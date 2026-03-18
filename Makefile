@@ -1,5 +1,5 @@
 
-.PHONY: up down logs lint format
+.PHONY: up up-lite down logs lint format
 
 PYTEST_ARGS ?=
 
@@ -12,6 +12,13 @@ up:
 
 down:
 	docker compose down
+
+up-lite:
+	@if [ ! -f .env ]; then \
+		echo "Error: .env file not found. Please create it from .env.template"; \
+		exit 1; \
+	fi
+	LITE_MODE=true docker compose up -d postgres redis minio api worker web
 
 logs:
 	@docker logs --tail=50 api-dev

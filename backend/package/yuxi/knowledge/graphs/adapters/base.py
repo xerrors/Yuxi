@@ -155,6 +155,9 @@ class Neo4jConnectionManager:
     def __init__(self):
         self.driver = None
         self.status = "closed"
+        if os.environ.get("LITE_MODE", "").lower() in ("true", "1"):
+            logger.info("LITE_MODE enabled, skipping Neo4j connection")
+            return
         self._connect()
 
     def _connect(self):

@@ -71,7 +71,7 @@ images=(
 # Pull each image
 for image in "${images[@]}"; do
     echo "🔄 Pulling ${image}..."
-    if bash docker/pull_image.sh "$image"; then
+    if bash scripts/pull_image.sh "$image"; then
         echo "✅ Successfully pulled ${image}"
     else
         echo "❌ Failed to pull ${image}"

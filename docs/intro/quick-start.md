@@ -72,6 +72,16 @@ docker compose up --build -d
 
 服务首次启动需要等待镜像拉取和编译，请耐心等待 2-3 分钟。
 
+::: tip 轻量模式（Lite Mode）
+如果你不需要知识库和知识图谱功能，可以使用轻量模式启动，跳过 Milvus、Neo4j、etcd 等服务，节省系统资源：
+
+```bash
+make up-lite
+```
+
+轻量模式仅启动核心服务（前端、后端、PostgreSQL、Redis、MinIO），前端侧边栏会自动隐藏知识库和图谱入口。切换回完整模式只需运行 `make up`。
+:::
+
 ### 步骤四：访问系统
 
 服务启动后，访问以下地址：

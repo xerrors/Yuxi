@@ -99,6 +99,8 @@ console.log(route)
 const activeTaskCount = computed(() => activeCountRef.value || 0)
 
 // 下面是导航菜单部分，添加智能体项
+const isLiteMode = import.meta.env.VITE_LITE_MODE === 'true'
+
 const mainList = computed(() => {
   const items = [
     {
@@ -110,20 +112,22 @@ const mainList = computed(() => {
   ]
 
   if (userStore.isAdmin) {
-    items.push(
-      {
-        name: '图谱',
-        path: '/graph',
-        icon: Waypoints,
-        activeIcon: Waypoints
-      },
-      {
-        name: '知识库',
-        path: '/database',
-        icon: LibraryBig,
-        activeIcon: LibraryBig
-      }
-    )
+    if (!isLiteMode) {
+      items.push(
+        {
+          name: '图谱',
+          path: '/graph',
+          icon: Waypoints,
+          activeIcon: Waypoints
+        },
+        {
+          name: '知识库',
+          path: '/database',
+          icon: LibraryBig,
+          activeIcon: LibraryBig
+        }
+      )
+    }
 
     if (userStore.isSuperAdmin) {
       items.push({
