@@ -68,13 +68,14 @@ $images = @(
     "nginx:alpine",
     "quay.io/coreos/etcd:v3.5.5",
     "postgres:16"
+    "redis:7-alpine"
 )
 
 # Pull each image
 foreach ($image in $images) {
     Write-Host "🔄 Pulling ${image}..." -ForegroundColor Yellow
     try {
-        & docker/pull_image.ps1 $image
+        & scripts/pull_image.ps1 $image
         if ($LASTEXITCODE -eq 0) {
             Write-Host "✅ Successfully pulled ${image}" -ForegroundColor Green
         } else {

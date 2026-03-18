@@ -119,13 +119,13 @@ docker logs web-dev -f
 
 ```bash
 # 手动拉取基础镜像
-bash docker/pull_image.sh python:3.12-slim
+bash scripts/pull_image.sh python:3.12-slim
 ```
 
 **离线环境部署方案**：
 
 ```bash
-# 在有网络的环境导出镜像
+# 在有网络的环境导出镜像，注意检查镜像列表，不一定是最新的。
 bash docker/save_docker_images.sh
 
 # 传输到目标机器

@@ -1,5 +1,5 @@
 
-.PHONY: up down logs lint format format_diff router-tests
+.PHONY: up down logs lint format
 
 PYTEST_ARGS ?=
 
@@ -33,6 +33,3 @@ format:
 	uv run python -m ruff check backend/package --fix
 	uv run python -m ruff check --select I backend/package --fix
 	docker compose exec -T web pnpm run format
-
-router-tests:
-	docker compose exec -T api uv run --group test pytest test/api $(PYTEST_ARGS)
