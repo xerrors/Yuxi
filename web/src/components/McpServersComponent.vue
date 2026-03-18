@@ -574,9 +574,9 @@ const fetchServers = async () => {
     const result = await mcpApi.getMcpServers()
     if (result.success) {
       servers.value = result.data || []
-      // 默认选中第一个服务器
+      // 默认选中排序后的第一个服务器
       if (!currentServer.value && servers.value.length > 0) {
-        selectServer(servers.value[0])
+        selectServer(filteredServers.value[0])
       } else if (currentServer.value) {
         const latest = servers.value.find((s) => s.name === currentServer.value.name)
         if (latest) {

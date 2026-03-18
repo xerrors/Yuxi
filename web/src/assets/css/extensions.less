@@ -31,6 +31,7 @@
 
   .search-box {
     padding: 12px 12px 0;
+
     .search-input :deep(.ant-input) {
       height: 28px;
     }
@@ -93,10 +94,12 @@
   }
 
   &.active {
+
     .item-icon,
     .server-icon {
       color: var(--main-color);
     }
+
     .item-name {
       color: var(--gray-900);
     }
@@ -126,8 +129,10 @@
     align-items: center;
     justify-content: center;
     background-color: @bg-secondary;
+
     .hint-box {
       text-align: center;
+
       p {
         margin-top: 12px;
         color: var(--gray-400);
@@ -167,6 +172,7 @@
     padding: 0 16px;
     flex-shrink: 0;
     border-bottom: 1px solid @border-color;
+
     &::before {
       border-bottom: none;
     }
@@ -197,6 +203,7 @@
 .text-muted {
   color: var(--gray-400);
 }
+
 .empty-text {
   padding: 40px 0;
   text-align: center;
@@ -206,9 +213,11 @@
 // Spin wrapper for full height
 .full-height-spin {
   height: 100%;
+
   :deep(.ant-spin-nested-loading) {
     height: 100%;
   }
+
   :deep(.ant-spin-container) {
     height: 100%;
     display: flex;
@@ -240,6 +249,7 @@
   0% {
     left: -30%;
   }
+
   100% {
     left: 100%;
   }
