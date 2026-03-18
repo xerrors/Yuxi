@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    image: yuxi-api:0.5.dev
+    image: yuxi-api:0.6.dev
     container_name: api-dev
     working_dir: /app
     volumes:
@@ -65,7 +65,7 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    image: yuxi-api:0.5.dev
+    image: yuxi-api:0.6.dev
     container_name: worker-dev
     working_dir: /app
     volumes:
@@ -121,7 +121,7 @@ services:
       context: .
       dockerfile: docker/web.Dockerfile
       target: development
-    image: yuxi-web:0.5.dev
+    image: yuxi-web:0.6.dev
     container_name: web-dev
     volumes:
       - ./web/src:/app/src

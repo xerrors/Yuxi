@@ -2,7 +2,7 @@
 <div align="center">
 <h1>语析 - 基于大模型的知识库与知识图谱智能体开发平台</h1>
 
-[![Stable](https://img.shields.io/badge/stable-v0.5.3-blue.svg)](https://github.com/xerrors/Yuxi-Know/tree/v0.5.3)
+[![Dev](https://img.shields.io/badge/dev-v0.6.0--dev-blue.svg)](https://github.com/xerrors/Yuxi-Know)
 [![](https://img.shields.io/badge/Docker-2496ED?style=flat&logo=docker&logoColor=ffffff)](https://github.com/xerrors/Yuxi-Know/blob/main/docker-compose.yml)
 [![](https://img.shields.io/github/issues/xerrors/Yuxi-Know?color=F48D73)](https://github.com/xerrors/Yuxi-Know/issues)
 [![License](https://img.shields.io/github/license/bitcookies/winrar-keygen.svg?logo=github)](https://github.com/xerrors/Yuxi-Know/blob/main/LICENSE)
@@ -120,7 +120,7 @@
 克隆代码，并初始化
 
 ```
-git clone --branch v0.5.3 --depth 1 https://github.com/xerrors/Yuxi-Know.git
+git clone --branch v0.6.0-dev --depth 1 https://github.com/xerrors/Yuxi-Know.git
 cd Yuxi-Know
 
 # Linux/macOS

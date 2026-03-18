@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor  # noqa: E402
 
 from yuxi.config import config as config  # noqa: E402
 
-__version__ = "0.5.3"
+__version__ = "0.6.0-dev"
 
 if os.getenv("YUXI_SKIP_APP_INIT") != "1":
     from yuxi.knowledge import graph_base as graph_base  # noqa: E402
