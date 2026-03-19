@@ -11,11 +11,8 @@ hero:
     alt: VitePress
   actions:
     - theme: brand
-      text: Latest 文档
-      link: /latest/intro/quick-start
-    - theme: alt
-      text: v0.4.0 文档
-      link: /v0.4.0/intro/quick-start
+      text: 快速开始
+      link: /intro/quick-start
 
 features:
   - title: 🤖 智能体与模型

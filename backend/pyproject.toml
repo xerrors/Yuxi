@@ -1,6 +1,6 @@
 [project]
 name = "yuxi-workspace"
-version = "0.5.3"
+version = "0.6.0-dev"
 description = "基于大模型的智能知识库与知识图谱智能体开发平台，融合了 RAG 技术与知识图谱技术，基于 LangGraph v1 + Vue.js + FastAPI + LightRAG 架构构建"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"

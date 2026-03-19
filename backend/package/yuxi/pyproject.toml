@@ -1,6 +1,6 @@
 [project]
 name = "yuxi"
-version = "0.5.3"
+version = "0.6.0-dev"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"

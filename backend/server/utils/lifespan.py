@@ -37,10 +37,14 @@ async def lifespan(app: FastAPI):
         raise
 
     # 初始化知识库管理器
-    try:
-        await knowledge_base.initialize()
-    except Exception as e:
-        logger.error(f"Failed to initialize knowledge base manager: {e}")
+    import os
+    if os.environ.get("LITE_MODE", "").lower() in ("true", "1"):
+        logger.info("LITE_MODE enabled, skipping knowledge base initialization")
+    else:
+        try:
+            await knowledge_base.initialize()
+        except Exception as e:
+            logger.error(f"Failed to initialize knowledge base manager: {e}")
 
     # 预热 Redis（run 队列）
     try:

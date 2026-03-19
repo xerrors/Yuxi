@@ -10,10 +10,10 @@
 
 ```bash
 # Linux/macOS
-bash docker/pull_image.sh
+bash scripts/pull_image.sh
 
 # Windows PowerShell
-powershell -ExecutionPolicy Bypass -File docker/pull_image.ps1
+powershell -ExecutionPolicy Bypass -File scripts/pull_image.ps1
 ```
 
 **构建失败问题**：

@@ -57,8 +57,8 @@
 ## v0.4
 
 ### 新增
-- 新增对于上传附件的智能体中间件，详见[文档](https://xerrors.github.io/Yuxi-Know/latest/advanced/agents-config.html#%E6%96%87%E4%BB%B6%E4%B8%8A%E4%BC%A0%E4%B8%AD%E9%97%B4%E4%BB%B6)
-- 新增多模态模型支持（当前仅支持图片），详见[文档](https://xerrors.github.io/Yuxi-Know/latest/advanced/agents-config.html#%E5%A4%9A%E6%A8%A1%E6%80%81%E5%9B%BE%E7%89%87%E6%94%AF%E6%8C%81)
+- 新增对于上传附件的智能体中间件，详见[文档](https://xerrors.github.io/Yuxi-Know/advanced/agents-config.html#%E6%96%87%E4%BB%B6%E4%B8%8A%E4%BC%A0%E4%B8%AD%E9%97%B4%E4%BB%B6)
+- 新增多模态模型支持（当前仅支持图片），详见[文档](https://xerrors.github.io/Yuxi-Know/advanced/agents-config.html#%E5%A4%9A%E6%A8%A1%E6%80%81%E5%9B%BE%E7%89%87%E6%94%AF%E6%8C%81)
 - 新建 DeepAgents 智能体（深度分析智能体），支持 todo，files 等渲染，支持文件的下载。
 - 新增基于知识库文件生成思维导图功能（[#335](https://github.com/xerrors/Yuxi-Know/pull/335#issuecomment-3530976425)）
 - 新增基于知识库文件生成示例问题功能（[#335](https://github.com/xerrors/Yuxi-Know/pull/335#issuecomment-3530976425)）
@@ -66,10 +66,10 @@
 - 新增自定义模型支持、新增 dashscope rerank/embeddings 模型的支持
 - 新增文档解析的图片支持，已支持 MinerU Officical、Docs、Markdown Zip格式
 - 新增暗色模式支持并调整整体 UI（[#343](https://github.com/xerrors/Yuxi-Know/pull/343)）
-- 新增知识库评估功能，支持导入评估基准或者自动构建评估基准（目前仅支持Milvus类型知识库）详见[文档](https://xerrors.github.io/Yuxi-Know/latest/intro/evaluation.html)
+- 新增知识库评估功能，支持导入评估基准或者自动构建评估基准（目前仅支持Milvus类型知识库）详见[文档](https://xerrors.github.io/Yuxi-Know/intro/evaluation.html)
 - 新增同名文件处理逻辑：遇到同名文件则在上传区域提示，是否删除旧文件
 - 新增生产环境部署脚本，固定 python 依赖版本，提升部署稳定性
-- 优化图谱可视化方式，统一图谱数据结构，统一使用基于 G6 的可视化方式，同时支持上传带属性的图谱文件，详见[文档](https://xerrors.github.io/Yuxi-Know/latest/intro/knowledge-base.html#_1-%E4%BB%A5%E4%B8%89%E5%85%83%E7%BB%84%E5%BD%A2%E5%BC%8F%E5%AF%BC%E5%85%A5)
+- 优化图谱可视化方式，统一图谱数据结构，统一使用基于 G6 的可视化方式，同时支持上传带属性的图谱文件，详见[文档](https://xerrors.github.io/Yuxi-Know/intro/knowledge-base.html#_1-%E4%BB%A5%E4%B8%89%E5%85%83%E7%BB%84%E5%BD%A2%E5%BC%8F%E5%AF%BC%E5%85%A5)
 - 优化 DBManager / ConversationManager，支持异步操作
 - 优化 知识库详情页面，更加简洁清晰，增强文件下载功能
 

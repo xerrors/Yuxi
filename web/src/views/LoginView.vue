@@ -40,9 +40,9 @@
         <div class="card-side is-form">
           <div class="form-wrapper">
             <header class="form-header">
-              <p class="welcome-text">欢迎登录</p>
               <!-- 如果是在初始化，显示特定标题 -->
               <h2 v-if="isFirstRun" class="init-title">系统初始化，请创建超级管理员</h2>
+              <p v-else class="welcome-text">欢迎登录</p>
             </header>
 
             <div class="login-content" :class="{ 'is-initializing': isFirstRun }">
@@ -651,7 +651,6 @@ onUnmounted(() => {
   width: 900px;
   max-width: 95vw;
   height: 560px;
-  max-height: 80vh;
   background: var(--gray-0);
   border-radius: 16px;
   box-shadow: 0 0px 40px var(--shadow-1);
@@ -727,6 +726,10 @@ onUnmounted(() => {
     margin-right: 8px;
     color: var(--gray-500);
   }
+}
+
+.login-form.login-form--init :deep(.ant-form-item) {
+  margin-bottom: 14px;
 }
 
 .third-party-login {

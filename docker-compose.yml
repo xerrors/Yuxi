@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    image: yuxi-api:0.5.dev
+    image: yuxi-api:0.6.dev
     container_name: api-dev
     working_dir: /app
     volumes:
@@ -25,6 +25,7 @@ services:
     # region api_envs
     environment:
       - HOST_IP=${HOST_IP:-}
+      - LITE_MODE=${LITE_MODE:-}
       - POSTGRES_URL=${POSTGRES_URL:-postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-yuxi_know}}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - RUN_EVENTS_STREAM_TTL_SECONDS=${RUN_EVENTS_STREAM_TTL_SECONDS:-7200}
@@ -58,8 +59,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      milvus:
-        condition: service_healthy
       minio:
         condition: service_healthy
 
@@ -67,7 +66,7 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    image: yuxi-api:0.5.dev
+    image: yuxi-api:0.6.dev
     container_name: worker-dev
     working_dir: /app
     volumes:
@@ -88,6 +87,7 @@ services:
       - .env
     environment:
       - HOST_IP=${HOST_IP:-}
+      - LITE_MODE=${LITE_MODE:-}
       - POSTGRES_URL=${POSTGRES_URL:-postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-yuxi_know}}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - RUN_EVENTS_STREAM_TTL_SECONDS=${RUN_EVENTS_STREAM_TTL_SECONDS:-7200}
@@ -114,8 +114,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      milvus:
-        condition: service_healthy
       minio:
         condition: service_healthy
 
@@ -124,7 +122,7 @@ services:
       context: .
       dockerfile: docker/web.Dockerfile
       target: development
-    image: yuxi-web:0.5.dev
+    image: yuxi-web:0.6.dev
     container_name: web-dev
     volumes:
       - ./web/src:/app/src
@@ -141,11 +139,14 @@ services:
       - NODE_ENV=development
       - VITE_API_URL=http://api:5050
       - VITE_USE_RUNS_API=${VITE_USE_RUNS_API:-false}
+      - VITE_LITE_MODE=${LITE_MODE:-}
     command: pnpm run server
     restart: unless-stopped
 
   # region neo4j
   graph:
+    profiles:
+      - full
     image: neo4j:5.26
     container_name: graph
     ports:
@@ -171,6 +172,8 @@ services:
   # endregion neo4j
 
   etcd:
+    profiles:
+      - full
     container_name: milvus-etcd-dev
     image: quay.io/coreos/etcd:v3.5.5
     environment:
@@ -215,6 +218,8 @@ services:
     restart: unless-stopped
 
   milvus:
+    profiles:
+      - full
     image: milvusdb/milvus:v2.5.6
     container_name: milvus
     command: ["milvus", "run", "standalone"]
