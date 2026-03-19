@@ -105,15 +105,35 @@ answer 为 object，格式为 {question_id: answer}。
 )
 def ask_user_question(
     questions: Annotated[
-        list[dict] | None,
+        list[dict] | str | None,
         "问题列表，每项格式 {question, options, multi_select, allow_other, question_id(optional)}",
     ] = None,
     question: Annotated[str, "兼容字段：单个问题文本（建议优先使用 questions）"] = "",
-    options: Annotated[list[dict] | None, "兼容字段：单个问题候选项（建议优先使用 questions）"] = None,
+    options: Annotated[list[dict] | str | None, "兼容字段：单个问题候选项（建议优先使用 questions）"] = None,
     multi_select: Annotated[bool, "兼容字段：单个问题是否允许多选"] = False,
     allow_other: Annotated[bool, "兼容字段：单个问题是否允许 Other 自定义答案"] = True,
 ) -> dict:
     """向用户发起问题并等待回答。"""
+    # 解析 options 参数：如果是字符串，尝试解析为 JSON
+    if isinstance(options, str):
+        try:
+            import json
+            options = json.loads(options)
+            logger.debug(f"Parsed string options to list: {options}")
+        except Exception as e:
+            logger.error(f"Failed to parse options string: {e}, using empty list")
+            options = []
+
+    # 解析 questions 参数：如果是字符串，尝试解析为 JSON
+    if isinstance(questions, str):
+        try:
+            import json
+            questions = json.loads(questions)
+            logger.debug(f"Parsed string questions to list: {questions}")
+        except Exception as e:
+            logger.error(f"Failed to parse questions string: {e}, using None")
+            questions = None
+
     input_questions = questions
     if not input_questions:
         legacy_question = str(question or "").strip()
