@@ -1,5 +1,6 @@
 from deepagents.middleware.filesystem import FilesystemMiddleware
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
+from deepagents.middleware.subagents import SubAgentMiddleware
 from langchain.agents import create_agent
 from langchain.agents.middleware import (
     ModelRetryMiddleware,
@@ -15,6 +16,7 @@ from yuxi.agents.common.middlewares import (
 from yuxi.agents.common.middlewares.knowledge_base_middleware import KnowledgeBaseMiddleware
 from yuxi.agents.common.middlewares.skills_middleware import SkillsMiddleware
 from yuxi.services.mcp_service import get_tools_from_all_servers
+from yuxi.services.subagent_service import get_subagents_from_names
 
 
 def _create_fs_backend(rt):
@@ -36,12 +38,25 @@ class ChatbotAgent(BaseAgent):
             await get_tools_from_all_servers()
         )  # 因为异步加载，无法放在 RuntimeConfigMiddleware 的 __init__ 中
 
+        subagents = await get_subagents_from_names(context.subagents)
+        subagents_model = load_chat_model(context.subagents_model)
+        subagents_middleware = SubAgentMiddleware(
+            default_model=subagents_model,
+            subagents=subagents,
+            general_purpose_agent=True,
+            default_middleware=[
+                FilesystemMiddleware(backend=_create_fs_backend),  # 文件系统后端
+                PatchToolCallsMiddleware(),
+            ],
+        )
+
         middlewares = [
             save_attachments_to_fs,  # 附件注入提示词
             FilesystemMiddleware(backend=_create_fs_backend),  # 文件系统后端
             KnowledgeBaseMiddleware(),  # 知识库工具
             RuntimeConfigMiddleware(extra_tools=all_mcp_tools),  # 运行时配置应用（模型/工具/MCP/提示词）
             SkillsMiddleware(),  # Skills 中间件（提示词注入、依赖展开、动态激活）
+            subagents_middleware,
             ModelRetryMiddleware(),  # 模型重试中间件
             TodoListMiddleware(),
             PatchToolCallsMiddleware(),
