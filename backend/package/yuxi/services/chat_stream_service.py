@@ -576,7 +576,6 @@ async def stream_agent_resume(
     yield make_resume_chunk(status="init", meta=meta, msg=init_msg)
 
     resume_command = Command(resume=resume_input)
-    graph = await agent.get_graph()
 
     user_id = str(current_user.id)
     agent_config_id = (config or {}).get("agent_config_id")
@@ -585,6 +584,7 @@ async def stream_agent_resume(
     context = agent.context_schema()
     context.update(agent_config or {})
     context.update({"user_id": user_id, "thread_id": thread_id})
+    graph = await agent.get_graph(context=context)
 
     stream_source = graph.astream(
         resume_command,
