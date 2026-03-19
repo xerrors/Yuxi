@@ -33,7 +33,7 @@
               @click="selectAgent(agent)"
             >
               <div class="item-header">
-                <img :src="subagentsIcon" alt="SubAgent" class="agent-icon-svg" />
+                <Bot :size="16" class="item-icon" />
                 <span class="item-name">{{ agent.name }}</span>
               </div>
               <div class="item-details">
@@ -56,8 +56,8 @@
 
         <template v-else>
           <div class="panel-top-bar">
-            <h2 style="min-height: 32px">
-              <img :src="subagentsIcon" alt="SubAgent" class="agent-icon-lg-svg" />
+            <h2 class="panel-title-row">
+              <Bot :size="18" class="panel-title-icon" />
               <span
                 ><strong>{{ currentAgent.name }}</strong></span
               >
@@ -138,8 +138,8 @@
                 <span class="tab-title"><MessageSquare :size="14" />系统提示词</span>
               </template>
               <div class="tab-content">
-                <div class="prompt-display">
-                  <pre>{{ currentAgent.system_prompt }}</pre>
+                <div class="code-panel">
+                  <pre class="code-panel-pre">{{ currentAgent.system_prompt }}</pre>
                 </div>
               </div>
             </a-tab-pane>
@@ -157,9 +157,8 @@
       @cancel="formModalVisible = false"
       :maskClosable="false"
       width="600px"
-      class="subagent-modal"
     >
-      <a-form layout="vertical" class="subagent-form">
+      <a-form layout="vertical" class="extension-form">
         <a-form-item label="名称" required class="form-item">
           <a-input
             v-model:value="form.name"
@@ -212,7 +211,6 @@ import { Search, Bot, Pencil, Trash2, Info, MessageSquare } from 'lucide-vue-nex
 import { subagentApi } from '@/apis/subagent_api'
 import { toolApi } from '@/apis/tool_api'
 import { formatFullDateTime } from '@/utils/time'
-import subagentsIcon from '@/assets/icons/subagents.svg'
 import ModelSelectorComponent from '@/components/ModelSelectorComponent.vue'
 
 // 状态
@@ -453,45 +451,6 @@ defineExpose({
 <style lang="less" scoped>
 @import '@/assets/css/extensions.less';
 
-.list-item {
-  .agent-icon-svg {
-    width: 16px;
-    height: 16px;
-    color: var(--gray-500);
-    flex-shrink: 0;
-  }
-
-  .item-details {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-
-    .builtin-tag {
-      background: var(--color-primary-50);
-      border: none;
-      color: var(--color-primary-600);
-      border-radius: 4px;
-      font-size: 11px;
-      width: fit-content;
-    }
-
-    .item-desc {
-      font-size: 12px;
-      color: var(--gray-400);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-  }
-}
-
-.agent-icon-lg-svg {
-  width: 18px;
-  height: 18px;
-  color: var(--gray-700);
-  flex-shrink: 0;
-}
-
 .model-override-row {
   display: flex;
   align-items: center;
@@ -506,62 +465,4 @@ defineExpose({
   }
 }
 
-/* 右侧面板 */
-.main-panel {
-  .detail-tabs {
-    .tab-content {
-      padding: 16px;
-      min-height: 300px;
-      height: 100%;
-      overflow: scroll;
-    }
-  }
-}
-
-.info-grid {
-  display: grid;
-  gap: 16px;
-
-  .info-item {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-
-    label {
-      font-size: 12px;
-      color: var(--gray-500);
-      font-weight: 500;
-    }
-
-    span {
-      font-size: 14px;
-      color: var(--gray-900);
-    }
-  }
-}
-
-.prompt-display {
-  background: var(--gray-50);
-  border: 1px solid var(--gray-150);
-  border-radius: 8px;
-  padding: 16px;
-
-  pre {
-    margin: 0;
-    font-family: 'Monaco', 'Consolas', monospace;
-    font-size: 13px;
-    white-space: pre-wrap;
-    word-break: break-word;
-    color: var(--gray-700);
-  }
-}
-
-/* 模态框样式 */
-.subagent-modal {
-  .subagent-form {
-    .form-item {
-      margin-bottom: 16px;
-    }
-  }
-}
 </style>

@@ -1,5 +1,5 @@
 <template>
-  <div class="extensions-view">
+  <div class="extensions-view extension-page-root">
     <div class="extensions-header">
       <a-tabs v-model:activeKey="activeTab" class="extensions-tabs">
         <a-tab-pane key="tools" tab="工具" />
@@ -213,13 +213,9 @@ const handleImportUpload = async ({ file, onSuccess, onError }) => {
 </script>
 
 <style scoped lang="less">
-.extensions-view {
-  height: 100%;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  background-color: var(--gray-0);
+@import '@/assets/css/extensions.less';
 
+.extensions-view {
   .extensions-header {
     display: flex;
     justify-content: space-between;

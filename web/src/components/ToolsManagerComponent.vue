@@ -45,8 +45,8 @@
                 <Wrench :size="16" class="item-icon" />
                 <span class="item-name">{{ tool.name }}</span>
               </div>
-              <div class="item-details">
-                <span class="item-category">{{
+              <div class="item-details item-details-inline">
+                <span class="item-category item-meta">{{
                   categoryLabels[tool.category] || tool.category
                 }}</span>
                 <div class="item-tags">
@@ -72,9 +72,9 @@
 
         <template v-else>
           <div class="panel-top-bar">
-            <div class="tool-summary">
+            <div class="panel-title-stack">
               <h2>{{ currentTool.name }}</h2>
-              <code>{{ currentTool.id }}</code>
+              <code class="panel-title-meta">{{ currentTool.id }}</code>
             </div>
           </div>
 
@@ -221,13 +221,6 @@ defineExpose({
 
 .list-item {
   .item-details {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    .item-category {
-      font-size: 12px;
-      color: var(--gray-600);
-    }
     .item-tags {
       display: flex;
       gap: 2px;
@@ -240,26 +233,6 @@ defineExpose({
         padding: 0 4px;
         margin: 0;
         border: none;
-      }
-    }
-  }
-}
-
-/* 右侧面板 */
-.main-panel {
-  .panel-top-bar {
-    .tool-summary {
-      min-height: 32px;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      code {
-        font-size: 12px;
-        color: var(--gray-500);
-        border-radius: 4px;
-        margin-top: 4px;
-        display: inline-block;
-        user-select: text;
       }
     }
   }

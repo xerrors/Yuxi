@@ -28,11 +28,11 @@
               @click="selectSkill(skill)"
             >
               <div class="item-header">
-                <Box :size="16" class="item-icon" />
+                <BookMarked :size="16" class="item-icon" />
                 <span class="item-name">{{ skill.name }}</span>
               </div>
-              <div class="item-details">
-                <span class="item-slug">{{ skill.slug }}</span>
+              <div class="item-details item-details-inline">
+                <span class="item-slug item-meta mono-text">{{ skill.slug }}</span>
                 <div class="item-badges">
                   <span
                     v-if="skill.tool_dependencies?.length"
@@ -63,7 +63,7 @@
 
         <template v-else>
           <div class="panel-top-bar">
-            <div class="skill-summary">
+            <div class="panel-title-stack">
               <h2>{{ currentSkill.name }}</h2>
               <!-- <code>{{ currentSkill.slug }}</code> -->
             </div>
@@ -279,7 +279,7 @@ import {
   FolderPlus,
   File,
   Search,
-  Box,
+  BookMarked,
   FileCode,
   Eye,
   Edit3
@@ -655,14 +655,6 @@ defineExpose({
 
 .list-item {
   .item-details {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    .item-slug {
-      font-size: 12px;
-      color: var(--gray-400);
-      font-family: monospace;
-    }
     .item-badges {
       display: flex;
       gap: 4px;
@@ -676,27 +668,6 @@ defineExpose({
         &.green {
           background-color: #22c55e;
         }
-      }
-    }
-  }
-}
-
-/* 右侧面板 */
-.main-panel {
-  .panel-top-bar {
-    .skill-summary {
-      min-height: 32px;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      code {
-        font-size: 12px;
-        color: var(--gray-500);
-        background: @bg-secondary;
-        padding: 2px 6px;
-        border-radius: 4px;
-        margin-top: 4px;
-        display: inline-block;
       }
     }
   }

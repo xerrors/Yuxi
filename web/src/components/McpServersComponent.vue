@@ -67,7 +67,7 @@
 
         <template v-else>
           <div class="panel-top-bar">
-            <h2 style="min-height: 32px">
+            <h2 class="panel-title-row">
               <span class="server-icon-lg">{{ currentServer.icon || '🔌' }}</span>
               <span
                 ><strong>{{ currentServer.name }}</strong></span
@@ -146,14 +146,14 @@
                   >
                     <div class="info-item" v-if="currentServer.url">
                       <label>服务器 URL</label>
-                      <span class="url-text">{{ currentServer.url }}</span>
+                      <span class="code-inline text-break-all">{{ currentServer.url }}</span>
                     </div>
                     <div
                       class="info-item"
                       v-if="currentServer.headers && Object.keys(currentServer.headers).length > 0"
                     >
                       <label>请求头</label>
-                      <pre class="headers-pre">{{
+                      <pre class="code-pre">{{
                         JSON.stringify(currentServer.headers, null, 2)
                       }}</pre>
                     </div>
@@ -171,7 +171,7 @@
                   <template v-if="currentServer.transport === 'stdio'">
                     <div class="info-item" v-if="currentServer.command">
                       <label>命令</label>
-                      <span class="command-text">{{ currentServer.command }}</span>
+                      <span class="code-inline">{{ currentServer.command }}</span>
                     </div>
                     <div
                       class="info-item"
@@ -189,7 +189,7 @@
                       v-if="currentServer.env && Object.keys(currentServer.env).length > 0"
                     >
                       <label>环境变量</label>
-                      <pre class="headers-pre">{{
+                      <pre class="code-pre">{{
                         JSON.stringify(currentServer.env, null, 2)
                       }}</pre>
                     </div>
@@ -351,7 +351,7 @@
       </div>
 
       <!-- 表单模式 -->
-      <a-form v-if="formMode === 'form'" layout="vertical" class="server-form">
+      <a-form v-if="formMode === 'form'" layout="vertical" class="extension-form">
         <a-form-item label="服务器名称" required class="form-item">
           <a-input
             v-model:value="form.name"
@@ -953,97 +953,6 @@ defineExpose({
   .server-icon {
     font-size: 18px;
   }
-
-  .item-details {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-
-    .transport-tag {
-      background: var(--gray-100);
-      border: none;
-      color: var(--gray-600);
-      border-radius: 4px;
-      font-size: 11px;
-      width: fit-content;
-    }
-
-    .item-desc {
-      font-size: 12px;
-      color: var(--gray-400);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-  }
-}
-
-/* 右侧面板 */
-.main-panel {
-  .detail-tabs {
-    .tab-content {
-      padding: 16px;
-      min-height: 300px;
-      height: 100%;
-      overflow: scroll;
-    }
-
-    .empty-tab {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 200px;
-    }
-  }
-}
-
-.info-grid {
-  display: grid;
-  gap: 16px;
-
-  .info-item {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-
-    label {
-      font-size: 12px;
-      color: var(--gray-500);
-      font-weight: 500;
-    }
-
-    span {
-      font-size: 14px;
-      color: var(--gray-900);
-    }
-
-    .url-text {
-      font-family: 'Monaco', 'Consolas', monospace;
-      font-size: 13px;
-      word-break: break-all;
-      background: var(--gray-50);
-      padding: 8px 12px;
-      border-radius: 4px;
-    }
-
-    .command-text {
-      font-family: 'Monaco', 'Consolas', monospace;
-      font-size: 13px;
-      background: var(--gray-50);
-      padding: 8px 12px;
-      border-radius: 4px;
-    }
-
-    .headers-pre {
-      font-family: 'Monaco', 'Consolas', monospace;
-      font-size: 12px;
-      background: var(--gray-50);
-      padding: 12px;
-      border-radius: 4px;
-      margin: 0;
-      overflow-x: auto;
-    }
-  }
 }
 
 /* 工具列表样式 */
@@ -1153,7 +1062,7 @@ defineExpose({
               font-weight: 500;
               font-size: 13px;
               color: var(--gray-900);
-              font-family: 'Monaco', 'Consolas', monospace;
+              font-family: @mono-font;
             }
             .param-required {
               font-size: 11px;
@@ -1168,7 +1077,7 @@ defineExpose({
               background: var(--gray-100);
               padding: 1px 6px;
               border-radius: 3px;
-              font-family: 'Monaco', 'Consolas', monospace;
+              font-family: @mono-font;
             }
           }
 
@@ -1189,14 +1098,9 @@ defineExpose({
     margin-bottom: 16px;
     text-align: right;
   }
-  .server-form {
-    .form-item {
-      margin-bottom: 16px;
-    }
-  }
   .json-mode {
     .json-textarea {
-      font-family: 'Monaco', 'Consolas', monospace;
+      font-family: @mono-font;
       font-size: 13px;
     }
     .json-actions {
