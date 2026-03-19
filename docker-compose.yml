@@ -25,6 +25,7 @@ services:
     # region api_envs
     environment:
       - HOST_IP=${HOST_IP:-}
+      - LITE_MODE=${LITE_MODE:-}
       - POSTGRES_URL=${POSTGRES_URL:-postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-yuxi_know}}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - RUN_EVENTS_STREAM_TTL_SECONDS=${RUN_EVENTS_STREAM_TTL_SECONDS:-7200}
