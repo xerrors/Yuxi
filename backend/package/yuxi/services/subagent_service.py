@@ -1,12 +1,11 @@
 """SubAgent 服务层"""
 
 import asyncio
-from copy import deepcopy
 from contextlib import asynccontextmanager
+from copy import deepcopy
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from yuxi.repositories.subagent_repository import SubAgentRepository
 from yuxi.services.mcp_service import get_tools_from_all_servers
 from yuxi.storage.postgres.manager import pg_manager
@@ -24,6 +23,7 @@ async def _get_session(db: AsyncSession | None = None):
     else:
         async with pg_manager.get_async_session_context() as session:
             yield session
+
 
 # 内置 SubAgent 配置
 _DEFAULT_SUBAGENTS = [
@@ -129,6 +129,7 @@ async def _get_available_tools() -> list[Any]:
     mcp_tools = await get_tools_from_all_servers()
     tools.extend(mcp_tools)
     return tools
+
 
 async def get_all_subagents(db: AsyncSession | None = None) -> list[dict[str, Any]]:
     """获取所有 SubAgent（含禁用的）"""

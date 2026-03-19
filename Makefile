@@ -24,14 +24,14 @@ logs:
 ######################
 
 lint:
-	uv run python -m ruff check backend/package
-	uv run python -m ruff format --check backend/package
-	uv run python -m ruff check --select I backend/package
+	cd backend && uv run ruff check package
+	cd backend && uv run ruff format --check package
+	cd backend && uv run ruff check --select I package
 
 format:
-	uv run python -m ruff format backend/package
-	uv run python -m ruff check backend/package --fix
-	uv run python -m ruff check --select I backend/package --fix
+	cd backend && uv run ruff format package
+	cd backend && uv run ruff check package --fix
+	cd backend && uv run ruff check --select I package --fix
 	docker compose exec -T web pnpm run format
 
 router-tests:

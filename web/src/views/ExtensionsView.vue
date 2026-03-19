@@ -50,7 +50,11 @@
             <Plus :size="14" />
             <span>添加</span>
           </a-button>
-          <a-button @click="handleSubagentRefresh" :disabled="subagentsLoading" class="lucide-icon-btn">
+          <a-button
+            @click="handleSubagentRefresh"
+            :disabled="subagentsLoading"
+            class="lucide-icon-btn"
+          >
             <RotateCw :size="14" />
             <span>刷新</span>
           </a-button>
@@ -73,7 +77,11 @@
         <McpServersComponent ref="mcpRef" @add="handleMcpAdd" @refresh="handleMcpRefresh" />
       </div>
       <div v-show="activeTab === 'subagents'" class="tab-panel">
-        <SubAgentsComponent ref="subagentsRef" @add="handleSubagentAdd" @refresh="handleSubagentRefresh" />
+        <SubAgentsComponent
+          ref="subagentsRef"
+          @add="handleSubagentAdd"
+          @refresh="handleSubagentRefresh"
+        />
       </div>
     </div>
   </div>
