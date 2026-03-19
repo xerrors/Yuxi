@@ -16,7 +16,7 @@ from yuxi.agents.common.middlewares.knowledge_base_middleware import KnowledgeBa
 from yuxi.agents.common.middlewares.skills_middleware import SkillsMiddleware
 from yuxi.agents.common.toolkits.buildin.tools import _create_tavily_search
 from yuxi.services.mcp_service import get_tools_from_all_servers
-from yuxi.services.subagent_service import get_subagent_specs, resolve_subagent_tools
+from yuxi.services.subagent_service import get_subagents_from_names
 from yuxi.utils import logger
 
 from .context import DeepContext
@@ -66,10 +66,8 @@ class DeepAgent(BaseAgent):
         all_mcp_tools = await get_tools_from_all_servers()
         # 合并搜索工具和 MCP 工具
 
-        # 从数据库加载 subagent specs（工具名称未解析）
-        user_subagents = await get_subagent_specs()
-        # 解析工具名称为实际工具实例
-        user_subagents = resolve_subagent_tools(user_subagents, search_tools + all_mcp_tools)
+        # 从数据库加载 subagent specs（工具名称已解析）
+        user_subagents = await get_subagents_from_names(context.subagents)
 
         # 主 Agent 上下文优化：90k tokens 触发压缩（128k context window 的 70%）
         summary_middleware = SummaryOffloadMiddleware(
