@@ -47,8 +47,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      milvus:
-        condition: service_healthy
       minio:
         condition: service_healthy
 
@@ -69,6 +67,7 @@ services:
       - .env.prod
     environment:
       - HOST_IP=${HOST_IP:-}
+      - LITE_MODE=${LITE_MODE:-}
       - POSTGRES_URL=${POSTGRES_URL:-postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-yuxi_know}}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - RUN_EVENTS_STREAM_TTL_SECONDS=${RUN_EVENTS_STREAM_TTL_SECONDS:-7200}
@@ -94,8 +93,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      milvus:
-        condition: service_healthy
       minio:
         condition: service_healthy
 
@@ -114,12 +111,13 @@ services:
       - app-network
     environment:
       - NODE_ENV=production
-      - VITE_API_URL=http://api:5050
-      - VITE_USE_RUNS_API=${VITE_USE_RUNS_API:-false}
+      - VITE_LITE_MODE=${LITE_MODE:-}
     command: nginx -g "daemon off;"
     restart: unless-stopped
 
   graph:
+    profiles:
+      - full
     image: neo4j:5.26
     container_name: graph
     volumes:
@@ -141,6 +139,8 @@ services:
     restart: unless-stopped
 
   etcd:
+    profiles:
+      - full
     container_name: milvus-etcd
     image: quay.io/coreos/etcd:v3.5.5
     environment:
@@ -182,6 +182,8 @@ services:
     restart: unless-stopped
 
   milvus:
+    profiles:
+      - full
     image: milvusdb/milvus:v2.5.6
     container_name: milvus
     command: ["milvus", "run", "standalone"]
@@ -252,7 +254,7 @@ services:
     profiles:
       - all
     env_file:
-      - .env
+      - .env.prod
     environment:
       MINERU_MODEL_SOURCE: local
     entrypoint: mineru-vllm-server
@@ -285,7 +287,7 @@ services:
     profiles:
       - all
     env_file:
-      - .env
+      - .env.prod
     ports:
       - 30001:30001
     environment:
