@@ -1,17 +1,6 @@
 <template>
   <div class="agent-view">
     <div class="agent-view-body">
-      <a-modal
-        v-model:open="createConfigModalOpen"
-        title="新建配置"
-        :width="320"
-        :confirmLoading="createConfigLoading"
-        @ok="handleCreateConfig"
-        @cancel="() => (createConfigModalOpen = false)"
-      >
-        <a-input v-model:value="createConfigName" placeholder="请输入配置名称" allow-clear />
-      </a-modal>
-
       <!-- 中间内容区域 -->
       <div class="content">
         <AgentChatComponent
@@ -20,66 +9,18 @@
           @close-config-sidebar="() => (chatUIStore.isConfigSidebarOpen = false)"
         >
           <template #input-actions-left>
-            <a-dropdown
+            <button
               v-if="selectedAgentId"
-              v-model:open="configDropdownOpen"
-              :trigger="['click']"
+              class="input-action-btn"
+              :class="{ active: chatUIStore.isConfigSidebarOpen }"
+              :disabled="isLoadingConfig"
+              @click="openConfigSidebar"
             >
-              <div
-                type="button"
-                class="agent-nav-btn config-toggle-btn"
-                :class="{ active: configDropdownOpen }"
-              >
-                <Settings2 size="18" class="nav-btn-icon" />
-                <span class="text hide-text">
-                  {{ selectedConfigSummary?.name || '配置' }}
-                </span>
-                <ChevronDown size="16" class="nav-btn-icon" />
-              </div>
-              <template #overlay>
-                <a-menu
-                  :selectedKeys="selectedAgentConfigId ? [String(selectedAgentConfigId)] : []"
-                >
-                  <a-menu-item
-                    v-for="cfg in agentConfigs[selectedAgentId] || []"
-                    :key="String(cfg.id)"
-                    @click="selectAgentConfig(cfg.id)"
-                  >
-                    <div class="menu-item-full">
-                      <Star
-                        :size="14"
-                        :fill="cfg.is_default ? 'currentColor' : 'none'"
-                        :style="{
-                          color: cfg.is_default ? 'var(--color-warning-500)' : 'var(--gray-400)'
-                        }"
-                      />
-                      <span>{{ cfg.name }}</span>
-                    </div>
-                  </a-menu-item>
-                  <a-menu-divider v-if="userStore.isAdmin" />
-                  <a-menu-item
-                    v-if="userStore.isAdmin"
-                    key="create_config"
-                    @click="openCreateConfigModal"
-                  >
-                    <div class="menu-item-layout">
-                      <CirclePlus :size="16" />
-                      <span>新建配置</span>
-                    </div>
-                  </a-menu-item>
-                  <a-menu-item
-                    v-if="userStore.isAdmin"
-                    key="open_config"
-                    @click="openConfigSidebar"
-                  >
-                    <div class="menu-item-layout">
-                      <SquarePen :size="16" />
-                      <span>编辑当前配置</span>
-                    </div>
-                  </a-menu-item>
-                </a-menu>
-              </template>
-            </a-dropdown>
+              <Settings2 size="18" />
+              <span class="hide-text">
+                {{ isLoadingConfig ? '加载中...' : (selectedConfigSummary?.name || '配置') }}
+              </span>
+            </button>
           </template>
 
           <template #header-right v-if="userStore.isAdmin">
@@ -140,7 +81,7 @@
 import { ref, watch } from 'vue'
 import { MessageOutlined, ShareAltOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
-import { Settings2, Ellipsis, ChevronDown, Star, CirclePlus, SquarePen } from 'lucide-vue-next'
+import { Settings2, Ellipsis } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import AgentChatComponent from '@/components/AgentChatComponent.vue'
 import AgentConfigSidebar from '@/components/AgentConfigSidebar.vue'
@@ -157,7 +98,6 @@ import { storeToRefs } from 'pinia'
 // 组件引用
 const feedbackModal = ref(null)
 const chatComponentRef = ref(null)
-const configDropdownOpen = ref(false)
 
 // Stores
 const userStore = useUserStore()
@@ -167,8 +107,7 @@ const route = useRoute()
 const router = useRouter()
 
 // 从 agentStore 中获取响应式状态
-const { agents, selectedAgentId, agentConfigs, selectedAgentConfigId, selectedConfigSummary } =
-  storeToRefs(agentStore)
+const { agents, selectedAgentId, selectedConfigSummary, isLoadingConfig } = storeToRefs(agentStore)
 
 const syncingRouteAgent = ref(false)
 
@@ -224,52 +163,7 @@ watch(selectedAgentId, (newAgentId) => {
 })
 
 const openConfigSidebar = () => {
-  configDropdownOpen.value = false
-  chatUIStore.isConfigSidebarOpen = true
-}
-
-const createConfigModalOpen = ref(false)
-const createConfigLoading = ref(false)
-const createConfigName = ref('')
-
-const openCreateConfigModal = () => {
-  configDropdownOpen.value = false
-  createConfigName.value = ''
-  createConfigModalOpen.value = true
-}
-
-const handleCreateConfig = async () => {
-  if (!selectedAgentId.value) return
-  if (!createConfigName.value) {
-    message.error('请输入配置名称')
-    return
-  }
-
-  createConfigLoading.value = true
-  try {
-    await agentStore.createAgentConfigProfile({
-      name: createConfigName.value,
-      setDefault: false,
-      fromCurrent: false
-    })
-    createConfigModalOpen.value = false
-    chatUIStore.isConfigSidebarOpen = true
-    message.success('配置已创建')
-  } catch (error) {
-    console.error('创建配置出错:', error)
-    message.error(error.message || '创建配置失败')
-  } finally {
-    createConfigLoading.value = false
-  }
-}
-
-const selectAgentConfig = async (configId) => {
-  try {
-    await agentStore.selectAgentConfig(configId)
-  } catch (error) {
-    console.error('切换配置出错:', error)
-    message.error('切换配置失败')
-  }
+  chatUIStore.isConfigSidebarOpen = !chatUIStore.isConfigSidebarOpen
 }
 
 // 更多菜单相关
@@ -963,41 +857,5 @@ const handleFeedback = () => {
   align-items: center;
   gap: 10px;
   width: 100%;
-}
-
-.agent-nav-btn.config-toggle-btn {
-  gap: 6px;
-  padding: 0 8px;
-  height: 28px;
-  border-radius: 8px;
-  font-size: 14px;
-  color: var(--gray-600);
-  transition: all 0.2s ease;
-  user-select: none;
-
-  .nav-btn-icon {
-    height: 16px;
-  }
-
-  .text {
-    line-height: 1;
-  }
-
-  &:hover {
-    color: var(--main-color);
-    background: var(--gray-100);
-  }
-
-  &.active {
-    color: var(--main-color);
-    background: var(--main-50);
-    font-weight: 500;
-  }
-}
-
-@media (max-width: 768px) {
-  .hide-text {
-    display: none;
-  }
 }
 </style>

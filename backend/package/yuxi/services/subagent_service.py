@@ -100,6 +100,7 @@ def clear_specs_cache() -> None:
     global _subagent_specs_cache
     _subagent_specs_cache = None
 
+
 async def get_subagents_from_names(selected_names: Any, *, db: AsyncSession | None = None) -> list[dict[str, Any]]:
     """根据名称获取 subagent specs（含工具解析）。"""
     specs = await get_subagent_specs(db)
@@ -125,12 +126,11 @@ async def get_subagents_from_names(selected_names: Any, *, db: AsyncSession | No
     for spec in matched:
         resolved_spec = dict(spec)
         tool_names = spec.get("tools", [])
-        resolved_spec["tools"] = [
-            all_tool_names[name] for name in tool_names if name in all_tool_names
-        ]
+        resolved_spec["tools"] = [all_tool_names[name] for name in tool_names if name in all_tool_names]
         resolved_specs.append(resolved_spec)
 
     return resolved_specs
+
 
 async def get_all_subagents(db: AsyncSession | None = None) -> list[dict[str, Any]]:
     """获取所有 SubAgent（含禁用的）"""

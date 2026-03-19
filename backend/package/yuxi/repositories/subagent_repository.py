@@ -30,10 +30,9 @@ class SubAgentRepository:
 
     async def exists_name(self, name: str) -> bool:
         """检查名称是否存在（仅查询计数，不获取完整数据）"""
-        from sqlalchemy import select, func
-        result = await self.db.execute(
-            select(func.count()).select_from(SubAgent).where(SubAgent.name == name)
-        )
+        from sqlalchemy import func, select
+
+        result = await self.db.execute(select(func.count()).select_from(SubAgent).where(SubAgent.name == name))
         return result.scalar() > 0
 
     async def create(

@@ -343,6 +343,18 @@ export const useAgentStore = defineStore(
               loadedConfig[key] = item.default
             }
           }
+
+          if (
+            loadedConfig[key] !== undefined &&
+            loadedConfig[key] !== null &&
+            loadedConfig[key] !== '' &&
+            (item?.type === 'number' || item?.type === 'int' || item?.type === 'float')
+          ) {
+            const numericValue = Number(loadedConfig[key])
+            if (!Number.isNaN(numericValue)) {
+              loadedConfig[key] = item.type === 'int' ? Math.trunc(numericValue) : numericValue
+            }
+          }
         })
 
         agentConfig.value = loadedConfig

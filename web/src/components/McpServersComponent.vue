@@ -189,9 +189,7 @@
                       v-if="currentServer.env && Object.keys(currentServer.env).length > 0"
                     >
                       <label>环境变量</label>
-                      <pre class="code-pre">{{
-                        JSON.stringify(currentServer.env, null, 2)
-                      }}</pre>
+                      <pre class="code-pre">{{ JSON.stringify(currentServer.env, null, 2) }}</pre>
                     </div>
                   </template>
 

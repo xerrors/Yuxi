@@ -31,18 +31,22 @@
     </template>
     <template #actions-left>
       <div class="input-actions-left">
-        <slot name="actions-left-extra"></slot>
         <!-- State Toggle Button -->
-        <div
+        <button
           v-if="hasStateContent"
-          class="state-toggle-btn"
+          class="input-action-btn"
           :class="{ active: isPanelOpen }"
           @click="$emit('toggle-panel')"
           title="查看工作状态"
         >
           <FolderCode :size="18" />
           <span>状态</span>
-        </div>
+        </button>
+      </div>
+    </template>
+    <template #actions-right>
+      <div class="input-actions-right">
+        <slot name="actions-left-extra"></slot>
       </div>
     </template>
   </MessageInputComponent>
@@ -184,12 +188,19 @@ defineExpose({
   gap: 8px;
 }
 
-.state-toggle-btn {
+.input-actions-right {
+  display: flex;
+  align-items: center;
+  margin-right: 8px;
+}
+
+// 输入框操作按钮通用样式（穿透到 slot 内容）
+:deep(.input-action-btn) {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 8px;
-  height: 28px;
+  padding: 8px 8px;
+  // height: 28px;
   border-radius: 8px;
   font-size: 14px;
   color: var(--gray-600);
@@ -200,13 +211,13 @@ defineExpose({
   border: none;
 
   &:hover {
-    color: var(--main-color);
-    background: var(--gray-100);
+    color: var(--gray-900);
+    background: var(--gray-50);
   }
 
   &.active {
-    color: var(--main-color);
-    background: var(--main-50);
+    color: var(--gray-900);
+    background: var(--gray-100);
     font-weight: 500;
   }
 
@@ -218,6 +229,13 @@ defineExpose({
 
   span {
     line-height: 1;
+  }
+}
+
+// slot 内容的 hide-text 响应式样式
+:deep(.hide-text) {
+  @media (max-width: 768px) {
+    display: none;
   }
 }
 </style>
