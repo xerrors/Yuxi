@@ -53,7 +53,7 @@ class MinIOClient:
 
     def __init__(self):
         """初始化 MinIO 客户端"""
-        self.endpoint = os.getenv("MINIO_URI") or "http://milvus-minio:9000"
+        self.endpoint = os.getenv("MINIO_URI") or "http://minio:9000"
         self.access_key = os.getenv("MINIO_ACCESS_KEY") or "minioadmin"
         self.secret_key = os.getenv("MINIO_SECRET_KEY") or "minioadmin"
         self._client = None

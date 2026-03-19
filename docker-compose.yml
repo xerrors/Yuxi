@@ -39,11 +39,11 @@ services:
       - MINERU_VL_SERVER=${MINERU_VL_SERVER:-http://mineru-vllm-server:30000}
       - MINERU_API_URI=${MINERU_API_URI:-http://mineru-api:30001}
       - PADDLEX_URI=${PADDLEX_URI:-http://paddlex:8080}
-      - MINIO_URI=${MINIO_URI:-http://milvus-minio:9000}
+      - MINIO_URI=${MINIO_URI:-http://minio:9000}
       - MODEL_DIR_IN_DOCKER=/models
       - RUNNING_IN_DOCKER=true
-      - NO_PROXY=localhost,127.0.0.1,milvus,graph,milvus-minio,milvus-etcd-dev,etcd,minio,mineru,paddlex,api.siliconflow.cn
-      - no_proxy=localhost,127.0.0.1,milvus,graph,milvus-minio,milvus-etcd-dev,etcd,minio,mineru,paddlex,api.siliconflow.cn
+      - NO_PROXY=localhost,127.0.0.1,milvus,graph,minio,milvus-etcd-dev,etcd,minio,mineru,paddlex,api.siliconflow.cn
+      - no_proxy=localhost,127.0.0.1,milvus,graph,minio,milvus-etcd-dev,etcd,minio,mineru,paddlex,api.siliconflow.cn
       - PYTHONPATH=/app/package
     # endregion api_envs
     command: uv run --no-dev uvicorn server.main:app --host 0.0.0.0 --port 5050 --reload
@@ -101,11 +101,11 @@ services:
       - MINERU_VL_SERVER=${MINERU_VL_SERVER:-http://mineru-vllm-server:30000}
       - MINERU_API_URI=${MINERU_API_URI:-http://mineru-api:30001}
       - PADDLEX_URI=${PADDLEX_URI:-http://paddlex:8080}
-      - MINIO_URI=${MINIO_URI:-http://milvus-minio:9000}
+      - MINIO_URI=${MINIO_URI:-http://minio:9000}
       - MODEL_DIR_IN_DOCKER=/models
       - RUNNING_IN_DOCKER=true
-      - NO_PROXY=localhost,127.0.0.1,milvus,graph,milvus-minio,milvus-etcd-dev,etcd,minio,mineru,paddlex,api.siliconflow.cn
-      - no_proxy=localhost,127.0.0.1,milvus,graph,milvus-minio,milvus-etcd-dev,etcd,minio,mineru,paddlex,api.siliconflow.cn
+      - NO_PROXY=localhost,127.0.0.1,milvus,graph,minio,milvus-etcd-dev,etcd,minio,mineru,paddlex,api.siliconflow.cn
+      - no_proxy=localhost,127.0.0.1,milvus,graph,minio,milvus-etcd-dev,etcd,minio,mineru,paddlex,api.siliconflow.cn
       - PYTHONPATH=/app/package
     command: uv run --no-dev arq server.worker_main.WorkerSettings
     restart: unless-stopped
@@ -145,8 +145,6 @@ services:
 
   # region neo4j
   graph:
-    profiles:
-      - full
     image: neo4j:5.26
     container_name: graph
     ports:
@@ -172,8 +170,6 @@ services:
   # endregion neo4j
 
   etcd:
-    profiles:
-      - full
     container_name: milvus-etcd-dev
     image: quay.io/coreos/etcd:v3.5.5
     environment:
@@ -195,7 +191,7 @@ services:
     restart: unless-stopped
 
   minio:
-    container_name: milvus-minio
+    container_name: minio
     image: minio/minio:RELEASE.2023-03-20T20-16-18Z
     environment:
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
@@ -218,8 +214,6 @@ services:
     restart: unless-stopped
 
   milvus:
-    profiles:
-      - full
     image: milvusdb/milvus:v2.5.6
     container_name: milvus
     command: ["milvus", "run", "standalone"]
