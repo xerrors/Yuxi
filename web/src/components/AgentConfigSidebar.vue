@@ -241,7 +241,7 @@
 
                 <!-- 数字 -->
                 <a-input-number
-                  v-else-if="value?.type === 'number'"
+                  v-else-if="value?.type === 'number' || value?.type === 'int' || value?.type === 'float'"
                   :value="agentConfig[key]"
                   @update:value="(val) => agentStore.updateAgentConfig({ [key]: val })"
                   :placeholder="getPlaceholder(key, value)"

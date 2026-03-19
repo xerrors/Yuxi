@@ -134,7 +134,7 @@ class BaseContext:
                         options = options()
 
                     configurable_items[f.name] = {
-                        "type": type_name,
+                        "type": f.metadata.get("type", type_name),
                         "name": f.metadata.get("name", f.name),
                         "options": options,
                         "default": f.default
