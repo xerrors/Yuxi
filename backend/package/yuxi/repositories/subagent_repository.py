@@ -18,14 +18,23 @@ class SubAgentRepository:
         result = await self.db.execute(select(SubAgent).order_by(SubAgent.updated_at.desc()))
         return list(result.scalars().all())
 
+    async def list_all_specs(self) -> list[dict[str, Any]]:
+        """获取所有 SubAgent 运行规格，按 updated_at 降序"""
+        items = await self.list_all()
+        return [item.to_subagent_spec() for item in items]
+
     async def get_by_name(self, name: str) -> SubAgent | None:
         """根据名称获取 SubAgent"""
         result = await self.db.execute(select(SubAgent).where(SubAgent.name == name))
         return result.scalar_one_or_none()
 
     async def exists_name(self, name: str) -> bool:
-        """检查名称是否存在"""
-        return (await self.get_by_name(name)) is not None
+        """检查名称是否存在（仅查询计数，不获取完整数据）"""
+        from sqlalchemy import select, func
+        result = await self.db.execute(
+            select(func.count()).select_from(SubAgent).where(SubAgent.name == name)
+        )
+        return result.scalar() > 0
 
     async def create(
         self,
@@ -67,14 +76,17 @@ class SubAgentRepository:
         model_provided: bool = False,
         updated_by: str | None,
     ) -> SubAgent:
-        if description is not None:
-            item.description = description
-        if system_prompt is not None:
-            item.system_prompt = system_prompt
-        if tools is not None:
-            item.tools = tools
+        # 批量更新非空字段
+        updates = {
+            "description": description,
+            "system_prompt": system_prompt,
+            "tools": tools,
+        }
         if model_provided:
-            item.model = model
+            updates["model"] = model
+        for field, value in updates.items():
+            if value is not None:
+                setattr(item, field, value)
         item.updated_by = updated_by
         item.updated_at = utc_now_naive()
         await self.db.commit()
@@ -85,28 +97,3 @@ class SubAgentRepository:
         """删除 SubAgent"""
         await self.db.delete(item)
         await self.db.commit()
-
-    async def upsert(self, data: dict[str, Any], created_by: str | None) -> SubAgent:
-        """Upsert 操作，如果存在则更新，否则创建"""
-        name = data["name"]
-        existing = await self.get_by_name(name)
-        if existing:
-            return await self.update(
-                existing,
-                description=data.get("description", existing.description),
-                system_prompt=data.get("system_prompt", existing.system_prompt),
-                tools=data.get("tools", existing.tools),
-                model=data.get("model", existing.model),
-                model_provided="model" in data,
-                updated_by=created_by,
-            )
-        else:
-            return await self.create(
-                name=name,
-                description=data["description"],
-                system_prompt=data["system_prompt"],
-                tools=data.get("tools"),
-                model=data.get("model"),
-                is_builtin=data.get("is_builtin", False),
-                created_by=created_by,
-            )

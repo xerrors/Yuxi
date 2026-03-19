@@ -415,16 +415,12 @@ class TestSubAgentService:
             "tools": ["tool_a"],
         }
 
-        class MockSubAgent:
-            def to_subagent_spec(self):
-                return mock_spec
-
         class MockRepo:
             def __init__(self, session):
                 pass
 
-            async def list_all(self):
-                return [MockSubAgent()]
+            async def list_all_specs(self):
+                return [mock_spec]
 
         @asynccontextmanager
         async def mock_session_context(*args, **kwargs):
@@ -435,7 +431,6 @@ class TestSubAgentService:
 
         monkeypatch.setattr(service_module, "SubAgentRepository", MockRepo)
         monkeypatch.setattr(service_module, "pg_manager", MockPgManager())
-        monkeypatch.setattr(service_module, "_get_available_tools", AsyncMock(return_value=[]))
 
         result = await service_module.get_subagent_specs()
 
@@ -460,7 +455,7 @@ class TestSubAgentService:
         second = await service_module.get_subagent_specs()
 
         assert second[0]["tools"] == ["tool_a"]
-        service_module.invalidate_subagent_specs_cache()
+        service_module.clear_specs_cache()
 
     def test_resolve_subagent_tools_does_not_mutate_input(self):
         from yuxi.services import subagent_service as service_module
@@ -551,3 +546,79 @@ class TestSubAgentModel:
         spec = agent.to_subagent_spec()
 
         assert "model" not in spec
+
+
+class TestDeepAgentSubagentSelection:
+    def test_filter_specs_by_names_empty_selection_returns_empty(self):
+        from yuxi.services.subagent_service import filter_specs_by_names
+
+        specs = [
+            {"name": "research-agent", "description": "r"},
+            {"name": "critique-agent", "description": "c"},
+        ]
+
+        filtered, missing = filter_specs_by_names(specs, [])
+
+        assert filtered == []
+        assert missing == []
+
+    def test_filter_specs_by_names_none_selection_returns_all(self):
+        from yuxi.services.subagent_service import filter_specs_by_names
+
+        specs = [
+            {"name": "research-agent", "description": "r"},
+            {"name": "critique-agent", "description": "c"},
+        ]
+
+        filtered, missing = filter_specs_by_names(specs, None)
+
+        assert filtered == specs
+        assert missing == []
+
+    def test_filter_specs_by_names_returns_subset_and_missing(self):
+        from yuxi.services.subagent_service import filter_specs_by_names
+
+        specs = [
+            {"name": "research-agent", "description": "r"},
+            {"name": "critique-agent", "description": "c"},
+            {"name": 123, "description": "invalid"},
+        ]
+
+        filtered, missing = filter_specs_by_names(
+            specs,
+            ["research-agent", "missing-agent", "research-agent", ""],
+        )
+
+        assert [item["name"] for item in filtered] == ["research-agent"]
+        assert missing == ["missing-agent"]
+
+    @pytest.mark.asyncio
+    async def test_get_subagents_from_names_filters_and_resolves_tools(self, monkeypatch):
+        from yuxi.services import subagent_service as service_module
+
+        async def fake_get_specs(_db=None):
+            return [
+                {
+                    "name": "research-agent",
+                    "description": "r",
+                    "system_prompt": "s",
+                    "tools": ["tool_a"],
+                },
+                {
+                    "name": "critique-agent",
+                    "description": "c",
+                    "system_prompt": "s",
+                    "tools": [],
+                },
+            ]
+
+        mock_tool = MagicMock()
+        mock_tool.name = "tool_a"
+
+        monkeypatch.setattr(service_module, "get_subagent_specs", fake_get_specs)
+        monkeypatch.setattr("yuxi.agents.common.toolkits.get_all_tool_instances", lambda: [mock_tool])
+
+        resolved_specs = await service_module.get_subagents_from_names(["research-agent", "missing-agent"])
+
+        assert [item["name"] for item in resolved_specs] == ["research-agent"]
+        assert resolved_specs[0]["tools"] == [mock_tool]

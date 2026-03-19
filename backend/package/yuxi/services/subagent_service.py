@@ -7,8 +7,8 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.repositories.subagent_repository import SubAgentRepository
-from yuxi.services.mcp_service import get_tools_from_all_servers
 from yuxi.storage.postgres.manager import pg_manager
+from yuxi.utils import logger
 
 # SubAgent specs cache for get_subagent_specs
 _subagent_specs_cache: list[dict[str, Any]] | None = None
@@ -91,45 +91,46 @@ async def get_subagent_specs(db: AsyncSession | None = None) -> list[dict[str, A
             return deepcopy(_subagent_specs_cache)
         async with _get_session(db) as session:
             repo = SubAgentRepository(session)
-            subagents = await repo.list_all()
-        _subagent_specs_cache = [sa.to_subagent_spec() for sa in subagents]
+            _subagent_specs_cache = await repo.list_all_specs()
     return deepcopy(_subagent_specs_cache)
 
 
-def invalidate_subagent_specs_cache() -> None:
+def clear_specs_cache() -> None:
     """清除 subagent specs 缓存"""
     global _subagent_specs_cache
     _subagent_specs_cache = None
 
+async def get_subagents_from_names(selected_names: Any, *, db: AsyncSession | None = None) -> list[dict[str, Any]]:
+    """根据名称获取 subagent specs（含工具解析）。"""
+    specs = await get_subagent_specs(db)
 
-def resolve_subagent_tools(specs: list[dict[str, Any]], available_tools: list[Any]) -> list[dict[str, Any]]:
-    """将 subagent specs 中的工具名称解析为实际工具实例"""
-    available_by_name = {tool.name: tool for tool in available_tools if hasattr(tool, "name")}
+    if not selected_names:
+        return []
+
+    selected_set = set(selected_names)
+    available = {spec["name"] for spec in specs if isinstance(spec.get("name"), str)}
+
+    matched = [spec for spec in specs if spec.get("name") in selected_set]
+    missing = [n for n in selected_names if n not in available]
+    if missing:
+        logger.warning(f"Configured subagents not found, skip: {missing}")
+
+    # 处理工具
+    # 仅从子智能体配置中的工具名称进行解析；不做 Tavily/MCP 特殊注入。
+    from yuxi.agents.common.toolkits import get_all_tool_instances
+
+    all_tools = get_all_tool_instances()
+    all_tool_names = {tool.name: tool for tool in all_tools}
     resolved_specs = []
-    for spec in specs:
+    for spec in matched:
         resolved_spec = dict(spec)
         tool_names = spec.get("tools", [])
         resolved_spec["tools"] = [
-            available_by_name[name] for name in tool_names if isinstance(name, str) and name in available_by_name
+            all_tool_names[name] for name in tool_names if name in all_tool_names
         ]
         resolved_specs.append(resolved_spec)
+
     return resolved_specs
-
-
-async def _get_available_tools() -> list[Any]:
-    """获取所有可用的工具实例"""
-    from yuxi.agents.common.toolkits.buildin.tools import _create_tavily_search
-
-    tools = []
-    # 添加 tavily_search 工具
-    tavily = _create_tavily_search()
-    if tavily:
-        tools.append(tavily)
-    # 添加 MCP 工具
-    mcp_tools = await get_tools_from_all_servers()
-    tools.extend(mcp_tools)
-    return tools
-
 
 async def get_all_subagents(db: AsyncSession | None = None) -> list[dict[str, Any]]:
     """获取所有 SubAgent（含禁用的）"""
@@ -164,7 +165,7 @@ async def create_subagent(
             is_builtin=False,
             created_by=created_by,
         )
-    invalidate_subagent_specs_cache()
+    clear_specs_cache()
     return item.to_dict()
 
 
@@ -191,7 +192,7 @@ async def update_subagent(
             model_provided="model" in data,
             updated_by=updated_by,
         )
-    invalidate_subagent_specs_cache()
+    clear_specs_cache()
     return item.to_dict()
 
 
@@ -205,5 +206,5 @@ async def delete_subagent(name: str, db: AsyncSession | None = None) -> bool:
         if item.is_builtin:
             raise ValueError("内置 SubAgent 不可删除")
         await repo.delete(item)
-    invalidate_subagent_specs_cache()
+    clear_specs_cache()
     return True
