@@ -34,12 +34,6 @@ class BaseContext:
         metadata={"name": "用户ID", "configurable": False, "description": "用来唯一标识一个用户"},
     )
 
-    # 不需要了，使用 user_id 判断
-    # department_id: int | None = field(
-    #     default=None,
-    #     metadata={"name": "部门ID", "configurable": False, "description": "用来唯一标识一个部门"},
-    # )
-
     system_prompt: Annotated[str, {"__template_metadata__": {"kind": "prompt"}}] = field(
         default="You are a helpful assistant.",
         metadata={"name": "系统提示词", "description": "用来描述智能体的角色和行为"},
@@ -91,6 +85,33 @@ class BaseContext:
             "description": "可选技能列表（由超级管理员维护）。运行时仅挂载并只读暴露选中的 "
             "skills。技能依赖的工具和 MCP 服务器也会被自动挂载。",
             "type": "list",
+        },
+    )
+
+    subagents_model: Annotated[str, {"__template_metadata__": {"kind": "llm"}}] = field(
+        default=sys_config.default_model,
+        metadata={
+            "name": "子智能体的默认模型",
+            "description": "子智能体的默认模型，会被子智能体的配置覆盖。",
+        },
+    )
+
+    subagents: Annotated[list[str], {"__template_metadata__": {"kind": "subagents"}}] = field(
+        default_factory=list,
+        metadata={
+            "name": "子智能体",
+            "options": [],
+            "description": "可选子智能体列表。为空表示不启用任何 SubAgent。但依然会启用一个 general-purpose 的子智能体",
+            "type": "list",
+        },
+    )
+
+    summary_threshold: int = field(
+        default=100,
+        metadata={
+            "name": "上下文摘要触发阈值 (KB)",
+            "description": "当上下文大小超过该值时，启用摘要功能以优化上下文使用。单位为 KB，默认值为 100KB。",
+            "type": "number",
         },
     )
 

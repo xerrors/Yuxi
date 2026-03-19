@@ -431,6 +431,7 @@ import { useAgentStore } from '@/stores/agent'
 import { useUserStore } from '@/stores/user'
 import { useDatabaseStore } from '@/stores/database'
 import { skillApi } from '@/apis/skill_api'
+import { subagentApi } from '@/apis/subagent_api'
 import { toolApi } from '@/apis/tool_api'
 import { storeToRefs } from 'pinia'
 
@@ -461,6 +462,7 @@ watch(
     if (val) {
       databaseStore.loadDatabases().catch(() => {})
       loadLiveSkillOptions().catch(() => {})
+      loadSubagentOptions().catch(() => {})
       loadToolOptions().catch(() => {})
       if (selectedAgentId.value) {
         try {
@@ -496,6 +498,7 @@ const currentSystemPromptKey = ref(null)
 const systemPromptDraft = ref('')
 const activeTab = ref('basic')
 const liveSkillOptions = ref([])
+const liveSubagentOptions = ref([])
 const toolOptionsFromApi = ref([])
 
 const isEmptyConfig = computed(() => {
@@ -518,7 +521,8 @@ const hasOtherConfigs = computed(() => {
       value.template_metadata?.kind === 'mcps' ||
       value.template_metadata?.kind === 'knowledges' ||
       value.template_metadata?.kind === 'tools' ||
-      value.template_metadata?.kind === 'skills'
+      value.template_metadata?.kind === 'skills' ||
+      value.template_metadata?.kind === 'subagents'
 
     return !isBasic && !isTools
   })
@@ -580,9 +584,30 @@ const loadToolOptions = async (force = false) => {
   }
 }
 
+const loadSubagentOptions = async (force = false) => {
+  if (!userStore.isAdmin) {
+    liveSubagentOptions.value = []
+    return
+  }
+  if (!force && liveSubagentOptions.value.length > 0) {
+    return
+  }
+  try {
+    const result = await subagentApi.getSubAgents()
+    const rows = result?.data || []
+    liveSubagentOptions.value = rows.map((item) => ({
+      id: item.name,
+      name: item.name,
+      description: item.description || ''
+    }))
+  } catch (error) {
+    console.warn('加载 Subagents 列表失败:', error)
+  }
+}
+
 // 判断是否为需要跳转的配置类型
 const isToolsKind = (kind) => {
-  return ['knowledges', 'tools', 'mcps', 'skills'].includes(kind)
+  return ['knowledges', 'tools', 'mcps', 'skills', 'subagents'].includes(kind)
 }
 
 // 强制刷新对应配置项的选项列表
@@ -600,6 +625,10 @@ const refreshConfigOptions = async (key, kind) => {
       case 'skills':
         await loadLiveSkillOptions(true)
         message.success('Skills 列表已刷新')
+        break
+      case 'subagents':
+        await loadSubagentOptions(true)
+        message.success('Subagents 列表已刷新')
         break
       case 'mcps':
         // MCP 没有前端 store，提示用户刷新页面
@@ -631,6 +660,9 @@ const navigateToConfigPage = (kind) => {
       case 'skills':
         router.push({ path: '/extensions', query: { tab: 'skills' } })
         break
+      case 'subagents':
+        router.push({ path: '/extensions', query: { tab: 'subagents' } })
+        break
     }
   }, 100)
 }
@@ -651,13 +683,16 @@ const getConfigOptions = (value) => {
   if (value?.template_metadata?.kind === 'skills') {
     return liveSkillOptions.value.length > 0 ? liveSkillOptions.value : value?.options || []
   }
+  if (value?.template_metadata?.kind === 'subagents') {
+    return liveSubagentOptions.value.length > 0 ? liveSubagentOptions.value : value?.options || []
+  }
   return value?.options || []
 }
 
 const isListConfig = (key, value) => {
   const isTools = value?.template_metadata?.kind === 'tools'
   const isList = value?.type === 'list'
-  return isTools || isList || key === 'skills'
+  return isTools || isList || key === 'skills' || key === 'subagents'
 }
 
 const getOptionValue = (option) => {
@@ -723,7 +758,9 @@ const shouldShowConfig = (key, value) => {
     value.template_metadata?.kind === 'knowledges' ||
     value.template_metadata?.kind === 'tools' ||
     value.template_metadata?.kind === 'skills' ||
-    key === 'skills'
+    value.template_metadata?.kind === 'subagents' ||
+    key === 'skills' ||
+    key === 'subagents'
 
   if (activeTab.value === 'basic') {
     // 基础：System Prompt, LLM Model
@@ -824,6 +861,9 @@ const openSelectionModal = async (key) => {
   }
   if (configurableItems.value[key]?.template_metadata?.kind === 'skills') {
     await loadLiveSkillOptions()
+  }
+  if (configurableItems.value[key]?.template_metadata?.kind === 'subagents') {
+    await loadSubagentOptions()
   }
   const currentValues = agentConfig.value[key] || []
   tempSelectedValues.value = [...currentValues]

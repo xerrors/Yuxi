@@ -11,6 +11,7 @@ from yuxi.agents.common import BaseAgent, load_chat_model
 from yuxi.agents.common.backends import create_agent_composite_backend
 from yuxi.agents.common.middlewares import (
     RuntimeConfigMiddleware,
+    SummaryOffloadMiddleware,
     save_attachments_to_fs,
 )
 from yuxi.agents.common.middlewares.knowledge_base_middleware import KnowledgeBaseMiddleware
@@ -38,10 +39,10 @@ class ChatbotAgent(BaseAgent):
             await get_tools_from_all_servers()
         )  # 因为异步加载，无法放在 RuntimeConfigMiddleware 的 __init__ 中
 
+        # subagents
         subagents = await get_subagents_from_names(context.subagents)
-        subagents_model = load_chat_model(context.subagents_model)
         subagents_middleware = SubAgentMiddleware(
-            default_model=subagents_model,
+            default_model=load_chat_model(context.subagents_model),
             subagents=subagents,
             general_purpose_agent=True,
             default_middleware=[
@@ -50,6 +51,17 @@ class ChatbotAgent(BaseAgent):
             ],
         )
 
+        # summary middleware
+        # 主 Agent 上下文优化：90k tokens 触发压缩（128k context window 的 70%）
+        summary_middleware = SummaryOffloadMiddleware(
+            model=load_chat_model(fully_specified_name=context.model),
+            trigger=("tokens", getattr(context, "summary_threshold", 100) * 1024),
+            trim_tokens_to_summarize=4000,
+            summary_offload_threshold=500,
+            max_retention_ratio=0.5,
+        )
+
+        # all middlewares
         middlewares = [
             save_attachments_to_fs,  # 附件注入提示词
             FilesystemMiddleware(backend=_create_fs_backend),  # 文件系统后端
@@ -57,6 +69,7 @@ class ChatbotAgent(BaseAgent):
             RuntimeConfigMiddleware(extra_tools=all_mcp_tools),  # 运行时配置应用（模型/工具/MCP/提示词）
             SkillsMiddleware(),  # Skills 中间件（提示词注入、依赖展开、动态激活）
             subagents_middleware,
+            summary_middleware,
             ModelRetryMiddleware(),  # 模型重试中间件
             TodoListMiddleware(),
             PatchToolCallsMiddleware(),
