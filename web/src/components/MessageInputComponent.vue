@@ -97,6 +97,19 @@
           </div>
         </div>
 
+        <!-- Subagents 列表 -->
+        <div v-if="mentionItems.subagents.length > 0" class="mention-group">
+          <div class="mention-group-title">Subagents</div>
+          <div
+            v-for="(item, index) in mentionItems.subagents"
+            :key="'subagent-' + item.value"
+            :class="['mention-item', { active: isItemSelected('subagent', index) }]"
+            @click="insertMention(item)"
+          >
+            {{ item.label }}
+          </div>
+        </div>
+
         <!-- 无结果 -->
         <div v-if="!hasAnyItems" class="mention-empty">暂无可引用的项</div>
       </div>
@@ -129,7 +142,6 @@ import { ref, computed, onMounted, nextTick, watch, onBeforeUnmount, useSlots } 
 import {
   SendOutlined,
   ArrowUpOutlined,
-  LoadingOutlined,
   PauseOutlined,
   PlusOutlined
 } from '@ant-design/icons-vue'
@@ -192,12 +204,13 @@ const slots = useSlots()
 // @ 提及功能是否启用
 const mentionEnabled = computed(() => {
   if (!props.mention) return false
-  const { files, knowledgeBases, mcps, skills } = props.mention
+  const { files, knowledgeBases, mcps, skills, subagents } = props.mention
   return (
     (Array.isArray(files) && files.length > 0) ||
     (Array.isArray(knowledgeBases) && knowledgeBases.length > 0) ||
     (Array.isArray(mcps) && mcps.length > 0) ||
-    (Array.isArray(skills) && skills.length > 0)
+    (Array.isArray(skills) && skills.length > 0) ||
+    (Array.isArray(subagents) && subagents.length > 0)
   )
 })
 
@@ -205,7 +218,8 @@ const mentionTypePrefixMap = {
   file: 'file',
   knowledge: 'knowledge',
   mcp: 'mcp',
-  skill: 'skill'
+  skill: 'skill',
+  subagent: 'subagent'
 }
 
 const formatMentionToken = (type, value) => {
@@ -215,27 +229,18 @@ const formatMentionToken = (type, value) => {
 
 // 检测是否在 @ 触发位置
 const checkMentionTrigger = (textarea) => {
-  console.log(
-    '[Mention] checkMentionTrigger called, textarea:',
-    !!textarea,
-    'mentionEnabled:',
-    mentionEnabled.value
-  )
   if (!textarea || !mentionEnabled.value) return false
 
   const cursorPos = textarea.selectionStart
   const textBeforeCursor = inputValue.value.slice(0, cursorPos)
-  console.log('[Mention] textBeforeCursor:', JSON.stringify(textBeforeCursor))
 
   // 检查是否以 @ 结尾（刚输入 @）或 @ 后有内容
   const atMatch = textBeforeCursor.match(/@(\S*)$/)
-  console.log('[Mention] atMatch:', atMatch)
   if (atMatch) {
     mentionQuery.value = atMatch[1]
     mentionPopupVisible.value = true
     mentionSelectedIndex.value = 0
     updateMentionItems(mentionQuery.value)
-    console.log('[Mention] popup should be visible now')
     return true
   }
 
@@ -246,12 +251,12 @@ const checkMentionTrigger = (textarea) => {
 // 更新提及候选项
 const updateMentionItems = (query = '') => {
   if (!props.mention) {
-    mentionItems.value = { files: [], knowledgeBases: [], mcps: [], skills: [] }
+    mentionItems.value = { files: [], knowledgeBases: [], mcps: [], skills: [], subagents: [] }
     return
   }
 
   const lowerQuery = query.toLowerCase()
-  const { files = [], knowledgeBases = [], mcps = [], skills = [] } = props.mention
+  const { files = [], knowledgeBases = [], mcps = [], skills = [], subagents = [] } = props.mention
 
   const filterItems = (list) =>
     list.filter((item) => {
@@ -319,11 +324,25 @@ const updateMentionItems = (query = '') => {
     }
   })
 
+  const subagentItems = subagents.map((subagent) => {
+    const subagentValue = subagent.id || subagent.value || subagent.name || ''
+    const subagentLabel = subagent.name || subagent.label || subagentValue
+    return {
+      value: subagentValue,
+      label: subagentLabel,
+      type: 'subagent',
+      insertValue: subagentValue,
+      tokenLabel: formatMentionToken('subagent', subagentValue),
+      description: subagent.description || ''
+    }
+  })
+
   mentionItems.value = {
     files: filterItems(fileItems),
     knowledgeBases: filterItems(knowledgeItems),
     mcps: filterItems(mcpItems),
-    skills: filterItems(skillItems)
+    skills: filterItems(skillItems),
+    subagents: filterItems(subagentItems)
   }
 }
 
@@ -334,6 +353,7 @@ const isItemSelected = (type, index) => {
   const filesLen = mentionItems.value.files.length
   const kbLen = mentionItems.value.knowledgeBases.length
   const mcpLen = mentionItems.value.mcps.length
+  const skillsLen = mentionItems.value.skills.length
 
   if (type === 'file') {
     return mentionSelectedIndex.value === index
@@ -341,8 +361,10 @@ const isItemSelected = (type, index) => {
     return mentionSelectedIndex.value === filesLen + index
   } else if (type === 'mcp') {
     return mentionSelectedIndex.value === filesLen + kbLen + index
-  } else {
+  } else if (type === 'skill') {
     return mentionSelectedIndex.value === filesLen + kbLen + mcpLen + index
+  } else {
+    return mentionSelectedIndex.value === filesLen + kbLen + mcpLen + skillsLen + index
   }
 }
 
@@ -353,7 +375,8 @@ const hasAnyItems = computed(() => {
     items.files.length > 0 ||
     items.knowledgeBases.length > 0 ||
     items.mcps.length > 0 ||
-    items.skills.length > 0
+    items.skills.length > 0 ||
+    items.subagents.length > 0
   )
 })
 
@@ -431,7 +454,8 @@ const handleMentionNavigation = (e) => {
     ...mentionItems.value.files,
     ...mentionItems.value.knowledgeBases,
     ...mentionItems.value.mcps,
-    ...mentionItems.value.skills
+    ...mentionItems.value.skills,
+    ...mentionItems.value.subagents
   ]
 
   const total = allItems.length
@@ -458,15 +482,6 @@ const handleMentionNavigation = (e) => {
 
 const hasOptionsLeft = computed(() => {
   const slot = slots['options-left']
-  if (!slot) {
-    return false
-  }
-  const renderedNodes = slot()
-  return Boolean(renderedNodes && renderedNodes.length)
-})
-
-const hasActionsLeft = computed(() => {
-  const slot = slots['actions-left']
   if (!slot) {
     return false
   }
@@ -511,12 +526,6 @@ const handleKeyPress = (e) => {
 // 检测 @ 触发
 const handleKeyUp = (e) => {
   if (e.key === '@' && mentionEnabled.value) {
-    console.log(
-      '[Mention] @ detected, mentionEnabled:',
-      mentionEnabled.value,
-      'mention:',
-      props.mention
-    )
     nextTick(() => {
       checkMentionTrigger(e.target)
     })
@@ -533,7 +542,6 @@ const handleInput = (e) => {
     const cursorPos = e.target.selectionStart
     const textBeforeCursor = value.slice(0, cursorPos)
     if (textBeforeCursor.endsWith('@')) {
-      console.log('[Mention] @ detected via input event')
       checkMentionTrigger(e.target)
     }
   }
@@ -554,7 +562,7 @@ const handleSendOrStop = () => {
 // @ 提及功能状态
 const mentionPopupVisible = ref(false)
 const mentionQuery = ref('')
-const mentionItems = ref({ files: [], knowledgeBases: [], mcps: [], skills: [] })
+const mentionItems = ref({ files: [], knowledgeBases: [], mcps: [], skills: [], subagents: [] })
 const mentionSelectedIndex = ref(0)
 
 const adjustTextareaHeight = () => {

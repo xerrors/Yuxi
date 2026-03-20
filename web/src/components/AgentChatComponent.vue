@@ -26,7 +26,7 @@
     <div class="chat">
       <div class="chat-header">
         <div class="header__left">
-          <slot name="header-left" class="nav-btn"></slot>
+          <slot name="header-left"></slot>
           <div
             v-if="!chatUIStore.isSidebarOpen && !userStore.isAdmin"
             type="button"
@@ -72,8 +72,8 @@
 
       <div class="chat-content-container">
         <!-- Main Chat Area -->
-        <div class="chat-main" ref="chatMainContainer">
-          <div class="chat-box" ref="messagesContainer">
+        <div class="chat-main">
+          <div class="chat-box">
             <div class="conv-box" v-for="(conv, index) in conversations" :key="index">
               <AgentMessageComponent
                 v-for="(message, msgIndex) in conv.messages"
@@ -140,21 +140,17 @@
               </div>
 
               <AgentInputArea
-                ref="messageInputRef"
                 v-model="userInput"
                 :is-loading="isProcessing"
                 :disabled="!currentAgent"
                 :send-button-disabled="(!userInput || !currentAgent) && !isProcessing"
                 placeholder="输入问题..."
+                :mention="mentionConfig"
                 :supports-file-upload="supportsFileUpload"
-                :agent-id="currentAgentId"
-                :thread-id="currentChatId"
-                :ensure-thread="ensureActiveThread"
                 :has-state-content="hasAgentStateContent"
                 :is-panel-open="isAgentPanelOpen"
-                :mention="mentionConfig"
                 @send="handleSendOrStop"
-                @attachment-changed="handleAgentStateRefresh"
+                @upload-attachment="handleAttachmentUpload"
                 @toggle-panel="toggleAgentPanel"
               >
                 <template #actions-left-extra>
@@ -235,7 +231,10 @@ import { MessageProcessor } from '@/utils/messageProcessor'
 import { agentApi, threadApi } from '@/apis'
 import HumanApprovalModal from '@/components/HumanApprovalModal.vue'
 import { useApproval } from '@/composables/useApproval'
+import { useAgentThreadState } from '@/composables/useAgentThreadState'
+import { useAgentRunStream } from '@/composables/useAgentRunStream'
 import { useAgentStreamHandler } from '@/composables/useAgentStreamHandler'
+import { useAgentMentionConfig } from '@/composables/useAgentMentionConfig'
 import AgentPanel from '@/components/AgentPanel.vue'
 import UserInfoComponent from '@/components/UserInfoComponent.vue'
 
@@ -270,16 +269,6 @@ const useRunsApi =
   import.meta.env.VITE_USE_RUNS_API === 'true' &&
   localStorage.getItem('force_legacy_stream') !== 'true'
 
-const ACTIVE_RUN_STORAGE_TTL_MS = 60 * 60 * 1000
-const ACTIVE_RUN_CLIENT_ID = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
-const typingChunkQueue = []
-let typingAnimationFrameId = null
-let typingLastFrameTs = 0
-let pendingTypingChars = 0
-const MIN_TYPING_CPS = 32
-const MAX_TYPING_CPS = 320
-const TYPING_BACKLOG_HIGH_WATERMARK = 500
-
 // 从智能体元数据获取示例问题
 const exampleQuestions = computed(() => {
   const agentId = currentAgentId.value
@@ -294,19 +283,15 @@ const exampleQuestions = computed(() => {
   }))
 })
 
-// Keep per-thread streaming scratch data in a consistent shape.
-const createOnGoingConvState = () => ({
-  msgChunks: {},
-  currentRequestKey: null,
-  currentAssistantKey: null,
-  toolCallBuffers: {}
-})
-
 // 业务状态（保留在组件本地）
 const chatState = reactive({
   currentThreadId: null,
   // 以threadId为键的线程状态
   threadStates: {}
+})
+const { getThreadState, resetOnGoingConv, stopThreadStream } = useAgentThreadState({
+  chatState,
+  getCurrentThreadId: () => chatState.currentThreadId
 })
 
 // 组件级别的线程和消息状态
@@ -383,13 +368,17 @@ const supportsFiles = computed(() => {
   return capabilities.includes('files')
 })
 
-const currentCapabilities = computed(() => {
-  return currentAgent.value?.capabilities || []
-})
-
 // AgentState 相关计算属性
 const currentAgentState = computed(() => {
   return currentChatId.value ? getThreadState(currentChatId.value)?.agentState || null : null
+})
+const { mentionConfig } = useAgentMentionConfig({
+  currentAgentState,
+  configurableItems,
+  agentConfig,
+  availableKnowledgeBases,
+  availableMcps,
+  availableSkills
 })
 
 const countFiles = (files) => {
@@ -416,73 +405,6 @@ watch(hasAgentStateContent, (newVal, oldVal) => {
   if (newVal && !oldVal) {
     // 从无状态变为有状态时，自动展开面板
     isAgentPanelOpen.value = true
-  }
-})
-
-const mentionConfig = computed(() => {
-  const rawFiles = currentAgentState.value?.files || {}
-  const files = []
-
-  // 处理 files - 兼容字典格式 {"/path/file": {content: [...]}} 和旧数组格式
-  if (typeof rawFiles === 'object' && !Array.isArray(rawFiles) && rawFiles !== null) {
-    // 新格式：字典格式 {"/attachments/xxx/file.md": {...}}
-    Object.entries(rawFiles).forEach(([filePath, fileData]) => {
-      files.push({
-        path: filePath,
-        ...fileData
-      })
-    })
-  } else if (Array.isArray(rawFiles)) {
-    // 旧格式：数组格式
-    rawFiles.forEach((item) => {
-      if (typeof item === 'object' && item !== null) {
-        Object.entries(item).forEach(([filePath, fileData]) => {
-          files.push({
-            path: filePath,
-            ...fileData
-          })
-        })
-      }
-    })
-  }
-
-  // Filter KBs and MCPs based on agent config
-  const configItems = configurableItems.value || {}
-  const currentConfig = agentConfig.value || {}
-  const allowedKbNames = new Set()
-  const allowedMcpNames = new Set()
-  const allowedSkillNames = new Set()
-
-  Object.entries(configItems).forEach(([key, item]) => {
-    const kind = item?.template_metadata?.kind
-    const val = currentConfig[key]
-
-    if (Array.isArray(val)) {
-      if (kind === 'knowledges') {
-        val.forEach((v) => allowedKbNames.add(v))
-      } else if (kind === 'mcps') {
-        val.forEach((v) => allowedMcpNames.add(v))
-      } else if (kind === 'skills' || key === 'skills') {
-        val.forEach((v) => allowedSkillNames.add(v))
-      }
-    }
-  })
-
-  const knowledgeBases = availableKnowledgeBases.value.filter((kb) => allowedKbNames.has(kb.name))
-  const mcps = availableMcps.value.filter((mcp) => allowedMcpNames.has(mcp.name))
-  const skills = availableSkills.value.filter((skill) => {
-    const skillName = skill.name || ''
-    const skillSlug = skill.slug || ''
-    return allowedSkillNames.has(skillName) || allowedSkillNames.has(skillSlug)
-  })
-
-  if (!files.length && !knowledgeBases.length && !mcps.length && !skills.length) return null
-
-  return {
-    files,
-    knowledgeBases,
-    mcps,
-    skills
   }
 })
 
@@ -568,12 +490,10 @@ const isStreaming = computed(() => {
 const isProcessing = computed(() => isStreaming.value)
 
 // ==================== SCROLL & RESIZE HANDLING ====================
-// Update scroll controller to target .chat-main
 const scrollController = new ScrollController('.chat-main')
 
 onMounted(() => {
   nextTick(() => {
-    // Update event listener to target .chat-main
     const chatMainContainer = document.querySelector('.chat-main')
     if (chatMainContainer) {
       chatMainContainer.addEventListener('scroll', scrollController.handleScroll, { passive: true })
@@ -585,77 +505,10 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  stopTypingRenderLoop()
-  typingChunkQueue.length = 0
-  pendingTypingChars = 0
   scrollController.cleanup()
   // 清理所有线程状态
   resetOnGoingConv()
 })
-
-// ==================== THREAD STATE MANAGEMENT ====================
-// 获取指定线程的状态，如果不存在则创建
-const getThreadState = (threadId) => {
-  if (!threadId) return null
-  if (!chatState.threadStates[threadId]) {
-    chatState.threadStates[threadId] = {
-      isStreaming: false,
-      streamAbortController: null,
-      runStreamAbortController: null,
-      activeRunId: null,
-      runLastSeq: '0',
-      lastRetryableJobTry: null,
-      onGoingConv: createOnGoingConvState(),
-      agentState: null // 添加 agentState 字段
-    }
-  }
-  return chatState.threadStates[threadId]
-}
-
-// 清理指定线程的状态
-const cleanupThreadState = (threadId) => {
-  if (!threadId) return
-  const threadState = chatState.threadStates[threadId]
-  if (threadState) {
-    clearTypingQueueForThread(threadId)
-    if (threadState.streamAbortController) {
-      threadState.streamAbortController.abort()
-    }
-    if (threadState.runStreamAbortController) {
-      threadState.runStreamAbortController.abort()
-    }
-    delete chatState.threadStates[threadId]
-  }
-}
-
-// ==================== STREAM HANDLING LOGIC ====================
-const resetOnGoingConv = (threadId = null) => {
-  const targetThreadId = threadId || currentChatId.value
-
-  if (targetThreadId) {
-    // 清理指定线程的状态
-    const threadState = getThreadState(targetThreadId)
-    if (threadState) {
-      clearTypingQueueForThread(targetThreadId)
-      if (threadState.streamAbortController) {
-        threadState.streamAbortController.abort()
-        threadState.streamAbortController = null
-      }
-      if (threadState.runStreamAbortController) {
-        threadState.runStreamAbortController.abort()
-        threadState.runStreamAbortController = null
-      }
-
-      // 直接重置对话状态
-      threadState.onGoingConv = createOnGoingConvState()
-    }
-  } else {
-    // 如果没有当前线程，清理所有线程状态
-    Object.keys(chatState.threadStates).forEach((tid) => {
-      cleanupThreadState(tid)
-    })
-  }
-}
 
 // ==================== 线程管理方法 ====================
 // 获取当前智能体的线程列表
@@ -826,456 +679,6 @@ const fetchAgentState = async (agentId, threadId) => {
   }
 }
 
-const RUN_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'interrupted'])
-
-const getActiveRunStorageKey = (threadId) => `active_run:${threadId}`
-
-const normalizeRunSeq = (value) => {
-  if (value === undefined || value === null) return '0'
-  const text = String(value).trim()
-  return text || '0'
-}
-
-const parseRunSeq = (value) => {
-  const text = normalizeRunSeq(value)
-  if (text.includes('-')) {
-    const [majorRaw, minorRaw] = text.split('-', 2)
-    let major = 0n
-    let minor = 0n
-    try {
-      major = BigInt(majorRaw || '0')
-      minor = BigInt(minorRaw || '0')
-    } catch {
-      return { kind: 'legacy', value: 0 }
-    }
-    return { kind: 'stream', major, minor }
-  }
-  const numberValue = Number.parseInt(text, 10)
-  if (!Number.isNaN(numberValue)) {
-    return { kind: 'legacy', value: numberValue }
-  }
-  return { kind: 'legacy', value: 0 }
-}
-
-const compareRunSeq = (incoming, current) => {
-  const left = parseRunSeq(incoming)
-  const right = parseRunSeq(current)
-
-  if (left.kind === 'stream' && right.kind === 'stream') {
-    if (left.major > right.major) return 1
-    if (left.major < right.major) return -1
-    if (left.minor > right.minor) return 1
-    if (left.minor < right.minor) return -1
-    return 0
-  }
-
-  if (left.kind === 'legacy' && right.kind === 'legacy') {
-    return left.value - right.value
-  }
-
-  if (left.kind === 'stream' && right.kind === 'legacy') return 1
-  return -1
-}
-
-const saveActiveRunSnapshot = (threadId, runId, lastSeq = '0') => {
-  if (!threadId || !runId) return
-  localStorage.setItem(
-    getActiveRunStorageKey(threadId),
-    JSON.stringify({
-      run_id: runId,
-      last_seq: normalizeRunSeq(lastSeq),
-      created_at: Date.now(),
-      client_id: ACTIVE_RUN_CLIENT_ID
-    })
-  )
-}
-
-const loadActiveRunSnapshot = (threadId) => {
-  if (!threadId) return null
-  try {
-    const raw = localStorage.getItem(getActiveRunStorageKey(threadId))
-    return raw ? JSON.parse(raw) : null
-  } catch {
-    return null
-  }
-}
-
-const clearActiveRunSnapshot = (threadId) => {
-  if (!threadId) return
-  localStorage.removeItem(getActiveRunStorageKey(threadId))
-}
-
-const splitChars = (text) => {
-  if (typeof text !== 'string' || !text) return []
-  return Array.from(text)
-}
-
-const calcTypingCps = () => {
-  if (pendingTypingChars <= 0) return MIN_TYPING_CPS
-  const ratio = Math.min(1, pendingTypingChars / TYPING_BACKLOG_HIGH_WATERMARK)
-  return Math.round(MIN_TYPING_CPS + ratio * (MAX_TYPING_CPS - MIN_TYPING_CPS))
-}
-
-const scheduleTypingRender = () => {
-  if (typingAnimationFrameId !== null) return
-  if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
-    typingAnimationFrameId = window.requestAnimationFrame(drainTypingQueue)
-  } else {
-    typingAnimationFrameId = setTimeout(() => {
-      typingAnimationFrameId = null
-      drainTypingQueue(Date.now())
-    }, 16)
-  }
-}
-
-const stopTypingRenderLoop = () => {
-  if (typingAnimationFrameId === null) return
-  if (typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
-    window.cancelAnimationFrame(typingAnimationFrameId)
-  } else {
-    clearTimeout(typingAnimationFrameId)
-  }
-  typingAnimationFrameId = null
-  typingLastFrameTs = 0
-}
-
-const enqueueLoadingChunkForTyping = (threadId, chunk) => {
-  if (!threadId || !chunk) return
-  if (chunk.status !== 'loading') {
-    typingChunkQueue.push({ threadId, chunk, isChar: false })
-    scheduleTypingRender()
-    return
-  }
-
-  const msg = chunk.msg || {}
-  const msgType = String(msg.type || '').toLowerCase()
-  const isToolMessage = msgType === 'tool' || msgType.includes('tool')
-  const streamText = typeof chunk.response === 'string' ? chunk.response : ''
-  const contentChars = !isToolMessage ? splitChars(streamText) : []
-  if (contentChars.length === 0) {
-    typingChunkQueue.push({ threadId, chunk, isChar: false })
-    scheduleTypingRender()
-    return
-  }
-
-  for (const char of contentChars) {
-    typingChunkQueue.push({
-      threadId,
-      isChar: true,
-      chunk: {
-        ...chunk,
-        response: char,
-        msg: {
-          ...msg,
-          content: char
-        }
-      }
-    })
-  }
-  pendingTypingChars += contentChars.length
-  scheduleTypingRender()
-}
-
-// 将队列按 threadId 分区，对匹配项执行回调，返回移除的字符数
-const partitionTypingQueue = (threadId, onMatch = null) => {
-  const remaining = []
-  let charCount = 0
-  for (const item of typingChunkQueue) {
-    if (item.threadId === threadId) {
-      if (onMatch) onMatch(item)
-      if (item.isChar) charCount += 1
-    } else {
-      remaining.push(item)
-    }
-  }
-  typingChunkQueue.length = 0
-  typingChunkQueue.push(...remaining)
-  pendingTypingChars = Math.max(0, pendingTypingChars - charCount)
-  typingChunkQueue.length === 0 ? stopTypingRenderLoop() : scheduleTypingRender()
-}
-
-const clearTypingQueueForThread = (threadId) => {
-  if (!threadId || typingChunkQueue.length === 0) return
-  partitionTypingQueue(threadId)
-}
-
-const flushTypingQueueForThread = (threadId) => {
-  if (!threadId || typingChunkQueue.length === 0) return
-  partitionTypingQueue(threadId, (item) => handleStreamChunk(item.chunk, threadId))
-}
-
-function drainTypingQueue(frameTs = Date.now()) {
-  typingAnimationFrameId = null
-  if (typingChunkQueue.length === 0) {
-    typingLastFrameTs = 0
-    return
-  }
-
-  if (!typingLastFrameTs) {
-    typingLastFrameTs = frameTs
-  }
-
-  const elapsedSeconds = Math.max(0.001, (frameTs - typingLastFrameTs) / 1000)
-  typingLastFrameTs = frameTs
-  const cps = calcTypingCps()
-  let budget = Math.max(1, Math.floor(elapsedSeconds * cps))
-
-  while (budget > 0 && typingChunkQueue.length > 0) {
-    const item = typingChunkQueue.shift()
-    if (!item) break
-    handleStreamChunk(item.chunk, item.threadId)
-    if (item.isChar) {
-      pendingTypingChars = Math.max(0, pendingTypingChars - 1)
-    }
-    budget -= 1
-  }
-
-  if (typingChunkQueue.length > 0) {
-    scheduleTypingRender()
-  } else {
-    typingLastFrameTs = 0
-  }
-}
-
-const processRunSseResponse = async (response, onEvent) => {
-  if (!response || !response.body) return
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  let eventType = 'message'
-  let dataLines = []
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
-
-      for (const rawLine of lines) {
-        const line = rawLine.replace(/\r$/, '')
-        if (!line) {
-          if (dataLines.length > 0) {
-            const dataText = dataLines.join('\n')
-            try {
-              const parsed = JSON.parse(dataText)
-              onEvent(eventType, parsed)
-            } catch (e) {
-              console.warn('Failed to parse run SSE data:', e, dataText)
-            }
-          }
-          eventType = 'message'
-          dataLines = []
-          continue
-        }
-        if (line.startsWith('event:')) {
-          eventType = line.slice(6).trim() || 'message'
-        } else if (line.startsWith('data:')) {
-          dataLines.push(line.slice(5).trim())
-        }
-      }
-    }
-    if (dataLines.length > 0) {
-      const dataText = dataLines.join('\n')
-      try {
-        const parsed = JSON.parse(dataText)
-        onEvent(eventType, parsed)
-      } catch (e) {
-        console.warn('Failed to parse trailing run SSE data:', e, dataText)
-      }
-    }
-  } finally {
-    try {
-      reader.releaseLock()
-    } catch {
-      // ignore
-    }
-  }
-}
-
-const stopRunStreamSubscription = (threadId) => {
-  const ts = getThreadState(threadId)
-  if (!ts) return
-  if (ts.runStreamAbortController) {
-    ts.runStreamAbortController.abort()
-    ts.runStreamAbortController = null
-  }
-}
-
-const startRunStream = async (threadId, runId, afterSeq = '0') => {
-  if (!threadId || !runId || !useRunsApi) return
-  const ts = getThreadState(threadId)
-  if (!ts) return
-
-  stopRunStreamSubscription(threadId)
-  const runController = new AbortController()
-  ts.runStreamAbortController = runController
-  ts.activeRunId = runId
-  ts.runLastSeq = normalizeRunSeq(afterSeq)
-  ts.lastRetryableJobTry = null
-  ts.isStreaming = true
-  saveActiveRunSnapshot(threadId, runId, ts.runLastSeq)
-
-  try {
-    const response = await agentApi.streamAgentRunEvents(runId, ts.runLastSeq, {
-      signal: runController.signal
-    })
-    if (!response.ok) {
-      throw new Error(`SSE response not ok: ${response.status}`)
-    }
-
-    await processRunSseResponse(response, (event, data) => {
-      if (!data || ts.activeRunId !== runId) return
-
-      if (data.seq !== undefined && data.seq !== null) {
-        const incomingSeq = normalizeRunSeq(data.seq)
-        if (compareRunSeq(incomingSeq, ts.runLastSeq) <= 0) return
-        ts.runLastSeq = incomingSeq
-        saveActiveRunSnapshot(threadId, runId, incomingSeq)
-      }
-
-      if (event === 'heartbeat') return
-
-      const payload = data.payload || {}
-      const isRetryableError = event === 'error' && payload?.chunk?.retryable === true
-      if (isRetryableError) {
-        const parsedJobTry = Number.parseInt(payload?.chunk?.job_try, 10)
-        const retryJobTry = Number.isNaN(parsedJobTry) ? null : parsedJobTry
-        if (retryJobTry !== null && ts.lastRetryableJobTry === retryJobTry) {
-          return
-        }
-        ts.lastRetryableJobTry = retryJobTry
-        console.warn('Run encountered retryable error, waiting for worker retry', {
-          threadId,
-          runId,
-          retryJobTry,
-          errorType: payload?.chunk?.error_type
-        })
-        return
-      }
-
-      if (Array.isArray(payload.items)) {
-        payload.items.forEach((chunk) => {
-          enqueueLoadingChunkForTyping(threadId, chunk)
-        })
-      } else if (payload.chunk) {
-        enqueueLoadingChunkForTyping(threadId, payload.chunk)
-      }
-
-      const approvalStatuses = ['ask_user_question_required', 'human_approval_required']
-      const isApprovalEvent =
-        approvalStatuses.includes(event) || approvalStatuses.includes(payload?.chunk?.status)
-
-      if (isApprovalEvent) {
-        const approvalChunk = payload?.chunk || { status: event, thread_id: threadId }
-        processApprovalInStream(approvalChunk, threadId, currentAgentId.value)
-      }
-
-      if (event === 'close') {
-        flushTypingQueueForThread(threadId)
-        ts.isStreaming = false
-        if (RUN_TERMINAL_STATUSES.has(data.status)) {
-          ts.activeRunId = null
-          ts.lastRetryableJobTry = null
-          clearActiveRunSnapshot(threadId)
-          fetchThreadMessages({ agentId: currentAgentId.value, threadId, delay: 200 }).finally(
-            () => {
-              fetchAgentState(currentAgentId.value, threadId)
-            }
-          )
-        } else if (ts.activeRunId === runId) {
-          window.setTimeout(() => {
-            if (ts.activeRunId === runId && !ts.runStreamAbortController) {
-              void startRunStream(threadId, runId, ts.runLastSeq)
-            }
-          }, 300)
-        }
-      }
-
-      const chunkStatus = payload?.chunk?.status
-      if (
-        event === 'finished' ||
-        event === 'error' ||
-        event === 'interrupted' ||
-        approvalStatuses.includes(event) ||
-        approvalStatuses.includes(chunkStatus)
-      ) {
-        flushTypingQueueForThread(threadId)
-        ts.isStreaming = false
-        ts.activeRunId = null
-        ts.lastRetryableJobTry = null
-        clearActiveRunSnapshot(threadId)
-        fetchThreadMessages({ agentId: currentAgentId.value, threadId, delay: 300 }).finally(() => {
-          resetOnGoingConv(threadId)
-          fetchAgentState(currentAgentId.value, threadId)
-          scrollController.scrollToBottom()
-        })
-      }
-    })
-  } catch (error) {
-    if (error?.name !== 'AbortError') {
-      console.error('Run SSE stream error:', error)
-      handleChatError(error, 'stream')
-      if (ts.activeRunId === runId) {
-        window.setTimeout(() => {
-          if (ts.activeRunId === runId && !ts.runStreamAbortController) {
-            void startRunStream(threadId, runId, ts.runLastSeq)
-          }
-        }, 500)
-      }
-    }
-  } finally {
-    if (ts.runStreamAbortController === runController) {
-      ts.runStreamAbortController = null
-    }
-    if (!ts.activeRunId) {
-      ts.isStreaming = false
-    }
-  }
-}
-
-const resumeActiveRunForThread = async (threadId) => {
-  if (!useRunsApi || !threadId) return
-  const ts = getThreadState(threadId)
-  if (!ts || ts.runStreamAbortController) return
-
-  const snapshot = loadActiveRunSnapshot(threadId)
-  if (snapshot?.run_id) {
-    if (Date.now() - Number(snapshot.created_at || 0) > ACTIVE_RUN_STORAGE_TTL_MS) {
-      clearActiveRunSnapshot(threadId)
-    } else {
-      try {
-        const runRes = await agentApi.getAgentRun(snapshot.run_id)
-        const run = runRes?.run
-        if (run && !RUN_TERMINAL_STATUSES.has(run.status)) {
-          await startRunStream(threadId, run.id, snapshot.last_seq || '0')
-          return
-        }
-      } catch {
-        // ignore
-      }
-      clearActiveRunSnapshot(threadId)
-    }
-  }
-
-  try {
-    const active = await agentApi.getThreadActiveRun(threadId)
-    const run = active?.run
-    if (run && !RUN_TERMINAL_STATUSES.has(run.status)) {
-      await startRunStream(threadId, run.id, 0)
-      return
-    }
-  } catch (e) {
-    console.warn('Failed to load active run for thread:', threadId, e)
-  }
-
-  ts.activeRunId = null
-  ts.runLastSeq = '0'
-  ts.isStreaming = false
-  clearActiveRunSnapshot(threadId)
-}
-
 const ensureActiveThread = async (title = '新的对话') => {
   if (currentChatId.value) return currentChatId.value
   try {
@@ -1288,6 +691,40 @@ const ensureActiveThread = async (title = '新的对话') => {
     // createThread 已处理错误提示
   }
   return null
+}
+
+const handleAttachmentUpload = async (files) => {
+  if (!files?.length) return
+  if (!AgentValidator.validateAgentIdWithError(currentAgentId.value, '上传附件', handleValidationError))
+    return
+
+  const preferredTitle = files[0]?.name || '新的对话'
+  let threadId = currentChatId.value
+
+  if (!threadId) {
+    threadId = await ensureActiveThread(preferredTitle)
+  }
+
+  if (!threadId) {
+    message.error('创建对话失败，无法上传附件')
+    return
+  }
+
+  try {
+    message.loading({
+      content: '正在上传附件...',
+      key: 'upload-attachment',
+      duration: 0
+    })
+    for (const file of files) {
+      await threadApi.uploadThreadAttachment(threadId, file)
+    }
+    message.success({ content: '附件上传成功', key: 'upload-attachment', duration: 2 })
+    await fetchAgentState(currentAgentId.value, threadId)
+  } catch (error) {
+    message.destroy('upload-attachment')
+    handleChatError(error, 'upload')
+  }
 }
 
 // ==================== 审批功能管理 ====================
@@ -1303,6 +740,17 @@ const { handleAgentResponse, handleStreamChunk } = useAgentStreamHandler({
   currentAgentId,
   supportsTodo,
   supportsFiles
+})
+const { startRunStream, resumeActiveRunForThread, stopRunStreamSubscription } = useAgentRunStream({
+  getThreadState,
+  useRunsApi,
+  currentAgentId,
+  handleStreamChunk,
+  processApprovalInStream,
+  fetchThreadMessages,
+  fetchAgentState,
+  resetOnGoingConv,
+  onScrollToBottom: () => scrollController.scrollToBottom()
 })
 
 // 发送消息并处理流式响应
@@ -1392,14 +840,7 @@ const createNewChat = async () => {
     if (newThread) {
       // 中断之前线程的流式输出（如果存在）
       const previousThreadId = chatState.currentThreadId
-      if (previousThreadId) {
-        const previousThreadState = getThreadState(previousThreadId)
-        if (previousThreadState?.isStreaming && previousThreadState.streamAbortController) {
-          previousThreadState.streamAbortController.abort()
-          previousThreadState.isStreaming = false
-          previousThreadState.streamAbortController = null
-        }
-      }
+      stopThreadStream(previousThreadId)
 
       chatState.currentThreadId = newThread.id
     }
@@ -1425,12 +866,7 @@ const selectChat = async (chatId) => {
 
   // 中断之前线程的流式输出（如果存在）
   if (previousThreadId && previousThreadId !== chatId) {
-    const previousThreadState = getThreadState(previousThreadId)
-    if (previousThreadState?.isStreaming && previousThreadState.streamAbortController) {
-      previousThreadState.streamAbortController.abort()
-      previousThreadState.isStreaming = false
-      previousThreadState.streamAbortController = null
-    }
+    stopThreadStream(previousThreadId)
     // run 模式下仅断开 SSE 订阅，不取消后台运行任务
     stopRunStreamSubscription(previousThreadId)
   }

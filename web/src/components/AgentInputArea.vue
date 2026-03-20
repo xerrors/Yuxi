@@ -1,7 +1,6 @@
 <template>
   <MessageInputComponent
     ref="inputRef"
-    :key="inputKey"
     :model-value="modelValue"
     @update:modelValue="updateValue"
     :is-loading="isLoading"
@@ -53,96 +52,42 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
-import { message } from 'ant-design-vue'
+import { ref } from 'vue'
 import MessageInputComponent from '@/components/MessageInputComponent.vue'
 import ImagePreviewComponent from '@/components/ImagePreviewComponent.vue'
 import AttachmentOptionsComponent from '@/components/AttachmentOptionsComponent.vue'
-import { threadApi } from '@/apis'
-import { AgentValidator } from '@/utils/agentValidator'
-import { handleChatError, handleValidationError } from '@/utils/errorHandler'
 import { FolderCode } from 'lucide-vue-next'
 
-const props = defineProps({
+defineProps({
   modelValue: { type: String, default: '' },
   isLoading: { type: Boolean, default: false },
   disabled: { type: Boolean, default: false },
   sendButtonDisabled: { type: Boolean, default: false },
   placeholder: { type: String, default: '输入问题...' },
+  mention: { type: Object, default: () => null },
   supportsFileUpload: { type: Boolean, default: false },
-  agentId: { type: String, default: '' },
-  threadId: { type: String, default: null },
-  ensureThread: { type: Function, required: true },
   hasStateContent: { type: Boolean, default: false },
-  isPanelOpen: { type: Boolean, default: false },
-  mention: { type: Object, default: () => null }
+  isPanelOpen: { type: Boolean, default: false }
 })
 
 const emit = defineEmits([
   'update:modelValue',
   'send',
   'keydown',
-  'attachment-changed',
+  'upload-attachment',
   'toggle-panel'
 ])
 
 const inputRef = ref(null)
 const currentImage = ref(null)
 
-// 用于强制重建输入组件的 key
-const inputKey = ref(0)
-
-// 监听 hasStateContent 变化，当从有 state 切换到无 state 时重建组件
-watch(
-  () => props.hasStateContent,
-  (newVal, oldVal) => {
-    // 当 hasStateContent 从 true 变为 false 时，重建输入组件
-    if (oldVal === true && newVal === false) {
-      inputKey.value++
-    }
-  }
-)
-
 const updateValue = (val) => {
   emit('update:modelValue', val)
 }
 
-const handleAttachmentUpload = async (files) => {
+const handleAttachmentUpload = (files) => {
   if (!files?.length) return
-  if (!AgentValidator.validateAgentIdWithError(props.agentId, '上传附件', handleValidationError))
-    return
-
-  const preferredTitle = files[0]?.name || '新的对话'
-  let threadId = props.threadId
-
-  if (!threadId) {
-    try {
-      threadId = await props.ensureThread(preferredTitle)
-    } catch (e) {
-      return
-    }
-  }
-
-  if (!threadId) {
-    message.error('创建对话失败，无法上传附件')
-    return
-  }
-
-  try {
-    const hide = message.loading({
-      content: '正在上传附件...',
-      key: 'upload-attachment',
-      duration: 0
-    })
-    for (const file of files) {
-      await threadApi.uploadThreadAttachment(threadId, file)
-    }
-    message.success({ content: '附件上传成功', key: 'upload-attachment', duration: 2 })
-    emit('attachment-changed', threadId)
-  } catch (error) {
-    message.destroy('upload-attachment')
-    handleChatError(error, 'upload')
-  }
+  emit('upload-attachment', files)
 }
 
 const handleImageUpload = (imageData) => {
