@@ -9,6 +9,7 @@ from yuxi.services.run_queue_service import close_queue_clients, get_redis_clien
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.knowledge import knowledge_base
 from yuxi.utils import logger
+from yuxi import get_version
 
 
 @asynccontextmanager
@@ -54,6 +55,18 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Run queue redis unavailable on startup: {e}")
 
     await tasker.start()
+    logger.info(f"""
+
+░██     ░██                       ░██
+ ░██   ░██
+  ░██ ░██   ░██    ░██ ░██    ░██ ░██
+   ░████    ░██    ░██  ░██  ░██  ░██
+    ░██     ░██    ░██   ░█████   ░██
+    ░██     ░██   ░███  ░██  ░██  ░██
+    ░██      ░█████░██ ░██    ░██ ░██  v{get_version()}
+
+    """)
+    logger.info("Yuxi backend startup complete")
     yield
     await tasker.shutdown()
     await close_queue_clients()
