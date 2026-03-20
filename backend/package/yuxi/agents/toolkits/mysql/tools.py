@@ -2,7 +2,7 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, Field
 
-from yuxi.agents.common.toolkits.registry import tool
+from yuxi.agents.toolkits.registry import tool
 from yuxi.utils import logger
 
 from .connection import (

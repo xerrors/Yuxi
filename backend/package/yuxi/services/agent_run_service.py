@@ -11,7 +11,7 @@ from collections.abc import AsyncIterator
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from yuxi.agents import agent_manager
+from yuxi.agents.buildin import agent_manager
 from yuxi.repositories.agent_run_repository import TERMINAL_RUN_STATUSES, AgentRunRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.services.run_queue_service import (

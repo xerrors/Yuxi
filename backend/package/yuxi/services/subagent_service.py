@@ -118,7 +118,7 @@ async def get_subagents_from_names(selected_names: Any, *, db: AsyncSession | No
 
     # 处理工具
     # 仅从子智能体配置中的工具名称进行解析；不做 Tavily/MCP 特殊注入。
-    from yuxi.agents.common.toolkits import get_all_tool_instances
+    from yuxi.agents.toolkits import get_all_tool_instances
 
     all_tools = get_all_tool_instances()
     all_tool_names = {tool.name: tool for tool in all_tools}

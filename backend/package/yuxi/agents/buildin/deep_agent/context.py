@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Annotated
 
-from yuxi.agents.common.context import BaseContext
+from yuxi.agents import BaseContext
 
 DEEP_PROMPT = """你是一位专家级研究员。你的工作是进行彻底的研究，然后撰写一份精美的报告。
 

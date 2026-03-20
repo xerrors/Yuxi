@@ -11,7 +11,7 @@ from yuxi.storage.postgres.models_business import User
 from server.routers.auth_router import get_admin_user
 from server.utils.auth_middleware import get_db, get_required_user
 from yuxi import config as conf
-from yuxi.agents import agent_manager
+from yuxi.agents.buildin import agent_manager
 from yuxi.models import select_model
 from yuxi.services.chat_stream_service import get_agent_state_view, stream_agent_chat, stream_agent_resume
 from yuxi.services.agent_run_service import (

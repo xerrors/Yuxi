@@ -13,7 +13,7 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver, aiosqlite
 from langgraph.graph.state import CompiledStateGraph
 
 from yuxi import config as sys_config
-from yuxi.agents.common.context import BaseContext
+from yuxi.agents.context import BaseContext
 from yuxi.utils import logger
 
 

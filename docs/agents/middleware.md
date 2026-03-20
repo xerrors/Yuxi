@@ -17,7 +17,7 @@
 支持文件上传功能的中间件。如果智能体需要处理用户上传的文档，可以启用此中间件：
 
 ```python
-from yuxi.agents.common.middlewares import inject_attachment_context
+from yuxi.agents.middlewares import inject_attachment_context
 
 async def get_graph(self):
     graph = create_agent(

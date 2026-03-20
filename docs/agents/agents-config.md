@@ -44,7 +44,7 @@ backend/package/yuxi/agents/
 智能体类需要继承 `BaseAgent` 并实现异步的 `get_graph` 方法：
 
 ```python
-from yuxi.agents.common import BaseAgent
+from yuxi.agents import BaseAgent
 from langgraph.prebuilt import create_agent
 
 class MyAgent(BaseAgent):

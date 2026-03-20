@@ -4,7 +4,7 @@ import inspect
 from pathlib import Path
 
 from server.utils.singleton import SingletonMeta
-from yuxi.agents.common import BaseAgent
+from yuxi.agents.base import BaseAgent
 from yuxi.utils import logger
 
 

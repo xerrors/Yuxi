@@ -18,7 +18,7 @@
             >
               <Settings2 size="18" />
               <span class="hide-text">
-                {{ isLoadingConfig ? '加载中...' : (selectedConfigSummary?.name || '配置') }}
+                {{ isLoadingConfig ? '加载中...' : selectedConfigSummary?.name || '配置' }}
               </span>
             </button>
           </template>

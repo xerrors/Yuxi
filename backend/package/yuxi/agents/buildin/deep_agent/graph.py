@@ -9,12 +9,12 @@ from langchain.agents.middleware import (
     ToolCallLimitMiddleware,
 )
 
-from yuxi.agents.common import BaseAgent, load_chat_model
-from yuxi.agents.common.backends import create_agent_composite_backend
-from yuxi.agents.common.middlewares import RuntimeConfigMiddleware, SummaryOffloadMiddleware, save_attachments_to_fs
-from yuxi.agents.common.middlewares.knowledge_base_middleware import KnowledgeBaseMiddleware
-from yuxi.agents.common.middlewares.skills_middleware import SkillsMiddleware
-from yuxi.agents.common.toolkits.buildin.tools import _create_tavily_search
+from yuxi.agents import BaseAgent, load_chat_model
+from yuxi.agents.backends import create_agent_composite_backend
+from yuxi.agents.middlewares import RuntimeConfigMiddleware, SummaryOffloadMiddleware, save_attachments_to_fs
+from yuxi.agents.middlewares.knowledge_base_middleware import KnowledgeBaseMiddleware
+from yuxi.agents.middlewares.skills_middleware import SkillsMiddleware
+from yuxi.agents.toolkits.buildin.tools import _create_tavily_search
 from yuxi.services.mcp_service import get_tools_from_all_servers
 from yuxi.services.subagent_service import get_subagents_from_names
 from yuxi.utils import logger

@@ -13,7 +13,7 @@ from langchain.tools.tool_node import ToolCallRequest
 from langgraph.types import Command
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.agents.common.toolkits import get_all_tool_instances
+from yuxi.agents.toolkits import get_all_tool_instances
 from yuxi.repositories.skill_repository import SkillRepository
 from yuxi.services.mcp_service import get_enabled_mcp_tools
 from yuxi.services.skill_service import _normalize_string_list, is_valid_skill_slug

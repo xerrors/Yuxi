@@ -5,7 +5,7 @@
 ## BaseContext 详解
 
 ```python
-from yuxi.agents.common import BaseContext
+from yuxi.agents import BaseContext
 from dataclasses import dataclass
 
 @dataclass(kw_only=True)
@@ -38,9 +38,9 @@ class MyAgentContext(BaseContext):
 有时需要自定义工具选项，比如 ReporterAgent 需要包含 MySQL 工具：
 
 ```python
-from yuxi.agents.common import BaseContext, gen_tool_info
-from yuxi.agents.common.toolkits.buildin import calculator, query_knowledge_graph
-from yuxi.agents.common.toolkits.mysql import get_mysql_tools
+from yuxi.agents import BaseContext, gen_tool_info
+from yuxi.agents.toolkits.buildin import calculator, query_knowledge_graph
+from yuxi.agents.toolkits.mysql import get_mysql_tools
 
 @dataclass(kw_only=True)
 class ReporterContext(BaseContext):

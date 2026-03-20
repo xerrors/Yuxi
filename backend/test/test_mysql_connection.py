@@ -55,7 +55,7 @@ def test_mysql_connection():
 
     try:
         # 导入 MySQL 连接管理器
-        from yuxi.agents.common.toolkits.mysql.connection import MySQLConnectionManager
+        from yuxi.agents.toolkits.mysql.connection import MySQLConnectionManager
 
         # 创建连接配置
         mysql_config = {
@@ -131,7 +131,7 @@ def test_tools():
     print("\n=== MySQL 工具测试 ===\n")
 
     try:
-        from yuxi.agents.common.toolkits.mysql.tools import mysql_list_tables, mysql_describe_table, mysql_query
+        from yuxi.agents.toolkits.mysql.tools import mysql_list_tables, mysql_describe_table, mysql_query
 
         print("✅ MySQL 工具导入成功")
 

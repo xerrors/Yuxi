@@ -1,6 +1,6 @@
 from deepagents.backends import CompositeBackend, StateBackend
 
-from yuxi.agents.common.middlewares.skills_middleware import normalize_selected_skills
+from yuxi.agents.middlewares.skills_middleware import normalize_selected_skills
 
 from .skills_backend import SelectedSkillsReadonlyBackend
 

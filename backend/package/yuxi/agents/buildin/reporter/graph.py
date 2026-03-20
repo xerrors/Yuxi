@@ -5,12 +5,12 @@ from deepagents.backends import StateBackend
 from deepagents.middleware.filesystem import FilesystemMiddleware
 from langchain.agents import create_agent
 
-from yuxi.agents.common import BaseAgent, BaseContext, load_chat_model
-from yuxi.agents.common.middlewares import (
+from yuxi.agents import BaseAgent, BaseContext, load_chat_model
+from yuxi.agents.middlewares import (
     RuntimeConfigMiddleware,
     save_attachments_to_fs,
 )
-from yuxi.agents.common.toolkits.mysql import get_mysql_tools
+from yuxi.agents.toolkits.mysql import get_mysql_tools
 from yuxi.services.mcp_service import get_mcp_server_names, get_tools_from_all_servers
 from yuxi.utils import logger
 

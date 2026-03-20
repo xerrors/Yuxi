@@ -165,7 +165,7 @@ async def create_database(
         )
 
         # 需要重新加载所有智能体，因为工具刷新了
-        from yuxi.agents import agent_manager
+        from yuxi.agents.buildin import agent_manager
 
         await agent_manager.reload_all()
 
@@ -258,7 +258,7 @@ async def delete_database(db_id: str, current_user: User = Depends(get_admin_use
         await knowledge_base.delete_database(db_id)
 
         # 需要重新加载所有智能体，因为工具刷新了
-        from yuxi.agents import agent_manager
+        from yuxi.agents.buildin import agent_manager
 
         await agent_manager.reload_all()
 

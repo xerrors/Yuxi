@@ -37,7 +37,7 @@ def _ensure_metadata_loaded():
     if _metadata_cache:  # 已加载
         return
 
-    from yuxi.agents.common.toolkits.registry import (
+    from yuxi.agents.toolkits.registry import (
         get_all_extra_metadata,
         get_all_tool_instances,
     )

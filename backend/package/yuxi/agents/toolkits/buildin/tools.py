@@ -7,7 +7,7 @@ import requests
 from langgraph.types import interrupt
 
 from yuxi import config, graph_base
-from yuxi.agents.common.toolkits.registry import ToolExtraMetadata, _all_tool_instances, _extra_registry, tool
+from yuxi.agents.toolkits.registry import ToolExtraMetadata, _all_tool_instances, _extra_registry, tool
 from yuxi.storage.minio import aupload_file_to_minio
 from yuxi.utils import logger
 from yuxi.utils.question_utils import normalize_questions
@@ -118,6 +118,7 @@ def ask_user_question(
     if isinstance(options, str):
         try:
             import json
+
             options = json.loads(options)
             logger.debug(f"Parsed string options to list: {options}")
         except Exception as e:
@@ -128,6 +129,7 @@ def ask_user_question(
     if isinstance(questions, str):
         try:
             import json
+
             questions = json.loads(questions)
             logger.debug(f"Parsed string questions to list: {questions}")
         except Exception as e:

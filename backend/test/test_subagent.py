@@ -616,7 +616,7 @@ class TestDeepAgentSubagentSelection:
         mock_tool.name = "tool_a"
 
         monkeypatch.setattr(service_module, "get_subagent_specs", fake_get_specs)
-        monkeypatch.setattr("yuxi.agents.common.toolkits.get_all_tool_instances", lambda: [mock_tool])
+        monkeypatch.setattr("yuxi.agents.toolkits.get_all_tool_instances", lambda: [mock_tool])
 
         resolved_specs = await service_module.get_subagents_from_names(["research-agent", "missing-agent"])
 

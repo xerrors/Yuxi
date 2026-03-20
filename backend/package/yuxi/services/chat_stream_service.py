@@ -9,7 +9,7 @@ from typing import Any
 from langchain.messages import AIMessage, AIMessageChunk, HumanMessage
 from langgraph.types import Command
 from yuxi import config as conf
-from yuxi.agents import agent_manager
+from yuxi.agents.buildin import agent_manager
 from yuxi.plugins.guard import content_guard
 from yuxi.repositories.agent_config_repository import AgentConfigRepository
 from yuxi.repositories.conversation_repository import ConversationRepository

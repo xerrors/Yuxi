@@ -8,7 +8,7 @@ import sys
 sys.path.insert(0, ".")
 
 try:
-    from yuxi.agents.common.toolkits.mysql.tools import mysql_list_tables, mysql_describe_table, mysql_query
+    from yuxi.agents.toolkits.mysql.tools import mysql_list_tables, mysql_describe_table, mysql_query
 
     print("✅ MySQL 工具导入成功")
     print(f"工具列表: {[tool.name for tool in [mysql_list_tables, mysql_describe_table, mysql_query]]}")

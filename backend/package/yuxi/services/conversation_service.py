@@ -6,7 +6,7 @@ from pathlib import Path
 import aiofiles
 from fastapi import HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
-from yuxi.agents import agent_manager
+from yuxi.agents.buildin import agent_manager
 from yuxi.config import config as app_config
 from yuxi.plugins.parser import Parser
 from yuxi.repositories.conversation_repository import ConversationRepository

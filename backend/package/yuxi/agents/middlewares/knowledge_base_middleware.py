@@ -2,7 +2,7 @@
 
 from langchain.agents.middleware import AgentMiddleware
 
-from yuxi.agents.common.toolkits.kbs import get_common_kb_tools
+from yuxi.agents.toolkits.kbs import get_common_kb_tools
 from yuxi.utils.logging_config import logger
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from yuxi.agents.common.backends import skills_backend
+from yuxi.agents.backends import skills_backend
 
 
 def _prepare_skills_dir(root: Path) -> None:
