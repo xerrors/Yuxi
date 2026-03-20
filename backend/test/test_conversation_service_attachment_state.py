@@ -123,8 +123,7 @@ async def test_convert_upload_to_markdown_returns_conversion_result(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    async def _fake_aparse(source: str, params=None, source_type: str = "file") -> str:
-        assert source_type == "file"
+    async def _fake_aparse(source: str, params=None) -> str:
         return "converted markdown"
 
     monkeypatch.setattr(svc, "_ensure_workdir", lambda: tmp_path)
@@ -147,8 +146,7 @@ async def test_convert_upload_to_markdown_truncates_content(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    async def _fake_aparse(source: str, params=None, source_type: str = "file") -> str:
-        assert source_type == "file"
+    async def _fake_aparse(source: str, params=None) -> str:
         return "x" * (svc.MAX_ATTACHMENT_MARKDOWN_CHARS + 200)
 
     monkeypatch.setattr(svc, "_ensure_workdir", lambda: tmp_path)

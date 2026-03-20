@@ -83,7 +83,7 @@ async def _convert_upload_to_markdown(upload: UploadFile) -> ConversionResult:
 
     try:
         file_size = await _write_upload_to_disk(upload, temp_path)
-        markdown = await Parser.aparse(str(temp_path), source_type="file")
+        markdown = await Parser.aparse(str(temp_path))
         markdown, truncated = _truncate_markdown(markdown)
         return ConversionResult(
             file_id=uuid.uuid4().hex,
@@ -94,7 +94,7 @@ async def _convert_upload_to_markdown(upload: UploadFile) -> ConversionResult:
             truncated=truncated,
         )
     except Exception as exc:  # noqa: BLE001
-        logger.error("Attachment conversion failed: %s", exc)
+        logger.error(f"Attachment conversion failed: {exc}")
         raise
 
 
