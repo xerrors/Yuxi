@@ -29,6 +29,15 @@ class ChatbotAgent(BaseAgent):
     name = "智能体助手"
     description = "基础的对话机器人，可以回答问题，可在配置中启用需要的工具。"
     capabilities = ["file_upload", "files", "todo"]  # 支持文件上传功能
+    metadata = {
+        "examples": [
+            "你好，请介绍一下你自己",
+            "帮我写一封商务邮件",
+            "解释一下什么是机器学习",
+            "推荐几本好书",
+            "如何提高工作效率？"
+        ]
+    }
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

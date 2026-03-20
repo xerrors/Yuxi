@@ -286,7 +286,7 @@ const exampleQuestions = computed(() => {
   let examples = []
   if (agentId && agents.value && agents.value.length > 0) {
     const agent = agents.value.find((a) => a.id === agentId)
-    examples = agent ? agent.examples || [] : []
+    examples = agent ? agent.metadata?.examples || [] : []
   }
   return examples.map((text, index) => ({
     id: index + 1,

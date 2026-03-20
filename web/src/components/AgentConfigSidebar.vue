@@ -71,14 +71,6 @@
               show-icon
               class="config-alert"
             />
-            <a-alert
-              v-if="!selectedAgent.has_checkpointer"
-              type="error"
-              message="该智能体没有配置 Checkpointer，功能无法正常使用"
-              show-icon
-              class="config-alert"
-            />
-
             <!-- 统一显示所有配置项 -->
             <template v-for="(value, key) in configurableItems" :key="key">
               <a-form-item

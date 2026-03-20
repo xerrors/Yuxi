@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import importlib.util
 import os
-import tomllib as tomli
 from abc import abstractmethod
 from inspect import isawaitable
 from pathlib import Path
@@ -34,7 +32,6 @@ class BaseAgent:
         self._async_conn = None
         self.workdir = Path(sys_config.save_dir) / "agents" / self.module_name
         self.workdir.mkdir(parents=True, exist_ok=True)
-        self._metadata_cache = None  # Cache for metadata to avoid repeated file reads
 
     @property
     def module_name(self) -> str:
@@ -47,7 +44,7 @@ class BaseAgent:
         return self.__class__.__name__
 
     async def get_info(self, include_configurable_items: bool = True):
-        # Load metadata from file
+        # metadata 固定在代码中，由各 Agent 的类属性提供
         metadata = self.load_metadata()
         configurable_items = {}
         if include_configurable_items:
@@ -56,11 +53,11 @@ class BaseAgent:
         # Merge metadata with class attributes, metadata takes precedence
         return {
             "id": self.id,
-            "name": metadata.get("name", getattr(self, "name", "Unknown")),
-            "description": metadata.get("description", getattr(self, "description", "Unknown")),
-            "examples": metadata.get("examples", []),
+            "name": getattr(self, "name", "Unknown"),
+            "description": getattr(self, "description", "Unknown"),
+            "metadata": metadata,
+            # "examples": metadata.get("examples", []),
             "configurable_items": configurable_items,
-            "has_checkpointer": await self.check_checkpointer(),
             "capabilities": getattr(self, "capabilities", []),  # 智能体能力列表
         }
 
@@ -116,7 +113,6 @@ class BaseAgent:
     async def check_checkpointer(self):
         app = await self.get_graph()
         if not hasattr(app, "checkpointer") or app.checkpointer is None:
-            logger.warning(f"智能体 {self.name} 的 Graph 未配置 checkpointer，无法获取历史记录")
             return False
         return True
 
@@ -253,40 +249,9 @@ class BaseAgent:
         return AsyncSqliteSaver(await self.get_async_conn())
 
     def load_metadata(self) -> dict:
-        """Load metadata from metadata.toml file in the agent's source directory."""
-        if self._metadata_cache is not None:
-            return self._metadata_cache
-
-        # Try to find metadata.toml in the agent's source directory
-        try:
-            # Get the agent's source file directory
-            agent_module = self.__class__.__module__
-
-            # Use importlib to get the module's file path
-            spec = importlib.util.find_spec(agent_module)
-            if spec and spec.origin:
-                agent_file = Path(spec.origin)
-                agent_dir = agent_file.parent
-            else:
-                # Fallback: construct path from module name
-                module_path = agent_module.replace(".", "/")
-                agent_file = Path(f"package/yuxi/{module_path}.py")
-                agent_dir = agent_file.parent
-
-            metadata_file = agent_dir / "metadata.toml"
-
-            if metadata_file.exists():
-                with open(metadata_file, "rb") as f:
-                    metadata = tomli.load(f)
-                    self._metadata_cache = metadata
-                    logger.debug(f"Loaded metadata from {metadata_file}")
-                    return metadata
-            else:
-                logger.debug(f"No metadata.toml found for {self.module_name} at {metadata_file}")
-                self._metadata_cache = {}
-                return {}
-
-        except Exception as e:
-            logger.error(f"Error loading metadata for {self.module_name}: {e}")
-            self._metadata_cache = {}
-            return {}
+        """Load metadata from agent class attribute."""
+        metadata = getattr(self, "metadata", {})
+        if isinstance(metadata, dict):
+            return metadata
+        logger.warning(f"Agent {self.module_name} metadata is not a dict, fallback to empty metadata")
+        return {}

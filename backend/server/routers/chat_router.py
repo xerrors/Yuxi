@@ -159,8 +159,7 @@ async def get_agent(current_user: User = Depends(get_required_user)):
             "id": agent_info["id"],
             "name": agent_info.get("name", "Unknown"),
             "description": agent_info.get("description", ""),
-            "examples": agent_info.get("examples", []),
-            "has_checkpointer": agent_info.get("has_checkpointer", False),
+            "metadata": agent_info.get("metadata", {}),
             "capabilities": agent_info.get("capabilities", []),  # 智能体能力列表
         }
         for agent_info in agents_info
@@ -184,9 +183,8 @@ async def get_single_agent(agent_id: str, current_user: User = Depends(get_requi
             "id": agent_info["id"],
             "name": agent_info.get("name", "Unknown"),
             "description": agent_info.get("description", ""),
-            "examples": agent_info.get("examples", []),
+            "metadata": agent_info.get("metadata", {}),
             "configurable_items": agent_info.get("configurable_items", []),
-            "has_checkpointer": agent_info.get("has_checkpointer", False),
             "capabilities": agent_info.get("capabilities", []),
         }
 
