@@ -5,8 +5,14 @@ Shared pytest fixtures for exercising FastAPI routers over the running API servi
 from __future__ import annotations
 
 import os
+import sys
 import uuid
 from collections.abc import AsyncGenerator
+
+# Ensure /app is on sys.path so 'server' and 'yuxi' modules resolve correctly.
+_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _root not in sys.path:
+    sys.path.insert(0, _root)
 
 import anyio
 import httpx

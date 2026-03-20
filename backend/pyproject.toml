@@ -106,6 +106,7 @@ members = [
 [tool.pytest.ini_options]
 addopts = "-v --tb=short"
 testpaths = ["test"]
+pythonpath = ["."]
 markers = [
     "auth: marks tests that require authentication",
     "slow: marks tests as slow",

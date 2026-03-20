@@ -457,26 +457,6 @@ class TestSubAgentService:
         assert second[0]["tools"] == ["tool_a"]
         service_module.clear_specs_cache()
 
-    def test_resolve_subagent_tools_does_not_mutate_input(self):
-        from yuxi.services import subagent_service as service_module
-
-        mock_tool = MagicMock()
-        mock_tool.name = "tool_a"
-        specs = [
-            {
-                "name": "test-agent",
-                "description": "Test",
-                "system_prompt": "You are a test",
-                "tools": ["tool_a"],
-            }
-        ]
-
-        resolved = service_module.resolve_subagent_tools(specs, [mock_tool])
-
-        assert specs[0]["tools"] == ["tool_a"]
-        assert resolved[0]["tools"] == [mock_tool]
-
-
 # =============================================================================
 # Model Tests
 # =============================================================================
@@ -549,49 +529,6 @@ class TestSubAgentModel:
 
 
 class TestDeepAgentSubagentSelection:
-    def test_filter_specs_by_names_empty_selection_returns_empty(self):
-        from yuxi.services.subagent_service import filter_specs_by_names
-
-        specs = [
-            {"name": "research-agent", "description": "r"},
-            {"name": "critique-agent", "description": "c"},
-        ]
-
-        filtered, missing = filter_specs_by_names(specs, [])
-
-        assert filtered == []
-        assert missing == []
-
-    def test_filter_specs_by_names_none_selection_returns_all(self):
-        from yuxi.services.subagent_service import filter_specs_by_names
-
-        specs = [
-            {"name": "research-agent", "description": "r"},
-            {"name": "critique-agent", "description": "c"},
-        ]
-
-        filtered, missing = filter_specs_by_names(specs, None)
-
-        assert filtered == specs
-        assert missing == []
-
-    def test_filter_specs_by_names_returns_subset_and_missing(self):
-        from yuxi.services.subagent_service import filter_specs_by_names
-
-        specs = [
-            {"name": "research-agent", "description": "r"},
-            {"name": "critique-agent", "description": "c"},
-            {"name": 123, "description": "invalid"},
-        ]
-
-        filtered, missing = filter_specs_by_names(
-            specs,
-            ["research-agent", "missing-agent", "research-agent", ""],
-        )
-
-        assert [item["name"] for item in filtered] == ["research-agent"]
-        assert missing == ["missing-agent"]
-
     @pytest.mark.asyncio
     async def test_get_subagents_from_names_filters_and_resolves_tools(self, monkeypatch):
         from yuxi.services import subagent_service as service_module

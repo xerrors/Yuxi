@@ -81,11 +81,12 @@ class SubAgentRepository:
             "system_prompt": system_prompt,
             "tools": tools,
         }
-        if model_provided:
-            updates["model"] = model
         for field, value in updates.items():
             if value is not None:
                 setattr(item, field, value)
+        # model_provided=True 时显式设置 model 值（包括 None），用于清空字段
+        if model_provided:
+            item.model = model
         item.updated_by = updated_by
         item.updated_at = utc_now_naive()
         await self.db.commit()
