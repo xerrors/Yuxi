@@ -1,3 +1,26 @@
+x-api-worker-env: &api-worker-env
+  HOST_IP: ${HOST_IP:-}
+  LITE_MODE: ${LITE_MODE:-}
+  RUNNING_IN_DOCKER: "true"
+  MODEL_DIR_IN_DOCKER: /models
+  PYTHONPATH: /app/package
+  POSTGRES_URL: ${POSTGRES_URL:-postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-yuxi_know}}
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+  RUN_CANCEL_KEY_TTL_SECONDS: ${RUN_CANCEL_KEY_TTL_SECONDS:-1800}
+  RUN_EVENTS_STREAM_TTL_SECONDS: ${RUN_EVENTS_STREAM_TTL_SECONDS:-7200}
+  NEO4J_URI: ${NEO4J_URI:-bolt://graph:7687}
+  NEO4J_USERNAME: ${NEO4J_USERNAME:-neo4j}
+  NEO4J_PASSWORD: ${NEO4J_PASSWORD:-0123456789}
+  MILVUS_URI: ${MILVUS_URI:-http://milvus:19530}
+  MILVUS_DB_NAME: ${MILVUS_DB_NAME:-default}
+  MILVUS_TOKEN: ${MILVUS_TOKEN:-}
+  MINERU_VL_SERVER: ${MINERU_VL_SERVER:-http://mineru-vllm-server:30000}
+  MINERU_API_URI: ${MINERU_API_URI:-http://mineru-api:30001}
+  PADDLEX_URI: ${PADDLEX_URI:-http://paddlex:8080}
+  MINIO_URI: ${MINIO_URI:-http://minio:9000}
+  NO_PROXY: localhost,127.0.0.1,milvus,graph,minio,milvus-etcd,etcd,minio,mineru,paddlex,api.siliconflow.cn
+  no_proxy: localhost,127.0.0.1,milvus,graph,minio,milvus-etcd,etcd,minio,mineru,paddlex,api.siliconflow.cn
+
 services:
   api:
     build:
@@ -14,27 +37,10 @@ services:
       - "host.docker.internal:host-gateway"
     env_file:
       - .env.prod
+    # region api_envs
     environment:
-      - HOST_IP=${HOST_IP:-}
-      - LITE_MODE=${LITE_MODE:-}
-      - POSTGRES_URL=${POSTGRES_URL:-postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-yuxi_know}}
-      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
-      - RUN_EVENTS_STREAM_TTL_SECONDS=${RUN_EVENTS_STREAM_TTL_SECONDS:-7200}
-      - RUN_CANCEL_KEY_TTL_SECONDS=${RUN_CANCEL_KEY_TTL_SECONDS:-1800}
-      - NEO4J_URI=${NEO4J_URI:-bolt://graph:7687}
-      - NEO4J_USERNAME=${NEO4J_USERNAME:-neo4j}
-      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-0123456789}
-      - MILVUS_URI=${MILVUS_URI:-http://milvus:19530}
-      - MILVUS_TOKEN=${MILVUS_TOKEN:-}
-      - MILVUS_DB_NAME=${MILVUS_DB_NAME:-default}
-      - MINERU_VL_SERVER=${MINERU_VL_SERVER:-http://mineru-vllm-server:30000}
-      - MINERU_API_URI=${MINERU_API_URI:-http://mineru-api:30001}
-      - PADDLEX_URI=${PADDLEX_URI:-http://paddlex:8080}
-      - MINIO_URI=${MINIO_URI:-http://minio:9000}
-      - MODEL_DIR_IN_DOCKER=/models
-      - RUNNING_IN_DOCKER=true
-      - NO_PROXY=localhost,127.0.0.1,milvus,graph,minio,milvus-etcd,etcd,minio,mineru,paddlex,api.siliconflow.cn
-      - no_proxy=localhost,127.0.0.1,milvus,graph,minio,milvus-etcd,etcd,minio,mineru,paddlex,api.siliconflow.cn
+      <<: *api-worker-env
+    # endregion api_envs
     command: uv run --no-dev uvicorn server.main:app --host 0.0.0.0 --port 5050
     restart: unless-stopped
     healthcheck:
@@ -67,26 +73,7 @@ services:
     env_file:
       - .env.prod
     environment:
-      - HOST_IP=${HOST_IP:-}
-      - LITE_MODE=${LITE_MODE:-}
-      - POSTGRES_URL=${POSTGRES_URL:-postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-yuxi_know}}
-      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
-      - RUN_EVENTS_STREAM_TTL_SECONDS=${RUN_EVENTS_STREAM_TTL_SECONDS:-7200}
-      - RUN_CANCEL_KEY_TTL_SECONDS=${RUN_CANCEL_KEY_TTL_SECONDS:-1800}
-      - NEO4J_URI=${NEO4J_URI:-bolt://graph:7687}
-      - NEO4J_USERNAME=${NEO4J_USERNAME:-neo4j}
-      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-0123456789}
-      - MILVUS_URI=${MILVUS_URI:-http://milvus:19530}
-      - MILVUS_TOKEN=${MILVUS_TOKEN:-}
-      - MILVUS_DB_NAME=${MILVUS_DB_NAME:-default}
-      - MINERU_VL_SERVER=${MINERU_VL_SERVER:-http://mineru-vllm-server:30000}
-      - MINERU_API_URI=${MINERU_API_URI:-http://mineru-api:30001}
-      - PADDLEX_URI=${PADDLEX_URI:-http://paddlex:8080}
-      - MINIO_URI=${MINIO_URI:-http://minio:9000}
-      - MODEL_DIR_IN_DOCKER=/models
-      - RUNNING_IN_DOCKER=true
-      - NO_PROXY=localhost,127.0.0.1,milvus,graph,minio,milvus-etcd,etcd,minio,mineru,paddlex,api.siliconflow.cn
-      - no_proxy=localhost,127.0.0.1,milvus,graph,minio,milvus-etcd,etcd,minio,mineru,paddlex,api.siliconflow.cn
+      <<: *api-worker-env
     command: uv run --no-dev arq server.worker_main.WorkerSettings
     restart: unless-stopped
     depends_on:
