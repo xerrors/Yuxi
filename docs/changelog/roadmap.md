@@ -6,14 +6,12 @@
 ### 看板
 
 - 集成 LangFuse (观望) 添加用户日志与用户反馈模块，可以在 AgentView 中查看信息
-- 集成 neo4j mcp （或者自己构建工具）
-- 增加 paddle-vl 以及 deepseek-ocr 的支持（deepseek-ocr 已支持），重构 OCR 的支持情况，并支持 Paddle 官方的解析 API https://aistudio.baidu.com/paddleocr/task
 - 系统层面添加 apikey，在智能体、知识库调用中支持 apikey 以支持外部调用
 - 部分场景应该使用默认模型作为默认值而不是空值
 - 检索测试中，添加问答
-- 探索 subagents 的体系
 - 集成 Memory，基于 deepagents 的文件后端实现
-- 将 后端代码 和 agents 解耦，agents 作为单独的 package 使用
+- 添加自定义向量模型和 rerank 模型的配置，在网页上面
+- 调研轻便的文件展示与编辑器
 
 ### Bugs
 - 部分异常状态下，智能体的模型名称出现重叠[#279](https://github.com/xerrors/Yuxi-Know/issues/279)
@@ -26,7 +24,10 @@
 
 ## v0.6
 
+<!-- 添加到这里 -->
 
+- 将 后端代码 和 agents 解耦，agents 作为单独的 package 使用
+- 添加 subagents
 
 ## v0.5
 
