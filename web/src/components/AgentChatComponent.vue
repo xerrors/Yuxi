@@ -4,6 +4,7 @@
       :current-chat-id="currentChatId"
       :chats-list="chatsList"
       :is-sidebar-open="chatUIStore.isSidebarOpen"
+      :is-floating="isSidebarFloating"
       :is-initial-render="localUIState.isInitialRender"
       :single-mode="props.singleMode"
       :agents="agents"
@@ -72,7 +73,7 @@
 
       <div class="chat-content-container">
         <!-- Main Chat Area -->
-        <div class="chat-main">
+        <div class="chat-main" ref="chatMainRef">
           <div class="chat-box">
             <div class="conv-box" v-for="(conv, index) in conversations" :key="index">
               <AgentMessageComponent
@@ -491,12 +492,39 @@ const isProcessing = computed(() => isStreaming.value)
 
 // ==================== SCROLL & RESIZE HANDLING ====================
 const scrollController = new ScrollController('.chat-main')
+const chatMainRef = ref(null)
+const isSidebarFloating = ref(false)
+let chatMainResizeObserver = null
 
 onMounted(() => {
   nextTick(() => {
     const chatMainContainer = document.querySelector('.chat-main')
     if (chatMainContainer) {
       chatMainContainer.addEventListener('scroll', scrollController.handleScroll, { passive: true })
+    }
+
+    if (window.ResizeObserver && chatMainRef.value) {
+      chatMainResizeObserver = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          const width = entry.contentRect.width
+          const isTakingSpace = chatUIStore.isSidebarOpen && !isSidebarFloating.value
+          
+          if (isTakingSpace) {
+            if (width < 600) {
+              isSidebarFloating.value = true
+              chatUIStore.isSidebarOpen = false
+              localStorage.setItem('chat_sidebar_open', 'false')
+            }
+          } else {
+            if (width >= 880) {
+              isSidebarFloating.value = false
+            } else {
+              isSidebarFloating.value = true
+            }
+          }
+        }
+      })
+      chatMainResizeObserver.observe(chatMainRef.value)
     }
   })
   setTimeout(() => {
@@ -506,6 +534,9 @@ onMounted(() => {
 
 onUnmounted(() => {
   scrollController.cleanup()
+  if (chatMainResizeObserver) {
+    chatMainResizeObserver.disconnect()
+  }
   // 清理所有线程状态
   resetOnGoingConv()
 })
