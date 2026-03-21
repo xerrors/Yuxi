@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -280,3 +281,197 @@ async def test_update_skill_dependencies(monkeypatch: pytest.MonkeyPatch):
     assert captured["skill_dependencies"] == ["beta"]
     assert captured["updated_by"] == "root"
     assert updated.skill_dependencies == ["beta"]
+
+
+@pytest.mark.asyncio
+async def test_init_builtin_skills_create_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+
+    source_dir = tmp_path / "builtin-skills" / "reporter"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    (source_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: reporter\n"
+        "description: SQL report\n"
+        "---\n"
+        "# SQL Reporter\n",
+        encoding="utf-8",
+    )
+    (source_dir / "prompts").mkdir(parents=True, exist_ok=True)
+    (source_dir / "prompts" / "system.md").write_text("prompt", encoding="utf-8")
+
+    monkeypatch.setattr(
+        svc,
+        "get_builtin_skill_specs",
+        lambda: [
+            SimpleNamespace(
+                slug="reporter",
+                source_dir=source_dir,
+                description="SQL report from python",
+                tool_dependencies=("mysql_query",),
+                mcp_dependencies=("charts",),
+                skill_dependencies=("common-report",),
+            )
+        ],
+    )
+
+    class FakeRepo:
+        created: list[dict] = []
+
+        def __init__(self, _db):
+            pass
+
+        async def get_by_slug(self, slug: str):
+            return None
+
+        async def create(
+            self,
+            *,
+            slug: str,
+            name: str,
+            description: str,
+            tool_dependencies: list[str] | None,
+            mcp_dependencies: list[str] | None,
+            skill_dependencies: list[str] | None,
+            dir_path: str,
+            created_by: str | None,
+        ) -> Skill:
+            self.__class__.created.append(
+                {
+                    "slug": slug,
+                    "name": name,
+                    "description": description,
+                    "tool_dependencies": tool_dependencies,
+                    "mcp_dependencies": mcp_dependencies,
+                    "skill_dependencies": skill_dependencies,
+                    "dir_path": dir_path,
+                    "created_by": created_by,
+                }
+            )
+            return Skill(
+                slug=slug,
+                name=name,
+                description=description,
+                dir_path=dir_path,
+                tool_dependencies=tool_dependencies or [],
+                mcp_dependencies=mcp_dependencies or [],
+                skill_dependencies=skill_dependencies or [],
+                created_by=created_by,
+                updated_by=created_by,
+            )
+
+    monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
+
+    await svc.init_builtin_skills(None)
+
+    assert len(FakeRepo.created) == 1
+    created = FakeRepo.created[0]
+    assert created["slug"] == "reporter"
+    assert created["name"] == "reporter"
+    assert created["description"] == "SQL report from python"
+    assert created["tool_dependencies"] == ["mysql_query"]
+    assert created["mcp_dependencies"] == ["charts"]
+    assert created["skill_dependencies"] == ["common-report"]
+    assert created["created_by"] == svc.BUILTIN_SKILL_OPERATOR
+
+    target_dir = tmp_path / "skills" / "reporter"
+    assert target_dir.is_symlink()
+    assert (target_dir / "SKILL.md").exists()
+
+
+@pytest.mark.asyncio
+async def test_init_builtin_skills_updates_existing_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+
+    source_dir = tmp_path / "builtin-skills" / "reporter"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    (source_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: reporter\n"
+        "description: old\n"
+        "---\n"
+        "# SQL Reporter\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        svc,
+        "get_builtin_skill_specs",
+        lambda: [
+            SimpleNamespace(
+                slug="reporter",
+                source_dir=source_dir,
+                description="new description",
+                tool_dependencies=("mysql_query",),
+                mcp_dependencies=("charts",),
+                skill_dependencies=(),
+            )
+        ],
+    )
+
+    existing_item = Skill(
+        slug="reporter",
+        name="reporter",
+        description="old description",
+        dir_path="skills/reporter",
+        tool_dependencies=[],
+        mcp_dependencies=[],
+        skill_dependencies=[],
+        created_by="system",
+        updated_by="system",
+    )
+
+    captured: dict[str, list[str] | str | None] = {}
+
+    class FakeRepo:
+        def __init__(self, _db):
+            pass
+
+        async def get_by_slug(self, slug: str):
+            return existing_item
+
+        async def update_metadata(
+            self,
+            item: Skill,
+            *,
+            name: str,
+            description: str,
+            updated_by: str | None,
+        ) -> Skill:
+            item.name = name
+            item.description = description
+            captured["name"] = name
+            captured["description"] = description
+            captured["updated_by"] = updated_by
+            return item
+
+        async def update_dependencies(
+            self,
+            item: Skill,
+            *,
+            tool_dependencies: list[str],
+            mcp_dependencies: list[str],
+            skill_dependencies: list[str],
+            updated_by: str | None,
+        ) -> Skill:
+            item.tool_dependencies = tool_dependencies
+            item.mcp_dependencies = mcp_dependencies
+            item.skill_dependencies = skill_dependencies
+            captured["tool_dependencies"] = tool_dependencies
+            captured["mcp_dependencies"] = mcp_dependencies
+            captured["skill_dependencies"] = skill_dependencies
+            captured["updated_by_deps"] = updated_by
+            return item
+
+    monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
+
+    await svc.init_builtin_skills(None, created_by="release-bot")
+
+    target_dir = tmp_path / "skills" / "reporter"
+    assert target_dir.is_symlink()
+    assert captured["description"] == "new description"
+    assert captured["tool_dependencies"] == ["mysql_query"]
+    assert captured["mcp_dependencies"] == ["charts"]
+    assert captured["skill_dependencies"] == []
+    assert captured["updated_by"] == "release-bot"
+    assert captured["updated_by_deps"] == "release-bot"

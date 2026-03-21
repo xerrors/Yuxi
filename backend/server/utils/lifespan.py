@@ -4,6 +4,7 @@ from fastapi import FastAPI
 
 from yuxi.services.task_service import tasker
 from yuxi.services.mcp_service import init_mcp_servers
+from yuxi.services.skill_service import init_builtin_skills
 from yuxi.services.subagent_service import init_builtin_subagents
 from yuxi.services.run_queue_service import close_queue_clients, get_redis_client
 from yuxi.storage.postgres.manager import pg_manager
@@ -35,6 +36,14 @@ async def lifespan(app: FastAPI):
         await init_builtin_subagents()
     except Exception as e:
         logger.error(f"Failed to initialize builtin subagents during startup: {e}")
+        raise
+
+    # 初始化内置 Skills
+    try:
+        async with pg_manager.get_async_session_context() as session:
+            await init_builtin_skills(session)
+    except Exception as e:
+        logger.error(f"Failed to initialize builtin skills during startup: {e}")
         raise
 
     # 初始化知识库管理器

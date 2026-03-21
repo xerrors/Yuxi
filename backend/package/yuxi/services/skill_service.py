@@ -15,6 +15,7 @@ from yuxi import config as sys_config
 from yuxi.repositories.skill_repository import SkillRepository
 from yuxi.services.mcp_service import get_mcp_server_names
 from yuxi.storage.postgres.models_business import Skill
+from yuxi.utils.logging_config import logger
 
 SKILL_SLUG_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 SKILL_NAME_PATTERN = SKILL_SLUG_PATTERN
@@ -50,6 +51,8 @@ TEXT_FILE_EXTENSIONS = {
     ".tsx",
 }
 
+BUILTIN_SKILL_OPERATOR = "builtin-system"
+
 
 def _normalize_string_list(values: list[str] | None) -> list[str]:
     if not values:
@@ -77,6 +80,37 @@ def get_skills_root_dir() -> Path:
     root = Path(sys_config.save_dir) / "skills"
     root.mkdir(parents=True, exist_ok=True)
     return root
+
+
+def get_builtin_skill_specs() -> list[Any]:
+    from yuxi.agents.skills.buildin import BUILTIN_SKILLS
+
+    return BUILTIN_SKILLS
+
+
+def _build_builtin_skill_dir_path(slug: str) -> str:
+    return (Path("skills") / slug).as_posix()
+
+
+def _is_builtin_managed(item: Skill, slug: str) -> bool:
+    expected_dir = _build_builtin_skill_dir_path(slug)
+    if item.dir_path != expected_dir:
+        return False
+    return (item.created_by or "") in {"system", BUILTIN_SKILL_OPERATOR}
+
+
+def _ensure_symlink_target(target_dir: Path, source_dir: Path) -> None:
+    if target_dir.is_symlink():
+        if target_dir.resolve() == source_dir.resolve():
+            return
+        target_dir.unlink()
+    elif target_dir.exists():
+        raise ValueError(f"技能目录已存在且非内置链接，无法托管: {target_dir}")
+
+    try:
+        target_dir.symlink_to(source_dir, target_is_directory=True)
+    except OSError as e:
+        raise ValueError(f"创建内置技能链接失败: {target_dir} -> {source_dir} ({e})") from e
 
 
 async def get_skill_dependency_options(db: AsyncSession) -> dict[str, list[str] | list[dict]]:
@@ -541,3 +575,80 @@ async def delete_skill(db: AsyncSession, *, slug: str) -> None:
 
     if trash_dir and trash_dir.exists():
         shutil.rmtree(trash_dir, ignore_errors=True)
+
+
+async def init_builtin_skills(db: AsyncSession, *, created_by: str = "system") -> None:
+    """初始化内置 skills（软链接目录 + 启动时同步元数据）。"""
+    repo = SkillRepository(db)
+    skills_root = get_skills_root_dir()
+    specs = get_builtin_skill_specs()
+
+    for spec in specs:
+        slug = str(getattr(spec, "slug", "")).strip()
+        source_dir = Path(str(getattr(spec, "source_dir", ""))).resolve()
+        configured_description = str(getattr(spec, "description", "")).strip()
+        configured_tools = _normalize_string_list(getattr(spec, "tool_dependencies", None))
+        configured_mcps = _normalize_string_list(getattr(spec, "mcp_dependencies", None))
+        configured_skills = _normalize_string_list(getattr(spec, "skill_dependencies", None))
+
+        if not is_valid_skill_slug(slug):
+            raise ValueError(f"内置 skill slug 非法: {slug}")
+        if not source_dir.exists() or not source_dir.is_dir():
+            logger.warning(f"跳过不存在的内置 skill 目录: {source_dir}")
+            continue
+
+        skill_md = source_dir / "SKILL.md"
+        if not skill_md.exists():
+            legacy_skill_md = source_dir / "SKILLS.md"
+            if not legacy_skill_md.exists():
+                raise ValueError(f"内置 skill 缺少 SKILL.md: {source_dir}")
+            skill_md = legacy_skill_md
+
+        content = skill_md.read_text(encoding="utf-8")
+        parsed_name, parsed_desc, meta = _parse_skill_markdown(content)
+        if parsed_name != slug:
+            raise ValueError(f"内置 skill frontmatter.name 必须等于 slug: {slug}")
+
+        description = configured_description or parsed_desc
+        tool_dependencies = configured_tools or _normalize_string_list(meta.get("tool_dependencies"))
+        mcp_dependencies = configured_mcps or _normalize_string_list(meta.get("mcp_dependencies"))
+        skill_dependencies = configured_skills or _normalize_string_list(meta.get("skill_dependencies"))
+
+        target_dir = skills_root / slug
+        _ensure_symlink_target(target_dir, source_dir)
+
+        item = await repo.get_by_slug(slug)
+        if item and not _is_builtin_managed(item, slug):
+            logger.warning(f"发现同名非内置 skill，跳过自动同步: {slug}")
+            continue
+
+        expected_dir_path = _build_builtin_skill_dir_path(slug)
+
+        if not item:
+            await repo.create(
+                slug=slug,
+                name=slug,
+                description=description,
+                tool_dependencies=tool_dependencies,
+                mcp_dependencies=mcp_dependencies,
+                skill_dependencies=skill_dependencies,
+                dir_path=expected_dir_path,
+                created_by=BUILTIN_SKILL_OPERATOR,
+            )
+            continue
+
+        if item.name != slug or item.description != description:
+            await repo.update_metadata(item, name=slug, description=description, updated_by=created_by)
+
+        if (
+            _normalize_string_list(item.tool_dependencies or []) != tool_dependencies
+            or _normalize_string_list(item.mcp_dependencies or []) != mcp_dependencies
+            or _normalize_string_list(item.skill_dependencies or []) != skill_dependencies
+        ):
+            await repo.update_dependencies(
+                item,
+                tool_dependencies=tool_dependencies,
+                mcp_dependencies=mcp_dependencies,
+                skill_dependencies=skill_dependencies,
+                updated_by=created_by,
+            )
