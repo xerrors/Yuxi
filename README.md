@@ -215,6 +215,17 @@ docker compose up --build
   </tr>
 </table>
 
+## 致谢
+
+本项目参考并引用了以下优秀开源项目，在此致以诚挚的感谢：
+
+- [LightRAG](https://github.com/HKUDS/LightRAG) - 直接引入作为图谱构建与检索的基础包
+- [DeepAgents](https://github.com/IDEA-CCNL/DeepAgents) - 直接引入作为深度智能体框架
+- [DeerFlow](https://github.com/bytedance/deer-flow) - 参考了其 Sandbox 智能体架构的实现思路
+- [RAGflow](https://github.com/infiniflow/ragflow) - 参考了其文档 Text Chunking 的分块策略
+- [LangGraph](https://github.com/langchain-ai/langgraph) - 多智能体编排框架，本项目的核心架构基础
+- 项目 Logo 由 Nano Banana 2 生成
+
 ## 参与贡献
 
 感谢所有贡献者的支持！
