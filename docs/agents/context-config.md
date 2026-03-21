@@ -38,7 +38,7 @@ class MyAgentContext(BaseContext):
 有时需要自定义工具选项，比如 ReporterAgent 需要包含 MySQL 工具：
 
 ```python
-from yuxi.agents import BaseContext, gen_tool_info
+from yuxi.agents import BaseContext, get_tool_info
 from yuxi.agents.toolkits.buildin import calculator, query_knowledge_graph
 from yuxi.agents.toolkits.mysql import get_mysql_tools
 
@@ -48,7 +48,7 @@ class ReporterContext(BaseContext):
         default_factory=lambda: [t.name for t in get_mysql_tools()],
         metadata={
             "name": "工具",
-            "options": lambda: gen_tool_info(
+            "options": lambda: get_tool_info(
                 [calculator, query_knowledge_graph, _create_tavily_search()] + get_mysql_tools()
             ),
             "description": "包含内置工具和 MySQL 工具包。",

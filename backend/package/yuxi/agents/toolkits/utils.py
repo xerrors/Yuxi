@@ -4,7 +4,7 @@ from typing import Any
 from yuxi.utils import logger
 
 
-def gen_tool_info(tools) -> list[dict[str, Any]]:
+def get_tool_info(tools) -> list[dict[str, Any]]:
     """获取所有工具的信息（用于前端展示）"""
     tools_info = []
 
