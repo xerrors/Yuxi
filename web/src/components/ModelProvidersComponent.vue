@@ -357,7 +357,7 @@
             v-model:value="customProviderModal.data.env"
             placeholder="请输入API密钥或环境变量名（如：MY_API_KEY）"
           />
-          <div class="form-help-text">支持直接输入API密钥，或使用环境变量名（如：MY_API_KEY）</div>
+          <div class="form-help-text">支持直接输入API密钥，或使用环境变量名（如：MY_API_KEY），如无密钥填写"无"。</div>
         </a-form-item>
 
         <a-form-item label="支持的模型" name="models">
@@ -366,7 +366,7 @@
             placeholder="请输入支持的模型列表，每行一个模型"
             :rows="4"
           />
-          <div class="form-help-text">每行输入一个模型名称，例如：gpt-3.5-turbo</div>
+          <div class="form-help-text">每行输入一个模型名称，例如：gpt-5</div>
         </a-form-item>
 
         <a-form-item label="文档地址" name="url">
@@ -719,6 +719,13 @@ const saveCustomProvider = async () => {
       .split('\n')
       .map((model) => model.trim())
       .filter((model) => model.length > 0)
+
+    // 校验默认模型必须在支持的模型列表中
+    if (models.length > 0 && !models.includes(customProviderModal.data.default)) {
+      message.error(`默认模型 "${customProviderModal.data.default}" 不在支持的模型列表中`)
+      customProviderModal.loading = false
+      return
+    }
 
     const providerData = {
       name: customProviderModal.data.name,

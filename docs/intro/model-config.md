@@ -132,12 +132,12 @@ models = [
 [model_names.api-proxy]
 name = "API 中转服务"
 base_url = "https://api-proxy.example.com/v1"
-default = "gpt-3.5-turbo"
+default = "gpt-5"
 env = "API_PROXY_KEY"
 models = [
-    "gpt-3.5-turbo",
-    "gpt-4",
-    "claude-3-sonnet"
+    "gpt-5",
+    "deepseek-chat",
+    "claude-4.6-sonnet"
 ]
 ```
 
