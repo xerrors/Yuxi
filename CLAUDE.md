@@ -28,7 +28,7 @@ Don't create helpers, utilities, or abstractions for one-time operations. Don't 
 - API 接口规范：所有的 API 接口都应该定义在 web/src/apis 下面
 - Icon 应该优先从 lucide-vue-next （推荐，但是需要注意尺寸）
 - 样式使用 less，非特殊情况必须使用 [base.css](web/src/assets/css/base.css) 中的颜色变量
-- UI 设计规范详见 [DESIGN](docs/agents/DESIGN.md)
+- UI 设计规范详见 [design](docs/develop-guides/design.md)
 
 
 ### 后端开发规范
