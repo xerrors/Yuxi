@@ -27,8 +27,8 @@ Don't create helpers, utilities, or abstractions for one-time operations. Don't 
 - 使用 pnpm 管理
 - API 接口规范：所有的 API 接口都应该定义在 web/src/apis 下面
 - Icon 应该优先从 lucide-vue-next （推荐，但是需要注意尺寸）
-- 样式使用 less，非特殊情况必须使用[base.css](web/src/assets/css/base.css) 中的颜色变量。
-- UI风格要简洁，同时要保持一致性，不要悬停位移，不要过度使用阴影以及渐变色。
+- 样式使用 less，非特殊情况必须使用 [base.css](web/src/assets/css/base.css) 中的颜色变量
+- UI 设计规范详见 [DESIGN](docs/agents/DESIGN.md)
 
 
 ### 后端开发规范
