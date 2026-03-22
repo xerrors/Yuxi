@@ -58,9 +58,15 @@ export default defineConfig({
         ]
       },
       {
+        text: '开发指南',
+        items: [
+          { text: '界面设计规范', link: '/develop-guides/design' },
+          { text: '路线图', link: '/develop-guides/roadmap' }
+        ]
+      },
+      {
         text: '更新日志',
         items: [
-          { text: '路线图', link: '/changelog/roadmap' },
           { text: '参与贡献', link: '/changelog/contributing' },
           { text: '常见问题', link: '/changelog/faq' },
           { text: '迁移至 v0.5', link: '/changelog/migrate_to_v0-5' }
