@@ -12,7 +12,6 @@ from yuxi.agents.backends import create_agent_composite_backend, get_sandbox_pro
 from yuxi.agents.middlewares import (
     RuntimeConfigMiddleware,
     SummaryOffloadMiddleware,
-    ToolErrorBoundaryMiddleware,
     save_attachments_to_fs,
 )
 from yuxi.agents.middlewares.knowledge_base_middleware import KnowledgeBaseMiddleware
@@ -71,7 +70,6 @@ class ChatbotAgent(BaseAgent):
             subagents=subagents,
             general_purpose_agent=True,
             default_middleware=[
-                ToolErrorBoundaryMiddleware(),
                 FilesystemMiddleware(backend=_create_fs_backend),  # 文件系统后端
                 PatchToolCallsMiddleware(),
             ],
@@ -89,7 +87,6 @@ class ChatbotAgent(BaseAgent):
 
         # all middlewares
         middlewares = [
-            ToolErrorBoundaryMiddleware(),
             save_attachments_to_fs,  # 附件注入提示词
             FilesystemMiddleware(backend=_create_fs_backend),  # 文件系统后端
             KnowledgeBaseMiddleware(),  # 知识库工具

@@ -14,7 +14,6 @@ from yuxi.agents.backends import create_agent_composite_backend, get_sandbox_pro
 from yuxi.agents.middlewares import (
     RuntimeConfigMiddleware,
     SummaryOffloadMiddleware,
-    ToolErrorBoundaryMiddleware,
     save_attachments_to_fs,
 )
 from yuxi.agents.middlewares.knowledge_base_middleware import KnowledgeBaseMiddleware
@@ -109,7 +108,6 @@ class DeepAgent(BaseAgent):
             default_tools=search_tools,
             subagents=user_subagents,
             default_middleware=[
-                ToolErrorBoundaryMiddleware(),
                 RuntimeConfigMiddleware(
                     model_context_name="subagents_model",
                     enable_model_override=True,
@@ -133,7 +131,6 @@ class DeepAgent(BaseAgent):
             model=model,
             system_prompt=context.system_prompt,
             middleware=[
-                ToolErrorBoundaryMiddleware(),
                 FilesystemMiddleware(backend=_create_fs_backend),  # 文件系统后端
                 RuntimeConfigMiddleware(extra_tools=all_mcp_tools),
                 SkillsMiddleware(),  # Skills 中间件（提示词注入、依赖展开、动态激活）
