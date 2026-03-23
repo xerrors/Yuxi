@@ -155,6 +155,7 @@
                 :mention="mentionConfig"
                 :supports-file-upload="supportsFileUpload"
                 :is-panel-open="isAgentPanelOpen"
+                :has-active-thread="!!currentChatId"
                 @send="handleSendOrStop"
                 @upload-attachment="handleAttachmentUpload"
                 @toggle-panel="toggleAgentPanel"

@@ -32,6 +32,7 @@
       <div class="input-actions-left">
         <!-- State Toggle Button -->
         <button
+          v-if="hasActiveThread"
           class="input-action-btn"
           :class="{ active: isPanelOpen }"
           @click="$emit('toggle-panel')"
@@ -65,7 +66,8 @@ defineProps({
   placeholder: { type: String, default: '输入问题...' },
   mention: { type: Object, default: () => null },
   supportsFileUpload: { type: Boolean, default: false },
-  isPanelOpen: { type: Boolean, default: false }
+  isPanelOpen: { type: Boolean, default: false },
+  hasActiveThread: { type: Boolean, default: true }
 })
 
 const emit = defineEmits([
