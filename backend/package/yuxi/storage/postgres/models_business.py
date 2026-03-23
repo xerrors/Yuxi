@@ -75,6 +75,9 @@ class User(Base):
     # 关联部门
     department = relationship("Department", back_populates="users")
 
+    # 关联 API Keys
+    api_keys = relationship("APIKey", back_populates="user", cascade="all, delete-orphan")
+
     def to_dict(self, include_password: bool = False) -> dict[str, Any]:
         result = {
             "id": self.id,
@@ -590,6 +593,53 @@ class SubAgent(Base):
         if self.model:
             spec["model"] = self.model
         return spec
+
+
+class APIKey(Base):
+    """API Key 模型"""
+
+    __tablename__ = "api_keys"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    key_hash = Column(String(64), nullable=False, unique=True, index=True)
+    key_prefix = Column(String(16), nullable=False)
+    name = Column(String(100), nullable=False)
+
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    department_id = Column(Integer, ForeignKey("departments.id"), nullable=True, index=True)
+
+    expires_at = Column(DateTime, nullable=True)
+    is_enabled = Column(Boolean, nullable=False, default=True)
+    last_used_at = Column(DateTime, nullable=True)
+
+    created_by = Column(String(64), nullable=False)
+    created_at = Column(DateTime, default=utc_now_naive)
+
+    # 关联
+    user = relationship("User", back_populates="api_keys")
+    department = relationship("Department")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "key_prefix": self.key_prefix,
+            "name": self.name,
+            "user_id": self.user_id,
+            "department_id": self.department_id,
+            "expires_at": format_utc_datetime(self.expires_at),
+            "is_enabled": bool(self.is_enabled),
+            "last_used_at": format_utc_datetime(self.last_used_at),
+            "created_by": self.created_by,
+            "created_at": format_utc_datetime(self.created_at),
+        }
+
+    def is_valid(self) -> bool:
+        """检查 Key 是否有效"""
+        if not self.is_enabled:
+            return False
+        if self.expires_at and utc_now_naive() > self.expires_at:
+            return False
+        return True
 
 
 class AgentRun(Base):

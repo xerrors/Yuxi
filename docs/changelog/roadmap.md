@@ -6,7 +6,6 @@
 ### 看板
 
 - 集成 LangFuse (观望) 添加用户日志与用户反馈模块，可以在 AgentView 中查看信息
-- 系统层面添加 apikey，在智能体、知识库调用中支持 apikey 以支持外部调用
 - 部分场景应该使用默认模型作为默认值而不是空值
 - 检索测试中，添加问答
 - 集成 Memory，基于 deepagents 的文件后端实现
@@ -26,6 +25,7 @@
 
 <!-- 添加到这里 -->
 
+- 新增 API Key 管理功能，支持外部系统通过 API Key 调用 Agent 对话接口（`POST /api/chat/agent/{agent_id}`）。统一使用 `Authorization: Bearer <api_key>` 认证，API Key 以 `yxkey_` 开头。获取 API Key 即代表拥有绑定用户的所有接口访问权限。
 - 将 后端代码 和 agents 解耦，agents 作为单独的 package 使用
 - 添加 subagents
 

@@ -49,6 +49,15 @@
           <TeamOutlined class="icon" />
           <span>部门管理</span>
         </div>
+        <div
+          class="sider-item"
+          :class="{ activesec: activeTab === 'apikey' }"
+          @click="activeTab = 'apikey'"
+          v-if="userStore.isSuperAdmin"
+        >
+          <KeyIcon class="icon" :size="14" />
+          <span>API Key</span>
+        </div>
       </div>
 
       <!-- 顶部导航 (Mobile) -->
@@ -85,6 +94,14 @@
         >
           部门管理
         </div>
+        <div
+          class="nav-item"
+          :class="{ active: activeTab === 'apikey' }"
+          @click="activeTab = 'apikey'"
+          v-if="userStore.isSuperAdmin"
+        >
+          API Key
+        </div>
       </div>
 
       <!-- 内容区域 -->
@@ -105,6 +122,10 @@
           <div v-show="activeTab === 'department'" v-if="userStore.isSuperAdmin">
             <DepartmentManagementComponent />
           </div>
+
+          <div v-show="activeTab === 'apikey'" v-if="userStore.isSuperAdmin">
+            <ApiKeyManagementComponent />
+          </div>
         </div>
       </div>
     </div>
@@ -115,10 +136,12 @@
 import { ref, computed, watch } from 'vue'
 import { useUserStore } from '@/stores/user'
 import { SettingOutlined, CodeOutlined, UserOutlined, TeamOutlined } from '@ant-design/icons-vue'
+import { Key as KeyIcon } from 'lucide-vue-next'
 import BasicSettingsSection from '@/components/BasicSettingsSection.vue'
 import ModelProvidersComponent from '@/components/ModelProvidersComponent.vue'
 import UserManagementComponent from '@/components/UserManagementComponent.vue'
 import DepartmentManagementComponent from '@/components/DepartmentManagementComponent.vue'
+import ApiKeyManagementComponent from '@/components/ApiKeyManagementComponent.vue'
 
 const props = defineProps({
   visible: {

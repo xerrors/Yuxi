@@ -51,7 +51,7 @@ cache
 *.local.py
 *.local.js
 *.local.yaml
-
+*.local/*
 
 *.pdf
 src/data

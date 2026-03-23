@@ -12,6 +12,7 @@ from server.routers.subagent_router import subagents_router
 from server.routers.system_router import system
 from server.routers.task_router import tasks
 from server.routers.tool_router import tools
+from server.routers.apikey_router import apikey_router
 
 _LITE_MODE = os.environ.get("LITE_MODE", "").lower() in ("true", "1")
 
@@ -28,6 +29,7 @@ router.include_router(mcp)  # /api/system/mcp-servers/*
 router.include_router(skills)  # /api/system/skills/*
 router.include_router(subagents_router)  # /api/system/subagents/*
 router.include_router(tools)  # /api/system/tools/*
+router.include_router(apikey_router)  # /api/apikey/*
 
 if not _LITE_MODE:
     from server.routers.graph_router import graph

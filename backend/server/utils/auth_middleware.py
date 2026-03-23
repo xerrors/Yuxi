@@ -1,13 +1,16 @@
+import hashlib
 import re
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from yuxi.storage.postgres.manager import pg_manager
-from yuxi.storage.postgres.models_business import User
+from yuxi.storage.postgres.models_business import User, APIKey
 from server.utils.auth_utils import AuthUtils
+from yuxi.utils.datetime_utils import utc_now_naive
 
 # 定义OAuth2密码承载器，指定token URL
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token", auto_error=False)
@@ -29,20 +32,76 @@ async def get_db():
         yield db
 
 
+async def _verify_api_key(key: str, db: AsyncSession) -> tuple[User | None, APIKey | None]:
+    """验证 API Key 并返回关联用户和 APIKey 对象"""
+    key_hash = hashlib.sha256(key.encode()).hexdigest()
+
+    result = await db.execute(select(APIKey).filter(APIKey.key_hash == key_hash))
+    api_key = result.scalar_one_or_none()
+
+    if api_key is None:
+        return None, None
+
+    if not api_key.is_enabled:
+        return None, None
+
+    if api_key.expires_at and utc_now_naive() > api_key.expires_at:
+        return None, None
+
+    if api_key.user_id:
+        result = await db.execute(select(User).filter(User.id == api_key.user_id))
+        user = result.scalar_one_or_none()
+        if user and not user.is_deleted:
+            return user, api_key
+
+    if api_key.department_id:
+        result = await db.execute(
+            select(User).filter(User.department_id == api_key.department_id, User.role.in_(["admin", "superadmin"]))
+        )
+        user = result.scalar_one_or_none()
+        if user and not user.is_deleted:
+            return user, api_key
+
+    result = await db.execute(select(User).filter(User.role == "superadmin", User.is_deleted == 0).limit(1))
+    user = result.scalar_one_or_none()
+    if user:
+        return user, api_key
+
+    return None, None
+
+
 # 获取当前用户（异步版本）
-async def get_current_user(token: str | None = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)):
+async def get_current_user(
+    authorization: str | None = Header(None),
+    db: AsyncSession = Depends(get_db),
+):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="无效的凭证",
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-    # 允许无token访问公开路径
-    if token is None:
+    if authorization is None:
         return None
 
+    if not authorization.startswith("Bearer "):
+        return None
+
+    token = authorization.split("Bearer ")[1]
+    if not token:
+        return None
+
+    # 根据 token 前缀判断认证方式
+    if token.startswith("yxkey_"):
+        # API Key 认证
+        user, api_key_obj = await _verify_api_key(token, db)
+        if user is not None and api_key_obj is not None:
+            api_key_obj.last_used_at = utc_now_naive()
+            await db.commit()
+        return user
+
+    # JWT Token 认证
     try:
-        # 验证token
         payload = AuthUtils.verify_access_token(token)
         user_id = payload.get("sub")
         if user_id is None:
@@ -50,16 +109,11 @@ async def get_current_user(token: str | None = Depends(oauth2_scheme), db: Async
     except JWTError:
         raise credentials_exception
     except ValueError as e:
-        # 捕获AuthUtils.verify_access_token可能抛出的ValueError
-        # 例如令牌过期或无效
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(e),  # 将错误信息直接传递给客户端
+            detail=str(e),
             headers={"WWW-Authenticate": "Bearer"},
         )
-
-    # 查找用户（异步版本）
-    from sqlalchemy import select
 
     result = await db.execute(select(User).filter(User.id == int(user_id)))
     user = result.scalar_one_or_none()
