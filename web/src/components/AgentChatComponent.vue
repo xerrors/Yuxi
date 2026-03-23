@@ -807,27 +807,6 @@ const sendMessage = async ({
     return Promise.reject(error)
   }
 
-  // 如果是新对话，用 fast-model 异步生成标题（不阻塞消息发送）
-  if ((threadMessages.value[threadId] || []).length === 0) {
-    const autoTitle = text.replace(/\s+/g, ' ').trim().slice(0, 2000)
-    if (autoTitle) {
-      void (async () => {
-        try {
-          const generatedTitle = await agentApi.generateTitle(autoTitle, configStore.config?.fast_model)
-          if (generatedTitle) {
-            const finalTitle = generatedTitle.slice(0, 30).replace(/\s+/g, ' ').trim()
-            if (finalTitle) {
-              void updateThread(threadId, finalTitle).catch(() => {})
-            }
-          }
-        } catch (e) {
-          // 失败时使用原始文本作为标题
-          void updateThread(threadId, autoTitle.slice(0, 30)).catch(() => {})
-        }
-      })()
-    }
-  }
-
   const requestData = {
     query: text,
     config: {
@@ -1043,6 +1022,7 @@ const handleSendMessage = async ({ image } = {}) => {
               }
             }
           } catch (e) {
+            console.error('Title generation failed:', e)
             // 失败时使用原始文本作为标题
             void updateThread(threadId, autoTitle.slice(0, 30)).catch(() => {})
           }
@@ -1071,6 +1051,28 @@ const handleSendMessage = async ({ image } = {}) => {
       handleChatError(error, 'send')
     }
     return
+  }
+
+  // 如果是新对话，用 fast-model 异步生成标题（不阻塞消息发送）
+  if ((threadMessages.value[threadId] || []).length === 0) {
+    const autoTitle = text.replace(/\s+/g, ' ').trim().slice(0, 2000)
+    if (autoTitle) {
+      void (async () => {
+        try {
+          const generatedTitle = await agentApi.generateTitle(autoTitle, configStore.config?.fast_model)
+          if (generatedTitle) {
+            const finalTitle = generatedTitle.slice(0, 30).replace(/\s+/g, ' ').trim()
+            if (finalTitle) {
+              void updateThread(threadId, finalTitle).catch(() => {})
+            }
+          }
+        } catch (e) {
+          console.error('Title generation failed:', e)
+          // 失败时使用原始文本作为标题
+          void updateThread(threadId, autoTitle.slice(0, 30)).catch(() => {})
+        }
+      })()
+    }
   }
 
   threadState.isStreaming = true
@@ -1690,7 +1692,7 @@ watch(currentChatId, (threadId, oldThreadId) => {
   max-width: 800px;
   margin: 0 auto;
   flex-grow: 1;
-  padding: 1rem 1.25rem;
+  padding: 1rem 1.5rem;
   display: flex;
   flex-direction: column;
 }
