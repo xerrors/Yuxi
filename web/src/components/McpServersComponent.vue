@@ -299,31 +299,6 @@
               </div>
             </a-tab-pane>
 
-            <a-tab-pane key="prompts">
-              <template #tab>
-                <span class="tab-title"><MessageSquare :size="14" />提示</span>
-              </template>
-              <div class="tab-content empty-tab">
-                <a-empty description="提示功能即将推出">
-                  <template #image>
-                    <span style="font-size: 48px">📝</span>
-                  </template>
-                </a-empty>
-              </div>
-            </a-tab-pane>
-
-            <a-tab-pane key="resources">
-              <template #tab>
-                <span class="tab-title"><Box :size="14" />资源</span>
-              </template>
-              <div class="tab-content empty-tab">
-                <a-empty description="资源功能即将推出">
-                  <template #image>
-                    <span style="font-size: 48px">📦</span>
-                  </template>
-                </a-empty>
-              </div>
-            </a-tab-pane>
           </a-tabs>
         </template>
       </div>
@@ -485,9 +460,7 @@ import {
   Info,
   Copy,
   Settings2,
-  Wrench,
-  MessageSquare,
-  Box
+  Wrench
 } from 'lucide-vue-next'
 import { mcpApi } from '@/apis/mcp_api'
 import { formatFullDateTime } from '@/utils/time'

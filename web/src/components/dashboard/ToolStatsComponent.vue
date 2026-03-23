@@ -155,7 +155,9 @@ const initToolsChart = () => {
 
   toolsChart = echarts.init(toolsChartRef.value)
 
-  const data = props.toolStats.most_used_tools.slice(0, 10) // 只显示前10个
+  const data = [...props.toolStats.most_used_tools]
+    .sort((a, b) => a.count - b.count)
+    .slice(0, 10) // 只显示前10个，升序排列让最高的在最上面
 
   const option = {
     tooltip: {

@@ -1,25 +1,30 @@
 <template>
   <a-modal
     v-model:open="visible"
-    title="系统设置"
+    :title="null"
     width="90%"
     :style="{ maxWidth: '980px', minWidth: '320px', top: '10%' }"
     :footer="null"
+    :closable="false"
     @cancel="handleClose"
     class="settings-modal"
     :destroyOnClose="true"
     :bodyStyle="{ padding: 0 }"
   >
     <div class="settings-container">
+      <button class="settings-close-btn lucide-icon-btn" @click="handleClose" aria-label="关闭设置">
+        <X :size="16" />
+      </button>
+
       <!-- 侧边栏 (Desktop) -->
       <div class="settings-sider">
         <div
           class="sider-item"
           :class="{ activesec: activeTab === 'base' }"
           @click="activeTab = 'base'"
-          v-if="userStore.isSuperAdmin"
+          v-if="userStore.isAdmin"
         >
-          <SettingOutlined class="icon" />
+          <Settings class="icon" :size="18" />
           <span>基本设置</span>
         </div>
         <div
@@ -28,7 +33,7 @@
           @click="activeTab = 'model'"
           v-if="userStore.isSuperAdmin"
         >
-          <CodeOutlined class="icon" />
+          <SquareCode class="icon" :size="18" />
           <span>模型配置</span>
         </div>
         <div
@@ -37,7 +42,7 @@
           @click="activeTab = 'user'"
           v-if="userStore.isAdmin"
         >
-          <UserOutlined class="icon" />
+          <User class="icon" :size="18" />
           <span>用户管理</span>
         </div>
         <div
@@ -46,7 +51,7 @@
           @click="activeTab = 'department'"
           v-if="userStore.isSuperAdmin"
         >
-          <TeamOutlined class="icon" />
+          <Users class="icon" :size="18" />
           <span>部门管理</span>
         </div>
         <div
@@ -55,7 +60,7 @@
           @click="activeTab = 'apikey'"
           v-if="userStore.isSuperAdmin"
         >
-          <KeyIcon class="icon" :size="14" />
+          <KeyIcon class="icon" :size="18" />
           <span>API Key</span>
         </div>
       </div>
@@ -66,7 +71,7 @@
           class="nav-item"
           :class="{ active: activeTab === 'base' }"
           @click="activeTab = 'base'"
-          v-if="userStore.isSuperAdmin"
+          v-if="userStore.isAdmin"
         >
           基本设置
         </div>
@@ -107,7 +112,7 @@
       <!-- 内容区域 -->
       <div class="settings-content-wrapper">
         <div class="settings-content">
-          <div v-show="activeTab === 'base'" v-if="userStore.isSuperAdmin">
+          <div v-show="activeTab === 'base'" v-if="userStore.isAdmin">
             <BasicSettingsSection />
           </div>
 
@@ -135,8 +140,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { useUserStore } from '@/stores/user'
-import { SettingOutlined, CodeOutlined, UserOutlined, TeamOutlined } from '@ant-design/icons-vue'
-import { Key as KeyIcon } from 'lucide-vue-next'
+import { Key as KeyIcon, Settings, SquareCode, User, Users, X } from 'lucide-vue-next'
 import BasicSettingsSection from '@/components/BasicSettingsSection.vue'
 import ModelProvidersComponent from '@/components/ModelProvidersComponent.vue'
 import UserManagementComponent from '@/components/UserManagementComponent.vue'
@@ -169,10 +173,8 @@ watch(
   () => props.visible,
   (newVal) => {
     if (newVal) {
-      if (userStore.isSuperAdmin) {
+      if (userStore.isAdmin) {
         activeTab.value = 'base'
-      } else if (userStore.isAdmin) {
-        activeTab.value = 'user'
       }
     }
   }
@@ -180,46 +182,68 @@ watch(
 </script>
 
 <style lang="less">
-.settings-modal {
-  :deep(.ant-modal-header) {
-    padding: 16px 24px;
-    border-bottom: 1px solid var(--gray-150);
-
-    .ant-modal-title {
-      font-size: 18px;
-      font-weight: 600;
-      color: var(--gray-900);
-    }
-  }
-
-  :deep(.ant-modal-content) {
-    border-radius: 8px;
+.settings-modal.ant-modal {
+  .ant-modal-content {
+    border-radius: 12px;
     display: flex;
     flex-direction: column;
+    position: relative;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .ant-modal-body {
+    padding: 0;
   }
 }
 
 .settings-container {
   display: flex;
-  height: 100%;
+  height: 70vh;
   width: 100%;
-  gap: 6px;
+  position: relative;
 
   @media (max-width: 900px) {
     flex-direction: column;
+    height: auto;
+    min-height: 70vh;
+  }
+}
+
+.settings-close-btn {
+  position: absolute;
+  top: 10px;
+  left: 14px;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 8px;
+  background: var(--gray-50);
+  color: var(--gray-700);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 2;
+
+  &:hover {
+    background: var(--gray-200);
+    color: var(--gray-900);
   }
 }
 
 /* Sidebar Styles - Matching SettingView.vue style */
 .settings-sider {
-  width: 128px;
+  width: 176px;
   height: 100%;
-  padding-top: 8px;
+  padding: 52px 10px 12px;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+  background: var(--gray-50);
+  border-right: 1px solid var(--gray-150);
 
   @media (max-width: 900px) {
     display: none;
@@ -237,7 +261,6 @@ watch(
     display: flex;
     align-items: center;
     gap: 10px;
-    margin-left: -20px;
 
     .icon {
       font-size: 14px; /* Slightly adjusted to align better, SettingView uses h() icon defaults */
@@ -248,7 +271,7 @@ watch(
     }
 
     &.activesec {
-      background: var(--gray-100);
+      background: var(--gray-150);
       color: var(--main-700);
     }
   }
@@ -258,30 +281,79 @@ watch(
 .settings-content-wrapper {
   flex: 1;
   height: 100%;
-  max-width: calc(100% - 128px);
+  max-width: calc(100% - 176px);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--gray-0);
+  padding: 0;
 
   @media (max-width: 900px) {
     max-width: 100%;
+    padding: 8px;
   }
 
   .settings-content {
-    padding: 0; /* Matches SettingView .setting padding */
+    padding: 12px 16px 16px; /* Keep inner readability without outer panel padding */
     // margin-bottom: 40px; /* Matches SettingView .setting margin-bottom */
     overflow-y: scroll;
-    height: 70vh;
+    height: auto;
+    flex: 1;
+    min-height: 0;
+
+    .model-providers-section,
+    .user-management,
+    .department-management,
+    .apikey-management {
+      min-height: auto;
+    }
+
+    .header-section {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    .header-content {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .section-title {
+      font-size: 16px;
+      font-weight: 500;
+      color: var(--gray-900);
+      line-height: 1.4;
+      margin: 12px 0 4px;
+    }
+
+    .section-description {
+      font-size: 14px;
+      color: var(--gray-600);
+      line-height: 1.4;
+      margin: 0;
+    }
+
+    .section-subtitle {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 500;
+      color: var(--gray-900);
+    }
+
+    .add-btn {
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
 
     @media (max-width: 900px) {
-      height: 70vh;
-      padding: 0px;
+      height: auto;
+      padding: 10px 12px 12px;
     }
-
-    h3 {
-      font-weight: 600;
-      color: var(--gray-900);
-      margin-bottom: 0.5em;
-    }
-
-    /* BasicSettingsSection has its own h3 styles which might conflict slightly but are mostly self-contained */
   }
 }
 
@@ -292,6 +364,7 @@ watch(
   border-bottom: 1px solid var(--gray-150);
   background: var(--gray-0);
   padding: 0;
+  padding-left: 42px;
   flex-shrink: 0;
 
   @media (max-width: 900px) {

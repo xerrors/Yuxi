@@ -3,11 +3,11 @@
     <!-- 头部区域 -->
     <div class="header-section">
       <div class="header-content">
-        <h3 class="title">部门管理</h3>
-        <p class="description">管理系统部门，部门下的用户会被隔离管理。</p>
+        <div class="section-title">部门管理</div>
+        <p class="section-description">管理系统部门，部门下的用户会被隔离管理。</p>
       </div>
-      <a-button type="primary" @click="showAddDepartmentModal" class="add-btn">
-        <template #icon><PlusOutlined /></template>
+      <a-button type="primary" @click="showAddDepartmentModal" class="add-btn lucide-icon-btn">
+        <template #icon><Plus :size="16" /></template>
         添加部门
       </a-button>
     </div>
@@ -46,9 +46,9 @@
                       type="text"
                       size="small"
                       @click="showEditDepartmentModal(record)"
-                      class="action-btn"
+                      class="action-btn lucide-icon-btn"
                     >
-                      <EditOutlined />
+                      <Pencil :size="14" />
                     </a-button>
                   </a-tooltip>
                   <a-tooltip title="删除部门">
@@ -58,9 +58,9 @@
                       danger
                       @click="confirmDeleteDepartment(record)"
                       :disabled="record.user_count > 0"
-                      class="action-btn"
+                      class="action-btn lucide-icon-btn"
                     >
-                      <DeleteOutlined />
+                      <Trash2 :size="14" />
                     </a-button>
                   </a-tooltip>
                 </a-space>
@@ -110,7 +110,7 @@
 
         <template v-if="!departmentManagement.editMode">
           <div class="admin-section-title">
-            <TeamOutlined />
+            <Users :size="16" />
             <span>部门管理员</span>
           </div>
           <p class="admin-section-hint">
@@ -170,7 +170,7 @@
 import { reactive, onMounted, watch } from 'vue'
 import { notification, Modal } from 'ant-design-vue'
 import { departmentApi, apiSuperAdminGet } from '@/apis'
-import { DeleteOutlined, EditOutlined, PlusOutlined, TeamOutlined } from '@ant-design/icons-vue'
+import { Delete as Trash2, Edit3 as Pencil, Plus, Users } from 'lucide-vue-next'
 
 // 表格列定义
 const columns = [
@@ -454,27 +454,6 @@ onMounted(() => {
 
 <style lang="less" scoped>
 .department-management {
-  margin-top: 12px;
-  min-height: 50vh;
-
-  .header-section {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 16px;
-
-    .header-content {
-      flex: 1;
-
-      .description {
-        font-size: 14px;
-        color: var(--gray-600);
-        margin: 0;
-        line-height: 1.4;
-      }
-    }
-  }
-
   .content-section {
     overflow: hidden;
 

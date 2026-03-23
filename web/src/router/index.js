@@ -38,8 +38,8 @@ const router = createRouter({
           meta: { keepAlive: true, requiresAuth: true }
         },
         {
-          path: ':agent_id',
-          name: 'AgentCompWithId',
+          path: ':thread_id',
+          name: 'AgentCompWithThreadId',
           component: () => import('../views/AgentView.vue'),
           meta: { keepAlive: true, requiresAuth: true }
         }
@@ -156,27 +156,14 @@ router.beforeEach(async (to, from, next) => {
 
   // 如果路由需要管理员权限但用户不是管理员
   if (requiresAdmin && !isAdmin) {
-    // 如果是普通用户，跳转到默认智能体页面
+    // 如果是普通用户，跳转到聊天页空态
     try {
       const agentStore = useAgentStore()
       // 等待 store 初始化完成
       if (!agentStore.isInitialized) {
         await agentStore.initialize()
       }
-
-      const defaultAgent = agentStore.defaultAgent
-      if (defaultAgent && defaultAgent.id) {
-        next(`/agent/${defaultAgent.id}`)
-      } else {
-        // 如果没有默认智能体，可以考虑跳转到第一个可用的智能体，或者一个特定的页面
-        const agentIds = Object.keys(agentStore.agents)
-        if (agentIds.length > 0) {
-          next(`/agent/${agentIds[0]}`)
-        } else {
-          // 没有可用的智能体，跳转到聊天页
-          next('/agent')
-        }
-      }
+      next('/agent')
     } catch (error) {
       console.error('获取智能体信息失败:', error)
       next('/agent')
@@ -191,12 +178,7 @@ router.beforeEach(async (to, from, next) => {
       if (!agentStore.isInitialized) {
         await agentStore.initialize()
       }
-      const defaultAgent = agentStore.defaultAgent
-      if (defaultAgent && defaultAgent.id) {
-        next(`/agent/${defaultAgent.id}`)
-      } else {
-        next('/agent')
-      }
+      next('/agent')
     } catch (error) {
       console.error('获取智能体信息失败:', error)
       next('/agent')

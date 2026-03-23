@@ -3,12 +3,12 @@
     <!-- 头部区域 -->
     <div class="header-section">
       <div class="header-content">
-        <h3 class="title">API Key 管理</h3>
-        <p class="description">
+        <div class="section-title">API Key 管理</div>
+        <p class="section-description">
           创建和管理 API Key，用于外部系统调用 Agent 对话接口。密钥仅显示一次，请妥善保管。
         </p>
       </div>
-      <a-button type="primary" @click="showCreateModal" class="add-btn">
+      <a-button type="primary" @click="showCreateModal" class="add-btn lucide-icon-btn">
         <Plus :size="14" />
         创建 API Key
       </a-button>
@@ -59,7 +59,7 @@
                       type="text"
                       size="small"
                       @click="regenerateKey(key)"
-                      class="action-btn"
+                      class="action-btn lucide-icon-btn"
                     >
                       <RefreshCw :size="14" />
                       <span>重新生成</span>
@@ -72,7 +72,7 @@
                     cancel-text="取消"
                   >
                     <a-tooltip title="删除">
-                      <a-button type="text" size="small" danger class="action-btn">
+                      <a-button type="text" size="small" danger class="action-btn lucide-icon-btn">
                         <Trash2 :size="14" />
                         <span>删除</span>
                       </a-button>
@@ -128,7 +128,7 @@
         />
         <div class="secret-value-container">
           <code class="secret-value">{{ createdSecret }}</code>
-          <a-button type="primary" @click="copySecret" class="copy-btn">
+          <a-button type="primary" @click="copySecret" class="copy-btn lucide-icon-btn">
             <Copy :size="14" />
             复制
           </a-button>
@@ -262,40 +262,6 @@ onMounted(() => {
 
 <style lang="less" scoped>
 .apikey-management {
-  padding: 12px;
-  min-height: 50vh;
-
-  .header-section {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 20px;
-    gap: 16px;
-
-    .header-content {
-      .title {
-        font-size: 16px;
-        font-weight: 600;
-        color: var(--gray-900);
-        margin: 0 0 4px 0;
-      }
-
-      .description {
-        font-size: 13px;
-        color: var(--gray-600);
-        margin: 0;
-        line-height: 1.4;
-      }
-    }
-
-    .add-btn {
-      flex-shrink: 0;
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-    }
-  }
-
   .content-section {
     .error-message {
       margin-bottom: 16px;

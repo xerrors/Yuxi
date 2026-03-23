@@ -1,23 +1,22 @@
 <template>
   <div class="model-providers-section">
-    <!-- 自定义供应商管理区域 -->
-    <h3>模型配置</h3>
-    <p>请在 <code>.env</code> 文件中配置对应的 APIKEY，并重新启动服务</p>
-    <a-divider />
-    <div class="custom-providers-section">
-      <div class="section-header">
-        <h3>自定义供应商</h3>
-        <a-button type="primary" @click="openAddCustomProviderModal">
-          <template #icon>
-            <PlusOutlined />
-          </template>
-          添加自定义供应商
-        </a-button>
-      </div>
-      <p class="section-description">
-        添加自定义的LLM供应商，支持OpenAI兼容的API格式。API密钥支持直接配置或使用环境变量名。
-      </p>
 
+    <div class="header-section">
+      <div class="header-content">
+        <div class="section-title">自定义供应商</div>
+        <p class="section-description">
+          添加自定义的LLM供应商，支持OpenAI兼容的API格式。
+        </p>
+      </div>
+      <a-button type="primary" @click="openAddCustomProviderModal" class="add-btn lucide-icon-btn">
+        <template #icon>
+            <Plus :size="16" />
+        </template>
+        添加自定义供应商
+      </a-button>
+    </div>
+
+    <div class="custom-providers-section">
       <!-- 自定义供应商列表 -->
       <div
         class="custom-provider-card"
@@ -33,20 +32,22 @@
             <a-button
               type="text"
               size="small"
+              class="lucide-icon-btn"
               @click="testCustomProvider(providerId, provider.default)"
             >
               <template #icon>
-                <ApiOutlined />
+                <PlugZap :size="14" />
               </template>
               测试连接
             </a-button>
             <a-button
               type="text"
               size="small"
+              class="lucide-icon-btn"
               @click="openEditCustomProviderModal(providerId, provider)"
             >
               <template #icon>
-                <EditOutlined />
+                <Pencil :size="14" />
               </template>
               编辑
             </a-button>
@@ -56,9 +57,9 @@
               ok-text="确定"
               cancel-text="取消"
             >
-              <a-button type="text" size="small" danger>
+              <a-button type="text" size="small" danger class="lucide-icon-btn">
                 <template #icon>
-                  <DeleteOutlined />
+                  <Trash2 :size="14" />
                 </template>
                 删除
               </a-button>
@@ -86,7 +87,7 @@
       <!-- 无自定义供应商时的提示 -->
       <div v-if="Object.keys(customProviders).length === 0" class="empty-state">
         <a-empty description="暂无自定义供应商">
-          <a-button type="primary" @click="openAddCustomProviderModal">添加自定义供应商</a-button>
+          <!-- <a-button type="primary" @click="openAddCustomProviderModal">添加自定义供应商</a-button> -->
         </a-empty>
       </div>
     </div>
@@ -96,12 +97,13 @@
     <!-- 系统内置供应商 -->
     <div class="builtin-providers-section">
       <div class="section-header">
-        <h3>系统内置供应商</h3>
+        <div class="section-subtitle">系统内置供应商</div>
         <div class="providers-stats">
           <span class="stats-item available"> {{ modelKeys.length }} 可用 </span>
           <span class="stats-item unavailable"> {{ notModelKeys.length }} 未配置 </span>
         </div>
       </div>
+      <p class="section-description">请在 <code>.env</code> 文件中配置对应的 APIKEY，并重新启动服务</p>
 
       <!-- 已配置的供应商 -->
       <div
@@ -114,16 +116,16 @@
             <img :src="modelIcons[item] || modelIcons.default" alt="模型图标" />
           </div>
           <div class="model-title-container">
-            <h3>{{ modelNames[item].name }}</h3>
+            <div class="model-name">{{ modelNames[item].name }}</div>
           </div>
           <div class="provider-meta">
             <a-button
               type="text"
-              class="expand-button"
+              class="expand-button lucide-icon-btn"
               @click.stop="openProviderConfig(item)"
               title="配置模型"
             >
-              <SettingOutlined /> 已选 {{ modelNames[item].models?.length || 0 }} 个模型
+              <Settings :size="14" /> 已选 {{ modelNames[item].models?.length || 0 }} 个模型
             </a-button>
           </div>
         </div>
@@ -147,9 +149,9 @@
             <img :src="modelIcons[item] || modelIcons.default" alt="模型图标" />
           </div>
           <div class="model-title-container">
-            <h3>{{ modelNames[item].name }}</h3>
+            <div class="model-name">{{ modelNames[item].name }}</div>
             <a :href="modelNames[item].url" target="_blank" class="model-url">
-              查看信息 <InfoCircleOutlined />
+              查看信息 <CircleHelp :size="13" />
             </a>
           </div>
           <div class="missing-keys">
@@ -173,9 +175,7 @@
     >
       <div v-if="providerConfig.loading" class="modal-loading-container">
         <a-spin
-          :indicator="
-            h(LoadingOutlined, { style: { fontSize: '32px', color: 'var(--main-color)' } })
-          "
+          :indicator="h(LoaderCircle, { size: 32, color: 'var(--main-color)' })"
         />
         <div class="loading-text">正在获取模型列表...</div>
       </div>
@@ -225,7 +225,7 @@
               allow-clear
             >
               <template #prefix>
-                <SearchOutlined />
+                <Search :size="14" />
               </template>
             </a-input>
           </div>
@@ -384,16 +384,15 @@
 import { computed, reactive, watch, h, ref } from 'vue'
 import { message } from 'ant-design-vue'
 import {
-  InfoCircleOutlined, // Keep if still used for other things, if not, remove. For now assume it might be used elsewhere.
-  SettingOutlined,
-  DownCircleOutlined,
-  LoadingOutlined,
-  SearchOutlined,
-  PlusOutlined,
-  EditOutlined,
-  DeleteOutlined,
-  ApiOutlined
-} from '@ant-design/icons-vue'
+  CircleHelp,
+  Settings,
+  LoaderCircle,
+  Search,
+  Plus,
+  Pencil,
+  Trash2,
+  PlugZap
+} from 'lucide-vue-next'
 import { useConfigStore } from '@/stores/config'
 import { modelIcons } from '@/utils/modelIcon'
 import { agentApi } from '@/apis/agent_api'
@@ -821,20 +820,9 @@ const testCustomProvider = async (providerId, modelName) => {
 </script>
 
 <style lang="less" scoped>
-.model-providers-section {
-  padding-top: 12px;
-}
 
 .custom-providers-section {
   margin-bottom: 24px;
-
-  .section-description {
-    margin: 0 0 16px 0;
-    color: var(--gray-600);
-    font-size: 14px;
-    line-height: 1.5;
-  }
-
   .custom-provider-card {
     border: 1px solid var(--gray-200);
     background: var(--gray-0);
@@ -858,7 +846,7 @@ const testCustomProvider = async (providerId, modelName) => {
 
         h4 {
           margin: 0;
-          font-weight: 600;
+          font-weight: 500;
           color: var(--gray-900);
         }
 
@@ -906,7 +894,7 @@ const testCustomProvider = async (providerId, modelName) => {
 
   .empty-state {
     text-align: center;
-    padding: 40px 20px;
+    padding: 10px 20px;
     background: var(--gray-25);
     border-radius: 8px;
     border: 1px dashed var(--gray-300);
@@ -919,14 +907,16 @@ const testCustomProvider = async (providerId, modelName) => {
   align-items: center;
   margin-bottom: 12px;
 
-  h3 {
+  .section-subtitle {
     margin: 0;
+    font-size: 16px;
     font-weight: 600;
     color: var(--gray-900);
   }
 }
 
 .builtin-providers-section {
+
   .section-header {
     .providers-stats {
       display: flex;
@@ -964,7 +954,7 @@ const testCustomProvider = async (providerId, modelName) => {
   border: 1px solid var(--gray-150);
   background-color: var(--gray-0);
   border-radius: 8px;
-  margin-bottom: 16px;
+  margin: 16px 0;
   padding: 0;
   overflow: hidden;
 
@@ -980,7 +970,7 @@ const testCustomProvider = async (providerId, modelName) => {
     .card-header {
       background: var(--gray-25);
 
-      h3 {
+      .model-name {
         color: var(--gray-700);
         font-weight: 500;
       }
@@ -1004,7 +994,7 @@ const testCustomProvider = async (providerId, modelName) => {
       flex-direction: column;
       flex: 1;
 
-      h3 {
+      .model-name {
         margin: 0;
         font-size: 14px;
         font-weight: 600;

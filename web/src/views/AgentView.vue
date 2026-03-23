@@ -6,6 +6,7 @@
         <AgentChatComponent
           ref="chatComponentRef"
           :single-mode="false"
+          @thread-change="handleThreadChange"
         >
           <template #input-actions-left>
             <button
@@ -106,60 +107,69 @@ const route = useRoute()
 const router = useRouter()
 
 // 从 agentStore 中获取响应式状态
-const { agents, selectedAgentId, selectedConfigSummary, isLoadingConfig } = storeToRefs(agentStore)
+const { selectedAgentId, defaultAgentId, selectedConfigSummary, isLoadingConfig } =
+  storeToRefs(agentStore)
 
-const syncingRouteAgent = ref(false)
+const syncingRouteThread = ref(false)
 
-const getRouteAgentId = () => {
-  const value = route.params.agent_id
+const getRouteThreadId = () => {
+  const value = route.params.thread_id
   return typeof value === 'string' ? value : ''
 }
 
-const syncSelectedAgentFromRoute = async () => {
-  const routeAgentId = getRouteAgentId()
-  if (!routeAgentId) return
+const syncSelectedThreadFromRoute = async () => {
+  const chatComponent = chatComponentRef.value
+  if (!chatComponent?.selectThreadFromRoute) return
 
-  syncingRouteAgent.value = true
+  const threadId = getRouteThreadId()
+  syncingRouteThread.value = true
   try {
-    if (!agentStore.isInitialized) {
-      await agentStore.initialize()
-    }
-
-    const routeAgentExists = (agents.value || []).some((agent) => agent.id === routeAgentId)
-    if (!routeAgentExists) {
-      if (selectedAgentId.value) {
-        await router.replace({
-          name: 'AgentCompWithId',
-          params: { agent_id: selectedAgentId.value }
-        })
+    if (!threadId) {
+      if (!agentStore.isInitialized) {
+        await agentStore.initialize()
       }
-      return
+      const targetAgentId = defaultAgentId.value
+      if (targetAgentId && selectedAgentId.value !== targetAgentId) {
+        await agentStore.selectAgent(targetAgentId)
+      }
     }
 
-    if (selectedAgentId.value !== routeAgentId) {
-      await agentStore.selectAgent(routeAgentId)
+    const ok = await chatComponent.selectThreadFromRoute(threadId)
+    if (threadId && !ok) {
+      await router.replace({ name: 'AgentComp' })
     }
   } catch (error) {
     handleChatError(error, 'load')
   } finally {
-    syncingRouteAgent.value = false
+    syncingRouteThread.value = false
   }
 }
 
 watch(
-  () => route.params.agent_id,
+  () => route.params.thread_id,
   () => {
-    syncSelectedAgentFromRoute()
+    syncSelectedThreadFromRoute()
   },
   { immediate: true }
 )
 
-watch(selectedAgentId, (newAgentId) => {
-  if (!newAgentId || syncingRouteAgent.value) return
-  const routeAgentId = getRouteAgentId()
-  if (routeAgentId === newAgentId) return
-  router.replace({ name: 'AgentCompWithId', params: { agent_id: newAgentId } })
+watch(chatComponentRef, (instance) => {
+  if (!instance) return
+  syncSelectedThreadFromRoute()
 })
+
+const handleThreadChange = (threadId) => {
+  if (syncingRouteThread.value) return
+  const currentRouteThreadId = getRouteThreadId()
+  const nextThreadId = threadId || ''
+  if (currentRouteThreadId === nextThreadId) return
+
+  if (nextThreadId) {
+    router.replace({ name: 'AgentCompWithThreadId', params: { thread_id: nextThreadId } })
+  } else {
+    router.replace({ name: 'AgentComp' })
+  }
+}
 
 const openConfigSidebar = () => {
   chatUIStore.isConfigSidebarOpen = !chatUIStore.isConfigSidebarOpen
@@ -177,7 +187,7 @@ const toggleMoreMenu = (event) => {
   if (chatUIStore.moreMenuOpen) {
     // 只在打开时计算位置
     const rect = event.currentTarget.getBoundingClientRect()
-    chatUIStore.openMoreMenu(rect.right - 130, rect.bottom + 8)
+    chatUIStore.openMoreMenu(rect.right - 110, rect.bottom + 8)
   }
 }
 

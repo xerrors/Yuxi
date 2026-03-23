@@ -24,7 +24,7 @@
 ## v0.6
 
 <!-- 添加到这里 -->
-
+- 调整 Agent 路由为 `/agent/{thread_id}`：`/agent` 进入未选中对话空态，不再在 URL 中展示 `agent_id`；发送首条消息时基于当前 `selectedAgentId` 与配置创建新对话，并自动跳转到对应线程路由。
 - 新增 API Key 管理功能，支持外部系统通过 API Key 调用 Agent 对话接口（`POST /api/chat/agent/{agent_id}`）。统一使用 `Authorization: Bearer <api_key>` 认证，API Key 以 `yxkey_` 开头。获取 API Key 即代表拥有绑定用户的所有接口访问权限。
 - 将 后端代码 和 agents 解耦，agents 作为单独的 package 使用
 - 添加 subagents

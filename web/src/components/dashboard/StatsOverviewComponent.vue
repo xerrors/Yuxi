@@ -46,7 +46,7 @@
         </div>
       </div>
 
-      <div class="stat-card secondary">
+      <div class="stat-card secondary clickable" @click="handleFeedbackClick">
         <div class="stat-icon">
           <BarChart3 class="icon" />
         </div>
@@ -88,6 +88,14 @@ const props = defineProps({
     default: () => ({})
   }
 })
+
+// Emits
+const emit = defineEmits(['open-feedback'])
+
+// Methods
+const handleFeedbackClick = () => {
+  emit('open-feedback')
+}
 
 // Methods
 const getSatisfactionClass = () => {
@@ -163,6 +171,10 @@ const getSatisfactionClass = () => {
           background-color: var(--color-accent-50);
           color: var(--color-accent-700);
         }
+      }
+
+      &.clickable {
+        cursor: pointer;
       }
 
       &.satisfaction-high {

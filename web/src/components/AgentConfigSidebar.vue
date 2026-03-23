@@ -51,11 +51,19 @@
     <!-- 侧边栏内容 -->
     <div class="sidebar-content">
       <div class="agent-info" v-if="selectedAgent">
-        <div class="agent-basic-info">
+        <!-- <div class="agent-basic-info">
           <p class="agent-description">{{ selectedAgent.description }}</p>
-        </div>
+        </div> -->
 
         <!-- <a-divider /> -->
+
+        <div class="config-segment" v-if="!isEmptyConfig">
+          <a-segmented
+            v-model:value="currentSegment"
+            :options="segmentOptions"
+            block
+          />
+        </div>
 
         <div
           v-if="selectedAgentId && configurableItems"
@@ -72,7 +80,7 @@
               class="config-alert"
             />
             <!-- 统一显示所有配置项 -->
-            <template v-for="(value, key) in configurableItems" :key="key">
+            <template v-for="(value, key) in filteredConfigurableItems" :key="key">
               <a-form-item
                 v-if="shouldShowConfig(key, value)"
                 :label="getConfigLabel(key, value)"
@@ -524,6 +532,12 @@ const createConfigModalOpen = ref(false)
 const createConfigLoading = ref(false)
 const createConfigName = ref('')
 const CREATE_CONFIG_OPTION_VALUE = '__create_config__'
+const currentSegment = ref('model')
+const segmentOptions = [
+  { label: '模型', value: 'model' },
+  { label: '工具', value: 'tools' },
+  { label: '其他', value: 'other' }
+]
 
 const isEmptyConfig = computed(() => {
   return !selectedAgentId.value || Object.keys(configurableItems.value).length === 0
@@ -552,6 +566,34 @@ const hasOtherConfigs = computed(() => {
 
     return !isBasic && !isTools
   })
+})
+
+const segmentConfigKeys = computed(() => {
+  const keys = Object.keys(configurableItems.value)
+  return {
+    model: keys.filter(key => {
+      const meta = configurableItems.value[key]?.template_metadata?.kind
+      return meta === 'llm' || meta === 'prompt'
+    }),
+    tools: keys.filter(key => {
+      const meta = configurableItems.value[key]?.template_metadata?.kind
+      return ['tools', 'knowledges', 'mcps', 'skills', 'subagents'].includes(meta)
+    }),
+    other: keys.filter(key => {
+      const meta = configurableItems.value[key]?.template_metadata?.kind
+      return !['llm', 'prompt', 'tools', 'knowledges', 'mcps', 'skills', 'subagents'].includes(meta)
+    })
+  }
+})
+
+const filteredConfigurableItems = computed(() => {
+  if (isEmptyConfig.value) return {}
+  const keys = segmentConfigKeys.value[currentSegment.value] || []
+  const filtered = {}
+  keys.forEach(key => {
+    filtered[key] = configurableItems.value[key]
+  })
+  return filtered
 })
 
 const configSwitchOptions = computed(() => {
@@ -1231,6 +1273,13 @@ const confirmDeleteConfig = async () => {
           line-height: 1.5;
         }
       }
+    }
+
+    .config-segment {
+      margin: 0 auto;
+      margin-bottom: 6px;
+      padding: 4px 0;
+      width: 80%;
     }
 
     .config-form-content {

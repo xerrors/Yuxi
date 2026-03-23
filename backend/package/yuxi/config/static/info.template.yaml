@@ -11,12 +11,18 @@ organization:
 # 项目信息
 branding:
   name: "Yuxi"
-  title: "Yuxi: 更智能的知识库智能体平台"     # 系统标题
-  subtitle: "大模型驱动的知识库智能体平台"          # 副标题
+  title: "让智能体可构建、可编排、可落地"     # 系统标题
+  subtitle: "开源智能体平台套件，融合 RAG 与知识图谱"          # 副标题（subtitles 为空时使用）
+  subtitles:
+    - "开源智能体平台套件，融合 RAG 与知识图谱"
+    - "统一编排 Agent、知识库、图谱与工具链"
+    - "让智能体可构建，让知识可连接，让决策可验证"
+    - "让智能体可落地，让流程可编排，让协作可扩展"
+    - "让数据可沉淀，让能力可复用，让系统可进化"
 
 features:
   - label: "GitHub Stars"
-    value: "4100+"
+    value: "4600+"
     description: "开发者社区的认可与支持"
     icon: "stars"
   - label: "已解决 Issues"
@@ -24,11 +30,11 @@ features:
     description: "持续改进和问题解决能力"
     icon: "issues"
   - label: "累计 Commits"
-    value: "1300+"
+    value: "1500+"
     description: "活跃的开发迭代和功能更新"
     icon: "commits"
   - label: "开源协议"
-    value: "MIT 协议"
+    value: "MIT License"
     description: "完全免费，支持商业使用"
     icon: "license"
 

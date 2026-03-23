@@ -3,11 +3,11 @@
     <!-- 头部区域 -->
     <div class="header-section">
       <div class="header-content">
-        <h3 class="title">用户管理</h3>
-        <p class="description">管理系统用户，请谨慎操作。删除用户后该用户将无法登录系统。</p>
+        <div class="section-title">用户管理</div>
+        <p class="section-description">管理系统用户，请谨慎操作。删除用户后该用户将无法登录系统。</p>
       </div>
-      <a-button type="primary" @click="showAddUserModal" class="add-btn">
-        <template #icon><PlusOutlined /></template>
+      <a-button type="primary" @click="showAddUserModal" class="add-btn lucide-icon-btn">
+        <template #icon><Plus :size="16" /></template>
         添加用户
       </a-button>
     </div>
@@ -85,9 +85,9 @@
                     type="text"
                     size="small"
                     @click="showEditUserModal(user)"
-                    class="action-btn"
+                    class="action-btn lucide-icon-btn"
                   >
-                    <EditOutlined />
+                    <Pencil :size="14" />
                     <span>编辑</span>
                   </a-button>
                 </a-tooltip>
@@ -101,9 +101,9 @@
                       user.id === userStore.userId ||
                       (user.role === 'superadmin' && userStore.userRole !== 'superadmin')
                     "
-                    class="action-btn"
+                    class="action-btn lucide-icon-btn"
                   >
-                    <DeleteOutlined />
+                    <Trash2 :size="14" />
                     <span>删除</span>
                   </a-button>
                 </a-tooltip>
@@ -238,8 +238,7 @@ import { reactive, onMounted, watch } from 'vue'
 import { notification, Modal } from 'ant-design-vue'
 import { useUserStore } from '@/stores/user'
 import { departmentApi } from '@/apis'
-import { DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons-vue'
-import { User, UserLock, UserStar } from 'lucide-vue-next'
+import { Plus, Pencil, Trash2, User, UserLock, UserStar } from 'lucide-vue-next'
 import { formatDateTime } from '@/utils/time'
 
 const userStore = useUserStore()
@@ -585,27 +584,6 @@ onMounted(async () => {
 
 <style lang="less" scoped>
 .user-management {
-  margin-top: 12px;
-  min-height: 50vh;
-
-  .header-section {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-
-    .header-content {
-      flex: 1;
-
-      .description {
-        font-size: 14px;
-        color: var(--gray-600);
-        margin: 0;
-        line-height: 1.4;
-        margin-bottom: 16px;
-      }
-    }
-  }
-
   .content-section {
     overflow: hidden;
 

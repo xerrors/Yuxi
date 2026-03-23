@@ -11,6 +11,7 @@
       <a-result status="error" :title="error.title" :sub-title="error.message">
         <template #extra>
           <a-button type="primary" @click="retryLoad">重试</a-button>
+          <a-button :href="faqUrl" target="_blank" rel="noopener noreferrer">常见问题</a-button>
         </template>
       </a-result>
     </div>
@@ -27,29 +28,6 @@
             />
             <span class="logo-text">{{ infoStore.organization.name }}</span>
           </div>
-          <nav class="nav-links">
-            <router-link
-              to="/agent"
-              class="nav-link"
-              v-if="userStore.isLoggedIn && userStore.isAdmin"
-            >
-              <span>智能体</span>
-            </router-link>
-            <router-link
-              to="/graph"
-              class="nav-link"
-              v-if="userStore.isLoggedIn && userStore.isAdmin"
-            >
-              <span>知识图谱</span>
-            </router-link>
-            <router-link
-              to="/database"
-              class="nav-link"
-              v-if="userStore.isLoggedIn && userStore.isAdmin"
-            >
-              <span>知识库</span>
-            </router-link>
-          </nav>
           <div class="header-actions">
             <div class="github-link">
               <a href="https://github.com/xerrors/Yuxi-Know" target="_blank">
@@ -66,22 +44,41 @@
         </div>
 
         <div class="hero-layout">
-          <div class="hero-content">
-            <h1 class="title">{{ infoStore.branding.title }}</h1>
-            <p class="subtitle">{{ infoStore.branding.subtitle }}</p>
+          <div class="hero-content reveal-up">
+            <p v-if="typedBadge" class="hero-badge" :class="{ typing: isBadgeTyping }">
+              <template v-if="badgeParts.number">
+                <span>{{ badgeParts.prefix }}</span>
+                <a
+                  class="hero-badge-link"
+                  :href="repoUrl"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <span class="hero-badge-number">{{ badgeParts.number }}</span>
+                </a>
+                <span>{{ badgeParts.suffix }}</span>
+              </template>
+              <template v-else>{{ typedBadge }}</template>
+            </p>
+            <h1 class="title reveal-up delay-1">{{ infoStore.branding.title }}</h1>
+            <Transition name="subtitle-switch" mode="out-in">
+              <p v-if="currentSubtitle" class="subtitle" :key="currentSubtitle">{{ currentSubtitle }}</p>
+            </Transition>
             <!-- <p class="description">{{ infoStore.branding.description }}</p> -->
             <div class="hero-actions">
-              <button class="button-base primary" @click="goToChat">开始对话</button>
-              <a
-                class="button-base secondary"
-                href="https://xerrors.github.io/Yuxi-Know/"
-                target="_blank"
+              <button class="button-base primary" @click="goToChat">开始体验</button>
+              <a class="doc-text-link" href="https://xerrors.github.io/Yuxi-Know/" target="_blank"
                 >查看文档</a
               >
             </div>
           </div>
           <div class="insight-panel" v-if="featureCards.length">
-            <div class="stat-card" v-for="card in featureCards" :key="card.label">
+            <div
+              class="stat-card"
+              v-for="(card, index) in featureCards"
+              :key="card.label"
+              :style="{ '--card-stagger': `${index}` }"
+            >
               <div class="stat-headline">
                 <span class="stat-icon" v-if="card.icon">
                   <component :is="card.icon" />
@@ -128,14 +125,12 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useInfoStore } from '@/stores/info'
 import { useAgentStore } from '@/stores/agent'
-import { useThemeStore } from '@/stores/theme'
 import { healthApi } from '@/apis/system_api'
-import { Result, Button } from 'ant-design-vue'
 import UserInfoComponent from '@/components/UserInfoComponent.vue'
 import ProjectOverview from '@/components/ProjectOverview.vue'
 import {
@@ -150,18 +145,176 @@ import {
   ShieldCheck
 } from 'lucide-vue-next'
 
-const AResult = Result
-const AButton = Button
-
 const router = useRouter()
 const userStore = useUserStore()
 const infoStore = useInfoStore()
 const agentStore = useAgentStore()
-const themeStore = useThemeStore()
+const repoUrl = 'https://github.com/xerrors/Yuxi-Know'
+const faqUrl = 'https://xerrors.github.io/Yuxi-Know/latest/changelog/faq.html'
 
 // 加载状态
 const isLoading = ref(true)
 const error = ref(null)
+const typedBadge = ref('')
+const isBadgeTyping = ref(false)
+let badgeTimer = null
+let subtitleTimer = null
+let starsFetchController = null
+
+const GITHUB_REPO_API = 'https://api.github.com/repos/xerrors/Yuxi-Know'
+const GITHUB_STARS_TIMEOUT = 3000
+
+const formatStars = (count) => {
+  if (!Number.isFinite(count) || count <= 0) {
+    return ''
+  }
+  return `${count}`
+}
+
+const subtitleIndex = ref(0)
+
+const subtitleOptions = computed(() => {
+  const subtitles = infoStore.branding?.subtitles
+  if (Array.isArray(subtitles)) {
+    const list = subtitles
+      .map((item) => (typeof item === 'string' ? item.trim() : ''))
+      .filter(Boolean)
+    if (list.length) {
+      return list
+    }
+  }
+
+  const fallback = (infoStore.branding?.subtitle || '').trim()
+  return fallback ? [fallback] : []
+})
+
+const currentSubtitle = computed(() => subtitleOptions.value[subtitleIndex.value] || '')
+const badgeParts = computed(() => {
+  const text = typedBadge.value || ''
+  const match = text.match(/^(.*?)(\d[\d,]*\+?)(\s+GitHub Stars.*)?$/)
+  if (!match) {
+    return {
+      prefix: text,
+      number: '',
+      suffix: ''
+    }
+  }
+
+  return {
+    prefix: match[1] || '',
+    number: match[2] || '',
+    suffix: match[3] || ''
+  }
+})
+
+const stopSubtitleCarousel = () => {
+  if (subtitleTimer) {
+    clearInterval(subtitleTimer)
+    subtitleTimer = null
+  }
+}
+
+const startSubtitleCarousel = () => {
+  stopSubtitleCarousel()
+  subtitleIndex.value = 0
+
+  if (subtitleOptions.value.length <= 1) {
+    return
+  }
+
+  subtitleTimer = setInterval(() => {
+    subtitleIndex.value = (subtitleIndex.value + 1) % subtitleOptions.value.length
+  }, 2800)
+}
+
+const stopStarsFetch = () => {
+  if (starsFetchController) {
+    starsFetchController.abort()
+    starsFetchController = null
+  }
+}
+
+const fetchGithubStars = async () => {
+  stopStarsFetch()
+  const controller = new AbortController()
+  starsFetchController = controller
+  const timer = setTimeout(() => {
+    controller.abort()
+  }, GITHUB_STARS_TIMEOUT)
+
+  try {
+    const response = await fetch(GITHUB_REPO_API, { signal: controller.signal })
+    if (!response.ok) {
+      return null
+    }
+
+    const data = await response.json()
+    const stars = Number(data?.stargazers_count)
+    return Number.isFinite(stars) && stars > 0 ? stars : null
+  } catch (e) {
+    return null
+  } finally {
+    clearTimeout(timer)
+    if (starsFetchController === controller) {
+      starsFetchController = null
+    }
+  }
+}
+
+const getHeroBadgeText = (starsCount = null) => {
+  const realtimeStars = formatStars(starsCount)
+  if (realtimeStars) {
+    return `已获得 ${realtimeStars} GitHub Stars`
+  }
+
+  const features = Array.isArray(infoStore.features) ? infoStore.features : []
+  const starFeature = features.find((item) => {
+    if (typeof item === 'string') {
+      return /star/i.test(item)
+    }
+
+    return /star|github/i.test(item?.label || '') || /stars|github/i.test(item?.icon || '')
+  })
+
+  if (!starFeature) {
+    return ''
+  }
+
+  const starValue =
+    typeof starFeature === 'string'
+      ? ''
+      : (starFeature?.value || '').toString().trim()
+
+  return starValue ? `已获得 ${starValue} GitHub Stars` : '已获得 GitHub Stars'
+}
+
+const stopBadgeTyping = () => {
+  if (badgeTimer) {
+    clearInterval(badgeTimer)
+    badgeTimer = null
+  }
+  isBadgeTyping.value = false
+}
+
+const startBadgeTyping = (starsCount = null) => {
+  stopBadgeTyping()
+  const text = getHeroBadgeText(starsCount)
+  typedBadge.value = ''
+
+  if (!text) {
+    return
+  }
+
+  let index = 0
+  isBadgeTyping.value = true
+  badgeTimer = setInterval(() => {
+    index += 1
+    typedBadge.value = text.slice(0, index)
+    if (index >= text.length) {
+      stopBadgeTyping()
+    }
+  }, 45)
+}
 
 const checkHealth = async () => {
   try {
@@ -187,8 +340,15 @@ const loadData = async () => {
     await checkHealth()
     // 健康检查通过后加载配置
     await infoStore.loadInfoConfig()
+    startSubtitleCarousel()
+    const starsCount = await fetchGithubStars()
+    startBadgeTyping(starsCount)
   } catch (e) {
     console.error('加载失败:', e)
+    stopBadgeTyping()
+    stopSubtitleCarousel()
+    stopStarsFetch()
+    typedBadge.value = ''
   } finally {
     isLoading.value = false
   }
@@ -233,6 +393,12 @@ const goToChat = async () => {
 onMounted(() => {
   // 加载数据
   loadData()
+})
+
+onUnmounted(() => {
+  stopBadgeTyping()
+  stopSubtitleCarousel()
+  stopStarsFetch()
 })
 
 const iconKey = (value) => (typeof value === 'string' ? value.toLowerCase() : '')
@@ -485,6 +651,57 @@ const actionLinks = computed(() => {
   gap: 1.25rem;
 }
 
+.reveal-up {
+  opacity: 0;
+  transform: translateY(14px);
+  animation: revealUp 0.7s ease forwards;
+}
+
+.reveal-up.delay-1 {
+  animation-delay: 120ms;
+}
+
+.hero-badge {
+  color: var(--main-600);
+  font-size: 0.92rem;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  margin: 0;
+}
+
+.hero-badge-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.hero-badge-number {
+  color: var(--main-700);
+  text-decoration: underline;
+  text-decoration-color: var(--main-500);
+  text-underline-offset: 0.15em;
+  text-decoration-thickness: 1.5px;
+  font-weight: 700;
+  transition:
+    color 0.2s ease,
+    text-decoration-color 0.2s ease;
+}
+
+.hero-badge-link:hover .hero-badge-number {
+  color: var(--main-800);
+  text-decoration-color: var(--main-700);
+}
+
+.hero-badge.typing::after {
+  content: '';
+  display: inline-block;
+  width: 1px;
+  height: 1em;
+  margin-left: 6px;
+  background: var(--main-600);
+  vertical-align: -0.1em;
+  animation: caretBlink 0.8s steps(1, end) infinite;
+}
+
 .title {
   font-size: clamp(2.5rem, 4vw, 4rem);
   font-weight: 800;
@@ -509,6 +726,21 @@ const actionLinks = computed(() => {
   font-weight: 600;
   color: var(--gray-700);
   line-height: 1.4;
+  margin: 0;
+  min-height: calc(1.4em * 1.3);
+}
+
+.subtitle-switch-enter-active,
+.subtitle-switch-leave-active {
+  transition:
+    opacity 0.32s ease,
+    transform 0.32s ease;
+}
+
+.subtitle-switch-enter-from,
+.subtitle-switch-leave-to {
+  opacity: 0;
+  transform: translateY(7px);
 }
 
 .description {
@@ -521,6 +753,22 @@ const actionLinks = computed(() => {
   flex-wrap: wrap;
   gap: 1rem;
   align-items: center;
+}
+
+.doc-text-link {
+  color: var(--main-700);
+  font-weight: 600;
+  text-decoration: none;
+  border-bottom: 1px dashed var(--main-300);
+  padding-bottom: 0.15rem;
+  transition:
+    color 0.2s ease,
+    border-color 0.2s ease;
+
+  &:hover {
+    color: var(--main-800);
+    border-color: var(--main-500);
+  }
 }
 
 .button-base {
@@ -543,9 +791,26 @@ const actionLinks = computed(() => {
   background: linear-gradient(135deg, var(--main-600), var(--main-500));
   color: var(--gray-0);
   border-color: transparent;
+  position: relative;
+  isolation: isolate;
 
   &:hover {
     background: linear-gradient(135deg, var(--main-700), var(--main-600));
+  }
+
+  &::after {
+    content: '';
+    position: absolute;
+    inset: -2px;
+    border-radius: inherit;
+    background: radial-gradient(circle, rgba(36, 131, 154, 0.35), transparent 68%);
+    opacity: 0;
+    z-index: -1;
+    transition: opacity 0.25s ease;
+  }
+
+  &:hover::after {
+    opacity: 1;
   }
 }
 
@@ -575,6 +840,10 @@ const actionLinks = computed(() => {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
+  opacity: 0;
+  transform: translateY(12px);
+  animation: cardRise 0.55s ease forwards;
+  animation-delay: calc(var(--card-stagger, 0) * 90ms + 200ms);
 }
 
 .stat-headline {
@@ -789,6 +1058,71 @@ const actionLinks = computed(() => {
 
 .footer:hover .copyright {
   opacity: 1;
+}
+
+@keyframes revealUp {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes cardRise {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes caretBlink {
+  50% {
+    opacity: 0;
+  }
+}
+
+:global(:root.dark) {
+  .hero-badge-number {
+    color: var(--main-200);
+    text-decoration-color: var(--main-300);
+  }
+
+  .hero-badge-link:hover .hero-badge-number {
+    color: var(--main-100);
+    text-decoration-color: var(--main-100);
+  }
+
+  .doc-text-link {
+    color: var(--main-300);
+    border-bottom-color: var(--main-500);
+
+    &:hover {
+      color: var(--main-200);
+      border-bottom-color: var(--main-300);
+    }
+  }
+
+  .button-base.primary::after {
+    background: radial-gradient(circle, rgba(130, 195, 214, 0.28), transparent 72%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal-up,
+  .stat-card,
+  .hero-badge.typing::after {
+    animation: none;
+  }
+
+  .reveal-up,
+  .stat-card {
+    opacity: 1;
+    transform: none;
+  }
+
+  .subtitle-switch-enter-active,
+  .subtitle-switch-leave-active {
+    transition: none;
+  }
 }
 
 @media (max-width: 768px) {

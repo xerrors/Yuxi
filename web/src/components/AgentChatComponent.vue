@@ -251,6 +251,7 @@ const props = defineProps({
   agentId: { type: String, default: '' },
   singleMode: { type: Boolean, default: true }
 })
+const emit = defineEmits(['thread-change'])
 
 // ==================== STORE MANAGEMENT ====================
 const agentStore = useAgentStore()
@@ -516,7 +517,7 @@ onMounted(() => {
         for (const entry of entries) {
           const width = entry.contentRect.width
           const isTakingSpace = chatUIStore.isSidebarOpen && !isSidebarFloating.value
-          
+
           if (isTakingSpace) {
             if (width < 600) {
               isSidebarFloating.value = true
@@ -849,58 +850,21 @@ const sendMessage = async ({
 }
 
 // ==================== CHAT ACTIONS ====================
-// 检查第一个对话是否为空
-const isFirstChatEmpty = () => {
-  if (threads.value.length === 0) return false
-  const chatToReuse = getFirstNonPinnedChat(threads.value)
-  const messages = threadMessages.value[chatToReuse.id]
-  // 只有当消息已加载且为空时才返回 true
-  return messages !== undefined && messages.length === 0
-}
-
 // 获取第一个非置顶的对话
 const getFirstNonPinnedChat = (chatList) => {
   if (!chatList || chatList.length === 0) return null
   return chatList.find((chat) => !chat.is_pinned) || chatList[0]
 }
 
-// 如果第一个对话为空，直接切换到第一个非置顶对话
-const switchToFirstChatIfEmpty = async () => {
-  if (threads.value.length > 0 && isFirstChatEmpty()) {
-    const chatToReuse = getFirstNonPinnedChat(threads.value)
-    if (chatState.currentThreadId !== chatToReuse.id) {
-      await selectChat(chatToReuse.id)
-    }
-    return true
-  }
-  return false
-}
-
 const createNewChat = async () => {
-  if (
-    !AgentValidator.validateAgentId(currentAgentId.value, '创建对话') ||
-    chatUIStore.creatingNewChat
-  )
-    return
-
-  // 如果第一个对话为空，直接切换到第一个对话而不是创建新对话
-  if (await switchToFirstChatIfEmpty()) return
-
-  chatUIStore.creatingNewChat = true
-  try {
-    const newThread = await createThread(currentAgentId.value, '新的对话')
-    if (newThread) {
-      // 中断之前线程的流式输出（如果存在）
-      const previousThreadId = chatState.currentThreadId
-      stopThreadStream(previousThreadId)
-
-      chatState.currentThreadId = newThread.id
-    }
-  } catch (error) {
-    handleChatError(error, 'create')
-  } finally {
-    chatUIStore.creatingNewChat = false
+  const previousThreadId = chatState.currentThreadId
+  if (previousThreadId) {
+    stopThreadStream(previousThreadId)
+    // run 模式下仅断开 SSE 订阅，不取消后台运行任务
+    stopRunStreamSubscription(previousThreadId)
   }
+  // 进入未选中对话空态，路由由 thread-change 统一同步到 /agent
+  chatState.currentThreadId = null
 }
 
 const selectChat = async (chatId) => {
@@ -951,6 +915,38 @@ const selectChat = async (chatId) => {
   await resumeActiveRunForThread(chatId)
 }
 
+const selectThreadFromRoute = async (threadId) => {
+  if (!agentStore.isInitialized) {
+    await initAll()
+  }
+
+  if (!threadId) {
+    const previousThreadId = chatState.currentThreadId
+    if (previousThreadId) {
+      stopThreadStream(previousThreadId)
+      stopRunStreamSubscription(previousThreadId)
+    }
+    chatState.currentThreadId = null
+    return true
+  }
+
+  if (chatState.currentThreadId === threadId) {
+    return true
+  }
+
+  if (!threads.value.length || !threads.value.find((thread) => thread.id === threadId)) {
+    await loadChatsList()
+  }
+
+  const targetThread = threads.value.find((thread) => thread.id === threadId)
+  if (!targetThread) {
+    return false
+  }
+
+  await selectChat(threadId)
+  return true
+}
+
 const deleteChat = async (chatId) => {
   if (
     !AgentValidator.validateAgentIdWithError(
@@ -964,11 +960,8 @@ const deleteChat = async (chatId) => {
     await deleteThread(chatId)
     if (chatState.currentThreadId === chatId) {
       chatState.currentThreadId = null
-      // 如果删除的是当前对话，自动创建新对话
+      // 删除当前对话后回到空态，发送消息时再创建新线程
       await createNewChat()
-    } else if (chatsList.value.length > 0) {
-      // 如果删除的不是当前对话，选择第一个非置顶可用对话
-      await selectChat(getFirstNonPinnedChat(chatsList.value).id)
     }
   } catch (error) {
     handleChatError(error, 'delete')
@@ -1229,7 +1222,8 @@ const buildExportPayload = () => {
 }
 
 defineExpose({
-  getExportPayload: buildExportPayload
+  getExportPayload: buildExportPayload,
+  selectThreadFromRoute
 })
 
 const toggleSidebar = () => {
@@ -1341,8 +1335,8 @@ const loadChatsList = async () => {
       chatState.currentThreadId = null
     }
 
-    // 如果有线程但没有选中任何线程，自动选择第一个非置顶对话
-    if (threads.value.length > 0 && !chatState.currentThreadId) {
+    // singleMode 保持旧行为：自动选择首个可用对话
+    if (props.singleMode && threads.value.length > 0 && !chatState.currentThreadId) {
       await selectChat(getFirstNonPinnedChat(threads.value).id)
     }
   } catch (error) {
@@ -1401,6 +1395,11 @@ watch(
   },
   { deep: true, flush: 'post' }
 )
+
+watch(currentChatId, (threadId, oldThreadId) => {
+  if (threadId === oldThreadId) return
+  emit('thread-change', threadId || '')
+})
 </script>
 
 <style lang="less" scoped>

@@ -26,7 +26,8 @@ export const useInfoStore = defineStore('info', () => {
       infoConfig.value.branding || {
         name: '',
         title: '',
-        subtitle: ''
+        subtitle: '',
+        subtitles: []
       }
   )
 

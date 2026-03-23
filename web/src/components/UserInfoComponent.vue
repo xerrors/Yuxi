@@ -66,9 +66,8 @@
     <!-- 个人资料弹窗 -->
     <a-modal
       v-model:open="profileModalVisible"
-      title="个人资料"
       :footer="null"
-      width="520px"
+      width="420px"
       class="profile-modal"
     >
       <div class="profile-content">
@@ -93,7 +92,7 @@
                 @change="handleAvatarChange"
                 accept="image/*"
               >
-                <a-button type="primary" size="small" :loading="avatarUploading">
+                <a-button type="primary" class="lucide-icon-btn" size="small" :loading="avatarUploading">
                   <template #icon><Upload size="14" /></template>
                   {{ userStore.avatar ? '更换头像' : '上传头像' }}
                 </a-button>
@@ -144,10 +143,8 @@
           </div>
           <div class="info-item">
             <div class="info-label">角色</div>
-            <div class="info-value">
-              <a-tag :color="getRoleColor(userStore.userRole)" class="role-tag">
-                {{ userRoleText }}
-              </a-tag>
+            <div class="info-value" :style="{'color': getRoleColor(userStore.userRole) }">
+              {{ userRoleText }}
             </div>
           </div>
           <div class="info-item" v-if="userStore.departmentId">
@@ -315,11 +312,11 @@ const openProfile = async () => {
 const getRoleColor = (role) => {
   switch (role) {
     case 'superadmin':
-      return 'red'
+      return 'var(--color-error-700)'
     case 'admin':
-      return 'blue'
+      return 'var(--color-primary-500)'
     case 'user':
-      return 'green'
+      return 'var(--color-success-500)'
     default:
       return 'default'
   }
@@ -549,14 +546,8 @@ const handleAvatarChange = async (info) => {
 
 .profile-modal {
   :deep(.ant-modal-header) {
-    padding: 20px 24px;
+    padding: 40px 24px;
     border-bottom: 1px solid var(--gray-150);
-
-    .ant-modal-title {
-      font-size: 18px;
-      font-weight: 600;
-      color: var(--gray-900);
-    }
   }
 
   :deep(.ant-modal-body) {
@@ -622,7 +613,7 @@ const handleAvatarChange = async (info) => {
     .info-item {
       display: flex;
       align-items: center;
-      padding: 12px 0;
+      padding: 12px;
       border-bottom: 1px solid var(--gray-50);
 
       &:last-child {
@@ -630,9 +621,9 @@ const handleAvatarChange = async (info) => {
       }
 
       .info-label {
-        width: 80px;
+        width: 120px;
         font-weight: 500;
-        color: var(--gray-500);
+        color: var(--gray-600);
         flex-shrink: 0;
       }
 
@@ -648,12 +639,6 @@ const handleAvatarChange = async (info) => {
           border-radius: 4px;
           display: inline-block;
         }
-      }
-
-      .role-tag {
-        font-weight: 500;
-        border-radius: 4px;
-        padding: 4px 12px;
       }
     }
   }
