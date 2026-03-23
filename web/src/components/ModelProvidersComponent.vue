@@ -357,7 +357,9 @@
             v-model:value="customProviderModal.data.env"
             placeholder="请输入API密钥或环境变量名（如：MY_API_KEY）"
           />
-          <div class="form-help-text">支持直接输入API密钥，或使用环境变量名（如：MY_API_KEY），如无密钥填写"无"。</div>
+          <div class="form-help-text">
+            支持直接输入API密钥，或使用环境变量名（如：MY_API_KEY），如无密钥填写"无"。
+          </div>
         </a-form-item>
 
         <a-form-item label="支持的模型" name="models">

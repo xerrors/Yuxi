@@ -8,10 +8,11 @@ from langchain.agents.middleware import (
 )
 
 from yuxi.agents import BaseAgent, load_chat_model
-from yuxi.agents.backends import create_agent_composite_backend
+from yuxi.agents.backends import create_agent_composite_backend, get_sandbox_provider
 from yuxi.agents.middlewares import (
     RuntimeConfigMiddleware,
     SummaryOffloadMiddleware,
+    ToolErrorBoundaryMiddleware,
     save_attachments_to_fs,
 )
 from yuxi.agents.middlewares.knowledge_base_middleware import KnowledgeBaseMiddleware
@@ -21,8 +22,23 @@ from yuxi.services.subagent_service import get_subagents_from_names
 
 
 def _create_fs_backend(rt):
-    """创建文件存储后端"""
-    return create_agent_composite_backend(rt)
+    """创建文件存储后端（支持沙盒执行）
+
+    从 runtime context 获取 user_id 和 thread_id，
+    如果有则创建沙盒后端作为默认后端。
+    """
+    context = getattr(rt, "context", None)
+    thread_id = getattr(context, "thread_id", None) or ""
+
+    sandbox_backend = None
+    if thread_id:
+        try:
+            provider = get_sandbox_provider()
+            sandbox_backend = provider.acquire(str(thread_id))
+        except Exception:
+            pass  # 沙盒创建失败，使用 StateBackend
+
+    return create_agent_composite_backend(rt, sandbox_backend=sandbox_backend)
 
 
 class ChatbotAgent(BaseAgent):
@@ -35,7 +51,7 @@ class ChatbotAgent(BaseAgent):
             "帮我写一封商务邮件",
             "解释一下什么是机器学习",
             "推荐几本好书",
-            "如何提高工作效率？"
+            "如何提高工作效率？",
         ]
     }
 
@@ -55,6 +71,7 @@ class ChatbotAgent(BaseAgent):
             subagents=subagents,
             general_purpose_agent=True,
             default_middleware=[
+                ToolErrorBoundaryMiddleware(),
                 FilesystemMiddleware(backend=_create_fs_backend),  # 文件系统后端
                 PatchToolCallsMiddleware(),
             ],
@@ -72,6 +89,7 @@ class ChatbotAgent(BaseAgent):
 
         # all middlewares
         middlewares = [
+            ToolErrorBoundaryMiddleware(),
             save_attachments_to_fs,  # 附件注入提示词
             FilesystemMiddleware(backend=_create_fs_backend),  # 文件系统后端
             KnowledgeBaseMiddleware(),  # 知识库工具

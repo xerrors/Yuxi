@@ -4,6 +4,7 @@
       :selected-keys="selectedKeys"
       :expanded-keys="expandedKeys"
       :tree-data="treeData"
+      :load-data="loadData"
       :show-icon="showIcon"
       :block-node="blockNode"
       :show-line="showLine"
@@ -56,6 +57,10 @@ const props = defineProps({
     type: Array,
     required: true,
     default: () => []
+  },
+  loadData: {
+    type: Function,
+    default: undefined
   },
   selectedKeys: {
     type: Array,

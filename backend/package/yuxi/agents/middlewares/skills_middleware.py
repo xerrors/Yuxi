@@ -60,7 +60,7 @@ async def get_prompt_metadata(db: AsyncSession | None = None) -> dict[str, Skill
         item.slug: {
             "name": item.name,
             "description": item.description,
-            "path": f"/skills/{item.slug}/SKILL.md",
+            "path": f"/mnt/skills/{item.slug}/SKILL.md",
         }
         for item in skills
     }
@@ -165,12 +165,12 @@ class SkillsMiddleware(AgentMiddleware):
         Args:
             skills_context_name: 上下文中的 skills 列表字段名称（默认 "skills"）
             enable_skills_prompt: 是否启用 skills 提示段注入（默认 True）
-            skills_sources_for_prompt: skills 来源路径（用于提示词展示，默认 ["/skills/"]）
+            skills_sources_for_prompt: skills 来源路径（用于提示词展示，默认 ["/mnt/skills/"]）
         """
         super().__init__()
         self.skills_context_name = skills_context_name
         self.enable_skills_prompt = enable_skills_prompt
-        self.skills_sources_for_prompt = skills_sources_for_prompt or ["/skills/"]
+        self.skills_sources_for_prompt = skills_sources_for_prompt or ["/mnt/skills/"]
         # 实例级缓存：避免每次模型调用都查数据库
         self._dependency_map_cache: dict[str, SkillDependencyNode] | None = None
         self._prompt_metadata_cache: dict[str, SkillPromptMetadata] | None = None
@@ -419,11 +419,12 @@ class SkillsMiddleware(AgentMiddleware):
             return None
         pure = PurePosixPath(raw if raw.startswith("/") else f"/{raw}")
         parts = [p for p in pure.parts if p not in ("/", "")]
-        if len(parts) != 3:
+        if len(parts) == 3 and parts[0] == "skills" and parts[2] == "SKILL.md":
+            slug = parts[1]
+        elif len(parts) == 4 and parts[0] == "mnt" and parts[1] == "skills" and parts[3] == "SKILL.md":
+            slug = parts[2]
+        else:
             return None
-        if parts[0] != "skills" or parts[2] != "SKILL.md":
-            return None
-        slug = parts[1]
         if not is_valid_skill_slug(slug):
             return None
         return slug

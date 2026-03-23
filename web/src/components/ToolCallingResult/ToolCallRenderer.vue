@@ -65,6 +65,17 @@
   <!-- 向用户提问 -->
   <AskUserQuestionTool v-else-if="toolName === 'ask_user_question'" :tool-call="toolCall" />
 
+  <!-- 执行命令 -->
+  <ExecuteTool
+    v-else-if="
+      toolName === 'execute' ||
+      toolName === 'run_shell_command' ||
+      toolName === 'bash' ||
+      toolName === 'cmd'
+    "
+    :tool-call="toolCall"
+  />
+
   <!-- 默认展示 -->
   <BaseToolCall v-else :tool-call="toolCall" />
 </template>
@@ -93,6 +104,7 @@ import MysqlQueryTool from './tools/MysqlQueryTool.vue'
 import MysqlDescribeTableTool from './tools/MysqlDescribeTableTool.vue'
 import MysqlListTablesTool from './tools/MysqlListTablesTool.vue'
 import AskUserQuestionTool from './tools/AskUserQuestionTool.vue'
+import ExecuteTool from './tools/ExecuteTool.vue'
 
 const props = defineProps({
   toolCall: {

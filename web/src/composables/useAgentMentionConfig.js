@@ -88,15 +88,22 @@ export function useAgentMentionConfig({
     })
     const subagents = Array.from(allowedSubagentNames)
       .filter((name) => !!name)
-      .map((name) =>
-        subagentOptionMap.get(name) || {
-          id: name,
-          name,
-          description: ''
-        }
+      .map(
+        (name) =>
+          subagentOptionMap.get(name) || {
+            id: name,
+            name,
+            description: ''
+          }
       )
 
-    if (!files.length && !knowledgeBases.length && !mcps.length && !skills.length && !subagents.length)
+    if (
+      !files.length &&
+      !knowledgeBases.length &&
+      !mcps.length &&
+      !skills.length &&
+      !subagents.length
+    )
       return null
 
     return {

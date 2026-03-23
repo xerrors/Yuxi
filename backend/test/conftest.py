@@ -1,10 +1,13 @@
 """
 Shared pytest fixtures for exercising FastAPI routers over the running API service.
 """
+# ruff: noqa: E402
 
 from __future__ import annotations
 
 import os
+import json
+import subprocess
 import sys
 import uuid
 from collections.abc import AsyncGenerator
@@ -33,6 +36,7 @@ assert ADMIN_PASSWORD, "TEST_PASSWORD is not set"
 
 _ADMIN_TOKEN_CACHE: str | None = None
 HTTP_TIMEOUT = httpx.Timeout(30.0, connect=5.0)
+SANDBOX_CONTAINER_PREFIX = os.getenv("YUXI_SANDBOX_CONTAINER_PREFIX", "yuxi-sandbox")
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -146,6 +150,56 @@ def cleanup_test_knowledge_databases():
         anyio.run(run_cleanup)
     except Exception as e:
         print(f"Warning: Exception during session cleanup teardown: {e}")
+
+
+def _docker_api_request(method: str, path: str) -> list[dict] | dict:
+    cmd = [
+        "curl",
+        "-sS",
+        "--unix-socket",
+        os.getenv("YUXI_DOCKER_API_SOCKET", "/var/run/docker.sock"),
+        "-X",
+        method,
+        f"{os.getenv('YUXI_DOCKER_API_BASE', 'http://localhost').rstrip('/')}{path}",
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=15, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or "Docker API request failed")
+    text = (result.stdout or "").strip()
+    if not text:
+        return {}
+    return json.loads(text)
+
+
+def _cleanup_sandbox_containers() -> None:
+    try:
+        containers = _docker_api_request("GET", "/containers/json?all=true")
+    except Exception as exc:
+        print(f"Warning: Failed to list sandbox containers for cleanup: {exc}")
+        return
+
+    for container in containers if isinstance(containers, list) else []:
+        names = container.get("Names") or []
+        if not any(name.lstrip("/").startswith(f"{SANDBOX_CONTAINER_PREFIX}-") for name in names):
+            continue
+        container_id = container.get("Id")
+        if not container_id:
+            continue
+        try:
+            _docker_api_request("POST", f"/containers/{container_id}/stop?t=2")
+        except Exception:
+            pass
+        try:
+            _docker_api_request("DELETE", f"/containers/{container_id}?force=true")
+        except Exception as exc:
+            print(f"Warning: Failed to cleanup sandbox container {container_id[:12]}: {exc}")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def cleanup_test_sandboxes():
+    _cleanup_sandbox_containers()
+    yield
+    _cleanup_sandbox_containers()
 
 
 @pytest_asyncio.fixture(scope="function")

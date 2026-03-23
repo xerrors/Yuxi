@@ -20,7 +20,7 @@
 
     <div class="tabs">
       <button class="tab" :class="{ active: activeTab === 'files' }" @click="activeTab = 'files'">
-        文件 ({{ fileCount }})
+        文件系统
       </button>
       <button class="tab" :class="{ active: activeTab === 'todos' }" @click="activeTab = 'todos'">
         任务 ({{ completedCount }}/{{ todos.length }})
@@ -53,11 +53,19 @@
 
       <!-- Files Display -->
       <div v-if="activeTab === 'files'" class="files-display">
-        <div v-if="!fileCount" class="empty">暂无文件</div>
+        <div v-if="!threadId" class="empty">创建对话后可查看工作区</div>
+        <div v-else-if="loadingFiles" class="empty">正在加载文件系统...</div>
+        <div v-else-if="filesystemError" class="empty error-state">
+          <div>{{ filesystemError }}</div>
+          <a-button type="link" size="small" @click="refreshFileSystem">重试</a-button>
+        </div>
+        <div v-else-if="!fileTreeData.length" class="empty">当前工作区为空</div>
         <div v-else class="file-tree-container">
           <FileTreeComponent
+            v-model:selectedKeys="selectedKeys"
             v-model:expandedKeys="expandedKeys"
             :tree-data="fileTreeData"
+            :load-data="loadData"
             @select="onFileSelect"
           >
             <template #title="{ node }">
@@ -128,7 +136,7 @@
           <pre v-if="Array.isArray(currentFile?.content)">{{
             formatContent(currentFile.content)
           }}</pre>
-          <div v-else-if="typeof currentFile?.content === 'string'">{{ currentFile.content }}</div>
+          <pre v-else-if="typeof currentFile?.content === 'string'" class="file-content-pre">{{ currentFile.content }}</pre>
           <pre v-else>{{ JSON.stringify(currentFile, null, 2) }}</pre>
         </template>
       </div>
@@ -138,7 +146,7 @@
 
 <script setup>
 import { computed, ref, onMounted, onUpdated, nextTick, watch } from 'vue'
-import { Download, X, FolderCode, RefreshCw, Folder, FolderOpen } from 'lucide-vue-next'
+import { Download, X, FolderCode } from 'lucide-vue-next'
 import {
   CheckCircleOutlined,
   SyncOutlined,
@@ -149,8 +157,13 @@ import {
 import { MdPreview } from 'md-editor-v3'
 import 'md-editor-v3/lib/preview.css'
 import { useThemeStore } from '@/stores/theme'
-import { getFileIcon, getFileIconColor, formatFileSize } from '@/utils/file_utils'
+import { getFileIcon, getFileIconColor } from '@/utils/file_utils'
 import FileTreeComponent from '@/components/FileTreeComponent.vue'
+import {
+  downloadViewerFile,
+  getViewerFileContent,
+  getViewerFileSystemTree
+} from '@/apis/viewer_filesystem'
 
 const props = defineProps({
   agentState: {
@@ -159,6 +172,14 @@ const props = defineProps({
   },
   threadId: {
     type: String,
+    default: null
+  },
+  agentId: {
+    type: String,
+    default: null
+  },
+  agentConfigId: {
+    type: [String, Number],
     default: null
   },
   panelRatio: {
@@ -173,6 +194,11 @@ const activeTab = ref('files')
 const modalVisible = ref(false)
 const currentFile = ref(null)
 const currentFilePath = ref('')
+const loadingFiles = ref(false)
+const filesystemError = ref('')
+
+const dynamicTreeData = ref([])
+const selectedKeys = ref([])
 
 const themeStore = useThemeStore()
 const theme = computed(() => (themeStore.isDark ? 'dark' : 'light'))
@@ -183,10 +209,6 @@ const isMarkdown = computed(() => {
 
 const todos = computed(() => {
   return props.agentState?.todos || []
-})
-
-const files = computed(() => {
-  return props.agentState?.files || []
 })
 
 const completedCount = computed(() => {
@@ -223,60 +245,22 @@ const checkOverflow = () => {
   overflowedIds.value = newOverflowed
 }
 
-onMounted(() => {
-  nextTick(checkOverflow)
-  updateActiveTab()
-})
-
 onUpdated(() => {
   nextTick(checkOverflow)
 })
 
-// 适配实际数据格式
-const normalizedFiles = computed(() => {
-  const rawFiles = files.value
-  const result = []
-
-  // 兼容字典格式 {"/path/file": {content: [...]}} 和旧数组格式
-  if (typeof rawFiles === 'object' && !Array.isArray(rawFiles) && rawFiles !== null) {
-    // 新格式：字典格式
-    Object.entries(rawFiles).forEach(([filePath, fileData]) => {
-      result.push({
-        path: filePath,
-        ...fileData
-      })
-    })
-  } else if (Array.isArray(rawFiles)) {
-    // 旧格式：数组格式
-    rawFiles.forEach((item) => {
-      if (typeof item === 'object' && item !== null) {
-        Object.entries(item).forEach(([filePath, fileData]) => {
-          result.push({
-            path: filePath,
-            ...fileData
-          })
-        })
-      }
-    })
-  }
-
-  return result
-})
-
-// 自动切换 tab 逻辑：如果 files 为空且有 todos，自动切换到 todos tab
+// 自动切换 tab 逻辑：如果没有任何文件且有 todos，自动切换到 todos tab
 const updateActiveTab = () => {
-  const fileList = normalizedFiles.value
   const todoList = todos.value
 
-  // 如果当前是 files tab，但文件为空且有 todos，切换到 todos
-  if (activeTab.value === 'files' && fileList.length === 0 && todoList.length > 0) {
+  if (activeTab.value === 'files' && dynamicTreeData.value.length === 0 && todoList.length > 0) {
     activeTab.value = 'todos'
   }
 }
 
-// 监听 files 和 todos 变化，自动切换 tab
+// 监听 todos 变化，自动切换 tab
 watch(
-  [() => props.agentState?.files, () => props.agentState?.todos],
+  [() => props.agentState?.todos],
   () => {
     updateActiveTab()
   },
@@ -285,125 +269,194 @@ watch(
 
 const expandedKeys = ref([])
 
-const buildTreeData = (filesList) => {
-  if (!filesList.length) return []
+const buildDisplayName = (fullPath) => {
+  const normalized = String(fullPath || '').replace(/\/+$/, '')
+  if (!normalized || normalized === '/') return '/'
+  const parts = normalized.split('/').filter(Boolean)
+  return parts[parts.length - 1] || normalized
+}
 
-  const root = []
-
-  // Helper to find or create folder node
-  const findOrCreateFolder = (nodes, key, title) => {
-    let node = nodes.find((n) => n.key === key)
-    if (!node) {
-      node = {
-        key,
-        title,
-        isLeaf: false,
-        children: [],
-        class: 'folder-node'
-      }
-      nodes.push(node)
+const sortEntries = (entries) => {
+  return [...entries].sort((left, right) => {
+    const leftIsDir = Boolean(left?.is_dir)
+    const rightIsDir = Boolean(right?.is_dir)
+    if (leftIsDir !== rightIsDir) {
+      return leftIsDir ? -1 : 1
     }
-    return node
-  }
 
-  filesList.forEach((file) => {
-    const cleanPath = file.path.startsWith('/') ? file.path.slice(1) : file.path
-    const parts = cleanPath.split('/')
-    let currentLevel = root
-    let currentPath = ''
-
-    parts.forEach((part, index) => {
-      const isLast = index === parts.length - 1
-      currentPath = currentPath ? `${currentPath}/${part}` : part
-
-      if (isLast) {
-        const nameParts = part.split('.')
-        let nameStart = part
-        let nameEnd = ''
-
-        if (nameParts.length > 1) {
-          // If extension exists
-          const ext = nameParts.pop()
-          // Keep last 5 chars if possible, or just the extension
-          // User asked for "last 5 chars".
-          // If we treat the whole thing as a string:
-          if (part.length > 5) {
-            nameEnd = part.slice(-5)
-            nameStart = part.slice(0, -5)
-          } else {
-            nameStart = part
-            nameEnd = ''
-          }
-        } else {
-          if (part.length > 5) {
-            nameEnd = part.slice(-5)
-            nameStart = part.slice(0, -5)
-          }
-        }
-
-        currentLevel.push({
-          key: currentPath,
-          title: part,
-          nameStart,
-          nameEnd,
-          isLeaf: true,
-          fileData: file,
-          class: 'file-node'
-        })
-      } else {
-        const folderNode = findOrCreateFolder(currentLevel, currentPath, part)
-        currentLevel = folderNode.children
-      }
-    })
+    const leftName = buildDisplayName(left?.path).toLowerCase()
+    const rightName = buildDisplayName(right?.path).toLowerCase()
+    return leftName.localeCompare(rightName, 'zh-Hans-CN')
   })
+}
 
-  const sortNodes = (nodes) => {
-    nodes.sort((a, b) => {
-      if (a.isLeaf === b.isLeaf) {
-        return a.title.localeCompare(b.title)
-      }
-      return a.isLeaf ? 1 : -1
-    })
-    nodes.forEach((node) => {
-      if (node.children) sortNodes(node.children)
-    })
+const parseDownloadFilename = (contentDisposition) => {
+  if (!contentDisposition) return ''
+
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)
+  if (utf8Match && utf8Match[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1])
+    } catch (error) {
+      console.warn('解析 UTF-8 文件名失败:', error)
+    }
   }
 
-  sortNodes(root)
-  return root
+  const asciiMatch = contentDisposition.match(/filename="?([^";]+)"?/i)
+  if (asciiMatch && asciiMatch[1]) {
+    return asciiMatch[1]
+  }
+
+  return ''
 }
 
-// Helper to truncate filename with tail preservation
-const truncateFilename = (name) => {
-  if (!name) return ''
-  // This is a visual truncation helper; for true dynamic CSS truncation,
-  // we'd need a more complex setup. Here we rely on CSS text-overflow
-  // but if we want specifically "last 5 chars" visible, we might need
-  // to split the string if we were using a JS-only approach.
-  // However, the user asked for "show ellipsis, and last 5 chars".
-  // CSS `text-overflow: ellipsis` puts it at the end.
-  // To do middle truncation via CSS is hard.
-  // Let's try to do it via JS for the title attribute, but for visual
-  // we might use a CSS trick or just standard ellipsis if the JS one is too static.
-  // Let's stick to standard ellipsis for now but maybe try to implement the requested logic if possible.
-  // Actually, pure CSS start/end truncation is tricky.
-  // Let's provide a computed display name logic in the template or a method.
-  return name
+const createTreeNode = (entry) => {
+  const fullPath = String(entry?.path || '')
+  const title = buildDisplayName(fullPath)
+  const isLeaf = !entry?.is_dir
+
+  let nameStart = title
+  let nameEnd = ''
+
+  if (isLeaf && title.includes('.') && title.length > 5) {
+    nameEnd = title.slice(-5)
+    nameStart = title.slice(0, -5)
+  }
+
+  return {
+    key: fullPath,
+    title,
+    nameStart,
+    nameEnd,
+    isLeaf,
+    children: isLeaf ? undefined : undefined,
+    fileData: {
+      ...entry,
+      path: fullPath,
+      name: title,
+      type: isLeaf ? 'file' : 'directory'
+    },
+    class: isLeaf ? 'file-node' : 'folder-node'
+  }
 }
 
-const fileTreeData = computed(() => buildTreeData(normalizedFiles.value))
+const updateTreeChildren = (nodes, targetKey, children) => {
+  return nodes.map((node) => {
+    if (node.key === targetKey) {
+      return { ...node, children }
+    }
+    if (!node.children?.length) {
+      return node
+    }
+    return {
+      ...node,
+      children: updateTreeChildren(node.children, targetKey, children)
+    }
+  })
+}
 
-const onFileSelect = (selectedKeys, { node }) => {
+const loadData = (treeNode) => {
+  return new Promise((resolve) => {
+    if (treeNode.isLeaf || (treeNode.children && treeNode.children.length > 0)) {
+      resolve()
+      return
+    }
+
+    if (!props.threadId) {
+      resolve()
+      return
+    }
+
+    getViewerFileSystemTree(props.threadId, treeNode.key, props.agentId, props.agentConfigId)
+      .then((res) => {
+        if (res && res.entries) {
+          const children = sortEntries(res.entries).map((entry) => createTreeNode(entry))
+          dynamicTreeData.value = updateTreeChildren(dynamicTreeData.value, treeNode.key, children)
+        }
+        resolve()
+      })
+      .catch((e) => {
+        console.error('Failed to load children for', treeNode.key, e)
+        resolve()
+      })
+  })
+}
+
+const refreshFileSystem = async () => {
+  if (!props.threadId) {
+    dynamicTreeData.value = []
+    filesystemError.value = ''
+    return
+  }
+
+  loadingFiles.value = true
+  filesystemError.value = ''
+  try {
+    const res = await getViewerFileSystemTree(props.threadId, '/', props.agentId, props.agentConfigId)
+    if (res && res.entries) {
+      dynamicTreeData.value = sortEntries(res.entries).map((entry) => createTreeNode(entry))
+      expandedKeys.value = []
+      selectedKeys.value = []
+    }
+  } catch (e) {
+    dynamicTreeData.value = []
+    filesystemError.value = e?.message || '加载文件系统失败'
+    console.error('Failed to load root files', e)
+  } finally {
+    loadingFiles.value = false
+  }
+}
+
+onMounted(() => {
+  nextTick(checkOverflow)
+  updateActiveTab()
+  refreshFileSystem()
+})
+
+watch(
+  [() => props.threadId, () => props.agentId, () => props.agentConfigId],
+  ([threadId]) => {
+    if (threadId) {
+      refreshFileSystem()
+    } else {
+      dynamicTreeData.value = []
+      expandedKeys.value = []
+      selectedKeys.value = []
+      filesystemError.value = ''
+    }
+  }
+)
+
+const fileTreeData = computed(() => dynamicTreeData.value)
+
+const onFileSelect = async (nextSelectedKeys, { node }) => {
+  selectedKeys.value = nextSelectedKeys
   if (node.isLeaf) {
-    if (node.fileData) {
-      showFileContent(node.key, node.fileData)
+    currentFilePath.value = node.key
+    currentFile.value = { content: 'Loading...' }
+    modalVisible.value = true
+
+    try {
+      const res = await getViewerFileContent(
+        props.threadId,
+        node.key,
+        props.agentId,
+        props.agentConfigId
+      )
+      if (res && res.content !== undefined) {
+        currentFile.value = {
+          ...node.fileData,
+          content: res.content
+        }
+      }
+    } catch (e) {
+      currentFile.value = {
+        ...node.fileData,
+        content: `Error loading file: ${e.message}`
+      }
     }
   }
 }
-
-const fileCount = computed(() => {
-  return normalizedFiles.value.length
-})
 
 // 方法
 const getFileName = (fileItem) => {
@@ -413,31 +466,9 @@ const getFileName = (fileItem) => {
   return '未知文件'
 }
 
-const formatDate = (dateString) => {
-  if (!dateString) return ''
-  try {
-    const date = new Date(dateString)
-    return date.toLocaleString('zh-CN', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit'
-    })
-  } catch (error) {
-    return dateString
-  }
-}
-
 const formatContent = (contentArray) => {
   if (!Array.isArray(contentArray)) return String(contentArray)
   return contentArray.join('\n')
-}
-
-const showFileContent = (filePath, fileData) => {
-  currentFilePath.value = filePath
-  currentFile.value = fileData
-  modalVisible.value = true
 }
 
 const closeModal = () => {
@@ -446,53 +477,34 @@ const closeModal = () => {
   currentFilePath.value = ''
 }
 
-const downloadFile = (fileItem) => {
+const downloadFile = async (fileItem) => {
   try {
-    // /attachments/ 下的文件直接从内容下载（已经是 Markdown）
-    if (fileItem.path?.startsWith('/attachments/') && fileItem.content) {
-      const content = formatContent(fileItem.content)
-      const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = getFileName(fileItem)
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      URL.revokeObjectURL(url)
-      return
-    }
-
-    // 其他文件：优先使用 minio_url 下载源文件
-    if (fileItem.minio_url) {
-      const link = document.createElement('a')
-      link.href = fileItem.minio_url
-      link.download = getFileName(fileItem)
-      link.target = '_blank'
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      return
-    }
-
-    // 降级：从 content 创建下载
-    const content = formatContent(fileItem.content)
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
+    const response = await downloadViewerFile(
+      props.threadId,
+      fileItem.path,
+      props.agentId,
+      props.agentConfigId
+    )
+    const blob = await response.blob()
+    const contentDisposition =
+      response.headers.get('Content-Disposition') || response.headers.get('content-disposition')
+    const filename = parseDownloadFilename(contentDisposition) || getFileName(fileItem)
+    const url = window.URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
-    link.download = getFileName(fileItem)
+    link.download = filename
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
-    URL.revokeObjectURL(url)
+    window.URL.revokeObjectURL(url)
   } catch (error) {
     console.error('下载文件失败:', error)
   }
 }
 
 const emitRefresh = () => {
-  emit('refresh')
+  refreshFileSystem()
+  emit('refresh', props.threadId)
 }
 
 // 拖拽调整宽度相关
@@ -673,6 +685,12 @@ const stopResize = () => {
       background: var(--gray-400);
     }
   }
+}
+
+.error-state {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .empty {

@@ -112,7 +112,8 @@ import {
   CheckSquare,
   Wrench,
   XCircle,
-  HelpCircle
+  HelpCircle,
+  Terminal
 } from 'lucide-vue-next'
 import { useAgentStore } from '@/stores/agent'
 import { storeToRefs } from 'pinia'
@@ -170,6 +171,14 @@ const toolIcon = computed(() => {
   if (name.includes('calc') || name.includes('math')) return Calculator
   // 任务
   if (name.includes('task') || name.includes('todo')) return CheckSquare
+  // 命令
+  if (
+    name.includes('execute') ||
+    name.includes('cmd') ||
+    name.includes('shell') ||
+    name.includes('bash')
+  )
+    return Terminal
   // 向用户提问
   if (name.includes('ask_user_question') || name.includes('question')) return HelpCircle
   // 默认

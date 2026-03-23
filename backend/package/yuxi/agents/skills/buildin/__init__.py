@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from yuxi.agents.toolkits.utils import get_tool_info
 from yuxi.agents.toolkits.mysql import get_mysql_tools
+from yuxi.agents.toolkits.utils import get_tool_info
 
 
 @dataclass(frozen=True)
@@ -28,4 +28,3 @@ BUILTIN_SKILLS: list[BuiltinSkillSpec] = [
         mcp_dependencies=("mcp-server-chart",),
     ),
 ]
-

@@ -106,10 +106,7 @@ async def require_user_conversation(conv_repo: ConversationRepository, thread_id
 
 
 def _make_attachment_path(file_name: str) -> str:
-    """生成附件在文件系统中的路径（无需 thread_id，state 已隔离）
-
-    统一使用 .md 扩展名，因为文件内容已经是 Markdown 格式
-    """
+    """生成附件在 /mnt 命名空间中的统一路径。"""
     # 提取不带扩展名的部分
     base_name = file_name
     for ext in [".docx", ".txt", ".html", ".htm", ".pdf", ".md"]:
@@ -119,7 +116,19 @@ def _make_attachment_path(file_name: str) -> str:
 
     # 替换路径分隔符
     safe_name = base_name.replace("/", "_").replace("\\", "_")
-    return f"/attachments/{safe_name}.md"
+    return f"{safe_name}.md"
+
+
+def _build_attachment_storage_path(*, user_id: str, thread_id: str, file_name: str) -> tuple[str, Path]:
+    """返回附件虚拟路径和宿主机落盘路径。"""
+    relative_name = _make_attachment_path(file_name)
+    virtual_path = f"/mnt/user-data/uploads/attachments/{relative_name}"
+
+    host_dir = Path(app_config.save_dir) / "threads" / thread_id / "user-data" / "uploads" / "attachments"
+    host_dir.mkdir(parents=True, exist_ok=True)
+    host_path = host_dir / relative_name
+
+    return virtual_path, host_path
 
 
 def _build_state_files(attachments: list[dict]) -> dict:
@@ -317,8 +326,13 @@ async def upload_thread_attachment_view(
         logger.error(f"附件解析失败: {exc}")
         raise HTTPException(status_code=500, detail="附件解析失败，请稍后重试") from exc
 
-    # 生成文件路径
-    file_path = _make_attachment_path(conversion.file_name)
+    # 生成并落盘附件 markdown（供 sandbox 文件工具读取）
+    file_path, host_attachment_path = _build_attachment_storage_path(
+        user_id=str(current_user_id),
+        thread_id=thread_id,
+        file_name=conversion.file_name,
+    )
+    host_attachment_path.write_text(conversion.markdown, encoding="utf-8")
 
     # 上传源文件到 MinIO（用于前端下载）
     minio_url = None
@@ -348,7 +362,7 @@ async def upload_thread_attachment_view(
         "markdown": conversion.markdown,
         "uploaded_at": utc_isoformat(),
         "truncated": conversion.truncated,
-        "file_path": file_path,  # 用于 StateBackend，前端不返回此字段
+        "file_path": file_path,  # 对模型暴露的虚拟路径
         "minio_url": minio_url,  # 暂未使用
     }
     await conv_repo.add_attachment(conversation.id, attachment_record)

@@ -10,8 +10,13 @@ from langchain.agents.middleware import (
 )
 
 from yuxi.agents import BaseAgent, load_chat_model
-from yuxi.agents.backends import create_agent_composite_backend
-from yuxi.agents.middlewares import RuntimeConfigMiddleware, SummaryOffloadMiddleware, save_attachments_to_fs
+from yuxi.agents.backends import create_agent_composite_backend, get_sandbox_provider
+from yuxi.agents.middlewares import (
+    RuntimeConfigMiddleware,
+    SummaryOffloadMiddleware,
+    ToolErrorBoundaryMiddleware,
+    save_attachments_to_fs,
+)
 from yuxi.agents.middlewares.knowledge_base_middleware import KnowledgeBaseMiddleware
 from yuxi.agents.middlewares.skills_middleware import SkillsMiddleware
 from yuxi.agents.toolkits.buildin.tools import _create_tavily_search
@@ -24,7 +29,18 @@ from .context import DeepContext
 
 def _create_fs_backend(rt):
     """创建文件存储后端"""
-    return create_agent_composite_backend(rt)
+    context = getattr(rt, "context", None)
+    thread_id = getattr(context, "thread_id", None) or ""
+
+    sandbox_backend = None
+    if thread_id:
+        try:
+            provider = get_sandbox_provider()
+            sandbox_backend = provider.acquire(str(thread_id))
+        except Exception:
+            pass
+
+    return create_agent_composite_backend(rt, sandbox_backend=sandbox_backend)
 
 
 class DeepAgent(BaseAgent):
@@ -93,6 +109,7 @@ class DeepAgent(BaseAgent):
             default_tools=search_tools,
             subagents=user_subagents,
             default_middleware=[
+                ToolErrorBoundaryMiddleware(),
                 RuntimeConfigMiddleware(
                     model_context_name="subagents_model",
                     enable_model_override=True,
@@ -116,6 +133,7 @@ class DeepAgent(BaseAgent):
             model=model,
             system_prompt=context.system_prompt,
             middleware=[
+                ToolErrorBoundaryMiddleware(),
                 FilesystemMiddleware(backend=_create_fs_backend),  # 文件系统后端
                 RuntimeConfigMiddleware(extra_tools=all_mcp_tools),
                 SkillsMiddleware(),  # Skills 中间件（提示词注入、依赖展开、动态激活）

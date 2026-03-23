@@ -51,6 +51,7 @@ export default defineConfig({
         text: '高级配置',
         items: [
           { text: '配置系统详解', link: '/advanced/configuration' },
+          { text: '沙盒改造与验收', link: '/advanced/sandbox-validation' },
           { text: '文档解析', link: '/advanced/document-processing' },
           { text: '品牌自定义', link: '/advanced/branding' },
           { text: '其他配置', link: '/advanced/misc' },

@@ -12,12 +12,12 @@ def _get_visible_skills_from_runtime(runtime) -> list[str]:
     return normalize_selected_skills(selected)
 
 
-def create_agent_composite_backend(runtime) -> CompositeBackend:
-    """为 agent 构建 backend：默认 StateBackend + /skills 路由只读 backend。"""
+def create_agent_composite_backend(runtime, *, sandbox_backend=None) -> CompositeBackend:
+    """为 agent 构建 backend：默认 State/Sandbox backend + /skills 路由只读 backend。"""
     visible_skills = _get_visible_skills_from_runtime(runtime)
     return CompositeBackend(
-        default=StateBackend(runtime),
+        default=sandbox_backend or StateBackend(runtime),
         routes={
-            "/skills/": SelectedSkillsReadonlyBackend(selected_slugs=visible_skills),
+            "/mnt/skills/": SelectedSkillsReadonlyBackend(selected_slugs=visible_skills),
         },
     )

@@ -1,6 +1,6 @@
 x-api-worker-env: &api-worker-env
   HOST_IP: ${HOST_IP:-}
-  LITE_MODE: ${LITE_MODE:-}
+  LITE_MODE: ${LITE_MODE:-false}
   RUNNING_IN_DOCKER: "true"
   MODEL_DIR_IN_DOCKER: /models
   PYTHONPATH: /app/package
@@ -18,6 +18,9 @@ x-api-worker-env: &api-worker-env
   MINERU_API_URI: ${MINERU_API_URI:-http://mineru-api:30001}
   PADDLEX_URI: ${PADDLEX_URI:-http://paddlex:8080}
   MINIO_URI: ${MINIO_URI:-http://minio:9000}
+  YUXI_SANDBOX_IMAGE: ${YUXI_SANDBOX_IMAGE:-yuxi-api:0.6.dev}
+  YUXI_DOCKER_API_BASE: ${YUXI_DOCKER_API_BASE:-http://localhost}
+  YUXI_HOST_PROJECT_DIR: ${YUXI_HOST_PROJECT_DIR:-${PWD:-}}
   NO_PROXY: localhost,127.0.0.1,milvus,graph,minio,milvus-etcd-dev,etcd,mineru,paddlex,api.siliconflow.cn
   no_proxy: localhost,127.0.0.1,milvus,graph,minio,milvus-etcd-dev,etcd,mineru,paddlex,api.siliconflow.cn
 
@@ -37,6 +40,7 @@ services:
       - ./backend/scripts:/app/scripts
       - ./.env:/app/.env
       - ${MODEL_DIR:-./models}:/models  # 使用默认值处理未定义的环境变量
+      - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "5050:5050"
     networks:
@@ -82,6 +86,7 @@ services:
       - ./backend/pyproject.toml:/app/pyproject.toml
       - ./backend/uv.lock:/app/uv.lock
       - ${MODEL_DIR:-./models}:/models
+      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - app-network
     extra_hosts:

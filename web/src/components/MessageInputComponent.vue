@@ -139,12 +139,7 @@
 
 <script setup>
 import { ref, computed, onMounted, nextTick, watch, onBeforeUnmount, useSlots } from 'vue'
-import {
-  SendOutlined,
-  ArrowUpOutlined,
-  PauseOutlined,
-  PlusOutlined
-} from '@ant-design/icons-vue'
+import { SendOutlined, ArrowUpOutlined, PauseOutlined, PlusOutlined } from '@ant-design/icons-vue'
 
 // 点击外部关闭下拉框
 const mentionDropdownRef = ref(null)

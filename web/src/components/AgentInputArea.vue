@@ -32,7 +32,6 @@
       <div class="input-actions-left">
         <!-- State Toggle Button -->
         <button
-          v-if="hasStateContent"
           class="input-action-btn"
           :class="{ active: isPanelOpen }"
           @click="$emit('toggle-panel')"
@@ -66,7 +65,6 @@ defineProps({
   placeholder: { type: String, default: '输入问题...' },
   mention: { type: Object, default: () => null },
   supportsFileUpload: { type: Boolean, default: false },
-  hasStateContent: { type: Boolean, default: false },
   isPanelOpen: { type: Boolean, default: false }
 })
 

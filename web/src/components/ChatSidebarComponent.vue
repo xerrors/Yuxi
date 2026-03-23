@@ -1,7 +1,11 @@
 <template>
   <div
     class="chat-sidebar"
-    :class="{ 'sidebar-open': chatUIStore.isSidebarOpen, 'no-transition': isInitialRender, 'is-floating': isFloating }"
+    :class="{
+      'sidebar-open': chatUIStore.isSidebarOpen,
+      'no-transition': isInitialRender,
+      'is-floating': isFloating
+    }"
   >
     <div class="sidebar-content">
       <div class="sidebar-header">
@@ -306,7 +310,7 @@ const togglePin = (chatId) => {
     top: 0;
     bottom: 0;
     height: 100%;
-    
+
     &.sidebar-open {
       box-shadow: 4px 0 16px rgba(0, 0, 0, 0.08);
       border-right: none;

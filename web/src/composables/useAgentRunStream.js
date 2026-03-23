@@ -264,11 +264,13 @@ export function useAgentRunStream({
           ts.activeRunId = null
           ts.lastRetryableJobTry = null
           clearActiveRunSnapshot(threadId)
-          fetchThreadMessages({ agentId: unref(currentAgentId), threadId, delay: 300 }).finally(() => {
-            resetOnGoingConv(threadId)
-            fetchAgentState(unref(currentAgentId), threadId)
-            onScrollToBottom()
-          })
+          fetchThreadMessages({ agentId: unref(currentAgentId), threadId, delay: 300 }).finally(
+            () => {
+              resetOnGoingConv(threadId)
+              fetchAgentState(unref(currentAgentId), threadId)
+              onScrollToBottom()
+            }
+          )
         }
       })
     } catch (error) {
