@@ -63,6 +63,12 @@
             <MessageCirclePlus v-else class="nav-btn-icon" size="16" />
             <span class="text">新对话</span>
           </div>
+          <div
+            v-if="currentThread?.title && currentThread.title !== '新的对话'"
+            class="conversation-title"
+          >
+            {{ currentThread.title }}
+          </div>
         </div>
         <div class="header__right">
           <UserInfoComponent v-if="!userStore.isAdmin" />
@@ -227,6 +233,7 @@ import { useAgentStore } from '@/stores/agent'
 import { useChatUIStore } from '@/stores/chatUI'
 import { useInfoStore } from '@/stores/info'
 import { useUserStore } from '@/stores/user'
+import { useConfigStore } from '@/stores/config'
 import { storeToRefs } from 'pinia'
 import { MessageProcessor } from '@/utils/messageProcessor'
 import { agentApi, threadApi } from '@/apis'
@@ -250,6 +257,7 @@ const agentStore = useAgentStore()
 const chatUIStore = useChatUIStore()
 const infoStore = useInfoStore()
 const userStore = useUserStore()
+const configStore = useConfigStore()
 const {
   agents,
   selectedAgentId,
@@ -798,11 +806,24 @@ const sendMessage = async ({
     return Promise.reject(error)
   }
 
-  // 如果是新对话，用消息内容作为标题
+  // 如果是新对话，用 fast-model 异步生成标题（不阻塞消息发送）
   if ((threadMessages.value[threadId] || []).length === 0) {
-    const autoTitle = text.replace(/\s+/g, ' ').trim().slice(0, 255)
+    const autoTitle = text.replace(/\s+/g, ' ').trim().slice(0, 2000)
     if (autoTitle) {
-      void updateThread(threadId, autoTitle).catch(() => {})
+      void (async () => {
+        try {
+          const generatedTitle = await agentApi.generateTitle(autoTitle, configStore.config?.fast_model)
+          if (generatedTitle) {
+            const finalTitle = generatedTitle.slice(0, 30).replace(/\s+/g, ' ').trim()
+            if (finalTitle) {
+              void updateThread(threadId, finalTitle).catch(() => {})
+            }
+          }
+        } catch (e) {
+          // 失败时使用原始文本作为标题
+          void updateThread(threadId, autoTitle.slice(0, 30)).catch(() => {})
+        }
+      })()
     }
   }
 
@@ -1017,9 +1038,22 @@ const handleSendMessage = async ({ image } = {}) => {
 
   if (useRunsApi) {
     if ((threadMessages.value[threadId] || []).length === 0) {
-      const autoTitle = text.replace(/\s+/g, ' ').trim().slice(0, 255)
+      const autoTitle = text.replace(/\s+/g, ' ').trim().slice(0, 2000)
       if (autoTitle) {
-        void updateThread(threadId, autoTitle).catch(() => {})
+        void (async () => {
+          try {
+            const generatedTitle = await agentApi.generateTitle(autoTitle, configStore.config?.fast_model)
+            if (generatedTitle) {
+              const finalTitle = generatedTitle.slice(0, 30).replace(/\s+/g, ' ').trim()
+              if (finalTitle) {
+                void updateThread(threadId, finalTitle).catch(() => {})
+              }
+            }
+          } catch (e) {
+            // 失败时使用原始文本作为标题
+            void updateThread(threadId, autoTitle.slice(0, 30)).catch(() => {})
+          }
+        })()
       }
     }
 
@@ -1458,6 +1492,17 @@ watch(
 
     .sidebar-logo-toggle:hover .sidebar-expand-overlay {
       opacity: 1;
+    }
+
+    .conversation-title {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-primary);
+      max-width: 200px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      margin-left: 8px;
     }
   }
 }

@@ -53,6 +53,20 @@ export const agentApi = {
   simpleCall: (query) => apiPost('/api/chat/call', { query }),
 
   /**
+   * 生成对话标题
+   * @param {string} query - 查询内容
+   * @param {Object} modelSpec - 模型配置
+   * @returns {Promise<string>} - 生成的标题
+   */
+  generateTitle: async (query, modelSpec) => {
+    const response = await apiPost('/api/chat/call', {
+      query: `根据以下对话内容生成一个简短的标题（最多30个字符，中英文均可），不要包含 markdown 标记：\n\n${query.slice(0, 2000)}`,
+      meta: { model_spec: modelSpec }
+    })
+    return response.response
+  },
+
+  /**
    * 获取默认智能体
    * @returns {Promise} - 默认智能体信息
    */

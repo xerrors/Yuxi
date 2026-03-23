@@ -47,11 +47,11 @@ class Config(BaseModel):
     # 模型配置
     # ============================================================
     default_model: str = Field(
-        default="siliconflow/Pro/deepseek-ai/DeepSeek-V3.2",
+        default="siliconflow/Pro/MiniMaxAI/MiniMax-M2.5",
         description="默认对话模型",
     )
     fast_model: str = Field(
-        default="siliconflow/Qwen/Qwen3.5-9B",
+        default="siliconflow/Pro/MiniMaxAI/MiniMax-M2.5",
         description="快速响应模型",
     )
     embed_model: str = Field(
@@ -63,7 +63,7 @@ class Config(BaseModel):
         description="默认 Re-Ranker 模型",
     )
     content_guard_llm_model: str = Field(
-        default="siliconflow/Qwen/Qwen3.5-9B",
+        default="siliconflow/Pro/MiniMaxAI/MiniMax-M2.5",
         description="内容审查LLM模型",
     )
 
