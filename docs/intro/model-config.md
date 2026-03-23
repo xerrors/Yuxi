@@ -9,6 +9,7 @@
 | [硅基流动](https://cloud.siliconflow.cn/i/Eo5yTHGJ) | `SILICONFLOW_API_KEY` | 🆓 免费额度，默认推荐 |
 | OpenAI                                           | `OPENAI_API_KEY`      | GPT 系列模型          |
 | DeepSeek                                         | `DEEPSEEK_API_KEY`    | 国产大模型            |
+| [MiniMax](https://platform.minimaxi.com/)        | `MINIMAX_API_KEY`     | M2.7/M2.5 系列，百万 token 上下文 |
 | OpenRouter                                       | `OPENROUTER_API_KEY`  | 多模型聚合平台        |
 | 智谱清言                                         | `ZHIPUAI_API_KEY`     | GLM 系列模型          |
 | 阿里云百炼                                       | `DASHSCOPE_API_KEY`   | 通义千问系列          |

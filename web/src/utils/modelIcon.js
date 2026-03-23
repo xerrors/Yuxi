@@ -8,6 +8,7 @@ import arkIcon from '@/assets/providers/doubao-color.svg'
 import openrouterIcon from '@/assets/providers/openrouter.svg'
 import defaultIcon from '@/assets/providers/default.png'
 import modelscopeIcon from '@/assets/providers/modelscope-color.svg'
+import minimaxIcon from '@/assets/providers/minimax-color.svg'
 
 export const modelIcons = {
   openai: openaiIcon,
@@ -20,5 +21,6 @@ export const modelIcons = {
   together: togetherIcon,
   openrouter: openrouterIcon,
   modelscope: modelscopeIcon,
+  minimax: minimaxIcon,
   default: defaultIcon // 添加默认图标
 }

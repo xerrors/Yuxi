@@ -115,6 +115,19 @@ DEFAULT_CHAT_MODEL_PROVIDERS: dict[str, ChatModelProvider] = {
             "doubao-seed-2-0-mini-260215",
         ],
     ),
+    "minimax": ChatModelProvider(
+        name="MiniMax",
+        url="https://platform.minimaxi.com/document/introduction",
+        base_url="https://api.minimaxi.com/v1",
+        default="MiniMax-M2.7",
+        env="MINIMAX_API_KEY",
+        models=[
+            "MiniMax-M2.7",
+            "MiniMax-M2.7-highspeed",
+            "MiniMax-M2.5",
+            "MiniMax-M2.5-highspeed",
+        ],
+    ),
     "openrouter": ChatModelProvider(
         name="OpenRouter",
         url="https://openrouter.ai/models",
