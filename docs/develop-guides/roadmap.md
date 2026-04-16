@@ -47,6 +47,7 @@
 - 重构 MCP 运行时配置加载模型：移除 `MCP_SERVERS` 作为运行正确性前提的设计，改为每次直接从数据库读取最新 MCP 配置，并用 `server_name:config_hash` 作为本地工具缓存 key；同时将内置 MCP 初始化职责收敛为仅同步数据库默认项，前端 MCP 选项改为直接使用实时资源列表，解决 `api`/`worker` 分进程下的配置不一致与缓存失效问题
 - 为知识库检索工具补充 `metadata.filepath` 注入：在 `query_kb` 统一出口基于会话可见知识库构建 `file_id -> /home/gem/kbs/...` 映射并回填 Milvus 检索结果，注入逻辑复用知识库只读后端命名规则；路径注入仅作用于 Milvus chunks 列表，Dify 和 LightRAG 等其他知识库保持原检索结果返回，不再兼容无显式 `file_id` 的推断注入，新增单测覆盖该约束
 - 调整 Milvus 混合检索实现：集合 schema 增加 Milvus 内置 BM25 稀疏向量字段、BM25 函数和中文 analyzer 配置，`keyword` 模式改为 BM25 全文检索，`hybrid` 模式改为 Milvus 原生向量 + BM25 混合检索，并同步更新检索参数说明。
+- 修复 OIDC 原始用户名绑定中的占位用户解析：绑定占位格式仍保持 `oidc:{sub}:{target_user_id}`，但在解析目标用户 ID 时改为从右侧拆分，避免 `sub` 中包含冒号时把已绑定账号误判成冲突账号，并补充对应单元测试覆盖该回归。
 - 修复 DOCX 解析中的图片回插顺序：Docling 导出的多个 `<!-- image -->` 占位符现在按文档图片顺序替换，避免多图文档中的图片链接前后颠倒。
 - 修复前端依赖安全告警：通过 `pnpm.overrides` 将传递依赖 `flatted` 锁定到 `3.4.2`、`lodash-es` 锁定到 `4.18.1`，并同步更新 `pnpm-lock.yaml` 以消除 DriftGuard 报告的高危 CVE
 - 重写界面设计规范：参考 `DESIGN.md` 写法补充视觉气质、颜色 token、组件状态、布局层级、响应式与 Agent Prompt Guide，并基于该规范收敛首页视觉表现，移除装饰性渐变、重阴影、hover 位移和入场动画。

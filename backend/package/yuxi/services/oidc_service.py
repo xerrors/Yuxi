@@ -409,7 +409,11 @@ class OIDCUtils:
         }
 
 
-async def get_or_create_oidc_department(db, dept_name_from_oidc: str | None = None, dept_desc_from_oidc: str | None = None) -> Department | None:
+async def get_or_create_oidc_department(
+    db,
+    dept_name_from_oidc: str | None = None,
+    dept_desc_from_oidc: str | None = None,
+) -> Department | None:
     """获取或创建 OIDC 用户的部门"""
     # 清理并验证从 OIDC 获取的部门名称
     processed_dept_name = None
@@ -494,17 +498,14 @@ async def find_user_by_oidc_sub(db, sub: str) -> User | None:
             if placeholder.is_deleted != 1:
                 # 非deleted占位，直接返回
                 return placeholder
-            parts = placeholder.user_id.split(":")
-            if len(parts) >= 3:
-                try:
-                    target_user_id = int(parts[2])
-                    result = await db.execute(select(User).filter(User.id == target_user_id, User.is_deleted == 0))
-                    target_user = result.scalar_one_or_none()
-                    if target_user:
-                        logger.debug(f"Resolved OIDC binding placeholder {placeholder.user_id} to user {target_user_id}")
-                        return target_user
-                except ValueError:
-                    continue
+            target_user_id = _extract_oidc_placeholder_target_user_id(placeholder.user_id)
+            if target_user_id is None:
+                continue
+            result = await db.execute(select(User).filter(User.id == target_user_id, User.is_deleted == 0))
+            target_user = result.scalar_one_or_none()
+            if target_user:
+                logger.debug(f"Resolved OIDC binding placeholder {placeholder.user_id} to user {target_user_id}")
+                return target_user
         # 如果没有解析出有效的目标用户，返回第一个非deleted legacy用户（向后兼容）
         for candidate in legacy_users:
             if candidate.is_deleted == 0:
@@ -535,18 +536,29 @@ async def find_deleted_oidc_user_by_sub(db, sub: str) -> User | None:
     legacy_users = list(legacy_result.scalars().all())
     if legacy_users:
         for placeholder in legacy_users:
-            parts = placeholder.user_id.split(":")
-            if len(parts) >= 3:
-                try:
-                    target_user_id = int(parts[2])
-                    result = await db.execute(select(User).filter(User.id == target_user_id, User.is_deleted == 1))
-                    target_user = result.scalar_one_or_none()
-                    if target_user:
-                        return target_user
-                except ValueError:
-                    continue
+            target_user_id = _extract_oidc_placeholder_target_user_id(placeholder.user_id)
+            if target_user_id is None:
+                continue
+            result = await db.execute(select(User).filter(User.id == target_user_id, User.is_deleted == 1))
+            target_user = result.scalar_one_or_none()
+            if target_user:
+                return target_user
         return legacy_users[0]
     return None
+
+
+def _extract_oidc_placeholder_target_user_id(user_id: str) -> int | None:
+    """从占位用户ID中解析真实用户ID，允许 sub 中包含冒号。"""
+    value = str(user_id or "").strip()
+    if not value.startswith("oidc:"):
+        return None
+
+    # 占位格式始终以 `:{target_user_id}` 结尾，因此从右侧拆分即可避免 sub 中的冒号干扰。
+    try:
+        _prefix, target_user_id = value.rsplit(":", 1)
+        return int(target_user_id)
+    except ValueError:
+        return None
 
 
 async def _create_oidc_binding_placeholder(db, sub: str, target_user: User) -> None:
@@ -591,7 +603,10 @@ async def _create_oidc_binding_placeholder(db, sub: str, target_user: User) -> N
     try:
         db.add(placeholder_user)
         await db.commit()
-        logger.info(f"Created OIDC binding placeholder (deleted) for sub {sub} -> user {target_user.id} ({target_user.user_id})")
+        logger.info(
+            f"Created OIDC binding placeholder (deleted) for sub {sub} -> "
+            f"user {target_user.id} ({target_user.user_id})"
+        )
     except IntegrityError:
         # 并发创建冲突，回滚后忽略
         await db.rollback()
@@ -645,7 +660,10 @@ async def create_oidc_user(db, user_info: dict, department_id: int | None = None
             user_by_sub = await find_user_by_oidc_sub(db, sub)
             if user_by_sub and user_by_sub.id == existing_user.id:
                 # sub 已经正确绑定到该用户，允许返回
-                logger.info(f"User with raw username {user_id} already exists and bound to sub {sub}, returning existing user")
+                logger.info(
+                    f"User with raw username {user_id} already exists and "
+                    f"bound to sub {sub}, returning existing user"
+                )
                 return existing_user
             elif user_by_sub is None:
                 # sub 尚未绑定任何用户，可以将sub绑定到这个现有用户
@@ -654,7 +672,10 @@ async def create_oidc_user(db, user_info: dict, department_id: int | None = None
                 return existing_user
             else:
                 # sub 已经绑定到另一个用户，冲突，拒绝创建
-                logger.warning(f"Cannot create OIDC user with raw username {user_id}: sub {sub} is already bound to another user {user_by_sub.id}, conflict")
+                logger.warning(
+                    f"Cannot create OIDC user with raw username {user_id}: "
+                    f"sub {sub} is already bound to another user {user_by_sub.id}, conflict"
+                )
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=f"用户名 {user_id} 已存在且OIDC标识 {sub} 已绑定到其他账号，请联系管理员处理冲突",
@@ -797,7 +818,10 @@ async def oidc_callback_handler(code: str, state: str, db, request: Request | No
                 else:
                     # sub 已经绑定到另一个用户，存在冲突，拒绝登录
                     conflict_name = user_by_sub.username if not user_by_name else user_by_name.username
-                    logger.warning(f"OIDC sub {sub} is already bound to a different user, login rejected to prevent account hijacking (conflict: {conflict_name})")
+                    logger.warning(
+                        f"OIDC sub {sub} is already bound to a different user, "
+                        f"login rejected to prevent account hijacking (conflict: {conflict_name})"
+                    )
                     return _redirect_to_login_with_error("OIDC标识已绑定到其他账号，请联系管理员处理绑定冲突")
             else:
                 # sub 尚未绑定到任何用户
