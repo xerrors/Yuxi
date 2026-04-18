@@ -83,6 +83,7 @@ const TOOL_RENDERERS = {
   search_file_content: SearchFileContentTool,
   task: TaskTool,
   tavily_search: WebSearchTool,
+  searxng_search: WebSearchTool,
   text_to_img_qwen_image: ImageTool,
   write_file: WriteFileTool,
   write_todos: TodoListTool

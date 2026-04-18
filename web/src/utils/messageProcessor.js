@@ -215,7 +215,7 @@ export class MessageProcessor {
 
       for (const toolCall of msg.tool_calls) {
         const toolName = (toolCall?.name || toolCall?.function?.name || '').toLowerCase()
-        if (!toolName.includes('tavily_search')) continue
+        if (!['tavily_search', 'searxng_search'].some((t) => toolName.includes(t))) continue
 
         const content = toolCall?.tool_call_result?.content
         const parsed = parseToolResultContent(content)

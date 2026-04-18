@@ -44,6 +44,8 @@ class Config(BaseModel):
     enable_content_guard: bool = Field(default=False, description="是否启用内容审查")
     enable_content_guard_llm: bool = Field(default=False, description="是否启用LLM内容审查")
     enable_web_search: bool = Field(default=False, description="是否启用网络搜索")
+    enable_searxng_search: bool = Field(default=False, description="是否启用 SearXNG 搜索")
+    searxng_url: str = Field(default="http://searxng:8888", description="SearXNG 服务地址")
 
     # ============================================================
     # 模型配置
@@ -238,6 +240,11 @@ class Config(BaseModel):
         # 检查网络搜索
         if os.getenv("TAVILY_API_KEY"):
             self.enable_web_search = True
+
+        # 检查 SearXNG（无需 API Key，只要 URL 配置了就启用）
+        if os.getenv("SEARXNG_URL"):
+            self.enable_searxng_search = True
+            self.searxng_url = os.getenv("SEARXNG_URL")
 
         # 获取可用的模型提供商
         self.valuable_model_provider = [k for k, v in self.model_provider_status.items() if v]

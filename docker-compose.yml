@@ -31,8 +31,8 @@ x-api-worker-env: &api-worker-env
   RUN_CANCEL_KEY_TTL_SECONDS: ${RUN_CANCEL_KEY_TTL_SECONDS:-1800}
   RUN_EVENTS_STREAM_TTL_SECONDS: ${RUN_EVENTS_STREAM_TTL_SECONDS:-7200}
   # 其他环境变量
-  NO_PROXY: localhost,127.0.0.1,milvus,graph,minio,milvus-etcd-dev,etcd,mineru,paddlex,sandbox-provisioner,api.siliconflow.cn
-  no_proxy: localhost,127.0.0.1,milvus,graph,minio,milvus-etcd-dev,etcd,mineru,paddlex,sandbox-provisioner,api.siliconflow.cn
+  NO_PROXY: localhost,127.0.0.1,milvus,graph,minio,milvus-etcd-dev,etcd,mineru,paddlex,sandbox-provisioner,api.siliconflow.cn,searxng
+  no_proxy: localhost,127.0.0.1,milvus,graph,minio,milvus-etcd-dev,etcd,mineru,paddlex,sandbox-provisioner,api.siliconflow.cn,searxng
 
 services:
   api:
@@ -429,6 +429,29 @@ services:
     networks:
       - app-network
     restart: unless-stopped
+
+  searxng:
+    image: searxng/searxng:latest
+    container_name: searxng
+    profiles:
+      - search
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./docker/volumes/searxng:/etc/searxng:rw
+    environment:
+      - SEARXNG_PORT=8888
+      - SEARXNG_BIND_ADDRESS=0.0.0.0
+      - SEARXNG_BASE_URL=http://localhost:8888
+    networks:
+      - app-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8888/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
 
 networks:
   app-network:

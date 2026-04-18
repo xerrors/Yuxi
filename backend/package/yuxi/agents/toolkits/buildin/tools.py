@@ -1,10 +1,12 @@
 import os
+import time
 import traceback
 import uuid
 from pathlib import Path
 from typing import Annotated, Any
 
 import requests
+
 from langchain.tools import InjectedToolCallId
 from langchain_core.messages import ToolMessage
 from langgraph.prebuilt.tool_node import ToolRuntime
@@ -20,6 +22,9 @@ from yuxi.utils.question_utils import normalize_questions
 
 # Lazy initialization for TavilySearch (only when API key is available)
 _tavily_search_instance = None
+
+# Lazy initialization for SearXNG Search (only when SEARXNG_URL is configured)
+_searxng_search_instance = None
 
 QWEN_IMAGE_CONFIG_GUIDE = """
 使用前需要先配置硅基流动的图片生成访问凭证。
@@ -62,6 +67,175 @@ if config.enable_web_search:
         _register_tavily_tool()
     except Exception as e:
         logger.warning(f"Failed to register TavilySearch tool: {e}")
+
+# =============================================================================
+# SearXNG 搜索工具
+
+# 定义 SearXNG 可用的备用引擎列表（按优先级排序，无需 API Key）
+# 参考: https://docs.searxng.org/admin/engines/configured_engines.html
+# 重要：每个引擎独立限流，多引擎轮询可以有效分散请求
+_SEARXNG_ENGINE_PRIORITIES = [
+    # 与 docker/volumes/searxng/settings.yml 中的 keep_only 保持一致
+    ["google"],
+    ["bing"],
+    ["duckduckgo"],
+]
+
+
+def _is_rate_limit_error(exception: Exception) -> bool:
+    """判断异常是否来自第三方引擎的限流（429）或服务不可用（503）。"""
+    msg = str(exception).lower()
+    return any(keyword in msg for keyword in ["429", "503", "rate", "limit", "too many", "unavailable", "temporarily"])
+
+
+def _is_searxng_unreachable(exception: Exception) -> bool:
+    """判断异常是否来自 SearXNG 服务本身不可用（连接失败、超时）。"""
+    msg = str(exception).lower()
+    return any(
+        keyword in msg
+        for keyword in ["connection", "timeout", "refused", "network", "resolve", "unable to connect"]
+    )
+
+
+def _get_searxng_wrapper():
+    """获取或创建 SearxSearchWrapper 实例（延迟初始化）。"""
+    if not hasattr(_get_searxng_wrapper, "_wrapper"):
+        from langchain_community.utilities import SearxSearchWrapper
+
+        _get_searxng_wrapper._wrapper = SearxSearchWrapper(searx_host=config.searxng_url)
+    return _get_searxng_wrapper._wrapper
+
+
+# 引擎轮询索引（模块级别持久化，每次工具调用后递增，实现引擎级别的负载分散）
+_engine_idx = {"current": 0}
+
+
+def _get_next_engine_config():
+    """获取下一个引擎配置，逐级降级。"""
+    global _engine_idx
+    idx = _engine_idx["current"]
+    _engine_idx["current"] = (idx + 1) % len(_SEARXNG_ENGINE_PRIORITIES)
+    return _SEARXNG_ENGINE_PRIORITIES[idx]
+
+
+def _call_searxng_with_retry(query: str, engines: list[str] | None = None, num_results: int = 7, attempt: int = 0) -> list[dict]:
+    """Execute search via direct HTTP API (bypassing LangChain wrapper to preserve all fields including score).
+
+    Falls back to LangChain wrapper only when the direct API is unavailable.
+    """
+    params = {"q": query, "format": "json", "limit": num_results}
+    if engines:
+        params["engines"] = engines
+
+    try:
+        resp = requests.get(f"{config.searxng_url}/search", params=params, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("results", [])
+    except Exception as exc:
+        if not _is_rate_limit_error(exc) and not _is_searxng_unreachable(exc):
+            raise
+
+        if attempt >= 2:
+            fallback_engines = _get_next_engine_config()
+            logger.warning(
+                f"SearXNG direct API retry #{attempt + 1} failed, "
+                f"switching to fallback engines={fallback_engines}: {exc}"
+            )
+            fallback_params = {"q": query, "format": "json", "limit": num_results}
+            if fallback_engines:
+                fallback_params["engines"] = fallback_engines
+            try:
+                resp = requests.get(f"{config.searxng_url}/search", params=fallback_params, timeout=15)
+                resp.raise_for_status()
+                return resp.json().get("results", [])
+            except Exception as fallback_exc:
+                logger.error(f"SearXNG fallback engines also failed: {fallback_exc}")
+                raise fallback_exc from exc
+
+        wait_seconds = min(2**attempt * 1.5, 8.0)
+        logger.warning(
+            f"SearXNG search hit rate limit (attempt {attempt + 1}/3), "
+            f"retrying in {wait_seconds:.1f}s: {exc}"
+        )
+        time.sleep(wait_seconds)
+        return _call_searxng_with_retry(query, engines, num_results, attempt + 1)
+
+
+@tool(
+    name_or_callable="searxng_search",
+    description="使用 SearXNG 元搜索引擎进行网页搜索。当第三方引擎（如 DuckDuckGo）偶发限流时，会自动重试（最多3次，每次间隔1-8秒），并在必要时切换到备用引擎（Qwant/Startpage/Mojeek等）。返回标准化格式的搜索结果。",
+    tags=["搜索"],
+    display_name="SearXNG 网页搜索",
+)
+def searxng_search_func(query: Annotated[str, "搜索查询关键词"]) -> dict:
+    """Execute SearXNG search with automatic retry and engine fallback.
+
+    Returns a dict compatible with the Tavily format consumed by the frontend:
+      - query: str          — 原始查询
+      - results[].url       — 网页链接（link → url 映射）
+      - results[].title     — 网页标题
+      - results[].content  — 摘要（snippet → content 映射）
+      - results[].score    — 相关度分（来自 SearXNG 的相对评分，1.0 最高，按序递减）
+      - results[].published_date — 发布日期（SearXNG 可能为空）
+    """
+    global _searxng_search_instance
+
+    engines = _get_next_engine_config()
+
+    try:
+        raw_results = _call_searxng_with_retry(query, engines if engines else None, num_results=7)
+    except Exception as exc:
+        logger.error(f"SearXNG search failed after all retries: {exc}")
+        return {
+            "query": query,
+            "results": [],
+            "error": f"搜索服务暂时不可用（{type(exc).__name__}），"
+            f"建议稍后重试或检查 SearXNG 容器状态（docker compose --profile search ps）。",
+        }
+
+    results = []
+    for r in raw_results:
+        if isinstance(r, dict) and r.get("Result") == "No good Search Result was found":
+            continue
+        results.append(
+            {
+                "title": r.get("title", ""),
+                "url": r.get("url") or r.get("link", ""),
+                "content": r.get("content") or r.get("snippet", ""),
+                "score": r.get("score", 1.0),
+                "published_date": r.get("publishedDate") or r.get("published_date", ""),
+            }
+        )
+
+    return {
+        "query": query,
+        "results": results,
+    }
+    """判断异常是否来自第三方引擎的限流（429）或服务不可用（503）。"""
+    msg = str(exception).lower()
+    return any(keyword in msg for keyword in ["429", "503", "rate", "limit", "too many", "unavailable", "temporarily"])
+
+
+def _is_searxng_unreachable(exception: Exception) -> bool:
+    """判断异常是否来自 SearXNG 服务本身不可用（连接失败、超时）。"""
+    msg = str(exception).lower()
+    return any(
+        keyword in msg
+        for keyword in ["connection", "timeout", "refused", "network", "resolve", "unable to connect"]
+    )
+
+
+# 注册 SearXNG 扩展元数据（@tool 装饰器已在模块加载时完成工具注册）
+if config.enable_searxng_search and "searxng_search" not in _extra_registry:
+    try:
+        _extra_registry["searxng_search"] = ToolExtraMetadata(
+            category="buildin",
+            tags=["搜索"],
+            display_name="SearXNG 网页搜索",
+        )
+    except Exception as e:
+        logger.warning(f"Failed to register SearXNG extra metadata: {e}")
 
 
 class PresentArtifactsInput(BaseModel):

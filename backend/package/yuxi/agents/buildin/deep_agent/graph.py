@@ -16,7 +16,7 @@ from yuxi.agents.middlewares import (
 )
 from yuxi.agents.middlewares.knowledge_base_middleware import KnowledgeBaseMiddleware
 from yuxi.agents.middlewares.skills_middleware import SkillsMiddleware
-from yuxi.agents.toolkits.buildin.tools import _create_tavily_search
+from yuxi.agents.toolkits.buildin.tools import _create_tavily_search, searxng_search_func
 from yuxi.services.mcp_service import get_tools_from_all_servers
 from yuxi.services.subagent_service import get_subagents_from_names
 from yuxi.utils import logger
@@ -44,6 +44,8 @@ class DeepAgent(BaseAgent):
             tavily = _create_tavily_search()
             if tavily:
                 tools.append(tavily)
+        if config.enable_searxng_search:
+            tools.append(searxng_search_func)
 
         if not tools:
             logger.warning("No search tools configured, DeepAgent will work without web search")
@@ -80,9 +82,9 @@ class DeepAgent(BaseAgent):
                 FilesystemMiddleware(backend=create_agent_composite_backend),  # 文件系统后端
                 PatchToolCallsMiddleware(),
                 summary_middleware,
-                # 子 Agent 搜索工具限制：tavily_search 最多 8 次
+                # 子 Agent 搜索工具限制：tavily_search + searxng_search 最多 8 次
                 ToolCallLimitMiddleware(
-                    tool_name="tavily_search",
+                    tool_name=["tavily_search", "searxng_search"],
                     run_limit=8,
                     exit_behavior="continue",
                 ),
@@ -104,9 +106,9 @@ class DeepAgent(BaseAgent):
                 KnowledgeBaseMiddleware(),  # 知识库工具
                 subagents_middleware,
                 summary_middleware,
-                # 工具调用限制：tavily_search 总调用最多 20 次
+                # 工具调用限制：tavily_search + searxng_search 总调用最多 20 次
                 ToolCallLimitMiddleware(
-                    tool_name="tavily_search",
+                    tool_name=["tavily_search", "searxng_search"],
                     thread_limit=20,
                     exit_behavior="continue",
                 ),
