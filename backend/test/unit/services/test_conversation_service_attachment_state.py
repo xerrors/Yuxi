@@ -68,8 +68,10 @@ async def test_sync_thread_attachment_state_updates_graph(monkeypatch: pytest.Mo
         {
             "status": "parsed",
             "path": "/home/gem/user-data/uploads/attachments/resume.md",
+            "file_path": "/home/gem/user-data/uploads/attachments/resume.md",
             "file_name": "resume.md",
             "uploaded_at": "2026-02-20T00:00:00+00:00",
+            "markdown": "# Resume\ncontent",
         }
     ]
     await svc._sync_thread_upload_state(
@@ -80,7 +82,10 @@ async def test_sync_thread_attachment_state_updates_graph(monkeypatch: pytest.Mo
     )
 
     assert captured["write_config"] == {"configurable": {"thread_id": "thread-1", "user_id": "u1"}}
-    assert captured["write_values"] == {"uploads": svc._build_state_uploads(attachments)}
+    assert captured["write_values"] == {
+        "uploads": svc._build_state_uploads(attachments),
+        "files": svc._build_state_files(attachments),
+    }
 
 
 @pytest.mark.asyncio

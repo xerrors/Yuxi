@@ -5,6 +5,7 @@ Integration tests for chat router endpoints.
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 
 import pytest
 from yuxi.agents.backends.sandbox import ensure_thread_dirs, sandbox_user_data_dir, sandbox_workspace_dir
@@ -179,3 +180,45 @@ async def test_save_thread_artifact_to_workspace_rejects_invalid_paths(test_clie
         headers=headers,
     )
     assert directory_response.status_code == 400, directory_response.text
+
+
+async def test_docx_attachment_is_materialized_into_state_files_and_readable(test_client, standard_user):
+    headers = standard_user["headers"]
+    thread_id = await _create_thread_for_user(test_client, headers)
+    docx_path = Path(__file__).resolve().parents[2] / "data" / "测试文档.docx"
+
+    with docx_path.open("rb") as handle:
+        upload_response = await test_client.post(
+            f"/api/chat/thread/{thread_id}/attachments",
+            files={
+                "file": (
+                    docx_path.name,
+                    handle,
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+            },
+            headers=headers,
+        )
+    assert upload_response.status_code == 200, upload_response.text
+
+    attachment = upload_response.json()
+    assert attachment["file_name"] == docx_path.name
+    assert attachment["status"] == "parsed"
+    assert attachment["path"].endswith(".md")
+
+    state_response = await test_client.get(f"/api/chat/thread/{thread_id}/state", headers=headers)
+    assert state_response.status_code == 200, state_response.text
+    agent_state = state_response.json()["agent_state"]
+    files = agent_state["files"]
+    assert attachment["path"] in files, agent_state
+    assert files[attachment["path"]]["content"], files[attachment["path"]]
+
+    content_response = await test_client.get(
+        f"/api/chat/thread/{thread_id}/files/content",
+        params={"path": attachment["path"]},
+        headers=headers,
+    )
+    assert content_response.status_code == 200, content_response.text
+    payload = content_response.json()
+    assert payload["path"] == attachment["path"]
+    assert payload["content"]

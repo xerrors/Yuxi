@@ -19,16 +19,16 @@ ENV TZ=Asia/Shanghai \
 RUN npm config set registry https://registry.npmmirror.com --global \
     && npm cache clean --force
 
-# 设置代理和时区，更换镜像源，安装系统依赖 - 合并为一个RUN减少层数
+# 设置代理和时区，更换软件源协议并安装系统依赖 - 合并为一个RUN减少层数
 RUN set -ex \
     # (A) 设置时区
     && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone \
-    # (B) 替换清华源 (针对 Debian Bookworm 的新版格式)
-    && sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources \
-    && sed -i 's|security.debian.org/debian-security|mirrors.tuna.tsinghua.edu.cn/debian-security|g' /etc/apt/sources.list.d/debian.sources \
+    # (B) 切换到 https 并启用重试，减少大包下载中断导致的构建失败
+    && sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+    && sed -i 's|http://security.debian.org/debian-security|https://security.debian.org/debian-security|g' /etc/apt/sources.list.d/debian.sources \
     # (C) 安装必要的系统库
-    && apt-get update \
-    && apt-get install -y --no-install-recommends --fix-missing \
+    && apt-get update -o Acquire::Retries=5 \
+    && apt-get install -y --no-install-recommends --fix-missing -o Acquire::Retries=5 \
         curl \
         ffmpeg \
         git \

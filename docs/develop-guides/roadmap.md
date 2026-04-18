@@ -19,6 +19,7 @@
 ### Bugs
 - 目前的知识库的图片存在公开访问风险
 - 生成基准测试会把所有的向量都计算一遍不合理
+- 登录失败分支调用了不存在的 `increment_failed_login()`，当前密码错误场景会直接抛出属性错误，尚未修复
 
 ### BREAKING CHANGE（不兼容变更，0.7 版本再实现）
 - 将自定义provider 的实现逻辑，从文件移动到数据库中，并将相关处理代码，移出 config 文件，放到 provider 模块中
@@ -38,6 +39,7 @@
 - 将 `yuxi` 从 uv workspace 成员调整为 `backend/package` 下可独立构建的本地 Python 包，backend 通过 path dependency 以已安装包形式发现依赖，移除对 `PYTHONPATH=/app/package` 的运行时耦合。
 - 修复沙盒 `workspace` 隔离粒度：宿主机目录从共享 `saves/threads/shared/workspace` 收敛为用户级 `saves/threads/shared/<user_id>/workspace`，并同步传递 `user_id` 到 sandbox 路径解析、provisioner 挂载与 viewer/chat 测试，保证同用户跨线程共享、不同用户隔离。
 - 调整输入框 `@` 提及中的文件搜索交互：无查询内容时不再直接展示文件列表，改为提示“输入相关内容以搜索文件”，避免未过滤结果干扰选择。
+- 修复聊天附件状态同步：上传文件转换出的 markdown 现在会同步写入 LangGraph `files/uploads` 状态，避免附件只显示在文件树里、但智能体状态中缺失导致 `read_file` 无法稳定读取。
 - 收紧文件系统安全边界：viewer/chat 下载与删除路径统一基于解析后的真实路径做允许目录校验，阻止通过软链接逃逸工作区/线程目录；同时将密码哈希默认实现升级为 Argon2，并移除 skill frontmatter 解析中的正则回溯风险。
 - 调整 Skills 导入能力：`/api/system/skills/import` 现在除 ZIP 外也支持直接上传单个 `SKILL.md`，前端上传入口与后端导入服务同步兼容，便于快速导入单文件技能
 - 扩展 viewer 工作区文件操作：`/home/gem/user-data/workspace` 支持从文件系统面板新建文件夹和上传文件，后端限制写入范围并保持同名冲突直接报错。

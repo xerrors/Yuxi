@@ -104,14 +104,16 @@ def _build_langfuse_run_context(
 def extract_agent_state(values: dict) -> AgentStatePayload:
     """从 LangGraph state 中提取 agent 状态"""
     if not isinstance(values, dict):
-        return {"todos": [], "files": {}, "artifacts": []}
+        return {"todos": [], "files": {}, "uploads": [], "artifacts": []}
 
     # 直接获取，信任 state 的数据结构
     todos = values.get("todos")
     artifacts = values.get("artifacts")
+    uploads = values.get("uploads")
     result: AgentStatePayload = {
         "todos": list(todos)[:20] if todos else [],
         "files": values.get("files") or {},
+        "uploads": list(uploads) if uploads else [],
         "artifacts": list(artifacts) if artifacts else [],
     }
 

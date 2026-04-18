@@ -163,6 +163,29 @@ def _build_state_uploads(attachments: list[dict]) -> list[dict]:
     return uploads
 
 
+def _build_state_files(attachments: list[dict]) -> dict[str, dict]:
+    files: dict[str, dict] = {}
+    for attachment in attachments:
+        if attachment.get("status") != "parsed":
+            continue
+
+        file_path = attachment.get("file_path")
+        markdown = attachment.get("markdown")
+        if not isinstance(file_path, str) or not file_path.strip():
+            continue
+        if not isinstance(markdown, str) or not markdown:
+            continue
+
+        uploaded_at = attachment.get("uploaded_at") or utc_isoformat()
+        files[file_path] = {
+            "content": markdown.splitlines(),
+            "created_at": uploaded_at,
+            "modified_at": uploaded_at,
+        }
+
+    return files
+
+
 async def _sync_thread_upload_state(
     *,
     thread_id: str,
@@ -183,6 +206,7 @@ async def _sync_thread_upload_state(
             config=config,
             values={
                 "uploads": _build_state_uploads(attachments),
+                "files": _build_state_files(attachments),
             },
         )
     except Exception as exc:  # noqa: BLE001

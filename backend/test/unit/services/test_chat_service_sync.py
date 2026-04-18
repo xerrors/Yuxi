@@ -133,7 +133,7 @@ async def test_agent_chat_uses_invoke_messages_and_persists_langgraph_state(monk
     assert result["response"] == "Hi from invoke"
     assert result["thread_id"] == "thread-1"
     assert result["request_id"] == "req-1"
-    assert result["agent_state"] == {"todos": ["todo-1"], "files": {}, "artifacts": []}
+    assert result["agent_state"] == {"todos": ["todo-1"], "files": {}, "uploads": [], "artifacts": []}
 
     invoke_messages = calls["invoke_messages"]
     assert isinstance(invoke_messages, list)
@@ -214,3 +214,21 @@ async def test_agent_chat_sync_returns_finished_even_when_state_has_interrupt(mo
     assert result["response"] == "Need input later"
     assert result["thread_id"] == "thread-2"
     assert result["request_id"] == "req-2"
+
+
+def test_extract_agent_state_keeps_uploads_and_files():
+    state = svc.extract_agent_state(
+        {
+            "todos": [{"content": "read attachment", "status": "completed"}],
+            "files": {"/home/gem/user-data/uploads/attachments/demo.md": {"content": ["line1"]}},
+            "uploads": [{"path": "/home/gem/user-data/uploads/attachments/demo.md"}],
+            "artifacts": ["/home/gem/user-data/outputs/result.txt"],
+        }
+    )
+
+    assert state == {
+        "todos": [{"content": "read attachment", "status": "completed"}],
+        "files": {"/home/gem/user-data/uploads/attachments/demo.md": {"content": ["line1"]}},
+        "uploads": [{"path": "/home/gem/user-data/uploads/attachments/demo.md"}],
+        "artifacts": ["/home/gem/user-data/outputs/result.txt"],
+    }

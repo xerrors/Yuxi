@@ -2,6 +2,14 @@
 
 本页用于记录各版本发布说明（新增、修复与破坏性变更）。
 
+## v0.6.1
+
+### 修复
+
+- 修复聊天附件状态同步链路：上传文件转换出的 Markdown 现在会同步写入 LangGraph `files/uploads` 状态，附件不再只显示在文件树中，智能体也能在对话执行时稳定感知并读取附件。
+- 修复生产部署中的 sandbox provisioner 挂载配置错误：正式环境改为挂载当前项目实际 `saves` 目录，避免附件 Markdown 已生成但 sandbox 内不可见，导致 `read_file('/home/gem/user-data/uploads/attachments/*.md')` 返回 404。
+- 补充附件读取回归测试：新增附件状态同步、聊天接口和端到端验证，覆盖“上传 office 文件 -> 转换 Markdown -> 智能体读取附件”的完整链路。
+
 ## v0.6 (2026-04-01)
 
 
