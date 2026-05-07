@@ -81,6 +81,13 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 2. 开发完成之后必须进行 检查 -> 测试 -> Lint，以及端到端测试，测试脚本不完善时应完善脚本。
 3. 测试规范务必遵守 [testing-guidelines.md](docs/develop-guides/testing-guidelines.md) 中的规范，测试脚本务必放在 backend/test 目录下，并且在提交前确保测试通过。
 
+### 需求沟通规范
+
+在沟通需求的时候，当需求不明确的时候，需要主动挖掘需求细节，对齐需求的验收标准，明确需求的优先级和范围，避免模糊需求导致的过度设计和不必要的工作。
+
+- 需求/修改 明确之后，如果改动较大，则需要在 docs/vibe 目录下创建一个包含日期的文档，记录需求的细节和验收标准
+- 该需求文档中，还应该包括本次任务的目标以及 checklist（简要）
+
 ### 前端开发规范
 - 使用 pnpm 管理
 - API 接口规范：所有的 API 接口都应该定义在 web/src/apis 下面
