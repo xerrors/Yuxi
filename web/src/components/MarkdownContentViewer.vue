@@ -22,12 +22,7 @@
     <div class="viewer-container">
       <!-- 左侧：Markdown内容 -->
       <div class="content-panel">
-        <MdPreview
-          :modelValue="mergedContent"
-          :theme="theme"
-          previewTheme="github"
-          class="markdown-content"
-        />
+        <MarkdownPreview :content="mergedContent" class="markdown-content" />
       </div>
 
       <!-- 右侧：Chunk信息 -->
@@ -88,10 +83,8 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { MdPreview } from 'md-editor-v3'
-import 'md-editor-v3/lib/preview.css'
 import { mergeChunks, getChunkPreview } from '@/utils/chunkUtils'
-import { useThemeStore } from '@/stores/theme'
+import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
 import { ChevronRight, ChevronLeft } from 'lucide-vue-next'
 
 const props = defineProps({
@@ -105,9 +98,6 @@ const props = defineProps({
   }
 })
 
-// 使用主题store
-const themeStore = useThemeStore()
-
 // 响应式引用
 const showTooltip = ref(false)
 const currentChunk = ref(null)
@@ -115,9 +105,6 @@ const tooltipStyle = ref({ top: '0px', left: '0px' })
 const activeChunkIndex = ref(null)
 const highlightedChunkIndex = ref(null)
 const chunkPanelVisible = ref(false)
-
-// 主题设置 - 根据系统主题动态切换
-const theme = computed(() => (themeStore.isDark ? 'dark' : 'light'))
 
 // 合并chunks
 const mergeResult = computed(() => mergeChunks(props.chunks))
@@ -253,26 +240,6 @@ onUnmounted(() => {
 .markdown-content {
   min-height: 100%;
   overflow: visible;
-}
-
-/* MdPreview 组件样式覆盖 */
-.markdown-content :deep(.md-editor) {
-  /* height: auto !important; */
-  min-height: 100%;
-}
-
-.markdown-content :deep(.md-editor-preview) {
-  padding: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
-  /* height: auto !important; */
-  font-size: small;
-  min-height: 100%;
-}
-
-.markdown-content :deep(.md-editor-preview-wrapper) {
-  padding: 0;
-  /* height: auto !important; */
-  min-height: 100%;
 }
 
 .chunk-panel {

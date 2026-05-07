@@ -17,22 +17,14 @@
       >
     </div>
 
-    <MdPreview
-      v-if="chunk?.content"
-      :modelValue="chunk.content"
-      :theme="theme"
-      previewTheme="github"
-      class="chunk-markdown-content flat-md-preview"
-    />
+    <MarkdownPreview v-if="chunk?.content" :content="chunk.content" class="chunk-markdown-content" />
     <div v-else class="empty-text">暂无内容</div>
   </a-modal>
 </template>
 
 <script setup>
 import { computed } from 'vue'
-import { MdPreview } from 'md-editor-v3'
-import 'md-editor-v3/lib/preview.css'
-import { useThemeStore } from '@/stores/theme'
+import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
 
 const props = defineProps({
   open: {
@@ -50,9 +42,6 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['update:open'])
-
-const themeStore = useThemeStore()
-const theme = computed(() => (themeStore.isDark ? 'dark' : 'light'))
 
 const visible = computed({
   get: () => props.open,
@@ -81,10 +70,6 @@ const modalTitle = computed(() => {
   .meta-item {
     color: var(--gray-600);
   }
-}
-
-.chunk-markdown-content :deep(.md-editor) {
-  background: transparent;
 }
 
 .empty-text {

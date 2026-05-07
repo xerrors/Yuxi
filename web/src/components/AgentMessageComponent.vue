@@ -38,17 +38,7 @@
       </div>
 
       <!-- 消息内容 -->
-      <MdPreview
-        v-if="parsedData.content"
-        ref="editorRef"
-        editorId="preview-only"
-        :theme="theme"
-        previewTheme="github"
-        :showCodeRowNumber="false"
-        :modelValue="parsedData.content"
-        :key="message.id"
-        class="message-md flat-md-preview"
-      />
+      <MarkdownPreview v-if="parsedData.content" :key="message.id" :content="parsedData.content" class="message-md" />
 
       <div v-else-if="parsedData.reasoning_content" class="empty-block"></div>
 
@@ -107,14 +97,11 @@ import { CaretRightOutlined } from '@ant-design/icons-vue'
 import RefsComponent from '@/components/RefsComponent.vue'
 import { Copy, Check } from 'lucide-vue-next'
 import ToolCallsGroupComponent from '@/components/ToolCallsGroupComponent.vue'
+import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
 import { useAgentStore } from '@/stores/agent'
 import { useInfoStore } from '@/stores/info'
-import { useThemeStore } from '@/stores/theme'
 import { storeToRefs } from 'pinia'
 import { MessageProcessor } from '@/utils/messageProcessor'
-
-import { MdPreview } from 'md-editor-v3'
-import 'md-editor-v3/lib/preview.css'
 
 const props = defineProps({
   // 消息角色：'user'|'assistant'|'sent'|'received'
@@ -152,8 +139,6 @@ const props = defineProps({
     default: false
   }
 })
-
-const editorRef = ref()
 
 const emit = defineEmits(['retry', 'retryStoppedMessage', 'openRefs'])
 
@@ -226,8 +211,6 @@ const getErrorMessage = computed(() => {
 const agentStore = useAgentStore()
 const { availableKnowledgeBases } = storeToRefs(agentStore)
 const infoStore = useInfoStore()
-const themeStore = useThemeStore()
-
 // 提取消息来源
 const messageSources = computed(() => {
   if (props.message.type === 'ai') {
@@ -235,9 +218,6 @@ const messageSources = computed(() => {
   }
   return { knowledgeChunks: [], webSources: [] }
 })
-
-// 主题设置 - 根据系统主题动态切换
-const theme = computed(() => (themeStore.isDark ? 'dark' : 'light'))
 
 // 过滤有效的工具调用
 const validToolCalls = computed(() => {
@@ -285,6 +265,7 @@ const parsedData = computed(() => {
     reasoning_content
   }
 })
+
 </script>
 
 <style lang="less" scoped>
@@ -549,10 +530,8 @@ const parsedData = computed(() => {
     object-fit: contain;
   }
 }
-</style>
 
-<style lang="less" scoped>
-:deep(.message-md) {
-  margin: 8px 0;
-}
+  .message-md {
+    margin: 8px 0;
+  }
 </style>

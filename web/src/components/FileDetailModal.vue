@@ -87,13 +87,7 @@
 
       <!-- Markdown 模式 -->
       <div v-else-if="viewMode === 'markdown'" class="content-panel flat-md-preview">
-        <MdPreview
-          v-if="mergedContent"
-          :modelValue="mergedContent"
-          :theme="theme"
-          previewTheme="github"
-          class="markdown-content"
-        />
+        <MarkdownPreview v-if="mergedContent" :content="mergedContent" class="markdown-content" />
         <div v-else class="empty-content">
           <p>暂无文件内容</p>
         </div>
@@ -126,18 +120,15 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { useDatabaseStore } from '@/stores/database'
-import { useThemeStore } from '@/stores/theme'
 import { message } from 'ant-design-vue'
 import { documentApi } from '@/apis/knowledge_api'
 import { mergeChunks } from '@/utils/chunkUtils'
 import { getFileIcon, getFileIconColor } from '@/utils/file_utils'
 import { getPreviewTypeByPath } from '@/utils/file_preview'
-import { MdPreview } from 'md-editor-v3'
-import 'md-editor-v3/lib/preview.css'
+import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
 import { Download, ChevronDown, FileText, X } from 'lucide-vue-next'
 
 const store = useDatabaseStore()
-const themeStore = useThemeStore()
 
 const visible = computed({
   get: () => store.state.fileDetailModalVisible,
@@ -162,9 +153,6 @@ const revokeSourcePreviewUrl = () => {
     sourcePreviewUrl.value = ''
   }
 }
-
-// 主题设置
-const theme = computed(() => (themeStore.isDark ? 'dark' : 'light'))
 
 // 视图模式
 const viewMode = ref('markdown')

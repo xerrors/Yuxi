@@ -1,14 +1,7 @@
-import { marked } from 'marked'
+import { escapeHtml } from '@/utils/html'
+import { renderMarkdown as renderMarkdownPreview } from '@/utils/markdown_preview'
 import dayjs, { parseToShanghai } from '@/utils/time'
 import chatExportTemplate from './templates/chat-export-template.html?raw'
-
-// 统一的 Markdown 渲染配置
-marked.setOptions({
-  gfm: true,
-  breaks: true,
-  mangle: false,
-  headerIds: false
-})
 
 export class ChatExporter {
   /**
@@ -24,7 +17,7 @@ export class ChatExporter {
     } = options || {}
 
     try {
-      const htmlContent = this.generateHTML({
+      const htmlContent = await this.generateHTML({
         chatTitle,
         agentName,
         agentDescription,
@@ -57,7 +50,7 @@ export class ChatExporter {
   /**
    * 生成完整 HTML 内容
    */
-  static generateHTML(options) {
+  static async generateHTML(options) {
     const { chatTitle, agentName, agentDescription, messages } = options
 
     const flattenedMessages = this.flattenMessages(messages)
@@ -65,7 +58,7 @@ export class ChatExporter {
       throw new Error('没有可导出的对话内容')
     }
 
-    const messagesHTML = this.generateMessagesHTML(flattenedMessages, agentName)
+    const messagesHTML = await this.generateMessagesHTML(flattenedMessages, agentName)
 
     return this.generateHTMLTemplate({
       chatTitle,
@@ -117,9 +110,9 @@ export class ChatExporter {
   /**
    * 生成对话消息的 HTML 片段
    */
-  static generateMessagesHTML(messages, agentName) {
-    return messages
-      .map((msg) => {
+  static async generateMessagesHTML(messages, agentName) {
+    const messageSegments = await Promise.all(
+      messages.map(async (msg) => {
         const isUserMessage = ['human', 'user'].includes(msg?.type) || msg?.role === 'user'
         const avatar = isUserMessage ? '👤' : '🤖'
         const senderLabel = isUserMessage ? '用户' : agentName || '智能助手'
@@ -128,8 +121,10 @@ export class ChatExporter {
         const timestamp = this.escapeHtml(this.formatTimestamp(timestampRaw))
 
         const { content, reasoning } = this.extractMessageContent(msg)
-        const contentHTML = content ? this.renderMarkdown(content) : ''
-        const reasoningHTML = !isUserMessage ? this.generateReasoningHTML(reasoning) : ''
+        const [contentHTML, reasoningHTML] = await Promise.all([
+          content ? this.renderMarkdown(content) : '',
+          !isUserMessage ? this.generateReasoningHTML(reasoning) : ''
+        ])
         const toolCallsHTML = !isUserMessage ? this.generateToolCallsHTML(msg) : ''
 
         const bodySegments = [
@@ -151,7 +146,9 @@ export class ChatExporter {
         </div>
       `
       })
-      .join('')
+    )
+
+    return messageSegments.join('')
   }
 
   /**
@@ -216,10 +213,10 @@ export class ChatExporter {
   /**
    * 生成推理过程 HTML
    */
-  static generateReasoningHTML(reasoning) {
+  static async generateReasoningHTML(reasoning) {
     if (!reasoning) return ''
 
-    const reasoningHTML = this.renderMarkdown(reasoning)
+    const reasoningHTML = await this.renderMarkdown(reasoning)
     if (!reasoningHTML) return ''
 
     return `
@@ -355,27 +352,18 @@ export class ChatExporter {
   /**
    * 统一的 Markdown 渲染，失败时回退到简单换行
    */
-  static renderMarkdown(content) {
+  static async renderMarkdown(content) {
     if (!content) return ''
     try {
-      return marked.parse(content).trim()
+      return (await renderMarkdownPreview(content)).trim()
     } catch (error) {
       console.warn('Markdown 渲染失败，回退为纯文本:', error)
       return this.escapeHtml(content).replace(/\n/g, '<br>')
     }
   }
 
-  /**
-   * HTML 转义
-   */
   static escapeHtml(value) {
-    if (value == null) return ''
-    return String(value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;')
+    return escapeHtml(value)
   }
 
   /**

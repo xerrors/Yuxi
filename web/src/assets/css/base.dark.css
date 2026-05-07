@@ -147,7 +147,3 @@
   --markmap-text-color: var(--gray-700);
   --markmap-highlight-node-bg: var(--color-error-50);
 }
-
-:root.dark .md-editor {
-  --md-bk-color: transparent;
-}

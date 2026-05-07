@@ -98,38 +98,6 @@
                 </div>
               </div>
               <div class="editor-container">
-                <div class="editor-header">
-                  <div class="current-path">
-                    <File :size="14" />
-                    <span>{{ selectedPath || '未选择文件' }}</span>
-                    <span v-if="canSave" class="save-hint">●</span>
-                  </div>
-                  <div class="header-actions">
-                    <a-button
-                      v-if="isMarkdownFile && selectedPath"
-                      size="small"
-                      @click="viewMode = viewMode === 'edit' ? 'preview' : 'edit'"
-                      class="lucide-icon-btn view-toggle-btn"
-                      :title="viewMode === 'edit' ? '预览' : '编辑'"
-                    >
-                      <Eye v-if="viewMode === 'edit'" :size="14" />
-                      <Edit3 v-else :size="14" />
-                      <span>{{ viewMode === 'edit' ? '预览' : '编辑' }}</span>
-                    </a-button>
-                    <a-button
-                      v-if="!isBuiltinInstalledSkill"
-                      type="primary"
-                      size="small"
-                      @click="saveCurrentFile"
-                      :disabled="!canSave"
-                      :loading="savingFile"
-                      class="lucide-icon-btn"
-                    >
-                      <Save :size="14" />
-                      <span>保存</span>
-                    </a-button>
-                  </div>
-                </div>
                 <div class="editor-main">
                   <a-empty
                     v-if="!selectedPath || selectedIsDir"
@@ -137,19 +105,18 @@
                     class="mt-40"
                   />
                   <template v-else>
-                    <MdPreview
-                      v-if="viewMode === 'preview'"
-                      :modelValue="fileContent"
-                      :theme="theme"
-                      previewTheme="github"
-                      class="markdown-preview flat-md-preview"
-                    />
-                    <a-textarea
-                      v-else
-                      v-model:value="fileContent"
-                      class="pure-editor"
-                      :readonly="isBuiltinInstalledSkill"
-                      spellcheck="false"
+                    <AgentFilePreview
+                      :file="selectedFilePreview"
+                      :file-path="selectedPath"
+                      :show-download="false"
+                      :show-fullscreen="true"
+                      :editable="!isBuiltinInstalledSkill"
+                      :edit-all-text="true"
+                      :saving="savingFile"
+                      :full-height="true"
+                      container-class="skill-file-preview"
+                      content-class="skill-file-preview-content"
+                      @save="saveCurrentFile"
                     />
                   </template>
                 </div>
@@ -240,7 +207,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import {
@@ -253,23 +220,15 @@ import {
   Layers,
   FilePlus,
   FolderPlus,
-  File,
-  RotateCw,
-  Eye,
-  Edit3
+  RotateCw
 } from 'lucide-vue-next'
-import { MdPreview } from 'md-editor-v3'
-import 'md-editor-v3/lib/preview.css'
-import { useThemeStore } from '@/stores/theme'
 import { skillApi } from '@/apis/skill_api'
+import AgentFilePreview from '@/components/AgentFilePreview.vue'
 import FileTreeComponent from '@/components/FileTreeComponent.vue'
 
 const route = useRoute()
 const router = useRouter()
 const slug = computed(() => decodeURIComponent(route.params.slug))
-
-const themeStore = useThemeStore()
-const theme = computed(() => (themeStore.isDark ? 'dark' : 'light'))
 
 const loading = ref(false)
 const currentSkill = ref(null)
@@ -279,8 +238,6 @@ const expandedKeys = ref([])
 const selectedPath = ref('')
 const selectedIsDir = ref(false)
 const fileContent = ref('')
-const originalFileContent = ref('')
-const viewMode = ref('edit')
 const savingFile = ref(false)
 const creatingNode = ref(false)
 const savingDependencies = ref(false)
@@ -323,15 +280,11 @@ const currentSkillStatusLabel = computed(() => {
   return '已上传'
 })
 
-const canSave = computed(() => {
-  if (!selectedPath.value || selectedIsDir.value) return false
-  return fileContent.value !== originalFileContent.value
-})
-
-const isMarkdownFile = computed(() => {
-  if (!selectedPath.value) return false
-  return selectedPath.value.toLowerCase().endsWith('.md')
-})
+const selectedFilePreview = computed(() => ({
+  content: fileContent.value,
+  previewType: 'text',
+  supported: true
+}))
 
 const toolDependencyOptions = computed(() =>
   (dependencyOptions.tools || []).map((i) =>
@@ -420,8 +373,6 @@ const resetFileState = () => {
   selectedTreeKeys.value = []
   expandedKeys.value = []
   fileContent.value = ''
-  originalFileContent.value = ''
-  viewMode.value = 'preview'
 }
 
 const expandAllKeys = (nodes) =>
@@ -447,7 +398,6 @@ const loadSkillFile = async (skillSlug, path = 'SKILL.md') => {
     const fileResult = await skillApi.getSkillFile(skillSlug, path)
     const content = fileResult?.data?.content || ''
     fileContent.value = content
-    originalFileContent.value = content
     selectedPath.value = path
     selectedIsDir.value = false
     selectedTreeKeys.value = [path]
@@ -469,20 +419,18 @@ const handleTreeSelect = async (keys, info) => {
   selectedIsDir.value = isDir
   if (isDir) {
     fileContent.value = ''
-    originalFileContent.value = ''
     return
   }
   try {
     const result = await skillApi.getSkillFile(currentSkill.value.slug, path)
     const content = result?.data?.content || ''
     fileContent.value = content
-    originalFileContent.value = content
   } catch {
     message.error('文件读取失败')
   }
 }
 
-const saveCurrentFile = async () => {
+const saveCurrentFile = async (content = fileContent.value) => {
   if (
     !currentSkill.value ||
     !selectedPath.value ||
@@ -494,9 +442,9 @@ const saveCurrentFile = async () => {
   try {
     await skillApi.updateSkillFile(currentSkill.value.slug, {
       path: selectedPath.value,
-      content: fileContent.value
+      content
     })
-    originalFileContent.value = fileContent.value
+    fileContent.value = content
     message.success('已保存')
     if (selectedPath.value === 'SKILL.md') await fetchSkillDetail()
   } catch {
@@ -651,12 +599,6 @@ const saveDependencies = async () => {
   }
 }
 
-watch(selectedPath, (newPath) => {
-  if (newPath && !newPath.toLowerCase().endsWith('.md')) {
-    viewMode.value = 'edit'
-  }
-})
-
 onMounted(() => {
   fetchSkillDetail()
 })
@@ -757,43 +699,6 @@ onMounted(() => {
   min-width: 0;
   min-height: 0;
 
-  .editor-header {
-    padding: 8px 16px 4px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    background-color: var(--gray-0);
-    flex-shrink: 0;
-
-    .current-path {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-family: 'Monaco', 'Consolas', monospace;
-      font-size: 12px;
-      color: var(--gray-500);
-      .save-hint {
-        color: var(--color-warning-500);
-        font-size: 10px;
-        margin-left: 4px;
-      }
-    }
-
-    .header-actions {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .view-toggle-btn {
-      background-color: var(--gray-100);
-      border-color: var(--gray-300);
-      &:hover {
-        background-color: var(--gray-200);
-        border-color: var(--gray-400);
-      }
-    }
-  }
 
   .editor-main {
     flex: 1;
@@ -810,36 +715,24 @@ onMounted(() => {
     justify-content: center;
   }
 
-  .editor-main :deep(textarea) {
+  .skill-file-preview {
     flex: 1;
     min-height: 0;
+    border-radius: 0;
   }
 
-  .pure-editor {
-    width: 100%;
-    height: 100%;
-    border: none;
-    resize: none;
-    padding: 16px;
-    font-family: 'Fira Code', 'Monaco', monospace;
-    font-size: 13px;
-    line-height: 1.6;
-    &:focus {
-      outline: none;
-    }
-  }
-
-  .markdown-preview {
+  :deep(.skill-file-preview-content) {
     flex: 1;
-    height: 100%;
-    overflow-y: auto;
-    :deep(.md-editor) {
-      height: 100%;
-      background: var(--gray-0);
-    }
-    :deep(.md-editor-preview-wrapper) {
-      padding: 16px 20px;
-    }
+    min-height: 0;
+    max-height: none;
+  }
+
+  :deep(.skill-file-preview-content .file-edit-textarea) {
+    min-height: 100%;
+  }
+
+  :deep(.skill-file-preview-content .file-content-pre.code-highlight code) {
+    min-height: 100%;
   }
 }
 
