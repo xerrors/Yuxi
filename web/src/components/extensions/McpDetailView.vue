@@ -28,7 +28,8 @@
           </button>
           <button
             type="button"
-            @click="showEditModal"
+            @click="startEdit"
+            :disabled="isEditing || !server"
             class="lucide-icon-btn extension-panel-action extension-panel-action-secondary"
           >
             <Pencil :size="14" />
@@ -62,7 +63,209 @@
                 <span class="tab-title"><Settings2 :size="14" />信息</span>
               </template>
               <div class="tab-content">
-                <div class="info-grid">
+                <div v-if="isEditing" class="edit-panel">
+                  <div class="edit-panel-header">
+                    <div>
+                      <h3>编辑 MCP</h3>
+                      <p>修改后保存会立即更新当前 MCP 配置。</p>
+                    </div>
+                    <div class="mode-slider" :class="{ 'is-json': formMode === 'json' }">
+                      <span class="mode-slider-thumb"></span>
+                      <button
+                        type="button"
+                        class="lucide-icon-btn mode-slider-btn"
+                        :class="{ active: formMode === 'form' }"
+                        title="表单模式"
+                        aria-label="切换到表单模式"
+                        @click="formMode = 'form'"
+                      >
+                        <Rows3 :size="14" />
+                      </button>
+                      <button
+                        type="button"
+                        class="lucide-icon-btn mode-slider-btn"
+                        :class="{ active: formMode === 'json' }"
+                        title="JSON 模式"
+                        aria-label="切换到 JSON 模式"
+                        @click="formMode = 'json'"
+                      >
+                        <Braces :size="14" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <a-form
+                    v-if="formMode === 'form'"
+                    layout="vertical"
+                    class="extension-form inline-edit-form"
+                  >
+                    <section class="form-section">
+                      <div class="form-section-title">
+                        <span>基础信息</span>
+                        <small>定义 MCP 的名称、描述与展示方式。</small>
+                      </div>
+                      <div class="form-grid form-grid-three">
+                        <a-form-item label="MCP 名称" required class="form-item">
+                          <a-input
+                            v-model:value="editForm.name"
+                            placeholder="请输入 MCP 名称（唯一标识）"
+                            disabled
+                          />
+                        </a-form-item>
+                        <a-form-item label="传输类型" required class="form-item">
+                          <a-select v-model:value="editForm.transport">
+                            <a-select-option value="streamable_http"
+                              >streamable_http</a-select-option
+                            >
+                            <a-select-option value="sse">sse</a-select-option>
+                            <a-select-option value="stdio">stdio</a-select-option>
+                          </a-select>
+                        </a-form-item>
+                        <a-form-item label="图标" class="form-item">
+                          <a-input
+                            v-model:value="editForm.icon"
+                            placeholder="输入 emoji，如 🧠"
+                            :maxlength="2"
+                          />
+                        </a-form-item>
+                      </div>
+                      <a-form-item label="描述" class="form-item form-item-full">
+                        <a-textarea
+                          v-model:value="editForm.description"
+                          placeholder="请输入 MCP 描述"
+                          :rows="2"
+                        />
+                      </a-form-item>
+                    </section>
+
+                    <section class="form-section">
+                      <div class="form-section-title">
+                        <span>连接配置</span>
+                        <small>配置当前传输方式需要的连接参数。</small>
+                      </div>
+                      <template
+                        v-if="
+                          editForm.transport === 'streamable_http' || editForm.transport === 'sse'
+                        "
+                      >
+                        <a-form-item label="MCP URL" required class="form-item form-item-full">
+                          <a-input
+                            v-model:value="editForm.url"
+                            placeholder="https://example.com/mcp"
+                          />
+                        </a-form-item>
+                        <div class="form-grid">
+                          <a-form-item label="HTTP 超时（秒）" class="form-item">
+                            <a-input-number
+                              v-model:value="editForm.timeout"
+                              :min="1"
+                              :max="300"
+                              style="width: 100%"
+                            />
+                          </a-form-item>
+                          <a-form-item label="SSE 读取超时（秒）" class="form-item">
+                            <a-input-number
+                              v-model:value="editForm.sse_read_timeout"
+                              :min="1"
+                              :max="300"
+                              style="width: 100%"
+                            />
+                          </a-form-item>
+                        </div>
+                      </template>
+                      <template v-if="isStdioTransport">
+                        <a-form-item label="命令" required class="form-item form-item-full">
+                          <a-input
+                            v-model:value="editForm.command"
+                            placeholder="例如：npx 或 /path/to/server"
+                          />
+                        </a-form-item>
+                      </template>
+                      <a-form-item label="标签" class="form-item form-item-full">
+                        <a-select
+                          v-model:value="editForm.tags"
+                          mode="tags"
+                          placeholder="输入标签后回车添加"
+                          style="width: 100%"
+                        />
+                      </a-form-item>
+                    </section>
+
+                    <section class="form-section">
+                      <div class="form-section-title">
+                        <span>高级配置</span>
+                        <small>请求头、启动参数和环境变量会直接影响 MCP 运行。</small>
+                      </div>
+                      <template
+                        v-if="
+                          editForm.transport === 'streamable_http' || editForm.transport === 'sse'
+                        "
+                      >
+                        <a-form-item label="HTTP 请求头" class="form-item form-item-full">
+                          <a-textarea
+                            v-model:value="editForm.headersText"
+                            placeholder='JSON 格式，如：{"Authorization": "Bearer xxx"}'
+                            :rows="4"
+                            class="config-textarea"
+                          />
+                          <div class="form-helper">
+                            请输入合法 JSON 对象，留空表示不发送额外请求头。
+                          </div>
+                        </a-form-item>
+                      </template>
+                      <template v-if="isStdioTransport">
+                        <a-form-item label="参数" class="form-item form-item-full">
+                          <a-select
+                            v-model:value="editForm.args"
+                            mode="tags"
+                            placeholder="输入参数后回车添加，如：-m"
+                            style="width: 100%"
+                          />
+                        </a-form-item>
+                        <a-form-item label="环境变量" class="form-item form-item-full">
+                          <div class="env-editor-shell">
+                            <McpEnvEditor v-model="editForm.env" />
+                          </div>
+                        </a-form-item>
+                      </template>
+                    </section>
+                  </a-form>
+
+                  <div v-else class="json-mode">
+                    <div class="json-mode-header">
+                      <span>JSON 配置</span>
+                      <small>适合批量调整完整 MCP 配置，保存前请确认 JSON 格式有效。</small>
+                    </div>
+                    <a-textarea
+                      v-model:value="jsonContent"
+                      :rows="15"
+                      placeholder="请输入 JSON 配置"
+                      class="json-textarea"
+                    />
+                    <div class="json-actions">
+                      <a-button size="small" @click="formatJson">格式化</a-button>
+                      <a-button size="small" @click="parseJsonToForm">解析到表单</a-button>
+                    </div>
+                  </div>
+
+                  <div class="edit-panel-actions">
+                    <a-button @click="cancelEdit" :disabled="editLoading" class="lucide-icon-btn">
+                      <template #icon><X :size="14" /></template>
+                      取消
+                    </a-button>
+                    <a-button
+                      type="primary"
+                      @click="handleSaveEdit"
+                      :loading="editLoading"
+                      class="lucide-icon-btn"
+                    >
+                      <template #icon><Save :size="14" /></template>
+                      保存
+                    </a-button>
+                  </div>
+                </div>
+
+                <div v-else class="info-grid">
                   <div class="info-item" v-if="server.description">
                     <label>描述</label>
                     <span>{{ server.description }}</span>
@@ -237,18 +440,11 @@
         </div>
       </a-spin>
     </div>
-
-    <McpFormModal
-      v-model:open="formModalVisible"
-      :edit-mode="editMode"
-      :edit-data="editData"
-      @submitted="handleFormSubmitted"
-    />
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import {
@@ -261,11 +457,15 @@ import {
   Info,
   Copy,
   Settings2,
-  Wrench
+  Wrench,
+  Save,
+  X,
+  Rows3,
+  Braces
 } from 'lucide-vue-next'
 import { mcpApi } from '@/apis/mcp_api'
 import { formatFullDateTime } from '@/utils/time'
-import McpFormModal from './McpFormModal.vue'
+import McpEnvEditor from '@/components/McpEnvEditor.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -282,9 +482,25 @@ const toolsError = ref(null)
 const toolSearchText = ref('')
 const toggleToolLoading = ref(null)
 
-const formModalVisible = ref(false)
-const editMode = ref(false)
-const editData = ref(null)
+const isEditing = ref(false)
+const editLoading = ref(false)
+const formMode = ref('form')
+const jsonContent = ref('')
+
+const editForm = reactive({
+  name: '',
+  description: '',
+  transport: 'streamable_http',
+  url: '',
+  command: '',
+  args: [],
+  env: null,
+  headersText: '',
+  timeout: null,
+  sse_read_timeout: null,
+  tags: [],
+  icon: ''
+})
 
 const actionLabel = computed(() => {
   if (server.value?.enabled === false) return '添加'
@@ -301,6 +517,13 @@ const filteredTools = computed(() => {
   )
 })
 
+const isStdioTransport = computed(
+  () =>
+    String(editForm.transport || '')
+      .trim()
+      .toLowerCase() === 'stdio'
+)
+
 const goBack = () => {
   router.push({ path: '/extensions', query: { tab: 'mcp' } })
 }
@@ -310,6 +533,135 @@ const formatTime = (timeStr) => formatFullDateTime(timeStr)
 const getTransportColor = (transport) => {
   const colors = { sse: 'orange', stdio: 'green', streamable_http: 'blue' }
   return colors[transport] || 'blue'
+}
+
+const resetEditForm = (data) => {
+  Object.assign(editForm, {
+    name: data?.name || '',
+    description: data?.description || '',
+    transport: data?.transport || 'streamable_http',
+    url: data?.url || '',
+    command: data?.command || '',
+    args: data?.args || [],
+    env: data?.env || null,
+    headersText: data?.headers ? JSON.stringify(data.headers, null, 2) : '',
+    timeout: data?.timeout,
+    sse_read_timeout: data?.sse_read_timeout,
+    tags: data?.tags || [],
+    icon: data?.icon || ''
+  })
+  jsonContent.value = data ? JSON.stringify(data, null, 2) : ''
+}
+
+const startEdit = () => {
+  if (!server.value) return
+  detailTab.value = 'general'
+  formMode.value = 'form'
+  resetEditForm(server.value)
+  isEditing.value = true
+}
+
+const cancelEdit = () => {
+  isEditing.value = false
+  resetEditForm(server.value)
+}
+
+const formatJson = () => {
+  try {
+    const obj = JSON.parse(jsonContent.value)
+    jsonContent.value = JSON.stringify(obj, null, 2)
+  } catch {
+    message.error('JSON 格式错误，无法格式化')
+  }
+}
+
+const parseJsonToForm = () => {
+  try {
+    const obj = JSON.parse(jsonContent.value)
+    resetEditForm(obj)
+    formMode.value = 'form'
+    message.success('已解析到表单')
+  } catch {
+    message.error('JSON 格式错误')
+  }
+}
+
+const buildEditPayload = () => {
+  if (formMode.value === 'json') {
+    try {
+      return JSON.parse(jsonContent.value)
+    } catch {
+      message.error('JSON 格式错误')
+      return null
+    }
+  }
+
+  let headers = null
+  if (editForm.headersText.trim()) {
+    try {
+      headers = JSON.parse(editForm.headersText)
+    } catch {
+      message.error('请求头 JSON 格式错误')
+      return null
+    }
+  }
+
+  return {
+    name: editForm.name,
+    description: editForm.description || null,
+    transport: editForm.transport,
+    url: editForm.url || null,
+    command: editForm.command || null,
+    args: editForm.args.length > 0 ? editForm.args : null,
+    env: editForm.env,
+    headers,
+    timeout: editForm.timeout || null,
+    sse_read_timeout: editForm.sse_read_timeout || null,
+    tags: editForm.tags.length > 0 ? editForm.tags : null,
+    icon: editForm.icon || null
+  }
+}
+
+const validateEditPayload = (data) => {
+  if (!data.name?.trim()) {
+    message.error('MCP 名称不能为空')
+    return false
+  }
+  if (!data.transport) {
+    message.error('请选择传输类型')
+    return false
+  }
+  if (['sse', 'streamable_http'].includes(data.transport) && !data.url?.trim()) {
+    message.error('HTTP 类型必须填写 MCP URL')
+    return false
+  }
+  if (data.transport === 'stdio' && !data.command?.trim()) {
+    message.error('StdIO 类型必须填写命令')
+    return false
+  }
+  return true
+}
+
+const handleSaveEdit = async () => {
+  if (!server.value) return
+  const data = buildEditPayload()
+  if (!data || !validateEditPayload(data)) return
+
+  try {
+    editLoading.value = true
+    const result = await mcpApi.updateMcpServer(server.value.name, data)
+    if (result.success) {
+      message.success('MCP 更新成功')
+      isEditing.value = false
+      await fetchServer()
+    } else {
+      message.error(result.message || '更新失败')
+    }
+  } catch (err) {
+    message.error(err.message || '更新失败')
+  } finally {
+    editLoading.value = false
+  }
 }
 
 const fetchServer = async () => {
@@ -393,12 +745,6 @@ const handleTestServer = async () => {
   }
 }
 
-const showEditModal = () => {
-  editMode.value = true
-  editData.value = { ...server.value }
-  formModalVisible.value = true
-}
-
 const handleDangerAction = async () => {
   if (!server.value) return
   if (server.value.enabled === false) {
@@ -449,11 +795,6 @@ const confirmDeleteServer = (srv) => {
   })
 }
 
-const handleFormSubmitted = async () => {
-  formModalVisible.value = false
-  await fetchServer()
-}
-
 watch(detailTab, (tab) => {
   if (tab === 'tools' && server.value) {
     fetchTools()
@@ -468,6 +809,189 @@ onMounted(() => {
 <style lang="less" scoped>
 @import '@/assets/css/extensions.less';
 @import '@/assets/css/extension-detail.less';
+
+.edit-panel {
+  background: var(--gray-0);
+  border: 1px solid var(--gray-150);
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.025);
+
+  .edit-panel-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: flex-start;
+    margin-bottom: 18px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--gray-100);
+
+    h3 {
+      margin: 0 0 4px;
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--gray-900);
+    }
+
+    p {
+      margin: 0;
+      font-size: 13px;
+      color: var(--gray-500);
+    }
+  }
+
+  .mode-slider {
+    position: relative;
+    display: inline-grid;
+    grid-template-columns: 1fr 1fr;
+    width: 72px;
+    height: 32px;
+    padding: 3px;
+    border: 1px solid var(--gray-150);
+    border-radius: 8px;
+    background: var(--gray-50);
+    flex-shrink: 0;
+  }
+
+  .mode-slider-thumb {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 32px;
+    height: 24px;
+    border-radius: 6px;
+    background: var(--gray-0);
+    box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
+    transition: transform 0.18s ease;
+  }
+
+  .mode-slider.is-json .mode-slider-thumb {
+    transform: translateX(34px);
+  }
+
+  .mode-slider-btn {
+    position: relative;
+    z-index: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 24px;
+    padding: 0;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--gray-500);
+    cursor: pointer;
+    transition: color 0.15s ease;
+
+    &.active {
+      color: var(--main-color);
+    }
+  }
+
+  .inline-edit-form {
+    display: flex;
+    flex-direction: column;
+
+    :deep(.ant-form-item) {
+      margin-bottom: 0;
+    }
+
+    :deep(.ant-form-item-label > label) {
+      color: var(--gray-700);
+      font-size: 13px;
+      font-weight: 500;
+    }
+  }
+
+  .form-section {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 18px 0 0;
+
+    & + .form-section {
+      margin-top: 18px;
+      border-top: 1px solid var(--gray-100);
+    }
+
+    &:first-child {
+      padding-top: 0;
+    }
+  }
+
+  .form-section-title,
+  .json-mode-header {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+
+    span {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--gray-900);
+    }
+
+    small {
+      font-size: 12px;
+      color: var(--gray-500);
+    }
+  }
+
+  .form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+
+  .form-grid-three {
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(120px, 0.45fr);
+  }
+
+  .form-item-full {
+    width: 100%;
+  }
+
+  .form-helper {
+    margin-top: 6px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--gray-500);
+  }
+
+  .config-textarea,
+  .json-textarea {
+    font-family: @mono-font;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  .env-editor-shell {
+    padding: 0;
+  }
+
+  .json-mode {
+    .json-mode-header {
+      margin-bottom: 14px;
+    }
+
+    .json-actions {
+      margin-top: 12px;
+      display: flex;
+      gap: 8px;
+    }
+  }
+
+  .edit-panel-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid var(--gray-100);
+  }
+}
 
 /* 工具列表样式 */
 .tools-tab {
