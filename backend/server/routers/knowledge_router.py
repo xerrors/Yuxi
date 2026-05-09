@@ -959,9 +959,15 @@ async def update_knowledge_base_query_params(
 
             options = kb_instance.databases_meta[db_id]["query_params"].setdefault("options", {})
             options.update(params)
-            await kb_instance._save_metadata()
+            updated_query_params = kb_instance.databases_meta[db_id]["query_params"]
 
-            logger.info(f"更新知识库 {db_id} 查询参数: {params}")
+        # 直接通过 Repository 更新单条记录，避免调用 _save_metadata() 遍历所有数据库和文件
+        from yuxi.repositories.knowledge_base_repository import KnowledgeBaseRepository
+
+        kb_repo = KnowledgeBaseRepository()
+        await kb_repo.update(db_id, {"query_params": updated_query_params})
+
+        logger.info(f"更新知识库 {db_id} 查询参数: {params}")
 
         return {"message": "success", "data": params}
 
