@@ -259,6 +259,11 @@ watch(
     background-color: var(--gray-0);
   }
 
+  img {
+    max-width: 100%;
+    height: auto;
+  }
+
   .katex {
     font-size: 1.05em;
   }
