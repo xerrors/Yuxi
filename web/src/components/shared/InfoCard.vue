@@ -77,7 +77,7 @@ const props = defineProps({
   description: { type: String, default: '' },
   info: { type: Array, default: () => [] },
   disabled: { type: Boolean, default: false },
-  defaultIcon: { type: [Object, String], default: () => Plug },
+  defaultIcon: { type: [Object, String, Function], default: () => Plug },
   tags: { type: Array, default: () => [] },
   status: { type: Object, default: null },
   actionLabel: { type: String, default: '' },

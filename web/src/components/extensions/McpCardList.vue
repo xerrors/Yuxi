@@ -33,7 +33,6 @@
           :title="server.name"
           :subtitle="server.transport"
           :description="server.description || '暂无描述'"
-          :default-icon="PlugIcon"
           :tags="mcpTags(server)"
           :status="{ label: '已添加', level: 'success' }"
           @click="navigateToDetail(server)"
@@ -52,7 +51,6 @@
           :title="server.name"
           :subtitle="server.transport"
           :description="server.description || '暂无描述'"
-          :default-icon="PlugIcon"
           :tags="mcpTags(server)"
           action-label="添加"
           @click="navigateToDetail(server)"
@@ -77,14 +75,12 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { Plus, RefreshCw, Plug } from 'lucide-vue-next'
+import { Plus, RefreshCw } from 'lucide-vue-next'
 import { mcpApi } from '@/apis/mcp_api'
 import ExtensionCardGrid from './ExtensionCardGrid.vue'
 import InfoCard from '@/components/shared/InfoCard.vue'
 import PageShoulder from '@/components/shared/PageShoulder.vue'
 import McpFormModal from './McpFormModal.vue'
-
-const PlugIcon = Plug
 
 const router = useRouter()
 
