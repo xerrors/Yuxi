@@ -119,8 +119,8 @@ Write-Host "=========================" -ForegroundColor Cyan
 # List of Docker images to pull
 $images = @(
     "python:3.12-slim",
-    "node:20-slim",
-    "node:20-alpine",
+    "node:24-slim",
+    "node:24-alpine",
     "milvusdb/milvus:v2.5.6",
     "neo4j:5.26",
     "minio/minio:RELEASE.2023-03-20T20-16-18Z",

@@ -13,8 +13,8 @@ echo "开始导出 Docker 镜像到 $OUTPUT_FILE..."
 IMAGES=(
     "python:3.12-slim",
     "ghcr.io/astral-sh/uv:0.7.2",
-    "node:20-alpine",
-    "node:20-slim",
+    "node:24-alpine",
+    "node:24-slim",
     "nginx:alpine",
     "neo4j:5.26",
     "quay.io/coreos/etcd:v3.5.5",

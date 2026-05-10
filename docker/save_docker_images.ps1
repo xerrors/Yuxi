@@ -16,7 +16,8 @@ Write-Host "开始导出Docker镜像到 $OutputFile..." -ForegroundColor Cyan
 $Images = @(
     "python:3.11-slim",
     "ghcr.io/astral-sh/uv:0.7.2",
-    "node:20-alpine",
+    "node:24-alpine",
+    "node:24-slim",
     "nginx:alpine",
     "neo4j:5.26",
     "quay.io/coreos/etcd:v3.5.5",
