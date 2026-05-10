@@ -591,8 +591,8 @@ onMounted(loadProviders)
           <Plus :size="14" />
           新增供应商
         </a-button>
-        <a-button class="lucide-icon-btn" @click="refreshProviders" :loading="refreshing">
-          <RefreshCw :size="14" :class="{ spinning: refreshing }" />
+        <a-button class="lucide-icon-btn" @click="loadProviders" :loading="loading">
+          <RefreshCw :size="14" :class="{ spinning: loading }" />
         </a-button>
       </template>
     </PageShoulder>

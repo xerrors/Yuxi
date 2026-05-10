@@ -206,7 +206,8 @@ import {
   SyncOutlined,
   SearchOutlined,
   ReloadOutlined,
-  LoadingOutlined
+  LoadingOutlined,
+  DatabaseOutlined
 } from '@ant-design/icons-vue'
 import PageHeader from '@/components/shared/PageHeader.vue'
 import { neo4jApi, unifiedApi } from '@/apis/graph_api'
