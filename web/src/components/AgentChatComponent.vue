@@ -1412,6 +1412,12 @@ const handleSendMessage = async ({ image } = {}) => {
 
   threadState.isStreaming = true
   resetOnGoingConv(threadId)
+  const requestId = createClientRequestId()
+  insertOptimisticHumanMessage(threadState, {
+    requestId,
+    text,
+    imageContent
+  })
   threadState.streamAbortController = new AbortController()
 
   try {
