@@ -127,31 +127,24 @@ def _convert_with_docling(file_path: Path, params: dict | None = None) -> str:
     doc = result.document
 
     if hasattr(doc, "pictures") and doc.pictures:
-        image_refs: list[tuple[str, bytes]] = []
-
+        replacements: list[str] = []
         for pic in doc.pictures:
-            if hasattr(pic, "image") and hasattr(pic.image, "uri"):
-                uri = str(pic.image.uri)
-                if uri.startswith("data:"):
+            uri = str(pic.image.uri) if hasattr(pic, "image") and hasattr(pic.image, "uri") else ""
+            if uri.startswith("data:"):
+                try:
                     image_data, mime_type = _parse_data_uri(uri)
-                    timestamp = int(time.time() * 1000000)
-                    filename = f"image_{timestamp}.{mime_type.split('/')[-1]}"
-                    image_refs.append((filename, image_data))
-
-        image_urls: list[str] = []
-        for filename, image_data in image_refs:
-            try:
-                url = _upload_image_to_minio(image_data, filename, image_bucket, image_prefix)
-                image_urls.append(f"![{filename}]({url})")
-            except Exception as e:  # noqa: BLE001
-                logger.error(f"上传图片失败 {filename}: {e}")
-                image_urls.append(f"[图片: {filename}]")
+                    filename = f"image_{int(time.time() * 1000000)}.{mime_type.split('/')[-1]}"
+                    url = _upload_image_to_minio(image_data, filename, image_bucket, image_prefix)
+                    replacements.append(f"![{filename}]({url})")
+                except Exception as e:  # noqa: BLE001
+                    logger.error(f"上传图片失败 {filename}: {e}")
+                    replacements.append("")
+            else:
+                replacements.append("")
 
         markdown = doc.export_to_markdown()
-
-        for url in image_urls:
-            markdown = re.sub(r"<!--\s*image\s*-->", url, markdown, count=1)
-
+        for replacement in replacements:
+            markdown = re.sub(r"<!--\s*image\s*-->", replacement, markdown, count=1)
         return markdown
 
     return doc.export_to_markdown()
