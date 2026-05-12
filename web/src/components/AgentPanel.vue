@@ -11,16 +11,6 @@
           <button class="header-action-btn" title="刷新" @click="emitRefresh">
             <RefreshCw :size="15" />
           </button>
-          <button
-            class="header-action-btn"
-            :title="isExpanded ? '恢复高度' : '向上展开'"
-            @click="emit('toggle-expand')"
-          >
-            <component :is="isExpanded ? ChevronsDownUp : ChevronsUpDown" :size="15" />
-          </button>
-          <button class="close-btn" @click="$emit('close')">
-            <X :size="18" />
-          </button>
         </div>
       </div>
     </div>
@@ -124,7 +114,7 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { ChevronsDownUp, ChevronsUpDown, Download, RefreshCw, Trash2, X } from 'lucide-vue-next'
+import { Download, RefreshCw, Trash2 } from 'lucide-vue-next'
 import { Modal, message } from 'ant-design-vue'
 import FileTreeComponent from '@/components/FileTreeComponent.vue'
 import AgentFilePreview from '@/components/AgentFilePreview.vue'
@@ -159,14 +149,10 @@ const props = defineProps({
   panelRatio: {
     type: Number,
     default: 0.35
-  },
-  isExpanded: {
-    type: Boolean,
-    default: false
   }
 })
 
-const emit = defineEmits(['refresh', 'close', 'resize', 'resizing', 'toggle-expand'])
+const emit = defineEmits(['refresh', 'resize', 'resizing'])
 const INLINE_PREVIEW_MIN_WIDTH = 920
 const DEFAULT_EXPANDED_ROOT_DIRECTORY_NAME = 'user-data'
 
@@ -751,23 +737,6 @@ watch(useInlinePreview, (isInline) => {
   flex-shrink: 0;
 }
 
-.close-btn {
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  color: var(--gray-500);
-  padding: 4px;
-  border-radius: 4px;
-  transition: all 0.2s;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-
-  &:hover {
-    background: var(--gray-100);
-    color: var(--gray-700);
-  }
-}
 
 .tab-content {
   flex: 1;

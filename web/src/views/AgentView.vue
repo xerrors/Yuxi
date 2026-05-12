@@ -72,9 +72,20 @@
             </a-dropdown>
           </template>
 
-          <template #header-right v-if="userStore.isAdmin">
+          <template #header-right="{ isAgentPanelOpen, hasActiveThread, toggleAgentPanel }">
+            <button
+              v-if="hasActiveThread"
+              type="button"
+              class="agent-nav-btn agent-state-btn"
+              :class="{ active: isAgentPanelOpen }"
+              title="查看文件"
+              @click.stop="toggleAgentPanel"
+            >
+              <FolderKanban size="18" class="nav-btn-icon" />
+              <span class="hide-text">文件</span>
+            </button>
             <div
-              v-if="selectedAgentId"
+              v-if="userStore.isAdmin && selectedAgentId"
               ref="moreButtonRef"
               type="button"
               class="agent-nav-btn"
@@ -141,7 +152,7 @@
 import { computed, ref, watch } from 'vue'
 import { MessageOutlined, ShareAltOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
-import { Settings2, Ellipsis, ChevronDown, Check, Plus } from 'lucide-vue-next'
+import { Settings2, Ellipsis, ChevronDown, Check, Plus, FolderKanban } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import AgentChatComponent from '@/components/AgentChatComponent.vue'
 import AgentConfigSidebar from '@/components/AgentConfigSidebar.vue'

@@ -87,16 +87,6 @@
     </template>
     <template #actions-right>
       <div class="input-actions-right">
-        <button
-          v-if="hasActiveThread"
-          class="input-action-btn"
-          :class="{ active: isPanelOpen }"
-          @click.stop="$emit('toggle-panel')"
-          title="查看文件"
-        >
-          <FolderKanban :size="18" />
-          <span>文件</span>
-        </button>
         <slot name="actions-left-extra"></slot>
       </div>
     </template>
@@ -108,7 +98,7 @@ import { computed, ref, watch } from 'vue'
 import MessageInputComponent from '@/components/MessageInputComponent.vue'
 import ImagePreviewComponent from '@/components/ImagePreviewComponent.vue'
 import AttachmentOptionsComponent from '@/components/AttachmentOptionsComponent.vue'
-import { FolderKanban, SquareCheck } from 'lucide-vue-next'
+import { SquareCheck } from 'lucide-vue-next'
 import {
   CheckCircleOutlined,
   ClockCircleOutlined,
@@ -124,7 +114,6 @@ const props = defineProps({
   sendButtonDisabled: { type: Boolean, default: false },
   mention: { type: Object, default: () => null },
   supportsFileUpload: { type: Boolean, default: false },
-  isPanelOpen: { type: Boolean, default: false },
   hasActiveThread: { type: Boolean, default: true },
   todos: {
     type: Array,
@@ -132,13 +121,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits([
-  'update:modelValue',
-  'send',
-  'keydown',
-  'upload-attachment',
-  'toggle-panel'
-])
+const emit = defineEmits(['update:modelValue', 'send', 'keydown', 'upload-attachment'])
 
 const inputRef = ref(null)
 const currentImage = ref(null)

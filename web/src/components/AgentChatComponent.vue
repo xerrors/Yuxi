@@ -12,8 +12,12 @@
           </div>
         </div>
         <div class="header__right">
-          <!-- AgentState 显示按钮已移动到输入框底部 -->
-          <slot name="header-right"></slot>
+          <slot
+            name="header-right"
+            :is-agent-panel-open="isAgentPanelOpen"
+            :has-active-thread="!!currentChatId"
+            :toggle-agent-panel="toggleAgentPanel"
+          ></slot>
         </div>
       </div>
 
@@ -150,12 +154,10 @@
                 :send-button-disabled="isSendButtonDisabled"
                 :mention="mentionConfig"
                 :supports-file-upload="supportsFileUpload"
-                :is-panel-open="isAgentPanelOpen"
                 :has-active-thread="!!currentChatId"
                 :todos="currentTodos"
                 @send="handleSendOrStop"
                 @upload-attachment="handleAttachmentUpload"
-                @toggle-panel="toggleAgentPanel"
               >
                 <template #actions-left-extra>
                   <slot name="input-actions-left"></slot>
@@ -193,8 +195,7 @@
           ref="panelWrapperRef"
           :class="{
             'is-visible': isAgentPanelOpen,
-            'no-transition': isResizing,
-            'is-expanded': isAgentPanelExpanded
+            'no-transition': isResizing
           }"
           :style="{
             flexBasis: isAgentPanelOpen ? `${panelRatio * 100}%` : '0px'
@@ -208,10 +209,7 @@
             :agent-id="currentThread?.agent_id || currentAgentId"
             :agent-config-id="selectedAgentConfigId"
             :panel-ratio="panelRatio"
-            :is-expanded="isAgentPanelExpanded"
             @refresh="handleAgentStateRefresh"
-            @close="toggleAgentPanel"
-            @toggle-expand="togglePanelExpanded"
             @resize="handlePanelResize"
             @resizing="handleResizingChange"
           />
@@ -360,7 +358,6 @@ const localUIState = reactive({
 
 // Agent Panel State
 const isAgentPanelOpen = ref(false)
-const isAgentPanelExpanded = ref(false)
 const isResizing = ref(false)
 const panelRatio = ref(0.3) // 面板宽度比例 (0-1)
 const panelWrapperRef = ref(null) // 直接操作 DOM
@@ -1583,18 +1580,9 @@ const toggleAgentPanel = async () => {
   const nextOpen = !isAgentPanelOpen.value
   isAgentPanelOpen.value = nextOpen
 
-  if (!nextOpen) {
-    isAgentPanelExpanded.value = false
-  }
-
   if (nextOpen) {
     await handleAgentStateRefresh()
   }
-}
-
-const togglePanelExpanded = () => {
-  if (!isAgentPanelOpen.value) return
-  isAgentPanelExpanded.value = !isAgentPanelExpanded.value
 }
 
 // 处理面板宽度调整（使用比例）
@@ -2006,11 +1994,11 @@ watch(currentChatId, (threadId, oldThreadId) => {
 
 .agent-panel-wrapper {
   flex: 0 0 auto;
-  align-self: flex-end;
-  height: 70vh;
+  align-self: stretch;
+  height: auto;
   overflow: hidden;
   z-index: 20;
-  margin: 28px 8px;
+  margin: 0 8px 8px;
   margin-left: 0;
   background: var(--gray-0);
   border-radius: 16px;
@@ -2019,22 +2007,6 @@ watch(currentChatId, (threadId, oldThreadId) => {
   will-change: flex-basis;
 }
 
-.agent-panel-wrapper.is-expanded {
-  align-self: stretch;
-  height: calc(100% - 16px);
-  margin-top: 8px;
-  margin-bottom: 8px;
-}
-
-@media (max-height: 700px) {
-  .agent-panel-wrapper {
-    height: calc(100% - 56px);
-  }
-
-  .agent-panel-wrapper.is-expanded {
-    height: calc(100% - 16px);
-  }
-}
 
 /* Workbench transition animations */
 .agent-panel-wrapper {
