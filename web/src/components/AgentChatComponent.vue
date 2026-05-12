@@ -12,7 +12,6 @@
           </div>
         </div>
         <div class="header__right">
-          <UserInfoComponent v-if="!userStore.isAdmin" />
           <!-- AgentState 显示按钮已移动到输入框底部 -->
           <slot name="header-right"></slot>
         </div>
@@ -247,7 +246,6 @@ import { AgentValidator } from '@/utils/agentValidator'
 import { useAgentStore } from '@/stores/agent'
 import { useChatThreadsStore } from '@/stores/chatThreads'
 import { useChatUIStore } from '@/stores/chatUI'
-import { useUserStore } from '@/stores/user'
 import { useConfigStore } from '@/stores/config'
 import { storeToRefs } from 'pinia'
 import { MessageProcessor } from '@/utils/messageProcessor'
@@ -263,7 +261,6 @@ import { useAgentMentionConfig } from '@/composables/useAgentMentionConfig'
 import { shouldAutoOpenAgentPanel } from '@/utils/agentPanelAutoOpen'
 import AgentArtifactsCard from '@/components/AgentArtifactsCard.vue'
 import AgentPanel from '@/components/AgentPanel.vue'
-import UserInfoComponent from '@/components/UserInfoComponent.vue'
 
 // ==================== PROPS & EMITS ====================
 const props = defineProps({
@@ -276,7 +273,6 @@ const emit = defineEmits(['thread-change'])
 const agentStore = useAgentStore()
 const chatThreadsStore = useChatThreadsStore()
 const chatUIStore = useChatUIStore()
-const userStore = useUserStore()
 const configStore = useConfigStore()
 const {
   agents,
