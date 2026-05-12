@@ -76,9 +76,10 @@ def test_convert_with_docling_reinserts_image_links_in_document_order(
     fake_doc = SimpleNamespace(
         pictures=[
             SimpleNamespace(image=SimpleNamespace(uri=f"data:image/png;base64,{first_image}")),
+            SimpleNamespace(image=SimpleNamespace(uri="https://example.test/remote.png")),
             SimpleNamespace(image=SimpleNamespace(uri=f"data:image/png;base64,{second_image}")),
         ],
-        export_to_markdown=lambda: "before\n<!-- image -->\nbetween\n<!-- image -->\nafter",
+        export_to_markdown=lambda: "before\n<!-- image -->\nremote\n<!-- image -->\nbetween\n<!-- image -->\nafter",
     )
     fake_result = SimpleNamespace(status=SimpleNamespace(name="SUCCESS"), document=fake_doc)
     uploaded_images: list[bytes] = []
@@ -103,10 +104,42 @@ def test_convert_with_docling_reinserts_image_links_in_document_order(
     assert markdown == (
         "before\n"
         "![image_1000000.png](https://example.test/1.png)\n"
+        "remote\n"
+        "\n"
         "between\n"
         "![image_2000000.png](https://example.test/2.png)\n"
         "after"
     )
+
+
+def test_convert_with_docling_keeps_image_placeholder_when_upload_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    file_path = tmp_path / "parser_test.docx"
+    file_path.write_bytes(b"fake docx")
+    image = base64.b64encode(b"image data").decode()
+    fake_doc = SimpleNamespace(
+        pictures=[SimpleNamespace(image=SimpleNamespace(uri=f"data:image/png;base64,{image}"))],
+        export_to_markdown=lambda: "before\n<!-- image -->\nafter",
+    )
+    fake_result = SimpleNamespace(status=SimpleNamespace(name="SUCCESS"), document=fake_doc)
+
+    class FakeConverter:
+        def convert(self, path: Path):
+            assert path == file_path
+            return fake_result
+
+    def _raise_upload_error(*args, **kwargs):
+        raise RuntimeError("upload failed")
+
+    monkeypatch.setattr(parser_unified, "_get_docling_converter", lambda: FakeConverter())
+    monkeypatch.setattr(parser_unified, "_upload_image_to_minio", _raise_upload_error)
+    monkeypatch.setattr(parser_unified.time, "time", lambda: 1.0)
+
+    markdown = parser_unified._convert_with_docling(file_path)
+
+    assert markdown == "before\n[图片: image_1000000.png]\nafter"
 
 
 def test_parser_parse_png_file_returns_markdown_text_with_mocked_ocr(
