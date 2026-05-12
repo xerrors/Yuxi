@@ -39,8 +39,7 @@ async def list_kbs(dummy: str, runtime: ToolRuntime) -> str:  # Now has 2 params
     # 打印 runtime—context 中的所有信息以进行调试
     logger.debug(f"Runtime context: {runtime_context.__dict__}")
 
-    # 获取用户在当前对话中启用的知识库列表
-    enabled_kb_names = getattr(runtime_context, "knowledges", []) or []
+    enabled_kb_names = getattr(runtime_context, "knowledges", None)
 
     # 获取用户可访问的知识库列表（包含名称和描述）
     try:
@@ -55,8 +54,10 @@ async def list_kbs(dummy: str, runtime: ToolRuntime) -> str:  # Now has 2 params
     logger.debug(f"用户 {user_id} 可访问的知识库列表: {all_kb_names}")
     logger.debug(f"用户 {user_id} 当前对话启用的知识库列表: {enabled_kb_names}")
 
-    # 与启用的知识库取交集
-    available_kbs = [kb for kb in all_kbs if kb["name"] in enabled_kb_names]
+    if enabled_kb_names is None:
+        available_kbs = all_kbs
+    else:
+        available_kbs = [kb for kb in all_kbs if kb["name"] in enabled_kb_names]
 
     if not available_kbs:
         return "当前没有可访问的知识库"

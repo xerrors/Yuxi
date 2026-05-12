@@ -91,6 +91,7 @@ export function useAgentMentionConfig({
 
     const configItems = configurableItems.value || {}
     const currentConfig = agentConfig.value || {}
+    let includeAllKnowledgeBases = false
     const allowedKbNames = new Set()
     const allowedMcpNames = new Set()
     const allowedSkillNames = new Set()
@@ -101,7 +102,9 @@ export function useAgentMentionConfig({
       const kind = item?.template_metadata?.kind
       const val = currentConfig[key]
 
-      if (Array.isArray(val)) {
+      if (kind === 'knowledges' && val === null) {
+        includeAllKnowledgeBases = true
+      } else if (Array.isArray(val)) {
         if (kind === 'knowledges') {
           val.forEach((v) => allowedKbNames.add(v))
         } else if (kind === 'mcps') {
@@ -133,7 +136,9 @@ export function useAgentMentionConfig({
       }
     })
 
-    const knowledgeBases = availableKnowledgeBases.value.filter((kb) => allowedKbNames.has(kb.name))
+    const knowledgeBases = includeAllKnowledgeBases
+      ? availableKnowledgeBases.value
+      : availableKnowledgeBases.value.filter((kb) => allowedKbNames.has(kb.name))
     const mcps = availableMcps.value.filter((mcp) => allowedMcpNames.has(mcp.name))
     const skills = availableSkills.value.filter((skill) => {
       const skillName = skill.name || ''

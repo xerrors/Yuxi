@@ -127,11 +127,6 @@ async def resolve_visible_knowledge_bases_for_context(context) -> list[dict[str,
         setattr(context, "_visible_knowledge_bases", [])
         return []
 
-    enabled_names = {str(name).strip() for name in (getattr(context, "knowledges", None) or []) if str(name).strip()}
-    if not enabled_names:
-        setattr(context, "_visible_knowledge_bases", [])
-        return []
-
     try:
         raw_user_id = int(user_id)
     except (TypeError, ValueError):
@@ -139,7 +134,12 @@ async def resolve_visible_knowledge_bases_for_context(context) -> list[dict[str,
         return []
 
     result = await knowledge_base.get_databases_by_raw_id(raw_user_id)
-    databases = [db for db in (result.get("databases") or []) if str(db.get("name") or "").strip() in enabled_names]
+    databases = result.get("databases") or []
+    enabled_knowledges = getattr(context, "knowledges", None)
+    if enabled_knowledges is not None:
+        enabled_names = {str(name).strip() for name in enabled_knowledges if str(name).strip()}
+        databases = [db for db in databases if str(db.get("name") or "").strip() in enabled_names]
+
     setattr(context, "_visible_knowledge_bases", databases)
     return databases
 

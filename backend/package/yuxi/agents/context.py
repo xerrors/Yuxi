@@ -55,11 +55,11 @@ class BaseContext:
         },
     )
 
-    knowledges: Annotated[list[str], {"__template_metadata__": {"kind": "knowledges"}}] = field(
-        default_factory=list,
+    knowledges: Annotated[list[str] | None, {"__template_metadata__": {"kind": "knowledges"}}] = field(
+        default=None,
         metadata={
             "name": "知识库",
-            "description": "知识库列表，可以在左侧知识库页面中创建知识库。",
+            "description": "知识库列表，可以在左侧知识库页面中创建知识库。默认选择当前用户可访问的全部知识库。",
             "type": "list",  # Explicitly mark as list type for frontend if needed
         },
     )

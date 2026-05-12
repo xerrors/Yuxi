@@ -824,6 +824,9 @@ const handleModelChange = (key, spec) => {
 // 多选相关方法
 const ensureArray = (key) => {
   const config = agentConfig.value || {}
+  if (config[key] === null && configurableItems.value[key]?.template_metadata?.kind === 'knowledges') {
+    return getConfigOptions(configurableItems.value[key]).map((option) => getOptionValue(option))
+  }
   if (!config[key] || !Array.isArray(config[key])) {
     return []
   }
@@ -891,8 +894,7 @@ const openSelectionModal = async (key) => {
   if (configurableItems.value[key]?.template_metadata?.kind === 'subagents') {
     await loadSubagentOptions()
   }
-  const currentValues = agentConfig.value[key] || []
-  tempSelectedValues.value = [...currentValues]
+  tempSelectedValues.value = [...ensureArray(key)]
   selectionModalOpen.value = true
 }
 
