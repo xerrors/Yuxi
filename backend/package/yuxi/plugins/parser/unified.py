@@ -131,6 +131,7 @@ def _convert_with_docling(file_path: Path, params: dict | None = None) -> str:
         for pic in doc.pictures:
             uri = str(pic.image.uri) if hasattr(pic, "image") and hasattr(pic.image, "uri") else ""
             if uri.startswith("data:"):
+                filename = "image"
                 try:
                     image_data, mime_type = _parse_data_uri(uri)
                     filename = f"image_{int(time.time() * 1000000)}.{mime_type.split('/')[-1]}"
@@ -138,7 +139,7 @@ def _convert_with_docling(file_path: Path, params: dict | None = None) -> str:
                     replacements.append(f"![{filename}]({url})")
                 except Exception as e:  # noqa: BLE001
                     logger.error(f"上传图片失败 {filename}: {e}")
-                    replacements.append("")
+                    replacements.append(f"[图片: {filename}]")
             else:
                 replacements.append("")
 
