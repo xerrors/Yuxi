@@ -327,14 +327,16 @@ const fullscreenPreviewVisible = ref(false)
 const htmlPreviewRenderKey = ref(0)
 
 const isMarkdown = computed(() => isMarkdownPreview(props.filePath, props.file?.previewType))
-const canEdit = computed(
-  () =>
+const canEdit = computed(() => {
+  const previewType = props.file?.previewType
+  return (
     props.editable &&
     props.file?.supported !== false &&
     typeof props.file?.content === 'string' &&
-    props.file?.previewType === 'text' &&
+    (previewType === 'text' || previewType === 'markdown') &&
     (props.editAllText || EDITABLE_EXTENSIONS.has(getPreviewFileExtension(props.filePath)))
-)
+  )
+})
 const savedContent = computed(() => formatContent(props.file?.content))
 const draftChanged = computed(() => draftContent.value !== savedContent.value)
 const isHtmlFile = computed(
