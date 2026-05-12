@@ -138,21 +138,12 @@
           <div v-if="userManagement.form.usernameError" class="error-text">
             {{ userManagement.form.usernameError }}
           </div>
-        </a-form-item>
-
-        <!-- 显示自动生成的用户ID（仅添加用户时显示） -->
-        <a-form-item
-          v-if="userManagement.form.generatedUserId && !userManagement.editMode"
-          label="用户ID"
-          class="form-item"
-        >
-          <a-input
-            :value="userManagement.form.generatedUserId"
-            placeholder="自动生成"
-            disabled
-            :addon-before="'登录ID'"
-          />
-          <div class="help-text">此ID将用于登录，根据用户名自动生成</div>
+          <div
+            v-if="userManagement.form.generatedUserId && !userManagement.editMode"
+            class="help-text"
+          >
+            登录ID：{{ userManagement.form.generatedUserId }}，此ID将用于登录，根据用户名自动生成
+          </div>
         </a-form-item>
 
         <!-- 手机号字段 -->
