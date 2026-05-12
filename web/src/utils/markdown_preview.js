@@ -145,7 +145,13 @@ const ensureLanguages = async (highlighter, languages) => {
   await Promise.all(
     languages
       .filter((language) => !loaded.has(language))
-      .map((language) => highlighter.loadLanguage(language).catch(() => null))
+      .map((language) => {
+        try {
+          return highlighter.loadLanguage(language).catch(() => null)
+        } catch {
+          return null
+        }
+      })
   )
 }
 
