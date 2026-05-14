@@ -121,3 +121,4 @@ make format        # 格式化代码
 
 1. 参考 [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) 规范编写提交信息。
 2. 使用中文提交信息，标题简洁明了，描述具体改动内容和原因。
+3. 创建 PR 需要参考 [CONTRIBUTING.md](CONTRIBUTING.md) 中的 PR 模板[PULL_REQUEST_TEMPLATE.md](.github/PULL_REQUEST_TEMPLATE.md)，并在提交前完成其中的检查项。
