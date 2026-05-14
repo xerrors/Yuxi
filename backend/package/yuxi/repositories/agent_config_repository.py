@@ -238,16 +238,18 @@ class AgentConfigRepository:
         Returns:
             是否成功更新（至少有一条记录被修改）
         """
+        import json
         sql = text("""
-            UPDATE agent_config
+            UPDATE agent_configs
             SET config_json = jsonb_set(
-                config_json,
+                CAST(config_json AS jsonb),
                 '{skills}',
-                COALESCE(config_json->'skills', '[]'::jsonb) || to_jsonb(:new_slugs::text[])::jsonb,
+                COALESCE(CAST(config_json->'skills' AS jsonb), CAST('[]' AS jsonb)) || CAST(:new_slugs_json AS jsonb),
                 true
             )
             WHERE id = :id
         """)
-        result = await self.db.execute(sql, {"id": agent_config_id, "new_slugs": new_slugs})
+        new_slugs_json = json.dumps(new_slugs)
+        result = await self.db.execute(sql, {"id": agent_config_id, "new_slugs_json": new_slugs_json})
         await self.db.commit()
         return result.rowcount > 0
