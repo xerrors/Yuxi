@@ -234,7 +234,7 @@ async def install_remote_skills_batch(
         raise ValueError("skills 列表不能为空")
 
     # 预分配结果数组（按请求顺序），校验非法名并记录失败
-    results: list[dict] = [{"slug": "", "success": False, "error": "unset"}] * len(skills)
+    results: list[dict] = [{"slug": "", "success": False, "error": "unset"} for _ in range(len(skills))]
     normalized_skills: list[str] = []
     valid_indices: list[int] = []
     for i, skill in enumerate(skills):

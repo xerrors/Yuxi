@@ -58,6 +58,8 @@ class PostgresManager(metaclass=SingletonMeta):
                 json_deserializer=json.loads,
                 pool_pre_ping=True,
                 pool_recycle=1800,
+                pool_size=10,
+                max_overflow=20,
             )
 
             # 创建异步会话工厂
@@ -258,13 +260,13 @@ class PostgresManager(metaclass=SingletonMeta):
 
     async def get_async_session(self) -> AsyncSession:
         """获取异步数据库会话"""
-        self._check_initialized()
+        self.initialize()  # 确保已初始化
         return self.AsyncSession()
 
     @asynccontextmanager
     async def get_async_session_context(self):
         """获取异步数据库会话的上下文管理器"""
-        self._check_initialized()
+        self.initialize()  # 确保已初始化
         session = self.AsyncSession()
         try:
             yield session
