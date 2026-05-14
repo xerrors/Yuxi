@@ -152,14 +152,12 @@ const mainList = computed(() => {
       })
     }
 
-    if (userStore.isSuperAdmin) {
-      items.push({
-        name: '扩展管理',
-        path: '/extensions',
-        icon: Blocks,
-        activeIcon: Blocks
-      })
-    }
+    items.push({
+      name: '扩展管理',
+      path: '/extensions',
+      icon: Blocks,
+      activeIcon: Blocks
+    })
 
     items.push({
       name: '模型配置',

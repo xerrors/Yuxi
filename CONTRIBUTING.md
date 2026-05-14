@@ -28,6 +28,7 @@ docker logs api-dev --tail 100
 2. 在对应目录完成开发与测试
 3. 提交清晰的 Commit Message
 4. 发起 Pull Request，并说明修改内容、原因和验证方式
+5. PR 模板 [PULL_REQUEST_TEMPLATE.md](.github/PULL_REQUEST_TEMPLATE.md) 中的检查项需要在提交前完成
 
 示例：
 
