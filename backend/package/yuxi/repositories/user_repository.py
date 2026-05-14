@@ -5,6 +5,7 @@ from datetime import datetime as dt
 from typing import Annotated, Any
 
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import User
@@ -19,14 +20,22 @@ class UserRepository:
     async def get_by_id(self, id: int) -> User | None:
         """根据 ID 获取用户"""
         async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(select(User).where(User.id == id))
-            return result.scalar_one_or_none()
+            return await self.get_by_id_with_db(session, id)
+
+    async def get_by_id_with_db(self, db: AsyncSession, id: int) -> User | None:
+        """使用指定的 db 根据 ID 获取用户"""
+        result = await db.execute(select(User).where(User.id == id))
+        return result.scalar_one_or_none()
 
     async def get_by_user_id(self, user_id: str) -> User | None:
         """根据 user_id 获取用户"""
         async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(select(User).where(User.user_id == user_id))
-            return result.scalar_one_or_none()
+            return await self.get_by_user_id_with_db(session, user_id)
+
+    async def get_by_user_id_with_db(self, db: AsyncSession, user_id: str) -> User | None:
+        """使用指定的 db 获取用户"""
+        result = await db.execute(select(User).where(User.user_id == user_id))
+        return result.scalar_one_or_none()
 
     async def get_by_phone(self, phone: str) -> User | None:
         """根据手机号获取用户"""
