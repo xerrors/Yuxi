@@ -65,7 +65,8 @@ async def get_system_logs(levels: str | None = None, current_user: User = Depend
         if levels:
             level_filter = set(level.strip().upper() for level in levels.split(",") if level.strip())
 
-        async with aiofiles.open(LOG_FILE) as f:
+        #  修复 GBK 编码报错：强制 utf-8 读取，忽略错误
+        async with aiofiles.open(LOG_FILE, mode='r', encoding='utf-8', errors='ignore') as f:
             # 读取最后1000行
             lines = []
             async for line in f:
@@ -90,7 +91,6 @@ async def get_system_logs(levels: str | None = None, current_user: User = Depend
     except Exception as e:
         logger.error(f"获取系统日志失败: {e}")
         raise HTTPException(status_code=500, detail=f"获取系统日志失败: {str(e)}")
-
 
 # =============================================================================
 # === 信息管理分组 ===
