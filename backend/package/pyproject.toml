@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "yuxi"
-version = "0.6.2.dev1"
+version = "0.6.2.beta"
 description = "Yuxi 智能知识库与知识图谱平台核心后端包"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"

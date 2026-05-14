@@ -32,7 +32,7 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    image: yuxi-api:${YUXI_VERSION:-0.6.2.dev1}
+    image: yuxi-api:${YUXI_VERSION:-0.6.2.beta}
     container_name: api-prod
     working_dir: /app
     networks:
@@ -69,7 +69,7 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    image: yuxi-api:${YUXI_VERSION:-0.6.2.dev1}
+    image: yuxi-api:${YUXI_VERSION:-0.6.2.beta}
     container_name: worker-prod
     working_dir: /app
     networks:
@@ -145,7 +145,7 @@ services:
       context: .
       dockerfile: docker/web.Dockerfile
       target: production
-    image: yuxi-web:${YUXI_VERSION:-0.6.2.dev1}
+    image: yuxi-web:${YUXI_VERSION:-0.6.2.beta}
     container_name: web-prod
     ports:
       - "80:80"

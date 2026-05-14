@@ -5659,7 +5659,7 @@ wheels = [
 
 [[package]]
 name = "yuxi"
-version = "0.6.2.dev1"
+version = "0.6.2.beta"
 source = { editable = "package" }
 dependencies = [
     { name = "agent-sandbox" },
@@ -5816,7 +5816,7 @@ requires-dist = [
 
 [[package]]
 name = "yuxi-workspace"
-version = "0.6.2.dev1"
+version = "0.6.2.beta"
 source = { virtual = "." }
 dependencies = [
     { name = "arq" },
