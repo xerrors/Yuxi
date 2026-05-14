@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import select, update
+from sqlalchemy import select, update, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.storage.postgres.models_business import AgentConfig
@@ -227,3 +227,27 @@ class AgentConfigRepository:
 
         if was_default:
             await self.set_default(config=remaining[0], updated_by=updated_by)
+
+    async def add_skills_to_config_json(self, *, agent_config_id: int, new_slugs: list[str]) -> bool:
+        """使用 PostgreSQL JSONB 原子操作追加 skills。
+
+        Args:
+            agent_config_id: AgentConfig 的 ID
+            new_slugs: 要追加的技能 slug 列表，会自动去重
+
+        Returns:
+            是否成功更新（至少有一条记录被修改）
+        """
+        sql = text("""
+            UPDATE agent_config
+            SET config_json = jsonb_set(
+                config_json,
+                '{skills}',
+                COALESCE(config_json->'skills', '[]'::jsonb) || to_jsonb(:new_slugs::text[])::jsonb,
+                true
+            )
+            WHERE id = :id
+        """)
+        result = await self.db.execute(sql, {"id": agent_config_id, "new_slugs": new_slugs})
+        await self.db.commit()
+        return result.rowcount > 0
