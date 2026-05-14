@@ -379,23 +379,18 @@ const handleInstallRemoteSkill = async () => {
   remoteInstallProgress.visible = true
   remoteInstallProgress.total = skillsToInstall.length
   try {
-    for (const skill of skillsToInstall) {
-      remoteInstallProgress.currentSkill = skill
-      try {
-        const result = await skillApi.installRemoteSkill({ source, skill })
-        const installedSlug = result?.data?.slug || skill
-        remoteInstallResults.success.push(installedSlug)
-        remoteInstallProgress.success += 1
-      } catch (error) {
-        remoteInstallResults.failed.push({
-          skill,
-          error: error?.response?.data?.detail || error.message || '远程 Skill 安装失败'
-        })
-        remoteInstallProgress.failed += 1
-      } finally {
-        remoteInstallProgress.completed += 1
-      }
-    }
+    const result = await skillApi.installRemoteSkillsBatch({
+      source,
+      skills: skillsToInstall
+    })
+    const results = result?.data || []
+    remoteInstallResults.success = results.filter((r) => r.success).map((r) => r.slug)
+    remoteInstallResults.failed = results
+      .filter((r) => !r.success)
+      .map((r) => ({ skill: r.slug, error: r.error || '安装失败' }))
+    remoteInstallProgress.success = remoteInstallResults.success.length
+    remoteInstallProgress.failed = remoteInstallResults.failed.length
+    remoteInstallProgress.completed = results.length
     remoteInstallProgress.currentSkill = ''
     await fetchSkills()
     if (remoteInstallResults.failed.length === 0) {

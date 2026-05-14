@@ -20,6 +20,10 @@ export const installRemoteSkill = async (payload) => {
   return apiAdminPost(`${BASE_URL}/remote/install`, payload)
 }
 
+export const installRemoteSkillsBatch = async (payload) => {
+  return apiAdminPost(`${BASE_URL}/remote/install-batch`, payload)
+}
+
 export const getSkillDependencyOptions = async () => {
   return apiAdminGet(`${BASE_URL}/dependency-options`)
 }
@@ -77,6 +81,7 @@ export const skillApi = {
   importSkillZip,
   listRemoteSkills,
   installRemoteSkill,
+  installRemoteSkillsBatch,
   getSkillDependencyOptions,
   listBuiltinSkills,
   installBuiltinSkill,

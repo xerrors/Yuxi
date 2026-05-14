@@ -209,3 +209,104 @@ async def install_remote_skill(
         )
     finally:
         shutil.rmtree(temp_home, ignore_errors=True)
+
+
+async def install_remote_skills_batch(
+    db: AsyncSession,
+    *,
+    source: str,
+    skills: list[str],
+    created_by: str | None,
+) -> list[dict]:
+    """批量从同一个远程仓库安装多个 skills（仅一次克隆）。
+
+    Args:
+        db: 数据库会话。
+        source: 远程仓库来源，如 ``owner/repo`` 或 GitHub URL。
+        skills: 需要安装的 skill 名称列表。
+        created_by: 操作者标识。
+
+    Returns:
+        每个 skill 的安装结果列表，顺序与请求一致: ``[{slug, success, error?}, ...]``
+    """
+    normalized_source = _normalize_source(source)
+    if not skills:
+        raise ValueError("skills 列表不能为空")
+
+    # 预分配结果数组（按请求顺序），校验非法名并记录失败
+    results: list[dict] = [{"slug": "", "success": False, "error": "unset"}] * len(skills)
+    normalized_skills: list[str] = []
+    valid_indices: list[int] = []
+    for i, skill in enumerate(skills):
+        try:
+            normalized_skills.append(_normalize_skill_name(skill))
+            valid_indices.append(i)
+        except ValueError as e:
+            results[i] = {"slug": skill, "success": False, "error": str(e)}
+
+    if not normalized_skills:
+        return results
+
+    temp_home, env, workdir = _create_isolated_workdir()
+    try:
+        # Step 1: 一次 npx 调用安装所有 skill（克隆一次）
+        skill_args: list[str] = []
+        for name in normalized_skills:
+            skill_args.extend(["--skill", name])
+
+        cli_failed = False
+        try:
+            await _run_skills_cli(
+                [
+                    "npx",
+                    "-y",
+                    "skills",
+                    "add",
+                    normalized_source,
+                    *skill_args,
+                    "-g",
+                    "-y",
+                    "--copy",
+                ],
+                env=env,
+                cwd=workdir,
+            )
+        except ValueError:
+            # CLI 对不匹配的 skill 会退出码非零，但已安装的目录仍在
+            cli_failed = True
+
+        # Step 2: 从临时目录中找到各 skill 的安装目录并逐个导入
+        base_dir = Path(temp_home).resolve()
+        skills_dir = base_dir / ".agents" / "skills"
+
+        for original_index, name in zip(valid_indices, normalized_skills):
+            installed_dir = _find_skill_dir(skills_dir, name)
+            if installed_dir is None:
+                error_msg = "CLI 安装失败" if cli_failed else "skills CLI 未生成预期的技能目录"
+                results[original_index] = {"slug": name, "success": False, "error": error_msg}
+                continue
+
+            try:
+                item = await import_skill_dir(
+                    db,
+                    source_dir=installed_dir,
+                    created_by=created_by,
+                )
+                results[original_index] = {"slug": item.slug, "success": True}
+            except Exception as e:
+                await db.rollback()
+                results[original_index] = {"slug": name, "success": False, "error": str(e)}
+
+        return results
+    finally:
+        shutil.rmtree(temp_home, ignore_errors=True)
+
+
+def _find_skill_dir(skills_dir: Path, name: str) -> Path | None:
+    """在 skills 安装目录下按名称查找 skill 子目录。"""
+    if not skills_dir.is_dir():
+        return None
+    for candidate in skills_dir.iterdir():
+        if candidate.name == name and candidate.is_dir():
+            return candidate
+    return None
