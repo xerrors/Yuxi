@@ -242,9 +242,14 @@ class AgentConfigRepository:
         sql = text("""
             UPDATE agent_configs
             SET config_json = jsonb_set(
-                CAST(config_json AS jsonb),
-                '{skills}',
-                COALESCE(CAST(config_json->'skills' AS jsonb), CAST('[]' AS jsonb)) || CAST(:new_slugs_json AS jsonb),
+                COALESCE(CAST(config_json AS jsonb), '{}'::jsonb),
+                '{context}',
+                jsonb_set(
+                    COALESCE(CAST(config_json->'context' AS jsonb), '{}'::jsonb),
+                    '{skills}',
+                    COALESCE(CAST(config_json->'context'->'skills' AS jsonb), CAST('[]' AS jsonb)) || CAST(:new_slugs_json AS jsonb),
+                    true
+                ),
                 true
             )
             WHERE id = :id
