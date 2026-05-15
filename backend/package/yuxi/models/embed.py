@@ -85,6 +85,7 @@ class BaseEmbeddingModel(ABC):
         batch_size = batch_size or self.batch_size
         data = []
         task_id = None
+        logger.info(f"[INFO] Embedding abatch_encode: msg_len={len(messages)}, batch_size={batch_size}")
         if len(messages) > batch_size:
             task_id = hashstr(messages)
             self.embed_state[task_id] = {"status": "in-progress", "total": len(messages), "progress": 0}
@@ -187,9 +188,16 @@ class OtherEmbedding(BaseEmbeddingModel):
         self.headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
 
     def build_payload(self, message: list[str] | str) -> dict:
-        return {"model": self.model, "input": message}
+        payload = {"model": self.model, "input": message}
+        if self.dimension:
+            payload["dimensions"] = self.dimension
+        if self.batch_size:
+            payload["batch_size"] = self.batch_size
+        return payload
 
     def encode(self, message: list[str] | str) -> list[list[float]]:
+        if isinstance(message, list) and len(message) > self.batch_size:
+            return self.batch_encode(message, batch_size=self.batch_size)
         payload = self.build_payload(message)
         try:
             response = requests.post(self.base_url, json=payload, headers=self.headers, timeout=60)
@@ -203,6 +211,8 @@ class OtherEmbedding(BaseEmbeddingModel):
             raise ValueError(f"Other Embedding request failed: {e}")
 
     async def aencode(self, message: list[str] | str) -> list[list[float]]:
+        if isinstance(message, list) and len(message) > self.batch_size:
+            return await self.abatch_encode(message, batch_size=self.batch_size)
         payload = self.build_payload(message)
         async with httpx.AsyncClient() as client:
             try:
@@ -214,7 +224,8 @@ class OtherEmbedding(BaseEmbeddingModel):
                 return [item["embedding"] for item in result["data"]]
             except (httpx.RequestError, json.JSONDecodeError) as e:
                 raise ValueError(f"Other Embedding async request failed: {e}, {payload}, {self.base_url=}")
-
+            except httpx.HTTPStatusError as e:
+                raise ValueError(f"Other Embedding async request failed: {e}, {payload}, {self.base_url=}")
 
 async def test_embedding_model_status(model_id: str) -> dict:
     """
