@@ -157,6 +157,38 @@ test: 添加测试
 chore: 构建过程或辅助工具的变动
 ```
 
+## Beta 后临时 dev 分支流程
+
+当已经打出 beta tag，并决定当前版本不再接收新功能时，`main` 进入 feature freeze：
+
+- `main` 只接收当前版本必要的 bugfix、文档修正、测试补充、版本号和发布配置调整
+- 已开发但不进入当前版本的新功能，不再合入 `main`
+- 从 `main` 创建临时 `dev` 分支，用于接收冻结期间已经完成的新功能
+- 冻结期间，`feature/*` 分支合入 `dev`，不要直接合入 `main`
+- 冻结期间，合入 `main` 的 release bugfix 需要同步到 `dev`，避免正式发布后丢失修复
+- 正式版发布并打 tag 后，再将 `dev` 合回 `main`，然后删除临时 `dev` 分支
+
+示例流程：
+
+```bash
+# 已经在 main 打出 beta tag 后
+git checkout main
+git checkout -b dev
+
+# 冻结期间：新功能合入 dev，发布修复合入 main
+
+# 正式发布后，将 main 上的发布修复同步到 dev，再合回 main
+git checkout dev
+git merge main
+
+git checkout main
+git merge --no-ff dev
+
+git branch -d dev
+```
+
+这个 `dev` 不是长期分支，只在当前版本 feature freeze 期间作为下一版本的临时集成线。发布完成并回合后，应删除该分支，恢复日常 `feature/* -> main` 的开发方式。
+
 ## Bug 修复发布流程
 
 当版本发布后发现 Bug，需要按实际分支状态处理。
