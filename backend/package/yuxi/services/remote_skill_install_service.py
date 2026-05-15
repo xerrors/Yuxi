@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -17,6 +18,16 @@ if TYPE_CHECKING:
 ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
 CONTROL_SEQUENCE_RE = re.compile(r"\x1B\][^\x07]*(?:\x07|\x1B\\)|\x1B[\(\)][A-Za-z0-9]")
 CLI_TIMEOUT_SECONDS = 300
+
+
+@dataclass(slots=True)
+class RemoteSkillsBatchPreparation:
+    temp_home: str | None
+    results: list[dict]
+
+    def cleanup(self) -> None:
+        if self.temp_home:
+            shutil.rmtree(self.temp_home, ignore_errors=True)
 
 
 def _normalize_source(source: str) -> str:
@@ -229,6 +240,37 @@ async def install_remote_skills_batch(
     Returns:
         每个 skill 的安装结果列表，顺序与请求一致: ``[{slug, success, error?}, ...]``
     """
+    preparation = await prepare_remote_skills_batch(source=source, skills=skills)
+    try:
+        results = preparation.results
+        for index, result in enumerate(results):
+            if not result.get("success"):
+                continue
+
+            source_dir = result.get("source_dir")
+            try:
+                item = await import_skill_dir(
+                    db,
+                    source_dir=source_dir,
+                    created_by=created_by,
+                )
+                results[index] = {"slug": item.slug, "success": True}
+            except Exception as e:
+                if hasattr(db, "rollback"):
+                    await db.rollback()
+                results[index] = {"slug": result["slug"], "success": False, "error": str(e)}
+
+        return results
+    finally:
+        preparation.cleanup()
+
+
+async def prepare_remote_skills_batch(
+    *,
+    source: str,
+    skills: list[str],
+) -> RemoteSkillsBatchPreparation:
+    """批量从远程仓库拉取 skill 目录，但不写数据库。"""
     normalized_source = _normalize_source(source)
     if not skills:
         raise ValueError("skills 列表不能为空")
@@ -245,11 +287,10 @@ async def install_remote_skills_batch(
             results[i] = {"slug": skill, "success": False, "error": str(e)}
 
     if not normalized_skills:
-        return results
+        return RemoteSkillsBatchPreparation(temp_home=None, results=results)
 
     temp_home, env, workdir = _create_isolated_workdir()
     try:
-        # Step 1: 一次 npx 调用安装所有 skill（克隆一次）
         skill_args: list[str] = []
         for name in normalized_skills:
             skill_args.extend(["--skill", name])
@@ -275,31 +316,19 @@ async def install_remote_skills_batch(
             # CLI 对不匹配的 skill 会退出码非零，但已安装的目录仍在
             cli_failed = True
 
-        # Step 2: 从临时目录中找到各 skill 的安装目录并逐个导入
-        base_dir = Path(temp_home).resolve()
-        skills_dir = base_dir / ".agents" / "skills"
-
+        skills_dir = Path(temp_home).resolve() / ".agents" / "skills"
         for original_index, name in zip(valid_indices, normalized_skills):
             installed_dir = _find_skill_dir(skills_dir, name)
             if installed_dir is None:
                 error_msg = "CLI 安装失败" if cli_failed else "skills CLI 未生成预期的技能目录"
                 results[original_index] = {"slug": name, "success": False, "error": error_msg}
-                continue
+            else:
+                results[original_index] = {"slug": name, "success": True, "source_dir": installed_dir}
 
-            try:
-                item = await import_skill_dir(
-                    db,
-                    source_dir=installed_dir,
-                    created_by=created_by,
-                )
-                results[original_index] = {"slug": item.slug, "success": True}
-            except Exception as e:
-                await db.rollback()
-                results[original_index] = {"slug": name, "success": False, "error": str(e)}
-
-        return results
-    finally:
+        return RemoteSkillsBatchPreparation(temp_home=temp_home, results=results)
+    except Exception:
         shutil.rmtree(temp_home, ignore_errors=True)
+        raise
 
 
 def _find_skill_dir(skills_dir: Path, name: str) -> Path | None:
