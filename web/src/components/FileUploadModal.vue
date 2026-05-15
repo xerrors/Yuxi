@@ -66,7 +66,7 @@
           </div>
           <div class="col-item" v-if="uploadMode !== 'url'">
             <div class="setting-label">
-              OCR 引擎
+              OCR 引擎（仅应用于 PDF/图片文件）
               <a-tooltip title="检查服务状态">
                 <ReloadOutlined
                   class="action-icon refresh-icon"
