@@ -110,11 +110,11 @@ async def test_assert_admin_missing_user_raises_error():
         
         with patch("yuxi.agents.toolkits.buildin.install_skill.UserRepository") as mock_repo_cls:
             mock_repo = MagicMock()
-            mock_repo.get_by_user_id = AsyncMock(return_value=mock_user)
+            mock_repo.get_by_id_with_db = AsyncMock(return_value=mock_user)
             mock_repo_cls.return_value = mock_repo
             
             with pytest.raises(ValueError, match="用户不存在"):
-                await _assert_admin("non-existent-user")
+                await _assert_admin(mock_session, "1")
 
 
 @pytest.mark.asyncio
@@ -128,11 +128,11 @@ async def test_assert_admin_non_admin_raises_error():
         
         with patch("yuxi.agents.toolkits.buildin.install_skill.UserRepository") as mock_repo_cls:
             mock_repo = MagicMock()
-            mock_repo.get_by_user_id = AsyncMock(return_value=mock_user)
+            mock_repo.get_by_id_with_db = AsyncMock(return_value=mock_user)
             mock_repo_cls.return_value = mock_repo
             
             with pytest.raises(ValueError, match="仅管理员可以安装 skill"):
-                await _assert_admin("test-user")
+                await _assert_admin(mock_session, "1")
 
 
 @pytest.mark.asyncio
@@ -146,11 +146,11 @@ async def test_assert_admin_admin_passes():
         
         with patch("yuxi.agents.toolkits.buildin.install_skill.UserRepository") as mock_repo_cls:
             mock_repo = MagicMock()
-            mock_repo.get_by_user_id = AsyncMock(return_value=mock_user)
+            mock_repo.get_by_id_with_db = AsyncMock(return_value=mock_user)
             mock_repo_cls.return_value = mock_repo
             
             # Should not raise
-            await _assert_admin("test-admin-user")
+            await _assert_admin(mock_session, "1")
 
 
 @pytest.mark.asyncio
@@ -164,11 +164,11 @@ async def test_assert_admin_superadmin_passes():
         
         with patch("yuxi.agents.toolkits.buildin.install_skill.UserRepository") as mock_repo_cls:
             mock_repo = MagicMock()
-            mock_repo.get_by_user_id = AsyncMock(return_value=mock_user)
+            mock_repo.get_by_id_with_db = AsyncMock(return_value=mock_user)
             mock_repo_cls.return_value = mock_repo
             
             # Should not raise
-            await _assert_admin("test-superadmin-user")
+            await _assert_admin(mock_session, "1")
 
 
 # =============================================================================
@@ -227,7 +227,8 @@ async def test_install_skill_no_context_returns_error():
 
 
 @pytest.mark.asyncio
-async def test_install_skill_git_no_skill_names_returns_error():
+@patch("yuxi.agents.toolkits.buildin.install_skill.pg_manager")
+async def test_install_skill_git_no_skill_names_returns_error(mock_pg):
     """install_skill should return error Command when using Git source without skill_names."""
     runtime = MagicMock()
     runtime.context.thread_id = "test-thread-id"
@@ -252,7 +253,8 @@ async def test_install_skill_git_no_skill_names_returns_error():
 
 
 @pytest.mark.asyncio
-async def test_install_skill_git_with_skill_names_passes_admin_check():
+@patch("yuxi.agents.toolkits.buildin.install_skill.pg_manager")
+async def test_install_skill_git_with_skill_names_passes_admin_check(mock_pg):
     """install_skill with Git source and skill_names should pass admin check (but may fail other steps)."""
     runtime = MagicMock()
     runtime.context.thread_id = "test-thread-id"
@@ -263,7 +265,7 @@ async def test_install_skill_git_with_skill_names_passes_admin_check():
         # Mock _assert_admin to not raise
         mock_assert.return_value = None
         
-        with patch("yuxi.agents.toolkits.buildin.install_skill._install_git_skills") as mock_install:
+        with patch("yuxi.services.remote_skill_install_service.install_remote_skills_batch") as mock_install:
             # Mock the git installation to return success
             mock_install.return_value = [{"slug": "test-skill", "success": True}]
             
@@ -285,7 +287,8 @@ async def test_install_skill_git_with_skill_names_passes_admin_check():
 
 
 @pytest.mark.asyncio
-async def test_install_skill_sandbox_success():
+@patch("yuxi.agents.toolkits.buildin.install_skill.pg_manager")
+async def test_install_skill_sandbox_success(mock_pg):
     """install_skill with valid sandbox path should work (full mock)."""
     runtime = MagicMock()
     runtime.context.thread_id = "test-thread-id"
@@ -296,7 +299,7 @@ async def test_install_skill_sandbox_success():
         mock_assert.return_value = None
         
         with patch("yuxi.agents.toolkits.buildin.install_skill._install_skill_from_sandbox") as mock_install:
-            mock_install.return_value = "my-skill"
+            mock_install.return_value = ("my-skill", False)
             
             with patch("yuxi.agents.toolkits.buildin.install_skill._enable_skill_in_current_config") as mock_enable:
                 mock_enable.return_value = True
@@ -314,7 +317,8 @@ async def test_install_skill_sandbox_success():
 
 
 @pytest.mark.asyncio
-async def test_install_skill_value_error_handling():
+@patch("yuxi.agents.toolkits.buildin.install_skill.pg_manager")
+async def test_install_skill_value_error_handling(mock_pg):
     """install_skill should handle ValueError from admin check gracefully."""
     runtime = MagicMock()
     runtime.context.thread_id = "test-thread-id"
@@ -338,7 +342,8 @@ async def test_install_skill_value_error_handling():
 
 
 @pytest.mark.asyncio
-async def test_install_skill_exception_handling():
+@patch("yuxi.agents.toolkits.buildin.install_skill.pg_manager")
+async def test_install_skill_exception_handling(mock_pg):
     """install_skill should handle unexpected exceptions gracefully."""
     runtime = MagicMock()
     runtime.context.thread_id = "test-thread-id"
@@ -362,7 +367,8 @@ async def test_install_skill_exception_handling():
 
 
 @pytest.mark.asyncio
-async def test_install_skill_partial_config_failure():
+@patch("yuxi.agents.toolkits.buildin.install_skill.pg_manager")
+async def test_install_skill_partial_config_failure(mock_pg):
     """install_skill should handle partial config persistence failure."""
     runtime = MagicMock()
     runtime.context.thread_id = "test-thread-id"
@@ -373,7 +379,7 @@ async def test_install_skill_partial_config_failure():
         mock_assert.return_value = None
         
         with patch("yuxi.agents.toolkits.buildin.install_skill._install_skill_from_sandbox") as mock_install:
-            mock_install.return_value = "my-skill"
+            mock_install.return_value = ("my-skill", False)
             
             with patch("yuxi.agents.toolkits.buildin.install_skill._enable_skill_in_current_config") as mock_enable:
                 # Simulate config persistence failure
@@ -389,11 +395,12 @@ async def test_install_skill_partial_config_failure():
     assert isinstance(result, Command)
     result_str = str(result.update)
     # Should indicate config persistence issue
-    assert "持久化" in result_str or "Skill 已安装" in result_str
+    assert "当前会话配置中激活失败" in result_str or "技能已安装到系统" in result_str
 
 
 @pytest.mark.asyncio
-async def test_install_skill_slug_warning_for_renamed():
+@patch("yuxi.agents.toolkits.buildin.install_skill.pg_manager")
+async def test_install_skill_slug_warning_for_renamed(mock_pg):
     """install_skill should include warning when skill is renamed."""
     runtime = MagicMock()
     runtime.context.thread_id = "test-thread-id"
@@ -405,7 +412,7 @@ async def test_install_skill_slug_warning_for_renamed():
         
         with patch("yuxi.agents.toolkits.buildin.install_skill._install_skill_from_sandbox") as mock_install:
             # Simulate skill being renamed during installation
-            mock_install.return_value = "my-skill-v2"
+            mock_install.return_value = ("my-skill-v2", True)
             
             with patch("yuxi.agents.toolkits.buildin.install_skill._enable_skill_in_current_config") as mock_enable:
                 mock_enable.return_value = True
