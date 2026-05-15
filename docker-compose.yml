@@ -3,7 +3,6 @@ x-api-worker-env: &api-worker-env
   LITE_MODE: ${LITE_MODE:-false}
   RUNNING_IN_DOCKER: "true"
   YUXI_ENV: development
-  MODEL_DIR_IN_DOCKER: /models
   # DBs and other services
   POSTGRES_URL: ${POSTGRES_URL:-postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-yuxi_know}}
   REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}

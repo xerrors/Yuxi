@@ -1,7 +1,7 @@
 """
 RapidOCR 解析器 - 纯OCR文字识别
 
-使用 RapidOCR (PP-OCRv4) 进行文字识别
+使用 RapidOCR (PP-OCRv5) 进行文字识别
 """
 
 import os
@@ -12,7 +12,7 @@ from pathlib import Path
 import fitz
 import numpy as np
 from PIL import Image
-from rapidocr_onnxruntime import RapidOCR
+from rapidocr import EngineType, LangDet, LangRec, ModelType, OCRVersion, RapidOCR
 
 from yuxi.plugins.parser.base import BaseDocumentProcessor, OCRException
 from yuxi.utils import logger
@@ -24,9 +24,6 @@ class RapidOCRParser(BaseDocumentProcessor):
     def __init__(self, det_box_thresh: float = 0.3):
         self.ocr = None
         self.det_box_thresh = det_box_thresh
-        self.model_dir_root = (
-            os.getenv("MODEL_DIR") if not os.getenv("RUNNING_IN_DOCKER") else os.getenv("MODEL_DIR_IN_DOCKER")
-        )
 
     def get_service_name(self) -> str:
         return "rapid_ocr"
@@ -34,49 +31,32 @@ class RapidOCRParser(BaseDocumentProcessor):
     def get_supported_extensions(self) -> list[str]:
         return [".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"]
 
-    def _get_model_paths(self) -> tuple[str, str]:
-        """获取模型文件路径"""
-        model_dir = os.path.join(self.model_dir_root, "SWHL/RapidOCR")
-        det_model_path = os.path.join(model_dir, "PP-OCRv4/ch_PP-OCRv4_det_infer.onnx")
-        rec_model_path = os.path.join(model_dir, "PP-OCRv4/ch_PP-OCRv4_rec_infer.onnx")
-        return det_model_path, rec_model_path
+    def _get_model_params(self) -> dict[str, object]:
+        return {
+            "Det.engine_type": EngineType.ONNXRUNTIME,
+            "Det.lang_type": LangDet.CH,
+            "Det.model_type": ModelType.MOBILE,
+            "Det.ocr_version": OCRVersion.PPOCRV5,
+            "Det.box_thresh": self.det_box_thresh,
+            "Cls.engine_type": EngineType.ONNXRUNTIME,
+            "Rec.engine_type": EngineType.ONNXRUNTIME,
+            "Rec.lang_type": LangRec.CH,
+            "Rec.model_type": ModelType.MOBILE,
+            "Rec.ocr_version": OCRVersion.PPOCRV5,
+        }
 
     def check_health(self) -> dict:
         """检查 RapidOCR 模型是否可用"""
         try:
-            det_model_path, rec_model_path = self._get_model_paths()
-            model_dir = os.path.dirname(os.path.dirname(det_model_path))
-
-            if not os.path.exists(model_dir):
-                return {
-                    "status": "unavailable",
-                    "message": f"模型目录不存在: {model_dir}",
-                    "details": {"model_dir": model_dir},
-                }
-
-            if not os.path.exists(det_model_path) or not os.path.exists(rec_model_path):
-                return {
-                    "status": "unavailable",
-                    "message": "模型文件缺失",
-                    "details": {"det_model": det_model_path, "rec_model": rec_model_path},
-                }
-
-            # 尝试加载模型
-            try:
-                test_ocr = RapidOCR(
-                    det_box_thresh=self.det_box_thresh, det_model_path=det_model_path, rec_model_path=rec_model_path
-                )
-                del test_ocr  # 释放资源
-                return {
-                    "status": "healthy",
-                    "message": "RapidOCR模型可用",
-                    "details": {"model_path": self._get_model_paths()},
-                }
-            except Exception as e:
-                return {"status": "error", "message": f"模型加载失败: {str(e)}", "details": {"error": str(e)}}
-
+            test_ocr = RapidOCR(params=self._get_model_params())
+            del test_ocr
+            return {
+                "status": "healthy",
+                "message": "RapidOCR PP-OCRv5 模型可用",
+                "details": {"ocr_version": "PP-OCRv5", "engine": "onnxruntime"},
+            }
         except Exception as e:
-            return {"status": "error", "message": f"健康检查失败: {str(e)}", "details": {"error": str(e)}}
+            return {"status": "error", "message": f"模型加载失败: {str(e)}", "details": {"error": str(e)}}
 
     def _load_model(self):
         """延迟加载 OCR 模型"""
@@ -85,17 +65,9 @@ class RapidOCRParser(BaseDocumentProcessor):
 
         logger.info("加载 RapidOCR 模型...")
 
-        # 先检查健康状态
-        health = self.check_health()
-        if health["status"] != "healthy":
-            raise OCRException(health["message"], self.get_service_name(), health["status"])
-
         try:
-            det_model_path, rec_model_path = self._get_model_paths()
-            self.ocr = RapidOCR(
-                det_box_thresh=self.det_box_thresh, det_model_path=det_model_path, rec_model_path=rec_model_path
-            )
-            logger.info(f"RapidOCR 模型加载成功 (det_box_thresh={self.det_box_thresh})")
+            self.ocr = RapidOCR(params=self._get_model_params())
+            logger.info(f"RapidOCR PP-OCRv5 模型加载成功 (det_box_thresh={self.det_box_thresh})")
         except Exception as e:
             raise OCRException(f"RapidOCR模型加载失败: {str(e)}", self.get_service_name(), "load_failed")
 
@@ -128,12 +100,12 @@ class RapidOCRParser(BaseDocumentProcessor):
             try:
                 # 执行 OCR
                 start_time = time.time()
-                result, _ = self.ocr(image_path)
+                result = self.ocr(image_path)
                 processing_time = time.time() - start_time
 
                 # 提取文本
-                if result:
-                    text = "\n".join([line[1] for line in result])
+                if result.txts:
+                    text = "\n".join(result.txts)
                     logger.info(
                         f"RapidOCR 成功: {os.path.basename(image_path) if isinstance(image, str) else 'temp_image'}"
                         f" ({processing_time:.2f}s)"

@@ -61,18 +61,9 @@ Yuxi 支持多种文档格式的智能解析，从简单的文本文件到复杂
 
 ## 快速配置
 
-### RapidOCR（推荐入门）
+### RapidOCR
 
-```bash
-# 下载模型
-hf download SWHL/RapidOCR --local-dir ./models/SWHL/RapidOCR
-
-# 配置环境变量
-MODEL_DIR=./models
-
-# 启动服务
-docker compose up -d api
-```
+启动后会默认下载，无需配置
 
 ### MinerU（高精度）
 
