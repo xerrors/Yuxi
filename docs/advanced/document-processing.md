@@ -76,35 +76,39 @@ docker compose up -d api
 
 ### MinerU（高精度）
 
-```env
-# .env 配置
-MINERU_VL_SERVER=http://localhost:30000
-MINERU_API_URI=http://localhost:30001
+首先从官网下载最新的 docker-compose 文件：
 
-# 启动服务（需要 GPU）
-docker compose up mineru-vllm-server mineru-api -d
+```bash
+wget https://gcore.jsdelivr.net/gh/opendatalab/MinerU@master/docker/compose.yaml -O docker/mineru.compose.yml
+```
+
+启动服务（需要 GPU）
+
+```bash
+docker compose -f docker/mineru.compose.yml --profile openai-server up -d
 ```
 
 ### MinerU Official（云服务）
 
+从 [MinerU 官网](https://mineru.net) 获取 API 密钥，在 .env 配置环境变量
+
 ```env
-# .env 配置
 MINERU_API_KEY=your-api-key-here
 ```
 
-从 [MinerU 官网](https://mineru.net) 获取 API 密钥。
-
 ### PP-Structure-V3（结构化）
 
+启动服务（需要 GPU）
+
 ```bash
-# 启动服务（需要 GPU）
 docker compose up paddlex -d
 ```
 
 ### DeepSeek OCR（简单云服务）
 
+在 .env 配置（使用已有的 SiliconFlow 密钥）
+
 ```env
-# .env 配置（使用已有的 SiliconFlow 密钥）
 SILICONFLOW_API_KEY=your-api-key-here
 ```
 
@@ -114,7 +118,7 @@ SILICONFLOW_API_KEY=your-api-key-here
 
 在 `.env` 中设置服务器 IP：
 
-```env
+```
 HOST_IP=your_server_ip
 ```
 

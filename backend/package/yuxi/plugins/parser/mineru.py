@@ -98,13 +98,14 @@ class MinerUParser(BaseDocumentProcessor):
             file_path: 文件路径
             params: 处理参数
                 - lang_list: 语言列表 (默认: ["ch"])
-                - backend: 后端类型 (默认: "pipeline", 支持 "vlm-*" 系列)
+                - backend: 后端类型 (默认: "hybrid-auto-engine")
                 - parse_method: 解析方法 (默认: "auto")
                 - start_page_id: 起始页码 (默认: 0)
                 - end_page_id: 结束页码 (默认: 99999)
                 - formula_enable: 启用公式解析 (默认: True)
                 - table_enable: 启用表格解析 (默认: True)
-                - server_url: VLM 服务器地址 (vlm-http-client 时需要)
+                - image_analysis: 启用图像/图表解析 (默认: True)
+                - server_url: OpenAI 兼容服务地址 (*-http-client 后端时可选)
 
         Returns:
             str: 提取的 Markdown 文本
@@ -121,23 +122,23 @@ class MinerUParser(BaseDocumentProcessor):
         # 解析参数
         params = params or {}
 
-        # 构建请求数据 - 只保留核心参数
         data = {
             "lang_list": params.get("lang_list", ["ch"]),
-            "backend": params.get("backend", "vlm-http-client"),
+            "backend": params.get("backend", "hybrid-auto-engine"),
             "parse_method": params.get("parse_method", "auto"),
-            # 固定返回 markdown 格式
+            "formula_enable": params.get("formula_enable", True),
+            "table_enable": params.get("table_enable", True),
+            "image_analysis": params.get("image_analysis", True),
+            "start_page_id": params.get("start_page_id", 0),
+            "end_page_id": params.get("end_page_id", 99999),
             "return_md": True,
-            # 添加图片解析支持
             "response_format_zip": True,
             "return_images": True,
         }
 
-        # vlm-http-client 后端需要 server_url
-        if data["backend"] == "vlm-http-client":
-            mineru_vl_server = os.environ.get("MINERU_VL_SERVER")
-            assert mineru_vl_server, "MINERU_VL_SERVER 环境变量未配置"
-            data["server_url"] = mineru_vl_server
+        server_url = params.get("server_url")
+        if server_url:
+            data["server_url"] = server_url
 
         try:
             start_time = time.time()
@@ -155,7 +156,7 @@ class MinerUParser(BaseDocumentProcessor):
                     self.parse_endpoint,
                     files=files,
                     data=data,
-                    timeout=os.environ.get("MINERU_TIMEOUT", 1800),  # 30分钟超时
+                    timeout=int(os.environ.get("MINERU_TIMEOUT", 1800)),  # 30分钟超时
                 )
 
             # 检查响应状态
