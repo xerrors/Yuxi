@@ -161,6 +161,16 @@ class QueryKBInput(BaseModel):
     )
 
 
+class OpenKBDocumentInput(BaseModel):
+    """打开知识库文档输入模型"""
+
+    resource_id: str = Field(description="知识库资源 ID，当前对应知识库 db_id")
+    file_id: str = Field(description="要打开的文档 ID，也就是知识库文件 file_id")
+    line: int | None = Field(default=None, ge=1, description="可选，1-based 起始行号")
+    offset: int | None = Field(default=None, ge=0, description="可选，0-based 起始偏移；line 优先于 offset")
+    window_size: int = Field(default=800, ge=1, le=2000, description="读取窗口行数，默认 800 行")
+
+
 async def _resolve_visible_knowledge_bases_for_query(runtime: ToolRuntime | None) -> list[dict[str, Any]]:
     if runtime is None:
         return []
@@ -188,31 +198,54 @@ def _find_query_target(
     retrievers: dict[str, Any],
     visible_kbs: list[dict[str, Any]],
 ) -> tuple[str | None, dict[str, Any] | None, str | None]:
-    if visible_kbs:
-        matched_kbs = [db for db in visible_kbs if str(db.get("name") or "").strip() == kb_name]
-        if not matched_kbs:
-            return None, None, f"知识库 '{kb_name}' 不存在或当前会话未启用"
-        if len(matched_kbs) > 1:
-            return None, None, f"知识库 '{kb_name}' 存在重名，请先调整名称后重试"
+    if not visible_kbs:
+        return None, None, "无法获取当前会话可访问的知识库"
 
-        target_db_id = str(matched_kbs[0].get("db_id") or "")
-        target_info = retrievers.get(target_db_id)
-        if target_info is None:
-            return None, None, f"知识库 '{kb_name}' 不存在"
-        return target_db_id, target_info, None
+    matched_kbs = [db for db in visible_kbs if str(db.get("name") or "").strip() == kb_name]
+    if not matched_kbs:
+        return None, None, f"知识库 '{kb_name}' 不存在或当前会话未启用"
+    if len(matched_kbs) > 1:
+        return None, None, f"知识库 '{kb_name}' 存在重名，请先调整名称后重试"
 
-    for db_id, info in retrievers.items():
-        if info["name"] == kb_name:
-            return str(db_id), info, None
+    target_db_id = str(matched_kbs[0].get("db_id") or "")
+    target_info = retrievers.get(target_db_id)
+    if target_info is None:
+        return None, None, f"知识库 '{kb_name}' 不存在"
+    return target_db_id, target_info, None
 
-    return None, None, f"知识库 '{kb_name}' 不存在"
+
+def _normalize_retrieval_result_metadata(result: Any) -> Any:
+    if not isinstance(result, list):
+        return result
+
+    for chunk in result:
+        if not isinstance(chunk, dict):
+            continue
+
+        metadata = chunk.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+
+        file_id = metadata.get("file_id") or chunk.get("file_id") or chunk.get("full_doc_id")
+        if file_id and not metadata.get("file_id"):
+            metadata["file_id"] = str(file_id)
+
+        for key in ("chunk_id", "chunk_index"):
+            value = metadata.get(key) if metadata.get(key) is not None else chunk.get(key)
+            if value is not None and metadata.get(key) is None:
+                metadata[key] = value
+
+        chunk["metadata"] = metadata
+
+    return result
 
 
 @tool(args_schema=QueryKBInput)
 async def query_kb(kb_name: str, query_text: str, file_name: str | None = None, runtime: ToolRuntime = None) -> Any:
     """在指定知识库中检索内容
 
-    当用户需要查询具体内容时使用此工具。根据关键词在知识库中检索相关文档片段。
+    当用户需要查询具体内容时使用此工具。根据关键词在知识库中检索相关文档片段；结果中的
+    metadata.file_id 和知识库 resource_id 可用于继续调用 open_kb_document 打开原文。
 
     Args:
         kb_name: 知识库名称
@@ -254,6 +287,8 @@ async def query_kb(kb_name: str, query_text: str, file_name: str | None = None, 
         else:
             result = retriever(query_text, **kwargs)
 
+        result = _normalize_retrieval_result_metadata(result)
+
         if kb_type != "milvus":
             return result
 
@@ -275,12 +310,67 @@ async def query_kb(kb_name: str, query_text: str, file_name: str | None = None, 
         return f"检索失败: {str(e)}"
 
 
+@tool(args_schema=OpenKBDocumentInput)
+async def open_kb_document(
+    resource_id: str,
+    file_id: str,
+    line: int | None = None,
+    offset: int | None = None,
+    window_size: int = 800,
+    runtime: ToolRuntime = None,
+) -> dict[str, Any] | str:
+    """按行窗口打开知识库文档原文
+
+    当 query_kb 返回的片段不足以回答问题，或需要查看某个文档的上下文时使用。
+    resource_id 对应知识库 db_id，file_id 对应检索结果 metadata.file_id。
+    """
+    normalized_resource_id = str(resource_id or "").strip()
+    normalized_file_id = str(file_id or "").strip()
+    if not normalized_resource_id:
+        return "请提供 resource_id"
+    if not normalized_file_id:
+        return "请提供 file_id"
+
+    visible_kbs = await _resolve_visible_knowledge_bases_for_query(runtime)
+    if not visible_kbs:
+        return "无法获取当前会话可访问的知识库"
+
+    visible_resource_ids = {str(kb.get("db_id") or "").strip() for kb in visible_kbs}
+    if normalized_resource_id not in visible_resource_ids:
+        return f"知识库资源 '{normalized_resource_id}' 不存在或当前会话未启用"
+
+    retrievers = knowledge_base.get_retrievers()
+    target_info = retrievers.get(normalized_resource_id)
+    if target_info is None:
+        return f"知识库资源 '{normalized_resource_id}' 不存在"
+
+    metadata = target_info.get("metadata") if isinstance(target_info, dict) else None
+    kb_type = str((metadata or {}).get("kb_type") or "").strip().lower()
+    if kb_type == "dify":
+        return "Dify 知识库为外部只读检索源，当前不支持通过 Open 打开全文"
+
+    try:
+        start_offset = int(line) - 1 if line is not None else int(offset or 0)
+        window = await knowledge_base.open_file_content(
+            normalized_resource_id,
+            normalized_file_id,
+            offset=start_offset,
+            limit=window_size,
+        )
+        return {"resource_id": normalized_resource_id, "file_id": normalized_file_id, **window}
+
+    except Exception as e:
+        logger.error(f"打开知识库文档失败: {e}")
+        return f"打开知识库文档失败: {str(e)}"
+
+
 def get_common_kb_tools() -> list:
     """获取通用知识库工具列表
 
-    返回 3 个通用工具：
+    返回 4 个通用工具：
     - list_kbs: 列出用户可访问的知识库
     - get_mindmap: 获取指定知识库的思维导图
     - query_kb: 在指定知识库中检索
+    - open_kb_document: 按 file_id 分段打开知识库文档
     """
-    return [list_kbs, get_mindmap, query_kb]
+    return [list_kbs, get_mindmap, query_kb, open_kb_document]

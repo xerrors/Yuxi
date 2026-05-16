@@ -528,6 +528,36 @@ class LightRagKB(KnowledgeBase):
 
             return processed_items_info
 
+    @staticmethod
+    def _attach_file_ids_to_chunks(rag: LightRAG, chunks):
+        if not isinstance(chunks, list):
+            return chunks
+
+        text_chunks = getattr(rag, "text_chunks", None)
+        chunk_store = getattr(text_chunks, "_data", None)
+        if not isinstance(chunk_store, dict):
+            return chunks
+
+        for chunk in chunks:
+            if not isinstance(chunk, dict):
+                continue
+
+            metadata = chunk.get("metadata")
+            if not isinstance(metadata, dict):
+                metadata = {}
+
+            chunk_id = metadata.get("chunk_id") or chunk.get("chunk_id") or chunk.get("id")
+            if chunk_id and not metadata.get("chunk_id"):
+                metadata["chunk_id"] = str(chunk_id)
+
+            stored_chunk = chunk_store.get(chunk_id)
+            if isinstance(stored_chunk, dict) and stored_chunk.get("full_doc_id") and not metadata.get("file_id"):
+                metadata["file_id"] = str(stored_chunk["full_doc_id"])
+
+            chunk["metadata"] = metadata
+
+        return chunks
+
     async def aquery(self, query_text: str, db_id: str, agent_call: bool = False, **kwargs) -> str:
         """异步查询知识库"""
         rag = await self._get_lightrag_instance(db_id)
@@ -579,7 +609,7 @@ class LightRagKB(KnowledgeBase):
                 data = response.get("data", {}) or {}
 
                 if scope == "chunks":
-                    return data.get("chunks", [])
+                    return self._attach_file_ids_to_chunks(rag, data.get("chunks", []))
 
                 result = {}
                 if scope in ["graph", "all"]:
@@ -594,7 +624,7 @@ class LightRagKB(KnowledgeBase):
                     result["references"] = data.get("references", [])
 
                 if scope == "all":
-                    result["chunks"] = data.get("chunks", [])
+                    result["chunks"] = self._attach_file_ids_to_chunks(rag, data.get("chunks", []))
 
                 return result
 
