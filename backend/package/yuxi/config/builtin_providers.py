@@ -49,6 +49,26 @@ BUILTIN_PROVIDERS: list[dict[str, Any]] = [
         "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
         "api_key_env": "DASHSCOPE_API_KEY",
         "models_endpoint": "https://dashscope.aliyuncs.com/compatible-mode/v1/models",
+        "embedding_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings",
+        "capabilities": ["chat", "embedding"],
+        "enabled_models": [
+            {"id": "qwen3-plus", "type": "chat", "display_name": "Qwen3 Plus"},
+            {"id": "qwen3-max", "type": "chat", "display_name": "Qwen3 Max"},
+            {"id": "deepseek-v4-flash", "type": "chat", "display_name": "DeepSeek V4 Flash"},
+            {"id": "deepseek-v4-pro", "type": "chat", "display_name": "DeepSeek V4 Pro"},
+            {"id": "text-embedding-v4", "type": "embedding", "display_name": "Text Embedding V4", "dimension": 1024, "batch_size": 10},
+        ],
+    },
+    {
+        "provider_id": "dashscope",
+        "display_name": "DashScope Rerank",
+        "base_url": "https://dashscope.aliyuncs.com/api/v1/services/rerank",
+        "api_key_env": "DASHSCOPE_API_KEY",
+        "rerank_base_url": "https://dashscope.aliyuncs.com/api/v1/services/rerank",
+        "capabilities": ["rerank"],
+        "enabled_models": [
+            {"id": "qwen3-rerank", "type": "rerank", "display_name": "Qwen3 Rerank"},
+        ],
     },
     {
         "provider_id": "alibaba-coding-plan-cn",
