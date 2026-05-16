@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.utils.auth_middleware import get_admin_user, get_db
-from yuxi.services.remote_skill_install_service import install_remote_skill, list_remote_skills
+from yuxi.services.remote_skill_install_service import install_remote_skill, install_remote_skills_batch, list_remote_skills
 from yuxi.services.skill_service import (
     BuiltinSkillUpdateConflictError,
     create_skill_node,
@@ -61,6 +61,10 @@ class RemoteSkillSourceRequest(BaseModel):
 
 class RemoteSkillInstallRequest(RemoteSkillSourceRequest):
     skill: str = Field(..., description="需要安装的 skill 名称")
+
+
+class RemoteSkillBatchInstallRequest(RemoteSkillSourceRequest):
+    skills: list[str] = Field(..., description="需要安装的 skill 名称列表（批量，共享一次克隆）")
 
 
 def _raise_from_value_error(e: ValueError) -> None:
@@ -249,6 +253,38 @@ async def install_remote_skill_route(
             f"Failed to install remote skill '{payload.skill}' from '{payload.source}': {e}"
         )
         raise HTTPException(status_code=500, detail="安装远程 skill 失败")
+
+
+@skills.post("/remote/install-batch")
+async def install_remote_skills_batch_route(
+    payload: RemoteSkillBatchInstallRequest,
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """批量从同一远程仓库安装多个 skills（仅一次克隆，不存在的 skill 静默跳过）。"""
+    try:
+        results = await install_remote_skills_batch(
+            db,
+            source=payload.source,
+            skills=payload.skills,
+            created_by=current_user.username,
+        )
+        success_count = sum(1 for r in results if r["success"])
+        failed_count = sum(1 for r in results if not r["success"])
+        return {
+            "success": True,
+            "data": results,
+            "summary": {"total": len(results), "success": success_count, "failed": failed_count},
+        }
+    except ValueError as e:
+        _raise_from_value_error(e)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Failed to install remote skills batch from '{payload.source}': {e}"
+        )
+        raise HTTPException(status_code=500, detail="批量安装远程 skills 失败")
 
 
 @skills.get("/{slug}/tree")
