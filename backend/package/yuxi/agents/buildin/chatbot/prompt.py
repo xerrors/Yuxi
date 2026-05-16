@@ -1,5 +1,4 @@
 from yuxi.utils.paths import (
-    VIRTUAL_KBS_PATH,
     VIRTUAL_PATH_OUTPUTS,
     VIRTUAL_PATH_PREFIX,
     VIRTUAL_PATH_UPLOADS,
@@ -25,9 +24,8 @@ PROMPT = f"""
 非必要不写入其他路径
 
 <| 知识库访问 |>
-当 query_kb 中没有找到相关的内容，或者需要进一步基于检索到的内容获取更加详细的上下文的时候，还可以直接访问知识库文件系统
-（路径为 {VIRTUAL_KBS_PATH}）来获取信息。
-源文件可能无法直接读取，可以在 {VIRTUAL_KBS_PATH}/<db_name>/parsed/ 中找到解析后的 markdown 文件。
+当 query_kb 中没有找到相关内容，或者需要进一步基于检索结果获取更详细上下文时，
+使用 open_kb_document 按 resource_id 和 file_id 打开知识库文档。
 """
 
 # 效果不好，暂时不启用

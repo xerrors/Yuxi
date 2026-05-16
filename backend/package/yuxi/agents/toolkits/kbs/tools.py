@@ -41,23 +41,18 @@ async def list_kbs(dummy: str, runtime: ToolRuntime) -> str:  # Now has 2 params
 
     enabled_kb_names = getattr(runtime_context, "knowledges", None)
 
-    # 获取用户可访问的知识库列表（包含名称和描述）
     try:
-        result = await knowledge_base.get_databases_by_raw_id(user_id)
-        all_kbs = result.get("databases", [])
+        from yuxi.agents.backends.knowledge_base_backend import resolve_visible_knowledge_bases_for_context
+
+        available_kbs = await resolve_visible_knowledge_bases_for_context(runtime_context)
     except Exception as e:
         logger.error(f"获取用户知识库列表失败: {e}")
         return f"获取知识库列表失败: {str(e)}"
 
-    all_kb_names = [kb["name"] for kb in all_kbs]
+    all_kb_names = [kb["name"] for kb in available_kbs]
 
     logger.debug(f"用户 {user_id} 可访问的知识库列表: {all_kb_names}")
     logger.debug(f"用户 {user_id} 当前对话启用的知识库列表: {enabled_kb_names}")
-
-    if enabled_kb_names is None:
-        available_kbs = all_kbs
-    else:
-        available_kbs = [kb for kb in all_kbs if kb["name"] in enabled_kb_names]
 
     if not available_kbs:
         return "当前没有可访问的知识库"
@@ -188,7 +183,7 @@ async def _resolve_visible_knowledge_bases_for_query(runtime: ToolRuntime | None
 
         return await resolve_visible_knowledge_bases_for_context(context)
     except Exception as exc:  # noqa: BLE001
-        logger.warning(f"解析会话可见知识库失败，跳过 filepath 注入: {exc}")
+        logger.warning(f"解析会话可见知识库失败: {exc}")
         return []
 
 
@@ -197,21 +192,21 @@ def _find_query_target(
     kb_name: str,
     retrievers: dict[str, Any],
     visible_kbs: list[dict[str, Any]],
-) -> tuple[str | None, dict[str, Any] | None, str | None]:
+) -> tuple[dict[str, Any] | None, str | None]:
     if not visible_kbs:
-        return None, None, "无法获取当前会话可访问的知识库"
+        return None, "无法获取当前会话可访问的知识库"
 
     matched_kbs = [db for db in visible_kbs if str(db.get("name") or "").strip() == kb_name]
     if not matched_kbs:
-        return None, None, f"知识库 '{kb_name}' 不存在或当前会话未启用"
+        return None, f"知识库 '{kb_name}' 不存在或当前会话未启用"
     if len(matched_kbs) > 1:
-        return None, None, f"知识库 '{kb_name}' 存在重名，请先调整名称后重试"
+        return None, f"知识库 '{kb_name}' 存在重名，请先调整名称后重试"
 
     target_db_id = str(matched_kbs[0].get("db_id") or "")
     target_info = retrievers.get(target_db_id)
     if target_info is None:
-        return None, None, f"知识库 '{kb_name}' 不存在"
-    return target_db_id, target_info, None
+        return None, f"知识库 '{kb_name}' 不存在"
+    return target_info, None
 
 
 def _normalize_retrieval_result_metadata(result: Any) -> Any:
@@ -265,16 +260,13 @@ async def query_kb(kb_name: str, query_text: str, file_name: str | None = None, 
 
     visible_kbs = await _resolve_visible_knowledge_bases_for_query(runtime)
 
-    target_db_id, target_info, target_error = _find_query_target(
+    target_info, target_error = _find_query_target(
         kb_name=kb_name,
         retrievers=retrievers,
         visible_kbs=visible_kbs,
     )
     if target_error:
         return target_error
-
-    metadata = target_info.get("metadata") if isinstance(target_info, dict) else None
-    kb_type = str((metadata or {}).get("kb_type") or "").strip().lower()
 
     try:
         retriever = target_info["retriever"]
@@ -287,23 +279,7 @@ async def query_kb(kb_name: str, query_text: str, file_name: str | None = None, 
         else:
             result = retriever(query_text, **kwargs)
 
-        result = _normalize_retrieval_result_metadata(result)
-
-        if kb_type != "milvus":
-            return result
-
-        if not isinstance(result, list):
-            return f"知识库 '{kb_name}' 返回结果不是 Milvus chunks 列表，无法注入文件路径"
-
-        from yuxi.agents.backends.knowledge_base_backend import inject_filepaths_into_retrieval_result
-
-        # 只有 Milvus 结果的 file_id 对应本地文件系统，可补充沙盒可读路径。
-        return await inject_filepaths_into_retrieval_result(
-            retrieval_chunks=result,
-            visible_kbs=visible_kbs,
-            target_db_id=target_db_id,
-            target_kb_name=kb_name,
-        )
+        return _normalize_retrieval_result_metadata(result)
 
     except Exception as e:
         logger.error(f"检索失败: {e}")
