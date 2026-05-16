@@ -63,6 +63,10 @@ class DifyKB(KnowledgeBase):
     async def get_file_content(self, db_id: str, file_id: str) -> dict:
         raise self._readonly_error()
 
+    async def open_file_content(self, db_id: str, file_id: str, offset: int = 0, limit: int = 800) -> dict:
+        del offset, limit
+        raise self._readonly_error()
+
     async def get_file_info(self, db_id: str, file_id: str) -> dict:
         raise self._readonly_error()
 

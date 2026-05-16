@@ -499,6 +499,11 @@ class KnowledgeBaseManager:
         kb_instance = await self._get_kb_for_database(db_id)
         return await kb_instance.get_file_content(db_id, file_id)
 
+    async def open_file_content(self, db_id: str, file_id: str, offset: int = 0, limit: int = 800) -> dict:
+        """按行窗口打开文件解析后的 Markdown 内容"""
+        kb_instance = await self._get_kb_for_database(db_id)
+        return await kb_instance.open_file_content(db_id, file_id, offset, limit)
+
     async def get_file_info(self, db_id: str, file_id: str) -> dict:
         """获取文件完整信息（基本信息+内容信息）- 保持向后兼容"""
         kb_instance = await self._get_kb_for_database(db_id)

@@ -397,6 +397,43 @@ class KnowledgeBase(ABC):
         content_bytes = await minio_client.adownload_file(bucket_name, object_name)
         return content_bytes.decode("utf-8")
 
+    def _build_open_file_window(self, content: str, *, offset: int = 0, limit: int = 800) -> dict[str, Any]:
+        lines = content.splitlines()
+        total_lines = len(lines)
+        start = min(max(int(offset), 0), total_lines)
+        window_size = min(max(int(limit), 1), 2000)
+        selected = lines[start : start + window_size]
+        end = start + len(selected)
+
+        return {
+            "start_line": start + 1 if selected else 0,
+            "end_line": end,
+            "total_lines": total_lines,
+            "offset": start,
+            "window_size": window_size,
+            "has_more_before": start > 0,
+            "has_more_after": end < total_lines,
+            "next_offset": end if end < total_lines else None,
+            "content": "\n".join(f"{start + idx + 1:6d}\t{line}" for idx, line in enumerate(selected)),
+        }
+
+    async def open_file_content(self, db_id: str, file_id: str, offset: int = 0, limit: int = 800) -> dict:
+        """按行窗口打开文件解析后的 Markdown 内容"""
+        file_meta = self.files_meta.get(file_id)
+        if file_meta is None:
+            raise Exception(f"文件不存在: {file_id}")
+        if file_meta.get("database_id") != db_id:
+            raise Exception(f"文件 {file_id} 不属于知识库 {db_id}")
+        if file_meta.get("is_folder"):
+            raise Exception(f"文件 {file_id} 是文件夹")
+
+        markdown_file = file_meta.get("markdown_file")
+        if not markdown_file:
+            raise Exception(f"文件 {file_id} 没有解析后的 Markdown 内容")
+
+        content = await self._read_markdown_from_minio(markdown_file)
+        return self._build_open_file_window(content, offset=offset, limit=limit)
+
     @abstractmethod
     async def index_file(self, db_id: str, file_id: str, operator_id: str | None = None) -> dict:
         """
