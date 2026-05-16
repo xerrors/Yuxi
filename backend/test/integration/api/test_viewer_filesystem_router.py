@@ -620,7 +620,7 @@ async def test_viewer_create_directory_rejects_invalid_names(test_client, standa
     assert response.status_code == 422, response.text
 
 
-async def test_viewer_tree_root_hides_kbs_namespace_when_no_database_is_visible(test_client, standard_user):
+async def test_viewer_tree_root_hides_kbs_namespace(test_client, standard_user):
     headers = standard_user["headers"]
     thread_id = await _create_thread_for_user(test_client, headers)
 
@@ -633,13 +633,11 @@ async def test_viewer_tree_root_hides_kbs_namespace_when_no_database_is_visible(
 
     entries = response.json().get("entries", [])
     paths = {entry.get("path") for entry in entries}
-    if "/home/gem/kbs/" in paths:
-        pytest.skip("Current integration database has visible knowledge bases.")
     assert "/home/gem/user-data/" in paths
     assert "/home/gem/kbs/" not in paths
 
 
-async def test_viewer_kbs_namespace_is_empty_when_no_database_is_visible(test_client, standard_user):
+async def test_viewer_rejects_kbs_namespace(test_client, standard_user):
     headers = standard_user["headers"]
     thread_id = await _create_thread_for_user(test_client, headers)
 
@@ -648,8 +646,18 @@ async def test_viewer_kbs_namespace_is_empty_when_no_database_is_visible(test_cl
         params={"thread_id": thread_id, "path": "/home/gem/kbs"},
         headers=headers,
     )
-    assert tree_response.status_code == 200, tree_response.text
-    entries = tree_response.json().get("entries", [])
-    if entries:
-        pytest.skip("Current integration database has visible knowledge bases.")
-    assert entries == []
+    assert tree_response.status_code == 400, tree_response.text
+
+    file_response = await test_client.get(
+        "/api/viewer/filesystem/file",
+        params={"thread_id": thread_id, "path": "/home/gem/kbs/demo.md"},
+        headers=headers,
+    )
+    assert file_response.status_code == 400, file_response.text
+
+    download_response = await test_client.get(
+        "/api/viewer/filesystem/download",
+        params={"thread_id": thread_id, "path": "/home/gem/kbs/demo.md"},
+        headers=headers,
+    )
+    assert download_response.status_code == 400, download_response.text

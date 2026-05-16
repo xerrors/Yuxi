@@ -39,7 +39,7 @@ def test_create_agent_composite_backend_uses_provisioner_default(monkeypatch):
     assert isinstance(backend.default, ProvisionerSandboxBackend)
     assert backend.default._visible_skills == ["reporter"]
     assert "/skills/" in backend.routes
-    assert "/home/gem/kbs/" in backend.routes
+    assert "/home/gem/kbs/" not in backend.routes
 
 
 def test_create_agent_composite_backend_requires_thread_id():

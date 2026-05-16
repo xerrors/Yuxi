@@ -12,7 +12,6 @@ import aiofiles
 from fastapi import HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from yuxi.agents.backends import KBS_PATH, KnowledgeBaseReadonlyBackend, resolve_visible_knowledge_bases_for_context
 from yuxi.agents.backends.sandbox import (
     SKILLS_PATH,
     USER_DATA_PATH,
@@ -90,6 +89,7 @@ _PROTECTED_USER_DATA_ROOTS = frozenset(
         VIRTUAL_PATH_OUTPUTS,
     }
 )
+_LEGACY_KBS_PATH = "/home/gem/kbs"
 
 
 def _detect_preview_type(path: str, raw_content: bytes) -> tuple[str, bool, str | None]:
@@ -139,7 +139,7 @@ def _normalize_path(path: str | None) -> str:
     normalized = (path or "/").strip() or "/"
     if not normalized.startswith("/"):
         normalized = f"/{normalized}"
-    return normalized.rstrip("/") if normalized not in {"/", KBS_PATH, SKILLS_PATH, USER_DATA_PATH} else normalized
+    return normalized.rstrip("/") if normalized not in {"/", SKILLS_PATH, USER_DATA_PATH} else normalized
 
 
 def _is_path_within(path: Path, root: Path) -> bool:
@@ -180,10 +180,6 @@ def _is_skills_path(path: str) -> bool:
     return path == SKILLS_PATH or path.startswith(f"{SKILLS_PATH}/")
 
 
-def _is_kbs_path(path: str) -> bool:
-    return path == KBS_PATH or path.startswith(f"{KBS_PATH}/")
-
-
 def _is_in_home_gem(path: str) -> bool:
     """检查路径是否在 /home/gem/ 下但不在虚拟挂载点内"""
     if not path.startswith("/home/gem/"):
@@ -193,7 +189,7 @@ def _is_in_home_gem(path: str) -> bool:
         return False
     if path.startswith(f"{SKILLS_PATH}/") or path == SKILLS_PATH:
         return False
-    if path.startswith(f"{KBS_PATH}/") or path == KBS_PATH:
+    if path == _LEGACY_KBS_PATH or path.startswith(f"{_LEGACY_KBS_PATH}/"):
         return False
     return True
 
@@ -202,12 +198,6 @@ def _strip_skills_prefix(path: str) -> str:
     if path == SKILLS_PATH:
         return "/"
     return path[len(SKILLS_PATH) :] or "/"
-
-
-def _strip_kbs_prefix(path: str) -> str:
-    if path == KBS_PATH:
-        return "/"
-    return path[len(KBS_PATH) :] or "/"
 
 
 def _remap_prefixed_entry(entry: dict, prefix: str) -> dict:
@@ -358,11 +348,9 @@ async def _resolve_viewer_state(
         agent_id=agent_id,
         agent_config_id=agent_config_id,
     )
-    visible_kbs = await resolve_visible_knowledge_bases_for_context(runtime_context)
     selected_skills = normalize_selected_skills(getattr(runtime_context, "skills", None) or [])
     skills_backend = SelectedSkillsReadonlyBackend(selected_slugs=selected_skills)
-    kb_backend = KnowledgeBaseReadonlyBackend(visible_kbs=visible_kbs)
-    return sandbox_backend, skills_backend, kb_backend, selected_skills
+    return sandbox_backend, skills_backend, selected_skills
 
 
 async def list_viewer_filesystem_tree(
@@ -378,7 +366,7 @@ async def list_viewer_filesystem_tree(
         raise HTTPException(status_code=422, detail="thread_id 不能为空")
 
     normalized_path = _normalize_path(path)
-    sandbox_backend, skills_backend, kb_backend, selected_skills = await _resolve_viewer_state(
+    sandbox_backend, skills_backend, selected_skills = await _resolve_viewer_state(
         thread_id=thread_id,
         agent_id=agent_id,
         agent_config_id=agent_config_id,
@@ -395,8 +383,6 @@ async def list_viewer_filesystem_tree(
         )
         if selected_skills:
             entries.append({"path": f"{SKILLS_PATH}/", "name": "skills", "is_dir": True, "size": 0, "modified_at": ""})
-        if kb_backend.has_entries():
-            entries.append({"path": f"{KBS_PATH}/", "name": "kbs", "is_dir": True, "size": 0, "modified_at": ""})
 
         return {"entries": _sort_entries(entries)}
 
@@ -419,10 +405,6 @@ async def list_viewer_filesystem_tree(
             entries = await asyncio.to_thread(skills_backend.ls_info, _strip_skills_prefix(normalized_path))
             remapped = [_remap_prefixed_entry(entry, SKILLS_PATH) for entry in entries]
             return {"entries": _sort_entries(remapped)}
-        if _is_kbs_path(normalized_path):
-            entries = await asyncio.to_thread(kb_backend.ls_info, _strip_kbs_prefix(normalized_path))
-            remapped = [_remap_prefixed_entry(entry, KBS_PATH) for entry in entries]
-            return {"entries": _sort_entries(remapped)}
     except PermissionError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except ValueError as e:
@@ -444,7 +426,7 @@ async def read_viewer_file_content(
         raise HTTPException(status_code=422, detail="thread_id 不能为空")
     normalized_path = _normalize_path(path)
 
-    sandbox_backend, skills_backend, kb_backend, _selected_skills = await _resolve_viewer_state(
+    sandbox_backend, skills_backend, _selected_skills = await _resolve_viewer_state(
         thread_id=thread_id,
         agent_id=agent_id,
         agent_config_id=agent_config_id,
@@ -476,8 +458,6 @@ async def read_viewer_file_content(
             }
         elif _is_skills_path(normalized_path):
             responses = await asyncio.to_thread(skills_backend.download_files, [_strip_skills_prefix(normalized_path)])
-        elif _is_kbs_path(normalized_path):
-            responses = await asyncio.to_thread(kb_backend.download_files, [_strip_kbs_prefix(normalized_path)])
         elif _is_in_home_gem(normalized_path):
             # /home/gem/ 下的其他文件（如 workspace 目录）
             responses = await asyncio.to_thread(sandbox_backend.download_files, [normalized_path])
@@ -537,7 +517,7 @@ async def download_viewer_file(
     db: AsyncSession,
 ) -> StreamingResponse:
     normalized_path = _normalize_path(path)
-    sandbox_backend, skills_backend, kb_backend, _selected_skills = await _resolve_viewer_state(
+    sandbox_backend, skills_backend, _selected_skills = await _resolve_viewer_state(
         thread_id=thread_id,
         agent_id=agent_id,
         agent_config_id=agent_config_id,
@@ -562,8 +542,6 @@ async def download_viewer_file(
 
         if _is_skills_path(normalized_path):
             responses = await asyncio.to_thread(skills_backend.download_files, [_strip_skills_prefix(normalized_path)])
-        elif _is_kbs_path(normalized_path):
-            responses = await asyncio.to_thread(kb_backend.download_files, [_strip_kbs_prefix(normalized_path)])
         elif _is_in_home_gem(normalized_path):
             # /home/gem/ 下的其他文件（如 workspace 目录）
             responses = await asyncio.to_thread(sandbox_backend.download_files, [normalized_path])
