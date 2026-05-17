@@ -97,6 +97,15 @@ class KnowledgeChunkRepository:
     async def count_graph_indexed_by_db_id(self, db_id: str) -> int:
         return await self._count_by_db_id(db_id, KnowledgeChunk.graph_indexed.is_(True))
 
+    async def count_graph_indexed_by_file_id(self, file_id: str) -> int:
+        async with pg_manager.get_async_session_context() as session:
+            result = await session.execute(
+                select(func.count())
+                .select_from(KnowledgeChunk)
+                .where(KnowledgeChunk.file_id == file_id, KnowledgeChunk.graph_indexed.is_(True))
+            )
+            return int(result.scalar() or 0)
+
     async def count_graph_pending_by_db_id(self, db_id: str) -> int:
         return await self._count_by_db_id(db_id, KnowledgeChunk.graph_indexed.is_not(True))
 

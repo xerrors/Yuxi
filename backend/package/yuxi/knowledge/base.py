@@ -1242,8 +1242,6 @@ class KnowledgeBase(ABC):
         if update_llm_model_spec:
             self.databases_meta[db_id]["llm_model_spec"] = llm_model_spec
 
-        asyncio.create_task(self._save_metadata())
-
         return self.get_database_info(db_id)
 
     def get_retrievers(self) -> dict[str, dict]:
@@ -1394,7 +1392,9 @@ class KnowledgeBase(ABC):
 
         if updated:
             logger.info(f"Filled {updated}/{len(files_to_update)} missing file sizes from MinIO for {self.kb_type}")
-            await self._save_metadata()
+            for file_id, file_size in results:
+                if file_size is not None:
+                    await self._persist_file(file_id)
 
     async def _save_metadata(self) -> None:
         from yuxi.repositories.evaluation_repository import EvaluationRepository
@@ -1421,19 +1421,6 @@ class KnowledgeBase(ABC):
             }
             if existing is None:
                 await kb_repo.create(payload)
-            else:
-                await kb_repo.update(
-                    db_id,
-                    {
-                        "name": payload["name"],
-                        "description": payload["description"],
-                        "kb_type": payload["kb_type"],
-                        "embedding_model_spec": payload["embedding_model_spec"],
-                        "llm_model_spec": payload["llm_model_spec"],
-                        "query_params": payload["query_params"],
-                        "additional_params": payload["additional_params"],
-                    },
-                )
 
         for file_id, meta in self.files_meta.items():
             db_id = meta.get("database_id")
