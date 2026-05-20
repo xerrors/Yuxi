@@ -396,7 +396,7 @@ provide('settingsModal', {
 @sidebar-width: 252px;
 @sidebar-collapsed-width: 56px;
 @sidebar-padding: 6px 8px;
-@sidebar-item-height: 40px;
+@sidebar-item-height: 36px;
 @sidebar-item-padding-x: 10px;
 @sidebar-icon-size: 18px;
 
@@ -545,7 +545,7 @@ div.header,
     background-color: transparent;
     color: var(--gray-700);
     font-size: 14px;
-    font-weight: 600;
+    font-weight: 450;
     transition:
       background-color 0.2s ease-in-out,
       border-color 0.2s ease-in-out,
@@ -567,7 +567,7 @@ div.header,
       margin-left: 8px;
       overflow: hidden;
       line-height: 20px;
-      font-weight: 500;
+      font-weight: 450;
       text-overflow: ellipsis;
       white-space: nowrap;
       transition:

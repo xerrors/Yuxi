@@ -4,6 +4,19 @@ import { agentApi, databaseApi, mcpApi, skillApi } from '@/apis'
 import { handleChatError } from '@/utils/errorHandler'
 import { useUserStore } from '@/stores/user'
 
+const CHATBOT_AGENT_ID = 'ChatbotAgent'
+
+function sortAgents(agents) {
+  return [...agents].sort((a, b) => {
+    const isAChatbotAgent = a.id === CHATBOT_AGENT_ID
+    const isBChatbotAgent = b.id === CHATBOT_AGENT_ID
+
+    if (isAChatbotAgent && !isBChatbotAgent) return -1
+    if (!isAChatbotAgent && isBChatbotAgent) return 1
+    return a.id.localeCompare(b.id)
+  })
+}
+
 export const useAgentStore = defineStore(
   'agent',
   () => {
@@ -184,7 +197,7 @@ export const useAgentStore = defineStore(
 
       try {
         const response = await agentApi.getAgents()
-        agents.value = response.agents
+        agents.value = sortAgents(response.agents || [])
       } catch (err) {
         console.error('Failed to fetch agents:', err)
         handleChatError(err, 'fetch')

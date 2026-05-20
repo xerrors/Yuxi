@@ -448,6 +448,9 @@ defineExpose({
     background: transparent;
   }
 
+}
+
+.remote-install-panel {
   .panel-header-text {
     display: flex;
     flex-direction: column;

@@ -68,13 +68,16 @@ def hard_split_by_token_limit(text: str, chunk_token_num: int) -> list[str]:
     max_tokens = max(int(chunk_token_num or 0), 1)
 
     while index < len(token_iter):
-        end_index = min(index + max_tokens, len(token_iter)) - 1
-        end = token_iter[end_index].end()
+        next_index = min(index + max_tokens, len(token_iter))
+        if next_index < len(token_iter):
+            end = token_iter[next_index].start()
+        else:
+            end = len(text)
         piece = text[start:end].strip()
         if piece:
             chunks.append(piece)
         start = end
-        index = end_index + 1
+        index = next_index
 
     tail = text[start:].strip()
     if tail:
