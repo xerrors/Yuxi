@@ -39,7 +39,7 @@
 
     <!-- @ 提及选择弹窗 -->
     <div v-if="mentionPopupVisible" ref="mentionDropdownRef" class="mention-dropdown-wrapper">
-      <div class="mention-popup">
+      <div class="mention-popup" @mousedown.prevent>
         <!-- 文件列表 -->
         <div v-if="mentionItems.files.length > 0 || showFileSearchPrompt" class="mention-group">
           <div class="mention-group-title">文件</div>
@@ -51,7 +51,7 @@
               v-for="(item, index) in mentionItems.files"
               :key="'file-' + item.value"
               :class="['mention-item', 'file-item', { active: isItemSelected('file', index) }]"
-              @click="insertMention(item)"
+              @mousedown.prevent.stop="insertMention(item)"
             >
               <div class="file-info-left">
                 <component
@@ -94,7 +94,7 @@
             v-for="(item, index) in mentionItems.knowledgeBases"
             :key="'kb-' + item.value"
             :class="['mention-item', { active: isItemSelected('knowledge', index) }]"
-            @click="insertMention(item)"
+            @mousedown.prevent.stop="insertMention(item)"
           >
             <span
               v-for="(part, pIdx) in splitTextByQuery(item.label, mentionQuery)"
@@ -112,7 +112,7 @@
             v-for="(item, index) in mentionItems.mcps"
             :key="'mcp-' + item.value"
             :class="['mention-item', { active: isItemSelected('mcp', index) }]"
-            @click="insertMention(item)"
+            @mousedown.prevent.stop="insertMention(item)"
           >
             <span
               v-for="(part, pIdx) in splitTextByQuery(item.label, mentionQuery)"
@@ -130,7 +130,7 @@
             v-for="(item, index) in mentionItems.skills"
             :key="'skill-' + item.value"
             :class="['mention-item', { active: isItemSelected('skill', index) }]"
-            @click="insertMention(item)"
+            @mousedown.prevent.stop="insertMention(item)"
           >
             <span
               v-for="(part, pIdx) in splitTextByQuery(item.label, mentionQuery)"
@@ -148,7 +148,7 @@
             v-for="(item, index) in mentionItems.subagents"
             :key="'subagent-' + item.value"
             :class="['mention-item', { active: isItemSelected('subagent', index) }]"
-            @click="insertMention(item)"
+            @mousedown.prevent.stop="insertMention(item)"
           >
             <span
               v-for="(part, pIdx) in splitTextByQuery(item.label, mentionQuery)"
@@ -192,6 +192,32 @@ import { SendOutlined, ArrowUpOutlined, PauseOutlined, FolderFilled } from '@ant
 import { Paperclip } from 'lucide-vue-next'
 import { searchMentionFiles } from '@/apis/mention_api'
 import { getFileIcon, getFileIconColor } from '@/utils/file_utils'
+import { useChatUIStore } from '@/stores/chatUI'
+
+const chatUIStore = useChatUIStore()
+
+// NOTE: 极其重要的安全锁 - 用于在打字触发提及的瞬间锁定 @ 符号及其后查询串的 Range 区间，彻底规避浏览器失焦导致的药丸插入偏离或失效
+const mentionTriggerRange = ref(null)
+
+/**
+ * 依据全局字符偏移量，在 DOM 容器树中深度优先定位对应的真正文本节点与节点内的偏移量
+ * @param container 容器元素
+ * @param targetOffset 全局字符偏移量
+ */
+const findNodeAndOffsetAt = (container, targetOffset) => {
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null, false)
+  let currentOffset = 0
+  let node = walker.nextNode()
+  while (node) {
+    const len = node.textContent.length
+    if (currentOffset + len >= targetOffset) {
+      return { node, offset: targetOffset - currentOffset }
+    }
+    currentOffset += len
+    node = walker.nextNode()
+  }
+  return { node: container, offset: container.childNodes.length }
+}
 
 // 点击外部关闭下拉框
 const mentionDropdownRef = ref(null)
@@ -200,6 +226,7 @@ const closeMentionPopup = (e) => {
   if (inputRef.value?.contains(e.target)) return
   if (mentionDropdownRef.value?.contains(e.target)) return
   mentionPopupVisible.value = false
+  mentionTriggerRange.value = null // 清空锁定的 Range，防内存泄漏并安全重置
 }
 
 const inputRef = ref(null)
@@ -350,6 +377,7 @@ const getMentionEmoji = (item) => {
 }
 
 // 检测是否在 @ 触发位置
+// 检测是否在 @ 触发位置并精确锁定 Range 范围
 const checkMentionTrigger = () => {
   if (!mentionEnabled.value) return false
   const range = getActiveRangeInfo()
@@ -359,10 +387,18 @@ const checkMentionTrigger = () => {
   if (!inputRef.value || !inputRef.value.contains(range.startContainer)) return false
 
   let textBeforeCursor = ''
-  if (range.startContainer.nodeType === Node.TEXT_NODE) {
-    textBeforeCursor = range.startContainer.textContent.slice(0, range.startOffset)
-  } else {
-    textBeforeCursor = range.startContainer.textContent.slice(0, range.startOffset)
+  let cursorGlobalIndex = 0
+  try {
+    const tempRange = range.cloneRange()
+    tempRange.setStart(inputRef.value, 0)
+    textBeforeCursor = tempRange.toString()
+    cursorGlobalIndex = textBeforeCursor.length
+  } catch (err) {
+    console.warn('Failed to get text before cursor using Range:', err)
+    // 兜底退化处理
+    const content = inputRef.value.textContent || ''
+    textBeforeCursor = content
+    cursorGlobalIndex = content.length
   }
 
   // 检查是否以 @ 结尾（刚输入 @）或 @ 后有内容
@@ -371,11 +407,29 @@ const checkMentionTrigger = () => {
     mentionQuery.value = atMatch[1]
     mentionPopupVisible.value = true
     mentionSelectedIndex.value = 0
+
+    // NOTE: 核心黄金锁 - 精确计算全局 @query 字符串区间并在 DOM 树中锁定
+    try {
+      const atGlobalIndex = cursorGlobalIndex - atMatch[0].length
+      const startPos = findNodeAndOffsetAt(inputRef.value, atGlobalIndex)
+      const endPos = findNodeAndOffsetAt(inputRef.value, cursorGlobalIndex)
+
+      const triggerRange = document.createRange()
+      triggerRange.setStart(startPos.node, startPos.offset)
+      triggerRange.setEnd(endPos.node, endPos.offset)
+
+      mentionTriggerRange.value = triggerRange
+    } catch (err) {
+      console.warn('Failed to lock mention trigger range:', err)
+      mentionTriggerRange.value = null // 失败则退化为即时搜索
+    }
+
     updateMentionItems(mentionQuery.value)
     return true
   }
 
   mentionPopupVisible.value = false
+  mentionTriggerRange.value = null
   return false
 }
 
@@ -585,29 +639,23 @@ const hasAnyItems = computed(() => {
 
 // 将提及项作为精致 HTML 小药丸节点精准插入富文本框中
 const insertMention = (item) => {
-  const range = getActiveRangeInfo()
+  // 1. 优先使用在打字阶段就已经精准锁定的 mentionTriggerRange，双重保险防失焦和偏移
+  let range = mentionTriggerRange.value
+  if (!range) {
+    // 兜底退化：如果无锁定的 Range，则即时获取
+    range = getActiveRangeInfo()
+  }
   if (!range || !inputRef.value) return
 
-  // 1. 确保光标处于我们的输入框内部
+  // 确保范围在我们的输入框内部
   if (!inputRef.value.contains(range.startContainer)) return
 
-  // 2. 找到光标前面的 @ 文本并移除
-  let textNode = range.startContainer
-  if (textNode.nodeType !== Node.TEXT_NODE) {
-    textNode = document.createTextNode('')
-    range.insertNode(textNode)
+  // 2. 原地擦除：干净利索地把已匹配好的整个 "@query" 文本从 DOM 中删除
+  try {
+    range.deleteContents()
+  } catch (err) {
+    console.warn('Failed to delete query contents using Range:', err)
   }
-
-  const offset = range.startOffset
-  const text = textNode.textContent
-  const textBefore = text.slice(0, offset)
-  const textAfter = text.slice(offset)
-
-  const atIndex = textBefore.lastIndexOf('@')
-  if (atIndex === -1) return
-
-  // 替换文本节点内容为 @ 之前的文本
-  textNode.textContent = textBefore.slice(0, atIndex)
 
   // 3. 动态组装带有 contenteditable="false" 的药丸节点，避免受到后续文字录入的碎裂干扰
   const pill = document.createElement('span')
@@ -630,27 +678,29 @@ const insertMention = (item) => {
   // 4. 插入药丸标签及尾随不折行空格（\u00A0），确保后面的新输入字词与药丸不黏贴
   const spaceNode = document.createTextNode('\u00A0')
 
-  const insertRange = document.createRange()
-  insertRange.setStartAfter(textNode)
-  insertRange.setEndAfter(textNode)
-
-  insertRange.insertNode(spaceNode)
-  insertRange.insertNode(pill)
-
-  if (textAfter) {
-    const afterNode = document.createTextNode(textAfter)
-    insertRange.setStartAfter(spaceNode)
-    insertRange.insertNode(afterNode)
+  try {
+    // 注意：insertNode 会把元素插在 Range 的起点。我们先插空格，再插药丸，即可保证最终物理顺序为 [药丸][空格]
+    range.insertNode(spaceNode)
+    range.insertNode(pill)
+  } catch (err) {
+    console.warn('Failed to insert mention nodes:', err)
+    // 降级使用 appendChild 兜底
+    inputRef.value.appendChild(pill)
+    inputRef.value.appendChild(spaceNode)
   }
 
-  // 5. 将光标顺滑移动到空格之后
-  const newSelection = window.getSelection()
-  if (newSelection) {
-    newSelection.removeAllRanges()
-    const newRange = document.createRange()
-    newRange.setStartAfter(spaceNode)
-    newRange.collapse(true)
-    newSelection.addRange(newRange)
+  // 5. 将光标顺滑移动到空格之后，无缝支持继续录入
+  try {
+    const newSelection = window.getSelection()
+    if (newSelection) {
+      newSelection.removeAllRanges()
+      const newRange = document.createRange()
+      newRange.setStartAfter(spaceNode)
+      newRange.collapse(true)
+      newSelection.addRange(newRange)
+    }
+  } catch (err) {
+    console.warn('Failed to redirect cursor after space node:', err)
   }
 
   // 6. 激活输入更新，进行全局同步
@@ -658,6 +708,7 @@ const insertMention = (item) => {
 
   mentionPopupVisible.value = false
   mentionQuery.value = ''
+  mentionTriggerRange.value = null // 完成后重置锁定
 }
 
 // 滚动到选中项
@@ -868,8 +919,23 @@ let activeAbortController = null
 let mentionSearchTimer = null
 
 // 聚焦输入框，智能把光标归位移到最后
-const focusInput = () => {
+const focusInput = (e) => {
   if (inputRef.value && !props.disabled) {
+    // NOTE: 如果输入框已经获得焦点，且点击是发生在输入框内部（如文字中间、药丸之间），
+    // 此时用户意图是在文字中间精细定位光标，我们必须立刻返回，绝对不能强行重置光标到末尾！
+    const isAlreadyFocused = document.activeElement === inputRef.value
+    const isClickInsideInput = e && inputRef.value.contains(e.target)
+
+    if (isAlreadyFocused && isClickInsideInput) {
+      if (mentionEnabled.value) {
+        nextTick(() => {
+          checkMentionTrigger()
+        })
+      }
+      return
+    }
+
+    // 只有在未聚焦，或者点击了外层容器空白处时，我们才主动聚焦并将光标智能定位到末尾
     inputRef.value.focus()
 
     // 把光标移动到富文本框的最末尾，提供极爽的使用反馈
@@ -896,6 +962,18 @@ const focusInput = () => {
 
 // 处理输入框点击事件，自适应检测光标是否落入 @提及 范围内以唤醒或更新弹窗
 const handleTextareaClick = (e) => {
+  // 智能检测是否点击了文件小药丸
+  const filePill = e.target.closest('.mention-pill.file-pill')
+  if (filePill) {
+    e.preventDefault()
+    e.stopPropagation() // 强力拦截，防止输入框失去焦点或触发键盘弹起/回退
+    const filePath = filePill.getAttribute('data-value')
+    if (filePath) {
+      chatUIStore.triggerFilePreview(filePath)
+    }
+    return
+  }
+
   if (mentionEnabled.value) {
     nextTick(() => {
       checkMentionTrigger()
@@ -1080,6 +1158,18 @@ defineExpose({
     background-color: rgba(9, 109, 217, 0.06);
     border: 1px solid rgba(9, 109, 217, 0.16);
     color: var(--main-600);
+    cursor: pointer; // 提示可点击
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+
+    &:hover {
+      background-color: rgba(9, 109, 217, 0.1);
+      border-color: rgba(9, 109, 217, 0.3);
+      filter: brightness(0.96);
+    }
+
+    &:active {
+      transform: scale(0.96); // 实体按压微动效反馈
+    }
   }
 
   &.knowledge-pill {
