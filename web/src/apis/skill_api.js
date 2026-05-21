@@ -1,9 +1,9 @@
-import { apiAdminGet, apiAdminPost, apiAdminPut, apiAdminDelete } from './base'
+import { apiGet, apiAdminGet, apiAdminPost, apiAdminPut, apiAdminDelete } from './base'
 
 const BASE_URL = '/api/system/skills'
 
 export const listSkills = async () => {
-  return apiAdminGet(BASE_URL)
+  return apiGet(BASE_URL)
 }
 
 export const importSkillZip = async (file) => {

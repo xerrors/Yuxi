@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from server.utils.auth_middleware import get_admin_user, get_db
+from server.utils.auth_middleware import get_admin_user, get_db, get_required_user
 from yuxi.services.remote_skill_install_service import install_remote_skill, install_remote_skills_batch, list_remote_skills
 from yuxi.services.skill_service import (
     BuiltinSkillUpdateConflictError,
@@ -82,7 +82,7 @@ def _cleanup_export_file(path: str) -> None:
 
 @skills.get("")
 async def list_skills_route(
-    _current_user: User = Depends(get_admin_user),
+    _current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
     """获取技能列表（管理员可读）。"""

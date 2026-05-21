@@ -45,6 +45,7 @@
 - **优化开发环境后台 worker 代码热重载机制**：引入 `watchfiles` 级进程监控与超时强杀释放，彻底解决了原热重载死锁卡死缺陷，大幅提升代码变更的重启效率。
 - **统一本地与 MCP 动态工具容错控制**：为本地及 MCP 动态工具注入统一的 `handle_tool_error` 异常捕获与容错逻辑，防止因外部工具调用失败导致 Agent 运行崩溃。
 - 下放扩展管理权限：普通管理员现在可进入扩展管理并完整管理 Tools、MCP、SubAgent、Skills；同步放开 Skill 管理接口权限并补充权限测试。
+- 修复聊天中普通用户 `@` 提及出不来技能和 MCP 列表的 Bug：将获取技能列表 `GET /api/system/skills` 与获取 MCP 服务器列表 `GET /api/system/mcp-servers` 的鉴权要求放宽至已登录的普通用户（`get_required_user`）；同时为了确保敏感配置的安全性，当普通用户请求 MCP 列表时，后端会自动进行脱敏，剔除 `url`、`command`、`args`、`env` 和 `headers` 等敏感连接参数，并新增了对应的角色鉴权及脱敏剔除测试用例。
 - 调整 Agent 知识库默认选择：未显式配置知识库时默认启用当前用户可访问的全部知识库，显式保存空列表仍表示不启用知识库。
 - 移除知识库沙盒文件系统映射：不再通过 `/home/gem/kbs` 暴露知识库文件树，Agent 继续使用 `query_kb` 与 `open_kb_document` 访问知识库内容。
 - 优化评估基准自动生成：仅支持 commonrag/Milvus 知识库，默认参考 chunks 数量改为 1；多 chunk 场景复用知识库向量检索选择相似 chunks，不再对全量 chunks 重新计算 embedding，并移除前端 Embedding 模型选择。

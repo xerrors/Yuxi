@@ -17,7 +17,7 @@ from yuxi.services.mcp_service import (
 )
 from yuxi.storage.postgres.models_business import User
 from yuxi.utils import logger
-from server.utils.auth_middleware import get_admin_user, get_db
+from server.utils.auth_middleware import get_admin_user, get_db, get_required_user
 
 mcp = APIRouter(prefix="/system/mcp-servers", tags=["mcp"])
 
@@ -80,13 +80,26 @@ async def get_server_or_404(db: AsyncSession, name: str):
 
 @mcp.get("")
 async def get_mcp_servers(
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """获取所有 MCP 服务器配置"""
+    """获取所有 MCP 服务器配置（普通用户仅获取脱敏的基础信息）"""
     try:
         servers = await get_all_mcp_servers(db)
-        return {"success": True, "data": [s.to_dict() for s in servers]}
+        if current_user.role in ["admin", "superadmin"]:
+            return {"success": True, "data": [s.to_dict() for s in servers]}
+        else:
+            # 普通用户仅返回展示类基础属性，脱敏敏感的连接环境配置
+            data = []
+            for s in servers:
+                d = s.to_dict()
+                d.pop("url", None)
+                d.pop("command", None)
+                d.pop("args", None)
+                d.pop("env", None)
+                d.pop("headers", None)
+                data.append(d)
+            return {"success": True, "data": data}
     except Exception as e:
         logger.error(f"Failed to get MCP servers: {e}")
         raise HTTPException(status_code=500, detail=str(e))
