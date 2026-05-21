@@ -431,6 +431,27 @@ const currentTodos = computed(() => {
   return Array.isArray(todos) ? todos : []
 })
 
+const hasAgentStateContent = computed(() => {
+  return shouldAutoOpenAgentPanel(currentThreadFiles.value)
+})
+
+// 监听 hasAgentStateContent 从 false → true 时，自动展开面板
+watch(hasAgentStateContent, (newVal, oldVal) => {
+  if (newVal && !oldVal) {
+    // 从无状态变为有状态时，自动展开面板
+    isAgentPanelOpen.value = true
+  }
+})
+
+// 监听全局文件系统预览信号，如果点击了文件药丸但工作台未开启，则自动强制开启工作台
+watch(
+  () => chatUIStore.previewFileTriggerTime,
+  (newVal) => {
+    if (newVal && !isAgentPanelOpen.value) {
+      isAgentPanelOpen.value = true
+    }
+  }
+)
 const { mentionConfig } = useAgentMentionConfig({
   currentAgentState,
   currentThreadAttachments,

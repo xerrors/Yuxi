@@ -22,6 +22,10 @@ export const useChatUIStore = defineStore(
     const moreMenuOpen = ref(false)
     const moreMenuPosition = ref({ x: 0, y: 0 })
 
+    // ==================== 文件系统预览状态 ====================
+    const previewFilePath = ref(null)
+    const previewFileTriggerTime = ref(0)
+
     // ==================== 方法 ====================
     /**
      * 打开更多菜单
@@ -41,6 +45,15 @@ export const useChatUIStore = defineStore(
     }
 
     /**
+     * 触发全局文件系统预览
+     * @param {string} path 文件绝对路径
+     */
+    function triggerFilePreview(path) {
+      previewFilePath.value = path
+      previewFileTriggerTime.value = Date.now()
+    }
+
+    /**
      * 重置所有 UI 状态（不包括持久化状态）
      */
     function reset() {
@@ -49,6 +62,8 @@ export const useChatUIStore = defineStore(
       isConfigSidebarOpen.value = false
       moreMenuOpen.value = false
       moreMenuPosition.value = { x: 0, y: 0 }
+      previewFilePath.value = null
+      previewFileTriggerTime.value = 0
     }
 
     return {
@@ -59,10 +74,13 @@ export const useChatUIStore = defineStore(
       sidebarCollapsed,
       moreMenuOpen,
       moreMenuPosition,
+      previewFilePath,
+      previewFileTriggerTime,
 
       // 方法
       openMoreMenu,
       closeMoreMenu,
+      triggerFilePreview,
       reset
     }
   },
