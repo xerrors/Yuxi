@@ -264,12 +264,18 @@ def test_list_skills_route_normal_user_success(monkeypatch):
 
     monkeypatch.setattr("server.routers.skill_router.list_skills", fake_list_skills)
 
-    # 普通用户应该也能成功获取列表
+    # 普通用户应该也能成功获取列表，但返回的字段应被安全白名单投影过滤
     app = _build_app(allow_admin=False)
     client = TestClient(app)
     resp = client.get("/api/system/skills")
     assert resp.status_code == 200, resp.text
     payload = resp.json()
     assert payload["success"] is True
-    assert payload["data"][0]["slug"] == "test-skill"
-    assert payload["data"][0]["name"] == "test-skill-name"
+    skill_data = payload["data"][0]
+    assert skill_data["slug"] == "test-skill"
+    assert skill_data["name"] == "test-skill-name"
+    # NOTE: 验证敏感字段如 dir_path、created_by 以及其它元数据已全部被白名单机制过滤，不发生越权泄露
+    assert "dir_path" not in skill_data
+    assert "created_by" not in skill_data
+    assert "updated_by" not in skill_data
+    assert "content_hash" not in skill_data

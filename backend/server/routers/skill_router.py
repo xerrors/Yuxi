@@ -10,7 +10,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.utils.auth_middleware import get_admin_user, get_db, get_required_user
-from yuxi.services.remote_skill_install_service import install_remote_skill, install_remote_skills_batch, list_remote_skills
+from yuxi.services.remote_skill_install_service import (
+    install_remote_skill,
+    install_remote_skills_batch,
+    list_remote_skills,
+)
 from yuxi.services.skill_service import (
     BuiltinSkillUpdateConflictError,
     create_skill_node,
@@ -82,13 +86,29 @@ def _cleanup_export_file(path: str) -> None:
 
 @skills.get("")
 async def list_skills_route(
-    _current_user: User = Depends(get_required_user),
+    current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """获取技能列表（管理员可读）。"""
+    """获取技能列表（普通用户仅获取白名单脱敏数据，管理员可读完整元数据）。"""
     try:
         items = await list_skills(db)
-        return {"success": True, "data": [item.to_dict() for item in items]}
+
+        # NOTE: 针对管理员与常规登录用户分流返回，防止物理目录结构（dir_path）与系统审计信息越权暴露给常规用户
+        if current_user.role in ["admin", "superadmin"]:
+            return {"success": True, "data": [item.to_dict() for item in items]}
+
+        safe_data = []
+        for item in items:
+            safe_data.append(
+                {
+                    "slug": item.slug,
+                    "name": item.name,
+                    "description": item.description,
+                    "version": item.version,
+                    "is_builtin": item.is_builtin,
+                }
+            )
+        return {"success": True, "data": safe_data}
     except Exception as e:
         logger.error(f"Failed to list skills: {e}")
         raise HTTPException(status_code=500, detail="获取技能列表失败")
@@ -249,9 +269,7 @@ async def install_remote_skill_route(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(
-            f"Failed to install remote skill '{payload.skill}' from '{payload.source}': {e}"
-        )
+        logger.error(f"Failed to install remote skill '{payload.skill}' from '{payload.source}': {e}")
         raise HTTPException(status_code=500, detail="安装远程 skill 失败")
 
 
@@ -281,9 +299,7 @@ async def install_remote_skills_batch_route(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(
-            f"Failed to install remote skills batch from '{payload.source}': {e}"
-        )
+        logger.error(f"Failed to install remote skills batch from '{payload.source}': {e}")
         raise HTTPException(status_code=500, detail="批量安装远程 skills 失败")
 
 

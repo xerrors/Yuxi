@@ -89,16 +89,19 @@ async def get_mcp_servers(
         if current_user.role in ["admin", "superadmin"]:
             return {"success": True, "data": [s.to_dict() for s in servers]}
         else:
-            # 普通用户仅返回展示类基础属性，脱敏敏感的连接环境配置
+            # NOTE: 针对普通用户采用高安全显式白名单字段准入投影，使用 getattr 兼容 Mock
+            # 仿真对象和历史数据，避免未来新增敏感字段或审计信息越权泄露
             data = []
             for s in servers:
-                d = s.to_dict()
-                d.pop("url", None)
-                d.pop("command", None)
-                d.pop("args", None)
-                d.pop("env", None)
-                d.pop("headers", None)
-                data.append(d)
+                data.append(
+                    {
+                        "name": getattr(s, "name", ""),
+                        "description": getattr(s, "description", None),
+                        "icon": getattr(s, "icon", None),
+                        "enabled": bool(getattr(s, "enabled", True)),
+                        "tags": getattr(s, "tags", None) or [],
+                    }
+                )
             return {"success": True, "data": data}
     except Exception as e:
         logger.error(f"Failed to get MCP servers: {e}")
