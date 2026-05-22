@@ -214,6 +214,13 @@
             @resizing="handleResizingChange"
           />
         </div>
+
+        <!-- 全局独立的文件系统预览 Modal -->
+        <AgentFilePreviewModal
+          :thread-id="currentChatId"
+          :agent-id="currentThread?.agent_id || currentAgentId"
+          :agent-config-id="selectedAgentConfigId"
+        />
       </div>
     </div>
   </div>
@@ -257,6 +264,7 @@ import { useStreamSmoother } from '@/composables/useStreamSmoother'
 import { useAgentMentionConfig } from '@/composables/useAgentMentionConfig'
 import AgentArtifactsCard from '@/components/AgentArtifactsCard.vue'
 import AgentPanel from '@/components/AgentPanel.vue'
+import AgentFilePreviewModal from '@/components/AgentFilePreviewModal.vue'
 
 // ==================== PROPS & EMITS ====================
 const props = defineProps({

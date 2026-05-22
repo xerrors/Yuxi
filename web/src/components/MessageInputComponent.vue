@@ -336,44 +336,53 @@ const getActiveRangeInfo = () => {
   return selection.getRangeAt(0)
 }
 
-// 依据类型与后缀名获取对应高辨识度的精致 Emoji 图标
-const getMentionEmoji = (item) => {
+// 依据类型与后缀名获取对应的高清晰度极简线性矢量 SVG 图标或极客 CSS 迷你代码行
+const getMentionIconSvg = (item) => {
   if (item.type === 'file') {
-    if (item.is_dir) return '📁'
-    const ext = String(item.label || '')
-      .split('.')
-      .pop()
-      ?.toLowerCase()
-    switch (ext) {
-      case 'py':
-        return '🐍'
-      case 'js':
-      case 'ts':
-      case 'jsx':
-      case 'tsx':
-        return '📁'
-      case 'html':
-        return '🌐'
-      case 'css':
-      case 'less':
-      case 'sass':
-      case 'scss':
-        return '🎨'
-      case 'json':
-        return '📦'
-      case 'md':
-        return '📝'
-      case 'csv':
-        return '📊'
-      default:
-        return '📄'
+    if (item.is_dir) {
+      // 文件夹极细线框
+      return `<svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display: block;"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>`
     }
+    
+    // 智能提取文件扩展名并检测是否为代码文件类型
+    const name = (item.label || '').toLowerCase()
+    const codeExtensions = [
+      '.py', '.js', '.ts', '.jsx', '.tsx', '.json', '.vue', '.css', '.less', '.html', 
+      '.cpp', '.c', '.h', '.cc', '.java', '.go', '.sh', '.yaml', '.yml', '.md', 
+      '.rs', '.sql', '.toml', '.xml', '.ini', '.bat', '.ps1'
+    ]
+    const isCode = codeExtensions.some(ext => name.endsWith(ext))
+    
+    if (isCode) {
+      // 极致科技感的极客 CSS 迷你语法高亮代码行 (三色线条发光渲染)
+      return `<div class="mini-code-icon">
+        <span class="mini-code-line mini-code-line-1"></span>
+        <span class="mini-code-line mini-code-line-2"></span>
+        <span class="mini-code-line mini-code-line-3"></span>
+      </div>`
+    }
+    
+    // 普通文件的 1.8 极细描边纸张线框
+    return `<svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display: block;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>`
   }
-  if (item.type === 'knowledge') return '📚'
-  if (item.type === 'mcp') return '🔌'
-  if (item.type === 'skill') return '⚡'
-  if (item.type === 'subagent') return '🤖'
-  return '🔗'
+  if (item.type === 'knowledge') {
+    // 知识库/书本的 1.8 极细描边线框
+    return `<svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display: block;"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>`
+  }
+  if (item.type === 'mcp') {
+    // MCP 插头的 1.8 极细描边线框
+    return `<svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display: block;"><path d="M18 8v3a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8h12z"></path><path d="M9 8V2h6v6M12 22v-5"></path></svg>`
+  }
+  if (item.type === 'skill') {
+    // 技能闪电的 1.8 极细描边线框
+    return `<svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display: block;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>`
+  }
+  if (item.type === 'subagent') {
+    // 智能体机器人的 1.8 极细描边线框
+    return `<svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display: block;"><rect x="3" y="11" width="18" height="10" rx="2"></rect><circle cx="12" cy="5" r="2"></circle><path d="M12 7v4M8 16h.01M16 16h.01"></path></svg>`
+  }
+  // 兜底极细矢量链接图标
+  return `<svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display: block;"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>`
 }
 
 // 检测是否在 @ 触发位置
@@ -667,13 +676,18 @@ const insertMention = (item) => {
 
   const iconContainer = document.createElement('span')
   iconContainer.className = 'pill-icon'
-  iconContainer.textContent = getMentionEmoji(item)
+  iconContainer.innerHTML = getMentionIconSvg(item)
   pill.appendChild(iconContainer)
 
   const textContainer = document.createElement('span')
   textContainer.className = 'pill-text'
   textContainer.textContent = item.label
   pill.appendChild(textContainer)
+
+  const deleteBtn = document.createElement('span')
+  deleteBtn.className = 'pill-close'
+  deleteBtn.innerHTML = `<svg viewBox="0 0 24 24" width="10" height="10" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display: block;"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`
+  pill.appendChild(deleteBtn)
 
   // 4. 插入药丸标签及尾随不折行空格（\u00A0），确保后面的新输入字词与药丸不黏贴
   const spaceNode = document.createTextNode('\u00A0')
@@ -962,7 +976,20 @@ const focusInput = (e) => {
 
 // 处理输入框点击事件，自适应检测光标是否落入 @提及 范围内以唤醒或更新弹窗
 const handleTextareaClick = (e) => {
-  // 智能检测是否点击了文件小药丸
+  // 1. 优先检测并拦截是否点击了药丸的精致删除按钮
+  const closeBtn = e.target.closest('.pill-close')
+  if (closeBtn) {
+    e.preventDefault()
+    e.stopPropagation()
+    const pill = closeBtn.closest('.mention-pill')
+    if (pill) {
+      pill.remove()
+      handleInput() // 重新序列化并触发数据同步
+    }
+    return
+  }
+
+  // 2. 智能检测是否点击了文件小药丸
   const filePill = e.target.closest('.mention-pill.file-pill')
   if (filePill) {
     e.preventDefault()
@@ -1119,24 +1146,77 @@ defineExpose({
   }
 }
 
-// 药丸全局样式 (使用 :deep 穿透动态插入的节点)
+// 药丸全局样式 (使用 :deep 穿透动态插入的节点，Option 2: 极致轻薄无界流式皮肤)
 :deep(.mention-pill) {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   border-radius: 6px;
-  padding: 1px 6px;
-  margin: 0 2px;
+  height: 22px; /* 绝对锁定药丸物理高度为 22px */
+  box-sizing: border-box; /* 启用 border-box 确保总高度严丝合缝 */
+  padding: 0 6px; /* 物理高度已锁定，上下 padding 归零，左右保持对称的 6px */
+  margin: 0 3px;
   font-size: 13px;
-  font-weight: 500;
-  line-height: 1.4;
+  font-weight: 550; /* 调重字重以在无界/轻量卡片下提供卓越的实体聚焦锚点 */
+  line-height: 1; /* 极关键！缩减行高溢出，让 flex align-items 获得绝对垂直控制权 */
   vertical-align: middle;
   cursor: default;
   user-select: none;
-  transition: all 0.2s ease;
+  background-color: rgba(0, 0, 0, 0.02); /* 极度清透的微弱半透明底色，去除大色块压迫感 */
+  border: 1px solid rgba(0, 0, 0, 0.045); /* 极其隐约的超细淡灰色边框 */
+  position: relative; /* 注入相对定位，为删除按钮绝对定位铺垫 */
+  // 注入 padding-right 过渡，实现呼吸般的横向展开动画
+  transition: 
+    background-color 0.2s cubic-bezier(0.4, 0, 0.2, 1), 
+    border-color 0.2s cubic-bezier(0.4, 0, 0.2, 1), 
+    padding-right 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 
   &:hover {
-    filter: brightness(0.96);
+    background-color: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.08);
+    padding-right: 22px; /* Hover 时右侧内边距优雅撑开 16px，供删除按钮浮现而绝不挤压文字 */
+
+    .pill-close {
+      opacity: 0.6;
+      transform: scale(1); /* 优雅淡入并弹性膨胀归位 */
+      pointer-events: auto; /* 仅在显示时允许鼠标事件 */
+    }
+  }
+
+  // 极客 CSS 迷你高亮代码行样式矩阵
+  .mini-code-icon {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 1.5px;
+    width: 12px;
+    height: 12px;
+    justify-content: center;
+    align-items: flex-start;
+    flex-shrink: 0;
+    position: relative;
+    top: 0.5px; /* 调低图标 1px，对齐中文视觉重心 */
+
+    .mini-code-line {
+      height: 2px;
+      border-radius: 1px;
+      display: block;
+
+      &.mini-code-line-1 {
+        width: 11px;
+        background-color: #569cd6; /* VS Code 经典的优雅蓝色 (Keyword 属性) */
+        box-shadow: 0 0 3px rgba(86, 156, 214, 0.45); /* 微弱发光光晕以增强 12px 极小空间的色彩立体感 */
+      }
+      &.mini-code-line-2 {
+        width: 7px;
+        background-color: #4ec9b0; /* 薄荷绿 (Type/Methods 属性) */
+        box-shadow: 0 0 3px rgba(78, 201, 176, 0.45);
+      }
+      &.mini-code-line-3 {
+        width: 9px;
+        background-color: #ce9178; /* 橙红色 (Strings/Constants 属性) */
+        box-shadow: 0 0 3px rgba(206, 145, 120, 0.45);
+      }
+    }
   }
 
   .pill-icon {
@@ -1144,6 +1224,18 @@ defineExpose({
     align-items: center;
     justify-content: center;
     font-size: 12px;
+    flex-shrink: 0;
+    height: 12px; /* 显式物理高度，同 svg 保持绝对一致 */
+    position: relative;
+    top: 0.5px; /* 调低图标 1px，对齐中文视觉重心 */
+
+    svg {
+      width: 12px;
+      height: 12px;
+      color: inherit;
+      display: block;
+      transition: transform 0.2s ease;
+    }
   }
 
   .pill-text {
@@ -1151,49 +1243,94 @@ defineExpose({
     text-overflow: ellipsis;
     white-space: nowrap;
     max-width: 200px;
+    letter-spacing: -0.01em;
+    display: inline-block; /* 保证不受行高溢出干扰 */
+    line-height: 1; /* 强制单行行高为 1，消除多语言字体包围盒计算偏差 */
+    position: relative;
+    top: -0.5px; /* 文字稍微往上提，抵消中文 baseline 偏下问题 */
   }
 
-  // 各种提及类型的专属配色加持
-  &.file-pill {
-    background-color: rgba(9, 109, 217, 0.06);
-    border: 1px solid rgba(9, 109, 217, 0.16);
-    color: var(--main-600);
-    cursor: pointer; // 提示可点击
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  // 绝对定位的精致删除按钮 (Notion 级隐藏与唤醒)
+  .pill-close {
+    position: absolute;
+    right: 4px;
+    top: 3px; /* 22px 容器减去 14px 按钮高度除以 2，得到 3px 的完美物理垂直居中，杜绝 translateY 亚像素偏移 */
+    transform: scale(0.7); /* 默认微型缩小，与透明度配合营造优雅浮现感 */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    color: inherit;
+    opacity: 0;
+    pointer-events: none; /* 默认未激活时穿透鼠标，彻底防误触 */
+    cursor: pointer;
+    transition: 
+      opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1), 
+      transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), 
+      background-color 0.2s ease;
+    margin-left: 0;
 
     &:hover {
-      background-color: rgba(9, 109, 217, 0.1);
-      border-color: rgba(9, 109, 217, 0.3);
-      filter: brightness(0.96);
+      opacity: 1 !important;
+      background-color: rgba(0, 0, 0, 0.06);
     }
 
     &:active {
-      transform: scale(0.96); // 实体按压微动效反馈
+      transform: scale(0.85) !important; /* 点击时物理弹性微按压缩放反馈 */
+    }
+  }
+
+  // 极客通透色相高亮专属主题配比 (只高亮纯净的前景色，不依赖沉重背景色)
+  &.file-pill {
+    color: #096dd9; /* 科技深邃蓝 */
+    cursor: pointer;
+
+    &:hover {
+      background-color: rgba(9, 109, 217, 0.05);
+      border-color: rgba(9, 109, 217, 0.15);
+    }
+
+    &:active {
+      transform: scale(0.96);
     }
   }
 
   &.knowledge-pill {
-    background-color: rgba(82, 196, 26, 0.06);
-    border: 1px solid rgba(82, 196, 26, 0.16);
-    color: #389e0d;
+    color: #389e0d; /* 薄荷森林绿 */
+
+    &:hover {
+      background-color: rgba(82, 196, 26, 0.05);
+      border-color: rgba(82, 196, 26, 0.15);
+    }
   }
 
   &.mcp-pill {
-    background-color: rgba(114, 46, 209, 0.06);
-    border: 1px solid rgba(114, 46, 209, 0.16);
-    color: #531dab;
+    color: #531dab; /* 极客极光紫 */
+
+    &:hover {
+      background-color: rgba(114, 46, 209, 0.05);
+      border-color: rgba(114, 46, 209, 0.15);
+    }
   }
 
   &.skill-pill {
-    background-color: rgba(250, 140, 22, 0.06);
-    border: 1px solid rgba(250, 140, 22, 0.16);
-    color: #d46b08;
+    color: #d46b08; /* 温暖金橘橙 */
+
+    &:hover {
+      background-color: rgba(250, 140, 22, 0.05);
+      border-color: rgba(250, 140, 22, 0.15);
+    }
   }
 
   &.subagent-pill {
-    background-color: rgba(19, 194, 194, 0.06);
-    border: 1px solid rgba(19, 194, 194, 0.16);
-    color: #08979c;
+    color: #08979c; /* 高透青色 */
+
+    &:hover {
+      background-color: rgba(19, 194, 194, 0.05);
+      border-color: rgba(19, 194, 194, 0.15);
+    }
   }
 }
 
