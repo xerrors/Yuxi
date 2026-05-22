@@ -337,7 +337,7 @@ const parsedData = computed(() => {
   .message-text {
     max-width: 100%;
     margin-bottom: 0;
-    white-space: pre-line;
+    white-space: pre-wrap;
 
     &.render-html {
       word-break: break-all;
