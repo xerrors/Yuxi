@@ -1284,6 +1284,7 @@ defineExpose({
     text-overflow: ellipsis;
     white-space: nowrap;
     max-width: 200px;
+    padding-right: 2px; /* 极其关键的 2px 缓冲，物理容纳英文字体 y, f 等侧斜字母的右溢出笔画，彻底规避 overflow:hidden 强行斩断字体的缺陷 */
     letter-spacing: -0.01em;
     display: inline-block; /* 保证不受行高溢出干扰 */
     line-height: 1; /* 强制单行行高为 1，消除多语言字体包围盒计算偏差 */
