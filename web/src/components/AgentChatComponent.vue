@@ -25,6 +25,24 @@
         <!-- Main Chat Area -->
         <div class="chat-main" ref="chatMainRef">
           <div class="chat-box">
+            <!-- 动态悬浮提问条（复用用户气泡底色和所有药丸、文字规范，且天然完美居中对齐） -->
+            <transition name="fade-slide">
+              <div
+                v-if="stickyUserMessage"
+                class="sticky-user-query-bar"
+              >
+                <div
+                  class="sticky-query-content message-box human"
+                  @click="scrollToQuery(stickyUserMessage.id)"
+                >
+                  <span class="query-text" v-html="renderUserMessage(stickyUserMessage.content)"></span>
+                  <div class="query-action-hint">
+                    <ChevronUp size="14" />
+                    <span>返回提问</span>
+                  </div>
+                </div>
+              </div>
+            </transition>
             <template v-for="row in conversationRows" :key="row.key">
               <div v-if="row.type === 'conversation'" class="conv-box">
                 <template
@@ -34,6 +52,7 @@
                   <AgentMessageComponent
                     v-if="displayItem.type === 'message'"
                     :message="displayItem.message"
+                    :data-msg-id="displayItem.message.id"
                     :is-processing="isDisplayMessageProcessing(row.conv, displayItem)"
                     :show-refs="showMsgRefs(displayItem.message)"
                     :hide-tool-calls="true"
@@ -237,7 +256,8 @@ import AgentInputArea from '@/components/AgentInputArea.vue'
 import AgentMessageComponent from '@/components/AgentMessageComponent.vue'
 import RefsComponent from '@/components/RefsComponent.vue'
 import ToolCallsGroupComponent from '@/components/ToolCallsGroupComponent.vue'
-import { Bot, Telescope, ChevronDown } from 'lucide-vue-next'
+import { Bot, Telescope, ChevronDown, ChevronUp } from 'lucide-vue-next'
+import { renderUserMessage } from '@/utils/mention'
 import { handleChatError, handleValidationError } from '@/utils/errorHandler'
 import { ScrollController } from '@/utils/scrollController'
 import { AgentValidator } from '@/utils/agentValidator'
@@ -414,6 +434,7 @@ const supportsFiles = computed(() => {
 const currentAgentState = computed(() => {
   return currentChatId.value ? getThreadState(currentChatId.value)?.agentState || null : null
 })
+// eslint-disable-next-line no-unused-vars
 const currentThreadFiles = computed(() => {
   if (!currentChatId.value) return []
   return threadFilesMap.value[currentChatId.value] || []
@@ -811,6 +832,65 @@ const maybeInsertThreadConfigNotice = () => {
 // ==================== SCROLL & RESIZE HANDLING ====================
 const scrollController = new ScrollController('.chat-main')
 const chatMainRef = ref(null)
+
+// 聊天滚动时吸顶的用户问题状态与控制
+const stickyUserMessage = ref(null)
+
+const handleChatScroll = (e) => {
+  const container = e.target
+  if (!container) return
+
+  const convBoxes = container.querySelectorAll('.conv-box')
+  let currentStuckMsg = null
+
+  const containerRect = container.getBoundingClientRect()
+  // 严格阈值：只有当用户提问气泡底端已 100% 完全滚出滚动容器顶部（不可见）时，才开始吸顶展示，杜绝重叠和提前遮挡
+  const stickyBoundary = containerRect.top
+
+  for (let i = convBoxes.length - 1; i >= 0; i--) {
+    const box = convBoxes[i]
+    const userMsgEl = box.querySelector('.message-box.human')
+    if (!userMsgEl) continue
+
+    const userMsgRect = userMsgEl.getBoundingClientRect()
+
+    if (userMsgRect.bottom < stickyBoundary) {
+      const msgId = userMsgEl.getAttribute('data-msg-id')
+      if (msgId) {
+        // 通过唯一 DOM 属性 data-msg-id 在 conversations 中精确查找，彻底摆脱 notice 插入导致的数组索引错位
+        let foundMsg = null
+        for (const conv of conversations.value) {
+          // 关键修复：后端消息 id 可能是数字类型，而 getAttribute('data-msg-id') 获取的永远是字符串类型。
+          // 必须将两边都统一强转为 String 之后再进行比对，以杜绝类型不一致导致严格比对失败的 Bug！
+          const matched = conv.messages.find(m => String(m.id) === String(msgId) && m.type === 'human')
+          if (matched) {
+            foundMsg = matched
+            break
+          }
+        }
+        if (foundMsg) {
+          currentStuckMsg = foundMsg
+          break
+        }
+      }
+    }
+  }
+
+  stickyUserMessage.value = currentStuckMsg
+}
+
+const scrollToQuery = (msgId) => {
+  if (!msgId || !chatMainRef.value) return
+  const element = chatMainRef.value.querySelector(`[data-msg-id="${msgId}"]`)
+  if (element) {
+    element.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+}
+
+// 切换对话时清除悬浮状态
+watch(currentChatId, () => {
+  stickyUserMessage.value = null
+})
 let chatMainResizeObserver = null
 // 初始化延迟标志，避免首次挂载时 ResizeObserver 立即触发导致侧边栏意外关闭
 let isResizeObserverReady = false
@@ -868,6 +948,7 @@ onMounted(() => {
     const chatMainContainer = document.querySelector('.chat-main')
     if (chatMainContainer) {
       chatMainContainer.addEventListener('scroll', scrollController.handleScroll, { passive: true })
+      chatMainContainer.addEventListener('scroll', handleChatScroll, { passive: true })
     }
 
     startChatMainResizeObserver()
@@ -885,6 +966,10 @@ onDeactivated(() => {
 })
 
 onUnmounted(() => {
+  const chatMainContainer = document.querySelector('.chat-main')
+  if (chatMainContainer) {
+    chatMainContainer.removeEventListener('scroll', handleChatScroll)
+  }
   scrollController.cleanup()
   stopChatMainResizeObserver()
   if (sendCooldownTimer) {
@@ -2363,6 +2448,117 @@ watch(currentChatId, (threadId, oldThreadId) => {
     flex-shrink: 0;
     color: var(--gray-600);
   }
+}
+
+/* 动态悬浮提问条样式 */
+.sticky-user-query-bar {
+  position: sticky;
+  top: 12px; /* 悬浮留出顶部 12px 间距，营造更强的空间感 */
+  width: 100%;
+  z-index: 99;
+  pointer-events: none; /* 防止遮罩拦截其他点击 */
+  height: 0; /* 极其关键：高度设为 0，防止吸顶条出现时把下面的聊天流往下挤，造成闪烁 */
+  overflow: visible; /* 允许里面的子元素正常溢出显示 */
+
+  // 引入共享的提问气泡提及药丸样式（完美复用提及药丸的所有图标、边框、颜色和亮暗色适配）
+  @import '@/assets/css/mention-pill.less';
+
+  .sticky-query-content {
+    pointer-events: auto; /* 仅对条状卡片开启交互 */
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    
+    // 完美复用系统原生用户气泡底色和文字配色
+    background: var(--main-50) !important;
+    border: 1px solid var(--main-100) !important;
+    border-radius: 12px !important;
+    padding: 10px 16px;
+    box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.08),
+                0 1px 3px rgba(0, 0, 0, 0.02) !important;
+    color: var(--gray-1000) !important;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+
+    // 磨砂玻璃质感增强（透出后面滚动的文本）
+    backdrop-filter: blur(16px) !important;
+    -webkit-backdrop-filter: blur(16px) !important;
+
+    // 暗色自适应适配（如果是暗色模式，Yuxi 也是通过 var(--main-50) 和 var(--main-100) 自适应的）
+    .dark &,
+    [data-theme='dark'] & {
+      border-color: rgba(255, 255, 255, 0.08) !important;
+      box-shadow: 0 12px 40px -12px rgba(0, 0, 0, 0.4) !important;
+    }
+
+    &:hover {
+      transform: translateY(-1px); /* 悬浮时微弱上移，更有质感 */
+      box-shadow: 0 12px 36px -8px rgba(0, 0, 0, 0.12) !important;
+      
+      .dark &,
+      [data-theme='dark'] & {
+        box-shadow: 0 16px 48px -10px rgba(0, 0, 0, 0.5) !important;
+      }
+    }
+  }
+
+  .query-text {
+    flex: 1;
+    font-size: 14px;
+    line-height: 20px;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-right: 16px;
+    text-align: left;
+  }
+
+  .query-action-hint {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 3px 10px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.3) !important;
+    border: 1px solid rgba(255, 255, 255, 0.4) !important;
+    color: var(--main-700) !important;
+    flex-shrink: 0;
+    margin-left: 12px;
+    transition: all 0.2s ease;
+    
+    .dark &,
+    [data-theme='dark'] & {
+      background: rgba(0, 0, 0, 0.2) !important;
+      border-color: rgba(255, 255, 255, 0.05) !important;
+      color: var(--main-300) !important;
+    }
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.5) !important;
+      color: var(--main-800) !important;
+      
+      .dark &,
+      [data-theme='dark'] & {
+        background: rgba(255, 255, 255, 0.1) !important;
+        color: var(--main-200) !important;
+      }
+    }
+  }
+}
+
+// 优雅的划入动画
+.fade-slide-enter-active,
+.fade-slide-leave-active {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.fade-slide-enter-from,
+.fade-slide-leave-to {
+  opacity: 0;
+  transform: translateY(-12px);
 }
 </style>
 

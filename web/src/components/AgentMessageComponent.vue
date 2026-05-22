@@ -5,7 +5,7 @@
   >
     <img :src="`data:image/jpeg;base64,${message.image_content}`" alt="用户上传的图片" />
   </div>
-  <div class="message-box" :class="[message.type, customClasses]">
+  <div class="message-box" :class="[message.type, customClasses]" :data-msg-id="message.id">
     <!-- 用户消息 -->
     <div
       v-if="message.type === 'human'"
