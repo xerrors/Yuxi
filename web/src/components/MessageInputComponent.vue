@@ -167,7 +167,7 @@
 
     <div class="send-button-container">
       <slot name="actions-right"></slot>
-      <a-tooltip :title="isLoading ? '停止回答' : ''">
+      <a-tooltip :title="isLoading ? '停止回答' : '发送 (Enter) / 换行 (Shift + Enter)'">
         <a-button
           @click="handleSendOrStop"
           :disabled="sendButtonDisabled"
