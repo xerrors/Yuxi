@@ -16,7 +16,12 @@
       <Check v-if="isCopied" size="14" />
       <Copy v-else size="14" />
     </div>
-    <p v-if="message.type === 'human'" class="message-text">{{ message.content }}</p>
+    <p
+      v-if="message.type === 'human'"
+      class="message-text render-html"
+      @click="handleMessageClick"
+      v-html="renderUserMessage(message.content)"
+    ></p>
 
     <p v-else-if="message.type === 'system'" class="message-text-system">{{ message.content }}</p>
 
@@ -105,6 +110,8 @@ import ToolCallsGroupComponent from '@/components/ToolCallsGroupComponent.vue'
 import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
 import { useAgentStore } from '@/stores/agent'
 import { useInfoStore } from '@/stores/info'
+import { useChatUIStore } from '@/stores/chatUI'
+import { renderUserMessage } from '@/utils/mention'
 import { storeToRefs } from 'pinia'
 import { MessageProcessor } from '@/utils/messageProcessor'
 
@@ -216,6 +223,22 @@ const getErrorMessage = computed(() => {
 const agentStore = useAgentStore()
 const { availableKnowledgeBases } = storeToRefs(agentStore)
 const infoStore = useInfoStore()
+const chatUIStore = useChatUIStore()
+
+/**
+ * 消息内提及药丸点击事件代理处理器
+ * @param {MouseEvent} e 鼠标点击事件
+ */
+const handleMessageClick = (e) => {
+  const filePill = e.target.closest('.mention-pill.file-pill')
+  if (filePill) {
+    const filePath = filePill.getAttribute('data-value')
+    if (filePath) {
+      chatUIStore.triggerFilePreview(filePath)
+    }
+  }
+}
+
 // 提取消息来源
 const messageSources = computed(() => {
   if (props.message.type === 'ai') {
@@ -315,7 +338,14 @@ const parsedData = computed(() => {
     max-width: 100%;
     margin-bottom: 0;
     white-space: pre-line;
+
+    &.render-html {
+      word-break: break-all;
+    }
   }
+
+  // 历史消息气泡提及药丸精致流式样式 (引入共享 Less 模块，开启暗色自适应与只读展示)
+  @import '@/assets/css/mention-pill.less';
 
   .message-copy-btn {
     cursor: pointer;
