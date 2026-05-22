@@ -16,7 +16,7 @@
       <div class="artifacts-panel-inner">
         <div class="output-list">
           <div v-for="file in normalizedArtifacts" :key="file.path" class="output-item">
-            <div class="item-main" @click="openPreview(file)">
+            <div class="item-main" @click="openGlobalPreview(file)">
               <component
                 :is="getFileIcon(file.path)"
                 class="item-icon"
@@ -44,39 +44,18 @@
         </div>
       </div>
     </div>
-
-    <a-modal
-      v-model:open="modalVisible"
-      width="800px"
-      :style="{ maxWidth: '90vw', top: '5vh' }"
-      :bodyStyle="{ maxHeight: '90vh', overflow: 'auto' }"
-      :footer="null"
-      :closable="false"
-      wrapClassName="agent-file-preview-modal"
-      @cancel="closePreview"
-    >
-      <AgentFilePreview
-        :file="currentFile"
-        :filePath="currentFilePath"
-        :showClose="true"
-        :showDownload="true"
-        :showFullscreen="true"
-        @download="downloadFile"
-        @close="closePreview"
-      />
-    </a-modal>
   </section>
 </template>
 
 <script setup>
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { ChevronDown, Download, FolderOutput, LoaderCircle, Save } from 'lucide-vue-next'
 import { threadApi } from '@/apis/agent_api'
-import AgentFilePreview from '@/components/AgentFilePreview.vue'
-import { getFileIcon, getFileIconColor } from '@/utils/file_utils'
+import { getFileIcon, getFileIconColor, parseDownloadFilename } from '@/utils/file_utils'
 import { getPreviewTypeByPath } from '@/utils/file_preview'
-import { downloadViewerFile, getViewerFileContent } from '@/apis/viewer_filesystem'
+import { downloadViewerFile } from '@/apis/viewer_filesystem'
+import { useChatUIStore } from '@/stores/chatUI'
 
 const props = defineProps({
   artifacts: {
@@ -98,6 +77,8 @@ const props = defineProps({
 })
 const emit = defineEmits(['saved'])
 
+const chatUIStore = useChatUIStore()
+
 const normalizedArtifacts = computed(() =>
   (props.artifacts || [])
     .filter((path) => typeof path === 'string' && path.trim())
@@ -114,95 +95,13 @@ const normalizedArtifacts = computed(() =>
 )
 const artifactsCountLabel = computed(() => `${normalizedArtifacts.value.length} 个文件`)
 const expanded = ref(false)
-
-const modalVisible = ref(false)
-const currentFile = ref(null)
-const currentFilePath = ref('')
 const savingState = ref({})
 
-const parseDownloadFilename = (contentDisposition) => {
-  if (!contentDisposition) return ''
 
-  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)
-  if (utf8Match && utf8Match[1]) {
-    try {
-      return decodeURIComponent(utf8Match[1])
-    } catch (error) {
-      console.warn('解析 UTF-8 文件名失败:', error)
-    }
-  }
 
-  const asciiMatch = contentDisposition.match(/filename="?([^";]+)"?/i)
-  return asciiMatch?.[1] || ''
-}
-
-const revokeCurrentPreviewUrl = () => {
-  const previewUrl = currentFile.value?.previewUrl
-  if (previewUrl) {
-    window.URL.revokeObjectURL(previewUrl)
-  }
-}
-
-const closePreview = () => {
-  revokeCurrentPreviewUrl()
-  modalVisible.value = false
-  currentFile.value = null
-  currentFilePath.value = ''
-}
-
-const openPreview = async (file) => {
-  if (!props.threadId || !file?.path) return
-
-  revokeCurrentPreviewUrl()
-  currentFilePath.value = file.path
-  currentFile.value = {
-    ...file,
-    content: 'Loading...',
-    supported: true,
-    previewType: 'text',
-    message: '',
-    previewUrl: ''
-  }
-  modalVisible.value = true
-
-  try {
-    const res = await getViewerFileContent(
-      props.threadId,
-      file.path,
-      props.agentId,
-      props.agentConfigId
-    )
-    const previewType = res?.preview_type || 'text'
-    let previewUrl = ''
-
-    if ((previewType === 'image' || previewType === 'pdf') && res?.supported) {
-      const response = await downloadViewerFile(
-        props.threadId,
-        file.path,
-        props.agentId,
-        props.agentConfigId
-      )
-      const blob = await response.blob()
-      previewUrl = window.URL.createObjectURL(blob)
-    }
-
-    currentFile.value = {
-      ...file,
-      content: res?.content ?? '',
-      supported: res?.supported !== false,
-      previewType,
-      message: res?.message || '',
-      previewUrl
-    }
-  } catch (error) {
-    currentFile.value = {
-      ...file,
-      content: `Error loading file: ${error?.message || 'unknown error'}`,
-      supported: false,
-      previewType: 'unsupported',
-      message: error?.message || '文件预览失败',
-      previewUrl: ''
-    }
+const openGlobalPreview = (file) => {
+  if (file?.path) {
+    chatUIStore.triggerFilePreview(file.path)
   }
 }
 
@@ -252,10 +151,6 @@ const saveToWorkspace = async (file) => {
     setSaving(file.path, false)
   }
 }
-
-onUnmounted(() => {
-  revokeCurrentPreviewUrl()
-})
 
 watch(
   () => [props.threadId, normalizedArtifacts.value.map((file) => file.path).join('|')],

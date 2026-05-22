@@ -194,3 +194,23 @@ export const formatFileSize = (bytes) => {
   const i = Math.floor(Math.log(bytes) / Math.log(k))
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
 }
+
+/**
+ * 解析 HTTP 响应头 Content-Disposition 中的文件名
+ * @param {string} contentDisposition 
+ * @returns {string} 文件名
+ */
+export const parseDownloadFilename = (contentDisposition) => {
+  if (!contentDisposition) return ''
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)
+  if (utf8Match && utf8Match[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1])
+    } catch (error) {
+      console.warn('解析 UTF-8 文件名失败:', error)
+    }
+  }
+  const asciiMatch = contentDisposition.match(/filename="?([^";]+)"?/i)
+  return asciiMatch?.[1] || ''
+}
+

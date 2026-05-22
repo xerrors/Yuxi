@@ -214,6 +214,13 @@
             @resizing="handleResizingChange"
           />
         </div>
+
+        <!-- 全局独立的文件系统预览 Modal -->
+        <AgentFilePreviewModal
+          :thread-id="currentChatId"
+          :agent-id="currentThread?.agent_id || currentAgentId"
+          :agent-config-id="selectedAgentConfigId"
+        />
       </div>
     </div>
   </div>
@@ -257,6 +264,7 @@ import { useStreamSmoother } from '@/composables/useStreamSmoother'
 import { useAgentMentionConfig } from '@/composables/useAgentMentionConfig'
 import AgentArtifactsCard from '@/components/AgentArtifactsCard.vue'
 import AgentPanel from '@/components/AgentPanel.vue'
+import AgentFilePreviewModal from '@/components/AgentFilePreviewModal.vue'
 
 // ==================== PROPS & EMITS ====================
 const props = defineProps({
@@ -431,27 +439,7 @@ const currentTodos = computed(() => {
   return Array.isArray(todos) ? todos : []
 })
 
-const hasAgentStateContent = computed(() => {
-  return shouldAutoOpenAgentPanel(currentThreadFiles.value)
-})
 
-// 监听 hasAgentStateContent 从 false → true 时，自动展开面板
-watch(hasAgentStateContent, (newVal, oldVal) => {
-  if (newVal && !oldVal) {
-    // 从无状态变为有状态时，自动展开面板
-    isAgentPanelOpen.value = true
-  }
-})
-
-// 监听全局文件系统预览信号，如果点击了文件药丸但工作台未开启，则自动强制开启工作台
-watch(
-  () => chatUIStore.previewFileTriggerTime,
-  (newVal) => {
-    if (newVal && !isAgentPanelOpen.value) {
-      isAgentPanelOpen.value = true
-    }
-  }
-)
 const { mentionConfig } = useAgentMentionConfig({
   currentAgentState,
   currentThreadAttachments,
