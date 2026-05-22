@@ -442,10 +442,18 @@ const checkMentionTrigger = () => {
   return false
 }
 
+// 记录上一次实际触发远程搜索的 query 字符串，防无意义的重复搜索网络开销
+let lastSearchQuery = ''
+
 // 更新提及候选项
 const updateMentionItems = (query = '') => {
   if (!props.mention) {
     mentionItems.value = { files: [], knowledgeBases: [], mcps: [], skills: [], subagents: [] }
+    return
+  }
+
+  // 如果搜索内容与上一次完全一致，且弹窗已经在显示，直接退出，绝不重新发送重复的 API 请求，也防止本地过滤覆盖已有的远程搜索结果
+  if (query && query === lastSearchQuery && mentionPopupVisible.value) {
     return
   }
 
@@ -543,11 +551,16 @@ const updateMentionItems = (query = '') => {
     subagents: filterItems(subagentItems)
   }
 
+  if (!query) {
+    lastSearchQuery = ''
+  }
+
   // NOTE: 如果是尚未开始对话的全新会话，此时 threadId 为空，允许使用临时占位 ID 检索用户全局的工作区文件
   if (query) {
     const activeThreadId = props.threadId || 'new_thread_placeholder'
     clearTimeout(mentionSearchTimer)
     mentionSearchTimer = setTimeout(async () => {
+      lastSearchQuery = query
       // 物理中断之前的未完成 HTTP 请求
       if (activeAbortController) {
         activeAbortController.abort()
@@ -648,6 +661,19 @@ const hasAnyItems = computed(() => {
 
 // 将提及项作为精致 HTML 小药丸节点精准插入富文本框中
 const insertMention = (item) => {
+  // 0. 立即物理熔断提及状态，清除防抖，打断任何挂起中的远程请求，确保后续 DOM 更新时决不误唤醒
+  mentionPopupVisible.value = false
+  mentionQuery.value = ''
+  lastSearchQuery = ''
+  if (mentionSearchTimer) {
+    clearTimeout(mentionSearchTimer)
+    mentionSearchTimer = null
+  }
+  if (activeAbortController) {
+    activeAbortController.abort()
+    activeAbortController = null
+  }
+
   // 1. 优先使用在打字阶段就已经精准锁定的 mentionTriggerRange，双重保险防失焦和偏移
   let range = mentionTriggerRange.value
   if (!range) {
@@ -1019,6 +1045,13 @@ watch(
     }
   }
 )
+
+// 监听提及弹窗可见性变化，在弹窗关闭时自动重置上一次搜索内容，以支持下一次全新输入时重新拉取
+watch(mentionPopupVisible, (newVal) => {
+  if (!newVal) {
+    lastSearchQuery = ''
+  }
+})
 
 onMounted(() => {
   document.addEventListener('click', closeMentionPopup)

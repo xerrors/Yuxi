@@ -45,7 +45,7 @@
 - 移除知识库沙盒文件系统映射：不再通过 `/home/gem/kbs` 暴露知识库文件树，Agent 继续使用 `query_kb` 与 `open_kb_document` 访问知识库内容。
 - 优化评估基准自动生成：仅支持 commonrag/Milvus 知识库，默认参考 chunks 数量改为 1；多 chunk 场景复用知识库向量检索选择相似 chunks，不再对全量 chunks 重新计算 embedding，并移除前端 Embedding 模型选择。
 - 修复知识库文档入库状态回退：当已解析文件缺失 `markdown_file` 解析产物时，索引流程会将文件状态恢复为未解析，便于重新解析而不是停留在索引失败。
-- 优化 `@` 文件 mention 候选搜索：前端废弃全量递归遍历，改为后端 `/api/mention/search` 接口 + Redis `ormsgpack` 二进制缓存（TTL 60s，上限 10 万条）；扫描加宽度/深度/黑名单三重剪枝防卡死；搜索结果按文件名/前缀/路径加权排序，最多返回 50 条；前端加防抖（250ms）+ `AbortController` 防竞态，高亮渲染使用 DOMPurify 防 XSS。
+- 优化 `@` 文件 mention 候选搜索与药丸插入：前端废弃全量递归遍历，改为后端 `/api/mention/search` 接口 + Redis `ormsgpack` 二进制缓存（TTL 60s，上限 10 万条）；扫描加宽度/深度/黑名单三重剪枝防卡死；搜索结果按文件名/前缀/路径加权排序，最多返回 50 条；前端加防抖（250ms）+ `AbortController` 防竞态，高亮渲染使用 DOMPurify 防 XSS；修复了当焦点聚焦在文本框内 `@` 字符或光标发生位移时，误触发重复搜索的性能开销，在 `insertMention` 首部加入物理熔断，并建立 `mentionPopupVisible` 的统一重置 watch 机制以精准控制生命周期和缓存熔断。
 - 调整知识库思维导图后端结构：将思维导图路由文件重命名为知识库语义更明确的 router，并把文件列表整理、提示词构建、AI JSON 解析等纯逻辑下沉到知识库 utils。
 - 收敛知识库评估后端结构：将评估指标、单题评估、答案生成提示词和自动基准生成算法下沉到 `knowledge/eval`，`EvaluationService` 保留任务、文件和持久化编排职责。
 - 新增个人工作区预览与管理：提供独立于对话 thread 的用户级 workspace API，并增加“工作区”页面，用于浏览个人 workspace 文件、预览 Markdown/文本/代码/图片/PDF；支持新建文件夹、上传文件、下载文件、删除文件/文件夹和多选删除；工作区预览支持 Markdown/TXT 在右侧预览框内切换编辑并保存，其他格式和非工作区预览默认只读；知识库与团队空间入口先展示到占位层级；默认创建 `agents/AGENTS.md`，并在 Agent 执行时将其内容追加到系统提示词。
