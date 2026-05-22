@@ -35,6 +35,9 @@
       @input="handleInput"
       @focus="focusInput"
       @click="handleTextareaClick"
+      @paste="handlePaste"
+      @copy="handleCopy"
+      @cut="handleCut"
     ></div>
 
     <!-- @ 提及选择弹窗 -->
@@ -193,6 +196,17 @@ import { Paperclip } from 'lucide-vue-next'
 import { searchMentionFiles } from '@/apis/mention_api'
 import { getFileIcon, getFileIconColor } from '@/utils/file_utils'
 import { useChatUIStore } from '@/stores/chatUI'
+import {
+  getMentionIconSvg,
+  splitTextByQuery,
+  formatMentionPath,
+  formatMentionToken,
+  getSelectionText,
+  parseMentionHtml,
+  parseMentionText,
+  mentionTypePrefixMap,
+  createPillElement
+} from '@/utils/mention'
 
 const chatUIStore = useChatUIStore()
 
@@ -284,50 +298,7 @@ const mentionEnabled = computed(() => {
   return !!props.mention
 })
 
-const mentionTypePrefixMap = {
-  file: 'file',
-  knowledge: 'knowledge',
-  mcp: 'mcp',
-  skill: 'skill',
-  subagent: 'subagent'
-}
-
-const formatMentionToken = (type, value) => {
-  const prefix = mentionTypePrefixMap[type] || type
-  return `@${prefix}:${value}`
-}
-
-const formatMentionPath = (path) => {
-  if (!path) return ''
-  let cleanPath = path.replace(/^\/?home\/gem\/user-data\/?/, '')
-  if (cleanPath.startsWith('/')) {
-    cleanPath = cleanPath.substring(1)
-  }
-  // 如果以 / 结尾，说明它是一个目录，我们先去掉末尾的 / 之后再算父目录
-  let isDir = cleanPath.endsWith('/')
-  let pathForParent = isDir ? cleanPath.substring(0, cleanPath.length - 1) : cleanPath
-
-  const lastSlashIndex = pathForParent.lastIndexOf('/')
-  if (lastSlashIndex === -1) {
-    return ''
-  }
-  return pathForParent.substring(0, lastSlashIndex + 1)
-}
-
-// 高性能且安全的关键字切片高亮解析函数 (100% 防御 XSS，避开危险的 v-html)
-const splitTextByQuery = (text, query) => {
-  if (!text) return []
-  if (!query) return [{ text, isMatch: false }]
-
-  const escapedQuery = query.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')
-  const regex = new RegExp(`(${escapedQuery})`, 'gi')
-  const parts = text.split(regex)
-
-  return parts.map((part) => ({
-    text: part,
-    isMatch: part.toLowerCase() === query.toLowerCase()
-  }))
-}
+// 已重构：相关解析与序列化算法已封装并从 @/utils/mention 通用模块中统一导入
 
 // 安全获取当前光标 Selection 与 Range 信息
 const getActiveRangeInfo = () => {
@@ -336,56 +307,6 @@ const getActiveRangeInfo = () => {
   return selection.getRangeAt(0)
 }
 
-// 依据类型与后缀名获取对应的高清晰度极简线性矢量 SVG 图标或极客 CSS 迷你代码行
-const getMentionIconSvg = (item) => {
-  if (item.type === 'file') {
-    if (item.is_dir) {
-      // 文件夹极细线框
-      return `<svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display: block;"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>`
-    }
-    
-    // 智能提取文件扩展名并检测是否为代码文件类型
-    const name = (item.label || '').toLowerCase()
-    const codeExtensions = [
-      '.py', '.js', '.ts', '.jsx', '.tsx', '.json', '.vue', '.css', '.less', '.html', 
-      '.cpp', '.c', '.h', '.cc', '.java', '.go', '.sh', '.yaml', '.yml', '.md', 
-      '.rs', '.sql', '.toml', '.xml', '.ini', '.bat', '.ps1'
-    ]
-    const isCode = codeExtensions.some(ext => name.endsWith(ext))
-    
-    if (isCode) {
-      // 极致科技感的极客 CSS 迷你语法高亮代码行 (三色线条发光渲染)
-      return `<div class="mini-code-icon">
-        <span class="mini-code-line mini-code-line-1"></span>
-        <span class="mini-code-line mini-code-line-2"></span>
-        <span class="mini-code-line mini-code-line-3"></span>
-      </div>`
-    }
-    
-    // 普通文件的 1.8 极细描边纸张线框
-    return `<svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display: block;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>`
-  }
-  if (item.type === 'knowledge') {
-    // 知识库/书本的 1.8 极细描边线框
-    return `<svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display: block;"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>`
-  }
-  if (item.type === 'mcp') {
-    // MCP 插头的 1.8 极细描边线框
-    return `<svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display: block;"><path d="M18 8v3a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8h12z"></path><path d="M9 8V2h6v6M12 22v-5"></path></svg>`
-  }
-  if (item.type === 'skill') {
-    // 技能闪电的 1.8 极细描边线框
-    return `<svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display: block;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>`
-  }
-  if (item.type === 'subagent') {
-    // 智能体机器人的 1.8 极细描边线框
-    return `<svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display: block;"><rect x="3" y="11" width="18" height="10" rx="2"></rect><circle cx="12" cy="5" r="2"></circle><path d="M12 7v4M8 16h.01M16 16h.01"></path></svg>`
-  }
-  // 兜底极细矢量链接图标
-  return `<svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display: block;"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>`
-}
-
-// 检测是否在 @ 触发位置
 // 检测是否在 @ 触发位置并精确锁定 Range 范围
 const checkMentionTrigger = () => {
   if (!mentionEnabled.value) return false
@@ -692,28 +613,8 @@ const insertMention = (item) => {
     console.warn('Failed to delete query contents using Range:', err)
   }
 
-  // 3. 动态组装带有 contenteditable="false" 的药丸节点，避免受到后续文字录入的碎裂干扰
-  const pill = document.createElement('span')
-  pill.className = `mention-pill ${item.type}-pill`
-  pill.setAttribute('contenteditable', 'false')
-  pill.setAttribute('data-type', item.type)
-  pill.setAttribute('data-value', item.value)
-  pill.setAttribute('data-label', item.label)
-
-  const iconContainer = document.createElement('span')
-  iconContainer.className = 'pill-icon'
-  iconContainer.innerHTML = getMentionIconSvg(item)
-  pill.appendChild(iconContainer)
-
-  const textContainer = document.createElement('span')
-  textContainer.className = 'pill-text'
-  textContainer.textContent = item.label
-  pill.appendChild(textContainer)
-
-  const deleteBtn = document.createElement('span')
-  deleteBtn.className = 'pill-close'
-  deleteBtn.innerHTML = `<svg viewBox="0 0 24 24" width="10" height="10" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display: block;"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`
-  pill.appendChild(deleteBtn)
+  // 3. 调用统一工厂函数创建药丸节点，避免受到后续文字录入的碎裂干扰
+  const pill = createPillElement(item)
 
   // 4. 插入药丸标签及尾随不折行空格（\u00A0），确保后面的新输入字词与药丸不黏贴
   const spaceNode = document.createTextNode('\u00A0')
@@ -952,6 +853,145 @@ const handleInput = (e) => {
   }
 }
 
+/**
+ * 在当前光标处插入纯文本
+ * @param {string} text 待插入的纯文本
+ */
+const insertTextAtCursor = (text) => {
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0) return
+
+  const range = selection.getRangeAt(0)
+  range.deleteContents()
+  
+  const textNode = document.createTextNode(text)
+  range.insertNode(textNode)
+  
+  // 将光标移到新插入文本的尾部
+  range.setStartAfter(textNode)
+  range.setEndAfter(textNode)
+  selection.removeAllRanges()
+  selection.addRange(range)
+
+  // 触发输入同步
+  handleInput()
+}
+
+/**
+ * 在当前光标处插入 DOM 片段
+ * @param {DocumentFragment} fragment 待插入的 DOM 片段
+ */
+const insertFragmentAtCursor = (fragment) => {
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0) return
+
+  const range = selection.getRangeAt(0)
+  range.deleteContents()
+  
+  // 保持对最后一个子节点的引用，以便将光标移到其后面
+  const lastChild = fragment.lastChild
+  
+  range.insertNode(fragment)
+  
+  if (lastChild) {
+    range.setStartAfter(lastChild)
+    range.setEndAfter(lastChild)
+    selection.removeAllRanges()
+    selection.addRange(range)
+  }
+
+  // 触发输入同步
+  handleInput()
+}
+
+// 处理粘贴事件，智能拦截解析提及文本并转换为药丸 DOM 节点
+const handlePaste = (e) => {
+  e.preventDefault()
+  
+  const clipboardData = e.clipboardData || window.clipboardData
+  if (!clipboardData) return
+
+  const pastedHtml = clipboardData.getData('text/html')
+  const pastedText = clipboardData.getData('text/plain') || ''
+
+  // 1. 优先检测 HTML 中是否包含已渲染的提及药丸 DOM (比如从历史消息或输入框复制的内容)
+  const hasPillInHtml = pastedHtml && (pastedHtml.includes('mention-pill') || pastedHtml.includes('data-type=') || pastedHtml.includes('data-value='))
+
+  if (hasPillInHtml) {
+    try {
+      const fragment = parseMentionHtml(pastedHtml)
+      insertFragmentAtCursor(fragment)
+      return
+    } catch (err) {
+      console.warn('Failed to parse pasted HTML containing pills, falling back to text regex parser:', err)
+    }
+  }
+
+  // 2. 兜底纯文本正则提及解析 (如用户从别的文本渠道、AI 的纯文本回复中直接复制的消息)
+  if (!pastedText) return
+  const mentionRegex = /@(file|knowledge|mcp|skill|subagent):([^\s\n\u00A0]+)/g
+  
+  // 如果没有任何提及格式，使用纯文本插入，防止富文本格式污染
+  if (!pastedText.match(mentionRegex)) {
+    insertTextAtCursor(pastedText)
+    return
+  }
+
+  // 3. 调用工具类进行高保真反序列化与去重解析，然后插入光标位置
+  const fragment = parseMentionText(pastedText)
+  insertFragmentAtCursor(fragment)
+}
+
+// 已重构：getSelectionText 遍历转换引擎已搬迁至 @/utils/mention 通用模块
+
+// 拦截复制事件，智能导出包含发光药丸的高保真文本和 HTML，完美防空白丢失
+const handleCopy = (e) => {
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return
+
+  try {
+    const range = selection.getRangeAt(0)
+    const container = document.createElement('div')
+    container.appendChild(range.cloneContents())
+
+    const plainText = getSelectionText(container)
+    const htmlText = container.innerHTML
+
+    e.clipboardData.setData('text/plain', plainText)
+    e.clipboardData.setData('text/html', htmlText)
+    e.preventDefault() // 阻止系统默认复制行为，100% 接管
+  } catch (err) {
+    console.warn('Failed to custom export selection on copy:', err)
+  }
+}
+
+// 拦截剪切事件，智能导出提及文本并物理清除选中项，触发状态同步
+const handleCut = (e) => {
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return
+
+  try {
+    const range = selection.getRangeAt(0)
+    const container = document.createElement('div')
+    container.appendChild(range.cloneContents())
+
+    const plainText = getSelectionText(container)
+    const htmlText = container.innerHTML
+
+    e.clipboardData.setData('text/plain', plainText)
+    e.clipboardData.setData('text/html', htmlText)
+    e.preventDefault() // 阻止默认剪切行为
+
+    // 物理切除选中的 Range 内容
+    range.deleteContents()
+    
+    // 强制触发输入框重置和 Pinia 全局状态同步
+    handleInput()
+  } catch (err) {
+    console.warn('Failed to custom export selection on cut:', err)
+  }
+}
+
 // 处理发送按钮点击
 const handleSendOrStop = () => {
   emit('send')
@@ -1187,194 +1227,8 @@ defineExpose({
   }
 }
 
-// 药丸全局样式 (使用 :deep 穿透动态插入的节点，Option 2: 极致轻薄无界流式皮肤)
-:deep(.mention-pill) {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  border-radius: 6px;
-  height: 22px; /* 绝对锁定药丸物理高度为 22px */
-  box-sizing: border-box; /* 启用 border-box 确保总高度严丝合缝 */
-  padding: 0 6px; /* 物理高度已锁定，上下 padding 归零，左右保持对称的 6px */
-  margin: 0 3px;
-  font-size: 13px;
-  font-weight: 550; /* 调重字重以在无界/轻量卡片下提供卓越的实体聚焦锚点 */
-  line-height: 1; /* 极关键！缩减行高溢出，让 flex align-items 获得绝对垂直控制权 */
-  vertical-align: middle;
-  cursor: default;
-  user-select: none;
-  background-color: rgba(0, 0, 0, 0.02); /* 极度清透的微弱半透明底色，去除大色块压迫感 */
-  border: 1px solid rgba(0, 0, 0, 0.045); /* 极其隐约的超细淡灰色边框 */
-  position: relative; /* 注入相对定位，为删除按钮绝对定位铺垫 */
-  // 注入 padding-right 过渡，实现呼吸般的横向展开动画
-  transition: 
-    background-color 0.2s cubic-bezier(0.4, 0, 0.2, 1), 
-    border-color 0.2s cubic-bezier(0.4, 0, 0.2, 1), 
-    padding-right 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-
-  &:hover {
-    background-color: rgba(0, 0, 0, 0.04);
-    border-color: rgba(0, 0, 0, 0.08);
-    padding-right: 22px; /* Hover 时右侧内边距优雅撑开 16px，供删除按钮浮现而绝不挤压文字 */
-
-    .pill-close {
-      opacity: 0.6;
-      transform: scale(1); /* 优雅淡入并弹性膨胀归位 */
-      pointer-events: auto; /* 仅在显示时允许鼠标事件 */
-    }
-  }
-
-  // 极客 CSS 迷你高亮代码行样式矩阵
-  .mini-code-icon {
-    display: inline-flex;
-    flex-direction: column;
-    gap: 1.5px;
-    width: 12px;
-    height: 12px;
-    justify-content: center;
-    align-items: flex-start;
-    flex-shrink: 0;
-    position: relative;
-    top: 0.5px; /* 调低图标 1px，对齐中文视觉重心 */
-
-    .mini-code-line {
-      height: 2px;
-      border-radius: 1px;
-      display: block;
-
-      &.mini-code-line-1 {
-        width: 11px;
-        background-color: #569cd6; /* VS Code 经典的优雅蓝色 (Keyword 属性) */
-        box-shadow: 0 0 3px rgba(86, 156, 214, 0.45); /* 微弱发光光晕以增强 12px 极小空间的色彩立体感 */
-      }
-      &.mini-code-line-2 {
-        width: 7px;
-        background-color: #4ec9b0; /* 薄荷绿 (Type/Methods 属性) */
-        box-shadow: 0 0 3px rgba(78, 201, 176, 0.45);
-      }
-      &.mini-code-line-3 {
-        width: 9px;
-        background-color: #ce9178; /* 橙红色 (Strings/Constants 属性) */
-        box-shadow: 0 0 3px rgba(206, 145, 120, 0.45);
-      }
-    }
-  }
-
-  .pill-icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 12px;
-    flex-shrink: 0;
-    height: 12px; /* 显式物理高度，同 svg 保持绝对一致 */
-    position: relative;
-    top: 0.5px; /* 调低图标 1px，对齐中文视觉重心 */
-
-    svg {
-      width: 12px;
-      height: 12px;
-      color: inherit;
-      display: block;
-      transition: transform 0.2s ease;
-    }
-  }
-
-  .pill-text {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 200px;
-    padding-right: 4px; /* 极其关键的 4px 充足缓冲，物理容纳英文字体 y, f 等侧斜字母的右溢出笔画，彻底规避 overflow:hidden 强行斩断字体的缺陷，更显大方 */
-    letter-spacing: -0.01em;
-    display: inline-block; /* 保证不受行高溢出干扰 */
-    line-height: 1; /* 强制单行行高为 1，消除多语言字体包围盒计算偏差 */
-    position: relative;
-    top: -0.5px; /* 文字稍微往上提，抵消中文 baseline 偏下问题 */
-  }
-
-  // 绝对定位的精致删除按钮 (Notion 级隐藏与唤醒)
-  .pill-close {
-    position: absolute;
-    right: 4px;
-    top: 3px; /* 22px 容器减去 14px 按钮高度除以 2，得到 3px 的完美物理垂直居中，杜绝 translateY 亚像素偏移 */
-    transform: scale(0.7); /* 默认微型缩小，与透明度配合营造优雅浮现感 */
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    color: inherit;
-    opacity: 0;
-    pointer-events: none; /* 默认未激活时穿透鼠标，彻底防误触 */
-    cursor: pointer;
-    transition: 
-      opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1), 
-      transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), 
-      background-color 0.2s ease;
-    margin-left: 0;
-
-    &:hover {
-      opacity: 1 !important;
-      background-color: rgba(0, 0, 0, 0.06);
-    }
-
-    &:active {
-      transform: scale(0.85) !important; /* 点击时物理弹性微按压缩放反馈 */
-    }
-  }
-
-  // 极客通透色相高亮专属主题配比 (只高亮纯净的前景色，不依赖沉重背景色)
-  &.file-pill {
-    color: #096dd9; /* 科技深邃蓝 */
-    cursor: pointer;
-
-    &:hover {
-      background-color: rgba(9, 109, 217, 0.05);
-      border-color: rgba(9, 109, 217, 0.15);
-    }
-
-    &:active {
-      transform: scale(0.96);
-    }
-  }
-
-  &.knowledge-pill {
-    color: #389e0d; /* 薄荷森林绿 */
-
-    &:hover {
-      background-color: rgba(82, 196, 26, 0.05);
-      border-color: rgba(82, 196, 26, 0.15);
-    }
-  }
-
-  &.mcp-pill {
-    color: #531dab; /* 极客极光紫 */
-
-    &:hover {
-      background-color: rgba(114, 46, 209, 0.05);
-      border-color: rgba(114, 46, 209, 0.15);
-    }
-  }
-
-  &.skill-pill {
-    color: #d46b08; /* 温暖金橘橙 */
-
-    &:hover {
-      background-color: rgba(250, 140, 22, 0.05);
-      border-color: rgba(250, 140, 22, 0.15);
-    }
-  }
-
-  &.subagent-pill {
-    color: #08979c; /* 高透青色 */
-
-    &:hover {
-      background-color: rgba(19, 194, 194, 0.05);
-      border-color: rgba(19, 194, 194, 0.15);
-    }
-  }
-}
+// 药丸全局样式 (引入共享 Less 模块，开启暗色自适应与双态悬停呼吸过渡)
+@import '@/assets/css/mention-pill.less';
 
 .send-button-container {
   grid-area: send;
