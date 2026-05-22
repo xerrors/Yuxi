@@ -37,7 +37,7 @@
 ### 0.6.2 开发记录
 
 <!-- 0.6.2 的内容请放在这里 -->
-- 重构输入框 `@` 提及药丸（Mention Pills）视觉系统与交互体验：移除强硬色块底色与粗边框，采用高雅通透的 Borderless Card（无界/轻量卡片）极简皮肤。通过字重（550）与各实体高饱和度专属主题色提供卓越的视觉锚点；文件类型左侧自动解析后缀名并渲染三色微发光的 CSS 迷你语法高亮代码行，其他类型统一升级为 `1.8` 极细描边精致 SVG 线框；引入 `height: 22px` 物理高度锁定与 line-height 控制，对图标及删除键做像素级（Pixel-perfect）垂直对齐纠偏，彻底解决浏览器亚像素舍入错位；删除按钮采用绝对定位并配套 `padding-right` 呼吸动效，实现 Hover 动态向右撑开交互，彻底避免空间冗余与排版抖动。
+- 重构输入框 `@` 提及药丸（Mention Pills）视觉系统与交互体验：移除强硬色块底色与粗边框，采用高雅通透的 Borderless Card（无界/轻量卡片）极简皮肤。通过字重（550）与各实体高饱和度专属主题色提供卓越的视觉锚点；文件类型左侧自动解析后缀名并渲染三色微发光的 CSS 迷你语法高亮代码行，其他类型统一升级为 `1.8` 极细描边精致 SVG 线框；引入 `height: 22px` 物理高度锁定与 line-height 控制，对图标及删除键做像素级（Pixel-perfect）垂直对齐纠偏，彻底解决浏览器亚像素舍入错位；删除按钮采用绝对定位并配套 `padding-right` 呼吸动效，实现 Hover 动态向右撑开交互，彻底避免空间冗余与排版抖动；在文本层 `.pill-text` 增加 `padding-right: 2px` 极窄弹性渲染缓冲槽，彻底解决因 `overflow: hidden` 做长文本省略截断时导致英文斜向或非平衡字形字母（如 `.py` 的尾字母 `y`）最右边缘像素被物理裁剪缺角的微小视觉缺陷。
 - 建立全新「无界全局文件预览系统」：彻底消除了点击药丸和交付件（Artifacts）必须强制弹出左侧工作台面板的繁重交互，解耦并设计了自包含的高内聚全局单例弹窗组件 `AgentFilePreviewModal.vue`；通过 Pinia Store 建立响应式的全局预览触发信号源，实现了多触发端（药丸点击、交付件卡片预览、窄屏文件树节点选中）的极致 DRY 重构，彻底清洗并删除了 `AgentChatComponent.vue`、`AgentArtifactsCard.vue` 与 `AgentPanel.vue` 中总计几百行重复的私有 Modal 节点、API 调用逻辑与 Blob 内存销毁代码；将 `parseDownloadFilename` 文件名解析函数抽取至公共工具包 `file_utils.js`，达成极致的前端代码重构去重。
 - 封堵双 Watcher 冲突 Bug 与性能守护：为 `AgentPanel.vue` 中的全局预览 Watcher 新增了 `useInlinePreview.value` 内联拦截守卫，彻底解决了宽屏模式下点击药丸产生双倍 API 重复调用的严重缺陷，完美隔离了宽窄屏下各自的预览高亮界限。
 - 下放扩展管理权限：普通管理员现在可进入扩展管理并完整管理 Tools、MCP、SubAgent、Skills；同步放开 Skill 管理接口权限并补充权限测试。
