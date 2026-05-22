@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from server.routers.skill_router import skills
-from server.utils.auth_middleware import get_admin_user, get_db
+from server.utils.auth_middleware import get_admin_user, get_db, get_required_user
 from yuxi.storage.postgres.models_business import Skill, User
 
 
@@ -25,8 +25,17 @@ def _build_app(*, allow_admin: bool = True) -> FastAPI:
             role="admin",
         )
 
+    async def fake_required_user():
+        return User(
+            username="admin" if allow_admin else "user",
+            user_id="admin" if allow_admin else "user",
+            password_hash="x",
+            role="admin" if allow_admin else "user",
+        )
+
     app.dependency_overrides[get_db] = fake_db
     app.dependency_overrides[get_admin_user] = fake_admin_user
+    app.dependency_overrides[get_required_user] = fake_required_user
     return app
 
 
@@ -240,3 +249,33 @@ def test_install_remote_skill_route(monkeypatch):
     assert captured["source"] == "anthropics/skills"
     assert captured["skill"] == "frontend-design"
     assert captured["created_by"] == "admin"
+
+
+def test_list_skills_route_normal_user_success(monkeypatch):
+    async def fake_list_skills(_db):
+        return [
+            Skill(
+                slug="test-skill",
+                name="test-skill-name",
+                description="test skill description",
+                dir_path="skills/test-skill",
+            )
+        ]
+
+    monkeypatch.setattr("server.routers.skill_router.list_skills", fake_list_skills)
+
+    # 普通用户应该也能成功获取列表，但返回的字段应被安全白名单投影过滤
+    app = _build_app(allow_admin=False)
+    client = TestClient(app)
+    resp = client.get("/api/system/skills")
+    assert resp.status_code == 200, resp.text
+    payload = resp.json()
+    assert payload["success"] is True
+    skill_data = payload["data"][0]
+    assert skill_data["slug"] == "test-skill"
+    assert skill_data["name"] == "test-skill-name"
+    # NOTE: 验证敏感字段如 dir_path、created_by 以及其它元数据已全部被白名单机制过滤，不发生越权泄露
+    assert "dir_path" not in skill_data
+    assert "created_by" not in skill_data
+    assert "updated_by" not in skill_data
+    assert "content_hash" not in skill_data

@@ -1,4 +1,4 @@
-import { apiAdminGet, apiAdminPost, apiAdminPut, apiAdminDelete } from './base'
+import { apiGet, apiAdminGet, apiAdminPost, apiAdminPut, apiAdminDelete } from './base'
 
 /**
  * MCP 服务器管理 API 模块
@@ -16,7 +16,7 @@ const BASE_URL = '/api/system/mcp-servers'
  * @returns {Promise} - 服务器列表
  */
 export const getMcpServers = async () => {
-  return apiAdminGet(BASE_URL)
+  return apiGet(BASE_URL)
 }
 
 /**
