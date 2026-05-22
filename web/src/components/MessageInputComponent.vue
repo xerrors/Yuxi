@@ -916,7 +916,15 @@ const handleKeyPress = (e) => {
 
 // 检测 @ 触发
 const handleKeyUp = (e) => {
-  if (e.key === '@' && mentionEnabled.value) {
+  if (!mentionEnabled.value) return
+
+  // 1. 如果输入了 @，立刻检测并唤醒提及
+  // 2. 如果使用方向键/Home/End 移动了光标，为了与鼠标点击切换光标保持行为一致，也自适应检测
+  // 注意：当提及弹窗显示时，ArrowUp 和 ArrowDown 用于列表项的键盘导航，此时输入框光标并未在文本中实质位移，无需重复检测
+  const isCursorMovement = ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key) ||
+    (['ArrowUp', 'ArrowDown'].includes(e.key) && !mentionPopupVisible.value)
+
+  if (e.key === '@' || isCursorMovement) {
     nextTick(() => {
       checkMentionTrigger()
     })
