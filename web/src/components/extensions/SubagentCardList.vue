@@ -83,6 +83,26 @@
             @focus="fetchAvailableTools"
           />
         </a-form-item>
+        <a-form-item label="MCP服务器" class="form-item">
+          <a-select
+            v-model:value="form.mcps"
+            mode="tags"
+            placeholder="选择或输入启用子代理专属 MCP 服务器"
+            style="width: 100%"
+            :options="availableMcps"
+            @focus="fetchAvailableMcps"
+          />
+        </a-form-item>
+        <a-form-item label="技能（Skills）" class="form-item">
+          <a-select
+            v-model:value="form.skills"
+            mode="tags"
+            placeholder="选择或输入子代理专属技能"
+            style="width: 100%"
+            :options="availableSkills"
+            @focus="fetchAvailableSkills"
+          />
+        </a-form-item>
         <a-form-item label="模型覆盖（可选）" class="form-item">
           <div class="model-override-row">
             <ModelSelectorComponent
@@ -107,7 +127,7 @@ import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { Plus, RefreshCw, Bot } from 'lucide-vue-next'
 import { subagentApi } from '@/apis/subagent_api'
-import { toolApi } from '@/apis/tool_api'
+import { useSubagentOptions } from '@/composables/useSubagentOptions'
 import ExtensionCardGrid from './ExtensionCardGrid.vue'
 import InfoCard from '@/components/shared/InfoCard.vue'
 import PageShoulder from '@/components/shared/PageShoulder.vue'
@@ -120,7 +140,15 @@ const router = useRouter()
 const loading = ref(false)
 const subagents = ref([])
 const searchQuery = ref('')
-const availableTools = ref([])
+
+const {
+  availableTools,
+  availableMcps,
+  availableSkills,
+  fetchAvailableTools,
+  fetchAvailableMcps,
+  fetchAvailableSkills
+} = useSubagentOptions()
 
 const formModalVisible = ref(false)
 const formLoading = ref(false)
@@ -129,6 +157,8 @@ const form = reactive({
   description: '',
   system_prompt: '',
   tools: [],
+  mcps: [],
+  skills: [],
   model: ''
 })
 
@@ -160,20 +190,16 @@ const navigateToDetail = (agent) => {
 }
 
 const handleSubagentAdd = () => {
-  Object.assign(form, { name: '', description: '', system_prompt: '', tools: [], model: '' })
+  Object.assign(form, {
+    name: '',
+    description: '',
+    system_prompt: '',
+    tools: [],
+    mcps: [],
+    skills: [],
+    model: ''
+  })
   formModalVisible.value = true
-}
-
-const fetchAvailableTools = async () => {
-  if (availableTools.value.length > 0) return
-  try {
-    const result = await toolApi.getToolOptions()
-    if (result.success && result.data) {
-      availableTools.value = result.data
-    }
-  } catch (err) {
-    console.error('获取工具选项失败:', err)
-  }
 }
 
 const handleModelSelect = (spec) => {
@@ -196,6 +222,8 @@ const handleFormSubmit = async () => {
       description: form.description || '',
       system_prompt: form.system_prompt,
       tools: form.tools || [],
+      mcps: form.mcps || [],
+      skills: form.skills || [],
       model: form.model || null
     }
     const result = await subagentApi.createSubAgent(data)
