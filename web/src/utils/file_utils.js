@@ -6,7 +6,6 @@ import {
   FileWordFilled,
   FileExcelFilled,
   FileImageFilled,
-  FileUnknownFilled,
   FilePptFilled,
   LinkOutlined,
   CodeFilled,

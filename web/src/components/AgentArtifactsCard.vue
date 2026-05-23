@@ -97,8 +97,6 @@ const artifactsCountLabel = computed(() => `${normalizedArtifacts.value.length} 
 const expanded = ref(false)
 const savingState = ref({})
 
-
-
 const openGlobalPreview = (file) => {
   if (file?.path) {
     chatUIStore.triggerFilePreview(file.path)

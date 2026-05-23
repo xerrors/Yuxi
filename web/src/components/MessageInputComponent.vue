@@ -197,7 +197,6 @@ import { searchMentionFiles } from '@/apis/mention_api'
 import { getFileIcon, getFileIconColor } from '@/utils/file_utils'
 import { useChatUIStore } from '@/stores/chatUI'
 import {
-  getMentionIconSvg,
   splitTextByQuery,
   formatMentionPath,
   formatMentionToken,
@@ -732,12 +731,6 @@ const getIcon = computed(() => {
   return iconComponents[props.sendIcon] || ArrowUpOutlined
 })
 
-// 创建本地引用以进行双向绑定
-const inputValue = computed({
-  get: () => props.modelValue,
-  set: (val) => emit('update:modelValue', val)
-})
-
 // 发送前内容序列化拦截：将富文本 DOM 翻译为后端可以直接消费的带完整绝对路径的纯文本
 const serializeContent = () => {
   if (!inputRef.value) return ''
@@ -849,7 +842,7 @@ const handleKeyUp = (e) => {
 }
 
 // 处理输入事件
-const handleInput = (e) => {
+const handleInput = () => {
   // 防呆：如果输入框全空（仅有空白字符且无提及药丸），物理重置 innerHTML 保证 CSS :empty 能够精准唤醒
   if (inputRef.value) {
     const text = inputRef.value.textContent || ''
