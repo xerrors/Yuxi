@@ -89,6 +89,26 @@
               </div>
             </div>
 
+            <div class="detail-section" v-if="agent.mcps && agent.mcps.length > 0">
+              <div class="section-header">
+                <Server :size="14" />
+                <span>MCP 服务器</span>
+              </div>
+              <div class="section-content">
+                <a-tag v-for="mcp in agent.mcps" :key="mcp" color="blue">{{ mcp }}</a-tag>
+              </div>
+            </div>
+
+            <div class="detail-section" v-if="agent.skills && agent.skills.length > 0">
+              <div class="section-header">
+                <Sparkles :size="14" />
+                <span>技能 (Skills)</span>
+              </div>
+              <div class="section-content">
+                <a-tag v-for="skill in agent.skills" :key="skill" color="purple">{{ skill }}</a-tag>
+              </div>
+            </div>
+
             <div class="detail-section" v-if="agent.is_builtin || agent.enabled === false">
               <div class="section-header">
                 <Info :size="14" />
@@ -162,6 +182,26 @@
             @focus="fetchAvailableTools"
           />
         </a-form-item>
+        <a-form-item label="MCPs (MCP 工具覆盖)" class="form-item">
+          <a-select
+            v-model:value="form.mcps"
+            mode="tags"
+            placeholder="选择或输入启用子代理专属 MCP 服务器"
+            style="width: 100%"
+            :options="availableMcps"
+            @focus="fetchAvailableMcps"
+          />
+        </a-form-item>
+        <a-form-item label="Skills (智能体技能覆盖)" class="form-item">
+          <a-select
+            v-model:value="form.skills"
+            mode="tags"
+            placeholder="选择或输入子代理专属技能"
+            style="width: 100%"
+            :options="availableSkills"
+            @focus="fetchAvailableSkills"
+          />
+        </a-form-item>
         <a-form-item label="模型覆盖（可选）" class="form-item">
           <div class="model-override-row">
             <ModelSelectorComponent
@@ -194,10 +234,12 @@ import {
   FileText,
   Cpu,
   Wrench,
-  Clock
+  Clock,
+  Server,
+  Sparkles
 } from 'lucide-vue-next'
 import { subagentApi } from '@/apis/subagent_api'
-import { toolApi } from '@/apis/tool_api'
+import { useSubagentOptions } from '@/composables/useSubagentOptions'
 import { formatFullDateTime } from '@/utils/time'
 import ModelSelectorComponent from '@/components/ModelSelectorComponent.vue'
 
@@ -210,12 +252,22 @@ const agent = ref(null)
 
 const formModalVisible = ref(false)
 const formLoading = ref(false)
-const availableTools = ref([])
+
+const {
+  availableTools,
+  availableMcps,
+  availableSkills,
+  fetchAvailableTools,
+  fetchAvailableMcps,
+  fetchAvailableSkills
+} = useSubagentOptions()
 const form = reactive({
   name: '',
   description: '',
   system_prompt: '',
   tools: [],
+  mcps: [],
+  skills: [],
   model: ''
 })
 
@@ -241,18 +293,6 @@ const fetchAgent = async () => {
   }
 }
 
-const fetchAvailableTools = async () => {
-  if (availableTools.value.length > 0) return
-  try {
-    const result = await toolApi.getToolOptions()
-    if (result.success && result.data) {
-      availableTools.value = result.data
-    }
-  } catch (err) {
-    console.error('获取工具选项失败:', err)
-  }
-}
-
 const showEditModal = () => {
   if (!agent.value) return
   Object.assign(form, {
@@ -260,6 +300,8 @@ const showEditModal = () => {
     description: agent.value.description || '',
     system_prompt: agent.value.system_prompt || '',
     tools: agent.value.tools || [],
+    mcps: agent.value.mcps || [],
+    skills: agent.value.skills || [],
     model: agent.value.model || ''
   })
   formModalVisible.value = true
@@ -281,6 +323,8 @@ const handleFormSubmit = async () => {
       description: form.description || '',
       system_prompt: form.system_prompt,
       tools: form.tools || [],
+      mcps: form.mcps || [],
+      skills: form.skills || [],
       model: form.model || null
     }
     const result = await subagentApi.updateSubAgent(form.name, data)
