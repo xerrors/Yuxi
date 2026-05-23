@@ -55,9 +55,9 @@
             <Check v-if="isCopied" size="13" />
             <Copy v-else size="13" />
           </div>
-          <!-- 左右收起按钮 (仅在吸顶时可用) -->
+          <!-- 左右收起按钮 (仅在吸顶且多行时可用) -->
           <div
-            v-if="isStuck"
+            v-if="isStuck && isMultiLine"
             class="action-icon-btn shrink-right-btn"
             @click.stop="isShrunkRight = true"
             title="向右收起"
