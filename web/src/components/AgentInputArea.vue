@@ -128,7 +128,7 @@ const emit = defineEmits(['update:modelValue', 'send', 'keydown', 'upload-attach
 const inputRef = ref(null)
 const currentImage = ref(null)
 const todoPopoverOpen = ref(false)
-const placeholder = '问点什么？使用 @ 可以提及哦~'
+const placeholder = '问点什么？使用 @ 提及资源，Shift + Enter 换行'
 
 const totalTodoCount = computed(() => props.todos.length)
 const completedTodoCount = computed(

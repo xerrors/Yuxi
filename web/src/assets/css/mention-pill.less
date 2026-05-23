@@ -1,0 +1,203 @@
+/* @/assets/css/mention-pill.less */
+
+:deep(.mention-pill) {
+  --mention-mcp-color: var(--color-primary-700); /* 极客莫兰迪主色 (一等公民，自动适配亮暗) */
+  --mention-mcp-hover-bg: var(--color-primary-50);
+  --mention-mcp-hover-border: var(--color-primary-100);
+
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 6px;
+  height: 22px; /* 绝对锁定药丸物理高度为 22px */
+  box-sizing: border-box; /* 启用 border-box 确保总高度严丝合缝 */
+  padding: 0 6px; /* 物理高度已锁定，上下 padding 归零，左右保持对称的 6px */
+  margin: 0 3px;
+  font-size: 13px;
+  font-weight: 550; /* 调重字重以在无界/轻量卡片下提供卓越的实体聚焦锚点 */
+  line-height: 1; /* 极关键！缩减行高溢出，让 flex align-items 获得绝对垂直控制权 */
+  vertical-align: middle;
+  cursor: default;
+  user-select: none;
+  background-color: var(--dark-5); /* 极度清透的微弱半透明底色，自动适配明暗 */
+  border: 1px solid var(--dark-10); /* 极其隐约的超细淡灰色边框，自动适配明暗 */
+  position: relative; /* 注入相对定位，为删除按钮绝对定位铺垫 */
+  // 注入 padding-right 过渡，实现呼吸般的横向展开动画
+  transition:
+    background-color 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+    padding-right 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+    transform 0.1s ease;
+
+  &:hover {
+    background-color: var(--dark-10);
+    border-color: var(--dark-25);
+  }
+
+  // 极客 CSS 迷你高亮代码行样式矩阵
+  .mini-code-icon {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 1.5px;
+    width: 12px;
+    height: 12px;
+    justify-content: center;
+    align-items: flex-start;
+    flex-shrink: 0;
+    position: relative;
+    top: 0.5px; /* 调低图标 1px，对齐中文视觉重心 */
+
+    .mini-code-line {
+      height: 2px;
+      border-radius: 1px;
+      display: block;
+
+      &.mini-code-line-1 {
+        width: 11px;
+        background-color: #569cd6; /* VS Code 经典的优雅蓝色 (Keyword 属性) */
+        box-shadow: 0 0 3px rgba(86, 156, 214, 0.45); /* 微弱发光光晕以增强 12px 极小空间的色彩立体感 */
+      }
+      &.mini-code-line-2 {
+        width: 7px;
+        background-color: #4ec9b0; /* 薄荷绿 (Type/Methods 属性) */
+        box-shadow: 0 0 3px rgba(78, 201, 176, 0.45);
+      }
+      &.mini-code-line-3 {
+        width: 9px;
+        background-color: #ce9178; /* 橙红色 (Strings/Constants 属性) */
+        box-shadow: 0 0 3px rgba(206, 145, 120, 0.45);
+      }
+    }
+  }
+
+  .pill-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    flex-shrink: 0;
+    height: 12px; /* 显式物理高度，同 svg 保持绝对一致 */
+    position: relative;
+    top: 0.5px; /* 调低图标 1px，对齐中文视觉重心 */
+
+    svg {
+      width: 12px;
+      height: 12px;
+      color: inherit;
+      display: block;
+      transition: transform 0.2s ease;
+    }
+  }
+
+  .pill-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 200px;
+    padding-right: 4px; /* 极其关键的 4px 充足缓冲，物理容纳英文字体 y, f 等侧斜字母的右溢出笔画，彻底规避 overflow:hidden 强行斩断字体的缺陷，更显大方 */
+    letter-spacing: -0.01em;
+    display: inline-block; /* 保证不受行高溢出干扰 */
+    line-height: 1; /* 强制单行行高为 1，消除多语言字体包围盒计算偏差 */
+    position: relative;
+    top: -0.5px; /* 文字稍微往上提，抵消中文 baseline 偏下问题 */
+  }
+
+  // 绝对定位的精致删除按钮 (Notion 级隐藏与唤醒)
+  .pill-close {
+    position: absolute;
+    right: 4px;
+    top: 3px; /* 22px 容器减去 14px 按钮高度除以 2，得到 3px 的完美物理垂直居中，杜绝 translateY 亚像素偏移 */
+    transform: scale(0.7); /* 默认微型缩小，与透明度配合营造优雅浮现感 */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    color: inherit;
+    opacity: 0;
+    pointer-events: none; /* 默认未激活时穿透鼠标，彻底防误触 */
+    cursor: pointer;
+    transition:
+      opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+      transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+      background-color 0.2s ease;
+    margin-left: 0;
+
+    &:hover {
+      opacity: 1 !important;
+      background-color: var(--dark-10);
+    }
+
+    &:active {
+      transform: scale(0.85) !important; /* 点击时物理弹性微按压缩放反馈 */
+    }
+  }
+
+  // hover 展开删除按钮（仅当有 hover 时且药丸内含 pill-close 按钮）
+  &:hover {
+    &:has(.pill-close) {
+      padding-right: 22px; /* Hover 时右侧内边距优雅撑开，供删除按钮浮现而绝不挤压文字 */
+
+      .pill-close {
+        opacity: 0.6;
+        transform: scale(1); /* 优雅淡入并弹性膨胀归位 */
+        pointer-events: auto; /* 仅在显示时允许鼠标事件 */
+      }
+    }
+  }
+
+  // 极客通透色相高亮专属主题配比 (只高亮纯净的前景色，不依赖沉重背景色)
+  &.file-pill {
+    color: var(--color-info-700); /* 科技深邃蓝 */
+    cursor: pointer;
+
+    &:hover {
+      background-color: var(--color-info-50);
+      border-color: var(--color-info-100);
+    }
+
+    &:active {
+      transform: scale(0.96);
+    }
+  }
+
+  &.knowledge-pill {
+    color: var(--color-success-700); /* 薄荷森林绿 */
+
+    &:hover {
+      background-color: var(--color-success-50);
+      border-color: var(--color-success-100);
+    }
+  }
+
+  &.mcp-pill {
+    color: var(--mention-mcp-color);
+
+    &:hover {
+      background-color: var(--mention-mcp-hover-bg);
+      border-color: var(--mention-mcp-hover-border);
+    }
+  }
+
+  &.skill-pill {
+    color: var(--color-warning-700); /* 温暖金橘橙 */
+
+    &:hover {
+      background-color: var(--color-warning-50);
+      border-color: var(--color-warning-100);
+    }
+  }
+
+  &.subagent-pill {
+    color: var(--color-accent-700); /* 高透青色 */
+
+    &:hover {
+      background-color: var(--color-accent-50);
+      border-color: var(--color-accent-100);
+    }
+  }
+}
+
+// 针对暗色模式的微调
+// 提及药丸已实现 100% 纯正 Token 化，明暗模式下均由底层 base.css 和 base.dark.css 的系统级 CSS 变量全自动无缝响应，无需任何本地冗余重写。
