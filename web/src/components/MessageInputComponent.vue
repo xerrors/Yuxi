@@ -773,6 +773,7 @@ const serializeContent = () => {
   // 统一将 \u00A0 还原为常规的普通空格发送给后端
   return result.replace(/\u00A0/g, ' ')
 }
+
 // 处理键盘事件
 const handleKeyPress = (e) => {
   // @ 提及键盘导航

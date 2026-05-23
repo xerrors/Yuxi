@@ -162,13 +162,21 @@
 import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { CaretRightOutlined } from '@ant-design/icons-vue'
 import RefsComponent from '@/components/RefsComponent.vue'
-import { Copy, Check, MessageSquare, ChevronLeft, ChevronRight, ChevronUp, ChevronDown } from 'lucide-vue-next'
-import { renderUserMessage } from '@/utils/mention'
+import {
+  Copy,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  ChevronLeft,
+  ChevronRight,
+  MessageSquare
+} from 'lucide-vue-next'
 import ToolCallsGroupComponent from '@/components/ToolCallsGroupComponent.vue'
 import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
 import { useAgentStore } from '@/stores/agent'
 import { useInfoStore } from '@/stores/info'
 import { useChatUIStore } from '@/stores/chatUI'
+import { renderUserMessage } from '@/utils/mention'
 import { storeToRefs } from 'pinia'
 import { MessageProcessor } from '@/utils/messageProcessor'
 

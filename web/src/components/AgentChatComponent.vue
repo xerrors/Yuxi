@@ -25,7 +25,6 @@
         <!-- Main Chat Area -->
         <div class="chat-main" ref="chatMainRef">
           <div class="chat-box">
-
             <template v-for="row in conversationRows" :key="row.key">
               <div v-if="row.type === 'conversation'" class="conv-box">
                 <template
@@ -35,7 +34,6 @@
                   <AgentMessageComponent
                     v-if="displayItem.type === 'message'"
                     :message="displayItem.message"
-                    :data-msg-id="displayItem.message.id"
                     :is-processing="isDisplayMessageProcessing(row.conv, displayItem)"
                     :show-refs="showMsgRefs(displayItem.message)"
                     :hide-tool-calls="true"
@@ -442,7 +440,6 @@ const currentTodos = computed(() => {
   return Array.isArray(todos) ? todos : []
 })
 
-
 const { mentionConfig } = useAgentMentionConfig({
   currentAgentState,
   currentThreadAttachments,
@@ -823,8 +820,6 @@ const maybeInsertThreadConfigNotice = () => {
 // ==================== SCROLL & RESIZE HANDLING ====================
 const scrollController = new ScrollController('.chat-main')
 const chatMainRef = ref(null)
-
-
 
 let chatMainResizeObserver = null
 // 初始化延迟标志，避免首次挂载时 ResizeObserver 立即触发导致侧边栏意外关闭
@@ -2379,7 +2374,6 @@ watch(currentChatId, (threadId, oldThreadId) => {
     color: var(--gray-600);
   }
 }
-
 </style>
 
 <style lang="less">
