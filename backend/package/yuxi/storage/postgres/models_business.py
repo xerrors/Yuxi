@@ -639,6 +639,8 @@ class SubAgent(Base):
     system_prompt = Column(Text, nullable=False, comment="系统提示词")
     tools = Column(JSON, nullable=False, default=list, comment="工具名称列表")
     model = Column(String(128), nullable=True, comment="可选的模型覆盖")
+    mcps = Column(JSON, nullable=False, default=list, comment="MCP 服务名列表")
+    skills = Column(JSON, nullable=False, default=list, comment="Skill slug 列表")
     enabled = Column(Boolean, nullable=False, default=True, comment="是否启用")
 
     is_builtin = Column(Boolean, nullable=False, default=False, comment="是否内置")
@@ -654,6 +656,8 @@ class SubAgent(Base):
             "description": self.description,
             "system_prompt": self.system_prompt,
             "tools": self.tools or [],
+            "mcps": self.mcps or [],
+            "skills": self.skills or [],
             "model": self.model,
             "enabled": bool(self.enabled),
             "is_builtin": bool(self.is_builtin),
@@ -670,6 +674,8 @@ class SubAgent(Base):
             "description": self.description,
             "system_prompt": self.system_prompt,
             "tools": self.tools or [],
+            "mcps": self.mcps or [],
+            "skills": self.skills or [],
         }
         if self.model:
             spec["model"] = self.model
