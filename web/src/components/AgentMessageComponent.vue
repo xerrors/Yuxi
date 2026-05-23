@@ -267,8 +267,8 @@ const initStickyObserver = () => {
         },
         {
           root: scrollContainer,
-          rootMargin: '-12px 0px 0px 0px',
-          threshold: [0.99, 1.0]
+          rootMargin: '-13px 0px 0px 0px',
+          threshold: [1.0]
         }
       )
       stickyObserver.observe(messageRef.value)
@@ -464,6 +464,7 @@ const parsedData = computed(() => {
     align-self: flex-end;
     border-radius: 0.5rem;
     padding: 0.5rem 1rem;
+    transition: padding 0.3s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.3s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1), backdrop-filter 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 
     // 原地吸顶悬浮
     position: sticky;
@@ -534,7 +535,8 @@ const parsedData = computed(() => {
     .message-text {
       flex: 1;
       min-width: 0;
-      transition: max-height 0.3s ease;
+      max-height: 400px; // 显式给定初始最大高度，彻底激活 CSS max-height transition
+      transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
     // 绝对定位在气泡外部右下角的动作条 (彻底移出淡蓝色框外)

@@ -136,6 +136,8 @@ export class ScrollController {
   }
 
   async scrollToBottomStaticForce() {
+    await nextTick()
+    await this.waitForLayoutStable()
     const container = this.getContainer()
     if (!container) return
 
@@ -148,6 +150,21 @@ export class ScrollController {
     }
 
     container.scrollTo(scrollOptions)
+
+    // 双重延迟重试：防止复杂的 markdown 等异步子组件挂载撑开高度导致未滚到底部
+    const retryDelays = [80, 200]
+    retryDelays.forEach((delay) => {
+      setTimeout(() => {
+        const currentContainer = this.getContainer()
+        if (currentContainer) {
+          this.isProgrammaticScroll = true
+          currentContainer.scrollTo({
+            top: currentContainer.scrollHeight,
+            behavior: 'auto'
+          })
+        }
+      }, delay)
+    })
   }
 
   /**
