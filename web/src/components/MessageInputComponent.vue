@@ -169,7 +169,7 @@
 
     <div class="send-button-container">
       <slot name="actions-right"></slot>
-      <a-tooltip :title="isLoading ? '停止回答' : ''">
+      <a-tooltip :title="isLoading ? '停止回答' : '发送 (Enter) / 换行 (Shift + Enter)'">
         <a-button
           @click="handleSendOrStop"
           :disabled="sendButtonDisabled"
@@ -743,9 +743,7 @@ const serializeContent = () => {
   if (!inputRef.value) return ''
 
   let result = ''
-  const childNodes = inputRef.value.childNodes
-  for (let i = 0; i < childNodes.length; i++) {
-    const node = childNodes[i]
+  const traverse = (node) => {
     if (node.nodeType === Node.TEXT_NODE) {
       result += node.textContent
     } else if (node.nodeType === Node.ELEMENT_NODE) {
@@ -753,17 +751,35 @@ const serializeContent = () => {
         const type = node.getAttribute('data-type')
         const value = node.getAttribute('data-value')
         result += formatMentionToken(type, value)
-      } else if (node.tagName === 'BR') {
+        return // 提及药丸已提取，无需遍历内部文字
+      }
+
+      if (node.tagName === 'BR') {
         result += '\n'
-      } else {
-        result += node.textContent
+        return
+      }
+
+      // 如果是块级元素且当前结果不为空、不以换行结尾，则在处理前置入换行符
+      const isBlock = ['DIV', 'P', 'LI', 'TR'].includes(node.tagName)
+      if (isBlock && result.length > 0 && !result.endsWith('\n')) {
+        result += '\n'
+      }
+
+      const children = node.childNodes
+      for (let i = 0; i < children.length; i++) {
+        traverse(children[i])
       }
     }
   }
+
+  const childNodes = inputRef.value.childNodes
+  for (let i = 0; i < childNodes.length; i++) {
+    traverse(childNodes[i])
+  }
+
   // 统一将 \u00A0 还原为常规的普通空格发送给后端
   return result.replace(/\u00A0/g, ' ')
 }
-
 // 处理键盘事件
 const handleKeyPress = (e) => {
   // @ 提及键盘导航
