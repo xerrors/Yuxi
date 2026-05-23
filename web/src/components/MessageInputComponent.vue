@@ -25,22 +25,24 @@
       <slot name="actions-left"></slot>
     </div>
 
-    <textarea
+    <div
       ref="inputRef"
+      :contenteditable="!disabled"
       class="user-input"
-      :value="inputValue"
+      :placeholder="placeholder"
       @keydown="handleKeyPress"
       @keyup="handleKeyUp"
       @input="handleInput"
       @focus="focusInput"
       @click="handleTextareaClick"
-      :placeholder="placeholder"
-      :disabled="disabled"
-    />
+      @paste="handlePaste"
+      @copy="handleCopy"
+      @cut="handleCut"
+    ></div>
 
     <!-- @ 提及选择弹窗 -->
     <div v-if="mentionPopupVisible" ref="mentionDropdownRef" class="mention-dropdown-wrapper">
-      <div class="mention-popup">
+      <div class="mention-popup" @mousedown.prevent>
         <!-- 文件列表 -->
         <div v-if="mentionItems.files.length > 0 || showFileSearchPrompt" class="mention-group">
           <div class="mention-group-title">文件</div>
@@ -52,7 +54,7 @@
               v-for="(item, index) in mentionItems.files"
               :key="'file-' + item.value"
               :class="['mention-item', 'file-item', { active: isItemSelected('file', index) }]"
-              @click="insertMention(item)"
+              @mousedown.prevent.stop="insertMention(item)"
             >
               <div class="file-info-left">
                 <component
@@ -95,7 +97,7 @@
             v-for="(item, index) in mentionItems.knowledgeBases"
             :key="'kb-' + item.value"
             :class="['mention-item', { active: isItemSelected('knowledge', index) }]"
-            @click="insertMention(item)"
+            @mousedown.prevent.stop="insertMention(item)"
           >
             <span
               v-for="(part, pIdx) in splitTextByQuery(item.label, mentionQuery)"
@@ -113,7 +115,7 @@
             v-for="(item, index) in mentionItems.mcps"
             :key="'mcp-' + item.value"
             :class="['mention-item', { active: isItemSelected('mcp', index) }]"
-            @click="insertMention(item)"
+            @mousedown.prevent.stop="insertMention(item)"
           >
             <span
               v-for="(part, pIdx) in splitTextByQuery(item.label, mentionQuery)"
@@ -131,7 +133,7 @@
             v-for="(item, index) in mentionItems.skills"
             :key="'skill-' + item.value"
             :class="['mention-item', { active: isItemSelected('skill', index) }]"
-            @click="insertMention(item)"
+            @mousedown.prevent.stop="insertMention(item)"
           >
             <span
               v-for="(part, pIdx) in splitTextByQuery(item.label, mentionQuery)"
@@ -149,7 +151,7 @@
             v-for="(item, index) in mentionItems.subagents"
             :key="'subagent-' + item.value"
             :class="['mention-item', { active: isItemSelected('subagent', index) }]"
-            @click="insertMention(item)"
+            @mousedown.prevent.stop="insertMention(item)"
           >
             <span
               v-for="(part, pIdx) in splitTextByQuery(item.label, mentionQuery)"
@@ -193,6 +195,43 @@ import { SendOutlined, ArrowUpOutlined, PauseOutlined, FolderFilled } from '@ant
 import { Paperclip } from 'lucide-vue-next'
 import { searchMentionFiles } from '@/apis/mention_api'
 import { getFileIcon, getFileIconColor } from '@/utils/file_utils'
+import { useChatUIStore } from '@/stores/chatUI'
+import {
+  getMentionIconSvg,
+  splitTextByQuery,
+  formatMentionPath,
+  formatMentionToken,
+  getSelectionText,
+  parseMentionHtml,
+  parseMentionText,
+  mentionTypePrefixMap,
+  createPillElement
+} from '@/utils/mention'
+
+const chatUIStore = useChatUIStore()
+
+// NOTE: 极其重要的安全锁 - 用于在打字触发提及的瞬间锁定 @ 符号及其后查询串的 Range 区间，彻底规避浏览器失焦导致的药丸插入偏离或失效
+const mentionTriggerRange = ref(null)
+
+/**
+ * 依据全局字符偏移量，在 DOM 容器树中深度优先定位对应的真正文本节点与节点内的偏移量
+ * @param container 容器元素
+ * @param targetOffset 全局字符偏移量
+ */
+const findNodeAndOffsetAt = (container, targetOffset) => {
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null, false)
+  let currentOffset = 0
+  let node = walker.nextNode()
+  while (node) {
+    const len = node.textContent.length
+    if (currentOffset + len >= targetOffset) {
+      return { node, offset: targetOffset - currentOffset }
+    }
+    currentOffset += len
+    node = walker.nextNode()
+  }
+  return { node: container, offset: container.childNodes.length }
+}
 
 // 点击外部关闭下拉框
 const mentionDropdownRef = ref(null)
@@ -201,6 +240,7 @@ const closeMentionPopup = (e) => {
   if (inputRef.value?.contains(e.target)) return
   if (mentionDropdownRef.value?.contains(e.target)) return
   mentionPopupVisible.value = false
+  mentionTriggerRange.value = null // 清空锁定的 Range，防内存泄漏并安全重置
 }
 
 const inputRef = ref(null)
@@ -258,57 +298,38 @@ const mentionEnabled = computed(() => {
   return !!props.mention
 })
 
-const mentionTypePrefixMap = {
-  file: 'file',
-  knowledge: 'knowledge',
-  mcp: 'mcp',
-  skill: 'skill',
-  subagent: 'subagent'
+// 已重构：相关解析与序列化算法已封装并从 @/utils/mention 通用模块中统一导入
+
+// 安全获取当前光标 Selection 与 Range 信息
+const getActiveRangeInfo = () => {
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0) return null
+  return selection.getRangeAt(0)
 }
 
-const formatMentionToken = (type, value) => {
-  const prefix = mentionTypePrefixMap[type] || type
-  return `@${prefix}:${value}`
-}
+// 检测是否在 @ 触发位置并精确锁定 Range 范围
+const checkMentionTrigger = () => {
+  if (!mentionEnabled.value) return false
+  const range = getActiveRangeInfo()
+  if (!range) return false
 
-const formatMentionPath = (path) => {
-  if (!path) return ''
-  let cleanPath = path.replace(/^\/?home\/gem\/user-data\/?/, '')
-  if (cleanPath.startsWith('/')) {
-    cleanPath = cleanPath.substring(1)
+  // 确保当前光标聚焦在我们的输入框内部
+  if (!inputRef.value || !inputRef.value.contains(range.startContainer)) return false
+
+  let textBeforeCursor = ''
+  let cursorGlobalIndex = 0
+  try {
+    const tempRange = range.cloneRange()
+    tempRange.setStart(inputRef.value, 0)
+    textBeforeCursor = tempRange.toString()
+    cursorGlobalIndex = textBeforeCursor.length
+  } catch (err) {
+    console.warn('Failed to get text before cursor using Range:', err)
+    // 兜底退化处理
+    const content = inputRef.value.textContent || ''
+    textBeforeCursor = content
+    cursorGlobalIndex = content.length
   }
-  // 如果以 / 结尾，说明它是一个目录，我们先去掉末尾的 / 之后再算父目录
-  let isDir = cleanPath.endsWith('/')
-  let pathForParent = isDir ? cleanPath.substring(0, cleanPath.length - 1) : cleanPath
-
-  const lastSlashIndex = pathForParent.lastIndexOf('/')
-  if (lastSlashIndex === -1) {
-    return ''
-  }
-  return pathForParent.substring(0, lastSlashIndex + 1)
-}
-
-// 高性能且安全的关键字切片高亮解析函数 (100% 防御 XSS，避开危险的 v-html)
-const splitTextByQuery = (text, query) => {
-  if (!text) return []
-  if (!query) return [{ text, isMatch: false }]
-
-  const escapedQuery = query.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')
-  const regex = new RegExp(`(${escapedQuery})`, 'gi')
-  const parts = text.split(regex)
-
-  return parts.map((part) => ({
-    text: part,
-    isMatch: part.toLowerCase() === query.toLowerCase()
-  }))
-}
-
-// 检测是否在 @ 触发位置
-const checkMentionTrigger = (textarea) => {
-  if (!textarea || !mentionEnabled.value) return false
-
-  const cursorPos = textarea.selectionStart
-  const textBeforeCursor = inputValue.value.slice(0, cursorPos)
 
   // 检查是否以 @ 结尾（刚输入 @）或 @ 后有内容
   const atMatch = textBeforeCursor.match(/@(\S*)$/)
@@ -316,18 +337,44 @@ const checkMentionTrigger = (textarea) => {
     mentionQuery.value = atMatch[1]
     mentionPopupVisible.value = true
     mentionSelectedIndex.value = 0
+
+    // NOTE: 核心黄金锁 - 精确计算全局 @query 字符串区间并在 DOM 树中锁定
+    try {
+      const atGlobalIndex = cursorGlobalIndex - atMatch[0].length
+      const startPos = findNodeAndOffsetAt(inputRef.value, atGlobalIndex)
+      const endPos = findNodeAndOffsetAt(inputRef.value, cursorGlobalIndex)
+
+      const triggerRange = document.createRange()
+      triggerRange.setStart(startPos.node, startPos.offset)
+      triggerRange.setEnd(endPos.node, endPos.offset)
+
+      mentionTriggerRange.value = triggerRange
+    } catch (err) {
+      console.warn('Failed to lock mention trigger range:', err)
+      mentionTriggerRange.value = null // 失败则退化为即时搜索
+    }
+
     updateMentionItems(mentionQuery.value)
     return true
   }
 
   mentionPopupVisible.value = false
+  mentionTriggerRange.value = null
   return false
 }
+
+// 记录上一次实际触发远程搜索的 query 字符串，防无意义的重复搜索网络开销
+let lastSearchQuery = ''
 
 // 更新提及候选项
 const updateMentionItems = (query = '') => {
   if (!props.mention) {
     mentionItems.value = { files: [], knowledgeBases: [], mcps: [], skills: [], subagents: [] }
+    return
+  }
+
+  // 如果搜索内容与上一次完全一致，且弹窗已经在显示，直接退出，绝不重新发送重复的 API 请求，也防止本地过滤覆盖已有的远程搜索结果
+  if (query && query === lastSearchQuery && mentionPopupVisible.value) {
     return
   }
 
@@ -425,11 +472,16 @@ const updateMentionItems = (query = '') => {
     subagents: filterItems(subagentItems)
   }
 
+  if (!query) {
+    lastSearchQuery = ''
+  }
+
   // NOTE: 如果是尚未开始对话的全新会话，此时 threadId 为空，允许使用临时占位 ID 检索用户全局的工作区文件
   if (query) {
     const activeThreadId = props.threadId || 'new_thread_placeholder'
     clearTimeout(mentionSearchTimer)
     mentionSearchTimer = setTimeout(async () => {
+      lastSearchQuery = query
       // 物理中断之前的未完成 HTTP 请求
       if (activeAbortController) {
         activeAbortController.abort()
@@ -528,31 +580,76 @@ const hasAnyItems = computed(() => {
   )
 })
 
+// 将提及项作为精致 HTML 小药丸节点精准插入富文本框中
 const insertMention = (item) => {
-  if (!inputRef.value) return
+  // 0. 立即物理熔断提及状态，清除防抖，打断任何挂起中的远程请求，确保后续 DOM 更新时决不误唤醒
+  mentionPopupVisible.value = false
+  mentionQuery.value = ''
+  lastSearchQuery = ''
+  if (mentionSearchTimer) {
+    clearTimeout(mentionSearchTimer)
+    mentionSearchTimer = null
+  }
+  if (activeAbortController) {
+    activeAbortController.abort()
+    activeAbortController = null
+  }
 
-  const textarea = inputRef.value
-  const cursorPos = textarea.selectionStart
-  const textBeforeCursor = inputValue.value.slice(0, cursorPos)
-  const mentionValue = item.insertValue || item.value
-  const mentionText = formatMentionToken(item.type, mentionValue)
+  // 1. 优先使用在打字阶段就已经精准锁定的 mentionTriggerRange，双重保险防失焦和偏移
+  let range = mentionTriggerRange.value
+  if (!range) {
+    // 兜底退化：如果无锁定的 Range，则即时获取
+    range = getActiveRangeInfo()
+  }
+  if (!range || !inputRef.value) return
 
-  // 移除 @ 及后面的查询内容，插入完整的提及项
-  const newTextBefore = textBeforeCursor.replace(/@(\S*)$/, `${mentionText} `)
-  const textAfterCursor = inputValue.value.slice(cursorPos)
+  // 确保范围在我们的输入框内部
+  if (!inputRef.value.contains(range.startContainer)) return
 
-  const newValue = newTextBefore + textAfterCursor
-  emit('update:modelValue', newValue)
+  // 2. 原地擦除：干净利索地把已匹配好的整个 "@query" 文本从 DOM 中删除
+  try {
+    range.deleteContents()
+  } catch (err) {
+    console.warn('Failed to delete query contents using Range:', err)
+  }
 
-  // 重置光标位置到插入内容之后
-  nextTick(() => {
-    const newCursorPos = newTextBefore.length
-    textarea.setSelectionRange(newCursorPos, newCursorPos)
-    textarea.focus()
-  })
+  // 3. 调用统一工厂函数创建药丸节点，避免受到后续文字录入的碎裂干扰
+  const pill = createPillElement(item)
+
+  // 4. 插入药丸标签及尾随不折行空格（\u00A0），确保后面的新输入字词与药丸不黏贴
+  const spaceNode = document.createTextNode('\u00A0')
+
+  try {
+    // 注意：insertNode 会把元素插在 Range 的起点。我们先插空格，再插药丸，即可保证最终物理顺序为 [药丸][空格]
+    range.insertNode(spaceNode)
+    range.insertNode(pill)
+  } catch (err) {
+    console.warn('Failed to insert mention nodes:', err)
+    // 降级使用 appendChild 兜底
+    inputRef.value.appendChild(pill)
+    inputRef.value.appendChild(spaceNode)
+  }
+
+  // 5. 将光标顺滑移动到空格之后，无缝支持继续录入
+  try {
+    const newSelection = window.getSelection()
+    if (newSelection) {
+      newSelection.removeAllRanges()
+      const newRange = document.createRange()
+      newRange.setStartAfter(spaceNode)
+      newRange.collapse(true)
+      newSelection.addRange(newRange)
+    }
+  } catch (err) {
+    console.warn('Failed to redirect cursor after space node:', err)
+  }
+
+  // 6. 激活输入更新，进行全局同步
+  handleInput()
 
   mentionPopupVisible.value = false
   mentionQuery.value = ''
+  mentionTriggerRange.value = null // 完成后重置锁定
 }
 
 // 滚动到选中项
@@ -561,12 +658,10 @@ const scrollToItem = (index) => {
     const popup = mentionDropdownRef.value?.querySelector('.mention-popup')
     if (!popup) return
 
-    // 查找所有 mention-item 元素
     const items = popup.querySelectorAll('.mention-item')
     const selectedItem = items[index]
 
     if (selectedItem) {
-      // 检查元素是否在可视区域内
       const popupRect = popup.getBoundingClientRect()
       const itemRect = selectedItem.getBoundingClientRect()
 
@@ -648,7 +743,6 @@ const serializeContent = () => {
   if (!inputRef.value) return ''
 
   let result = ''
-
   const traverse = (node) => {
     if (node.nodeType === Node.TEXT_NODE) {
       result += node.textContent
@@ -696,28 +790,221 @@ const handleKeyPress = (e) => {
     }
   }
 
+  // 退格键拦截，如果光标紧跟在药丸后面，退格直接删除整个药丸
+  if (e.key === 'Backspace') {
+    const range = getActiveRangeInfo()
+    if (range && range.collapsed) {
+      const container = range.startContainer
+      const offset = range.startOffset
+
+      // 场景 A：光标在文本节点的最开始位置，检测前面的兄弟节点是否是药丸
+      if (container.nodeType === Node.TEXT_NODE && offset === 0) {
+        const prevSibling = container.previousSibling
+        if (
+          prevSibling &&
+          prevSibling.nodeType === Node.ELEMENT_NODE &&
+          prevSibling.classList.contains('mention-pill')
+        ) {
+          e.preventDefault()
+          prevSibling.remove()
+          handleInput()
+          return
+        }
+      }
+      // 场景 B：光标在元素容器节点，偏移量前面直接是药丸节点
+      else if (container.nodeType === Node.ELEMENT_NODE && offset > 0) {
+        const targetNode = container.childNodes[offset - 1]
+        if (
+          targetNode &&
+          targetNode.nodeType === Node.ELEMENT_NODE &&
+          targetNode.classList.contains('mention-pill')
+        ) {
+          e.preventDefault()
+          targetNode.remove()
+          handleInput()
+          return
+        }
+      }
+    }
+  }
+
   emit('keydown', e)
 }
 
 // 检测 @ 触发
 const handleKeyUp = (e) => {
-  if (e.key === '@' && mentionEnabled.value) {
+  if (!mentionEnabled.value) return
+
+  // 1. 如果输入了 @，立刻检测并唤醒提及
+  // 2. 如果使用方向键/Home/End 移动了光标，为了与鼠标点击切换光标保持行为一致，也自适应检测
+  // 注意：当提及弹窗显示时，ArrowUp 和 ArrowDown 用于列表项的键盘导航，此时输入框光标并未在文本中实质位移，无需重复检测
+  const isCursorMovement = ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key) ||
+    (['ArrowUp', 'ArrowDown'].includes(e.key) && !mentionPopupVisible.value)
+
+  if (e.key === '@' || isCursorMovement) {
     nextTick(() => {
-      checkMentionTrigger(e.target)
+      checkMentionTrigger()
     })
   }
 }
 
 // 处理输入事件
 const handleInput = (e) => {
-  const value = e.target.value
+  // 防呆：如果输入框全空（仅有空白字符且无提及药丸），物理重置 innerHTML 保证 CSS :empty 能够精准唤醒
+  if (inputRef.value) {
+    const text = inputRef.value.textContent || ''
+    const hasPill = inputRef.value.querySelector('.mention-pill')
+    if (text.trim() === '' && !hasPill) {
+      inputRef.value.innerHTML = ''
+    }
+  }
+
+  const value = serializeContent()
   emit('update:modelValue', value)
 
-  // 只要开启了提及功能，在任何输入事件时都使用正则表达式动态检测是否唤醒或更新弹出框
   if (mentionEnabled.value) {
     nextTick(() => {
-      checkMentionTrigger(e.target)
+      checkMentionTrigger()
     })
+  }
+}
+
+/**
+ * 在当前光标处插入纯文本
+ * @param {string} text 待插入的纯文本
+ */
+const insertTextAtCursor = (text) => {
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0) return
+
+  const range = selection.getRangeAt(0)
+  range.deleteContents()
+  
+  const textNode = document.createTextNode(text)
+  range.insertNode(textNode)
+  
+  // 将光标移到新插入文本的尾部
+  range.setStartAfter(textNode)
+  range.setEndAfter(textNode)
+  selection.removeAllRanges()
+  selection.addRange(range)
+
+  // 触发输入同步
+  handleInput()
+}
+
+/**
+ * 在当前光标处插入 DOM 片段
+ * @param {DocumentFragment} fragment 待插入的 DOM 片段
+ */
+const insertFragmentAtCursor = (fragment) => {
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0) return
+
+  const range = selection.getRangeAt(0)
+  range.deleteContents()
+  
+  // 保持对最后一个子节点的引用，以便将光标移到其后面
+  const lastChild = fragment.lastChild
+  
+  range.insertNode(fragment)
+  
+  if (lastChild) {
+    range.setStartAfter(lastChild)
+    range.setEndAfter(lastChild)
+    selection.removeAllRanges()
+    selection.addRange(range)
+  }
+
+  // 触发输入同步
+  handleInput()
+}
+
+// 处理粘贴事件，智能拦截解析提及文本并转换为药丸 DOM 节点
+const handlePaste = (e) => {
+  e.preventDefault()
+  
+  const clipboardData = e.clipboardData || window.clipboardData
+  if (!clipboardData) return
+
+  const pastedHtml = clipboardData.getData('text/html')
+  const pastedText = clipboardData.getData('text/plain') || ''
+
+  // 1. 优先检测 HTML 中是否包含已渲染的提及药丸 DOM (比如从历史消息或输入框复制的内容)
+  const hasPillInHtml = pastedHtml && (pastedHtml.includes('mention-pill') || pastedHtml.includes('data-type=') || pastedHtml.includes('data-value='))
+
+  if (hasPillInHtml) {
+    try {
+      const fragment = parseMentionHtml(pastedHtml)
+      insertFragmentAtCursor(fragment)
+      return
+    } catch (err) {
+      console.warn('Failed to parse pasted HTML containing pills, falling back to text regex parser:', err)
+    }
+  }
+
+  // 2. 兜底纯文本正则提及解析 (如用户从别的文本渠道、AI 的纯文本回复中直接复制的消息)
+  if (!pastedText) return
+  const mentionRegex = /@(file|knowledge|mcp|skill|subagent):([^\s\n\u00A0]+)/g
+  
+  // 如果没有任何提及格式，使用纯文本插入，防止富文本格式污染
+  if (!pastedText.match(mentionRegex)) {
+    insertTextAtCursor(pastedText)
+    return
+  }
+
+  // 3. 调用工具类进行高保真反序列化与去重解析，然后插入光标位置
+  const fragment = parseMentionText(pastedText)
+  insertFragmentAtCursor(fragment)
+}
+
+// 已重构：getSelectionText 遍历转换引擎已搬迁至 @/utils/mention 通用模块
+
+// 拦截复制事件，智能导出包含发光药丸的高保真文本和 HTML，完美防空白丢失
+const handleCopy = (e) => {
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return
+
+  try {
+    const range = selection.getRangeAt(0)
+    const container = document.createElement('div')
+    container.appendChild(range.cloneContents())
+
+    const plainText = getSelectionText(container)
+    const htmlText = container.innerHTML
+
+    e.clipboardData.setData('text/plain', plainText)
+    e.clipboardData.setData('text/html', htmlText)
+    e.preventDefault() // 阻止系统默认复制行为，100% 接管
+  } catch (err) {
+    console.warn('Failed to custom export selection on copy:', err)
+  }
+}
+
+// 拦截剪切事件，智能导出提及文本并物理清除选中项，触发状态同步
+const handleCut = (e) => {
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return
+
+  try {
+    const range = selection.getRangeAt(0)
+    const container = document.createElement('div')
+    container.appendChild(range.cloneContents())
+
+    const plainText = getSelectionText(container)
+    const htmlText = container.innerHTML
+
+    e.clipboardData.setData('text/plain', plainText)
+    e.clipboardData.setData('text/html', htmlText)
+    e.preventDefault() // 阻止默认剪切行为
+
+    // 物理切除选中的 Range 内容
+    range.deleteContents()
+    
+    // 强制触发输入框重置和 Pinia 全局状态同步
+    handleInput()
+  } catch (err) {
+    console.warn('Failed to custom export selection on cut:', err)
   }
 }
 
@@ -735,24 +1022,43 @@ const searchRequestId = ref(0)
 let activeAbortController = null
 let mentionSearchTimer = null
 
-const adjustTextareaHeight = () => {
-  if (!inputRef.value) {
-    return
-  }
-
-  const textarea = inputRef.value
-  textarea.style.height = 'auto'
-  textarea.style.height = `${textarea.scrollHeight}px`
-}
-
-// 聚焦输入框
-const focusInput = () => {
+// 聚焦输入框，智能把光标归位移到最后
+const focusInput = (e) => {
   if (inputRef.value && !props.disabled) {
+    // NOTE: 如果输入框已经获得焦点，且点击是发生在输入框内部（如文字中间、药丸之间），
+    // 此时用户意图是在文字中间精细定位光标，我们必须立刻返回，绝对不能强行重置光标到末尾！
+    const isAlreadyFocused = document.activeElement === inputRef.value
+    const isClickInsideInput = e && inputRef.value.contains(e.target)
+
+    if (isAlreadyFocused && isClickInsideInput) {
+      if (mentionEnabled.value) {
+        nextTick(() => {
+          checkMentionTrigger()
+        })
+      }
+      return
+    }
+
+    // 只有在未聚焦，或者点击了外层容器空白处时，我们才主动聚焦并将光标智能定位到末尾
     inputRef.value.focus()
-    // 聚焦回来时，如果开启了提及，自动检测当前光标位置是否处于 @提及 范围，是则重新升起弹框
+
+    // 把光标移动到富文本框的最末尾，提供极爽的使用反馈
+    try {
+      const selection = window.getSelection()
+      if (selection) {
+        const range = document.createRange()
+        range.selectNodeContents(inputRef.value)
+        range.collapse(false)
+        selection.removeAllRanges()
+        selection.addRange(range)
+      }
+    } catch (err) {
+      console.warn('Failed to set selection range:', err)
+    }
+
     if (mentionEnabled.value) {
       nextTick(() => {
-        checkMentionTrigger(inputRef.value)
+        checkMentionTrigger()
       })
     }
   }
@@ -760,30 +1066,61 @@ const focusInput = () => {
 
 // 处理输入框点击事件，自适应检测光标是否落入 @提及 范围内以唤醒或更新弹窗
 const handleTextareaClick = (e) => {
+  // 1. 优先检测并拦截是否点击了药丸的精致删除按钮
+  const closeBtn = e.target.closest('.pill-close')
+  if (closeBtn) {
+    e.preventDefault()
+    e.stopPropagation()
+    const pill = closeBtn.closest('.mention-pill')
+    if (pill) {
+      pill.remove()
+      handleInput() // 重新序列化并触发数据同步
+    }
+    return
+  }
+
+  // 2. 智能检测是否点击了文件小药丸
+  const filePill = e.target.closest('.mention-pill.file-pill')
+  if (filePill) {
+    e.preventDefault()
+    e.stopPropagation() // 强力拦截，防止输入框失去焦点或触发键盘弹起/回退
+    const filePath = filePill.getAttribute('data-value')
+    if (filePath) {
+      chatUIStore.triggerFilePreview(filePath)
+    }
+    return
+  }
+
   if (mentionEnabled.value) {
     nextTick(() => {
-      checkMentionTrigger(e.target)
+      checkMentionTrigger()
     })
   }
 }
 
-// 监听输入值变化
-watch(inputValue, () => {
-  if (debounceTimer.value) {
-    clearTimeout(debounceTimer.value)
+// 监听父组件传进来的 modelValue 变化，支持发送完毕后的物理清空
+watch(
+  () => props.modelValue,
+  (newVal) => {
+    if (!newVal) {
+      if (inputRef.value && inputRef.value.innerHTML !== '') {
+        inputRef.value.innerHTML = ''
+      }
+    }
   }
-  debounceTimer.value = setTimeout(() => {
-    nextTick(() => {
-      adjustTextareaHeight()
-    })
-  }, 100)
+)
+
+// 监听提及弹窗可见性变化，在弹窗关闭时自动重置上一次搜索内容，以支持下一次全新输入时重新拉取
+watch(mentionPopupVisible, (newVal) => {
+  if (!newVal) {
+    lastSearchQuery = ''
+  }
 })
 
 onMounted(() => {
   document.addEventListener('click', closeMentionPopup)
   nextTick(() => {
     if (inputRef.value) {
-      adjustTextareaHeight()
       inputRef.value.focus()
     }
   })
@@ -884,21 +1221,30 @@ defineExpose({
   color: var(--gray-1000);
   font-size: 15px;
   outline: none;
-  resize: none;
   line-height: 1.5;
   font-family: inherit;
   min-height: 44px; /* Default min-height for multi-line */
   max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
 
   &:focus {
     outline: none;
     box-shadow: none;
   }
 
-  &::placeholder {
+  // 完美的 Placeholder 伪类，自适应 contenteditable:empty
+  &:empty::before {
+    content: attr(placeholder);
     color: var(--gray-400);
+    pointer-events: none;
+    display: block;
   }
 }
+
+// 药丸全局样式 (引入共享 Less 模块，开启暗色自适应与双态悬停呼吸过渡)
+@import '@/assets/css/mention-pill.less';
 
 .send-button-container {
   grid-area: send;

@@ -168,6 +168,7 @@ import ToolCallsGroupComponent from '@/components/ToolCallsGroupComponent.vue'
 import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
 import { useAgentStore } from '@/stores/agent'
 import { useInfoStore } from '@/stores/info'
+import { useChatUIStore } from '@/stores/chatUI'
 import { storeToRefs } from 'pinia'
 import { MessageProcessor } from '@/utils/messageProcessor'
 
@@ -366,6 +367,22 @@ const getErrorMessage = computed(() => {
 const agentStore = useAgentStore()
 const { availableKnowledgeBases } = storeToRefs(agentStore)
 const infoStore = useInfoStore()
+const chatUIStore = useChatUIStore()
+
+/**
+ * 消息内提及药丸点击事件代理处理器
+ * @param {MouseEvent} e 鼠标点击事件
+ */
+const handleMessageClick = (e) => {
+  const filePill = e.target.closest('.mention-pill.file-pill')
+  if (filePill) {
+    const filePath = filePill.getAttribute('data-value')
+    if (filePath) {
+      chatUIStore.triggerFilePreview(filePath)
+    }
+  }
+}
+
 // 提取消息来源
 const messageSources = computed(() => {
   if (props.message.type === 'ai') {
@@ -498,14 +515,14 @@ const parsedData = computed(() => {
     }
   }
 
+  // 历史消息气泡提及药丸精致流式样式 (引入共享 Less 模块，开启暗色自适应与只读展示)
+  @import '@/assets/css/mention-pill.less';
+
   .message-copy-btn {
     cursor: pointer;
     color: var(--gray-400);
     transition: all 0.2s ease;
   }
-
-  // 历史消息气泡提及药丸精致流式样式 (引入共享 Less 模块，开启暗色自适应与只读展示)
-  @import '@/assets/css/mention-pill.less';
 
   .human-message-wrapper {
     position: relative;

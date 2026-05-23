@@ -88,27 +88,6 @@
         </div>
       </div>
     </div>
-
-    <a-modal
-      v-model:open="modalVisible"
-      width="800px"
-      :style="{ maxWidth: '90vw', top: '5vh' }"
-      :bodyStyle="{ maxHeight: '90vh', overflow: 'auto' }"
-      :footer="null"
-      :closable="false"
-      wrapClassName="agent-file-preview-modal"
-      @cancel="closePreview"
-    >
-      <AgentFilePreview
-        :file="currentFile"
-        :filePath="currentFilePath"
-        :showClose="true"
-        :showDownload="true"
-        :showFullscreen="true"
-        @download="downloadFile"
-        @close="closePreview"
-      />
-    </a-modal>
   </div>
 </template>
 
@@ -124,6 +103,9 @@ import {
   getViewerFileContent,
   getViewerFileSystemTree
 } from '@/apis/viewer_filesystem'
+import { useChatUIStore } from '@/stores/chatUI'
+
+const chatUIStore = useChatUIStore()
 
 const props = defineProps({
   agentState: {
@@ -153,7 +135,6 @@ const INLINE_PREVIEW_MIN_WIDTH = 920
 const DISPLAY_ROOT_DIRECTORY_NAME = 'user-data'
 
 const panelRef = ref(null)
-const modalVisible = ref(false)
 const currentFile = ref(null)
 const currentFilePath = ref('')
 const loadingFiles = ref(false)
@@ -360,26 +341,40 @@ const revokeCurrentPreviewUrl = () => {
   }
 }
 
-const onFileSelect = async (nextSelectedKeys, { node }) => {
-  selectedKeys.value = nextSelectedKeys
-  if (!node?.isLeaf || !props.threadId) return
+const previewFileByPath = async (filePath) => {
+  if (!filePath || !props.threadId) return
+
+  // 自动将当前选中的节点设为对应的文件路径，联动高亮左侧文件树
+  selectedKeys.value = [filePath]
+
+  // 如果是非内联模式（窄屏），直接委托给全局独立预览组件弹窗展示，侧边栏本身不作局部 API 加载，减少重复渲染和冗余数据交互
+  if (!useInlinePreview.value) {
+    return
+  }
 
   revokeCurrentPreviewUrl()
-  currentFilePath.value = node.key
+  currentFilePath.value = filePath
+
+  const fileName = filePath.split('/').pop() || filePath
+  const fileData = {
+    path: filePath,
+    name: fileName,
+    type: 'file'
+  }
+
   currentFile.value = {
-    ...node.fileData,
+    ...fileData,
     content: 'Loading...',
     supported: true,
     previewType: 'text',
     message: '',
     previewUrl: ''
   }
-  modalVisible.value = !useInlinePreview.value
 
   try {
     const res = await getViewerFileContent(
       props.threadId,
-      node.key,
+      filePath,
       props.agentId,
       props.agentConfigId
     )
@@ -389,7 +384,7 @@ const onFileSelect = async (nextSelectedKeys, { node }) => {
     if ((previewType === 'image' || previewType === 'pdf') && res?.supported) {
       const response = await downloadViewerFile(
         props.threadId,
-        node.key,
+        filePath,
         props.agentId,
         props.agentConfigId
       )
@@ -398,7 +393,7 @@ const onFileSelect = async (nextSelectedKeys, { node }) => {
     }
 
     currentFile.value = {
-      ...node.fileData,
+      ...fileData,
       content: res?.content ?? '',
       supported: res?.supported !== false,
       previewType,
@@ -407,7 +402,7 @@ const onFileSelect = async (nextSelectedKeys, { node }) => {
     }
   } catch (error) {
     currentFile.value = {
-      ...node.fileData,
+      ...fileData,
       content: `Error loading file: ${error?.message || 'unknown error'}`,
       supported: false,
       previewType: 'unsupported',
@@ -417,9 +412,25 @@ const onFileSelect = async (nextSelectedKeys, { node }) => {
   }
 }
 
+const onFileSelect = async (nextSelectedKeys, { node }) => {
+  selectedKeys.value = nextSelectedKeys
+  if (!node?.isLeaf || !props.threadId) {
+    if (nextSelectedKeys.length === 0) {
+      closePreview()
+    }
+    return
+  }
+
+  if (useInlinePreview.value) {
+    await previewFileByPath(node.key)
+  } else {
+    // 窄屏模式下，直接委托给全局独立预览组件进行 Modal 弹窗展示，复用全局预览，保持系统极致统一
+    chatUIStore.triggerFilePreview(node.key)
+  }
+}
+
 const closePreview = () => {
   revokeCurrentPreviewUrl()
-  modalVisible.value = false
   currentFile.value = null
   currentFilePath.value = ''
   selectedKeys.value = []
@@ -599,14 +610,18 @@ watch([() => props.threadId, () => props.agentId, () => props.agentConfigId], ([
   }
 })
 
-watch(useInlinePreview, (isInline) => {
-  if (!currentFile.value) {
-    modalVisible.value = false
-    return
-  }
-
-  modalVisible.value = !isInline
-})
+watch(
+  () => chatUIStore.previewFileTriggerTime,
+  (newVal) => {
+    if (newVal && chatUIStore.previewFilePath) {
+      // 仅在宽屏内联预览模式下响应，窄屏预览已由 AgentFilePreviewModal 全局组件接管，避免双重请求和状态冲突
+      if (useInlinePreview.value) {
+        previewFileByPath(chatUIStore.previewFilePath)
+      }
+    }
+  },
+  { immediate: true }
+)
 </script>
 
 <style scoped lang="less">
