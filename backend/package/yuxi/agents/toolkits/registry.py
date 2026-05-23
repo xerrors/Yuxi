@@ -89,6 +89,7 @@ def tool(
         )
 
         # 自动收集工具实例
+        tool_obj.handle_tool_error = True
         _all_tool_instances.append(tool_obj)
 
         return tool_obj

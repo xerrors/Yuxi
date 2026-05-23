@@ -109,7 +109,7 @@ services:
       - .env
     environment:
       <<: *api-worker-env
-    command: uv run --no-dev arq server.worker_main.WorkerSettings
+    command: watchfiles --filter python "arq server.worker_main.WorkerSettings" /app/server /app/package
     restart: unless-stopped
     depends_on:
       postgres:
