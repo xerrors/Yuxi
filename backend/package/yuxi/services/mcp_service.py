@@ -275,6 +275,8 @@ async def get_mcp_tools(
                 if tool.metadata is None:
                     tool.metadata = {}
                 tool.metadata["id"] = unique_id
+                # 开启错误处理，防止工具调用抛出 ToolException 时击穿服务
+                tool.handle_tool_error = True
                 all_processed_tools.append(tool)
 
             if cache:

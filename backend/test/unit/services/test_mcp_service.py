@@ -112,3 +112,27 @@ async def test_get_tools_from_all_servers_loads_names_from_db_once(monkeypatch):
         ("alpha", server_configs),
         ("beta", server_configs),
     ]
+
+
+async def test_get_mcp_tools_sets_handle_tool_error(monkeypatch):
+    mcp_service.clear_mcp_cache()
+
+    config = {"transport": "stdio", "command": "demo-tool", "disabled_tools": []}
+
+    async def fake_get_enabled_mcp_server_config(server_name: str, db=None):
+        del db
+        return config
+
+    async def fake_get_mcp_client(server_configs):
+        tool = SimpleNamespace(name="demo_tool", metadata={})
+        return _FakeClient([tool])
+
+    monkeypatch.setattr(mcp_service, "get_enabled_mcp_server_config", fake_get_enabled_mcp_server_config)
+    monkeypatch.setattr(mcp_service, "get_mcp_client", fake_get_mcp_client)
+
+    tools = await mcp_service.get_mcp_tools("demo")
+    assert len(tools) == 1
+    assert tools[0].handle_tool_error is True
+
+    mcp_service.clear_mcp_cache()
+
