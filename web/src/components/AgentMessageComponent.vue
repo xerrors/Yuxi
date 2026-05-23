@@ -169,7 +169,6 @@ import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
 import { useAgentStore } from '@/stores/agent'
 import { useInfoStore } from '@/stores/info'
 import { useChatUIStore } from '@/stores/chatUI'
-import { renderUserMessage } from '@/utils/mention'
 import { storeToRefs } from 'pinia'
 import { MessageProcessor } from '@/utils/messageProcessor'
 
