@@ -334,8 +334,6 @@ def _list_user_data_root_entries(thread_id: str, uid: str) -> list[dict]:
 async def _resolve_viewer_state(
     *,
     thread_id: str,
-    agent_id: str | None,
-    agent_config_id: int | None,
     current_user: User,
     db: AsyncSession,
 ):
@@ -343,8 +341,6 @@ async def _resolve_viewer_state(
         thread_id=thread_id,
         user=current_user,
         db=db,
-        agent_id=agent_id,
-        agent_config_id=agent_config_id,
     )
     selected_skills = getattr(runtime_context, "_readable_skills", [])
     selected_skills = normalize_string_list(selected_skills if isinstance(selected_skills, list) else [])
@@ -358,8 +354,6 @@ async def list_viewer_filesystem_tree(
     *,
     thread_id: str,
     path: str,
-    agent_id: str | None,
-    agent_config_id: int | None,
     current_user: User,
     db: AsyncSession,
 ) -> dict:
@@ -369,8 +363,6 @@ async def list_viewer_filesystem_tree(
     normalized_path = _normalize_path(path)
     sandbox_backend, skills_backend, selected_skills = await _resolve_viewer_state(
         thread_id=thread_id,
-        agent_id=agent_id,
-        agent_config_id=agent_config_id,
         current_user=current_user,
         db=db,
     )
@@ -418,8 +410,6 @@ async def read_viewer_file_content(
     *,
     thread_id: str,
     path: str,
-    agent_id: str | None,
-    agent_config_id: int | None,
     current_user: User,
     db: AsyncSession,
 ) -> dict:
@@ -429,8 +419,6 @@ async def read_viewer_file_content(
 
     sandbox_backend, skills_backend, _selected_skills = await _resolve_viewer_state(
         thread_id=thread_id,
-        agent_id=agent_id,
-        agent_config_id=agent_config_id,
         current_user=current_user,
         db=db,
     )
@@ -512,16 +500,12 @@ async def download_viewer_file(
     *,
     thread_id: str,
     path: str,
-    agent_id: str | None,
-    agent_config_id: int | None,
     current_user: User,
     db: AsyncSession,
 ) -> StreamingResponse:
     normalized_path = _normalize_path(path)
     sandbox_backend, skills_backend, _selected_skills = await _resolve_viewer_state(
         thread_id=thread_id,
-        agent_id=agent_id,
-        agent_config_id=agent_config_id,
         current_user=current_user,
         db=db,
     )
@@ -577,8 +561,6 @@ async def delete_viewer_file(
     *,
     thread_id: str,
     path: str,
-    agent_id: str | None,
-    agent_config_id: int | None,
     current_user: User,
     db: AsyncSession,
 ) -> dict:
@@ -588,8 +570,6 @@ async def delete_viewer_file(
     normalized_path = _normalize_path(path)
     await _resolve_viewer_state(
         thread_id=thread_id,
-        agent_id=agent_id,
-        agent_config_id=agent_config_id,
         current_user=current_user,
         db=db,
     )
@@ -620,8 +600,6 @@ async def create_viewer_directory(
     thread_id: str,
     parent_path: str,
     name: str,
-    agent_id: str | None,
-    agent_config_id: int | None,
     current_user: User,
     db: AsyncSession,
 ) -> dict:
@@ -630,8 +608,6 @@ async def create_viewer_directory(
 
     await _resolve_viewer_state(
         thread_id=thread_id,
-        agent_id=agent_id,
-        agent_config_id=agent_config_id,
         current_user=current_user,
         db=db,
     )
@@ -658,8 +634,6 @@ async def upload_viewer_file(
     thread_id: str,
     parent_path: str,
     file: UploadFile,
-    agent_id: str | None,
-    agent_config_id: int | None,
     current_user: User,
     db: AsyncSession,
 ) -> dict:
@@ -668,8 +642,6 @@ async def upload_viewer_file(
 
     await _resolve_viewer_state(
         thread_id=thread_id,
-        agent_id=agent_id,
-        agent_config_id=agent_config_id,
         current_user=current_user,
         db=db,
     )

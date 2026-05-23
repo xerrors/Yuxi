@@ -10,72 +10,45 @@ const buildQuery = (params) => {
   return query.toString()
 }
 
-const buildViewerQuery = (threadId, path, agentId = null, agentConfigId = null) => {
+const buildViewerQuery = (threadId, path) => {
   return buildQuery({
     thread_id: threadId,
-    path,
-    agent_id: agentId,
-    agent_config_id: agentConfigId
+    path
   })
 }
 
-export const getViewerFileSystemTree = (
-  threadId,
-  path = '/',
-  agentId = null,
-  agentConfigId = null
-) => {
-  const query = buildViewerQuery(threadId, path, agentId, agentConfigId)
+export const getViewerFileSystemTree = (threadId, path = '/') => {
+  const query = buildViewerQuery(threadId, path)
   return apiGet(`/api/viewer/filesystem/tree?${query}`)
 }
 
-export const getViewerFileContent = (threadId, path, agentId = null, agentConfigId = null) => {
-  const query = buildViewerQuery(threadId, path, agentId, agentConfigId)
+export const getViewerFileContent = (threadId, path) => {
+  const query = buildViewerQuery(threadId, path)
   return apiGet(`/api/viewer/filesystem/file?${query}`)
 }
 
-export const downloadViewerFile = (threadId, path, agentId = null, agentConfigId = null) => {
-  const query = buildViewerQuery(threadId, path, agentId, agentConfigId)
+export const downloadViewerFile = (threadId, path) => {
+  const query = buildViewerQuery(threadId, path)
   return apiGet(`/api/viewer/filesystem/download?${query}`, {}, true, 'blob')
 }
 
-export const deleteViewerFile = (threadId, path, agentId = null, agentConfigId = null) => {
-  const query = buildViewerQuery(threadId, path, agentId, agentConfigId)
+export const deleteViewerFile = (threadId, path) => {
+  const query = buildViewerQuery(threadId, path)
   return apiDelete(`/api/viewer/filesystem/file?${query}`)
 }
 
-export const createViewerDirectory = (
-  threadId,
-  parentPath,
-  name,
-  agentId = null,
-  agentConfigId = null
-) => {
+export const createViewerDirectory = (threadId, parentPath, name) => {
   return apiPost('/api/viewer/filesystem/directory', {
     thread_id: threadId,
     parent_path: parentPath,
-    name,
-    agent_id: agentId,
-    agent_config_id: agentConfigId
+    name
   })
 }
 
-export const uploadViewerFile = (
-  threadId,
-  parentPath,
-  file,
-  agentId = null,
-  agentConfigId = null
-) => {
+export const uploadViewerFile = (threadId, parentPath, file) => {
   const formData = new FormData()
   formData.set('thread_id', threadId)
   formData.set('parent_path', parentPath)
-  if (agentId !== undefined && agentId !== null && agentId !== '') {
-    formData.set('agent_id', agentId)
-  }
-  if (agentConfigId !== undefined && agentConfigId !== null && agentConfigId !== '') {
-    formData.set('agent_config_id', agentConfigId)
-  }
   formData.set('file', file)
   return apiPost('/api/viewer/filesystem/upload', formData)
 }

@@ -6,8 +6,9 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.agents.backends import create_agent_composite_backend
 from yuxi.agents.backends.sandbox.backend import _looks_like_binary
+from yuxi.agents.buildin import agent_manager
 from yuxi.agents.context import BaseContext, normalize_agent_context_config, prepare_agent_runtime_context
-from yuxi.repositories.agent_config_repository import AgentConfigRepository
+from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.services.conversation_service import require_user_conversation
 from yuxi.storage.postgres.models_business import User
@@ -17,29 +18,23 @@ async def _resolve_filesystem_context(
     *,
     db: AsyncSession,
     user: User,
-    agent_id: str,
-    agent_config_id: int | None,
+    bound_agent_id: str,
 ) -> BaseContext:
-    context = BaseContext(thread_id="", uid=str(user.uid))
-    repo = AgentConfigRepository(db)
+    agent_item = await AgentRepository(db).get_visible_by_slug(slug=bound_agent_id, user=user)
+    if not agent_item:
+        raise HTTPException(status_code=404, detail="智能体不存在")
 
-    config_item = None
-    if agent_config_id is not None:
-        config_item = await repo.get_by_id(config_id=int(agent_config_id))
-        if config_item is not None and (config_item.uid != str(user.uid) or config_item.agent_id != agent_id):
-            config_item = None
+    backend = agent_manager.get_agent(agent_item.backend_id)
+    if not backend:
+        raise HTTPException(status_code=404, detail="智能体后端不存在")
 
-    if config_item is None:
-        config_item = await repo.get_or_create_default(
-            uid=str(user.uid),
-            agent_id=agent_id,
-            created_by=str(user.uid),
-        )
-
+    context_schema = backend.context_schema
+    context = context_schema(thread_id="", uid=str(user.uid))
     normalized_config = await normalize_agent_context_config(
-        (config_item.config_json or {}).get("context", {}),
+        (agent_item.config_json or {}).get("context", {}),
         db=db,
         user=user,
+        context_schema=context_schema,
     )
     context.update_from_dict(normalized_config)
     return context
@@ -50,8 +45,6 @@ async def _resolve_filesystem_state(
     thread_id: str,
     user: User,
     db: AsyncSession,
-    agent_id: str | None,
-    agent_config_id: int | None,
 ):
     conv_repo = ConversationRepository(db)
     conversation = await require_user_conversation(conv_repo, thread_id, str(user.uid))
@@ -59,8 +52,7 @@ async def _resolve_filesystem_state(
     runtime_context = await _resolve_filesystem_context(
         db=db,
         user=user,
-        agent_id=agent_id or conversation.agent_id,
-        agent_config_id=agent_config_id,
+        bound_agent_id=conversation.agent_id,
     )
     runtime_context.thread_id = thread_id
     runtime_context.uid = str(user.uid)
@@ -73,8 +65,6 @@ async def list_filesystem_entries_view(
     *,
     thread_id: str,
     path: str,
-    agent_id: str | None,
-    agent_config_id: int | None,
     current_user: User,
     db: AsyncSession,
 ) -> dict:
@@ -87,8 +77,6 @@ async def list_filesystem_entries_view(
         thread_id=thread_id,
         user=current_user,
         db=db,
-        agent_id=agent_id,
-        agent_config_id=agent_config_id,
     )
 
     runtime_stub = type("RuntimeStub", (), {"context": runtime_context})()
@@ -107,8 +95,6 @@ async def read_file_content_view(
     *,
     thread_id: str,
     path: str,
-    agent_id: str | None,
-    agent_config_id: int | None,
     current_user: User,
     db: AsyncSession,
 ) -> dict:
@@ -123,8 +109,6 @@ async def read_file_content_view(
         thread_id=thread_id,
         user=current_user,
         db=db,
-        agent_id=agent_id,
-        agent_config_id=agent_config_id,
     )
 
     runtime_stub = type("RuntimeStub", (), {"context": runtime_context})()

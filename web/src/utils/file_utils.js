@@ -11,6 +11,7 @@ import {
   LinkOutlined,
   CodeFilled
 } from '@ant-design/icons-vue'
+import { getPreviewFileExtension, getPreviewTypeByPath } from '@/utils/file_preview'
 import { formatRelative, parseToShanghai } from '@/utils/time'
 
 const DEFAULT_FILE_ICON = { icon: FileFilled, color: 'var(--gray-600)' }
@@ -30,6 +31,8 @@ const FILE_ICON_CONFIG = {
   csv: { icon: FileExcelFilled, color: 'var(--color-success-500)' },
   ppt: { icon: FilePptFilled, color: 'var(--color-warning-700)' },
   pptx: { icon: FilePptFilled, color: 'var(--color-warning-700)' },
+  apng: { icon: FileImageFilled, color: 'var(--color-accent-700)' },
+  avif: { icon: FileImageFilled, color: 'var(--color-accent-700)' },
   jpg: { icon: FileImageFilled, color: 'var(--color-accent-700)' },
   jpeg: { icon: FileImageFilled, color: 'var(--color-accent-700)' },
   png: { icon: FileImageFilled, color: 'var(--color-accent-700)' },
@@ -109,4 +112,50 @@ export const formatFileSize = (bytes) => {
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']
   const i = Math.floor(Math.log(bytes) / Math.log(k))
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+}
+
+export const getDisplayFileName = (pathOrName, fallback = '文件') => {
+  const value = String(pathOrName || '').trim()
+  if (!value) return fallback
+  return value.split('/').pop() || value || fallback
+}
+
+export const getFileExtensionLabel = (pathOrName) => {
+  const extension = getPreviewFileExtension(pathOrName).replace(/^\./, '')
+  return extension ? extension.toUpperCase() : ''
+}
+
+export const getMimeSubtypeLabel = (mimeType) => {
+  const subtype = String(mimeType || '')
+    .split('/')
+    .pop()
+    ?.trim()
+  return subtype ? subtype.toUpperCase() : ''
+}
+
+export const normalizeAttachmentPreview = (attachment) => {
+  const name = getDisplayFileName(
+    attachment?.file_name || attachment?.name || attachment?.path,
+    '附件'
+  )
+  const fileId = attachment?.file_id || attachment?.path || name
+  const fileType = String(attachment?.file_type || '')
+  const sizeLabel = formatFileSize(attachment?.file_size)
+  const typeLabel = getFileExtensionLabel(name) || getMimeSubtypeLabel(fileType) || '文件'
+
+  return {
+    raw: attachment,
+    fileId,
+    name,
+    previewUrl: attachment?.original_artifact_url || attachment?.artifact_url || '',
+    isImage: fileType.startsWith('image/') || getPreviewTypeByPath(name) === 'image',
+    meta: [typeLabel, sizeLabel === '-' ? '' : sizeLabel].filter(Boolean).join(' · '),
+    icon: getFileIcon(name),
+    iconColor: getFileIconColor(name)
+  }
+}
+
+export const normalizeAttachmentPreviews = (attachments) => {
+  if (!Array.isArray(attachments)) return []
+  return attachments.map(normalizeAttachmentPreview).filter((attachment) => attachment.fileId)
 }

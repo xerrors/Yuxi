@@ -28,24 +28,18 @@ class CreateViewerDirectoryRequest(BaseModel):
     thread_id: str
     parent_path: str
     name: str
-    agent_id: str | None = None
-    agent_config_id: int | None = None
 
 
 @filesystem_router.get("/tree", response_model=dict)
 async def get_viewer_tree(
     thread_id: str = Query(..., description="线程 ID"),
     path: str = Query("/", description="目录路径"),
-    agent_id: str | None = Query(None, description="智能体 ID"),
-    agent_config_id: int | None = Query(None, description="智能体配置 ID"),
     current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
     return await list_viewer_filesystem_tree(
         thread_id=thread_id,
         path=path,
-        agent_id=agent_id,
-        agent_config_id=agent_config_id,
         current_user=current_user,
         db=db,
     )
@@ -55,16 +49,12 @@ async def get_viewer_tree(
 async def get_viewer_file(
     thread_id: str = Query(..., description="线程 ID"),
     path: str = Query(..., description="文件路径"),
-    agent_id: str | None = Query(None, description="智能体 ID"),
-    agent_config_id: int | None = Query(None, description="智能体配置 ID"),
     current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
     return await read_viewer_file_content(
         thread_id=thread_id,
         path=path,
-        agent_id=agent_id,
-        agent_config_id=agent_config_id,
         current_user=current_user,
         db=db,
     )
@@ -74,16 +64,12 @@ async def get_viewer_file(
 async def delete_viewer_file_route(
     thread_id: str = Query(..., description="线程 ID"),
     path: str = Query(..., description="文件路径"),
-    agent_id: str | None = Query(None, description="智能体 ID"),
-    agent_config_id: int | None = Query(None, description="智能体配置 ID"),
     current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
     return await delete_viewer_file(
         thread_id=thread_id,
         path=path,
-        agent_id=agent_id,
-        agent_config_id=agent_config_id,
         current_user=current_user,
         db=db,
     )
@@ -99,8 +85,6 @@ async def create_viewer_directory_route(
         thread_id=payload.thread_id,
         parent_path=payload.parent_path,
         name=payload.name,
-        agent_id=payload.agent_id,
-        agent_config_id=payload.agent_config_id,
         current_user=current_user,
         db=db,
     )
@@ -110,8 +94,6 @@ async def create_viewer_directory_route(
 async def upload_viewer_file_route(
     thread_id: str = Form(..., description="线程 ID"),
     parent_path: str = Form(..., description="父目录路径"),
-    agent_id: str | None = Form(None, description="智能体 ID"),
-    agent_config_id: int | None = Form(None, description="智能体配置 ID"),
     file: UploadFile = File(..., description="上传文件"),
     current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
@@ -120,8 +102,6 @@ async def upload_viewer_file_route(
         thread_id=thread_id,
         parent_path=parent_path,
         file=file,
-        agent_id=agent_id,
-        agent_config_id=agent_config_id,
         current_user=current_user,
         db=db,
     )
@@ -131,16 +111,12 @@ async def upload_viewer_file_route(
 async def download_viewer(
     thread_id: str = Query(..., description="线程 ID"),
     path: str = Query(..., description="文件路径"),
-    agent_id: str | None = Query(None, description="智能体 ID"),
-    agent_config_id: int | None = Query(None, description="智能体配置 ID"),
     current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
     return await download_viewer_file(
         thread_id=thread_id,
         path=path,
-        agent_id=agent_id,
-        agent_config_id=agent_config_id,
         current_user=current_user,
         db=db,
     )

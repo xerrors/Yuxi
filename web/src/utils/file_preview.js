@@ -1,5 +1,15 @@
 const MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown', '.mdx'])
-const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg'])
+const IMAGE_EXTENSIONS = new Set([
+  '.apng',
+  '.avif',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.bmp',
+  '.webp',
+  '.svg'
+])
 const PDF_EXTENSIONS = new Set(['.pdf'])
 const HTML_EXTENSIONS = new Set(['.html', '.htm'])
 const CODE_LANGUAGE_ALIASES = {
