@@ -21,6 +21,8 @@ class SubAgentCreateRequest(BaseModel):
     description: str = Field(..., description="描述")
     system_prompt: str = Field(..., description="系统提示词")
     tools: list[str] = Field(default_factory=list, description="工具名称列表")
+    mcps: list[str] = Field(default_factory=list, description="MCP 服务名列表")
+    skills: list[str] = Field(default_factory=list, description="Skill slug 列表")
     model: str | None = Field(None, description="可选的模型覆盖")
 
 
@@ -28,6 +30,8 @@ class SubAgentUpdateRequest(BaseModel):
     description: str | None = Field(None, description="描述")
     system_prompt: str | None = Field(None, description="系统提示词")
     tools: list[str] | None = Field(None, description="工具名称列表")
+    mcps: list[str] | None = Field(None, description="MCP 服务名列表")
+    skills: list[str] | None = Field(None, description="Skill slug 列表")
     model: str | None = Field(None, description="可选的模型覆盖")
 
 

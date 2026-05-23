@@ -49,6 +49,8 @@ class SubAgentRepository:
         description: str,
         system_prompt: str,
         tools: list[str] | None,
+        mcps: list[str] | None = None,
+        skills: list[str] | None = None,
         model: str | None,
         is_builtin: bool,
         created_by: str | None,
@@ -59,6 +61,8 @@ class SubAgentRepository:
             description=description,
             system_prompt=system_prompt,
             tools=tools or [],
+            mcps=mcps or [],
+            skills=skills or [],
             model=model,
             enabled=True,
             is_builtin=is_builtin,
@@ -79,6 +83,8 @@ class SubAgentRepository:
         description: str | None,
         system_prompt: str | None,
         tools: list[str] | None,
+        mcps: list[str] | None = None,
+        skills: list[str] | None = None,
         model: str | None,
         model_provided: bool = False,
         updated_by: str | None,
@@ -88,6 +94,8 @@ class SubAgentRepository:
             "description": description,
             "system_prompt": system_prompt,
             "tools": tools,
+            "mcps": mcps,
+            "skills": skills,
         }
         for field, value in updates.items():
             if value is not None:

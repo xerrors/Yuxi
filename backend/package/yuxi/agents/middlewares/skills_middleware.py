@@ -159,6 +159,8 @@ class SkillsMiddleware(AgentMiddleware):
         skills_context_name: str = "skills",
         enable_skills_prompt: bool = True,
         skills_sources_for_prompt: list[str] | None = None,
+        static_skills: list[str] | None = None,
+        subagent_system_prompt: str | None = None,
     ):
         """初始化中间件
 
@@ -166,11 +168,15 @@ class SkillsMiddleware(AgentMiddleware):
             skills_context_name: 上下文中的 skills 列表字段名称（默认 "skills"）
             enable_skills_prompt: 是否启用 skills 提示段注入（默认 True）
             skills_sources_for_prompt: skills 来源路径（用于提示词展示，默认 ["/home/gem/skills/"]）
+            static_skills: 静态指定的 skills 列表（子代理场景下无需 context 动态加载）
+            subagent_system_prompt: 子智能体系统提示词覆盖
         """
         super().__init__()
         self.skills_context_name = skills_context_name
         self.enable_skills_prompt = enable_skills_prompt
         self.skills_sources_for_prompt = skills_sources_for_prompt or ["/home/gem/skills/"]
+        self.static_skills = static_skills
+        self.subagent_system_prompt = subagent_system_prompt
 
     async def abefore_agent(self, state: SkillsState, runtime) -> dict[str, Any] | None:
         """在 agent 执行前注入 skills 提示词"""
@@ -179,38 +185,58 @@ class SkillsMiddleware(AgentMiddleware):
         # 检查是否需要注入
         if not self.enable_skills_prompt:
             return None
-        if getattr(runtime_context, "_skills_prompt_injected", False):
+
+        # 区别对待：如果 static_skills 不为空，说明这是子智能体的专属 SkillsMiddleware！
+        # 我们使用专属于子智能体本实例的注入状态标志，从而与父 Agent 以及其他子代理进程/线程级别隔离开！
+        injected_flag = "_skills_prompt_injected"
+        if self.static_skills is not None:
+            injected_flag = f"_skills_prompt_injected_sub_{id(self)}"
+        if getattr(runtime_context, injected_flag, False):
+            # if runtime_context and getattr(runtime_context, "_skills_prompt_injected", False):
             return None
+
+        # 基础系统提示词：如果是子代理模式，绝不使用被污染的父 Agent 提示词，而是使用传入的子代理专属提示词
+        if self.subagent_system_prompt is not None:
+            base_prompt = self.subagent_system_prompt
+        else:
+            base_prompt = getattr(runtime_context, "system_prompt", "") or ""
 
         # 从数据库加载 skills 数据（使用缓存）
         dependency_map = await get_dependency_map()
 
         # 获取配置的 skills
-        configured_skills = getattr(runtime_context, self.skills_context_name, None) or []
+        configured_skills = (
+            self.static_skills
+            if self.static_skills is not None
+            else (getattr(runtime_context, self.skills_context_name, None) or [])
+        )
         selected_skills = normalize_selected_skills(configured_skills)
 
+        # 如果没有专属 skills，直接写入专属 system_prompt，防止被父级冲刷
         if not selected_skills:
+            setattr(runtime_context, "system_prompt", base_prompt)
+            setattr(runtime_context, injected_flag, True)
             return None
 
         # 计算 visible_skills
         visible_skills = expand_skill_closure(selected_skills, dependency_map)
 
         if not visible_skills:
+            setattr(runtime_context, "system_prompt", base_prompt)
+            setattr(runtime_context, injected_flag, True)
             return None
 
         # 收集提示词元数据并构建提示段
         skills_meta = await self._collect_prompt_metadata(visible_skills)
         skills_section = self._build_skills_section(skills_meta)
 
-        # 注入提示词
-        base_prompt = getattr(runtime_context, "system_prompt", "") or ""
+        # 注入提示词并强制覆盖写入 runtime_context.system_prompt，确保接下来子智能体模型调用能够拿到正确的提示词
         merged_prompt = f"{base_prompt}\n\n{skills_section}" if base_prompt else skills_section
         setattr(runtime_context, "system_prompt", merged_prompt)
-        setattr(runtime_context, "_skills_prompt_injected", True)
+        setattr(runtime_context, injected_flag, True)
 
         # 存储 visible_skills 供后续使用
         setattr(runtime_context, "_visible_skills", visible_skills)
-
         return None
 
     async def awrap_model_call(
@@ -219,18 +245,43 @@ class SkillsMiddleware(AgentMiddleware):
         """包装模型调用，处理动态激活和依赖展开"""
         runtime_context = request.runtime.context
 
+        # 如果是子代理模式，将我们在 abefore_agent 中拼接了专属 Skill 元信息的 system_prompt
+        # 写入模型请求的 system_message 中。为避免吞掉其他中间件的修改，此处采用安全合并或追加策略。
+        if self.static_skills is not None:
+            subagent_prompt = getattr(runtime_context, "system_prompt", "")
+            if subagent_prompt and subagent_prompt not in (request.system_message or ""):
+                if not request.system_message or request.system_message == self.subagent_system_prompt:
+                    request = request.override(system_message=subagent_prompt)
+                else:
+                    # 提取专属技能提示词段并安全追加，避免覆盖其他中间件的修改
+                    if self.subagent_system_prompt and subagent_prompt.startswith(self.subagent_system_prompt):
+                        skills_section = subagent_prompt[len(self.subagent_system_prompt) :].lstrip()
+                        if skills_section and skills_section not in request.system_message:
+                            request = request.override(system_message=f"{request.system_message}\n\n{skills_section}")
+                    else:
+                        request = request.override(system_message=subagent_prompt)
         # 从缓存加载 skills 数据
         dependency_map = await get_dependency_map()
 
         # 1. 获取配置的 skills
-        configured_skills = getattr(runtime_context, self.skills_context_name, None) or []
+        configured_skills = (
+            self.static_skills
+            if self.static_skills is not None
+            else (getattr(runtime_context, self.skills_context_name, None) or [])
+        )
         configured = normalize_selected_skills(configured_skills)
 
         # 2. 获取运行时动态激活的 skills
-        state = request.state if isinstance(request.state, dict) else {}
-        activated = state.get("activated_skills", []) or []
-        if not isinstance(activated, list):
-            activated = []
+        if self.static_skills is not None:
+            # 在子代理模式下，静态配置的 skills 已经在编译期由 subagent_service.py 解析并注册到 Graph
+            # 这里在运行时只需获取动态激活（例如通过 read_file 激活）的额外技能，以消除双重执行和不必要的 IO 开销
+            activated_dynamic = getattr(runtime_context, "_subagent_activated_skills", None) or []
+            activated = normalize_selected_skills(activated_dynamic)
+        else:
+            state = request.state if isinstance(request.state, dict) else {}
+            activated = state.get("activated_skills", []) or []
+            if not isinstance(activated, list):
+                activated = []
 
         # 3. 合并并展开闭包
         all_skills = normalize_selected_skills(configured + activated)
@@ -375,7 +426,7 @@ class SkillsMiddleware(AgentMiddleware):
             return result
 
         logger.debug(f"SkillsMiddleware: activated skill by read_file: {slug}")
-        return self._merge_activated_skill_update(result, slug)
+        return self._merge_activated_skill_update(result, slug, request.runtime.context)
 
     async def awrap_tool_call(
         self,
@@ -421,19 +472,33 @@ class SkillsMiddleware(AgentMiddleware):
     def _is_visible_skill_slug(self, request: ToolCallRequest, slug: str) -> bool:
         """检查 slug 是否可见"""
         runtime_context = request.runtime.context
-        visible_skills = getattr(runtime_context, "_visible_skills", None)
+        visible_skills = getattr(runtime_context, "_visible_skills", None) if runtime_context else None
 
         if isinstance(visible_skills, list):
             return slug in visible_skills
 
         # 后备：从配置的 skills 检查
-        configured_skills = getattr(runtime_context, self.skills_context_name, None) or []
+        configured_skills = (
+            self.static_skills
+            if self.static_skills is not None
+            else (getattr(runtime_context, self.skills_context_name, None) or [])
+        )
         normalized = normalize_selected_skills(configured_skills)
         return slug in normalized
 
-    def _merge_activated_skill_update(self, result: Any, slug: str):
+    def _merge_activated_skill_update(self, result: Any, slug: str, runtime_context: Any = None):
         """合并动态激活的 skill 更新"""
         from langchain_core.messages import ToolMessage
+
+        # 如果是子代理配置，直接存入 runtime_context，不污染 state
+        if self.static_skills is not None and runtime_context is not None:
+            current = getattr(runtime_context, "_subagent_activated_skills", None)
+            if current is None:
+                current = []
+                setattr(runtime_context, "_subagent_activated_skills", current)
+            if slug not in current:
+                current.append(slug)
+            return result
 
         if isinstance(result, Command):
             update = dict(result.update or {})
