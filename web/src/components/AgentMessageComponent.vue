@@ -626,46 +626,15 @@ const parsedData = computed(() => {
     &.is-stuck-layout {
       gap: 8px;
 
-      // 如果处于折叠状态，左右排列，文字限制单行显示
+      // 如果处于折叠状态，限制文字单行显示，不加任何内外边距缩进
       &.is-collapsed {
-        flex-direction: row;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-
         .message-text {
           max-height: 24px;
           white-space: nowrap;
           text-overflow: ellipsis;
           overflow: hidden;
-          padding-left: 32px;  // 避让左侧绝对定位的收缩按钮
-          padding-right: 70px; // 给右侧绝对定位的动作条留出呼吸宽度，彻底防止文字重叠
-        }
-
-        .human-action-bar {
-          top: 50%;
-          bottom: auto;
-          transform: translateY(-50%);
-          right: 0px;
-        }
-
-        .shrink-right-btn {
-          top: 50%;
-          bottom: auto;
-          transform: translateY(-50%);
-          left: 0px;
-        }
-      }
-
-      // 如果处于展开状态，动作按钮挂在下边缘外侧
-      &:not(.is-collapsed) {
-        .human-action-bar {
-          right: 0px;
-          bottom: -20px;
-        }
-        .shrink-right-btn {
-          left: 0px;
-          bottom: -20px;
+          padding-left: 0px;  // 彻底消灭不悬浮时的左侧尴尬空白
+          padding-right: 0px; // 彻底消灭不悬浮时的右侧尴尬空白
         }
       }
     }
