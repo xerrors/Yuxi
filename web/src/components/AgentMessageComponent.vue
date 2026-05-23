@@ -44,7 +44,7 @@
           @click="handleMessageClick"
           v-html="renderUserMessage(message.content)"
         ></p>
-        
+
         <!-- 左右收起按钮 (仅在吸顶且多行时可用，绝对定位在左下角，默认隐藏，hover 显现) -->
         <div
           v-if="isStuck && isMultiLine"
@@ -162,7 +162,15 @@
 import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { CaretRightOutlined } from '@ant-design/icons-vue'
 import RefsComponent from '@/components/RefsComponent.vue'
-import { Copy, Check, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, MessageSquare } from 'lucide-vue-next'
+import {
+  Copy,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  ChevronLeft,
+  ChevronRight,
+  MessageSquare
+} from 'lucide-vue-next'
 import ToolCallsGroupComponent from '@/components/ToolCallsGroupComponent.vue'
 import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
 import { useAgentStore } from '@/stores/agent'
@@ -610,7 +618,7 @@ const parsedData = computed(() => {
         background: var(--main-50);
         transform: translateY(-1px);
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-        
+
         .arrow-hint {
           transform: translateX(-2px);
         }
@@ -633,7 +641,7 @@ const parsedData = computed(() => {
           white-space: nowrap;
           text-overflow: ellipsis;
           overflow: hidden;
-          padding-left: 0px;  // 彻底消灭不悬浮时的左侧尴尬空白
+          padding-left: 0px; // 彻底消灭不悬浮时的左侧尴尬空白
           padding-right: 0px; // 彻底消灭不悬浮时的右侧尴尬空白
         }
       }
