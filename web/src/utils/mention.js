@@ -53,7 +53,7 @@ export const splitTextByQuery = (text, query) => {
   if (!text) return []
   if (!query) return [{ text, isMatch: false }]
 
-  const escapedQuery = query.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')
+  const escapedQuery = query.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')
   const regex = new RegExp(`(${escapedQuery})`, 'gi')
   const parts = text.split(regex)
 
@@ -91,11 +91,35 @@ export const getMentionIconSvg = (typeOrItem, label, isDir = false) => {
     // 智能提取文件扩展名并检测是否为代码文件类型
     const name = (itemLabel || '').toLowerCase()
     const codeExtensions = [
-      '.py', '.js', '.ts', '.jsx', '.tsx', '.json', '.vue', '.css', '.less', '.html', 
-      '.cpp', '.c', '.h', '.cc', '.java', '.go', '.sh', '.yaml', '.yml', '.md', 
-      '.rs', '.sql', '.toml', '.xml', '.ini', '.bat', '.ps1'
+      '.py',
+      '.js',
+      '.ts',
+      '.jsx',
+      '.tsx',
+      '.json',
+      '.vue',
+      '.css',
+      '.less',
+      '.html',
+      '.cpp',
+      '.c',
+      '.h',
+      '.cc',
+      '.java',
+      '.go',
+      '.sh',
+      '.yaml',
+      '.yml',
+      '.md',
+      '.rs',
+      '.sql',
+      '.toml',
+      '.xml',
+      '.ini',
+      '.bat',
+      '.ps1'
     ]
-    const isCode = codeExtensions.some(ext => name.endsWith(ext))
+    const isCode = codeExtensions.some((ext) => name.endsWith(ext))
 
     if (isCode) {
       // 极致科技感的极客 CSS 迷你语法高亮代码行 (三色线条发光渲染)
@@ -211,7 +235,7 @@ export const renderUserMessage = (content) => {
       label = parts[parts.length - 1] || value
       try {
         label = decodeURIComponent(label)
-      } catch (e) {
+      } catch {
         // 忽略解码异常
       }
     }
@@ -224,10 +248,12 @@ export const renderUserMessage = (content) => {
     const escapedLabel = escapeHtml(label)
 
     // 生成精美药丸 HTML 字符串（在历史流中免除 Close 按钮，以防多余交互）
-    return `<span class="mention-pill ${escapedType}-pill" data-type="${escapedType}" data-value="${escapedValue}" data-label="${escapedLabel}">` +
+    return (
+      `<span class="mention-pill ${escapedType}-pill" data-type="${escapedType}" data-value="${escapedValue}" data-label="${escapedLabel}">` +
       `<span class="pill-icon">${iconHtml}</span>` +
       `<span class="pill-text">${escapedLabel}</span>` +
       `</span>`
+    )
   })
 }
 
@@ -279,7 +305,11 @@ export const parseMentionHtml = (pastedHtml) => {
       // 智能防重双空格：如果前一个节点已是药丸尾随空格（\u00A0），且当前文本节点以空格开头，则去除重复的首空格
       if (text.startsWith(' ') || text.startsWith('\u00A0')) {
         const last = frag.lastChild
-        if (last && last.nodeType === Node.TEXT_NODE && (last.textContent === '\u00A0' || last.textContent === ' ')) {
+        if (
+          last &&
+          last.nodeType === Node.TEXT_NODE &&
+          (last.textContent === '\u00A0' || last.textContent === ' ')
+        ) {
           text = text.substring(1)
         }
       }
@@ -288,13 +318,16 @@ export const parseMentionHtml = (pastedHtml) => {
       }
     } else if (node.nodeType === Node.ELEMENT_NODE) {
       // 智能捕获：是否是我们的 mention-pill 药丸
-      const isPill = node.classList.contains('mention-pill') || 
-                      node.getAttribute('data-type') || 
-                      node.closest?.('.mention-pill')
+      const isPill =
+        node.classList.contains('mention-pill') ||
+        node.getAttribute('data-type') ||
+        node.closest?.('.mention-pill')
 
       if (isPill) {
         // 如果是子节点，向上寻找真正的药丸容器
-        const pillEl = node.classList.contains('mention-pill') ? node : (node.closest?.('.mention-pill') || node)
+        const pillEl = node.classList.contains('mention-pill')
+          ? node
+          : node.closest?.('.mention-pill') || node
         const type = pillEl.getAttribute('data-type')
         const value = pillEl.getAttribute('data-value')
         const label = pillEl.getAttribute('data-label') || pillEl.textContent.trim()
@@ -369,7 +402,7 @@ export const parseMentionText = (pastedText) => {
       label = parts[parts.length - 1] || value
       try {
         label = decodeURIComponent(label)
-      } catch (err) {
+      } catch {
         // 忽略解码异常
       }
     }
