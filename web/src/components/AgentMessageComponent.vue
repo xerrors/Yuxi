@@ -5,18 +5,78 @@
   >
     <img :src="`data:image/jpeg;base64,${message.image_content}`" alt="用户上传的图片" />
   </div>
-  <div class="message-box" :class="[message.type, customClasses]" :data-msg-id="message.id">
-    <!-- 用户消息 -->
+  <div
+    ref="messageRef"
+    class="message-box"
+    :class="[
+      message.type,
+      customClasses,
+      { 'is-stuck': isStuck, 'is-shrunk': isStuck && isShrunkRight }
+    ]"
+    :data-msg-id="message.id"
+  >
+    <!-- 用户提问内容及右下角动作条 -->
     <div
       v-if="message.type === 'human'"
-      class="message-copy-btn human-copy"
-      @click="copyToClipboard(message.content)"
-      :class="{ 'is-copied': isCopied }"
+      class="human-message-wrapper"
+      :class="{
+        'is-stuck-layout': isStuck && isMultiLine,
+        'is-collapsed': isStuck && isMultiLine && !isExpanded,
+        'is-shrunk-right': isStuck && isShrunkRight
+      }"
     >
-      <Check v-if="isCopied" size="14" />
-      <Copy v-else size="14" />
+      <!-- 向右收缩后的悬浮胶囊/球 -->
+      <div
+        v-if="isStuck && isShrunkRight"
+        class="stuck-shrunk-ball"
+        @click.stop="isShrunkRight = false"
+        title="展开提问"
+      >
+        <MessageSquare size="15" />
+        <ChevronLeft size="12" class="arrow-hint" />
+      </div>
+
+      <!-- 正常的提问卡片内容 -->
+      <template v-else>
+        <p
+          ref="humanTextRef"
+          class="message-text render-html"
+          @click="handleMessageClick"
+          v-html="renderUserMessage(message.content)"
+        ></p>
+        <div class="human-action-bar">
+          <!-- 内联复制按钮 (默认不显示，hover 显现) -->
+          <div
+            class="message-copy-btn inline-copy"
+            @click.stop="copyToClipboard(message.content)"
+            :class="{ 'is-copied': isCopied }"
+            title="复制问题"
+          >
+            <Check v-if="isCopied" size="13" />
+            <Copy v-else size="13" />
+          </div>
+          <!-- 左右收起按钮 (仅在吸顶时可用) -->
+          <div
+            v-if="isStuck"
+            class="action-icon-btn shrink-right-btn"
+            @click.stop="isShrunkRight = true"
+            title="向右收起"
+          >
+            <ChevronRight size="13" />
+          </div>
+          <!-- 上下折叠/展开纯图标按钮 (仅在吸顶且多行时可用) -->
+          <div
+            v-if="isStuck && isMultiLine"
+            class="action-icon-btn expand-toggle-btn"
+            @click.stop="isExpanded = !isExpanded"
+            :title="isExpanded ? '折叠' : '展开'"
+          >
+            <ChevronUp v-if="isExpanded" size="13" />
+            <ChevronDown v-else size="13" />
+          </div>
+        </div>
+      </template>
     </div>
-    <p v-if="message.type === 'human'" class="message-text">{{ message.content }}</p>
 
     <p v-else-if="message.type === 'system'" class="message-text-system">{{ message.content }}</p>
 
@@ -97,10 +157,10 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { CaretRightOutlined } from '@ant-design/icons-vue'
 import RefsComponent from '@/components/RefsComponent.vue'
-import { Copy, Check } from 'lucide-vue-next'
+import { Copy, Check, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, MessageSquare } from 'lucide-vue-next'
 import ToolCallsGroupComponent from '@/components/ToolCallsGroupComponent.vue'
 import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
 import { useAgentStore } from '@/stores/agent'
@@ -149,6 +209,93 @@ const emit = defineEmits(['retry', 'retryStoppedMessage', 'openRefs'])
 
 // 复制状态
 const isCopied = ref(false)
+
+// 原地吸顶悬浮与多行折叠控制
+const messageRef = ref(null)
+const humanTextRef = ref(null)
+const isStuck = ref(false)
+const isMultiLine = ref(false)
+const isExpanded = ref(false)
+const isShrunkRight = ref(false)
+let stickyObserver = null
+
+// 触顶状态退出时还原折叠和右收缩状态
+watch(isStuck, (newVal) => {
+  if (!newVal) {
+    isShrunkRight.value = false
+    isExpanded.value = false
+  }
+})
+
+// 初始化/重新建立吸顶监听与多行测量
+const initStickyObserver = () => {
+  if (stickyObserver) {
+    stickyObserver.disconnect()
+    stickyObserver = null
+  }
+
+  // 1. 监测是否是多行提问以决定是否需要吸顶折叠
+  if (humanTextRef.value) {
+    setTimeout(() => {
+      if (humanTextRef.value && humanTextRef.value.scrollHeight > 28) {
+        isMultiLine.value = true
+      } else {
+        isMultiLine.value = false
+      }
+    }, 100)
+  }
+
+  // 2. 监测气泡是否触顶悬浮
+  if (messageRef.value) {
+    const scrollContainer = messageRef.value.closest('.chat-main')
+    if (scrollContainer) {
+      stickyObserver = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            const rect = entry.boundingClientRect
+            const rootRect = entry.rootBounds
+            if (rootRect) {
+              // 判断元素顶部是否处于或滑过 top: 12px 触顶线（因 top: 12px，故在 13px 以内触发），且元素底部仍在视口内
+              const isElementStuck = rect.top <= rootRect.top + 13 && rect.bottom > rootRect.top
+              isStuck.value = isElementStuck
+            }
+          }
+        },
+        {
+          root: scrollContainer,
+          rootMargin: '-12px 0px 0px 0px',
+          threshold: [0.99, 1.0]
+        }
+      )
+      stickyObserver.observe(messageRef.value)
+    }
+  }
+}
+
+onMounted(() => {
+  if (props.message.type === 'human') {
+    initStickyObserver()
+  }
+})
+
+// 关键修复：当对话中的 message 被替换复用时，我们需要通过监测 props.message.id 动态重连 IntersectionObserver
+watch(
+  () => props.message.id,
+  () => {
+    nextTick(() => {
+      if (props.message.type === 'human') {
+        initStickyObserver()
+      }
+    })
+  }
+)
+
+onUnmounted(() => {
+  if (stickyObserver) {
+    stickyObserver.disconnect()
+    stickyObserver = null
+  }
+})
 
 const copyToClipboard = async (text) => {
   try {
@@ -293,10 +440,37 @@ const parsedData = computed(() => {
   &.sent {
     max-width: 95%;
     color: var(--gray-1000);
-    background-color: var(--main-50);
+    background-color: color-mix(in srgb, var(--main-50) 85%, transparent);
     align-self: flex-end;
     border-radius: 0.5rem;
     padding: 0.5rem 1rem;
+
+    // 原地吸顶悬浮
+    position: sticky;
+    top: 12px;
+    z-index: 10;
+
+    // 磨砂玻璃半透效果
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+
+    // 投影增强，用于在悬浮或重合时提高界限识别度
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+
+    // 适配暗色模式阴影
+    .dark &,
+    [data-theme='dark'] & {
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+    }
+  }
+
+  &.is-shrunk {
+    padding: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    border: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
   }
 
   &.assistant,
@@ -325,31 +499,170 @@ const parsedData = computed(() => {
     cursor: pointer;
     color: var(--gray-400);
     transition: all 0.2s ease;
+  }
+
+  // 历史消息气泡提及药丸精致流式样式 (引入共享 Less 模块，开启暗色自适应与只读展示)
+  @import '@/assets/css/mention-pill.less';
+
+  .human-message-wrapper {
+    position: relative;
+    width: 100%;
     display: flex;
-    align-items: center;
-    justify-content: center;
-    opacity: 0;
-    flex-shrink: 0;
+    flex-direction: column;
+    padding-bottom: 0px; // 保持气泡完美包裹文字，不加底部内边距
 
-    &:hover {
-      color: var(--main-color);
+    .message-text {
+      flex: 1;
+      min-width: 0;
+      transition: max-height 0.3s ease;
     }
 
-    &.is-copied {
-      color: var(--color-success-500);
-      opacity: 1;
-    }
-
-    &.human-copy {
+    // 绝对定位在气泡外部右下角的动作条 (彻底移出淡蓝色框外)
+    .human-action-bar {
       position: absolute;
-      left: -28px;
-      bottom: 8px;
+      right: 0px;
+      bottom: -20px; // 使用负数 bottom，使其完全悬浮在淡蓝色气泡的下边缘外面！
+      display: inline-flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 6px;
+      pointer-events: auto;
+      z-index: 12;
+
+      // 内联复制按钮样式 (正圆形小按钮，鼠标不放上去不要显示)
+      .inline-copy {
+        opacity: 0;
+        pointer-events: none;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        color: var(--gray-700);
+        background: var(--main-0);
+        border: 1px solid var(--gray-200);
+        box-shadow: 0 3px 8px rgba(0, 0, 0, 0.08);
+        cursor: pointer;
+
+        &:hover {
+          background: var(--main-50);
+          color: var(--main-700);
+          border-color: var(--main-200);
+          transform: translateY(-1px);
+          box-shadow: 0 4px 10px rgba(0, 0, 0, 0.12);
+        }
+
+        &.is-copied {
+          opacity: 1 !important;
+          pointer-events: auto !important;
+          color: var(--color-success-500);
+          background: var(--main-0);
+          border-color: var(--color-success-500);
+        }
+      }
+    }
+
+    // 悬浮在气泡上时高亮显示复制按钮
+    &:hover {
+      .human-action-bar .inline-copy {
+        opacity: 0.85;
+        pointer-events: auto;
+      }
+    }
+
+    // 向右收缩后的悬浮胶囊/球样式
+    .stuck-shrunk-ball {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 6px 12px;
+      border-radius: 18px;
+      background: var(--main-0);
+      border: 1px solid var(--gray-200);
+      box-shadow: 0 3px 10px rgba(0, 0, 0, 0.08);
+      color: var(--main-700);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      transition: all 0.2s ease;
+      animation: fadeInUp 0.2s ease;
+
+      &:hover {
+        background: var(--main-50);
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+        
+        .arrow-hint {
+          transform: translateX(-2px);
+        }
+      }
+
+      .arrow-hint {
+        transition: transform 0.2s ease;
+        color: var(--gray-400);
+      }
+    }
+
+    // 吸顶多行状态下的特定布局
+    &.is-stuck-layout {
+      gap: 8px;
+
+      // 如果处于折叠状态，左右排列，文字限制单行显示
+      &.is-collapsed {
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+
+        .message-text {
+          max-height: 24px;
+          white-space: nowrap;
+          text-overflow: ellipsis;
+          overflow: hidden;
+          padding-right: 70px; // 给右侧绝对定位的动作条留出呼吸宽度，彻底防止文字重叠
+        }
+
+        .human-action-bar {
+          top: 50%;
+          bottom: auto;
+          transform: translateY(-50%);
+          right: 0px;
+        }
+      }
+
+      // 如果处于展开状态，动作按钮挂在下边缘外侧
+      &:not(.is-collapsed) {
+        .human-action-bar {
+          right: 0px;
+          bottom: -20px;
+        }
+      }
     }
   }
 
-  &:hover {
-    .message-copy-btn {
-      opacity: 1;
+  // 动作条通用图标按钮样式 (正圆形小球悬浮按钮)
+  .action-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--main-0);
+    border: 1px solid var(--gray-200);
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.08);
+    color: var(--gray-700);
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+
+    &:hover {
+      background: var(--main-50);
+      color: var(--main-700);
+      border-color: var(--main-200);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.12);
     }
   }
 

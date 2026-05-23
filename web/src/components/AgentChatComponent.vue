@@ -256,8 +256,7 @@ import AgentInputArea from '@/components/AgentInputArea.vue'
 import AgentMessageComponent from '@/components/AgentMessageComponent.vue'
 import RefsComponent from '@/components/RefsComponent.vue'
 import ToolCallsGroupComponent from '@/components/ToolCallsGroupComponent.vue'
-import { Bot, Telescope, ChevronDown, ChevronUp } from 'lucide-vue-next'
-import { renderUserMessage } from '@/utils/mention'
+import { Bot, Telescope, ChevronDown } from 'lucide-vue-next'
 import { handleChatError, handleValidationError } from '@/utils/errorHandler'
 import { ScrollController } from '@/utils/scrollController'
 import { AgentValidator } from '@/utils/agentValidator'
@@ -833,8 +832,6 @@ const maybeInsertThreadConfigNotice = () => {
 const scrollController = new ScrollController('.chat-main')
 const chatMainRef = ref(null)
 
-// 聊天滚动时吸顶的用户问题状态与控制
-const stickyUserMessage = ref(null)
 
 const handleChatScroll = (e) => {
   const container = e.target
@@ -948,7 +945,6 @@ onMounted(() => {
     const chatMainContainer = document.querySelector('.chat-main')
     if (chatMainContainer) {
       chatMainContainer.addEventListener('scroll', scrollController.handleScroll, { passive: true })
-      chatMainContainer.addEventListener('scroll', handleChatScroll, { passive: true })
     }
 
     startChatMainResizeObserver()
@@ -966,10 +962,6 @@ onDeactivated(() => {
 })
 
 onUnmounted(() => {
-  const chatMainContainer = document.querySelector('.chat-main')
-  if (chatMainContainer) {
-    chatMainContainer.removeEventListener('scroll', handleChatScroll)
-  }
   scrollController.cleanup()
   stopChatMainResizeObserver()
   if (sendCooldownTimer) {
@@ -2449,7 +2441,6 @@ watch(currentChatId, (threadId, oldThreadId) => {
     color: var(--gray-600);
   }
 }
-
 /* 动态悬浮提问条样式 */
 .sticky-user-query-bar {
   position: sticky;
