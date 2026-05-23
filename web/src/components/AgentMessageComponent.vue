@@ -44,6 +44,17 @@
           @click="handleMessageClick"
           v-html="renderUserMessage(message.content)"
         ></p>
+        
+        <!-- 左右收起按钮 (仅在吸顶且多行时可用，绝对定位在左下角，默认隐藏，hover 显现) -->
+        <div
+          v-if="isStuck && isMultiLine"
+          class="action-icon-btn shrink-right-btn"
+          @click.stop="isShrunkRight = true"
+          title="向右收起"
+        >
+          <ChevronRight size="13" />
+        </div>
+
         <div class="human-action-bar">
           <!-- 内联复制按钮 (默认不显示，hover 显现) -->
           <div
@@ -54,15 +65,6 @@
           >
             <Check v-if="isCopied" size="13" />
             <Copy v-else size="13" />
-          </div>
-          <!-- 左右收起按钮 (仅在吸顶且多行时可用) -->
-          <div
-            v-if="isStuck && isMultiLine"
-            class="action-icon-btn shrink-right-btn"
-            @click.stop="isShrunkRight = true"
-            title="向右收起"
-          >
-            <ChevronRight size="13" />
           </div>
           <!-- 上下折叠/展开纯图标按钮 (仅在吸顶且多行时可用) -->
           <div
@@ -564,12 +566,27 @@ const parsedData = computed(() => {
       }
     }
 
-    // 悬浮在气泡上时高亮显示复制按钮
+    // 悬浮在气泡上时高亮显示复制按钮与收起按钮
     &:hover {
       .human-action-bar .inline-copy {
         opacity: 0.85;
         pointer-events: auto;
       }
+      .shrink-right-btn {
+        opacity: 0.85;
+        pointer-events: auto;
+      }
+    }
+
+    // 左右收起按钮 (绝对定位悬浮在左下方外面，默认不显示，hover 显现)
+    .shrink-right-btn {
+      position: absolute;
+      left: 0px;
+      bottom: -20px; // 使用负数 bottom，使其完全悬浮在气泡外的左下角边缘！
+      opacity: 0;
+      pointer-events: none;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      z-index: 12;
     }
 
     // 向右收缩后的悬浮胶囊/球样式
@@ -621,6 +638,7 @@ const parsedData = computed(() => {
           white-space: nowrap;
           text-overflow: ellipsis;
           overflow: hidden;
+          padding-left: 32px;  // 避让左侧绝对定位的收缩按钮
           padding-right: 70px; // 给右侧绝对定位的动作条留出呼吸宽度，彻底防止文字重叠
         }
 
@@ -630,12 +648,23 @@ const parsedData = computed(() => {
           transform: translateY(-50%);
           right: 0px;
         }
+
+        .shrink-right-btn {
+          top: 50%;
+          bottom: auto;
+          transform: translateY(-50%);
+          left: 0px;
+        }
       }
 
       // 如果处于展开状态，动作按钮挂在下边缘外侧
       &:not(.is-collapsed) {
         .human-action-bar {
           right: 0px;
+          bottom: -20px;
+        }
+        .shrink-right-btn {
+          left: 0px;
           bottom: -20px;
         }
       }
