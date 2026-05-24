@@ -284,8 +284,6 @@ const nextExecutions = computed(() => {
   return getNextExecutions(tempCronExpr.value, 5)
 })
 
-
-
 // ============ Actions ============
 const toggleWeekDay = (val) => {
   const current = [...cronDayOfWeek.value]
@@ -483,14 +481,11 @@ watch(
 )
 
 // 监听临时表达式修改，若合法则立刻实时向上游表单双向绑定同步数据，实现真正的所见即所得
-watch(
-  tempCronExpr,
-  (newVal) => {
-    if (validateCron(newVal)) {
-      emit('update:value', newVal)
-    }
+watch(tempCronExpr, (newVal) => {
+  if (validateCron(newVal)) {
+    emit('update:value', newVal)
   }
-)
+})
 
 const formatPredictionDate = (date) => {
   const y = date.getFullYear()
@@ -506,257 +501,249 @@ const formatPredictionDate = (date) => {
 <template>
   <div class="cron-selector-wrapper">
     <div class="cron-editor-panel">
-          <!-- 顶部大药丸模式切换 Toggle -->
-          <div class="panel-header">
-            <div class="mode-toggle-wrapper">
-              <div
-                class="mode-toggle-btn"
-                :class="{ active: !isAdvancedMode }"
-                @click="isAdvancedMode = false"
-              >
-                快捷配置
-              </div>
-              <div
-                class="mode-toggle-btn"
-                :class="{ active: isAdvancedMode }"
-                @click="isAdvancedMode = true"
-              >
-                高级自定义 (Cron)
-              </div>
+      <!-- 顶部大药丸模式切换 Toggle -->
+      <div class="panel-header">
+        <div class="mode-toggle-wrapper">
+          <div
+            class="mode-toggle-btn"
+            :class="{ active: !isAdvancedMode }"
+            @click="isAdvancedMode = false"
+          >
+            快捷配置
+          </div>
+          <div
+            class="mode-toggle-btn"
+            :class="{ active: isAdvancedMode }"
+            @click="isAdvancedMode = true"
+          >
+            高级自定义 (Cron)
+          </div>
+        </div>
+      </div>
+
+      <!-- 中间分栏布局 -->
+      <div class="panel-body">
+        <!-- 左栏：未来 5 次执行时间预测 -->
+        <div class="left-column">
+          <div class="forecast-header">
+            <Calendar :size="14" class="forecast-icon" />
+            <span>未来 5 次执行预测</span>
+          </div>
+          <div class="forecast-list" v-if="isTempCronValid && nextExecutions.length > 0">
+            <div
+              v-for="(date, index) in nextExecutions"
+              :key="index"
+              class="forecast-item"
+              :class="{ first: index === 0 }"
+            >
+              <span class="forecast-dot"></span>
+              <span class="forecast-time">{{ formatPredictionDate(date) }}</span>
             </div>
           </div>
+          <div class="forecast-empty" v-else>
+            <AlertCircle :size="14" class="text-danger" />
+            <span>暂无有效的执行预测</span>
+          </div>
+        </div>
 
-          <!-- 中间分栏布局 -->
-          <div class="panel-body">
-            <!-- 左栏：未来 5 次执行时间预测 -->
-            <div class="left-column">
-              <div class="forecast-header">
-                <Calendar :size="14" class="forecast-icon" />
-                <span>未来 5 次执行预测</span>
-              </div>
-              <div class="forecast-list" v-if="isTempCronValid && nextExecutions.length > 0">
-                <div
-                  v-for="(date, index) in nextExecutions"
-                  :key="index"
-                  class="forecast-item"
-                  :class="{ first: index === 0 }"
-                >
-                  <span class="forecast-dot"></span>
-                  <span class="forecast-time">{{ formatPredictionDate(date) }}</span>
-                </div>
-              </div>
-              <div class="forecast-empty" v-else>
-                <AlertCircle :size="14" class="text-danger" />
-                <span>暂无有效的执行预测</span>
-              </div>
+        <!-- 右栏：配置选项及翻译 -->
+        <div class="right-column">
+          <!-- A. 快捷配置面板 -->
+          <div v-if="!isAdvancedMode" class="quick-config-container">
+            <div class="right-top-section">
+              <div class="frequency-title">执行频率</div>
+              <a-radio-group v-model:value="quickType" size="small" class="quick-type-radios">
+                <a-radio-button value="interval">按间隔</a-radio-button>
+                <a-radio-button value="daily">按天</a-radio-button>
+                <a-radio-button value="weekly">按周</a-radio-button>
+                <a-radio-button value="monthly">按月</a-radio-button>
+              </a-radio-group>
             </div>
 
-            <!-- 右栏：配置选项及翻译 -->
-            <div class="right-column">
-              <!-- A. 快捷配置面板 -->
-              <div v-if="!isAdvancedMode" class="quick-config-container">
-                <div class="right-top-section">
-                  <div class="frequency-title">执行频率</div>
-                  <a-radio-group v-model:value="quickType" size="small" class="quick-type-radios">
-                    <a-radio-button value="interval">按间隔</a-radio-button>
-                    <a-radio-button value="daily">按天</a-radio-button>
-                    <a-radio-button value="weekly">按周</a-radio-button>
-                    <a-radio-button value="monthly">按月</a-radio-button>
-                  </a-radio-group>
-                </div>
-
-                <!-- 二级配置项 -->
-                <div class="quick-details-wrapper">
-                  <!-- 间隔 -->
-                  <div
-                    v-if="quickType === 'interval'"
-                    class="setting-detail-row flex-column align-start"
-                  >
-                    <div class="setting-card">
-                      <span class="card-label">运行时间间隔</span>
-                      <div class="flex-align-center gap-6" style="height: 34px">
-                        <span>每隔</span>
-                        <a-select
-                          v-model:value="cronIntervalMins"
-                          size="small"
-                          class="styled-select"
-                          style="width: 80px"
-                        >
-                          <a-select-option :value="1">1</a-select-option>
-                          <a-select-option :value="5">5</a-select-option>
-                          <a-select-option :value="10">10</a-select-option>
-                          <a-select-option :value="15">15</a-select-option>
-                          <a-select-option :value="30">30</a-select-option>
-                          <a-select-option :value="60">60</a-select-option>
-                        </a-select>
-                        <span>分钟自动执行一次</span>
-                      </div>
-                      <span class="card-tip">高频自动任务，适用于即时性监控或定时同步场景</span>
-                    </div>
+            <!-- 二级配置项 -->
+            <div class="quick-details-wrapper">
+              <!-- 间隔 -->
+              <div
+                v-if="quickType === 'interval'"
+                class="setting-detail-row flex-column align-start"
+              >
+                <div class="setting-card">
+                  <span class="card-label">运行时间间隔</span>
+                  <div class="flex-align-center gap-6" style="height: 34px">
+                    <span>每隔</span>
+                    <a-select
+                      v-model:value="cronIntervalMins"
+                      size="small"
+                      class="styled-select"
+                      style="width: 80px"
+                    >
+                      <a-select-option :value="1">1</a-select-option>
+                      <a-select-option :value="5">5</a-select-option>
+                      <a-select-option :value="10">10</a-select-option>
+                      <a-select-option :value="15">15</a-select-option>
+                      <a-select-option :value="30">30</a-select-option>
+                      <a-select-option :value="60">60</a-select-option>
+                    </a-select>
+                    <span>分钟自动执行一次</span>
                   </div>
-
-                  <!-- 每天 -->
-                  <div
-                    v-else-if="quickType === 'daily'"
-                    class="setting-detail-row flex-column align-start"
-                  >
-                    <div class="setting-card">
-                      <span class="card-label">运行时间点</span>
-                      <div class="time-picker-simulate">
-                        <a-select
-                          v-model:value="cronHour"
-                          :options="hourOptions"
-                          size="small"
-                          class="styled-select"
-                          style="width: 65px"
-                        />
-                        <span class="colon">:</span>
-                        <a-select
-                          v-model:value="cronMinute"
-                          :options="minuteOptions"
-                          size="small"
-                          class="styled-select"
-                          style="width: 65px"
-                        />
-                        <Clock :size="12" class="text-muted" style="margin-left: 6px" />
-                      </div>
-                      <span class="card-tip">每天将在设定的固定时刻在后台自动触发运行</span>
-                    </div>
-                  </div>
-
-                  <!-- 按周 -->
-                  <div
-                    v-else-if="quickType === 'weekly'"
-                    class="setting-detail-row flex-column align-start"
-                  >
-                    <div class="setting-card">
-                      <span class="card-label">运行星期</span>
-                      <div class="week-badges-container">
-                        <div
-                          v-for="opt in weekBadgeOptions"
-                          :key="opt.value"
-                          class="week-badge-item"
-                          :class="{ active: cronDayOfWeek.includes(opt.value) }"
-                          @click="toggleWeekDay(opt.value)"
-                        >
-                          {{ opt.label }}
-                        </div>
-                      </div>
-                      <div class="start-time-row" style="margin-top: 8px">
-                        <span class="label">开始时间</span>
-                        <div class="time-picker-simulate">
-                          <a-select
-                            v-model:value="cronHour"
-                            :options="hourOptions"
-                            size="small"
-                            class="styled-select"
-                            style="width: 65px"
-                          />
-                          <span class="colon">:</span>
-                          <a-select
-                            v-model:value="cronMinute"
-                            :options="minuteOptions"
-                            size="small"
-                            class="styled-select"
-                            style="width: 65px"
-                          />
-                          <Clock :size="12" class="text-muted" style="margin-left: 6px" />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <!-- 按月 (恢复为极简、直观的单天选择) -->
-                  <div
-                    v-else-if="quickType === 'monthly'"
-                    class="setting-detail-row flex-column align-start"
-                  >
-                    <div class="setting-card">
-                      <span class="card-label">运行时间点</span>
-                      <div class="flex-align-center gap-6" style="height: 34px; box-sizing: border-box">
-                        <span>每月的</span>
-                        <a-select
-                          v-model:value="cronDayOfMonth"
-                          :options="dayOfMonthOptions"
-                          size="small"
-                          class="styled-select"
-                          style="width: 80px"
-                        />
-                        <span>自动触发</span>
-                      </div>
-                      <div class="start-time-row" style="margin-top: 8px">
-                        <span class="label">开始时间</span>
-                        <div class="time-picker-simulate">
-                          <a-select
-                            v-model:value="cronHour"
-                            :options="hourOptions"
-                            size="small"
-                            class="styled-select"
-                            style="width: 65px"
-                          />
-                          <span class="colon">:</span>
-                          <a-select
-                            v-model:value="cronMinute"
-                            :options="minuteOptions"
-                            size="small"
-                            class="styled-select"
-                            style="width: 65px"
-                          />
-                          <Clock :size="12" class="text-muted" style="margin-left: 6px" />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- 实时中文翻译卡片 -->
-                <div class="translation-card">
-                  <div class="flex-align-center gap-6 text-translation">
-                    <Info :size="14" class="info-icon" />
-                    <span class="translate-text">{{ translateText }}</span>
-                  </div>
+                  <span class="card-tip">高频自动任务，适用于即时性监控或定时同步场景</span>
                 </div>
               </div>
 
-              <!-- B. 高级自定义面板 -->
-              <div v-else class="advanced-config-container">
-                <div class="right-top-section">
-                  <div class="advanced-title">高级自定义 (Cron)</div>
-                  <!-- 极客深色代码风输入框 -->
-                  <div class="code-editor-box">
-                    <div class="editor-input-row">
-                      <input
-                        v-model="tempCronExpr"
-                        placeholder="* * * * *"
-                        class="editor-raw-input"
+              <!-- 每天 -->
+              <div
+                v-else-if="quickType === 'daily'"
+                class="setting-detail-row flex-column align-start"
+              >
+                <div class="setting-card">
+                  <span class="card-label">运行时间点</span>
+                  <div class="time-picker-simulate">
+                    <a-select
+                      v-model:value="cronHour"
+                      :options="hourOptions"
+                      size="small"
+                      class="styled-select"
+                      style="width: 65px"
+                    />
+                    <span class="colon">:</span>
+                    <a-select
+                      v-model:value="cronMinute"
+                      :options="minuteOptions"
+                      size="small"
+                      class="styled-select"
+                      style="width: 65px"
+                    />
+                    <Clock :size="12" class="text-muted" style="margin-left: 6px" />
+                  </div>
+                  <span class="card-tip">每天将在设定的固定时刻在后台自动触发运行</span>
+                </div>
+              </div>
+
+              <!-- 按周 -->
+              <div
+                v-else-if="quickType === 'weekly'"
+                class="setting-detail-row flex-column align-start"
+              >
+                <div class="setting-card">
+                  <span class="card-label">运行星期</span>
+                  <div class="week-badges-container">
+                    <div
+                      v-for="opt in weekBadgeOptions"
+                      :key="opt.value"
+                      class="week-badge-item"
+                      :class="{ active: cronDayOfWeek.includes(opt.value) }"
+                      @click="toggleWeekDay(opt.value)"
+                    >
+                      {{ opt.label }}
+                    </div>
+                  </div>
+                  <div class="start-time-row" style="margin-top: 8px">
+                    <span class="label">开始时间</span>
+                    <div class="time-picker-simulate">
+                      <a-select
+                        v-model:value="cronHour"
+                        :options="hourOptions"
+                        size="small"
+                        class="styled-select"
+                        style="width: 65px"
                       />
-                      <div class="validation-status">
-                        <span v-if="isTempCronValid" class="valid-badge">
-                          <Check :size="12" class="icon" /> 验证通过
-                        </span>
-                        <span v-else class="invalid-badge">
-                          <AlertCircle :size="12" class="icon" /> 格式错误
-                        </span>
-                      </div>
+                      <span class="colon">:</span>
+                      <a-select
+                        v-model:value="cronMinute"
+                        :options="minuteOptions"
+                        size="small"
+                        class="styled-select"
+                        style="width: 65px"
+                      />
+                      <Clock :size="12" class="text-muted" style="margin-left: 6px" />
                     </div>
                   </div>
-                  <span class="text-muted format-tip">五位标准格式: 分 时 日 月 周 (空格分隔)</span>
                 </div>
+              </div>
 
-                <!-- 翻译提示 -->
-                <div
-                  class="translation-card code-translation"
-                  :class="{ invalid: !isTempCronValid }"
-                >
-                  <div class="flex-align-center gap-6 text-translation">
-                    <Info :size="14" class="info-icon" />
-                    <span class="translate-text">{{ translateText }}</span>
+              <!-- 按月 (恢复为极简、直观的单天选择) -->
+              <div
+                v-else-if="quickType === 'monthly'"
+                class="setting-detail-row flex-column align-start"
+              >
+                <div class="setting-card">
+                  <span class="card-label">运行时间点</span>
+                  <div class="flex-align-center gap-6" style="height: 34px; box-sizing: border-box">
+                    <span>每月的</span>
+                    <a-select
+                      v-model:value="cronDayOfMonth"
+                      :options="dayOfMonthOptions"
+                      size="small"
+                      class="styled-select"
+                      style="width: 80px"
+                    />
+                    <span>自动触发</span>
+                  </div>
+                  <div class="start-time-row" style="margin-top: 8px">
+                    <span class="label">开始时间</span>
+                    <div class="time-picker-simulate">
+                      <a-select
+                        v-model:value="cronHour"
+                        :options="hourOptions"
+                        size="small"
+                        class="styled-select"
+                        style="width: 65px"
+                      />
+                      <span class="colon">:</span>
+                      <a-select
+                        v-model:value="cronMinute"
+                        :options="minuteOptions"
+                        size="small"
+                        class="styled-select"
+                        style="width: 65px"
+                      />
+                      <Clock :size="12" class="text-muted" style="margin-left: 6px" />
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
+
+            <!-- 实时中文翻译卡片 -->
+            <div class="translation-card">
+              <div class="flex-align-center gap-6 text-translation">
+                <Info :size="14" class="info-icon" />
+                <span class="translate-text">{{ translateText }}</span>
+              </div>
+            </div>
           </div>
 
+          <!-- B. 高级自定义面板 -->
+          <div v-else class="advanced-config-container">
+            <div class="right-top-section">
+              <div class="advanced-title">高级自定义 (Cron)</div>
+              <!-- 极客深色代码风输入框 -->
+              <div class="code-editor-box">
+                <div class="editor-input-row">
+                  <input v-model="tempCronExpr" placeholder="* * * * *" class="editor-raw-input" />
+                  <div class="validation-status">
+                    <span v-if="isTempCronValid" class="valid-badge">
+                      <Check :size="12" class="icon" /> 验证通过
+                    </span>
+                    <span v-else class="invalid-badge">
+                      <AlertCircle :size="12" class="icon" /> 格式错误
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <span class="text-muted format-tip">五位标准格式: 分 时 日 月 周 (空格分隔)</span>
+            </div>
+
+            <!-- 翻译提示 -->
+            <div class="translation-card code-translation" :class="{ invalid: !isTempCronValid }">
+              <div class="flex-align-center gap-6 text-translation">
+                <Info :size="14" class="info-icon" />
+                <span class="translate-text">{{ translateText }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -1168,8 +1155,6 @@ const formatPredictionDate = (date) => {
       }
     }
   }
-
-
 }
 
 // 公用 Flex 辅助类

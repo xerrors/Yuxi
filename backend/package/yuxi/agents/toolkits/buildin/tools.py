@@ -173,6 +173,19 @@ def present_artifacts(
     )
 
 
+class AskUserQuestionInput(BaseModel):
+    """向用户发起提问并等待回复的输入参数。"""
+
+    questions: list[dict] | str | None = Field(
+        default=None,
+        description="问题列表，每项包含 {question, options, multi_select, allow_other, question_id}",
+    )
+    question: str = Field(default="", description="兼容字段：单个问题文本")
+    options: list[dict] | str | None = Field(default=None, description="兼容字段：单个问题候选项")
+    multi_select: bool = Field(default=False, description="兼容字段：单个问题是否允许多选")
+    allow_other: bool = Field(default=True, description="兼容字段：单个问题是否允许 Other 自定义答案")
+
+
 ASK_USER_QUESTION_DESCRIPTION = """
 在执行过程中，当你需要用户做决定或补充需求时，使用这个工具向用户提问。
 
@@ -205,6 +218,7 @@ answer 为 object，格式为 {question_id: answer}。
     tags=["交互"],
     display_name="向用户提问",
     description=ASK_USER_QUESTION_DESCRIPTION,
+    args_schema=AskUserQuestionInput,
 )
 def ask_user_question(
     questions: Annotated[

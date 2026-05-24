@@ -2,7 +2,23 @@
 import { ref, reactive, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
-import { Plus, RefreshCw, Play, Edit3, Trash2, FileText, ExternalLink, Info, Maximize2, Minimize2, LayoutGrid, List, Cpu, Clock, Calendar } from 'lucide-vue-next'
+import {
+  Plus,
+  RefreshCw,
+  Play,
+  Edit3,
+  Trash2,
+  FileText,
+  ExternalLink,
+  Info,
+  Maximize2,
+  Minimize2,
+  LayoutGrid,
+  List,
+  Cpu,
+  Clock,
+  Calendar
+} from 'lucide-vue-next'
 
 import { scheduleApi, agentApi } from '@/apis'
 import { useAgentStore } from '@/stores/agent'
@@ -619,7 +635,7 @@ const columns = [
   {
     title: '绑定的智能体配置',
     dataIndex: 'agent_config_id',
-    key: 'agent_config_id',
+    key: 'agent_config_id'
     // 去掉固定宽度以承接自适应弹性拉伸，完美吸收多余空间
   },
   {
@@ -755,7 +771,11 @@ onMounted(async () => {
                 <h3 class="card-title" :title="record.name" @click="showEditModal(record)">
                   {{ record.name }}
                 </h3>
-                <span v-if="record.description" class="card-description text-muted" :title="record.description">
+                <span
+                  v-if="record.description"
+                  class="card-description text-muted"
+                  :title="record.description"
+                >
                   {{ record.description }}
                 </span>
               </div>
@@ -774,9 +794,7 @@ onMounted(async () => {
             <div class="card-body">
               <!-- 绑定智能体配置 -->
               <div class="body-info-row">
-                <span class="info-label text-muted">
-                  <Cpu :size="13" /> 绑定的智能体配置
-                </span>
+                <span class="info-label text-muted"> <Cpu :size="13" /> 绑定的智能体配置 </span>
                 <span class="info-value agent-name-badge">
                   {{ agentConfigMap[record.agent_config_id] || record.agent_config_id }}
                 </span>
@@ -784,9 +802,7 @@ onMounted(async () => {
 
               <!-- Cron 表达式及周期 -->
               <div class="body-info-row">
-                <span class="info-label text-muted">
-                  <Clock :size="13" /> 定时周期 (Cron)
-                </span>
+                <span class="info-label text-muted"> <Clock :size="13" /> 定时周期 (Cron) </span>
                 <span class="info-value cron-badge-container">
                   <code class="cron-code-text">{{ record.cron_expr }}</code>
                   <span class="tz-badge-text">{{ record.timezone }}</span>
@@ -816,25 +832,37 @@ onMounted(async () => {
             <!-- 卡片悬浮/常规动作控制面板 -->
             <div class="card-actions-panel">
               <a-tooltip title="立即运行一次" :mouse-enter-delay="0.4">
-                <button class="card-action-btn play-btn" @click="handleTrigger(record)" type="button">
+                <button
+                  class="card-action-btn play-btn"
+                  @click="handleTrigger(record)"
+                  type="button"
+                >
                   <Play :size="13" />
                 </button>
               </a-tooltip>
-              
+
               <a-tooltip title="执行日志" :mouse-enter-delay="0.4">
                 <button class="card-action-btn log-btn" @click="showLogs(record)" type="button">
                   <FileText :size="13" />
                 </button>
               </a-tooltip>
-              
+
               <a-tooltip title="编辑任务" :mouse-enter-delay="0.4">
-                <button class="card-action-btn edit-btn" @click="showEditModal(record)" type="button">
+                <button
+                  class="card-action-btn edit-btn"
+                  @click="showEditModal(record)"
+                  type="button"
+                >
                   <Edit3 :size="13" />
                 </button>
               </a-tooltip>
-              
+
               <a-tooltip title="删除任务" :mouse-enter-delay="0.4">
-                <button class="card-action-btn delete-btn" @click="handleDelete(record)" type="button">
+                <button
+                  class="card-action-btn delete-btn"
+                  @click="handleDelete(record)"
+                  type="button"
+                >
                   <Trash2 :size="13" />
                 </button>
               </a-tooltip>
@@ -850,7 +878,7 @@ onMounted(async () => {
                 <Cpu :size="40" stroke="var(--main-400)" />
               </div>
             </template>
-            <a-button type="primary" @click="showCreateModal" style="margin-top: 16px;">
+            <a-button type="primary" @click="showCreateModal" style="margin-top: 16px">
               <Plus :size="14" /> 新增定时任务
             </a-button>
           </a-empty>
@@ -1301,8 +1329,9 @@ onMounted(async () => {
   &:hover {
     transform: translateY(-4px);
     border-color: var(--main-300);
-    box-shadow: 0 10px 20px -8px color-mix(in srgb, var(--main-color) 12%, transparent),
-                0 4px 12px rgba(0, 0, 0, 0.02);
+    box-shadow:
+      0 10px 20px -8px color-mix(in srgb, var(--main-color) 12%, transparent),
+      0 4px 12px rgba(0, 0, 0, 0.02);
 
     .card-actions-panel {
       opacity: 1;
@@ -1324,7 +1353,7 @@ onMounted(async () => {
       color: var(--gray-500);
       border-color: var(--gray-150);
     }
-    
+
     .cron-code-text {
       background-color: var(--gray-100);
       color: var(--gray-500);
@@ -1436,7 +1465,7 @@ onMounted(async () => {
     max-width: 100%;
 
     .cron-code-text {
-      font-family: Menlo, Monaco, Consolas, "Courier New", monospace;
+      font-family: Menlo, Monaco, Consolas, 'Courier New', monospace;
       background-color: var(--gray-50);
       border: 1px solid var(--gray-200);
       color: var(--gray-800);
@@ -1488,7 +1517,7 @@ onMounted(async () => {
       display: inline-flex;
       align-items: center;
       gap: 4px;
-      
+
       .paused-text {
         color: var(--gray-400);
         font-style: italic;
@@ -1970,11 +1999,15 @@ onMounted(async () => {
       height: 32px;
       background: var(--gray-300);
       border-radius: 2px;
-      transition: background 0.2s, height 0.2s, width 0.2s;
+      transition:
+        background 0.2s,
+        height 0.2s,
+        width 0.2s;
     }
 
     /* 悬浮及拖动时指示条高亮为主题色 */
-    &:hover::after, &:active::after {
+    &:hover::after,
+    &:active::after {
       background: var(--main-400) !important;
       height: 38px; /* 悬浮时微增高度，充满呼吸感 */
     }
