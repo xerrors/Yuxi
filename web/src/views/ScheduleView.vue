@@ -53,6 +53,9 @@ const flushResize = () => {
   resizeFrameId = 0
   if (!isResizing.value) return
 
+  const drawerEl = document.querySelector('.resizable-drawer .ant-drawer-content-wrapper')
+  if (!drawerEl) return
+
   const deltaX = startX - pendingClientX // 往左拖拽是变宽
   let newWidth = startWidth + deltaX
 
@@ -61,8 +64,8 @@ const flushResize = () => {
   if (newWidth < 450) newWidth = 450
   if (newWidth > maxWidth) newWidth = maxWidth
 
-  // 实时驱动响应式状态，避免与 Vue 重绘机制冲突，在无 transition 阻尼下实现百分之百贴手实时移动
-  drawerWidth.value = newWidth
+  // 纯真实 DOM 宽度更新，高频移动期间绝不改动任何响应式状态，避免触发子表单和组件的高开销 diff 重绘，确保极致的 0 延迟
+  drawerEl.style.width = `${newWidth}px`
 }
 
 const queueResize = (clientX) => {
@@ -75,6 +78,12 @@ const queueResize = (clientX) => {
 const handleResizeMouseDown = (e) => {
   if (e.button !== 0) return
   e.preventDefault()
+
+  const drawerEl = document.querySelector('.resizable-drawer .ant-drawer-content-wrapper')
+  if (!drawerEl) return
+
+  // 1. 强行在真实 DOM 上瞬间切断 Transition 过渡动画，保障拖拽瞬间毫无阻尼
+  drawerEl.style.setProperty('transition', 'none', 'important')
 
   isResizing.value = true
   resizePointerId = e.pointerId
@@ -117,6 +126,12 @@ const stopResize = (e) => {
     console.warn('释放指针捕获失败:', err)
   }
 
+  // 2. 拖拽结束，恢复真实 DOM 上的过渡动画
+  const drawerEl = document.querySelector('.resizable-drawer .ant-drawer-content-wrapper')
+  if (drawerEl) {
+    drawerEl.style.removeProperty('transition')
+  }
+
   let finalClientX = e ? e.clientX : pendingClientX
   const deltaX = startX - finalClientX
   let finalWidth = startWidth + deltaX
@@ -124,7 +139,7 @@ const stopResize = (e) => {
   if (finalWidth < 450) finalWidth = 450
   if (finalWidth > maxWidth) finalWidth = maxWidth
 
-  // 写入最终宽度以同步 Vue 状态
+  // 3. 拖拽结束时，一次性写入并同步最终宽度到 Vue 响应式状态中
   drawerWidth.value = finalWidth
   preFullWidth.value = finalWidth
 
