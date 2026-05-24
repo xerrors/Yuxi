@@ -518,6 +518,7 @@ const formatPredictionDate = (date) => {
       placement="bottomLeft"
       :overlay-style="{ width: '640px' }"
       :overlay-inner-style="{ padding: '0px', borderRadius: '16px', overflow: 'hidden' }"
+      :arrow="false"
       destroy-on-close
     >
       <a-input
