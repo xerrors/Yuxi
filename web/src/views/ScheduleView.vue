@@ -64,8 +64,10 @@ const flushResize = () => {
   if (newWidth < 450) newWidth = 450
   if (newWidth > maxWidth) newWidth = maxWidth
 
-  // 纯真实 DOM 宽度更新，高频移动期间绝不改动任何响应式状态，避免触发子表单和组件的高开销 diff 重绘，确保极致的 0 延迟
-  drawerEl.style.width = `${newWidth}px`
+  // 强力覆写所有相关宽度样式，彻底粉碎 ant-design-vue 抽屉内部的任何物理 CSS 宽度约束
+  drawerEl.style.setProperty('width', `${newWidth}px`, 'important')
+  drawerEl.style.setProperty('min-width', `${newWidth}px`, 'important')
+  drawerEl.style.setProperty('max-width', `${newWidth}px`, 'important')
 }
 
 const queueResize = (clientX) => {
@@ -126,10 +128,13 @@ const stopResize = (e) => {
     console.warn('释放指针捕获失败:', err)
   }
 
-  // 2. 拖拽结束，恢复真实 DOM 上的过渡动画
+  // 2. 拖拽结束，恢复真实 DOM 上的过渡动画并干净擦除所有强制宽度样式覆盖
   const drawerEl = document.querySelector('.resizable-drawer .ant-drawer-content-wrapper')
   if (drawerEl) {
     drawerEl.style.removeProperty('transition')
+    drawerEl.style.removeProperty('width')
+    drawerEl.style.removeProperty('min-width')
+    drawerEl.style.removeProperty('max-width')
   }
 
   let finalClientX = e ? e.clientX : pendingClientX
