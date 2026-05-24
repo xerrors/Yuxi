@@ -656,6 +656,20 @@ onMounted(async () => {
       destroy-on-close
     >
       <a-form ref="formRef" :model="formState" :rules="rules" layout="vertical" class="custom-form">
+        <!-- 1. 核心指令：Query 提示词 -->
+        <a-form-item label="Query 提示词 (触发首条输入)" name="query">
+          <a-textarea
+            v-model:value="formState.query"
+            :rows="3"
+            placeholder="例如：请播报今天的新闻与重要待办事项"
+          />
+          <div class="form-item-tip text-muted">
+            <Info :size="12" /> 定时触发时，系统将以此 Query
+            作为用户第一句话发给智能体自动开启对话。
+          </div>
+        </a-form-item>
+
+        <!-- 2. 基础信息：名称与描述 -->
         <a-form-item label="任务名称" name="name">
           <a-input v-model:value="formState.name" placeholder="请输入方便记忆的任务名称" />
         </a-form-item>
@@ -668,6 +682,7 @@ onMounted(async () => {
           />
         </a-form-item>
 
+        <!-- 3. 运行环境：绑定智能体 与 状态开关 -->
         <div class="form-row">
           <a-form-item label="绑定智能体配置" name="agent_config_id" class="form-col-6">
             <a-select
@@ -679,7 +694,19 @@ onMounted(async () => {
             />
           </a-form-item>
 
-          <a-form-item label="执行时区" name="timezone" class="form-col-6">
+          <a-form-item label="任务状态" name="enabled" class="form-col-6">
+            <a-switch
+              v-model:checked="formState.enabled"
+              checked-children="启用"
+              un-checked-children="暂停"
+              style="margin-top: 6px"
+            />
+          </a-form-item>
+        </div>
+
+        <!-- 4. 调度周期：执行时区 与 Cron 表达式 -->
+        <div class="form-row" style="margin-top: 8px">
+          <a-form-item label="执行时区" name="timezone" class="form-col-12" style="width: 100%">
             <a-select v-model:value="formState.timezone" placeholder="请选择时区">
               <a-select-option value="Asia/Shanghai">Asia/Shanghai (北京时间)</a-select-option>
               <a-select-option value="America/New_York"
@@ -695,28 +722,7 @@ onMounted(async () => {
           <CronSelector v-model:value="formState.cron_expr" />
         </a-form-item>
 
-        <div class="form-row" style="margin-top: 16px">
-          <a-form-item label="任务状态" name="enabled" class="form-col-6">
-            <a-switch
-              v-model:checked="formState.enabled"
-              checked-children="启用"
-              un-checked-children="暂停"
-            />
-          </a-form-item>
-        </div>
-
-        <a-form-item label="Query 提示词 (触发首条输入)" name="query">
-          <a-textarea
-            v-model:value="formState.query"
-            :rows="3"
-            placeholder="例如：请播报今天的新闻与重要待办事项"
-          />
-          <div class="form-item-tip text-muted">
-            <Info :size="12" /> 定时触发时，系统将以此 Query
-            作为用户第一句话发给智能体自动开启对话。
-          </div>
-        </a-form-item>
-
+        <!-- 5. 高级极客配置 -->
         <a-collapse expand-icon-position="end" :ghost="true" class="advanced-collapse">
           <a-collapse-panel key="advanced" header="高级配置 (JSON 格式参数)">
             <a-form-item label="高级参数 (支持配置 override)" name="config_text">
