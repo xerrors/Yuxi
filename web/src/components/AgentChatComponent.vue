@@ -1875,12 +1875,12 @@ watch(currentChatId, (threadId, oldThreadId) => {
 
 // ==================== Undo / Fork 时间旅行 ====================
 
-const handleUndo = async (message) => {
+const handleUndo = async (msg) => {
   const threadId = currentChatId.value
-  if (!threadId || !message?.id) return
+  if (!threadId || !msg?.id) return
 
   try {
-    const result = await threadApi.undoThread(threadId, message.id)
+    const result = await threadApi.undoThread(threadId, msg.id)
     message.success('已撤销')
 
     // 重新加载当前线程的消息历史
@@ -1896,12 +1896,12 @@ const handleUndo = async (message) => {
   }
 }
 
-const handleFork = async (message) => {
+const handleFork = async (msg) => {
   const threadId = currentChatId.value
-  if (!threadId || !message?.id) return
+  if (!threadId || !msg?.id) return
 
   try {
-    const result = await threadApi.forkThread(threadId, message.id)
+    const result = await threadApi.forkThread(threadId, msg.id)
     message.success('已分叉到新会话')
 
     // 跳转到新会话
