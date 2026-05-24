@@ -654,6 +654,7 @@ onMounted(async () => {
       :width="600"
       :confirm-loading="modalSaving"
       @ok="handleSave"
+      wrap-class-name="schedule-modal-wrapper"
       destroy-on-close
     >
       <a-form ref="formRef" :model="formState" :rules="rules" layout="vertical" class="custom-form">
@@ -1078,6 +1079,18 @@ onMounted(async () => {
   }
   to {
     transform: rotate(360deg);
+  }
+}
+</style>
+
+<style lang="less">
+/* 全局覆盖 schedule-modal-wrapper 以保证定时表单 Modal 内部滚动，彻底防止底部按钮掉出屏幕被遮挡 */
+.schedule-modal-wrapper {
+  .ant-modal-body {
+    max-height: calc(100vh - 280px) !important;
+    overflow-y: auto !important;
+    padding-right: 12px !important;
+    scrollbar-width: thin;
   }
 }
 </style>
