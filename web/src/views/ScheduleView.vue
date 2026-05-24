@@ -782,6 +782,7 @@ onMounted(async () => {
       placement="right"
       destroy-on-close
       class="resizable-drawer"
+      :class="{ 'is-resizing': isResizing }"
     >
       <!-- 拖拽拉伸手柄条 -->
       <div class="drawer-resize-handle" @pointerdown="handleResizeMouseDown"></div>
@@ -1244,6 +1245,13 @@ onMounted(async () => {
 
   .ant-drawer-content-wrapper {
     position: relative;
+  }
+
+  /* 拖拽拉伸进行中时，强制关闭 transition 过渡动画，防止由于动画阻尼产生严重的卡顿或拉扯感，完美保障拖拽绝对贴手丝滑 */
+  &.is-resizing {
+    .ant-drawer-content-wrapper {
+      transition: none !important;
+    }
   }
 
   .drawer-resize-handle {
