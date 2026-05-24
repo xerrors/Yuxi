@@ -48,13 +48,11 @@ let pendingClientX = 0
 let resizeFrameId = 0
 let startX = 0
 let startWidth = 0
+let drawerEl = null // 缓存在高频拖拽中直接操作的真实 DOM 节点
 
 const flushResize = () => {
   resizeFrameId = 0
-  if (!isResizing.value) return
-
-  const drawerEl = document.querySelector('.resizable-drawer .ant-drawer-content-wrapper')
-  if (!drawerEl) return
+  if (!isResizing.value || !drawerEl) return
 
   const deltaX = startX - pendingClientX // 往左拖拽是变宽
   let newWidth = startWidth + deltaX
@@ -81,10 +79,14 @@ const handleResizeMouseDown = (e) => {
   if (e.button !== 0) return
   e.preventDefault()
 
-  const drawerEl = document.querySelector('.resizable-drawer .ant-drawer-content-wrapper')
+  // 1. 采用最稳健的 closest 祖先元素回溯查找，100% 精准锁定当前抽屉的 wrapper 容器，彻底解决 Portal 导致的 Class 移位问题
+  drawerEl = e.currentTarget.closest('.ant-drawer-content-wrapper')
+  if (!drawerEl) {
+    drawerEl = e.currentTarget.closest('.ant-drawer')
+  }
   if (!drawerEl) return
 
-  // 1. 强行在真实 DOM 上瞬间切断 Transition 过渡动画，保障拖拽瞬间毫无阻尼
+  // 2. 强行在真实 DOM 上瞬间切断 Transition 过渡动画，保障拖拽瞬间毫无阻尼
   drawerEl.style.setProperty('transition', 'none', 'important')
 
   isResizing.value = true
@@ -129,7 +131,6 @@ const stopResize = (e) => {
   }
 
   // 2. 拖拽结束，恢复真实 DOM 上的过渡动画并干净擦除所有强制宽度样式覆盖
-  const drawerEl = document.querySelector('.resizable-drawer .ant-drawer-content-wrapper')
   if (drawerEl) {
     drawerEl.style.removeProperty('transition')
     drawerEl.style.removeProperty('width')
@@ -150,6 +151,7 @@ const stopResize = (e) => {
 
   isResizing.value = false
   resizePointerId = null
+  drawerEl = null // 释放 DOM 引用，防止潜在内存泄露
   document.body.style.cursor = ''
   document.body.style.userSelect = ''
 
