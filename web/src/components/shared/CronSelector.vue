@@ -518,7 +518,7 @@ const formatPredictionDate = (date) => {
       placement="bottomLeft"
       :overlay-style="{ width: '640px' }"
       :overlay-inner-style="{ padding: '0px', borderRadius: '16px', overflow: 'hidden' }"
-      :getPopupContainer="(triggerNode) => triggerNode.parentNode"
+      :getPopupContainer="(triggerNode) => triggerNode.closest('.ant-modal-body') || triggerNode.parentNode"
       destroy-on-close
     >
       <a-input
