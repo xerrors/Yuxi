@@ -15,6 +15,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    func,
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
@@ -763,4 +764,91 @@ class AgentRun(Base):
             "finished_at": format_utc_datetime(self.finished_at),
             "created_at": format_utc_datetime(self.created_at),
             "updated_at": format_utc_datetime(self.updated_at),
+        }
+
+
+class ScheduleDefinition(Base):
+    """定时任务配置模型"""
+
+    __tablename__ = "schedule_definitions"
+
+    id = Column(String(64), primary_key=True, comment="Schedule ID")
+    name = Column(String(255), nullable=False, comment="Schedule Name")
+    description = Column(Text, nullable=True, comment="Schedule Description")
+    user_id = Column(String(64), ForeignKey("users.id"), nullable=False, index=True, comment="Creator User ID")
+    agent_config_id = Column(Integer, ForeignKey("agent_configs.id"), nullable=False, comment="Target Agent Config ID")
+    cron_expr = Column(String(128), nullable=False, comment="Cron Expression")
+    timezone = Column(String(64), nullable=False, default="Asia/Shanghai", comment="Timezone")
+    query = Column(Text, nullable=False, comment="User Prompt Query")
+    image_content = Column(Text, nullable=True, comment="Base64 Image Content")
+    config = Column(JSON, nullable=False, default=dict, comment="Additional Agent Config")
+    enabled = Column(Boolean, nullable=False, default=True, index=True, comment="Whether enabled")
+    last_run_at = Column(DateTime(timezone=True), nullable=True, comment="Last execution time")
+    next_run_at = Column(DateTime(timezone=True), nullable=True, index=True, comment="Pre-computed next execution time")
+    run_count = Column(Integer, nullable=False, default=0, comment="Successful run count")
+    failed_count = Column(Integer, nullable=False, default=0, comment="Continuous trigger failure count")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=func.now(), comment="Creation time")
+    updated_at = Column(
+        DateTime(timezone=True), nullable=False, default=func.now(), onupdate=func.now(), comment="Update time"
+    )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "user_id": self.user_id,
+            "agent_config_id": self.agent_config_id,
+            "cron_expr": self.cron_expr,
+            "timezone": self.timezone,
+            "query": self.query,
+            "image_content": self.image_content,
+            "config": self.config or {},
+            "enabled": self.enabled,
+            "last_run_at": format_utc_datetime(self.last_run_at) if self.last_run_at else None,
+            "next_run_at": format_utc_datetime(self.next_run_at) if self.next_run_at else None,
+            "run_count": self.run_count,
+            "failed_count": self.failed_count,
+            "created_at": format_utc_datetime(self.created_at),
+            "updated_at": format_utc_datetime(self.updated_at),
+        }
+
+
+class ScheduleLog(Base):
+    """定时任务执行日志模型"""
+
+    __tablename__ = "schedule_logs"
+
+    id = Column(String(64), primary_key=True, comment="Log ID")
+    schedule_id = Column(
+        String(64),
+        ForeignKey("schedule_definitions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="Schedule ID",
+    )
+    run_id = Column(String(64), nullable=True, comment="Associated agent_runs.id")
+    thread_id = Column(String(64), nullable=True, comment="Associated conversation thread ID")
+    status = Column(String(32), nullable=False, comment="Trigger status: triggered / trigger_failed")
+    execution_status = Column(
+        String(32),
+        nullable=False,
+        default="pending",
+        comment="Run execution status: pending/running/completed/failed/cancelled",
+    )
+    trigger_delay_ms = Column(Integer, nullable=True, comment="Delay between scheduled time and actual trigger time")
+    error_message = Column(Text, nullable=True, comment="Error message if trigger_failed")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=func.now(), index=True, comment="Log time")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "schedule_id": self.schedule_id,
+            "run_id": self.run_id,
+            "thread_id": self.thread_id,
+            "status": self.status,
+            "execution_status": self.execution_status,
+            "trigger_delay_ms": self.trigger_delay_ms,
+            "error_message": self.error_message,
+            "created_at": format_utc_datetime(self.created_at),
         }

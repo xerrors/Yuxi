@@ -246,7 +246,46 @@ class PostgresManager(metaclass=SingletonMeta):
             "CREATE INDEX IF NOT EXISTS ix_conversations_is_pinned ON conversations(is_pinned)",
             "CREATE UNIQUE INDEX IF NOT EXISTS ix_model_providers_provider_id ON model_providers(provider_id)",
             "CREATE INDEX IF NOT EXISTS ix_model_providers_is_enabled ON model_providers(is_enabled)",
+            """
+            CREATE TABLE IF NOT EXISTS schedule_definitions (
+                id VARCHAR(64) PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                description TEXT,
+                user_id VARCHAR(64) NOT NULL,
+                agent_config_id INTEGER NOT NULL,
+                cron_expr VARCHAR(128) NOT NULL,
+                timezone VARCHAR(64) NOT NULL DEFAULT 'Asia/Shanghai',
+                query TEXT NOT NULL,
+                image_content TEXT,
+                config JSONB NOT NULL DEFAULT '{}'::jsonb,
+                enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                last_run_at TIMESTAMPTZ,
+                next_run_at TIMESTAMPTZ,
+                run_count INTEGER NOT NULL DEFAULT 0,
+                failed_count INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS schedule_logs (
+                id VARCHAR(64) PRIMARY KEY,
+                schedule_id VARCHAR(64) NOT NULL,
+                run_id VARCHAR(64),
+                thread_id VARCHAR(64),
+                status VARCHAR(32) NOT NULL,
+                execution_status VARCHAR(32) NOT NULL DEFAULT 'pending',
+                trigger_delay_ms INTEGER,
+                error_message TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_schedule_defs_poll ON schedule_definitions(enabled, next_run_at)",
+            "CREATE INDEX IF NOT EXISTS idx_schedule_defs_user ON schedule_definitions(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_schedule_logs_schedule ON schedule_logs(schedule_id)",
+            "CREATE INDEX IF NOT EXISTS idx_schedule_logs_created ON schedule_logs(created_at)",
         ]
+
         async with self.async_engine.begin() as conn:
             for stmt in stmts:
                 await conn.execute(text(stmt))

@@ -809,6 +809,8 @@ async def stream_agent_chat(
 
     messages = [human_message]
     agent_config = (config_item.config_json or {}).get("context", {})
+    if meta.get("auto_approve"):
+        agent_config["auto_approve"] = True
 
     if not thread_id:
         thread_id = str(uuid.uuid4())

@@ -33,6 +33,11 @@ class BaseContext:
         metadata={"name": "用户ID", "configurable": False, "description": "用来唯一标识一个用户"},
     )
 
+    auto_approve: bool = field(
+        default=False,
+        metadata={"name": "自动审批", "configurable": False, "description": "定时任务是否自动审批"},
+    )
+
     system_prompt: Annotated[str, {"__template_metadata__": {"kind": "prompt"}}] = field(
         default="You are a helpful assistant.",
         metadata={"name": "系统提示词", "description": "用来描述智能体的角色和行为"},

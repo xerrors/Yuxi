@@ -175,6 +175,19 @@ const router = createRouter({
       redirect: '/extensions'
     },
     {
+      path: '/schedules',
+      name: 'schedules',
+      component: AppLayout,
+      children: [
+        {
+          path: '',
+          name: 'ScheduleComp',
+          component: () => import('../views/ScheduleView.vue'),
+          meta: { keepAlive: false, requiresAuth: true }
+        }
+      ]
+    },
+    {
       path: '/:pathMatch(.*)*',
       name: 'NotFound',
       component: () => import('../views/EmptyView.vue'),

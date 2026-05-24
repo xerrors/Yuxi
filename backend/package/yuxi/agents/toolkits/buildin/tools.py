@@ -215,6 +215,7 @@ def ask_user_question(
     options: Annotated[list[dict] | str | None, "兼容字段：单个问题候选项（建议优先使用 questions）"] = None,
     multi_select: Annotated[bool, "兼容字段：单个问题是否允许多选"] = False,
     allow_other: Annotated[bool, "兼容字段：单个问题是否允许 Other 自定义答案"] = True,
+    runtime: ToolRuntime = None,
 ) -> dict:
     """向用户发起问题并等待回答。"""
     # 解析 options 参数：如果是字符串，尝试解析为 JSON
@@ -256,6 +257,23 @@ def ask_user_question(
 
     if not normalized_questions:
         raise ValueError("questions 至少需要包含一个有效问题")
+
+    # 检查是否开启了自动审批（定时任务）
+    runtime_context = getattr(runtime, "context", None) if runtime else None
+    if runtime_context and getattr(runtime_context, "auto_approve", False):
+        logger.info(f"Auto-approving question for thread {getattr(runtime_context, 'thread_id', 'unknown')}")
+        default_answers = {}
+        for q in normalized_questions:
+            q_id = q.get("question_id") or str(uuid.uuid4())
+            opts = q.get("options") or []
+            if opts:
+                default_answers[q_id] = opts[0].get("value")
+            else:
+                default_answers[q_id] = "自动回复"
+        return {
+            "questions": normalized_questions,
+            "answer": default_answers,
+        }
 
     interrupt_payload = {
         "questions": normalized_questions,

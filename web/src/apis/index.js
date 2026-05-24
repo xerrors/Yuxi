@@ -6,6 +6,8 @@
 // 导出API模块
 export * from './system_api' // 系统管理API
 export * from './knowledge_api' // 知识库管理API
+export * from './workspace_api' // 用户个人工作区
+export * from './schedule_api' // 定时任务 API
 export * from './graph_api' // 图谱API
 export * from './agent_api' // 智能体API
 export * from './tasker' // 任务管理API
