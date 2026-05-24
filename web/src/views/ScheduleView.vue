@@ -53,9 +53,6 @@ const flushResize = () => {
   resizeFrameId = 0
   if (!isResizing.value) return
 
-  const drawerEl = document.querySelector('.resizable-drawer .ant-drawer-content-wrapper')
-  if (!drawerEl) return
-
   const deltaX = startX - pendingClientX // 往左拖拽是变宽
   let newWidth = startWidth + deltaX
 
@@ -64,7 +61,8 @@ const flushResize = () => {
   if (newWidth < 450) newWidth = 450
   if (newWidth > maxWidth) newWidth = maxWidth
 
-  drawerEl.style.width = `${newWidth}px`
+  // 实时驱动响应式状态，避免与 Vue 重绘机制冲突，在无 transition 阻尼下实现百分之百贴手实时移动
+  drawerWidth.value = newWidth
 }
 
 const queueResize = (clientX) => {
