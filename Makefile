@@ -18,7 +18,7 @@ up-lite:
 		echo "Error: .env file not found. Please create it from .env.template"; \
 		exit 1; \
 	fi
-	LITE_MODE=true VITE_USE_RUNS_API=false docker compose up -d postgres redis minio api web
+	LITE_MODE=true VITE_USE_RUNS_API=false docker compose up -d postgres redis minio api web worker
 
 logs:
 	@docker logs --tail=50 api-dev
