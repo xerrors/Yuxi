@@ -88,7 +88,10 @@
                 <span v-else-if="benchmark.has_gold_chunks" class="card-tag benchmark-tag tag-blue">
                   检索评估
                 </span>
-                <span v-else-if="benchmark.has_gold_answers" class="card-tag benchmark-tag tag-gold">
+                <span
+                  v-else-if="benchmark.has_gold_answers"
+                  class="card-tag benchmark-tag tag-gold"
+                >
                   问答评估
                 </span>
                 <span v-else class="card-tag benchmark-tag">仅查询</span>

@@ -38,7 +38,12 @@
       </div>
 
       <!-- 消息内容 -->
-      <MarkdownPreview v-if="parsedData.content" :key="message.id" :content="parsedData.content" class="message-md" />
+      <MarkdownPreview
+        v-if="parsedData.content"
+        :key="message.id"
+        :content="parsedData.content"
+        class="message-md"
+      />
 
       <div v-else-if="parsedData.reasoning_content" class="empty-block"></div>
 
@@ -265,7 +270,6 @@ const parsedData = computed(() => {
     reasoning_content
   }
 })
-
 </script>
 
 <style lang="less" scoped>
@@ -531,7 +535,7 @@ const parsedData = computed(() => {
   }
 }
 
-  .message-md {
-    margin: 8px 0;
-  }
+.message-md {
+  margin: 8px 0;
+}
 </style>

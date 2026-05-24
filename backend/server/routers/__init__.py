@@ -16,6 +16,7 @@ from server.routers.tool_router import tools
 from server.routers.auth_apikey_router import apikey_router
 from server.routers.filesystem_router import filesystem_router
 from server.routers.workspace_router import workspace
+from server.routers.schedule_router import schedule_router
 
 _LITE_MODE = os.environ.get("LITE_MODE", "").lower() in ("true", "1")
 
@@ -38,6 +39,8 @@ router.include_router(tools)  # /api/system/tools/* 工具列表与配置
 router.include_router(apikey_router)  # /api/apikey/* API Key 管理
 router.include_router(filesystem_router)  # /api/viewer/filesystem/* 工作台文件系统视图
 router.include_router(workspace)  # /api/workspace/* 用户个人工作区
+router.include_router(schedule_router)  # /api/schedules/* 定时任务管理接口
+
 
 if not _LITE_MODE:
     from server.routers.graph_router import graph

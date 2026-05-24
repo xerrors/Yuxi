@@ -737,7 +737,6 @@ watch(useInlinePreview, (isInline) => {
   flex-shrink: 0;
 }
 
-
 .tab-content {
   flex: 1;
   overflow-y: auto;

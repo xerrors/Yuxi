@@ -699,7 +699,6 @@ onMounted(() => {
   min-width: 0;
   min-height: 0;
 
-
   .editor-main {
     flex: 1;
     min-height: 0;

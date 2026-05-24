@@ -447,7 +447,6 @@ defineExpose({
     padding: 0;
     background: transparent;
   }
-
 }
 
 .remote-install-panel {

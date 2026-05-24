@@ -706,5 +706,4 @@ onUnmounted(() => {
 .fullscreen-file-content .image-preview {
   max-height: calc(100vh - 48px);
 }
-
 </style>

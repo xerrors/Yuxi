@@ -97,7 +97,10 @@ const emit = defineEmits(['update:visible', 'success'])
 // 默认基准名称
 const defaultBenchmarkName = () => {
   const today = new Date().toISOString().slice(0, 10)
-  const suffix = Array.from({ length: 4 }, () => '0123456789abcdefghijklmnopqrstuvwxyz'[Math.floor(Math.random() * 36)]).join('')
+  const suffix = Array.from(
+    { length: 4 },
+    () => '0123456789abcdefghijklmnopqrstuvwxyz'[Math.floor(Math.random() * 36)]
+  ).join('')
   return `Test-${today}-${suffix}`
 }
 
@@ -208,5 +211,3 @@ watch(visible, (val) => {
   }
 })
 </script>
-
-

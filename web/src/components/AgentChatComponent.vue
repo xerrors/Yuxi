@@ -2007,7 +2007,6 @@ watch(currentChatId, (threadId, oldThreadId) => {
   will-change: flex-basis;
 }
 
-
 /* Workbench transition animations */
 .agent-panel-wrapper {
   transition: flex-basis 0.3s cubic-bezier(0.4, 0, 0.2, 1);

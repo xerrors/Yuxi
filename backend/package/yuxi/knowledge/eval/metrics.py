@@ -3,9 +3,10 @@ RAG评估指标计算工具
 简化版：只保留Recall/F1（检索）和 LLM Judge（答案准确性）
 """
 
-import json_repair
 import textwrap
 from typing import Any
+
+import json_repair
 
 from yuxi.utils import logger
 

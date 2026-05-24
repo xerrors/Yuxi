@@ -4,7 +4,6 @@ import json
 import textwrap
 from typing import Any
 
-
 MINDMAP_SYSTEM_PROMPT = """你是一个专业的知识整理助手。
 
 你的任务是分析用户提供的文件列表，生成一个层次分明的思维导图结构。

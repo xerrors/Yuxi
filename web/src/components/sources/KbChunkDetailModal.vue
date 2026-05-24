@@ -17,7 +17,11 @@
       >
     </div>
 
-    <MarkdownPreview v-if="chunk?.content" :content="chunk.content" class="chunk-markdown-content" />
+    <MarkdownPreview
+      v-if="chunk?.content"
+      :content="chunk.content"
+      class="chunk-markdown-content"
+    />
     <div v-else class="empty-text">暂无内容</div>
   </a-modal>
 </template>
