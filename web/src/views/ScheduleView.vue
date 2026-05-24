@@ -647,14 +647,12 @@ onMounted(async () => {
       </a-table>
     </div>
 
-    <!-- Create/Edit Modal -->
-    <a-modal
+    <!-- Create/Edit Drawer -->
+    <a-drawer
       v-model:open="isModalVisible"
       :title="isEditing ? '编辑定时任务' : '新增定时任务'"
       :width="600"
-      :confirm-loading="modalSaving"
-      @ok="handleSave"
-      wrap-class-name="schedule-modal-wrapper"
+      placement="right"
       destroy-on-close
     >
       <a-form ref="formRef" :model="formState" :rules="rules" layout="vertical" class="custom-form">
@@ -736,7 +734,13 @@ onMounted(async () => {
           </a-collapse-panel>
         </a-collapse>
       </a-form>
-    </a-modal>
+      <template #footer>
+        <div class="drawer-footer-actions">
+          <a-button style="margin-right: 8px" @click="isModalVisible = false">取消</a-button>
+          <a-button type="primary" :loading="modalSaving" @click="handleSave">确认保存</a-button>
+        </div>
+      </template>
+    </a-drawer>
 
     <!-- Logs Drawer -->
     <a-drawer
@@ -1084,13 +1088,10 @@ onMounted(async () => {
 </style>
 
 <style lang="less">
-/* 全局覆盖 schedule-modal-wrapper 以保证定时表单 Modal 内部滚动，彻底防止底部按钮掉出屏幕被遮挡 */
-.schedule-modal-wrapper {
-  .ant-modal-body {
-    max-height: calc(100vh - 280px) !important;
-    overflow-y: auto !important;
-    padding-right: 12px !important;
-    scrollbar-width: thin;
-  }
+.drawer-footer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 4px 16px;
 }
 </style>
