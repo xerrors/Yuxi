@@ -170,14 +170,19 @@ onUnmounted(() => {
   document.body.style.userSelect = ''
 })
 
-// 切换全屏状态
+// 切换“全屏”最大化状态（不盖住左侧导航边栏，保留平台级导航和全局控制感）
 const toggleFullscreen = () => {
   if (isFullPage.value) {
     drawerWidth.value = preFullWidth.value
     isFullPage.value = false
   } else {
     preFullWidth.value = drawerWidth.value
-    drawerWidth.value = window.innerWidth
+
+    // 动态获取左侧边导航栏的实际物理宽度，做动态适配
+    const sidebarEl = document.querySelector('.app-layout > .header')
+    const sidebarWidth = sidebarEl ? sidebarEl.offsetWidth : 252
+
+    drawerWidth.value = window.innerWidth - sidebarWidth
     isFullPage.value = true
   }
 }
