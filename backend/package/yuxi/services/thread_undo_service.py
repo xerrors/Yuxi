@@ -159,7 +159,7 @@ async def undo_thread(
         )
 
     # ---- 10. 标记 agent_runs 为 cancelled ----
-    cancelled_meta = (AgentRun.extra_metadata + {"cancelled_reason": "undo_by_user"}).label("new_meta")
+    # AgentRun 没有 extra_metadata 列，用 error_message 记录取消原因
     await db.execute(
         sa_update(AgentRun)
         .where(
@@ -171,7 +171,7 @@ async def undo_thread(
                 )
             ),
         )
-        .values(status="cancelled", extra_metadata=cancelled_meta, updated_at=utc_now_naive())
+        .values(status="cancelled", error_message="cancelled_by_user_undo", updated_at=utc_now_naive())
     )
 
     # ---- 11. Python 侧标记消息为逻辑删除 ----
