@@ -2,7 +2,7 @@
 import { ref, reactive, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
-import { Plus, RefreshCw, Play, Edit3, Trash2, FileText, ExternalLink, Info } from 'lucide-vue-next'
+import { Plus, RefreshCw, Play, Edit3, Trash2, FileText, ExternalLink, Info, Maximize2, Minimize2 } from 'lucide-vue-next'
 
 import { scheduleApi, agentApi } from '@/apis'
 import { useAgentStore } from '@/stores/agent'
@@ -36,6 +36,50 @@ const isModalVisible = ref(false)
 const isEditing = ref(false)
 const currentScheduleId = ref(null)
 const modalSaving = ref(false)
+
+// ============ Resizable & Fullscreen Drawer States & Methods ============
+const drawerWidth = ref(600)
+const isFullPage = ref(false)
+const preFullWidth = ref(600)
+
+// 鼠标悬停拉伸宽度方法
+const handleResizeMouseDown = (e) => {
+  e.preventDefault()
+  const startX = e.clientX
+  const startWidth = drawerWidth.value
+
+  const handleMouseMove = (moveEvent) => {
+    const deltaX = startX - moveEvent.clientX // 往左拖拽是变宽
+    let newWidth = startWidth + deltaX
+
+    // 限制宽度范围：450px 到 屏幕可视宽度的 95%
+    const maxWidth = window.innerWidth * 0.95
+    if (newWidth < 450) newWidth = 450
+    if (newWidth > maxWidth) newWidth = maxWidth
+
+    drawerWidth.value = newWidth
+  }
+
+  const handleMouseUp = () => {
+    document.removeEventListener('mousemove', handleMouseMove)
+    document.removeEventListener('mouseup', handleMouseUp)
+  }
+
+  document.addEventListener('mousemove', handleMouseMove)
+  document.addEventListener('mouseup', handleMouseUp)
+}
+
+// 切换全屏状态
+const toggleFullscreen = () => {
+  if (isFullPage.value) {
+    drawerWidth.value = preFullWidth.value
+    isFullPage.value = false
+  } else {
+    preFullWidth.value = drawerWidth.value
+    drawerWidth.value = window.innerWidth
+    isFullPage.value = true
+  }
+}
 
 const formRef = ref(null)
 const formState = reactive({
@@ -651,10 +695,21 @@ onMounted(async () => {
     <a-drawer
       v-model:open="isModalVisible"
       :title="isEditing ? '编辑定时任务' : '新增定时任务'"
-      :width="600"
+      :width="drawerWidth"
       placement="right"
       destroy-on-close
+      class="resizable-drawer"
     >
+      <!-- 拖拽拉伸手柄条 -->
+      <div class="drawer-resize-handle" @mousedown="handleResizeMouseDown"></div>
+
+      <!-- 头部自定义全屏按钮 -->
+      <template #extra>
+        <a-button type="text" class="fullscreen-toggle-btn" @click="toggleFullscreen">
+          <component :is="isFullPage ? Minimize2 : Maximize2" :size="14" />
+        </a-button>
+      </template>
+
       <a-form ref="formRef" :model="formState" :rules="rules" layout="vertical" class="custom-form">
         <!-- 1. 核心指令：Query 提示词 -->
         <a-form-item label="Query 提示词 (触发首条输入)" name="query">
@@ -1099,5 +1154,50 @@ onMounted(async () => {
   justify-content: flex-end;
   gap: 12px;
   padding: 4px 16px;
+}
+
+/* 抽屉边缘鼠标拉伸手柄热区条 - 鼠标悬停呈主题色发光质感 */
+.resizable-drawer {
+  position: relative;
+
+  .ant-drawer-content-wrapper {
+    position: relative;
+  }
+
+  .drawer-resize-handle {
+    position: absolute;
+    left: -3px;
+    top: 0;
+    bottom: 0;
+    width: 6px;
+    cursor: col-resize;
+    z-index: 1000;
+    background-color: transparent;
+    transition: background-color 0.2s ease, box-shadow 0.2s ease;
+
+    &:hover, &:active {
+      background-color: var(--main-color) !important;
+      box-shadow: 0 0 6px 1px color-mix(in srgb, var(--main-color) 40%, transparent);
+    }
+  }
+}
+
+/* 头部全屏切换控制按钮美化 */
+.fullscreen-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  color: var(--gray-500);
+  transition: all 0.2s ease;
+  padding: 0;
+  border: none;
+
+  &:hover {
+    color: var(--main-color) !important;
+    background-color: rgba(0, 0, 0, 0.04) !important;
+  }
 }
 </style>
