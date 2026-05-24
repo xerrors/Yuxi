@@ -13,7 +13,6 @@ const props = defineProps({
 const emit = defineEmits(['update:value'])
 
 // ============ Internal States ============
-const visible = ref(false)
 const isAdvancedMode = ref(false) // true: 高级自定义, false: 快捷配置
 const quickType = ref('daily') // interval | daily | weekly | monthly
 
@@ -285,11 +284,7 @@ const nextExecutions = computed(() => {
   return getNextExecutions(tempCronExpr.value, 5)
 })
 
-const displayValue = computed(() => {
-  if (!props.value || !validateCron(props.value)) return props.value || '未配置周期'
-  const chineseText = translateCronToChinese(props.value)
-  return `${props.value} (${chineseText})`
-})
+
 
 // ============ Actions ============
 const toggleWeekDay = (val) => {
@@ -487,17 +482,15 @@ watch(
   { immediate: true }
 )
 
-const handleConfirm = () => {
-  if (!isTempCronValid.value) return
-  emit('update:value', tempCronExpr.value)
-  visible.value = false
-}
-
-const handleCancel = () => {
-  tempCronExpr.value = props.value
-  parseCronToConfig(props.value)
-  visible.value = false
-}
+// 监听临时表达式修改，若合法则立刻实时向上游表单双向绑定同步数据，实现真正的所见即所得
+watch(
+  tempCronExpr,
+  (newVal) => {
+    if (validateCron(newVal)) {
+      emit('update:value', newVal)
+    }
+  }
+)
 
 const formatPredictionDate = (date) => {
   const y = date.getFullYear()
@@ -512,28 +505,7 @@ const formatPredictionDate = (date) => {
 
 <template>
   <div class="cron-selector-wrapper">
-    <a-popover
-      v-model:open="visible"
-      trigger="click"
-      placement="bottomLeft"
-      :overlay-style="{ width: '640px' }"
-      :overlay-inner-style="{ padding: '0px', borderRadius: '16px', overflow: 'hidden' }"
-      :getPopupContainer="(triggerNode) => triggerNode.closest('.ant-drawer-body') || triggerNode.closest('.ant-modal-body') || triggerNode.parentNode"
-      destroy-on-close
-    >
-      <a-input
-        :value="displayValue"
-        readonly
-        placeholder="点击配置定时任务的执行周期..."
-        class="trigger-input"
-      >
-        <template #suffix>
-          <Clock :size="14" class="text-muted clock-icon" />
-        </template>
-      </a-input>
-
-      <template #content>
-        <div class="cron-editor-panel">
+    <div class="cron-editor-panel">
           <!-- 顶部大药丸模式切换 Toggle -->
           <div class="panel-header">
             <div class="mode-toggle-wrapper">
@@ -785,22 +757,7 @@ const formatPredictionDate = (date) => {
             </div>
           </div>
 
-          <!-- 底部控制按钮 -->
-          <div class="panel-footer">
-            <a-button size="small" class="cancel-btn" @click="handleCancel">取消</a-button>
-            <a-button
-              size="small"
-              type="primary"
-              class="confirm-btn"
-              :disabled="!isTempCronValid"
-              @click="handleConfirm"
-            >
-              保存周期
-            </a-button>
-          </div>
-        </div>
-      </template>
-    </a-popover>
+    </div>
   </div>
 </template>
 
@@ -808,41 +765,18 @@ const formatPredictionDate = (date) => {
 .cron-selector-wrapper {
   width: 100%;
   position: relative;
-
-  .trigger-input {
-    cursor: pointer;
-    background-color: var(--gray-0);
-    border-radius: 8px;
-    height: 38px;
-
-    :deep(input) {
-      cursor: pointer;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      overflow: hidden;
-      font-size: 13px;
-    }
-  }
-
-  .clock-icon {
-    color: var(--gray-400);
-    transition: color 0.2s ease;
-  }
-
-  &:hover .clock-icon {
-    color: var(--main-color);
-  }
 }
 
-// ============ Popover 内部玻璃态面板 ============
+// ============ 行内高值配置面板 ============
 .cron-editor-panel {
   display: flex;
   flex-direction: column;
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.5);
-  width: 640px;
+  background: var(--gray-0);
+  border: 1px solid var(--gray-200);
+  border-radius: 12px;
+  width: 100%;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.03);
+  overflow: hidden;
   box-sizing: border-box;
 
   // 顶部药丸 Toggle
@@ -896,7 +830,7 @@ const formatPredictionDate = (date) => {
 
     // 左栏：Next 5 Executions 预测
     .left-column {
-      width: 42%;
+      width: 38%;
       border-right: 1px solid rgba(0, 0, 0, 0.05);
       padding: 16px;
       display: flex;
@@ -974,7 +908,7 @@ const formatPredictionDate = (date) => {
 
     // 右栏：配置选项及翻译
     .right-column {
-      width: 58%;
+      width: 62%;
       padding: 16px;
       display: flex;
       flex-direction: column;
@@ -1235,24 +1169,7 @@ const formatPredictionDate = (date) => {
     }
   }
 
-  // 底部控制
-  .panel-footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    padding: 12px 16px;
-    background-color: rgba(0, 0, 0, 0.02);
 
-    .cancel-btn {
-      border-radius: 6px;
-      font-size: 12px;
-    }
-
-    .confirm-btn {
-      border-radius: 6px;
-      font-size: 12px;
-    }
-  }
 }
 
 // 公用 Flex 辅助类
