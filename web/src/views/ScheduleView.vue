@@ -1,5 +1,5 @@
 <script setup>
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { Plus, RefreshCw, Play, Edit3, Trash2, FileText, ExternalLink, Info, Maximize2, Minimize2 } from 'lucide-vue-next'
@@ -42,32 +42,115 @@ const drawerWidth = ref(600)
 const isFullPage = ref(false)
 const preFullWidth = ref(600)
 
-// 鼠标悬停拉伸宽度方法
-const handleResizeMouseDown = (e) => {
-  e.preventDefault()
-  const startX = e.clientX
-  const startWidth = drawerWidth.value
+const isResizing = ref(false)
+let resizePointerId = null
+let pendingClientX = 0
+let resizeFrameId = 0
+let startX = 0
+let startWidth = 0
 
-  const handleMouseMove = (moveEvent) => {
-    const deltaX = startX - moveEvent.clientX // 往左拖拽是变宽
-    let newWidth = startWidth + deltaX
+const flushResize = () => {
+  resizeFrameId = 0
+  if (!isResizing.value) return
 
-    // 限制宽度范围：450px 到 屏幕可视宽度的 95%
-    const maxWidth = window.innerWidth * 0.95
-    if (newWidth < 450) newWidth = 450
-    if (newWidth > maxWidth) newWidth = maxWidth
+  const drawerEl = document.querySelector('.resizable-drawer .ant-drawer-content-wrapper')
+  if (!drawerEl) return
 
-    drawerWidth.value = newWidth
-  }
+  const deltaX = startX - pendingClientX // 往左拖拽是变宽
+  let newWidth = startWidth + deltaX
 
-  const handleMouseUp = () => {
-    document.removeEventListener('mousemove', handleMouseMove)
-    document.removeEventListener('mouseup', handleMouseUp)
-  }
+  // 限制宽度范围：450px 到 屏幕可视宽度的 95%
+  const maxWidth = window.innerWidth * 0.95
+  if (newWidth < 450) newWidth = 450
+  if (newWidth > maxWidth) newWidth = maxWidth
 
-  document.addEventListener('mousemove', handleMouseMove)
-  document.addEventListener('mouseup', handleMouseUp)
+  drawerEl.style.width = `${newWidth}px`
 }
+
+const queueResize = (clientX) => {
+  pendingClientX = clientX
+  if (resizeFrameId) return
+  resizeFrameId = window.requestAnimationFrame(flushResize)
+}
+
+// 鼠标/指针悬停拉伸宽度方法 - 完美对齐 AgentPanel 拖拽机制
+const handleResizeMouseDown = (e) => {
+  if (e.button !== 0) return
+  e.preventDefault()
+
+  isResizing.value = true
+  resizePointerId = e.pointerId
+  startX = e.clientX
+  startWidth = drawerWidth.value
+  pendingClientX = e.clientX
+
+  // 锁定指针与避免文字选中
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+
+  // 将指针捕获锁定到该手柄，确保即使指针移出元素外，也能完美捕获所有指针移动事件
+  e.currentTarget?.setPointerCapture?.(e.pointerId)
+
+  window.addEventListener('pointermove', onPointerMove)
+  window.addEventListener('pointerup', stopResize)
+  window.addEventListener('pointercancel', stopResize)
+}
+
+const onPointerMove = (e) => {
+  if (!isResizing.value || e.pointerId !== resizePointerId) return
+  queueResize(e.clientX)
+}
+
+const stopResize = (e) => {
+  if (!isResizing.value || (e && e.pointerId !== resizePointerId)) return
+
+  if (resizeFrameId) {
+    window.cancelAnimationFrame(resizeFrameId)
+    resizeFrameId = 0
+  }
+
+  // 释放指针捕获
+  try {
+    const handleEl = document.querySelector('.resizable-drawer .drawer-resize-handle')
+    if (handleEl && resizePointerId !== null) {
+      handleEl.releasePointerCapture(resizePointerId)
+    }
+  } catch (err) {
+    console.warn('释放指针捕获失败:', err)
+  }
+
+  let finalClientX = e ? e.clientX : pendingClientX
+  const deltaX = startX - finalClientX
+  let finalWidth = startWidth + deltaX
+  const maxWidth = window.innerWidth * 0.95
+  if (finalWidth < 450) finalWidth = 450
+  if (finalWidth > maxWidth) finalWidth = maxWidth
+
+  // 写入最终宽度以同步 Vue 状态
+  drawerWidth.value = finalWidth
+  preFullWidth.value = finalWidth
+
+  isResizing.value = false
+  resizePointerId = null
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+
+  window.removeEventListener('pointermove', onPointerMove)
+  window.removeEventListener('pointerup', stopResize)
+  window.removeEventListener('pointercancel', stopResize)
+}
+
+// 页面卸载时进行彻底的垃圾回收与事件解绑
+onUnmounted(() => {
+  if (resizeFrameId) {
+    window.cancelAnimationFrame(resizeFrameId)
+  }
+  window.removeEventListener('pointermove', onPointerMove)
+  window.removeEventListener('pointerup', stopResize)
+  window.removeEventListener('pointercancel', stopResize)
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+})
 
 // 切换全屏状态
 const toggleFullscreen = () => {
@@ -701,7 +784,7 @@ onMounted(async () => {
       class="resizable-drawer"
     >
       <!-- 拖拽拉伸手柄条 -->
-      <div class="drawer-resize-handle" @mousedown="handleResizeMouseDown"></div>
+      <div class="drawer-resize-handle" @pointerdown="handleResizeMouseDown"></div>
 
       <!-- 头部自定义全屏按钮 -->
       <template #extra>
@@ -1156,7 +1239,6 @@ onMounted(async () => {
   padding: 4px 16px;
 }
 
-/* 抽屉边缘鼠标拉伸手柄热区条 - 鼠标悬停呈主题色发光质感 */
 .resizable-drawer {
   position: relative;
 
@@ -1166,18 +1248,32 @@ onMounted(async () => {
 
   .drawer-resize-handle {
     position: absolute;
-    left: -3px;
+    left: -6px; /* 居中于左边缘线 */
     top: 0;
     bottom: 0;
-    width: 6px;
+    width: 12px; /* 舒适的热区宽度，让鼠标非常容易捕捉 */
     cursor: col-resize;
     z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     background-color: transparent;
-    transition: background-color 0.2s ease, box-shadow 0.2s ease;
+    touch-action: none;
 
-    &:hover, &:active {
-      background-color: var(--main-color) !important;
-      box-shadow: 0 0 6px 1px color-mix(in srgb, var(--main-color) 40%, transparent);
+    /* 仿 AgentPanel 文件系统同款灰色半透明小长条指示器 */
+    &::after {
+      content: '';
+      width: 4px;
+      height: 32px;
+      background: var(--gray-300);
+      border-radius: 2px;
+      transition: background 0.2s, height 0.2s, width 0.2s;
+    }
+
+    /* 悬浮及拖动时指示条高亮为主题色 */
+    &:hover::after, &:active::after {
+      background: var(--main-400) !important;
+      height: 38px; /* 悬浮时微增高度，充满呼吸感 */
     }
   }
 }
