@@ -500,6 +500,10 @@ async def get_thread_history_view(
     role_type_map = {"user": "human", "assistant": "ai", "tool": "tool", "system": "system"}
 
     for msg in messages:
+        # 跳过已被 Undo 逻辑删除的消息
+        if (msg.extra_metadata or {}).get("is_deleted") == "true":
+            continue
+
         user_feedback = None
         if msg.feedbacks:
             for feedback in msg.feedbacks:
