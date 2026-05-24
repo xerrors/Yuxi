@@ -518,8 +518,7 @@ const formatPredictionDate = (date) => {
       placement="bottomLeft"
       :overlay-style="{ width: '640px' }"
       :overlay-inner-style="{ padding: '0px', borderRadius: '16px', overflow: 'hidden' }"
-      :arrow="false"
-      :auto-adjust-overflow="false"
+      :getPopupContainer="(triggerNode) => triggerNode.parentNode"
       destroy-on-close
     >
       <a-input
@@ -808,6 +807,7 @@ const formatPredictionDate = (date) => {
 <style scoped lang="less">
 .cron-selector-wrapper {
   width: 100%;
+  position: relative;
 
   .trigger-input {
     cursor: pointer;
