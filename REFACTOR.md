@@ -25,6 +25,7 @@
 - [ ] rename database table name, such as skills -> agent_skills, subagents -> agent_subagents, mcp, tool_call, 等等
 - [x] department 的 id 也不能使用那个索引的 id 来使用了，应该是一个独立的 dept_id，需要确认
 - [ ] allow user config skill, and envs
+- [ ] 添加 Skill 的权限设计
 - [ ] add model retry times to agent context config
 - [ ] add user envs when load sandbox
 - [ ] Config spacy model 的 load

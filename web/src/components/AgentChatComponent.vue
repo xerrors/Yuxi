@@ -120,6 +120,9 @@
                 <template #actions-left-extra>
                   <slot name="input-actions-left" :has-active-thread="!!currentChatId"></slot>
                 </template>
+                <template #actions-right-extra>
+                  <slot name="input-actions-right" :has-active-thread="!!currentChatId"></slot>
+                </template>
               </AgentInputArea>
 
               <div class="bottom-actions" v-if="conversations.length > 0">
@@ -205,7 +208,8 @@ import AgentPanel from '@/components/AgentPanel.vue'
 // ==================== PROPS & EMITS ====================
 const props = defineProps({
   agentId: { type: String, default: '' },
-  singleMode: { type: Boolean, default: true }
+  singleMode: { type: Boolean, default: true },
+  sendDisabled: { type: Boolean, default: false }
 })
 const emit = defineEmits(['thread-change'])
 
@@ -581,7 +585,9 @@ const isReplyLoading = computed(() => {
 })
 const isSendButtonDisabled = computed(() => {
   return (
-    sendCooldownActive.value || ((!userInput.value || !currentAgent.value) && !isProcessing.value)
+    sendCooldownActive.value ||
+    (props.sendDisabled && !isProcessing.value) ||
+    ((!userInput.value || !currentAgent.value) && !isProcessing.value)
   )
 })
 
@@ -1259,7 +1265,13 @@ const selectThreadFromRoute = async (threadId) => {
 const handleSendMessage = async ({ image } = {}) => {
   const text = userInput.value.trim()
   const imageContent = image?.imageContent || null
-  if ((!text && !image) || !currentAgent.value || isProcessing.value || sendCooldownActive.value)
+  if (
+    (!text && !image) ||
+    !currentAgent.value ||
+    isProcessing.value ||
+    sendCooldownActive.value ||
+    props.sendDisabled
+  )
     return
 
   // 发送后进入短暂冷却，防止连续触发停止
@@ -1457,6 +1469,7 @@ const handleSendOrStop = async (payload) => {
       return
     }
   }
+  if (props.sendDisabled) return
   await handleSendMessage(payload)
 }
 

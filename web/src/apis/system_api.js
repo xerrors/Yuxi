@@ -108,7 +108,7 @@ export const modelProviderApi = {
   },
 
   getV2Models: async (modelType = 'chat') => {
-    return apiAdminGet(`/api/system/model-providers/models/v2?model_type=${modelType}`)
+    return apiGet(`/api/system/model-providers/models/v2?model_type=${modelType}`)
   },
 
   getCacheStatus: async () => {

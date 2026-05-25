@@ -1,18 +1,16 @@
 <template>
-  <a-dropdown trigger="click" :open="dropdownOpen" @open-change="handleOpenChange">
-    <div class="model-select" :class="modelSelectClasses" @click.prevent>
+  <a-dropdown trigger="click" :open="dropdownOpen" :disabled="props.disabled" @open-change="handleOpenChange">
+    <div class="model-select" :class="modelSelectClasses" @click.prevent.stop @mousedown.stop>
       <div class="model-select-content">
         <div class="model-info">
-          <a-tooltip :title="displayModelTooltip" placement="right">
-            <span class="model-text text"> {{ displayModelText }} </span>
-          </a-tooltip>
+          <span class="model-text text" :title="displayModelTitle">{{ displayModelText }}</span>
         </div>
-        <div class="model-status-controls">
+        <div v-if="resolvedSize !== 'nano'" class="model-status-controls">
           <span
             v-if="state.currentModelStatus"
             class="model-status-indicator"
             :class="state.currentModelStatus.status"
-            :title="getCurrentModelStatusTooltip()"
+            :title="getCurrentModelStatusTitle()"
           >
             {{ modelStatusIcon }}
           </span>
@@ -21,7 +19,7 @@
             type="text"
             :loading="state.checkingStatus"
             @click.stop="checkCurrentModelStatus"
-            :disabled="state.checkingStatus"
+            :disabled="props.disabled || state.checkingStatus"
             class="status-check-button"
           >
             {{ state.checkingStatus ? '检查中...' : '检查' }}
@@ -34,16 +32,15 @@
         <div class="model-search">
           <a-input v-model:value="modelSearchKeyword" placeholder="搜索模型" allow-clear @keydown.stop>
             <template #suffix>
-              <a-tooltip title="刷新缓存">
-                <button
-                  :disabled="state.refreshingCache"
-                  class="cache-refresh-button"
-                  @mousedown.prevent.stop
-                  @click.stop="refreshCache"
-                >
-                  <RefreshCw :size="13" :class="{ spin: state.refreshingCache }" />
-                </button>
-              </a-tooltip>
+              <button
+                :disabled="props.disabled || state.refreshingCache"
+                :title="state.refreshingCache ? '刷新中...' : '刷新缓存'"
+                class="cache-refresh-button"
+                @mousedown.prevent.stop
+                @click.stop="refreshCache"
+              >
+                <RefreshCw :size="13" :class="{ spin: state.refreshingCache }" />
+              </button>
             </template>
           </a-input>
         </div>
@@ -91,7 +88,11 @@ const props = defineProps({
   size: {
     type: String,
     default: 'small',
-    validator: (value) => ['small', 'middle', 'large'].includes(value)
+    validator: (value) => ['nano', 'small', 'middle', 'large'].includes(value)
+  },
+  disabled: {
+    type: Boolean,
+    default: false
   },
   displayName: {
     type: String,
@@ -151,13 +152,17 @@ const fetchV2Models = async () => {
 
 // 下拉展开时触发实时刷新（仅在打开瞬间触发，关闭时忽略）
 const handleOpenChange = (open) => {
+  if (props.disabled) {
+    dropdownOpen.value = false
+    return
+  }
   dropdownOpen.value = open
   if (open) fetchV2Models()
 }
 
 // 强制刷新缓存
 const refreshCache = async () => {
-  if (state.refreshingCache) return
+  if (props.disabled || state.refreshingCache) return
   state.refreshingCache = true
   try {
     await modelProviderApi.refreshModelCache()
@@ -180,8 +185,10 @@ const state = reactive({
 
 const resolvedSize = computed(() => props.size || 'small')
 const modelSelectClasses = computed(() => ({
+  'model-select--nano': resolvedSize.value === 'nano',
   'model-select--middle': resolvedSize.value === 'middle',
-  'model-select--large': resolvedSize.value === 'large'
+  'model-select--large': resolvedSize.value === 'large',
+  'model-select--disabled': props.disabled
 }))
 const buttonSize = computed(() => {
   if (resolvedSize.value === 'large') return 'large'
@@ -206,10 +213,11 @@ const displayModelText = computed(() => {
   return spec
 })
 
-const displayModelTooltip = computed(() => props.model_spec || props.placeholder)
+const displayModelTitle = computed(() => props.model_spec || props.placeholder)
 
 // 检查当前模型状态
 const checkCurrentModelStatus = async () => {
+  if (props.disabled) return
   const spec = props.model_spec
   if (!spec) return
 
@@ -238,7 +246,7 @@ const modelStatusIcon = computed(() => {
   return '○'
 })
 
-const getCurrentModelStatusTooltip = () => {
+const getCurrentModelStatusTitle = () => {
   const status = state.currentModelStatus
   if (!status) return '状态未知'
 
@@ -253,6 +261,7 @@ const getCurrentModelStatusTooltip = () => {
 
 // 选择 v2 模型的方法
 const handleSelectV2Model = (spec) => {
+  if (props.disabled) return
   emit('select-model', spec)
   dropdownOpen.value = false
 }
@@ -282,6 +291,34 @@ const handleSelectV2Model = (spec) => {
   cursor: pointer;
 }
 
+.model-select--nano {
+  max-width: 100%;
+  height: 30px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--gray-600);
+  background: transparent;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.model-select--nano:hover {
+  color: var(--gray-900);
+  background: var(--gray-50);
+}
+
+.model-select--nano .model-text {
+  color: currentColor;
+}
+
+.model-select--disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .model-dropdown {
   min-width: 280px;
   max-width: 420px;
@@ -301,6 +338,25 @@ const handleSelectV2Model = (spec) => {
     max-height: 260px;
     overflow-y: auto;
     box-shadow: none;
+  }
+
+  .ant-dropdown-menu-item,
+  .ant-dropdown-menu-submenu-title {
+    border-radius: 6px;
+  }
+
+  .ant-dropdown-menu-item:hover,
+  .ant-dropdown-menu-submenu-title:hover,
+  .ant-dropdown-menu-item-active,
+  .ant-dropdown-menu-submenu-title-active {
+    background: var(--gray-50);
+  }
+
+  .ant-dropdown-menu-item-selected,
+  .ant-dropdown-menu-item-selected:hover,
+  .ant-dropdown-menu-item-selected.ant-dropdown-menu-item-active {
+    color: var(--gray-1000);
+    background: var(--main-50);
   }
 }
 </style>

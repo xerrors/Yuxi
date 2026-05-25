@@ -77,6 +77,7 @@
     </template>
     <template #actions-left>
       <div class="input-actions-left">
+        <slot name="actions-left-extra"></slot>
         <a-popover
           v-if="showTodoEntry"
           v-model:open="todoPopoverOpen"
@@ -133,7 +134,7 @@
     </template>
     <template #actions-right>
       <div class="input-actions-right">
-        <slot name="actions-left-extra"></slot>
+        <slot name="actions-right-extra"></slot>
       </div>
     </template>
   </MessageInputComponent>
@@ -401,7 +402,7 @@ const getTodoStatusLabel = (status) => {
   align-items: center;
   gap: 6px;
   padding: 6px 8px;
-  // height: 28px;
+  height: 30px;
   border-radius: 8px;
   font-size: 13px;
   color: var(--gray-600);

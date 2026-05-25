@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from server.utils.auth_middleware import get_admin_user, get_db
+from server.utils.auth_middleware import get_admin_user, get_db, get_required_user
 from yuxi.services.model_provider_service import (
     check_credential_status,
     create_provider_config,
@@ -201,7 +201,7 @@ async def refresh_model_cache(
 @model_providers.get("/models/v2")
 async def get_v2_models(
     model_type: str = "chat",
-    current_user: User = Depends(get_admin_user),
+    _current_user: User = Depends(get_required_user),
 ):
     """获取 v2 格式的模型列表，按 provider 分组。
 

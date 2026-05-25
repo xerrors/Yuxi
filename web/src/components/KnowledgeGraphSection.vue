@@ -218,7 +218,7 @@
                     size="small"
                     type="text"
                     danger
-                    v-if="!isBuildActive"
+                    v-if="graphBuildStatus?.locked && !isBuildActive"
                     @click="confirmResetGraph"
                     >重置</a-button
                   >
@@ -378,7 +378,7 @@ const extractorTypeOptions = [
   {
     value: 'spacy',
     label: 'spaCy',
-    description: '使用本地 NER 模型抽取实体',
+    description: '【Beta】使用本地 NER 模型抽取实体',
     icon: ScanText
   }
 ]
