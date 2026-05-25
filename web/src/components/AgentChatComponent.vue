@@ -39,7 +39,6 @@
                     :hide-tool-calls="true"
                     @retry="retryMessage(displayItem.message)"
                     @undo="handleUndo"
-                    @fork="handleFork"
                   >
                   </AgentMessageComponent>
                   <ToolCallsGroupComponent
@@ -54,9 +53,10 @@
                 <RefsComponent
                   v-if="shouldShowRefs(row.conv)"
                   :message="getLastMessage(row.conv)"
-                  :show-refs="['model', 'copy', 'sources']"
+                  :show-refs="['model', 'copy', 'sources', 'fork']"
                   :is-latest-message="false"
                   :sources="getConversationSources(row.conv)"
+                  @fork="handleFork(getLastMessage(row.conv))"
                 />
               </div>
               <div v-else class="chat-inline-notice">

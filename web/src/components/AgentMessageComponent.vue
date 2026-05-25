@@ -7,21 +7,19 @@
   </div>
   <div class="message-box" :class="[message.type, customClasses]">
     <!-- 用户消息 -->
-    <div
-      v-if="message.type === 'human'"
-      class="message-copy-btn human-copy"
-      @click="copyToClipboard(message.content)"
-      :class="{ 'is-copied': isCopied }"
-    >
-      <Check v-if="isCopied" size="14" />
-      <Copy v-else size="14" />
-    </div>
     <div v-if="message.type === 'human'" class="message-actions">
+      <a-tooltip title="复制">
+        <span
+          class="action-btn"
+          @click="copyToClipboard(message.content)"
+          :class="{ 'is-copied': isCopied }"
+        >
+          <Check v-if="isCopied" size="14" />
+          <Copy v-else size="14" />
+        </span>
+      </a-tooltip>
       <a-tooltip title="撤销到此">
         <span class="action-btn" @click="emit('undo', message)"><Undo2 size="14" /></span>
-      </a-tooltip>
-      <a-tooltip title="从此分叉">
-        <span class="action-btn" @click="emit('fork', message)"><GitFork size="14" /></span>
       </a-tooltip>
     </div>
     <p v-if="message.type === 'human'" class="message-text">{{ message.content }}</p>
@@ -108,7 +106,7 @@
 import { computed, ref } from 'vue'
 import { CaretRightOutlined } from '@ant-design/icons-vue'
 import RefsComponent from '@/components/RefsComponent.vue'
-import { Copy, Check, Undo2, GitFork } from 'lucide-vue-next'
+import { Copy, Check, Undo2 } from 'lucide-vue-next'
 import ToolCallsGroupComponent from '@/components/ToolCallsGroupComponent.vue'
 import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
 import { useAgentStore } from '@/stores/agent'
@@ -153,7 +151,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['retry', 'retryStoppedMessage', 'openRefs', 'undo', 'fork'])
+const emit = defineEmits(['retry', 'retryStoppedMessage', 'openRefs', 'undo'])
 
 // 复制状态
 const isCopied = ref(false)
@@ -299,12 +297,14 @@ const parsedData = computed(() => {
 
   &.human,
   &.sent {
+    position: relative;
     max-width: 95%;
     color: var(--gray-1000);
     background-color: var(--main-50);
     align-self: flex-end;
     border-radius: 0.5rem;
     padding: 0.5rem 1rem;
+    margin-bottom: 1.8rem;
   }
 
   &.assistant,
@@ -325,41 +325,16 @@ const parsedData = computed(() => {
     white-space: pre-line;
   }
 
-  .message-copy-btn {
-    cursor: pointer;
-    color: var(--gray-400);
-    transition: all 0.2s ease;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    opacity: 0;
-    flex-shrink: 0;
-
-    &:hover {
-      color: var(--main-color);
-    }
-
-    &.is-copied {
-      color: var(--color-success-500);
-      opacity: 1;
-    }
-
-    &.human-copy {
-      position: absolute;
-      left: -28px;
-      bottom: 8px;
-    }
-  }
-
   .message-actions {
     position: absolute;
-    left: -28px;
-    bottom: 34px;
+    right: 4px;
+    bottom: -28px;
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     gap: 4px;
     opacity: 0;
     transition: opacity 0.2s ease;
+    z-index: 10;
 
     .action-btn {
       display: flex;
@@ -377,17 +352,15 @@ const parsedData = computed(() => {
         background: var(--gray-100);
         color: var(--gray-800);
       }
+
+      &.is-copied {
+        color: var(--color-success-500);
+      }
     }
   }
 
   &:hover {
     .message-actions {
-      opacity: 1;
-    }
-  }
-
-  &:hover {
-    .message-copy-btn {
       opacity: 1;
     }
   }

@@ -23,6 +23,15 @@
           :fill="feedbackState.rating === 'dislike' ? 'currentColor' : 'none'"
         />
       </span>
+      <!-- 分叉 -->
+      <span
+        v-if="showKey('fork')"
+        class="item btn"
+        @click="emit('fork')"
+        title="从此分叉"
+      >
+        <GitFork size="12" />
+      </span>
       <!-- 模型名称 -->
       <span v-if="showKey('model') && getModelName(msg)" class="item" @click="console.log(msg)">
         <Bot size="12" /> {{ getModelName(msg) }}
@@ -101,13 +110,14 @@ import {
   Check,
   RotateCcw,
   BookOpen,
-  ChevronDown
+  ChevronDown,
+  GitFork
 } from 'lucide-vue-next'
 import { agentApi } from '@/apis'
 import KnowledgeSourceSection from '@/components/KnowledgeSourceSection.vue'
 import WebSearchSourceSection from '@/components/WebSearchSourceSection.vue'
 
-const emit = defineEmits(['retry', 'openRefs'])
+const emit = defineEmits(['retry', 'openRefs', 'fork'])
 const props = defineProps({
   message: Object,
   showRefs: {

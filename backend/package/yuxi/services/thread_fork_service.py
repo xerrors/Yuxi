@@ -5,12 +5,12 @@
 
 import uuid as uuid_lib
 
-from sqlalchemy import insert as sa_insert, select
+from sqlalchemy import func as sa_func, insert as sa_insert, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.repositories.checkpoint_repository import (
     build_ancestors_cte,
-    select_checkpoint_parent,
+    select_checkpoint_entry,
 )
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.storage.postgres.checkpoint_tables import (
@@ -78,6 +78,14 @@ async def fork_thread(
         raise ForkValidationError("对话线程不存在")
     conv_id_a = conversation_a.id
 
+    # ---- 检查是否存在 checkpoint（旧会话可能没有） ----
+    ckpt_count_result = await db.execute(
+        select(sa_func.count()).select_from(checkpoints).where(checkpoints.c.thread_id == thread_id_a)
+    )
+    if ckpt_count_result.scalar() == 0:
+        await _cleanup_cloned_files(thread_id_b)
+        raise ForkValidationError("此对话没有保存 AI 推理记录，无法分叉（可能是较早创建的会话）")
+
     # ---- 加锁原会话 ----
     await db.execute(
         select(Conversation.id).where(Conversation.thread_id == thread_id_a).with_for_update()
@@ -89,31 +97,87 @@ async def fork_thread(
         await _cleanup_cloned_files(thread_id_b)
         raise ForkValidationError("消息不存在或不属于该会话")
 
-    if target_msg.role == "assistant":
-        user_msgs = await db.execute(
-            select(Message)
-            .where(Message.conversation_id == conv_id_a, Message.role == "user", Message.id <= message_id)
-            .order_by(Message.id.desc())
-            .limit(1),
-        )
-        target_msg = user_msgs.scalar_one_or_none()
-        if not target_msg:
-            await _cleanup_cloned_files(thread_id_b)
-            raise ForkValidationError("未找到对应的用户消息")
-        message_id = target_msg.id
+    # ---- 计算克隆边界 ----
+    # 核心语义：用户在哪 fork，就 fork 哪里（含）之前的全部内容
+    # 前端 fork 按钮只在 assistant 消息上，传来的 message_id 是 AI 回复的 id
+    # user 消息不支持 fork（只有 undo），所以只处理 assistant 消息场景
+    #
+    # 消息序列：Q1 → A1 → Q2 → A2 → Q3 → A3(用户点fork)
+    # 期望结果：克隆 Q1+A1+Q2+A2+Q3+A3 = 6 条，AI 记忆也应该是 6 条
+    #
+    # 关键：消息边界和 checkpoint 边界必须包含相同轮次
 
-    target_request_id = (target_msg.extra_metadata or {}).get("request_id")
+    if target_msg.role != "assistant":
+        await _cleanup_cloned_files(thread_id_b)
+        raise ForkValidationError("Fork 仅支持在 AI 回复消息上操作")
+
+    # Fork 点是 AI 回复 → 包含这条 AI 回复及其之前的所有消息
+    fork_boundary_id = target_msg.id
+
+    # 找到这条 AI 回复对应的 user 消息(Q3)
+    user_msg_result = await db.execute(
+        select(Message)
+        .where(Message.conversation_id == conv_id_a, Message.role == "user", Message.id < message_id)
+        .order_by(Message.id.desc())
+        .limit(1),
+    )
+    user_msg = user_msg_result.scalar_one_or_none()
+    if not user_msg:
+        await _cleanup_cloned_files(thread_id_b)
+        raise ForkValidationError("未找到对应的用户消息")
+
+    target_request_id = (user_msg.extra_metadata or {}).get("request_id")
     if not target_request_id:
         await _cleanup_cloned_files(thread_id_b)
         raise ForkValidationError("目标消息缺少 request_id，无法定位 checkpoint")
 
-    # ---- 定位分叉回档起点 ----
-    entry_result = await db.execute(select_checkpoint_parent(thread_id_a, target_request_id))
-    entry_row = entry_result.fetchone()
-    if not entry_row or not entry_row[0]:
-        await _cleanup_cloned_files(thread_id_b)
-        raise ForkValidationError("该消息之前没有可用的 AI 推理状态")
-    target_checkpoint_id = entry_row[0]
+    # ---- 定位包含 A3 状态的 checkpoint ----
+    # 优先查找 source='output' 的 checkpoint（包含 AI 回复的完整状态）
+    output_ckpt_result = await db.execute(
+        select(checkpoints.c.checkpoint_id)
+        .where(
+            checkpoints.c.thread_id == thread_id_a,
+            checkpoints.c.metadata["request_id"].astext == target_request_id,
+            checkpoints.c.metadata["source"].astext == "output",
+        )
+        .limit(1)
+    )
+    output_ckpt_row = output_ckpt_result.fetchone()
+
+    if output_ckpt_row and output_ckpt_row[0]:
+        # 有 output checkpoint，直接用
+        target_checkpoint_id = output_ckpt_row[0]
+    else:
+        # 没有 output checkpoint（LangGraph 配置问题），需要换思路：
+        # ckpt_in_Q3 的状态 = Q1+A1+Q2+A2（不含 A3）
+        # ckpt_in_Q4 的状态 = Q1+A1+Q2+A2+Q3+A3（含 A3）
+        # 所以要找 ckpt_in_Q3 的"子节点"（parent 指向 ckpt_in_Q3 的那条 checkpoint）
+        entry_result = await db.execute(
+            select_checkpoint_entry(thread_id_a, target_request_id)
+        )
+        entry_row = entry_result.fetchone()
+        if not entry_row or not entry_row[0]:
+            await _cleanup_cloned_files(thread_id_b)
+            raise ForkValidationError("该消息之前没有可用的 AI 推理状态")
+
+        # 找 ckpt_in_Q3 的子节点（状态包含 A3）
+        child_ckpt_result = await db.execute(
+            select(checkpoints.c.checkpoint_id)
+            .where(
+                checkpoints.c.thread_id == thread_id_a,
+                checkpoints.c.parent_checkpoint_id == entry_row[0],
+            )
+            .limit(1)
+        )
+        child_ckpt_row = child_ckpt_result.fetchone()
+        if child_ckpt_row and child_ckpt_row[0]:
+            # 找到子节点，用子节点（状态包含 A3）
+            target_checkpoint_id = child_ckpt_row[0]
+        else:
+            # 没有子节点，说明 A3 是最后一条消息，还没有后续的 input checkpoint
+            # 此时用 ckpt_in_Q3 本身 + checkpoint_writes 来恢复状态
+            # checkpoint_writes 表里存储了 A3 的输出，会被一并克隆
+            target_checkpoint_id = entry_row[0]
 
     # ---- 递归 CTE 向上查找所有祖先 checkpoint ----
     ancestors_cte = build_ancestors_cte(thread_id_a, target_checkpoint_id)
@@ -137,16 +201,19 @@ async def fork_thread(
         await db.flush()
         conv_id_b = new_conversation.id
 
-        # 2. 克隆 checkpoints —— INSERT ... SELECT via from_select()
-        ckpt_cols = [
-            "thread_id", "checkpoint_ns", "checkpoint_id",
-            "parent_checkpoint_id", "type", "checkpoint", "metadata",
-        ]
+        # 2. 克隆 checkpoints —— INSERT ... SELECT，thread_id 替换为新 thread_id_b
         await db.execute(
             sa_insert(checkpoints).from_select(
-                ckpt_cols,
+                ["thread_id", "checkpoint_ns", "checkpoint_id",
+                 "parent_checkpoint_id", "type", "checkpoint", "metadata"],
                 select(
-                    *[checkpoints.c[col] for col in ckpt_cols]
+                    literal(thread_id_b).label("thread_id"),
+                    checkpoints.c.checkpoint_ns,
+                    checkpoints.c.checkpoint_id,
+                    checkpoints.c.parent_checkpoint_id,
+                    checkpoints.c.type,
+                    checkpoints.c.checkpoint,
+                    checkpoints.c.metadata,
                 ).where(
                     checkpoints.c.thread_id == thread_id_a,
                     checkpoints.c.checkpoint_id.in_(ancestor_ids),
@@ -154,16 +221,21 @@ async def fork_thread(
             )
         )
 
-        # 3. 克隆 checkpoint_writes
-        cw_cols = [
-            "thread_id", "checkpoint_ns", "checkpoint_id",
-            "task_id", "idx", "channel", "type", "blob", "task_path",
-        ]
+        # 3. 克隆 checkpoint_writes，thread_id 替换为新 thread_id_b
         await db.execute(
             sa_insert(checkpoint_writes).from_select(
-                cw_cols,
+                ["thread_id", "checkpoint_ns", "checkpoint_id",
+                 "task_id", "idx", "channel", "type", "blob", "task_path"],
                 select(
-                    *[checkpoint_writes.c[col] for col in cw_cols]
+                    literal(thread_id_b).label("thread_id"),
+                    checkpoint_writes.c.checkpoint_ns,
+                    checkpoint_writes.c.checkpoint_id,
+                    checkpoint_writes.c.task_id,
+                    checkpoint_writes.c.idx,
+                    checkpoint_writes.c.channel,
+                    checkpoint_writes.c.type,
+                    checkpoint_writes.c.blob,
+                    checkpoint_writes.c.task_path,
                 ).where(
                     checkpoint_writes.c.thread_id == thread_id_a,
                     checkpoint_writes.c.checkpoint_id.in_(ancestor_ids),
@@ -223,10 +295,10 @@ async def fork_thread(
                     )
                 )
 
-        # 5. 查询源消息（Python 侧过滤已删除）
+        # 5. 查询源消息（Python 侧过滤已删除），包含 fork 点 user 消息对应的 assistant 回复
         src_messages_result = await db.execute(
             select(Message)
-            .where(Message.conversation_id == conv_id_a, Message.id <= message_id)
+            .where(Message.conversation_id == conv_id_a, Message.id <= fork_boundary_id)
             .order_by(Message.id.asc()),
         )
         src_messages = [

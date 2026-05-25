@@ -5,7 +5,7 @@
 checkpoint_repository 和上层服务通过 expression language 构造查询。
 """
 
-from sqlalchemy import column, String, table
+from sqlalchemy import LargeBinary, column, Integer, String, table
 from sqlalchemy.dialects.postgresql import JSONB
 
 
@@ -26,10 +26,10 @@ checkpoint_writes = table(
     column("checkpoint_ns", String),
     column("checkpoint_id", String),
     column("task_id", String),
-    column("idx", String),
+    column("idx", Integer),
     column("channel", String),
     column("type", String),
-    column("blob", String),
+    column("blob", LargeBinary),
     column("task_path", String),
 )
 
@@ -40,5 +40,5 @@ checkpoint_blobs = table(
     column("channel", String),
     column("version", String),
     column("type", String),
-    column("blob", String),
+    column("blob", LargeBinary),
 )
