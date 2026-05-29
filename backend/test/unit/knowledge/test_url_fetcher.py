@@ -17,7 +17,7 @@ async def test_forbidden_ip_allows_private_network_addresses(monkeypatch: pytest
     assert await url_fetcher.is_forbidden_ip("172.27.86.91") is False
 
 
-@pytest.mark.parametrize("ip_addr", ["127.0.0.1", "169.254.169.254", "::1", "fe80::1"])
+@pytest.mark.parametrize("ip_addr", ["127.0.0.1", "169.254.169.254", "::1", "fe80::1", "fe80::1%lo0"])
 async def test_forbidden_ip_blocks_loopback_and_link_local(
     monkeypatch: pytest.MonkeyPatch, ip_addr: str
 ) -> None:

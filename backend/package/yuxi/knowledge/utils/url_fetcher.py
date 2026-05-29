@@ -22,16 +22,15 @@ async def is_forbidden_ip(hostname: str) -> bool:
         ip_list = await asyncio.to_thread(socket.getaddrinfo, hostname, None)
         for item in ip_list:
             ip_addr = item[4][0]
+            if "%" in ip_addr:
+                ip_addr = ip_addr.split("%", 1)[0]
             ip_obj = ipaddress.ip_address(ip_addr)
             if ip_obj.is_loopback or ip_obj.is_link_local:
                 return True
         return False
     except Exception as e:
         logger.warning(f"Failed to resolve hostname {hostname}: {e}")
-        # If resolution fails, assume it's unsafe or let the connection fail naturally,
-        # but to be safe we can return True to block it if strict mode is preferred.
-        # For now, we return False assuming standard DNS failure handling.
-        return False
+        return True
 
 
 async def fetch_url_content(url: str, max_size: int = MAX_DOWNLOAD_SIZE) -> tuple[bytes, str]:
