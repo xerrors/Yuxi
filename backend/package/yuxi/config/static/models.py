@@ -119,13 +119,12 @@ DEFAULT_CHAT_MODEL_PROVIDERS: dict[str, ChatModelProvider] = {
         name="MiniMax",
         url="https://platform.minimaxi.com/docs/guides/models-intro",
         base_url="https://api.minimaxi.com/v1",
-        default="MiniMax-M2.7",
+        default="MiniMax-M3",
         env="MINIMAX_API_KEY",
         models=[
+            "MiniMax-M3",
             "MiniMax-M2.7",
             "MiniMax-M2.7-highspeed",
-            "MiniMax-M2.5",
-            "MiniMax-M2.5-highspeed",
         ],
     ),
     "openrouter": ChatModelProvider(
