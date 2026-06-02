@@ -80,6 +80,40 @@ export const updateMcpServerStatus = async (name, enabled) => {
 }
 
 // =============================================================================
+// === MCP 连接管理 ===
+// =============================================================================
+
+export const getMcpServerConnections = async (name) => {
+  return apiAdminGet(`${BASE_URL}/${encodeURIComponent(name)}/connections`)
+}
+
+export const createMcpServerConnection = async (name, data) => {
+  return apiAdminPost(`${BASE_URL}/${encodeURIComponent(name)}/connections`, data)
+}
+
+export const updateMcpServerConnection = async (name, connectionId, data) => {
+  return apiAdminPut(`${BASE_URL}/${encodeURIComponent(name)}/connections/${connectionId}`, data)
+}
+
+export const updateMcpConnectionStatus = async (name, connectionId, status) => {
+  return apiAdminPut(`${BASE_URL}/${encodeURIComponent(name)}/connections/${connectionId}/status`, {
+    status
+  })
+}
+
+export const deleteMcpServerConnection = async (name, connectionId) => {
+  return apiAdminDelete(`${BASE_URL}/${encodeURIComponent(name)}/connections/${connectionId}`)
+}
+
+export const testMcpConnection = async (name, connectionId) => {
+  return apiAdminPost(`${BASE_URL}/${encodeURIComponent(name)}/connections/${connectionId}/test`, {})
+}
+
+export const reauthorizeMcpConnection = async (name, connectionId) => {
+  return apiAdminPost(`${BASE_URL}/${encodeURIComponent(name)}/connections/${connectionId}/reauth`, {})
+}
+
+// =============================================================================
 // === MCP 工具管理 ===
 // =============================================================================
 
@@ -126,6 +160,13 @@ export const mcpApi = {
   deleteMcpServer,
   testMcpServer,
   updateMcpServerStatus,
+  getMcpServerConnections,
+  createMcpServerConnection,
+  updateMcpServerConnection,
+  updateMcpConnectionStatus,
+  deleteMcpServerConnection,
+  testMcpConnection,
+  reauthorizeMcpConnection,
   getMcpServerTools,
   refreshMcpServerTools,
   toggleMcpServerTool

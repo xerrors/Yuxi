@@ -6,7 +6,7 @@
     :confirmLoading="formLoading"
     @cancel="visible = false"
     :maskClosable="false"
-    width="560px"
+    width="min(780px, calc(100vw - 32px))"
     class="server-modal"
   >
     <div class="mode-switch">
@@ -93,6 +93,7 @@
           <McpEnvEditor v-model="form.env" />
         </a-form-item>
       </template>
+      <McpAuthConfigBuilder v-model="form.authConfigText" :transport="form.transport" />
       <a-form-item label="标签" class="form-item">
         <a-select
           v-model:value="form.tags"
@@ -122,6 +123,7 @@
 import { ref, reactive, computed, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { mcpApi } from '@/apis/mcp_api'
+import McpAuthConfigBuilder from '@/components/extensions/McpAuthConfigBuilder.vue'
 import McpEnvEditor from '@/components/McpEnvEditor.vue'
 
 const props = defineProps({
@@ -150,6 +152,7 @@ const form = reactive({
   args: [],
   env: null,
   headersText: '',
+  authConfigText: '',
   timeout: null,
   sse_read_timeout: null,
   tags: [],
@@ -177,6 +180,9 @@ watch(
         args: props.editData.args || [],
         env: props.editData.env || null,
         headersText: props.editData.headers ? JSON.stringify(props.editData.headers, null, 2) : '',
+        authConfigText: props.editData.auth_config
+          ? JSON.stringify(props.editData.auth_config, null, 2)
+          : '',
         timeout: props.editData.timeout,
         sse_read_timeout: props.editData.sse_read_timeout,
         tags: props.editData.tags || [],
@@ -194,6 +200,7 @@ watch(
         args: [],
         env: null,
         headersText: '',
+        authConfigText: '',
         timeout: null,
         sse_read_timeout: null,
         tags: [],
@@ -226,6 +233,7 @@ const parseJsonToForm = () => {
       args: obj.args || [],
       env: obj.env || null,
       headersText: obj.headers ? JSON.stringify(obj.headers, null, 2) : '',
+      authConfigText: obj.auth_config ? JSON.stringify(obj.auth_config, null, 2) : '',
       timeout: obj.timeout || null,
       sse_read_timeout: obj.sse_read_timeout || null,
       tags: obj.tags || [],
@@ -259,6 +267,16 @@ const handleFormSubmit = async () => {
           return
         }
       }
+
+      let authConfig = null
+      if (form.authConfigText.trim()) {
+        try {
+          authConfig = JSON.parse(form.authConfigText)
+        } catch {
+          message.error('认证配置 JSON 格式错误')
+          return
+        }
+      }
       data = {
         name: form.name,
         description: form.description || null,
@@ -268,6 +286,7 @@ const handleFormSubmit = async () => {
         args: form.args.length > 0 ? form.args : null,
         env: form.env,
         headers,
+        auth_config: authConfig,
         timeout: form.timeout || null,
         sse_read_timeout: form.sse_read_timeout || null,
         tags: form.tags.length > 0 ? form.tags : null,

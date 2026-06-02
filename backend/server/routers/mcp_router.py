@@ -1,18 +1,30 @@
 """MCP 服务器管理路由"""
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yuxi.services.mcp_auth.config_models import MCPAuthConfig
 from yuxi.services.mcp_service import (
+    create_mcp_connection,
     create_mcp_server,
+    delete_mcp_connection,
     get_mcp_tools_stats,
     delete_mcp_server,
+    get_mcp_connection,
+    get_mcp_server_dependency_summary,
     get_all_mcp_servers,
     get_all_mcp_tools,
     get_mcp_server,
+    list_mcp_connections,
+    reauthorize_mcp_connection,
+    set_mcp_connection_status,
     set_server_enabled,
+    test_mcp_connection,
     toggle_tool_enabled,
+    update_mcp_connection,
     update_mcp_server,
 )
 from yuxi.storage.postgres.models_business import User
@@ -40,6 +52,7 @@ class CreateMcpServerRequest(BaseModel):
     sse_read_timeout: int | None = Field(None, description="SSE 读取超时（秒）")
     tags: list | None = Field(None, description="标签数组")
     icon: str | None = Field(None, description="图标（emoji）")
+    auth_config: dict | None = Field(None, description="MCP 鉴权配置")
 
 
 class UpdateMcpServerRequest(BaseModel):
@@ -54,10 +67,33 @@ class UpdateMcpServerRequest(BaseModel):
     sse_read_timeout: int | None = Field(None, description="SSE 读取超时（秒）")
     tags: list | None = Field(None, description="标签数组")
     icon: str | None = Field(None, description="图标（emoji）")
+    auth_config: dict | None = Field(None, description="MCP 鉴权配置")
 
 
 class UpdateMcpServerStatusRequest(BaseModel):
     enabled: bool = Field(..., description="是否启用")
+
+
+class CreateMcpConnectionRequest(BaseModel):
+    scope_type: str = Field(..., description="连接范围：system/department/user")
+    scope_id: str = Field(..., description="范围标识")
+    display_name: str | None = Field(None, description="展示名称")
+    external_subject: str | None = Field(None, description="外部系统主体标识")
+    credential: dict | str | None = Field(None, description="长期凭据")
+    meta_json: dict | None = Field(None, description="非敏感元数据")
+    status: str = Field("active", description="连接状态")
+
+
+class UpdateMcpConnectionStatusRequest(BaseModel):
+    status: str = Field(..., description="连接状态")
+
+
+class UpdateMcpConnectionRequest(BaseModel):
+    display_name: str | None = Field(None, description="展示名称")
+    external_subject: str | None = Field(None, description="外部系统主体标识")
+    credential: dict | str | None = Field(None, description="长期凭据")
+    meta_json: dict | None = Field(None, description="非敏感元数据")
+    status: str | None = Field(None, description="连接状态")
 
 
 # =============================================================================
@@ -71,6 +107,30 @@ async def get_server_or_404(db: AsyncSession, name: str):
     if not server:
         raise HTTPException(status_code=404, detail=f"服务器 '{name}' 不存在")
     return server
+
+
+async def get_connection_for_server_or_404(db: AsyncSession, server_name: str, connection_id: int):
+    connection = await get_mcp_connection(db, connection_id)
+    if connection is None or connection.server_name != server_name:
+        raise HTTPException(status_code=404, detail=f"连接 '{connection_id}' 不存在")
+    return connection
+
+
+def _normalize_credential_blob(value: dict | str | None) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _validate_auth_config_or_400(payload: dict | None) -> dict | None:
+    if payload is None:
+        return None
+    try:
+        return MCPAuthConfig.model_validate(payload).model_dump(mode="json")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"auth_config 配置无效: {exc}") from exc
 
 
 # =============================================================================
@@ -127,6 +187,7 @@ async def create_mcp_server_route(
         raise HTTPException(status_code=400, detail="传输类型为 stdio 时，command 必填")
 
     try:
+        auth_config = _validate_auth_config_or_400(request.auth_config)
         server = await create_mcp_server(
             db,
             name=request.name,
@@ -141,9 +202,12 @@ async def create_mcp_server_route(
             sse_read_timeout=request.sse_read_timeout,
             tags=request.tags,
             icon=request.icon,
+            auth_config=auth_config,
             created_by=current_user.username,
         )
         return {"success": True, "data": server.to_dict()}
+    except HTTPException:
+        raise
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
@@ -182,10 +246,12 @@ async def update_mcp_server_route(
         raise HTTPException(status_code=400, detail=f"传输类型必须是 {', '.join(valid_transports)} 之一")
 
     try:
-        fields_set = getattr(request, "model_fields_set", getattr(request, "__fields_set__", set()))
+        fields_set = request.model_fields_set
         update_kwargs = {}
         if "env" in fields_set:
             update_kwargs["env"] = request.env
+        if "auth_config" in fields_set:
+            update_kwargs["auth_config"] = _validate_auth_config_or_400(request.auth_config)
 
         server = await update_mcp_server(
             db,
@@ -204,6 +270,8 @@ async def update_mcp_server_route(
             **update_kwargs,
         )
         return {"success": True, "data": server.to_dict()}
+    except HTTPException:
+        raise
     except ValueError as ve:
         raise HTTPException(status_code=404, detail=str(ve))
     except Exception as e:
@@ -214,6 +282,7 @@ async def update_mcp_server_route(
 @mcp.delete("/{name}")
 async def delete_mcp_server_route(
     name: str,
+    hard: bool = False,
     current_user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -221,13 +290,26 @@ async def delete_mcp_server_route(
     try:
         # 检查是否为系统内置服务器
         server = await get_mcp_server(db, name)
-        if server and server.created_by == "system":
+        if not server:
+            raise HTTPException(status_code=404, detail=f"服务器 '{name}' 不存在")
+        if server.created_by == "system":
             raise HTTPException(status_code=403, detail="系统内置的 MCP 服务器无法删除")
+
+        if not hard:
+            await set_server_enabled(db, name, False, current_user.username)
+            return {"success": True, "message": f"服务器 '{name}' 已退役"}
+
+        if bool(server.enabled):
+            raise HTTPException(status_code=409, detail="请先退役服务器，再执行硬删除")
+
+        dependency_summary = await get_mcp_server_dependency_summary(db, name)
+        if dependency_summary["has_references"]:
+            raise HTTPException(status_code=409, detail=dependency_summary)
 
         deleted = await delete_mcp_server(db, name)
         if not deleted:
             raise HTTPException(status_code=404, detail=f"服务器 '{name}' 不存在")
-        return {"success": True, "message": f"服务器 '{name}' 已删除"}
+        return {"success": True, "message": f"服务器 '{name}' 已彻底删除"}
     except HTTPException:
         raise
     except Exception as e:
@@ -248,7 +330,11 @@ async def test_mcp_server(
 ):
     """测试 MCP 服务器连接"""
     try:
-        await get_server_or_404(db, name)
+        server = await get_server_or_404(db, name)
+        if server.auth_config_json:
+            auth_config = MCPAuthConfig.model_validate(server.auth_config_json)
+            if auth_config.binding_scope != "inline":
+                raise HTTPException(status_code=400, detail="该 MCP 需要绑定连接，请在连接页测试具体连接")
 
         try:
             tools = await get_all_mcp_tools(name)
@@ -286,6 +372,195 @@ async def update_mcp_server_status_route(
         raise HTTPException(status_code=404, detail=str(ve))
     except Exception as e:
         logger.error(f"Failed to toggle MCP server: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# === MCP 连接管理 ===
+# =============================================================================
+
+
+@mcp.get("/{name}/connections")
+async def get_mcp_connections(
+    name: str,
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    del current_user
+    try:
+        await get_server_or_404(db, name)
+        connections = await list_mcp_connections(db, server_name=name)
+        return {"success": True, "data": [item.to_dict() for item in connections]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to list MCP connections: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@mcp.post("/{name}/connections")
+async def create_mcp_connection_route(
+    name: str,
+    request: CreateMcpConnectionRequest,
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        await get_server_or_404(db, name)
+        connection = await create_mcp_connection(
+            db,
+            server_name=name,
+            scope_type=request.scope_type,
+            scope_id=request.scope_id,
+            display_name=request.display_name,
+            external_subject=request.external_subject,
+            status=request.status,
+            credential_blob=_normalize_credential_blob(request.credential),
+            meta_json=request.meta_json,
+            created_by=current_user.username,
+        )
+        return {"success": True, "data": connection.to_dict()}
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to create MCP connection: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@mcp.put("/{name}/connections/{connection_id}/status")
+async def update_mcp_connection_status_route(
+    name: str,
+    connection_id: int,
+    request: UpdateMcpConnectionStatusRequest,
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        await get_server_or_404(db, name)
+        await get_connection_for_server_or_404(db, name, connection_id)
+        connection = await set_mcp_connection_status(
+            db,
+            connection_id,
+            status=request.status,
+            updated_by=current_user.username,
+        )
+        return {"success": True, "data": connection.to_dict(), "message": "连接状态已更新"}
+    except ValueError as ve:
+        raise HTTPException(status_code=404, detail=str(ve))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update MCP connection status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@mcp.put("/{name}/connections/{connection_id}")
+async def update_mcp_connection_route(
+    name: str,
+    connection_id: int,
+    request: UpdateMcpConnectionRequest,
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        await get_server_or_404(db, name)
+        await get_connection_for_server_or_404(db, name, connection_id)
+        fields_set = request.model_fields_set
+        update_kwargs = {}
+        if "credential" in fields_set:
+            update_kwargs["credential_blob"] = _normalize_credential_blob(request.credential)
+        if "display_name" in fields_set:
+            update_kwargs["display_name"] = request.display_name
+        if "external_subject" in fields_set:
+            update_kwargs["external_subject"] = request.external_subject
+        if "meta_json" in fields_set:
+            update_kwargs["meta_json"] = request.meta_json
+        if "status" in fields_set:
+            update_kwargs["status"] = request.status
+
+        connection = await update_mcp_connection(
+            db,
+            connection_id,
+            updated_by=current_user.username,
+            **update_kwargs,
+        )
+        return {"success": True, "data": connection.to_dict(), "message": "连接已更新"}
+    except ValueError as ve:
+        raise HTTPException(status_code=404, detail=str(ve))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update MCP connection: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@mcp.delete("/{name}/connections/{connection_id}")
+async def delete_mcp_connection_route(
+    name: str,
+    connection_id: int,
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    del current_user
+    try:
+        await get_server_or_404(db, name)
+        await get_connection_for_server_or_404(db, name, connection_id)
+        deleted = await delete_mcp_connection(db, connection_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail=f"连接 '{connection_id}' 不存在")
+        return {"success": True, "message": "连接已删除"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete MCP connection: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@mcp.post("/{name}/connections/{connection_id}/test")
+async def test_mcp_connection_route(
+    name: str,
+    connection_id: int,
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        await get_server_or_404(db, name)
+        await get_connection_for_server_or_404(db, name, connection_id)
+        result = await test_mcp_connection(db, connection_id, updated_by=current_user.username)
+        return {
+            "success": True,
+            "tool_count": result["tool_count"],
+            "message": f"连接成功，共发现 {result['tool_count']} 个工具",
+        }
+    except ValueError as ve:
+        raise HTTPException(status_code=404, detail=str(ve))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to test MCP connection: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@mcp.post("/{name}/connections/{connection_id}/reauth")
+async def reauthorize_mcp_connection_route(
+    name: str,
+    connection_id: int,
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        await get_server_or_404(db, name)
+        await get_connection_for_server_or_404(db, name, connection_id)
+        connection = await reauthorize_mcp_connection(db, connection_id, updated_by=current_user.username)
+        return {"success": True, "data": connection.to_dict(), "message": "连接已重置并重新激活"}
+    except ValueError as ve:
+        raise HTTPException(status_code=404, detail=str(ve))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to reauthorize MCP connection: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

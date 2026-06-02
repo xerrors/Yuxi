@@ -6,6 +6,7 @@ x-api-worker-env: &api-worker-env
   # DBs and other services
   POSTGRES_URL: ${POSTGRES_URL:-postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-yuxi_know}}
   REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+  YUXI_INTERNAL_MCP_PROXY_BASE_URL: ${YUXI_INTERNAL_MCP_PROXY_BASE_URL:-http://api:5050}
   NEO4J_URI: ${NEO4J_URI:-bolt://graph:7687}
   NEO4J_USERNAME: ${NEO4J_USERNAME:-neo4j}
   NEO4J_PASSWORD: ${NEO4J_PASSWORD:-0123456789}
@@ -29,6 +30,8 @@ x-api-worker-env: &api-worker-env
   # Agent run
   RUN_CANCEL_KEY_TTL_SECONDS: ${RUN_CANCEL_KEY_TTL_SECONDS:-1800}
   RUN_EVENTS_STREAM_TTL_SECONDS: ${RUN_EVENTS_STREAM_TTL_SECONDS:-7200}
+  # MCP auth
+  MCP_CREDENTIALS_MASTER_KEY: ${MCP_CREDENTIALS_MASTER_KEY:-}
   # 其他环境变量
   NO_PROXY: localhost,127.0.0.1,milvus,graph,minio,milvus-etcd-dev,etcd,mineru,paddlex,sandbox-provisioner,api.siliconflow.cn
   no_proxy: localhost,127.0.0.1,milvus,graph,minio,milvus-etcd-dev,etcd,mineru,paddlex,sandbox-provisioner,api.siliconflow.cn

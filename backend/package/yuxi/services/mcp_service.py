@@ -9,16 +9,28 @@ Responsibilities:
 
 import asyncio
 import hashlib
+import httpx
 import json
+import os
 import re
 import traceback
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any, cast
 
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from yuxi.storage.postgres.models_business import MCPServer
+from yuxi.services.mcp_auth.config_models import MCPAuthConfig
+from yuxi.services.mcp_auth.crypto import encrypt_credential_blob
+from yuxi.services.mcp_auth.orchestrator import AuthContext, resolve_runtime_mcp_config
+from yuxi.services.mcp_auth.proxy_service import (
+    INTERNAL_PROXY_TOKEN_HEADER,
+    build_proxy_runtime_config,
+    should_use_internal_proxy,
+)
+from yuxi.services.mcp_auth.redis_token_cache import RedisTokenCache
+from yuxi.storage.postgres.models_business import AgentConfig, MCPConnection, MCPServer, Skill
 from yuxi.utils import logger
 
 # =============================================================================
@@ -35,6 +47,8 @@ _mcp_tools_cache: dict[str, list[Callable[..., Any]]] = {}
 # MCP tools statistics (for reporting enabled/disabled counts)
 _mcp_tools_stats: dict[str, dict[str, int]] = {}
 _UNSET = object()
+_VALID_MCP_CONNECTION_SCOPE_TYPES = {"system", "department", "user"}
+_VALID_MCP_CONNECTION_STATUSES = {"active", "disabled", "reauth_required", "invalid"}
 
 # Default MCP Server configurations (Imported to DB on first run)
 _DEFAULT_MCP_SERVERS = {
@@ -68,6 +82,8 @@ _SYNCED_MCP_FIELDS = (
     "tags",
     "icon",
 )
+
+_MCP_PROXY_BASE_URL_ENV = "YUXI_INTERNAL_MCP_PROXY_BASE_URL"
 
 # =============================================================================
 # === Core Logic (Moved from agents/common/mcp.py) ===
@@ -207,6 +223,138 @@ async def get_enabled_mcp_server_config(server_name: str, *, db: AsyncSession | 
     return configs.get(server_name)
 
 
+def _get_internal_mcp_proxy_base_url() -> str | None:
+    value = os.getenv(_MCP_PROXY_BASE_URL_ENV, "").strip()
+    return value or None
+
+
+def _extract_cache_identity(server_config: dict[str, Any]) -> tuple[dict[str, Any], str, bool]:
+    cache_partition = str(server_config.get("__yuxi_cache_partition") or "server")
+    allow_global_cache = bool(server_config.get("__yuxi_allow_global_cache", True))
+    cache_identity = {
+        key: value
+        for key, value in server_config.items()
+        if key not in {"__yuxi_cache_partition", "__yuxi_allow_global_cache", "disabled_tools"}
+    }
+    headers = dict(cache_identity.get("headers") or {})
+    headers.pop(INTERNAL_PROXY_TOKEN_HEADER, None)
+    if headers:
+        cache_identity["headers"] = headers
+    elif "headers" in cache_identity:
+        cache_identity["headers"] = {}
+    return cache_identity, cache_partition, allow_global_cache
+
+
+def _resolve_scope_id(binding_scope: str, auth_context: AuthContext | None) -> str | None:
+    if binding_scope == "inline":
+        return None
+    if binding_scope == "system":
+        return "global"
+    if auth_context is None:
+        raise ValueError(f"auth_context is required for MCP binding scope '{binding_scope}'")
+    if binding_scope == "department":
+        if not auth_context.department_id:
+            raise ValueError("department_id is required for department-scoped MCP auth")
+        return str(auth_context.department_id)
+    if binding_scope == "user":
+        if not auth_context.user_id:
+            raise ValueError("user_id is required for user-scoped MCP auth")
+        return str(auth_context.user_id)
+    raise ValueError(f"Unsupported MCP binding scope: {binding_scope}")
+
+
+def _normalize_mcp_connection_scope(scope_type: str, scope_id: str | None) -> tuple[str, str]:
+    normalized_scope_type = str(scope_type or "").strip().lower()
+    if normalized_scope_type not in _VALID_MCP_CONNECTION_SCOPE_TYPES:
+        raise ValueError("scope_type must be one of: system, department, user")
+
+    normalized_scope_id = str(scope_id or "").strip()
+    if normalized_scope_type == "system":
+        return normalized_scope_type, "global"
+    if not normalized_scope_id:
+        raise ValueError(f"scope_id is required for {normalized_scope_type}-scoped MCP connections")
+    return normalized_scope_type, normalized_scope_id
+
+
+def _normalize_mcp_connection_status(status: str) -> str:
+    normalized_status = str(status or "").strip().lower()
+    if normalized_status not in _VALID_MCP_CONNECTION_STATUSES:
+        raise ValueError("status must be one of: active, disabled, reauth_required, invalid")
+    return normalized_status
+
+
+async def _get_enabled_mcp_server_record(server_name: str, *, db: AsyncSession) -> MCPServer | None:
+    result = await db.execute(
+        select(MCPServer).where(
+            MCPServer.enabled == 1,
+            MCPServer.name == server_name,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_runtime_mcp_server_config(
+    server_name: str,
+    *,
+    auth_context: AuthContext | None = None,
+    db: AsyncSession | None = None,
+    http_client: httpx.AsyncClient | None = None,
+) -> dict[str, Any] | None:
+    if db is None and auth_context is None:
+        return await get_enabled_mcp_server_config(server_name)
+
+    if db is not None:
+        server = await _get_enabled_mcp_server_record(server_name, db=db)
+        if server is None:
+            return None
+        if not server.auth_config_json:
+            return server.to_mcp_config()
+
+        auth_config = MCPAuthConfig.model_validate(server.auth_config_json)
+        scope_id = _resolve_scope_id(auth_config.binding_scope, auth_context)
+        if scope_id is None:
+            return server.to_mcp_config()
+
+        result = await db.execute(
+            select(MCPConnection).where(
+                MCPConnection.server_name == server_name,
+                MCPConnection.scope_type == auth_config.binding_scope,
+                MCPConnection.scope_id == scope_id,
+                MCPConnection.status == "active",
+            )
+        )
+        connection = result.scalar_one_or_none()
+        if connection is None:
+            raise ValueError(
+                f"Active MCP connection not found for server '{server_name}' and scope "
+                f"{auth_config.binding_scope}:{scope_id}"
+            )
+        proxy_base_url = _get_internal_mcp_proxy_base_url()
+        if should_use_internal_proxy(server, auth_config, proxy_base_url):
+            return build_proxy_runtime_config(
+                server,
+                auth_config=auth_config,
+                auth_context=auth_context or AuthContext(),
+                proxy_base_url=proxy_base_url or "",
+            )
+        return await resolve_runtime_mcp_config(
+            server,
+            auth_context=auth_context or AuthContext(),
+            connection=connection,
+            http_client=http_client,
+        )
+
+    from yuxi.storage.postgres.manager import pg_manager
+
+    async with pg_manager.get_async_session_context() as session:
+        return await get_runtime_mcp_server_config(
+            server_name,
+            auth_context=auth_context,
+            db=session,
+            http_client=http_client,
+        )
+
+
 async def get_enabled_mcp_server_names(*, db: AsyncSession | None = None) -> list[str]:
     """Get enabled MCP server names from the database."""
     configs = await _load_enabled_mcp_server_configs(db=db)
@@ -245,9 +393,13 @@ async def get_mcp_tools(
 
     # 配置 hash 直接基于完整配置生成。只要数据库中的配置发生变化，
     # 本地工具缓存 key 就会变化，从而自然触发重建。
-    config_payload = json.dumps(server_config, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
+    cache_identity, cache_partition, allow_global_cache = _extract_cache_identity(server_config)
+    config_payload = json.dumps(cache_identity, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
     config_hash = hashlib.sha256(config_payload.encode("utf-8")).hexdigest()[:16]
-    cache_key = f"{server_name}:{config_hash}"
+    if allow_global_cache:
+        cache_key = f"{server_name}:{config_hash}"
+    else:
+        cache_key = f"{server_name}:{cache_partition}:{config_hash}"
 
     all_processed_tools: list[Callable[..., Any]] = []
 
@@ -258,7 +410,11 @@ async def get_mcp_tools(
     if not all_processed_tools:
         try:
             # disabled_tools 只影响返回值过滤，不参与 MCP client 建连参数。
-            client_config = {k: v for k, v in server_config.items() if k not in ("disabled_tools",)}
+            client_config = {
+                k: v
+                for k, v in server_config.items()
+                if k not in ("disabled_tools", "__yuxi_cache_partition", "__yuxi_allow_global_cache")
+            }
 
             client = await get_mcp_client({server_name: client_config})
             if client is None:
@@ -347,6 +503,27 @@ def clear_mcp_server_tools_cache(server_name: str) -> None:
     logger.info(f"Cleared tools cache for MCP server '{server_name}'")
 
 
+async def _clear_mcp_connection_runtime_auth_cache(connection_id: int | None) -> None:
+    if connection_id is None:
+        return
+
+    cache = RedisTokenCache()
+    try:
+        await cache.delete_access_token(connection_id)
+    except Exception as exc:
+        logger.warning(f"Failed to clear MCP token cache for connection {connection_id}: {exc}")
+    try:
+        await cache.release_refresh_lock(connection_id)
+    except Exception as exc:
+        logger.warning(f"Failed to clear MCP refresh lock for connection {connection_id}: {exc}")
+
+
+async def _clear_mcp_server_runtime_auth_cache(db: AsyncSession, server_name: str) -> None:
+    connections = await list_mcp_connections(db, server_name=server_name)
+    for connection in connections:
+        await _clear_mcp_connection_runtime_auth_cache(getattr(connection, "id", None))
+
+
 def get_mcp_tools_stats(server_name: str) -> dict[str, int] | None:
     """Get tools statistics for a MCP server.
 
@@ -373,6 +550,224 @@ async def get_all_mcp_servers(db: AsyncSession) -> list[MCPServer]:
     return list(result.scalars().all())
 
 
+async def get_mcp_connection(db: AsyncSession, connection_id: int) -> MCPConnection | None:
+    result = await db.execute(select(MCPConnection).where(MCPConnection.id == connection_id))
+    return result.scalar_one_or_none()
+
+
+def _auth_context_from_connection(connection: MCPConnection) -> AuthContext:
+    if connection.scope_type == "department":
+        return AuthContext(department_id=connection.scope_id)
+    if connection.scope_type == "user":
+        return AuthContext(user_id=connection.scope_id)
+    return AuthContext()
+
+
+async def list_mcp_connections(
+    db: AsyncSession,
+    *,
+    server_name: str | None = None,
+    scope_type: str | None = None,
+    scope_id: str | None = None,
+) -> list[MCPConnection]:
+    stmt = select(MCPConnection)
+    if server_name is not None:
+        stmt = stmt.where(MCPConnection.server_name == server_name)
+    if scope_type is not None:
+        stmt = stmt.where(MCPConnection.scope_type == scope_type)
+    if scope_id is not None:
+        stmt = stmt.where(MCPConnection.scope_id == scope_id)
+    stmt = stmt.order_by(MCPConnection.id.asc())
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def create_mcp_connection(
+    db: AsyncSession,
+    *,
+    server_name: str,
+    scope_type: str,
+    scope_id: str,
+    display_name: str | None = None,
+    external_subject: str | None = None,
+    status: str = "active",
+    credential_blob: str | None = None,
+    meta_json: dict[str, Any] | None = None,
+    created_by: str | None = None,
+) -> MCPConnection:
+    server = await get_mcp_server(db, server_name)
+    if server is None:
+        raise ValueError(f"Server '{server_name}' does not exist")
+    normalized_scope_type, normalized_scope_id = _normalize_mcp_connection_scope(scope_type, scope_id)
+    normalized_status = _normalize_mcp_connection_status(status)
+
+    encrypted_credential_blob = (
+        encrypt_credential_blob(credential_blob)
+        if isinstance(credential_blob, str) and credential_blob.strip()
+        else credential_blob
+    )
+
+    connection = MCPConnection(
+        server_name=server_name,
+        scope_type=normalized_scope_type,
+        scope_id=normalized_scope_id,
+        display_name=display_name,
+        external_subject=external_subject,
+        status=normalized_status,
+        credential_blob=encrypted_credential_blob,
+        meta_json=meta_json or {},
+        created_by=created_by,
+        updated_by=created_by,
+    )
+    db.add(connection)
+    await db.commit()
+    await db.refresh(connection)
+    return connection
+
+
+async def update_mcp_connection(
+    db: AsyncSession,
+    connection_id: int,
+    *,
+    display_name: str | None = None,
+    external_subject: str | None = None,
+    credential_blob: Any = _UNSET,
+    meta_json: dict[str, Any] | None = None,
+    status: str | None = None,
+    updated_by: str | None = None,
+) -> MCPConnection:
+    connection = await get_mcp_connection(db, connection_id)
+    if connection is None:
+        raise ValueError(f"MCP connection '{connection_id}' does not exist")
+
+    should_clear_runtime_auth_cache = False
+    if display_name is not None:
+        connection.display_name = display_name
+    if external_subject is not None:
+        connection.external_subject = external_subject
+    if credential_blob is not _UNSET:
+        if isinstance(credential_blob, str) and credential_blob.strip():
+            connection.credential_blob = encrypt_credential_blob(credential_blob)
+        else:
+            connection.credential_blob = credential_blob
+        should_clear_runtime_auth_cache = True
+    if meta_json is not None:
+        connection.meta_json = meta_json
+    if status is not None:
+        connection.status = _normalize_mcp_connection_status(status)
+        should_clear_runtime_auth_cache = True
+    if updated_by is not None:
+        connection.updated_by = updated_by
+
+    await db.commit()
+    await db.refresh(connection)
+    if should_clear_runtime_auth_cache:
+        await _clear_mcp_connection_runtime_auth_cache(connection.id)
+    return connection
+
+
+async def delete_mcp_connection(db: AsyncSession, connection_id: int) -> bool:
+    connection = await get_mcp_connection(db, connection_id)
+    if connection is None:
+        return False
+    deleted_connection_id = connection.id
+    await db.delete(connection)
+    await db.commit()
+    await _clear_mcp_connection_runtime_auth_cache(deleted_connection_id)
+    return True
+
+
+async def set_mcp_connection_status(
+    db: AsyncSession,
+    connection_id: int,
+    *,
+    status: str,
+    updated_by: str | None = None,
+) -> MCPConnection:
+    connection = await get_mcp_connection(db, connection_id)
+    if connection is None:
+        raise ValueError(f"MCP connection '{connection_id}' does not exist")
+
+    connection.status = _normalize_mcp_connection_status(status)
+    if updated_by is not None:
+        connection.updated_by = updated_by
+    await db.commit()
+    await db.refresh(connection)
+    await _clear_mcp_connection_runtime_auth_cache(connection.id)
+    return connection
+
+
+async def reauthorize_mcp_connection(
+    db: AsyncSession,
+    connection_id: int,
+    *,
+    updated_by: str | None = None,
+) -> MCPConnection:
+    connection = await get_mcp_connection(db, connection_id)
+    if connection is None:
+        raise ValueError(f"MCP connection '{connection_id}' does not exist")
+
+    cache = RedisTokenCache()
+    if getattr(connection, "id", None) is not None:
+        try:
+            await cache.delete_access_token(connection.id)
+        except Exception as exc:
+            logger.warning(f"Failed to clear MCP token cache for connection {connection.id}: {exc}")
+        try:
+            await cache.release_refresh_lock(connection.id)
+        except Exception as exc:
+            logger.warning(f"Failed to clear MCP refresh lock for connection {connection.id}: {exc}")
+
+    connection.status = "active"
+    meta_json = dict(connection.meta_json or {})
+    meta_json.pop("last_error", None)
+    connection.meta_json = meta_json
+    if updated_by is not None:
+        connection.updated_by = updated_by
+    await db.commit()
+    await db.refresh(connection)
+    return connection
+
+
+async def test_mcp_connection(
+    db: AsyncSession,
+    connection_id: int,
+    *,
+    updated_by: str | None = None,
+) -> dict[str, Any]:
+    connection = await get_mcp_connection(db, connection_id)
+    if connection is None:
+        raise ValueError(f"MCP connection '{connection_id}' does not exist")
+
+    server = await get_mcp_server(db, connection.server_name)
+    if server is None:
+        raise ValueError(f"Server '{connection.server_name}' does not exist")
+
+    auth_context = _auth_context_from_connection(connection)
+    config = await get_runtime_mcp_server_config(server.name, auth_context=auth_context, db=db)
+    if config is None:
+        raise ValueError(f"MCP server '{server.name}' runtime config unavailable")
+
+    tools = await get_mcp_tools(
+        server.name,
+        additional_servers={server.name: config},
+        disabled_tools=[],
+        cache=False,
+        force_refresh=True,
+    )
+
+    meta_json = dict(connection.meta_json or {})
+    meta_json["last_success_at"] = datetime.now(tz=UTC).isoformat()
+    meta_json.pop("last_error", None)
+    connection.meta_json = meta_json
+    connection.status = "active"
+    if updated_by is not None:
+        connection.updated_by = updated_by
+    await db.commit()
+    await db.refresh(connection)
+    return {"tool_count": len(tools), "connection": connection}
+
+
 async def create_mcp_server(
     db: AsyncSession,
     name: str,
@@ -387,6 +782,7 @@ async def create_mcp_server(
     sse_read_timeout: int = None,
     tags: list = None,
     icon: str = None,
+    auth_config: dict | None = None,
     created_by: str = None,
 ) -> MCPServer:
     """Create server."""
@@ -404,6 +800,7 @@ async def create_mcp_server(
         args=args,
         env=env,
         headers=headers,
+        auth_config_json=auth_config,
         timeout=timeout,
         sse_read_timeout=sse_read_timeout,
         tags=tags,
@@ -416,6 +813,7 @@ async def create_mcp_server(
     await db.commit()
     await db.refresh(server)
 
+    await _clear_mcp_server_runtime_auth_cache(db, name)
     clear_mcp_server_tools_cache(name)
 
     logger.info(f"Created MCP server '{name}'")
@@ -436,6 +834,7 @@ async def update_mcp_server(
     sse_read_timeout: int = None,
     tags: list = None,
     icon: str = None,
+    auth_config: Any = _UNSET,
     updated_by: str = None,
 ) -> MCPServer:
     """Update server configuration."""
@@ -457,6 +856,8 @@ async def update_mcp_server(
         server.env = env
     if headers is not None:
         server.headers = headers
+    if auth_config is not _UNSET:
+        server.auth_config_json = auth_config
     if timeout is not None:
         server.timeout = timeout
     if sse_read_timeout is not None:
@@ -483,13 +884,46 @@ async def delete_mcp_server(db: AsyncSession, name: str) -> bool:
     if not server:
         return False
 
+    connection_ids = [item.id for item in await list_mcp_connections(db, server_name=name)]
     await db.delete(server)
     await db.commit()
 
+    for connection_id in connection_ids:
+        await _clear_mcp_connection_runtime_auth_cache(connection_id)
     clear_mcp_server_tools_cache(name)
 
     logger.info(f"Deleted MCP server '{name}'")
     return True
+
+
+async def get_mcp_server_dependency_summary(db: AsyncSession, name: str) -> dict[str, Any]:
+    connections = await list_mcp_connections(db, server_name=name)
+
+    skill_rows = (await db.execute(select(Skill))).scalars().all()
+    matched_skills = [
+        {"slug": item.slug, "name": item.name}
+        for item in skill_rows
+        if name in (item.mcp_dependencies or [])
+    ]
+
+    agent_config_rows = (await db.execute(select(AgentConfig))).scalars().all()
+    matched_agent_configs = []
+    for item in agent_config_rows:
+        config_json = item.config_json or {}
+        if name in (config_json.get("mcps") or []):
+            matched_agent_configs.append({"id": item.id, "name": item.name, "agent_id": item.agent_id})
+
+    connection_refs = [
+        {"scope_type": item.scope_type, "scope_id": item.scope_id, "status": item.status}
+        for item in connections
+    ]
+
+    return {
+        "has_references": bool(connection_refs or matched_skills or matched_agent_configs),
+        "connections": connection_refs,
+        "skills": matched_skills,
+        "agent_configs": matched_agent_configs,
+    }
 
 
 # =============================================================================
@@ -511,6 +945,8 @@ async def set_server_enabled(
     await db.commit()
 
     is_enabled = bool(server.enabled)
+    if not is_enabled:
+        await _clear_mcp_server_runtime_auth_cache(db, name)
     clear_mcp_server_tools_cache(name)
 
     logger.info(f"Set MCP server '{name}' enabled={is_enabled}")
@@ -564,7 +1000,13 @@ async def toggle_tool_enabled(
 # =============================================================================
 
 
-async def get_enabled_mcp_tools(server_name: str) -> list:
+async def get_enabled_mcp_tools(
+    server_name: str,
+    *,
+    auth_context: AuthContext | None = None,
+    db: AsyncSession | None = None,
+    http_client: httpx.AsyncClient | None = None,
+) -> list:
     """Get MCP server tools (auto-filtering disabled_tools).
 
     Unified entry point for Agents, automatically:
@@ -578,7 +1020,12 @@ async def get_enabled_mcp_tools(server_name: str) -> list:
     Returns:
         List of enabled tools
     """
-    config = await get_enabled_mcp_server_config(server_name)
+    config = await get_runtime_mcp_server_config(
+        server_name,
+        auth_context=auth_context,
+        db=db,
+        http_client=http_client,
+    )
     if config is None:
         logger.warning(f"MCP server '{server_name}' not found in database or disabled")
         return []

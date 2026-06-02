@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.agents.toolkits import get_all_tool_instances
 from yuxi.repositories.skill_repository import SkillRepository
+from yuxi.services.mcp_auth.orchestrator import AuthContext
 from yuxi.services.mcp_service import get_enabled_mcp_tools
 from yuxi.services.skill_service import _normalize_string_list, is_valid_skill_slug
 from yuxi.storage.postgres.manager import pg_manager
@@ -342,7 +343,13 @@ class SkillsMiddleware(AgentMiddleware):
         async def load_mcp_tools(server_name: str) -> list:
             """加载单个 MCP 服务器的工具"""
             try:
-                mcp_tools = await get_enabled_mcp_tools(server_name)
+                mcp_tools = await get_enabled_mcp_tools(
+                    server_name,
+                    auth_context=AuthContext(
+                        user_id=getattr(context, "user_id", None),
+                        department_id=getattr(context, "department_id", None),
+                    ),
+                )
                 if not mcp_tools:
                     logger.warning(f"SkillsMiddleware: mcp dependency unavailable, skip: {server_name}")
                 return mcp_tools

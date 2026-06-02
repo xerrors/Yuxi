@@ -56,7 +56,13 @@ def _load_workspace_agents_prompt(thread_id: str, user_id: str) -> str:
     return prompt
 
 
-async def _build_agent_input_context(agent_config: dict, *, thread_id: str, user_id: str) -> dict:
+async def _build_agent_input_context(
+    agent_config: dict,
+    *,
+    thread_id: str,
+    user_id: str,
+    department_id: str | int | None = None,
+) -> dict:
     input_context = dict(agent_config or {})
     agents_prompt = await asyncio.to_thread(_load_workspace_agents_prompt, thread_id, user_id)
 
@@ -65,7 +71,13 @@ async def _build_agent_input_context(agent_config: dict, *, thread_id: str, user
         base_prompt = str(input_context.get("system_prompt") or "").rstrip()
         input_context["system_prompt"] = f"{base_prompt}\n\n{agents_section}" if base_prompt else agents_section
 
-    input_context.update({"user_id": user_id, "thread_id": thread_id})
+    input_context.update(
+        {
+            "user_id": user_id,
+            "thread_id": thread_id,
+            "department_id": str(department_id) if department_id is not None else None,
+        }
+    )
     return input_context
 
 
@@ -598,7 +610,12 @@ async def agent_chat(
         thread_id = str(uuid.uuid4())
         logger.warning(f"No thread_id provided, generated new thread_id: {thread_id}")
 
-    input_context = await _build_agent_input_context(agent_config, thread_id=thread_id, user_id=user_id)
+    input_context = await _build_agent_input_context(
+        agent_config,
+        thread_id=thread_id,
+        user_id=user_id,
+        department_id=getattr(current_user, "department_id", None),
+    )
     langfuse_run = _build_langfuse_run_context(
         current_user=current_user,
         thread_id=thread_id,
@@ -814,7 +831,12 @@ async def stream_agent_chat(
         thread_id = str(uuid.uuid4())
         logger.warning(f"No thread_id provided, generated new thread_id: {thread_id}")
 
-    input_context = await _build_agent_input_context(agent_config, thread_id=thread_id, user_id=user_id)
+    input_context = await _build_agent_input_context(
+        agent_config,
+        thread_id=thread_id,
+        user_id=user_id,
+        department_id=getattr(current_user, "department_id", None),
+    )
     langfuse_run = _build_langfuse_run_context(
         current_user=current_user,
         thread_id=thread_id,
@@ -1049,7 +1071,14 @@ async def stream_agent_resume(
         return
 
     context = agent.context_schema()
-    context.update(await _build_agent_input_context(agent_config or {}, thread_id=thread_id, user_id=user_id))
+    context.update(
+        await _build_agent_input_context(
+            agent_config or {},
+            thread_id=thread_id,
+            user_id=user_id,
+            department_id=getattr(current_user, "department_id", None),
+        )
+    )
     graph = await agent.get_graph(context=context)
     langfuse_run = _build_langfuse_run_context(
         current_user=current_user,

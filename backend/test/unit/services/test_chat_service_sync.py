@@ -157,7 +157,12 @@ async def test_agent_chat_uses_invoke_messages_and_persists_langgraph_state(monk
     assert len(invoke_messages) == 1
     assert isinstance(invoke_messages[0], HumanMessage)
     assert invoke_messages[0].content == "hello"
-    assert calls["invoke_input_context"] == {"temperature": 0.1, "user_id": "user-1", "thread_id": "thread-1"}
+    assert calls["invoke_input_context"] == {
+        "temperature": 0.1,
+        "user_id": "user-1",
+        "thread_id": "thread-1",
+        "department_id": "dept-1",
+    }
     assert calls["invoke_kwargs"] == {
         "callbacks": ["handler-1"],
         "metadata": {"langfuse_user_id": "user-1", "langfuse_session_id": "thread-1"},
@@ -246,12 +251,14 @@ async def test_build_agent_input_context_merges_workspace_agents_prompt(monkeypa
         {"system_prompt": "原始系统提示词", "temperature": 0.1},
         thread_id="thread-1",
         user_id="user-1",
+        department_id="dept-9",
     )
 
     assert context["system_prompt"] == "原始系统提示词\n\n用户工作区 agents/AGENTS.md 内容：\n回答前先读取 AGENTS.md"
     assert context["temperature"] == 0.1
     assert context["thread_id"] == "thread-1"
     assert context["user_id"] == "user-1"
+    assert context["department_id"] == "dept-9"
 
 
 @pytest.mark.asyncio
@@ -264,6 +271,8 @@ async def test_build_agent_input_context_keeps_prompt_when_workspace_agents_prom
         {"system_prompt": "原始系统提示词"},
         thread_id="thread-1",
         user_id="user-1",
+        department_id="dept-9",
     )
 
     assert context["system_prompt"] == "原始系统提示词"
+    assert context["department_id"] == "dept-9"
