@@ -146,9 +146,16 @@ export const useUserStore = defineStore('user', () => {
   }
 
   // 用户管理功能
-  async function getUsers() {
+  async function getUsers(params = {}) {
     try {
-      const response = await fetch('/api/auth/users', {
+      const query = new URLSearchParams()
+      if (params.skip !== undefined) query.append('skip', params.skip)
+      if (params.limit !== undefined) query.append('limit', params.limit)
+      if (params.user_id) query.append('user_id', params.user_id)
+      if (params.username) query.append('username', params.username)
+
+      const url = query.toString() ? `/api/auth/users?${query.toString()}` : '/api/auth/users'
+      const response = await fetch(url, {
         headers: {
           ...getAuthHeaders()
         }

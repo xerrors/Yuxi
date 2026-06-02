@@ -506,18 +506,25 @@ async def create_user(
 # 路由：获取所有用户（管理员权限）
 @auth.get("/users", response_model=list[UserResponse])
 async def read_users(
-    skip: int = 0, limit: int = 100, current_user: User = Depends(get_admin_user), db: AsyncSession = Depends(get_db)
+    skip: int = 0,
+    limit: int = 100,
+    user_id: str | None = None,
+    username: str | None = None,
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
 ):
     user_repo = UserRepository()
 
     # 部门隔离逻辑
     if current_user.role == "superadmin":
         # 超级管理员可以看到所有用户
-        users_with_dept = await user_repo.list_with_department(skip=skip, limit=limit)
+        users_with_dept = await user_repo.list_with_department(
+            skip=skip, limit=limit, user_id=user_id, username=username
+        )
     else:
         # 普通管理员只能看到本部门用户
         users_with_dept = await user_repo.list_with_department(
-            skip=skip, limit=limit, department_id=current_user.department_id
+            skip=skip, limit=limit, department_id=current_user.department_id, user_id=user_id, username=username
         )
 
     users = []

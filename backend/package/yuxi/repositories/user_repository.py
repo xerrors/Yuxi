@@ -49,7 +49,13 @@ class UserRepository:
             return list(result.scalars().all())
 
     async def list_with_department(
-        self, skip: int = 0, limit: int = 100, department_id: int | None = None, role: str | None = None
+        self,
+        skip: int = 0,
+        limit: int = 100,
+        department_id: int | None = None,
+        role: str | None = None,
+        user_id: str | None = None,
+        username: str | None = None,
     ) -> Annotated[list[tuple[User, str | None]], "用户列表，包含部门名称"]:
         """获取用户列表，包含部门名称"""
         async with pg_manager.get_async_session_context() as session:
@@ -64,6 +70,10 @@ class UserRepository:
                 query = query.where(User.department_id == department_id)
             if role is not None:
                 query = query.where(User.role == role)
+            if user_id is not None:
+                query = query.where(User.user_id.ilike(f"%{user_id}%"))
+            if username is not None:
+                query = query.where(User.username.ilike(f"%{username}%"))
             query = query.order_by(User.id.asc()).offset(skip).limit(limit)
             result = await session.execute(query)
             return list(result.all())

@@ -14,6 +14,34 @@
       </a-button>
     </div>
 
+    <!-- 筛选区域 -->
+    <div class="filter-section">
+      <a-input
+        v-model:value="userManagement.userIdFilter"
+        placeholder="筛选用户ID"
+        size="middle"
+        allow-clear
+        style="width: 180px"
+        @pressEnter="handleFilter"
+      />
+      <a-input
+        v-model:value="userManagement.usernameFilter"
+        placeholder="筛选用户名"
+        size="middle"
+        allow-clear
+        style="width: 180px"
+        @pressEnter="handleFilter"
+      />
+      <a-button type="primary" size="middle" @click="handleFilter" class="lucide-icon-btn">
+        <template #icon><Search :size="14" /></template>
+        筛选
+      </a-button>
+      <a-button size="middle" @click="clearFilter" class="lucide-icon-btn">
+        <template #icon><X :size="14" /></template>
+        重置
+      </a-button>
+    </div>
+
     <!-- 主内容区域 -->
     <div class="content-section">
       <a-spin :spinning="userManagement.loading">
@@ -236,11 +264,11 @@
 </template>
 
 <script setup>
-import { reactive, onMounted, watch } from 'vue'
+import { reactive, onMounted, watch, nextTick } from 'vue'
 import { notification, Modal } from 'ant-design-vue'
 import { useUserStore } from '@/stores/user'
 import { departmentApi } from '@/apis'
-import { Plus, Pencil, Trash2, User, UserLock, UserStar } from 'lucide-vue-next'
+import { Plus, Pencil, Trash2, User, UserLock, UserStar, Search, X } from 'lucide-vue-next'
 import { formatDateTime } from '@/utils/time'
 
 const userStore = useUserStore()
@@ -254,6 +282,8 @@ const userManagement = reactive({
   modalTitle: '添加用户',
   editMode: false,
   editUserId: null,
+  userIdFilter: '', // 用户ID筛选
+  usernameFilter: '', // 用户名筛选
   form: {
     username: '',
     generatedUserId: '', // 自动生成的user_id
@@ -344,14 +374,35 @@ watch(
   }
 )
 
+// 监听筛选字段清空，自动重新加载
+watch(
+  () => userManagement.userIdFilter,
+  (newVal, oldVal) => {
+    if (!newVal && oldVal) {
+      nextTick(() => handleFilter())
+    }
+  }
+)
+watch(
+  () => userManagement.usernameFilter,
+  (newVal, oldVal) => {
+    if (!newVal && oldVal) {
+      nextTick(() => handleFilter())
+    }
+  }
+)
+
 // 格式化时间显示
 const formatTime = (timeStr) => formatDateTime(timeStr)
 
 // 获取用户列表
-const fetchUsers = async () => {
+const fetchUsers = async (params = {}) => {
   try {
     userManagement.loading = true
-    const users = await userStore.getUsers()
+    const users = await userStore.getUsers({
+      limit: 100,
+      ...params
+    })
     userManagement.users = users
     userManagement.error = null
   } catch (error) {
@@ -360,6 +411,25 @@ const fetchUsers = async () => {
   } finally {
     userManagement.loading = false
   }
+}
+
+// 筛选用户
+const handleFilter = () => {
+  const params = {}
+  if (userManagement.userIdFilter.trim()) {
+    params.user_id = userManagement.userIdFilter.trim()
+  }
+  if (userManagement.usernameFilter.trim()) {
+    params.username = userManagement.usernameFilter.trim()
+  }
+  fetchUsers(params)
+}
+
+// 清空筛选
+const clearFilter = () => {
+  userManagement.userIdFilter = ''
+  userManagement.usernameFilter = ''
+  fetchUsers()
 }
 
 // 打开添加用户模态框
@@ -487,8 +557,8 @@ const handleUserFormSubmit = async () => {
       notification.success({ message: '用户创建成功' })
     }
 
-    // 重新获取用户列表
-    await fetchUsers()
+    // 重新获取用户列表（保留当前筛选条件）
+    await handleFilter()
     userManagement.modalVisible = false
   } catch (error) {
     console.error('用户操作失败:', error)
@@ -521,8 +591,8 @@ const confirmDeleteUser = (user) => {
         userManagement.loading = true
         await userStore.deleteUser(user.id)
         notification.success({ message: '用户删除成功' })
-        // 重新获取用户列表
-        await fetchUsers()
+        // 重新获取用户列表（保留当前筛选条件）
+        await handleFilter()
       } catch (error) {
         console.error('删除用户失败:', error)
         notification.error({
@@ -558,6 +628,13 @@ onMounted(async () => {
 
 <style lang="less" scoped>
 .user-management {
+  .filter-section {
+    display: flex;
+    gap: 12px;
+    padding: 16px 0;
+    align-items: center;
+  }
+
   .content-section {
     overflow: hidden;
 
