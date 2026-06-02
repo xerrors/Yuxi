@@ -6,8 +6,8 @@ import pytest
 from langchain_core.messages import SystemMessage, ToolMessage
 from langgraph.types import Command
 
-import yuxi.agents.middlewares.skills_middleware as skills_middleware
-from yuxi.agents.middlewares.skills_middleware import SkillsMiddleware, resolve_runtime_skills_for_context
+import yuxi.agents.middlewares.skills as skills_middleware
+from yuxi.agents.middlewares.skills import SkillsMiddleware, resolve_runtime_skills_for_context
 
 
 def _system_message_text(message: SystemMessage) -> str:

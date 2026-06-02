@@ -401,7 +401,7 @@ async def prepare_agent_runtime_context(
         return context
 
     from yuxi.agents.backends.knowledge_base_backend import resolve_visible_knowledge_bases_for_context
-    from yuxi.agents.middlewares.skills_middleware import resolve_runtime_skills_for_context
+    from yuxi.agents.middlewares.skills import resolve_runtime_skills_for_context
     from yuxi.repositories.user_repository import UserRepository
     from yuxi.storage.postgres.manager import pg_manager
 

@@ -3,12 +3,12 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-import yuxi.agents.middlewares.subagent_task_middleware as subagent_task_middleware
+import yuxi.agents.middlewares.subagent_task as subagent_task_middleware
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.prebuilt.tool_node import ToolRuntime
 from langgraph.types import Command
 from yuxi.agents.buildin.chatbot.state import merge_subagent_runs
-from yuxi.agents.middlewares.subagent_task_middleware import YuxiSubAgentMiddleware
+from yuxi.agents.middlewares.subagent_task import YuxiSubAgentMiddleware
 from yuxi.utils.subagent_thread_utils import make_child_thread_id
 from yuxi.repositories.agent_repository import SUB_AGENT_BACKEND_ID
 

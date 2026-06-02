@@ -11,8 +11,8 @@ from yuxi.agents.buildin.chatbot.prompt import TODO_MID_PROMPT, build_prompt_wit
 from yuxi.agents.buildin.subagent.context import SubAgentContext
 from yuxi.agents.context import prepare_agent_runtime_context
 from yuxi.agents.middlewares import create_summary_middleware, save_attachments_to_fs
-from yuxi.agents.middlewares.knowledge_base_middleware import KnowledgeBaseMiddleware
-from yuxi.agents.middlewares.skills_middleware import SkillsMiddleware
+from yuxi.agents.middlewares.knowledge_base import KnowledgeBaseMiddleware
+from yuxi.agents.middlewares.skills import SkillsMiddleware
 from yuxi.agents.toolkits.service import resolve_configured_runtime_tools
 
 

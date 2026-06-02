@@ -9,9 +9,9 @@ from yuxi.agents.middlewares import (
     create_summary_middleware,
     save_attachments_to_fs,
 )
-from yuxi.agents.middlewares.knowledge_base_middleware import KnowledgeBaseMiddleware
-from yuxi.agents.middlewares.skills_middleware import SkillsMiddleware
-from yuxi.agents.middlewares.subagent_task_middleware import create_subagent_task_middleware
+from yuxi.agents.middlewares.knowledge_base import KnowledgeBaseMiddleware
+from yuxi.agents.middlewares.skills import SkillsMiddleware
+from yuxi.agents.middlewares.subagent_task import create_subagent_task_middleware
 from yuxi.agents.toolkits.service import resolve_configured_runtime_tools
 
 from .context import ChatBotContext

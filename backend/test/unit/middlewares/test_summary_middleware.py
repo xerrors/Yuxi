@@ -6,7 +6,7 @@ import pytest
 from deepagents.middleware.summarization import SummarizationMiddleware
 
 from yuxi.agents.backends.composite import create_agent_composite_backend
-from yuxi.agents.middlewares.summary_middleware import create_summary_middleware
+from yuxi.agents.middlewares.summary import create_summary_middleware
 from yuxi.utils.paths import VIRTUAL_PATH_CONVERSATION_HISTORY, VIRTUAL_PATH_LARGE_TOOL_RESULTS
 
 
