@@ -293,7 +293,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, reactive } from 'vue'
 import { message, Upload, Modal } from 'ant-design-vue'
 import { useUserStore } from '@/stores/user'
 import { useDatabaseStore } from '@/stores/database'
@@ -652,7 +652,7 @@ const handleFetchUrls = async () => {
     }
     if (urlList.value.some((u) => u.url === url)) continue
 
-    const item = { url, status: 'pending', data: null, error: '' }
+    const item = reactive({ url, status: 'pending', data: null, error: '' })
     urlList.value.push(item)
     newItems.push(item)
   }

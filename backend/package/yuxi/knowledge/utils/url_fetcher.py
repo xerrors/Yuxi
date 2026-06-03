@@ -13,8 +13,8 @@ MAX_DOWNLOAD_SIZE = 10 * 1024 * 1024
 ALLOWED_CONTENT_TYPES = ["text/html", "application/xhtml+xml"]
 
 
-async def is_private_ip(hostname: str) -> bool:
-    """Check if the hostname resolves to a private IP address."""
+async def is_forbidden_ip(hostname: str) -> bool:
+    """Check if the hostname resolves to a forbidden IP address."""
     import asyncio
 
     try:
@@ -22,21 +22,20 @@ async def is_private_ip(hostname: str) -> bool:
         ip_list = await asyncio.to_thread(socket.getaddrinfo, hostname, None)
         for item in ip_list:
             ip_addr = item[4][0]
+            if "%" in ip_addr:
+                ip_addr = ip_addr.split("%", 1)[0]
             ip_obj = ipaddress.ip_address(ip_addr)
-            if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local:
+            if ip_obj.is_loopback or ip_obj.is_link_local:
                 return True
         return False
     except Exception as e:
         logger.warning(f"Failed to resolve hostname {hostname}: {e}")
-        # If resolution fails, assume it's unsafe or let the connection fail naturally,
-        # but to be safe we can return True to block it if strict mode is preferred.
-        # For now, we return False assuming standard DNS failure handling.
-        return False
+        return True
 
 
 async def fetch_url_content(url: str, max_size: int = MAX_DOWNLOAD_SIZE) -> tuple[bytes, str]:
     """
-    Fetch URL content with security checks (size limit, content type, private IP blocking).
+    Fetch URL content with security checks (size limit, content type, loopback/link-local blocking).
 
     Args:
         url: The URL to fetch.
@@ -58,8 +57,11 @@ async def fetch_url_content(url: str, max_size: int = MAX_DOWNLOAD_SIZE) -> tupl
 
     # Parse URL to check IP
     parsed_url = urlparse(url)
-    if await is_private_ip(parsed_url.hostname):
-        raise ValueError("Access to private IP addresses is forbidden")
+    hostname = parsed_url.hostname
+    if hostname is None:
+        raise ValueError("Invalid URL: no hostname found")
+    if await is_forbidden_ip(hostname):
+        raise ValueError("Access to loopback or link-local IP addresses is forbidden")
 
     current_url = url
     redirect_count = 0
@@ -99,8 +101,6 @@ async def fetch_url_content(url: str, max_size: int = MAX_DOWNLOAD_SIZE) -> tupl
                             current_url = f"{parsed_current.scheme}://{parsed_current.netloc}{location}"
                         elif not location.startswith("http"):
                             # Handle relative path without /? or other weird cases, or assume absolute
-                            parsed_current = urlparse(current_url)
-                            # simple join
                             from urllib.parse import urljoin
 
                             current_url = urljoin(current_url, location)
@@ -113,8 +113,11 @@ async def fetch_url_content(url: str, max_size: int = MAX_DOWNLOAD_SIZE) -> tupl
                             raise ValueError(f"Redirected to invalid URL: {error_msg}")
 
                         parsed_new = urlparse(current_url)
-                        if await is_private_ip(parsed_new.hostname):
-                            raise ValueError("Redirected to private IP address")
+                        new_hostname = parsed_new.hostname
+                        if new_hostname is None:
+                            raise ValueError("Redirected to invalid URL: no hostname found")
+                        if await is_forbidden_ip(new_hostname):
+                            raise ValueError("Redirected to loopback or link-local IP address")
 
                         continue  # Start new request
 

@@ -35,7 +35,9 @@ Yuxi 支持多种文档格式的智能解析，从简单的文本文件到复杂
 3. 内置去重机制，避免重复抓取
 
 ::: tip URL 白名单配置
-示例：`YUXI_URL_WHITELIST=github.com,*.wikipedia.org,docs.python.org`
+示例：`YUXI_URL_WHITELIST=github.com,*.wikipedia.org,docs.python.org,172.27.86.91`
+
+白名单项匹配 URL 的 hostname，不包含端口。命中白名单的普通内网 IP 可用于内网知识库接入；`localhost`、`127.0.0.1`、`169.254.169.254` 等回环或链路本地地址仍会被安全策略拦截。
 :::
 
 ## OCR 方案选择
