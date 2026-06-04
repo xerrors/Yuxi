@@ -133,6 +133,21 @@ class RuntimeConfigMiddleware(AgentMiddleware):
             tool = dynamic_tools.get(request.tool_call.get("name")) if isinstance(dynamic_tools, dict) else None
             if tool is not None:
                 request = request.override(tool=tool)
+
+        # NOTE: 注入当前的 AuthContext 以便于长连接拦截器 DynamicMCPTokenAuth 随时刷新 token
+        runtime_context = getattr(request.runtime, "context", None)
+        if runtime_context is not None:
+            work_id = getattr(runtime_context, "work_id", None) or getattr(runtime_context, "user_id", None)
+            dept_id = getattr(runtime_context, "department_id", None)
+            auth_context = AuthContext(user_id=work_id, department_id=dept_id)
+            
+            from yuxi.services.mcp_auth.orchestrator import mcp_auth_context_var
+            token = mcp_auth_context_var.set(auth_context)
+            try:
+                return await handler(request)
+            finally:
+                mcp_auth_context_var.reset(token)
+
         return await handler(request)
 
     async def get_tools_from_context(self, context) -> list:

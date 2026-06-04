@@ -15,11 +15,18 @@ from yuxi.storage.postgres.models_business import MCPConnection, MCPServer
 from yuxi.utils import logger
 
 
+import contextvars
+
+
 @dataclass(slots=True)
 class AuthContext:
     user_id: str | None = None
     department_id: str | None = None
 
+
+mcp_auth_context_var: contextvars.ContextVar[AuthContext | None] = contextvars.ContextVar(
+    "mcp_auth_context_var", default=None
+)
 
 _DEFAULT_TOKEN_RESPONSE_MAP = {
     "access_token": "access_token",
@@ -138,109 +145,6 @@ def _merge_injected_entries(
     return config
 
 
-async def _fetch_custom_http_token(
-    request_config: dict[str, Any],
-    *,
-    response_map: dict[str, str] | None,
-    context: AuthContext,
-    secret_values: dict[str, Any],
-    token_values: dict[str, Any],
-    http_client: httpx.AsyncClient | None,
-) -> dict[str, Any]:
-    response_map = response_map or dict(_DEFAULT_TOKEN_RESPONSE_MAP)
-    if http_client is None:
-        http_client = httpx.AsyncClient()
-        should_close = True
-    else:
-        should_close = False
-
-    try:
-        headers = resolve_template_value(
-            request_config.get("headers") or {},
-            context=_context_payload(context),
-            secret=secret_values,
-            token=token_values,
-            access_token=token_values.get("access_token"),
-        )
-        body = resolve_template_value(
-            request_config.get("body_template") or {},
-            context=_context_payload(context),
-            secret=secret_values,
-            token=token_values,
-            access_token=token_values.get("access_token"),
-        )
-        body_type = request_config.get("body_type", "json")
-        request_kwargs: dict[str, Any] = {
-            "method": (request_config.get("method") or "POST").upper(),
-            "url": request_config["url"],
-            "headers": headers,
-        }
-        if body_type == "json":
-            request_kwargs["json"] = body
-        else:
-            request_kwargs["data"] = body
-
-        response = await http_client.request(**request_kwargs)
-        response.raise_for_status()
-        payload = response.json()
-        resolved = {}
-        for field_name, path in response_map.items():
-            try:
-                resolved[field_name] = _extract_path(payload, path)
-            except KeyError:
-                continue
-        return _normalize_token_payload(resolved)
-    finally:
-        if should_close:
-            await http_client.aclose()
-
-
-async def _resolve_authorization_code_token_request(
-    *,
-    token_request: dict[str, Any],
-    secret_values: dict[str, Any],
-    token_values: dict[str, Any],
-    http_client: httpx.AsyncClient | None,
-) -> tuple[dict[str, Any], dict[str, str]]:
-    if http_client is None:
-        http_client = httpx.AsyncClient()
-        should_close = True
-    else:
-        should_close = False
-
-    try:
-        issuer_url = (
-            token_request.get("issuer_url")
-            or secret_values.get("issuer_url")
-            or token_values.get("issuer_url")
-        )
-        if not issuer_url:
-            raise ValueError("authorization_code provider requires token_request.issuer_url")
-        discovery_url = f"{str(issuer_url).rstrip('/')}/.well-known/openid-configuration"
-        response = await http_client.get(discovery_url)
-        response.raise_for_status()
-        payload = response.json()
-        token_endpoint = payload.get("token_endpoint")
-        if not token_endpoint:
-            raise ValueError("authorization_code provider discovery missing token_endpoint")
-        return {
-            "url": token_endpoint,
-            "method": "POST",
-            "body_type": "form",
-            "headers": {
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
-            "body_template": {
-                "grant_type": "refresh_token",
-                "refresh_token": "${token.refresh_token}",
-                "client_id": token_request.get("client_id", "${secret.client_id}"),
-                "client_secret": token_request.get("client_secret", "${secret.client_secret}"),
-            },
-        }, dict(_DEFAULT_TOKEN_RESPONSE_MAP)
-    finally:
-        if should_close:
-            await http_client.aclose()
-
 
 async def _load_cached_token(
     *,
@@ -340,76 +244,28 @@ async def _request_dynamic_token_values(
     token_cache: Any | None,
     token_values: dict[str, Any],
 ) -> dict[str, Any]:
-    token_request = auth_config.token_request or {}
-    refresh_request = token_request.get("refresh")
-    if (
-        token_values
-        and refresh_request
-        and (token_values.get("refresh_token") or credential_payload.get("refresh_token"))
-    ):
-        refresh_token_values = dict(token_values)
-        if not refresh_token_values.get("refresh_token") and credential_payload.get("refresh_token"):
-            refresh_token_values["refresh_token"] = credential_payload["refresh_token"]
-        refreshed = await _fetch_custom_http_token(
-            refresh_request,
-            response_map=(refresh_request.get("response_map") or token_request.get("response_map")),
-            context=context,
-            secret_values=secret_values,
-            token_values=refresh_token_values,
-            http_client=http_client,
-        )
-        if not refreshed.get("refresh_token") and refresh_token_values.get("refresh_token"):
-            refreshed["refresh_token"] = refresh_token_values["refresh_token"]
-        await _store_cached_token(
-            token_cache=token_cache,
-            connection_id=getattr(connection, "id", None),
-            token_payload=refreshed,
-        )
-        return refreshed
-
-    if auth_config.provider == "authorization_code":
-        authorization_request, response_map = await _resolve_authorization_code_token_request(
-            token_request=token_request,
-            secret_values=secret_values,
-            token_values=token_values or credential_payload,
-            http_client=http_client,
-        )
-        authorization_token_values = dict(token_values or credential_payload)
-        if not authorization_token_values.get("refresh_token") and credential_payload.get("refresh_token"):
-            authorization_token_values["refresh_token"] = credential_payload["refresh_token"]
-        resolved = await _fetch_custom_http_token(
-            authorization_request,
-            response_map=response_map,
-            context=context,
-            secret_values=secret_values,
-            token_values=authorization_token_values,
-            http_client=http_client,
-        )
-        if not resolved.get("refresh_token") and authorization_token_values.get("refresh_token"):
-            resolved["refresh_token"] = authorization_token_values["refresh_token"]
-        await _store_cached_token(
-            token_cache=token_cache,
-            connection_id=getattr(connection, "id", None),
-            token_payload=resolved,
-        )
-        return resolved
-
-    resolved = await _fetch_custom_http_token(
-        token_request,
-        response_map=token_request.get("response_map"),
-        context=context,
+    from yuxi.services.mcp_auth.fetchers.factory import TokenFetcherFactory
+    
+    fetcher = TokenFetcherFactory.get_fetcher(auth_config.provider)
+    resolved = await fetcher.fetch_token(
+        auth_config,
+        context_payload={
+            "user_id": context.user_id,
+            "department_id": context.department_id,
+        },
         secret_values=secret_values,
+        credential_payload=credential_payload,
         token_values=token_values,
         http_client=http_client,
     )
-    if not resolved.get("refresh_token") and credential_payload.get("refresh_token"):
-        resolved["refresh_token"] = credential_payload["refresh_token"]
+    
     await _store_cached_token(
         token_cache=token_cache,
         connection_id=getattr(connection, "id", None),
         token_payload=resolved,
     )
     return resolved
+
 
 
 async def _resolve_dynamic_token_values(
@@ -423,7 +279,9 @@ async def _resolve_dynamic_token_values(
     token_cache: Any | None,
 ) -> dict[str, Any]:
     if token_cache is None and connection is not None:
+        from yuxi.services.mcp_service import RedisTokenCache
         token_cache = RedisTokenCache()
+
 
     cached_token = await _load_cached_token(
         token_cache=token_cache,

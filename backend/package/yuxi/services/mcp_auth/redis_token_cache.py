@@ -14,12 +14,24 @@ DEFAULT_TOKEN_TTL_SECONDS = 300
 DEFAULT_LOCK_TTL_SECONDS = 30
 
 
+import uuid
+_PYTEST_SESSION_TOKEN = uuid.uuid4().hex[:8]
+
+
 def _access_token_key(connection_id: int) -> str:
-    return f"{ACCESS_TOKEN_KEY_PREFIX}:{connection_id}"
+    key = f"{ACCESS_TOKEN_KEY_PREFIX}:{connection_id}"
+    import os
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return f"test:{_PYTEST_SESSION_TOKEN}:{key}"
+    return key
 
 
 def _refresh_lock_key(connection_id: int) -> str:
-    return f"{REFRESH_LOCK_KEY_PREFIX}:{connection_id}"
+    key = f"{REFRESH_LOCK_KEY_PREFIX}:{connection_id}"
+    import os
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return f"test:{_PYTEST_SESSION_TOKEN}:{key}"
+    return key
 
 
 def _compute_token_ttl_seconds(token_payload: dict[str, Any]) -> int:
