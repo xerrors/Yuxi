@@ -1,21 +1,18 @@
 from __future__ import annotations
+
 import asyncio
+import contextvars
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
-
 from yuxi.services.mcp_auth.config_models import MCPAuthConfig
 from yuxi.services.mcp_auth.crypto import decrypt_credential_blob
-from yuxi.services.mcp_auth.redis_token_cache import RedisTokenCache
 from yuxi.services.mcp_auth.template_resolver import resolve_template_value
 from yuxi.storage.postgres.models_business import MCPConnection, MCPServer
 from yuxi.utils import logger
-
-
-import contextvars
 
 
 @dataclass(slots=True)
@@ -96,6 +93,9 @@ def _normalize_token_payload(token_values: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(token_values)
     expires_at = normalized.get("expires_at")
     if isinstance(expires_at, datetime):
+        if expires_at.tzinfo is None:
+            # 若无时区信息则默认为 UTC，避免 astimezone() 将其视作本地时区转换
+            expires_at = expires_at.replace(tzinfo=UTC)
         normalized["expires_at"] = expires_at.astimezone(UTC).isoformat()
         return normalized
     if isinstance(expires_at, str):
@@ -143,7 +143,6 @@ def _merge_injected_entries(
         )
     config[inject_target] = target_values
     return config
-
 
 
 async def _load_cached_token(
@@ -245,7 +244,7 @@ async def _request_dynamic_token_values(
     token_values: dict[str, Any],
 ) -> dict[str, Any]:
     from yuxi.services.mcp_auth.fetchers.factory import TokenFetcherFactory
-    
+
     fetcher = TokenFetcherFactory.get_fetcher(auth_config.provider)
     resolved = await fetcher.fetch_token(
         auth_config,
@@ -258,14 +257,13 @@ async def _request_dynamic_token_values(
         token_values=token_values,
         http_client=http_client,
     )
-    
+
     await _store_cached_token(
         token_cache=token_cache,
         connection_id=getattr(connection, "id", None),
         token_payload=resolved,
     )
     return resolved
-
 
 
 async def _resolve_dynamic_token_values(
@@ -280,8 +278,8 @@ async def _resolve_dynamic_token_values(
 ) -> dict[str, Any]:
     if token_cache is None and connection is not None:
         from yuxi.services.mcp_auth.redis_token_cache import RedisTokenCache
-        token_cache = RedisTokenCache()
 
+        token_cache = RedisTokenCache()
 
     cached_token = await _load_cached_token(
         token_cache=token_cache,

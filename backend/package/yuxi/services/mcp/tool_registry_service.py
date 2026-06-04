@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import asyncio
 import hashlib
 import json
@@ -8,11 +9,9 @@ from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any, cast
 
-from sqlalchemy import select
+import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from yuxi.services.mcp_auth.config_models import MCPAuthConfig
-from yuxi.services.mcp_auth.crypto import encrypt_credential_blob
 from yuxi.services.mcp_auth.orchestrator import AuthContext
 from yuxi.services.mcp_auth.proxy_service import (
     INTERNAL_PROXY_DISABLE_TOOL_OBJECT_CACHE_KEY,
@@ -30,11 +29,10 @@ _mcp_tool_cache_store = RedisMcpToolCache()
 _mcp_lock = asyncio.Lock()
 
 
-
-
 def to_camel_case(s: str) -> str:
     """转换字符串为 lowerCamelCase 命名格式"""
     import re
+
     s = re.sub(r"[-_]+(.)", lambda m: m.group(1).upper(), s)
     if len(s) > 0:
         s = s[0].lower() + s[1:]
@@ -45,18 +43,19 @@ def _extract_cache_identity(server_config: dict[str, Any]) -> tuple[dict[str, An
     """提取用于缓存 key 比较的标识配置"""
     cache_partition = str(server_config.get("__yuxi_cache_partition") or "server")
     allow_global_cache = bool(server_config.get("__yuxi_allow_global_cache", True))
-    
+
     cache_identity = {
         key: value
         for key, value in server_config.items()
-        if key not in {
+        if key
+        not in {
             "__yuxi_cache_partition",
             "__yuxi_allow_global_cache",
             INTERNAL_PROXY_DISABLE_TOOL_OBJECT_CACHE_KEY,
             "disabled_tools",
         }
     }
-    
+
     headers = dict(cache_identity.get("headers") or {})
     headers.pop(INTERNAL_PROXY_TOKEN_HEADER, None)
     if headers:
@@ -71,14 +70,14 @@ async def _build_mcp_tool_cache_descriptor(server_name: str, server_config: dict
     cache_identity, cache_partition, allow_global_cache = _extract_cache_identity(server_config)
     config_payload = json.dumps(cache_identity, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
     config_hash = hashlib.sha256(config_payload.encode("utf-8")).hexdigest()[:16]
-    
+
     server_revision = await _mcp_tool_cache_store.get_server_revision(server_name)
     partition_revision = 0
     if not allow_global_cache:
         partition_revision = await _mcp_tool_cache_store.get_partition_revision(server_name, cache_partition)
     revision_token = f"s{server_revision}:p{partition_revision}"
     cache_prefix = f"{server_name}:{cache_partition}:{revision_token}:"
-    
+
     return {
         "cache_identity": cache_identity,
         "cache_partition": cache_partition,
@@ -189,6 +188,7 @@ async def get_mcp_tools(
         server_config = additional_servers[server_name]
     else:
         from yuxi.services.mcp.server_service import get_enabled_mcp_server_config
+
         server_config = await get_enabled_mcp_server_config(server_name)
 
     if server_config is None:
@@ -199,13 +199,14 @@ async def get_mcp_tools(
     cache_partition = cache_descriptor["cache_partition"]
     cache_prefix = cache_descriptor["cache_prefix"]
     cache_key = cache_descriptor["cache_key"]
-    
+
     # 策略模式：根据 AuthProvider 确认是否容许内存缓存 Tool 实例对象
     from yuxi.services.mcp.cache_policy import CachePolicyFactory
+
     auth_config = _get_mcp_auth_config(server_config)
     policy = CachePolicyFactory.get_policy(auth_config.provider if auth_config else None)
     use_tool_object_cache = (
-        cache 
+        cache
         and policy.should_cache_tool_object()
         and not bool(server_config.get(INTERNAL_PROXY_DISABLE_TOOL_OBJECT_CACHE_KEY))
     )
@@ -221,7 +222,8 @@ async def get_mcp_tools(
             client_config = {
                 k: v
                 for k, v in server_config.items()
-                if k not in (
+                if k
+                not in (
                     "disabled_tools",
                     "__yuxi_cache_partition",
                     "__yuxi_allow_global_cache",
@@ -229,8 +231,10 @@ async def get_mcp_tools(
                 )
             }
 
-            # NOTE: 从长连接池中提取 ClientSession 实例（对 Stdio 而言子进程被挂起复用，避免频繁启停；HTTP 协议亦保持 Keep-Alive）
+            # NOTE: 从长连接池中提取 ClientSession 实例
+            # （对 Stdio 而言子进程被挂起复用，避免频繁启停；HTTP 协议亦保持 Keep-Alive）
             from yuxi.services.mcp.client_pool import mcp_client_pool
+
             session = await mcp_client_pool.get_session(
                 server_name,
                 partition_key=f"{cache_partition}:s{cache_descriptor['server_revision']}:p{cache_descriptor['partition_revision']}",
@@ -243,6 +247,7 @@ async def get_mcp_tools(
             else:
                 # 调用 langchain 官方加载工具，直接传入已预备并建立好的 session
                 from langchain_mcp_adapters.tools import load_mcp_tools
+
                 raw_tools = cast(list[Any], await load_mcp_tools(session, server_name=server_name))
 
             server_cc = to_camel_case(server_name)
@@ -266,7 +271,7 @@ async def get_mcp_tools(
                         for stale_key in stale_keys:
                             _mcp_tools_cache.pop(stale_key, None)
                         _mcp_tools_cache[cache_key] = all_processed_tools
-                        
+
                 await _mcp_tool_cache_store.set_manifest(
                     cache_key,
                     _serialize_mcp_tools_manifest(
@@ -306,6 +311,7 @@ async def get_mcp_tools(
 async def get_tools_from_all_servers() -> list[Callable[..., Any]]:
     """批量载入所有可用服务的工具（用于系统初始化及预热）"""
     from yuxi.services.mcp.server_service import _load_enabled_mcp_server_configs
+
     server_configs = await _load_enabled_mcp_server_configs()
     all_tools = []
     for server_name, server_config in server_configs.items():
@@ -323,8 +329,10 @@ def clear_mcp_cache() -> None:
     _mcp_tools_cache = {}
 
     try:
-        from yuxi.services.mcp.client_pool import mcp_client_pool
+        from yuxi.services.mcp.client_pool import clear_resolved_headers_cache, mcp_client_pool
+
         mcp_client_pool._sessions.clear()
+        clear_resolved_headers_cache()
     except Exception:
         pass
 
@@ -337,6 +345,13 @@ def clear_mcp_server_tools_cache(server_name: str) -> None:
     for key in stale_keys:
         _mcp_tools_cache.pop(key, None)
 
+    try:
+        from yuxi.services.mcp.client_pool import clear_server_resolved_headers_cache
+
+        clear_server_resolved_headers_cache(server_name)
+    except Exception:
+        pass
+
 
 def clear_mcp_connection_tools_cache(server_name: str, connection_id: int | None) -> None:
     """清空指定连接下的本地内存缓存"""
@@ -347,6 +362,13 @@ def clear_mcp_connection_tools_cache(server_name: str, connection_id: int | None
     stale_keys = [k for k in _mcp_tools_cache if suffix in k and k.startswith(f"{server_name}:")]
     for key in stale_keys:
         _mcp_tools_cache.pop(key, None)
+
+    try:
+        from yuxi.services.mcp.client_pool import clear_server_resolved_headers_cache
+
+        clear_server_resolved_headers_cache(server_name)
+    except Exception:
+        pass
 
 
 async def invalidate_mcp_server_tools_cache(server_name: str) -> None:
@@ -376,6 +398,7 @@ async def _clear_mcp_connection_runtime_auth_cache(connection_id: int | None) ->
     if connection_id is None:
         return
     from yuxi.services.mcp_auth.redis_token_cache import RedisTokenCache
+
     cache = RedisTokenCache()
     try:
         await cache.delete_access_token(connection_id)
@@ -390,6 +413,7 @@ async def _clear_mcp_connection_runtime_auth_cache(connection_id: int | None) ->
 async def _clear_mcp_server_runtime_auth_cache(db: AsyncSession, server_name: str) -> None:
     """清理服务器下所有关联连接的 Token 缓存"""
     from yuxi.services.mcp.connection_service import list_mcp_connections
+
     connections = await list_mcp_connections(db, server_name=server_name)
     for connection in connections:
         await _clear_mcp_connection_runtime_auth_cache(getattr(connection, "id", None))
@@ -407,12 +431,13 @@ async def get_enabled_mcp_tools(
     http_client: httpx.AsyncClient | None = None,
 ) -> list:
     from yuxi.services.mcp.server_service import get_runtime_mcp_server_config
-    
+
     token = None
     if auth_context:
         from yuxi.services.mcp_auth.orchestrator import mcp_auth_context_var
+
         token = mcp_auth_context_var.set(auth_context)
-        
+
     try:
         config = await get_runtime_mcp_server_config(
             server_name,
@@ -433,6 +458,7 @@ async def get_enabled_mcp_tools(
     finally:
         if token:
             from yuxi.services.mcp_auth.orchestrator import mcp_auth_context_var
+
             mcp_auth_context_var.reset(token)
 
 
@@ -445,12 +471,13 @@ async def get_all_mcp_tools(
     force_refresh: bool = False,
 ) -> list:
     from yuxi.services.mcp.server_service import get_enabled_mcp_server_config, get_runtime_mcp_server_config
-    
+
     token = None
     if auth_context:
         from yuxi.services.mcp_auth.orchestrator import mcp_auth_context_var
+
         token = mcp_auth_context_var.set(auth_context)
-        
+
     try:
         if auth_context is None and db is None:
             config = await get_enabled_mcp_server_config(server_name)
@@ -481,6 +508,7 @@ async def get_all_mcp_tools(
     finally:
         if token:
             from yuxi.services.mcp_auth.orchestrator import mcp_auth_context_var
+
             mcp_auth_context_var.reset(token)
 
 
@@ -492,6 +520,7 @@ async def toggle_tool_enabled(
 ) -> tuple[bool, MCPServer]:
     """切换单个工具的启用状态"""
     from yuxi.services.mcp.server_service import get_mcp_server
+
     server = await get_mcp_server(db, server_name)
     if not server:
         raise ValueError(f"Server '{server_name}' does not exist")
@@ -515,5 +544,3 @@ async def toggle_tool_enabled(
 
     logger.info(f"Toggled tool '{tool_name}' for server '{server_name}' enabled={enabled}")
     return enabled, server
-
-

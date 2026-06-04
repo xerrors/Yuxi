@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -14,13 +15,13 @@ DEFAULT_TOKEN_TTL_SECONDS = 300
 DEFAULT_LOCK_TTL_SECONDS = 30
 
 
-import uuid
 _PYTEST_SESSION_TOKEN = uuid.uuid4().hex[:8]
 
 
 def _access_token_key(connection_id: int) -> str:
     key = f"{ACCESS_TOKEN_KEY_PREFIX}:{connection_id}"
     import os
+
     if os.environ.get("PYTEST_CURRENT_TEST"):
         return f"test:{_PYTEST_SESSION_TOKEN}:{key}"
     return key
@@ -29,6 +30,7 @@ def _access_token_key(connection_id: int) -> str:
 def _refresh_lock_key(connection_id: int) -> str:
     key = f"{REFRESH_LOCK_KEY_PREFIX}:{connection_id}"
     import os
+
     if os.environ.get("PYTEST_CURRENT_TEST"):
         return f"test:{_PYTEST_SESSION_TOKEN}:{key}"
     return key

@@ -1,16 +1,36 @@
 from __future__ import annotations
+
 import asyncio
 import hashlib
 import json
 import logging
-from typing import Any, AsyncGenerator, TYPE_CHECKING
-import httpx
+import time
+from collections.abc import AsyncGenerator
+from typing import TYPE_CHECKING, Any
 
+import httpx
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from yuxi.services.mcp_auth.orchestrator import mcp_auth_context_var
 
 if TYPE_CHECKING:
     from mcp import ClientSession
+
+# 缓存存储格式: (server_name, user_id, department_id) -> (resolved_headers, expires_at)
+_resolved_headers_cache: dict[tuple[str, str | None, str | None], tuple[dict[str, Any], float]] = {}
+_HEADERS_CACHE_TTL = 15.0
+
+
+def clear_resolved_headers_cache() -> None:
+    """清除解析后的 headers 缓存"""
+    _resolved_headers_cache.clear()
+
+
+def clear_server_resolved_headers_cache(server_name: str) -> None:
+    """清除指定服务器的解析后 headers 缓存"""
+    stale_keys = [k for k in _resolved_headers_cache if k[0] == server_name]
+    for key in stale_keys:
+        _resolved_headers_cache.pop(key, None)
+
 
 logger = logging.getLogger("yuxi.mcp.client_pool")
 
@@ -21,17 +41,28 @@ class DynamicMCPTokenAuth(httpx.Auth):
     def __init__(self, server_name: str):
         self.server_name = server_name
 
-    async def async_auth_flow(
-        self, request: httpx.Request
-    ) -> AsyncGenerator[httpx.Request, httpx.Response]:
+    async def async_auth_flow(self, request: httpx.Request) -> AsyncGenerator[httpx.Request, httpx.Response]:
         # NOTE: 1. 从当前协程上下文读取 AuthContext
         auth_context = mcp_auth_context_var.get()
         if auth_context:
             try:
+                cache_key = (self.server_name, auth_context.user_id, auth_context.department_id)
+                now = time.time()
+                cached = _resolved_headers_cache.get(cache_key)
+                if cached is not None:
+                    headers, expires_at = cached
+                    if now < expires_at:
+                        for key, val in headers.items():
+                            request.headers[key] = str(val)
+                        yield request
+                        return
+
                 # 导入数据库会话管理器以获取连接与 Token
                 from yuxi.storage.postgres.manager import pg_manager
+
                 async with pg_manager.get_async_session_context() as session:
                     from yuxi.services.mcp.server_service import get_runtime_mcp_server_config
+
                     # NOTE: 2. 读取当前上下文对应的最新运行时配置（含 Token 自动刷新逻辑）
                     runtime_config = await get_runtime_mcp_server_config(
                         self.server_name,
@@ -41,12 +72,11 @@ class DynamicMCPTokenAuth(httpx.Auth):
                     if runtime_config:
                         # NOTE: 3. 将最新的头部注入到当前 HTTP 请求中
                         headers = runtime_config.get("headers") or {}
+                        _resolved_headers_cache[cache_key] = (headers, now + _HEADERS_CACHE_TTL)
                         for key, val in headers.items():
                             request.headers[key] = str(val)
             except Exception as exc:
-                logger.error(
-                    f"DynamicMCPTokenAuth failed to resolve token headers for '{self.server_name}': {exc}"
-                )
+                logger.error(f"DynamicMCPTokenAuth failed to resolve token headers for '{self.server_name}': {exc}")
         yield request
 
 
@@ -99,7 +129,7 @@ class LongLivedSession:
         if self._loop_task:
             try:
                 await asyncio.wait_for(self._loop_task, timeout=5.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(f"Timeout waiting for long-lived session of {self.server_name} to stop.")
                 self._loop_task.cancel()
             except Exception as exc:
@@ -120,7 +150,8 @@ class MCPClientPool:
         clean_config = {
             k: v
             for k, v in config.items()
-            if k not in {
+            if k
+            not in {
                 "__yuxi_cache_partition",
                 "__yuxi_allow_global_cache",
                 "disabled_tools",
@@ -134,7 +165,7 @@ class MCPClientPool:
         elif "headers" in clean_config:
             clean_config["headers"] = {}
 
-        payload = json.dumps(clean_config, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
+        payload = json.dumps(clean_config, sort_keys=True, ensure_ascii=True, separators=(",", ":"), default=str)
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
     async def _get_mcp_client(self, server_configs: dict[str, Any] | None = None) -> MultiServerMCPClient | None:
@@ -163,7 +194,7 @@ class MCPClientPool:
                 # NOTE: 如果配置无变化且 Session 处于活动状态，直接复用
                 if cached_hash == config_hash and ll_session.session is not None:
                     return ll_session.session
-                
+
                 # 如果发生配置变化或 Session 断开，执行销毁
                 logger.info(f"Destroying stale/disconnected MCP session for {cache_key}")
                 await ll_session.stop()
@@ -183,13 +214,15 @@ class MCPClientPool:
                 # 注入 DynamicMCPTokenAuth，让底层 httpx 在长连接执行每个具体请求时动态提取最新 Token
                 client_config["auth"] = DynamicMCPTokenAuth(server_name)
 
-            logger.info(f"Creating new long-lived MCP session for {cache_key} (transport: {client_config.get('transport')})")
+            logger.info(
+                f"Creating new long-lived MCP session for {cache_key} (transport: {client_config.get('transport')})"
+            )
             client = await self._get_mcp_client({server_name: client_config})
             if client is None:
                 raise RuntimeError(f"Failed to initialize MCP client for {server_name}")
             ll_session = LongLivedSession(client, server_name)
             await ll_session.start()
-            
+
             self._sessions[cache_key] = (ll_session, config_hash)
             return ll_session.session
 

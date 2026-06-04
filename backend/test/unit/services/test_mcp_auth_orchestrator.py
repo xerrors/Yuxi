@@ -666,3 +666,34 @@ async def test_resolve_runtime_mcp_config_refreshes_authorization_code_token():
       ("POST", "https://id.example.com/oauth/token"),
     ]
     assert resolved["headers"] == {"Authorization": "Bearer oidc-access-token"}
+
+
+async def test_normalize_token_payload_naive_datetime():
+    """测试 _normalize_token_payload 对 naive datetime 默认填充 UTC 时区"""
+    from yuxi.services.mcp_auth.orchestrator import _normalize_token_payload
+    from datetime import datetime, UTC
+    
+    # 构造 naive datetime (无 tzinfo)
+    naive_dt = datetime(2026, 6, 5, 12, 0, 0)
+    payload = {"expires_at": naive_dt}
+    
+    normalized = _normalize_token_payload(payload)
+    # 期望转换后有时区，并且值为 2026-06-05T12:00:00+00:00 (ISO格式)
+    expected_iso = datetime(2026, 6, 5, 12, 0, 0, tzinfo=UTC).isoformat()
+    assert normalized["expires_at"] == expected_iso
+
+
+async def test_normalize_token_payload_aware_datetime():
+    """测试 _normalize_token_payload 对于带时区的 datetime 维持原时区对应 UTC 时间"""
+    from yuxi.services.mcp_auth.orchestrator import _normalize_token_payload
+    from datetime import datetime, timezone, timedelta
+    
+    # 构造带时区的 datetime (比如东八区)
+    shanghai_tz = timezone(timedelta(hours=8))
+    aware_dt = datetime(2026, 6, 5, 20, 0, 0, tzinfo=shanghai_tz)
+    payload = {"expires_at": aware_dt}
+    
+    normalized = _normalize_token_payload(payload)
+    # 转换为 UTC 后应该为 2026-06-05T12:00:00+00:00
+    expected_iso = datetime(2026, 6, 5, 12, 0, 0, tzinfo=timezone.utc).isoformat()
+    assert normalized["expires_at"] == expected_iso
