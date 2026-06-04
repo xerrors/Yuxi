@@ -278,6 +278,25 @@ async def test_bound_auth_server_test_endpoint_requires_connection_level_testing
         await _cleanup_server(test_client, admin_headers, server_name)
 
 
+async def test_bound_auth_tools_endpoint_requires_current_admin_connection(test_client, admin_headers):
+    server_name = _build_server_name("pytest-mcp-bound-tools")
+    await _create_server(test_client, admin_headers, server_name)
+
+    try:
+        response = await test_client.get(f"/api/system/mcp-servers/{server_name}/tools", headers=admin_headers)
+        assert response.status_code == 403, response.text
+        assert "Active MCP connection not found" in response.json()["detail"]
+
+        refresh_response = await test_client.post(
+            f"/api/system/mcp-servers/{server_name}/tools/refresh",
+            headers=admin_headers,
+        )
+        assert refresh_response.status_code == 403, refresh_response.text
+        assert "Active MCP connection not found" in refresh_response.json()["detail"]
+    finally:
+        await _cleanup_server(test_client, admin_headers, server_name)
+
+
 async def test_create_mcp_server_rejects_invalid_auth_config_via_real_api(test_client, admin_headers):
     server_name = _build_server_name("pytest-mcp-invalid-auth")
 

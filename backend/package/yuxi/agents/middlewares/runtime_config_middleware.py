@@ -90,14 +90,18 @@ class RuntimeConfigMiddleware(AgentMiddleware):
             # 获取上下文配置的工具
             enabled_tools = await self.get_tools_from_context(runtime_context)
             existing_tools = list(request.tools or [])
-            enabled_tool_names = {t.name for t in enabled_tools}
             managed_tool_names = {t.name for t in self.tools}
             merged_tools = []
             for t_bind in existing_tools:
-                # (1) 已启用的工具保留
-                # (2) 非本中间件管理的工具保留
-                if t_bind.name in enabled_tool_names or t_bind.name not in managed_tool_names:
+                # 非本中间件管理的工具保留；本中间件管理的工具统一用本轮实时加载结果覆盖。
+                if t_bind.name not in managed_tool_names:
                     merged_tools.append(t_bind)
+            merged_tool_names = {t.name for t in merged_tools}
+            for tool in enabled_tools:
+                if tool.name in merged_tool_names:
+                    continue
+                merged_tools.append(tool)
+                merged_tool_names.add(tool.name)
             overrides["tools"] = merged_tools
             logger.debug(f"RuntimeConfigMiddleware selected tools: {[t.name for t in merged_tools]}")
 

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yuxi.services.mcp_auth.orchestrator import AuthContext
 from yuxi.services.mcp_auth.config_models import MCPAuthConfig
 from yuxi.services.mcp_service import (
     create_mcp_connection,
@@ -131,6 +132,15 @@ def _validate_auth_config_or_400(payload: dict | None) -> dict | None:
         return MCPAuthConfig.model_validate(payload).model_dump(mode="json")
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"auth_config 配置无效: {exc}") from exc
+
+
+def _auth_context_from_user(current_user: User) -> AuthContext:
+    department_id = getattr(current_user, "department_id", None)
+    user_id = getattr(current_user, "user_id", None)
+    return AuthContext(
+        user_id=str(user_id) if user_id is not None else None,
+        department_id=str(department_id) if department_id is not None else None,
+    )
 
 
 # =============================================================================
@@ -579,10 +589,11 @@ async def get_mcp_server_tools(
     try:
         server = await get_server_or_404(db, name)
         disabled_tools = server.disabled_tools or []
+        auth_context = _auth_context_from_user(current_user)
 
         try:
             # 获取所有工具（不过滤 disabled_tools）
-            tools = await get_all_mcp_tools(name)
+            tools = await get_all_mcp_tools(name, auth_context=auth_context, db=db)
             tool_list = []
 
             for tool in tools:
@@ -610,6 +621,8 @@ async def get_mcp_server_tools(
                 "data": tool_list,
                 "total": len(tool_list),
             }
+        except ValueError as tool_error:
+            raise HTTPException(status_code=403, detail=f"获取工具失败: {str(tool_error)}")
         except Exception as tool_error:
             logger.error(f"Failed to get tools from MCP server '{name}': {tool_error}")
             raise HTTPException(status_code=500, detail=f"获取工具失败: {str(tool_error)}")
@@ -629,10 +642,11 @@ async def refresh_mcp_server_tools(
     """刷新 MCP 服务器的工具列表（清除缓存重新获取）"""
     try:
         await get_server_or_404(db, name)
+        auth_context = _auth_context_from_user(current_user)
 
         try:
             # 获取所有工具（不过滤 disabled_tools）
-            tools = await get_all_mcp_tools(name)
+            tools = await get_all_mcp_tools(name, auth_context=auth_context, db=db, force_refresh=True)
 
             # 获取统计信息
             stats = get_mcp_tools_stats(name)
@@ -652,6 +666,8 @@ async def refresh_mcp_server_tools(
                 "enabled_count": enabled_count,
                 "disabled_count": disabled_count,
             }
+        except ValueError as tool_error:
+            raise HTTPException(status_code=403, detail=f"刷新失败: {str(tool_error)}")
         except Exception as tool_error:
             raise HTTPException(status_code=500, detail=f"刷新失败: {str(tool_error)}")
     except HTTPException:

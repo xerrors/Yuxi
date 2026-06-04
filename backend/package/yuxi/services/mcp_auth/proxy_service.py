@@ -71,7 +71,6 @@ def build_internal_proxy_url(proxy_base_url: str, server_name: str) -> str:
 def build_proxy_runtime_config(
     server: MCPServer,
     *,
-    auth_config: MCPAuthConfig,
     auth_context: AuthContext,
     proxy_base_url: str,
 ) -> dict[str, Any]:
@@ -81,18 +80,6 @@ def build_proxy_runtime_config(
     headers[INTERNAL_PROXY_TOKEN_HEADER] = create_proxy_access_token(server.name, auth_context)
     config["headers"] = headers
     config["url"] = build_internal_proxy_url(proxy_base_url, server.name)
-    if auth_config.manifest_scope == "binding":
-        if auth_config.binding_scope == "department":
-            partition = f"department:{auth_context.department_id or 'unknown'}"
-        elif auth_config.binding_scope == "user":
-            partition = f"user:{auth_context.user_id or 'unknown'}"
-        else:
-            partition = f"{auth_config.binding_scope}:global"
-        config["__yuxi_cache_partition"] = partition
-        config["__yuxi_allow_global_cache"] = False
-    else:
-        config["__yuxi_cache_partition"] = "server"
-        config["__yuxi_allow_global_cache"] = True
     return config
 
 

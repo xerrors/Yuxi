@@ -180,6 +180,50 @@ async def test_get_enabled_mcp_tools_uses_runtime_mcp_config(monkeypatch):
     ]
 
 
+async def test_get_all_mcp_tools_uses_runtime_mcp_config_when_auth_context_is_provided(monkeypatch):
+    captured: list[dict] = []
+
+    async def fake_get_runtime_mcp_server_config(server_name: str, *, auth_context=None, db=None, http_client=None):
+        del db, http_client
+        assert server_name == "demo"
+        assert auth_context is not None
+        return {
+            "transport": "stdio",
+            "command": "demo-with-auth",
+            "disabled_tools": ["tool_b"],
+        }
+
+    async def fake_get_mcp_tools(server_name: str, additional_servers=None, disabled_tools=None, **kwargs):
+        del kwargs
+        captured.append(
+            {
+                "server_name": server_name,
+                "additional_servers": additional_servers,
+                "disabled_tools": list(disabled_tools or []),
+            }
+        )
+        return ["tool-a", "tool-b"]
+
+    monkeypatch.setattr(mcp_service, "get_runtime_mcp_server_config", fake_get_runtime_mcp_server_config)
+    monkeypatch.setattr(mcp_service, "get_mcp_tools", fake_get_mcp_tools)
+
+    tools = await mcp_service.get_all_mcp_tools(
+        "demo",
+        auth_context=AuthContext(user_id="u-100", department_id="d-9"),
+    )
+
+    assert tools == ["tool-a", "tool-b"]
+    assert captured == [
+        {
+            "server_name": "demo",
+            "additional_servers": {
+                "demo": {"transport": "stdio", "command": "demo-with-auth", "disabled_tools": ["tool_b"]}
+            },
+            "disabled_tools": [],
+        }
+    ]
+
+
 async def test_get_runtime_mcp_server_config_returns_internal_proxy_for_dynamic_http_provider(
     runtime_session, monkeypatch
 ):
@@ -238,3 +282,5 @@ async def test_get_runtime_mcp_server_config_returns_internal_proxy_for_dynamic_
     assert config["headers"]["X-App"] == "yuxi"
     assert "X-Yuxi-MCP-Proxy-Token" in config["headers"]
     assert "Authorization" not in config["headers"]
+    assert config["__yuxi_cache_partition"] == "connection:31"
+    assert config["__yuxi_allow_global_cache"] is False

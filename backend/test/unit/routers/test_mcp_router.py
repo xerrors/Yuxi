@@ -25,6 +25,7 @@ def _build_app(*, allow_admin: bool = True) -> FastAPI:
             user_id="admin",
             password_hash="x",
             role="admin",
+            department_id=42,
         )
 
     async def fake_required_user():
@@ -33,6 +34,7 @@ def _build_app(*, allow_admin: bool = True) -> FastAPI:
             user_id="admin" if allow_admin else "user",
             password_hash="x",
             role="admin" if allow_admin else "user",
+            department_id=42,
         )
 
     app.dependency_overrides[get_db] = fake_db
@@ -534,6 +536,92 @@ def test_test_mcp_server_requires_connection_level_test_for_bound_auth(monkeypat
     client = TestClient(_build_app())
     resp = client.post("/api/system/mcp-servers/gateway/test", json={})
     assert resp.status_code == 400, resp.text
+
+
+def test_get_mcp_server_tools_uses_current_admin_auth_context(monkeypatch):
+    captured = {}
+
+    class DummyServer:
+        disabled_tools = ["tool_b"]
+
+    class DummyArgsSchema:
+        @staticmethod
+        def schema():
+            return {"properties": {"city": {"type": "string"}}, "required": ["city"]}
+
+    class DummyTool:
+        name = "tool_a"
+        description = "tool a"
+        metadata = {"id": "mcp__gateway__toolA"}
+        args_schema = DummyArgsSchema()
+
+    async def fake_get_server_or_404(db, name):
+        del db
+        assert name == "gateway"
+        return DummyServer()
+
+    async def fake_get_all_mcp_tools(server_name, *, auth_context=None, db=None, http_client=None, force_refresh=False):
+        del db, http_client, force_refresh
+        captured["server_name"] = server_name
+        captured["user_id"] = auth_context.user_id
+        captured["department_id"] = auth_context.department_id
+        return [DummyTool()]
+
+    monkeypatch.setattr("server.routers.mcp_router.get_server_or_404", fake_get_server_or_404)
+    monkeypatch.setattr("server.routers.mcp_router.get_all_mcp_tools", fake_get_all_mcp_tools)
+
+    client = TestClient(_build_app())
+    resp = client.get("/api/system/mcp-servers/gateway/tools")
+
+    assert resp.status_code == 200, resp.text
+    assert captured == {
+        "server_name": "gateway",
+        "user_id": "admin",
+        "department_id": "42",
+    }
+    payload = resp.json()
+    assert payload["total"] == 1
+    assert payload["data"][0]["required"] == ["city"]
+    assert payload["data"][0]["enabled"] is True
+
+
+def test_get_mcp_server_tools_returns_403_when_bound_connection_missing(monkeypatch):
+    class DummyServer:
+        disabled_tools = []
+
+    async def fake_get_server_or_404(db, name):
+        del db, name
+        return DummyServer()
+
+    async def fake_get_all_mcp_tools(server_name, *, auth_context=None, db=None, http_client=None, force_refresh=False):
+        del server_name, auth_context, db, http_client, force_refresh
+        raise ValueError("Active MCP connection not found for server 'gateway' and scope department:42")
+
+    monkeypatch.setattr("server.routers.mcp_router.get_server_or_404", fake_get_server_or_404)
+    monkeypatch.setattr("server.routers.mcp_router.get_all_mcp_tools", fake_get_all_mcp_tools)
+
+    client = TestClient(_build_app())
+    resp = client.get("/api/system/mcp-servers/gateway/tools")
+
+    assert resp.status_code == 403, resp.text
+
+
+def test_refresh_mcp_server_tools_returns_403_when_bound_connection_missing(monkeypatch):
+    async def fake_get_server_or_404(db, name):
+        del db, name
+        return type("DummyServer", (), {})()
+
+    async def fake_get_all_mcp_tools(server_name, *, auth_context=None, db=None, http_client=None, force_refresh=False):
+        del server_name, auth_context, db, http_client, force_refresh
+        raise ValueError("Active MCP connection not found for server 'gateway' and scope department:42")
+
+    monkeypatch.setattr("server.routers.mcp_router.get_server_or_404", fake_get_server_or_404)
+    monkeypatch.setattr("server.routers.mcp_router.get_all_mcp_tools", fake_get_all_mcp_tools)
+
+    client = TestClient(_build_app())
+    resp = client.post("/api/system/mcp-servers/gateway/tools/refresh")
+
+    assert resp.status_code == 403, resp.text
 
 
 def test_delete_mcp_server_defaults_to_retire(monkeypatch):
