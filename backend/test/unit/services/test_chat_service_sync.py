@@ -142,7 +142,7 @@ async def test_agent_chat_uses_invoke_messages_and_persists_langgraph_state(monk
         thread_id="thread-1",
         meta={"request_id": "req-1"},
         image_content=None,
-        current_user=SimpleNamespace(id="user-1", department_id="dept-1"),
+        current_user=SimpleNamespace(id="user-1", user_id="login-1001", department_id="dept-1"),
         db=object(),
     )
 
@@ -160,6 +160,7 @@ async def test_agent_chat_uses_invoke_messages_and_persists_langgraph_state(monk
     assert calls["invoke_input_context"] == {
         "temperature": 0.1,
         "user_id": "user-1",
+        "mcp_user_id": "login-1001",
         "thread_id": "thread-1",
         "department_id": "dept-1",
     }
@@ -258,6 +259,25 @@ async def test_build_agent_input_context_merges_workspace_agents_prompt(monkeypa
     assert context["temperature"] == 0.1
     assert context["thread_id"] == "thread-1"
     assert context["user_id"] == "user-1"
+    assert context["department_id"] == "dept-9"
+
+
+@pytest.mark.asyncio
+async def test_build_agent_input_context_keeps_runtime_user_id_and_mcp_scope_user_id(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(svc, "_load_workspace_agents_prompt", _empty_agents_prompt)
+
+    context = await svc._build_agent_input_context(
+        {},
+        thread_id="thread-1",
+        user_id="2",
+        department_id="dept-9",
+        mcp_user_id="login-1001",
+    )
+
+    assert context["user_id"] == "2"
+    assert context["mcp_user_id"] == "login-1001"
     assert context["department_id"] == "dept-9"
 
 

@@ -61,10 +61,12 @@ async def _build_agent_input_context(
     *,
     thread_id: str,
     user_id: str,
+    mcp_user_id: str | int | None = None,
     department_id: str | int | None = None,
 ) -> dict:
     input_context = dict(agent_config or {})
     agents_prompt = await asyncio.to_thread(_load_workspace_agents_prompt, thread_id, user_id)
+    mcp_scope_user_id = str(mcp_user_id) if mcp_user_id is not None else user_id
 
     if agents_prompt:
         agents_section = f"用户工作区 agents/AGENTS.md 内容：\n{agents_prompt}"
@@ -74,6 +76,7 @@ async def _build_agent_input_context(
     input_context.update(
         {
             "user_id": user_id,
+            "mcp_user_id": mcp_scope_user_id,
             "thread_id": thread_id,
             "department_id": str(department_id) if department_id is not None else None,
         }
@@ -614,6 +617,7 @@ async def agent_chat(
         agent_config,
         thread_id=thread_id,
         user_id=user_id,
+        mcp_user_id=getattr(current_user, "user_id", None),
         department_id=getattr(current_user, "department_id", None),
     )
     langfuse_run = _build_langfuse_run_context(
@@ -835,6 +839,7 @@ async def stream_agent_chat(
         agent_config,
         thread_id=thread_id,
         user_id=user_id,
+        mcp_user_id=getattr(current_user, "user_id", None),
         department_id=getattr(current_user, "department_id", None),
     )
     langfuse_run = _build_langfuse_run_context(
@@ -1076,6 +1081,7 @@ async def stream_agent_resume(
             agent_config or {},
             thread_id=thread_id,
             user_id=user_id,
+            mcp_user_id=getattr(current_user, "user_id", None),
             department_id=getattr(current_user, "department_id", None),
         )
     )

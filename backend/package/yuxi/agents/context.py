@@ -33,6 +33,15 @@ class BaseContext:
         metadata={"name": "用户ID", "configurable": False, "description": "用来唯一标识一个用户"},
     )
 
+    mcp_user_id: str | None = field(
+        default=None,
+        metadata={
+            "name": "MCP用户标识",
+            "configurable": False,
+            "description": "用来匹配个人 MCP 连接绑定范围的用户标识",
+        },
+    )
+
     department_id: str | None = field(
         default=None,
         metadata={"name": "部门ID", "configurable": False, "description": "用来标识当前用户所属部门"},
