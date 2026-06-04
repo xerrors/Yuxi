@@ -132,12 +132,18 @@ async def test_stream_agent_chat_passes_langfuse_callbacks_and_persists_trace_in
         thread_id="thread-1",
         meta={"request_id": "req-1"},
         image_content=None,
-        current_user=SimpleNamespace(id="user-1", department_id="dept-1"),
+        current_user=SimpleNamespace(id="user-1", user_id="login-user-1", department_id="dept-1"),
         db=object(),
     ):
         chunks.append(json.loads(chunk.decode("utf-8")))
 
-    assert calls["stream_input_context"] == {"temperature": 0.1, "user_id": "user-1", "thread_id": "thread-1"}
+    assert calls["stream_input_context"] == {
+        "temperature": 0.1,
+        "user_id": "user-1",
+        "work_id": "login-user-1",
+        "thread_id": "thread-1",
+        "department_id": "dept-1",
+    }
     assert calls["stream_kwargs"] == {
         "callbacks": ["handler-1"],
         "metadata": {"langfuse_user_id": "user-1", "langfuse_session_id": "thread-1"},
@@ -210,7 +216,7 @@ async def test_stream_agent_chat_emits_realtime_agent_state_from_values(monkeypa
         thread_id="thread-1",
         meta={"request_id": "req-1"},
         image_content=None,
-        current_user=SimpleNamespace(id="user-1", department_id="dept-1"),
+        current_user=SimpleNamespace(id="user-1", user_id="login-user-1", department_id="dept-1"),
         db=object(),
     ):
         chunks.append(json.loads(chunk.decode("utf-8")))

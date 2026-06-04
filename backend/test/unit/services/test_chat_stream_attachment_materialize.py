@@ -67,6 +67,7 @@ async def test_materialize_attachment_files_keeps_original_file_when_markdown_co
 
     result = await cs._materialize_attachment_files(
         thread_id="t-1",
+        user_id="u-1",
         upload=upload,
         file_name="demo.pdf",
         file_content=b"%PDF-test",
@@ -103,6 +104,7 @@ async def test_materialize_attachment_files_writes_markdown_copy_when_conversion
 
     result = await cs._materialize_attachment_files(
         thread_id="t-1",
+        user_id="u-1",
         upload=upload,
         file_name="demo.txt",
         file_content=b"hello",
