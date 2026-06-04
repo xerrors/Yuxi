@@ -12,6 +12,7 @@ from yuxi.services.mcp_auth.orchestrator import AuthContext, resolve_runtime_mcp
 from yuxi.storage.postgres.models_business import MCPConnection, MCPServer
 
 INTERNAL_PROXY_TOKEN_HEADER = "X-Yuxi-MCP-Proxy-Token"
+INTERNAL_PROXY_DISABLE_TOOL_OBJECT_CACHE_KEY = "__yuxi_disable_tool_object_cache"
 _PROXY_TOKEN_TYPE = "mcp_proxy"
 _DYNAMIC_HTTP_PROVIDERS = {"custom_http_token", "client_credentials", "authorization_code"}
 _HTTP_TRANSPORTS = {"streamable_http", "sse"}
@@ -31,9 +32,7 @@ _HOP_BY_HOP_HEADERS = {
 
 def should_use_internal_proxy(server: MCPServer, auth_config: MCPAuthConfig, proxy_base_url: str | None) -> bool:
     return bool(
-        proxy_base_url
-        and server.transport in _HTTP_TRANSPORTS
-        and auth_config.provider in _DYNAMIC_HTTP_PROVIDERS
+        proxy_base_url and server.transport in _HTTP_TRANSPORTS and auth_config.provider in _DYNAMIC_HTTP_PROVIDERS
     )
 
 
@@ -80,6 +79,7 @@ def build_proxy_runtime_config(
     headers[INTERNAL_PROXY_TOKEN_HEADER] = create_proxy_access_token(server.name, auth_context)
     config["headers"] = headers
     config["url"] = build_internal_proxy_url(proxy_base_url, server.name)
+    config[INTERNAL_PROXY_DISABLE_TOOL_OBJECT_CACHE_KEY] = True
     return config
 
 

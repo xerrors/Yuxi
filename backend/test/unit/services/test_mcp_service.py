@@ -62,9 +62,7 @@ async def test_get_enabled_mcp_tools_loads_latest_config_from_db(monkeypatch):
     assert captured == [
         {
             "server_name": "demo",
-            "additional_servers": {
-                "demo": {"transport": "stdio", "command": "demo", "disabled_tools": ["tool_b"]}
-            },
+            "additional_servers": {"demo": {"transport": "stdio", "command": "demo", "disabled_tools": ["tool_b"]}},
             "disabled_tools": ["tool_b"],
         }
     ]
@@ -197,6 +195,51 @@ async def test_get_mcp_tools_keeps_connection_partitions_separate(monkeypatch):
     assert [tool.name for tool in tools_a] == ["tool_for_proxy-token-user-a"]
     assert [tool.name for tool in tools_b] == ["tool_for_proxy-token-user-b"]
     assert build_calls == ["proxy-token-user-a", "proxy-token-user-b"]
+
+    mcp_service.clear_mcp_cache()
+
+
+async def test_get_mcp_tools_does_not_cache_internal_proxy_tool_objects(monkeypatch):
+    mcp_service.clear_mcp_cache()
+
+    configs = [
+        {
+            "transport": "streamable_http",
+            "url": "http://internal-api:5050/api/internal/mcp-proxy/demo",
+            "headers": {
+                INTERNAL_PROXY_TOKEN_HEADER: "proxy-token-v1",
+            },
+            "__yuxi_cache_partition": "connection:101",
+            "__yuxi_allow_global_cache": False,
+            "__yuxi_disable_tool_object_cache": True,
+        },
+        {
+            "transport": "streamable_http",
+            "url": "http://internal-api:5050/api/internal/mcp-proxy/demo",
+            "headers": {
+                INTERNAL_PROXY_TOKEN_HEADER: "proxy-token-v2",
+            },
+            "__yuxi_cache_partition": "connection:101",
+            "__yuxi_allow_global_cache": False,
+            "__yuxi_disable_tool_object_cache": True,
+        },
+    ]
+    build_calls: list[str] = []
+
+    async def fake_get_mcp_client(server_configs):
+        token = server_configs["demo"]["headers"][INTERNAL_PROXY_TOKEN_HEADER]
+        build_calls.append(token)
+        tool = SimpleNamespace(name=f"tool_for_{token}", metadata={})
+        return _FakeClient([tool])
+
+    monkeypatch.setattr(mcp_service, "get_mcp_client", fake_get_mcp_client)
+
+    tools_first = await mcp_service.get_mcp_tools("demo", additional_servers={"demo": configs[0]})
+    tools_second = await mcp_service.get_mcp_tools("demo", additional_servers={"demo": configs[1]})
+
+    assert [tool.name for tool in tools_first] == ["tool_for_proxy-token-v1"]
+    assert [tool.name for tool in tools_second] == ["tool_for_proxy-token-v2"]
+    assert build_calls == ["proxy-token-v1", "proxy-token-v2"]
 
     mcp_service.clear_mcp_cache()
 

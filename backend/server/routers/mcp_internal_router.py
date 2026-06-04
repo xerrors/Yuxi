@@ -70,6 +70,8 @@ async def proxy_mcp_server_request(
     server = await get_mcp_server(db, server_name)
     if server is None:
         raise HTTPException(status_code=404, detail=f"服务器 '{server_name}' 不存在")
+    if not bool(getattr(server, "enabled", True)):
+        raise HTTPException(status_code=404, detail=f"服务器 '{server_name}' 不存在或已停用")
 
     try:
         connection = await _load_active_connection(db, server=server, auth_context=auth_context)

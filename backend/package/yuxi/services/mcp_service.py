@@ -26,6 +26,7 @@ from yuxi.services.mcp_auth.config_models import MCPAuthConfig
 from yuxi.services.mcp_auth.crypto import encrypt_credential_blob
 from yuxi.services.mcp_auth.orchestrator import AuthContext, resolve_runtime_mcp_config
 from yuxi.services.mcp_auth.proxy_service import (
+    INTERNAL_PROXY_DISABLE_TOOL_OBJECT_CACHE_KEY,
     INTERNAL_PROXY_TOKEN_HEADER,
     build_proxy_runtime_config,
     should_use_internal_proxy,
@@ -237,7 +238,13 @@ def _extract_cache_identity(server_config: dict[str, Any]) -> tuple[dict[str, An
     cache_identity = {
         key: value
         for key, value in server_config.items()
-        if key not in {"__yuxi_cache_partition", "__yuxi_allow_global_cache", "disabled_tools"}
+        if key
+        not in {
+            "__yuxi_cache_partition",
+            "__yuxi_allow_global_cache",
+            INTERNAL_PROXY_DISABLE_TOOL_OBJECT_CACHE_KEY,
+            "disabled_tools",
+        }
     }
     headers = dict(cache_identity.get("headers") or {})
     headers.pop(INTERNAL_PROXY_TOKEN_HEADER, None)
@@ -538,11 +545,12 @@ async def get_mcp_tools(
     cache_partition = cache_descriptor["cache_partition"]
     cache_prefix = cache_descriptor["cache_prefix"]
     cache_key = cache_descriptor["cache_key"]
+    use_tool_object_cache = cache and not bool(server_config.get(INTERNAL_PROXY_DISABLE_TOOL_OBJECT_CACHE_KEY))
 
     all_processed_tools: list[Callable[..., Any]] = []
 
     async with _mcp_lock:
-        if not force_refresh and cache and cache_key in _mcp_tools_cache:
+        if not force_refresh and use_tool_object_cache and cache_key in _mcp_tools_cache:
             all_processed_tools = _mcp_tools_cache[cache_key]
 
     if not all_processed_tools:
@@ -551,7 +559,13 @@ async def get_mcp_tools(
             client_config = {
                 k: v
                 for k, v in server_config.items()
-                if k not in ("disabled_tools", "__yuxi_cache_partition", "__yuxi_allow_global_cache")
+                if k
+                not in (
+                    "disabled_tools",
+                    "__yuxi_cache_partition",
+                    "__yuxi_allow_global_cache",
+                    INTERNAL_PROXY_DISABLE_TOOL_OBJECT_CACHE_KEY,
+                )
             }
 
             client = await get_mcp_client({server_name: client_config})
@@ -574,11 +588,14 @@ async def get_mcp_tools(
                 all_processed_tools.append(tool)
 
             if cache:
-                async with _mcp_lock:
-                    stale_keys = [key for key in _mcp_tools_cache if key.startswith(cache_prefix) and key != cache_key]
-                    for stale_key in stale_keys:
-                        _mcp_tools_cache.pop(stale_key, None)
-                    _mcp_tools_cache[cache_key] = all_processed_tools
+                if use_tool_object_cache:
+                    async with _mcp_lock:
+                        stale_keys = [
+                            key for key in _mcp_tools_cache if key.startswith(cache_prefix) and key != cache_key
+                        ]
+                        for stale_key in stale_keys:
+                            _mcp_tools_cache.pop(stale_key, None)
+                        _mcp_tools_cache[cache_key] = all_processed_tools
                 await _mcp_tool_cache_store.set_manifest(
                     cache_key,
                     _serialize_mcp_tools_manifest(
@@ -1060,6 +1077,8 @@ async def update_mcp_server(
     await db.commit()
     await db.refresh(server)
 
+    if auth_config is not _UNSET:
+        await _clear_mcp_server_runtime_auth_cache(db, name)
     await invalidate_mcp_server_tools_cache(name)
 
     logger.info(f"Updated MCP server '{name}'")
@@ -1089,9 +1108,7 @@ async def get_mcp_server_dependency_summary(db: AsyncSession, name: str) -> dict
 
     skill_rows = (await db.execute(select(Skill))).scalars().all()
     matched_skills = [
-        {"slug": item.slug, "name": item.name}
-        for item in skill_rows
-        if name in (item.mcp_dependencies or [])
+        {"slug": item.slug, "name": item.name} for item in skill_rows if name in (item.mcp_dependencies or [])
     ]
 
     agent_config_rows = (await db.execute(select(AgentConfig))).scalars().all()
@@ -1102,8 +1119,7 @@ async def get_mcp_server_dependency_summary(db: AsyncSession, name: str) -> dict
             matched_agent_configs.append({"id": item.id, "name": item.name, "agent_id": item.agent_id})
 
     connection_refs = [
-        {"scope_type": item.scope_type, "scope_id": item.scope_id, "status": item.status}
-        for item in connections
+        {"scope_type": item.scope_type, "scope_id": item.scope_id, "status": item.status} for item in connections
     ]
 
     return {

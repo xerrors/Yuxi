@@ -37,7 +37,7 @@
 ### 0.6.3 开发记录
 
 - 修复 DeepAgent 未绑定 `DeepContext`，导致深度分析专用系统提示词和子智能体默认模型配置未生效的问题；同时避免运行时重复注入默认提示词。
-- **MCP 多鉴权编排与内部代理链路**：为 MCP 接入新增 `auth_config_json` 与 `mcp_connections` 绑定模型，支持 `bound_secret`、`custom_http_token`、`client_credentials`、`stdio_env`、`authorization_code` 等鉴权编排基础；后端补齐基于 Redis 的 access token 缓存、预刷新与 401 后自动删缓存重试能力，并新增 `/api/internal/mcp-proxy/{server_name}` 内部代理路由，将动态 HTTP MCP 的鉴权、续期和重试逻辑统一收敛到服务端；补齐用户/部门绑定连接缺失时的内部代理拒绝逻辑，避免个人级 MCP 连接被其他用户通过代理入口串用；同时让管理端 `/api/system/mcp-servers/{name}/tools` 与 `/tools/refresh` 也按当前管理员的 `user_id/department_id` 解析绑定连接，避免跨部门管理员在未授权情况下探测到 MCP 工具列表；新增 Redis 版次 + manifest 分级缓存，让 API/Worker 多进程场景下的 MCP 工具清单按 `server` / `connection` 分区同步失效，并避免旧 graph 中预加载的 managed tool 覆盖本轮实时鉴权加载结果。
+- **MCP 多鉴权编排与内部代理链路**：为 MCP 接入新增 `auth_config_json` 与 `mcp_connections` 绑定模型，支持 `bound_secret`、`custom_http_token`、`client_credentials`、`stdio_env`、`authorization_code` 等鉴权编排基础；后端补齐基于 Redis 的 access token 缓存、预刷新与 401 后自动删缓存重试能力，并新增 `/api/internal/mcp-proxy/{server_name}` 内部代理路由，将动态 HTTP MCP 的鉴权、续期和重试逻辑统一收敛到服务端；补齐用户/部门绑定连接缺失时的内部代理拒绝逻辑，避免个人级 MCP 连接被其他用户通过代理入口串用；同时让管理端 `/api/system/mcp-servers/{name}/tools` 与 `/tools/refresh` 也按当前管理员的 `user_id/department_id` 解析绑定连接，避免跨部门管理员在未授权情况下探测到 MCP 工具列表；新增 Redis 版次 + manifest 分级缓存，让 API/Worker 多进程场景下的 MCP 工具清单按 `server` / `connection` 分区同步失效，并避免旧 graph 中预加载的 managed tool 覆盖本轮实时鉴权加载结果；修复动态 HTTP 内部代理短期 JWT 被工具对象缓存固化、停用 MCP 仍可通过内部代理访问、更新 `auth_config` 后 runtime token 未立即清理的问题。
 
 ---
 

@@ -284,3 +284,58 @@ async def test_get_runtime_mcp_server_config_returns_internal_proxy_for_dynamic_
     assert "Authorization" not in config["headers"]
     assert config["__yuxi_cache_partition"] == "connection:31"
     assert config["__yuxi_allow_global_cache"] is False
+    assert config["__yuxi_disable_tool_object_cache"] is True
+
+
+async def test_update_mcp_server_auth_config_clears_runtime_auth_cache(runtime_session, monkeypatch):
+    server = MCPServer(
+        name="finance-gateway",
+        transport="streamable_http",
+        url="http://finance.local/mcp",
+        auth_config_json={
+            "version": 1,
+            "provider": "bound_secret",
+            "binding_scope": "system",
+            "inject": {
+                "target": "headers",
+                "entries": [{"name": "Authorization", "value_template": "Bearer ${secret.access_token}"}],
+            },
+        },
+        enabled=1,
+        created_by="tester",
+        updated_by="tester",
+    )
+    runtime_session.add(server)
+    await runtime_session.commit()
+
+    calls = {"runtime_auth_cache": 0, "tools_cache": 0}
+
+    async def fake_clear_runtime_auth_cache(db, server_name):
+        assert db is runtime_session
+        assert server_name == "finance-gateway"
+        calls["runtime_auth_cache"] += 1
+
+    async def fake_invalidate_tools_cache(server_name):
+        assert server_name == "finance-gateway"
+        calls["tools_cache"] += 1
+
+    monkeypatch.setattr(mcp_service, "_clear_mcp_server_runtime_auth_cache", fake_clear_runtime_auth_cache)
+    monkeypatch.setattr(mcp_service, "invalidate_mcp_server_tools_cache", fake_invalidate_tools_cache)
+
+    await mcp_service.update_mcp_server(
+        runtime_session,
+        "finance-gateway",
+        auth_config={
+            "version": 1,
+            "provider": "custom_http_token",
+            "binding_scope": "system",
+            "inject": {
+                "target": "headers",
+                "entries": [{"name": "Authorization", "value_template": "Bearer ${access_token}"}],
+            },
+            "token_request": {"url": "http://gateway.local/auth/token", "method": "POST"},
+        },
+        updated_by="tester",
+    )
+
+    assert calls == {"runtime_auth_cache": 1, "tools_cache": 1}

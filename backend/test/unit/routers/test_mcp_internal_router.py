@@ -84,6 +84,53 @@ def test_internal_proxy_route_requires_internal_token():
     assert resp.status_code == 401, resp.text
 
 
+def test_internal_proxy_route_rejects_disabled_server(monkeypatch):
+    class DummyServer:
+        name = "disabled-proxy"
+        transport = "streamable_http"
+        enabled = 0
+        auth_config_json = {
+            "version": 1,
+            "provider": "custom_http_token",
+            "binding_scope": "department",
+            "inject": {
+                "target": "headers",
+                "entries": [{"name": "Authorization", "value_template": "Bearer ${access_token}"}],
+            },
+            "token_request": {"url": "http://gateway.local/auth/token", "method": "POST"},
+        }
+
+    async def fake_get_mcp_server(db, name):
+        del db
+        assert name == "disabled-proxy"
+        return DummyServer()
+
+    async def fake_load_connection(db, *, server, auth_context):
+        del db, server, auth_context
+        raise AssertionError("disabled MCP server should be rejected before loading a connection")
+
+    async def fake_proxy_mcp_request(server, **kwargs):
+        del server, kwargs
+        raise AssertionError("disabled MCP server should not be proxied")
+
+    monkeypatch.setattr(
+        "server.routers.mcp_internal_router.decode_proxy_access_token",
+        lambda token, server_name: AuthContext(user_id="user-1", department_id="dep-1"),
+    )
+    monkeypatch.setattr("server.routers.mcp_internal_router.get_mcp_server", fake_get_mcp_server)
+    monkeypatch.setattr("server.routers.mcp_internal_router._load_active_connection", fake_load_connection)
+    monkeypatch.setattr("server.routers.mcp_internal_router.proxy_mcp_request", fake_proxy_mcp_request)
+
+    client = TestClient(_build_app())
+    resp = client.post(
+        "/api/internal/mcp-proxy/disabled-proxy",
+        headers={"X-Yuxi-MCP-Proxy-Token": "test-token", "content-type": "application/json"},
+        json={"jsonrpc": "2.0", "id": 1},
+    )
+
+    assert resp.status_code == 404, resp.text
+
+
 def test_internal_proxy_route_rejects_user_scoped_request_without_active_connection(monkeypatch):
     class DummyServer:
         name = "personal-proxy"
