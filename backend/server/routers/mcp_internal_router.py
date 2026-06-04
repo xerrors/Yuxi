@@ -73,6 +73,10 @@ async def proxy_mcp_server_request(
 
     try:
         connection = await _load_active_connection(db, server=server, auth_context=auth_context)
+        auth_config = MCPAuthConfig.model_validate(server.auth_config_json or {})
+        if auth_config.binding_scope != "inline" and connection is None:
+            raise HTTPException(status_code=403, detail="当前用户没有该 MCP 的有效连接")
+
         body = await request.body()
         upstream_response = await proxy_mcp_request(
             server,

@@ -37,7 +37,7 @@
 ### 0.6.3 开发记录
 
 - 修复 DeepAgent 未绑定 `DeepContext`，导致深度分析专用系统提示词和子智能体默认模型配置未生效的问题；同时避免运行时重复注入默认提示词。
-- **MCP 多鉴权编排与内部代理链路**：为 MCP 接入新增 `auth_config_json` 与 `mcp_connections` 绑定模型，支持 `bound_secret`、`custom_http_token`、`client_credentials`、`stdio_env`、`authorization_code` 等鉴权编排基础；后端补齐基于 Redis 的 access token 缓存、预刷新与 401 后自动删缓存重试能力，并新增 `/api/internal/mcp-proxy/{server_name}` 内部代理路由，将动态 HTTP MCP 的鉴权、续期和重试逻辑统一收敛到服务端。
+- **MCP 多鉴权编排与内部代理链路**：为 MCP 接入新增 `auth_config_json` 与 `mcp_connections` 绑定模型，支持 `bound_secret`、`custom_http_token`、`client_credentials`、`stdio_env`、`authorization_code` 等鉴权编排基础；后端补齐基于 Redis 的 access token 缓存、预刷新与 401 后自动删缓存重试能力，并新增 `/api/internal/mcp-proxy/{server_name}` 内部代理路由，将动态 HTTP MCP 的鉴权、续期和重试逻辑统一收敛到服务端；补齐用户/部门绑定连接缺失时的内部代理拒绝逻辑，避免个人级 MCP 连接被其他用户通过代理入口串用。
 
 ---
 

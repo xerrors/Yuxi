@@ -75,6 +75,67 @@ async def test_get_runtime_mcp_server_config_resolves_department_connection(runt
     assert config["headers"]["Authorization"] == "Bearer dept-token"
 
 
+async def test_get_enabled_mcp_tools_does_not_reuse_user_connection_for_other_user(runtime_session, monkeypatch):
+    server = MCPServer(
+        name="personal-gateway",
+        transport="streamable_http",
+        url="http://personal.local/mcp",
+        auth_config_json={
+            "version": 1,
+            "provider": "bound_secret",
+            "binding_scope": "user",
+            "manifest_scope": "server",
+            "inject": {
+                "target": "headers",
+                "entries": [{"name": "Authorization", "value_template": "Bearer ${secret.access_token}"}],
+            },
+        },
+        enabled=1,
+        created_by="tester",
+        updated_by="tester",
+    )
+    runtime_session.add(server)
+    runtime_session.add(
+        MCPConnection(
+            server_name="personal-gateway",
+            scope_type="user",
+            scope_id="user-1",
+            status="active",
+            credential_blob=json.dumps({"secrets": {"access_token": "user-1-token"}}),
+            created_by="tester",
+            updated_by="tester",
+        )
+    )
+    await runtime_session.commit()
+
+    captured_configs: list[dict] = []
+
+    async def fake_get_mcp_tools(server_name: str, additional_servers=None, disabled_tools=None, **kwargs):
+        del disabled_tools, kwargs
+        assert server_name == "personal-gateway"
+        captured_configs.append(additional_servers[server_name])
+        return ["private-tool"]
+
+    monkeypatch.setattr(mcp_service, "get_mcp_tools", fake_get_mcp_tools)
+
+    user_1_tools = await mcp_service.get_enabled_mcp_tools(
+        "personal-gateway",
+        auth_context=AuthContext(user_id="user-1"),
+        db=runtime_session,
+    )
+
+    with pytest.raises(ValueError, match="Active MCP connection not found"):
+        await mcp_service.get_enabled_mcp_tools(
+            "personal-gateway",
+            auth_context=AuthContext(user_id="user-2"),
+            db=runtime_session,
+        )
+
+    assert user_1_tools == ["private-tool"]
+    assert len(captured_configs) == 1
+    assert captured_configs[0]["headers"]["Authorization"] == "Bearer user-1-token"
+
+
 async def test_get_enabled_mcp_tools_uses_runtime_mcp_config(monkeypatch):
     captured: list[dict] = []
 
