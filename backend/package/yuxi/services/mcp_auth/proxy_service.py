@@ -93,8 +93,12 @@ def _merge_upstream_headers(
     request_headers: dict[str, str] | None,
 ) -> dict[str, Any]:
     merged = dict(base_headers or {})
+    _PROTECTED_HEADERS = {
+        INTERNAL_PROXY_TOKEN_HEADER.lower(),
+        "authorization",
+    }
     for key, value in (request_headers or {}).items():
-        if key.lower() in _HOP_BY_HOP_HEADERS or key.lower() == INTERNAL_PROXY_TOKEN_HEADER.lower():
+        if key.lower() in _HOP_BY_HOP_HEADERS or key.lower() in _PROTECTED_HEADERS:
             continue
         merged[key] = value
     return merged
@@ -207,7 +211,16 @@ async def _proxy_mcp_request_stream(
             status_code=400, detail=f"Internal proxy only supports HTTP MCP transports, got: {server.transport}"
         )
 
-    http_client = _http_client or httpx.AsyncClient(timeout=server.timeout or 60.0)
+    connect_timeout = server.timeout or 60.0
+    read_timeout = server.sse_read_timeout or connect_timeout
+    http_client = _http_client or httpx.AsyncClient(
+        timeout=httpx.Timeout(
+            connect=connect_timeout,
+            read=read_timeout,
+            write=connect_timeout,
+            pool=connect_timeout,
+        )
+    )
     bg_task = BackgroundTask(http_client.aclose)
 
     if _token_cache is not None:

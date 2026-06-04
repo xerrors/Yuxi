@@ -132,7 +132,15 @@ async def create_mcp_connection(
         updated_by=created_by,
     )
     db.add(connection)
-    await db.commit()
+    from sqlalchemy.exc import IntegrityError
+
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise ValueError(
+            f"该 MCP 服务器 '{server_name}' 在范围 {normalized_scope_type}:{normalized_scope_id} 下已存在连接"
+        )
     await db.refresh(connection)
     return connection
 

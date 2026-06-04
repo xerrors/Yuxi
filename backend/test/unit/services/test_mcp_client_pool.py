@@ -194,7 +194,7 @@ async def test_dynamic_mcp_token_auth_cache():
             assert len(_resolved_headers_cache) == 0
     
             _resolved_headers_cache[cache_key] = ({"Auth": "Bearer test"}, 2000.0)
-            clear_mcp_cache()
+            await clear_mcp_cache()
             assert len(_resolved_headers_cache) == 0
     finally:
         mcp_auth_context_var.reset(token)

@@ -71,7 +71,7 @@ async def test_get_enabled_mcp_tools_loads_latest_config_from_db(monkeypatch):
 
 
 async def test_get_mcp_tools_rebuilds_cache_when_config_hash_changes(monkeypatch):
-    tool_registry_service.clear_mcp_cache()
+    await tool_registry_service.clear_mcp_cache()
 
     configs = [
         {"transport": "stdio", "command": "demo-v1", "disabled_tools": []},
@@ -104,7 +104,7 @@ async def test_get_mcp_tools_rebuilds_cache_when_config_hash_changes(monkeypatch
     assert [tool.name for tool in tools_v2] == ["tool_for_demo-v2"]
     assert build_calls == ["demo-v1", "demo-v2"]
 
-    tool_registry_service.clear_mcp_cache()
+    await tool_registry_service.clear_mcp_cache()
 
 
 async def test_get_tools_from_all_servers_loads_names_from_db_once(monkeypatch):
@@ -136,7 +136,7 @@ async def test_get_tools_from_all_servers_loads_names_from_db_once(monkeypatch):
 
 
 async def test_get_mcp_tools_sets_handle_tool_error(monkeypatch):
-    tool_registry_service.clear_mcp_cache()
+    await tool_registry_service.clear_mcp_cache()
 
     config = {"transport": "stdio", "command": "demo-tool", "disabled_tools": []}
 
@@ -155,11 +155,11 @@ async def test_get_mcp_tools_sets_handle_tool_error(monkeypatch):
     assert len(tools) == 1
     assert tools[0].handle_tool_error is True
 
-    tool_registry_service.clear_mcp_cache()
+    await tool_registry_service.clear_mcp_cache()
 
 
 async def test_get_mcp_tools_keeps_connection_partitions_separate(monkeypatch):
-    tool_registry_service.clear_mcp_cache()
+    await tool_registry_service.clear_mcp_cache()
 
     configs = [
         {
@@ -198,11 +198,11 @@ async def test_get_mcp_tools_keeps_connection_partitions_separate(monkeypatch):
     assert [tool.name for tool in tools_b] == ["tool_for_proxy-token-user-b"]
     assert build_calls == ["proxy-token-user-a", "proxy-token-user-b"]
 
-    tool_registry_service.clear_mcp_cache()
+    await tool_registry_service.clear_mcp_cache()
 
 
 async def test_get_mcp_tools_does_not_cache_internal_proxy_tool_objects(monkeypatch):
-    tool_registry_service.clear_mcp_cache()
+    await tool_registry_service.clear_mcp_cache()
 
     configs = [
         {
@@ -243,7 +243,7 @@ async def test_get_mcp_tools_does_not_cache_internal_proxy_tool_objects(monkeypa
     assert [tool.name for tool in tools_second] == ["tool_for_proxy-token-v2"]
     assert build_calls == ["proxy-token-v1", "proxy-token-v2"]
 
-    tool_registry_service.clear_mcp_cache()
+    await tool_registry_service.clear_mcp_cache()
 
 
 async def test_get_tools_from_all_servers_skips_runtime_auth_servers_without_context(monkeypatch):
@@ -292,7 +292,7 @@ async def test_get_tools_from_all_servers_skips_runtime_auth_servers_without_con
 
 
 async def test_get_mcp_tools_rebuilds_when_redis_server_revision_changes(monkeypatch):
-    tool_registry_service.clear_mcp_cache()
+    await tool_registry_service.clear_mcp_cache()
 
     fake_redis = _FakeRedis()
 
@@ -323,11 +323,11 @@ async def test_get_mcp_tools_rebuilds_when_redis_server_revision_changes(monkeyp
     assert [tool.name for tool in tools_third] == ["tool_2"]
     assert build_calls == ["demo-tool", "demo-tool"]
 
-    tool_registry_service.clear_mcp_cache()
+    await tool_registry_service.clear_mcp_cache()
 
 
 async def test_get_all_mcp_tools_uses_redis_manifest_when_local_cache_is_empty(monkeypatch):
-    tool_registry_service.clear_mcp_cache()
+    await tool_registry_service.clear_mcp_cache()
 
     fake_redis = _FakeRedis()
 
@@ -365,7 +365,7 @@ async def test_get_all_mcp_tools_uses_redis_manifest_when_local_cache_is_empty(m
     tools_first = await tool_registry_service.get_all_mcp_tools("demo")
     assert [tool.name for tool in tools_first] == ["alpha_tool"]
 
-    tool_registry_service.clear_mcp_cache()
+    await tool_registry_service.clear_mcp_cache()
 
     async def fail_get_mcp_client(server_configs):
         raise AssertionError(f"should not fetch live tools when redis manifest is available: {server_configs}")

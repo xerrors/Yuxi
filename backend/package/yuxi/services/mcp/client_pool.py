@@ -71,8 +71,18 @@ class DynamicMCPTokenAuth(httpx.Auth):
                     )
                     if runtime_config:
                         # NOTE: 3. 将最新的头部注入到当前 HTTP 请求中
-                        headers = runtime_config.get("headers") or {}
+                        headers = dict(runtime_config.get("headers") or {})
                         _resolved_headers_cache[cache_key] = (headers, now + _HEADERS_CACHE_TTL)
+
+                        # 惰性清理过期条目，避免无界膨胀
+                        stale_keys = [
+                            k
+                            for k in list(_resolved_headers_cache.keys())[:100]
+                            if _resolved_headers_cache.get(k, (None, float("inf")))[1] <= now
+                        ][:20]
+                        for k in stale_keys:
+                            _resolved_headers_cache.pop(k, None)
+
                         for key, val in headers.items():
                             request.headers[key] = str(val)
             except Exception as exc:
@@ -199,6 +209,14 @@ class MCPClientPool:
                 logger.info(f"Destroying stale/disconnected MCP session for {cache_key}")
                 await ll_session.stop()
                 self._sessions.pop(cache_key, None)
+
+            # NOTE: 驱逐同 server_name 下其他过时 partition_key 的旧 session，
+            # 防止 revision 变化导致的连接池内存泄漏
+            stale_keys = [k for k in self._sessions if k[0] == server_name and k != cache_key]
+            for stale_key in stale_keys:
+                stale_session, _ = self._sessions.pop(stale_key)
+                logger.info(f"Evicting stale MCP session for {stale_key}")
+                await stale_session.stop()
 
             # NOTE: 针对 HTTP/SSE 协议，注入自定义的 httpx.Auth 认证流以支持长连接动态 Token
             client_config = dict(runtime_config)

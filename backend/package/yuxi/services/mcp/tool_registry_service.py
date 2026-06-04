@@ -323,7 +323,7 @@ async def get_tools_from_all_servers() -> list[Callable[..., Any]]:
     return all_tools
 
 
-def clear_mcp_cache() -> None:
+async def clear_mcp_cache() -> None:
     """清空本地内存工具缓存"""
     global _mcp_tools_cache
     _mcp_tools_cache = {}
@@ -331,7 +331,7 @@ def clear_mcp_cache() -> None:
     try:
         from yuxi.services.mcp.client_pool import clear_resolved_headers_cache, mcp_client_pool
 
-        mcp_client_pool._sessions.clear()
+        await mcp_client_pool.shutdown()
         clear_resolved_headers_cache()
     except Exception:
         pass
