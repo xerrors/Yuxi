@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from yuxi.services.task_service import tasker
-from yuxi.services.mcp_service import ensure_builtin_mcp_servers_in_db
+from yuxi.services.mcp.server_service import ensure_builtin_mcp_servers_in_db
 from yuxi.services.model_provider_service import ensure_builtin_model_providers_in_db
 from yuxi.services.subagent_service import init_builtin_subagents
 from yuxi.services.run_queue_service import close_queue_clients, get_redis_client

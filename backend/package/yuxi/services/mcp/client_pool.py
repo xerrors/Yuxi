@@ -31,7 +31,7 @@ class DynamicMCPTokenAuth(httpx.Auth):
                 # 导入数据库会话管理器以获取连接与 Token
                 from yuxi.storage.postgres.manager import pg_manager
                 async with pg_manager.get_async_session_context() as session:
-                    from yuxi.services.mcp_service import get_runtime_mcp_server_config
+                    from yuxi.services.mcp.server_service import get_runtime_mcp_server_config
                     # NOTE: 2. 读取当前上下文对应的最新运行时配置（含 Token 自动刷新逻辑）
                     runtime_config = await get_runtime_mcp_server_config(
                         self.server_name,
@@ -137,6 +137,15 @@ class MCPClientPool:
         payload = json.dumps(clean_config, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
+    async def _get_mcp_client(self, server_configs: dict[str, Any] | None = None) -> MultiServerMCPClient | None:
+        try:
+            client = MultiServerMCPClient(server_configs)  # pyright: ignore[reportArgumentType]
+            logger.info(f"Initialized MCP client with servers: {list(server_configs.keys() or [])}")
+            return client
+        except Exception as e:
+            logger.error(f"Failed to initialize MCP client: {e}")
+            return None
+
     async def get_session(
         self,
         server_name: str,
@@ -175,8 +184,7 @@ class MCPClientPool:
                 client_config["auth"] = DynamicMCPTokenAuth(server_name)
 
             logger.info(f"Creating new long-lived MCP session for {cache_key} (transport: {client_config.get('transport')})")
-            from yuxi.services.mcp_service import get_mcp_client
-            client = await get_mcp_client({server_name: client_config})
+            client = await self._get_mcp_client({server_name: client_config})
             if client is None:
                 raise RuntimeError(f"Failed to initialize MCP client for {server_name}")
             ll_session = LongLivedSession(client, server_name)

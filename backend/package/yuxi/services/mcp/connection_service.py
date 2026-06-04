@@ -245,8 +245,8 @@ async def reauthorize_mcp_connection(
     if connection is None:
         raise ValueError(f"MCP connection '{connection_id}' does not exist")
 
-    from yuxi.services import mcp_service
-    cache = mcp_service.RedisTokenCache()
+    from yuxi.services.mcp_auth.redis_token_cache import RedisTokenCache
+    cache = RedisTokenCache()
     if getattr(connection, "id", None) is not None:
         try:
             await cache.delete_access_token(connection.id)
@@ -288,12 +288,14 @@ async def test_mcp_connection(
         raise ValueError(f"Server '{connection.server_name}' does not exist")
 
     auth_context = _auth_context_from_connection(connection)
-    from yuxi.services import mcp_service
-    config = await mcp_service.get_runtime_mcp_server_config(server.name, auth_context=auth_context, db=db)
+    from yuxi.services.mcp.server_service import get_runtime_mcp_server_config
+    from yuxi.services.mcp.tool_registry_service import get_mcp_tools
+    
+    config = await get_runtime_mcp_server_config(server.name, auth_context=auth_context, db=db)
     if config is None:
         raise ValueError(f"MCP server '{server.name}' runtime config unavailable")
 
-    tools = await mcp_service.get_mcp_tools(
+    tools = await get_mcp_tools(
         server.name,
         additional_servers={server.name: config},
         disabled_tools=[],

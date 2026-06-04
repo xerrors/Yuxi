@@ -8,25 +8,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.services.mcp_auth.orchestrator import AuthContext
 from yuxi.services.mcp_auth.config_models import MCPAuthConfig
-from yuxi.services.mcp_service import (
-    create_mcp_connection,
+from yuxi.services.mcp.server_service import (
     create_mcp_server,
-    delete_mcp_connection,
-    get_mcp_tools_stats,
     delete_mcp_server,
-    get_mcp_connection,
-    get_mcp_server_dependency_summary,
     get_all_mcp_servers,
-    get_all_mcp_tools,
     get_mcp_server,
+    get_mcp_server_dependency_summary,
+    set_server_enabled,
+    update_mcp_server,
+)
+from yuxi.services.mcp.connection_service import (
+    create_mcp_connection,
+    delete_mcp_connection,
+    get_mcp_connection,
     list_mcp_connections,
     reauthorize_mcp_connection,
     set_mcp_connection_status,
-    set_server_enabled,
     test_mcp_connection,
-    toggle_tool_enabled,
     update_mcp_connection,
-    update_mcp_server,
+)
+from yuxi.services.mcp.tool_registry_service import (
+    get_all_mcp_tools,
+    get_mcp_tools_stats,
+    toggle_tool_enabled,
 )
 from yuxi.storage.postgres.models_business import User
 from yuxi.utils import logger

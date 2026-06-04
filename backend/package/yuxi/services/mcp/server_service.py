@@ -201,8 +201,7 @@ async def get_runtime_mcp_server_config(
 ) -> dict[str, Any] | None:
     """解析获取附带运行时鉴权与租户范围的 MCP 服务配置"""
     if db is None and auth_context is None:
-        from yuxi.services import mcp_service
-        return await mcp_service.get_enabled_mcp_server_config(server_name)
+        return await get_enabled_mcp_server_config(server_name)
 
     if db is not None:
         server = await _get_enabled_mcp_server_record(server_name, db=db)
@@ -212,8 +211,8 @@ async def get_runtime_mcp_server_config(
             return server.to_mcp_config()
 
         auth_config = MCPAuthConfig.model_validate(server.auth_config_json)
-        from yuxi.services import mcp_service
-        scope_id = mcp_service._resolve_scope_id(auth_config.binding_scope, auth_context)
+        from yuxi.services.mcp.connection_service import _resolve_scope_id
+        scope_id = _resolve_scope_id(auth_config.binding_scope, auth_context)
         if scope_id is None:
             return server.to_mcp_config()
 
@@ -265,8 +264,7 @@ async def get_runtime_mcp_server_config(
 
 async def get_enabled_mcp_server_names(*, db: AsyncSession | None = None) -> list[str]:
     """获取所有已启用的服务器名称"""
-    from yuxi.services import mcp_service
-    configs = await mcp_service._load_enabled_mcp_server_configs(db=db)
+    configs = await _load_enabled_mcp_server_configs(db=db)
     return list(configs.keys())
 
 
@@ -326,9 +324,9 @@ async def create_mcp_server(
     await db.commit()
     await db.refresh(server)
 
-    from yuxi.services import mcp_service
-    await mcp_service._clear_mcp_server_runtime_auth_cache(db, name)
-    await mcp_service.invalidate_mcp_server_tools_cache(name)
+    from yuxi.services.mcp.tool_registry_service import _clear_mcp_server_runtime_auth_cache, invalidate_mcp_server_tools_cache
+    await _clear_mcp_server_runtime_auth_cache(db, name)
+    await invalidate_mcp_server_tools_cache(name)
 
     logger.info(f"Created MCP server '{name}'")
     return server
@@ -386,10 +384,10 @@ async def update_mcp_server(
     await db.commit()
     await db.refresh(server)
 
-    from yuxi.services import mcp_service
+    from yuxi.services.mcp.tool_registry_service import _clear_mcp_server_runtime_auth_cache, invalidate_mcp_server_tools_cache
     if auth_config is not _UNSET:
-        await mcp_service._clear_mcp_server_runtime_auth_cache(db, name)
-    await mcp_service.invalidate_mcp_server_tools_cache(name)
+        await _clear_mcp_server_runtime_auth_cache(db, name)
+    await invalidate_mcp_server_tools_cache(name)
 
     logger.info(f"Updated MCP server '{name}'")
     return server
@@ -404,9 +402,9 @@ async def delete_mcp_server(db: AsyncSession, name: str) -> bool:
     await db.delete(server)
     await db.commit()
 
-    from yuxi.services import mcp_service
-    await mcp_service._clear_mcp_server_runtime_auth_cache(db, name)
-    await mcp_service.invalidate_mcp_server_tools_cache(name)
+    from yuxi.services.mcp.tool_registry_service import _clear_mcp_server_runtime_auth_cache, invalidate_mcp_server_tools_cache
+    await _clear_mcp_server_runtime_auth_cache(db, name)
+    await invalidate_mcp_server_tools_cache(name)
 
     logger.info(f"Deleted MCP server '{name}'")
     return True
@@ -414,8 +412,8 @@ async def delete_mcp_server(db: AsyncSession, name: str) -> bool:
 
 async def get_mcp_server_dependency_summary(db: AsyncSession, name: str) -> dict[str, Any]:
     """获取依赖于该 MCP 服务器的智能体、技能和连接概要"""
-    from yuxi.services import mcp_service
-    connections = await mcp_service.list_mcp_connections(db, server_name=name)
+    from yuxi.services.mcp.connection_service import list_mcp_connections
+    connections = await list_mcp_connections(db, server_name=name)
 
     skill_rows = (await db.execute(select(Skill))).scalars().all()
     matched_skills = [
@@ -455,10 +453,10 @@ async def set_server_enabled(
     await db.commit()
 
     is_enabled = bool(server.enabled)
-    from yuxi.services import mcp_service
+    from yuxi.services.mcp.tool_registry_service import _clear_mcp_server_runtime_auth_cache, invalidate_mcp_server_tools_cache
     if not is_enabled:
-        await mcp_service._clear_mcp_server_runtime_auth_cache(db, name)
-    await mcp_service.invalidate_mcp_server_tools_cache(name)
+        await _clear_mcp_server_runtime_auth_cache(db, name)
+    await invalidate_mcp_server_tools_cache(name)
 
     logger.info(f"Set MCP server '{name}' enabled={is_enabled}")
     return is_enabled, server

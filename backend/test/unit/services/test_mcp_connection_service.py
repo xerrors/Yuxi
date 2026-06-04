@@ -8,7 +8,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
-from yuxi.services import mcp_service
+from yuxi.services.mcp import connection_service, server_service, tool_registry_service
+from yuxi.services.mcp.client_pool import mcp_client_pool
+from yuxi.services.mcp_auth.redis_token_cache import RedisTokenCache
 from yuxi.services.mcp_auth.crypto import decrypt_credential_blob
 from yuxi.storage.postgres.models_business import AgentConfig, Department, MCPConnection, MCPServer, Skill
 
@@ -60,7 +62,7 @@ async def test_create_and_list_mcp_connections(connection_service_session, monke
     )
     await connection_service_session.commit()
 
-    created = await mcp_service.create_mcp_connection(
+    created = await connection_service.create_mcp_connection(
         connection_service_session,
         server_name="finance-gateway",
         scope_type="department",
@@ -72,7 +74,7 @@ async def test_create_and_list_mcp_connections(connection_service_session, monke
         created_by="tester",
     )
 
-    listed = await mcp_service.list_mcp_connections(connection_service_session, server_name="finance-gateway")
+    listed = await connection_service.list_mcp_connections(connection_service_session, server_name="finance-gateway")
 
     assert created.server_name == "finance-gateway"
     assert created.scope_type == "department"
@@ -92,7 +94,7 @@ async def test_create_mcp_connection_normalizes_system_scope_to_global(connectio
     )
     await connection_service_session.commit()
 
-    created = await mcp_service.create_mcp_connection(
+    created = await connection_service.create_mcp_connection(
         connection_service_session,
         server_name="global-gateway",
         scope_type="system",
@@ -119,7 +121,7 @@ async def test_set_mcp_connection_status_updates_status(connection_service_sessi
     )
     await connection_service_session.commit()
 
-    created = await mcp_service.create_mcp_connection(
+    created = await connection_service.create_mcp_connection(
         connection_service_session,
         server_name="corp-gateway",
         scope_type="system",
@@ -129,7 +131,7 @@ async def test_set_mcp_connection_status_updates_status(connection_service_sessi
         created_by="tester",
     )
 
-    updated = await mcp_service.set_mcp_connection_status(
+    updated = await connection_service.set_mcp_connection_status(
         connection_service_session,
         created.id,
         status="reauth_required",
@@ -154,7 +156,7 @@ async def test_create_mcp_connection_rejects_invalid_scope_type(connection_servi
     await connection_service_session.commit()
 
     with pytest.raises(ValueError, match="scope_type"):
-        await mcp_service.create_mcp_connection(
+        await connection_service.create_mcp_connection(
             connection_service_session,
             server_name="invalid-scope-gateway",
             scope_type="tenant",
@@ -177,7 +179,7 @@ async def test_create_mcp_connection_rejects_missing_department_scope_id(connect
     await connection_service_session.commit()
 
     with pytest.raises(ValueError, match="scope_id"):
-        await mcp_service.create_mcp_connection(
+        await connection_service.create_mcp_connection(
             connection_service_session,
             server_name="missing-scope-id-gateway",
             scope_type="department",
@@ -199,7 +201,7 @@ async def test_set_mcp_connection_status_rejects_invalid_status(connection_servi
     )
     await connection_service_session.commit()
 
-    created = await mcp_service.create_mcp_connection(
+    created = await connection_service.create_mcp_connection(
         connection_service_session,
         server_name="invalid-status-gateway",
         scope_type="system",
@@ -208,7 +210,7 @@ async def test_set_mcp_connection_status_rejects_invalid_status(connection_servi
     )
 
     with pytest.raises(ValueError, match="status"):
-        await mcp_service.set_mcp_connection_status(
+        await connection_service.set_mcp_connection_status(
             connection_service_session,
             created.id,
             status="broken",
@@ -230,7 +232,7 @@ async def test_create_mcp_connection_encrypts_credentials(connection_service_ses
     await connection_service_session.commit()
 
     plaintext = '{"secrets":{"access_token":"secure-token"}}'
-    created = await mcp_service.create_mcp_connection(
+    created = await connection_service.create_mcp_connection(
         connection_service_session,
         server_name="secure-gateway",
         scope_type="system",
@@ -259,7 +261,7 @@ async def test_create_mcp_connection_rejects_plaintext_credentials_without_maste
     await connection_service_session.commit()
 
     with pytest.raises(ValueError, match="MCP_CREDENTIALS_MASTER_KEY"):
-        await mcp_service.create_mcp_connection(
+        await connection_service.create_mcp_connection(
             connection_service_session,
             server_name="insecure-gateway",
             scope_type="system",
@@ -321,7 +323,7 @@ async def test_get_mcp_server_dependency_summary_reports_runtime_references(dele
     )
     await delete_semantics_session.commit()
 
-    summary = await mcp_service.get_mcp_server_dependency_summary(delete_semantics_session, "finance-gateway")
+    summary = await server_service.get_mcp_server_dependency_summary(delete_semantics_session, "finance-gateway")
 
     assert summary["has_references"] is True
     assert summary["connections"] == [{"scope_type": "department", "scope_id": "42", "status": "active"}]
@@ -342,7 +344,7 @@ async def test_update_mcp_connection_reencrypts_credentials(connection_service_s
     )
     await connection_service_session.commit()
 
-    created = await mcp_service.create_mcp_connection(
+    created = await connection_service.create_mcp_connection(
         connection_service_session,
         server_name="update-gateway",
         scope_type="system",
@@ -352,7 +354,7 @@ async def test_update_mcp_connection_reencrypts_credentials(connection_service_s
         created_by="tester",
     )
 
-    updated = await mcp_service.update_mcp_connection(
+    updated = await connection_service.update_mcp_connection(
         connection_service_session,
         created.id,
         display_name="new",
@@ -377,7 +379,7 @@ async def test_delete_mcp_connection_removes_record(connection_service_session, 
         async def release_refresh_lock(self, connection_id):
             released_connection_ids.append(connection_id)
 
-    monkeypatch.setattr(mcp_service, "RedisTokenCache", lambda: DummyTokenCache())
+    monkeypatch.setattr(connection_service, "RedisTokenCache", lambda: DummyTokenCache())
     connection_service_session.add(
         MCPServer(
             name="delete-connection-gateway",
@@ -389,7 +391,7 @@ async def test_delete_mcp_connection_removes_record(connection_service_session, 
     )
     await connection_service_session.commit()
 
-    created = await mcp_service.create_mcp_connection(
+    created = await connection_service.create_mcp_connection(
         connection_service_session,
         server_name="delete-connection-gateway",
         scope_type="system",
@@ -398,12 +400,12 @@ async def test_delete_mcp_connection_removes_record(connection_service_session, 
         created_by="tester",
     )
 
-    deleted = await mcp_service.delete_mcp_connection(connection_service_session, created.id)
+    deleted = await connection_service.delete_mcp_connection(connection_service_session, created.id)
 
     assert deleted is True
     assert cleared_connection_ids == [created.id]
     assert released_connection_ids == [created.id]
-    assert await mcp_service.get_mcp_connection(connection_service_session, created.id) is None
+    assert await connection_service.get_mcp_connection(connection_service_session, created.id) is None
 
 
 async def test_reauthorize_mcp_connection_clears_runtime_error(connection_service_session, monkeypatch):
@@ -418,7 +420,7 @@ async def test_reauthorize_mcp_connection_clears_runtime_error(connection_servic
         async def release_refresh_lock(self, connection_id):
             released_connection_ids.append(connection_id)
 
-    monkeypatch.setattr(mcp_service, "RedisTokenCache", lambda: DummyTokenCache())
+    monkeypatch.setattr(connection_service, "RedisTokenCache", lambda: DummyTokenCache())
 
     connection_service_session.add(
         MCPServer(
@@ -431,7 +433,7 @@ async def test_reauthorize_mcp_connection_clears_runtime_error(connection_servic
     )
     await connection_service_session.commit()
 
-    created = await mcp_service.create_mcp_connection(
+    created = await connection_service.create_mcp_connection(
         connection_service_session,
         server_name="reauth-gateway",
         scope_type="system",
@@ -442,7 +444,7 @@ async def test_reauthorize_mcp_connection_clears_runtime_error(connection_servic
         created_by="tester",
     )
 
-    updated = await mcp_service.reauthorize_mcp_connection(
+    updated = await connection_service.reauthorize_mcp_connection(
         connection_service_session,
         created.id,
         updated_by="admin",
@@ -469,7 +471,7 @@ async def test_update_mcp_connection_clears_runtime_auth_cache_on_credential_cha
         async def release_refresh_lock(self, connection_id):
             released_connection_ids.append(connection_id)
 
-    monkeypatch.setattr(mcp_service, "RedisTokenCache", lambda: DummyTokenCache())
+    monkeypatch.setattr(connection_service, "RedisTokenCache", lambda: DummyTokenCache())
     connection_service_session.add(
         MCPServer(
             name="credential-update-gateway",
@@ -481,7 +483,7 @@ async def test_update_mcp_connection_clears_runtime_auth_cache_on_credential_cha
     )
     await connection_service_session.commit()
 
-    created = await mcp_service.create_mcp_connection(
+    created = await connection_service.create_mcp_connection(
         connection_service_session,
         server_name="credential-update-gateway",
         scope_type="system",
@@ -490,7 +492,7 @@ async def test_update_mcp_connection_clears_runtime_auth_cache_on_credential_cha
         created_by="tester",
     )
 
-    updated = await mcp_service.update_mcp_connection(
+    updated = await connection_service.update_mcp_connection(
         connection_service_session,
         created.id,
         credential_blob='{"secrets":{"access_token":"new-token"}}',
@@ -516,7 +518,7 @@ async def test_set_server_enabled_clears_runtime_auth_cache_when_retiring(
         async def release_refresh_lock(self, connection_id):
             released_connection_ids.append(connection_id)
 
-    monkeypatch.setattr(mcp_service, "RedisTokenCache", lambda: DummyTokenCache())
+    monkeypatch.setattr(connection_service, "RedisTokenCache", lambda: DummyTokenCache())
     connection_service_session.add(
         MCPServer(
             name="retire-gateway",
@@ -529,7 +531,7 @@ async def test_set_server_enabled_clears_runtime_auth_cache_when_retiring(
     )
     await connection_service_session.commit()
 
-    first = await mcp_service.create_mcp_connection(
+    first = await connection_service.create_mcp_connection(
         connection_service_session,
         server_name="retire-gateway",
         scope_type="department",
@@ -537,7 +539,7 @@ async def test_set_server_enabled_clears_runtime_auth_cache_when_retiring(
         credential_blob='{"secrets":{"access_token":"token-1"}}',
         created_by="tester",
     )
-    second = await mcp_service.create_mcp_connection(
+    second = await connection_service.create_mcp_connection(
         connection_service_session,
         server_name="retire-gateway",
         scope_type="department",
@@ -546,7 +548,7 @@ async def test_set_server_enabled_clears_runtime_auth_cache_when_retiring(
         created_by="tester",
     )
 
-    enabled, server = await mcp_service.set_server_enabled(
+    enabled, server = await server_service.set_server_enabled(
         connection_service_session,
         "retire-gateway",
         False,
@@ -570,8 +572,8 @@ async def test_test_mcp_connection_refreshes_success_metadata(connection_service
         del additional_servers, disabled_tools, kwargs
         return [server_name, "tool-b"]
 
-    monkeypatch.setattr(mcp_service, "get_runtime_mcp_server_config", fake_get_runtime_mcp_server_config)
-    monkeypatch.setattr(mcp_service, "get_mcp_tools", fake_get_mcp_tools)
+    monkeypatch.setattr(server_service, "get_runtime_mcp_server_config", fake_get_runtime_mcp_server_config)
+    monkeypatch.setattr(tool_registry_service, "get_mcp_tools", fake_get_mcp_tools)
 
     connection_service_session.add(
         MCPServer(
@@ -584,7 +586,7 @@ async def test_test_mcp_connection_refreshes_success_metadata(connection_service
     )
     await connection_service_session.commit()
 
-    created = await mcp_service.create_mcp_connection(
+    created = await connection_service.create_mcp_connection(
         connection_service_session,
         server_name="test-gateway",
         scope_type="department",
@@ -595,7 +597,7 @@ async def test_test_mcp_connection_refreshes_success_metadata(connection_service
         created_by="tester",
     )
 
-    result = await mcp_service.test_mcp_connection(
+    result = await connection_service.test_mcp_connection(
         connection_service_session,
         created.id,
         updated_by="admin",

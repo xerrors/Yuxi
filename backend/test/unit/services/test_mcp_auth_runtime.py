@@ -9,7 +9,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
-from yuxi.services import mcp_service
+from yuxi.services.mcp import connection_service, server_service, tool_registry_service
+from yuxi.services.mcp.client_pool import mcp_client_pool
+from yuxi.services.mcp_auth.redis_token_cache import RedisTokenCache
 from yuxi.services.mcp_auth.orchestrator import AuthContext
 from yuxi.storage.postgres.models_business import MCPConnection, MCPServer
 
@@ -65,7 +67,7 @@ async def test_get_runtime_mcp_server_config_resolves_department_connection(runt
     )
     await runtime_session.commit()
 
-    config = await mcp_service.get_runtime_mcp_server_config(
+    config = await server_service.get_runtime_mcp_server_config(
         "finance-gateway",
         auth_context=AuthContext(user_id="u-1", department_id="42"),
         db=runtime_session,
@@ -116,16 +118,16 @@ async def test_get_enabled_mcp_tools_does_not_reuse_user_connection_for_other_us
         captured_configs.append(additional_servers[server_name])
         return ["private-tool"]
 
-    monkeypatch.setattr(mcp_service, "get_mcp_tools", fake_get_mcp_tools)
+    monkeypatch.setattr(tool_registry_service, "get_mcp_tools", fake_get_mcp_tools)
 
-    user_1_tools = await mcp_service.get_enabled_mcp_tools(
+    user_1_tools = await tool_registry_service.get_enabled_mcp_tools(
         "personal-gateway",
         auth_context=AuthContext(user_id="user-1"),
         db=runtime_session,
     )
 
     with pytest.raises(ValueError, match="Active MCP connection not found"):
-        await mcp_service.get_enabled_mcp_tools(
+        await tool_registry_service.get_enabled_mcp_tools(
             "personal-gateway",
             auth_context=AuthContext(user_id="user-2"),
             db=runtime_session,
@@ -160,10 +162,10 @@ async def test_get_enabled_mcp_tools_uses_runtime_mcp_config(monkeypatch):
         )
         return ["tool-a"]
 
-    monkeypatch.setattr(mcp_service, "get_runtime_mcp_server_config", fake_get_runtime_mcp_server_config)
-    monkeypatch.setattr(mcp_service, "get_mcp_tools", fake_get_mcp_tools)
+    monkeypatch.setattr(server_service, "get_runtime_mcp_server_config", fake_get_runtime_mcp_server_config)
+    monkeypatch.setattr(tool_registry_service, "get_mcp_tools", fake_get_mcp_tools)
 
-    tools = await mcp_service.get_enabled_mcp_tools(
+    tools = await tool_registry_service.get_enabled_mcp_tools(
         "demo",
         auth_context=AuthContext(user_id="u-100", department_id="d-9"),
     )
@@ -204,10 +206,10 @@ async def test_get_all_mcp_tools_uses_runtime_mcp_config_when_auth_context_is_pr
         )
         return ["tool-a", "tool-b"]
 
-    monkeypatch.setattr(mcp_service, "get_runtime_mcp_server_config", fake_get_runtime_mcp_server_config)
-    monkeypatch.setattr(mcp_service, "get_mcp_tools", fake_get_mcp_tools)
+    monkeypatch.setattr(server_service, "get_runtime_mcp_server_config", fake_get_runtime_mcp_server_config)
+    monkeypatch.setattr(tool_registry_service, "get_mcp_tools", fake_get_mcp_tools)
 
-    tools = await mcp_service.get_all_mcp_tools(
+    tools = await tool_registry_service.get_all_mcp_tools(
         "demo",
         auth_context=AuthContext(user_id="u-100", department_id="d-9"),
     )
@@ -271,7 +273,7 @@ async def test_get_runtime_mcp_server_config_returns_internal_proxy_for_dynamic_
     )
     await runtime_session.commit()
 
-    config = await mcp_service.get_runtime_mcp_server_config(
+    config = await server_service.get_runtime_mcp_server_config(
         "finance-proxy",
         auth_context=AuthContext(user_id="user-1", department_id="dep-88"),
         db=runtime_session,
@@ -319,10 +321,10 @@ async def test_update_mcp_server_auth_config_clears_runtime_auth_cache(runtime_s
         assert server_name == "finance-gateway"
         calls["tools_cache"] += 1
 
-    monkeypatch.setattr(mcp_service, "_clear_mcp_server_runtime_auth_cache", fake_clear_runtime_auth_cache)
-    monkeypatch.setattr(mcp_service, "invalidate_mcp_server_tools_cache", fake_invalidate_tools_cache)
+    monkeypatch.setattr(tool_registry_service, "_clear_mcp_server_runtime_auth_cache", fake_clear_runtime_auth_cache)
+    monkeypatch.setattr(tool_registry_service, "invalidate_mcp_server_tools_cache", fake_invalidate_tools_cache)
 
-    await mcp_service.update_mcp_server(
+    await server_service.update_mcp_server(
         runtime_session,
         "finance-gateway",
         auth_config={

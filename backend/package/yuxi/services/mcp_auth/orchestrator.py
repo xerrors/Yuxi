@@ -279,7 +279,7 @@ async def _resolve_dynamic_token_values(
     token_cache: Any | None,
 ) -> dict[str, Any]:
     if token_cache is None and connection is not None:
-        from yuxi.services.mcp_service import RedisTokenCache
+        from yuxi.services.mcp_auth.redis_token_cache import RedisTokenCache
         token_cache = RedisTokenCache()
 
 

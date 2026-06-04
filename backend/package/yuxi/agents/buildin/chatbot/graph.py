@@ -13,7 +13,7 @@ from yuxi.agents.middlewares import (
 )
 from yuxi.agents.middlewares.knowledge_base_middleware import KnowledgeBaseMiddleware
 from yuxi.agents.middlewares.skills_middleware import SkillsMiddleware
-from yuxi.services.mcp_service import get_tools_from_all_servers
+from yuxi.services.mcp.tool_registry_service import get_tools_from_all_servers
 from yuxi.services.subagent_service import get_subagents_from_names
 
 from .prompt import TODO_MID_PROMPT, build_prompt_with_context

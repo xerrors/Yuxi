@@ -5,6 +5,11 @@ from typing import Any
 from urllib.parse import urlencode
 
 import httpx
+from fastapi import Request, Response, HTTPException
+from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from starlette.background import BackgroundTask
 
 from server.utils.auth_utils import AuthUtils
 from yuxi.services.mcp_auth.config_models import MCPAuthConfig
@@ -128,71 +133,153 @@ def _record_scope_error(connection: MCPConnection | None, message: str) -> None:
     connection.meta_json = meta_json
 
 
-async def proxy_mcp_request(
+async def handle_mcp_proxy_request(
+    server_name: str,
+    request: Request,
+    path: str,
+    internal_token: str,
+    db: AsyncSession,
+) -> Response:
+    """内部网关主入口：鉴权解析、查库拦截与流式代理"""
+    from yuxi.services.mcp.server_service import get_mcp_server
+    
+    try:
+        auth_context = decode_proxy_access_token(internal_token, server_name=server_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    server = await get_mcp_server(db, server_name)
+    if server is None:
+        raise HTTPException(status_code=404, detail=f"服务器 '{server_name}' 不存在")
+    if not bool(getattr(server, "enabled", True)):
+        raise HTTPException(status_code=404, detail=f"服务器 '{server_name}' 不存在或已停用")
+
+    auth_config = MCPAuthConfig.model_validate(server.auth_config_json or {})
+    
+    from yuxi.services.mcp.connection_service import _resolve_scope_id
+    scope_id = _resolve_scope_id(auth_config.binding_scope, auth_context)
+    connection = None
+    if scope_id is not None:
+        result = await db.execute(
+            select(MCPConnection).where(
+                MCPConnection.server_name == server.name,
+                MCPConnection.scope_type == auth_config.binding_scope,
+                MCPConnection.scope_id == scope_id,
+                MCPConnection.status == "active",
+            )
+        )
+        connection = result.scalar_one_or_none()
+
+    if auth_config.binding_scope != "inline" and connection is None:
+        raise HTTPException(status_code=403, detail="当前用户没有该 MCP 的有效连接")
+
+    # 注意：我们读取整个 request body，因为 MCP 请求参数通常极小，
+    # 但由于可能有 401 重试，我们需要保存下 body 来实现背压重发。
+    body = await request.body()
+    return await _proxy_mcp_request_stream(
+        server=server,
+        connection=connection,
+        auth_context=auth_context,
+        request=request,
+        body=body,
+        path=path,
+        db=db,
+    )
+
+
+async def _proxy_mcp_request_stream(
     server: MCPServer,
     *,
     connection: MCPConnection | None,
     auth_context: AuthContext,
-    method: str,
-    headers: dict[str, str] | None,
-    query_params: dict[str, Any] | None,
+    request: Request,
     body: bytes,
     path: str = "",
-    http_client: httpx.AsyncClient | None = None,
-    token_cache: Any | None = None,
-) -> httpx.Response:
+    db: AsyncSession,
+) -> Response:
+    """底层流式转发逻辑：处理 HTTPX 透传、SSE 和 401 重试闭环事务"""
     auth_config = MCPAuthConfig.model_validate(server.auth_config_json or {})
     if server.transport not in _HTTP_TRANSPORTS:
-        raise ValueError(f"Internal proxy only supports HTTP MCP transports, got: {server.transport}")
+        raise HTTPException(status_code=400, detail=f"Internal proxy only supports HTTP MCP transports, got: {server.transport}")
 
-    if http_client is None:
-        http_client = httpx.AsyncClient()
-        should_close = True
-    else:
-        should_close = False
+    http_client = httpx.AsyncClient(timeout=server.timeout or 60.0)
+    bg_task = BackgroundTask(http_client.aclose)
+    
+    from yuxi.services.mcp_auth.redis_token_cache import RedisTokenCache
+    token_cache = RedisTokenCache()
 
-    try:
-        max_attempts = 2 if auth_config.refresh_policy.retry_once_on_401 else 1
-        for attempt in range(max_attempts):
-            runtime_config = await resolve_runtime_mcp_config(
-                server,
-                auth_context=auth_context,
-                connection=connection,
-                http_client=http_client,
-                token_cache=token_cache,
-            )
-            target_url = _build_target_url(runtime_config["url"], path=path, query_params=query_params)
-            upstream_headers = _merge_upstream_headers(runtime_config.get("headers") or {}, headers)
-            response = await http_client.request(
-                method=method.upper(),
-                url=target_url,
-                headers=upstream_headers,
-                content=body,
-            )
-            if response.status_code == 403:
-                _record_scope_error(connection, "MCP upstream rejected request due to insufficient scope")
-                return httpx.Response(
-                    403,
-                    json={
-                        "error": "insufficient_scope",
-                        "message": "当前授权范围不足，请联系管理员或重新授权",
-                    },
-                )
-            if response.status_code != 401:
-                return response
-            if attempt + 1 >= max_attempts:
-                break
-            if token_cache is not None and connection is not None and getattr(connection, "id", None) is not None:
-                await token_cache.delete_access_token(connection.id)
-
-        _mark_reauth_required(connection, "MCP upstream returned 401 after retry")
-        return httpx.Response(
-            424,
-            json={
-                "error": "reauth_required",
-                "message": "连接失效，请重新连接",
-            },
+    max_attempts = 2 if auth_config.refresh_policy.retry_once_on_401 else 1
+    
+    for attempt in range(max_attempts):
+        runtime_config = await resolve_runtime_mcp_config(
+            server,
+            auth_context=auth_context,
+            connection=connection,
+            http_client=http_client,
+            token_cache=token_cache,
         )
-    finally:
-        if should_close:
-            await http_client.aclose()
+        target_url = _build_target_url(runtime_config["url"], path=path, query_params=dict(request.query_params))
+        upstream_headers = _merge_upstream_headers(runtime_config.get("headers") or {}, dict(request.headers))
+        
+        request_obj = http_client.build_request(
+            method=request.method.upper(),
+            url=target_url,
+            headers=upstream_headers,
+            content=body,
+        )
+        
+        # 使用 send(stream=True) 获取异步可迭代响应而不会阻塞 SSE 长链接
+        response = await http_client.send(request_obj, stream=True)
+        
+        if response.status_code == 403:
+            await response.aclose()
+            _record_scope_error(connection, "MCP upstream rejected request due to insufficient scope")
+            if connection is not None:
+                await db.commit()
+            return Response(
+                content='{"error": "insufficient_scope", "message": "当前授权范围不足"}',
+                status_code=403,
+                media_type="application/json",
+                background=bg_task
+            )
+            
+        if response.status_code != 401:
+            # 正常响应，此时直接闭环提交事务，防止污染外层
+            if connection is not None and hasattr(db, "commit"):
+                await db.commit()
+                
+            async def proxy_stream_generator():
+                try:
+                    async for chunk in response.aiter_raw():
+                        yield chunk
+                finally:
+                    await response.aclose()
+                    
+            resp_headers = {}
+            for k, v in response.headers.items():
+                if k.lower() not in _HOP_BY_HOP_HEADERS and k.lower() not in ("content-encoding", "content-length"):
+                    resp_headers[k] = v
+                    
+            return StreamingResponse(
+                proxy_stream_generator(),
+                status_code=response.status_code,
+                headers=resp_headers,
+                background=bg_task
+            )
+            
+        # 如果是 401，回收流连接并准备重试
+        await response.aclose()
+        if attempt + 1 >= max_attempts:
+            break
+        if connection is not None and getattr(connection, "id", None) is not None:
+            await token_cache.delete_access_token(connection.id)
+
+    _mark_reauth_required(connection, "MCP upstream returned 401 after retry")
+    if connection is not None:
+        await db.commit()
+    return Response(
+        content='{"error": "reauth_required", "message": "连接失效，请重新连接"}',
+        status_code=424,
+        media_type="application/json",
+        background=bg_task
+    )

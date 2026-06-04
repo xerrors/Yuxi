@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from yuxi.services import mcp_service
+from yuxi.services.mcp import connection_service, server_service, tool_registry_service
+from yuxi.services.mcp.client_pool import mcp_client_pool
+from yuxi.services.mcp_auth.redis_token_cache import RedisTokenCache
 from yuxi.services.mcp_tool_cache import RedisMcpToolCache
 from yuxi.services.mcp_auth.proxy_service import INTERNAL_PROXY_TOKEN_HEADER
 
@@ -53,10 +55,10 @@ async def test_get_enabled_mcp_tools_loads_latest_config_from_db(monkeypatch):
         )
         return ["tool-a"]
 
-    monkeypatch.setattr(mcp_service, "get_enabled_mcp_server_config", fake_get_enabled_mcp_server_config)
-    monkeypatch.setattr(mcp_service, "get_mcp_tools", fake_get_mcp_tools)
+    monkeypatch.setattr(server_service, "get_enabled_mcp_server_config", fake_get_enabled_mcp_server_config)
+    monkeypatch.setattr(tool_registry_service, "get_mcp_tools", fake_get_mcp_tools)
 
-    tools = await mcp_service.get_enabled_mcp_tools("demo")
+    tools = await tool_registry_service.get_enabled_mcp_tools("demo")
 
     assert tools == ["tool-a"]
     assert captured == [
@@ -69,7 +71,7 @@ async def test_get_enabled_mcp_tools_loads_latest_config_from_db(monkeypatch):
 
 
 async def test_get_mcp_tools_rebuilds_cache_when_config_hash_changes(monkeypatch):
-    mcp_service.clear_mcp_cache()
+    tool_registry_service.clear_mcp_cache()
 
     configs = [
         {"transport": "stdio", "command": "demo-v1", "disabled_tools": []},
@@ -88,21 +90,21 @@ async def test_get_mcp_tools_rebuilds_cache_when_config_hash_changes(monkeypatch
         tool = SimpleNamespace(name=f"tool_for_{config['command']}", metadata={})
         return _FakeClient([tool])
 
-    monkeypatch.setattr(mcp_service, "get_enabled_mcp_server_config", fake_get_enabled_mcp_server_config)
-    monkeypatch.setattr(mcp_service, "get_mcp_client", fake_get_mcp_client)
+    monkeypatch.setattr(server_service, "get_enabled_mcp_server_config", fake_get_enabled_mcp_server_config)
+    monkeypatch.setattr(mcp_client_pool, "_get_mcp_client", fake_get_mcp_client)
 
-    tools_v1_first = await mcp_service.get_mcp_tools("demo")
-    tools_v1_second = await mcp_service.get_mcp_tools("demo")
+    tools_v1_first = await tool_registry_service.get_mcp_tools("demo")
+    tools_v1_second = await tool_registry_service.get_mcp_tools("demo")
 
     configs[0] = configs[1]
-    tools_v2 = await mcp_service.get_mcp_tools("demo")
+    tools_v2 = await tool_registry_service.get_mcp_tools("demo")
 
     assert [tool.name for tool in tools_v1_first] == ["tool_for_demo-v1"]
     assert [tool.name for tool in tools_v1_second] == ["tool_for_demo-v1"]
     assert [tool.name for tool in tools_v2] == ["tool_for_demo-v2"]
     assert build_calls == ["demo-v1", "demo-v2"]
 
-    mcp_service.clear_mcp_cache()
+    tool_registry_service.clear_mcp_cache()
 
 
 async def test_get_tools_from_all_servers_loads_names_from_db_once(monkeypatch):
@@ -121,10 +123,10 @@ async def test_get_tools_from_all_servers_loads_names_from_db_once(monkeypatch):
         calls.append((server_name, additional_servers or {}))
         return [server_name]
 
-    monkeypatch.setattr(mcp_service, "_load_enabled_mcp_server_configs", fake_load_enabled_mcp_server_configs)
-    monkeypatch.setattr(mcp_service, "get_mcp_tools", fake_get_mcp_tools)
+    monkeypatch.setattr(server_service, "_load_enabled_mcp_server_configs", fake_load_enabled_mcp_server_configs)
+    monkeypatch.setattr(tool_registry_service, "get_mcp_tools", fake_get_mcp_tools)
 
-    tools = await mcp_service.get_tools_from_all_servers()
+    tools = await tool_registry_service.get_tools_from_all_servers()
 
     assert tools == ["alpha", "beta"]
     assert calls == [
@@ -134,7 +136,7 @@ async def test_get_tools_from_all_servers_loads_names_from_db_once(monkeypatch):
 
 
 async def test_get_mcp_tools_sets_handle_tool_error(monkeypatch):
-    mcp_service.clear_mcp_cache()
+    tool_registry_service.clear_mcp_cache()
 
     config = {"transport": "stdio", "command": "demo-tool", "disabled_tools": []}
 
@@ -146,18 +148,18 @@ async def test_get_mcp_tools_sets_handle_tool_error(monkeypatch):
         tool = SimpleNamespace(name="demo_tool", metadata={})
         return _FakeClient([tool])
 
-    monkeypatch.setattr(mcp_service, "get_enabled_mcp_server_config", fake_get_enabled_mcp_server_config)
-    monkeypatch.setattr(mcp_service, "get_mcp_client", fake_get_mcp_client)
+    monkeypatch.setattr(server_service, "get_enabled_mcp_server_config", fake_get_enabled_mcp_server_config)
+    monkeypatch.setattr(mcp_client_pool, "_get_mcp_client", fake_get_mcp_client)
 
-    tools = await mcp_service.get_mcp_tools("demo")
+    tools = await tool_registry_service.get_mcp_tools("demo")
     assert len(tools) == 1
     assert tools[0].handle_tool_error is True
 
-    mcp_service.clear_mcp_cache()
+    tool_registry_service.clear_mcp_cache()
 
 
 async def test_get_mcp_tools_keeps_connection_partitions_separate(monkeypatch):
-    mcp_service.clear_mcp_cache()
+    tool_registry_service.clear_mcp_cache()
 
     configs = [
         {
@@ -187,20 +189,20 @@ async def test_get_mcp_tools_keeps_connection_partitions_separate(monkeypatch):
         tool = SimpleNamespace(name=f"tool_for_{token}", metadata={})
         return _FakeClient([tool])
 
-    monkeypatch.setattr(mcp_service, "get_mcp_client", fake_get_mcp_client)
+    monkeypatch.setattr(mcp_client_pool, "_get_mcp_client", fake_get_mcp_client)
 
-    tools_a = await mcp_service.get_mcp_tools("demo", additional_servers={"demo": configs[0]})
-    tools_b = await mcp_service.get_mcp_tools("demo", additional_servers={"demo": configs[1]})
+    tools_a = await tool_registry_service.get_mcp_tools("demo", additional_servers={"demo": configs[0]})
+    tools_b = await tool_registry_service.get_mcp_tools("demo", additional_servers={"demo": configs[1]})
 
     assert [tool.name for tool in tools_a] == ["tool_for_proxy-token-user-a"]
     assert [tool.name for tool in tools_b] == ["tool_for_proxy-token-user-b"]
     assert build_calls == ["proxy-token-user-a", "proxy-token-user-b"]
 
-    mcp_service.clear_mcp_cache()
+    tool_registry_service.clear_mcp_cache()
 
 
 async def test_get_mcp_tools_does_not_cache_internal_proxy_tool_objects(monkeypatch):
-    mcp_service.clear_mcp_cache()
+    tool_registry_service.clear_mcp_cache()
 
     configs = [
         {
@@ -232,16 +234,16 @@ async def test_get_mcp_tools_does_not_cache_internal_proxy_tool_objects(monkeypa
         tool = SimpleNamespace(name=f"tool_for_{token}", metadata={})
         return _FakeClient([tool])
 
-    monkeypatch.setattr(mcp_service, "get_mcp_client", fake_get_mcp_client)
+    monkeypatch.setattr(mcp_client_pool, "_get_mcp_client", fake_get_mcp_client)
 
-    tools_first = await mcp_service.get_mcp_tools("demo", additional_servers={"demo": configs[0]})
-    tools_second = await mcp_service.get_mcp_tools("demo", additional_servers={"demo": configs[1]})
+    tools_first = await tool_registry_service.get_mcp_tools("demo", additional_servers={"demo": configs[0]})
+    tools_second = await tool_registry_service.get_mcp_tools("demo", additional_servers={"demo": configs[1]})
 
     assert [tool.name for tool in tools_first] == ["tool_for_proxy-token-v1"]
     assert [tool.name for tool in tools_second] == ["tool_for_proxy-token-v2"]
     assert build_calls == ["proxy-token-v1", "proxy-token-v2"]
 
-    mcp_service.clear_mcp_cache()
+    tool_registry_service.clear_mcp_cache()
 
 
 async def test_get_tools_from_all_servers_skips_runtime_auth_servers_without_context(monkeypatch):
@@ -278,10 +280,10 @@ async def test_get_tools_from_all_servers_skips_runtime_auth_servers_without_con
         calls.append((server_name, additional_servers or {}))
         return [server_name]
 
-    monkeypatch.setattr(mcp_service, "_load_enabled_mcp_server_configs", fake_load_enabled_mcp_server_configs)
-    monkeypatch.setattr(mcp_service, "get_mcp_tools", fake_get_mcp_tools)
+    monkeypatch.setattr(server_service, "_load_enabled_mcp_server_configs", fake_load_enabled_mcp_server_configs)
+    monkeypatch.setattr(tool_registry_service, "get_mcp_tools", fake_get_mcp_tools)
 
-    tools = await mcp_service.get_tools_from_all_servers()
+    tools = await tool_registry_service.get_tools_from_all_servers()
 
     assert tools == ["shared"]
     assert calls == [
@@ -290,16 +292,14 @@ async def test_get_tools_from_all_servers_skips_runtime_auth_servers_without_con
 
 
 async def test_get_mcp_tools_rebuilds_when_redis_server_revision_changes(monkeypatch):
-    mcp_service.clear_mcp_cache()
+    tool_registry_service.clear_mcp_cache()
 
     fake_redis = _FakeRedis()
 
     async def fake_redis_factory():
         return fake_redis
 
-    monkeypatch.setattr(
-        mcp_service,
-        "_mcp_tool_cache_store",
+    monkeypatch.setattr(tool_registry_service, "_mcp_tool_cache_store",
         RedisMcpToolCache(redis_client_factory=fake_redis_factory),
     )
 
@@ -311,32 +311,30 @@ async def test_get_mcp_tools_rebuilds_when_redis_server_revision_changes(monkeyp
         tool = SimpleNamespace(name=f"tool_{len(build_calls)}", metadata={})
         return _FakeClient([tool])
 
-    monkeypatch.setattr(mcp_service, "get_mcp_client", fake_get_mcp_client)
+    monkeypatch.setattr(mcp_client_pool, "_get_mcp_client", fake_get_mcp_client)
 
-    tools_first = await mcp_service.get_mcp_tools("demo", additional_servers={"demo": config})
-    tools_second = await mcp_service.get_mcp_tools("demo", additional_servers={"demo": config})
-    await mcp_service._mcp_tool_cache_store.bump_server_revision("demo")
-    tools_third = await mcp_service.get_mcp_tools("demo", additional_servers={"demo": config})
+    tools_first = await tool_registry_service.get_mcp_tools("demo", additional_servers={"demo": config})
+    tools_second = await tool_registry_service.get_mcp_tools("demo", additional_servers={"demo": config})
+    await tool_registry_service._mcp_tool_cache_store.bump_server_revision("demo")
+    tools_third = await tool_registry_service.get_mcp_tools("demo", additional_servers={"demo": config})
 
     assert [tool.name for tool in tools_first] == ["tool_1"]
     assert [tool.name for tool in tools_second] == ["tool_1"]
     assert [tool.name for tool in tools_third] == ["tool_2"]
     assert build_calls == ["demo-tool", "demo-tool"]
 
-    mcp_service.clear_mcp_cache()
+    tool_registry_service.clear_mcp_cache()
 
 
 async def test_get_all_mcp_tools_uses_redis_manifest_when_local_cache_is_empty(monkeypatch):
-    mcp_service.clear_mcp_cache()
+    tool_registry_service.clear_mcp_cache()
 
     fake_redis = _FakeRedis()
 
     async def fake_redis_factory():
         return fake_redis
 
-    monkeypatch.setattr(
-        mcp_service,
-        "_mcp_tool_cache_store",
+    monkeypatch.setattr(tool_registry_service, "_mcp_tool_cache_store",
         RedisMcpToolCache(redis_client_factory=fake_redis_factory),
     )
 
@@ -361,20 +359,20 @@ async def test_get_all_mcp_tools_uses_redis_manifest_when_local_cache_is_empty(m
         del server_name, db
         return config
 
-    monkeypatch.setattr(mcp_service, "get_enabled_mcp_server_config", fake_get_enabled_mcp_server_config)
-    monkeypatch.setattr(mcp_service, "get_mcp_client", fake_get_mcp_client)
+    monkeypatch.setattr(server_service, "get_enabled_mcp_server_config", fake_get_enabled_mcp_server_config)
+    monkeypatch.setattr(mcp_client_pool, "_get_mcp_client", fake_get_mcp_client)
 
-    tools_first = await mcp_service.get_all_mcp_tools("demo")
+    tools_first = await tool_registry_service.get_all_mcp_tools("demo")
     assert [tool.name for tool in tools_first] == ["alpha_tool"]
 
-    mcp_service.clear_mcp_cache()
+    tool_registry_service.clear_mcp_cache()
 
     async def fail_get_mcp_client(server_configs):
         raise AssertionError(f"should not fetch live tools when redis manifest is available: {server_configs}")
 
-    monkeypatch.setattr(mcp_service, "get_mcp_client", fail_get_mcp_client)
+    monkeypatch.setattr(mcp_client_pool, "_get_mcp_client", fail_get_mcp_client)
 
-    tools_second = await mcp_service.get_all_mcp_tools("demo")
+    tools_second = await tool_registry_service.get_all_mcp_tools("demo")
 
     assert [tool.name for tool in tools_second] == ["alpha_tool"]
     assert tools_second[0].metadata["id"] == "mcp__demo__alphaTool"
