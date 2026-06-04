@@ -647,7 +647,26 @@
                         required
                         class="form-item"
                       >
+                        <a-select
+                          v-if="connectionForm.scopeType === 'department'"
+                          v-model:value="connectionForm.scopeId"
+                          :disabled="isEditingConnection"
+                          :loading="isFetchingScopeOptions"
+                          placeholder="请选择部门"
+                          show-search
+                          :options="departmentList.map(d => ({ label: d.name, value: d.id.toString() }))"
+                        />
+                        <a-select
+                          v-else-if="connectionForm.scopeType === 'user'"
+                          v-model:value="connectionForm.scopeId"
+                          :disabled="isEditingConnection"
+                          :loading="isFetchingScopeOptions"
+                          placeholder="请选择用户"
+                          show-search
+                          :options="userList.map(u => ({ label: `${u.username} (${u.user_id_login})`, value: u.id.toString() }))"
+                        />
                         <a-input
+                          v-else
                           v-model:value="connectionForm.scopeId"
                           :disabled="isEditingConnection"
                           :placeholder="scopeIdPlaceholder"
@@ -799,6 +818,8 @@ import { formatFullDateTime } from '@/utils/time'
 import { extractSecretFieldNames } from '@/utils/mcpAuthConfigBuilder'
 import McpAuthConfigBuilder from '@/components/extensions/McpAuthConfigBuilder.vue'
 import McpEnvEditor from '@/components/McpEnvEditor.vue'
+import { departmentApi } from '@/apis/department_api'
+import { userApi } from '@/apis/user_api'
 
 const route = useRoute()
 const router = useRouter()
@@ -808,6 +829,10 @@ const loading = ref(false)
 const server = ref(null)
 const detailTab = ref('general')
 const testLoading = ref(null)
+
+const userList = ref([])
+const departmentList = ref([])
+const isFetchingScopeOptions = ref(false)
 
 const tools = ref([])
 const toolsLoading = ref(false)
@@ -1543,8 +1568,25 @@ watch(detailTab, (tab) => {
   }
 })
 
+const loadScopeOptions = async () => {
+  try {
+    isFetchingScopeOptions.value = true
+    const [usersRes, deptsRes] = await Promise.all([
+      userApi.getUsers(),
+      departmentApi.getDepartments()
+    ])
+    userList.value = usersRes || []
+    departmentList.value = deptsRes || []
+  } catch (err) {
+    message.error('获取用户/部门列表失败: ' + err.message)
+  } finally {
+    isFetchingScopeOptions.value = false
+  }
+}
+
 onMounted(() => {
   fetchServer()
+  loadScopeOptions()
 })
 </script>
 
