@@ -63,11 +63,10 @@ async def _build_agent_input_context(
     current_user: User,
 ) -> dict:
     input_context = dict(agent_config or {})
-    user_id = str(current_user.id)
-    current_user_scope_id = getattr(current_user, "user_id", None)
-    mcp_scope_user_id = str(current_user_scope_id) if current_user_scope_id is not None else user_id
-    department_id = getattr(current_user, "department_id", None)
-    agents_prompt = await asyncio.to_thread(_load_workspace_agents_prompt, thread_id, user_id)
+    db_user_id = str(current_user.id)
+    work_id = current_user.user_id
+    department_id = current_user.department_id
+    agents_prompt = await asyncio.to_thread(_load_workspace_agents_prompt, thread_id, db_user_id)
 
     if agents_prompt:
         agents_section = f"用户工作区 agents/AGENTS.md 内容：\n{agents_prompt}"
@@ -76,8 +75,8 @@ async def _build_agent_input_context(
 
     input_context.update(
         {
-            "user_id": user_id,
-            "mcp_user_id": mcp_scope_user_id,
+            "user_id": db_user_id,
+            "mcp_user_id": work_id,
             "thread_id": thread_id,
             "department_id": str(department_id) if department_id is not None else None,
         }
@@ -89,7 +88,7 @@ async def _build_agent_input_context(
         user_info_parts.append(f"姓名: {username}")
     if role := getattr(current_user, "role", None):
         user_info_parts.append(f"角色: {role}")
-    if work_id := getattr(current_user, "user_id", None):
+    if work_id:
         user_info_parts.append(f"工号: {work_id}")
 
     if user_info_parts:

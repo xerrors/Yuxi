@@ -232,7 +232,7 @@ async def test_agent_chat_sync_returns_finished_even_when_state_has_interrupt(mo
         thread_id="thread-2",
         meta={"request_id": "req-2"},
         image_content=None,
-        current_user=SimpleNamespace(id="user-1", department_id="dept-1"),
+        current_user=SimpleNamespace(id="user-1", user_id="login-1001", department_id="dept-1"),
         db=object(),
     )
 
