@@ -4,6 +4,7 @@ from collections.abc import Callable
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
+from langchain.tools.tool_node import ToolCallRequest
 from langchain_core.messages import SystemMessage
 
 from yuxi.agents import load_chat_model
@@ -12,6 +13,8 @@ from yuxi.services.mcp_auth.orchestrator import AuthContext
 from yuxi.services.mcp_service import get_enabled_mcp_tools
 from yuxi.utils.datetime_utils import shanghai_now
 from yuxi.utils.logging_config import logger
+
+_RUNTIME_DYNAMIC_TOOLS_ATTR = "_runtime_config_dynamic_tools_by_name"
 
 
 class RuntimeConfigMiddleware(AgentMiddleware):
@@ -102,6 +105,7 @@ class RuntimeConfigMiddleware(AgentMiddleware):
                     continue
                 merged_tools.append(tool)
                 merged_tool_names.add(tool.name)
+            setattr(runtime_context, _RUNTIME_DYNAMIC_TOOLS_ATTR, {tool.name: tool for tool in enabled_tools})
             overrides["tools"] = merged_tools
             logger.debug(f"RuntimeConfigMiddleware selected tools: {[t.name for t in merged_tools]}")
 
@@ -119,6 +123,16 @@ class RuntimeConfigMiddleware(AgentMiddleware):
         if overrides:
             request = request.override(**overrides)
 
+        return await handler(request)
+
+    async def awrap_tool_call(self, request: ToolCallRequest, handler: Callable[[ToolCallRequest], Any]):
+        """Allow ToolNode to execute runtime-auth MCP tools loaded during the last model call."""
+        if request.tool is None:
+            runtime_context = getattr(request.runtime, "context", None)
+            dynamic_tools = getattr(runtime_context, _RUNTIME_DYNAMIC_TOOLS_ATTR, {}) or {}
+            tool = dynamic_tools.get(request.tool_call.get("name")) if isinstance(dynamic_tools, dict) else None
+            if tool is not None:
+                request = request.override(tool=tool)
         return await handler(request)
 
     async def get_tools_from_context(self, context) -> list:
