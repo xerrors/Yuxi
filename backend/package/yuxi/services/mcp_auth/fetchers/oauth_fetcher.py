@@ -1,8 +1,10 @@
 from __future__ import annotations
+
 from typing import Any
+
 import httpx
 from yuxi.services.mcp_auth.config_models import MCPAuthConfig
-from yuxi.services.mcp_auth.fetchers.base import ITokenFetcher, fetch_custom_http_token, _DEFAULT_TOKEN_RESPONSE_MAP
+from yuxi.services.mcp_auth.fetchers.base import _DEFAULT_TOKEN_RESPONSE_MAP, ITokenFetcher, fetch_custom_http_token
 
 
 class AuthorizationCodeFetcher(ITokenFetcher):
@@ -16,9 +18,7 @@ class AuthorizationCodeFetcher(ITokenFetcher):
         http_client: httpx.AsyncClient,
     ) -> tuple[dict[str, Any], dict[str, str]]:
         issuer_url = (
-            token_request.get("issuer_url")
-            or secret_values.get("issuer_url")
-            or token_values.get("issuer_url")
+            token_request.get("issuer_url") or secret_values.get("issuer_url") or token_values.get("issuer_url")
         )
         if not issuer_url:
             raise ValueError("authorization_code provider requires token_request.issuer_url")
@@ -29,7 +29,7 @@ class AuthorizationCodeFetcher(ITokenFetcher):
         token_endpoint = payload.get("token_endpoint")
         if not token_endpoint:
             raise ValueError("authorization_code provider discovery missing token_endpoint")
-        
+
         return {
             "url": token_endpoint,
             "method": "POST",
@@ -72,7 +72,7 @@ class AuthorizationCodeFetcher(ITokenFetcher):
             authorization_token_values = dict(token_values or credential_payload)
             if not authorization_token_values.get("refresh_token") and credential_payload.get("refresh_token"):
                 authorization_token_values["refresh_token"] = credential_payload["refresh_token"]
-            
+
             resolved = await fetch_custom_http_token(
                 authorization_request,
                 response_map=response_map,

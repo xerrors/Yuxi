@@ -1,6 +1,8 @@
 from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from typing import Any
+
 import httpx
 from yuxi.services.mcp_auth.config_models import MCPAuthConfig
 from yuxi.services.mcp_auth.template_resolver import resolve_template_value
@@ -17,6 +19,7 @@ _DEFAULT_TOKEN_RESPONSE_MAP = {
     "token_type": "token_type",
 }
 
+
 def extract_path(payload: dict[str, Any], path: str) -> Any:
     """从 payload 中根据点分路径提取字段值"""
     current: Any = payload
@@ -26,6 +29,7 @@ def extract_path(payload: dict[str, Any], path: str) -> Any:
             continue
         raise KeyError(path)
     return current
+
 
 async def fetch_custom_http_token(
     request_config: dict[str, Any],
@@ -38,7 +42,7 @@ async def fetch_custom_http_token(
 ) -> dict[str, Any]:
     """执行自定义 HTTP 请求获取 Token"""
     from yuxi.services.mcp_auth.orchestrator import _normalize_token_payload
-    
+
     response_map = response_map or dict(_DEFAULT_TOKEN_RESPONSE_MAP)
     if http_client is None:
         http_client = httpx.AsyncClient()
@@ -84,7 +88,9 @@ async def fetch_custom_http_token(
         return _normalize_token_payload(resolved)
     except Exception as exc:
         import traceback
+
         from yuxi.utils import logger
+
         logger.error(f"fetch_custom_http_token failure: {exc}, traceback: {traceback.format_exc()}")
         raise
     finally:
@@ -136,7 +142,7 @@ class BaseTokenFetcher(ITokenFetcher, ABC):
             refresh_token_values = dict(token_values)
             if not refresh_token_values.get("refresh_token") and credential_payload.get("refresh_token"):
                 refresh_token_values["refresh_token"] = credential_payload["refresh_token"]
-            
+
             refreshed = await fetch_custom_http_token(
                 refresh_request,
                 response_map=(refresh_request.get("response_map") or token_request.get("response_map")),

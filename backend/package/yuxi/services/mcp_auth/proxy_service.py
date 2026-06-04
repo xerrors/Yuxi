@@ -5,16 +5,16 @@ from typing import Any
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import Request, Response, HTTPException
+from fastapi import HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.background import BackgroundTask
-
-from server.utils.auth_utils import AuthUtils
 from yuxi.services.mcp_auth.config_models import MCPAuthConfig
 from yuxi.services.mcp_auth.orchestrator import AuthContext, resolve_runtime_mcp_config
 from yuxi.storage.postgres.models_business import MCPConnection, MCPServer
+
+from server.utils.auth_utils import AuthUtils
 
 INTERNAL_PROXY_TOKEN_HEADER = "X-Yuxi-MCP-Proxy-Token"
 INTERNAL_PROXY_DISABLE_TOOL_OBJECT_CACHE_KEY = "__yuxi_disable_tool_object_cache"
@@ -142,7 +142,7 @@ async def handle_mcp_proxy_request(
 ) -> Response:
     """内部网关主入口：鉴权解析、查库拦截与流式代理"""
     from yuxi.services.mcp.server_service import get_mcp_server
-    
+
     try:
         auth_context = decode_proxy_access_token(internal_token, server_name=server_name)
     except ValueError as exc:
@@ -155,8 +155,9 @@ async def handle_mcp_proxy_request(
         raise HTTPException(status_code=404, detail=f"服务器 '{server_name}' 不存在或已停用")
 
     auth_config = MCPAuthConfig.model_validate(server.auth_config_json or {})
-    
+
     from yuxi.services.mcp.connection_service import _resolve_scope_id
+
     scope_id = _resolve_scope_id(auth_config.binding_scope, auth_context)
     connection = None
     if scope_id is not None:
@@ -202,19 +203,22 @@ async def _proxy_mcp_request_stream(
     """底层流式转发逻辑：处理 HTTPX 透传、SSE 和 401 重试闭环事务"""
     auth_config = MCPAuthConfig.model_validate(server.auth_config_json or {})
     if server.transport not in _HTTP_TRANSPORTS:
-        raise HTTPException(status_code=400, detail=f"Internal proxy only supports HTTP MCP transports, got: {server.transport}")
+        raise HTTPException(
+            status_code=400, detail=f"Internal proxy only supports HTTP MCP transports, got: {server.transport}"
+        )
 
     http_client = _http_client or httpx.AsyncClient(timeout=server.timeout or 60.0)
     bg_task = BackgroundTask(http_client.aclose)
-    
+
     if _token_cache is not None:
         token_cache = _token_cache
     else:
         from yuxi.services.mcp_auth.redis_token_cache import RedisTokenCache
+
         token_cache = RedisTokenCache()
 
     max_attempts = 2 if auth_config.refresh_policy.retry_once_on_401 else 1
-    
+
     for attempt in range(max_attempts):
         runtime_config = await resolve_runtime_mcp_config(
             server,
@@ -225,17 +229,17 @@ async def _proxy_mcp_request_stream(
         )
         target_url = _build_target_url(runtime_config["url"], path=path, query_params=dict(request.query_params))
         upstream_headers = _merge_upstream_headers(runtime_config.get("headers") or {}, dict(request.headers))
-        
+
         request_obj = http_client.build_request(
             method=request.method.upper(),
             url=target_url,
             headers=upstream_headers,
             content=body,
         )
-        
+
         # 使用 send(stream=True) 获取异步可迭代响应而不会阻塞 SSE 长链接
         response = await http_client.send(request_obj, stream=True)
-        
+
         if response.status_code == 403:
             await response.aclose()
             _record_scope_error(connection, "MCP upstream rejected request due to insufficient scope")
@@ -245,33 +249,30 @@ async def _proxy_mcp_request_stream(
                 content='{"error": "insufficient_scope", "message": "当前授权范围不足"}',
                 status_code=403,
                 media_type="application/json",
-                background=bg_task
+                background=bg_task,
             )
-            
+
         if response.status_code != 401:
             # 正常响应，此时直接闭环提交事务，防止污染外层
             if connection is not None and hasattr(db, "commit"):
                 await db.commit()
-                
+
             async def proxy_stream_generator():
                 try:
                     async for chunk in response.aiter_raw():
                         yield chunk
                 finally:
                     await response.aclose()
-                    
+
             resp_headers = {}
             for k, v in response.headers.items():
                 if k.lower() not in _HOP_BY_HOP_HEADERS and k.lower() not in ("content-encoding", "content-length"):
                     resp_headers[k] = v
-                    
+
             return StreamingResponse(
-                proxy_stream_generator(),
-                status_code=response.status_code,
-                headers=resp_headers,
-                background=bg_task
+                proxy_stream_generator(), status_code=response.status_code, headers=resp_headers, background=bg_task
             )
-            
+
         # 如果是 401，回收流连接并准备重试
         await response.aclose()
         if attempt + 1 >= max_attempts:
@@ -286,5 +287,5 @@ async def _proxy_mcp_request_stream(
         content='{"error": "reauth_required", "message": "连接失效，请重新连接"}',
         status_code=424,
         media_type="application/json",
-        background=bg_task
+        background=bg_task,
     )

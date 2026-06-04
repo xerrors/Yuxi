@@ -1,5 +1,7 @@
 from __future__ import annotations
+
 from typing import Any
+
 import httpx
 from yuxi.services.mcp_auth.config_models import MCPAuthConfig
 from yuxi.services.mcp_auth.fetchers.base import BaseTokenFetcher, fetch_custom_http_token
@@ -34,5 +36,6 @@ class CustomHttpTokenFetcher(BaseTokenFetcher):
 
 class ClientCredentialsFetcher(CustomHttpTokenFetcher):
     """客户端凭证 (Client Credentials) 方式获取 Token"""
+
     # NOTE: 当前其底层获取逻辑与 CustomHttpTokenFetcher 相同
     pass

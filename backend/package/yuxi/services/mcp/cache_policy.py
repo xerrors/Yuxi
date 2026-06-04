@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
@@ -23,7 +24,7 @@ class MCPCachePolicy(ABC):
     ) -> tuple[str, bool]:
         """
         解析该连接应被划分到哪一个缓存分区中。
-        
+
         返回:
             tuple[partition_key, is_shared_across_users]
             - partition_key: 用于区分 Redis 缓存或内存缓存隔离区段的 Key。

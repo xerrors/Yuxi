@@ -1,6 +1,7 @@
 from __future__ import annotations
+
 from yuxi.services.mcp_auth.fetchers.base import ITokenFetcher
-from yuxi.services.mcp_auth.fetchers.http_fetcher import CustomHttpTokenFetcher, ClientCredentialsFetcher
+from yuxi.services.mcp_auth.fetchers.http_fetcher import ClientCredentialsFetcher, CustomHttpTokenFetcher
 from yuxi.services.mcp_auth.fetchers.oauth_fetcher import AuthorizationCodeFetcher
 
 
