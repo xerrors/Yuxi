@@ -35,7 +35,7 @@ async def test_get_mcp_tools_from_context_passes_auth_context_to_mcp_loader(monk
 
 @pytest.mark.asyncio
 @pytest.mark.unit
-async def test_get_mcp_tools_from_context_uses_mcp_user_id_for_user_scoped_auth(monkeypatch: pytest.MonkeyPatch):
+async def test_get_mcp_tools_from_context_uses_work_id_for_user_scoped_auth(monkeypatch: pytest.MonkeyPatch):
     captured: list[tuple[str, str | None, str | None]] = []
 
     async def fake_get_enabled_mcp_tools(server_name: str, *, auth_context=None, db=None, http_client=None):
@@ -49,7 +49,7 @@ async def test_get_mcp_tools_from_context_uses_mcp_user_id_for_user_scoped_auth(
     context = SimpleNamespace(
         mcps=["dts-mcp_server"],
         user_id="2",
-        mcp_user_id="login-1001",
+        work_id="login-1001",
         department_id="dept-9",
     )
 

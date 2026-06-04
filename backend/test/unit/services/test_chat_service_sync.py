@@ -161,7 +161,7 @@ async def test_agent_chat_uses_invoke_messages_and_persists_langgraph_state(monk
         "system_prompt": "工号: login-1001",
         "temperature": 0.1,
         "user_id": "user-1",
-        "mcp_user_id": "login-1001",
+        "work_id": "login-1001",
         "thread_id": "thread-1",
         "department_id": "dept-1",
     }
@@ -278,7 +278,7 @@ async def test_build_agent_input_context_derives_runtime_identity_from_current_u
     )
 
     assert context["user_id"] == "2"
-    assert context["mcp_user_id"] == "login-1001"
+    assert context["work_id"] == "login-1001"
     assert context["department_id"] == "dept-9"
 
 

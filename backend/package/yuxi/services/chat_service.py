@@ -76,7 +76,7 @@ async def _build_agent_input_context(
     input_context.update(
         {
             "user_id": db_user_id,
-            "mcp_user_id": work_id,
+            "work_id": work_id,
             "thread_id": thread_id,
             "department_id": str(department_id) if department_id is not None else None,
         }

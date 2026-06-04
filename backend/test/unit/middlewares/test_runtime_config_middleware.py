@@ -40,7 +40,7 @@ async def test_get_tools_from_context_passes_auth_context_to_mcp_loader(monkeypa
 
 @pytest.mark.asyncio
 @pytest.mark.unit
-async def test_get_tools_from_context_uses_mcp_user_id_for_user_scoped_auth(monkeypatch: pytest.MonkeyPatch):
+async def test_get_tools_from_context_uses_work_id_for_user_scoped_auth(monkeypatch: pytest.MonkeyPatch):
     captured: list[tuple[str, str | None, str | None]] = []
 
     monkeypatch.setattr(runtime_config_middleware, "get_all_tool_instances", lambda: [])
@@ -57,7 +57,7 @@ async def test_get_tools_from_context_uses_mcp_user_id_for_user_scoped_auth(monk
         tools=[],
         mcps=["dts-mcp_server"],
         user_id="2",
-        mcp_user_id="login-1001",
+        work_id="login-1001",
         department_id="dept-9",
     )
 
@@ -88,7 +88,7 @@ async def test_runtime_loaded_mcp_tool_can_be_executed_when_tool_node_did_not_pr
         tools=[],
         mcps=["dts-mcp_server"],
         user_id="2",
-        mcp_user_id="login-1001",
+        work_id="login-1001",
         department_id="dept-9",
         model=None,
         system_prompt="",
