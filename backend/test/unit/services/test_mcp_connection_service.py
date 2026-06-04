@@ -379,7 +379,7 @@ async def test_delete_mcp_connection_removes_record(connection_service_session, 
         async def release_refresh_lock(self, connection_id):
             released_connection_ids.append(connection_id)
 
-    monkeypatch.setattr(connection_service, "RedisTokenCache", lambda: DummyTokenCache())
+    monkeypatch.setattr("yuxi.services.mcp_auth.redis_token_cache.RedisTokenCache", lambda: DummyTokenCache())
     connection_service_session.add(
         MCPServer(
             name="delete-connection-gateway",
@@ -420,7 +420,7 @@ async def test_reauthorize_mcp_connection_clears_runtime_error(connection_servic
         async def release_refresh_lock(self, connection_id):
             released_connection_ids.append(connection_id)
 
-    monkeypatch.setattr(connection_service, "RedisTokenCache", lambda: DummyTokenCache())
+    monkeypatch.setattr("yuxi.services.mcp_auth.redis_token_cache.RedisTokenCache", lambda: DummyTokenCache())
 
     connection_service_session.add(
         MCPServer(
@@ -471,7 +471,7 @@ async def test_update_mcp_connection_clears_runtime_auth_cache_on_credential_cha
         async def release_refresh_lock(self, connection_id):
             released_connection_ids.append(connection_id)
 
-    monkeypatch.setattr(connection_service, "RedisTokenCache", lambda: DummyTokenCache())
+    monkeypatch.setattr("yuxi.services.mcp_auth.redis_token_cache.RedisTokenCache", lambda: DummyTokenCache())
     connection_service_session.add(
         MCPServer(
             name="credential-update-gateway",
@@ -518,7 +518,7 @@ async def test_set_server_enabled_clears_runtime_auth_cache_when_retiring(
         async def release_refresh_lock(self, connection_id):
             released_connection_ids.append(connection_id)
 
-    monkeypatch.setattr(connection_service, "RedisTokenCache", lambda: DummyTokenCache())
+    monkeypatch.setattr("yuxi.services.mcp_auth.redis_token_cache.RedisTokenCache", lambda: DummyTokenCache())
     connection_service_session.add(
         MCPServer(
             name="retire-gateway",

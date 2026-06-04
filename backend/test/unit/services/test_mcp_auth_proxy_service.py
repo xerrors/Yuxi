@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+
+def make_mock_response(status_code, content):
+    import httpx
+    resp = httpx.Response(status_code, content=content)
+    async def fake_aiter_raw():
+        yield content
+    resp.aiter_raw = fake_aiter_raw
+    return resp
+
 import json
 import os
 from datetime import UTC, datetime, timedelta
@@ -10,7 +19,27 @@ import pytest
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
 from yuxi.services.mcp_auth.orchestrator import AuthContext
-from yuxi.services.mcp_auth.proxy_service import proxy_mcp_request
+from yuxi.services.mcp_auth.proxy_service import _proxy_mcp_request_stream
+from starlette.requests import Request
+
+
+def make_mock_response(status_code, content):
+    import httpx
+    resp = httpx.Response(status_code, content=content)
+    async def fake_aiter_raw():
+        yield content
+    resp.aiter_raw = fake_aiter_raw
+    return resp
+
+import json
+async def get_response_json(response):
+    if hasattr(response, "body_iterator"):
+        body = b"".join([chunk async for chunk in response.body_iterator])
+    else:
+        body = response.body
+    return json.loads(body)
+
+from fastapi.responses import StreamingResponse
 from yuxi.storage.postgres.models_business import MCPConnection, MCPServer
 
 
@@ -53,9 +82,11 @@ async def test_proxy_mcp_request_retries_once_after_401_with_refreshed_token():
         if str(request.url) == "http://upstream.local/mcp":
             observed_authorizations.append(request.headers.get("Authorization"))
             if request.headers.get("Authorization") == "Bearer stale-token":
-                return httpx.Response(401, json={"error": "expired"})
+                return make_mock_response(401, b'{"error": "expired"}')
             if request.headers.get("Authorization") == "Bearer fresh-token":
-                return httpx.Response(200, json={"result": "ok"})
+                resp = make_mock_response(200, b'{"result": "ok"}')
+        resp.is_stream_consumed = False
+        return resp
 
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
 
@@ -111,22 +142,26 @@ async def test_proxy_mcp_request_retries_once_after_401_with_refreshed_token():
         }
     )
 
-    response = await proxy_mcp_request(
+    req = Request({"type": "http", "method": "POST", "headers": [(b"content-type", b"application/json")], "query_string": b""})
+    
+    class DummyDB:
+        async def commit(self): pass
+        
+    response = await _proxy_mcp_request_stream(
         server,
         connection=connection,
         auth_context=AuthContext(user_id="user-1", department_id="dep-1"),
-        method="POST",
-        headers={"content-type": "application/json"},
-        query_params={},
+        request=req,
         body=b'{"jsonrpc":"2.0","id":1}',
-        http_client=http_client,
-        token_cache=token_cache,
+        db=DummyDB(),
+        _http_client=http_client,
+        _token_cache=token_cache,
     )
 
     await http_client.aclose()
 
     assert response.status_code == 200
-    assert response.json() == {"result": "ok"}
+    assert await get_response_json(response) == {"result": "ok"}
     assert observed_authorizations == ["Bearer stale-token", "Bearer fresh-token"]
     assert token_cache.deleted_connection_ids == [41]
     assert token_cache.set_calls and token_cache.set_calls[0][0] == 41
@@ -149,7 +184,7 @@ async def test_proxy_mcp_request_marks_reauth_required_after_final_401():
             )
         if str(request.url) == "http://upstream.local/mcp":
             attempts += 1
-            return httpx.Response(401, json={"error": "expired"})
+            return make_mock_response(401, b'{"error": "expired"}')
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
 
     http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
@@ -204,22 +239,26 @@ async def test_proxy_mcp_request_marks_reauth_required_after_final_401():
         }
     )
 
-    response = await proxy_mcp_request(
+    req = Request({"type": "http", "method": "POST", "headers": [(b"content-type", b"application/json")], "query_string": b""})
+    
+    class DummyDB:
+        async def commit(self): pass
+        
+    response = await _proxy_mcp_request_stream(
         server,
         connection=connection,
         auth_context=AuthContext(user_id="user-1", department_id="dep-1"),
-        method="POST",
-        headers={"content-type": "application/json"},
-        query_params={},
+        request=req,
         body=b'{"jsonrpc":"2.0","id":1}',
-        http_client=http_client,
-        token_cache=token_cache,
+        db=DummyDB(),
+        _http_client=http_client,
+        _token_cache=token_cache,
     )
 
     await http_client.aclose()
 
     assert response.status_code == 424
-    assert response.json()["error"] == "reauth_required"
+    assert (await get_response_json(response))["error"] == "reauth_required"
     assert connection.status == "reauth_required"
     assert connection.meta_json["last_error"]["code"] == "unauthorized"
 
@@ -227,7 +266,7 @@ async def test_proxy_mcp_request_marks_reauth_required_after_final_401():
 async def test_proxy_mcp_request_records_scope_error_on_403():
     def handler(request: httpx.Request) -> httpx.Response:
         if str(request.url) == "http://upstream.local/mcp":
-            return httpx.Response(403, json={"error": "forbidden"})
+            return make_mock_response(403, b'{"error": "forbidden"}')
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
 
     http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
@@ -261,21 +300,23 @@ async def test_proxy_mcp_request_records_scope_error_on_403():
         updated_by="tester",
     )
 
-    response = await proxy_mcp_request(
+    req = Request({"type": "http", "method": "POST", "headers": [(b"content-type", b"application/json")], "query_string": b""})
+    class DummyDB:
+        async def commit(self): pass
+    response = await _proxy_mcp_request_stream(
         server,
         connection=connection,
         auth_context=AuthContext(user_id="user-1", department_id="dep-1"),
-        method="POST",
-        headers={"content-type": "application/json"},
-        query_params={},
+        request=req,
         body=b'{"jsonrpc":"2.0","id":1}',
-        http_client=http_client,
-        token_cache=None,
+        db=DummyDB(),
+        _http_client=http_client,
+        _token_cache=None,
     )
 
     await http_client.aclose()
 
     assert response.status_code == 403
-    assert response.json()["error"] == "insufficient_scope"
+    assert (await get_response_json(response))["error"] == "insufficient_scope"
     assert connection.status == "active"
     assert connection.meta_json["last_error"]["code"] == "insufficient_scope"

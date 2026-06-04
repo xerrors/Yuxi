@@ -196,17 +196,22 @@ async def _proxy_mcp_request_stream(
     body: bytes,
     path: str = "",
     db: AsyncSession,
+    _http_client: httpx.AsyncClient | None = None,
+    _token_cache: Any | None = None,
 ) -> Response:
     """底层流式转发逻辑：处理 HTTPX 透传、SSE 和 401 重试闭环事务"""
     auth_config = MCPAuthConfig.model_validate(server.auth_config_json or {})
     if server.transport not in _HTTP_TRANSPORTS:
         raise HTTPException(status_code=400, detail=f"Internal proxy only supports HTTP MCP transports, got: {server.transport}")
 
-    http_client = httpx.AsyncClient(timeout=server.timeout or 60.0)
+    http_client = _http_client or httpx.AsyncClient(timeout=server.timeout or 60.0)
     bg_task = BackgroundTask(http_client.aclose)
     
-    from yuxi.services.mcp_auth.redis_token_cache import RedisTokenCache
-    token_cache = RedisTokenCache()
+    if _token_cache is not None:
+        token_cache = _token_cache
+    else:
+        from yuxi.services.mcp_auth.redis_token_cache import RedisTokenCache
+        token_cache = RedisTokenCache()
 
     max_attempts = 2 if auth_config.refresh_policy.retry_once_on_401 else 1
     
