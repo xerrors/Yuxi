@@ -50,3 +50,14 @@ class MCPAuthConfig(BaseModel):
         ):
             raise ValueError("token_request is required for dynamic auth providers")
         return self
+
+    def get_secret_fields(self) -> list[str]:
+        """Extract all secret fields referenced in the configuration templates."""
+        import re
+        import json
+        
+        pattern = re.compile(r"\$\{secret\.([^\}]+)\}")
+        dumped = json.dumps(self.model_dump(mode="json"))
+        matches = pattern.findall(dumped)
+        # Deduplicate while preserving order
+        return list(dict.fromkeys(matches))
