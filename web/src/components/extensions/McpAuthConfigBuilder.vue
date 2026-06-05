@@ -163,7 +163,6 @@
                       danger
                       :disabled="form.tokenHeaders.length === 1"
                       @click="removeKeyValueRow(form.tokenHeaders, index)" v-if="!readonly"
-                      v-if="!readonly"
                     >
                       <Trash2 :size="14" />
                     </a-button>
