@@ -349,11 +349,6 @@ async def test_mcp_server(
     """测试 MCP 服务器连接"""
     try:
         server = await get_server_or_404(db, name)
-        if server.auth_config_json:
-            auth_config = MCPAuthConfig.model_validate(server.auth_config_json)
-            if auth_config.binding_scope != "inline" and auth_config.get_secret_fields():
-                raise HTTPException(status_code=400, detail="该 MCP 需要绑定连接（需要绑定长期密钥，请在连接页创建对应连接后进行测试）")
-
         try:
             auth_context = _auth_context_from_user(current_user)
             tools = await get_all_mcp_tools(name, auth_context=auth_context, db=db)
@@ -362,8 +357,17 @@ async def test_mcp_server(
                 "message": f"连接成功，共发现 {len(tools)} 个工具",
                 "tool_count": len(tools),
             }
+        except ValueError as val_err:
+            err_msg = str(val_err)
+            if "Active MCP connection not found" in err_msg:
+                raise HTTPException(
+                    status_code=400,
+                    detail="该 MCP 需要绑定连接（需要绑定长期密钥，请在连接页创建对应连接后进行测试）"
+                )
+            raise HTTPException(status_code=500, detail=f"连接失败: {err_msg}")
         except Exception as test_error:
             raise HTTPException(status_code=500, detail=f"连接失败: {str(test_error)}")
+
     except HTTPException:
         raise
     except Exception as e:

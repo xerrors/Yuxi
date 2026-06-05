@@ -278,6 +278,67 @@ async def test_bound_auth_server_test_endpoint_requires_connection_level_testing
         await _cleanup_server(test_client, admin_headers, server_name)
 
 
+async def test_bound_auth_server_test_endpoint_succeeds_with_connection(test_client, admin_headers):
+    me_response = await test_client.get("/api/auth/me", headers=admin_headers)
+    assert me_response.status_code == 200, me_response.text
+    me_data = me_response.json()
+    admin_dept_id = str(me_data["department_id"])
+
+    server_name = _build_server_name("pytest-mcp-bound-test-ok")
+
+    response = await test_client.post(
+        "/api/system/mcp-servers",
+        json={
+            "name": server_name,
+            "transport": "sse",
+            "url": "http://mcp-demo-server:8999/sse",
+            "description": "pytest mcp auth server ok",
+            "auth_config": {
+                "version": 1,
+                "provider": "bound_secret",
+                "binding_scope": "department",
+                "inject": {
+                    "target": "headers",
+                    "entries": [
+                        {
+                            "name": "Authorization",
+                            "value_template": "Bearer ${secret.access_token}",
+                        }
+                    ],
+                },
+            },
+        },
+        headers=admin_headers,
+    )
+    assert response.status_code == 200, response.text
+
+    try:
+        test_fail_response = await test_client.post(f"/api/system/mcp-servers/{server_name}/test", headers=admin_headers)
+        assert test_fail_response.status_code == 400, test_fail_response.text
+        assert "需要绑定连接" in test_fail_response.json()["detail"]
+
+        conn_response = await test_client.post(
+            f"/api/system/mcp-servers/{server_name}/connections",
+            json={
+                "scope_type": "department",
+                "scope_id": admin_dept_id,
+                "display_name": "Dept Scope Test OK",
+                "credential": {"secrets": {"access_token": "dummy_dept_token"}},
+            },
+            headers=admin_headers,
+        )
+        assert conn_response.status_code == 200, conn_response.text
+        conn_id = conn_response.json()["data"]["id"]
+
+        test_ok_response = await test_client.post(f"/api/system/mcp-servers/{server_name}/test", headers=admin_headers)
+        assert test_ok_response.status_code == 200, test_ok_response.text
+        assert test_ok_response.json()["success"] is True
+        assert test_ok_response.json()["tool_count"] > 0
+    finally:
+        await _cleanup_server(test_client, admin_headers, server_name)
+
+
+
 async def test_bound_auth_tools_endpoint_requires_current_admin_connection(test_client, admin_headers):
     server_name = _build_server_name("pytest-mcp-bound-tools")
     await _create_server(test_client, admin_headers, server_name)
