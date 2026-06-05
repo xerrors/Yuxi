@@ -281,7 +281,7 @@
         <div>
           <span class="preview-label">可用模板变量</span>
           <p>
-            <code>${access_token}</code>、<code>${secret.client_id}</code>、<code>${context.user_id}</code>、<code>${context.department_id}</code>
+            <code>${access_token}</code>、<code>${secret.client_id}</code>、<code>${context.user_id}</code>、<code>${context.work_id}</code>、<code>${context.department_id}</code>
           </p>
         </div>
       </div>
@@ -434,6 +434,7 @@ const quickInjectEntries = computed(() => {
     return [
       { label: 'Access Token 环境变量', name: 'MCP_ACCESS_TOKEN', value_template: '${access_token}' },
       { label: 'User ID 环境变量', name: 'YUXI_USER_ID', value_template: '${context.user_id}' },
+      { label: 'Work ID 环境变量', name: 'YUXI_WORK_ID', value_template: '${context.work_id}' },
       {
         label: 'Department ID 环境变量',
         name: 'YUXI_DEPARTMENT_ID',
@@ -448,6 +449,7 @@ const quickInjectEntries = computed(() => {
       value_template: form.provider === 'bound_secret' ? 'Bearer ${secret.access_token}' : 'Bearer ${access_token}'
     },
     { label: '用户 ID', name: 'X-Yuxi-User', value_template: '${context.user_id}' },
+    { label: '员工工号', name: 'X-Yuxi-Work-Id', value_template: '${context.work_id}' },
     { label: '部门 ID', name: 'X-Yuxi-Department', value_template: '${context.department_id}' },
     { label: 'API Key', name: 'X-Api-Key', value_template: '${secret.api_key}' }
   ]
