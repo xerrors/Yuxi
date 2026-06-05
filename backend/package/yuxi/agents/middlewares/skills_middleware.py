@@ -343,12 +343,14 @@ class SkillsMiddleware(AgentMiddleware):
         async def load_mcp_tools(server_name: str) -> list:
             """加载单个 MCP 服务器的工具"""
             try:
-                work_id = getattr(context, "work_id", None) or getattr(context, "user_id", None)
+                user_id = getattr(context, "user_id", None)
+                work_id = getattr(context, "work_id", None)
                 mcp_tools = await get_enabled_mcp_tools(
                     server_name,
                     auth_context=AuthContext(
-                        user_id=work_id,
+                        user_id=user_id,
                         department_id=getattr(context, "department_id", None),
+                        work_id=work_id,
                     ),
                 )
                 if not mcp_tools:

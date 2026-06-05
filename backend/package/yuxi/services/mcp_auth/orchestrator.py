@@ -19,6 +19,7 @@ from yuxi.utils import logger
 class AuthContext:
     user_id: str | None = None
     department_id: str | None = None
+    work_id: str | None = None
 
 
 mcp_auth_context_var: contextvars.ContextVar[AuthContext | None] = contextvars.ContextVar(
@@ -74,6 +75,7 @@ def _context_payload(context: AuthContext) -> dict[str, Any]:
     return {
         "user_id": context.user_id,
         "department_id": context.department_id,
+        "work_id": context.work_id,
     }
 
 
@@ -136,6 +138,7 @@ def _merge_injected_entries(
             context={
                 "user_id": context.user_id,
                 "department_id": context.department_id,
+                "work_id": context.work_id,
             },
             secret=secret_values,
             token=token_values,
@@ -251,6 +254,7 @@ async def _request_dynamic_token_values(
         context_payload={
             "user_id": context.user_id,
             "department_id": context.department_id,
+            "work_id": context.work_id,
         },
         secret_values=secret_values,
         credential_payload=credential_payload,

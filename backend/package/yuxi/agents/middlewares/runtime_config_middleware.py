@@ -137,9 +137,10 @@ class RuntimeConfigMiddleware(AgentMiddleware):
         # NOTE: 注入当前的 AuthContext 以便于长连接拦截器 DynamicMCPTokenAuth 随时刷新 token
         runtime_context = getattr(request.runtime, "context", None)
         if runtime_context is not None:
-            work_id = getattr(runtime_context, "work_id", None) or getattr(runtime_context, "user_id", None)
+            user_id = getattr(runtime_context, "user_id", None)
+            work_id = getattr(runtime_context, "work_id", None)
             dept_id = getattr(runtime_context, "department_id", None)
-            auth_context = AuthContext(user_id=work_id, department_id=dept_id)
+            auth_context = AuthContext(user_id=user_id, department_id=dept_id, work_id=work_id)
 
             from yuxi.services.mcp_auth.orchestrator import mcp_auth_context_var
 
@@ -186,12 +187,14 @@ class RuntimeConfigMiddleware(AgentMiddleware):
                 continue
             selected_mcp_servers.add(server_name)
             try:
-                work_id = getattr(context, "work_id", None) or getattr(context, "user_id", None)
+                user_id = getattr(context, "user_id", None)
+                work_id = getattr(context, "work_id", None)
                 mcp_tools = await get_enabled_mcp_tools(
                     server_name,
                     auth_context=AuthContext(
-                        user_id=work_id,
+                        user_id=user_id,
                         department_id=getattr(context, "department_id", None),
+                        work_id=work_id,
                     ),
                 )
                 if not mcp_tools:
