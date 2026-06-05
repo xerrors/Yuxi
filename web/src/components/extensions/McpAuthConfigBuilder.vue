@@ -23,7 +23,7 @@
           v-for="option in providerOptions"
           :key="option.value"
           type="button"
-          class="auth-provider-card"
+          class="auth-provider-card" :disabled="readonly"
           :class="{ active: form.provider === option.value }"
           @click="switchProvider(option.value)"
         >
@@ -52,7 +52,7 @@
               v-for="scope in bindingScopeOptions"
               :key="scope.value"
               type="button"
-              class="binding-scope-card"
+              class="binding-scope-card" :disabled="readonly"
               :class="{ active: form.bindingScope === scope.value }"
               @click="form.bindingScope = scope.value"
             >
@@ -71,12 +71,12 @@
           <div class="auth-field-row compact">
             <label>注入目标</label>
             <a-segmented
-              v-model:value="form.injectTarget"
+              v-model:value="form.injectTarget" :disabled="readonly"
               :options="injectTargetOptions"
               size="small"
             />
           </div>
-          <div class="quick-template-bar">
+          <div class="quick-template-bar" v-if="!readonly">
             <button
               v-for="entry in quickInjectEntries"
               :key="`${entry.name}:${entry.value_template}`"
@@ -92,9 +92,10 @@
               :key="index"
               class="row-editor-line"
             >
-              <a-input v-model:value="entry.name" placeholder="名称，如 Authorization" />
+              <a-input v-model:value="entry.name" :readonly="readonly" placeholder="名称，如 Authorization" />
               <a-input
                 v-model:value="entry.value_template"
+                :readonly="readonly"
                 placeholder="模板，如 Bearer ${access_token}"
               />
               <a-button
@@ -102,12 +103,12 @@
                 size="small"
                 danger
                 :disabled="form.injectEntries.length === 1"
-                @click="removeInjectEntry(index)"
+                @click="removeInjectEntry(index)" v-if="!readonly"
               >
                 <Trash2 :size="14" />
               </a-button>
             </div>
-            <a-button size="small" class="lucide-icon-btn" @click="addInjectEntry">
+            <a-button size="small" class="lucide-icon-btn" @click="addInjectEntry" v-if="!readonly">
               <Plus :size="13" />
               <span>添加注入项</span>
             </a-button>
@@ -123,13 +124,13 @@
             <div class="auth-field-row span-2">
               <label>Token 接口 URL</label>
               <a-input
-                v-model:value="form.tokenUrl"
+                v-model:value="form.tokenUrl" :readonly="readonly"
                 placeholder="例如：http://gateway.internal/api/token"
               />
             </div>
             <div class="auth-field-row">
               <label>请求方法</label>
-              <a-select v-model:value="form.tokenMethod">
+              <a-select v-model:value="form.tokenMethod" :disabled="readonly">
                 <a-select-option value="POST">POST</a-select-option>
                 <a-select-option value="GET">GET</a-select-option>
                 <a-select-option value="PUT">PUT</a-select-option>
@@ -137,7 +138,7 @@
             </div>
             <div class="auth-field-row">
               <label>Body 类型</label>
-              <a-select v-model:value="form.tokenBodyType">
+              <a-select v-model:value="form.tokenBodyType" :disabled="readonly">
                 <a-select-option value="json">JSON</a-select-option>
                 <a-select-option value="form">Form</a-select-option>
               </a-select>
@@ -154,19 +155,20 @@
                     :key="`header-${index}`"
                     class="row-editor-line"
                   >
-                    <a-input v-model:value="row.key" placeholder="Header 名称" />
-                    <a-input v-model:value="row.value" placeholder="Header 值" />
+                    <a-input v-model:value="row.key" :readonly="readonly" placeholder="Header 名称" />
+                    <a-input v-model:value="row.value" :readonly="readonly" placeholder="Header 值" />
                     <a-button
                       type="text"
                       size="small"
                       danger
                       :disabled="form.tokenHeaders.length === 1"
-                      @click="removeKeyValueRow(form.tokenHeaders, index)"
+                      @click="removeKeyValueRow(form.tokenHeaders, index)" v-if="!readonly"
+                      v-if="!readonly"
                     >
                       <Trash2 :size="14" />
                     </a-button>
                   </div>
-                  <a-button size="small" class="lucide-icon-btn" @click="addKeyValueRow(form.tokenHeaders)">
+                  <a-button size="small" class="lucide-icon-btn" v-if="!readonly" @click="addKeyValueRow(form.tokenHeaders)">
                     <Plus :size="13" />
                     <span>添加一行</span>
                   </a-button>
@@ -180,14 +182,14 @@
                     :key="`body-${index}`"
                     class="row-editor-line"
                   >
-                    <a-input v-model:value="row.key" placeholder="字段名" />
-                    <a-input v-model:value="row.value" placeholder="模板值，如 ${secret.client_id}" />
+                    <a-input v-model:value="row.key" :readonly="readonly" placeholder="字段名" />
+                    <a-input v-model:value="row.value" :readonly="readonly" placeholder="模板值，如 ${secret.client_id}" />
                     <a-button
                       type="text"
                       size="small"
                       danger
                       :disabled="form.tokenBodyTemplate.length === 1"
-                      @click="removeKeyValueRow(form.tokenBodyTemplate, index)"
+                      @click="removeKeyValueRow(form.tokenBodyTemplate, index)" v-if="!readonly"
                     >
                       <Trash2 :size="14" />
                     </a-button>
@@ -195,7 +197,7 @@
                   <a-button
                     size="small"
                     class="lucide-icon-btn"
-                    @click="addKeyValueRow(form.tokenBodyTemplate)"
+                    v-if="!readonly" @click="addKeyValueRow(form.tokenBodyTemplate)"
                   >
                     <Plus :size="13" />
                     <span>添加一行</span>
@@ -212,14 +214,14 @@
                     :key="`response-${index}`"
                     class="row-editor-line"
                   >
-                    <a-input v-model:value="row.key" placeholder="标准字段，如 access_token" />
-                    <a-input v-model:value="row.value" placeholder="响应路径，如 data.access_token" />
+                    <a-input v-model:value="row.key" :readonly="readonly" placeholder="标准字段，如 access_token" />
+                    <a-input v-model:value="row.value" :readonly="readonly" placeholder="响应路径，如 data.access_token" />
                     <a-button
                       type="text"
                       size="small"
                       danger
                       :disabled="form.tokenResponseMap.length === 1"
-                      @click="removeKeyValueRow(form.tokenResponseMap, index)"
+                      @click="removeKeyValueRow(form.tokenResponseMap, index)" v-if="!readonly"
                     >
                       <Trash2 :size="14" />
                     </a-button>
@@ -227,7 +229,7 @@
                   <a-button
                     size="small"
                     class="lucide-icon-btn"
-                    @click="addKeyValueRow(form.tokenResponseMap)"
+                    v-if="!readonly" @click="addKeyValueRow(form.tokenResponseMap)"
                   >
                     <Plus :size="13" />
                     <span>添加一行</span>
@@ -243,7 +245,7 @@
             <div class="auth-form-grid">
               <div class="auth-field-row">
                 <label>MCP 清单隔离</label>
-                <a-select v-model:value="form.manifestScope">
+                <a-select v-model:value="form.manifestScope" :disabled="readonly">
                   <a-select-option value="binding">按连接隔离</a-select-option>
                   <a-select-option value="server">服务级共享</a-select-option>
                 </a-select>
@@ -251,7 +253,7 @@
               <div class="auth-field-row">
                 <label>提前刷新秒数</label>
                 <a-input-number
-                  v-model:value="form.preRefreshSeconds"
+                  v-model:value="form.preRefreshSeconds" :disabled="readonly"
                   :min="0"
                   :max="86400"
                   style="width: 100%"
@@ -259,7 +261,7 @@
               </div>
               <div class="auth-field-row span-2 compact">
                 <label>401 处理</label>
-                <a-switch v-model:checked="form.retryOnceOn401" />
+                <a-switch v-model:checked="form.retryOnceOn401" :disabled="readonly" />
                 <span class="field-helper">收到 401 时清理缓存并自动重试一次。</span>
               </div>
             </div>
@@ -312,10 +314,10 @@
       <a-textarea
         v-model:value="jsonDraft"
         :rows="12"
-        class="auth-json-textarea"
+        class="auth-json-textarea" :readonly="readonly"
         placeholder="粘贴 auth_config JSON；留空表示不启用动态鉴权"
       />
-      <div class="json-action-row">
+      <div class="json-action-row" v-if="!readonly">
         <a-button size="small" @click="formatJsonDraft">格式化</a-button>
         <a-button size="small" type="primary" @click="importJsonToForm">导入到向导</a-button>
       </div>
@@ -354,6 +356,7 @@ import {
 } from '@/utils/mcpAuthConfigBuilder'
 
 const props = defineProps({
+  readonly: { type: Boolean, default: false },
   modelValue: { type: String, default: '' },
   transport: { type: String, default: 'streamable_http' }
 })
@@ -736,6 +739,11 @@ watch(jsonDraft, (value) => {
     border-color: var(--main-color);
     background: var(--main-10);
     color: var(--main-color);
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.7;
   }
 }
 

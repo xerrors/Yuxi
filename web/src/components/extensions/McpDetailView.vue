@@ -345,14 +345,16 @@
                     <span>{{ server.created_by }}</span>
                   </div>
                   <div
-                    class="info-item"
+                    class="info-item info-item-full"
                     v-if="server.auth_config && Object.keys(server.auth_config).length > 0"
+                    style="grid-column: 1 / -1; margin-top: 10px;"
                   >
-                    <label>认证配置</label>
-                    <span>
-                      {{ providerLabelMap[server.auth_config.provider] || server.auth_config.provider || '已配置' }}
-                      <span style="color: var(--gray-400); font-size: 12px; margin-left: 8px;">(进入编辑模式查看详情)</span>
-                    </span>
+                    <label style="margin-bottom: 8px; display: block;">认证配置明细</label>
+                    <McpAuthConfigBuilder
+                      :modelValue="JSON.stringify(server.auth_config, null, 2)"
+                      :transport="server.transport"
+                      readonly
+                    />
                   </div>
                 </div>
               </div>
