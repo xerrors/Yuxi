@@ -663,7 +663,7 @@
                           :loading="isFetchingScopeOptions"
                           placeholder="请选择用户"
                           show-search
-                          :options="userList.map(u => ({ label: `${u.username} (${u.user_id_login})`, value: u.id.toString() }))"
+                          :options="userList.map(u => ({ label: u.username === u.user_id ? u.username : `${u.username} (${u.user_id})`, value: u.id.toString() }))"
                         />
                         <a-input
                           v-else
