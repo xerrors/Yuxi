@@ -65,6 +65,7 @@ def create_proxy_access_token(server_name: str, auth_context: AuthContext) -> st
             "server_name": server_name,
             "user_id": auth_context.user_id,
             "department_id": auth_context.department_id,
+            "work_id": auth_context.work_id,
         },
         expires_delta=timedelta(minutes=15),
     )
@@ -81,6 +82,7 @@ def decode_proxy_access_token(token: str, *, server_name: str) -> AuthContext:
     return AuthContext(
         user_id=payload.get("user_id"),
         department_id=payload.get("department_id"),
+        work_id=payload.get("work_id"),
     )
 
 
