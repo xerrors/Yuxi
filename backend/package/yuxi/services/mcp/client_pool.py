@@ -123,7 +123,7 @@ class LongLivedSession:
                 # 挂起直到收到停止指令
                 await self._stop_event.wait()
         except Exception as exc:
-            logger.error(f"Error in long-lived MCP session loop for {self.server_name}: {exc}")
+            logger.error(f"Error in long-lived MCP session loop for {self.server_name}", exc_info=True)
         finally:
             self.session = None
             self._running = False
@@ -270,7 +270,15 @@ class MCPClientPool:
             async with self._dict_lock:
                 if self._sessions.get(cache_key) is init_future:
                     self._sessions.pop(cache_key, None)
-            raise
+    async def remove_session(self, server_name: str, partition_key: str):
+        """移除指定 key 的连接，强制下一次请求重新创建"""
+        cache_key = (server_name, partition_key)
+        async with self._dict_lock:
+            val = self._sessions.pop(cache_key, None)
+            if val is not None and not isinstance(val, asyncio.Future):
+                ll_session, _ = val
+                logger.info(f"Removing invalid session for {cache_key} from pool")
+                await ll_session.stop()
 
     async def ensure_prewarm(
         self,

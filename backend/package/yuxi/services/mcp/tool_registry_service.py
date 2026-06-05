@@ -300,6 +300,12 @@ async def get_mcp_tools(
             logger.error(
                 f"Failed to load tools from MCP server '{server_name}': {e}, traceback: {traceback.format_exc()}"
             )
+            try:
+                partition_key = f"{cache_partition}:s{cache_descriptor['server_revision']}:p{cache_descriptor['partition_revision']}"
+                from yuxi.services.mcp.client_pool import mcp_client_pool
+                await mcp_client_pool.remove_session(server_name, partition_key)
+            except Exception as pool_err:
+                logger.warning(f"Failed to remove stale session for {server_name}: {pool_err}")
             return []
 
     if disabled_tools:

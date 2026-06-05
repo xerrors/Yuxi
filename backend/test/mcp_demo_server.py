@@ -14,6 +14,9 @@ from mcp.server.models import InitializationOptions
 import mcp.types as types
 from mcp.server.sse import SseServerTransport
 from mcp.server.stdio import stdio_server
+from contextlib import asynccontextmanager
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from mcp.server.fastmcp.server import StreamableHTTPASGIApp
 
 # 简体中文注释与日志规范 (RULE[user_global])
 logger = logging.getLogger("mcp_demo_server")
@@ -108,10 +111,22 @@ async def handle_call_tool(name: str, arguments: dict[str, Any] | None) -> list[
 
 
 # =============================================================================
-# === SSE 传输协议支持 (FastAPI) ===
+# === SSE 与 Streamable HTTP 传输协议支持 (FastAPI) ===
 # =============================================================================
 
-app = FastAPI(title="MCP Demo Server")
+session_manager = StreamableHTTPSessionManager(
+    app=server,
+    stateless=True,
+)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with session_manager.run():
+        yield
+
+app = FastAPI(title="MCP Demo Server", lifespan=lifespan)
+app.mount("/mcp", StreamableHTTPASGIApp(session_manager))
+
 sse_transport = SseServerTransport("/messages")
 
 @app.post("/oauth/token")
@@ -129,37 +144,41 @@ async def oauth_token(request: Request):
         "scope": "read write"
     }
 
-@app.get("/sse")
-async def sse(request: Request):
-    """建立 SSE 长连接通道，并将当前的 Headers 存入 ContextVar"""
-    headers_dict = dict(request.headers)
-    logger.info(f"New SSE connection attempt. Headers: {headers_dict}")
-    
-    # 注入 ContextVar，使得在该长连接处理循环下的所有 list/call_tool 能读取到 header
-    token = current_request_headers_var.set(headers_dict)
-    try:
-        async with sse_transport.connect_sse(
-            request.scope, request.receive, request.send
-        ) as (read_stream, write_stream):
-            await server.run(
-                read_stream,
-                write_stream,
-                InitializationOptions(
-                    server_name="yuxi-mcp-demo-server",
-                    server_version="1.0.0",
-                    capabilities=server.get_capabilities(
-                        notification_options=NotificationOptions(),
-                        experimental_capabilities={},
+class SSEEndpoint:
+    async def __call__(self, scope, receive, send):
+        """建立 SSE 长连接通道，并将当前的 Headers 存入 ContextVar"""
+        headers_dict = {k.decode('utf-8'): v.decode('utf-8') for k, v in scope.get("headers", [])}
+        logger.info(f"New SSE connection attempt. Headers: {headers_dict}")
+        
+        # 注入 ContextVar，使得在该长连接处理循环下的所有 list/call_tool 能读取到 header
+        token = current_request_headers_var.set(headers_dict)
+        try:
+            async with sse_transport.connect_sse(
+                scope, receive, send
+            ) as (read_stream, write_stream):
+                await server.run(
+                    read_stream,
+                    write_stream,
+                    InitializationOptions(
+                        server_name="yuxi-mcp-demo-server",
+                        server_version="1.0.0",
+                        capabilities=server.get_capabilities(
+                            notification_options=NotificationOptions(),
+                            experimental_capabilities={},
+                        ),
                     ),
-                ),
-            )
-    finally:
-        current_request_headers_var.reset(token)
+                )
+        finally:
+            current_request_headers_var.reset(token)
 
-@app.post("/messages")
-async def messages(request: Request):
-    """接收 SSE 通道发来的具体 JSON-RPC 请求"""
-    await sse_transport.handle_post_message(request.scope, request.receive, request.send)
+app.add_route("/sse", SSEEndpoint(), methods=["GET"])
+
+class MessagesEndpoint:
+    async def __call__(self, scope, receive, send):
+        """接收 SSE 通道发来的具体 JSON-RPC 请求"""
+        await sse_transport.handle_post_message(scope, receive, send)
+
+app.add_route("/messages", MessagesEndpoint(), methods=["POST"])
 
 
 # =============================================================================
@@ -195,7 +214,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Mock MCP Demo Server")
     parser.add_argument(
         "--transport",
-        choices=["stdio", "sse"],
+        choices=["stdio", "sse", "streamable-http"],
         default="sse",
         help="传输协议类型 (默认为 sse)"
     )
@@ -210,5 +229,5 @@ if __name__ == "__main__":
     if args.transport == "stdio":
         asyncio.run(run_stdio())
     else:
-        logger.info(f"Starting SSE FastAPI Server on port {args.port}...")
+        logger.info(f"Starting FastAPI Server (transport: {args.transport}) on port {args.port}...")
         uvicorn.run(app, host="0.0.0.0", port=args.port)

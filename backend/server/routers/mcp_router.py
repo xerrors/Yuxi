@@ -130,7 +130,7 @@ def _normalize_credential_blob(value: dict | str | None) -> str | None:
 
 
 def _validate_auth_config_or_400(payload: dict | None) -> dict | None:
-    if payload is None:
+    if not payload:
         return None
     try:
         return MCPAuthConfig.model_validate(payload).model_dump(mode="json")
@@ -348,7 +348,7 @@ async def test_mcp_server(
         if server.auth_config_json:
             auth_config = MCPAuthConfig.model_validate(server.auth_config_json)
             if auth_config.binding_scope != "inline" and auth_config.get_secret_fields():
-                raise HTTPException(status_code=400, detail="该 MCP 需要绑定长期密钥，请在连接页创建对应连接后进行测试")
+                raise HTTPException(status_code=400, detail="该 MCP 需要绑定连接（需要绑定长期密钥，请在连接页创建对应连接后进行测试）")
 
         try:
             auth_context = _auth_context_from_user(current_user)

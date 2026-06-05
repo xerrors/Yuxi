@@ -53,9 +53,9 @@ class MCPAuthConfig(BaseModel):
 
     def get_secret_fields(self) -> list[str]:
         """Extract all secret fields referenced in the configuration templates."""
-        import re
         import json
-        
+        import re
+
         pattern = re.compile(r"\$\{secret\.([^\}]+)\}")
         dumped = json.dumps(self.model_dump(mode="json"))
         matches = pattern.findall(dumped)

@@ -409,6 +409,21 @@ services:
       - app-network
     restart: unless-stopped
 
+  mcp-demo-server:
+    image: yuxi-api:${YUXI_VERSION:-0.6.2}
+    container_name: mcp-demo-server
+    working_dir: /app
+    volumes:
+      - ./backend/package:/app/package
+      - ./backend/test:/app/test
+      - ./.env:/app/.env
+    ports:
+      - "8999:8999"
+    networks:
+      - app-network
+    command: uv run --no-sync --no-dev test/mcp_demo_server.py --transport sse --port 8999
+    restart: unless-stopped
+
 volumes:
   nltk_data:
 
