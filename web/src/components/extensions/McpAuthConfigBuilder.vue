@@ -276,7 +276,9 @@
               {{ getSecretFieldLabel(field) }}
             </span>
           </div>
-          <p v-else>当前配置未引用 `${secret.xxx}`，连接页可不填长期密钥。</p>
+          <p v-else style="margin: 0;">
+            当前配置未引用 <code>${secret.xxx}</code>，由于无需长期凭据，您可以直接进行测试，无需强制绑定连接。
+          </p>
         </div>
         <div>
           <span class="preview-label">可用模板变量</span>

@@ -224,10 +224,12 @@ async def get_runtime_mcp_server_config(
         )
         connection = result.scalar_one_or_none()
         if connection is None:
-            raise ValueError(
-                f"Active MCP connection not found for server '{server_name}' and scope "
-                f"{auth_config.binding_scope}:{scope_id}"
-            )
+            if auth_config.get_secret_fields():
+                raise ValueError(
+                    f"Active MCP connection not found for server '{server_name}' and scope "
+                    f"{auth_config.binding_scope}:{scope_id}"
+                )
+            # 无需长期密钥的鉴权机制无需强制绑定连接即可生成运行时配置
         proxy_base_url = _get_internal_mcp_proxy_base_url()
         if should_use_internal_proxy(server, auth_config, proxy_base_url):
             config = build_proxy_runtime_config(

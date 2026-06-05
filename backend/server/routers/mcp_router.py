@@ -347,11 +347,12 @@ async def test_mcp_server(
         server = await get_server_or_404(db, name)
         if server.auth_config_json:
             auth_config = MCPAuthConfig.model_validate(server.auth_config_json)
-            if auth_config.binding_scope != "inline":
-                raise HTTPException(status_code=400, detail="该 MCP 需要绑定连接，请在连接页测试具体连接")
+            if auth_config.binding_scope != "inline" and auth_config.get_secret_fields():
+                raise HTTPException(status_code=400, detail="该 MCP 需要绑定长期密钥，请在连接页创建对应连接后进行测试")
 
         try:
-            tools = await get_all_mcp_tools(name)
+            auth_context = _auth_context_from_user(current_user)
+            tools = await get_all_mcp_tools(name, auth_context=auth_context, db=db)
             return {
                 "success": True,
                 "message": f"连接成功，共发现 {len(tools)} 个工具",
