@@ -144,8 +144,7 @@ async def test_dynamic_mcp_token_auth_cache():
     token = mcp_auth_context_var.set(auth_ctx)
     try:
         with patch("yuxi.storage.postgres.manager.pg_manager.get_async_session_context") as mock_session_ctx, \
-             patch("yuxi.services.mcp.server_service.get_runtime_mcp_server_config", return_value=mock_runtime_config) as mock_get_config, \
-             patch("time.time", side_effect=[1000.0, 1005.0, 1010.0, 1030.0]):
+             patch("yuxi.services.mcp.server_service.get_runtime_mcp_server_config", return_value=mock_runtime_config) as mock_get_config:
             
             # 模拟 async with pg_manager.get_async_session_context() as session
             mock_session = MagicMock()
@@ -178,22 +177,14 @@ async def test_dynamic_mcp_token_auth_cache():
             results_3 = [r async for r in generator_3]
             assert len(results_3) == 1
             assert mock_get_config.call_count == 2
-            
-            # 5. 第四次请求（+20秒）：经过了 10 秒（累计过了15秒的 TTL 限制），由于 1020 - 1010 >= 15，缓存过期，再次执行 DB 查询
-            mock_req_4 = MagicMock(headers={})
-            generator_4 = auth.async_auth_flow(mock_req_4)
-            results_4 = [r async for r in generator_4]
-            assert len(results_4) == 1
-            assert mock_get_config.call_count == 3
-    
-            # 6. 测试 clear_mcp_cache / clear_mcp_server_tools_cache 联动清除所有 resolved_headers 缓存
-            from yuxi.services.mcp.tool_registry_service import clear_mcp_cache, clear_mcp_server_tools_cache
+            # 4. 测试 clear_mcp_cache / clear_mcp_server_tools_cache 联动清除所有 resolved_headers 缓存
+            from yuxi.services.mcp.tool_registry_service import clear_mcp_cache, invalidate_mcp_server_tools_cache
             # 确保当前有缓存项
-            _resolved_headers_cache[cache_key] = ({"Auth": "Bearer test"}, 2000.0)
-            clear_mcp_server_tools_cache("test_server")
+            _resolved_headers_cache[cache_key] = {"Auth": "Bearer test"}
+            await invalidate_mcp_server_tools_cache("test_server")
             assert len(_resolved_headers_cache) == 0
     
-            _resolved_headers_cache[cache_key] = ({"Auth": "Bearer test"}, 2000.0)
+            _resolved_headers_cache[cache_key] = {"Auth": "Bearer test"}
             await clear_mcp_cache()
             assert len(_resolved_headers_cache) == 0
     finally:

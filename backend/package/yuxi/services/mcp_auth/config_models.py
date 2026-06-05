@@ -21,7 +21,7 @@ class RefreshPolicy(BaseModel):
 
 
 class MCPAuthConfig(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="ignore")
 
     version: int = 1
     provider: Literal[

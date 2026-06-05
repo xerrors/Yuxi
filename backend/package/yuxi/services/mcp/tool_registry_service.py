@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import httpx
+from cachetools import LRUCache
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.services.mcp_auth.config_models import MCPAuthConfig
 from yuxi.services.mcp_auth.orchestrator import AuthContext
@@ -23,8 +24,8 @@ from yuxi.storage.postgres.models_business import MCPConnection, MCPServer
 logger = logging.getLogger("yuxi.mcp.tool_registry_service")
 
 # 全局共享状态（直接在本模块维护，供外部和测试使用）
-_mcp_tools_cache: dict[str, list[Callable[..., Any]]] = {}
-_mcp_tools_stats: dict[str, dict[str, int]] = {}
+_mcp_tools_cache: LRUCache = LRUCache(maxsize=128)
+_mcp_tools_stats: LRUCache = LRUCache(maxsize=128)
 _mcp_tool_cache_store = RedisMcpToolCache()
 _mcp_lock = asyncio.Lock()
 

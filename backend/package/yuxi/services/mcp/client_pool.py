@@ -4,7 +4,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import time
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any
 
@@ -15,9 +14,10 @@ from yuxi.services.mcp_auth.orchestrator import mcp_auth_context_var
 if TYPE_CHECKING:
     from mcp import ClientSession
 
-# 缓存存储格式: (server_name, user_id, department_id) -> (resolved_headers, expires_at)
-_resolved_headers_cache: dict[tuple[str, str | None, str | None], tuple[dict[str, Any], float]] = {}
-_HEADERS_CACHE_TTL = 15.0
+from cachetools import TTLCache
+
+# 缓存存储格式: (server_name, user_id, department_id) -> resolved_headers
+_resolved_headers_cache: TTLCache = TTLCache(maxsize=1024, ttl=15.0)
 
 
 def clear_resolved_headers_cache() -> None:
@@ -42,20 +42,26 @@ class DynamicMCPTokenAuth(httpx.Auth):
         self.server_name = server_name
 
     async def async_auth_flow(self, request: httpx.Request) -> AsyncGenerator[httpx.Request, httpx.Response]:
-        # NOTE: 1. 从当前协程上下文读取 AuthContext
         auth_context = mcp_auth_context_var.get()
         if auth_context:
             try:
                 cache_key = (self.server_name, auth_context.user_id, auth_context.department_id)
-                now = time.time()
-                cached = _resolved_headers_cache.get(cache_key)
-                if cached is not None:
-                    headers, expires_at = cached
-                    if now < expires_at:
-                        for key, val in headers.items():
-                            request.headers[key] = str(val)
-                        yield request
-                        return
+                cached_headers = _resolved_headers_cache.get(cache_key)
+                if cached_headers is not None:
+                    for key, val in cached_headers.items():
+                        request.headers[key] = str(val)
+                    yield request
+                    return
+
+                from yuxi.services.mcp_auth.proxy_service import INTERNAL_PROXY_TOKEN_HEADER, create_proxy_access_token
+
+                if INTERNAL_PROXY_TOKEN_HEADER.lower() in request.headers:
+                    # NOTE: 代理模式下，直接在本地生成新的代理 JWT，跳过 DB 事务
+                    new_token = create_proxy_access_token(self.server_name, auth_context)
+                    request.headers[INTERNAL_PROXY_TOKEN_HEADER] = new_token
+                    _resolved_headers_cache[cache_key] = dict(request.headers)
+                    yield request
+                    return
 
                 # 导入数据库会话管理器以获取连接与 Token
                 from yuxi.storage.postgres.manager import pg_manager
@@ -63,25 +69,15 @@ class DynamicMCPTokenAuth(httpx.Auth):
                 async with pg_manager.get_async_session_context() as session:
                     from yuxi.services.mcp.server_service import get_runtime_mcp_server_config
 
-                    # NOTE: 2. 读取当前上下文对应的最新运行时配置（含 Token 自动刷新逻辑）
+                    # NOTE: 读取当前上下文对应的最新运行时配置（含 Token 自动刷新逻辑）
                     runtime_config = await get_runtime_mcp_server_config(
                         self.server_name,
                         auth_context=auth_context,
                         db=session,
                     )
                     if runtime_config:
-                        # NOTE: 3. 将最新的头部注入到当前 HTTP 请求中
                         headers = dict(runtime_config.get("headers") or {})
-                        _resolved_headers_cache[cache_key] = (headers, now + _HEADERS_CACHE_TTL)
-
-                        # 惰性清理过期条目，避免无界膨胀
-                        stale_keys = [
-                            k
-                            for k in list(_resolved_headers_cache.keys())[:100]
-                            if _resolved_headers_cache.get(k, (None, float("inf")))[1] <= now
-                        ][:20]
-                        for k in stale_keys:
-                            _resolved_headers_cache.pop(k, None)
+                        _resolved_headers_cache[cache_key] = headers
 
                         for key, val in headers.items():
                             request.headers[key] = str(val)
@@ -151,9 +147,9 @@ class MCPClientPool:
     """MCP 客户端连接池实现"""
 
     def __init__(self):
-        # 缓存键格式: (server_name, partition_key) -> (LongLivedSession, config_hash)
-        self._sessions: dict[tuple[str, str], tuple[LongLivedSession, str]] = {}
-        self._lock = asyncio.Lock()
+        # 缓存键格式: (server_name, partition_key) -> tuple[LongLivedSession, str] | asyncio.Future
+        self._sessions: dict[tuple[str, str], Any] = {}
+        self._dict_lock = asyncio.Lock()
 
     def _calculate_config_hash(self, config: dict[str, Any]) -> str:
         """根据配置计算 Hash 用于比对配置是否脏变"""
@@ -197,30 +193,52 @@ class MCPClientPool:
         config_hash = self._calculate_config_hash(runtime_config)
         cache_key = (server_name, partition_key)
 
-        async with self._lock:
-            existing = self._sessions.get(cache_key)
-            if existing:
-                ll_session, cached_hash = existing
-                # NOTE: 如果配置无变化且 Session 处于活动状态，直接复用
-                if cached_hash == config_hash and ll_session.session is not None:
-                    return ll_session.session
+        while True:
+            async with self._dict_lock:
+                existing = self._sessions.get(cache_key)
 
-                # 如果发生配置变化或 Session 断开，执行销毁
+                if existing is not None:
+                    if isinstance(existing, asyncio.Future):
+                        future = existing
+                        stale_session = None
+                    else:
+                        ll_session, cached_hash = existing
+                        if cached_hash == config_hash and ll_session.session is not None:
+                            return ll_session.session
+
+                        self._sessions.pop(cache_key, None)
+                        stale_session = ll_session
+                        future = None
+                else:
+                    future = None
+                    stale_session = None
+
+                    stale_keys = [k for k in self._sessions if k[0] == server_name and k != cache_key]
+                    stale_other_sessions = []
+                    for stale_key in stale_keys:
+                        stale_val = self._sessions.pop(stale_key)
+                        if not isinstance(stale_val, asyncio.Future):
+                            stale_other_sessions.append(stale_val[0])
+
+                    init_future = asyncio.get_running_loop().create_future()
+                    self._sessions[cache_key] = init_future
+                    break
+
+            if future is not None:
+                await future
+                continue
+
+            if stale_session is not None:
                 logger.info(f"Destroying stale/disconnected MCP session for {cache_key}")
-                await ll_session.stop()
-                self._sessions.pop(cache_key, None)
-
-            # NOTE: 驱逐同 server_name 下其他过时 partition_key 的旧 session，
-            # 防止 revision 变化导致的连接池内存泄漏
-            stale_keys = [k for k in self._sessions if k[0] == server_name and k != cache_key]
-            for stale_key in stale_keys:
-                stale_session, _ = self._sessions.pop(stale_key)
-                logger.info(f"Evicting stale MCP session for {stale_key}")
                 await stale_session.stop()
+                continue
 
-            # NOTE: 针对 HTTP/SSE 协议，注入自定义的 httpx.Auth 认证流以支持长连接动态 Token
+        for s_session in stale_other_sessions:
+            logger.info("Evicting stale MCP session")
+            await s_session.stop()
+
+        try:
             client_config = dict(runtime_config)
-            # 清理框架保留魔法键
             for magic_k in (
                 "__yuxi_cache_partition",
                 "__yuxi_allow_global_cache",
@@ -229,7 +247,6 @@ class MCPClientPool:
                 client_config.pop(magic_k, None)
 
             if client_config.get("transport") in ("sse", "http", "streamable_http", "streamable-http"):
-                # 注入 DynamicMCPTokenAuth，让底层 httpx 在长连接执行每个具体请求时动态提取最新 Token
                 client_config["auth"] = DynamicMCPTokenAuth(server_name)
 
             logger.info(
@@ -241,8 +258,19 @@ class MCPClientPool:
             ll_session = LongLivedSession(client, server_name)
             await ll_session.start()
 
-            self._sessions[cache_key] = (ll_session, config_hash)
+            result = (ll_session, config_hash)
+            init_future.set_result(result)
+            async with self._dict_lock:
+                self._sessions[cache_key] = result
             return ll_session.session
+
+        except BaseException as exc:
+            if not init_future.done():
+                init_future.set_exception(exc)
+            async with self._dict_lock:
+                if self._sessions.get(cache_key) is init_future:
+                    self._sessions.pop(cache_key, None)
+            raise
 
     async def ensure_prewarm(
         self,
@@ -258,11 +286,19 @@ class MCPClientPool:
 
     async def shutdown(self):
         """关闭并回收连接池中的所有连接"""
-        async with self._lock:
-            for cache_key, (ll_session, _) in list(self._sessions.items()):
-                logger.info(f"Stopping MCP session for {cache_key} during shutdown")
-                await ll_session.stop()
+        async with self._dict_lock:
+            sessions_to_stop = []
+            for cache_key, val in list(self._sessions.items()):
+                if isinstance(val, asyncio.Future):
+                    val.cancel()
+                else:
+                    ll_session, _ = val
+                    sessions_to_stop.append((cache_key, ll_session))
             self._sessions.clear()
+
+        for cache_key, ll_session in sessions_to_stop:
+            logger.info(f"Stopping MCP session for {cache_key} during shutdown")
+            await ll_session.stop()
 
 
 # 全局单例连接池

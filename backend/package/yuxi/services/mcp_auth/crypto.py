@@ -6,10 +6,12 @@ import json
 import os
 from typing import Any
 
+from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 MASTER_KEY_ENV = "MCP_CREDENTIALS_MASTER_KEY"
-ENVELOPE_VERSION = 1
+ENVELOPE_VERSION = 2
 ENVELOPE_KEY_ID = "local"
 _AAD = b"yuxi:mcp_credentials:v1"
 
@@ -21,8 +23,20 @@ def _get_master_key() -> str:
     return value
 
 
-def _derive_aes_key(master_key: str) -> bytes:
+def _derive_aes_key_v1(master_key: str) -> bytes:
+    # legacy v1 key derivation (raw sha256)
     return hashlib.sha256(master_key.encode("utf-8")).digest()
+
+
+def _derive_aes_key_v2(master_key: str, salt: bytes) -> bytes:
+    # v2 key derivation using HKDF
+    hkdf = HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        info=b"mcp-credentials-v2",
+    )
+    return hkdf.derive(master_key.encode("utf-8"))
 
 
 def _b64encode(value: bytes) -> str:
@@ -43,7 +57,10 @@ def _parse_envelope(blob: str) -> dict[str, Any] | None:
     required_keys = {"v", "kid", "nonce", "ciphertext"}
     if not required_keys.issubset(payload.keys()):
         return None
-    if payload.get("v") != ENVELOPE_VERSION:
+    v = payload.get("v")
+    if v not in (1, 2):
+        return None
+    if v == 2 and "salt" not in payload:
         return None
     return payload
 
@@ -61,13 +78,15 @@ def encrypt_credential_blob(plaintext: str) -> str:
         return plaintext
 
     master_key = _get_master_key()
-    aesgcm = AESGCM(_derive_aes_key(master_key))
+    salt = os.urandom(16)
+    aesgcm = AESGCM(_derive_aes_key_v2(master_key, salt))
     nonce = os.urandom(12)
     ciphertext = aesgcm.encrypt(nonce, plaintext.encode("utf-8"), _AAD)
     return json.dumps(
         {
             "v": ENVELOPE_VERSION,
             "kid": ENVELOPE_KEY_ID,
+            "salt": _b64encode(salt),
             "nonce": _b64encode(nonce),
             "ciphertext": _b64encode(ciphertext),
         },
@@ -85,7 +104,16 @@ def decrypt_credential_blob(blob: str | None) -> str | None:
         return blob
 
     master_key = _get_master_key()
-    aesgcm = AESGCM(_derive_aes_key(master_key))
+    v = payload.get("v")
+    if v == 1:
+        key = _derive_aes_key_v1(master_key)
+    elif v == 2:
+        salt = _b64decode(payload["salt"])
+        key = _derive_aes_key_v2(master_key, salt)
+    else:
+        return blob
+
+    aesgcm = AESGCM(key)
     plaintext = aesgcm.decrypt(
         _b64decode(payload["nonce"]),
         _b64decode(payload["ciphertext"]),

@@ -405,15 +405,17 @@ async def delete_mcp_server(db: AsyncSession, name: str) -> bool:
     if not server:
         return False
 
-    await db.delete(server)
-    await db.commit()
-
     from yuxi.services.mcp.tool_registry_service import (
         _clear_mcp_server_runtime_auth_cache,
         invalidate_mcp_server_tools_cache,
     )
 
+    # NOTE: 必须在级联删除前执行 Redis 缓存清理，否则关联的 connection 行被删除后将无法提取 ID
     await _clear_mcp_server_runtime_auth_cache(db, name)
+
+    await db.delete(server)
+    await db.commit()
+
     await invalidate_mcp_server_tools_cache(name)
 
     logger.info(f"Deleted MCP server '{name}'")

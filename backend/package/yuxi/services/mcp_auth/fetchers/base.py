@@ -45,7 +45,7 @@ async def fetch_custom_http_token(
 
     response_map = response_map or dict(_DEFAULT_TOKEN_RESPONSE_MAP)
     if http_client is None:
-        http_client = httpx.AsyncClient()
+        http_client = httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0))
         should_close = True
     else:
         should_close = False
@@ -75,6 +75,8 @@ async def fetch_custom_http_token(
             request_kwargs["json"] = body
         else:
             request_kwargs["data"] = body
+
+        request_kwargs["timeout"] = httpx.Timeout(10.0, read=30.0)
 
         response = await http_client.request(**request_kwargs)
         response.raise_for_status()

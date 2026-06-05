@@ -9,12 +9,28 @@ from fastapi import HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from starlette.background import BackgroundTask
 from yuxi.services.mcp_auth.config_models import MCPAuthConfig
 from yuxi.services.mcp_auth.orchestrator import AuthContext, resolve_runtime_mcp_config
 from yuxi.storage.postgres.models_business import MCPConnection, MCPServer
 
 from server.utils.auth_utils import AuthUtils
+
+_proxy_http_client: httpx.AsyncClient | None = None
+
+
+def get_shared_proxy_client() -> httpx.AsyncClient:
+    global _proxy_http_client
+    if _proxy_http_client is None:
+        _proxy_http_client = httpx.AsyncClient(timeout=httpx.Timeout(connect=30.0, pool=120.0, read=120.0, write=30.0))
+    return _proxy_http_client
+
+
+async def close_shared_proxy_client() -> None:
+    global _proxy_http_client
+    if _proxy_http_client is not None:
+        await _proxy_http_client.aclose()
+        _proxy_http_client = None
+
 
 INTERNAL_PROXY_TOKEN_HEADER = "X-Yuxi-MCP-Proxy-Token"
 INTERNAL_PROXY_DISABLE_TOOL_OBJECT_CACHE_KEY = "__yuxi_disable_tool_object_cache"
@@ -213,15 +229,13 @@ async def _proxy_mcp_request_stream(
 
     connect_timeout = server.timeout or 60.0
     read_timeout = server.sse_read_timeout or connect_timeout
-    http_client = _http_client or httpx.AsyncClient(
-        timeout=httpx.Timeout(
-            connect=connect_timeout,
-            read=read_timeout,
-            write=connect_timeout,
-            pool=connect_timeout,
-        )
+    request_timeout = httpx.Timeout(
+        connect=connect_timeout,
+        read=read_timeout,
+        write=connect_timeout,
+        pool=connect_timeout,
     )
-    bg_task = BackgroundTask(http_client.aclose)
+    http_client = _http_client or get_shared_proxy_client()
 
     if _token_cache is not None:
         token_cache = _token_cache
@@ -248,6 +262,7 @@ async def _proxy_mcp_request_stream(
             url=target_url,
             headers=upstream_headers,
             content=body,
+            timeout=request_timeout,
         )
 
         # 使用 send(stream=True) 获取异步可迭代响应而不会阻塞 SSE 长链接
@@ -262,7 +277,7 @@ async def _proxy_mcp_request_stream(
                 content='{"error": "insufficient_scope", "message": "当前授权范围不足"}',
                 status_code=403,
                 media_type="application/json",
-                background=bg_task,
+                background=None,
             )
 
         if response.status_code != 401:
@@ -283,7 +298,7 @@ async def _proxy_mcp_request_stream(
                     resp_headers[k] = v
 
             return StreamingResponse(
-                proxy_stream_generator(), status_code=response.status_code, headers=resp_headers, background=bg_task
+                proxy_stream_generator(), status_code=response.status_code, headers=resp_headers, background=None
             )
 
         # 如果是 401，回收流连接并准备重试
@@ -300,5 +315,5 @@ async def _proxy_mcp_request_stream(
         content='{"error": "reauth_required", "message": "连接失效，请重新连接"}',
         status_code=424,
         media_type="application/json",
-        background=bg_task,
+        background=None,
     )

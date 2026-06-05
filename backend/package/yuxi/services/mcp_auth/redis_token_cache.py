@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -13,27 +12,6 @@ ACCESS_TOKEN_KEY_PREFIX = "yuxi:mcp:access_token:v1"
 REFRESH_LOCK_KEY_PREFIX = "yuxi:mcp:refresh_lock:v1"
 DEFAULT_TOKEN_TTL_SECONDS = 300
 DEFAULT_LOCK_TTL_SECONDS = 30
-
-
-_PYTEST_SESSION_TOKEN = uuid.uuid4().hex[:8]
-
-
-def _access_token_key(connection_id: int) -> str:
-    key = f"{ACCESS_TOKEN_KEY_PREFIX}:{connection_id}"
-    import os
-
-    if os.environ.get("PYTEST_CURRENT_TEST"):
-        return f"test:{_PYTEST_SESSION_TOKEN}:{key}"
-    return key
-
-
-def _refresh_lock_key(connection_id: int) -> str:
-    key = f"{REFRESH_LOCK_KEY_PREFIX}:{connection_id}"
-    import os
-
-    if os.environ.get("PYTEST_CURRENT_TEST"):
-        return f"test:{_PYTEST_SESSION_TOKEN}:{key}"
-    return key
 
 
 def _compute_token_ttl_seconds(token_payload: dict[str, Any]) -> int:
@@ -54,15 +32,32 @@ def _compute_token_ttl_seconds(token_payload: dict[str, Any]) -> int:
 
 
 class RedisTokenCache:
-    def __init__(self, redis_client_factory: Callable[[], Awaitable[Any]] | None = None):
+    def __init__(
+        self,
+        redis_client_factory: Callable[[], Awaitable[Any]] | None = None,
+        key_prefix: str | None = None,
+    ):
         self._redis_client_factory = redis_client_factory or get_redis_client
+        self._key_prefix = key_prefix
+
+    def _access_token_key(self, connection_id: int) -> str:
+        key = f"{ACCESS_TOKEN_KEY_PREFIX}:{connection_id}"
+        if self._key_prefix:
+            return f"{self._key_prefix}:{key}"
+        return key
+
+    def _refresh_lock_key(self, connection_id: int) -> str:
+        key = f"{REFRESH_LOCK_KEY_PREFIX}:{connection_id}"
+        if self._key_prefix:
+            return f"{self._key_prefix}:{key}"
+        return key
 
     async def _get_redis(self):
         return await self._redis_client_factory()
 
     async def get_access_token(self, connection_id: int) -> dict[str, Any] | None:
         redis = await self._get_redis()
-        raw = await redis.get(_access_token_key(connection_id))
+        raw = await redis.get(self._access_token_key(connection_id))
         if not raw:
             return None
         if isinstance(raw, dict):
@@ -73,20 +68,20 @@ class RedisTokenCache:
         redis = await self._get_redis()
         ttl_seconds = _compute_token_ttl_seconds(token_payload)
         await redis.set(
-            _access_token_key(connection_id),
+            self._access_token_key(connection_id),
             json.dumps(token_payload, ensure_ascii=False, separators=(",", ":")),
             ex=ttl_seconds,
         )
 
     async def delete_access_token(self, connection_id: int) -> None:
         redis = await self._get_redis()
-        await redis.delete(_access_token_key(connection_id))
+        await redis.delete(self._access_token_key(connection_id))
 
     async def acquire_refresh_lock(self, connection_id: int, *, ttl_seconds: int = DEFAULT_LOCK_TTL_SECONDS) -> bool:
         redis = await self._get_redis()
-        acquired = await redis.set(_refresh_lock_key(connection_id), "1", ex=ttl_seconds, nx=True)
+        acquired = await redis.set(self._refresh_lock_key(connection_id), "1", ex=ttl_seconds, nx=True)
         return bool(acquired)
 
     async def release_refresh_lock(self, connection_id: int) -> None:
         redis = await self._get_redis()
-        await redis.delete(_refresh_lock_key(connection_id))
+        await redis.delete(self._refresh_lock_key(connection_id))

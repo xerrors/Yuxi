@@ -101,6 +101,14 @@ async def lifespan(app: FastAPI):
     """)
     logger.info("Yuxi backend startup complete")
     yield
+
+    from yuxi.services.mcp.client_pool import mcp_client_pool
+    from yuxi.services.mcp_auth.proxy_service import close_shared_proxy_client
+
+    logger.info("Shutting down MCP client pool and proxy clients...")
+    await mcp_client_pool.shutdown()
+    await close_shared_proxy_client()
+
     await tasker.shutdown()
     shutdown_sandbox_provider()
     await close_queue_clients()
