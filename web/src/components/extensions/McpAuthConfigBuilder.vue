@@ -1,5 +1,5 @@
 <template>
-  <div class="mcp-auth-builder">
+  <div class="mcp-auth-builder" :class="{ 'is-readonly': readonly }">
     <div class="auth-builder-toolbar">
       <div class="auth-builder-title">
         <span>认证配置</span>
@@ -956,4 +956,66 @@ watch(jsonDraft, (value) => {
     grid-template-columns: 1fr;
   }
 }
+.is-readonly {
+  :deep(.ant-input[disabled]),
+  :deep(.ant-input[readonly]),
+  :deep(.ant-input-number-disabled),
+  :deep(.ant-select-disabled .ant-select-selector),
+  :deep(.ant-switch-disabled) {
+    color: var(--gray-900);
+    background-color: var(--gray-0);
+    border-color: transparent;
+    cursor: default;
+  }
+  
+  :deep(.ant-input), :deep(.ant-input-number), :deep(.ant-select-selector) {
+    border-color: transparent;
+    background-color: transparent;
+  }
+  
+  /* Retain some outline so they don't look like floating text completely? Let's just make it subtle */
+  :deep(.ant-input[disabled]),
+  :deep(.ant-input[readonly]),
+  :deep(.ant-input-number-disabled),
+  :deep(.ant-select-disabled .ant-select-selector) {
+    border: 1px solid var(--gray-150);
+    background-color: var(--gray-0);
+  }
+
+  .auth-provider-card:disabled,
+  .binding-scope-card:disabled {
+    cursor: default;
+    opacity: 1;
+    background: var(--gray-25);
+  }
+
+  .auth-provider-card.active:disabled,
+  .binding-scope-card.active:disabled {
+    color: var(--main-color);
+    background: var(--main-10);
+    border-color: var(--main-color);
+
+    span {
+      color: var(--main-color);
+    }
+  }
+
+  .auth-provider-card:not(.active):disabled,
+  .binding-scope-card:not(.active):disabled {
+    span {
+      color: var(--gray-700);
+    }
+    small {
+      color: var(--gray-500);
+    }
+  }
+
+  :deep(.ant-radio-button-wrapper-disabled) {
+    color: var(--gray-700);
+    background-color: var(--gray-0);
+    border-color: var(--gray-150);
+    cursor: default;
+  }
+}
+
 </style>
