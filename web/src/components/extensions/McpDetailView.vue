@@ -349,7 +349,10 @@
                     v-if="server.auth_config && Object.keys(server.auth_config).length > 0"
                   >
                     <label>认证配置</label>
-                    <pre class="code-pre">{{ JSON.stringify(server.auth_config, null, 2) }}</pre>
+                    <span>
+                      {{ providerLabelMap[server.auth_config.provider] || server.auth_config.provider || '已配置' }}
+                      <span style="color: var(--gray-400); font-size: 12px; margin-left: 8px;">(进入编辑模式查看详情)</span>
+                    </span>
                   </div>
                 </div>
               </div>
