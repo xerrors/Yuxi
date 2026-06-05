@@ -489,7 +489,7 @@
                 <div class="connection-summary-strip">
                   <div class="connection-summary-item">
                     <span class="summary-label">认证方式</span>
-                    <strong>{{ server.auth_config?.provider || '未配置' }}</strong>
+                    <strong>{{ providerLabelMap[server.auth_config?.provider] || server.auth_config?.provider || '未配置' }}</strong>
                   </div>
                   <div class="connection-summary-item">
                     <span class="summary-label">默认绑定</span>
@@ -919,6 +919,14 @@ const statusLabelMap = {
   disabled: '停用',
   reauth_required: '需要重连',
   invalid: '无效'
+}
+
+const providerLabelMap = {
+  none: '不启用',
+  bound_secret: '绑定长期密钥',
+  custom_http_token: '接口换 Token',
+  stdio_env: 'StdIO 环境变量',
+  client_credentials: 'OAuth2 客户端凭证'
 }
 
 const actionLabel = computed(() => {
