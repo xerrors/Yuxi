@@ -205,6 +205,7 @@ async def test_resolve_runtime_mcp_config_fetches_custom_http_token_with_user_co
         auth_context=AuthContext(user_id="user-9", department_id="finance"),
         connection=connection,
         http_client=http_client,
+        token_cache=DummyTokenCache(),
     )
 
     await http_client.aclose()
@@ -285,6 +286,7 @@ async def test_resolve_runtime_mcp_config_fetches_client_credentials_token():
         auth_context=AuthContext(user_id="u-1", department_id="d-1"),
         connection=connection,
         http_client=http_client,
+        token_cache=DummyTokenCache(),
     )
 
     await http_client.aclose()
@@ -657,6 +659,7 @@ async def test_resolve_runtime_mcp_config_refreshes_authorization_code_token():
         auth_context=AuthContext(user_id="user-1", department_id="dep-1"),
         connection=connection,
         http_client=http_client,
+        token_cache=DummyTokenCache(),
     )
 
     await http_client.aclose()

@@ -140,11 +140,15 @@ def _validate_auth_config_or_400(payload: dict | None) -> dict | None:
 
 def _auth_context_from_user(current_user: User) -> AuthContext:
     department_id = getattr(current_user, "department_id", None)
-    user_id = getattr(current_user, "user_id", None)
+    db_id = getattr(current_user, "id", None)
+    login_id = getattr(current_user, "user_id", None)
+    resolved_user_id = db_id if db_id is not None else login_id
     return AuthContext(
-        user_id=str(user_id) if user_id is not None else None,
+        user_id=str(resolved_user_id) if resolved_user_id is not None else None,
         department_id=str(department_id) if department_id is not None else None,
+        work_id=str(login_id) if login_id is not None else None,
     )
+
 
 
 # =============================================================================

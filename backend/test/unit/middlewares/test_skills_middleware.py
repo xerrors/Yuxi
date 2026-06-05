@@ -56,4 +56,4 @@ async def test_get_mcp_tools_from_context_uses_work_id_for_user_scoped_auth(monk
     tools = await middleware._get_mcp_tools_from_context(context)
 
     assert tools == []
-    assert captured == [("dts-mcp_server", "login-1001", "dept-9")]
+    assert captured == [("dts-mcp_server", "2", "dept-9")]

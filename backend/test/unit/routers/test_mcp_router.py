@@ -522,7 +522,7 @@ def test_test_mcp_server_requires_connection_level_test_for_bound_auth(monkeypat
             "binding_scope": "department",
             "inject": {
                 "target": "headers",
-                "entries": [{"name": "Authorization", "value_template": "Bearer ${access_token}"}],
+                "entries": [{"name": "Authorization", "value_template": "Bearer ${secret.access_token}"}],
             },
             "token_request": {"url": "http://gateway.local/auth/token", "method": "POST"},
         }
