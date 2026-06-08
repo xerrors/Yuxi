@@ -208,7 +208,7 @@ async def get_runtime_mcp_server_config(
             return server.to_mcp_config()
 
         auth_config = MCPAuthConfig.model_validate(server.auth_config_json)
-        from yuxi.services.mcp.connection_service import _resolve_scope_id
+        from yuxi.services.mcp.connection_service import _resolve_scope_id, requires_bound_mcp_connection
 
         scope_id = _resolve_scope_id(auth_config.binding_scope, auth_context)
         if scope_id is None:
@@ -224,7 +224,7 @@ async def get_runtime_mcp_server_config(
         )
         connection = result.scalar_one_or_none()
         if connection is None:
-            if auth_config.get_secret_fields():
+            if requires_bound_mcp_connection(auth_config):
                 raise ValueError(
                     f"Active MCP connection not found for server '{server_name}' and scope "
                     f"{auth_config.binding_scope}:{scope_id}"

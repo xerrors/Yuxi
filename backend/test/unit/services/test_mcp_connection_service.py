@@ -607,3 +607,48 @@ async def test_test_mcp_connection_refreshes_success_metadata(connection_service
     assert result["connection"].status == "active"
     assert "last_success_at" in result["connection"].meta_json
     assert "last_error" not in result["connection"].meta_json
+
+
+async def test_test_mcp_connection_populates_work_id_for_user_scope(connection_service_session, monkeypatch):
+    observed_auth_contexts = []
+
+    async def fake_get_runtime_mcp_server_config(server_name, *, auth_context=None, db=None, http_client=None):
+        del db, http_client
+        observed_auth_contexts.append(auth_context)
+        return {"transport": "stdio", "command": f"{server_name}-cmd", "disabled_tools": []}
+
+    async def fake_get_mcp_tools(server_name, additional_servers=None, disabled_tools=None, **kwargs):
+        del server_name, additional_servers, disabled_tools, kwargs
+        return ["tool-a"]
+
+    monkeypatch.setattr(server_service, "get_runtime_mcp_server_config", fake_get_runtime_mcp_server_config)
+    monkeypatch.setattr(tool_registry_service, "get_mcp_tools", fake_get_mcp_tools)
+
+    connection_service_session.add(
+        MCPServer(
+            name="user-work-id-gateway",
+            transport="streamable_http",
+            url="http://test.local/mcp",
+            created_by="tester",
+            updated_by="tester",
+        )
+    )
+    await connection_service_session.commit()
+
+    created = await connection_service.create_mcp_connection(
+        connection_service_session,
+        server_name="user-work-id-gateway",
+        scope_type="user",
+        scope_id="U001",
+        created_by="tester",
+    )
+
+    result = await connection_service.test_mcp_connection(
+        connection_service_session,
+        created.id,
+        updated_by="admin",
+    )
+
+    assert result["tool_count"] == 1
+    assert observed_auth_contexts[0].user_id == "U001"
+    assert observed_auth_contexts[0].work_id == "U001"

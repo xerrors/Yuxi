@@ -118,6 +118,33 @@ async def test_calculate_config_hash_with_non_serializable():
     assert len(config_hash) == 16
 
 
+def test_calculate_config_hash_ignores_internal_proxy_token_header():
+    """代理模式下短期 JWT 变化不应触发长连接重建"""
+    from yuxi.services.mcp_auth.proxy_service import INTERNAL_PROXY_TOKEN_HEADER
+
+    pool = MCPClientPool()
+    config_a = {
+        "transport": "streamable_http",
+        "url": "http://api:5050/api/internal/mcp-proxy/demo",
+        "headers": {
+            "X-App": "yuxi",
+            "Authorization": "Bearer upstream-a",
+            INTERNAL_PROXY_TOKEN_HEADER: "proxy-token-a",
+        },
+    }
+    config_b = {
+        "transport": "streamable_http",
+        "url": "http://api:5050/api/internal/mcp-proxy/demo",
+        "headers": {
+            "X-App": "yuxi",
+            "Authorization": "Bearer upstream-b",
+            INTERNAL_PROXY_TOKEN_HEADER: "proxy-token-b",
+        },
+    }
+
+    assert pool._calculate_config_hash(config_a) == pool._calculate_config_hash(config_b)
+
+
 @pytest.mark.asyncio
 async def test_dynamic_mcp_token_auth_cache():
     """测试 DynamicMCPTokenAuth 的 in-memory 缓存及联动清除逻辑"""

@@ -122,7 +122,7 @@ class LongLivedSession:
                 self._ready_event.set()
                 # 挂起直到收到停止指令
                 await self._stop_event.wait()
-        except Exception as exc:
+        except Exception:
             logger.error(f"Error in long-lived MCP session loop for {self.server_name}", exc_info=True)
         finally:
             self.session = None
@@ -163,9 +163,12 @@ class MCPClientPool:
                 "disabled_tools",
             }
         }
-        # 剔除 header 中可能随时变化的 token/Authorization 以便准确比对静态配置
+        # 剔除 header 中可能随时变化的 token，以便准确比对静态配置
+        from yuxi.services.mcp_auth.proxy_service import INTERNAL_PROXY_TOKEN_HEADER
+
+        transient_header_names = {"authorization", INTERNAL_PROXY_TOKEN_HEADER.lower()}
         headers = dict(clean_config.get("headers") or {})
-        headers.pop("Authorization", None)
+        headers = {key: value for key, value in headers.items() if key.lower() not in transient_header_names}
         if headers:
             clean_config["headers"] = headers
         elif "headers" in clean_config:

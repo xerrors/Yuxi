@@ -39,8 +39,12 @@ async def get_response_json(response):
         body = response.body
     return json.loads(body)
 
+from fastapi import Response
 from fastapi.responses import StreamingResponse
+from yuxi.services.mcp import server_service
 from yuxi.storage.postgres.models_business import MCPConnection, MCPServer
+from yuxi.services.mcp_auth import proxy_service
+from yuxi.services.mcp_auth.proxy_service import create_proxy_access_token, handle_mcp_proxy_request
 
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
@@ -320,3 +324,90 @@ async def test_proxy_mcp_request_records_scope_error_on_403():
     assert (await get_response_json(response))["error"] == "insufficient_scope"
     assert connection.status == "active"
     assert connection.meta_json["last_error"]["code"] == "insufficient_scope"
+
+
+async def test_handle_mcp_proxy_request_allows_no_secret_dynamic_config_without_connection(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "unit-test-jwt-secret-with-at-least-32-bytes")
+    monkeypatch.setenv("YUXI_INSTANCE_ID", "unit-test-instance")
+
+    server = MCPServer(
+        name="proxy-no-secret",
+        transport="streamable_http",
+        url="http://upstream.local/mcp",
+        auth_config_json={
+            "version": 1,
+            "provider": "custom_http_token",
+            "binding_scope": "user",
+            "manifest_scope": "server",
+            "inject": {
+                "target": "headers",
+                "entries": [{"name": "Authorization", "value_template": "Bearer ${access_token}"}],
+            },
+            "token_request": {
+                "url": "http://gateway.local/auth/token",
+                "method": "POST",
+                "body_type": "json",
+                "body_template": {"work_id": "${context.work_id}"},
+                "response_map": {"access_token": "access_token", "expires_in": "expires_in"},
+            },
+        },
+        enabled=1,
+        created_by="tester",
+        updated_by="tester",
+    )
+
+    async def fake_get_mcp_server(db, server_name):
+        del db
+        assert server_name == "proxy-no-secret"
+        return server
+
+    observed = {}
+
+    async def fake_proxy_mcp_request_stream(**kwargs):
+        assert kwargs["server"] is server
+        observed["connection"] = kwargs["connection"]
+        observed["auth_context"] = kwargs["auth_context"]
+        observed["body"] = kwargs["body"]
+        return Response(status_code=204)
+
+    class EmptyResult:
+        def scalar_one_or_none(self):
+            return None
+
+    class DummyDB:
+        async def execute(self, stmt):
+            del stmt
+            return EmptyResult()
+
+    monkeypatch.setattr(server_service, "get_mcp_server", fake_get_mcp_server)
+    monkeypatch.setattr(proxy_service, "_proxy_mcp_request_stream", fake_proxy_mcp_request_stream)
+
+    token = create_proxy_access_token(
+        "proxy-no-secret",
+        AuthContext(user_id="user-1", department_id="dep-1", work_id="W001"),
+    )
+    async def receive():
+        return {"type": "http.request", "body": b'{"jsonrpc":"2.0","id":1}', "more_body": False}
+
+    req = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "headers": [(b"content-type", b"application/json")],
+            "query_string": b"",
+        },
+        receive,
+    )
+
+    response = await handle_mcp_proxy_request(
+        "proxy-no-secret",
+        request=req,
+        path="",
+        internal_token=token,
+        db=DummyDB(),
+    )
+
+    assert response.status_code == 204
+    assert observed["connection"] is None
+    assert observed["auth_context"].work_id == "W001"
+    assert observed["body"] == b'{"jsonrpc":"2.0","id":1}'

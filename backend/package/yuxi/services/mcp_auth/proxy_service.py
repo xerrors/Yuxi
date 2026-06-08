@@ -178,7 +178,7 @@ async def handle_mcp_proxy_request(
 
     auth_config = MCPAuthConfig.model_validate(server.auth_config_json or {})
 
-    from yuxi.services.mcp.connection_service import _resolve_scope_id
+    from yuxi.services.mcp.connection_service import _resolve_scope_id, requires_bound_mcp_connection
 
     scope_id = _resolve_scope_id(auth_config.binding_scope, auth_context)
     connection = None
@@ -193,7 +193,7 @@ async def handle_mcp_proxy_request(
         )
         connection = result.scalar_one_or_none()
 
-    if auth_config.binding_scope != "inline" and connection is None:
+    if connection is None and requires_bound_mcp_connection(auth_config):
         raise HTTPException(status_code=403, detail="当前用户没有该 MCP 的有效连接")
 
     # 注意：我们读取整个 request body，因为 MCP 请求参数通常极小，

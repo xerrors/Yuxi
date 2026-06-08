@@ -6,6 +6,7 @@ from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from yuxi.services.mcp_auth.config_models import MCPAuthConfig
 from yuxi.services.mcp_auth.crypto import encrypt_credential_blob
 from yuxi.services.mcp_auth.orchestrator import AuthContext
 from yuxi.storage.postgres.models_business import MCPConnection
@@ -34,6 +35,11 @@ def _resolve_scope_id(binding_scope: str, auth_context: AuthContext | None) -> s
             raise ValueError("user_id is required for user-scoped MCP auth")
         return str(auth_context.user_id)
     raise ValueError(f"Unsupported MCP binding scope: {binding_scope}")
+
+
+def requires_bound_mcp_connection(auth_config: MCPAuthConfig) -> bool:
+    """判断当前鉴权配置是否必须存在 active MCPConnection。"""
+    return auth_config.binding_scope != "inline" and bool(auth_config.get_secret_fields())
 
 
 def _normalize_mcp_connection_scope(scope_type: str, scope_id: str | None) -> tuple[str, str]:
@@ -67,7 +73,7 @@ def _auth_context_from_connection(connection: MCPConnection) -> AuthContext:
     if connection.scope_type == "department":
         return AuthContext(department_id=connection.scope_id)
     if connection.scope_type == "user":
-        return AuthContext(user_id=connection.scope_id)
+        return AuthContext(user_id=connection.scope_id, work_id=connection.scope_id)
     return AuthContext()
 
 
