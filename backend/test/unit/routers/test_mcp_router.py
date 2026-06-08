@@ -43,6 +43,18 @@ def _build_app(*, allow_admin: bool = True) -> FastAPI:
     return app
 
 
+def _auth_config(binding_scope: str = "user") -> dict:
+    return {
+        "version": 1,
+        "provider": "bound_secret",
+        "binding_scope": binding_scope,
+        "inject": {
+            "target": "headers",
+            "entries": [{"name": "Authorization", "value_template": "Bearer ${secret.access_token}"}],
+        },
+    }
+
+
 def test_update_mcp_server_status(monkeypatch):
     captured = {}
 
@@ -135,6 +147,70 @@ def test_get_mcp_servers_normal_user_is_stripped(monkeypatch):
     assert data_user["name"] == "test-mcp"
     assert data_user["description"] == "test mcp description"
     assert data_user["enabled"] is True
+
+
+def test_get_mcp_server_normal_user_gets_public_detail(monkeypatch):
+    class DummyServer:
+        name = "personal-gateway"
+        description = "personal gateway"
+        transport = "streamable_http"
+        url = "http://gateway.local/mcp"
+        headers = {"Authorization": "Bearer secret"}
+        enabled = 1
+        tags = ["finance"]
+        icon = "🔐"
+        auth_config_json = {
+            "version": 1,
+            "provider": "bound_secret",
+            "binding_scope": "user",
+            "inject": {
+                "target": "headers",
+                "entries": [{"name": "Authorization", "value_template": "Bearer ${secret.access_token}"}],
+            },
+        }
+
+        def to_dict(self):
+            return {"name": self.name, "url": self.url, "headers": self.headers}
+
+    async def fake_get_mcp_server(db, name):
+        del db
+        assert name == "personal-gateway"
+        return DummyServer()
+
+    monkeypatch.setattr("server.routers.mcp_router.get_mcp_server", fake_get_mcp_server)
+
+    client = TestClient(_build_app(allow_admin=False))
+    resp = client.get("/api/system/mcp-servers/personal-gateway")
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()["data"]
+    assert data["name"] == "personal-gateway"
+    assert data["auth_config"] == {
+        "version": 1,
+        "provider": "bound_secret",
+        "binding_scope": "user",
+        "manifest_scope": "server",
+        "secret_fields": ["access_token"],
+    }
+    assert "url" not in data
+    assert "headers" not in data
+
+
+def test_get_mcp_server_normal_user_cannot_read_disabled_server(monkeypatch):
+    class DummyServer:
+        name = "disabled-gateway"
+        enabled = 0
+
+    async def fake_get_mcp_server(db, name):
+        del db, name
+        return DummyServer()
+
+    monkeypatch.setattr("server.routers.mcp_router.get_mcp_server", fake_get_mcp_server)
+
+    client = TestClient(_build_app(allow_admin=False))
+    resp = client.get("/api/system/mcp-servers/disabled-gateway")
+
+    assert resp.status_code == 404, resp.text
 
 
 def test_create_mcp_server_forwards_auth_config(monkeypatch):
@@ -288,6 +364,115 @@ def test_list_mcp_connections(monkeypatch):
     ]
 
 
+def test_list_mcp_connections_normal_user_only_lists_own_user_scope(monkeypatch):
+    captured = {}
+
+    class DummyConnection:
+        def to_dict(self):
+            return {"id": 9, "scope_type": "user", "scope_id": "user", "status": "active"}
+
+    async def fake_get_mcp_server(db, name):
+        del db
+        return type("DummyServer", (), {"name": name, "enabled": 1, "auth_config_json": _auth_config()})()
+
+    async def fake_list_mcp_connections(db, **kwargs):
+        del db
+        captured.update(kwargs)
+        return [DummyConnection()]
+
+    monkeypatch.setattr("server.routers.mcp_router.get_mcp_server", fake_get_mcp_server)
+    monkeypatch.setattr("server.routers.mcp_router.list_mcp_connections", fake_list_mcp_connections)
+
+    client = TestClient(_build_app(allow_admin=False))
+    resp = client.get("/api/system/mcp-servers/gateway/connections")
+
+    assert resp.status_code == 200, resp.text
+    assert captured == {"server_name": "gateway", "scope_type": "user", "scope_id": "user"}
+    assert resp.json()["data"] == [
+        {"id": 9, "scope_type": "user", "scope_id": "user", "status": "active"}
+    ]
+
+
+def test_list_mcp_connections_admin_mine_filters_to_current_user(monkeypatch):
+    captured = {}
+
+    async def fake_get_mcp_server(db, name):
+        del db
+        return type("DummyServer", (), {"name": name, "enabled": 1, "auth_config_json": _auth_config()})()
+
+    async def fake_list_mcp_connections(db, **kwargs):
+        del db
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr("server.routers.mcp_router.get_mcp_server", fake_get_mcp_server)
+    monkeypatch.setattr("server.routers.mcp_router.list_mcp_connections", fake_list_mcp_connections)
+
+    client = TestClient(_build_app())
+    resp = client.get("/api/system/mcp-servers/gateway/connections?mine=true")
+
+    assert resp.status_code == 200, resp.text
+    assert captured == {"server_name": "gateway", "scope_type": "user", "scope_id": "admin"}
+
+
+def test_list_mcp_connections_paginated_returns_summary(monkeypatch):
+    captured = {}
+    count_filters = []
+
+    class DummyConnection:
+        def to_dict(self):
+            return {"id": 12, "scope_type": "user", "scope_id": "1", "status": "active"}
+
+    async def fake_get_mcp_server(db, name):
+        del db
+        return type(
+            "DummyServer",
+            (),
+            {
+                "name": name,
+                "auth_config_json": _auth_config("user"),
+            },
+        )()
+
+    async def fake_list_mcp_connections_page(db, **kwargs):
+        del db
+        captured.update(kwargs)
+        return [DummyConnection()], 17
+
+    async def fake_count_mcp_connections(db, **kwargs):
+        del db
+        count_filters.append(kwargs.get("status_filter", "all"))
+        return {"all": 30, "active": 14, "attention": 3, "disabled": 5}.get(
+            kwargs.get("status_filter", "all"), 0
+        )
+
+    monkeypatch.setattr("server.routers.mcp_router.get_mcp_server", fake_get_mcp_server)
+    monkeypatch.setattr(
+        "server.routers.mcp_router.list_mcp_connections_page",
+        fake_list_mcp_connections_page,
+    )
+    monkeypatch.setattr("server.routers.mcp_router.count_mcp_connections", fake_count_mcp_connections)
+
+    client = TestClient(_build_app())
+    resp = client.get(
+        "/api/system/mcp-servers/gateway/connections?paginated=true&status=attention&search=alice&page=2&page_size=5"
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert captured["server_name"] == "gateway"
+    assert captured["status_filter"] == "attention"
+    assert captured["effective_scope_type"] == "user"
+    assert captured["credentials_required"] is True
+    assert captured["search"] == "alice"
+    assert captured["page"] == 2
+    assert captured["page_size"] == 5
+    payload = resp.json()["data"]
+    assert payload["items"] == [{"id": 12, "scope_type": "user", "scope_id": "1", "status": "active"}]
+    assert payload["total"] == 17
+    assert payload["summary"] == {"total": 30, "active": 14, "attention": 3, "disabled": 5}
+    assert count_filters == ["all", "active", "attention", "disabled"]
+
+
 def test_create_mcp_connection(monkeypatch):
     captured = {}
 
@@ -325,6 +510,123 @@ def test_create_mcp_connection(monkeypatch):
     assert captured["scope_id"] == "42"
     assert captured["credential_blob"] == '{"secrets": {"access_token": "token-1"}}'
     assert captured["created_by"] == "admin"
+
+
+def test_create_mcp_connection_normal_user_auto_binds_own_scope(monkeypatch):
+    captured = {}
+
+    class DummyConnection:
+        def to_dict(self):
+            return {"id": 11, "scope_type": "user", "scope_id": "user", "status": "active"}
+
+    async def fake_get_mcp_server(db, name):
+        del db
+        return type(
+            "DummyServer",
+            (),
+            {
+                "name": name,
+                "enabled": 1,
+                "auth_config_json": {
+                    "version": 1,
+                    "provider": "bound_secret",
+                    "binding_scope": "user",
+                    "inject": {
+                        "target": "headers",
+                        "entries": [
+                            {"name": "Authorization", "value_template": "Bearer ${secret.access_token}"}
+                        ],
+                    },
+                },
+            },
+        )()
+
+    async def fake_create_mcp_connection(db, **kwargs):
+        del db
+        captured.update(kwargs)
+        return DummyConnection()
+
+    monkeypatch.setattr("server.routers.mcp_router.get_mcp_server", fake_get_mcp_server)
+    monkeypatch.setattr("server.routers.mcp_router.create_mcp_connection", fake_create_mcp_connection)
+
+    client = TestClient(_build_app(allow_admin=False))
+    resp = client.post(
+        "/api/system/mcp-servers/gateway/connections",
+        json={
+            "scope_type": "user",
+            "display_name": "我的连接",
+            "credential": {"secrets": {"access_token": "token-1"}},
+        },
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert captured["server_name"] == "gateway"
+    assert captured["scope_type"] == "user"
+    assert captured["scope_id"] == "user"
+    assert captured["created_by"] == "user"
+
+
+def test_create_mcp_connection_normal_user_rejects_non_user_scope(monkeypatch):
+    async def fake_get_mcp_server(db, name):
+        del db
+        return type(
+            "DummyServer",
+            (),
+            {
+                "name": name,
+                "enabled": 1,
+                "auth_config_json": {
+                    "version": 1,
+                    "provider": "bound_secret",
+                    "binding_scope": "user",
+                    "inject": {
+                        "target": "headers",
+                        "entries": [
+                            {"name": "Authorization", "value_template": "Bearer ${secret.access_token}"}
+                        ],
+                    },
+                },
+            },
+        )()
+
+    async def fake_create_mcp_connection(db, **kwargs):
+        raise AssertionError("ordinary users must not create shared MCP connections")
+
+    monkeypatch.setattr("server.routers.mcp_router.get_mcp_server", fake_get_mcp_server)
+    monkeypatch.setattr("server.routers.mcp_router.create_mcp_connection", fake_create_mcp_connection)
+
+    client = TestClient(_build_app(allow_admin=False))
+    resp = client.post(
+        "/api/system/mcp-servers/gateway/connections",
+        json={"scope_type": "department", "scope_id": "42"},
+    )
+
+    assert resp.status_code == 403, resp.text
+
+
+def test_update_mcp_connection_normal_user_rejects_non_user_binding(monkeypatch):
+    async def fake_get_mcp_server(db, name):
+        del db
+        return type(
+            "DummyServer",
+            (),
+            {"name": name, "enabled": 1, "auth_config_json": _auth_config("department")},
+        )()
+
+    async def fake_get_mcp_connection(db, connection_id):
+        del db, connection_id
+        raise AssertionError("ordinary users must not manage connections on shared-bound MCPs")
+
+    monkeypatch.setattr("server.routers.mcp_router.get_mcp_server", fake_get_mcp_server)
+    monkeypatch.setattr("server.routers.mcp_router.get_mcp_connection", fake_get_mcp_connection)
+
+    client = TestClient(_build_app(allow_admin=False))
+    resp = client.put(
+        "/api/system/mcp-servers/gateway/connections/7",
+        json={"display_name": "我的连接"},
+    )
+
+    assert resp.status_code == 403, resp.text
 
 
 def test_update_mcp_connection_status(monkeypatch):
@@ -431,6 +733,32 @@ def test_delete_mcp_connection(monkeypatch):
     assert captured == {"connection_id": 7}
 
 
+def test_delete_mcp_connection_normal_user_cannot_delete_other_user_connection(monkeypatch):
+    async def fake_get_mcp_server(db, name):
+        del db
+        return type("DummyServer", (), {"name": name, "enabled": 1, "auth_config_json": _auth_config()})()
+
+    async def fake_get_mcp_connection(db, connection_id):
+        del db
+        return type(
+            "DummyConnectionRef",
+            (),
+            {"id": connection_id, "server_name": "gateway", "scope_type": "user", "scope_id": "other-user"},
+        )()
+
+    async def fake_delete_mcp_connection(db, connection_id):
+        raise AssertionError("should not delete another user's MCP connection")
+
+    monkeypatch.setattr("server.routers.mcp_router.get_mcp_server", fake_get_mcp_server)
+    monkeypatch.setattr("server.routers.mcp_router.get_mcp_connection", fake_get_mcp_connection)
+    monkeypatch.setattr("server.routers.mcp_router.delete_mcp_connection", fake_delete_mcp_connection)
+
+    client = TestClient(_build_app(allow_admin=False))
+    resp = client.delete("/api/system/mcp-servers/gateway/connections/7")
+
+    assert resp.status_code == 404, resp.text
+
+
 def test_test_mcp_connection_route(monkeypatch):
     captured = {}
 
@@ -531,7 +859,12 @@ def test_test_mcp_server_requires_connection_level_test_for_bound_auth(monkeypat
         del db, name
         return DummyServer()
 
+    async def fake_get_all_mcp_tools(server_name, *, auth_context=None, db=None, http_client=None, force_refresh=False):
+        del server_name, auth_context, db, http_client, force_refresh
+        raise ValueError("Active MCP connection not found for server 'gateway' and scope department:42")
+
     monkeypatch.setattr("server.routers.mcp_router.get_server_or_404", fake_get_server_or_404)
+    monkeypatch.setattr("server.routers.mcp_router.get_all_mcp_tools", fake_get_all_mcp_tools)
 
     client = TestClient(_build_app())
     resp = client.post("/api/system/mcp-servers/gateway/test", json={})

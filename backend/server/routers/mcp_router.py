@@ -2,7 +2,7 @@
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,11 +18,14 @@ from yuxi.services.mcp.server_service import (
     update_mcp_server,
 )
 from yuxi.services.mcp.connection_service import (
+    count_mcp_connections,
     create_mcp_connection,
     delete_mcp_connection,
     get_mcp_connection,
+    list_mcp_connections_page,
     list_mcp_connections,
     reauthorize_mcp_connection,
+    requires_bound_mcp_connection,
     set_mcp_connection_status,
     test_mcp_connection,
     update_mcp_connection,
@@ -81,7 +84,7 @@ class UpdateMcpServerStatusRequest(BaseModel):
 
 class CreateMcpConnectionRequest(BaseModel):
     scope_type: str = Field(..., description="连接范围：system/department/user")
-    scope_id: str = Field(..., description="范围标识")
+    scope_id: str | None = Field(None, description="范围标识")
     display_name: str | None = Field(None, description="展示名称")
     external_subject: str | None = Field(None, description="外部系统主体标识")
     credential: dict | str | None = Field(None, description="长期凭据")
@@ -114,10 +117,89 @@ async def get_server_or_404(db: AsyncSession, name: str):
     return server
 
 
-async def get_connection_for_server_or_404(db: AsyncSession, server_name: str, connection_id: int):
+def _is_admin_user(current_user: User) -> bool:
+    return current_user.role in ["admin", "superadmin"]
+
+
+def _current_user_scope_id(current_user: User) -> str:
+    db_id = getattr(current_user, "id", None)
+    login_id = getattr(current_user, "user_id", None)
+    resolved_user_id = db_id if db_id is not None else login_id
+    if resolved_user_id is None:
+        raise HTTPException(status_code=400, detail="当前用户缺少可用的用户标识")
+    return str(resolved_user_id)
+
+
+def _public_auth_config(payload: dict | None) -> dict:
+    if not payload:
+        return {}
+    try:
+        auth_config = MCPAuthConfig.model_validate(payload)
+    except Exception:
+        return {}
+    return {
+        "version": auth_config.version,
+        "provider": auth_config.provider,
+        "binding_scope": auth_config.binding_scope,
+        "manifest_scope": auth_config.manifest_scope,
+        "secret_fields": auth_config.get_secret_fields(),
+    }
+
+
+def _public_mcp_server_detail(server) -> dict:
+    return {
+        "name": getattr(server, "name", ""),
+        "description": getattr(server, "description", None),
+        "transport": getattr(server, "transport", None),
+        "auth_config": _public_auth_config(getattr(server, "auth_config_json", None)),
+        "tags": getattr(server, "tags", None) or [],
+        "icon": getattr(server, "icon", None),
+        "enabled": bool(getattr(server, "enabled", True)),
+    }
+
+
+def _ensure_mcp_server_visible_to_user(server, current_user: User) -> None:
+    if _is_admin_user(current_user):
+        return
+    if not bool(getattr(server, "enabled", True)):
+        raise HTTPException(status_code=404, detail=f"服务器 '{getattr(server, 'name', '')}' 不存在")
+
+
+def _ensure_personal_connection_server(
+    server,
+    current_user: User,
+    *,
+    include_admin: bool = False,
+) -> None:
+    _ensure_mcp_server_visible_to_user(server, current_user)
+    if _is_admin_user(current_user) and not include_admin:
+        return
+    try:
+        auth_config = MCPAuthConfig.model_validate(getattr(server, "auth_config_json", None) or {})
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="当前 MCP 未配置可用的动态鉴权策略") from exc
+    if auth_config.binding_scope != "user":
+        raise HTTPException(status_code=403, detail="仅管理员可以维护非个人范围的 MCP 连接")
+
+
+def _ensure_connection_accessible_to_user(connection, current_user: User) -> None:
+    if _is_admin_user(current_user):
+        return
+    if connection.scope_type != "user" or connection.scope_id != _current_user_scope_id(current_user):
+        raise HTTPException(status_code=404, detail=f"连接 '{connection.id}' 不存在")
+
+
+async def get_connection_for_server_or_404(
+    db: AsyncSession,
+    server_name: str,
+    connection_id: int,
+    current_user: User | None = None,
+):
     connection = await get_mcp_connection(db, connection_id)
     if connection is None or connection.server_name != server_name:
         raise HTTPException(status_code=404, detail=f"连接 '{connection_id}' 不存在")
+    if current_user is not None:
+        _ensure_connection_accessible_to_user(connection, current_user)
     return connection
 
 
@@ -171,6 +253,8 @@ async def get_mcp_servers(
             # 仿真对象和历史数据，避免未来新增敏感字段或审计信息越权泄露
             data = []
             for s in servers:
+                if not bool(getattr(s, "enabled", True)):
+                    continue
                 data.append(
                     {
                         "name": getattr(s, "name", ""),
@@ -236,13 +320,16 @@ async def create_mcp_server_route(
 @mcp.get("/{name}")
 async def get_mcp_server_route(
     name: str,
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """获取单个 MCP 服务器配置"""
+    """获取单个 MCP 服务器配置（普通用户仅获取脱敏的基础信息）"""
     try:
         server = await get_server_or_404(db, name)
-        return {"success": True, "data": server.to_dict()}
+        _ensure_mcp_server_visible_to_user(server, current_user)
+        if _is_admin_user(current_user):
+            return {"success": True, "data": server.to_dict()}
+        return {"success": True, "data": _public_mcp_server_detail(server)}
     except HTTPException:
         raise
     except Exception as e:
@@ -348,7 +435,7 @@ async def test_mcp_server(
 ):
     """测试 MCP 服务器连接"""
     try:
-        server = await get_server_or_404(db, name)
+        await get_server_or_404(db, name)
         try:
             auth_context = _auth_context_from_user(current_user)
             tools = await get_all_mcp_tools(name, auth_context=auth_context, db=db)
@@ -406,14 +493,76 @@ async def update_mcp_server_status_route(
 @mcp.get("/{name}/connections")
 async def get_mcp_connections(
     name: str,
-    current_user: User = Depends(get_admin_user),
+    mine: bool = False,
+    paginated: bool = False,
+    status: str = Query("all", description="健康筛选：all/active/attention/disabled"),
+    search: str | None = Query(None, description="连接名、绑定对象或主体搜索"),
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(12, ge=1, le=100, description="每页数量"),
+    current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
-    del current_user
     try:
-        await get_server_or_404(db, name)
-        connections = await list_mcp_connections(db, server_name=name)
+        server = await get_server_or_404(db, name)
+        _ensure_mcp_server_visible_to_user(server, current_user)
+        list_kwargs = {"server_name": name}
+        if mine or not _is_admin_user(current_user):
+            _ensure_personal_connection_server(server, current_user, include_admin=mine)
+            list_kwargs.update({"scope_type": "user", "scope_id": _current_user_scope_id(current_user)})
+        if paginated or status != "all" or search:
+            effective_scope_type = None
+            credentials_required = False
+            try:
+                auth_config = MCPAuthConfig.model_validate(getattr(server, "auth_config_json", None) or {})
+                if auth_config.binding_scope in {"system", "department", "user"}:
+                    effective_scope_type = auth_config.binding_scope
+                credentials_required = requires_bound_mcp_connection(auth_config)
+            except Exception:
+                effective_scope_type = None
+                credentials_required = False
+
+            connections, total = await list_mcp_connections_page(
+                db,
+                **list_kwargs,
+                status_filter=status,
+                effective_scope_type=effective_scope_type,
+                credentials_required=credentials_required,
+                search=search,
+                page=page,
+                page_size=page_size,
+            )
+            summary = {
+                "total": await count_mcp_connections(db, **list_kwargs),
+                "active": await count_mcp_connections(
+                    db,
+                    **list_kwargs,
+                    status_filter="active",
+                    effective_scope_type=effective_scope_type,
+                    credentials_required=credentials_required,
+                ),
+                "attention": await count_mcp_connections(
+                    db,
+                    **list_kwargs,
+                    status_filter="attention",
+                    effective_scope_type=effective_scope_type,
+                    credentials_required=credentials_required,
+                ),
+                "disabled": await count_mcp_connections(db, **list_kwargs, status_filter="disabled"),
+            }
+            return {
+                "success": True,
+                "data": {
+                    "items": [item.to_dict() for item in connections],
+                    "total": total,
+                    "page": page,
+                    "page_size": page_size,
+                    "summary": summary,
+                },
+            }
+        connections = await list_mcp_connections(db, **list_kwargs)
         return {"success": True, "data": [item.to_dict() for item in connections]}
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
     except HTTPException:
         raise
     except Exception as e:
@@ -425,16 +574,26 @@ async def get_mcp_connections(
 async def create_mcp_connection_route(
     name: str,
     request: CreateMcpConnectionRequest,
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        await get_server_or_404(db, name)
+        server = await get_server_or_404(db, name)
+        _ensure_personal_connection_server(server, current_user)
+        scope_type = request.scope_type
+        scope_id = request.scope_id
+        if scope_type == "user" and not scope_id:
+            scope_id = _current_user_scope_id(current_user)
+        if not _is_admin_user(current_user):
+            if request.scope_type != "user":
+                raise HTTPException(status_code=403, detail="普通用户只能维护个人专用 MCP 连接")
+            scope_type = "user"
+            scope_id = _current_user_scope_id(current_user)
         connection = await create_mcp_connection(
             db,
             server_name=name,
-            scope_type=request.scope_type,
-            scope_id=request.scope_id,
+            scope_type=scope_type,
+            scope_id=scope_id,
             display_name=request.display_name,
             external_subject=request.external_subject,
             status=request.status,
@@ -457,12 +616,13 @@ async def update_mcp_connection_status_route(
     name: str,
     connection_id: int,
     request: UpdateMcpConnectionStatusRequest,
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        await get_server_or_404(db, name)
-        await get_connection_for_server_or_404(db, name, connection_id)
+        server = await get_server_or_404(db, name)
+        _ensure_personal_connection_server(server, current_user)
+        await get_connection_for_server_or_404(db, name, connection_id, current_user)
         connection = await set_mcp_connection_status(
             db,
             connection_id,
@@ -484,12 +644,13 @@ async def update_mcp_connection_route(
     name: str,
     connection_id: int,
     request: UpdateMcpConnectionRequest,
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        await get_server_or_404(db, name)
-        await get_connection_for_server_or_404(db, name, connection_id)
+        server = await get_server_or_404(db, name)
+        _ensure_personal_connection_server(server, current_user)
+        await get_connection_for_server_or_404(db, name, connection_id, current_user)
         fields_set = request.model_fields_set
         update_kwargs = {}
         if "credential" in fields_set:
@@ -523,13 +684,13 @@ async def update_mcp_connection_route(
 async def delete_mcp_connection_route(
     name: str,
     connection_id: int,
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
-    del current_user
     try:
-        await get_server_or_404(db, name)
-        await get_connection_for_server_or_404(db, name, connection_id)
+        server = await get_server_or_404(db, name)
+        _ensure_personal_connection_server(server, current_user)
+        await get_connection_for_server_or_404(db, name, connection_id, current_user)
         deleted = await delete_mcp_connection(db, connection_id)
         if not deleted:
             raise HTTPException(status_code=404, detail=f"连接 '{connection_id}' 不存在")
@@ -545,12 +706,13 @@ async def delete_mcp_connection_route(
 async def test_mcp_connection_route(
     name: str,
     connection_id: int,
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        await get_server_or_404(db, name)
-        await get_connection_for_server_or_404(db, name, connection_id)
+        server = await get_server_or_404(db, name)
+        _ensure_personal_connection_server(server, current_user)
+        await get_connection_for_server_or_404(db, name, connection_id, current_user)
         result = await test_mcp_connection(db, connection_id, updated_by=current_user.username)
         return {
             "success": True,
@@ -570,12 +732,13 @@ async def test_mcp_connection_route(
 async def reauthorize_mcp_connection_route(
     name: str,
     connection_id: int,
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        await get_server_or_404(db, name)
-        await get_connection_for_server_or_404(db, name, connection_id)
+        server = await get_server_or_404(db, name)
+        _ensure_personal_connection_server(server, current_user)
+        await get_connection_for_server_or_404(db, name, connection_id, current_user)
         connection = await reauthorize_mcp_connection(db, connection_id, updated_by=current_user.username)
         return {"success": True, "data": connection.to_dict(), "message": "连接已重置并重新激活"}
     except ValueError as ve:
