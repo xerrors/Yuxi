@@ -142,7 +142,7 @@ async def test_agent_chat_uses_invoke_messages_and_persists_langgraph_state(monk
         thread_id="thread-1",
         meta={"request_id": "req-1"},
         image_content=None,
-        current_user=SimpleNamespace(id="user-1", department_id="dept-1"),
+        current_user=SimpleNamespace(id="user-1", user_id="login-1001", department_id="dept-1"),
         db=object(),
     )
 
@@ -157,7 +157,14 @@ async def test_agent_chat_uses_invoke_messages_and_persists_langgraph_state(monk
     assert len(invoke_messages) == 1
     assert isinstance(invoke_messages[0], HumanMessage)
     assert invoke_messages[0].content == "hello"
-    assert calls["invoke_input_context"] == {"temperature": 0.1, "user_id": "user-1", "thread_id": "thread-1"}
+    assert calls["invoke_input_context"] == {
+        "system_prompt": "工号: login-1001",
+        "temperature": 0.1,
+        "user_id": "user-1",
+        "work_id": "login-1001",
+        "thread_id": "thread-1",
+        "department_id": "dept-1",
+    }
     assert calls["invoke_kwargs"] == {
         "callbacks": ["handler-1"],
         "metadata": {"langfuse_user_id": "user-1", "langfuse_session_id": "thread-1"},
@@ -225,7 +232,7 @@ async def test_agent_chat_sync_returns_finished_even_when_state_has_interrupt(mo
         thread_id="thread-2",
         meta={"request_id": "req-2"},
         image_content=None,
-        current_user=SimpleNamespace(id="user-1", department_id="dept-1"),
+        current_user=SimpleNamespace(id="user-1", user_id="login-1001", department_id="dept-1"),
         db=object(),
     )
 
@@ -245,17 +252,38 @@ async def test_build_agent_input_context_merges_workspace_agents_prompt(monkeypa
     context = await svc._build_agent_input_context(
         {"system_prompt": "原始系统提示词", "temperature": 0.1},
         thread_id="thread-1",
-        user_id="user-1",
+        current_user=SimpleNamespace(id="user-1", user_id="login-1001", department_id="dept-9"),
     )
 
-    assert context["system_prompt"] == "原始系统提示词\n\n用户工作区 agents/AGENTS.md 内容：\n回答前先读取 AGENTS.md"
+    assert (
+        context["system_prompt"]
+        == "原始系统提示词\n\n用户工作区 agents/AGENTS.md 内容：\n回答前先读取 AGENTS.md\n\n用户信息:\n工号: login-1001"
+    )
     assert context["temperature"] == 0.1
     assert context["thread_id"] == "thread-1"
     assert context["user_id"] == "user-1"
+    assert context["department_id"] == "dept-9"
 
 
 @pytest.mark.asyncio
-async def test_build_agent_input_context_keeps_prompt_when_workspace_agents_prompt_empty(
+async def test_build_agent_input_context_derives_runtime_identity_from_current_user(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(svc, "_load_workspace_agents_prompt", _empty_agents_prompt)
+
+    context = await svc._build_agent_input_context(
+        {},
+        thread_id="thread-1",
+        current_user=SimpleNamespace(id=2, user_id="login-1001", department_id="dept-9"),
+    )
+
+    assert context["user_id"] == "2"
+    assert context["work_id"] == "login-1001"
+    assert context["department_id"] == "dept-9"
+
+
+@pytest.mark.asyncio
+async def test_build_agent_input_context_appends_user_info_when_workspace_agents_prompt_empty(
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.setattr(svc, "_load_workspace_agents_prompt", _empty_agents_prompt)
@@ -263,7 +291,8 @@ async def test_build_agent_input_context_keeps_prompt_when_workspace_agents_prom
     context = await svc._build_agent_input_context(
         {"system_prompt": "原始系统提示词"},
         thread_id="thread-1",
-        user_id="user-1",
+        current_user=SimpleNamespace(id="user-1", user_id="login-1001", department_id="dept-9"),
     )
 
-    assert context["system_prompt"] == "原始系统提示词"
+    assert context["system_prompt"] == "原始系统提示词\n\n用户信息:\n工号: login-1001"
+    assert context["department_id"] == "dept-9"

@@ -15,7 +15,7 @@ from yuxi.models.chat import OpenAIBase
 from yuxi.models.embed import OllamaEmbedding, OtherEmbedding
 from yuxi.models.rerank import DashscopeReranker, OpenAIReranker
 from yuxi.services.model_provider_service import (
-    _resolve_api_key,
+    resolve_api_key,
     ensure_builtin_model_providers_in_db,
     get_model_provider_by_id,
 )
@@ -34,7 +34,7 @@ pytestmark = [
 
 def _model_spec(provider: ModelProvider, model: dict[str, Any]) -> dict[str, Any]:
     """Turn an enabled model item into runtime parameters for existing model clients."""
-    api_key = _resolve_api_key(provider)
+    api_key = resolve_api_key(provider)
     if api_key is None:
         api_key = "no_api_key"
     return {

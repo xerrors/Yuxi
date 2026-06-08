@@ -33,6 +33,20 @@ class BaseContext:
         metadata={"name": "用户ID", "configurable": False, "description": "用来唯一标识一个用户"},
     )
 
+    work_id: str | None = field(
+        default=None,
+        metadata={
+            "name": "工号",
+            "configurable": False,
+            "description": "用来匹配个人 MCP 连接绑定范围的工号",
+        },
+    )
+
+    department_id: str | None = field(
+        default=None,
+        metadata={"name": "部门ID", "configurable": False, "description": "用来标识当前用户所属部门"},
+    )
+
     system_prompt: Annotated[str, {"__template_metadata__": {"kind": "prompt"}}] = field(
         default="You are a helpful assistant.",
         metadata={"name": "系统提示词", "description": "用来描述智能体的角色和行为"},
