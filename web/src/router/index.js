@@ -192,9 +192,10 @@ router.beforeEach(async (to, from, next) => {
     return
   }
 
-  // 如果用户已登录但访问登录页
+  // 如果用户已登录但访问登录页，按 redirect 参数跳转
   if (to.path === '/login' && isLoggedIn) {
-    next('/')
+    const redirectTarget = to.query.redirect || '/'
+    next(redirectTarget)
     return
   }
 
