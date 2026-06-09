@@ -4,7 +4,8 @@ import asyncio
 import hashlib
 import json
 import logging
-import traceback
+import os
+import time
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any, cast
@@ -26,8 +27,10 @@ logger = logging.getLogger("yuxi.mcp.tool_registry_service")
 # 全局共享状态（直接在本模块维护，供外部和测试使用）
 _mcp_tools_cache: LRUCache = LRUCache(maxsize=128)
 _mcp_tools_stats: LRUCache = LRUCache(maxsize=128)
+_mcp_tools_failure_cache: LRUCache = LRUCache(maxsize=256)
 _mcp_tool_cache_store = RedisMcpToolCache()
 _mcp_lock = asyncio.Lock()
+_MCP_TOOL_FAILURE_COOLDOWN_SECONDS = float(os.getenv("YUXI_MCP_TOOL_FAILURE_COOLDOWN_SECONDS", "30"))
 
 
 def to_camel_case(s: str) -> str:
@@ -171,6 +174,37 @@ def _can_preload_mcp_server_tools_without_runtime_auth(server_config: dict[str, 
     return auth_config.provider == "legacy_static"
 
 
+def _get_cached_mcp_tool_failure(cache_key: str) -> dict[str, Any] | None:
+    entry = _mcp_tools_failure_cache.get(cache_key)
+    if not entry:
+        return None
+    retry_at = float(entry.get("retry_at") or 0)
+    if retry_at <= time.monotonic():
+        _mcp_tools_failure_cache.pop(cache_key, None)
+        return None
+    return entry
+
+
+def _record_mcp_tool_failure(cache_key: str, exc: BaseException) -> None:
+    if _MCP_TOOL_FAILURE_COOLDOWN_SECONDS <= 0:
+        return
+    _mcp_tools_failure_cache[cache_key] = {
+        "retry_at": time.monotonic() + _MCP_TOOL_FAILURE_COOLDOWN_SECONDS,
+        "message": str(exc) or exc.__class__.__name__,
+    }
+
+
+def _clear_mcp_tool_failure(cache_key: str) -> None:
+    _mcp_tools_failure_cache.pop(cache_key, None)
+
+
+def _clear_mcp_tool_failure_cache_for_server(server_name: str) -> None:
+    prefix = f"{server_name}:"
+    stale_keys = [key for key in _mcp_tools_failure_cache if key.startswith(prefix)]
+    for key in stale_keys:
+        _mcp_tools_failure_cache.pop(key, None)
+
+
 async def get_mcp_tools(
     server_name: str,
     additional_servers: dict[str, dict[str, Any]] | None = None,
@@ -219,6 +253,16 @@ async def get_mcp_tools(
             all_processed_tools = _mcp_tools_cache[cache_key]
 
     if not all_processed_tools:
+        if not force_refresh:
+            failure_entry = _get_cached_mcp_tool_failure(cache_key)
+            if failure_entry is not None:
+                retry_in = max(0.0, float(failure_entry.get("retry_at") or 0) - time.monotonic())
+                logger.debug(
+                    f"Skip loading MCP tools for '{server_name}' during failure cooldown "
+                    f"({retry_in:.1f}s left): {failure_entry.get('message')}"
+                )
+                return []
+
         try:
             client_config = {
                 k: v
@@ -296,13 +340,22 @@ async def get_mcp_tools(
                     f"{len(all_processed_tools)} tools loaded."
                 )
 
+            _clear_mcp_tool_failure(cache_key)
+
         except Exception as e:
-            logger.error(
-                f"Failed to load tools from MCP server '{server_name}': {e}, traceback: {traceback.format_exc()}"
+            _record_mcp_tool_failure(cache_key, e)
+            logger.warning(
+                f"MCP server '{server_name}' temporarily unavailable; "
+                f"suppress retries for {_MCP_TOOL_FAILURE_COOLDOWN_SECONDS:.0f}s: {e}"
             )
+            logger.debug(f"Failed to load tools from MCP server '{server_name}'", exc_info=True)
             try:
-                partition_key = f"{cache_partition}:s{cache_descriptor['server_revision']}:p{cache_descriptor['partition_revision']}"
+                partition_key = (
+                    f"{cache_partition}:s{cache_descriptor['server_revision']}:"
+                    f"p{cache_descriptor['partition_revision']}"
+                )
                 from yuxi.services.mcp.client_pool import mcp_client_pool
+
                 await mcp_client_pool.remove_session(server_name, partition_key)
             except Exception as pool_err:
                 logger.warning(f"Failed to remove stale session for {server_name}: {pool_err}")
@@ -315,11 +368,26 @@ async def get_mcp_tools(
     return all_processed_tools
 
 
-async def get_tools_from_all_servers() -> list[Callable[..., Any]]:
-    """批量载入所有可用服务的工具（用于系统初始化及预热）"""
+async def get_tools_from_all_servers(server_names: list[str] | None = None) -> list[Callable[..., Any]]:
+    """批量载入指定或所有可用服务的工具（用于系统初始化及预热）"""
     from yuxi.services.mcp.server_service import _load_enabled_mcp_server_configs
 
-    server_configs = await _load_enabled_mcp_server_configs()
+    names: list[str] | None = None
+    if server_names is not None:
+        names = []
+        seen: set[str] = set()
+        for value in server_names:
+            if not isinstance(value, str):
+                continue
+            name = value.strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            names.append(name)
+        if not names:
+            return []
+
+    server_configs = await _load_enabled_mcp_server_configs(names=names)
     all_tools = []
     for server_name, server_config in server_configs.items():
         if not _can_preload_mcp_server_tools_without_runtime_auth(server_config):
@@ -332,8 +400,9 @@ async def get_tools_from_all_servers() -> list[Callable[..., Any]]:
 
 async def clear_mcp_cache() -> None:
     """清空本地内存工具缓存"""
-    global _mcp_tools_cache
-    _mcp_tools_cache = {}
+    global _mcp_tools_cache, _mcp_tools_failure_cache
+    _mcp_tools_cache = LRUCache(maxsize=128)
+    _mcp_tools_failure_cache = LRUCache(maxsize=256)
 
     try:
         from yuxi.services.mcp.client_pool import clear_resolved_headers_cache, mcp_client_pool
@@ -351,6 +420,7 @@ def clear_mcp_server_tools_cache(server_name: str) -> None:
     stale_keys = [k for k in _mcp_tools_cache if k.startswith(prefix)]
     for key in stale_keys:
         _mcp_tools_cache.pop(key, None)
+    _clear_mcp_tool_failure_cache_for_server(server_name)
 
     try:
         from yuxi.services.mcp.client_pool import clear_server_resolved_headers_cache
@@ -369,6 +439,11 @@ def clear_mcp_connection_tools_cache(server_name: str, connection_id: int | None
     stale_keys = [k for k in _mcp_tools_cache if suffix in k and k.startswith(f"{server_name}:")]
     for key in stale_keys:
         _mcp_tools_cache.pop(key, None)
+    stale_failure_keys = [
+        key for key in _mcp_tools_failure_cache if suffix in key and key.startswith(f"{server_name}:")
+    ]
+    for key in stale_failure_keys:
+        _mcp_tools_failure_cache.pop(key, None)
 
     try:
         from yuxi.services.mcp.client_pool import clear_server_resolved_headers_cache

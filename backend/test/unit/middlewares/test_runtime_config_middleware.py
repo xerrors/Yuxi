@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -12,7 +13,10 @@ from yuxi.agents.middlewares.runtime_config_middleware import RuntimeConfigMiddl
 
 @pytest.mark.asyncio
 @pytest.mark.unit
-async def test_get_tools_from_context_passes_auth_context_to_mcp_loader(monkeypatch: pytest.MonkeyPatch):
+async def test_get_tools_from_context_passes_auth_context_to_mcp_loader(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+):
     captured: list[tuple[str, str | None, str | None]] = []
 
     monkeypatch.setattr(runtime_config_middleware, "get_all_tool_instances", lambda: [])
@@ -32,10 +36,12 @@ async def test_get_tools_from_context_passes_auth_context_to_mcp_loader(monkeypa
         department_id="dept-9",
     )
 
-    tools = await middleware.get_tools_from_context(context)
+    with caplog.at_level(logging.WARNING, logger="Yuxi"):
+        tools = await middleware.get_tools_from_context(context)
 
     assert tools == []
     assert captured == [("finance-gateway", "user-1", "dept-9")]
+    assert "mcp dependency unavailable" not in caplog.text
 
 
 @pytest.mark.asyncio

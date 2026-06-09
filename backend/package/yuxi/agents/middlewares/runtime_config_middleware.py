@@ -182,10 +182,15 @@ class RuntimeConfigMiddleware(AgentMiddleware):
                 all_mcp_names.append(server_name)
 
         selected_mcp_servers: set[str] = set()
+        selected_mcp_names: list[str] = []
+        loaded_mcp_tools: dict[str, int] = {}
+        unavailable_mcp_servers: list[str] = []
+        failed_mcp_servers: list[str] = []
         for server_name in all_mcp_names:
             if server_name in selected_mcp_servers:
                 continue
             selected_mcp_servers.add(server_name)
+            selected_mcp_names.append(server_name)
             try:
                 user_id = getattr(context, "user_id", None)
                 work_id = getattr(context, "work_id", None)
@@ -198,9 +203,20 @@ class RuntimeConfigMiddleware(AgentMiddleware):
                     ),
                 )
                 if not mcp_tools:
-                    logger.warning(f"RuntimeConfigMiddleware: mcp dependency unavailable, skip: {server_name}")
+                    unavailable_mcp_servers.append(server_name)
+                    logger.debug(f"RuntimeConfigMiddleware: mcp dependency unavailable, skip: {server_name}")
+                else:
+                    loaded_mcp_tools[server_name] = len(mcp_tools)
                 selected_tools.extend(mcp_tools)
             except Exception as e:
+                failed_mcp_servers.append(server_name)
                 logger.warning(f"RuntimeConfigMiddleware: failed to load mcp dependency '{server_name}': {e}")
+
+        if selected_mcp_names:
+            logger.info(
+                "RuntimeConfigMiddleware MCP runtime selection: "
+                f"selected={selected_mcp_names}, loaded={loaded_mcp_tools}, "
+                f"unavailable={unavailable_mcp_servers}, failed={failed_mcp_servers}"
+            )
 
         return selected_tools

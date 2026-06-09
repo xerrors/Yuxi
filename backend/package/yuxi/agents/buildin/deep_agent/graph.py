@@ -15,7 +15,7 @@ from yuxi.agents.middlewares import (
     save_attachments_to_fs,
 )
 from yuxi.agents.middlewares.knowledge_base_middleware import KnowledgeBaseMiddleware
-from yuxi.agents.middlewares.skills_middleware import SkillsMiddleware
+from yuxi.agents.middlewares.skills_middleware import SkillsMiddleware, collect_context_mcp_names_for_preload
 from yuxi.agents.toolkits.buildin.tools import _create_tavily_search
 from yuxi.services.mcp.tool_registry_service import get_tools_from_all_servers
 from yuxi.services.subagent_service import get_subagents_from_names
@@ -57,7 +57,9 @@ class DeepAgent(BaseAgent):
         model = load_chat_model(context.model)
         sub_model = load_chat_model(context.subagents_model)
         search_tools = await self.get_tools()
-        all_mcp_tools = await get_tools_from_all_servers()
+        preload_mcp_names = await collect_context_mcp_names_for_preload(context)
+        logger.info(f"DeepAgent MCP preload candidates: {preload_mcp_names}")
+        all_mcp_tools = await get_tools_from_all_servers(preload_mcp_names)
         # 合并搜索工具和 MCP 工具
 
         # 从数据库加载 subagent specs（工具名称已解析）

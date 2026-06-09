@@ -12,16 +12,19 @@ from yuxi.agents.middlewares import (
     save_attachments_to_fs,
 )
 from yuxi.agents.middlewares.knowledge_base_middleware import KnowledgeBaseMiddleware
-from yuxi.agents.middlewares.skills_middleware import SkillsMiddleware
+from yuxi.agents.middlewares.skills_middleware import SkillsMiddleware, collect_context_mcp_names_for_preload
 from yuxi.services.mcp.tool_registry_service import get_tools_from_all_servers
 from yuxi.services.subagent_service import get_subagents_from_names
+from yuxi.utils.logging_config import logger
 
 from .prompt import TODO_MID_PROMPT, build_prompt_with_context
 
 
 async def _build_middlewares(context):
     """构建中间件列表"""
-    all_mcp_tools = await get_tools_from_all_servers()  # 因为异步加载，无法放在 RuntimeConfigMiddleware 的 __init__ 中
+    preload_mcp_names = await collect_context_mcp_names_for_preload(context)
+    logger.info(f"ChatbotAgent MCP preload candidates: {preload_mcp_names}")
+    all_mcp_tools = await get_tools_from_all_servers(preload_mcp_names)
 
     # summary middleware
     # 主 Agent 上下文优化：90k tokens 触发压缩（128k context window 的 70%）

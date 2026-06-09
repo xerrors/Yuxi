@@ -122,8 +122,12 @@ class LongLivedSession:
                 self._ready_event.set()
                 # 挂起直到收到停止指令
                 await self._stop_event.wait()
-        except Exception:
-            logger.error(f"Error in long-lived MCP session loop for {self.server_name}", exc_info=True)
+        except Exception as exc:
+            if self.session is None:
+                logger.debug(f"Failed to start MCP session for {self.server_name}: {exc}", exc_info=True)
+            else:
+                logger.warning(f"MCP session loop stopped for {self.server_name}: {exc}")
+                logger.debug(f"Error in long-lived MCP session loop for {self.server_name}", exc_info=True)
         finally:
             self.session = None
             self._running = False
@@ -270,9 +274,12 @@ class MCPClientPool:
         except BaseException as exc:
             if not init_future.done():
                 init_future.set_exception(exc)
+                init_future.exception()
             async with self._dict_lock:
                 if self._sessions.get(cache_key) is init_future:
                     self._sessions.pop(cache_key, None)
+            raise
+
     async def remove_session(self, server_name: str, partition_key: str):
         """移除指定 key 的连接，强制下一次请求重新创建"""
         cache_key = (server_name, partition_key)

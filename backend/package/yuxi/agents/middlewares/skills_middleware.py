@@ -80,6 +80,21 @@ async def get_dependency_map(db: AsyncSession | None = None) -> dict[str, SkillD
     return result
 
 
+async def collect_context_mcp_names_for_preload(context, *, skills_context_name: str = "skills") -> list[str]:
+    """收集图构建阶段需要预注册的 MCP 名称。"""
+    names: list[str] = []
+    names.extend(normalize_selected_skills(getattr(context, "mcps", None) or []))
+
+    dependency_map = await get_dependency_map()
+    configured_skills = normalize_selected_skills(getattr(context, skills_context_name, None) or [])
+    for slug in expand_skill_closure(configured_skills, dependency_map):
+        node = dependency_map.get(slug)
+        if node:
+            names.extend(node.get("mcps", []))
+
+    return normalize_selected_skills(names)
+
+
 def normalize_selected_skills(selected_skills: list[str] | None) -> list[str]:
     """规范化 skills 列表，去重并过滤无效值"""
     return _normalize_string_list(selected_skills)
@@ -339,6 +354,9 @@ class SkillsMiddleware(AgentMiddleware):
 
         # 去重
         unique_mcp_names = list(dict.fromkeys(all_mcp_names))
+        loaded_mcp_tools: dict[str, int] = {}
+        unavailable_mcp_servers: list[str] = []
+        failed_mcp_servers: list[str] = []
 
         async def load_mcp_tools(server_name: str) -> list:
             """加载单个 MCP 服务器的工具"""
@@ -354,14 +372,24 @@ class SkillsMiddleware(AgentMiddleware):
                     ),
                 )
                 if not mcp_tools:
-                    logger.warning(f"SkillsMiddleware: mcp dependency unavailable, skip: {server_name}")
+                    unavailable_mcp_servers.append(server_name)
+                    logger.debug(f"SkillsMiddleware: mcp dependency unavailable, skip: {server_name}")
+                else:
+                    loaded_mcp_tools[server_name] = len(mcp_tools)
                 return mcp_tools
             except Exception as e:
+                failed_mcp_servers.append(server_name)
                 logger.warning(f"SkillsMiddleware: failed to load mcp dependency '{server_name}': {e}")
                 return []
 
         # 并行加载所有 MCP 工具
         results = await asyncio.gather(*[load_mcp_tools(name) for name in unique_mcp_names])
+        if unique_mcp_names:
+            logger.info(
+                "SkillsMiddleware MCP dependency selection: "
+                f"selected={unique_mcp_names}, loaded={loaded_mcp_tools}, "
+                f"unavailable={unavailable_mcp_servers}, failed={failed_mcp_servers}"
+            )
         selected_tools = []
         for tools in results:
             selected_tools.extend(tools)
