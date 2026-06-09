@@ -12,7 +12,7 @@ from yuxi.agents.state import BaseState
 from yuxi.agents.toolkits.utils import get_tool_info
 
 # MCP - Agent 层统一入口（自动过滤 disabled_tools）
-from yuxi.services.mcp_service import get_enabled_mcp_tools
+from yuxi.services.mcp.tool_registry_service import get_enabled_mcp_tools
 
 __all__ = [
     # Base classes

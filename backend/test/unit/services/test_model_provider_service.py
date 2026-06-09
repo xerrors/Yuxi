@@ -97,6 +97,12 @@ async def test_fetch_remote_models_loads_embedding_only_when_capability_enabled(
         return [{"id": f"{model_type}-model", "type": model_type}]
 
     monkeypatch.setattr("yuxi.services.model_provider_service._fetch_models_from_endpoint", fake_fetch)
+    
+    from unittest.mock import AsyncMock, MagicMock
+    mock_client_instance = MagicMock()
+    mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+    mock_client_instance.__aexit__ = AsyncMock(return_value=None)
+    monkeypatch.setattr("yuxi.services.model_provider_service.httpx.AsyncClient", lambda **kwargs: mock_client_instance)
 
     class Provider:
         base_url = "https://example.com/v1"

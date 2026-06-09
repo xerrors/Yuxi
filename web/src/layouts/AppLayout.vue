@@ -55,12 +55,19 @@ const showDebugModal = ref(false)
 
 // Add state for settings modal
 const showSettingsModal = ref(false)
+const settingsInitialTab = ref(null)
 
 const { sidebarCollapsed } = storeToRefs(chatUIStore)
 
 // Provide settings modal methods to child components
-const openSettingsModal = () => {
+const openSettingsModal = (initialTab = null) => {
+  settingsInitialTab.value = initialTab
   showSettingsModal.value = true
+}
+
+const closeSettingsModal = () => {
+  showSettingsModal.value = false
+  settingsInitialTab.value = null
 }
 
 // Handle debug modal close
@@ -387,7 +394,11 @@ provide('settingsModal', {
       <DebugComponent />
     </a-modal>
     <TaskCenterDrawer v-if="userStore.isAdmin" />
-    <SettingsModal v-model:visible="showSettingsModal" @close="() => (showSettingsModal = false)" />
+    <SettingsModal
+      v-model:visible="showSettingsModal"
+      :initial-tab="settingsInitialTab"
+      @close="closeSettingsModal"
+    />
   </div>
 </template>
 

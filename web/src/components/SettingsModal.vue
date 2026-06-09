@@ -64,6 +64,15 @@
             <KeyIcon class="icon" :size="18" />
             <span>API Key</span>
           </div>
+          <div
+            class="sider-item"
+            :class="{ activesec: activeTab === 'mcp' }"
+            @click="activeTab = 'mcp'"
+            v-if="userStore.isLoggedIn"
+          >
+            <Plug class="icon" :size="18" />
+            <span>MCP 连接</span>
+          </div>
         </div>
 
         <div v-if="showStarCard" class="settings-star-card">
@@ -142,6 +151,14 @@
         >
           API Key
         </div>
+        <div
+          class="nav-item"
+          :class="{ active: activeTab === 'mcp' }"
+          @click="activeTab = 'mcp'"
+          v-if="userStore.isLoggedIn"
+        >
+          MCP 连接
+        </div>
       </div>
 
       <!-- 内容区域 -->
@@ -166,6 +183,10 @@
           <div v-show="activeTab === 'apikey'" v-if="userStore.isLoggedIn">
             <ApiKeyManagementComponent />
           </div>
+
+          <div v-show="activeTab === 'mcp'" v-if="userStore.isLoggedIn">
+            <McpPersonalConnectionsSection />
+          </div>
         </div>
       </div>
     </div>
@@ -178,6 +199,7 @@ import { useUserStore } from '@/stores/user'
 import {
   ExternalLink,
   Key as KeyIcon,
+  Plug,
   Settings,
   SquareCode,
   Star,
@@ -190,11 +212,16 @@ import ModelProvidersComponent from '@/components/ModelProvidersComponent.vue'
 import UserManagementComponent from '@/components/UserManagementComponent.vue'
 import DepartmentManagementComponent from '@/components/DepartmentManagementComponent.vue'
 import ApiKeyManagementComponent from '@/components/ApiKeyManagementComponent.vue'
+import McpPersonalConnectionsSection from '@/components/McpPersonalConnectionsSection.vue'
 
 const props = defineProps({
   visible: {
     type: Boolean,
     default: false
+  },
+  initialTab: {
+    type: String,
+    default: null
   }
 })
 
@@ -221,6 +248,20 @@ const dismissStarCard = () => {
   localStorage.setItem(STAR_CARD_STORAGE_KEY, 'true')
 }
 
+const canOpenTab = (tab) => {
+  if (tab === 'base' || tab === 'user') return userStore.isAdmin
+  if (tab === 'model' || tab === 'department') return userStore.isSuperAdmin
+  if (tab === 'apikey' || tab === 'mcp') return userStore.isLoggedIn
+  return false
+}
+
+const getDefaultTab = () => {
+  if (props.initialTab && canOpenTab(props.initialTab)) return props.initialTab
+  if (userStore.isAdmin) return 'base'
+  if (userStore.isLoggedIn) return 'mcp'
+  return 'base'
+}
+
 onMounted(() => {
   showStarCard.value = localStorage.getItem(STAR_CARD_STORAGE_KEY) !== 'true'
 })
@@ -230,11 +271,7 @@ watch(
   () => props.visible,
   (newVal) => {
     if (newVal) {
-      if (userStore.isAdmin) {
-        activeTab.value = 'base'
-      } else if (userStore.isLogin) {
-        activeTab.value = 'apikey'
-      }
+      activeTab.value = getDefaultTab()
     }
   }
 )
@@ -450,7 +487,8 @@ watch(
     .model-providers-section,
     .user-management,
     .department-management,
-    .apikey-management {
+    .apikey-management,
+    .mcp-personal-settings {
       min-height: auto;
     }
 

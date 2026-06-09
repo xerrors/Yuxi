@@ -190,7 +190,7 @@ async def list_run_stream_events(
 ) -> list[dict]:
     redis = await get_redis_client()
     key = _event_stream_key(run_id)
-    start = "-" if after_seq in {"0", "0-0", ""} else f"{after_seq}"
+    start = "-" if after_seq in {"0", "0-0", ""} else f"({after_seq}"
     rows = await redis.xrange(key, min=start, max="+", count=limit)
     events = []
 

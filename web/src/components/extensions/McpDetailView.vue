@@ -228,6 +228,10 @@
                           </div>
                         </a-form-item>
                       </template>
+                      <McpAuthConfigBuilder
+                        v-model="editForm.authConfigText"
+                        :transport="editForm.transport"
+                      />
                     </section>
                   </a-form>
 
@@ -340,6 +344,18 @@
                     <label>创建人</label>
                     <span>{{ server.created_by }}</span>
                   </div>
+                  <div
+                    class="info-item info-item-full"
+                    v-if="server.auth_config && Object.keys(server.auth_config).length > 0"
+                    style="grid-column: 1 / -1; margin-top: 10px"
+                  >
+                    <label style="margin-bottom: 8px; display: block">认证配置明细</label>
+                    <McpAuthConfigBuilder
+                      :modelValue="JSON.stringify(server.auth_config, null, 2)"
+                      :transport="server.transport"
+                      readonly
+                    />
+                  </div>
                 </div>
               </div>
             </a-tab-pane>
@@ -433,6 +449,448 @@
                 </a-spin>
               </div>
             </a-tab-pane>
+
+            <a-tab-pane key="connections">
+              <template #tab>
+                <span class="tab-title"
+                  ><KeyRound :size="14" />连接 ({{ connectionTotalCount }})</span
+                >
+              </template>
+              <div class="tab-content connections-tab">
+                <div class="connection-command-bar">
+                  <div class="connection-command-copy">
+                    <h3>连接管理</h3>
+                    <p>
+                      {{
+                        hasAuthConfig
+                          ? '按全局、部门或用户维护长期凭据，运行时自动换取和刷新 token。'
+                          : '当前 MCP 未配置动态鉴权，通常不需要维护连接。'
+                      }}
+                    </p>
+                  </div>
+                  <a-space :size="8">
+                    <a-tooltip
+                      :title="hasAuthConfig ? '创建新的鉴权连接' : '请先在 MCP 编辑页配置认证策略'"
+                    >
+                      <a-button
+                        type="primary"
+                        @click="openCreateConnectionDrawer"
+                        :disabled="!hasAuthConfig"
+                        class="lucide-icon-btn"
+                      >
+                        <Plus :size="14" />
+                        <span>新建连接</span>
+                      </a-button>
+                    </a-tooltip>
+                    <a-button
+                      @click="fetchConnections"
+                      :loading="connectionsLoading"
+                      class="lucide-icon-btn"
+                    >
+                      <RotateCw :size="14" />
+                      <span>刷新</span>
+                    </a-button>
+                  </a-space>
+                </div>
+
+                <div class="connection-summary-strip">
+                  <div class="connection-summary-item">
+                    <span class="summary-label">认证方式</span>
+                    <strong>{{
+                      providerLabelMap[server.auth_config?.provider] ||
+                      server.auth_config?.provider ||
+                      '未配置'
+                    }}</strong>
+                  </div>
+                  <div class="connection-summary-item">
+                    <span class="summary-label">默认绑定</span>
+                    <strong>{{ authBindingScopeLabel }}</strong>
+                  </div>
+                  <div class="connection-summary-item">
+                    <span class="summary-label">可用连接</span>
+                    <strong>{{ activeConnectionCount }}</strong>
+                  </div>
+                  <div class="connection-summary-item">
+                    <span class="summary-label">需处理</span>
+                    <strong>{{ attentionConnectionCount }}</strong>
+                  </div>
+                </div>
+
+                <div class="connection-list-toolbar">
+                  <div class="connection-filter-group">
+                    <a-segmented
+                      v-model:value="connectionFilter"
+                      :options="connectionFilterOptions"
+                    />
+                    <a-input
+                      v-model:value="connectionSearchText"
+                      allow-clear
+                      class="connection-search-input"
+                      placeholder="搜索连接名、绑定对象"
+                    >
+                      <template #prefix>
+                        <Search :size="14" />
+                      </template>
+                    </a-input>
+                  </div>
+                  <div class="connection-page-controls">
+                    <span class="connection-result-count">共 {{ connectionTotal }} 条</span>
+                    <a-pagination
+                      v-if="connectionTotal > connectionPageSize"
+                      v-model:current="connectionPage"
+                      v-model:page-size="connectionPageSize"
+                      size="small"
+                      :total="connectionTotal"
+                      :page-size-options="['12', '24', '48']"
+                      show-size-changer
+                      show-less-items
+                    />
+                  </div>
+                </div>
+
+                <a-spin :spinning="connectionsLoading">
+                  <div v-if="connectionsError" class="detail-empty">
+                    <a-empty :description="connectionsError" />
+                  </div>
+                  <div v-else-if="connections.length === 0" class="connection-empty-state">
+                    <a-empty :description="connectionEmptyDescription" />
+                    <a-button
+                      v-if="hasAuthConfig && !hasConnectionListFilter"
+                      type="primary"
+                      @click="openCreateConnectionDrawer"
+                      class="lucide-icon-btn"
+                    >
+                      <Plus :size="14" />
+                      <span>新建连接</span>
+                    </a-button>
+                    <a-button v-else-if="hasConnectionListFilter" @click="resetConnectionFilters">
+                      清除筛选
+                    </a-button>
+                  </div>
+                  <div v-else class="connection-list-body">
+                    <div class="connection-cards-grid">
+                      <div
+                        v-for="connection in connections"
+                        :key="connection.id"
+                        class="connection-card"
+                      >
+                        <div class="connection-card-header">
+                          <div class="connection-key-info">
+                            <KeyRound :size="18" class="connection-key-icon" />
+                            <div class="connection-key-copy">
+                              <h4>{{ getConnectionTitle(connection) }}</h4>
+                              <span v-if="connection.external_subject">
+                                {{ connection.external_subject }}
+                              </span>
+                            </div>
+                          </div>
+                          <span
+                            class="connection-scope-badge"
+                            :class="[
+                              `scope-${connection.scope_type || 'unknown'}`,
+                              { 'is-mismatch': !isConnectionScopeMatched(connection) }
+                            ]"
+                            :title="`生效范围：${getConnectionScopeLabel(connection.scope_type)}`"
+                          >
+                            <Globe2 v-if="connection.scope_type === 'system'" :size="13" />
+                            <Building2
+                              v-else-if="connection.scope_type === 'department'"
+                              :size="13"
+                            />
+                            <UserRound v-else :size="13" />
+                            {{ getConnectionScopeLabel(connection.scope_type) }}
+                          </span>
+                        </div>
+
+                        <div class="connection-card-content">
+                          <div
+                            v-if="getConnectionIssue(connection)"
+                            class="connection-issue"
+                            :class="`issue-${getConnectionIssue(connection).tone}`"
+                          >
+                            <div class="issue-copy">
+                              <span>问题：{{ getConnectionIssue(connection).label }}</span>
+                              <small>{{ getConnectionIssue(connection).description }}</small>
+                            </div>
+                            <a-button
+                              type="link"
+                              size="small"
+                              class="issue-action"
+                              :loading="
+                                connectionActionLoading ===
+                                `${connection.id}:${getConnectionIssue(connection).key === 'reauth_required' ? 'reauth' : 'issue'}`
+                              "
+                              @click="handleConnectionIssueAction(connection)"
+                            >
+                              {{ getConnectionIssue(connection).actionLabel }}
+                            </a-button>
+                          </div>
+                          <div class="connection-info-item">
+                            <span class="info-label">绑定对象:</span>
+                            <span class="info-value">{{
+                              getConnectionScopeTargetLabel(connection)
+                            }}</span>
+                          </div>
+                          <div class="connection-info-item">
+                            <span class="info-label">最近记录:</span>
+                            <span class="info-value">{{ getConnectionLastInfo(connection) }}</span>
+                          </div>
+                        </div>
+
+                        <div class="connection-card-footer">
+                          <div class="footer-left">
+                            <span class="switch-label">
+                              {{ getConnectionStatusSwitchLabel(connection) }}
+                            </span>
+                            <a-tooltip :title="getConnectionStatusToggleTooltip(connection)">
+                              <span class="status-switch-wrap">
+                                <a-switch
+                                  size="small"
+                                  :checked="connection.status === 'active'"
+                                  :disabled="!canToggleConnectionStatus(connection)"
+                                  :loading="connectionActionLoading === `${connection.id}:status`"
+                                  @change="
+                                    (checked) => handleToggleConnectionStatus(connection, checked)
+                                  "
+                                />
+                              </span>
+                            </a-tooltip>
+                          </div>
+                          <div class="connection-row-actions">
+                            <a-button
+                              type="text"
+                              size="small"
+                              class="connection-action-btn lucide-icon-btn"
+                              @click="startEditConnection(connection)"
+                            >
+                              <Pencil :size="14" />
+                              <span>编辑</span>
+                            </a-button>
+                            <a-tooltip :title="getConnectionTestTooltip(connection)">
+                              <span class="connection-action-wrap">
+                                <a-button
+                                  type="text"
+                                  size="small"
+                                  class="connection-action-btn lucide-icon-btn"
+                                  :disabled="!canTestConnection(connection)"
+                                  @click="handleTestConnection(connection)"
+                                  :loading="connectionActionLoading === `${connection.id}:test`"
+                                >
+                                  <Zap :size="14" />
+                                  <span>测试</span>
+                                </a-button>
+                              </span>
+                            </a-tooltip>
+                            <a-tooltip :title="getConnectionReauthorizeTooltip(connection)">
+                              <span class="connection-action-wrap">
+                                <a-button
+                                  type="text"
+                                  size="small"
+                                  class="connection-action-btn lucide-icon-btn"
+                                  :disabled="!canReauthorizeConnection(connection)"
+                                  @click="handleReauthorizeConnection(connection)"
+                                  :loading="connectionActionLoading === `${connection.id}:reauth`"
+                                >
+                                  <RotateCw :size="14" />
+                                  <span>重连</span>
+                                </a-button>
+                              </span>
+                            </a-tooltip>
+                            <a-button
+                              type="text"
+                              size="small"
+                              danger
+                              class="connection-action-btn danger-action-btn lucide-icon-btn"
+                              @click="handleDeleteConnection(connection)"
+                            >
+                              <Trash2 :size="14" />
+                              <span>删除</span>
+                            </a-button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div v-if="connectionTotal > connectionPageSize" class="connection-pagination">
+                      <a-pagination
+                        v-model:current="connectionPage"
+                        v-model:page-size="connectionPageSize"
+                        :total="connectionTotal"
+                        :page-size-options="['12', '24', '48']"
+                        show-size-changer
+                        show-less-items
+                      />
+                    </div>
+                  </div>
+                </a-spin>
+
+                <a-drawer
+                  v-model:open="showConnectionForm"
+                  :title="connectionDrawerTitle"
+                  placement="right"
+                  width="min(560px, calc(100vw - 24px))"
+                  :body-style="{ padding: 0 }"
+                  destroy-on-close
+                  class="mcp-connection-drawer"
+                  @close="closeConnectionForm"
+                >
+                  <a-form layout="vertical" class="connection-drawer-form">
+                    <section class="drawer-section">
+                      <div class="drawer-section-title">
+                        <span>绑定范围</span>
+                        <small>决定运行时为哪些请求使用这组凭据。</small>
+                      </div>
+                      <div class="scope-option-grid">
+                        <button
+                          v-for="option in availableConnectionScopeOptions"
+                          :key="option.value"
+                          type="button"
+                          class="scope-option"
+                          :class="{ active: connectionForm.scopeType === option.value }"
+                          :disabled="isEditingConnection"
+                          @click="connectionForm.scopeType = option.value"
+                        >
+                          <component :is="option.icon" :size="16" />
+                          <span>{{ option.label }}</span>
+                          <small>{{ option.description }}</small>
+                        </button>
+                      </div>
+                      <a-form-item
+                        v-if="showScopeIdField"
+                        :label="scopeIdLabel"
+                        required
+                        class="form-item"
+                      >
+                        <a-select
+                          v-if="connectionForm.scopeType === 'department'"
+                          v-model:value="connectionForm.scopeId"
+                          :disabled="isEditingConnection"
+                          :loading="isFetchingScopeOptions"
+                          placeholder="请选择部门"
+                          show-search
+                          :options="
+                            departmentList.map((d) => ({ label: d.name, value: d.id.toString() }))
+                          "
+                        />
+                        <a-select
+                          v-else-if="connectionForm.scopeType === 'user'"
+                          v-model:value="connectionForm.scopeId"
+                          :disabled="isEditingConnection"
+                          :loading="isFetchingScopeOptions"
+                          placeholder="请选择用户"
+                          show-search
+                          :options="
+                            userList.map((u) => ({
+                              label:
+                                u.username === u.user_id
+                                  ? u.username
+                                  : `${u.username} (${u.user_id})`,
+                              value: u.id.toString()
+                            }))
+                          "
+                        />
+                        <a-input
+                          v-else
+                          v-model:value="connectionForm.scopeId"
+                          :disabled="isEditingConnection"
+                          :placeholder="scopeIdPlaceholder"
+                        />
+                      </a-form-item>
+                    </section>
+
+                    <section class="drawer-section">
+                      <div class="drawer-section-title">
+                        <span>展示信息</span>
+                        <small>名称用于列表识别，不参与鉴权计算。</small>
+                      </div>
+                      <a-form-item label="连接名称" class="form-item">
+                        <a-input
+                          v-model:value="connectionForm.displayName"
+                          placeholder="例如：财务部共享连接"
+                        />
+                      </a-form-item>
+                    </section>
+
+                    <section class="drawer-section">
+                      <div class="drawer-section-title">
+                        <span>凭据</span>
+                        <small>{{ credentialHint }}</small>
+                      </div>
+                      <div v-if="credentialSecretFields.length > 0" class="secret-field-grid">
+                        <a-form-item
+                          v-for="fieldName in credentialSecretFields"
+                          :key="fieldName"
+                          :label="getSecretFieldLabel(fieldName)"
+                          class="form-item"
+                        >
+                          <a-input-password
+                            v-model:value="connectionForm.secretValues[fieldName]"
+                            :placeholder="
+                              isEditingConnection ? '留空表示保持现有值' : `请输入 ${fieldName}`
+                            "
+                          />
+                        </a-form-item>
+                      </div>
+                      <a-form-item v-else label="长期凭据" class="form-item">
+                        <a-textarea
+                          v-model:value="connectionForm.credentialText"
+                          :rows="4"
+                          class="config-textarea"
+                          :placeholder="
+                            isEditingConnection
+                              ? '留空表示保持现有凭据'
+                              : '粘贴长期 token；复杂场景可在高级设置中填写 JSON'
+                          "
+                        />
+                      </a-form-item>
+                    </section>
+
+                    <a-collapse ghost class="connection-advanced-collapse">
+                      <a-collapse-panel key="advanced" header="高级设置">
+                        <a-form-item label="外部主体标识" class="form-item">
+                          <a-input
+                            v-model:value="connectionForm.externalSubject"
+                            placeholder="可选，例如外部用户名或 tenant subject"
+                          />
+                        </a-form-item>
+                        <a-form-item
+                          v-if="credentialSecretFields.length > 0"
+                          label="原始凭据 JSON"
+                          class="form-item"
+                        >
+                          <a-textarea
+                            v-model:value="connectionForm.credentialText"
+                            :rows="5"
+                            class="config-textarea"
+                            placeholder='可选。填写后会覆盖上方密钥字段，例如 {"secrets":{"client_id":"xxx"}}'
+                          />
+                        </a-form-item>
+                        <a-form-item label="元数据 JSON" class="form-item">
+                          <a-textarea
+                            v-model:value="connectionForm.metaText"
+                            :rows="4"
+                            class="config-textarea"
+                            placeholder='可选，例如 {"tenant":"finance"}'
+                          />
+                        </a-form-item>
+                      </a-collapse-panel>
+                    </a-collapse>
+
+                    <div class="connection-drawer-footer">
+                      <a-button @click="closeConnectionForm" :disabled="connectionSubmitting">
+                        取消
+                      </a-button>
+                      <a-button
+                        type="primary"
+                        :loading="connectionSubmitting"
+                        @click="handleSubmitConnection"
+                      >
+                        {{ isEditingConnection ? '保存连接' : '创建连接' }}
+                      </a-button>
+                    </div>
+                  </a-form>
+                </a-drawer>
+              </div>
+            </a-tab-pane>
           </a-tabs>
         </div>
         <div v-else-if="!loading" class="detail-empty">
@@ -461,11 +919,20 @@ import {
   Save,
   X,
   Rows3,
-  Braces
+  Braces,
+  KeyRound,
+  Globe2,
+  Building2,
+  UserRound,
+  Search
 } from 'lucide-vue-next'
 import { mcpApi } from '@/apis/mcp_api'
 import { formatFullDateTime } from '@/utils/time'
+import { extractSecretFieldNames } from '@/utils/mcpAuthConfigBuilder'
+import McpAuthConfigBuilder from '@/components/extensions/McpAuthConfigBuilder.vue'
 import McpEnvEditor from '@/components/McpEnvEditor.vue'
+import { departmentApi } from '@/apis/department_api'
+import { userApi } from '@/apis/user_api'
 
 const route = useRoute()
 const router = useRouter()
@@ -476,11 +943,34 @@ const server = ref(null)
 const detailTab = ref('general')
 const testLoading = ref(null)
 
+const userList = ref([])
+const departmentList = ref([])
+const isFetchingScopeOptions = ref(false)
+
 const tools = ref([])
 const toolsLoading = ref(false)
 const toolsError = ref(null)
 const toolSearchText = ref('')
 const toggleToolLoading = ref(null)
+const connections = ref([])
+const connectionsLoading = ref(false)
+const connectionsError = ref(null)
+const connectionFilter = ref('all')
+const connectionSearchText = ref('')
+const connectionPage = ref(1)
+const connectionPageSize = ref(12)
+const connectionTotal = ref(0)
+const connectionSummary = reactive({
+  total: 0,
+  active: 0,
+  attention: 0,
+  disabled: 0
+})
+let connectionSearchTimer = null
+const showConnectionForm = ref(false)
+const connectionSubmitting = ref(false)
+const connectionActionLoading = ref(null)
+const editingConnectionId = ref(null)
 
 const isEditing = ref(false)
 const editLoading = ref(false)
@@ -496,16 +986,120 @@ const editForm = reactive({
   args: [],
   env: null,
   headersText: '',
+  authConfigText: '',
   timeout: null,
   sse_read_timeout: null,
   tags: [],
   icon: ''
 })
 
-const actionLabel = computed(() => {
-  if (server.value?.enabled === false) return '添加'
-  return server.value?.created_by === 'system' ? '移除' : '删除'
+const connectionForm = reactive({
+  scopeType: 'department',
+  scopeId: '',
+  displayName: '',
+  externalSubject: '',
+  credentialText: '',
+  secretValues: {},
+  metaText: ''
 })
+
+const connectionScopeOptions = [
+  {
+    value: 'system',
+    label: '全局共享',
+    description: '所有用户共用',
+    icon: Globe2
+  },
+  {
+    value: 'department',
+    label: '部门共享',
+    description: '按部门隔离',
+    icon: Building2
+  },
+  {
+    value: 'user',
+    label: '个人专用',
+    description: '按用户隔离',
+    icon: UserRound
+  }
+]
+
+const scopeLabelMap = {
+  inline: '内联',
+  system: '全局共享',
+  department: '部门共享',
+  user: '个人专用'
+}
+
+const statusLabelMap = {
+  active: '启用',
+  disabled: '停用',
+  reauth_required: '需要重连',
+  invalid: '无效'
+}
+
+const providerLabelMap = {
+  none: '不启用',
+  bound_secret: '绑定长期密钥',
+  custom_http_token: '接口换 Token',
+  stdio_env: 'StdIO 环境变量',
+  client_credentials: 'OAuth2 客户端凭证'
+}
+
+const connectionFilterOptions = [
+  { label: '全部', value: 'all' },
+  { label: '生效中', value: 'active' },
+  { label: '需处理', value: 'attention' },
+  { label: '未启用', value: 'disabled' }
+]
+
+const actionLabel = computed(() => {
+  if (server.value?.enabled === false) return '恢复'
+  return server.value?.created_by === 'system' ? '移除' : '退役'
+})
+
+const isEditingConnection = computed(() => editingConnectionId.value !== null)
+
+const hasAuthConfig = computed(
+  () => !!server.value?.auth_config && Object.keys(server.value.auth_config).length > 0
+)
+
+const validConnectionScopeTypes = ['system', 'department', 'user']
+
+const effectiveConnectionScopeType = computed(() => {
+  const bindingScope = server.value?.auth_config?.binding_scope
+  return validConnectionScopeTypes.includes(bindingScope) ? bindingScope : ''
+})
+
+const availableConnectionScopeOptions = computed(() => {
+  if (!effectiveConnectionScopeType.value) return connectionScopeOptions
+  return connectionScopeOptions.filter(
+    (option) => option.value === effectiveConnectionScopeType.value
+  )
+})
+
+const authBindingScopeLabel = computed(() => {
+  const bindingScope = server.value?.auth_config?.binding_scope
+  return scopeLabelMap[bindingScope] || '未限定'
+})
+
+const connectionTotalCount = computed(() => connectionSummary.total || connectionTotal.value)
+
+const activeConnectionCount = computed(() => connectionSummary.active || 0)
+
+const attentionConnectionCount = computed(() => connectionSummary.attention || 0)
+
+const hasConnectionListFilter = computed(
+  () => connectionFilter.value !== 'all' || Boolean(connectionSearchText.value.trim())
+)
+
+const connectionEmptyDescription = computed(() => {
+  if (hasConnectionListFilter.value) return '没有匹配的连接。'
+  if (hasAuthConfig.value) return '暂无连接。创建连接后，运行时会按绑定范围自动选择凭据。'
+  return '当前 MCP 没有启用动态鉴权连接。'
+})
+
+const connectionDrawerTitle = computed(() => (isEditingConnection.value ? '编辑连接' : '新建连接'))
 
 const filteredTools = computed(() => {
   if (!toolSearchText.value) return tools.value
@@ -524,6 +1118,36 @@ const isStdioTransport = computed(
       .toLowerCase() === 'stdio'
 )
 
+const credentialSecretFields = computed(() =>
+  extractSecretFieldNames(server.value?.auth_config || {})
+)
+
+const connectionCredentialsRequired = computed(() => credentialSecretFields.value.length > 0)
+
+const showScopeIdField = computed(() => connectionForm.scopeType !== 'system')
+
+const scopeIdLabel = computed(() => {
+  if (connectionForm.scopeType === 'department') return '部门'
+  if (connectionForm.scopeType === 'user') return '用户'
+  return '范围标识'
+})
+
+const scopeIdPlaceholder = computed(() => {
+  if (connectionForm.scopeType === 'department') return '请选择部门'
+  if (connectionForm.scopeType === 'user') return '请选择用户'
+  return '留空默认 global'
+})
+
+const credentialHint = computed(() => {
+  if (isEditingConnection.value) {
+    return '为安全起见不回显已有凭据；留空表示保持原值。'
+  }
+  if (credentialSecretFields.value.length > 0) {
+    return '系统已根据认证配置推导出需要录入的密钥字段。'
+  }
+  return '当前认证配置没有声明密钥字段，可直接粘贴长期 token。'
+})
+
 const goBack = () => {
   router.push({ path: '/extensions', query: { tab: 'mcp' } })
 }
@@ -533,6 +1157,164 @@ const formatTime = (timeStr) => formatFullDateTime(timeStr)
 const getTransportColor = (transport) => {
   const colors = { sse: 'orange', stdio: 'green', streamable_http: 'blue' }
   return colors[transport] || 'blue'
+}
+
+const createEmptySecretValues = () =>
+  Object.fromEntries(credentialSecretFields.value.map((fieldName) => [fieldName, '']))
+
+const setNestedSecretValue = (target, path, value) => {
+  const segments = String(path || '')
+    .split('.')
+    .filter(Boolean)
+  let current = target
+  segments.forEach((segment, index) => {
+    if (index === segments.length - 1) {
+      current[segment] = value
+      return
+    }
+    current[segment] = current[segment] || {}
+    current = current[segment]
+  })
+}
+
+const getConnectionTitle = (connection) =>
+  connection.display_name ||
+  `${getConnectionScopeLabel(connection.scope_type)} ${getConnectionScopeTargetLabel(connection)}`
+
+const getConnectionScopeLabel = (scopeType) => scopeLabelMap[scopeType] || scopeType || '未知范围'
+
+const getConnectionStatusLabel = (status) => statusLabelMap[status] || status || '未知状态'
+
+const isConnectionScopeMatched = (connection) =>
+  !effectiveConnectionScopeType.value ||
+  connection?.scope_type === effectiveConnectionScopeType.value
+
+const isConnectionCredentialMissing = (connection) =>
+  connectionCredentialsRequired.value && !connection?.has_credentials
+
+const getConnectionScopeTargetLabel = (connection) => {
+  const scopeId = String(connection?.scope_id || '')
+  if (connection?.scope_type === 'system') {
+    return '全部用户'
+  }
+  if (connection?.scope_type === 'department') {
+    const department = departmentList.value.find((item) => String(item.id) === scopeId)
+    return department ? `${department.name} (#${department.id})` : `部门 #${scopeId || '-'}`
+  }
+  if (connection?.scope_type === 'user') {
+    const user = userList.value.find(
+      (item) => String(item.id) === scopeId || String(item.user_id) === scopeId
+    )
+    if (!user) return `用户 #${scopeId || '-'}`
+    return user.username === user.user_id ? user.username : `${user.username} (${user.user_id})`
+  }
+  return scopeId || '未指定'
+}
+
+const canToggleConnectionStatus = (connection) => {
+  if (!['active', 'disabled'].includes(connection?.status)) return false
+  if (connection.status === 'disabled') {
+    return isConnectionScopeMatched(connection) && !isConnectionCredentialMissing(connection)
+  }
+  return true
+}
+
+const getConnectionStatusSwitchLabel = (connection) => {
+  if (connection?.status === 'active') return '已启用'
+  return getConnectionStatusLabel(connection?.status)
+}
+
+const getConnectionStatusToggleTooltip = (connection) => {
+  if (connection?.status === 'active') return '停用连接'
+  if (connection?.status === 'disabled') {
+    if (!isConnectionScopeMatched(connection)) {
+      return `该连接未生效，不能启用；当前 MCP 使用${authBindingScopeLabel.value}`
+    }
+    if (isConnectionCredentialMissing(connection)) {
+      return '请先补充凭据'
+    }
+    return '启用连接'
+  }
+  return '请先重连或编辑凭据'
+}
+
+const canTestConnection = (connection) =>
+  isConnectionScopeMatched(connection) && !isConnectionCredentialMissing(connection)
+
+const getConnectionTestTooltip = (connection) => {
+  if (canTestConnection(connection)) return '测试连接'
+  if (isConnectionCredentialMissing(connection)) return '请先补充凭据'
+  return `该连接未生效，当前 MCP 使用${authBindingScopeLabel.value}`
+}
+
+const canReauthorizeConnection = (connection) =>
+  isConnectionScopeMatched(connection) && !isConnectionCredentialMissing(connection)
+
+const getConnectionReauthorizeTooltip = (connection) => {
+  if (canReauthorizeConnection(connection)) return '重置授权并重新激活'
+  if (isConnectionCredentialMissing(connection)) return '请先补充凭据'
+  return `该连接未生效，不能重连；当前 MCP 使用${authBindingScopeLabel.value}`
+}
+
+const getConnectionIssue = (connection) => {
+  if (!isConnectionScopeMatched(connection)) {
+    return {
+      key: 'scope_mismatch',
+      label: '范围不匹配',
+      description: `当前 MCP 使用${authBindingScopeLabel.value}，这组连接不会在运行时生效。`,
+      actionLabel: '新建匹配连接',
+      tone: 'warning'
+    }
+  }
+  if (isConnectionCredentialMissing(connection)) {
+    return {
+      key: 'missing_credentials',
+      label: '缺少凭据',
+      description: '缺少长期凭据，运行时无法换取或注入 token。',
+      actionLabel: '补充凭据',
+      tone: 'error'
+    }
+  }
+  if (connection?.status === 'reauth_required') {
+    return {
+      key: 'reauth_required',
+      label: '授权失效',
+      description: '缓存 token 已失效，需要重新授权后才能继续使用。',
+      actionLabel: '重连',
+      tone: 'warning'
+    }
+  }
+  if (connection?.status === 'invalid' || connection?.meta_json?.last_error?.message) {
+    return {
+      key: 'test_failed',
+      label: '测试失败',
+      description: connection?.meta_json?.last_error?.message || '最近一次连接检测失败。',
+      actionLabel: '编辑凭据',
+      tone: 'error'
+    }
+  }
+  return null
+}
+
+const getConnectionLastInfo = (connection) => {
+  if (connection.meta_json?.last_success_at) {
+    return `最近成功 ${formatTime(connection.meta_json.last_success_at)}`
+  }
+  if (connection.updated_at) {
+    return `更新于 ${formatTime(connection.updated_at)}`
+  }
+  return '暂无记录'
+}
+
+const getSecretFieldLabel = (fieldName) => {
+  const labelMap = {
+    client_id: 'Client ID',
+    client_secret: 'Client Secret',
+    access_token: 'Access Token',
+    refresh_token: 'Refresh Token',
+    issuer_url: 'Issuer URL'
+  }
+  return labelMap[fieldName] || fieldName
 }
 
 const resetEditForm = (data) => {
@@ -545,6 +1327,7 @@ const resetEditForm = (data) => {
     args: data?.args || [],
     env: data?.env || null,
     headersText: data?.headers ? JSON.stringify(data.headers, null, 2) : '',
+    authConfigText: data?.auth_config ? JSON.stringify(data.auth_config, null, 2) : '',
     timeout: data?.timeout,
     sse_read_timeout: data?.sse_read_timeout,
     tags: data?.tags || [],
@@ -586,6 +1369,20 @@ const parseJsonToForm = () => {
   }
 }
 
+const parseJsonText = (text, label, { allowRawString = false } = {}) => {
+  const trimmed = String(text || '').trim()
+  if (!trimmed) return null
+  try {
+    return JSON.parse(trimmed)
+  } catch {
+    if (allowRawString) {
+      return trimmed
+    }
+    message.error(`${label} JSON 格式错误`)
+    return undefined
+  }
+}
+
 const buildEditPayload = () => {
   if (formMode.value === 'json') {
     try {
@@ -606,6 +1403,11 @@ const buildEditPayload = () => {
     }
   }
 
+  const authConfig = parseJsonText(editForm.authConfigText, '认证配置')
+  if (authConfig === undefined) {
+    return null
+  }
+
   return {
     name: editForm.name,
     description: editForm.description || null,
@@ -615,11 +1417,52 @@ const buildEditPayload = () => {
     args: editForm.args.length > 0 ? editForm.args : null,
     env: editForm.env,
     headers,
+    auth_config: authConfig,
     timeout: editForm.timeout || null,
     sse_read_timeout: editForm.sse_read_timeout || null,
     tags: editForm.tags.length > 0 ? editForm.tags : null,
     icon: editForm.icon || null
   }
+}
+
+const getDefaultConnectionScopeType = () =>
+  availableConnectionScopeOptions.value[0]?.value || 'department'
+
+const resetConnectionForm = () => {
+  editingConnectionId.value = null
+  Object.assign(connectionForm, {
+    scopeType: getDefaultConnectionScopeType(),
+    scopeId: '',
+    displayName: '',
+    externalSubject: '',
+    credentialText: '',
+    secretValues: createEmptySecretValues(),
+    metaText: ''
+  })
+}
+
+const openCreateConnectionDrawer = () => {
+  resetConnectionForm()
+  showConnectionForm.value = true
+}
+
+const closeConnectionForm = () => {
+  showConnectionForm.value = false
+  resetConnectionForm()
+}
+
+const startEditConnection = (connection) => {
+  editingConnectionId.value = connection.id
+  showConnectionForm.value = true
+  Object.assign(connectionForm, {
+    scopeType: connection.scope_type || 'department',
+    scopeId: connection.scope_id || '',
+    displayName: connection.display_name || '',
+    externalSubject: connection.external_subject || '',
+    credentialText: '',
+    secretValues: createEmptySecretValues(),
+    metaText: connection.meta_json ? JSON.stringify(connection.meta_json, null, 2) : ''
+  })
 }
 
 const validateEditPayload = (data) => {
@@ -700,6 +1543,68 @@ const fetchTools = async () => {
   }
 }
 
+const fetchConnections = async () => {
+  if (!server.value) return
+  try {
+    connectionsLoading.value = true
+    connectionsError.value = null
+    const result = await mcpApi.getMcpServerConnections(server.value.name, {
+      paginated: true,
+      status: connectionFilter.value,
+      search: connectionSearchText.value.trim(),
+      page: connectionPage.value,
+      page_size: connectionPageSize.value
+    })
+    if (result.success) {
+      if (Array.isArray(result.data)) {
+        connections.value = result.data
+        connectionTotal.value = result.data.length
+        Object.assign(connectionSummary, {
+          total: result.data.length,
+          active: result.data.filter(
+            (connection) =>
+              connection.status === 'active' &&
+              isConnectionScopeMatched(connection) &&
+              !isConnectionCredentialMissing(connection)
+          ).length,
+          attention: result.data.filter((connection) => Boolean(getConnectionIssue(connection)))
+            .length,
+          disabled: result.data.filter((connection) => connection.status === 'disabled').length
+        })
+        return
+      }
+      const pageData = result.data || {}
+      const nextConnections = pageData.items || []
+      const nextTotal = pageData.total || 0
+      const nextPageSize = pageData.page_size || connectionPageSize.value
+      if (connectionPage.value > 1 && nextConnections.length === 0 && nextTotal > 0) {
+        connectionPage.value = Math.ceil(nextTotal / nextPageSize)
+        await fetchConnections()
+        return
+      }
+      connections.value = nextConnections
+      connectionTotal.value = nextTotal
+      connectionPageSize.value = nextPageSize
+      Object.assign(connectionSummary, {
+        total: pageData.summary?.total || 0,
+        active: pageData.summary?.active || 0,
+        attention: pageData.summary?.attention || 0,
+        disabled: pageData.summary?.disabled || 0
+      })
+    } else {
+      connectionsError.value = result.message || '获取连接列表失败'
+      connections.value = []
+      connectionTotal.value = 0
+    }
+  } catch (err) {
+    connectionsError.value = err.message || '获取连接列表失败'
+    connections.value = []
+    connectionTotal.value = 0
+  } finally {
+    connectionsLoading.value = false
+  }
+}
+
 const handleToggleTool = async (tool) => {
   if (!server.value) return
   try {
@@ -745,6 +1650,210 @@ const handleTestServer = async () => {
   }
 }
 
+const buildConnectionCredential = () => {
+  const rawCredential = parseJsonText(connectionForm.credentialText, '长期凭据', {
+    allowRawString: true
+  })
+  if (rawCredential === undefined) return undefined
+  if (rawCredential !== null) return rawCredential
+
+  const secrets = {}
+  Object.entries(connectionForm.secretValues).forEach(([key, value]) => {
+    const trimmedValue = String(value || '').trim()
+    if (trimmedValue) {
+      setNestedSecretValue(secrets, key, trimmedValue)
+    }
+  })
+
+  if (Object.keys(secrets).length === 0) {
+    return null
+  }
+  return { secrets }
+}
+
+const validateConnectionCredential = () => {
+  if (isEditingConnection.value || credentialSecretFields.value.length === 0) {
+    return true
+  }
+
+  const missingFields = credentialSecretFields.value.filter(
+    (fieldName) => !String(connectionForm.secretValues[fieldName] || '').trim()
+  )
+  if (missingFields.length === 0 || connectionForm.credentialText.trim()) {
+    return true
+  }
+
+  message.error(`请填写凭据字段：${missingFields.join('、')}`)
+  return false
+}
+
+const handleSubmitConnection = async () => {
+  if (!server.value) return
+
+  const scopeId = connectionForm.scopeType === 'system' ? 'global' : connectionForm.scopeId.trim()
+  if (!scopeId) {
+    message.error(`${scopeIdLabel.value}不能为空`)
+    return
+  }
+  if (!validateConnectionCredential()) return
+
+  const metaJson = parseJsonText(connectionForm.metaText, '连接元数据')
+  if (metaJson === undefined) return
+  const credential = buildConnectionCredential()
+  if (credential === undefined) return
+
+  try {
+    connectionSubmitting.value = true
+    const payload = {
+      display_name: connectionForm.displayName || null,
+      external_subject: connectionForm.externalSubject || null,
+      meta_json: metaJson
+    }
+    if (credential !== null) {
+      payload.credential = credential
+    }
+
+    const result = isEditingConnection.value
+      ? await mcpApi.updateMcpServerConnection(
+          server.value.name,
+          editingConnectionId.value,
+          payload
+        )
+      : await mcpApi.createMcpServerConnection(server.value.name, {
+          scope_type: connectionForm.scopeType,
+          scope_id: scopeId,
+          status: 'active',
+          ...payload
+        })
+    if (result.success) {
+      message.success(isEditingConnection.value ? '连接更新成功' : '连接创建成功')
+      showConnectionForm.value = false
+      resetConnectionForm()
+      await fetchConnections()
+    } else {
+      message.error(result.message || (isEditingConnection.value ? '连接更新失败' : '连接创建失败'))
+    }
+  } catch (err) {
+    message.error(err.message || (isEditingConnection.value ? '连接更新失败' : '连接创建失败'))
+  } finally {
+    connectionSubmitting.value = false
+  }
+}
+
+const handleToggleConnectionStatus = async (connection, checked) => {
+  if (!server.value || !canToggleConnectionStatus(connection)) return
+  const nextStatus = checked ? 'active' : 'disabled'
+  if (connection.status === nextStatus) return
+  const loadingKey = `${connection.id}:status`
+  try {
+    connectionActionLoading.value = loadingKey
+    const result = await mcpApi.updateMcpConnectionStatus(
+      server.value.name,
+      connection.id,
+      nextStatus
+    )
+    if (result.success) {
+      message.success(result.message || (checked ? '连接已启用' : '连接已停用'))
+      await fetchConnections()
+    } else {
+      message.error(result.message || '状态更新失败')
+      await fetchConnections()
+    }
+  } catch (err) {
+    message.error(err.message || '状态更新失败')
+    await fetchConnections()
+  } finally {
+    connectionActionLoading.value = null
+  }
+}
+
+const handleTestConnection = async (connection) => {
+  if (!server.value || !canTestConnection(connection)) return
+  const loadingKey = `${connection.id}:test`
+  try {
+    connectionActionLoading.value = loadingKey
+    const result = await mcpApi.testMcpConnection(server.value.name, connection.id)
+    if (result.success) {
+      message.success(result.message || '连接测试成功')
+      await fetchConnections()
+    } else {
+      message.error(result.message || '连接测试失败')
+    }
+  } catch (err) {
+    message.error(err.message || '连接测试失败')
+  } finally {
+    connectionActionLoading.value = null
+  }
+}
+
+const handleConnectionIssueAction = (connection) => {
+  const issue = getConnectionIssue(connection)
+  if (!issue) return
+  if (issue.key === 'scope_mismatch') {
+    openCreateConnectionDrawer()
+    return
+  }
+  if (issue.key === 'missing_credentials' || issue.key === 'test_failed') {
+    startEditConnection(connection)
+    return
+  }
+  if (issue.key === 'reauth_required') {
+    handleReauthorizeConnection(connection)
+  }
+}
+
+const resetConnectionFilters = () => {
+  connectionFilter.value = 'all'
+  connectionSearchText.value = ''
+}
+
+const handleReauthorizeConnection = async (connection) => {
+  if (!server.value || !canReauthorizeConnection(connection)) return
+  const loadingKey = `${connection.id}:reauth`
+  try {
+    connectionActionLoading.value = loadingKey
+    const result = await mcpApi.reauthorizeMcpConnection(server.value.name, connection.id)
+    if (result.success) {
+      message.success(result.message || '连接已重置')
+      await fetchConnections()
+    } else {
+      message.error(result.message || '连接重置失败')
+    }
+  } catch (err) {
+    message.error(err.message || '连接重置失败')
+  } finally {
+    connectionActionLoading.value = null
+  }
+}
+
+const handleDeleteConnection = (connection) => {
+  if (!server.value) return
+  Modal.confirm({
+    title: '确认删除连接',
+    content: `确定要删除连接 "${getConnectionTitle(connection)}" 吗？`,
+    okText: '删除',
+    okType: 'danger',
+    cancelText: '取消',
+    async onOk() {
+      try {
+        const result = await mcpApi.deleteMcpServerConnection(server.value.name, connection.id)
+        if (result.success) {
+          message.success(result.message || '连接已删除')
+          if (editingConnectionId.value === connection.id) {
+            showConnectionForm.value = false
+            resetConnectionForm()
+          }
+          await fetchConnections()
+        } else {
+          message.error(result.message || '连接删除失败')
+        }
+      } catch (err) {
+        message.error(err.message || '连接删除失败')
+      }
+    }
+  })
+}
+
 const handleDangerAction = async () => {
   if (!server.value) return
   if (server.value.enabled === false) {
@@ -774,17 +1883,17 @@ const handleSetServerEnabled = async (srv, enabled) => {
 
 const confirmDeleteServer = (srv) => {
   Modal.confirm({
-    title: '确认删除 MCP',
-    content: `确定要删除 MCP "${srv.name}" 吗？此操作不可撤销。`,
-    okText: '删除',
-    okType: 'danger',
+    title: '确认退役 MCP',
+    content: `确定要退役 MCP "${srv.name}" 吗？退役后不会再被新运行加载，但配置和连接会保留。`,
+    okText: '退役',
+    okType: 'primary',
     cancelText: '取消',
     async onOk() {
       try {
         const result = await mcpApi.deleteMcpServer(srv.name)
         if (result.success) {
-          message.success('MCP 删除成功')
-          router.push({ path: '/extensions', query: { tab: 'mcp' } })
+          message.success(result.message || 'MCP 已退役')
+          await fetchServer()
         } else {
           message.error(result.message || '删除失败')
         }
@@ -799,10 +1908,58 @@ watch(detailTab, (tab) => {
   if (tab === 'tools' && server.value) {
     fetchTools()
   }
+  if (tab === 'connections' && server.value) {
+    fetchConnections()
+  }
 })
+
+watch(connectionFilter, () => {
+  if (detailTab.value !== 'connections') return
+  if (connectionPage.value === 1) {
+    fetchConnections()
+  } else {
+    connectionPage.value = 1
+  }
+})
+
+watch(connectionSearchText, () => {
+  if (connectionSearchTimer) {
+    clearTimeout(connectionSearchTimer)
+  }
+  connectionSearchTimer = setTimeout(() => {
+    if (detailTab.value !== 'connections') return
+    if (connectionPage.value === 1) {
+      fetchConnections()
+    } else {
+      connectionPage.value = 1
+    }
+  }, 300)
+})
+
+watch([connectionPage, connectionPageSize], () => {
+  if (detailTab.value !== 'connections') return
+  fetchConnections()
+})
+
+const loadScopeOptions = async () => {
+  try {
+    isFetchingScopeOptions.value = true
+    const [usersRes, deptsRes] = await Promise.all([
+      userApi.getUsers(),
+      departmentApi.getDepartments()
+    ])
+    userList.value = usersRes || []
+    departmentList.value = deptsRes || []
+  } catch (err) {
+    message.error('获取用户/部门列表失败: ' + err.message)
+  } finally {
+    isFetchingScopeOptions.value = false
+  }
+}
 
 onMounted(() => {
   fetchServer()
+  loadScopeOptions()
 })
 </script>
 
@@ -1131,6 +2288,398 @@ onMounted(() => {
 }
 
 .mcp-detail {
+  .connections-tab {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .connection-command-bar {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: center;
+    padding: 16px;
+    border: 1px solid var(--gray-150);
+    border-radius: 8px;
+    background: var(--gray-0);
+  }
+
+  .connection-command-copy {
+    min-width: 0;
+
+    h3 {
+      margin: 0 0 4px;
+      color: var(--gray-900);
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    p {
+      margin: 0;
+      color: var(--gray-500);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+  }
+
+  .connection-summary-strip {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    border: 1px solid var(--gray-150);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--gray-0);
+  }
+
+  .connection-summary-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 12px 14px;
+
+    & + .connection-summary-item {
+      border-left: 1px solid var(--gray-100);
+    }
+
+    .summary-label {
+      color: var(--gray-500);
+      font-size: 12px;
+    }
+
+    strong {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--gray-900);
+      font-size: 15px;
+      font-weight: 600;
+    }
+  }
+
+  .connection-list-toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid var(--gray-150);
+    border-radius: 8px;
+    background: var(--gray-0);
+  }
+
+  .connection-filter-group,
+  .connection-page-controls {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .connection-filter-group {
+    flex: 1;
+  }
+
+  .connection-page-controls {
+    flex-shrink: 0;
+    justify-content: flex-end;
+  }
+
+  .connection-result-count {
+    color: var(--gray-500);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .connection-search-input {
+    width: min(320px, 100%);
+
+    :deep(.ant-input-prefix) {
+      color: var(--gray-500);
+    }
+  }
+
+  .connection-empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 42px 16px;
+    border: 1px solid var(--gray-150);
+    border-radius: 8px;
+    background: var(--gray-0);
+  }
+
+  .connection-list-body {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .connection-cards-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 12px;
+  }
+
+  .connection-card {
+    padding: 12px;
+    border: 1px solid var(--gray-150);
+    border-radius: 8px;
+    background: var(--gray-0);
+    transition:
+      border-color 0.2s,
+      box-shadow 0.2s;
+
+    &:hover {
+      border-color: var(--gray-300);
+    }
+  }
+
+  .connection-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+
+  .connection-key-info {
+    min-width: 0;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .connection-key-icon {
+    color: var(--main-600);
+    flex-shrink: 0;
+  }
+
+  .connection-key-copy {
+    min-width: 0;
+
+    h4 {
+      margin: 0;
+      overflow: hidden;
+      color: var(--gray-900);
+      font-size: 14px;
+      font-weight: 600;
+      line-height: 1.4;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    span {
+      display: block;
+      margin-top: 2px;
+      overflow: hidden;
+      color: var(--gray-500);
+      font-size: 12px;
+      line-height: 1.4;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  .connection-scope-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 28px;
+    flex-shrink: 0;
+    gap: 5px;
+    padding: 0 10px;
+    border: 1px solid var(--gray-150);
+    border-radius: 7px;
+    background: var(--gray-25);
+    color: var(--gray-700);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1;
+    white-space: nowrap;
+
+    &.scope-system {
+      border-color: var(--color-success-100);
+      background: var(--color-success-50);
+      color: var(--color-success-700);
+    }
+
+    &.scope-department {
+      border-color: var(--color-accent-100);
+      background: var(--color-accent-50);
+      color: var(--color-accent-700);
+    }
+
+    &.scope-user {
+      border-color: var(--color-info-100);
+      background: var(--color-info-50);
+      color: var(--color-info-700);
+    }
+
+    &.is-mismatch {
+      border-color: var(--color-warning-100);
+      background: var(--color-warning-50);
+      color: var(--color-warning-900);
+    }
+  }
+
+  .connection-card-content {
+    margin-bottom: 10px;
+  }
+
+  .connection-issue {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+    padding: 9px 10px;
+    border: 1px solid var(--gray-150);
+    border-radius: 8px;
+    background: var(--gray-25);
+
+    &.issue-warning {
+      border-color: var(--color-warning-100);
+      background: var(--color-warning-10);
+
+      .issue-copy span {
+        color: var(--color-warning-900);
+      }
+    }
+
+    &.issue-error {
+      border-color: var(--color-error-100);
+      background: var(--color-error-10);
+
+      .issue-copy span {
+        color: var(--color-error-700);
+      }
+    }
+  }
+
+  .issue-copy {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+
+    span {
+      font-size: 13px;
+      font-weight: 600;
+      line-height: 1.4;
+    }
+
+    small {
+      overflow: hidden;
+      color: var(--gray-600);
+      font-size: 12px;
+      line-height: 1.4;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  .issue-action {
+    flex-shrink: 0;
+    padding: 0;
+    font-size: 12px;
+    font-weight: 500;
+  }
+
+  .connection-info-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin-bottom: 6px;
+    color: var(--gray-900);
+    font-size: 13px;
+
+    &:last-child {
+      margin-bottom: 0;
+    }
+
+    .info-label {
+      color: var(--gray-600);
+      flex-shrink: 0;
+    }
+
+    .info-value {
+      min-width: 0;
+      color: var(--gray-900);
+      word-break: break-all;
+    }
+  }
+
+  .connection-card-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding-top: 8px;
+    border-top: 1px solid var(--gray-100);
+  }
+
+  .footer-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .switch-label {
+    color: var(--gray-600);
+    font-size: 12px;
+  }
+
+  .status-switch-wrap {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .connection-row-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 4px;
+  }
+
+  .connection-action-wrap {
+    display: inline-flex;
+  }
+
+  .connection-action-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--gray-700);
+    font-size: 12px;
+
+    &:hover {
+      color: var(--main-600);
+    }
+  }
+
+  .danger-action-btn {
+    color: var(--color-error-700);
+
+    &:hover {
+      background: var(--color-error-50);
+      color: var(--color-error-900);
+    }
+  }
+
+  .connection-pagination {
+    display: flex;
+    justify-content: flex-end;
+    padding-top: 2px;
+  }
+
   .detail-content-wrapper {
     flex: 1;
     min-height: 0;
@@ -1139,9 +2688,216 @@ onMounted(() => {
   }
 
   .detail-content-inner {
-    max-width: 900px;
+    max-width: 1120px;
     margin: 0 auto;
     padding: 16px var(--page-padding);
+  }
+}
+
+.connection-drawer-form {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+  padding: 18px 20px 0;
+
+  :deep(.ant-form-item) {
+    margin-bottom: 0;
+  }
+
+  :deep(.ant-form-item-label > label) {
+    color: var(--gray-700);
+    font-size: 13px;
+    font-weight: 500;
+  }
+}
+
+.drawer-section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-bottom: 18px;
+
+  & + .drawer-section {
+    padding-top: 18px;
+    border-top: 1px solid var(--gray-100);
+  }
+}
+
+.drawer-section-title {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+
+  span {
+    color: var(--gray-900);
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  small {
+    color: var(--gray-500);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+}
+
+.scope-option-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(136px, 1fr));
+  gap: 8px;
+}
+
+.scope-option {
+  display: flex;
+  min-height: 78px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--gray-150);
+  border-radius: 8px;
+  background: var(--gray-0);
+  color: var(--gray-700);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    color 0.15s ease;
+
+  span {
+    color: var(--gray-900);
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  small {
+    color: var(--gray-500);
+    font-size: 12px;
+  }
+
+  &:hover:not(:disabled) {
+    border-color: var(--main-300);
+    background: var(--main-10);
+    color: var(--main-color);
+  }
+
+  &.active {
+    border-color: var(--main-color);
+    background: var(--main-30);
+    color: var(--main-color);
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.7;
+  }
+}
+
+.secret-field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.connection-advanced-collapse {
+  margin: 0 -4px 12px;
+
+  :deep(.ant-collapse-header) {
+    padding: 10px 4px;
+    color: var(--gray-600);
+    font-size: 13px;
+  }
+
+  :deep(.ant-collapse-content-box) {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 4px 4px 12px;
+  }
+}
+
+.connection-drawer-footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: auto -20px 0;
+  padding: 14px 20px;
+  border-top: 1px solid var(--gray-100);
+  background: var(--gray-0);
+}
+
+@media (max-width: 980px) {
+  .mcp-detail {
+    .connection-list-toolbar {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
+    .connection-filter-group,
+    .connection-page-controls {
+      width: 100%;
+      justify-content: space-between;
+    }
+
+    .connection-filter-group {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
+    .connection-search-input {
+      width: 100%;
+    }
+
+    .connection-summary-strip {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .connection-summary-item:nth-child(3) {
+      border-left: 0;
+      border-top: 1px solid var(--gray-100);
+    }
+
+    .connection-summary-item:nth-child(4) {
+      border-top: 1px solid var(--gray-100);
+    }
+
+    .connection-row-actions {
+      justify-content: flex-start;
+    }
+
+    .connection-card-footer {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+  }
+}
+
+@media (max-width: 640px) {
+  .mcp-detail {
+    .connection-command-bar {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
+    .connection-issue {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
+    .connection-pagination {
+      justify-content: flex-start;
+    }
+
+    .connection-summary-strip,
+    .connection-cards-grid,
+    .scope-option-grid,
+    .secret-field-grid {
+      grid-template-columns: 1fr;
+    }
   }
 }
 </style>

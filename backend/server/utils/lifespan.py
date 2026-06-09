@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from yuxi.services.task_service import tasker
-from yuxi.services.mcp_service import ensure_builtin_mcp_servers_in_db
+from yuxi.services.mcp.server_service import ensure_builtin_mcp_servers_in_db
 from yuxi.services.model_provider_service import ensure_builtin_model_providers_in_db
 from yuxi.services.subagent_service import init_builtin_subagents
 from yuxi.services.run_queue_service import close_queue_clients, get_redis_client
@@ -101,6 +101,14 @@ async def lifespan(app: FastAPI):
     """)
     logger.info("Yuxi backend startup complete")
     yield
+
+    from yuxi.services.mcp.client_pool import mcp_client_pool
+    from yuxi.services.mcp_auth.proxy_service import close_shared_proxy_client
+
+    logger.info("Shutting down MCP client pool and proxy clients...")
+    await mcp_client_pool.shutdown()
+    await close_shared_proxy_client()
+
     await tasker.shutdown()
     shutdown_sandbox_provider()
     await close_queue_clients()
