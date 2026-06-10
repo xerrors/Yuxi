@@ -17,7 +17,7 @@ class Config(BaseModel):
     """应用配置类。"""
 
     save_dir: str = Field(default="saves", description="保存目录")
-    enable_reranker: bool = Field(default=False, description="是否开启重排序")
+    enable_reranker: bool = Field(default=True, description="是否开启重排序")
     enable_content_guard: bool = Field(default=False, description="是否启用内容审查")
     enable_content_guard_llm: bool = Field(default=False, description="是否启用LLM内容审查")
     default_model: str = Field(
@@ -29,11 +29,11 @@ class Config(BaseModel):
         description="快速响应模型",
     )
     embed_model: str = Field(
-        default="siliconflow-cn:Pro/BAAI/bge-m3",
+        default="yuxi-embedding:bge-m3",
         description="默认 Embedding 模型",
     )
     reranker: str = Field(
-        default="siliconflow-cn:Pro/BAAI/bge-reranker-v2-m3",
+        default="yuxi-reranker:bge-reranker-v2-m3",
         description="默认 Re-Ranker 模型",
     )
     content_guard_llm_model: str = Field(

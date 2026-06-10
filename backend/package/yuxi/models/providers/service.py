@@ -256,7 +256,7 @@ async def ensure_builtin_model_providers_in_db(db: AsyncSession) -> None:
         payload["enabled_models"] = provider_def.get("enabled_models", [])
         payload["headers_json"] = payload.get("headers_json") or {}
         payload["extra_json"] = payload.get("extra_json") or {}
-        payload["is_enabled"] = provider_id == "siliconflow-cn"
+        payload["is_enabled"] = provider_def.get("is_enabled", provider_id == "siliconflow-cn")
         payload["is_builtin"] = True
         payload["created_by"] = "system"
         payload["updated_by"] = "system"

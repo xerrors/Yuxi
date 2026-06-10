@@ -163,6 +163,42 @@ BUILTIN_PROVIDERS: list[dict[str, Any]] = [
         "models_endpoint": "https://api-inference.modelscope.cn/v1/models",
     },
     {
+        "provider_id": "yuxi-embedding",
+        "display_name": "Yuxi Local Embedding",
+        "base_url": "http://yuxi-embedding:7997",
+        "embedding_base_url": "http://yuxi-embedding:7997/embeddings",
+        "api_key_env": "YUXI_LOCAL_MODEL_API_KEY",
+        "capabilities": ["embedding"],
+        "is_enabled": True,
+        "enabled_models": [
+            {
+                "id": "bge-m3",
+                "type": "embedding",
+                "display_name": "bge-m3",
+                "dimension": 1024,
+                "batch_size": 40,
+                "source": "manual",
+            },
+        ],
+    },
+    {
+        "provider_id": "yuxi-reranker",
+        "display_name": "Yuxi Local Reranker",
+        "base_url": "http://yuxi-reranker:8000/v1/rerank",
+        "rerank_base_url": "http://yuxi-reranker:8000/v1/rerank",
+        "api_key_env": "YUXI_LOCAL_MODEL_API_KEY",
+        "capabilities": ["rerank"],
+        "is_enabled": True,
+        "enabled_models": [
+            {
+                "id": "bge-reranker-v2-m3",
+                "type": "rerank",
+                "display_name": "bge-reranker-v2-m3",
+                "source": "manual",
+            },
+        ],
+    },
+    {
         "provider_id": "opencode",
         "display_name": "OpenCode",
         "base_url": "https://opencode.ai/zen/v1",
