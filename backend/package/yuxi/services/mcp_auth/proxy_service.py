@@ -307,6 +307,9 @@ async def _proxy_mcp_request_stream(
         await response.aclose()
         if attempt + 1 >= max_attempts:
             break
+        from yuxi.services.mcp.client_pool import clear_server_resolved_headers_cache
+
+        clear_server_resolved_headers_cache(server.name)
         if connection is not None and getattr(connection, "id", None) is not None:
             await token_cache.delete_access_token(connection.id)
 

@@ -192,13 +192,13 @@ class RuntimeConfigMiddleware(AgentMiddleware):
             selected_mcp_servers.add(server_name)
             selected_mcp_names.append(server_name)
             try:
-                user_id = getattr(context, "user_id", None)
-                work_id = getattr(context, "work_id", None)
+                user_id = getattr(context, "user_id", None) if context is not None else None
+                work_id = getattr(context, "work_id", None) if context is not None else None
                 mcp_tools = await get_enabled_mcp_tools(
                     server_name,
                     auth_context=AuthContext(
                         user_id=user_id,
-                        department_id=getattr(context, "department_id", None),
+                        department_id=getattr(context, "department_id", None) if context is not None else None,
                         work_id=work_id,
                     ),
                 )

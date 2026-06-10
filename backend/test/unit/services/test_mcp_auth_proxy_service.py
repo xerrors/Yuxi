@@ -1,50 +1,43 @@
 from __future__ import annotations
 
-
-def make_mock_response(status_code, content):
-    import httpx
-    resp = httpx.Response(status_code, content=content)
-    async def fake_aiter_raw():
-        yield content
-    resp.aiter_raw = fake_aiter_raw
-    return resp
-
 import json
 import os
 from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
+from fastapi import Response
+from starlette.requests import Request
+from yuxi.services.mcp import server_service
+from yuxi.services.mcp_auth import proxy_service
+from yuxi.services.mcp_auth.orchestrator import AuthContext
+from yuxi.services.mcp_auth.proxy_service import (
+    _proxy_mcp_request_stream,
+    create_proxy_access_token,
+    handle_mcp_proxy_request,
+)
+from yuxi.storage.postgres.models_business import MCPConnection, MCPServer
+
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
-from yuxi.services.mcp_auth.orchestrator import AuthContext
-from yuxi.services.mcp_auth.proxy_service import _proxy_mcp_request_stream
-from starlette.requests import Request
-
 
 def make_mock_response(status_code, content):
-    import httpx
     resp = httpx.Response(status_code, content=content)
+
     async def fake_aiter_raw():
         yield content
+
     resp.aiter_raw = fake_aiter_raw
     return resp
 
-import json
+
 async def get_response_json(response):
     if hasattr(response, "body_iterator"):
         body = b"".join([chunk async for chunk in response.body_iterator])
     else:
         body = response.body
     return json.loads(body)
-
-from fastapi import Response
-from fastapi.responses import StreamingResponse
-from yuxi.services.mcp import server_service
-from yuxi.storage.postgres.models_business import MCPConnection, MCPServer
-from yuxi.services.mcp_auth import proxy_service
-from yuxi.services.mcp_auth.proxy_service import create_proxy_access_token, handle_mcp_proxy_request
 
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
@@ -71,6 +64,10 @@ class DummyTokenCache:
 
 async def test_proxy_mcp_request_retries_once_after_401_with_refreshed_token():
     observed_authorizations: list[str | None] = []
+    from yuxi.services.mcp.client_pool import clear_resolved_headers_cache, _resolved_headers_cache
+
+    clear_resolved_headers_cache()
+    _resolved_headers_cache[("proxy-retry", "user-1", "dep-1")] = {"Authorization": "Bearer stale-token"}
 
     def handler(request: httpx.Request) -> httpx.Response:
         if str(request.url) == "http://gateway.local/auth/token":
@@ -146,11 +143,18 @@ async def test_proxy_mcp_request_retries_once_after_401_with_refreshed_token():
         }
     )
 
-    req = Request({"type": "http", "method": "POST", "headers": [(b"content-type", b"application/json")], "query_string": b""})
-    
+    req = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "headers": [(b"content-type", b"application/json")],
+            "query_string": b"",
+        }
+    )
+
     class DummyDB:
         async def commit(self): pass
-        
+
     response = await _proxy_mcp_request_stream(
         server,
         connection=connection,
@@ -169,7 +173,9 @@ async def test_proxy_mcp_request_retries_once_after_401_with_refreshed_token():
     assert observed_authorizations == ["Bearer stale-token", "Bearer fresh-token"]
     assert token_cache.deleted_connection_ids == [41]
     assert token_cache.set_calls and token_cache.set_calls[0][0] == 41
+    assert ("proxy-retry", "user-1", "dep-1") not in _resolved_headers_cache
     assert connection.status == "active"
+    clear_resolved_headers_cache()
 
 
 async def test_proxy_mcp_request_marks_reauth_required_after_final_401():
@@ -243,11 +249,18 @@ async def test_proxy_mcp_request_marks_reauth_required_after_final_401():
         }
     )
 
-    req = Request({"type": "http", "method": "POST", "headers": [(b"content-type", b"application/json")], "query_string": b""})
-    
+    req = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "headers": [(b"content-type", b"application/json")],
+            "query_string": b"",
+        }
+    )
+
     class DummyDB:
         async def commit(self): pass
-        
+
     response = await _proxy_mcp_request_stream(
         server,
         connection=connection,
@@ -304,7 +317,15 @@ async def test_proxy_mcp_request_records_scope_error_on_403():
         updated_by="tester",
     )
 
-    req = Request({"type": "http", "method": "POST", "headers": [(b"content-type", b"application/json")], "query_string": b""})
+    req = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "headers": [(b"content-type", b"application/json")],
+            "query_string": b"",
+        }
+    )
+
     class DummyDB:
         async def commit(self): pass
     response = await _proxy_mcp_request_stream(
