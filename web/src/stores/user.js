@@ -146,19 +146,37 @@ export const useUserStore = defineStore('user', () => {
   }
 
   // 用户管理功能
-  async function getUsers() {
+  async function getUsers({ pageSize = 100 } = {}) {
     try {
-      const response = await fetch('/api/auth/users', {
-        headers: {
-          ...getAuthHeaders()
-        }
-      })
+      const users = []
+      let skip = 0
 
-      if (!response.ok) {
-        throw new Error('获取用户列表失败')
+      while (true) {
+        const params = new URLSearchParams({
+          skip: String(skip),
+          limit: String(pageSize)
+        })
+        const response = await fetch(`/api/auth/users?${params.toString()}`, {
+          headers: {
+            ...getAuthHeaders()
+          }
+        })
+
+        if (!response.ok) {
+          throw new Error('获取用户列表失败')
+        }
+
+        const batch = await response.json()
+        users.push(...batch)
+
+        if (batch.length < pageSize) {
+          break
+        }
+
+        skip += pageSize
       }
 
-      return await response.json()
+      return users
     } catch (error) {
       console.error('获取用户列表错误:', error)
       throw error

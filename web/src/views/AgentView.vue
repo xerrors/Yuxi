@@ -40,13 +40,17 @@
                     }"
                     @click="handleAgentSwitch(agent.value, hasActiveThread)"
                   >
-                    <img
-                      v-if="agent.icon"
+                    <FallbackAvatar
                       class="config-dropdown-item-icon-image"
                       :src="agent.icon"
+                      :default-src="agent.defaultIcon"
+                      :name="agent.label"
+                      :seed="agent.value || agent.label"
+                      kind="agent"
+                      :size="24"
+                      shape="rounded"
                       :alt="`${agent.label}图标`"
                     />
-                    <span v-else class="config-dropdown-item-icon-empty" aria-hidden="true"></span>
                     <span class="config-dropdown-item-label">{{ agent.label }}</span>
                     <span v-if="agent.isBuiltin" class="config-dropdown-item-badge">内置</span>
                     <Check
@@ -74,20 +78,6 @@
               </template>
             </a-dropdown>
           </template>
-
-          <template #header-right="{ sideActive, hasActiveThread, toggleAgentPanel }">
-            <button
-              v-if="hasActiveThread"
-              type="button"
-              class="agent-nav-btn agent-state-btn"
-              :class="{ active: sideActive === 'file' }"
-              title="查看文件"
-              @click.stop="toggleAgentPanel"
-            >
-              <FolderKanban size="18" class="nav-btn-icon" />
-              <span class="hide-text">文件</span>
-            </button>
-          </template>
         </AgentChatComponent>
       </div>
     </div>
@@ -97,12 +87,13 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
-import { Settings2, ChevronDown, Check, FolderKanban } from 'lucide-vue-next'
+import { Settings2, ChevronDown, Check } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import AgentChatComponent from '@/components/AgentChatComponent.vue'
 import { isBuiltinAgent, useAgentStore } from '@/stores/agent'
 import { handleChatError } from '@/utils/errorHandler'
 import { generatePixelAvatar } from '@/utils/pixelAvatar'
+import FallbackAvatar from '@/components/common/FallbackAvatar.vue'
 
 import { storeToRefs } from 'pinia'
 
@@ -178,7 +169,8 @@ const agentQuickSwitchOptions = computed(() =>
     .map((agent) => ({
       label: agent.name || agent.id,
       value: agent.id,
-      icon: agent.icon || (agent.id ? generatePixelAvatar(agent.id) : ''),
+      icon: agent.icon || '',
+      defaultIcon: agent.id ? generatePixelAvatar(agent.id) : '',
       isBuiltin: isBuiltinAgent(agent)
     }))
 )

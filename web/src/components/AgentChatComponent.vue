@@ -1,6 +1,13 @@
 <template>
   <div class="chat-container">
-    <div class="chat">
+    <div
+      class="chat"
+      :class="{
+        'has-file-panel': isFilePanelOpen,
+        'is-resizing-file-panel': isResizing
+      }"
+      :style="{ '--file-panel-width': filePanelWidthStyle }"
+    >
       <div class="chat-header">
         <div class="header__left">
           <slot name="header-left"></slot>
@@ -16,16 +23,32 @@
             v-if="showStateEntry"
             type="button"
             class="agent-nav-btn agent-state-btn state-entry-btn"
-            :class="{ active: sideActive === 'state' }"
+            :class="{ active: statePanelOpen }"
             title="查看状态"
+            :aria-expanded="statePanelOpen"
+            aria-controls="agent-state-panel"
             @click.stop="toggleStatePanel"
           >
             <SquareCheck size="18" class="nav-btn-icon" />
             <span class="hide-text">状态</span>
           </button>
+          <button
+            v-if="showFileEntry && !isFilePanelOpen"
+            type="button"
+            class="agent-nav-btn agent-state-btn file-entry-btn"
+            title="查看文件"
+            :aria-expanded="isFilePanelOpen"
+            aria-controls="agent-file-panel"
+            @click.stop="toggleAgentPanel"
+          >
+            <FolderKanban size="18" class="nav-btn-icon" />
+            <span class="hide-text">文件</span>
+          </button>
           <slot
             name="header-right"
             :side-active="sideActive"
+            :is-file-panel-open="isFilePanelOpen"
+            :is-state-panel-open="statePanelOpen"
             :has-active-thread="!!currentChatId"
             :toggle-agent-panel="toggleAgentPanel"
           ></slot>
@@ -36,8 +59,9 @@
         ref="chatContentContainerRef"
         class="chat-content-container"
         :class="{
-          'has-file-panel': sideActive === 'file',
-          'has-state-panel': sideActive === 'state'
+          'has-file-panel': isFilePanelOpen,
+          'has-state-panel': statePanelDocked,
+          'has-floating-state-panel': statePanelFloating
         }"
       >
         <!-- Main Chat Area -->
@@ -163,46 +187,19 @@
           </div>
         </div>
 
-        <!-- Agent Panel Area -->
-
         <div
-          class="side-panel side-panel--file"
-          ref="panelWrapperRef"
-          :class="{
-            'is-visible': sideActive === 'file',
-            'no-transition': isResizing
-          }"
-          :style="{
-            flexBasis: sideActive === 'file' ? `${panelRatio * 100}%` : '0px'
-          }"
-        >
-          <AgentPanel
-            v-if="sideActive === 'file'"
-            :agent-state="currentAgentState"
-            :thread-id="currentChatId"
-            :panel-ratio="panelRatio"
-            :preview-tabs="agentPanelPreviewTabs"
-            :active-preview-path="agentPanelActivePreviewPath"
-            :view-mode="agentPanelViewMode"
-            @refresh="handleAgentStateRefresh"
-            @resize="handlePanelResize"
-            @resizing="handleResizingChange"
-            @open-preview="openPanelPreview"
-            @activate-preview="activatePanelPreview"
-            @close-preview-tab="closePanelPreviewTab"
-            @close-preview-path="closePanelPreviewPath"
-            @view-mode-change="setAgentPanelViewMode"
-          />
-        </div>
-
-        <div
+          id="agent-state-panel"
           class="side-panel side-panel--state"
-          :class="{ 'is-visible': sideActive === 'state' }"
+          :class="{
+            'is-visible': statePanelOpen,
+            'is-docked': statePanelDocked,
+            'is-floating': statePanelFloating
+          }"
           :style="{
-            flexBasis: sideActive === 'state' ? '340px' : '0px'
+            flexBasis: statePanelDocked ? `${statePanelDockWidth}px` : '0px'
           }"
         >
-          <div v-if="sideActive === 'state'" class="state-panel">
+          <div v-if="statePanelOpen" class="state-panel">
             <div class="side-panel__header state-panel-header">
               <span class="state-panel-title">状态</span>
               <div class="state-panel-header-actions">
@@ -400,13 +397,17 @@
                       :class="{ 'is-clickable': run.child_thread_id }"
                       @click="run.child_thread_id && openSubagentThread(run)"
                     >
-                      <img
-                        v-if="getSubagentIconSrc(run)"
+                      <FallbackAvatar
                         class="state-subagent-icon"
                         :src="getSubagentIconSrc(run)"
+                        :default-src="getSubagentDefaultIconSrc(run)"
+                        :name="getSubagentRunName(run)"
+                        :seed="run.subagent_type || getSubagentRunName(run)"
+                        kind="agent"
+                        :size="28"
+                        shape="rounded"
                         :alt="`${getSubagentRunName(run)}图标`"
                       />
-                      <span v-else class="state-subagent-icon" aria-hidden="true"></span>
                       <div class="state-list-item-body">
                         <div class="state-list-item-title state-subagent-title">
                           <span>{{ getSubagentRunName(run) }}</span>
@@ -438,6 +439,38 @@
           </div>
         </div>
       </div>
+
+      <div
+        id="agent-file-panel"
+        class="side-panel side-panel--file"
+        ref="panelWrapperRef"
+        :class="{
+          'is-visible': isFilePanelOpen,
+          'no-transition': isResizing
+        }"
+        :style="{
+          width: filePanelWidthStyle
+        }"
+      >
+        <AgentPanel
+          v-if="isFilePanelOpen"
+          :agent-state="currentAgentState"
+          :thread-id="currentChatId"
+          :panel-ratio="panelRatio"
+          :preview-tabs="agentPanelPreviewTabs"
+          :active-preview-path="agentPanelActivePreviewPath"
+          :view-mode="agentPanelViewMode"
+          @close="closeFilePanel"
+          @refresh="handleAgentStateRefresh"
+          @resize="handlePanelResize"
+          @resizing="handleResizingChange"
+          @open-preview="openPanelPreview"
+          @activate-preview="activatePanelPreview"
+          @close-preview-tab="closePanelPreviewTab"
+          @close-preview-path="closePanelPreviewPath"
+          @view-mode-change="setAgentPanelViewMode"
+        />
+      </div>
     </div>
 
     <SubagentThreadModal
@@ -445,6 +478,7 @@
       :child-thread-id="subagentThreadModal.childThreadId"
       :subagent-name="activeSubagentThreadName"
       :subagent-avatar="activeSubagentThreadAvatar"
+      :subagent-default-avatar="activeSubagentThreadDefaultAvatar"
     />
   </div>
 </template>
@@ -463,7 +497,7 @@ import {
   onDeactivated
 } from 'vue'
 import { message } from 'ant-design-vue'
-import { ChevronDown, RefreshCw, SquareCheck } from 'lucide-vue-next'
+import { ChevronDown, FolderKanban, RefreshCw, SquareCheck } from 'lucide-vue-next'
 import { formatFileSize } from '@/utils/file_utils'
 import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
 import { generatePixelAvatar } from '@/utils/pixelAvatar'
@@ -500,6 +534,7 @@ import AgentArtifactsCard from '@/components/AgentArtifactsCard.vue'
 import AgentPanel from '@/components/AgentPanel.vue'
 import AttachmentTmpUploadModal from '@/components/AttachmentTmpUploadModal.vue'
 import SubagentThreadModal from '@/components/SubagentThreadModal.vue'
+import FallbackAvatar from '@/components/common/FallbackAvatar.vue'
 import { enrichTaskToolCalls, parseToolCallArgs } from '@/components/ToolCallingResult/toolRegistry'
 import { getConversationDisplayItems } from '@/utils/messageGrouping'
 import { makeChildThreadId } from '@/utils/subagentThread'
@@ -587,18 +622,30 @@ const configNoticeScrollVersion = ref(0)
 
 // 本地 UI 状态（仅在本组件使用）
 const localUIState = reactive({
-  chatMainWidth: typeof window !== 'undefined' ? window.innerWidth : 0
+  chatMainWidth: typeof window !== 'undefined' ? window.innerWidth : 0,
+  chatContentWidth: typeof window !== 'undefined' ? window.innerWidth : 0
 })
 
 // Agent Panel State
-const sideActive = ref('')
+const isFilePanelOpen = ref(false)
+const statePanelOpen = ref(false)
+const sideActive = computed(() => {
+  if (isFilePanelOpen.value) return 'file'
+  if (statePanelOpen.value) return 'state'
+  return ''
+})
 const isResizing = ref(false)
 const defaultPanelRatio = 0.3
 const previewPanelRatio = 0.65
 const minPanelRatio = 0.25
 const maxPanelRatio = 0.75
 const minChatMainWidth = 350
+const filePanelGapWidth = 0
+const mobilePanelBreakpoint = 768
+const statePanelDockWidth = 340
+const statePanelDockMinChatWidth = 800
 const panelRatio = ref(defaultPanelRatio) // 面板宽度比例 (0-1)
+const filePanelDragWidth = ref(null)
 const agentPanelPreviewTabs = ref([])
 const agentPanelActivePreviewPath = ref('')
 const agentPanelViewMode = ref('tree')
@@ -621,11 +668,22 @@ const getPanelContainerWidth = () => {
   return container?.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 0)
 }
 
+const getFilePanelMaxWidth = (containerWidth = getPanelContainerWidth()) => {
+  if (!containerWidth) return 0
+  if (containerWidth <= mobilePanelBreakpoint) return Math.max(0, containerWidth - 16)
+  return Math.max(0, containerWidth - minChatMainWidth - filePanelGapWidth)
+}
+
+const getFilePanelMinWidth = (containerWidth, maxWidth = getFilePanelMaxWidth(containerWidth)) => {
+  const preferredMinWidth = containerWidth <= mobilePanelBreakpoint ? 280 : 320
+  return Math.min(preferredMinWidth, maxWidth)
+}
+
 const getMaxPanelRatio = (containerWidth = getPanelContainerWidth()) => {
   if (!containerWidth) return maxPanelRatio
   return Math.max(
     minPanelRatio,
-    Math.min(maxPanelRatio, (containerWidth - minChatMainWidth) / containerWidth)
+    Math.min(maxPanelRatio, getFilePanelMaxWidth(containerWidth) / containerWidth)
   )
 }
 
@@ -633,20 +691,43 @@ const clampPanelRatio = (ratio, containerWidth = getPanelContainerWidth()) => {
   return Math.max(minPanelRatio, Math.min(ratio, getMaxPanelRatio(containerWidth)))
 }
 
+const filePanelWidthStyle = computed(() => {
+  if (!isFilePanelOpen.value) return '0px'
+  if (filePanelDragWidth.value !== null) return `${filePanelDragWidth.value}px`
+
+  const containerWidth = localUIState.chatContentWidth || getPanelContainerWidth()
+  if (!containerWidth) return `${panelRatio.value * 100}%`
+
+  const maxWidth = getFilePanelMaxWidth(containerWidth)
+  const minWidth = getFilePanelMinWidth(containerWidth, maxWidth)
+  const preferredWidth = containerWidth * panelRatio.value
+  return `${Math.max(minWidth, Math.min(preferredWidth, maxWidth))}px`
+})
+
+const statePanelCanDock = computed(() => {
+  if (isFilePanelOpen.value) return false
+  const containerWidth = localUIState.chatContentWidth || getPanelContainerWidth()
+  return containerWidth - statePanelDockWidth > statePanelDockMinChatWidth
+})
+const statePanelDocked = computed(() => statePanelOpen.value && statePanelCanDock.value)
+const statePanelFloating = computed(() => statePanelOpen.value && !statePanelDocked.value)
+
 const setPanelRatioForViewMode = () => {
   const hasPreview = Boolean(agentPanelActivePreviewPath.value)
   panelRatio.value = clampPanelRatio(hasPreview ? previewPanelRatio : defaultPanelRatio)
 }
 
 const showFilePanel = (mode = 'tree') => {
-  sideActive.value = 'file'
+  isFilePanelOpen.value = true
+  statePanelOpen.value = false
   agentPanelViewMode.value =
     mode === 'preview' && agentPanelActivePreviewPath.value ? 'preview' : 'tree'
   setPanelRatioForViewMode()
 }
 
 const showFileTreePanel = () => {
-  sideActive.value = 'file'
+  isFilePanelOpen.value = true
+  statePanelOpen.value = false
   agentPanelActivePreviewPath.value = ''
   agentPanelViewMode.value = 'tree'
   setPanelRatioForViewMode()
@@ -680,8 +761,11 @@ const getSubagentAgent = (run) => {
 
 const getSubagentIconSrc = (run) => {
   const agent = getSubagentAgent(run)
-  return agent?.icon || (run?.subagent_type ? generatePixelAvatar(run.subagent_type) : '')
+  return agent?.icon || ''
 }
+
+const getSubagentDefaultIconSrc = (run) =>
+  run?.subagent_type ? generatePixelAvatar(run.subagent_type) : ''
 
 const getSubagentRunMeta = (run) => {
   const artifacts = Array.isArray(run?.artifacts) ? run.artifacts.length : 0
@@ -700,7 +784,8 @@ const isSameOrChildPanelPath = (path, targetPath) => {
 }
 
 const resetAgentPanelState = () => {
-  sideActive.value = ''
+  isFilePanelOpen.value = false
+  statePanelOpen.value = false
   panelRatio.value = defaultPanelRatio
   agentPanelPreviewTabs.value = []
   agentPanelActivePreviewPath.value = ''
@@ -902,13 +987,15 @@ const subagentThreadModal = reactive({
   open: false,
   childThreadId: '',
   subagentName: '',
-  subagentAvatar: ''
+  subagentAvatar: '',
+  subagentDefaultAvatar: ''
 })
 const openSubagentThread = (run) => {
   if (!run?.child_thread_id) return
   subagentThreadModal.childThreadId = String(run.child_thread_id)
   subagentThreadModal.subagentName = getSubagentRunName(run)
   subagentThreadModal.subagentAvatar = getSubagentIconSrc(run)
+  subagentThreadModal.subagentDefaultAvatar = getSubagentDefaultIconSrc(run)
   subagentThreadModal.open = true
 }
 const isStateSectionExpanded = (key) => !collapsedStateSections[key]
@@ -946,6 +1033,7 @@ const completedTodoCount = computed(
   () => currentTodos.value.filter((todo) => todo?.status === 'completed').length
 )
 const showStateEntry = computed(() => Boolean(currentChatId.value))
+const showFileEntry = computed(() => Boolean(currentChatId.value))
 const todoProgress = computed(() => {
   if (!totalTodoCount.value) return 0
   return Math.round((completedTodoCount.value / totalTodoCount.value) * 100)
@@ -1159,6 +1247,12 @@ const activeSubagentThreadAvatar = computed(() =>
     ? getSubagentIconSrc(activeSubagentThreadRun.value) || subagentThreadModal.subagentAvatar
     : subagentThreadModal.subagentAvatar
 )
+const activeSubagentThreadDefaultAvatar = computed(() =>
+  activeSubagentThreadRun.value
+    ? getSubagentDefaultIconSrc(activeSubagentThreadRun.value) ||
+      subagentThreadModal.subagentDefaultAvatar
+    : subagentThreadModal.subagentDefaultAvatar
+)
 
 // 首次运行的子智能体：前端按后端同样的哈希推算 child_thread_id，缓存到映射里供面板/轨迹定位。
 watch(
@@ -1239,7 +1333,7 @@ const isStreaming = computed(() => {
   return threadState ? threadState.isStreaming : false
 })
 const shouldRefreshStateWhileStreaming = computed(
-  () => Boolean(currentChatId.value) && isStreaming.value && sideActive.value === 'state'
+  () => Boolean(currentChatId.value) && isStreaming.value && statePanelOpen.value
 )
 const isProcessing = computed(() => isStreaming.value)
 const isReplyLoading = computed(() => {
@@ -1545,19 +1639,24 @@ const startChatMainResizeObserver = () => {
     return
   }
 
-  localUIState.chatMainWidth = chatMainRef.value.clientWidth || window.innerWidth
+  const syncLayoutWidths = () => {
+    localUIState.chatMainWidth = chatMainRef.value?.clientWidth || window.innerWidth
+    localUIState.chatContentWidth =
+      chatContentContainerRef.value?.clientWidth || localUIState.chatMainWidth
+  }
+
+  syncLayoutWidths()
   chatMainResizeObserver = new ResizeObserver((entries) => {
     // 初始化期间跳过检查，等待 layout 稳定
     if (!isResizeObserverReady) return
 
-    for (const entry of entries) {
-      const width = entry.contentRect.width
-      if (!width) continue
-
-      localUIState.chatMainWidth = width
-    }
+    if (!entries.length) return
+    syncLayoutWidths()
   })
   chatMainResizeObserver.observe(chatMainRef.value)
+  if (chatContentContainerRef.value) {
+    chatMainResizeObserver.observe(chatContentContainerRef.value)
+  }
   armResizeObserver()
 }
 
@@ -2186,18 +2285,23 @@ const handleAgentStateRefresh = async (threadId = null) => {
 }
 
 const toggleStatePanel = async () => {
-  const nextOpen = sideActive.value !== 'state'
-  sideActive.value = nextOpen ? 'state' : ''
+  const nextOpen = !statePanelOpen.value
+  statePanelOpen.value = nextOpen
   if (nextOpen && currentChatId.value && !currentAgentState.value) {
     await handleAgentStateRefresh()
   }
 }
 
+const closeFilePanel = () => {
+  isFilePanelOpen.value = false
+  filePanelDragWidth.value = null
+}
+
 const toggleAgentPanel = async () => {
-  const nextOpen = sideActive.value !== 'file'
+  const nextOpen = !isFilePanelOpen.value
 
   if (!nextOpen) {
-    sideActive.value = ''
+    closeFilePanel()
     return
   }
 
@@ -2216,11 +2320,11 @@ const handlePanelResize = (clientX) => {
 
   const deltaX = clientX - resizeStartX
   const rawWidth = resizeStartWidth - deltaX
-  const minWidth = minPanelRatio * panelContainerWidth
-  const maxWidth = getMaxPanelRatio(panelContainerWidth) * panelContainerWidth
+  const maxWidth = getFilePanelMaxWidth(panelContainerWidth)
+  const minWidth = getFilePanelMinWidth(panelContainerWidth, maxWidth)
   const nextWidth = Math.max(minWidth, Math.min(rawWidth, maxWidth))
 
-  panelWrapperRef.value.style.setProperty('flex', `0 0 ${nextWidth}px`, 'important')
+  filePanelDragWidth.value = nextWidth
 
   if (nextWidth !== rawWidth) {
     resizeStartX = clientX
@@ -2235,6 +2339,7 @@ const handleResizingChange = (isResizingState, clientX = 0) => {
   if (isResizingState && panelWrapperRef.value) {
     resizeStartX = clientX
     resizeStartWidth = panelWrapperRef.value.offsetWidth
+    filePanelDragWidth.value = resizeStartWidth
     if (!panelContainerWidth) {
       panelContainerWidth = getPanelContainerWidth()
     }
@@ -2242,9 +2347,12 @@ const handleResizingChange = (isResizingState, clientX = 0) => {
   }
 
   if (!isResizingState && panelWrapperRef.value && panelContainerWidth) {
-    const finalWidth = panelWrapperRef.value.offsetWidth
+    const finalWidth = filePanelDragWidth.value ?? panelWrapperRef.value.offsetWidth
     panelRatio.value = clampPanelRatio(finalWidth / panelContainerWidth, panelContainerWidth)
-    panelWrapperRef.value.style.removeProperty('flex')
+  }
+
+  if (!isResizingState) {
+    filePanelDragWidth.value = null
     resizeStartX = 0
     resizeStartWidth = 0
     panelContainerWidth = 0 // 重置，供下次使用
@@ -2357,8 +2465,14 @@ onMounted(async () => {
 })
 
 watch(showStateEntry, (visible) => {
-  if (!visible && sideActive.value === 'state') {
-    sideActive.value = ''
+  if (!visible && statePanelOpen.value) {
+    statePanelOpen.value = false
+  }
+})
+
+watch(showFileEntry, (visible) => {
+  if (!visible && isFilePanelOpen.value) {
+    closeFilePanel()
   }
 })
 
@@ -2490,6 +2604,7 @@ watch(currentChatId, (threadId, oldThreadId) => {
     align-items: center;
     padding: 1rem 8px;
     flex-shrink: 0; /* Prevent header from shrinking */
+    transition: padding-right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 
     .header__left,
     .header__right {
@@ -2518,6 +2633,17 @@ watch(currentChatId, (threadId, oldThreadId) => {
       margin-left: 8px;
     }
   }
+
+  &.has-file-panel .chat-header {
+    padding-right: calc(var(--file-panel-width) + 8px);
+  }
+
+  &.is-resizing-file-panel {
+    .chat-header,
+    .chat-main {
+      transition: none;
+    }
+  }
 }
 
 .chat-content-container {
@@ -2538,10 +2664,15 @@ watch(currentChatId, (threadId, oldThreadId) => {
   position: relative;
   transition:
     flex-basis 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    margin-right 0.3s cubic-bezier(0.4, 0, 0.2, 1),
     width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   min-width: 0; /* Prevent flex item from overflowing */
 
   scrollbar-width: none;
+}
+
+.chat-content-container.has-file-panel .chat-main {
+  margin-right: var(--file-panel-width);
 }
 
 .side-panel {
@@ -2549,28 +2680,27 @@ watch(currentChatId, (threadId, oldThreadId) => {
   overflow: hidden;
   background: var(--gray-0);
   border: 1px solid var(--gray-150);
-  border-radius: 16px;
+  border-radius: 10px;
   box-shadow:
     0 16px 40px var(--shadow-1),
     0 2px 10px var(--shadow-0);
   z-index: 20;
-  margin: 0 8px 8px;
-  margin-left: -16px;
   min-width: 0;
   opacity: 0;
+  pointer-events: none;
   transform: translateX(10px);
-  will-change: flex-basis;
+  will-change: width, flex-basis, opacity, transform;
   transition:
+    width 0.3s cubic-bezier(0.4, 0, 0.2, 1),
     flex-basis 0.3s cubic-bezier(0.4, 0, 0.2, 1),
     opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-    transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-    margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .side-panel.is-visible {
   opacity: 1;
+  pointer-events: auto;
   transform: translateX(0);
-  margin-left: 0;
 }
 
 .side-panel.no-transition {
@@ -2578,16 +2708,25 @@ watch(currentChatId, (threadId, oldThreadId) => {
 }
 
 .side-panel--file {
-  align-self: stretch;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  display: flex;
   height: auto;
+  max-width: 100%;
+  border: none;
+  border-left: 1px solid var(--gray-150);
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .side-panel--file.is-visible {
-  min-width: 320px;
+  min-width: 0;
 }
 
 .side-panel--state {
-  align-self: flex-start;
   height: auto;
   max-height: calc(100% - 8px);
   max-width: min(340px, calc(100vw - 24px));
@@ -2597,6 +2736,25 @@ watch(currentChatId, (threadId, oldThreadId) => {
 
 .side-panel--state.is-visible {
   min-width: 300px;
+}
+
+.side-panel--state.is-docked {
+  align-self: flex-start;
+  margin: 0 8px 8px 0;
+}
+
+.side-panel--state.is-floating {
+  position: absolute;
+  top: 8px;
+  right: calc(var(--file-panel-width) + 8px);
+  width: min(340px, calc(100% - var(--file-panel-width) - 24px));
+  min-width: 0;
+  max-height: calc(100% - 16px);
+  margin: 0;
+  z-index: 26;
+  box-shadow:
+    0 12px 28px var(--shadow-1),
+    0 2px 8px var(--shadow-0);
 }
 
 .state-panel {
@@ -2762,7 +2920,6 @@ watch(currentChatId, (threadId, oldThreadId) => {
   margin: 0 auto;
   flex-grow: 1;
   padding: 1rem var(--page-padding);
-  padding-right: 30px;
   display: flex;
   flex-direction: column;
 }
@@ -2914,25 +3071,39 @@ watch(currentChatId, (threadId, oldThreadId) => {
   }
 
   .side-panel--file.is-visible,
-  .side-panel--state.is-visible {
-    max-width: calc(100% - 350px);
+  .side-panel--state.is-docked.is-visible {
+    max-width: 100%;
   }
 }
 
 @media (max-width: 768px) {
+  .chat.has-file-panel .chat-header {
+    padding-right: 8px;
+  }
+
   .chat-content-container.has-file-panel .chat-main,
   .chat-content-container.has-state-panel .chat-main {
+    margin-right: 0;
     min-width: 0;
   }
 
+  .side-panel--file {
+    top: calc(var(--header-height) + 4px);
+  }
+
   .side-panel--file.is-visible {
-    min-width: 280px;
-    max-width: 80%;
+    min-width: 0;
+    max-width: calc(100% - 16px);
   }
 
   .side-panel--state.is-visible {
-    min-width: 260px;
-    max-width: 80%;
+    min-width: 0;
+    max-width: calc(100% - 24px);
+  }
+
+  .side-panel--state.is-floating {
+    right: 12px;
+    width: min(320px, calc(100% - 24px));
   }
 
   .agent-segment-wrapper {

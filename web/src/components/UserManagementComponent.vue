@@ -69,11 +69,21 @@
             />
           </div>
           <div v-else class="user-cards-grid">
-            <div v-for="user in filteredUsers" :key="user.id" class="user-card">
+            <div v-for="user in paginatedUsers" :key="user.id" class="user-card">
               <div class="card-header">
                 <div class="user-info-main">
                   <div class="user-avatar">
-                    <img :src="getUserAvatarSrc(user)" :alt="user.username" class="avatar-img" />
+                    <FallbackAvatar
+                      :src="user.avatar"
+                      :default-src="getUserDefaultAvatarSrc(user)"
+                      :name="user.username"
+                      :seed="user.uid || user.username"
+                      kind="user"
+                      :size="40"
+                      shape="circle"
+                      :alt="user.username"
+                      class="avatar-img"
+                    />
                   </div>
                   <div class="user-info-content">
                     <div class="name-tag-row">
@@ -151,6 +161,16 @@
                 </div>
               </div>
             </div>
+          </div>
+          <div v-if="filteredUsers.length > userManagement.pageSize" class="pagination-section">
+            <a-pagination
+              v-model:current="userManagement.currentPage"
+              v-model:page-size="userManagement.pageSize"
+              :total="filteredUsers.length"
+              :page-size-options="['20', '50', '100']"
+              show-size-changer
+              size="small"
+            />
           </div>
         </div>
       </a-spin>
@@ -272,6 +292,7 @@ import {
 } from 'lucide-vue-next'
 import { formatDateTime } from '@/utils/time'
 import { generatePixelAvatar } from '@/utils/pixelAvatar'
+import FallbackAvatar from '@/components/common/FallbackAvatar.vue'
 
 const userStore = useUserStore()
 
@@ -283,6 +304,8 @@ const userManagement = reactive({
   searchKeyword: '',
   departmentFilter: '',
   roleFilter: '',
+  currentPage: 1,
+  pageSize: 50,
   error: null,
   modalVisible: false,
   modalTitle: '添加用户',
@@ -356,6 +379,12 @@ const filteredUsers = computed(() => {
   })
 })
 
+const paginatedUsers = computed(() => {
+  const pageSize = Number(userManagement.pageSize)
+  const start = (userManagement.currentPage - 1) * pageSize
+  return filteredUsers.value.slice(start, start + pageSize)
+})
+
 // 获取部门列表
 const fetchDepartments = async () => {
   if (!userStore.isSuperAdmin) return // 普通管理员不需要获取所有部门列表
@@ -427,10 +456,27 @@ watch(
   }
 )
 
+watch(
+  () => [userManagement.searchKeyword, userManagement.departmentFilter, userManagement.roleFilter],
+  () => {
+    userManagement.currentPage = 1
+  }
+)
+
+watch(
+  () => filteredUsers.value.length,
+  (total) => {
+    const maxPage = Math.max(1, Math.ceil(total / Number(userManagement.pageSize)))
+    if (userManagement.currentPage > maxPage) {
+      userManagement.currentPage = maxPage
+    }
+  }
+)
+
 // 格式化时间显示
 const formatTime = (timeStr) => formatDateTime(timeStr)
 
-const getUserAvatarSrc = (user) => user.avatar || generatePixelAvatar(user.uid)
+const getUserDefaultAvatarSrc = (user) => (user.uid ? generatePixelAvatar(user.uid) : '')
 
 const isUserDeleteDisabled = (user) =>
   user.id === userStore.userId ||
@@ -945,6 +991,12 @@ onMounted(async () => {
             }
           }
         }
+      }
+
+      .pagination-section {
+        display: flex;
+        justify-content: flex-end;
+        margin-top: 16px;
       }
     }
   }

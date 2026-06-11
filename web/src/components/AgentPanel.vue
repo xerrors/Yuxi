@@ -46,6 +46,14 @@
         <button class="header-action-btn" title="刷新" aria-label="刷新" @click="emitRefresh">
           <RefreshCw :size="15" />
         </button>
+        <button
+          class="header-action-btn"
+          title="关闭文件面板"
+          aria-label="关闭文件面板"
+          @click="emitClose"
+        >
+          <PanelRightClose :size="15" />
+        </button>
       </div>
     </div>
 
@@ -129,7 +137,7 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { Download, Folders, RefreshCw, Trash2, X } from 'lucide-vue-next'
+import { Download, Folders, PanelRightClose, RefreshCw, Trash2, X } from 'lucide-vue-next'
 import { Modal, message } from 'ant-design-vue'
 import FileTreeComponent from '@/components/FileTreeComponent.vue'
 import AgentFilePreview from '@/components/AgentFilePreview.vue'
@@ -170,6 +178,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits([
+  'close',
   'refresh',
   'resize',
   'resizing',
@@ -541,6 +550,10 @@ const emitRefresh = () => {
   emit('refresh', props.threadId)
 }
 
+const emitClose = () => {
+  emit('close')
+}
+
 let resizePointerId = null
 let pendingClientX = 0
 let resizeFrameId = 0
@@ -663,7 +676,9 @@ watch(
 }
 
 .agent-panel {
+  width: 100%;
   height: 100%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   position: relative;
@@ -675,8 +690,7 @@ watch(
   }
 
   .panel-header {
-    border-bottom: none;
-    padding-bottom: 0;
+    border-bottom: 1px solid var(--gray-100);
   }
 
   :deep(.side-preview-shell) {

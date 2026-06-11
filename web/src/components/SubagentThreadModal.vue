@@ -8,13 +8,17 @@
   >
     <template #title>
       <div class="subagent-thread-modal-title">
-        <img
-          v-if="subagentAvatar"
+        <FallbackAvatar
           class="subagent-thread-modal-avatar"
           :src="subagentAvatar"
+          :default-src="subagentDefaultAvatar"
+          :name="modalTitleName"
+          :seed="childThreadId || modalTitleName"
+          kind="agent"
+          :size="28"
+          shape="rounded"
           :alt="`${modalTitleName} icon`"
         />
-        <span v-else class="subagent-thread-modal-avatar" aria-hidden="true"></span>
         <span class="subagent-thread-modal-name">{{ modalTitleName }}</span>
       </div>
     </template>
@@ -31,6 +35,7 @@ import { computed, ref, watch } from 'vue'
 import { agentApi } from '@/apis'
 import { MessageProcessor } from '@/utils/messageProcessor'
 import ThreadMessageList from '@/components/ThreadMessageList.vue'
+import FallbackAvatar from '@/components/common/FallbackAvatar.vue'
 
 const props = defineProps({
   open: {
@@ -46,6 +51,10 @@ const props = defineProps({
     default: ''
   },
   subagentAvatar: {
+    type: String,
+    default: ''
+  },
+  subagentDefaultAvatar: {
     type: String,
     default: ''
   }
