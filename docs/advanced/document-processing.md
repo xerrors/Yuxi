@@ -68,17 +68,19 @@ Yuxi 支持多种文档格式的智能解析，从简单的文本文件到复杂
 
 ### MinerU（高精度）
 
-首先从官网下载最新的 docker-compose 文件：
+项目已内置 mineru-api 服务（位于 docker-compose.yml，属于 all profile），无需额外下载官方 compose 文件。首次构建镜像时会基于 docker/mineru.Dockerfile 下载模型，该过程耗时较长。
+
+启动服务（需要 GPU）：
 
 ```bash
-wget https://gcore.jsdelivr.net/gh/opendatalab/MinerU@master/docker/compose.yaml -O docker/mineru.compose.yml
+docker compose --profile all up -d --build mineru-api
 ```
 
-启动服务（需要 GPU）
+该服务在 `30001` 端口提供 `/file_parse` 接口，后端 `api` / `worker` 默认通过 `MINERU_API_URI=http://mineru-api:30001` 连接，通常无需额外配置。
 
-```bash
-docker compose -f docker/mineru.compose.yml --profile openai-server up -d
-```
+::: tip 显存不足
+若显存有限导致启动失败，可在 `docker-compose.yml` 的 `mineru-api` 服务下放开 `--gpu-memory-utilization` 参数（如 `0.5`，必要时进一步降低）。
+:::
 
 ### MinerU Official（云服务）
 
