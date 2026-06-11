@@ -1318,6 +1318,9 @@ defineExpose({
 
 .remote-list {
   border-top: 1px solid var(--gray-100);
+  /* 远端候选模型较多时仅在列表区内部滚动，保持已启用模型区固定可见，避免撑高弹窗 */
+  max-height: 45vh;
+  overflow-y: auto;
 }
 
 .remote-row {
