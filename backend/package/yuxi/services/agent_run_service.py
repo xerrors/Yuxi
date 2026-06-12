@@ -85,6 +85,10 @@ def _compact_message_dict(message: dict) -> dict:
     compact = {
         key: message[key] for key in ("id", "role", "content", "type", "message_type") if message.get(key) is not None
     }
+    # image_content 是前端渲染内联图片消息（multimodal_image）的必需字段，
+    # 仅在 init chunk 出现一次，不能当作调试字段精简掉，否则流式期间图片不显示。
+    if message.get("image_content"):
+        compact["image_content"] = message["image_content"]
     extra_metadata = message.get("extra_metadata")
     if isinstance(extra_metadata, dict) and extra_metadata.get("attachments"):
         compact["extra_metadata"] = {"attachments": extra_metadata["attachments"]}
@@ -345,11 +349,17 @@ async def create_agent_run_view(
         if run_type == "resume":
             input_metadata["source"] = "ask_user_question_resume"
 
+        if run_type == "resume":
+            input_message_type = "resume"
+        elif image_content:
+            input_message_type = "multimodal_image"
+        else:
+            input_message_type = "text"
         input_message = Message(
             conversation_id=conversation.id,
             role="user",
             content=input_content,
-            message_type="resume" if run_type == "resume" else "text",
+            message_type=input_message_type,
             image_content=image_content,
             run_id=run_id,
             request_id=request_id,
