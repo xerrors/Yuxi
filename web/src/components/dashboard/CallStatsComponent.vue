@@ -169,8 +169,15 @@ const renderCallStatsChart = () => {
     }
   })
 
+  const agentNames = callStatsData.value.agent_names || {}
+
+  const resolveCategoryLabel = (cat) => {
+    if (cat === 'None') return '未知模型'
+    return agentNames[cat] || cat
+  }
+
   const series = categories.map((category, index) => ({
-    name: category === 'None' ? '未知模型' : category,
+    name: resolveCategoryLabel(category),
     type: 'bar',
     stack: 'total',
     emphasis: { focus: 'series' },
@@ -234,7 +241,7 @@ const renderCallStatsChart = () => {
       }
     },
     legend: {
-      data: categories.map((cat) => (cat === 'None' ? '未知模型' : cat)),
+      data: categories.map(resolveCategoryLabel),
       bottom: 5 /* 调整图例位置，从0改为5 */,
       textStyle: { color: getCSSVariable('--gray-500'), fontSize: 12 },
       itemWidth: 14,

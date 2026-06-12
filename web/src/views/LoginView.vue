@@ -283,6 +283,7 @@ import {
   Key as KeyIcon,
   AlertCircle as ExclamationCircleIcon
 } from 'lucide-vue-next'
+import { tryAutoStartOIDC, sanitizeRedirect } from '@/utils/oidcAutoStart'
 
 const router = useRouter()
 const route = useRoute()
@@ -539,9 +540,11 @@ const checkOIDCConfig = async () => {
     if (config.provider_name) {
       oidcButtonText.value = config.provider_name
     }
+    return config
   } catch (error) {
     console.error('检查 OIDC 配置失败:', error)
     oidcEnabled.value = false
+    return null
   } finally {
     oidcChecking.value = false
   }
@@ -614,9 +617,9 @@ const checkServerHealth = async () => {
 
 // 组件挂载时
 onMounted(async () => {
-  // 如果已登录，跳转到首页
+  // 如果已登录，按 redirect 参数跳转（不固定跳首页）
   if (userStore.isLoggedIn) {
-    router.push('/')
+    router.push(sanitizeRedirect(route.query.redirect))
     return
   }
 
@@ -631,8 +634,21 @@ onMounted(async () => {
   // 检查是否是首次运行
   await checkFirstRunStatus()
 
-  // 检查 OIDC 配置
-  checkOIDCConfig()
+  // 如果处于首次运行状态，不需要 OIDC 自动登录
+  if (isFirstRun.value) {
+    return
+  }
+
+  // 检查 OIDC 配置完成后，尝试自动触发 OIDC 登录（跨系统跳转场景）
+  const config = await checkOIDCConfig()
+  if (config && config.enabled) {
+    const autoStarted = await tryAutoStartOIDC(
+      async () => await authApi.getOIDCLoginUrl(),
+      config
+    )
+    // 如果已发起 OIDC 跳转，页面会被重定向，不需要继续
+    if (autoStarted) return
+  }
 })
 
 // 组件卸载时清理定时器

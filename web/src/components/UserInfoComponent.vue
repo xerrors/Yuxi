@@ -3,14 +3,17 @@
     <a-dropdown :trigger="['click']" v-if="userStore.isLoggedIn">
       <div class="user-info-dropdown" :data-align="showRole ? 'left' : 'center'">
         <div class="user-avatar">
-          <img
-            v-if="avatarSrc"
-            :src="avatarSrc"
+          <FallbackAvatar
+            :src="userStore.avatar"
+            :default-src="avatarDefaultSrc"
+            :name="userStore.username"
+            :seed="userStore.uid || userStore.username"
+            kind="user"
+            :size="32"
+            shape="circle"
             :alt="userStore.username"
             class="avatar-image"
-            @error="handleAvatarError"
           />
-          <CircleUser v-else />
           <!-- <div class="user-role-badge" :class="userRoleClass"></div> -->
         </div>
         <div v-if="showRole" class="user-name">{{ userStore.username }}</div>
@@ -67,14 +70,15 @@
 </template>
 
 <script setup>
-import { computed, ref, inject, useSlots, watch } from 'vue'
+import { computed, ref, inject, useSlots } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import DebugComponent from '@/components/DebugComponent.vue'
 import { message } from 'ant-design-vue'
-import { CircleUser, BookOpen, Sun, Moon, LogOut, Settings, Terminal } from 'lucide-vue-next'
+import { BookOpen, Sun, Moon, LogOut, Settings, Terminal } from 'lucide-vue-next'
 import { useThemeStore } from '@/stores/theme'
 import { generatePixelAvatar } from '@/utils/pixelAvatar'
+import FallbackAvatar from '@/components/common/FallbackAvatar.vue'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -87,26 +91,7 @@ const showDebug = ref(false)
 // Inject settings modal methods
 const { openSettingsModal } = inject('settingsModal', {})
 
-const avatarLoadFailed = ref(false)
-
-// 用户头像不可用时回退到基于 UID 生成的本地像素头像。
-const avatarSrc = computed(() => {
-  if (userStore.avatar && !avatarLoadFailed.value) return userStore.avatar
-  return generatePixelAvatar(userStore.uid)
-})
-
-const handleAvatarError = () => {
-  if (userStore.avatar && !avatarLoadFailed.value) {
-    avatarLoadFailed.value = true
-  }
-}
-
-watch(
-  () => userStore.avatar,
-  () => {
-    avatarLoadFailed.value = false
-  }
-)
+const avatarDefaultSrc = computed(() => (userStore.uid ? generatePixelAvatar(userStore.uid) : ''))
 
 defineProps({
   showRole: {

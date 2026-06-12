@@ -19,9 +19,17 @@
         <!-- 卡片头部：用户信息和反馈类型 -->
         <div class="card-header">
           <div class="user-info">
-            <a-avatar :src="getFeedbackAvatarSrc(feedback)" :size="32" class="user-avatar">
-              {{ feedback.username ? feedback.username.charAt(0).toUpperCase() : 'U' }}
-            </a-avatar>
+            <FallbackAvatar
+              :src="feedback.avatar"
+              :default-src="getFeedbackDefaultAvatarSrc(feedback)"
+              :name="feedback.username"
+              :seed="feedback.uid || feedback.username"
+              kind="user"
+              :size="32"
+              shape="circle"
+              :alt="feedback.username"
+              class="user-avatar"
+            />
             <div class="user-details">
               <div class="username">{{ feedback.username || '未知用户' }}</div>
             </div>
@@ -117,6 +125,7 @@ import { LikeOutlined, DislikeOutlined, ClockCircleOutlined } from '@ant-design/
 import { dashboardApi } from '@/apis/dashboard_api'
 import { formatFullDateTime } from '@/utils/time'
 import { generatePixelAvatar } from '@/utils/pixelAvatar'
+import FallbackAvatar from '@/components/common/FallbackAvatar.vue'
 
 // 常量配置
 const CONFIG = {
@@ -212,7 +221,7 @@ const loadFeedbacks = async () => {
   }
 }
 
-const getFeedbackAvatarSrc = (feedback) => feedback.avatar || generatePixelAvatar(feedback.uid)
+const getFeedbackDefaultAvatarSrc = (feedback) => (feedback.uid ? generatePixelAvatar(feedback.uid) : '')
 
 // 格式化完整日期
 const formatFullDate = (dateString) => formatFullDateTime(dateString)

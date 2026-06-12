@@ -349,6 +349,10 @@ class AgentRepository:
         result = await self.db.execute(select(Agent).where(Agent.slug == slug))
         return result.scalar_one_or_none()
 
+    async def list_by_slugs(self, slugs: list[str]) -> list[Agent]:
+        result = await self.db.execute(select(Agent).where(Agent.slug.in_(slugs)))
+        return list(result.scalars().all())
+
     async def get_visible_by_slug(self, *, slug: str, user: User, include_subagents: bool = False) -> Agent | None:
         agent = await self.get_by_slug(slug)
         if not agent or (agent.is_subagent and not include_subagents):

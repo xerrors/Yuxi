@@ -20,9 +20,17 @@
           accept="image/*"
         >
           <div class="avatar-upload" :class="{ uploading: avatarUploading }">
-            <a-avatar :size="80" :src="avatarSrc" @error="handleAvatarError">
-              <template #icon><CircleUser :size="48" /></template>
-            </a-avatar>
+            <FallbackAvatar
+              :src="userStore.avatar"
+              :default-src="avatarDefaultSrc"
+              :name="userStore.username"
+              :seed="userStore.uid || userStore.username"
+              kind="user"
+              :size="80"
+              shape="circle"
+              :alt="userStore.username"
+              class="account-avatar"
+            />
             <div class="avatar-mask">
               <Upload v-if="!avatarUploading" :size="16" />
               <RefreshCw v-else :size="16" class="spin" />
@@ -103,8 +111,9 @@
 <script setup>
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
-import { CircleUser, RefreshCw, Upload } from 'lucide-vue-next'
+import { RefreshCw, Upload } from 'lucide-vue-next'
 import ApiKeyManagementComponent from '@/components/ApiKeyManagementComponent.vue'
+import FallbackAvatar from '@/components/common/FallbackAvatar.vue'
 import { useUserStore } from '@/stores/user'
 import { generatePixelAvatar } from '@/utils/pixelAvatar'
 
@@ -115,16 +124,12 @@ const savingField = ref('')
 const editingField = ref('')
 const usernameInput = ref(null)
 const phoneInput = ref(null)
-const avatarLoadFailed = ref(false)
 const profileDraft = reactive({
   username: '',
   phone_number: ''
 })
 
-const avatarSrc = computed(() => {
-  if (userStore.avatar && !avatarLoadFailed.value) return userStore.avatar
-  return generatePixelAvatar(userStore.uid)
-})
+const avatarDefaultSrc = computed(() => (userStore.uid ? generatePixelAvatar(userStore.uid) : ''))
 
 const userRoleText = computed(() => {
   switch (userStore.userRole) {
@@ -142,13 +147,6 @@ const userRoleText = computed(() => {
 const syncProfileDraft = () => {
   profileDraft.username = userStore.username || ''
   profileDraft.phone_number = userStore.phoneNumber || ''
-}
-
-const handleAvatarError = () => {
-  if (userStore.avatar && !avatarLoadFailed.value) {
-    avatarLoadFailed.value = true
-  }
-  return false
 }
 
 const refreshProfile = async () => {
@@ -270,7 +268,6 @@ const handleAvatarChange = async (info) => {
   try {
     avatarUploading.value = true
     await userStore.uploadAvatar(info.file.originFileObj || info.file)
-    avatarLoadFailed.value = false
     message.success('头像上传成功！')
   } catch (error) {
     console.error('头像上传失败:', error)
@@ -279,13 +276,6 @@ const handleAvatarChange = async (info) => {
     avatarUploading.value = false
   }
 }
-
-watch(
-  () => userStore.avatar,
-  () => {
-    avatarLoadFailed.value = false
-  }
-)
 
 watch(() => [userStore.username, userStore.phoneNumber], syncProfileDraft, { immediate: true })
 </script>
@@ -337,19 +327,10 @@ watch(() => [userStore.username, userStore.phoneNumber], syncProfileDraft, { imm
     flex: 0 0 auto;
     box-shadow: 0 2px 8px var(--shadow-2);
 
-    :deep(.ant-avatar) {
+    .account-avatar {
       width: 80px;
       height: 80px;
       border: 3px solid var(--gray-150);
-      background: var(--gray-50);
-      color: var(--gray-400);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    :deep(.ant-avatar-image img) {
-      object-fit: cover;
     }
 
     &:hover .avatar-mask,

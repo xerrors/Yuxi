@@ -2,7 +2,7 @@ from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from langchain.agents import create_agent
 from langchain.agents.middleware import ModelRetryMiddleware, TodoListMiddleware
 
-from yuxi.agents import BaseAgent, load_chat_model
+from yuxi.agents import BaseAgent, load_chat_model, resolve_chat_model_spec
 from yuxi.agents.backends import create_agent_filesystem_middleware
 from yuxi.agents.context import prepare_agent_runtime_context
 from yuxi.agents.middlewares import (
@@ -24,8 +24,9 @@ async def _build_middlewares(context):
     # summary middleware
     # 主 Agent 上下文优化：默认 100k tokens 触发压缩，保留最近 50%
     summary_trigger_tokens = getattr(context, "summary_threshold", 100) * 1024
+    model_spec = resolve_chat_model_spec(context.model)
     summary_middleware = create_summary_middleware(
-        model=load_chat_model(fully_specified_name=context.model),
+        model=load_chat_model(fully_specified_name=model_spec),
         trigger=("tokens", summary_trigger_tokens),
         keep=("tokens", summary_trigger_tokens // 2),
         trim_tokens_to_summarize=4000,
@@ -71,8 +72,9 @@ class ChatbotAgent(BaseAgent):
         )
 
         # 使用 create_agent 创建智能体
+        model_spec = resolve_chat_model_spec(context.model)
         graph = create_agent(
-            model=load_chat_model(fully_specified_name=context.model),
+            model=load_chat_model(fully_specified_name=model_spec),
             tools=await resolve_configured_runtime_tools(context),
             system_prompt=build_prompt_with_context(context),
             middleware=await _build_middlewares(context),

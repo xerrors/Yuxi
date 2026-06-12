@@ -1,4 +1,4 @@
-import { getPreviewFileExtension, getPreviewTypeByPath } from '@/utils/file_preview'
+import { getPreviewFileExtension } from '@/utils/file_preview'
 import { formatRelative, parseToShanghai } from '@/utils/time'
 
 export const formatRelativeTime = (value) => formatRelative(value)
@@ -47,6 +47,16 @@ export const getMimeSubtypeLabel = (mimeType) => {
   return subtype ? subtype.toUpperCase() : ''
 }
 
+export const inferImageMimeTypeFromBase64 = (base64Content) => {
+  const head = String(base64Content || '').slice(0, 48)
+  if (head.startsWith('iVBORw0KGgo')) return 'image/png'
+  if (head.startsWith('/9j/')) return 'image/jpeg'
+  if (head.startsWith('R0lGODdh') || head.startsWith('R0lGODlh')) return 'image/gif'
+  if (head.startsWith('UklGR')) return 'image/webp'
+  if (head.startsWith('Qk')) return 'image/bmp'
+  return null
+}
+
 export const normalizeAttachmentPreview = (attachment) => {
   const name = getDisplayFileName(
     attachment?.file_name || attachment?.name || attachment?.path,
@@ -62,7 +72,6 @@ export const normalizeAttachmentPreview = (attachment) => {
     fileId,
     name,
     previewUrl: attachment?.original_artifact_url || attachment?.artifact_url || '',
-    isImage: fileType.startsWith('image/') || getPreviewTypeByPath(name) === 'image',
     meta: [typeLabel, sizeLabel === '-' ? '' : sizeLabel].filter(Boolean).join(' · ')
   }
 }

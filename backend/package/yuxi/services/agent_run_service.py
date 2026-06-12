@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.agents.buildin import agent_manager
+from yuxi.agents.models import resolve_chat_model_spec
 from yuxi.models.providers.cache import model_cache
 from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.agent_run_repository import TERMINAL_RUN_STATUSES, AgentRunRepository
@@ -37,16 +38,17 @@ SSE_POLL_INTERVAL_SECONDS = float(os.getenv("RUN_SSE_POLL_INTERVAL_SECONDS", "1.
 
 def _validate_model_spec(model_spec: str | None) -> str | None:
     """校验对话级模型覆盖：未提供则返回 None；非法模型直接 422，不静默回退。"""
-    if not model_spec:
+    normalized = model_spec.strip() if isinstance(model_spec, str) else None
+    if not normalized:
         return None
-    info = model_cache.get_model_info(model_spec)
+    info = model_cache.get_model_info(normalized)
     if not info or info.model_type != "chat":
-        raise HTTPException(status_code=422, detail=f"未找到可用聊天模型: '{model_spec}'")
-    return model_spec
+        raise HTTPException(status_code=422, detail=f"未找到可用聊天模型: '{normalized}'")
+    return normalized
 
 
-def _resolve_effective_model_spec(model_spec: str | None, agent_item, agent_backend) -> str | None:
-    """解析本次 chat run 实际使用的模型：显式覆盖优先，否则快照智能体当前配置。"""
+def _resolve_effective_model_spec(model_spec: str | None, agent_item, agent_backend) -> str:
+    """解析本次 chat run 实际使用的模型：显式覆盖优先，否则配置模型，最后系统默认模型。"""
     resolved_model_spec = _validate_model_spec(model_spec)
     if resolved_model_spec:
         return resolved_model_spec
@@ -56,7 +58,7 @@ def _resolve_effective_model_spec(model_spec: str | None, agent_item, agent_back
     config_context = config_json.get("context") if isinstance(config_json, dict) else {}
     if isinstance(config_context, dict):
         context.update_from_dict(config_context)
-    return getattr(context, "model", None)
+    return resolve_chat_model_spec(getattr(context, "model", None))
 
 
 def _build_run_response(run) -> dict:
@@ -349,7 +351,7 @@ async def create_agent_run_view(
             conversation_id=conversation.id,
             role="user",
             content=input_content,
-            message_type="resume" if run_type == "resume" else "text",
+            message_type="resume" if run_type == "resume" else "multimodal_image" if image_content else "text",
             image_content=image_content,
             run_id=run_id,
             request_id=request_id,

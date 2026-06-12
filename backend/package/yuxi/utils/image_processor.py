@@ -106,12 +106,7 @@ class ImageProcessor:
     def _generate_thumbnail(self, img: Image.Image) -> bytes:
         """生成缩略图"""
         try:
-            # 创建副本以避免修改原图
-            thumbnail = img.copy()
-
-            # 转换为RGB模式（处理RGBA等格式）
-            if thumbnail.mode != "RGB":
-                thumbnail = thumbnail.convert("RGB")
+            thumbnail = self._convert_to_rgb_for_export(img)
 
             # 生成缩略图，保持宽高比
             thumbnail.thumbnail(self.THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
@@ -129,6 +124,20 @@ class ImageProcessor:
                 empty_img.save(output, format="JPEG", quality=85)
                 return output.getvalue()
 
+    def _convert_to_rgb_for_export(self, img: Image.Image) -> Image.Image:
+        """转换为 RGB，同时把透明像素按白底合成，避免隐藏颜色变成可见像素。"""
+        if img.mode == "RGB":
+            return img.copy()
+
+        has_alpha = img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info)
+        if not has_alpha:
+            return img.convert("RGB")
+
+        rgba_img = img.convert("RGBA")
+        background = Image.new("RGBA", rgba_img.size, (255, 255, 255, 255))
+        background.alpha_composite(rgba_img)
+        return background.convert("RGB")
+
     def _compress_image(self, img: Image.Image, original_format: str) -> tuple[bytes, str]:
         """
         压缩图片，如果超过大小限制
@@ -140,12 +149,7 @@ class ImageProcessor:
         Returns:
             Tuple[bytes, str]: (压缩后的图片数据, 最终格式)
         """
-        # 创建副本
-        processed_img = img.copy()
-
-        # 转换为RGB模式（如果需要）
-        if processed_img.mode in ("RGBA", "LA", "P"):
-            processed_img = processed_img.convert("RGB")
+        processed_img = self._convert_to_rgb_for_export(img)
 
         # 尝试保持原始格式，但优先使用JPEG（更好的压缩）
         target_format = "JPEG" if original_format != "PNG" else "PNG"

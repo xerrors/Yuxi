@@ -5,7 +5,7 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import ModelRetryMiddleware, TodoListMiddleware
 from langchain.agents.middleware.types import AgentMiddleware
 
-from yuxi.agents import BaseAgent, BaseState, load_chat_model
+from yuxi.agents import BaseAgent, BaseState, load_chat_model, resolve_chat_model_spec
 from yuxi.agents.backends import create_agent_filesystem_middleware
 from yuxi.agents.buildin.chatbot.prompt import TODO_MID_PROMPT, build_prompt_with_context
 from yuxi.agents.buildin.subagent.context import SubAgentContext
@@ -40,8 +40,9 @@ class _SubAgentToolFilterMiddleware(AgentMiddleware[Any, Any, Any]):
 
 async def _build_middlewares(context):
     summary_trigger_tokens = getattr(context, "summary_threshold", 100) * 1024
+    model_spec = resolve_chat_model_spec(context.model)
     summary_middleware = create_summary_middleware(
-        model=load_chat_model(fully_specified_name=context.model),
+        model=load_chat_model(fully_specified_name=model_spec),
         trigger=("tokens", summary_trigger_tokens),
         keep=("tokens", summary_trigger_tokens // 2),
         trim_tokens_to_summarize=4000,
@@ -96,9 +97,10 @@ class SubAgentBackend(BaseAgent):
             context or self.context_schema(),
             context_schema=self.context_schema,
         )
+        model_spec = resolve_chat_model_spec(context.model)
 
         return create_agent(
-            model=load_chat_model(fully_specified_name=context.model),
+            model=load_chat_model(fully_specified_name=model_spec),
             tools=_filter_disabled_tools(await resolve_configured_runtime_tools(context)),
             system_prompt=build_prompt_with_context(context),
             middleware=await _build_middlewares(context),

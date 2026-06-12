@@ -313,7 +313,7 @@ const formatResultData = (data) => {
         }
 
         .description {
-          color: var(--gray-500);
+          color: var(--gray-600);
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
@@ -329,7 +329,7 @@ const formatResultData = (data) => {
       :deep(.tag) {
         font-size: 11px;
         color: var(--gray-500);
-        background-color: var(--gray-50);
+        // background-color: var(--gray-50);
         padding: 0px 4px;
         border-radius: 4px;
         margin-left: 8px;
@@ -337,11 +337,11 @@ const formatResultData = (data) => {
 
         &.success {
           color: var(--color-success-500);
-          background-color: var(--color-success-50);
+          // background-color: var(--color-success-50);
         }
         &.error {
           color: var(--color-error-500);
-          background-color: var(--color-error-50);
+          // background-color: var(--color-error-50);
         }
       }
     }

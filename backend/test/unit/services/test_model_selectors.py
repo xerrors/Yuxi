@@ -4,7 +4,7 @@ import httpx
 import pytest
 import requests
 
-from yuxi.agents.models import load_chat_model
+from yuxi.agents.models import load_chat_model, resolve_chat_model_spec
 from yuxi.models.chat import select_model
 from yuxi.models.embed import OtherEmbedding, select_embedding_model
 from yuxi.models.rerank import OpenAIReranker, get_reranker
@@ -62,6 +62,21 @@ def _httpx_embedding_response(status_code: int, content: str | None = None) -> h
 def test_selectors_report_unknown_unconfigured_specs(selector, args):
     with pytest.raises(ValueError, match="Unknown|未找到模型"):
         selector(**args)
+
+
+def test_resolve_chat_model_spec_prefers_explicit_then_fallback_then_default(monkeypatch):
+    monkeypatch.setattr("yuxi.agents.models.sys_config.default_model", "system-default:model")
+
+    assert resolve_chat_model_spec(" explicit:model ", fallback="fallback:model") == "explicit:model"
+    assert resolve_chat_model_spec("", fallback=" fallback:model ") == "fallback:model"
+    assert resolve_chat_model_spec(None, fallback="") == "system-default:model"
+
+
+def test_resolve_chat_model_spec_rejects_all_empty(monkeypatch):
+    monkeypatch.setattr("yuxi.agents.models.sys_config.default_model", "")
+
+    with pytest.raises(ValueError, match="model spec 不能为空"):
+        resolve_chat_model_spec("", fallback=None)
 
 
 def test_select_embedding_model_loads_model_from_cache(monkeypatch):

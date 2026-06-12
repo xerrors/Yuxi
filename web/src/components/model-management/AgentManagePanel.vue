@@ -24,6 +24,7 @@ import { isBuiltinAgent, useAgentStore } from '@/stores/agent'
 import { useUserStore } from '@/stores/user'
 import PageShoulder from '@/components/shared/PageShoulder.vue'
 import InfoCard from '@/components/shared/InfoCard.vue'
+import FallbackAvatar from '@/components/common/FallbackAvatar.vue'
 import ExtensionCardGrid from '@/components/extensions/ExtensionCardGrid.vue'
 import { generatePixelAvatar } from '@/utils/pixelAvatar'
 import { MAX_IMAGE_UPLOAD_SIZE_BYTES, MAX_IMAGE_UPLOAD_SIZE_MB } from '@/utils/upload_limits'
@@ -150,16 +151,15 @@ const getAgentShareAllowedLevels = () => {
 
 const canManageAgent = (agent) => !!agent?.can_manage
 const agentModalTitle = computed(() => (editingAgentId.value ? '编辑智能体' : '新增智能体'))
-const getAgentIconSrc = (agent) => agent.icon || (agent.id ? generatePixelAvatar(agent.id) : '')
+const getAgentDefaultIconSrc = (agent) => (agent.id ? generatePixelAvatar(agent.id) : '')
 const getAgentTags = (agent) => [
   ...(!agent?.can_manage ? [{ name: '只读', color: 'default' }] : []),
   ...(agent?.backend_id ? [{ name: agent.backend_id, color: 'blue' }] : [])
 ]
-const agentPreviewIcon = computed(() => {
-  if (agentForm.icon?.trim()) return agentForm.icon.trim()
-  if (editingAgentId.value) return generatePixelAvatar(editingAgentId.value)
-  return ''
-})
+const agentPreviewDefaultIcon = computed(() =>
+  editingAgentId.value ? generatePixelAvatar(editingAgentId.value) : ''
+)
+const agentPreviewName = computed(() => agentForm.name || editingAgentId.value || '智能体')
 const selectedBackendOption = computed(() =>
   agentBackendOptions.value.find((backend) => backend.value === agentForm.backend_id)
 )
@@ -424,10 +424,15 @@ defineExpose({
             @click="canManageAgent(agent) && openEditAgentModal(agent)"
           >
             <template #icon>
-              <img
-                v-if="getAgentIconSrc(agent)"
+              <FallbackAvatar
                 class="agent-card-icon-image"
-                :src="getAgentIconSrc(agent)"
+                :src="agent.icon"
+                :default-src="getAgentDefaultIconSrc(agent)"
+                :name="agent.name || agent.id"
+                :seed="agent.id || agent.name"
+                kind="agent"
+                :size="40"
+                shape="rounded"
                 :alt="`${agent.name || '智能体'}图标`"
               />
             </template>
@@ -534,13 +539,19 @@ defineExpose({
                       class="agent-icon-upload"
                       :class="{
                         uploading: agentIconUploading,
-                        'is-empty': !agentPreviewIcon
+                        'is-empty': !agentForm.icon && !editingAgentId && !agentForm.name.trim()
                       }"
                     >
-                      <img
-                        v-if="agentPreviewIcon"
-                        :src="agentPreviewIcon"
+                      <FallbackAvatar
+                        :src="agentForm.icon"
+                        :default-src="agentPreviewDefaultIcon"
+                        :name="agentPreviewName"
+                        :seed="editingAgentId || agentForm.slug || agentForm.name"
+                        kind="agent"
+                        :size="56"
+                        shape="rounded"
                         :alt="`${agentForm.name || '智能体'}图标`"
+                        class="agent-icon-preview-avatar"
                       />
                       <div class="agent-icon-mask">
                         <RefreshCw v-if="agentIconUploading" :size="16" class="spinning" />
@@ -667,7 +678,7 @@ defineExpose({
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  border: 0;
 }
 
 .agent-card-menu-trigger {
@@ -911,11 +922,10 @@ defineExpose({
     border-color 0.16s ease,
     box-shadow 0.16s ease;
 
-  img {
-    display: block;
+  .agent-icon-preview-avatar {
     width: 100%;
     height: 100%;
-    object-fit: cover;
+    border: 0;
   }
 
   &:hover,

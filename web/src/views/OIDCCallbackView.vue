@@ -32,6 +32,7 @@ import { useUserStore } from '@/stores/user'
 import { useAgentStore } from '@/stores/agent'
 import { authApi } from '@/apis/auth_api'
 import { message } from 'ant-design-vue'
+import { clearAutoStartAttempt } from '@/utils/oidcAutoStart'
 
 const router = useRouter()
 const route = useRoute()
@@ -84,9 +85,10 @@ const handleCallback = async () => {
     // 显示成功消息
     message.success('登录成功')
 
-    // 获取重定向路径
+    // 获取重定向路径并清理 OIDC 相关标记
     const redirectPath = sessionStorage.getItem('oidc_redirect') || '/'
     sessionStorage.removeItem('oidc_redirect')
+    clearAutoStartAttempt()
 
     loading.value = false
 

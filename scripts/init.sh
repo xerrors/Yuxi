@@ -125,7 +125,6 @@ images=(
     "quay.io/coreos/etcd:v3.5.5"
     "postgres:16"
     "redis:7-alpine"
-    "enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest"
 )
 
 # Pull each image
@@ -138,6 +137,10 @@ for image in "${images[@]}"; do
         exit 1
     fi
 done
+
+echo "🔄 Pulling enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest..."
+docker pull enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest
+echo "✅ Successfully pulled enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest"
 
 echo ""
 echo "🎉 Initialization complete!"

@@ -16,6 +16,7 @@ from sqlalchemy import Integer, String, cast, distinct, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.utils.auth_middleware import get_admin_user, get_db
+from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.storage.postgres.models_business import User
 from yuxi.utils.datetime_utils import UTC, ensure_shanghai, shanghai_now, utc_now
@@ -89,6 +90,7 @@ class AgentAnalytics(BaseModel):
     agent_satisfaction_rates: list[dict]
     agent_tool_usage: list[dict]
     top_performing_agents: list[dict]
+    agent_names: dict[str, str] = {}  # agent_id -> agent_name 映射
 
 
 class ConversationListItem(BaseModel):
@@ -557,12 +559,19 @@ async def get_agent_analytics(
         top_performing_agents.sort(key=lambda x: x["conversation_count"], reverse=True)
         top_performing_agents = top_performing_agents[:5]
 
+        agent_slugs = [agent_id for agent_id, _ in agents if agent_id]
+        agent_names = {}
+        if agent_slugs:
+            agent_repo = AgentRepository(db)
+            agent_names = {agent.slug: agent.name for agent in await agent_repo.list_by_slugs(agent_slugs)}
+
         return AgentAnalytics(
             total_agents=total_agents,
             agent_conversation_counts=agent_conversation_counts,
             agent_satisfaction_rates=agent_satisfaction,
             agent_tool_usage=agent_tool_usage,
             top_performing_agents=top_performing_agents,
+            agent_names=agent_names,
         )
 
     except Exception as e:
@@ -718,6 +727,7 @@ class TimeSeriesStats(BaseModel):
     average_count: float
     peak_count: int
     peak_date: str
+    agent_names: dict[str, str] | None = None  # agent_id -> agent_name 映射（仅 type=agents）
 
 
 @dashboard.get("/stats/calls/timeseries", response_model=TimeSeriesStats)
@@ -887,6 +897,13 @@ async def get_call_timeseries_stats(
 
         categories = sorted(list(categories))
 
+        agent_names = None
+        if type == "agents" and categories:
+            agent_slugs = [c for c in categories if c]
+            if agent_slugs:
+                agent_repo = AgentRepository(db)
+                agent_names = {agent.slug: agent.name for agent in await agent_repo.list_by_slugs(agent_slugs)}
+
         # 重新组织数据：按时间点分组每个类别的数据
         time_data = {}
 
@@ -961,6 +978,7 @@ async def get_call_timeseries_stats(
             average_count=average_count,
             peak_count=peak_data["total"],
             peak_date=peak_data["date"],
+            agent_names=agent_names,
         )
 
     except HTTPException:

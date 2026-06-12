@@ -33,6 +33,7 @@ MILVUS_AVAILABLE = True
 CONTENT_SPARSE_FIELD = "content_sparse"
 CONTENT_ANALYZER_PARAMS = {"type": "chinese"}
 VECTOR_METRIC_TYPE = "COSINE"
+MILVUS_CHUNK_EMBED_BATCH_SIZE = 200
 
 
 @dataclass(kw_only=True)
@@ -526,6 +527,33 @@ class MilvusKB(KnowledgeBase):
             logger.error(f"Failed to rollback Milvus chunks for {file_id}: {cleanup_error}")
         raise errors[0]
 
+    async def _embed_and_store_chunks(
+        self,
+        kb_id: str,
+        file_id: str,
+        collection: Collection,
+        chunks: list[dict],
+        embedding_function,
+        *,
+        chunk_batch_size: int = MILVUS_CHUNK_EMBED_BATCH_SIZE,
+    ) -> None:
+        """对 chunks 进行分批嵌入并存储到 Milvus 和 PostgreSQL"""
+        if not chunks:
+            return
+
+        chunk_batch_size = max(int(chunk_batch_size), 1)
+        for start in range(0, len(chunks), chunk_batch_size):
+            batch_chunks = chunks[start : start + chunk_batch_size]
+            texts = [chunk["content"] for chunk in batch_chunks]
+            embeddings = await embedding_function(texts)
+            await self._insert_chunks_to_stores(
+                kb_id,
+                file_id,
+                collection,
+                batch_chunks,
+                embeddings,
+            )
+
     async def _delete_file_chunks_from_milvus(self, collection: Collection, file_id: str) -> None:
         expr = f'file_id == "{file_id}"'
         results = collection.query(expr=expr, output_fields=["id"], limit=1)
@@ -652,12 +680,9 @@ class MilvusKB(KnowledgeBase):
             )
 
             if chunks:
-                texts = [chunk["content"] for chunk in chunks]
-                embeddings = await embedding_function(texts)
-
                 # Clean up existing chunks if any (for re-indexing)
                 await self.delete_file_chunks_only(kb_id, file_id)
-                await self._insert_chunks_to_stores(kb_id, file_id, collection, chunks, embeddings)
+                await self._embed_and_store_chunks(kb_id, file_id, collection, chunks, embedding_function)
 
             logger.info(f"Indexed file {file_id} into Milvus")
 
@@ -744,9 +769,7 @@ class MilvusKB(KnowledgeBase):
                 await self.delete_file_chunks_only(kb_id, file_id)
 
                 if chunks:
-                    texts = [chunk["content"] for chunk in chunks]
-                    embeddings = await embedding_function(texts)
-                    await self._insert_chunks_to_stores(kb_id, file_id, collection, chunks, embeddings)
+                    await self._embed_and_store_chunks(kb_id, file_id, collection, chunks, embedding_function)
 
                 logger.info(f"Updated file {file_path} in Milvus. Done.")
 

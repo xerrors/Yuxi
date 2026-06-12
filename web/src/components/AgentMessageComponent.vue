@@ -1,9 +1,9 @@
 <template>
   <div
-    v-if="message.message_type === 'multimodal_image' && message.image_content"
+    v-if="message.type === 'human' && message.image_content"
     class="message-image"
   >
-    <img :src="`data:image/jpeg;base64,${message.image_content}`" alt="用户上传的图片" />
+    <img :src="`data:${messageImageMimeType};base64,${message.image_content}`" alt="用户上传的图片" />
   </div>
   <div
     class="message-box"
@@ -109,15 +109,7 @@
     class="human-message-attachments"
   >
     <div
-      v-for="attachment in imageAttachments"
-      :key="attachment.fileId"
-      class="message-attachment-image"
-    >
-      <img :src="attachment.previewUrl" :alt="attachment.name" class="message-attachment-thumb" />
-    </div>
-
-    <div
-      v-for="attachment in fileAttachments"
+      v-for="attachment in messageAttachments"
       :key="attachment.fileId"
       class="message-attachment-file"
     >
@@ -146,7 +138,7 @@ import { useAgentStore } from '@/stores/agent'
 import { useInfoStore } from '@/stores/info'
 import { storeToRefs } from 'pinia'
 import { MessageProcessor } from '@/utils/messageProcessor'
-import { normalizeAttachmentPreviews } from '@/utils/file_utils'
+import { inferImageMimeTypeFromBase64, normalizeAttachmentPreviews } from '@/utils/file_utils'
 import { buildMentionDisplayLabels } from '@/utils/mention_utils'
 import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
 import { enrichTaskToolCalls } from '@/components/ToolCallingResult/toolRegistry'
@@ -266,12 +258,8 @@ const infoStore = useInfoStore()
 const messageAttachments = computed(() =>
   normalizeAttachmentPreviews(props.message.extra_metadata?.attachments)
 )
-
-const imageAttachments = computed(() =>
-  messageAttachments.value.filter((attachment) => attachment.isImage && attachment.previewUrl)
-)
-const fileAttachments = computed(() =>
-  messageAttachments.value.filter((attachment) => !attachment.isImage || !attachment.previewUrl)
+const messageImageMimeType = computed(
+  () => inferImageMimeTypeFromBase64(props.message.image_content) || 'image/jpeg'
 )
 
 const mentionDisplayLabels = computed(() => buildMentionDisplayLabels(props.mention || {}))
@@ -495,22 +483,6 @@ const parsedData = computed(() => {
   align-self: flex-end;
   max-width: 95%;
   margin-bottom: 0.8rem;
-}
-
-.message-attachment-image {
-  width: 112px;
-  height: 112px;
-  overflow: hidden;
-  border: 1px solid var(--gray-200);
-  border-radius: 0.5rem;
-  background: var(--gray-0);
-}
-
-.message-attachment-thumb {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
 }
 
 .message-attachment-file {

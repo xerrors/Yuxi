@@ -169,6 +169,7 @@ def _json_safe(value: Any) -> Any:
 def _apply_model_override(input_context: dict, meta: dict | None) -> None:
     """对话级模型覆盖：meta.model_spec 优先于智能体配置的 model。值已在创建 run 时校验。"""
     model_spec = (meta or {}).get("model_spec")
+    model_spec = model_spec.strip() if isinstance(model_spec, str) else model_spec
     if model_spec:
         input_context["model"] = model_spec
 

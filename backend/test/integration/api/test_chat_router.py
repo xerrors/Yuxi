@@ -4,9 +4,12 @@ Integration tests for chat router endpoints.
 
 from __future__ import annotations
 
+import base64
+import io
 import uuid
 
 import pytest
+from PIL import Image
 from yuxi.agents.backends.sandbox import ensure_thread_dirs, sandbox_user_data_dir, sandbox_workspace_dir
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
@@ -15,6 +18,58 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 async def test_chat_endpoints_require_authentication(test_client):
     assert (await test_client.get("/api/chat/threads")).status_code == 401
     assert (await test_client.get("/api/agent")).status_code == 401
+
+
+async def test_image_upload_composites_transparent_png_pixels_on_white(test_client, admin_headers):
+    image = Image.new("RGBA", (2, 2), (255, 255, 255, 0))
+    image.putpixel((0, 0), (50, 87, 244, 0))
+    image.putpixel((1, 0), (50, 87, 244, 255))
+
+    with io.BytesIO() as buffer:
+        image.save(buffer, format="PNG")
+        image_bytes = buffer.getvalue()
+
+    response = await test_client.post(
+        "/api/chat/image/upload",
+        headers=admin_headers,
+        files={"file": ("transparent.png", image_bytes, "image/png")},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["success"] is True
+    assert payload["mime_type"] == "image/png"
+
+    processed_data = base64.b64decode(payload["image_content"])
+    with Image.open(io.BytesIO(processed_data)) as processed_image:
+        rgb_image = processed_image.convert("RGB")
+
+    assert rgb_image.getpixel((0, 0)) == (255, 255, 255)
+    assert rgb_image.getpixel((1, 0)) == (50, 87, 244)
+
+
+async def test_thread_artifact_uses_image_signature_for_content_type(test_client, admin_headers):
+    thread_id = await _create_thread_for_user(test_client, admin_headers)
+    image = Image.new("RGBA", (2, 2), (255, 255, 255, 0))
+
+    with io.BytesIO() as buffer:
+        image.save(buffer, format="PNG")
+        image_bytes = buffer.getvalue()
+
+    upload_response = await test_client.post(
+        f"/api/chat/thread/{thread_id}/attachments",
+        headers=admin_headers,
+        files={"file": ("mislabeled.jpg", image_bytes, "image/jpeg")},
+    )
+
+    assert upload_response.status_code == 200, upload_response.text
+    attachment = upload_response.json()
+
+    artifact_response = await test_client.get(attachment["original_artifact_url"], headers=admin_headers)
+
+    assert artifact_response.status_code == 200, artifact_response.text
+    assert artifact_response.headers["content-type"].startswith("image/png")
+    assert artifact_response.content.startswith(b"\x89PNG\r\n\x1a\n")
 
 
 async def _create_thread_for_user(test_client, headers: dict[str, str]) -> str:

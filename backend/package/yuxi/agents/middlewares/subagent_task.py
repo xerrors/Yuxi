@@ -413,6 +413,10 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
                 run_id=run.id,
                 request_id=run.request_id,
             )
+            if not str(child_input_context.get("model") or "").strip():
+                parent_model = str(getattr(self.parent_context, "model", "") or "").strip()
+                if parent_model:
+                    child_input_context["model"] = parent_model
             child_context.update_from_dict(child_input_context)
             child_context.uid = uid
             child_context.thread_id = child_thread_id

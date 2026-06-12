@@ -23,27 +23,7 @@
 
         <div v-if="previewAttachments.length" class="attachment-preview-list">
           <div
-            v-for="attachment in previewImageAttachments"
-            :key="attachment.fileId"
-            class="attachment-preview-image"
-          >
-            <img
-              :src="attachment.previewUrl"
-              :alt="attachment.name"
-              class="attachment-image-thumb"
-            />
-            <button
-              class="attachment-remove-btn"
-              type="button"
-              :aria-label="`移除附件 ${attachment.name}`"
-              @click.stop="handleAttachmentRemoved(attachment)"
-            >
-              <X :size="14" />
-            </button>
-          </div>
-
-          <div
-            v-for="attachment in previewFileAttachments"
+            v-for="attachment in previewAttachments"
             :key="attachment.fileId"
             class="attachment-file-card"
           >
@@ -124,12 +104,6 @@ const currentImage = ref(null)
 const placeholder = '问点什么？使用 @ 可以提及哦~'
 
 const previewAttachments = computed(() => normalizeAttachmentPreviews(props.attachments))
-const previewImageAttachments = computed(() =>
-  previewAttachments.value.filter((attachment) => attachment.isImage && attachment.previewUrl)
-)
-const previewFileAttachments = computed(() =>
-  previewAttachments.value.filter((attachment) => !attachment.isImage || !attachment.previewUrl)
-)
 
 const updateValue = (val) => {
   emit('update:modelValue', val)
@@ -213,23 +187,6 @@ defineExpose({
   gap: 8px;
 }
 
-.attachment-preview-image {
-  position: relative;
-  width: 80px;
-  height: 80px;
-  border-radius: 12px;
-  border: 1px solid var(--gray-150);
-  background: var(--gray-25);
-  overflow: hidden;
-}
-
-.attachment-image-thumb {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-
 .attachment-file-card {
   position: relative;
   display: flex;
@@ -281,8 +238,8 @@ defineExpose({
   position: absolute;
   top: 6px;
   right: 6px;
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   border: none;
   border-radius: 50%;
   display: inline-flex;

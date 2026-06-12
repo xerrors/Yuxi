@@ -6,8 +6,13 @@
         :alt="imageData.originalName"
         class="preview-image"
       />
-      <button class="remove-button" @click="handleRemove">
-        <X />
+      <button
+        class="remove-button"
+        type="button"
+        :aria-label="`移除图片 ${imageData.originalName || ''}`"
+        @click="handleRemove"
+      >
+        <X :size="14" />
       </button>
     </div>
   </div>
@@ -49,22 +54,29 @@ const handleRemove = () => {
 
 .remove-button {
   position: absolute;
-  top: 3px;
-  right: 3px;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
+  top: 6px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
   border: none;
-  background: rgba(0, 0, 0, 0.2);
-  color: var(--gray-0);
-  cursor: pointer;
-  display: flex;
+  border-radius: 50%;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: background-color 0.15s ease;
+  padding: 0;
+  color: var(--gray-0);
+  background: var(--gray-900);
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    transform 0.15s ease;
 
   &:hover {
-    background: rgba(0, 0, 0, 0.3);
+    background: var(--gray-700);
+  }
+
+  &:active {
+    transform: scale(0.96);
   }
 }
 </style>

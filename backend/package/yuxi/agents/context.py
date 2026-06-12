@@ -5,7 +5,6 @@ import uuid
 from dataclasses import MISSING, dataclass, field, fields
 from typing import Any, get_origin
 
-from yuxi import config as sys_config
 from yuxi.agents.backends.sandbox.paths import sandbox_workspace_agents_prompt_file
 from yuxi.utils.logging_config import logger
 
@@ -131,11 +130,11 @@ class BaseContext:
     )
 
     model: str = field(
-        default=sys_config.default_model,
+        default="",
         metadata={
             "name": "智能体模型",
             "options": [],
-            "description": "智能体的驱动模型，建议选择 Agent 能力较强的模型，不建议使用小参数模型。",
+            "description": "智能体的驱动模型，留空时使用系统默认模型。",
             "kind": "llm",
         },
     )

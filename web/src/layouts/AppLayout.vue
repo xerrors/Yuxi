@@ -112,6 +112,9 @@ const route = useRoute()
 const router = useRouter()
 
 const activeTaskCount = computed(() => activeCountRef.value || 0)
+const activeConversationThreadId = computed(() => {
+  return route.path.startsWith('/agent') ? currentThreadId.value : null
+})
 const organizationName = computed(() => {
   return infoStore.organization.name || infoStore.branding.name || 'Yuxi'
 })
@@ -124,7 +127,8 @@ const mainList = computed(() => {
       path: '/agent',
       icon: MessageCirclePlus,
       activeIcon: MessageCirclePlus,
-      action: true
+      action: true,
+      exactActive: true
     }
   ]
 
@@ -164,6 +168,9 @@ const mainList = computed(() => {
 
 const isNavItemActive = (item) => {
   const activePaths = item.activePaths || [item.path]
+  if (item.exactActive) {
+    return activePaths.some((path) => route.path === path)
+  }
   return activePaths.some((path) => route.path === path || route.path.startsWith(`${path}/`))
 }
 
@@ -297,7 +304,7 @@ provide('settingsModal', {
         <ConversationNavSection
           v-if="!sidebarCollapsed"
           class="sidebar-conversations"
-          :current-chat-id="currentThreadId"
+          :current-chat-id="activeConversationThreadId"
           :chats-list="threads"
           :has-more-chats="hasMoreThreads"
           :is-loading-more="isLoadingMoreThreads"
