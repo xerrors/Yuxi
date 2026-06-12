@@ -3,7 +3,7 @@
 
 # 组织信息
 organization:
-  name: "江南语析"           # 完整组织名称
+  name: "楚天智航"           # 完整组织名称
   logo: "/favicon.svg"       # Logo文件路径（放在 web/public 目录下）
   avatar: "/avatar.jpg"      # 头像文件路径（放在 web/public 目录下）
   login_bg: "/login-bg.jpg"  # 登录背景图片路径（放在 web/public 目录下）

@@ -2,8 +2,8 @@
 import { ref, computed } from 'vue'
 import { withBase } from 'vitepress'
 
-const GITHUB = 'https://github.com/xerrors/Yuxi'
-const DEMO = 'https://www.bilibili.com/video/BV1TZEx6NEit/'
+// const GITHUB = 'https://github.com/xerrors/Yuxi'
+// const DEMO = 'https://www.bilibili.com/video/BV1TZEx6NEit/'
 
 // 关键数字（占位，后续替换为真实数据）
 const stats = [

@@ -344,8 +344,9 @@ services:
       dockerfile: docker/mineru.Dockerfile
     image: mineru-vllm:latest
     container_name: mineru-api
+    # GPU 服务：随 .env 的 COMPOSE_PROFILES=gpu 默认启动；无 GPU 机器置空即可跳过
     profiles:
-      - all
+      - gpu
     env_file:
       - .env
     ports:
@@ -383,8 +384,9 @@ services:
       dockerfile: docker/paddlex.Dockerfile
     image: paddlex:latest
     container_name: paddlex-ocr
+    # GPU 服务：随 .env 的 COMPOSE_PROFILES=gpu 默认启动；无 GPU 机器置空即可跳过
     profiles:
-      - all
+      - gpu
     volumes:
       - ./docker/volumes/paddlex:/paddlex
     ports:

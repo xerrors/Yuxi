@@ -36,7 +36,7 @@
           <span class="logo-text">{{ infoStore.organization.name }}</span>
         </div>
         <div class="header-actions">
-          <a
+          <!-- <a
             class="github-link"
             href="https://github.com/xerrors/Yuxi"
             target="_blank"
@@ -49,7 +49,7 @@
                 d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"
               ></path>
             </svg>
-          </a>
+          </a> -->
           <UserInfoComponent :show-button="true" />
         </div>
       </header>
@@ -84,7 +84,7 @@
                 <span>开始体验</span>
                 <ArrowRight :size="18" />
               </button>
-              <a
+              <!-- <a
                 class="button-base secondary"
                 href="https://xerrors.github.io/Yuxi/"
                 target="_blank"
@@ -92,7 +92,7 @@
               >
                 <BookText :size="18" />
                 <span>查看文档</span>
-              </a>
+              </a> -->
             </div>
           </div>
 
@@ -145,11 +145,8 @@
                     ></span>
                   </div>
 
-                  <div class="flow-node flow-node--hub">
-                    <span class="flow-icon flow-icon--hub">
-                      <span class="hub-ring"></span>
-                      <Sparkles :size="24" />
-                    </span>
+                  <div class="flow-node">
+                    <span class="flow-icon"><Sparkles :size="22" /></span>
                     <span class="flow-name">RAG 引擎</span>
                   </div>
 
@@ -172,6 +169,103 @@
                   <div class="flow-node">
                     <span class="flow-icon"><Library :size="22" /></span>
                     <span class="flow-name">知识库</span>
+                  </div>
+                </div>
+
+                <div class="flow-mid">
+                  <div class="flow-vcol">
+                    <div class="flow-vlink" aria-hidden="true">
+                      <span class="flow-vrail"></span>
+                      <span
+                        class="flow-dot flow-dot--down"
+                        v-for="n in 2"
+                        :key="`d1${n}`"
+                        :style="{ '--i': n - 1 }"
+                      ></span>
+                      <span
+                        class="flow-dot flow-dot--up"
+                        v-for="n in 2"
+                        :key="`u1${n}`"
+                        :style="{ '--i': n - 1 }"
+                      ></span>
+                    </div>
+                  </div>
+
+                  <div class="flow-center">
+                    <div class="flow-node flow-node--hub">
+                      <span class="flow-icon flow-icon--hub flow-icon--llm">
+                        <span class="hub-ring"></span>
+                        <Brain :size="46" />
+                      </span>
+                      <span class="flow-name"> </span>
+                    </div>
+                  </div>
+
+                  <div class="flow-vcol">
+                    <div class="flow-vlink" aria-hidden="true">
+                      <span class="flow-vrail"></span>
+                      <span
+                        class="flow-dot flow-dot--down"
+                        v-for="n in 2"
+                        :key="`d2${n}`"
+                        :style="{ '--i': n - 1 }"
+                      ></span>
+                      <span
+                        class="flow-dot flow-dot--up"
+                        v-for="n in 2"
+                        :key="`u2${n}`"
+                        :style="{ '--i': n - 1 }"
+                      ></span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="flow-row flow-row--second">
+                  <div class="flow-node">
+                    <span class="flow-icon"><User :size="22" /></span>
+                    <span class="flow-name">终端用户</span>
+                  </div>
+
+                  <div class="flow-link" aria-hidden="true">
+                    <span class="flow-rail"></span>
+                    <span
+                      class="flow-dot flow-dot--fwd"
+                      v-for="n in 2"
+                      :key="`f3${n}`"
+                      :style="{ '--i': n - 1 }"
+                    ></span>
+                    <span
+                      class="flow-dot flow-dot--back"
+                      v-for="n in 2"
+                      :key="`b3${n}`"
+                      :style="{ '--i': n - 1 }"
+                    ></span>
+                  </div>
+
+                  <div class="flow-node">
+                    <span class="flow-icon"><Terminal :size="22" /></span>
+                    <span class="flow-name">工具沙盒</span>
+                  </div>
+
+                  <div class="flow-link" aria-hidden="true">
+                    <span class="flow-rail"></span>
+                    <span
+                      class="flow-dot flow-dot--fwd"
+                      v-for="n in 2"
+                      :key="`f5${n}`"
+                      :style="{ '--i': n - 1 }"
+                    ></span>
+                    <span
+                      class="flow-dot flow-dot--back"
+                      v-for="n in 2"
+                      :key="`b5${n}`"
+                      :style="{ '--i': n - 1 }"
+                    ></span>
+                  </div>
+
+                  <div class="flow-node">
+                    <span class="flow-icon"><Puzzle :size="22" /></span>
+                    <span class="flow-name">技能 Skills</span>
                   </div>
                 </div>
 
@@ -211,14 +305,14 @@ import { useInfoStore } from '@/stores/info'
 import { healthApi } from '@/apis/system_api'
 import UserInfoComponent from '@/components/UserInfoComponent.vue'
 import {
-  BookText,
-  Star,
-  GitFork,
-  CircleDot,
   ArrowRight,
   Workflow,
   Library,
-  Sparkles
+  Sparkles,
+  User,
+  Brain,
+  Terminal,
+  Puzzle
 } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -232,20 +326,8 @@ const isLoading = ref(true)
 const error = ref(null)
 const typedBadge = ref('')
 const isBadgeTyping = ref(false)
-const githubStats = ref(null)
 let badgeTimer = null
 let subtitleTimer = null
-let starsFetchController = null
-
-const GITHUB_REPO_API = 'https://api.github.com/repos/xerrors/Yuxi'
-const GITHUB_STARS_TIMEOUT = 3000
-
-const formatStars = (count) => {
-  if (!Number.isFinite(count) || count <= 0) {
-    return ''
-  }
-  return `${count}`
-}
 
 const subtitleIndex = ref(0)
 
@@ -303,46 +385,8 @@ const startSubtitleCarousel = () => {
   }, 2800)
 }
 
-const stopStarsFetch = () => {
-  if (starsFetchController) {
-    starsFetchController.abort()
-    starsFetchController = null
-  }
-}
-
-const fetchGithubRepo = async () => {
-  stopStarsFetch()
-  const controller = new AbortController()
-  starsFetchController = controller
-  const timer = setTimeout(() => {
-    controller.abort()
-  }, GITHUB_STARS_TIMEOUT)
-
-  try {
-    const response = await fetch(GITHUB_REPO_API, { signal: controller.signal })
-    if (!response.ok) {
-      return null
-    }
-
-    const data = await response.json()
-    return {
-      stars: Number(data?.stargazers_count) || 0,
-      forks: Number(data?.forks_count) || 0,
-      issues: Number(data?.open_issues_count) || 0
-    }
-  } catch {
-    return null
-  } finally {
-    clearTimeout(timer)
-    if (starsFetchController === controller) {
-      starsFetchController = null
-    }
-  }
-}
-
-const getHeroBadgeText = (starsCount = null) => {
-  const realtimeStars = formatStars(starsCount)
-  return realtimeStars ? `已获得 ${realtimeStars} GitHub Stars` : ''
+const getHeroBadgeText = () => {
+  return '在“智”的道路上稳步前行'
 }
 
 const stopBadgeTyping = () => {
@@ -353,9 +397,9 @@ const stopBadgeTyping = () => {
   isBadgeTyping.value = false
 }
 
-const startBadgeTyping = (starsCount = null) => {
+const startBadgeTyping = () => {
   stopBadgeTyping()
-  const text = getHeroBadgeText(starsCount)
+  const text = getHeroBadgeText()
   typedBadge.value = ''
 
   if (!text) {
@@ -398,14 +442,11 @@ const loadData = async () => {
     // 健康检查通过后加载配置
     await infoStore.loadInfoConfig()
     startSubtitleCarousel()
-    const repo = await fetchGithubRepo()
-    githubStats.value = repo
-    startBadgeTyping(repo?.stars ?? null)
+    startBadgeTyping()
   } catch (e) {
     console.error('加载失败:', e)
     stopBadgeTyping()
     stopSubtitleCarousel()
-    stopStarsFetch()
     typedBadge.value = ''
   } finally {
     isLoading.value = false
@@ -434,24 +475,11 @@ onMounted(() => {
 onUnmounted(() => {
   stopBadgeTyping()
   stopSubtitleCarousel()
-  stopStarsFetch()
 })
 
-const formatCount = (count) =>
-  Number.isFinite(count) && count >= 0 ? count.toLocaleString('en-US') : ''
-
-// 首页统计直接展示实时的 GitHub 仓库数据，不再依赖 branding 配置
+// 首页不再展示统计数据
 const realtimeStats = computed(() => {
-  const stats = githubStats.value
-  if (!stats) {
-    return []
-  }
-
-  return [
-    { key: 'stars', label: 'Stars', value: formatCount(stats.stars), icon: Star },
-    { key: 'forks', label: 'Forks', value: formatCount(stats.forks), icon: GitFork },
-    { key: 'issues', label: 'Open Issues', value: formatCount(stats.issues), icon: CircleDot }
-  ]
+  return []
 })
 </script>
 
@@ -748,7 +776,7 @@ const realtimeStats = computed(() => {
   flex-wrap: wrap;
   gap: 1.25rem;
   align-items: center;
-  margin-top: 0.5rem;
+  margin-top: 3.5rem;
 }
 
 .button-base {
@@ -855,6 +883,84 @@ const realtimeStats = computed(() => {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
+}
+
+.flow-row--second {
+  margin-top: 0;
+}
+
+/* 竖向连线：复刻横向 flow-link 的轨道 + 流动圆点，方向改为上下 */
+.flow-vlink {
+  position: relative;
+  width: 54px;
+  height: 36px;
+  margin: 0 auto;
+}
+
+.flow-vrail {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  border-radius: 2px;
+  background: linear-gradient(
+    180deg,
+    var(--main-50),
+    var(--main-200) 25%,
+    var(--main-200) 75%,
+    var(--main-50)
+  );
+}
+
+.flow-dot--down {
+  left: calc(50% - 5px);
+  background: var(--main-500);
+  box-shadow: 0 0 0 4px var(--main-50);
+  animation: flowDown 2.4s linear infinite;
+  animation-delay: calc(var(--i) * 1.2s);
+}
+
+.flow-dot--up {
+  left: calc(50% + 5px);
+  transform: translateX(-100%);
+  background: var(--main-300);
+  box-shadow: 0 0 0 4px var(--main-30);
+  animation: flowUp 2.4s linear infinite;
+  animation-delay: calc(var(--i) * 1.2s + 0.6s);
+}
+
+/* 中间排：左竖线 / 中央LLM / 右竖线，与上下排三列对齐 */
+.flow-mid {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.flow-vcol {
+  width: 76px;
+  flex-shrink: 0;
+  display: flex;
+  justify-content: center;
+}
+
+/* 中央 LLM 居中 */
+.flow-center {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+}
+
+.flow-icon--hub.flow-icon--llm {
+  width: 150px;
+  height: 60px;
+  border-radius: 26px;
+}
+
+/* 中央 LLM 节点不受普通节点 76px 宽度限制 */
+.flow-center .flow-node {
+  width: auto;
 }
 
 .flow-node {
@@ -1101,6 +1207,40 @@ const realtimeStats = computed(() => {
   }
   100% {
     left: -4px;
+    opacity: 0;
+  }
+}
+
+@keyframes flowDown {
+  0% {
+    top: -4px;
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    top: calc(100% - 4px);
+    opacity: 0;
+  }
+}
+
+@keyframes flowUp {
+  0% {
+    top: calc(100% - 4px);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    top: -4px;
     opacity: 0;
   }
 }

@@ -70,7 +70,7 @@
           <div class="star-card-header">
             <div class="star-card-badge">
               <Star :size="12" />
-              <span>支持项目</span>
+              <span>问题反馈</span>
             </div>
             <button
               class="star-card-close lucide-icon-btn"
@@ -80,11 +80,11 @@
               <X :size="14" />
             </button>
           </div>
-          <p class="star-card-title">给 Yuxi 点个 Star</p>
+          <p class="star-card-title">VX:xiangchang24</p>
           <p class="star-card-description">
-            如果这个项目帮到了你，欢迎去 GitHub 点亮一个 Star，让更多人看到它。
+            如果有任何问题请及时联系，请尽情发挥你的想象来反复质问小智
           </p>
-          <a
+          <!-- <a
             class="star-card-link"
             :href="projectRepoUrl"
             target="_blank"
@@ -96,7 +96,7 @@
               alt="GitHub stars for Yuxi"
             />
             <ExternalLink :size="13" />
-          </a>
+          </a> -->
         </div>
       </div>
 

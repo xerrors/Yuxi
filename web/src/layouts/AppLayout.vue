@@ -40,9 +40,9 @@ const { activeCount: activeCountRef, isDrawerOpen } = storeToRefs(taskerStore)
 const { threads, currentThreadId, hasMoreThreads, isLoadingMoreThreads } =
   storeToRefs(chatThreadsStore)
 
-// Add state for GitHub stars
-const githubStars = ref(0)
-const isLoadingStars = ref(false)
+// // Add state for GitHub stars
+// const githubStars = ref(0)
+// const isLoadingStars = ref(false)
 
 // Add state for debug modal
 const showDebugModal = ref(false)
@@ -82,19 +82,19 @@ const getRemoteDatabase = async () => {
 }
 
 // Fetch GitHub stars count
-const fetchGithubStars = async () => {
-  try {
-    isLoadingStars.value = true
-    // 公共API，可以直接使用fetch
-    const response = await fetch('https://api.github.com/repos/xerrors/Yuxi')
-    const data = await response.json()
-    githubStars.value = data.stargazers_count
-  } catch (error) {
-    console.error('获取GitHub stars失败:', error)
-  } finally {
-    isLoadingStars.value = false
-  }
-}
+// const fetchGithubStars = async () => {
+//   try {
+//     isLoadingStars.value = true
+//     // 公共API，可以直接使用fetch
+//     const response = await fetch('https://api.github.com/repos/xerrors/Yuxi')
+//     const data = await response.json()
+//     githubStars.value = data.stargazers_count
+//   } catch (error) {
+//     console.error('获取GitHub stars失败:', error)
+//   } finally {
+//     isLoadingStars.value = false
+//   }
+// }
 
 onMounted(async () => {
   // 加载信息配置与知识库数据无依赖，可并行
@@ -104,7 +104,7 @@ onMounted(async () => {
   if (userStore.isAdmin) {
     await getRemoteConfig()
     taskerStore.loadTasks()
-    fetchGithubStars() // Fetch GitHub stars on mount
+    // fetchGithubStars() // Fetch GitHub stars on mount
   }
 })
 
@@ -309,7 +309,7 @@ provide('settingsModal', {
         />
       </div>
       <div class="foo">
-        <div class="github nav-item" @click.stop>
+        <!-- <div class="github nav-item" @click.stop>
           <a-tooltip placement="right" :open="sidebarCollapsed ? undefined : false">
             <template #title>欢迎 Star</template>
             <a href="https://github.com/xerrors/Yuxi" target="_blank" class="github-link">
@@ -320,7 +320,7 @@ provide('settingsModal', {
               </span>
             </a>
           </a-tooltip>
-        </div>
+        </div> -->
         <!-- 用户信息组件 -->
         <div class="nav-item user-info" @click.stop>
           <UserInfoComponent :show-role="!sidebarCollapsed">
