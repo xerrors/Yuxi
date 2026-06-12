@@ -9,7 +9,8 @@ import {
   Settings2,
   Trash2,
   CheckCircle2,
-  LayersPlus
+  LayersPlus,
+  X
 } from 'lucide-vue-next'
 
 import { modelProviderApi } from '@/apis/system_api'
@@ -69,6 +70,9 @@ const editingModel = ref({
 // Models modal state (per provider)
 const showModelsModal = ref(false)
 const currentProviderForModels = ref(null)
+
+// 远端候选模型底部滑出面板开关（在模型配置弹窗内部）
+const showRemotePanel = ref(false)
 
 // Remote models per provider
 const remoteModelsMap = ref({})
@@ -426,6 +430,8 @@ const openModelsModal = (provider) => {
   remoteModelSearch.value[provider.provider_id] =
     remoteModelSearch.value[provider.provider_id] || ''
   remoteModelTypeFilter.value[provider.provider_id] = 'all'
+  // 每次进入弹窗默认只展示已启用模型，远端候选面板保持关闭
+  showRemotePanel.value = false
   showModelsModal.value = true
 }
 
@@ -445,6 +451,19 @@ const fetchRemoteModels = async (providerId) => {
   } finally {
     remoteLoading.value = false
   }
+}
+
+// 点击「获取远程模型」：沿用现有请求逻辑，成功后从弹窗内底部滑出候选面板
+const openRemotePanel = async (providerId) => {
+  await fetchRemoteModels(providerId)
+  if (remoteModelsLoaded.value[providerId]) {
+    showRemotePanel.value = true
+  }
+}
+
+const closeRemotePanel = () => {
+  // 仅关闭面板，不清空 remoteModelsMap 缓存（照搬现有弹窗不清缓存的设定）
+  showRemotePanel.value = false
 }
 
 // ============ Model Operations ============
@@ -861,7 +880,7 @@ defineExpose({
                 type="primary"
                 class="lucide-icon-btn"
                 :loading="remoteLoading"
-                @click="fetchRemoteModels(currentProviderForModels.provider_id)"
+                @click="openRemotePanel(currentProviderForModels.provider_id)"
               >
                 获取远程模型
               </a-button>
@@ -950,25 +969,40 @@ defineExpose({
           <a-empty v-else description="暂无已启用模型" />
         </div>
 
-        <!-- Remote Models Section -->
-        <div class="models-section">
-          <div class="remote-header">
+        <!-- 遮罩：抽屉打开时点击非抽屉区域关闭，并让下层变暗形成层次感 -->
+        <Transition name="remote-overlay-fade">
+          <div v-if="showRemotePanel" class="remote-overlay" @click="closeRemotePanel"></div>
+        </Transition>
+
+        <!-- Remote Models Panel（弹窗内底部滑出） -->
+        <div class="remote-panel" :class="{ open: showRemotePanel }">
+          <div class="remote-panel-header">
             <h4 class="models-section-title">远端候选模型 ({{ filteredRemoteModels.length }})</h4>
-            <a-input
-              v-if="remoteModelsMap[currentProviderForModels.provider_id]?.length"
-              v-model:value="remoteModelSearch[currentProviderForModels.provider_id]"
-              class="remote-search-input"
-              placeholder="搜索模型..."
-              allow-clear
+            <div class="remote-panel-filters">
+              <a-input
+                v-if="remoteModelsMap[currentProviderForModels.provider_id]?.length"
+                v-model:value="remoteModelSearch[currentProviderForModels.provider_id]"
+                class="remote-search-input"
+                placeholder="搜索模型..."
+                allow-clear
+              >
+                <template #prefix><Search :size="12" /></template>
+              </a-input>
+              <a-segmented
+                v-if="remoteModelsMap[currentProviderForModels.provider_id]?.length"
+                v-model:value="remoteModelTypeFilter[currentProviderForModels.provider_id]"
+                :options="remoteModelTypeOptions"
+                class="remote-type-filter"
+              />
+            </div>
+            <a-button
+              size="small"
+              class="lucide-icon-btn remote-panel-close"
+              aria-label="关闭"
+              @click="closeRemotePanel"
             >
-              <template #prefix><Search :size="12" /></template>
-            </a-input>
-            <a-segmented
-              v-if="remoteModelsMap[currentProviderForModels.provider_id]?.length"
-              v-model:value="remoteModelTypeFilter[currentProviderForModels.provider_id]"
-              :options="remoteModelTypeOptions"
-              class="remote-type-filter"
-            />
+              <X :size="14" />
+            </a-button>
           </div>
           <div
             class="remote-list"
@@ -1018,7 +1052,7 @@ defineExpose({
               </a-button>
             </div>
           </div>
-          <div class="remote-fetch-actions"></div>
+          <a-empty v-else class="remote-empty" description="暂无远端候选模型" />
         </div>
       </div>
     </a-modal>
@@ -1144,12 +1178,19 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 20px;
+  /* 固定高度略加高，作为远端候选底部滑出面板的定位上下文；内部各区自行滚动 */
+  position: relative;
+  height: 68vh;
+  overflow: hidden;
 }
 
 .models-section {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  /* 已启用模型区占满弹窗，表格过多时在区域内部滚动，header 按钮保持固定 */
+  flex: 1;
+  min-height: 0;
 }
 
 .models-section-title {
@@ -1164,7 +1205,10 @@ defineExpose({
   flex-direction: column;
   border: 1px solid var(--gray-150);
   border-radius: 6px;
-  overflow: hidden;
+  /* 已启用模型过多时表格区内部滚动 */
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .table-head,
@@ -1284,6 +1328,8 @@ defineExpose({
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 8px;
+  /* header（含获取远程模型 / 手动添加按钮）固定，不随列表滚动 */
+  flex-shrink: 0;
 
   .models-section-title {
     margin: 0;
@@ -1296,16 +1342,89 @@ defineExpose({
   }
 }
 
-.remote-header {
+/* 遮罩：盖住下层已启用模型区，点击关闭抽屉，并让抽屉浮起形成层次感 */
+.remote-overlay {
+  position: absolute;
+  inset: 0;
+  /* 遮罩用页面背景色 + 不透明度提白虚化下层（不依赖暗色硬编码，浅/暗色均跟随 token） */
+  background: var(--gray-0);
+  opacity: 0.6;
+  z-index: 2;
+  cursor: pointer;
+}
+
+/* 遮罩淡入淡出（关闭时也平滑消失） */
+.remote-overlay-fade-enter-active,
+.remote-overlay-fade-leave-active {
+  transition: opacity 0.28s ease;
+}
+
+.remote-overlay-fade-enter-from,
+.remote-overlay-fade-leave-to {
+  opacity: 0;
+}
+
+/* 远端候选模型：从弹窗内底部滑出的面板，覆盖弹窗下半部 */
+.remote-panel {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  height: 80%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px 16px 14px;
+  background: var(--gray-0);
+  /* 浮起卡片四角圆角 */
+  border-radius: 12px;
+  /* 环绕柔和投影，使卡片明显浮于下层之上 */
+  box-shadow: 0 8px 24px var(--shadow-4);
+  transform: translateY(calc(100% + 12px));
+  transition: transform 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+  z-index: 3;
+
+  /* 顶部抓手条，强化“抽屉”感 */
+  &::before {
+    content: '';
+    position: absolute;
+    top: 7px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--gray-200);
+  }
+
+  &.open {
+    transform: translateY(0);
+  }
+}
+
+.remote-panel-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
+  flex-shrink: 0;
 
   .models-section-title {
     margin: 0;
     flex-shrink: 0;
   }
+}
+
+.remote-panel-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.remote-panel-close {
+  /* 复用 lucide-icon-btn 与 a-button 基础样式，仅防止被过滤区挤压 */
+  flex-shrink: 0;
 }
 
 .remote-search-input {
@@ -1317,10 +1436,18 @@ defineExpose({
 }
 
 .remote-list {
-  border-top: 1px solid var(--gray-100);
-  /* 远端候选模型较多时仅在列表区内部滚动，保持已启用模型区固定可见，避免撑高弹窗 */
-  max-height: 45vh;
+  /* 候选过多时仅在面板内部滚动 */
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+}
+
+.remote-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
 }
 
 .remote-row {
