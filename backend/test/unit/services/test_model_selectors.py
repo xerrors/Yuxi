@@ -5,7 +5,7 @@ import pytest
 import requests
 
 from yuxi.agents.models import load_chat_model, resolve_chat_model_spec
-from yuxi.models.chat import select_model
+from yuxi.models.chat import LangChainChatAdapter, select_model
 from yuxi.models.embed import OtherEmbedding, select_embedding_model
 from yuxi.models.rerank import OpenAIReranker, get_reranker
 from yuxi.models.providers.cache import ModelInfo
@@ -21,6 +21,18 @@ def _model_info(model_type: str) -> ModelInfo:
         base_url="https://example.com/v1",
         provider_type="openai",
         dimension=1024 if model_type == "embedding" else None,
+    )
+
+
+def _chat_model_info(provider_id: str, model_id: str, provider_type: str = "openai") -> ModelInfo:
+    return ModelInfo(
+        provider_id=provider_id,
+        model_id=model_id,
+        model_type="chat",
+        display_name=model_id,
+        api_key="test-key",
+        base_url="https://example.com/v1",
+        provider_type=provider_type,
     )
 
 
@@ -90,6 +102,108 @@ def test_select_embedding_model_loads_model_from_cache(monkeypatch):
     assert isinstance(model, OtherEmbedding)
     assert model.model == "namespace/embedding-model"
     assert model.dimension == 1024
+
+
+def test_select_model_wraps_langchain_model_and_expands_model_params(monkeypatch):
+    fake_model = SimpleNamespace()
+    captured = {}
+
+    monkeypatch.setattr(
+        "yuxi.models.chat.model_cache.get_model_info",
+        lambda spec: _chat_model_info("test-provider", "namespace/chat-model")
+        if spec == "test-provider:namespace/chat-model"
+        else None,
+    )
+
+    def fake_load_chat_model(spec, **kwargs):
+        captured["spec"] = spec
+        captured["kwargs"] = kwargs
+        return fake_model
+
+    monkeypatch.setattr("yuxi.models.chat.load_chat_model", fake_load_chat_model)
+
+    model = select_model(
+        "test-provider:namespace/chat-model",
+        model_params={"temperature": 0.2},
+        timeout=60.0,
+    )
+
+    assert isinstance(model, LangChainChatAdapter)
+    assert model.model is fake_model
+    assert model.model_name == "namespace/chat-model"
+    assert captured == {
+        "spec": "test-provider:namespace/chat-model",
+        "kwargs": {"temperature": 0.2, "timeout": 60.0},
+    }
+
+
+def test_select_model_maps_anthropic_max_completion_tokens(monkeypatch):
+    captured = {}
+
+    monkeypatch.setattr(
+        "yuxi.models.chat.model_cache.get_model_info",
+        lambda spec: _chat_model_info("anthropic", "mimo-v2.5", provider_type="anthropic")
+        if spec == "anthropic:mimo-v2.5"
+        else None,
+    )
+    monkeypatch.setattr(
+        "yuxi.models.chat.load_chat_model",
+        lambda spec, **kwargs: captured.update({"spec": spec, "kwargs": kwargs}) or SimpleNamespace(),
+    )
+
+    select_model("anthropic:mimo-v2.5", model_params={"max_completion_tokens": 123})
+
+    assert captured == {"spec": "anthropic:mimo-v2.5", "kwargs": {"max_tokens": 123}}
+
+
+def test_load_chat_model_disables_tool_call_streaming_for_all_siliconflow(monkeypatch):
+    monkeypatch.setattr(
+        "yuxi.agents.models.model_cache.get_model_info",
+        lambda spec: _chat_model_info("siliconflow-cn", "deepseek-ai/DeepSeek-V4-Flash")
+        if spec == "siliconflow-cn:deepseek-ai/DeepSeek-V4-Flash"
+        else None,
+    )
+
+    model = load_chat_model("siliconflow-cn:deepseek-ai/DeepSeek-V4-Flash")
+    explicit = load_chat_model("siliconflow-cn:deepseek-ai/DeepSeek-V4-Flash", disable_streaming=False)
+
+    assert model.disable_streaming == "tool_calling"
+    assert explicit.disable_streaming is False
+
+
+def test_load_chat_model_keeps_non_siliconflow_openai_streaming(monkeypatch):
+    monkeypatch.setattr(
+        "yuxi.agents.models.model_cache.get_model_info",
+        lambda spec: _chat_model_info("openai-compatible", "namespace/chat-model")
+        if spec == "openai-compatible:namespace/chat-model"
+        else None,
+    )
+
+    model = load_chat_model("openai-compatible:namespace/chat-model")
+    explicit = load_chat_model("openai-compatible:namespace/chat-model", disable_streaming=True)
+
+    assert model.disable_streaming is False
+    assert explicit.disable_streaming is True
+
+
+@pytest.mark.asyncio
+async def test_langchain_chat_adapter_preserves_call_response_contract():
+    from langchain_core.messages import AIMessage
+
+    captured = {}
+
+    class FakeLangChainModel:
+        async def ainvoke(self, messages):
+            captured["messages"] = messages
+            return AIMessage(content=[{"type": "text", "text": "he"}, {"type": "text", "text": "llo"}])
+
+    adapter = LangChainChatAdapter(FakeLangChainModel(), model_name="test-model")
+
+    response = await adapter.call([{"role": "user", "content": "Say hello"}], stream=False)
+
+    assert response.content == "hello"
+    assert response.is_full is False
+    assert type(captured["messages"][0]).__name__ == "HumanMessage"
 
 
 @pytest.mark.asyncio
