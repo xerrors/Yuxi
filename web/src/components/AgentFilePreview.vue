@@ -222,7 +222,7 @@
               <iframe
                 :key="`fullscreen-${htmlPreviewRenderKey}`"
                 class="html-preview fullscreen-embed-preview"
-                :srcdoc="htmlPreviewSrcdoc"
+                :srcdoc="htmlPreviewFullscreenSrcdoc"
                 :title="filePath"
                 sandbox="allow-scripts"
               />
@@ -281,7 +281,7 @@ import {
 
 const EDITABLE_EXTENSIONS = new Set(['.md', '.markdown', '.mdx', '.txt'])
 const HTML_PREVIEW_SCALE = 0.75
-const HTML_PREVIEW_SCALE_CSS = `html { zoom: ${HTML_PREVIEW_SCALE} !important; }`
+const HTML_PREVIEW_FULLSCREEN_SCALE = 1
 
 const props = defineProps({
   file: {
@@ -386,7 +386,12 @@ const isHtmlFile = computed(
     typeof props.file?.content === 'string' &&
     isHtmlPreview(props.filePath)
 )
-const htmlPreviewSrcdoc = computed(() => buildHtmlPreviewSrcdoc(props.file?.content))
+const htmlPreviewSrcdoc = computed(() =>
+  buildHtmlPreviewSrcdoc(props.file?.content, HTML_PREVIEW_SCALE)
+)
+const htmlPreviewFullscreenSrcdoc = computed(() =>
+  buildHtmlPreviewSrcdoc(props.file?.content, HTML_PREVIEW_FULLSCREEN_SCALE)
+)
 const codeThemeClass = computed(() => (themeStore.isDark ? 'hljs-theme-dark' : 'hljs-theme-light'))
 const codeLanguage = computed(() => getCodeLanguageByPath(props.filePath))
 const isCodePreview = computed(
@@ -427,15 +432,17 @@ const serializeDoctype = (doctype) => {
   return `<!DOCTYPE ${doctype.name}${publicId}${systemId}>`
 }
 
-const buildHtmlPreviewSrcdoc = (content) => {
+const buildHtmlPreviewSrcdoc = (content, scale = HTML_PREVIEW_SCALE) => {
   const html = formatContent(content)
   if (!html.trim() || typeof DOMParser === 'undefined') return html
 
   const doc = new DOMParser().parseFromString(html, 'text/html')
-  const style = doc.createElement('style')
-  style.setAttribute('data-yuxi-html-preview-scale', String(HTML_PREVIEW_SCALE))
-  style.textContent = HTML_PREVIEW_SCALE_CSS
-  doc.head.append(style)
+  if (scale !== 1) {
+    const style = doc.createElement('style')
+    style.setAttribute('data-yuxi-html-preview-scale', String(scale))
+    style.textContent = `html { zoom: ${scale} !important; }`
+    doc.head.append(style)
+  }
 
   return `${serializeDoctype(doc.doctype)}${doc.documentElement.outerHTML}`
 }
@@ -808,12 +815,13 @@ onUnmounted(() => {
 }
 
 .html-preview {
+  display: block; // 消除 iframe 行内基线间隙导致的底部白边
   width: 100%;
   height: 100%; // 适应父容器高度，而非固定 100vh
   min-height: 0; // 移除固定最小高度，避免短内容白边
   border: none;
   border-radius: 0px;
-  background: #fff; // HTML 内容通常需要白色背景以保证可读性
+  background: var(--gray-0); // 跟随主题：亮色为白、暗色为近黑，避免暗色 HTML 底部露出白边
 }
 
 .unsupported-preview {
