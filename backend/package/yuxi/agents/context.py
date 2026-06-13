@@ -9,6 +9,42 @@ from yuxi.agents.backends.sandbox.paths import sandbox_workspace_agents_prompt_f
 from yuxi.utils.logging_config import logger
 
 WORKSPACE_AGENTS_PROMPT_MAX_BYTES = 64 * 1024
+DEFAULT_SUMMARY_THRESHOLD_K = 100  # 100K tokens
+DEFAULT_SUMMARY_KEEP_MESSAGES = 10
+DEFAULT_SUMMARY_TOOL_RESULT_TOKEN_LIMIT = 500
+DEFAULT_MAX_EXECUTION_STEPS = 300
+DEFAULT_TOOL_RESULT_EVICTION_K_TOKENS = 3
+DEFAULT_YUXI_SUMMARY_PROMPT = """你是对话上下文压缩助手。
+你的任务是把下面的对话历史压缩成后续智能体继续工作所需的高价值上下文。
+
+请特别保留并清晰记录：
+
+## SESSION INTENT
+用户当前的主要目标、任务范围和最终交付物。
+
+## USER REQUIREMENTS AND PREFERENCES
+用户明确提出的要求、偏好、禁忌、输出格式、语言风格、技术约束、验收标准，以及对实现方式的取舍意见。只记录仍然可能影响后续回答或执行的内容。
+
+## PROGRESS AND DECISIONS
+已经完成的步骤、关键结论、已确认的方案、被否定的方案及原因。
+
+## ARTIFACTS AND REFERENCES
+已经创建、修改、读取或需要继续关注的文件、路径、工具输出路径、线程或运行标识。保留具体路径和关键标识符。
+
+## NEXT STEPS
+为了完成用户目标，后续最应该继续做的具体步骤。没有待办时写 None。
+
+要求：
+- 不要逐字复述冗长工具输出；保留结论、路径和必要证据。
+- 不要编造没有出现在对话中的事实。
+- 如果存在未解决的问题或风险，明确记录。
+- 使用与用户主要对话一致的语言。
+
+<messages>
+{messages}
+</messages>
+
+只输出压缩后的上下文，不要添加额外说明。"""
 
 
 def _role_can_access(auth: str | None, role: str | None) -> bool:
@@ -186,10 +222,63 @@ class BaseContext:
     )
 
     summary_threshold: int = field(
-        default=100,
+        default=DEFAULT_SUMMARY_THRESHOLD_K,
         metadata={
             "name": "上下文摘要触发阈值 (K)",
-            "description": "当上下文大小超过该值时，启用摘要功能以优化上下文使用。单位为 K，默认值为 100K。",
+            "description": (
+                f"当上下文大小超过该值时，启用摘要功能以优化上下文使用。单位为 K，默认值为 "
+                f"{DEFAULT_SUMMARY_THRESHOLD_K}K。"
+            ),
+            "type": "number",
+            "auth": "admin",
+        },
+    )
+
+    summary_keep_messages: int = field(
+        default=DEFAULT_SUMMARY_KEEP_MESSAGES,
+        metadata={
+            "name": "摘要后保留消息数",
+            "description": (
+                f"上下文摘要触发后，除摘要消息外保留最近的消息数量，默认 "
+                f"{DEFAULT_SUMMARY_KEEP_MESSAGES} 条。"
+            ),
+            "type": "number",
+            "auth": "admin",
+        },
+    )
+
+    summary_prompt: str = field(
+        default=DEFAULT_YUXI_SUMMARY_PROMPT,
+        metadata={
+            "name": "上下文摘要提示词",
+            "description": "触发上下文摘要时使用的提示词，必须能接收 {messages} 作为待摘要消息占位符。",
+            "type": "string",
+            "kind": "prompt",
+            "auth": "admin",
+        },
+    )
+
+    summary_tool_result_token_limit: int = field(
+        default=DEFAULT_SUMMARY_TOOL_RESULT_TOKEN_LIMIT,
+        metadata={
+            "name": "摘要工具结果预览上限",
+            "description": (
+                "上下文摘要清洗历史工具结果时，会将完整结果写入 outputs，并用路径和不超过该 token "
+                f"数的预览替换 ToolMessage 内容，默认 {DEFAULT_SUMMARY_TOOL_RESULT_TOKEN_LIMIT}。"
+            ),
+            "type": "number",
+            "auth": "admin",
+        },
+    )
+
+    max_execution_steps: int = field(
+        default=DEFAULT_MAX_EXECUTION_STEPS,
+        metadata={
+            "name": "最大执行步数",
+            "description": (
+                "单次 Agent 运行允许的最大 LangGraph 执行步数，对应 recursion_limit，默认 "
+                f"{DEFAULT_MAX_EXECUTION_STEPS}。"
+            ),
             "type": "number",
             "auth": "admin",
         },

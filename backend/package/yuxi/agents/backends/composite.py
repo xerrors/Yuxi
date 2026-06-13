@@ -17,6 +17,8 @@ from yuxi.utils.paths import VIRTUAL_PATH_CONVERSATION_HISTORY, VIRTUAL_PATH_LAR
 from .sandbox import ProvisionerSandboxBackend
 from .skills_backend import SelectedSkillsReadonlyBackend
 
+_TOOL_RESULT_EVICTION_EXEMPT_TOOLS = frozenset({"read_file"})
+
 
 def _coerce_glob_result(result) -> GlobResult:
     if isinstance(result, GlobResult):
@@ -84,6 +86,30 @@ class CustomCompositeBackend(CompositeBackend):
             return GlobResult(matches=results)
 
         return _coerce_glob_result(await self.default.aglob(pattern, path))
+
+
+class YuxiFilesystemMiddleware(FilesystemMiddleware):
+    """Filesystem middleware that budgets large tool outputs before they hit model context."""
+
+    def wrap_tool_call(self, request, handler):
+        tool_result = handler(request)
+
+        if self._tool_token_limit_before_evict is None:
+            return tool_result
+        if request.tool_call["name"] in _TOOL_RESULT_EVICTION_EXEMPT_TOOLS:
+            return tool_result
+
+        return self._intercept_large_tool_result(tool_result, request.runtime)
+
+    async def awrap_tool_call(self, request, handler):
+        tool_result = await handler(request)
+
+        if self._tool_token_limit_before_evict is None:
+            return tool_result
+        if request.tool_call["name"] in _TOOL_RESULT_EVICTION_EXEMPT_TOOLS:
+            return tool_result
+
+        return await self._aintercept_large_tool_result(tool_result, request.runtime)
 
 
 @dataclass(frozen=True)
@@ -166,7 +192,7 @@ def create_agent_filesystem_middleware(
             readable_skills_source=context,
             error_context="runtime context",
         ).create_backend()
-    middleware = FilesystemMiddleware(
+    middleware = YuxiFilesystemMiddleware(
         backend=backend,
         tool_token_limit_before_evict=tool_token_limit_before_evict,
     )

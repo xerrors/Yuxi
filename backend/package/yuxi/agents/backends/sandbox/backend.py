@@ -137,6 +137,19 @@ def _describe_read_error(file_path: str, exc: Exception) -> str:
     return f"Error: Failed to read '{file_path}'"
 
 
+def _is_missing_file_error(exc: Exception) -> bool:
+    if isinstance(exc, FileNotFoundError):
+        return True
+
+    status_code = getattr(exc, "status_code", None)
+    response = getattr(exc, "response", None)
+    if status_code == 404 or getattr(response, "status_code", None) == 404:
+        return True
+
+    detail = str(exc).lower()
+    return "status_code: 404" in detail or "file does not exist" in detail
+
+
 def _looks_like_binary(content: bytes) -> bool:
     if not content:
         return False
@@ -534,6 +547,9 @@ class ProvisionerSandboxBackend(BaseSandbox):
                 responses.append(FileDownloadResponse(path=normalized_path, content=None, error="invalid_path"))
             except Exception as exc:  # noqa: BLE001
                 normalized_path = str(path)
+                if _is_missing_file_error(exc):
+                    responses.append(FileDownloadResponse(path=normalized_path, content=None, error="file_not_found"))
+                    continue
                 logger.warning(f"Download from sandbox failed for {normalized_path}: {exc}")
                 responses.append(FileDownloadResponse(path=normalized_path, content=None, error=f"read_failed: {exc}"))
         return responses
