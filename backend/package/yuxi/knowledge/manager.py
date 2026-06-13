@@ -499,6 +499,11 @@ class KnowledgeBaseManager:
         kb_instance = await self._get_kb_for_database(kb_id)
         return await kb_instance.update_content(kb_id, file_ids, params or {})
 
+    async def repair_missing_file_stats(self, kb_id: str) -> dict:
+        """修复历史文件缺失的 Chunk/Token 统计，并刷新知识库聚合统计。"""
+        kb_instance = await self._get_kb_for_database(kb_id)
+        return await kb_instance.repair_missing_file_stats(kb_id)
+
     async def get_file_basic_info(self, kb_id: str, file_id: str) -> dict:
         """获取文件基本信息（仅元数据）"""
         kb_instance = await self._get_kb_for_database(kb_id)

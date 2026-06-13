@@ -92,54 +92,72 @@
             <div class="file-panel-status">
               <div
                 v-if="pendingParseCount > 0"
-                class="file-stat-card file-stat-action"
+                class="file-stat-card file-stat-action file-stat-summary"
                 @click="confirmBatchParse"
               >
-                <FileText :size="20" />
-                <div>
+                <FileText :size="16" />
+                <div class="file-stat-inline">
                   <strong>{{ pendingParseCount }}</strong>
                   <span>待解析</span>
                 </div>
               </div>
               <div
                 v-if="pendingIndexCount > 0"
-                class="file-stat-card file-stat-action"
+                class="file-stat-card file-stat-action file-stat-summary"
                 @click="confirmBatchIndex"
               >
-                <DatabaseIcon :size="20" />
-                <div>
+                <DatabaseIcon :size="16" />
+                <div class="file-stat-inline">
                   <strong>{{ pendingIndexCount }}</strong>
                   <span>待入库</span>
                 </div>
               </div>
-              <div class="file-stat-card">
-                <FileText :size="20" />
-                <div>
+              <div class="file-stat-card file-stat-summary">
+                <FileText :size="16" />
+                <div class="file-stat-inline">
                   <strong>{{ fileStats.count }}</strong>
-                  <span>文件总数</span>
+                  <span>文件</span>
                 </div>
               </div>
-              <div v-if="fileStats.sizeText" class="file-stat-card">
-                <DatabaseIcon :size="20" />
-                <div>
+              <div v-if="fileStats.sizeText" class="file-stat-card file-stat-summary">
+                <DatabaseIcon :size="16" />
+                <div class="file-stat-inline">
                   <strong>{{ fileStats.sizeText }}</strong>
                   <span>总大小</span>
                 </div>
               </div>
-              <div class="file-stat-card">
-                <CheckCircle2 :size="20" />
-                <div>
-                  <strong>{{ fileStats.processedCount }}</strong>
-                  <span>已处理</span>
+              <button
+                type="button"
+                class="file-stat-card file-stat-summary file-stat-repair"
+                :disabled="statsRepairing"
+                :aria-busy="statsRepairing"
+                aria-label="修复缺失的 Chunk/Token 统计"
+                title="修复缺失的 Chunk/Token 统计"
+                @click="repairDatabaseStats"
+              >
+                <LoaderCircle v-if="statsRepairing" :size="16" class="file-stat-spinner" />
+                <DatabaseIcon v-else :size="16" />
+                <div class="file-stat-inline">
+                  <strong>{{ fileStats.chunkText }}</strong>
+                  <span>Chunks</span>
                 </div>
-              </div>
-              <div class="file-stat-card">
-                <Activity :size="20" />
-                <div>
-                  <strong>{{ fileStats.completionRate }}%</strong>
-                  <span>完成进度</span>
+              </button>
+              <button
+                type="button"
+                class="file-stat-card file-stat-summary file-stat-repair"
+                :disabled="statsRepairing"
+                :aria-busy="statsRepairing"
+                aria-label="修复缺失的 Chunk/Token 统计"
+                title="修复缺失的 Chunk/Token 统计"
+                @click="repairDatabaseStats"
+              >
+                <LoaderCircle v-if="statsRepairing" :size="16" class="file-stat-spinner" />
+                <Hash v-else :size="16" />
+                <div class="file-stat-inline">
+                  <strong>{{ fileStats.tokenText }}</strong>
+                  <span>Tokens</span>
                 </div>
-              </div>
+              </button>
             </div>
           </div>
           <FileTable ref="fileTableRef" />
@@ -333,16 +351,16 @@ import { useDatabaseStore } from '@/stores/database'
 import { useTaskerStore } from '@/stores/tasker'
 import { useUserStore } from '@/stores/user'
 import {
-  Activity,
   ArrowLeft,
   BarChart3,
-  CheckCircle2,
   ClipboardList,
   Copy,
   Database as DatabaseIcon,
   FileUp,
   FileText,
   FolderPlus,
+  Hash,
+  LoaderCircle,
   Map as MapIcon,
   Network,
   Pencil,
@@ -363,6 +381,7 @@ import EvaluationBenchmarks from '@/components/EvaluationBenchmarks.vue'
 import SearchConfigPanel from '@/components/SearchConfigPanel.vue'
 import AiTextarea from '@/components/AiTextarea.vue'
 import ShareConfigForm from '@/components/ShareConfigForm.vue'
+import { databaseApi } from '@/apis/knowledge_api'
 import { departmentApi } from '@/apis/department_api'
 import { authApi } from '@/apis/auth_api'
 import { CHUNK_PRESET_OPTIONS, getChunkPresetDescription } from '@/utils/chunk_presets'
@@ -439,21 +458,61 @@ const pendingParseCount = computed(() => {
   return Object.values(files).filter((f) => !f.is_folder && f.status === 'uploaded').length
 })
 
+const formatStatNumber = (value) => {
+  const number = Number(value ?? 0)
+  return Number.isFinite(number) ? number.toLocaleString('zh-CN') : '0'
+}
+
+const formatTokenStatNumber = (value) => {
+  const number = Number(value ?? 0)
+  if (!Number.isFinite(number)) return '0'
+  if (number > 10000) return `${Math.round(number / 1000)}K`
+  return number.toLocaleString('zh-CN')
+}
+
+const statsRepairing = ref(false)
+
 const fileStats = computed(() => {
   const files = Object.values(store.database.files || {}).filter((file) => !file.is_folder)
+  const stats = store.database.stats || {}
+  const statsFileCount = Number(stats.file_count)
   const totalSize = files.reduce((sum, file) => {
     const size = Number(file.file_size ?? file.size ?? 0)
     return Number.isFinite(size) ? sum + size : sum
   }, 0)
-  const processedCount = files.filter((file) => ['done', 'indexed'].includes(file.status)).length
 
   return {
-    count: files.length,
+    count: Number.isFinite(statsFileCount) ? statsFileCount : files.length,
     sizeText: totalSize > 0 ? formatFileSize(totalSize) : '',
-    processedCount,
-    completionRate: files.length ? Math.round((processedCount / files.length) * 100) : 0
+    chunkText: formatStatNumber(stats.chunk_count),
+    tokenText: formatTokenStatNumber(stats.token_count)
   }
 })
+
+const repairDatabaseStats = async () => {
+  if (!kbId.value || statsRepairing.value) return
+
+  statsRepairing.value = true
+  try {
+    const result = await databaseApi.repairDatabaseStats(kbId.value)
+    await store.getDatabaseInfo(undefined, true, true)
+
+    const updatedTokenFiles = Number(result?.updated_token_files || 0)
+    const updatedChunkFiles = Number(result?.updated_chunk_files || 0)
+    if (updatedTokenFiles || updatedChunkFiles) {
+      message.success(
+        `已修复 ${updatedTokenFiles} 个 Token 统计，${updatedChunkFiles} 个 Chunk 统计`
+      )
+    } else {
+      message.info('统计已是最新')
+    }
+  } catch (error) {
+    console.error(error)
+    message.error(error.message || '统计修复失败')
+  } finally {
+    statsRepairing.value = false
+  }
+}
 
 const pendingIndexCount = computed(() => {
   const files = store.database.files || {}
@@ -1063,12 +1122,12 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
 .file-stat-card {
-  min-width: 92px;
+  min-width: 60px;
   display: flex;
   align-items: center;
   gap: 16px;
@@ -1078,6 +1137,8 @@ onMounted(() => {
   border: 1px solid var(--gray-100);
   color: var(--main-color);
   font: inherit;
+  appearance: none;
+  text-align: left;
 
   div {
     display: flex;
@@ -1089,12 +1150,26 @@ onMounted(() => {
     font-size: 14px;
     line-height: 1.2;
     color: var(--gray-900);
+    white-space: nowrap;
   }
 
   span {
     font-size: 11px;
     color: var(--gray-500);
     white-space: nowrap;
+  }
+}
+
+.file-stat-summary {
+  min-width: 87px;
+  min-height: 36px;
+  gap: 8px;
+  padding: 5px 10px;
+
+  .file-stat-inline {
+    flex-direction: row;
+    align-items: baseline;
+    gap: 4px;
   }
 }
 
@@ -1109,6 +1184,33 @@ onMounted(() => {
 
   &:hover {
     border-color: var(--color-warning-700);
+  }
+}
+
+.file-stat-repair {
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+
+  &:hover:not(:disabled) {
+    border-color: var(--main-300);
+    background-color: var(--main-30);
+  }
+
+  &:disabled {
+    cursor: wait;
+    opacity: 0.72;
+  }
+}
+
+.file-stat-spinner {
+  animation: file-stat-spin 0.8s linear infinite;
+}
+
+@keyframes file-stat-spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 

@@ -22,6 +22,7 @@ from pymilvus import (
 
 from yuxi.knowledge.base import FileStatus, KnowledgeBase
 from yuxi.knowledge.chunking.ragflow_like.dispatcher import chunk_markdown
+from yuxi.knowledge.chunking.ragflow_like.nlp import count_tokens
 from yuxi.knowledge.parser.unified import Parser
 from yuxi.knowledge.utils.kb_utils import resolve_processing_params
 from yuxi.models.providers.cache import model_cache
@@ -465,6 +466,12 @@ class MilvusKB(KnowledgeBase):
         """将文本分割成块"""
         return chunk_markdown(text, file_id, filename, params)
 
+    def _calculate_chunk_stats(self, chunks: list[dict]) -> dict[str, int]:
+        return {
+            "chunk_count": len(chunks),
+            "token_count": sum(count_tokens(chunk["content"]) for chunk in chunks),
+        }
+
     def _build_chunk_pg_records(self, kb_id: str, chunks: list[dict]) -> list[dict[str, Any]]:
         return [
             {
@@ -679,9 +686,12 @@ class MilvusKB(KnowledgeBase):
                 f"chunk_parser_config={params.get('chunk_parser_config')}"
             )
 
+            chunk_stats = self._calculate_chunk_stats(chunks)
+
+            # Clean up existing chunks if any (for re-indexing)
+            await self.delete_file_chunks_only(kb_id, file_id)
+
             if chunks:
-                # Clean up existing chunks if any (for re-indexing)
-                await self.delete_file_chunks_only(kb_id, file_id)
                 await self._embed_and_store_chunks(kb_id, file_id, collection, chunks, embedding_function)
 
             logger.info(f"Indexed file {file_id} into Milvus")
@@ -689,11 +699,15 @@ class MilvusKB(KnowledgeBase):
             # Update status
             async with self._metadata_lock:
                 self.files_meta[file_id]["status"] = FileStatus.INDEXED
+                self.files_meta[file_id].update(chunk_stats)
                 self.files_meta[file_id]["updated_at"] = utc_isoformat()
                 if operator_id:
                     self.files_meta[file_id]["updated_by"] = operator_id
                 await self._persist_file(file_id)
-                return self.files_meta[file_id]
+                result = self.files_meta[file_id]
+
+            await self.refresh_database_stats(kb_id)
+            return result
 
         except Exception as e:
             logger.error(f"Indexing failed for {file_id}: {e}")
@@ -764,6 +778,7 @@ class MilvusKB(KnowledgeBase):
                 # 重新生成 chunks
                 chunks = self._split_text_into_chunks(markdown_content, file_id, filename, resolved_params)
                 logger.info(f"Split {filename} into {len(chunks)} chunks")
+                chunk_stats = self._calculate_chunk_stats(chunks)
 
                 # 先删除现有 chunks，保留文件元数据
                 await self.delete_file_chunks_only(kb_id, file_id)
@@ -776,7 +791,9 @@ class MilvusKB(KnowledgeBase):
                 # 更新元数据状态
                 async with self._metadata_lock:
                     self.files_meta[file_id]["status"] = "done"
+                    self.files_meta[file_id].update(chunk_stats)
                     await self._persist_file(file_id)
+                await self.refresh_database_stats(kb_id)
 
                 # 从处理队列中移除
                 self._remove_from_processing_queue(file_id)
@@ -784,6 +801,7 @@ class MilvusKB(KnowledgeBase):
                 # 返回更新后的文件信息
                 updated_file_meta = file_meta.copy()
                 updated_file_meta["status"] = "done"
+                updated_file_meta.update(chunk_stats)
                 updated_file_meta["file_id"] = file_id
                 processed_items_info.append(updated_file_meta)
 
@@ -1172,6 +1190,11 @@ class MilvusKB(KnowledgeBase):
             except Exception as e:
                 logger.error(f"Error checking file existence in Milvus: {e}")
         # 注意：这里不删除 files_meta[file_id]，保留元数据用于后续操作
+        if file_id in self.files_meta:
+            self.files_meta[file_id]["chunk_count"] = 0
+            self.files_meta[file_id]["token_count"] = 0
+            await self._persist_file(file_id)
+            await self.refresh_database_stats(kb_id)
 
     async def delete_file(self, kb_id: str, file_id: str) -> None:
         """删除文件（包括元数据）"""
@@ -1185,6 +1208,7 @@ class MilvusKB(KnowledgeBase):
                 from yuxi.repositories.knowledge_file_repository import KnowledgeFileRepository
 
                 await KnowledgeFileRepository().delete(file_id)
+        await self.refresh_database_stats(kb_id)
 
     async def get_file_basic_info(self, kb_id: str, file_id: str) -> dict:
         """获取文件基本信息（仅元数据）"""

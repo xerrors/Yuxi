@@ -37,6 +37,15 @@ export const databaseApi = {
   },
 
   /**
+   * 修复知识库文件统计
+   * @param {string} kbId - 知识库ID
+   * @returns {Promise} - 修复结果
+   */
+  repairDatabaseStats: async (kbId) => {
+    return apiAdminPost(`/api/knowledge/databases/${kbId}/stats/repair`, {})
+  },
+
+  /**
    * 更新知识库信息
    * @param {string} kbId - 知识库ID
    * @param {Object} updateData - 更新数据
