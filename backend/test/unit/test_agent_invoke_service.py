@@ -124,3 +124,18 @@ async def test_invoke_agent_once_returns_empty_answer_without_ai_message(monkeyp
 
     assert result.answer == ""
     assert result.tool_calls == []
+
+
+@pytest.mark.asyncio
+async def test_invoke_agent_once_joins_text_blocks_from_list_content(monkeypatch):
+    # Anthropic/Claude 与多模态模型的 AIMessage.content 是内容块列表，
+    # 需拼接 text 块而非返回列表 repr。
+    messages = [
+        AIMessage(content=[{"type": "text", "text": "产品 A "}, {"type": "text", "text": "支持离线。"}]),
+    ]
+    backend = FakeBackend({"messages": messages})
+    _patch_common(monkeypatch, agent_item=FakeAgentItem(), backend=backend)
+
+    result = await service.invoke_agent_once(db=None, user=FakeUser(), agent_id="my-agent", query="hi")
+
+    assert result.answer == "产品 A 支持离线。"

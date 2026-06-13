@@ -42,11 +42,23 @@ def _message_to_dict(message: Any) -> dict[str, Any]:
 
 
 def _extract_answer(messages: list[Any]) -> str:
-    """取最后一条 AIMessage 的文本内容作为最终答案。"""
+    """取最后一条 AIMessage 的文本内容作为最终答案。
+
+    content 可能是字符串，也可能是内容块列表（Anthropic/Claude、多模态模型常见），
+    后者需要拼接其中的 text 块，避免把列表的 repr 当作答案返回给评估器。
+    """
     for message in reversed(messages):
         if isinstance(message, AIMessage):
             content = message.content
-            return content if isinstance(content, str) else str(content)
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                return "".join(
+                    block.get("text", "")
+                    for block in content
+                    if isinstance(block, dict) and block.get("type") == "text"
+                )
+            return ""
     return ""
 
 
