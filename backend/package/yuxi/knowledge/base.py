@@ -261,6 +261,7 @@ class KnowledgeBase(ABC):
         # Save to metadata
         self.files_meta[file_id] = metadata
         await self._persist_file(file_id)
+        await self.refresh_database_stats(kb_id)
 
         return metadata
 
@@ -867,6 +868,7 @@ class KnowledgeBase(ABC):
             数据库信息字典
         """
         kwargs = self.normalize_additional_params(kwargs)
+        kwargs["stats"] = {"file_count": 0, "chunk_count": 0, "token_count": 0}
 
         alphabet = string.ascii_lowercase + string.digits
         while True:
@@ -1060,6 +1062,103 @@ class KnowledgeBase(ABC):
                 defaults[opt["key"]] = opt["default"]
         return {"options": defaults}
 
+    def _build_database_stats(self, kb_id: str) -> dict[str, int]:
+        stats = {"file_count": 0, "chunk_count": 0, "token_count": 0}
+        for file_info in self.files_meta.values():
+            if file_info.get("kb_id") != kb_id or file_info.get("is_folder"):
+                continue
+            stats["file_count"] += 1
+            stats["chunk_count"] += int(file_info.get("chunk_count") or 0)
+            stats["token_count"] += int(file_info.get("token_count") or 0)
+        return stats
+
+    @staticmethod
+    def _normalize_database_stats(stats: dict | None) -> dict[str, int]:
+        normalized = {"file_count": 0, "chunk_count": 0, "token_count": 0}
+        if not isinstance(stats, dict):
+            return normalized
+
+        for key in normalized:
+            try:
+                normalized[key] = max(int(stats.get(key) or 0), 0)
+            except (TypeError, ValueError):
+                normalized[key] = 0
+        return normalized
+
+    def _get_database_stats(self, kb_id: str) -> dict[str, int]:
+        metadata = self.databases_meta.get(kb_id, {}).get("metadata") or {}
+        stats = metadata.get("stats") if isinstance(metadata, dict) else None
+        if isinstance(stats, dict):
+            return self._normalize_database_stats(stats)
+        return self._build_database_stats(kb_id)
+
+    def _set_database_stats(self, kb_id: str, stats: dict[str, int]) -> None:
+        if kb_id not in self.databases_meta:
+            raise ValueError(f"Database {kb_id} not found")
+
+        metadata = self.databases_meta[kb_id].setdefault("metadata", {})
+        metadata["stats"] = self._normalize_database_stats(stats)
+
+    async def refresh_database_stats(self, kb_id: str) -> dict[str, int]:
+        stats = self._build_database_stats(kb_id)
+        self._set_database_stats(kb_id, stats)
+        await self._persist_kb(kb_id)
+        return stats
+
+    async def repair_missing_file_stats(self, kb_id: str) -> dict:
+        if kb_id not in self.databases_meta:
+            raise ValueError(f"Database {kb_id} not found")
+
+        from yuxi.knowledge.chunking.ragflow_like.nlp import count_tokens
+        from yuxi.repositories.knowledge_chunk_repository import KnowledgeChunkRepository
+
+        file_ids = [
+            file_id
+            for file_id, meta in self.files_meta.items()
+            if meta.get("kb_id") == kb_id and not meta.get("is_folder")
+        ]
+        chunk_repo = KnowledgeChunkRepository()
+        chunk_counts = await chunk_repo.count_by_file_ids(file_ids)
+        token_file_ids = [file_id for file_id in file_ids if int(self.files_meta[file_id].get("token_count") or 0) <= 0]
+        token_counts = {file_id: 0 for file_id in token_file_ids}
+        for chunk in await chunk_repo.list_by_file_ids(token_file_ids):
+            token_counts[chunk.file_id] = token_counts.get(chunk.file_id, 0) + count_tokens(chunk.content or "")
+
+        changed_file_ids: set[str] = set()
+        updated_chunk_files = 0
+        updated_token_files = 0
+
+        for file_id in file_ids:
+            meta = self.files_meta[file_id]
+            next_chunk_count = int(chunk_counts.get(file_id, 0))
+            if int(meta.get("chunk_count") or 0) != next_chunk_count:
+                meta["chunk_count"] = next_chunk_count
+                changed_file_ids.add(file_id)
+                updated_chunk_files += 1
+
+            if file_id in token_counts:
+                current_token_count = meta.get("token_count")
+                next_token_count = int(token_counts[file_id])
+                if current_token_count is None or int(current_token_count or 0) != next_token_count:
+                    meta["token_count"] = next_token_count
+                    changed_file_ids.add(file_id)
+                    updated_token_files += 1
+
+        for file_id in sorted(changed_file_ids):
+            self.files_meta[file_id]["updated_at"] = utc_isoformat()
+            await self._persist_file(file_id)
+
+        stats = await self.refresh_database_stats(kb_id)
+        return {
+            "status": "success",
+            "stats": stats,
+            "scanned_files": len(file_ids),
+            "scanned_token_files": len(token_file_ids),
+            "updated_files": len(changed_file_ids),
+            "updated_chunk_files": updated_chunk_files,
+            "updated_token_files": updated_token_files,
+        }
+
     def get_database_info(self, kb_id: str, include_files: bool = True) -> dict | None:
         """
         获取数据库详细信息
@@ -1083,6 +1182,7 @@ class KnowledgeBase(ABC):
         # 统计文件数量（始终计算，即使不加载文件详情）
         db_file_count = sum(1 for file_info in self.files_meta.values() if file_info.get("kb_id") == kb_id)
         meta["row_count"] = db_file_count
+        meta["stats"] = self._get_database_stats(kb_id)
 
         # 仅在需要时加载文件详情
         if include_files:
@@ -1100,6 +1200,8 @@ class KnowledgeBase(ABC):
                         "created_at": created_at,
                         "is_folder": file_info.get("is_folder", False),
                         "parent_id": file_info.get("parent_id", None),
+                        "chunk_count": int(file_info.get("chunk_count") or 0),
+                        "token_count": int(file_info.get("token_count") or 0),
                     }
 
             # 按创建时间倒序排序文件列表
@@ -1140,6 +1242,7 @@ class KnowledgeBase(ABC):
             # 统计文件数量（始终计算，即使不加载文件详情）
             db_file_count = sum(1 for file_info in self.files_meta.values() if file_info.get("kb_id") == kb_id)
             db_dict["row_count"] = db_file_count
+            db_dict["stats"] = self._get_database_stats(kb_id)
 
             # 仅在需要时加载文件详情
             if include_files:
@@ -1157,6 +1260,8 @@ class KnowledgeBase(ABC):
                             "created_at": created_at,
                             "is_folder": file_info.get("is_folder", False),
                             "parent_id": file_info.get("parent_id", None),
+                            "chunk_count": int(file_info.get("chunk_count") or 0),
+                            "token_count": int(file_info.get("token_count") or 0),
                         }
 
                 # 按创建时间倒序排序文件列表
@@ -1468,6 +1573,8 @@ class KnowledgeBase(ABC):
                     "status": record.status,
                     "content_hash": record.content_hash,
                     "size": record.file_size,
+                    "chunk_count": int(getattr(record, "chunk_count", 0) or 0),
+                    "token_count": int(getattr(record, "token_count", 0) or 0),
                     "content_type": record.content_type,
                     "processing_params": sanitize_processing_params(
                         resolve_processing_params(
@@ -1579,6 +1686,8 @@ class KnowledgeBase(ABC):
                     "status": meta.get("status"),
                     "content_hash": meta.get("content_hash"),
                     "file_size": meta.get("size"),
+                    "chunk_count": int(meta.get("chunk_count") or 0),
+                    "token_count": int(meta.get("token_count") or 0),
                     "content_type": meta.get("content_type"),
                     "processing_params": sanitize_processing_params(meta.get("processing_params")),
                     "is_folder": meta.get("is_folder", False),
@@ -1616,6 +1725,8 @@ class KnowledgeBase(ABC):
                 "status": meta.get("status"),
                 "content_hash": meta.get("content_hash"),
                 "file_size": meta.get("size"),
+                "chunk_count": int(meta.get("chunk_count") or 0),
+                "token_count": int(meta.get("token_count") or 0),
                 "content_type": meta.get("content_type"),
                 "processing_params": sanitize_processing_params(meta.get("processing_params")),
                 "is_folder": meta.get("is_folder", False),

@@ -29,7 +29,7 @@
             aria-controls="agent-state-panel"
             @click.stop="toggleStatePanel"
           >
-            <LayoutList size="18" class="nav-btn-icon" />
+            <LayoutList size="16" class="nav-btn-icon" />
             <span class="hide-text">状态</span>
           </button>
           <button
@@ -41,7 +41,7 @@
             aria-controls="agent-file-panel"
             @click.stop="toggleAgentPanel"
           >
-            <FolderKanban size="18" class="nav-btn-icon" />
+            <FolderKanban size="16" class="nav-btn-icon" />
             <span class="hide-text">文件</span>
           </button>
           <slot
@@ -497,7 +497,12 @@ import {
   onDeactivated
 } from 'vue'
 import { message } from 'ant-design-vue'
-import { ChevronDown, FolderKanban, RefreshCw, LayoutList } from 'lucide-vue-next'
+import {
+  ChevronDown,
+  FolderKanban,
+  LayoutList,
+  RefreshCw
+} from 'lucide-vue-next'
 import { formatFileSize } from '@/utils/file_utils'
 import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
 import { generatePixelAvatar } from '@/utils/pixelAvatar'
@@ -2598,6 +2603,8 @@ watch(currentChatId, (threadId, oldThreadId) => {
 }
 
 .chat {
+  --header-height: 40px;
+
   position: relative;
   flex: 1;
   display: flex;
@@ -2611,10 +2618,11 @@ watch(currentChatId, (threadId, oldThreadId) => {
     user-select: none;
     z-index: 10;
     height: var(--header-height);
+    min-height: var(--header-height);
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 1rem 8px;
+    padding: 0 8px;
     flex-shrink: 0; /* Prevent header from shrinking */
     transition: padding-right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 
@@ -2639,7 +2647,8 @@ watch(currentChatId, (threadId, oldThreadId) => {
     }
 
     .conversation-title {
-      font-size: 15px;
+      font-size: 14px;
+      line-height: 20px;
       font-weight: 400;
       color: var(--text-primary);
       max-width: 200px;
@@ -3173,16 +3182,17 @@ watch(currentChatId, (threadId, oldThreadId) => {
 <style lang="less">
 .agent-nav-btn {
   display: flex;
-  gap: 6px;
-  padding: 6px 8px;
-  height: 32px;
+  gap: 5px;
+  padding: 4px 7px;
+  height: 28px;
   justify-content: center;
   align-items: center;
   border-radius: 6px;
   color: var(--gray-900);
   cursor: pointer;
   width: auto;
-  font-size: 15px;
+  font-size: 14px;
+  line-height: 20px;
   transition: background-color 0.3s;
   border: none;
   background: transparent;
@@ -3198,7 +3208,8 @@ watch(currentChatId, (threadId, oldThreadId) => {
   }
 
   .nav-btn-icon {
-    height: 18px;
+    width: 16px;
+    height: 16px;
   }
 
   .loading-icon {
@@ -3225,6 +3236,9 @@ watch(currentChatId, (threadId, oldThreadId) => {
 
 .state-panel-header {
   padding: 10px 14px;
+  padding-bottom: 0px;
+  background: transparent;
+  border-bottom: none;
 }
 
 .state-panel-header-actions {
@@ -3263,9 +3277,9 @@ watch(currentChatId, (threadId, oldThreadId) => {
 
 .state-panel-title {
   min-width: 0;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--gray-900);
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--gray-500);
 }
 
 .state-panel-summary,

@@ -539,10 +539,11 @@ defineExpose({
                       class="agent-icon-upload"
                       :class="{
                         uploading: agentIconUploading,
-                        'is-empty': !agentForm.icon && !editingAgentId && !agentForm.name.trim()
+                        'is-empty': !agentForm.icon && !editingAgentId
                       }"
                     >
                       <FallbackAvatar
+                        v-if="agentForm.icon || editingAgentId"
                         :src="agentForm.icon"
                         :default-src="agentPreviewDefaultIcon"
                         :name="agentPreviewName"

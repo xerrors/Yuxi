@@ -12,7 +12,6 @@
           <div class="item-name">{{ file.name }}</div>
           <div class="item-desc">{{ getFileMetaLabel(file.path) }}</div>
         </div>
-        <span class="item-open-label">打开</span>
       </button>
       <div class="item-actions">
         <button class="item-action-btn" title="下载" @click.stop="downloadFile(file)">
@@ -213,13 +212,6 @@ const saveToWorkspace = async (file) => {
   line-height: 1.2;
 }
 
-.item-open-label {
-  flex-shrink: 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--main-700);
-}
-
 .item-actions {
   display: flex;
   align-items: center;
@@ -276,10 +268,6 @@ const saveToWorkspace = async (file) => {
 
   .item-main {
     padding: 9px 6px 9px 12px;
-  }
-
-  .item-open-label {
-    display: none;
   }
 }
 </style>

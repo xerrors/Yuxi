@@ -110,6 +110,12 @@ async def test_admin_can_login_and_fetch_profile(test_client, admin_headers):
     assert data["id"]
 
 
+async def test_profile_requires_authentication(test_client):
+    response = await test_client.get("/api/auth/me")
+    assert response.status_code == 401
+    assert response.json()["detail"] == "请登录后再访问"
+
+
 async def test_admin_can_create_and_delete_user(test_client, admin_headers):
     suffix = uuid.uuid4().hex[:8]
     payload = {

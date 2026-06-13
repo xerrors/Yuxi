@@ -300,6 +300,19 @@ async def get_database_info(kb_id: str, current_user: User = Depends(get_admin_u
     return database
 
 
+@knowledge.post("/databases/{kb_id}/stats/repair")
+async def repair_database_stats(kb_id: str, current_user: User = Depends(get_admin_user)):
+    """修复知识库历史文件缺失的 Chunk/Token 统计。"""
+    await _ensure_database_supports_documents(kb_id, "统计修复")
+    try:
+        return await knowledge_base.repair_missing_file_stats(kb_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"修复知识库统计失败 {e}, {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"修复知识库统计失败: {e}")
+
+
 @knowledge.put("/databases/{kb_id}")
 async def update_database_info(
     kb_id: str,

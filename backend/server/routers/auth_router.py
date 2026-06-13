@@ -15,7 +15,6 @@ from yuxi.repositories.department_repository import DepartmentRepository
 from server.utils.auth_middleware import (
     get_admin_user,
     get_superadmin_user,
-    get_current_user,
     get_db,
     get_required_user,
 )
@@ -329,7 +328,7 @@ async def initialize_admin(admin_data: InitializeAdmin, db: AsyncSession = Depen
 
 
 @auth.get("/me", response_model=UserResponse)
-async def read_users_me(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def read_users_me(current_user: User = Depends(get_required_user), db: AsyncSession = Depends(get_db)):
     """获取当前登录用户的个人信息"""
     user_dict = current_user.to_dict()
 

@@ -274,7 +274,7 @@
         </div>
 
         <span v-else-if="column.key === 'created_at'" class="file-time-cell">
-          {{ record.is_folder ? '-' : formatStandardTime(text) }}
+          {{ record.is_folder ? '-' : formatFileTableTime(text) }}
         </span>
 
         <div v-else-if="column.key === 'action'" class="table-row-actions">
@@ -1156,8 +1156,20 @@ const handleIndexConfigCancel = () => {
   resetIndexParams()
 }
 
+const formatFileTableTime = (value) => {
+  const parsed = parseToShanghai(value)
+  if (!parsed) return '-'
+
+  const oneYearAgo = parseToShanghai(Date.now()).subtract(1, 'year')
+  if (parsed.isAfter(oneYearAgo)) {
+    return parsed.format('MM月DD日 HH:mm:ss')
+  }
+
+  return parsed.format('YYYY年MM月DD日')
+}
+
 // 导入工具函数
-import { formatStandardTime } from '@/utils/file_utils'
+import { parseToShanghai } from '@/utils/time'
 import { buildChunkParamsPayload, isPlainObject } from '@/utils/chunk_presets'
 import ChunkParamsConfig from '@/components/ChunkParamsConfig.vue'
 import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
@@ -1204,7 +1216,7 @@ import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
   }
 
   .action-searcher {
-    width: 120px;
+    width: 220px;
     border-radius: 6px;
     padding: 4px 8px;
     border: none;

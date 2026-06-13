@@ -346,12 +346,27 @@
       </div>
 
       <template #footer>
-        <a-button @click="closeSystemPromptModal">{{
-          isReadOnlyConfig ? '关闭' : '取消'
-        }}</a-button>
-        <a-button v-if="!isReadOnlyConfig" type="primary" @click="saveSystemPrompt">
-          保存
-        </a-button>
+        <div class="system-prompt-modal-footer">
+          <a-button
+            v-if="!isReadOnlyConfig && hasSystemPromptDefault"
+            class="restore-default-btn"
+            :disabled="isSystemPromptDefault"
+            @click="restoreSystemPromptDefault"
+          >
+            <template #icon>
+              <RotateCcw :size="14" />
+            </template>
+            恢复默认
+          </a-button>
+          <div class="system-prompt-modal-actions">
+            <a-button @click="closeSystemPromptModal">{{
+              isReadOnlyConfig ? '关闭' : '取消'
+            }}</a-button>
+            <a-button v-if="!isReadOnlyConfig" type="primary" @click="saveSystemPrompt">
+              保存
+            </a-button>
+          </div>
+        </div>
       </template>
     </a-modal>
   </div>
@@ -361,7 +376,7 @@
 import { ref, computed } from 'vue'
 import { message } from 'ant-design-vue'
 import { useRouter } from 'vue-router'
-import { Check, Plus, Search, RotateCw, Settings } from 'lucide-vue-next'
+import { Check, Plus, Search, RotateCw, RotateCcw, Settings } from 'lucide-vue-next'
 import ModelSelectorComponent from '@/components/ModelSelectorComponent.vue'
 import { useAgentStore } from '@/stores/agent'
 import {
@@ -514,6 +529,26 @@ const systemPromptModalPlaceholder = computed(() => {
   return getPlaceholder(currentSystemPromptKey.value, currentItem)
 })
 
+const currentSystemPromptItem = computed(() => {
+  if (!currentSystemPromptKey.value) return null
+  return configurableItems.value[currentSystemPromptKey.value] || null
+})
+
+const hasSystemPromptDefault = computed(() => {
+  const currentItem = currentSystemPromptItem.value
+  return !!currentItem && Object.prototype.hasOwnProperty.call(currentItem, 'default')
+})
+
+const systemPromptDefaultValue = computed(() => {
+  if (!hasSystemPromptDefault.value) return ''
+  const defaultValue = currentSystemPromptItem.value.default
+  return defaultValue == null ? '' : String(defaultValue)
+})
+
+const isSystemPromptDefault = computed(
+  () => hasSystemPromptDefault.value && systemPromptDraft.value === systemPromptDefaultValue.value
+)
+
 const filteredOptions = computed(() => {
   if (!currentConfigKey.value) return []
   const key = currentConfigKey.value
@@ -664,6 +699,11 @@ const closeSystemPromptModal = () => {
   systemPromptModalOpen.value = false
   currentSystemPromptKey.value = null
   systemPromptDraft.value = ''
+}
+
+const restoreSystemPromptDefault = () => {
+  if (isReadOnlyConfig.value || !hasSystemPromptDefault.value) return
+  systemPromptDraft.value = systemPromptDefaultValue.value
 }
 
 const saveSystemPrompt = () => {
@@ -1209,6 +1249,27 @@ defineExpose({ validateAndFilterConfig })
       font-size: 13px;
       line-height: 1.6;
       border-radius: 8px;
+    }
+  }
+
+  .system-prompt-modal-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
+
+    .restore-default-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .system-prompt-modal-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: auto;
     }
   }
 }
