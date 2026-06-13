@@ -809,8 +809,8 @@ onUnmounted(() => {
 
 .html-preview {
   width: 100%;
-  min-height: calc(80vh - 40px);
-  height: 100vh;
+  height: 100%; // 适应父容器高度，而非固定 100vh
+  min-height: 0; // 移除固定最小高度，避免短内容白边
   border: none;
   border-radius: 0px;
   background: #fff; // HTML 内容通常需要白色背景以保证可读性
@@ -880,7 +880,8 @@ onUnmounted(() => {
 }
 
 .fullscreen-embed-preview {
-  height: 100vh;
+  height: 100vh; // 全屏时填满视口
+  min-height: 100vh; // 确保全屏时不塌陷
   border-radius: 0px;
 }
 
