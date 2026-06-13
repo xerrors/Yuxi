@@ -4,6 +4,12 @@
 
 同一版本的多次功能更新时，应以功能为单位进行更新，比如之前添加了 A 功能的更新，在后续的更新中修复了因 A 功能引入的 bug，那么这个修复说明应该和 A 功能描述放在一起，而不是新增一条修复记录，功能更新同理。
 
+## v0.7.1 (开发中)
+
+### 开发记录
+
+- 新增无状态 Agent 调用接口（`yuxi.services.agent_invoke_service.invoke_agent_once`），作为「RAG 评估支持 Agent 模式」的地基：以调用方传入的 uid 身份对指定智能体执行单 query 调用，复用现有运行上下文解析与 `invoke_messages`，使用一次性 thread_id 避免污染真实对话 checkpointer，不创建 conversation、不写 run/message 记录、不入队列；返回最终答案、完整消息 trace 与提取后的工具调用 trace（含知识库检索工具命中结果），供评估器后续消费。
+
 ## v0.7.0 (2026-06-13)
 
 ### 破坏性变更
