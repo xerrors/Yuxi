@@ -332,3 +332,4 @@ class MyAgent(BaseAgent):
 - [MCP 集成](./mcp-integration.md)
 - [Skills 管理](./skills-management.md)
 - [子智能体](./subagents-management.md)
+- [Langfuse 集成](../advanced/langfuse-integration.md)

@@ -45,6 +45,20 @@
               <span class="toolbar-text">重新生成</span>
             </button>
             <button
+              v-if="isIncremental && mindmapData"
+              type="button"
+              class="lucide-icon-btn mindmap-toolbar-btn mindmap-toolbar-btn--accent"
+              :disabled="generating"
+              @click="incrementalUpdate"
+              title="增量更新"
+            >
+              <Plus :size="14" />
+              <span class="toolbar-text">增量更新</span>
+              <span v-if="mindmapDiff?.added_files?.length" class="mindmap-badge">
+                {{ mindmapDiff.added_files.length }}
+              </span>
+            </button>
+            <button
               type="button"
               class="lucide-icon-btn mindmap-toolbar-btn"
               @click="fitView"
@@ -66,7 +80,7 @@
 <script setup>
 import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { message } from 'ant-design-vue'
-import { RefreshCw, Map as MapIcon, Sparkles, Maximize2 } from 'lucide-vue-next'
+import { RefreshCw, Map as MapIcon, Sparkles, Maximize2, Plus } from 'lucide-vue-next'
 import { mindmapApi } from '@/apis/knowledge_api'
 import { Markmap } from 'markmap-view'
 import { Transformer } from 'markmap-lib'
@@ -86,6 +100,8 @@ const loading = ref(false)
 const generating = ref(false)
 const mindmapData = ref(null)
 const mindmapSvg = ref(null)
+const mindmapDiff = ref(null)
+const isIncremental = ref(false)
 let markmapInstance = null
 let textMeasureContext = null
 
@@ -139,6 +155,8 @@ const loadMindmap = async () => {
         renderMindmap(mindmap)
       }, 100)
     }
+
+    await checkMindmapDiff()
   } catch (error) {
     // 如果是404错误，说明还没有生成，静默处理
     if (
@@ -182,6 +200,8 @@ const generateMindmap = async () => {
       renderMindmap(response.mindmap)
       message.success('思维导图生成成功！')
     }, 100)
+
+    await checkMindmapDiff()
   } catch (error) {
     console.error('生成思维导图失败:', error)
     const errorMsg = error?.message || String(error)
@@ -196,6 +216,59 @@ const generateMindmap = async () => {
  */
 const refreshMindmap = async () => {
   await generateMindmap()
+}
+
+/**
+ * 检测思维导图变更
+ */
+const checkMindmapDiff = async () => {
+  if (!props.kbId || !mindmapData.value) {
+    isIncremental.value = false
+    mindmapDiff.value = null
+    return
+  }
+  try {
+    const diff = await mindmapApi.getDiff(props.kbId)
+    mindmapDiff.value = diff
+    isIncremental.value = diff.needs_update
+  } catch {
+    isIncremental.value = false
+    mindmapDiff.value = null
+  }
+}
+
+/**
+ * 增量更新思维导图
+ */
+const incrementalUpdate = async () => {
+  if (!props.kbId) return
+
+  try {
+    generating.value = true
+
+    const response = await mindmapApi.generateMindmap(props.kbId, [], '', true)
+
+    mindmapData.value = response.mindmap
+
+    await nextTick()
+
+    setTimeout(() => {
+      renderMindmap(response.mindmap)
+      if (response.no_ai_needed) {
+        message.success('思维导图已更新（自动清理已删除文件）')
+      } else {
+        message.success('增量更新完成！')
+      }
+    }, 100)
+
+    await checkMindmapDiff()
+  } catch (error) {
+    console.error('增量更新失败:', error)
+    const errorMsg = error?.message || String(error)
+    message.error('增量更新失败: ' + errorMsg)
+  } finally {
+    generating.value = false
+  }
 }
 
 /**
@@ -700,5 +773,31 @@ onUnmounted(() => {
 :deep(.mindmap-safari-label) {
   font: var(--markmap-font);
   fill: var(--markmap-text-color);
+}
+
+.mindmap-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  margin-left: 4px;
+  border-radius: 9px;
+  background: var(--main-600);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.mindmap-toolbar-btn--accent {
+  color: var(--main-600);
+
+  &:hover,
+  &:focus-visible {
+    background: var(--main-30);
+    color: var(--main-700);
+  }
 }
 </style>

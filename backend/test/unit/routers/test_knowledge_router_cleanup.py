@@ -1,4 +1,5 @@
 from io import BytesIO
+from inspect import signature
 from types import SimpleNamespace
 
 import pytest
@@ -24,6 +25,20 @@ class FakeTaskContext:
 
     async def raise_if_cancelled(self) -> None:
         return None
+
+
+async def test_upload_file_does_not_expose_legacy_allow_jsonl_query():
+    assert "allow_jsonl" not in signature(knowledge_router.upload_file).parameters
+
+
+async def test_upload_file_rejects_jsonl_uploads():
+    upload = UploadFile(filename="dataset.jsonl", file=BytesIO(b'{"query":"hello"}\n'))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await knowledge_router.upload_file(upload, kb_id=None, current_user=SimpleNamespace(uid="user_1"))
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Unsupported file type: .jsonl"
 
 
 async def test_upload_file_rejects_oversized_file(monkeypatch):

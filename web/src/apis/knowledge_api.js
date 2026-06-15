@@ -251,15 +251,20 @@ export const mindmapApi = {
     return apiAdminGet(`/api/knowledge/databases/${kbId}/mindmap/files`)
   },
 
-  generateMindmap: async (kbId, fileIds = [], userPrompt = '') => {
+  generateMindmap: async (kbId, fileIds = [], userPrompt = '', incremental = false) => {
     return apiAdminPost(`/api/knowledge/databases/${kbId}/mindmap/generate`, {
       file_ids: fileIds,
-      user_prompt: userPrompt
+      user_prompt: userPrompt,
+      incremental
     })
   },
 
   getByDatabase: async (kbId) => {
     return apiAdminGet(`/api/knowledge/databases/${kbId}/mindmap`)
+  },
+
+  getDiff: async (kbId) => {
+    return apiAdminGet(`/api/knowledge/databases/${kbId}/mindmap/diff`)
   }
 }
 

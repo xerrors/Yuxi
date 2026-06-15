@@ -241,12 +241,17 @@ const renderCallStatsChart = () => {
       }
     },
     legend: {
+      type: 'scroll',
       data: categories.map(resolveCategoryLabel),
       bottom: 5 /* 调整图例位置，从0改为5 */,
       textStyle: { color: getCSSVariable('--gray-500'), fontSize: 12 },
       itemWidth: 14,
       itemHeight: 14,
-      formatter: (name) => truncateLegend(name)
+      formatter: (name) => truncateLegend(name),
+      pageIconSize: 12,
+      pageIconColor: getCSSVariable('--gray-500'),
+      pageIconInactiveColor: getCSSVariable('--gray-300'),
+      pageTextStyle: { color: getCSSVariable('--gray-500') }
     },
     series
   }

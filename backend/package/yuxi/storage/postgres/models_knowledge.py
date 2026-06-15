@@ -38,6 +38,8 @@ class KnowledgeBase(Base):
     additional_params = Column(JSON_VALUE)
     share_config = Column(JSON_VALUE)
     mindmap = Column(JSON_VALUE)
+    mindmap_file_ids = Column(JSON_VALUE)
+    mindmap_metadata = Column(JSON_VALUE)
     sample_questions = Column(JSON_VALUE)
     created_by = Column(String(64))
     created_at = Column(DateTime(timezone=True), default=utc_now_naive)
