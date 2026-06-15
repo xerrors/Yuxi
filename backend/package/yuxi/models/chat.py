@@ -1,73 +1,8 @@
-from openai import AsyncOpenAI
-from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from langchain_core.messages import convert_to_messages
 
+from yuxi.agents.models import load_chat_model
 from yuxi.models.providers.cache import model_cache
 from yuxi.utils import logger
-
-
-class OpenAIBase:
-    def __init__(self, api_key, base_url, model_name, **kwargs):
-        self.model_params = kwargs.pop("model_params", {}) or {}
-        self.api_key = api_key
-        self.base_url = base_url
-        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url, **kwargs)
-        self.model_name = model_name
-        self.info = kwargs
-
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((Exception,)),
-        before_sleep=before_sleep_log(logger, log_level="WARNING"),
-        reraise=True,
-    )
-    async def call(self, message, stream=False):
-        if isinstance(message, str):
-            messages = [{"role": "user", "content": message}]
-        else:
-            messages = message
-
-        try:
-            if stream:
-                response = self._stream_response(messages)
-            else:
-                response = await self._get_response(messages)
-        except Exception as e:
-            err = (
-                f"Error streaming response: {e}, URL: {self.base_url}, "
-                f"API Key: {self.api_key[:5]}***, Model: {self.model_name}"
-            )
-            logger.error(err)
-            raise Exception(err)
-
-        return response
-
-    async def _stream_response(self, messages):
-        response = await self.client.chat.completions.create(
-            model=self.model_name,
-            messages=messages,
-            stream=True,
-            **self.model_params,
-        )
-        async for chunk in response:
-            if len(chunk.choices) > 0:
-                yield chunk.choices[0].delta
-
-    async def _get_response(self, messages):
-        response = await self.client.chat.completions.create(
-            model=self.model_name,
-            messages=messages,
-            stream=False,
-            **self.model_params,
-        )
-        return response.choices[0].message
-
-    async def get_models(self):
-        try:
-            return await self.client.models.list(extra_query={"type": "text"})
-        except Exception as e:
-            logger.error(f"Error getting models: {e}")
-            return []
 
 
 class GeneralResponse:
@@ -76,7 +11,46 @@ class GeneralResponse:
         self.is_full = False
 
 
-def select_model(model_spec: str, **kwargs) -> OpenAIBase:
+class LangChainChatAdapter:
+    def __init__(self, model, *, model_name: str, base_url: str | None = None, info: dict | None = None):
+        self.model = model
+        self.model_name = model_name
+        self.base_url = base_url
+        self.info = info or {}
+
+    @staticmethod
+    def _normalize_messages(message):
+        if isinstance(message, str):
+            return message
+        return convert_to_messages(message)
+
+    async def call(self, message, stream=False):
+        messages = self._normalize_messages(message)
+        try:
+            if stream:
+                return self._stream_response(messages)
+            response = await self.model.ainvoke(messages)
+            return GeneralResponse(response.text)
+        except Exception as e:
+            err = f"Error calling model: {e}, URL: {self.base_url}, Model: {self.model_name}"
+            logger.error(err)
+            raise Exception(err)
+
+    async def _stream_response(self, messages):
+        async for chunk in self.model.astream(messages):
+            if chunk.text:
+                yield GeneralResponse(chunk.text)
+
+
+def _langchain_kwargs(provider_type: str, kwargs: dict) -> dict:
+    langchain_kwargs = dict(kwargs.pop("model_params", {}) or {})
+    langchain_kwargs.update(kwargs)
+    if provider_type == "anthropic" and "max_completion_tokens" in langchain_kwargs:
+        langchain_kwargs.setdefault("max_tokens", langchain_kwargs.pop("max_completion_tokens"))
+    return langchain_kwargs
+
+
+def select_model(model_spec: str, **kwargs) -> LangChainChatAdapter:
     if not model_spec:
         raise ValueError("model_spec 不能为空")
 
@@ -91,11 +65,15 @@ def select_model(model_spec: str, **kwargs) -> OpenAIBase:
 
     logger.info(f"Selecting model: {model_spec} (provider_type={info.provider_type})")
 
-    return OpenAIBase(
-        api_key=info.api_key,
-        base_url=info.base_url,
+    model = load_chat_model(
+        model_spec,
+        **_langchain_kwargs(info.provider_type, kwargs),
+    )
+    return LangChainChatAdapter(
+        model,
         model_name=info.model_id,
-        **kwargs,
+        base_url=info.base_url,
+        info={"provider_type": info.provider_type, "provider_id": info.provider_id},
     )
 
 

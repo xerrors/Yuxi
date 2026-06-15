@@ -8,7 +8,7 @@
           :single-mode="false"
           @thread-change="handleThreadChange"
         >
-          <template #input-actions-right="{ hasActiveThread }">
+          <template #input-actions-left="{ hasActiveThread }">
             <a-dropdown
               v-if="selectedAgentId"
               v-model:open="agentDropdownOpen"

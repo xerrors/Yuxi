@@ -642,10 +642,7 @@ onMounted(async () => {
   // 检查 OIDC 配置完成后，尝试自动触发 OIDC 登录（跨系统跳转场景）
   const config = await checkOIDCConfig()
   if (config && config.enabled) {
-    const autoStarted = await tryAutoStartOIDC(
-      async () => await authApi.getOIDCLoginUrl(),
-      config
-    )
+    const autoStarted = await tryAutoStartOIDC(async () => await authApi.getOIDCLoginUrl(), config)
     // 如果已发起 OIDC 跳转，页面会被重定向，不需要继续
     if (autoStarted) return
   }

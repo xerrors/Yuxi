@@ -31,28 +31,7 @@
 
     <a-divider />
 
-    <!-- 图表区域：拆分为两行 -->
-    <a-row :gutter="24" style="margin-bottom: 16px">
-      <!-- 数据库类型分布 -->
-      <a-col :span="24">
-        <div class="chart-container">
-          <div class="chart-header">
-            <h4>类型分布</h4>
-            <div class="legend" v-if="dbTypeLegend.length">
-              <div class="legend-item" v-for="(item, idx) in dbTypeLegend" :key="item.name">
-                <span
-                  class="legend-color"
-                  :style="{ backgroundColor: getLegendColorByIndex(idx) }"
-                ></span>
-                <span class="legend-label">{{ item.name }}</span>
-              </div>
-            </div>
-          </div>
-          <div ref="dbTypeChartRef" class="chart chart--thin"></div>
-        </div>
-      </a-col>
-    </a-row>
-
+    <!-- 图表区域 -->
     <a-row :gutter="24">
       <!-- 文件类型分布 -->
       <a-col :span="24">
@@ -112,7 +91,7 @@
 <script setup>
 import { ref, onMounted, watch, nextTick, computed } from 'vue'
 import * as echarts from 'echarts'
-import { getColorByIndex, getColorPalette } from '@/utils/chartColors'
+import { getColorPalette } from '@/utils/chartColors'
 import { useThemeStore } from '@/stores/theme'
 
 // CSS 变量解析工具函数
@@ -136,9 +115,7 @@ const props = defineProps({
 })
 
 // Chart refs
-const dbTypeChartRef = ref(null)
 const fileTypeChartRef = ref(null)
-let dbTypeChart = null
 let fileTypeChart = null
 
 // File type chart data for carousel
@@ -167,77 +144,6 @@ const formattedStorageSize = computed(() => {
 //   const size = props.knowledgeStats?.total_storage_size || 0
 //   return nodes > 0 ? size / (nodes * 1024) : 0 // 转换为KB
 // })
-
-// 使用统一的调色盘
-const getLegendColorByIndex = (index) => getColorByIndex(index)
-
-// 初始化数据库类型分布图 - 横向分段条
-const dbTypeLegend = ref([])
-const initDbTypeChart = () => {
-  if (!dbTypeChartRef.value || !props.knowledgeStats?.databases_by_type) return
-
-  const entries = Object.entries(props.knowledgeStats.databases_by_type)
-    .map(([type, count]) => ({ name: type || '未知', value: count }))
-    .filter((item) => item.value > 0)
-
-  // update legend data
-  dbTypeLegend.value = entries
-
-  if (!dbTypeChart) {
-    dbTypeChart = echarts.init(dbTypeChartRef.value)
-  }
-
-  const total = entries.reduce((sum, item) => sum + item.value, 0)
-
-  // Build stacked bar series, but render with neutral color and separators
-  const series = entries.map((item, idx) => ({
-    name: item.name,
-    type: 'bar',
-    stack: 'total',
-    barWidth: 28,
-    data: [item.value],
-    itemStyle: {
-      color: getLegendColorByIndex(idx),
-      borderColor: getCSSVariable('--gray-0'),
-      borderWidth: 2,
-      borderJoin: 'miter'
-    },
-    emphasis: {
-      itemStyle: {
-        color: getLegendColorByIndex(idx)
-      }
-    }
-  }))
-
-  const option = {
-    animation: false,
-    tooltip: {
-      trigger: 'item',
-      backgroundColor: getCSSVariable('--gray-0'),
-      borderColor: getCSSVariable('--gray-200'),
-      borderWidth: 1,
-      textStyle: { color: getCSSVariable('--gray-600') },
-      formatter: (params) => {
-        const value = params.value || 0
-        return `${params.seriesName}: ${value}/${total}`
-      }
-    },
-    grid: { left: 0, right: 0, top: 10, bottom: 10, containLabel: false },
-    xAxis: {
-      type: 'value',
-      show: false,
-      max: total > 0 ? total : undefined
-    },
-    yAxis: {
-      type: 'category',
-      show: false,
-      data: ['all']
-    },
-    series
-  }
-
-  dbTypeChart.setOption(option, true)
-}
 
 // 初始化文件类型分布图
 const initFileTypeChart = () => {
@@ -399,7 +305,6 @@ const stopCarousel = () => {
 // 更新图表
 const updateCharts = () => {
   nextTick(() => {
-    initDbTypeChart()
     initFileTypeChart()
   })
 }
@@ -415,7 +320,6 @@ watch(
 
 // 窗口大小变化时重新调整图表
 const handleResize = () => {
-  if (dbTypeChart) dbTypeChart.resize()
   if (fileTypeChart) fileTypeChart.resize()
 }
 
@@ -428,7 +332,7 @@ onMounted(() => {
 watch(
   () => themeStore.isDark,
   () => {
-    if (props.knowledgeStats && (dbTypeChart || fileTypeChart)) {
+    if (props.knowledgeStats && fileTypeChart) {
       nextTick(() => {
         updateCharts()
       })
@@ -440,10 +344,6 @@ watch(
 const cleanup = () => {
   window.removeEventListener('resize', handleResize)
   stopCarousel() // 停止轮播
-  if (dbTypeChart) {
-    dbTypeChart.dispose()
-    dbTypeChart = null
-  }
   if (fileTypeChart) {
     fileTypeChart.dispose()
     fileTypeChart = null
@@ -459,44 +359,9 @@ defineExpose({
 <style scoped lang="less">
 // KnowledgeStatsComponent 特有的样式
 .chart-container {
-  .chart-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 8px;
-
-    h4 {
-      margin: 0;
-    }
-
-    .legend {
-      display: flex;
-      gap: 12px;
-      align-items: center;
-
-      .legend-item {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 12px;
-        color: var(--gray-500);
-      }
-
-      .legend-color {
-        width: 10px;
-        height: 10px;
-        border-radius: 2px;
-      }
-    }
-  }
-
   .chart {
     height: 300px;
     width: 100%;
-  }
-
-  .chart--thin {
-    height: 80px;
   }
 
   // 环形图容器样式

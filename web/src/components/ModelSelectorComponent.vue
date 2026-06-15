@@ -122,6 +122,7 @@ const v2Models = ref({})
 const loadingV2Models = ref(false)
 const dropdownOpen = ref(false)
 const modelSearchKeyword = ref('')
+let fetchV2ModelsPromise = null
 
 const filteredV2Models = computed(() => {
   const keyword = modelSearchKeyword.value.trim().toLowerCase()
@@ -165,28 +166,42 @@ const getProviderDisplayName = (providerId, providerData = {}) => {
 
 // 拉取 v2 模型列表
 const fetchV2Models = async () => {
-  if (loadingV2Models.value) return
+  if (fetchV2ModelsPromise) return fetchV2ModelsPromise
+
   loadingV2Models.value = true
-  try {
-    const response = await modelProviderApi.getV2Models('chat')
-    if (response.success) {
-      v2Models.value = response.data || {}
+  fetchV2ModelsPromise = (async () => {
+    try {
+      const response = await modelProviderApi.getV2Models('chat')
+      if (response.success) {
+        v2Models.value = response.data || {}
+      }
+    } catch (error) {
+      console.warn('Failed to load v2 models:', error)
+    } finally {
+      loadingV2Models.value = false
+      fetchV2ModelsPromise = null
     }
-  } catch (error) {
-    console.warn('Failed to load v2 models:', error)
-  } finally {
-    loadingV2Models.value = false
-  }
+  })()
+
+  return fetchV2ModelsPromise
 }
 
-// 下拉展开时触发实时刷新（仅在打开瞬间触发，关闭时忽略）
-const handleOpenChange = (open) => {
+// 下拉展开前先刷新模型列表，避免弹层打开后再因数据加载发生高度跳变。
+const handleOpenChange = async (open) => {
   if (props.disabled) {
     dropdownOpen.value = false
     return
   }
-  dropdownOpen.value = open
-  if (open) fetchV2Models()
+
+  if (!open) {
+    dropdownOpen.value = false
+    return
+  }
+
+  await fetchV2Models()
+  if (!props.disabled) {
+    dropdownOpen.value = true
+  }
 }
 
 // 强制刷新缓存

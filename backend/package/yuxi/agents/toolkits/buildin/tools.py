@@ -10,11 +10,15 @@ from pydantic import BaseModel, Field
 
 from yuxi.agents.toolkits.registry import ToolExtraMetadata, _all_tool_instances, _extra_registry, tool
 from yuxi.utils import logger
-from yuxi.utils.paths import VIRTUAL_PATH_OUTPUTS
+from yuxi.utils.paths import CONVERSATION_HISTORY_DIR_NAME, LARGE_TOOL_RESULTS_DIR_NAME, VIRTUAL_PATH_OUTPUTS
 from yuxi.utils.question_utils import normalize_questions
 
 # Lazy initialization for TavilySearch (only when API key is available)
 _tavily_search_instance = None
+
+_PRESENT_ARTIFACTS_INTERNAL_DIR_NAMES = frozenset(
+    {CONVERSATION_HISTORY_DIR_NAME, LARGE_TOOL_RESULTS_DIR_NAME, "large_tool_history"}
+)
 
 
 def _create_tavily_search():
@@ -53,7 +57,9 @@ if os.getenv("TAVILY_API_KEY"):
 class PresentArtifactsInput(BaseModel):
     """Expose artifact files to the frontend after the agent finishes."""
 
-    filepaths: list[str] = Field(description=f"需要展示给用户的文件绝对路径列表，只允许位于 {VIRTUAL_PATH_OUTPUTS} 下")
+    filepaths: list[str] = Field(
+        description=f"需要展示给用户的文件绝对路径列表，只允许位于 {VIRTUAL_PATH_OUTPUTS} 下，且不能是内部运行文件"
+    )
 
 
 def _normalize_presented_artifact_path(filepath: str, runtime: ToolRuntime) -> str:
@@ -94,6 +100,9 @@ def _normalize_presented_artifact_path(filepath: str, runtime: ToolRuntime) -> s
     except ValueError as exc:
         raise ValueError(f"只允许展示 {outputs_virtual_prefix}/ 下的文件: {normalized_input}") from exc
 
+    if relative_path.parts and relative_path.parts[0] in _PRESENT_ARTIFACTS_INTERNAL_DIR_NAMES:
+        raise ValueError(f"不允许展示工具调用阶段文件: {outputs_virtual_prefix}/{relative_path.as_posix()}")
+
     return f"{outputs_virtual_prefix}/{relative_path.as_posix()}"
 
 
@@ -108,7 +117,10 @@ PRESENT_ARTIFACTS_DESCRIPTION = f"""
 注意事项：
 1. 只能传入 `{VIRTUAL_PATH_OUTPUTS}` 下的文件
 2. 不要传入中间过程文件，只有真正需要给用户看的结果文件才调用
-3. 可以一次传多个文件
+3. 不要传入工具调用阶段文件，例如：
+   - `{VIRTUAL_PATH_OUTPUTS}/{LARGE_TOOL_RESULTS_DIR_NAME}`
+   - `{VIRTUAL_PATH_OUTPUTS}/{CONVERSATION_HISTORY_DIR_NAME}`
+4. 可以一次传多个文件
 """
 
 

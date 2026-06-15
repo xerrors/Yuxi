@@ -1,7 +1,6 @@
 import traceback
 import uuid
 from typing import Any
-from mimetypes import guess_type
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import FileResponse, StreamingResponse
@@ -27,6 +26,7 @@ from yuxi.services.conversation_service import (
     upload_thread_attachment_view,
     upload_tmp_attachment_view,
 )
+from yuxi.services.file_preview import detect_media_type
 from yuxi.services.thread_files_service import (
     list_thread_files_view,
     read_thread_file_content_view,
@@ -544,7 +544,7 @@ async def get_thread_artifact(
         path=path,
     )
 
-    media_type = guess_type(file_path.name)[0] or "application/octet-stream"
+    media_type = detect_media_type(file_path.name, file_path.read_bytes())
     headers = {"Content-Disposition": f'attachment; filename="{file_path.name}"'} if download else None
     return FileResponse(path=file_path, media_type=media_type, headers=headers)
 

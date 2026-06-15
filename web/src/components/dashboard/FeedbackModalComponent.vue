@@ -221,7 +221,8 @@ const loadFeedbacks = async () => {
   }
 }
 
-const getFeedbackDefaultAvatarSrc = (feedback) => (feedback.uid ? generatePixelAvatar(feedback.uid) : '')
+const getFeedbackDefaultAvatarSrc = (feedback) =>
+  feedback.uid ? generatePixelAvatar(feedback.uid) : ''
 
 // 格式化完整日期
 const formatFullDate = (dateString) => formatFullDateTime(dateString)

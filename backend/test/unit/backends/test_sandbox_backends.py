@@ -7,6 +7,7 @@ from types import MethodType, SimpleNamespace
 
 import pytest
 from deepagents.backends.protocol import GlobResult
+from langchain_core.messages import ToolMessage
 from yuxi.agents.backends.composite import (
     CustomCompositeBackend,
     create_agent_composite_backend,
@@ -117,6 +118,60 @@ def test_create_agent_filesystem_middleware_uses_outputs_for_internal_artifacts(
     assert middleware._tool_token_limit_before_evict == 500
     assert middleware._large_tool_results_prefix == VIRTUAL_PATH_LARGE_TOOL_RESULTS
     assert middleware._conversation_history_prefix == VIRTUAL_PATH_CONVERSATION_HISTORY
+
+
+def test_filesystem_middleware_evicts_large_non_read_file_tool_result() -> None:
+    class _Backend:
+        artifacts_root = "/"
+
+        def __init__(self):
+            self.writes: list[tuple[str, str]] = []
+
+        def write(self, path: str, content: str):
+            self.writes.append((path, content))
+            return SimpleNamespace(error=None)
+
+    backend = _Backend()
+    middleware = create_agent_filesystem_middleware(tool_token_limit_before_evict=1)
+    middleware.backend = backend
+    request = SimpleNamespace(tool_call={"name": "grep"}, runtime=SimpleNamespace())
+    content = "BEGIN\n" + ("middle\n" * 5000) + "END"
+
+    result = middleware.wrap_tool_call(
+        request,
+        lambda _: ToolMessage(content=content, name="grep", tool_call_id="call-grep"),
+    )
+
+    assert backend.writes == [(f"{VIRTUAL_PATH_LARGE_TOOL_RESULTS}/call-grep", content)]
+    assert isinstance(result, ToolMessage)
+    assert len(result.content) < len(content)
+    assert f"{VIRTUAL_PATH_LARGE_TOOL_RESULTS}/call-grep" in result.content
+
+
+def test_filesystem_middleware_keeps_read_file_result_inline_to_avoid_evict_loop() -> None:
+    class _Backend:
+        artifacts_root = "/"
+
+        def __init__(self):
+            self.writes: list[tuple[str, str]] = []
+
+        def write(self, path: str, content: str):
+            self.writes.append((path, content))
+            return SimpleNamespace(error=None)
+
+    backend = _Backend()
+    middleware = create_agent_filesystem_middleware(tool_token_limit_before_evict=1)
+    middleware.backend = backend
+    request = SimpleNamespace(tool_call={"name": "read_file"}, runtime=SimpleNamespace())
+    content = "x" * 100
+
+    result = middleware.wrap_tool_call(
+        request,
+        lambda _: ToolMessage(content=content, name="read_file", tool_call_id="call-read"),
+    )
+
+    assert backend.writes == []
+    assert result.content == content
 
 
 def test_custom_composite_glob_only_searches_routes_from_root() -> None:
@@ -373,9 +428,7 @@ def test_provisioner_read_preserves_base64_like_plain_text(monkeypatch) -> None:
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
 
     fake_client = SimpleNamespace(
-        file=SimpleNamespace(
-            read_file=lambda **_kwargs: SimpleNamespace(data=SimpleNamespace(content="SGVsbG8="))
-        )
+        file=SimpleNamespace(read_file=lambda **_kwargs: SimpleNamespace(data=SimpleNamespace(content="SGVsbG8=")))
     )
     backend._get_client = MethodType(lambda self: fake_client, backend)
 
@@ -391,9 +444,7 @@ def test_provisioner_read_decodes_explicit_base64(monkeypatch) -> None:
 
     fake_client = SimpleNamespace(
         file=SimpleNamespace(
-            read_file=lambda **_kwargs: SimpleNamespace(
-                data=SimpleNamespace(content="SGVsbG8=", encoding="base64")
-            )
+            read_file=lambda **_kwargs: SimpleNamespace(data=SimpleNamespace(content="SGVsbG8=", encoding="base64"))
         )
     )
     backend._get_client = MethodType(lambda self: fake_client, backend)
@@ -444,6 +495,20 @@ def test_provisioner_download_files_distinguishes_invalid_path_from_read_failure
 
     assert responses[0].error == "invalid_path"
     assert responses[1].error.startswith("read_failed")
+
+
+def test_provisioner_download_files_treats_sandbox_404_as_missing(monkeypatch) -> None:
+    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
+
+    def _missing_from_sandbox(path, offset=0, limit=None):
+        raise RuntimeError("status_code: 404, body: {'message': 'File does not exist'}")
+
+    monkeypatch.setattr(backend, "_read_binary", _missing_from_sandbox)
+
+    responses = backend.download_files(["/home/gem/user-data/outputs/missing.md"])
+
+    assert responses[0].error == "file_not_found"
 
 
 def test_provisioner_execute_returns_error_response_on_client_failure(monkeypatch) -> None:

@@ -63,6 +63,8 @@ class KnowledgeFile(Base):
     status = Column(String(32), default="uploaded", index=True)
     content_hash = Column(String(128), index=True)
     file_size = Column(BigInteger)
+    chunk_count = Column(Integer, default=0)
+    token_count = Column(BigInteger, default=0)
     content_type = Column(String(64))
     processing_params = Column(JSON_VALUE)
     is_folder = Column(Boolean, default=False)

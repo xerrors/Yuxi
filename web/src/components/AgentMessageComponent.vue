@@ -1,9 +1,15 @@
 <template>
-  <div
-    v-if="message.message_type === 'multimodal_image' && message.image_content"
-    class="message-image"
-  >
-    <img :src="`data:image/jpeg;base64,${message.image_content}`" alt="用户上传的图片" />
+  <div v-if="message.type === 'human' && message.image_content" class="message-image">
+    <img
+      :src="`data:${messageImageMimeType};base64,${message.image_content}`"
+      alt="用户上传的图片"
+      @click="
+        openImagePreview(
+          `data:${messageImageMimeType};base64,${message.image_content}`,
+          '用户上传的图片'
+        )
+      "
+    />
   </div>
   <div
     class="message-box"
@@ -109,15 +115,7 @@
     class="human-message-attachments"
   >
     <div
-      v-for="attachment in imageAttachments"
-      :key="attachment.fileId"
-      class="message-attachment-image"
-    >
-      <img :src="attachment.previewUrl" :alt="attachment.name" class="message-attachment-thumb" />
-    </div>
-
-    <div
-      v-for="attachment in fileAttachments"
+      v-for="attachment in messageAttachments"
       :key="attachment.fileId"
       class="message-attachment-file"
     >
@@ -132,13 +130,26 @@
       </div>
     </div>
   </div>
+
+  <Teleport to="body">
+    <div
+      v-if="imagePreview.visible"
+      class="message-image-preview-overlay"
+      @click="closeImagePreview"
+    >
+      <button class="message-image-preview-close" title="关闭" @click.stop="closeImagePreview">
+        <X :size="20" />
+      </button>
+      <img :src="imagePreview.src" :alt="imagePreview.alt" class="message-image-preview-img" />
+    </div>
+  </Teleport>
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, onUnmounted } from 'vue'
 import { CaretRightOutlined } from '@ant-design/icons-vue'
 import RefsComponent from '@/components/RefsComponent.vue'
-import { Copy, Check } from 'lucide-vue-next'
+import { Copy, Check, X } from 'lucide-vue-next'
 import ToolCallsGroupComponent from '@/components/ToolCallsGroupComponent.vue'
 import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
 import MentionTextRenderer from '@/components/common/MentionTextRenderer.vue'
@@ -146,7 +157,7 @@ import { useAgentStore } from '@/stores/agent'
 import { useInfoStore } from '@/stores/info'
 import { storeToRefs } from 'pinia'
 import { MessageProcessor } from '@/utils/messageProcessor'
-import { normalizeAttachmentPreviews } from '@/utils/file_utils'
+import { inferImageMimeTypeFromBase64, normalizeAttachmentPreviews } from '@/utils/file_utils'
 import { buildMentionDisplayLabels } from '@/utils/mention_utils'
 import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
 import { enrichTaskToolCalls } from '@/components/ToolCallingResult/toolRegistry'
@@ -193,6 +204,30 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['retry', 'retryStoppedMessage', 'openRefs'])
+
+// 图片全屏预览
+const imagePreview = ref({ visible: false, src: '', alt: '' })
+
+const handleImagePreviewKeydown = (e) => {
+  if (e.key === 'Escape') {
+    closeImagePreview()
+  }
+}
+
+const openImagePreview = (src, alt = '') => {
+  if (!src) return
+  imagePreview.value = { visible: true, src, alt }
+  window.addEventListener('keydown', handleImagePreviewKeydown)
+}
+
+const closeImagePreview = () => {
+  imagePreview.value = { visible: false, src: '', alt: '' }
+  window.removeEventListener('keydown', handleImagePreviewKeydown)
+}
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleImagePreviewKeydown)
+})
 
 // 复制状态
 const isCopied = ref(false)
@@ -266,12 +301,8 @@ const infoStore = useInfoStore()
 const messageAttachments = computed(() =>
   normalizeAttachmentPreviews(props.message.extra_metadata?.attachments)
 )
-
-const imageAttachments = computed(() =>
-  messageAttachments.value.filter((attachment) => attachment.isImage && attachment.previewUrl)
-)
-const fileAttachments = computed(() =>
-  messageAttachments.value.filter((attachment) => !attachment.isImage || !attachment.previewUrl)
+const messageImageMimeType = computed(
+  () => inferImageMimeTypeFromBase64(props.message.image_content) || 'image/jpeg'
 )
 
 const mentionDisplayLabels = computed(() => buildMentionDisplayLabels(props.mention || {}))
@@ -497,22 +528,6 @@ const parsedData = computed(() => {
   margin-bottom: 0.8rem;
 }
 
-.message-attachment-image {
-  width: 112px;
-  height: 112px;
-  overflow: hidden;
-  border: 1px solid var(--gray-200);
-  border-radius: 0.5rem;
-  background: var(--gray-0);
-}
-
-.message-attachment-thumb {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-
 .message-attachment-file {
   width: 220px;
   min-width: 0;
@@ -631,10 +646,52 @@ const parsedData = computed(() => {
     max-width: 100%;
     max-height: 200px;
     object-fit: contain;
+    cursor: pointer;
   }
 }
 
 .message-md {
   margin: 8px 0;
+}
+
+.message-image-preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  background: rgba(0, 0, 0, 0.75);
+  cursor: zoom-out;
+}
+
+.message-image-preview-img {
+  max-width: 90vw;
+  max-height: 90vh;
+  object-fit: contain;
+  border-radius: 4px;
+  cursor: zoom-out;
+}
+
+.message-image-preview-close {
+  position: fixed;
+  top: 1.5rem;
+  right: 1.5rem;
+  width: 2.5rem;
+  height: 2.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  color: var(--gray-0);
+  background: rgba(255, 255, 255, 0.15);
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.28);
+  }
 }
 </style>

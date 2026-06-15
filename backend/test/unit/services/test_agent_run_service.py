@@ -642,6 +642,19 @@ def test_validate_model_spec_accepts_chat_model(monkeypatch: pytest.MonkeyPatch)
     assert agent_run_service._validate_model_spec("gpt-x") == "gpt-x"
 
 
+def test_validate_model_spec_strips_explicit_model(monkeypatch: pytest.MonkeyPatch):
+    seen = []
+
+    def fake_get_model_info(spec):
+        seen.append(spec)
+        return SimpleNamespace(model_type="chat")
+
+    monkeypatch.setattr(agent_run_service.model_cache, "get_model_info", fake_get_model_info)
+
+    assert agent_run_service._validate_model_spec(" gpt-x ") == "gpt-x"
+    assert seen == ["gpt-x"]
+
+
 def _patch_common_run_repos(
     monkeypatch: pytest.MonkeyPatch,
     run_repo_cls,
@@ -754,6 +767,45 @@ async def test_create_chat_run_persists_validated_model_spec(monkeypatch: pytest
 
 
 @pytest.mark.asyncio
+async def test_create_chat_run_with_image_persists_multimodal_message_type(monkeypatch: pytest.MonkeyPatch):
+    captured = {}
+    created_run = SimpleNamespace(id="", thread_id="thread-1", status="pending", request_id="req-1", uid="user-1")
+
+    class RunRepo:
+        def __init__(self, db_session):
+            del db_session
+
+        async def get_run_by_request_id(self, request_id: str):
+            del request_id
+            return None
+
+        async def create_run(self, **kwargs):
+            captured["input_payload"] = kwargs["input_payload"]
+            created_run.id = kwargs["run_id"]
+            return created_run
+
+        async def set_input_message(self, run_id: str, message_id: int):
+            del run_id, message_id
+            return created_run
+
+    db = _patch_common_run_repos(monkeypatch, RunRepo)
+
+    await agent_run_service.create_agent_run_view(
+        query="看图",
+        agent_id="default",
+        thread_id="thread-1",
+        meta={"request_id": "req-1"},
+        image_content="base64-image",
+        current_uid="user-1",
+        db=db,
+    )
+
+    assert captured["input_payload"]["image_content"] == "base64-image"
+    assert db.added[0].message_type == "multimodal_image"
+    assert db.added[0].image_content == "base64-image"
+
+
+@pytest.mark.asyncio
 async def test_create_chat_run_snapshots_agent_configured_model_spec(monkeypatch: pytest.MonkeyPatch):
     captured = {}
     created_run = SimpleNamespace(id="", thread_id="thread-1", status="pending", request_id="req-1", uid="user-1")
@@ -794,6 +846,54 @@ async def test_create_chat_run_snapshots_agent_configured_model_spec(monkeypatch
 
     assert captured["input_payload"]["model_spec"] == "agent-config-model"
     assert db.added[0].extra_metadata["model_spec"] == "agent-config-model"
+
+
+@pytest.mark.asyncio
+async def test_create_chat_run_snapshots_system_default_when_agent_model_empty(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        agent_run_service,
+        "resolve_chat_model_spec",
+        lambda model_spec: str(model_spec).strip() if str(model_spec or "").strip() else "system-default-model",
+    )
+    captured = {}
+    created_run = SimpleNamespace(id="", thread_id="thread-1", status="pending", request_id="req-1", uid="user-1")
+
+    class RunRepo:
+        def __init__(self, db_session):
+            del db_session
+
+        async def get_run_by_request_id(self, request_id: str):
+            del request_id
+            return None
+
+        async def create_run(self, **kwargs):
+            captured["input_payload"] = kwargs["input_payload"]
+            created_run.id = kwargs["run_id"]
+            return created_run
+
+        async def set_input_message(self, run_id: str, message_id: int):
+            del run_id, message_id
+            return created_run
+
+    db = _patch_common_run_repos(
+        monkeypatch,
+        RunRepo,
+        agent_config_json={"context": {"model": ""}},
+    )
+
+    await agent_run_service.create_agent_run_view(
+        query="hello",
+        agent_id="default",
+        thread_id="thread-1",
+        meta={"request_id": "req-1"},
+        image_content=None,
+        current_uid="user-1",
+        db=db,
+        model_spec=None,
+    )
+
+    assert captured["input_payload"]["model_spec"] == "system-default-model"
+    assert db.added[0].extra_metadata["model_spec"] == "system-default-model"
 
 
 @pytest.mark.asyncio

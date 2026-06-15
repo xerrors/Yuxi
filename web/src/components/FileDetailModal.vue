@@ -31,10 +31,9 @@
 
           <!-- 下载按钮下拉菜单 -->
           <a-dropdown trigger="click" v-if="file">
-            <a-button type="default" class="download-btn">
-              <template #icon><Download :size="16" /></template>
-              下载
-              <ChevronDown :size="16" style="margin-left: 4px" />
+            <a-button type="default" class="download-btn" title="下载" aria-label="下载">
+              <Download :size="16" />
+              <ChevronDown :size="14" />
             </a-button>
             <template #overlay>
               <a-menu @click="handleDownloadMenuClick">
@@ -118,7 +117,7 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, h, ref, watch } from 'vue'
 import { useDatabaseStore } from '@/stores/database'
 import { message } from 'ant-design-vue'
 import { documentApi } from '@/apis/knowledge_api'
@@ -126,7 +125,7 @@ import { mergeChunks } from '@/utils/chunkUtils'
 import { getPreviewTypeByPath } from '@/utils/file_preview'
 import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
 import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
-import { Download, ChevronDown, FileText, X } from 'lucide-vue-next'
+import { Download, ChevronDown, FileSearch, FileText, Rows3, X } from 'lucide-vue-next'
 
 const store = useDatabaseStore()
 
@@ -160,15 +159,28 @@ const hasSourcePreview = computed(() => ['image', 'pdf'].includes(sourcePreviewT
 // 是否有实际的分块数据
 const hasChunks = computed(() => mappedChunks.value && mappedChunks.value.length > 0)
 
+const makeViewModeOption = (label, value, icon) => ({
+  label: h(
+    'span',
+    {
+      class: 'view-option-icon',
+      title: label,
+      'aria-label': label
+    },
+    [h(icon, { size: 15 })]
+  ),
+  value
+})
+
 const viewModeOptions = computed(() => {
   const options = []
   if (hasSourcePreview.value) {
-    options.push({ label: '源文件', value: 'source' })
+    options.push(makeViewModeOption('源文件', 'source', FileSearch))
   }
-  options.push({ label: 'Markdown', value: 'markdown' })
+  options.push(makeViewModeOption('Markdown', 'markdown', FileText))
   // 只有当有实际的分块数据时才显示 Chunks 选项
   if (hasChunks.value) {
-    options.push({ label: 'Chunks', value: 'chunks' })
+    options.push(makeViewModeOption('Chunks', 'chunks', Rows3))
   }
   return options
 })
@@ -484,7 +496,9 @@ const handleDownloadMarkdown = () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
   width: 100%;
+  min-width: 0;
 }
 
 /* 文件标题样式 */
@@ -492,9 +506,20 @@ const handleDownloadMarkdown = () => {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+
+  svg {
+    flex: 0 0 auto;
+  }
 }
 
 .file-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 600;
   font-size: 15px;
   color: var(--gray-900);
@@ -509,22 +534,27 @@ const handleDownloadMarkdown = () => {
 .header-controls {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
+  flex: 0 0 auto;
   margin-left: auto;
+  min-width: 0;
 }
 
 /* 下载按钮样式 */
 .download-btn {
   display: inline-flex;
   align-items: center;
-  padding: 4px 8px;
+  justify-content: center;
+  width: 40px;
+  min-width: 40px;
+  padding: 0;
   height: 28px;
-  font-size: 13px;
   line-height: 1;
   border-radius: 6px;
-  gap: 4px;
+  gap: 2px;
 
   svg {
+    flex: 0 0 auto;
     vertical-align: middle;
   }
 }
@@ -534,6 +564,7 @@ const handleDownloadMarkdown = () => {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex: 0 0 28px;
   width: 28px;
   height: 28px;
   border: none;
@@ -553,10 +584,37 @@ const handleDownloadMarkdown = () => {
 .view-controls {
   display: flex;
   align-items: center;
-  gap: 8px;
+  flex: 0 0 auto;
+
+  .ant-segmented {
+    padding: 2px;
+  }
+
+  .ant-segmented-item {
+    min-width: 30px;
+  }
+
+  .ant-segmented-item-label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 24px;
+    min-height: 24px;
+    padding: 0 7px;
+    line-height: 24px;
+  }
+}
+
+.view-option-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
 }
 
 .view-info {
+  flex: 0 0 auto;
   font-size: 12px;
   color: var(--gray-500);
   white-space: nowrap;

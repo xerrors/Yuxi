@@ -39,6 +39,30 @@ class KnowledgeChunkRepository:
             )
             return list(result.scalars().all())
 
+    async def list_by_file_ids(self, file_ids: list[str]) -> list[KnowledgeChunk]:
+        if not file_ids:
+            return []
+
+        async with pg_manager.get_async_session_context() as session:
+            result = await session.execute(
+                select(KnowledgeChunk)
+                .where(KnowledgeChunk.file_id.in_(file_ids))
+                .order_by(KnowledgeChunk.file_id.asc(), KnowledgeChunk.chunk_index.asc())
+            )
+            return list(result.scalars().all())
+
+    async def count_by_file_ids(self, file_ids: list[str]) -> dict[str, int]:
+        if not file_ids:
+            return {}
+
+        async with pg_manager.get_async_session_context() as session:
+            result = await session.execute(
+                select(KnowledgeChunk.file_id, func.count())
+                .where(KnowledgeChunk.file_id.in_(file_ids))
+                .group_by(KnowledgeChunk.file_id)
+            )
+            return {str(file_id): int(count or 0) for file_id, count in result.all()}
+
     async def list_by_kb_id(self, kb_id: str) -> list[KnowledgeChunk]:
         async with pg_manager.get_async_session_context() as session:
             result = await session.execute(

@@ -264,6 +264,55 @@ async def test_task_tool_invokes_subagent_with_child_scope(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_task_tool_inherits_parent_model_when_subagent_model_empty(monkeypatch) -> None:
+    _patch_subagent_run_tracking(monkeypatch)
+    captured = {}
+
+    class _Graph:
+        async def ainvoke(self, state, *, config, context):
+            del state, config
+            captured["context"] = context
+            return {"messages": [AIMessage(content="child done")]}
+
+    class _Backend:
+        context_schema = _ChildContext
+
+        async def get_graph(self, *, context):
+            captured["graph_context"] = context
+            return _Graph()
+
+    monkeypatch.setattr(
+        subagent_task_middleware,
+        "_get_agent_backend",
+        lambda backend_id: _Backend() if backend_id == SUB_AGENT_BACKEND_ID else None,
+    )
+
+    middleware = YuxiSubAgentMiddleware(
+        parent_context=SimpleNamespace(thread_id="parent-thread", uid="user-1", model="parent:model"),
+        subagents=[
+            SimpleNamespace(
+                slug="worker",
+                name="Worker",
+                description="work on scoped tasks",
+                backend_id=SUB_AGENT_BACKEND_ID,
+                config_json={"context": {"model": ""}},
+            )
+        ],
+    )
+    runtime = SimpleNamespace(tool_call_id="tool-1", state={}, config={})
+
+    result = await middleware.tools[0].coroutine(
+        description="write a report",
+        subagent_type="worker",
+        runtime=runtime,
+    )
+
+    assert isinstance(result, Command)
+    assert captured["context"] is captured["graph_context"]
+    assert captured["context"].model == "parent:model"
+
+
+@pytest.mark.asyncio
 async def test_task_tool_records_failed_subagent_run(monkeypatch) -> None:
     _patch_subagent_run_tracking(monkeypatch)
 

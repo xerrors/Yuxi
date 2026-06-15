@@ -83,6 +83,10 @@ class MyAgent(BaseAgent):
 | `mcps` | 启用的 MCP 服务器 |
 | `skills` | 关联 Skills |
 | `summary_threshold` | 摘要触发阈值 |
+| `summary_prompt` | 摘要触发时使用的提示词 |
+| `summary_keep_messages` | 摘要后保留的最近消息数 |
+| `summary_tool_result_token_limit` | 摘要阶段工具结果预览上限 |
+| `max_execution_steps` | 单次运行最大执行步数 |
 | `thread_id` / `uid` | 运行期标识，不作为页面配置项暴露 |
 
 `tools`、`knowledges`、`mcps`、`skills` 在未显式配置时会默认启用当前用户可访问的全部资源。

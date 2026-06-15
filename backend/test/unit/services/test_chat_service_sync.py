@@ -229,7 +229,13 @@ async def test_agent_chat_uses_invoke_messages_and_persists_langgraph_state(monk
     assert result["response"] == "Hi from invoke"
     assert result["thread_id"] == "thread-1"
     assert result["request_id"] == "req-1"
-    assert result["agent_state"] == {"todos": ["todo-1"], "files": {}, "artifacts": [], "subagent_runs": []}
+    assert result["agent_state"] == {
+        "todos": ["todo-1"],
+        "files": {},
+        "artifacts": [],
+        "subagent_runs": [],
+        "token_usage": None,
+    }
 
     invoke_messages = calls["invoke_messages"]
     assert isinstance(invoke_messages, list)

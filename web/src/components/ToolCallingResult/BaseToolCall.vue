@@ -7,14 +7,14 @@
     <div class="tool-header" @click="toggleExpand">
       <!-- Fixed Status Icon -->
       <span v-if="effectiveStatus === 'completed'">
-        <component v-if="toolIcon" :is="toolIcon" size="16" class="tool-loader tool-success" />
-        <CheckCircle v-else size="16" class="tool-loader tool-success" />
+        <component v-if="toolIcon" :is="toolIcon" size="15" class="tool-loader tool-success" />
+        <CheckCircle v-else size="15" class="tool-loader tool-success" />
       </span>
       <span v-else-if="effectiveStatus === 'error'">
-        <XCircle size="16" class="tool-loader tool-error" />
+        <XCircle size="15" class="tool-loader tool-error" />
       </span>
       <span v-else>
-        <Loader size="16" class="tool-loader rotate tool-loading" />
+        <Loader size="15" class="tool-loader rotate tool-loading" />
       </span>
 
       <!-- Content Area with Slots -->
@@ -313,7 +313,7 @@ const formatResultData = (data) => {
         }
 
         .description {
-          color: var(--gray-500);
+          color: var(--gray-600);
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
@@ -329,7 +329,7 @@ const formatResultData = (data) => {
       :deep(.tag) {
         font-size: 11px;
         color: var(--gray-500);
-        background-color: var(--gray-50);
+        // background-color: var(--gray-50);
         padding: 0px 4px;
         border-radius: 4px;
         margin-left: 8px;
@@ -337,11 +337,11 @@ const formatResultData = (data) => {
 
         &.success {
           color: var(--color-success-500);
-          background-color: var(--color-success-50);
+          // background-color: var(--color-success-50);
         }
         &.error {
           color: var(--color-error-500);
-          background-color: var(--color-error-50);
+          // background-color: var(--color-error-50);
         }
       }
     }

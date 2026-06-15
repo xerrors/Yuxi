@@ -8,7 +8,7 @@
       }"
       :style="{ '--file-panel-width': filePanelWidthStyle }"
     >
-      <div class="chat-header">
+      <div class="chat-header" :class="{ 'has-active-thread': !!currentChatId }">
         <div class="header__left">
           <slot name="header-left"></slot>
           <div
@@ -29,7 +29,7 @@
             aria-controls="agent-state-panel"
             @click.stop="toggleStatePanel"
           >
-            <SquareCheck size="18" class="nav-btn-icon" />
+            <LayoutList size="16" class="nav-btn-icon" />
             <span class="hide-text">状态</span>
           </button>
           <button
@@ -41,7 +41,7 @@
             aria-controls="agent-file-panel"
             @click.stop="toggleAgentPanel"
           >
-            <FolderKanban size="18" class="nav-btn-icon" />
+            <FolderKanban size="16" class="nav-btn-icon" />
             <span class="hide-text">文件</span>
           </button>
           <slot
@@ -157,6 +157,9 @@
                 @remove-attachment="handleAttachmentRemove"
               >
                 <template #actions-left-extra>
+                  <slot name="input-actions-left" :has-active-thread="!!currentChatId"></slot>
+                </template>
+                <template #actions-right-extra>
                   <div class="input-model-selector">
                     <ModelSelectorComponent
                       :model_spec="currentModelSpec"
@@ -166,9 +169,6 @@
                       @select-model="handleModelSelect"
                     />
                   </div>
-                  <slot name="input-actions-left" :has-active-thread="!!currentChatId"></slot>
-                </template>
-                <template #actions-right-extra>
                   <slot name="input-actions-right" :has-active-thread="!!currentChatId"></slot>
                 </template>
               </AgentInputArea>
@@ -217,6 +217,78 @@
             </div>
 
             <div class="state-panel-body">
+              <section
+                v-if="currentTokenUsage"
+                class="state-section"
+                :class="{ 'is-collapsed': !isStateSectionExpanded('tokenUsage') }"
+                aria-label="上下文使用情况"
+              >
+                <button
+                  type="button"
+                  class="state-section-header"
+                  :aria-expanded="isStateSectionExpanded('tokenUsage')"
+                  aria-controls="state-section-token-usage"
+                  @click="toggleStateSection('tokenUsage')"
+                >
+                  <span class="state-section-label">
+                    <span class="state-section-title">上下文使用</span>
+                    <ChevronDown
+                      :size="15"
+                      class="state-section-chevron"
+                      :class="{ 'is-collapsed': !isStateSectionExpanded('tokenUsage') }"
+                    />
+                  </span>
+                  <span class="state-section-meta">
+                    {{ tokenUsageHeaderPercentLabel }}
+                  </span>
+                </button>
+                <div
+                  v-show="isStateSectionExpanded('tokenUsage')"
+                  id="state-section-token-usage"
+                  class="state-section-content"
+                >
+                  <div class="token-usage-content">
+                    <div class="token-usage-stack">
+                      <div class="token-usage-stack-head">
+                        <span>当前上下文</span>
+                        <strong>{{ tokenUsageStackHeadLabel }}</strong>
+                      </div>
+                      <div class="token-usage-stack-track" aria-label="Token 构成">
+                        <div
+                          v-for="segment in tokenUsageBarSegments"
+                          :key="segment.key"
+                          class="token-usage-stack-segment"
+                          :class="segment.tone"
+                          :style="{ width: segment.percent }"
+                          :title="`${segment.label}: ${segment.valueLabel}`"
+                        ></div>
+                      </div>
+                      <div class="token-usage-stack-legend">
+                        <span
+                          v-for="segment in tokenUsageSegments"
+                          :key="segment.key"
+                          class="token-usage-stack-legend-item"
+                        >
+                          <i :class="segment.tone"></i>
+                          {{ segment.label }} {{ segment.valueLabel }}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div v-if="tokenUsageMetaRows.length" class="token-usage-breakdown">
+                      <div
+                        v-for="item in tokenUsageMetaRows"
+                        :key="item.key"
+                        class="token-usage-breakdown-row"
+                      >
+                        <span>{{ item.label }}</span>
+                        <strong>{{ item.value }}</strong>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
               <section
                 v-if="currentTodos.length"
                 class="state-section"
@@ -497,7 +569,12 @@ import {
   onDeactivated
 } from 'vue'
 import { message } from 'ant-design-vue'
-import { ChevronDown, FolderKanban, RefreshCw, SquareCheck } from 'lucide-vue-next'
+import {
+  ChevronDown,
+  FolderKanban,
+  LayoutList,
+  RefreshCw
+} from 'lucide-vue-next'
 import { formatFileSize } from '@/utils/file_utils'
 import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
 import { generatePixelAvatar } from '@/utils/pixelAvatar'
@@ -609,6 +686,7 @@ const threadAttachmentsMap = ref({})
 const attachmentUploadModalOpen = ref(false)
 const isRefreshingState = ref(false)
 const collapsedStateSections = reactive({
+  tokenUsage: false,
   todos: false,
   files: false,
   artifacts: false,
@@ -924,6 +1002,164 @@ const supportsFiles = computed(() => {
 const currentAgentState = computed(() => {
   return currentChatId.value ? getThreadState(currentChatId.value)?.agentState || null : null
 })
+const toFiniteNumber = (value) => {
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric : null
+}
+const TOKEN_COUNT_K_UNIT = 1024
+const formatTokenCount = (value) => {
+  const numeric = toFiniteNumber(value)
+  if (numeric === null) return '-'
+  if (numeric >= TOKEN_COUNT_K_UNIT) {
+    const digits = numeric >= TOKEN_COUNT_K_UNIT * 10 ? 1 : 2
+    return `${(numeric / TOKEN_COUNT_K_UNIT).toFixed(digits).replace(/\.0+$/, '')}k`
+  }
+  return String(Math.round(numeric))
+}
+const currentTokenUsage = computed(() => {
+  const usage = currentAgentState.value?.token_usage
+  return usage && typeof usage === 'object' && !Array.isArray(usage) ? usage : null
+})
+const tokenUsageSegments = computed(() => {
+  const usage = currentTokenUsage.value
+  if (!usage) return []
+
+  const summaryTokens = usage.summary_active
+    ? Math.max(toFiniteNumber(usage.summary_message_tokens) || 0, 0)
+    : 0
+  const llmMessageTokens = Math.max(toFiniteNumber(usage.llm_messages_tokens) || 0, 0)
+  const stateMessageTokensBeforeCall = Math.max(
+    toFiniteNumber(usage.state_messages_tokens_before_call ?? usage.state_messages_tokens) || 0,
+    0
+  )
+  const messageTokens = Math.max(llmMessageTokens - summaryTokens, 0)
+  const cutMessageTokens = Math.max(stateMessageTokensBeforeCall - llmMessageTokens, 0)
+  const llmMessageCount = Math.max(toFiniteNumber(usage.llm_message_count) || 0, 0)
+  const displayMessageCount = Math.max(llmMessageCount - (usage.summary_active ? 1 : 0), 0)
+  const stateMessageCountBeforeCall = Math.max(
+    toFiniteNumber(usage.state_message_count_before_call ?? usage.state_message_count) || 0,
+    0
+  )
+  const cutMessageCount = Math.max(stateMessageCountBeforeCall - llmMessageCount, 0)
+  const systemTokens = Math.max(toFiniteNumber(usage.system_tokens) || 0, 0)
+  const toolsTokens = Math.max(toFiniteNumber(usage.tools_tokens) || 0, 0)
+  const inputTokens = Math.max(toFiniteNumber(usage.llm_input_tokens) || 0, 0)
+  const rawSegments = [
+    {
+      key: 'cut',
+      label: '已压缩',
+      value: cutMessageTokens,
+      messageCount: cutMessageCount,
+      tone: 'is-cut'
+    },
+    {
+      key: 'messages',
+      label: '消息',
+      value: messageTokens,
+      messageCount: displayMessageCount,
+      tone: 'is-messages'
+    },
+    {
+      key: 'summary',
+      label: '摘要',
+      value: summaryTokens,
+      messageCount: usage.summary_active ? 1 : 0,
+      tone: 'is-summary'
+    },
+    {
+      key: 'system',
+      label: '系统',
+      value: systemTokens,
+      tone: 'is-system'
+    },
+    {
+      key: 'tools',
+      label: `工具 (${usage.tool_count || 0})`,
+      value: toolsTokens,
+      tone: 'is-tools'
+    }
+  ].filter((segment) => segment.value > 0)
+
+  const accountedInputTokens = llmMessageTokens + systemTokens + toolsTokens
+  if (inputTokens > accountedInputTokens) {
+    rawSegments.push({
+      key: 'overhead',
+      label: '其他',
+      value: inputTokens - accountedInputTokens,
+      tone: 'is-overhead'
+    })
+  }
+
+  const segmentTotal = rawSegments.reduce((sum, segment) => sum + segment.value, 0)
+  const total = Math.max(cutMessageTokens + inputTokens, segmentTotal, 1)
+  return rawSegments.map((segment) => {
+    const ratio = segment.value / total
+    return {
+      ...segment,
+      percent: `${Math.max(0, Math.min(ratio * 100, 100)).toFixed(2)}%`,
+      valueLabel: segment.messageCount
+        ? `${formatTokenCount(segment.value)} (${segment.messageCount}条)`
+        : formatTokenCount(segment.value)
+    }
+  })
+})
+const tokenUsageStackTotal = computed(() => {
+  const inputTokens = toFiniteNumber(currentTokenUsage.value?.llm_input_tokens)
+  if (inputTokens !== null) return Math.max(inputTokens, 0)
+  return tokenUsageSegments.value
+    .filter((segment) => segment.key !== 'cut')
+    .reduce((sum, segment) => sum + segment.value, 0)
+})
+const tokenUsageStackLimit = computed(() => {
+  const summaryTriggerTokens = toFiniteNumber(currentTokenUsage.value?.summary_trigger_tokens)
+  if (summaryTriggerTokens && summaryTriggerTokens > 0) return summaryTriggerTokens
+
+  const contextWindow = toFiniteNumber(currentTokenUsage.value?.context_window)
+  if (contextWindow && contextWindow > 0) return contextWindow
+
+  return Math.max(tokenUsageStackTotal.value, 1)
+})
+const tokenUsageHeaderPercentLabel = computed(() => {
+  const limit = Math.max(tokenUsageStackLimit.value, 1)
+  const percent = Math.max(0, Math.min((tokenUsageStackTotal.value / limit) * 100, 100))
+  if (percent > 0 && percent < 1) return '<1%'
+  return `${Math.round(percent)}%`
+})
+const tokenUsageStackHeadLabel = computed(() => {
+  const summaryTriggerTokens = toFiniteNumber(currentTokenUsage.value?.summary_trigger_tokens)
+  if (summaryTriggerTokens && summaryTriggerTokens > 0) {
+    return `${formatTokenCount(tokenUsageStackTotal.value)} / ${formatTokenCount(summaryTriggerTokens)} Token`
+  }
+  return `${formatTokenCount(tokenUsageStackTotal.value)} Token`
+})
+const tokenUsageBarSegments = computed(() => {
+  const limit = Math.max(tokenUsageStackLimit.value, 1)
+  let remaining = limit
+  return tokenUsageSegments.value
+    .filter((segment) => segment.key !== 'cut')
+    .map((segment) => {
+      const value = Math.min(segment.value, Math.max(remaining, 0))
+      remaining -= value
+      return {
+        ...segment,
+        percent: `${Math.max(0, Math.min((value / limit) * 100, 100)).toFixed(2)}%`
+      }
+    })
+    .filter((segment) => segment.value > 0 && segment.percent !== '0.00%')
+})
+const tokenUsageMetaRows = computed(() => {
+  const usage = currentTokenUsage.value
+  if (!usage) return []
+  const rows = []
+  if (toFiniteNumber(usage.context_window)) {
+    rows.push({
+      key: 'context',
+      label: '窗口/剩余',
+      value: `${formatTokenCount(usage.context_window)} / ${formatTokenCount(usage.remaining_context_tokens)}`
+    })
+  }
+  return rows
+})
 const currentThreadAttachments = computed(() => {
   if (!currentChatId.value) return []
   return threadAttachmentsMap.value[currentChatId.value] || []
@@ -1040,6 +1276,7 @@ const todoProgress = computed(() => {
 })
 const stateSummaryLabel = computed(() => {
   const total =
+    (currentTokenUsage.value ? 1 : 0) +
     totalTodoCount.value +
     currentStateFiles.value.length +
     currentArtifactFiles.value.length +
@@ -1048,6 +1285,7 @@ const stateSummaryLabel = computed(() => {
 })
 const hasVisibleStateSections = computed(
   () =>
+    Boolean(currentTokenUsage.value) ||
     currentTodos.value.length > 0 ||
     currentStateFiles.value.length > 0 ||
     currentArtifactFiles.value.length > 0 ||
@@ -1283,12 +1521,67 @@ const historyConversations = computed(() => {
   return MessageProcessor.convertServerHistoryToMessages(currentThreadMessages.value)
 })
 
+function getMessageRequestId(message) {
+  const metadataRequestId = message?.extra_metadata?.request_id
+  if (typeof metadataRequestId === 'string' && metadataRequestId.trim())
+    return metadataRequestId.trim()
+  if (message?.type === 'human' && typeof message.id === 'string' && message.id.trim()) {
+    return message.id.trim()
+  }
+  return null
+}
+
+function mergeLocalImageFields(message, localMessage) {
+  if (!localMessage?.image_content || message?.image_content) return message
+  return {
+    ...message,
+    message_type: localMessage.message_type || message.message_type,
+    image_content: localMessage.image_content,
+    extra_metadata: message.extra_metadata || {}
+  }
+}
+
+function mergeOngoingUserMessageIntoHistory(historyConvs, ongoingMessages) {
+  if (!Array.isArray(historyConvs) || !historyConvs.length || !Array.isArray(ongoingMessages)) {
+    return { historyConvs, ongoingMessages }
+  }
+
+  const firstOngoingMessage = ongoingMessages[0]
+  if (!firstOngoingMessage || firstOngoingMessage.type !== 'human') {
+    return { historyConvs, ongoingMessages }
+  }
+
+  const lastHistoryConv = historyConvs[historyConvs.length - 1]
+  const historyMessages = Array.isArray(lastHistoryConv?.messages) ? lastHistoryConv.messages : []
+  const historyHumanIndex = historyMessages.findIndex((message) => message?.type === 'human')
+  if (historyHumanIndex === -1) return { historyConvs, ongoingMessages }
+
+  const historyHuman = historyMessages[historyHumanIndex]
+  const historyRequestId = getMessageRequestId(historyHuman)
+  const ongoingRequestId = getMessageRequestId(firstOngoingMessage)
+  if (!historyRequestId || !ongoingRequestId || historyRequestId !== ongoingRequestId) {
+    return { historyConvs, ongoingMessages }
+  }
+
+  const patchedHistoryHuman = mergeLocalImageFields(historyHuman, firstOngoingMessage)
+  if (patchedHistoryHuman === historyHuman) {
+    return { historyConvs, ongoingMessages: ongoingMessages.slice(1) }
+  }
+
+  const patchedHistoryMessages = [...historyMessages]
+  patchedHistoryMessages[historyHumanIndex] = patchedHistoryHuman
+  const patchedHistoryConvs = [...historyConvs]
+  patchedHistoryConvs[historyConvs.length - 1] = {
+    ...lastHistoryConv,
+    messages: patchedHistoryMessages
+  }
+  return { historyConvs: patchedHistoryConvs, ongoingMessages: ongoingMessages.slice(1) }
+}
+
 const conversations = computed(() => {
   const historyConvs = historyConversations.value
-  const mergedOngoingMessages = stripDuplicatedOngoingHumanMessage(
-    historyConvs,
-    onGoingConvMessages.value
-  )
+  const { historyConvs: mergedHistoryConvs, ongoingMessages: mergedOngoingMessages } =
+    mergeOngoingUserMessageIntoHistory(historyConvs, onGoingConvMessages.value)
 
   // 如果有进行中的消息且线程状态显示正在流式处理，添加进行中的对话
   if (mergedOngoingMessages.length > 0) {
@@ -1296,9 +1589,9 @@ const conversations = computed(() => {
       messages: mergedOngoingMessages,
       status: 'streaming'
     }
-    return [...historyConvs, onGoingConv]
+    return [...mergedHistoryConvs, onGoingConv]
   }
-  return historyConvs
+  return mergedHistoryConvs
 })
 
 const conversationRows = computed(() => {
@@ -1389,49 +1682,6 @@ const buildOptimisticHumanMessage = ({
   }
 
   return message
-}
-
-const getMessageRequestId = (message) => {
-  if (!message || typeof message !== 'object') return null
-
-  const metadataRequestId = message.extra_metadata?.request_id
-  if (typeof metadataRequestId === 'string' && metadataRequestId.trim()) {
-    return metadataRequestId.trim()
-  }
-
-  if (message.type === 'human' && typeof message.id === 'string' && message.id.trim()) {
-    return message.id.trim()
-  }
-
-  return null
-}
-
-// 历史消息已落库时，ongoing 里仍会保留当前轮的本地 user message；
-// 切回线程后按 request_id 去掉这条重复消息，只保留仍在流式更新的部分。
-const stripDuplicatedOngoingHumanMessage = (historyConvs, ongoingMessages) => {
-  if (!Array.isArray(historyConvs) || !historyConvs.length || !Array.isArray(ongoingMessages)) {
-    return ongoingMessages
-  }
-
-  const firstOngoingMessage = ongoingMessages[0]
-  if (!firstOngoingMessage || firstOngoingMessage.type !== 'human') {
-    return ongoingMessages
-  }
-
-  const lastHistoryConv = historyConvs[historyConvs.length - 1]
-  const historyMessages = Array.isArray(lastHistoryConv?.messages) ? lastHistoryConv.messages : []
-  const lastHistoryHuman = historyMessages.find((message) => message?.type === 'human')
-  if (!lastHistoryHuman) {
-    return ongoingMessages
-  }
-
-  const historyRequestId = getMessageRequestId(lastHistoryHuman)
-  const ongoingRequestId = getMessageRequestId(firstOngoingMessage)
-  if (!historyRequestId || !ongoingRequestId || historyRequestId !== ongoingRequestId) {
-    return ongoingMessages
-  }
-
-  return ongoingMessages.slice(1)
 }
 
 // 发送 runs 前先在前端插入一条用户消息，避免等待 worker 轮询后消息才出现。
@@ -2586,6 +2836,8 @@ watch(currentChatId, (threadId, oldThreadId) => {
 }
 
 .chat {
+  --header-height: 40px;
+
   position: relative;
   flex: 1;
   display: flex;
@@ -2599,12 +2851,17 @@ watch(currentChatId, (threadId, oldThreadId) => {
     user-select: none;
     z-index: 10;
     height: var(--header-height);
+    min-height: var(--header-height);
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 1rem 8px;
+    padding: 0 8px;
     flex-shrink: 0; /* Prevent header from shrinking */
     transition: padding-right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+
+    &.has-active-thread {
+      border-bottom: 1px solid var(--gray-150);
+    }
 
     .header__left,
     .header__right {
@@ -2623,7 +2880,8 @@ watch(currentChatId, (threadId, oldThreadId) => {
     }
 
     .conversation-title {
-      font-size: 15px;
+      font-size: 14px;
+      line-height: 20px;
       font-weight: 400;
       color: var(--text-primary);
       max-width: 200px;
@@ -2740,7 +2998,8 @@ watch(currentChatId, (threadId, oldThreadId) => {
 
 .side-panel--state.is-docked {
   align-self: flex-start;
-  margin: 0 8px 8px 0;
+  margin: 8px 8px 8px 0;
+  max-height: calc(100% - 16px);
 }
 
 .side-panel--state.is-floating {
@@ -3156,16 +3415,17 @@ watch(currentChatId, (threadId, oldThreadId) => {
 <style lang="less">
 .agent-nav-btn {
   display: flex;
-  gap: 6px;
-  padding: 6px 8px;
-  height: 32px;
+  gap: 5px;
+  padding: 4px 7px;
+  height: 28px;
   justify-content: center;
   align-items: center;
   border-radius: 6px;
   color: var(--gray-900);
   cursor: pointer;
   width: auto;
-  font-size: 15px;
+  font-size: 14px;
+  line-height: 20px;
   transition: background-color 0.3s;
   border: none;
   background: transparent;
@@ -3181,7 +3441,8 @@ watch(currentChatId, (threadId, oldThreadId) => {
   }
 
   .nav-btn-icon {
-    height: 18px;
+    width: 16px;
+    height: 16px;
   }
 
   .loading-icon {
@@ -3194,7 +3455,7 @@ watch(currentChatId, (threadId, oldThreadId) => {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  min-height: 44px;
+  min-height: var(--header-height);
   padding: 4px 12px;
   background: var(--gray-25);
   border-bottom: 1px solid var(--gray-100);
@@ -3208,6 +3469,9 @@ watch(currentChatId, (threadId, oldThreadId) => {
 
 .state-panel-header {
   padding: 10px 14px;
+  padding-bottom: 0px;
+  background: transparent;
+  border-bottom: none;
 }
 
 .state-panel-header-actions {
@@ -3246,9 +3510,9 @@ watch(currentChatId, (threadId, oldThreadId) => {
 
 .state-panel-title {
   min-width: 0;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--gray-900);
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--gray-500);
 }
 
 .state-panel-summary,
@@ -3261,7 +3525,7 @@ watch(currentChatId, (threadId, oldThreadId) => {
 .state-panel-body {
   flex: 1;
   min-height: 0;
-  padding: 12px 14px 14px;
+  padding: 8px 14px 14px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -3344,6 +3608,138 @@ watch(currentChatId, (threadId, oldThreadId) => {
   text-align: center;
 }
 
+.token-usage-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 2px;
+}
+
+.token-usage-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.token-usage-stack-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--gray-500);
+}
+
+.token-usage-stack-head strong {
+  color: var(--gray-900);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.token-usage-stack-track {
+  display: flex;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--gray-100);
+}
+
+.token-usage-stack-segment {
+  height: 100%;
+  min-width: 2px;
+  transition: width 0.2s ease;
+}
+
+.token-usage-stack-legend {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  font-size: 11px;
+  color: var(--gray-500);
+}
+
+.token-usage-stack-legend-item {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.token-usage-stack-legend-item i {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 2px;
+  background: var(--gray-300);
+}
+
+.token-usage-stack-segment,
+.token-usage-stack-legend-item i {
+  &.is-cut {
+    background-color: var(--main-500);
+    background-image: repeating-linear-gradient(
+      135deg,
+      var(--main-30) 0,
+      var(--main-30) 1px,
+      transparent 1px,
+      transparent 4px
+    );
+  }
+
+  &.is-messages {
+    background: var(--main-500);
+  }
+
+  &.is-summary {
+    background: var(--color-info-500);
+  }
+
+  &.is-system {
+    background: var(--color-success-500);
+  }
+
+  &.is-tools {
+    background: var(--color-warning-500);
+  }
+
+  &.is-overhead {
+    background: var(--gray-300);
+  }
+}
+
+.token-usage-breakdown {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 10px;
+  padding-top: 2px;
+}
+
+.token-usage-breakdown-row {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--gray-500);
+}
+
+.token-usage-breakdown-row span,
+.token-usage-breakdown-row strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.token-usage-breakdown-row strong {
+  color: var(--gray-800);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 .todo-panel-list {
   display: flex;
   flex-direction: column;
@@ -3352,10 +3748,10 @@ watch(currentChatId, (threadId, oldThreadId) => {
 
 .todo-item {
   display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 9px 0;
-  border-bottom: 1px solid var(--gray-100);
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  border-bottom: 1px solid var(--gray-50);
 }
 
 .todo-item:last-child {
@@ -3363,8 +3759,8 @@ watch(currentChatId, (threadId, oldThreadId) => {
 }
 
 .todo-item-icon {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   display: inline-flex;
   align-items: center;
@@ -3401,7 +3797,7 @@ watch(currentChatId, (threadId, oldThreadId) => {
 .todo-item-text {
   font-size: 14px;
   line-height: 1.5;
-  color: var(--gray-800);
+  color: var(--gray-700);
   word-break: break-word;
 }
 

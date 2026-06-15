@@ -42,6 +42,7 @@ async def test_ensure_default_agent_creates_description(monkeypatch):
     agent = await repo.ensure_default_agent()
 
     assert agent.description == DEFAULT_AGENT_DESCRIPTION
+    assert agent.config_json == {"context": {}}
     assert db.added is agent
     db.commit.assert_awaited_once()
     db.refresh.assert_awaited_once_with(agent)

@@ -709,7 +709,7 @@ watch(
   justify-content: space-between;
   gap: 8px;
   padding: 4px 12px;
-  min-height: 44px;
+  min-height: var(--header-height);
   background: var(--gray-25);
   border-bottom: 1px solid var(--gray-100);
   flex-shrink: 0;

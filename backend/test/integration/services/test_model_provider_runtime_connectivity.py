@@ -7,9 +7,10 @@ from typing import Any
 
 import pytest
 
-from yuxi.models.chat import OpenAIBase
+from yuxi.models.chat import select_model
 from yuxi.models.embed import OtherEmbedding
 from yuxi.models.rerank import DashscopeReranker, OpenAIReranker
+from yuxi.models.providers.cache import ModelInfo
 from yuxi.models.providers.service import (
     resolve_api_key,
     ensure_builtin_model_providers_in_db,
@@ -83,15 +84,28 @@ async def _load_provider() -> ModelProvider:
         return provider
 
 
-async def test_provider_db_chat_model_connectivity():
+async def test_provider_db_chat_model_connectivity(monkeypatch: pytest.MonkeyPatch):
     provider = await _load_provider()
     spec = _select_provider_model(provider, "chat", "TEST_PROVIDER_CHAT_MODEL")
-
-    model = OpenAIBase(
+    model_spec = f"{spec['provider_id']}:{spec['model_id']}"
+    info = ModelInfo(
+        provider_id=spec["provider_id"],
+        model_id=spec["model_id"],
+        model_type="chat",
+        display_name=spec["model_id"],
         api_key=spec["api_key"],
         base_url=spec["base_url"],
-        model_name=spec["model_id"],
+        provider_type=provider.provider_type,
+        extra={"parameters": spec["parameters"]},
     )
+
+    def get_model_info(current: str):
+        return info if current == model_spec else None
+
+    monkeypatch.setattr("yuxi.models.chat.model_cache.get_model_info", get_model_info)
+    monkeypatch.setattr("yuxi.agents.models.model_cache.get_model_info", get_model_info)
+
+    model = select_model(model_spec, model_params=spec["parameters"])
     response = await model.call([{"role": "user", "content": "Say 1"}], stream=False)
 
     assert response.content

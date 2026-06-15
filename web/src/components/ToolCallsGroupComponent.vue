@@ -9,7 +9,7 @@
       @click="toggleToolCallsExpanded"
     >
       <span class="summary-leading">
-        <Wrench size="14" />
+        <Atom size="14" />
       </span>
       <span class="summary-content">
         <span class="summary-title">{{ toolCallsSummaryTitle }}</span>
@@ -40,7 +40,7 @@
 
 <script setup>
 import { computed, ref, watch, inject } from 'vue'
-import { ChevronDown, ChevronRight, Wrench } from 'lucide-vue-next'
+import { ChevronDown, ChevronRight, Atom } from 'lucide-vue-next'
 import { ToolCallRenderer } from '@/components/ToolCallingResult'
 import { getToolCallId, normalizeToolCalls } from '@/components/ToolCallingResult/toolRegistry'
 
@@ -106,7 +106,7 @@ const getToolCallLabel = (toolCall) => {
 
 const toolCallsSummaryTitle = computed(() => {
   if (normalizedToolCalls.value.length === 1) {
-    return `使用了工具: ${getToolCallLabel(normalizedToolCalls.value[0])}`
+    return `调用: ${getToolCallLabel(normalizedToolCalls.value[0])}`
   }
   return `已调用 ${normalizedToolCalls.value.length} 个工具`
 })
@@ -211,7 +211,7 @@ const toggleToolCallsExpanded = () => {
       margin-left: 4px;
       font-size: 11px;
       padding: 0px 4px;
-      background: var(--gray-25);
+      // background: var(--gray-25);
       color: var(--gray-600);
       border-radius: 4px;
       white-space: nowrap;

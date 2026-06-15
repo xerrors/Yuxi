@@ -100,3 +100,29 @@ def detect_preview_type(path: str, raw_content: bytes) -> tuple[str, bool, str |
         return "text", True, None
     except UnicodeDecodeError:
         return "unsupported", False, "当前文件不是可读文本，暂不支持预览"
+
+
+def detect_media_type(path: str, raw_content: bytes | None = None) -> str:
+    """Detect response media type, preferring file signatures over filename suffixes."""
+    head = (raw_content or b"")[:512]
+
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if head.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if head.startswith(b"GIF87a") or head.startswith(b"GIF89a"):
+        return "image/gif"
+    if head.startswith(b"RIFF") and b"WEBP" in head[:16]:
+        return "image/webp"
+    if head.startswith(b"BM"):
+        return "image/bmp"
+    if head.startswith(b"%PDF-"):
+        return "application/pdf"
+
+    stripped_head = head.lstrip()
+    if stripped_head.startswith(b"<svg") or stripped_head.startswith(b"<?xml"):
+        suffix = PurePosixPath(path).suffix.lower()
+        if suffix == ".svg" or b"<svg" in stripped_head[:256]:
+            return "image/svg+xml"
+
+    return mimetypes.guess_type(path)[0] or "application/octet-stream"

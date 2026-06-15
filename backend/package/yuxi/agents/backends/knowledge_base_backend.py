@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from yuxi import knowledge_base
-
 
 async def resolve_visible_knowledge_bases_for_context(context) -> list[dict[str, Any]]:
+    from yuxi import knowledge_base
+
     uid = getattr(context, "uid", None)
     if not uid:
         setattr(context, "_visible_knowledge_bases", [])

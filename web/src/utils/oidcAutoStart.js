@@ -6,7 +6,13 @@ const AUTO_START_KEY = 'oidc_auto_start_attempted'
 // - 不能以 // 或 \ 开头（协议相对 URL / 非标准路径）
 // 不合法或缺失时返回 "/"
 export function sanitizeRedirect(value) {
-  if (typeof value === 'string' && value.length > 0 && value[0] === '/' && value[1] !== '/' && value[1] !== '\\') {
+  if (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value[0] === '/' &&
+    value[1] !== '/' &&
+    value[1] !== '\\'
+  ) {
     return value
   }
   return '/'

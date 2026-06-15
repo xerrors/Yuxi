@@ -103,17 +103,19 @@ def _build_langfuse_run_context(
 def extract_agent_state(values: dict) -> AgentStatePayload:
     """从 LangGraph state 中提取 agent 状态"""
     if not isinstance(values, dict):
-        return {"todos": [], "files": {}, "artifacts": [], "subagent_runs": []}
+        return {"todos": [], "files": {}, "artifacts": [], "subagent_runs": [], "token_usage": None}
 
     # 直接获取，信任 state 的数据结构
     todos = values.get("todos")
     artifacts = values.get("artifacts")
     subagent_runs = values.get("subagent_runs")
+    token_usage = values.get("token_usage")
     result: AgentStatePayload = {
         "todos": list(todos)[:20] if todos else [],
         "files": values.get("files") or {},
         "artifacts": list(artifacts) if artifacts else [],
         "subagent_runs": list(subagent_runs) if subagent_runs else [],
+        "token_usage": dict(token_usage) if isinstance(token_usage, dict) else None,
     }
 
     return result
@@ -169,6 +171,7 @@ def _json_safe(value: Any) -> Any:
 def _apply_model_override(input_context: dict, meta: dict | None) -> None:
     """对话级模型覆盖：meta.model_spec 优先于智能体配置的 model。值已在创建 run 时校验。"""
     model_spec = (meta or {}).get("model_spec")
+    model_spec = model_spec.strip() if isinstance(model_spec, str) else model_spec
     if model_spec:
         input_context["model"] = model_spec
 

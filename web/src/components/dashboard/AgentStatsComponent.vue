@@ -56,14 +56,13 @@
         <template #bodyCell="{ column, record, index }">
           <template v-if="column.key === 'rank'">
             <div class="rank-display">
-              <span v-if="index < 3" class="rank-medal">
-                {{ index === 0 ? '🥇' : index === 1 ? '🥈' : '🥉' }}
-              </span>
-              <span v-else class="rank-number">{{ index + 1 }}</span>
+              <span class="rank-number" :class="{ featured: index < 3 }">{{ index + 1 }}</span>
             </div>
           </template>
           <template v-if="column.key === 'agent_id'">
-            <a-tag color="blue">{{ resolveAgentName(record.agent_id) }}</a-tag>
+            <span class="agent-name" :title="resolveAgentName(record.agent_id)">
+              {{ resolveAgentName(record.agent_id) }}
+            </span>
           </template>
           <template v-if="column.key === 'satisfaction_rate'">
             <a-statistic
@@ -379,23 +378,38 @@ defineExpose({
   align-items: center;
   justify-content: center;
 
-  .rank-medal {
-    font-size: 20px;
-  }
-
   .rank-number {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     width: 24px;
     height: 24px;
-    background-color: var(--gray-100);
+    background-color: var(--gray-50);
     border-radius: 50%;
     font-size: 12px;
     font-weight: 600;
     color: var(--gray-600);
-    border: 1px solid var(--gray-200);
+    border: 1px solid var(--gray-150);
   }
+
+  .rank-number.featured {
+    background-color: var(--main-20);
+    border-color: var(--main-100);
+    color: var(--main-color);
+  }
+}
+
+.agent-name {
+  display: inline-block;
+  max-width: 100%;
+  color: var(--gray-900);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  white-space: nowrap;
 }
 
 // AgentStatsComponent 特有的样式

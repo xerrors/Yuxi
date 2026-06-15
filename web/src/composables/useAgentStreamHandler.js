@@ -105,16 +105,22 @@ export function useAgentStreamHandler({
             threadState.pendingRequestId = resolvedRequestId
           }
           if (resolvedRequestId && msg && msg.type !== 'system') {
-            threadState.onGoingConv.msgChunks[resolvedRequestId] = [
-              {
-                ...msg,
-                id: msg?.id || resolvedRequestId,
-                extra_metadata: {
-                  ...(msg?.extra_metadata || {}),
-                  request_id: resolvedRequestId
-                }
+            const localHumanMessage = threadState.onGoingConv.msgChunks[resolvedRequestId]?.find(
+              (item) => item?.type === 'human' || item?.role === 'user'
+            )
+            const initMessage = {
+              ...msg,
+              id: msg?.id || resolvedRequestId,
+              extra_metadata: {
+                ...(msg?.extra_metadata || {}),
+                request_id: resolvedRequestId
               }
-            ]
+            }
+            if (localHumanMessage?.image_content && !initMessage.image_content) {
+              initMessage.message_type = localHumanMessage.message_type || initMessage.message_type
+              initMessage.image_content = localHumanMessage.image_content
+            }
+            threadState.onGoingConv.msgChunks[resolvedRequestId] = [initMessage]
           }
         }
         // 只有在服务端确认 init 后，才展示“正在回复”的加载动画。

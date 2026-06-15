@@ -59,7 +59,11 @@ const run = () => {
   }
 
   {
-    assert.equal(getAvatarInitials('张三丰', 'user'), '张三', 'Chinese initials use first two chars')
+    assert.equal(
+      getAvatarInitials('张三丰', 'user'),
+      '张三',
+      'Chinese initials use first two chars'
+    )
     assert.equal(getAvatarInitials('Alice', 'user'), 'Al', 'ASCII initials use first two chars')
     assert.equal(getAvatarInitials('', 'user'), '用户', 'User fallback should be localized')
     assert.equal(getAvatarInitials('', 'agent'), '智能', 'Agent fallback should be localized')
