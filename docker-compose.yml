@@ -228,27 +228,17 @@ services:
     restart: unless-stopped
 
   yuxi-reranker:
-    image: yuxi-reranker:bge-reranker-v2-m3
+    image: beloved70020/bge-reranker-v2-m3:latest
     container_name: yuxi-reranker
-    volumes:
-      - ./docker/volumes/models:/models
     ports:
-      - "8003:8000"
-    environment:
-      - RERANKER_DOWNLOAD_SOURCE=${RERANKER_DOWNLOAD_SOURCE:-modelscope}
-      - RERANKER_MODEL=BAAI/bge-reranker-v2-m3
-      - MODELSCOPE_RERANKER_MODEL=AI-ModelScope/bge-reranker-v2-m3
-      - RERANKER_BATCH_SIZE=${RERANKER_BATCH_SIZE:-4}
-      - RERANKER_MAX_LENGTH=${RERANKER_MAX_LENGTH:-512}
-      - RERANKER_DEVICE=${RERANKER_DEVICE:-cpu}
-      - TORCH_NUM_THREADS=${RERANKER_TORCH_NUM_THREADS:-4}
+      - "8003:8080"
     healthcheck:
       test:
         [
           "CMD",
           "python",
           "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8080/health').read()",
         ]
       interval: 30s
       timeout: 10s

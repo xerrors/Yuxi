@@ -43,6 +43,8 @@ RUN set -ex \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+ENV UV_HTTP_TIMEOUT=300
+
 # 复制项目配置文件
 COPY ../backend/pyproject.toml /app/pyproject.toml
 COPY ../backend/.python-version /app/.python-version

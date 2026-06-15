@@ -184,8 +184,8 @@ BUILTIN_PROVIDERS: list[dict[str, Any]] = [
     {
         "provider_id": "yuxi-reranker",
         "display_name": "Yuxi Local Reranker",
-        "base_url": "http://yuxi-reranker:8000/v1/rerank",
-        "rerank_base_url": "http://yuxi-reranker:8000/v1/rerank",
+        "base_url": "http://yuxi-reranker:8080/v1/rerank",
+        "rerank_base_url": "http://yuxi-reranker:8080/v1/rerank",
         "api_key_env": "YUXI_LOCAL_MODEL_API_KEY",
         "capabilities": ["rerank"],
         "is_enabled": True,
