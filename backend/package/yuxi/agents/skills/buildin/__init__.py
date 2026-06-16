@@ -39,10 +39,4 @@ BUILTIN_SKILLS: list[BuiltinSkillSpec] = [
         version="2026.06.05",
         mcp_dependencies=("mcp-server-chart",),
     ),
-    BuiltinSkillSpec(
-        slug="standards-status-check",
-        source_dir=_SKILLS_ROOT / "standards-status-check",
-        description="检查三体系标准条款库对应的 GB/T 标准是否仍为现行版本，并校验知识库或文件名称是否匹配官方标准号与名称。",
-        version="2026.06.11",
-    ),
 ]

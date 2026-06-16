@@ -63,6 +63,7 @@ ACCESS_LEVELS = SHARE_ACCESS_LEVELS
 ADMIN_ROLES = {"admin", "superadmin"}
 DEFAULT_SKILL_SHARE_CONFIG = {"access_level": "user", "department_ids": [], "user_uids": []}
 BUILTIN_SKILL_SHARE_CONFIG = {"access_level": "global", "department_ids": [], "user_uids": []}
+DEPRECATED_BUILTIN_SKILL_SLUGS = {"standards-status-check"}
 SKILL_DRAFT_TTL_SECONDS = 60 * 60
 _THREAD_SKILLS_LOCK = threading.Lock()
 _THREAD_SKILLS_LOCKS: dict[str, threading.Lock] = {}
@@ -1284,6 +1285,16 @@ def list_builtin_skill_specs() -> list[dict[str, Any]]:
 async def init_builtin_skills(db: AsyncSession, *, created_by: str = "system") -> list[Skill]:
     repo = SkillRepository(db)
     synced_items: list[Skill] = []
+
+    for slug in DEPRECATED_BUILTIN_SKILL_SLUGS:
+        existing = await repo.get_by_slug(slug)
+        if not existing or not is_builtin_skill(existing):
+            continue
+
+        skill_dir = _resolve_skill_dir(existing)
+        if skill_dir.exists():
+            await asyncio.to_thread(shutil.rmtree, skill_dir, ignore_errors=True)
+        await repo.delete(existing)
 
     for spec in list_builtin_skill_specs():
         slug = spec["slug"]
