@@ -20,6 +20,7 @@
 - 新增 Agent token usage 状态快照，在状态面板中作为普通可折叠分组展示完整 `messages`、当前传给 LLM 的 `messages`、system/tools 构成、输入构成堆叠条和上下文窗口占用估算。
 - 优化 Agent 上下文压缩：Yuxi 的 DeepAgents summary adapter 在生成 summary 与写入 conversation history 时，不再改写 `AIMessage.tool_calls` 或 provider tool metadata，只逐条替换被摘要掉的旧 `ToolMessage.content`；`summary_keep_messages` 保留窗口原样传给模型，不再额外清洗最近消息；完整工具输出写入 `outputs/large_tool_results`，文件名使用工具名与内容 hash 生成，上下文只保留完整路径和最多 `summary_tool_result_token_limit` tokens 的预览，未触发 summary 的常规模型调用不做额外 ToolMessage 清洗；Summary 阈值判断沿用 DeepAgents/LangChain 默认近似 token counter，并保留其 usage metadata scaling；首次写入 `conversation_history` 前读取旧文件的 sandbox 404 会按 `file_not_found` 处理，不再产生误导性 warning；`present_artifacts` 会拒绝展示 `large_tool_results` 与 `conversation_history` 等工具调用阶段文件。新增管理员可配置项 `summary_keep_messages`、`summary_prompt`、`summary_tool_result_token_limit` 与 `max_execution_steps`，分别控制摘要后保留消息数、摘要提示词、summary 阶段工具结果预览上限和 LangGraph `recursion_limit`。
 - 收敛普通聊天模型加载链路：`select_model` 保留旧 `.call()` 调用契约，内部改为通过 LangChain chat model adapter 复用 Agent 侧模型加载器，统一 OpenAI-compatible、Anthropic 与 Gemini 等 provider 的运行时适配；移除旧 `OpenAIBase` wrapper，默认重试策略迁移为 LangChain provider 参数。
+- 新增知识库 `query_keywords` 工具：基于关键词列表走 BM25 通道检索，适合精确匹配专有名词、术语和代码符号等场景，与 `query_kb` 的语义检索互为补充
 
 ## v0.7.0 (2026-06-13)
 

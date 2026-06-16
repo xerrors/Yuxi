@@ -68,3 +68,13 @@ class OpenOutputSchema(BaseModel):
     has_more_after: bool = Field(description="窗口后是否还有内容")
     next_offset: int | None = Field(default=None, description="下一窗口 offset；没有更多内容时为 null")
     content: str = Field(description="带行号的窗口内容")
+
+
+class QueryKeywordsInputSchema(BaseModel):
+    """基于关键词检索的输入模型"""
+
+    kb_id: str = Field(description="知识库资源 ID，也就是 kb_id")
+    keywords: list[str] = Field(
+        description="关键词列表，用于 BM25 关键词检索；适合精确匹配专有名词、术语、代码符号等场景"
+    )
+    file_name: str | None = Field(default=None, description="可选文件名关键词过滤，非必要不要使用")

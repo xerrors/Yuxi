@@ -13,6 +13,7 @@ from yuxi.knowledge.schemas import (
     FindOutputSchema,
     OpenInputSchema,
     OpenOutputSchema,
+    QueryKeywordsInputSchema,
     SearchInputSchema,
     SearchOutputSchema,
 )
@@ -153,6 +154,7 @@ async def get_mindmap(kb_name: str, runtime: ToolRuntime) -> str:
 
 
 QueryKBInput = SearchInputSchema
+QueryKeywordsInput = QueryKeywordsInputSchema
 OpenKBDocumentInput = OpenInputSchema
 FindKBDocumentInput = FindInputSchema
 
@@ -239,6 +241,64 @@ async def query_kb(kb_id: str, query_text: str, file_name: str | None = None, ru
     except Exception as e:
         logger.error(f"检索失败: {e}")
         return f"检索失败: {str(e)}"
+
+
+@tool(category="knowledge", tags=["知识库"], args_schema=QueryKeywordsInput)
+async def query_keywords(
+    kb_id: str,
+    keywords: list[str],
+    file_name: str | None = None,
+    runtime: ToolRuntime = None,
+) -> Any:
+    """基于关键词在指定知识库中检索内容
+
+    当用户明确知道要搜索的关键词（如专有名词、技术术语、代码符号、特定指标等）
+    时使用此工具，走 BM25 关键词命中排序。如果需要语义理解型的模糊检索，请使用 query_kb。
+
+    Args:
+        kb_id: 知识库资源 ID，也就是 kb_id
+        keywords: 关键词列表
+        file_name: 可选文件名关键词过滤
+
+    Returns:
+        检索结果列表，结构与 query_kb 一致
+    """
+    if not kb_id:
+        return "请提供 kb_id"
+    if not keywords:
+        return "请提供关键词列表"
+
+    knowledge_base = _get_knowledge_base()
+    retrievers = knowledge_base.get_retrievers()
+    visible_kbs = await _resolve_visible_knowledge_bases_for_query(runtime)
+    target_info, target_kb_id, target_error = _find_query_target(
+        kb_id=kb_id,
+        retrievers=retrievers,
+        visible_kbs=visible_kbs,
+    )
+    if target_error:
+        return target_error
+
+    try:
+        retriever = target_info["retriever"]
+        # 拼接关键词为查询文本，强制使用 keyword/BM25 模式
+        query_text = " ".join(keywords)
+        kwargs: dict[str, Any] = {"search_mode": "keyword"}
+        if file_name:
+            kwargs["file_name"] = file_name
+
+        if inspect.iscoroutinefunction(retriever):
+            result = await retriever(query_text, **kwargs)
+        else:
+            result = retriever(query_text, **kwargs)
+
+        if isinstance(result, dict) and result.get("kb_id") == target_kb_id and isinstance(result.get("results"), list):
+            return SearchOutputSchema(**result).model_dump()
+        return KnowledgeBase.build_search_output(target_kb_id, result)
+
+    except Exception as e:
+        logger.error(f"关键词检索失败: {e}")
+        return f"关键词检索失败: {str(e)}"
 
 
 @tool(category="knowledge", tags=["知识库"], args_schema=OpenKBDocumentInput)
@@ -358,11 +418,12 @@ async def find_kb_document(
 def get_common_kb_tools() -> list:
     """获取通用知识库工具列表
 
-    返回 5 个通用工具：
+    返回 6 个通用工具：
     - list_kbs: 列出用户可访问的知识库
     - get_mindmap: 获取指定知识库的思维导图
-    - query_kb: 在指定知识库中检索
+    - query_kb: 在指定知识库中语义检索
+    - query_keywords: 基于关键词在指定知识库中检索
     - find_kb_document: 在指定文件内定位关键词或正则模式
     - open_kb_document: 按 file_id 分段打开知识库文档
     """
-    return [list_kbs, get_mindmap, query_kb, find_kb_document, open_kb_document]
+    return [list_kbs, get_mindmap, query_kb, query_keywords, find_kb_document, open_kb_document]
