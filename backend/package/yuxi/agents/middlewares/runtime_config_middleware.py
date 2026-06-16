@@ -4,13 +4,17 @@ from collections.abc import Callable
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
+from langchain.tools.tool_node import ToolCallRequest
 from langchain_core.messages import SystemMessage
 
 from yuxi.agents import load_chat_model
 from yuxi.agents.toolkits import get_all_tool_instances
-from yuxi.services.mcp_service import get_enabled_mcp_tools
+from yuxi.services.mcp.tool_registry_service import get_enabled_mcp_tools
+from yuxi.services.mcp_auth.orchestrator import AuthContext
 from yuxi.utils.datetime_utils import shanghai_now
 from yuxi.utils.logging_config import logger
+
+_RUNTIME_DYNAMIC_TOOLS_ATTR = "_runtime_config_dynamic_tools_by_name"
 
 
 class RuntimeConfigMiddleware(AgentMiddleware):
@@ -89,14 +93,19 @@ class RuntimeConfigMiddleware(AgentMiddleware):
             # 获取上下文配置的工具
             enabled_tools = await self.get_tools_from_context(runtime_context)
             existing_tools = list(request.tools or [])
-            enabled_tool_names = {t.name for t in enabled_tools}
             managed_tool_names = {t.name for t in self.tools}
             merged_tools = []
             for t_bind in existing_tools:
-                # (1) 已启用的工具保留
-                # (2) 非本中间件管理的工具保留
-                if t_bind.name in enabled_tool_names or t_bind.name not in managed_tool_names:
+                # 非本中间件管理的工具保留；本中间件管理的工具统一用本轮实时加载结果覆盖。
+                if t_bind.name not in managed_tool_names:
                     merged_tools.append(t_bind)
+            merged_tool_names = {t.name for t in merged_tools}
+            for tool in enabled_tools:
+                if tool.name in merged_tool_names:
+                    continue
+                merged_tools.append(tool)
+                merged_tool_names.add(tool.name)
+            setattr(runtime_context, _RUNTIME_DYNAMIC_TOOLS_ATTR, {tool.name: tool for tool in enabled_tools})
             overrides["tools"] = merged_tools
             logger.debug(f"RuntimeConfigMiddleware selected tools: {[t.name for t in merged_tools]}")
 
@@ -113,6 +122,33 @@ class RuntimeConfigMiddleware(AgentMiddleware):
 
         if overrides:
             request = request.override(**overrides)
+
+        return await handler(request)
+
+    async def awrap_tool_call(self, request: ToolCallRequest, handler: Callable[[ToolCallRequest], Any]):
+        """Allow ToolNode to execute runtime-auth MCP tools loaded during the last model call."""
+        if request.tool is None:
+            runtime_context = getattr(request.runtime, "context", None)
+            dynamic_tools = getattr(runtime_context, _RUNTIME_DYNAMIC_TOOLS_ATTR, {}) or {}
+            tool = dynamic_tools.get(request.tool_call.get("name")) if isinstance(dynamic_tools, dict) else None
+            if tool is not None:
+                request = request.override(tool=tool)
+
+        # NOTE: 注入当前的 AuthContext 以便于长连接拦截器 DynamicMCPTokenAuth 随时刷新 token
+        runtime_context = getattr(request.runtime, "context", None)
+        if runtime_context is not None:
+            user_id = getattr(runtime_context, "user_id", None)
+            work_id = getattr(runtime_context, "work_id", None)
+            dept_id = getattr(runtime_context, "department_id", None)
+            auth_context = AuthContext(user_id=user_id, department_id=dept_id, work_id=work_id)
+
+            from yuxi.services.mcp_auth.orchestrator import mcp_auth_context_var
+
+            token = mcp_auth_context_var.set(auth_context)
+            try:
+                return await handler(request)
+            finally:
+                mcp_auth_context_var.reset(token)
 
         return await handler(request)
 
@@ -146,16 +182,41 @@ class RuntimeConfigMiddleware(AgentMiddleware):
                 all_mcp_names.append(server_name)
 
         selected_mcp_servers: set[str] = set()
+        selected_mcp_names: list[str] = []
+        loaded_mcp_tools: dict[str, int] = {}
+        unavailable_mcp_servers: list[str] = []
+        failed_mcp_servers: list[str] = []
         for server_name in all_mcp_names:
             if server_name in selected_mcp_servers:
                 continue
             selected_mcp_servers.add(server_name)
+            selected_mcp_names.append(server_name)
             try:
-                mcp_tools = await get_enabled_mcp_tools(server_name)
+                user_id = getattr(context, "user_id", None) if context is not None else None
+                work_id = getattr(context, "work_id", None) if context is not None else None
+                mcp_tools = await get_enabled_mcp_tools(
+                    server_name,
+                    auth_context=AuthContext(
+                        user_id=user_id,
+                        department_id=getattr(context, "department_id", None) if context is not None else None,
+                        work_id=work_id,
+                    ),
+                )
                 if not mcp_tools:
-                    logger.warning(f"RuntimeConfigMiddleware: mcp dependency unavailable, skip: {server_name}")
+                    unavailable_mcp_servers.append(server_name)
+                    logger.debug(f"RuntimeConfigMiddleware: mcp dependency unavailable, skip: {server_name}")
+                else:
+                    loaded_mcp_tools[server_name] = len(mcp_tools)
                 selected_tools.extend(mcp_tools)
             except Exception as e:
+                failed_mcp_servers.append(server_name)
                 logger.warning(f"RuntimeConfigMiddleware: failed to load mcp dependency '{server_name}': {e}")
+
+        if selected_mcp_names:
+            logger.info(
+                "RuntimeConfigMiddleware MCP runtime selection: "
+                f"selected={selected_mcp_names}, loaded={loaded_mcp_tools}, "
+                f"unavailable={unavailable_mcp_servers}, failed={failed_mcp_servers}"
+            )
 
         return selected_tools

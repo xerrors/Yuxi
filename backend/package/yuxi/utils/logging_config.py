@@ -44,6 +44,12 @@ def _setup_logging_bridge():
     lightrag_logger.setLevel(logging.DEBUG)
     lightrag_logger.propagate = False  # 避免重复
 
+    # 桥接 MCP 服务层日志，便于在 agent 运行时直接观察 MCP 选择、加载和失败冷却。
+    mcp_logger = logging.getLogger("yuxi.mcp")
+    mcp_logger.addHandler(loguru_handler)
+    mcp_logger.setLevel(logging.INFO)
+    mcp_logger.propagate = False
+
     # 桥接其他常见第三方库（降低级别减少噪音）
     for lib in ["httpx", "openai", "neo4j", "urllib3"]:
         lib_logger = logging.getLogger(lib)

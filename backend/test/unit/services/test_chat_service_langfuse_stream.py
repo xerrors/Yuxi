@@ -98,6 +98,12 @@ async def test_stream_agent_chat_passes_langfuse_callbacks_and_persists_trace_in
             yield None
         return
 
+    class FakeAgentConfigRepo:
+        def __init__(self, db): pass
+        async def get_by_id(self, config_id):
+            return SimpleNamespace(id=config_id)
+    monkeypatch.setattr(svc, "AgentConfigRepository", FakeAgentConfigRepo)
+    
     monkeypatch.setattr(svc.agent_manager, "get_agent", lambda agent_id: FakeAgent())
     monkeypatch.setattr(svc, "get_agent_config_by_id", fake_get_agent_config_by_id)
     monkeypatch.setattr(svc, "ConversationRepository", _FakeConvRepo)
@@ -105,6 +111,13 @@ async def test_stream_agent_chat_passes_langfuse_callbacks_and_persists_trace_in
     monkeypatch.setattr(svc.content_guard, "check", fake_guard_check)
     monkeypatch.setattr(svc.content_guard, "check_with_keywords", fake_guard_check_with_keywords)
     monkeypatch.setattr(svc, "check_and_handle_interrupts", fake_interrupts)
+    
+    import contextlib
+    @contextlib.asynccontextmanager
+    async def fake_get_async_session_context():
+        yield object()
+    monkeypatch.setattr(svc.pg_manager, "get_async_session_context", fake_get_async_session_context)
+    
     monkeypatch.setattr(
         svc,
         "_build_langfuse_run_context",
@@ -132,12 +145,19 @@ async def test_stream_agent_chat_passes_langfuse_callbacks_and_persists_trace_in
         thread_id="thread-1",
         meta={"request_id": "req-1"},
         image_content=None,
-        current_user=SimpleNamespace(id="user-1", department_id="dept-1"),
+        current_user=SimpleNamespace(id="user-1", user_id="login-user-1", department_id="dept-1"),
         db=object(),
     ):
         chunks.append(json.loads(chunk.decode("utf-8")))
 
-    assert calls["stream_input_context"] == {"temperature": 0.1, "user_id": "user-1", "thread_id": "thread-1"}
+    assert calls["stream_input_context"] == {
+        "temperature": 0.1,
+        "user_id": "user-1",
+        "work_id": "login-user-1",
+        "thread_id": "thread-1",
+        "department_id": "dept-1",
+        "system_prompt": "工号: login-user-1",
+    }
     assert calls["stream_kwargs"] == {
         "callbacks": ["handler-1"],
         "metadata": {"langfuse_user_id": "user-1", "langfuse_session_id": "thread-1"},
@@ -188,6 +208,12 @@ async def test_stream_agent_chat_emits_realtime_agent_state_from_values(monkeypa
             yield None
         return
 
+    class FakeAgentConfigRepo:
+        def __init__(self, db): pass
+        async def get_by_id(self, config_id):
+            return SimpleNamespace(id=config_id)
+    monkeypatch.setattr(svc, "AgentConfigRepository", FakeAgentConfigRepo)
+
     monkeypatch.setattr(svc.agent_manager, "get_agent", lambda agent_id: FakeAgent())
     monkeypatch.setattr(svc, "get_agent_config_by_id", fake_get_agent_config_by_id)
     monkeypatch.setattr(svc, "ConversationRepository", _FakeConvRepo)
@@ -195,6 +221,13 @@ async def test_stream_agent_chat_emits_realtime_agent_state_from_values(monkeypa
     monkeypatch.setattr(svc.content_guard, "check", fake_guard_check)
     monkeypatch.setattr(svc.content_guard, "check_with_keywords", fake_guard_check_with_keywords)
     monkeypatch.setattr(svc, "check_and_handle_interrupts", fake_interrupts)
+    
+    import contextlib
+    @contextlib.asynccontextmanager
+    async def fake_get_async_session_context():
+        yield object()
+    monkeypatch.setattr(svc.pg_manager, "get_async_session_context", fake_get_async_session_context)
+
     monkeypatch.setattr(
         svc,
         "_build_langfuse_run_context",
@@ -210,7 +243,7 @@ async def test_stream_agent_chat_emits_realtime_agent_state_from_values(monkeypa
         thread_id="thread-1",
         meta={"request_id": "req-1"},
         image_content=None,
-        current_user=SimpleNamespace(id="user-1", department_id="dept-1"),
+        current_user=SimpleNamespace(id="user-1", user_id="login-user-1", department_id="dept-1"),
         db=object(),
     ):
         chunks.append(json.loads(chunk.decode("utf-8")))

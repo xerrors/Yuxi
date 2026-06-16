@@ -80,3 +80,6 @@ docs/vibe
 /models
 
 .taskr/
+
+.workbuddy
+.worktrees/

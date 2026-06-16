@@ -1,4 +1,13 @@
-import { apiGet, apiAdminGet, apiAdminPost, apiAdminPut, apiAdminDelete } from './base'
+import {
+  apiGet,
+  apiPost,
+  apiPut,
+  apiDelete,
+  apiAdminGet,
+  apiAdminPost,
+  apiAdminPut,
+  apiAdminDelete
+} from './base'
 
 /**
  * MCP 服务器管理 API 模块
@@ -25,7 +34,7 @@ export const getMcpServers = async () => {
  * @returns {Promise} - 服务器配置
  */
 export const getMcpServer = async (name) => {
-  return apiAdminGet(`${BASE_URL}/${encodeURIComponent(name)}`)
+  return apiGet(`${BASE_URL}/${encodeURIComponent(name)}`)
 }
 
 /**
@@ -80,6 +89,48 @@ export const updateMcpServerStatus = async (name, enabled) => {
 }
 
 // =============================================================================
+// === MCP 连接管理 ===
+// =============================================================================
+
+export const getMcpServerConnections = async (name, options = {}) => {
+  const params = new URLSearchParams()
+  if (options.mine) params.set('mine', 'true')
+  if (options.paginated) params.set('paginated', 'true')
+  if (options.status) params.set('status', options.status)
+  if (options.search) params.set('search', options.search)
+  if (options.page) params.set('page', String(options.page))
+  if (options.page_size) params.set('page_size', String(options.page_size))
+  const query = params.toString()
+  return apiGet(`${BASE_URL}/${encodeURIComponent(name)}/connections${query ? `?${query}` : ''}`)
+}
+
+export const createMcpServerConnection = async (name, data) => {
+  return apiPost(`${BASE_URL}/${encodeURIComponent(name)}/connections`, data)
+}
+
+export const updateMcpServerConnection = async (name, connectionId, data) => {
+  return apiPut(`${BASE_URL}/${encodeURIComponent(name)}/connections/${connectionId}`, data)
+}
+
+export const updateMcpConnectionStatus = async (name, connectionId, status) => {
+  return apiPut(`${BASE_URL}/${encodeURIComponent(name)}/connections/${connectionId}/status`, {
+    status
+  })
+}
+
+export const deleteMcpServerConnection = async (name, connectionId) => {
+  return apiDelete(`${BASE_URL}/${encodeURIComponent(name)}/connections/${connectionId}`)
+}
+
+export const testMcpConnection = async (name, connectionId) => {
+  return apiPost(`${BASE_URL}/${encodeURIComponent(name)}/connections/${connectionId}/test`, {})
+}
+
+export const reauthorizeMcpConnection = async (name, connectionId) => {
+  return apiPost(`${BASE_URL}/${encodeURIComponent(name)}/connections/${connectionId}/reauth`, {})
+}
+
+// =============================================================================
 // === MCP 工具管理 ===
 // =============================================================================
 
@@ -126,6 +177,13 @@ export const mcpApi = {
   deleteMcpServer,
   testMcpServer,
   updateMcpServerStatus,
+  getMcpServerConnections,
+  createMcpServerConnection,
+  updateMcpServerConnection,
+  updateMcpConnectionStatus,
+  deleteMcpServerConnection,
+  testMcpConnection,
+  reauthorizeMcpConnection,
   getMcpServerTools,
   refreshMcpServerTools,
   toggleMcpServerTool

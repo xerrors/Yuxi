@@ -15,7 +15,7 @@ import yaml
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi import config as sys_config
 from yuxi.repositories.skill_repository import SkillRepository
-from yuxi.services.mcp_service import get_enabled_mcp_server_names
+from yuxi.services.mcp.server_service import get_enabled_mcp_server_names
 from yuxi.storage.postgres.models_business import Skill
 from yuxi.utils.logging_config import logger
 

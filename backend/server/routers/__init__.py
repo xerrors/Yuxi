@@ -6,6 +6,7 @@ from server.routers.auth_router import auth
 from server.routers.chat_router import chat
 from server.routers.dashboard_router import dashboard
 from server.routers.auth_dept_router import department
+from server.routers.mcp_internal_router import mcp_internal
 from server.routers.mcp_router import mcp
 from server.routers.model_provider_router import model_providers
 from server.routers.skill_router import skills
@@ -32,6 +33,7 @@ router.include_router(dashboard)  # /api/dashboard/* 仪表盘聚合数据
 router.include_router(department)  # /api/departments/* 部门与权限相关数据
 router.include_router(tasks)  # /api/tasks/* 后台任务查询与管理
 router.include_router(mcp)  # /api/system/mcp-servers/* MCP 服务管理
+router.include_router(mcp_internal)  # /api/internal/mcp-proxy/* 动态 MCP 内部代理
 router.include_router(model_providers)  # /api/system/model-providers/* 独立模型配置
 router.include_router(skills)  # /api/system/skills/* Skills 管理
 router.include_router(subagents_router)  # /api/system/subagents/* 子智能体管理

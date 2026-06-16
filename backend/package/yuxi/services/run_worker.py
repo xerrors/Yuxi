@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 from yuxi.repositories.agent_run_repository import TERMINAL_RUN_STATUSES, AgentRunRepository
 from yuxi.services.chat_service import stream_agent_chat
-from yuxi.services.mcp_service import ensure_builtin_mcp_servers_in_db
+from yuxi.services.mcp.server_service import ensure_builtin_mcp_servers_in_db
 from yuxi.services.run_queue_service import (
     append_run_stream_event,
     clear_cancel_signal,
