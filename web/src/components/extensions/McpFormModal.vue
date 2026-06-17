@@ -6,7 +6,7 @@
     :confirmLoading="formLoading"
     @cancel="visible = false"
     :maskClosable="false"
-    width="560px"
+    width="min(780px, calc(100vw - 32px))"
     class="server-modal"
   >
     <div class="mode-switch">
@@ -93,6 +93,7 @@
           <McpEnvEditor v-model="form.env" />
         </a-form-item>
       </template>
+      <McpAuthConfigBuilder v-model="form.authConfigText" :transport="form.transport" />
       <a-form-item label="标签" class="form-item">
         <a-select
           v-model:value="form.tags"
@@ -119,9 +120,18 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch } from 'vue'
+import { reactive, computed, shallowRef, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { mcpApi } from '@/apis/mcp_api'
+import {
+  buildMcpServerPayloadFromForm,
+  createMcpServerFormState,
+  formatMcpServerJsonContent,
+  parseMcpServerJsonContent,
+  stringifyMcpServerConfig,
+  validateMcpServerPayload
+} from '@/utils/mcpServerFormUtils'
+import McpAuthConfigBuilder from '@/components/extensions/McpAuthConfigBuilder.vue'
 import McpEnvEditor from '@/components/McpEnvEditor.vue'
 
 const props = defineProps({
@@ -137,24 +147,11 @@ const visible = computed({
   set: (val) => emit('update:open', val)
 })
 
-const formLoading = ref(false)
-const formMode = ref('form')
-const jsonContent = ref('')
+const formLoading = shallowRef(false)
+const formMode = shallowRef('form')
+const jsonContent = shallowRef('')
 
-const form = reactive({
-  name: '',
-  description: '',
-  transport: 'streamable_http',
-  url: '',
-  command: '',
-  args: [],
-  env: null,
-  headersText: '',
-  timeout: null,
-  sse_read_timeout: null,
-  tags: [],
-  icon: ''
-})
+const form = reactive(createMcpServerFormState())
 
 const isStdioTransport = computed(
   () =>
@@ -163,137 +160,42 @@ const isStdioTransport = computed(
       .toLowerCase() === 'stdio'
 )
 
+const resetForm = (data) => {
+  Object.assign(form, createMcpServerFormState(data))
+  jsonContent.value = stringifyMcpServerConfig(data)
+}
+
 watch(
   () => props.open,
   (val) => {
-    if (val && props.editData) {
-      formMode.value = 'form'
-      Object.assign(form, {
-        name: props.editData.name || '',
-        description: props.editData.description || '',
-        transport: props.editData.transport || 'streamable_http',
-        url: props.editData.url || '',
-        command: props.editData.command || '',
-        args: props.editData.args || [],
-        env: props.editData.env || null,
-        headersText: props.editData.headers ? JSON.stringify(props.editData.headers, null, 2) : '',
-        timeout: props.editData.timeout,
-        sse_read_timeout: props.editData.sse_read_timeout,
-        tags: props.editData.tags || [],
-        icon: props.editData.icon || ''
-      })
-      jsonContent.value = props.editData ? JSON.stringify(props.editData, null, 2) : ''
-    } else if (val && !props.editData) {
-      formMode.value = 'form'
-      Object.assign(form, {
-        name: '',
-        description: '',
-        transport: 'streamable_http',
-        url: '',
-        command: '',
-        args: [],
-        env: null,
-        headersText: '',
-        timeout: null,
-        sse_read_timeout: null,
-        tags: [],
-        icon: ''
-      })
-      jsonContent.value = ''
-    }
+    if (!val) return
+    formMode.value = 'form'
+    resetForm(props.editData)
   },
   { immediate: true }
 )
 
 const formatJson = () => {
-  try {
-    const obj = JSON.parse(jsonContent.value)
-    jsonContent.value = JSON.stringify(obj, null, 2)
-  } catch {
-    message.error('JSON 格式错误，无法格式化')
-  }
+  const formatted = formatMcpServerJsonContent(jsonContent.value, message.error)
+  if (formatted !== undefined) jsonContent.value = formatted
 }
 
 const parseJsonToForm = () => {
-  try {
-    const obj = JSON.parse(jsonContent.value)
-    Object.assign(form, {
-      name: obj.name || '',
-      description: obj.description || '',
-      transport: obj.transport || 'streamable_http',
-      url: obj.url || '',
-      command: obj.command || '',
-      args: obj.args || [],
-      env: obj.env || null,
-      headersText: obj.headers ? JSON.stringify(obj.headers, null, 2) : '',
-      timeout: obj.timeout || null,
-      sse_read_timeout: obj.sse_read_timeout || null,
-      tags: obj.tags || [],
-      icon: obj.icon || ''
-    })
-    formMode.value = 'form'
-    message.success('已解析到表单')
-  } catch {
-    message.error('JSON 格式错误')
-  }
+  const data = parseMcpServerJsonContent(jsonContent.value, message.error)
+  if (data === undefined) return
+  resetForm(data)
+  formMode.value = 'form'
+  message.success('已解析到表单')
 }
 
 const handleFormSubmit = async () => {
   try {
     formLoading.value = true
-    let data
-    if (formMode.value === 'json') {
-      try {
-        data = JSON.parse(jsonContent.value)
-      } catch {
-        message.error('JSON 格式错误')
-        return
-      }
-    } else {
-      let headers = null
-      if (form.headersText.trim()) {
-        try {
-          headers = JSON.parse(form.headersText)
-        } catch {
-          message.error('请求头 JSON 格式错误')
-          return
-        }
-      }
-      data = {
-        name: form.name,
-        description: form.description || null,
-        transport: form.transport,
-        url: form.url || null,
-        command: form.command || null,
-        args: form.args.length > 0 ? form.args : null,
-        env: form.env,
-        headers,
-        timeout: form.timeout || null,
-        sse_read_timeout: form.sse_read_timeout || null,
-        tags: form.tags.length > 0 ? form.tags : null,
-        icon: form.icon || null
-      }
-    }
-    if (!data.name?.trim()) {
-      message.error('MCP 名称不能为空')
-      return
-    }
-    if (!data.transport) {
-      message.error('请选择传输类型')
-      return
-    }
-    if (['sse', 'streamable_http'].includes(data.transport)) {
-      if (!data.url?.trim()) {
-        message.error('HTTP 类型必须填写 MCP URL')
-        return
-      }
-    }
-    if (data.transport === 'stdio') {
-      if (!data.command?.trim()) {
-        message.error('StdIO 类型必须填写命令')
-        return
-      }
-    }
+    const data =
+      formMode.value === 'json'
+        ? parseMcpServerJsonContent(jsonContent.value, message.error)
+        : buildMcpServerPayloadFromForm(form, message.error)
+    if (!data || !validateMcpServerPayload(data, message.error)) return
 
     if (props.editMode) {
       const result = await mcpApi.updateMcpServer(data.name, data)
