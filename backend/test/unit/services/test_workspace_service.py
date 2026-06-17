@@ -92,6 +92,90 @@ async def test_read_workspace_file_content_returns_unsupported_for_non_utf8_text
 
 
 @pytest.mark.asyncio
+async def test_read_workspace_file_content_returns_pdf_preview_for_office_file(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(workspace_paths.conf, "save_dir", str(tmp_path))
+    user = _user()
+    root = svc._workspace_root(user)
+    target = root / "demo.docx"
+    target.write_bytes(b"office")
+
+    result = await svc.read_workspace_file_content(path="/demo.docx", current_user=user)
+
+    assert result["content"] is None
+    assert result["preview_type"] == "pdf"
+    assert result["supported"] is True
+    assert result["variant"] == "pdf"
+
+
+@pytest.mark.asyncio
+async def test_download_workspace_file_converts_office_file_to_pdf(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(workspace_paths.conf, "save_dir", str(tmp_path))
+    user = _user()
+    root = svc._workspace_root(user)
+    target = root / "slides.pptx"
+    target.write_bytes(b"presentation")
+
+    async def fake_convert(filename: str, content: bytes) -> bytes:
+        assert filename == "slides.pptx"
+        assert content == b"presentation"
+        return b"%PDF-1.4\npreview"
+
+    monkeypatch.setattr(svc, "convert_office_to_pdf", fake_convert)
+
+    response = await svc.download_workspace_file(path="/slides.pptx", current_user=user, variant="pdf")
+    body = b""
+    async for chunk in response.body_iterator:
+        body += chunk
+
+    assert response.media_type == "application/pdf"
+    assert body == b"%PDF-1.4\npreview"
+
+
+@pytest.mark.asyncio
+async def test_download_workspace_file_caches_office_pdf_conversion(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(workspace_paths.conf, "save_dir", str(tmp_path))
+    user = _user()
+    root = svc._workspace_root(user)
+    target = root / "slides.pptx"
+    target.write_bytes(b"presentation")
+
+    convert_calls = 0
+
+    async def fake_convert(filename: str, content: bytes) -> bytes:
+        nonlocal convert_calls
+        convert_calls += 1
+        return b"%PDF-1.4\npreview"
+
+    monkeypatch.setattr(svc, "convert_office_to_pdf", fake_convert)
+
+    async def read_pdf() -> bytes:
+        response = await svc.download_workspace_file(path="/slides.pptx", current_user=user, variant="pdf")
+        body = b""
+        async for chunk in response.body_iterator:
+            body += chunk
+        return body
+
+    assert await read_pdf() == b"%PDF-1.4\npreview"
+    assert await read_pdf() == b"%PDF-1.4\npreview"
+    # 第二次请求命中缓存，不应再次触发转换
+    assert convert_calls == 1
+
+    # 源文件变化后缓存失效，重新转换
+    target.write_bytes(b"presentation-v2")
+    assert await read_pdf() == b"%PDF-1.4\npreview"
+    assert convert_calls == 2
+
+
+@pytest.mark.asyncio
 async def test_write_workspace_file_content_updates_markdown_file(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(workspace_paths.conf, "save_dir", str(tmp_path))
     user = _user()

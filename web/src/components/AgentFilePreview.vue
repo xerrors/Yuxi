@@ -21,7 +21,7 @@
             v-for="variant in availablePreviewVariants"
             :key="variant.key"
             class="preview-mode-btn text-mode-btn"
-            :class="{ active: activePreviewVariant === variant.key }"
+            :class="{ active: isPreviewVariantActive(variant) }"
             :title="variant.label"
             @click="$emit('switchVariant', variant.key)"
           >
@@ -362,12 +362,29 @@ const draftContent = ref('')
 const fullscreenPreviewVisible = ref(false)
 const htmlPreviewRenderKey = ref(0)
 
+const getPreviewVariantGroup = (key) => (key === 'parsed' ? 'parsed' : 'preview')
+const getPreviewVariantLabel = (key) =>
+  getPreviewVariantGroup(key) === 'parsed' ? '解析' : '预览'
 const isMarkdown = computed(() => isMarkdownPreview(props.filePath, props.file?.previewType))
 const availablePreviewVariants = computed(() => {
   const variants = props.file?.availableVariants || props.file?.available_variants || []
-  return variants.filter((variant) => variant?.supported !== false && variant?.key)
+  const supportedVariants = variants.filter(
+    (variant) => variant?.supported !== false && variant?.key
+  )
+  const hasPdfPreview = supportedVariants.some((variant) => variant.key === 'pdf')
+
+  return supportedVariants
+    .filter((variant) => !(hasPdfPreview && variant.key === 'original'))
+    .map((variant) => ({
+      ...variant,
+      label: getPreviewVariantLabel(variant.key)
+    }))
 })
-const activePreviewVariant = computed(() => props.file?.variant || props.file?.previewVariant || '')
+const activePreviewVariant = computed(
+  () => props.file?.variant || props.file?.previewVariant || ''
+)
+const isPreviewVariantActive = (variant) =>
+  getPreviewVariantGroup(activePreviewVariant.value) === getPreviewVariantGroup(variant.key)
 const canEdit = computed(() => {
   const previewType = props.file?.previewType
   return (

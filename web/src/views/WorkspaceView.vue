@@ -256,7 +256,7 @@ const createBinaryPreviewUrl = async (entry, response) => {
           entry.file_id,
           response.variant || 'original'
         )
-      : await downloadWorkspaceFile(entry.path)
+      : await downloadWorkspaceFile(entry.path, response.variant || 'original')
   const blob = await downloadResponse.blob()
   return window.URL.createObjectURL(blob)
 }

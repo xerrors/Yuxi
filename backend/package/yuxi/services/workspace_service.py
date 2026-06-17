@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import io
 import mimetypes
 import shutil
@@ -12,7 +13,12 @@ import aiofiles
 from fastapi import HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from yuxi.agents.backends.sandbox.paths import _global_user_data_dir, ensure_workspace_default_files
-from yuxi.services.file_preview import detect_preview_type
+from yuxi.services.file_preview import (
+    OfficePreviewConversionError,
+    convert_office_to_pdf,
+    detect_preview_type,
+    is_office_pdf_preview_file,
+)
 from yuxi.services.mention_search_service import invalidate_workspace_mention_cache
 from yuxi.storage.postgres.models_business import User
 from yuxi.utils.datetime_utils import utc_isoformat_from_timestamp
@@ -155,6 +161,15 @@ async def read_workspace_file_content(*, path: str, current_user: User) -> dict:
         raise HTTPException(status_code=404, detail="文件不存在")
     if not target.is_file():
         raise HTTPException(status_code=400, detail="当前路径是目录")
+
+    if is_office_pdf_preview_file(path):
+        return {
+            "content": None,
+            "preview_type": "pdf",
+            "supported": True,
+            "message": None,
+            "variant": "pdf",
+        }
 
     raw_content = await asyncio.to_thread(target.read_bytes)
     preview_type, supported, message = detect_preview_type(path, raw_content)
@@ -309,14 +324,57 @@ async def upload_workspace_files(*, parent_path: str, files: list[UploadFile], c
     return {"success": True, "entries": [_entry_for_path(root, target) for _file, target in upload_targets]}
 
 
-async def download_workspace_file(*, path: str, current_user: User) -> StreamingResponse | FileResponse:
+async def _convert_workspace_office_to_pdf(user: User, target: Path, file_name: str) -> bytes:
+    """将工作区 Office 文件转换为 PDF，按源文件 mtime/size 缓存到本地，避免重复转换。"""
+    user_data_root = _global_user_data_dir(str(user.uid)).resolve()
+    cache_dir = user_data_root / ".office_preview_cache"
+    stat = await asyncio.to_thread(target.stat)
+    digest = hashlib.sha256(str(target).encode("utf-8")).hexdigest()
+    cache_path = cache_dir / f"{digest}-{stat.st_mtime_ns}-{stat.st_size}.pdf"
+
+    cached = await asyncio.to_thread(lambda: cache_path.read_bytes() if cache_path.exists() else None)
+    if cached is not None:
+        return cached
+
+    content = await asyncio.to_thread(target.read_bytes)
+    try:
+        pdf_content = await convert_office_to_pdf(file_name, content)
+    except OfficePreviewConversionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    await asyncio.to_thread(_store_office_pdf_cache, cache_dir, digest, cache_path, pdf_content)
+    return pdf_content
+
+
+def _store_office_pdf_cache(cache_dir: Path, digest: str, cache_path: Path, pdf_content: bytes) -> None:
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    # 源文件变化后缓存文件名随之改变，顺带清掉同源的旧版本，避免缓存无限增长
+    for stale in cache_dir.glob(f"{digest}-*.pdf"):
+        if stale != cache_path:
+            stale.unlink(missing_ok=True)
+    cache_path.write_bytes(pdf_content)
+
+
+async def download_workspace_file(
+    *, path: str, current_user: User, variant: str = "original"
+) -> StreamingResponse | FileResponse:
     target = _resolve_workspace_path(current_user, path)
     if not target.exists():
         raise HTTPException(status_code=404, detail="文件不存在")
     if not target.is_file():
         raise HTTPException(status_code=400, detail="当前路径是目录")
+    if variant not in {"original", "pdf"}:
+        raise HTTPException(status_code=400, detail="Unsupported download variant")
 
     file_name = target.name or "download"
+    if variant == "pdf":
+        if not is_office_pdf_preview_file(file_name):
+            raise HTTPException(status_code=400, detail="当前文件类型不支持 PDF 预览")
+        pdf_content = await _convert_workspace_office_to_pdf(current_user, target, file_name)
+        stem = target.stem or "preview"
+        headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{quote(f'{stem}.pdf')}"}
+        return StreamingResponse(io.BytesIO(pdf_content), media_type="application/pdf", headers=headers)
+
     media_type = mimetypes.guess_type(file_name)[0] or "application/octet-stream"
     headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{quote(file_name)}"}
     if target.stat().st_size > 1024 * 1024 * 16:

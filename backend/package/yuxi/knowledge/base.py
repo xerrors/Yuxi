@@ -445,10 +445,15 @@ class KnowledgeBase(ABC):
         return file_meta.get("minio_url") or file_meta.get("path")
 
     def _knowledge_preview_variants(self, file_meta: dict) -> list[dict]:
+        from yuxi.services.file_preview import is_office_pdf_preview_file
+
         variants = []
         original_path = self._original_file_path(file_meta)
+        filename = file_meta.get("filename") or file_meta.get("original_filename") or ""
         if original_path:
             variants.append({"key": "original", "label": "Source", "supported": True})
+            if is_office_pdf_preview_file(filename):
+                variants.append({"key": "pdf", "label": "PDF", "supported": True})
         if file_meta.get("markdown_file"):
             variants.append({"key": "parsed", "label": "MD", "supported": True})
         return variants
@@ -458,7 +463,9 @@ class KnowledgeBase(ABC):
         variants = [] if is_dir else self._knowledge_preview_variants(file_meta)
         preview_modes = [item["key"] for item in variants]
         default_preview_mode = None
-        if "parsed" in preview_modes:
+        if "pdf" in preview_modes:
+            default_preview_mode = "pdf"
+        elif "parsed" in preview_modes:
             default_preview_mode = "parsed"
         elif preview_modes:
             default_preview_mode = preview_modes[0]
@@ -539,6 +546,45 @@ class KnowledgeBase(ABC):
             "readonly": True,
         }
 
+    @staticmethod
+    def _office_pdf_preview_path(kb_id: str, file_id: str) -> str:
+        return f"{kb_id}/preview/{file_id}.pdf"
+
+    async def _ensure_office_pdf_preview(self, kb_id: str, file_id: str, file_meta: dict) -> str:
+        from yuxi.services.file_preview import (
+            OfficePreviewConversionError,
+            convert_office_to_pdf,
+            is_office_pdf_preview_file,
+        )
+        from yuxi.storage.minio import get_minio_client
+
+        filename = file_meta.get("filename") or file_meta.get("original_filename") or file_id
+        if not is_office_pdf_preview_file(filename):
+            raise ValueError("当前文件类型不支持 PDF 预览")
+
+        minio_client = get_minio_client()
+        bucket_name = minio_client.KB_BUCKETS["parsed"]
+        object_name = self._office_pdf_preview_path(kb_id, file_id)
+        if await minio_client.astat_file(bucket_name, object_name) is not None:
+            return f"minio://{bucket_name}/{object_name}"
+
+        original_path = self._original_file_path(file_meta)
+        if not original_path:
+            raise ValueError("文件没有可转换的原始内容")
+
+        raw_content = await self._read_minio_bytes(original_path)
+        try:
+            pdf_content = await convert_office_to_pdf(filename, raw_content)
+        except OfficePreviewConversionError as exc:
+            raise ValueError(str(exc)) from exc
+        await minio_client.aupload_file(
+            bucket_name=bucket_name,
+            object_name=object_name,
+            data=pdf_content,
+            content_type="application/pdf",
+        )
+        return f"minio://{bucket_name}/{object_name}"
+
     async def read_file_preview(self, kb_id: str, file_id: str, variant: str = "parsed") -> dict:
         from yuxi.services.file_preview import detect_preview_type
 
@@ -548,7 +594,7 @@ class KnowledgeBase(ABC):
 
         variants = self._knowledge_preview_variants(file_meta)
         variant_keys = {item["key"] for item in variants}
-        if variant not in {"original", "parsed"}:
+        if variant not in {"original", "parsed", "pdf"}:
             raise ValueError("Unsupported preview variant")
 
         filename = file_meta.get("filename") or file_meta.get("original_filename") or file_id
@@ -561,6 +607,24 @@ class KnowledgeBase(ABC):
             "readonly": True,
             "available_variants": variants,
         }
+
+        if variant == "pdf":
+            if "pdf" not in variant_keys:
+                return {
+                    **response,
+                    "content": None,
+                    "preview_type": "unsupported",
+                    "supported": False,
+                    "message": "当前文件类型不支持 PDF 预览",
+                }
+            await self._ensure_office_pdf_preview(kb_id, file_id, file_meta)
+            return {
+                **response,
+                "content": None,
+                "preview_type": "pdf",
+                "supported": True,
+                "message": None,
+            }
 
         if variant == "parsed":
             markdown_file = file_meta.get("markdown_file")
@@ -633,10 +697,19 @@ class KnowledgeBase(ABC):
         file_meta = self._get_file_meta(kb_id, file_id)
         if file_meta.get("is_folder"):
             raise ValueError("Cannot download a folder")
-        if variant not in {"original", "parsed"}:
+        if variant not in {"original", "parsed", "pdf"}:
             raise ValueError("Unsupported download variant")
 
         filename = file_meta.get("filename") or file_meta.get("original_filename") or file_id
+        if variant == "pdf":
+            preview_path = await self._ensure_office_pdf_preview(kb_id, file_id, file_meta)
+            stem = filename.rsplit(".", 1)[0] or file_id
+            return {
+                "filename": f"{stem}.pdf",
+                "content": await self._read_minio_bytes(preview_path),
+                "media_type": "application/pdf",
+            }
+
         if variant == "parsed":
             markdown_file = file_meta.get("markdown_file")
             if not markdown_file:

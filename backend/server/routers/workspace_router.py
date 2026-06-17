@@ -100,7 +100,7 @@ async def get_workspace_knowledge_tree(
 async def get_workspace_knowledge_file(
     kb_id: str = Query(..., description="知识库 ID"),
     file_id: str = Query(..., description="知识库文件 ID"),
-    variant: str = Query("parsed", description="预览模式：parsed 或 original"),
+    variant: str = Query("parsed", description="预览模式：parsed、original 或 pdf"),
     current_user: User = Depends(get_required_user),
 ):
     await _ensure_knowledge_read_access(current_user, kb_id)
@@ -114,7 +114,7 @@ async def get_workspace_knowledge_file(
 async def download_workspace_knowledge_file(
     kb_id: str = Query(..., description="知识库 ID"),
     file_id: str = Query(..., description="知识库文件 ID"),
-    variant: str = Query("original", description="下载模式：original 或 parsed"),
+    variant: str = Query("original", description="下载模式：original、parsed 或 pdf"),
     current_user: User = Depends(get_required_user),
 ):
     await _ensure_knowledge_read_access(current_user, kb_id)
@@ -175,6 +175,7 @@ async def upload_workspace_files_route(
 @workspace.get("/download")
 async def download_workspace(
     path: str = Query(..., description="工作区文件路径"),
+    variant: str = Query("original", description="下载模式：original 或 pdf"),
     current_user: User = Depends(get_required_user),
 ):
-    return await download_workspace_file(path=path, current_user=current_user)
+    return await download_workspace_file(path=path, current_user=current_user, variant=variant)

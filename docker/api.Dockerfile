@@ -32,9 +32,13 @@ RUN set -ex \
         curl \
         ffmpeg \
         git \
+        fonts-liberation \
+        fonts-noto-cjk \
         libpq5 \
         libsm6 \
         libxext6 \
+        libreoffice-impress-nogui \
+        libreoffice-writer-nogui \
     # (D) 清理垃圾，减小体积
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*

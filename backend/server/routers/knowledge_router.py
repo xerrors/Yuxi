@@ -105,6 +105,11 @@ async def _delete_document_storage_objects(kb_id: str, doc_id: str, file_path: s
     except Exception as minio_error:
         logger.warning(f"从MinIO删除解析结果失败: {minio_error}")
 
+    try:
+        await minio_client.adelete_file(minio_client.KB_BUCKETS["parsed"], f"{kb_id}/preview/{doc_id}.pdf")
+    except Exception as minio_error:
+        logger.warning(f"从MinIO删除预览 PDF 失败: {minio_error}")
+
 
 async def _ensure_database_supports_documents(kb_id: str, operation: str) -> None:
     db_info = await knowledge_base.get_database_info(kb_id)
