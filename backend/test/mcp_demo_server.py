@@ -20,7 +20,6 @@ from mcp.server.fastmcp.server import StreamableHTTPASGIApp
 
 # 简体中文注释与日志规范 (RULE[user_global])
 logger = logging.getLogger("mcp_demo_server")
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
 # 用于在不同传输协议下传递当前请求身份上下文的 ContextVar
 current_request_headers_var = contextvars.ContextVar("current_request_headers", default=None)
@@ -34,8 +33,8 @@ async def handle_list_tools() -> list[types.Tool]:
     headers = current_request_headers_var.get() or {}
     
     # 优先级: HTTP Headers > 系统环境变量 (兼容 stdio 与 sse 两种环境的测试)
-    dept_id = headers.get("x-department-id") or os.environ.get("X_DEPARTMENT_ID")
-    user_id = headers.get("x-user-id") or os.environ.get("X_USER_ID")
+    dept_id = headers.get("x-yuxi-department") or headers.get("x-department-id") or os.environ.get("X_DEPARTMENT_ID")
+    user_id = headers.get("x-yuxi-user") or headers.get("x-user-id") or os.environ.get("X_USER_ID")
     auth_token = headers.get("authorization") or os.environ.get("AUTHORIZATION")
     
     logger.info(f"Listing tools - AuthToken: {auth_token}, DeptID: {dept_id}, UserID: {user_id}")
@@ -147,7 +146,7 @@ async def oauth_token(request: Request):
 class SSEEndpoint:
     async def __call__(self, scope, receive, send):
         """建立 SSE 长连接通道，并将当前的 Headers 存入 ContextVar"""
-        headers_dict = {k.decode('utf-8'): v.decode('utf-8') for k, v in scope.get("headers", [])}
+        headers_dict = {k.decode('utf-8', errors='replace'): v.decode('utf-8', errors='replace') for k, v in scope.get("headers", [])}
         logger.info(f"New SSE connection attempt. Headers: {headers_dict}")
         
         # 注入 ContextVar，使得在该长连接处理循环下的所有 list/call_tool 能读取到 header
@@ -190,7 +189,7 @@ async def run_stdio():
     logger.info("Starting Stdio server transport...")
     
     # Stdio 模式下从系统环境变量读取 headers
-    current_request_headers_var.set(dict(os.environ))
+    current_request_headers_var.set({k.lower().replace("_", "-"): v for k, v in os.environ.items()})
     
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
@@ -211,6 +210,7 @@ async def run_stdio():
 # =============================================================================
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
     parser = argparse.ArgumentParser(description="Mock MCP Demo Server")
     parser.add_argument(
         "--transport",

@@ -64,7 +64,7 @@ def _build_auth_config() -> dict:
 async def _cleanup_server(client: httpx.AsyncClient, headers: dict[str, str], server_name: str) -> None:
     list_response = await client.get(f"/api/system/mcp-servers/{server_name}/connections", headers=headers)
     if list_response.status_code == 200:
-        for connection in list_response.json().get("data", []):
+        for connection in (list_response.json().get("data") or []):
             await client.delete(
                 f"/api/system/mcp-servers/{server_name}/connections/{connection['id']}",
                 headers=headers,
@@ -197,3 +197,4 @@ async def test_mcp_admin_flow_e2e_supports_dynamic_auth_connections(
         assert hard_delete_response.status_code == 200, hard_delete_response.text
     finally:
         await _cleanup_server(e2e_client, e2e_headers, server_name)
+        await _cleanup_server(e2e_client, e2e_headers, invalid_server_name)
