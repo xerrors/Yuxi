@@ -1,9 +1,8 @@
 from __future__ import annotations
-
 from types import SimpleNamespace
-
-from yuxi.services import mcp_service
-
+import pytest
+from yuxi.services import mcp as mcp_service
+from yuxi.services.mcp import server_service, tool_registry_service
 
 class _FakeClient:
     def __init__(self, tools):
@@ -32,8 +31,8 @@ async def test_get_enabled_mcp_tools_loads_latest_config_from_db(monkeypatch):
         )
         return ["tool-a"]
 
-    monkeypatch.setattr(mcp_service, "get_enabled_mcp_server_config", fake_get_enabled_mcp_server_config)
-    monkeypatch.setattr(mcp_service, "get_mcp_tools", fake_get_mcp_tools)
+    monkeypatch.setattr(server_service, "get_enabled_mcp_server_config", fake_get_enabled_mcp_server_config)
+    monkeypatch.setattr(tool_registry_service, "get_mcp_tools", fake_get_mcp_tools)
 
     tools = await mcp_service.get_enabled_mcp_tools("demo")
 
@@ -50,7 +49,7 @@ async def test_get_enabled_mcp_tools_loads_latest_config_from_db(monkeypatch):
 
 
 async def test_get_mcp_tools_rebuilds_cache_when_config_hash_changes(monkeypatch):
-    mcp_service.clear_mcp_cache()
+    await mcp_service.clear_mcp_cache()
 
     configs = [
         {"transport": "stdio", "command": "demo-v1", "disabled_tools": []},
@@ -69,8 +68,11 @@ async def test_get_mcp_tools_rebuilds_cache_when_config_hash_changes(monkeypatch
         tool = SimpleNamespace(name=f"tool_for_{config['command']}", metadata={})
         return _FakeClient([tool])
 
-    monkeypatch.setattr(mcp_service, "get_enabled_mcp_server_config", fake_get_enabled_mcp_server_config)
-    monkeypatch.setattr(mcp_service, "get_mcp_client", fake_get_mcp_client)
+    async def fake_get_session(server_name, partition_key=None, runtime_config=None):
+        return await fake_get_mcp_client({server_name: runtime_config})
+
+    monkeypatch.setattr(server_service, "get_enabled_mcp_server_config", fake_get_enabled_mcp_server_config)
+    monkeypatch.setattr(mcp_service.mcp_client_pool, "get_session", fake_get_session)
 
     tools_v1_first = await mcp_service.get_mcp_tools("demo")
     tools_v1_second = await mcp_service.get_mcp_tools("demo")
@@ -83,7 +85,7 @@ async def test_get_mcp_tools_rebuilds_cache_when_config_hash_changes(monkeypatch
     assert [tool.name for tool in tools_v2] == ["tool_for_demo-v2"]
     assert build_calls == ["demo-v1", "demo-v2"]
 
-    mcp_service.clear_mcp_cache()
+    await mcp_service.clear_mcp_cache()
 
 
 async def test_get_tools_from_all_servers_loads_names_from_db_once(monkeypatch):
@@ -102,20 +104,20 @@ async def test_get_tools_from_all_servers_loads_names_from_db_once(monkeypatch):
         calls.append((server_name, additional_servers or {}))
         return [server_name]
 
-    monkeypatch.setattr(mcp_service, "_load_enabled_mcp_server_configs", fake_load_enabled_mcp_server_configs)
-    monkeypatch.setattr(mcp_service, "get_mcp_tools", fake_get_mcp_tools)
+    monkeypatch.setattr(server_service, "_load_enabled_mcp_server_configs", fake_load_enabled_mcp_server_configs)
+    monkeypatch.setattr(tool_registry_service, "get_mcp_tools", fake_get_mcp_tools)
 
     tools = await mcp_service.get_tools_from_all_servers()
 
     assert tools == ["alpha", "beta"]
     assert calls == [
-        ("alpha", server_configs),
-        ("beta", server_configs),
+        ("alpha", {"alpha": server_configs["alpha"]}),
+        ("beta", {"beta": server_configs["beta"]}),
     ]
 
 
 async def test_get_mcp_tools_sets_handle_tool_error(monkeypatch):
-    mcp_service.clear_mcp_cache()
+    await mcp_service.clear_mcp_cache()
 
     config = {"transport": "stdio", "command": "demo-tool", "disabled_tools": []}
 
@@ -127,12 +129,14 @@ async def test_get_mcp_tools_sets_handle_tool_error(monkeypatch):
         tool = SimpleNamespace(name="demo_tool", metadata={})
         return _FakeClient([tool])
 
-    monkeypatch.setattr(mcp_service, "get_enabled_mcp_server_config", fake_get_enabled_mcp_server_config)
-    monkeypatch.setattr(mcp_service, "get_mcp_client", fake_get_mcp_client)
+    async def fake_get_session(server_name, partition_key=None, runtime_config=None):
+        return await fake_get_mcp_client({server_name: runtime_config})
+
+    monkeypatch.setattr(server_service, "get_enabled_mcp_server_config", fake_get_enabled_mcp_server_config)
+    monkeypatch.setattr(mcp_service.mcp_client_pool, "get_session", fake_get_session)
 
     tools = await mcp_service.get_mcp_tools("demo")
     assert len(tools) == 1
     assert tools[0].handle_tool_error is True
 
-    mcp_service.clear_mcp_cache()
-
+    await mcp_service.clear_mcp_cache()

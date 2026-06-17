@@ -16,6 +16,7 @@ dependencies = [
     "aiosqlite>=0.20.0",
     "argon2-cffi>=25.1.0",
     "asyncpg>=0.30.0",
+    "cachetools>=5.3.0",
     "chardet>=5.0.0",
     "colorlog>=6.9.0",
     "dashscope>=1.23.2",
