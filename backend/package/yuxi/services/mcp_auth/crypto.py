@@ -114,9 +114,14 @@ def decrypt_credential_blob(blob: str | None) -> str | None:
         return blob
 
     aesgcm = AESGCM(key)
-    plaintext = aesgcm.decrypt(
-        _b64decode(payload["nonce"]),
-        _b64decode(payload["ciphertext"]),
-        _AAD,
-    )
+    try:
+        plaintext = aesgcm.decrypt(
+            _b64decode(payload["nonce"]),
+            _b64decode(payload["ciphertext"]),
+            _AAD,
+        )
+    except Exception as exc:
+        from yuxi.utils import logger
+        logger.error(f"Failed to decrypt credential blob: {exc}")
+        raise ValueError("Failed to decrypt credential blob") from exc
     return plaintext.decode("utf-8")
