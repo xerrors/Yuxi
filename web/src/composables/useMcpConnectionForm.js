@@ -65,7 +65,7 @@ export function useMcpConnectionForm({
     editingConnectionId.value = connection.id
     Object.assign(form, {
       scopeType: connection.scope_type || resolveDefaultScopeType(),
-      scopeId: connection.scope_id || '',
+      scopeId: connection.scope_id != null ? String(connection.scope_id) : '',
       displayName: connection.display_name || '',
       externalSubject: connection.external_subject || '',
       credentialText: '',

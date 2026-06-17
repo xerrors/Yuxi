@@ -42,14 +42,18 @@ export const setNestedSecretValue = (target, path, value) => {
     .split('.')
     .filter(Boolean)
   let current = target
-  segments.forEach((segment, index) => {
-    if (index === segments.length - 1) {
-      current[segment] = value
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i]
+    if (segment === '__proto__' || segment === 'constructor' || segment === 'prototype') {
       return
     }
-    current[segment] = current[segment] || {}
-    current = current[segment]
-  })
+    if (i === segments.length - 1) {
+      current[segment] = value
+    } else {
+      current[segment] = current[segment] || {}
+      current = current[segment]
+    }
+  }
 }
 
 export const buildMcpCredentialFromForm = ({

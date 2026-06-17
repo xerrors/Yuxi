@@ -501,7 +501,7 @@ const resetConnectionFilters = () => {
 const handleSubmitConnection = async () => {
   if (!props.server) return
 
-  const scopeId = form.scopeType === 'system' ? 'global' : form.scopeId.trim()
+  const scopeId = form.scopeType === 'system' ? 'global' : String(form.scopeId ?? '').trim()
   if (!scopeId) {
     message.error(`${scopeIdLabel.value}不能为空`)
     return
