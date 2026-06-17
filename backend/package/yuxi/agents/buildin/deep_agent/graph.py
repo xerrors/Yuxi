@@ -17,7 +17,7 @@ from yuxi.agents.middlewares import (
 from yuxi.agents.middlewares.knowledge_base_middleware import KnowledgeBaseMiddleware
 from yuxi.agents.middlewares.skills_middleware import SkillsMiddleware
 from yuxi.agents.toolkits.buildin.tools import _create_tavily_search
-from yuxi.services.mcp_service import get_tools_from_all_servers
+from yuxi.services.mcp.tool_registry_service import get_tools_from_all_servers
 from yuxi.services.subagent_service import get_subagents_from_names
 from yuxi.utils import logger
 

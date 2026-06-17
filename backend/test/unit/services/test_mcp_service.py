@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from yuxi.services import mcp_service
+from yuxi.services.mcp import tool_registry_service as mcp_service
 
 
 class _FakeClient:
@@ -135,4 +135,3 @@ async def test_get_mcp_tools_sets_handle_tool_error(monkeypatch):
     assert tools[0].handle_tool_error is True
 
     mcp_service.clear_mcp_cache()
-

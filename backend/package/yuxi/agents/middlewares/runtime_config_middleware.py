@@ -8,7 +8,7 @@ from langchain_core.messages import SystemMessage
 
 from yuxi.agents import load_chat_model
 from yuxi.agents.toolkits import get_all_tool_instances
-from yuxi.services.mcp_service import get_enabled_mcp_tools
+from yuxi.services.mcp.tool_registry_service import get_enabled_mcp_tools
 from yuxi.utils.datetime_utils import shanghai_now
 from yuxi.utils.logging_config import logger
 

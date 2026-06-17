@@ -3,7 +3,7 @@ from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
 
-from yuxi.services.mcp_service import get_mcp_tools
+from yuxi.services.mcp.tool_registry_service import get_mcp_tools
 from yuxi.utils import logger
 
 
