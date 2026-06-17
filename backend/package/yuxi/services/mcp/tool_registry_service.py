@@ -259,12 +259,14 @@ async def get_mcp_tools(
     )
 
     all_processed_tools: list[Callable[..., Any]] = []
+    cache_hit = False
 
     async with _mcp_lock:
         if not force_refresh and use_tool_object_cache and cache_key in _mcp_tools_cache:
             all_processed_tools = _mcp_tools_cache[cache_key]
+            cache_hit = True
 
-    if not all_processed_tools:
+    if not cache_hit:
         if not force_refresh:
             failure_entry = _get_cached_mcp_tool_failure(cache_key)
             if failure_entry is not None:
@@ -491,7 +493,7 @@ async def get_enabled_mcp_tools(
 ) -> list:
     from yuxi.services.mcp.server_service import get_runtime_mcp_server_config
 
-    token = mcp_auth_context_var.set(auth_context) if auth_context else None
+    token = mcp_auth_context_var.set(auth_context)
 
     try:
         config = await get_runtime_mcp_server_config(
@@ -511,8 +513,7 @@ async def get_enabled_mcp_tools(
             disabled_tools=disabled_tools,
         )
     finally:
-        if token is not None:
-            mcp_auth_context_var.reset(token)
+        mcp_auth_context_var.reset(token)
 
 
 async def get_all_mcp_tools(
@@ -525,7 +526,7 @@ async def get_all_mcp_tools(
 ) -> list:
     from yuxi.services.mcp.server_service import get_enabled_mcp_server_config, get_runtime_mcp_server_config
 
-    token = mcp_auth_context_var.set(auth_context) if auth_context else None
+    token = mcp_auth_context_var.set(auth_context)
 
     try:
         if auth_context is None and db is None:
@@ -555,8 +556,7 @@ async def get_all_mcp_tools(
             force_refresh=force_refresh,
         )
     finally:
-        if token is not None:
-            mcp_auth_context_var.reset(token)
+        mcp_auth_context_var.reset(token)
 
 
 async def toggle_tool_enabled(

@@ -42,7 +42,7 @@ class DynamicMCPTokenAuth(httpx.Auth):
         self.server_name = server_name
 
     async def async_auth_flow(self, request: httpx.Request) -> AsyncGenerator[httpx.Request, httpx.Response]:
-        auth_context = mcp_auth_context_var.get()
+        auth_context = mcp_auth_context_var.get(None)
         if auth_context:
             try:
                 cache_key = (self.server_name, auth_context.user_id, auth_context.department_id)
