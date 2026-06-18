@@ -78,6 +78,22 @@ def test_general_chunking_should_split_long_continuous_ascii_for_storage_limit()
         assert count_tokens(chunk["content"]) <= 512
 
 
+def test_general_chunking_should_not_split_utf8_character_boundary() -> None:
+    content = "a" * (CHUNK_CONTENT_MAX_BYTES - 1) + "你" * 32
+
+    chunks = chunk_markdown(
+        markdown_content=content,
+        file_id="file_utf8_boundary",
+        filename="utf8.md",
+        processing_params={"chunk_preset_id": "general", "chunk_parser_config": {"chunk_token_num": 100000}},
+    )
+
+    assert len(chunks) == 2
+    assert "".join(chunk["content"] for chunk in chunks) == content
+    for chunk in chunks:
+        assert len(chunk["content"].encode("utf-8")) <= CHUNK_CONTENT_MAX_BYTES
+
+
 def test_qa_chunking_from_markdown_headings() -> None:
     content = """
 # 问题一

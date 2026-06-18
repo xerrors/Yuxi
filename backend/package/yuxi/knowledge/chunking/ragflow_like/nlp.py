@@ -51,7 +51,7 @@ def _estimated_token_spans(text: str) -> list[tuple[int, int]]:
     spans: list[tuple[int, int]] = []
     for match in re.finditer(r"[A-Za-z0-9_]+|[一-鿿]", text or ""):
         token = match.group(0)
-        if re.fullmatch(r"[A-Za-z0-9_]+", token):
+        if token[0].isascii():
             for start in range(match.start(), match.end(), ALNUM_TOKEN_CHARS):
                 spans.append((start, min(start + ALNUM_TOKEN_CHARS, match.end())))
         else:

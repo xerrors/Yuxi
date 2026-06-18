@@ -509,8 +509,6 @@ class MilvusKB(KnowledgeBase):
         if not chunks:
             return
 
-        self._validate_milvus_content_limit(chunks)
-
         entities = [
             [chunk["id"] for chunk in chunks],
             [chunk["content"] for chunk in chunks],

@@ -10,21 +10,23 @@ CHUNK_CONTENT_MAX_BYTES = 65535
 
 
 def _split_text_by_utf8_bytes(text: str, max_bytes: int) -> list[str]:
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return [text] if text else []
+
     parts: list[str] = []
     start = 0
-    current_size = 0
+    while start < len(encoded):
+        end = min(start + max_bytes, len(encoded))
+        if end < len(encoded):
+            while end > start and (encoded[end] & 0xC0) == 0x80:
+                end -= 1
+            if end == start:
+                raise ValueError("max_bytes is too small to hold one UTF-8 character")
 
-    for index, char in enumerate(text):
-        char_size = len(char.encode("utf-8"))
-        if index > start and current_size + char_size > max_bytes:
-            parts.append(text[start:index])
-            start = index
-            current_size = 0
-        current_size += char_size
+        parts.append(encoded[start:end].decode("utf-8"))
+        start = end
 
-    tail = text[start:]
-    if tail:
-        parts.append(tail)
     return parts
 
 
