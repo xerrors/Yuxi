@@ -19,9 +19,10 @@ from pymilvus import (
     db,
     utility,
 )
+from pymilvus.exceptions import MilvusException
 
 from yuxi.knowledge.base import FileStatus, KnowledgeBase
-from yuxi.knowledge.chunking.ragflow_like.dispatcher import chunk_markdown
+from yuxi.knowledge.chunking.ragflow_like.dispatcher import CHUNK_CONTENT_MAX_BYTES, chunk_markdown
 from yuxi.knowledge.parser.unified import Parser
 from yuxi.knowledge.utils.kb_utils import resolve_processing_params
 from yuxi.models.providers.cache import model_cache
@@ -32,6 +33,7 @@ from yuxi.utils.datetime_utils import utc_isoformat
 MILVUS_AVAILABLE = True
 CONTENT_SPARSE_FIELD = "content_sparse"
 CONTENT_ANALYZER_PARAMS = {"type": "chinese"}
+MILVUS_CONTENT_MAX_LENGTH = CHUNK_CONTENT_MAX_BYTES
 VECTOR_METRIC_TYPE = "COSINE"
 
 
@@ -281,7 +283,8 @@ class MilvusKB(KnowledgeBase):
         """初始化 Milvus 连接"""
         try:
             # 连接到 Milvus
-            connections.connect(alias=self.connection_alias, uri=self.milvus_uri, token=self.milvus_token)
+            if not connections.has_connection(self.connection_alias):
+                connections.connect(alias=self.connection_alias, uri=self.milvus_uri, token=self.milvus_token)
 
             # 创建数据库（如果不存在）
             try:
@@ -315,6 +318,7 @@ class MilvusKB(KnowledgeBase):
         collection_name = kb_id
 
         try:
+            self._init_connection()
             # 检查集合是否存在
             if utility.has_collection(collection_name, using=self.connection_alias):
                 collection = Collection(name=collection_name, using=self.connection_alias)
@@ -342,7 +346,7 @@ class MilvusKB(KnowledgeBase):
                 logger.info(f"Collection {collection_name} not found, creating new one")
                 return self._create_new_collection(collection_name, embedding_info, kb_id)
 
-        except (connections.MilvusException, RuntimeError) as e:
+        except (MilvusException, RuntimeError) as e:
             logger.error(f"Error checking collection {collection_name}: {e}")
             raise
         except Exception as e:
@@ -361,7 +365,7 @@ class MilvusKB(KnowledgeBase):
             FieldSchema(
                 name="content",
                 dtype=DataType.VARCHAR,
-                max_length=65535,
+                max_length=MILVUS_CONTENT_MAX_LENGTH,
                 enable_analyzer=True,
                 analyzer_params=CONTENT_ANALYZER_PARAMS,
             ),
@@ -464,6 +468,16 @@ class MilvusKB(KnowledgeBase):
         """将文本分割成块"""
         return chunk_markdown(text, file_id, filename, params)
 
+    def _validate_milvus_content_limit(self, chunks: list[dict]) -> None:
+        for chunk in chunks:
+            content = chunk.get("content") or ""
+            content_length = len(content.encode("utf-8"))
+            if content_length > MILVUS_CONTENT_MAX_LENGTH:
+                raise ValueError(
+                    f"Chunk {chunk.get('chunk_id')} content exceeds Milvus content limit: "
+                    f"{content_length} > {MILVUS_CONTENT_MAX_LENGTH}"
+                )
+
     def _build_chunk_pg_records(self, kb_id: str, chunks: list[dict]) -> list[dict[str, Any]]:
         return [
             {
@@ -494,6 +508,8 @@ class MilvusKB(KnowledgeBase):
     ) -> None:
         if not chunks:
             return
+
+        self._validate_milvus_content_limit(chunks)
 
         entities = [
             [chunk["id"] for chunk in chunks],
@@ -652,6 +668,7 @@ class MilvusKB(KnowledgeBase):
             )
 
             if chunks:
+                self._validate_milvus_content_limit(chunks)
                 texts = [chunk["content"] for chunk in chunks]
                 embeddings = await embedding_function(texts)
 
@@ -744,6 +761,7 @@ class MilvusKB(KnowledgeBase):
                 await self.delete_file_chunks_only(kb_id, file_id)
 
                 if chunks:
+                    self._validate_milvus_content_limit(chunks)
                     texts = [chunk["content"] for chunk in chunks]
                     embeddings = await embedding_function(texts)
                     await self._insert_chunks_to_stores(kb_id, file_id, collection, chunks, embeddings)

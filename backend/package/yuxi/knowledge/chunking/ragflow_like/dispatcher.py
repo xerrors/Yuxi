@@ -2,8 +2,49 @@ from __future__ import annotations
 
 from typing import Any
 
+from yuxi.knowledge.chunking.ragflow_like import nlp
 from yuxi.knowledge.chunking.ragflow_like.parsers import book, general, laws, qa, semantic, separator
 from yuxi.knowledge.chunking.ragflow_like.presets import map_to_internal_parser_id, normalize_chunk_preset_id
+
+CHUNK_CONTENT_MAX_BYTES = 65535
+
+
+def _split_text_by_utf8_bytes(text: str, max_bytes: int) -> list[str]:
+    parts: list[str] = []
+    start = 0
+    current_size = 0
+
+    for index, char in enumerate(text):
+        char_size = len(char.encode("utf-8"))
+        if index > start and current_size + char_size > max_bytes:
+            parts.append(text[start:index])
+            start = index
+            current_size = 0
+        current_size += char_size
+
+    tail = text[start:]
+    if tail:
+        parts.append(tail)
+    return parts
+
+
+def _ensure_chunk_storage_limit(text_chunks: list[str], parser_config: dict[str, Any]) -> list[str]:
+    chunk_token_num = int(parser_config.get("chunk_token_num", 512) or 512)
+    limited_chunks: list[str] = []
+
+    for chunk in text_chunks:
+        text = (chunk or "").strip()
+        if not text:
+            continue
+
+        token_parts = nlp.hard_split_by_token_limit(text, chunk_token_num)
+        for part in token_parts:
+            if len(part.encode("utf-8")) <= CHUNK_CONTENT_MAX_BYTES:
+                limited_chunks.append(part)
+                continue
+            limited_chunks.extend(_split_text_by_utf8_bytes(part, CHUNK_CONTENT_MAX_BYTES))
+
+    return limited_chunks
 
 
 def _build_chunk_records(
@@ -75,6 +116,7 @@ def chunk_markdown(
     parser_config = params.get("chunk_parser_config") if isinstance(params.get("chunk_parser_config"), dict) else {}
 
     text_chunks = _dispatch_markdown_parser(preset_id, filename, markdown_content, parser_config)
+    text_chunks = _ensure_chunk_storage_limit(text_chunks, parser_config)
     return _build_chunk_records(text_chunks, file_id, filename, markdown_content)
 
 

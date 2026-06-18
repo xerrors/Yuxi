@@ -44,15 +44,27 @@ BULLET_PATTERN = [
 ]
 
 MARKDOWN_BULLET_GROUP_INDEX = 4
+ALNUM_TOKEN_CHARS = 16
+
+
+def _estimated_token_spans(text: str) -> list[tuple[int, int]]:
+    spans: list[tuple[int, int]] = []
+    for match in re.finditer(r"[A-Za-z0-9_]+|[一-鿿]", text or ""):
+        token = match.group(0)
+        if re.fullmatch(r"[A-Za-z0-9_]+", token):
+            for start in range(match.start(), match.end(), ALNUM_TOKEN_CHARS):
+                spans.append((start, min(start + ALNUM_TOKEN_CHARS, match.end())))
+        else:
+            spans.append((match.start(), match.end()))
+    return spans
 
 
 def count_tokens(text: str) -> int:
     """近似 token 计数，避免引入额外依赖。"""
     if not text:
         return 0
-    # 英文单词 + 数字 + CJK 单字
-    parts = re.findall(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]", text)
-    return max(1, len(parts)) if text.strip() else 0
+    token_count = len(_estimated_token_spans(text))
+    return max(1, token_count) if text.strip() else 0
 
 
 def hard_split_by_token_limit(text: str, chunk_token_num: int, hard_limit_token_num: int | None = None) -> list[str]:
@@ -61,7 +73,7 @@ def hard_split_by_token_limit(text: str, chunk_token_num: int, hard_limit_token_
     hard_limit_token_num 只在调用方显式传入时生效，用于允许略超目标长度的块
     保持完整；默认保持严格不超过 chunk_token_num 的历史行为。
     """
-    token_iter = list(re.finditer(r"[A-Za-z0-9_]+|[一-鿿]", text or ""))
+    token_iter = _estimated_token_spans(text or "")
     if not token_iter:
         cleaned = (text or "").strip()
         return [cleaned] if cleaned else []
@@ -81,7 +93,7 @@ def hard_split_by_token_limit(text: str, chunk_token_num: int, hard_limit_token_
     while index < len(token_iter):
         next_index = min(index + max_tokens, len(token_iter))
         if next_index < len(token_iter):
-            end = token_iter[next_index].start()
+            end = token_iter[next_index][0]
         else:
             end = len(text)
         if text[start:end].strip():

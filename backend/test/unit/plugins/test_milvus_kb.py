@@ -1,8 +1,12 @@
+from types import SimpleNamespace
+
+import pytest
 from pymilvus import CollectionSchema, DataType, FieldSchema, Function, FunctionType
 
 from yuxi.knowledge.implementations.milvus import (
     CONTENT_ANALYZER_PARAMS,
     CONTENT_SPARSE_FIELD,
+    MILVUS_CONTENT_MAX_LENGTH,
     VECTOR_METRIC_TYPE,
     MilvusKB,
 )
@@ -65,6 +69,48 @@ def test_build_chunk_pg_records_preserves_extraction_result():
     )
 
     assert records[0]["extraction_result"] == {"entities": ["alpha"]}
+
+
+def test_validate_milvus_content_limit_rejects_oversized_chunk():
+    kb = MilvusKB.__new__(MilvusKB)
+    content = "你" * (MILVUS_CONTENT_MAX_LENGTH // 3 + 1)
+
+    with pytest.raises(ValueError, match="content exceeds Milvus content limit"):
+        kb._validate_milvus_content_limit([
+            {"chunk_id": "chunk-1", "content": content},
+        ])
+
+
+def test_validate_milvus_content_limit_accepts_boundary_chunk():
+    kb = MilvusKB.__new__(MilvusKB)
+
+    kb._validate_milvus_content_limit([
+        {"chunk_id": "chunk-1", "content": "a" * MILVUS_CONTENT_MAX_LENGTH},
+    ])
+
+
+async def test_create_kb_instance_reinitializes_connection_before_collection_check(monkeypatch):
+    kb = MilvusKB.__new__(MilvusKB)
+    kb.databases_meta = {"db": {"embedding_model_spec": "test-provider:test-embedding"}}
+    kb.connection_alias = "test-milvus"
+    init_connection_calls = []
+
+    def get_model_info(model_spec):
+        return SimpleNamespace(model_type="embedding", model_id="test-embedding", dimension=2)
+
+    monkeypatch.setattr(kb, "_init_connection", lambda: init_connection_calls.append(True))
+    monkeypatch.setattr("yuxi.knowledge.implementations.milvus.model_cache.get_model_info", get_model_info)
+    monkeypatch.setattr("yuxi.knowledge.implementations.milvus.utility.has_collection", lambda *args, **kwargs: False)
+    monkeypatch.setattr(
+        kb,
+        "_create_new_collection",
+        lambda collection_name, embedding_info, kb_id: {"collection_name": collection_name, "kb_id": kb_id},
+    )
+
+    result = await kb._create_kb_instance("db", {})
+
+    assert init_connection_calls == [True]
+    assert result == {"collection_name": "db", "kb_id": "db"}
 
 
 async def test_keyword_mode_uses_milvus_bm25_search():
@@ -177,7 +223,7 @@ def test_collection_supports_bm25_requires_analyzed_content_sparse_field_and_fun
             FieldSchema(
                 name="content",
                 dtype=DataType.VARCHAR,
-                max_length=65535,
+                max_length=MILVUS_CONTENT_MAX_LENGTH,
                 enable_analyzer=True,
                 analyzer_params=CONTENT_ANALYZER_PARAMS,
             ),

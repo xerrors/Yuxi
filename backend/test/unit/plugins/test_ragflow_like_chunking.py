@@ -5,7 +5,7 @@ import sys
 
 sys.path.append(os.getcwd())
 
-from yuxi.knowledge.chunking.ragflow_like.dispatcher import chunk_markdown
+from yuxi.knowledge.chunking.ragflow_like.dispatcher import CHUNK_CONTENT_MAX_BYTES, chunk_markdown
 from yuxi.knowledge.chunking.ragflow_like.nlp import bullets_category, count_tokens
 from yuxi.knowledge.chunking.ragflow_like.utils.semantic_utils import split_sentences_chinese
 from yuxi.knowledge.chunking.ragflow_like.presets import (
@@ -59,6 +59,23 @@ def test_resolve_chunk_processing_params_returns_only_nested_keys() -> None:
     assert resolved["chunk_preset_id"] == "general"
     assert resolved["chunk_engine_version"] == CHUNK_ENGINE_VERSION
     assert len(resolved) == 3
+
+
+def test_general_chunking_should_split_long_continuous_ascii_for_storage_limit() -> None:
+    content = "a" * (CHUNK_CONTENT_MAX_BYTES * 2 + 123)
+
+    chunks = chunk_markdown(
+        markdown_content=content,
+        file_id="file_long_ascii",
+        filename="long.md",
+        processing_params={"chunk_preset_id": "general", "chunk_parser_config": {"chunk_token_num": 512}},
+    )
+
+    assert len(chunks) > 1
+    assert "".join(chunk["content"] for chunk in chunks) == content
+    for chunk in chunks:
+        assert len(chunk["content"].encode("utf-8")) <= CHUNK_CONTENT_MAX_BYTES
+        assert count_tokens(chunk["content"]) <= 512
 
 
 def test_qa_chunking_from_markdown_headings() -> None:

@@ -104,6 +104,14 @@ class TestHardSplitByTokenLimit:
         for chunk in result:
             assert nlp.count_tokens(chunk) <= 512
 
+    def test_splits_long_continuous_ascii_text(self):
+        text = "a" * 20000
+        result = nlp.hard_split_by_token_limit(text, 512)
+        assert len(result) > 1
+        assert "".join(result) == text
+        for chunk in result:
+            assert nlp.count_tokens(chunk) <= 512
+
     def test_empty_text_returns_empty(self):
         assert nlp.hard_split_by_token_limit("", 512) == []
 
@@ -120,6 +128,9 @@ class TestHardSplitByTokenLimit:
         text = "，。！？"
         result = nlp.hard_split_by_token_limit(text, 512)
         assert result == ["，。！？"]
+
+    def test_count_tokens_estimates_long_continuous_ascii(self):
+        assert nlp.count_tokens("a" * 1600) == 100
 
 
 # ── general._ensure_chunk_token_limit ──────────────────────────────
