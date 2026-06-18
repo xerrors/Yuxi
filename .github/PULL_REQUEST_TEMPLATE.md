@@ -1,5 +1,11 @@
 ## 变更描述
+
+> 🔥 务必注意，本项目不允许提交未经 “Human Review” 过的代码，不允许 Agent 未经人类审阅，直接提交 PR。不允许 Agent 直接提交回复。
+>
+> Code is Cheap, Show Me Your Thoughts!
+
 简要描述这个 PR 做了什么
+
 
 ## 变更类型
 - [ ] 新功能
