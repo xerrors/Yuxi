@@ -334,7 +334,9 @@ class MilvusKB(KnowledgeBase):
                     return self._create_new_collection(collection_name, embedding_info, kb_id)
 
                 if not self._collection_supports_bm25(collection):
-                    logger.warning(f"Collection {collection_name} schema does not support BM25, recreating")
+                    logger.warning(
+                        f"Collection {collection_name} schema does not support BM25/phrase-match, recreating"
+                    )
                     utility.drop_collection(collection_name, using=self.connection_alias)
                     return self._create_new_collection(collection_name, embedding_info, kb_id)
 
@@ -366,6 +368,7 @@ class MilvusKB(KnowledgeBase):
                 max_length=65535,
                 enable_analyzer=True,
                 analyzer_params=CONTENT_ANALYZER_PARAMS,
+                enable_match=True,
             ),
             FieldSchema(name="chunk_id", dtype=DataType.VARCHAR, max_length=100),
             FieldSchema(name="file_id", dtype=DataType.VARCHAR, max_length=100),
@@ -404,13 +407,15 @@ class MilvusKB(KnowledgeBase):
         return collection
 
     def _collection_supports_bm25(self, collection: Collection) -> bool:
-        """检查集合是否具备 Milvus 内置 BM25 所需的 schema。"""
+        """检查集合是否具备 Milvus 内置 BM25 与 PHRASE_MATCH 所需的 schema。"""
         fields = {field.name: field for field in collection.schema.fields}
         content_field = fields.get("content")
         sparse_field = fields.get(CONTENT_SPARSE_FIELD)
         if not content_field or content_field.dtype != DataType.VARCHAR:
             return False
         if content_field.params.get("enable_analyzer") is not True:
+            return False
+        if content_field.params.get("enable_match") is not True:
             return False
         if not sparse_field or sparse_field.dtype != DataType.SPARSE_FLOAT_VECTOR:
             return False
@@ -597,6 +602,34 @@ class MilvusKB(KnowledgeBase):
             return f'file_id == "{escaped_ids[0]}"'
         joined_ids = '", "'.join(escaped_ids)
         return f'file_id in ["{joined_ids}"]'
+
+    @staticmethod
+    def _escape_expr_literal(s: str) -> str:
+        """转义 Milvus 表达式字符串字面量中的反斜杠与双引号。"""
+        return s.replace("\\", "\\\\").replace('"', '\\"')
+
+    def _build_phrase_match_expr(self, terms: list[str], slop: int) -> str | None:
+        """构建 PHRASE_MATCH 表达式：任一关键词精准命中即算精准（grep 语义，取 or）。
+
+        slop=0 要求分词后 token 相邻（精确短语），>0 允许 token 间有间隔/乱序。
+        全部 term 为空时返回 None，表示无法应用精准匹配。
+        """
+        clauses: list[str] = []
+        for term in terms:
+            cleaned = (term or "").strip()
+            if not cleaned:
+                continue
+            escaped = self._escape_expr_literal(cleaned)
+            clauses.append(f'PHRASE_MATCH(content, "{escaped}", {int(slop)})')
+        if not clauses:
+            return None
+        return " or ".join(clauses) if len(clauses) > 1 else clauses[0]
+
+    @staticmethod
+    def _combine_exprs(*exprs: str | None) -> str | None:
+        """用 and 连接若干过滤表达式，跳过 None/空串；全空返回 None。"""
+        parts = [e for e in exprs if e]
+        return " and ".join(parts) if parts else None
 
     async def index_file(
         self, kb_id: str, file_id: str, operator_id: str | None = None, params: dict | None = None
@@ -828,6 +861,7 @@ class MilvusKB(KnowledgeBase):
         score: float,
         include_distances: bool,
         score_field: str | None = None,
+        is_precise_match: bool | None = None,
     ) -> dict:
         """将 Milvus Hit 转成知识库统一返回的 Chunk 结构。"""
         entity = hit.entity
@@ -838,12 +872,45 @@ class MilvusKB(KnowledgeBase):
             "file_id": file_id,
             "chunk_index": entity.get("chunk_index"),
         }
+        if is_precise_match is not None:
+            metadata["is_precise_match"] = is_precise_match
         chunk = {"content": entity.get("content", ""), "metadata": metadata, "score": float(score or 0.0)}
         if score_field:
             chunk[score_field] = float(score or 0.0)
         if include_distances:
             chunk["distance"] = hit.distance
         return chunk
+
+    @staticmethod
+    def _merge_precise_and_backfill(
+        precise_hits: list[dict], backfill_hits: list[dict], final_top_k: int
+    ) -> list[dict]:
+        """合并精准命中与 BM25 兜底命中：精准块在前（已按 BM25 降序），兜底块在后，按 chunk_id 去重，截 final_top_k。"""
+        seen: set[str] = set()
+        merged: list[dict] = []
+
+        def _chunk_id(chunk: dict) -> str | None:
+            return chunk.get("metadata", {}).get("chunk_id")
+
+        for chunk in precise_hits:
+            cid = _chunk_id(chunk)
+            if cid is None or cid in seen:
+                continue
+            seen.add(cid)
+            merged.append(chunk)
+            if len(merged) >= final_top_k:
+                return merged
+
+        for chunk in backfill_hits:
+            cid = _chunk_id(chunk)
+            if cid is None or cid in seen:
+                continue
+            seen.add(cid)
+            merged.append(chunk)
+            if len(merged) >= final_top_k:
+                break
+        return merged
+
 
     async def aquery(self, query_text: str, kb_id: str, agent_call: bool = False, **kwargs) -> list[dict]:
         """异步查询知识库"""
@@ -919,22 +986,69 @@ class MilvusKB(KnowledgeBase):
                     "params": {"drop_ratio_search": bm25_drop_ratio_search},
                 }
 
-                results = collection.search(
-                    data=[query_text],
-                    anns_field=CONTENT_SPARSE_FIELD,
-                    param=bm25_search_params,
-                    limit=bm25_top_k,
-                    expr=file_expr,
-                    output_fields=output_fields,
-                )
+                precise_match = bool(merged_kwargs.get("precise_match", False))
+                precise_hits: list[dict] = []
+                backfill_hits: list[dict] = []
 
-                if results and len(results) > 0 and len(results[0]) > 0:
-                    for hit in results[0]:
-                        retrieved_chunks.append(
-                            self._build_chunk_from_hit(hit, hit.distance, include_distances, score_field="bm25_score")
+                if precise_match:
+                    phrase_slop = int(merged_kwargs.get("phrase_slop", 0))
+                    terms = merged_kwargs.get("phrase_match_terms") or [query_text]
+                    phrase_expr = self._build_phrase_match_expr(list(terms), phrase_slop)
+                    if phrase_expr is None:
+                        logger.warning("precise_match requested but no valid terms; falling back to pure BM25")
+                        precise_match = False
+                    else:
+                        precise_expr = self._combine_exprs(file_expr, phrase_expr)
+                        results = collection.search(
+                            data=[query_text],
+                            anns_field=CONTENT_SPARSE_FIELD,
+                            param=bm25_search_params,
+                            limit=bm25_top_k,
+                            expr=precise_expr,
+                            output_fields=output_fields,
                         )
+                        if results and len(results) > 0 and len(results[0]) > 0:
+                            for hit in results[0]:
+                                precise_hits.append(
+                                    self._build_chunk_from_hit(
+                                        hit,
+                                        hit.distance,
+                                        include_distances,
+                                        score_field="bm25_score",
+                                        is_precise_match=True,
+                                    )
+                                )
+                        logger.debug(f"PHRASE_MATCH+BM25: {len(precise_hits)} precise hits")
 
-                logger.debug(f"Milvus BM25 query response: {len(retrieved_chunks)} chunks found")
+                # 精准命中不足时用纯 BM25 兜底；精准命中已够则短路跳过
+                if not precise_match or len(precise_hits) < final_top_k:
+                    results = collection.search(
+                        data=[query_text],
+                        anns_field=CONTENT_SPARSE_FIELD,
+                        param=bm25_search_params,
+                        limit=bm25_top_k,
+                        expr=file_expr,
+                        output_fields=output_fields,
+                    )
+                    if results and len(results) > 0 and len(results[0]) > 0:
+                        for hit in results[0]:
+                            backfill_hits.append(
+                                self._build_chunk_from_hit(
+                                    hit,
+                                    hit.distance,
+                                    include_distances,
+                                    score_field="bm25_score",
+                                    is_precise_match=False if precise_match else None,
+                                )
+                            )
+                    logger.debug(f"BM25 backfill: {len(backfill_hits)} hits")
+
+                retrieved_chunks = self._merge_precise_and_backfill(
+                    precise_hits, backfill_hits, final_top_k
+                )
+                logger.debug(
+                    f"Milvus BM25 query response: {len(retrieved_chunks)} chunks found (precise={len(precise_hits)})"
+                )
             else:
                 embedding_model_spec = self.databases_meta[kb_id].get("embedding_model_spec")
                 embedding_function = self._get_embedding_function(embedding_model_spec, sync=True)

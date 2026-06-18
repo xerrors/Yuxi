@@ -253,7 +253,10 @@ async def query_keywords(
     """基于关键词在指定知识库中检索内容
 
     当用户明确知道要搜索的关键词（如专有名词、技术术语、代码符号、特定指标等）
-    时使用此工具，走 BM25 关键词命中排序。如果需要语义理解型的模糊检索，请使用 query_kb。
+    时使用此工具。检索采用「精准优先 + BM25 兜底」策略：包含完整关键词短语的 chunk
+    排在前面（基于 Milvus PHRASE_MATCH，分词后 token 相邻即算精准命中），精准命中
+    不足时由 BM25 模糊命中补齐，结果 metadata 中以 is_precise_match 标记。如果需要
+    语义理解型的模糊检索，请使用 query_kb。
 
     Args:
         kb_id: 知识库资源 ID，也就是 kb_id
@@ -265,6 +268,7 @@ async def query_keywords(
     """
     if not kb_id:
         return "请提供 kb_id"
+    keywords = [k.strip() for k in keywords if k and k.strip()]
     if not keywords:
         return "请提供关键词列表"
 
@@ -281,9 +285,13 @@ async def query_keywords(
 
     try:
         retriever = target_info["retriever"]
-        # 拼接关键词为查询文本，强制使用 keyword/BM25 模式
+        # 拼接关键词为查询文本，强制使用 keyword/BM25 模式并启用精准匹配
         query_text = " ".join(keywords)
-        kwargs: dict[str, Any] = {"search_mode": "keyword"}
+        kwargs: dict[str, Any] = {
+            "search_mode": "keyword",
+            "precise_match": True,
+            "phrase_match_terms": keywords,
+        }
         if file_name:
             kwargs["file_name"] = file_name
 
