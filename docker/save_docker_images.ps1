@@ -20,9 +20,9 @@ $Images = @(
     "node:24-slim",
     "nginx:alpine",
     "neo4j:5.26",
-    "quay.io/coreos/etcd:v3.5.5",
-    "minio/minio:RELEASE.2023-03-20T20-16-18Z",
-    "milvusdb/milvus:v2.5.6",
+    "quay.io/coreos/etcd:v3.5.25",
+    "minio/minio:RELEASE.2024-05-28T17-19-04Z",
+    "milvusdb/milvus:v2.6.16",
     # "lmsysorg/sglang:v0.4.9.post3-cu126",
     # "ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlex/paddlex:paddlex3.0.1-paddlepaddle3.0.0-gpu-cuda11.8-cudnn8.9-trt8.6"
 )

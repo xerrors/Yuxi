@@ -17,9 +17,9 @@ IMAGES=(
     "node:24-slim",
     "nginx:alpine",
     "neo4j:5.26",
-    "quay.io/coreos/etcd:v3.5.5",
-    "minio/minio:RELEASE.2023-03-20T20-16-18Z",
-    "milvusdb/milvus:v2.5.6",
+    "quay.io/coreos/etcd:v3.5.25",
+    "minio/minio:RELEASE.2024-05-28T17-19-04Z",
+    "milvusdb/milvus:v2.6.16",
 )
 
 # 确保所有镜像都已下载
