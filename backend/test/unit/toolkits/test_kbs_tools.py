@@ -4,7 +4,6 @@ import inspect
 from types import SimpleNamespace
 
 import pytest
-
 from yuxi.agents.toolkits.kbs import tools
 
 
@@ -24,6 +23,10 @@ def _query_kb_callable():
     return _tool_callable(tools.query_kb)
 
 
+def _query_keywords_callable():
+    return _tool_callable(tools.query_keywords)
+
+
 def _find_kb_document_callable():
     return _tool_callable(tools.find_kb_document)
 
@@ -41,6 +44,10 @@ async def _run_tool(callback, **kwargs):
 
 async def _run_query_kb(**kwargs):
     return await _run_tool(_query_kb_callable(), **kwargs)
+
+
+async def _run_query_keywords(**kwargs):
+    return await _run_tool(_query_keywords_callable(), **kwargs)
 
 
 async def _run_find_kb_document(**kwargs):
@@ -71,7 +78,7 @@ def _build_test_window(content: str, offset: int = 0, limit: int = 1800) -> dict
 
 def _patch_retrievers(monkeypatch, *, kb_type: str = "milvus", retriever=None):
     monkeypatch.setattr(
-        tools.knowledge_base,
+        tools._get_knowledge_base(),
         "get_retrievers",
         lambda: {
             "db-1": {
@@ -80,6 +87,7 @@ def _patch_retrievers(monkeypatch, *, kb_type: str = "milvus", retriever=None):
                 "metadata": {"kb_type": kb_type},
             }
         },
+        raising=False,
     )
 
 
@@ -205,6 +213,51 @@ async def test_query_kb_maps_full_doc_id_and_chunk_metadata(monkeypatch) -> None
 
 
 @pytest.mark.asyncio
+async def test_query_keywords_forwards_precise_match_kwargs(monkeypatch) -> None:
+    captured: dict = {}
+
+    async def _fake_retriever(query_text: str, **kwargs):
+        captured["query_text"] = query_text
+        captured["kwargs"] = kwargs
+        return [
+            {
+                "content": "precise hit",
+                "metadata": {"file_id": "file-1", "source": "doc.md", "is_precise_match": True},
+            }
+        ]
+
+    _patch_retrievers(monkeypatch, retriever=_fake_retriever)
+    monkeypatch.setattr(tools, "_resolve_visible_knowledge_bases_for_query", _fake_visible_kbs)
+
+    runtime = SimpleNamespace(context=SimpleNamespace())
+    result = await _run_query_keywords(kb_id="db-1", keywords=["扭转减振器", "故障"], runtime=runtime)
+
+    # 拼接为空格分隔的查询文本，并强制 keyword + 精准匹配 + 原始关键词列表
+    assert captured["query_text"] == "扭转减振器 故障"
+    assert captured["kwargs"] == {
+        "search_mode": "keyword",
+        "precise_match": True,
+        "phrase_match_terms": ["扭转减振器", "故障"],
+    }
+    assert result["kb_id"] == "db-1"
+    assert result["results"][0]["metadata"]["is_precise_match"] is True
+
+
+@pytest.mark.asyncio
+async def test_query_keywords_rejects_empty_or_whitespace_keywords(monkeypatch) -> None:
+    async def _must_not_be_called(*args, **kwargs):
+        raise AssertionError("retriever should not be called for empty keywords")
+
+    _patch_retrievers(monkeypatch, retriever=_must_not_be_called)
+    monkeypatch.setattr(tools, "_resolve_visible_knowledge_bases_for_query", _fake_visible_kbs)
+
+    runtime = SimpleNamespace(context=SimpleNamespace())
+
+    assert await _run_query_keywords(kb_id="db-1", keywords=[], runtime=runtime) == "请提供关键词列表"
+    assert await _run_query_keywords(kb_id="db-1", keywords=["", "   "], runtime=runtime) == "请提供关键词列表"
+
+
+@pytest.mark.asyncio
 async def test_find_kb_document_returns_context_windows(monkeypatch) -> None:
     _patch_retrievers(monkeypatch)
     monkeypatch.setattr(tools, "_resolve_visible_knowledge_bases_for_query", _fake_visible_kbs)
@@ -240,7 +293,7 @@ async def test_find_kb_document_returns_context_windows(monkeypatch) -> None:
             ],
         }
 
-    monkeypatch.setattr(tools.knowledge_base, "find_file_content", _fake_find_file_content)
+    monkeypatch.setattr(tools._get_knowledge_base(), "find_file_content", _fake_find_file_content, raising=False)
 
     runtime = SimpleNamespace(context=SimpleNamespace())
     result = await _run_find_kb_document(
@@ -295,7 +348,7 @@ async def test_open_kb_document_reads_markdown_content_by_default_window(monkeyp
         assert file_id == "file-1"
         return _build_test_window("\n".join(lines), offset=offset, limit=limit)
 
-    monkeypatch.setattr(tools.knowledge_base, "open_file_content", _fake_open_file_content)
+    monkeypatch.setattr(tools._get_knowledge_base(), "open_file_content", _fake_open_file_content, raising=False)
 
     runtime = SimpleNamespace(context=SimpleNamespace())
     result = await _run_open_kb_document(kb_id="db-1", file_id="file-1", runtime=runtime)
@@ -325,7 +378,7 @@ async def test_open_kb_document_prefers_line_over_offset(monkeypatch) -> None:
         assert file_id == "file-1"
         return _build_test_window("\n".join(lines), offset=offset, limit=limit)
 
-    monkeypatch.setattr(tools.knowledge_base, "open_file_content", _fake_open_file_content)
+    monkeypatch.setattr(tools._get_knowledge_base(), "open_file_content", _fake_open_file_content, raising=False)
 
     runtime = SimpleNamespace(context=SimpleNamespace())
     result = await _run_open_kb_document(
@@ -369,7 +422,7 @@ async def test_open_kb_document_requires_markdown_content(monkeypatch) -> None:
         del kb_id, file_id, offset, limit
         raise Exception("文件 file-1 没有解析后的 Markdown 内容")
 
-    monkeypatch.setattr(tools.knowledge_base, "open_file_content", _fake_open_file_content)
+    monkeypatch.setattr(tools._get_knowledge_base(), "open_file_content", _fake_open_file_content, raising=False)
 
     runtime = SimpleNamespace(context=SimpleNamespace())
     result = await _run_open_kb_document(kb_id="db-1", file_id="file-1", runtime=runtime)

@@ -19,25 +19,28 @@ from yuxi.knowledge.implementations.milvus import (
 
 
 class FakeHit:
-    def __init__(self, content: str, distance: float):
+    def __init__(self, content: str, distance: float, chunk_id: str = "chunk-1"):
         self.distance = distance
         self.entity = {
             "content": content,
-            "chunk_id": "chunk-1",
+            "chunk_id": chunk_id,
             "file_id": "file-1",
             "chunk_index": 0,
         }
 
 
 class FakeCollection:
-    def __init__(self, distance: float = 0.8):
+    def __init__(self, distance: float = 0.8, search_results: list | None = None):
         self.search_calls = []
         self.hybrid_calls = []
         self.insert_calls = []
         self.distance = distance
+        self._search_results = list(search_results) if search_results else None
 
     def search(self, **kwargs):
         self.search_calls.append(kwargs)
+        if self._search_results:
+            return self._search_results.pop(0)
         return [[FakeHit("BM25 result", self.distance)]]
 
     def hybrid_search(self, **kwargs):
@@ -420,6 +423,102 @@ async def test_keyword_mode_uses_milvus_bm25_search():
     assert search_call["limit"] == 7
 
 
+async def test_keyword_mode_precise_match_uses_phrase_match_filter_and_backfill():
+    """精准匹配：PHRASE_MATCH 过滤的精准命中在前，BM25 兜底在后，按 chunk_id 去重。"""
+    precise_results = [
+        [
+            FakeHit("precise-1", 0.9, chunk_id="p1"),
+            FakeHit("precise-2", 0.7, chunk_id="p2"),
+        ]
+    ]
+    backfill_results = [
+        [
+            FakeHit("backfill-1", 0.5, chunk_id="b1"),
+            FakeHit("backfill-2", 0.3, chunk_id="b2"),
+        ]
+    ]
+    collection = FakeCollection(search_results=[precise_results, backfill_results])
+    kb = make_kb(collection)
+
+    chunks = await kb.aquery(
+        "扭转减振器",
+        "db",
+        search_mode="keyword",
+        precise_match=True,
+        phrase_match_terms=["扭转减振器"],
+        final_top_k=10,
+    )
+
+    # 第一次 search 带 PHRASE_MATCH 过滤
+    precise_call = collection.search_calls[0]
+    assert precise_call["anns_field"] == CONTENT_SPARSE_FIELD
+    assert 'PHRASE_MATCH(content, "扭转减振器", 0)' in precise_call["expr"]
+
+    # 第二次 search 为纯 BM25 兜底（无 file_name 时 expr 为 None）
+    backfill_call = collection.search_calls[1]
+    assert backfill_call["expr"] is None
+
+    # 合并顺序：精准在前、兜底在后，去重后共 4 条
+    assert [c["metadata"]["chunk_id"] for c in chunks] == ["p1", "p2", "b1", "b2"]
+    assert chunks[0]["metadata"]["is_precise_match"] is True
+    assert chunks[1]["metadata"]["is_precise_match"] is True
+    assert chunks[2]["metadata"]["is_precise_match"] is False
+    assert chunks[3]["metadata"]["is_precise_match"] is False
+
+
+async def test_precise_match_short_circuits_when_enough_hits():
+    """精准命中已够 final_top_k 时不再触发兜底查询。"""
+    precise_results = [
+        [
+            FakeHit("precise-1", 0.9, chunk_id="p1"),
+            FakeHit("precise-2", 0.7, chunk_id="p2"),
+        ]
+    ]
+    collection = FakeCollection(search_results=[precise_results])
+    kb = make_kb(collection)
+
+    chunks = await kb.aquery(
+        "term",
+        "db",
+        search_mode="keyword",
+        precise_match=True,
+        phrase_match_terms=["term"],
+        final_top_k=1,
+    )
+
+    assert len(collection.search_calls) == 1
+    assert chunks[0]["metadata"]["chunk_id"] == "p1"
+    assert chunks[0]["metadata"]["is_precise_match"] is True
+
+
+async def test_precise_match_degrades_when_no_valid_terms():
+    """phrase_match_terms 全为空时降级为纯 BM25，不抛错、不写 is_precise_match。"""
+    collection = FakeCollection()
+    kb = make_kb(collection)
+
+    chunks = await kb.aquery(
+        "fallback query",
+        "db",
+        search_mode="keyword",
+        precise_match=True,
+        phrase_match_terms=["", "   "],
+        final_top_k=5,
+    )
+
+    assert len(collection.search_calls) == 1
+    assert collection.search_calls[0]["expr"] is None
+    assert "is_precise_match" not in chunks[0]["metadata"]
+
+
+def test_build_phrase_match_expr_or_joins_and_escapes():
+    kb = MilvusKB.__new__(MilvusKB)
+    expr = kb._build_phrase_match_expr(["扭转减振器", '含"引号', ""], 0)
+    # 多关键词整体加括号，避免与 file_expr 拼 and 时 or 优先级问题
+    assert expr == '(PHRASE_MATCH(content, "扭转减振器", 0) or PHRASE_MATCH(content, "含\\"引号", 0))'
+    assert kb._build_phrase_match_expr(["", "  "], 0) is None
+    assert kb._build_phrase_match_expr(["单关键词"], 2) == 'PHRASE_MATCH(content, "单关键词", 2)'
+
+
 async def test_vector_mode_ignores_metric_type_override():
     collection = FakeCollection()
     kb = make_kb(collection)
@@ -509,6 +608,7 @@ def test_collection_supports_bm25_requires_analyzed_content_sparse_field_and_fun
                 max_length=65535,
                 enable_analyzer=True,
                 analyzer_params=CONTENT_ANALYZER_PARAMS,
+                enable_match=True,
             ),
             FieldSchema(name=CONTENT_SPARSE_FIELD, dtype=DataType.SPARSE_FLOAT_VECTOR),
         ],
@@ -525,3 +625,176 @@ def test_collection_supports_bm25_requires_analyzed_content_sparse_field_and_fun
     collection = type("Collection", (), {"schema": schema})()
 
     assert kb._collection_supports_bm25(collection)
+
+
+def test_collection_supports_bm25_requires_enable_match():
+    """缺 enable_match 的存量集合应被判为不支持，触发自动重建。"""
+    kb = MilvusKB.__new__(MilvusKB)
+    schema = CollectionSchema(
+        fields=[
+            FieldSchema(name="id", dtype=DataType.VARCHAR, max_length=100, is_primary=True),
+            FieldSchema(
+                name="content",
+                dtype=DataType.VARCHAR,
+                max_length=65535,
+                enable_analyzer=True,
+                analyzer_params=CONTENT_ANALYZER_PARAMS,
+            ),
+            FieldSchema(name=CONTENT_SPARSE_FIELD, dtype=DataType.SPARSE_FLOAT_VECTOR),
+        ],
+        functions=[
+            Function(
+                name="content_bm25",
+                input_field_names=["content"],
+                output_field_names=[CONTENT_SPARSE_FIELD],
+                function_type=FunctionType.BM25,
+            )
+        ],
+    )
+
+    collection = type("Collection", (), {"schema": schema})()
+
+    assert not kb._collection_supports_bm25(collection)
+
+
+async def test_migrate_collection_for_match_reuses_embeddings(monkeypatch):
+    """向量迁移：旧集合 embedding 原样回灌新集合，不重算；不读 content_sparse。"""
+    from yuxi.knowledge.implementations import milvus as milvus_mod
+
+    records = [
+        {"id": "id-1", "content": "c1", "chunk_id": "c1", "file_id": "f1", "chunk_index": 0, "embedding": [0.1, 0.2]},
+        {"id": "id-2", "content": "c2", "chunk_id": "c2", "file_id": "f1", "chunk_index": 1, "embedding": [0.3, 0.4]},
+    ]
+
+    class FakeIterator:
+        def __init__(self, batches):
+            self._batches = batches
+            self._i = 0
+
+        def next(self):
+            if self._i >= len(self._batches):
+                return []
+            batch = self._batches[self._i]
+            self._i += 1
+            return batch
+
+    class OldCollection:
+        def __init__(self):
+            self.query_iterator_calls = []
+
+        def load(self):
+            pass
+
+        def query_iterator(self, **kwargs):
+            self.query_iterator_calls.append(kwargs)
+            return FakeIterator([records])
+
+    class NewCollection:
+        def __init__(self):
+            self.insert_calls = []
+            self.flushed = False
+
+        def insert(self, entities):
+            self.insert_calls.append(entities)
+
+        def flush(self):
+            self.flushed = True
+
+    old = OldCollection()
+    new_collection = NewCollection()
+    kb = MilvusKB.__new__(MilvusKB)
+    kb.connection_alias = "default"
+    kb._create_new_collection = lambda name, info, kb_id: new_collection
+
+    drop_calls = []
+    monkeypatch.setattr(milvus_mod.utility, "drop_collection", lambda name, using=None: drop_calls.append(name))
+    # __del__ 会对带 connection_alias 的实例调 disconnect，mock 掉避免 pymilvus deprecation 噪音
+    monkeypatch.setattr(milvus_mod.connections, "disconnect", lambda *a, **k: None)
+
+    result = await kb._migrate_collection_for_match("col", old, None, "db")
+
+    assert result is new_collection
+    assert drop_calls == ["col"]
+    assert old.query_iterator_calls[0]["output_fields"] == [
+        "id",
+        "content",
+        "chunk_id",
+        "file_id",
+        "chunk_index",
+        "embedding",
+    ]
+    assert "content_sparse" not in old.query_iterator_calls[0]["output_fields"]
+    assert len(new_collection.insert_calls) == 1
+    entities = new_collection.insert_calls[0]
+    # 列格式：[ids, contents, chunk_ids, file_ids, chunk_indexes, embeddings]
+    assert entities[0] == ["id-1", "id-2"]
+    assert entities[2] == ["c1", "c2"]
+    assert entities[5] == [[0.1, 0.2], [0.3, 0.4]]
+    assert new_collection.flushed is True
+
+
+async def test_keyword_mode_reranker_keeps_recall_pool(monkeypatch):
+    """bug #2: reranker 开启时 keyword 分支不应提前截到 final_top_k，候选池保留 recall_top_k。"""
+    precise_results = [
+        [
+            FakeHit("p1", 0.9, chunk_id="p1"),
+            FakeHit("p2", 0.8, chunk_id="p2"),
+            FakeHit("p3", 0.7, chunk_id="p3"),
+        ]
+    ]
+    collection = FakeCollection(search_results=[precise_results])
+    kb = make_kb(collection)
+
+    captured = {}
+
+    class FakeReranker:
+        async def acompute_score(self, pairs, normalize=True):
+            _, docs = pairs
+            captured["docs"] = list(docs)
+            return [0.9, 0.5, 0.7][: len(docs)]
+
+        async def aclose(self):
+            pass
+
+    import yuxi.models.rerank as rerank_mod
+
+    monkeypatch.setattr(rerank_mod, "get_reranker", lambda model: FakeReranker())
+
+    chunks = await kb.aquery(
+        "term",
+        "db",
+        search_mode="keyword",
+        precise_match=True,
+        phrase_match_terms=["term"],
+        final_top_k=2,
+        use_reranker=True,
+        reranker_model="fake",
+        recall_top_k=50,
+    )
+
+    # precise 命中 3 条短路兜底；reranker 应拿到全部 3 条而非被 final_top_k=2 截断
+    assert len(captured["docs"]) == 3
+    assert len(chunks) == 2  # 最终截断到 final_top_k
+
+
+async def test_keyword_mode_precise_match_with_file_name_wraps_or(monkeypatch):
+    """bug #3: 多关键词 + file_name 过滤时，or 子句整体加括号，file_name 约束全部关键词。"""
+    precise_results = [[FakeHit("precise-1", 0.9, chunk_id="p1")]]
+    collection = FakeCollection(search_results=[precise_results])
+    kb = make_kb(collection)
+
+    await kb.aquery(
+        "kw",
+        "db",
+        search_mode="keyword",
+        precise_match=True,
+        phrase_match_terms=["扭转减振器", "减振器"],
+        file_name="demo.md",
+        final_top_k=5,
+    )
+
+    precise_call = collection.search_calls[0]
+    expr = precise_call["expr"]
+    # file_expr 在前，PHRASE_MATCH 的 or 子句整体被括号包裹
+    assert expr.startswith('file_id == "file-1" and (PHRASE_MATCH(content, "扭转减振器", 0) or ')
+    assert expr.endswith(")")

@@ -35,6 +35,7 @@ CONTENT_SPARSE_FIELD = "content_sparse"
 CONTENT_ANALYZER_PARAMS = {"type": "chinese"}
 VECTOR_METRIC_TYPE = "COSINE"
 MILVUS_CHUNK_EMBED_BATCH_SIZE = 200
+MILVUS_MIGRATE_BATCH_SIZE = 1000
 
 
 @dataclass(kw_only=True)
@@ -335,10 +336,9 @@ class MilvusKB(KnowledgeBase):
 
                 if not self._collection_supports_bm25(collection):
                     logger.warning(
-                        f"Collection {collection_name} schema does not support BM25/phrase-match, recreating"
+                        f"Collection {collection_name} schema does not support BM25/phrase-match, migrating data"
                     )
-                    utility.drop_collection(collection_name, using=self.connection_alias)
-                    return self._create_new_collection(collection_name, embedding_info, kb_id)
+                    return await self._migrate_collection_for_match(collection_name, collection, embedding_info, kb_id)
 
                 logger.info(f"Retrieved existing collection: {collection_name}")
                 return collection
@@ -428,6 +428,79 @@ class MilvusKB(KnowledgeBase):
             ):
                 return True
         return False
+
+    async def _migrate_collection_for_match(
+        self,
+        collection_name: str,
+        old_collection: Collection,
+        embedding_info: Any,
+        kb_id: str,
+    ) -> Collection:
+        """迁移存量集合到支持 PHRASE_MATCH 的新 schema（enable_match=True）。
+
+        升级路径：把旧集合的 embedding 原样读出 → drop → 按新 schema 建集合 → 回灌，
+        不重算 embedding。content_sparse 由新集合的 BM25 Function 在 insert 时自动生成。
+
+        风险：drop 后若 insert 失败，该 KB 数据会丢失，需人工重建。故应在维护窗口预热，
+        且升级前对重要 KB 做备份。任一步失败直接抛错，不静默回退。
+        """
+        logger.warning(f"Collection {collection_name} missing enable_match, migrating embeddings to new schema")
+        return await asyncio.to_thread(
+            self._migrate_collection_for_match_sync,
+            collection_name,
+            old_collection,
+            embedding_info,
+            kb_id,
+        )
+
+    def _migrate_collection_for_match_sync(
+        self,
+        collection_name: str,
+        old_collection: Collection,
+        embedding_info: Any,
+        kb_id: str,
+    ) -> Collection:
+        """同步执行向量迁移（在 to_thread 中调用）。"""
+        # 1. load 旧集合（query 前置条件；已 load 时 Milvus 幂等）
+        try:
+            old_collection.load()
+        except Exception as e:
+            logger.warning(f"Load old collection {collection_name} for migration failed: {e}")
+
+        # 2. 分批读出全量 records（不含 content_sparse，新集合 BM25 Function 自动生成）
+        output_fields = ["id", "content", "chunk_id", "file_id", "chunk_index", "embedding"]
+        records: list[dict] = []
+        iterator = old_collection.query_iterator(batch_size=MILVUS_MIGRATE_BATCH_SIZE, output_fields=output_fields)
+        while True:
+            batch = iterator.next()
+            if not batch:
+                break
+            records.extend(batch)
+        logger.info(f"Migrating {len(records)} records for collection {collection_name}")
+
+        # 3. drop 旧集合
+        utility.drop_collection(collection_name, using=self.connection_alias)
+
+        # 4. 建新集合（带 enable_match）
+        new_collection = self._create_new_collection(collection_name, embedding_info, kb_id)
+
+        # 5. 分批回灌：列格式与 _insert_chunks_to_stores 一致，不传 sparse
+        for start in range(0, len(records), MILVUS_MIGRATE_BATCH_SIZE):
+            batch = records[start : start + MILVUS_MIGRATE_BATCH_SIZE]
+            entities = [
+                [r.get("id") for r in batch],
+                [r.get("content") for r in batch],
+                [r.get("chunk_id") for r in batch],
+                [r.get("file_id") for r in batch],
+                [r.get("chunk_index") for r in batch],
+                [r.get("embedding") for r in batch],
+            ]
+            new_collection.insert(entities)
+
+        # 6. flush 确保 PHRASE_MATCH 倒排在 growing segment 上可见，迁移后立即可查
+        new_collection.flush()
+        logger.info(f"Migrated collection {collection_name}: {len(records)} records re-inserted")
+        return new_collection
 
     async def _initialize_kb_instance(self, instance: Any) -> None:
         """初始化 Milvus 集合（加载到内存）"""
@@ -623,7 +696,11 @@ class MilvusKB(KnowledgeBase):
             clauses.append(f'PHRASE_MATCH(content, "{escaped}", {int(slop)})')
         if not clauses:
             return None
-        return " or ".join(clauses) if len(clauses) > 1 else clauses[0]
+        # 多关键词整体加括号：与 file_expr 经 _combine_exprs 拼成 `file and (PM(a) or PM(b))`。
+        # Milvus 中 and 优先级高于 or，不加括号 file_name 过滤只会约束第一个关键词。
+        if len(clauses) > 1:
+            return f"({' or '.join(clauses)})"
+        return clauses[0]
 
     @staticmethod
     def _combine_exprs(*exprs: str | None) -> str | None:
@@ -911,7 +988,6 @@ class MilvusKB(KnowledgeBase):
                 break
         return merged
 
-
     async def aquery(self, query_text: str, kb_id: str, agent_call: bool = False, **kwargs) -> list[dict]:
         """异步查询知识库"""
         collection = await self._get_milvus_collection(kb_id)
@@ -1043,9 +1119,9 @@ class MilvusKB(KnowledgeBase):
                             )
                     logger.debug(f"BM25 backfill: {len(backfill_hits)} hits")
 
-                retrieved_chunks = self._merge_precise_and_backfill(
-                    precise_hits, backfill_hits, final_top_k
-                )
+                # 用 recall_top_k 而非 final_top_k：开启 reranker/graph 时 recall_top_k 是重排候选池，
+                # 提前截到 final_top_k 会让重排只拿到少量候选、recall 退化。最终截断由 [:final_top_k] 负责。
+                retrieved_chunks = self._merge_precise_and_backfill(precise_hits, backfill_hits, recall_top_k)
                 logger.debug(
                     f"Milvus BM25 query response: {len(retrieved_chunks)} chunks found (precise={len(precise_hits)})"
                 )
