@@ -21,8 +21,14 @@ from yuxi.utils import logger
 # === Global Cache & State ===
 # =============================================================================
 
-# Global Lock for MCP state
-_mcp_lock = asyncio.Lock()
+# Per-server locks to prevent concurrent duplicate initialization (Cache Stampede protection)
+_server_locks: dict[str, asyncio.Lock] = {}
+
+def _get_server_lock(server_name: str) -> asyncio.Lock:
+    """Get or create a lock for the given server name."""
+    if server_name not in _server_locks:
+        _server_locks[server_name] = asyncio.Lock()
+    return _server_locks[server_name]
 
 # 本地仅缓存工具对象。配置始终以数据库为准，每次按 server_name 现查。
 # cache key 使用 server_name:config_hash，当配置变化时会自然失效。
@@ -63,7 +69,7 @@ def to_camel_case(s: str) -> str:
 async def get_mcp_tools(
     server_name: str,
     additional_servers: dict[str, dict[str, Any]] | None = None,
-    disabled_tools: list[str] = None,
+    disabled_tools: list[str] | None = None,
     cache: bool = True,
     force_refresh: bool = False,
 ) -> list[Callable[..., Any]]:
@@ -98,36 +104,37 @@ async def get_mcp_tools(
 
     all_processed_tools: list[Callable[..., Any]] = []
 
-    async with _mcp_lock:
+    # 使用 per-server lock + double-check 模式，仅阻塞同一 server 的并发请求
+    server_lock = _get_server_lock(server_name)
+    async with server_lock:
         if not force_refresh and cache and cache_key in _mcp_tools_cache:
             all_processed_tools = _mcp_tools_cache[cache_key]
 
-    if not all_processed_tools:
-        try:
-            # disabled_tools 只影响返回值过滤，不参与 MCP client 建连参数。
-            client_config = {k: v for k, v in server_config.items() if k not in ("disabled_tools",)}
+        if not all_processed_tools:
+            try:
+                # disabled_tools 只影响返回值过滤，不参与 MCP client 建连参数。
+                client_config = {k: v for k, v in server_config.items() if k not in ("disabled_tools",)}
 
-            client = await get_mcp_client({server_name: client_config})
-            if client is None:
-                return []
+                client = await get_mcp_client({server_name: client_config})
+                if client is None:
+                    return []
 
-            raw_tools = cast(list[Any], await client.get_tools())
+                raw_tools = cast(list[Any], await client.get_tools())
 
-            server_cc = to_camel_case(server_name)
-            for tool in raw_tools:
-                original_name = tool.name
-                tool_cc = to_camel_case(original_name)
-                unique_id = f"mcp__{server_cc}__{tool_cc}"
+                server_cc = to_camel_case(server_name)
+                for tool in raw_tools:
+                    original_name = tool.name
+                    tool_cc = to_camel_case(original_name)
+                    unique_id = f"mcp__{server_cc}__{tool_cc}"
 
-                if tool.metadata is None:
-                    tool.metadata = {}
-                tool.metadata["id"] = unique_id
-                # 开启错误处理，防止工具调用抛出 ToolException 时击穿服务
-                tool.handle_tool_error = True
-                all_processed_tools.append(tool)
+                    if tool.metadata is None:
+                        tool.metadata = {}
+                    tool.metadata["id"] = unique_id
+                    # 开启错误处理，防止工具调用抛出 ToolException 时击穿服务
+                    tool.handle_tool_error = True
+                    all_processed_tools.append(tool)
 
-            if cache:
-                async with _mcp_lock:
+                if cache:
                     stale_keys = [
                         key for key in _mcp_tools_cache if key.startswith(f"{server_name}:") and key != cache_key
                     ]
@@ -135,24 +142,24 @@ async def get_mcp_tools(
                         _mcp_tools_cache.pop(stale_key, None)
                     _mcp_tools_cache[cache_key] = all_processed_tools
 
-                global_config_disabled = server_config.get("disabled_tools") or []
-                enabled_count = len([t for t in all_processed_tools if t.name not in global_config_disabled])
-                _mcp_tools_stats[server_name] = {
-                    "total": len(all_processed_tools),
-                    "enabled": enabled_count,
-                    "disabled": len(all_processed_tools) - enabled_count,
-                }
+                    global_config_disabled = server_config.get("disabled_tools") or []
+                    enabled_count = len([t for t in all_processed_tools if t.name not in global_config_disabled])
+                    _mcp_tools_stats[server_name] = {
+                        "total": len(all_processed_tools),
+                        "enabled": enabled_count,
+                        "disabled": len(all_processed_tools) - enabled_count,
+                    }
 
-                logger.info(
-                    f"Refreshed MCP tools cache for '{server_name}' with key '{cache_key}': "
-                    f"{len(all_processed_tools)} tools loaded."
+                    logger.info(
+                        f"Refreshed MCP tools cache for '{server_name}' with key '{cache_key}': "
+                        f"{len(all_processed_tools)} tools loaded."
+                    )
+
+            except Exception as e:
+                logger.error(
+                    f"Failed to load tools from MCP server '{server_name}': {e}, traceback: {traceback.format_exc()}"
                 )
-
-        except Exception as e:
-            logger.error(
-                f"Failed to load tools from MCP server '{server_name}': {e}, traceback: {traceback.format_exc()}"
-            )
-            return []
+                return []
 
     # 3. Filtering (Apply to Return Value Only)
     if disabled_tools:
@@ -178,9 +185,10 @@ async def get_tools_from_all_servers() -> list[Callable[..., Any]]:
 
 def clear_mcp_cache() -> None:
     """Clear the MCP tools cache (useful for testing)."""
-    global _mcp_tools_cache, _mcp_tools_stats
+    global _mcp_tools_cache, _mcp_tools_stats, _server_locks
     _mcp_tools_cache = {}
     _mcp_tools_stats = {}
+    _server_locks = {}
 
 
 def clear_mcp_server_tools_cache(server_name: str) -> None:
@@ -191,6 +199,7 @@ def clear_mcp_server_tools_cache(server_name: str) -> None:
     for stale_key in stale_keys:
         _mcp_tools_cache.pop(stale_key, None)
     _mcp_tools_stats.pop(server_name, None)
+    _server_locks.pop(server_name, None)
     logger.info(f"Cleared tools cache for MCP server '{server_name}'")
 
 
