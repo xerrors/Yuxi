@@ -64,6 +64,38 @@ def test_build_run_context_includes_trace_metadata(monkeypatch):
     ]
 
 
+def test_build_run_context_merges_evaluation_metadata_and_tags(monkeypatch):
+    monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
+    monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
+    svc.get_langfuse_client.cache_clear()
+
+    run_context = svc.build_run_context(
+        user_id="user-1",
+        thread_id="thread-1",
+        agent_id="agent-a",
+        request_id="req-1",
+        operation="agent_chat_stream",
+        extra_metadata={
+            "source": "agent_evaluation",
+            "feature": "agent_evaluation",
+            "evaluation": {"dataset_name": "agent-eval-smoke"},
+        },
+        extra_tags=["agent_evaluation", "dataset:agent-eval-smoke", "agent_evaluation"],
+    )
+
+    assert run_context.metadata["source"] == "agent_evaluation"
+    assert run_context.metadata["feature"] == "agent_evaluation"
+    assert run_context.metadata["evaluation"] == {"dataset_name": "agent-eval-smoke"}
+    assert run_context.tags == [
+        "yuxi",
+        "chat",
+        "agent_chat_stream",
+        "agent:agent-a",
+        "agent_evaluation",
+        "dataset:agent-eval-smoke",
+    ]
+
+
 def test_get_trace_info_prefers_handler_last_trace_id(monkeypatch):
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")

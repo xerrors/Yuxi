@@ -23,6 +23,7 @@ from yuxi.services.agent_run_service import (
     get_agent_run_view,
     stream_agent_run_events,
 )
+from yuxi.services.agent_eval_run_service import run_agent_eval
 from yuxi.storage.postgres.models_business import User
 
 agent_router = APIRouter(prefix="/agent", tags=["agent"])
@@ -61,6 +62,21 @@ class AgentRunCreate(BaseModel):
     resume: Any | None = Field(None, description="可选，恢复 interrupted run 的输入")
     parent_run_id: str | None = Field(None, description="可选，被恢复的 run ID")
     resume_request_id: str | None = Field(None, description="可选，resume 幂等键")
+
+
+class AgentEvaluationContext(BaseModel):
+    dataset_name: str | None = Field(None, description="Langfuse dataset 名称")
+    dataset_item_id: str | None = Field(None, description="Langfuse dataset item ID")
+    experiment_name: str | None = Field(None, description="Langfuse experiment/run 名称")
+
+
+class AgentEvalRunCreate(BaseModel):
+    query: str = Field(..., description="评估样例输入")
+    agent_slug: str = Field(..., description="要运行的智能体 slug")
+    evaluation: AgentEvaluationContext = Field(default_factory=AgentEvaluationContext, description="评估上下文")
+    meta: dict = Field(default_factory=dict, description="可选，请求追踪信息，例如 request_id、attachment_file_ids")
+    image_content: str | None = Field(None, description="可选，base64 图片内容")
+    model_spec: str | None = Field(None, description="可选，对话级模型覆盖，优先级高于智能体配置")
 
 
 def _backend_info(info: dict) -> dict:
@@ -265,6 +281,24 @@ async def create_agent_run(
         resume=payload.resume,
         parent_run_id=payload.parent_run_id,
         resume_request_id=payload.resume_request_id,
+    )
+
+
+@agent_router.post("/eval/runs")
+async def create_agent_eval_run(
+    payload: AgentEvalRunCreate,
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await run_agent_eval(
+        query=payload.query,
+        agent_slug=payload.agent_slug,
+        evaluation=payload.evaluation.model_dump(exclude_none=True),
+        meta=dict(payload.meta or {}),
+        image_content=payload.image_content,
+        model_spec=payload.model_spec,
+        current_user=current_user,
+        db=db,
     )
 
 

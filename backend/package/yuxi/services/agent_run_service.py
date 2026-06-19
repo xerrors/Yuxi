@@ -7,6 +7,7 @@ import json
 import os
 import uuid
 from collections.abc import AsyncIterator
+from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -318,6 +319,8 @@ async def create_agent_run_view(
         "uid": str(current_uid),
         "request_id": request_id,
         "attachment_file_ids": (meta or {}).get("attachment_file_ids") or [],
+        "source": (meta or {}).get("source"),
+        "evaluation": (meta or {}).get("evaluation") or None,
         "created_at": utc_now_naive().isoformat(),
     }
     try:
@@ -344,6 +347,10 @@ async def create_agent_run_view(
             "attachments": [],
             "model_spec": resolved_model_spec,
         }
+        if (meta or {}).get("source"):
+            input_metadata["source"] = (meta or {}).get("source")
+        if (meta or {}).get("evaluation"):
+            input_metadata["evaluation"] = (meta or {}).get("evaluation")
         if run_type == "resume":
             input_metadata["source"] = "ask_user_question_resume"
 
@@ -381,6 +388,77 @@ async def get_agent_run_view(*, run_id: str, current_uid: str, db: AsyncSession)
     if not run:
         raise HTTPException(status_code=404, detail="运行任务不存在")
     return {"run": run.to_dict()}
+
+
+def _select_output_message(messages: list[Message], *, output_message_id: int | None) -> Message | None:
+    """优先选用运行记录的输出消息，否则回退到最后一条 assistant 消息。"""
+    if output_message_id:
+        for message in messages:
+            if message.id == output_message_id and message.role == "assistant":
+                return message
+
+    for message in reversed(messages):
+        if message.role == "assistant":
+            return message
+    return None
+
+
+async def get_agent_run_result(*, run_id: str, current_uid: str, db: AsyncSession) -> dict:
+    """加载某个 run 的最终结果（状态/输出/Langfuse trace/错误），供 chat/eval/cron 等统一复用。"""
+    run = await AgentRunRepository(db).get_run_for_user(run_id, str(current_uid))
+    if not run:
+        return {
+            "status": "failed",
+            "agent_run_id": run_id,
+            "output": "",
+            "error": {"type": "run_not_found", "message": "运行任务不存在"},
+        }
+
+    messages: list[Message] = []
+    if run.conversation_id:
+        result = await db.execute(
+            select(Message)
+            .where(Message.conversation_id == run.conversation_id)
+            .order_by(Message.created_at.asc(), Message.id.asc())
+        )
+        messages = list(result.scalars().unique().all())
+
+    output_message = _select_output_message(messages, output_message_id=run.output_message_id)
+    output_metadata = (
+        output_message.extra_metadata if output_message and isinstance(output_message.extra_metadata, dict) else {}
+    )
+
+    payload: dict[str, Any] = {
+        "status": run.status,
+        "output": output_message.content if output_message else "",
+        "agent_slug": run.agent_id,
+        "thread_id": run.thread_id,
+        "conversation_id": run.conversation_id,
+        "agent_run_id": run.id,
+        "request_id": run.request_id,
+        "final_message_id": output_message.id if output_message else None,
+        "langfuse_trace_id": output_metadata.get("langfuse_trace_id"),
+    }
+    if run.error_type or run.error_message:
+        payload["error"] = {"type": run.error_type, "message": run.error_message}
+    return payload
+
+
+async def load_agent_run_result(*, run_id: str, current_uid: str) -> dict:
+    """自开独立会话读取 run 结果，用于流结束/后台调用等请求会话已不可用的场景。"""
+    async with pg_manager.get_async_session_context() as db:
+        return await get_agent_run_result(run_id=run_id, current_uid=current_uid, db=db)
+
+
+async def await_agent_run_result(*, run_id: str, current_uid: str) -> dict:
+    """阻塞至 run 终结并返回最终结果，供 cron 等 in-process 调用。
+
+    复用有限事件流 ``stream_agent_run_events``：它在 run 终结或超时后自然结束，
+    因此排空即等待，无需额外轮询。等待上限继承事件流内部的 ``SSE_MAX_CONNECTION_MINUTES``。
+    """
+    async for _ in stream_agent_run_events(run_id=run_id, after_seq="0-0", current_uid=current_uid, verbose=False):
+        pass
+    return await load_agent_run_result(run_id=run_id, current_uid=current_uid)
 
 
 async def cancel_agent_run_view(*, run_id: str, current_uid: str, db: AsyncSession) -> dict:

@@ -314,6 +314,10 @@ async def process_agent_run(ctx, run_id: str):
         "attachment_file_ids": payload.get("attachment_file_ids") or [],
         "model_spec": payload.get("model_spec"),
     }
+    if payload.get("source"):
+        meta["source"] = payload.get("source")
+    if isinstance(payload.get("evaluation"), dict):
+        meta["evaluation"] = payload.get("evaluation") or {}
 
     await mark_run_running(run_id)
     run_ctx = RunContext(run_id=run_id)
@@ -332,6 +336,8 @@ async def process_agent_run(ctx, run_id: str):
             "agent_id": agent_id,
             "backend_id": payload.get("backend_id"),
             "uid": uid,
+            "source": payload.get("source"),
+            "evaluation": payload.get("evaluation") or {},
         },
         thread_id=thread_id,
     )

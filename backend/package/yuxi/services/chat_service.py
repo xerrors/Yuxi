@@ -85,7 +85,30 @@ def _build_langfuse_run_context(
     operation: str,
     backend_id: str | None = None,
     message_type: str | None = None,
+    meta: dict | None = None,
 ) -> LangfuseRunContext:
+    extra_metadata = None
+    extra_tags = None
+    evaluation = (meta or {}).get("evaluation") if isinstance(meta, dict) else None
+    # 如果请求来自智能体评测，添加评测相关的 metadata 和 tags，方便在 Langfuse 中进行过滤和分析
+    if (meta or {}).get("source") == "agent_evaluation" or (isinstance(evaluation, dict) and evaluation):
+        extra_metadata = {
+            "source": "agent_evaluation",
+            "feature": "agent_evaluation",
+        }
+        extra_tags = ["agent_evaluation"]
+        if isinstance(evaluation, dict):
+            dataset_name = evaluation.get("dataset_name")
+            experiment_name = evaluation.get("experiment_name")
+            for key in ("dataset_name", "dataset_item_id", "experiment_name"):
+                value = evaluation.get(key)
+                if value:
+                    extra_metadata[f"evaluation_{key}"] = str(value)
+            if dataset_name:
+                extra_tags.append(f"dataset:{dataset_name}")
+            if experiment_name:
+                extra_tags.append(f"experiment:{experiment_name}")
+
     return build_run_context(
         user_id=str(getattr(current_user, "uid", current_user.id)),
         thread_id=thread_id,
@@ -97,6 +120,8 @@ def _build_langfuse_run_context(
         username=getattr(current_user, "username", None),
         login_user_id=getattr(current_user, "uid", None),
         department_id=getattr(current_user, "department_id", None),
+        extra_metadata=extra_metadata,
+        extra_tags=extra_tags,
     )
 
 
@@ -799,6 +824,7 @@ async def agent_chat(
         request_id=meta["request_id"],
         operation="agent_chat_sync",
         message_type=message_type,
+        meta=meta,
     )
     trace_info: dict[str, Any] = {}
 
@@ -1010,6 +1036,7 @@ async def stream_agent_chat(
         request_id=meta["request_id"],
         operation="agent_chat_stream",
         message_type=message_type,
+        meta=meta,
     )
     full_msg = None
     accumulated_content: list[str] = []
@@ -1309,6 +1336,7 @@ async def stream_agent_resume(
         request_id=meta.get("request_id") or str(uuid.uuid4()),
         operation="agent_chat_resume",
         message_type="resume",
+        meta=meta,
     )
     trace_info: dict[str, Any] = {}
     last_agent_state_signature = ""
