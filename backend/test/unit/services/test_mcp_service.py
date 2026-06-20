@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 from yuxi.services.mcp import tool_registry_service as mcp_service
@@ -41,12 +42,31 @@ async def test_get_enabled_mcp_tools_loads_latest_config_from_db(monkeypatch):
     assert captured == [
         {
             "server_name": "demo",
-            "additional_servers": {
-                "demo": {"transport": "stdio", "command": "demo", "disabled_tools": ["tool_b"]}
-            },
+            "additional_servers": {"demo": {"transport": "stdio", "command": "demo", "disabled_tools": ["tool_b"]}},
             "disabled_tools": ["tool_b"],
         }
     ]
+
+
+async def test_get_enabled_mcp_tools_times_out_slow_runtime_discovery(monkeypatch):
+    async def fake_get_enabled_mcp_server_config(server_name: str, db=None):
+        del db
+        assert server_name == "slow"
+        return {"transport": "streamable_http", "url": "http://slow.example/mcp", "disabled_tools": []}
+
+    async def fake_get_mcp_tools(server_name: str, additional_servers=None, disabled_tools=None, **kwargs):
+        del additional_servers, disabled_tools, kwargs
+        assert server_name == "slow"
+        await asyncio.sleep(0.05)
+        return ["late-tool"]
+
+    monkeypatch.setattr(mcp_service, "MCP_TOOLS_DISCOVERY_TIMEOUT_SECONDS", 0.01, raising=False)
+    monkeypatch.setattr(mcp_service, "get_enabled_mcp_server_config", fake_get_enabled_mcp_server_config)
+    monkeypatch.setattr(mcp_service, "get_mcp_tools", fake_get_mcp_tools)
+
+    tools = await mcp_service.get_enabled_mcp_tools("slow")
+
+    assert tools == []
 
 
 async def test_get_mcp_tools_rebuilds_cache_when_config_hash_changes(monkeypatch):

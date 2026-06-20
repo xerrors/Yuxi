@@ -24,11 +24,13 @@ from yuxi.utils import logger
 # Per-server locks to prevent concurrent duplicate initialization (Cache Stampede protection)
 _server_locks: dict[str, asyncio.Lock] = {}
 
+
 def _get_server_lock(server_name: str) -> asyncio.Lock:
     """Get or create a lock for the given server name."""
     if server_name not in _server_locks:
         _server_locks[server_name] = asyncio.Lock()
     return _server_locks[server_name]
+
 
 # 本地仅缓存工具对象。配置始终以数据库为准，每次按 server_name 现查。
 # cache key 使用 server_name:config_hash，当配置变化时会自然失效。
@@ -36,6 +38,8 @@ _mcp_tools_cache: dict[str, list[Callable[..., Any]]] = {}
 
 # MCP tools statistics (for reporting enabled/disabled counts)
 _mcp_tools_stats: dict[str, dict[str, int]] = {}
+
+MCP_TOOLS_DISCOVERY_TIMEOUT_SECONDS = 10
 
 # =============================================================================
 # === Core Logic (Moved from agents/common/mcp.py) ===
@@ -237,7 +241,16 @@ async def get_enabled_mcp_tools(server_name: str) -> list:
         return []
 
     disabled_tools = config.get("disabled_tools") or []
-    return await get_mcp_tools(server_name, additional_servers={server_name: config}, disabled_tools=disabled_tools)
+    try:
+        return await asyncio.wait_for(
+            get_mcp_tools(server_name, additional_servers={server_name: config}, disabled_tools=disabled_tools),
+            timeout=MCP_TOOLS_DISCOVERY_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        logger.warning(
+            f"MCP server '{server_name}' tool discovery timed out after {MCP_TOOLS_DISCOVERY_TIMEOUT_SECONDS}s, skip"
+        )
+        return []
 
 
 async def get_all_mcp_tools(server_name: str) -> list:

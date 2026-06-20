@@ -17,7 +17,6 @@ from yuxi.agents.middlewares import (
 from yuxi.agents.middlewares.knowledge_base_middleware import KnowledgeBaseMiddleware
 from yuxi.agents.middlewares.skills_middleware import SkillsMiddleware
 from yuxi.agents.toolkits.buildin.tools import _create_tavily_search
-from yuxi.services.mcp.tool_registry_service import get_tools_from_all_servers
 from yuxi.services.subagent_service import get_subagents_from_names
 from yuxi.utils import logger
 
@@ -57,8 +56,6 @@ class DeepAgent(BaseAgent):
         model = load_chat_model(context.model)
         sub_model = load_chat_model(context.subagents_model)
         search_tools = await self.get_tools()
-        all_mcp_tools = await get_tools_from_all_servers()
-        # 合并搜索工具和 MCP 工具
 
         # 从数据库加载 subagent specs（工具名称已解析）
         user_subagents = await get_subagents_from_names(context.subagents)
@@ -97,7 +94,7 @@ class DeepAgent(BaseAgent):
             system_prompt="",
             middleware=[
                 FilesystemMiddleware(backend=create_agent_composite_backend),  # 文件系统后端
-                RuntimeConfigMiddleware(extra_tools=all_mcp_tools),
+                RuntimeConfigMiddleware(),
                 SkillsMiddleware(),  # Skills 中间件（提示词注入、依赖展开、动态激活）
                 save_attachments_to_fs,  # 附件注入提示词
                 TodoListMiddleware(system_prompt="任务结束前，应该检查维护的待办事项列表是否结束。"),
