@@ -16,18 +16,6 @@
         <span class="file-path-title">{{ filePath }}</span>
       </div>
       <div class="modal-actions">
-        <div v-if="availablePreviewVariants.length > 1" class="preview-mode-switch">
-          <button
-            v-for="variant in availablePreviewVariants"
-            :key="variant.key"
-            class="preview-mode-btn text-mode-btn"
-            :class="{ active: activePreviewVariant === variant.key }"
-            :title="variant.label"
-            @click="$emit('switchVariant', variant.key)"
-          >
-            {{ variant.label }}
-          </button>
-        </div>
         <button
           v-if="canEdit && editMode !== 'edit'"
           class="modal-action-btn"
@@ -82,6 +70,28 @@
           <component :is="closeIconComponent" :size="18" />
         </button>
       </div>
+    </div>
+
+    <div
+      v-if="showInlineHtmlControls && !showHeader && isHtmlFile"
+      class="preview-mode-switch inline-html-preview-switch"
+    >
+      <button
+        class="preview-mode-btn"
+        :class="{ active: htmlPreviewMode === 'render' }"
+        @click="htmlPreviewMode = 'render'"
+        title="预览"
+      >
+        <Globe :size="16" />
+      </button>
+      <button
+        class="preview-mode-btn"
+        :class="{ active: htmlPreviewMode === 'source' }"
+        @click="htmlPreviewMode = 'source'"
+        title="源码"
+      >
+        <Code2 :size="16" />
+      </button>
     </div>
 
     <div v-if="canEdit && editMode === 'edit'" class="edit-floating-actions">
@@ -222,7 +232,7 @@
               <iframe
                 :key="`fullscreen-${htmlPreviewRenderKey}`"
                 class="html-preview fullscreen-embed-preview"
-                :srcdoc="htmlPreviewSrcdoc"
+                :srcdoc="htmlPreviewFullscreenSrcdoc"
                 :title="filePath"
                 sandbox="allow-scripts"
               />
@@ -281,7 +291,7 @@ import {
 
 const EDITABLE_EXTENSIONS = new Set(['.md', '.markdown', '.mdx', '.txt'])
 const HTML_PREVIEW_SCALE = 0.75
-const HTML_PREVIEW_SCALE_CSS = `html { zoom: ${HTML_PREVIEW_SCALE} !important; }`
+const HTML_PREVIEW_FULLSCREEN_SCALE = 1
 
 const props = defineProps({
   file: {
@@ -305,6 +315,10 @@ const props = defineProps({
     default: false
   },
   showFullscreen: {
+    type: Boolean,
+    default: false
+  },
+  showInlineHtmlControls: {
     type: Boolean,
     default: false
   },
@@ -347,7 +361,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['close', 'download', 'save', 'switchVariant'])
+const emit = defineEmits(['close', 'download', 'save'])
 
 const themeStore = useThemeStore()
 const closeTitle = computed(() =>
@@ -363,11 +377,6 @@ const fullscreenPreviewVisible = ref(false)
 const htmlPreviewRenderKey = ref(0)
 
 const isMarkdown = computed(() => isMarkdownPreview(props.filePath, props.file?.previewType))
-const availablePreviewVariants = computed(() => {
-  const variants = props.file?.availableVariants || props.file?.available_variants || []
-  return variants.filter((variant) => variant?.supported !== false && variant?.key)
-})
-const activePreviewVariant = computed(() => props.file?.variant || props.file?.previewVariant || '')
 const canEdit = computed(() => {
   const previewType = props.file?.previewType
   return (
@@ -382,11 +391,16 @@ const savedContent = computed(() => formatContent(props.file?.content))
 const draftChanged = computed(() => draftContent.value !== savedContent.value)
 const isHtmlFile = computed(
   () =>
-    props.file?.previewType === 'text' &&
+    ['text', 'html'].includes(props.file?.previewType) &&
     typeof props.file?.content === 'string' &&
     isHtmlPreview(props.filePath)
 )
-const htmlPreviewSrcdoc = computed(() => buildHtmlPreviewSrcdoc(props.file?.content))
+const htmlPreviewSrcdoc = computed(() =>
+  buildHtmlPreviewSrcdoc(props.file?.content, HTML_PREVIEW_SCALE)
+)
+const htmlPreviewFullscreenSrcdoc = computed(() =>
+  buildHtmlPreviewSrcdoc(props.file?.content, HTML_PREVIEW_FULLSCREEN_SCALE)
+)
 const codeThemeClass = computed(() => (themeStore.isDark ? 'hljs-theme-dark' : 'hljs-theme-light'))
 const codeLanguage = computed(() => getCodeLanguageByPath(props.filePath))
 const isCodePreview = computed(
@@ -427,15 +441,17 @@ const serializeDoctype = (doctype) => {
   return `<!DOCTYPE ${doctype.name}${publicId}${systemId}>`
 }
 
-const buildHtmlPreviewSrcdoc = (content) => {
+const buildHtmlPreviewSrcdoc = (content, scale = HTML_PREVIEW_SCALE) => {
   const html = formatContent(content)
   if (!html.trim() || typeof DOMParser === 'undefined') return html
 
   const doc = new DOMParser().parseFromString(html, 'text/html')
-  const style = doc.createElement('style')
-  style.setAttribute('data-yuxi-html-preview-scale', String(HTML_PREVIEW_SCALE))
-  style.textContent = HTML_PREVIEW_SCALE_CSS
-  doc.head.append(style)
+  if (scale !== 1) {
+    const style = doc.createElement('style')
+    style.setAttribute('data-yuxi-html-preview-scale', String(scale))
+    style.textContent = `html { zoom: ${scale} !important; }`
+    doc.head.append(style)
+  }
 
   return `${serializeDoctype(doc.doctype)}${doc.documentElement.outerHTML}`
 }
@@ -505,6 +521,10 @@ onUnmounted(() => {
   max-height: 100vh;
 }
 
+.agent-file-preview.is-full-height .file-content {
+  min-height: 0;
+}
+
 .agent-file-preview.is-borderless {
   border-radius: 0;
 }
@@ -541,6 +561,14 @@ onUnmounted(() => {
   padding: 2px;
   border-radius: 8px;
   background: var(--gray-100);
+}
+
+.inline-html-preview-switch {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 5;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
 }
 
 .file-path-title {
@@ -599,7 +627,9 @@ onUnmounted(() => {
 }
 
 .file-content {
+  flex: 1 1 auto;
   min-height: 300px;
+  min-width: 0;
   overflow-y: auto;
   border-radius: 0px;
 
@@ -808,12 +838,13 @@ onUnmounted(() => {
 }
 
 .html-preview {
+  display: block; // 消除 iframe 行内基线间隙导致的底部白边
   width: 100%;
-  min-height: calc(80vh - 40px);
-  height: 100vh;
+  height: 100%; // 适应父容器高度，而非固定 100vh
+  min-height: 0; // 移除固定最小高度，避免短内容白边
   border: none;
   border-radius: 0px;
-  background: #fff; // HTML 内容通常需要白色背景以保证可读性
+  background: var(--gray-0); // 跟随主题：亮色为白、暗色为近黑，避免暗色 HTML 底部露出白边
 }
 
 .unsupported-preview {
@@ -880,7 +911,8 @@ onUnmounted(() => {
 }
 
 .fullscreen-embed-preview {
-  height: 100vh;
+  height: 100vh; // 全屏时填满视口
+  min-height: 100vh; // 确保全屏时不塌陷
   border-radius: 0px;
 }
 

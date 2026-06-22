@@ -1,150 +1,99 @@
 <template>
-  <section class="workspace-file-list">
-    <div class="file-list-header">
-      <div class="path-line">
-        <a-breadcrumb class="path-breadcrumb">
-          <a-breadcrumb-item v-for="item in resolvedBreadcrumbItems" :key="item.path">
-            <button
-              type="button"
-              class="breadcrumb-action"
-              :class="{ current: item.path === normalizedCurrentPath }"
-              :disabled="item.path === normalizedCurrentPath"
-              :title="item.path"
-              @click="$emit('select-path', item.path)"
-            >
-              {{ item.name }}
-            </button>
-          </a-breadcrumb-item>
-        </a-breadcrumb>
-      </div>
-      <div class="list-actions">
-        <span class="entry-count">{{ entries.length }} 项</span>
-        <a-tooltip v-if="!readonly" title="多选">
-          <a-button
-            size="small"
-            class="lucide-icon-btn"
-            :type="effectiveSelectionMode ? 'primary' : 'default'"
-            aria-label="多选"
-            @click="toggleSelectionMode"
-          >
-            <ListChecks :size="14" />
-          </a-button>
-        </a-tooltip>
+  <FileBrowserTable
+    class="workspace-file-list"
+    :rows="entries"
+    :columns="columns"
+    row-key="path"
+    :selected-key="selectedPath"
+    :row-class-name="rowClassName"
+    :loading="loading"
+    :breadcrumbs="resolvedBreadcrumbItems"
+    :root-label="rootLabel"
+    :pagination="pagination"
+    :selection="tableSelection"
+    empty-text="当前文件夹为空"
+    @open-row="(entry) => $emit('select-entry', entry)"
+    @breadcrumb-click="handleBreadcrumbClick"
+    @page-change="(payload) => $emit('page-change', payload)"
+  >
+    <template #toolbar-actions>
+      <span class="entry-count">{{ entryCountText }}</span>
+      <a-tooltip v-if="!readonly" title="多选">
         <a-button
-          v-if="effectiveSelectionMode"
           size="small"
-          danger
-          :disabled="!selectedPaths.length"
-          :loading="deletingPaths.length > 0"
-          @click="$emit('delete-selected')"
+          class="lucide-icon-btn"
+          :type="effectiveSelectionMode ? 'primary' : 'default'"
+          aria-label="多选"
+          @click="toggleSelectionMode"
         >
-          删除选中
+          <ListChecks :size="14" />
         </a-button>
-      </div>
-    </div>
-
-    <div class="file-table" role="table" aria-label="工作区文件列表">
-      <div
-        class="file-row table-head"
-        :class="{ 'selection-enabled': effectiveSelectionMode }"
-        role="row"
+      </a-tooltip>
+      <a-button
+        v-if="effectiveSelectionMode"
+        size="small"
+        danger
+        :disabled="!selectedPaths.length"
+        :loading="deletingPaths.length > 0"
+        @click="$emit('delete-selected')"
       >
-        <span v-if="effectiveSelectionMode" class="selection-cell">
-          <a-checkbox
-            :checked="allSelected"
-            :indeterminate="partiallySelected"
-            :disabled="!entries.length"
-            aria-label="全选当前目录文件"
-            @change="toggleAllSelection"
-          />
-        </span>
-        <span>名称</span>
-        <span>大小</span>
-        <span>修改时间</span>
-        <span class="action-head">操作</span>
-      </div>
-      <div
-        v-for="entry in entries"
-        :key="entry.path"
-        class="file-row"
-        :class="{
-          selected: selectedPath === entry.path,
-          deleting: isDeleting(entry.path),
-          'selection-enabled': effectiveSelectionMode
-        }"
-        role="row"
-        tabindex="0"
-        @click="$emit('select-entry', entry)"
-        @keydown.enter="$emit('select-entry', entry)"
-      >
-        <span v-if="effectiveSelectionMode" class="selection-cell" @click.stop>
-          <a-checkbox
-            :checked="selectedPathSet.has(entry.path)"
-            :disabled="isDeleting(entry.path)"
-            :aria-label="`选择 ${entry.name}`"
-            @change="(event) => toggleEntrySelection(entry.path, event.target.checked)"
-          />
-        </span>
-        <span class="name-cell">
-          <FileTypeIcon :name="entry.name || entry.path" :is-dir="entry.is_dir" :size="17" />
-          <span class="entry-name" :title="entry.name">{{ entry.name }}</span>
-        </span>
-        <span>{{ entry.is_dir ? '-' : formatFileSize(entry.size) }}</span>
-        <span>{{ formatRelativeTime(entry.modified_at) }}</span>
-        <span class="action-cell" @click.stop>
-          <a-dropdown v-if="!entry.is_dir || !readonly" :trigger="['click']">
-            <button
-              type="button"
-              class="more-action"
-              :disabled="isDeleting(entry.path)"
-              aria-label="更多操作"
-              @click.stop
-            >
-              <MoreHorizontal :size="16" />
-            </button>
-            <template #overlay>
-              <a-menu>
-                <a-menu-item
-                  v-if="!entry.is_dir"
-                  key="download"
-                  @click="$emit('download-entry', entry)"
-                >
-                  <span class="menu-item-content">
-                    <Download :size="14" />
-                    <span>下载</span>
-                  </span>
-                </a-menu-item>
-                <a-menu-item
-                  v-if="!readonly"
-                  key="delete"
-                  danger
-                  @click="$emit('delete-entry', entry)"
-                >
-                  <span class="menu-item-content">
-                    <Trash2 :size="14" />
-                    <span>删除</span>
-                  </span>
-                </a-menu-item>
-              </a-menu>
-            </template>
-          </a-dropdown>
-        </span>
-      </div>
-    </div>
+        删除选中
+      </a-button>
+    </template>
 
-    <div v-if="loading" class="list-state">
-      <a-spin />
-      <span>正在加载文件...</span>
-    </div>
-    <a-empty v-else-if="!entries.length" class="list-empty" description="当前文件夹为空" />
-  </section>
+    <template #name="{ row }">
+      <span class="name-cell">
+        <FileTypeIcon :name="row.name || row.path" :is-dir="row.is_dir" :size="17" />
+        <span class="entry-name" :title="row.name">{{ row.name }}</span>
+      </span>
+    </template>
+
+    <template #cell-size="{ row }">
+      <span>{{ row.is_dir ? '-' : formatFileSize(row.size) }}</span>
+    </template>
+
+    <template #cell-modified_at="{ row }">
+      <span>{{ formatRelativeTime(row.modified_at) }}</span>
+    </template>
+
+    <template #row-actions="{ row }">
+      <a-dropdown v-if="!row.is_dir || !readonly" :trigger="['click']">
+        <button
+          type="button"
+          class="more-action"
+          :disabled="isDeleting(row.path)"
+          aria-label="更多操作"
+          @click.stop
+        >
+          <MoreHorizontal :size="16" />
+        </button>
+        <template #overlay>
+          <a-menu>
+            <a-menu-item v-if="!row.is_dir" key="download" @click="$emit('download-entry', row)">
+              <span class="menu-item-content">
+                <Download :size="14" />
+                <span>下载</span>
+              </span>
+            </a-menu-item>
+            <a-menu-item v-if="!readonly" key="delete" danger @click="$emit('delete-entry', row)">
+              <span class="menu-item-content">
+                <Trash2 :size="14" />
+                <span>删除</span>
+              </span>
+            </a-menu-item>
+          </a-menu>
+        </template>
+      </a-dropdown>
+    </template>
+  </FileBrowserTable>
 </template>
 
 <script setup>
 import { computed } from 'vue'
 import { Download, ListChecks, MoreHorizontal, Trash2 } from 'lucide-vue-next'
-import { formatFileSize, formatRelativeTime } from '@/utils/file_utils'
+import FileBrowserTable from '@/components/common/FileBrowserTable.vue'
 import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
+import { formatFileSize, formatRelativeTime } from '@/utils/file_utils'
 
 const props = defineProps({
   entries: { type: Array, default: () => [] },
@@ -156,25 +105,40 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
   readonly: { type: Boolean, default: false },
   breadcrumbItems: { type: Array, default: null },
-  rootLabel: { type: String, default: '工作区' }
+  rootLabel: { type: String, default: '工作区' },
+  pagination: { type: Object, default: null }
 })
 
 const emit = defineEmits([
   'select-entry',
   'select-path',
+  'breadcrumb-click',
   'update:selectedPaths',
   'update:selectionMode',
   'delete-selected',
   'delete-entry',
-  'download-entry'
+  'download-entry',
+  'page-change'
 ])
 
-const selectedPathSet = computed(() => new Set(props.selectedPaths))
+const columns = [
+  { title: '名称', dataIndex: 'name', key: 'name', ellipsis: true },
+  { title: '大小', dataIndex: 'size', key: 'size', width: 86 },
+  { title: '修改时间', dataIndex: 'modified_at', key: 'modified_at', width: 126 },
+  { title: '操作', key: 'action', dataIndex: 'path', width: 58, align: 'center' }
+]
+
 const deletingPathSet = computed(() => new Set(props.deletingPaths))
-const entryPaths = computed(() => props.entries.map((entry) => entry.path))
-const entryPathSet = computed(() => new Set(entryPaths.value))
+const entryPathSet = computed(() => new Set(props.entries.map((entry) => entry.path)))
 const normalizedCurrentPath = computed(() => (props.currentPath || '/').replace(/\/+$/, '') || '/')
 const effectiveSelectionMode = computed(() => !props.readonly && props.selectionMode)
+const entryCountText = computed(() => {
+  if (props.pagination?.total !== undefined) {
+    return `${props.pagination.total} 项`
+  }
+  return `${props.entries.length} 项`
+})
+
 const resolvedBreadcrumbItems = computed(() => {
   if (props.breadcrumbItems?.length) return props.breadcrumbItems
 
@@ -195,17 +159,24 @@ const resolvedBreadcrumbItems = computed(() => {
   )
 })
 
-const allSelected = computed(() => {
-  return (
-    entryPaths.value.length > 0 && entryPaths.value.every((path) => selectedPathSet.value.has(path))
-  )
-})
+const tableSelection = computed(() => {
+  if (!effectiveSelectionMode.value) return null
 
-const partiallySelected = computed(() => {
-  return !allSelected.value && entryPaths.value.some((path) => selectedPathSet.value.has(path))
+  return {
+    selectedRowKeys: props.selectedPaths,
+    getCheckboxProps: (row) => ({ disabled: isDeleting(row.path) }),
+    onChange: (keys) => {
+      emit(
+        'update:selectedPaths',
+        keys.filter((path) => entryPathSet.value.has(path))
+      )
+    }
+  }
 })
 
 const isDeleting = (path) => deletingPathSet.value.has(path)
+
+const rowClassName = (entry) => (isDeleting(entry.path) ? 'is-deleting' : '')
 
 const toggleSelectionMode = () => {
   if (props.readonly) return
@@ -216,83 +187,16 @@ const toggleSelectionMode = () => {
   }
 }
 
-const toggleAllSelection = (event) => {
-  emit('update:selectedPaths', event.target.checked ? [...entryPaths.value] : [])
-}
-
-const toggleEntrySelection = (path, checked) => {
-  const nextSelectedPaths = new Set(props.selectedPaths)
-  if (checked) {
-    nextSelectedPaths.add(path)
-  } else {
-    nextSelectedPaths.delete(path)
-  }
-  emit(
-    'update:selectedPaths',
-    [...nextSelectedPaths].filter((selectedPath) => entryPathSet.value.has(selectedPath))
-  )
+const handleBreadcrumbClick = ({ item, index }) => {
+  emit('breadcrumb-click', { item, index })
+  emit('select-path', item.path)
 }
 </script>
 
 <style scoped lang="less">
 .workspace-file-list {
-  display: flex;
-  flex-direction: column;
   min-width: 0;
   min-height: 0;
-  background: var(--gray-0);
-}
-
-.file-list-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 44px;
-  padding: 0 14px;
-  border-bottom: 1px solid var(--gray-100);
-}
-
-.path-line,
-.list-actions {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  gap: 8px;
-}
-
-.list-actions {
-  flex: 0 0 auto;
-}
-
-.path-breadcrumb {
-  min-width: 0;
-  overflow: hidden;
-  font-size: 14px;
-}
-
-.breadcrumb-action {
-  max-width: 180px;
-  padding: 0;
-  overflow: hidden;
-  border: 0;
-  background: transparent;
-  color: var(--main-800);
-  cursor: pointer;
-  font: inherit;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 400;
-
-  &:hover:not(:disabled) {
-    color: var(--main-600);
-  }
-
-  &.current,
-  &:disabled {
-    color: var(--gray-900);
-    cursor: default;
-  }
 }
 
 .entry-count {
@@ -301,69 +205,20 @@ const toggleEntrySelection = (path, checked) => {
   font-size: 12px;
 }
 
-.file-table {
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.file-row {
-  display: grid;
-  grid-template-columns: minmax(150px, 1fr) 76px 118px 34px;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-height: 38px;
-  padding: 0 14px;
-  border: 0;
-  border-bottom: 1px solid var(--gray-50);
-  background: transparent;
-  color: var(--gray-700);
-  font-size: 13px;
-  text-align: left;
-
-  &.selection-enabled {
-    grid-template-columns: 34px minmax(150px, 1fr) 76px 118px 34px;
-  }
-
-  &:not(.table-head) {
-    cursor: pointer;
-  }
-
-  &:hover:not(.table-head),
-  &.selected {
-    background: var(--main-20);
-    color: var(--gray-1000);
-  }
-
-  &.selected {
-    box-shadow: inset 3px 0 0 var(--main-color);
-  }
-
-  &.deleting {
-    opacity: 0.62;
-  }
-}
-
-.table-head {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  min-height: 34px;
-  background: var(--gray-25);
-  color: var(--gray-500);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.selection-cell,
-.action-cell {
+.name-cell {
   display: inline-flex;
   align-items: center;
+  max-width: 100%;
+  min-width: 0;
+  gap: 8px;
+  vertical-align: middle;
 }
 
-.action-head,
-.action-cell {
-  justify-content: center;
+.entry-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .more-action {
@@ -393,38 +248,5 @@ const toggleEntrySelection = (path, checked) => {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-}
-
-.name-cell {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  gap: 8px;
-}
-
-.folder-icon {
-  color: var(--main-500);
-  fill: var(--main-500);
-  fill-opacity: 0.16;
-}
-
-.entry-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.list-state {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-height: 180px;
-  color: var(--gray-500);
-}
-
-.list-empty {
-  margin-top: 48px;
 }
 </style>

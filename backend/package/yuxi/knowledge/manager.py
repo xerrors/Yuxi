@@ -369,11 +369,13 @@ class KnowledgeBaseManager:
 
         kb_instance = self._get_or_create_kb_instance(kb_type)
         kwargs = kb_instance.normalize_additional_params(kwargs)
+        record_fields = {"share_config": share_config, "created_by": created_by}
         db_info = await kb_instance.create_database(
             database_name,
             description,
             embedding_model_spec=embedding_model_spec,
             llm_model_spec=llm_model_spec,
+            record_fields=record_fields,
             **kwargs,
         )
         kb_id = db_info["kb_id"]
@@ -381,8 +383,7 @@ class KnowledgeBaseManager:
         from yuxi.repositories.knowledge_base_repository import KnowledgeBaseRepository
 
         kb_repo = KnowledgeBaseRepository()
-        updated = await kb_repo.update(kb_id, {"share_config": share_config, "created_by": created_by})
-        if updated is None:
+        if await kb_repo.get_by_kb_id(kb_id) is None:
             await kb_repo.create(
                 {
                     "kb_id": kb_id,
@@ -392,8 +393,7 @@ class KnowledgeBaseManager:
                     "embedding_model_spec": embedding_model_spec,
                     "llm_model_spec": db_info.get("llm_model_spec"),
                     "additional_params": kwargs.copy(),
-                    "share_config": share_config,
-                    "created_by": created_by,
+                    **record_fields,
                 }
             )
 
@@ -452,7 +452,39 @@ class KnowledgeBaseManager:
         kb_instance = await self._get_kb_for_database(kb_id)
         return await kb_instance.export_data(kb_id, format=format, **kwargs)
 
-    async def get_database_info(self, kb_id: str) -> dict | None:
+    @staticmethod
+    def _file_record_list_item(record, child_counts: dict[str, int] | None = None) -> dict:
+        child_counts = child_counts or {}
+        file_id = getattr(record, "file_id")
+        child_count = int(getattr(record, "virtual_children_count", 0) or child_counts.get(file_id, 0))
+        created_at_value = getattr(record, "created_at", None)
+        updated_at_value = getattr(record, "updated_at", None)
+        created_at = utc_isoformat(created_at_value) if created_at_value else None
+        updated_at = utc_isoformat(updated_at_value) if updated_at_value else None
+        return {
+            "file_id": file_id,
+            "filename": getattr(record, "filename"),
+            "file_type": getattr(record, "file_type", None),
+            "status": getattr(record, "status", None) or "uploaded",
+            "created_at": created_at,
+            "updated_at": updated_at,
+            "file_size": int(getattr(record, "file_size", None) or 0),
+            "is_folder": bool(getattr(record, "is_folder", False)),
+            "parent_id": getattr(record, "parent_id", None),
+            "has_children": child_count > 0,
+            "children_count": child_count,
+            "has_original_file": bool(getattr(record, "minio_url", None) or getattr(record, "path", None)),
+            "has_parsed_markdown": bool(getattr(record, "markdown_file", None)),
+            "is_virtual_folder": bool(getattr(record, "is_virtual_folder", False)),
+            "path_prefix": getattr(record, "path_prefix", None),
+        }
+
+    async def _get_database_file_stats(self, kb_id: str) -> dict[str, int]:
+        from yuxi.repositories.knowledge_file_repository import KnowledgeFileRepository
+
+        return await KnowledgeFileRepository().get_kb_file_stats(kb_id)
+
+    async def get_database_info(self, kb_id: str, include_files: bool = False) -> dict | None:
         """获取数据库详细信息"""
         from yuxi.repositories.knowledge_base_repository import KnowledgeBaseRepository
 
@@ -461,28 +493,145 @@ class KnowledgeBaseManager:
         if kb is None:
             return None
 
-        try:
-            kb_instance = await self._get_kb_for_database(kb_id)
-            db_info = kb_instance.get_database_info(kb_id)
-        except KBNotFoundError:
+        kb_instance: KnowledgeBase | None = None
+        kb_type = kb.kb_type or "milvus"
+        kb_class = (
+            KnowledgeBaseFactory.get_kb_class(kb_type) if KnowledgeBaseFactory.is_type_supported(kb_type) else None
+        )
+        normalized_additional_params = (
+            kb_class.normalize_additional_params(kb.additional_params) if kb_class else (kb.additional_params or {})
+        )
+        if include_files:
+            try:
+                kb_instance = await self._get_kb_for_database(kb_id)
+                db_info = kb_instance.get_database_info(kb_id, include_files=True)
+            except KBNotFoundError:
+                db_info = {
+                    "kb_id": kb_id,
+                    "name": kb.name,
+                    "description": kb.description,
+                    "kb_type": kb.kb_type,
+                    "files": {},
+                    "row_count": 0,
+                    "status": "已连接",
+                }
+        else:
             db_info = {
                 "kb_id": kb_id,
                 "name": kb.name,
                 "description": kb.description,
                 "kb_type": kb.kb_type,
-                "files": {},
-                "row_count": 0,
+                "embedding_model_spec": kb.embedding_model_spec,
+                "llm_model_spec": kb.llm_model_spec,
+                "query_params": kb.query_params,
+                "metadata": normalized_additional_params,
+                "created_at": utc_isoformat(kb.created_at) if kb.created_at else None,
                 "status": "已连接",
             }
 
         # 添加数据库中的附加字段
-        db_info["additional_params"] = kb_instance.normalize_additional_params(kb.additional_params)
+        if kb_instance:
+            db_info["additional_params"] = kb_instance.normalize_additional_params(kb.additional_params)
+        else:
+            db_info["additional_params"] = normalized_additional_params
         db_info["share_config"] = kb.share_config or DEFAULT_SHARE_CONFIG.copy()
         db_info["mindmap"] = kb.mindmap
         db_info["sample_questions"] = kb.sample_questions or []
         db_info["query_params"] = kb.query_params
+        file_stats = await self._get_database_file_stats(kb_id)
+        db_info["stats"] = file_stats
+        db_info["row_count"] = file_stats["row_count"]
 
         return db_info
+
+    async def list_document_files(
+        self,
+        kb_id: str,
+        *,
+        parent_id: str | None = None,
+        path_prefix: str | None = None,
+        status: str | None = None,
+        page: int = 1,
+        page_size: int = 100,
+        recursive: bool = False,
+        files_only: bool = False,
+        include_stats: bool = True,
+    ) -> dict:
+        """按目录和筛选条件分页获取轻量文件列表。"""
+        from yuxi.repositories.knowledge_base_repository import KnowledgeBaseRepository
+        from yuxi.repositories.knowledge_file_repository import KnowledgeFileRepository
+
+        kb = await KnowledgeBaseRepository().get_by_kb_id(kb_id)
+        if kb is None:
+            raise KBNotFoundError(f"Database {kb_id} not found")
+
+        repo = KnowledgeFileRepository()
+        if parent_id:
+            parent_record = await repo.get_by_file_id(parent_id)
+            if not parent_record or parent_record.kb_id != kb_id:
+                raise ValueError("Parent folder not found")
+            if not parent_record.is_folder:
+                raise ValueError("Parent is not a folder")
+
+        normalized_page = max(int(page or 1), 1)
+        normalized_page_size = min(max(int(page_size or 100), 1), 500)
+        effective_recursive = recursive and bool(status and status != "all")
+        records, total = await repo.list_documents(
+            kb_id=kb_id,
+            parent_id=parent_id,
+            path_prefix=path_prefix,
+            status=status,
+            page=normalized_page,
+            page_size=normalized_page_size,
+            recursive=effective_recursive,
+            files_only=files_only,
+        )
+        folder_ids = [record.file_id for record in records if record.is_folder]
+        child_counts = await repo.count_children_by_parent_ids(kb_id=kb_id, parent_ids=folder_ids)
+        stats = await repo.get_kb_file_stats(kb_id) if include_stats else None
+        items = [self._file_record_list_item(record, child_counts) for record in records]
+        normalize_path_prefix = getattr(repo, "_normalize_path_prefix", lambda value: value or "")
+
+        result = {
+            "items": items,
+            "total": total,
+            "page": normalized_page,
+            "page_size": normalized_page_size,
+            "has_more": normalized_page * normalized_page_size < total,
+            "parent_id": parent_id,
+            "path_prefix": normalize_path_prefix(path_prefix),
+            "recursive": effective_recursive,
+        }
+        if stats is not None:
+            result["stats"] = stats
+        return result
+
+    async def document_file_exists(self, kb_id: str, filename: str) -> bool:
+        """检查指定知识库中是否存在给定展示文件名或相对路径的文件。"""
+        from yuxi.repositories.knowledge_file_repository import KnowledgeFileRepository
+
+        normalized_filename = filename.strip()
+        if not normalized_filename:
+            raise ValueError("filename is required")
+        return await KnowledgeFileRepository().exists_by_filename(kb_id=kb_id, filename=normalized_filename)
+
+    async def list_document_file_ids_by_statuses(
+        self,
+        kb_id: str,
+        *,
+        statuses: list[str],
+        after_file_id: str | None = None,
+        limit: int = 500,
+    ) -> list[str]:
+        """按文件状态游标分页获取文件 ID，用于后台批量处理任务。"""
+        from yuxi.repositories.knowledge_file_repository import KnowledgeFileRepository
+
+        return await KnowledgeFileRepository().list_file_ids_by_exact_statuses(
+            kb_id=kb_id,
+            statuses=statuses,
+            after_file_id=after_file_id,
+            limit=limit,
+        )
 
     async def delete_folder(self, kb_id: str, folder_id: str) -> None:
         """递归删除文件夹"""
@@ -498,6 +647,11 @@ class KnowledgeBaseManager:
         """更新内容（重新分块）"""
         kb_instance = await self._get_kb_for_database(kb_id)
         return await kb_instance.update_content(kb_id, file_ids, params or {})
+
+    async def repair_missing_file_stats(self, kb_id: str) -> dict:
+        """修复历史文件缺失的 Chunk/Token 统计，并刷新知识库聚合统计。"""
+        kb_instance = await self._get_kb_for_database(kb_id)
+        return await kb_instance.repair_missing_file_stats(kb_id)
 
     async def get_file_basic_info(self, kb_id: str, file_id: str) -> dict:
         """获取文件基本信息（仅元数据）"""
@@ -551,9 +705,9 @@ class KnowledgeBaseManager:
         kb_instance = await self._get_kb_for_database(kb_id)
         return await kb_instance.list_file_tree(kb_id, parent_id, recursive, files_only)
 
-    async def read_file_preview(self, kb_id: str, file_id: str, variant: str = "parsed") -> dict:
+    async def read_file_preview(self, kb_id: str, file_id: str) -> dict:
         kb_instance = await self._get_kb_for_database(kb_id)
-        return await kb_instance.read_file_preview(kb_id, file_id, variant)
+        return await kb_instance.read_file_preview(kb_id, file_id)
 
     async def get_file_download(self, kb_id: str, file_id: str, variant: str = "original") -> dict:
         kb_instance = await self._get_kb_for_database(kb_id)

@@ -7,14 +7,14 @@
     <div class="tool-header" @click="toggleExpand">
       <!-- Fixed Status Icon -->
       <span v-if="effectiveStatus === 'completed'">
-        <component v-if="toolIcon" :is="toolIcon" size="16" class="tool-loader tool-success" />
-        <CheckCircle v-else size="16" class="tool-loader tool-success" />
+        <component v-if="toolIcon" :is="toolIcon" size="15" class="tool-loader tool-success" />
+        <CheckCircle v-else size="15" class="tool-loader tool-success" />
       </span>
       <span v-else-if="effectiveStatus === 'error'">
-        <XCircle size="16" class="tool-loader tool-error" />
+        <XCircle size="15" class="tool-loader tool-error" />
       </span>
       <span v-else>
-        <Loader size="16" class="tool-loader rotate tool-loading" />
+        <Loader size="15" class="tool-loader rotate tool-loading" />
       </span>
 
       <!-- Content Area with Slots -->

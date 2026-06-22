@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 
 from sqlalchemy import delete, func, select, update
 
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_knowledge import KnowledgeChunk
+
+SQL_IN_BATCH_SIZE = 10_000
 
 
 class KnowledgeChunkRepository:
@@ -25,6 +28,11 @@ class KnowledgeChunkRepository:
         "extraction_result",
     }
 
+    @staticmethod
+    def _iter_batches(items: list[str], batch_size: int = SQL_IN_BATCH_SIZE) -> Iterator[list[str]]:
+        for index in range(0, len(items), batch_size):
+            yield items[index : index + batch_size]
+
     async def get_by_chunk_id(self, chunk_id: str) -> KnowledgeChunk | None:
         async with pg_manager.get_async_session_context() as session:
             result = await session.execute(select(KnowledgeChunk).where(KnowledgeChunk.chunk_id == chunk_id))
@@ -39,6 +47,36 @@ class KnowledgeChunkRepository:
             )
             return list(result.scalars().all())
 
+    async def list_by_file_ids(self, file_ids: list[str]) -> list[KnowledgeChunk]:
+        if not file_ids:
+            return []
+
+        chunks: list[KnowledgeChunk] = []
+        async with pg_manager.get_async_session_context() as session:
+            for batch in self._iter_batches(file_ids):
+                result = await session.execute(
+                    select(KnowledgeChunk)
+                    .where(KnowledgeChunk.file_id.in_(batch))
+                    .order_by(KnowledgeChunk.file_id.asc(), KnowledgeChunk.chunk_index.asc())
+                )
+                chunks.extend(result.scalars().all())
+        return sorted(chunks, key=lambda chunk: (chunk.file_id, chunk.chunk_index))
+
+    async def count_by_file_ids(self, file_ids: list[str]) -> dict[str, int]:
+        if not file_ids:
+            return {}
+
+        counts: dict[str, int] = {}
+        async with pg_manager.get_async_session_context() as session:
+            for batch in self._iter_batches(file_ids):
+                result = await session.execute(
+                    select(KnowledgeChunk.file_id, func.count())
+                    .where(KnowledgeChunk.file_id.in_(batch))
+                    .group_by(KnowledgeChunk.file_id)
+                )
+                counts.update({str(file_id): int(count or 0) for file_id, count in result.all()})
+        return counts
+
     async def list_by_kb_id(self, kb_id: str) -> list[KnowledgeChunk]:
         async with pg_manager.get_async_session_context() as session:
             result = await session.execute(
@@ -49,10 +87,12 @@ class KnowledgeChunkRepository:
     async def list_by_chunk_ids(self, chunk_ids: list[str]) -> list[KnowledgeChunk]:
         if not chunk_ids:
             return []
+        chunks_by_id: dict[str, KnowledgeChunk] = {}
         async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(select(KnowledgeChunk).where(KnowledgeChunk.chunk_id.in_(chunk_ids)))
-            chunks_by_id = {chunk.chunk_id: chunk for chunk in result.scalars().all()}
-            return [chunks_by_id[chunk_id] for chunk_id in chunk_ids if chunk_id in chunks_by_id]
+            for batch in self._iter_batches(chunk_ids):
+                result = await session.execute(select(KnowledgeChunk).where(KnowledgeChunk.chunk_id.in_(batch)))
+                chunks_by_id.update({chunk.chunk_id: chunk for chunk in result.scalars().all()})
+        return [chunks_by_id[chunk_id] for chunk_id in chunk_ids if chunk_id in chunks_by_id]
 
     async def batch_upsert(self, chunks: list[dict[str, Any]]) -> list[KnowledgeChunk]:
         if not chunks:
@@ -64,8 +104,10 @@ class KnowledgeChunkRepository:
         chunk_ids = [chunk["chunk_id"] for chunk in sanitized_chunks]
 
         async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(select(KnowledgeChunk).where(KnowledgeChunk.chunk_id.in_(chunk_ids)))
-            existing_by_chunk_id = {chunk.chunk_id: chunk for chunk in result.scalars().all()}
+            existing_by_chunk_id: dict[str, KnowledgeChunk] = {}
+            for batch in self._iter_batches(chunk_ids):
+                result = await session.execute(select(KnowledgeChunk).where(KnowledgeChunk.chunk_id.in_(batch)))
+                existing_by_chunk_id.update({chunk.chunk_id: chunk for chunk in result.scalars().all()})
 
             records: list[KnowledgeChunk] = []
             for chunk_data in sanitized_chunks:

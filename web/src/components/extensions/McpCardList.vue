@@ -26,7 +26,7 @@
 
     <template v-else>
       <div v-if="filteredEnabledServers.length" class="extension-section-header">已添加</div>
-      <ExtensionCardGrid :min-width="360">
+      <ExtensionCardGrid v-if="filteredEnabledServers.length" :min-width="360">
         <InfoCard
           v-for="server in filteredEnabledServers"
           :key="server.slug"

@@ -31,10 +31,14 @@ RUN set -ex \
     && apt-get install -y --no-install-recommends --fix-missing \
         curl \
         ffmpeg \
+        fonts-liberation \
+        fonts-noto-cjk \
         git \
         libpq5 \
         libsm6 \
         libxext6 \
+        libreoffice-impress-nogui \
+        libreoffice-writer-nogui \
     # (D) 清理垃圾，减小体积
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*

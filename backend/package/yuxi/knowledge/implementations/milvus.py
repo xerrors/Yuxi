@@ -2,6 +2,7 @@ import asyncio
 import os
 import time
 import traceback
+import weakref
 from dataclasses import MISSING, dataclass, field, fields
 from functools import partial
 from typing import Any
@@ -22,6 +23,7 @@ from pymilvus import (
 
 from yuxi.knowledge.base import FileStatus, KnowledgeBase
 from yuxi.knowledge.chunking.ragflow_like.dispatcher import chunk_markdown
+from yuxi.knowledge.chunking.ragflow_like.nlp import count_tokens
 from yuxi.knowledge.parser.unified import Parser
 from yuxi.knowledge.utils.kb_utils import resolve_processing_params
 from yuxi.models.providers.cache import model_cache
@@ -34,6 +36,47 @@ CONTENT_SPARSE_FIELD = "content_sparse"
 CONTENT_ANALYZER_PARAMS = {"type": "chinese"}
 VECTOR_METRIC_TYPE = "COSINE"
 MILVUS_CHUNK_EMBED_BATCH_SIZE = 200
+MILVUS_QUERY_OFFLOAD_LIMIT = 8
+_milvus_query_offload_semaphore_refs: dict[
+    int,
+    tuple[weakref.ReferenceType[asyncio.AbstractEventLoop], weakref.ReferenceType[asyncio.Semaphore]],
+] = {}
+
+
+def _get_milvus_query_offload_semaphore() -> asyncio.Semaphore:
+    loop = asyncio.get_running_loop()
+    loop_id = id(loop)
+    entry = _milvus_query_offload_semaphore_refs.get(loop_id)
+    if entry is not None:
+        loop_ref, semaphore_ref = entry
+        semaphore = semaphore_ref()
+        if loop_ref() is loop and semaphore is not None:
+            return semaphore
+
+    semaphore = asyncio.Semaphore(MILVUS_QUERY_OFFLOAD_LIMIT)
+
+    def cleanup(ref, stale_loop_id=loop_id):
+        current_entry = _milvus_query_offload_semaphore_refs.get(stale_loop_id)
+        if current_entry is not None and current_entry[1] is ref:
+            _milvus_query_offload_semaphore_refs.pop(stale_loop_id, None)
+
+    _milvus_query_offload_semaphore_refs[loop_id] = (weakref.ref(loop), weakref.ref(semaphore, cleanup))
+    return semaphore
+
+
+async def _run_milvus_query_io(func, /, *args, **kwargs):
+    semaphore = _get_milvus_query_offload_semaphore()
+    await semaphore.acquire()
+    task = asyncio.create_task(asyncio.to_thread(func, *args, **kwargs))
+
+    def release_capacity(completed_task: asyncio.Task):
+        semaphore.release()
+        if completed_task.cancelled():
+            return
+        completed_task.exception()
+
+    task.add_done_callback(release_capacity)
+    return await asyncio.shield(task)
 
 
 @dataclass(kw_only=True)
@@ -465,6 +508,12 @@ class MilvusKB(KnowledgeBase):
         """将文本分割成块"""
         return chunk_markdown(text, file_id, filename, params)
 
+    def _calculate_chunk_stats(self, chunks: list[dict]) -> dict[str, int]:
+        return {
+            "chunk_count": len(chunks),
+            "token_count": sum(count_tokens(chunk["content"]) for chunk in chunks),
+        }
+
     def _build_chunk_pg_records(self, kb_id: str, chunks: list[dict]) -> list[dict[str, Any]]:
         return [
             {
@@ -679,9 +728,12 @@ class MilvusKB(KnowledgeBase):
                 f"chunk_parser_config={params.get('chunk_parser_config')}"
             )
 
+            chunk_stats = self._calculate_chunk_stats(chunks)
+
+            # Clean up existing chunks if any (for re-indexing)
+            await self.delete_file_chunks_only(kb_id, file_id)
+
             if chunks:
-                # Clean up existing chunks if any (for re-indexing)
-                await self.delete_file_chunks_only(kb_id, file_id)
                 await self._embed_and_store_chunks(kb_id, file_id, collection, chunks, embedding_function)
 
             logger.info(f"Indexed file {file_id} into Milvus")
@@ -689,11 +741,15 @@ class MilvusKB(KnowledgeBase):
             # Update status
             async with self._metadata_lock:
                 self.files_meta[file_id]["status"] = FileStatus.INDEXED
+                self.files_meta[file_id].update(chunk_stats)
                 self.files_meta[file_id]["updated_at"] = utc_isoformat()
                 if operator_id:
                     self.files_meta[file_id]["updated_by"] = operator_id
                 await self._persist_file(file_id)
-                return self.files_meta[file_id]
+                result = self.files_meta[file_id]
+
+            await self.refresh_database_stats(kb_id)
+            return result
 
         except Exception as e:
             logger.error(f"Indexing failed for {file_id}: {e}")
@@ -764,6 +820,7 @@ class MilvusKB(KnowledgeBase):
                 # 重新生成 chunks
                 chunks = self._split_text_into_chunks(markdown_content, file_id, filename, resolved_params)
                 logger.info(f"Split {filename} into {len(chunks)} chunks")
+                chunk_stats = self._calculate_chunk_stats(chunks)
 
                 # 先删除现有 chunks，保留文件元数据
                 await self.delete_file_chunks_only(kb_id, file_id)
@@ -776,7 +833,9 @@ class MilvusKB(KnowledgeBase):
                 # 更新元数据状态
                 async with self._metadata_lock:
                     self.files_meta[file_id]["status"] = "done"
+                    self.files_meta[file_id].update(chunk_stats)
                     await self._persist_file(file_id)
+                await self.refresh_database_stats(kb_id)
 
                 # 从处理队列中移除
                 self._remove_from_processing_queue(file_id)
@@ -784,6 +843,7 @@ class MilvusKB(KnowledgeBase):
                 # 返回更新后的文件信息
                 updated_file_meta = file_meta.copy()
                 updated_file_meta["status"] = "done"
+                updated_file_meta.update(chunk_stats)
                 updated_file_meta["file_id"] = file_id
                 processed_items_info.append(updated_file_meta)
 
@@ -867,11 +927,12 @@ class MilvusKB(KnowledgeBase):
             if search_mode == "vector":
                 embedding_model_spec = self.databases_meta[kb_id].get("embedding_model_spec")
                 embedding_function = self._get_embedding_function(embedding_model_spec, sync=True)
-                query_embedding = embedding_function([query_text])
+                query_embedding = await _run_milvus_query_io(embedding_function, [query_text])
 
                 search_params = {"metric_type": metric_type, "params": {"nprobe": 10}}
 
-                results = collection.search(
+                results = await _run_milvus_query_io(
+                    collection.search,
                     data=query_embedding,
                     anns_field="embedding",
                     param=search_params,
@@ -901,7 +962,8 @@ class MilvusKB(KnowledgeBase):
                     "params": {"drop_ratio_search": bm25_drop_ratio_search},
                 }
 
-                results = collection.search(
+                results = await _run_milvus_query_io(
+                    collection.search,
                     data=[query_text],
                     anns_field=CONTENT_SPARSE_FIELD,
                     param=bm25_search_params,
@@ -920,7 +982,7 @@ class MilvusKB(KnowledgeBase):
             else:
                 embedding_model_spec = self.databases_meta[kb_id].get("embedding_model_spec")
                 embedding_function = self._get_embedding_function(embedding_model_spec, sync=True)
-                query_embedding = embedding_function([query_text])
+                query_embedding = await _run_milvus_query_io(embedding_function, [query_text])
                 bm25_top_k = int(merged_kwargs.get("bm25_top_k", recall_top_k))
                 bm25_top_k = max(bm25_top_k, 1)
                 bm25_drop_ratio_search = float(merged_kwargs.get("bm25_drop_ratio_search", 0.0))
@@ -944,7 +1006,8 @@ class MilvusKB(KnowledgeBase):
                     limit=bm25_top_k,
                     expr=file_expr,
                 )
-                results = collection.hybrid_search(
+                results = await _run_milvus_query_io(
+                    collection.hybrid_search,
                     reqs=[vector_request, bm25_request],
                     rerank=WeightedRanker(vector_weight, bm25_weight),
                     limit=recall_top_k,
@@ -1031,7 +1094,7 @@ class MilvusKB(KnowledgeBase):
             graph_top_k = max(int(query_params.get("graph_top_k", 20)), 1)
             graph_max_nodes = max(int(query_params.get("graph_max_nodes", 10000)), 1)
 
-            vector_store = MilvusGraphVectorStore()
+            vector_store = await _run_milvus_query_io(MilvusGraphVectorStore)
             entity_hits, triple_hits = await asyncio.gather(
                 vector_store.search_entities(
                     kb_id=kb_id,
@@ -1172,6 +1235,11 @@ class MilvusKB(KnowledgeBase):
             except Exception as e:
                 logger.error(f"Error checking file existence in Milvus: {e}")
         # 注意：这里不删除 files_meta[file_id]，保留元数据用于后续操作
+        if file_id in self.files_meta:
+            self.files_meta[file_id]["chunk_count"] = 0
+            self.files_meta[file_id]["token_count"] = 0
+            await self._persist_file(file_id)
+            await self.refresh_database_stats(kb_id)
 
     async def delete_file(self, kb_id: str, file_id: str) -> None:
         """删除文件（包括元数据）"""
@@ -1185,6 +1253,7 @@ class MilvusKB(KnowledgeBase):
                 from yuxi.repositories.knowledge_file_repository import KnowledgeFileRepository
 
                 await KnowledgeFileRepository().delete(file_id)
+        await self.refresh_database_stats(kb_id)
 
     async def get_file_basic_info(self, kb_id: str, file_id: str) -> dict:
         """获取文件基本信息（仅元数据）"""

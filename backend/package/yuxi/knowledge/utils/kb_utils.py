@@ -115,8 +115,11 @@ async def prepare_item_metadata(item: str, content_type: str, kb_id: str, params
         timestamp_pattern = r"^(.+)_(\d{13})(\.[^.]+)$"
         match = re.match(timestamp_pattern, filename)
         filename_display = match.group(1) + match.group(3) if match else filename
+        source_path = _normalize_source_path(params.get("source_path")) if params else None
+        if source_path:
+            filename_display = source_path
 
-        file_type = filename.split(".")[-1].lower() if "." in filename else ""
+        file_type = filename_display.rsplit(".", 1)[-1].lower() if "." in filename_display else ""
         item_path = item
 
         content_hash = None
@@ -153,6 +156,29 @@ async def prepare_item_metadata(item: str, content_type: str, kb_id: str, params
         metadata["processing_params"] = sanitize_processing_params(params)
 
     return metadata
+
+
+def _normalize_source_path(value: object) -> str | None:
+    """归一化客户端传入的上传源路径，仅用于知识库文件树中的展示文件名。
+
+    source_path 用来保留 CLI 目录上传时的相对层级。这里不会把它当作真实
+    存储路径使用：反斜杠会转成斜杠，开头的 "./" 会被去掉，绝对路径和
+    ".." 父目录跳转会被拒绝。
+    """
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    if not normalized or normalized.startswith("/"):
+        return None
+    parts = [part for part in normalized.split("/") if part and part != "."]
+    if not parts or any(part == ".." for part in parts):
+        return None
+    display_path = "/".join(parts)
+    if len(display_path) > 512:
+        raise ValueError("source_path is too long")
+    return display_path
 
 
 def merge_processing_params(metadata_params: dict | None, request_params: dict | None) -> dict:

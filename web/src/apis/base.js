@@ -54,7 +54,14 @@ export async function apiRequest(url, options = {}, requiresAuth = true, respons
 
       try {
         errorData = await response.json()
-        errorMessage = errorData.detail || errorData.message || errorMessage
+        // detail 可能是字符串，也可能是结构化对象（如 { error, message }），后者需取出可读文案，
+        // 否则直接拼接会得到 "[object Object]"。
+        const detail = errorData.detail
+        if (detail && typeof detail === 'object') {
+          errorMessage = detail.message || detail.error || errorMessage
+        } else {
+          errorMessage = detail || errorData.message || errorMessage
+        }
         console.log('API错误详情:', errorData)
 
         // 如果是422错误，打印更详细的信息
@@ -84,13 +91,9 @@ export async function apiRequest(url, options = {}, requiresAuth = true, respons
         // 如果是认证失败，可能需要重新登录
         const userStore = useUserStore()
 
-        // 检查是否是token过期
+        // 检查是否是token过期（errorMessage 已统一为字符串，避免对对象 detail 调用 includes 抛错）
         const isTokenExpired =
-          errorData &&
-          (errorData.detail?.includes('令牌已过期') ||
-            errorData.detail?.includes('token expired') ||
-            errorMessage?.includes('令牌已过期') ||
-            errorMessage?.includes('token expired'))
+          errorMessage?.includes('令牌已过期') || errorMessage?.includes('token expired')
 
         message.error(isTokenExpired ? '登录已过期，请重新登录' : '认证失败，请重新登录')
 

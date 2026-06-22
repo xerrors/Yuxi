@@ -6,7 +6,6 @@ from typing import Any
 from langgraph.prebuilt.tool_node import ToolRuntime
 from pydantic import BaseModel, Field
 
-from yuxi import knowledge_base
 from yuxi.agents.toolkits.registry import tool
 from yuxi.knowledge.base import KnowledgeBase
 from yuxi.knowledge.schemas import (
@@ -20,6 +19,12 @@ from yuxi.knowledge.schemas import (
 from yuxi.utils import logger
 
 # ========== 通用知识库工具函数 ==========
+
+
+def _get_knowledge_base():
+    from yuxi import knowledge_base
+
+    return knowledge_base
 
 
 class ListKBsInput(BaseModel):
@@ -99,6 +104,7 @@ async def get_mindmap(kb_name: str, runtime: ToolRuntime) -> str:
         return "请提供知识库名称"
 
     # 获取所有检索器
+    knowledge_base = _get_knowledge_base()
     retrievers = knowledge_base.get_retrievers()
 
     # 查找对应的知识库
@@ -204,6 +210,7 @@ async def query_kb(kb_id: str, query_text: str, file_name: str | None = None, ru
     if not query_text:
         return "请提供查询内容"
 
+    knowledge_base = _get_knowledge_base()
     retrievers = knowledge_base.get_retrievers()
     visible_kbs = await _resolve_visible_knowledge_bases_for_query(runtime)
     target_info, target_kb_id, target_error = _find_query_target(
@@ -263,6 +270,7 @@ async def open_kb_document(
     if normalized_kb_id not in visible_kb_ids:
         return f"知识库资源 '{normalized_kb_id}' 不存在或当前会话未启用"
 
+    knowledge_base = _get_knowledge_base()
     retrievers = knowledge_base.get_retrievers()
     target_info = retrievers.get(normalized_kb_id)
     if target_info is None:
@@ -320,6 +328,7 @@ async def find_kb_document(
     if normalized_kb_id not in visible_kb_ids:
         return f"知识库资源 '{normalized_kb_id}' 不存在或当前会话未启用"
 
+    knowledge_base = _get_knowledge_base()
     retrievers = knowledge_base.get_retrievers()
     target_info = retrievers.get(normalized_kb_id)
     if target_info is None:

@@ -34,6 +34,12 @@ const router = createRouter({
       meta: { public: true }
     },
     {
+      path: '/auth/cli/authorize',
+      name: 'CLIAuthAuthorize',
+      component: () => import('@/views/CLIAuthAuthorizeView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
       path: '/agent',
       name: 'AgentMain',
       component: AppLayout,
@@ -74,7 +80,7 @@ const router = createRouter({
           path: '',
           name: 'DashboardComp',
           component: () => import('../views/DashboardView.vue'),
-          meta: { keepAlive: false, requiresAuth: true, requiresAdmin: true }
+          meta: { keepAlive: false, requiresAuth: true, requiresSuperAdmin: true }
         }
       ]
     },

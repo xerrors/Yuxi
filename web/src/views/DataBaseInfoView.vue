@@ -1,6 +1,11 @@
 <template>
   <div class="database-info-container extension-detail-page">
-    <FileDetailModal />
+    <FileDetailModal
+      v-model:open="store.state.fileDetailModalVisible"
+      :kb-id="kbId"
+      :file-id="store.fileDetailFileId"
+      @closed="store.closeFileDetail"
+    />
 
     <FileUploadModal
       v-model:visible="addFilesModalVisible"
@@ -90,56 +95,78 @@
               </div>
             </div>
             <div class="file-panel-status">
-              <div
+              <button
                 v-if="pendingParseCount > 0"
-                class="file-stat-card file-stat-action"
+                type="button"
+                class="file-stat-card file-stat-action file-stat-summary"
+                :disabled="store.state.chunkLoading"
                 @click="confirmBatchParse"
               >
-                <FileText :size="20" />
-                <div>
+                <FileText :size="16" />
+                <div class="file-stat-inline">
                   <strong>{{ pendingParseCount }}</strong>
                   <span>待解析</span>
                 </div>
-              </div>
-              <div
+              </button>
+              <button
                 v-if="pendingIndexCount > 0"
-                class="file-stat-card file-stat-action"
+                type="button"
+                class="file-stat-card file-stat-action file-stat-summary"
+                :disabled="store.state.chunkLoading"
                 @click="confirmBatchIndex"
               >
-                <DatabaseIcon :size="20" />
-                <div>
+                <DatabaseIcon :size="16" />
+                <div class="file-stat-inline">
                   <strong>{{ pendingIndexCount }}</strong>
                   <span>待入库</span>
                 </div>
-              </div>
-              <div class="file-stat-card">
-                <FileText :size="20" />
-                <div>
+              </button>
+              <div class="file-stat-card file-stat-summary">
+                <FileText :size="16" />
+                <div class="file-stat-inline">
                   <strong>{{ fileStats.count }}</strong>
-                  <span>文件总数</span>
+                  <span>文件</span>
                 </div>
               </div>
-              <div v-if="fileStats.sizeText" class="file-stat-card">
-                <DatabaseIcon :size="20" />
-                <div>
+              <div v-if="fileStats.sizeText" class="file-stat-card file-stat-summary">
+                <DatabaseIcon :size="16" />
+                <div class="file-stat-inline">
                   <strong>{{ fileStats.sizeText }}</strong>
                   <span>总大小</span>
                 </div>
               </div>
-              <div class="file-stat-card">
-                <CheckCircle2 :size="20" />
-                <div>
-                  <strong>{{ fileStats.processedCount }}</strong>
-                  <span>已处理</span>
+              <button
+                type="button"
+                class="file-stat-card file-stat-summary file-stat-repair"
+                :disabled="statsRepairing"
+                :aria-busy="statsRepairing"
+                aria-label="修复缺失的 Chunk/Token 统计"
+                title="修复缺失的 Chunk/Token 统计"
+                @click="repairDatabaseStats"
+              >
+                <LoaderCircle v-if="statsRepairing" :size="16" class="file-stat-spinner" />
+                <DatabaseIcon v-else :size="16" />
+                <div class="file-stat-inline">
+                  <strong>{{ fileStats.chunkText }}</strong>
+                  <span>Chunks</span>
                 </div>
-              </div>
-              <div class="file-stat-card">
-                <Activity :size="20" />
-                <div>
-                  <strong>{{ fileStats.completionRate }}%</strong>
-                  <span>完成进度</span>
+              </button>
+              <button
+                type="button"
+                class="file-stat-card file-stat-summary file-stat-repair"
+                :disabled="statsRepairing"
+                :aria-busy="statsRepairing"
+                aria-label="修复缺失的 Chunk/Token 统计"
+                title="修复缺失的 Chunk/Token 统计"
+                @click="repairDatabaseStats"
+              >
+                <LoaderCircle v-if="statsRepairing" :size="16" class="file-stat-spinner" />
+                <Hash v-else :size="16" />
+                <div class="file-stat-inline">
+                  <strong>{{ fileStats.tokenText }}</strong>
+                  <span>Tokens</span>
                 </div>
-              </div>
+              </button>
             </div>
           </div>
           <FileTable ref="fileTableRef" />
@@ -234,6 +261,7 @@
             :name="editForm.name"
             :files="fileList"
             placeholder="请输入知识库描述"
+            action-placement="header"
             :rows="4"
           />
         </a-form-item>
@@ -333,16 +361,16 @@ import { useDatabaseStore } from '@/stores/database'
 import { useTaskerStore } from '@/stores/tasker'
 import { useUserStore } from '@/stores/user'
 import {
-  Activity,
   ArrowLeft,
   BarChart3,
-  CheckCircle2,
   ClipboardList,
   Copy,
   Database as DatabaseIcon,
   FileUp,
   FileText,
   FolderPlus,
+  Hash,
+  LoaderCircle,
   Map as MapIcon,
   Network,
   Pencil,
@@ -363,6 +391,7 @@ import EvaluationBenchmarks from '@/components/EvaluationBenchmarks.vue'
 import SearchConfigPanel from '@/components/SearchConfigPanel.vue'
 import AiTextarea from '@/components/AiTextarea.vue'
 import ShareConfigForm from '@/components/ShareConfigForm.vue'
+import { databaseApi } from '@/apis/knowledge_api'
 import { departmentApi } from '@/apis/department_api'
 import { authApi } from '@/apis/auth_api'
 import { CHUNK_PRESET_OPTIONS, getChunkPresetDescription } from '@/utils/chunk_presets'
@@ -435,63 +464,94 @@ watch(visibleTabs, (nextTabs) => {
 })
 
 const pendingParseCount = computed(() => {
-  const files = store.database.files || {}
-  return Object.values(files).filter((f) => !f.is_folder && f.status === 'uploaded').length
+  return Number(store.database.stats?.pending_parse_count || 0)
 })
 
+const formatStatNumber = (value) => {
+  const number = Number(value ?? 0)
+  return Number.isFinite(number) ? number.toLocaleString('zh-CN') : '0'
+}
+
+const formatTokenStatNumber = (value) => {
+  const number = Number(value ?? 0)
+  if (!Number.isFinite(number)) return '0'
+  const absNumber = Math.abs(number)
+  if (absNumber > 1024 * 1000) return `${(number / 1_000_000).toFixed(1)} m`
+  if (absNumber >= 1000) return `${Math.round(number / 1000).toLocaleString('zh-CN')} k`
+  return number.toLocaleString('zh-CN')
+}
+
+const statsRepairing = ref(false)
+
 const fileStats = computed(() => {
-  const files = Object.values(store.database.files || {}).filter((file) => !file.is_folder)
-  const totalSize = files.reduce((sum, file) => {
-    const size = Number(file.file_size ?? file.size ?? 0)
-    return Number.isFinite(size) ? sum + size : sum
-  }, 0)
-  const processedCount = files.filter((file) => ['done', 'indexed'].includes(file.status)).length
+  const stats = store.database.stats || {}
+  const statsFileCount = Number(stats.file_count)
+  const totalSize = Number(stats.total_size || 0)
 
   return {
-    count: files.length,
+    count: Number.isFinite(statsFileCount) ? statsFileCount : 0,
     sizeText: totalSize > 0 ? formatFileSize(totalSize) : '',
-    processedCount,
-    completionRate: files.length ? Math.round((processedCount / files.length) * 100) : 0
+    chunkText: formatStatNumber(stats.chunk_count),
+    tokenText: formatTokenStatNumber(stats.token_count)
   }
 })
 
+const repairDatabaseStats = async () => {
+  if (!kbId.value || statsRepairing.value) return
+
+  statsRepairing.value = true
+  try {
+    const result = await databaseApi.repairDatabaseStats(kbId.value)
+    await store.getDatabaseInfo(undefined, true, true)
+
+    const updatedTokenFiles = Number(result?.updated_token_files || 0)
+    const updatedChunkFiles = Number(result?.updated_chunk_files || 0)
+    if (updatedTokenFiles || updatedChunkFiles) {
+      message.success(
+        `已修复 ${updatedTokenFiles} 个 Token 统计，${updatedChunkFiles} 个 Chunk 统计`
+      )
+    } else {
+      message.info('统计已是最新')
+    }
+  } catch (error) {
+    console.error(error)
+    message.error(error.message || '统计修复失败')
+  } finally {
+    statsRepairing.value = false
+  }
+}
+
 const pendingIndexCount = computed(() => {
-  const files = store.database.files || {}
-  return Object.values(files).filter((f) => {
-    if (f.is_folder) return false
-    return f.status === 'parsed' || f.status === 'error_indexing'
-  }).length
+  return Number(store.database.stats?.pending_index_count || 0)
 })
 
 const confirmBatchParse = () => {
-  const fileIds = Object.values(store.database.files || {})
-    .filter((f) => f.status === 'uploaded')
-    .map((f) => f.file_id)
-
-  if (fileIds.length === 0) return
+  const count = pendingParseCount.value
+  if (count <= 0) {
+    message.info('没有待解析文档')
+    return
+  }
 
   Modal.confirm({
-    title: '批量解析',
-    content: `确定要解析 ${fileIds.length} 个文件吗？`,
-    onOk: () => store.parseFiles(fileIds)
+    title: '解析待解析文件',
+    content: `将提交 ${formatStatNumber(count)} 个待解析文件，任务会在后台按批处理，可在任务中心查看进度。`,
+    okText: '提交解析',
+    cancelText: '取消',
+    onOk: () => store.parsePendingFiles(count)
   })
 }
 
 const confirmBatchIndex = () => {
-  const fileIds = Object.values(store.database.files || {})
-    .filter((f) => {
-      if (f.is_folder) return false
-      return f.status === 'parsed' || f.status === 'error_indexing'
-    })
-    .map((f) => f.file_id)
+  const count = pendingIndexCount.value
+  if (count <= 0) {
+    message.info('没有待入库文档')
+    return
+  }
 
-  if (fileIds.length === 0) return
-
-  Modal.confirm({
-    title: '批量入库',
-    content: `确定要入库 ${fileIds.length} 个文件吗？`,
-    onOk: () => store.indexFiles(fileIds)
-  })
+  const opened = fileTableRef.value?.startPendingIndex?.(count)
+  if (!opened) {
+    message.error('文件列表尚未加载完成，请稍后再试')
+  }
 }
 
 const mindmapSectionRef = ref(null)
@@ -525,7 +585,8 @@ const showAddFilesModal = (options = {}) => {
   isFolderUploadMode.value = isFolder
   addFilesMode.value = mode
   addFilesModalVisible.value = true
-  currentFolderId.value = null
+  currentFolderId.value =
+    fileTableRef.value?.getCurrentFolderId?.() || store.fileBrowser.parentId || null
 }
 
 const showCreateFolderModal = () => {
@@ -533,28 +594,20 @@ const showCreateFolderModal = () => {
 }
 
 const folderTree = computed(() => {
-  const files = store.database.files || {}
-  const fileList = Object.values(files)
-  const nodeMap = new Map()
   const roots = []
-
-  fileList.forEach((file) => {
-    if (file.is_folder) {
-      const item = { ...file, title: file.filename, value: file.file_id, children: [] }
-      nodeMap.set(file.file_id, item)
+  let currentLevel = roots
+  for (const item of (store.folderBreadcrumbs || [])
+    .slice(1)
+    .filter((node) => !node.is_virtual_folder)) {
+    const node = {
+      file_id: item.file_id,
+      filename: item.filename,
+      is_folder: true,
+      children: []
     }
-  })
-
-  fileList.forEach((file) => {
-    if (file.is_folder && file.parent_id && nodeMap.has(file.parent_id)) {
-      const parent = nodeMap.get(file.parent_id)
-      const child = nodeMap.get(file.file_id)
-      if (parent && child) parent.children.push(child)
-    } else if (file.is_folder && !file.parent_id && nodeMap.has(file.file_id)) {
-      roots.push(nodeMap.get(file.file_id))
-    }
-  })
-
+    currentLevel.push(node)
+    currentLevel = node.children
+  }
   return roots
 })
 
@@ -564,8 +617,8 @@ const onFileUploadSuccess = () => {
 
 const resetFileSelectionState = () => {
   store.selectedRowKeys = []
-  store.selectedFile = null
-  store.state.fileDetailModalVisible = false
+  store.closeFileDetail()
+  store.resetFileBrowser()
 }
 
 watch(
@@ -584,11 +637,9 @@ watch(
 const previousFileCount = ref(0)
 
 watch(
-  () => database.value?.files,
-  (newFiles) => {
-    if (!newFiles) return
-
-    const newFileCount = Object.keys(newFiles).length
+  () => database.value?.stats?.file_count,
+  (newFileCountValue) => {
+    const newFileCount = Number(newFileCountValue || 0)
     const oldFileCount = previousFileCount.value
 
     if (isInitialLoad.value) {
@@ -624,7 +675,7 @@ watch(
 
     previousFileCount.value = newFileCount
   },
-  { deep: true }
+  { deep: false }
 )
 
 const backToDatabase = () => {
@@ -676,10 +727,7 @@ const rules = {
 const chunkPresetOptions = CHUNK_PRESET_OPTIONS.map(({ label, value }) => ({ label, value }))
 const editPresetDescription = computed(() => getChunkPresetDescription(editForm.chunk_preset_id))
 const fileList = computed(() => {
-  if (!database.value?.files) return []
-  return Object.values(database.value.files)
-    .map((f) => f.filename)
-    .filter(Boolean)
+  return (store.documentFiles || []).map((f) => f.filename).filter(Boolean)
 })
 
 const canEditShareConfig = computed(() => userStore.isSuperAdmin || userStore.isAdmin)
@@ -1063,12 +1111,12 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
 .file-stat-card {
-  min-width: 92px;
+  min-width: 60px;
   display: flex;
   align-items: center;
   gap: 16px;
@@ -1078,6 +1126,8 @@ onMounted(() => {
   border: 1px solid var(--gray-100);
   color: var(--main-color);
   font: inherit;
+  appearance: none;
+  text-align: left;
 
   div {
     display: flex;
@@ -1089,12 +1139,26 @@ onMounted(() => {
     font-size: 14px;
     line-height: 1.2;
     color: var(--gray-900);
+    white-space: nowrap;
   }
 
   span {
     font-size: 11px;
     color: var(--gray-500);
     white-space: nowrap;
+  }
+}
+
+.file-stat-summary {
+  min-width: 87px;
+  min-height: 36px;
+  gap: 8px;
+  padding: 5px 10px;
+
+  .file-stat-inline {
+    flex-direction: row;
+    align-items: baseline;
+    gap: 4px;
   }
 }
 
@@ -1109,6 +1173,38 @@ onMounted(() => {
 
   &:hover {
     border-color: var(--color-warning-700);
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+}
+
+.file-stat-repair {
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+
+  &:hover:not(:disabled) {
+    border-color: var(--main-300);
+    background-color: var(--main-30);
+  }
+
+  &:disabled {
+    cursor: wait;
+    opacity: 0.72;
+  }
+}
+
+.file-stat-spinner {
+  animation: file-stat-spin 0.8s linear infinite;
+}
+
+@keyframes file-stat-spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 

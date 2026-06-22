@@ -2,10 +2,22 @@ const DICEBEAR_GLYPHS_AVATAR_BASE_URL = 'https://api.dicebear.com/10.x/glyphs/sv
 
 export const AVATAR_BACKGROUND_TOKENS = [
   { background: 'linear-gradient(135deg, var(--main-600), var(--color-info-500))', color: '#fff' },
-  { background: 'linear-gradient(135deg, var(--chart-palette-5), var(--chart-palette-9))', color: '#fff' },
-  { background: 'linear-gradient(135deg, var(--chart-palette-7), var(--chart-palette-3))', color: '#fff' },
-  { background: 'linear-gradient(135deg, var(--color-accent-500), var(--chart-palette-6))', color: '#fff' },
-  { background: 'linear-gradient(135deg, var(--chart-palette-4), var(--color-error-500))', color: '#fff' }
+  {
+    background: 'linear-gradient(135deg, var(--chart-palette-5), var(--chart-palette-9))',
+    color: '#fff'
+  },
+  {
+    background: 'linear-gradient(135deg, var(--chart-palette-7), var(--chart-palette-3))',
+    color: '#fff'
+  },
+  {
+    background: 'linear-gradient(135deg, var(--color-accent-500), var(--chart-palette-6))',
+    color: '#fff'
+  },
+  {
+    background: 'linear-gradient(135deg, var(--chart-palette-4), var(--color-error-500))',
+    color: '#fff'
+  }
 ]
 
 const normalizeSeed = (id) => {

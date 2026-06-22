@@ -1,5 +1,4 @@
 import hashlib
-import re
 
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -13,16 +12,6 @@ from yuxi.utils.auth_utils import AuthUtils
 
 # 定义OAuth2密码承载器，指定token URL
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token", auto_error=False)
-
-# 公开路径列表，无需登录即可访问
-PUBLIC_PATHS = [
-    r"^/api/auth/token$",  # 登录
-    r"^/api/auth/check-first-run$",  # 检查是否首次运行
-    r"^/api/auth/initialize$",  # 初始化系统
-    r"^/api$",  # Health Check
-    r"^/api/system/health$",  # Health Check
-    r"^/api/system/info$",  # 获取系统信息配置
-]
 
 
 # 获取数据库会话（异步版本）
@@ -52,19 +41,22 @@ async def _verify_api_key(key: str, db: AsyncSession) -> tuple[User | None, APIK
         user = result.scalar_one_or_none()
         if user and not user.is_deleted:
             return user, api_key
+        return None, None
 
     if api_key.department_id:
         result = await db.execute(
-            select(User).filter(User.department_id == api_key.department_id, User.role.in_(["admin", "superadmin"]))
+            select(User)
+            .filter(
+                User.department_id == api_key.department_id,
+                User.role.in_(["admin", "superadmin"]),
+                User.is_deleted == 0,
+            )
+            .order_by(User.role.desc(), User.id.asc())
+            .limit(1)
         )
         user = result.scalar_one_or_none()
-        if user and not user.is_deleted:
+        if user:
             return user, api_key
-
-    result = await db.execute(select(User).filter(User.role == "superadmin", User.is_deleted == 0).limit(1))
-    user = result.scalar_one_or_none()
-    if user:
-        return user, api_key
 
     return None, None
 
@@ -160,12 +152,3 @@ async def get_superadmin_user(current_user: User = Depends(get_required_user)):
             detail="需要超级管理员权限",
         )
     return current_user
-
-
-# 检查路径是否为公开路径
-def is_public_path(path: str) -> bool:
-    path = path.rstrip("/")  # 去除尾部斜杠以便于匹配
-    for pattern in PUBLIC_PATHS:
-        if re.match(pattern, path):
-            return True
-    return False

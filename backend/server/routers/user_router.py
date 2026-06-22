@@ -1,8 +1,6 @@
 """用户级配置与凭据路由"""
 
-import hashlib
 import re
-import secrets
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
@@ -14,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from server.utils.auth_middleware import get_db, get_required_user
 from yuxi.storage.minio import upload_image_to_minio
 from yuxi.storage.postgres.models_business import APIKey, AgentEnv, User
+from yuxi.utils.auth_utils import AuthUtils
 from yuxi.utils.datetime_utils import coerce_any_to_utc_datetime, format_utc_datetime, utc_now_naive
 
 user_router = APIRouter(prefix="/user", tags=["user"])
@@ -23,14 +22,6 @@ MAX_ENV_COUNT = 200
 MAX_ENV_KEY_LENGTH = 128
 MAX_ENV_VALUE_LENGTH = 32768
 MAX_USER_IMAGE_SIZE_BYTES = 5 * 1024 * 1024
-
-
-def generate_api_key() -> tuple[str, str, str]:
-    random_part = secrets.token_hex(24)
-    full_key = f"yxkey_{random_part}"
-    key_hash = hashlib.sha256(full_key.encode()).hexdigest()
-    key_prefix = full_key[:12]
-    return full_key, key_hash, key_prefix
 
 
 class APIKeyCreate(BaseModel):
@@ -156,18 +147,21 @@ async def create_api_key(
     current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
-    target_user_id = data.user_id or current_user.id
-
     if data.user_id and data.user_id != current_user.id and current_user.role != "superadmin":
         raise HTTPException(status_code=403, detail="无权为其他用户创建 API Key")
 
+    target_user = current_user
     if data.user_id:
         result = await db.execute(select(User).filter(User.id == data.user_id))
         user = result.scalar_one_or_none()
         if not user or user.is_deleted:
             raise HTTPException(status_code=404, detail="关联的用户不存在")
+        target_user = user
 
-    full_key, key_hash, key_prefix = generate_api_key()
+    if data.department_id is not None and data.department_id != target_user.department_id:
+        raise HTTPException(status_code=403, detail="API Key 部门必须与关联用户部门一致")
+
+    full_key, key_hash, key_prefix = AuthUtils.generate_api_key()
     expires_at = None
     if data.expires_at:
         aware_dt = coerce_any_to_utc_datetime(data.expires_at)
@@ -178,7 +172,7 @@ async def create_api_key(
         key_hash=key_hash,
         key_prefix=key_prefix,
         name=data.name,
-        user_id=target_user_id,
+        user_id=target_user.id,
         department_id=data.department_id,
         expires_at=expires_at,
         created_by=str(current_user.id),
@@ -247,7 +241,7 @@ async def regenerate_api_key(
 ):
     api_key = await get_accessible_api_key(db, api_key_id, current_user)
 
-    full_key, key_hash, key_prefix = generate_api_key()
+    full_key, key_hash, key_prefix = AuthUtils.generate_api_key()
     api_key.key_hash = key_hash
     api_key.key_prefix = key_prefix
 

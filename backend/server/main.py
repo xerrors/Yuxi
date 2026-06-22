@@ -22,7 +22,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from server.routers import router
 from server.utils.lifespan import lifespan
-from server.utils.auth_middleware import is_public_path
 from server.utils.common_utils import setup_logging
 from server.utils.access_log_middleware import AccessLogMiddleware
 
@@ -32,10 +31,46 @@ setup_logging()
 RATE_LIMIT_MAX_ATTEMPTS = 10
 RATE_LIMIT_WINDOW_SECONDS = 60
 RATE_LIMIT_ENDPOINTS = {("/api/auth/token", "POST")}
+DEFAULT_DEVELOPMENT_CORS_ORIGINS = ("http://localhost:5173", "http://127.0.0.1:5173")
+EXPLICIT_CORS_METHODS = ("DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT")
+EXPLICIT_CORS_HEADERS = ("Accept", "Authorization", "Content-Type", "Last-Event-ID", "X-Requested-With")
 
 # In-memory login attempt tracker to reduce brute-force exposure per worker
 _login_attempts: defaultdict[str, deque[float]] = defaultdict(deque)
 _attempt_lock = asyncio.Lock()
+
+
+def _parse_cors_origins() -> list[str]:
+    value = os.getenv("YUXI_CORS_ORIGINS")
+    origins = [origin.strip() for origin in (value or "").split(",") if origin.strip()]
+    if origins:
+        return origins
+
+    environment = (os.getenv("YUXI_ENV") or "development").strip().lower()
+    if environment in {"production", "prod"}:
+        return []
+
+    return list(DEFAULT_DEVELOPMENT_CORS_ORIGINS)
+
+
+def _build_cors_options(origins: list[str] | None = None) -> dict[str, object]:
+    allow_origins = _parse_cors_origins() if origins is None else origins
+    if "*" in allow_origins:
+        return {
+            "allow_origins": ["*"],
+            "allow_credentials": False,
+            "allow_methods": ["*"],
+            "allow_headers": ["*"],
+        }
+
+    return {
+        "allow_origins": allow_origins,
+        "allow_credentials": True,
+        "allow_methods": list(EXPLICIT_CORS_METHODS),
+        "allow_headers": list(EXPLICIT_CORS_HEADERS),
+        "expose_headers": ["Content-Disposition", "X-Lock-Remaining"],
+    }
+
 
 app = FastAPI(lifespan=lifespan)
 # 所有业务接口统一挂载到 /api，具体分组在 server.routers 中集中注册。
@@ -44,10 +79,7 @@ app.include_router(router, prefix="/api")
 # CORS 设置
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    **_build_cors_options(),
 )
 
 
@@ -96,45 +128,11 @@ class LoginRateLimitMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-# 鉴权中间件
-class AuthMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        # 获取请求路径
-        path = request.url.path
-
-        # 检查是否为公开路径，公开路径无需身份验证
-        if is_public_path(path):
-            return await call_next(request)
-
-        if not path.startswith("/api"):
-            # 非API路径，可能是前端路由或静态资源
-            return await call_next(request)
-
-        # # 提取Authorization头
-        # auth_header = request.headers.get("Authorization")
-        # if not auth_header or not auth_header.startswith("Bearer "):
-        #     return JSONResponse(
-        #         status_code=status.HTTP_401_UNAUTHORIZED,
-        #         content={"detail": f"请先登录。Path: {path}"},
-        #         headers={"WWW-Authenticate": "Bearer"}
-        #     )
-
-        # # 获取token
-        # token = auth_header.split("Bearer ")[1]
-
-        # # 添加token到请求状态，后续路由可以直接使用
-        # request.state.token = token
-
-        # 继续处理请求
-        return await call_next(request)
-
-
 # 添加访问日志中间件（记录请求处理时间）
 app.add_middleware(AccessLogMiddleware)
 
-# 添加鉴权中间件
+# 添加登录限流中间件
 app.add_middleware(LoginRateLimitMiddleware)
-app.add_middleware(AuthMiddleware)
 
 if __name__ == "__main__":
     # uvicorn.run(app, host="0.0.0.0", port=5050, threads=10, workers=10, reload=True)

@@ -8,9 +8,15 @@
     "markdown-it-task-checkbox": "^1.0.6",
     "vitepress": "^1.6.4"
   },
+  "devDependencies": {
+    "esbuild": "0.28.1"
+  },
   "pnpm": {
     "overrides": {
-      "vitepress>vite": "6.4.3"
+      "esbuild": "0.28.1",
+      "vitepress>@vitejs/plugin-vue": "6.0.6",
+      "vitepress>vite": "8.0.16"
     }
-  }
+  },
+  "packageManager": "pnpm@10.11.0"
 }

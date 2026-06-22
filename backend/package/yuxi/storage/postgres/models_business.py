@@ -708,6 +708,43 @@ class APIKey(Base):
         return True
 
 
+class CLIAuthSession(Base):
+    """CLI 浏览器授权会话。"""
+
+    __tablename__ = "cli_auth_sessions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    device_code_hash = Column(String(64), nullable=False, unique=True, index=True)
+    user_code = Column(String(16), nullable=False, unique=True, index=True)
+    status = Column(String(32), nullable=False, default="pending", index=True)
+    key_name = Column(String(100), nullable=False)
+
+    approved_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    api_key_id = Column(Integer, ForeignKey("api_keys.id"), nullable=True, index=True)
+
+    created_at = Column(DateTime, default=utc_now_naive, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    approved_at = Column(DateTime, nullable=True)
+    consumed_at = Column(DateTime, nullable=True)
+
+    approved_user = relationship("User")
+    api_key = relationship("APIKey")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "user_code": self.user_code,
+            "status": self.status,
+            "key_name": self.key_name,
+            "approved_user_id": self.approved_user_id,
+            "api_key_id": self.api_key_id,
+            "created_at": format_utc_datetime(self.created_at),
+            "expires_at": format_utc_datetime(self.expires_at),
+            "approved_at": format_utc_datetime(self.approved_at),
+            "consumed_at": format_utc_datetime(self.consumed_at),
+        }
+
+
 class AgentRun(Base):
     """AgentRun table - 运行任务表"""
 

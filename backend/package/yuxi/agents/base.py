@@ -14,7 +14,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 
 from yuxi import config as sys_config
-from yuxi.agents.context import BaseContext, resolve_agent_resource_options
+from yuxi.agents.context import DEFAULT_MAX_EXECUTION_STEPS, BaseContext, resolve_agent_resource_options
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.utils import logger
 from yuxi.utils.subagent_thread_utils import make_child_thread_id
@@ -110,6 +110,11 @@ async def _collect_subagent_routes(run, parent_thread_id: str, routes: dict[tupl
         logger.debug(f"collect subagent stream routes failed: {exc}")
 
 
+def _recursion_limit_from_context(context: BaseContext, default: int) -> int:
+    value = getattr(context, "max_execution_steps", default)
+    return int(value) if isinstance(value, int) and value > 0 else default
+
+
 class BaseAgent:
     """
     定义一个基础 Agent 供 各类 graph 继承
@@ -189,7 +194,7 @@ class BaseAgent:
         # 构建配置：LangGraph 会自动从 checkpointer 恢复 state
         input_config = {
             "configurable": {"thread_id": context.thread_id, "uid": context.uid},
-            "recursion_limit": 300,
+            "recursion_limit": _recursion_limit_from_context(context, DEFAULT_MAX_EXECUTION_STEPS),
         }
 
         # langfuse metadata and callbacks integration
@@ -216,7 +221,7 @@ class BaseAgent:
 
         input_config = {
             "configurable": {"thread_id": context.thread_id, "uid": context.uid},
-            "recursion_limit": 300,
+            "recursion_limit": _recursion_limit_from_context(context, DEFAULT_MAX_EXECUTION_STEPS),
         }
 
         if callbacks := kwargs.get("callbacks"):
@@ -293,7 +298,7 @@ class BaseAgent:
         # 构建配置
         input_config = {
             "configurable": {"thread_id": context.thread_id, "uid": context.uid},
-            "recursion_limit": 100,
+            "recursion_limit": _recursion_limit_from_context(context, DEFAULT_MAX_EXECUTION_STEPS),
         }
 
         # langfuse metadata and callbacks integration

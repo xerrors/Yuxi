@@ -23,7 +23,13 @@ from yuxi.agents.backends.sandbox import (
 from yuxi.agents.backends.skills_backend import SelectedSkillsReadonlyBackend
 from yuxi.agents.skills.service import normalize_string_list
 from yuxi.services.agent_runtime_service import resolve_thread_agent_runtime_context
-from yuxi.services.file_preview import detect_preview_type
+from yuxi.services.file_preview import (
+    MAX_BINARY_PREVIEW_SIZE_BYTES,
+    detect_media_type,
+    is_binary_preview_type,
+    render_preview_payload,
+    render_preview_too_large_payload,
+)
 from yuxi.services.workspace_service import (
     create_workspace_directory as create_workspace_directory_entry,
 )
@@ -131,6 +137,30 @@ def _sort_entries(entries: list[dict]) -> list[dict]:
             PurePosixPath(str(e.get("path") or "").rstrip("/")).name.lower(),
         ),
     )
+
+
+def _preview_too_large_payload() -> dict:
+    return render_preview_too_large_payload()
+
+
+def _preview_binary_response(path: str, raw_content: bytes, preview_type: str) -> StreamingResponse:
+    file_name = PurePosixPath(path).name or "preview"
+    media_type = detect_media_type(file_name, raw_content)
+    headers = {
+        "Content-Disposition": f"inline; filename*=UTF-8''{quote(file_name)}",
+        "X-Yuxi-Preview-Type": preview_type,
+        "X-Yuxi-Preview-Filename": quote(file_name),
+    }
+    return StreamingResponse(io.BytesIO(raw_content), media_type=media_type, headers=headers)
+
+
+def _render_viewer_preview(path: str, raw_content: bytes) -> dict | StreamingResponse:
+    if len(raw_content) > MAX_BINARY_PREVIEW_SIZE_BYTES:
+        return _preview_too_large_payload()
+    payload = render_preview_payload(path, raw_content)
+    if is_binary_preview_type(payload["preview_type"]) and payload["supported"]:
+        return _preview_binary_response(path, raw_content, payload["preview_type"])
+    return payload
 
 
 def _entry_for_local_path(thread_id: str, uid: str, path: Path, listing_root: Path) -> dict:
@@ -310,7 +340,7 @@ async def read_viewer_file_content(
     path: str,
     current_user: User,
     db: AsyncSession,
-) -> dict:
+) -> dict | StreamingResponse:
     if not thread_id:
         raise HTTPException(status_code=422, detail="thread_id 不能为空")
     normalized_path = _normalize_path(path)
@@ -333,21 +363,10 @@ async def read_viewer_file_content(
                 raise HTTPException(status_code=404, detail="文件不存在")
             if not actual_path.is_file():
                 raise HTTPException(status_code=400, detail="当前路径是目录")
+            if actual_path.stat().st_size > MAX_BINARY_PREVIEW_SIZE_BYTES:
+                return _preview_too_large_payload()
             raw_content = await asyncio.to_thread(actual_path.read_bytes)
-            preview_type, supported, message = detect_preview_type(normalized_path, raw_content)
-            if preview_type in {"image", "pdf"} or not supported:
-                return {
-                    "content": None,
-                    "preview_type": preview_type,
-                    "supported": supported,
-                    "message": message,
-                }
-            return {
-                "content": raw_content.decode("utf-8"),
-                "preview_type": preview_type,
-                "supported": supported,
-                "message": message,
-            }
+            return _render_viewer_preview(normalized_path, raw_content)
         elif _is_skills_path(normalized_path):
             responses = await asyncio.to_thread(skills_backend.download_files, [_strip_skills_prefix(normalized_path)])
         elif _is_in_home_gem(normalized_path):
@@ -372,31 +391,7 @@ async def read_viewer_file_content(
         raise HTTPException(status_code=400, detail=str(response.error))
 
     raw_content = response.content or b""
-    preview_type, supported, message = detect_preview_type(normalized_path, raw_content)
-
-    if preview_type in {"image", "pdf"}:
-        return {
-            "content": None,
-            "preview_type": preview_type,
-            "supported": supported,
-            "message": message,
-        }
-
-    if not supported:
-        return {
-            "content": None,
-            "preview_type": preview_type,
-            "supported": supported,
-            "message": message,
-        }
-
-    content = raw_content.decode("utf-8")
-    return {
-        "content": content,
-        "preview_type": preview_type,
-        "supported": supported,
-        "message": message,
-    }
+    return _render_viewer_preview(normalized_path, raw_content)
 
 
 async def download_viewer_file(

@@ -1,3 +1,4 @@
+import hashlib
 import os
 import secrets
 from datetime import timedelta
@@ -46,6 +47,14 @@ def _get_jwt_issuer() -> str:
 
 
 class AuthUtils:
+    @staticmethod
+    def generate_api_key() -> tuple[str, str, str]:
+        random_part = secrets.token_hex(24)
+        full_key = f"yxkey_{random_part}"
+        key_hash = hashlib.sha256(full_key.encode()).hexdigest()
+        key_prefix = full_key[:12]
+        return full_key, key_hash, key_prefix
+
     @staticmethod
     def hash_password(password: str) -> str:
         return PASSWORD_HASHER.hash(password)
