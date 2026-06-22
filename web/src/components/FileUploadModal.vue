@@ -141,8 +141,14 @@
                   </div>
                 </template>
 
-                <a-button class="ocr-engine-trigger" block :loading="ocrHealthChecking">
-                  <span>{{ selectedOcrEngineLabel }}</span>
+                <a-button class="ocr-engine-trigger" block>
+                  <span class="ocr-engine-trigger-main">
+                    <ReloadOutlined
+                      v-if="ocrHealthChecking"
+                      class="ocr-engine-trigger-loading"
+                    />
+                    <span class="ocr-engine-trigger-label">{{ selectedOcrEngineLabel }}</span>
+                  </span>
                   <ChevronDown :size="14" />
                 </a-button>
               </a-popover>
@@ -1757,6 +1763,28 @@ const chunkData = async () => {
   align-items: center;
   justify-content: space-between;
   width: 100%;
+  min-width: 0;
+}
+
+.ocr-engine-trigger-main {
+  display: inline-flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 8px;
+}
+
+.ocr-engine-trigger-loading {
+  flex: 0 0 auto;
+  color: var(--main-color);
+  animation: spin 1s linear infinite;
+}
+
+.ocr-engine-trigger-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ocr-engine-panel {
@@ -1824,17 +1852,26 @@ const chunkData = async () => {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
 }
 
 .ocr-engine-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--gray-900);
   font-size: 13px;
   font-weight: 500;
 }
 
 .ocr-engine-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
   flex: none;
   font-size: 12px;
+  line-height: 1;
 }
 
 .ocr-engine-status.status-local,

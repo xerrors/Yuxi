@@ -19,6 +19,7 @@ async def _fake_normalize_agent_context_config(context, **_kwargs):
 
 class _FakeConvRepo:
     def __init__(self, _db):
+        self.db = _db
         self.saved_messages: list[dict] = []
         self.tool_calls: list[dict] = []
         self.conversations: dict[str, SimpleNamespace] = {}
@@ -45,6 +46,8 @@ class _FakeConvRepo:
         message_type: str = "text",
         extra_metadata: dict | None = None,
         image_content: str | None = None,
+        run_id: str | None = None,
+        request_id: str | None = None,
     ):
         self.saved_messages.append(
             {
@@ -54,6 +57,8 @@ class _FakeConvRepo:
                 "message_type": message_type,
                 "extra_metadata": extra_metadata,
                 "image_content": image_content,
+                "run_id": run_id,
+                "request_id": request_id,
             }
         )
         return SimpleNamespace(id=1)
@@ -154,6 +159,55 @@ async def test_save_messages_from_langgraph_state_handles_dict_tool_call_blocks(
 
 
 @pytest.mark.asyncio
+async def test_save_messages_from_langgraph_state_backfills_run_output_message(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeDB:
+        def __init__(self):
+            self.commit_count = 0
+
+        async def commit(self):
+            self.commit_count += 1
+
+    class FakeGraph:
+        async def aget_state(self, _config):
+            return SimpleNamespace(values={"messages": [HumanMessage(content="question"), AIMessage(content="answer")]})
+
+    class FakeAgent:
+        async def get_graph(self):
+            return FakeGraph()
+
+    fake_db = FakeDB()
+    conv_repo = _FakeConvRepo(fake_db)
+    captured: dict[str, object] = {}
+
+    class FakeRunRepo:
+        def __init__(self, db):
+            assert db is fake_db
+
+        async def set_output_message(self, run_id: str, message_id: int):
+            captured["run_id"] = run_id
+            captured["message_id"] = message_id
+
+    monkeypatch.setattr(svc, "AgentRunRepository", FakeRunRepo)
+
+    await svc.save_messages_from_langgraph_state(
+        agent_instance=FakeAgent(),
+        thread_id="thread-1",
+        conv_repo=conv_repo,
+        config_dict={"configurable": {"thread_id": "thread-1", "uid": "user-1"}},
+        trace_info={"langfuse_trace_id": "trace-1"},
+        run_id="run-1",
+        request_id="req-1",
+    )
+
+    assert conv_repo.saved_messages[0]["content"] == "answer"
+    assert conv_repo.saved_messages[0]["run_id"] == "run-1"
+    assert conv_repo.saved_messages[0]["request_id"] == "req-1"
+    assert conv_repo.saved_messages[0]["extra_metadata"]["langfuse_trace_id"] == "trace-1"
+    assert captured == {"run_id": "run-1", "message_id": 1}
+    assert fake_db.commit_count == 1
+
+
+@pytest.mark.asyncio
 async def test_agent_chat_uses_invoke_messages_and_persists_langgraph_state(monkeypatch: pytest.MonkeyPatch):
     calls: dict[str, object] = {}
 
@@ -180,13 +234,17 @@ async def test_agent_chat_uses_invoke_messages_and_persists_langgraph_state(monk
     async def fake_resolve_agent_runtime(**_kwargs):
         return SimpleNamespace(slug="test-agent", backend_id="ChatbotAgent"), FakeAgent(), {"temperature": 0.1}
 
-    async def fake_save_messages_from_langgraph_state(*, agent_instance, thread_id, conv_repo, config_dict, trace_info):
+    async def fake_save_messages_from_langgraph_state(
+        *, agent_instance, thread_id, conv_repo, config_dict, trace_info, run_id=None, request_id=None
+    ):
         calls["saved_state"] = {
             "agent_instance": agent_instance,
             "thread_id": thread_id,
             "conv_repo": conv_repo,
             "config_dict": config_dict,
             "trace_info": trace_info,
+            "run_id": run_id,
+            "request_id": request_id,
         }
 
     async def fake_guard_check(_content):
@@ -289,7 +347,10 @@ async def test_agent_chat_sync_returns_finished_even_when_state_has_interrupt(mo
     async def fake_resolve_agent_runtime(**_kwargs):
         return SimpleNamespace(slug="test-agent", backend_id="ChatbotAgent"), FakeAgent(), {}
 
-    async def fake_save_messages_from_langgraph_state(*, agent_instance, thread_id, conv_repo, config_dict, trace_info):
+    async def fake_save_messages_from_langgraph_state(
+        *, agent_instance, thread_id, conv_repo, config_dict, trace_info, run_id=None, request_id=None
+    ):
+        del agent_instance, thread_id, conv_repo, config_dict, trace_info, run_id, request_id
         return None
 
     async def fake_guard_check(_content):

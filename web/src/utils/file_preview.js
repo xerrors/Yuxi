@@ -12,6 +12,42 @@ const IMAGE_EXTENSIONS = new Set([
 ])
 const PDF_EXTENSIONS = new Set(['.pdf'])
 const HTML_EXTENSIONS = new Set(['.html', '.htm'])
+const OFFICE_EXTENSIONS = new Set(['.docx', '.pptx'])
+const TEXT_EXTENSIONS = new Set([
+  '.txt',
+  '.text',
+  '.log',
+  '.json',
+  '.jsonl',
+  '.yaml',
+  '.yml',
+  '.toml',
+  '.ini',
+  '.cfg',
+  '.conf',
+  '.csv',
+  '.tsv',
+  '.py',
+  '.js',
+  '.ts',
+  '.jsx',
+  '.tsx',
+  '.vue',
+  '.html',
+  '.htm',
+  '.css',
+  '.less',
+  '.scss',
+  '.xml',
+  '.sql',
+  '.sh',
+  '.bash',
+  '.zsh',
+  '.fish',
+  '.env',
+  '.dockerfile',
+  '.gitignore'
+])
 const CODE_LANGUAGE_ALIASES = {
   js: 'javascript',
   ts: 'typescript',
@@ -97,10 +133,55 @@ export const getPreviewTypeByPath = (path) => {
   if (IMAGE_EXTENSIONS.has(extension)) return 'image'
   if (PDF_EXTENSIONS.has(extension)) return 'pdf'
   if (MARKDOWN_EXTENSIONS.has(extension)) return 'markdown'
-  return 'text'
+  if (HTML_EXTENSIONS.has(extension)) return 'html'
+  if (OFFICE_EXTENSIONS.has(extension)) return 'office'
+  if (TEXT_EXTENSIONS.has(extension)) return 'text'
+  return 'unsupported'
 }
 
 export const getCodeLanguageByPath = (path) =>
   normalizeCodeLanguage(CODE_LANGUAGE_MAP[getPreviewFileExtension(path)] || '')
 
 export const isHtmlPreview = (path) => HTML_EXTENSIONS.has(getPreviewFileExtension(path))
+
+export const getPreviewTypeByContentType = (contentType) => {
+  const normalized = String(contentType || '').toLowerCase()
+  if (normalized.includes('application/pdf')) return 'pdf'
+  if (normalized.startsWith('image/')) return 'image'
+  if (normalized.includes('text/markdown')) return 'markdown'
+  if (normalized.includes('text/html')) return 'html'
+  if (normalized.startsWith('text/')) return 'text'
+  if (normalized.includes('application/json')) return 'json'
+  return 'unsupported'
+}
+
+export const normalizePreviewResponse = async (response, baseFile = {}) => {
+  const contentType = response?.headers?.get?.('content-type') || ''
+
+  if (contentType.includes('application/json')) {
+    const payload = await response.json()
+    const previewType = payload.preview_type || payload.previewType || payload.kind || 'text'
+    return {
+      ...baseFile,
+      ...payload,
+      content: payload.content ?? '',
+      previewType,
+      supported: payload.supported !== false,
+      message: payload.message || '',
+      previewUrl: ''
+    }
+  }
+
+  const previewType =
+    response?.headers?.get?.('x-yuxi-preview-type') || getPreviewTypeByContentType(contentType)
+  const blob = await response.blob()
+
+  return {
+    ...baseFile,
+    content: null,
+    previewType,
+    supported: previewType !== 'unsupported',
+    message: previewType === 'unsupported' ? '当前文件暂不支持预览，请下载后查看' : '',
+    previewUrl: window.URL.createObjectURL(blob)
+  }
+}

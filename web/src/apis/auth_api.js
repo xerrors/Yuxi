@@ -2,7 +2,7 @@
  * 认证相关 API
  */
 
-import { apiAdminGet } from './base'
+import { apiAdminGet, apiGet, apiPost } from './base'
 
 async function parseErrorDetail(response, fallbackMessage) {
   const contentType = response.headers.get('content-type') || ''
@@ -80,9 +80,21 @@ async function exchangeOIDCCode(code) {
   return response.json()
 }
 
+async function getCLIAuthSession(userCode) {
+  const encoded = encodeURIComponent(userCode)
+  return apiGet(`/api/auth/cli/sessions/${encoded}`)
+}
+
+async function approveCLIAuthSession(userCode) {
+  const encoded = encodeURIComponent(userCode)
+  return apiPost(`/api/auth/cli/sessions/${encoded}/approve`, {})
+}
+
 export const authApi = {
   getOIDCConfig,
   getOIDCLoginUrl,
   getUserAccessOptions,
-  exchangeOIDCCode
+  exchangeOIDCCode,
+  getCLIAuthSession,
+  approveCLIAuthSession
 }

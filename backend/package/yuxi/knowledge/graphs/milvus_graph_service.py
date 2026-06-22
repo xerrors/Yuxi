@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import weakref
 from typing import Any
 
 from yuxi.knowledge.graphs.extractors import GraphExtractor, GraphExtractorFactory, normalize_extraction_result
@@ -30,6 +31,47 @@ from yuxi.utils.datetime_utils import utc_isoformat
 
 GRAPH_CONFIG_KEY = "graph_build_config"
 GRAPH_TASK_TYPE = "knowledge_graph_index"
+NEO4J_QUERY_OFFLOAD_LIMIT = 8
+_neo4j_query_offload_semaphore_refs: dict[
+    int,
+    tuple[weakref.ReferenceType[asyncio.AbstractEventLoop], weakref.ReferenceType[asyncio.Semaphore]],
+] = {}
+
+
+def _get_neo4j_query_offload_semaphore() -> asyncio.Semaphore:
+    loop = asyncio.get_running_loop()
+    loop_id = id(loop)
+    entry = _neo4j_query_offload_semaphore_refs.get(loop_id)
+    if entry is not None:
+        loop_ref, semaphore_ref = entry
+        semaphore = semaphore_ref()
+        if loop_ref() is loop and semaphore is not None:
+            return semaphore
+
+    semaphore = asyncio.Semaphore(NEO4J_QUERY_OFFLOAD_LIMIT)
+
+    def cleanup(ref, stale_loop_id=loop_id):
+        current_entry = _neo4j_query_offload_semaphore_refs.get(stale_loop_id)
+        if current_entry is not None and current_entry[1] is ref:
+            _neo4j_query_offload_semaphore_refs.pop(stale_loop_id, None)
+
+    _neo4j_query_offload_semaphore_refs[loop_id] = (weakref.ref(loop), weakref.ref(semaphore, cleanup))
+    return semaphore
+
+
+async def _run_neo4j_query_io(func, /, *args, **kwargs):
+    semaphore = _get_neo4j_query_offload_semaphore()
+    await semaphore.acquire()
+    task = asyncio.create_task(asyncio.to_thread(func, *args, **kwargs))
+
+    def release_capacity(completed_task: asyncio.Task):
+        semaphore.release()
+        if completed_task.cancelled():
+            return
+        completed_task.exception()
+
+    task.add_done_callback(release_capacity)
+    return await asyncio.shield(task)
 
 
 class MilvusGraphService:
@@ -503,16 +545,36 @@ class MilvusGraphService:
         label = safe_neo4j_label(effective_kb_id)
         limit = max_nodes
         try:
-            with self.driver.session() as session:
-                result = session.run(
-                    self._build_query(label, keyword, limit, max_depth, exclude_chunk),
-                    keyword=keyword,
-                    limit=limit,
-                )
-                return self._process_query_result(result, limit, effective_kb_id, exclude_chunk)
+            return await _run_neo4j_query_io(
+                self._query_nodes_sync,
+                effective_kb_id,
+                label,
+                keyword,
+                limit,
+                max_depth,
+                exclude_chunk,
+            )
         except Exception as e:
             logger.error(f"Milvus graph query failed: {e}")
             return {"nodes": [], "edges": []}
+
+    def _query_nodes_sync(
+        self,
+        kb_id: str,
+        label: str,
+        keyword: str,
+        limit: int,
+        max_depth: int,
+        exclude_chunk: bool,
+    ) -> dict[str, Any]:
+        with self.driver.session() as session:
+            result = session.run(
+                self._build_query(label, keyword, limit, max_depth, exclude_chunk),
+                keyword=keyword,
+                limit=limit,
+                edge_limit=limit * 10,
+            )
+            return self._process_query_result(result, limit, kb_id, exclude_chunk)
 
     async def query_seed_subgraph(
         self,
@@ -523,6 +585,7 @@ class MilvusGraphService:
     ) -> dict[str, Any]:
         if not entity_ids:
             return {"nodes": [], "edges": []}
+        seed_entity_ids = list(dict.fromkeys(entity_ids))
         label = safe_neo4j_label(kb_id)
         cypher = f"""
         MATCH (seed:Entity:MilvusKB:`{label}`)
@@ -538,18 +601,33 @@ class MilvusGraphService:
         RETURN graph_nodes AS nodes, collect(DISTINCT rel) AS edges
         """
         try:
-            with self.driver.session() as session:
-                record = session.run(
-                    cypher,
-                    entity_ids=list(dict.fromkeys(entity_ids)),
-                    path_limit=max(max_nodes, 1) * 4,
-                ).single()
-                if not record:
-                    return {"nodes": [], "edges": []}
-                return self._process_subgraph_record(record, max_nodes, kb_id)
+            return await _run_neo4j_query_io(
+                self._query_seed_subgraph_sync,
+                kb_id,
+                cypher,
+                seed_entity_ids,
+                max_nodes,
+            )
         except Exception as e:
             logger.error(f"Milvus seed subgraph query failed: {e}")
             return {"nodes": [], "edges": []}
+
+    def _query_seed_subgraph_sync(
+        self,
+        kb_id: str,
+        cypher: str,
+        entity_ids: list[str],
+        max_nodes: int,
+    ) -> dict[str, Any]:
+        with self.driver.session() as session:
+            record = session.run(
+                cypher,
+                entity_ids=entity_ids,
+                path_limit=max(max_nodes, 1) * 4,
+            ).single()
+            if not record:
+                return {"nodes": [], "edges": []}
+            return self._process_subgraph_record(record, max_nodes, kb_id)
 
     async def query_and_rank_chunks_by_ppr(
         self,
@@ -637,11 +715,14 @@ class MilvusGraphService:
         ORDER BY node_label
         """
         try:
-            records = neo4j_read(self.driver, cypher, kb_id=effective_kb_id)
+            records = await _run_neo4j_query_io(self._get_labels_sync, cypher, effective_kb_id)
             return [record["node_label"] for record in records]
         except Exception as e:
             logger.error(f"Failed to get Milvus graph labels: {e}")
             return []
+
+    def _get_labels_sync(self, cypher: str, kb_id: str) -> list[Any]:
+        return neo4j_read(self.driver, cypher, kb_id=kb_id)
 
     async def get_stats(self, kb_id: str | None = None) -> dict[str, Any]:
         effective_kb_id = kb_id or self.kb_id
@@ -662,17 +743,20 @@ class MilvusGraphService:
         ORDER BY count DESC
         """
         try:
-            with self.driver.session() as session:
-                stats = session.run(stats_cypher).single()
-                label_stats = session.run(label_cypher)
-                return {
-                    "total_nodes": stats["node_count"] if stats else 0,
-                    "total_edges": stats["edge_count"] if stats else 0,
-                    "entity_types": [{"type": row["entity_label"], "count": row["count"]} for row in label_stats],
-                }
+            return await _run_neo4j_query_io(self._get_stats_sync, stats_cypher, label_cypher)
         except Exception as e:
             logger.error(f"Failed to get Milvus graph stats: {e}")
             return {"total_nodes": 0, "total_edges": 0, "entity_types": []}
+
+    def _get_stats_sync(self, stats_cypher: str, label_cypher: str) -> dict[str, Any]:
+        with self.driver.session() as session:
+            stats = session.run(stats_cypher).single()
+            label_stats = session.run(label_cypher)
+            return {
+                "total_nodes": stats["node_count"] if stats else 0,
+                "total_edges": stats["edge_count"] if stats else 0,
+                "entity_types": [{"type": row["entity_label"], "count": row["count"]} for row in label_stats],
+            }
 
     async def _get_milvus_kb(self, kb_id: str):
         kb = await self.kb_repo.get_by_kb_id(kb_id)
@@ -734,7 +818,7 @@ class MilvusGraphService:
         WITH n LIMIT $limit
         OPTIONAL MATCH (n)-[r]-(m:MilvusKB:`{label}`){m_exclude}
         RETURN n AS h, r AS r, m AS t
-        LIMIT {limit * 10}
+        LIMIT $edge_limit
         """
 
     def _process_query_result(self, result, limit: int, kb_id: str, exclude_chunk: bool = False) -> dict[str, Any]:

@@ -45,7 +45,7 @@ async def get_viewer_tree(
     )
 
 
-@filesystem_router.get("/file", response_model=dict)
+@filesystem_router.get("/file")
 async def get_viewer_file(
     thread_id: str = Query(..., description="线程 ID"),
     path: str = Query(..., description="文件路径"),

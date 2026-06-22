@@ -24,7 +24,7 @@ export const getViewerFileSystemTree = (threadId, path = '/') => {
 
 export const getViewerFileContent = (threadId, path) => {
   const query = buildViewerQuery(threadId, path)
-  return apiGet(`/api/viewer/filesystem/file?${query}`)
+  return apiGet(`/api/viewer/filesystem/file?${query}`, {}, true, 'blob')
 }
 
 export const downloadViewerFile = (threadId, path) => {

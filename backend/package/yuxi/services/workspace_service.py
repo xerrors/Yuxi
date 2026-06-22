@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import io
-import mimetypes
 import shutil
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote
@@ -12,7 +12,17 @@ import aiofiles
 from fastapi import HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from yuxi.agents.backends.sandbox.paths import _global_user_data_dir, ensure_workspace_default_files
-from yuxi.services.file_preview import detect_preview_type
+from yuxi.services.file_preview import (
+    MAX_BINARY_PREVIEW_SIZE_BYTES,
+    OfficePreviewConversionError,
+    convert_office_to_pdf,
+    detect_preview_type,
+    detect_media_type,
+    is_office_pdf_preview_file,
+    is_binary_preview_type,
+    render_preview_payload,
+    render_preview_too_large_payload,
+)
 from yuxi.services.mention_search_service import invalidate_workspace_mention_cache
 from yuxi.storage.postgres.models_business import User
 from yuxi.utils.datetime_utils import utc_isoformat_from_timestamp
@@ -149,37 +159,56 @@ def resolve_workspace_file_path(*, path: str, current_user: User) -> Path:
     return target
 
 
-async def read_workspace_file_content(*, path: str, current_user: User) -> dict:
+async def read_workspace_file_content(*, path: str, current_user: User) -> dict | StreamingResponse:
     target = _resolve_workspace_path(current_user, path)
     if not target.exists():
         raise HTTPException(status_code=404, detail="文件不存在")
     if not target.is_file():
         raise HTTPException(status_code=400, detail="当前路径是目录")
 
+    stat = await asyncio.to_thread(target.stat)
+    if stat.st_size > MAX_BINARY_PREVIEW_SIZE_BYTES:
+        return render_preview_too_large_payload()
+
+    if is_office_pdf_preview_file(path):
+        pdf_content = await _convert_workspace_office_to_pdf(current_user, target, target.name)
+        return _preview_binary_response(
+            filename=f"{target.stem or 'preview'}.pdf",
+            content=pdf_content,
+            media_type="application/pdf",
+            preview_type="pdf",
+        )
+
     raw_content = await asyncio.to_thread(target.read_bytes)
     preview_type, supported, message = detect_preview_type(path, raw_content)
-    if preview_type in {"image", "pdf"} or not supported:
+    if is_binary_preview_type(preview_type) and supported:
+        return _preview_binary_response(
+            filename=target.name or "preview",
+            content=raw_content,
+            media_type=detect_media_type(path, raw_content),
+            preview_type=preview_type,
+        )
+    if not supported:
         return {
             "content": None,
             "preview_type": preview_type,
-            "supported": supported,
-            "message": message,
-        }
-    try:
-        content = raw_content.decode("utf-8")
-    except UnicodeDecodeError:
-        return {
-            "content": None,
-            "preview_type": "unsupported",
             "supported": False,
-            "message": "当前文件不是 UTF-8 文本，暂不支持预览",
+            "message": message,
+            "truncated": False,
+            "limit": None,
         }
-    return {
-        "content": content,
-        "preview_type": preview_type,
-        "supported": supported,
-        "message": message,
+    return render_preview_payload(path, raw_content)
+
+
+def _preview_binary_response(
+    *, filename: str, content: bytes, media_type: str, preview_type: str
+) -> StreamingResponse:
+    headers = {
+        "Content-Disposition": f"inline; filename*=UTF-8''{quote(filename)}",
+        "X-Yuxi-Preview-Type": preview_type,
+        "X-Yuxi-Preview-Filename": quote(filename),
     }
+    return StreamingResponse(io.BytesIO(content), media_type=media_type, headers=headers)
 
 
 async def write_workspace_file_content(*, path: str, content: str, current_user: User) -> dict:
@@ -309,6 +338,35 @@ async def upload_workspace_files(*, parent_path: str, files: list[UploadFile], c
     return {"success": True, "entries": [_entry_for_path(root, target) for _file, target in upload_targets]}
 
 
+async def _convert_workspace_office_to_pdf(user: User, target: Path, file_name: str) -> bytes:
+    user_data_root = _global_user_data_dir(str(user.uid)).resolve()
+    cache_dir = user_data_root / ".office_preview_cache"
+    stat = await asyncio.to_thread(target.stat)
+    digest = hashlib.sha256(str(target).encode("utf-8")).hexdigest()
+    cache_path = cache_dir / f"{digest}-{stat.st_mtime_ns}-{stat.st_size}.pdf"
+
+    cached = await asyncio.to_thread(lambda: cache_path.read_bytes() if cache_path.exists() else None)
+    if cached is not None:
+        return cached
+
+    content = await asyncio.to_thread(target.read_bytes)
+    try:
+        pdf_content = await convert_office_to_pdf(file_name, content)
+    except OfficePreviewConversionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    await asyncio.to_thread(_store_office_pdf_cache, cache_dir, digest, cache_path, pdf_content)
+    return pdf_content
+
+
+def _store_office_pdf_cache(cache_dir: Path, digest: str, cache_path: Path, pdf_content: bytes) -> None:
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    for stale in cache_dir.glob(f"{digest}-*.pdf"):
+        if stale != cache_path:
+            stale.unlink(missing_ok=True)
+    cache_path.write_bytes(pdf_content)
+
+
 async def download_workspace_file(*, path: str, current_user: User) -> StreamingResponse | FileResponse:
     target = _resolve_workspace_path(current_user, path)
     if not target.exists():
@@ -317,7 +375,7 @@ async def download_workspace_file(*, path: str, current_user: User) -> Streaming
         raise HTTPException(status_code=400, detail="当前路径是目录")
 
     file_name = target.name or "download"
-    media_type = mimetypes.guess_type(file_name)[0] or "application/octet-stream"
+    media_type = detect_media_type(file_name)
     headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{quote(file_name)}"}
     if target.stat().st_size > 1024 * 1024 * 16:
         return FileResponse(path=target, media_type=media_type, headers=headers)

@@ -81,7 +81,7 @@ def parse_sample_questions_content(content: str) -> list[str]:
 
 
 async def generate_database_sample_questions(kb_id: str, count: int = 10) -> dict[str, Any]:
-    db_info = await knowledge_base.get_database_info(kb_id)
+    db_info = await knowledge_base.get_database_info(kb_id, include_files=True)
     if not db_info:
         raise HTTPException(status_code=404, detail=f"知识库 {kb_id} 不存在")
 

@@ -49,6 +49,29 @@ class AgentRunRepository:
         )
         return result.scalar_one_or_none()
 
+    async def list_child_runs_for_user(self, parent_agent_run_id: str, uid: str) -> list[AgentRun]:
+        result = await self.db.execute(
+            select(AgentRun)
+            .where(
+                AgentRun.parent_agent_run_id == parent_agent_run_id,
+                AgentRun.uid == str(uid),
+            )
+            .order_by(AgentRun.created_at.asc(), AgentRun.id.asc())
+        )
+        return list(result.scalars().all())
+
+    async def list_active_child_runs_for_user(self, parent_agent_run_id: str, uid: str) -> list[AgentRun]:
+        result = await self.db.execute(
+            select(AgentRun)
+            .where(
+                AgentRun.parent_agent_run_id == parent_agent_run_id,
+                AgentRun.uid == str(uid),
+                AgentRun.status.notin_(TERMINAL_RUN_STATUSES),
+            )
+            .order_by(AgentRun.created_at.asc(), AgentRun.id.asc())
+        )
+        return list(result.scalars().all())
+
     async def create_run(
         self,
         *,
@@ -89,6 +112,15 @@ class AgentRunRepository:
         if not run:
             return None
         run.input_message_id = message_id
+        run.updated_at = utc_now_naive()
+        await self.db.flush()
+        return run
+
+    async def set_output_message(self, run_id: str, message_id: int) -> AgentRun | None:
+        run = await self.get_run(run_id)
+        if not run:
+            return None
+        run.output_message_id = message_id
         run.updated_at = utc_now_naive()
         await self.db.flush()
         return run

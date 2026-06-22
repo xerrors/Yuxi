@@ -40,6 +40,8 @@ class _FakeConvRepo:
         message_type: str = "text",
         extra_metadata: dict | None = None,
         image_content: str | None = None,
+        run_id: str | None = None,
+        request_id: str | None = None,
     ):
         self.saved_messages.append(
             {
@@ -49,6 +51,8 @@ class _FakeConvRepo:
                 "message_type": message_type,
                 "extra_metadata": extra_metadata,
                 "image_content": image_content,
+                "run_id": run_id,
+                "request_id": request_id,
             }
         )
         return SimpleNamespace(id=1)
@@ -98,11 +102,15 @@ async def test_stream_agent_chat_passes_langfuse_callbacks_and_persists_trace_in
     async def fake_resolve_agent_runtime(**_kwargs):
         return SimpleNamespace(slug="test-agent", backend_id="ChatbotAgent"), FakeAgent(), {"temperature": 0.1}
 
-    async def fake_save_messages_from_langgraph_state(*, agent_instance, thread_id, conv_repo, config_dict, trace_info):
+    async def fake_save_messages_from_langgraph_state(
+        *, agent_instance, thread_id, conv_repo, config_dict, trace_info, run_id=None, request_id=None
+    ):
         calls["saved_state"] = {
             "thread_id": thread_id,
             "config_dict": config_dict,
             "trace_info": trace_info,
+            "run_id": run_id,
+            "request_id": request_id,
         }
 
     async def fake_guard_check(_content):
@@ -244,7 +252,10 @@ async def test_stream_agent_chat_maps_raw_protocol_events_to_yuxi_stream_events(
     async def fake_resolve_agent_runtime(**_kwargs):
         return SimpleNamespace(slug="test-agent", backend_id="ChatbotAgent"), FakeAgent(), {}
 
-    async def fake_save_messages_from_langgraph_state(*, agent_instance, thread_id, conv_repo, config_dict, trace_info):
+    async def fake_save_messages_from_langgraph_state(
+        *, agent_instance, thread_id, conv_repo, config_dict, trace_info, run_id=None, request_id=None
+    ):
+        del agent_instance, thread_id, conv_repo, config_dict, trace_info, run_id, request_id
         return None
 
     async def fake_guard_check(_content):
@@ -333,7 +344,10 @@ async def test_stream_agent_chat_emits_realtime_agent_state_from_values(monkeypa
     async def fake_resolve_agent_runtime(**_kwargs):
         return SimpleNamespace(slug="test-agent", backend_id="ChatbotAgent"), FakeAgent(), {}
 
-    async def fake_save_messages_from_langgraph_state(*, agent_instance, thread_id, conv_repo, config_dict, trace_info):
+    async def fake_save_messages_from_langgraph_state(
+        *, agent_instance, thread_id, conv_repo, config_dict, trace_info, run_id=None, request_id=None
+    ):
+        del agent_instance, thread_id, conv_repo, config_dict, trace_info, run_id, request_id
         return None
 
     async def fake_guard_check(_content):

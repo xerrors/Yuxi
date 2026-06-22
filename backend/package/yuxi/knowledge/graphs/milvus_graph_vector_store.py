@@ -18,7 +18,12 @@ from pymilvus import (
 )
 
 from yuxi.knowledge.graphs.graph_utils import graph_entity_collection_name, graph_triple_collection_name
-from yuxi.knowledge.implementations.milvus import CONTENT_ANALYZER_PARAMS, CONTENT_SPARSE_FIELD, VECTOR_METRIC_TYPE
+from yuxi.knowledge.implementations.milvus import (
+    CONTENT_ANALYZER_PARAMS,
+    CONTENT_SPARSE_FIELD,
+    VECTOR_METRIC_TYPE,
+    _run_milvus_query_io,
+)
 from yuxi.models.embed import select_embedding_model
 from yuxi.models.providers.cache import model_cache
 from yuxi.utils import hashstr, logger
@@ -101,7 +106,10 @@ class MilvusGraphVectorStore:
         top_k: int,
     ) -> list[dict[str, Any]]:
         collection_name = graph_entity_collection_name(kb_id)
-        if not utility.has_collection(collection_name, using=self.connection_alias):
+        has_collection = await _run_milvus_query_io(
+            utility.has_collection, collection_name, using=self.connection_alias
+        )
+        if not has_collection:
             return []
         return await self._search_graph_collection(
             collection_name=collection_name,
@@ -120,7 +128,10 @@ class MilvusGraphVectorStore:
         top_k: int,
     ) -> list[dict[str, Any]]:
         collection_name = graph_triple_collection_name(kb_id)
-        if not utility.has_collection(collection_name, using=self.connection_alias):
+        has_collection = await _run_milvus_query_io(
+            utility.has_collection, collection_name, using=self.connection_alias
+        )
+        if not has_collection:
             return []
         return await self._search_graph_collection(
             collection_name=collection_name,
@@ -158,17 +169,26 @@ class MilvusGraphVectorStore:
     ) -> list[dict[str, Any]]:
         if top_k <= 0:
             return []
-        collection = Collection(name=collection_name, using=self.connection_alias)
-        collection.load()
         embed = self._get_embedding_function(embedding_model_spec)
         query_embedding = await embed([query_text])
-        return await asyncio.to_thread(
-            self._search_loaded_collection,
-            collection,
+        return await _run_milvus_query_io(
+            self._search_graph_collection_sync,
+            collection_name,
             query_embedding,
             max(top_k, 1),
             output_fields,
         )
+
+    def _search_graph_collection_sync(
+        self,
+        collection_name: str,
+        query_embedding: list,
+        top_k: int,
+        output_fields: list[str],
+    ) -> list[dict[str, Any]]:
+        collection = Collection(name=collection_name, using=self.connection_alias)
+        collection.load()
+        return self._search_loaded_collection(collection, query_embedding, top_k, output_fields)
 
     def _search_loaded_collection(
         self,

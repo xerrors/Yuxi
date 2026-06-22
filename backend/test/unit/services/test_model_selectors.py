@@ -156,7 +156,9 @@ def test_select_model_maps_anthropic_max_completion_tokens(monkeypatch):
     assert captured == {"spec": "anthropic:mimo-v2.5", "kwargs": {"max_tokens": 123}}
 
 
-def test_load_chat_model_disables_tool_call_streaming_for_all_siliconflow(monkeypatch):
+def test_load_chat_model_uses_toolcall_chunk_fix_for_openai_compatible(monkeypatch):
+    from yuxi.agents.models import _ToolCallChunkFixChatOpenAI
+
     monkeypatch.setattr(
         "yuxi.agents.models.model_cache.get_model_info",
         lambda spec: _chat_model_info("siliconflow-cn", "deepseek-ai/DeepSeek-V4-Flash")
@@ -165,10 +167,10 @@ def test_load_chat_model_disables_tool_call_streaming_for_all_siliconflow(monkey
     )
 
     model = load_chat_model("siliconflow-cn:deepseek-ai/DeepSeek-V4-Flash")
-    explicit = load_chat_model("siliconflow-cn:deepseek-ai/DeepSeek-V4-Flash", disable_streaming=False)
 
-    assert model.disable_streaming == "tool_calling"
-    assert explicit.disable_streaming is False
+    # 不再按 provider 禁用流式，改用归一化子类规避 v3 流式累积丢 tool_call 字段的缺陷
+    assert isinstance(model, _ToolCallChunkFixChatOpenAI)
+    assert model.disable_streaming is False
 
 
 def test_load_chat_model_keeps_non_siliconflow_openai_streaming(monkeypatch):

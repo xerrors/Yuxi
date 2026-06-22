@@ -30,6 +30,7 @@ x-api-worker-env: &api-worker-env
   # Agent run
   RUN_CANCEL_KEY_TTL_SECONDS: ${RUN_CANCEL_KEY_TTL_SECONDS:-1800}
   RUN_EVENTS_STREAM_TTL_SECONDS: ${RUN_EVENTS_STREAM_TTL_SECONDS:-7200}
+  YUXI_CORS_ORIGINS: ${YUXI_CORS_ORIGINS:-}
   # 其他环境变量
   NO_PROXY: localhost,127.0.0.1,milvus,graph,minio,milvus-etcd-dev,etcd,mineru,paddlex,sandbox-provisioner,yuxi-embedding,yuxi-reranker,api.siliconflow.cn
   no_proxy: localhost,127.0.0.1,milvus,graph,minio,milvus-etcd-dev,etcd,mineru,paddlex,sandbox-provisioner,yuxi-embedding,yuxi-reranker,api.siliconflow.cn
@@ -39,7 +40,7 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    image: yuxi-api:${YUXI_VERSION:-0.7.0}
+    image: yuxi-api:${YUXI_VERSION:-0.7.1.dev0}
     container_name: api-dev
     working_dir: /app
     volumes:
@@ -87,7 +88,7 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    image: yuxi-api:${YUXI_VERSION:-0.7.0}
+    image: yuxi-api:${YUXI_VERSION:-0.7.1.dev0}
     container_name: worker-dev
     working_dir: /app
     volumes:
@@ -126,7 +127,7 @@ services:
     build:
       context: ./docker/sandbox_provisioner
       dockerfile: Dockerfile
-    image: yuxi-sandbox-provisioner:${YUXI_VERSION:-0.7.0}
+    image: yuxi-sandbox-provisioner:${YUXI_VERSION:-0.7.1.dev0}
     container_name: sandbox-provisioner
     volumes:
       - ./docker/volumes/yuxi:/app/saves
@@ -180,7 +181,7 @@ services:
       context: .
       dockerfile: docker/web.Dockerfile
       target: development
-    image: yuxi-web:${YUXI_VERSION:-0.7.0}
+    image: yuxi-web:${YUXI_VERSION:-0.7.1.dev0}
     container_name: web-dev
     volumes:
       - ./web/src:/app/src

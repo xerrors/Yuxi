@@ -9,7 +9,9 @@ import {
   Settings2,
   Trash2,
   CheckCircle2,
-  LayersPlus
+  LayersPlus,
+  LoaderCircle,
+  Zap
 } from 'lucide-vue-next'
 
 import { modelProviderApi } from '@/apis/system_api'
@@ -159,6 +161,9 @@ const getModelId = (model) => {
 }
 
 const buildModelSpec = (providerId, modelId) => `${providerId}:${modelId}`
+
+const isModelTesting = (providerId, modelId) =>
+  !!modelTestLoadingBySpec.value[buildModelSpec(providerId, modelId)]
 
 const getModelTestTitle = (providerId, model) => {
   const spec = buildModelSpec(providerId, model.id)
@@ -918,20 +923,20 @@ defineExpose({
                 <a-button
                   size="small"
                   class="model-test-button"
+                  :class="{
+                    'is-testing': isModelTesting(currentProviderForModels.provider_id, model.id)
+                  }"
+                  aria-label="测试模型连接"
+                  :aria-busy="isModelTesting(currentProviderForModels.provider_id, model.id)"
                   :title="getModelTestTitle(currentProviderForModels.provider_id, model)"
-                  :loading="
-                    modelTestLoadingBySpec[
-                      buildModelSpec(currentProviderForModels.provider_id, model.id)
-                    ]
-                  "
-                  :disabled="
-                    modelTestLoadingBySpec[
-                      buildModelSpec(currentProviderForModels.provider_id, model.id)
-                    ]
-                  "
                   @click="testModelConnection(currentProviderForModels.provider_id, model)"
                 >
-                  测试
+                  <LoaderCircle
+                    v-if="isModelTesting(currentProviderForModels.provider_id, model.id)"
+                    :size="13"
+                    class="spinning"
+                  />
+                  <Zap v-else :size="13" />
                 </a-button>
                 <a-button size="small" class="lucide-icon-btn" @click="openModelConfigModal(model)">
                   <Settings2 :size="13" />
@@ -1104,7 +1109,7 @@ defineExpose({
   padding: 4px 8px;
   border: none;
   background: transparent;
-  color: var(--main-700);
+  color: var(--gray-700);
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
@@ -1112,7 +1117,8 @@ defineExpose({
   transition: background 0.15s;
 
   &:hover {
-    background: var(--main-50);
+    background: var(--gray-50);
+    color: var(--gray-800);
   }
 }
 
@@ -1242,7 +1248,18 @@ defineExpose({
 }
 
 .model-test-button {
-  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  min-width: 28px;
+  padding: 0;
+  color: var(--main-700);
+
+  &.is-testing {
+    color: var(--main-600);
+    cursor: wait;
+  }
 }
 
 .type-tag {

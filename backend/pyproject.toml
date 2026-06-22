@@ -1,6 +1,6 @@
 [project]
 name = "yuxi-workspace"
-version = "0.7.0"
+version = "0.7.1.dev0"
 description = "基于大模型的智能知识库与知识图谱智能体开发平台，融合了 RAG 技术与知识图谱技术，基于 LangGraph v1 + Vue.js + FastAPI + LightRAG 架构构建"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
@@ -20,6 +20,17 @@ lint.select = [         # 选择的规则
 ]
 
 [tool.uv]
+constraint-dependencies = [
+    "aiohttp>=3.14.1",
+    "cryptography>=48.0.1",
+    "langchain>=1.3.9",
+    "langchain-anthropic>=1.4.6",
+    "pypdf>=6.13.3",
+    "pyjwt>=2.13.0",
+    "python-multipart>=0.0.31",
+    "starlette>=1.3.1",
+    "torch>=2.12.1",
+]
 
 [[tool.uv.index]]
 name = "tsinghua"

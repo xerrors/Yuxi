@@ -218,6 +218,7 @@ BUILTIN_PROVIDERS: list[dict[str, Any]] = [
         "enabled_models": [
             {"id": "deepseek-ai/DeepSeek-V4-Flash", "type": "chat", "display_name": "deepseek-ai/DeepSeek-V4-Flash"},
             {"id": "Pro/MiniMaxAI/MiniMax-M2.5", "type": "chat", "display_name": "Pro/MiniMaxAI/MiniMax-M2.5"},
+            {"id": "zai-org/GLM-5.2", "type": "chat", "display_name": "zai-org/GLM-5.2"},
             {
                 "id": "Pro/BAAI/bge-m3",
                 "type": "embedding",

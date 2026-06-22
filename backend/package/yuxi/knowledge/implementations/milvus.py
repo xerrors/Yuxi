@@ -2,6 +2,7 @@ import asyncio
 import os
 import time
 import traceback
+import weakref
 from dataclasses import MISSING, dataclass, field, fields
 from functools import partial
 from typing import Any
@@ -35,6 +36,47 @@ CONTENT_SPARSE_FIELD = "content_sparse"
 CONTENT_ANALYZER_PARAMS = {"type": "chinese"}
 VECTOR_METRIC_TYPE = "COSINE"
 MILVUS_CHUNK_EMBED_BATCH_SIZE = 200
+MILVUS_QUERY_OFFLOAD_LIMIT = 8
+_milvus_query_offload_semaphore_refs: dict[
+    int,
+    tuple[weakref.ReferenceType[asyncio.AbstractEventLoop], weakref.ReferenceType[asyncio.Semaphore]],
+] = {}
+
+
+def _get_milvus_query_offload_semaphore() -> asyncio.Semaphore:
+    loop = asyncio.get_running_loop()
+    loop_id = id(loop)
+    entry = _milvus_query_offload_semaphore_refs.get(loop_id)
+    if entry is not None:
+        loop_ref, semaphore_ref = entry
+        semaphore = semaphore_ref()
+        if loop_ref() is loop and semaphore is not None:
+            return semaphore
+
+    semaphore = asyncio.Semaphore(MILVUS_QUERY_OFFLOAD_LIMIT)
+
+    def cleanup(ref, stale_loop_id=loop_id):
+        current_entry = _milvus_query_offload_semaphore_refs.get(stale_loop_id)
+        if current_entry is not None and current_entry[1] is ref:
+            _milvus_query_offload_semaphore_refs.pop(stale_loop_id, None)
+
+    _milvus_query_offload_semaphore_refs[loop_id] = (weakref.ref(loop), weakref.ref(semaphore, cleanup))
+    return semaphore
+
+
+async def _run_milvus_query_io(func, /, *args, **kwargs):
+    semaphore = _get_milvus_query_offload_semaphore()
+    await semaphore.acquire()
+    task = asyncio.create_task(asyncio.to_thread(func, *args, **kwargs))
+
+    def release_capacity(completed_task: asyncio.Task):
+        semaphore.release()
+        if completed_task.cancelled():
+            return
+        completed_task.exception()
+
+    task.add_done_callback(release_capacity)
+    return await asyncio.shield(task)
 
 
 @dataclass(kw_only=True)
@@ -885,11 +927,12 @@ class MilvusKB(KnowledgeBase):
             if search_mode == "vector":
                 embedding_model_spec = self.databases_meta[kb_id].get("embedding_model_spec")
                 embedding_function = self._get_embedding_function(embedding_model_spec, sync=True)
-                query_embedding = embedding_function([query_text])
+                query_embedding = await _run_milvus_query_io(embedding_function, [query_text])
 
                 search_params = {"metric_type": metric_type, "params": {"nprobe": 10}}
 
-                results = collection.search(
+                results = await _run_milvus_query_io(
+                    collection.search,
                     data=query_embedding,
                     anns_field="embedding",
                     param=search_params,
@@ -919,7 +962,8 @@ class MilvusKB(KnowledgeBase):
                     "params": {"drop_ratio_search": bm25_drop_ratio_search},
                 }
 
-                results = collection.search(
+                results = await _run_milvus_query_io(
+                    collection.search,
                     data=[query_text],
                     anns_field=CONTENT_SPARSE_FIELD,
                     param=bm25_search_params,
@@ -938,7 +982,7 @@ class MilvusKB(KnowledgeBase):
             else:
                 embedding_model_spec = self.databases_meta[kb_id].get("embedding_model_spec")
                 embedding_function = self._get_embedding_function(embedding_model_spec, sync=True)
-                query_embedding = embedding_function([query_text])
+                query_embedding = await _run_milvus_query_io(embedding_function, [query_text])
                 bm25_top_k = int(merged_kwargs.get("bm25_top_k", recall_top_k))
                 bm25_top_k = max(bm25_top_k, 1)
                 bm25_drop_ratio_search = float(merged_kwargs.get("bm25_drop_ratio_search", 0.0))
@@ -962,7 +1006,8 @@ class MilvusKB(KnowledgeBase):
                     limit=bm25_top_k,
                     expr=file_expr,
                 )
-                results = collection.hybrid_search(
+                results = await _run_milvus_query_io(
+                    collection.hybrid_search,
                     reqs=[vector_request, bm25_request],
                     rerank=WeightedRanker(vector_weight, bm25_weight),
                     limit=recall_top_k,
@@ -1049,7 +1094,7 @@ class MilvusKB(KnowledgeBase):
             graph_top_k = max(int(query_params.get("graph_top_k", 20)), 1)
             graph_max_nodes = max(int(query_params.get("graph_max_nodes", 10000)), 1)
 
-            vector_store = MilvusGraphVectorStore()
+            vector_store = await _run_milvus_query_io(MilvusGraphVectorStore)
             entity_hits, triple_hits = await asyncio.gather(
                 vector_store.search_entities(
                     kb_id=kb_id,

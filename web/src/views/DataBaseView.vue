@@ -529,6 +529,12 @@ defineExpose({
 </script>
 
 <style lang="less" scoped>
+.database-container {
+  :deep(.info-card-icon) {
+    background: var(--gray-0);
+  }
+}
+
 .new-database-modal {
   .new-database-form {
     display: flex;

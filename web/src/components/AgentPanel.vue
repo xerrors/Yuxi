@@ -148,6 +148,7 @@ import {
   getViewerFileContent,
   getViewerFileSystemTree
 } from '@/apis/viewer_filesystem'
+import { normalizePreviewResponse } from '@/utils/file_preview'
 
 const props = defineProps({
   agentState: {
@@ -432,28 +433,14 @@ const loadActivePreview = async () => {
     const res = await getViewerFileContent(props.threadId, filePath)
     if (requestSeq !== previewRequestSeq) return
 
-    const previewType = res?.preview_type || 'text'
-    let previewUrl = ''
-
-    if ((previewType === 'image' || previewType === 'pdf') && res?.supported) {
-      const response = await downloadViewerFile(props.threadId, filePath)
-      const blob = await response.blob()
-      previewUrl = window.URL.createObjectURL(blob)
-    }
+    const nextFile = await normalizePreviewResponse(res, baseFile)
 
     if (requestSeq !== previewRequestSeq) {
-      if (previewUrl) window.URL.revokeObjectURL(previewUrl)
+      if (nextFile.previewUrl) window.URL.revokeObjectURL(nextFile.previewUrl)
       return
     }
 
-    currentFile.value = {
-      ...baseFile,
-      content: res?.content ?? '',
-      supported: res?.supported !== false,
-      previewType,
-      message: res?.message || '',
-      previewUrl
-    }
+    currentFile.value = nextFile
   } catch (error) {
     if (requestSeq !== previewRequestSeq) return
 

@@ -607,7 +607,203 @@ async def test_create_resume_run_marks_input_message_source(monkeypatch: pytest.
     assert db.added[0].extra_metadata["source"] == "ask_user_question_resume"
 
 
-# ==================== 对话级模型覆盖 model_spec ====================
+@pytest.mark.asyncio
+async def test_create_agent_run_core_can_skip_input_message_for_child_run(monkeypatch: pytest.MonkeyPatch):
+    captured = {}
+    created_run = SimpleNamespace(
+        id="",
+        thread_id="child-thread",
+        status="pending",
+        request_id="subagent-req",
+        uid="user-1",
+    )
+
+    class RunRepo:
+        def __init__(self, db_session):
+            del db_session
+
+        async def get_run_by_request_id(self, request_id: str):
+            assert request_id == "subagent-req"
+            return None
+
+        async def create_run(self, **kwargs):
+            captured["create_run"] = kwargs
+            created_run.id = kwargs["run_id"]
+            return created_run
+
+        async def set_input_message(self, run_id: str, message_id: int):
+            del run_id, message_id
+            raise AssertionError("input message should not be persisted")
+
+    db = _patch_common_run_repos(monkeypatch, RunRepo)
+
+    run, created = await agent_run_service.create_agent_run(
+        query="delegate this",
+        agent_id="default",
+        thread_id="thread-1",
+        meta={"request_id": "subagent-req"},
+        image_content=None,
+        current_uid="user-1",
+        db=db,
+        run_type="subagent",
+        parent_agent_run_id="parent-agent-run",
+        checkpoint_thread_id="child-thread",
+        persist_input_message=False,
+    )
+
+    assert created is True
+    assert run is created_run
+    assert db.added == []
+    assert captured["create_run"]["run_type"] == "subagent"
+    assert captured["create_run"]["parent_agent_run_id"] == "parent-agent-run"
+    assert captured["create_run"]["checkpoint_thread_id"] == "child-thread"
+    assert captured["create_run"]["input_payload"]["parent_agent_run_id"] == "parent-agent-run"
+    assert db.committed is True
+
+
+# ==================== run 结果基础能力 ====================
+
+
+@pytest.mark.asyncio
+async def test_get_agent_run_result_uses_output_message_id(monkeypatch: pytest.MonkeyPatch):
+    run = SimpleNamespace(
+        id="run-1",
+        status="completed",
+        agent_id="default-chatbot",
+        thread_id="thread-1",
+        conversation_id=10,
+        request_id="req-1",
+        output_message_id=2,
+        error_type=None,
+        error_message=None,
+    )
+    messages = [
+        SimpleNamespace(id=1, role="user", content="question", extra_metadata={}),
+        SimpleNamespace(id=2, role="assistant", content="older", extra_metadata={"langfuse_trace_id": "trace-old"}),
+        SimpleNamespace(id=3, role="assistant", content="final", extra_metadata={"langfuse_trace_id": "trace-final"}),
+    ]
+
+    class FakeScalars:
+        def unique(self):
+            return self
+
+        def all(self):
+            return messages
+
+    class FakeResult:
+        def scalars(self):
+            return FakeScalars()
+
+    class FakeDB:
+        async def execute(self, _stmt):
+            return FakeResult()
+
+    class RunRepo:
+        def __init__(self, db):
+            self.db = db
+
+        async def get_run_for_user(self, run_id: str, uid: str):
+            assert run_id == "run-1"
+            assert uid == "user-1"
+            return run
+
+    monkeypatch.setattr(agent_run_service, "AgentRunRepository", RunRepo)
+
+    payload = await agent_run_service.get_agent_run_result(run_id="run-1", current_uid="user-1", db=FakeDB())
+
+    assert payload["status"] == "completed"
+    assert payload["output"] == "older"
+    assert payload["final_message_id"] == 2
+    assert payload["langfuse_trace_id"] == "trace-old"
+    assert "debug" not in payload
+
+
+@pytest.mark.asyncio
+async def test_get_agent_run_result_missing_run_returns_failed(monkeypatch: pytest.MonkeyPatch):
+    class RunRepo:
+        def __init__(self, db):
+            self.db = db
+
+        async def get_run_for_user(self, run_id: str, uid: str):
+            del run_id, uid
+            return None
+
+    monkeypatch.setattr(agent_run_service, "AgentRunRepository", RunRepo)
+
+    payload = await agent_run_service.get_agent_run_result(run_id="run-x", current_uid="user-1", db=object())
+
+    assert payload["status"] == "failed"
+    assert payload["error"]["type"] == "run_not_found"
+
+
+@pytest.mark.asyncio
+async def test_await_agent_run_result_drains_stream_then_loads_result(monkeypatch: pytest.MonkeyPatch):
+    drained: list[str] = []
+
+    async def fake_stream(*, run_id: str, after_seq: str, current_uid: str, verbose: bool):
+        assert run_id == "run-1"
+        assert after_seq == "0-0"
+        assert current_uid == "user-1"
+        assert verbose is False
+        for chunk in ("event: messages\n\n", "event: end\n\n"):
+            drained.append(chunk)
+            yield chunk
+
+    async def fake_load(*, run_id: str, current_uid: str):
+        assert run_id == "run-1"
+        assert current_uid == "user-1"
+        return {"status": "completed", "output": "final"}
+
+    monkeypatch.setattr(agent_run_service, "stream_agent_run_events", fake_stream)
+    monkeypatch.setattr(agent_run_service, "load_agent_run_result", fake_load)
+
+    payload = await agent_run_service.await_agent_run_result(run_id="run-1", current_uid="user-1")
+
+    assert len(drained) == 2
+    assert payload == {"status": "completed", "output": "final"}
+
+
+@pytest.mark.asyncio
+async def test_request_cancel_agent_run_can_cascade_children(monkeypatch: pytest.MonkeyPatch):
+    parent_run = SimpleNamespace(id="parent-run", uid="user-1")
+    child_runs = [SimpleNamespace(id="child-1"), SimpleNamespace(id="child-2")]
+    requested: list[str] = []
+    signals: list[str] = []
+
+    class RunRepo:
+        def __init__(self, db):
+            self.db = db
+
+        async def get_run_for_user(self, run_id: str, uid: str):
+            assert run_id == "parent-run"
+            assert uid == "user-1"
+            return parent_run
+
+        async def list_active_child_runs_for_user(self, parent_agent_run_id: str, uid: str):
+            assert parent_agent_run_id == "parent-run"
+            assert uid == "user-1"
+            return child_runs
+
+        async def request_cancel(self, run_id: str):
+            requested.append(run_id)
+            return parent_run if run_id == "parent-run" else SimpleNamespace(id=run_id)
+
+    async def fake_publish_cancel_signal(run_id: str):
+        signals.append(run_id)
+
+    monkeypatch.setattr(agent_run_service, "AgentRunRepository", RunRepo)
+    monkeypatch.setattr(agent_run_service, "publish_cancel_signal", fake_publish_cancel_signal)
+
+    run = await agent_run_service.request_cancel_agent_run(
+        run_id="parent-run",
+        current_uid="user-1",
+        db=object(),
+        cascade_children=True,
+    )
+
+    assert run is parent_run
+    assert requested == ["child-1", "child-2", "parent-run"]
+    assert signals == ["child-1", "child-2", "parent-run"]
 
 
 def test_validate_model_spec_returns_none_when_empty():

@@ -255,7 +255,7 @@ def remove_files_from_mindmap(mindmap_data: dict[str, Any], removed_filenames: s
 
 
 async def get_mindmap_database_files(kb_id: str) -> dict[str, Any]:
-    db_info = await knowledge_base.get_database_info(kb_id)
+    db_info = await knowledge_base.get_database_info(kb_id, include_files=True)
     if not db_info:
         raise HTTPException(status_code=404, detail=f"知识库 {kb_id} 不存在")
 
@@ -276,7 +276,7 @@ async def get_mindmap_diff(kb_id: str) -> dict[str, Any]:
     if kb is None:
         raise HTTPException(status_code=404, detail=f"知识库 {kb_id} 不存在")
 
-    db_info = await knowledge_base.get_database_info(kb_id)
+    db_info = await knowledge_base.get_database_info(kb_id, include_files=True)
     current_files = db_info.get("files", {}) if db_info else {}
 
     changes = detect_mindmap_changes(kb.mindmap, kb.mindmap_file_ids, current_files)
@@ -292,7 +292,7 @@ async def update_mindmap_incremental(kb_id: str, user_prompt: str = "") -> dict[
     if kb is None or not kb.mindmap:
         raise HTTPException(status_code=400, detail="知识库没有现有思维导图，请使用全量生成")
 
-    db_info = await knowledge_base.get_database_info(kb_id)
+    db_info = await knowledge_base.get_database_info(kb_id, include_files=True)
     db_name = db_info.get("name", "知识库") if db_info else "知识库"
     current_files = db_info.get("files", {}) if db_info else {}
 
@@ -388,7 +388,7 @@ async def generate_database_mindmap(
     if incremental:
         return await update_mindmap_incremental(kb_id, user_prompt)
 
-    db_info = await knowledge_base.get_database_info(kb_id)
+    db_info = await knowledge_base.get_database_info(kb_id, include_files=True)
     if not db_info:
         raise HTTPException(status_code=404, detail=f"知识库 {kb_id} 不存在")
 
@@ -466,7 +466,7 @@ async def get_mindmap_databases_overview(uid: str) -> dict[str, Any]:
         if not kb_id:
             continue
 
-        detail_info = await knowledge_base.get_database_info(kb_id)
+        detail_info = await knowledge_base.get_database_info(kb_id, include_files=True)
         file_count = len(detail_info.get("files", {})) if detail_info else 0
         db_list.append(
             {

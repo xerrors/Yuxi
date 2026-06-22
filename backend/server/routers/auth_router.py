@@ -4,7 +4,7 @@ from yuxi.utils import logger
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, status, UploadFile, File
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +21,15 @@ from server.utils.auth_middleware import (
 from yuxi.utils.auth_utils import AuthUtils
 from yuxi.services.user_identity_service import generate_unique_uid, validate_username, is_valid_phone_number
 from yuxi.services.operation_log_service import log_operation
+from yuxi.services.auth_service import (
+    CLI_AUTH_POLL_INTERVAL_SECONDS,
+    CLI_AUTH_SESSION_TTL_SECONDS,
+    CLIAuthError,
+    approve_cli_auth_session,
+    create_cli_auth_session,
+    exchange_cli_auth_token,
+    get_cli_auth_session_for_user,
+)
 from yuxi.storage.minio import upload_image_to_minio
 from yuxi.utils.datetime_utils import utc_now_naive
 
@@ -132,9 +141,53 @@ class OIDCLoginResponse(BaseModel):
     department_name: str | None = None
 
 
+class CLIAuthSessionCreate(BaseModel):
+    key_name: str | None = Field(default=None, max_length=100)
+
+
+class CLIAuthTokenRequest(BaseModel):
+    device_code: str
+
+
+class CLIAuthSessionCreateResponse(BaseModel):
+    device_code: str
+    user_code: str
+    verification_uri: str
+    expires_in: int
+    interval: int
+
+
+class CLIAuthSessionResponse(BaseModel):
+    user_code: str
+    status: str
+    key_name: str
+    created_at: str
+    expires_at: str
+    approved_at: str | None = None
+
+
+class CLIAuthApproveResponse(BaseModel):
+    user_code: str
+    status: str
+    approved_at: str | None = None
+
+
+class CLIAuthTokenResponse(BaseModel):
+    api_key: dict
+    secret: str
+    user: dict
+
+
 # =============================================================================
 # === 工具函数 ===
 # =============================================================================
+
+
+def _raise_cli_auth_error(exc: CLIAuthError) -> None:
+    raise HTTPException(
+        status_code=exc.status_code,
+        detail={"error": exc.code, "message": exc.message},
+    ) from exc
 
 
 # 路由：登录获取令牌
@@ -236,6 +289,57 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
         "department_id": user.department_id,
         "department_name": department_name,
     }
+
+
+# =============================================================================
+# === CLI 浏览器登录授权分组 ===
+# =============================================================================
+
+
+@auth.post("/cli/sessions", response_model=CLIAuthSessionCreateResponse)
+async def create_cli_session(data: CLIAuthSessionCreate, db: AsyncSession = Depends(get_db)):
+    session, device_code = await create_cli_auth_session(db, key_name=data.key_name)
+    return CLIAuthSessionCreateResponse(
+        device_code=device_code,
+        user_code=session.user_code,
+        verification_uri="/auth/cli/authorize",
+        expires_in=CLI_AUTH_SESSION_TTL_SECONDS,
+        interval=CLI_AUTH_POLL_INTERVAL_SECONDS,
+    )
+
+
+@auth.get("/cli/sessions/{user_code}", response_model=CLIAuthSessionResponse)
+async def get_cli_session(
+    user_code: str,
+    _current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        session = await get_cli_auth_session_for_user(db, user_code)
+    except CLIAuthError as exc:
+        _raise_cli_auth_error(exc)
+    return CLIAuthSessionResponse(**session.to_dict())
+
+
+@auth.post("/cli/sessions/{user_code}/approve", response_model=CLIAuthApproveResponse)
+async def approve_cli_session(
+    user_code: str,
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        session = await approve_cli_auth_session(db, user_code, current_user)
+    except CLIAuthError as exc:
+        _raise_cli_auth_error(exc)
+    return CLIAuthApproveResponse(**session.to_dict())
+
+
+@auth.post("/cli/sessions/token", response_model=CLIAuthTokenResponse)
+async def exchange_cli_session_token(data: CLIAuthTokenRequest, db: AsyncSession = Depends(get_db)):
+    try:
+        return await exchange_cli_auth_token(db, data.device_code)
+    except CLIAuthError as exc:
+        _raise_cli_auth_error(exc)
 
 
 # 路由：校验是否需要初始化管理员
@@ -755,15 +859,9 @@ async def delete_user(
 
     deletion_detail = f"删除用户: {user.username}, ID: {user.id}, 角色: {user.role}"
 
-    # 软删除：标记删除状态并脱敏
-    import hashlib
-
-    # 生成4位哈希（基于 user_id + id，避免历史软删除记录重名冲突）
-    hash_suffix = hashlib.sha256(f"{user.uid}:{user.id}".encode()).hexdigest()[:4]
-
     user.is_deleted = 1
     user.deleted_at = utc_now_naive()
-    user.username = f"已注销用户-{hash_suffix}"
+    user.username = f"已注销用户-{user.id}"
     user.phone_number = None  # 清空手机号，释放该手机号供其他用户使用
     user.password_hash = "DELETED"  # 禁止登录
     user.avatar = None  # 清空头像

@@ -1,14 +1,14 @@
 import os
-import aiofiles
 from pathlib import Path
 
+import aiofiles
 import yaml
 from fastapi import APIRouter, Body, Depends, HTTPException
-
-from yuxi.storage.postgres.models_business import User
-from server.utils.auth_middleware import get_admin_user
 from yuxi import config, get_version
+from yuxi.storage.postgres.models_business import User
 from yuxi.utils.logging_config import logger
+
+from server.utils.auth_middleware import get_admin_user
 
 system = APIRouter(prefix="/system", tags=["system"])
 
@@ -21,6 +21,31 @@ system = APIRouter(prefix="/system", tags=["system"])
 async def health_check():
     """系统健康检查接口（公开接口）"""
     return {"status": "ok", "message": "服务正常运行", "version": get_version()}
+
+
+@system.get("/discovery")
+async def discovery():
+    """系统能力发现接口（公开接口）"""
+    return {
+        "name": "Yuxi",
+        "version": get_version(),
+        "api_prefix": "/api",
+        "capabilities": {
+            "cli": {
+                "min_cli_version": "0.1.0",
+                "browser_login": True,
+                "api_key_auth": True,
+                "remote_config": True,
+                "kb_upload": True,
+            }
+        },
+        "endpoints": {
+            "health": "/api/system/health",
+            "auth_me": "/api/auth/me",
+            "cli_auth_sessions": "/api/auth/cli/sessions",
+            "cli_auth_authorize": "/auth/cli/authorize",
+        },
+    }
 
 
 # =============================================================================

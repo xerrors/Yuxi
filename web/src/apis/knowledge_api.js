@@ -92,7 +92,39 @@ export const databaseApi = {
 // === 文档管理分组 ===
 // =============================================================================
 
+const buildQuery = (params) => {
+  const query = new URLSearchParams()
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      query.set(key, String(value))
+    }
+  })
+  return query.toString()
+}
+
 export const documentApi = {
+  /**
+   * 分页获取知识库文档列表
+   * @param {string} kbId - 知识库ID
+   * @param {Object} params - 查询参数
+   * @returns {Promise} - 文档列表
+   */
+  listDocuments: async (kbId, params = {}) => {
+    const query = buildQuery(params)
+    return apiAdminGet(`/api/knowledge/databases/${kbId}/documents${query ? `?${query}` : ''}`)
+  },
+
+  /**
+   * 检查知识库中是否存在指定文件名或相对路径
+   * @param {string} kbId - 知识库ID
+   * @param {string} filename - 文件名或相对路径
+   * @returns {Promise} - 存在性检查结果
+   */
+  documentExists: async (kbId, filename) => {
+    const query = buildQuery({ filename })
+    return apiAdminGet(`/api/knowledge/databases/${kbId}/documents/exists?${query}`)
+  },
+
   /**
    * 创建文件夹
    * @param {string} kbId - 知识库ID
@@ -108,19 +140,6 @@ export const documentApi = {
   },
 
   /**
-   * 移动文档/文件夹
-   * @param {string} kbId - 知识库ID
-   * @param {string} docId - 文档/文件夹ID
-   * @param {string} newParentId - 新的父文件夹ID
-   * @returns {Promise} - 移动结果
-   */
-  moveDocument: async (kbId, docId, newParentId) => {
-    return apiAdminPut(`/api/knowledge/databases/${kbId}/documents/${docId}/move`, {
-      new_parent_id: newParentId
-    })
-  },
-
-  /**
    * 添加文档到知识库
    * @param {string} kbId - 知识库ID
    * @param {Array} items - 文档列表
@@ -129,6 +148,20 @@ export const documentApi = {
    */
   addDocuments: async (kbId, items, params = {}) => {
     return apiAdminPost(`/api/knowledge/databases/${kbId}/documents`, {
+      items,
+      params
+    })
+  },
+
+  /**
+   * 将已上传文件添加为知识库文档记录（不解析、不入库）
+   * @param {string} kbId - 知识库ID
+   * @param {Array} items - 已上传文件的 MinIO URL 列表
+   * @param {Object} params - 添加参数
+   * @returns {Promise} - 添加结果
+   */
+  addUploadedDocuments: async (kbId, items, params = {}) => {
+    return apiAdminPost(`/api/knowledge/databases/${kbId}/documents/add`, {
       items,
       params
     })

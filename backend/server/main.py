@@ -31,10 +31,46 @@ setup_logging()
 RATE_LIMIT_MAX_ATTEMPTS = 10
 RATE_LIMIT_WINDOW_SECONDS = 60
 RATE_LIMIT_ENDPOINTS = {("/api/auth/token", "POST")}
+DEFAULT_DEVELOPMENT_CORS_ORIGINS = ("http://localhost:5173", "http://127.0.0.1:5173")
+EXPLICIT_CORS_METHODS = ("DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT")
+EXPLICIT_CORS_HEADERS = ("Accept", "Authorization", "Content-Type", "Last-Event-ID", "X-Requested-With")
 
 # In-memory login attempt tracker to reduce brute-force exposure per worker
 _login_attempts: defaultdict[str, deque[float]] = defaultdict(deque)
 _attempt_lock = asyncio.Lock()
+
+
+def _parse_cors_origins() -> list[str]:
+    value = os.getenv("YUXI_CORS_ORIGINS")
+    origins = [origin.strip() for origin in (value or "").split(",") if origin.strip()]
+    if origins:
+        return origins
+
+    environment = (os.getenv("YUXI_ENV") or "development").strip().lower()
+    if environment in {"production", "prod"}:
+        return []
+
+    return list(DEFAULT_DEVELOPMENT_CORS_ORIGINS)
+
+
+def _build_cors_options(origins: list[str] | None = None) -> dict[str, object]:
+    allow_origins = _parse_cors_origins() if origins is None else origins
+    if "*" in allow_origins:
+        return {
+            "allow_origins": ["*"],
+            "allow_credentials": False,
+            "allow_methods": ["*"],
+            "allow_headers": ["*"],
+        }
+
+    return {
+        "allow_origins": allow_origins,
+        "allow_credentials": True,
+        "allow_methods": list(EXPLICIT_CORS_METHODS),
+        "allow_headers": list(EXPLICIT_CORS_HEADERS),
+        "expose_headers": ["Content-Disposition", "X-Lock-Remaining"],
+    }
+
 
 app = FastAPI(lifespan=lifespan)
 # 所有业务接口统一挂载到 /api，具体分组在 server.routers 中集中注册。
@@ -43,10 +79,7 @@ app.include_router(router, prefix="/api")
 # CORS 设置
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    **_build_cors_options(),
 )
 
 
