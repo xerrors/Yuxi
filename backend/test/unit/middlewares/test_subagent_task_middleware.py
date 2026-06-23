@@ -4,11 +4,13 @@ from types import SimpleNamespace
 
 import pytest
 import yuxi.agents.middlewares.subagent_task as subagent_task_middleware
+from langchain.agents._subagent_transformer import SubagentTransformer as LangChainSubagentTransformer
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.prebuilt.tool_node import ToolRuntime
+from langgraph.stream._mux import StreamMux
 from langgraph.types import Command
 from yuxi.agents.buildin.chatbot.state import merge_subagent_runs
-from yuxi.agents.middlewares.subagent_task import YuxiSubAgentMiddleware
+from yuxi.agents.middlewares.subagent_task import YUXI_SUBAGENTS_STREAM_KEY, YuxiSubAgentMiddleware
 from yuxi.utils.subagent_thread_utils import make_child_thread_id
 from yuxi.repositories.agent_repository import SUB_AGENT_BACKEND_ID
 
@@ -106,6 +108,29 @@ async def test_create_task_middleware_loads_all_visible_subagents_when_empty(mon
     assert isinstance(middleware, YuxiSubAgentMiddleware)
     assert middleware.subagent_names == frozenset({"worker"})
     assert middleware.transformers
+
+
+def test_yuxi_subagent_transformer_does_not_conflict_with_langchain_default() -> None:
+    middleware = YuxiSubAgentMiddleware(
+        parent_context=SimpleNamespace(thread_id="parent-thread", uid="user-1"),
+        subagents=[
+            SimpleNamespace(
+                slug="worker",
+                name="Worker",
+                description="work on scoped tasks",
+                backend_id=SUB_AGENT_BACKEND_ID,
+                config_json={},
+            )
+        ],
+    )
+
+    mux = StreamMux(
+        factories=[LangChainSubagentTransformer, *middleware.transformers],
+        is_async=True,
+    )
+
+    assert "subagents" in mux.extensions
+    assert YUXI_SUBAGENTS_STREAM_KEY in mux.extensions
 
 
 @pytest.mark.asyncio
