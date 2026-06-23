@@ -593,6 +593,45 @@ def _build_ask_user_question_payload(info: Any, thread_id: str) -> dict[str, Any
     }
 
 
+def _is_human_approval_payload(payload: dict) -> bool:
+    """判断 interrupt 是否为 HumanInTheLoopMiddleware 的工具审批载荷。
+
+    HIL 中间件产生的 interrupt value 含 ``action_requests``(待审批的工具调用)
+    与 ``review_configs``(每个工具允许的决策类型),与 ask_user_question 的
+    ``questions`` 结构不同。用 ``action_requests`` 作为判别依据。
+    """
+    action_requests = payload.get("action_requests")
+    return isinstance(action_requests, list) and len(action_requests) > 0
+
+
+def _build_human_approval_payload(info: Any, thread_id: str) -> dict[str, Any]:
+    """将 HIL 工具审批 interrupt 标准化为 human_approval_required 载荷。"""
+    payload = _coerce_interrupt_payload(info)
+
+    action_requests = payload.get("action_requests") or []
+    review_configs = payload.get("review_configs") or []
+
+    # 为每个 action_request 补齐 description(供前端展示),保留原始字段
+    normalized_actions: list[dict[str, Any]] = []
+    for action in action_requests:
+        if not isinstance(action, dict):
+            continue
+        action = dict(action)
+        if not action.get("description"):
+            action["description"] = "操作需要确认\n\nTool: {name}\nArgs: {args}".format(
+                name=action.get("name", ""),
+                args=action.get("args", {}),
+            )
+        normalized_actions.append(action)
+
+    return {
+        "action_requests": normalized_actions,
+        "review_configs": review_configs,
+        "source": "human_approval",
+        "thread_id": thread_id,
+    }
+
+
 def _ensure_full_msg(full_msg: AIMessage | None, accumulated_content: list[str]) -> AIMessage | None:
     """如果 full_msg 为空且有累积内容，构建 AIMessage"""
     if not full_msg and accumulated_content:
@@ -673,9 +712,15 @@ async def check_and_handle_interrupts(
 
         interrupt_info = _extract_interrupt_info(state)
         if interrupt_info:
-            question_payload = _build_ask_user_question_payload(interrupt_info, thread_id)
-            meta["interrupt"] = question_payload
-            yield make_chunk(status="ask_user_question_required", meta=meta, **question_payload)
+            payload = _coerce_interrupt_payload(interrupt_info)
+            if _is_human_approval_payload(payload):
+                approval_payload = _build_human_approval_payload(interrupt_info, thread_id)
+                meta["interrupt"] = approval_payload
+                yield make_chunk(status="human_approval_required", meta=meta, **approval_payload)
+            else:
+                question_payload = _build_ask_user_question_payload(interrupt_info, thread_id)
+                meta["interrupt"] = question_payload
+                yield make_chunk(status="ask_user_question_required", meta=meta, **question_payload)
 
     except Exception as e:
         logger.exception(f"Error checking interrupts: {e}")
