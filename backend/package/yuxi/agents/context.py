@@ -239,8 +239,7 @@ class BaseContext:
         metadata={
             "name": "摘要后保留消息数",
             "description": (
-                f"上下文摘要触发后，除摘要消息外保留最近的消息数量，默认 "
-                f"{DEFAULT_SUMMARY_KEEP_MESSAGES} 条。"
+                f"上下文摘要触发后，除摘要消息外保留最近的消息数量，默认 {DEFAULT_SUMMARY_KEEP_MESSAGES} 条。"
             ),
             "type": "number",
             "auth": "admin",

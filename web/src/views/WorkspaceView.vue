@@ -533,10 +533,7 @@ const openKnowledgeDirectory = async (entry) => {
     parentId: nextBreadcrumb.parentId,
     pathPrefix: nextBreadcrumb.pathPrefix,
     page: 1,
-    breadcrumbs: [
-      ...knowledgeBreadcrumbItems.value,
-      nextBreadcrumb
-    ]
+    breadcrumbs: [...knowledgeBreadcrumbItems.value, nextBreadcrumb]
   })
 }
 

@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from typing import Annotated, Any
 
-from deepagents import SubagentTransformer
+from deepagents import SubagentTransformer as DeepAgentsSubagentTransformer
 from deepagents.middleware._utils import append_to_system_message
 from langchain.agents.middleware.types import AgentMiddleware, ContextT, ModelRequest, ModelResponse, ResponseT
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -25,6 +25,7 @@ from yuxi.utils.subagent_thread_utils import make_child_thread_id
 
 _CHILD_STATE_INHERIT_KEYS: frozenset[str] = frozenset()
 _TERMINAL_RUN_STATUSES = {"completed", "failed", "cancelled", "interrupted"}
+YUXI_SUBAGENTS_STREAM_KEY = "yuxi_subagents"
 
 TASK_SYSTEM_PROMPT = """## `task`（子智能体任务工具）
 
@@ -58,6 +59,11 @@ Do not call subagents through shell, curl, HTTP APIs, or command-line indirectio
 TASK_DESCRIPTION_ARG = "需要子智能体独立完成的任务描述，包含必要上下文和期望输出。"
 SUBAGENT_TYPE_ARG = "要调用的子智能体标识，必须是工具描述中列出的可用类型之一。"
 THREAD_ID_ARG = "可选。要继续的既有子智能体线程 ID，必须来自之前 task 工具结果；新任务不要填写。"
+
+
+class YuxiSubagentTransformer(DeepAgentsSubagentTransformer):
+    def init(self) -> dict[str, Any]:
+        return {YUXI_SUBAGENTS_STREAM_KEY: self._log}
 
 
 def _get_agent_backend(backend_id: str):
@@ -260,7 +266,7 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
         self.system_prompt = TASK_SYSTEM_PROMPT.format(available_agents=available_agents)
         self.tools = [self._build_task_tool(available_agents)]
         self.subagent_names = frozenset(self.subagents)
-        self.transformers = [lambda scope: SubagentTransformer(scope, subagent_names=self.subagent_names)]
+        self.transformers = [lambda scope: YuxiSubagentTransformer(scope, subagent_names=self.subagent_names)]
 
     async def _create_subagent_run(
         self,

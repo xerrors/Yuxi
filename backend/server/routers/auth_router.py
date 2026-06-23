@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.storage.postgres.manager import pg_manager
-from yuxi.storage.postgres.models_business import User, Department
+from yuxi.storage.postgres.models_business import APIKey, User, Department
 from yuxi.repositories.user_repository import UserRepository
 from yuxi.repositories.department_repository import DepartmentRepository
 from server.utils.auth_middleware import (
@@ -865,6 +865,9 @@ async def delete_user(
     user.phone_number = None  # 清空手机号，释放该手机号供其他用户使用
     user.password_hash = "DELETED"  # 禁止登录
     user.avatar = None  # 清空头像
+    api_key_result = await db.execute(select(APIKey).filter(APIKey.user_id == user.id))
+    for api_key in api_key_result.scalars().all():
+        api_key.is_enabled = False
 
     await db.commit()
 

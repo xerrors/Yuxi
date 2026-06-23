@@ -265,8 +265,7 @@ export function useStreamSmoother({ getThreadState, options = {} }) {
       return
     }
 
-    const hasImmediateBudget =
-      Number.isFinite(immediateBudget) && Math.floor(immediateBudget) > 0
+    const hasImmediateBudget = Number.isFinite(immediateBudget) && Math.floor(immediateBudget) > 0
     const budget = forceFlush
       ? pending
       : hasImmediateBudget

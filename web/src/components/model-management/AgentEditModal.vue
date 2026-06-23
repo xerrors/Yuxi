@@ -383,7 +383,9 @@ defineExpose({
                     placeholder="标识可选，留空自动生成"
                     aria-label="智能体标识"
                   />
-                  <span v-else class="agent-inline-slug">{{ agentForm.slug || editingAgentId }}</span>
+                  <span v-else class="agent-inline-slug">{{
+                    agentForm.slug || editingAgentId
+                  }}</span>
                 </div>
               </div>
               <div

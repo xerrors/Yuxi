@@ -57,35 +57,41 @@ export const FILE_STATUS_FILTER_OPTIONS = [
   { label: '重试入库', value: 'error_indexing' }
 ]
 
-export const getFileStatusView = (status) => STATUS_VIEW[status] || { label: status || '', tone: '', icon: null }
+export const getFileStatusView = (status) =>
+  STATUS_VIEW[status] || { label: status || '', tone: '', icon: null }
 
 export const getFilePrimaryAction = (record) => {
   if (!record || record.is_folder) return null
   return STATUS_ACTION[record.status] || null
 }
 
-export const canParseFile = (record) => Boolean(record && !record.is_folder && PARSEABLE_STATUSES.has(record.status))
+export const canParseFile = (record) =>
+  Boolean(record && !record.is_folder && PARSEABLE_STATUSES.has(record.status))
 
-export const canIndexFile = (record) => Boolean(record && !record.is_folder && INDEXABLE_STATUSES.has(record.status))
+export const canIndexFile = (record) =>
+  Boolean(record && !record.is_folder && INDEXABLE_STATUSES.has(record.status))
 
 export const canReindexFile = (record) =>
   Boolean(record && !record.is_folder && (record.status === 'done' || record.status === 'indexed'))
 
 export const canDownloadFile = (record) =>
-  Boolean(record && !record.is_folder && record.file_type !== 'url' && DOWNLOADABLE_STATUSES.has(record.status))
+  Boolean(
+    record &&
+    !record.is_folder &&
+    record.file_type !== 'url' &&
+    DOWNLOADABLE_STATUSES.has(record.status)
+  )
 
 export const canSelectFile = (record, locked = false) =>
   Boolean(
-    record &&
-      !record.is_folder &&
-      !locked &&
-      !TABLE_SELECTION_BLOCKED_STATUSES.has(record.status)
+    record && !record.is_folder && !locked && !TABLE_SELECTION_BLOCKED_STATUSES.has(record.status)
   )
 
 export const canDeleteFile = (record, locked = false) =>
   Boolean(record && !record.is_folder && !locked && !DELETE_BLOCKED_STATUSES.has(record.status))
 
-export const isProcessingFile = (record) => Boolean(record && PROCESSING_STATUSES.has(record.status))
+export const isProcessingFile = (record) =>
+  Boolean(record && PROCESSING_STATUSES.has(record.status))
 
 export const matchesStatusFilter = (record, status) => {
   if (!record || status === 'all') return true

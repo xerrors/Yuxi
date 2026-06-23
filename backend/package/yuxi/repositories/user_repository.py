@@ -8,10 +8,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.storage.postgres.manager import pg_manager
-from yuxi.storage.postgres.models_business import User
+from yuxi.storage.postgres.models_business import APIKey, User
 
-# 使用 naive datetime 以匹配 PostgreSQL TIMESTAMP WITHOUT TIME ZONE 列
-_utc_now = dt.now(UTC).replace(tzinfo=None)
+
+def _utc_now() -> dt:
+    # 使用 naive datetime 以匹配 PostgreSQL TIMESTAMP WITHOUT TIME ZONE 列
+    return dt.now(UTC).replace(tzinfo=None)
 
 
 class UserRepository:
@@ -115,6 +117,9 @@ class UserRepository:
                 user.username = f"已注销用户-{hash_suffix}"
             if phone_number:
                 user.phone_number = None
+            api_key_result = await session.execute(select(APIKey).where(APIKey.user_id == user.id))
+            for api_key in api_key_result.scalars().all():
+                api_key.is_enabled = False
         return True
 
     async def exists_by_uid(self, uid: str) -> bool:

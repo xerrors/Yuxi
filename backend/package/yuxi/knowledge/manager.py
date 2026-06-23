@@ -615,6 +615,24 @@ class KnowledgeBaseManager:
             raise ValueError("filename is required")
         return await KnowledgeFileRepository().exists_by_filename(kb_id=kb_id, filename=normalized_filename)
 
+    async def list_document_file_ids_by_statuses(
+        self,
+        kb_id: str,
+        *,
+        statuses: list[str],
+        after_file_id: str | None = None,
+        limit: int = 500,
+    ) -> list[str]:
+        """按文件状态游标分页获取文件 ID，用于后台批量处理任务。"""
+        from yuxi.repositories.knowledge_file_repository import KnowledgeFileRepository
+
+        return await KnowledgeFileRepository().list_file_ids_by_exact_statuses(
+            kb_id=kb_id,
+            statuses=statuses,
+            after_file_id=after_file_id,
+            limit=limit,
+        )
+
     async def delete_folder(self, kb_id: str, folder_id: str) -> None:
         """递归删除文件夹"""
         kb_instance = await self._get_kb_for_database(kb_id)

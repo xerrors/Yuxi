@@ -143,10 +143,7 @@
 
                 <a-button class="ocr-engine-trigger" block>
                   <span class="ocr-engine-trigger-main">
-                    <ReloadOutlined
-                      v-if="ocrHealthChecking"
-                      class="ocr-engine-trigger-loading"
-                    />
+                    <ReloadOutlined v-if="ocrHealthChecking" class="ocr-engine-trigger-loading" />
                     <span class="ocr-engine-trigger-label">{{ selectedOcrEngineLabel }}</span>
                   </span>
                   <ChevronDown :size="14" />

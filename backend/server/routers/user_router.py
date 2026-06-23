@@ -147,16 +147,19 @@ async def create_api_key(
     current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
-    target_user_id = data.user_id or current_user.id
-
     if data.user_id and data.user_id != current_user.id and current_user.role != "superadmin":
         raise HTTPException(status_code=403, detail="无权为其他用户创建 API Key")
 
+    target_user = current_user
     if data.user_id:
         result = await db.execute(select(User).filter(User.id == data.user_id))
         user = result.scalar_one_or_none()
         if not user or user.is_deleted:
             raise HTTPException(status_code=404, detail="关联的用户不存在")
+        target_user = user
+
+    if data.department_id is not None and data.department_id != target_user.department_id:
+        raise HTTPException(status_code=403, detail="API Key 部门必须与关联用户部门一致")
 
     full_key, key_hash, key_prefix = AuthUtils.generate_api_key()
     expires_at = None
@@ -169,7 +172,7 @@ async def create_api_key(
         key_hash=key_hash,
         key_prefix=key_prefix,
         name=data.name,
-        user_id=target_user_id,
+        user_id=target_user.id,
         department_id=data.department_id,
         expires_at=expires_at,
         created_by=str(current_user.id),

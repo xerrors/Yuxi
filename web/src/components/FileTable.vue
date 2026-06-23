@@ -6,12 +6,20 @@
       :title="indexConfigModalTitle"
       :confirm-loading="indexConfigModalLoading"
       width="600px"
+      @cancel="handleIndexConfigCancel"
     >
       <template #footer>
         <a-button key="back" @click="handleIndexConfigCancel">取消</a-button>
         <a-button key="submit" type="primary" @click="handleIndexConfigConfirm">确定</a-button>
       </template>
       <div class="index-params">
+        <a-alert
+          v-if="isPendingIndexOperation"
+          class="index-pending-alert"
+          type="info"
+          show-icon
+          :message="`将提交 ${pendingIndexTotalText} 个待入库文件，任务会在后台按批处理，可在任务中心查看进度。`"
+        />
         <ChunkParamsConfig
           :temp-chunk-params="indexParams"
           :show-qa-split="true"
@@ -345,6 +353,7 @@ import {
   canDeleteFile,
   canDownloadFile,
   canIndexFile,
+  canOpenFileDetail,
   canParseFile,
   canReindexFile,
   canSelectFile,
@@ -379,7 +388,9 @@ const applyFilters = async (overrides = {}) => {
   const recursive = nextStatus !== 'all'
   const currentFolder = folderBreadcrumbs.value[folderBreadcrumbs.value.length - 1]
   const isVirtualFolder = Boolean(currentFolder?.is_virtual_folder)
-  const parentId = isVirtualFolder ? currentFolder?.parent_id || null : currentFolder?.file_id || null
+  const parentId = isVirtualFolder
+    ? currentFolder?.parent_id || null
+    : currentFolder?.file_id || null
   const pathPrefix = isVirtualFolder ? currentFolder?.path_prefix || '' : ''
   await store.loadDocumentFiles({
     page: 1,
@@ -451,7 +462,9 @@ const currentStatusLabel = computed(() => {
   return opt ? opt.label : ''
 })
 
-const allSelectableFiles = computed(() => files.value.filter((file) => canSelectFile(file, lock.value)))
+const allSelectableFiles = computed(() =>
+  files.value.filter((file) => canSelectFile(file, lock.value))
+)
 
 const isAllSelected = computed(() => {
   const selectableIds = allSelectableFiles.value.map((f) => f.file_id)
@@ -505,6 +518,7 @@ defineExpose({
     statusFilter.value = status
     await applyFilters({ status })
   },
+  startPendingIndex: (count) => startPendingIndex(count),
   getCurrentFolderId: () => store.fileBrowser.parentId,
   refresh: () => handleRefresh()
 })
@@ -560,6 +574,9 @@ const buildIndexParamsPayload = () => {
 }
 const currentIndexFileIds = ref([])
 const isBatchIndexOperation = ref(false)
+const isPendingIndexOperation = ref(false)
+const pendingIndexTotal = ref(0)
+const pendingIndexTotalText = computed(() => Number(pendingIndexTotal.value || 0).toLocaleString('zh-CN'))
 
 const pageSizeOptions = ['100', '300', '500']
 
@@ -747,13 +764,40 @@ const handleBatchIndex = async () => {
 
   currentIndexFileIds.value = [...validKeys]
   isBatchIndexOperation.value = true
+  isPendingIndexOperation.value = false
+  pendingIndexTotal.value = 0
   indexConfigModalTitle.value = '批量入库参数配置'
   indexConfigModalVisible.value = true
 }
 
+const startPendingIndex = (count = 0) => {
+  if (lock.value) {
+    message.warning('当前有文件处理中，请稍后再试')
+    return false
+  }
+
+  const total = Number(count || 0)
+  if (total <= 0) {
+    message.info('没有待入库文档')
+    return false
+  }
+
+  currentIndexFileIds.value = []
+  isBatchIndexOperation.value = false
+  isPendingIndexOperation.value = true
+  pendingIndexTotal.value = total
+  indexConfigModalTitle.value = '待入库文件参数配置'
+  resetIndexParams()
+  indexConfigModalVisible.value = true
+  return true
+}
+
 const openFileDetail = (record) => {
-  console.log('openFileDetail', record)
-  store.openFileDetail(record)
+  if (!canOpenFileDetail(record)) {
+    message.error('文件未处理完成，请稍后再试')
+    return
+  }
+  store.openFileDetail(record.file_id)
 }
 
 const handleDownloadFile = async (record) => {
@@ -861,6 +905,8 @@ const handleIndexFile = async (record) => {
   closePopover(record.file_id)
   currentIndexFileIds.value = [record.file_id]
   isBatchIndexOperation.value = false
+  isPendingIndexOperation.value = false
+  pendingIndexTotal.value = 0
   indexConfigModalTitle.value = '入库参数配置'
 
   const processingParams = await loadRecordProcessingParams(record)
@@ -873,6 +919,8 @@ const handleReindexFile = async (record) => {
   closePopover(record.file_id)
   currentIndexFileIds.value = [record.file_id]
   isBatchIndexOperation.value = false
+  isPendingIndexOperation.value = false
+  pendingIndexTotal.value = 0
   indexConfigModalTitle.value = '重新入库参数配置'
 
   const processingParams = await loadRecordProcessingParams(record)
@@ -884,17 +932,22 @@ const handleReindexFile = async (record) => {
 // 入库确认 (统一处理 Index 和 Reindex)
 const handleIndexConfigConfirm = async () => {
   try {
-    // 调用 indexFiles 接口 (支持 params)
-    const result = await store.indexFiles(currentIndexFileIds.value, buildIndexParamsPayload())
+    const params = buildIndexParamsPayload()
+    const result = isPendingIndexOperation.value
+      ? await store.indexPendingFiles(params, pendingIndexTotal.value)
+      : await store.indexFiles(currentIndexFileIds.value, params)
     if (result) {
       currentIndexFileIds.value = []
+      pendingIndexTotal.value = 0
       // 清空选择
-      if (isBatchIndexOperation.value) {
+      if (isBatchIndexOperation.value || isPendingIndexOperation.value) {
         selectedRowKeys.value = []
       }
       // 关闭模态框
       indexConfigModalVisible.value = false
 
+      isBatchIndexOperation.value = false
+      isPendingIndexOperation.value = false
       resetIndexParams()
     } else {
       // message.error(`入库失败: ${result.message}`); // store already shows message
@@ -911,6 +964,8 @@ const handleIndexConfigCancel = () => {
   indexConfigModalVisible.value = false
   currentIndexFileIds.value = []
   isBatchIndexOperation.value = false
+  isPendingIndexOperation.value = false
+  pendingIndexTotal.value = 0
   resetIndexParams()
 }
 
@@ -1035,6 +1090,10 @@ import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
     width: 14px;
     height: 14px;
   }
+}
+
+.index-pending-alert {
+  margin-bottom: 12px;
 }
 
 .file-name-cell,

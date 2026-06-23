@@ -16,10 +16,10 @@ from yuxi.services.file_preview import (
     MAX_BINARY_PREVIEW_SIZE_BYTES,
     OfficePreviewConversionError,
     convert_office_to_pdf,
-    detect_preview_type,
     detect_media_type,
-    is_office_pdf_preview_file,
+    detect_preview_type,
     is_binary_preview_type,
+    is_office_pdf_preview_file,
     render_preview_payload,
     render_preview_too_large_payload,
 )
@@ -200,9 +200,7 @@ async def read_workspace_file_content(*, path: str, current_user: User) -> dict 
     return render_preview_payload(path, raw_content)
 
 
-def _preview_binary_response(
-    *, filename: str, content: bytes, media_type: str, preview_type: str
-) -> StreamingResponse:
+def _preview_binary_response(*, filename: str, content: bytes, media_type: str, preview_type: str) -> StreamingResponse:
     headers = {
         "Content-Disposition": f"inline; filename*=UTF-8''{quote(filename)}",
         "X-Yuxi-Preview-Type": preview_type,

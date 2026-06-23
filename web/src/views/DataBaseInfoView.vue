@@ -1,6 +1,11 @@
 <template>
   <div class="database-info-container extension-detail-page">
-    <FileDetailModal />
+    <FileDetailModal
+      v-model:open="store.state.fileDetailModalVisible"
+      :kb-id="kbId"
+      :file-id="store.fileDetailFileId"
+      @closed="store.closeFileDetail"
+    />
 
     <FileUploadModal
       v-model:visible="addFilesModalVisible"
@@ -90,9 +95,11 @@
               </div>
             </div>
             <div class="file-panel-status">
-              <div
+              <button
                 v-if="pendingParseCount > 0"
+                type="button"
                 class="file-stat-card file-stat-action file-stat-summary"
+                :disabled="store.state.chunkLoading"
                 @click="confirmBatchParse"
               >
                 <FileText :size="16" />
@@ -100,10 +107,12 @@
                   <strong>{{ pendingParseCount }}</strong>
                   <span>待解析</span>
                 </div>
-              </div>
-              <div
+              </button>
+              <button
                 v-if="pendingIndexCount > 0"
+                type="button"
                 class="file-stat-card file-stat-action file-stat-summary"
+                :disabled="store.state.chunkLoading"
                 @click="confirmBatchIndex"
               >
                 <DatabaseIcon :size="16" />
@@ -111,7 +120,7 @@
                   <strong>{{ pendingIndexCount }}</strong>
                   <span>待入库</span>
                 </div>
-              </div>
+              </button>
               <div class="file-stat-card file-stat-summary">
                 <FileText :size="16" />
                 <div class="file-stat-inline">
@@ -370,7 +379,7 @@ import {
   Trash2
 } from 'lucide-vue-next'
 import { QuestionCircleOutlined } from '@ant-design/icons-vue'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import FileTable from '@/components/FileTable.vue'
 import FileDetailModal from '@/components/FileDetailModal.vue'
 import FileUploadModal from '@/components/FileUploadModal.vue'
@@ -517,11 +526,32 @@ const pendingIndexCount = computed(() => {
 })
 
 const confirmBatchParse = () => {
-  fileTableRef.value?.applyStatusFilter?.('uploaded')
+  const count = pendingParseCount.value
+  if (count <= 0) {
+    message.info('没有待解析文档')
+    return
+  }
+
+  Modal.confirm({
+    title: '解析待解析文件',
+    content: `将提交 ${formatStatNumber(count)} 个待解析文件，任务会在后台按批处理，可在任务中心查看进度。`,
+    okText: '提交解析',
+    cancelText: '取消',
+    onOk: () => store.parsePendingFiles(count)
+  })
 }
 
 const confirmBatchIndex = () => {
-  fileTableRef.value?.applyStatusFilter?.('parsed')
+  const count = pendingIndexCount.value
+  if (count <= 0) {
+    message.info('没有待入库文档')
+    return
+  }
+
+  const opened = fileTableRef.value?.startPendingIndex?.(count)
+  if (!opened) {
+    message.error('文件列表尚未加载完成，请稍后再试')
+  }
 }
 
 const mindmapSectionRef = ref(null)
@@ -555,7 +585,8 @@ const showAddFilesModal = (options = {}) => {
   isFolderUploadMode.value = isFolder
   addFilesMode.value = mode
   addFilesModalVisible.value = true
-  currentFolderId.value = fileTableRef.value?.getCurrentFolderId?.() || store.fileBrowser.parentId || null
+  currentFolderId.value =
+    fileTableRef.value?.getCurrentFolderId?.() || store.fileBrowser.parentId || null
 }
 
 const showCreateFolderModal = () => {
@@ -565,7 +596,9 @@ const showCreateFolderModal = () => {
 const folderTree = computed(() => {
   const roots = []
   let currentLevel = roots
-  for (const item of (store.folderBreadcrumbs || []).slice(1).filter((node) => !node.is_virtual_folder)) {
+  for (const item of (store.folderBreadcrumbs || [])
+    .slice(1)
+    .filter((node) => !node.is_virtual_folder)) {
     const node = {
       file_id: item.file_id,
       filename: item.filename,
@@ -584,8 +617,7 @@ const onFileUploadSuccess = () => {
 
 const resetFileSelectionState = () => {
   store.selectedRowKeys = []
-  store.selectedFile = null
-  store.state.fileDetailModalVisible = false
+  store.closeFileDetail()
   store.resetFileBrowser()
 }
 
@@ -695,9 +727,7 @@ const rules = {
 const chunkPresetOptions = CHUNK_PRESET_OPTIONS.map(({ label, value }) => ({ label, value }))
 const editPresetDescription = computed(() => getChunkPresetDescription(editForm.chunk_preset_id))
 const fileList = computed(() => {
-  return (store.documentFiles || [])
-    .map((f) => f.filename)
-    .filter(Boolean)
+  return (store.documentFiles || []).map((f) => f.filename).filter(Boolean)
 })
 
 const canEditShareConfig = computed(() => userStore.isSuperAdmin || userStore.isAdmin)
@@ -1143,6 +1173,11 @@ onMounted(() => {
 
   &:hover {
     border-color: var(--color-warning-700);
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
   }
 }
 

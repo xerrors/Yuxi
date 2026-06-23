@@ -26,6 +26,36 @@ class KnowledgeFileRepository:
             result = await session.execute(select(KnowledgeFile).where(KnowledgeFile.kb_id == kb_id))
             return list(result.scalars().all())
 
+    async def list_file_ids_by_exact_statuses(
+        self,
+        *,
+        kb_id: str,
+        statuses: list[str],
+        after_file_id: str | None = None,
+        limit: int = 500,
+    ) -> list[str]:
+        normalized_statuses = [status for status in statuses if status]
+        if not normalized_statuses:
+            return []
+
+        normalized_limit = min(max(int(limit or 100), 1), 500)
+        filters = [
+            KnowledgeFile.kb_id == kb_id,
+            KnowledgeFile.is_folder.is_(False),
+            KnowledgeFile.status.in_(normalized_statuses),
+        ]
+        if after_file_id:
+            filters.append(KnowledgeFile.file_id > after_file_id)
+
+        async with pg_manager.get_async_session_context() as session:
+            result = await session.execute(
+                select(KnowledgeFile.file_id)
+                .where(*filters)
+                .order_by(KnowledgeFile.file_id.asc())
+                .limit(normalized_limit)
+            )
+            return [str(file_id) for file_id in result.scalars().all()]
+
     async def exists_by_filename(self, *, kb_id: str, filename: str) -> bool:
         async with pg_manager.get_async_session_context() as session:
             result = await session.execute(

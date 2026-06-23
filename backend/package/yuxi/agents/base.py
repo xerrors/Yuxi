@@ -80,7 +80,9 @@ def _subagent_route_for_namespace(
 
 
 async def _collect_subagent_routes(run, parent_thread_id: str, routes: dict[tuple[str, ...], dict[str, str]]) -> None:
-    subagents = getattr(run, "subagents", None)
+    subagents = getattr(run, "yuxi_subagents", None)
+    if subagents is None:
+        subagents = getattr(run, "subagents", None)
     if subagents is None:
         return
 

@@ -265,6 +265,157 @@ async def test_index_documents_uses_uid_for_operator(monkeypatch):
     assert captured["operator_id"] == "uid-user"
 
 
+async def test_parse_documents_rejects_oversized_direct_batch():
+    file_ids = [f"file_{index}" for index in range(knowledge_router.MAX_DIRECT_DOCUMENT_ACTION_FILE_IDS + 1)]
+
+    with pytest.raises(HTTPException) as exc_info:
+        await knowledge_router.parse_documents(
+            "kb_1",
+            file_ids,
+            current_user=SimpleNamespace(uid="uid-user"),
+        )
+
+    assert exc_info.value.status_code == 400
+    assert str(knowledge_router.MAX_DIRECT_DOCUMENT_ACTION_FILE_IDS) in exc_info.value.detail
+
+
+async def test_parse_pending_documents_enqueues_status_scoped_task(monkeypatch):
+    captured = {"list_calls": [], "parsed": []}
+
+    async def fake_ensure_database_supports_documents(kb_id: str, operation: str) -> None:
+        captured["ensure"] = (kb_id, operation)
+
+    async def fake_get_database_info(kb_id: str) -> dict:
+        return {"name": "测试知识库", "stats": {"pending_parse_count": 2}}
+
+    async def fake_list_document_file_ids_by_statuses(kb_id: str, *, statuses, after_file_id, limit):
+        captured["list_calls"].append(
+            {"kb_id": kb_id, "statuses": statuses, "after_file_id": after_file_id, "limit": limit}
+        )
+        return ["file_1", "file_2"] if after_file_id is None else []
+
+    async def fake_parse_file(kb_id: str, file_id: str, operator_id: str | None = None):
+        captured["parsed"].append({"kb_id": kb_id, "file_id": file_id, "operator_id": operator_id})
+        return {"file_id": file_id, "status": "parsed"}
+
+    async def fake_enqueue_unique_by_payload(**kwargs):
+        captured["payload"] = kwargs["payload"]
+        captured["payload_match"] = kwargs["payload_match"]
+        captured["statuses"] = kwargs["statuses"]
+        await kwargs["coroutine"](FakeTaskContext())
+        return SimpleNamespace(id="task_1"), True
+
+    monkeypatch.setattr(
+        knowledge_router,
+        "_ensure_database_supports_documents",
+        fake_ensure_database_supports_documents,
+    )
+    monkeypatch.setattr(knowledge_router.knowledge_base, "get_database_info", fake_get_database_info)
+    monkeypatch.setattr(
+        knowledge_router.knowledge_base,
+        "list_document_file_ids_by_statuses",
+        fake_list_document_file_ids_by_statuses,
+    )
+    monkeypatch.setattr(knowledge_router.knowledge_base, "parse_file", fake_parse_file)
+    monkeypatch.setattr(knowledge_router.tasker, "enqueue_unique_by_payload", fake_enqueue_unique_by_payload)
+
+    result = await knowledge_router.parse_pending_documents(
+        "kb_1",
+        current_user=SimpleNamespace(uid="uid-user"),
+    )
+
+    assert result["status"] == "queued"
+    assert result["task_id"] == "task_1"
+    assert captured["ensure"] == ("kb_1", "文档解析")
+    assert captured["payload_match"] == {"kb_id": "kb_1", "scope": "pending", "action": "parse"}
+    assert captured["statuses"] == knowledge_router.ACTIVE_DOCUMENT_ACTION_TASK_STATUSES
+    assert captured["payload"]["statuses"] == knowledge_router.PENDING_PARSE_STATUSES
+    assert captured["list_calls"] == [
+        {
+            "kb_id": "kb_1",
+            "statuses": knowledge_router.PENDING_PARSE_STATUSES,
+            "after_file_id": None,
+            "limit": knowledge_router.DOCUMENT_ACTION_BATCH_SIZE,
+        },
+        {
+            "kb_id": "kb_1",
+            "statuses": knowledge_router.PENDING_PARSE_STATUSES,
+            "after_file_id": "file_2",
+            "limit": knowledge_router.DOCUMENT_ACTION_BATCH_SIZE,
+        },
+    ]
+    assert captured["parsed"] == [
+        {"kb_id": "kb_1", "file_id": "file_1", "operator_id": "uid-user"},
+        {"kb_id": "kb_1", "file_id": "file_2", "operator_id": "uid-user"},
+    ]
+
+
+async def test_index_pending_documents_uses_pending_statuses_and_params(monkeypatch):
+    captured = {"list_calls": [], "updated": [], "indexed": []}
+
+    async def fake_ensure_database_supports_documents(kb_id: str, operation: str) -> None:
+        captured["ensure"] = (kb_id, operation)
+
+    async def fake_get_database_info(kb_id: str) -> dict:
+        return {"name": "测试知识库", "stats": {"pending_index_count": 2}}
+
+    async def fake_list_document_file_ids_by_statuses(kb_id: str, *, statuses, after_file_id, limit):
+        captured["list_calls"].append(
+            {"kb_id": kb_id, "statuses": statuses, "after_file_id": after_file_id, "limit": limit}
+        )
+        return ["file_1", "file_2"] if after_file_id is None else []
+
+    async def fake_update_file_params(kb_id: str, file_id: str, params: dict, operator_id: str | None = None):
+        captured["updated"].append({"kb_id": kb_id, "file_id": file_id, "params": params, "operator_id": operator_id})
+
+    async def fake_index_file(kb_id: str, file_id: str, operator_id: str | None = None, params: dict | None = None):
+        captured["indexed"].append({"kb_id": kb_id, "file_id": file_id, "operator_id": operator_id, "params": params})
+        return {"file_id": file_id, "status": "indexed"}
+
+    async def fake_enqueue_unique_by_payload(**kwargs):
+        captured["payload"] = kwargs["payload"]
+        captured["payload_match"] = kwargs["payload_match"]
+        await kwargs["coroutine"](FakeTaskContext())
+        return SimpleNamespace(id="task_1"), True
+
+    monkeypatch.setattr(
+        knowledge_router,
+        "_ensure_database_supports_documents",
+        fake_ensure_database_supports_documents,
+    )
+    monkeypatch.setattr(knowledge_router.knowledge_base, "get_database_info", fake_get_database_info)
+    monkeypatch.setattr(
+        knowledge_router.knowledge_base,
+        "list_document_file_ids_by_statuses",
+        fake_list_document_file_ids_by_statuses,
+    )
+    monkeypatch.setattr(knowledge_router.knowledge_base, "update_file_params", fake_update_file_params)
+    monkeypatch.setattr(knowledge_router.knowledge_base, "index_file", fake_index_file)
+    monkeypatch.setattr(knowledge_router.tasker, "enqueue_unique_by_payload", fake_enqueue_unique_by_payload)
+
+    params = {"chunk_preset_id": "general"}
+    result = await knowledge_router.index_pending_documents(
+        "kb_1",
+        payload=knowledge_router.PendingIndexDocumentsRequest(params=params),
+        current_user=SimpleNamespace(uid="uid-user"),
+    )
+
+    assert result["status"] == "queued"
+    assert captured["ensure"] == ("kb_1", "文档入库")
+    assert captured["payload_match"] == {"kb_id": "kb_1", "scope": "pending", "action": "index"}
+    assert captured["payload"]["statuses"] == knowledge_router.PENDING_INDEX_STATUSES
+    assert captured["payload"]["params"] == params
+    assert captured["list_calls"][0]["statuses"] == knowledge_router.PENDING_INDEX_STATUSES
+    assert captured["updated"] == [
+        {"kb_id": "kb_1", "file_id": "file_1", "params": params, "operator_id": "uid-user"},
+        {"kb_id": "kb_1", "file_id": "file_2", "params": params, "operator_id": "uid-user"},
+    ]
+    assert captured["indexed"] == [
+        {"kb_id": "kb_1", "file_id": "file_1", "operator_id": "uid-user", "params": params},
+        {"kb_id": "kb_1", "file_id": "file_2", "operator_id": "uid-user", "params": params},
+    ]
+
+
 async def test_add_documents_auto_index_returns_one_final_result_per_item(monkeypatch):
     context = FakeTaskContext()
     item = "minio://knowledgebases/kb_1/upload/demo.txt"

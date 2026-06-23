@@ -36,6 +36,7 @@ class FakeKnowledgeBaseRepository:
 class FakeKnowledgeFileRepository:
     list_calls = []
     exists_calls = []
+    action_id_calls = []
 
     def __init__(self):
         self.records = [
@@ -91,6 +92,10 @@ class FakeKnowledgeFileRepository:
         self.__class__.list_calls.append(kwargs)
         return self.records, 2
 
+    async def list_file_ids_by_exact_statuses(self, **kwargs):
+        self.__class__.action_id_calls.append(kwargs)
+        return ["file_2"]
+
     async def exists_by_filename(self, *, kb_id, filename):
         self.__class__.exists_calls.append({"kb_id": kb_id, "filename": filename})
         return filename == "docs/Guide.md"
@@ -103,6 +108,7 @@ class FakeKnowledgeFileRepository:
 def patch_repositories(monkeypatch):
     FakeKnowledgeFileRepository.list_calls = []
     FakeKnowledgeFileRepository.exists_calls = []
+    FakeKnowledgeFileRepository.action_id_calls = []
     monkeypatch.setattr(
         "yuxi.repositories.knowledge_base_repository.KnowledgeBaseRepository",
         FakeKnowledgeBaseRepository,
@@ -249,4 +255,25 @@ async def test_document_file_exists_delegates_exact_filename_to_repository():
     assert FakeKnowledgeFileRepository.exists_calls == [
         {"kb_id": "kb_1", "filename": "docs/Guide.md"},
         {"kb_id": "kb_1", "filename": "docs/guide.md"},
+    ]
+
+
+async def test_list_document_file_ids_by_statuses_delegates_to_repository():
+    manager = KnowledgeBaseManager("/tmp/yuxi-test")
+
+    result = await manager.list_document_file_ids_by_statuses(
+        "kb_1",
+        statuses=["parsed", "error_indexing"],
+        after_file_id="file_1",
+        limit=500,
+    )
+
+    assert result == ["file_2"]
+    assert FakeKnowledgeFileRepository.action_id_calls == [
+        {
+            "kb_id": "kb_1",
+            "statuses": ["parsed", "error_indexing"],
+            "after_file_id": "file_1",
+            "limit": 500,
+        }
     ]

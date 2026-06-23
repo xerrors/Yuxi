@@ -1,14 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import {
-  Plus,
-  RefreshCw,
-  Trash2,
-  SquarePen,
-  Bot,
-  MoreVertical
-} from 'lucide-vue-next'
+import { Plus, RefreshCw, Trash2, SquarePen, Bot, MoreVertical } from 'lucide-vue-next'
 
 import { agentApi } from '@/apis/agent_api'
 import AgentEditModal from '@/components/model-management/AgentEditModal.vue'
@@ -324,5 +317,4 @@ defineExpose({
     transform: rotate(360deg);
   }
 }
-
 </style>

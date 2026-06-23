@@ -6,12 +6,7 @@ import { useTaskerStore } from '@/stores/tasker'
 import { useUserStore } from '@/stores/user'
 import { useRouter } from 'vue-router'
 import { parseToShanghai } from '@/utils/time'
-import {
-  canOpenFileDetail,
-  canPreviewParsed,
-  canSelectFile,
-  isProcessingFile
-} from '@/utils/knowledge_file_policy'
+import { canSelectFile, isProcessingFile } from '@/utils/knowledge_file_policy'
 
 export const useDatabaseStore = defineStore('database', () => {
   const router = useRouter()
@@ -22,7 +17,7 @@ export const useDatabaseStore = defineStore('database', () => {
   const databases = ref([])
   const database = ref({})
   const kbId = ref(null)
-  const selectedFile = ref(null)
+  const fileDetailFileId = ref(null)
   const documentFiles = ref([])
   const folderBreadcrumbs = ref([{ file_id: null, filename: '全部文件', path_prefix: '' }])
 
@@ -47,7 +42,6 @@ export const useDatabaseStore = defineStore('database', () => {
     databaseLoading: false,
     lock: false,
     fileDetailModalVisible: false,
-    fileDetailLoading: false,
     batchDeleting: false,
     chunkLoading: false,
     autoRefresh: false,
@@ -519,6 +513,37 @@ export const useDatabaseStore = defineStore('database', () => {
     }
   }
 
+  async function parsePendingFiles(count = 0) {
+    state.chunkLoading = true
+    try {
+      const data = await documentApi.parsePendingDocuments(kbId.value)
+      if (data.status === 'success' || data.status === 'queued') {
+        enableAutoRefresh('auto')
+        message.success(data.message || '解析任务已提交')
+        if (data.task_id) {
+          taskerStore.registerQueuedTask({
+            task_id: data.task_id,
+            name: `文档解析 (${kbId.value})`,
+            task_type: 'knowledge_parse',
+            message: data.message,
+            payload: { kb_id: kbId.value, count: data.queued_count || count, scope: 'pending' }
+          })
+        }
+        await delayedRefresh()
+        return true
+      } else {
+        message.error(data.message || '提交失败')
+        return false
+      }
+    } catch (error) {
+      console.error(error)
+      message.error(error.message || '请求失败')
+      return false
+    } finally {
+      state.chunkLoading = false
+    }
+  }
+
   async function indexFiles(fileIds, params = {}) {
     if (fileIds.length === 0) return
     state.chunkLoading = true
@@ -551,38 +576,50 @@ export const useDatabaseStore = defineStore('database', () => {
     }
   }
 
-  async function openFileDetail(record) {
-    if (!canOpenFileDetail(record)) {
-      message.error('文件未处理完成，请稍后再试')
-      return
-    }
-    state.fileDetailModalVisible = true
-    selectedFile.value = { ...record, lines: [], content: '' }
-    if (!canPreviewParsed(record)) {
-      state.fileDetailLoading = false
-      state.lock = false
-      return
-    }
-
-    state.fileDetailLoading = true
-    state.lock = true
-
+  async function indexPendingFiles(params = {}, count = 0) {
+    state.chunkLoading = true
     try {
-      const data = await documentApi.getDocumentInfo(kbId.value, record.file_id)
-      if (data.status == 'failed') {
-        message.error(data.message)
-        state.fileDetailModalVisible = false
-        return
+      const data = await documentApi.indexPendingDocuments(kbId.value, params)
+      if (data.status === 'success' || data.status === 'queued') {
+        enableAutoRefresh('auto')
+        message.success(data.message || '入库任务已提交')
+        if (data.task_id) {
+          taskerStore.registerQueuedTask({
+            task_id: data.task_id,
+            name: `文档入库 (${kbId.value})`,
+            task_type: 'knowledge_index',
+            message: data.message,
+            payload: { kb_id: kbId.value, count: data.queued_count || count, scope: 'pending' }
+          })
+        }
+        await delayedRefresh()
+        return true
+      } else {
+        message.error(data.message || '提交失败')
+        return false
       }
-      selectedFile.value = { ...record, lines: data.lines || [], content: data.content }
     } catch (error) {
       console.error(error)
-      message.error(error.message)
-      state.fileDetailModalVisible = false
+      message.error(error.message || '请求失败')
+      return false
     } finally {
-      state.fileDetailLoading = false
-      state.lock = false
+      state.chunkLoading = false
     }
+  }
+
+  function openFileDetail(fileId) {
+    const nextFileId = typeof fileId === 'object' ? fileId?.file_id : fileId
+    if (!nextFileId) {
+      message.error('文件信息不完整')
+      return
+    }
+    fileDetailFileId.value = nextFileId
+    state.fileDetailModalVisible = true
+  }
+
+  function closeFileDetail() {
+    state.fileDetailModalVisible = false
+    fileDetailFileId.value = null
   }
 
   async function loadQueryParams(id) {
@@ -689,7 +726,7 @@ export const useDatabaseStore = defineStore('database', () => {
     databases,
     database,
     kbId,
-    selectedFile,
+    fileDetailFileId,
     documentFiles,
     folderBreadcrumbs,
     queryParams,
@@ -707,8 +744,11 @@ export const useDatabaseStore = defineStore('database', () => {
     handleBatchDelete,
     addFiles,
     parseFiles,
+    parsePendingFiles,
     indexFiles,
+    indexPendingFiles,
     openFileDetail,
+    closeFileDetail,
     loadQueryParams,
     loadDocumentFiles,
     enterFolder,

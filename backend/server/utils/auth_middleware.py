@@ -41,19 +41,22 @@ async def _verify_api_key(key: str, db: AsyncSession) -> tuple[User | None, APIK
         user = result.scalar_one_or_none()
         if user and not user.is_deleted:
             return user, api_key
+        return None, None
 
     if api_key.department_id:
         result = await db.execute(
-            select(User).filter(User.department_id == api_key.department_id, User.role.in_(["admin", "superadmin"]))
+            select(User)
+            .filter(
+                User.department_id == api_key.department_id,
+                User.role.in_(["admin", "superadmin"]),
+                User.is_deleted == 0,
+            )
+            .order_by(User.role.desc(), User.id.asc())
+            .limit(1)
         )
         user = result.scalar_one_or_none()
-        if user and not user.is_deleted:
+        if user:
             return user, api_key
-
-    result = await db.execute(select(User).filter(User.role == "superadmin", User.is_deleted == 0).limit(1))
-    user = result.scalar_one_or_none()
-    if user:
-        return user, api_key
 
     return None, None
 

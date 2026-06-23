@@ -61,7 +61,11 @@ const approved = ref(false)
 const errorMessage = ref('')
 const session = ref(null)
 
-const userCode = computed(() => String(route.query.user_code || '').trim().toUpperCase())
+const userCode = computed(() =>
+  String(route.query.user_code || '')
+    .trim()
+    .toUpperCase()
+)
 
 async function loadSession() {
   if (!userCode.value) {
