@@ -12,10 +12,14 @@ sys.path.insert(0, os.getcwd())
 from yuxi.services.chat_service import (
     _normalize_interrupt_questions,
     _build_ask_user_question_payload,
+    _build_human_approval_payload,
+    _is_human_approval_payload,
     _coerce_interrupt_payload,
+    check_and_handle_interrupts,
     stream_agent_resume,
 )
 from yuxi.services import chat_service as svc
+from yuxi.services import run_worker
 from yuxi.utils.question_utils import normalize_options
 
 
@@ -215,9 +219,12 @@ async def test_stream_agent_resume_routes_subagent_chunks(monkeypatch):
         context_schema = FakeContext
 
         async def stream_resume_with_state(self, resume_command, input_context=None, **kwargs):
-            yield "messages", (
-                {"content": "child token", "id": "msg-child"},
-                {"namespace": ["task:1"], "thread_id": "child-thread"},
+            yield (
+                "messages",
+                (
+                    {"content": "child token", "id": "msg-child"},
+                    {"namespace": ["task:1"], "thread_id": "child-thread"},
+                ),
             )
 
         async def get_graph(self, context=None):
@@ -290,3 +297,132 @@ class TestCoerceInterruptPayload:
     def test_none_input(self):
         result = _coerce_interrupt_payload(None)
         assert isinstance(result, dict)
+
+
+class TestHumanApprovalPayloadDetection:
+    """测试 HIL 工具审批 interrupt 的判别与载荷构建。"""
+
+    def test_is_human_approval_payload_true_for_action_requests(self):
+        payload = {"action_requests": [{"name": "delete_file", "args": {"path": "/x"}}], "review_configs": []}
+        assert _is_human_approval_payload(payload) is True
+
+    def test_is_human_approval_payload_false_for_questions(self):
+        assert _is_human_approval_payload({"questions": [{"question": "Q"}]}) is False
+
+    def test_is_human_approval_payload_false_for_empty(self):
+        assert _is_human_approval_payload({}) is False
+        assert _is_human_approval_payload({"action_requests": []}) is False
+
+    def test_build_human_approval_payload_preserves_action_requests(self):
+        info = {
+            "action_requests": [{"name": "send_email", "args": {"to": "a@b.com"}, "description": "需要确认"}],
+            "review_configs": [{"action_name": "send_email", "allowed_decisions": ["approve", "reject"]}],
+        }
+        result = _build_human_approval_payload(info, "thread-hil-1")
+
+        assert result["source"] == "human_approval"
+        assert result["thread_id"] == "thread-hil-1"
+        assert len(result["action_requests"]) == 1
+        assert result["action_requests"][0]["name"] == "send_email"
+        assert result["action_requests"][0]["description"] == "需要确认"
+        assert result["review_configs"][0]["allowed_decisions"] == ["approve", "reject"]
+
+    def test_build_human_approval_payload_fills_missing_description(self):
+        """HIL payload 缺 description 时补默认提示,便于前端展示。"""
+        info = {"action_requests": [{"name": "delete_file", "args": {"path": "/tmp/x"}}], "review_configs": []}
+        result = _build_human_approval_payload(info, "thread-hil-2")
+
+        desc = result["action_requests"][0]["description"]
+        assert "delete_file" in desc
+        assert "/tmp/x" in desc
+
+
+class TestCheckAndHandleInterruptsRouting:
+    """测试 check_and_handle_interrupts 按载荷类型分流到 ask_user_question / human_approval。"""
+
+    @pytest.mark.asyncio
+    async def test_routes_human_approval_interrupt_to_human_approval_required(self):
+        """HIL interrupt(含 action_requests)应发 human_approval_required,不再塞默认空问题。"""
+        hil_value = {
+            "action_requests": [{"name": "delete_file", "args": {"path": "/x"}}],
+            "review_configs": [{"action_name": "delete_file", "allowed_decisions": ["approve", "reject"]}],
+        }
+
+        class FakeGraph:
+            async def aget_state(self, _config):
+                return SimpleNamespace(
+                    values={"__interrupt__": [SimpleNamespace(value=hil_value)]},
+                    tasks=[],
+                )
+
+        class FakeAgent:
+            async def get_graph(self):
+                return FakeGraph()
+
+        chunks: list[dict] = []
+
+        def make_chunk(status, meta, **kwargs):
+            return json.dumps({"status": status, "meta": meta, **kwargs}, ensure_ascii=False).encode("utf-8")
+
+        stream = check_and_handle_interrupts(FakeAgent(), {"configurable": {"thread_id": "t"}}, make_chunk, {}, "t")
+        async for raw in stream:
+            chunks.append(json.loads(raw.decode("utf-8")))
+
+        assert len(chunks) == 1
+        assert chunks[0]["status"] == "human_approval_required"
+        assert "action_requests" in chunks[0]
+        assert chunks[0]["action_requests"][0]["name"] == "delete_file"
+        assert "review_configs" in chunks[0]
+        # 不应再出现被误塞的默认空问题
+        assert "questions" not in chunks[0]
+
+    @pytest.mark.asyncio
+    async def test_routes_ask_user_question_interrupt_unchanged(self):
+        """ask_user_question interrupt(含 questions)仍走原有 ask_user_question_required 通道。"""
+        info_value = {"questions": [{"question": "选择一个", "options": ["A", "B"]}]}
+
+        class FakeGraph:
+            async def aget_state(self, _config):
+                return SimpleNamespace(
+                    values={"__interrupt__": [SimpleNamespace(value=info_value)]},
+                    tasks=[],
+                )
+
+        class FakeAgent:
+            async def get_graph(self):
+                return FakeGraph()
+
+        chunks: list[dict] = []
+
+        def make_chunk(status, meta, **kwargs):
+            return json.dumps({"status": status, "meta": meta, **kwargs}, ensure_ascii=False).encode("utf-8")
+
+        stream = check_and_handle_interrupts(FakeAgent(), {"configurable": {"thread_id": "t"}}, make_chunk, {}, "t")
+        async for raw in stream:
+            chunks.append(json.loads(raw.decode("utf-8")))
+
+        assert len(chunks) == 1
+        assert chunks[0]["status"] == "ask_user_question_required"
+        assert chunks[0]["questions"][0]["question"] == "选择一个"
+
+
+class TestInterruptSummary:
+    """测试 run_worker._interrupt_summary 兼容两类 interrupt 载荷。"""
+
+    def test_summary_from_questions(self):
+        chunk = {"questions": [{"question": "是否继续？"}]}
+        assert run_worker._interrupt_summary(chunk) == "是否继续？"
+
+    def test_summary_from_action_requests_with_args(self):
+        chunk = {"action_requests": [{"name": "delete_file", "args": {"path": "/x"}}]}
+        summary = run_worker._interrupt_summary(chunk)
+        assert "delete_file" in summary
+        assert "/x" in summary
+
+    def test_summary_from_action_requests_without_args(self):
+        chunk = {"action_requests": [{"name": "send_email", "args": {}}]}
+        assert run_worker._interrupt_summary(chunk) == "操作需要确认: send_email"
+
+    def test_summary_empty_when_no_payload(self):
+        assert run_worker._interrupt_summary({}) == ""
+        assert run_worker._interrupt_summary(None) == ""

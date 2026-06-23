@@ -1145,3 +1145,46 @@ async def test_create_resume_run_inherits_parent_model_spec(monkeypatch: pytest.
     )
 
     assert captured["input_payload"]["model_spec"] == "parent-model"
+
+
+class TestCompactStreamChunkHil:
+    """测试 _compact_stream_chunk 在 verbose=false 精简时保留 HIL 工具审批字段。
+
+    回归:修复前白名单漏掉 action_requests/review_configs,前端收到空弹窗。
+    """
+
+    def test_compact_keeps_human_approval_action_requests(self):
+        chunk = {
+            "status": "human_approval_required",
+            "action_requests": [{"name": "delete_file", "args": {"path": "/x"}}],
+            "review_configs": [{"action_name": "delete_file", "allowed_decisions": ["approve", "reject"]}],
+            "source": "human_approval",
+        }
+        compact = agent_run_service._compact_stream_chunk(chunk)
+
+        assert compact["status"] == "human_approval_required"
+        assert compact["action_requests"] == chunk["action_requests"]
+        assert compact["review_configs"] == chunk["review_configs"]
+
+    def test_compact_keeps_ask_user_question_questions(self):
+        """ask_user_question 的 questions 仍保留(未回归)。"""
+        chunk = {
+            "status": "ask_user_question_required",
+            "questions": [{"question": "选择一个", "options": ["A"]}],
+        }
+        compact = agent_run_service._compact_stream_chunk(chunk)
+
+        assert compact["questions"] == chunk["questions"]
+
+    def test_compact_drops_missing_fields(self):
+        """白名单外的字段被丢弃;白名单内但未提供的字段不出现。"""
+        chunk = {
+            "status": "human_approval_required",
+            "extra_field": "should be dropped",
+        }
+        compact = agent_run_service._compact_stream_chunk(chunk)
+
+        assert compact["status"] == "human_approval_required"
+        assert "extra_field" not in compact
+        assert "action_requests" not in compact
+        assert "review_configs" not in compact
