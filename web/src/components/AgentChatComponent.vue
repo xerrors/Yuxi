@@ -125,10 +125,20 @@
           <div class="bottom" :class="{ 'start-screen': !conversations.length }">
             <!-- 人工审批弹窗 - 放在输入框上方 -->
             <HumanApprovalModal
+              v-if="isAskUserApproval"
               :visible="currentApprovalModalVisible"
               :questions="currentApprovalQuestions"
               @submit="handleQuestionSubmit"
               @cancel="handleQuestionCancel"
+            />
+            <HumanToolApprovalModal
+              v-else
+              :visible="currentApprovalModalVisible"
+              :action-requests="currentApprovalActionRequests"
+              :review-configs="currentApprovalReviewConfigs"
+              @approve="handleToolApprovalSubmit"
+              @reject="handleToolApprovalReject"
+              @edit="handleToolApprovalSubmit"
             />
 
             <div class="message-input-wrapper">
@@ -596,6 +606,7 @@ import { storeToRefs } from 'pinia'
 import { MessageProcessor } from '@/utils/messageProcessor'
 import { agentApi, threadApi } from '@/apis'
 import HumanApprovalModal from '@/components/HumanApprovalModal.vue'
+import HumanToolApprovalModal from '@/components/HumanToolApprovalModal.vue'
 import { useApproval } from '@/composables/useApproval'
 import { useAgentThreadState } from '@/composables/useAgentThreadState'
 import { useAgentRunStream } from '@/composables/useAgentRunStream'
@@ -1307,8 +1318,23 @@ const currentApprovalModalVisible = computed(
     Boolean(approvalState.threadId) &&
     approvalState.threadId === currentChatId.value
 )
+const isAskUserApproval = computed(
+  () => approvalState.kind !== 'human_approval'
+)
 const currentApprovalQuestions = computed(() =>
-  currentApprovalModalVisible.value ? approvalState.questions : []
+  currentApprovalModalVisible.value && isAskUserApproval.value
+    ? approvalState.questions
+    : []
+)
+const currentApprovalActionRequests = computed(() =>
+  currentApprovalModalVisible.value && !isAskUserApproval.value
+    ? approvalState.actionRequests
+    : []
+)
+const currentApprovalReviewConfigs = computed(() =>
+  currentApprovalModalVisible.value && !isAskUserApproval.value
+    ? approvalState.reviewConfigs
+    : []
 )
 
 const shouldSuppressRefsForApproval = () =>
@@ -2486,6 +2512,15 @@ const handleQuestionSubmit = (answer) => {
 
 const handleQuestionCancel = () => {
   handleApprovalWithStream('reject')
+}
+
+// HIL 工具审批：approve/edit/reject 均发送 { decisions: [...] }
+const handleToolApprovalSubmit = (payload) => {
+  handleApprovalWithStream(payload)
+}
+
+const handleToolApprovalReject = (payload) => {
+  handleApprovalWithStream(payload)
 }
 
 const buildExportPayload = () => {
