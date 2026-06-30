@@ -343,8 +343,8 @@ async def process_agent_run(ctx, run_id: str):
         meta["skills_thread_id"] = runtime.get("skills_thread_id")
     if input_metadata.get("source"):
         meta["source"] = input_metadata.get("source")
-    if isinstance(input_metadata.get("evaluation"), dict):
-        meta["evaluation"] = input_metadata.get("evaluation") or {}
+    if isinstance(input_metadata.get("agent_invocation_meta"), dict):
+        meta["agent_invocation_meta"] = input_metadata.get("agent_invocation_meta") or {}
 
     await mark_run_running(run_id)
     run_ctx = RunContext(run_id=run_id)
@@ -355,19 +355,22 @@ async def process_agent_run(ctx, run_id: str):
         max_chars=LOADING_FLUSH_MAX_CHARS,
     )
     await run_ctx.start()
+    metadata_event = {
+        "request_id": request_id,
+        "agent_slug": agent_slug,
+        "uid": uid,
+        "source": input_metadata.get("source"),
+        "run_type": run_type,
+        "created_by_run_id": run.created_by_run_id,
+        "subagent_slug": agent_slug if run_type == "subagent" else None,
+    }
+    if isinstance(input_metadata.get("agent_invocation_meta"), dict):
+        metadata_event["agent_invocation_meta"] = input_metadata.get("agent_invocation_meta") or {}
+
     await append_run_event(
         run_id,
         "metadata",
-        {
-            "request_id": request_id,
-            "agent_slug": agent_slug,
-            "uid": uid,
-            "source": input_metadata.get("source"),
-            "run_type": run_type,
-            "created_by_run_id": run.created_by_run_id,
-            "subagent_slug": agent_slug if run_type == "subagent" else None,
-            "evaluation": input_metadata.get("evaluation") or {},
-        },
+        metadata_event,
         thread_id=thread_id,
     )
     terminal_set = False

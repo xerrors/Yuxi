@@ -7,7 +7,11 @@ from types import SimpleNamespace
 import pytest
 
 import yuxi.services.agent_run_service as agent_run_service
-from yuxi.services.input_message_service import build_chat_input_message
+from yuxi.services.input_message_service import (
+    build_chat_input_message,
+    build_chat_input_message_from_openai_content,
+    restore_chat_input_message,
+)
 
 
 def _chat_input(content: str, image_content: str | None = None):
@@ -19,6 +23,48 @@ def _sse_data(chunk: str) -> dict:
         if line.startswith("data: "):
             return json.loads(line.removeprefix("data: "))
     raise AssertionError(f"SSE chunk has no data line: {chunk}")
+
+
+def test_openai_content_parts_build_and_restore_multimodal_message():
+    input_message = build_chat_input_message_from_openai_content(
+        [
+            {"type": "text", "text": "看图"},
+            {"type": "image_url", "image_url": {"url": "https://example.test/image.png"}},
+        ]
+    )
+
+    assert input_message.content == "看图"
+    assert input_message.message_type == "multimodal_image"
+    assert input_message.image_content is None
+    raw_message = input_message.raw_message()
+    assert raw_message["content"][1]["image_url"]["url"] == "https://example.test/image.png"
+
+    restored = restore_chat_input_message(
+        content=input_message.content, image_content=None, metadata={"raw_message": raw_message}
+    )
+    assert restored.message_type == "multimodal_image"
+    assert restored.require_langchain_message().content == raw_message["content"]
+
+
+def test_prepare_run_input_message_keeps_invocation_meta_namespaced():
+    input_message = agent_run_service._prepare_run_input_message(
+        run_type="chat",
+        input_message=build_chat_input_message("hello"),
+        resume=None,
+        request_id="req-1",
+        model_spec="provider:model",
+        meta={
+            "source": "agent_call",
+            "agent_invocation_meta": {"trace_id": "trace-1"},
+            "evaluation": {"dataset_name": "legacy-top-level"},
+            "custom_variables": {"system_prompt": "legacy"},
+        },
+    )
+
+    assert input_message.extra_metadata["source"] == "agent_call"
+    assert input_message.extra_metadata["agent_invocation_meta"] == {"trace_id": "trace-1"}
+    assert "evaluation" not in input_message.extra_metadata
+    assert "custom_variables" not in input_message.extra_metadata
 
 
 class _FakeContext:
@@ -719,6 +765,59 @@ async def test_create_resume_run_marks_input_message_source(monkeypatch: pytest.
 
 
 @pytest.mark.asyncio
+async def test_create_resume_run_without_request_id_reuses_stable_key(monkeypatch: pytest.MonkeyPatch):
+    parent_run = SimpleNamespace(
+        id="parent-run",
+        conversation_thread_id="thread-1",
+        status="interrupted",
+        input_payload={"model_spec": "parent-model"},
+    )
+    first_db = _patch_agent_run_creation(monkeypatch, parent_run=parent_run)
+
+    await agent_run_service.create_agent_run_view(
+        input_message=None,
+        agent_slug="default",
+        thread_id="thread-1",
+        meta={},
+        current_uid="user-1",
+        db=first_db,
+        resume={"language": "python", "answer": "ok"},
+        created_by_run_id="parent-run",
+    )
+
+    request_id = first_db.created_run_kwargs["request_id"]
+    existing_run = SimpleNamespace(
+        id="existing-resume-run",
+        conversation_thread_id="thread-1",
+        agent_slug="default",
+        status="pending",
+        request_id=request_id,
+        uid="user-1",
+        run_type="resume",
+        created_by_run_id="parent-run",
+        subagent_thread_relation_id=None,
+    )
+    retry_db = _patch_agent_run_creation(monkeypatch, existing_run=existing_run, parent_run=parent_run)
+
+    result = await agent_run_service.create_agent_run_view(
+        input_message=None,
+        agent_slug="default",
+        thread_id="thread-1",
+        meta={},
+        current_uid="user-1",
+        db=retry_db,
+        resume={"answer": "ok", "language": "python"},
+        created_by_run_id="parent-run",
+    )
+
+    assert result["run_id"] == "existing-resume-run"
+    assert request_id.startswith("resume:")
+    assert len(request_id) <= 64
+    assert retry_db.request_id_lookups == [request_id]
+    assert retry_db.created_run_kwargs is None
+
+
+@pytest.mark.asyncio
 async def test_create_resume_run_requires_parent_run_id(monkeypatch: pytest.MonkeyPatch):
     db = _patch_agent_run_creation(monkeypatch)
 
@@ -924,11 +1023,40 @@ async def test_await_agent_run_result_drains_stream_then_loads_result(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_await_agent_run_result_raises_when_stream_ends_before_terminal(monkeypatch: pytest.MonkeyPatch):
+    async def fake_stream(*, run_id: str, after_seq: str, current_uid: str, verbose: bool):
+        assert run_id == "run-1"
+        assert after_seq == "0-0"
+        assert current_uid == "user-1"
+        assert verbose is False
+        yield ": heartbeat\n\n"
+
+    async def fake_load(*, run_id: str, current_uid: str):
+        assert run_id == "run-1"
+        assert current_uid == "user-1"
+        return {"status": "running", "agent_run_id": run_id, "output": ""}
+
+    monkeypatch.setattr(agent_run_service, "stream_agent_run_events", fake_stream)
+    monkeypatch.setattr(agent_run_service, "load_agent_run_result", fake_load)
+
+    with pytest.raises(agent_run_service.AgentRunWaitTimeout) as exc_info:
+        await agent_run_service.await_agent_run_result(run_id="run-1", current_uid="user-1")
+
+    assert exc_info.value.result == {"status": "running", "agent_run_id": "run-1", "output": ""}
+
+
+@pytest.mark.asyncio
 async def test_cancel_agent_run_view_cascades_children(monkeypatch: pytest.MonkeyPatch):
     parent_run = SimpleNamespace(id="parent-run", uid="user-1", to_dict=lambda: {"id": "parent-run"})
     child_runs = [SimpleNamespace(id="child-1"), SimpleNamespace(id="child-2")]
     requested: list[str] = []
-    signals: list[str] = []
+    signals: list[tuple[str, bool]] = []
+
+    class Db:
+        committed = False
+
+        async def commit(self):
+            self.committed = True
 
     class RunRepo:
         def __init__(self, db):
@@ -949,41 +1077,42 @@ async def test_cancel_agent_run_view_cascades_children(monkeypatch: pytest.Monke
             return parent_run if run_id == "parent-run" else SimpleNamespace(id=run_id)
 
     async def fake_publish_cancel_signal(run_id: str):
-        signals.append(run_id)
+        signals.append((run_id, db.committed))
 
     monkeypatch.setattr(agent_run_service, "AgentRunRepository", RunRepo)
     monkeypatch.setattr(agent_run_service, "publish_cancel_signal", fake_publish_cancel_signal)
+    db = Db()
 
     result = await agent_run_service.cancel_agent_run_view(
         run_id="parent-run",
         current_uid="user-1",
-        db=object(),
+        db=db,
     )
 
     assert result["run"]["id"] == "parent-run"
     assert requested == ["child-1", "child-2", "parent-run"]
-    assert signals == ["child-1", "child-2", "parent-run"]
+    assert signals == [("child-1", True), ("child-2", True), ("parent-run", True)]
 
 
-def test_resolve_effective_model_spec_rejects_unknown_explicit_model(monkeypatch: pytest.MonkeyPatch):
+def test_resolve_agent_run_model_spec_rejects_unknown_explicit_model(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(agent_run_service.model_cache, "get_model_info", lambda spec: None)
     with pytest.raises(agent_run_service.HTTPException) as exc:
-        agent_run_service._resolve_effective_model_spec("nope", SimpleNamespace(config_json={}), _FakeBackend())
+        agent_run_service.resolve_agent_run_model_spec("nope", SimpleNamespace(config_json={}), _FakeBackend())
     assert exc.value.status_code == 422
 
 
-def test_resolve_effective_model_spec_rejects_non_chat_explicit_model(monkeypatch: pytest.MonkeyPatch):
+def test_resolve_agent_run_model_spec_rejects_non_chat_explicit_model(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         agent_run_service.model_cache,
         "get_model_info",
         lambda spec: SimpleNamespace(model_type="embedding"),
     )
     with pytest.raises(agent_run_service.HTTPException) as exc:
-        agent_run_service._resolve_effective_model_spec("embed-1", SimpleNamespace(config_json={}), _FakeBackend())
+        agent_run_service.resolve_agent_run_model_spec("embed-1", SimpleNamespace(config_json={}), _FakeBackend())
     assert exc.value.status_code == 422
 
 
-def test_resolve_effective_model_spec_strips_explicit_chat_model(monkeypatch: pytest.MonkeyPatch):
+def test_resolve_agent_run_model_spec_strips_explicit_chat_model(monkeypatch: pytest.MonkeyPatch):
     seen = []
 
     def fake_get_model_info(spec):
@@ -993,7 +1122,7 @@ def test_resolve_effective_model_spec_strips_explicit_chat_model(monkeypatch: py
     monkeypatch.setattr(agent_run_service.model_cache, "get_model_info", fake_get_model_info)
 
     assert (
-        agent_run_service._resolve_effective_model_spec(
+        agent_run_service.resolve_agent_run_model_spec(
             " gpt-x ",
             SimpleNamespace(config_json={}),
             _FakeBackend(),

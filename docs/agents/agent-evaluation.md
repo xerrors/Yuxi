@@ -68,7 +68,7 @@ yuxi agent eval \
 
 1. 从 Langfuse 读取 dataset。
 2. 对每条 dataset item 提取任务文本。
-3. 调用 `POST /api/agent/eval/runs`。
+3. 调用 `POST /api/agent-invocation/eval/runs`。
 4. Yuxi 后端创建正常 conversation 和 AgentRun。
 5. worker 按真实 Agent 链路执行任务。
 6. 接口阻塞到 run 终态后返回最终 assistant output。
@@ -78,7 +78,7 @@ yuxi agent eval \
 
 ## 查看结果
 
-评估完成后，在 Langfuse 控制台打开对应 dataset，可以看到刚创建的 experiment run。每条 item 会保存本次 Yuxi Agent 的最终输出。Yuxi 后端也会给评估运行写入 `agent_evaluation` 标记，方便在 Langfuse traces 中筛选：
+评估完成后，在 Langfuse 控制台打开对应 dataset，可以看到刚创建的 experiment run。每条 item 会保存本次 Yuxi Agent 的最终输出。Yuxi 后端会在运行内部使用 `agent_invocation_meta.evaluation` 保存评估上下文，并给 Langfuse trace 写入 `agent_evaluation` 标记，方便筛选：
 
 - `source=agent_evaluation`
 - `evaluation_dataset_name=<dataset name>`

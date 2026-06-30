@@ -91,6 +91,44 @@ class _FakeConvRepo:
         return []
 
 
+def test_build_langfuse_run_context_reads_evaluation_from_invocation_meta(monkeypatch: pytest.MonkeyPatch):
+    calls: dict[str, object] = {}
+
+    def fake_build_run_context(**kwargs):
+        calls.update(kwargs)
+        return SimpleNamespace(metadata=kwargs.get("extra_metadata") or {}, tags=kwargs.get("extra_tags") or [])
+
+    monkeypatch.setattr(svc, "build_run_context", fake_build_run_context)
+
+    result = svc._build_langfuse_run_context(
+        current_user=SimpleNamespace(id=1, uid="user-1", username="alice", department_id=7),
+        thread_id="thread-1",
+        agent_id="agent-a",
+        request_id="req-1",
+        operation="agent_chat_stream",
+        meta={
+            "source": "agent_evaluation",
+            "agent_invocation_meta": {
+                "evaluation": {
+                    "dataset_name": "dataset-a",
+                    "dataset_item_id": "item-1",
+                    "experiment_name": "exp-1",
+                }
+            },
+        },
+    )
+
+    assert result.metadata == {
+        "source": "agent_evaluation",
+        "feature": "agent_evaluation",
+        "evaluation_dataset_name": "dataset-a",
+        "evaluation_dataset_item_id": "item-1",
+        "evaluation_experiment_name": "exp-1",
+    }
+    assert result.tags == ["agent_evaluation", "dataset:dataset-a", "experiment:exp-1"]
+    assert "evaluation" not in result.metadata
+
+
 @pytest.mark.asyncio
 async def test_stream_agent_chat_passes_langfuse_callbacks_and_persists_trace_info(monkeypatch: pytest.MonkeyPatch):
     calls: dict[str, object] = {}

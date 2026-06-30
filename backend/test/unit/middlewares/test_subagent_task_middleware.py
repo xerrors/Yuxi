@@ -118,6 +118,7 @@ def _patch_task_start_and_await(
     output: str = "child done",
     thread_id: str = "child-thread",
     error_message: str | None = None,
+    wait_timeout: bool = False,
 ):
     class _SubagentRunService:
         def __init__(self, db):
@@ -154,9 +155,16 @@ def _patch_task_start_and_await(
 
     async def fake_await_agent_run_result(*, run_id: str, current_uid: str):
         captured["await"] = {"run_id": run_id, "current_uid": current_uid}
-        result = {"status": status, "output": output}
+        result = {
+            "status": status,
+            "output": output,
+            "agent_run_id": run_id,
+            "thread_id": thread_id,
+        }
         if error_message:
             result["error"] = {"type": "RuntimeError", "message": error_message}
+        if wait_timeout:
+            raise agent_run_service.AgentRunWaitTimeout(result)
         return result
 
     _patch_session(monkeypatch)
@@ -364,6 +372,39 @@ async def test_task_tool_records_failed_subagent_run(monkeypatch) -> None:
     assert result.update["messages"][0].content == "> 子智能体线程 ID: child-thread\n\n---\n\nchild boom"
     assert result.update["subagent_runs"][0]["status"] == "failed"
     assert result.update["subagent_runs"][0]["error"] == "child boom"
+
+
+@pytest.mark.asyncio
+async def test_task_tool_reports_running_subagent_after_wait_timeout(monkeypatch) -> None:
+    captured = {}
+    _patch_task_start_and_await(monkeypatch, captured, status="running", output="", wait_timeout=True)
+
+    middleware = YuxiSubAgentMiddleware(
+        parent_context=SimpleNamespace(thread_id="parent-thread", uid="user-1", run_id="parent-run", model=""),
+        subagents=[
+            SimpleNamespace(
+                slug="worker",
+                name="Worker",
+                description="work on scoped tasks",
+                backend_id=SUB_AGENT_BACKEND_ID,
+                config_json={},
+            )
+        ],
+    )
+
+    result = await middleware.tools[0].coroutine(
+        description="write a long report",
+        subagent_slug="worker",
+        runtime=SimpleNamespace(tool_call_id="tool-1", state={}, config={}),
+    )
+
+    assert isinstance(result, Command)
+    content = result.update["messages"][0].content
+    assert "子智能体仍在运行" in content
+    assert "run_id: child-run" in content
+    assert "不要把当前结果视为任务已完成" in content
+    assert "子智能体已完成任务" not in content
+    assert result.update["subagent_runs"][0]["status"] == "running"
 
 
 @pytest.mark.asyncio
@@ -599,6 +640,45 @@ async def test_subagent_events_cancel_and_await_use_parent_run_scope(monkeypatch
         load == {"run_id": "child-run", "uid": "user-1", "created_by_run_id": "parent-run"}
         for load in captured["loads"]
     )
+
+
+@pytest.mark.asyncio
+async def test_subagent_await_reports_timeout_when_run_is_still_active(monkeypatch) -> None:
+    captured: dict[str, object] = {"loads": []}
+
+    async def fake_get_verified_subagent_run(self, *, run_id: str, uid: str, created_by_run_id: str):
+        del self
+        captured["loads"].append(
+            {
+                "run_id": run_id,
+                "uid": uid,
+                "created_by_run_id": created_by_run_id,
+            }
+        )
+        return _subagent_run(status="running")
+
+    async def fake_await_agent_run_result(*, run_id: str, current_uid: str):
+        captured["await"] = {"run_id": run_id, "current_uid": current_uid}
+        raise agent_run_service.AgentRunWaitTimeout(
+            {"status": "running", "agent_run_id": run_id, "thread_id": "child-thread", "output": ""}
+        )
+
+    _patch_session(monkeypatch)
+    monkeypatch.setattr(YuxiSubAgentMiddleware, "_get_verified_subagent_run", fake_get_verified_subagent_run)
+    monkeypatch.setattr(agent_run_service, "await_agent_run_result", fake_await_agent_run_result)
+
+    result = await {item.name: item for item in _async_tool_middleware().tools}["subagent_await"].coroutine(
+        run_id="child-run",
+        runtime=SimpleNamespace(tool_call_id="await-call"),
+    )
+
+    payload = json.loads(result.update["messages"][0].content)
+    assert payload["status"] == "running"
+    assert payload["wait_timed_out"] is True
+    assert payload["message"] == "子智能体仍在运行，等待最终结果超时；请稍后继续查询。"
+    assert payload["result"]["status"] == "running"
+    assert captured["await"] == {"run_id": "child-run", "current_uid": "user-1"}
+    assert len(captured["loads"]) == 2
 
 
 def test_merge_subagent_runs_keeps_new_run_on_same_child_thread() -> None:

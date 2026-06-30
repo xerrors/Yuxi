@@ -1,3 +1,16 @@
+"""Agent runtime context resolution helpers.
+
+This module loads the configured Agent backend and prepares a ``BaseContext``
+for UI/runtime operations that need the same context shape as a real run. It is
+read-oriented: resolve agent config, normalize context fields and prepare
+thread-specific runtime state.
+
+It does not create ``AgentRun`` records, enqueue workers, read run results or
+format external invocation responses. Those responsibilities stay in
+``agent_run_service`` and ``agent_invocation_service`` so context resolution can
+remain reusable by chat state queries, file views and other runtime helpers.
+"""
+
 from __future__ import annotations
 
 from fastapi import HTTPException

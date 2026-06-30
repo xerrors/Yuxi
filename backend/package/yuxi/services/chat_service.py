@@ -1,3 +1,17 @@
+"""Agent runtime streaming service.
+
+This module is the LangGraph execution path used by the worker after an
+``AgentRun`` has already been created. It restores input messages, builds the
+agent runtime context, streams model/tool events, persists assistant output and
+extracts UI-facing agent state.
+
+Do not put run creation, request id idempotency, queueing or external
+invocation response formatting here. Those responsibilities belong to
+``agent_run_service`` and ``agent_invocation_service`` respectively. Keeping
+this file focused on execution makes normal chat, resume runs and subagent runs
+share the same runtime behavior once they reach the worker.
+"""
+
 import asyncio
 import json
 import uuid
@@ -17,13 +31,13 @@ from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.repositories.subagent_thread_repository import SubagentThreadRepository
 from yuxi.services.conversation_service import serialize_attachment
 from yuxi.services.input_message_service import AgentRunInputMessage
-from yuxi.services.subagent_run_service import serialize_subagent_run_state
 from yuxi.services.langfuse_service import (
     LangfuseRunContext,
     build_run_context,
     flush_langfuse,
     get_trace_info,
 )
+from yuxi.services.subagent_run_service import serialize_subagent_run_state
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import Agent, User
 from yuxi.utils.guard import content_guard
@@ -99,7 +113,8 @@ def _build_langfuse_run_context(
 ) -> LangfuseRunContext:
     extra_metadata = None
     extra_tags = None
-    evaluation = (meta or {}).get("evaluation") if isinstance(meta, dict) else None
+    invocation_meta = (meta or {}).get("agent_invocation_meta") if isinstance(meta, dict) else None
+    evaluation = invocation_meta.get("evaluation") if isinstance(invocation_meta, dict) else None
     # 如果请求来自智能体评测，添加评测相关的 metadata 和 tags，方便在 Langfuse 中进行过滤和分析
     if (meta or {}).get("source") == "agent_evaluation" or (isinstance(evaluation, dict) and evaluation):
         extra_metadata = {

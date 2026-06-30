@@ -68,7 +68,7 @@ def _agent(slug: str = "worker"):
 
 
 def _parent_run():
-    return SimpleNamespace(id="parent-run", conversation_thread_id="parent-thread", conversation_id=10)
+    return SimpleNamespace(id="parent-run", conversation_thread_id="parent-thread", conversation_id=10, run_type="chat")
 
 
 def _relation(
@@ -446,6 +446,34 @@ async def test_subagent_run_service_rejects_parent_run_without_conversation_befo
             tool_call_id="tool-2",
         )
 
+    assert "conversation" not in captured
+    assert "relation" not in captured
+
+
+@pytest.mark.asyncio
+async def test_subagent_run_service_rejects_subagent_as_creator(monkeypatch: pytest.MonkeyPatch):
+    captured: dict[str, object] = {}
+    _patch_repos(
+        monkeypatch,
+        captured=captured,
+        parent_run=SimpleNamespace(
+            id="parent-run",
+            conversation_thread_id="parent-thread",
+            conversation_id=10,
+            run_type="subagent",
+        ),
+    )
+
+    with pytest.raises(ValueError, match="子智能体不能创建子智能体"):
+        await SubagentRunService(_FakeDB()).start(
+            uid="user-1",
+            created_by_run_id="parent-run",
+            agent_item=_agent(),
+            input_message=build_chat_input_message("nested child"),
+            tool_call_id="tool-2",
+        )
+
+    assert "relation_lookup_thread_id" not in captured
     assert "conversation" not in captured
     assert "relation" not in captured
 

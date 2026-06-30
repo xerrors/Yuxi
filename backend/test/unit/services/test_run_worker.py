@@ -87,6 +87,59 @@ def _patch_common(monkeypatch: pytest.MonkeyPatch, run_obj: SimpleNamespace):
 
 
 @pytest.mark.asyncio
+async def test_process_agent_run_restores_invocation_meta(monkeypatch: pytest.MonkeyPatch):
+    run_obj = _build_run()
+    _patch_common(monkeypatch, run_obj)
+
+    captured: dict[str, object] = {}
+    events: list[dict] = []
+    terminal_statuses: list[str] = []
+
+    async def fake_load_input_message(message_id: int | None):
+        assert message_id == 10
+        return SimpleNamespace(
+            content="hello",
+            image_content=None,
+            extra_metadata={
+                "source": "agent_call",
+                "agent_invocation_meta": {"trace_id": "trace-1"},
+                "evaluation": {"dataset_name": "legacy-top-level"},
+                "custom_variables": {"system_prompt": "legacy"},
+            },
+        )
+
+    async def fake_append_event(run_id: str, event_type: str, payload: dict, **kwargs):
+        del kwargs
+        events.append({"run_id": run_id, "event_type": event_type, "payload": payload})
+
+    async def fake_mark_terminal(run_id: str, status: str, error_type=None, error_message=None):
+        del run_id, error_type, error_message
+        terminal_statuses.append(status)
+
+    def fake_stream_agent_chat(**kwargs):
+        captured.update(kwargs)
+        return _BytesAsyncIter([b'{"status":"finished","request_id":"req-1","thread_id":"thread-1"}\n'])
+
+    monkeypatch.setattr(run_worker, "_load_input_message", fake_load_input_message)
+    monkeypatch.setattr(run_worker, "append_run_event", fake_append_event)
+    monkeypatch.setattr(run_worker, "mark_run_terminal", fake_mark_terminal)
+    monkeypatch.setattr(run_worker, "stream_agent_chat", fake_stream_agent_chat)
+
+    await run_worker.process_agent_run({"job_try": 1}, "run-1")
+
+    meta = captured["meta"]
+    assert meta["source"] == "agent_call"
+    assert meta["agent_invocation_meta"] == {"trace_id": "trace-1"}
+    assert "evaluation" not in meta
+    assert "custom_variables" not in meta
+    metadata_event = next(event for event in events if event["event_type"] == "metadata")
+    assert metadata_event["payload"]["agent_invocation_meta"] == {"trace_id": "trace-1"}
+    assert "evaluation" not in metadata_event["payload"]
+    assert "custom_variables" not in metadata_event["payload"]
+    assert terminal_statuses == ["completed"]
+
+
+@pytest.mark.asyncio
 async def test_process_agent_run_non_retryable_error_marks_failed(monkeypatch: pytest.MonkeyPatch):
     run_obj = _build_run()
     _patch_common(monkeypatch, run_obj)

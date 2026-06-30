@@ -1,4 +1,14 @@
-"""Subagent run lifecycle service."""
+"""Subagent run orchestration service.
+
+This module owns parent/child agent-thread relationships. It decides whether a
+task starts a new child thread or continues an existing one, records the
+``SubagentThread`` relation and builds the subagent-only runtime payload.
+
+It deliberately delegates durable run mechanics to ``agent_run_service``:
+request id idempotency, active-run conflict checks, input message persistence,
+AgentRun row creation and queue enqueueing all stay in the shared AgentRun
+lifecycle boundary.
+"""
 
 from __future__ import annotations
 
@@ -106,6 +116,8 @@ class SubagentRunService:
         creator_run = await self.run_repo.get_run_for_user(created_by_run_id, uid)
         if not creator_run:
             raise ValueError("父运行任务不存在")
+        if getattr(creator_run, "run_type", None) == "subagent":
+            raise ValueError("子智能体不能创建子智能体")
 
         child_thread_id = str(requested_thread_id or "").strip()
         continuing = bool(child_thread_id)  # 表示是继续运行已有子智能体线程，而非新建子线程
@@ -189,7 +201,7 @@ class SubagentRunService:
         if not input_message.content:
             raise HTTPException(status_code=422, detail="input_message 不能为空")
 
-        scope = await agent_run_service._validate_run_creation_scope(
+        scope = await agent_run_service.prepare_agent_run_creation_scope(
             agent_slug=relation.subagent_slug,
             conversation_thread_id=relation.child_thread_id,
             request_id=request_id,
@@ -208,7 +220,7 @@ class SubagentRunService:
         if creator_run.conversation_id != relation.parent_conversation_id:
             raise HTTPException(status_code=409, detail="subagent thread relation 与本次运行不匹配")
 
-        resolved_model_spec = agent_run_service._resolve_effective_model_spec(
+        resolved_model_spec = agent_run_service.resolve_agent_run_model_spec(
             model_spec,
             scope.agent_item,
             scope.agent_backend,
@@ -231,13 +243,13 @@ class SubagentRunService:
                 "raw_message": input_message.raw_message(),
             }
         )
-        persisted_input_message = await agent_run_service._create_input_message(
+        persisted_input_message = await agent_run_service.create_agent_run_input_message(
             db=self.db,
             conversation_id=scope.conversation.id,
             request_id=request_id,
             input_message=subagent_input_message,
         )
-        return await agent_run_service._create_agent_run(
+        return await agent_run_service.persist_agent_run_record(
             agent_slug=relation.subagent_slug,
             conversation_thread_id=relation.child_thread_id,
             current_uid=current_uid,

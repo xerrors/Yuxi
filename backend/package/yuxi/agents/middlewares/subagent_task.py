@@ -182,7 +182,7 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
             parent_runtime = started.parent_runtime
             subagent_service = _subagent_run_service_module()
             try:
-                from yuxi.services.agent_run_service import await_agent_run_result
+                from yuxi.services.agent_run_service import AgentRunWaitTimeout, await_agent_run_result
 
                 result = await await_agent_run_result(run_id=started.result.run.id, current_uid=parent_runtime.uid)
                 run = await self._get_verified_subagent_run(
@@ -190,6 +190,17 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
                     uid=parent_runtime.uid,
                     created_by_run_id=parent_runtime.created_by_run_id,
                 )
+            except AgentRunWaitTimeout as exc:
+                try:
+                    run = await self._get_verified_subagent_run(
+                        run_id=started.result.run.id,
+                        uid=parent_runtime.uid,
+                        created_by_run_id=parent_runtime.created_by_run_id,
+                    )
+                except ValueError as verify_exc:
+                    return str(verify_exc)
+                subagent_run = subagent_service.serialize_subagent_run_state(run)
+                return _task_wait_timeout_response(exc.result, runtime.tool_call_id, subagent_run)
             except ValueError as exc:
                 return str(exc)
 
@@ -346,11 +357,12 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
             run_id: Annotated[str, SUBAGENT_RUN_ID_ARG],
             runtime: ToolRuntime,
         ) -> str | Command:
-            from yuxi.services.agent_run_service import await_agent_run_result
+            from yuxi.services.agent_run_service import AgentRunWaitTimeout, await_agent_run_result
 
             parent_runtime, runtime_error = self._require_async_parent_runtime("无法等待子智能体")
             if runtime_error:
                 return runtime_error
+            wait_timed_out = False
             try:
                 # 等待前校验 run 归属，避免越权等待其它子任务
                 await self._get_verified_subagent_run(
@@ -365,6 +377,17 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
                     uid=parent_runtime.uid,
                     created_by_run_id=parent_runtime.created_by_run_id,
                 )
+            except AgentRunWaitTimeout as exc:
+                wait_timed_out = True
+                result = exc.result
+                try:
+                    run = await self._get_verified_subagent_run(
+                        run_id=run_id,
+                        uid=parent_runtime.uid,
+                        created_by_run_id=parent_runtime.created_by_run_id,
+                    )
+                except ValueError as verify_exc:
+                    return str(verify_exc)
             except ValueError as exc:
                 return str(exc)
 
@@ -375,6 +398,9 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
                 "thread_id": run.conversation_thread_id,
                 "result": result,
             }
+            if wait_timed_out:
+                payload["wait_timed_out"] = True
+                payload["message"] = "子智能体仍在运行，等待最终结果超时；请稍后继续查询。"
             subagent_run = subagent_service.serialize_subagent_run_state(run)
             return _json_tool_command(payload, runtime.tool_call_id, subagent_run=subagent_run)
 
@@ -516,6 +542,21 @@ def _task_result_response(result: dict[str, Any], tool_call_id: str, subagent_ru
     if not output:
         output = "子智能体已完成任务，但没有返回文本结果。"
 
+    tool_result = _tool_result_with_thread_id(subagent_run["child_thread_id"], output)
+    return Command(
+        update={"messages": [ToolMessage(tool_result, tool_call_id=tool_call_id)], "subagent_runs": [subagent_run]}
+    )
+
+
+def _task_wait_timeout_response(result: dict[str, Any], tool_call_id: str, subagent_run: dict[str, Any]) -> Command:
+    """同步 task 等待到达上限时，明确告诉父智能体子 run 仍未终结。"""
+    status = str(result.get("status") or subagent_run.get("status") or "running")
+    run_id = str(result.get("agent_run_id") or subagent_run["run_id"])
+    output = (
+        f"子智能体仍在运行（status: {status}），尚未返回最终文本结果。\n"
+        f"run_id: {run_id}\n"
+        "请稍后使用 subagent_status 或 subagent_await 查询结果；不要把当前结果视为任务已完成。"
+    )
     tool_result = _tool_result_with_thread_id(subagent_run["child_thread_id"], output)
     return Command(
         update={"messages": [ToolMessage(tool_result, tool_call_id=tool_call_id)], "subagent_runs": [subagent_run]}

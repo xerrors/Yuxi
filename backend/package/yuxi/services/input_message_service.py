@@ -50,6 +50,82 @@ def build_chat_input_message(query: str, image_content: str | None = None) -> Ag
     )
 
 
+def build_chat_input_message_from_openai_content(content: str | list[dict[str, Any]]) -> AgentRunInputMessage:
+    if isinstance(content, str):
+        if not content:
+            raise ValueError("user message content 必须是非空字符串或多模态数组")
+        return build_chat_input_message(content)
+
+    if not isinstance(content, list) or not content:
+        raise ValueError("user message content 必须是非空字符串或多模态数组")
+
+    parts: list[dict[str, Any]] = []
+    text_segments: list[str] = []
+    first_image_content: str | None = None
+    has_image = False
+
+    for part in content:
+        if not isinstance(part, dict):
+            raise ValueError("user message content 多模态数组元素必须是对象")
+
+        part_type = part.get("type")
+        if part_type == "text":
+            text = part.get("text")
+            if not isinstance(text, str):
+                raise ValueError("text content part 必须包含字符串 text")
+            if text:
+                text_segments.append(text)
+                parts.append({"type": "text", "text": text})
+            continue
+
+        if part_type == "image_url":
+            image_url = _normalize_openai_image_url_part(part.get("image_url"))
+            has_image = True
+            if first_image_content is None:
+                first_image_content = _extract_data_url_base64(image_url["url"])
+            parts.append({"type": "image_url", "image_url": image_url})
+            continue
+
+        raise ValueError(f"不支持的多模态 content part 类型: {part_type}")
+
+    if not text_segments and not has_image:
+        raise ValueError("user message content 必须包含非空文本或图片")
+
+    query = "\n".join(text_segments)
+    if not has_image:
+        return build_chat_input_message(query)
+
+    return AgentRunInputMessage(
+        content=query,
+        message_type="multimodal_image",
+        image_content=first_image_content,
+        langchain_message=HumanMessage(content=parts),
+    )
+
+
+def _normalize_openai_image_url_part(image_url: object) -> dict[str, Any]:
+    if isinstance(image_url, str):
+        url = image_url
+        normalized: dict[str, Any] = {"url": url}
+    elif isinstance(image_url, dict):
+        url = image_url.get("url")
+        normalized = dict(image_url)
+    else:
+        raise ValueError("image_url content part 必须包含 image_url.url")
+
+    if not isinstance(url, str) or not url:
+        raise ValueError("image_url content part 必须包含 image_url.url")
+    normalized["url"] = url
+    return normalized
+
+
+def _extract_data_url_base64(url: str) -> str | None:
+    marker = ";base64,"
+    if not url.startswith("data:image/") or marker not in url:
+        return None
+    return url.split(marker, 1)[1]
+
+
 def build_resume_input_message(resume: object) -> AgentRunInputMessage:
     return AgentRunInputMessage(
         content=json.dumps(resume, ensure_ascii=False),
@@ -65,7 +141,8 @@ def restore_chat_input_message(*, content: str, image_content: str | None, metad
             langchain_message = HumanMessage.model_validate(raw_message)
         except Exception as exc:
             raise ValueError("invalid raw_message for chat input message") from exc
-        message_type = "multimodal_image" if image_content else "text"
+        raw_content = raw_message.get("content")
+        message_type = "multimodal_image" if image_content or _has_image_url_content_part(raw_content) else "text"
         return AgentRunInputMessage(
             content=content,
             message_type=message_type,
@@ -75,3 +152,9 @@ def restore_chat_input_message(*, content: str, image_content: str | None, metad
         )
 
     return build_chat_input_message(content, image_content)
+
+
+def _has_image_url_content_part(content: object) -> bool:
+    return isinstance(content, list) and any(
+        isinstance(part, dict) and part.get("type") == "image_url" for part in content
+    )

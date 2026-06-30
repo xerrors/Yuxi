@@ -127,7 +127,7 @@ class YuxiClient:
             "image_content": image_content,
             "model_spec": model_spec,
         }
-        return self._request("POST", "/agent/eval/runs", json=payload, timeout=timeout_seconds)
+        return self._request("POST", "/agent-invocation/eval/runs", json=payload, timeout=timeout_seconds)
 
     def authorize_url(self, session: CLIAuthSession) -> str:
         return build_url(self.remote.url, session.authorize_path)
