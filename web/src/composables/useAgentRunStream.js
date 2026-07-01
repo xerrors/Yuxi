@@ -153,7 +153,10 @@ export function useAgentRunStream({
 
   const hasPendingInterruptForRun = (threadState, runId) => {
     const pendingInterrupt = threadState?.pendingInterrupt
-    if (!pendingInterrupt?.questions?.length) return false
+    // 兼容两类 interrupt:ask_user_question(questions)与 human_approval(actionRequests)
+    const hasPayload =
+      pendingInterrupt?.questions?.length > 0 || pendingInterrupt?.actionRequests?.length > 0
+    if (!hasPayload) return false
     return !pendingInterrupt.parentRunId || pendingInterrupt.parentRunId === runId
   }
 

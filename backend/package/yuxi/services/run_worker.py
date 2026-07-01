@@ -229,6 +229,35 @@ def _chunk_thread_id(chunk: dict, fallback: str | None) -> str | None:
     return _thread_id_from_mapping(chunk) or fallback
 
 
+def _interrupt_summary(chunk: dict) -> str:
+    """从 interrupt chunk 提取人类可读的摘要。
+
+    兼容两类 interrupt 载荷:ask_user_question 的 ``questions`` 与
+    HumanInTheLoop 的 ``action_requests``(工具审批)。无可用信息时返回空串。
+    """
+    if not isinstance(chunk, dict):
+        return ""
+
+    questions = chunk.get("questions")
+    if isinstance(questions, list) and questions:
+        first = questions[0]
+        if isinstance(first, dict):
+            return str(first.get("question") or "").strip()
+
+    action_requests = chunk.get("action_requests")
+    if isinstance(action_requests, list) and action_requests:
+        first = action_requests[0]
+        if isinstance(first, dict):
+            name = str(first.get("name") or "").strip()
+            args = first.get("args")
+            if name:
+                if args:
+                    return f"操作需要确认: {name}({args})"
+                return f"操作需要确认: {name}"
+
+    return ""
+
+
 def _map_chunk_to_run_event(chunk: dict) -> tuple[str, dict]:
     status = chunk.get("status") or "event"
     if status == "loading":
@@ -407,12 +436,7 @@ async def process_agent_run(ctx, run_id: str):
                         await _append_end_event(run_id, status_value, thread_id=thread_id, payload={"chunk": chunk})
                         terminal_set = True
                     elif status in {"ask_user_question_required", "human_approval_required"}:
-                        questions = chunk.get("questions") if isinstance(chunk, dict) else None
-                        first_question = ""
-                        if isinstance(questions, list) and questions:
-                            first = questions[0]
-                            if isinstance(first, dict):
-                                first_question = str(first.get("question") or "").strip()
+                        first_question = _interrupt_summary(chunk)
 
                         await mark_run_terminal(
                             run_id,
