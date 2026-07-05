@@ -296,3 +296,242 @@ async def test_create_agent_eval_run_leaves_thread_resolution_to_invocation_help
     assert calls["run_kwargs"]["requested_thread_id"] == ""
     assert calls["run_kwargs"]["request_id"] == "eval-req"
     assert calls["await_kwargs"] == {"run_id": "run-1", "current_uid": "user-1"}
+
+
+@pytest.mark.asyncio
+async def test_create_agent_eval_run_adds_trajectory_summary_when_requested(monkeypatch: pytest.MonkeyPatch):
+    calls: dict[str, object] = {}
+    current_user = SimpleNamespace(uid="user-1", role="user")
+
+    async def fake_create_agent_invocation_run_view(**kwargs):
+        calls["run_kwargs"] = kwargs
+        return {
+            "run_id": "run-1",
+            "thread_id": "thread-1",
+            "status": "pending",
+            "request_id": kwargs["request_id"],
+        }
+
+    async def fake_await_agent_run_result(*, run_id: str, current_uid: str):
+        return {
+            "status": "completed",
+            "agent_run_id": run_id,
+            "request_id": "eval-req",
+            "output": "ok",
+            "langfuse_trace_id": "trace-1",
+        }
+
+    async def fake_load_trajectory_summary(run_id: str):
+        calls["trajectory_run_id"] = run_id
+        return {"tool_call_count": 1, "tools": [{"name": "web_search", "call_count": 1, "error_count": 0}]}
+
+    monkeypatch.setattr(svc, "create_agent_invocation_run_view", fake_create_agent_invocation_run_view)
+    monkeypatch.setattr(svc, "await_agent_run_result", fake_await_agent_run_result)
+    monkeypatch.setattr(svc, "_load_trajectory_summary", fake_load_trajectory_summary)
+
+    result = await svc.create_agent_eval_run_view(
+        query="question",
+        agent_slug="default-chatbot",
+        evaluation={},
+        meta={"request_id": "eval-req"},
+        image_content=None,
+        model_spec=None,
+        current_user=current_user,
+        db=object(),
+        include_trajectory_summary=True,
+    )
+
+    assert calls["trajectory_run_id"] == "run-1"
+    assert result["trajectory_summary"] == {
+        "tool_call_count": 1,
+        "tools": [{"name": "web_search", "call_count": 1, "error_count": 0}],
+        "langfuse_trace_id": "trace-1",
+    }
+
+
+@pytest.mark.asyncio
+async def test_create_agent_eval_run_ignores_trajectory_summary_load_errors(monkeypatch: pytest.MonkeyPatch):
+    calls: dict[str, object] = {}
+    current_user = SimpleNamespace(uid="user-1", role="user")
+
+    async def fake_create_agent_invocation_run_view(**kwargs):
+        return {
+            "run_id": "run-1",
+            "thread_id": "thread-1",
+            "status": "pending",
+            "request_id": kwargs["request_id"],
+        }
+
+    async def fake_await_agent_run_result(*, run_id: str, current_uid: str):
+        del current_uid
+        return {"status": "completed", "agent_run_id": run_id, "request_id": "eval-req", "output": "ok"}
+
+    async def fake_load_trajectory_summary(run_id: str):
+        calls["trajectory_run_id"] = run_id
+        raise RuntimeError("redis unavailable")
+
+    monkeypatch.setattr(svc, "create_agent_invocation_run_view", fake_create_agent_invocation_run_view)
+    monkeypatch.setattr(svc, "await_agent_run_result", fake_await_agent_run_result)
+    monkeypatch.setattr(svc, "_load_trajectory_summary", fake_load_trajectory_summary)
+
+    result = await svc.create_agent_eval_run_view(
+        query="question",
+        agent_slug="default-chatbot",
+        evaluation={},
+        meta={"request_id": "eval-req"},
+        image_content=None,
+        model_spec=None,
+        current_user=current_user,
+        db=object(),
+        include_trajectory_summary=True,
+    )
+
+    assert calls["trajectory_run_id"] == "run-1"
+    assert result == {"status": "completed", "agent_run_id": "run-1", "request_id": "eval-req", "output": "ok"}
+
+
+def test_build_trajectory_summary_counts_tools_interrupts_and_errors():
+    summary = svc._build_trajectory_summary(
+        [
+            {
+                "seq": "1-0",
+                "event_type": "messages",
+                "payload": {
+                    "payload": {
+                        "items": [
+                            {
+                                "stream_event": {
+                                    "type": "tool_call",
+                                    "tool_call_id": "call-search",
+                                    "name": "web_search",
+                                }
+                            }
+                        ]
+                    }
+                },
+            },
+            {
+                "seq": "2-0",
+                "event_type": "error",
+                "payload": {
+                    "payload": {
+                        "chunk": {
+                            "event": {
+                                "data": {
+                                    "event": "tool-finished",
+                                    "tool_call_id": "call-search",
+                                    "tool_name": "web_search",
+                                    "error": "timeout",
+                                }
+                            }
+                        }
+                    }
+                },
+            },
+            {"seq": "3-0", "event_type": "interrupt", "payload": {"payload": {"reason": "human_approval"}}},
+        ]
+    )
+
+    assert summary == {
+        "schema_version": 1,
+        "source": "run_events",
+        "event_count": 3,
+        "events_truncated": False,
+        "event_range": {"first_seq": "1-0", "last_seq": "3-0"},
+        "tool_call_count": 1,
+        "tool_error_count": 1,
+        "interrupt_count": 1,
+        "tools": [{"name": "web_search", "call_count": 1, "error_count": 1}],
+    }
+
+
+def test_build_trajectory_summary_counts_human_interrupt_once_with_end_event():
+    interrupt_chunk = {
+        "status": "human_approval_required",
+        "message": "approve?",
+    }
+
+    summary = svc._build_trajectory_summary(
+        [
+            {
+                "seq": "1-0",
+                "event_type": "interrupt",
+                "payload": {"payload": {"reason": "human_approval", "chunk": interrupt_chunk}},
+            },
+            {
+                "seq": "2-0",
+                "event_type": "end",
+                "payload": {"payload": {"status": "interrupted", "chunk": interrupt_chunk}},
+            },
+        ]
+    )
+
+    assert summary["interrupt_count"] == 1
+
+
+def test_build_trajectory_summary_matches_no_id_tool_finish_to_start():
+    summary = svc._build_trajectory_summary(
+        [
+            {
+                "seq": None,
+                "event_type": "messages",
+                "payload": {
+                    "payload": {
+                        "items": [
+                            {
+                                "stream_event": {
+                                    "type": "tool_call",
+                                    "name": "read_file",
+                                }
+                            }
+                        ]
+                    }
+                },
+            },
+            {
+                "seq": None,
+                "event_type": "error",
+                "payload": {
+                    "payload": {
+                        "chunk": {
+                            "event": {
+                                "data": {
+                                    "event": "tool-finished",
+                                    "tool_name": "read_file",
+                                    "error": "file not found",
+                                }
+                            }
+                        }
+                    }
+                },
+            },
+        ]
+    )
+
+    assert summary["event_range"] == {"first_seq": None, "last_seq": None}
+    assert summary["tool_call_count"] == 1
+    assert summary["tool_error_count"] == 1
+    assert summary["tools"] == [{"name": "read_file", "call_count": 1, "error_count": 1}]
+
+
+@pytest.mark.asyncio
+async def test_load_trajectory_summary_reads_run_events_with_limit(monkeypatch: pytest.MonkeyPatch):
+    calls: dict[str, object] = {}
+
+    async def fake_list_run_stream_events(run_id: str, *, after_seq: str, limit: int):
+        calls["run_id"] = run_id
+        calls["after_seq"] = after_seq
+        calls["limit"] = limit
+        return []
+
+    monkeypatch.setattr(svc, "list_run_stream_events", fake_list_run_stream_events)
+
+    summary = await svc._load_trajectory_summary("run-1")
+
+    assert calls == {
+        "run_id": "run-1",
+        "after_seq": "0-0",
+        "limit": svc.TRAJECTORY_SUMMARY_EVENT_LIMIT,
+    }
+    assert summary["event_count"] == 0
+    assert summary["tools"] == []

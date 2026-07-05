@@ -49,6 +49,7 @@ class AgentEvalRunCreate(BaseModel):
     meta: dict = Field(default_factory=dict, description="可选，请求追踪信息，例如 request_id、attachment_file_ids")
     image_content: str | None = Field(None, description="可选，base64 图片内容")
     model_spec: str | None = Field(None, description="可选，对话级模型覆盖，优先级高于智能体配置")
+    include_trajectory_summary: bool = Field(False, description="是否返回轻量工具调用轨迹摘要")
 
 
 @agent_invocation_router.post("/agent-call/runs")
@@ -101,6 +102,7 @@ async def create_agent_eval_run(
         meta=dict(payload.meta or {}),
         image_content=payload.image_content,
         model_spec=payload.model_spec,
+        include_trajectory_summary=payload.include_trajectory_summary,
         current_user=current_user,
         db=db,
     )

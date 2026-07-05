@@ -34,11 +34,15 @@ from yuxi.services.input_message_service import (
     build_chat_input_message,
     build_chat_input_message_from_openai_content,
 )
+from yuxi.services.run_queue_service import list_run_stream_events
 from yuxi.storage.postgres.models_business import User
+from yuxi.utils.logging_config import logger
 
 EVALUATION_SOURCE = "agent_evaluation"
 EVALUATION_FIELDS = ("dataset_name", "dataset_item_id", "experiment_name")
 MAX_REQUEST_ID_LENGTH = 64
+TRAJECTORY_SUMMARY_EVENT_LIMIT = 500
+INTERRUPT_STATUSES = {"ask_user_question_required", "human_approval_required", "interrupted"}
 
 
 async def create_agent_call_run_view(
@@ -116,6 +120,7 @@ async def create_agent_eval_run_view(
     model_spec: str | None,
     current_user: User,
     db: AsyncSession,
+    include_trajectory_summary: bool = False,
 ) -> dict[str, Any]:
     """创建一次评估样例运行，并阻塞等待最终 AgentRun 结果。
 
@@ -143,7 +148,7 @@ async def create_agent_eval_run_view(
         attachment_file_ids=meta.get("attachment_file_ids") or [],
     )
     try:
-        return await await_agent_run_result(run_id=run_response["run_id"], current_uid=str(current_user.uid))
+        result = await await_agent_run_result(run_id=run_response["run_id"], current_uid=str(current_user.uid))
     except AgentRunWaitTimeout as exc:
         raise HTTPException(
             status_code=504,
@@ -152,6 +157,15 @@ async def create_agent_eval_run_view(
                 "run": exc.result,
             },
         ) from exc
+    if include_trajectory_summary:
+        try:
+            trajectory_summary = await _load_trajectory_summary(run_response["run_id"])
+            if result.get("langfuse_trace_id"):
+                trajectory_summary["langfuse_trace_id"] = result["langfuse_trace_id"]
+            result["trajectory_summary"] = trajectory_summary
+        except Exception as e:
+            logger.warning(f"Failed to load trajectory summary for run {run_response['run_id']}: {e}")
+    return result
 
 
 async def create_agent_invocation_run_view(
@@ -236,6 +250,126 @@ async def get_agent_call_run_result_view(
 
     result = await get_agent_run_result(run_id=run_id, current_uid=current_uid, db=db)
     return _build_agent_call_response(result)
+
+
+async def _load_trajectory_summary(run_id: str) -> dict[str, Any]:
+    """从 run event stream 读取有限事件并生成轻量轨迹摘要。"""
+    events = await list_run_stream_events(run_id, after_seq="0-0", limit=TRAJECTORY_SUMMARY_EVENT_LIMIT)
+    return _build_trajectory_summary(events)
+
+
+def _build_trajectory_summary(events: list[dict[str, Any]]) -> dict[str, Any]:
+    """聚合工具调用、工具错误和人工中断计数，避免暴露完整事件载荷。"""
+    summary = _trajectory_summary_base(events)
+    tool_calls: dict[str, str] = {}
+    tool_errors: set[str] = set()
+    open_tool_keys: dict[str, list[str]] = {}
+    fallback_index = 0
+
+    def next_tool_key(tool_call_id: str | None, name: str, *, is_start: bool, is_finish: bool) -> str:
+        nonlocal fallback_index
+        if tool_call_id:
+            return str(tool_call_id)
+        if is_finish and open_tool_keys.get(name):
+            return open_tool_keys[name].pop(0)
+
+        key = f"name:{name}:{fallback_index}"
+        fallback_index += 1
+        if is_start and not is_finish:
+            open_tool_keys.setdefault(name, []).append(key)
+        return key
+
+    for event in events:
+        event_type = event.get("event_type")
+        if event_type == "interrupt":
+            summary["interrupt_count"] += 1
+
+        for chunk in _iter_event_chunks(event):
+            if _is_interrupt_status_event(event_type, chunk):
+                summary["interrupt_count"] += 1
+
+            stream_event = chunk.get("stream_event")
+            if isinstance(stream_event, dict) and stream_event.get("type") == "tool_call":
+                name = str(stream_event.get("name") or "unknown")
+                key = next_tool_key(stream_event.get("tool_call_id"), name, is_start=True, is_finish=False)
+                tool_calls.setdefault(key, name)
+
+            tool_event = chunk.get("event")
+            tool_event_data = tool_event.get("data") if isinstance(tool_event, dict) else None
+            if not isinstance(tool_event_data, dict):
+                continue
+
+            name = str(tool_event_data.get("tool_name") or tool_event_data.get("name") or "unknown")
+            tool_event_type = tool_event_data.get("event")
+            key = next_tool_key(
+                tool_event_data.get("tool_call_id"),
+                name,
+                is_start=tool_event_type == "tool-started",
+                is_finish=tool_event_type == "tool-finished",
+            )
+            if tool_event_type == "tool-started" or key not in tool_calls:
+                tool_calls.setdefault(key, name)
+            if tool_event_data.get("error") or event_type == "error":
+                tool_errors.add(key)
+
+    tools_by_name: dict[str, dict[str, Any]] = {}
+    for key, name in tool_calls.items():
+        item = tools_by_name.setdefault(name, {"name": name, "call_count": 0, "error_count": 0})
+        item["call_count"] += 1
+        if key in tool_errors:
+            item["error_count"] += 1
+
+    summary["tool_call_count"] = len(tool_calls)
+    summary["tool_error_count"] = len(tool_errors)
+    summary["tools"] = sorted(tools_by_name.values(), key=lambda item: item["name"])
+    return summary
+
+
+def _trajectory_summary_base(events: list[dict[str, Any]]) -> dict[str, Any]:
+    """创建轨迹摘要的固定字段，后续只填充聚合计数。"""
+    first_seq = _event_seq(events[0]) if events else None
+    last_seq = _event_seq(events[-1]) if events else None
+    return {
+        "schema_version": 1,
+        "source": "run_events",
+        "event_count": len(events),
+        "events_truncated": len(events) >= TRAJECTORY_SUMMARY_EVENT_LIMIT,
+        "event_range": {"first_seq": first_seq, "last_seq": last_seq},
+        "tool_call_count": 0,
+        "tool_error_count": 0,
+        "interrupt_count": 0,
+        "tools": [],
+    }
+
+
+def _event_seq(event: dict[str, Any]) -> str | None:
+    seq = event.get("seq")
+    return str(seq) if seq is not None else None
+
+
+def _iter_event_chunks(event: dict[str, Any]):
+    payload = _event_payload(event)
+    items = payload.get("items")
+    if isinstance(items, list):
+        for item in items:
+            if isinstance(item, dict):
+                yield item
+
+    chunk = payload.get("chunk")
+    if isinstance(chunk, dict):
+        yield chunk
+
+
+def _event_payload(event: dict[str, Any]) -> dict[str, Any]:
+    envelope = event.get("payload")
+    if not isinstance(envelope, dict):
+        return {}
+    payload = envelope.get("payload")
+    return payload if isinstance(payload, dict) else {}
+
+
+def _is_interrupt_status_event(event_type: str | None, chunk: dict[str, Any]) -> bool:
+    return event_type not in {"interrupt", "end"} and chunk.get("status") in INTERRUPT_STATUSES
 
 
 def _normalize_required_text(value: str | None, *, field_name: str) -> str:
