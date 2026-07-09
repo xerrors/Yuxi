@@ -196,6 +196,44 @@ class PostgresManager(metaclass=SingletonMeta):
             "ALTER TABLE IF EXISTS subagents ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE",
             "ALTER TABLE IF EXISTS conversations ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN NOT NULL DEFAULT FALSE",
             "ALTER TABLE IF EXISTS mcp_servers ADD COLUMN IF NOT EXISTS env JSONB",
+            "ALTER TABLE IF EXISTS mcp_servers ADD COLUMN IF NOT EXISTS auth_config_json JSONB",
+            """
+            CREATE TABLE IF NOT EXISTS mcp_connections (
+                id SERIAL PRIMARY KEY,
+                server_name VARCHAR(100) NOT NULL REFERENCES mcp_servers(name) ON DELETE CASCADE,
+                scope_type VARCHAR(16) NOT NULL,
+                scope_id VARCHAR(64) NOT NULL,
+                display_name VARCHAR(128),
+                external_subject VARCHAR(255),
+                status VARCHAR(32) NOT NULL DEFAULT 'active',
+                credential_blob TEXT,
+                meta_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+                created_by VARCHAR(64),
+                updated_by VARCHAR(64),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                CONSTRAINT uq_mcp_connections_server_scope UNIQUE (server_name, scope_type, scope_id)
+            )
+            """,
+            # 安全添加 CHECK 约束（PostgreSQL 不支持 ALTER TABLE ADD CONSTRAINT IF NOT EXISTS）
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint WHERE conname = 'ck_mcp_connections_scope_type'
+                ) THEN
+                    ALTER TABLE mcp_connections ADD CONSTRAINT ck_mcp_connections_scope_type
+                        CHECK (scope_type IN ('system', 'department', 'user'));
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint WHERE conname = 'ck_mcp_connections_status'
+                ) THEN
+                    ALTER TABLE mcp_connections ADD CONSTRAINT ck_mcp_connections_status
+                        CHECK (status IN ('active', 'disabled', 'reauth_required', 'invalid'));
+                END IF;
+            END;
+            $$;
+            """,
             """
             CREATE TABLE IF NOT EXISTS model_providers (
                 id SERIAL PRIMARY KEY,
@@ -244,11 +282,16 @@ class PostgresManager(metaclass=SingletonMeta):
             "CREATE INDEX IF NOT EXISTS idx_agent_runs_thread_created ON agent_runs(thread_id, created_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_agent_runs_status_updated ON agent_runs(status, updated_at)",
             "CREATE INDEX IF NOT EXISTS ix_conversations_is_pinned ON conversations(is_pinned)",
+            "CREATE INDEX IF NOT EXISTS idx_mcp_connections_status ON mcp_connections(status)",
+            "CREATE INDEX IF NOT EXISTS idx_mcp_connections_subject ON mcp_connections(external_subject)",
             "CREATE UNIQUE INDEX IF NOT EXISTS ix_model_providers_provider_id ON model_providers(provider_id)",
             "CREATE INDEX IF NOT EXISTS ix_model_providers_is_enabled ON model_providers(is_enabled)",
             # Undo/Fork 递归 CTE 性能索引
             "CREATE INDEX IF NOT EXISTS idx_checkpoints_thread_parent ON checkpoints(thread_id, parent_checkpoint_id)",
-            "CREATE INDEX IF NOT EXISTS idx_checkpoints_thread_request ON checkpoints(thread_id, (metadata->>'request_id'))",
+            (
+                "CREATE INDEX IF NOT EXISTS idx_checkpoints_thread_request "
+                "ON checkpoints(thread_id, (metadata->>'request_id'))"
+            ),
         ]
         async with self.async_engine.begin() as conn:
             for stmt in stmts:

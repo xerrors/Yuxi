@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     Float,
@@ -16,8 +17,8 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
+from sqlalchemy.ext.declarative import declarative_base
 from yuxi.utils.datetime_utils import format_utc_datetime, utc_now_naive
 
 Base = declarative_base()
@@ -440,6 +441,7 @@ class MCPServer(Base):
     args = Column(JSON, nullable=True, comment="命令参数数组（stdio）")
     env = Column(JSON, nullable=True, comment="环境变量（stdio）")
     headers = Column(JSON, nullable=True, comment="HTTP 请求头")
+    auth_config_json = Column(JSON, nullable=True, comment="MCP 鉴权配置")
     timeout = Column(Integer, nullable=True, comment="HTTP 超时时间（秒）")
     sse_read_timeout = Column(Integer, nullable=True, comment="SSE 读取超时（秒）")
 
@@ -469,6 +471,7 @@ class MCPServer(Base):
             "args": self.args or [],
             "env": self.env or {},
             "headers": self.headers or {},
+            "auth_config": self.auth_config_json or {},
             "timeout": self.timeout,
             "sse_read_timeout": self.sse_read_timeout,
             "tags": self.tags or [],
@@ -516,6 +519,14 @@ class MCPServer(Base):
                     config["headers"] = json.loads(self.headers)
                 except json.JSONDecodeError:
                     pass
+        if self.auth_config_json:
+            if isinstance(self.auth_config_json, dict):
+                config["auth_config"] = self.auth_config_json
+            elif isinstance(self.auth_config_json, str):
+                try:
+                    config["auth_config"] = json.loads(self.auth_config_json)
+                except json.JSONDecodeError:
+                    pass
         if self.timeout is not None:
             config["timeout"] = self.timeout
         if self.sse_read_timeout is not None:
@@ -523,6 +534,57 @@ class MCPServer(Base):
         if self.disabled_tools:
             config["disabled_tools"] = self.disabled_tools
         return config
+
+
+class MCPConnection(Base):
+    """MCP 服务器连接凭据模型"""
+
+    __tablename__ = "mcp_connections"
+    __table_args__ = (
+        UniqueConstraint("server_name", "scope_type", "scope_id", name="uq_mcp_connections_server_scope"),
+        CheckConstraint("scope_type IN ('system', 'department', 'user')", name="ck_mcp_connections_scope_type"),
+        CheckConstraint(
+            "status IN ('active', 'disabled', 'reauth_required', 'invalid')", name="ck_mcp_connections_status"
+        ),
+        Index("idx_mcp_connections_status", "status"),
+        Index("idx_mcp_connections_subject", "external_subject"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    server_name = Column(String(100), ForeignKey("mcp_servers.name", ondelete="CASCADE"), nullable=False)
+    scope_type = Column(String(16), nullable=False, comment="system/department/user")
+    scope_id = Column(String(64), nullable=False, comment="作用域标识（system 为 global）")
+    display_name = Column(String(128), nullable=True, comment="显示名称")
+    external_subject = Column(String(255), nullable=True, comment="外部服务用户/应用标识")
+    status = Column(String(32), nullable=False, default="active", comment="连接状态")
+    credential_blob = Column(Text, nullable=True, comment="加密后的凭据数据")
+    meta_json = Column(JSON, nullable=False, default=dict, comment="扩展元信息")
+    created_by = Column(String(64), nullable=True)
+    updated_by = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=utc_now_naive, comment="创建时间")
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, comment="更新时间")
+
+    server = relationship("MCPServer")
+
+    def to_dict(self, *, include_credentials: bool = False) -> dict[str, Any]:
+        payload = {
+            "id": self.id,
+            "server_name": self.server_name,
+            "scope_type": self.scope_type,
+            "scope_id": self.scope_id,
+            "display_name": self.display_name,
+            "external_subject": self.external_subject,
+            "status": self.status,
+            "meta_json": self.meta_json or {},
+            "has_credentials": bool(self.credential_blob),
+            "created_by": self.created_by,
+            "updated_by": self.updated_by,
+            "created_at": format_utc_datetime(self.created_at),
+            "updated_at": format_utc_datetime(self.updated_at),
+        }
+        if include_credentials:
+            payload["credential_blob"] = self.credential_blob
+        return payload
 
 
 class ModelProvider(Base):

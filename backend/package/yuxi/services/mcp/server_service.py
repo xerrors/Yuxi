@@ -8,7 +8,7 @@ Responsibilities:
 import traceback
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import String, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.storage.postgres.models_business import MCPServer
 from yuxi.utils import logger
@@ -195,6 +195,39 @@ async def get_all_mcp_servers(db: AsyncSession) -> list[MCPServer]:
     return list(result.scalars().all())
 
 
+async def get_mcp_server_dependency_summary(db: AsyncSession, name: str) -> dict[str, Any]:
+    """Get dependency references for an MCP server (connections, skills, agent configs)."""
+    from yuxi.services.mcp.connection_service import list_mcp_connections
+    from yuxi.storage.postgres.models_business import AgentConfig, Skill
+
+    connections = await list_mcp_connections(db, server_name=name)
+
+    skill_stmt = select(Skill).where(cast(Skill.mcp_dependencies, String).contains(name))
+    skill_rows = (await db.execute(skill_stmt)).scalars().all()
+    matched_skills = [
+        {"slug": item.slug, "name": item.name} for item in skill_rows if name in (item.mcp_dependencies or [])
+    ]
+
+    agent_config_stmt = select(AgentConfig).where(cast(AgentConfig.config_json, String).contains(name))
+    agent_config_rows = (await db.execute(agent_config_stmt)).scalars().all()
+    matched_agent_configs = []
+    for item in agent_config_rows:
+        config_json = item.config_json or {}
+        if name in (config_json.get("mcps") or []):
+            matched_agent_configs.append({"id": item.id, "name": item.name, "agent_id": item.agent_id})
+
+    connection_refs = [
+        {"scope_type": item.scope_type, "scope_id": item.scope_id, "status": item.status} for item in connections
+    ]
+
+    return {
+        "has_references": bool(connection_refs or matched_skills or matched_agent_configs),
+        "connections": connection_refs,
+        "skills": matched_skills,
+        "agent_configs": matched_agent_configs,
+    }
+
+
 async def create_mcp_server(
     db: AsyncSession,
     name: str,
@@ -205,6 +238,7 @@ async def create_mcp_server(
     env: dict = None,
     description: str = None,
     headers: dict = None,
+    auth_config: dict | None = None,
     timeout: int = None,
     sse_read_timeout: int = None,
     tags: list = None,
@@ -226,6 +260,7 @@ async def create_mcp_server(
         args=args,
         env=env,
         headers=headers,
+        auth_config_json=auth_config,
         timeout=timeout,
         sse_read_timeout=sse_read_timeout,
         tags=tags,
@@ -254,6 +289,7 @@ async def update_mcp_server(
     args: list = None,
     env: Any = _UNSET,
     headers: dict = None,
+    auth_config: Any = _UNSET,
     timeout: int = None,
     sse_read_timeout: int = None,
     tags: list = None,
@@ -279,6 +315,8 @@ async def update_mcp_server(
         server.env = env
     if headers is not None:
         server.headers = headers
+    if auth_config is not _UNSET:
+        server.auth_config_json = auth_config
     if timeout is not None:
         server.timeout = timeout
     if sse_read_timeout is not None:
