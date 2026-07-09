@@ -309,6 +309,13 @@ async def create_mcp_connection(
         dept_result = await db.execute(select(Department).where(Department.id == dept_id_int))
         if dept_result.scalar_one_or_none() is None:
             raise ValueError(f"Department with id '{normalized_scope_id}' does not exist")
+    elif normalized_scope_type == "user":
+        user_conditions = [User.user_id == normalized_scope_id]
+        if normalized_scope_id.isdigit():
+            user_conditions.append(User.id == int(normalized_scope_id))
+        user_result = await db.execute(select(User.id).where(or_(*user_conditions), User.is_deleted == 0))
+        if user_result.scalar_one_or_none() is None:
+            raise ValueError(f"User '{normalized_scope_id}' does not exist")
 
     encrypted_credential_blob = (
         encrypt_credential_blob(credential_blob)

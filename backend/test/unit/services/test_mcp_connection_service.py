@@ -4,13 +4,14 @@ import os
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
 from yuxi.services.mcp import connection_service
 from yuxi.services.mcp_auth.crypto import decrypt_credential_blob
-from yuxi.storage.postgres.models_business import MCPConnection, MCPServer
+from yuxi.storage.postgres.models_business import Department, MCPConnection, MCPServer, User
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 
@@ -44,6 +45,8 @@ def mcp_credentials_master_key(monkeypatch):
 async def conn_session():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
+        await conn.run_sync(Department.__table__.create)
+        await conn.run_sync(User.__table__.create)
         await conn.run_sync(MCPServer.__table__.create)
         await conn.run_sync(MCPConnection.__table__.create)
 
@@ -68,6 +71,28 @@ async def _add_server(session, name: str, **overrides) -> MCPServer:
     return server
 
 
+async def _ensure_user(session, scope_id: str) -> User:
+    conditions = [User.user_id == scope_id]
+    if scope_id.isdigit():
+        conditions.append(User.id == int(scope_id))
+    existing = (await session.execute(select(User).where(or_(*conditions)))).scalar_one_or_none()
+    if existing is not None:
+        return existing
+
+    user_kwargs = {
+        "username": f"user-{scope_id}",
+        "user_id": scope_id,
+        "password_hash": "x",
+        "role": "user",
+    }
+    if scope_id.isdigit():
+        user_kwargs["id"] = int(scope_id)
+    user = User(**user_kwargs)
+    session.add(user)
+    await session.commit()
+    return user
+
+
 async def _create_connection(session, server_name: str, **overrides) -> MCPConnection:
     params = {
         "server_name": server_name,
@@ -77,6 +102,8 @@ async def _create_connection(session, server_name: str, **overrides) -> MCPConne
         "created_by": "tester",
     }
     params.update(overrides)
+    if params["scope_type"] == "user" and str(params["scope_id"] or "").strip():
+        await _ensure_user(session, str(params["scope_id"]))
     return await connection_service.create_mcp_connection(session, **params)
 
 
@@ -178,6 +205,19 @@ async def test_empty_scope_id_for_non_system_raises(conn_session):
     await _add_server(conn_session, "srv")
     with pytest.raises(ValueError, match="scope_id is required for"):
         await _create_connection(conn_session, "srv", scope_type="user", scope_id="")
+
+
+async def test_user_scope_requires_existing_user(conn_session):
+    await _add_server(conn_session, "srv")
+    with pytest.raises(ValueError, match="User '404' does not exist"):
+        await connection_service.create_mcp_connection(
+            conn_session,
+            server_name="srv",
+            scope_type="user",
+            scope_id="404",
+            credential_blob='{"secrets":{"token":"my-token"}}',
+            created_by="tester",
+        )
 
 
 # =============================================================================

@@ -9,6 +9,7 @@ Prerequisites:
 from __future__ import annotations
 
 import os
+import uuid
 
 import pytest
 
@@ -143,10 +144,22 @@ class TestMcpConnectionCrudRealDb:
         _require_credentials()
         self.headers = await _admin_headers(test_client)
         self.dept_id = await _ensure_system_department(test_client, self.headers)
+        self.user_scope_ids = []
+        for _ in range(4):
+            username = f"pytest_mcp_user_{uuid.uuid4().hex[:8]}"
+            resp = await test_client.post(
+                "/api/auth/users",
+                json={"username": username, "password": f"Pw!{uuid.uuid4().hex[:8]}", "role": "user"},
+                headers=self.headers,
+            )
+            assert resp.status_code == 200, f"Create test user failed: {resp.text}"
+            self.user_scope_ids.append(str(resp.json()["id"]))
         await _create_mcp_server_if_missing(test_client, self.headers)
         await _cleanup_mcp_connections(test_client, self.headers, MCP_SERVER_NAME)
         yield
         await _cleanup_mcp_connections(test_client, self.headers, MCP_SERVER_NAME)
+        for user_id in self.user_scope_ids:
+            await test_client.delete(f"/api/auth/users/{user_id}", headers=self.headers)
 
     async def _create_connection(self, test_client, **overrides) -> dict:
         body = {
@@ -175,7 +188,7 @@ class TestMcpConnectionCrudRealDb:
 
     async def test_create_and_get_connection(self, test_client):
         """Create a connection and verify it appears in the list."""
-        created = await self._create_connection(test_client, scope_type="user", scope_id="42")
+        created = await self._create_connection(test_client, scope_type="user", scope_id=self.user_scope_ids[0])
         conn_id = created["id"]
 
         list_resp = await test_client.get(
@@ -188,8 +201,8 @@ class TestMcpConnectionCrudRealDb:
 
     async def test_list_connections_paginated(self, test_client):
         """Verify paginated listing with summary counts."""
-        for i in range(3):
-            await self._create_connection(test_client, scope_type="user", scope_id=str(i + 10))
+        for user_id in self.user_scope_ids[:3]:
+            await self._create_connection(test_client, scope_type="user", scope_id=user_id)
 
         resp = await test_client.get(
             f"/api/system/mcp-servers/{MCP_SERVER_NAME}/connections?paginated=true&page=1&page_size=2",
@@ -230,7 +243,7 @@ class TestMcpConnectionCrudRealDb:
 
     async def test_delete_connection(self, test_client):
         """Create then delete a connection."""
-        created = await self._create_connection(test_client, scope_type="user", scope_id="99")
+        created = await self._create_connection(test_client, scope_type="user", scope_id=self.user_scope_ids[0])
         conn_id = created["id"]
 
         resp = await test_client.delete(

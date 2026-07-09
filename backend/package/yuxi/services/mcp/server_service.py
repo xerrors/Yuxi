@@ -8,7 +8,7 @@ Responsibilities:
 import traceback
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import String, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.storage.postgres.models_business import MCPServer
 from yuxi.utils import logger
@@ -202,12 +202,14 @@ async def get_mcp_server_dependency_summary(db: AsyncSession, name: str) -> dict
 
     connections = await list_mcp_connections(db, server_name=name)
 
-    skill_rows = (await db.execute(select(Skill))).scalars().all()
+    skill_stmt = select(Skill).where(cast(Skill.mcp_dependencies, String).contains(name))
+    skill_rows = (await db.execute(skill_stmt)).scalars().all()
     matched_skills = [
         {"slug": item.slug, "name": item.name} for item in skill_rows if name in (item.mcp_dependencies or [])
     ]
 
-    agent_config_rows = (await db.execute(select(AgentConfig))).scalars().all()
+    agent_config_stmt = select(AgentConfig).where(cast(AgentConfig.config_json, String).contains(name))
+    agent_config_rows = (await db.execute(agent_config_stmt)).scalars().all()
     matched_agent_configs = []
     for item in agent_config_rows:
         config_json = item.config_json or {}
