@@ -33,7 +33,7 @@
 **其他**
 - [x] 历史对话新增搜索能力（[#790](https://github.com/xerrors/Yuxi/issues/790)）
 - [x] 消息中的代码块增加快速复制按钮（[#790](https://github.com/xerrors/Yuxi/issues/790)）
-- [ ] 集成 Memory，基于 deepagents 的文件后端实现，需要考虑定位
+- [x] 集成用户级 Memory，基于 DeepAgents 文件后端在主智能体中按需维护长期记忆
 - [x] 优化 Task 模块定位：区分真正的后台任务实体与进度条管理工具，重新定义任务中心/Tasker 的职责边界
 - [x] 模型供应商类型继续补齐非 OpenAI 兼容适配，并清理不再支持的 provider type 字样 <Badge text="v0.7.1" />
 - [ ] 优化 Agent 向用户追问交互：支持较长文本回答输入，并在流式输出时保持聊天区跟随最新内容（[#753](https://github.com/xerrors/Yuxi/issues/753)）

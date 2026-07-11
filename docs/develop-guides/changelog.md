@@ -20,7 +20,7 @@
 - 知识库详情页新增整页内容加载态：切换或首次进入详情时，在知识库信息返回前仅展示居中 loading，避免标题、标签页和文件区域先渲染旧数据或空状态。
 - 智能体管理页的普通智能体卡片新增“去对话”入口，点击后进入新建对话并预选对应智能体；子智能体卡片不展示该入口。
 - 修复 API/Worker Docker 镜像构建失败：后端项目要求 Python `>=3.12,<3.14`，Dockerfile 基础镜像与 `.python-version` 同步到 `python:3.13-slim`，并将 `docker/api.Dockerfile` 的 `COPY` 源路径改为相对仓库根目录的 `backend/...`，与 `docker-compose` 中 `build.context: .` 保持一致；同时移除 `uv sync` 对 BuildKit `--mount` 的依赖并启用 `--no-cache`，避免分别因 Python 版本不兼容、`../backend/...` 越出 build context、未启用 BuildKit 或 uv 缓存残留导致镜像构建失败或体积膨胀。
-- 新增用户级配置：保留现有全局配置链路不变，新增 `user_config` 表、`UserConfigSchema` 与无缓存的 `UserConfig` PostgreSQL 读取/保存入口；新增 `/api/user/config`，所有登录用户可读写自己的配置。首个字段为 `enable_memory`（是否启用 Memory），作为预留开关仅持久化与展示，不接入运行逻辑；设置弹窗新增“用户配置” Tab 展示并保存该开关。
+- 新增用户级配置与 Memory：保留现有全局配置链路不变，新增 `user_config` 表、`UserConfigSchema` 与无缓存的 `UserConfig` PostgreSQL 读取/保存入口；新增 `/api/user/config`，所有登录用户可读写自己的配置。`enable_memory` 开启后，主智能体通过 DeepAgents MemoryMiddleware 加载用户共享工作区的 `memory/MEMORY.md`，并通过不接受路径参数的 `update_memory` 工具按需维护跨会话长期记忆，避免普通文件工具创建读取不到的旁路文件；每次 Agent run 都重新读取文件，避免旧线程继续使用 checkpoint 缓存，子智能体首版不加载共享可写 Memory。设置弹窗新增“用户配置” Tab 展示并保存该开关。
 - 优化 Skills 管理页展示文案：补充推荐 Skills 与内置 `mysql-reporter` 的卡片描述，避免短描述在两行卡片布局下显得过空。
 - 新增 PaddleOCR 云端 API OCR 解析器：支持 `paddleocr_vl_1_6` 调用 `PaddleOCR-VL-1.6` 输出版面 Markdown，支持 `paddleocr_pp_ocrv6` 调用 `PP-OCRv6` 输出纯 OCR 文本；解析器复用 PaddleOCR jobs 提交、轮询与 JSONL 下载逻辑，健康检查仅校验 `PADDLEOCR_API_TOKEN` 配置状态，不创建真实 OCR 任务；知识库上传与临时附件解析弹窗同步增加两个 OCR 选项。
 - 优化对话消息代码块交互：助手消息中的 Markdown 代码块右上角新增简约复制按钮，支持点击快速复制代码内容并显示短暂“已复制”反馈。

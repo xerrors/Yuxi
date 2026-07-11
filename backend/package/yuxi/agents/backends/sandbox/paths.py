@@ -12,6 +12,8 @@ from yuxi.utils.paths import (
     WORKSPACE_AGENTS_DIR_NAME,
     WORKSPACE_AGENTS_PROMPT_FILE_NAME,
     WORKSPACE_DIR_NAME,
+    WORKSPACE_MEMORY_DIR_NAME,
+    WORKSPACE_MEMORY_FILE_NAME,
 )
 
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -86,28 +88,35 @@ def _chmod_writable(path: Path, *, dir: bool = False) -> None:
 
 def ensure_workspace_default_files(workspace_dir: Path) -> None:
     workspace_dir = _resolve_threads_child_path(workspace_dir)
-    agents_dir = workspace_dir / WORKSPACE_AGENTS_DIR_NAME
-    agents_file = agents_dir / WORKSPACE_AGENTS_PROMPT_FILE_NAME
+    default_files = (
+        ("Agents", workspace_dir / WORKSPACE_AGENTS_DIR_NAME / WORKSPACE_AGENTS_PROMPT_FILE_NAME, b""),
+        (
+            "Memory",
+            workspace_dir / WORKSPACE_MEMORY_DIR_NAME / WORKSPACE_MEMORY_FILE_NAME,
+            b"# User Memory\n",
+        ),
+    )
 
-    try:
-        agents_dir.mkdir(parents=True, exist_ok=True)
-        _chmod_writable(agents_dir, dir=True)
-    except FileExistsError:
-        logger.warning("工作区默认 Agents 目录创建失败：路径已被文件占用")
-        return
-    except OSError as exc:
-        logger.warning(f"工作区默认 Agents 目录初始化失败: {exc}")
-        return
+    for label, file_path, initial_content in default_files:
+        try:
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            _chmod_writable(file_path.parent, dir=True)
+        except FileExistsError:
+            logger.warning(f"工作区默认 {label} 目录创建失败：路径已被文件占用")
+            continue
+        except OSError as exc:
+            logger.warning(f"工作区默认 {label} 目录初始化失败: {exc}")
+            continue
 
-    try:
-        with agents_file.open("xb"):
-            pass
-        _chmod_writable(agents_file)
-    except FileExistsError:
-        if agents_file.is_dir():
-            logger.warning("工作区默认 AGENTS.md 创建失败：路径已被目录占用")
-    except OSError as exc:
-        logger.warning(f"工作区默认 Agents 文件初始化失败: {exc}")
+        try:
+            with file_path.open("xb") as buffer:
+                buffer.write(initial_content)
+            _chmod_writable(file_path)
+        except FileExistsError:
+            if file_path.is_dir():
+                logger.warning(f"工作区默认 {file_path.name} 创建失败：路径已被目录占用")
+        except OSError as exc:
+            logger.warning(f"工作区默认 {label} 文件初始化失败: {exc}")
 
 
 def sandbox_uploads_dir(thread_id: str) -> Path:

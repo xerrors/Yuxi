@@ -4,7 +4,7 @@
       <div class="header-content">
         <div class="section-title">用户配置(Beta)</div>
         <p class="section-description">
-          配置当前用户的专属设置。当前为测试预览版，暂未引入新的特性，仅作技术能力拓展。
+          配置当前用户的专属设置。Memory 用于在不同对话之间保留长期有效的偏好和经验。
         </p>
       </div>
       <div class="header-actions">
@@ -24,9 +24,11 @@
           <div class="config-meta">
             <div class="config-title-line">
               <span class="config-title">是否启用 Memory</span>
-              <span class="reserved-badge">预留开关</span>
+              <span class="reserved-badge">Beta</span>
             </div>
-            <p class="config-description">当前仅保存配置值，暂不接入智能体运行逻辑。</p>
+            <p class="config-description">
+              启用后，主智能体通过专用工具读写用户工作区的 memory/MEMORY.md；子智能体暂不写入。
+            </p>
           </div>
           <a-switch :checked="draftEnableMemory" @change="draftEnableMemory = Boolean($event)" />
         </div>

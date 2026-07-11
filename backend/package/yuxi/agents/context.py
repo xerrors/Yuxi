@@ -6,6 +6,7 @@ from dataclasses import MISSING, dataclass, field, fields
 from typing import Any, get_origin
 
 from yuxi.agents.backends.sandbox.paths import sandbox_workspace_agents_prompt_file
+from yuxi.config import UserConfig
 from yuxi.utils.logging_config import logger
 
 WORKSPACE_AGENTS_PROMPT_MAX_BYTES = 64 * 1024
@@ -509,6 +510,7 @@ async def prepare_agent_runtime_context(
 ) -> BaseContext:
     """准备 Agent 运行时上下文，主要是根据 context 中的 uid 加载用户可访问的资源列表，并进行规范化处理。"""
     schema = context_schema or type(context)
+    setattr(context, "_memory_enabled", False)
     uid = str(getattr(context, "uid", "") or "").strip()
     if not uid:
         return context
@@ -531,6 +533,9 @@ async def prepare_agent_runtime_context(
             setattr(context, "_runtime_skill_metadata", {})
             setattr(context, "_runtime_skill_dependency_map", {})
             return context
+
+        user_config = await UserConfig.load(db, uid)
+        setattr(context, "_memory_enabled", bool(user_config.schema.enable_memory))
 
         raw_resources = {
             field_name: getattr(context, field_name, None)

@@ -15,6 +15,7 @@ from yuxi.agents.context import (
 )
 from yuxi.agents.middlewares import (
     TokenUsageMiddleware,
+    create_memory_middleware,
     create_summary_middleware,
     save_attachments_to_fs,
 )
@@ -56,9 +57,10 @@ async def _build_middlewares(context):
             getattr(context, "tool_token_limit", DEFAULT_TOOL_RESULT_EVICTION_K_TOKENS) * 1024,
             context=context,
         ),
-        save_attachments_to_fs,
-        SkillsMiddleware(),
     ]
+    if getattr(context, "_memory_enabled", False):
+        middlewares.append(create_memory_middleware())
+    middlewares.extend([save_attachments_to_fs, SkillsMiddleware()])
     subagent_middleware = await create_subagent_task_middleware(context)
     if subagent_middleware:
         middlewares.append(subagent_middleware)

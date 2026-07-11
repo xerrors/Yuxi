@@ -204,6 +204,10 @@ Agent.config_json.context.system_prompt
 
 因此，`agents/AGENTS.md` 适合放置用户维度的稳定约束，不适合放置一次性任务要求；一次性要求仍应直接写在当前对话中。
 
+用户在设置页开启 `enable_memory` 后，主智能体还会通过 DeepAgents MemoryMiddleware 加载用户共享工作区的 `memory/MEMORY.md`。该文件用于保存 Agent 在对话中识别出的长期偏好和可复用经验，并由 Agent 通过固定路径的 `update_memory` 工具按需更新；每次新的 Agent run 都会重新读取文件，因此其他线程写入的内容可以在后续运行中生效。关闭开关只停止加载和更新，不会删除已有文件。
+
+`agents/AGENTS.md` 与 `memory/MEMORY.md` 的职责不同：前者由用户维护稳定指令和工作区约定，后者由 Agent 维护跨会话记忆。Memory 写入不接受路径参数，Agent 不应使用普通文件工具另建 JSON 或其他记忆文件。首版只在主智能体中启用共享可写 Memory，子智能体不加载该 Memory。
+
 ### 4.2 Context 实例化阶段
 
 `BaseAgent` 在运行前会创建 `context_schema()` 实例，并通过 `update_from_dict()` 注入配置值。
