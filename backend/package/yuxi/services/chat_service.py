@@ -29,7 +29,7 @@ from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.repositories.subagent_thread_repository import SubagentThreadRepository
-from yuxi.services.conversation_service import serialize_attachment
+from yuxi.services.conversation_service import materialize_inline_image_upload, serialize_attachment
 from yuxi.services.input_message_service import AgentRunInputMessage
 from yuxi.services.langfuse_service import (
     LangfuseRunContext,
@@ -384,6 +384,37 @@ async def _stream_agent_events(agent, messages, *, input_context=None, **kwargs)
         **kwargs,
     ):
         yield mode, payload
+
+
+def _merge_uploads(existing_uploads: list[dict], current_uploads: list[dict]) -> list[dict]:
+    merged: list[dict] = []
+    positions: dict[tuple[str, str], int] = {}
+    for upload in [*existing_uploads, *current_uploads]:
+        if not isinstance(upload, dict):
+            continue
+        identity = next(
+            (
+                (field, str(upload[field]))
+                for field in ("file_id", "path")
+                if upload.get(field) is not None and str(upload[field]).strip()
+            ),
+            None,
+        )
+        if identity is not None and identity in positions:
+            merged[positions[identity]] = upload
+            continue
+        if identity is not None:
+            positions[identity] = len(merged)
+        merged.append(upload)
+    return merged
+
+
+async def _merge_checkpoint_uploads(agent, *, context, config: dict, current_uploads: list[dict]) -> list[dict]:
+    graph = await agent.get_graph(context=context)
+    snapshot = await graph.aget_state(config)
+    values = snapshot.values if snapshot and isinstance(snapshot.values, dict) else {}
+    existing_uploads = values.get("uploads") if isinstance(values.get("uploads"), list) else []
+    return _merge_uploads(existing_uploads, current_uploads)
 
 
 async def _get_existing_message_ids(conv_repo: ConversationRepository, thread_id: str) -> set[str]:
@@ -875,6 +906,16 @@ async def stream_agent_chat(
             request_id=meta["request_id"],
             attachment_file_ids=_normalize_attachment_file_ids(meta),
         )
+        runtime_uploads = list(request_attachments)
+        if image_content:
+            runtime_uploads.append(
+                await materialize_inline_image_upload(
+                    thread_id=thread_id,
+                    uid=uid,
+                    image_content=image_content,
+                    request_id=meta["request_id"],
+                )
+            )
 
         init_msg = {
             "role": "user",
@@ -910,14 +951,22 @@ async def stream_agent_chat(
         # 先构建 langgraph_config
         langgraph_config = {"configurable": {"thread_id": thread_id, "uid": uid}}
 
-        # LangGraph 会自动从 checkpointer 恢复 state（包括 uploads）
-        # 无需手动加载或传递
+        # Inline images are added to this run's uploads state so file tools receive a real sandbox path.
 
         protocol_message_ids: dict[tuple[str, str], str] = {}
+        if image_content:
+            runtime_uploads = await _merge_checkpoint_uploads(
+                agent,
+                context=context,
+                config=langgraph_config,
+                current_uploads=runtime_uploads,
+            )
+        state_updates = {"uploads": runtime_uploads} if image_content else None
         async for mode, payload in _stream_agent_events(
             agent,
             messages,
             input_context=input_context,
+            state_updates=state_updates,
             callbacks=langfuse_run.callbacks,
             metadata=langfuse_run.metadata,
             tags=langfuse_run.tags,

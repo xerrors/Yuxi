@@ -1,3 +1,7 @@
+import asyncio
+import base64
+import binascii
+import hashlib
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -283,6 +287,52 @@ def serialize_attachment(record: dict) -> dict:
         "original_artifact_url": record.get("original_artifact_url"),
         "minio_url": record.get("minio_url"),
         "request_id": record.get("request_id"),
+    }
+
+
+async def materialize_inline_image_upload(
+    *,
+    thread_id: str,
+    uid: str,
+    image_content: str,
+    request_id: str | None = None,
+) -> dict:
+    """Persist an inline chat image in the thread sandbox for file tools."""
+    try:
+        image_bytes = base64.b64decode(image_content, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise ValueError("invalid inline image content") from exc
+
+    if not image_bytes:
+        raise ValueError("inline image content is empty")
+    if len(image_bytes) > MAX_ATTACHMENT_SIZE_BYTES:
+        raise ValueError("inline image exceeds the 5 MB attachment limit")
+
+    if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        suffix, file_type = ".png", "image/png"
+    else:
+        suffix, file_type = ".jpg", "image/jpeg"
+
+    file_id = hashlib.sha256(image_bytes).hexdigest()
+    file_name = f"{file_id}{suffix}"
+    ensure_thread_dirs(thread_id, uid)
+    virtual_path = _make_upload_virtual_path(file_name)
+    storage_path = sandbox_uploads_dir(thread_id) / file_name
+    await asyncio.to_thread(storage_path.write_bytes, image_bytes)
+
+    return {
+        "file_id": file_id,
+        "file_name": file_name,
+        "file_type": file_type,
+        "file_size": len(image_bytes),
+        "status": "uploaded",
+        "uploaded_at": utc_isoformat(),
+        "path": virtual_path,
+        "artifact_url": _artifact_url(thread_id, virtual_path),
+        "original_path": virtual_path,
+        "original_artifact_url": _artifact_url(thread_id, virtual_path),
+        "storage_path": str(storage_path),
+        "request_id": request_id,
     }
 
 

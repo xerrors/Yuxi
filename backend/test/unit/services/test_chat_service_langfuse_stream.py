@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 from types import SimpleNamespace
 
@@ -7,6 +8,7 @@ import pytest
 from langchain.messages import AIMessageChunk, HumanMessage
 
 from yuxi.services import chat_service as svc
+from yuxi.services import conversation_service as conversation_svc
 from yuxi.services.input_message_service import build_chat_input_message
 
 
@@ -130,7 +132,9 @@ def test_build_langfuse_run_context_reads_evaluation_from_invocation_meta(monkey
 
 
 @pytest.mark.asyncio
-async def test_stream_agent_chat_passes_langfuse_callbacks_and_persists_trace_info(monkeypatch: pytest.MonkeyPatch):
+async def test_stream_agent_chat_passes_langfuse_callbacks_and_persists_trace_info(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+):
     calls: dict[str, object] = {}
 
     class FakeAgent:
@@ -145,7 +149,20 @@ async def test_stream_agent_chat_passes_langfuse_callbacks_and_persists_trace_in
         async def get_graph(self, *, context=None):
             class FakeGraph:
                 async def aget_state(self, config):
-                    return SimpleNamespace(values={"messages": [], "files": {}, "artifacts": []})
+                    return SimpleNamespace(
+                        values={
+                            "messages": [],
+                            "files": {},
+                            "artifacts": [],
+                            "uploads": [
+                                {
+                                    "file_id": "existing-file",
+                                    "file_name": "existing.pdf",
+                                    "path": "/home/gem/user-data/uploads/existing.pdf",
+                                }
+                            ],
+                        }
+                    )
 
             return FakeGraph()
 
@@ -201,13 +218,16 @@ async def test_stream_agent_chat_passes_langfuse_callbacks_and_persists_trace_in
         },
     )
     monkeypatch.setattr(svc, "flush_langfuse", lambda: calls.setdefault("flushed", True))
+    monkeypatch.setattr(conversation_svc.app_config, "save_dir", str(tmp_path))
+
+    image_bytes = b"\xff\xd8inline-image\xff\xd9"
 
     chunks = []
     async for chunk in svc.stream_agent_chat(
         agent_slug="test-agent",
         thread_id="thread-1",
         meta={"request_id": "req-1"},
-        input_message=build_chat_input_message("hello"),
+        input_message=build_chat_input_message("hello", base64.b64encode(image_bytes).decode("ascii")),
         current_user=SimpleNamespace(id=1, uid="user-1", role="user", department_id="dept-1"),
         db=object(),
     ):
@@ -220,10 +240,18 @@ async def test_stream_agent_chat_passes_langfuse_callbacks_and_persists_trace_in
         "run_id": None,
         "request_id": "req-1",
     }
+    existing_upload, inline_upload = calls["stream_kwargs"]["state_updates"]["uploads"]
+    assert existing_upload["file_id"] == "existing-file"
+    assert inline_upload["path"].startswith("/home/gem/user-data/uploads/")
+    assert inline_upload["file_type"] == "image/jpeg"
+    assert (
+        tmp_path / "threads" / "thread-1" / "user-data" / "uploads" / inline_upload["file_name"]
+    ).read_bytes() == image_bytes
     assert calls["stream_kwargs"] == {
         "callbacks": ["handler-1"],
         "metadata": {"langfuse_user_id": "user-1", "langfuse_session_id": "thread-1"},
         "tags": ["yuxi", "chat"],
+        "state_updates": {"uploads": [existing_upload, inline_upload]},
     }
     assert calls["saved_state"]["trace_info"] == {
         "langfuse_trace_id": "trace-runtime",
