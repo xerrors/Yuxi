@@ -701,6 +701,41 @@ async def test_subagent_run_service_resumes_parent_question_with_child_scope(mon
 
 
 @pytest.mark.asyncio
+async def test_subagent_run_service_converts_resume_http_error_to_value_error(monkeypatch: pytest.MonkeyPatch):
+    interrupted_run = SimpleNamespace(
+        id="child-run",
+        agent_slug="worker",
+        conversation_thread_id="child-thread",
+        status="interrupted",
+        error_type="ask_main_agent_required",
+        subagent_thread_relation_id=77,
+        run_type="subagent",
+        created_by_run_id="parent-run",
+    )
+    _patch_repos(
+        monkeypatch,
+        child_run=interrupted_run,
+        relation_by_id=_relation(),
+    )
+
+    async def fake_create_agent_run_view(**kwargs):
+        raise HTTPException(status_code=409, detail={"code": "run_busy", "message": "busy"})
+
+    monkeypatch.setattr(service_module.agent_run_service, "create_agent_run_view", fake_create_agent_run_view)
+
+    with pytest.raises(ValueError) as exc_info:
+        await SubagentRunService(_FakeDB()).resume_for_creator(
+            uid="user-1",
+            created_by_run_id="parent-run",
+            interrupted_run_id="child-run",
+            answer="answer",
+            tool_call_id="answer-call",
+        )
+
+    assert str(exc_info.value) == '{"code": "run_busy", "message": "busy"}'
+
+
+@pytest.mark.asyncio
 async def test_subagent_run_service_rejects_non_parent_question_interrupt(monkeypatch: pytest.MonkeyPatch):
     interrupted_run = SimpleNamespace(
         id="child-run",

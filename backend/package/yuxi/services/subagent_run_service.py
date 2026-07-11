@@ -226,20 +226,24 @@ class SubagentRunService:
                 return existing_resume
             raise ValueError("该子智能体问题已被后续运行取代")
 
-        response = await agent_run_service.create_agent_run_view(
-            input_message=None,
-            agent_slug=interrupted_run.agent_slug,
-            thread_id=interrupted_run.conversation_thread_id,
-            meta={"source": "ask_for_main_agent_resume"},
-            current_uid=uid,
-            db=self.db,
-            resume=normalized_answer,
-            created_by_run_id=created_by_run_id,
-            resume_from_run_id=interrupted_run.id,
-            agent_kind="subagent",
-            subagent_thread_relation_id=relation.id,
-            runtime_overrides={"tool_call_id": tool_call_id},
-        )
+        try:
+            response = await agent_run_service.create_agent_run_view(
+                input_message=None,
+                agent_slug=interrupted_run.agent_slug,
+                thread_id=interrupted_run.conversation_thread_id,
+                meta={"source": "ask_for_main_agent_resume"},
+                current_uid=uid,
+                db=self.db,
+                resume=normalized_answer,
+                created_by_run_id=created_by_run_id,
+                resume_from_run_id=interrupted_run.id,
+                agent_kind="subagent",
+                subagent_thread_relation_id=relation.id,
+                runtime_overrides={"tool_call_id": tool_call_id},
+            )
+        except HTTPException as exc:
+            detail = exc.detail
+            raise ValueError(detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False)) from exc
         resumed_run = await self.run_repo.get_run_for_user(response["run_id"], uid)
         if not resumed_run:
             raise ValueError("恢复后的子智能体运行不存在")
