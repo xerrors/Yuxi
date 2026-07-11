@@ -92,6 +92,15 @@ class TaskToolSchema(BaseModel):
 
 `task` 是同步工具：父智能体调用后会阻塞等待子智能体 run 走到终态，再拿到最终 assistant 文本。这种模式适合短任务，例如父智能体必须立即依赖子智能体结果继续推理时。
 
+同步任务支持子智能体向父智能体请求必要信息：
+
+1. 子智能体调用 `ask_for_main_agent(question)` 后暂停当前 child run。
+2. `task` 返回 `status=input_required`、问题、child `run_id` 和 `thread_id`，父智能体不会把它误当最终结果。
+3. 父智能体能直接回答时调用 `answer_subagent_question(run_id, answer)`；如果也缺少信息，先使用 `ask_user_question` 询问用户，再回答子智能体。
+4. 系统恢复原 child checkpoint 并继续同步等待；子智能体可以再次提问，直到任务完成或失败。
+
+`ask_for_main_agent` 只在同步 `task` 的子运行中可见，不是管理员可配置的普通工具。异步 `subagent_start` 暂不支持主动向已经结束的父 run 提问，也不会注入该工具。
+
 但当子任务耗时较长或可以并行多个时，同步等待会让父智能体长时间停在工具调用上，无法继续工作。因此 middleware 还同时暴露一组异步子智能体生命周期工具：
 
 | 工具 | 作用 | 关键参数 |

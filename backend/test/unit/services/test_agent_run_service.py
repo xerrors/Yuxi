@@ -1468,6 +1468,60 @@ async def test_create_resume_run_inherits_parent_model_spec(monkeypatch: pytest.
     assert db.created_run_kwargs["input_payload"]["model_spec"] == "parent-model"
 
 
+@pytest.mark.asyncio
+async def test_create_subagent_resume_preserves_runtime_and_current_parent_scope(monkeypatch: pytest.MonkeyPatch):
+    db = _patch_agent_run_creation(
+        monkeypatch,
+        parent_run=SimpleNamespace(
+            id="parent-run",
+            conversation_thread_id="thread-1",
+            status="interrupted",
+            input_payload={
+                "model_spec": "parent-model",
+                "runtime": {
+                    "tool_call_id": "task-call",
+                    "subagent_name": "Worker",
+                    "parent_thread_id": "parent-thread",
+                    "file_thread_id": "parent-thread",
+                    "skills_thread_id": "thread-1",
+                    "allow_parent_questions": True,
+                },
+            },
+        ),
+    )
+
+    await agent_run_service.create_agent_run_view(
+        input_message=None,
+        agent_slug="default",
+        thread_id="thread-1",
+        meta={"request_id": "resume-req", "source": "ask_for_main_agent_resume"},
+        current_uid="user-1",
+        db=db,
+        resume="使用自然月",
+        created_by_run_id="current-parent-run",
+        resume_from_run_id="parent-run",
+        agent_kind="subagent",
+        subagent_thread_relation_id=77,
+        runtime_overrides={"tool_call_id": "answer-call"},
+    )
+
+    assert db.created_run_kwargs["created_by_run_id"] == "current-parent-run"
+    assert db.created_run_kwargs["subagent_thread_relation_id"] == 77
+    assert db.created_run_kwargs["input_payload"] == {
+        "model_spec": "parent-model",
+        "resume_from_run_id": "parent-run",
+        "runtime": {
+            "tool_call_id": "answer-call",
+            "subagent_name": "Worker",
+            "parent_thread_id": "parent-thread",
+            "file_thread_id": "parent-thread",
+            "skills_thread_id": "thread-1",
+            "allow_parent_questions": True,
+        },
+    }
+    assert db.added[0].extra_metadata["source"] == "ask_for_main_agent_resume"
+
+
 def test_compact_stream_chunk_retains_compression_field():
     chunk = {
         "request_id": "req-1",

@@ -261,6 +261,126 @@ async def test_process_subagent_run_restores_runtime_context(monkeypatch: pytest
 
 
 @pytest.mark.asyncio
+async def test_process_subagent_resume_restores_runtime_context(monkeypatch: pytest.MonkeyPatch):
+    run_obj = _build_run()
+    run_obj.run_type = "resume"
+    run_obj.agent_slug = "worker"
+    run_obj.conversation_thread_id = "child-thread"
+    run_obj.created_by_run_id = "current-parent-run"
+    run_obj.subagent_thread_relation_id = 77
+    run_obj.input_payload = {
+        "model_spec": "provider:model",
+        "resume_from_run_id": "child-run",
+        "runtime": {
+            "parent_thread_id": "parent-thread",
+            "file_thread_id": "shared-file-thread",
+            "skills_thread_id": "child-thread",
+            "allow_parent_questions": True,
+        },
+    }
+    _patch_common(monkeypatch, run_obj)
+    captured: dict[str, object] = {}
+
+    async def fake_load_input_message(_message_id):
+        return SimpleNamespace(
+            content='"使用自然月"',
+            image_content=None,
+            extra_metadata={"resume": "使用自然月", "source": "ask_for_main_agent_resume"},
+        )
+
+    async def fake_append_event(*_args, **_kwargs):
+        return None
+
+    async def fake_mark_terminal(*_args, **_kwargs):
+        return None
+
+    def fake_stream_agent_resume(**kwargs):
+        captured.update(kwargs)
+        return _BytesAsyncIter([b'{"status":"finished","thread_id":"child-thread"}\n'])
+
+    monkeypatch.setattr(run_worker, "_load_input_message", fake_load_input_message)
+    monkeypatch.setattr(run_worker, "append_run_event", fake_append_event)
+    monkeypatch.setattr(run_worker, "mark_run_terminal", fake_mark_terminal)
+    monkeypatch.setattr(run_worker, "stream_agent_resume", fake_stream_agent_resume)
+
+    await run_worker.process_agent_run({"job_try": 1}, "run-1")
+
+    assert captured["resume_input"] == "使用自然月"
+    assert captured["thread_id"] == "child-thread"
+    assert captured["meta"]["is_subagent_runtime"] is True
+    assert captured["meta"]["parent_thread_id"] == "parent-thread"
+    assert captured["meta"]["file_thread_id"] == "shared-file-thread"
+    assert captured["meta"]["skills_thread_id"] == "child-thread"
+    assert captured["meta"]["allow_parent_questions"] is True
+
+
+def test_map_parent_question_chunk_to_interrupt_event():
+    event_type, payload = run_worker._map_chunk_to_run_event(
+        {
+            "status": "ask_main_agent_required",
+            "question": "应该使用哪个统计周期？",
+            "source": "ask_for_main_agent",
+        }
+    )
+
+    assert event_type == "interrupt"
+    assert payload["reason"] == "ask_main_agent_required"
+    assert payload["chunk"]["question"] == "应该使用哪个统计周期？"
+
+
+@pytest.mark.asyncio
+async def test_process_subagent_parent_question_marks_interrupted_with_question(monkeypatch: pytest.MonkeyPatch):
+    run_obj = _build_run()
+    run_obj.run_type = "subagent"
+    run_obj.agent_slug = "worker"
+    run_obj.conversation_thread_id = "child-thread"
+    run_obj.created_by_run_id = "parent-run"
+    run_obj.subagent_thread_relation_id = 77
+    run_obj.input_payload = {
+        "model_spec": "provider:model",
+        "runtime": {
+            "parent_thread_id": "parent-thread",
+            "file_thread_id": "parent-thread",
+            "skills_thread_id": "child-thread",
+            "allow_parent_questions": True,
+        },
+    }
+    _patch_common(monkeypatch, run_obj)
+    terminal = {}
+    events = []
+
+    async def fake_append_event(_run_id, event_type, payload, **_kwargs):
+        events.append((event_type, payload))
+
+    async def fake_mark_terminal(_run_id, status, error_type=None, error_message=None):
+        terminal.update(status=status, error_type=error_type, error_message=error_message)
+
+    def fake_stream_agent_chat(**_kwargs):
+        return _BytesAsyncIter(
+            [
+                (
+                    '{"status":"ask_main_agent_required","question":"应该使用哪个统计周期？",'
+                    '"source":"ask_for_main_agent","thread_id":"child-thread"}\n'
+                ).encode()
+            ]
+        )
+
+    monkeypatch.setattr(run_worker, "append_run_event", fake_append_event)
+    monkeypatch.setattr(run_worker, "mark_run_terminal", fake_mark_terminal)
+    monkeypatch.setattr(run_worker, "stream_agent_chat", fake_stream_agent_chat)
+
+    await run_worker.process_agent_run({"job_try": 1}, "run-1")
+
+    assert terminal == {
+        "status": "interrupted",
+        "error_type": "ask_main_agent_required",
+        "error_message": "应该使用哪个统计周期？",
+    }
+    assert any(event_type == "interrupt" for event_type, _payload in events)
+    assert any(event_type == "end" and payload["status"] == "interrupted" for event_type, payload in events)
+
+
+@pytest.mark.asyncio
 async def test_process_agent_run_rejects_unknown_run_type(monkeypatch: pytest.MonkeyPatch):
     run_obj = _build_run()
     run_obj.run_type = "unknown"

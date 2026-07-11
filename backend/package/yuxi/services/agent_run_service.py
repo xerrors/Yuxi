@@ -70,9 +70,14 @@ def _resolve_agent_run_request_id(
     if raw_request_id:
         return str(raw_request_id)
     if run_type == "resume":
-        resume_key = json.dumps(resume, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
-        return hash_id("resume:", f"{created_by_run_id}:{resume_key}", length=64)
+        return build_resume_run_request_id(interrupted_run_id=created_by_run_id, resume=resume)
     return str(uuid.uuid4())
+
+
+def build_resume_run_request_id(*, interrupted_run_id: str | None, resume: object | None) -> str:
+    """为同一被中断 run 的同一份回答生成稳定 resume request ID。"""
+    resume_key = json.dumps(resume, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    return hash_id("resume:", f"{interrupted_run_id}:{resume_key}", length=64)
 
 
 class AgentRunWaitTimeout(Exception):
@@ -183,6 +188,7 @@ def _compact_stream_chunk(chunk: dict) -> dict:
             "retryable",
             "job_try",
             "questions",
+            "question",
             "interrupt_info",
             "source",
             "agent_state",
@@ -364,6 +370,10 @@ async def create_agent_run_view(
     model_spec: str | None = None,
     resume: object | None = None,
     created_by_run_id: str | None = None,
+    resume_from_run_id: str | None = None,
+    agent_kind: Literal["main", "subagent"] = "main",
+    subagent_thread_relation_id: int | None = None,
+    runtime_overrides: dict[str, Any] | None = None,
 ) -> dict:
     """创建 chat/resume run 的 HTTP 入口，输入正文由 Message 承载，run 只登记运行元数据。"""
     meta = meta or {}
@@ -372,11 +382,12 @@ async def create_agent_run_view(
 
     run_type = "resume" if resume is not None else "chat"
     run_created_by_id = created_by_run_id if run_type == "resume" else None
+    interrupted_run_id = resume_from_run_id or run_created_by_id
     request_id = _resolve_agent_run_request_id(
         meta=meta,
         run_type=run_type,
         resume=resume,
-        created_by_run_id=run_created_by_id,
+        created_by_run_id=interrupted_run_id,
     )
 
     scope = await prepare_agent_run_creation_scope(
@@ -386,8 +397,10 @@ async def create_agent_run_view(
         db=db,
         request_id=request_id,
         run_type=run_type,
-        agent_kind="main",
+        agent_kind=agent_kind,
         created_by_run_id=run_created_by_id,
+        resume_from_run_id=interrupted_run_id,
+        subagent_thread_relation_id=subagent_thread_relation_id,
     )
     if scope.existing_run:
         return _build_run_response(scope.existing_run)
@@ -413,6 +426,13 @@ async def create_agent_run_view(
         input_message=run_input_message,
     )
     input_payload = {"model_spec": resolved_model_spec}
+    if run_type == "resume":
+        parent_runtime = scope.parent_run.input_payload.get("runtime")
+        if isinstance(parent_runtime, dict):
+            input_payload["runtime"] = dict(parent_runtime)
+        input_payload["resume_from_run_id"] = interrupted_run_id
+    if runtime_overrides:
+        input_payload.setdefault("runtime", {}).update(runtime_overrides)
 
     run, created = await persist_agent_run_record(
         agent_slug=agent_slug,
@@ -425,6 +445,7 @@ async def create_agent_run_view(
         input_payload=input_payload,
         persisted_input_message=persisted_input_message,
         created_by_run_id=run_created_by_id,
+        subagent_thread_relation_id=subagent_thread_relation_id,
     )
     if created:
         await db.commit()
@@ -468,7 +489,7 @@ def _prepare_run_input_message(
         return input_message.with_metadata(metadata)
 
     metadata["resume"] = resume
-    metadata["source"] = "ask_user_question_resume"
+    metadata["source"] = str(meta.get("source") or "ask_user_question_resume")
     return build_resume_input_message(resume).with_metadata(metadata)
 
 
@@ -604,6 +625,7 @@ async def prepare_agent_run_creation_scope(
     run_type: Literal["chat", "resume", "subagent"],
     agent_kind: Literal["main", "subagent"],
     created_by_run_id: str | None = None,
+    resume_from_run_id: str | None = None,
     subagent_thread_relation_id: int | None = None,
 ) -> AgentRunCreationScope:
     """校验 run 创建作用域，加载对话、智能体、后端和幂等状态，并拒绝同线程并发写入。"""
@@ -647,10 +669,13 @@ async def prepare_agent_run_creation_scope(
         raise HTTPException(status_code=409, detail="request_id 冲突")
     parent_run = None
     if run_type == "resume":
+        interrupted_run_id = resume_from_run_id or created_by_run_id
         if not created_by_run_id:
             raise HTTPException(status_code=422, detail="created_by_run_id 不能为空")
+        if not interrupted_run_id:
+            raise HTTPException(status_code=422, detail="resume_from_run_id 不能为空")
         if not existing:
-            parent_run = await run_repo.get_run_for_user(created_by_run_id, str(current_uid))
+            parent_run = await run_repo.get_run_for_user(interrupted_run_id, str(current_uid))
             if not parent_run or parent_run.conversation_thread_id != conversation_thread_id:
                 raise HTTPException(status_code=404, detail="被恢复的运行任务不存在")
             if parent_run.status != "interrupted":

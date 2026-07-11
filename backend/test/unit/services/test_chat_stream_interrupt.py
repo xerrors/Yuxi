@@ -10,6 +10,7 @@ import pytest
 sys.path.insert(0, os.getcwd())
 
 from yuxi.services.chat_service import (
+    _build_ask_main_agent_payload,
     _normalize_interrupt_questions,
     _build_ask_user_question_payload,
     _coerce_interrupt_payload,
@@ -154,6 +155,27 @@ class TestBuildAskUserQuestionPayload:
         assert len(result["questions"][0]["question_id"]) > 0
 
 
+class TestBuildAskMainAgentPayload:
+    def test_builds_parent_question_payload(self):
+        result = _build_ask_main_agent_payload(
+            {"source": "ask_for_main_agent", "question": "应该使用哪个统计周期？"},
+            "child-thread",
+        )
+
+        assert result == {
+            "question": "应该使用哪个统计周期？",
+            "source": "ask_for_main_agent",
+            "thread_id": "child-thread",
+        }
+
+    def test_ignores_other_interrupt_sources(self):
+        assert _build_ask_main_agent_payload({"source": "ask_user_question"}, "thread-1") is None
+
+    def test_rejects_missing_question(self):
+        with pytest.raises(ValueError, match="缺少 question"):
+            _build_ask_main_agent_payload({"source": "ask_for_main_agent"}, "thread-1")
+
+
 class TestNormalizeInterruptQuestions:
     """测试 _normalize_interrupt_questions 函数"""
 
@@ -180,6 +202,45 @@ class TestNormalizeInterruptQuestions:
 
 
 @pytest.mark.asyncio
+async def test_check_and_handle_interrupts_emits_parent_question_status():
+    class FakeGraph:
+        async def aget_state(self, _config):
+            interrupt_info = SimpleNamespace(value={"source": "ask_for_main_agent", "question": "需要选择统计周期"})
+            return SimpleNamespace(values={"messages": []}, tasks=[SimpleNamespace(interrupts=[interrupt_info])])
+
+    class FakeAgent:
+        async def get_graph(self, context=None):
+            del context
+            return FakeGraph()
+
+    def make_chunk(**kwargs):
+        return kwargs
+
+    meta = {}
+    chunks = [
+        chunk
+        async for chunk in svc.check_and_handle_interrupts(
+            FakeAgent(),
+            {"configurable": {"thread_id": "child-thread"}},
+            make_chunk,
+            meta,
+            "child-thread",
+            object(),
+        )
+    ]
+
+    assert chunks == [
+        {
+            "status": "ask_main_agent_required",
+            "meta": {"interrupt": meta["interrupt"]},
+            "question": "需要选择统计周期",
+            "source": "ask_for_main_agent",
+            "thread_id": "child-thread",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_stream_agent_resume_init_does_not_render_resume_input():
     stream = stream_agent_resume(
         thread_id="thread-1",
@@ -199,6 +260,8 @@ async def test_stream_agent_resume_init_does_not_render_resume_input():
 
 @pytest.mark.asyncio
 async def test_stream_agent_resume_routes_subagent_chunks(monkeypatch):
+    captured = {}
+
     class FakeContext:
         def __init__(self):
             self.thread_id = None
@@ -230,8 +293,9 @@ async def test_stream_agent_resume_routes_subagent_chunks(monkeypatch):
 
             return FakeGraph()
 
-    async def fake_resolve_agent_runtime(**_kwargs):
-        return SimpleNamespace(slug="main-agent", backend_id="ChatbotAgent"), FakeAgent(), {}
+    async def fake_resolve_agent_runtime(**kwargs):
+        captured["resolve"] = kwargs
+        return SimpleNamespace(slug="worker", backend_id="SubAgentBackend"), FakeAgent(), {}
 
     async def fake_save_messages_from_langgraph_state(**_kwargs):
         return None
@@ -258,7 +322,14 @@ async def test_stream_agent_resume_routes_subagent_chunks(monkeypatch):
     stream = stream_agent_resume(
         thread_id="parent-thread",
         resume_input={"ok": True},
-        meta={"request_id": "req-1"},
+        meta={
+            "request_id": "req-1",
+            "is_subagent_runtime": True,
+            "parent_thread_id": "parent-thread",
+            "file_thread_id": "parent-thread",
+            "skills_thread_id": "parent-thread",
+            "allow_parent_questions": True,
+        },
         current_user=SimpleNamespace(uid="user-1"),
         db=object(),
     )
@@ -280,8 +351,9 @@ async def test_stream_agent_resume_routes_subagent_chunks(monkeypatch):
     assert loading["stream_event"]["thread_id"] == "child-thread"
     finished = chunks[-1]
     assert finished["status"] == "finished"
-    assert finished["meta"]["agent_slug"] == "main-agent"
+    assert finished["meta"]["agent_slug"] == "worker"
     assert "agent_id" not in finished["meta"]
+    assert captured["resolve"]["agent_kind"] == "subagent"
 
 
 class TestCoerceInterruptPayload:

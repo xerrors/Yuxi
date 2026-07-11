@@ -61,6 +61,12 @@ TASK_SYSTEM_PROMPT = """## `task`（子智能体任务工具）
   若同线程已有运行中 run，会返回 busy，不会隐藏排队。
 - 短任务且父智能体必须立刻依赖结果时继续使用 `task`。
 
+同步子智能体提问：
+- `task` 返回 `input_required` 时，子智能体正在等待你回答 `question`。
+- 你能根据当前上下文回答时，调用 `answer_subagent_question(run_id, answer)` 恢复子智能体并继续等待。
+- 你也缺少关键信息时，先使用 `ask_user_question` 询问用户；拿到答案后再调用 `answer_subagent_question`。
+- 不要把问题当成子智能体的最终结果，也不要用新的 `task` 代替恢复。
+
 Available subagent slugs:
 
 {available_agents}"""
@@ -92,11 +98,18 @@ SUBAGENT_CANCEL_DESCRIPTION = """Cancel a running subagent run by run_id."""
 
 SUBAGENT_AWAIT_DESCRIPTION = """Wait for a subagent run to finish and return its final result."""
 
+ANSWER_SUBAGENT_QUESTION_DESCRIPTION = """Answer a clarification requested by a synchronous subagent.
+
+Use the run_id returned by task with status=input_required. The answer resumes that exact interrupted child run and
+waits synchronously until it completes or asks another question. Do not use this for background subagent_start runs."""
+
 TASK_DESCRIPTION_ARG = "需要子智能体独立完成的任务描述，包含必要上下文和期望输出。"
 SUBAGENT_SLUG_ARG = "要调用的子智能体 slug，必须是工具描述中列出的可用项之一。"
 TASK_THREAD_ID_ARG = "可选。要继续的既有子智能体线程 ID，通常来自之前 task 工具结果；新任务不要填写。"
 ASYNC_THREAD_ID_ARG = "可选。要继续的后台子智能体线程 ID，来自之前 subagent_start 返回的 thread_id；新任务不要填写。"
 SUBAGENT_RUN_ID_ARG = "子智能体运行 ID，由 subagent_start 返回。"
+SUBAGENT_QUESTION_RUN_ID_ARG = "等待父智能体回答的子智能体 run_id，由同步 task 的 input_required 结果返回。"
+SUBAGENT_ANSWER_ARG = "给子智能体的完整回答；应直接解决它提出的问题，并包含继续执行所需信息。"
 SUBAGENT_AFTER_SEQ_ARG = "可选。事件流游标，首次读取传 0-0；后续传上次返回的 last_seq。"
 SUBAGENT_EVENT_LIMIT_ARG = "可选。读取事件数量，范围 1-50。"
 
@@ -140,7 +153,11 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
         self.subagents = {agent.slug: agent for agent in subagents}
         available_agents = "\n".join(f"- {agent.slug}: {agent.description or agent.name}" for agent in subagents)
         self.system_prompt = TASK_SYSTEM_PROMPT.format(available_agents=available_agents)
-        self.tools = [self._build_task_tool(available_agents), *self._build_async_subagent_tools(available_agents)]
+        self.tools = [
+            self._build_task_tool(available_agents),
+            self._build_answer_subagent_question_tool(),
+            *self._build_async_subagent_tools(available_agents),
+        ]
         self.subagent_names = frozenset(self.subagents)
         self.transformers = [lambda scope: YuxiSubagentTransformer(scope, subagent_names=self.subagent_names)]
 
@@ -177,44 +194,94 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
                 runtime=runtime,
                 thread_id=thread_id,
                 error_prefix="无法调用子智能体",
+                allow_parent_questions=True,
             )
             if error is not None:
                 return error
 
-            # 阻塞父智能体运行，直到子 run 终结再读取最终结果；运行失败时 result 含 error 信息
-            parent_runtime = started.parent_runtime
-            subagent_service = _subagent_run_service_module()
-            try:
-                from yuxi.services.agent_run_service import AgentRunWaitTimeout, await_agent_run_result
-
-                result = await await_agent_run_result(run_id=started.result.run.id, current_uid=parent_runtime.uid)
-                run = await self._get_verified_subagent_run(
-                    run_id=started.result.run.id,
-                    uid=parent_runtime.uid,
-                    created_by_run_id=parent_runtime.created_by_run_id,
-                )
-            except AgentRunWaitTimeout as exc:
-                try:
-                    run = await self._get_verified_subagent_run(
-                        run_id=started.result.run.id,
-                        uid=parent_runtime.uid,
-                        created_by_run_id=parent_runtime.created_by_run_id,
-                    )
-                except ValueError as verify_exc:
-                    return str(verify_exc)
-                subagent_run = subagent_service.serialize_subagent_run_state(run)
-                return _task_wait_timeout_response(exc.result, runtime.tool_call_id, subagent_run)
-            except ValueError as exc:
-                return str(exc)
-
-            subagent_run = subagent_service.serialize_subagent_run_state(run)
-            return _task_result_response(result, runtime.tool_call_id, subagent_run)
+            return await self._wait_for_synchronous_result(
+                run_id=started.result.run.id,
+                parent_runtime=started.parent_runtime,
+                tool_call_id=runtime.tool_call_id,
+            )
 
         return _async_only_tool(
             name="task",
             coroutine=atask,
             description=TASK_TOOL_DESCRIPTION.format(available_agents=available_agents),
         )
+
+    def _build_answer_subagent_question_tool(self) -> StructuredTool:
+        async def aanswer_subagent_question(
+            run_id: Annotated[str, SUBAGENT_QUESTION_RUN_ID_ARG],
+            answer: Annotated[str, SUBAGENT_ANSWER_ARG],
+            runtime: ToolRuntime,
+        ) -> str | Command:
+            parent_runtime, runtime_error = self._require_async_parent_runtime("无法回答子智能体")
+            if runtime_error:
+                return runtime_error
+            if not runtime.tool_call_id:
+                raise ValueError("Tool call ID is required for answering a subagent")
+
+            try:
+                subagent_service = _subagent_run_service_module()
+                async with pg_manager.get_async_session_context() as db:
+                    resumed_run = await subagent_service.SubagentRunService(db).resume_for_creator(
+                        uid=parent_runtime.uid,
+                        created_by_run_id=parent_runtime.created_by_run_id,
+                        interrupted_run_id=run_id,
+                        answer=answer,
+                        tool_call_id=runtime.tool_call_id,
+                    )
+            except ValueError as exc:
+                return str(exc)
+
+            return await self._wait_for_synchronous_result(
+                run_id=resumed_run.id,
+                parent_runtime=parent_runtime,
+                tool_call_id=runtime.tool_call_id,
+            )
+
+        return _async_only_tool(
+            name="answer_subagent_question",
+            coroutine=aanswer_subagent_question,
+            description=ANSWER_SUBAGENT_QUESTION_DESCRIPTION,
+        )
+
+    async def _wait_for_synchronous_result(
+        self,
+        *,
+        run_id: str,
+        parent_runtime: _ParentRuntime,
+        tool_call_id: str,
+    ) -> str | Command:
+        """等待同步 child run，并统一处理完成、提问和等待超时。"""
+        from yuxi.services.agent_run_service import AgentRunWaitTimeout, await_agent_run_result
+
+        subagent_service = _subagent_run_service_module()
+        try:
+            result = await await_agent_run_result(run_id=run_id, current_uid=parent_runtime.uid)
+            run = await self._get_verified_subagent_run(
+                run_id=run_id,
+                uid=parent_runtime.uid,
+                created_by_run_id=parent_runtime.created_by_run_id,
+            )
+        except AgentRunWaitTimeout as exc:
+            try:
+                run = await self._get_verified_subagent_run(
+                    run_id=run_id,
+                    uid=parent_runtime.uid,
+                    created_by_run_id=parent_runtime.created_by_run_id,
+                )
+            except ValueError as verify_exc:
+                return str(verify_exc)
+            subagent_run = subagent_service.serialize_subagent_run_state(run)
+            return _task_wait_timeout_response(exc.result, tool_call_id, subagent_run)
+        except ValueError as exc:
+            return str(exc)
+
+        subagent_run = subagent_service.serialize_subagent_run_state(run)
+        return _task_result_response(result, tool_call_id, subagent_run)
 
     def _build_async_subagent_tools(self, available_agents: str) -> list[StructuredTool]:
         """构建后台子智能体生命周期工具：start/status/events/cancel/await。"""
@@ -231,6 +298,7 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
                 runtime=runtime,
                 thread_id=thread_id,
                 error_prefix="无法启动子智能体",
+                allow_parent_questions=False,
             )
             if error is not None:
                 return error
@@ -465,6 +533,7 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
         runtime: ToolRuntime,
         thread_id: str | None,
         error_prefix: str,
+        allow_parent_questions: bool,
     ) -> tuple[_StartedSubagent | None, str | Command | None]:
         """校验并启动（或继续）后台子智能体 run；成功返回启动结果，失败返回可直接回传的错误响应。"""
         if subagent_slug not in self.subagents:
@@ -491,6 +560,7 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
                     requested_thread_id=thread_id,
                     file_thread_id=parent_runtime.file_thread_id,
                     model_spec=self._subagent_model_override(agent_item),
+                    allow_parent_questions=allow_parent_questions,
                 )
         except subagent_service.SubagentRunBusy as exc:
             return None, _json_tool_command(exc.to_payload(), runtime.tool_call_id)
@@ -539,8 +609,19 @@ class _StartedSubagent:
 
 def _task_result_response(result: dict[str, Any], tool_call_id: str, subagent_run: dict[str, Any]) -> Command:
     """把后台子智能体 run 的最终结果转换为同步 task 工具结果。"""
-    output = str(result.get("output") or "").strip()
     error = result.get("error") if isinstance(result.get("error"), dict) else None
+    if result.get("status") == "interrupted" and error and error.get("type") == "ask_main_agent_required":
+        payload = {
+            "status": "input_required",
+            "source": "ask_for_main_agent",
+            "run_id": result.get("agent_run_id") or subagent_run["run_id"],
+            "thread_id": subagent_run["child_thread_id"],
+            "question": str(error.get("message") or "").strip(),
+            "next_action": "使用 answer_subagent_question 回答；如果父智能体也缺少信息，先向用户提问。",
+        }
+        return _json_tool_command(payload, tool_call_id, subagent_run=subagent_run)
+
+    output = str(result.get("output") or "").strip()
     if not output and error:
         output = str(error.get("message") or "子智能体运行失败")
     if not output:

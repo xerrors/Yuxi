@@ -118,6 +118,7 @@ def _patch_task_start_and_await(
     output: str = "child done",
     thread_id: str = "child-thread",
     error_message: str | None = None,
+    error_type: str = "RuntimeError",
     wait_timeout: bool = False,
 ):
     class _SubagentRunService:
@@ -162,7 +163,7 @@ def _patch_task_start_and_await(
             "thread_id": thread_id,
         }
         if error_message:
-            result["error"] = {"type": "RuntimeError", "message": error_message}
+            result["error"] = {"type": error_type, "message": error_message}
         if wait_timeout:
             raise agent_run_service.AgentRunWaitTimeout(result)
         return result
@@ -306,6 +307,7 @@ async def test_task_tool_invokes_subagent_with_child_scope(monkeypatch) -> None:
     assert captured["start"]["requested_thread_id"] is None
     assert captured["start"]["file_thread_id"] == "parent-file-thread"
     assert captured["start"]["model_spec"] is None
+    assert captured["start"]["allow_parent_questions"] is True
     assert captured["await"] == {"run_id": "child-run", "current_uid": "user-1"}
     assert result.update["subagent_runs"][0]["run_id"] == "child-run"
     assert result.update["subagent_runs"][0]["child_thread_id"] == "child-thread"
@@ -372,6 +374,80 @@ async def test_task_tool_records_failed_subagent_run(monkeypatch) -> None:
     assert result.update["messages"][0].content == "> 子智能体线程 ID: child-thread\n\n---\n\nchild boom"
     assert result.update["subagent_runs"][0]["status"] == "failed"
     assert result.update["subagent_runs"][0]["error"] == "child boom"
+
+
+@pytest.mark.asyncio
+async def test_task_tool_returns_parent_question_as_structured_input_required(monkeypatch) -> None:
+    captured = {}
+    _patch_task_start_and_await(
+        monkeypatch,
+        captured,
+        status="interrupted",
+        output="",
+        error_type="ask_main_agent_required",
+        error_message="应该使用自然月还是财务周期？",
+    )
+
+    middleware = _async_tool_middleware()
+    result = await middleware.tools[0].coroutine(
+        description="分析财务数据",
+        subagent_slug="worker",
+        runtime=SimpleNamespace(tool_call_id="tool-1", state={}, config={}),
+    )
+
+    payload = json.loads(result.update["messages"][0].content)
+    assert payload == {
+        "status": "input_required",
+        "source": "ask_for_main_agent",
+        "run_id": "child-run",
+        "thread_id": "child-thread",
+        "question": "应该使用自然月还是财务周期？",
+        "next_action": "使用 answer_subagent_question 回答；如果父智能体也缺少信息，先向用户提问。",
+    }
+    assert result.update["subagent_runs"][0]["status"] == "interrupted"
+
+
+@pytest.mark.asyncio
+async def test_answer_subagent_question_resumes_child_and_waits_for_result(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _SubagentRunService:
+        def __init__(self, db):
+            captured["db"] = db
+
+        async def resume_for_creator(self, **kwargs):
+            captured["resume"] = kwargs
+            return _subagent_run(status="pending", tool_call_id=kwargs["tool_call_id"])
+
+        async def get_run_for_creator(self, **kwargs):
+            captured["verify"] = kwargs
+            return _subagent_run(status="completed", tool_call_id="answer-call")
+
+    async def fake_await_agent_run_result(*, run_id: str, current_uid: str):
+        captured["await"] = {"run_id": run_id, "current_uid": current_uid}
+        return {"status": "completed", "output": "分析完成", "agent_run_id": run_id}
+
+    _patch_session(monkeypatch)
+    _patch_subagent_run_service(monkeypatch, _SubagentRunService)
+    monkeypatch.setattr(agent_run_service, "await_agent_run_result", fake_await_agent_run_result)
+
+    middleware = _async_tool_middleware()
+    tool = next(item for item in middleware.tools if item.name == "answer_subagent_question")
+    result = await tool.coroutine(
+        run_id="child-run",
+        answer="使用自然月",
+        runtime=SimpleNamespace(tool_call_id="answer-call"),
+    )
+
+    assert captured["resume"] == {
+        "uid": "user-1",
+        "created_by_run_id": "parent-run",
+        "interrupted_run_id": "child-run",
+        "answer": "使用自然月",
+        "tool_call_id": "answer-call",
+    }
+    assert captured["await"] == {"run_id": "child-run", "current_uid": "user-1"}
+    assert result.update["messages"][0].content.endswith("分析完成")
 
 
 @pytest.mark.asyncio
@@ -445,9 +521,7 @@ async def test_task_tool_rejects_invalid_continuation_thread(monkeypatch) -> Non
             del db
 
         async def start(self, **kwargs):
-            raise ValueError(
-                f"无法继续子智能体线程 {kwargs['requested_thread_id']}：当前对话中没有找到对应的运行记录"
-            )
+            raise ValueError(f"无法继续子智能体线程 {kwargs['requested_thread_id']}：当前对话中没有找到对应的运行记录")
 
     _patch_session(monkeypatch)
     _patch_subagent_run_service(monkeypatch, _SubagentRunService)
@@ -524,6 +598,7 @@ async def test_subagent_start_creates_child_run_and_enqueues(monkeypatch) -> Non
     assert "description" not in captured["start"]
     assert captured["start"]["requested_thread_id"] is None
     assert captured["start"]["model_spec"] == "provider:parent-model"
+    assert captured["start"]["allow_parent_questions"] is False
     assert result.update["subagent_runs"][0]["child_thread_id"] == child_thread_id
     assert result.update["subagent_runs"][0]["run_id"] == "child-run"
 

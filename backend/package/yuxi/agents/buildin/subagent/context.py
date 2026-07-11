@@ -21,3 +21,7 @@ class SubAgentContext(BaseContext):
         default=False,
         metadata={"name": "子智能体运行态", "configurable": False, "hide": True},
     )
+    allow_parent_questions: bool = field(
+        default=False,
+        metadata={"name": "允许向父智能体提问", "configurable": False, "hide": True},
+    )

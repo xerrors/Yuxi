@@ -88,3 +88,35 @@ async def test_get_subagent_run_for_creator_returns_none_for_relation_mismatch(s
     )
 
     assert result is None
+
+
+async def test_get_subagent_run_for_creator_accepts_child_resume_run(session):
+    await _seed_subagent_runs(session)
+    resume_run = AgentRun(
+        id="resume-run",
+        conversation_thread_id="child-thread",
+        agent_slug="worker",
+        uid="user-1",
+        status="completed",
+        request_id="resume-req",
+        conversation_id=20,
+        created_by_run_id="parent-run",
+        subagent_thread_relation_id=77,
+        run_type="resume",
+        input_payload={"resume_from_run_id": "child-run"},
+    )
+    session.add(resume_run)
+    await session.commit()
+
+    result = await AgentRunRepository(session).get_subagent_run_for_creator(
+        uid="user-1",
+        created_by_run_id="parent-run",
+        run_id="resume-run",
+    )
+
+    assert result is resume_run
+    latest = await AgentRunRepository(session).get_latest_subagent_run_by_thread_for_user(
+        "child-thread",
+        "user-1",
+    )
+    assert latest is resume_run

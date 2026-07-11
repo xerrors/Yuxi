@@ -212,8 +212,7 @@ def _apply_model_override(input_context: dict, meta: dict | None) -> None:
 def _apply_subagent_runtime_context(input_context: dict, meta: dict | None) -> None:
     """把子智能体 run 的父线程和文件线程信息注入运行 context。"""
     meta = meta or {}
-    # 仅对子智能体类型的 run 生效
-    if meta.get("run_type") != "subagent":
+    if not meta.get("is_subagent_runtime"):
         return
     # 这三个线程 ID 由 subagent_run_service 在创建 run 时写入 runtime，
     # 是子智能体区别于普通对话的唯一依据；缺失即上游契约被破坏，直接失败而非静默回退。
@@ -224,6 +223,7 @@ def _apply_subagent_runtime_context(input_context: dict, meta: dict | None) -> N
         input_context[key] = value
     # 标记为子智能体运行，供下游逻辑判断
     input_context["is_subagent_runtime"] = True
+    input_context["allow_parent_questions"] = bool(meta.get("allow_parent_questions"))
 
 
 def _stream_message_key(metadata: dict | None, namespace: list[str], thread_id: str | None) -> tuple[str, str]:
@@ -620,6 +620,17 @@ def _build_ask_user_question_payload(info: Any, thread_id: str) -> dict[str, Any
     }
 
 
+def _build_ask_main_agent_payload(info: Any, thread_id: str) -> dict[str, Any] | None:
+    """将子智能体 interrupt 标准化为父智能体可消费的问题。"""
+    payload = _coerce_interrupt_payload(info)
+    if payload.get("source") != "ask_for_main_agent":
+        return None
+    question = str(payload.get("question") or "").strip()
+    if not question:
+        raise ValueError("ask_for_main_agent interrupt 缺少 question")
+    return {"question": question, "source": "ask_for_main_agent", "thread_id": thread_id}
+
+
 def _ensure_full_msg(full_msg: AIMessage | None, accumulated_content: list[str]) -> AIMessage | None:
     """如果 full_msg 为空且有累积内容，构建 AIMessage"""
     if not full_msg and accumulated_content:
@@ -704,6 +715,11 @@ async def check_and_handle_interrupts(
 
         interrupt_info = _extract_interrupt_info(state)
         if interrupt_info:
+            main_agent_payload = _build_ask_main_agent_payload(interrupt_info, thread_id)
+            if main_agent_payload is not None:
+                meta["interrupt"] = main_agent_payload
+                yield make_chunk(status="ask_main_agent_required", meta=meta, **main_agent_payload)
+                return
             question_payload = _build_ask_user_question_payload(interrupt_info, thread_id)
             meta["interrupt"] = question_payload
             yield make_chunk(status="ask_user_question_required", meta=meta, **question_payload)
@@ -1133,6 +1149,7 @@ async def stream_agent_resume(
             user=current_user,
             requested_agent_slug=None,
             thread_id=thread_id,
+            agent_kind="subagent" if meta.get("is_subagent_runtime") else "main",
         )
     except ValueError as e:
         yield make_resume_chunk(status="error", error_type="invalid_agent", error_message=str(e), meta=meta)
@@ -1148,6 +1165,7 @@ async def stream_agent_resume(
         request_id=meta.get("request_id"),
     )
     _apply_model_override(input_context, meta)
+    _apply_subagent_runtime_context(input_context, meta)
     context = _build_agent_context(agent, input_context)
     langfuse_run = _build_langfuse_run_context(
         current_user=current_user,

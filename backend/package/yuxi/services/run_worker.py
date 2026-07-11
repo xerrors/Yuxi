@@ -223,7 +223,12 @@ def _map_chunk_to_run_event(chunk: dict) -> tuple[str, dict]:
         return "messages", {"chunk": chunk}
     if status == "agent_state":
         return "custom", {"name": "yuxi.agent_state", "chunk": chunk, "agent_state": chunk.get("agent_state") or {}}
-    if status in {"ask_user_question_required", "human_approval_required", "interrupted"}:
+    if status in {
+        "ask_user_question_required",
+        "ask_main_agent_required",
+        "human_approval_required",
+        "interrupted",
+    }:
         reason = "human_approval" if status == "human_approval_required" else status
         return "interrupt", {"reason": reason, "chunk": chunk}
     if status == "warning":
@@ -323,6 +328,8 @@ async def process_agent_run(ctx, run_id: str):
             await mark_run_terminal(run_id, "failed", "invalid_input_message", str(exc))
             return
 
+    is_subagent_runtime = run_type == "subagent" or bool(getattr(run, "subagent_thread_relation_id", None))
+
     meta = {
         "run_id": run_id,
         "request_id": request_id,
@@ -334,13 +341,15 @@ async def process_agent_run(ctx, run_id: str):
         "model_spec": payload.get("model_spec"),
         "run_type": run_type,
         "created_by_run_id": run.created_by_run_id,
+        "is_subagent_runtime": is_subagent_runtime,
     }
-    if run_type == "subagent":
+    if is_subagent_runtime:
         # 三个线程 ID 在 subagent_run_service 创建 run 时已写入 runtime，此处不再二次兜底；
         # 缺失会在 chat_service._apply_subagent_runtime_context 处直接报错。
         meta["parent_thread_id"] = runtime.get("parent_thread_id")
         meta["file_thread_id"] = runtime.get("file_thread_id")
         meta["skills_thread_id"] = runtime.get("skills_thread_id")
+        meta["allow_parent_questions"] = bool(runtime.get("allow_parent_questions"))
     if input_metadata.get("source"):
         meta["source"] = input_metadata.get("source")
     if isinstance(input_metadata.get("agent_invocation_meta"), dict):
@@ -362,7 +371,7 @@ async def process_agent_run(ctx, run_id: str):
         "source": input_metadata.get("source"),
         "run_type": run_type,
         "created_by_run_id": run.created_by_run_id,
-        "subagent_slug": agent_slug if run_type == "subagent" else None,
+        "subagent_slug": agent_slug if is_subagent_runtime else None,
     }
     if isinstance(input_metadata.get("agent_invocation_meta"), dict):
         metadata_event["agent_invocation_meta"] = input_metadata.get("agent_invocation_meta") or {}
@@ -439,9 +448,16 @@ async def process_agent_run(ctx, run_id: str):
                         )
                         await _append_end_event(run_id, status_value, thread_id=thread_id, payload={"chunk": chunk})
                         terminal_set = True
-                    elif status in {"ask_user_question_required", "human_approval_required"}:
+                    elif status in {
+                        "ask_user_question_required",
+                        "ask_main_agent_required",
+                        "human_approval_required",
+                    }:
+                        if status == "ask_main_agent_required":
+                            first_question = str(chunk.get("question") or "").strip()
+                        else:
+                            first_question = ""
                         questions = chunk.get("questions") if isinstance(chunk, dict) else None
-                        first_question = ""
                         if isinstance(questions, list) and questions:
                             first = questions[0]
                             if isinstance(first, dict):
@@ -451,7 +467,8 @@ async def process_agent_run(ctx, run_id: str):
                             run_id,
                             "interrupted",
                             error_type=status,
-                            error_message=first_question or "需要用户回答问题",
+                            error_message=first_question
+                            or ("需要父智能体回答问题" if status == "ask_main_agent_required" else "需要用户回答问题"),
                         )
                         await _append_end_event(run_id, "interrupted", thread_id=thread_id, payload={"chunk": chunk})
                         terminal_set = True

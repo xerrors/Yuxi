@@ -4,6 +4,8 @@ from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from langchain.agents import create_agent
 from langchain.agents.middleware import ModelRetryMiddleware, TodoListMiddleware
 from langchain.agents.middleware.types import AgentMiddleware
+from langchain_core.tools import tool
+from langgraph.types import interrupt
 
 from yuxi.agents import BaseAgent, BaseState, load_chat_model, resolve_chat_model_spec
 from yuxi.agents.backends import create_agent_filesystem_middleware
@@ -23,6 +25,26 @@ from yuxi.agents.middlewares.skills import SkillsMiddleware
 from yuxi.agents.toolkits.service import resolve_configured_runtime_tools
 
 _SUBAGENT_DISABLED_TOOLS = frozenset({"present_artifacts", "ask_user_question", "install_skill"})
+
+ASK_FOR_MAIN_AGENT_PROMPT = """## 向父智能体请求信息
+
+当前任务由父智能体同步委派。如果缺少只有父智能体上下文中才有的信息，或确实需要父智能体做决定，
+使用 `ask_for_main_agent` 提出一个具体问题。父智能体回答后，你会从当前任务继续执行。
+
+- 先使用已有上下文自行判断；信息足够时不要提问。
+- 问题必须包含父智能体作答所需的必要背景，但不要重复整段任务。
+- 不要询问进度、是否继续或可以自行决定的实现细节。
+"""
+
+
+@tool
+def ask_for_main_agent(question: str) -> dict[str, str]:
+    """向父智能体询问继续当前同步子任务所必需的信息或决策。"""
+    normalized_question = str(question or "").strip()
+    if not normalized_question:
+        raise ValueError("question 不能为空")
+    answer = interrupt({"source": "ask_for_main_agent", "question": normalized_question})
+    return {"question": normalized_question, "answer": str(answer)}
 
 
 def _tool_name(tool) -> str | None:
@@ -117,10 +139,16 @@ class SubAgentBackend(BaseAgent):
         )
         model_spec = resolve_chat_model_spec(context.model)
 
+        tools = _filter_disabled_tools(await resolve_configured_runtime_tools(context))
+        system_prompt = build_prompt_with_context(context)
+        if context.allow_parent_questions:
+            tools.append(ask_for_main_agent)
+            system_prompt = f"{system_prompt.rstrip()}\n\n{ASK_FOR_MAIN_AGENT_PROMPT}"
+
         return create_agent(
             model=load_chat_model(fully_specified_name=model_spec),
-            tools=_filter_disabled_tools(await resolve_configured_runtime_tools(context)),
-            system_prompt=build_prompt_with_context(context),
+            tools=tools,
+            system_prompt=system_prompt,
             middleware=await _build_middlewares(context),
             state_schema=BaseState,
             checkpointer=await self._get_checkpointer(),

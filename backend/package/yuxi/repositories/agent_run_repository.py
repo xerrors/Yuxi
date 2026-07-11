@@ -40,7 +40,7 @@ class AgentRunRepository:
             return None
 
         run = await self.get_run_for_user(run_id, uid)
-        if not run or run.run_type != "subagent":
+        if not run or run.run_type not in {"subagent", "resume"}:
             return None
         if run.created_by_run_id != creator_run.id:
             return None
@@ -70,7 +70,8 @@ class AgentRunRepository:
             .where(
                 AgentRun.conversation_thread_id == conversation_thread_id,
                 AgentRun.uid == str(uid),
-                AgentRun.run_type == "subagent",
+                AgentRun.run_type.in_(["subagent", "resume"]),
+                AgentRun.subagent_thread_relation_id.is_not(None),
             )
             .order_by(AgentRun.created_at.desc())
             .limit(1)

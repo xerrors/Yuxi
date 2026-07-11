@@ -102,7 +102,11 @@ def _patch_repos(
     *,
     captured: dict[str, object] | None = None,
     parent_run=None,
+    parent_resume_run=None,
     child_run=None,
+    resumed_run=None,
+    latest_child_run=None,
+    existing_request_run=None,
     child_conversation=None,
     existing_child_conversation=None,
     existing_relation=None,
@@ -119,7 +123,12 @@ def _patch_repos(
 
         async def get_run_for_user(self, run_id: str, uid: str):
             assert uid == "user-1"
-            return {"parent-run": parent_run, "child-run": child_run}.get(run_id)
+            return {
+                "parent-run": parent_run,
+                "parent-resume": parent_resume_run,
+                "child-run": child_run,
+                "resume-run": resumed_run,
+            }.get(run_id)
 
         async def get_subagent_run_for_creator(self, *, uid: str, created_by_run_id: str, run_id: str):
             assert uid == "user-1"
@@ -142,6 +151,15 @@ def _patch_repos(
             if relation_by_id.child_thread_id != run.conversation_thread_id:
                 return None
             return run
+
+        async def get_latest_run_by_thread_for_user(self, conversation_thread_id: str, uid: str):
+            assert conversation_thread_id == "child-thread"
+            assert uid == "user-1"
+            return latest_child_run or child_run
+
+        async def get_run_by_request_id(self, request_id: str):
+            captured["resume_request_id"] = request_id
+            return existing_request_run
 
     class ConvRepo:
         def __init__(self, _db):
@@ -333,6 +351,7 @@ async def test_subagent_run_service_creates_child_relation_run_and_enqueue(monke
         input_message=build_chat_input_message("run in background"),
         tool_call_id="tool-1",
         model_spec="provider:model",
+        allow_parent_questions=True,
     )
 
     child_thread_id = make_child_thread_id("parent-thread", "worker", "tool-1")
@@ -352,6 +371,7 @@ async def test_subagent_run_service_creates_child_relation_run_and_enqueue(monke
     }
     assert captured["create_run_record"]["relation"].id == 77
     assert captured["create_run_record"]["model_spec"] == "provider:model"
+    assert captured["create_run_record"]["allow_parent_questions"] is True
     assert captured["create_run_record"]["creator_run"].id == "parent-run"
     assert captured["create_run_record"]["input_message"].content == "run in background"
     assert captured["create_run_record"]["input_message"].raw_message()["type"] == "human"
@@ -610,6 +630,229 @@ async def test_subagent_run_service_create_run_record_uses_creator_thread_when_f
     assert db.created_run_kwargs["created_by_run_id"] == "parent-run"
     assert db.created_run_kwargs["input_payload"]["runtime"]["parent_thread_id"] == "current-parent-thread"
     assert db.created_run_kwargs["input_payload"]["runtime"]["file_thread_id"] == "current-parent-thread"
+
+
+@pytest.mark.asyncio
+async def test_subagent_run_service_create_run_record_enables_parent_questions_only_when_requested(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    db = _FakeDB()
+    _patch_run_record_creation(monkeypatch, db)
+    creator_run = SimpleNamespace(id="parent-run", conversation_id=10, conversation_thread_id="parent-thread")
+    relation = _relation()
+
+    await SubagentRunService(db)._create_run_record(
+        input_message=build_chat_input_message("need clarification"),
+        request_id="subagent-sync",
+        current_uid="user-1",
+        model_spec=None,
+        creator_run=creator_run,
+        relation=relation,
+        tool_call_id="tool-1",
+        file_thread_id=None,
+        allow_parent_questions=True,
+    )
+
+    assert db.created_run_kwargs["input_payload"]["runtime"]["allow_parent_questions"] is True
+
+
+@pytest.mark.asyncio
+async def test_subagent_run_service_resumes_parent_question_with_child_scope(monkeypatch: pytest.MonkeyPatch):
+    interrupted_run = SimpleNamespace(
+        id="child-run",
+        agent_slug="worker",
+        conversation_thread_id="child-thread",
+        status="interrupted",
+        error_type="ask_main_agent_required",
+        subagent_thread_relation_id=77,
+        run_type="subagent",
+        created_by_run_id="parent-run",
+    )
+    resumed_run = SimpleNamespace(id="resume-run")
+    _patch_repos(
+        monkeypatch,
+        child_run=interrupted_run,
+        resumed_run=resumed_run,
+        relation_by_id=_relation(),
+    )
+    captured = {}
+
+    async def fake_create_agent_run_view(**kwargs):
+        captured.update(kwargs)
+        return {"run_id": "resume-run"}
+
+    monkeypatch.setattr(service_module.agent_run_service, "create_agent_run_view", fake_create_agent_run_view)
+
+    run = await SubagentRunService(_FakeDB()).resume_for_creator(
+        uid="user-1",
+        created_by_run_id="parent-run",
+        interrupted_run_id="child-run",
+        answer="使用自然月",
+        tool_call_id="answer-call",
+    )
+
+    assert run is resumed_run
+    assert captured["resume"] == "使用自然月"
+    assert captured["created_by_run_id"] == "parent-run"
+    assert captured["resume_from_run_id"] == "child-run"
+    assert captured["agent_kind"] == "subagent"
+    assert captured["subagent_thread_relation_id"] == 77
+    assert captured["runtime_overrides"] == {"tool_call_id": "answer-call"}
+
+
+@pytest.mark.asyncio
+async def test_subagent_run_service_rejects_non_parent_question_interrupt(monkeypatch: pytest.MonkeyPatch):
+    interrupted_run = SimpleNamespace(
+        id="child-run",
+        status="interrupted",
+        error_type="ask_user_question_required",
+        run_type="subagent",
+        created_by_run_id="parent-run",
+        subagent_thread_relation_id=77,
+        conversation_thread_id="child-thread",
+    )
+    _patch_repos(monkeypatch, child_run=interrupted_run, relation_by_id=_relation())
+
+    with pytest.raises(ValueError, match="没有等待父智能体回答"):
+        await SubagentRunService(_FakeDB()).resume_for_creator(
+            uid="user-1",
+            created_by_run_id="parent-run",
+            interrupted_run_id="child-run",
+            answer="answer",
+            tool_call_id="answer-call",
+        )
+
+
+@pytest.mark.asyncio
+async def test_subagent_run_service_allows_resumed_parent_run_in_same_conversation(monkeypatch: pytest.MonkeyPatch):
+    interrupted_run = SimpleNamespace(
+        id="child-run",
+        agent_slug="worker",
+        conversation_thread_id="child-thread",
+        status="interrupted",
+        error_type="ask_main_agent_required",
+        subagent_thread_relation_id=77,
+        run_type="subagent",
+        created_by_run_id="parent-run",
+    )
+    resumed_run = SimpleNamespace(id="resume-run")
+    _patch_repos(
+        monkeypatch,
+        parent_resume_run=SimpleNamespace(id="parent-resume", conversation_id=10, run_type="resume"),
+        child_run=interrupted_run,
+        resumed_run=resumed_run,
+        relation_by_id=_relation(),
+    )
+    captured = {}
+
+    async def fake_create_agent_run_view(**kwargs):
+        captured.update(kwargs)
+        return {"run_id": "resume-run"}
+
+    monkeypatch.setattr(service_module.agent_run_service, "create_agent_run_view", fake_create_agent_run_view)
+
+    await SubagentRunService(_FakeDB()).resume_for_creator(
+        uid="user-1",
+        created_by_run_id="parent-resume",
+        interrupted_run_id="child-run",
+        answer="用户确认使用自然月",
+        tool_call_id="answer-call",
+    )
+
+    assert captured["created_by_run_id"] == "parent-resume"
+    assert captured["resume_from_run_id"] == "child-run"
+
+
+@pytest.mark.asyncio
+async def test_subagent_run_service_rejects_stale_parent_question(monkeypatch: pytest.MonkeyPatch):
+    interrupted_run = SimpleNamespace(
+        id="child-run",
+        agent_slug="worker",
+        conversation_thread_id="child-thread",
+        status="interrupted",
+        error_type="ask_main_agent_required",
+        subagent_thread_relation_id=77,
+        run_type="subagent",
+    )
+    _patch_repos(
+        monkeypatch,
+        child_run=interrupted_run,
+        latest_child_run=SimpleNamespace(id="newer-run"),
+        relation_by_id=_relation(),
+    )
+
+    with pytest.raises(ValueError, match="已被后续运行取代"):
+        await SubagentRunService(_FakeDB()).resume_for_creator(
+            uid="user-1",
+            created_by_run_id="parent-run",
+            interrupted_run_id="child-run",
+            answer="过期回答",
+            tool_call_id="answer-call",
+        )
+
+
+@pytest.mark.asyncio
+async def test_subagent_run_service_rejects_parent_question_from_another_conversation(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    interrupted_run = SimpleNamespace(
+        id="child-run",
+        agent_slug="worker",
+        conversation_thread_id="child-thread",
+        status="interrupted",
+        error_type="ask_main_agent_required",
+        subagent_thread_relation_id=77,
+        run_type="subagent",
+    )
+    _patch_repos(
+        monkeypatch,
+        parent_run=SimpleNamespace(id="parent-run", conversation_id=99, run_type="chat"),
+        child_run=interrupted_run,
+        relation_by_id=_relation(parent_conversation_id=10),
+    )
+
+    with pytest.raises(ValueError, match="不属于当前父对话"):
+        await SubagentRunService(_FakeDB()).resume_for_creator(
+            uid="user-1",
+            created_by_run_id="parent-run",
+            interrupted_run_id="child-run",
+            answer="非法回答",
+            tool_call_id="answer-call",
+        )
+
+
+@pytest.mark.asyncio
+async def test_subagent_run_service_reuses_same_answer_resume(monkeypatch: pytest.MonkeyPatch):
+    interrupted_run = SimpleNamespace(
+        id="child-run",
+        agent_slug="worker",
+        conversation_thread_id="child-thread",
+        status="interrupted",
+        error_type="ask_main_agent_required",
+        subagent_thread_relation_id=77,
+        run_type="subagent",
+    )
+    existing_resume = SimpleNamespace(id="resume-run")
+    captured = {}
+    _patch_repos(
+        monkeypatch,
+        captured=captured,
+        child_run=interrupted_run,
+        latest_child_run=existing_resume,
+        existing_request_run=existing_resume,
+        relation_by_id=_relation(),
+    )
+
+    run = await SubagentRunService(_FakeDB()).resume_for_creator(
+        uid="user-1",
+        created_by_run_id="parent-run",
+        interrupted_run_id="child-run",
+        answer="使用自然月",
+        tool_call_id="answer-call",
+    )
+
+    assert run is existing_resume
+    assert captured["resume_request_id"].startswith("resume:")
 
 
 @pytest.mark.asyncio

@@ -110,6 +110,7 @@ class SubagentRunService:
         requested_thread_id: str | None = None,
         file_thread_id: str | None = None,
         model_spec: str | None = None,
+        allow_parent_questions: bool = False,
     ) -> SubagentStartResult:
         """启动或继续一个后台子智能体 run，并在新建时入队 worker。"""
 
@@ -150,6 +151,7 @@ class SubagentRunService:
                 relation=relation,
                 tool_call_id=tool_call_id,
                 file_thread_id=file_thread_id,
+                allow_parent_questions=allow_parent_questions,
             )
         except HTTPException as exc:
             detail = exc.detail
@@ -185,6 +187,92 @@ class SubagentRunService:
             raise ValueError("子智能体运行不存在或不属于当前父运行")
         return run
 
+    async def resume_for_creator(
+        self,
+        *,
+        uid: str,
+        created_by_run_id: str,
+        interrupted_run_id: str,
+        answer: str,
+        tool_call_id: str,
+    ) -> AgentRun:
+        """回答同步子智能体的问题，并恢复被中断的 child checkpoint。"""
+        interrupted_run = await self._get_question_run_for_parent_conversation(
+            uid=uid,
+            created_by_run_id=created_by_run_id,
+            run_id=interrupted_run_id,
+        )
+        if interrupted_run.status != "interrupted" or interrupted_run.error_type != "ask_main_agent_required":
+            raise ValueError("子智能体运行当前没有等待父智能体回答")
+
+        normalized_answer = str(answer or "").strip()
+        if not normalized_answer:
+            raise ValueError("父智能体回答不能为空")
+        relation_id = interrupted_run.subagent_thread_relation_id
+        relation = await self.thread_repo.get_for_user(relation_id, uid) if relation_id else None
+        if not relation or relation.child_thread_id != interrupted_run.conversation_thread_id:
+            raise ValueError("子智能体线程关系不存在或不匹配")
+        latest_run = await self.run_repo.get_latest_run_by_thread_for_user(
+            interrupted_run.conversation_thread_id,
+            uid,
+        )
+        if not latest_run or latest_run.id != interrupted_run.id:
+            request_id = agent_run_service.build_resume_run_request_id(
+                interrupted_run_id=interrupted_run.id,
+                resume=normalized_answer,
+            )
+            existing_resume = await self.run_repo.get_run_by_request_id(request_id)
+            if existing_resume and latest_run and existing_resume.id == latest_run.id:
+                return existing_resume
+            raise ValueError("该子智能体问题已被后续运行取代")
+
+        response = await agent_run_service.create_agent_run_view(
+            input_message=None,
+            agent_slug=interrupted_run.agent_slug,
+            thread_id=interrupted_run.conversation_thread_id,
+            meta={"source": "ask_for_main_agent_resume"},
+            current_uid=uid,
+            db=self.db,
+            resume=normalized_answer,
+            created_by_run_id=created_by_run_id,
+            resume_from_run_id=interrupted_run.id,
+            agent_kind="subagent",
+            subagent_thread_relation_id=relation.id,
+            runtime_overrides={"tool_call_id": tool_call_id},
+        )
+        resumed_run = await self.run_repo.get_run_for_user(response["run_id"], uid)
+        if not resumed_run:
+            raise ValueError("恢复后的子智能体运行不存在")
+        return resumed_run
+
+    async def _get_question_run_for_parent_conversation(
+        self,
+        *,
+        uid: str,
+        created_by_run_id: str,
+        run_id: str,
+    ) -> AgentRun:
+        """允许同一父对话的 resume run 回答此前同步 child run 的问题。"""
+        creator_run = await self.run_repo.get_run_for_user(created_by_run_id, uid)
+        run = await self.run_repo.get_run_for_user(run_id, uid)
+        if (
+            not creator_run
+            or getattr(creator_run, "run_type", None) == "subagent"
+            or getattr(creator_run, "subagent_thread_relation_id", None)
+            or not run
+        ):
+            raise ValueError("子智能体运行不存在或不属于当前父对话")
+        if run.run_type not in {"subagent", "resume"} or not run.subagent_thread_relation_id:
+            raise ValueError("子智能体运行不存在或不属于当前父对话")
+        relation = await self.thread_repo.get_for_user(run.subagent_thread_relation_id, uid)
+        if (
+            not relation
+            or relation.parent_conversation_id != creator_run.conversation_id
+            or relation.child_thread_id != run.conversation_thread_id
+        ):
+            raise ValueError("子智能体运行不存在或不属于当前父对话")
+        return run
+
     async def _create_run_record(
         self,
         *,
@@ -196,6 +284,7 @@ class SubagentRunService:
         relation: SubagentThread,
         tool_call_id: str,
         file_thread_id: str | None,
+        allow_parent_questions: bool = False,
     ) -> tuple[Any, bool]:
         """创建后台子智能体 run，并把规范化输入消息保存为该 run 的输入。"""
         if not input_message.content:
@@ -232,6 +321,8 @@ class SubagentRunService:
             "file_thread_id": file_thread_id or creator_run.conversation_thread_id,
             "skills_thread_id": relation.child_thread_id,
         }
+        if allow_parent_questions:
+            runtime_payload["allow_parent_questions"] = True
         input_payload = {
             "model_spec": resolved_model_spec,
             "runtime": {key: value for key, value in runtime_payload.items() if value is not None},
