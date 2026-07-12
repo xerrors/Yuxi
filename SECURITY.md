@@ -1,6 +1,6 @@
 # Security Policy
 
-Thank you for helping keep Yuxi-Know and its users safe. We take security
+Thank you for helping keep Yuxi and its users safe. We take security
 seriously and appreciate the efforts of the security community to responsibly
 disclose vulnerabilities.
 
