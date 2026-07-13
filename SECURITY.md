@@ -70,12 +70,12 @@ When you report an issue through a private channel, we aim to:
 - Publish a [GitHub Security Advisory](https://github.com/xerrors/Yuxi/security/advisories)
   (and request a CVE where appropriate) once a fix is available.
 
-These are targets, not guarantees — Yuxi-Know is maintained by a small team, so
+These are targets, not guarantees — Yuxi is maintained by a small team, so
 timelines may vary with complexity and availability.
 
 ## Scope
 
-This policy covers the code in this repository (backend, frontend, agent
+This policy covers the code in this repository (backend, web, agent
 harness, and the deployment configuration shipped here, e.g. `docker-compose`
 files and the sandbox provisioner).
 
@@ -126,4 +126,4 @@ Published security advisories for this project are listed under the
 
 ---
 
-Thank you for helping make Yuxi-Know safer for everyone.
+Thank you for helping make Yuxi safer for everyone.
