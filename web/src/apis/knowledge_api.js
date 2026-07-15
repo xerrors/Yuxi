@@ -582,6 +582,10 @@ export const evaluationApi = {
     return apiAdminPost(`/api/evaluation/databases/${kbId}/datasets/generate`, params)
   },
 
+  resumeDatasetGeneration: async (kbId, datasetId) => {
+    return apiAdminPost(`/api/evaluation/databases/${kbId}/datasets/${datasetId}/resume`, {})
+  },
+
   runEvaluation: async (kbId, params) => {
     return apiAdminPost(`/api/evaluation/databases/${kbId}/runs`, params)
   },

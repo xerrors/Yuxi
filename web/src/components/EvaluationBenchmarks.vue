@@ -71,6 +71,16 @@
                   <template #overlay>
                     <a-menu>
                       <a-menu-item
+                        v-if="getDatasetBuildStatus(benchmark) === 'failed'"
+                        key="resume"
+                        @click="resumeDataset(benchmark)"
+                      >
+                        <span class="benchmark-menu-item">
+                          <RotateCcw :size="14" />
+                          <span>继续生成</span>
+                        </span>
+                      </a-menu-item>
+                      <a-menu-item
                         key="download"
                         :disabled="
                           !isDatasetCompleted(benchmark) ||
@@ -291,6 +301,7 @@ import {
   Download,
   MoreVertical,
   RefreshCw,
+  RotateCcw,
   Trash2,
   Upload,
   X
@@ -698,6 +709,24 @@ const downloadDataset = async (benchmark) => {
     message.error(`下载失败: ${error.message || '未知错误'}`)
   } finally {
     delete downloadingDatasetMap[benchmarkId]
+  }
+}
+
+// 继续生成基准
+const resumeDataset = async (benchmark) => {
+  try {
+    const response = await evaluationApi.resumeDatasetGeneration(
+      props.kbId,
+      benchmark.dataset_id
+    )
+    if (response.message === 'success') {
+      message.success(response.data?.message || '已恢复生成')
+      loadBenchmarks()
+      taskerStore.loadTasks()
+    }
+  } catch (error) {
+    console.error('恢复生成失败:', error)
+    message.error(error?.response?.data?.detail || '恢复生成失败')
   }
 }
 

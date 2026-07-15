@@ -256,6 +256,8 @@ async def iter_generated_benchmark_items(
     concurrency_count: int = DEFAULT_BENCHMARK_GENERATION_CONCURRENCY,
     generation_mode: str = "vector",
     graph_expand_top_k: int = DEFAULT_GRAPH_EXPAND_TOP_K,
+    progress_base: int = 0,
+    total_progress: int | None = None,
     progress_cb: Callable[[int, str], Any] | None = None,
     cancel_cb: Callable[[], Any] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
@@ -323,8 +325,8 @@ async def iter_generated_benchmark_items(
                     generated += 1
                     results.append((attempt_no, item))
                     if progress_cb:
-                        progress = int(99 * generated / max(count, 1))
-                        message = f"已生成 {generated}/{count}"
+                        progress = int(99 * (progress_base + generated) / max(total_progress, 1))
+                        message = f"已生成 {progress_base + generated}/{total_progress}"
                 if progress_cb:
                     await progress_cb(progress, message)
             finally:
