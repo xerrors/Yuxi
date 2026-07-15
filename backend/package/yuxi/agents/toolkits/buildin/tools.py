@@ -170,10 +170,10 @@ class OcrParseFileInput(BaseModel):
 
 
 OCR_PARSE_FILE_DESCRIPTION = f"""
-将沙盒中的 PDF 或图片文件解析为 Markdown 文本，并把结果保存为文件。
+将沙盒中的 PDF、Office 文档或图片文件解析为 Markdown 文本，并把结果保存为文件。
 
 使用场景：
-1. 用户上传了 PDF/图片附件，需要提取其中的文字内容
+1. 用户上传了 PDF、Office 文档或图片附件，需要提取其中的文字内容
 2. 工作区、uploads 或 outputs 下已有文件，需要转成可读取的 Markdown
 3. 解析结果较长，后续应使用 read_file 读取保存后的 Markdown 文件
 

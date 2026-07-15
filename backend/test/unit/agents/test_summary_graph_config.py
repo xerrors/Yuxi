@@ -43,11 +43,13 @@ async def test_chatbot_summary_trim_limit_matches_summary_threshold(monkeypatch:
 
     monkeypatch.setattr(chatbot_graph, "create_subagent_task_middleware", no_subagent_middleware)
 
-    await chatbot_graph._build_middlewares(_context(summary_threshold=123))
+    middlewares = await chatbot_graph._build_middlewares(_context(summary_threshold=123))
 
     assert captured["summary_kwargs"]["trigger"] == ("tokens", 123 * 1024)
     assert captured["summary_kwargs"]["trim_tokens_to_summarize"] == 123 * 1024
     assert captured["summary_kwargs"]["l1_l2_trigger_ratio"] == 0.75
+    middleware_names = [type(middleware).__name__ for middleware in middlewares]
+    assert middleware_names.index("ModelRetryMiddleware") < middleware_names.index("ImageInputCompatibilityMiddleware")
 
 
 @pytest.mark.unit
@@ -56,8 +58,10 @@ async def test_subagent_summary_trim_limit_matches_summary_threshold(monkeypatch
     captured: dict = {}
     _patch_common_graph_deps(monkeypatch, subagent_graph, captured)
 
-    await subagent_graph._build_middlewares(_context(summary_threshold=64))
+    middlewares = await subagent_graph._build_middlewares(_context(summary_threshold=64))
 
     assert captured["summary_kwargs"]["trigger"] == ("tokens", 64 * 1024)
     assert captured["summary_kwargs"]["trim_tokens_to_summarize"] == 64 * 1024
     assert captured["summary_kwargs"]["l1_l2_trigger_ratio"] == 0.75
+    middleware_names = [type(middleware).__name__ for middleware in middlewares]
+    assert middleware_names.index("ModelRetryMiddleware") < middleware_names.index("ImageInputCompatibilityMiddleware")

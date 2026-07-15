@@ -534,11 +534,10 @@ def test_provisioner_read_rejects_large_known_binary_before_read(monkeypatch) ->
     assert read_calls == []
 
 
-def test_provisioner_read_rejects_large_unknown_binary_before_full_read(monkeypatch) -> None:
+def test_provisioner_read_rejects_unknown_binary(monkeypatch) -> None:
     monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
     read_calls: list[tuple[str, int, int | None]] = []
-    monkeypatch.setattr(backend, "_file_size_bytes", lambda _path: MAX_BINARY_BYTES + 1)
 
     def _read_binary(path, offset=0, limit=None):
         read_calls.append((path, offset, limit))
@@ -549,25 +548,51 @@ def test_provisioner_read_rejects_large_unknown_binary_before_full_read(monkeypa
     result = backend.read("/home/gem/user-data/large.unknown")
 
     assert result.file_data is None
-    assert result.error == f"Binary file exceeds maximum preview size of {MAX_BINARY_BYTES} bytes"
+    assert result.error == "read_file only supports UTF-8 text and image files. This file type is not supported."
     assert read_calls == [("/home/gem/user-data/large.unknown", 0, 2000)]
 
 
-def test_provisioner_read_falls_back_to_base64_on_sandbox_utf8_decode_failure(monkeypatch) -> None:
+def test_provisioner_read_rejects_unknown_file_on_sandbox_utf8_decode_failure(monkeypatch) -> None:
     monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
-    monkeypatch.setattr(backend, "_file_size_bytes", lambda _path: 6)
 
     def _read_binary_raises(path, offset=0, limit=None):
         raise RuntimeError("'utf-8' codec can't decode byte 0x89 in position 0")
 
     monkeypatch.setattr(backend, "_read_binary", _read_binary_raises)
-    monkeypatch.setattr(backend, "_read_file_base64", lambda _path: "R0lGODlh")
 
     result = backend.read("/home/gem/user-data/workspace/uploaded.bin")
 
-    assert result.error is None
-    assert result.file_data == {"content": "R0lGODlh", "encoding": "base64"}
+    assert result.file_data is None
+    assert result.error == "read_file only supports UTF-8 text and image files. This file type is not supported."
+
+
+@pytest.mark.parametrize("extension", ["pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx"])
+def test_provisioner_read_routes_documents_to_ocr(monkeypatch, extension: str) -> None:
+    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
+    monkeypatch.setattr(backend, "_file_size_bytes", lambda _path: 8)
+    monkeypatch.setattr(backend, "_read_binary", lambda *_args, **_kwargs: pytest.fail("document was read"))
+
+    result = backend.read(f"/home/gem/user-data/uploads/document.{extension}")
+
+    assert result.file_data is None
+    assert result.error == (
+        "read_file does not support PDF or Office documents. Use ocr_parse_file to convert the file to Markdown first."
+    )
+
+
+@pytest.mark.parametrize("extension", ["mp3", "mp4", "wav"])
+def test_provisioner_read_rejects_other_known_modalities(monkeypatch, extension: str) -> None:
+    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
+    monkeypatch.setattr(backend, "_file_size_bytes", lambda _path: 8)
+    monkeypatch.setattr(backend, "_read_file_base64", lambda _path: pytest.fail("binary file was read"))
+
+    result = backend.read(f"/home/gem/user-data/uploads/media.{extension}")
+
+    assert result.file_data is None
+    assert result.error == "read_file only supports UTF-8 text and image files. This file type is not supported."
 
 
 def test_read_file_tool_returns_multimodal_block_for_small_binary() -> None:
