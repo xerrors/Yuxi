@@ -445,6 +445,56 @@ async def test_stream_agent_run_events_reads_redis_and_ends_on_end_event(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_stream_agent_run_events_queries_db_once_while_redis_has_events(monkeypatch: pytest.MonkeyPatch):
+    session_count = 0
+
+    @asynccontextmanager
+    async def fake_session_ctx():
+        nonlocal session_count
+        session_count += 1
+        yield object()
+
+    class Repo:
+        def __init__(self, db):
+            self.db = db
+
+        async def get_run_for_user(self, run_id: str, uid: str):
+            del run_id, uid
+            return SimpleNamespace(status="running", conversation_thread_id="thread-1", request_id="req-1")
+
+    redis_read_count = 0
+
+    async def fake_list_events(run_id: str, *, after_seq: str, limit: int):
+        nonlocal redis_read_count
+        del run_id, after_seq, limit
+        redis_read_count += 1
+        return [
+            {
+                "seq": f"170000000000{redis_read_count}-0",
+                "event_type": "end" if redis_read_count == 3 else "metadata",
+                "payload": {"run_id": "run-1"},
+            }
+        ]
+
+    monkeypatch.setattr(agent_run_service.pg_manager, "get_async_session_context", fake_session_ctx)
+    monkeypatch.setattr(agent_run_service, "AgentRunRepository", Repo)
+    monkeypatch.setattr(agent_run_service, "list_run_stream_events", fake_list_events)
+    monkeypatch.setattr(agent_run_service, "SSE_POLL_INTERVAL_SECONDS", 0)
+
+    chunks = []
+    async for chunk in agent_run_service.stream_agent_run_events(
+        run_id="run-1",
+        after_seq="0-0",
+        current_uid="user-1",
+    ):
+        chunks.append(chunk)
+
+    assert redis_read_count == 3
+    assert session_count == 1
+    assert chunks[-1].startswith("event: end")
+
+
+@pytest.mark.asyncio
 async def test_stream_agent_run_events_compacts_verbose_false(monkeypatch: pytest.MonkeyPatch):
     @asynccontextmanager
     async def fake_session_ctx():
@@ -644,7 +694,17 @@ async def test_stream_agent_run_events_compacts_verbose_false(monkeypatch: pytes
 
 
 @pytest.mark.asyncio
-async def test_stream_agent_run_events_compact_fallback_end_keeps_request_id(monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.parametrize(
+    ("status_check_interval", "max_connection_minutes"),
+    [(0, 30), (999, 0)],
+)
+async def test_stream_agent_run_events_compact_fallback_end_keeps_request_id(
+    monkeypatch: pytest.MonkeyPatch,
+    status_check_interval: float,
+    max_connection_minutes: int,
+):
+    query_count = 0
+
     @asynccontextmanager
     async def fake_session_ctx():
         yield object()
@@ -654,8 +714,14 @@ async def test_stream_agent_run_events_compact_fallback_end_keeps_request_id(mon
             self.db = db
 
         async def get_run_for_user(self, run_id: str, uid: str):
+            nonlocal query_count
             del run_id, uid
-            return SimpleNamespace(status="completed", conversation_thread_id="thread-1", request_id="req-1")
+            query_count += 1
+            return SimpleNamespace(
+                status="running" if query_count == 1 else "completed",
+                conversation_thread_id="thread-1",
+                request_id="req-1",
+            )
 
     async def fake_list_events(run_id: str, *, after_seq: str, limit: int):
         del run_id, after_seq, limit
@@ -669,6 +735,8 @@ async def test_stream_agent_run_events_compact_fallback_end_keeps_request_id(mon
     monkeypatch.setattr(agent_run_service, "AgentRunRepository", Repo)
     monkeypatch.setattr(agent_run_service, "list_run_stream_events", fake_list_events)
     monkeypatch.setattr(agent_run_service, "get_last_run_stream_seq", fake_get_last_run_stream_seq)
+    monkeypatch.setattr(agent_run_service, "SSE_DB_STATUS_CHECK_INTERVAL_SECONDS", status_check_interval)
+    monkeypatch.setattr(agent_run_service, "SSE_MAX_CONNECTION_MINUTES", max_connection_minutes)
 
     chunks = []
     async for chunk in agent_run_service.stream_agent_run_events(
@@ -683,6 +751,7 @@ async def test_stream_agent_run_events_compact_fallback_end_keeps_request_id(mon
     assert chunks[0].startswith("event: end")
     assert "id: 1700000000004-0" in chunks[0]
     data = _sse_data(chunks[0])
+    assert query_count == 2
     assert data["request_id"] == "req-1"
     assert data["payload"] == {"status": "completed"}
 

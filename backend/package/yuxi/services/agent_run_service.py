@@ -54,6 +54,7 @@ from yuxi.utils.logging_config import logger
 SSE_HEARTBEAT_SECONDS = int(os.getenv("RUN_SSE_HEARTBEAT_SECONDS", "15"))  # SSE 连接空闲多久发送心跳
 SSE_MAX_CONNECTION_MINUTES = int(os.getenv("RUN_SSE_MAX_CONNECTION_MINUTES", "30"))  # SSE 连接最大持续时间
 SSE_POLL_INTERVAL_SECONDS = float(os.getenv("RUN_SSE_POLL_INTERVAL_SECONDS", "1.0"))  # SSE 轮询间隔
+SSE_DB_STATUS_CHECK_INTERVAL_SECONDS = 5.0
 RUN_PROGRESS_RECENT_EVENT_SCAN_LIMIT = 100
 RUN_PROGRESS_MESSAGE_LIMIT = 3
 RUN_PROGRESS_CONTENT_MAX_CHARS = 800
@@ -812,32 +813,32 @@ async def stream_agent_run_events(
     """按 SSE 格式读取 run 事件流；终结事件缺失时根据数据库状态补发 end。"""
     started_at = utc_now_naive()
     last_heartbeat_ts = started_at
-
     last_seq = normalize_after_seq(after_seq)
 
     try:
-        while True:
-            try:
-                async with pg_manager.get_async_session_context() as db:
-                    repo = AgentRunRepository(db)
-                    run = await repo.get_run_for_user(run_id, str(current_uid))
-                    if not run:
-                        yield _format_sse({"run_id": run_id, "message": "运行任务不存在"}, event="error")
-                        return
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                logger.warning(f"Run SSE DB error for run {run_id}: {e}")
-                yield _format_sse(
-                    {
-                        "run_id": run_id,
-                        "message": "运行事件流暂时不可用，请重连",
-                        "reason": "db_error",
-                    },
-                    event="error",
-                )
+        try:
+            run = await _load_agent_run_for_sse(run_id, current_uid)
+            if not run:
+                yield _format_sse({"run_id": run_id, "message": "运行任务不存在"}, event="error")
                 return
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning(f"Run SSE DB error for run {run_id}: {e}")
+            yield _format_sse(
+                {
+                    "run_id": run_id,
+                    "message": "运行事件流暂时不可用，请重连",
+                    "reason": "db_error",
+                },
+                event="error",
+            )
+            return
 
+        loop = asyncio.get_running_loop()
+        next_status_check_at = loop.time() + SSE_DB_STATUS_CHECK_INTERVAL_SECONDS
+
+        while True:
             try:
                 events = await list_run_stream_events(run_id, after_seq=last_seq, limit=200)
             except Exception as e:
@@ -869,7 +870,37 @@ async def stream_agent_run_events(
             if emitted_terminal:
                 return
 
-            if run.status in TERMINAL_RUN_STATUSES and not events:
+            now = utc_now_naive()
+            elapsed_seconds = (now - started_at).total_seconds()
+            timed_out = elapsed_seconds >= SSE_MAX_CONNECTION_MINUTES * 60
+            monotonic_now = loop.time()
+
+            if events:
+                next_status_check_at = monotonic_now + SSE_DB_STATUS_CHECK_INTERVAL_SECONDS
+
+            status_check_due = not events and monotonic_now >= next_status_check_at
+            if timed_out or (status_check_due and run.status not in TERMINAL_RUN_STATUSES):
+                try:
+                    run = await _load_agent_run_for_sse(run_id, current_uid)
+                    if not run:
+                        yield _format_sse({"run_id": run_id, "message": "运行任务不存在"}, event="error")
+                        return
+                    next_status_check_at = loop.time() + SSE_DB_STATUS_CHECK_INTERVAL_SECONDS
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.warning(f"Run SSE DB error for run {run_id}: {e}")
+                    yield _format_sse(
+                        {
+                            "run_id": run_id,
+                            "message": "运行事件流暂时不可用，请重连",
+                            "reason": "db_error",
+                        },
+                        event="error",
+                    )
+                    return
+
+            if run.status in TERMINAL_RUN_STATUSES and (not events or timed_out):
                 terminal_seq = last_seq
                 if terminal_seq in {"", "0-0"}:
                     terminal_seq = await get_last_run_stream_seq(run_id)
@@ -891,19 +922,22 @@ async def stream_agent_run_events(
                 )
                 return
 
-            now = utc_now_naive()
-            elapsed_seconds = (now - started_at).total_seconds()
             heartbeat_elapsed = (now - last_heartbeat_ts).total_seconds()
             if heartbeat_elapsed >= SSE_HEARTBEAT_SECONDS:
                 yield _format_heartbeat()
                 last_heartbeat_ts = now
 
-            if elapsed_seconds >= SSE_MAX_CONNECTION_MINUTES * 60:
+            if timed_out:
                 return
 
             await asyncio.sleep(SSE_POLL_INTERVAL_SECONDS)
     except asyncio.CancelledError:
         return
+
+
+async def _load_agent_run_for_sse(run_id: str, current_uid: str):
+    async with pg_manager.get_async_session_context() as db:
+        return await AgentRunRepository(db).get_run_for_user(run_id, str(current_uid))
 
 
 async def get_active_run_by_thread(*, thread_id: str, current_uid: str, db: AsyncSession) -> dict:
