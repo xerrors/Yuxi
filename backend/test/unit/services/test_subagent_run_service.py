@@ -309,7 +309,7 @@ def _fake_create_run_record(captured: dict[str, object], *, run_id: str = "child
 async def test_subagent_run_service_creates_child_relation_run_and_enqueue(monkeypatch: pytest.MonkeyPatch):
     db = _FakeDB()
     captured: dict[str, object] = {}
-    enqueued: list[str] = []
+    enqueued: list[tuple[str, str]] = []
     child_conversation = SimpleNamespace(id=20, uid="user-1", agent_id="worker", status="active")
     relation = _relation(child_thread_id="")
 
@@ -320,8 +320,8 @@ async def test_subagent_run_service_creates_child_relation_run_and_enqueue(monke
         created_relation=relation,
     )
 
-    async def fake_enqueue(run_id: str):
-        enqueued.append(run_id)
+    async def fake_enqueue(run_id: str, *, run_type: str):
+        enqueued.append((run_id, run_type))
 
     monkeypatch.setattr(SubagentRunService, "_create_run_record", _fake_create_run_record(captured))
     monkeypatch.setattr(service_module.agent_run_service, "enqueue_agent_run", fake_enqueue)
@@ -357,7 +357,7 @@ async def test_subagent_run_service_creates_child_relation_run_and_enqueue(monke
     assert captured["create_run_record"]["input_message"].raw_message()["type"] == "human"
     assert captured["create_run_record"]["input_message"].raw_message()["content"] == "run in background"
     assert db.committed is True
-    assert enqueued == ["child-run"]
+    assert enqueued == [("child-run", "subagent")]
 
 
 @pytest.mark.asyncio
@@ -367,8 +367,8 @@ async def test_subagent_run_service_continues_existing_relation(monkeypatch: pyt
     relation = _relation()
     _patch_repos(monkeypatch, captured=captured, existing_relation=relation)
 
-    async def fake_enqueue(run_id: str):
-        captured["enqueued"] = run_id
+    async def fake_enqueue(run_id: str, *, run_type: str):
+        captured["enqueued"] = (run_id, run_type)
 
     monkeypatch.setattr(
         SubagentRunService,
@@ -393,7 +393,7 @@ async def test_subagent_run_service_continues_existing_relation(monkeypatch: pyt
     assert captured["create_run_record"]["input_message"].content == "continue"
     assert captured["create_run_record"]["input_message"].raw_message()["type"] == "human"
     assert captured["create_run_record"]["input_message"].raw_message()["content"] == "continue"
-    assert captured["enqueued"] == "child-run-2"
+    assert captured["enqueued"] == ("child-run-2", "subagent")
 
 
 @pytest.mark.asyncio

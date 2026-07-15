@@ -7,9 +7,9 @@ streaming run events, loading final results and requesting cancellation.
 Keep source-specific orchestration outside this file. Normal chat, external
 invocation and subagent tools may all create AgentRun records, but each caller
 should translate its own request shape into this module's public run APIs first.
-The worker then executes every run through the same queue and ``chat_service``
-runtime path, so this module must not depend on agent-call, evaluation or
-subagent presentation details.
+Workers execute every run through the same function and ``chat_service``
+runtime path, while queue routing keeps subagent capacity isolated. This module
+must not depend on agent-call, evaluation or subagent presentation details.
 """
 
 from __future__ import annotations
@@ -37,6 +37,8 @@ from yuxi.services.input_message_service import (
     build_resume_input_message,
 )
 from yuxi.services.run_queue_service import (
+    AGENT_RUN_QUEUE_NAME,
+    SUBAGENT_RUN_QUEUE_NAME,
     build_run_event_envelope,
     get_arq_pool,
     get_last_run_stream_seq,
@@ -428,7 +430,7 @@ async def create_agent_run_view(
     )
     if created:
         await db.commit()
-        await enqueue_agent_run(run.id)
+        await enqueue_agent_run(run.id, run_type=run_type)
 
     return _build_run_response(run)
 
@@ -679,10 +681,16 @@ async def prepare_agent_run_creation_scope(
     )
 
 
-async def enqueue_agent_run(run_id: str) -> None:
-    """把已持久化的 run 投递到后台 worker 队列。"""
+async def enqueue_agent_run(run_id: str, *, run_type: str) -> None:
+    """按 run 类型把已持久化任务投递到对应的后台 worker 队列。"""
+    queue_name = SUBAGENT_RUN_QUEUE_NAME if run_type == "subagent" else AGENT_RUN_QUEUE_NAME
     queue = await get_arq_pool()
-    await queue.enqueue_job("process_agent_run", run_id, _job_id=f"run:{run_id}")
+    await queue.enqueue_job(
+        "process_agent_run",
+        run_id,
+        _job_id=f"run:{run_id}",
+        _queue_name=queue_name,
+    )
 
 
 async def get_agent_run_view(*, run_id: str, current_uid: str, db: AsyncSession) -> dict:

@@ -249,7 +249,7 @@ class _CreateRunDb:
         self.committed = False
         self.created_run = None
         self.created_run_kwargs = None
-        self.enqueued: list[tuple[str, str, str]] = []
+        self.enqueued: list[tuple[str, str, str, str]] = []
         self.order: list[str] = []
         self.request_id_lookups: list[str] = []
         self.active_run_lookup = None
@@ -709,7 +709,7 @@ async def test_create_agent_run_persists_input_before_enqueue(monkeypatch: pytes
     assert db.created_run_kwargs["input_message_id"] == 10
     assert db.added[0].run_id == db.created_run.id
     assert db.added[0].request_id == "req-1"
-    assert db.enqueued == [("process_agent_run", db.created_run.id, f"run:{db.created_run.id}")]
+    assert db.enqueued == [("process_agent_run", db.created_run.id, f"run:{db.created_run.id}", "arq:queue")]
     assert db.created_run_kwargs["input_payload"] == {"model_spec": "agent-default-model"}
     assert "model_spec" not in db.added[0].extra_metadata
     assert db.added[0].extra_metadata["raw_message"]["type"] == "human"
@@ -1333,10 +1333,10 @@ def _patch_agent_run_creation(
             )
 
     class Queue:
-        async def enqueue_job(self, job_name: str, run_id: str, _job_id: str):
+        async def enqueue_job(self, job_name: str, run_id: str, _job_id: str, _queue_name: str):
             assert db.committed is True
             db.order.append("enqueue")
-            db.enqueued.append((job_name, run_id, _job_id))
+            db.enqueued.append((job_name, run_id, _job_id, _queue_name))
 
     async def fake_get_arq_pool():
         return Queue()
@@ -1347,6 +1347,43 @@ def _patch_agent_run_creation(
     monkeypatch.setattr(agent_run_service, "AgentRunRepository", _CreateRunRepo)
     monkeypatch.setattr(agent_run_service, "get_arq_pool", fake_get_arq_pool)
     return db
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("run_type", "expected_queue"),
+    [
+        ("chat", "arq:queue"),
+        ("resume", "arq:queue"),
+        ("subagent", "arq:queue:subagent"),
+    ],
+)
+async def test_enqueue_agent_run_routes_subagents_to_isolated_queue(
+    monkeypatch: pytest.MonkeyPatch,
+    run_type: str,
+    expected_queue: str,
+):
+    calls: list[dict[str, object]] = []
+
+    class Queue:
+        async def enqueue_job(self, job_name: str, run_id: str, **kwargs):
+            calls.append({"job_name": job_name, "run_id": run_id, **kwargs})
+
+    async def fake_get_arq_pool():
+        return Queue()
+
+    monkeypatch.setattr(agent_run_service, "get_arq_pool", fake_get_arq_pool)
+
+    await agent_run_service.enqueue_agent_run("run-1", run_type=run_type)
+
+    assert calls == [
+        {
+            "job_name": "process_agent_run",
+            "run_id": "run-1",
+            "_job_id": "run:run-1",
+            "_queue_name": expected_queue,
+        }
+    ]
 
 
 @pytest.mark.asyncio

@@ -95,6 +95,36 @@ services:
       sandbox-provisioner:
         condition: service_healthy
 
+  subagent-worker:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    image: yuxi-api:${YUXI_VERSION:-0.7.1.beta1}
+    container_name: subagent-worker-prod
+    working_dir: /app
+    networks:
+      - app-network
+    volumes:
+      - ./docker/volumes/yuxi:/app/saves
+      - ./docker/volumes/models:/app/models
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - .env.prod
+    environment:
+      <<: *api-worker-env
+    command: uv run --no-sync --no-dev arq server.worker_main.SubagentWorkerSettings
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      sandbox-provisioner:
+        condition: service_healthy
+
   sandbox-provisioner:
     build:
       context: ./docker/sandbox_provisioner

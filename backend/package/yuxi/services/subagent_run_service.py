@@ -165,7 +165,7 @@ class SubagentRunService:
         # 创建成功后入队 worker 执行；幂等命中已有 run 时不重复入队。
         if created:
             await self.db.commit()
-            await agent_run_service.enqueue_agent_run(run.id)
+            await agent_run_service.enqueue_agent_run(run.id, run_type="subagent")
 
         return SubagentStartResult(
             run=run,

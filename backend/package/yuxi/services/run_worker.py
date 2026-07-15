@@ -16,6 +16,8 @@ from yuxi.repositories.agent_run_repository import TERMINAL_RUN_STATUSES, AgentR
 from yuxi.services.chat_service import stream_agent_chat, stream_agent_resume
 from yuxi.services.input_message_service import restore_chat_input_message
 from yuxi.services.run_queue_service import (
+    AGENT_RUN_QUEUE_NAME,
+    SUBAGENT_RUN_QUEUE_NAME,
     append_run_stream_event,
     clear_cancel_signal,
     has_cancel_signal,
@@ -564,6 +566,8 @@ async def _worker_shutdown(ctx):
 
 class WorkerSettings:
     functions = [process_agent_run]
+    queue_name = AGENT_RUN_QUEUE_NAME
+    max_jobs = 10
     max_tries = 2
     retry_jobs = True
     job_timeout = 3600
@@ -574,3 +578,16 @@ class WorkerSettings:
         redis_settings = get_arq_redis_settings()
     except Exception:
         redis_settings = None
+
+
+class SubagentWorkerSettings:
+    functions = WorkerSettings.functions
+    queue_name = SUBAGENT_RUN_QUEUE_NAME
+    max_jobs = WorkerSettings.max_jobs
+    max_tries = WorkerSettings.max_tries
+    retry_jobs = WorkerSettings.retry_jobs
+    job_timeout = WorkerSettings.job_timeout
+    keep_result = WorkerSettings.keep_result
+    on_startup = WorkerSettings.on_startup
+    on_shutdown = WorkerSettings.on_shutdown
+    redis_settings = WorkerSettings.redis_settings

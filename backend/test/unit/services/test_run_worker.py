@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 import yuxi.services.run_worker as run_worker
+from arq.worker import get_kwargs
 
 
 class _RaisingAsyncIter:
@@ -16,6 +17,22 @@ class _RaisingAsyncIter:
 
     async def __anext__(self):
         raise self._exc
+
+
+def test_worker_settings_keep_subagent_capacity_isolated():
+    parent_settings = get_kwargs(run_worker.WorkerSettings)
+    subagent_settings = get_kwargs(run_worker.SubagentWorkerSettings)
+
+    assert parent_settings["queue_name"] == "arq:queue"
+    assert subagent_settings["queue_name"] == "arq:queue:subagent"
+    assert parent_settings["queue_name"] != subagent_settings["queue_name"]
+    assert parent_settings["max_jobs"] == 10
+    assert subagent_settings["max_jobs"] == 10
+    assert subagent_settings["functions"] == [run_worker.process_agent_run]
+    assert subagent_settings == {
+        **parent_settings,
+        "queue_name": "arq:queue:subagent",
+    }
 
 
 class _BytesAsyncIter:
