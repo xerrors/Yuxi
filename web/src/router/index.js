@@ -85,14 +85,14 @@ const router = createRouter({
       ]
     },
     {
-      path: '/model-manage',
-      name: 'model-manage',
+      path: '/agent-manage',
+      name: 'agent-manage',
       component: AppLayout,
       children: [
         {
           path: '',
-          name: 'ModelManageComp',
-          component: () => import('../views/ModelManageView.vue'),
+          name: 'AgentManageComp',
+          component: () => import('../views/AgentManageView.vue'),
           meta: { keepAlive: false, requiresAuth: true }
         }
       ]

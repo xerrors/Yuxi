@@ -788,16 +788,17 @@ const previewedToolArgs = computed(() => previewToolArgs(formattedToolArgs.value
 
 .approval-actions {
   display: flex;
-  gap: 10px;
-  padding: 12px 20px 16px;
+  gap: 8px;
+  padding: 10px 20px 14px;
 }
 
 .btn {
   flex: 1;
-  padding: 10px 20px;
+  min-height: 34px;
+  padding: 7px 16px;
   border: none;
   border-radius: 6px;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -905,8 +906,9 @@ const previewedToolArgs = computed(() => previewToolArgs(formattedToolArgs.value
   }
 
   .btn {
-    padding: 8px 16px;
-    font-size: 13px;
+    min-height: 32px;
+    padding: 6px 14px;
+    font-size: 12px;
   }
 }
 </style>

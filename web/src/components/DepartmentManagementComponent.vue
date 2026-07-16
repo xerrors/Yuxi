@@ -98,7 +98,7 @@
       width="520px"
       class="department-modal"
     >
-      <a-form layout="vertical" class="department-form">
+      <a-form layout="vertical" class="department-form" autocomplete="off">
         <a-form-item label="部门名称" required class="form-item">
           <a-input
             v-model:value="departmentManagement.form.name"
@@ -131,6 +131,8 @@
               placeholder="请输入管理员UID（3-20位字母/数字/下划线）"
               size="large"
               :maxlength="20"
+              name="new-department-admin-uid"
+              autocomplete="off"
               @blur="checkAdminUid"
             />
             <div v-if="departmentManagement.form.uidError" class="error-text">
@@ -146,6 +148,8 @@
               size="large"
               :minlength="MIN_PASSWORD_LENGTH"
               :maxlength="50"
+              name="new-department-admin-password"
+              autocomplete="new-password"
             />
           </a-form-item>
 
@@ -155,6 +159,8 @@
               placeholder="请再次输入密码"
               size="large"
               :maxlength="50"
+              name="new-department-admin-password-confirmation"
+              autocomplete="new-password"
             />
           </a-form-item>
 
@@ -164,6 +170,8 @@
               placeholder="请输入手机号（可用于登录）"
               size="large"
               :maxlength="11"
+              name="new-department-admin-phone"
+              autocomplete="off"
             />
             <div v-if="departmentManagement.form.phoneError" class="error-text">
               {{ departmentManagement.form.phoneError }}

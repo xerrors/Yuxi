@@ -54,7 +54,7 @@ watch(activeTab, (tab) => {
 </script>
 
 <template>
-  <div class="model-manage-view">
+  <div class="agent-manage-view">
     <PageHeader
       v-model:active-key="activeTab"
       title="智能体管理"
@@ -81,7 +81,7 @@ watch(activeTab, (tab) => {
       </template>
     </PageHeader>
 
-    <div class="model-manage-content">
+    <div class="agent-manage-content">
       <div v-show="activeTab === 'agents'" class="tab-panel">
         <AgentManagePanel ref="agentPanelRef" />
       </div>
@@ -93,7 +93,7 @@ watch(activeTab, (tab) => {
 </template>
 
 <style lang="less" scoped>
-.model-manage-view {
+.agent-manage-view {
   display: flex;
   flex-direction: column;
   min-height: 100%;
@@ -101,7 +101,7 @@ watch(activeTab, (tab) => {
   color: var(--gray-1000);
 }
 
-.model-manage-content {
+.agent-manage-content {
   flex: 1;
   min-height: 0;
   overflow: hidden;

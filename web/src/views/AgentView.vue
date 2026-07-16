@@ -17,18 +17,30 @@
               overlay-class-name="config-dropdown-overlay"
             >
               <button
+                ref="agentDropdownTriggerRef"
                 type="button"
                 class="input-action-btn config-dropdown-trigger"
                 :class="{ disabled: isLoadingConfig }"
-                @click.stop
-                @mousedown.stop
+                :aria-label="currentAgentLabel"
               >
+                <FallbackAvatar
+                  v-if="currentAgentOption"
+                  class="config-dropdown-compact-icon"
+                  :src="currentAgentOption.icon"
+                  :default-src="currentAgentOption.defaultIcon"
+                  :name="currentAgentOption.label"
+                  :seed="currentAgentOption.value || currentAgentOption.label"
+                  kind="agent"
+                  :size="18"
+                  shape="rounded"
+                  alt=""
+                />
                 <span class="hide-text config-dropdown-text">{{ currentAgentLabel }}</span>
                 <ChevronDown size="15" class="config-dropdown-chevron" />
               </button>
 
               <template #overlay>
-                <div class="config-dropdown-panel" @click.stop>
+                <div ref="agentDropdownPanelRef" class="config-dropdown-panel">
                   <button
                     v-for="agent in agentQuickSwitchOptions"
                     :key="agent.value"
@@ -95,6 +107,7 @@ import { message } from 'ant-design-vue'
 import { Settings2, ChevronDown, Check } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import { agentApi } from '@/apis/agent_api'
+import { useOutsidePointerdown } from '@/composables/useOutsidePointerdown'
 import AgentChatComponent from '@/components/AgentChatComponent.vue'
 import AgentEditModal from '@/components/model-management/AgentEditModal.vue'
 import { isBuiltinAgent, useAgentStore } from '@/stores/agent'
@@ -227,6 +240,8 @@ const currentAgentLabel = computed(() => {
 })
 
 const agentDropdownOpen = ref(false)
+const agentDropdownTriggerRef = ref(null)
+const agentDropdownPanelRef = ref(null)
 const agentBackendOptions = ref([])
 const agentBackendsLoaded = ref(false)
 
@@ -275,6 +290,8 @@ const openAgentManagement = async () => {
     message.error(error.message || '打开智能体配置失败')
   }
 }
+
+useOutsidePointerdown(agentDropdownOpen, [agentDropdownTriggerRef, agentDropdownPanelRef])
 </script>
 
 <style lang="less" scoped>
@@ -332,6 +349,27 @@ const openAgentManagement = async () => {
 .config-dropdown-chevron {
   flex-shrink: 0;
   color: currentColor;
+}
+
+.config-dropdown-compact-icon {
+  display: none;
+  flex-shrink: 0;
+}
+
+@container (max-width: 640px) {
+  .config-dropdown-trigger {
+    width: 30px;
+    padding-inline: 0;
+  }
+
+  .config-dropdown-compact-icon {
+    display: block;
+  }
+
+  .config-dropdown-text,
+  .config-dropdown-chevron {
+    display: none;
+  }
 }
 
 // 响应式优化

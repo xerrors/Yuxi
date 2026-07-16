@@ -264,7 +264,6 @@
             <div class="side-panel__header state-panel-header">
               <span class="state-panel-title">状态</span>
               <div class="state-panel-header-actions">
-                <span class="state-panel-summary">{{ stateSummaryLabel }}</span>
                 <button
                   type="button"
                   class="state-refresh-btn"
@@ -299,9 +298,6 @@
                       :class="{ 'is-collapsed': !isStateSectionExpanded('tokenUsage') }"
                     />
                   </span>
-                  <span class="state-section-meta">
-                    {{ tokenUsageHeaderPercentLabel }}
-                  </span>
                 </button>
                 <div
                   v-show="isStateSectionExpanded('tokenUsage')"
@@ -311,7 +307,7 @@
                   <div class="token-usage-content">
                     <div class="token-usage-stack">
                       <div class="token-usage-stack-head">
-                        <span>当前上下文</span>
+                        <span>{{ tokenUsageHeaderPercentLabel }}</span>
                         <strong>{{ tokenUsageStackHeadLabel }}</strong>
                       </div>
                       <div class="token-usage-stack-track" aria-label="Token 构成">
@@ -371,7 +367,7 @@
                     />
                   </span>
                   <span v-if="totalTodoCount" class="state-section-meta">
-                    {{ completedTodoCount }}/{{ totalTodoCount }} · {{ todoProgress }}%
+                    {{ completedTodoCount }}/{{ totalTodoCount }}
                   </span>
                 </button>
                 <div
@@ -672,7 +668,7 @@ import { MessageProcessor } from '@/utils/messageProcessor'
 import { agentApi, threadApi } from '@/apis'
 import HumanApprovalModal from '@/components/HumanApprovalModal.vue'
 import { useApproval } from '@/composables/useApproval'
-import { useAgentThreadState } from '@/composables/useAgentThreadState'
+import { useAgentThreadState, IDLE_QUEUE_SNAPSHOT } from '@/composables/useAgentThreadState'
 import { useAgentRunStream } from '@/composables/useAgentRunStream'
 import { useAgentStreamHandler } from '@/composables/useAgentStreamHandler'
 import { useStreamSmoother } from '@/composables/useStreamSmoother'
@@ -686,7 +682,12 @@ import FallbackAvatar from '@/components/common/FallbackAvatar.vue'
 import { enrichTaskToolCalls, parseToolCallArgs } from '@/components/ToolCallingResult/toolRegistry'
 import { getConversationDisplayItems } from '@/utils/messageGrouping'
 import { makeChildThreadId } from '@/utils/subagentThread'
-import { isThreadWaitingForUserAction, isToolApprovalMode } from '@/utils/toolApproval'
+import {
+  isThreadWaitingForUserAction,
+  isToolApprovalMode,
+  readToolApprovalModePreference,
+  writeToolApprovalModePreference
+} from '@/utils/toolApproval'
 
 // ==================== PROPS & EMITS ====================
 const props = defineProps({
@@ -1035,6 +1036,7 @@ const currentChatId = computed(() => currentThreadId.value)
 const DRAFT_MODEL_KEY = '__draft__'
 const selectedModelByThread = reactive({})
 const selectedToolApprovalModeByThread = reactive({})
+const savedToolApprovalMode = ref(readToolApprovalModePreference())
 const agentDefaultModel = computed(
   () =>
     agentConfig.value?.model ||
@@ -1064,11 +1066,14 @@ const agentDefaultToolApprovalMode = computed(
 const currentToolApprovalMode = computed(
   () =>
     selectedToolApprovalModeByThread[currentChatId.value || DRAFT_MODEL_KEY] ||
+    savedToolApprovalMode.value ||
     agentDefaultToolApprovalMode.value
 )
 const handleToolApprovalModeSelect = (mode) => {
   if (!isToolApprovalMode(mode)) return
   selectedToolApprovalModeByThread[currentChatId.value || DRAFT_MODEL_KEY] = mode
+  savedToolApprovalMode.value = mode
+  writeToolApprovalModePreference(mode)
 }
 
 const currentThreadAgentName = computed(() => {
@@ -1151,11 +1156,16 @@ const tokenUsageSegments = computed(() => {
   const inputTokens = Math.max(toFiniteNumber(usage.llm_input_tokens) || 0, 0)
   const rawSegments = [
     {
-      key: 'cut',
-      label: '已压缩',
-      value: cutMessageTokens,
-      messageCount: cutMessageCount,
-      tone: 'is-cut'
+      key: 'system',
+      label: '系统提示',
+      value: systemTokens,
+      tone: 'is-system'
+    },
+    {
+      key: 'tools',
+      label: `工具定义 (${usage.tool_count || 0})`,
+      value: toolsTokens,
+      tone: 'is-tools'
     },
     {
       key: 'messages',
@@ -1179,16 +1189,11 @@ const tokenUsageSegments = computed(() => {
       tone: 'is-summary'
     },
     {
-      key: 'system',
-      label: '系统消息',
-      value: systemTokens,
-      tone: 'is-system'
-    },
-    {
-      key: 'tools',
-      label: `工具定义 (${usage.tool_count || 0})`,
-      value: toolsTokens,
-      tone: 'is-tools'
+      key: 'cut',
+      label: '已压缩',
+      value: cutMessageTokens,
+      messageCount: cutMessageCount,
+      tone: 'is-cut'
     }
   ].filter((segment) => segment.value > 0)
 
@@ -1387,19 +1392,6 @@ const completedTodoCount = computed(
 )
 const showStateEntry = computed(() => Boolean(currentChatId.value))
 const showFileEntry = computed(() => Boolean(currentChatId.value))
-const todoProgress = computed(() => {
-  if (!totalTodoCount.value) return 0
-  return Math.round((completedTodoCount.value / totalTodoCount.value) * 100)
-})
-const stateSummaryLabel = computed(() => {
-  const total =
-    (currentTokenUsage.value ? 1 : 0) +
-    totalTodoCount.value +
-    currentStateFiles.value.length +
-    currentArtifactFiles.value.length +
-    displaySubagentRuns.value.length
-  return total ? `${total} 项` : '暂无内容'
-})
 const hasVisibleStateSections = computed(
   () =>
     Boolean(currentTokenUsage.value) ||
@@ -1855,13 +1847,7 @@ const isStreaming = computed(() => {
 })
 const currentQueuedRequests = computed(() => currentThreadState.value?.queuedRequests || [])
 const currentQueueSnapshot = computed(
-  () =>
-    currentThreadState.value?.queueSnapshot || {
-      status: 'idle',
-      paused_reason: null,
-      blocking_run_id: null,
-      can_continue: false
-    }
+  () => currentThreadState.value?.queueSnapshot || IDLE_QUEUE_SNAPSHOT
 )
 const queuedRequestCount = computed(() => currentQueuedRequests.value.length)
 const hasQueuedRequests = computed(() => queuedRequestCount.value > 0)
@@ -2284,7 +2270,6 @@ const restoreThreadModelSelection = (threadId, history) => {
     }
   }
   restoreField(selectedModelByThread, (spec) => spec, 'model_spec')
-  restoreField(selectedToolApprovalModeByThread, isToolApprovalMode, 'tool_approval_mode')
 }
 
 const fetchThreadFiles = async (threadId) => {
@@ -2662,7 +2647,7 @@ const handleSendMessage = async ({ image } = {}) => {
   }
   // 仅当用户显式选择过模型才下发覆盖；否则传 null，由后端使用智能体配置的模型
   const modelSpec = selectedModelByThread[threadId] || null
-  const toolApprovalMode = selectedToolApprovalModeByThread[threadId] || null
+  const toolApprovalMode = currentToolApprovalMode.value
 
   userInput.value = ''
 
@@ -2917,7 +2902,7 @@ const toggleAgentPanel = async () => {
     return
   }
 
-  showFileTreePanel()
+  showFilePanel(agentPanelActivePreviewPath.value ? 'preview' : 'tree')
   await handleAgentStateRefresh()
 }
 
@@ -3386,7 +3371,7 @@ watch(currentChatId, (threadId, oldThreadId) => {
 }
 
 .chat-greeting-input {
-  padding: 24px 0;
+  padding: 24px 0 34px;
   text-align: center;
 
   h1 {
@@ -4000,7 +3985,6 @@ watch(currentChatId, (threadId, oldThreadId) => {
   color: var(--gray-500);
 }
 
-.state-panel-summary,
 .state-section-meta {
   flex-shrink: 0;
   font-size: 12px;
@@ -4123,6 +4107,7 @@ watch(currentChatId, (threadId, oldThreadId) => {
 
 .token-usage-stack-track {
   display: flex;
+  gap: 1px;
   height: 10px;
   overflow: hidden;
   border-radius: 999px;
@@ -4139,7 +4124,7 @@ watch(currentChatId, (threadId, oldThreadId) => {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px 10px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--gray-500);
 }
 

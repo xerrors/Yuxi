@@ -14,11 +14,12 @@
             class="conversation-item"
             :class="{ active: currentChatId === chat.id }"
             @click="$emit('select-chat', chat.id)"
+            @dblclick.stop="renameChat(chat.id)"
             @click.middle="$emit('delete-chat', chat.id)"
           >
             <span class="conversation-title">{{ chat.title || '新的对话' }}</span>
             <span class="actions-mask"></span>
-            <span class="conversation-actions" @click.stop>
+            <span class="conversation-actions" @click.stop @dblclick.stop>
               <a-dropdown :trigger="['click']">
                 <template #overlay>
                   <a-menu>
@@ -133,22 +134,23 @@ const renameChat = async (chatId) => {
   let newTitle = chat.title || ''
   Modal.confirm({
     title: '重命名对话',
-    content: h('div', { style: { marginTop: '12px' } }, [
+    icon: null,
+    closable: false,
+    maskClosable: true,
+    centered: true,
+    width: 400,
+    class: 'rename-conversation-modal',
+    content: h('div', [
+      h('p', { class: 'rename-conversation-description' }, '保持简短且易于识别'),
       h('input', {
         value: newTitle,
-        style: {
-          width: '100%',
-          padding: '4px 8px',
-          border: '1px solid var(--gray-150)',
-          background: 'var(--gray-0)',
-          borderRadius: '4px'
-        },
+        class: 'rename-conversation-input',
         onInput: (event) => {
           newTitle = event.target.value
         }
       })
     ]),
-    okText: '确认',
+    okText: '保存',
     cancelText: '取消',
     onOk: () => {
       if (!newTitle.trim()) {
@@ -160,6 +162,68 @@ const renameChat = async (chatId) => {
   })
 }
 </script>
+
+<style lang="less">
+.rename-conversation-modal {
+  .ant-modal-content {
+    padding: 22px 24px 20px;
+    border-radius: 12px;
+  }
+
+  .ant-modal-confirm-title {
+    color: var(--gray-900);
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1.4;
+  }
+
+  .ant-modal-confirm-body .ant-modal-confirm-content {
+    width: 100%;
+    max-width: none !important;
+    margin-top: 4px;
+  }
+
+  .ant-modal-confirm-btns {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 18px;
+
+    .ant-btn {
+      min-width: 68px;
+      height: 34px;
+      margin-inline-start: 0;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+  }
+}
+
+.rename-conversation-description {
+  margin: 0 0 14px;
+  color: var(--gray-500);
+  font-size: 13px;
+}
+
+.rename-conversation-input {
+  width: 100%;
+  height: 38px;
+  padding: 0 12px;
+  color: var(--gray-900);
+  background: var(--gray-0);
+  border: 1px solid var(--gray-150);
+  border-radius: 8px;
+  outline: none;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+
+  &:focus {
+    border-color: var(--main-400);
+    box-shadow: 0 0 0 2px var(--main-50);
+  }
+}
+</style>
 
 <style lang="less" scoped>
 .conversation-nav-section {

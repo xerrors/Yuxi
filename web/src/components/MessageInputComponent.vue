@@ -2,7 +2,7 @@
   <div
     class="input-box"
     :class="[customClasses, { 'dragging-files': isDraggingFiles }]"
-    @click="focusInput"
+    @click="handleInputBoxClick"
     @dragenter="handleDragEnter"
     @dragover="handleDragOver"
     @dragleave="handleDragLeave"
@@ -13,23 +13,31 @@
     </div>
 
     <div class="expand-options" v-if="hasOptionsLeft">
-      <a-popover
+      <a-dropdown
         v-model:open="optionsExpanded"
-        placement="bottomLeft"
-        trigger="click"
-        :overlay-inner-style="{ padding: '4px' }"
+        :trigger="['click']"
+        placement="topLeft"
+        overlay-class-name="config-dropdown-overlay"
       >
-        <template #content>
-          <slot name="options-left">
-            <div class="no-options">没有配置 options</div>
-          </slot>
+        <template #overlay>
+          <div ref="optionsPanelRef" class="options-dropdown-content">
+            <slot name="options-left">
+              <div class="no-options">没有配置 options</div>
+            </slot>
+          </div>
         </template>
-        <a-button type="text" class="expand-btn">
-          <template #icon>
-            <Paperclip :size="16" :class="{ rotated: optionsExpanded }" />
-          </template>
-        </a-button>
-      </a-popover>
+        <button
+          ref="optionsTriggerRef"
+          type="button"
+          class="expand-btn"
+          :class="{ active: optionsExpanded }"
+          aria-label="添加内容"
+          aria-haspopup="menu"
+          :aria-expanded="optionsExpanded"
+        >
+          <Plus :size="17" />
+        </button>
+      </a-dropdown>
       <slot name="actions-left"></slot>
     </div>
 
@@ -290,9 +298,11 @@ import {
   render
 } from 'vue'
 import { SendOutlined, ArrowUpOutlined, PauseOutlined } from '@ant-design/icons-vue'
-import { Paperclip } from 'lucide-vue-next'
+import { Plus } from 'lucide-vue-next'
 import { searchMentionFiles } from '@/apis/mention_api'
 import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
+import { useOutsidePointerdown } from '@/composables/useOutsidePointerdown'
+import { buildMentionResourceItems } from '@/utils/mention_resource_items'
 import {
   getMentionIconComponent,
   getMentionIconStyle,
@@ -305,7 +315,6 @@ import {
   findActiveMentionQuery,
   formatMentionToken,
   getMentionDisplayLabel,
-  mentionTypePrefixMap,
   parseMentionText,
   replaceRawRange
 } from '@/utils/mention_utils'
@@ -321,6 +330,8 @@ const closeMentionPopup = (e) => {
 
 const inputRef = ref(null)
 const optionsExpanded = ref(false)
+const optionsTriggerRef = ref(null)
+const optionsPanelRef = ref(null)
 // 用于防抖的定时器
 const debounceTimer = ref(null)
 const props = defineProps({
@@ -367,6 +378,10 @@ const props = defineProps({
   fileUploadEnabled: {
     type: Boolean,
     default: false
+  },
+  showOptionsLeft: {
+    type: Boolean,
+    default: true
   }
 })
 
@@ -379,6 +394,7 @@ const mentionEnabled = computed(() => {
 })
 
 const mentionDisplayLabels = computed(() => buildMentionDisplayLabels(props.mention || {}))
+const mentionResourceItems = computed(() => buildMentionResourceItems(props.mention || {}))
 
 let lastRawSelectionRange = null
 let lastSyncedEditorValue = props.modelValue || ''
@@ -718,7 +734,7 @@ const updateMentionItems = (query = '') => {
   }
 
   const lowerQuery = normalizedQuery.toLowerCase()
-  const { files = [], knowledgeBases = [], mcps = [], skills = [], subagents = [] } = props.mention
+  const { files = [] } = props.mention
 
   const filterItems = (list) =>
     list.filter((item) => {
@@ -728,8 +744,7 @@ const updateMentionItems = (query = '') => {
         item.description,
         item.resourceId,
         item.tokenLabel,
-        item.type,
-        mentionTypePrefixMap[item.type]
+        item.type
       ]
       return searchTexts.some((text) =>
         String(text || '')
@@ -754,57 +769,12 @@ const updateMentionItems = (query = '') => {
 
   const filteredLocalFiles = normalizedQuery ? filterItems(localFileItems) : []
 
-  const knowledgeItems = knowledgeBases.map((kb) => {
-    const kbName = kb.name || ''
-    return {
-      value: kbName,
-      label: kbName,
-      type: 'knowledge',
-      insertValue: kbName,
-      tokenLabel: formatMentionToken('knowledge', kbName),
-      description: kb.description || '',
-      resourceId: kb.kb_id
-    }
-  })
-
-  const mcpItems = mcps.map((m) => {
-    const mcpValue = m.slug || m.value || m.id || m.name || ''
-    const mcpLabel = m.name || m.label || mcpValue
-    return {
-      value: mcpValue,
-      label: mcpLabel,
-      type: 'mcp',
-      insertValue: mcpValue,
-      tokenLabel: formatMentionToken('mcp', mcpLabel),
-      description: m.description || ''
-    }
-  })
-
-  const skillItems = skills.map((skill) => {
-    const skillValue = skill.slug || skill.value || skill.id || skill.name || ''
-    const skillLabel = skill.name || skill.label || skillValue
-    return {
-      value: skillValue,
-      label: skillLabel,
-      type: 'skill',
-      insertValue: skillValue,
-      tokenLabel: formatMentionToken('skill', skillLabel),
-      description: skill.description || ''
-    }
-  })
-
-  const subagentItems = subagents.map((subagent) => {
-    const subagentValue = subagent.id || subagent.value || subagent.slug || subagent.name || ''
-    const subagentLabel = subagent.name || subagent.label || subagentValue
-    return {
-      value: subagentValue,
-      label: subagentLabel,
-      type: 'subagent',
-      insertValue: subagentValue,
-      tokenLabel: formatMentionToken('subagent', subagentLabel),
-      description: subagent.description || ''
-    }
-  })
+  const {
+    knowledgeBases: knowledgeItems,
+    mcps: mcpItems,
+    skills: skillItems,
+    subagents: subagentItems
+  } = mentionResourceItems.value
 
   // 初始化设置 mentionItems 状态（使用前端已有的本地过滤结果，瞬间更新，达到零卡顿）
   mentionItems.value = {
@@ -918,6 +888,24 @@ const hasAnyItems = computed(() => {
   )
 })
 
+const commitMention = (item, range = null) => {
+  if (!inputRef.value || props.disabled) return
+  const mentionValue = item?.insertValue || item?.value
+  if (!item?.type || !mentionValue) return
+
+  const mentionText = `${formatMentionToken(item.type, mentionValue)} `
+  mentionPopupVisible.value = false
+  mentionQuery.value = ''
+
+  if (range) {
+    const currentValue = getEditorRawValue()
+    const newValue = replaceRawRange(currentValue, range.start, range.end, mentionText)
+    updateRawValue(newValue, range.start + mentionText.length)
+    return
+  }
+  replaceCurrentRawSelection(mentionText)
+}
+
 const insertMention = (item) => {
   if (!inputRef.value) return
 
@@ -926,19 +914,7 @@ const insertMention = (item) => {
   const activeMention = findActiveMentionQuery(currentValue, selectionRange.end)
   if (!activeMention) return
 
-  const mentionValue = item.insertValue || item.value
-  const mentionText = `${formatMentionToken(item.type, mentionValue)} `
-  const newValue = replaceRawRange(
-    currentValue,
-    activeMention.start,
-    activeMention.end,
-    mentionText
-  )
-  const newCursorPos = activeMention.start + mentionText.length
-
-  mentionPopupVisible.value = false
-  mentionQuery.value = ''
-  updateRawValue(newValue, newCursorPos)
+  commitMention(item, { start: activeMention.start, end: activeMention.end })
 }
 
 // 滚动到选中项
@@ -1000,6 +976,9 @@ const handleMentionNavigation = (e) => {
 }
 
 const hasOptionsLeft = computed(() => {
+  if (!props.showOptionsLeft) {
+    return false
+  }
   const slot = slots['options-left']
   if (!slot) {
     return false
@@ -1201,6 +1180,14 @@ const isComposing = ref(false)
 let activeAbortController = null
 let mentionSearchTimer = null
 
+watch(optionsExpanded, (open) => {
+  if (open) {
+    mentionPopupVisible.value = false
+  }
+})
+
+useOutsidePointerdown(optionsExpanded, [optionsTriggerRef, optionsPanelRef])
+
 const adjustTextareaHeight = () => {
   if (!inputRef.value) {
     return
@@ -1222,6 +1209,16 @@ const focusInput = () => {
       })
     }
   }
+}
+
+const handleInputBoxClick = (event) => {
+  if (event.target instanceof Element) {
+    const interactiveTarget = event.target.closest(
+      'button, a, input, textarea, select, [role="button"], [role="menuitem"], [role="switch"]'
+    )
+    if (interactiveTarget) return
+  }
+  focusInput()
 }
 
 // 处理输入框点击事件，自适应检测光标是否落入 @提及 范围内以唤醒或更新弹窗
@@ -1279,6 +1276,7 @@ onBeforeUnmount(() => {
 // 公开方法供父组件调用
 defineExpose({
   focus: () => inputRef.value?.focus(),
+  insertMention: commitMention,
   closeOptions: () => {
     optionsExpanded.value = false
   }
@@ -1287,6 +1285,7 @@ defineExpose({
 
 <style lang="less" scoped>
 .input-box {
+  container-type: inline-size;
   display: grid;
   width: 100%;
   margin: 0 auto;
@@ -1418,7 +1417,7 @@ defineExpose({
   :deep(.mention-ref-token) {
     display: inline-flex;
     align-items: baseline;
-    gap: 2px;
+    gap: 6px;
     max-width: min(100%, 360px);
     color: var(--main-700);
     line-height: normal;
@@ -1466,26 +1465,22 @@ defineExpose({
   align-items: center;
   justify-content: center;
   color: var(--gray-600);
-  transition: all 0.2s ease;
+  padding: 0;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease;
   border: 1px solid transparent;
   background-color: transparent;
 
   &:hover {
-    color: var(--main-color);
+    color: var(--gray-900);
+    background: var(--gray-50);
   }
 
-  &:active {
-    color: var(--main-color);
-    // 移除点击缩小效果
-  }
-
-  .anticon {
-    font-size: 14px;
-    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-
-    &.rotated {
-      transform: rotate(45deg);
-    }
+  &.active {
+    color: var(--gray-900);
+    background: var(--gray-100);
   }
 }
 

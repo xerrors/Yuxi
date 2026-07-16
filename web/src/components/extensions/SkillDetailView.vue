@@ -10,7 +10,7 @@
       </button>
       <div class="detail-title-area">
         <div class="detail-icon">
-          <BookMarked :size="18" />
+          <WandSparkles :size="18" />
         </div>
         <div class="detail-title-text">
           <h2>{{ currentSkill?.name || slug }}</h2>
@@ -343,7 +343,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import {
   ArrowLeft,
-  BookMarked,
+  WandSparkles,
   Download,
   Trash2,
   Save,

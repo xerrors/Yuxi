@@ -12,99 +12,99 @@
     </div>
 
     <div class="account-card profile-card">
-      <div class="profile-left">
-        <a-upload
-          :show-upload-list="false"
-          :before-upload="beforeUpload"
-          @change="handleAvatarChange"
-          accept="image/*"
-        >
-          <div class="avatar-upload" :class="{ uploading: avatarUploading }">
-            <FallbackAvatar
-              :src="userStore.avatar"
-              :default-src="avatarDefaultSrc"
-              :name="userStore.username"
-              :seed="userStore.uid || userStore.username"
-              kind="user"
-              :size="80"
-              shape="circle"
-              :alt="userStore.username"
-              class="account-avatar"
-            />
-            <div class="avatar-mask">
-              <Upload v-if="!avatarUploading" :size="16" />
-              <RefreshCw v-else :size="16" class="spin" />
-              <span>{{ userStore.avatar ? '更换' : '上传' }}</span>
+      <div class="profile-summary">
+        <div class="profile-left">
+          <a-upload
+            :show-upload-list="false"
+            :before-upload="beforeUpload"
+            @change="handleAvatarChange"
+            accept="image/*"
+          >
+            <div class="avatar-upload" :class="{ uploading: avatarUploading }">
+              <FallbackAvatar
+                :src="userStore.avatar"
+                :default-src="avatarDefaultSrc"
+                :name="userStore.username"
+                :seed="userStore.uid || userStore.username"
+                kind="user"
+                :size="80"
+                shape="circle"
+                :alt="userStore.username"
+                class="account-avatar"
+              />
+              <div class="avatar-mask">
+                <Upload v-if="!avatarUploading" :size="16" />
+                <RefreshCw v-else :size="16" class="spin" />
+                <span>{{ userStore.avatar ? '更换' : '上传' }}</span>
+              </div>
+            </div>
+          </a-upload>
+
+          <div class="profile-fields">
+            <div class="profile-row editable-row">
+              <span class="profile-label">用户名</span>
+              <a-input
+                v-if="editingField === 'username'"
+                ref="usernameInput"
+                v-model:value="profileDraft.username"
+                class="inline-input"
+                size="small"
+                :max-length="20"
+                :disabled="savingField === 'username'"
+                @press-enter="saveField('username')"
+                @keydown.esc.stop.prevent="cancelField"
+                @blur="cancelField"
+              />
+              <button v-else type="button" class="editable-value" @click="startFieldEdit('username')">
+                {{ userStore.username || '未设置' }}
+              </button>
+            </div>
+            <div class="profile-row editable-row">
+              <span class="profile-label">手机号</span>
+              <a-input
+                v-if="editingField === 'phone_number'"
+                ref="phoneInput"
+                v-model:value="profileDraft.phone_number"
+                class="inline-input"
+                size="small"
+                :max-length="11"
+                :disabled="savingField === 'phone_number'"
+                @press-enter="saveField('phone_number')"
+                @keydown.esc.stop.prevent="cancelField"
+                @blur="cancelField"
+              />
+              <button
+                v-else
+                type="button"
+                class="editable-value"
+                @click="startFieldEdit('phone_number')"
+              >
+                {{ userStore.phoneNumber || '未设置' }}
+              </button>
+            </div>
+            <div class="profile-row">
+              <span class="profile-label">UID</span>
+              <span class="profile-value mono">{{ userStore.uid || '未设置' }}</span>
             </div>
           </div>
-        </a-upload>
+        </div>
 
-        <div class="profile-fields">
-          <div class="profile-row editable-row">
-            <span class="profile-label">用户名</span>
-            <a-input
-              v-if="editingField === 'username'"
-              ref="usernameInput"
-              v-model:value="profileDraft.username"
-              class="inline-input"
-              size="small"
-              :max-length="20"
-              :disabled="savingField === 'username'"
-              @press-enter="saveField('username')"
-              @keydown.esc.stop.prevent="cancelField"
-              @blur="cancelField"
-            />
-            <button v-else type="button" class="editable-value" @click="startFieldEdit('username')">
-              {{ userStore.username || '未设置' }}
-            </button>
+        <div class="identity-panel">
+          <div class="identity-item">
+            <span class="identity-icon"><ShieldCheck :size="15" /></span>
+            <span class="profile-label">权限</span>
+            <span class="profile-value" :style="{ color: getRoleColor(userStore.userRole) }">
+              {{ userRoleText }}
+            </span>
           </div>
-          <div class="profile-row editable-row">
-            <span class="profile-label">手机号</span>
-            <a-input
-              v-if="editingField === 'phone_number'"
-              ref="phoneInput"
-              v-model:value="profileDraft.phone_number"
-              class="inline-input"
-              size="small"
-              :max-length="11"
-              :disabled="savingField === 'phone_number'"
-              @press-enter="saveField('phone_number')"
-              @keydown.esc.stop.prevent="cancelField"
-              @blur="cancelField"
-            />
-            <button
-              v-else
-              type="button"
-              class="editable-value"
-              @click="startFieldEdit('phone_number')"
-            >
-              {{ userStore.phoneNumber || '未设置' }}
-            </button>
-          </div>
-          <div class="profile-row">
-            <span class="profile-label">UID</span>
-            <span class="profile-value mono">{{ userStore.uid || '未设置' }}</span>
+          <div class="identity-item">
+            <span class="identity-icon"><Building2 :size="15" /></span>
+            <span class="profile-label">部门</span>
+            <span class="profile-value">{{ userStore.departmentName || '默认部门' }}</span>
           </div>
         </div>
       </div>
-
-      <div class="identity-panel">
-        <div class="identity-item">
-          <span class="identity-icon"><ShieldCheck :size="15" /></span>
-          <span class="profile-label">权限</span>
-          <span class="profile-value" :style="{ color: getRoleColor(userStore.userRole) }">
-            {{ userRoleText }}
-          </span>
-        </div>
-        <div class="identity-item">
-          <span class="identity-icon"><Building2 :size="15" /></span>
-          <span class="profile-label">部门</span>
-          <span class="profile-value">{{ userStore.departmentName || '默认部门' }}</span>
-        </div>
-      </div>
-    </div>
-    <div class="account-card user-config-card">
-      <UserConfigSettingsCard />
+      <UserConfigSettingsCard ref="userConfigRef" />
     </div>
   </div>
 </template>
@@ -126,6 +126,7 @@ const savingField = ref('')
 const editingField = ref('')
 const usernameInput = ref(null)
 const phoneInput = ref(null)
+const userConfigRef = ref(null)
 const profileDraft = reactive({
   username: '',
   phone_number: ''
@@ -154,9 +155,9 @@ const syncProfileDraft = () => {
 const refreshProfile = async () => {
   refreshing.value = true
   try {
-    await userStore.getCurrentUser()
+    await Promise.all([userStore.getCurrentUser(), userConfigRef.value?.refresh?.()])
     syncProfileDraft()
-    message.success('账户信息已刷新')
+    message.success('账户设置已刷新')
   } catch (error) {
     console.error('刷新用户信息失败:', error)
     message.error('刷新失败：' + (error.message || '请稍后重试'))
@@ -297,10 +298,16 @@ watch(() => [userStore.username, userStore.phoneNumber], syncProfileDraft, { imm
 
   .profile-card {
     display: flex;
+    flex-direction: column;
+    gap: 18px;
+    background: var(--gray-25);
+  }
+
+  .profile-summary {
+    display: flex;
     align-items: stretch;
     justify-content: space-between;
     gap: 20px;
-    background: var(--gray-25);
 
     @media (max-width: 760px) {
       flex-direction: column;

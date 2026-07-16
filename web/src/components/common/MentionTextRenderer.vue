@@ -77,7 +77,7 @@ const getTokenLabel = (segment) =>
 .mention-ref-token {
   display: inline-flex;
   align-items: baseline;
-  gap: 2px;
+  gap: 6px;
   max-width: 100%;
   color: var(--main-700);
   line-height: normal;

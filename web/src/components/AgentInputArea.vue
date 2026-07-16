@@ -10,6 +10,7 @@
     :mention="mention"
     :thread-id="threadId"
     :file-upload-enabled="supportsFileUpload"
+    :show-options-left="showInputOptions"
     @send="handleSend"
     @keydown="handleKeyDown"
     @paste-image="handlePastedImage"
@@ -51,11 +52,13 @@
     </template>
     <template #options-left>
       <AttachmentOptionsComponent
-        v-if="supportsFileUpload"
         :disabled="disabled"
+        :file-upload-enabled="supportsFileUpload"
+        :mention="mention"
         @upload="handleAttachmentUpload"
         @upload-image="handleImageUpload"
         @upload-image-success="handleImageUploadSuccess"
+        @select-mention="handleMentionSelect"
       />
     </template>
     <template #actions-left>
@@ -108,6 +111,12 @@ const currentImage = ref(null)
 const placeholder = '问点什么？使用 @ 可以提及哦~'
 
 const previewAttachments = computed(() => normalizeAttachmentPreviews(props.attachments))
+const showInputOptions = computed(
+  () =>
+    props.supportsFileUpload ||
+    Boolean(props.mention?.knowledgeBases?.length) ||
+    Boolean(props.mention?.skills?.length)
+)
 
 const updateValue = (val) => {
   emit('update:modelValue', val)
@@ -143,6 +152,11 @@ const handleImageUploadSuccess = () => {
   if (inputRef.value) {
     inputRef.value.closeOptions()
   }
+}
+
+const handleMentionSelect = (item) => {
+  inputRef.value?.insertMention(item)
+  inputRef.value?.closeOptions()
 }
 
 const handleImageRemoved = () => {

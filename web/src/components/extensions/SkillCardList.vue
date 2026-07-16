@@ -60,7 +60,7 @@
     >
       <div class="skill-empty-card">
         <div class="skill-empty-icon">
-          <BookMarked :size="22" />
+          <WandSparkles :size="22" />
         </div>
         <div class="skill-empty-title">
           {{ searchQuery ? '没有匹配的 Skill' : '还没有添加 Skill' }}
@@ -103,7 +103,7 @@
               variant="mini"
               :title="formatExtensionCardTitle(skill.name)"
               :description="skill.description || '暂无描述'"
-              :default-icon="BookMarkedIcon"
+              :default-icon="WandSparkles"
               @click="handleCardClick(skill)"
               :class="{
                 'card-clickable-select': isBatchDeleteMode && !skill.isRecommendation,
@@ -162,7 +162,7 @@
         <div class="skill-preview-header">
           <div class="skill-preview-title-area">
             <div class="skill-preview-icon">
-              <BookMarked :size="18" />
+              <WandSparkles :size="18" />
             </div>
             <div class="skill-preview-title-text">
               <div class="skill-preview-title">
@@ -599,7 +599,7 @@ import {
   RefreshCw,
   Upload,
   Computer,
-  BookMarked,
+  WandSparkles,
   History,
   Trash2,
   Check,
@@ -615,7 +615,6 @@ import ShareConfigForm from '@/components/ShareConfigForm.vue'
 import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
 import { formatExtensionCardTitle } from '@/utils/extensionDisplayName'
 
-const BookMarkedIcon = BookMarked
 const RECOMMENDED_SKILLS = [
   {
     slug: 'skill-creator',

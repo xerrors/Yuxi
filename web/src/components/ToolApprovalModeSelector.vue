@@ -6,20 +6,31 @@
     overlay-class-name="config-dropdown-overlay"
   >
     <button
+      ref="triggerRef"
       type="button"
       class="input-action-btn config-dropdown-trigger"
       :class="{ 'is-trusted': modelValue === 'always_trust' }"
+      :aria-label="currentOption.label"
       aria-haspopup="menu"
       :aria-expanded="open"
-      @click.stop
-      @mousedown.stop
     >
+      <component
+        :is="currentOption.icon"
+        :size="16"
+        class="config-dropdown-compact-icon"
+        aria-hidden="true"
+      />
       <span class="hide-text config-dropdown-text">{{ currentOption.label }}</span>
       <ChevronDown :size="15" class="config-dropdown-chevron" />
     </button>
 
     <template #overlay>
-      <div class="config-dropdown-panel" role="menu" aria-label="工具审批模式" @click.stop>
+      <div
+        ref="panelRef"
+        class="config-dropdown-panel"
+        role="menu"
+        aria-label="工具审批模式"
+      >
         <button
           v-for="option in options"
           :key="option.value"
@@ -51,6 +62,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { Check, ChevronDown, Hand, ShieldAlert } from 'lucide-vue-next'
+import { useOutsidePointerdown } from '@/composables/useOutsidePointerdown'
 
 const props = defineProps({
   modelValue: { type: String, default: 'default' }
@@ -71,6 +83,8 @@ const options = [
 ]
 
 const open = ref(false)
+const triggerRef = ref(null)
+const panelRef = ref(null)
 const currentOption = computed(
   () => options.find((option) => option.value === props.modelValue) || options[0]
 )
@@ -79,6 +93,8 @@ const selectMode = (mode) => {
   emit('update:modelValue', mode)
   open.value = false
 }
+
+useOutsidePointerdown(open, [triggerRef, panelRef])
 </script>
 
 <style scoped lang="less">
@@ -110,6 +126,27 @@ const selectMode = (mode) => {
 .config-dropdown-chevron {
   flex-shrink: 0;
   color: currentColor;
+}
+
+.config-dropdown-compact-icon {
+  display: none;
+  flex-shrink: 0;
+}
+
+@container (max-width: 640px) {
+  .config-dropdown-trigger {
+    width: 30px;
+    padding-inline: 0;
+  }
+
+  .config-dropdown-compact-icon {
+    display: block;
+  }
+
+  .config-dropdown-text,
+  .config-dropdown-chevron {
+    display: none;
+  }
 }
 </style>
 

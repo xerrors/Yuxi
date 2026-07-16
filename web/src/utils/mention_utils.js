@@ -1,12 +1,7 @@
 import { getDisplayFileName } from '@/utils/file_utils'
+import { mentionTypePrefixMap } from './mention_token.js'
 
-export const mentionTypePrefixMap = {
-  file: 'file',
-  knowledge: 'knowledge',
-  mcp: 'mcp',
-  skill: 'skill',
-  subagent: 'subagent'
-}
+export { formatMentionToken, mentionTypePrefixMap } from './mention_token.js'
 
 const mentionTypePattern = Object.values(mentionTypePrefixMap).join('|')
 const mentionTokenRegex = new RegExp(
@@ -14,20 +9,7 @@ const mentionTokenRegex = new RegExp(
   'g'
 )
 
-const quoteMentionValue = (value) =>
-  String(value ?? '')
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"')
 const unquoteMentionValue = (value) => String(value ?? '').replace(/\\(["\\])/g, '$1')
-
-export const formatMentionToken = (type, value) => {
-  const prefix = mentionTypePrefixMap[type] || type
-  const rawValue = String(value ?? '')
-  if (/\s|["\\]/.test(rawValue)) {
-    return `@${prefix}:"${quoteMentionValue(rawValue)}"`
-  }
-  return `@${prefix}:${rawValue}`
-}
 
 export const parseMentionText = (text = '') => {
   const value = String(text || '')

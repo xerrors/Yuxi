@@ -1,16 +1,5 @@
 <template>
   <div class="user-config-settings">
-    <div class="header-section">
-      <div class="header-content">
-        <div class="section-title">用户配置</div>
-      </div>
-      <div class="header-actions">
-        <a-button class="lucide-icon-btn" :loading="loading" @click="loadUserConfig">
-          <template #icon><RefreshCw :size="16" :class="{ spin: loading }" /></template>
-          刷新
-        </a-button>
-      </div>
-    </div>
     <a-spin :spinning="loading">
       <div class="config-panel">
         <div class="config-row">
@@ -31,7 +20,6 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { message } from 'ant-design-vue'
-import { RefreshCw } from 'lucide-vue-next'
 import { userConfigApi } from '@/apis/user_config_api'
 
 const loading = ref(false)
@@ -75,40 +63,14 @@ const saveUserConfig = async () => {
 }
 
 onMounted(loadUserConfig)
+
+defineExpose({ refresh: loadUserConfig })
 </script>
 
 <style lang="less" scoped>
 .user-config-settings {
-  .header-section {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-end;
-    gap: 16px;
-    margin-bottom: 12px;
-
-    @media (max-width: 760px) {
-      align-items: stretch;
-      flex-direction: column;
-    }
-  }
-
-  .header-content {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .header-actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-shrink: 0;
-  }
-
   .config-panel {
-    border: 1px solid var(--gray-150);
-    border-radius: 8px;
-    background: var(--gray-0);
-    overflow: hidden;
+    border-top: 1px solid var(--gray-150);
   }
 
   .config-row {
@@ -116,7 +78,7 @@ onMounted(loadUserConfig)
     justify-content: space-between;
     align-items: center;
     gap: 16px;
-    padding: 14px 16px;
+    padding: 16px 0 0;
 
     @media (max-width: 560px) {
       align-items: flex-start;
@@ -161,20 +123,6 @@ onMounted(loadUserConfig)
     color: var(--gray-600);
     font-size: 13px;
     line-height: 1.5;
-  }
-}
-
-:deep(.spin) {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-
-  to {
-    transform: rotate(360deg);
   }
 }
 </style>
