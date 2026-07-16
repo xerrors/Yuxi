@@ -349,3 +349,70 @@ async def test_confirm_tmp_thread_attachments_keeps_duplicate_names_separate(mon
     assert first["original_path"] != second["original_path"]
     assert (tmp_path / "threads" / "thread-1" / "user-data" / "uploads" / Path(first["original_path"]).name).read_bytes() == b"first"
     assert (tmp_path / "threads" / "thread-1" / "user-data" / "uploads" / Path(second["original_path"]).name).read_bytes() == b"second"
+
+
+@pytest.mark.asyncio
+async def test_parse_tmp_attachment_image_uses_default_ocr_engine_when_parse_method_is_none(monkeypatch):
+    """图片附件未指定 parse_method 时应使用系统默认 OCR 引擎。"""
+    fake_minio = FakeMinioClient()
+    object_name = "tmp/chat_attachments/user-1/tmp-1/original/demo.png"
+    fake_minio.objects[("knowledgebases", object_name)] = b"png-bytes"
+    monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
+
+    parse_calls = []
+
+    async def fake_parse(source: str, params: dict | None = None) -> str:
+        parse_calls.append({"source": source, "params": params})
+        return "# parsed"
+
+    monkeypatch.setattr(service.Parser, "aparse", staticmethod(fake_parse))
+    monkeypatch.setattr(service.app_config, "default_ocr_engine", "mineru_ocr")
+
+    response = await service.parse_tmp_attachment_view(
+        object_name=object_name,
+        file_name="demo.png",
+        parse_method=None,
+        bucket_name="knowledgebases",
+        current_uid="user-1",
+    )
+
+    assert parse_calls == [
+        {
+            "source": f"minio://knowledgebases/{object_name}",
+            "params": {"ocr_engine": "mineru_ocr"},
+        }
+    ]
+    assert response["parse_method"] == "mineru_ocr"
+
+
+@pytest.mark.asyncio
+async def test_parse_tmp_attachment_pdf_defaults_to_disable_when_parse_method_is_none(monkeypatch):
+    """PDF 附件未指定 parse_method 时应默认禁用 OCR。"""
+    fake_minio = FakeMinioClient()
+    object_name = "tmp/chat_attachments/user-1/tmp-1/original/demo.pdf"
+    fake_minio.objects[("knowledgebases", object_name)] = b"pdf-bytes"
+    monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
+
+    parse_calls = []
+
+    async def fake_parse(source: str, params: dict | None = None) -> str:
+        parse_calls.append({"source": source, "params": params})
+        return "# parsed"
+
+    monkeypatch.setattr(service.Parser, "aparse", staticmethod(fake_parse))
+
+    response = await service.parse_tmp_attachment_view(
+        object_name=object_name,
+        file_name="demo.pdf",
+        parse_method=None,
+        bucket_name="knowledgebases",
+        current_uid="user-1",
+    )
+
+    assert parse_calls == [
+        {
+            "source": f"minio://knowledgebases/{object_name}",
+            "params": {"ocr_engine": "disable"},
+        }
+    ]
+    assert response["parse_method"] == "disable"

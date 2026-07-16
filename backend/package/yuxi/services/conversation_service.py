@@ -207,7 +207,7 @@ def _normalize_parse_method(file_name: str, parse_method: str | None) -> str:
     if suffix not in TMP_ATTACHMENT_PARSE_EXTENSIONS:
         raise HTTPException(status_code=400, detail="当前仅支持 PDF 和图片附件解析")
 
-    method = parse_method or ("rapid_ocr" if suffix in TMP_ATTACHMENT_IMAGE_EXTENSIONS else "disable")
+    method = parse_method or (app_config.default_ocr_engine if suffix in TMP_ATTACHMENT_IMAGE_EXTENSIONS else "disable")
     if suffix in TMP_ATTACHMENT_IMAGE_EXTENSIONS:
         allowed_methods = TMP_ATTACHMENT_OCR_METHODS
     else:
