@@ -214,7 +214,8 @@
           <a-form-item label="密码" required class="form-item">
             <a-input-password
               v-model:value="userManagement.form.password"
-              placeholder="请输入密码"
+              :placeholder="`请输入密码（至少 ${MIN_PASSWORD_LENGTH} 位）`"
+              :minlength="MIN_PASSWORD_LENGTH"
             />
           </a-form-item>
 
@@ -274,6 +275,7 @@ import {
   Search
 } from 'lucide-vue-next'
 import { formatDateTime } from '@/utils/time'
+import { isPasswordLongEnough, MIN_PASSWORD_LENGTH } from '@/utils/passwordValidation'
 import { generatePixelAvatar } from '@/utils/pixelAvatar'
 import FallbackAvatar from '@/components/common/FallbackAvatar.vue'
 import InfoCard from '@/components/shared/InfoCard.vue'
@@ -563,6 +565,11 @@ const handleUserFormSubmit = async () => {
     if (userManagement.displayPasswordFields) {
       if (!userManagement.form.password) {
         message.error('密码不能为空')
+        return
+      }
+
+      if (!isPasswordLongEnough(userManagement.form.password)) {
+        message.error(`密码至少需要 ${MIN_PASSWORD_LENGTH} 个字符`)
         return
       }
 

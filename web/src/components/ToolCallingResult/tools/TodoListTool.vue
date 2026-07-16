@@ -10,7 +10,12 @@
     <template #result="{ resultContent }">
       <div class="todo-list-result">
         <div class="todo-list">
-          <div v-for="(todo, index) in todoListData(resultContent)" :key="index" class="todo-item">
+          <div
+            v-for="(todo, index) in todoListData(resultContent)"
+            :key="index"
+            class="todo-item"
+            :class="{ completed: todo.status === 'completed' }"
+          >
             <div class="todo-status">
               <CheckCircleOutlined v-if="todo.status === 'completed'" class="icon completed" />
               <SyncOutlined

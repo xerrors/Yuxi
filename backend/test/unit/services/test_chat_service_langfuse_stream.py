@@ -25,6 +25,14 @@ class _FakeContext:
             setattr(self, key, value)
 
 
+class _FakeSession:
+    def __init__(self):
+        self.commit_count = 0
+
+    async def commit(self):
+        self.commit_count += 1
+
+
 class _FakeConvRepo:
     def __init__(self, _db):
         self.saved_messages: list[dict] = []
@@ -130,13 +138,17 @@ def test_build_langfuse_run_context_reads_evaluation_from_invocation_meta(monkey
 
 
 @pytest.mark.asyncio
-async def test_stream_agent_chat_passes_langfuse_callbacks_and_persists_trace_info(monkeypatch: pytest.MonkeyPatch):
+async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_context(
+    monkeypatch: pytest.MonkeyPatch,
+):
     calls: dict[str, object] = {}
+    db = _FakeSession()
 
     class FakeAgent:
         context_schema = _FakeContext
 
         async def stream_messages_with_state(self, messages, input_context=None, **kwargs):
+            assert db.commit_count == 1
             calls["stream_messages"] = messages
             calls["stream_input_context"] = input_context
             calls["stream_kwargs"] = kwargs
@@ -209,17 +221,20 @@ async def test_stream_agent_chat_passes_langfuse_callbacks_and_persists_trace_in
         meta={"request_id": "req-1"},
         input_message=build_chat_input_message("hello"),
         current_user=SimpleNamespace(id=1, uid="user-1", role="user", department_id="dept-1"),
-        db=object(),
+        db=db,
     ):
         chunks.append(json.loads(chunk.decode("utf-8")))
 
-    assert calls["stream_input_context"] == {
-        "temperature": 0.1,
-        "uid": "user-1",
-        "thread_id": "thread-1",
-        "run_id": None,
-        "request_id": "req-1",
-    }
+    assert (
+        calls["stream_input_context"].items()
+        >= {
+            "temperature": 0.1,
+            "uid": "user-1",
+            "thread_id": "thread-1",
+            "run_id": None,
+            "request_id": "req-1",
+        }.items()
+    )
     assert calls["stream_kwargs"] == {
         "callbacks": ["handler-1"],
         "metadata": {"langfuse_user_id": "user-1", "langfuse_session_id": "thread-1"},
@@ -344,7 +359,7 @@ async def test_stream_agent_chat_maps_raw_protocol_events_to_yuxi_stream_events(
         meta={"request_id": "req-1"},
         input_message=build_chat_input_message("hello"),
         current_user=SimpleNamespace(id=1, uid="user-1", role="user", department_id="dept-1"),
-        db=object(),
+        db=_FakeSession(),
     ):
         chunks.append(json.loads(chunk.decode("utf-8")))
 
@@ -435,7 +450,7 @@ async def test_stream_agent_chat_emits_realtime_agent_state_from_values(monkeypa
         meta={"request_id": "req-1"},
         input_message=build_chat_input_message("hello"),
         current_user=SimpleNamespace(id=1, uid="user-1", role="user", department_id="dept-1"),
-        db=object(),
+        db=_FakeSession(),
     ):
         chunks.append(json.loads(chunk.decode("utf-8")))
 
@@ -462,12 +477,15 @@ async def test_stream_agent_chat_maps_custom_compression_event_to_context_compre
         async def stream_messages_with_state(self, messages, input_context=None, **kwargs):
             yield "custom", {"type": "yuxi.context_compression", "status": "started"}
             yield "messages", (AIMessageChunk(content="hi"), {"node": "llm"})
-            yield "custom", {
-                "type": "yuxi.context_compression",
-                "status": "completed",
-                "cutoff_index": 5,
-                "file_path": "/conv/x.md",
-            }
+            yield (
+                "custom",
+                {
+                    "type": "yuxi.context_compression",
+                    "status": "completed",
+                    "cutoff_index": 5,
+                    "file_path": "/conv/x.md",
+                },
+            )
 
         async def stream_messages(self, messages, input_context=None, **kwargs):
             raise AssertionError("stream_messages fallback should not be used")
@@ -517,7 +535,7 @@ async def test_stream_agent_chat_maps_custom_compression_event_to_context_compre
         meta={"request_id": "req-1"},
         input_message=build_chat_input_message("hello"),
         current_user=SimpleNamespace(id=1, uid="user-1", role="user", department_id="dept-1"),
-        db=object(),
+        db=_FakeSession(),
     ):
         chunks.append(json.loads(chunk.decode("utf-8")))
 

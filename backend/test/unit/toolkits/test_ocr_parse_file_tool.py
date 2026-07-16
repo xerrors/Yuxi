@@ -12,7 +12,7 @@ from yuxi.agents.backends.sandbox.paths import (
     virtual_path_for_thread_file,
 )
 from yuxi.agents.toolkits.buildin.tools import ocr_parse_file
-from yuxi.knowledge.parser import Parser
+from yuxi.knowledge.parser.unified import Parser
 
 pytestmark = pytest.mark.unit
 

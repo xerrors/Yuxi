@@ -52,6 +52,7 @@ export const useDatabaseStore = defineStore('database', () => {
   let refreshInterval = null
   let autoRefreshSource = null // Tracks whether auto-refresh was user-triggered or automatic
   let autoRefreshManualOverride = false // Indicates user explicitly disabled auto-refresh
+  let fileBrowserContextId = 0
 
   function setCurrentFileMap(items = []) {
     database.value = {
@@ -61,6 +62,7 @@ export const useDatabaseStore = defineStore('database', () => {
   }
 
   function resetFileBrowser() {
+    fileBrowserContextId += 1
     documentFiles.value = []
     folderBreadcrumbs.value = [{ file_id: null, filename: '全部文件', path_prefix: '' }]
     selectedRowKeys.value = []
@@ -343,6 +345,24 @@ export const useDatabaseStore = defineStore('database', () => {
     const nextPathPrefix = nextRecursive ? '' : (options.pathPrefix ?? fileBrowser.pathPrefix)
     const nextPage = Number(options.page ?? fileBrowser.page) || 1
     const nextPageSize = Number(options.pageSize ?? fileBrowser.pageSize) || 100
+    const contextChanged =
+      fileBrowser.parentId !== nextParentId ||
+      fileBrowser.page !== nextPage ||
+      fileBrowser.pageSize !== nextPageSize ||
+      fileBrowser.pathPrefix !== nextPathPrefix ||
+      fileBrowser.status !== nextStatus ||
+      fileBrowser.recursive !== nextRecursive
+    if (contextChanged) fileBrowserContextId += 1
+    const contextId = fileBrowserContextId
+
+    Object.assign(fileBrowser, {
+      parentId: nextParentId,
+      page: nextPage,
+      pageSize: nextPageSize,
+      pathPrefix: nextPathPrefix,
+      status: nextStatus,
+      recursive: nextRecursive
+    })
 
     if (!options.isBackground) {
       fileBrowser.loading = true
@@ -363,6 +383,8 @@ export const useDatabaseStore = defineStore('database', () => {
       }
 
       const data = await documentApi.listDocuments(kbIdValue, params)
+      if (contextId !== fileBrowserContextId) return
+
       const items = data?.items || []
       documentFiles.value = items
       setCurrentFileMap(items)
@@ -391,7 +413,7 @@ export const useDatabaseStore = defineStore('database', () => {
         message.error(error.message || '加载文件列表失败')
       }
     } finally {
-      if (!options.isBackground) {
+      if (!options.isBackground && contextId === fileBrowserContextId) {
         fileBrowser.loading = false
       }
     }

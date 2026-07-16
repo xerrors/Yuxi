@@ -453,7 +453,7 @@ const vReveal = {
         </header>
         <div v-reveal class="yx-quick">
           <pre class="yx-code"><code><span class="yx-c-cmt"># 1. 克隆并初始化</span>
-git clone --branch v0.7.1.beta1 --depth 1 https://github.com/xerrors/Yuxi.git
+git clone --branch v0.7.1.beta2 --depth 1 https://github.com/xerrors/Yuxi.git
 cd Yuxi && ./scripts/init.sh
 
 <span class="yx-c-cmt"># 2. 使用 Docker 启动</span>

@@ -4,14 +4,16 @@ x-api-worker-env: &api-worker-env
   RUNNING_IN_DOCKER: "true"
   YUXI_ENV: production
   PYTHONPATH: /app/package
-  POSTGRES_URL: ${POSTGRES_URL:-postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-yuxi}}
+  JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in .env.prod}
+  YUXI_INSTANCE_ID: ${YUXI_INSTANCE_ID:?Set YUXI_INSTANCE_ID in .env.prod}
+  POSTGRES_URL: ${POSTGRES_URL:-postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.prod}@postgres:5432/${POSTGRES_DB:-yuxi}}
   REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
   RUN_CANCEL_KEY_TTL_SECONDS: ${RUN_CANCEL_KEY_TTL_SECONDS:-1800}
   RUN_EVENTS_STREAM_TTL_SECONDS: ${RUN_EVENTS_STREAM_TTL_SECONDS:-7200}
   YUXI_CORS_ORIGINS: ${YUXI_CORS_ORIGINS:-}
   NEO4J_URI: ${NEO4J_URI:-bolt://graph:7687}
   NEO4J_USERNAME: ${NEO4J_USERNAME:-neo4j}
-  NEO4J_PASSWORD: ${NEO4J_PASSWORD:-0123456789}
+  NEO4J_PASSWORD: ${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in .env.prod}
   MILVUS_URI: ${MILVUS_URI:-http://milvus:19530}
   MILVUS_DB_NAME: ${MILVUS_DB_NAME:-default}
   MILVUS_TOKEN: ${MILVUS_TOKEN:-}
@@ -31,7 +33,7 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    image: yuxi-api:${YUXI_VERSION:-0.7.1.beta1}
+    image: yuxi-api:${YUXI_VERSION:-0.7.1.beta2}
     container_name: api-prod
     working_dir: /app
     networks:
@@ -69,7 +71,7 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    image: yuxi-api:${YUXI_VERSION:-0.7.1.beta1}
+    image: yuxi-api:${YUXI_VERSION:-0.7.1.beta2}
     container_name: worker-prod
     working_dir: /app
     networks:
@@ -146,7 +148,7 @@ services:
       context: .
       dockerfile: docker/web.Dockerfile
       target: production
-    image: yuxi-web:${YUXI_VERSION:-0.7.1.beta1}
+    image: yuxi-web:${YUXI_VERSION:-0.7.1.beta2}
     container_name: web-prod
     ports:
       - "80:80"
@@ -173,7 +175,7 @@ services:
       retries: 5
       start_period: 30s
     environment:
-      - NEO4J_AUTH=${NEO4J_USERNAME:-neo4j}/${NEO4J_PASSWORD:-0123456789}
+      - NEO4J_AUTH=${NEO4J_USERNAME:-neo4j}/${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in .env.prod}
       - NEO4J_server_bolt_listen__address=0.0.0.0:7687
       - NEO4J_server_http_listen__address=0.0.0.0:7474
       - ENTITY_EMBEDDING=true
@@ -206,8 +208,8 @@ services:
     container_name: minio
     image: minio/minio:RELEASE.2023-03-20T20-16-18Z
     environment:
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?Set MINIO_ACCESS_KEY in .env.prod}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?Set MINIO_SECRET_KEY in .env.prod}
     volumes:
       - ./docker/volumes/milvus/minio:/minio_data
       - ./docker/volumes/milvus/minio_config:/root/.minio
@@ -255,7 +257,7 @@ services:
       - "5432:5432"
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.prod}
       - POSTGRES_DB=${POSTGRES_DB:-yuxi}
       - TZ=${TZ:-Asia/Shanghai}
     volumes:

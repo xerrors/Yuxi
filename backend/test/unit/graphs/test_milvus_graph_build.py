@@ -235,6 +235,28 @@ def test_milvus_graph_service_writes_chunk_entity_and_relation():
     assert entity_call.kwargs["attributes"] == '[{"text": "工程师", "label": "Occupation"}]'
 
 
+def test_milvus_graph_service_delete_file_graph_uses_scoped_streaming_queries():
+    tx = MagicMock()
+    session = MagicMock()
+    session.__enter__.return_value = session
+    session.execute_write.side_effect = lambda func: func(tx)
+    driver = MagicMock()
+    driver.session.return_value = session
+    service = MilvusGraphService(neo4j_connection=SimpleNamespace(driver=driver))
+
+    service._delete_file_graph_from_neo4j("kb_test", "file_1")
+
+    queries = [call.args[0] for call in tx.run.call_args_list]
+    assert len(queries) == 3
+    cleanup_query = queries[1]
+    assert "file_id: $file_id" in cleanup_query
+    assert "DELETE m" in cleanup_query
+    assert "WITH DISTINCT e" in cleanup_query
+    assert "collect(" not in cleanup_query
+    assert "MATCH (e:Entity:MilvusKB:`kb_test` {kb_id: $kb_id})" not in cleanup_query
+    assert "DETACH DELETE c" in queries[2]
+
+
 def test_milvus_graph_service_process_query_result_keeps_complete_edges():
     service = MilvusGraphService()
     result = service._process_query_result(

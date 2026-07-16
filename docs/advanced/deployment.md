@@ -26,9 +26,17 @@ cp .env.template .env.prod
 
 编辑 `.env.prod`，设置强密码和必要的 API 密钥：
 
-- `NEO4J_PASSWORD`：修改默认密码
-- `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY`：修改默认密钥
-- `SILICONFLOW_API_KEY` 等模型密钥
+```sh
+POSTGRES_PASSWORD=
+NEO4J_PASSWORD=
+MINIO_ACCESS_KEY=
+MINIO_SECRET_KEY=
+JWT_SECRET_KEY=
+YUXI_INSTANCE_ID=
+SILICONFLOW_API_KEY=
+```
+
+生产 Compose 会在前六项配置缺失或为空时拒绝启动，并提示具体变量名。`JWT_SECRET_KEY` 至少使用 32 字节随机值并持久保存；`YUXI_INSTANCE_ID` 应是每套部署稳定且唯一的实例标识。模型 API 密钥按实际使用的供应商配置。
 
 ### 2. 启动服务
 

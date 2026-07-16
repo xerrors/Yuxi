@@ -170,10 +170,10 @@ class OcrParseFileInput(BaseModel):
 
 
 OCR_PARSE_FILE_DESCRIPTION = f"""
-将沙盒中的 PDF 或图片文件解析为 Markdown 文本，并把结果保存为文件。
+将沙盒中的 PDF、Office 文档或图片文件解析为 Markdown 文本，并把结果保存为文件。
 
 使用场景：
-1. 用户上传了 PDF/图片附件，需要提取其中的文字内容
+1. 用户上传了 PDF、Office 文档或图片附件，需要提取其中的文字内容
 2. 工作区、uploads 或 outputs 下已有文件，需要转成可读取的 Markdown
 3. 解析结果较长，后续应使用 read_file 读取保存后的 Markdown 文件
 
@@ -196,7 +196,7 @@ OCR_PARSE_FILE_DESCRIPTION = f"""
 async def ocr_parse_file(file_path: str, runtime: ToolRuntime, ocr_engine: str | None = None) -> dict:
     """Parse a sandbox file with OCR, persist Markdown output, and return only a short result summary."""
     from yuxi.agents.backends.sandbox.paths import virtual_path_for_thread_file
-    from yuxi.knowledge.parser import Parser
+    from yuxi.knowledge.parser.unified import Parser
 
     file_thread_id, uid, actual_path = _resolve_ocr_source_path(file_path, runtime)
     engine = _resolve_ocr_engine(ocr_engine)

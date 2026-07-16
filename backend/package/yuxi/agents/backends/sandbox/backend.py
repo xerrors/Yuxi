@@ -44,6 +44,8 @@ _SKILLS_ROOT = "/" + VIRTUAL_SKILLS_PATH.strip("/")
 _READABLE_ROOTS = (_USER_DATA_ROOT, _SKILLS_ROOT)
 _WRITABLE_ROOTS = (_WORKSPACE_ROOT, _OUTPUTS_ROOT)
 _BINARY_PREVIEW_TOO_LARGE_ERROR = f"Binary file exceeds maximum preview size of {MAX_BINARY_BYTES} bytes"
+_IMAGE_EXTENSIONS = frozenset({".gif", ".heic", ".heif", ".jpeg", ".jpg", ".png", ".webp"})
+_DOCUMENT_EXTENSIONS = frozenset({".doc", ".docx", ".pdf", ".ppt", ".pptx", ".xls", ".xlsx"})
 
 
 def _normalize_path(path: str) -> str:
@@ -336,21 +338,33 @@ class ProvisionerSandboxBackend(BaseSandbox):
         if not _can_read_path(normalized_path):
             return ReadResult(error=_permission_error("read", normalized_path))
 
+        document_read_error = (
+            "read_file does not support PDF or Office documents. "
+            "Use ocr_parse_file to convert the file to Markdown first."
+        )
+        binary_read_error = "read_file only supports UTF-8 text and image files. This file type is not supported."
         try:
-            if _get_file_type(normalized_path) != "text":
+            extension = PurePosixPath(normalized_path).suffix.lower()
+            if extension in _IMAGE_EXTENSIONS:
                 return self._read_base64_file(normalized_path)
+            if extension in _DOCUMENT_EXTENSIONS:
+                self._file_size_bytes(normalized_path)
+                return ReadResult(error=document_read_error)
+            if _get_file_type(normalized_path) != "text":
+                self._file_size_bytes(normalized_path)
+                return ReadResult(error=binary_read_error)
 
             try:
                 content = self._read_binary(normalized_path, offset=offset, limit=limit)
             except Exception as exc:  # noqa: BLE001
                 if not _is_utf8_decode_failure(exc):
                     raise
-                return self._read_base64_file(normalized_path)
+                return ReadResult(error=binary_read_error)
 
             if not _looks_like_binary(content):
                 return ReadResult(file_data={"content": content.decode("utf-8"), "encoding": "utf-8"})
 
-            return self._read_base64_file(normalized_path)
+            return ReadResult(error=binary_read_error)
         except Exception as exc:  # noqa: BLE001
             error = _describe_read_error(file_path, exc)
             return ReadResult(error=error.removeprefix("Error: "))

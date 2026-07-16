@@ -142,8 +142,9 @@
           <a-form-item label="密码" required class="form-item">
             <a-input-password
               v-model:value="departmentManagement.form.adminPassword"
-              placeholder="请输入管理员密码"
+              :placeholder="`请输入管理员密码（至少 ${MIN_PASSWORD_LENGTH} 位）`"
               size="large"
+              :minlength="MIN_PASSWORD_LENGTH"
               :maxlength="50"
             />
           </a-form-item>
@@ -179,6 +180,7 @@ import { reactive, onMounted, watch } from 'vue'
 import { notification, message, Modal } from 'ant-design-vue'
 import { departmentApi, apiSuperAdminGet } from '@/apis'
 import { Plus, RefreshCw, SquarePen, Trash2 } from 'lucide-vue-next'
+import { isPasswordLongEnough, MIN_PASSWORD_LENGTH } from '@/utils/passwordValidation'
 
 // 表格列定义
 const columns = [
@@ -387,6 +389,11 @@ const handleDepartmentFormSubmit = async () => {
     // 验证密码
     if (!departmentManagement.form.adminPassword) {
       notification.error({ message: '请输入管理员密码' })
+      return
+    }
+
+    if (!isPasswordLongEnough(departmentManagement.form.adminPassword)) {
+      notification.error({ message: `密码至少需要 ${MIN_PASSWORD_LENGTH} 个字符` })
       return
     }
 

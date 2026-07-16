@@ -22,7 +22,7 @@ from yuxi.utils import logger
 
 
 def _get_knowledge_base():
-    from yuxi import knowledge_base
+    from yuxi.knowledge.runtime import knowledge_base
 
     return knowledge_base
 

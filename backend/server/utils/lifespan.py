@@ -9,7 +9,8 @@ from yuxi.agents.mcp.service import ensure_builtin_mcp_servers_in_db
 from yuxi.models.providers.service import ensure_builtin_model_providers_in_db
 from yuxi.services.run_queue_service import close_queue_clients, get_redis_client
 from yuxi.storage.postgres.manager import pg_manager
-from yuxi.knowledge import knowledge_base
+from yuxi.storage.neo4j import close_shared_neo4j_connection
+from yuxi.knowledge.runtime import knowledge_base
 from yuxi.utils import logger
 from yuxi.agents.backends.sandbox import init_sandbox_provider, shutdown_sandbox_provider
 from yuxi import get_version
@@ -120,4 +121,5 @@ async def lifespan(app: FastAPI):
     await tasker.shutdown()
     shutdown_sandbox_provider()
     await close_queue_clients()
+    close_shared_neo4j_connection()
     await pg_manager.close()

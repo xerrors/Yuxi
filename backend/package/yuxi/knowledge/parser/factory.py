@@ -9,21 +9,11 @@ from importlib import import_module
 from typing import Any
 
 from yuxi.knowledge.parser.base import BaseDocumentProcessor
+from yuxi.knowledge.parser.registry import PROCESSOR_TYPES
 from yuxi.utils import logger
 
 # 处理器实例缓存
 _PROCESSOR_CACHE: dict[str, BaseDocumentProcessor] = {}
-
-# 处理器类型映射: processor_type -> (module_path, class_name)
-PROCESSOR_TYPES = {
-    "rapid_ocr": ("yuxi.knowledge.parser.rapid_ocr", "RapidOCRParser"),
-    "mineru_ocr": ("yuxi.knowledge.parser.mineru", "MinerUParser"),
-    "mineru_official": ("yuxi.knowledge.parser.mineru_official", "MinerUOfficialParser"),
-    "pp_structure_v3_ocr": ("yuxi.knowledge.parser.pp_structure_v3", "PPStructureV3Parser"),
-    "deepseek_ocr": ("yuxi.knowledge.parser.deepseek_ocr", "DeepSeekOCRParser"),
-    "paddleocr_vl_1_6": ("yuxi.knowledge.parser.paddleocr_api", "PaddleOCRVLParser"),
-    "paddleocr_pp_ocrv6": ("yuxi.knowledge.parser.paddleocr_api", "PaddleOCRPPOCRv6Parser"),
-}
 
 
 class DocumentProcessorFactory:

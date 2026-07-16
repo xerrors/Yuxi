@@ -32,6 +32,4 @@ config.save()
 
 `save_dir` 是启动期内部路径配置，不在管理员配置中展示，也不支持通过管理员配置接口、`base.toml` 或运行时 Redis 快照修改。sandbox 相关配置仍属于启动期敏感配置，运行中的已初始化组件不承诺完整热更新，修改后需要重启服务保证生效。
 
-## 常见问题
-
-**配置文件损坏**：删除 `saves/config/base.toml`，系统将重新生成默认配置。
+如果 `base.toml` 损坏，删除 `saves/config/base.toml` 后重启服务即可回到代码默认配置。

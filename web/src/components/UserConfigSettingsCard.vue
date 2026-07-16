@@ -29,7 +29,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { message } from 'ant-design-vue'
 import { RefreshCw } from 'lucide-vue-next'
 import { userConfigApi } from '@/apis/user_config_api'

@@ -10,6 +10,7 @@ from yuxi.agents.skills import service as skill_service
 from yuxi.agents.toolkits.buildin import install_skill as exported_install_skill
 
 install_skill_module = importlib.import_module("yuxi.agents.toolkits.buildin.install_skill")
+sandbox_backend_module = importlib.import_module("yuxi.agents.backends.sandbox")
 
 
 class _AsyncSessionContext:
@@ -269,14 +270,8 @@ def test_prepare_skill_invalid_virtual_path_does_not_fallback_to_sandbox(monkeyp
         def __init__(self, *_args, **_kwargs):
             calls["fallback"] = True
 
-    monkeypatch.setattr(
-        "yuxi.agents.backends.sandbox.resolve_virtual_path",
-        resolve_virtual_path,
-    )
-    monkeypatch.setattr(
-        "yuxi.agents.backends.sandbox.ProvisionerSandboxBackend",
-        FakeProvisionerSandboxBackend,
-    )
+    monkeypatch.setattr(sandbox_backend_module, "resolve_virtual_path", resolve_virtual_path)
+    monkeypatch.setattr(sandbox_backend_module, "ProvisionerSandboxBackend", FakeProvisionerSandboxBackend)
     monkeypatch.setattr(skill_service, "is_valid_skill_slug", lambda _slug: True)
 
     with pytest.raises(ValueError, match="path traversal detected"):

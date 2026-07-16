@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -9,9 +8,6 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
-
-# Avoid package-level knowledge graph initialization during pytest collection.
-os.environ.setdefault("YUXI_SKIP_APP_INIT", "1")
 
 
 def pytest_configure(config: pytest.Config) -> None:

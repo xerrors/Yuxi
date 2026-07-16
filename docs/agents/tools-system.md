@@ -18,7 +18,7 @@ def example_tool(text: str) -> str:
 ```
 
 装饰器参数：
-- **category**: 工具分类，用于分组（`buildin`、`mysql`、`debug`）
+- **category**: 工具分类，用于分组，例如 `buildin`、`knowledge`、`debug`
 - **tags**: 标签列表，用于前端展示
 - **display_name**: 显示名称（给人看的名字）
 - **icon**: 图标名称（可选）
@@ -28,10 +28,10 @@ def example_tool(text: str) -> str:
 导入 `toolkits` 包时会自动触发注册：
 
 ```python
-from yuxi.agents.toolkits import buildin, mysql  # 触发 @tool 装饰器执行
+from yuxi.agents.toolkits import buildin, debug  # 触发模块内 @tool 装饰器执行
 ```
 
-`toolkits/__init__.py` 中已包含 `buildin`、`mysql`、`debug` 模块的导入，这些模块加载时会自动注册所有带 `@tool` 装饰器的函数。
+`toolkits/__init__.py` 会导入 `buildin` 与 `debug` 模块；知识库工具由内置 `knowledge-base` Skill 的依赖显式注册，而不是作为所有 Agent 的默认工具。
 
 ## 工具分类
 
@@ -40,19 +40,12 @@ from yuxi.agents.toolkits import buildin, mysql  # 触发 @tool 装饰器执行
 | 工具 | 说明 |
 |------|------|
 | `ask_user_question` | 向用户发起交互式提问 |
+| `ocr_parse_file` | 将 uploads、outputs 或 workspace 中的 PDF、Office 或图片文件转换为 Markdown |
 | `present_artifacts` | 展示 Agent 沙盒 outputs 目录下的产物文件 |
 | `install_skill` | 从沙盒路径或 Git 来源安装当前用户私有 Skill，并激活当前主智能体会话；子智能体禁用 |
 | `tavily_search` | Tavily 网页搜索（需配置 `TAVILY_API_KEY`） |
 
 Qwen-Image 生成能力已迁移为内置 Skill `image-gen`。模型调用与图片下载在 Agent 沙盒中完成，生成后的图片保存到 `/home/gem/user-data/outputs/`，再通过 `present_artifacts` 展示。
-
-### MySQL 工具 (mysql)
-
-| 工具 | 说明 |
-|------|------|
-| `mysql_list_tables` | 列出数据库中所有表 |
-| `mysql_describe_table` | 获取表结构信息 |
-| `mysql_query` | 执行只读 SQL 查询 |
 
 ### 知识库工具 (kbs)
 
@@ -69,9 +62,10 @@ kb_tools = get_common_kb_tools()
 |------|------|
 | `list_kbs` | 列出用户可访问的知识库 |
 | `get_mindmap` | 获取知识库的思维导图结构 |
-| `query_kb` | 在指定知识库中检索内容，返回结构化的 `resource_id`（即 `kb_id`）/`file_id`/`chunk` |
+| `query_kb` | 按 `kb_id` 检索内容，返回结构化的 `kb_id`、`file_id` 与命中片段 |
 | `find_kb_document` | 在已知文件内按关键词或正则定位内容 |
 | `open_kb_document` | 按 `file_id` 分段打开知识库文档（默认窗口 1800 行） |
+| `search_file` | 按文件名在指定或全部可见知识库中搜索文件 |
 
 ## 工具组装
 

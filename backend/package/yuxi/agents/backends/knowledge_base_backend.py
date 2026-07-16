@@ -4,7 +4,7 @@ from typing import Any
 
 
 async def resolve_visible_knowledge_bases_for_context(context) -> list[dict[str, Any]]:
-    from yuxi import knowledge_base
+    from yuxi.knowledge.runtime import knowledge_base
 
     uid = getattr(context, "uid", None)
     if not uid:

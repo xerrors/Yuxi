@@ -105,7 +105,7 @@ async def test_resolve_agent_resource_options_empty_fields_loads_nothing(monkeyp
 
     monkeypatch.setitem(
         sys.modules,
-        "yuxi.knowledge",
+        "yuxi.knowledge.runtime",
         types.SimpleNamespace(knowledge_base=types.SimpleNamespace(get_databases_by_user=fail_if_loaded)),
     )
 
@@ -152,7 +152,7 @@ async def test_normalize_agent_context_config_expands_null_and_filters_explicit_
     )
     monkeypatch.setitem(
         sys.modules,
-        "yuxi.knowledge",
+        "yuxi.knowledge.runtime",
         types.SimpleNamespace(knowledge_base=types.SimpleNamespace(get_databases_by_user=fake_get_databases_by_user)),
     )
     monkeypatch.setitem(
@@ -292,7 +292,7 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
     )
     monkeypatch.setitem(
         sys.modules,
-        "yuxi.knowledge",
+        "yuxi.knowledge.runtime",
         types.SimpleNamespace(knowledge_base=types.SimpleNamespace(get_databases_by_user=fake_get_databases_by_user)),
     )
     monkeypatch.setitem(

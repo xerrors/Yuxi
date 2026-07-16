@@ -20,7 +20,7 @@
 
 ```bash
 # 克隆最新版本
-git clone --branch v0.7.1.beta1 --depth 1 https://github.com/xerrors/Yuxi.git
+git clone --branch v0.7.1.beta2 --depth 1 https://github.com/xerrors/Yuxi.git
 cd Yuxi
 ```
 
@@ -112,7 +112,7 @@ docker logs api-dev -f
 docker logs web-dev -f
 ```
 
-### 常见问题
+### 部署故障排查
 
 <details>
 <summary><strong>Docker 镜像拉取失败</strong></summary>

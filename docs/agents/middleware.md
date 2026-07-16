@@ -29,6 +29,7 @@
 | `TodoListMiddleware` | 提供待办状态，让前端状态面板可展示 Agent 运行进度 |
 | `PatchToolCallsMiddleware` | 修正部分工具调用消息形态，提升工具调用兼容性 |
 | `ModelRetryMiddleware` | 在模型调用失败时按配置重试 |
+| `ImageInputCompatibilityMiddleware` | 仅为 OpenAI Chat Completions 兼容链路桥接 `read_file` 返回的图片；模型明确拒绝图片输入时自动改为 `ocr_parse_file` |
 | `TokenUsageMiddleware` | 在 LangGraph state 写入本轮 token 使用快照，供前端状态面板查看 |
 
 `SubAgentBackend` 使用同一组核心能力，但不会挂载 `YuxiSubAgentMiddleware`，并额外过滤 `present_artifacts`、`ask_user_question`、`install_skill` 等不适合子智能体直接使用的工具。
@@ -82,7 +83,7 @@
 
 L1 后会重新计算上下文大小；如果仍超过入口阈值乘以 `summary_l2_trigger_ratio`，才进入 L2 summary，把较早的 L1 视图消息压缩成一条 summary message，并保留最近窗口内的原始消息。比例越小越容易进入 L2；`1.0` 表示 L1 后仍超过原始触发阈值才进入 L2。L2 传给摘要模型的待摘要历史上限等于 `summary_threshold` 对应的 token 数，避免用过小的固定窗口丢掉早期关键信息。L2 不再对工具结果做第二轮 offload，只写入 `_summarization_event`，后续调用仍由 DeepAgents 的 cutoff 语义重建 effective messages。
 
-这对知识库检索尤其重要：`query_kb`、`open_kb_document`、`find_kb_document` 等工具可能返回较长的片段、引用和文档内容。Summary 阶段保留“查过什么、结果在哪里、关键预览是什么”，同时避免把大量检索原文反复卷入摘要，减少上下文污染和 token 压力。
+这对知识库检索尤其重要：`query_kb`、`open_kb_document`、`find_kb_document` 等工具可能返回较长的片段、引用和文档内容。Summary 阶段保留“查过什么、结果在哪里、关键预览是什么”，同时避免把大量检索原文反复卷入摘要，减少上下文污染和 token 压力。压缩开始、完成或失败会以 `context_compression` 流事件同步到前端；摘要模型自身的 token 流不会作为聊天消息输出。
 
 未达到入口阈值的常规模型调用不会额外清洗工具结果；达到入口阈值但 L1 后低于 L2 门槛时，会直接用 L1 精简后的临时视图调用模型，不生成 summary event。
 

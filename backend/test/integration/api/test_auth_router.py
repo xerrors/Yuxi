@@ -137,6 +137,26 @@ async def test_admin_can_create_and_delete_user(test_client, admin_headers):
     assert delete_payload["message"] == "用户已删除"
 
 
+async def test_admin_password_mutations_reject_passwords_shorter_than_eight_characters(
+    test_client, admin_headers, standard_user
+):
+    create_response = await test_client.post(
+        "/api/auth/users",
+        json={"username": f"weak_{uuid.uuid4().hex[:8]}", "password": "short", "role": "user"},
+        headers=admin_headers,
+    )
+    assert create_response.status_code == 422, create_response.text
+    assert create_response.json()["detail"][0]["loc"] == ["body", "password"]
+
+    update_response = await test_client.put(
+        f"/api/auth/users/{standard_user['user']['id']}",
+        json={"password": "short"},
+        headers=admin_headers,
+    )
+    assert update_response.status_code == 422, update_response.text
+    assert update_response.json()["detail"][0]["loc"] == ["body", "password"]
+
+
 async def test_department_admin_is_limited_to_own_department_users(test_client, admin_headers):
     await _require_superadmin(test_client, admin_headers)
 

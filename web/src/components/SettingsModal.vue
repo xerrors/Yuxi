@@ -241,7 +241,7 @@ const visible = computed({
 
 const availableTabs = computed(() => {
   const tabs = []
-  if (userStore.isLoggedIn) tabs.push('account', 'userConfig', 'agentEnv')
+  if (userStore.isLoggedIn) tabs.push('account', 'apiKeys', 'agentEnv')
   if (userStore.isAdmin) tabs.push('base', 'user')
   if (userStore.isSuperAdmin) tabs.push('department')
   return tabs

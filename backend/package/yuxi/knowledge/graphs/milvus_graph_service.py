@@ -494,18 +494,21 @@ class MilvusGraphService:
         def query(tx):
             tx.run(
                 f"""
-                MATCH (:Chunk:MilvusKB:`{label}`)-[m:MENTIONS {{kb_id: $kb_id, file_id: $file_id}}]->
+                MATCH (:Entity:MilvusKB:`{label}`)-[r:RELATION {{kb_id: $kb_id, file_id: $file_id}}]->
                     (:Entity:MilvusKB:`{label}`)
-                DELETE m
+                DELETE r
                 """,
                 kb_id=kb_id,
                 file_id=file_id,
             )
             tx.run(
                 f"""
-                MATCH (:Entity:MilvusKB:`{label}`)-[r:RELATION {{kb_id: $kb_id, file_id: $file_id}}]->
-                    (:Entity:MilvusKB:`{label}`)
-                DELETE r
+                MATCH (:Chunk:MilvusKB:`{label}` {{kb_id: $kb_id, file_id: $file_id}})-[m:MENTIONS]->
+                    (e:Entity:MilvusKB:`{label}`)
+                DELETE m
+                WITH DISTINCT e
+                WHERE NOT ()-[:MENTIONS]->(e)
+                DETACH DELETE e
                 """,
                 kb_id=kb_id,
                 file_id=file_id,
@@ -517,14 +520,6 @@ class MilvusGraphService:
                 """,
                 kb_id=kb_id,
                 file_id=file_id,
-            )
-            tx.run(
-                f"""
-                MATCH (e:Entity:MilvusKB:`{label}` {{kb_id: $kb_id}})
-                WHERE NOT ()-[:MENTIONS]->(e)
-                DETACH DELETE e
-                """,
-                kb_id=kb_id,
             )
 
         neo4j_write(self.driver, query)

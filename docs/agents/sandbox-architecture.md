@@ -158,7 +158,7 @@ skills 的结合方式分成两层。第一层是提示词层，`prepare_agent_r
 
 附件的结合方式更偏向“先落盘，再把路径告诉模型”。用户上传文件后，系统会先把原始文件写入 `saves/threads/<file_thread_id>/user-data/uploads`。如果该文件可以被解析，系统还会额外生成一个 Markdown 副本，写到 `saves/threads/<file_thread_id>/user-data/uploads/attachments/<name>.md`。普通 Agent 的文件线程就是当前对话线程；子智能体沿用父对话文件线程，所以能访问父对话附件。随后，LangGraph state 中会维护一份 `uploads` 列表，`AttachmentMiddleware` 会把这些可读路径注入系统提示，告诉模型优先用 `read_file` 去读取这些路径。因此，附件并不是“作为消息大段内联塞给模型”，而是被转换成沙盒文件系统中的路径对象。
 
-知识库不再与沙盒文件系统结合。它不会被复制到每个线程目录，也不会生成虚拟目录；模型通过专门的知识库工具检索，并在需要更完整上下文时用 `open_kb_document` 按 `resource_id` 和 `file_id` 打开文档内容。
+知识库不再与沙盒文件系统结合。它不会被复制到每个线程目录，也不会生成虚拟目录；模型通过专门的知识库工具检索，并在需要更完整上下文时用 `open_kb_document` 按 `kb_id` 和 `file_id` 打开文档内容。
 
 ## 十一、当前推荐如何使用 Docker 沙盒
 

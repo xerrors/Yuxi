@@ -434,7 +434,7 @@ async def resolve_agent_resource_options(
             if tool.get("slug")
         ]
     if "knowledges" in fields_to_load:
-        from yuxi.knowledge import knowledge_base
+        from yuxi.knowledge.runtime import knowledge_base
 
         databases = (await knowledge_base.get_databases_by_user(user)).get("databases", [])
         options["knowledges"] = [

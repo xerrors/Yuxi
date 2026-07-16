@@ -8,8 +8,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from server.utils.auth_middleware import get_required_user
-from yuxi import knowledge_base
 from yuxi.knowledge.factory import KnowledgeBaseFactory
+from yuxi.knowledge.runtime import knowledge_base
 from yuxi.services.workspace_service import (
     create_workspace_directory,
     delete_workspace_path,

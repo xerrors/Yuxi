@@ -54,7 +54,11 @@ Milvus 文件从上传到可检索，经历三个阶段：
 
 系统对 Markdown 内容进行分块，将 chunk 内容与元数据双写到 PostgreSQL 的 `knowledge_chunks` 表，并将向量写入 Milvus。
 
-在前端界面中，默认会自动完成前两个阶段。如果需要自动入库，勾选「上传后自动入库」选项；否则需要手动点击入库按钮。
+上传完成后可以分别执行解析和入库，也可以选择自动入库。文件管理支持目录懒加载、服务端分页以及按待处理状态批量提交解析或入库任务；单次显式选择最多 1000 个文件。
+
+### 分块配置
+
+分块策略由 `chunk_preset_id` 选择（`general`、`qa`、`book`、`laws`、`semantic`、`separator`），通用分块参数放在 `chunk_parser_config` 中。文件记录会保存解析和分块参数快照；旧的根级 `chunk_size`、`chunk_overlap`、`qa_separator` 不再作为兼容字段。
 
 ## 知识导图与示例问题
 
@@ -103,16 +107,18 @@ Neo4j 连接信息可以在 `.env` 中配置：
 
 ## API 使用
 
-如果需要通过程序批量处理文件，可以使用以下接口：
+程序化上传应先将文件上传到 MinIO，再创建文档记录；CLI 可使用 `yuxi kb upload` 完成这条链路。接口如下：
 
 ```bash
 # 1. 上传文件
 POST /api/knowledge/files/upload?kb_id=<知识库ID>
 # 返回 file_path 和 content_hash
 
-# 2. 解析并入库
+# 2. 创建文件记录，不触发解析或入库
+POST /api/knowledge/databases/{kb_id}/documents/add
+
+# 3. 按需提交解析和入库
 POST /api/knowledge/databases/{kb_id}/documents
-# 返回 status=queued 和 task_id
 ```
 
 系统会自动去重：基于内容哈希判断是否已存在相同文件。

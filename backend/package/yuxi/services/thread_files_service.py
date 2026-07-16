@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import shutil
 from pathlib import Path
 from typing import Any
@@ -76,17 +77,28 @@ async def list_thread_files_view(
 
     if recursive:
         if virtual_path.rstrip("/") == _get_virtual_root():
-            return _list_user_data_root_entries(thread_id, uid, virtual_path, recursive=True)
-        return _list_files_recursive(thread_id, uid, actual_path, virtual_path)
+            return await asyncio.to_thread(
+                _list_user_data_root_entries,
+                thread_id,
+                uid,
+                virtual_path,
+                recursive=True,
+            )
+        return await asyncio.to_thread(_list_files_recursive, thread_id, uid, actual_path, virtual_path)
 
     if virtual_path.rstrip("/") == _get_virtual_root():
-        return _list_user_data_root_entries(thread_id, uid, virtual_path)
+        return await asyncio.to_thread(_list_user_data_root_entries, thread_id, uid, virtual_path)
 
-    entries: list[dict[str, Any]] = []
-    for child in sorted(actual_path.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower())):
-        entries.append(_thread_file_entry(thread_id, uid, child))
+    entries = await asyncio.to_thread(_list_directory_entries, thread_id, uid, actual_path)
 
     return {"path": virtual_path, "files": entries}
+
+
+def _list_directory_entries(thread_id: str, uid: str, actual_path: Path) -> list[dict[str, Any]]:
+    return [
+        _thread_file_entry(thread_id, uid, child)
+        for child in sorted(actual_path.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower()))
+    ]
 
 
 def _list_user_data_root_entries(thread_id: str, uid: str, virtual_path: str, recursive: bool = False) -> dict:
@@ -153,7 +165,7 @@ async def read_thread_file_content_view(
     if not actual_path.is_file():
         raise HTTPException(status_code=400, detail="path must be a file")
 
-    text = actual_path.read_text(encoding="utf-8", errors="replace")
+    text = await asyncio.to_thread(actual_path.read_text, encoding="utf-8", errors="replace")
     lines = text.splitlines()
     start = max(0, int(offset))
     count = min(max(1, int(limit)), 5000)

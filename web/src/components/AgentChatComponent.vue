@@ -325,6 +325,7 @@
                       v-for="(todo, index) in currentTodos"
                       :key="`${todo.fullContent}-${index}`"
                       class="todo-item"
+                      :class="{ completed: todo.status === 'completed' }"
                     >
                       <div class="todo-item-icon" :class="todo.status || 'unknown'">
                         <CheckCircleOutlined v-if="todo.status === 'completed'" />
@@ -2948,7 +2949,7 @@ watch(
       scrollController.scrollToBottom()
     }
   },
-  { deep: true, flush: 'post' }
+  { flush: 'post' }
 )
 
 watch(
@@ -3952,6 +3953,11 @@ watch(currentChatId, (threadId, oldThreadId) => {
   line-height: 1.5;
   color: var(--gray-700);
   word-break: break-word;
+}
+
+.todo-item.completed .todo-item-text {
+  color: var(--gray-500);
+  text-decoration: line-through;
 }
 
 .state-list {

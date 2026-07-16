@@ -88,6 +88,7 @@ class MyAgent(BaseAgent):
 | `summary_tool_result_token_limit` | 工具结果 offload 阈值和预览 token 上限 |
 | `summary_l2_trigger_ratio` | L1 后进入 L2 summary 的触发比例 |
 | `max_execution_steps` | 单次运行最大执行步数 |
+| `model_retry_times` | 模型调用失败时的最大重试次数 |
 | `thread_id` / `uid` | 运行期标识，不作为页面配置项暴露 |
 
 `tools`、`knowledges`、`mcps`、`skills` 在未显式配置时会默认启用当前用户可访问的全部资源。
@@ -192,17 +193,17 @@ Context 的价值不只在“配置页面”。它贯穿了从配置加载到实
 
 也就是说，运行期 Context 的基础来源并不是前端临时状态，而是数据库中保存的 Agent。
 
-此外，用户工作区会默认创建 `agents/AGENTS.md`。当 Agent 开始执行时，后端会读取当前用户工作区下的这个文件，并将其内容追加到 `system_prompt`，用于补充该用户对 Agent 的长期指令或工作区约定。该文件属于用户级共享工作区，内容会随 `uid` 和当前运行的线程作用域映射到运行时工作区路径；文件不存在、为空或不可读时不会影响 Agent 启动，单次注入内容最多读取 64 KiB，超出部分会截断并追加提示。
+用户工作区会默认创建 `agents/AGENTS.md`、`agents/USER.md` 与 `agents/MEMORY.md`。每次 Agent 运行开始时，后端按这三个文件的固定顺序读取非空内容并追加到 `system_prompt`：前者适合放长期工作约束，`USER.md` 记录稳定的用户偏好，`MEMORY.md` 保存可跨对话复用的事实。它们属于用户级共享工作区；文件不存在、为空或不可读时不会阻断运行。每个文件最多读取 64 KiB，超出部分会截断并标记。
 
 合并后的提示词结构可以理解为：
 
 ```text
 Agent.config_json.context.system_prompt
-  + 用户工作区 agents/AGENTS.md 内容
+  + 用户工作区 agents/AGENTS.md、USER.md、MEMORY.md 内容
   + 运行期中间件继续追加的系统提示段
 ```
 
-因此，`agents/AGENTS.md` 适合放置用户维度的稳定约束，不适合放置一次性任务要求；一次性要求仍应直接写在当前对话中。
+一次性要求仍应直接写在当前对话中，而不应写入这三个跨对话文件。
 
 ### 4.2 Context 实例化阶段
 
@@ -242,8 +243,7 @@ config_json.context + runtime ids -> context_schema instance
 - `load_chat_model(context.model)` 选择主模型
 - `build_prompt_with_context(context)` 生成系统提示词
 - `resolve_configured_runtime_tools(context)` 组装已配置的内置工具和 MCP 工具
-- `KnowledgeBaseMiddleware` 根据 `_visible_knowledge_bases` 暴露知识库工具
-- `SkillsMiddleware` 根据 `_prompt_skills` 注入 Skill 提示段，并在 Skill 被激活后按需挂载工具与 MCP 依赖
+- `SkillsMiddleware` 根据 `_prompt_skills` 注入 Skill 提示段，并在 Skill 被激活后按需让模型看见其工具与 MCP 依赖；知识库工具由内置 `knowledge-base` Skill 提供
 - `save_attachments_to_fs` 将线程附件转换为运行时可读的文件提示
 
 文件系统与沙盒接入同样读取这些运行时字段：

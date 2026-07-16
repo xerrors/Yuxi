@@ -1,6 +1,11 @@
 import pytest
 
-from yuxi.storage.neo4j import Neo4jConnectionManager, safe_neo4j_label
+from yuxi.storage.neo4j import (
+    Neo4jConnectionManager,
+    close_shared_neo4j_connection,
+    safe_neo4j_label,
+)
+from yuxi.storage.neo4j import manager as neo4j_manager
 
 
 def test_storage_neo4j_exports_manager():
@@ -28,3 +33,19 @@ def test_neo4j_connection_manager_skips_connection_in_lite_mode(monkeypatch):
 
     assert manager.driver is None
     assert manager.status == "closed"
+
+
+def test_close_shared_neo4j_connection_closes_existing_manager(monkeypatch):
+    class FakeConnection:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    connection = FakeConnection()
+    monkeypatch.setattr(neo4j_manager, "_shared_neo4j_connection", connection)
+
+    close_shared_neo4j_connection()
+
+    assert connection.closed is True

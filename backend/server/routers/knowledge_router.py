@@ -9,11 +9,12 @@ from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Upload
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.responses import StreamingResponse
-from yuxi import config, knowledge_base
+from yuxi import config
 from yuxi.knowledge.chunking.ragflow_like.presets import get_chunk_preset_options
 from yuxi.knowledge.factory import KnowledgeBaseFactory
 from yuxi.knowledge.graphs.milvus_graph_service import GRAPH_TASK_TYPE, MilvusGraphService
-from yuxi.knowledge.parser import SUPPORTED_FILE_EXTENSIONS, Parser, is_supported_file_extension
+from yuxi.knowledge.parser.unified import SUPPORTED_FILE_EXTENSIONS, Parser, is_supported_file_extension
+from yuxi.knowledge.runtime import knowledge_base
 from yuxi.knowledge.utils import calculate_content_hash, is_minio_url, parse_minio_url
 from yuxi.knowledge.utils.mindmap_utils import (
     batch_remove_files_from_mindmap,

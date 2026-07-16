@@ -43,17 +43,17 @@
               <Moon v-else :size="16" />
             </template>
             <span class="menu-text">{{
-              themeStore.isDark ? '切换到浅色模式' : '切换到深色模式 (Beta)'
+              themeStore.isDark ? '切换到浅色模式' : '切换到深色模式'
             }}</span>
           </a-menu-item>
-          <a-menu-divider v-if="userStore.isAdmin" />
+          <a-menu-divider />
           <a-menu-item v-if="userStore.isSuperAdmin" key="debug" @click="showDebug = true">
             <template #icon><Terminal :size="16" /></template>
             <span class="menu-text">调试面板（非生产环境）</span>
           </a-menu-item>
-          <a-menu-item v-if="userStore.isAdmin" key="setting" @click="goToSetting">
+          <a-menu-item key="setting" @click="goToSetting">
             <template #icon><Settings :size="16" /></template>
-            <span class="menu-text">系统设置</span>
+            <span class="menu-text">设置</span>
           </a-menu-item>
           <a-menu-item key="logout" @click="logout">
             <template #icon><LogOut :size="16" /></template>
@@ -142,7 +142,7 @@ const toggleTheme = () => {
 // 前往设置页
 const goToSetting = () => {
   if (openSettingsModal) {
-    openSettingsModal('base')
+    openSettingsModal('account')
   }
 }
 

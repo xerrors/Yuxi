@@ -907,6 +907,9 @@ async def stream_agent_chat(
             except Exception as e:
                 logger.error(f"Error saving user message: {e}")
 
+        # 智能体流式执行期间不访问业务数据库，先结束预处理事务并归还连接池。
+        await db.commit()
+
         # 先构建 langgraph_config
         langgraph_config = {"configurable": {"thread_id": thread_id, "uid": uid}}
 
@@ -1137,6 +1140,9 @@ async def stream_agent_resume(
     except ValueError as e:
         yield make_resume_chunk(status="error", error_type="invalid_agent", error_message=str(e), meta=meta)
         return
+
+    # 恢复流执行期间不访问业务数据库，先结束运行时解析事务并归还连接池。
+    await db.commit()
 
     meta["agent_slug"] = agent_item.slug
     meta["backend_id"] = agent_item.backend_id

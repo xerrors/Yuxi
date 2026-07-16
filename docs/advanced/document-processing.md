@@ -1,6 +1,6 @@
 # 文档处理与 OCR
 
-Yuxi 支持多种文档格式的智能解析，从简单的文本文件到复杂的 PDF 文档，都能自动提取内容并转换为可检索的格式。
+Yuxi 将上传文件先保存为原文件，再解析为 Markdown 并按知识库分块策略入库。OCR 引擎既可在系统设置中作为默认值配置，也可在知识库上传或临时附件解析时逐次选择；未显式选择时使用 `default_ocr_engine`。
 
 ## 支持的文件类型
 
@@ -17,7 +17,7 @@ Yuxi 支持多种文档格式的智能解析，从简单的文本文件到复杂
 
 ### 图片文件
 
-对于图片文件，需要启用 OCR 才能提取文字：
+图片文件必须选择 OCR 引擎才能提取文字：
 - .jpg, .jpeg, .png, .bmp, .tiff, .tif
 
 ### 压缩包
@@ -29,7 +29,7 @@ Yuxi 支持多种文档格式的智能解析，从简单的文本文件到复杂
 
 ### 网页内容
 
-支持通过 URL 直接抓取网页内容：
+知识库支持先从 URL 抓取页面内容，再作为文件进入现有上传、解析与入库链路：
 
 1. 配置 `YUXI_URL_WHITELIST` 环境变量启用白名单机制
 2. 系统自动将 HTML 转换为 Markdown
@@ -54,6 +54,8 @@ Yuxi 支持多种文档格式的智能解析，从简单的文本文件到复杂
 | DeepSeek OCR | 智能理解 | 无 | 云端服务，Markdown 输出 |
 | PaddleOCR-VL-1.6 | 复杂文档、表格、图片 PDF | 无 | 百度 AI Studio 云端服务，输出 Markdown |
 | PP-OCRv6 | 基础文字识别 | 无 | 百度 AI Studio 云端 OCR，输出纯文本 |
+
+后端保存的引擎标识与界面名称对应如下：`rapid_ocr`、`mineru_ocr`、`mineru_official`、`pp_structure_v3_ocr`、`deepseek_ocr`、`paddleocr_vl_1_6`、`paddleocr_pp_ocrv6`。PDF 也可以选择 `disable`，此时仅使用文本提取，不调用 OCR。
 
 ### 选择建议
 
@@ -133,6 +135,12 @@ PADDLEOCR_API_URL=https://paddleocr.aistudio-app.com/api/v2/ocr/jobs
 - `PaddleOCR-VL-1.6`：对应 `paddleocr_vl_1_6`，用于文档版面解析，返回 Markdown
 - `PP-OCRv6`：对应 `paddleocr_pp_ocrv6`，用于基础 OCR，返回按行拼接的纯文本
 
+## 解析参数与分块快照
+
+知识库分块配置由两部分组成：`chunk_preset_id` 只表示策略（`general`、`qa`、`book`、`laws`、`semantic`、`separator`），具体参数统一放在 `chunk_parser_config` 中。不要再写入旧的根级 `chunk_size`、`chunk_overlap` 或 `qa_separator` 字段。
+
+文件级 `processing_params` 会同时保存 `ocr_engine`、`ocr_engine_config`、分块策略和 `chunk_parser_config`。重新解析或入库时，系统以文件记录、知识库配置和本次请求合并后的快照为准，便于复现历史处理结果。
+
 ## 图片显示配置
 
 上传文档中的图片需要正确配置才能在外部显示：
@@ -149,4 +157,6 @@ HOST_IP=your_server_ip
 2. **GPU 要求**：MinerU 和 PP-Structure-V3 需要 GPU 支持
 3. **API 密钥**：MinerU Official、DeepSeek OCR、PaddleOCR API 等云服务需要额外的 API 密钥或 Access Token 配置
 4. **超时处理**：复杂文档解析可能耗时较长，可通过 `MINERU_TIMEOUT` 环境变量调整超时时间
-5. **文件大小限制**：单个上传文件大小不超过 100 MB
+5. **文件大小限制**：知识库与工作区的单个上传文件大小均不超过 100 MB；工作区一次最多上传 50 个文件
+6. **解析参数**：文件会保存当次 `ocr_engine`、`ocr_engine_config` 与分块参数快照。后续修改系统默认 OCR 或分块预设不会改写已上传文件的处理记录
+7. **Agent 读取非文本文件**：Agent 的 `read_file` 只直接读取 UTF-8 文本和图片；遇到 PDF、Office 或其他二进制文件时，应使用 `ocr_parse_file` 生成 Markdown 后再读取

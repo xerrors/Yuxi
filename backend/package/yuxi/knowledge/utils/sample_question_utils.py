@@ -6,8 +6,9 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from yuxi import config, knowledge_base
+from yuxi import config
 from yuxi.knowledge.factory import KnowledgeBaseFactory
+from yuxi.knowledge.runtime import knowledge_base
 from yuxi.models import select_model
 from yuxi.repositories.knowledge_base_repository import KnowledgeBaseRepository
 from yuxi.utils import logger

@@ -11,6 +11,7 @@ from yuxi.knowledge.eval.benchmark_generation import (
     normalize_generation_concurrency_count,
 )
 from yuxi.knowledge.eval.evaluator import aggregate_metrics, evaluate_question
+from yuxi.knowledge.runtime import knowledge_base
 from yuxi.models import select_model
 from yuxi.repositories.evaluation_repository import EvaluationRepository
 from yuxi.repositories.knowledge_base_repository import KnowledgeBaseRepository

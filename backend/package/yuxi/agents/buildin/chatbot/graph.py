@@ -14,6 +14,7 @@ from yuxi.agents.context import (
     prepare_agent_runtime_context,
 )
 from yuxi.agents.middlewares import (
+    ImageInputCompatibilityMiddleware,
     TokenUsageMiddleware,
     create_summary_middleware,
     save_attachments_to_fs,
@@ -68,6 +69,7 @@ async def _build_middlewares(context):
             TodoListMiddleware(system_prompt=TODO_MID_PROMPT),
             PatchToolCallsMiddleware(),
             ModelRetryMiddleware(max_retries=getattr(context, "model_retry_times", 2)),
+            ImageInputCompatibilityMiddleware(),
             TokenUsageMiddleware(),
         ]
     )

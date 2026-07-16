@@ -1,11 +1,9 @@
-"""Tasker 行为单元测试：payload 暴露、进度节流、终态保留与重启恢复。
+"""Tasker 行为单元测试：执行、关闭、终态保留与重启恢复。
 
 使用内存 fake repo，不依赖真实数据库与 Docker。
 """
 
 import asyncio
-
-import pytest
 
 from yuxi.services import task_service
 from yuxi.services.task_service import Tasker
@@ -110,6 +108,106 @@ async def test_explicit_none_result_is_persisted():
     await tasker.shutdown()
 
 
+async def test_shutdown_cancels_running_task_without_starting_queued_task():
+    repo = FakeRepo()
+    tasker = await _make_tasker(repo)
+    running = asyncio.Event()
+    queued_started = asyncio.Event()
+
+    async def blocking_coro(ctx):
+        running.set()
+        await asyncio.Event().wait()
+
+    async def queued_coro(ctx):
+        queued_started.set()
+
+    active = await tasker.enqueue(name="active", task_type="demo", coroutine=blocking_coro)
+    queued = await tasker.enqueue(name="queued", task_type="demo", coroutine=queued_coro)
+    await running.wait()
+    await _wait_status(tasker, active.id, {"running"})
+
+    await asyncio.wait_for(tasker.shutdown(), timeout=1.0)
+
+    assert (await tasker.get_task(active.id))["status"] == "cancelled"
+    assert (await tasker.get_task(queued.id))["status"] == "pending"
+    assert not queued_started.is_set()
+    assert tasker._workers == []
+    assert tasker._started is False
+
+
+async def test_shutdown_exits_when_cancel_status_persistence_fails():
+    class FailingCancelledRepo(FakeRepo):
+        async def upsert(self, task_id: str, data: dict) -> None:
+            await super().upsert(task_id, data)
+            if data.get("status") == "cancelled":
+                raise RuntimeError("cancel status persistence failed")
+
+    tasker = await _make_tasker(FailingCancelledRepo())
+    running = asyncio.Event()
+
+    async def blocking_coro(ctx):
+        running.set()
+        await asyncio.Event().wait()
+
+    task = await tasker.enqueue(name="active", task_type="demo", coroutine=blocking_coro)
+    await running.wait()
+    await _wait_status(tasker, task.id, {"running"})
+
+    await asyncio.wait_for(tasker.shutdown(), timeout=1.0)
+
+    assert (await tasker.get_task(task.id))["status"] == "cancelled"
+    assert tasker._workers == []
+    assert tasker._started is False
+
+
+async def test_shutdown_exits_when_terminal_pruning_fails(monkeypatch):
+    tasker = await _make_tasker(FakeRepo())
+    running = asyncio.Event()
+
+    async def blocking_coro(ctx):
+        running.set()
+        await asyncio.Event().wait()
+
+    async def failing_prune():
+        raise RuntimeError("terminal pruning failed")
+
+    task = await tasker.enqueue(name="active", task_type="demo", coroutine=blocking_coro)
+    await running.wait()
+    await _wait_status(tasker, task.id, {"running"})
+    monkeypatch.setattr(tasker, "_prune_terminal_tasks", failing_prune)
+
+    await asyncio.wait_for(tasker.shutdown(), timeout=1.0)
+
+    assert (await tasker.get_task(task.id))["status"] == "cancelled"
+    assert tasker._workers == []
+    assert tasker._started is False
+
+
+async def test_cooperative_task_cancellation_keeps_worker_available():
+    repo = FakeRepo()
+    tasker = await _make_tasker(repo)
+    running = asyncio.Event()
+    check_cancellation = asyncio.Event()
+
+    async def cancellable_coro(ctx):
+        running.set()
+        await check_cancellation.wait()
+        await ctx.raise_if_cancelled()
+
+    cancelled = await tasker.enqueue(name="cancelled", task_type="demo", coroutine=cancellable_coro)
+    await running.wait()
+    assert await tasker.cancel_task(cancelled.id)
+    check_cancellation.set()
+    await _wait_status(tasker, cancelled.id, {"cancelled"})
+
+    async def completed_coro(ctx):
+        return "done"
+
+    completed = await tasker.enqueue(name="completed", task_type="demo", coroutine=completed_coro)
+    assert (await _wait_status(tasker, completed.id, {"success"}))["status"] == "success"
+    await tasker.shutdown()
+
+
 async def test_completed_tasks_are_pruned_to_limit(monkeypatch):
     monkeypatch.setattr(task_service, "MAX_TERMINAL_TASKS", 3)
     repo = FakeRepo()
@@ -132,14 +230,18 @@ async def test_load_state_marks_interrupted_and_prunes(monkeypatch):
     monkeypatch.setattr(task_service, "MAX_TERMINAL_TASKS", 2)
     repo = FakeRepo(
         preset=[
-            FakeRecord({"id": "a", "name": "a", "type": "demo", "status": "running",
-                        "created_at": "2026-01-01T00:00:05"}),
-            FakeRecord({"id": "b", "name": "b", "type": "demo", "status": "success",
-                        "created_at": "2026-01-01T00:00:04"}),
-            FakeRecord({"id": "c", "name": "c", "type": "demo", "status": "success",
-                        "created_at": "2026-01-01T00:00:03"}),
-            FakeRecord({"id": "d", "name": "d", "type": "demo", "status": "success",
-                        "created_at": "2026-01-01T00:00:02"}),
+            FakeRecord(
+                {"id": "a", "name": "a", "type": "demo", "status": "running", "created_at": "2026-01-01T00:00:05"}
+            ),
+            FakeRecord(
+                {"id": "b", "name": "b", "type": "demo", "status": "success", "created_at": "2026-01-01T00:00:04"}
+            ),
+            FakeRecord(
+                {"id": "c", "name": "c", "type": "demo", "status": "success", "created_at": "2026-01-01T00:00:03"}
+            ),
+            FakeRecord(
+                {"id": "d", "name": "d", "type": "demo", "status": "success", "created_at": "2026-01-01T00:00:02"}
+            ),
         ]
     )
     tasker = await _make_tasker(repo)

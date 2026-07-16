@@ -110,9 +110,11 @@ def test_select_model_wraps_langchain_model_and_expands_model_params(monkeypatch
 
     monkeypatch.setattr(
         "yuxi.models.chat.model_cache.get_model_info",
-        lambda spec: _chat_model_info("test-provider", "namespace/chat-model")
-        if spec == "test-provider:namespace/chat-model"
-        else None,
+        lambda spec: (
+            _chat_model_info("test-provider", "namespace/chat-model")
+            if spec == "test-provider:namespace/chat-model"
+            else None
+        ),
     )
 
     def fake_load_chat_model(spec, **kwargs):
@@ -142,9 +144,11 @@ def test_select_model_maps_anthropic_max_completion_tokens(monkeypatch):
 
     monkeypatch.setattr(
         "yuxi.models.chat.model_cache.get_model_info",
-        lambda spec: _chat_model_info("anthropic", "mimo-v2.5", provider_type="anthropic")
-        if spec == "anthropic:mimo-v2.5"
-        else None,
+        lambda spec: (
+            _chat_model_info("anthropic", "mimo-v2.5", provider_type="anthropic")
+            if spec == "anthropic:mimo-v2.5"
+            else None
+        ),
     )
     monkeypatch.setattr(
         "yuxi.models.chat.load_chat_model",
@@ -161,9 +165,11 @@ def test_load_chat_model_uses_toolcall_chunk_fix_for_openai_compatible(monkeypat
 
     monkeypatch.setattr(
         "yuxi.agents.models.model_cache.get_model_info",
-        lambda spec: _chat_model_info("siliconflow-cn", "deepseek-ai/DeepSeek-V4-Flash")
-        if spec == "siliconflow-cn:deepseek-ai/DeepSeek-V4-Flash"
-        else None,
+        lambda spec: (
+            _chat_model_info("siliconflow-cn", "deepseek-ai/DeepSeek-V4-Flash")
+            if spec == "siliconflow-cn:deepseek-ai/DeepSeek-V4-Flash"
+            else None
+        ),
     )
 
     model = load_chat_model("siliconflow-cn:deepseek-ai/DeepSeek-V4-Flash")
@@ -176,9 +182,11 @@ def test_load_chat_model_uses_toolcall_chunk_fix_for_openai_compatible(monkeypat
 def test_load_chat_model_keeps_non_siliconflow_openai_streaming(monkeypatch):
     monkeypatch.setattr(
         "yuxi.agents.models.model_cache.get_model_info",
-        lambda spec: _chat_model_info("openai-compatible", "namespace/chat-model")
-        if spec == "openai-compatible:namespace/chat-model"
-        else None,
+        lambda spec: (
+            _chat_model_info("openai-compatible", "namespace/chat-model")
+            if spec == "openai-compatible:namespace/chat-model"
+            else None
+        ),
     )
 
     model = load_chat_model("openai-compatible:namespace/chat-model")
@@ -186,97 +194,6 @@ def test_load_chat_model_keeps_non_siliconflow_openai_streaming(monkeypatch):
 
     assert model.disable_streaming is False
     assert explicit.disable_streaming is True
-
-
-def test_openai_payload_bridges_read_file_image_tool_result_to_user_role():
-    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-    from yuxi.agents.models import _ToolCallChunkFixChatOpenAI
-
-    model = _ToolCallChunkFixChatOpenAI(
-        model="namespace/chat-model",
-        api_key="test-key",
-        base_url="https://example.com/v1",
-    )
-
-    payload = model._get_request_payload(
-        [
-            HumanMessage("读一下这张图"),
-            AIMessage(
-                content="",
-                tool_calls=[
-                    {
-                        "name": "read_file",
-                        "args": {"file_path": "/home/gem/user-data/workspace/a.png"},
-                        "id": "call_image",
-                    }
-                ],
-            ),
-            ToolMessage(
-                content_blocks=[{"type": "image", "base64": "iVBORw0KGgo=", "mime_type": "image/png"}],
-                name="read_file",
-                tool_call_id="call_image",
-            ),
-        ]
-    )
-
-    tool_message = payload["messages"][2]
-    image_message = payload["messages"][3]
-
-    assert tool_message["role"] == "tool"
-    assert isinstance(tool_message["content"], str)
-    assert "image_url" not in tool_message["content"]
-    assert image_message == {
-        "role": "user",
-        "content": [
-            {
-                "type": "text",
-                "text": "Images returned by read_file are attached below. Inspect them when answering.",
-            },
-            {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}},
-        ],
-    }
-
-
-def test_openai_payload_inserts_tool_image_user_message_after_parallel_tool_block():
-    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-    from yuxi.agents.models import _ToolCallChunkFixChatOpenAI
-
-    model = _ToolCallChunkFixChatOpenAI(
-        model="namespace/chat-model",
-        api_key="test-key",
-        base_url="https://example.com/v1",
-    )
-
-    payload = model._get_request_payload(
-        [
-            HumanMessage("读图并列目录"),
-            AIMessage(
-                content="",
-                tool_calls=[
-                    {
-                        "name": "read_file",
-                        "args": {"file_path": "/home/gem/user-data/workspace/a.png"},
-                        "id": "call_image",
-                    },
-                    {"name": "ls", "args": {"path": "/home/gem/user-data/workspace"}, "id": "call_ls"},
-                ],
-            ),
-            ToolMessage(
-                content_blocks=[{"type": "image", "base64": "abc", "mime_type": "image/png"}],
-                name="read_file",
-                tool_call_id="call_image",
-            ),
-            ToolMessage(content="['a.png']", name="ls", tool_call_id="call_ls"),
-        ]
-    )
-
-    assert [message["role"] for message in payload["messages"]] == ["user", "assistant", "tool", "tool", "user"]
-    assert payload["messages"][2]["tool_call_id"] == "call_image"
-    assert payload["messages"][3]["tool_call_id"] == "call_ls"
-    assert payload["messages"][4]["content"][1] == {
-        "type": "image_url",
-        "image_url": {"url": "data:image/png;base64,abc"},
-    }
 
 
 @pytest.mark.asyncio

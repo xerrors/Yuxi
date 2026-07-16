@@ -13,8 +13,8 @@ import yuxi.knowledge.parser.unified as parser_unified
 from docx import Document
 from PIL import Image
 
-from yuxi.knowledge.parser import Parser
 from yuxi.knowledge.parser.factory import DocumentProcessorFactory
+from yuxi.knowledge.parser.unified import Parser
 
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 

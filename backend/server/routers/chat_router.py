@@ -2,6 +2,7 @@ import traceback
 import uuid
 from typing import Any
 
+import aiofiles
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -488,7 +489,9 @@ async def get_thread_artifact(
         path=path,
     )
 
-    media_type = detect_media_type(file_path.name, file_path.read_bytes())
+    async with aiofiles.open(file_path, "rb") as artifact_file:
+        file_head = await artifact_file.read(512)
+    media_type = detect_media_type(file_path.name, file_head)
     headers = {"Content-Disposition": f'attachment; filename="{file_path.name}"'} if download else None
     return FileResponse(path=file_path, media_type=media_type, headers=headers)
 

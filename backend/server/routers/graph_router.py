@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from server.utils.auth_middleware import get_admin_user
-from yuxi import knowledge_base
 from yuxi.knowledge.graphs.milvus_graph_service import MilvusGraphService
+from yuxi.knowledge.runtime import knowledge_base
 from yuxi.storage.postgres.models_business import User
 from yuxi.utils.logging_config import logger
 

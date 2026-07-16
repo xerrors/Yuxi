@@ -93,9 +93,3 @@
 ## Ollama 支持
 
 当前版本不再内置 Ollama provider type，也不再提供 Ollama embedding 运行时适配。已有 Ollama embedding 知识库需要管理员选择新的 embedding 模型并重建索引，避免不同向量空间混用。
-
-## 常见问题
-
-**凭证缺失警告**：检查 API Key 是否正确配置，或确认环境变量是否已设置。
-
-**模型配置未生效**：确认模型已添加至供应商的已启用列表中。

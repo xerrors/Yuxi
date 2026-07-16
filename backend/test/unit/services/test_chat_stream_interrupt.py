@@ -19,6 +19,14 @@ from yuxi.services import chat_service as svc
 from yuxi.utils.question_utils import normalize_options
 
 
+class _FakeSession:
+    def __init__(self):
+        self.commit_count = 0
+
+    async def commit(self):
+        self.commit_count += 1
+
+
 class TestNormalizeInterruptOptions:
     """测试 _normalize_interrupt_options 函数"""
 
@@ -198,7 +206,9 @@ async def test_stream_agent_resume_init_does_not_render_resume_input():
 
 
 @pytest.mark.asyncio
-async def test_stream_agent_resume_routes_subagent_chunks(monkeypatch):
+async def test_stream_agent_resume_commits_before_stream_and_routes_subagent_chunks(monkeypatch):
+    db = _FakeSession()
+
     class FakeContext:
         def __init__(self):
             self.thread_id = None
@@ -215,6 +225,7 @@ async def test_stream_agent_resume_routes_subagent_chunks(monkeypatch):
         context_schema = FakeContext
 
         async def stream_resume_with_state(self, resume_command, input_context=None, **kwargs):
+            assert db.commit_count == 1
             yield (
                 "messages",
                 (
@@ -260,7 +271,7 @@ async def test_stream_agent_resume_routes_subagent_chunks(monkeypatch):
         resume_input={"ok": True},
         meta={"request_id": "req-1"},
         current_user=SimpleNamespace(uid="user-1"),
-        db=object(),
+        db=db,
     )
 
     chunks = []
