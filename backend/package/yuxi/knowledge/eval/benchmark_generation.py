@@ -325,8 +325,9 @@ async def iter_generated_benchmark_items(
                     generated += 1
                     results.append((attempt_no, item))
                     if progress_cb:
-                        progress = int(99 * (progress_base + generated) / max(total_progress, 1))
-                        message = f"已生成 {progress_base + generated}/{total_progress}"
+                        total_val = total_progress if total_progress is not None else (progress_base + count)
+                        progress = int(99 * (progress_base + generated) / max(total_val, 1))
+                        message = f"已生成 {progress_base + generated}/{total_val}"
                 if progress_cb:
                     await progress_cb(progress, message)
             finally:

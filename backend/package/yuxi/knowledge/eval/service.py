@@ -529,8 +529,8 @@ class EvaluationService:
 
             await flush_items()
 
-            if start_index == 0:
-                raise ValueError("未生成有效评估题目")
+            if start_index == existing_count:
+                raise ValueError("未生成新的有效评估题目")
 
             await self._update_dataset_build_metadata(
                 dataset_id,
