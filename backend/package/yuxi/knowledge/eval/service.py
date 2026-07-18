@@ -1,10 +1,10 @@
 import asyncio
 import json
+import os
 import re
 import uuid
 from typing import Any
 
-from yuxi.config.app import config
 from yuxi.knowledge import knowledge_base
 from yuxi.knowledge.eval.benchmark_generation import (
     dump_benchmark_item,
@@ -21,6 +21,8 @@ from yuxi.repositories.task_repository import TaskRepository
 from yuxi.services.task_service import TaskContext, tasker
 from yuxi.utils import logger
 from yuxi.utils.datetime_utils import format_utc_datetime, utc_now_naive
+
+DATASET_PERSIST_BATCH_SIZE = max(1, int(os.getenv("YUXI_DATASET_PERSIST_BATCH_SIZE") or 1))
 
 
 def build_evaluation_run_name(started_at=None, hash_value: str | None = None) -> str:
@@ -223,7 +225,7 @@ class EvaluationService:
             row = await self.eval_repo.get_dataset(dataset_id)
             if row is None or row.kb_id != kb_id:
                 raise ValueError("Dataset not found")
-            if (row.build_metadata or {}).get("status", "completed") != "completed":
+            if (row.build_metadata or {}).get("status", "completed") not in {"completed", "failed"}:
                 raise ValueError("Dataset is not ready")
 
             total_items = await self.eval_repo.count_dataset_items(dataset_id)
@@ -476,7 +478,7 @@ class EvaluationService:
                 message=message or build_metadata.get("message", ""),
             )
 
-        batch_size = config.dataset_persist_batch_size
+        batch_size = DATASET_PERSIST_BATCH_SIZE
         buffer: list[dict[str, Any]] = []
 
         async def flush_items() -> None:

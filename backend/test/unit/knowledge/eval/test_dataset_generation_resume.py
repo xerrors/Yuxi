@@ -153,7 +153,7 @@ async def test_generate_dataset_task_resumes_from_existing_items(monkeypatch):
     monkeypatch.setattr(
         eval_service_module, "knowledge_base", SimpleNamespace(aget_kb=mock_aget_kb)
     )
-    monkeypatch.setattr(eval_service_module.config, "dataset_persist_batch_size", 1)
+    monkeypatch.setattr(eval_service_module, "DATASET_PERSIST_BATCH_SIZE", 1)
 
     added_items = []
     updated_item_counts = []
@@ -208,7 +208,7 @@ async def test_generate_dataset_task_persists_in_batches(monkeypatch):
     monkeypatch.setattr(
         eval_service_module, "knowledge_base", SimpleNamespace(aget_kb=mock_aget_kb)
     )
-    monkeypatch.setattr(eval_service_module.config, "dataset_persist_batch_size", 2)
+    monkeypatch.setattr(eval_service_module, "DATASET_PERSIST_BATCH_SIZE", 2)
 
     flush_batches = []
 
@@ -383,7 +383,7 @@ def make_real_generator_service(monkeypatch, kb, batch_size, added_items, metada
     monkeypatch.setattr(
         eval_service_module, "knowledge_base", SimpleNamespace(aget_kb=mock_aget_kb)
     )
-    monkeypatch.setattr(eval_service_module.config, "dataset_persist_batch_size", batch_size)
+    monkeypatch.setattr(eval_service_module, "DATASET_PERSIST_BATCH_SIZE", batch_size)
 
     class FakeRepo:
         async def count_dataset_items(self, dataset_id):

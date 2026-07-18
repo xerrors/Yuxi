@@ -51,8 +51,8 @@
           v-for="benchmark in benchmarks"
           :key="benchmark.dataset_id"
           class="benchmark-item"
-          :class="{ 'benchmark-item-disabled': !isDatasetCompleted(benchmark) }"
-          @click="isDatasetCompleted(benchmark) && previewDataset(benchmark)"
+          :class="{ 'benchmark-item-disabled': !isDatasetViewable(benchmark) }"
+          @click="isDatasetViewable(benchmark) && previewDataset(benchmark)"
         >
           <!-- 主要内容 -->
           <div class="benchmark-main">
@@ -460,6 +460,9 @@ const getDatasetBuildStatus = (benchmark) => getBuildMetadata(benchmark).status 
 
 const isDatasetCompleted = (benchmark) => getDatasetBuildStatus(benchmark) === 'completed'
 
+const isDatasetViewable = (benchmark) =>
+  ['completed', 'failed'].includes(getDatasetBuildStatus(benchmark))
+
 const isDatasetBuilding = (benchmark) =>
   ['pending', 'running'].includes(getDatasetBuildStatus(benchmark))
 
@@ -617,7 +620,7 @@ const loadPreviewQuestions = async () => {
 
 // 预览基准
 const previewDataset = async (benchmark) => {
-  if (!isDatasetCompleted(benchmark)) {
+  if (!isDatasetViewable(benchmark)) {
     message.warning('评估基准生成完成后才能预览')
     return
   }
