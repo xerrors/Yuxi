@@ -250,14 +250,16 @@ async def test_generate_dataset_task_persists_in_batches(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_resume_dataset_generation_enqueues_new_task(monkeypatch):
-    async def fake_enqueue(**kwargs):
-        return SimpleNamespace(id="task_2")
+    """无进行中任务时原子创建恢复任务，并校验 payload_match/statuses 等去重传参。"""
+    captured = {}
 
-    monkeypatch.setattr(eval_service_module.tasker, "enqueue", fake_enqueue)
-    async def fake_find_task_by_payload(**kwargs):
-        return None
+    async def fake_enqueue_unique_by_payload(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(id="task_2"), True
 
-    monkeypatch.setattr(eval_service_module.tasker, "find_task_by_payload", fake_find_task_by_payload)
+    monkeypatch.setattr(
+        eval_service_module.tasker, "enqueue_unique_by_payload", fake_enqueue_unique_by_payload
+    )
 
     class FakeRepo:
         async def count_dataset_items(self, dataset_id):
@@ -292,17 +294,21 @@ async def test_resume_dataset_generation_enqueues_new_task(monkeypatch):
 
     assert result["task_id"] == "task_2"
     assert result["message"] == "评估数据集生成任务已恢复"
+    assert captured["payload_match"] == {"dataset_id": "ds_1"}
+    assert captured["statuses"] == {"pending", "running"}
+    assert captured["payload"]["dataset_id"] == "ds_1"
 
 
 @pytest.mark.asyncio
 async def test_resume_dataset_generation_returns_existing_task(monkeypatch):
-    async def fake_find_task_by_payload(**kwargs):
-        return SimpleNamespace(id="task_1")
+    """已有进行中任务时直接返回该任务（created=False），不重复创建。"""
+    async def fake_enqueue_unique_by_payload(**kwargs):
+        return SimpleNamespace(id="task_1"), False
 
     monkeypatch.setattr(
         eval_service_module.tasker,
-        "find_task_by_payload",
-        fake_find_task_by_payload,
+        "enqueue_unique_by_payload",
+        fake_enqueue_unique_by_payload,
     )
 
     class FakeRepo:
@@ -351,3 +357,137 @@ async def test_resume_dataset_generation_when_already_complete():
     result = await service.resume_dataset_generation("kb_1", "ds_1", "user_1")
 
     assert result["message"] == "数据集已完成生成"
+
+
+class FlakyQueryKB:
+    kb_type = "milvus"
+
+    def __init__(self, fail_after):
+        self.fail_after = fail_after
+        self.calls = 0
+
+    async def aquery(self, query_text, kb_id, **kwargs):
+        self.calls += 1
+        if self.calls > self.fail_after:
+            raise RuntimeError("kb query failed")
+        return []
+
+
+def make_real_generator_service(monkeypatch, kb, batch_size, added_items, metadata_updates, add_items_error=None):
+    fake_llm = TrackingLlm()
+    monkeypatch.setattr(benchmark_generation, "select_model", lambda model_spec: fake_llm)
+
+    async def mock_aget_kb(kb_id):
+        return kb
+
+    monkeypatch.setattr(
+        eval_service_module, "knowledge_base", SimpleNamespace(aget_kb=mock_aget_kb)
+    )
+    monkeypatch.setattr(eval_service_module.config, "dataset_persist_batch_size", batch_size)
+
+    class FakeRepo:
+        async def count_dataset_items(self, dataset_id):
+            return 0
+
+        async def add_dataset_items(self, items):
+            if add_items_error is not None:
+                raise add_items_error
+            added_items.append(items[:])
+
+        async def update_dataset(self, dataset_id, data):
+            if "build_metadata" in data:
+                metadata_updates.append(data["build_metadata"])
+
+        async def get_dataset(self, dataset_id):
+            return None
+
+    service = EvaluationService()
+    service.eval_repo = FakeRepo()
+    return service
+
+
+def make_generation_context(neighbors_count=2):
+    return FakeContext(
+        {
+            "dataset_id": "ds_1",
+            # 与本文件 autouse fixture fake_chunk_repository 中 chunk 的 kb_id 对齐
+            "kb_id": "db_1",
+            "count": 5,
+            "neighbors_count": neighbors_count,
+            "concurrency_count": 1,
+            "llm_model_spec": "test:model",
+            "generation_mode": "vector",
+            "graph_expand_top_k": 1,
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_generate_dataset_task_persists_items_before_failure_with_real_generator(monkeypatch):
+    """真实生成器路径下中途失败：已按批落库的 2 条不丢，metadata 标记 failed。"""
+    added_items = []
+    metadata_updates = []
+    service = make_real_generator_service(monkeypatch, FlakyQueryKB(fail_after=2), 1, added_items, metadata_updates)
+
+    with pytest.raises(RuntimeError, match="kb query failed"):
+        await service._generate_dataset_task(make_generation_context())
+
+    assert sum(len(batch) for batch in added_items) == 2
+    assert metadata_updates[-1]["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_generate_dataset_task_flushes_remaining_buffer_on_failure(monkeypatch):
+    """中途失败时未满一批的残余 buffer 也一并落库（批次 2+1），metadata 标记 failed。"""
+    added_items = []
+    metadata_updates = []
+    service = make_real_generator_service(monkeypatch, FlakyQueryKB(fail_after=3), 2, added_items, metadata_updates)
+
+    with pytest.raises(RuntimeError, match="kb query failed"):
+        await service._generate_dataset_task(make_generation_context())
+
+    assert [len(batch) for batch in added_items] == [2, 1]
+    assert metadata_updates[-1]["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_generate_dataset_task_flushes_remaining_buffer_on_cancellation(monkeypatch):
+    """取消时未满一批的残余 buffer 经 except CancelledError 分支落库（批次 2+1）。"""
+    added_items = []
+    metadata_updates = []
+    service = make_real_generator_service(monkeypatch, FakeKB(), 2, added_items, metadata_updates)
+    context = make_generation_context(neighbors_count=1)
+    cancel_calls = 0
+
+    async def raise_if_cancelled():
+        nonlocal cancel_calls
+        cancel_calls += 1
+        if cancel_calls >= 4:
+            raise asyncio.CancelledError("cancelled by test")
+
+    context.raise_if_cancelled = raise_if_cancelled
+
+    with pytest.raises(asyncio.CancelledError):
+        await service._generate_dataset_task(context)
+
+    assert [len(batch) for batch in added_items] == [2, 1]
+
+
+@pytest.mark.asyncio
+async def test_generate_dataset_task_preserves_original_error_when_flush_fails(monkeypatch):
+    """残余落库自身失败（db down）时原始生成异常不被掩盖，failed 状态仍写入。"""
+    added_items = []
+    metadata_updates = []
+    service = make_real_generator_service(
+        monkeypatch,
+        FlakyQueryKB(fail_after=1),
+        2,
+        added_items,
+        metadata_updates,
+        add_items_error=RuntimeError("db down"),
+    )
+
+    with pytest.raises(RuntimeError, match="kb query failed"):
+        await service._generate_dataset_task(make_generation_context())
+
+    assert metadata_updates[-1]["status"] == "failed"

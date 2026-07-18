@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 import uuid
@@ -296,18 +297,6 @@ class EvaluationService:
             )
             return {"dataset_id": dataset_id, "message": "数据集已完成生成"}
 
-        existing_task = await tasker.find_task_by_payload(
-            task_type="dataset_generation",
-            payload_match={"dataset_id": dataset_id},
-            statuses={"pending", "running"},
-        )
-        if existing_task:
-            return {
-                "dataset_id": dataset_id,
-                "task_id": existing_task.id,
-                "message": "已有进行中的生成任务",
-            }
-
         payload = {
             "dataset_id": dataset_id,
             "kb_id": kb_id,
@@ -321,12 +310,20 @@ class EvaluationService:
             "generation_mode": params.get("generation_mode", "vector"),
             "graph_expand_top_k": int(params.get("graph_expand_top_k", 1)),
         }
-        task = await tasker.enqueue(
+        task, created = await tasker.enqueue_unique_by_payload(
             name="继续生成评估数据集",
             task_type="dataset_generation",
             payload=payload,
             coroutine=self._generate_dataset_task,
+            payload_match={"dataset_id": dataset_id},
+            statuses={"pending", "running"},
         )
+        if not created:
+            return {
+                "dataset_id": dataset_id,
+                "task_id": task.id,
+                "message": "已有进行中的生成任务",
+            }
         metadata["status"] = "pending"
         metadata["task_id"] = task.id
         metadata["progress"] = int(99 * existing_count / max(total_count, 1))
@@ -479,6 +476,24 @@ class EvaluationService:
                 message=message or build_metadata.get("message", ""),
             )
 
+        batch_size = config.dataset_persist_batch_size
+        buffer: list[dict[str, Any]] = []
+
+        async def flush_items() -> None:
+            if not buffer:
+                return
+            nonlocal start_index
+            await self.eval_repo.add_dataset_items(self._build_dataset_items(dataset_id, kb_id, buffer, start_index))
+            start_index += len(buffer)
+            buffer.clear()
+            await self.eval_repo.update_dataset(dataset_id, {"item_count": start_index})
+
+        async def flush_items_best_effort() -> None:
+            try:
+                await flush_items()
+            except Exception:
+                logger.exception(f"保存残余题目失败: {dataset_id}")
+
         try:
             kb_instance = await knowledge_base.aget_kb(kb_id)
             if not kb_instance:
@@ -487,22 +502,6 @@ class EvaluationService:
             if kb_instance.kb_type != "milvus":
                 await report_progress(100, "仅支持 commonrag/Milvus 类型知识库生成评估数据集")
                 raise ValueError("Unsupported KB type for dataset generation")
-
-            batch_size = config.dataset_persist_batch_size
-            buffer: list[dict[str, Any]] = []
-
-            async def flush_items() -> None:
-                if not buffer:
-                    return
-                nonlocal start_index
-                await self.eval_repo.add_dataset_items(
-                    self._build_dataset_items(dataset_id, kb_id, buffer, start_index)
-                )
-                start_index += len(buffer)
-                buffer.clear()
-                await self.eval_repo.update_dataset(dataset_id, {"item_count": start_index})
-                progress = int(99 * start_index / total_count)
-                await report_progress(progress, f"已生成 {start_index}/{total_count}")
 
             try:
                 async for item in iter_generated_benchmark_items(
@@ -521,7 +520,7 @@ class EvaluationService:
                 ):
                     buffer.append(item)
                     if len(buffer) >= batch_size:
-                        await flush_items()
+                        await flush_items_best_effort()
             except ValueError as e:
                 if str(e) == "No chunks found in knowledge base":
                     await report_progress(100, "知识库为空或未解析到chunks")
@@ -540,7 +539,11 @@ class EvaluationService:
                 message="完成",
             )
             await context.set_progress(100, "完成")
+        except asyncio.CancelledError:
+            await flush_items_best_effort()
+            raise
         except Exception as e:
+            await flush_items_best_effort()
             await self._update_dataset_build_metadata(
                 dataset_id,
                 build_metadata,
