@@ -1,6 +1,6 @@
 {
   "name": "yuxi-web",
-  "version": "0.7.1.beta2",
+  "version": "0.7.1",
   "private": true,
   "type": "module",
   "scripts": {

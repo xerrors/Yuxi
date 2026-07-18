@@ -1,16 +1,22 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
+import secrets
 import threading
 import time
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Annotated
 from urllib import request
 
-from fastapi import FastAPI, HTTPException
+import httpx
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from dotenv import dotenv_values
 
@@ -18,6 +24,20 @@ logger = logging.getLogger(__name__)
 
 SANDBOX_ENV_FILE = Path(__file__).parent / "sandbox.env"
 SAFE_PATH_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+PROXY_RESPONSE_HEADERS = frozenset({"cache-control", "content-disposition", "content-type", "etag", "last-modified"})
+HOP_BY_HOP_HEADERS = frozenset(
+    {
+        "connection",
+        "content-length",
+        "host",
+        "keep-alive",
+        "proxy-authorization",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+    }
+)
 
 
 def canonical_backend_name(backend: str) -> str:
@@ -37,6 +57,26 @@ def load_sandbox_env() -> dict[str, str]:
 
 def merged_sandbox_env(global_env: dict[str, str], user_env: dict[str, str]) -> dict[str, str]:
     return {**global_env, **normalize_env(user_env)}
+
+
+def provisioner_token() -> str:
+    token = os.getenv("SANDBOX_PROVISIONER_TOKEN", "").strip()
+    if len(token) < 32:
+        raise RuntimeError("SANDBOX_PROVISIONER_TOKEN must contain at least 32 characters")
+    return token
+
+
+def require_provisioner_auth(authorization: Annotated[str | None, Header()] = None) -> None:
+    expected = f"Bearer {provisioner_token()}"
+    if authorization is None or not secrets.compare_digest(authorization, expected):
+        raise HTTPException(status_code=401, detail="invalid provisioner credentials")
+
+
+def sandbox_proxy_url(sandbox_id: str) -> str:
+    public_url = os.getenv("PROVISIONER_PUBLIC_URL", "http://sandbox-provisioner:8002").strip().rstrip("/")
+    if not public_url:
+        raise RuntimeError("PROVISIONER_PUBLIC_URL is required")
+    return f"{public_url}/api/sandboxes/{sandbox_id}/proxy"
 
 
 class CreateSandboxRequest(BaseModel):
@@ -156,16 +196,18 @@ class LocalContainerProvisionerBackend:
             "SANDBOX_IMAGE",
             "enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest",
         )
-        self._network = os.getenv("DOCKER_NETWORK")
+        self._network_prefix = os.getenv("DOCKER_NETWORK_PREFIX")
+        if not self._network_prefix:
+            raise RuntimeError("DOCKER_NETWORK_PREFIX is required for the docker backend")
         self._threads_host_path = os.getenv("DOCKER_THREADS_HOST_PATH")
         self._container_prefix = os.getenv("DOCKER_SANDBOX_PREFIX", "yuxi-sandbox")
-        self._sandbox_host = os.getenv("DOCKER_SANDBOX_HOST", "host.docker.internal")
         self._health_timeout_seconds = int(os.getenv("SANDBOX_HEALTH_TIMEOUT_SECONDS", "300"))
         self._sandbox_env = load_sandbox_env()
 
         try:
             self._client = docker.from_env()
             self._client.ping()
+            self._provisioner_container = self._client.containers.get(os.environ["HOSTNAME"])
         except DockerException as exc:
             raise RuntimeError(f"docker backend unavailable: {exc}") from exc
 
@@ -214,6 +256,10 @@ class LocalContainerProvisionerBackend:
 
     def _container_name(self, sandbox_id: str) -> str:
         return f"{self._container_prefix}-{self._sanitize_id(sandbox_id)}"
+
+    def _network_name(self, sandbox_id: str) -> str:
+        prefix = self._network_prefix.rstrip("-_")
+        return f"{prefix}-{self._sanitize_id(sandbox_id)}"
 
     def _thread_skills_host_path(self, thread_id: str) -> Path:
         threads_root = Path(self._threads_host_path).resolve()
@@ -297,26 +343,65 @@ class LocalContainerProvisionerBackend:
         base = Path(self._normalize_host_bind_path(saves_source))
         if not self._threads_host_path:
             self._threads_host_path = str(base / "threads")
-    def _host_port_for(self, container) -> int | None:
-        ports = (container.attrs.get("NetworkSettings") or {}).get("Ports") or {}
-        bindings = ports.get(f"{self._container_port}/tcp")
-        if not bindings:
-            return None
-        host_port = bindings[0].get("HostPort")
-        if not host_port:
-            return None
-        return int(host_port)
 
-    def _sandbox_url(self, host_port: int) -> str:
-        return f"http://{self._sandbox_host}:{host_port}"
+    def _is_on_expected_network(self, container, sandbox_id: str) -> bool:
+        networks = (container.attrs.get("NetworkSettings") or {}).get("Networks") or {}
+        return set(networks) == {self._network_name(sandbox_id)}
+
+    @staticmethod
+    def _has_expected_network_ownership(network, sandbox_id: str) -> bool:
+        labels = network.attrs.get("Labels") or {}
+        return labels.get("managed-by") == "yuxi-sandbox-provisioner" and labels.get("sandbox-id") == sandbox_id
+
+    def _ensure_network(self, sandbox_id: str) -> str:
+        from docker.errors import NotFound
+
+        network_name = self._network_name(sandbox_id)
+        try:
+            network = self._client.networks.get(network_name)
+        except NotFound:
+            network = self._client.networks.create(
+                network_name,
+                driver="bridge",
+                labels={
+                    "managed-by": "yuxi-sandbox-provisioner",
+                    "sandbox-id": sandbox_id,
+                },
+            )
+
+        network.reload()
+        if not self._has_expected_network_ownership(network, sandbox_id):
+            raise RuntimeError(f"sandbox network {network_name} has unexpected ownership")
+
+        containers = network.attrs.get("Containers") or {}
+        if self._provisioner_container.id not in containers:
+            network.connect(self._provisioner_container, aliases=["sandbox-provisioner"])
+        return network_name
+
+    def _delete_network(self, sandbox_id: str) -> None:
+        from docker.errors import NotFound
+
+        try:
+            network = self._client.networks.get(self._network_name(sandbox_id))
+        except NotFound:
+            return
+        network.reload()
+        if not self._has_expected_network_ownership(network, sandbox_id):
+            logger.warning("Skipping removal of sandbox network %s with unexpected ownership", network.name)
+            return
+        containers = network.attrs.get("Containers") or {}
+        if self._provisioner_container.id in containers:
+            network.disconnect(self._provisioner_container, force=True)
+        network.remove()
+
+    def _sandbox_url(self, container) -> str:
+        return f"http://{container.name}:{self._container_port}"
 
     def _to_record(self, container, sandbox_id: str) -> SandboxRecord:
         state = (container.attrs.get("State") or {}).get("Status")
-        host_port = self._host_port_for(container)
-        sandbox_url = self._sandbox_url(host_port) if host_port is not None else ""
         return SandboxRecord(
             sandbox_id=sandbox_id,
-            sandbox_url=sandbox_url,
+            sandbox_url=self._sandbox_url(container),
             status=state or "unknown",
         )
 
@@ -325,7 +410,7 @@ class LocalContainerProvisionerBackend:
         cmd = (
             "sh -lc "
             '"mkdir -p /home/gem/user-data/workspace /home/gem/user-data/uploads /home/gem/user-data/outputs '
-            '&& chmod -R a+rwx /home/gem/user-data/workspace '
+            "&& chmod -R a+rwx /home/gem/user-data/workspace "
             '&& chmod a+rwx /home/gem/user-data /home/gem/user-data/uploads /home/gem/user-data/outputs"'
         )
         result = container.exec_run(cmd, user="0:0")
@@ -368,17 +453,20 @@ class LocalContainerProvisionerBackend:
                     logger.info("Recreating sandbox %s because skills mount is stale", sandbox_id)
                     self.delete(sandbox_id)
                     existing = None
+                elif not self._is_on_expected_network(existing, sandbox_id):
+                    logger.info("Recreating sandbox %s because its network is stale", sandbox_id)
+                    self.delete(sandbox_id)
+                    existing = None
                 elif not self._has_expected_user_data_mounts(existing, safe_file_thread_id, safe_uid):
                     logger.info("Recreating sandbox %s because user-data mounts are stale", sandbox_id)
                     self.delete(sandbox_id)
                     existing = None
             if existing is not None:
+                self._ensure_network(sandbox_id)
                 if existing.status == "running":
                     try:
                         self._ensure_user_data_writable(existing)
                         record = self._to_record(existing, sandbox_id)
-                        if not record.sandbox_url:
-                            raise RuntimeError(f"sandbox {sandbox_id} has no mapped host port")
                         if not wait_for_sandbox_ready(record.sandbox_url, timeout_seconds=self._health_timeout_seconds):
                             raise RuntimeError(f"sandbox {sandbox_id} is not ready at {record.sandbox_url}")
                         return record
@@ -398,6 +486,7 @@ class LocalContainerProvisionerBackend:
             thread_outputs.mkdir(parents=True, exist_ok=True)
             thread_skills = self._thread_skills_host_path(safe_skills_thread_id)
             thread_skills.mkdir(parents=True, exist_ok=True)
+            network_name = self._ensure_network(sandbox_id)
 
             container_name = self._container_name(sandbox_id)
             run_kwargs = {
@@ -418,27 +507,30 @@ class LocalContainerProvisionerBackend:
                     str(thread_outputs): {"bind": "/home/gem/user-data/outputs", "mode": "rw"},
                     str(thread_skills): {"bind": "/home/gem/skills", "mode": "ro"},
                 },
-                "ports": {f"{self._container_port}/tcp": None},
+                "network": network_name,
                 "security_opt": ["seccomp=unconfined"],
                 # The sandbox image expects /home/gem to be writable during boot.
                 # Keep it ephemeral and mount persistent user-data underneath it.
                 "tmpfs": {"/home/gem": "rw,exec,mode=777"},
             }
-            if self._network:
-                run_kwargs["network"] = self._network
             sandbox_env = merged_sandbox_env(self._sandbox_env, env or {})
             if sandbox_env:
                 run_kwargs["environment"] = sandbox_env
 
-            container = self._client.containers.run(self._sandbox_image, **run_kwargs)
-            container.reload()
-            self._ensure_user_data_writable(container)
-            record = self._to_record(container, sandbox_id)
-            if not record.sandbox_url:
-                raise RuntimeError(f"sandbox {sandbox_id} has no mapped host port")
-            if not wait_for_sandbox_ready(record.sandbox_url, timeout_seconds=self._health_timeout_seconds):
-                raise RuntimeError(f"sandbox {sandbox_id} is not ready at {record.sandbox_url}")
-            return record
+            try:
+                container = self._client.containers.run(self._sandbox_image, **run_kwargs)
+                container.reload()
+                self._ensure_user_data_writable(container)
+                record = self._to_record(container, sandbox_id)
+                if not wait_for_sandbox_ready(record.sandbox_url, timeout_seconds=self._health_timeout_seconds):
+                    raise RuntimeError(f"sandbox {sandbox_id} is not ready at {record.sandbox_url}")
+                return record
+            except Exception:
+                try:
+                    self.delete(sandbox_id)
+                except Exception as cleanup_exc:
+                    logger.warning("Failed to clean up sandbox %s after creation failed: %s", sandbox_id, cleanup_exc)
+                raise
 
     def discover(self, sandbox_id: str) -> SandboxRecord | None:
         container = self._get_container(sandbox_id)
@@ -457,6 +549,14 @@ class LocalContainerProvisionerBackend:
         safe_file_thread_id = self._validate_thread_id(file_thread_id)
         safe_skills_thread_id = self._validate_thread_id(skills_thread_id)
         safe_uid = self._validate_uid(uid)
+        if not self._is_on_expected_network(container, sandbox_id):
+            logger.info("Discarding stale sandbox %s on an unexpected network", sandbox_id)
+            try:
+                self.delete(sandbox_id)
+            except Exception as exc:
+                logger.warning("Failed to delete stale sandbox %s during discover: %s", sandbox_id, exc)
+            return None
+        self._ensure_network(sandbox_id)
         if not self._is_expected_skills_mount(container, safe_skills_thread_id):
             logger.info("Discarding stale sandbox %s with unexpected skills mount", sandbox_id)
             try:
@@ -493,11 +593,11 @@ class LocalContainerProvisionerBackend:
 
     def delete(self, sandbox_id: str) -> None:
         container = self._get_container(sandbox_id)
-        if container is None:
-            return
-        if container.status == "running":
-            container.stop(timeout=10)
-        container.remove(v=True, force=True)
+        if container is not None:
+            if container.status == "running":
+                container.stop(timeout=10)
+            container.remove(v=True, force=True)
+        self._delete_network(sandbox_id)
 
 
 class KubernetesProvisionerBackend:
@@ -669,9 +769,7 @@ class KubernetesProvisionerBackend:
             if getattr(container, "name", None) != "sandbox":
                 continue
             actual_mounts = {
-                str(getattr(mount, "mount_path", "") or "").rstrip("/"): str(
-                    getattr(mount, "sub_path", "") or ""
-                )
+                str(getattr(mount, "mount_path", "") or "").rstrip("/"): str(getattr(mount, "sub_path", "") or "")
                 for mount in getattr(container, "volume_mounts", []) or []
             }
             return all(actual_mounts.get(path) == sub_path for path, sub_path in expected_mounts.items())
@@ -958,15 +1056,28 @@ idle_reaper = SandboxIdleReaper(backend_impl)
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI):
-    idle_reaper.start()
+async def lifespan(app: FastAPI):
+    provisioner_token()
+    app.state.http_client = httpx.AsyncClient(timeout=None, follow_redirects=False, trust_env=False)
     try:
+        idle_reaper.start()
         yield
     finally:
-        idle_reaper.shutdown()
+        try:
+            idle_reaper.shutdown()
+        finally:
+            await app.state.http_client.aclose()
 
 
 app = FastAPI(title="Yuxi Sandbox Provisioner", lifespan=lifespan)
+
+
+def sandbox_response(record: SandboxRecord) -> SandboxResponse:
+    return SandboxResponse(
+        sandbox_id=record.sandbox_id,
+        sandbox_url=sandbox_proxy_url(record.sandbox_id),
+        status=record.status,
+    )
 
 
 @app.get("/health")
@@ -981,7 +1092,11 @@ def health():
     }
 
 
-@app.post("/api/sandboxes", response_model=SandboxResponse)
+@app.post(
+    "/api/sandboxes",
+    response_model=SandboxResponse,
+    dependencies=[Depends(require_provisioner_auth)],
+)
 def create_sandbox(payload: CreateSandboxRequest):
     try:
         # Backend.create() already handles container reuse (discovers existing container first)
@@ -998,14 +1113,14 @@ def create_sandbox(payload: CreateSandboxRequest):
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     idle_reaper.touch(record.sandbox_id)
-    return SandboxResponse(
-        sandbox_id=record.sandbox_id,
-        sandbox_url=record.sandbox_url,
-        status=record.status,
-    )
+    return sandbox_response(record)
 
 
-@app.get("/api/sandboxes/{sandbox_id}", response_model=SandboxResponse)
+@app.get(
+    "/api/sandboxes/{sandbox_id}",
+    response_model=SandboxResponse,
+    dependencies=[Depends(require_provisioner_auth)],
+)
 def get_sandbox(sandbox_id: str):
     try:
         record = backend_impl.discover(sandbox_id)
@@ -1016,14 +1131,14 @@ def get_sandbox(sandbox_id: str):
         raise HTTPException(status_code=404, detail="sandbox not found")
     idle_reaper.touch(record.sandbox_id)
 
-    return SandboxResponse(
-        sandbox_id=record.sandbox_id,
-        sandbox_url=record.sandbox_url,
-        status=record.status,
-    )
+    return sandbox_response(record)
 
 
-@app.post("/api/sandboxes/{sandbox_id}/touch", response_model=TouchSandboxResponse)
+@app.post(
+    "/api/sandboxes/{sandbox_id}/touch",
+    response_model=TouchSandboxResponse,
+    dependencies=[Depends(require_provisioner_auth)],
+)
 def touch_sandbox(sandbox_id: str):
     try:
         record = backend_impl.discover(sandbox_id)
@@ -1035,25 +1150,26 @@ def touch_sandbox(sandbox_id: str):
     return TouchSandboxResponse(ok=True, sandbox_id=sandbox_id, status=record.status)
 
 
-@app.get("/api/sandboxes", response_model=ListSandboxesResponse)
+@app.get(
+    "/api/sandboxes",
+    response_model=ListSandboxesResponse,
+    dependencies=[Depends(require_provisioner_auth)],
+)
 def list_sandboxes():
     try:
         records = backend_impl.list()
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    sandboxes = [
-        SandboxResponse(
-            sandbox_id=record.sandbox_id,
-            sandbox_url=record.sandbox_url,
-            status=record.status,
-        )
-        for record in records
-    ]
+    sandboxes = [sandbox_response(record) for record in records]
     return ListSandboxesResponse(sandboxes=sandboxes, count=len(sandboxes))
 
 
-@app.delete("/api/sandboxes/{sandbox_id}", response_model=DeleteSandboxResponse)
+@app.delete(
+    "/api/sandboxes/{sandbox_id}",
+    response_model=DeleteSandboxResponse,
+    dependencies=[Depends(require_provisioner_auth)],
+)
 def delete_sandbox(sandbox_id: str):
     try:
         backend_impl.delete(sandbox_id)
@@ -1062,3 +1178,58 @@ def delete_sandbox(sandbox_id: str):
     idle_reaper.forget(sandbox_id)
 
     return DeleteSandboxResponse(ok=True, sandbox_id=sandbox_id)
+
+
+@app.api_route(
+    "/api/sandboxes/{sandbox_id}/proxy/{path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
+    dependencies=[Depends(require_provisioner_auth)],
+)
+@app.api_route(
+    "/api/sandboxes/{sandbox_id}/proxy",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
+    dependencies=[Depends(require_provisioner_auth)],
+)
+async def proxy_sandbox_request(sandbox_id: str, request: Request, path: str = ""):
+    try:
+        record = await asyncio.to_thread(backend_impl.discover, sandbox_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail="failed to discover sandbox") from exc
+    if record is None:
+        raise HTTPException(status_code=404, detail="sandbox not found")
+
+    target_url = f"{record.sandbox_url.rstrip('/')}/{path.lstrip('/')}"
+    request_headers = {
+        key: value
+        for key, value in request.headers.items()
+        if key.lower() != "authorization" and key.lower() not in HOP_BY_HOP_HEADERS
+    }
+    client: httpx.AsyncClient = request.app.state.http_client
+    try:
+        upstream_request = client.build_request(
+            request.method,
+            target_url,
+            params=request.query_params,
+            headers=request_headers,
+            content=request.stream(),
+        )
+        upstream_response = await client.send(upstream_request, stream=True)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail="sandbox request failed") from exc
+
+    async def response_body() -> AsyncIterator[bytes]:
+        try:
+            async for chunk in upstream_response.aiter_bytes():
+                yield chunk
+        finally:
+            await upstream_response.aclose()
+
+    response_headers = {
+        key: value for key, value in upstream_response.headers.items() if key.lower() in PROXY_RESPONSE_HEADERS
+    }
+    idle_reaper.touch(sandbox_id)
+    return StreamingResponse(
+        response_body(),
+        status_code=upstream_response.status_code,
+        headers=response_headers,
+    )

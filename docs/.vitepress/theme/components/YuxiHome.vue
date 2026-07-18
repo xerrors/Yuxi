@@ -209,7 +209,7 @@ const vReveal = {
         <div class="yx-grid"></div>
       </div>
       <div class="yx-container yx-hero__inner">
-        <span class="yx-badge">v0.7.0 · MIT 开源 · LangGraph 驱动</span>
+        <span class="yx-badge">v0.7.1 · MIT 开源 · LangGraph 驱动</span>
         <h1 class="yx-hero__title">语析 <span class="yx-accent">Yuxi</span></h1>
         <p class="yx-hero__subtitle">融合 RAG 与知识图谱的智能体 Harness 平台</p>
         <p class="yx-hero__desc">
@@ -453,7 +453,7 @@ const vReveal = {
         </header>
         <div v-reveal class="yx-quick">
           <pre class="yx-code"><code><span class="yx-c-cmt"># 1. 克隆并初始化</span>
-git clone --branch v0.7.1.beta2 --depth 1 https://github.com/xerrors/Yuxi.git
+git clone --branch v0.7.1 --depth 1 https://github.com/xerrors/Yuxi.git
 cd Yuxi && ./scripts/init.sh
 
 <span class="yx-c-cmt"># 2. 使用 Docker 启动</span>

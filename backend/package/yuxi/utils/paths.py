@@ -1,8 +1,10 @@
+import os
 from pathlib import Path
 
-from yuxi import config
-
-VIRTUAL_PATH_PREFIX = config.sandbox_virtual_path_prefix
+_raw_prefix = os.getenv("SANDBOX_VIRTUAL_PATH_PREFIX")
+VIRTUAL_PATH_PREFIX = (_raw_prefix.strip() if _raw_prefix else "/home/gem/user-data") or "/home/gem/user-data"
+if not VIRTUAL_PATH_PREFIX.startswith("/"):
+    VIRTUAL_PATH_PREFIX = f"/{VIRTUAL_PATH_PREFIX}"
 WORKSPACE_DIR_NAME = "workspace"
 WORKSPACE_AGENTS_DIR_NAME = "agents"
 WORKSPACE_AGENT_CONTEXT_FILES = {

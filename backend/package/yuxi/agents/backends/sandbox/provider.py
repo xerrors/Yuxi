@@ -7,10 +7,16 @@ import threading
 import time
 from dataclasses import dataclass
 
-from yuxi import config as conf
 from yuxi.utils.logging_config import logger
 
 from .provisioner_client import ProvisionerClient, SandboxRecord
+
+
+def sandbox_provisioner_token() -> str:
+    token = (os.getenv("SANDBOX_PROVISIONER_TOKEN") or "").strip()
+    if len(token) < 32:
+        raise ValueError("SANDBOX_PROVISIONER_TOKEN must contain at least 32 characters")
+    return token
 
 
 def sandbox_id_for_thread(thread_id: str, skills_thread_id: str | None = None, *, uid: str | None = None) -> str:
@@ -78,20 +84,17 @@ class SandboxConnection:
 
 class ProvisionerSandboxProvider:
     def __init__(self):
-        provider_name = str(getattr(conf, "sandbox_provider", "provisioner")).strip().lower()
+        provider_name = (os.getenv("SANDBOX_PROVIDER") or "provisioner").strip().lower()
         if provider_name != "provisioner":
-            raise RuntimeError("only sandbox_provider=provisioner is supported")
+            raise ValueError("Only SANDBOX_PROVIDER=provisioner is supported.")
+        provisioner_url = (os.getenv("SANDBOX_PROVISIONER_URL") or "http://sandbox-provisioner:8002").strip()
 
-        provisioner_url = str(getattr(conf, "sandbox_provisioner_url", "") or "").strip()
-        if not provisioner_url:
-            raise RuntimeError("sandbox_provisioner_url is required")
-
-        self._client = ProvisionerClient(provisioner_url)
+        self._client = ProvisionerClient(provisioner_url, token=sandbox_provisioner_token())
         self._lock = threading.Lock()
         self._thread_locks: dict[str, threading.Lock] = {}
         self._connections: dict[str, SandboxConnection] = {}
         self._last_touch_at: dict[str, float] = {}
-        self._touch_interval_seconds = int(getattr(conf, "sandbox_keepalive_interval_seconds", 30))
+        self._touch_interval_seconds = int(os.getenv("SANDBOX_KEEPALIVE_INTERVAL_SECONDS") or 30)
 
     def _thread_lock(self, cache_key: str) -> threading.Lock:
         with self._lock:

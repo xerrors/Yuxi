@@ -13,15 +13,17 @@ class SandboxRecord:
 
 
 class ProvisionerClient:
-    def __init__(self, base_url: str, *, timeout_seconds: int = 20):
+    def __init__(self, base_url: str, *, token: str, timeout_seconds: int = 20):
         self._base_url = base_url.rstrip("/")
         self._timeout = httpx.Timeout(timeout_seconds)
+        self._headers = {"Authorization": f"Bearer {token}"}
 
     def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
         return httpx.request(
             method=method,
             url=f"{self._base_url}{path}",
             timeout=self._timeout,
+            headers=self._headers,
             **kwargs,
         )
 

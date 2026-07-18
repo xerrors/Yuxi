@@ -22,6 +22,7 @@ x-api-worker-env: &api-worker-env
   MINIO_URI: ${MINIO_URI:-http://minio:9000}
   SANDBOX_PROVIDER: ${SANDBOX_PROVIDER:-provisioner}
   SANDBOX_PROVISIONER_URL: ${SANDBOX_PROVISIONER_URL:-http://sandbox-provisioner:8002}
+  SANDBOX_PROVISIONER_TOKEN: ${SANDBOX_PROVISIONER_TOKEN:?Set SANDBOX_PROVISIONER_TOKEN in .env.prod}
   SANDBOX_VIRTUAL_PATH_PREFIX: ${SANDBOX_VIRTUAL_PATH_PREFIX:-/home/gem/user-data}
   SANDBOX_EXEC_TIMEOUT_SECONDS: ${SANDBOX_EXEC_TIMEOUT_SECONDS:-180}
   SANDBOX_MAX_OUTPUT_BYTES: ${SANDBOX_MAX_OUTPUT_BYTES:-262144}
@@ -33,7 +34,7 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    image: yuxi-api:${YUXI_VERSION:-0.7.1.beta2}
+    image: yuxi-api:${YUXI_VERSION:-0.7.1}
     container_name: api-prod
     working_dir: /app
     networks:
@@ -71,7 +72,7 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    image: yuxi-api:${YUXI_VERSION:-0.7.1.beta2}
+    image: yuxi-api:${YUXI_VERSION:-0.7.1}
     container_name: worker-prod
     working_dir: /app
     networks:
@@ -113,6 +114,8 @@ services:
     environment:
       # Common provisioner settings
       - PROVISIONER_BACKEND=${SANDBOX_PROVISIONER_BACKEND:-docker}
+      - PROVISIONER_PUBLIC_URL=${SANDBOX_PROVISIONER_URL:-http://sandbox-provisioner:8002}
+      - SANDBOX_PROVISIONER_TOKEN=${SANDBOX_PROVISIONER_TOKEN:?Set SANDBOX_PROVISIONER_TOKEN in .env.prod}
       - SANDBOX_IMAGE=${SANDBOX_IMAGE:-enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest}
       - SANDBOX_CONTAINER_PORT=${SANDBOX_CONTAINER_PORT:-8080}
       - MEMORY_SANDBOX_URL_TEMPLATE=${MEMORY_SANDBOX_URL_TEMPLATE:-http://agent-sandbox:8000}
@@ -125,10 +128,9 @@ services:
       - HTTPS_PROXY=${SANDBOX_HTTPS_PROXY:-}
       - NO_PROXY=localhost,127.0.0.1,host.docker.internal
       # Docker backend only
-      - DOCKER_NETWORK=${SANDBOX_DOCKER_NETWORK:-yuxi-know_app-network}
+      - DOCKER_NETWORK_PREFIX=${SANDBOX_DOCKER_NETWORK_PREFIX:-yuxi-know-sandbox}
       - DOCKER_THREADS_HOST_PATH=${SANDBOX_DOCKER_THREADS_HOST_PATH:-}
       - DOCKER_SANDBOX_PREFIX=${SANDBOX_DOCKER_SANDBOX_PREFIX:-yuxi-sandbox}
-      - DOCKER_SANDBOX_HOST=${SANDBOX_DOCKER_SANDBOX_HOST:-host.docker.internal}
       # Kubernetes backend only
       - K8S_NAMESPACE=${SANDBOX_K8S_NAMESPACE:-yuxi-know}
       - NODE_HOST=${SANDBOX_NODE_HOST:-host.docker.internal}
@@ -148,7 +150,7 @@ services:
       context: .
       dockerfile: docker/web.Dockerfile
       target: production
-    image: yuxi-web:${YUXI_VERSION:-0.7.1.beta2}
+    image: yuxi-web:${YUXI_VERSION:-0.7.1}
     container_name: web-prod
     ports:
       - "80:80"
@@ -253,8 +255,6 @@ services:
   postgres:
     image: postgres:16
     container_name: postgres
-    ports:
-      - "5432:5432"
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.prod}
@@ -296,8 +296,6 @@ services:
       - all
     env_file:
       - .env.prod
-    ports:
-      - 30001:30001
     environment:
       MINERU_MODEL_SOURCE: local
     entrypoint: mineru-api

@@ -413,8 +413,12 @@ class KnowledgeBase(ABC):
 
             return file_meta
 
-        except Exception as e:
-            error_msg = str(e)
+        except (Exception, asyncio.CancelledError) as e:
+            if isinstance(e, asyncio.CancelledError):
+                current_task = asyncio.current_task()
+                if current_task is not None and current_task.cancelling():
+                    current_task.uncancel()
+            error_msg = "File parsing was cancelled" if isinstance(e, asyncio.CancelledError) else str(e)
             logger.error(f"Failed to parse file {file_id}: {error_msg}")
 
             file_meta["status"] = FileStatus.ERROR_PARSING

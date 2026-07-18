@@ -17,6 +17,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
+from yuxi.storage.minio.client import normalize_public_minio_url
 from yuxi.utils.datetime_utils import format_utc_datetime, utc_now_naive
 
 Base = declarative_base()
@@ -91,7 +92,7 @@ class User(Base):
             "username": self.username,
             "uid": self.uid,
             "phone_number": self.phone_number,
-            "avatar": self.avatar,
+            "avatar": normalize_public_minio_url(self.avatar),
             "role": self.role,
             "department_id": self.department_id,
             "created_at": format_utc_datetime(self.created_at),
@@ -212,8 +213,8 @@ class Agent(Base):
             "backend_id": self.backend_id,
             "name": self.name,
             "description": self.description,
-            "icon": self.icon,
-            "pics": self.pics or [],
+            "icon": normalize_public_minio_url(self.icon),
+            "pics": [normalize_public_minio_url(pic) for pic in (self.pics or [])],
             "config_json": self.config_json or {},
             "share_config": self.share_config or {},
             "is_default": bool(self.is_default),

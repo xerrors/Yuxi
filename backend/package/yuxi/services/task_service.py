@@ -1,4 +1,6 @@
 import asyncio
+import math
+import os
 import uuid
 from collections import Counter
 from collections.abc import Awaitable, Callable
@@ -16,8 +18,14 @@ TERMINAL_STATUSES = {"success", "failed", "cancelled"}
 PROGRESS_PERSIST_DELTA = 2.0
 # 内存与数据库各保留最近多少条终态任务，超出的自动清理
 MAX_TERMINAL_TASKS = 200
+# 后台任务默认最多执行 6 小时，可按部署环境或单个任务覆盖。
+TASKER_DEFAULT_TIMEOUT_SECONDS = float(os.getenv("TASKER_DEFAULT_TIMEOUT_SECONDS", 6 * 60 * 60))
 # 哨兵：区分「未传参」与「显式传入 None」，使 result/error 可被清空
 _UNSET: Any = object()
+
+
+class _TaskExecutionTimeout(TimeoutError):
+    pass
 
 
 def _iso_to_utc_naive(value: str | None) -> datetime | None:
@@ -77,6 +85,7 @@ class TaskContext:
         self._tasker = tasker
         self.task_id = task_id
         self.payload = payload or {}
+        self.cancellation_reason: str | None = None
 
     async def set_progress(self, progress: float, message: str | None = None) -> None:
         await self._tasker._update_task(
@@ -96,13 +105,19 @@ class TaskContext:
 
     async def raise_if_cancelled(self) -> None:
         if self.is_cancel_requested():
+            self.cancellation_reason = "cancelled"
             raise asyncio.CancelledError("Task was cancelled")
 
 
 class Tasker:
-    def __init__(self, worker_count: int = 2):
+    def __init__(
+        self,
+        worker_count: int = 2,
+        default_timeout_seconds: float = TASKER_DEFAULT_TIMEOUT_SECONDS,
+    ):
         self.worker_count = max(1, worker_count)
-        self._queue: asyncio.Queue[tuple[str, TaskCoroutine]] = asyncio.Queue()
+        self.default_timeout_seconds = self._validate_timeout_seconds(default_timeout_seconds)
+        self._queue: asyncio.Queue[tuple[str, TaskCoroutine, float]] = asyncio.Queue()
         self._tasks: dict[str, Task] = {}
         self._lock = asyncio.Lock()
         self._lifecycle_lock = asyncio.Lock()
@@ -145,13 +160,15 @@ class Tasker:
         task_type: str,
         payload: dict[str, Any] | None = None,
         coroutine: TaskCoroutine,
+        timeout_seconds: float | None = None,
     ) -> Task:
+        effective_timeout = self._resolve_timeout_seconds(timeout_seconds)
         task_id = uuid.uuid4().hex
         task = Task(id=task_id, name=name, type=task_type, payload=payload or {})
         async with self._lock:
             self._tasks[task_id] = task
             await self._persist_task(task)
-            await self._queue.put((task_id, coroutine))
+            await self._queue.put((task_id, coroutine, effective_timeout))
         logger.info("Enqueued task {} ({})", task_id, name)
         return task
 
@@ -174,7 +191,9 @@ class Tasker:
         coroutine: TaskCoroutine,
         payload_match: dict[str, Any],
         statuses: set[str] | None = None,
+        timeout_seconds: float | None = None,
     ) -> tuple[Task, bool]:
+        effective_timeout = self._resolve_timeout_seconds(timeout_seconds)
         task_payload = payload or {}
         async with self._lock:
             existing = self._find_task_by_payload_locked(task_type, payload_match, statuses)
@@ -184,7 +203,7 @@ class Tasker:
             task = Task(id=task_id, name=name, type=task_type, payload=task_payload)
             self._tasks[task_id] = task
             await self._persist_task(task)
-            await self._queue.put((task_id, coroutine))
+            await self._queue.put((task_id, coroutine, effective_timeout))
         logger.info("Enqueued task {} ({})", task.id, name)
         return task, True
 
@@ -261,7 +280,7 @@ class Tasker:
     async def _worker_loop(self) -> None:
         while True:
             try:
-                task_id, coroutine = await self._queue.get()
+                task_id, coroutine, timeout_seconds = await self._queue.get()
                 try:
                     task = await self._get_task_instance(task_id)
                     if not task:
@@ -274,7 +293,7 @@ class Tasker:
                     )
                     context = TaskContext(self, task_id, task.payload)
                     try:
-                        result = await coroutine(context)
+                        result = await self._run_task_coroutine(coroutine, context, timeout_seconds)
                         if task.cancel_requested:
                             await self._mark_cancelled(task_id, "Task cancelled during execution")
                             continue
@@ -284,6 +303,16 @@ class Tasker:
                             progress=100.0,
                             message="任务已完成",
                             result=result,
+                            completed_at=utc_isoformat(),
+                        )
+                    except _TaskExecutionTimeout as exc:
+                        logger.warning("Task {} timed out after {} seconds", task_id, timeout_seconds)
+                        await self._update_task(
+                            task_id,
+                            status="failed",
+                            progress=100.0,
+                            message="任务执行超时",
+                            error=str(exc),
                             completed_at=utc_isoformat(),
                         )
                     except asyncio.CancelledError:
@@ -312,6 +341,45 @@ class Tasker:
                 worker = asyncio.current_task()
                 if worker is not None and worker.cancelling() > 0:
                     break
+
+    async def _run_task_coroutine(
+        self,
+        coroutine: TaskCoroutine,
+        context: TaskContext,
+        timeout_seconds: float,
+    ) -> Any:
+        execution = asyncio.ensure_future(coroutine(context))
+        try:
+            done, _ = await asyncio.wait({execution}, timeout=timeout_seconds)
+            if execution not in done:
+                context.cancellation_reason = "timeout"
+                execution.cancel()
+                await asyncio.gather(execution, return_exceptions=True)
+                raise _TaskExecutionTimeout(f"Task exceeded the {timeout_seconds:g}-second execution timeout")
+            return await execution
+        except asyncio.CancelledError:
+            current_task = asyncio.current_task()
+            if current_task is not None and current_task.cancelling():
+                context.cancellation_reason = "shutdown"
+                execution.cancel()
+                current_task.uncancel()
+                try:
+                    await asyncio.gather(execution, return_exceptions=True)
+                finally:
+                    current_task.cancel()
+            raise
+
+    def _resolve_timeout_seconds(self, timeout_seconds: float | None) -> float:
+        if timeout_seconds is None:
+            return self.default_timeout_seconds
+        return self._validate_timeout_seconds(timeout_seconds)
+
+    @staticmethod
+    def _validate_timeout_seconds(timeout_seconds: float) -> float:
+        timeout_seconds = float(timeout_seconds)
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+            raise ValueError("Task timeout must be a positive finite number")
+        return timeout_seconds
 
     async def _get_task_instance(self, task_id: str) -> Task | None:
         async with self._lock:

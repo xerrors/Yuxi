@@ -54,7 +54,7 @@ Navigation: [Introduction](https://xerrors.github.io/Yuxi/) ｜ [Quick Start](ht
 **1. Clone and initialize**
 
 ```bash
-git clone --branch v0.7.1.beta2 --depth 1 https://github.com/xerrors/Yuxi.git
+git clone --branch v0.7.1 --depth 1 https://github.com/xerrors/Yuxi.git
 cd Yuxi
 
 # Linux/macOS

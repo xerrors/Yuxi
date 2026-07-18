@@ -1,4 +1,5 @@
 fastapi>=0.121
+httpx>=0.28.1
 uvicorn[standard]>=0.34.2
 kubernetes>=31.0.0
 docker>=7.1.0

@@ -5,7 +5,6 @@ import re
 import uuid
 from typing import Any
 
-from yuxi.knowledge import knowledge_base
 from yuxi.knowledge.eval.benchmark_generation import (
     dump_benchmark_item,
     iter_generated_benchmark_items,
@@ -541,18 +540,27 @@ class EvaluationService:
                 message="完成",
             )
             await context.set_progress(100, "完成")
-        except asyncio.CancelledError:
-            await flush_items_best_effort()
-            raise
-        except Exception as e:
+        except (Exception, asyncio.CancelledError) as e:
+            if isinstance(e, asyncio.CancelledError):
+                current_task = asyncio.current_task()
+                if current_task is not None and current_task.cancelling():
+                    current_task.uncancel()
+            error = str(e)
+            if isinstance(e, asyncio.CancelledError):
+                if context.is_cancel_requested():
+                    error = "任务已取消"
+                elif context.cancellation_reason == "timeout":
+                    error = "任务执行超时"
+                else:
+                    error = "服务停止，任务执行中断"
             await flush_items_best_effort()
             await self._update_dataset_build_metadata(
                 dataset_id,
                 build_metadata,
                 status="failed",
                 progress=100,
-                error_message=str(e),
-                message=str(e),
+                error_message=error,
+                message=error,
             )
             raise
 
@@ -725,17 +733,29 @@ class EvaluationService:
                 final_score=overall_score,
             )
             await context.set_progress(100, "完成")
-        except Exception as e:
-            logger.error(f"Task failed: {e}")
+        except (Exception, asyncio.CancelledError) as e:
+            if isinstance(e, asyncio.CancelledError):
+                current_task = asyncio.current_task()
+                if current_task is not None and current_task.cancelling():
+                    current_task.uncancel()
+            error = str(e)
+            if isinstance(e, asyncio.CancelledError):
+                if context.is_cancel_requested():
+                    error = "任务已取消"
+                elif context.cancellation_reason == "timeout":
+                    error = "任务执行超时"
+                else:
+                    error = "服务停止，任务执行中断"
+            logger.error(f"Task failed: {error}")
             try:
                 if "payload" in locals():
                     await self.eval_repo.update_run(
                         payload["run_id"],
-                        {"status": "failed", "metrics": {"error": str(e)}, "completed_at": utc_now_naive()},
+                        {"status": "failed", "metrics": {"error": error}, "completed_at": utc_now_naive()},
                     )
             except Exception as exc:
                 logger.error(f"Error updating run record: {exc}")
-            await context.set_message(f"Error: {str(e)}")
+            await context.set_message(f"Error: {error}")
             raise
 
     async def list_runs(self, kb_id: str) -> list[dict[str, Any]]:

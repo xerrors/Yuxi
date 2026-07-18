@@ -5272,7 +5272,7 @@ wheels = [
 
 [[package]]
 name = "yuxi"
-version = "0.7.1.beta2"
+version = "0.7.1"
 source = { editable = "." }
 dependencies = [
     { name = "agent-sandbox" },

@@ -563,13 +563,23 @@ class MilvusGraphService:
         exclude_chunk: bool,
     ) -> dict[str, Any]:
         with self.driver.session() as session:
+            query_params: dict[str, Any] = {
+                "keyword": keyword,
+                "limit": limit,
+            }
+            if max_depth > 0:
+                max_depth = min(max_depth, 3)
+                query_params["path_limit"] = max(limit, 1) * 10
             result = session.run(
                 self._build_query(label, keyword, limit, max_depth, exclude_chunk),
-                keyword=keyword,
-                limit=limit,
-                edge_limit=limit * 10,
+                **query_params,
             )
-            return self._process_query_result(result, limit, kb_id, exclude_chunk)
+            if max_depth <= 0:
+                return self._process_query_result(result, limit, kb_id, exclude_chunk)
+            record = result.single()
+            if not record:
+                return {"nodes": [], "edges": []}
+            return self._process_subgraph_record(record, limit, kb_id)
 
     async def query_seed_subgraph(
         self,
@@ -797,7 +807,6 @@ class MilvusGraphService:
 
     def _build_query(self, label: str, keyword: str, limit: int, max_depth: int, exclude_chunk: bool = False) -> str:
         where = self._build_where(exclude_chunk, keyword)
-        m_exclude = " WHERE NOT m:Chunk" if exclude_chunk else ""
 
         if max_depth <= 0:
             return f"""
@@ -807,13 +816,23 @@ class MilvusGraphService:
             LIMIT $limit
             """
 
+        path_node_filter = f"path_node:MilvusKB AND path_node:`{label}`"
+        if exclude_chunk:
+            path_node_filter += " AND NOT path_node:Chunk"
+
         return f"""
         MATCH (n:MilvusKB:`{label}`)
         {where}
         WITH n LIMIT $limit
-        OPTIONAL MATCH (n)-[r]-(m:MilvusKB:`{label}`){m_exclude}
-        RETURN n AS h, r AS r, m AS t
-        LIMIT $edge_limit
+        WITH collect(n) AS seeds
+        UNWIND seeds AS seed
+        OPTIONAL MATCH p = (seed)-[*1..{max_depth}]-(m:MilvusKB:`{label}`)
+        WHERE all(path_node IN nodes(p) WHERE {path_node_filter})
+        WITH seeds, p
+        LIMIT $path_limit
+        WITH seeds, collect(p) AS paths
+        RETURN reduce(path_nodes = [], path IN paths | path_nodes + nodes(path)) + seeds AS nodes,
+               reduce(path_edges = [], path IN paths | path_edges + relationships(path)) AS edges
         """
 
     def _process_query_result(self, result, limit: int, kb_id: str, exclude_chunk: bool = False) -> dict[str, Any]:

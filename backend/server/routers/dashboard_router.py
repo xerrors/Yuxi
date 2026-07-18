@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from server.utils.auth_middleware import get_db, get_superadmin_user
 from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
+from yuxi.storage.minio.client import normalize_public_minio_url
 from yuxi.storage.postgres.models_business import User
 from yuxi.utils.datetime_utils import UTC, ensure_shanghai, shanghai_now, utc_now
 from yuxi.utils.logging_config import logger
@@ -697,7 +698,7 @@ async def get_all_feedbacks(
                 "message_id": feedback.message_id,
                 "uid": feedback.uid,
                 "username": user.username if user else None,
-                "avatar": user.avatar if user else None,
+                "avatar": normalize_public_minio_url(user.avatar) if user else None,
                 "rating": feedback.rating,
                 "reason": feedback.reason,
                 "created_at": feedback.created_at.isoformat(),

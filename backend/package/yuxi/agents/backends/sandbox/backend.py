@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import os
 import uuid
 from contextlib import suppress
 from datetime import datetime
@@ -23,7 +24,6 @@ from deepagents.backends.protocol import (
 from deepagents.backends.sandbox import MAX_BINARY_BYTES, BaseSandbox
 from deepagents.backends.utils import _get_file_type
 
-from yuxi import config as conf
 from yuxi.agents.skills.service import sync_thread_readable_skills
 from yuxi.utils.logging_config import logger
 from yuxi.utils.paths import (
@@ -33,8 +33,7 @@ from yuxi.utils.paths import (
     VIRTUAL_SKILLS_PATH,
     WORKSPACE_DIR_NAME,
 )
-
-from .provider import get_sandbox_provider, sandbox_id_for_thread
+from .provider import get_sandbox_provider, sandbox_id_for_thread, sandbox_provisioner_token
 
 _USER_DATA_ROOT = "/" + VIRTUAL_PATH_PREFIX.strip("/")
 _WORKSPACE_ROOT = f"{_USER_DATA_ROOT}/{WORKSPACE_DIR_NAME}"
@@ -201,8 +200,8 @@ class ProvisionerSandboxBackend(BaseSandbox):
         self._id = sandbox_id_for_thread(self._file_thread_id, self._skills_thread_id, uid=self._uid)
         self._client: Any | None = None
         self._client_url: str | None = None
-        self._command_timeout_seconds = int(getattr(conf, "sandbox_exec_timeout_seconds", 180))
-        self._max_output_bytes = int(getattr(conf, "sandbox_max_output_bytes", 262_144))
+        self._command_timeout_seconds = int(os.getenv("SANDBOX_EXEC_TIMEOUT_SECONDS") or 180)
+        self._max_output_bytes = int(os.getenv("SANDBOX_MAX_OUTPUT_BYTES") or 262_144)
 
     @property
     def id(self) -> str:
@@ -216,7 +215,11 @@ class ProvisionerSandboxBackend(BaseSandbox):
                 "agent-sandbox is required. Install dependency `agent-sandbox` in the docker image."
             ) from exc
 
-        return AgentSandboxClient(base_url=sandbox_url, timeout=self._command_timeout_seconds)
+        return AgentSandboxClient(
+            base_url=sandbox_url,
+            headers={"Authorization": f"Bearer {sandbox_provisioner_token()}"},
+            timeout=self._command_timeout_seconds,
+        )
 
     def _get_client(self) -> Any:
         sync_thread_readable_skills(self._skills_thread_id, self._readable_skills)

@@ -125,12 +125,16 @@ class FakeContext:
         self.payload = payload
         self.progress_calls = []
         self.messages = []
+        self.cancellation_reason = None
 
     async def set_progress(self, progress, message=None):
         self.progress_calls.append((progress, message))
 
     async def set_message(self, message):
         self.messages.append(message)
+
+    def is_cancel_requested(self):
+        return False
 
     async def raise_if_cancelled(self):
         pass

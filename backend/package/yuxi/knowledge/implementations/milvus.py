@@ -758,9 +758,14 @@ class MilvusKB(KnowledgeBase):
             await self.refresh_database_stats(kb_id)
             return result
 
-        except Exception as e:
-            logger.error(f"Indexing failed for {file_id}: {e}")
-            update_data = {"status": FileStatus.ERROR_INDEXING, "error_message": str(e)}
+        except (Exception, asyncio.CancelledError) as e:
+            if isinstance(e, asyncio.CancelledError):
+                current_task = asyncio.current_task()
+                if current_task is not None and current_task.cancelling():
+                    current_task.uncancel()
+            error_msg = "File indexing was cancelled" if isinstance(e, asyncio.CancelledError) else str(e)
+            logger.error(f"Indexing failed for {file_id}: {error_msg}")
+            update_data = {"status": FileStatus.ERROR_INDEXING, "error_message": error_msg}
             if operator_id:
                 update_data["updated_by"] = operator_id
             await KnowledgeFileRepository().update_fields(file_id=file_id, kb_id=kb_id, data=update_data)

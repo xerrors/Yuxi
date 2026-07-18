@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException
-from yuxi import config as conf
 from yuxi.agents.backends.sandbox import (
     ensure_thread_dirs,
     resolve_virtual_path,
@@ -20,12 +19,12 @@ from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.services.conversation_service import require_user_conversation
 from yuxi.services.mention_search_service import invalidate_mention_cache, invalidate_workspace_mention_cache
 from yuxi.utils.datetime_utils import utc_isoformat_from_timestamp
+from yuxi.utils.paths import VIRTUAL_PATH_PREFIX
 
 
 def _get_virtual_root() -> str:
     """Return the virtual root exposed by the thread-files API."""
-    prefix = str(getattr(conf, "sandbox_virtual_path_prefix", "/home/gem/user-data") or "/home/gem/user-data")
-    return "/" + prefix.strip("/")
+    return "/" + VIRTUAL_PATH_PREFIX.strip("/")
 
 
 def _thread_file_entry(

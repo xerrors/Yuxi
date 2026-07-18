@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
@@ -62,13 +61,6 @@ class Config(BaseModel):
     )
     default_ocr_engine: str = Field(default=DEFAULT_OCR_ENGINE, description="默认 OCR 解析引擎")
 
-    sandbox_provider: str = Field(default="provisioner", description="沙箱提供者")
-    sandbox_provisioner_url: str = Field(default="http://sandbox-provisioner:8002", description="沙箱服务地址")
-    sandbox_virtual_path_prefix: str = Field(default="/home/gem/user-data", description="沙箱用户目录前缀")
-    sandbox_exec_timeout_seconds: int = Field(default=180, description="沙箱执行超时时间（秒）")
-    sandbox_max_output_bytes: int = Field(default=262144, description="沙箱最大输出字节数")
-    sandbox_keepalive_interval_seconds: int = Field(default=30, description="沙箱保活间隔")
-
     _config_file: Path | None = PrivateAttr(default=None)
     _runtime_sync_thread: Any = PrivateAttr(default=None)
 
@@ -78,7 +70,6 @@ class Config(BaseModel):
         super().__init__(**data)
         self._setup_paths()
         self._load_user_config()
-        self._handle_environment()
 
     def _setup_paths(self) -> None:
         self._config_file = Path(self.save_dir) / "config" / "base.toml"
@@ -107,30 +98,6 @@ class Config(BaseModel):
 
         except Exception as e:
             logger.error(f"Failed to load config from {self._config_file}: {e}")
-
-    def _handle_environment(self) -> None:
-        self.sandbox_provider = (os.getenv("SANDBOX_PROVIDER") or self.sandbox_provider or "provisioner").strip()
-        self.sandbox_provisioner_url = (
-            os.getenv("SANDBOX_PROVISIONER_URL") or self.sandbox_provisioner_url or "http://sandbox-provisioner:8002"
-        ).strip()
-        self.sandbox_virtual_path_prefix = (
-            os.getenv("SANDBOX_VIRTUAL_PATH_PREFIX") or self.sandbox_virtual_path_prefix or "/home/gem/user-data"
-        ).strip()
-        self.sandbox_exec_timeout_seconds = int(
-            os.getenv("SANDBOX_EXEC_TIMEOUT_SECONDS") or self.sandbox_exec_timeout_seconds or 180
-        )
-        self.sandbox_max_output_bytes = int(
-            os.getenv("SANDBOX_MAX_OUTPUT_BYTES") or self.sandbox_max_output_bytes or 262144
-        )
-        self.sandbox_keepalive_interval_seconds = int(
-            os.getenv("SANDBOX_KEEPALIVE_INTERVAL_SECONDS") or self.sandbox_keepalive_interval_seconds or 30
-        )
-        if self.sandbox_provider.lower() != "provisioner":
-            raise ValueError("Only sandbox_provider=provisioner is supported.")
-        if not self.sandbox_provisioner_url:
-            raise ValueError("SANDBOX_PROVISIONER_URL is required when sandbox provider is provisioner.")
-        if not self.sandbox_virtual_path_prefix.startswith("/"):
-            self.sandbox_virtual_path_prefix = f"/{self.sandbox_virtual_path_prefix}"
 
     def start_runtime_sync(self, interval: float = runtime_cache.RUNTIME_CONFIG_SYNC_INTERVAL_SECONDS) -> None:
         """启动后台线程周期性从 Redis 同步运行时配置。多次调用仅启动一次。"""

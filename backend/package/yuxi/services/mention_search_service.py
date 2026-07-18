@@ -12,9 +12,9 @@ from yuxi.agents.backends.sandbox.paths import (
     sandbox_uploads_dir,
     sandbox_workspace_dir,
 )
-from yuxi.config.app import config
 from yuxi.services.run_queue_service import get_redis_client
 from yuxi.utils.logging_config import logger
+from yuxi.utils.paths import VIRTUAL_PATH_PREFIX
 
 MENTION_EXCLUDE_DIRS = {
     ".git",
@@ -200,7 +200,7 @@ async def get_or_build_file_index(
 
 def _rank_mention_entries(index: list[tuple[str, str, str]], query: str) -> list[dict]:
     query_lower = query.lower()
-    prefix = (config.sandbox_virtual_path_prefix or "/home/gem/user-data").rstrip("/")
+    prefix = VIRTUAL_PATH_PREFIX.rstrip("/")
     name_matched = []
     path_matched = []
 

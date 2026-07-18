@@ -38,8 +38,12 @@ class FakeRepo:
         return self.preset
 
 
-async def _make_tasker(repo: FakeRepo, worker_count: int = 1) -> Tasker:
-    tasker = Tasker(worker_count=worker_count)
+async def _make_tasker(
+    repo: FakeRepo,
+    worker_count: int = 1,
+    default_timeout_seconds: float = 60,
+) -> Tasker:
+    tasker = Tasker(worker_count=worker_count, default_timeout_seconds=default_timeout_seconds)
     tasker._repo = repo
     await tasker.start()
     return tasker
@@ -205,6 +209,97 @@ async def test_cooperative_task_cancellation_keeps_worker_available():
 
     completed = await tasker.enqueue(name="completed", task_type="demo", coroutine=completed_coro)
     assert (await _wait_status(tasker, completed.id, {"success"}))["status"] == "success"
+    await tasker.shutdown()
+
+
+async def test_timeout_fails_task_and_releases_worker():
+    repo = FakeRepo()
+    tasker = await _make_tasker(repo, default_timeout_seconds=0.05)
+    cancellation_reason: list[str | None] = []
+
+    async def slow_coro(ctx):
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            await asyncio.sleep(0)
+            cancellation_reason.append(ctx.cancellation_reason)
+            raise
+
+    async def quick_coro(ctx):
+        return "done"
+
+    slow_task = await tasker.enqueue(name="slow", task_type="demo", coroutine=slow_coro)
+    quick_task = await tasker.enqueue(name="quick", task_type="demo", coroutine=quick_coro)
+
+    timed_out = await _wait_status(tasker, slow_task.id, {"failed"})
+    completed = await _wait_status(tasker, quick_task.id, {"success"})
+
+    assert timed_out["message"] == "任务执行超时"
+    assert "0.05-second execution timeout" in timed_out["error"]
+    assert cancellation_reason == ["timeout"]
+    assert completed["result"] == "done"
+    await tasker.shutdown()
+
+
+async def test_enqueue_timeout_overrides_shorter_default():
+    repo = FakeRepo()
+    tasker = await _make_tasker(repo, default_timeout_seconds=0.01)
+
+    async def coro(ctx):
+        await asyncio.sleep(0.03)
+        return "done"
+
+    task = await tasker.enqueue(
+        name="x",
+        task_type="demo",
+        coroutine=coro,
+        timeout_seconds=0.2,
+    )
+    final = await _wait_status(tasker, task.id, {"success", "failed"})
+
+    assert final["status"] == "success"
+    assert final["result"] == "done"
+    await tasker.shutdown()
+
+
+async def test_task_coroutine_accepts_future_awaitable():
+    repo = FakeRepo()
+    tasker = await _make_tasker(repo)
+    loop = asyncio.get_running_loop()
+
+    def future_coro(ctx):
+        future = loop.create_future()
+        future.set_result("done")
+        return future
+
+    task = await tasker.enqueue(name="x", task_type="demo", coroutine=future_coro)
+    final = await _wait_status(tasker, task.id, {"success"})
+
+    assert final["result"] == "done"
+    await tasker.shutdown()
+
+
+async def test_worker_cancellation_exposes_shutdown_reason():
+    repo = FakeRepo()
+    tasker = await _make_tasker(repo)
+    started = asyncio.Event()
+    cancellation_reason: list[str | None] = []
+
+    async def coro(ctx):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancellation_reason.append(ctx.cancellation_reason)
+            raise
+
+    task = await tasker.enqueue(name="x", task_type="demo", coroutine=coro)
+    await asyncio.wait_for(started.wait(), timeout=1)
+    tasker._workers[0].cancel()
+    final = await _wait_status(tasker, task.id, {"cancelled"})
+
+    assert final["status"] == "cancelled"
+    assert cancellation_reason == ["shutdown"]
     await tasker.shutdown()
 
 
