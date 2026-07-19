@@ -175,7 +175,13 @@
               <div class="status-row">
                 <span class="status-label">状态</span>
                 <a-tag v-if="isBuildActive" color="blue" size="small">构建中</a-tag>
-                <a-tag v-else-if="isBuildFailed" color="red" size="small">构建失败</a-tag>
+                <a-tag v-else-if="isBuildFailed" color="red" size="small">执行异常</a-tag>
+                <a-tag
+                  v-else-if="graphBuildStatus?.build_task_status === 'completed'"
+                  color="green"
+                  size="small"
+                  >执行完成</a-tag
+                >
                 <a-tag v-else-if="graphBuildStatus?.locked" color="green" size="small"
                   >已配置</a-tag
                 >
@@ -200,6 +206,29 @@
                 <div class="stat-item">
                   <span class="stat-value">{{ graphBuildStatus?.indexed_chunks ?? '-' }}</span>
                   <span class="stat-label">已构建</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-value">{{ graphBuildStatus?.structured_chunks ?? '-' }}</span>
+                  <span class="stat-label">结构完成</span>
+                </div>
+                <div
+                  class="stat-item"
+                  :class="{ 'is-clickable': extractionFailedCount > 0 }"
+                  :role="extractionFailedCount > 0 ? 'button' : undefined"
+                  :tabindex="extractionFailedCount > 0 ? 0 : undefined"
+                  @click="openFailedChunkSamples"
+                  @keydown.enter.prevent="openFailedChunkSamples"
+                >
+                  <span class="stat-value">{{ extractionFailedCount }}</span>
+                  <span class="stat-label">抽取失败</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-value">{{ vectorPendingCount }}</span>
+                  <span class="stat-label">向量待处理</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-value">{{ vectorFailedCount }}</span>
+                  <span class="stat-label">向量失败</span>
                 </div>
                 <div class="stat-item">
                   <span class="stat-value">{{ graphBuildStatus?.entity_count ?? '-' }}</span>
@@ -227,9 +256,9 @@
                   type="primary"
                   block
                   :disabled="!graphBuildStatus?.pending_chunks"
-                  @click="startGraphBuild"
+                  @click="vectorFailedCount ? retryGraphVectors() : startGraphBuild()"
                 >
-                  重试索引
+                  {{ vectorFailedCount ? '重试失败向量' : '重试索引' }}
                 </a-button>
                 <a-button
                   v-else
@@ -323,7 +352,7 @@
           />
         </a-form-item>
         <div class="form-grid two-columns">
-          <a-form-item label="并发队列数">
+          <a-form-item label="LLM 抽取并发数">
             <a-input-number
               v-model:value="graphConfigForm.concurrency_count"
               :min="1"
@@ -340,6 +369,38 @@
           </a-form-item>
         </div>
       </a-form>
+    </a-modal>
+
+    <a-modal
+      v-model:open="showFailedChunkSamples"
+      title="样例 Chunk"
+      width="760px"
+      :footer="null"
+    >
+      <div v-if="failedChunkSamplesLoading" class="failed-chunk-loading">
+        <Loader2 :size="18" class="spin" />
+        正在加载失败 Chunk
+      </div>
+      <a-empty v-else-if="!failedChunkSamples.length" description="暂无抽取失败的 Chunk" />
+      <a-tabs v-else v-model:activeKey="activeFailedChunkKey" class="failed-chunk-tabs">
+        <a-tab-pane
+          v-for="(chunk, index) in failedChunkSamples"
+          :key="chunk.chunk_id"
+          :tab="`样例 ${index + 1}`"
+        >
+          <div class="failed-chunk-meta">
+            <span>Chunk {{ Number(chunk.chunk_index) + 1 }}</span>
+            <span>{{ chunk.file_id }}</span>
+            <span>尝试 {{ chunk.details?.attempt_count ?? '-' }} 次</span>
+          </div>
+          <a-alert
+            type="error"
+            :message="chunk.details?.last_error || '未记录失败原因'"
+            show-icon
+          />
+          <pre class="failed-chunk-content">{{ chunk.content }}</pre>
+        </a-tab-pane>
+      </a-tabs>
     </a-modal>
   </div>
 </template>
@@ -401,6 +462,10 @@ const searchInput = ref('')
 const graphBuildStatus = ref(null)
 const graphBuildLoading = ref(false)
 const showGraphConfig = ref(false)
+const showFailedChunkSamples = ref(false)
+const failedChunkSamplesLoading = ref(false)
+const failedChunkSamples = ref([])
+const activeFailedChunkKey = ref('')
 let buildStatusPollTimer = null
 
 const extractorTypeOptions = [
@@ -436,6 +501,14 @@ const pendingGraphChunks = computed(() => {
 })
 
 const hasPendingGraphChunks = computed(() => pendingGraphChunks.value > 0)
+const extractionFailedCount = computed(() =>
+  Number(graphBuildStatus.value?.extraction_counts?.failed || 0)
+)
+const vectorPendingCount = computed(() => {
+  const counts = graphBuildStatus.value?.vector_counts || {}
+  return Number(counts.pending || 0) + Number(counts.processing || 0)
+})
+const vectorFailedCount = computed(() => Number(graphBuildStatus.value?.vector_counts?.failed || 0))
 
 const isGraphIndexComplete = computed(() => {
   return (
@@ -628,7 +701,7 @@ const configureGraphBuild = async () => {
 
 const startGraphBuild = async () => {
   try {
-    const data = await graphBuildApi.startIndex(kbId.value, 20)
+    const data = await graphBuildApi.startIndex(kbId.value)
     message.success(data.message || '图谱构建任务已提交')
     if (data.task_id) {
       taskerStore.registerQueuedTask({
@@ -643,6 +716,44 @@ const startGraphBuild = async () => {
   } catch (e) {
     console.error('Failed to start graph build:', e)
     message.error(getErrorDetail(e, '提交图谱构建任务失败'))
+  }
+}
+
+const retryGraphVectors = async () => {
+  try {
+    const data = await graphBuildApi.reconcile(kbId.value, 'failed')
+    message.success(data.message || '图谱向量索引修复任务已提交')
+    if (data.task_id) {
+      taskerStore.registerQueuedTask({
+        task_id: data.task_id,
+        name: `图谱向量索引修复 (${kbId.value})`,
+        task_type: GRAPH_BUILD_TASK_TYPE,
+        message: data.message,
+        payload: { kb_id: kbId.value, reconcile_mode: 'failed' }
+      })
+    }
+    await loadGraphBuildStatus()
+  } catch (e) {
+    console.error('Failed to reconcile graph vectors:', e)
+    message.error(getErrorDetail(e, '提交图谱向量索引修复任务失败'))
+  }
+}
+
+const openFailedChunkSamples = async () => {
+  if (!extractionFailedCount.value || failedChunkSamplesLoading.value) return
+  showFailedChunkSamples.value = true
+  failedChunkSamplesLoading.value = true
+  failedChunkSamples.value = []
+  activeFailedChunkKey.value = ''
+  try {
+    const data = await graphBuildApi.getFailedChunks(kbId.value, 10)
+    failedChunkSamples.value = data.samples || []
+    activeFailedChunkKey.value = failedChunkSamples.value[0]?.chunk_id || ''
+  } catch (e) {
+    console.error('Failed to load graph extraction failed chunks:', e)
+    message.error(getErrorDetail(e, '加载抽取失败 Chunk 失败'))
+  } finally {
+    failedChunkSamplesLoading.value = false
   }
 }
 
@@ -759,6 +870,8 @@ watch(kbId, () => {
   graphLoaded.value = false
   graph.clearGraph()
   graphBuildStatus.value = null
+  showFailedChunkSamples.value = false
+  failedChunkSamples.value = []
   if (isMilvus.value) {
     loadGraphBuildStatus()
   }
@@ -1030,6 +1143,22 @@ onUnmounted(() => {
     border-radius: 4px;
     background: var(--gray-50);
 
+    &.is-clickable {
+      cursor: pointer;
+      border: 1px solid var(--color-error-100);
+
+      &:hover,
+      &:focus-visible {
+        background: var(--color-error-50);
+        outline: none;
+      }
+
+      .stat-value,
+      .stat-label {
+        color: var(--color-error-700);
+      }
+    }
+
     .stat-value {
       font-size: 15px;
       font-weight: 600;
@@ -1054,6 +1183,40 @@ onUnmounted(() => {
     display: flex;
     justify-content: space-between;
   }
+}
+
+.failed-chunk-loading {
+  min-height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--gray-600);
+}
+
+.failed-chunk-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-bottom: 12px;
+  color: var(--gray-600);
+  font-size: 12px;
+}
+
+.failed-chunk-content {
+  max-height: 360px;
+  overflow: auto;
+  margin: 12px 0 0;
+  padding: 14px;
+  border: 1px solid var(--gray-150);
+  border-radius: 8px;
+  background: var(--gray-50);
+  color: var(--gray-900);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .config-warning {

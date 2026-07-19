@@ -47,46 +47,33 @@ class MilvusGraphVectorStore:
         except Exception as exc:
             logger.warning(f"Milvus graph database operation failed, using default: {exc}")
 
-    async def insert_missing_graph_records(
+    async def upsert_graph_records(
         self,
         *,
         kb_id: str,
         embedding_model_spec: str,
-        entities: list[dict[str, Any]],
-        triples: list[dict[str, Any]],
+        record_type: str,
+        records: list[dict[str, Any]],
     ) -> None:
-        if not entities and not triples:
+        if not records:
             return
-
         embedding_info = model_cache.get_model_info(embedding_model_spec)
         if not embedding_info or embedding_info.model_type != "embedding":
             raise ValueError(f"Unsupported embedding model: {embedding_model_spec}")
 
-        entity_collection = self._get_or_create_entity_collection(kb_id, embedding_info)
-        triple_collection = self._get_or_create_triple_collection(kb_id, embedding_info)
-
-        entity_ids = [entity["entity_id"] for entity in entities]
-        triple_ids = [triple["triple_id"] for triple in triples]
-        existing_entity_ids, existing_triple_ids = await asyncio.gather(
-            asyncio.to_thread(self._query_existing_ids, entity_collection, entity_ids),
-            asyncio.to_thread(self._query_existing_ids, triple_collection, triple_ids),
-        )
-
-        missing_entities = [entity for entity in entities if entity["entity_id"] not in existing_entity_ids]
-        missing_triples = [triple for triple in triples if triple["triple_id"] not in existing_triple_ids]
-        if not missing_entities and not missing_triples:
-            return
+        if record_type == "entity":
+            collection = await asyncio.to_thread(self._get_or_create_entity_collection, kb_id, embedding_info)
+        elif record_type == "triple":
+            collection = await asyncio.to_thread(self._get_or_create_triple_collection, kb_id, embedding_info)
+        else:
+            raise ValueError(f"Unsupported graph vector record type: {record_type}")
 
         embed = self._get_embedding_function(embedding_model_spec)
-        entity_embeddings, triple_embeddings = await asyncio.gather(
-            embed([entity["content"] for entity in missing_entities]) if missing_entities else self._empty_embeddings(),
-            embed([triple["content"] for triple in missing_triples]) if missing_triples else self._empty_embeddings(),
-        )
-
-        if missing_entities:
-            await asyncio.to_thread(self._insert_entities, entity_collection, missing_entities, entity_embeddings)
-        if missing_triples:
-            await asyncio.to_thread(self._insert_triples, triple_collection, missing_triples, triple_embeddings)
+        embeddings = await embed([record["content"] for record in records])
+        if record_type == "entity":
+            await asyncio.to_thread(self._upsert_entities, collection, records, embeddings)
+        else:
+            await asyncio.to_thread(self._upsert_triples, collection, records, embeddings)
 
     async def delete_graph_records(self, kb_id: str, *, entity_ids: list[str], triple_ids: list[str]) -> None:
         tasks = []
@@ -149,9 +136,6 @@ class MilvusGraphVectorStore:
                     logger.info(f"Dropped Milvus graph collection {collection_name}")
             except Exception as exc:
                 logger.error(f"Failed to drop Milvus graph collection {collection_name}: {exc}")
-
-    async def _empty_embeddings(self) -> list:
-        return []
 
     def _get_embedding_function(self, embedding_model_spec: str):
         model = select_embedding_model(embedding_model_spec)
@@ -280,34 +264,22 @@ class MilvusGraphVectorStore:
         )
         return collection
 
-    def _query_existing_ids(self, collection: Collection, ids: list[str]) -> set[str]:
-        if not ids:
-            return set()
-        collection.load()
-        existing_ids: set[str] = set()
-        for start in range(0, len(ids), 1000):
-            batch = ids[start : start + 1000]
-            quoted_ids = ", ".join(f'"{item}"' for item in batch)
-            rows = collection.query(expr=f"id in [{quoted_ids}]", output_fields=["id"])
-            existing_ids.update(row["id"] for row in rows)
-        return existing_ids
-
-    def _insert_entities(self, collection: Collection, entities: list[dict[str, Any]], embeddings: list) -> None:
-        collection.insert(
+    def _upsert_entities(self, collection: Collection, records: list[dict[str, Any]], embeddings: list) -> None:
+        collection.upsert(
             [
-                [entity["entity_id"] for entity in entities],
-                [entity["content"] for entity in entities],
+                [record["id"] for record in records],
+                [record["content"] for record in records],
                 embeddings,
             ]
         )
 
-    def _insert_triples(self, collection: Collection, triples: list[dict[str, Any]], embeddings: list) -> None:
-        collection.insert(
+    def _upsert_triples(self, collection: Collection, records: list[dict[str, Any]], embeddings: list) -> None:
+        collection.upsert(
             [
-                [triple["triple_id"] for triple in triples],
-                [triple["content"] for triple in triples],
-                [triple["source_entity_id"] for triple in triples],
-                [triple["target_entity_id"] for triple in triples],
+                [record["id"] for record in records],
+                [record["content"] for record in records],
+                [record["source_id"] for record in records],
+                [record["target_id"] for record in records],
                 embeddings,
             ]
         )

@@ -107,10 +107,19 @@
             </a-menu-item-group>
           </template>
         </a-menu>
-        <div v-if="hasModelMetadata" class="model-metadata-source">
-          部分信息（价格、能力等）来自
-          <a href="https://models.dev" target="_blank" rel="noreferrer" @click.stop>models.dev</a>
-          填补。仅供参考，可能和官网有偏差。
+        <div v-if="userStore.isAdmin || hasModelMetadata" class="model-metadata-source">
+          <template v-if="userStore.isAdmin">
+            没有合适的模型？
+            <RouterLink :to="{ path: '/agent-manage', query: { tab: 'providers' } }" @click.stop>
+              配置模型
+            </RouterLink>
+          </template>
+          <template v-if="hasModelMetadata">
+            <span v-if="userStore.isAdmin">。 </span>
+            部分信息（价格、能力等）来自
+            <a href="https://models.dev" target="_blank" rel="noreferrer" @click.stop>models.dev</a>
+            填补。仅供参考，可能和官网有偏差。
+          </template>
         </div>
       </div>
     </template>
@@ -122,6 +131,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { modelProviderApi } from '@/apis/system_api'
 import { Eye, RefreshCw, X } from 'lucide-vue-next'
 import { useModelStatus } from '@/composables/useModelStatus'
+import { useUserStore } from '@/stores/user'
 import { loadModelMetadataCatalog, resolveModelDisplayMetadata } from '@/utils/modelMetadata'
 
 const props = defineProps({
@@ -154,6 +164,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['select-model'])
+const userStore = useUserStore()
 
 // v2 模型数据：每次展开下拉时实时从后端拉取
 const v2Models = ref({})

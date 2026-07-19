@@ -507,10 +507,8 @@ async def configure_graph_build(
 @knowledge.post("/databases/{kb_id}/graph-build/index")
 async def index_graph_build(
     kb_id: str,
-    data: dict | None = Body(default=None),
     current_user: User = Depends(get_admin_user),
 ):
-    data = data or {}
     try:
         if await _has_running_graph_build_task(kb_id):
             raise HTTPException(status_code=409, detail="该知识库已有正在运行的图谱构建任务")
@@ -519,7 +517,6 @@ async def index_graph_build(
         if not database:
             raise HTTPException(status_code=404, detail=f"知识库 {kb_id} 不存在")
 
-        batch_size = max(1, min(int(data.get("batch_size") or 20), 200))
         service = MilvusGraphService()
         graph_status = await service.get_status(kb_id)
         if not graph_status.get("locked"):
@@ -528,15 +525,18 @@ async def index_graph_build(
         async def run_graph_index(context: TaskContext):
             await context.set_message("任务初始化")
             await context.set_progress(5.0, "准备构建图谱")
-            result = await service.build_pending_chunks(kb_id, batch_size=batch_size, context=context)
+            result = await service.build_pending_chunks(kb_id, context=context)
             await context.set_result(result)
-            await context.set_progress(100.0, f"图谱构建完成，成功 {result['success']} 个，失败 {result['failed']} 个")
+            await context.set_progress(
+                100.0,
+                f"图谱构建执行完成，成功 {result['success']} 个，抽取失败 {result['extraction_failed']} 个",
+            )
             return result
 
         task, created = await tasker.enqueue_unique_by_payload(
             name=f"图谱构建 ({database['name']})",
             task_type=GRAPH_TASK_TYPE,
-            payload={"kb_id": kb_id, "batch_size": batch_size},
+            payload={"kb_id": kb_id},
             coroutine=run_graph_index,
             payload_match={"kb_id": kb_id},
             statuses=ACTIVE_GRAPH_BUILD_STATUSES,
@@ -551,6 +551,21 @@ async def index_graph_build(
     except Exception as e:
         logger.error(f"提交图谱构建任务失败 {e}, {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"提交图谱构建任务失败: {e}")
+
+
+@knowledge.get("/databases/{kb_id}/graph-build/failed-chunks")
+async def get_graph_build_failed_chunks(
+    kb_id: str,
+    limit: int = 10,
+    current_user: User = Depends(get_admin_user),
+):
+    try:
+        return await MilvusGraphService().get_failed_chunk_samples(kb_id, limit=max(1, min(limit, 10)))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"获取图谱抽取失败 Chunk 样例失败 {e}, {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"获取图谱抽取失败 Chunk 样例失败: {e}")
 
 
 @knowledge.post("/databases/{kb_id}/graph-build/reset")
@@ -576,6 +591,60 @@ async def reset_graph_build(
     except Exception as e:
         logger.error(f"重置图谱构建状态失败 {e}, {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"重置图谱构建状态失败: {e}")
+
+
+@knowledge.post("/databases/{kb_id}/graph-build/reconcile")
+async def reconcile_graph_build(
+    kb_id: str,
+    data: dict | None = Body(default=None),
+    current_user: User = Depends(get_admin_user),
+):
+    data = data or {}
+    mode = data.get("mode") or "failed"
+    if mode not in {"failed", "all_vectors"}:
+        raise HTTPException(status_code=400, detail="mode 必须是 failed 或 all_vectors")
+    try:
+        if await _has_running_graph_build_task(kb_id):
+            raise HTTPException(status_code=409, detail="该知识库已有正在运行的图谱构建任务")
+
+        database = await knowledge_base.get_database_info(kb_id)
+        if not database:
+            raise HTTPException(status_code=404, detail=f"知识库 {kb_id} 不存在")
+
+        service = MilvusGraphService()
+
+        async def run_graph_reconcile(context: TaskContext):
+            await context.set_progress(5.0, "准备修复图谱向量索引")
+            reconcile_result = await service.reconcile_vectors(kb_id, all_vectors=mode == "all_vectors")
+            result = await service.build_pending_chunks(kb_id, context=context)
+            result["reconcile"] = reconcile_result
+            await context.set_result(result)
+            await context.set_progress(100.0, "图谱向量索引修复完成")
+            return result
+
+        task, created = await tasker.enqueue_unique_by_payload(
+            name=f"图谱向量索引修复 ({database['name']})",
+            task_type=GRAPH_TASK_TYPE,
+            payload={"kb_id": kb_id, "reconcile_mode": mode},
+            coroutine=run_graph_reconcile,
+            payload_match={"kb_id": kb_id},
+            statuses=ACTIVE_GRAPH_BUILD_STATUSES,
+        )
+        if not created:
+            raise HTTPException(status_code=409, detail="该知识库已有正在运行的图谱构建任务")
+        return {
+            "message": "图谱向量索引修复任务已提交",
+            "status": "queued",
+            "task_id": task.id,
+            "mode": mode,
+        }
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"提交图谱向量索引修复任务失败 {e}, {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"提交图谱向量索引修复任务失败: {e}")
 
 
 @knowledge.get("/databases/{kb_id}/export")

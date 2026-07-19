@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import weakref
 from typing import Any
 
@@ -32,6 +33,17 @@ from yuxi.utils.datetime_utils import utc_isoformat
 GRAPH_CONFIG_KEY = "graph_build_config"
 GRAPH_TASK_TYPE = "knowledge_graph_index"
 NEO4J_QUERY_OFFLOAD_LIMIT = 8
+# 数据库游标每次预取的 chunk 数量边界，只控制查询频率和单页内存，不限制 LLM 并发。
+# 实际 LLM 并发只由 extractor_options.concurrency_count 决定；预取量会按其两倍动态计算后落在此范围内。
+GRAPH_BUILD_FETCH_MIN_SIZE = 100
+GRAPH_BUILD_FETCH_MAX_SIZE = 1000
+# 构建任务 INFO 汇总日志与前端进度更新间隔；单个 chunk 的耗时明细使用 DEBUG 日志。
+GRAPH_BUILD_LOG_INTERVAL_SECONDS = 5.0
+GRAPH_VECTOR_BATCH_SIZE = 100
+GRAPH_VECTOR_LEASE_SECONDS = 300
+GRAPH_VECTOR_FLUSH_INTERVAL_SECONDS = 0.2
+GRAPH_EXTRACTION_MAX_ATTEMPTS = 3
+GRAPH_EXTRACTION_RETRY_DELAYS_SECONDS = (2.0, 10.0)
 _neo4j_query_offload_semaphore_refs: dict[
     int,
     tuple[weakref.ReferenceType[asyncio.AbstractEventLoop], weakref.ReferenceType[asyncio.Semaphore]],
@@ -90,6 +102,7 @@ class MilvusGraphService:
         self.chunk_repo = chunk_repo or KnowledgeChunkRepository()
         self.graph_repo = graph_repo or KnowledgeGraphRepository()
         self._graph_vector_store = graph_vector_store
+        self._graph_vector_store_lock = asyncio.Lock()
         self._connection = neo4j_connection
 
     @property
@@ -104,6 +117,14 @@ class MilvusGraphService:
             self._graph_vector_store = MilvusGraphVectorStore()
         return self._graph_vector_store
 
+    async def get_graph_vector_store(self) -> MilvusGraphVectorStore:
+        if self._graph_vector_store is not None:
+            return self._graph_vector_store
+        async with self._graph_vector_store_lock:
+            if self._graph_vector_store is None:
+                self._graph_vector_store = await asyncio.to_thread(MilvusGraphVectorStore)
+        return self._graph_vector_store
+
     @property
     def driver(self):
         return self.connection.driver
@@ -112,34 +133,42 @@ class MilvusGraphService:
         kb = await self._get_milvus_kb(kb_id)
         params = dict(kb.additional_params or {})
         config = params.get(GRAPH_CONFIG_KEY) or {}
-        total_chunks, pending_chunks, indexed_chunks, graph_counts = await asyncio.gather(
+        status_values = await asyncio.gather(
             self.chunk_repo.count_by_kb_id(kb_id),
             self.chunk_repo.count_graph_pending_by_kb_id(kb_id),
             self.chunk_repo.count_graph_indexed_by_kb_id(kb_id),
+            self.chunk_repo.count_graph_structure_indexed_by_kb_id(kb_id),
+            self.chunk_repo.count_graph_extraction_statuses_by_kb_id(kb_id),
             self.graph_repo.count_by_kb_id(kb_id),
+            self.graph_repo.count_vector_statuses_by_kb_id(kb_id),
         )
+        (
+            total_chunks,
+            pending_chunks,
+            indexed_chunks,
+            structured_chunks,
+            extraction_counts,
+            graph_counts,
+            vector_counts,
+        ) = status_values
         entity_count, relationship_count = graph_counts
 
         build_task_status = None
         build_task_progress = 0
         if tasker is not None:
-            active_task = await tasker.find_task_by_payload(
+            latest_task = await tasker.find_task_by_payload(
                 task_type=GRAPH_TASK_TYPE,
                 payload_match={"kb_id": kb_id},
-                statuses={"pending", "running"},
+                statuses=None,
             )
-            if active_task:
-                build_task_status = active_task.status
-                build_task_progress = round(active_task.progress)
-            else:
-                failed_task = await tasker.find_task_by_payload(
-                    task_type=GRAPH_TASK_TYPE,
-                    payload_match={"kb_id": kb_id},
-                    statuses={"failed", "cancelled"},
-                )
-                if failed_task:
-                    build_task_status = "failed"
-                    build_task_progress = 0
+            if latest_task and latest_task.status in {"pending", "running"}:
+                build_task_status = latest_task.status
+                build_task_progress = round(latest_task.progress)
+            elif latest_task and latest_task.status == "success":
+                build_task_status = "completed"
+                build_task_progress = 100
+            elif latest_task and latest_task.status in {"failed", "cancelled"}:
+                build_task_status = "failed"
 
         return {
             "kb_id": kb_id,
@@ -150,6 +179,9 @@ class MilvusGraphService:
             "total_chunks": total_chunks,
             "pending_chunks": pending_chunks,
             "indexed_chunks": indexed_chunks,
+            "structured_chunks": structured_chunks,
+            "extraction_counts": extraction_counts,
+            "vector_counts": vector_counts,
             "entity_count": entity_count,
             "relationship_count": relationship_count,
             "build_task_status": build_task_status,
@@ -190,89 +222,291 @@ class MilvusGraphService:
         await self.kb_repo.update(kb_id, {"additional_params": additional_params})
         return config
 
-    async def build_pending_chunks(self, kb_id: str, *, batch_size: int, context=None) -> dict[str, Any]:
+    async def get_failed_chunk_samples(self, kb_id: str, limit: int = 10) -> dict[str, Any]:
+        await self._get_milvus_kb(kb_id)
+        samples = await self.chunk_repo.list_graph_extraction_failed_samples(kb_id, limit)
+        return {"kb_id": kb_id, "samples": samples}
+
+    async def build_pending_chunks(self, kb_id: str, *, context=None) -> dict[str, Any]:
         kb = await self._get_milvus_kb(kb_id)
         config = self._get_locked_config(kb.additional_params or {})
         extractor_options = self._runtime_extractor_options(config)
         extractor = GraphExtractorFactory.create(config["extractor_type"], extractor_options)
         worker_count = self._get_worker_count(config)
         total_pending = await self.chunk_repo.count_graph_pending_by_kb_id(kb_id)
+        initially_indexed = await self.chunk_repo.count_graph_indexed_by_kb_id(kb_id)
         processed = 0
-        failed = 0
-        failed_chunk_ids: set[str] = set()
-        write_lock = asyncio.Lock()
+        extraction_failed = 0
+        write_failed = 0
+        extraction_completed = 0
+        write_completed = 0
+        active_extractions = 0
+        fetch_size = max(GRAPH_BUILD_FETCH_MIN_SIZE, min(worker_count * 2, GRAPH_BUILD_FETCH_MAX_SIZE))
+        extraction_queue: asyncio.Queue[Any | None] = asyncio.Queue(maxsize=max(worker_count * 2, 1))
+        write_queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=max(worker_count * 2, 1))
+        reporter_stop = asyncio.Event()
+        structure_done = asyncio.Event()
+        vector_wakeup = asyncio.Event()
+        started_at = time.monotonic()
 
-        while True:
-            if context is not None:
-                await context.raise_if_cancelled()
-            chunks = await self.chunk_repo.list_graph_pending_by_kb_id(kb_id, batch_size)
-            unprocessed = [c for c in chunks if c.chunk_id not in failed_chunk_ids]
-            if not unprocessed:
-                break
+        logger.info(
+            f"图谱构建开始 kb_id={kb_id} pending={total_pending} "
+            f"extraction_concurrency={worker_count} fetch_size={fetch_size}"
+        )
 
-            queue: asyncio.Queue[Any] = asyncio.Queue()
-            for chunk in unprocessed:
-                queue.put_nowait(chunk)
+        async def put_queue_item(queue: asyncio.Queue, item) -> None:
+            while True:
+                if context is not None:
+                    await context.raise_if_cancelled()
+                try:
+                    await asyncio.wait_for(queue.put(item), timeout=0.5)
+                    return
+                except TimeoutError:
+                    continue
 
-            async def worker() -> None:
-                nonlocal processed, failed
-                while True:
+        async def extraction_worker(worker_index: int) -> None:
+            nonlocal active_extractions, extraction_completed, extraction_failed
+            while True:
+                chunk = await extraction_queue.get()
+                try:
+                    if chunk is None:
+                        return
                     if context is not None:
                         await context.raise_if_cancelled()
+                    active_extractions += 1
+                    extraction_started_at = time.monotonic()
                     try:
-                        chunk = queue.get_nowait()
-                    except asyncio.QueueEmpty:
-                        return
-                    try:
-                        extraction_result = await self._get_chunk_extraction_result(kb_id, chunk, extractor)
-                        async with write_lock:
-                            entities, triples = await asyncio.to_thread(
-                                self.write_chunk_graph,
-                                kb_id,
-                                chunk,
-                                extraction_result,
-                            )
-                            await self.graph_repo.upsert_chunk_graph(
-                                kb_id=kb_id,
-                                file_id=chunk.file_id,
-                                chunk_id=chunk.chunk_id,
-                                entities=entities,
-                                triples=triples,
-                            )
-                            await self.graph_vector_store.insert_missing_graph_records(
-                                kb_id=kb_id,
-                                embedding_model_spec=kb.embedding_model_spec,
-                                entities=entities,
-                                triples=triples,
-                            )
-                            await self.chunk_repo.mark_graph_indexed(
-                                chunk.chunk_id,
-                                ent_ids=[entity["entity_id"] for entity in entities],
-                            )
-                        processed += 1
+                        await self._get_chunk_extraction_result(kb_id, chunk, extractor)
+                        await put_queue_item(write_queue, chunk.chunk_id)
                     except Exception as exc:
-                        logger.error(f"Chunk 图谱构建失败 chunk_id={chunk.chunk_id}: {exc}")
-                        failed_chunk_ids.add(chunk.chunk_id)
-                        failed += 1
+                        extraction_failed += 1
+                        logger.error(
+                            f"Chunk 图谱抽取失败 kb_id={kb_id} chunk_id={chunk.chunk_id} worker={worker_index}: {exc}"
+                        )
                     finally:
-                        queue.task_done()
+                        active_extractions -= 1
+                        extraction_completed += 1
+                        logger.debug(
+                            f"Chunk 图谱抽取结束 kb_id={kb_id} chunk_id={chunk.chunk_id} "
+                            f"worker={worker_index} duration={time.monotonic() - extraction_started_at:.2f}s"
+                        )
+                finally:
+                    extraction_queue.task_done()
 
+        async def write_worker() -> None:
+            nonlocal processed, write_failed, write_completed
+            while True:
+                chunk_id = await write_queue.get()
+                try:
+                    if chunk_id is None:
+                        return
                     if context is not None:
-                        completed = processed + failed
-                        progress = 5.0 + min(90.0, completed / max(total_pending, 1) * 90.0)
-                        await context.set_progress(progress, f"图谱构建 {completed}/{total_pending}，失败 {failed}")
+                        await context.raise_if_cancelled()
+                    chunk = await self.chunk_repo.get_by_chunk_id(chunk_id)
+                    if chunk is None:
+                        raise ValueError(f"图谱写入找不到 chunk: {chunk_id}")
+                    extraction_result = await self._get_chunk_extraction_result(kb_id, chunk, extractor)
+                    write_started_at = time.monotonic()
+                    entities, triples = await asyncio.to_thread(
+                        self.write_chunk_graph,
+                        kb_id,
+                        chunk,
+                        extraction_result,
+                    )
+                    await self.graph_repo.upsert_chunk_graph(
+                        kb_id=kb_id,
+                        file_id=chunk.file_id,
+                        chunk_id=chunk.chunk_id,
+                        entities=entities,
+                        triples=triples,
+                    )
+                    await self.chunk_repo.mark_graph_structure_indexed(
+                        chunk.chunk_id,
+                        ent_ids=[entity["entity_id"] for entity in entities],
+                    )
+                    vector_wakeup.set()
+                    processed += 1
+                    logger.debug(
+                        f"Chunk 图谱写入结束 kb_id={kb_id} chunk_id={chunk.chunk_id} "
+                        f"entities={len(entities)} triples={len(triples)} "
+                        f"duration={time.monotonic() - write_started_at:.2f}s"
+                    )
+                except Exception as exc:
+                    write_failed += 1
+                    logger.error(f"Chunk 图谱写入失败 kb_id={kb_id} chunk_id={chunk_id}: {exc}")
+                finally:
+                    if chunk_id is not None:
+                        write_completed += 1
+                    write_queue.task_done()
 
-            workers = [asyncio.create_task(worker()) for _ in range(min(worker_count, len(unprocessed)))]
+        async def index_vector_batch(record_type: str) -> int:
+            lock_token, records = await self.graph_repo.claim_vector_records(
+                kb_id=kb_id,
+                record_type=record_type,
+                limit=GRAPH_VECTOR_BATCH_SIZE,
+                lease_seconds=GRAPH_VECTOR_LEASE_SECONDS,
+            )
+            if not records:
+                return 0
+            record_ids = [record["id"] for record in records]
             try:
-                await asyncio.gather(*workers)
-            except Exception:
-                for task in workers:
-                    task.cancel()
-                await asyncio.gather(*workers, return_exceptions=True)
+                graph_vector_store = await self.get_graph_vector_store()
+                await graph_vector_store.upsert_graph_records(
+                    kb_id=kb_id,
+                    embedding_model_spec=kb.embedding_model_spec,
+                    record_type=record_type,
+                    records=records,
+                )
+                await self.graph_repo.mark_vector_records_indexed(
+                    record_type=record_type,
+                    record_ids=record_ids,
+                    lock_token=lock_token,
+                )
+            except asyncio.CancelledError as exc:
+                await self.graph_repo.mark_vector_records_failed(
+                    record_type=record_type,
+                    record_ids=record_ids,
+                    lock_token=lock_token,
+                    error=str(exc) or "cancelled",
+                )
                 raise
+            except Exception as exc:
+                await self.graph_repo.mark_vector_records_failed(
+                    record_type=record_type,
+                    record_ids=record_ids,
+                    lock_token=lock_token,
+                    error=str(exc),
+                )
+                logger.error(f"图谱向量索引失败 kb_id={kb_id} type={record_type} count={len(records)}: {exc}")
+            return len(records)
+
+        async def vector_worker() -> None:
+            while True:
+                if context is not None:
+                    await context.raise_if_cancelled()
+                entity_count, triple_count = await asyncio.gather(
+                    index_vector_batch("entity"),
+                    index_vector_batch("triple"),
+                )
+                if entity_count or triple_count:
+                    await self.graph_repo.finalize_graph_indexed_chunks(kb_id)
+                    continue
+
+                vector_counts = await self.graph_repo.count_vector_statuses_by_kb_id(kb_id)
+                if structure_done.is_set() and not vector_counts["pending"] and not vector_counts["processing"]:
+                    await self.graph_repo.finalize_graph_indexed_chunks(kb_id)
+                    return
+                vector_wakeup.clear()
+                try:
+                    await asyncio.wait_for(vector_wakeup.wait(), timeout=1.0)
+                except TimeoutError:
+                    pass
+                if vector_wakeup.is_set():
+                    await asyncio.sleep(GRAPH_VECTOR_FLUSH_INTERVAL_SECONDS)
+
+        async def report_progress() -> None:
+            while True:
+                try:
+                    await asyncio.wait_for(reporter_stop.wait(), timeout=GRAPH_BUILD_LOG_INTERVAL_SECONDS)
+                except TimeoutError:
+                    pass
+
+                elapsed = max(time.monotonic() - started_at, 0.001)
+                extraction_rate = extraction_completed / elapsed
+                vector_counts = await self.graph_repo.count_vector_statuses_by_kb_id(kb_id)
+                message = (
+                    f"图谱构建：抽取 {extraction_completed}/{total_pending} "
+                    f"(活跃 {active_extractions}/{worker_count})，写入 {write_completed}/{total_pending}，"
+                    f"向量待处理 {vector_counts['pending'] + vector_counts['processing']}，"
+                    f"向量失败 {vector_counts['failed']}，抽取失败 {extraction_failed}，"
+                    f"写入失败 {write_failed}，抽取吞吐 {extraction_rate:.2f} chunk/s"
+                )
+                logger.info(f"kb_id={kb_id} {message}")
+                if context is not None:
+                    extraction_progress = extraction_completed / max(total_pending, 1) * 40.0
+                    structure_progress = write_completed / max(total_pending, 1) * 20.0
+                    indexed_chunks = await self.chunk_repo.count_graph_indexed_by_kb_id(kb_id)
+                    newly_indexed = max(indexed_chunks - initially_indexed, 0)
+                    vector_progress = newly_indexed / max(total_pending, 1) * 35.0
+                    await context.set_progress(
+                        5.0 + min(extraction_progress + structure_progress + vector_progress, 95.0), message
+                    )
+                if reporter_stop.is_set():
+                    return
+
+        extraction_workers = [
+            asyncio.create_task(extraction_worker(index + 1), name=f"graph-extractor-{index + 1}")
+            for index in range(worker_count)
+        ]
+        writer_task = asyncio.create_task(write_worker(), name="graph-writer")
+        vector_task = asyncio.create_task(vector_worker(), name="graph-vector-indexer")
+        reporter_task = asyncio.create_task(report_progress(), name="graph-progress-reporter")
+
+        try:
+            after_id = 0
+            while True:
+                if context is not None:
+                    await context.raise_if_cancelled()
+                chunks = await self.chunk_repo.list_graph_pending_by_kb_id(
+                    kb_id,
+                    fetch_size,
+                    after_id=after_id,
+                )
+                if not chunks:
+                    break
+                for chunk in chunks:
+                    after_id = chunk.id
+                    if getattr(chunk, "graph_structure_indexed", False):
+                        extraction_completed += 1
+                        write_completed += 1
+                        vector_wakeup.set()
+                    elif chunk.extraction_result:
+                        extraction_completed += 1
+                        await put_queue_item(write_queue, chunk.chunk_id)
+                    else:
+                        await put_queue_item(extraction_queue, chunk)
+
+            for _ in extraction_workers:
+                await put_queue_item(extraction_queue, None)
+            await asyncio.gather(*extraction_workers)
+            await put_queue_item(write_queue, None)
+            await writer_task
+            structure_done.set()
+            vector_wakeup.set()
+            await vector_task
+        except BaseException:
+            for task in [*extraction_workers, writer_task, vector_task]:
+                task.cancel()
+            await asyncio.gather(*extraction_workers, writer_task, vector_task, return_exceptions=True)
+            raise
+        finally:
+            reporter_stop.set()
+            await asyncio.gather(reporter_task, return_exceptions=True)
 
         remaining = await self.chunk_repo.count_graph_pending_by_kb_id(kb_id)
-        return {"kb_id": kb_id, "success": processed, "failed": failed, "remaining": remaining}
+        extraction_counts = await self.chunk_repo.count_graph_extraction_statuses_by_kb_id(kb_id)
+        vector_counts = await self.graph_repo.count_vector_statuses_by_kb_id(kb_id)
+        logger.info(
+            f"图谱构建结束 kb_id={kb_id} success={processed} extraction_failed={extraction_failed} "
+            f"write_failed={write_failed} remaining={remaining} "
+            f"duration={time.monotonic() - started_at:.2f}s"
+        )
+        incomplete = max(remaining - extraction_counts["failed"], 0)
+        result = {
+            "kb_id": kb_id,
+            "success": max(total_pending - remaining, 0),
+            "failed": extraction_failed + write_failed,
+            "extraction_failed": extraction_failed,
+            "write_failed": write_failed,
+            "remaining": remaining,
+            "vector_failed": vector_counts["failed"],
+        }
+        if incomplete or write_failed or vector_counts["failed"]:
+            raise RuntimeError(
+                f"图谱构建执行异常：chunk_incomplete={incomplete}, "
+                f"write_failed={write_failed}, vector_failed={vector_counts['failed']}"
+            )
+        return result
 
     @staticmethod
     def _get_worker_count(config: dict[str, Any]) -> int:
@@ -295,18 +529,34 @@ class MilvusGraphService:
         if chunk.extraction_result:
             return normalize_extraction_result(chunk.extraction_result, extractor_type)
 
-        extraction_result = await extractor.extract(
-            chunk.content,
-            chunk_metadata={
-                "kb_id": kb_id,
-                "chunk_id": chunk.chunk_id,
-                "file_id": chunk.file_id,
-                "chunk_index": chunk.chunk_index,
-            },
-        )
-        normalized_result = normalize_extraction_result(extraction_result, extractor_type)
-        await self.chunk_repo.update_extraction_result(chunk.chunk_id, normalized_result)
-        return normalized_result
+        details = getattr(chunk, "graph_extraction_details", None) or {}
+        if details.get("status") == "failed":
+            await self.chunk_repo.mark_graph_extraction_pending(chunk.chunk_id)
+
+        metadata = {
+            "kb_id": kb_id,
+            "chunk_id": chunk.chunk_id,
+            "file_id": chunk.file_id,
+            "chunk_index": chunk.chunk_index,
+        }
+        for attempt in range(1, GRAPH_EXTRACTION_MAX_ATTEMPTS + 1):
+            try:
+                extraction_result = await extractor.extract(chunk.content, chunk_metadata=metadata)
+                normalized_result = normalize_extraction_result(extraction_result, extractor_type)
+                await self.chunk_repo.update_extraction_result(chunk.chunk_id, normalized_result, attempt)
+                return normalized_result
+            except Exception as exc:
+                if attempt >= GRAPH_EXTRACTION_MAX_ATTEMPTS:
+                    await self.chunk_repo.mark_graph_extraction_failed(chunk.chunk_id, attempt, str(exc))
+                    raise
+                delay = GRAPH_EXTRACTION_RETRY_DELAYS_SECONDS[attempt - 1]
+                logger.warning(
+                    f"Chunk 图谱抽取重试 kb_id={kb_id} chunk_id={chunk.chunk_id} "
+                    f"attempt={attempt}/{GRAPH_EXTRACTION_MAX_ATTEMPTS} delay={delay:.1f}s: {exc}"
+                )
+                await asyncio.sleep(delay)
+
+        raise RuntimeError(f"Chunk 图谱抽取未返回结果: {chunk.chunk_id}")
 
     def write_chunk_graph(
         self,
@@ -468,6 +718,18 @@ class MilvusGraphService:
             "reset_chunks": reset_chunks,
             "clear_extraction_result": clear_extraction_result,
             "clear_config": clear_config,
+        }
+
+    async def reconcile_vectors(self, kb_id: str, *, all_vectors: bool) -> dict[str, Any]:
+        await self._get_milvus_kb(kb_id)
+        reset_records = await self.graph_repo.reconcile_vector_records(kb_id, all_vectors=all_vectors)
+        if all_vectors:
+            graph_vector_store = await self.get_graph_vector_store()
+            await asyncio.to_thread(graph_vector_store.drop_graph_collections, kb_id)
+        return {
+            "kb_id": kb_id,
+            "mode": "all_vectors" if all_vectors else "failed",
+            "reset_records": reset_records,
         }
 
     def delete_graph(self, kb_id: str) -> None:

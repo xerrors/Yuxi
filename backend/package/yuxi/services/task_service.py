@@ -180,7 +180,16 @@ class Tasker:
         statuses: set[str] | None = None,
     ) -> Task | None:
         async with self._lock:
-            return self._find_task_by_payload_locked(task_type, payload_match, statuses)
+            matching_tasks = [
+                task
+                for task in self._tasks.values()
+                if task.type == task_type
+                and (statuses is None or task.status in statuses)
+                and all(task.payload.get(key) == value for key, value in payload_match.items())
+            ]
+            if not matching_tasks:
+                return None
+            return max(matching_tasks, key=lambda task: (task.created_at or "", task.id))
 
     async def enqueue_unique_by_payload(
         self,

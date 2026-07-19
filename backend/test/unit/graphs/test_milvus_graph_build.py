@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -11,6 +12,7 @@ from yuxi.knowledge.graphs.extractors import (
     normalize_extraction_result,
 )
 from yuxi.knowledge.graphs.milvus_graph_service import MilvusGraphService
+from yuxi.knowledge.graphs.milvus_graph_vector_store import MilvusGraphVectorStore
 
 
 def _raw_graph_node(node_id: str, *, labels: list[str] | None = None, name: str | None = None) -> dict:
@@ -120,6 +122,568 @@ def test_graph_extractor_factory_rejects_spacy():
 
 
 @pytest.mark.asyncio
+async def test_graph_extraction_retries_twice_before_third_attempt_succeeds(monkeypatch):
+    chunk = SimpleNamespace(
+        chunk_id="chunk_1",
+        file_id="file_1",
+        chunk_index=0,
+        content="张三任职于公司",
+        extraction_result=None,
+        graph_extraction_details={"status": "failed", "attempt_count": 3},
+    )
+    extractor = SimpleNamespace(
+        extractor_type="llm",
+        extract=AsyncMock(
+            side_effect=[
+                RuntimeError("timeout"),
+                ValueError("invalid json"),
+                {"entities": [], "relations": []},
+            ]
+        ),
+    )
+    chunk_repo = SimpleNamespace(
+        mark_graph_extraction_pending=AsyncMock(),
+        mark_graph_extraction_failed=AsyncMock(),
+        update_extraction_result=AsyncMock(),
+    )
+    service = MilvusGraphService(chunk_repo=chunk_repo)
+    monkeypatch.setattr(
+        "yuxi.knowledge.graphs.milvus_graph_service.GRAPH_EXTRACTION_RETRY_DELAYS_SECONDS",
+        (0, 0),
+    )
+
+    result = await service._get_chunk_extraction_result("kb_test", chunk, extractor)
+
+    assert result["metadata"]["extractor_type"] == "llm"
+    assert extractor.extract.await_count == 3
+    chunk_repo.mark_graph_extraction_pending.assert_awaited_once_with("chunk_1")
+    chunk_repo.update_extraction_result.assert_awaited_once_with("chunk_1", result, 3)
+    chunk_repo.mark_graph_extraction_failed.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_graph_build_keeps_extraction_concurrency_full_while_writes_are_blocked(monkeypatch):
+    chunks = [
+        SimpleNamespace(
+            id=index,
+            chunk_id=f"chunk_{index}",
+            file_id="file_1",
+            kb_id="kb_test",
+            chunk_index=index,
+            content=f"content {index}",
+            start_char_pos=0,
+            end_char_pos=10,
+            extraction_result=None,
+            graph_extraction_details={"status": "pending", "attempt_count": 0},
+            graph_indexed=False,
+        )
+        for index in range(1, 7)
+    ]
+    chunks[0].extraction_result = {"entities": [], "relations": []}
+    chunks[0].graph_extraction_details = {"status": "succeeded"}
+    kb = SimpleNamespace(
+        kb_type="milvus",
+        embedding_model_spec="test/embedding",
+        additional_params={
+            "graph_build_config": {
+                "locked": True,
+                "extractor_type": "llm",
+                "extractor_options": {"model_spec": "test/model", "concurrency_count": 2},
+            }
+        },
+    )
+    all_extractions_finished = asyncio.Event()
+    release_writes = asyncio.Event()
+
+    class Repo:
+        async def get_by_kb_id(self, kb_id):
+            return kb
+
+    class ChunkRepo:
+        async def count_graph_pending_by_kb_id(self, kb_id):
+            return sum(not chunk.graph_indexed for chunk in chunks)
+
+        async def count_graph_indexed_by_kb_id(self, kb_id):
+            return sum(chunk.graph_indexed for chunk in chunks)
+
+        async def count_graph_extraction_statuses_by_kb_id(self, kb_id):
+            counts = {"pending": 0, "succeeded": 0, "failed": 0}
+            for chunk in chunks:
+                counts[chunk.graph_extraction_details["status"]] += 1
+            return counts
+
+        async def list_graph_pending_by_kb_id(self, kb_id, limit, *, after_id=0):
+            return [chunk for chunk in chunks if chunk.id > after_id and not chunk.graph_indexed][:limit]
+
+        async def update_extraction_result(self, chunk_id, extraction_result, attempt_count=1):
+            chunk = next(chunk for chunk in chunks if chunk.chunk_id == chunk_id)
+            chunk.extraction_result = extraction_result
+            chunk.graph_extraction_details = {"status": "succeeded", "attempt_count": attempt_count}
+
+        async def mark_graph_extraction_pending(self, chunk_id):
+            chunk = next(chunk for chunk in chunks if chunk.chunk_id == chunk_id)
+            chunk.graph_extraction_details = {"status": "pending", "attempt_count": 0}
+
+        async def mark_graph_extraction_failed(self, chunk_id, attempt_count, error):
+            chunk = next(chunk for chunk in chunks if chunk.chunk_id == chunk_id)
+            chunk.graph_extraction_details = {
+                "status": "failed",
+                "attempt_count": attempt_count,
+                "last_error": error,
+            }
+
+        async def get_by_chunk_id(self, chunk_id):
+            return next(chunk for chunk in chunks if chunk.chunk_id == chunk_id)
+
+        async def mark_graph_indexed(self, chunk_id, ent_ids=None):
+            chunk = next(chunk for chunk in chunks if chunk.chunk_id == chunk_id)
+            chunk.graph_indexed = True
+
+        async def mark_graph_structure_indexed(self, chunk_id, ent_ids=None):
+            chunk = next(chunk for chunk in chunks if chunk.chunk_id == chunk_id)
+            chunk.graph_structure_indexed = True
+
+    class Extractor:
+        extractor_type = "llm"
+        active = 0
+        max_active = 0
+        calls = 0
+        completed = 0
+
+        async def extract(self, text, *, chunk_metadata=None):
+            self.calls += 1
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            try:
+                await asyncio.sleep(0.01)
+                if text == "content 6":
+                    raise RuntimeError("extract failed")
+                return {"entities": [], "relations": []}
+            finally:
+                self.active -= 1
+                self.completed += 1
+                if self.completed == 7:
+                    all_extractions_finished.set()
+
+    extractor = Extractor()
+    monkeypatch.setattr(GraphExtractorFactory, "create", lambda extractor_type, options: extractor)
+    monkeypatch.setattr(
+        "yuxi.knowledge.graphs.milvus_graph_service.GRAPH_EXTRACTION_RETRY_DELAYS_SECONDS",
+        (0, 0),
+    )
+
+    async def wait_for_writes(**kwargs):
+        await release_writes.wait()
+
+    class GraphRepo:
+        upsert_chunk_graph = AsyncMock(side_effect=wait_for_writes)
+
+        async def claim_vector_records(self, **kwargs):
+            return "token", []
+
+        async def count_vector_statuses_by_kb_id(self, kb_id):
+            return {"pending": 0, "processing": 0, "indexed": 0, "failed": 0}
+
+        async def finalize_graph_indexed_chunks(self, kb_id):
+            finalized = 0
+            for chunk in chunks:
+                if getattr(chunk, "graph_structure_indexed", False) and not chunk.graph_indexed:
+                    chunk.graph_indexed = True
+                    finalized += 1
+            return finalized
+
+    graph_repo = GraphRepo()
+    graph_vector_store = SimpleNamespace(upsert_graph_records=AsyncMock())
+    service = MilvusGraphService(
+        kb_repo=Repo(),
+        chunk_repo=ChunkRepo(),
+        graph_repo=graph_repo,
+        graph_vector_store=graph_vector_store,
+    )
+    monkeypatch.setattr(service, "write_chunk_graph", lambda kb_id, chunk, result: ([], []))
+
+    build_task = asyncio.create_task(service.build_pending_chunks("kb_test"))
+    await asyncio.wait_for(all_extractions_finished.wait(), timeout=1)
+
+    assert extractor.max_active == 2
+    assert extractor.calls == 7
+    assert not build_task.done()
+
+    release_writes.set()
+    result = await asyncio.wait_for(build_task, timeout=1)
+
+    assert result["success"] == 5
+    assert result["extraction_failed"] == 1
+    assert result["remaining"] == 1
+    assert chunks[-1].graph_extraction_details["status"] == "failed"
+    assert chunks[-1].graph_extraction_details["attempt_count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_graph_build_cancellation_stops_backpressured_extraction_queue(monkeypatch):
+    chunks = [
+        SimpleNamespace(
+            id=index,
+            chunk_id=f"chunk_{index}",
+            file_id="file_1",
+            kb_id="kb_test",
+            chunk_index=index,
+            content=f"content {index}",
+            extraction_result=None,
+            graph_indexed=False,
+        )
+        for index in range(1, 10)
+    ]
+    kb = SimpleNamespace(
+        kb_type="milvus",
+        embedding_model_spec="test/embedding",
+        additional_params={
+            "graph_build_config": {
+                "locked": True,
+                "extractor_type": "llm",
+                "extractor_options": {"model_spec": "test/model", "concurrency_count": 1},
+            }
+        },
+    )
+    extraction_started = asyncio.Event()
+    never_finish = asyncio.Event()
+
+    class Repo:
+        async def get_by_kb_id(self, kb_id):
+            return kb
+
+    class ChunkRepo:
+        async def count_graph_pending_by_kb_id(self, kb_id):
+            return len(chunks)
+
+        async def count_graph_indexed_by_kb_id(self, kb_id):
+            return 0
+
+        async def list_graph_pending_by_kb_id(self, kb_id, limit, *, after_id=0):
+            return [chunk for chunk in chunks if chunk.id > after_id][:limit]
+
+    class Extractor:
+        extractor_type = "llm"
+
+        async def extract(self, text, *, chunk_metadata=None):
+            extraction_started.set()
+            await never_finish.wait()
+
+    class Context:
+        cancel_requested = False
+
+        async def raise_if_cancelled(self):
+            if self.cancel_requested:
+                raise asyncio.CancelledError
+
+        async def set_progress(self, progress, message):
+            return None
+
+    context = Context()
+    monkeypatch.setattr(GraphExtractorFactory, "create", lambda extractor_type, options: Extractor())
+    service = MilvusGraphService(
+        kb_repo=Repo(),
+        chunk_repo=ChunkRepo(),
+        graph_repo=SimpleNamespace(),
+        graph_vector_store=SimpleNamespace(),
+    )
+
+    build_task = asyncio.create_task(service.build_pending_chunks("kb_test", context=context))
+    await asyncio.wait_for(extraction_started.wait(), timeout=1)
+    context.cancel_requested = True
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(build_task, timeout=1.5)
+
+
+@pytest.mark.asyncio
+async def test_graph_build_indexes_vectors_after_structure_write(monkeypatch):
+    chunk = SimpleNamespace(
+        id=1,
+        chunk_id="chunk_1",
+        file_id="file_1",
+        kb_id="kb_test",
+        chunk_index=1,
+        content="张三任职于公司",
+        start_char_pos=0,
+        end_char_pos=8,
+        extraction_result=normalize_extraction_result(
+            {
+                "relations": [
+                    {
+                        "source": {"text": "张三", "label": "Person"},
+                        "target": {"text": "公司", "label": "Organization"},
+                        "text": "任职于",
+                        "label": "WORKS_AT",
+                    }
+                ]
+            },
+            "llm",
+        ),
+        graph_structure_indexed=False,
+        graph_indexed=False,
+    )
+    kb = SimpleNamespace(
+        kb_type="milvus",
+        embedding_model_spec="test/embedding",
+        additional_params={
+            "graph_build_config": {
+                "locked": True,
+                "extractor_type": "llm",
+                "extractor_options": {"model_spec": "test/model", "concurrency_count": 2},
+            }
+        },
+    )
+
+    class ChunkRepo:
+        async def count_graph_pending_by_kb_id(self, kb_id):
+            return int(not chunk.graph_indexed)
+
+        async def count_graph_indexed_by_kb_id(self, kb_id):
+            return int(chunk.graph_indexed)
+
+        async def count_graph_extraction_statuses_by_kb_id(self, kb_id):
+            return {"pending": 0, "succeeded": 1, "failed": 0}
+
+        async def list_graph_pending_by_kb_id(self, kb_id, limit, *, after_id=0):
+            return [chunk] if chunk.id > after_id and not chunk.graph_indexed else []
+
+        async def get_by_chunk_id(self, chunk_id):
+            return chunk
+
+        async def mark_graph_structure_indexed(self, chunk_id, ent_ids):
+            chunk.graph_structure_indexed = True
+
+    class GraphRepo:
+        def __init__(self):
+            self.pending = False
+            self.indexed = False
+
+        async def upsert_chunk_graph(self, **kwargs):
+            self.pending = True
+
+        async def claim_vector_records(self, *, record_type, **kwargs):
+            if record_type == "entity" and self.pending:
+                self.pending = False
+                return "token", [{"id": "entity_1", "content": "张三"}]
+            return "token", []
+
+        async def mark_vector_records_indexed(self, **kwargs):
+            self.indexed = True
+
+        async def mark_vector_records_failed(self, **kwargs):
+            raise AssertionError("vector indexing should succeed")
+
+        async def count_vector_statuses_by_kb_id(self, kb_id):
+            return {
+                "pending": int(self.pending),
+                "processing": 0,
+                "indexed": int(self.indexed),
+                "failed": 0,
+            }
+
+        async def finalize_graph_indexed_chunks(self, kb_id):
+            if chunk.graph_structure_indexed and self.indexed:
+                chunk.graph_indexed = True
+                return 1
+            return 0
+
+    graph_repo = GraphRepo()
+    vector_store = SimpleNamespace(upsert_graph_records=AsyncMock())
+    service = MilvusGraphService(
+        kb_repo=SimpleNamespace(get_by_kb_id=AsyncMock(return_value=kb)),
+        chunk_repo=ChunkRepo(),
+        graph_repo=graph_repo,
+        graph_vector_store=vector_store,
+    )
+    monkeypatch.setattr(
+        service,
+        "write_chunk_graph",
+        lambda kb_id, chunk, result: ([{"entity_id": "entity_1"}], []),
+    )
+
+    result = await service.build_pending_chunks("kb_test")
+
+    assert result == {
+        "kb_id": "kb_test",
+        "success": 1,
+        "failed": 0,
+        "extraction_failed": 0,
+        "write_failed": 0,
+        "remaining": 0,
+        "vector_failed": 0,
+    }
+    vector_store.upsert_graph_records.assert_awaited_once()
+    assert chunk.graph_structure_indexed is True
+    assert chunk.graph_indexed is True
+
+
+@pytest.mark.asyncio
+async def test_graph_build_fails_after_three_vector_attempts(monkeypatch):
+    chunk = SimpleNamespace(
+        id=1,
+        chunk_id="chunk_1",
+        file_id="file_1",
+        kb_id="kb_test",
+        chunk_index=1,
+        content="content",
+        start_char_pos=0,
+        end_char_pos=7,
+        extraction_result={"entities": [], "relations": [], "metadata": {"extractor_type": "llm"}},
+        graph_structure_indexed=False,
+        graph_indexed=False,
+    )
+    kb = SimpleNamespace(
+        kb_type="milvus",
+        embedding_model_spec="test/embedding",
+        additional_params={
+            "graph_build_config": {
+                "locked": True,
+                "extractor_type": "llm",
+                "extractor_options": {"model_spec": "test/model", "concurrency_count": 1},
+            }
+        },
+    )
+
+    class ChunkRepo:
+        async def count_graph_pending_by_kb_id(self, kb_id):
+            return 1
+
+        async def count_graph_indexed_by_kb_id(self, kb_id):
+            return 0
+
+        async def count_graph_extraction_statuses_by_kb_id(self, kb_id):
+            return {"pending": 0, "succeeded": 1, "failed": 0}
+
+        async def list_graph_pending_by_kb_id(self, kb_id, limit, *, after_id=0):
+            return [chunk] if chunk.id > after_id else []
+
+        async def get_by_chunk_id(self, chunk_id):
+            return chunk
+
+        async def mark_graph_structure_indexed(self, chunk_id, ent_ids):
+            chunk.graph_structure_indexed = True
+
+    class GraphRepo:
+        attempts = 0
+        status = "pending"
+
+        async def upsert_chunk_graph(self, **kwargs):
+            return None
+
+        async def claim_vector_records(self, *, record_type, **kwargs):
+            if record_type != "entity" or self.status != "pending":
+                return "token", []
+            self.status = "processing"
+            self.attempts += 1
+            return "token", [{"id": "entity_1", "content": "entity"}]
+
+        async def mark_vector_records_indexed(self, **kwargs):
+            raise AssertionError("vector indexing should fail")
+
+        async def mark_vector_records_failed(self, **kwargs):
+            self.status = "failed" if self.attempts >= 3 else "pending"
+
+        async def count_vector_statuses_by_kb_id(self, kb_id):
+            return {
+                "pending": int(self.status == "pending"),
+                "processing": int(self.status == "processing"),
+                "indexed": 0,
+                "failed": int(self.status == "failed"),
+            }
+
+        async def finalize_graph_indexed_chunks(self, kb_id):
+            return 0
+
+    graph_repo = GraphRepo()
+    service = MilvusGraphService(
+        kb_repo=SimpleNamespace(get_by_kb_id=AsyncMock(return_value=kb)),
+        chunk_repo=ChunkRepo(),
+        graph_repo=graph_repo,
+        graph_vector_store=SimpleNamespace(upsert_graph_records=AsyncMock(side_effect=RuntimeError("embed failed"))),
+    )
+    monkeypatch.setattr(service, "write_chunk_graph", lambda kb_id, chunk, result: ([{"entity_id": "e"}], []))
+
+    with pytest.raises(RuntimeError, match="vector_failed=1"):
+        await service.build_pending_chunks("kb_test")
+
+    assert graph_repo.attempts == 3
+
+
+@pytest.mark.asyncio
+async def test_graph_reconcile_skips_completed_structure(monkeypatch):
+    chunk = SimpleNamespace(
+        id=1,
+        chunk_id="chunk_1",
+        graph_structure_indexed=True,
+        graph_indexed=False,
+        extraction_result={"entities": [], "relations": []},
+    )
+    kb = SimpleNamespace(
+        kb_type="milvus",
+        embedding_model_spec="test/embedding",
+        additional_params={
+            "graph_build_config": {
+                "locked": True,
+                "extractor_type": "llm",
+                "extractor_options": {"model_spec": "test/model", "concurrency_count": 1},
+            }
+        },
+    )
+
+    class ChunkRepo:
+        async def count_graph_pending_by_kb_id(self, kb_id):
+            return int(not chunk.graph_indexed)
+
+        async def count_graph_indexed_by_kb_id(self, kb_id):
+            return int(chunk.graph_indexed)
+
+        async def count_graph_extraction_statuses_by_kb_id(self, kb_id):
+            return {"pending": 0, "succeeded": 1, "failed": 0}
+
+        async def list_graph_pending_by_kb_id(self, kb_id, limit, *, after_id=0):
+            return [chunk] if chunk.id > after_id else []
+
+    class GraphRepo:
+        pending = True
+
+        async def upsert_chunk_graph(self, **kwargs):
+            raise AssertionError("reconcile must not rewrite graph structure")
+
+        async def claim_vector_records(self, *, record_type, **kwargs):
+            if record_type == "entity" and self.pending:
+                self.pending = False
+                return "token", [{"id": "entity_1", "content": "entity"}]
+            return "token", []
+
+        async def mark_vector_records_indexed(self, **kwargs):
+            return None
+
+        async def mark_vector_records_failed(self, **kwargs):
+            raise AssertionError("vector indexing should succeed")
+
+        async def count_vector_statuses_by_kb_id(self, kb_id):
+            return {"pending": int(self.pending), "processing": 0, "indexed": 1, "failed": 0}
+
+        async def finalize_graph_indexed_chunks(self, kb_id):
+            chunk.graph_indexed = True
+            return 1
+
+    service = MilvusGraphService(
+        kb_repo=SimpleNamespace(get_by_kb_id=AsyncMock(return_value=kb)),
+        chunk_repo=ChunkRepo(),
+        graph_repo=GraphRepo(),
+        graph_vector_store=SimpleNamespace(upsert_graph_records=AsyncMock()),
+    )
+    monkeypatch.setattr(service, "write_chunk_graph", MagicMock(side_effect=AssertionError("must not write")))
+
+    result = await service.build_pending_chunks("kb_test")
+
+    assert result["success"] == 1
+    service.write_chunk_graph.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_milvus_graph_service_configure_rejects_spacy():
     kb = SimpleNamespace(kb_type="milvus", additional_params={})
 
@@ -166,8 +730,15 @@ async def test_milvus_graph_service_configure_persists_updated_concurrency():
         count_by_kb_id=AsyncMock(return_value=0),
         count_graph_pending_by_kb_id=AsyncMock(return_value=0),
         count_graph_indexed_by_kb_id=AsyncMock(return_value=0),
+        count_graph_structure_indexed_by_kb_id=AsyncMock(return_value=0),
+        count_graph_extraction_statuses_by_kb_id=AsyncMock(return_value={"pending": 0, "succeeded": 0, "failed": 0}),
     )
-    graph_repo = SimpleNamespace(count_by_kb_id=AsyncMock(return_value=(3, 2)))
+    graph_repo = SimpleNamespace(
+        count_by_kb_id=AsyncMock(return_value=(3, 2)),
+        count_vector_statuses_by_kb_id=AsyncMock(
+            return_value={"pending": 0, "processing": 0, "indexed": 5, "failed": 0}
+        ),
+    )
     service = MilvusGraphService(kb_repo=Repo(), chunk_repo=chunk_repo, graph_repo=graph_repo)
 
     await service.configure(
@@ -181,6 +752,49 @@ async def test_milvus_graph_service_configure_persists_updated_concurrency():
     assert status["config"]["extractor_options"]["concurrency_count"] == 9
     assert status["entity_count"] == 3
     assert status["relationship_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_graph_status_reports_latest_successful_run_as_completed():
+    kb = SimpleNamespace(
+        kb_type="milvus",
+        additional_params={
+            "graph_build_config": {
+                "locked": True,
+                "extractor_type": "llm",
+                "extractor_options": {"model_spec": "test/model", "concurrency_count": 5},
+            }
+        },
+    )
+
+    class Repo:
+        async def get_by_kb_id(self, kb_id):
+            return kb
+
+    class Tasker:
+        async def find_task_by_payload(self, *, task_type, payload_match, statuses):
+            assert statuses is None
+            return SimpleNamespace(status="success", progress=100)
+
+    chunk_repo = SimpleNamespace(
+        count_by_kb_id=AsyncMock(return_value=10),
+        count_graph_pending_by_kb_id=AsyncMock(return_value=0),
+        count_graph_indexed_by_kb_id=AsyncMock(return_value=10),
+        count_graph_structure_indexed_by_kb_id=AsyncMock(return_value=10),
+        count_graph_extraction_statuses_by_kb_id=AsyncMock(return_value={"pending": 0, "succeeded": 10, "failed": 0}),
+    )
+    graph_repo = SimpleNamespace(
+        count_by_kb_id=AsyncMock(return_value=(3, 2)),
+        count_vector_statuses_by_kb_id=AsyncMock(
+            return_value={"pending": 0, "processing": 0, "indexed": 5, "failed": 0}
+        ),
+    )
+    service = MilvusGraphService(kb_repo=Repo(), chunk_repo=chunk_repo, graph_repo=graph_repo)
+
+    status = await service.get_status("kb_test", tasker=Tasker())
+
+    assert status["build_task_status"] == "completed"
+    assert status["build_task_progress"] == 100
 
 
 def test_milvus_graph_service_writes_chunk_entity_and_relation():
@@ -233,6 +847,20 @@ def test_milvus_graph_service_writes_chunk_entity_and_relation():
     assert any("MERGE (source)-[r:RELATION" in query for query in queries)
     entity_call = next(call for call in tx.run.call_args_list if "MERGE (e:Entity" in call.args[0])
     assert entity_call.kwargs["attributes"] == '[{"text": "工程师", "label": "Occupation"}]'
+
+
+def test_graph_vector_store_uses_idempotent_upsert():
+    collection = MagicMock()
+    store = MilvusGraphVectorStore.__new__(MilvusGraphVectorStore)
+
+    store._upsert_entities(
+        collection,
+        [{"id": "entity_1", "content": "entity"}],
+        [[0.1, 0.2]],
+    )
+
+    collection.upsert.assert_called_once_with([["entity_1"], ["entity"], [[0.1, 0.2]]])
+    collection.insert.assert_not_called()
 
 
 def test_milvus_graph_service_delete_file_graph_uses_scoped_streaming_queries():

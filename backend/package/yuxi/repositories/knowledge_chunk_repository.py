@@ -7,6 +7,7 @@ from sqlalchemy import delete, func, select, update
 
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_knowledge import KnowledgeChunk
+from yuxi.utils.datetime_utils import utc_isoformat
 
 SQL_IN_BATCH_SIZE = 10_000
 
@@ -23,6 +24,7 @@ class KnowledgeChunkRepository:
         "start_token_pos",
         "end_token_pos",
         "graph_indexed",
+        "graph_extraction_details",
         "ent_ids",
         "tags",
         "extraction_result",
@@ -139,6 +141,48 @@ class KnowledgeChunkRepository:
     async def count_graph_indexed_by_kb_id(self, kb_id: str) -> int:
         return await self._count_by_kb_id(kb_id, KnowledgeChunk.graph_indexed.is_(True))
 
+    async def count_graph_structure_indexed_by_kb_id(self, kb_id: str) -> int:
+        return await self._count_by_kb_id(kb_id, KnowledgeChunk.graph_structure_indexed.is_(True))
+
+    async def count_graph_extraction_statuses_by_kb_id(self, kb_id: str) -> dict[str, int]:
+        counts = {"pending": 0, "succeeded": 0, "failed": 0}
+        status = func.coalesce(KnowledgeChunk.graph_extraction_details["status"].as_string(), "pending")
+        async with pg_manager.get_async_session_context() as session:
+            rows = (
+                await session.execute(
+                    select(status, func.count()).where(KnowledgeChunk.kb_id == kb_id).group_by(status)
+                )
+            ).all()
+        for value, count in rows:
+            counts[str(value)] = int(count or 0)
+        return counts
+
+    async def list_graph_extraction_failed_samples(self, kb_id: str, limit: int = 10) -> list[dict[str, Any]]:
+        status = KnowledgeChunk.graph_extraction_details["status"].as_string()
+        async with pg_manager.get_async_session_context() as session:
+            chunks = list(
+                (
+                    await session.execute(
+                        select(KnowledgeChunk)
+                        .where(KnowledgeChunk.kb_id == kb_id, status == "failed")
+                        .order_by(func.random())
+                        .limit(max(1, min(limit, 10)))
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return [
+            {
+                "chunk_id": chunk.chunk_id,
+                "file_id": chunk.file_id,
+                "chunk_index": chunk.chunk_index,
+                "content": chunk.content,
+                "details": chunk.graph_extraction_details or {},
+            }
+            for chunk in chunks
+        ]
+
     async def count_graph_indexed_by_file_id(self, file_id: str) -> int:
         async with pg_manager.get_async_session_context() as session:
             result = await session.execute(
@@ -158,22 +202,66 @@ class KnowledgeChunkRepository:
             )
             return int(result.scalar() or 0)
 
-    async def list_graph_pending_by_kb_id(self, kb_id: str, limit: int) -> list[KnowledgeChunk]:
+    async def list_graph_pending_by_kb_id(
+        self,
+        kb_id: str,
+        limit: int,
+        *,
+        after_id: int = 0,
+    ) -> list[KnowledgeChunk]:
         async with pg_manager.get_async_session_context() as session:
             result = await session.execute(
                 select(KnowledgeChunk)
-                .where(KnowledgeChunk.kb_id == kb_id, KnowledgeChunk.graph_indexed.is_not(True))
+                .where(
+                    KnowledgeChunk.kb_id == kb_id,
+                    KnowledgeChunk.graph_indexed.is_not(True),
+                    KnowledgeChunk.id > after_id,
+                )
                 .order_by(KnowledgeChunk.id.asc())
                 .limit(max(limit, 1))
             )
             return list(result.scalars().all())
 
-    async def update_extraction_result(self, chunk_id: str, extraction_result: dict[str, Any]) -> None:
+    async def update_extraction_result(
+        self,
+        chunk_id: str,
+        extraction_result: dict[str, Any],
+        attempt_count: int = 1,
+    ) -> None:
         async with pg_manager.get_async_session_context() as session:
             await session.execute(
                 update(KnowledgeChunk)
                 .where(KnowledgeChunk.chunk_id == chunk_id)
-                .values(extraction_result=extraction_result)
+                .values(
+                    extraction_result=extraction_result,
+                    graph_extraction_details={
+                        "status": "succeeded",
+                        "attempt_count": attempt_count,
+                    },
+                )
+            )
+
+    async def mark_graph_extraction_pending(self, chunk_id: str) -> None:
+        async with pg_manager.get_async_session_context() as session:
+            await session.execute(
+                update(KnowledgeChunk)
+                .where(KnowledgeChunk.chunk_id == chunk_id)
+                .values(graph_extraction_details={"status": "pending", "attempt_count": 0})
+            )
+
+    async def mark_graph_extraction_failed(self, chunk_id: str, attempt_count: int, error: str) -> None:
+        async with pg_manager.get_async_session_context() as session:
+            await session.execute(
+                update(KnowledgeChunk)
+                .where(KnowledgeChunk.chunk_id == chunk_id)
+                .values(
+                    graph_extraction_details={
+                        "status": "failed",
+                        "attempt_count": attempt_count,
+                        "last_error": error[:4000],
+                        "last_attempt_at": utc_isoformat(),
+                    }
+                )
             )
 
     async def mark_graph_indexed(
@@ -191,10 +279,25 @@ class KnowledgeChunkRepository:
         async with pg_manager.get_async_session_context() as session:
             await session.execute(update(KnowledgeChunk).where(KnowledgeChunk.chunk_id == chunk_id).values(**values))
 
+    async def mark_graph_structure_indexed(self, chunk_id: str, ent_ids: list[str]) -> None:
+        async with pg_manager.get_async_session_context() as session:
+            await session.execute(
+                update(KnowledgeChunk)
+                .where(KnowledgeChunk.chunk_id == chunk_id)
+                .values(graph_structure_indexed=True, ent_ids=ent_ids)
+            )
+
     async def reset_graph_state_by_kb_id(self, kb_id: str, clear_extraction_result: bool) -> int:
-        values: dict[str, Any] = {"graph_indexed": False}
+        values: dict[str, Any] = {"graph_structure_indexed": False, "graph_indexed": False}
         if clear_extraction_result:
-            values.update({"extraction_result": None, "ent_ids": None, "tags": None})
+            values.update(
+                {
+                    "extraction_result": None,
+                    "graph_extraction_details": {"status": "pending", "attempt_count": 0},
+                    "ent_ids": None,
+                    "tags": None,
+                }
+            )
 
         async with pg_manager.get_async_session_context() as session:
             result = await session.execute(update(KnowledgeChunk).where(KnowledgeChunk.kb_id == kb_id).values(**values))

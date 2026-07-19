@@ -131,7 +131,7 @@ export const useTaskerStore = defineStore('tasker', () => {
     if (!taskId) return
     try {
       await taskerApi.cancelTask(taskId)
-      message.success('取消任务成功')
+      message.success('取消请求已提交')
       await refreshTask(taskId)
     } catch (error) {
       console.error(`取消任务 ${taskId} 失败`, error)

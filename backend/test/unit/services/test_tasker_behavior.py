@@ -6,7 +6,7 @@
 import asyncio
 
 from yuxi.services import task_service
-from yuxi.services.task_service import Tasker
+from yuxi.services.task_service import Task, Tasker
 
 
 class FakeRecord:
@@ -75,6 +75,35 @@ async def test_task_context_exposes_payload():
 
     assert seen["payload"] == {"a": 1}
     await tasker.shutdown()
+
+
+async def test_find_task_by_payload_returns_latest_matching_task():
+    tasker = Tasker()
+    tasker._tasks = {
+        "old": Task(
+            id="old",
+            name="old",
+            type="knowledge_graph_index",
+            status="failed",
+            created_at="2026-07-18T10:00:00Z",
+            payload={"kb_id": "kb_test"},
+        ),
+        "new": Task(
+            id="new",
+            name="new",
+            type="knowledge_graph_index",
+            status="success",
+            created_at="2026-07-18T11:00:00Z",
+            payload={"kb_id": "kb_test"},
+        ),
+    }
+
+    task = await tasker.find_task_by_payload(
+        task_type="knowledge_graph_index",
+        payload_match={"kb_id": "kb_test"},
+    )
+
+    assert task is tasker._tasks["new"]
 
 
 async def test_progress_updates_are_throttled():

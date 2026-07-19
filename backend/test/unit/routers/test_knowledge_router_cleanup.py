@@ -231,11 +231,11 @@ async def test_markdown_endpoint_rejects_oversized_file(monkeypatch):
 async def test_index_documents_uses_uid_for_operator(monkeypatch):
     captured = {}
 
-    async def fake_ensure_database_supports_documents(kb_id: str, operation: str) -> None:
-        return None
-
     async def fake_get_database_info(kb_id: str) -> dict:
         return {"name": "测试知识库"}
+
+    async def fake_ensure_database_supports_documents(kb_id: str, operation: str) -> dict:
+        return await fake_get_database_info(kb_id)
 
     async def fake_index_file(kb_id: str, file_id: str, operator_id: str | None = None, params: dict | None = None):
         captured["operator_id"] = operator_id
@@ -282,8 +282,9 @@ async def test_parse_documents_rejects_oversized_direct_batch():
 async def test_parse_pending_documents_enqueues_status_scoped_task(monkeypatch):
     captured = {"list_calls": [], "parsed": []}
 
-    async def fake_ensure_database_supports_documents(kb_id: str, operation: str) -> None:
+    async def fake_ensure_database_supports_documents(kb_id: str, operation: str) -> dict:
         captured["ensure"] = (kb_id, operation)
+        return await fake_get_database_info(kb_id)
 
     async def fake_get_database_info(kb_id: str) -> dict:
         return {"name": "测试知识库", "stats": {"pending_parse_count": 2}}
@@ -350,11 +351,63 @@ async def test_parse_pending_documents_enqueues_status_scoped_task(monkeypatch):
     ]
 
 
+async def test_reconcile_graph_build_mutates_state_only_after_unique_task_is_created(monkeypatch):
+    captured = {}
+
+    class FakeGraphService:
+        async def reconcile_vectors(self, kb_id: str, *, all_vectors: bool):
+            captured["reconcile"] = (kb_id, all_vectors)
+            return {"kb_id": kb_id, "mode": "all_vectors", "reset_records": 2}
+
+        async def build_pending_chunks(self, kb_id: str, *, context):
+            captured["build"] = kb_id
+            return {"kb_id": kb_id, "success": 1}
+
+    async def fake_has_running_graph_build_task(kb_id: str) -> bool:
+        return False
+
+    async def fake_get_database_info(kb_id: str) -> dict:
+        return {"name": "测试知识库"}
+
+    async def fake_enqueue_unique_by_payload(**kwargs):
+        captured["coroutine"] = kwargs["coroutine"]
+        assert "reconcile" not in captured
+        return SimpleNamespace(id="task_1"), True
+
+    monkeypatch.setattr(knowledge_router, "_has_running_graph_build_task", fake_has_running_graph_build_task)
+    monkeypatch.setattr(knowledge_router.knowledge_base, "get_database_info", fake_get_database_info)
+    monkeypatch.setattr(knowledge_router, "MilvusGraphService", FakeGraphService)
+    monkeypatch.setattr(knowledge_router.tasker, "enqueue_unique_by_payload", fake_enqueue_unique_by_payload)
+
+    result = await knowledge_router.reconcile_graph_build(
+        "kb_1",
+        data={"mode": "all_vectors"},
+        current_user=SimpleNamespace(uid="uid-user"),
+    )
+
+    assert result == {
+        "message": "图谱向量索引修复任务已提交",
+        "status": "queued",
+        "task_id": "task_1",
+        "mode": "all_vectors",
+    }
+    assert "reconcile" not in captured
+
+    context = FakeTaskContext()
+    task_result = await captured["coroutine"](context)
+
+    assert captured["reconcile"] == ("kb_1", True)
+    assert captured["build"] == "kb_1"
+    assert task_result["reconcile"]["reset_records"] == 2
+    assert context.result == task_result
+
+
 async def test_index_pending_documents_uses_pending_statuses_and_params(monkeypatch):
     captured = {"list_calls": [], "updated": [], "indexed": []}
 
-    async def fake_ensure_database_supports_documents(kb_id: str, operation: str) -> None:
+    async def fake_ensure_database_supports_documents(kb_id: str, operation: str) -> dict:
         captured["ensure"] = (kb_id, operation)
+        return await fake_get_database_info(kb_id)
 
     async def fake_get_database_info(kb_id: str) -> dict:
         return {"name": "测试知识库", "stats": {"pending_index_count": 2}}

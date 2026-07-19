@@ -247,7 +247,10 @@ class PostgresManager(metaclass=SingletonMeta):
                 end_char_pos INTEGER,
                 start_token_pos INTEGER,
                 end_token_pos INTEGER,
+                graph_structure_indexed BOOLEAN NOT NULL DEFAULT FALSE,
                 graph_indexed BOOLEAN DEFAULT FALSE,
+                graph_extraction_details JSONB NOT NULL
+                    DEFAULT jsonb_build_object('status', 'pending', 'attempt_count', 0),
                 ent_ids JSONB,
                 tags JSONB,
                 extraction_result JSONB,
@@ -256,6 +259,32 @@ class PostgresManager(metaclass=SingletonMeta):
             )
             """,
             "ALTER TABLE IF EXISTS knowledge_chunks ADD COLUMN IF NOT EXISTS extraction_result JSONB",
+            (
+                "ALTER TABLE IF EXISTS knowledge_chunks ADD COLUMN IF NOT EXISTS "
+                "graph_structure_indexed BOOLEAN NOT NULL DEFAULT FALSE"
+            ),
+            (
+                "ALTER TABLE IF EXISTS knowledge_chunks ADD COLUMN IF NOT EXISTS "
+                "graph_extraction_details JSONB NOT NULL "
+                "DEFAULT jsonb_build_object('status', 'pending', 'attempt_count', 0)"
+            ),
+            (
+                "ALTER TABLE IF EXISTS knowledge_chunks ALTER COLUMN graph_extraction_details "
+                "SET DEFAULT jsonb_build_object('status', 'pending', 'attempt_count', 0)"
+            ),
+            ("ALTER TABLE IF EXISTS knowledge_chunks ALTER COLUMN graph_structure_indexed SET DEFAULT FALSE"),
+            "UPDATE knowledge_chunks SET graph_structure_indexed = TRUE WHERE graph_indexed IS TRUE",
+            (
+                "UPDATE knowledge_chunks SET graph_extraction_details = jsonb_build_object('status', 'succeeded') "
+                "WHERE (graph_extraction_details IS NULL "
+                "OR graph_extraction_details->>'status' = 'pending') "
+                "AND (extraction_result IS NOT NULL OR graph_structure_indexed IS TRUE OR graph_indexed IS TRUE)"
+            ),
+            (
+                "UPDATE knowledge_chunks SET graph_extraction_details = "
+                "jsonb_build_object('status', 'pending', 'attempt_count', 0) "
+                "WHERE graph_extraction_details IS NULL"
+            ),
             """
             CREATE TABLE IF NOT EXISTS knowledge_graph_entities (
                 id SERIAL PRIMARY KEY,
@@ -265,6 +294,12 @@ class PostgresManager(metaclass=SingletonMeta):
                 label VARCHAR(128) NOT NULL,
                 name VARCHAR(512) NOT NULL,
                 attributes JSONB,
+                vector_status VARCHAR(16) NOT NULL DEFAULT 'pending',
+                vector_attempt_count INTEGER NOT NULL DEFAULT 0,
+                vector_last_error TEXT,
+                vector_next_retry_at TIMESTAMPTZ,
+                vector_locked_until TIMESTAMPTZ,
+                vector_lock_token VARCHAR(32),
                 created_at TIMESTAMPTZ DEFAULT NOW(),
                 updated_at TIMESTAMPTZ DEFAULT NOW(),
                 CONSTRAINT uq_knowledge_graph_entities_identity UNIQUE (kb_id, normalized_name, label)
@@ -290,6 +325,12 @@ class PostgresManager(metaclass=SingletonMeta):
                 target_entity_id VARCHAR(64) NOT NULL REFERENCES knowledge_graph_entities(entity_id) ON DELETE CASCADE,
                 relation_type VARCHAR(256) NOT NULL,
                 content TEXT NOT NULL,
+                vector_status VARCHAR(16) NOT NULL DEFAULT 'pending',
+                vector_attempt_count INTEGER NOT NULL DEFAULT 0,
+                vector_last_error TEXT,
+                vector_next_retry_at TIMESTAMPTZ,
+                vector_locked_until TIMESTAMPTZ,
+                vector_lock_token VARCHAR(32),
                 created_at TIMESTAMPTZ DEFAULT NOW(),
                 updated_at TIMESTAMPTZ DEFAULT NOW()
             )
@@ -308,6 +349,47 @@ class PostgresManager(metaclass=SingletonMeta):
             )
             """,
             "ALTER TABLE IF EXISTS knowledge_bases ALTER COLUMN kb_id TYPE VARCHAR(80)",
+            "ALTER TABLE IF EXISTS knowledge_graph_entities ADD COLUMN IF NOT EXISTS vector_status VARCHAR(16)",
+            (
+                "ALTER TABLE IF EXISTS knowledge_graph_entities ADD COLUMN IF NOT EXISTS "
+                "vector_attempt_count INTEGER NOT NULL DEFAULT 0"
+            ),
+            "ALTER TABLE IF EXISTS knowledge_graph_entities ADD COLUMN IF NOT EXISTS vector_last_error TEXT",
+            (
+                "ALTER TABLE IF EXISTS knowledge_graph_entities ADD COLUMN IF NOT EXISTS "
+                "vector_next_retry_at TIMESTAMPTZ"
+            ),
+            ("ALTER TABLE IF EXISTS knowledge_graph_entities ADD COLUMN IF NOT EXISTS vector_locked_until TIMESTAMPTZ"),
+            ("ALTER TABLE IF EXISTS knowledge_graph_entities ADD COLUMN IF NOT EXISTS vector_lock_token VARCHAR(32)"),
+            (
+                "UPDATE knowledge_graph_entities AS entity SET vector_status = CASE WHEN EXISTS ("
+                "SELECT 1 FROM knowledge_graph_entity_mentions AS mention "
+                "JOIN knowledge_chunks AS chunk ON chunk.chunk_id = mention.chunk_id "
+                "WHERE mention.entity_id = entity.entity_id AND chunk.graph_indexed IS NOT TRUE"
+                ") THEN 'pending' ELSE 'indexed' END WHERE entity.vector_status IS NULL"
+            ),
+            "ALTER TABLE IF EXISTS knowledge_graph_entities ALTER COLUMN vector_status SET DEFAULT 'pending'",
+            "ALTER TABLE IF EXISTS knowledge_graph_entities ALTER COLUMN vector_status SET NOT NULL",
+            ("ALTER TABLE IF EXISTS knowledge_graph_entities ALTER COLUMN vector_attempt_count SET DEFAULT 0"),
+            "ALTER TABLE IF EXISTS knowledge_graph_triples ADD COLUMN IF NOT EXISTS vector_status VARCHAR(16)",
+            (
+                "ALTER TABLE IF EXISTS knowledge_graph_triples ADD COLUMN IF NOT EXISTS "
+                "vector_attempt_count INTEGER NOT NULL DEFAULT 0"
+            ),
+            "ALTER TABLE IF EXISTS knowledge_graph_triples ADD COLUMN IF NOT EXISTS vector_last_error TEXT",
+            ("ALTER TABLE IF EXISTS knowledge_graph_triples ADD COLUMN IF NOT EXISTS vector_next_retry_at TIMESTAMPTZ"),
+            ("ALTER TABLE IF EXISTS knowledge_graph_triples ADD COLUMN IF NOT EXISTS vector_locked_until TIMESTAMPTZ"),
+            "ALTER TABLE IF EXISTS knowledge_graph_triples ADD COLUMN IF NOT EXISTS vector_lock_token VARCHAR(32)",
+            (
+                "UPDATE knowledge_graph_triples AS triple SET vector_status = CASE WHEN EXISTS ("
+                "SELECT 1 FROM knowledge_graph_triple_mentions AS mention "
+                "JOIN knowledge_chunks AS chunk ON chunk.chunk_id = mention.chunk_id "
+                "WHERE mention.triple_id = triple.triple_id AND chunk.graph_indexed IS NOT TRUE"
+                ") THEN 'pending' ELSE 'indexed' END WHERE triple.vector_status IS NULL"
+            ),
+            "ALTER TABLE IF EXISTS knowledge_graph_triples ALTER COLUMN vector_status SET DEFAULT 'pending'",
+            "ALTER TABLE IF EXISTS knowledge_graph_triples ALTER COLUMN vector_status SET NOT NULL",
+            ("ALTER TABLE IF EXISTS knowledge_graph_triples ALTER COLUMN vector_attempt_count SET DEFAULT 0"),
             "ALTER TABLE IF EXISTS knowledge_files ALTER COLUMN kb_id TYPE VARCHAR(80)",
             "ALTER TABLE IF EXISTS evaluation_datasets ALTER COLUMN kb_id TYPE VARCHAR(80)",
             "ALTER TABLE IF EXISTS evaluation_dataset_items ALTER COLUMN kb_id TYPE VARCHAR(80)",
@@ -334,10 +416,22 @@ class PostgresManager(metaclass=SingletonMeta):
             "CREATE INDEX IF NOT EXISTS ix_knowledge_chunks_kb_id ON knowledge_chunks(kb_id)",
             "CREATE INDEX IF NOT EXISTS ix_knowledge_chunks_graph_indexed ON knowledge_chunks(graph_indexed)",
             (
+                "CREATE INDEX IF NOT EXISTS ix_knowledge_chunks_graph_structure_indexed "
+                "ON knowledge_chunks(graph_structure_indexed)"
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS ix_knowledge_chunks_graph_extraction_status "
+                "ON knowledge_chunks(kb_id, ((graph_extraction_details->>'status')))"
+            ),
+            (
                 "CREATE UNIQUE INDEX IF NOT EXISTS uq_knowledge_graph_entities_entity_id "
                 "ON knowledge_graph_entities(entity_id)"
             ),
             "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_entities_kb_id ON knowledge_graph_entities(kb_id)",
+            (
+                "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_entities_vector_pending "
+                "ON knowledge_graph_entities(kb_id, vector_status, vector_next_retry_at)"
+            ),
             (
                 "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_entity_mentions_kb_id "
                 "ON knowledge_graph_entity_mentions(kb_id)"
@@ -355,6 +449,10 @@ class PostgresManager(metaclass=SingletonMeta):
                 "ON knowledge_graph_triples(triple_id)"
             ),
             "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_triples_kb_id ON knowledge_graph_triples(kb_id)",
+            (
+                "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_triples_vector_pending "
+                "ON knowledge_graph_triples(kb_id, vector_status, vector_next_retry_at)"
+            ),
             (
                 "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_triple_mentions_kb_id "
                 "ON knowledge_graph_triple_mentions(kb_id)"

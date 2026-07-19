@@ -138,3 +138,25 @@ async def test_ensure_business_schema_removes_unbound_api_keys_before_requiring_
     assert statements.index("DELETE FROM api_keys WHERE user_id IS NULL") < statements.index(
         "ALTER TABLE IF EXISTS api_keys ALTER COLUMN user_id SET NOT NULL"
     )
+
+
+@pytest.mark.asyncio
+async def test_ensure_knowledge_schema_rebuilds_vectors_for_incomplete_legacy_chunks():
+    manager = PostgresManager()
+    original_initialized = manager._initialized
+    original_engine = manager.async_engine
+    connection = _RecordingConnection()
+
+    manager._initialized = True
+    manager.async_engine = _RecordingEngine(connection)
+    try:
+        await manager.ensure_knowledge_schema()
+    finally:
+        manager._initialized = original_initialized
+        manager.async_engine = original_engine
+
+    statements = "\n".join(connection.statements)
+
+    assert "mention.entity_id = entity.entity_id AND chunk.graph_indexed IS NOT TRUE" in statements
+    assert "mention.triple_id = triple.triple_id AND chunk.graph_indexed IS NOT TRUE" in statements
+    assert "THEN 'pending' ELSE 'indexed'" in statements
