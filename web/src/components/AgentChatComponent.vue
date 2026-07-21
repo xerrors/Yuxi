@@ -140,7 +140,6 @@
                 class="queued-request-panel"
                 aria-label="排队请求"
               >
-                <div class="queued-request-title">要求后续变更</div>
                 <div
                   v-if="currentQueueSnapshot.status === 'paused'"
                   class="queued-request-notice is-paused"
@@ -3576,6 +3575,11 @@ watch(currentChatId, (threadId, oldThreadId) => {
       min-width: 0;
     }
 
+    .queued-request-panel + .message-input-stage {
+      z-index: 1;
+      margin-top: -16px;
+    }
+
     .message-input-stage.has-tool-approval {
       display: grid;
 
@@ -3601,18 +3605,12 @@ watch(currentChatId, (threadId, oldThreadId) => {
     }
 
     .queued-request-panel {
-      margin-bottom: 8px;
-      padding: 14px 16px 10px;
-      background: var(--gray-0);
+      max-height: 196px;
+      overflow-y: auto;
+      padding: 10px 12px 18px;
+      background: var(--gray-25);
       border: 1px solid var(--gray-150);
-      border-radius: 12px;
-    }
-
-    .queued-request-title {
-      margin-bottom: 6px;
-      color: var(--color-text-tertiary);
-      font-size: 12px;
-      font-weight: 500;
+      border-radius: 16px 16px 12px 12px;
     }
 
     .queued-request-notice {
@@ -3620,17 +3618,16 @@ watch(currentChatId, (threadId, oldThreadId) => {
       align-items: center;
       justify-content: space-between;
       gap: 12px;
-      margin-bottom: 10px;
-      padding: 8px 10px;
+      margin: 0 6px 4px;
+      padding: 0;
       color: var(--color-text-tertiary);
-      background: var(--gray-50);
-      border-radius: 8px;
+      background: transparent;
       font-size: 13px;
       line-height: 1.5;
 
       &.is-paused {
         color: var(--color-warning-700);
-        background: var(--color-warning-50);
+        background: transparent;
       }
     }
 
@@ -3639,11 +3636,10 @@ watch(currentChatId, (threadId, oldThreadId) => {
       flex: 0 0 auto;
       align-items: center;
       gap: 4px;
-      padding: 5px 8px;
+      padding: 4px 0;
       color: var(--color-warning-700);
       background: transparent;
-      border: 1px solid currentColor;
-      border-radius: 6px;
+      border: 0;
       cursor: pointer;
       font-size: 12px;
 
@@ -3656,49 +3652,63 @@ watch(currentChatId, (threadId, oldThreadId) => {
     .queued-request-list {
       display: flex;
       flex-direction: column;
+      gap: 2px;
     }
 
     .queued-request-row {
-      min-height: 40px;
+      min-height: 30px;
       display: grid;
-      grid-template-columns: 18px minmax(0, 1fr) auto 32px;
-      gap: 8px;
+      grid-template-columns: 18px minmax(0, 1fr) auto 30px;
+      gap: 10px;
       align-items: center;
+      padding: 0 4px 0 6px;
       color: var(--color-text);
+      border-radius: 8px;
+      transition: background-color 0.18s ease;
 
-      & + .queued-request-row {
-        border-top: 1px solid var(--gray-100);
+      &:hover {
+        background: var(--gray-50);
       }
     }
 
     .queued-request-icon {
-      color: var(--gray-400);
+      color: var(--gray-500);
     }
 
     .queued-request-content {
       min-width: 0;
       overflow: hidden;
       font-size: 14px;
-      font-weight: 500;
+      font-weight: 600;
       line-height: 1.5;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
 
     .queued-request-position {
-      color: var(--color-text-tertiary);
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      color: var(--gray-500);
       font-size: 12px;
+      font-variant-numeric: tabular-nums;
       white-space: nowrap;
+
+      &::before {
+        content: '↪';
+        color: var(--gray-400);
+        font-size: 14px;
+      }
     }
 
     .queued-request-delete {
-      width: 32px;
-      height: 32px;
+      width: 30px;
+      height: 30px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       padding: 0;
-      color: var(--gray-400);
+      color: var(--gray-500);
       background: transparent;
       border: 0;
       border-radius: 6px;
