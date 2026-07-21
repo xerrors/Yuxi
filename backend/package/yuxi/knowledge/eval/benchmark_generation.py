@@ -370,7 +370,7 @@ async def iter_generated_benchmark_items(
                     continue
                 received += 1
                 yield resolved
-        completed = True
+        completed = pending_error is None
     finally:
         if not completed:
             for task in workers:

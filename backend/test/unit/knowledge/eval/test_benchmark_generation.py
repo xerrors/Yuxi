@@ -502,6 +502,46 @@ async def test_iter_generated_benchmark_items_drains_reorder_buffer_on_exception
 
 
 @pytest.mark.asyncio
+async def test_iter_generated_benchmark_items_cancels_other_workers_on_exception(monkeypatch):
+    monkeypatch.setattr(benchmark_generation, "select_model", lambda model_spec: TrackingLlm())
+    second_worker_started = asyncio.Event()
+    second_worker_cancelled = asyncio.Event()
+    call_count = 0
+
+    async def fake_generate(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            await second_worker_started.wait()
+            raise RuntimeError("worker error")
+
+        second_worker_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            second_worker_cancelled.set()
+            raise
+
+    monkeypatch.setattr(benchmark_generation, "_generate_benchmark_item_once", fake_generate)
+
+    async def consume_items():
+        async for _ in iter_generated_benchmark_items(
+            kb_instance=NoQueryKnowledgeBase(),
+            kb_id="db_1",
+            count=2,
+            neighbors_count=1,
+            concurrency_count=2,
+            llm_model_spec="test-provider:test-model",
+        ):
+            pass
+
+    with pytest.raises(RuntimeError, match="worker error"):
+        await asyncio.wait_for(consume_items(), timeout=1)
+
+    assert second_worker_cancelled.is_set()
+
+
+@pytest.mark.asyncio
 async def test_iter_generated_benchmark_items_yields_partial_items_before_cancellation(monkeypatch):
     """取消时已产出的 2 条 item 先于 CancelledError 产出，验证取消路径不丢已生成结果。"""
     fake_llm = TrackingLlm()

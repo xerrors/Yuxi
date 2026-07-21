@@ -272,9 +272,7 @@ class EvaluationService:
             logger.error(f"删除评估数据集失败: {e}")
             raise
 
-    async def resume_dataset_generation(
-        self, kb_id: str, dataset_id: str, created_by: str
-    ) -> dict[str, Any]:
+    async def resume_dataset_generation(self, kb_id: str, dataset_id: str, created_by: str) -> dict[str, Any]:
         row = await self.eval_repo.get_dataset(dataset_id)
         if row is None or row.kb_id != kb_id:
             raise ValueError("Dataset not found")
@@ -529,8 +527,8 @@ class EvaluationService:
 
             await flush_items()
 
-            if start_index == existing_count:
-                raise ValueError("未生成新的有效评估题目")
+            if start_index < total_count:
+                raise ValueError(f"仅生成 {start_index}/{total_count} 道有效评估题目")
 
             await self._update_dataset_build_metadata(
                 dataset_id,

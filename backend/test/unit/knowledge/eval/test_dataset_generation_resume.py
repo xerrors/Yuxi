@@ -4,7 +4,9 @@ from types import SimpleNamespace
 import pytest
 
 from yuxi.knowledge.eval import benchmark_generation
+from yuxi.knowledge.eval import service as eval_service_module
 from yuxi.knowledge.eval.benchmark_generation import iter_generated_benchmark_items
+from yuxi.knowledge.eval.service import EvaluationService
 
 
 class FakeGenerationKnowledgeBase:
@@ -101,22 +103,11 @@ async def test_iter_generated_benchmark_items_uses_progress_base_and_total_progr
     assert "5/5" in generation_calls[-1][1]
 
 
-from yuxi.knowledge.eval.service import EvaluationService
-
-
 def test_build_dataset_items_with_start_index():
     service = EvaluationService()
-    items = service._build_dataset_items(
-        "ds_1", "kb_1", [{"query": "q1"}, {"query": "q2"}], start_index=5
-    )
+    items = service._build_dataset_items("ds_1", "kb_1", [{"query": "q1"}, {"query": "q2"}], start_index=5)
     assert items[0]["item_index"] == 5
     assert items[1]["item_index"] == 6
-
-
-from types import SimpleNamespace
-
-from yuxi.knowledge.eval import service as eval_service_module
-from yuxi.knowledge.eval.service import EvaluationService
 
 
 class FakeContext:
@@ -151,12 +142,11 @@ async def test_generate_dataset_task_resumes_from_existing_items(monkeypatch):
             yield {"query": f"q{i}", "gold_answer": f"a{i}", "gold_chunk_ids": ["c1"]}
 
     monkeypatch.setattr(eval_service_module, "iter_generated_benchmark_items", fake_iter)
+
     async def mock_aget_kb(kb_id):
         return FakeKB()
 
-    monkeypatch.setattr(
-        eval_service_module, "knowledge_base", SimpleNamespace(aget_kb=mock_aget_kb)
-    )
+    monkeypatch.setattr(eval_service_module, "knowledge_base", SimpleNamespace(aget_kb=mock_aget_kb))
     monkeypatch.setattr(eval_service_module, "DATASET_PERSIST_BATCH_SIZE", 1)
 
     added_items = []
@@ -206,12 +196,11 @@ async def test_generate_dataset_task_persists_in_batches(monkeypatch):
             yield {"query": f"q{i}", "gold_answer": f"a{i}", "gold_chunk_ids": ["c1"]}
 
     monkeypatch.setattr(eval_service_module, "iter_generated_benchmark_items", fake_iter)
+
     async def mock_aget_kb(kb_id):
         return FakeKB()
 
-    monkeypatch.setattr(
-        eval_service_module, "knowledge_base", SimpleNamespace(aget_kb=mock_aget_kb)
-    )
+    monkeypatch.setattr(eval_service_module, "knowledge_base", SimpleNamespace(aget_kb=mock_aget_kb))
     monkeypatch.setattr(eval_service_module, "DATASET_PERSIST_BATCH_SIZE", 2)
 
     flush_batches = []
@@ -253,6 +242,53 @@ async def test_generate_dataset_task_persists_in_batches(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_generate_dataset_task_fails_when_generated_count_is_below_target(monkeypatch):
+    async def fake_iter(*args, **kwargs):
+        yield {"query": "q1", "gold_answer": "a1", "gold_chunk_ids": ["c1"]}
+
+    async def mock_aget_kb(kb_id):
+        return FakeKB()
+
+    monkeypatch.setattr(eval_service_module, "iter_generated_benchmark_items", fake_iter)
+    monkeypatch.setattr(eval_service_module, "knowledge_base", SimpleNamespace(aget_kb=mock_aget_kb))
+
+    added_items = []
+    metadata_updates = []
+
+    class FakeRepo:
+        async def count_dataset_items(self, dataset_id):
+            return 0
+
+        async def add_dataset_items(self, items):
+            added_items.extend(items)
+
+        async def update_dataset(self, dataset_id, data):
+            if "build_metadata" in data:
+                metadata_updates.append(dict(data["build_metadata"]))
+
+    service = EvaluationService()
+    service.eval_repo = FakeRepo()
+    context = FakeContext(
+        {
+            "dataset_id": "ds_1",
+            "kb_id": "kb_1",
+            "count": 5,
+            "neighbors_count": 1,
+            "concurrency_count": 1,
+            "llm_model_spec": "test:model",
+            "generation_mode": "vector",
+            "graph_expand_top_k": 1,
+        }
+    )
+
+    with pytest.raises(ValueError, match="仅生成 1/5 道有效评估题目"):
+        await service._generate_dataset_task(context)
+
+    assert len(added_items) == 1
+    assert metadata_updates[-1]["status"] == "failed"
+
+
+@pytest.mark.asyncio
 async def test_resume_dataset_generation_enqueues_new_task(monkeypatch):
     """无进行中任务时原子创建恢复任务，并校验 payload_match/statuses 等去重传参。"""
     captured = {}
@@ -261,9 +297,7 @@ async def test_resume_dataset_generation_enqueues_new_task(monkeypatch):
         captured.update(kwargs)
         return SimpleNamespace(id="task_2"), True
 
-    monkeypatch.setattr(
-        eval_service_module.tasker, "enqueue_unique_by_payload", fake_enqueue_unique_by_payload
-    )
+    monkeypatch.setattr(eval_service_module.tasker, "enqueue_unique_by_payload", fake_enqueue_unique_by_payload)
 
     class FakeRepo:
         async def count_dataset_items(self, dataset_id):
@@ -306,6 +340,7 @@ async def test_resume_dataset_generation_enqueues_new_task(monkeypatch):
 @pytest.mark.asyncio
 async def test_resume_dataset_generation_returns_existing_task(monkeypatch):
     """已有进行中任务时直接返回该任务（created=False），不重复创建。"""
+
     async def fake_enqueue_unique_by_payload(**kwargs):
         return SimpleNamespace(id="task_1"), False
 
@@ -384,9 +419,7 @@ def make_real_generator_service(monkeypatch, kb, batch_size, added_items, metada
     async def mock_aget_kb(kb_id):
         return kb
 
-    monkeypatch.setattr(
-        eval_service_module, "knowledge_base", SimpleNamespace(aget_kb=mock_aget_kb)
-    )
+    monkeypatch.setattr(eval_service_module, "knowledge_base", SimpleNamespace(aget_kb=mock_aget_kb))
     monkeypatch.setattr(eval_service_module, "DATASET_PERSIST_BATCH_SIZE", batch_size)
 
     class FakeRepo:
