@@ -162,8 +162,8 @@ def chunk_markdown(
     while i < len(tokens):
         token = tokens[i]
         if token.type == "heading_open":
-            inline_token = tokens[i + 1]
-            full_title = inline_token.content.strip() if inline_token.type == "inline" else ""
+            inline_token = tokens[i + 1] if i + 1 < len(tokens) else None
+            full_title = inline_token.content.strip() if inline_token and inline_token.type == "inline" else ""
             if not full_title:
                 i += 3
                 continue
