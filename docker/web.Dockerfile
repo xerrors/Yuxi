@@ -42,6 +42,8 @@ RUN pnpm run build
 # 生产环境运行阶段
 FROM nginx:alpine AS production
 COPY --from=build-stage /app/dist /usr/share/nginx/html
+RUN find /usr/share/nginx/html -type d -exec chmod 755 {} \; \
+    && find /usr/share/nginx/html -type f -exec chmod 644 {} \;
 COPY ./docker/nginx/nginx.conf /etc/nginx/nginx.conf
 COPY ./docker/nginx/default.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80

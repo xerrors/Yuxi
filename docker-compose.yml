@@ -284,6 +284,8 @@ services:
     environment:
       ETCD_ENDPOINTS: etcd:2379
       MINIO_ADDRESS: minio:9000
+      MINIO_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       MILVUS_LOG_LEVEL: error
     volumes:
       - ./docker/volumes/milvus/milvus:/var/lib/milvus
