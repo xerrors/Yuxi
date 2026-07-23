@@ -1242,8 +1242,8 @@ defineExpose({
             :placeholder="REQUEST_BODY_OVERRIDES_PLACEHOLDER"
           />
           <small class="form-help">
-            仅 OpenAI/OpenRouter 的 chat 模型会通过 extra_body 透传；支持 enable_thinking、thinking_budget、thinking、reasoning
-            和 reasoning_effort。
+            仅 OpenAI 兼容供应商（含 OpenRouter）的 chat 模型会通过 extra_body 透传；支持
+            enable_thinking、thinking_budget、thinking、reasoning 和 reasoning_effort。
           </small>
         </label>
 

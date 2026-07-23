@@ -127,6 +127,7 @@ def _validate_request_body_overrides_scope(
     enabled_models: list[dict[str, Any]],
     provider_type: str | None,
 ) -> None:
+    """校验请求体覆盖仅用于 OpenAI 兼容供应商的 chat 模型。"""
     for model in enabled_models or []:
         overrides = model.get("request_body_overrides") or {}
         if not overrides:
