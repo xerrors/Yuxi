@@ -289,11 +289,8 @@ async def parse_image_async(file, params=None):
     return await asyncio.to_thread(parse_image, file, params=params)
 
 
-
 async def parse_resolved_document(source: str, params: dict | None = None) -> MarkdownParseResult:
-    """使用已经解析好的运行时参数执行底层文件转换。"""
-
-    """将不同类型的文件转换为 markdown，支持本地文件和 MinIO 文件。"""
+    """使用已解析的运行时参数，将本地或 MinIO 文件转换为 Markdown。"""
     from yuxi.knowledge.utils.kb_utils import is_minio_url, parse_minio_url
     from yuxi.storage.minio.client import get_minio_client
 

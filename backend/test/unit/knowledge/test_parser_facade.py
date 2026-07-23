@@ -75,6 +75,30 @@ def test_mineru_official_health_check_does_not_create_task(monkeypatch: pytest.M
     assert health["status"] == "configured"
 
 
+def test_mineru_official_parsing_does_not_reject_configured_health(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    file_path = tmp_path / "mineru.pdf"
+    file_path.write_bytes(b"pdf")
+    parser = MinerUOfficialParser(api_key="test-key")
+
+    monkeypatch.setattr(parser, "_upload_file", lambda *args, **kwargs: "batch-id")
+    monkeypatch.setattr(
+        parser,
+        "_poll_batch_result",
+        lambda *args, **kwargs: {"state": "done", "full_zip_url": "https://example.test/result.zip"},
+    )
+
+    def raise_download_error(*args, **kwargs):
+        raise RuntimeError("use markdown fallback")
+
+    monkeypatch.setattr(parser, "_download_zip", raise_download_error)
+    monkeypatch.setattr(parser, "_download_and_extract", lambda *args, **kwargs: "parsed markdown")
+
+    assert parser.process_file(str(file_path)) == "parsed markdown"
+
+
 def test_rapid_ocr_health_check_does_not_load_model(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         "yuxi.knowledge.parser.rapid_ocr.RapidOCR",

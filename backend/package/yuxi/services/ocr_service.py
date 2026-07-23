@@ -17,6 +17,7 @@ from yuxi.config.options import (
 from yuxi.knowledge.parser.factory import DocumentProcessorFactory
 from yuxi.knowledge.parser.registry import PROCESSOR_TYPES, get_parser_metadata
 from yuxi.knowledge.parser.unified import OCR_FILE_EXTENSIONS, parse_resolved_document
+from yuxi.models.providers.service import get_model_provider_by_id, resolve_api_key
 
 
 def get_ocr_options() -> dict[str, Any]:
@@ -139,23 +140,15 @@ async def _build_processor_kwargs(db: AsyncSession, engine_id: str) -> dict[str,
         opts = await pp_structure_v3_ocr_host_opts.get(db)
         return {"server_url": opts["server_url"]} if opts["server_url"] else {}
     if engine_id == "deepseek_ocr":
-        provider = _resolve_deepseek_provider()
-        if provider is None or not provider.api_key:
+        provider = await get_model_provider_by_id(db, "siliconflow-cn")
+        api_key = resolve_api_key(provider) if provider and provider.is_enabled else None
+        if not api_key:
             raise ValueError("siliconflow-cn 模型供应商凭证不可用")
         return {
-            "api_key": provider.api_key,
+            "api_key": api_key,
             "api_url": f"{provider.base_url.rstrip('/')}/chat/completions",
         }
     if engine_id in {"paddleocr_vl_1_6", "paddleocr_pp_ocrv6"}:
         opts = await paddleocr_api_opts.get(db)
         return {key: value for key, value in opts.items() if value}
     return {}
-
-
-def _resolve_deepseek_provider():
-    from yuxi.models.providers.cache import model_cache
-
-    models = model_cache.get_specs_grouped_by_provider().get("siliconflow-cn", [])
-    return next((model for model in models if model.model_id == "deepseek-ai/DeepSeek-OCR"), None) or (
-        models[0] if models else None
-    )

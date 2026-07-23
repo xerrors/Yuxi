@@ -73,13 +73,6 @@ class MinerUOfficialParser(BaseDocumentProcessor):
                 f"不支持的文件类型: {file_ext}", self.get_service_name(), "unsupported_file_type"
             )
 
-        # 先检查 API 健康状态
-        health = self.check_health()
-        if health["status"] != "healthy":
-            raise DocumentParserException(
-                f"MinerU 官方 API 不可用: {health['message']}", self.get_service_name(), health["status"]
-            )
-
         # 处理参数
         params = params or {}
 

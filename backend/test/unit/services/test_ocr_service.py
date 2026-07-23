@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.config.options import ensure_options_in_db, update_option_value
 from yuxi.services import ocr_service
-from yuxi.storage.postgres.models_business import Base
+from yuxi.storage.postgres.models_business import Base, ModelProvider
 
 
 @pytest_asyncio.fixture
@@ -50,19 +48,20 @@ def test_ocr_options_use_parser_metadata():
 
 
 @pytest.mark.asyncio
-async def test_deepseek_uses_siliconflow_model_provider(db_session, monkeypatch):
-    provider = SimpleNamespace(
-        model_id="deepseek-ai/DeepSeek-OCR",
-        api_key="provider-secret",
+async def test_deepseek_uses_provider_credentials_without_chat_models(db_session):
+    provider = ModelProvider(
+        provider_id="siliconflow-cn",
+        display_name="SiliconFlow",
+        provider_type="openai",
         base_url="https://provider.example/v1",
+        is_enabled=True,
+        api_key="provider-secret",
+        api_key_env=None,
+        capabilities=["embedding"],
+        enabled_models=[{"id": "BAAI/bge-m3", "type": "embedding"}],
     )
-    from yuxi.models.providers.cache import model_cache
-
-    monkeypatch.setattr(
-        model_cache,
-        "get_specs_grouped_by_provider",
-        lambda: {"siliconflow-cn": [provider]},
-    )
+    db_session.add(provider)
+    await db_session.flush()
 
     resolved = await ocr_service.resolve_ocr_task_params({"ocr_engine": "deepseek_ocr"}, db_session)
 
