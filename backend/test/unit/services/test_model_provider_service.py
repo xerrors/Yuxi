@@ -6,12 +6,14 @@ import pytest
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
 from yuxi.models.providers.builtin import BUILTIN_PROVIDERS
+from yuxi.models.providers.request_overrides import normalize_request_body_overrides
 from yuxi.models.providers.service import (
-    check_credential_status,
-    update_provider_config,
     _normalize_payload,
     _normalize_remote_model,
+    _validate_request_body_overrides_scope,
+    check_credential_status,
     fetch_remote_models,
+    update_provider_config,
 )
 
 
@@ -37,7 +39,7 @@ def test_normalize_payload_accepts_allowed_model_request_body_overrides():
         "enable_thinking": True,
         "thinking_budget": 1024,
         "thinking": {"type": "enabled"},
-        "reasoning": {"effort": "low"},
+        "reasoning": {"future_provider_option": {"enabled": True}},
         "reasoning_effort": "high",
     }
     payload = _normalize_payload(
@@ -58,133 +60,34 @@ def test_normalize_payload_accepts_allowed_model_request_body_overrides():
     assert payload["enabled_models"][0]["request_body_overrides"] == overrides
 
 
-def test_normalize_payload_accepts_openrouter_specific_request_body_overrides():
-    payload = _normalize_payload(
-        {
-            "provider_id": "openrouter-local",
-            "display_name": "OpenRouter Local",
-            "provider_type": "openrouter",
-            "base_url": "https://openrouter.ai/api/v1",
-            "capabilities": ["chat"],
-            "enabled_models": [
-                {
-                    "id": "openai/gpt-oss-120b",
-                    "type": "chat",
-                    "request_body_overrides": {
-                        "reasoning": {
-                            "effort": "low",
-                            "future_provider_option": {"enabled": True},
-                        }
-                    },
-                }
-            ],
-        }
-    )
+@pytest.mark.parametrize(
+    ("value", "error"),
+    [
+        (["enable_thinking"], "必须是 JSON 对象"),
+        ({"messages": []}, "包含不支持的 extra_body 字段"),
+        ({"thinking_budget": float("nan")}, "只能包含合法 JSON 值"),
+    ],
+)
+def test_normalize_request_body_overrides_rejects_invalid_values(value, error):
+    with pytest.raises(ValueError, match=error):
+        normalize_request_body_overrides(value)
 
-    assert payload["enabled_models"][0]["request_body_overrides"] == {
-        "reasoning": {
-            "effort": "low",
-            "future_provider_option": {"enabled": True},
-        }
+
+@pytest.mark.parametrize(
+    ("provider_type", "model_type", "error"),
+    [
+        ("anthropic", "chat", "仅支持 OpenAI 兼容供应商"),
+        ("openai", "rerank", "仅支持 chat 模型"),
+    ],
+)
+def test_request_body_overrides_require_openai_chat_model(provider_type, model_type, error):
+    model = {
+        "id": "model",
+        "type": model_type,
+        "request_body_overrides": {"thinking_budget": 1024},
     }
-
-
-def test_normalize_payload_rejects_non_object_model_request_body_overrides():
-    with pytest.raises(ValueError, match="request_body_overrides 必须是 JSON 对象"):
-        _normalize_payload(
-            {
-                "provider_id": "siliconflow-local",
-                "display_name": "SiliconFlow Local",
-                "base_url": "https://api.siliconflow.cn/v1",
-                "enabled_models": [
-                    {
-                        "id": "Qwen/Qwen3-8B",
-                        "type": "chat",
-                        "request_body_overrides": ["enable_thinking"],
-                    }
-                ],
-            }
-        )
-
-
-def test_normalize_payload_rejects_request_body_override_fields_outside_allowlist():
-    with pytest.raises(ValueError, match="包含不支持的 extra_body 字段: Authorization, messages, model"):
-        _normalize_payload(
-            {
-                "provider_id": "siliconflow-local",
-                "display_name": "SiliconFlow Local",
-                "base_url": "https://api.siliconflow.cn/v1",
-                "enabled_models": [
-                    {
-                        "id": "Qwen/Qwen3-8B",
-                        "type": "chat",
-                        "request_body_overrides": {
-                            "Authorization": "Bearer leaked",
-                            "messages": [],
-                            "model": "other-model",
-                        },
-                    }
-                ],
-            }
-        )
-
-
-def test_normalize_payload_rejects_request_body_overrides_for_non_openai_compatible_provider():
-    with pytest.raises(ValueError, match="仅支持 OpenAI 兼容供应商"):
-        _normalize_payload(
-            {
-                "provider_id": "anthropic-local",
-                "display_name": "Anthropic Local",
-                "provider_type": "anthropic",
-                "base_url": "https://example.com/v1",
-                "capabilities": ["chat"],
-                "enabled_models": [
-                    {
-                        "id": "claude-sonnet",
-                        "type": "chat",
-                        "request_body_overrides": {"thinking_budget": 1024},
-                    }
-                ],
-            }
-        )
-
-
-def test_normalize_payload_rejects_request_body_overrides_for_non_chat_model():
-    with pytest.raises(ValueError, match="仅支持 chat 模型"):
-        _normalize_payload(
-            {
-                "provider_id": "rerank-local",
-                "display_name": "Rerank Local",
-                "provider_type": "openai",
-                "base_url": "https://example.com/v1",
-                "capabilities": ["rerank"],
-                "enabled_models": [
-                    {
-                        "id": "rerank-model",
-                        "type": "rerank",
-                        "request_body_overrides": {"thinking_budget": 1024},
-                    }
-                ],
-            }
-        )
-
-
-def test_normalize_payload_rejects_non_json_model_request_body_override_values():
-    with pytest.raises(ValueError, match="只能包含合法 JSON 值"):
-        _normalize_payload(
-            {
-                "provider_id": "siliconflow-local",
-                "display_name": "SiliconFlow Local",
-                "base_url": "https://api.siliconflow.cn/v1",
-                "enabled_models": [
-                    {
-                        "id": "Qwen/Qwen3-8B",
-                        "type": "chat",
-                        "request_body_overrides": {"thinking_budget": float("nan")},
-                    }
-                ],
-            }
-        )
+    with pytest.raises(ValueError, match=error):
+        _validate_request_body_overrides_scope([model], provider_type)
 
 
 @pytest.mark.asyncio

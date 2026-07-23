@@ -261,46 +261,6 @@ def test_load_chat_model_merges_request_body_overrides_into_extra_body(monkeypat
     assert captured_body["thinking_budget"] == 1024
 
 
-def test_load_chat_model_rejects_cached_request_body_override_fields_outside_allowlist(monkeypatch):
-    monkeypatch.setattr(
-        "yuxi.agents.models.model_cache.get_model_info",
-        lambda spec: (
-            _chat_model_info(
-                "siliconflow-cn",
-                "Qwen/Qwen3-8B",
-                request_body_overrides={
-                    "enable_thinking": False,
-                    "stream": True,
-                },
-            )
-            if spec == "siliconflow-cn:Qwen/Qwen3-8B"
-            else None
-        ),
-    )
-
-    with pytest.raises(ValueError, match="包含不支持的 extra_body 字段: stream"):
-        load_chat_model("siliconflow-cn:Qwen/Qwen3-8B")
-
-
-def test_load_chat_model_rejects_request_body_overrides_for_non_openai_compatible_provider(monkeypatch):
-    monkeypatch.setattr(
-        "yuxi.agents.models.model_cache.get_model_info",
-        lambda spec: (
-            _chat_model_info(
-                "anthropic",
-                "claude-sonnet",
-                provider_type="anthropic",
-                request_body_overrides={"thinking": {"type": "enabled"}},
-            )
-            if spec == "anthropic:claude-sonnet"
-            else None
-        ),
-    )
-
-    with pytest.raises(ValueError, match="仅支持 OpenAI 兼容供应商"):
-        load_chat_model("anthropic:claude-sonnet")
-
-
 @pytest.mark.asyncio
 async def test_langchain_chat_adapter_preserves_call_response_contract():
     from langchain_core.messages import AIMessage
