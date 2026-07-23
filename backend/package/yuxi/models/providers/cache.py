@@ -137,7 +137,6 @@ class ModelCache:
 
     def rebuild(self, providers: list[Any]) -> None:
         from yuxi.models.providers.service import resolve_api_key
-        from yuxi.models.providers.request_overrides import normalize_request_body_overrides
 
         new_cache: dict[str, ModelInfo] = {}
 
@@ -161,10 +160,7 @@ class ModelCache:
                     provider_type=provider.provider_type,
                     headers=dict(provider.headers_json or {}),
                     extra=dict(provider.extra_json or {}),
-                    request_body_overrides=normalize_request_body_overrides(
-                        model.get("request_body_overrides", {}),
-                        model_id=model["id"],
-                    ),
+                    request_body_overrides=dict(model.get("request_body_overrides") or {}),
                     dimension=model.get("dimension"),
                     batch_size=model.get("batch_size", 40),
                 )

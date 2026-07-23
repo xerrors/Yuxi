@@ -1,6 +1,7 @@
 # ruff: noqa: E501
 
 import asyncio
+import json
 import os
 import re
 from typing import Any
@@ -16,15 +17,19 @@ from yuxi.models.providers.repository import (
     list_model_providers,
     update_model_provider,
 )
-from yuxi.models.providers.request_overrides import (
-    OPENAI_COMPATIBLE_REQUEST_BODY_PROVIDER_TYPES,
-    normalize_request_body_overrides,
-)
 from yuxi.storage.postgres.models_business import ModelProvider
 
 VALID_MODEL_TYPES = {"chat", "embedding", "rerank"}
 VALID_MODEL_SOURCES = {"manual", "remote"}
 VALID_PROVIDER_TYPES = {"openai", "anthropic", "gemini", "openrouter"}
+OPENAI_COMPATIBLE_REQUEST_BODY_PROVIDER_TYPES = {"openai", "openrouter"}
+ALLOWED_EXTRA_BODY_FIELDS = {
+    "enable_thinking",
+    "reasoning",
+    "reasoning_effort",
+    "thinking",
+    "thinking_budget",
+}
 _PROVIDER_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{1,99}$")
 
 
@@ -63,10 +68,28 @@ def _normalize_model_item(model: dict[str, Any]) -> dict[str, Any]:
     normalized["display_name"] = str(model.get("display_name") or model.get("name") or model_id)
     normalized["extra"] = _normalize_dict(model.get("extra"))
     if "request_body_overrides" in model:
-        normalized["request_body_overrides"] = normalize_request_body_overrides(
-            model.get("request_body_overrides"),
-            model_id=model_id,
-        )
+        overrides = model.get("request_body_overrides")
+        if not isinstance(overrides, dict):
+            raise ValueError(f"模型 {model_id} 的 request_body_overrides 必须是 JSON 对象")
+
+        invalid_keys = [key for key in overrides if not isinstance(key, str) or not key.strip()]
+        if invalid_keys:
+            raise ValueError(f"模型 {model_id} 的 request_body_overrides 字段名必须是非空字符串")
+
+        unsupported_fields = sorted(set(overrides) - ALLOWED_EXTRA_BODY_FIELDS)
+        if unsupported_fields:
+            allowed_fields = ", ".join(sorted(ALLOWED_EXTRA_BODY_FIELDS))
+            raise ValueError(
+                f"模型 {model_id} 的 request_body_overrides 包含不支持的 extra_body 字段: "
+                f"{', '.join(unsupported_fields)}；允许字段: {allowed_fields}"
+            )
+
+        try:
+            json.dumps(overrides, ensure_ascii=False, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"模型 {model_id} 的 request_body_overrides 只能包含合法 JSON 值") from exc
+
+        normalized["request_body_overrides"] = dict(overrides)
 
     if model_type == "embedding":
         dimension = model.get("dimension")

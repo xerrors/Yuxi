@@ -4,10 +4,6 @@ from pydantic import SecretStr
 
 from yuxi import config as sys_config
 from yuxi.models.providers.cache import model_cache
-from yuxi.models.providers.request_overrides import (
-    OPENAI_COMPATIBLE_REQUEST_BODY_PROVIDER_TYPES,
-    normalize_request_body_overrides,
-)
 from yuxi.utils import get_docker_safe_url
 from yuxi.utils.logging_config import logger
 
@@ -41,12 +37,10 @@ def load_chat_model(fully_specified_name: str | None, **kwargs) -> BaseChatModel
 
     api_key = info.api_key
     base_url = get_docker_safe_url(info.base_url)
-    kwargs = _merge_request_body_overrides(
-        info.provider_type,
-        kwargs,
-        info.request_body_overrides,
-        model_id=info.model_id,
-    )
+    if info.request_body_overrides:
+        extra_body = dict(kwargs.get("extra_body") or {})
+        extra_body.update(info.request_body_overrides)
+        kwargs = {**kwargs, "extra_body": extra_body}
 
     logger.debug(f"Loading model {fully_specified_name} with provider_type={info.provider_type}")
 
@@ -75,27 +69,6 @@ def load_chat_model(fully_specified_name: str | None, **kwargs) -> BaseChatModel
         stream_usage=True,
         **kwargs,
     )
-
-
-def _merge_request_body_overrides(
-    provider_type: str,
-    kwargs: dict,
-    request_body_overrides: dict | None,
-    *,
-    model_id: str = "",
-) -> dict:
-    overrides = normalize_request_body_overrides(request_body_overrides or {}, model_id=model_id)
-    if not overrides:
-        return kwargs
-
-    merged = dict(kwargs)
-    if provider_type not in OPENAI_COMPATIBLE_REQUEST_BODY_PROVIDER_TYPES:
-        raise ValueError("模型请求参数 JSON 仅支持 OpenAI 兼容供应商")
-
-    extra_body = dict(merged.get("extra_body") or {})
-    extra_body.update(overrides)
-    merged["extra_body"] = extra_body
-    return merged
 
 
 class _ToolCallChunkFixChatOpenAI(ChatOpenAI):

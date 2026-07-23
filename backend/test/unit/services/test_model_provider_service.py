@@ -6,7 +6,6 @@ import pytest
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
 from yuxi.models.providers.builtin import BUILTIN_PROVIDERS
-from yuxi.models.providers.request_overrides import normalize_request_body_overrides
 from yuxi.models.providers.service import (
     _normalize_payload,
     _normalize_remote_model,
@@ -69,8 +68,20 @@ def test_normalize_payload_accepts_allowed_model_request_body_overrides():
     ],
 )
 def test_normalize_request_body_overrides_rejects_invalid_values(value, error):
+    data = {
+        "provider_id": "siliconflow-local",
+        "display_name": "SiliconFlow Local",
+        "base_url": "https://api.siliconflow.cn/v1",
+        "enabled_models": [
+            {
+                "id": "Qwen/Qwen3-8B",
+                "type": "chat",
+                "request_body_overrides": value,
+            }
+        ],
+    }
     with pytest.raises(ValueError, match=error):
-        normalize_request_body_overrides(value)
+        _normalize_payload(data)
 
 
 @pytest.mark.parametrize(
