@@ -1,4 +1,5 @@
 import os
+from types import SimpleNamespace
 
 import pytest
 
@@ -7,6 +8,7 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key")
 from yuxi.models.providers.builtin import BUILTIN_PROVIDERS
 from yuxi.models.providers.service import (
     check_credential_status,
+    update_provider_config,
     _normalize_payload,
     _normalize_remote_model,
     fetch_remote_models,
@@ -28,6 +30,220 @@ def test_normalize_payload_accepts_enabled_chat_model():
     assert "models_endpoint" not in payload
     assert "embedding_models_endpoint" not in payload
     assert payload["enabled_models"][0]["display_name"] == "anthropic/claude-sonnet-4.5"
+
+
+def test_normalize_payload_accepts_model_request_body_overrides():
+    payload = _normalize_payload(
+        {
+            "provider_id": "siliconflow-local",
+            "display_name": "SiliconFlow Local",
+            "base_url": "https://api.siliconflow.cn/v1",
+            "enabled_models": [
+                {
+                    "id": "Qwen/Qwen3-8B",
+                    "type": "chat",
+                    "request_body_overrides": {
+                        "enable_thinking": True,
+                        "thinking_budget": 1024,
+                    },
+                }
+            ],
+        }
+    )
+
+    assert payload["enabled_models"][0]["request_body_overrides"] == {
+        "enable_thinking": True,
+        "thinking_budget": 1024,
+    }
+
+
+def test_normalize_payload_accepts_openrouter_specific_request_body_overrides():
+    payload = _normalize_payload(
+        {
+            "provider_id": "openrouter-local",
+            "display_name": "OpenRouter Local",
+            "provider_type": "openrouter",
+            "base_url": "https://openrouter.ai/api/v1",
+            "capabilities": ["chat"],
+            "enabled_models": [
+                {
+                    "id": "openai/gpt-oss-120b",
+                    "type": "chat",
+                    "request_body_overrides": {"reasoning": {"effort": "low"}},
+                }
+            ],
+        }
+    )
+
+    assert payload["enabled_models"][0]["request_body_overrides"] == {"reasoning": {"effort": "low"}}
+
+
+def test_normalize_payload_rejects_non_object_model_request_body_overrides():
+    with pytest.raises(ValueError, match="request_body_overrides 必须是 JSON 对象"):
+        _normalize_payload(
+            {
+                "provider_id": "siliconflow-local",
+                "display_name": "SiliconFlow Local",
+                "base_url": "https://api.siliconflow.cn/v1",
+                "enabled_models": [
+                    {
+                        "id": "Qwen/Qwen3-8B",
+                        "type": "chat",
+                        "request_body_overrides": ["enable_thinking"],
+                    }
+                ],
+            }
+        )
+
+
+def test_normalize_payload_rejects_protected_model_request_body_override_fields():
+    with pytest.raises(ValueError, match="不允许覆盖受保护字段: Authorization, messages, model"):
+        _normalize_payload(
+            {
+                "provider_id": "siliconflow-local",
+                "display_name": "SiliconFlow Local",
+                "base_url": "https://api.siliconflow.cn/v1",
+                "enabled_models": [
+                    {
+                        "id": "Qwen/Qwen3-8B",
+                        "type": "chat",
+                        "request_body_overrides": {
+                            "Authorization": "Bearer leaked",
+                            "messages": [],
+                            "model": "other-model",
+                        },
+                    }
+                ],
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "apiKey",
+        "baseUrl",
+        "defaultHeaders",
+        "functionCall",
+        "functions",
+        "maxTokens",
+        "modalities",
+        "openaiApiKey",
+        "parallelToolCalls",
+        "prediction",
+        "promptCacheKey",
+        "reasoningEffort",
+        "responseFormat",
+        "safetyIdentifier",
+        "streamOptions",
+        "temperature",
+        "toolChoice",
+        "webSearchOptions",
+    ],
+)
+def test_normalize_payload_rejects_protected_model_request_body_override_aliases(field):
+    with pytest.raises(ValueError, match="不允许覆盖受保护字段"):
+        _normalize_payload(
+            {
+                "provider_id": "siliconflow-local",
+                "display_name": "SiliconFlow Local",
+                "base_url": "https://api.siliconflow.cn/v1",
+                "enabled_models": [
+                    {
+                        "id": "Qwen/Qwen3-8B",
+                        "type": "chat",
+                        "request_body_overrides": {field: True},
+                    }
+                ],
+            }
+        )
+
+
+def test_normalize_payload_rejects_request_body_overrides_for_non_openai_compatible_provider():
+    with pytest.raises(ValueError, match="仅支持 OpenAI 兼容供应商"):
+        _normalize_payload(
+            {
+                "provider_id": "anthropic-local",
+                "display_name": "Anthropic Local",
+                "provider_type": "anthropic",
+                "base_url": "https://example.com/v1",
+                "capabilities": ["chat"],
+                "enabled_models": [
+                    {
+                        "id": "claude-sonnet",
+                        "type": "chat",
+                        "request_body_overrides": {"thinking_budget": 1024},
+                    }
+                ],
+            }
+        )
+
+
+def test_normalize_payload_rejects_request_body_overrides_for_non_chat_model():
+    with pytest.raises(ValueError, match="仅支持 chat 模型"):
+        _normalize_payload(
+            {
+                "provider_id": "rerank-local",
+                "display_name": "Rerank Local",
+                "provider_type": "openai",
+                "base_url": "https://example.com/v1",
+                "capabilities": ["rerank"],
+                "enabled_models": [
+                    {
+                        "id": "rerank-model",
+                        "type": "rerank",
+                        "request_body_overrides": {"top_n": 5},
+                    }
+                ],
+            }
+        )
+
+
+def test_normalize_payload_rejects_non_json_model_request_body_override_values():
+    with pytest.raises(ValueError, match="只能包含合法 JSON 值"):
+        _normalize_payload(
+            {
+                "provider_id": "siliconflow-local",
+                "display_name": "SiliconFlow Local",
+                "base_url": "https://api.siliconflow.cn/v1",
+                "enabled_models": [
+                    {
+                        "id": "Qwen/Qwen3-8B",
+                        "type": "chat",
+                        "request_body_overrides": {"thinking_budget": float("nan")},
+                    }
+                ],
+            }
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_provider_config_rejects_provider_type_change_with_existing_overrides(monkeypatch):
+    provider = SimpleNamespace(
+        provider_id="openai-local",
+        provider_type="openai",
+        capabilities=["chat"],
+        enabled_models=[
+            {
+                "id": "chat-model",
+                "type": "chat",
+                "request_body_overrides": {"enable_thinking": False},
+            }
+        ],
+    )
+
+    async def fake_get_model_provider(db, provider_id):
+        del db
+        return provider if provider_id == "openai-local" else None
+
+    async def fail_update_model_provider(db, provider, data):
+        pytest.fail("不应在非法 request_body_overrides 范围下写入 provider")
+
+    monkeypatch.setattr("yuxi.models.providers.service.get_model_provider", fake_get_model_provider)
+    monkeypatch.setattr("yuxi.models.providers.service.update_model_provider", fail_update_model_provider)
+
+    with pytest.raises(ValueError, match="仅支持 OpenAI 兼容供应商"):
+        await update_provider_config(None, "openai-local", {"provider_type": "anthropic"}, "tester")
 
 
 def test_normalize_payload_accepts_anthropic_provider_type():

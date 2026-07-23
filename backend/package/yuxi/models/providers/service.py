@@ -16,6 +16,10 @@ from yuxi.models.providers.repository import (
     list_model_providers,
     update_model_provider,
 )
+from yuxi.models.providers.request_overrides import (
+    OPENAI_COMPATIBLE_REQUEST_BODY_PROVIDER_TYPES,
+    normalize_request_body_overrides,
+)
 from yuxi.storage.postgres.models_business import ModelProvider
 
 VALID_MODEL_TYPES = {"chat", "embedding", "rerank"}
@@ -58,6 +62,11 @@ def _normalize_model_item(model: dict[str, Any]) -> dict[str, Any]:
     normalized["source"] = source
     normalized["display_name"] = str(model.get("display_name") or model.get("name") or model_id)
     normalized["extra"] = _normalize_dict(model.get("extra"))
+    if "request_body_overrides" in model:
+        normalized["request_body_overrides"] = normalize_request_body_overrides(
+            model.get("request_body_overrides"),
+            model_id=model_id,
+        )
 
     if model_type == "embedding":
         dimension = model.get("dimension")
@@ -89,6 +98,21 @@ def _validate_models_capabilities(enabled_models: list[dict], capabilities: set[
     for model in enabled_models or []:
         if model["type"] not in capabilities:
             raise ValueError(f"模型 {model['id']} 的 type={model['type']} 不在 provider 能力 {sorted(capabilities)} 内")
+
+
+def _validate_request_body_overrides_scope(
+    enabled_models: list[dict[str, Any]],
+    provider_type: str | None,
+) -> None:
+    for model in enabled_models or []:
+        overrides = model.get("request_body_overrides") or {}
+        if not overrides:
+            continue
+        model_id = model.get("id") or ""
+        if provider_type not in OPENAI_COMPATIBLE_REQUEST_BODY_PROVIDER_TYPES:
+            raise ValueError(f"模型 {model_id} 的 request_body_overrides 仅支持 OpenAI 兼容供应商")
+        if model.get("type") != "chat":
+            raise ValueError(f"模型 {model_id} 的 request_body_overrides 仅支持 chat 模型")
 
 
 _FIELD_DEFAULTS: dict[str, Any] = {
@@ -159,6 +183,9 @@ def _normalize_payload(data: dict[str, Any], *, partial: bool = False) -> dict[s
         capabilities_set = set(payload.get("capabilities") or [])
         if capabilities_set:
             _validate_models_capabilities(payload.get("enabled_models"), capabilities_set)
+
+    if not partial:
+        _validate_request_body_overrides_scope(payload.get("enabled_models"), payload.get("provider_type"))
 
     return payload
 
@@ -289,6 +316,11 @@ async def update_provider_config(
         existing_caps = set(provider.capabilities or [])
         if existing_caps:
             _validate_models_capabilities(payload.get("enabled_models"), existing_caps)
+    if "enabled_models" in payload or "provider_type" in payload:
+        _validate_request_body_overrides_scope(
+            payload.get("enabled_models", provider.enabled_models or []),
+            payload.get("provider_type", provider.provider_type),
+        )
     payload["updated_by"] = username
     return await update_model_provider(db, provider, payload)
 

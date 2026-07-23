@@ -24,7 +24,12 @@ def _model_info(model_type: str) -> ModelInfo:
     )
 
 
-def _chat_model_info(provider_id: str, model_id: str, provider_type: str = "openai") -> ModelInfo:
+def _chat_model_info(
+    provider_id: str,
+    model_id: str,
+    provider_type: str = "openai",
+    request_body_overrides: dict | None = None,
+) -> ModelInfo:
     return ModelInfo(
         provider_id=provider_id,
         model_id=model_id,
@@ -33,6 +38,7 @@ def _chat_model_info(provider_id: str, model_id: str, provider_type: str = "open
         api_key="test-key",
         base_url="https://example.com/v1",
         provider_type=provider_type,
+        request_body_overrides=request_body_overrides or {},
     )
 
 
@@ -194,6 +200,87 @@ def test_load_chat_model_keeps_non_siliconflow_openai_streaming(monkeypatch):
 
     assert model.disable_streaming is False
     assert explicit.disable_streaming is True
+
+
+def test_load_chat_model_merges_request_body_overrides_into_extra_body(monkeypatch):
+    captured = {}
+
+    monkeypatch.setattr(
+        "yuxi.agents.models.model_cache.get_model_info",
+        lambda spec: (
+            _chat_model_info(
+                "siliconflow-cn",
+                "Qwen/Qwen3-8B",
+                request_body_overrides={
+                    "enable_thinking": False,
+                    "provider_option": "model",
+                },
+            )
+            if spec == "siliconflow-cn:Qwen/Qwen3-8B"
+            else None
+        ),
+    )
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("yuxi.agents.models._ToolCallChunkFixChatOpenAI", FakeChatOpenAI)
+
+    model = load_chat_model(
+        "siliconflow-cn:Qwen/Qwen3-8B",
+        temperature=0.1,
+        extra_body={"provider_option": "caller", "caller_only": True},
+    )
+
+    assert isinstance(model, FakeChatOpenAI)
+    assert captured["temperature"] == 0.1
+    assert captured["extra_body"] == {
+        "provider_option": "model",
+        "caller_only": True,
+        "enable_thinking": False,
+    }
+
+
+def test_load_chat_model_rejects_cached_protected_request_body_override_fields(monkeypatch):
+    monkeypatch.setattr(
+        "yuxi.agents.models.model_cache.get_model_info",
+        lambda spec: (
+            _chat_model_info(
+                "siliconflow-cn",
+                "Qwen/Qwen3-8B",
+                request_body_overrides={
+                    "default_headers": {"Authorization": "Bearer leaked"},
+                    "enable_thinking": False,
+                    "stream": True,
+                },
+            )
+            if spec == "siliconflow-cn:Qwen/Qwen3-8B"
+            else None
+        ),
+    )
+
+    with pytest.raises(ValueError, match="不允许覆盖受保护字段"):
+        load_chat_model("siliconflow-cn:Qwen/Qwen3-8B")
+
+
+def test_load_chat_model_rejects_request_body_overrides_for_non_openai_compatible_provider(monkeypatch):
+    monkeypatch.setattr(
+        "yuxi.agents.models.model_cache.get_model_info",
+        lambda spec: (
+            _chat_model_info(
+                "anthropic",
+                "claude-sonnet",
+                provider_type="anthropic",
+                request_body_overrides={"thinking_effort": "low"},
+            )
+            if spec == "anthropic:claude-sonnet"
+            else None
+        ),
+    )
+
+    with pytest.raises(ValueError, match="仅支持 OpenAI 兼容供应商"):
+        load_chat_model("anthropic:claude-sonnet")
 
 
 @pytest.mark.asyncio

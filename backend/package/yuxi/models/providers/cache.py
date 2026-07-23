@@ -36,7 +36,9 @@ class ModelInfo:
 
     # 可选配置
     headers: dict[str, str] = field(default_factory=dict)
+    # provider 级 extra_json，不是 OpenAI chat 的 extra_body。
     extra: dict[str, Any] = field(default_factory=dict)
+    request_body_overrides: dict[str, Any] = field(default_factory=dict)
 
     # Embedding 专属
     dimension: int | None = None
@@ -57,6 +59,7 @@ class ModelInfo:
             "provider_type": self.provider_type,
             "headers": self.headers,
             "extra": self.extra,
+            "request_body_overrides": self.request_body_overrides,
             "dimension": self.dimension,
             "batch_size": self.batch_size,
         }
@@ -73,6 +76,7 @@ class ModelInfo:
             provider_type=data["provider_type"],
             headers=data.get("headers", {}),
             extra=data.get("extra", {}),
+            request_body_overrides=data.get("request_body_overrides", {}),
             dimension=data.get("dimension"),
             batch_size=data.get("batch_size", 40),
         )
@@ -133,6 +137,7 @@ class ModelCache:
 
     def rebuild(self, providers: list[Any]) -> None:
         from yuxi.models.providers.service import resolve_api_key
+        from yuxi.models.providers.request_overrides import normalize_request_body_overrides
 
         new_cache: dict[str, ModelInfo] = {}
 
@@ -156,6 +161,10 @@ class ModelCache:
                     provider_type=provider.provider_type,
                     headers=dict(provider.headers_json or {}),
                     extra=dict(provider.extra_json or {}),
+                    request_body_overrides=normalize_request_body_overrides(
+                        model.get("request_body_overrides", {}),
+                        model_id=model["id"],
+                    ),
                     dimension=model.get("dimension"),
                     batch_size=model.get("batch_size", 40),
                 )
