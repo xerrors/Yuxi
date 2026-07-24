@@ -8,7 +8,7 @@
     "server": "vite serve --host",
     "server:prod": "vite serve --host --port 8080",
     "build": "vite build",
-    "test:unit": "node --test test/unit/*.test.js",
+    "test:unit": "node --test src/utils/__tests__/*.test.js src/utils/__tests__/*.spec.js",
     "preview": "vite preview",
     "lint": "eslint . --fix --cache",
     "format": "prettier --write --experimental-cli src/"

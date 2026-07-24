@@ -74,12 +74,17 @@ def _patch_common(monkeypatch: pytest.MonkeyPatch, run_obj: SimpleNamespace):
         del self
         return False
 
+    async def fake_no_handoff(run_id: str):
+        return SimpleNamespace(target_run_id=run_id, request_id=None, new_run_id=None, changed=False)
+
     monkeypatch.setattr(run_worker.pg_manager, "get_async_session_context", fake_session_ctx)
     monkeypatch.setattr(run_worker, "_get_run", fake_get_run)
     monkeypatch.setattr(run_worker, "_load_user", fake_load_user)
     monkeypatch.setattr(run_worker, "_load_input_message", fake_load_input_message)
     monkeypatch.setattr(run_worker, "mark_run_running", fake_noop)
     monkeypatch.setattr(run_worker, "clear_cancel_signal", fake_noop)
+    monkeypatch.setattr(run_worker, "finalize_ready_steer_handoff", fake_no_handoff)
+    monkeypatch.setattr(run_worker, "settle_target_steer_after_terminal", fake_noop)
     monkeypatch.setattr(run_worker, "stream_agent_chat", lambda **kwargs: object())
     monkeypatch.setattr(run_worker.RunContext, "start", fake_noop)
     monkeypatch.setattr(run_worker.RunContext, "close", fake_noop)
@@ -211,6 +216,111 @@ async def test_process_agent_run_retryable_error_retries_then_completes(monkeypa
 
     await run_worker.process_agent_run({"job_try": 2}, "run-1")
     assert terminal_statuses == ["completed"]
+
+
+@pytest.mark.asyncio
+async def test_ready_steer_retry_handoffs_without_replaying_input(monkeypatch: pytest.MonkeyPatch):
+    """旧 job 在 steer_ready 后重试时直接交接，不再次进入 Graph。"""
+    run_obj = _build_run()
+    run_obj.status = "running"
+    _patch_common(monkeypatch, run_obj)
+    events: list[tuple[str, dict]] = []
+    enqueued: list[str] = []
+
+    async def fake_handoff(run_id: str):
+        return SimpleNamespace(
+            target_run_id=run_id,
+            request_id="steer-request",
+            new_run_id="replacement-run",
+            changed=True,
+        )
+
+    async def fake_append_event(run_id: str, event_type: str, payload: dict, **kwargs):
+        del run_id, kwargs
+        events.append((event_type, payload))
+
+    async def fake_enqueue(run_id: str):
+        enqueued.append(run_id)
+
+    def fail_stream_agent_chat(**kwargs):
+        del kwargs
+        raise AssertionError("steer_ready retry must not replay the original input")
+
+    monkeypatch.setattr(run_worker, "finalize_ready_steer_handoff", fake_handoff)
+    monkeypatch.setattr(run_worker, "append_run_event", fake_append_event)
+    monkeypatch.setattr(run_worker, "enqueue_agent_run", fake_enqueue)
+    monkeypatch.setattr(run_worker, "stream_agent_chat", fail_stream_agent_chat)
+
+    await run_worker.process_agent_run({"job_try": 2}, "run-1")
+
+    assert events == [
+        (
+            "end",
+            {
+                "status": "cancelled",
+                "reason": "steered",
+                "replacement_request_id": "steer-request",
+                "replacement_run_id": "replacement-run",
+            },
+        )
+    ]
+    assert enqueued == ["replacement-run"]
+
+
+@pytest.mark.asyncio
+async def test_terminal_steered_retry_recovers_existing_replacement(monkeypatch: pytest.MonkeyPatch):
+    """旧 Run 已提交交接时，job 重试只恢复既有 replacement。"""
+    run_obj = _build_run()
+    run_obj.status = "cancelled"
+    run_obj.error_type = "steered"
+    _patch_common(monkeypatch, run_obj)
+    recovered: list[str] = []
+
+    async def fake_recover(run_id: str):
+        recovered.append(run_id)
+        return "replacement-run"
+
+    async def fail_settle(run_id: str):
+        raise AssertionError(f"steered terminal run must not settle pending request: {run_id}")
+
+    monkeypatch.setattr(run_worker, "recover_steered_replacement", fake_recover)
+    monkeypatch.setattr(run_worker, "settle_target_steer_after_terminal", fail_settle)
+
+    await run_worker.process_agent_run({"job_try": 2}, "run-1")
+
+    assert recovered == ["run-1"]
+
+
+@pytest.mark.asyncio
+async def test_cancel_requested_wins_race_before_completed(monkeypatch: pytest.MonkeyPatch):
+    """handoff 未生效后若取消抢先，worker 收口为 cancelled 而不是 completed。"""
+    run_obj = _build_run()
+    _patch_common(monkeypatch, run_obj)
+    terminal_attempts: list[str] = []
+    settled: list[str] = []
+
+    def fake_stream_agent_chat(**kwargs):
+        del kwargs
+        return _BytesAsyncIter([b'{"status":"finished","request_id":"req-1"}\n'])
+
+    async def fake_mark_terminal(run_id: str, status: str, error_type=None, error_message=None):
+        del run_id, error_type, error_message
+        terminal_attempts.append(status)
+        if status == "completed":
+            return run_worker.TerminalTransition(status="cancel_requested", changed=False)
+        return run_worker.TerminalTransition(status="cancelled", changed=True)
+
+    async def fake_settle(run_id: str):
+        settled.append(run_id)
+
+    monkeypatch.setattr(run_worker, "stream_agent_chat", fake_stream_agent_chat)
+    monkeypatch.setattr(run_worker, "mark_run_terminal", fake_mark_terminal)
+    monkeypatch.setattr(run_worker, "settle_target_steer_after_terminal", fake_settle)
+
+    await run_worker.process_agent_run({"job_try": 1}, "run-1")
+
+    assert terminal_attempts == ["completed", "cancelled"]
+    assert settled == ["run-1"]
 
 
 @pytest.mark.asyncio
@@ -453,6 +563,8 @@ def test_chunk_thread_id_uses_fallback_for_unstable_nested_metadata():
 
 @pytest.mark.asyncio
 async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.MonkeyPatch):
+    from yuxi.config import options
+
     calls: list[str] = []
 
     def fake_initialize():
@@ -475,6 +587,9 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
         del session
         calls.append("init_builtin_skills")
 
+    async def fake_ensure_options_in_db(session):
+        del session
+
     def fake_start_runtime_sync():
         calls.append("start_runtime_sync")
 
@@ -487,6 +602,7 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
     monkeypatch.setattr(run_worker.pg_manager, "get_async_session_context", fake_session_ctx)
     monkeypatch.setattr(run_worker, "ensure_builtin_mcp_servers_in_db", fake_ensure_builtin_mcp_servers_in_db)
     monkeypatch.setattr(run_worker, "init_builtin_skills", fake_init_builtin_skills)
+    monkeypatch.setattr(options, "ensure_options_in_db", fake_ensure_options_in_db)
     monkeypatch.setattr(run_worker.sys_config, "start_runtime_sync", fake_start_runtime_sync)
     monkeypatch.setattr(run_worker, "recover_pending_dispatches", fake_recover_pending_dispatches)
 

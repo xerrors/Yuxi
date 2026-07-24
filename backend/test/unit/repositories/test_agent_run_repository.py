@@ -88,3 +88,27 @@ async def test_get_subagent_run_for_creator_returns_none_for_relation_mismatch(s
     )
 
     assert result is None
+
+
+async def test_cancel_requested_cannot_be_overwritten_by_running_or_completed(session):
+    """取消请求一旦持久化，worker 不能把它改回 running/completed。"""
+    run = AgentRun(
+        id="cancel-race-run",
+        conversation_thread_id="cancel-race-thread",
+        agent_slug="main",
+        uid="user-1",
+        status="cancel_requested",
+        request_id="cancel-race-request",
+        run_type="chat",
+        input_payload={},
+    )
+    session.add(run)
+    await session.commit()
+
+    repo = AgentRunRepository(session)
+    running = await repo.mark_running(run.id)
+    completed, changed = await repo.set_terminal_status(run.id, status="completed")
+
+    assert running.status == "cancel_requested"
+    assert completed.status == "cancel_requested"
+    assert changed is False

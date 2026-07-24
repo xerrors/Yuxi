@@ -17,6 +17,21 @@ from yuxi.utils.singleton import SingletonMeta
 # 合并两个 Base
 CombinedBase = declarative_base()
 AGENT_RUN_TERMINAL_STATUS_SQL = ", ".join(f"'{status}'" for status in AGENT_RUN_TERMINAL_STATUSES)
+PENDING_STEER_INVARIANT_CHECK_SQL = """
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM agent_run_requests
+        WHERE queue_policy = 'steer' AND status IN ('queued', 'steer_ready')
+        GROUP BY uid, agent_slug, conversation_thread_id
+        HAVING COUNT(*) > 1
+    ) THEN
+        RAISE EXCEPTION
+            'agent_run_requests contains multiple pending Steer requests for one thread';
+    END IF;
+END $$
+"""
 
 # 继承所有表
 for module in [KnowledgeBase, BusinessBase]:
@@ -747,11 +762,23 @@ class PostgresManager(metaclass=SingletonMeta):
             )
             """,
             "CREATE UNIQUE INDEX IF NOT EXISTS ix_agent_run_requests_request_id ON agent_run_requests(request_id)",
+            "ALTER TABLE agent_run_requests ADD COLUMN IF NOT EXISTS target_run_id VARCHAR(64) REFERENCES agent_runs(id)",  # noqa: E501
+            "ALTER TABLE agent_run_requests ADD COLUMN IF NOT EXISTS error_code VARCHAR(64)",
             """
             CREATE INDEX IF NOT EXISTS ix_agent_run_requests_queue
             ON agent_run_requests(uid, agent_slug, conversation_thread_id, status, created_at, id)
             """,
             "CREATE INDEX IF NOT EXISTS ix_agent_run_requests_dispatched_run_id ON agent_run_requests(dispatched_run_id)",  # noqa: E501
+            """
+            CREATE INDEX IF NOT EXISTS ix_agent_run_requests_target_run_status
+            ON agent_run_requests(target_run_id, status)
+            """,
+            PENDING_STEER_INVARIANT_CHECK_SQL,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_run_requests_one_steering_per_thread
+            ON agent_run_requests(uid, agent_slug, conversation_thread_id)
+            WHERE queue_policy = 'steer' AND status IN ('queued', 'steer_ready')
+            """,
         ]
         async with self.async_engine.begin() as conn:
             # 历史未绑定用户的 API Key 会在下方迁移语句里被静默删除，先计数告警

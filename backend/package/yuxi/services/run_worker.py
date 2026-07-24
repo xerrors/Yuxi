@@ -16,8 +16,12 @@ from yuxi.repositories.agent_run_repository import TERMINAL_RUN_STATUSES, AgentR
 from yuxi.services.agent_request_queue_service import (
     RUN_STATUS_TO_DELIVERY_STATUS,
     dispatch_next_request,
+    finalize_ready_steer_handoff,
     recover_pending_dispatches,
+    recover_steered_replacement,
+    settle_target_steer_after_terminal,
 )
+from yuxi.services.agent_run_service import enqueue_agent_run
 from yuxi.services.chat_service import stream_agent_chat, stream_agent_resume
 from yuxi.services.input_message_service import restore_chat_input_message
 from yuxi.services.run_queue_service import (
@@ -152,7 +156,8 @@ async def append_run_event(run_id: str, event_type: str, payload: dict, *, threa
 async def mark_run_running(run_id: str):
     async with pg_manager.get_async_session_context() as db:
         repo = AgentRunRepository(db)
-        await repo.mark_running(run_id)
+        run = await repo.mark_running(run_id)
+        return run.status if run else None
 
 
 async def mark_run_terminal(run_id: str, status: str, error_type: str | None = None, error_message: str | None = None):
@@ -282,7 +287,28 @@ async def _finish_run(
     )
     if transition.changed and transition.status:
         await _append_end_event(run_id, transition.status, thread_id=thread_id, payload={"chunk": chunk})
+        await settle_target_steer_after_terminal(run_id)
     return transition
+
+
+async def _finish_steer_handoff(run_id: str, *, thread_id: str | None):
+    """按旧 end 事件、新 Run 投递的顺序发布已提交交接。"""
+    handoff = await finalize_ready_steer_handoff(run_id)
+    if not handoff.changed:
+        return handoff
+
+    await _append_end_event(
+        run_id,
+        "cancelled",
+        thread_id=thread_id,
+        payload={
+            "reason": "steered",
+            "replacement_request_id": handoff.request_id,
+            "replacement_run_id": handoff.new_run_id,
+        },
+    )
+    await enqueue_agent_run(handoff.new_run_id)
+    return handoff
 
 
 async def _consume_stream_with_cancel(agen, run_ctx: RunContext):
@@ -312,6 +338,10 @@ async def process_agent_run(ctx, run_id: str):
         return
 
     if run.status in TERMINAL_RUN_STATUSES:
+        if run.status == "cancelled" and run.error_type == "steered":
+            await recover_steered_replacement(run_id)
+        else:
+            await settle_target_steer_after_terminal(run_id)
         if run.status == "completed":
             await dispatch_next_request(
                 uid=run.uid,
@@ -320,6 +350,21 @@ async def process_agent_run(ctx, run_id: str):
             )
         logger.info(f"Run already terminal, skip: {run_id}, status={run.status}")
         return
+
+    if run.status == "cancel_requested":
+        transition = await mark_run_terminal(run_id, "cancelled", "cancelled", "对话已取消")
+        if transition.changed:
+            await _append_end_event(run_id, "cancelled", thread_id=run.conversation_thread_id)
+            await settle_target_steer_after_terminal(run_id)
+        await clear_cancel_signal(run_id)
+        return
+
+    if run.status == "running" and run.run_type == "chat":
+        handoff = await _finish_steer_handoff(run_id, thread_id=run.conversation_thread_id)
+        if handoff.changed:
+            logger.info(f"Recovered ready Steer handoff: {run_id} -> {handoff.new_run_id}")
+            await clear_cancel_signal(run_id)
+            return
 
     if not isinstance(run.input_payload, dict):
         await mark_run_terminal(run_id, "failed", "invalid_input_payload", "run input_payload 必须是对象")
@@ -396,7 +441,14 @@ async def process_agent_run(ctx, run_id: str):
     if isinstance(input_metadata.get("agent_invocation_meta"), dict):
         meta["agent_invocation_meta"] = input_metadata.get("agent_invocation_meta") or {}
 
-    await mark_run_running(run_id)
+    running_status = await mark_run_running(run_id)
+    if running_status == "cancel_requested":
+        transition = await mark_run_terminal(run_id, "cancelled", "cancelled", "对话已取消")
+        if transition.changed:
+            await _append_end_event(run_id, "cancelled", thread_id=thread_id)
+            await settle_target_steer_after_terminal(run_id)
+        await clear_cancel_signal(run_id)
+        return
     run_ctx = RunContext(run_id=run_id)
     writer = ChunkedEventWriter(
         run_id=run_id,
@@ -424,6 +476,7 @@ async def process_agent_run(ctx, run_id: str):
         thread_id=thread_id,
     )
     terminal_set = False
+    finished_chunk = None
 
     try:
         async with pg_manager.get_async_session_context() as db:
@@ -468,13 +521,7 @@ async def process_agent_run(ctx, run_id: str):
                         continue
 
                     if status == "finished":
-                        transition = await _finish_run(
-                            run_id,
-                            "completed",
-                            thread_id=thread_id,
-                            chunk=chunk,
-                        )
-                        terminal_set = transition.status is not None
+                        finished_chunk = chunk
                     elif status == "error":
                         transition = await _finish_run(
                             run_id,
@@ -484,7 +531,9 @@ async def process_agent_run(ctx, run_id: str):
                             error_type=chunk.get("error_type") or "stream_error",
                             error_message=chunk.get("error_message") or chunk.get("message"),
                         )
-                        terminal_set = transition.status is not None
+                        if transition.status == "cancel_requested":
+                            raise asyncio.CancelledError(f"run {run_id} cancellation won terminal race")
+                        terminal_set = transition.status in TERMINAL_RUN_STATUSES
                     elif status == "interrupted":
                         status_value = "cancelled" if await _is_cancel_requested(run_id) else "interrupted"
                         transition = await _finish_run(
@@ -495,7 +544,9 @@ async def process_agent_run(ctx, run_id: str):
                             error_type=status_value,
                             error_message=chunk.get("message"),
                         )
-                        terminal_set = transition.status is not None
+                        if transition.status == "cancel_requested":
+                            raise asyncio.CancelledError(f"run {run_id} cancellation won terminal race")
+                        terminal_set = transition.status in TERMINAL_RUN_STATUSES
                     elif status in {"ask_user_question_required", "human_approval_required"}:
                         questions = chunk.get("questions") if isinstance(chunk, dict) else None
                         first_question = ""
@@ -516,19 +567,26 @@ async def process_agent_run(ctx, run_id: str):
                                 else first_question or "需要用户回答问题"
                             ),
                         )
-                        terminal_set = transition.status is not None
+                        if transition.status == "cancel_requested":
+                            raise asyncio.CancelledError(f"run {run_id} cancellation won terminal race")
+                        terminal_set = transition.status in TERMINAL_RUN_STATUSES
 
         await writer.flush()
         if not terminal_set:
             if await run_ctx.is_cancelled():
                 raise asyncio.CancelledError(f"run {run_id} cancelled")
-            finished_chunk = {"status": "finished", "request_id": request_id}
-            await _finish_run(
-                run_id,
-                "completed",
-                thread_id=thread_id,
-                chunk=finished_chunk,
-            )
+            handoff = await _finish_steer_handoff(run_id, thread_id=thread_id)
+            if handoff.changed:
+                terminal_set = True
+            else:
+                transition = await _finish_run(
+                    run_id,
+                    "completed",
+                    thread_id=thread_id,
+                    chunk=finished_chunk or {"status": "finished", "request_id": request_id},
+                )
+                if transition.status == "cancel_requested":
+                    raise asyncio.CancelledError(f"run {run_id} cancellation won terminal race")
 
     except asyncio.CancelledError:
         await writer.flush()
@@ -548,6 +606,7 @@ async def process_agent_run(ctx, run_id: str):
             )
             await _append_end_event(run_id, "cancelled", thread_id=thread_id, payload={"chunk": cancel_chunk})
             logger.info(f"Run cancelled: {run_id}")
+            await settle_target_steer_after_terminal(run_id)
         else:
             logger.info(f"Run cancellation ignored after terminal status: {run_id}, status={transition.status}")
     except Exception as e:

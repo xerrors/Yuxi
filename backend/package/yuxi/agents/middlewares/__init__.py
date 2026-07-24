@@ -3,12 +3,14 @@ from .context import context_aware_prompt, context_based_model
 from .dynamic_tool import DynamicToolMiddleware
 from .model_input import ImageInputCompatibilityMiddleware
 from .summary import create_summary_middleware
+from .steer import SteerMiddleware
 from .token_usage import TokenUsageMiddleware
 
 __all__ = [
     "DynamicToolMiddleware",
     "ImageInputCompatibilityMiddleware",
     "TokenUsageMiddleware",
+    "SteerMiddleware",
     "context_aware_prompt",
     "context_based_model",
     "create_summary_middleware",

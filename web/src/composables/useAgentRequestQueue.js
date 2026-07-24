@@ -2,8 +2,14 @@ import { agentApi } from '@/apis'
 import { processRunSseResponse } from '@/composables/useAgentRunStream'
 import { IDLE_QUEUE_SNAPSHOT } from '@/composables/useAgentThreadState'
 import { handleChatError } from '@/utils/errorHandler'
+import { applySteerRequestEvent } from '@/utils/agentRequestQueue'
 
-export function useAgentRequestQueue({ getThreadState, startRunStream, onStreamError }) {
+export function useAgentRequestQueue({
+  getThreadState,
+  startRunStream,
+  onStreamError,
+  onSteerDispatched
+}) {
   const removeRequestFromQueue = (ts, requestId) => {
     if (!ts || !ts.queuedRequests) return
     ts.queuedRequests = ts.queuedRequests.filter((r) => r.request_id !== requestId)
@@ -65,7 +71,13 @@ export function useAgentRequestQueue({ getThreadState, startRunStream, onStreamE
     if (ts.requestStreams[requestId]) return
 
     const controller = new AbortController()
-    const entry = { controller, position: 0, status: 'queued' }
+    const queuedRequest = ts.queuedRequests?.find((request) => request.request_id === requestId)
+    const entry = {
+      controller,
+      position: 0,
+      status: 'queued',
+      queuePolicy: queuedRequest?.queue_policy
+    }
     ts.requestStreams[requestId] = entry
 
     try {
@@ -86,15 +98,29 @@ export function useAgentRequestQueue({ getThreadState, startRunStream, onStreamE
           entry.position = data.position || entry.position
           const queuedRequest = tsInner.queuedRequests?.find((r) => r.request_id === requestId)
           if (queuedRequest) queuedRequest.queue_position = entry.position
+        } else if ((event === 'steering' || event === 'steer_ready') && data) {
+          entry.status = event === 'steer_ready' ? 'steer_ready' : 'queued'
+          entry.queuePolicy = 'steer'
+          applySteerRequestEvent(tsInner.queuedRequests, requestId, event, data)
         } else if (event === 'run_created' && data) {
           entry.status = 'dispatched'
           if (data.run_id) {
+            const dispatchedRequest = tsInner.queuedRequests?.find(
+              (r) => r.request_id === requestId
+            )
             removeRequestFromQueue(tsInner, requestId)
             stopRequestStream(threadId, requestId)
+            if (
+              (dispatchedRequest?.queue_policy === 'steer' || entry.queuePolicy === 'steer') &&
+              typeof onSteerDispatched === 'function'
+            ) {
+              onSteerDispatched(threadId, requestId, data.run_id)
+            }
             void startRunStream(threadId, data.run_id, requestId)
           }
         } else if (event === 'cancelled' || event === 'rejected' || event === 'failed') {
           entry.status = event
+          const failedRequest = tsInner.queuedRequests?.find((r) => r.request_id === requestId)
           tsInner.isStreaming = false
           tsInner.replyLoadingVisible = false
           tsInner.pendingRequestId = null
@@ -102,7 +128,11 @@ export function useAgentRequestQueue({ getThreadState, startRunStream, onStreamE
           removeRequestFromQueue(tsInner, requestId)
           stopRequestStream(threadId, requestId)
           if (typeof onStreamError === 'function') {
-            onStreamError(threadId, requestId, event)
+            onStreamError(threadId, requestId, event, {
+              errorCode: data?.error_code,
+              queuePolicy: failedRequest?.queue_policy,
+              content: failedRequest?.content
+            })
           }
         }
       }
@@ -141,11 +171,26 @@ export function useAgentRequestQueue({ getThreadState, startRunStream, onStreamE
     }
   }
 
+  const steerRequest = async (threadId, agentSlug, requestId) => {
+    const ts = getThreadState(threadId)
+    if (!ts || !threadId || !agentSlug || !requestId) return false
+    try {
+      await agentApi.steerRequest(requestId)
+      await syncQueuedRequests(threadId, agentSlug)
+      void startRequestStream(threadId, requestId)
+      return true
+    } catch (error) {
+      handleChatError(error, 'steer')
+      return false
+    }
+  }
+
   return {
     startRequestStream,
     stopAllRequestStreams,
     cancelRequest,
     syncQueuedRequests,
-    continueQueue
+    continueQueue,
+    steerRequest
   }
 }

@@ -14,6 +14,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    text,
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
@@ -926,17 +927,19 @@ class AgentRunRequest(Base):
         String(16),
         nullable=False,
         default="enqueue",
-        comment="排队策略: enqueue/reject",
+        comment="排队策略: enqueue/reject/steer",
     )
     status = Column(
         String(32),
         nullable=False,
         default="queued",
-        comment="请求状态: queued/dispatched/cancelled/rejected/failed",
+        comment="请求状态: queued/steer_ready/dispatched/cancelled/rejected/failed",
     )
     input_message_id = Column(Integer, ForeignKey("messages.id"), nullable=False, comment="关联输入消息 ID")
     dispatched_run_id = Column(String(64), ForeignKey("agent_runs.id"), nullable=True, comment="已派发的 AgentRun ID")
+    target_run_id = Column(String(64), ForeignKey("agent_runs.id"), nullable=True, comment="Steer 目标 AgentRun ID")
     input_payload = Column(JSON, nullable=False, default=dict, comment="原始输入载荷快照")
+    error_code = Column(String(64), nullable=True, comment="rejected/failed 时的稳定错误码")
     error_message = Column(Text, nullable=True, comment="rejected/failed 时的错误信息")
     created_at = Column(DateTime, nullable=False, default=utc_now_naive, comment="创建时间")
     dispatched_at = Column(DateTime, nullable=True, comment="派发时间")
@@ -951,6 +954,7 @@ class AgentRunRequest(Base):
     # Relationships
     input_message = relationship("Message", foreign_keys=[input_message_id])
     dispatched_run = relationship("AgentRun", foreign_keys=[dispatched_run_id])
+    target_run = relationship("AgentRun", foreign_keys=[target_run_id])
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -963,6 +967,8 @@ class AgentRunRequest(Base):
             "status": self.status,
             "input_message_id": self.input_message_id,
             "dispatched_run_id": self.dispatched_run_id,
+            "target_run_id": self.target_run_id,
+            "error_code": self.error_code,
             "error_message": self.error_message,
             "created_at": format_utc_datetime(self.created_at),
             "dispatched_at": format_utc_datetime(self.dispatched_at),
@@ -978,4 +984,20 @@ Index(
     AgentRunRequest.status,
     AgentRunRequest.created_at,
     AgentRunRequest.id,
+)
+
+Index(
+    "ix_agent_run_requests_target_run_status",
+    AgentRunRequest.target_run_id,
+    AgentRunRequest.status,
+)
+
+Index(
+    "uq_agent_run_requests_one_steering_per_thread",
+    AgentRunRequest.uid,
+    AgentRunRequest.agent_slug,
+    AgentRunRequest.conversation_thread_id,
+    unique=True,
+    postgresql_where=text("queue_policy = 'steer' AND status IN ('queued', 'steer_ready')"),
+    sqlite_where=text("queue_policy = 'steer' AND status IN ('queued', 'steer_ready')"),
 )

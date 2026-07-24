@@ -79,7 +79,7 @@ async def test_async_agent_call_uses_request_intake(test_client, admin_headers):
     assert request["status"] in {"queued", "dispatched"}
 
 
-async def test_steer_policy_returns_422(test_client, admin_headers):
+async def test_steer_without_active_run_returns_stable_conflict(test_client, admin_headers):
     agent_slug = await _get_default_agent_slug(test_client, admin_headers)
     thread_id = await _create_thread(test_client, admin_headers, agent_slug)
 
@@ -88,7 +88,26 @@ async def test_steer_policy_returns_422(test_client, admin_headers):
         json={"query": "hi", "agent_slug": agent_slug, "thread_id": thread_id, "queue_policy": "steer", "meta": {}},
         headers=admin_headers,
     )
-    assert resp.status_code == 422
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["code"] == "steer_target_missing"
+
+
+async def test_resume_rejects_steer_queue_policy(test_client, admin_headers):
+    """Resume 不能绕过仅主 Chat 支持 Steer 的门禁。"""
+    response = await test_client.post(
+        "/api/agent/runs",
+        json={
+            "agent_slug": "unused",
+            "thread_id": "unused",
+            "resume": {"answer": "yes"},
+            "queue_policy": "steer",
+            "meta": {},
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "queue_policy 仅支持普通 Chat 请求"
 
 
 async def test_get_request_returns_404_for_missing(test_client, admin_headers):

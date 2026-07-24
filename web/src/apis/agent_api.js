@@ -149,6 +149,9 @@ export const agentApi = {
    */
   cancelRequest: (requestId) => apiPost(`/api/agent/requests/${requestId}/cancel`, {}),
 
+  /** 将普通排队请求原地升级为 Steer */
+  steerRequest: (requestId) => apiPost(`/api/agent/requests/${requestId}/steer`, {}),
+
   /**
    * 打开 Request 事件 SSE 连接（调用方负责关闭）
    */

@@ -172,17 +172,28 @@
                       {{ request.content || '排队请求' }}
                     </span>
                     <span class="queued-request-position">
-                      排队 {{ request.queue_position || request.position || 1 }}
+                      {{ getQueuedRequestStatusText(request) }}
                     </span>
-                    <button
-                      type="button"
-                      class="queued-request-delete lucide-icon-btn"
-                      :disabled="cancellingRequestIds.has(request.request_id)"
-                      :aria-label="`删除排队请求：${request.content || '排队请求'}`"
-                      @click="handleCancelQueuedRequest(request.request_id)"
-                    >
-                      <Trash2 :size="16" />
-                    </button>
+                    <div class="queued-request-actions">
+                      <button
+                        v-if="canSteerQueuedRequest(request)"
+                        type="button"
+                        class="queued-request-steer"
+                        :disabled="steeringRequestIds.has(request.request_id)"
+                        @click="handleSteerQueuedRequest(request.request_id)"
+                      >
+                        引导
+                      </button>
+                      <button
+                        type="button"
+                        class="queued-request-delete lucide-icon-btn"
+                        :disabled="cancellingRequestIds.has(request.request_id)"
+                        :aria-label="`删除排队请求：${request.content || '排队请求'}`"
+                        @click="handleCancelQueuedRequest(request.request_id)"
+                      >
+                        <Trash2 :size="16" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               </section>
@@ -226,6 +237,15 @@
                       <slot name="input-actions-left" :has-active-thread="!!currentChatId"></slot>
                     </template>
                     <template #actions-right-extra>
+                      <button
+                        v-if="canSubmitSteer"
+                        type="button"
+                        class="direct-steer-button"
+                        title="当前工具完成后接替正在执行的任务"
+                        @click="handleDirectSteer"
+                      >
+                        引导
+                      </button>
                       <div class="input-model-selector">
                         <ModelSelectorComponent
                           :model_spec="currentModelSpec"
@@ -666,6 +686,13 @@ import AgentMessageComponent from '@/components/AgentMessageComponent.vue'
 import RefsComponent from '@/components/RefsComponent.vue'
 import ToolCallsGroupComponent from '@/components/ToolCallsGroupComponent.vue'
 import { handleChatError, handleValidationError } from '@/utils/errorHandler'
+import {
+  getQueuedRequestStatusText,
+  getRunTerminalNotice,
+  getSteerHandoffNoticeKey,
+  getSteerFailureMessage,
+  isPendingSteerRequest
+} from '@/utils/agentRequestQueue'
 import { ScrollController } from '@/utils/scrollController'
 import { AgentValidator } from '@/utils/agentValidator'
 import { useAgentStore } from '@/stores/agent'
@@ -720,6 +747,8 @@ const { threads, currentThreadId, currentThread } = storeToRefs(chatThreadsStore
 const userInput = ref('')
 const sendCooldownActive = ref(false)
 const cancellingRequestIds = reactive(new Set())
+const steeringRequestIds = reactive(new Set())
+const shownSteerHandoffNotices = reactive(new Set())
 let sendCooldownTimer = null
 // 预设的打招呼文本
 const greetingMessages = [
@@ -1858,6 +1887,7 @@ const isStreaming = computed(() => {
   return threadState ? threadState.isStreaming : false
 })
 const currentQueuedRequests = computed(() => currentThreadState.value?.queuedRequests || [])
+const pendingSteerRequest = computed(() => currentQueuedRequests.value.find(isPendingSteerRequest))
 const currentQueueSnapshot = computed(
   () => currentThreadState.value?.queueSnapshot || IDLE_QUEUE_SNAPSHOT
 )
@@ -1900,6 +1930,14 @@ const isSendButtonDisabled = computed(() => {
     !currentAgent.value
   )
 })
+const canSubmitSteer = computed(
+  () =>
+    Boolean(currentThreadState.value?.activeRunId && currentThreadState.value?.isStreaming) &&
+    Boolean(String(userInput.value || '').trim()) &&
+    !pendingSteerRequest.value &&
+    !isWaitingForUserAction.value &&
+    !sendCooldownActive.value
+)
 
 const startSendCooldown = () => {
   sendCooldownActive.value = true
@@ -2419,6 +2457,14 @@ const restorePendingInterruptForThread = (threadId) => {
   return restoreInterruptFromThreadState(threadId)
 }
 
+const showSteerHandoffNotice = (threadId, requestId) => {
+  if (currentChatId.value !== threadId) return
+  const noticeKey = getSteerHandoffNoticeKey(threadId, requestId)
+  if (!noticeKey || shownSteerHandoffNotices.has(noticeKey)) return
+  shownSteerHandoffNotices.add(noticeKey)
+  message.info('当前任务已由新的引导请求接替')
+}
+
 const { handleStreamChunk } = useAgentStreamHandler({
   getThreadState,
   processApprovalInStream,
@@ -2439,10 +2485,12 @@ const { startRunStream, resumeActiveRunForThread, stopRunStreamSubscription } = 
     restorePendingInterruptForThread(threadId)
     void resumeQueuedRequestsForThread(threadId)
   },
-  onTerminalDetected: ({ threadId, touchedThreadIds = [] }) => {
+  onTerminalDetected: ({ threadId, touchedThreadIds = [], terminal }) => {
     if (approvalState.threadId === threadId || touchedThreadIds.includes(approvalState.threadId)) {
       hideApprovalState()
     }
+    const terminalNotice = getRunTerminalNotice(terminal)
+    if (terminalNotice) showSteerHandoffNotice(threadId, terminal?.replacement_request_id)
     void resumeQueuedRequestsForThread(threadId)
   }
 })
@@ -2462,11 +2510,19 @@ const {
   stopAllRequestStreams,
   cancelRequest,
   syncQueuedRequests,
-  continueQueue
+  continueQueue,
+  steerRequest
 } = useAgentRequestQueue({
   getThreadState,
   startRunStream: startDispatchedRequestRun,
-  onStreamError: () => {}
+  onStreamError: (threadId, requestId, event, context) => {
+    if (event !== 'failed' || context?.queuePolicy !== 'steer') return
+    if (currentChatId.value === threadId && !userInput.value && context.content) {
+      userInput.value = context.content
+    }
+    message.warning(getSteerFailureMessage(context?.errorCode))
+  },
+  onSteerDispatched: (threadId, requestId) => showSteerHandoffNotice(threadId, requestId)
 })
 
 const handleCancelQueuedRequest = async (requestId) => {
@@ -2491,6 +2547,28 @@ const handleContinueQueue = async () => {
   if (await continueQueue(threadId, agentSlug)) {
     message.success('队列已继续')
   }
+}
+
+const canSteerQueuedRequest = (request) =>
+  Boolean(
+    request?.status === 'queued' &&
+    request?.queue_policy === 'enqueue' &&
+    currentThreadState.value?.activeRunId &&
+    currentThreadState.value?.isStreaming &&
+    !pendingSteerRequest.value &&
+    !isWaitingForUserAction.value
+  )
+
+const handleSteerQueuedRequest = async (requestId) => {
+  const threadId = currentChatId.value
+  const agentSlug =
+    threads.value.find((thread) => thread.id === threadId)?.agent_id || currentAgentId.value
+  if (!threadId || !agentSlug || steeringRequestIds.has(requestId)) return
+
+  steeringRequestIds.add(requestId)
+  const upgraded = await steerRequest(threadId, agentSlug, requestId)
+  steeringRequestIds.delete(requestId)
+  if (upgraded) message.success('已设为引导请求')
 }
 
 const resumeQueuedRequestsForThread = async (threadId) => {
@@ -2631,7 +2709,7 @@ const selectThreadFromRoute = async (threadId) => {
   return true
 }
 
-const handleSendMessage = async ({ image } = {}) => {
+const handleSendMessage = async ({ image, queuePolicy = 'enqueue' } = {}) => {
   const text = userInput.value.trim()
   const imageContent = image?.imageContent || null
   if (
@@ -2729,7 +2807,8 @@ const handleSendMessage = async ({ image } = {}) => {
       },
       image_content: imageContent,
       model_spec: modelSpec,
-      tool_approval_mode: toolApprovalMode
+      tool_approval_mode: toolApprovalMode,
+      queue_policy: queuePolicy
     })
     const status = runResp?.status
     const runId = runResp?.run_id
@@ -2738,6 +2817,8 @@ const handleSendMessage = async ({ image } = {}) => {
       threadState.queuedRequests.push({
         request_id: requestId,
         status: 'queued',
+        queue_policy: runResp?.queue_policy || queuePolicy,
+        target_run_id: runResp?.target_run_id || null,
         queue_position: runResp?.queue_position || 1,
         content: text
       })
@@ -2760,8 +2841,14 @@ const handleSendMessage = async ({ image } = {}) => {
       resetOnGoingConv(threadId)
     }
     rollbackAttachments(threadId, previousAttachments)
+    if (queuePolicy === 'steer' && !userInput.value) userInput.value = text
     handleChatError(error, 'send')
   }
+}
+
+const handleDirectSteer = async () => {
+  if (!canSubmitSteer.value) return
+  await handleSendMessage({ queuePolicy: 'steer' })
 }
 
 // 发送或中断
@@ -3658,7 +3745,7 @@ watch(currentChatId, (threadId, oldThreadId) => {
     .queued-request-row {
       min-height: 30px;
       display: grid;
-      grid-template-columns: 18px minmax(0, 1fr) auto 30px;
+      grid-template-columns: 18px minmax(0, 1fr) auto auto;
       gap: 10px;
       align-items: center;
       padding: 0 4px 0 6px;
@@ -3698,6 +3785,34 @@ watch(currentChatId, (threadId, oldThreadId) => {
         content: '↪';
         color: var(--gray-400);
         font-size: 14px;
+      }
+    }
+
+    .queued-request-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+    }
+
+    .queued-request-steer,
+    .direct-steer-button {
+      padding: 4px 8px;
+      color: var(--main-color);
+      background: transparent;
+      border: 1px solid var(--gray-200);
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      line-height: 1.4;
+
+      &:hover:not(:disabled) {
+        background: var(--gray-50);
+        border-color: var(--main-color);
+      }
+
+      &:disabled {
+        opacity: 0.5;
+        cursor: wait;
       }
     }
 
@@ -3755,6 +3870,10 @@ watch(currentChatId, (threadId, oldThreadId) => {
     justify-content: center;
     min-width: 0;
     max-width: min(168px, calc(100vw - 160px));
+  }
+
+  .direct-steer-button {
+    margin-right: 4px;
   }
 
   &.start-screen {

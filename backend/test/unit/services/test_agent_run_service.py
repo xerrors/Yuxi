@@ -63,8 +63,24 @@ def test_prepare_run_input_message_keeps_invocation_meta_namespaced():
 
     assert input_message.extra_metadata["source"] == "agent_call"
     assert input_message.extra_metadata["agent_invocation_meta"] == {"trace_id": "trace-1"}
+    assert input_message.require_langchain_message().id == "request:req-1"
+    assert input_message.raw_message()["id"] == "request:req-1"
     assert "evaluation" not in input_message.extra_metadata
     assert "custom_variables" not in input_message.extra_metadata
+
+
+def test_restore_chat_input_message_adds_stable_id_to_legacy_payload():
+    """旧消息缺少 LangGraph ID 时按 request_id 恢复，重试不会重复追加。"""
+    restored = restore_chat_input_message(
+        content="hello",
+        image_content=None,
+        metadata={
+            "request_id": "legacy-request",
+            "raw_message": {"type": "human", "content": "hello"},
+        },
+    )
+
+    assert restored.require_langchain_message().id == "request:legacy-request"
 
 
 def _progress_event(seq: str, chunks: list[dict]) -> dict:

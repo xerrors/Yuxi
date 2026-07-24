@@ -46,7 +46,7 @@ from yuxi.services.run_queue_service import (
     publish_cancel_signal,
 )
 from yuxi.storage.postgres.manager import pg_manager
-from yuxi.storage.postgres.models_business import Message, User
+from yuxi.storage.postgres.models_business import AgentRunRequest, Message, User
 from yuxi.utils.datetime_utils import utc_now_naive
 from yuxi.utils.hash_utils import hash_id
 from yuxi.utils.logging_config import logger
@@ -896,6 +896,15 @@ async def stream_agent_run_events(
                     if not run:
                         yield format_sse({"run_id": run_id, "message": "运行任务不存在"}, event="error")
                         return
+                    replacement_request = None
+                    if run.status == "cancelled" and run.error_type == "steered":
+                        replacement_request = await db.scalar(
+                            select(AgentRunRequest).where(
+                                AgentRunRequest.target_run_id == run.id,
+                                AgentRunRequest.queue_policy == "steer",
+                                AgentRunRequest.status == "dispatched",
+                            )
+                        )
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -947,11 +956,20 @@ async def stream_agent_run_events(
                     terminal_seq = await get_last_run_stream_seq(run_id)
                 if terminal_seq in {"", "0-0"}:
                     terminal_seq = None
+                terminal_payload = {"status": run.status, "request_id": run.request_id}
+                if replacement_request is not None:
+                    terminal_payload.update(
+                        {
+                            "reason": "steered",
+                            "replacement_request_id": replacement_request.request_id,
+                            "replacement_run_id": replacement_request.dispatched_run_id,
+                        }
+                    )
                 terminal_envelope = build_run_event_envelope(
                     run_id=run_id,
                     thread_id=run.conversation_thread_id,
                     event_type="end",
-                    payload={"status": run.status, "request_id": run.request_id},
+                    payload=terminal_payload,
                     created_at=utc_now_naive().isoformat(),
                 )
                 if not verbose:

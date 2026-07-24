@@ -19,6 +19,10 @@ class AgentRunRepository:
         result = await self.db.execute(select(AgentRun).where(AgentRun.id == run_id))
         return result.scalar_one_or_none()
 
+    async def lock_run(self, run_id: str) -> AgentRun | None:
+        """锁定指定 Run，供跨 request/run 的事务状态机使用。"""
+        return await self._lock_run(run_id)
+
     async def get_run_by_request_id(self, request_id: str) -> AgentRun | None:
         result = await self.db.execute(select(AgentRun).where(AgentRun.request_id == request_id))
         return result.scalar_one_or_none()
@@ -205,7 +209,7 @@ class AgentRunRepository:
         run = await self._lock_run(run_id)
         if not run:
             return None
-        if run.status in TERMINAL_RUN_STATUSES:
+        if run.status in TERMINAL_RUN_STATUSES or run.status == "cancel_requested":
             return run
         now = utc_now_naive()
         run.status = "running"
@@ -238,6 +242,8 @@ class AgentRunRepository:
             return None, False
         if run.status in TERMINAL_RUN_STATUSES:
             return run, False
+        if run.status == "cancel_requested" and status != "cancelled":
+            return run, False
         run.status = status
         run.error_type = error_type
         run.error_message = error_message
@@ -247,5 +253,7 @@ class AgentRunRepository:
         return run, True
 
     async def _lock_run(self, run_id: str) -> AgentRun | None:
-        result = await self.db.execute(select(AgentRun).where(AgentRun.id == run_id).with_for_update())
+        result = await self.db.execute(
+            select(AgentRun).where(AgentRun.id == run_id).with_for_update().execution_options(populate_existing=True)
+        )
         return result.scalar_one_or_none()

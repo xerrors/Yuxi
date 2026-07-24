@@ -14,6 +14,7 @@ from yuxi.services.agent_request_queue_service import (
     NOT_IMPLEMENTED_QUEUE_POLICIES,
     cancel_queued_request,
     intake_request,
+    steer_queued_request,
     validate_queue_policy,
 )
 from yuxi.storage.postgres.models_business import AgentRunRequest, Base, Message
@@ -31,6 +32,10 @@ def test_validate_queue_policy_accepts_enqueue():
 
 def test_validate_queue_policy_accepts_reject():
     validate_queue_policy("reject")
+
+
+def test_validate_queue_policy_accepts_steer():
+    validate_queue_policy("steer")
 
 
 @pytest.mark.parametrize("policy", list(NOT_IMPLEMENTED_QUEUE_POLICIES))
@@ -842,3 +847,125 @@ async def test_enqueue_after_empty_failed_queue_dispatches_new_request(session, 
 
     assert result.status == "dispatched"
     assert result.run_id is not None
+
+
+@pytest.mark.asyncio
+async def test_direct_steer_binds_running_chat_without_dispatching(session, monkeypatch: pytest.MonkeyPatch):
+    """直接 Steer 只持久化等待请求，不与目标 Run 并发执行。"""
+    from yuxi.services import agent_request_queue_service
+    from yuxi.services.input_message_service import build_chat_input_message
+    from yuxi.storage.postgres.models_business import AgentRun
+
+    monkeypatch.setattr(agent_request_queue_service, "resolve_agent_run_config", lambda *args: ("model", "default"))
+    await _seed_thread(session)
+    session.add(
+        AgentRun(
+            id="run-active",
+            conversation_thread_id="t1",
+            agent_slug="main",
+            uid="user-1",
+            request_id="request-active",
+            input_payload={},
+            status="running",
+            run_type="chat",
+            conversation_id=10,
+        )
+    )
+    await session.commit()
+
+    result = await intake_request(
+        db=session,
+        request_id="request-steer",
+        uid="user-1",
+        agent_slug="main",
+        thread_id="t1",
+        queue_policy="steer",
+        input_message=build_chat_input_message("改变方向"),
+        agent_item=MagicMock(),
+        agent_backend=MagicMock(),
+    )
+
+    request = await session.scalar(select(AgentRunRequest).where(AgentRunRequest.request_id == "request-steer"))
+    assert result.status == "queued"
+    assert result.run_id is None
+    assert result.target_run_id == "run-active"
+    assert request.queue_policy == "steer"
+    assert request.target_run_id == "run-active"
+
+
+@pytest.mark.asyncio
+async def test_steer_rejects_non_chat_source_before_persistence(session):
+    """Agent Call/Eval 等来源不能借 Steer 创建 Message 或 request。"""
+    from fastapi import HTTPException
+    from yuxi.services.input_message_service import build_chat_input_message
+
+    with pytest.raises(HTTPException) as exc_info:
+        await intake_request(
+            db=session,
+            request_id="request-agent-call-steer",
+            uid="user-1",
+            agent_slug="main",
+            thread_id="missing-thread",
+            source="agent_call",
+            queue_policy="steer",
+            input_message=build_chat_input_message("改变方向"),
+            agent_item=MagicMock(),
+            agent_backend=MagicMock(),
+        )
+
+    assert exc_info.value.status_code == 422
+    assert (
+        await session.scalar(
+            select(sa_func.count())
+            .select_from(AgentRunRequest)
+            .where(AgentRunRequest.request_id == "request-agent-call-steer")
+        )
+        == 0
+    )
+    assert (
+        await session.scalar(
+            select(sa_func.count()).select_from(Message).where(Message.request_id == "request-agent-call-steer")
+        )
+        == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_queued_request_upgrade_preserves_identity_and_fifo_fields(session):
+    """queued -> Steer 原地更新，不重建 request、Message 或输入快照。"""
+    from yuxi.storage.postgres.models_business import AgentRun
+
+    await _seed_thread(session)
+    created_at = utc_now_naive() - timedelta(seconds=2)
+    request = await _seed_queued_request(
+        session,
+        request_id="request-upgrade",
+        message_id=101,
+        created_at=created_at,
+    )
+    request.input_payload = {"model_spec": "provider:model"}
+    original_id = request.id
+    session.add(
+        AgentRun(
+            id="run-active",
+            conversation_thread_id="t1",
+            agent_slug="main",
+            uid="user-1",
+            request_id="request-active",
+            input_payload={},
+            status="running",
+            run_type="chat",
+            conversation_id=10,
+        )
+    )
+    await session.commit()
+
+    result = await steer_queued_request(request_id="request-upgrade", current_uid="user-1", db=session)
+    upgraded = await session.scalar(select(AgentRunRequest).where(AgentRunRequest.request_id == "request-upgrade"))
+
+    assert result.target_run_id == "run-active"
+    assert upgraded.id == original_id
+    assert upgraded.input_message_id == 101
+    assert upgraded.input_payload == {"model_spec": "provider:model"}
+    assert upgraded.created_at == created_at
+    assert upgraded.queue_policy == "steer"

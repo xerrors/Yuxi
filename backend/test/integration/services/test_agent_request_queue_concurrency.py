@@ -10,17 +10,548 @@ from unittest.mock import MagicMock
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import delete, select, update
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy import delete, func, select, text, update
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.repositories.agent_run_request_repository import AgentRunRequestRepository
 from yuxi.services import agent_request_queue_service
 from yuxi.services import run_worker
 from yuxi.services.input_message_service import build_chat_input_message
+from yuxi.storage.postgres.manager import PENDING_STEER_INVARIANT_CHECK_SQL
 from yuxi.storage.postgres.models_business import AgentRun, AgentRunRequest, Conversation, Message
 from yuxi.utils.datetime_utils import utc_now_naive
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
+
+
+async def test_schema_check_reports_duplicate_pending_steers():
+    """真实 PostgreSQL schema 演进在建索引前明确报告重复 pending Steer。"""
+    thread_id = f"pytest-steer-schema-{uuid.uuid4()}"
+    uid = f"pytest-user-{uuid.uuid4()}"
+    engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
+
+    async with engine.connect() as connection:
+        transaction = await connection.begin()
+        async with AsyncSession(bind=connection, expire_on_commit=False) as db:
+            try:
+                await db.execute(text("DROP INDEX IF EXISTS uq_agent_run_requests_one_steering_per_thread"))
+                conversation = Conversation(thread_id=thread_id, uid=uid, agent_id="main", status="active")
+                db.add(conversation)
+                await db.flush()
+                messages = [
+                    Message(
+                        conversation_id=conversation.id,
+                        role="user",
+                        content=f"steer-{index}",
+                        request_id=f"schema-steer-{uuid.uuid4()}",
+                        delivery_status="queued",
+                    )
+                    for index in range(2)
+                ]
+                db.add_all(messages)
+                await db.flush()
+                db.add_all(
+                    [
+                        AgentRunRequest(
+                            request_id=message.request_id,
+                            uid=uid,
+                            agent_slug="main",
+                            conversation_thread_id=thread_id,
+                            source="chat",
+                            queue_policy="steer",
+                            status="queued",
+                            input_message_id=message.id,
+                            input_payload={},
+                        )
+                        for message in messages
+                    ]
+                )
+                await db.flush()
+
+                with pytest.raises(DBAPIError) as exc_info:
+                    await db.execute(text(PENDING_STEER_INVARIANT_CHECK_SQL))
+
+                assert "multiple pending Steer requests" in str(exc_info.value)
+            finally:
+                await transaction.rollback()
+
+    await engine.dispose()
+
+
+async def test_concurrent_direct_steers_accept_only_one_without_orphan_message(monkeypatch: pytest.MonkeyPatch):
+    """Conversation 行锁保证并发 Steer 唯一，失败方不写 Message/Request。"""
+    thread_id = f"pytest-steer-{uuid.uuid4()}"
+    uid = f"pytest-user-{uuid.uuid4()}"
+    request_ids = [f"steer-{uuid.uuid4()}" for _ in range(2)]
+    engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    monkeypatch.setattr(agent_request_queue_service, "resolve_agent_run_config", lambda *args: ("model", "default"))
+
+    async with session_factory() as db:
+        conversation = Conversation(thread_id=thread_id, uid=uid, agent_id="main", status="active")
+        db.add(conversation)
+        await db.flush()
+        db.add(
+            AgentRun(
+                id=f"run-{uuid.uuid4()}",
+                conversation_thread_id=thread_id,
+                agent_slug="main",
+                uid=uid,
+                request_id=f"active-{uuid.uuid4()}",
+                input_payload={},
+                status="running",
+                run_type="chat",
+                conversation_id=conversation.id,
+            )
+        )
+        await db.commit()
+
+    async def submit(request_id: str):
+        async with session_factory() as db:
+            try:
+                result = await agent_request_queue_service.intake_request(
+                    db=db,
+                    request_id=request_id,
+                    uid=uid,
+                    agent_slug="main",
+                    thread_id=thread_id,
+                    queue_policy="steer",
+                    input_message=build_chat_input_message(request_id),
+                    agent_item=MagicMock(),
+                    agent_backend=MagicMock(),
+                )
+                await db.commit()
+                return result
+            except HTTPException as exc:
+                await db.rollback()
+                return exc
+
+    try:
+        results = await asyncio.wait_for(
+            asyncio.gather(*(submit(request_id) for request_id in request_ids)),
+            timeout=10,
+        )
+        accepted = [result for result in results if not isinstance(result, HTTPException)]
+        rejected = [result for result in results if isinstance(result, HTTPException)]
+
+        async with session_factory() as db:
+            requests = (
+                (await db.execute(select(AgentRunRequest).where(AgentRunRequest.request_id.in_(request_ids))))
+                .scalars()
+                .all()
+            )
+            messages = (await db.execute(select(Message).where(Message.request_id.in_(request_ids)))).scalars().all()
+
+        assert len(accepted) == 1
+        assert len(rejected) == 1
+        assert rejected[0].status_code == 409
+        assert rejected[0].detail["code"] == "steer_already_pending"
+        assert len(requests) == 1
+        assert len(messages) == 1
+        assert requests[0].queue_policy == "steer"
+    finally:
+        await _cleanup_queue_test_thread(session_factory, engine, thread_id)
+
+
+async def test_cancel_commit_before_target_lock_rejects_direct_steer(monkeypatch: pytest.MonkeyPatch):
+    """Steer 读 active 后必须锁定并刷新 Run，不能越过已提交的取消。"""
+    thread_id = f"pytest-steer-cancel-intake-{uuid.uuid4()}"
+    uid = f"pytest-user-{uuid.uuid4()}"
+    target_run_id = f"target-{uuid.uuid4()}"
+    steer_request_id = f"steer-{uuid.uuid4()}"
+    engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    active_read = asyncio.Event()
+    cancel_committed = asyncio.Event()
+    original_get_active = AgentRunRepository.get_active_run_by_thread_for_user
+
+    async def pause_after_active_read(repo, **kwargs):
+        run = await original_get_active(repo, **kwargs)
+        if kwargs.get("conversation_thread_id") == thread_id:
+            active_read.set()
+            await asyncio.wait_for(cancel_committed.wait(), timeout=10)
+        return run
+
+    monkeypatch.setattr(AgentRunRepository, "get_active_run_by_thread_for_user", pause_after_active_read)
+    monkeypatch.setattr(agent_request_queue_service, "resolve_agent_run_config", lambda *args: ("model", "default"))
+
+    async with session_factory() as db:
+        conversation = Conversation(thread_id=thread_id, uid=uid, agent_id="main", status="active")
+        db.add(conversation)
+        await db.flush()
+        db.add(
+            AgentRun(
+                id=target_run_id,
+                conversation_thread_id=thread_id,
+                agent_slug="main",
+                uid=uid,
+                request_id=f"active-{uuid.uuid4()}",
+                input_payload={},
+                status="running",
+                run_type="chat",
+                conversation_id=conversation.id,
+            )
+        )
+        await db.commit()
+
+    async def submit_steer():
+        async with session_factory() as db:
+            try:
+                return await agent_request_queue_service.intake_request(
+                    db=db,
+                    request_id=steer_request_id,
+                    uid=uid,
+                    agent_slug="main",
+                    thread_id=thread_id,
+                    queue_policy="steer",
+                    input_message=build_chat_input_message("改变方向"),
+                    agent_item=MagicMock(),
+                    agent_backend=MagicMock(),
+                )
+            except HTTPException as exc:
+                await db.rollback()
+                return exc
+
+    steer_task = asyncio.create_task(submit_steer())
+    try:
+        await asyncio.wait_for(active_read.wait(), timeout=10)
+        async with session_factory() as db:
+            await AgentRunRepository(db).request_cancel(target_run_id)
+            await db.commit()
+        cancel_committed.set()
+        result = await asyncio.wait_for(steer_task, timeout=10)
+
+        async with session_factory() as db:
+            request_count = await db.scalar(
+                select(func.count()).select_from(AgentRunRequest).where(AgentRunRequest.request_id == steer_request_id)
+            )
+            message_count = await db.scalar(
+                select(func.count()).select_from(Message).where(Message.request_id == steer_request_id)
+            )
+
+        assert isinstance(result, HTTPException)
+        assert result.detail["code"] == "run_cancel_pending"
+        assert request_count == 0
+        assert message_count == 0
+    finally:
+        cancel_committed.set()
+        await asyncio.gather(steer_task, return_exceptions=True)
+        await _cleanup_queue_test_thread(session_factory, engine, thread_id)
+
+
+async def test_concurrent_queued_upgrades_keep_loser_in_fifo():
+    """两个 queued request 并发升级时只接受一个，失败项保持原 FIFO 事实。"""
+    thread_id = f"pytest-steer-upgrade-{uuid.uuid4()}"
+    uid = f"pytest-user-{uuid.uuid4()}"
+    request_ids = [f"queued-{uuid.uuid4()}" for _ in range(2)]
+    engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with session_factory() as db:
+        conversation = Conversation(thread_id=thread_id, uid=uid, agent_id="main", status="active")
+        db.add(conversation)
+        await db.flush()
+        db.add(
+            AgentRun(
+                id=f"run-{uuid.uuid4()}",
+                conversation_thread_id=thread_id,
+                agent_slug="main",
+                uid=uid,
+                request_id=f"active-{uuid.uuid4()}",
+                input_payload={},
+                status="running",
+                run_type="chat",
+                conversation_id=conversation.id,
+            )
+        )
+        messages = [
+            Message(
+                conversation_id=conversation.id,
+                role="user",
+                content=request_id,
+                request_id=request_id,
+                delivery_status="queued",
+            )
+            for request_id in request_ids
+        ]
+        db.add_all(messages)
+        await db.flush()
+        db.add_all(
+            [
+                AgentRunRequest(
+                    request_id=request_id,
+                    uid=uid,
+                    agent_slug="main",
+                    conversation_thread_id=thread_id,
+                    source="chat",
+                    queue_policy="enqueue",
+                    status="queued",
+                    input_message_id=message.id,
+                    input_payload={"model_spec": "model"},
+                )
+                for request_id, message in zip(request_ids, messages, strict=True)
+            ]
+        )
+        await db.commit()
+
+    async def upgrade(request_id: str):
+        async with session_factory() as db:
+            try:
+                result = await agent_request_queue_service.steer_queued_request(
+                    request_id=request_id,
+                    current_uid=uid,
+                    db=db,
+                )
+                await db.commit()
+                return result
+            except HTTPException as exc:
+                await db.rollback()
+                return exc
+
+    try:
+        results = await asyncio.wait_for(
+            asyncio.gather(*(upgrade(request_id) for request_id in request_ids)),
+            timeout=10,
+        )
+        accepted = [result for result in results if not isinstance(result, HTTPException)]
+        rejected = [result for result in results if isinstance(result, HTTPException)]
+
+        async with session_factory() as db:
+            requests = (
+                (
+                    await db.execute(
+                        select(AgentRunRequest)
+                        .where(AgentRunRequest.request_id.in_(request_ids))
+                        .order_by(AgentRunRequest.id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+        assert len(accepted) == 1
+        assert len(rejected) == 1
+        assert rejected[0].detail["code"] == "steer_already_pending"
+        assert [request.queue_policy for request in requests].count("steer") == 1
+        assert [request.queue_policy for request in requests].count("enqueue") == 1
+        assert all(request.status == "queued" for request in requests)
+        assert {request.request_id for request in requests} == set(request_ids)
+    finally:
+        await _cleanup_queue_test_thread(session_factory, engine, thread_id)
+
+
+async def test_ready_steer_handoff_commits_old_terminal_and_replacement_together(monkeypatch: pytest.MonkeyPatch):
+    """真实 PostgreSQL 验证交接事务同时写入旧终态、request 和 replacement。"""
+    thread_id = f"pytest-steer-handoff-{uuid.uuid4()}"
+    uid = f"pytest-user-{uuid.uuid4()}"
+    target_run_id = f"target-{uuid.uuid4()}"
+    steer_request_id = f"steer-{uuid.uuid4()}"
+    engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    enqueued_run_ids: list[str] = []
+
+    @asynccontextmanager
+    async def session_context():
+        async with session_factory() as db:
+            try:
+                yield db
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                raise
+
+    async def capture_enqueue(run_id: str):
+        enqueued_run_ids.append(run_id)
+
+    monkeypatch.setattr(agent_request_queue_service.pg_manager, "get_async_session_context", session_context)
+    monkeypatch.setattr(agent_request_queue_service, "enqueue_agent_run", capture_enqueue)
+
+    async with session_factory() as db:
+        conversation = Conversation(thread_id=thread_id, uid=uid, agent_id="main", status="active")
+        db.add(conversation)
+        await db.flush()
+        target_message = Message(
+            conversation_id=conversation.id,
+            role="user",
+            content="target",
+            request_id=f"target-request-{uuid.uuid4()}",
+            delivery_status="dispatched",
+        )
+        steer_message = Message(
+            conversation_id=conversation.id,
+            role="user",
+            content="steer",
+            request_id=steer_request_id,
+            delivery_status="queued",
+        )
+        db.add_all([target_message, steer_message])
+        await db.flush()
+        db.add(
+            AgentRun(
+                id=target_run_id,
+                conversation_thread_id=thread_id,
+                agent_slug="main",
+                uid=uid,
+                request_id=target_message.request_id,
+                input_payload={},
+                status="running",
+                run_type="chat",
+                conversation_id=conversation.id,
+                input_message_id=target_message.id,
+            )
+        )
+        await db.flush()
+        db.add(
+            AgentRunRequest(
+                request_id=steer_request_id,
+                uid=uid,
+                agent_slug="main",
+                conversation_thread_id=thread_id,
+                source="chat",
+                queue_policy="steer",
+                status="steer_ready",
+                input_message_id=steer_message.id,
+                target_run_id=target_run_id,
+                input_payload={"model_spec": "model", "tool_approval_mode": "default"},
+            )
+        )
+        await db.commit()
+
+    try:
+        handoff = await agent_request_queue_service.finalize_ready_steer_handoff(target_run_id)
+
+        async with session_factory() as db:
+            target = await db.get(AgentRun, target_run_id)
+            request = await db.scalar(select(AgentRunRequest).where(AgentRunRequest.request_id == steer_request_id))
+            replacement = await db.get(AgentRun, request.dispatched_run_id)
+            target_message = await db.get(Message, target.input_message_id)
+
+        assert handoff.changed is True
+        assert target.status == "cancelled"
+        assert target.error_type == "steered"
+        assert target_message.delivery_status == "complete"
+        assert request.status == "dispatched"
+        assert replacement.status == "pending"
+        assert replacement.input_message_id == request.input_message_id
+        assert enqueued_run_ids == []
+
+        recovered_run_id = await agent_request_queue_service.recover_steered_replacement(target_run_id)
+        assert recovered_run_id == replacement.id
+        assert enqueued_run_ids == [replacement.id]
+    finally:
+        await _cleanup_queue_test_thread(session_factory, engine, thread_id)
+
+
+async def test_cancel_requested_wins_ready_handoff_without_replacement(monkeypatch: pytest.MonkeyPatch):
+    """取消抢先写入后，handoff/completed 都不能覆盖它或创建 replacement。"""
+    thread_id = f"pytest-steer-cancel-{uuid.uuid4()}"
+    uid = f"pytest-user-{uuid.uuid4()}"
+    target_run_id = f"target-{uuid.uuid4()}"
+    steer_request_id = f"steer-{uuid.uuid4()}"
+    engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    enqueued_run_ids: list[str] = []
+
+    @asynccontextmanager
+    async def session_context():
+        async with session_factory() as db:
+            try:
+                yield db
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                raise
+
+    async def capture_enqueue(run_id: str):
+        enqueued_run_ids.append(run_id)
+
+    monkeypatch.setattr(agent_request_queue_service.pg_manager, "get_async_session_context", session_context)
+    monkeypatch.setattr(agent_request_queue_service, "enqueue_agent_run", capture_enqueue)
+
+    async with session_factory() as db:
+        conversation = Conversation(thread_id=thread_id, uid=uid, agent_id="main", status="active")
+        db.add(conversation)
+        await db.flush()
+        steer_message = Message(
+            conversation_id=conversation.id,
+            role="user",
+            content="steer",
+            request_id=steer_request_id,
+            delivery_status="queued",
+        )
+        db.add(steer_message)
+        await db.flush()
+        db.add_all(
+            [
+                AgentRun(
+                    id=target_run_id,
+                    conversation_thread_id=thread_id,
+                    agent_slug="main",
+                    uid=uid,
+                    request_id=f"target-{uuid.uuid4()}",
+                    input_payload={},
+                    status="cancel_requested",
+                    run_type="chat",
+                    conversation_id=conversation.id,
+                ),
+                AgentRunRequest(
+                    request_id=steer_request_id,
+                    uid=uid,
+                    agent_slug="main",
+                    conversation_thread_id=thread_id,
+                    source="chat",
+                    queue_policy="steer",
+                    status="steer_ready",
+                    input_message_id=steer_message.id,
+                    target_run_id=target_run_id,
+                    input_payload={"model_spec": "model", "tool_approval_mode": "default"},
+                ),
+            ]
+        )
+        await db.commit()
+
+    try:
+        handoff = await agent_request_queue_service.finalize_ready_steer_handoff(target_run_id)
+        async with session_factory() as db:
+            run, completed_changed = await AgentRunRepository(db).set_terminal_status(
+                target_run_id,
+                status="completed",
+            )
+            await db.commit()
+        assert handoff.changed is False
+        assert run.status == "cancel_requested"
+        assert completed_changed is False
+
+        async with session_factory() as db:
+            run, cancelled_changed = await AgentRunRepository(db).set_terminal_status(
+                target_run_id,
+                status="cancelled",
+                error_type="cancelled",
+            )
+            await db.commit()
+        await agent_request_queue_service.settle_target_steer_after_terminal(target_run_id)
+
+        async with session_factory() as db:
+            request = await db.scalar(select(AgentRunRequest).where(AgentRunRequest.request_id == steer_request_id))
+            replacements = (
+                await db.scalars(
+                    select(AgentRun).where(
+                        AgentRun.conversation_thread_id == thread_id,
+                        AgentRun.id != target_run_id,
+                    )
+                )
+            ).all()
+
+        assert cancelled_changed is True
+        assert run.status == "cancelled"
+        assert request.status == "failed"
+        assert request.error_code == "steer_target_cancelled"
+        assert replacements == []
+        assert enqueued_run_ids == []
+    finally:
+        await _cleanup_queue_test_thread(session_factory, engine, thread_id)
 
 
 async def _cleanup_queue_test_thread(session_factory, engine, thread_id: str) -> None:
@@ -322,7 +853,7 @@ async def test_startup_recovery_reenqueues_pending_runs_without_queue_requests(m
                 ).all()
             )
 
-        assert sorted(enqueue_calls) == sorted(run_ids)
+        assert all(enqueue_calls.count(run_id) == 1 for run_id in run_ids)
         assert request_count == 0
     finally:
         async with session_factory() as db:

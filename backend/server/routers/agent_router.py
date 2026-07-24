@@ -23,6 +23,7 @@ from yuxi.services.agent_request_queue_service import (
     get_request as get_request_svc,
     get_thread_queue_snapshot,
     intake_request,
+    steer_queued_request,
     stream_request_events,
 )
 from yuxi.services.agent_run_service import (
@@ -75,7 +76,10 @@ class AgentRunCreate(BaseModel):
     tool_approval_mode: str | None = Field(None, description="可选，本次运行的工具审批模式覆盖")
     resume: Any | None = Field(None, description="可选，恢复时传给 LangGraph 的输入载荷，非布尔值")
     created_by_run_id: str | None = Field(None, description="可选，创建本 run 的父 run ID；resume 时为被恢复的 run ID")
-    queue_policy: str = Field("enqueue", description="排队策略：enqueue（默认排队）或 reject（运行中拒绝）")
+    queue_policy: str = Field(
+        "enqueue",
+        description="排队策略：enqueue（默认排队）、reject（运行中拒绝）或 steer（安全接替）",
+    )
 
 
 def _backend_info(info: dict) -> dict:
@@ -274,6 +278,8 @@ async def create_agent_run(
 ):
     # resume 路径：恢复已有 LangGraph 状态，跳过 request 入队与派发，直接新建 run。
     if payload.resume is not None:
+        if payload.queue_policy != "enqueue":
+            raise HTTPException(status_code=422, detail="queue_policy 仅支持普通 Chat 请求")
         input_message = None
         if payload.query:
             input_message = build_chat_input_message(payload.query, payload.image_content)
@@ -330,9 +336,10 @@ async def create_agent_run(
         "queue_position": result.queue_position,
         "message_id": result.message_id,
         "run_id": result.run_id,
+        "target_run_id": result.target_run_id,
         "stream_url": f"/api/agent/runs/{result.run_id}/events" if result.run_id else None,
         "request_events_url": (
-            f"/api/agent/requests/{result.request_id}/events" if result.status == "queued" else None
+            f"/api/agent/requests/{result.request_id}/events" if result.status in {"queued", "steer_ready"} else None
         ),
         "thread_id": result.thread_id,
     }
@@ -391,6 +398,25 @@ async def cancel_request(
     status = await cancel_queued_request_svc(request_id=request_id, current_uid=str(current_user.uid), db=db)
     await db.commit()
     return {"request_id": request_id, "status": status}
+
+
+@agent_router.post("/requests/{request_id}/steer")
+async def steer_request(
+    request_id: str,
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await steer_queued_request(request_id=request_id, current_uid=str(current_user.uid), db=db)
+    await db.commit()
+    return {
+        "request_id": result.request_id,
+        "thread_id": result.thread_id,
+        "status": result.status,
+        "queue_policy": result.queue_policy,
+        "target_run_id": result.target_run_id,
+        "run_id": result.run_id,
+        "request_events_url": f"/api/agent/requests/{result.request_id}/events",
+    }
 
 
 @agent_router.get("/requests/{request_id}/events")

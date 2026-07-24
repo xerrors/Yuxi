@@ -15,6 +15,7 @@ from yuxi.agents.context import (
 )
 from yuxi.agents.middlewares import (
     ImageInputCompatibilityMiddleware,
+    SteerMiddleware,
     TokenUsageMiddleware,
     create_summary_middleware,
     save_attachments_to_fs,
@@ -54,6 +55,7 @@ async def _build_middlewares(context):
     )
 
     middlewares = [
+        SteerMiddleware(),
         create_agent_filesystem_middleware(
             getattr(context, "tool_token_limit", DEFAULT_TOOL_RESULT_EVICTION_K_TOKENS) * 1024,
             context=context,
