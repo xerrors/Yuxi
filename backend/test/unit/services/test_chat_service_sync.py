@@ -369,6 +369,100 @@ async def test_get_agent_state_view_rejects_async_subagent_without_child_convers
 
 
 @pytest.mark.asyncio
+async def test_get_agent_state_view_returns_interrupted_checkpoint_payload(monkeypatch: pytest.MonkeyPatch):
+    thread_id = "thread-1"
+
+    class ConvRepo:
+        def __init__(self, _db):
+            pass
+
+        async def get_conversation_by_thread_id(self, requested_thread_id: str):
+            assert requested_thread_id == thread_id
+            return SimpleNamespace(id=20, uid="user-1", agent_id="main", status="active")
+
+    class AgentRepo:
+        def __init__(self, _db):
+            pass
+
+        async def get_by_slug(self, slug: str):
+            assert slug == "main"
+            return SimpleNamespace(backend_id="ChatBot", config_json={"context": {}})
+
+    class ThreadRepo:
+        def __init__(self, _db):
+            pass
+
+        async def get_by_child_conversation_for_user(self, conversation_id: int, uid: str):
+            assert conversation_id == 20
+            assert uid == "user-1"
+            return None
+
+    class RunRepo:
+        def __init__(self, _db):
+            pass
+
+        async def get_latest_run_by_thread_for_user(self, requested_thread_id: str, uid: str):
+            assert requested_thread_id == thread_id
+            assert uid == "user-1"
+            return SimpleNamespace(id="run-1", status="interrupted", input_payload={})
+
+    class Context:
+        def __init__(self, *, thread_id="", uid=""):
+            self.thread_id = thread_id
+            self.uid = uid
+
+        def update(self, data: dict):
+            for key, value in data.items():
+                setattr(self, key, value)
+
+    class Agent:
+        context_schema = Context
+
+        async def get_graph(self, *, context):
+            assert context.thread_id == thread_id
+            return SimpleNamespace(
+                aget_state=lambda _config: None,
+            )
+
+    checkpoint_state = SimpleNamespace(
+        values={},
+        tasks=[
+            SimpleNamespace(
+                interrupts=[
+                    SimpleNamespace(
+                        value={
+                            "action_requests": [{"name": "execute", "args": {"command": "pytest -q"}}],
+                            "review_configs": [{"action_name": "execute", "allowed_decisions": ["approve", "reject"]}],
+                        }
+                    )
+                ]
+            )
+        ],
+    )
+
+    async def read_checkpoint_state(*_args, **_kwargs):
+        return checkpoint_state
+
+    monkeypatch.setattr(svc, "ConversationRepository", ConvRepo)
+    monkeypatch.setattr(svc, "AgentRepository", AgentRepo)
+    monkeypatch.setattr(svc, "SubagentThreadRepository", ThreadRepo)
+    monkeypatch.setattr(svc, "AgentRunRepository", RunRepo)
+    monkeypatch.setattr(svc, "normalize_agent_context_config", _fake_normalize_agent_context_config)
+    monkeypatch.setattr(svc, "_read_checkpoint_state", read_checkpoint_state)
+    monkeypatch.setattr(svc.agent_manager, "get_agent", lambda backend_id: Agent())
+
+    result = await svc.get_agent_state_view(
+        thread_id=thread_id,
+        current_user=SimpleNamespace(uid="user-1"),
+        db=object(),
+    )
+
+    assert result["interrupt"]["status"] == "human_approval_required"
+    assert result["interrupt"]["run_id"] == "run-1"
+    assert result["interrupt"]["approval"]["action_requests"][0]["name"] == "execute"
+
+
+@pytest.mark.asyncio
 async def test_get_agent_state_view_includes_subagent_thread_relation(monkeypatch: pytest.MonkeyPatch):
     child_thread_id = "child-thread"
 
@@ -425,7 +519,7 @@ async def test_get_agent_state_view_includes_subagent_thread_relation(monkeypatc
         async def get_latest_run_by_thread_for_user(self, thread_id: str, uid: str):
             assert thread_id == child_thread_id
             assert uid == "user-1"
-            return SimpleNamespace(input_payload={"model_spec": "provider:run-model"})
+            return SimpleNamespace(status="running", input_payload={"model_spec": "provider:run-model"})
 
         async def get_latest_subagent_run_by_thread_for_user(self, thread_id: str, uid: str):
             assert thread_id == child_thread_id

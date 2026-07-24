@@ -81,3 +81,6 @@ export const hasPendingInterruptPayload = (pendingInterrupt) => {
 export const isThreadWaitingForUserAction = (threadState) =>
   hasPendingInterruptPayload(threadState?.pendingInterrupt) ||
   threadState?.queueSnapshot?.status === 'interrupted'
+
+export const isRunInterruptedConflict = (error) =>
+  error?.response?.status === 409 && error?.response?.data?.detail?.code === 'run_interrupted'

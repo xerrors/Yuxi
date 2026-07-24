@@ -206,6 +206,7 @@
                   :aria-hidden="currentToolApprovalVisible ? 'true' : undefined"
                 >
                   <AgentInputArea
+                    ref="agentInputAreaRef"
                     v-model="userInput"
                     :is-loading="shouldShowStopButton"
                     :disabled="!currentAgent || currentToolApprovalVisible"
@@ -676,7 +677,7 @@ import { storeToRefs } from 'pinia'
 import { MessageProcessor } from '@/utils/messageProcessor'
 import { agentApi, threadApi } from '@/apis'
 import HumanApprovalModal from '@/components/HumanApprovalModal.vue'
-import { useApproval } from '@/composables/useApproval'
+import { extractPendingInterrupt, useApproval } from '@/composables/useApproval'
 import { useAgentThreadState, IDLE_QUEUE_SNAPSHOT } from '@/composables/useAgentThreadState'
 import { useAgentRunStream } from '@/composables/useAgentRunStream'
 import { useAgentStreamHandler } from '@/composables/useAgentStreamHandler'
@@ -692,6 +693,7 @@ import { enrichTaskToolCalls, parseToolCallArgs } from '@/components/ToolCalling
 import { getConversationDisplayItems } from '@/utils/messageGrouping'
 import { makeChildThreadId } from '@/utils/subagentThread'
 import {
+  isRunInterruptedConflict,
   isThreadWaitingForUserAction,
   isToolApprovalMode,
   readToolApprovalModePreference,
@@ -718,6 +720,7 @@ const { threads, currentThreadId, currentThread } = storeToRefs(chatThreadsStore
 
 // ==================== LOCAL CHAT & UI STATE ====================
 const userInput = ref('')
+const agentInputAreaRef = ref(null)
 const sendCooldownActive = ref(false)
 const cancellingRequestIds = reactive(new Set())
 let sendCooldownTimer = null
@@ -2327,6 +2330,11 @@ const fetchAgentState = async (agentId, threadId) => {
     const targetState = getThreadState(threadId)
     if (!targetState) return
     targetState.agentState = res.agent_state || null
+    const pendingInterrupt = extractPendingInterrupt(res.interrupt, threadId)
+    if (pendingInterrupt) {
+      targetState.pendingInterrupt = pendingInterrupt
+      restorePendingInterruptForThread(threadId)
+    }
   } catch {
     // agent state is optional UI state
   }
@@ -2760,6 +2768,14 @@ const handleSendMessage = async ({ image } = {}) => {
       resetOnGoingConv(threadId)
     }
     rollbackAttachments(threadId, previousAttachments)
+
+    if (isRunInterruptedConflict(error)) {
+      const currentDraft = userInput.value
+      userInput.value = [text, currentDraft].filter(Boolean).join('\n')
+      agentInputAreaRef.value?.restoreImage?.(image)
+      await fetchAgentState(currentAgentId.value, threadId)
+    }
+
     handleChatError(error, 'send')
   }
 }

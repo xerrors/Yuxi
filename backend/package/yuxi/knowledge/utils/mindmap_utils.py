@@ -115,10 +115,10 @@ async def _list_mindmap_files_page(
 ) -> tuple[dict[str, dict], int]:
     from yuxi.repositories.knowledge_file_repository import KnowledgeFileRepository
 
-    records, total = await KnowledgeFileRepository().list_documents(
+    records, total = await KnowledgeFileRepository().search_files(
         kb_id=kb_id,
-        page=1,
-        page_size=page_size,
+        offset=0,
+        limit=page_size,
         files_only=True,
     )
     return {record.file_id: _file_record_to_mindmap_file(record) for record in records}, total
