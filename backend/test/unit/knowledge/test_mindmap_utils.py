@@ -47,8 +47,8 @@ async def test_get_mindmap_diff_keeps_tracked_file_outside_first_page(monkeypatc
     kb_repo = FakeKnowledgeBaseRepository(make_kb())
 
     class FakeFileRepository:
-        async def list_documents(self, **kwargs):
-            assert kwargs["page_size"] == mm.MINDMAP_FILE_PAGE_SIZE
+        async def search_files(self, **kwargs):
+            assert kwargs["limit"] == mm.MINDMAP_FILE_PAGE_SIZE
             return [make_file("new", "new.pdf")], 100
 
         async def list_by_file_ids(self, file_ids):
@@ -98,6 +98,39 @@ async def test_generate_database_mindmap_loads_selected_file_ids_directly(monkey
     assert result["file_count"] == 1
     assert result["original_file_count"] == 1
     assert kb_repo.updates[0][1]["mindmap_file_ids"] == {"outside-page": "outside.pdf"}
+
+
+@pytest.mark.asyncio
+async def test_generate_database_mindmap_includes_nested_files_when_root_is_empty(monkeypatch):
+    kb_repo = FakeKnowledgeBaseRepository(make_kb(mindmap=None, mindmap_file_ids=None))
+
+    class FakeFileRepository:
+        async def search_files(self, **kwargs):
+            assert kwargs == {
+                "kb_id": "kb_1",
+                "offset": 0,
+                "limit": mm.MINDMAP_GENERATION_FILE_LIMIT,
+                "files_only": True,
+            }
+            return [make_file("nested", "nested.pdf")], 1
+
+    class FakeModel:
+        async def call(self, messages, stream):
+            assert "nested.pdf" in messages[1]["content"]
+            return SimpleNamespace(content='{"content":"知识库","children":[{"content":"nested.pdf","children":[]}]}')
+
+    monkeypatch.setattr(mm, "KnowledgeBaseRepository", lambda: kb_repo)
+    monkeypatch.setattr(
+        "yuxi.repositories.knowledge_file_repository.KnowledgeFileRepository",
+        FakeFileRepository,
+    )
+    monkeypatch.setattr(mm, "select_model", lambda model_spec: FakeModel())
+
+    result = await mm.generate_database_mindmap("kb_1")
+
+    assert result["file_count"] == 1
+    assert result["original_file_count"] == 1
+    assert kb_repo.updates[0][1]["mindmap_file_ids"] == {"nested": "nested.pdf"}
 
 
 @pytest.mark.asyncio

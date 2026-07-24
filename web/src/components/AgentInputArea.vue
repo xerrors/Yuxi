@@ -163,6 +163,13 @@ const handleImageRemoved = () => {
   currentImage.value = null
 }
 
+// 发送被后端拒绝时仅向空输入区恢复旧图片，保留等待期间新选择的图片。
+const restoreImage = (image) => {
+  if (!currentImage.value) {
+    currentImage.value = image || null
+  }
+}
+
 const handleAttachmentRemoved = (attachment) => {
   emit('remove-attachment', attachment.raw)
 }
@@ -187,7 +194,8 @@ const handleKeyDown = (e) => {
 
 defineExpose({
   focus: () => inputRef.value?.focus(),
-  closeOptions: () => inputRef.value?.closeOptions()
+  closeOptions: () => inputRef.value?.closeOptions(),
+  restoreImage
 })
 </script>
 

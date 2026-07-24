@@ -632,6 +632,17 @@ def _build_tool_approval_payload(payload: dict, thread_id: str) -> dict[str, Any
     }
 
 
+def _build_pending_interrupt_payload(info: Any, thread_id: str) -> dict[str, Any]:
+    """将 checkpoint 中断信息转换为前端可恢复的统一载荷。"""
+    coerced = _coerce_interrupt_payload(info)
+    approval_payload = _build_tool_approval_payload(coerced, thread_id)
+    if approval_payload:
+        return {"status": "human_approval_required", **approval_payload}
+
+    question_payload = _build_ask_user_question_payload(coerced, thread_id)
+    return {"status": "ask_user_question_required", **question_payload}
+
+
 def _ensure_full_msg(full_msg: AIMessage | None, accumulated_content: list[str]) -> AIMessage | None:
     """如果 full_msg 为空且有累积内容，构建 AIMessage"""
     if not full_msg and accumulated_content:
@@ -716,16 +727,10 @@ async def check_and_handle_interrupts(
 
         interrupt_info = _extract_interrupt_info(state)
         if interrupt_info:
-            # 共享一次 coercion，避免两个 builder 各自重复解析
-            coerced = _coerce_interrupt_payload(interrupt_info)
-            approval_payload = _build_tool_approval_payload(coerced, thread_id)
-            if approval_payload:
-                meta["interrupt"] = approval_payload
-                yield make_chunk(status="human_approval_required", meta=meta, **approval_payload)
-                return
-            question_payload = _build_ask_user_question_payload(coerced, thread_id)
-            meta["interrupt"] = question_payload
-            yield make_chunk(status="ask_user_question_required", meta=meta, **question_payload)
+            pending_interrupt = _build_pending_interrupt_payload(interrupt_info, thread_id)
+            status = pending_interrupt.pop("status")
+            meta["interrupt"] = pending_interrupt
+            yield make_chunk(status=status, meta=meta, **pending_interrupt)
 
     except Exception as e:
         logger.exception(f"Error checking interrupts: {e}")
@@ -1405,6 +1410,12 @@ async def get_agent_state_view(
         state = await _read_checkpoint_state(agent, uid=current_uid, thread_id=thread_id, context=context)
         values = getattr(state, "values", {}) if state else {}
         response = {"agent_state": extract_agent_state(values)}
+        interrupt_info = _extract_interrupt_info(state) if state else None
+        if latest_run and latest_run.status == "interrupted" and interrupt_info:
+            response["interrupt"] = {
+                **_build_pending_interrupt_payload(interrupt_info, thread_id),
+                "run_id": latest_run.id,
+            }
         relation = await SubagentThreadRepository(db).get_by_child_conversation_for_user(
             conversation.id,
             str(current_uid),
