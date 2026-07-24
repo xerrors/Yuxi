@@ -19,16 +19,13 @@ from yuxi.utils import logger
 class MinerUParser(BaseDocumentProcessor):
     """MinerU 文档解析器 - 使用 HTTP API 进行文档理解和解析"""
 
+    service_name = "mineru_ocr"
+    display_name = "MinerU OCR"
+    supported_extensions = [".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"]
+
     def __init__(self, server_url: str | None = None):
-        self.server_url = server_url or os.getenv("MINERU_API_URI") or "http://localhost:30001"
+        self.server_url = (server_url or os.getenv("MINERU_API_URI") or "http://localhost:30001").rstrip("/")
         self.parse_endpoint = f"{self.server_url}/file_parse"
-
-    def get_service_name(self) -> str:
-        return "mineru_ocr"
-
-    def get_supported_extensions(self) -> list[str]:
-        """MinerU 支持 PDF 和多种图像格式"""
-        return [".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"]
 
     def check_health(self) -> dict:
         """检查 MinerU 服务健康状态"""
@@ -156,7 +153,7 @@ class MinerUParser(BaseDocumentProcessor):
                     self.parse_endpoint,
                     files=files,
                     data=data,
-                    timeout=int(os.environ.get("MINERU_TIMEOUT", 1800)),  # 30分钟超时
+                    timeout=int(params.get("timeout_seconds") or os.environ.get("MINERU_TIMEOUT", 1800)),
                 )
 
             # 检查响应状态

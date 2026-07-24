@@ -73,6 +73,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to initialize model cache during startup: {e}")
 
+    try:
+        from yuxi.config.options import ensure_options_in_db
+
+        async with pg_manager.get_async_session_context() as session:
+            await ensure_options_in_db(session)
+    except Exception as e:
+        logger.error(f"Failed to initialize config options during startup: {e}")
+
     # 初始化知识库管理器
     if os.environ.get("LITE_MODE", "").lower() in ("true", "1"):
         logger.info("LITE_MODE enabled, skipping knowledge base initialization")
@@ -89,7 +97,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Run queue redis unavailable on startup: {e}")
 
-    # 启动运行时配置同步线程（周期性从 Redis 拉取管理员保存的配置快照）
+    # 启动应用级运行时配置同步线程。
     config.start_runtime_sync()
 
     try:

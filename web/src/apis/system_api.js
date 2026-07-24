@@ -56,6 +56,13 @@ export const configApi = {
   }
 }
 
+export const configOptionsApi = {
+  getOptions: async () => apiAdminGet('/api/system/config/options'),
+
+  updateOption: async (key, value) =>
+    apiAdminPut(`/api/system/config/options/${encodeURIComponent(key)}`, { value })
+}
+
 // =============================================================================
 // === 信息管理分组 ===
 // =============================================================================
@@ -73,11 +80,8 @@ export const brandApi = {
 // =============================================================================
 
 export const ocrApi = {
-  /**
-   * 获取OCR服务健康状态
-   * @returns {Promise} - OCR健康状态
-   */
-  getHealth: async () => apiAdminGet('/api/system/ocr/health')
+  getOptions: async () => apiGet('/api/system/ocr/options'),
+  getHealth: async () => apiGet('/api/system/ocr/health')
 }
 
 // =============================================================================

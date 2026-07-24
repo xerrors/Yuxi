@@ -21,15 +21,13 @@ from yuxi.utils import logger
 class RapidOCRParser(BaseDocumentProcessor):
     """RapidOCR 解析器 - 使用 ONNX 模型进行文字识别"""
 
+    service_name = "rapid_ocr"
+    display_name = "RapidOCR (ONNX)"
+    supported_extensions = [".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"]
+
     def __init__(self, det_box_thresh: float = 0.3):
         self.ocr = None
         self.det_box_thresh = det_box_thresh
-
-    def get_service_name(self) -> str:
-        return "rapid_ocr"
-
-    def get_supported_extensions(self) -> list[str]:
-        return [".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"]
 
     def _get_model_params(self) -> dict[str, object]:
         return {
@@ -46,17 +44,17 @@ class RapidOCRParser(BaseDocumentProcessor):
         }
 
     def check_health(self) -> dict:
-        """检查 RapidOCR 模型是否可用"""
-        try:
-            test_ocr = RapidOCR(params=self._get_model_params())
-            del test_ocr
-            return {
-                "status": "healthy",
-                "message": "RapidOCR PP-OCRv5 模型可用",
-                "details": {"ocr_version": "PP-OCRv5", "engine": "onnxruntime"},
-            }
-        except Exception as e:
-            return {"status": "error", "message": f"模型加载失败: {str(e)}", "details": {"error": str(e)}}
+        """报告本地组件状态，避免选择器刷新时重复加载模型。"""
+
+        return {
+            "status": "healthy",
+            "message": "RapidOCR PP-OCRv5 组件可用",
+            "details": {
+                "ocr_version": "PP-OCRv5",
+                "engine": "onnxruntime",
+                "det_box_thresh": self.det_box_thresh,
+            },
+        }
 
     def _load_model(self):
         """延迟加载 OCR 模型"""

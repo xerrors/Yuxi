@@ -80,6 +80,37 @@
 
 嵌入模型（embedding）需配置向量维度，请参考模型提供商的规格说明。
 
+OpenAI 兼容供应商的对话模型可在「模型请求参数 JSON」中配置思考模式。这里填写的 JSON 会作为 OpenAI SDK 的 `extra_body` 传入；SDK 会将其中字段合并到最终 HTTP 请求体顶层。
+
+出于安全考虑，该配置采用白名单机制，仅允许以下顶层字段：
+
+| 字段 | 常见供应商或用途 |
+|------|------------------|
+| `enable_thinking` | DashScope、SiliconFlow 等供应商的思考开关 |
+| `thinking_budget` | DashScope、SiliconFlow 等供应商的思考 Token 预算 |
+| `thinking` | DeepSeek、智谱、Kimi、火山方舟等供应商的思考配置对象 |
+| `reasoning` | OpenRouter 等供应商的推理配置对象 |
+| `reasoning_effort` | OpenAI 风格的推理强度 |
+
+白名单只校验顶层字段，`thinking`、`reasoning` 等对象的内部结构由对应供应商校验。不同模型支持的取值和预算范围可能不同，应以供应商的当前文档为准。项目维护者如需支持新的顶层字段，可修改 `backend/package/yuxi/models/providers/service.py` 中的 `ALLOWED_EXTRA_BODY_FIELDS`，并补充相应测试和本文档。
+
+例如，关闭思考：
+
+```json
+{
+  "enable_thinking": false
+}
+```
+
+限制思考预算：
+
+```json
+{
+  "enable_thinking": true,
+  "thinking_budget": 1024
+}
+```
+
 ### 移除模型
 
 在供应商详情的已启用模型列表中移除不需要的模型。

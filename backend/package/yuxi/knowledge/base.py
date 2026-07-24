@@ -380,14 +380,14 @@ class KnowledgeBase(ABC):
             raise ValueError(message)
 
         try:
-            from yuxi.knowledge.parser.unified import Parser
+            from yuxi.services.ocr_service import parse_document
 
             # Prepare params
             params = file_meta.get("processing_params", {}) or {}
             params["image_bucket"] = "public"
             params["image_prefix"] = f"{kb_id}/kb-images"
 
-            markdown_content = await Parser.aparse(
+            markdown_content = await parse_document(
                 source=file_path,
                 params=params,
             )

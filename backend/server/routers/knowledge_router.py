@@ -13,7 +13,7 @@ from yuxi import config
 from yuxi.knowledge.chunking.ragflow_like.presets import get_chunk_preset_options
 from yuxi.knowledge.factory import KnowledgeBaseFactory
 from yuxi.knowledge.graphs.milvus_graph_service import GRAPH_TASK_TYPE, MilvusGraphService
-from yuxi.knowledge.parser.unified import SUPPORTED_FILE_EXTENSIONS, Parser, is_supported_file_extension
+from yuxi.knowledge.parser.unified import SUPPORTED_FILE_EXTENSIONS, is_supported_file_extension
 from yuxi.knowledge.runtime import knowledge_base
 from yuxi.knowledge.utils import calculate_content_hash, is_minio_url, parse_minio_url
 from yuxi.knowledge.utils.mindmap_utils import (
@@ -31,6 +31,7 @@ from yuxi.knowledge.utils.sample_question_utils import (
 )
 from yuxi.knowledge.utils.url_fetcher import fetch_url_content
 from yuxi.models.providers.cache import model_cache
+from yuxi.services.ocr_service import parse_document
 from yuxi.services.task_service import TaskContext, tasker
 from yuxi.services.workspace_service import MAX_WORKSPACE_UPLOAD_SIZE_BYTES, resolve_workspace_file_path
 from yuxi.storage.minio.client import MinIOClient, StorageError, aupload_file_to_minio, get_minio_client
@@ -2054,7 +2055,7 @@ async def mark_it_down(file: UploadFile = File(...), current_user: User = Depend
             too_large_message="文件过大，当前仅支持 100 MB 以内的文件",
         )
 
-        markdown_content = await Parser.aparse(temp_path)
+        markdown_content = await parse_document(temp_path)
         return {"markdown_content": markdown_content, "message": "success"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

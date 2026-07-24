@@ -55,7 +55,12 @@
                 @keydown.esc.stop.prevent="cancelField"
                 @blur="cancelField"
               />
-              <button v-else type="button" class="editable-value" @click="startFieldEdit('username')">
+              <button
+                v-else
+                type="button"
+                class="editable-value"
+                @click="startFieldEdit('username')"
+              >
                 {{ userStore.username || '未设置' }}
               </button>
             </div>

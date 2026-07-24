@@ -338,7 +338,7 @@ async def test_parse_file_cancellation_marks_file_retryable(monkeypatch):
         parsing.set()
         await asyncio.Event().wait()
 
-    monkeypatch.setattr("yuxi.knowledge.parser.unified.Parser.aparse", cancelled_parse)
+    monkeypatch.setattr("yuxi.services.ocr_service.parse_document", cancelled_parse)
 
     task = asyncio.create_task(kb.parse_file("db", "file-1", operator_id="user-1"))
     await asyncio.wait_for(parsing.wait(), timeout=1)
@@ -531,7 +531,7 @@ async def test_update_content_uses_streaming_chunk_store(monkeypatch):
     kb._split_text_into_chunks = lambda text, file_id, filename, params: [make_chunk(0), make_chunk(1)]
     kb.delete_file_chunks_only = delete_file_chunks_only
     kb._embed_and_store_chunks = embed_and_store_chunks
-    monkeypatch.setattr("yuxi.knowledge.implementations.milvus.Parser.aparse", parse_file)
+    monkeypatch.setattr("yuxi.knowledge.implementations.milvus.parse_document", parse_file)
 
     result = await kb.update_content("db", ["file-1"])
 

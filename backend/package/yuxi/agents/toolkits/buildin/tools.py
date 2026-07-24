@@ -196,11 +196,11 @@ OCR_PARSE_FILE_DESCRIPTION = f"""
 async def ocr_parse_file(file_path: str, runtime: ToolRuntime, ocr_engine: str | None = None) -> dict:
     """Parse a sandbox file with OCR, persist Markdown output, and return only a short result summary."""
     from yuxi.agents.backends.sandbox.paths import virtual_path_for_thread_file
-    from yuxi.knowledge.parser.unified import Parser
+    from yuxi.services.ocr_service import parse_document
 
     file_thread_id, uid, actual_path = _resolve_ocr_source_path(file_path, runtime)
     engine = _resolve_ocr_engine(ocr_engine)
-    markdown = await Parser.aparse(str(actual_path), params={"ocr_engine": engine})
+    markdown = await parse_document(str(actual_path), params={"ocr_engine": engine})
 
     output_path = _next_ocr_output_path(file_thread_id, actual_path)
     output_path.write_text(markdown, encoding="utf-8")
@@ -280,10 +280,10 @@ def _runtime_scope_value(runtime: ToolRuntime, key: str) -> str | None:
 
 def _resolve_ocr_engine(ocr_engine: str | None) -> str:
     """Validate the requested OCR engine, falling back to the system default when omitted."""
-    from yuxi import config
     from yuxi.knowledge.parser.factory import DocumentProcessorFactory
+    from yuxi.services.ocr_service import resolve_ocr_engine_id
 
-    engine = str(ocr_engine or config.default_ocr_engine).strip() or config.default_ocr_engine
+    engine = resolve_ocr_engine_id(ocr_engine)
     allowed = {"disable", *DocumentProcessorFactory.get_available_processors()}
     if engine not in allowed:
         raise ValueError(f"不支持的 OCR 引擎: {engine}")

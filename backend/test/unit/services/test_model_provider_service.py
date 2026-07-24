@@ -1,4 +1,5 @@
 import os
+from types import SimpleNamespace
 
 import pytest
 
@@ -6,10 +7,12 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
 from yuxi.models.providers.builtin import BUILTIN_PROVIDERS
 from yuxi.models.providers.service import (
-    check_credential_status,
     _normalize_payload,
     _normalize_remote_model,
+    _validate_request_body_overrides_scope,
+    check_credential_status,
     fetch_remote_models,
+    update_provider_config,
 )
 
 
@@ -28,6 +31,103 @@ def test_normalize_payload_accepts_enabled_chat_model():
     assert "models_endpoint" not in payload
     assert "embedding_models_endpoint" not in payload
     assert payload["enabled_models"][0]["display_name"] == "anthropic/claude-sonnet-4.5"
+
+
+def test_normalize_payload_accepts_allowed_model_request_body_overrides():
+    overrides = {
+        "enable_thinking": True,
+        "thinking_budget": 1024,
+        "thinking": {"type": "enabled"},
+        "reasoning": {"future_provider_option": {"enabled": True}},
+        "reasoning_effort": "high",
+    }
+    payload = _normalize_payload(
+        {
+            "provider_id": "siliconflow-local",
+            "display_name": "SiliconFlow Local",
+            "base_url": "https://api.siliconflow.cn/v1",
+            "enabled_models": [
+                {
+                    "id": "Qwen/Qwen3-8B",
+                    "type": "chat",
+                    "request_body_overrides": overrides,
+                }
+            ],
+        }
+    )
+
+    assert payload["enabled_models"][0]["request_body_overrides"] == overrides
+
+
+@pytest.mark.parametrize(
+    ("value", "error"),
+    [
+        (["enable_thinking"], "必须是 JSON 对象"),
+        ({"messages": []}, "包含不支持的 extra_body 字段"),
+        ({"thinking_budget": float("nan")}, "只能包含合法 JSON 值"),
+    ],
+)
+def test_normalize_request_body_overrides_rejects_invalid_values(value, error):
+    data = {
+        "provider_id": "siliconflow-local",
+        "display_name": "SiliconFlow Local",
+        "base_url": "https://api.siliconflow.cn/v1",
+        "enabled_models": [
+            {
+                "id": "Qwen/Qwen3-8B",
+                "type": "chat",
+                "request_body_overrides": value,
+            }
+        ],
+    }
+    with pytest.raises(ValueError, match=error):
+        _normalize_payload(data)
+
+
+@pytest.mark.parametrize(
+    ("provider_type", "model_type", "error"),
+    [
+        ("anthropic", "chat", "仅支持 OpenAI 兼容供应商"),
+        ("openai", "rerank", "仅支持 chat 模型"),
+    ],
+)
+def test_request_body_overrides_require_openai_chat_model(provider_type, model_type, error):
+    model = {
+        "id": "model",
+        "type": model_type,
+        "request_body_overrides": {"thinking_budget": 1024},
+    }
+    with pytest.raises(ValueError, match=error):
+        _validate_request_body_overrides_scope([model], provider_type)
+
+
+@pytest.mark.asyncio
+async def test_update_provider_config_rejects_provider_type_change_with_existing_overrides(monkeypatch):
+    provider = SimpleNamespace(
+        provider_id="openai-local",
+        provider_type="openai",
+        capabilities=["chat"],
+        enabled_models=[
+            {
+                "id": "chat-model",
+                "type": "chat",
+                "request_body_overrides": {"enable_thinking": False},
+            }
+        ],
+    )
+
+    async def fake_get_model_provider(db, provider_id):
+        del db
+        return provider if provider_id == "openai-local" else None
+
+    async def fail_update_model_provider(db, provider, data):
+        pytest.fail("不应在非法 request_body_overrides 范围下写入 provider")
+
+    monkeypatch.setattr("yuxi.models.providers.service.get_model_provider", fake_get_model_provider)
+    monkeypatch.setattr("yuxi.models.providers.service.update_model_provider", fail_update_model_provider)
+
+    with pytest.raises(ValueError, match="仅支持 OpenAI 兼容供应商"):
+        await update_provider_config(None, "openai-local", {"provider_type": "anthropic"}, "tester")
 
 
 def test_normalize_payload_accepts_anthropic_provider_type():

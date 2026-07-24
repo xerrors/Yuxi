@@ -54,6 +54,7 @@ const MODALITY_DISPLAY = {
   audio: { icon: AudioLines, label: '音频输入' },
   pdf: { icon: FileText, label: 'PDF 文档输入' }
 }
+const REQUEST_BODY_OVERRIDES_PLACEHOLDER = '{\n  "enable_thinking": false\n}'
 
 // Provider form state
 const showProviderModal = ref(false)
@@ -87,6 +88,8 @@ const editingModel = ref({
   source: 'remote',
   protocol_override: null,
   base_url_override: null,
+  request_body_overrides: {},
+  request_body_overrides_text: '{}',
   context_length: null,
   dimension: null,
   batch_size: null,
@@ -270,15 +273,18 @@ const editingModelTypeOptions = computed(() => {
 })
 
 const parseJsonObject = (text, label) => {
+  let parsed
   try {
-    const parsed = JSON.parse(text || '{}')
-    if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
-      throw new Error(`${label} 必须是 JSON 对象`)
-    }
-    return parsed
-  } catch {
-    throw new Error(`${label} 格式不正确`)
+    const source = typeof text === 'string' && text.trim() ? text : '{}'
+    parsed = JSON.parse(source)
+  } catch (error) {
+    const reason = error?.message ? `：${error.message}` : ''
+    throw new Error(`${label} 格式不正确${reason}`, { cause: error })
   }
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
+    throw new Error(`${label} 必须是 JSON 对象`)
+  }
+  return parsed
 }
 
 const formatJsonText = (value) => JSON.stringify(value || {}, null, 2)
@@ -510,6 +516,12 @@ const normalizeModel = (model = {}) => ({
   source: model.source || 'remote',
   protocol_override: model.protocol_override || null,
   base_url_override: model.base_url_override || null,
+  request_body_overrides:
+    model.request_body_overrides &&
+    typeof model.request_body_overrides === 'object' &&
+    !Array.isArray(model.request_body_overrides)
+      ? model.request_body_overrides
+      : {},
   context_length: model.context_length || null,
   dimension: model.dimension || null,
   batch_size: model.batch_size || null,
@@ -576,7 +588,9 @@ const addModelFromRemote = async (providerId, remoteModel) => {
 }
 
 const openModelConfigModal = (model) => {
-  Object.assign(editingModel.value, normalizeModel(model))
+  const normalized = normalizeModel(model)
+  normalized.request_body_overrides_text = formatJsonText(normalized.request_body_overrides)
+  Object.assign(editingModel.value, normalized)
   isCreating.value = false
   showModelModal.value = true
 }
@@ -593,6 +607,8 @@ const openCreateModal = (provider) => {
     source: 'manual',
     protocol_override: null,
     base_url_override: null,
+    request_body_overrides: {},
+    request_body_overrides_text: '{}',
     context_length: null,
     dimension: null,
     batch_size: null,
@@ -601,6 +617,19 @@ const openCreateModal = (provider) => {
   })
   isCreating.value = true
   showModelModal.value = true
+}
+
+const buildModelConfigPayload = () => {
+  const requestBodyOverrides = parseJsonObject(
+    editingModel.value.request_body_overrides_text,
+    '模型请求参数'
+  )
+  const modelPayload = { ...editingModel.value }
+  delete modelPayload.request_body_overrides_text
+  return {
+    ...modelPayload,
+    request_body_overrides: requestBodyOverrides
+  }
 }
 
 const saveModelConfig = async () => {
@@ -612,9 +641,10 @@ const saveModelConfig = async () => {
     )
     if (!provider) return
 
+    const modelPayload = buildModelConfigPayload()
     let enabledModels
     if (isCreating.value) {
-      const newId = (editingModel.value.id || '').trim()
+      const newId = (modelPayload.id || '').trim()
       if (!newId) {
         message.error('请填写模型 ID')
         return
@@ -623,11 +653,11 @@ const saveModelConfig = async () => {
         message.error('模型 ID 已存在')
         return
       }
-      const newModel = { ...editingModel.value, id: newId, source: 'manual', enabled: true }
+      const newModel = { ...modelPayload, id: newId, source: 'manual', enabled: true }
       enabledModels = [...(provider.enabled_models || []), newModel]
     } else {
       enabledModels = (provider.enabled_models || []).map((m) =>
-        m.id === editingModel.value.id ? { ...editingModel.value } : m
+        m.id === modelPayload.id ? { ...modelPayload } : m
       )
     }
 
@@ -1204,6 +1234,19 @@ defineExpose({
           </label>
         </div>
 
+        <label class="form-label full-width">
+          <span>模型请求参数 JSON</span>
+          <a-textarea
+            v-model:value="editingModel.request_body_overrides_text"
+            :rows="6"
+            :placeholder="REQUEST_BODY_OVERRIDES_PLACEHOLDER"
+          />
+          <small class="form-help">
+            仅 OpenAI 兼容供应商（含 OpenRouter）的 chat 模型会通过 extra_body 透传；支持
+            enable_thinking、thinking_budget、thinking、reasoning 和 reasoning_effort。
+          </small>
+        </label>
+
         <div class="form-row">
           <label class="form-label" v-if="editingModel.type === 'embedding'">
             <span>维度</span>
@@ -1620,6 +1663,12 @@ defineExpose({
     font-size: 12px;
     font-weight: 500;
   }
+}
+
+.form-help {
+  color: var(--gray-500);
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .full-width {

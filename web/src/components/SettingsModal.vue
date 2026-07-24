@@ -48,6 +48,15 @@
           </div>
           <div
             class="sider-item"
+            :class="{ activesec: activeTab === 'ocr' }"
+            @click="activeTab = 'ocr'"
+            v-if="userStore.isAdmin"
+          >
+            <ScanText class="icon" :size="18" />
+            <span>OCR 配置</span>
+          </div>
+          <div
+            class="sider-item"
             :class="{ activesec: activeTab === 'user' }"
             @click="activeTab = 'user'"
             v-if="userStore.isAdmin"
@@ -145,6 +154,14 @@
         </div>
         <div
           class="nav-item"
+          :class="{ active: activeTab === 'ocr' }"
+          @click="activeTab = 'ocr'"
+          v-if="userStore.isAdmin"
+        >
+          OCR 配置
+        </div>
+        <div
+          class="nav-item"
           :class="{ active: activeTab === 'user' }"
           @click="activeTab = 'user'"
           v-if="userStore.isAdmin"
@@ -180,6 +197,10 @@
             <BasicSettingsSection />
           </div>
 
+          <div v-show="activeTab === 'ocr'" v-if="userStore.isAdmin">
+            <OCRSettingsSection />
+          </div>
+
           <div v-show="activeTab === 'user'" v-if="userStore.isAdmin">
             <UserManagementComponent />
           </div>
@@ -201,6 +222,7 @@ import {
   ExternalLink,
   Settings,
   Key,
+  ScanText,
   Star,
   SquareTerminal,
   User,
@@ -210,6 +232,7 @@ import {
 import AccountSettingsComponent from '@/components/AccountSettingsComponent.vue'
 import AgentEnvSettingsCard from '@/components/AgentEnvSettingsCard.vue'
 import BasicSettingsSection from '@/components/BasicSettingsSection.vue'
+import OCRSettingsSection from '@/components/OCRSettingsSection.vue'
 import ApiKeyManagementComponent from '@/components/ApiKeyManagementComponent.vue'
 import UserManagementComponent from '@/components/UserManagementComponent.vue'
 import DepartmentManagementComponent from '@/components/DepartmentManagementComponent.vue'
@@ -242,7 +265,7 @@ const visible = computed({
 const availableTabs = computed(() => {
   const tabs = []
   if (userStore.isLoggedIn) tabs.push('account', 'apiKeys', 'agentEnv')
-  if (userStore.isAdmin) tabs.push('base', 'user')
+  if (userStore.isAdmin) tabs.push('base', 'ocr', 'user')
   if (userStore.isSuperAdmin) tabs.push('department')
   return tabs
 })

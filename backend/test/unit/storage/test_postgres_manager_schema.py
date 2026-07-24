@@ -115,6 +115,29 @@ async def test_ensure_business_schema_creates_user_config_table():
 
 
 @pytest.mark.asyncio
+async def test_ensure_business_schema_creates_generic_config_options_table():
+    manager = PostgresManager()
+    original_initialized = manager._initialized
+    original_engine = manager.async_engine
+    connection = _RecordingConnection()
+
+    manager._initialized = True
+    manager.async_engine = _RecordingEngine(connection)
+    try:
+        await manager.ensure_business_schema()
+    finally:
+        manager._initialized = original_initialized
+        manager.async_engine = original_engine
+
+    statements = "\n".join(connection.statements)
+
+    assert "CREATE TABLE IF NOT EXISTS config_options" in statements
+    assert "params JSONB NOT NULL" in statements
+    assert "value JSONB NOT NULL" in statements
+    assert "CREATE UNIQUE INDEX IF NOT EXISTS ix_config_options_key" in statements
+
+
+@pytest.mark.asyncio
 async def test_ensure_business_schema_removes_unbound_api_keys_before_requiring_user_id():
     manager = PostgresManager()
     original_initialized = manager._initialized
@@ -157,6 +180,10 @@ async def test_ensure_knowledge_schema_rebuilds_vectors_for_incomplete_legacy_ch
 
     statements = "\n".join(connection.statements)
 
+    assert (
+        "UPDATE knowledge_chunks SET graph_structure_indexed = TRUE "
+        "WHERE graph_indexed IS TRUE AND graph_structure_indexed IS NOT TRUE"
+    ) in statements
     assert "mention.entity_id = entity.entity_id AND chunk.graph_indexed IS NOT TRUE" in statements
     assert "mention.triple_id = triple.triple_id AND chunk.graph_indexed IS NOT TRUE" in statements
     assert "THEN 'pending' ELSE 'indexed'" in statements

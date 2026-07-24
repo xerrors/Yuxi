@@ -2,6 +2,11 @@
 .git
 .gitignore
 
+# macOS AppleDouble 元数据文件；它们可能携带不可读取的 xattr，不能进入 Docker 构建上下文
+._*
+**/._*
+.AppleDouble
+
 # 忽略 Python 的缓存文件
 __pycache__/
 *.pyc

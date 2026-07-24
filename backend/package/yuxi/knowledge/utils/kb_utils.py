@@ -1,7 +1,6 @@
 import hashlib
 import time
 
-from yuxi import config
 from yuxi.knowledge.chunking.ragflow_like.presets import resolve_chunk_processing_params
 from yuxi.utils import hashstr, logger
 from yuxi.utils.datetime_utils import utc_isoformat
@@ -12,6 +11,7 @@ _DROPPED_PROCESSING_PARAM_KEYS = {
     "content_hashes",
     "file_sizes",
     "enable_ocr",
+    "ocr_engine_config",
 }
 
 
@@ -28,12 +28,9 @@ def resolve_processing_params(
     file_processing_params: dict | None,
     request_params: dict | None = None,
 ) -> dict:
-    merged_params = sanitize_processing_params(merge_processing_params(file_processing_params, request_params)) or {}
-    if "ocr_engine" not in merged_params or not merged_params.get("ocr_engine"):
-        merged_params["ocr_engine"] = config.default_ocr_engine
-    if not isinstance(merged_params.get("ocr_engine_config"), dict):
-        merged_params["ocr_engine_config"] = {}
+    """合并文件、请求中的 OCR 和分块参数。"""
 
+    merged_params = sanitize_processing_params(merge_processing_params(file_processing_params, request_params)) or {}
     chunk_params = resolve_chunk_processing_params(
         kb_additional_params=kb_additional_params,
         file_processing_params=file_processing_params,

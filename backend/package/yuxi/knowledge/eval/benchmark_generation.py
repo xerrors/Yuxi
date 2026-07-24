@@ -17,6 +17,8 @@ GRAPH_SEED_DECAY = 0.9
 GRAPH_PPR_DAMPING = 0.85
 GRAPH_PPR_MAX_NODES = 10000
 
+_WORKER_DONE = object()
+
 
 async def collect_kb_chunks(kb_instance: Any, kb_id: str) -> list[dict[str, Any]]:
     del kb_instance
@@ -256,6 +258,8 @@ async def iter_generated_benchmark_items(
     concurrency_count: int = DEFAULT_BENCHMARK_GENERATION_CONCURRENCY,
     generation_mode: str = "vector",
     graph_expand_top_k: int = DEFAULT_GRAPH_EXPAND_TOP_K,
+    progress_base: int = 0,
+    total_progress: int | None = None,
     progress_cb: Callable[[int, str], Any] | None = None,
     cancel_cb: Callable[[], Any] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
@@ -283,7 +287,7 @@ async def iter_generated_benchmark_items(
     worker_count = normalize_generation_concurrency_count(concurrency_count)
     actual_worker_count = min(worker_count, max(count, 1), max_attempts)
     generated = 0
-    results: list[tuple[int, dict[str, Any]]] = []
+    results_queue: asyncio.Queue = asyncio.Queue()
     state_lock = asyncio.Lock()
     queue: asyncio.Queue[int] = asyncio.Queue()
 
@@ -292,60 +296,98 @@ async def iter_generated_benchmark_items(
 
     async def worker() -> None:
         nonlocal generated
-        while True:
-            if cancel_cb:
-                await cancel_cb()
-            async with state_lock:
-                if generated >= count:
-                    return
-            try:
-                attempt_no = queue.get_nowait()
-            except asyncio.QueueEmpty:
-                return
-            try:
-                item = await _generate_benchmark_item_once(
-                    kb_instance=kb_instance,
-                    kb_id=kb_id,
-                    all_chunks=all_chunks,
-                    llm=llm,
-                    context_count=context_count,
-                    generation_mode=generation_mode,
-                    graph_expand_top_k=graph_expand_top_k,
-                    chunks_by_id=chunks_by_id,
-                )
-                if item is None:
-                    continue
-                progress = None
-                message = None
+        try:
+            while True:
+                if cancel_cb:
+                    await cancel_cb()
                 async with state_lock:
                     if generated >= count:
-                        continue
-                    generated += 1
-                    results.append((attempt_no, item))
-                    if progress_cb:
-                        progress = int(99 * generated / max(count, 1))
-                        message = f"已生成 {generated}/{count}"
-                if progress_cb:
-                    await progress_cb(progress, message)
-            finally:
-                queue.task_done()
+                        return
+                try:
+                    attempt_no = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    return
+                try:
+                    item = await _generate_benchmark_item_once(
+                        kb_instance=kb_instance,
+                        kb_id=kb_id,
+                        all_chunks=all_chunks,
+                        llm=llm,
+                        context_count=context_count,
+                        generation_mode=generation_mode,
+                        graph_expand_top_k=graph_expand_top_k,
+                        chunks_by_id=chunks_by_id,
+                    )
+                    progress = None
+                    message = None
+                    if item is not None:
+                        async with state_lock:
+                            if generated >= count:
+                                item = None  # 超额丢弃，但 attempt 已 resolved，仍需回报
+                            else:
+                                generated += 1
+                                if progress_cb:
+                                    total_val = (
+                                        total_progress if total_progress is not None else (progress_base + count)
+                                    )
+                                    progress = int(99 * (progress_base + generated) / max(total_val, 1))
+                                    message = f"已生成 {progress_base + generated}/{total_val}"
+                    await results_queue.put((attempt_no, item))
+                    if progress_cb and progress is not None:
+                        await progress_cb(progress, message)
+                finally:
+                    queue.task_done()
+        except asyncio.CancelledError as exc:
+            await results_queue.put(exc)
+            raise
+        except Exception as exc:
+            await results_queue.put(exc)
+        finally:
+            await results_queue.put(_WORKER_DONE)
 
     workers = [asyncio.create_task(worker()) for _ in range(actual_worker_count)]
+    done_workers = 0
+    received = 0
+    next_attempt = 0
+    reorder: dict[int, dict[str, Any] | None] = {}
+    pending_error: BaseException | None = None
+    completed = False
     try:
-        await asyncio.gather(*workers)
-    except asyncio.CancelledError:
-        for task in workers:
-            task.cancel()
+        while done_workers < actual_worker_count and received < count:
+            report = await results_queue.get()
+            if report is _WORKER_DONE:
+                done_workers += 1
+                continue
+            if isinstance(report, BaseException):
+                pending_error = report
+                break
+            attempt_no, item = report
+            reorder[attempt_no] = item
+            while next_attempt in reorder:
+                resolved = reorder.pop(next_attempt)
+                next_attempt += 1
+                if resolved is None:
+                    continue
+                received += 1
+                yield resolved
+        completed = pending_error is None
+    finally:
+        if not completed:
+            for task in workers:
+                task.cancel()
         await asyncio.gather(*workers, return_exceptions=True)
-        raise
-    except Exception:
-        for task in workers:
-            task.cancel()
-        await asyncio.gather(*workers, return_exceptions=True)
-        raise
 
-    for _, item in sorted(results, key=lambda pair: pair[0]):
-        yield item
+    if pending_error is not None:
+        while not results_queue.empty():
+            pending = results_queue.get_nowait()
+            if pending is _WORKER_DONE or isinstance(pending, BaseException):
+                continue
+            attempt_no, item = pending
+            reorder[attempt_no] = item
+        for attempt_no in sorted(reorder):
+            if reorder[attempt_no] is not None:
+                yield reorder[attempt_no]
+        raise pending_error
 
 
 def dump_benchmark_item(item: dict[str, Any]) -> str:

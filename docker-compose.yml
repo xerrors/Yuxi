@@ -32,6 +32,7 @@ x-api-worker-env: &api-worker-env
   RUN_CANCEL_KEY_TTL_SECONDS: ${RUN_CANCEL_KEY_TTL_SECONDS:-1800}
   RUN_EVENTS_STREAM_TTL_SECONDS: ${RUN_EVENTS_STREAM_TTL_SECONDS:-7200}
   YUXI_CORS_ORIGINS: ${YUXI_CORS_ORIGINS:-}
+  YUXI_DATASET_PERSIST_BATCH_SIZE: ${YUXI_DATASET_PERSIST_BATCH_SIZE:-1}
   # 其他环境变量
   NO_PROXY: localhost,127.0.0.1,milvus,graph,minio,milvus-etcd-dev,etcd,mineru,paddlex,sandbox-provisioner,api.siliconflow.cn
   no_proxy: localhost,127.0.0.1,milvus,graph,minio,milvus-etcd-dev,etcd,mineru,paddlex,sandbox-provisioner,api.siliconflow.cn
@@ -283,6 +284,8 @@ services:
     environment:
       ETCD_ENDPOINTS: etcd:2379
       MINIO_ADDRESS: minio:9000
+      MINIO_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       MILVUS_LOG_LEVEL: error
     volumes:
       - ./docker/volumes/milvus/milvus:/var/lib/milvus

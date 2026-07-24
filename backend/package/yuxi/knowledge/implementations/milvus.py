@@ -24,11 +24,11 @@ from pymilvus import (
 from yuxi.knowledge.base import FileStatus, KnowledgeBase
 from yuxi.knowledge.chunking.ragflow_like.dispatcher import chunk_markdown
 from yuxi.knowledge.chunking.ragflow_like.nlp import count_tokens
-from yuxi.knowledge.parser.unified import Parser
 from yuxi.knowledge.utils.kb_utils import resolve_processing_params
 from yuxi.models.providers.cache import model_cache
 from yuxi.repositories.knowledge_chunk_repository import KnowledgeChunkRepository
 from yuxi.repositories.knowledge_file_repository import KnowledgeFileRepository
+from yuxi.services.ocr_service import parse_document
 from yuxi.utils import hashstr, logger
 
 MILVUS_AVAILABLE = True
@@ -819,7 +819,7 @@ class MilvusKB(KnowledgeBase):
 
                 # 重新解析文件为 markdown
                 parse_params = {**resolved_params, "image_bucket": "public", "image_prefix": f"{kb_id}/kb-images"}
-                markdown_content = await Parser.aparse(source=file_path, params=parse_params)
+                markdown_content = await parse_document(source=file_path, params=parse_params)
 
                 # 重新生成 chunks
                 chunks = self._split_text_into_chunks(markdown_content, file_id, filename, resolved_params)

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 from rich.console import Console
+from rich.text import Text
 from typer.testing import CliRunner
 
 from yuxi_cli.config import ConfigStore
@@ -245,25 +246,28 @@ def test_kb_find_requires_pattern(tmp_path):
 
 def test_kb_subcommands_are_registered():
     result = CliRunner().invoke(app, ["kb", "--help"])
+    output = Text.from_ansi(result.output).plain
     assert result.exit_code == 0
     for command in ("list", "files", "query", "open", "find", "upload"):
-        assert command in result.output
+        assert command in output
     for removed_command in ("parse-pending", "index-pending"):
-        assert removed_command not in result.output
+        assert removed_command not in output
 
 
 def test_kb_query_help_lists_key_options():
     result = CliRunner().invoke(app, ["kb", "query", "--help"])
+    output = Text.from_ansi(result.output).plain
     assert result.exit_code == 0
-    assert "--kb-id" in result.output
-    assert "--top-k" in result.output
-    assert "--search-mode" in result.output
-    assert "--json" in result.output
+    assert "--kb-id" in output
+    assert "--top-k" in output
+    assert "--search-mode" in output
+    assert "--json" in output
 
 
 def test_kb_find_help_lists_repeatable_pattern():
     result = CliRunner().invoke(app, ["kb", "find", "--help"])
+    output = Text.from_ansi(result.output).plain
     assert result.exit_code == 0
-    assert "--pattern" in result.output
-    assert "--regex" in result.output
-    assert "--case-sensitive" in result.output
+    assert "--pattern" in output
+    assert "--regex" in output
+    assert "--case-sensitive" in output

@@ -273,7 +273,10 @@ class PostgresManager(metaclass=SingletonMeta):
                 "SET DEFAULT jsonb_build_object('status', 'pending', 'attempt_count', 0)"
             ),
             ("ALTER TABLE IF EXISTS knowledge_chunks ALTER COLUMN graph_structure_indexed SET DEFAULT FALSE"),
-            "UPDATE knowledge_chunks SET graph_structure_indexed = TRUE WHERE graph_indexed IS TRUE",
+            (
+                "UPDATE knowledge_chunks SET graph_structure_indexed = TRUE "
+                "WHERE graph_indexed IS TRUE AND graph_structure_indexed IS NOT TRUE"
+            ),
             (
                 "UPDATE knowledge_chunks SET graph_extraction_details = jsonb_build_object('status', 'succeeded') "
                 "WHERE (graph_extraction_details IS NULL "
@@ -549,6 +552,21 @@ class PostgresManager(metaclass=SingletonMeta):
             ON agents(is_default)
             WHERE is_default IS TRUE
             """,
+            """
+            CREATE TABLE IF NOT EXISTS config_options (
+                id SERIAL PRIMARY KEY,
+                key VARCHAR(100) NOT NULL UNIQUE,
+                name VARCHAR(100) NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                params JSONB NOT NULL DEFAULT '{}'::jsonb,
+                value JSONB NOT NULL DEFAULT '{}'::jsonb,
+                created_by VARCHAR(100),
+                updated_by VARCHAR(100),
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """,
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_config_options_key ON config_options(key)",
             """
             CREATE TABLE IF NOT EXISTS model_providers (
                 id SERIAL PRIMARY KEY,

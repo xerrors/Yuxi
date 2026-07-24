@@ -278,6 +278,28 @@ def test_image_gen_builtin_skill_spec():
     assert (image_gen["source_dir"] / "SKILL.md").exists()
 
 
+def test_html_preview_builtin_skill_spec():
+    specs = {spec["slug"]: spec for spec in svc.list_builtin_skill_specs()}
+
+    assert "html-preview" in specs
+    html_preview = specs["html-preview"]
+    assert html_preview["name"] == "html-preview"
+    assert html_preview["tool_dependencies"] == []
+    assert html_preview["mcp_dependencies"] == []
+
+    content = (html_preview["source_dir"] / "SKILL.md").read_text(encoding="utf-8")
+    assert "```html:preview" in content
+    assert "\n    ```html:preview" not in content
+    assert "最多只能有 3 个前导空格" in content
+    assert "普通 `html` 代码块" in content
+
+
+def test_deep_research_builtin_skill_includes_html_preview_dependency():
+    specs = {spec["slug"]: spec for spec in svc.list_builtin_skill_specs()}
+
+    assert specs["deep-research"]["skill_dependencies"] == ["html-preview"]
+
+
 def test_knowledge_base_builtin_skill_spec():
     specs = {spec["slug"]: spec for spec in svc.list_builtin_skill_specs()}
 

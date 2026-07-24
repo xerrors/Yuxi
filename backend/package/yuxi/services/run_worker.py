@@ -631,18 +631,25 @@ async def _load_input_message(message_id: int | None) -> Message | None:
 
 
 async def _worker_startup(ctx):
-    del ctx
+    """初始化 worker 依赖。"""
+
     pg_manager.initialize()
     await pg_manager.create_business_tables()
     await pg_manager.ensure_business_schema()
     await ensure_builtin_mcp_servers_in_db()
     async with pg_manager.get_async_session_context() as session:
         await init_builtin_skills(session)
+        from yuxi.config.options import ensure_options_in_db
+
+        await ensure_options_in_db(session)
     sys_config.start_runtime_sync()
     await recover_pending_dispatches()
 
 
 async def _worker_shutdown(ctx):
+    """关闭 worker 数据库连接。"""
+
+    del ctx
     await pg_manager.close()
 
 

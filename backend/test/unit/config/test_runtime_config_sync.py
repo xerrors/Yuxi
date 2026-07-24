@@ -90,6 +90,16 @@ def test_fresh_import_loads_default_ocr_engine_without_initializing_knowledge_ru
     assert "Failed to load config" not in result.stdout + result.stderr
 
 
+def test_fresh_import_keeps_disable_as_default_ocr_engine(tmp_path):
+    loaded, result = _import_yuxi_in_fresh_process(
+        tmp_path,
+        'default_ocr_engine = "disable"\n',
+    )
+
+    assert loaded["default_ocr_engine"] == "disable"
+    assert "Invalid config key ignored" not in result.stdout + result.stderr
+
+
 def test_fresh_import_ignores_invalid_ocr_engine_and_loads_later_config(tmp_path):
     loaded, _ = _import_yuxi_in_fresh_process(
         tmp_path,

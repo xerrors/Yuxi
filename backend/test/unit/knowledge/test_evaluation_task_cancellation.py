@@ -30,6 +30,9 @@ class FakeEvaluationRepository:
         self.dataset_updates: list[tuple[str, dict]] = []
         self.run_updates: list[tuple[str, dict]] = []
 
+    async def count_dataset_items(self, dataset_id: str) -> int:
+        return 0
+
     async def update_dataset(self, dataset_id: str, data: dict) -> None:
         await asyncio.sleep(0)
         self.dataset_updates.append((dataset_id, deepcopy(data)))

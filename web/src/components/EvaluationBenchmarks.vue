@@ -51,8 +51,8 @@
           v-for="benchmark in benchmarks"
           :key="benchmark.dataset_id"
           class="benchmark-item"
-          :class="{ 'benchmark-item-disabled': !isDatasetCompleted(benchmark) }"
-          @click="isDatasetCompleted(benchmark) && previewDataset(benchmark)"
+          :class="{ 'benchmark-item-disabled': !isDatasetViewable(benchmark) }"
+          @click="isDatasetViewable(benchmark) && previewDataset(benchmark)"
         >
           <!-- 主要内容 -->
           <div class="benchmark-main">
@@ -70,6 +70,16 @@
                   </button>
                   <template #overlay>
                     <a-menu>
+                      <a-menu-item
+                        v-if="getDatasetBuildStatus(benchmark) === 'failed'"
+                        key="resume"
+                        @click="resumeDataset(benchmark)"
+                      >
+                        <span class="benchmark-menu-item">
+                          <RotateCcw :size="14" />
+                          <span>继续生成</span>
+                        </span>
+                      </a-menu-item>
                       <a-menu-item
                         key="download"
                         :disabled="
@@ -291,6 +301,7 @@ import {
   Download,
   MoreVertical,
   RefreshCw,
+  RotateCcw,
   Trash2,
   Upload,
   X
@@ -449,6 +460,9 @@ const getDatasetBuildStatus = (benchmark) => getBuildMetadata(benchmark).status 
 
 const isDatasetCompleted = (benchmark) => getDatasetBuildStatus(benchmark) === 'completed'
 
+const isDatasetViewable = (benchmark) =>
+  ['completed', 'failed'].includes(getDatasetBuildStatus(benchmark))
+
 const isDatasetBuilding = (benchmark) =>
   ['pending', 'running'].includes(getDatasetBuildStatus(benchmark))
 
@@ -606,7 +620,7 @@ const loadPreviewQuestions = async () => {
 
 // 预览基准
 const previewDataset = async (benchmark) => {
-  if (!isDatasetCompleted(benchmark)) {
+  if (!isDatasetViewable(benchmark)) {
     message.warning('评估基准生成完成后才能预览')
     return
   }
@@ -698,6 +712,21 @@ const downloadDataset = async (benchmark) => {
     message.error(`下载失败: ${error.message || '未知错误'}`)
   } finally {
     delete downloadingDatasetMap[benchmarkId]
+  }
+}
+
+// 继续生成基准
+const resumeDataset = async (benchmark) => {
+  try {
+    const response = await evaluationApi.resumeDatasetGeneration(props.kbId, benchmark.dataset_id)
+    if (response.message === 'success') {
+      message.success(response.data?.message || '已恢复生成')
+      loadBenchmarks()
+      taskerStore.loadTasks()
+    }
+  } catch (error) {
+    console.error('恢复生成失败:', error)
+    message.error(error?.response?.data?.detail || '恢复生成失败')
   }
 }
 

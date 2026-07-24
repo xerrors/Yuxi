@@ -190,7 +190,6 @@ def _metadata_namespace(metadata: dict | None) -> list[str]:
     return []
 
 
-
 def _apply_model_override(input_context: dict, meta: dict | None) -> None:
     """对话级模型覆盖：meta.model_spec 优先于智能体配置的 model。值已在创建 run 时校验。"""
     model_spec = (meta or {}).get("model_spec")
@@ -593,7 +592,6 @@ def _coerce_interrupt_payload(info: Any) -> dict:
 
 def _build_ask_user_question_payload(payload: dict, thread_id: str) -> dict[str, Any]:
     """将已标准化的 interrupt payload 转换为 ask_user_question_required 载荷。"""
-
 
     questions = _normalize_interrupt_questions(payload.get("questions"))
 

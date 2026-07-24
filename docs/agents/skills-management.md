@@ -65,6 +65,15 @@ Skills 本质上是提示词和工具的封装，以下是一些可以参考的 
 - **社区 Skills**：各平台分享的 Agent 提示词模板
 - **自定义开发**：根据业务需求自行开发
 
+系统也会在启动时同步仓库内置 Skills。内置 `html-preview` 用于指导 Agent 在普通
+Markdown 不足以清晰表达指标、对比、流程、时间线或层级关系时，按需输出
+`html:preview` 静态 HTML/CSS 围栏；普通 HTML 源码仍使用 `html` 代码块。该 Skill
+不依赖额外工具，前端继续通过清洗后的 sandboxed iframe 渲染预览。
+
+未显式配置 Skills 的 Agent 会按现有资源默认规则自动获得该 Skill。使用显式 Skills
+允许列表的 Agent 需要选择 `html-preview` 才能使用；内置 `deep-research` 已声明该依赖，
+升级后仍可继续输出辅助可视化。
+
 ## 快速开始
 
 ### 创建你的第一个 Skill

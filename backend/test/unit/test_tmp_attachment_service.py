@@ -9,7 +9,9 @@ from types import SimpleNamespace
 import pytest
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
-os.environ.setdefault("SAVE_DIR", os.path.join(os.environ.get("CLAUDE_JOB_DIR", tempfile.gettempdir()), "yuxi-test-saves"))
+os.environ.setdefault(
+    "SAVE_DIR", os.path.join(os.environ.get("CLAUDE_JOB_DIR", tempfile.gettempdir()), "yuxi-test-saves")
+)
 
 from yuxi.services import conversation_service as service
 
@@ -123,7 +125,7 @@ async def test_parse_tmp_attachment_uses_selected_method_and_uploads_markdown(mo
         parse_calls.append({"source": source, "params": params})
         return "# parsed"
 
-    monkeypatch.setattr(service.Parser, "aparse", staticmethod(fake_parse))
+    monkeypatch.setattr(service, "parse_document", fake_parse)
 
     response = await service.parse_tmp_attachment_view(
         object_name=object_name,
@@ -196,9 +198,9 @@ async def test_confirm_tmp_thread_attachments_materializes_original_and_parsed_f
     assert original_name.endswith("_demo.pdf")
     assert markdown_name.endswith("_demo.md")
     assert (tmp_path / "threads" / "thread-1" / "user-data" / "uploads" / original_name).read_bytes() == b"pdf-bytes"
-    assert (
-        tmp_path / "threads" / "thread-1" / "user-data" / "uploads" / "attachments" / markdown_name
-    ).read_text(encoding="utf-8") == "# parsed"
+    assert (tmp_path / "threads" / "thread-1" / "user-data" / "uploads" / "attachments" / markdown_name).read_text(
+        encoding="utf-8"
+    ) == "# parsed"
     assert Path(fake_repo.attachments[0]["original_path"]).name == original_name
 
 
@@ -235,7 +237,7 @@ async def test_parse_tmp_attachment_handles_url_metacharacters(monkeypatch):
         parse_calls.append(source)
         return "# parsed"
 
-    monkeypatch.setattr(service.Parser, "aparse", staticmethod(fake_parse))
+    monkeypatch.setattr(service, "parse_document", fake_parse)
 
     response = await service.parse_tmp_attachment_view(
         object_name=object_name,
@@ -347,5 +349,9 @@ async def test_confirm_tmp_thread_attachments_keeps_duplicate_names_separate(mon
 
     first, second = response["attachments"]
     assert first["original_path"] != second["original_path"]
-    assert (tmp_path / "threads" / "thread-1" / "user-data" / "uploads" / Path(first["original_path"]).name).read_bytes() == b"first"
-    assert (tmp_path / "threads" / "thread-1" / "user-data" / "uploads" / Path(second["original_path"]).name).read_bytes() == b"second"
+    assert (
+        tmp_path / "threads" / "thread-1" / "user-data" / "uploads" / Path(first["original_path"]).name
+    ).read_bytes() == b"first"
+    assert (
+        tmp_path / "threads" / "thread-1" / "user-data" / "uploads" / Path(second["original_path"]).name
+    ).read_bytes() == b"second"

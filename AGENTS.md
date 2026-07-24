@@ -16,6 +16,7 @@ Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-s
 **Don't assume. Don't hide confusion. Surface tradeoffs.**
 
 Before implementing:
+
 - Restate the request as the smallest acceptance criteria you are about to satisfy. If you cannot state it simply, you do not understand the request yet.
 - State your assumptions explicitly. If uncertain, ask.
 - If multiple interpretations exist, present them - don't pick silently.
@@ -28,11 +29,13 @@ Before implementing:
 **Define success criteria. Loop until verified.**
 
 Transform tasks into verifiable goals:
+
 - "Add validation" → "Write tests for invalid inputs, then make them pass"
 - "Fix the bug" → "Write a test that reproduces it, then make it pass"
 - "Refactor X" → "Ensure tests pass before and after"
 
 For multi-step tasks, state a brief plan:
+
 ```
 1. [Step] → verify: [check]
 2. [Step] → verify: [check]
@@ -67,6 +70,8 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - 删除由本次修改产生的未使用 import、变量、函数和分支；除非用户要求，不清理修改前已存在的无关死代码。
 - 对小型状态、进度或摘要需求，直接读取来源、选择必要字段并返回最小结果，不重建事件流或调试视图。
 - 如果实现明显长于问题本身，或 200 行可以清楚地写成 50 行，应停下来简化。
+- 新增函数/类 需要有明确的清晰凝练的 docstring（中文），重要的、关键的位置需要有额外的注释。
+- 代码要注重可读性，要有“段落”的概念，不同语义关联的代码之间可以留一个空行，方便阅读。
 
 自检问题：高级工程师是否会认为这段实现过度设计、过度防御、过度嵌套或过于零碎？如果会，先简化再提交。
 
@@ -97,21 +102,22 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - 该需求文档中，还应该包括本次任务的目标以及 checklist（简要）
 
 ### 前端开发规范
+
 - 使用 pnpm 管理
 - API 接口规范：所有的 API 接口都应该定义在 web/src/apis 下面
 - Icon 应该优先从 lucide-vue-next （推荐，但是需要注意尺寸）
 - 样式使用 less，非特殊情况必须使用 [base.css](web/src/assets/css/base.css) 中的颜色变量
 - UI 设计规范详见 [design](docs/develop-guides/design.md)
 
-
 ### 后端开发规范
 
 ```bash
 # 代码检查和格式化
 make format        # 格式化代码
-
 ```
+
 注意：
+
 - Python 代码要符合 pythonic 风格
 - 尽量使用较新的语法，避免使用旧版本的语法（版本兼容到 3.12+）
 - 更新 [changelog.md](docs/develop-guides/changelog.md) 文档记录本次修改，多个类似的功能更新已经补充在一起

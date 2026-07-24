@@ -25,12 +25,7 @@
     </button>
 
     <template #overlay>
-      <div
-        ref="panelRef"
-        class="config-dropdown-panel"
-        role="menu"
-        aria-label="工具审批模式"
-      >
+      <div ref="panelRef" class="config-dropdown-panel" role="menu" aria-label="工具审批模式">
         <button
           v-for="option in options"
           :key="option.value"
@@ -48,11 +43,7 @@
             :class="{ trusted: option.value === 'always_trust' }"
           />
           <span class="config-dropdown-item-label">{{ option.label }}</span>
-          <Check
-            v-if="modelValue === option.value"
-            :size="14"
-            class="config-dropdown-item-check"
-          />
+          <Check v-if="modelValue === option.value" :size="14" class="config-dropdown-item-check" />
         </button>
       </div>
     </template>

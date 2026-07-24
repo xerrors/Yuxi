@@ -169,6 +169,24 @@ async def generate_evaluation_dataset(
         raise HTTPException(status_code=500, detail=f"生成评估数据集失败: {str(e)}")
 
 
+@evaluation.post("/databases/{kb_id}/datasets/{dataset_id}/resume")
+async def resume_evaluation_dataset(
+    kb_id: str, dataset_id: str, current_user: User = Depends(get_admin_user)
+):
+    """恢复自动生成评估数据集"""
+    try:
+        service = EvaluationService()
+        result = await service.resume_dataset_generation(
+            kb_id=kb_id, dataset_id=dataset_id, created_by=current_user.uid
+        )
+        return {"message": "success", "data": result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception(f"恢复评估数据集生成失败: {e}")
+        raise HTTPException(status_code=500, detail=f"恢复评估数据集生成失败: {str(e)}")
+
+
 @evaluation.post("/databases/{kb_id}/runs")
 async def run_evaluation(kb_id: str, request: RunEvaluationRequest, current_user: User = Depends(get_admin_user)):
     """运行RAG评估"""

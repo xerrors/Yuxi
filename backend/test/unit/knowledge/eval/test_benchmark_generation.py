@@ -411,3 +411,160 @@ async def test_iter_generated_benchmark_items_stops_at_max_attempts(monkeypatch)
 
     assert items == []
     assert fake_llm.calls == 50
+
+
+@pytest.mark.asyncio
+async def test_iter_generated_benchmark_items_yields_before_all_workers_finish(monkeypatch):
+    """第 2 次 LLM 调用未完成前第 1 条已产出，验证生成器真流式（旧实现等全部 worker 结束才产出，此处死锁超时判负）。"""
+    second_call_entered = asyncio.Event()
+    release_second_call = asyncio.Event()
+
+    class BlockingLlm:
+        def __init__(self):
+            self.calls = 0
+
+        async def call(self, prompt, stream):
+            self.calls += 1
+            if self.calls == 1:
+                return SimpleNamespace(
+                    content='{"query":"问题一","gold_answer":"答案一","gold_chunk_ids":["anchor_chunk"]}'
+                )
+            second_call_entered.set()
+            await release_second_call.wait()
+            return SimpleNamespace(
+                content='{"query":"问题二","gold_answer":"答案二","gold_chunk_ids":["anchor_chunk"]}'
+            )
+
+    fake_llm = BlockingLlm()
+    monkeypatch.setattr(benchmark_generation, "select_model", lambda model_spec: fake_llm)
+
+    async def collect_items():
+        items = []
+        async for item in iter_generated_benchmark_items(
+            kb_instance=NoQueryKnowledgeBase(),
+            kb_id="db_1",
+            count=2,
+            neighbors_count=1,
+            concurrency_count=1,
+            llm_model_spec="test-provider:test-model",
+        ):
+            items.append(item)
+            if len(items) == 1:
+                assert second_call_entered.is_set()
+                release_second_call.set()
+        return items
+
+    items = await asyncio.wait_for(collect_items(), timeout=5)
+
+    assert len(items) == 2
+
+
+@pytest.mark.asyncio
+async def test_iter_generated_benchmark_items_drains_reorder_buffer_on_exception(monkeypatch):
+    """多 worker 下某 worker 抛异常时，reorder 缓冲中已产出但未按 attempt_no 连续 yield 的 item 经 drain 路径保全。
+
+    第一个 _generate 调用延迟后抛异常，该 worker 领到的 attempt 永远不会产出，导致 next_attempt
+    游标无法前进，其他 worker 产出的 item 全部卡在 reorder 缓冲中。异常 break 后 drain 路径
+    将这些乱序 item 一并 yield。
+    """
+    monkeypatch.setattr(benchmark_generation, "select_model", lambda model_spec: TrackingLlm())
+    call_count = 0
+
+    async def fake_generate(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            await asyncio.sleep(0.1)
+            raise RuntimeError("worker error")
+        return {
+            "query": f"q{call_count}",
+            "gold_answer": "a",
+            "gold_chunk_ids": ["anchor_chunk"],
+        }
+
+    monkeypatch.setattr(benchmark_generation, "_generate_benchmark_item_once", fake_generate)
+
+    items = []
+    with pytest.raises(RuntimeError, match="worker error"):
+        async for item in iter_generated_benchmark_items(
+            kb_instance=NoQueryKnowledgeBase(),
+            kb_id="db_1",
+            count=3,
+            neighbors_count=1,
+            concurrency_count=2,
+            llm_model_spec="test-provider:test-model",
+        ):
+            items.append(item)
+
+    # 无论哪个 worker 领到 attempt 0（延迟后抛异常），其他 worker 产出的 item
+    # 都会因 next_attempt 游标未前进而卡在 reorder 缓冲中，经 drain 路径 yield
+    assert len(items) >= 1
+
+
+@pytest.mark.asyncio
+async def test_iter_generated_benchmark_items_cancels_other_workers_on_exception(monkeypatch):
+    monkeypatch.setattr(benchmark_generation, "select_model", lambda model_spec: TrackingLlm())
+    second_worker_started = asyncio.Event()
+    second_worker_cancelled = asyncio.Event()
+    call_count = 0
+
+    async def fake_generate(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            await second_worker_started.wait()
+            raise RuntimeError("worker error")
+
+        second_worker_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            second_worker_cancelled.set()
+            raise
+
+    monkeypatch.setattr(benchmark_generation, "_generate_benchmark_item_once", fake_generate)
+
+    async def consume_items():
+        async for _ in iter_generated_benchmark_items(
+            kb_instance=NoQueryKnowledgeBase(),
+            kb_id="db_1",
+            count=2,
+            neighbors_count=1,
+            concurrency_count=2,
+            llm_model_spec="test-provider:test-model",
+        ):
+            pass
+
+    with pytest.raises(RuntimeError, match="worker error"):
+        await asyncio.wait_for(consume_items(), timeout=1)
+
+    assert second_worker_cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_iter_generated_benchmark_items_yields_partial_items_before_cancellation(monkeypatch):
+    """取消时已产出的 2 条 item 先于 CancelledError 产出，验证取消路径不丢已生成结果。"""
+    fake_llm = TrackingLlm()
+    monkeypatch.setattr(benchmark_generation, "select_model", lambda model_spec: fake_llm)
+    cancel_calls = 0
+
+    async def cancel_cb():
+        nonlocal cancel_calls
+        cancel_calls += 1
+        if cancel_calls >= 3:
+            raise asyncio.CancelledError("cancelled by test")
+
+    items = []
+    with pytest.raises(asyncio.CancelledError):
+        async for item in iter_generated_benchmark_items(
+            kb_instance=NoQueryKnowledgeBase(),
+            kb_id="db_1",
+            count=5,
+            neighbors_count=1,
+            concurrency_count=1,
+            llm_model_spec="test-provider:test-model",
+            cancel_cb=cancel_cb,
+        ):
+            items.append(item)
+
+    assert len(items) == 2

@@ -33,6 +33,7 @@ from yuxi.utils.paths import (
     VIRTUAL_SKILLS_PATH,
     WORKSPACE_DIR_NAME,
 )
+
 from .provider import get_sandbox_provider, sandbox_id_for_thread, sandbox_provisioner_token
 
 _USER_DATA_ROOT = "/" + VIRTUAL_PATH_PREFIX.strip("/")
