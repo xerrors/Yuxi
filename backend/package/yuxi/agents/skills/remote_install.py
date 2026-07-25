@@ -8,6 +8,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +20,9 @@ if TYPE_CHECKING:
 ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
 CONTROL_SEQUENCE_RE = re.compile(r"\x1B\][^\x07]*(?:\x07|\x1B\\)|\x1B[\(\)][A-Za-z0-9]")
 CLI_TIMEOUT_SECONDS = 300
+GITHUB_REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+GITHUB_ALLOWED_HOSTS = {"github.com", "www.github.com"}
+INVALID_SOURCE_MESSAGE = "source 仅支持 GitHub owner/repo 或 https://github.com/OWNER/REPO(.git) 格式"
 
 
 @dataclass(slots=True)
@@ -37,7 +41,23 @@ def _normalize_source(source: str) -> str:
         raise ValueError("source 不能为空")
     if any(ch in value for ch in ("\n", "\r", "\x00")):
         raise ValueError("source 包含非法字符")
-    return value
+    if GITHUB_REPO_PATTERN.fullmatch(value):
+        return value
+
+    parsed = urlparse(value)
+    if parsed.scheme != "https" or parsed.hostname not in GITHUB_ALLOWED_HOSTS:
+        raise ValueError(INVALID_SOURCE_MESSAGE)
+    if parsed.username or parsed.password or parsed.port or parsed.query or parsed.fragment:
+        raise ValueError(INVALID_SOURCE_MESSAGE)
+
+    repo_path = parsed.path.strip("/")
+    if repo_path.endswith(".git"):
+        repo_path = repo_path[:-4]
+    if not GITHUB_REPO_PATTERN.fullmatch(repo_path):
+        raise ValueError(INVALID_SOURCE_MESSAGE)
+
+    owner, repo = repo_path.split("/", 1)
+    return f"https://github.com/{owner}/{repo}"
 
 
 def _normalize_skill_name(skill: str) -> str:

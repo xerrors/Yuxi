@@ -8,6 +8,29 @@ import pytest
 from yuxi.agents.skills import remote_install as svc
 
 
+def test_normalize_source_accepts_owner_repo() -> None:
+    assert svc._normalize_source("anthropics/skills") == "anthropics/skills"
+
+
+def test_normalize_source_accepts_canonical_github_url() -> None:
+    assert svc._normalize_source("https://www.github.com/anthropics/skills.git") == "https://github.com/anthropics/skills"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "http://127.0.0.1:9/repo.git",
+        "https://example.com/owner/repo",
+        "git@github.com:anthropics/skills.git",
+        "file:///tmp/skills",
+        "https://github.com/anthropics/skills?tab=readme",
+    ],
+)
+def test_normalize_source_rejects_non_github_or_unsafe_url(source: str) -> None:
+    with pytest.raises(ValueError, match="GitHub owner/repo"):
+        svc._normalize_source(source)
+
+
 def test_parse_available_skills_from_cli_output() -> None:
     output = """
     \x1b[38;5;250m███████╗\x1b[0m
