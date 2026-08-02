@@ -183,3 +183,166 @@ async def get_schedule(schedule_id: str, runtime: ToolRuntime) -> str:  # type: 
     if row is None:
         return "未找到该任务"
     return _json_or_error(row.to_dict(), "未找到该任务")
+
+
+# ========== create_schedule ==========
+
+
+class CreateScheduleInput(BaseModel):
+    """创建一个新的定时任务。"""
+
+    name: str
+    description: str | None = None
+    agent_config_id: int
+    cron_expr: str
+    timezone: str = "Asia/Shanghai"
+    query: str
+    image_content: str | None = None
+    config: dict = {}
+    enabled: bool = True
+
+
+@tool(args_schema=CreateScheduleInput)  # type: ignore[misc]
+async def create_schedule(  # type: ignore[no-redef]
+    name: str,
+    description: str | None,
+    agent_config_id: int,
+    cron_expr: str,
+    timezone: str,
+    query: str,
+    image_content: str | None,
+    config: dict,
+    enabled: bool,
+    runtime: ToolRuntime,
+) -> str:
+    """创建新的定时任务。普通用户只能绑定自己创建的 agent_config；admin 不受限。"""
+    user_id = _resolve_user(runtime)
+    if not user_id:
+        return "无法获取用户信息"
+
+    try:
+        async with pg_manager.get_async_session_context() as session:
+            is_admin = await _is_admin(runtime, session)
+            err = await _check_agent_ownership(session, agent_config_id, user_id, is_admin)
+            if err:
+                return err
+
+            # 计算 next_run_at；cron 失败由 compute_next_run 抛
+            next_run = None
+            if enabled:
+                try:
+                    next_run = compute_next_run(cron_expr, timezone)
+                except Exception as e:
+                    return f"cron 表达式无效: {e}"
+
+            schedule = ScheduleDefinition(
+                id=str(uuid.uuid4()),
+                name=name,
+                description=description,
+                user_id=str(user_id),
+                agent_config_id=agent_config_id,
+                cron_expr=cron_expr,
+                timezone=timezone,
+                query=query,
+                image_content=image_content,
+                config=config or {},
+                enabled=enabled,
+                next_run_at=next_run,
+            )
+            repo = ScheduleRepository(session)
+            created = await repo.create_schedule(schedule)
+            return _json_or_error(created.to_dict(), "创建失败")
+    except Exception as e:
+        logger.error(f"create_schedule 工具异常: {e}")
+        return f"创建失败: {e}"
+
+
+# ========== update_schedule ==========
+
+
+class UpdateScheduleInput(BaseModel):
+    """更新定时任务字段；只更新提供的字段。"""
+
+    schedule_id: str
+    name: str | None = None
+    description: str | None = None
+    agent_config_id: int | None = None
+    cron_expr: str | None = None
+    timezone: str | None = None
+    query: str | None = None
+    image_content: str | None = None
+    config: dict | None = None
+    enabled: bool | None = None
+
+
+@tool(args_schema=UpdateScheduleInput)  # type: ignore[misc]
+async def update_schedule(  # type: ignore[no-redef]
+    schedule_id: str,
+    name: str | None,
+    description: str | None,
+    agent_config_id: int | None,
+    cron_expr: str | None,
+    timezone: str | None,
+    query: str | None,
+    image_content: str | None,
+    config: dict | None,
+    enabled: bool | None,
+    runtime: ToolRuntime,
+) -> str:
+    """更新定时任务；agent_config_id 必须归属当前用户（admin 跳过）。"""
+    user_id = _resolve_user(runtime)
+    if not user_id:
+        return "无法获取用户信息"
+
+    try:
+        async with pg_manager.get_async_session_context() as session:
+            is_admin = await _is_admin(runtime, session)
+            if agent_config_id is not None:
+                err = await _check_agent_ownership(session, agent_config_id, user_id, is_admin)
+                if err:
+                    return err
+
+            update_data: dict[str, Any] = {}
+            if name is not None:
+                update_data["name"] = name
+            if description is not None:
+                update_data["description"] = description
+            if agent_config_id is not None:
+                update_data["agent_config_id"] = agent_config_id
+            if cron_expr is not None:
+                update_data["cron_expr"] = cron_expr
+            if timezone is not None:
+                update_data["timezone"] = timezone
+            if query is not None:
+                update_data["query"] = query
+            if image_content is not None:
+                update_data["image_content"] = image_content
+            if config is not None:
+                update_data["config"] = config
+            if enabled is not None:
+                update_data["enabled"] = enabled
+
+            # 若改了 cron/时区/启用状态，重算 next_run_at
+            if enabled or "cron_expr" in update_data or "timezone" in update_data:
+                final_cron = update_data.get("cron_expr")
+                final_tz = update_data.get("timezone")
+                final_enabled = update_data.get("enabled", enabled if enabled is not None else True)
+                if final_enabled:
+                    try:
+                        # 需要原值兜底；这里用 None 时抛错
+                        if final_cron is None or final_tz is None:
+                            raise ValueError("缺少 cron 或时区")
+                        update_data["next_run_at"] = compute_next_run(final_cron, final_tz)
+                    except Exception as e:
+                        return f"cron 表达式无效: {e}"
+                else:
+                    update_data["next_run_at"] = None
+
+            repo = ScheduleRepository(session)
+            updated = await repo.update_for_user(schedule_id, user_id, update_data, is_admin=is_admin)
+            if updated is None:
+                return "未找到该任务"
+            return _json_or_error(updated.to_dict(), "更新失败")
+    except Exception as e:
+        logger.error(f"update_schedule 工具异常: {e}")
+        return f"更新失败: {e}"
