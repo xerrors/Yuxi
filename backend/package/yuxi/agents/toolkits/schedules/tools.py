@@ -414,3 +414,38 @@ async def list_schedule_logs(  # type: ignore[no-redef]
     except Exception as e:
         logger.error(f"list_schedule_logs 工具异常: {e}")
         return f"查询失败: {e}"
+
+
+# ========== trigger_schedule ==========
+
+
+class TriggerScheduleInput(BaseModel):
+    """立即触发一次定时任务。"""
+
+    schedule_id: str
+
+
+@tool(args_schema=TriggerScheduleInput)  # type: ignore[misc]
+async def trigger_schedule(schedule_id: str, runtime: ToolRuntime) -> str:  # type: ignore[no-redef]
+    """立即触发一次定时任务；不影响原 cron 周期。
+
+    即使 schedule 处于 disabled 状态也可触发（与现有 manual_trigger_schedule 行为一致）。
+    """
+    user_id = _resolve_user(runtime)
+    if not user_id:
+        return "无法获取用户信息"
+
+    try:
+        async with pg_manager.get_async_session_context() as session:
+            is_admin = await _is_admin(runtime, session)
+            repo = ScheduleRepository(session)
+            schedule = await repo.get_by_id_for_user(schedule_id, user_id, is_admin=is_admin)
+            if schedule is None:
+                return "未找到该任务"
+
+            service = ScheduleService()
+            thread_id, run_id = await service.manual_trigger_schedule(schedule=schedule, db=session)
+        return _json_or_error({"thread_id": thread_id, "run_id": run_id, "schedule_id": schedule_id}, "触发失败")
+    except Exception as e:
+        logger.error(f"trigger_schedule 工具异常: {e}")
+        return f"触发失败: {e}"

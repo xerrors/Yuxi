@@ -437,3 +437,74 @@ async def test_list_schedule_logs_returns_empty_for_other_user(monkeypatch) -> N
     )
 
     assert result == "未找到该任务"
+
+
+# ========== trigger_schedule ==========
+
+
+async def test_trigger_schedule_succeeds_for_owner(monkeypatch) -> None:
+    sched_repo = _FakeRepo({"get_by_id_for_user": AsyncMock(return_value=SimpleNamespace(id="sx"))})
+
+    @asynccontextmanager
+    async def _ctx():
+        yield MagicMock()
+
+    monkeypatch.setattr(tools, "pg_manager", MagicMock(get_async_session_context=_ctx))
+    monkeypatch.setattr(tools, "ScheduleRepository", lambda _s: sched_repo)
+
+    class _FakeService:
+        async def manual_trigger_schedule(self, *, schedule, db):
+            return ("thread-1", "run-1")
+
+    monkeypatch.setattr(tools, "ScheduleService", _FakeService)
+
+    result = await tools.trigger_schedule.coroutine(  # type: ignore[attr-defined]
+        schedule_id="sx",
+        runtime=_make_runtime(user_id="u1"),
+    )
+
+    payload = json.loads(result)
+    assert payload["thread_id"] == "thread-1"
+    assert payload["run_id"] == "run-1"
+
+
+async def test_trigger_schedule_returns_friendly_error_for_other_user(monkeypatch) -> None:
+    sched_repo = _FakeRepo({"get_by_id_for_user": AsyncMock(return_value=None)})
+
+    @asynccontextmanager
+    async def _ctx():
+        yield MagicMock()
+
+    monkeypatch.setattr(tools, "pg_manager", MagicMock(get_async_session_context=_ctx))
+    monkeypatch.setattr(tools, "ScheduleRepository", lambda _s: sched_repo)
+
+    result = await tools.trigger_schedule.coroutine(  # type: ignore[attr-defined]
+        schedule_id="sx",
+        runtime=_make_runtime(user_id="u2"),
+    )
+
+    assert result == "未找到该任务"
+
+
+async def test_trigger_schedule_admin_can_trigger_others(monkeypatch) -> None:
+    sched_repo = _FakeRepo({"get_by_id_for_user": AsyncMock(return_value=SimpleNamespace(id="sx"))})
+
+    @asynccontextmanager
+    async def _ctx():
+        yield MagicMock()
+
+    monkeypatch.setattr(tools, "pg_manager", MagicMock(get_async_session_context=_ctx))
+    monkeypatch.setattr(tools, "ScheduleRepository", lambda _s: sched_repo)
+
+    class _FakeService:
+        async def manual_trigger_schedule(self, *, schedule, db):
+            return ("t1", "r1")
+
+    monkeypatch.setattr(tools, "ScheduleService", _FakeService)
+
+    await tools.trigger_schedule.coroutine(  # type: ignore[attr-defined]
+        schedule_id="sx",
+        runtime=_make_runtime(user_id="admin1", is_admin=True),
+    )
+
+    sched_repo._methods["get_by_id_for_user"].assert_awaited_once_with("sx", "admin1", is_admin=True)
