@@ -1,0 +1,3 @@
+schema: spec-driven
+created: 2026-08-03
+goal: 在 agent 对话中支持 LLM 自主管理当前用户的定时任务，并确保 user 数据隔离

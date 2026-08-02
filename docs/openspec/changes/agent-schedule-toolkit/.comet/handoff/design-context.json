@@ -1,0 +1,15 @@
+{
+  "change": "agent-schedule-toolkit",
+  "phase": "design",
+  "mode": "compact",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "4bc29435a694803fb41b2a379dde6827ff218119146a4153ba7eee08508b6a3f",
+  "files": [
+    { "path": "openspec/changes/agent-schedule-toolkit/proposal.md", "sha256": "42e96a53f90fdd14f5bb71690a8f1386042fa95c4630a14cdad252739c736f82" },
+    { "path": "openspec/changes/agent-schedule-toolkit/design.md", "sha256": "1204594d881f782de01c6b666420b0d18b4d892fbd5883fd136a2c33337b5195" },
+    { "path": "openspec/changes/agent-schedule-toolkit/tasks.md", "sha256": "421fc5abb843b61a5ab58a66bdef07f22c30e511763bc6974ffc7b2533aabf19" },
+    { "path": "openspec/changes/agent-schedule-toolkit/specs/agent-schedule-tools/spec.md", "sha256": "f84da292b7237edafc26e3825566a504717f0644b0c48fcad02a433f5e76c4d7" },
+    { "path": "openspec/changes/agent-schedule-toolkit/specs/scheduled-runs/spec.md", "sha256": "f21901d692d80fe10450d5ea6eb81fcb9fc28000c792efb7086b61edd3a06e34" }
+  ]
+}
