@@ -44,6 +44,7 @@ export default defineConfig({
           { text: '智能体配置', link: '/agents/agents-config' },
           { text: 'Langfuse 集成', link: '/agents/langfuse-integration' },
           { text: '工具系统', link: '/agents/tools-system' },
+          { text: 'agent-schedule-tools', link: '/agents/agent-schedule-tools' },
           { text: '中间件', link: '/agents/middleware' },
           { text: '沙盒架构与设计', link: '/agents/sandbox-architecture' },
           { text: 'MCP 集成', link: '/agents/mcp-integration' },

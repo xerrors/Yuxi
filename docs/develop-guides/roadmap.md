@@ -35,9 +35,13 @@
 
 ## 版本记录
 
+### 0.6.4 开发记录
+
+- 2026-08-03 `agent-schedule-toolkit`（OpenSpec change）：在 agent 运行时新增 7 个 schedule 管理 `@tool`；把"按用户隔离"下沉到 `ScheduleRepository` 的 4 个 owner-aware 方法；修复 `create_schedule_route` / `update_schedule_route` 中 `agent_config_id` 归属校验缺失的越权漏洞。详见 `docs/agents/agent-schedule-tools.md`。
+
 ### 0.6.3 开发记录
 
-- **定时任务自动化系统实现**：在 Yuxi-Know 智能体平台中增加了定时任务（Scheduled Task）功能。用户可以通过 Cron 表达式周期自动触发指定智能体及配置进行会话；系统底层集成了 PostgreSQL 与 Arq 任务队列，利用 `SKIP LOCKED` 避免多 Worker 重复执行；通过在工具链路中传入 `auto_approve` 配置，实现了定时任务执行时 `ask_user_question` 提问工具的“静默审批”自动通过，对话历史、错误日志及运行状态均完备记录入库。
+- **定时任务自动化系统实现**：在 Yuxi-Know 智能体平台中增加了定时任务（Scheduled Task）功能。用户可以通过 Cron 表达式周期自动触发指定智能体及配置进行会话；系统底层集成了 PostgreSQL 与 Arq 任务队列，利用 `SKIP LOCKED` 避免多 Worker 重复执行；通过在工具链路中传入 `auto_approve` 配置，实现了定时任务执行时 `ask_user_question` 提问工具的"静默审批"自动通过，对话历史、错误日志及运行状态均完备记录入库。
 
 ---
 
