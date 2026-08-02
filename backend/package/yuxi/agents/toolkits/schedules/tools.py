@@ -346,3 +346,71 @@ async def update_schedule(  # type: ignore[no-redef]
     except Exception as e:
         logger.error(f"update_schedule 工具异常: {e}")
         return f"更新失败: {e}"
+
+
+# ========== delete_schedule ==========
+
+
+class DeleteScheduleInput(BaseModel):
+    """删除定时任务。"""
+
+    schedule_id: str
+
+
+@tool(args_schema=DeleteScheduleInput)  # type: ignore[misc]
+async def delete_schedule(schedule_id: str, runtime: ToolRuntime) -> str:  # type: ignore[no-redef]
+    """删除定时任务（按 owner 隔离）。"""
+    user_id = _resolve_user(runtime)
+    if not user_id:
+        return "无法获取用户信息"
+
+    try:
+        async with pg_manager.get_async_session_context() as session:
+            is_admin = await _is_admin(runtime, session)
+            repo = ScheduleRepository(session)
+            ok = await repo.delete_for_user(schedule_id, user_id, is_admin=is_admin)
+        if not ok:
+            return "未找到该任务"
+        return _json_or_error({"deleted": True, "schedule_id": schedule_id}, "删除失败")
+    except Exception as e:
+        logger.error(f"delete_schedule 工具异常: {e}")
+        return f"删除失败: {e}"
+
+
+# ========== list_schedule_logs ==========
+
+
+class ListScheduleLogsInput(BaseModel):
+    """列出指定定时任务的执行日志。"""
+
+    schedule_id: str
+    limit: int = LIST_DEFAULT_LIMIT
+    offset: int = 0
+
+
+@tool(args_schema=ListScheduleLogsInput)  # type: ignore[misc]
+async def list_schedule_logs(  # type: ignore[no-redef]
+    schedule_id: str,
+    limit: int,
+    offset: int,
+    runtime: ToolRuntime,
+) -> str:
+    """列出指定任务的执行日志（按 owner 隔离；admin 可看全部）。"""
+    user_id = _resolve_user(runtime)
+    if not user_id:
+        return "无法获取用户信息"
+
+    limit = min(max(int(limit), 1), LIST_MAX_LIMIT)
+    offset = max(int(offset), 0)
+
+    try:
+        async with pg_manager.get_async_session_context() as session:
+            is_admin = await _is_admin(runtime, session)
+            repo = ScheduleRepository(session)
+            logs = await repo.list_logs_for_user(schedule_id, user_id, limit=limit, offset=offset, is_admin=is_admin)
+        if not logs:
+            return "未找到该任务"
+        return _json_or_error([log.to_dict() for log in logs], "未找到该任务")
+    except Exception as e:
+        logger.error(f"list_schedule_logs 工具异常: {e}")
+        return f"查询失败: {e}"

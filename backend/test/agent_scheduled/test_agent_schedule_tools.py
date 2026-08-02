@@ -373,3 +373,67 @@ async def test_update_schedule_skips_agent_check_when_agent_id_not_provided(monk
 
     assert json.loads(result)["name"] == "x"
     agent_repo._methods["get_by_id"].assert_not_awaited()
+
+
+# ========== delete_schedule ==========
+
+
+async def test_delete_schedule_succeeds_for_owner(monkeypatch) -> None:
+    repo = _FakeRepo({"delete_for_user": AsyncMock(return_value=True)})
+    _patch_session(monkeypatch, repo)
+
+    result = await tools.delete_schedule.coroutine(  # type: ignore[attr-defined]
+        schedule_id="sx",
+        runtime=_make_runtime(user_id="u1"),
+    )
+
+    payload = json.loads(result)
+    assert payload["deleted"] is True
+    repo._methods["delete_for_user"].assert_awaited_once_with("sx", "u1", is_admin=False)
+
+
+async def test_delete_schedule_returns_friendly_error_for_other_user(monkeypatch) -> None:
+    repo = _FakeRepo({"delete_for_user": AsyncMock(return_value=False)})
+    _patch_session(monkeypatch, repo)
+
+    result = await tools.delete_schedule.coroutine(  # type: ignore[attr-defined]
+        schedule_id="sx",
+        runtime=_make_runtime(user_id="u2"),
+    )
+
+    assert result == "未找到该任务"
+
+
+# ========== list_schedule_logs ==========
+
+
+async def test_list_schedule_logs_returns_logs_for_owner(monkeypatch) -> None:
+    fake_logs = [SimpleNamespace(id="l1", to_dict=lambda: {"id": "l1"})]
+    repo = _FakeRepo({"list_logs_for_user": AsyncMock(return_value=fake_logs)})
+    _patch_session(monkeypatch, repo)
+
+    result = await tools.list_schedule_logs.coroutine(  # type: ignore[attr-defined]
+        schedule_id="sx",
+        limit=20,
+        offset=0,
+        runtime=_make_runtime(user_id="u1"),
+    )
+
+    payload = json.loads(result)
+    assert payload[0]["id"] == "l1"
+    repo._methods["list_logs_for_user"].assert_awaited_once()
+
+
+async def test_list_schedule_logs_returns_empty_for_other_user(monkeypatch) -> None:
+    """仓储层 list_logs_for_user 在 owner 不匹配时返回 []；工具返回'未找到该任务'。"""
+    repo = _FakeRepo({"list_logs_for_user": AsyncMock(return_value=[])})
+    _patch_session(monkeypatch, repo)
+
+    result = await tools.list_schedule_logs.coroutine(  # type: ignore[attr-defined]
+        schedule_id="sx",
+        limit=20,
+        offset=0,
+        runtime=_make_runtime(user_id="u2"),
+    )
+
+    assert result == "未找到该任务"
