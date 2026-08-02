@@ -1,15 +1,15 @@
 import uuid
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from server.utils.auth_middleware import get_admin_user, get_db, get_required_user
-from yuxi.storage.postgres.models_business import User, ScheduleDefinition, ScheduleLog
+from server.utils.auth_middleware import get_db, get_required_user
+from yuxi.repositories.agent_config_repository import AgentConfigRepository
 from yuxi.repositories.schedule_repository import ScheduleRepository
 from yuxi.services.schedule_service import ScheduleService
 from yuxi.services.schedule_manager import compute_next_run
+from yuxi.storage.postgres.models_business import ScheduleDefinition, User
 from yuxi.utils.logging_config import logger
 
 schedule_router = APIRouter(prefix="/schedules", tags=["schedules"])
@@ -51,6 +51,19 @@ def _raise_forbidden(message: str = "无权进行该操作"):
     raise HTTPException(status_code=403, detail=message)
 
 
+async def _verify_agent_ownership(db: AsyncSession, agent_config_id: int, current_user: User) -> None:
+    """校验 agent_config 归属当前用户；失败抛 403。admin 跳过。
+
+    注：AgentConfig 没有 user_id 字段，owner 记录在 `created_by`（String，值为 user.id 的字符串形式）。
+    与 tools.py 中的 `_check_agent_ownership` 行为保持一致。
+    """
+    if _is_admin(current_user):
+        return
+    config_item = await AgentConfigRepository(db).get_by_id(agent_config_id)
+    if config_item is None or str(config_item.created_by) != str(current_user.id):
+        raise HTTPException(status_code=403, detail="无权使用该 agent")
+
+
 @schedule_router.post("")
 async def create_schedule_route(
     payload: ScheduleCreateRequest,
@@ -59,6 +72,10 @@ async def create_schedule_route(
 ):
     """创建定时任务"""
     try:
+        # 校验 agent_config 归属（admin 跳过）
+        if payload.agent_config_id is not None:
+            await _verify_agent_ownership(db, payload.agent_config_id, current_user)
+
         next_run = None
         if payload.enabled:
             try:
@@ -103,7 +120,7 @@ async def list_schedules_route(
     try:
         repo = ScheduleRepository(db)
         user_filter = None if _is_admin(current_user) else str(current_user.id)
-        
+
         items = await repo.list_schedules(user_id=user_filter, limit=limit, offset=offset)
         return {"success": True, "data": [item.to_dict() for item in items]}
     except Exception as e:
@@ -119,13 +136,14 @@ async def get_schedule_route(
 ):
     """获取定时任务详情"""
     repo = ScheduleRepository(db)
-    schedule = await repo.get_by_id(schedule_id)
+    schedule = await repo.get_by_id_for_user(
+        schedule_id,
+        str(current_user.id),
+        is_admin=_is_admin(current_user),
+    )
     if not schedule:
         _raise_not_found()
-    
-    if not _is_admin(current_user) and schedule.user_id != str(current_user.id):
-        _raise_forbidden()
-        
+
     return {"success": True, "data": schedule.to_dict()}
 
 
@@ -138,16 +156,21 @@ async def update_schedule_route(
 ):
     """更新定时任务"""
     try:
+        # 若替换 agent_config_id，先校验归属
+        if payload.agent_config_id is not None:
+            await _verify_agent_ownership(db, payload.agent_config_id, current_user)
+
         repo = ScheduleRepository(db)
-        schedule = await repo.get_by_id(schedule_id)
+        schedule = await repo.get_by_id_for_user(
+            schedule_id,
+            str(current_user.id),
+            is_admin=_is_admin(current_user),
+        )
         if not schedule:
             _raise_not_found()
-        
-        if not _is_admin(current_user) and schedule.user_id != str(current_user.id):
-            _raise_forbidden()
 
         update_data = payload.model_dump(exclude_unset=True)
-        
+
         # 如果修改了启用状态、时区或 Cron 表达式，重新计算下一次执行时间
         cron_expr = update_data.get("cron_expr", schedule.cron_expr)
         timezone_str = update_data.get("timezone", schedule.timezone)
@@ -162,7 +185,12 @@ async def update_schedule_route(
             else:
                 update_data["next_run_at"] = None
 
-        updated_schedule = await repo.update_schedule(schedule_id, update_data)
+        updated_schedule = await repo.update_for_user(
+            schedule_id,
+            str(current_user.id),
+            update_data,
+            is_admin=_is_admin(current_user),
+        )
         await db.commit()
         return {"success": True, "data": updated_schedule.to_dict() if updated_schedule else {}}
     except HTTPException:
@@ -181,14 +209,19 @@ async def delete_schedule_route(
     """删除定时任务"""
     try:
         repo = ScheduleRepository(db)
-        schedule = await repo.get_by_id(schedule_id)
+        schedule = await repo.get_by_id_for_user(
+            schedule_id,
+            str(current_user.id),
+            is_admin=_is_admin(current_user),
+        )
         if not schedule:
             _raise_not_found()
-        
-        if not _is_admin(current_user) and schedule.user_id != str(current_user.id):
-            _raise_forbidden()
 
-        success = await repo.delete_schedule(schedule_id)
+        success = await repo.delete_for_user(
+            schedule_id,
+            str(current_user.id),
+            is_admin=_is_admin(current_user),
+        )
         await db.commit()
         return {"success": success}
     except HTTPException:
@@ -208,12 +241,13 @@ async def patch_schedule_route(
     """局部更新定时任务（例如单独切换启用状态）"""
     try:
         repo = ScheduleRepository(db)
-        schedule = await repo.get_by_id(schedule_id)
+        schedule = await repo.get_by_id_for_user(
+            schedule_id,
+            str(current_user.id),
+            is_admin=_is_admin(current_user),
+        )
         if not schedule:
             _raise_not_found()
-        
-        if not _is_admin(current_user) and schedule.user_id != str(current_user.id):
-            _raise_forbidden()
 
         update_data = {}
         if "enabled" in payload:
@@ -227,7 +261,12 @@ async def patch_schedule_route(
             else:
                 update_data["next_run_at"] = None
 
-        updated_schedule = await repo.update_schedule(schedule_id, update_data)
+        updated_schedule = await repo.update_for_user(
+            schedule_id,
+            str(current_user.id),
+            update_data,
+            is_admin=_is_admin(current_user),
+        )
         await db.commit()
         return {"success": True, "data": updated_schedule.to_dict() if updated_schedule else {}}
     except HTTPException:
@@ -246,12 +285,13 @@ async def trigger_schedule_route(
     """手动立即触发一次定时任务的运行"""
     try:
         repo = ScheduleRepository(db)
-        schedule = await repo.get_by_id(schedule_id)
+        schedule = await repo.get_by_id_for_user(
+            schedule_id,
+            str(current_user.id),
+            is_admin=_is_admin(current_user),
+        )
         if not schedule:
             _raise_not_found()
-        
-        if not _is_admin(current_user) and schedule.user_id != str(current_user.id):
-            _raise_forbidden()
 
         service = ScheduleService()
         thread_id, run_id = await service.manual_trigger_schedule(schedule=schedule, db=db)
@@ -275,14 +315,23 @@ async def list_schedule_logs_route(
     """获取指定定时任务配置的历史执行日志列表"""
     try:
         repo = ScheduleRepository(db)
-        schedule = await repo.get_by_id(schedule_id)
-        if not schedule:
-            _raise_not_found()
-        
-        if not _is_admin(current_user) and schedule.user_id != str(current_user.id):
-            _raise_forbidden()
+        logs = await repo.list_logs_for_user(
+            schedule_id,
+            str(current_user.id),
+            limit=limit,
+            offset=offset,
+            is_admin=_is_admin(current_user),
+        )
+        if not logs:
+            # 校验 schedule 是否存在/有权访问，避免对不存在的 id 返回空列表而误判
+            schedule = await repo.get_by_id_for_user(
+                schedule_id,
+                str(current_user.id),
+                is_admin=_is_admin(current_user),
+            )
+            if not schedule:
+                _raise_not_found()
 
-        logs = await repo.get_logs_by_schedule_id(schedule_id, limit=limit, offset=offset)
         return {"success": True, "data": [log.to_dict() for log in logs]}
     except HTTPException:
         raise
