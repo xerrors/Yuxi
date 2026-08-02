@@ -63,6 +63,73 @@ class ScheduleRepository:
         await self.db.flush()
         return (result.rowcount or 0) > 0
 
+    async def get_by_id_for_user(
+        self, schedule_id: str, user_id: str, *, is_admin: bool = False
+    ) -> ScheduleDefinition | None:
+        """按 id 取 schedule，并按 user_id 过滤；admin 跳过 owner 过滤。
+
+        HTTP 路由和 @tool 入口请用此方法；ARQ worker 仍用 get_by_id。
+        """
+        stmt = select(ScheduleDefinition).where(ScheduleDefinition.id == schedule_id)
+        if not is_admin:
+            stmt = stmt.where(ScheduleDefinition.user_id == user_id)
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def update_for_user(
+        self,
+        schedule_id: str,
+        user_id: str,
+        data: dict[str, Any],
+        *,
+        is_admin: bool = False,
+    ) -> ScheduleDefinition | None:
+        """按 (id, user_id) 校验后更新；admin 跳过 owner 过滤。"""
+        schedule = await self.get_by_id_for_user(schedule_id, user_id, is_admin=is_admin)
+        if not schedule:
+            return None
+
+        for key, value in data.items():
+            if hasattr(schedule, key):
+                setattr(schedule, key, value)
+        schedule.updated_at = datetime.now(UTC)
+        await self.db.flush()
+        await self.db.refresh(schedule)
+        return schedule
+
+    async def delete_for_user(self, schedule_id: str, user_id: str, *, is_admin: bool = False) -> bool:
+        """按 (id, user_id) 校验后删除；admin 跳过 owner 过滤。"""
+        schedule = await self.get_by_id_for_user(schedule_id, user_id, is_admin=is_admin)
+        if not schedule:
+            return False
+        await self.db.delete(schedule)
+        await self.db.flush()
+        return True
+
+    async def list_logs_for_user(
+        self,
+        schedule_id: str,
+        user_id: str,
+        *,
+        limit: int,
+        offset: int,
+        is_admin: bool = False,
+    ) -> list[ScheduleLog]:
+        """校验 schedule 归属后返回其执行日志；admin 跳过 owner 过滤。"""
+        owner_ok = await self.get_by_id_for_user(schedule_id, user_id, is_admin=is_admin)
+        if not owner_ok:
+            return []
+
+        stmt = (
+            select(ScheduleLog)
+            .where(ScheduleLog.schedule_id == schedule_id)
+            .order_by(ScheduleLog.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
     async def get_due_schedules_with_lock(self, limit: int = 50) -> list[ScheduleDefinition]:
         """
         利用 Postgres 事务行级锁 FOR UPDATE SKIP LOCKED 锁定并获取到期且启用的调度任务列表。
