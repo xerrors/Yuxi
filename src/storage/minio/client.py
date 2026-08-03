@@ -9,6 +9,7 @@ import os
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from io import BytesIO
+from urllib.parse import urlparse
 
 from urllib3 import BaseHTTPResponse
 
@@ -67,19 +68,22 @@ class MinIOClient:
         self.secret_key = os.getenv("MINIO_SECRET_KEY") or "minioadmin"
         self._client = None
 
-        # 设置公开访问端点
-        if os.getenv("RUNNING_IN_DOCKER"):
-            host_ip = (os.getenv("HOST_IP") or "").strip()
-            if not host_ip:
-                host_ip = "localhost"
+        # Public URLs may be served through an application reverse proxy rather
+        # than by exposing MinIO's port directly.
+        public_uri = (os.getenv("MINIO_PUBLIC_URI") or "").strip().rstrip("/")
+        if public_uri:
+            parsed_public_uri = urlparse(public_uri)
+            if parsed_public_uri.scheme not in {"http", "https"} or not parsed_public_uri.hostname:
+                raise StorageError("MINIO_PUBLIC_URI 必须是有效的 http/https URL")
+            self.public_base_url = public_uri
+        elif os.getenv("RUNNING_IN_DOCKER"):
+            host_ip = (os.getenv("HOST_IP") or "localhost").strip()
             if "://" in host_ip:
-                host_ip = host_ip.split("://")[-1]
-            host_ip = host_ip.rstrip("/")
-            self.public_endpoint = f"{host_ip}:9000"
-            logger.debug(f"Docker MinIOClient public_endpoint: {self.public_endpoint}")
+                host_ip = host_ip.split("://", 1)[-1]
+            self.public_base_url = f"http://{host_ip.rstrip('/')}:9000"
         else:
-            self.public_endpoint = "localhost:9000"
-            logger.debug(f"Default_client: {self.public_endpoint}")
+            self.public_base_url = "http://localhost:9000"
+        logger.debug(f"MinIOClient public_base_url: {self.public_base_url}")
 
     @property
     def client(self) -> Minio:
@@ -132,7 +136,7 @@ class MinIOClient:
             )
 
             assert result is not None
-            url = f"http://{self.public_endpoint}/{bucket_name}/{object_name}"
+            url = f"{self.public_base_url}/{bucket_name}/{object_name}"
 
             return UploadResult(url, bucket_name, object_name)
 
@@ -365,7 +369,6 @@ class MinIOClient:
             StorageError: 如果 URL 无效或下载失败
         """
         import tempfile
-        from urllib.parse import urlparse
 
         # 验证 URL
         if not url or not isinstance(url, str):
@@ -378,12 +381,13 @@ class MinIOClient:
 
         parsed = urlparse(url)
 
-        # 验证主机
+        # URL must belong to the private MinIO endpoint or the explicitly
+        # configured public reverse-proxy endpoint.
         endpoint_host = self.endpoint.split("://")[-1].split(":")[0]
-        url_host = parsed.netloc.split(":")[0]
-
-        if endpoint_host != url_host and url_host != os.environ.get("HOST_IP", "localhost"):
-            raise StorageError(f"不允许的外部 URL: {url_host}")
+        public_uri = urlparse(self.public_base_url)
+        allowed_hosts = {endpoint_host, public_uri.hostname or ""}
+        if parsed.hostname not in allowed_hosts:
+            raise StorageError(f"不允许的外部 URL: {parsed.hostname}")
 
         # 检查路径遍历
         if ".." in url or "\\" in url:
@@ -393,8 +397,14 @@ class MinIOClient:
         if allowed_extensions and not any(url.endswith(ext) for ext in allowed_extensions):
             raise StorageError(f"文件扩展名不符合要求，允许: {', '.join(allowed_extensions)}")
 
-        # 解析 bucket 和 object name
-        path_parts = parsed.path.lstrip("/").split("/", 1)
+        # Parse bucket and object name, removing the configured public prefix.
+        object_path = parsed.path
+        public_prefix = public_uri.path.rstrip("/")
+        if parsed.hostname == public_uri.hostname and public_prefix:
+            if object_path != public_prefix and not object_path.startswith(f"{public_prefix}/"):
+                raise StorageError("URL 不属于配置的 MinIO 公开路径")
+            object_path = object_path[len(public_prefix) :]
+        path_parts = object_path.lstrip("/").split("/", 1)
         if len(path_parts) != 2:
             raise StorageError("无法解析 MinIO URL")
 
