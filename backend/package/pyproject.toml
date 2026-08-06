@@ -23,7 +23,6 @@ dependencies = [
     "docling>=2.68.0",
     "docx2txt>=0.9",
     "httpx>=0.27.0",
-    "igraph>=0.11.8",
     "json-repair>=0.54.0",
     "langchain>=1.3.9",
     "langchain-community>=0.4",
@@ -84,6 +83,12 @@ dependencies = [
     "nltk>=3.8.1",
     "beautifulsoup4>=4.12.0",
 ]
+
+[project.optional-dependencies]
+# python-igraph 为 GPL-2.0 许可，不随默认安装强制携带；
+# 仅在使用 PPR 图谱排序（rank_chunks_by_ppr）时显式安装。
+# 安装：uv pip install "yuxi[graph]" 或 uv sync --extra graph
+graph = ["igraph>=0.11.8"]
 
 [tool.setuptools]
 include-package-data = true
