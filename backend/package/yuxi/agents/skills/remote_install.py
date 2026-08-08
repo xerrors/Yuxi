@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.agents.skills.service import import_skill_dir, is_valid_skill_slug
+from yuxi.knowledge.utils.url_fetcher import is_private_ip
 
 if TYPE_CHECKING:
     from yuxi.storage.postgres.models_business import Skill
@@ -22,7 +23,8 @@ CONTROL_SEQUENCE_RE = re.compile(r"\x1B\][^\x07]*(?:\x07|\x1B\\)|\x1B[\(\)][A-Za
 CLI_TIMEOUT_SECONDS = 300
 GITHUB_REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 GITHUB_ALLOWED_HOSTS = {"github.com", "www.github.com"}
-INVALID_SOURCE_MESSAGE = "source 仅支持 GitHub owner/repo 或 https://github.com/OWNER/REPO(.git) 格式"
+INVALID_SOURCE_MESSAGE = "source 仅支持 GitHub owner/repo 或公共 https URL"
+PRIVATE_SOURCE_MESSAGE = "source 不能指向 localhost、私有网段或其他内网地址"
 
 
 @dataclass(slots=True)
@@ -45,19 +47,38 @@ def _normalize_source(source: str) -> str:
         return value
 
     parsed = urlparse(value)
-    if parsed.scheme != "https" or parsed.hostname not in GITHUB_ALLOWED_HOSTS:
+    if parsed.scheme != "https" or not parsed.hostname:
         raise ValueError(INVALID_SOURCE_MESSAGE)
-    if parsed.username or parsed.password or parsed.port or parsed.query or parsed.fragment:
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise ValueError(INVALID_SOURCE_MESSAGE)
+    if parsed.port not in (None, 443):
+        raise ValueError(PRIVATE_SOURCE_MESSAGE)
 
-    repo_path = parsed.path.strip("/")
-    if repo_path.endswith(".git"):
-        repo_path = repo_path[:-4]
-    if not GITHUB_REPO_PATTERN.fullmatch(repo_path):
-        raise ValueError(INVALID_SOURCE_MESSAGE)
+    hostname = parsed.hostname.rstrip(".").lower()
+    if hostname in {"localhost"} or hostname.endswith((".local", ".localhost", ".internal")):
+        raise ValueError(PRIVATE_SOURCE_MESSAGE)
 
-    owner, repo = repo_path.split("/", 1)
-    return f"https://github.com/{owner}/{repo}"
+    path = parsed.path.rstrip("/") or "/"
+    if hostname in GITHUB_ALLOWED_HOSTS:
+        repo_path = path.strip("/")
+        if repo_path.endswith(".git"):
+            repo_path = repo_path[:-4]
+        if GITHUB_REPO_PATTERN.fullmatch(repo_path):
+            return f"https://github.com/{repo_path}"
+
+    normalized = parsed._replace(scheme="https", netloc=hostname if parsed.port in (None, 443) else f"{hostname}:{parsed.port}", path=path)
+    return normalized.geturl().rstrip("/")
+
+
+async def _validate_source_destination(source: str) -> None:
+    if GITHUB_REPO_PATTERN.fullmatch(source):
+        return
+
+    hostname = urlparse(source).hostname
+    if not hostname:
+        raise ValueError(INVALID_SOURCE_MESSAGE)
+    if await is_private_ip(hostname):
+        raise ValueError(PRIVATE_SOURCE_MESSAGE)
 
 
 def _normalize_skill_name(skill: str) -> str:
@@ -164,6 +185,7 @@ def _create_isolated_workdir() -> tuple[str, dict[str, str], str]:
 
 async def list_remote_skills(source: str) -> list[dict[str, str]]:
     normalized_source = _normalize_source(source)
+    await _validate_source_destination(normalized_source)
 
     temp_home, env, workdir = _create_isolated_workdir()
     try:
@@ -190,6 +212,7 @@ async def install_remote_skill(
 ) -> Skill:
     normalized_source = _normalize_source(source)
     normalized_skill = _normalize_skill_name(skill)
+    await _validate_source_destination(normalized_source)
 
     temp_home, env, workdir = _create_isolated_workdir()
     try:
@@ -285,6 +308,7 @@ async def prepare_remote_skills_batch(
 ) -> RemoteSkillsBatchPreparation:
     """批量从远程仓库拉取 skill 目录，但不写数据库。"""
     normalized_source = _normalize_source(source)
+    await _validate_source_destination(normalized_source)
     if not skills:
         raise ValueError("skills 列表不能为空")
 

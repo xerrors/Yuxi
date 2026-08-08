@@ -16,19 +16,54 @@ def test_normalize_source_accepts_canonical_github_url() -> None:
     assert svc._normalize_source("https://www.github.com/anthropics/skills.git") == "https://github.com/anthropics/skills"
 
 
+def test_normalize_source_accepts_public_https_skill_url() -> None:
+    assert (
+        svc._normalize_source("https://modelscope.cn/skills/@pskoett/self-improving-agent/")
+        == "https://modelscope.cn/skills/@pskoett/self-improving-agent"
+    )
+
+
 @pytest.mark.parametrize(
     "source",
     [
         "http://127.0.0.1:9/repo.git",
-        "https://example.com/owner/repo",
         "git@github.com:anthropics/skills.git",
         "file:///tmp/skills",
         "https://github.com/anthropics/skills?tab=readme",
+        "https://localhost/skills/demo",
+        "https://modelscope.cn:8443/skills/demo",
     ],
 )
-def test_normalize_source_rejects_non_github_or_unsafe_url(source: str) -> None:
-    with pytest.raises(ValueError, match="GitHub owner/repo"):
+def test_normalize_source_rejects_unsafe_url_shapes(source: str) -> None:
+    with pytest.raises(ValueError):
         svc._normalize_source(source)
+
+
+@pytest.mark.asyncio
+async def test_validate_source_destination_skips_dns_for_owner_repo(monkeypatch: pytest.MonkeyPatch) -> None:
+    called = False
+
+    async def fake_is_private_ip(_hostname: str) -> bool:
+        nonlocal called
+        called = True
+        return False
+
+    monkeypatch.setattr(svc, "is_private_ip", fake_is_private_ip)
+
+    await svc._validate_source_destination("anthropics/skills")
+
+    assert called is False
+
+
+@pytest.mark.asyncio
+async def test_validate_source_destination_rejects_private_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_is_private_ip(_hostname: str) -> bool:
+        return True
+
+    monkeypatch.setattr(svc, "is_private_ip", fake_is_private_ip)
+
+    with pytest.raises(ValueError, match="内网地址"):
+        await svc._validate_source_destination("https://modelscope.cn/skills/demo")
 
 
 def test_parse_available_skills_from_cli_output() -> None:
