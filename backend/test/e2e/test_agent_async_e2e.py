@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import asyncio
 import json
-import os
 import uuid
 from typing import Any
 
@@ -10,17 +8,11 @@ import asyncpg
 import httpx
 import pytest
 
+from e2e_helpers import cancel_run, consume_events, delete_agent, postgres_dsn, wait_for_run
+
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow]
 
-POLL_INTERVAL_SECONDS = float(os.getenv("E2E_RUN_POLL_INTERVAL_SECONDS", "2"))
-RUN_TIMEOUT_SECONDS = int(os.getenv("E2E_RUN_TIMEOUT_SECONDS", "240"))
 EXPECTED_OUTPUT = "ASYNC_AGENT_E2E_OK"
-
-
-def _postgres_dsn() -> str:
-    return os.getenv("POSTGRES_URL", "postgresql+asyncpg://postgres:postgres@postgres:5432/yuxi").replace(
-        "+asyncpg", ""
-    )
 
 
 async def _create_agent(client: httpx.AsyncClient, headers: dict[str, str], uid: str) -> str:
@@ -59,18 +51,6 @@ async def _create_agent(client: httpx.AsyncClient, headers: dict[str, str], uid:
     assert response.status_code == 200, response.text
     assert (response.json().get("agent") or {}).get("slug") == slug
     return slug
-
-
-async def _delete_agent(client: httpx.AsyncClient, headers: dict[str, str], slug: str) -> None:
-    response = await client.delete(f"/api/agent/{slug}", headers=headers)
-    assert response.status_code in {200, 404}, response.text
-
-
-async def _cancel_run(client: httpx.AsyncClient, headers: dict[str, str], run_id: str | None) -> None:
-    if not run_id:
-        return
-    response = await client.post(f"/api/agent/runs/{run_id}/cancel", headers=headers)
-    assert response.status_code < 500, response.text
 
 
 async def _create_thread(client: httpx.AsyncClient, headers: dict[str, str], agent_slug: str) -> str:
@@ -116,57 +96,6 @@ async def _create_run(
     return str(run_id), request_id
 
 
-async def _iter_sse(client: httpx.AsyncClient, headers: dict[str, str], run_id: str):
-    async with client.stream("GET", f"/api/agent/runs/{run_id}/events?verbose=false", headers=headers) as response:
-        assert response.status_code == 200, response.text
-        event = "message"
-        data_lines: list[str] = []
-        async for line in response.aiter_lines():
-            if not line:
-                if data_lines:
-                    yield event, json.loads("\n".join(data_lines))
-                event = "message"
-                data_lines = []
-                continue
-            if line.startswith(":"):
-                continue
-            if line.startswith("event:"):
-                event = line[len("event:") :].strip() or "message"
-            elif line.startswith("data:"):
-                data_lines.append(line[len("data:") :].strip())
-
-
-async def _consume_events(client: httpx.AsyncClient, headers: dict[str, str], run_id: str) -> dict[str, int]:
-    event_counts: dict[str, int] = {}
-
-    async def consume() -> None:
-        async for event, payload in _iter_sse(client, headers, run_id):
-            event_counts[event] = event_counts.get(event, 0) + 1
-            if event == "end" or payload.get("status") in {"completed", "failed", "cancelled", "interrupted"}:
-                return
-
-    await asyncio.wait_for(consume(), timeout=RUN_TIMEOUT_SECONDS)
-    return event_counts
-
-
-async def _wait_for_run(client: httpx.AsyncClient, headers: dict[str, str], run_id: str) -> dict:
-    deadline = asyncio.get_running_loop().time() + RUN_TIMEOUT_SECONDS
-    last_payload: dict | None = None
-
-    while asyncio.get_running_loop().time() < deadline:
-        response = await client.get(f"/api/agent/runs/{run_id}", headers=headers)
-        assert response.status_code == 200, response.text
-
-        last_payload = response.json().get("run") or {}
-        status = str(last_payload.get("status") or "")
-        if status in {"completed", "failed", "cancelled", "interrupted"}:
-            return last_payload
-
-        await asyncio.sleep(POLL_INTERVAL_SECONDS)
-
-    pytest.fail("Run timed out: " + json.dumps(last_payload or {}, ensure_ascii=False))
-
-
 async def _assert_run_persisted(
     *,
     run_id: str,
@@ -175,7 +104,7 @@ async def _assert_run_persisted(
     agent_slug: str,
     uid: str,
 ) -> None:
-    conn = await asyncpg.connect(_postgres_dsn())
+    conn = await asyncpg.connect(postgres_dsn())
     try:
         row = await conn.fetchrow(
             """
@@ -243,11 +172,11 @@ async def test_async_agent_run_stream_result_and_persistence(
             thread_id=thread_id,
         )
 
-        event_counts = await _consume_events(e2e_client, e2e_headers, run_id)
+        event_counts = await consume_events(e2e_client, e2e_headers, run_id)
         assert event_counts.get("messages", 0) > 0, event_counts
         assert event_counts.get("end", 0) == 1, event_counts
 
-        run_payload = await _wait_for_run(e2e_client, e2e_headers, run_id)
+        run_payload = await wait_for_run(e2e_client, e2e_headers, run_id)
         assert run_payload.get("status") == "completed", run_payload
         assert run_payload.get("request_id") == request_id
 
@@ -276,5 +205,5 @@ async def test_async_agent_run_stream_result_and_persistence(
         run_completed = True
     finally:
         if not run_completed:
-            await _cancel_run(e2e_client, e2e_headers, run_id)
-        await _delete_agent(e2e_client, e2e_headers, agent_slug)
+            await cancel_run(e2e_client, e2e_headers, run_id)
+        await delete_agent(e2e_client, e2e_headers, agent_slug)

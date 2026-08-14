@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from langchain_core.messages import ToolMessage
 from langgraph.types import Command
+import pytest
 
 from yuxi.agents.base import _json_safe, _normalize_tool_event_data
 
@@ -44,18 +45,18 @@ def test_command_tool_finished_prefers_message_matching_tool_call_id():
     assert output.content == "目标结果"
 
 
-def test_regular_dict_output_is_left_untouched():
-    data = {"event": "tool-finished", "tool_call_id": "call_x", "output": {"content": "plain", "type": "tool"}}
-    assert _normalize_tool_event_data(data)["output"] == {"content": "plain", "type": "tool"}
-
-
-def test_tool_started_event_is_left_untouched():
-    data = {"event": "tool-started", "tool_call_id": "call_x", "output": None}
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"event": "tool-finished", "tool_call_id": "call_x", "output": {"content": "plain", "type": "tool"}},
+        {"event": "tool-started", "tool_call_id": "call_x", "output": None},
+        {
+            "event": "tool-finished",
+            "tool_call_id": "call_x",
+            "output": Command(update={"todos": [{"content": "无消息", "status": "pending"}]}),
+        },
+    ],
+)
+def test_untouched_tool_event_data_is_returned_as_is(data):
     assert _normalize_tool_event_data(data) is data
-
-
-def test_command_without_tool_message_is_left_untouched():
-    command = Command(update={"todos": [{"content": "无消息", "status": "pending"}]})
-    data = {"event": "tool-finished", "tool_call_id": "call_x", "output": command}
-    assert _normalize_tool_event_data(data)["output"] is command
 

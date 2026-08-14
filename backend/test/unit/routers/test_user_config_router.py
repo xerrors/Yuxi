@@ -4,7 +4,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from server.routers.user_router import get_logged_in_user, get_user_config, update_user_config
+from server.routers.user_router import get_user_config, update_user_config
 from yuxi.config import UserConfigSchema
 from yuxi.storage.postgres.models_business import Base, Department, User
 
@@ -53,14 +53,3 @@ async def test_user_config_routes_scope_to_current_user(session):
 
     assert own_config["enable_memory"] is True
     assert other_config["enable_memory"] is False
-
-
-async def test_user_config_allows_logged_in_user_without_department():
-    user = User(
-        username="No Dept User",
-        uid="no_dept_user",
-        password_hash="$argon2id$placeholder",
-        role="user",
-    )
-
-    assert await get_logged_in_user(user) is user

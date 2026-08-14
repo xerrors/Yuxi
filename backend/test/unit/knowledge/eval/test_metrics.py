@@ -4,7 +4,7 @@ import pytest
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
-from yuxi.knowledge.eval.metrics import EvaluationMetricsCalculator, RetrievalMetrics
+from yuxi.knowledge.eval.metrics import EvaluationMetricsCalculator
 
 
 def test_retrieval_metrics_use_metadata_chunk_id():
@@ -19,7 +19,7 @@ def test_retrieval_metrics_use_metadata_chunk_id():
 
     assert metrics["recall@1"] == 0.0
     assert metrics["recall@3"] == 0.5
-    assert metrics["f1@3"] == RetrievalMetrics.f1_score_at_k(["chunk_a", "chunk_b"], ["chunk_b", "chunk_c"], 3)
+    assert metrics["f1@3"] == pytest.approx(0.4)
 
 
 def test_overall_score_uses_answer_accuracy_when_available():

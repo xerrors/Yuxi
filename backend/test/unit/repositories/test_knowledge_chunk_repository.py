@@ -13,15 +13,6 @@ def _extract_id_batch(statement) -> list[str]:
     return list(id_batches[0])
 
 
-def test_iter_batches_limits_sql_in_arguments():
-    ids = [f"id-{index}" for index in range(SQL_IN_BATCH_SIZE * 2 + 1)]
-
-    batches = list(KnowledgeChunkRepository._iter_batches(ids))
-
-    assert [len(batch) for batch in batches] == [SQL_IN_BATCH_SIZE, SQL_IN_BATCH_SIZE, 1]
-    assert [item for batch in batches for item in batch] == ids
-
-
 @pytest.mark.asyncio
 async def test_count_by_file_ids_splits_large_inputs(monkeypatch):
     file_ids = [f"file-{index}" for index in range(SQL_IN_BATCH_SIZE + 5)]

@@ -26,16 +26,9 @@ pytestmark = [pytest.mark.unit]
 # ── validate_queue_policy ──
 
 
-def test_validate_queue_policy_accepts_enqueue():
-    validate_queue_policy("enqueue")
-
-
-def test_validate_queue_policy_accepts_reject():
-    validate_queue_policy("reject")
-
-
-def test_validate_queue_policy_accepts_steer():
-    validate_queue_policy("steer")
+@pytest.mark.parametrize("policy", ["enqueue", "reject", "steer"])
+def test_validate_queue_policy_accepts_policy(policy):
+    validate_queue_policy(policy)
 
 
 @pytest.mark.parametrize("policy", list(NOT_IMPLEMENTED_QUEUE_POLICIES))
@@ -182,14 +175,6 @@ async def test_intake_request_rejects_missing_attachment_without_creating_reques
 
 
 # ── AgentRunCreate request model ──
-
-
-def test_agent_run_create_accepts_thread_id():
-    from server.routers.agent_router import AgentRunCreate
-
-    payload = AgentRunCreate(query="hi", agent_slug="bot", thread_id="t1")
-    assert payload.thread_id == "t1"
-    assert payload.tool_approval_mode is None
 
 
 # ── fixtures ──
@@ -418,9 +403,18 @@ async def test_cancel_returns_404_for_wrong_user(session):
 
 
 @pytest.mark.asyncio
-async def test_cancel_success(session):
+@pytest.mark.parametrize("already_cancelled", [False, True])
+async def test_cancel_returns_cancelled_status(session, already_cancelled):
     await _seed_thread(session)
     await _create_request(session, request_id="req-1")
+    if already_cancelled:
+        from yuxi.repositories.agent_run_request_repository import AgentRunRequestRepository
+
+        repo = AgentRunRequestRepository(session)
+        request = await repo.lock_by_request_id("req-1")
+        request.status = "cancelled"
+        request.updated_at = utc_now_naive()
+        await session.commit()
     status = await cancel_queued_request(request_id="req-1", current_uid="user-1", db=session)
     assert status == "cancelled"
 
@@ -438,21 +432,6 @@ async def test_cancel_dispatched_raises_409(session):
         await cancel_queued_request(request_id="req-1", current_uid="user-1", db=session)
     assert exc_info.value.status_code == 409
     assert exc_info.value.detail["code"] == "request_already_dispatched"
-
-
-@pytest.mark.asyncio
-async def test_cancel_already_cancelled_returns_status(session):
-    await _seed_thread(session)
-    await _create_request(session, request_id="req-1")
-    from yuxi.repositories.agent_run_request_repository import AgentRunRequestRepository
-
-    repo = AgentRunRequestRepository(session)
-    request = await repo.lock_by_request_id("req-1")
-    request.status = "cancelled"
-    request.updated_at = utc_now_naive()
-    await session.commit()
-    status = await cancel_queued_request(request_id="req-1", current_uid="user-1", db=session)
-    assert status == "cancelled"
 
 
 # ── idempotency ──
@@ -648,90 +627,11 @@ async def test_dispatches_multiple_queued_requests_one_at_a_time(session):
     assert await request_repo.get_queue_position("request-c") == 0
 
 
-# ── mark_run_terminal syncs delivery_status (Fix 2) ──
-
-
-@pytest.mark.asyncio
-async def test_mark_run_terminal_sets_delivery_status(session):
-    """mark_run_terminal completed sets message.delivery_status to complete."""
-    import uuid as _uuid
-
-    from yuxi.repositories.agent_run_repository import AgentRunRepository
-    from yuxi.storage.postgres.models_business import AgentRun, Conversation, Message
-
-    run_id = str(_uuid.uuid4())
-    session.add(Conversation(id=10, thread_id="t1", uid="user-1", agent_id="main", status="active"))
-    session.add(Message(id=100, conversation_id=10, role="user", content="hi", delivery_status="dispatched"))
-    session.add(
-        AgentRun(
-            id=run_id,
-            conversation_thread_id="t1",
-            agent_slug="main",
-            uid="user-1",
-            request_id="req-terminal",
-            input_payload={},
-            status="running",
-            run_type="chat",
-            input_message_id=100,
-        )
-    )
-    await session.commit()
-
-    # mark_run_terminal uses pg_manager (separate session), so we update via DB directly
-    async with session.begin_nested():
-        repo = AgentRunRepository(session)
-        await repo.set_terminal_status(run_id, status="completed")
-        msg = await session.get(Message, 100)
-        if msg:
-            msg.delivery_status = "complete"
-
-    msg = await session.get(Message, 100)
-    assert msg.delivery_status == "complete"
-
-
-@pytest.mark.asyncio
-async def test_mark_run_terminal_failed_sets_delivery_status(session):
-    """mark_run_terminal failed sets message.delivery_status to failed."""
-    import uuid as _uuid
-
-    from yuxi.repositories.agent_run_repository import AgentRunRepository
-    from yuxi.storage.postgres.models_business import AgentRun, Conversation, Message
-
-    run_id = str(_uuid.uuid4())
-    session.add(Conversation(id=11, thread_id="t2", uid="user-1", agent_id="main", status="active"))
-    session.add(Message(id=200, conversation_id=11, role="user", content="hi", delivery_status="dispatched"))
-    session.add(
-        AgentRun(
-            id=run_id,
-            conversation_thread_id="t2",
-            agent_slug="main",
-            uid="user-1",
-            request_id="req-failed",
-            input_payload={},
-            status="running",
-            run_type="chat",
-            input_message_id=200,
-            conversation_id=11,
-        )
-    )
-    await session.commit()
-
-    async with session.begin_nested():
-        repo = AgentRunRepository(session)
-        await repo.set_terminal_status(run_id, status="failed", error_type="test", error_message="boom")
-        msg = await session.get(Message, 200)
-        if msg:
-            msg.delivery_status = "failed"
-
-    msg = await session.get(Message, 200)
-    assert msg.delivery_status == "failed"
-
-
 # ── reject persists request + message (Fix 3) ──
 
 
 @pytest.mark.asyncio
-async def test_reject_with_active_run_persists_request(session):
+async def test_reject_with_active_run_persists_request_and_is_idempotent(session):
     import uuid as _uuid
 
     from yuxi.services.input_message_service import build_chat_input_message
@@ -752,9 +652,9 @@ async def test_reject_with_active_run_persists_request(session):
     )
     await session.commit()
 
-    result = await intake_request(
+    first = await intake_request(
         db=session,
-        request_id="req-reject-fix3",
+        request_id="req-reject",
         uid="user-1",
         agent_slug="main",
         thread_id="t1",
@@ -763,55 +663,20 @@ async def test_reject_with_active_run_persists_request(session):
         agent_item=MagicMock(),
         agent_backend=MagicMock(),
     )
-    assert result.status == "rejected"
-    assert result.message_id is not None
+    await session.commit()
+    assert first.status == "rejected"
+    assert first.message_id is not None
 
-    req = await session.scalar(select(AgentRunRequest).where(AgentRunRequest.request_id == "req-reject-fix3"))
+    req = await session.scalar(select(AgentRunRequest).where(AgentRunRequest.request_id == "req-reject"))
     assert req is not None
     assert req.status == "rejected"
 
-    msg = await session.get(Message, result.message_id)
+    msg = await session.get(Message, first.message_id)
     assert msg.delivery_status == "rejected"
-
-
-@pytest.mark.asyncio
-async def test_reject_idempotent(session):
-    import uuid as _uuid
-
-    from yuxi.services.input_message_service import build_chat_input_message
-    from yuxi.storage.postgres.models_business import AgentRun
-
-    await _seed_thread(session)
-    session.add(
-        AgentRun(
-            id=str(_uuid.uuid4()),
-            conversation_thread_id="t1",
-            agent_slug="main",
-            uid="user-1",
-            request_id="existing",
-            input_payload={},
-            status="running",
-            run_type="chat",
-        )
-    )
-    await session.commit()
-
-    first = await intake_request(
-        db=session,
-        request_id="req-reject-idem",
-        uid="user-1",
-        agent_slug="main",
-        thread_id="t1",
-        queue_policy="reject",
-        input_message=build_chat_input_message("hello"),
-        agent_item=MagicMock(),
-        agent_backend=MagicMock(),
-    )
-    await session.commit()
 
     second = await intake_request(
         db=session,
-        request_id="req-reject-idem",
+        request_id="req-reject",
         uid="user-1",
         agent_slug="main",
         thread_id="t1",

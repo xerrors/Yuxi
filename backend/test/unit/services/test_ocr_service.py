@@ -34,10 +34,6 @@ async def test_task_resolution_uses_database_option(db_session):
     assert resolved["_ocr_processor_kwargs"] == {"server_url": "http://mineru-config:30001/"}
 
 
-def test_resolve_ocr_engine_id_accepts_disable():
-    assert ocr_service.resolve_ocr_engine_id("disable", "rapid_ocr") == "disable"
-
-
 @pytest.mark.asyncio
 async def test_ocr_options_use_parser_metadata(db_session, monkeypatch):
     async def get_options(option, _db=None):

@@ -49,11 +49,15 @@ async def test_superadmin_can_delete_department_with_users(test_client, admin_he
         list_users_response = await test_client.get("/api/auth/users", headers=admin_headers)
         assert list_users_response.status_code == 200, list_users_response.text
         users_before_delete = list_users_response.json()
-        department_admin = next((user for user in users_before_delete if user["uid"] == department_payload["admin_uid"]), None)
+        department_admin = next(
+            (user for user in users_before_delete if user["uid"] == department_payload["admin_uid"]), None
+        )
         assert department_admin is not None
         department_admin_id = department_admin["id"]
 
-        delete_department_response = await test_client.delete(f"/api/departments/{department_id}", headers=admin_headers)
+        delete_department_response = await test_client.delete(
+            f"/api/departments/{department_id}", headers=admin_headers
+        )
         assert delete_department_response.status_code == 200, delete_department_response.text
         assert delete_department_response.json()["success"] is True
         department_id = None

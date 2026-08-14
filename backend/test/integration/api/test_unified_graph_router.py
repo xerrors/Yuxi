@@ -64,47 +64,26 @@ async def test_graph_endpoints_reject_non_milvus_types(test_client, admin_header
     assert "only supports Milvus" in response.text
 
 
-async def test_milvus_subgraph_endpoint(test_client, admin_headers, knowledge_database):
+@pytest.mark.parametrize(
+    ("path", "params", "expected_keys"),
+    [
+        ("/api/graph/subgraph", {"node_label": "*", "max_nodes": 10}, ("nodes", "edges")),
+        ("/api/graph/stats", {}, ("total_nodes", "total_edges", "entity_types")),
+        ("/api/graph/labels", {}, ("labels",)),
+    ],
+)
+async def test_milvus_graph_endpoints(test_client, admin_headers, knowledge_database, path, params, expected_keys):
     response = await test_client.get(
-        "/api/graph/subgraph",
-        params={"kb_id": knowledge_database["kb_id"], "node_label": "*", "max_nodes": 10},
+        path,
+        params={"kb_id": knowledge_database["kb_id"], **params},
         headers=admin_headers,
     )
 
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["success"] is True
-    assert "nodes" in payload["data"]
-    assert "edges" in payload["data"]
-
-
-async def test_milvus_stats_endpoint(test_client, admin_headers, knowledge_database):
-    response = await test_client.get(
-        "/api/graph/stats",
-        params={"kb_id": knowledge_database["kb_id"]},
-        headers=admin_headers,
-    )
-
-    assert response.status_code == 200, response.text
-    payload = response.json()
-    assert payload["success"] is True
-    assert "total_nodes" in payload["data"]
-    assert "total_edges" in payload["data"]
-    assert "entity_types" in payload["data"]
-
-
-async def test_milvus_labels_endpoint(test_client, admin_headers, knowledge_database):
-    response = await test_client.get(
-        "/api/graph/labels",
-        params={"kb_id": knowledge_database["kb_id"]},
-        headers=admin_headers,
-    )
-
-    assert response.status_code == 200, response.text
-    payload = response.json()
-    assert payload["success"] is True
-    assert "labels" in payload["data"]
-    assert isinstance(payload["data"]["labels"], list)
+    for key in expected_keys:
+        assert key in payload["data"]
 
 
 @pytest.mark.parametrize(

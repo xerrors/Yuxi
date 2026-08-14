@@ -10,18 +10,14 @@ import asyncpg
 import httpx
 import pytest
 
+from e2e_helpers import cancel_run, delete_agent, postgres_dsn
+
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow]
 
 POLL_INTERVAL_SECONDS = float(os.getenv("E2E_RUN_POLL_INTERVAL_SECONDS", "2"))
 RUN_TIMEOUT_SECONDS = int(os.getenv("E2E_RUN_TIMEOUT_SECONDS", "240"))
 EVAL_EXPECTED_OUTPUT = "AGENT_EVAL_E2E_OK"
 CALL_EXPECTED_OUTPUT = "AGENT_CALL_E2E_OK"
-
-
-def _postgres_dsn() -> str:
-    return os.getenv("POSTGRES_URL", "postgresql+asyncpg://postgres:postgres@postgres:5432/yuxi").replace(
-        "+asyncpg", ""
-    )
 
 
 def _json_dict(value: Any) -> dict[str, Any]:
@@ -74,18 +70,6 @@ async def _create_agent(client: httpx.AsyncClient, headers: dict[str, str], uid:
     return slug
 
 
-async def _delete_agent(client: httpx.AsyncClient, headers: dict[str, str], slug: str) -> None:
-    response = await client.delete(f"/api/agent/{slug}", headers=headers)
-    assert response.status_code in {200, 404}, response.text
-
-
-async def _cancel_run(client: httpx.AsyncClient, headers: dict[str, str], run_id: str | None) -> None:
-    if not run_id:
-        return
-    response = await client.post(f"/api/agent/runs/{run_id}/cancel", headers=headers)
-    assert response.status_code < 500, response.text
-
-
 async def _wait_agent_call_result(
     client: httpx.AsyncClient,
     headers: dict[str, str],
@@ -112,7 +96,7 @@ async def _wait_agent_call_result(
 
 
 async def _load_run_metadata(run_id: str) -> dict[str, Any]:
-    conn = await asyncpg.connect(_postgres_dsn())
+    conn = await asyncpg.connect(postgres_dsn())
     try:
         row = await conn.fetchrow(
             """
@@ -233,5 +217,5 @@ async def test_agent_eval_and_agent_call_entrypoints_share_run_invocation_flow(
         assert "custom_variables" not in agent_call_run["input_metadata"]
     finally:
         if not agent_call_completed:
-            await _cancel_run(e2e_client, e2e_headers, agent_call_run_id)
-        await _delete_agent(e2e_client, e2e_headers, agent_slug)
+            await cancel_run(e2e_client, e2e_headers, agent_call_run_id)
+        await delete_agent(e2e_client, e2e_headers, agent_slug)

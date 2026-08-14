@@ -228,44 +228,14 @@ async def test_enable_skills_updates_current_user_owned_agent_config(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_enable_skills_does_not_update_agent_not_owned_by_current_user(monkeypatch):
-    conv = SimpleNamespace(uid="user-1", agent_id="shared-agent")
-    agent = SimpleNamespace(created_by="admin", config_json={"context": {}})
-    calls = {}
-
-    class FakeConversationRepository:
-        def __init__(self, db):
-            self.db = db
-
-        async def get_conversation_by_thread_id(self, _thread_id):
-            return conv
-
-    class FakeAgentRepository:
-        def __init__(self, db):
-            self.db = db
-
-        async def get_by_slug(self, _slug):
-            return agent
-
-        async def update(self, *_args, **_kwargs):
-            calls["updated"] = True
-
-    monkeypatch.setattr(install_skill_module, "ConversationRepository", FakeConversationRepository)
-    monkeypatch.setattr(install_skill_module, "AgentRepository", FakeAgentRepository)
-
-    result = await install_skill_module._enable_skills_in_current_config(
-        SimpleNamespace(),
-        "thread-1",
-        "user-1",
-        ["new-skill"],
-    )
-
-    assert result is False
-    assert "updated" not in calls
-
-
-@pytest.mark.asyncio
-async def test_enable_skills_does_not_update_mismatched_runtime_uid(monkeypatch):
+@pytest.mark.parametrize(
+    ("runtime_uid", "agent", "must_not_call"),
+    [
+        ("user-1", SimpleNamespace(created_by="admin", config_json={"context": {}}), "update"),
+        ("other-user", None, "get_by_slug"),
+    ],
+)
+async def test_enable_skills_does_not_update_unowned_agent(monkeypatch, runtime_uid: str, agent, must_not_call: str):
     conv = SimpleNamespace(uid="user-1", agent_id="agent-1")
     calls = {}
 
@@ -280,8 +250,12 @@ async def test_enable_skills_does_not_update_mismatched_runtime_uid(monkeypatch)
         def __init__(self, db):
             self.db = db
 
-        async def get_by_slug(self, *_args):
-            calls["loaded_agent"] = True
+        async def get_by_slug(self, _slug):
+            calls["get_by_slug"] = True
+            return agent
+
+        async def update(self, *_args, **_kwargs):
+            calls["update"] = True
 
     monkeypatch.setattr(install_skill_module, "ConversationRepository", FakeConversationRepository)
     monkeypatch.setattr(install_skill_module, "AgentRepository", FakeAgentRepository)
@@ -289,12 +263,12 @@ async def test_enable_skills_does_not_update_mismatched_runtime_uid(monkeypatch)
     result = await install_skill_module._enable_skills_in_current_config(
         SimpleNamespace(),
         "thread-1",
-        "other-user",
+        runtime_uid,
         ["new-skill"],
     )
 
     assert result is False
-    assert "loaded_agent" not in calls
+    assert must_not_call not in calls
 
 
 def test_prepare_skill_from_sandbox_uses_sandbox_api_without_host_path_resolution(monkeypatch, tmp_path: Path):

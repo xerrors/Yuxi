@@ -373,81 +373,75 @@ async def test_index_file_persists_chunk_stats(monkeypatch):
     assert file_repo.update_calls[-1][2]["status"] == FileStatus.INDEXED
 
 
-async def test_parse_file_cancellation_marks_file_retryable(monkeypatch):
+@pytest.mark.parametrize(
+    ("operation", "expected_status", "expected_message"),
+    [
+        ("parse", FileStatus.ERROR_PARSING, "File parsing was cancelled"),
+        ("index", FileStatus.ERROR_INDEXING, "File indexing was cancelled"),
+    ],
+)
+async def test_cancellation_marks_file_retryable(monkeypatch, operation, expected_status, expected_message):
     kb = MilvusKB.__new__(MilvusKB)
-    file_repo = FakeKnowledgeFileRepository(
-        {"file-1": make_file_record(markdown_file=None, status=FileStatus.UPLOADED)}
-    )
-    patch_file_repository(monkeypatch, file_repo)
-
-    parsing = asyncio.Event()
-
-    async def cancelled_parse(*args, **kwargs):
-        parsing.set()
-        await asyncio.Event().wait()
-
-    monkeypatch.setattr("yuxi.services.ocr_service.parse_document", cancelled_parse)
-
-    task = asyncio.create_task(
-        kb.parse_file(
-            "db",
-            "file-1",
-            operator_id="user-1",
-            additional_params={},
+    if operation == "parse":
+        file_repo = FakeKnowledgeFileRepository(
+            {"file-1": make_file_record(markdown_file=None, status=FileStatus.UPLOADED)}
         )
-    )
-    await asyncio.wait_for(parsing.wait(), timeout=1)
+        patch_file_repository(monkeypatch, file_repo)
+        started = asyncio.Event()
+
+        async def cancelled_step(*args, **kwargs):
+            started.set()
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr("yuxi.services.ocr_service.parse_document", cancelled_step)
+        task = asyncio.create_task(
+            kb.parse_file(
+                "db",
+                "file-1",
+                operator_id="user-1",
+                additional_params={},
+            )
+        )
+    else:
+        file_repo = FakeKnowledgeFileRepository({"file-1": make_file_record()})
+        patch_file_repository(monkeypatch, file_repo)
+        started = asyncio.Event()
+
+        async def get_collection(kb_id, embedding_model_spec):
+            del kb_id, embedding_model_spec
+            return FakeCollection()
+
+        async def cancelled_step(path):
+            started.set()
+            await asyncio.Event().wait()
+
+        kb._get_or_create_milvus_collection = get_collection
+        kb._get_embedding_function = lambda embedding_model_spec: None
+        kb._read_markdown_from_minio = cancelled_step
+
+        async def get_system_options(_option, _db=None):
+            return {"embed_model": EMBEDDING_MODEL_SPEC}
+
+        monkeypatch.setattr(type(milvus_module.system_options), "get", get_system_options)
+        task = asyncio.create_task(
+            kb.index_file(
+                "db",
+                "file-1",
+                operator_id="user-1",
+                params={},
+                embedding_model_spec=EMBEDDING_MODEL_SPEC,
+                additional_params={},
+            )
+        )
+
+    await asyncio.wait_for(started.wait(), timeout=1)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
 
     record = file_repo.records["file-1"]
-    assert record.status == FileStatus.ERROR_PARSING
-    assert record.error_message == "File parsing was cancelled"
-
-
-async def test_index_file_cancellation_marks_file_retryable(monkeypatch):
-    kb = MilvusKB.__new__(MilvusKB)
-    file_repo = FakeKnowledgeFileRepository({"file-1": make_file_record()})
-    patch_file_repository(monkeypatch, file_repo)
-
-    async def get_collection(kb_id, embedding_model_spec):
-        del kb_id, embedding_model_spec
-        return FakeCollection()
-
-    reading = asyncio.Event()
-
-    async def cancelled_read(path):
-        reading.set()
-        await asyncio.Event().wait()
-
-    kb._get_or_create_milvus_collection = get_collection
-    kb._get_embedding_function = lambda embedding_model_spec: None
-    kb._read_markdown_from_minio = cancelled_read
-
-    async def get_system_options(_option, _db=None):
-        return {"embed_model": EMBEDDING_MODEL_SPEC}
-
-    monkeypatch.setattr(type(milvus_module.system_options), "get", get_system_options)
-
-    task = asyncio.create_task(
-        kb.index_file(
-            "db",
-            "file-1",
-            operator_id="user-1",
-            params={},
-            embedding_model_spec=EMBEDDING_MODEL_SPEC,
-            additional_params={},
-        )
-    )
-    await asyncio.wait_for(reading.wait(), timeout=1)
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-
-    record = file_repo.records["file-1"]
-    assert record.status == FileStatus.ERROR_INDEXING
-    assert record.error_message == "File indexing was cancelled"
+    assert record.status == expected_status
+    assert record.error_message == expected_message
 
 
 async def test_delete_file_chunks_only_resets_file_stats(monkeypatch):

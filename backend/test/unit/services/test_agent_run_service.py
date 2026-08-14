@@ -1523,10 +1523,19 @@ async def test_create_chat_run_with_image_persists_multimodal_message_type(monke
 
 
 @pytest.mark.asyncio
-async def test_create_chat_run_snapshots_agent_configured_model_spec(monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.parametrize(
+    ("configured_model", "expected_spec"),
+    [
+        ("agent-config-model", "agent-config-model"),
+        ("", "system-default:model"),
+    ],
+)
+async def test_create_chat_run_snapshots_model_spec_source(
+    monkeypatch: pytest.MonkeyPatch, configured_model: str, expected_spec: str
+):
     db = _patch_agent_run_creation(
         monkeypatch,
-        agent_config_json={"context": {"model": "agent-config-model"}},
+        agent_config_json={"context": {"model": configured_model}},
     )
 
     await agent_run_service.create_agent_run_view(
@@ -1539,28 +1548,7 @@ async def test_create_chat_run_snapshots_agent_configured_model_spec(monkeypatch
         model_spec=None,
     )
 
-    assert db.created_run_kwargs["input_payload"]["model_spec"] == "agent-config-model"
-    assert "model_spec" not in db.added[0].extra_metadata
-
-
-@pytest.mark.asyncio
-async def test_create_chat_run_snapshots_system_default_when_agent_model_empty(monkeypatch: pytest.MonkeyPatch):
-    db = _patch_agent_run_creation(
-        monkeypatch,
-        agent_config_json={"context": {"model": ""}},
-    )
-
-    await agent_run_service.create_agent_run_view(
-        input_message=_chat_input("hello"),
-        agent_slug="default",
-        thread_id="thread-1",
-        meta={"request_id": "req-1"},
-        current_uid="user-1",
-        db=db,
-        model_spec=None,
-    )
-
-    assert db.created_run_kwargs["input_payload"]["model_spec"] == "system-default:model"
+    assert db.created_run_kwargs["input_payload"]["model_spec"] == expected_spec
     assert "model_spec" not in db.added[0].extra_metadata
 
 
@@ -1642,30 +1630,35 @@ def test_validate_resume_input_accepts_only_approve_and_reject_decisions():
     assert exc.value.status_code == 422
 
 
-def test_compact_stream_chunk_retains_compression_field():
-    chunk = {
-        "request_id": "req-1",
-        "response": None,
-        "thread_id": "thread-1",
-        "status": "context_compression",
-        "compression": {"type": "yuxi.context_compression", "status": "started"},
-        "meta": {"uid": "user-1"},
-    }
-
+@pytest.mark.parametrize(
+    ("field", "chunk"),
+    [
+        (
+            "compression",
+            {
+                "request_id": "req-1",
+                "response": None,
+                "thread_id": "thread-1",
+                "status": "context_compression",
+                "compression": {"type": "yuxi.context_compression", "status": "started"},
+                "meta": {"uid": "user-1"},
+            },
+        ),
+        (
+            "approval",
+            {
+                "status": "human_approval_required",
+                "run_id": "run-1",
+                "approval": {
+                    "action_requests": [{"name": "execute", "args": {"command": "pytest -q"}}],
+                    "review_configs": [{"action_name": "execute", "allowed_decisions": ["approve", "reject"]}],
+                },
+            },
+        ),
+    ],
+)
+def test_compact_stream_chunk_retains_status_and_field(field: str, chunk: dict):
     compact = agent_run_service._compact_stream_chunk(chunk)
 
-    assert compact["status"] == "context_compression"
-    assert compact["compression"] == {"type": "yuxi.context_compression", "status": "started"}
-
-
-def test_compact_stream_chunk_retains_tool_approval_payload():
-    approval = {
-        "action_requests": [{"name": "execute", "args": {"command": "pytest -q"}}],
-        "review_configs": [{"action_name": "execute", "allowed_decisions": ["approve", "reject"]}],
-    }
-
-    compact = agent_run_service._compact_stream_chunk(
-        {"status": "human_approval_required", "run_id": "run-1", "approval": approval}
-    )
-
-    assert compact["approval"] == approval
+    assert compact["status"] == chunk["status"]
+    assert compact[field] == chunk[field]

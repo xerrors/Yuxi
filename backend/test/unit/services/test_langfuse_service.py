@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from yuxi.services import langfuse_service as svc
 
 
@@ -35,6 +37,26 @@ class _FakeCallbackHandler:
         self.public_key = public_key
         self.trace_context = trace_context
         self.last_trace_id = None
+
+
+@pytest.fixture
+def run_context_with_last_trace(monkeypatch):
+    _FakeLangfuseClient.instances.clear()
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
+    monkeypatch.setattr(svc, "Langfuse", _FakeLangfuseClient)
+    monkeypatch.setattr(svc, "CallbackHandler", _FakeCallbackHandler)
+    svc.get_langfuse_client.cache_clear()
+
+    run_context = svc.build_run_context(
+        user_id="user-1",
+        thread_id="thread-1",
+        agent_id="agent-a",
+        request_id="req-1",
+        operation="agent_chat_stream",
+    )
+    run_context.callbacks[0].last_trace_id = "trace-runtime"
+    return run_context
 
 
 def test_build_run_context_includes_trace_metadata(monkeypatch):
@@ -108,24 +130,8 @@ def test_build_run_context_merges_evaluation_metadata_and_tags(monkeypatch):
     ]
 
 
-def test_get_trace_info_prefers_handler_last_trace_id(monkeypatch):
-    _FakeLangfuseClient.instances.clear()
-    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
-    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
-    monkeypatch.setattr(svc, "Langfuse", _FakeLangfuseClient)
-    monkeypatch.setattr(svc, "CallbackHandler", _FakeCallbackHandler)
-    svc.get_langfuse_client.cache_clear()
-
-    run_context = svc.build_run_context(
-        user_id="user-1",
-        thread_id="thread-1",
-        agent_id="agent-a",
-        request_id="req-1",
-        operation="agent_chat_stream",
-    )
-    run_context.callbacks[0].last_trace_id = "trace-runtime"
-
-    trace_info = svc.get_trace_info(run_context)
+def test_get_trace_info_prefers_handler_last_trace_id(run_context_with_last_trace):
+    trace_info = svc.get_trace_info(run_context_with_last_trace)
 
     assert trace_info == {
         "langfuse_trace_id": "trace-runtime",
@@ -134,24 +140,8 @@ def test_get_trace_info_prefers_handler_last_trace_id(monkeypatch):
     }
 
 
-async def test_get_trace_url_async_returns_trace_url(monkeypatch):
-    _FakeLangfuseClient.instances.clear()
-    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
-    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
-    monkeypatch.setattr(svc, "Langfuse", _FakeLangfuseClient)
-    monkeypatch.setattr(svc, "CallbackHandler", _FakeCallbackHandler)
-    svc.get_langfuse_client.cache_clear()
-
-    run_context = svc.build_run_context(
-        user_id="user-1",
-        thread_id="thread-1",
-        agent_id="agent-a",
-        request_id="req-1",
-        operation="agent_chat_stream",
-    )
-    run_context.callbacks[0].last_trace_id = "trace-runtime"
-
-    trace_url = await svc.get_trace_url_async(run_context)
+async def test_get_trace_url_async_returns_trace_url(run_context_with_last_trace):
+    trace_url = await svc.get_trace_url_async(run_context_with_last_trace)
 
     assert trace_url == "https://langfuse.local/trace/trace-runtime"
 

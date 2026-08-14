@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from io import BytesIO
 
+import pytest
 from docx import Document
 
 from yuxi.services.file_preview import (
@@ -20,20 +21,24 @@ def _build_docx_bytes(text: str) -> bytes:
     return buffer.getvalue()
 
 
-def test_detect_preview_type_does_not_treat_docx_as_markdown_preview():
-    preview_type, supported, message = detect_preview_type("demo.docx", _build_docx_bytes("Docx preview"))
+@pytest.mark.parametrize(
+    ("renderer", "expected_third"),
+    [
+        (detect_preview_type, "当前文件是二进制文件，暂不支持预览"),
+        (render_preview_payload, None),
+    ],
+)
+def test_docx_is_not_treated_as_markdown_preview(renderer, expected_third):
+    result = renderer("demo.docx", _build_docx_bytes("Docx preview"))
+
+    if isinstance(result, tuple):
+        preview_type, supported, third = result
+    else:
+        preview_type, supported, third = result["preview_type"], result["supported"], result["content"]
 
     assert preview_type == "unsupported"
     assert supported is False
-    assert message == "当前文件是二进制文件，暂不支持预览"
-
-
-def test_render_preview_payload_rejects_docx_without_parsed_markdown():
-    payload = render_preview_payload("demo.docx", _build_docx_bytes("Docx preview text"))
-
-    assert payload["preview_type"] == "unsupported"
-    assert payload["supported"] is False
-    assert payload["content"] is None
+    assert third == expected_third
 
 
 def test_render_preview_payload_truncates_long_markdown():

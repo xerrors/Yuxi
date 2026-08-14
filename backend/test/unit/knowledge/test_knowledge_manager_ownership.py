@@ -36,7 +36,10 @@ async def test_delete_database_cleans_resources_before_deleting_record(tmp_path,
     assert calls == [("cleanup", "kb_1"), ("delete_record", "kb_1")]
 
 
-async def test_parse_file_refreshes_stats_after_executor_failure(tmp_path, monkeypatch):
+@pytest.mark.parametrize("refresh_stats_fails", [False, True])
+async def test_parse_file_refreshes_stats_and_keeps_original_error_after_executor_failure(
+    tmp_path, monkeypatch, refresh_stats_fails
+):
     manager = KnowledgeBaseManager(str(tmp_path))
     refreshed = []
 
@@ -47,9 +50,13 @@ async def test_parse_file_refreshes_stats_after_executor_failure(tmp_path, monke
     async def get_kb_config(_kb_id: str):
         return KnowledgeBaseConfig(kb_id="kb_1", kb_type="fake")
 
-    async def refresh_database_stats(kb_id: str):
-        refreshed.append(kb_id)
-        return {}
+    if refresh_stats_fails:
+        async def refresh_database_stats(_kb_id: str):
+            raise RuntimeError("stats failed")
+    else:
+        async def refresh_database_stats(kb_id: str):
+            refreshed.append(kb_id)
+            return {}
 
     monkeypatch.setattr(manager, "get_kb_config", get_kb_config)
     monkeypatch.setattr(manager, "_get_or_create_kb_instance", lambda _kb_type: FakeExecutor())
@@ -58,28 +65,8 @@ async def test_parse_file_refreshes_stats_after_executor_failure(tmp_path, monke
     with pytest.raises(ValueError, match="parse failed"):
         await manager.parse_file("kb_1", "file_1")
 
-    assert refreshed == ["kb_1"]
-
-
-async def test_parse_file_keeps_executor_error_when_stats_refresh_fails(tmp_path, monkeypatch):
-    manager = KnowledgeBaseManager(str(tmp_path))
-
-    class FakeExecutor:
-        async def parse_file(self, *args, **kwargs):
-            raise ValueError("parse failed")
-
-    async def get_kb_config(_kb_id: str):
-        return KnowledgeBaseConfig(kb_id="kb_1", kb_type="fake")
-
-    async def refresh_database_stats(_kb_id: str):
-        raise RuntimeError("stats failed")
-
-    monkeypatch.setattr(manager, "get_kb_config", get_kb_config)
-    monkeypatch.setattr(manager, "_get_or_create_kb_instance", lambda _kb_type: FakeExecutor())
-    monkeypatch.setattr(manager, "_refresh_database_stats", refresh_database_stats)
-
-    with pytest.raises(ValueError, match="parse failed"):
-        await manager.parse_file("kb_1", "file_1")
+    if not refresh_stats_fails:
+        assert refreshed == ["kb_1"]
 
 
 async def test_update_query_params_delegates_persistence_to_manager(tmp_path, monkeypatch):

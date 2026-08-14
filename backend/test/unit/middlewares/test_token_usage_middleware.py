@@ -224,76 +224,108 @@ async def test_token_usage_middleware_resets_run_and_keeps_v2_thread_usage() -> 
     assert thread_bucket["cache_observed_input_tokens"] == 150
 
 
-def test_token_usage_middleware_removes_blacklisted_buckets_from_existing_v2_thread() -> None:
-    middleware = TokenUsageMiddleware()
-    state = {
-        "messages": [],
-        "token_usage": {
-            "current_run_id": "run-1",
-            "run": {"schema_version": 2, "models": {}, "total": {}},
-            "thread": {
-                "schema_version": 2,
-                "model_call_count": 2,
-                "usage_reported_call_count": 2,
-                "models": {
-                    "siliconflow-cn:model-a": {
-                        "model": {"provider_id": "siliconflow-cn"},
-                        "usage": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
-                        "model_call_count": 1,
-                        "usage_reported_call_count": 1,
-                    },
-                    "provider-b:model-b": {
-                        "model": {"provider_id": "provider-b"},
-                        "usage": {"input_tokens": 50, "output_tokens": 10, "total_tokens": 60},
-                        "model_call_count": 1,
-                        "usage_reported_call_count": 1,
+@pytest.mark.parametrize(
+    (
+        "state",
+        "run_id",
+        "expected_current_run_id",
+        "expected_run_model_keys",
+        "expected_thread_model_keys",
+        "expected_thread_total",
+    ),
+    [
+        (
+            {
+                "messages": [],
+                "token_usage": {
+                    "current_run_id": "run-1",
+                    "run": {"schema_version": 2, "models": {}, "total": {}},
+                    "thread": {
+                        "schema_version": 2,
+                        "model_call_count": 2,
+                        "usage_reported_call_count": 2,
+                        "models": {
+                            "siliconflow-cn:model-a": {
+                                "model": {"provider_id": "siliconflow-cn"},
+                                "usage": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
+                                "model_call_count": 1,
+                                "usage_reported_call_count": 1,
+                            },
+                            "provider-b:model-b": {
+                                "model": {"provider_id": "provider-b"},
+                                "usage": {"input_tokens": 50, "output_tokens": 10, "total_tokens": 60},
+                                "model_call_count": 1,
+                                "usage_reported_call_count": 1,
+                            },
+                        },
+                        "total": {"input_tokens": 150, "output_tokens": 30, "total_tokens": 180},
                     },
                 },
-                "total": {"input_tokens": 150, "output_tokens": 30, "total_tokens": 180},
             },
-        },
-    }
-    runtime = SimpleNamespace(context=SimpleNamespace(run_id="run-2"))
+            "run-2",
+            "run-2",
+            set(),
+            {"provider-b:model-b"},
+            {"input_tokens": 50, "output_tokens": 10, "total_tokens": 60},
+        ),
+        (
+            {
+                "messages": [],
+                "token_usage": {
+                    "current_run_id": "run-1",
+                    "latest": {"bucket_key": "siliconflow:model-a"},
+                    "run": {
+                        "schema_version": 2,
+                        "models": {
+                            "siliconflow:model-a": {
+                                "model": {"provider_id": "siliconflow"},
+                                "usage": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
+                                "model_call_count": 1,
+                                "usage_reported_call_count": 1,
+                            }
+                        },
+                        "total": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
+                    },
+                    "thread": {
+                        "schema_version": 2,
+                        "models": {
+                            "siliconflow:model-a": {
+                                "model": {"provider_id": "siliconflow"},
+                                "usage": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
+                                "model_call_count": 1,
+                                "usage_reported_call_count": 1,
+                            }
+                        },
+                        "total": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
+                    },
+                },
+            },
+            "run-1",
+            "run-1",
+            set(),
+            set(),
+            {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+        ),
+    ],
+)
+def test_token_usage_middleware_removes_blacklisted_buckets_from_previous_state(
+    state: dict,
+    run_id: str,
+    expected_current_run_id: str,
+    expected_run_model_keys: set,
+    expected_thread_model_keys: set,
+    expected_thread_total: dict,
+) -> None:
+    middleware = TokenUsageMiddleware()
+    runtime = SimpleNamespace(context=SimpleNamespace(run_id=run_id))
 
     reset = middleware.before_agent(state, runtime)["token_usage"]
 
-    assert set(reset["thread"]["models"]) == {"provider-b:model-b"}
-    assert reset["thread"]["total"] == {"input_tokens": 50, "output_tokens": 10, "total_tokens": 60}
-
-
-def test_token_usage_middleware_removes_blacklisted_buckets_when_resuming_same_run() -> None:
-    middleware = TokenUsageMiddleware()
-    blacklisted_bucket = {
-        "model": {"provider_id": "siliconflow"},
-        "usage": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
-        "model_call_count": 1,
-        "usage_reported_call_count": 1,
-    }
-    state = {
-        "messages": [],
-        "token_usage": {
-            "current_run_id": "run-1",
-            "latest": {"bucket_key": "siliconflow:model-a"},
-            "run": {
-                "schema_version": 2,
-                "models": {"siliconflow:model-a": blacklisted_bucket},
-                "total": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
-            },
-            "thread": {
-                "schema_version": 2,
-                "models": {"siliconflow:model-a": blacklisted_bucket},
-                "total": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
-            },
-        },
-    }
-    runtime = SimpleNamespace(context=SimpleNamespace(run_id="run-1"))
-
-    resumed = middleware.before_agent(state, runtime)["token_usage"]
-
-    assert resumed["current_run_id"] == "run-1"
-    assert resumed["latest"] is None
-    assert resumed["run"]["models"] == {}
-    assert resumed["thread"]["models"] == {}
+    assert reset["current_run_id"] == expected_current_run_id
+    assert reset["latest"] is None
+    assert set(reset["run"]["models"]) == expected_run_model_keys
+    assert set(reset["thread"]["models"]) == expected_thread_model_keys
+    assert reset["thread"]["total"] == expected_thread_total
 
 
 def test_token_usage_middleware_discards_unattributed_v1_thread_totals() -> None:

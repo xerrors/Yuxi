@@ -10,7 +10,7 @@ def test_parse_plain_text_returns_none():
 
 
 def test_parse_supported_command_and_arguments():
-    assert parse_slash_command(" /approve ") is not None
+    assert parse_slash_command(" /approve ").name == "approve"
     assert parse_slash_command("/state").name == "state"
     assert parse_slash_command('/approve "run-1"').args == ("run-1",)
 

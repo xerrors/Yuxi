@@ -214,21 +214,10 @@ async def test_awrap_model_call_mounts_knowledge_base_skill_tools():
     }
 
 
-def test_resolve_skill_gated_tools_collects_readable_dependency_tools():
-    """门控工具必须能从可见 Skill 的依赖解析出真实工具实例，供构建期注册进 ToolNode。"""
-    context = SimpleNamespace(
-        _readable_skills=["knowledge-base"],
-        _runtime_skill_dependency_map={"knowledge-base": {"tools": sorted(_KB_TOOL_NAMES), "mcps": [], "skills": []}},
-    )
-
-    tools = resolve_skill_gated_tools(context)
-
-    assert {tool.name for tool in tools} == _KB_TOOL_NAMES
-
-
 @pytest.mark.asyncio
-async def test_resolve_configured_runtime_tools_registers_skill_gated_tools():
-    """门控工具必须随基础工具一起进入 create_agent 工具列表（即注册进 ToolNode），否则激活后仍报 not a valid tool。"""
+async def test_resolve_skill_gated_tools_registers_kb_tools():
+    """门控工具必须能从可见 Skill 的依赖解析出真实工具实例，并随基础工具一起进入
+    create_agent 工具列表（即注册进 ToolNode），否则激活后仍报 not a valid tool。"""
     context = SimpleNamespace(
         tools=None,
         mcps=None,
@@ -236,9 +225,11 @@ async def test_resolve_configured_runtime_tools_registers_skill_gated_tools():
         _runtime_skill_dependency_map={"knowledge-base": {"tools": sorted(_KB_TOOL_NAMES), "mcps": [], "skills": []}},
     )
 
-    tools = await resolve_configured_runtime_tools(context)
+    gated_tools = resolve_skill_gated_tools(context)
+    assert {tool.name for tool in gated_tools} == _KB_TOOL_NAMES
 
-    assert _KB_TOOL_NAMES <= {tool.name for tool in tools}
+    runtime_tools = await resolve_configured_runtime_tools(context)
+    assert _KB_TOOL_NAMES <= {tool.name for tool in runtime_tools}
 
 
 def _make_gated_request(activated):
@@ -298,29 +289,19 @@ async def test_awrap_model_call_keeps_gated_tools_when_activated():
     assert captured["tools"] == {"read_file", "list_kbs", "query_kb"}
 
 
-def test_read_file_activates_only_readable_skill() -> None:
+@pytest.mark.parametrize(
+    "file_path",
+    [
+        "/home/gem/skills/alpha/SKILL.md",
+        "/home/gem/user-data/workspace/agents/skills/alpha/SKILL.md",
+    ],
+)
+def test_read_file_activates_only_readable_skill(file_path: str) -> None:
     middleware = SkillsMiddleware()
     result = ToolMessage(content="ok", tool_call_id="tool-1", name="read_file")
     request = SimpleNamespace(
         runtime=SimpleNamespace(context=SimpleNamespace(_readable_skills=["alpha"])),
-        tool_call={"name": "read_file", "args": {"file_path": "/home/gem/skills/alpha/SKILL.md"}},
-    )
-
-    updated = middleware._process_tool_call_result(result, request)
-
-    assert isinstance(updated, Command)
-    assert updated.update["activated_skills"] == ["alpha"]
-
-
-def test_read_personal_skill_file_activates_readable_skill() -> None:
-    middleware = SkillsMiddleware()
-    result = ToolMessage(content="ok", tool_call_id="tool-1", name="read_file")
-    request = SimpleNamespace(
-        runtime=SimpleNamespace(context=SimpleNamespace(_readable_skills=["alpha"])),
-        tool_call={
-            "name": "read_file",
-            "args": {"file_path": "/home/gem/user-data/workspace/agents/skills/alpha/SKILL.md"},
-        },
+        tool_call={"name": "read_file", "args": {"file_path": file_path}},
     )
 
     updated = middleware._process_tool_call_result(result, request)

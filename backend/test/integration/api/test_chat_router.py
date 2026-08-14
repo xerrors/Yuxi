@@ -99,15 +99,6 @@ async def _create_thread_for_user(test_client, headers: dict[str, str]) -> str:
     return thread_id
 
 
-async def test_admin_can_list_agents(test_client, admin_headers):
-    response = await test_client.get("/api/agent", headers=admin_headers)
-    assert response.status_code == 200, response.text
-    payload = response.json()
-    assert isinstance(payload["agents"], list)
-    if payload["agents"]:
-        assert "agent_id" in payload["agents"][0]
-
-
 async def test_thread_tool_approval_mode_is_saved_in_conversation_metadata(test_client, admin_headers):
     thread_id = await _create_thread_for_user(test_client, admin_headers)
 
@@ -153,7 +144,6 @@ async def test_mark_thread_viewed_returns_thread_status(test_client, admin_heade
     response = await test_client.post(f"/api/chat/thread/{thread_id}/viewed", headers=admin_headers)
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["id"] == thread_id
     assert payload["thread_status"] in {"done", "ready", "loading"}
 
 

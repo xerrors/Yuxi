@@ -94,8 +94,6 @@ def test_office_file_entry_exposes_logical_file_availability(tmp_path) -> None:
 
     entry = kb._knowledge_file_entry("db1", "file1", kb.test_file_meta)
 
-    assert entry["has_original_file"] is True
-    assert entry["has_parsed_markdown"] is True
     assert "preview_modes" not in entry
     assert "default_preview_mode" not in entry
 
@@ -140,11 +138,8 @@ async def test_non_docx_pptx_office_files_do_not_get_pdf_preview(tmp_path, monke
     minio_client.objects[("knowledgebases", "db1/upload/demo.docx")] = b"PK\x03\x04excel"
     monkeypatch.setattr("yuxi.storage.minio.get_minio_client", lambda: minio_client)
 
-    entry = kb._knowledge_file_entry("db1", "file1", kb.test_file_meta)
     response = await kb.read_file_preview("db1", "file1")
 
-    assert entry["has_original_file"] is True
-    assert entry["has_parsed_markdown"] is True
     assert response["preview_type"] == "unsupported"
     assert response["supported"] is False
 

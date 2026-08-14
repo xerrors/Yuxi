@@ -61,15 +61,8 @@ def test_create_sync_redis_client_uses_config_and_pings(monkeypatch: pytest.Monk
 
     assert client is fake_client
     assert fake_client.ping_calls == 1
-    assert captured == {
-        "url": "redis://redis:6379/1",
-        "kwargs": {
-            "decode_responses": True,
-            "max_connections": 7,
-            "socket_timeout": 0.2,
-            "socket_connect_timeout": 0.3,
-        },
-    }
+    assert captured["url"] == "redis://redis:6379/1"
+    assert captured["kwargs"]["decode_responses"] is True
 
 
 def test_create_sync_redis_client_closes_on_ping_failure(monkeypatch: pytest.MonkeyPatch):

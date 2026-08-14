@@ -407,8 +407,39 @@ async def test_remote_skill_sandbox_cleanup_removes_whole_thread_dir_when_releas
 
 
 @pytest.mark.asyncio
-async def test_install_remote_skills_batch_partial_failure(monkeypatch: pytest.MonkeyPatch):
-    sandbox = _FakeRemoteSkillSandbox(available={"skill-a", "skill-c"})
+@pytest.mark.parametrize(
+    ("skills", "available", "expected_results", "expected_cli_skills"),
+    [
+        (
+            ["skill-a", "skill-b", "skill-c"],
+            {"skill-a", "skill-c"},
+            [
+                {"slug": "skill-a", "success": True},
+                {"slug": "skill-b", "success": False, "error": "skills CLI 未生成预期的技能目录"},
+                {"slug": "skill-c", "success": True},
+            ],
+            ["skill-a", "skill-b", "skill-c"],
+        ),
+        (
+            ["valid-skill", "Bad Name", "another-valid"],
+            {"valid-skill"},
+            [
+                {"slug": "valid-skill", "success": True},
+                {"slug": "Bad Name", "success": False, "error": "skill 名称不合法"},
+                {"slug": "another-valid", "success": False, "error": "skills CLI 未生成预期的技能目录"},
+            ],
+            ["valid-skill", "another-valid"],
+        ),
+    ],
+)
+async def test_install_remote_skills_batch_partial_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    skills: list[str],
+    available: set[str],
+    expected_results: list[dict],
+    expected_cli_skills: list[str],
+):
+    sandbox = _FakeRemoteSkillSandbox(available=available)
 
     async def fake_import_skill_dir(_db, *, source_dir, created_by):
         return SimpleNamespace(slug=source_dir.name)
@@ -419,44 +450,14 @@ async def test_install_remote_skills_batch_partial_failure(monkeypatch: pytest.M
     results = await svc.install_remote_skills_batch(
         None,
         source="test/repo",
-        skills=["skill-a", "skill-b", "skill-c"],
+        skills=skills,
         created_by="root",
     )
 
-    assert len(results) == 3
-    assert results[0] == {"slug": "skill-a", "success": True}
-    assert results[1] == {"slug": "skill-b", "success": False, "error": "skills CLI 未生成预期的技能目录"}
-    assert results[2] == {"slug": "skill-c", "success": True}
-
-
-@pytest.mark.asyncio
-async def test_install_remote_skills_batch_handles_invalid_names(monkeypatch: pytest.MonkeyPatch):
-    sandbox = _FakeRemoteSkillSandbox(available={"valid-skill"})
-
-    async def fake_import_skill_dir(_db, *, source_dir, created_by):
-        return SimpleNamespace(slug=source_dir.name)
-
-    _use_fake_sandbox(monkeypatch, sandbox)
-    monkeypatch.setattr(svc, "import_skill_dir", fake_import_skill_dir)
-
-    results = await svc.install_remote_skills_batch(
-        None,
-        source="test/repo",
-        skills=["valid-skill", "Bad Name", "another-valid"],
-        created_by="root",
-    )
-
-    assert len(results) == 3
-    assert results[0] == {"slug": "valid-skill", "success": True}
-    assert results[1]["success"] is False
-    assert "不合法" in results[1]["error"]
-    assert results[2] == {"slug": "another-valid", "success": False, "error": "skills CLI 未生成预期的技能目录"}
-
-    # Only valid skills passed to the CLI
+    assert results == expected_results
     assert len(sandbox.calls) == 1
-    assert "--skill" in str(sandbox.calls[0])
-    assert "valid-skill" in str(sandbox.calls[0])
-    assert "Bad" not in str(sandbox.calls[0])
+    cli_skill_names = [sandbox.calls[0][index + 1] for index, arg in enumerate(sandbox.calls[0]) if arg == "--skill"]
+    assert cli_skill_names == expected_cli_skills
 
 
 def test_parse_search_skills() -> None:

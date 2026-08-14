@@ -36,18 +36,6 @@ class _FakeStreamRedis:
 
 
 @pytest.mark.asyncio
-async def test_get_redis_client_uses_storage_client(monkeypatch: pytest.MonkeyPatch):
-    fake_client = object()
-
-    async def fake_get_async_redis_client():
-        return fake_client
-
-    monkeypatch.setattr(run_queue_service, "get_async_redis_client", fake_get_async_redis_client)
-
-    assert await run_queue_service.get_redis_client() is fake_client
-
-
-@pytest.mark.asyncio
 async def test_run_stream_event_roundtrip(monkeypatch: pytest.MonkeyPatch):
     fake_redis = _FakeStreamRedis()
 

@@ -8,13 +8,6 @@ from yuxi.storage.neo4j import (
 from yuxi.storage.neo4j import manager as neo4j_manager
 
 
-def test_storage_neo4j_exports_manager():
-    import yuxi.storage.neo4j as neo4j_storage
-
-    assert neo4j_storage.Neo4jConnectionManager is Neo4jConnectionManager
-    assert neo4j_storage.safe_neo4j_label is safe_neo4j_label
-
-
 @pytest.mark.parametrize("label", ["kb_test", "MilvusKB", "_internal_1"])
 def test_safe_neo4j_label_accepts_valid_labels(label):
     assert safe_neo4j_label(label) == label

@@ -3,59 +3,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from conftest import NoQueryKnowledgeBase, TrackingLlm, make_chunk
+
 from yuxi.knowledge.eval import benchmark_generation
 from yuxi.knowledge.eval import service as eval_service_module
 from yuxi.knowledge.eval.benchmark_generation import iter_generated_benchmark_items
 from yuxi.knowledge.eval.service import EvaluationService
-
-
-class FakeGenerationKnowledgeBase:
-    def __init__(self, query_results=None):
-        self.query_results = query_results or []
-        self.query_calls = []
-
-    async def aquery(self, query_text, kb_id, **kwargs):
-        self.query_calls.append({"query_text": query_text, "kb_id": kb_id, **kwargs})
-        return self.query_results
-
-
-class NoQueryKnowledgeBase(FakeGenerationKnowledgeBase):
-    async def aquery(self, query_text, kb_id, **kwargs):
-        raise AssertionError("neighbors_count=1 时不应调用 aquery")
-
-
-class TrackingLlm:
-    def __init__(self, content=None, delay=0):
-        self.content = content or '{"query":"问题","gold_answer":"答案","gold_chunk_ids":["anchor_chunk"]}'
-        self.delay = delay
-        self.active_calls = 0
-        self.max_active_calls = 0
-        self.calls = 0
-
-    async def call(self, prompt, stream):
-        self.calls += 1
-        self.active_calls += 1
-        self.max_active_calls = max(self.max_active_calls, self.active_calls)
-        try:
-            if self.delay:
-                await asyncio.sleep(self.delay)
-            return SimpleNamespace(content=self.content)
-        finally:
-            self.active_calls -= 1
-
-
-def make_chunk(chunk_id: str, *, kb_id: str = "db_1"):
-    return SimpleNamespace(
-        chunk_id=chunk_id,
-        kb_id=kb_id,
-        file_id="file_a",
-        content="anchor content",
-        chunk_index=0,
-        graph_indexed=False,
-        ent_ids=[],
-        tags=None,
-        extraction_result=None,
-    )
 
 
 @pytest.fixture(autouse=True)
@@ -462,30 +415,31 @@ def make_generation_context(neighbors_count=2):
 
 
 @pytest.mark.asyncio
-async def test_generate_dataset_task_persists_items_before_failure_with_real_generator(monkeypatch):
-    """真实生成器路径下中途失败：已按批落库的 2 条不丢，metadata 标记 failed。"""
+@pytest.mark.parametrize(
+    ("fail_after", "batch_size", "expected_batches"),
+    [
+        (2, 1, [1, 1]),  # 已按批落库后失败
+        (3, 2, [2, 1]),  # 失败时未满一批的残余 buffer 一并落库
+    ],
+)
+async def test_generate_dataset_task_persists_partial_batches_on_failure(
+    monkeypatch, fail_after, batch_size, expected_batches
+):
+    """真实生成器中途失败：已生成题目按批落库、失败时残余 buffer 也落库，metadata 标记 failed。"""
     added_items = []
     metadata_updates = []
-    service = make_real_generator_service(monkeypatch, FlakyQueryKB(fail_after=2), 1, added_items, metadata_updates)
+    service = make_real_generator_service(
+        monkeypatch,
+        FlakyQueryKB(fail_after=fail_after),
+        batch_size,
+        added_items,
+        metadata_updates,
+    )
 
     with pytest.raises(RuntimeError, match="kb query failed"):
         await service._generate_dataset_task(make_generation_context())
 
-    assert sum(len(batch) for batch in added_items) == 2
-    assert metadata_updates[-1]["status"] == "failed"
-
-
-@pytest.mark.asyncio
-async def test_generate_dataset_task_flushes_remaining_buffer_on_failure(monkeypatch):
-    """中途失败时未满一批的残余 buffer 也一并落库（批次 2+1），metadata 标记 failed。"""
-    added_items = []
-    metadata_updates = []
-    service = make_real_generator_service(monkeypatch, FlakyQueryKB(fail_after=3), 2, added_items, metadata_updates)
-
-    with pytest.raises(RuntimeError, match="kb query failed"):
-        await service._generate_dataset_task(make_generation_context())
-
-    assert [len(batch) for batch in added_items] == [2, 1]
+    assert [len(batch) for batch in added_items] == expected_batches
     assert metadata_updates[-1]["status"] == "failed"
 
 

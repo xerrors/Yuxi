@@ -3,6 +3,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import select
 
 from yuxi.repositories.knowledge_chunk_repository import KnowledgeChunkRepository
@@ -17,9 +18,8 @@ from yuxi.storage.postgres.models_knowledge import (
 )
 
 
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_vector_projection_claim_and_finalize_chunk():
+@pytest_asyncio.fixture
+async def pg_pool():
     # The integration schema fixture uses its own anyio loop. Recreate the
     # SQLAlchemy pool in this test loop before exercising repository leases.
     pg_manager._initialized = False
@@ -27,6 +27,16 @@ async def test_vector_projection_claim_and_finalize_chunk():
     pg_manager.AsyncSession = None
     pg_manager.initialize()
     await pg_manager.ensure_knowledge_schema()
+    yield
+    await pg_manager.async_engine.dispose()
+    pg_manager._initialized = False
+    pg_manager.async_engine = None
+    pg_manager.AsyncSession = None
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_vector_projection_claim_and_finalize_chunk(pg_pool):
     suffix = uuid4().hex
     kb_id = f"pytest_vector_{suffix}"
     file_id = f"file_{suffix}"
@@ -99,20 +109,11 @@ async def test_vector_projection_claim_and_finalize_chunk():
             kb = await session.scalar(select(KnowledgeBase).where(KnowledgeBase.kb_id == kb_id))
             if kb is not None:
                 await session.delete(kb)
-        await pg_manager.async_engine.dispose()
-        pg_manager._initialized = False
-        pg_manager.async_engine = None
-        pg_manager.AsyncSession = None
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_chunk_extraction_details_return_recent_failure_samples():
-    pg_manager._initialized = False
-    pg_manager.async_engine = None
-    pg_manager.AsyncSession = None
-    pg_manager.initialize()
-    await pg_manager.ensure_knowledge_schema()
+async def test_chunk_extraction_details_return_recent_failure_samples(pg_pool):
     suffix = uuid4().hex
     kb_id = f"pytest_extraction_{suffix}"
     file_id = f"file_{suffix}"
@@ -180,7 +181,3 @@ async def test_chunk_extraction_details_return_recent_failure_samples():
             kb = await session.scalar(select(KnowledgeBase).where(KnowledgeBase.kb_id == kb_id))
             if kb is not None:
                 await session.delete(kb)
-        await pg_manager.async_engine.dispose()
-        pg_manager._initialized = False
-        pg_manager.async_engine = None
-        pg_manager.AsyncSession = None

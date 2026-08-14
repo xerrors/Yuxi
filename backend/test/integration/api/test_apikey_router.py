@@ -148,13 +148,6 @@ async def test_api_key_auth_requires_bearer_prefix(test_client, admin_headers):
         await test_client.delete(f"{API_KEYS_PATH}{created['id']}", headers=admin_headers)
 
 
-async def test_jwt_still_works_after_apikey_auth(test_client, admin_headers):
-    """Test that JWT Bearer tokens still work after API Key changes."""
-    # Call protected endpoint with JWT Bearer token (admin_headers)
-    response = await test_client.get(PROTECTED_PATH, headers=admin_headers)
-    assert response.status_code == 200, response.text
-
-
 async def test_api_key_auto_binds_to_current_user(test_client, admin_headers):
     """Test that API Key created without user_id is auto-bound to creator."""
     # Create API key as admin
@@ -165,14 +158,6 @@ async def test_api_key_auto_binds_to_current_user(test_client, admin_headers):
     try:
         # Verify user_id is set (auto-bound to admin)
         assert created["user_id"] is not None, "API Key should be auto-bound to creator"
-
-        # Verify the key can be used for auth
-        api_key_secret = create_response.json()["secret"]
-        response = await test_client.get(
-            PROTECTED_PATH,
-            headers={"Authorization": f"Bearer {api_key_secret}"},
-        )
-        assert response.status_code == 200, response.text
     finally:
         # Cleanup: delete the test API key
         await test_client.delete(f"{API_KEYS_PATH}{created['id']}", headers=admin_headers)

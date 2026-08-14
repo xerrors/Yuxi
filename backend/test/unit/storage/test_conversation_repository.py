@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -47,8 +47,7 @@ def test_normalize_title_trims_spaces():
     assert normalized == "hello world"
 
 
-@pytest.mark.asyncio
-async def test_list_conversations_excludes_invocation_sources(conversation_session):
+def _seed_invocation_excluding_conversations() -> tuple[Conversation, Conversation, Conversation, datetime]:
     now = utc_now_naive()
     normal = Conversation(
         thread_id="thread-normal",
@@ -81,6 +80,12 @@ async def test_list_conversations_excludes_invocation_sources(conversation_sessi
         updated_at=now + timedelta(minutes=1),
         extra_metadata={"source": "agent_evaluation"},
     )
+    return normal, agent_call, agent_eval, now
+
+
+@pytest.mark.asyncio
+async def test_list_conversations_excludes_invocation_sources(conversation_session):
+    normal, agent_call, agent_eval, _ = _seed_invocation_excluding_conversations()
     conversation_session.add_all([normal, agent_call, agent_eval])
     await conversation_session.commit()
 
@@ -187,37 +192,7 @@ async def test_search_conversations_by_message_content_filters_user_status_and_t
 
 @pytest.mark.asyncio
 async def test_search_conversations_by_message_content_excludes_invocation_sources(conversation_session):
-    now = utc_now_naive()
-    normal = Conversation(
-        thread_id="thread-normal",
-        uid="user-a",
-        agent_id="agent-a",
-        title="Normal",
-        status="active",
-        created_at=now,
-        updated_at=now,
-        extra_metadata={},
-    )
-    agent_call = Conversation(
-        thread_id="thread-call",
-        uid="user-a",
-        agent_id="agent-a",
-        title="Agent Call Run",
-        status="active",
-        created_at=now,
-        updated_at=now + timedelta(minutes=2),
-        extra_metadata={"source": "agent_call"},
-    )
-    agent_eval = Conversation(
-        thread_id="thread-eval",
-        uid="user-a",
-        agent_id="agent-a",
-        title="Agent Evaluation Run",
-        status="active",
-        created_at=now,
-        updated_at=now + timedelta(minutes=1),
-        extra_metadata={"source": "agent_evaluation"},
-    )
+    normal, agent_call, agent_eval, now = _seed_invocation_excluding_conversations()
     conversation_session.add_all([normal, agent_call, agent_eval])
     await conversation_session.flush()
     conversation_session.add_all(

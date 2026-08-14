@@ -7,7 +7,6 @@ from yuxi.agents.backends.sandbox import (
 from yuxi.agents.buildin.chatbot.state import merge_subagent_runs
 from yuxi.agents.state import merge_artifacts
 from yuxi.agents.toolkits.buildin.tools import _normalize_presented_artifact_path
-from yuxi.services.chat_service import extract_agent_state
 from yuxi.utils.paths import CONVERSATION_HISTORY_DIR_NAME, LARGE_TOOL_RESULTS_DIR_NAME
 
 
@@ -192,21 +191,3 @@ def test_normalize_presented_artifact_path_rejects_internal_output_files():
             assert "工具调用阶段文件" in str(exc)
         else:
             raise AssertionError(f"expected ValueError for internal output file under {dir_name}")
-
-
-def test_extract_agent_state_includes_artifacts():
-    state = extract_agent_state(
-        {
-            "todos": [{"content": "done", "status": "completed"}],
-            "files": {"/tmp/demo.txt": {"content": ["x"]}},
-            "artifacts": ["/home/gem/user-data/outputs/demo.txt"],
-            "subagent_runs": [{"id": "tool-1", "status": "completed"}],
-            "token_usage": {"llm_input_tokens": 42},
-        }
-    )
-
-    assert state["todos"] == [{"content": "done", "status": "completed"}]
-    assert state["files"] == {"/tmp/demo.txt": {"content": ["x"]}}
-    assert state["artifacts"] == ["/home/gem/user-data/outputs/demo.txt"]
-    assert state["subagent_runs"] == [{"id": "tool-1", "status": "completed"}]
-    assert state["token_usage"] == {"llm_input_tokens": 42}

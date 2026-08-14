@@ -11,11 +11,16 @@ from yuxi.services import viewer_filesystem_service as svc
 from yuxi.services import workspace_service
 
 
-def test_resolve_local_user_data_path_blocks_upload_symlink_escape(tmp_path: Path, monkeypatch) -> None:
+def _prepare_symlink_escape(tmp_path: Path, monkeypatch) -> tuple[str, str]:
     monkeypatch.setenv("SAVE_DIR", str(tmp_path))
     thread_id = "thread-1"
     uid = "user-1"
     sandbox_paths.ensure_thread_dirs(thread_id, uid)
+    return thread_id, uid
+
+
+def test_resolve_local_user_data_path_blocks_upload_symlink_escape(tmp_path: Path, monkeypatch) -> None:
+    thread_id, uid = _prepare_symlink_escape(tmp_path, monkeypatch)
 
     outside_file = tmp_path / "outside.txt"
     outside_file.write_text("outside", encoding="utf-8")
@@ -29,10 +34,7 @@ def test_resolve_local_user_data_path_blocks_upload_symlink_escape(tmp_path: Pat
 
 
 def test_list_local_entries_skips_symlink_escape(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
-    thread_id = "thread-1"
-    uid = "user-1"
-    sandbox_paths.ensure_thread_dirs(thread_id, uid)
+    thread_id, uid = _prepare_symlink_escape(tmp_path, monkeypatch)
 
     uploads_dir = sandbox_paths.sandbox_uploads_dir(thread_id)
     (uploads_dir / "safe.txt").write_text("safe", encoding="utf-8")

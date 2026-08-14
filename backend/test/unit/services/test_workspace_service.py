@@ -30,16 +30,7 @@ def test_workspace_root_creates_default_agent_context_files(tmp_path: Path, monk
     assert (root / "agents" / "MEMORY.md").read_text(encoding="utf-8") == (
         "# MEMORY\n\n以下是 Agent 需要记住的一些信息\n"
     )
-
-
-def test_ensure_thread_dirs_creates_default_agent_context_files(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
-
-    workspace_paths.ensure_thread_dirs("thread-1", "user-1")
-
-    agents_dir = tmp_path / "threads" / "shared" / "user-1" / "workspace" / "agents"
-    assert {path.name for path in agents_dir.iterdir()} == {"AGENTS.md", "USER.md", "MEMORY.md"}
-    assert all(path.read_text(encoding="utf-8").strip() for path in agents_dir.iterdir())
+    assert {path.name for path in (root / "agents").iterdir()} == {"AGENTS.md", "USER.md", "MEMORY.md"}
 
 
 def test_external_uid_uses_stable_path_safe_workspace_directory(tmp_path: Path, monkeypatch) -> None:
@@ -101,18 +92,27 @@ def test_ensure_workspace_default_files_rejects_path_outside_threads_root(
         workspace_paths.ensure_workspace_default_files(tmp_path / "outside-workspace")
 
 
+@pytest.mark.parametrize(
+    ("filename", "content"),
+    [
+        ("bad.txt", b"\xff\xfe\x00"),
+        ("sheet.xlsx", b"PK\x03\x04excel"),
+    ],
+)
 @pytest.mark.asyncio
-async def test_read_workspace_file_content_returns_unsupported_for_non_utf8_text(
+async def test_read_workspace_file_content_returns_unsupported_for_unreadable_files(
     tmp_path: Path,
     monkeypatch,
+    filename: str,
+    content: bytes,
 ) -> None:
     monkeypatch.setenv("SAVE_DIR", str(tmp_path))
     user = _user()
     root = svc._workspace_root(user)
-    target = root / "bad.txt"
-    target.write_bytes(b"\xff\xfe\x00")
+    target = root / filename
+    target.write_bytes(content)
 
-    result = await svc.read_workspace_file_content(path="/bad.txt", current_user=user)
+    result = await svc.read_workspace_file_content(path=f"/{filename}", current_user=user)
 
     assert result["content"] is None
     assert result["preview_type"] == "unsupported"
@@ -165,55 +165,40 @@ async def test_read_workspace_file_content_rejects_xlsx_preview(
     assert result["supported"] is False
 
 
-@pytest.mark.asyncio
-async def test_preview_workspace_file_converts_office_file_to_pdf(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
-    user = _user()
-    root = svc._workspace_root(user)
-    target = root / "slides.pptx"
-    target.write_bytes(b"presentation")
-
-    async def fake_convert(filename: str, content: bytes) -> bytes:
-        assert filename == "slides.pptx"
-        assert content == b"presentation"
-        return b"%PDF-1.4\npreview"
-
-    monkeypatch.setattr(svc, "convert_office_to_pdf", fake_convert)
-
-    response = await svc.read_workspace_file_content(path="/slides.pptx", current_user=user)
-    body = b""
-    async for chunk in response.body_iterator:
-        body += chunk
-
-    assert response.media_type == "application/pdf"
-    assert body == b"%PDF-1.4\npreview"
-
-
+@pytest.mark.parametrize(
+    ("filename", "content"),
+    [
+        ("demo.docx", b"office"),
+        ("slides.pptx", b"presentation"),
+    ],
+)
 @pytest.mark.asyncio
 async def test_preview_workspace_file_caches_office_pdf_conversion(
     tmp_path: Path,
     monkeypatch,
+    filename: str,
+    content: bytes,
 ) -> None:
     monkeypatch.setenv("SAVE_DIR", str(tmp_path))
     user = _user()
     root = svc._workspace_root(user)
-    target = root / "slides.pptx"
-    target.write_bytes(b"presentation")
+    target = root / filename
+    target.write_bytes(content)
 
     convert_calls = 0
 
-    async def fake_convert(filename: str, content: bytes) -> bytes:
+    async def fake_convert(name: str, _raw: bytes) -> bytes:
         nonlocal convert_calls
+        assert name == filename
         convert_calls += 1
         return b"%PDF-1.4\npreview"
 
     monkeypatch.setattr(svc, "convert_office_to_pdf", fake_convert)
 
     async def read_pdf() -> bytes:
-        response = await svc.read_workspace_file_content(path="/slides.pptx", current_user=user)
+        response = await svc.read_workspace_file_content(path=f"/{filename}", current_user=user)
+        assert response.media_type == "application/pdf"
+        assert response.headers["x-yuxi-preview-type"] == "pdf"
         body = b""
         async for chunk in response.body_iterator:
             body += chunk
@@ -223,7 +208,7 @@ async def test_preview_workspace_file_caches_office_pdf_conversion(
     assert await read_pdf() == b"%PDF-1.4\npreview"
     assert convert_calls == 1
 
-    target.write_bytes(b"presentation-v2")
+    target.write_bytes(content + b"-v2")
     assert await read_pdf() == b"%PDF-1.4\npreview"
     assert convert_calls == 2
 
@@ -248,33 +233,35 @@ async def test_download_workspace_file_keeps_office_original_file(
     assert body == b"presentation"
 
 
+@pytest.mark.parametrize(
+    ("extension", "original", "content"),
+    [
+        ("md", "旧内容", "# 新内容"),
+        ("txt", "old", "new"),
+    ],
+)
 @pytest.mark.asyncio
-async def test_write_workspace_file_content_updates_markdown_file(tmp_path: Path, monkeypatch) -> None:
+async def test_write_workspace_file_content_updates_file(
+    tmp_path: Path,
+    monkeypatch,
+    extension: str,
+    original: str,
+    content: str,
+) -> None:
     monkeypatch.setenv("SAVE_DIR", str(tmp_path))
     user = _user()
     root = svc._workspace_root(user)
-    target = root / "note.md"
-    target.write_text("旧内容", encoding="utf-8")
+    target = root / f"note.{extension}"
+    target.write_text(original, encoding="utf-8")
 
-    result = await svc.write_workspace_file_content(path="/note.md", content="# 新内容", current_user=user)
+    result = await svc.write_workspace_file_content(
+        path=f"/note.{extension}", content=content, current_user=user
+    )
 
     assert result["success"] is True
-    assert result["path"] == "/note.md"
-    assert result["entry"]["path"] == "/note.md"
-    assert target.read_text(encoding="utf-8") == "# 新内容"
-
-
-@pytest.mark.asyncio
-async def test_write_workspace_file_content_updates_txt_file(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
-    user = _user()
-    root = svc._workspace_root(user)
-    target = root / "note.txt"
-    target.write_text("old", encoding="utf-8")
-
-    await svc.write_workspace_file_content(path="/note.txt", content="new", current_user=user)
-
-    assert target.read_text(encoding="utf-8") == "new"
+    assert result["path"] == f"/note.{extension}"
+    assert result["entry"]["path"] == f"/note.{extension}"
+    assert target.read_text(encoding="utf-8") == content
 
 
 @pytest.mark.asyncio

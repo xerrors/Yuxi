@@ -269,46 +269,81 @@ async def test_get_databases_by_user_sets_permission_and_redacts_readonly_secret
     assert owner[0].additional_params["dify_token"] == "secret"
 
 
-async def test_list_document_files_returns_lightweight_paginated_items():
+@pytest.mark.parametrize(
+    ("scenario", "kwargs", "expected_call"),
+    [
+        (
+            "paginated",
+            {"parent_id": "folder_1", "status": "indexed", "page": 2, "page_size": 50},
+            {
+                "kb_id": "kb_1",
+                "parent_id": "folder_1",
+                "path_prefix": None,
+                "status": "indexed",
+                "page": 2,
+                "page_size": 50,
+                "recursive": False,
+                "files_only": False,
+            },
+        ),
+        (
+            "files_only",
+            {"files_only": True, "include_stats": False},
+            {
+                "kb_id": "kb_1",
+                "parent_id": None,
+                "path_prefix": None,
+                "status": None,
+                "page": 1,
+                "page_size": 100,
+                "recursive": False,
+                "files_only": True,
+            },
+        ),
+        (
+            "recursive",
+            {"recursive": True, "include_stats": False},
+            {
+                "kb_id": "kb_1",
+                "parent_id": None,
+                "path_prefix": None,
+                "status": None,
+                "page": 1,
+                "page_size": 100,
+                "recursive": False,
+                "files_only": False,
+            },
+        ),
+    ],
+)
+async def test_list_document_files_passes_expected_parameters(scenario, kwargs, expected_call):
     manager = KnowledgeBaseManager("/tmp/yuxi-test")
 
-    result = await manager.list_document_files(
-        "kb_1",
-        parent_id="folder_1",
-        status="indexed",
-        page=2,
-        page_size=50,
-    )
+    result = await manager.list_document_files("kb_1", **kwargs)
 
-    assert result["page"] == 2
-    assert result["page_size"] == 50
-    assert result["total"] == 2
-    assert FakeKnowledgeFileRepository.list_calls == [
-        {
-            "kb_id": "kb_1",
-            "parent_id": "folder_1",
-            "path_prefix": None,
-            "status": "indexed",
-            "page": 2,
-            "page_size": 50,
-            "recursive": False,
-            "files_only": False,
-        }
-    ]
-    assert result["items"][0]["has_children"] is True
-    assert result["items"][1]["file_size"] == 1024
-    assert result["items"][1]["chunk_count"] == 9
-    assert result["items"][1]["token_count"] == 128
-    assert result["items"][1]["created_by"] == "user_1"
-    assert result["items"][1]["created_by_name"] == "测试用户"
-    assert result["items"][1]["created_by_avatar"] == "https://example.com/avatar.png"
-    assert result["items"][1]["has_original_file"] is True
-    assert result["items"][1]["has_parsed_markdown"] is True
+    assert FakeKnowledgeFileRepository.list_calls == [expected_call]
+    if scenario == "paginated":
+        assert result["page"] == 2
+        assert result["page_size"] == 50
+        assert result["total"] == 2
+        assert result["items"][0]["has_children"] is True
+        assert result["items"][1]["file_size"] == 1024
+        assert result["items"][1]["chunk_count"] == 9
+        assert result["items"][1]["token_count"] == 128
+        assert result["items"][1]["created_by"] == "user_1"
+        assert result["items"][1]["created_by_name"] == "测试用户"
+        assert result["items"][1]["created_by_avatar"] == "https://example.com/avatar.png"
+        assert result["items"][1]["has_original_file"] is True
+        assert result["items"][1]["has_parsed_markdown"] is True
 
-    returned_keys = set(result["items"][1])
-    assert "path" not in returned_keys
-    assert "markdown_file" not in returned_keys
-    assert "processing_params" not in returned_keys
+        returned_keys = set(result["items"][1])
+        assert "path" not in returned_keys
+        assert "markdown_file" not in returned_keys
+        assert "processing_params" not in returned_keys
+    elif scenario == "files_only":
+        assert "stats" not in result
+    else:
+        assert result["recursive"] is False
 
 
 async def test_list_document_files_keeps_virtual_folder_contract():
@@ -339,46 +374,6 @@ async def test_list_document_files_keeps_virtual_folder_contract():
     assert item["path_prefix"] == "资料/"
     assert item["has_children"] is True
     assert item["children_count"] == 3
-
-
-async def test_list_document_files_passes_files_only_and_can_omit_stats():
-    manager = KnowledgeBaseManager("/tmp/yuxi-test")
-
-    result = await manager.list_document_files("kb_1", files_only=True, include_stats=False)
-
-    assert "stats" not in result
-    assert FakeKnowledgeFileRepository.list_calls == [
-        {
-            "kb_id": "kb_1",
-            "parent_id": None,
-            "path_prefix": None,
-            "status": None,
-            "page": 1,
-            "page_size": 100,
-            "recursive": False,
-            "files_only": True,
-        }
-    ]
-
-
-async def test_list_document_files_ignores_recursive_without_status_filter():
-    manager = KnowledgeBaseManager("/tmp/yuxi-test")
-
-    result = await manager.list_document_files("kb_1", recursive=True, include_stats=False)
-
-    assert result["recursive"] is False
-    assert FakeKnowledgeFileRepository.list_calls == [
-        {
-            "kb_id": "kb_1",
-            "parent_id": None,
-            "path_prefix": None,
-            "status": None,
-            "page": 1,
-            "page_size": 100,
-            "recursive": False,
-            "files_only": False,
-        }
-    ]
 
 
 async def test_document_file_exists_delegates_exact_filename_to_repository():

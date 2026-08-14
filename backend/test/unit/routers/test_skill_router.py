@@ -253,25 +253,6 @@ def test_remote_skill_prepare_and_admin_confirm_routes(monkeypatch):
     assert captured["confirm"]["operator_uid"] == "admin"
 
 
-def test_remote_skill_list_route_reads_policy_independently(monkeypatch):
-    captured: dict[str, object] = {}
-
-    async def fake_list_remote_skills(source):
-        captured["source"] = source
-        return [{"name": "demo", "description": "demo skill"}]
-
-    monkeypatch.setattr("server.routers.skill_router.list_remote_skills", fake_list_remote_skills)
-
-    response = TestClient(_build_app(role="user")).post(
-        "/api/skills/remote/list",
-        json={"source": "owner/repo"},
-    )
-
-    assert response.status_code == 200, response.text
-    assert response.json()["data"] == [{"name": "demo", "description": "demo skill"}]
-    assert captured == {"source": "owner/repo"}
-
-
 def test_normal_user_cannot_confirm_shared_skill_install(monkeypatch):
     async def unexpected_confirm(*_args, **_kwargs):
         raise AssertionError("普通用户不应进入共享 Skill 安装服务")
@@ -285,22 +266,6 @@ def test_normal_user_cannot_confirm_shared_skill_install(monkeypatch):
     )
 
     assert response.status_code == 403
-
-
-def test_discard_skill_draft_route(monkeypatch):
-    captured: dict[str, str] = {}
-
-    async def fake_discard_skill_install_draft(*, draft_id, operator):
-        captured["draft_id"] = draft_id
-        captured["operator_uid"] = operator.uid
-
-    monkeypatch.setattr("server.routers.skill_router.discard_skill_install_draft", fake_discard_skill_install_draft)
-
-    client = TestClient(_build_app(role="user"))
-    resp = client.delete("/api/skills/install-drafts/draft-1")
-
-    assert resp.status_code == 200, resp.text
-    assert captured == {"draft_id": "draft-1", "operator_uid": "user"}
 
 
 def test_dependency_options_route_checks_manage_permission(monkeypatch):

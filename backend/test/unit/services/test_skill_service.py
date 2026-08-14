@@ -536,15 +536,60 @@ def test_is_valid_skill_slug():
     assert svc.is_valid_skill_slug("") is False
 
 
-def test_sync_thread_readable_skills_none_keeps_no_skills(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.parametrize(
+    ("seed_files", "mutation", "steps"),
+    [
+        (
+            {"skills/alpha": "alpha"},
+            None,
+            [(None, None, {})],
+        ),
+        (
+            {"skills/alpha": "alpha", "skills/beta": "beta"},
+            None,
+            [
+                (["alpha", "missing", "alpha"], None, {"alpha": "alpha"}),
+                (["beta"], None, {"beta": "beta"}),
+            ],
+        ),
+        (
+            {"skills/demo": "shared", "personal/demo": "personal"},
+            ("personal/demo", "changed"),
+            [
+                (["demo"], {"demo": "personal/demo"}, {"demo": "personal"}),
+                (["demo"], {"demo": "personal/demo"}, {"demo": "changed"}),
+            ],
+        ),
+    ],
+)
+def test_sync_thread_readable_skills(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    seed_files: dict[str, str],
+    mutation: tuple[str, str] | None,
+    steps: list[tuple],
+):
     monkeypatch.setenv("SAVE_DIR", str(tmp_path))
-    skills_root = tmp_path / "skills"
-    (skills_root / "alpha").mkdir(parents=True, exist_ok=True)
-    (skills_root / "alpha" / "SKILL.md").write_text("alpha", encoding="utf-8")
+    for rel, content in seed_files.items():
+        skill_dir = tmp_path / rel
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(content, encoding="utf-8")
 
-    thread_root = svc.sync_thread_readable_skills("thread_1", None)
+    for step_index, (selected, source_dirs, expected_entries) in enumerate(steps):
+        if step_index > 0 and mutation is not None:
+            rel_path, new_content = mutation
+            (tmp_path / rel_path / "SKILL.md").write_text(new_content, encoding="utf-8")
 
-    assert list(thread_root.iterdir()) == []
+        resolved_sources = {slug: tmp_path / rel for slug, rel in source_dirs.items()} if source_dirs else None
+        thread_root = svc.sync_thread_readable_skills("thread_1", selected, resolved_sources)
+
+        assert thread_root == tmp_path / "threads" / "thread_1" / "skills"
+        assert sorted(path.name for path in thread_root.iterdir()) == sorted(expected_entries)
+        for name, content in expected_entries.items():
+            entry = thread_root / name
+            assert entry.is_dir()
+            assert not entry.is_symlink()
+            assert (entry / "SKILL.md").read_text(encoding="utf-8") == content
 
 
 @pytest.mark.asyncio
@@ -572,27 +617,6 @@ async def test_sync_thread_readable_skills_async_runs_in_thread(monkeypatch: pyt
             ("thread-1", ["alpha"], {"alpha": "/tmp/alpha"}),
         )
     ]
-
-
-def test_sync_thread_readable_skills_only_keeps_selected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
-    skills_root = tmp_path / "skills"
-    (skills_root / "alpha").mkdir(parents=True, exist_ok=True)
-    (skills_root / "alpha" / "SKILL.md").write_text("alpha", encoding="utf-8")
-    (skills_root / "beta").mkdir(parents=True, exist_ok=True)
-    (skills_root / "beta" / "SKILL.md").write_text("beta", encoding="utf-8")
-
-    thread_root = svc.sync_thread_readable_skills("thread_1", ["alpha", "missing", "alpha"])
-
-    assert thread_root == tmp_path / "threads" / "thread_1" / "skills"
-    assert sorted(path.name for path in thread_root.iterdir()) == ["alpha"]
-    assert (thread_root / "alpha").is_dir()
-    assert not (thread_root / "alpha").is_symlink()
-    assert (thread_root / "alpha" / "SKILL.md").read_text(encoding="utf-8") == "alpha"
-
-    svc.sync_thread_readable_skills("thread_1", ["beta"])
-    assert sorted(path.name for path in thread_root.iterdir()) == ["beta"]
-    assert (thread_root / "beta" / "SKILL.md").read_text(encoding="utf-8") == "beta"
 
 
 @pytest.mark.asyncio
@@ -1838,26 +1862,3 @@ async def test_confirm_personal_skill_draft_uses_original_slug_without_database(
     assert (personal_root / "demo" / "SKILL.md").exists()
     assert not draft_dir.exists()
 
-
-def test_sync_thread_readable_skills_uses_final_source_mapping(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-):
-    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
-    shared_dir = tmp_path / "skills" / "demo"
-    personal_dir = tmp_path / "personal" / "demo"
-    shared_dir.mkdir(parents=True)
-    personal_dir.mkdir(parents=True)
-    (shared_dir / "SKILL.md").write_text("shared", encoding="utf-8")
-    (personal_dir / "SKILL.md").write_text("personal", encoding="utf-8")
-
-    thread_root = svc.sync_thread_readable_skills(
-        "thread-1",
-        ["demo"],
-        {"demo": personal_dir},
-    )
-    assert (thread_root / "demo" / "SKILL.md").read_text(encoding="utf-8") == "personal"
-
-    (personal_dir / "SKILL.md").write_text("changed", encoding="utf-8")
-    svc.sync_thread_readable_skills("thread-1", ["demo"], {"demo": personal_dir})
-    assert (thread_root / "demo" / "SKILL.md").read_text(encoding="utf-8") == "changed"

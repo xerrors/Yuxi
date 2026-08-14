@@ -6,7 +6,7 @@ from typing import Any
 import httpx
 import pytest
 
-from test.e2e.test_agent_async_e2e import _cancel_run, _consume_events, _wait_for_run
+from e2e_helpers import cancel_run, consume_events, wait_for_run
 from test.live_api_cleanup import remove_e2e_thread_storage
 from yuxi.agents.skills.service import get_personal_skills_root_dir, get_thread_skills_root_dir
 from yuxi.utils.paths import VIRTUAL_PATH_WORKSPACE_SKILLS
@@ -109,9 +109,9 @@ async def test_main_agent_reads_personal_skill_from_workspace(
         assert run_response.status_code == 200, run_response.text
         run_id = str(run_response.json()["run_id"])
 
-        event_counts = await _consume_events(e2e_client, e2e_headers, run_id)
+        event_counts = await consume_events(e2e_client, e2e_headers, run_id)
         assert event_counts.get("messages", 0) > 0, event_counts
-        run_payload = await _wait_for_run(e2e_client, e2e_headers, run_id)
+        run_payload = await wait_for_run(e2e_client, e2e_headers, run_id)
         assert run_payload.get("status") == "completed", run_payload
 
         result_response = await e2e_client.get(f"/api/agent/runs/{run_id}/result", headers=e2e_headers)
@@ -122,7 +122,7 @@ async def test_main_agent_reads_personal_skill_from_workspace(
         assert personal_skill.read_text(encoding="utf-8") == skill_md
         assert not (get_thread_skills_root_dir(thread_id) / slug).exists()
     finally:
-        await _cancel_run(e2e_client, e2e_headers, run_id)
+        await cancel_run(e2e_client, e2e_headers, run_id)
         if thread_id:
             thread_delete = await e2e_client.delete(f"/api/chat/thread/{thread_id}", headers=e2e_headers)
             assert thread_delete.status_code in {200, 404}, thread_delete.text

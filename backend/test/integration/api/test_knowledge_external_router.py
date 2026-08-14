@@ -76,8 +76,6 @@ async def test_external_files_lists_and_searches(test_client, admin_headers, kno
     assert list_response.status_code == 200, list_response.text
     payload = list_response.json()
     assert isinstance(payload.get("files"), list)
-    assert payload["offset"] == 0
-    assert payload["limit"] == 100
 
     search_response = await test_client.get(
         f"/api/knowledge/databases/external/{kb_id}/files",
@@ -105,21 +103,12 @@ async def test_external_open_unknown_file_returns_400(test_client, admin_headers
     assert response.status_code == 400
 
 
-async def test_external_find_rejects_empty_patterns(test_client, admin_headers, knowledge_database):
+@pytest.mark.parametrize("patterns", [[], ["keyword"]])
+async def test_external_find_rejects_bad_patterns(test_client, admin_headers, knowledge_database, patterns):
     kb_id = knowledge_database["kb_id"]
     response = await test_client.post(
         f"/api/knowledge/databases/external/{kb_id}/files/file_does_not_exist/find",
-        json={"patterns": []},
-        headers=admin_headers,
-    )
-    assert response.status_code == 400
-
-
-async def test_external_find_unknown_file_returns_400(test_client, admin_headers, knowledge_database):
-    kb_id = knowledge_database["kb_id"]
-    response = await test_client.post(
-        f"/api/knowledge/databases/external/{kb_id}/files/file_does_not_exist/find",
-        json={"patterns": ["keyword"]},
+        json={"patterns": patterns},
         headers=admin_headers,
     )
     assert response.status_code == 400

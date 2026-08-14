@@ -179,13 +179,10 @@ async def test_parse_tmp_attachment_uses_selected_method_and_uploads_markdown(mo
     assert fake_minio.objects[("knowledgebases", response["parsed_object_name"])] == b"# parsed"
 
 
-@pytest.mark.asyncio
-async def test_confirm_tmp_thread_attachments_persists_objects_without_local_paths(monkeypatch):
+@pytest.fixture
+def confirm_attachment_env(monkeypatch: pytest.MonkeyPatch):
+    """构造 confirm 流程所需的 MinIO 与仓库假实现，并挂载到 service 模块。"""
     fake_minio = FakeMinioClient()
-    original_object = "tmp/chat_attachments/user-1/tmp-1/original/demo.pdf"
-    parsed_object = "tmp/chat_attachments/user-1/tmp-1/parsed/demo.md"
-    fake_minio.objects[("knowledgebases", original_object)] = b"pdf-bytes"
-    fake_minio.objects[("knowledgebases", parsed_object)] = b"# parsed"
     fake_repo = FakeConversationRepository(db=None)
 
     monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
@@ -195,6 +192,17 @@ async def test_confirm_tmp_thread_attachments_persists_objects_without_local_pat
         return None
 
     monkeypatch.setattr(service, "invalidate_mention_cache", noop_invalidate)
+
+    return fake_minio, fake_repo
+
+
+@pytest.mark.asyncio
+async def test_confirm_tmp_thread_attachments_persists_objects_without_local_paths(confirm_attachment_env):
+    fake_minio, fake_repo = confirm_attachment_env
+    original_object = "tmp/chat_attachments/user-1/tmp-1/original/demo.pdf"
+    parsed_object = "tmp/chat_attachments/user-1/tmp-1/parsed/demo.md"
+    fake_minio.objects[("knowledgebases", original_object)] = b"pdf-bytes"
+    fake_minio.objects[("knowledgebases", parsed_object)] = b"# parsed"
 
     response = await service.confirm_tmp_thread_attachments_view(
         thread_id="thread-1",
@@ -271,14 +279,10 @@ async def test_parse_tmp_attachment_handles_url_metacharacters(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_confirm_tmp_thread_attachments_rejects_non_parsed_object(monkeypatch):
-    fake_minio = FakeMinioClient()
+async def test_confirm_tmp_thread_attachments_rejects_non_parsed_object(confirm_attachment_env):
+    fake_minio, fake_repo = confirm_attachment_env
     original_object = "tmp/chat_attachments/user-1/tmp-1/original/demo.pdf"
     fake_minio.objects[("knowledgebases", original_object)] = b"pdf-bytes"
-    fake_repo = FakeConversationRepository(db=None)
-
-    monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
-    monkeypatch.setattr(service, "ConversationRepository", lambda db: fake_repo)
 
     with pytest.raises(service.HTTPException) as exc_info:
         await service.confirm_tmp_thread_attachments_view(
@@ -301,15 +305,11 @@ async def test_confirm_tmp_thread_attachments_rejects_non_parsed_object(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_confirm_tmp_thread_attachments_validates_batch_before_commit(monkeypatch):
-    fake_minio = FakeMinioClient()
+async def test_confirm_tmp_thread_attachments_validates_batch_before_commit(confirm_attachment_env):
+    fake_minio, fake_repo = confirm_attachment_env
     valid_object = "tmp/chat_attachments/user-1/tmp-1/original/valid.pdf"
     missing_object = "tmp/chat_attachments/user-1/tmp-2/original/missing.pdf"
     fake_minio.objects[("knowledgebases", valid_object)] = b"pdf-bytes"
-    fake_repo = FakeConversationRepository(db=None)
-
-    monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
-    monkeypatch.setattr(service, "ConversationRepository", lambda db: fake_repo)
 
     with pytest.raises(service.HTTPException) as exc_info:
         await service.confirm_tmp_thread_attachments_view(
@@ -327,21 +327,12 @@ async def test_confirm_tmp_thread_attachments_validates_batch_before_commit(monk
 
 
 @pytest.mark.asyncio
-async def test_confirm_tmp_thread_attachments_keeps_duplicate_names_separate(monkeypatch):
-    fake_minio = FakeMinioClient()
+async def test_confirm_tmp_thread_attachments_keeps_duplicate_names_separate(confirm_attachment_env):
+    fake_minio, fake_repo = confirm_attachment_env
     first_object = "tmp/chat_attachments/user-1/tmp-1/original/report.pdf"
     second_object = "tmp/chat_attachments/user-1/tmp-2/original/report.pdf"
     fake_minio.objects[("knowledgebases", first_object)] = b"first"
     fake_minio.objects[("knowledgebases", second_object)] = b"second"
-    fake_repo = FakeConversationRepository(db=None)
-
-    monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
-    monkeypatch.setattr(service, "ConversationRepository", lambda db: fake_repo)
-
-    async def noop_invalidate(thread_id: str):
-        return None
-
-    monkeypatch.setattr(service, "invalidate_mention_cache", noop_invalidate)
 
     response = await service.confirm_tmp_thread_attachments_view(
         thread_id="thread-1",

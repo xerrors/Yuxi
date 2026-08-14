@@ -9,14 +9,8 @@ import pytest
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 
-async def test_reranker_list_requires_admin(test_client, standard_user):
-    public_response = await test_client.get("/api/settings/rerankers")
-    assert public_response.status_code == 404
-
-    forbidden_response = await test_client.get("/api/settings/rerankers", headers=standard_user["headers"])
-    assert forbidden_response.status_code == 404
-
-
-async def test_admin_can_list_rerankers(test_client, admin_headers):
-    response = await test_client.get("/api/settings/rerankers", headers=admin_headers)
-    assert response.status_code == 404, response.text
+async def test_reranker_endpoint_is_offline(test_client, standard_user, admin_headers):
+    """Reranker listing endpoint has been removed; all roles get 404."""
+    for headers in (None, standard_user["headers"], admin_headers):
+        response = await test_client.get("/api/settings/rerankers", headers=headers)
+        assert response.status_code == 404, response.text

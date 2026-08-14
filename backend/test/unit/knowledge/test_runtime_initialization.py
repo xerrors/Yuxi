@@ -8,14 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 from yuxi.knowledge.manager import KnowledgeBaseManager
-from yuxi.knowledge.parser.factory import DocumentProcessorFactory
-from yuxi.knowledge.parser.registry import PROCESSOR_TYPES
 
 pytestmark = pytest.mark.unit
-
-
-def test_document_processor_factory_uses_shared_registry():
-    assert DocumentProcessorFactory.PROCESSOR_TYPES is PROCESSOR_TYPES
 
 
 def test_knowledge_runtime_preserves_lite_mode(tmp_path):

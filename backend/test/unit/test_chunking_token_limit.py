@@ -74,8 +74,8 @@ def _isolated_modules():
 
 
 class TestHardSplitByTokenLimit:
-    def test_short_text_unchanged(self):
-        text = "这是一段短文本"
+    @pytest.mark.parametrize("text", ["这是一段短文本", "，。！？"])
+    def test_short_text_unchanged(self, text):
         result = nlp.hard_split_by_token_limit(text, 512)
         assert result == [text]
 
@@ -116,26 +116,21 @@ class TestHardSplitByTokenLimit:
         # max_tokens = max(0, 1) = 1, 每个 token 单独一个 chunk
         assert len(result) == 3
 
-    def test_punctuation_only_text(self):
-        text = "，。！？"
-        result = nlp.hard_split_by_token_limit(text, 512)
-        assert result == ["，。！？"]
-
 
 # ── general._ensure_chunk_token_limit ──────────────────────────────
 
 
 class TestEnsureChunkTokenLimit:
-    def test_all_chunks_within_limit_pass_through(self):
-        chunks = ["短文本一", "短文本二", "短文本三"]
+    @pytest.mark.parametrize(
+        "chunks",
+        [
+            ["短文本一", "短文本二", "短文本三"],
+            ["短文本", "内容" * 300, "短文本二"],
+        ],
+    )
+    def test_chunks_within_limit_pass_through(self, chunks):
         result = general._ensure_chunk_token_limit(chunks, 512)
-        assert result == ["短文本一", "短文本二", "短文本三"]
-
-    def test_slightly_oversized_chunk_passes_through(self):
-        long_text = "内容" * 300  # ~600 CJK tokens
-        chunks = ["短文本", long_text, "短文本二"]
-        result = general._ensure_chunk_token_limit(chunks, 512)
-        assert result == ["短文本", long_text, "短文本二"]
+        assert result == chunks
 
     def test_oversized_chunk_gets_split_with_merged_tail(self):
         long_text = "内容" * 635  # 1270 CJK tokens -> 512 + 758
@@ -184,18 +179,4 @@ class TestGeneralChunkMarkdown:
         doc = "测试\n" * 200
         chunks = general.chunk_markdown(doc)
         for chunk in chunks:
-            assert nlp.count_tokens(chunk) <= 512
-
-
-# ── laws parser 回归 ──────────────────────────────────────────────
-
-
-class TestLawsParserRegression:
-    """验证 nlp.hard_split_by_token_limit 可被 laws parser 正常调用。"""
-
-    def test_hard_split_produces_same_result(self):
-        text = "法规内容" * 300
-        result = nlp.hard_split_by_token_limit(text, 512)
-        assert len(result) > 1
-        for chunk in result:
             assert nlp.count_tokens(chunk) <= 512

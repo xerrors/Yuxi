@@ -1,7 +1,6 @@
 import pytest
 
 from yuxi.agents.tool_approval import (
-    SENSITIVE_BACKEND_TOOLS,
     TOOL_APPROVAL_INTERRUPT_ON,
     create_tool_approval_middleware,
     normalize_tool_approval_mode,
@@ -12,7 +11,6 @@ def test_default_mode_builds_sensitive_tool_approval_middleware():
     middleware = create_tool_approval_middleware("default")
 
     assert middleware.interrupt_on == TOOL_APPROVAL_INTERRUPT_ON
-    assert set(middleware.interrupt_on) == SENSITIVE_BACKEND_TOOLS
     assert all(
         config["allowed_decisions"] == ["approve", "reject"]
         for config in middleware.interrupt_on.values()

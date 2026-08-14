@@ -10,29 +10,7 @@ from yuxi.agents.toolkits.buildin import tools
 def test_ask_user_question_interrupt_payload_and_result_format(monkeypatch):
     captured_payloads = []
     expected_answer = {"style": "simple"}
-
-    def fake_interrupt(payload):
-        captured_payloads.append(payload)
-        return expected_answer
-
-    monkeypatch.setattr(tools, "interrupt", fake_interrupt)
-
-    result = tools.ask_user_question.func(
-        questions=[
-            {
-                "question_id": "style",
-                "question": "选择界面风格",
-                "options": [
-                    {"label": "简洁 (Recommended)", "value": "simple"},
-                    {"label": "详细", "value": "detailed"},
-                ],
-                "multi_select": False,
-                "allow_other": False,
-            }
-        ]
-    )
-
-    expected_questions = [
+    questions = [
         {
             "question_id": "style",
             "question": "选择界面风格",
@@ -45,8 +23,16 @@ def test_ask_user_question_interrupt_payload_and_result_format(monkeypatch):
         }
     ]
 
-    assert captured_payloads == [{"questions": expected_questions, "source": "ask_user_question"}]
-    assert result == {"questions": expected_questions, "answer": expected_answer}
+    def fake_interrupt(payload):
+        captured_payloads.append(payload)
+        return expected_answer
+
+    monkeypatch.setattr(tools, "interrupt", fake_interrupt)
+
+    result = tools.ask_user_question.func(questions=questions)
+
+    assert captured_payloads == [{"questions": questions, "source": "ask_user_question"}]
+    assert result == {"questions": questions, "answer": expected_answer}
 
 
 def test_ask_user_question_accepts_json_string_questions(monkeypatch):

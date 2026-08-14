@@ -144,12 +144,22 @@ async def test_ocr_parse_file_accepts_disable_for_pdf(tmp_path, monkeypatch: pyt
 
 
 @pytest.mark.asyncio
-async def test_ocr_parse_file_rejects_non_user_data_path(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "file_path",
+    [
+        "/etc/passwd",
+        "/home/gem/user-data/../secrets.png",
+    ],
+)
+async def test_ocr_parse_file_rejects_path_outside_user_data(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, file_path: str
+) -> None:
     monkeypatch.setenv("SAVE_DIR", str(tmp_path))
     _mock_system_options(monkeypatch)
 
     with pytest.raises(ValueError, match="只允许解析"):
-        await ocr_parse_file.coroutine(file_path="/etc/passwd", runtime=_runtime())
+        await ocr_parse_file.coroutine(file_path=file_path, runtime=_runtime())
 
 
 @pytest.mark.asyncio
@@ -163,18 +173,6 @@ async def test_ocr_parse_file_rejects_directory(tmp_path, monkeypatch: pytest.Mo
 
     with pytest.raises(ValueError, match="路径不是普通文件"):
         await ocr_parse_file.coroutine(file_path=dir_virtual_path, runtime=_runtime(thread_id=thread_id, uid=uid))
-
-
-@pytest.mark.asyncio
-async def test_ocr_parse_file_rejects_path_traversal(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
-    _mock_system_options(monkeypatch)
-
-    with pytest.raises(ValueError, match="只允许解析"):
-        await ocr_parse_file.coroutine(
-            file_path="/home/gem/user-data/../secrets.png",
-            runtime=_runtime(),
-        )
 
 
 def _mock_system_options(monkeypatch: pytest.MonkeyPatch) -> None:

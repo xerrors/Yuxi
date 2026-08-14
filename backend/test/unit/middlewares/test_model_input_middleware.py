@@ -78,20 +78,37 @@ def test_keeps_non_openai_tool_images_unchanged() -> None:
 
 
 @pytest.mark.asyncio
-async def test_translates_explicit_provider_image_rejection() -> None:
+@pytest.mark.parametrize(
+    ("error_message", "status_code"),
+    [
+        ("This model does not support image input", 400),
+        ("No endpoints found that support image input", 404),
+        (
+            "Error code: 400 - {'code': 20041, 'message': "
+            "'The model is not a VLM (Vision Language Model). Please use text-only prompts.'}",
+            400,
+        ),
+    ],
+)
+async def test_translates_provider_image_rejection_to_ocr_fallback(error_message: str, status_code: int) -> None:
     middleware = ImageInputCompatibilityMiddleware()
     request = _request(
         SimpleNamespace(),
         [_read_file_image_message()],
     )
+    calls = 0
 
     async def handler(_request):
-        error = RuntimeError("This model does not support image input")
-        error.status_code = 400
+        nonlocal calls
+        calls += 1
+        error = RuntimeError(error_message)
+        error.status_code = status_code
         raise error
 
     response = await middleware.awrap_model_call(request, handler)
 
+    assert calls == 1
+    assert [tool.name for tool in middleware.tools] == ["ocr_parse_file"]
     assert response.result[0].content == "当前模型不支持图片输入，正在改用 OCR 工具提取图片文字。"
     assert response.result[0].tool_calls[0]["name"] == "ocr_parse_file"
     assert response.result[0].tool_calls[0]["args"] == {"file_path": "/home/gem/user-data/uploads/image.png"}
@@ -132,28 +149,6 @@ async def test_translates_openrouter_missing_vision_endpoint() -> None:
     assert response.result[0].tool_calls[0]["name"] == "ocr_parse_file"
 
 
-@pytest.mark.asyncio
-async def test_translates_siliconflow_non_vlm_error_without_retrying() -> None:
-    middleware = ImageInputCompatibilityMiddleware()
-    request = _request(SimpleNamespace(), [_read_file_image_message()])
-    calls = 0
-
-    async def handler(_request):
-        nonlocal calls
-        calls += 1
-        error = RuntimeError(
-            "Error code: 400 - {'code': 20041, 'message': "
-            "'The model is not a VLM (Vision Language Model). Please use text-only prompts.'}"
-        )
-        error.status_code = 400
-        raise error
-
-    response = await middleware.awrap_model_call(request, handler)
-
-    assert calls == 1
-    assert response.result[0].tool_calls[0]["name"] == "ocr_parse_file"
-
-
 def test_omits_historical_tool_image_after_ocr_fallback() -> None:
     middleware = ImageInputCompatibilityMiddleware()
     path = "/home/gem/user-data/uploads/image.png"
@@ -181,10 +176,6 @@ def test_omits_historical_tool_image_after_ocr_fallback() -> None:
 
     assert [message.type for message in seen["messages"]] == ["tool", "ai", "tool"]
     assert "OCR fallback was requested" in seen["messages"][0].content
-
-
-def test_registers_ocr_tool_for_automatic_fallback() -> None:
-    assert [tool.name for tool in ImageInputCompatibilityMiddleware().tools] == ["ocr_parse_file"]
 
 
 @pytest.mark.asyncio

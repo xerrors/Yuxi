@@ -52,42 +52,29 @@ def test_filter_disabled_tools_removes_sensitive_backend_tools_only_in_default_m
     ] == ["read_file", "write_file", "edit_file", "execute"]
 
 
-def test_subagent_tool_filter_middleware_filters_before_handler():
-    middleware = subagent_graph._SubAgentToolFilterMiddleware()
-    seen = {}
-
-    def handler(request):
-        seen["tools"] = request.tools
-        return "ok"
-
-    result = middleware.wrap_model_call(
-        _Request([
-            SimpleNamespace(name="present_artifacts"),
-            SimpleNamespace(name="allowed_tool"),
-        ]),
-        handler,
-    )
-
-    assert result == "ok"
-    assert [tool.name for tool in seen["tools"]] == ["allowed_tool"]
-
-
 @pytest.mark.asyncio
-async def test_subagent_tool_filter_middleware_filters_async_before_handler():
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_subagent_tool_filter_middleware_filters_before_handler(use_async: bool):
     middleware = subagent_graph._SubAgentToolFilterMiddleware()
     seen = {}
 
-    async def handler(request):
+    async def async_handler(request):
         seen["tools"] = request.tools
         return "ok"
 
-    result = await middleware.awrap_model_call(
-        _Request([
-            {"name": "ask_user_question"},
-            SimpleNamespace(name="allowed_tool"),
-        ]),
-        handler,
-    )
+    def sync_handler(request):
+        seen["tools"] = request.tools
+        return "ok"
+
+    request = _Request([
+        SimpleNamespace(name="present_artifacts"),
+        {"name": "ask_user_question"},
+        SimpleNamespace(name="allowed_tool"),
+    ])
+    if use_async:
+        result = await middleware.awrap_model_call(request, async_handler)
+    else:
+        result = middleware.wrap_model_call(request, sync_handler)
 
     assert result == "ok"
     assert [subagent_graph._tool_name(tool) for tool in seen["tools"]] == ["allowed_tool"]

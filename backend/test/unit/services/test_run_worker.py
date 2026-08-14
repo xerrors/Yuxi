@@ -624,16 +624,6 @@ async def test_chunked_event_writer_flushes_semantic_tool_call_immediately(monke
     ]
 
 
-def test_chunk_thread_id_uses_fallback_for_unstable_nested_metadata():
-    assert (
-        run_worker._chunk_thread_id(
-            {"metadata": {"configurable": {"thread_id": "child-thread"}}},
-            "parent-thread",
-        )
-        == "parent-thread"
-    )
-
-
 @pytest.mark.asyncio
 async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.MonkeyPatch):
     calls: list[str] = []

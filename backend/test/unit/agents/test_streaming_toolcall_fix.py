@@ -8,12 +8,11 @@
 本测试用 fake 流式模型确定性复现该缺陷（无需网络/API key），并验证修复有效。
 """
 
-import pytest
 from langchain.agents import create_agent
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessageChunk, HumanMessage
 from langchain_core.messages.tool import tool_call_chunk
-from langchain_core.outputs import ChatGenerationChunk, ChatResult
+from langchain_core.outputs import ChatGenerationChunk
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphRecursionError

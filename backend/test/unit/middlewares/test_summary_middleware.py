@@ -246,52 +246,105 @@ def test_sanitize_messages_for_summary_only_replaces_tool_message_content() -> N
 
 
 @pytest.mark.unit
-def test_sanitize_messages_for_summary_writes_large_tool_result_and_limits_preview() -> None:
+@pytest.mark.parametrize(
+    ("tool_result_offload_token_limit", "tool_content", "expect_preview"),
+    [
+        pytest.param(10, "BEGIN\n" + ("middle\n" * 2000) + "END", True, id="limits_preview"),
+        pytest.param(0, "SECRET_RESULT_SHOULD_NOT_BE_IN_PROMPT", False, id="omits_preview"),
+    ],
+)
+def test_sanitize_messages_for_summary_writes_large_tool_result_and_limits_preview(
+    tool_result_offload_token_limit: int,
+    tool_content: str,
+    expect_preview: bool,
+) -> None:
     backend = _MemoryBackend()
-    large_result = "BEGIN\n" + ("middle\n" * 2000) + "END"
     messages = [
         HumanMessage(content="查资料"),
         AIMessage(content="", tool_calls=[{"id": "call-1", "name": "query_kb", "args": {}}]),
-        ToolMessage(content=large_result, tool_call_id="call-1", name="query_kb"),
+        ToolMessage(content=tool_content, tool_call_id="call-1", name="query_kb"),
     ]
 
-    sanitized = sanitize_messages_for_summary(messages, backend=backend, tool_result_offload_token_limit=10)
+    sanitized = sanitize_messages_for_summary(
+        messages,
+        backend=backend,
+        tool_result_offload_token_limit=tool_result_offload_token_limit,
+    )
     formatted = get_buffer_string(sanitized)
 
-    assert backend.writes == [(_expected_tool_result_path(large_result), large_result)]
+    assert backend.writes == [(_expected_tool_result_path(tool_content), tool_content)]
     assert sanitized[1] is messages[1]
     assert isinstance(sanitized[2], ToolMessage)
     assert "[Tool result saved]" in formatted
-    assert f"Full output path: {_expected_tool_result_path(large_result)}" in formatted
-    assert "BEGIN" in formatted
-    assert "END" not in formatted
+    assert f"Full output path: {_expected_tool_result_path(tool_content)}" in formatted
     assert "Truncated" in formatted
-    assert len(sanitized[2].content) < len(large_result)
+    assert ("Output preview:" in formatted) is expect_preview
+    if expect_preview:
+        assert "BEGIN" in formatted
+        assert "END" not in formatted
+        assert len(sanitized[2].content) < len(tool_content)
+    else:
+        assert tool_content not in formatted
 
 
 @pytest.mark.unit
-def test_sanitize_messages_for_summary_omits_preview_when_limit_is_zero() -> None:
-    backend = _MemoryBackend()
-    result_content = "SECRET_RESULT_SHOULD_NOT_BE_IN_PROMPT"
-    messages = [
-        ToolMessage(content=result_content, tool_call_id="call-1", name="query_kb"),
-    ]
-
-    sanitized = sanitize_messages_for_summary(messages, backend=backend, tool_result_offload_token_limit=0)
-    formatted = get_buffer_string(sanitized)
-
-    assert backend.writes == [(_expected_tool_result_path(result_content), result_content)]
-    assert f"Full output path: {_expected_tool_result_path(result_content)}" in formatted
-    assert result_content not in formatted
-    assert "Output preview:" not in formatted
-    assert "Truncated" in formatted
-
-
-@pytest.mark.unit
-def test_wrap_model_call_offloads_large_tool_messages_in_l1_without_state_mutation() -> None:
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        pytest.param(
+            {
+                "l1_l2_trigger_ratio": 100.0,
+                "tool_result_offload_token_limit": 1,
+                "keep": 3,
+                "extra_turns": 0,
+                "expect_extended": False,
+                "expect_summary_count": 0,
+                "expect_offload_marker_in_captured": True,
+                "expect_truncated_in_captured": True,
+                "expect_full_content_in_summary": False,
+                "expect_history_write": False,
+            },
+            id="l1_only_without_state_mutation",
+        ),
+        pytest.param(
+            {
+                "l1_l2_trigger_ratio": 0.01,
+                "tool_result_offload_token_limit": 1,
+                "keep": 2,
+                "extra_turns": 1,
+                "expect_extended": True,
+                "expect_summary_count": 1,
+                "expect_offload_marker_in_captured": False,
+                "expect_truncated_in_captured": False,
+                "expect_full_content_in_summary": False,
+                "expect_history_write": True,
+            },
+            id="l2_summary_offloads_tool_results_outside_keep_window",
+        ),
+        pytest.param(
+            {
+                "l1_l2_trigger_ratio": 0.01,
+                "tool_result_offload_token_limit": None,
+                "keep": 2,
+                "extra_turns": 0,
+                "expect_extended": True,
+                "expect_summary_count": 1,
+                "expect_offload_marker_in_captured": False,
+                "expect_truncated_in_captured": False,
+                "expect_full_content_in_summary": True,
+                "expect_history_write": True,
+            },
+            id="l2_summary_uses_full_tool_result_preview",
+        ),
+    ],
+)
+def test_wrap_model_call_offloads_large_tool_results(scenario: dict) -> None:
+    """大 tool result 在 L1 视图中落盘并裁剪：L1-only 不改写原始消息，L2 触发时决定摘要输入内容。"""
     backend = _MemoryBackend()
     model = _RecordingModel()
     large_result = "BEGIN\n" + ("raw result payload\n" * 200)
+    if scenario["expect_full_content_in_summary"]:
+        large_result += "END"
     messages = [
         HumanMessage(content="查资料"),
         AIMessage(content="", tool_calls=[{"id": "call-1", "name": "query_kb", "args": {}}]),
@@ -299,15 +352,17 @@ def test_wrap_model_call_offloads_large_tool_messages_in_l1_without_state_mutati
         AIMessage(content="资料已整理"),
         HumanMessage(content="继续"),
     ]
+    for index in range(scenario["extra_turns"]):
+        messages.extend([AIMessage(content=f"可以继续{index}"), HumanMessage(content=f"新问题{index}")])
     middleware = YuxiSummarizationMiddleware(
         model=model,
         backend=backend,
         trigger=("tokens", 500),
-        keep=("messages", 3),
+        keep=("messages", scenario["keep"]),
         token_counter=_content_char_counter,
         trim_tokens_to_summarize=None,
-        tool_result_offload_token_limit=1,
-        l1_l2_trigger_ratio=100.0,
+        tool_result_offload_token_limit=scenario["tool_result_offload_token_limit"],
+        l1_l2_trigger_ratio=scenario["l1_l2_trigger_ratio"],
     )
     middleware._history_path_prefix = VIRTUAL_PATH_CONVERSATION_HISTORY
     middleware._large_tool_results_prefix = VIRTUAL_PATH_LARGE_TOOL_RESULTS
@@ -320,16 +375,26 @@ def test_wrap_model_call_offloads_large_tool_messages_in_l1_without_state_mutati
 
     result = middleware.wrap_model_call(_model_request(messages), handler)
 
-    assert not isinstance(result, ExtendedModelResponse)
-    assert model.prompts == []
-    assert captured_messages is not None
-    formatted = get_buffer_string(captured_messages)
-    assert "[Tool result saved]" in formatted
-    assert "Truncated" in formatted
-    assert "END" not in formatted
+    assert isinstance(result, ExtendedModelResponse) is scenario["expect_extended"]
+    assert len(model.prompts) == scenario["expect_summary_count"]
     assert messages[2].content == large_result
     assert (_expected_tool_result_path(large_result), large_result) in backend.writes
-    assert not any(write_path.startswith(VIRTUAL_PATH_CONVERSATION_HISTORY) for write_path, _content in backend.writes)
+    history_writes = [
+        write_path
+        for write_path, _content in backend.writes
+        if write_path.startswith(VIRTUAL_PATH_CONVERSATION_HISTORY)
+    ]
+    assert bool(history_writes) is scenario["expect_history_write"]
+
+    assert captured_messages is not None
+    formatted = get_buffer_string(captured_messages)
+    assert ("[Tool result saved]" in formatted) is scenario["expect_offload_marker_in_captured"]
+    assert ("Truncated" in formatted) is scenario["expect_truncated_in_captured"]
+    assert "raw result payload" not in formatted
+
+    if scenario["expect_summary_count"]:
+        assert "[Tool result saved]" in model.prompts[0]
+        assert ("END" in model.prompts[0]) is scenario["expect_full_content_in_summary"]
 
 
 @pytest.mark.unit
@@ -462,89 +527,6 @@ def test_wrap_model_call_truncates_large_write_file_args_only_in_l1_view() -> No
     assert provider_arguments.endswith("...(argument truncated for context view)")
     assert messages[1].tool_calls[0]["args"]["content"] == large_content
     assert messages[1].additional_kwargs["tool_calls"][0]["function"]["arguments"] == raw_arguments
-
-
-@pytest.mark.unit
-def test_wrap_model_call_offloads_tool_messages_outside_keep_window_when_summary_triggers() -> None:
-    backend = _MemoryBackend()
-    model = _RecordingModel()
-    old_result = "BEGIN\n" + ("raw result payload\n" * 200)
-    messages = [
-        HumanMessage(content="查资料"),
-        AIMessage(content="", tool_calls=[{"id": "call-1", "name": "query_kb", "args": {}}]),
-        ToolMessage(content=old_result, tool_call_id="call-1", name="query_kb"),
-        AIMessage(content="资料已整理"),
-        HumanMessage(content="继续"),
-        AIMessage(content="可以继续"),
-        HumanMessage(content="新问题"),
-    ]
-    middleware = YuxiSummarizationMiddleware(
-        model=model,
-        backend=backend,
-        trigger=("tokens", 500),
-        keep=("messages", 2),
-        token_counter=_content_char_counter,
-        trim_tokens_to_summarize=None,
-        tool_result_offload_token_limit=1,
-        l1_l2_trigger_ratio=0.01,
-    )
-    middleware._history_path_prefix = VIRTUAL_PATH_CONVERSATION_HISTORY
-    middleware._large_tool_results_prefix = VIRTUAL_PATH_LARGE_TOOL_RESULTS
-    captured_messages: list | None = None
-
-    def handler(request: ModelRequest) -> ModelResponse:
-        nonlocal captured_messages
-        captured_messages = request.messages
-        return ModelResponse(result=[AIMessage(content="ok")])
-
-    result = middleware.wrap_model_call(_model_request(messages), handler)
-
-    assert isinstance(result, ExtendedModelResponse)
-    assert len(model.prompts) == 1
-    assert captured_messages is not None
-    formatted = get_buffer_string(captured_messages)
-    assert "[Tool result saved]" in model.prompts[0]
-    assert "[Tool result saved]" not in formatted
-    assert "raw result payload" not in formatted
-    tool_result_write = (_expected_tool_result_path(old_result), old_result)
-    assert backend.writes.count(tool_result_write) == 1
-    assert any(write_path.startswith(VIRTUAL_PATH_CONVERSATION_HISTORY) for write_path, _content in backend.writes)
-
-
-@pytest.mark.unit
-def test_l1_offload_uses_summary_tool_result_preview_limit_for_l2_summary() -> None:
-    backend = _MemoryBackend()
-    model = _RecordingModel()
-    old_result = "BEGIN\n" + ("raw result payload\n" * 200) + "END"
-    messages = [
-        HumanMessage(content="查资料"),
-        AIMessage(content="", tool_calls=[{"id": "call-1", "name": "query_kb", "args": {}}]),
-        ToolMessage(content=old_result, tool_call_id="call-1", name="query_kb"),
-        AIMessage(content="资料已整理"),
-        HumanMessage(content="继续"),
-    ]
-    middleware = YuxiSummarizationMiddleware(
-        model=model,
-        backend=backend,
-        trigger=("tokens", 500),
-        keep=("messages", 2),
-        token_counter=_content_char_counter,
-        trim_tokens_to_summarize=None,
-        tool_result_offload_token_limit=None,
-        l1_l2_trigger_ratio=0.01,
-    )
-    middleware._history_path_prefix = VIRTUAL_PATH_CONVERSATION_HISTORY
-    middleware._large_tool_results_prefix = VIRTUAL_PATH_LARGE_TOOL_RESULTS
-
-    result = middleware.wrap_model_call(
-        _model_request(messages),
-        lambda _request: ModelResponse(result=[AIMessage(content="ok")]),
-    )
-
-    assert isinstance(result, ExtendedModelResponse)
-    assert len(model.prompts) == 1
-    assert "END" in model.prompts[0]
-    assert backend.writes.count((_expected_tool_result_path(old_result), old_result)) == 1
 
 
 @pytest.mark.unit
@@ -692,17 +674,25 @@ def _compressing_messages(large_result: str) -> list:
 
 
 @pytest.mark.unit
-async def test_awrap_model_call_emits_started_and_completed_when_summary_triggers(
+@pytest.mark.parametrize("async_call", [False, True], ids=["sync", "async"])
+async def test_wrap_model_call_emits_started_and_completed(
     compression_events: list[dict],
+    async_call: bool,
 ) -> None:
     backend = _MemoryBackend()
     middleware, large_result = _make_compressing_middleware(backend)
     messages = _compressing_messages(large_result)
 
-    async def handler(request: ModelRequest) -> ModelResponse:
-        return ModelResponse(result=[AIMessage(content="ok")])
+    if async_call:
+        async def handler(request: ModelRequest) -> ModelResponse:
+            return ModelResponse(result=[AIMessage(content="ok")])
 
-    result = await middleware.awrap_model_call(_model_request(messages), handler)
+        result = await middleware.awrap_model_call(_model_request(messages), handler)
+    else:
+        def handler(request: ModelRequest) -> ModelResponse:
+            return ModelResponse(result=[AIMessage(content="ok")])
+
+        result = middleware.wrap_model_call(_model_request(messages), handler)
 
     assert isinstance(result, ExtendedModelResponse)
     statuses = [event["status"] for event in compression_events]
@@ -735,13 +725,25 @@ async def test_awrap_model_call_emits_nothing_when_summary_not_triggered(compres
 
 
 @pytest.mark.unit
-async def test_awrap_model_call_emits_started_when_overflow_falls_back_to_summary(
+@pytest.mark.parametrize(
+    ("preconfigure", "overflow_message"),
+    [
+        pytest.param("disable_trigger", "context overflow", id="trigger_raised"),
+        pytest.param("l1_only", "context overflow after l1", id="l1_only"),
+    ],
+)
+async def test_awrap_model_call_falls_back_to_summary_on_overflow(
     compression_events: list[dict],
+    preconfigure: str,
+    overflow_message: str,
 ) -> None:
     backend = _MemoryBackend()
     middleware, large_result = _make_compressing_middleware(backend)
-    middleware._lc_helper.trigger = [("tokens", 100_000)]
-    middleware._lc_helper._trigger_clauses = [{"tokens": 100_000}]
+    if preconfigure == "disable_trigger":
+        middleware._lc_helper.trigger = [("tokens", 100_000)]
+        middleware._lc_helper._trigger_clauses = [{"tokens": 100_000}]
+    else:
+        middleware.l1_l2_trigger_ratio = 100.0
     messages = _compressing_messages(large_result)
     calls = 0
 
@@ -749,31 +751,7 @@ async def test_awrap_model_call_emits_started_when_overflow_falls_back_to_summar
         nonlocal calls
         calls += 1
         if calls == 1:
-            raise ContextOverflowError("context overflow")
-        return ModelResponse(result=[AIMessage(content="ok")])
-
-    result = await middleware.awrap_model_call(_model_request(messages), handler)
-
-    assert isinstance(result, ExtendedModelResponse)
-    assert calls == 2
-    assert [event["status"] for event in compression_events] == ["started", "completed"]
-
-
-@pytest.mark.unit
-async def test_awrap_model_call_falls_back_to_summary_when_l1_only_overflows(
-    compression_events: list[dict],
-) -> None:
-    backend = _MemoryBackend()
-    middleware, large_result = _make_compressing_middleware(backend)
-    middleware.l1_l2_trigger_ratio = 100.0
-    messages = _compressing_messages(large_result)
-    calls = 0
-
-    async def handler(request: ModelRequest) -> ModelResponse:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            raise ContextOverflowError("context overflow after l1")
+            raise ContextOverflowError(overflow_message)
         return ModelResponse(result=[AIMessage(content="ok")])
 
     result = await middleware.awrap_model_call(_model_request(messages), handler)
@@ -800,19 +778,3 @@ async def test_awrap_model_call_emits_failed_when_handler_raises_after_started(
     statuses = [event["status"] for event in compression_events]
     assert statuses == ["started", "failed"]
     assert "model boom" in compression_events[-1]["error"]
-
-
-@pytest.mark.unit
-def test_wrap_model_call_emits_started_and_completed_sync(compression_events: list[dict]) -> None:
-    backend = _MemoryBackend()
-    middleware, large_result = _make_compressing_middleware(backend)
-    messages = _compressing_messages(large_result)
-
-    def handler(request: ModelRequest) -> ModelResponse:
-        return ModelResponse(result=[AIMessage(content="ok")])
-
-    result = middleware.wrap_model_call(_model_request(messages), handler)
-
-    assert isinstance(result, ExtendedModelResponse)
-    statuses = [event["status"] for event in compression_events]
-    assert statuses == ["started", "completed"]

@@ -31,6 +31,7 @@ def test_normalize_payload_accepts_enabled_chat_model():
     assert "models_endpoint" not in payload
     assert "embedding_models_endpoint" not in payload
     assert payload["enabled_models"][0]["display_name"] == "anthropic/claude-sonnet-4.5"
+    assert payload["enabled_models"][0]["source"] == "remote"
 
 
 def test_normalize_payload_accepts_allowed_model_request_body_overrides():
@@ -259,116 +260,29 @@ def test_builtin_provider_templates_default_to_openai_provider_type():
     assert all("ollama" not in provider["provider_id"] for provider in BUILTIN_PROVIDERS)
 
 
-def test_builtin_siliconflow_provider_includes_default_runnable_models():
-    provider = next(item for item in BUILTIN_PROVIDERS if item["provider_id"] == "siliconflow-cn")
-    models = {model["id"]: model for model in provider["enabled_models"]}
+@pytest.mark.parametrize(
+    ("is_enabled", "api_key", "api_key_env", "expected"),
+    [
+        (False, None, None, "ok"),
+        (True, "sk-test", None, "ok"),
+        (True, None, "TEST_API_KEY", "ok"),
+        (True, None, "MISSING_KEY", "warning"),
+        (True, None, None, "warning"),
+    ],
+)
+def test_check_credential_status(monkeypatch, is_enabled, api_key, api_key_env, expected):
+    """check_credential_status 依据启用状态与凭证配置返回 ok / warning。"""
+    if api_key_env == "TEST_API_KEY":
+        monkeypatch.setenv(api_key_env, "exists")
+    elif api_key_env == "MISSING_KEY":
+        monkeypatch.delenv(api_key_env, raising=False)
 
-    assert provider["capabilities"] == ["chat", "embedding", "rerank"]
-    assert provider["embedding_base_url"] == "https://api.siliconflow.cn/v1/embeddings"
-    assert provider["rerank_base_url"] == "https://api.siliconflow.cn/v1/rerank"
-    assert models["Pro/BAAI/bge-m3"]["type"] == "embedding"
-    assert models["Pro/BAAI/bge-m3"]["dimension"] == 1024
-    assert "base_url_override" not in models["Pro/BAAI/bge-m3"]
-    assert models["Pro/BAAI/bge-reranker-v2-m3"]["type"] == "rerank"
-    assert "base_url_override" not in models["Pro/BAAI/bge-reranker-v2-m3"]
+    provider = SimpleNamespace(is_enabled=is_enabled, api_key=api_key, api_key_env=api_key_env)
 
-
-def test_builtin_dashscope_cn_provider_includes_default_embedding_and_rerank_models():
-    provider = next(item for item in BUILTIN_PROVIDERS if item["provider_id"] == "alibaba-cn")
-    models = {model["id"]: model for model in provider["enabled_models"]}
-
-    assert provider["capabilities"] == ["chat", "embedding", "rerank"]
-    assert provider["embedding_base_url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings"
-    assert provider["rerank_base_url"] == "https://dashscope.aliyuncs.com/compatible-api/v1/reranks"
-    assert "embedding_models_endpoint" not in provider
-    assert "rerank_models_endpoint" not in provider
-    assert models["text-embedding-v4"]["type"] == "embedding"
-    assert models["text-embedding-v4"]["dimension"] == 1024
-    assert models["qwen3-rerank"]["type"] == "rerank"
-
-
-def test_builtin_dashscope_international_provider_uses_international_endpoint():
-    provider = next(item for item in BUILTIN_PROVIDERS if item["provider_id"] == "alibaba")
-
-    assert provider["display_name"] == "DashScope (International)"
-    assert provider["base_url"] == "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
-    assert provider["models_endpoint"] == "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models"
-    assert "embedding_base_url" not in provider
-    assert "rerank_base_url" not in provider
-
-
-def testcheck_credential_status_disabled_provider_always_ok():
-    """未启用的 provider 无论凭证如何配置，状态始终为 ok。"""
-
-    class Provider:
-        is_enabled = False
-        api_key = None
-        api_key_env = None
-
-    assert check_credential_status(Provider()) == "ok"
-
-
-def testcheck_credential_status_direct_api_key_ok():
-    """直接配置了 api_key 的启用 provider 状态为 ok。"""
-
-    class Provider:
-        is_enabled = True
-        api_key = "sk-test"
-        api_key_env = None
-
-    assert check_credential_status(Provider()) == "ok"
-
-
-def testcheck_credential_status_env_key_exists_ok(monkeypatch):
-    """api_key_env 对应的环境变量存在时状态为 ok。"""
-    monkeypatch.setenv("TEST_API_KEY", "exists")
-
-    class Provider:
-        is_enabled = True
-        api_key = None
-        api_key_env = "TEST_API_KEY"
-
-    assert check_credential_status(Provider()) == "ok"
-
-
-def testcheck_credential_status_env_key_missing_warning(monkeypatch):
-    """api_key_env 对应的环境变量不存在时状态为 warning。"""
-    monkeypatch.delenv("MISSING_KEY", raising=False)
-
-    class Provider:
-        is_enabled = True
-        api_key = None
-        api_key_env = "MISSING_KEY"
-
-    assert check_credential_status(Provider()) == "warning"
-
-
-def testcheck_credential_status_both_empty_warning():
-    """api_key 和 api_key_env 都未配置时状态为 warning。"""
-
-    class Provider:
-        is_enabled = True
-        api_key = None
-        api_key_env = None
-
-    assert check_credential_status(Provider()) == "warning"
+    assert check_credential_status(provider) == expected
 
 
 # ==================== 手动添加模型 / source 字段 ====================
-
-
-def test_normalize_payload_default_model_source_is_remote():
-    """未显式指定 source 时，规范化后默认填入 remote，向后兼容旧数据。"""
-    payload = _normalize_payload(
-        {
-            "provider_id": "openrouter-local",
-            "display_name": "OpenRouter Local",
-            "base_url": "https://openrouter.ai/api/v1",
-            "enabled_models": [{"id": "anthropic/claude-sonnet-4.5", "type": "chat"}],
-        }
-    )
-
-    assert payload["enabled_models"][0]["source"] == "remote"
 
 
 def test_normalize_payload_accepts_manual_source():

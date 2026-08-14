@@ -22,8 +22,6 @@ from yuxi.knowledge.parser.rapid_ocr import RapidOCRParser
 from yuxi.knowledge.parser.registry import PROCESSOR_TYPES, get_parser_metadata
 from yuxi.services.ocr_service import parse_document
 
-DATA_DIR = Path(__file__).resolve().parents[2] / "data"
-
 
 def test_factory_cache_key_does_not_contain_credential():
     cache_key = DocumentProcessorFactory._build_cache_key("deepseek_ocr", {"api_key": "top-secret"})
@@ -151,10 +149,8 @@ async def test_parse_document_pdf_returns_markdown_text(tmp_path: Path):
 
     markdown = await parse_document(str(file_path), params={"ocr_engine": "disable"})
 
-    assert isinstance(markdown, str)
     assert "Parser" in markdown
     assert "content" in markdown
-    assert len(markdown.strip()) > 0
 
 
 @pytest.mark.asyncio
@@ -170,9 +166,7 @@ async def test_parse_document_docx_returns_markdown_text(tmp_path: Path, monkeyp
 
     markdown = await parse_document(str(file_path))
 
-    assert isinstance(markdown, str)
     assert "Parser DOCX content" in markdown
-    assert len(markdown.strip()) > 0
 
 
 def test_convert_csv_to_markdown_preserves_column_dtypes(
@@ -293,9 +287,7 @@ async def test_parse_document_png_returns_markdown_text_with_mocked_ocr(
 
     markdown = await parse_document(str(file_path), params={"ocr_engine": "rapid_ocr"})
 
-    assert isinstance(markdown, str)
     assert "Parser PNG content" in markdown
-    assert len(markdown.strip()) > 0
 
 
 def test_parse_image_ignores_ocr_engine_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -413,22 +405,3 @@ def test_parse_pdf_keeps_explicit_disable_when_default_ocr_enabled(
     result = parser_unified.parse_pdf(str(file_path), params={"ocr_engine": "disable"})
 
     assert "Parser PDF content" in result
-
-
-@pytest.mark.asyncio
-async def test_parse_document_image_with_mineru_when_available():
-    file_path = DATA_DIR / "测试图片.png"
-    assert file_path.exists(), f"测试文件不存在: {file_path}"
-
-    health = await asyncio.to_thread(DocumentProcessorFactory.check_health, "mineru_ocr")
-    if health.get("status") != "healthy":
-        pytest.skip(f"mineru_ocr 不可用: {health.get('message', 'unknown')}")
-
-    markdown = await parse_document(
-        str(file_path),
-        params={"ocr_engine": "mineru_ocr", "backend": "pipeline"},
-    )
-
-    assert isinstance(markdown, str)
-    assert len(markdown) > 100
-    assert len(markdown.strip()) > 0

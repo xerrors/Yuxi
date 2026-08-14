@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 import pytest
 
+from e2e_helpers import cancel_run, delete_agent
 from test.live_api_cleanup import remove_e2e_thread_storage
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow]
@@ -30,18 +31,6 @@ async def _create_agent(
     agent = response.json().get("agent")
     assert isinstance(agent, dict), response.text
     return agent
-
-
-async def _delete_agent(client: httpx.AsyncClient, headers: dict[str, str], slug: str) -> None:
-    response = await client.delete(f"/api/agent/{slug}", headers=headers)
-    assert response.status_code in {200, 404}, response.text
-
-
-async def _cancel_run(client: httpx.AsyncClient, headers: dict[str, str], run_id: str | None) -> None:
-    if not run_id:
-        return
-    response = await client.post(f"/api/agent/runs/{run_id}/cancel", headers=headers)
-    assert response.status_code < 500, response.text
 
 
 async def _create_thread(client: httpx.AsyncClient, headers: dict[str, str], agent_id: str, marker: str) -> str:
@@ -402,7 +391,7 @@ async def test_subagent_stream_records_run_and_shares_output_files(
 
     finally:
         if not run_completed:
-            await _cancel_run(e2e_client, e2e_headers, run_id)
+            await cancel_run(e2e_client, e2e_headers, run_id)
         for cleanup_thread_id in (thread_id, child_thread_id):
             if cleanup_thread_id:
                 delete_response = await e2e_client.delete(
@@ -412,4 +401,4 @@ async def test_subagent_stream_records_run_and_shares_output_files(
                 assert delete_response.status_code in {200, 404}, delete_response.text
                 remove_e2e_thread_storage(cleanup_thread_id)
         for slug in reversed(created_agents):
-            await _delete_agent(e2e_client, e2e_headers, slug)
+            await delete_agent(e2e_client, e2e_headers, slug)

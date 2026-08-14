@@ -588,28 +588,6 @@ async def test_get_database_mindmap_not_exists(test_client, admin_headers, knowl
     assert payload["mindmap"] is None  # 尚未生成思维导图
 
 
-async def test_generate_and_get_mindmap(test_client, admin_headers, knowledge_database):
-    """测试生成并获取思维导图
-
-    注意：此测试需要知识库中有文件才能完整测试核心功能。
-    由于没有前置的文件上传 fixture，测试会先验证空文件场景（预期400），
-    然后使用 xfail 标记等待后续完善。
-    """
-    kb_id = knowledge_database["kb_id"]
-
-    # 空文件场景 - 预期返回400错误
-    generate_response = await test_client.post(
-        f"/api/knowledge/databases/{kb_id}/mindmap/generate",
-        json={"file_ids": [], "user_prompt": ""},
-        headers=admin_headers,
-    )
-    assert generate_response.status_code == 400
-    assert "中没有文件" in generate_response.json()["detail"]
-
-    # 标记此测试需要文件上传支持才能完整执行
-    pytest.skip("需要先上传文件才能完整测试思维导图生成功能")
-
-
 # =============================================================================
 # === Knowledge Router Additional Tests ===
 # =============================================================================
@@ -640,7 +618,12 @@ async def test_create_database_defaults_to_global_share_config(test_client, admi
         await test_client.delete(f"/api/knowledge/databases/{kb_id}", headers=admin_headers)
 
 
-async def test_department_share_config_filters_accessible_databases(test_client, admin_headers):
+@pytest.mark.parametrize(
+    ("access_level", "scope_key"),
+    [("department", "department_ids"), ("user", "user_uids")],
+)
+async def test_share_config_filters_accessible_databases(test_client, admin_headers, access_level, scope_key):
+    """按 share_config 的访问范围过滤可访问知识库，department 与 user 两级同构。"""
     department_a = await _create_test_department(test_client, admin_headers, "pytest_dept_a")
     department_b = await _create_test_department(test_client, admin_headers, "pytest_dept_b")
     user_a = user_b = None
@@ -649,7 +632,12 @@ async def test_department_share_config_filters_accessible_databases(test_client,
     try:
         user_a = await _create_test_user(test_client, admin_headers, department_a["id"])
         user_b = await _create_test_user(test_client, admin_headers, department_b["id"])
-        scope = {"access_level": "department", "department_ids": [department_a["id"]], "user_uids": []}
+        if access_level == "department":
+            scope = {"access_level": "department", "department_ids": [department_a["id"]], "user_uids": []}
+            scope_target = department_a["id"]
+        else:
+            scope = {"access_level": "user", "department_ids": [], "user_uids": [user_a["user"]["uid"]]}
+            scope_target = user_a["user"]["uid"]
         database = await _create_test_database(
             test_client,
             admin_headers,
@@ -657,8 +645,8 @@ async def test_department_share_config_filters_accessible_databases(test_client,
         )
 
         saved_config = database["share_config"]
-        assert saved_config["manage_scope"]["access_level"] == "department"
-        assert department_a["id"] in saved_config["manage_scope"]["department_ids"]
+        assert saved_config["manage_scope"]["access_level"] == access_level
+        assert scope_target in saved_config["manage_scope"][scope_key]
 
         assert database["kb_id"] in await _accessible_kb_ids(test_client, user_a["headers"])
         assert database["kb_id"] not in await _accessible_kb_ids(test_client, user_b["headers"])
@@ -671,56 +659,6 @@ async def test_department_share_config_filters_accessible_databases(test_client,
             await _delete_user_by_id(test_client, admin_headers, user_b["user"]["id"])
         await _delete_department_with_admin(test_client, admin_headers, department_a)
         await _delete_department_with_admin(test_client, admin_headers, department_b)
-
-
-async def test_user_share_config_filters_accessible_databases(test_client, admin_headers):
-    department_a = await _create_test_department(test_client, admin_headers, "pytest_dept_a")
-    department_b = await _create_test_department(test_client, admin_headers, "pytest_dept_b")
-    user_a = user_b = None
-    database = None
-
-    try:
-        user_a = await _create_test_user(test_client, admin_headers, department_a["id"])
-        user_b = await _create_test_user(test_client, admin_headers, department_b["id"])
-        scope = {"access_level": "user", "department_ids": [], "user_uids": [user_a["user"]["uid"]]}
-        database = await _create_test_database(
-            test_client,
-            admin_headers,
-            {"version": 2, "read_scope": scope, "manage_scope": scope},
-        )
-
-        saved_config = database["share_config"]
-        assert saved_config["manage_scope"]["access_level"] == "user"
-        assert user_a["user"]["uid"] in saved_config["manage_scope"]["user_uids"]
-
-        assert database["kb_id"] in await _accessible_kb_ids(test_client, user_a["headers"])
-        assert database["kb_id"] not in await _accessible_kb_ids(test_client, user_b["headers"])
-    finally:
-        if database:
-            await test_client.delete(f"/api/knowledge/databases/{database['kb_id']}", headers=admin_headers)
-        if user_a:
-            await _delete_user_by_id(test_client, admin_headers, user_a["user"]["id"])
-        if user_b:
-            await _delete_user_by_id(test_client, admin_headers, user_b["user"]["id"])
-        await _delete_department_with_admin(test_client, admin_headers, department_a)
-        await _delete_department_with_admin(test_client, admin_headers, department_b)
-
-
-async def test_user_access_options_include_all_departments_for_admin(test_client, admin_headers):
-    department = await _create_test_department(test_client, admin_headers, "pytest_access_options")
-    user = None
-
-    try:
-        user = await _create_test_user(test_client, admin_headers, department["id"])
-        response = await test_client.get("/api/auth/users/access-options", headers=admin_headers)
-        assert response.status_code == 200, response.text
-        uids = {item["uid"] for item in response.json()}
-        assert user["user"]["uid"] in uids
-        assert department["admin_uid"] in uids
-    finally:
-        if user:
-            await _delete_user_by_id(test_client, admin_headers, user["user"]["id"])
-        await _delete_department_with_admin(test_client, admin_headers, department)
 
 
 async def test_get_knowledge_base_types(test_client, admin_headers):
@@ -830,27 +768,6 @@ async def test_create_lightrag_knowledge_base_is_unsupported(test_client, admin_
     assert "Unsupported knowledge base type: lightrag" in response.json()["detail"]
 
 
-async def test_create_milvus_knowledge_base(test_client, admin_headers):
-    """测试创建 Milvus 知识库
-
-    注意：数据库清理由 conftest.py 中的 session fixture 自动处理。
-    """
-    db_name = f"pytest_milvus_{uuid.uuid4().hex[:6]}"
-    payload = {
-        "database_name": db_name,
-        "description": "Pytest Milvus knowledge base",
-        "embedding_model_spec": "siliconflow-cn:Pro/BAAI/bge-m3",
-        "kb_type": "milvus",
-        "additional_params": {},
-    }
-
-    create_response = await test_client.post("/api/knowledge/databases", json=payload, headers=admin_headers)
-    assert create_response.status_code == 200, create_response.text
-
-    db_payload = create_response.json()
-    assert db_payload["kb_type"] == "milvus"
-
-
 async def test_sample_questions_endpoints(test_client, admin_headers, knowledge_database):
     """测试示例问题接口（空文件时预期返回400）"""
     kb_id = knowledge_database["kb_id"]
@@ -894,11 +811,19 @@ async def test_mindmap_permissions(test_client, standard_user, knowledge_databas
     _assert_forbidden_response(forbidden_generate)
 
 
-async def test_document_search_returns_empty_for_blank_query(test_client, admin_headers, knowledge_database):
-    """空关键词直接返回空结果，且不命中 /documents/{doc_id} 路由。"""
+@pytest.mark.parametrize(
+    "search_params",
+    [
+        {},
+        {"query": "nonexistent-needle-xyz", "offset": 0, "limit": 50},
+    ],
+)
+async def test_document_search_returns_empty_results(test_client, admin_headers, knowledge_database, search_params):
+    """空关键词或不存在关键词都返回空结果，且不命中 /documents/{doc_id} 路由。"""
     kb_id = knowledge_database["kb_id"]
     response = await test_client.get(
         f"/api/knowledge/databases/{kb_id}/documents/search",
+        params=search_params,
         headers=admin_headers,
     )
     assert response.status_code == 200, response.text
@@ -906,23 +831,9 @@ async def test_document_search_returns_empty_for_blank_query(test_client, admin_
     assert payload["files"] == []
     assert payload["total"] == 0
     assert payload["has_more"] is False
-
-
-async def test_document_search_returns_structure_for_query(test_client, admin_headers, knowledge_database):
-    """带关键词搜索返回标准结构，并验证路由声明顺序不被 /documents/{doc_id} 抢匹配。"""
-    kb_id = knowledge_database["kb_id"]
-    response = await test_client.get(
-        f"/api/knowledge/databases/{kb_id}/documents/search",
-        params={"query": "nonexistent-needle-xyz", "offset": 0, "limit": 50},
-        headers=admin_headers,
-    )
-    assert response.status_code == 200, response.text
-    payload = response.json()
-    assert isinstance(payload.get("files"), list)
-    assert payload["total"] == 0
-    assert payload["offset"] == 0
-    assert payload["limit"] == 50
-    assert payload["has_more"] is False
+    assert payload["offset"] == search_params.get("offset", 0)
+    if "limit" in search_params:
+        assert payload["limit"] == search_params["limit"]
 
 
 async def test_document_search_requires_admin(test_client, standard_user, knowledge_database):

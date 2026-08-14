@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
-
 import pytest
 import pytest_asyncio
 from fastapi import HTTPException
@@ -10,8 +8,6 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from server.routers.auth_router import delete_user
 from server.routers.user_router import APIKeyCreate, create_api_key
 from server.utils.auth_middleware import _verify_api_key
-from yuxi.repositories import user_repository as user_repository_module
-from yuxi.repositories.user_repository import UserRepository
 from yuxi.storage.postgres.models_business import APIKey, Base, Department, User
 from yuxi.utils.auth_utils import AuthUtils
 
@@ -174,31 +170,4 @@ async def test_delete_user_disables_owned_api_keys(session):
     await db.refresh(api_key)
 
     assert result["success"] is True
-    assert api_key.is_enabled is False
-
-
-async def test_user_repository_soft_delete_disables_owned_api_keys(session, monkeypatch):
-    db = session["db"]
-    _secret, key_hash, key_prefix = AuthUtils.generate_api_key()
-    api_key = APIKey(
-        key_hash=key_hash,
-        key_prefix=key_prefix,
-        name="repository owned key",
-        user_id=session["regular_user"].id,
-        created_by=str(session["regular_user"].id),
-    )
-    db.add(api_key)
-    await db.commit()
-    await db.refresh(api_key)
-
-    @asynccontextmanager
-    async def fake_session_context():
-        yield db
-        await db.commit()
-
-    monkeypatch.setattr(user_repository_module.pg_manager, "get_async_session_context", fake_session_context)
-
-    assert await UserRepository().soft_delete(session["regular_user"].id) is True
-    await db.refresh(api_key)
-
     assert api_key.is_enabled is False

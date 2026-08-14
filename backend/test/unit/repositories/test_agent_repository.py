@@ -29,6 +29,29 @@ class FakeDb:
         self.added = item
 
 
+_MANAGER_USER_SCOPE = {
+    "version": 2,
+    "read_scope": {"access_level": "user", "user_uids": ["manager"]},
+    "manage_scope": {"access_level": "user", "user_uids": ["manager"]},
+}
+
+
+def _agent_for_update(*, slug="shared-bot", name="Shared Bot", created_by="owner", share_config=_MANAGER_USER_SCOPE):
+    return SimpleNamespace(
+        slug=slug,
+        backend_id="ChatbotAgent",
+        share_config=share_config,
+        created_by=created_by,
+        updated_by=None,
+        updated_at=None,
+        name=name,
+        description="",
+        icon=None,
+        pics=[],
+        config_json={},
+    )
+
+
 @pytest.mark.asyncio
 async def test_ensure_default_agent_creates_description(monkeypatch):
     db = FakeDb()
@@ -190,27 +213,10 @@ def test_user_shared_agent_is_manageable_for_normal_user():
 async def test_delegated_manager_update_preserves_shared_agent_acl():
     db = FakeDb()
     repo = AgentRepository(db)
-    share_config = {
-        "version": 2,
-        "read_scope": {"access_level": "user", "user_uids": ["manager"]},
-        "manage_scope": {"access_level": "user", "user_uids": ["manager"]},
-    }
-    agent = SimpleNamespace(
-        slug="shared-bot",
-        backend_id="ChatbotAgent",
-        share_config=share_config,
-        created_by="owner",
-        updated_by=None,
-        updated_at=None,
-        name="Shared Bot",
-        description="",
-        icon=None,
-        pics=[],
-        config_json={},
-    )
+    agent = _agent_for_update()
     await repo.update(
         agent,
-        share_config=share_config,
+        share_config=_MANAGER_USER_SCOPE,
         updated_by="manager",
     )
 
@@ -222,23 +228,7 @@ async def test_delegated_manager_update_preserves_shared_agent_acl():
 async def test_delegated_manager_can_update_agent_acl_with_standard_validation():
     db = FakeDb()
     repo = AgentRepository(db)
-    agent = SimpleNamespace(
-        slug="shared-bot",
-        backend_id="ChatbotAgent",
-        share_config={
-            "version": 2,
-            "read_scope": {"access_level": "user", "user_uids": ["manager"]},
-            "manage_scope": {"access_level": "user", "user_uids": ["manager"]},
-        },
-        created_by="owner",
-        updated_by=None,
-        updated_at=None,
-        name="Shared Bot",
-        description="",
-        icon=None,
-        pics=[],
-        config_json={},
-    )
+    agent = _agent_for_update()
     await repo.update(
         agent,
         share_config={
@@ -257,23 +247,7 @@ async def test_delegated_manager_can_update_agent_acl_with_standard_validation()
 async def test_normal_user_can_update_read_scope_without_granting_manage_scope():
     db = FakeDb()
     repo = AgentRepository(db)
-    agent = SimpleNamespace(
-        slug="personal-bot",
-        backend_id="ChatbotAgent",
-        share_config={
-            "version": 2,
-            "read_scope": {"access_level": "user", "user_uids": ["manager"]},
-            "manage_scope": {"access_level": "user", "user_uids": ["manager"]},
-        },
-        created_by="manager",
-        updated_by=None,
-        updated_at=None,
-        name="Personal Bot",
-        description="",
-        icon=None,
-        pics=[],
-        config_json={},
-    )
+    agent = _agent_for_update(slug="personal-bot", name="Personal Bot", created_by="manager")
     await repo.update(
         agent,
         share_config={
@@ -299,28 +273,11 @@ async def test_normal_user_can_update_read_scope_without_granting_manage_scope()
 async def test_normal_user_can_update_agent_with_equivalent_v2_share_config():
     db = FakeDb()
     repo = AgentRepository(db)
-    share_config = {
-        "version": 2,
-        "read_scope": {"access_level": "user", "user_uids": ["manager"]},
-        "manage_scope": {"access_level": "user", "user_uids": ["manager"]},
-    }
-    agent = SimpleNamespace(
-        slug="shared-bot",
-        backend_id="ChatbotAgent",
-        share_config=share_config,
-        created_by="manager",
-        updated_by=None,
-        updated_at=None,
-        name="Legacy Bot",
-        description="",
-        icon=None,
-        pics=[],
-        config_json={},
-    )
+    agent = _agent_for_update(name="Legacy Bot", created_by="manager")
     await repo.update(
         agent,
         name="Renamed Bot",
-        share_config=share_config,
+        share_config=_MANAGER_USER_SCOPE,
         updated_by="manager",
     )
 

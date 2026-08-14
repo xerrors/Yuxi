@@ -47,6 +47,17 @@ def _runtime(
     )
 
 
+def _make_provider(client) -> ProvisionerSandboxProvider:
+    provider = ProvisionerSandboxProvider.__new__(ProvisionerSandboxProvider)
+    provider._client = client
+    provider._lock = threading.Lock()
+    provider._thread_locks = {}
+    provider._connections = {}
+    provider._last_touch_at = {}
+    provider._touch_interval_seconds = 30
+    return provider
+
+
 def test_create_agent_composite_backend_uses_prepared_readable_skills(monkeypatch):
     monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
 
@@ -130,30 +141,8 @@ def test_sandbox_provider_waiter_keeps_shared_thread_lock_alive():
     assert waiter_acquired.is_set()
 
 
-def test_sandbox_provider_release_keeps_cache_when_delete_fails():
-    provider = object.__new__(ProvisionerSandboxProvider)
-    provider._lock = threading.Lock()
-    provider._thread_locks = {}
-    provider._connections = {}
-    provider._last_touch_at = {}
-
-    def fail_delete(_sandbox_id):
-        raise RuntimeError("delete failed")
-
-    provider._client = SimpleNamespace(delete=fail_delete)
-    connection = SimpleNamespace(sandbox_id="sandbox-1")
-    cache_key = "user-1::thread-1::thread-1"
-    provider._connections[cache_key] = connection
-    provider._last_touch_at[cache_key] = 1.0
-
-    with pytest.raises(RuntimeError, match="delete failed"):
-        provider.release("thread-1", uid="user-1")
-
-    assert provider._connections[cache_key] is connection
-    assert provider._last_touch_at[cache_key] == 1.0
-
-
-def test_sandbox_provider_release_clears_cache_when_delete_fails_for_one_time_scope():
+@pytest.mark.parametrize("clear_cache_on_delete_failure", [False, True])
+def test_sandbox_provider_release_on_delete_failure(clear_cache_on_delete_failure):
     provider = object.__new__(ProvisionerSandboxProvider)
     provider._lock = threading.Lock()
     provider._thread_locks = {}
@@ -173,11 +162,15 @@ def test_sandbox_provider_release_clears_cache_when_delete_fails_for_one_time_sc
         provider.release(
             "thread-1",
             uid="user-1",
-            clear_cache_on_delete_failure=True,
+            clear_cache_on_delete_failure=clear_cache_on_delete_failure,
         )
 
-    assert cache_key not in provider._connections
-    assert cache_key not in provider._last_touch_at
+    if clear_cache_on_delete_failure:
+        assert cache_key not in provider._connections
+        assert cache_key not in provider._last_touch_at
+    else:
+        assert provider._connections[cache_key] is connection
+        assert provider._last_touch_at[cache_key] == 1.0
 
 
 @pytest.mark.asyncio
@@ -224,7 +217,8 @@ def test_create_agent_composite_backend_ignores_unprepared_context_skills(monkey
     assert backend.default._readable_skills == []
 
 
-def test_create_agent_composite_backend_uses_split_thread_scopes(monkeypatch):
+@pytest.mark.parametrize("scope_source", ["config", "state"])
+def test_create_agent_composite_backend_uses_split_thread_scopes(monkeypatch, scope_source):
     monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     runtime = _runtime(
         thread_id="child-thread",
@@ -232,9 +226,11 @@ def test_create_agent_composite_backend_uses_split_thread_scopes(monkeypatch):
         readable_skills=["worker-skill"],
         skill_sources={"worker-skill": "/tmp/worker-skill"},
     )
-    runtime.config["configurable"].update(
-        {"file_thread_id": "parent-thread", "skills_thread_id": "child-skills-thread"}
-    )
+    split_scopes = {"file_thread_id": "parent-thread", "skills_thread_id": "child-skills-thread"}
+    if scope_source == "config":
+        runtime.config["configurable"].update(split_scopes)
+    else:
+        runtime.state = split_scopes
 
     backend = create_agent_composite_backend(runtime)
 
@@ -242,23 +238,6 @@ def test_create_agent_composite_backend_uses_split_thread_scopes(monkeypatch):
     assert backend.default._file_thread_id == "parent-thread"
     assert backend.default._skills_thread_id == "child-skills-thread"
     assert backend.default._readable_skills == ["worker-skill"]
-
-
-def test_create_agent_composite_backend_uses_split_thread_scopes_from_state(monkeypatch):
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
-    runtime = _runtime(
-        thread_id="child-thread",
-        uid="user-1",
-        readable_skills=["worker-skill"],
-        skill_sources={"worker-skill": "/tmp/worker-skill"},
-    )
-    runtime.state = {"file_thread_id": "parent-thread", "skills_thread_id": "child-skills-thread"}
-
-    backend = create_agent_composite_backend(runtime)
-
-    assert backend.default._thread_id == "child-thread"
-    assert backend.default._file_thread_id == "parent-thread"
-    assert backend.default._skills_thread_id == "child-skills-thread"
 
 
 def test_create_agent_filesystem_middleware_uses_context_scope(monkeypatch):
@@ -461,8 +440,6 @@ def test_sandbox_id_for_thread_includes_skills_scope():
 
 
 def test_provider_uses_distinct_sandbox_scope_for_different_uid(monkeypatch) -> None:
-    from yuxi.agents.backends.sandbox.provider import ProvisionerSandboxProvider
-
     created = []
 
     class FakeClient:
@@ -473,13 +450,7 @@ def test_provider_uses_distinct_sandbox_scope_for_different_uid(monkeypatch) -> 
         def touch(self, _sandbox_id):
             return True
 
-    provider = ProvisionerSandboxProvider.__new__(ProvisionerSandboxProvider)
-    provider._client = FakeClient()
-    provider._lock = threading.Lock()
-    provider._thread_locks = {}
-    provider._connections = {}
-    provider._last_touch_at = {}
-    provider._touch_interval_seconds = 30
+    provider = _make_provider(FakeClient())
     monkeypatch.setattr("yuxi.agents.backends.sandbox.provider.load_user_agent_env", lambda uid: {"A": uid})
 
     sandbox_1 = provider.acquire(
@@ -502,7 +473,6 @@ def test_provider_uses_distinct_sandbox_scope_for_different_uid(monkeypatch) -> 
 
 def test_provider_maps_external_uid_only_at_provisioner_filesystem_boundary(monkeypatch) -> None:
     from yuxi.agents.backends.sandbox.paths import workspace_uid_dirname
-    from yuxi.agents.backends.sandbox.provider import ProvisionerSandboxProvider
 
     calls = []
 
@@ -514,13 +484,7 @@ def test_provider_maps_external_uid_only_at_provisioner_filesystem_boundary(monk
         def touch(self, _sandbox_id):
             return True
 
-    provider = ProvisionerSandboxProvider.__new__(ProvisionerSandboxProvider)
-    provider._client = FakeClient()
-    provider._lock = threading.Lock()
-    provider._thread_locks = {}
-    provider._connections = {}
-    provider._last_touch_at = {}
-    provider._touch_interval_seconds = 30
+    provider = _make_provider(FakeClient())
     logical_uid = "oidc:12345678-1234-1234-1234-123456789abc"
     monkeypatch.setattr("yuxi.agents.backends.sandbox.provider.load_user_agent_env", lambda uid: {"OWNER": uid})
 
@@ -532,8 +496,6 @@ def test_provider_maps_external_uid_only_at_provisioner_filesystem_boundary(monk
 
 
 def test_provider_get_create_if_missing_ensures_expected_split_scope(monkeypatch) -> None:
-    from yuxi.agents.backends.sandbox.provider import ProvisionerSandboxProvider
-
     calls = []
 
     class FakeClient:
@@ -544,13 +506,7 @@ def test_provider_get_create_if_missing_ensures_expected_split_scope(monkeypatch
         def discover(self, _sandbox_id):
             raise AssertionError("create_if_missing should ensure sandbox through provisioner create")
 
-    provider = ProvisionerSandboxProvider.__new__(ProvisionerSandboxProvider)
-    provider._client = FakeClient()
-    provider._lock = threading.Lock()
-    provider._thread_locks = {}
-    provider._connections = {}
-    provider._last_touch_at = {}
-    provider._touch_interval_seconds = 30
+    provider = _make_provider(FakeClient())
     monkeypatch.setattr("yuxi.agents.backends.sandbox.provider.load_user_agent_env", lambda uid: {"A": uid})
 
     connection = provider.get(
@@ -578,8 +534,6 @@ def test_provider_get_create_if_missing_ensures_expected_split_scope(monkeypatch
 
 
 def test_provider_can_create_sandbox_without_environment(monkeypatch) -> None:
-    from yuxi.agents.backends.sandbox.provider import ProvisionerSandboxProvider
-
     calls = []
 
     class FakeClient:
@@ -587,13 +541,7 @@ def test_provider_can_create_sandbox_without_environment(monkeypatch) -> None:
             calls.append((env, kwargs["inherit_env"]))
             return SimpleNamespace(sandbox_id=sandbox_id, sandbox_url="http://sandbox")
 
-    provider = ProvisionerSandboxProvider.__new__(ProvisionerSandboxProvider)
-    provider._client = FakeClient()
-    provider._lock = threading.Lock()
-    provider._thread_locks = {}
-    provider._connections = {}
-    provider._last_touch_at = {}
-    provider._touch_interval_seconds = 30
+    provider = _make_provider(FakeClient())
     monkeypatch.setattr(
         "yuxi.agents.backends.sandbox.provider.load_user_agent_env",
         lambda _uid: pytest.fail("隔离 Sandbox 不应加载用户环境变量"),
@@ -699,7 +647,6 @@ def test_provisioner_glob_root_searches_readable_roots(monkeypatch) -> None:
 
     result = backend.glob("**/*.md")
 
-    assert result.error is None
     assert [call["path"] for call in calls] == ["/home/gem/user-data", "/home/gem/skills"]
     assert [item["path"] for item in result.matches] == [
         "/home/gem/skills/match.md",
@@ -707,33 +654,25 @@ def test_provisioner_glob_root_searches_readable_roots(monkeypatch) -> None:
     ]
 
 
-def test_provisioner_read_preserves_base64_like_plain_text(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
-    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
-
-    fake_client = SimpleNamespace(
-        file=SimpleNamespace(read_file=lambda **_kwargs: SimpleNamespace(data=SimpleNamespace(content="SGVsbG8=")))
-    )
-    backend._get_client = MethodType(lambda self: fake_client, backend)
-
-    result = backend.read("/home/gem/user-data/outputs/base64-looking.txt")
-
-    assert result.error is None
-    assert result.file_data == {"content": "SGVsbG8=", "encoding": "utf-8"}
-
-
-def test_provisioner_read_decodes_explicit_base64(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("encoding", "expected"),
+    [
+        (None, b"SGVsbG8="),
+        ("base64", b"Hello"),
+    ],
+)
+def test_provisioner_read_binary_preserves_or_decodes_base64_content(monkeypatch, encoding, expected) -> None:
     monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
 
     fake_client = SimpleNamespace(
         file=SimpleNamespace(
-            read_file=lambda **_kwargs: SimpleNamespace(data=SimpleNamespace(content="SGVsbG8=", encoding="base64"))
+            read_file=lambda **_kwargs: SimpleNamespace(data=SimpleNamespace(content="SGVsbG8=", encoding=encoding))
         )
     )
     backend._get_client = MethodType(lambda self: fake_client, backend)
 
-    assert backend._read_binary("/home/gem/user-data/outputs/file.bin") == b"Hello"
+    assert backend._read_binary("/home/gem/user-data/outputs/file.bin") == expected
 
 
 def test_provisioner_read_file_base64_reads_temp_file_not_shell_output(monkeypatch) -> None:
@@ -769,30 +708,23 @@ def test_provisioner_read_file_base64_reads_temp_file_not_shell_output(monkeypat
     assert shell_calls[1]["command"].startswith("rm -f /tmp/yuxi-read-file-")
 
 
-def test_provisioner_read_reports_binary_files(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
-    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
-    monkeypatch.setattr(backend, "_file_size_bytes", lambda _path: 8)
-    monkeypatch.setattr(backend, "_read_file_base64", lambda _path: "iVBORw0KGgo=")
-
-    result = backend.read("/home/gem/user-data/image.png")
-
-    assert result.error is None
-    assert result.file_data is not None
-    assert result.file_data["encoding"] == "base64"
-
-
-def test_provisioner_read_treats_known_non_text_extension_as_base64(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("path", "base64_content"),
+    [
+        ("/home/gem/user-data/image.png", "iVBORw0KGgo="),
+        ("/home/gem/user-data/image.gif", "R0lGODlh"),
+    ],
+)
+def test_provisioner_read_treats_image_files_as_base64(monkeypatch, path, base64_content) -> None:
     monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
     monkeypatch.setattr(backend, "_file_size_bytes", lambda _path: 6)
     monkeypatch.setattr(backend, "_read_binary", lambda path, offset=0, limit=None: pytest.fail("file API used"))
-    monkeypatch.setattr(backend, "_read_file_base64", lambda _path: "R0lGODlh")
+    monkeypatch.setattr(backend, "_read_file_base64", lambda _path: base64_content)
 
-    result = backend.read("/home/gem/user-data/image.gif")
+    result = backend.read(path)
 
-    assert result.error is None
-    assert result.file_data == {"content": "R0lGODlh", "encoding": "base64"}
+    assert result.file_data == {"content": base64_content, "encoding": "base64"}
 
 
 def test_provisioner_read_rejects_large_known_binary_before_read(monkeypatch) -> None:
@@ -1014,7 +946,6 @@ def test_provisioner_download_files_streams_binary_bytes(monkeypatch) -> None:
 
     response = backend.download_files(["/home/gem/user-data/outputs/demo.bin"])[0]
 
-    assert response.error is None
     assert response.content == b"\x00\xffbinary"
     assert calls == [
         {

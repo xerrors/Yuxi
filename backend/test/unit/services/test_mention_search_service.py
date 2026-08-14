@@ -165,21 +165,6 @@ async def test_mention_cache_lifecycle_with_ormsgpack(mock_sandbox_paths, fake_r
 
 
 @pytest.mark.asyncio
-async def test_search_workspace_without_thread_id(mock_sandbox_paths, fake_redis):
-    workspace = mock_sandbox_paths["workspace"]
-    uploads = mock_sandbox_paths["uploads"]
-    (workspace / "guide.md").write_text("workspace")
-    (uploads / "guide.csv").write_text("thread")
-
-    results = await mention_service.search_mention_files_in_index(None, "user_1", "guide")
-
-    assert len(results) == 1
-    assert results[0]["name"] == "guide.md"
-    assert results[0]["path"] == "/home/gem/user-data/workspace/guide.md"
-    assert results[0]["source"] == "workspace"
-
-
-@pytest.mark.asyncio
 async def test_search_thread_source_before_workspace(mock_sandbox_paths, fake_redis):
     workspace = mock_sandbox_paths["workspace"]
     uploads = mock_sandbox_paths["uploads"]
@@ -198,8 +183,11 @@ async def test_search_thread_source_before_workspace(mock_sandbox_paths, fake_re
 @pytest.mark.asyncio
 async def test_search_mention_files_in_index(mock_sandbox_paths, fake_redis):
     workspace = mock_sandbox_paths["workspace"]
+    uploads = mock_sandbox_paths["uploads"]
     (workspace / "agent_config.json").write_text("config")
     (workspace / "main.py").write_text("main")
+    (workspace / "guide.md").write_text("workspace")
+    (uploads / "guide.csv").write_text("thread")
 
     # 搜索匹配测试
     results = await mention_service.search_mention_files_in_index("thread_1", "user_1", "config")
@@ -213,6 +201,13 @@ async def test_search_mention_files_in_index(mock_sandbox_paths, fake_redis):
     results_case = await mention_service.search_mention_files_in_index("thread_1", "user_1", "MAIN")
     assert len(results_case) == 1
     assert results_case[0]["name"] == "main.py"
+
+    # 不带 thread_id 时仅搜 workspace 单来源，线程附件不参与
+    results_no_thread = await mention_service.search_mention_files_in_index(None, "user_1", "guide")
+    assert len(results_no_thread) == 1
+    assert results_no_thread[0]["name"] == "guide.md"
+    assert results_no_thread[0]["path"] == "/home/gem/user-data/workspace/guide.md"
+    assert results_no_thread[0]["source"] == "workspace"
 
 
 @pytest.mark.asyncio

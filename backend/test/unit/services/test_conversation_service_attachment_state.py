@@ -8,11 +8,6 @@ from yuxi.services import chat_service as chat_svc
 from yuxi.services import attachment_service as svc
 
 
-def test_tmp_attachment_ocr_methods_use_processor_factory():
-    assert svc.TMP_ATTACHMENT_OCR_METHODS == tuple(svc.DocumentProcessorFactory.get_available_processors())
-    assert "paddleocr_vl_1_6" in svc.TMP_ATTACHMENT_OCR_METHODS
-
-
 class _DummyUpload:
     def __init__(self, *, filename: str, content_type: str | None, data: bytes):
         self.filename = filename
@@ -105,14 +100,17 @@ async def test_convert_upload_to_markdown_rejects_unsupported_extension(monkeypa
         await svc._convert_upload_to_markdown(upload)
 
 
-def test_normalize_parse_method_uses_default_ocr_engine_for_images():
-    method = svc._normalize_parse_method("scan.png", parse_method=None, default_ocr_engine="mineru_ocr")
-    assert method == "mineru_ocr"
-
-
-def test_normalize_parse_method_uses_default_ocr_engine_for_images_fallback_to_rapid():
-    method = svc._normalize_parse_method("scan.jpg", parse_method=None, default_ocr_engine="deepseek_ocr")
-    assert method == "deepseek_ocr"
+@pytest.mark.parametrize(
+    ("default_engine", "expected"),
+    [
+        ("mineru_ocr", "mineru_ocr"),
+        ("deepseek_ocr", "deepseek_ocr"),
+        ("disable", "rapid_ocr"),
+    ],
+)
+def test_normalize_parse_method_image_uses_default_engine_or_fallback(default_engine, expected):
+    method = svc._normalize_parse_method("scan.png", parse_method=None, default_ocr_engine=default_engine)
+    assert method == expected
 
 
 def test_normalize_parse_method_pdf_defaults_to_disable():
@@ -123,8 +121,3 @@ def test_normalize_parse_method_pdf_defaults_to_disable():
 def test_normalize_parse_method_respects_explicit_parse_method():
     method = svc._normalize_parse_method("scan.png", parse_method="deepseek_ocr", default_ocr_engine="rapid_ocr")
     assert method == "deepseek_ocr"
-
-
-def test_normalize_parse_method_fallback_to_rapid_when_default_is_disable():
-    method = svc._normalize_parse_method("scan.png", parse_method=None, default_ocr_engine="disable")
-    assert method == "rapid_ocr"

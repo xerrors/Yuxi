@@ -152,18 +152,6 @@ async def test_mark_thread_viewed_turns_ready_to_done(session):
     assert next(item for item in after if item["id"] == "thread-view")["thread_status"] == "done"
 
 
-async def test_mark_thread_viewed_is_idempotent(session):
-    await _seed_conversation(session, thread_id="thread-view")
-    await _seed_run(session, thread_id="thread-view", run_id="run-view", status="completed")
-    await session.commit()
-
-    first = await svc.mark_thread_viewed_view(db=session, thread_id="thread-view", current_uid="user-1")
-    second = await svc.mark_thread_viewed_view(db=session, thread_id="thread-view", current_uid="user-1")
-
-    assert first["thread_status"] == "done"
-    assert second["thread_status"] == "done"
-
-
 async def test_mark_thread_viewed_keeps_loading_when_run_active(session):
     await _seed_conversation(session, thread_id="thread-active")
     await _seed_run(session, thread_id="thread-active", run_id="run-active", status="running")

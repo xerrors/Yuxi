@@ -148,7 +148,6 @@ async def test_remote_skill_policy_explicit_empty_list_is_visible_and_restored(t
 async def test_ocr_health_is_available_to_logged_in_users_and_returns_all_methods(
     test_client,
     standard_user,
-    admin_headers,
     monkeypatch,
 ):
     async def fake_health(db):
@@ -160,9 +159,6 @@ async def test_ocr_health_is_available_to_logged_in_users_and_returns_all_method
     response = await test_client.get("/api/system/ocr/health", headers=standard_user["headers"])
     assert response.status_code == 200, response.text
     assert response.json()["health"]["rapid_ocr"]["status"] == "healthy"
-
-    admin_response = await test_client.get("/api/system/ocr/health", headers=admin_headers)
-    assert admin_response.status_code == 200, admin_response.text
 
 
 async def test_admin_can_fetch_config_and_reload_info(test_client, admin_headers):

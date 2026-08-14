@@ -413,25 +413,21 @@ async def test_subagent_run_service_continues_existing_relation(monkeypatch: pyt
 
 
 @pytest.mark.asyncio
-async def test_subagent_run_service_rejects_thread_from_another_parent(monkeypatch: pytest.MonkeyPatch):
-    _patch_repos(monkeypatch, existing_relation=_relation(parent_conversation_id=99))
+@pytest.mark.parametrize(
+    ("relation_kwargs", "expected_error"),
+    [
+        ({"parent_conversation_id": 99}, "线程不属于当前对话"),
+        ({"subagent_slug": "other"}, "属于子智能体 other"),
+    ],
+)
+async def test_subagent_run_service_rejects_thread_from_unrelated_relation(
+    monkeypatch: pytest.MonkeyPatch,
+    relation_kwargs,
+    expected_error,
+):
+    _patch_repos(monkeypatch, existing_relation=_relation(**relation_kwargs))
 
-    with pytest.raises(ValueError, match="线程不属于当前对话"):
-        await SubagentRunService(_FakeDB()).start(
-            uid="user-1",
-            created_by_run_id="parent-run",
-            agent_item=_agent(),
-            input_message=build_chat_input_message("continue"),
-            tool_call_id="tool-2",
-            requested_thread_id="child-thread",
-        )
-
-
-@pytest.mark.asyncio
-async def test_subagent_run_service_rejects_thread_from_another_subagent(monkeypatch: pytest.MonkeyPatch):
-    _patch_repos(monkeypatch, existing_relation=_relation(subagent_slug="other"))
-
-    with pytest.raises(ValueError, match="属于子智能体 other"):
+    with pytest.raises(ValueError, match=expected_error):
         await SubagentRunService(_FakeDB()).start(
             uid="user-1",
             created_by_run_id="parent-run",

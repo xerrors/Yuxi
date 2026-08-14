@@ -9,7 +9,6 @@ import yuxi.services.agent_run_service as agent_run_service
 import yuxi.services.subagent_run_service as subagent_run_service
 from langgraph.prebuilt.tool_node import ToolRuntime
 from langgraph.types import Command
-from yuxi.agents.buildin.chatbot.state import merge_subagent_runs
 from yuxi.agents.middlewares.subagent_task import YuxiSubAgentMiddleware
 from yuxi.repositories.agent_repository import SUB_AGENT_BACKEND_ID
 from yuxi.services.input_message_service import AgentRunInputMessage
@@ -698,59 +697,3 @@ async def test_subagent_await_reports_timeout_when_run_is_still_active(monkeypat
     assert payload["result"]["status"] == "running"
     assert captured["await"] == {"run_id": "child-run", "current_uid": "user-1"}
     assert len(captured["loads"]) == 2
-
-
-def test_merge_subagent_runs_keeps_new_run_on_same_child_thread() -> None:
-    child_thread_id = make_child_thread_id("parent-thread", "worker", "tool-old")
-
-    merged = merge_subagent_runs(
-        [
-            {
-                "id": "tool-old",
-                "run_id": "run-old",
-                "subagent_slug": "worker",
-                "subagent_name": "Worker",
-                "child_thread_id": child_thread_id,
-                "description": "first task",
-                "status": "completed",
-                "created_at": "2026-05-31T01:00:00Z",
-                "completed_at": "2026-05-31T01:01:00Z",
-            }
-        ],
-        [
-            {
-                "id": "tool-new",
-                "run_id": "run-new",
-                "subagent_slug": "worker",
-                "subagent_name": "Worker",
-                "child_thread_id": child_thread_id,
-                "description": "continue task",
-                "status": "pending",
-                "created_at": "2026-05-31T02:00:00Z",
-            }
-        ],
-    )
-
-    assert merged == [
-        {
-            "id": "tool-old",
-            "run_id": "run-old",
-            "subagent_slug": "worker",
-            "subagent_name": "Worker",
-            "child_thread_id": child_thread_id,
-            "description": "first task",
-            "status": "completed",
-            "created_at": "2026-05-31T01:00:00Z",
-            "completed_at": "2026-05-31T01:01:00Z",
-        },
-        {
-            "id": "tool-new",
-            "run_id": "run-new",
-            "subagent_slug": "worker",
-            "subagent_name": "Worker",
-            "child_thread_id": child_thread_id,
-            "description": "continue task",
-            "status": "pending",
-            "created_at": "2026-05-31T02:00:00Z",
-        },
-    ]

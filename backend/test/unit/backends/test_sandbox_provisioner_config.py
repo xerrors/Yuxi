@@ -54,6 +54,30 @@ def _docker_backend(module, tmp_path, run_container):
     return backend
 
 
+def _docker_backend_with_running_container(monkeypatch, tmp_path):
+    module = _load_module()
+    captured = []
+
+    class FakeContainer:
+        name = "yuxi-sandbox-sandbox-1"
+        status = "running"
+        attrs = {"State": {"Status": "running"}}
+
+        def reload(self):
+            return None
+
+    backend = _docker_backend(
+        module,
+        tmp_path,
+        lambda image, **kwargs: captured.append((image, kwargs)) or FakeContainer(),
+    )
+    monkeypatch.setattr(backend, "_get_container", lambda _sandbox_id: None)
+    monkeypatch.setattr(backend, "_ensure_network", backend._network_name)
+    monkeypatch.setattr(backend, "_ensure_user_data_writable", lambda _container: None)
+    monkeypatch.setattr(module, "wait_for_sandbox_ready", lambda _url, timeout_seconds: True)
+    return module, backend, captured
+
+
 def test_canonical_backend_name(monkeypatch):
     monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
     module = _load_module()
@@ -146,26 +170,7 @@ def test_docker_mount_checks_use_file_and_skills_thread_ids(monkeypatch, tmp_pat
 
 def test_docker_sandbox_mounts_shared_workspace_without_thread_history_projection(monkeypatch, tmp_path):
     monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
-    module = _load_module()
-    captured = []
-
-    class FakeContainer:
-        name = "yuxi-sandbox-sandbox-1"
-        status = "running"
-        attrs = {"State": {"Status": "running"}}
-
-        def reload(self):
-            return None
-
-    backend = _docker_backend(
-        module,
-        tmp_path,
-        lambda image, **kwargs: captured.append((image, kwargs)) or FakeContainer(),
-    )
-    monkeypatch.setattr(backend, "_get_container", lambda _sandbox_id: None)
-    monkeypatch.setattr(backend, "_ensure_network", backend._network_name)
-    monkeypatch.setattr(backend, "_ensure_user_data_writable", lambda _container: None)
-    monkeypatch.setattr(module, "wait_for_sandbox_ready", lambda _url, timeout_seconds: True)
+    module, backend, captured = _docker_backend_with_running_container(monkeypatch, tmp_path)
 
     backend.create("sandbox-1", "thread-1", "user-1")
 
@@ -405,26 +410,7 @@ async def test_proxy_discovers_sandbox_outside_event_loop_thread(monkeypatch):
 
 def test_docker_backend_uses_private_network_without_published_port(monkeypatch, tmp_path):
     monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
-    module = _load_module()
-    captured = []
-
-    class FakeContainer:
-        name = "yuxi-sandbox-sandbox-1"
-        status = "running"
-        attrs = {"State": {"Status": "running"}}
-
-        def reload(self):
-            return None
-
-    backend = _docker_backend(
-        module,
-        tmp_path,
-        lambda image, **kwargs: captured.append((image, kwargs)) or FakeContainer(),
-    )
-    monkeypatch.setattr(backend, "_get_container", lambda _sandbox_id: None)
-    monkeypatch.setattr(backend, "_ensure_network", backend._network_name)
-    monkeypatch.setattr(backend, "_ensure_user_data_writable", lambda _container: None)
-    monkeypatch.setattr(module, "wait_for_sandbox_ready", lambda _url, timeout_seconds: True)
+    _, backend, captured = _docker_backend_with_running_container(monkeypatch, tmp_path)
 
     record = backend.create("sandbox-1", "thread-1", "user-1")
 
@@ -436,27 +422,8 @@ def test_docker_backend_uses_private_network_without_published_port(monkeypatch,
 
 def test_docker_backend_can_disable_sandbox_environment(monkeypatch, tmp_path):
     monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
-    module = _load_module()
-    captured = []
-
-    class FakeContainer:
-        name = "yuxi-sandbox-sandbox-1"
-        status = "running"
-        attrs = {"State": {"Status": "running"}}
-
-        def reload(self):
-            return None
-
-    backend = _docker_backend(
-        module,
-        tmp_path,
-        lambda image, **kwargs: captured.append((image, kwargs)) or FakeContainer(),
-    )
+    _, backend, captured = _docker_backend_with_running_container(monkeypatch, tmp_path)
     backend._sandbox_env = {"GLOBAL_SECRET": "value"}
-    monkeypatch.setattr(backend, "_get_container", lambda _sandbox_id: None)
-    monkeypatch.setattr(backend, "_ensure_network", backend._network_name)
-    monkeypatch.setattr(backend, "_ensure_user_data_writable", lambda _container: None)
-    monkeypatch.setattr(module, "wait_for_sandbox_ready", lambda _url, timeout_seconds: True)
 
     backend.create("sandbox-1", "thread-1", "user-1", {"USER_SECRET": "value"}, inherit_env=False)
 
@@ -492,7 +459,14 @@ def test_kubernetes_sandbox_disables_service_account_token_and_environment(monke
     assert pod.spec.containers[0].env == []
 
 
-def test_docker_backend_cleans_up_container_and_network_when_health_check_fails(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    ("start_succeeds", "error_match"),
+    [
+        (True, "is not ready"),
+        (False, "container start failed"),
+    ],
+)
+def test_docker_backend_cleans_up_sandbox_and_network_on_failure(monkeypatch, tmp_path, start_succeeds, error_match):
     monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
     module = _load_module()
     created_container = None
@@ -518,6 +492,8 @@ def test_docker_backend_cleans_up_container_and_network_when_health_check_fails(
 
     def run_container(_image, **_kwargs):
         nonlocal created_container
+        if not start_succeeds:
+            raise RuntimeError("container start failed")
         created_container = FakeContainer()
         return created_container
 
@@ -528,31 +504,13 @@ def test_docker_backend_cleans_up_container_and_network_when_health_check_fails(
     monkeypatch.setattr(backend, "_ensure_user_data_writable", lambda _container: None)
     monkeypatch.setattr(module, "wait_for_sandbox_ready", lambda _url, timeout_seconds: False)
 
-    with pytest.raises(RuntimeError, match="is not ready"):
-        backend.create("sandbox-1", "thread-1", "user-1")
-
-    assert created_container is not None
-    assert created_container.removed is True
-    assert deleted_networks == ["sandbox-1"]
-
-
-def test_docker_backend_cleans_up_network_when_container_start_fails(monkeypatch, tmp_path):
-    monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
-    module = _load_module()
-    deleted_networks = []
-
-    def fail_to_start(_image, **_kwargs):
-        raise RuntimeError("container start failed")
-
-    backend = _docker_backend(module, tmp_path, fail_to_start)
-    monkeypatch.setattr(backend, "_get_container", lambda _sandbox_id: None)
-    monkeypatch.setattr(backend, "_ensure_network", backend._network_name)
-    monkeypatch.setattr(backend, "_delete_network", deleted_networks.append)
-
-    with pytest.raises(RuntimeError, match="container start failed"):
+    with pytest.raises(RuntimeError, match=error_match):
         backend.create("sandbox-1", "thread-1", "user-1")
 
     assert deleted_networks == ["sandbox-1"]
+    if start_succeeds:
+        assert created_container is not None
+        assert created_container.removed is True
 
 
 def test_docker_backend_assigns_each_sandbox_a_distinct_network(monkeypatch):

@@ -112,11 +112,9 @@ def test_llm_graph_extractor_appends_schema_to_fixed_prompt():
     assert "文本：\n张三任职于公司" in prompt
 
 
-def test_graph_extractor_factory_supports_only_llm():
+def test_graph_extractor_factory_supports_only_llm_and_rejects_spacy():
     assert GraphExtractorFactory.supported_types() == ["llm"]
 
-
-def test_graph_extractor_factory_rejects_spacy():
     with pytest.raises(ValueError, match="spacy"):
         GraphExtractorFactory.create("spacy", {"model": "zh_core_web_sm"})
 
@@ -885,76 +883,71 @@ def test_milvus_graph_service_delete_file_graph_uses_scoped_streaming_queries():
     assert "DETACH DELETE c" in queries[2]
 
 
-def test_milvus_graph_service_process_query_result_keeps_complete_edges():
+@pytest.mark.parametrize(
+    ("payload", "limit", "exclude_chunk", "expected_node_ids", "expected_edge_ids"),
+    [
+        (
+            [
+                {
+                    "h": _raw_graph_node("node-a"),
+                    "t": _raw_graph_node("node-b"),
+                    "r": _raw_graph_edge("edge-a-b", "node-a", "node-b"),
+                }
+            ],
+            2,
+            False,
+            ["node-a", "node-b"],
+            ["edge-a-b"],
+        ),
+        (
+            [
+                {
+                    "h": _raw_graph_node("node-a"),
+                    "t": _raw_graph_node("node-b"),
+                    "r": _raw_graph_edge("edge-a-b", "node-a", "node-b"),
+                }
+            ],
+            1,
+            False,
+            ["node-a"],
+            [],
+        ),
+        (
+            [
+                {
+                    "h": _raw_graph_node("entity-a"),
+                    "t": _raw_graph_node("chunk-a", labels=["MilvusKB", "Chunk"]),
+                    "r": _raw_graph_edge("edge-entity-chunk", "entity-a", "chunk-a"),
+                }
+            ],
+            2,
+            True,
+            ["entity-a"],
+            [],
+        ),
+        (
+            [
+                {
+                    "h": _raw_graph_node("node-a"),
+                    "t": _raw_graph_node("node-b"),
+                    "r": _raw_graph_edge("edge-a-b", "node-a", "node-b"),
+                }
+            ],
+            -1,
+            False,
+            [],
+            [],
+        ),
+    ],
+)
+def test_milvus_graph_service_process_query_result(
+    payload, limit, exclude_chunk, expected_node_ids, expected_edge_ids
+):
     service = MilvusGraphService()
-    result = service._process_query_result(
-        [
-            {
-                "h": _raw_graph_node("node-a"),
-                "t": _raw_graph_node("node-b"),
-                "r": _raw_graph_edge("edge-a-b", "node-a", "node-b"),
-            }
-        ],
-        limit=2,
-        kb_id="kb_test",
-    )
+    result = service._process_query_result(payload, limit=limit, kb_id="kb_test", exclude_chunk=exclude_chunk)
 
-    assert [node["id"] for node in result["nodes"]] == ["node-a", "node-b"]
-    assert [edge["id"] for edge in result["edges"]] == ["edge-a-b"]
-
-
-def test_milvus_graph_service_process_query_result_filters_edges_after_node_limit():
-    service = MilvusGraphService()
-    result = service._process_query_result(
-        [
-            {
-                "h": _raw_graph_node("node-a"),
-                "t": _raw_graph_node("node-b"),
-                "r": _raw_graph_edge("edge-a-b", "node-a", "node-b"),
-            }
-        ],
-        limit=1,
-        kb_id="kb_test",
-    )
-
-    assert [node["id"] for node in result["nodes"]] == ["node-a"]
-    assert result["edges"] == []
-
-
-def test_milvus_graph_service_process_query_result_filters_edges_to_excluded_chunk_nodes():
-    service = MilvusGraphService()
-    result = service._process_query_result(
-        [
-            {
-                "h": _raw_graph_node("entity-a"),
-                "t": _raw_graph_node("chunk-a", labels=["MilvusKB", "Chunk"]),
-                "r": _raw_graph_edge("edge-entity-chunk", "entity-a", "chunk-a"),
-            }
-        ],
-        limit=2,
-        kb_id="kb_test",
-        exclude_chunk=True,
-    )
-
-    assert [node["id"] for node in result["nodes"]] == ["entity-a"]
-    assert result["edges"] == []
-
-
-def test_milvus_graph_service_process_query_result_clamps_negative_limit():
-    service = MilvusGraphService()
-    result = service._process_query_result(
-        [
-            {
-                "h": _raw_graph_node("node-a"),
-                "t": _raw_graph_node("node-b"),
-                "r": _raw_graph_edge("edge-a-b", "node-a", "node-b"),
-            }
-        ],
-        limit=-1,
-        kb_id="kb_test",
-    )
-
-    assert result == {"nodes": [], "edges": []}
+    assert [node["id"] for node in result["nodes"]] == expected_node_ids
+    assert [edge["id"] for edge in result["edges"]] == expected_edge_ids
 
 
 @pytest.mark.parametrize("max_depth", [1, 2, 3])
@@ -1034,21 +1027,14 @@ def test_milvus_graph_service_query_nodes_sync_caps_max_depth():
 
 
 @pytest.mark.asyncio
-async def test_milvus_graph_service_query_nodes_empty_kb_id():
+@pytest.mark.parametrize(
+    ("method", "kwargs", "expected"),
+    [
+        ("query_nodes", {"keyword": "test"}, {"nodes": [], "edges": []}),
+        ("get_labels", {}, []),
+        ("get_stats", {}, {"total_nodes": 0, "total_edges": 0, "entity_types": []}),
+    ],
+)
+async def test_milvus_graph_service_early_returns_empty_for_missing_kb_id(method, kwargs, expected):
     service = MilvusGraphService()
-    result = await service.query_nodes(kb_id=None, keyword="test")
-    assert result == {"nodes": [], "edges": []}
-
-
-@pytest.mark.asyncio
-async def test_milvus_graph_service_get_labels_empty_kb_id():
-    service = MilvusGraphService()
-    result = await service.get_labels(kb_id=None)
-    assert result == []
-
-
-@pytest.mark.asyncio
-async def test_milvus_graph_service_get_stats_empty_kb_id():
-    service = MilvusGraphService()
-    result = await service.get_stats(kb_id=None)
-    assert result == {"total_nodes": 0, "total_edges": 0, "entity_types": []}
+    assert await getattr(service, method)(kb_id=None, **kwargs) == expected

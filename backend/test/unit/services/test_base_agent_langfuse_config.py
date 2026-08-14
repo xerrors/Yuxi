@@ -35,44 +35,34 @@ _TestAgent.__module__ = "yuxi.agents.tests.fake"
 
 
 @pytest.mark.asyncio
-async def test_base_agent_stream_messages_passes_callbacks_metadata_and_tags():
+@pytest.mark.parametrize("mode", ["stream", "invoke"])
+async def test_base_agent_passes_callbacks_metadata_and_tags(mode):
     agent = _TestAgent()
 
-    items = []
-    async for item in agent.stream_messages(
-        ["hello"],
-        input_context={"uid": "user-1", "thread_id": "thread-1"},
-        callbacks=["handler-1"],
-        metadata={"langfuse_user_id": "user-1"},
-        tags=["yuxi"],
-    ):
-        items.append(item)
+    if mode == "stream":
+        items = []
+        async for item in agent.stream_messages(
+            ["hello"],
+            input_context={"uid": "user-1", "thread_id": "thread-1"},
+            callbacks=["handler-1"],
+            metadata={"langfuse_user_id": "user-1"},
+            tags=["yuxi"],
+        ):
+            items.append(item)
+        assert len(items) == 1
+        config_attr = "last_stream_config"
+    else:
+        await agent.invoke_messages(
+            ["hello"],
+            input_context={"uid": "user-1", "thread_id": "thread-1"},
+            callbacks=["handler-1"],
+            metadata={"langfuse_user_id": "user-1"},
+            tags=["yuxi"],
+        )
+        config_attr = "last_invoke_config"
 
     graph = await agent.get_graph()
-    assert len(items) == 1
-    assert graph.last_stream_config == {
-        "configurable": {"thread_id": "thread-1", "uid": "user-1"},
-        "recursion_limit": 300,
-        "callbacks": ["handler-1"],
-        "metadata": {"langfuse_user_id": "user-1"},
-        "tags": ["yuxi"],
-    }
-
-
-@pytest.mark.asyncio
-async def test_base_agent_invoke_messages_passes_callbacks_metadata_and_tags():
-    agent = _TestAgent()
-
-    await agent.invoke_messages(
-        ["hello"],
-        input_context={"uid": "user-1", "thread_id": "thread-1"},
-        callbacks=["handler-1"],
-        metadata={"langfuse_user_id": "user-1"},
-        tags=["yuxi"],
-    )
-
-    graph = await agent.get_graph()
-    assert graph.last_invoke_config == {
+    assert getattr(graph, config_attr) == {
         "configurable": {"thread_id": "thread-1", "uid": "user-1"},
         "recursion_limit": 300,
         "callbacks": ["handler-1"],

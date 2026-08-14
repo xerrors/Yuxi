@@ -53,7 +53,7 @@ async def test_evaluate_question_uses_runtime_kb_manager(monkeypatch):
 
 
 def test_aggregate_metrics_matches_service_output_shape():
-    metrics, overall_score = aggregate_metrics(
+    metrics, _ = aggregate_metrics(
         [{"recall@1": 1.0, "f1@1": 0.0}, {"recall@1": 0.0, "f1@1": 1.0}],
         [{"score": 1.0}, {"score": 0.0}],
         include_overall_score=True,
@@ -62,4 +62,4 @@ def test_aggregate_metrics_matches_service_output_shape():
     assert metrics["recall@1"] == 0.5
     assert metrics["f1@1"] == 0.5
     assert metrics["answer_correctness"] == 0.5
-    assert metrics["overall_score"] == overall_score
+    assert metrics["overall_score"] == 0.5

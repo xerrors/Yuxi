@@ -29,7 +29,7 @@ async def test_agent_run_create_rejects_empty_input(test_client, admin_headers):
         json={"query": "", "agent_slug": "default-chatbot", "thread_id": str(uuid.uuid4())},
         headers=admin_headers,
     )
-    assert response.status_code in (404, 422)
+    assert response.status_code == 404
 
 
 async def test_agent_run_missing_resource_returns_not_found(test_client, admin_headers):
