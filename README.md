@@ -90,7 +90,7 @@ docker compose up --build
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=xerrors/Yuxi)](https://star-history.com/#xerrors/Yuxi)
+[![Star History Chart](https://star-history.dera.page/svg?repos=xerrors/Yuxi)](https://star-history.dera.page/#xerrors/Yuxi)
 
 ## 📄 许可证
 
