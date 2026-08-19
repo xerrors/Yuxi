@@ -43,7 +43,7 @@ jobs:
 
       # 2. 安装 uv（项目使用 uv 作为包管理器）
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v7
         with:
           version: "0.7.2"
 
