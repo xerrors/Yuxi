@@ -25,7 +25,7 @@ jobs:
       E2E_PASSWORD: real-probe-password-at-least-eight
       SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Require real-provider credential
         run: |
           if [ -z "$SILICONFLOW_API_KEY" ]; then

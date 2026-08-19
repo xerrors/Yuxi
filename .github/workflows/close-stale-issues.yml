@@ -18,7 +18,7 @@ jobs:
       pull-requests: write
 
     steps:
-    - uses: actions/stale@v5
+    - uses: actions/stale@v11
       with:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
         stale-issue-message: '此 Issue 已标记为待关闭，若 14 天内无进一步活动将被自动关闭。'

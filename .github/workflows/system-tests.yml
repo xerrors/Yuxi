@@ -47,7 +47,7 @@ jobs:
       E2E_USERNAME: ci_e2e_admin
       E2E_PASSWORD: ci-e2e-password-at-least-eight
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Prepare Compose environment
         run: |
           cp .env.template .env
