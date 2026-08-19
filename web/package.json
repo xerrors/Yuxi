@@ -31,7 +31,7 @@
     "graphology-generators": "^0.11.2",
     "highlight.js": "^11.11.1",
     "js-yaml": "^4.3.1",
-    "katex": "^0.16.45",
+    "katex": "^0.18.4",
     "less": "^4.9.0",
     "lucide-vue-next": "^1.0.0",
     "markdown-it": "^14.2.0",
@@ -49,7 +49,7 @@
     "@eslint/js": "^10.0.1",
     "@vitejs/plugin-vue": "^6.0.6",
     "@vue/eslint-config-prettier": "^10.2.0",
-    "esbuild": "0.28.1",
+    "esbuild": "0.28.2",
     "eslint": "^10.3.0",
     "eslint-plugin-vue": "^10.9.1",
     "globals": "^17.6.0",
@@ -60,7 +60,7 @@
   "pnpm": {
     "overrides": {
       "brace-expansion": "5.0.9",
-      "esbuild": "0.28.1",
+      "esbuild": "0.28.2",
       "eslint-scope": "9.1.2",
       "flatted": "3.4.2",
       "lodash": "4.18.1",
