@@ -19,7 +19,7 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           version: "0.11.7"
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Audit locked Python vulnerabilities
