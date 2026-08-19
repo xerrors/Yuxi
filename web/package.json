@@ -21,7 +21,7 @@
     "@sigma/edge-curve": "^3.1.0",
     "@sigma/node-border": "^3.0.0",
     "@vscode/markdown-it-katex": "^1.1.2",
-    "@vueuse/core": "^14.3.0",
+    "@vueuse/core": "^14.4.0",
     "ant-design-vue": "^4.2.6",
     "d3": "^7.9.0",
     "dayjs": "^1.11.20",
