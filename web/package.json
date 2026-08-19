@@ -52,7 +52,7 @@
     "esbuild": "0.28.1",
     "eslint": "^10.3.0",
     "eslint-plugin-vue": "^10.9.1",
-    "globals": "^17.6.0",
+    "globals": "^17.11.0",
     "prettier": "^3.8.3",
     "vite": "^8.0.16",
     "vue-eslint-parser": "^10.4.0"
