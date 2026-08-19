@@ -2,7 +2,7 @@
 # Use DaoCloud mirrored vllm image for China region for gpu with Volta、Turing、Ampere、Ada Lovelace、Hopper、Blackwell architecture (7.0 <= Compute Capability <= 12.0)
 # Compute Capability version query (https://developer.nvidia.com/cuda-gpus)
 # support x86_64 architecture and ARM(AArch64) architecture
-FROM docker.m.daocloud.io/vllm/vllm-openai:v0.11.2
+FROM docker.m.daocloud.io/vllm/vllm-openai:v0.27.1
 
 # Install libgl for opencv support & Noto fonts for Chinese characters
 RUN apt-get update && \
