@@ -285,7 +285,7 @@ services:
     restart: unless-stopped
 
   milvus:
-    image: milvusdb/milvus:v2.5.6
+    image: milvusdb/milvus:v3.0.0
     container_name: milvus
     command: ["milvus", "run", "standalone"]
     security_opt:
