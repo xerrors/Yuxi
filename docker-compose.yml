@@ -337,7 +337,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:7.4.10-alpine
+    image: redis:8.10.0-alpine
     container_name: redis
     ports:
       - "127.0.0.1:6379:6379"
