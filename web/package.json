@@ -50,7 +50,7 @@
     "@vitejs/plugin-vue": "^6.0.6",
     "@vue/eslint-config-prettier": "^10.2.0",
     "esbuild": "0.28.1",
-    "eslint": "^10.3.0",
+    "eslint": "^10.8.1",
     "eslint-plugin-vue": "^10.9.1",
     "globals": "^17.6.0",
     "prettier": "^3.8.3",
