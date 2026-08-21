@@ -50,6 +50,7 @@
 | MiniMax | `minimax-cn` | chat | `MINIMAX_API_KEY` |
 | MiniMax International | `minimax` | chat | `MINIMAX_API_KEY` |
 | OpenRouter | `openrouter` | chat, embedding | `OPENROUTER_API_KEY` |
+| OrcaRouter | `orcarouter` | chat | `ORCAROUTER_API_KEY` |
 | ModelScope | `modelscope` | chat | `MODELSCOPE_ACCESS_TOKEN` |
 | OpenCode | `opencode` | chat | 无默认环境变量 |
 | OpenCode Go | `opencode-go` | chat | 无默认环境变量 |

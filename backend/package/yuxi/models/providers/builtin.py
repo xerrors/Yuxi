@@ -163,6 +163,13 @@ BUILTIN_PROVIDERS: list[dict[str, Any]] = [
         "embedding_models_endpoint": "https://openrouter.ai/api/v1/embeddings/models",
     },
     {
+        "provider_id": "orcarouter",
+        "display_name": "OrcaRouter",
+        "base_url": "https://api.orcarouter.ai/v1",
+        "api_key_env": "ORCAROUTER_API_KEY",
+        "models_endpoint": "https://api.orcarouter.ai/v1/models",
+    },
+    {
         "provider_id": "modelscope",
         "display_name": "ModelScope",
         "base_url": "https://api-inference.modelscope.cn/v1",

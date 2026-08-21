@@ -260,6 +260,22 @@ def test_builtin_provider_templates_default_to_openai_provider_type():
     assert all("ollama" not in provider["provider_id"] for provider in BUILTIN_PROVIDERS)
 
 
+def test_builtin_orcarouter_template_is_chat_openai_compatible():
+    orca = next(p for p in BUILTIN_PROVIDERS if p["provider_id"] == "orcarouter")
+    assert orca["display_name"] == "OrcaRouter"
+    assert orca["base_url"] == "https://api.orcarouter.ai/v1"
+    assert orca["api_key_env"] == "ORCAROUTER_API_KEY"
+    assert orca.get("capabilities") in (None, ["chat"])
+    payload = _normalize_payload(
+        {
+            "provider_id": orca["provider_id"],
+            "display_name": orca["display_name"],
+            "base_url": orca["base_url"],
+        }
+    )
+    assert payload["provider_type"] == "openai"
+
+
 @pytest.mark.parametrize(
     ("is_enabled", "api_key", "api_key_env", "expected"),
     [
