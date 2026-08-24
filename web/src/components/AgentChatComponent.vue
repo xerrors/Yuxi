@@ -269,6 +269,7 @@
                           size="nano"
                           display-name="mini"
                           placeholder="选择模型"
+                          :auto-select-first="agentStore.isInitialized && !currentModelSpec"
                           @select-model="handleModelSelect"
                         />
                       </div>

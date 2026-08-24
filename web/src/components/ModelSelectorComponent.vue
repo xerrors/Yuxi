@@ -180,6 +180,10 @@ const props = defineProps({
     type: String,
     default: 'full',
     validator: (value) => ['full', 'short', 'mini'].includes(value)
+  },
+  autoSelectFirst: {
+    type: Boolean,
+    default: false
   }
 })
 
@@ -286,6 +290,29 @@ const buildModelMetadataBySpec = (modelsByProvider, providers) => {
 }
 
 const getModelInfo = (model) => modelMetadataBySpec.value[model.spec] || {}
+
+// 聊天输入框没有任何默认模型时，使用接口返回的第一个可用模型。
+// 该行为由调用方显式开启，避免影响设置页等需要用户手动选择的场景。
+const selectFirstModelIfNeeded = () => {
+  if (!props.autoSelectFirst || props.disabled || props.model_spec) return
+
+  const firstModel = Object.values(v2Models.value)
+    .flatMap((providerData) => providerData.models || [])
+    .find((model) => model?.spec)
+  if (!firstModel?.spec) {
+    console.warn('[模型选择] 未找到可用于聊天的模型')
+    return
+  }
+
+  console.info(`[模型选择] 初始未选择模型，自动选择 ${firstModel.spec}`)
+  emit('select-model', firstModel.spec)
+}
+
+const initializeDefaultModel = async () => {
+  if (!props.autoSelectFirst || props.disabled) return
+  await fetchV2Models()
+  selectFirstModelIfNeeded()
+}
 
 // 下拉展开前先刷新模型列表，避免弹层打开后再因数据加载发生高度跳变。
 const handleOpenChange = async (open) => {
@@ -419,6 +446,21 @@ const handleSelectV2Model = (spec) => {
   emit('select-model', spec)
   dropdownOpen.value = false
 }
+
+watch(
+  () => [props.autoSelectFirst, props.disabled],
+  ([autoSelectFirst, disabled], previousState) => {
+    const [previousAutoSelectFirst, previousDisabled] = previousState || []
+    if (
+      autoSelectFirst &&
+      !disabled &&
+      (!previousAutoSelectFirst || previousDisabled)
+    ) {
+      void initializeDefaultModel()
+    }
+  },
+  { immediate: true }
+)
 
 // 清空选择
 const handleClear = () => {
