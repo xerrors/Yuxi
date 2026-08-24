@@ -82,6 +82,11 @@ async function exchangeOAToken(token) {
   return exchangeLoginCredential('/api/auth/oa/exchange-token', { token }, 'OA 免登录失败')
 }
 
+/** 使用父项目提供的 OA 账号换取仅限内网试用的 Yuxi 登录态。 */
+async function exchangeOAAccount(account) {
+  return exchangeLoginCredential('/api/auth/oa/exchange-account', { account }, 'OA 账号登录失败')
+}
+
 async function login(credentials) {
   const formData = new FormData()
   formData.append('username', credentials.loginId)
@@ -165,6 +170,7 @@ export const authApi = {
   checkUidAvailability,
   exchangeOIDCCode,
   exchangeOAToken,
+  exchangeOAAccount,
   getCLIAuthSession,
   approveCLIAuthSession
 }

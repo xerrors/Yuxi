@@ -5,15 +5,18 @@ import { useUserStore } from '@/stores/user'
 import { authApi } from '@/apis/auth_api'
 import {
   confirmEmbedDisplayMode,
-  markEmbedDisplayModePending,
   resolveAppNavigationPath,
   resetEmbedDisplayMode
 } from '@/composables/useEmbedMode'
 import { canAccessRoute, getAuthenticatedHomePath } from '@/utils/authNavigation'
-import { createOAEmbedBridge, parseOAEmbedAllowedOrigins } from '@/utils/oaEmbedBridge'
+import {
+  createOAEmbedBridge,
+  getOAEmbedRenewalDelay,
+  parseOAEmbedAllowedOrigins
+} from '@/utils/oaEmbedBridge'
 import { setOAEmbedAuthRequiredHandler } from '@/utils/oaEmbedSession'
 
-/** 在嵌入路由中将 OA 现有 token 交换为 Yuxi 登录态。 */
+/** 在嵌入路由中将父项目下发的 OA 账号交换为 Yuxi 登录态。 */
 export function useOAEmbedBridge(enabled) {
   const userStore = useUserStore()
   const chatThreadsStore = useChatThreadsStore()
@@ -23,6 +26,19 @@ export function useOAEmbedBridge(enabled) {
   const statusMessage = ref('等待 OA 授权')
   let bridge = null
   let clearAuthRequiredHandler = null
+  let renewalTimer = null
+
+  const clearRenewalTimer = () => {
+    if (renewalTimer !== null) window.clearTimeout(renewalTimer)
+    renewalTimer = null
+  }
+
+  const scheduleRenewal = (accessToken) => {
+    clearRenewalTimer()
+    const delay = getOAEmbedRenewalDelay(accessToken)
+    if (delay === null) return
+    renewalTimer = window.setTimeout(requestAuthRequired, delay)
+  }
 
   const clearAuthorization = (message) => {
     isAuthorized.value = false
@@ -32,6 +48,7 @@ export function useOAEmbedBridge(enabled) {
   }
 
   const requestAuthRequired = () => {
+    clearRenewalTimer()
     clearAuthorization('等待 OA 重新授权')
     bridge?.requestAuthRequired()
   }
@@ -54,11 +71,12 @@ export function useOAEmbedBridge(enabled) {
 
     bridge = createOAEmbedBridge({
       allowedOrigins,
-      onToken: async (token) => {
-        clearAuthorization('正在验证 OA 授权')
+      onAccount: async (account) => {
+        clearAuthorization('正在验证 OA 账号')
         try {
-          const loginData = await authApi.exchangeOAToken(token)
+          const loginData = await authApi.exchangeOAAccount(account)
           await userStore.acceptEmbedToken(loginData.access_token)
+          scheduleRenewal(loginData.access_token)
           if (!canAccessRoute(route.matched, userStore.hasPermission)) {
             await router.replace(
               resolveAppNavigationPath(true, getAuthenticatedHomePath(userStore.hasPermission))
@@ -79,6 +97,7 @@ export function useOAEmbedBridge(enabled) {
   }
 
   const stopBridge = () => {
+    clearRenewalTimer()
     bridge?.stop()
     bridge = null
     clearAuthRequiredHandler?.()
@@ -97,7 +116,8 @@ export function useOAEmbedBridge(enabled) {
     isAuthorized,
     statusMessage,
     requestDisplayMode(mode, threadId) {
-      if (bridge?.requestMode(mode, threadId)) markEmbedDisplayModePending()
+      // 正式父插件没有模式确认回执，消息发出后由当前嵌入页面立即完成状态同步。
+      if (bridge?.requestMode(mode, threadId)) confirmEmbedDisplayMode(mode)
     },
     requestClose(threadId) {
       bridge?.requestClose(threadId)

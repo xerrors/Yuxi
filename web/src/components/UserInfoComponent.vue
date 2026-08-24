@@ -58,7 +58,7 @@
             <template #icon><Settings :size="16" /></template>
             <span class="menu-text">设置</span>
           </a-menu-item>
-          <a-menu-item key="logout" @click="logout">
+          <a-menu-item v-if="props.allowLogout" key="logout" @click="logout">
             <template #icon><LogOut :size="16" /></template>
             <span class="menu-text">退出登录</span>
           </a-menu-item>
@@ -96,7 +96,7 @@ const { openSettingsModal } = inject('settingsModal', {})
 
 const avatarDefaultSrc = computed(() => (userStore.uid ? generatePixelAvatar(userStore.uid) : ''))
 
-defineProps({
+const props = defineProps({
   showRole: {
     type: Boolean,
     default: false
@@ -104,6 +104,11 @@ defineProps({
   showButton: {
     type: Boolean,
     default: false
+  },
+  // 嵌入 OA 时由宿主系统维护登录态，默认仅独立站允许主动退出。
+  allowLogout: {
+    type: Boolean,
+    default: true
   }
 })
 
@@ -113,6 +118,12 @@ const assignedRolesText = computed(
 
 // 退出登录
 const logout = () => {
+  // 防止隐藏菜单以外的调用破坏 OA 宿主的登录会话。
+  if (!props.allowLogout) {
+    console.info('[用户菜单] 当前为嵌入模式，已忽略主动退出登录操作')
+    return
+  }
+
   userStore.logout()
   message.success('已退出登录')
   // 跳转到首页

@@ -35,7 +35,12 @@ from yuxi.services.login_rate_limit_service import (
     extract_client_ip,
     record_login_failure,
 )
-from yuxi.services.oa_sso_service import MAX_OA_TOKEN_LENGTH, exchange_oa_token_handler
+from yuxi.services.oa_sso_service import (
+    MAX_OA_ACCOUNT_LENGTH,
+    MAX_OA_TOKEN_LENGTH,
+    exchange_oa_account_handler,
+    exchange_oa_token_handler,
+)
 
 # OIDC 认证相关导入
 from yuxi.services.oidc_service import (
@@ -208,6 +213,12 @@ class OASSOTokenRequest(BaseModel):
     """OA 页面下发的现有登录凭证。"""
 
     token: str = Field(min_length=1, max_length=MAX_OA_TOKEN_LENGTH)
+
+
+class OAAccountLoginRequest(BaseModel):
+    """父项目内嵌时下发的 OA 账号。"""
+
+    account: str = Field(min_length=1, max_length=MAX_OA_ACCOUNT_LENGTH)
 
 
 class CLIAuthSessionCreate(BaseModel):
@@ -1050,6 +1061,12 @@ async def impersonate_user(
 async def exchange_oa_token(data: OASSOTokenRequest, request: Request, db: AsyncSession = Depends(get_db)):
     """验证 OA 现有 token 并签发 Yuxi 登录凭证。"""
     return await exchange_oa_token_handler(data.token, db, request)
+
+
+@auth.post("/oa/exchange-account", response_model=Token)
+async def exchange_oa_account(data: OAAccountLoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    """使用父项目账号换取仅限内网试用的 Yuxi 登录凭证。"""
+    return await exchange_oa_account_handler(data.account, db, request)
 
 
 # =============================================================================

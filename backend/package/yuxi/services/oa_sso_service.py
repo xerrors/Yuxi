@@ -22,6 +22,7 @@ from yuxi.utils.datetime_utils import utc_now_naive
 from yuxi.utils.logging_config import logger
 
 MAX_OA_TOKEN_LENGTH = 16_384
+MAX_OA_ACCOUNT_LENGTH = 64
 ACTIVE_OA_USER_STATE = "service"
 LOCAL_OA_HOSTS = {"localhost", "127.0.0.1", "::1", "host.docker.internal"}
 
@@ -58,6 +59,38 @@ class OASSOConfig(BaseModel):
         return environment == "development" and parsed.scheme == "http" and parsed.hostname in LOCAL_OA_HOSTS
 
 
+class OAAccountLoginConfig(BaseModel):
+    """父项目仅提供账号时使用的临时 OA 登录配置。"""
+
+    enabled: bool = False
+    login_url: str = ""
+    company_code: str = ""
+
+    @classmethod
+    def from_env(cls) -> "OAAccountLoginConfig":
+        """从环境变量读取 account 换票配置。"""
+        return cls(
+            enabled=os.environ.get("OA_ACCOUNT_LOGIN_ENABLED", "false").strip().lower() == "true",
+            login_url=os.environ.get("OA_ACCOUNT_LOGIN_URL", "").strip(),
+            company_code=os.environ.get("OA_ACCOUNT_LOGIN_COMPANY_CODE", "").strip(),
+        )
+
+    def is_configured(self) -> bool:
+        """仅允许非生产环境启用 account 换票。"""
+        environment = os.environ.get("YUXI_ENV", "development").strip().lower()
+        if environment in {"prod", "production"} or not self.enabled or not self.company_code:
+            return False
+        try:
+            parsed = urllib.parse.urlsplit(self.login_url)
+        except ValueError:
+            return False
+        if not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            return False
+        if parsed.scheme == "https":
+            return True
+        return environment == "development" and parsed.scheme == "http" and parsed.hostname in LOCAL_OA_HOSTS
+
+
 class OAIdentity(BaseModel):
     """OA 用户接口验证后的最小可信身份。"""
 
@@ -74,6 +107,7 @@ class OAIdentity(BaseModel):
 
 
 oa_sso_config = OASSOConfig.from_env()
+oa_account_login_config = OAAccountLoginConfig.from_env()
 
 
 def extract_oa_token_account(token: str) -> str:
@@ -168,14 +202,10 @@ async def fetch_oa_identity(token: str, account: str) -> OAIdentity:
     )
 
 
-async def exchange_oa_token_handler(token: str, db, request: Request | None = None) -> dict[str, Any]:
-    """验证 OA token，匹配本地用户并签发 Yuxi token。"""
-    if not oa_sso_config.is_configured():
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "OA 免登录未配置")
-
-    account = extract_oa_token_account(token)
-    identity = await fetch_oa_identity(token, account)
-    department = await resolve_external_department(db, identity.department_name)
+async def _complete_oa_login(
+    identity: OAIdentity, db, request: Request | None, department=None, operation: str = "OA SSO 登录"
+) -> dict[str, Any]:
+    """按已验证的 OA 身份复用本地用户并签发 Yuxi 登录态。"""
     user_repo = UserRepository()
 
     result = await db.execute(select(User).where(User.uid == identity.uid))
@@ -199,7 +229,7 @@ async def exchange_oa_token_handler(token: str, db, request: Request | None = No
                 "phone_number": None,
                 "avatar": None,
                 "password_hash": AuthUtils.hash_password(secrets.token_urlsafe(32)),
-                "department_id": department.id,
+                "department_id": department.id if department else None,
                 "last_login": utc_now_naive(),
             },
         )
@@ -217,11 +247,80 @@ async def exchange_oa_token_handler(token: str, db, request: Request | None = No
     if user is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "OA 用户不存在")
 
-    await log_operation(db, user.id, "OA SSO 登录", request=request)
+    await log_operation(db, user.id, operation, request=request)
     return {
         "access_token": AuthUtils.create_access_token({"sub": str(user.id)}),
         "token_type": "bearer",
         "user_id": user.id,
-        **serialize_user(user, department.name),
+        **serialize_user(user, department.name if department else None),
         "effective_permissions": list(build_authorization_context(user).effective_permissions),
     }
+
+
+async def exchange_oa_token_handler(token: str, db, request: Request | None = None) -> dict[str, Any]:
+    """验证 OA token，匹配本地用户并签发 Yuxi token。"""
+    if not oa_sso_config.is_configured():
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "OA 免登录未配置")
+
+    account = extract_oa_token_account(token)
+    identity = await fetch_oa_identity(token, account)
+    department = await resolve_external_department(db, identity.department_name)
+    return await _complete_oa_login(identity, db, request, department)
+
+
+async def exchange_oa_account_handler(account: str, db, request: Request | None = None) -> dict[str, Any]:
+    """使用父项目提供的账号换取 OA 凭证并建立临时内网登录态。"""
+    if not oa_account_login_config.is_configured():
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "OA 账号登录未配置")
+    # 账号只是父页面传入的待校验线索，必须使用换到的 OA token 查询用户信息后才能建立本地登录态。
+    if not oa_sso_config.is_configured() or oa_sso_config.company_code != oa_account_login_config.company_code:
+        logger.error("OA account login requires a matching OA user info configuration")
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "OA 账号身份校验未配置")
+
+    normalized_account = account.strip() if isinstance(account, str) else ""
+    if not normalized_account or len(normalized_account) > MAX_OA_ACCOUNT_LENGTH:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "OA 账号无效")
+
+    try:
+        async with httpx.AsyncClient(follow_redirects=False, timeout=10.0) as client:
+            response = await client.post(
+                oa_account_login_config.login_url,
+                json={
+                    "account": normalized_account,
+                    "deviceId": "H5",
+                    "companyCode": oa_account_login_config.company_code,
+                    "loginType": "8",
+                },
+                headers={"Accept": "application/json"},
+            )
+    except httpx.HTTPError as exc:
+        logger.error(f"OA account login request failed: {type(exc).__name__}")
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "OA 账号登录服务暂不可用") from exc
+
+    if response.status_code != status.HTTP_200_OK:
+        logger.error(f"OA account login returned status {response.status_code}")
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "OA 账号登录服务返回异常")
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "OA 账号登录服务返回无效数据") from exc
+
+    response_data = payload.get("data") if isinstance(payload, dict) else None
+    tokens = response_data
+    if isinstance(response_data, dict) and isinstance(response_data.get("data"), dict):
+        # 真实网关比 H5 的 Axios 返回值多一层 data，并用字符串 "1" 表示成功。
+        if str(response_data.get("status")) != "1":
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "OA 账号登录失败")
+        tokens = response_data["data"]
+    if not isinstance(tokens, dict) or not all(
+        isinstance(tokens.get(key), str) and tokens[key].strip() for key in ("oaToken", "saToken")
+    ):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "OA 账号登录失败")
+
+    returned_account = str(tokens.get("account") or "").strip()
+    if returned_account and returned_account != normalized_account:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "OA 用户账号校验失败")
+
+    identity = await fetch_oa_identity(tokens["oaToken"].strip(), normalized_account)
+    department = await resolve_external_department(db, identity.department_name)
+    return await _complete_oa_login(identity, db, request, department, operation="OA账号代入登录")

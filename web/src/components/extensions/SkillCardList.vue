@@ -566,6 +566,10 @@ const userStore = useUserStore()
 const canUseSkills = computed(() => userStore.hasPermission('skill:use'))
 const canManageSkills = computed(() => userStore.hasPermission('skill:manage'))
 const canInstallSkills = computed(() => canUseSkills.value || canManageSkills.value)
+// iframe 刷新时 OA 授权是异步完成的，权限未就绪前不能判断应访问哪套 Skill 列表接口。
+const userPermissionsReady = computed(
+  () => Boolean(userStore.userId) && userStore.effectivePermissions.length > 0
+)
 
 const loading = ref(false)
 const importing = ref(false)
@@ -1002,8 +1006,18 @@ const handleBatchDelete = () => {
 }
 
 const fetchSkills = async ({ refreshPersonal = false } = {}) => {
+  if (!userPermissionsReady.value) {
+    console.debug('[Skill] 用户权限尚未就绪，暂不加载 Skill 列表')
+    return
+  }
+
   loading.value = true
   try {
+    const usePersonalSkillList = canUseSkills.value
+    console.debug('[Skill] 加载 Skill 列表', {
+      usePersonalSkillList,
+      refreshPersonal
+    })
     const skillResult = canUseSkills.value
       ? await skillApi.listSkillCards({ refreshPersonal })
       : await skillApi.listSkills()
@@ -1014,6 +1028,17 @@ const fetchSkills = async ({ refreshPersonal = false } = {}) => {
     loading.value = false
   }
 }
+
+watch(
+  () => [userStore.userId, userStore.effectivePermissions.join('|')],
+  ([userId, permissionSnapshot]) => {
+    if (!userId || !permissionSnapshot) return
+
+    // 权限从 OA 授权流程写入后，强制重新扫描个人 Skill，避免首次请求使用旧列表。
+    console.debug('[Skill] 用户权限已就绪，刷新个人 Skill 列表')
+    void fetchSkills({ refreshPersonal: true })
+  }
+)
 
 const beforeSkillUpload = (file) => {
   const lower = file.name.toLowerCase()

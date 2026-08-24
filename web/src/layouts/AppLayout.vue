@@ -1,7 +1,6 @@
 <script setup>
 import { ref, onMounted, onUnmounted, computed, provide, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
-import { GithubOutlined } from '@ant-design/icons-vue'
 import {
   BarChart3,
   ClipboardList,
@@ -87,7 +86,11 @@ const showDebugModal = ref(false)
 
 const { sidebarCollapsed } = storeToRefs(chatUIStore)
 const embedSidebarCollapsed = ref(false)
-const showSidebar = computed(() => shouldShowAppSidebar(isEmbedded.value, embedDisplayMode.value))
+const isSettingsRoute = computed(() => Boolean(route.meta.settingsTab))
+// 设置页已经提供专属导航，隐藏应用主侧栏，避免全屏嵌入时出现双侧栏。
+const showSidebar = computed(
+  () => !isSettingsRoute.value && shouldShowAppSidebar(isEmbedded.value, embedDisplayMode.value)
+)
 const layoutSidebarCollapsed = computed(() =>
   isEmbedded.value ? embedSidebarCollapsed.value : sidebarCollapsed.value
 )
@@ -528,18 +531,9 @@ provide('settingsModal', {
         />
       </div>
       <div class="foo">
-        <div class="github nav-item" @click.stop>
-          <a-tooltip placement="right" :open="layoutSidebarCollapsed ? undefined : false">
-            <template #title>欢迎 Star</template>
-            <a href="https://github.com/xerrors/Yuxi" target="_blank" class="github-link">
-              <GithubOutlined class="icon" />
-              <span class="nav-text">GitHub</span>
-            </a>
-          </a-tooltip>
-        </div>
         <!-- 用户信息组件 -->
         <div class="nav-item user-info" @click.stop>
-          <UserInfoComponent :show-role="!layoutSidebarCollapsed">
+          <UserInfoComponent :show-role="!layoutSidebarCollapsed" :allow-logout="!isEmbedded">
             <template v-if="userStore.hasPermission('system_task:manage')" #actions>
               <a-tooltip placement="top" title="任务中心">
                 <button
@@ -570,7 +564,8 @@ provide('settingsModal', {
       class="embed-auth-waiting"
       role="status"
     >
-      {{ embedStatusMessage }}
+      <span class="embed-auth-spinner" aria-hidden="true"></span>
+      <span>{{ embedStatusMessage }}</span>
     </div>
     <router-view v-else v-slot="{ Component, route }" id="app-router-view">
       <keep-alive v-if="route.meta.keepAlive !== false">
@@ -689,12 +684,31 @@ div.header,
 
 .embed-auth-waiting {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 12px;
   padding: 24px;
   color: var(--gray-600);
   background: var(--gray-25);
   font-size: 14px;
+  text-align: center;
+}
+
+// OA 授权完成前使用轻量旋转指示，避免等待区域看起来像页面卡住。
+.embed-auth-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--gray-200);
+  border-top-color: var(--main-color);
+  border-radius: 50%;
+  animation: embed-auth-spin 0.8s linear infinite;
+}
+
+@keyframes embed-auth-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .embed-page-controls {
@@ -774,7 +788,6 @@ div.header,
 
   .sidebar-brand,
   :deep(.conversation-nav-section:not(.sidebar-conversations)),
-  .github,
   .user-info {
     flex-shrink: 0;
   }
@@ -944,51 +957,6 @@ div.header,
       color: var(--main-color);
     }
 
-    &.github {
-      margin-bottom: 8px;
-      &:hover {
-        border-color: transparent;
-      }
-
-      .github-link {
-        display: flex;
-        align-items: center;
-        width: 100%;
-        min-width: 0;
-        color: inherit;
-        text-decoration: none;
-      }
-
-      .icon {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        font-size: @sidebar-icon-size;
-        line-height: 1;
-      }
-
-      .github-stars {
-        display: flex;
-        align-items: center;
-        max-width: 48px;
-        margin-left: auto;
-        overflow: hidden;
-        font-size: 12px;
-        color: var(--gray-600);
-        background-color: var(--gray-100);
-        padding: 2px 8px;
-        border-radius: 6px;
-        white-space: nowrap;
-        transition:
-          opacity 0.12s ease,
-          max-width 0.18s ease;
-
-        .star-count {
-          font-weight: 600;
-        }
-      }
-    }
-
     &.api-docs {
       padding: 10px 12px;
     }
@@ -1130,18 +1098,11 @@ div.header,
       width: 100%;
       padding: 0 @sidebar-collapsed-icon-padding-x;
 
-      .nav-text,
-      .github-stars {
+      .nav-text {
         max-width: 0;
         margin-left: 0;
         opacity: 0;
         pointer-events: none;
-      }
-
-      &.github {
-        .github-link {
-          justify-content: flex-start;
-        }
       }
 
       &.user-info {

@@ -67,13 +67,10 @@
   </head>
   <body>
     <header>
-      <label>Yuxi <input id="yuxi-base" value="http://127.0.0.1:5174" /></label>
-      <label
-        >OA Mock <input id="oa-base" value="http://127.0.0.1:9101"
-      /></label>
+      <label>Yuxi <input id="yuxi-base" value="http://127.0.0.1:5173" /></label>
+      <label>OA account <input id="oa-account" placeholder="请输入真实 OA account" /></label>
       <button id="open" type="button">打开 AI 助手</button>
-      <button id="login" type="button">刷新 OA token</button>
-      <button id="expire" type="button">模拟 token 过期</button>
+      <button id="login" type="button">重新发送 account</button>
     </header>
     <div id="frame-shell" data-mode="fixed" hidden>
       <iframe
@@ -85,26 +82,35 @@
     <pre id="events" aria-live="polite"></pre>
     <script>
       const baseInput = document.querySelector("#yuxi-base");
-      const oaBaseInput = document.querySelector("#oa-base");
+      const accountInput = document.querySelector("#oa-account");
       const frame = document.querySelector("#yuxi-frame");
       const shell = document.querySelector("#frame-shell");
       const events = document.querySelector("#events");
       const modes = new Set(["fixed", "floating", "fullscreen"]);
-      let oaToken = "";
 
       const base = () => baseInput.value.replace(/\/$/, "");
-      const oaBase = () => oaBaseInput.value.replace(/\/$/, "");
       const origin = () => new URL(base()).origin;
       const log = (value) => {
         events.textContent += `${new Date().toISOString()} ${value}\n`;
       };
-      const sendToken = () => {
-        if (!oaToken) return;
+      // 按正式 OA 插件协议下发账号；Yuxi 仅消费 userInfo.account，不应依赖父项目 token。
+      const sendLoginParams = () => {
+        const account = accountInput.value.trim();
+        if (!account) {
+          log("未填写 OA account");
+          return;
+        }
         frame.contentWindow.postMessage(
-          { type: "oa:token", token: oaToken },
+          {
+            type: "login-params",
+            data: {
+              type: "login-params",
+              userInfo: { account },
+            },
+          },
           origin(),
         );
-        log("OA -> Yuxi: oa:token");
+        log("OA -> Yuxi: login-params");
       };
       const loadFrame = () => {
         frame.src = `${base()}/embed`;
@@ -113,20 +119,17 @@
         if (!modes.has(mode)) return;
         shell.hidden = false;
         shell.dataset.mode = mode;
-        frame.contentWindow.postMessage(
-          { type: "oa:mode-changed", mode },
-          origin(),
-        );
-        log(`OA -> Yuxi: oa:mode-changed (${mode})`);
       };
 
-      async function refreshOAToken() {
-        const response = await fetch(`${oaBase()}/mock-oa-token`);
-        if (!response.ok) throw new Error("获取模拟 OA token 失败");
-        const payload = await response.json();
-        oaToken = payload.token;
-        sendToken();
-      }
+      // 正式父插件只在子页 ready 后发送初始化消息，随后等待子页主动请求登录参数。
+      const sendInitialMessages = () => {
+        frame.contentWindow.postMessage(
+          { type: "host-info", data: { viewport: { width: window.innerWidth, height: window.innerHeight } } },
+          origin(),
+        );
+        frame.contentWindow.postMessage({ type: "initial-mode", mode: "embedded" }, origin());
+        log("OA -> Yuxi: host-info, initial-mode (embedded)");
+      };
 
       window.addEventListener("message", (event) => {
         if (event.source !== frame.contentWindow || event.origin !== origin())
@@ -135,15 +138,18 @@
         log(
           `Yuxi -> OA: ${message.type}${message.threadId ? ` (${message.threadId})` : ""}`,
         );
-        if (message.type === "yuxi:ready") {
-          sendToken();
+        if (message.type === "ready") {
           applyMode("fixed");
+          sendInitialMessages();
         }
-        if (message.type === "yuxi:auth-required") refreshOAToken();
-        if (message.type === "yuxi:mode-request") {
-          applyMode(message.mode);
+        if (message.type === "request-login-params") sendLoginParams();
+        if (message.type === "toggle-floating") {
+          applyMode(message.data?.isFloating ? "floating" : "fixed");
         }
-        if (message.type === "yuxi:close-request") {
+        if (message.type === "toggle-window-size") {
+          applyMode(message.data?.isEnlarge ? "fullscreen" : "fixed");
+        }
+        if (message.type === "close") {
           shell.hidden = true;
         }
       });
@@ -156,13 +162,7 @@
       });
       document
         .querySelector("#login")
-        .addEventListener("click", refreshOAToken);
-      document.querySelector("#expire").addEventListener("click", () => {
-        oaToken = "expired-local-test-token";
-        sendToken();
-      });
-
-      refreshOAToken();
+        .addEventListener("click", sendLoginParams);
     </script>
   </body>
 </html>
