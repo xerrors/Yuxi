@@ -30,11 +30,19 @@ class KnowledgeFolderService:
 
         while True:
             await context.raise_if_cancelled()
-            batch = await self.repository.migrate_virtual_folder_batch(
-                kb_id=kb_id,
-                operator_id=operator_id,
-                after_file_id=cursor,
-            )
+            batch: dict = {}
+
+            async def migrate_batch(session, _task_record) -> None:
+                batch.update(
+                    await self.repository.migrate_virtual_folder_batch(
+                        session,
+                        kb_id=kb_id,
+                        operator_id=operator_id,
+                        after_file_id=cursor,
+                    )
+                )
+
+            await context.run_owned_transaction(migrate_batch)
             if batch["scanned"] == 0:
                 if pass_progress == 0:
                     break

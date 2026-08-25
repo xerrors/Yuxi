@@ -20,8 +20,8 @@ from yuxi.utils import logger
 from yuxi.utils.singleton import SingletonMeta
 
 AGENT_RUN_TERMINAL_STATUS_SQL = ", ".join(f"'{status}'" for status in AGENT_RUN_TERMINAL_STATUSES)
-BUSINESS_SCHEMA_VERSION = 1
-KNOWLEDGE_SCHEMA_VERSION = 1
+BUSINESS_SCHEMA_VERSION = 2
+KNOWLEDGE_SCHEMA_VERSION = 2
 SCHEMA_VERSION_TABLE = "yuxi_schema_migrations"
 AGENT_RUN_LEASE_SCHEMA_STATEMENTS = (
     "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS worker_id VARCHAR(128)",
@@ -174,6 +174,54 @@ V071_WORKDIR_CUTOVER_STATEMENTS = (
     """,
     "ALTER TABLE IF EXISTS conversations ALTER COLUMN project_id SET NOT NULL",
     "CREATE INDEX IF NOT EXISTS ix_conversations_project_id ON conversations(project_id)",
+)
+KNOWLEDGE_FILE_TASK_OWNER_SCHEMA_STATEMENTS = (
+    "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS processing_task_id VARCHAR(64)",
+    "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS processing_owner VARCHAR(128)",
+    "CREATE INDEX IF NOT EXISTS ix_knowledge_files_processing_task_id ON knowledge_files(processing_task_id)",
+    """
+    UPDATE knowledge_files
+    SET status = CASE WHEN status = 'parsing' THEN 'error_parsing' ELSE 'error_indexing' END,
+        error_message = 'service_interrupted: 旧执行实例中断，处理结果未知，请重试',
+        processing_task_id = NULL,
+        processing_owner = NULL,
+        updated_at = timezone('utc', now())
+    WHERE status IN ('parsing', 'indexing')
+      AND processing_task_id IS NULL
+    """,
+)
+TASK_DURABLE_SCHEMA_STATEMENTS = (
+    "ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS recovery_strategy VARCHAR(16)",
+    "UPDATE tasks SET recovery_strategy = 'fail' WHERE recovery_strategy IS NULL",
+    "ALTER TABLE IF EXISTS tasks ALTER COLUMN recovery_strategy SET DEFAULT 'fail'",
+    "ALTER TABLE IF EXISTS tasks ALTER COLUMN recovery_strategy SET NOT NULL",
+    "ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS handler_version INTEGER",
+    "UPDATE tasks SET handler_version = 0 WHERE handler_version IS NULL",
+    "ALTER TABLE IF EXISTS tasks ALTER COLUMN handler_version SET DEFAULT 1",
+    "ALTER TABLE IF EXISTS tasks ALTER COLUMN handler_version SET NOT NULL",
+    "ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS dedupe_key VARCHAR(64)",
+    "ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS worker_id VARCHAR(128)",
+    "ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMP WITHOUT TIME ZONE",
+    "ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMP WITHOUT TIME ZONE",
+    "ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS timeout_seconds DOUBLE PRECISION",
+    "UPDATE tasks SET timeout_seconds = 21600.0 WHERE timeout_seconds IS NULL",
+    "ALTER TABLE IF EXISTS tasks ALTER COLUMN timeout_seconds SET DEFAULT 21600.0",
+    "ALTER TABLE IF EXISTS tasks ALTER COLUMN timeout_seconds SET NOT NULL",
+    "CREATE INDEX IF NOT EXISTS ix_tasks_status_lease_expires ON tasks(status, lease_expires_at)",
+    """
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'uq_tasks_active_dedupe'
+              AND conrelid = 'tasks'::regclass
+        ) THEN
+            ALTER TABLE tasks
+            ADD CONSTRAINT uq_tasks_active_dedupe UNIQUE (type, dedupe_key);
+        END IF;
+    END $$
+    """,
 )
 RUNTIME_SCOPE_SCHEMA_STATEMENTS = (
     "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS runtime_scope_id VARCHAR(64)",
@@ -417,6 +465,20 @@ class PostgresManager(metaclass=SingletonMeta):
             await conn.run_sync(BusinessBase.metadata.create_all)
         logger.info("PostgreSQL business tables created/checked")
 
+    async def upgrade_business_schema_v1_to_v2(self) -> None:
+        """为通用 Task 增加持久执行权、租约和去重字段。"""
+        self._check_initialized()
+        async with self.async_engine.begin() as conn:
+            for statement in TASK_DURABLE_SCHEMA_STATEMENTS:
+                await conn.execute(text(statement))
+
+    async def upgrade_knowledge_schema_v1_to_v2(self) -> None:
+        """为知识文件处理中间态增加 Durable Task attempt owner。"""
+        self._check_initialized()
+        async with self.async_engine.begin() as conn:
+            for statement in KNOWLEDGE_FILE_TASK_OWNER_SCHEMA_STATEMENTS:
+                await conn.execute(text(statement))
+
     async def drop_tables(self):
         """删除所有表（慎用！）"""
         self._check_initialized()
@@ -466,6 +528,7 @@ class PostgresManager(metaclass=SingletonMeta):
             "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS processing_params JSONB",
             "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS is_folder BOOLEAN",
             "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS error_message TEXT",
+            *KNOWLEDGE_FILE_TASK_OWNER_SCHEMA_STATEMENTS,
             "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS created_by VARCHAR(64)",
             "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS updated_by VARCHAR(64)",
             "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ",
@@ -1235,6 +1298,7 @@ class PostgresManager(metaclass=SingletonMeta):
             ON agent_run_requests(uid, agent_slug, conversation_thread_id, status, created_at, id)
             """,
             "CREATE INDEX IF NOT EXISTS ix_agent_run_requests_dispatched_run_id ON agent_run_requests(dispatched_run_id)",  # noqa: E501
+            *TASK_DURABLE_SCHEMA_STATEMENTS,
         ]
         async with self.async_engine.begin() as conn:
             # 历史未绑定用户的 API Key 会在下方迁移语句里被静默删除，先计数告警

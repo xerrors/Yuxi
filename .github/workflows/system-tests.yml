@@ -155,6 +155,21 @@ jobs:
             test/integration/api/test_skill_artifact_authorization.py -q
       - name: Verify real Sandbox storage isolation and shared projections
         run: docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/services/test_project_workdir_provisioner.py -q
+      - name: Verify full-mode Durable Task worker path
+        run: |
+          docker compose stop api worker
+          LITE_MODE=false docker compose run --rm storage-migrator
+          LITE_MODE=false docker compose run --rm --no-deps api \
+            uv run --no-sync --no-dev pytest test/integration/services/test_durable_task_repository.py -q
+          LITE_MODE=false docker compose run --rm --no-deps \
+            -e DURABLE_TASK_GATE_ID=${{ github.run_id }} api \
+            uv run --no-sync --no-dev pytest \
+              test/integration/services/test_durable_task_worker_path.py::test_prepare_task_with_failed_initial_arq_publication -q
+          LITE_MODE=false docker compose up -d --force-recreate worker
+          LITE_MODE=false docker compose run --rm --no-deps \
+            -e DURABLE_TASK_GATE_ID=${{ github.run_id }} api \
+            uv run --no-sync --no-dev pytest \
+              test/integration/services/test_durable_task_worker_path.py::test_shipping_worker_startup_recovers_pending_publication -q
       - name: Runtime logs on failure
         if: failure()
         run: docker compose logs api worker sandbox-provisioner --tail 300

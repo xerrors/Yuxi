@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy import DateTime, String, case, cast, func, literal, or_, select, union_all, update
 
 from yuxi.storage.postgres.manager import pg_manager
+from yuxi.storage.postgres.models_business import TaskRecord
 from yuxi.storage.postgres.models_knowledge import KnowledgeFile
 from yuxi.utils import logger
 from yuxi.utils.datetime_utils import utc_now_naive
@@ -60,13 +61,14 @@ class KnowledgeFileRepository:
 
     async def migrate_virtual_folder_batch(
         self,
+        session,
         *,
         kb_id: str,
         operator_id: str,
         after_file_id: str | None,
         batch_size: int = 500,
     ) -> dict[str, Any]:
-        """原子迁移一批文件的首个路径段。"""
+        """在调用方拥有的 Task attempt 事务内迁移一批路径。"""
         filters = [
             KnowledgeFile.kb_id == kb_id,
             or_(KnowledgeFile.is_folder.is_(False), KnowledgeFile.is_folder.is_(None)),
@@ -75,76 +77,80 @@ class KnowledgeFileRepository:
         if after_file_id:
             filters.append(KnowledgeFile.file_id > after_file_id)
 
-        async with pg_manager.get_async_session_context() as session:
-            await session.execute(select(func.pg_advisory_xact_lock(func.hashtext(kb_id))))
-            records = list(
+        await session.execute(select(func.pg_advisory_xact_lock(func.hashtext(kb_id))))
+        records = list(
+            (
+                await session.execute(
+                    select(KnowledgeFile).where(*filters).order_by(KnowledgeFile.file_id).limit(batch_size)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not records:
+            return {"scanned": 0, "processed": 0, "created_folders": 0, "conflict_file_ids": []}
+
+        groups: dict[tuple[str | None, str], list[KnowledgeFile]] = {}
+        conflict_file_ids: list[str] = []
+        for record in records:
+            segment, remainder = record.filename.split("/", 1)
+            if not segment or segment in {".", ".."} or not remainder:
+                conflict_file_ids.append(record.file_id)
+                continue
+            groups.setdefault((record.parent_id, segment), []).append(record)
+
+        processed = 0
+        created_folders = 0
+        for (parent_id, segment), group in groups.items():
+            siblings = list(
                 (
                     await session.execute(
-                        select(KnowledgeFile).where(*filters).order_by(KnowledgeFile.file_id).limit(batch_size)
+                        select(KnowledgeFile).where(
+                            KnowledgeFile.kb_id == kb_id,
+                            self._parent_condition(parent_id),
+                            KnowledgeFile.filename == segment,
+                        )
                     )
                 )
                 .scalars()
                 .all()
             )
-            if not records:
-                return {"scanned": 0, "processed": 0, "created_folders": 0, "conflict_file_ids": []}
-
-            groups: dict[tuple[str | None, str], list[KnowledgeFile]] = {}
-            conflict_file_ids: list[str] = []
-            for record in records:
-                segment, remainder = record.filename.split("/", 1)
-                if not segment or segment in {".", ".."} or not remainder:
-                    conflict_file_ids.append(record.file_id)
-                    continue
-                groups.setdefault((record.parent_id, segment), []).append(record)
-
-            processed = 0
-            created_folders = 0
-            for (parent_id, segment), group in groups.items():
-                sibling_result = await session.execute(
-                    select(KnowledgeFile).where(
-                        KnowledgeFile.kb_id == kb_id,
-                        self._parent_condition(parent_id),
-                        KnowledgeFile.filename == segment,
-                    )
+            if len(siblings) == 1 and siblings[0].is_folder:
+                folder = siblings[0]
+            elif siblings:
+                conflict_file_ids.extend(record.file_id for record in group)
+                continue
+            else:
+                folder = KnowledgeFile(
+                    file_id=f"folder-{uuid.uuid4()}",
+                    kb_id=kb_id,
+                    parent_id=parent_id,
+                    filename=segment,
+                    path=segment,
+                    file_type="folder",
+                    status="done",
+                    is_folder=True,
+                    file_size=0,
+                    chunk_count=0,
+                    token_count=0,
+                    created_by=operator_id,
                 )
-                siblings = list(sibling_result.scalars().all())
-                if len(siblings) == 1 and siblings[0].is_folder:
-                    folder = siblings[0]
-                elif siblings:
-                    conflict_file_ids.extend(record.file_id for record in group)
-                    continue
-                else:
-                    folder = KnowledgeFile(
-                        file_id=f"folder-{uuid.uuid4()}",
-                        kb_id=kb_id,
-                        parent_id=parent_id,
-                        filename=segment,
-                        path=segment,
-                        file_type="folder",
-                        status="done",
-                        is_folder=True,
-                        file_size=0,
-                        chunk_count=0,
-                        token_count=0,
-                        created_by=operator_id,
-                    )
-                    session.add(folder)
-                    await session.flush()
-                    created_folders += 1
+                session.add(folder)
+                await session.flush()
+                created_folders += 1
 
-                for record in group:
-                    record.parent_id = folder.file_id
-                    record.filename = record.filename.split("/", 1)[1]
-                    processed += 1
+            for record in group:
+                record.parent_id = folder.file_id
+                record.filename = record.filename.split("/", 1)[1]
+                processed += 1
 
-            return {
-                "scanned": len(records),
-                "processed": processed,
-                "created_folders": created_folders,
-                "conflict_file_ids": conflict_file_ids,
-                "last_file_id": records[-1].file_id,
-            }
+        return {
+            "scanned": len(records),
+            "processed": processed,
+            "created_folders": created_folders,
+            "conflict_file_ids": conflict_file_ids,
+            "last_file_id": records[-1].file_id,
+        }
 
     async def aggregate_dashboard_stats(self) -> list[tuple[str, int, int, int]]:
         """按文件类型聚合真实文件数、大小与 Chunk 数。"""
@@ -182,6 +188,8 @@ class KnowledgeFileRepository:
         "processing_params",
         "is_folder",
         "error_message",
+        "processing_task_id",
+        "processing_owner",
         "created_by",
         "updated_by",
     }
@@ -753,23 +761,74 @@ class KnowledgeFileRepository:
         file_id: str,
         allowed_statuses: set[str],
         data: dict[str, Any],
+        processing_task_id: str | None = None,
+        processing_owner: str | None = None,
     ) -> KnowledgeFile | None:
+        lease_task_id = processing_task_id or data.get("processing_task_id")
+        lease_owner = processing_owner or data.get("processing_owner")
         sanitized_data = self._sanitize_data(data)
         if not sanitized_data:
             return await self.get_by_file_id(file_id)
 
+        filters = [
+            KnowledgeFile.kb_id == kb_id,
+            KnowledgeFile.file_id == file_id,
+            KnowledgeFile.status.in_(sorted(allowed_statuses)),
+        ]
+        if processing_task_id is not None:
+            filters.append(KnowledgeFile.processing_task_id == processing_task_id)
+        if processing_owner is not None:
+            filters.append(KnowledgeFile.processing_owner == processing_owner)
         async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(
-                update(KnowledgeFile)
-                .where(
-                    KnowledgeFile.kb_id == kb_id,
-                    KnowledgeFile.file_id == file_id,
-                    KnowledgeFile.status.in_(sorted(allowed_statuses)),
+            if lease_task_id is not None and lease_owner is not None:
+                task_record = await session.scalar(
+                    select(TaskRecord)
+                    .where(
+                        TaskRecord.id == lease_task_id,
+                        TaskRecord.status == "running",
+                        TaskRecord.worker_id == lease_owner,
+                    )
+                    .with_for_update()
                 )
-                .values(**sanitized_data)
-                .returning(KnowledgeFile)
+                if task_record is None:
+                    return None
+                file_record = await session.scalar(select(KnowledgeFile).where(*filters).with_for_update())
+                if file_record is None:
+                    return None
+                database_now = await session.scalar(select(func.timezone("utc", func.clock_timestamp())))
+                if task_record.lease_expires_at is None or task_record.lease_expires_at <= database_now:
+                    return None
+                for key, value in sanitized_data.items():
+                    setattr(file_record, key, value)
+                await session.flush()
+                return file_record
+
+            result = await session.execute(
+                update(KnowledgeFile).where(*filters).values(**sanitized_data).returning(KnowledgeFile)
             )
             return result.scalar_one_or_none()
+
+    @staticmethod
+    async def fail_task_processing_in_session(session, *, task_id: str, error: str) -> int:
+        """仅收敛仍由指定 Durable Task 拥有的文件中间态。"""
+        result = await session.execute(
+            update(KnowledgeFile)
+            .where(
+                KnowledgeFile.processing_task_id == task_id,
+                KnowledgeFile.status.in_(["parsing", "indexing"]),
+            )
+            .values(
+                status=case(
+                    (KnowledgeFile.status == "parsing", "error_parsing"),
+                    else_="error_indexing",
+                ),
+                error_message=error,
+                processing_task_id=None,
+                processing_owner=None,
+                updated_at=func.now(),
+            )
+        )
+        return int(result.rowcount or 0)
 
     async def delete(self, file_id: str) -> None:
         async with pg_manager.get_async_session_context() as session:

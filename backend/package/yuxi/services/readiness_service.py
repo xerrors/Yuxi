@@ -10,6 +10,10 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from sqlalchemy import text
+from yuxi.services.task_queue_service import (
+    TASK_RECONCILIATION_HEALTH_KEY,
+    TASK_RECONCILIATION_HEALTH_TTL_SECONDS,
+)
 from yuxi.services.run_queue_service import (
     WORKER_HEALTH_KEY,
     WORKER_HEALTH_MAX_TTL_MS,
@@ -51,6 +55,7 @@ async def _probe_worker() -> None:
     leases = (
         (WORKER_HEALTH_KEY, WORKER_HEALTH_MAX_TTL_MS),
         (WORKER_RECONCILIATION_HEALTH_KEY, WORKER_RECONCILIATION_HEALTH_TTL_SECONDS * 1000),
+        (TASK_RECONCILIATION_HEALTH_KEY, TASK_RECONCILIATION_HEALTH_TTL_SECONDS * 1000),
     )
     for key, max_ttl_ms in leases:
         value = await redis.get(key)

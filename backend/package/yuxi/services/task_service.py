@@ -1,37 +1,27 @@
+from __future__ import annotations
+
 import asyncio
+import hashlib
+import json
 import math
 import os
 import uuid
-from collections import Counter
-from collections.abc import Awaitable, Callable
-from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from dataclasses import dataclass, field
+from functools import partial
 from typing import Any
 
-from yuxi.repositories.task_repository import TaskRepository
-from yuxi.utils.datetime_utils import coerce_any_to_utc_datetime, utc_isoformat
+from yuxi.config.runtime import lite_mode_enabled
+from yuxi.repositories.task_repository import TERMINAL_TASK_STATUSES, TaskRepository
+from yuxi.services.task_queue_service import TASK_HEARTBEAT_SECONDS, TASK_LEASE_SECONDS, publish_task
+from yuxi.services.task_registry import get_task_definition
+from yuxi.utils.datetime_utils import utc_isoformat, utc_now_naive
 from yuxi.utils.logging_config import logger
 
-TaskCoroutine = Callable[["TaskContext"], Awaitable[Any]]
-TERMINAL_STATUSES = {"success", "failed", "cancelled"}
-# 纯进度推进时，进度增量小于该阈值则只更新内存、不落库（前端读内存，不受影响）
+TERMINAL_STATUSES = TERMINAL_TASK_STATUSES
 PROGRESS_PERSIST_DELTA = 2.0
-# 内存与数据库各保留最近多少条终态任务，超出的自动清理
-MAX_TERMINAL_TASKS = 200
-# 后台任务默认最多执行 6 小时，可按部署环境或单个任务覆盖。
 TASKER_DEFAULT_TIMEOUT_SECONDS = float(os.getenv("TASKER_DEFAULT_TIMEOUT_SECONDS", 6 * 60 * 60))
-# 哨兵：区分「未传参」与「显式传入 None」，使 result/error 可被清空
-_UNSET: Any = object()
-
-
-class _TaskExecutionTimeout(TimeoutError):
-    pass
-
-
-def _iso_to_utc_naive(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    return coerce_any_to_utc_datetime(value).replace(tzinfo=None)
+TASKER_MAX_TIMEOUT_SECONDS = 24 * 60 * 60
+DURABLE_TASK_MAX_RUNNING = 4
 
 
 @dataclass
@@ -50,108 +40,95 @@ class Task:
     result: Any | None = None
     error: str | None = None
     cancel_requested: bool = False
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-    def to_summary_dict(self) -> dict[str, Any]:
-        data = asdict(self)
-        data.pop("payload", None)
-        data.pop("result", None)
-        return data
+    recovery_strategy: str = "fail"
+    handler_version: int = 1
+    dedupe_key: str | None = None
+    attempt_count: int = 0
+    worker_id: str | None = None
+    heartbeat_at: str | None = None
+    lease_expires_at: str | None = None
+    timeout_seconds: float = TASKER_DEFAULT_TIMEOUT_SECONDS
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Task":
-        return cls(
-            id=data["id"],
-            name=data.get("name", "Unnamed Task"),
-            type=data.get("type", "general"),
-            status=data.get("status", "pending"),
-            progress=data.get("progress", 0.0),
-            message=data.get("message", ""),
-            created_at=data.get("created_at", utc_isoformat()),
-            updated_at=data.get("updated_at", utc_isoformat()),
-            started_at=data.get("started_at"),
-            completed_at=data.get("completed_at"),
-            payload=data.get("payload", {}),
-            result=data.get("result"),
-            error=data.get("error"),
-            cancel_requested=data.get("cancel_requested", False),
-        )
+    def from_dict(cls, data: dict[str, Any]) -> Task:
+        fields = cls.__dataclass_fields__
+        values = {key: value for key, value in data.items() if key in fields}
+        values["cancel_requested"] = bool(values.get("cancel_requested", False))
+        return cls(**values)
 
 
 class TaskContext:
-    def __init__(self, tasker: "Tasker", task_id: str, payload: dict[str, Any] | None = None):
-        self._tasker = tasker
+    """向领域 Handler 提供受当前 attempt lease 保护的进度与取消边界。"""
+
+    def __init__(self, task_id: str, worker_id: str, payload: dict[str, Any] | None = None):
         self.task_id = task_id
+        self.worker_id = worker_id
         self.payload = payload or {}
         self.cancellation_reason: str | None = None
+        self._cancel_requested = False
+        self._last_persisted_progress: float | None = None
+        self._repo = TaskRepository()
 
     async def set_progress(self, progress: float, message: str | None = None) -> None:
-        await self._tasker._update_task(
-            self.task_id,
-            progress=max(0.0, min(progress, 100.0)),
-            message=message,
-        )
+        normalized = max(0.0, min(float(progress), 100.0))
+        if (
+            self._last_persisted_progress is not None
+            and abs(normalized - self._last_persisted_progress) < PROGRESS_PERSIST_DELTA
+        ):
+            return
+        data: dict[str, Any] = {"progress": normalized}
+        if message is not None:
+            data["message"] = message
+        await self._update(data)
+        self._last_persisted_progress = normalized
 
     async def set_message(self, message: str) -> None:
-        await self._tasker._update_task(self.task_id, message=message)
+        await self._update({"message": message})
 
     async def set_result(self, result: Any) -> None:
-        await self._tasker._update_task(self.task_id, result=result)
+        await self._update({"result": result})
 
     def is_cancel_requested(self) -> bool:
-        return self._tasker._is_cancel_requested(self.task_id)
+        return self._cancel_requested
+
+    async def run_owned_transaction(self, operation) -> None:
+        """在 attempt lease 行锁内提交领域 checkpoint。"""
+        if not await self._repo.run_owned_transaction(
+            self.task_id,
+            worker_id=self.worker_id,
+            operation=operation,
+        ):
+            self.cancellation_reason = "lease_lost"
+            raise asyncio.CancelledError("Task lease was lost")
 
     async def raise_if_cancelled(self) -> None:
-        if self.is_cancel_requested():
-            self.cancellation_reason = "cancelled"
+        owns_lease, cancel_requested = await self._repo.check_control(
+            self.task_id,
+            worker_id=self.worker_id,
+        )
+        if not owns_lease:
+            self.cancellation_reason = "lease_lost"
+            raise asyncio.CancelledError("Task lease was lost")
+        if cancel_requested:
+            self._request_cancel("cancelled")
             raise asyncio.CancelledError("Task was cancelled")
+
+    def _request_cancel(self, reason: str) -> None:
+        self._cancel_requested = reason == "cancelled"
+        self.cancellation_reason = reason
+
+    async def _update(self, data: dict[str, Any]) -> None:
+        if not await self._repo.update_owned(self.task_id, worker_id=self.worker_id, data=data):
+            self.cancellation_reason = "lease_lost"
+            raise asyncio.CancelledError("Task lease was lost")
 
 
 class Tasker:
-    def __init__(
-        self,
-        worker_count: int = 2,
-        default_timeout_seconds: float = TASKER_DEFAULT_TIMEOUT_SECONDS,
-    ):
-        self.worker_count = max(1, worker_count)
+    """持久 Task Service 门面；执行只发生在独立 ARQ worker。"""
+
+    def __init__(self, default_timeout_seconds: float = TASKER_DEFAULT_TIMEOUT_SECONDS):
         self.default_timeout_seconds = self._validate_timeout_seconds(default_timeout_seconds)
-        self._queue: asyncio.Queue[tuple[str, TaskCoroutine, float]] = asyncio.Queue()
-        self._tasks: dict[str, Task] = {}
-        self._lock = asyncio.Lock()
-        self._lifecycle_lock = asyncio.Lock()
-        self._workers: list[asyncio.Task[Any]] = []
-        self._started = False
         self._repo = TaskRepository()
-        # 记录每个任务上次落库时的进度，用于进度节流
-        self._last_persisted_progress: dict[str, float] = {}
-
-    async def start(self) -> None:
-        async with self._lifecycle_lock:
-            async with self._lock:
-                if self._started:
-                    return
-                await self._load_state()
-                for _ in range(self.worker_count):
-                    worker = asyncio.create_task(self._worker_loop(), name="tasker-worker")
-                    self._workers.append(worker)
-                self._started = True
-                logger.info("Tasker started with {} workers", self.worker_count)
-
-    async def shutdown(self) -> None:
-        async with self._lifecycle_lock:
-            async with self._lock:
-                if not self._started:
-                    return
-                workers = self._workers.copy()
-                self._workers.clear()
-                self._started = False
-                for worker in workers:
-                    worker.cancel()
-
-            await asyncio.gather(*workers, return_exceptions=True)
-            logger.info("Tasker shutdown complete")
 
     async def enqueue(
         self,
@@ -159,18 +136,87 @@ class Tasker:
         name: str,
         task_type: str,
         payload: dict[str, Any] | None = None,
-        coroutine: TaskCoroutine,
         timeout_seconds: float | None = None,
     ) -> Task:
-        effective_timeout = self._resolve_timeout_seconds(timeout_seconds)
-        task_id = uuid.uuid4().hex
-        task = Task(id=task_id, name=name, type=task_type, payload=payload or {})
-        async with self._lock:
-            self._tasks[task_id] = task
-            await self._persist_task(task)
-            await self._queue.put((task_id, coroutine, effective_timeout))
-        logger.info("Enqueued task {} ({})", task_id, name)
+        task, _ = await self._enqueue_task(
+            name=name,
+            task_type=task_type,
+            payload=payload or {},
+            timeout_seconds=timeout_seconds,
+            dedupe_key=None,
+        )
         return task
+
+    async def enqueue_unique_by_payload(
+        self,
+        *,
+        name: str,
+        task_type: str,
+        payload: dict[str, Any] | None = None,
+        payload_match: dict[str, Any],
+        timeout_seconds: float | None = None,
+    ) -> tuple[Task, bool]:
+        return await self._enqueue_task(
+            name=name,
+            task_type=task_type,
+            payload=payload or {},
+            timeout_seconds=timeout_seconds,
+            dedupe_key=self._dedupe_key(task_type, payload_match),
+        )
+
+    async def create_in_session(
+        self,
+        session,
+        *,
+        name: str,
+        task_type: str,
+        payload: dict[str, Any],
+        payload_match: dict[str, Any] | None = None,
+        timeout_seconds: float | None = None,
+    ) -> Task:
+        """在领域 service 事务中创建 Task；调用方提交后必须显式 publish。"""
+        task_id = uuid.uuid4().hex
+        record = await self._repo.create_in_session(
+            session,
+            task_id,
+            self._build_task_data(
+                name=name,
+                task_type=task_type,
+                payload=payload,
+                timeout_seconds=timeout_seconds,
+                dedupe_key=self._dedupe_key(task_type, payload_match) if payload_match is not None else None,
+            ),
+        )
+        return Task.from_dict(record.to_dict())
+
+    async def create_unique_in_session(
+        self,
+        session,
+        *,
+        name: str,
+        task_type: str,
+        payload: dict[str, Any],
+        payload_match: dict[str, Any],
+        timeout_seconds: float | None = None,
+    ) -> tuple[Task, bool]:
+        """在领域 service 事务中按数据库 dedupe 创建 Task。"""
+        task_id = uuid.uuid4().hex
+        record, created = await self._repo.create_or_get_in_session(
+            session,
+            task_id,
+            self._build_task_data(
+                name=name,
+                task_type=task_type,
+                payload=payload,
+                timeout_seconds=timeout_seconds,
+                dedupe_key=self._dedupe_key(task_type, payload_match),
+            ),
+        )
+        return Task.from_dict(record.to_dict()), created
+
+    async def publish(self, task: Task) -> None:
+        """发布已经由 owning transaction 提交的 Task。"""
+        await self._publish_created_task(task)
 
     async def find_task_by_payload(
         self,
@@ -179,204 +225,115 @@ class Tasker:
         payload_match: dict[str, Any],
         statuses: set[str] | None = None,
     ) -> Task | None:
-        async with self._lock:
-            matching_tasks = [
-                task
-                for task in self._tasks.values()
-                if task.type == task_type
-                and (statuses is None or task.status in statuses)
-                and all(task.payload.get(key) == value for key, value in payload_match.items())
-            ]
-            if not matching_tasks:
-                return None
-            return max(matching_tasks, key=lambda task: (task.created_at or "", task.id))
+        record = await self._repo.find_latest_by_payload(
+            task_type=task_type,
+            payload_match=payload_match,
+            statuses=statuses,
+        )
+        return Task.from_dict(record.to_dict()) if record else None
 
-    async def enqueue_unique_by_payload(
+    async def list_tasks(self, status: str | None = None, limit: int = 100) -> dict[str, Any]:
+        records = await self._repo.list(status=status, limit=limit)
+        return {
+            "tasks": [record.to_summary_dict() for record in records],
+            "summary": await self._repo.summarize(status=status),
+        }
+
+    async def get_task(self, task_id: str) -> dict[str, Any] | None:
+        record = await self._repo.get_by_id(task_id)
+        return record.to_dict() if record else None
+
+    async def cancel_task(self, task_id: str) -> Task | None:
+        current = await self._repo.get_by_id(task_id)
+        before_cancel = None
+        if current is not None:
+            handler_version = 1 if current.handler_version is None else int(current.handler_version)
+            try:
+                definition = get_task_definition(current.type, handler_version)
+            except ValueError:
+                definition = get_task_definition(current.type)
+            if lite_mode_enabled() and definition.requires_knowledge:
+                return None
+            failure_handler = definition.load_failure_handler()
+            if failure_handler is not None:
+                before_cancel = partial(failure_handler, error="任务已取消")
+
+        record = await self._repo.request_cancel(task_id, before_cancel=before_cancel)
+        return Task.from_dict(record.to_dict()) if record else None
+
+    async def delete_task(self, task_id: str) -> bool:
+        current = await self._repo.get_by_id(task_id)
+        if current is None:
+            return False
+        if lite_mode_enabled():
+            try:
+                definition = get_task_definition(current.type)
+            except ValueError:
+                return False
+            if definition.requires_knowledge:
+                return False
+        return await self._repo.delete_terminal(task_id)
+
+    @staticmethod
+    async def _publish_created_task(task: Task) -> None:
+        try:
+            await publish_task(task.id)
+        except Exception:
+            logger.error("Task publication failed; pending intent will be retried: task_id=%s", task.id, exc_info=True)
+
+    async def _enqueue_task(
         self,
         *,
         name: str,
         task_type: str,
-        payload: dict[str, Any] | None = None,
-        coroutine: TaskCoroutine,
-        payload_match: dict[str, Any],
-        statuses: set[str] | None = None,
-        timeout_seconds: float | None = None,
+        payload: dict[str, Any],
+        timeout_seconds: float | None,
+        dedupe_key: str | None,
     ) -> tuple[Task, bool]:
-        effective_timeout = self._resolve_timeout_seconds(timeout_seconds)
-        task_payload = payload or {}
-        async with self._lock:
-            existing = self._find_task_by_payload_locked(task_type, payload_match, statuses)
-            if existing:
-                return existing, False
-            task_id = uuid.uuid4().hex
-            task = Task(id=task_id, name=name, type=task_type, payload=task_payload)
-            self._tasks[task_id] = task
-            await self._persist_task(task)
-            await self._queue.put((task_id, coroutine, effective_timeout))
-        logger.info("Enqueued task {} ({})", task.id, name)
-        return task, True
+        record, created = await self._repo.create(
+            uuid.uuid4().hex,
+            self._build_task_data(
+                name=name,
+                task_type=task_type,
+                payload=payload,
+                timeout_seconds=timeout_seconds,
+                dedupe_key=dedupe_key,
+            ),
+        )
+        task = Task.from_dict(record.to_dict())
+        if created:
+            await self._publish_created_task(task)
+        return task, created
 
-    def _find_task_by_payload_locked(
+    def _build_task_data(
         self,
+        *,
+        name: str,
         task_type: str,
-        payload_match: dict[str, Any],
-        statuses: set[str] | None,
-    ) -> Task | None:
-        for task in self._tasks.values():
-            if task.type != task_type:
-                continue
-            if statuses is not None and task.status not in statuses:
-                continue
-            if all(task.payload.get(key) == value for key, value in payload_match.items()):
-                return task
-        return None
-
-    async def list_tasks(self, status: str | None = None, limit: int = 100) -> dict[str, Any]:
-        async with self._lock:
-            all_tasks = list(self._tasks.values())
-
-        status_counter = Counter(task.status for task in all_tasks)
-        type_counter = Counter(task.type for task in all_tasks)
-        all_tasks.sort(key=lambda item: item.created_at or utc_isoformat(), reverse=True)
-
-        tasks = all_tasks
-        if status:
-            tasks = [task for task in tasks if task.status == status]
-
-        limited_tasks = tasks[: max(limit, 0)]
-
-        summary: dict[str, Any] = {
-            "total": len(all_tasks),
-            "filtered_total": len(tasks),
-            "status_counts": dict(status_counter),
-            "type_counts": dict(type_counter),
-        }
-
+        payload: dict[str, Any],
+        timeout_seconds: float | None,
+        dedupe_key: str | None,
+    ) -> dict[str, Any]:
+        definition = get_task_definition(task_type)
+        now = utc_now_naive()
         return {
-            "tasks": [task.to_summary_dict() for task in limited_tasks],
-            "summary": summary,
+            "name": name,
+            "type": task_type,
+            "status": "pending",
+            "progress": 0.0,
+            "message": "任务等待 worker 执行",
+            "payload": payload,
+            "result": None,
+            "error": None,
+            "cancel_requested": 0,
+            "recovery_strategy": definition.recovery_strategy,
+            "handler_version": definition.version,
+            "dedupe_key": dedupe_key,
+            "attempt_count": 0,
+            "timeout_seconds": self._resolve_timeout_seconds(timeout_seconds),
+            "created_at": now,
+            "updated_at": now,
         }
-
-    async def get_task(self, task_id: str) -> dict[str, Any] | None:
-        async with self._lock:
-            task = self._tasks.get(task_id)
-        return task.to_dict() if task else None
-
-    async def cancel_task(self, task_id: str) -> bool:
-        async with self._lock:
-            task = self._tasks.get(task_id)
-            if not task:
-                return False
-            if task.status in TERMINAL_STATUSES:
-                return False
-            task.cancel_requested = True
-            task.updated_at = utc_isoformat()
-            await self._persist_task(task)
-        logger.info("Cancellation requested for task {}", task_id)
-        return True
-
-    async def delete_task(self, task_id: str) -> bool:
-        """Delete a task by id. Returns True if deleted, False if not found."""
-        async with self._lock:
-            if task_id not in self._tasks:
-                return False
-            del self._tasks[task_id]
-            self._last_persisted_progress.pop(task_id, None)
-        await self._repo.delete(task_id)
-        logger.info("Deleted task {}", task_id)
-        return True
-
-    async def _worker_loop(self) -> None:
-        while True:
-            try:
-                task_id, coroutine, timeout_seconds = await self._queue.get()
-                try:
-                    task = await self._get_task_instance(task_id)
-                    if not task:
-                        continue
-                    if task.cancel_requested:
-                        await self._mark_cancelled(task_id, "Task was cancelled before execution")
-                        continue
-                    await self._update_task(
-                        task_id, status="running", progress=0.0, message="任务开始执行", started_at=utc_isoformat()
-                    )
-                    context = TaskContext(self, task_id, task.payload)
-                    try:
-                        result = await self._run_task_coroutine(coroutine, context, timeout_seconds)
-                        if task.cancel_requested:
-                            await self._mark_cancelled(task_id, "Task cancelled during execution")
-                            continue
-                        await self._update_task(
-                            task_id,
-                            status="success",
-                            progress=100.0,
-                            message="任务已完成",
-                            result=result,
-                            completed_at=utc_isoformat(),
-                        )
-                    except _TaskExecutionTimeout as exc:
-                        logger.warning("Task {} timed out after {} seconds", task_id, timeout_seconds)
-                        await self._update_task(
-                            task_id,
-                            status="failed",
-                            progress=100.0,
-                            message="任务执行超时",
-                            error=str(exc),
-                            completed_at=utc_isoformat(),
-                        )
-                    except asyncio.CancelledError:
-                        worker = asyncio.current_task()
-                        should_stop_worker = worker is not None and worker.cancelling() > 0
-                        await self._mark_cancelled(task_id, "任务被取消")
-                        if should_stop_worker:
-                            raise
-                    except Exception as exc:  # noqa: BLE001
-                        logger.exception("Task {} failed: {}", task_id, exc)
-                        await self._update_task(
-                            task_id,
-                            status="failed",
-                            progress=100.0,
-                            message="任务执行失败",
-                            error=str(exc),
-                            completed_at=utc_isoformat(),
-                        )
-                finally:
-                    self._queue.task_done()
-                    await self._prune_terminal_tasks()
-            except asyncio.CancelledError:
-                break
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("Tasker worker error: {}", exc)
-                worker = asyncio.current_task()
-                if worker is not None and worker.cancelling() > 0:
-                    break
-
-    async def _run_task_coroutine(
-        self,
-        coroutine: TaskCoroutine,
-        context: TaskContext,
-        timeout_seconds: float,
-    ) -> Any:
-        execution = asyncio.ensure_future(coroutine(context))
-        try:
-            done, _ = await asyncio.wait({execution}, timeout=timeout_seconds)
-            if execution not in done:
-                context.cancellation_reason = "timeout"
-                execution.cancel()
-                await asyncio.gather(execution, return_exceptions=True)
-                raise _TaskExecutionTimeout(f"Task exceeded the {timeout_seconds:g}-second execution timeout")
-            return await execution
-        except asyncio.CancelledError:
-            current_task = asyncio.current_task()
-            if current_task is not None and current_task.cancelling():
-                context.cancellation_reason = "shutdown"
-                execution.cancel()
-                current_task.uncancel()
-                try:
-                    await asyncio.gather(execution, return_exceptions=True)
-                finally:
-                    current_task.cancel()
-            raise
 
     def _resolve_timeout_seconds(self, timeout_seconds: float | None) -> float:
         if timeout_seconds is None:
@@ -386,131 +343,189 @@ class Tasker:
     @staticmethod
     def _validate_timeout_seconds(timeout_seconds: float) -> float:
         timeout_seconds = float(timeout_seconds)
-        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
-            raise ValueError("Task timeout must be a positive finite number")
+        if not math.isfinite(timeout_seconds) or not 0 < timeout_seconds <= TASKER_MAX_TIMEOUT_SECONDS:
+            raise ValueError(f"Task timeout must be between 0 and {TASKER_MAX_TIMEOUT_SECONDS} seconds")
         return timeout_seconds
 
-    async def _get_task_instance(self, task_id: str) -> Task | None:
-        async with self._lock:
-            return self._tasks.get(task_id)
+    @staticmethod
+    def _dedupe_key(task_type: str, payload_match: dict[str, Any]) -> str:
+        serialized = json.dumps(payload_match, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(f"{task_type}:{serialized}".encode()).hexdigest()
 
-    async def _mark_cancelled(self, task_id: str, message: str) -> None:
-        await self._update_task(
-            task_id,
-            status="cancelled",
-            progress=100.0,
-            message=message,
-            completed_at=utc_isoformat(),
-        )
 
-    async def _update_task(
-        self,
-        task_id: str,
-        *,
-        status: str | None = None,
-        progress: float | None = None,
-        message: str | None = None,
-        result: Any = _UNSET,
-        error: Any = _UNSET,
-        started_at: str | None = None,
-        completed_at: str | None = None,
-    ) -> None:
-        async with self._lock:
-            task = self._tasks.get(task_id)
-            if not task:
-                return
-            if status:
-                task.status = status
-            if progress is not None:
-                task.progress = max(0.0, min(progress, 100.0))
-            if message is not None:
-                task.message = message
-            if result is not _UNSET:
-                task.result = result
-            if error is not _UNSET:
-                task.error = error
-            if started_at is not None:
-                task.started_at = started_at
-            if completed_at is not None:
-                task.completed_at = completed_at
-            task.updated_at = utc_isoformat()
-
-            # 仅进度推进的高频更新做节流；状态切换、结果、错误、起止时间一律立即落库
-            only_progress = (
-                status is None and result is _UNSET and error is _UNSET and started_at is None and completed_at is None
+async def _heartbeat_task(context: TaskContext, execution: asyncio.Task[Any]) -> None:
+    repo = TaskRepository()
+    while not execution.done():
+        await asyncio.sleep(TASK_HEARTBEAT_SECONDS)
+        if execution.done():
+            return
+        try:
+            renewed, cancel_requested = await repo.renew_lease(
+                context.task_id,
+                worker_id=context.worker_id,
+                lease_seconds=TASK_LEASE_SECONDS,
             )
-            if only_progress:
-                last = self._last_persisted_progress.get(task_id)
-                if last is not None and abs(task.progress - last) < PROGRESS_PERSIST_DELTA:
-                    return
-            self._last_persisted_progress[task_id] = task.progress
-            await self._persist_task(task)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.error("Task heartbeat failed; cancelling owner: task_id=%s", context.task_id, exc_info=True)
+            context._request_cancel("lease_lost")
+            execution.cancel()
+            return
+        if not renewed:
+            context._request_cancel("lease_lost")
+            execution.cancel()
+            return
+        if cancel_requested:
+            context._request_cancel("cancelled")
+            execution.cancel()
+            return
 
-    def _is_cancel_requested(self, task_id: str) -> bool:
-        task = self._tasks.get(task_id)
-        return bool(task and task.cancel_requested)
 
-    def _collect_stale_terminal_ids(self) -> list[str]:
-        """从内存中剔除超出保留上限的旧终态任务，返回需要从数据库删除的 id（调用方须持锁）。"""
-        terminal = [task for task in self._tasks.values() if task.status in TERMINAL_STATUSES]
-        if len(terminal) <= MAX_TERMINAL_TASKS:
-            return []
-        terminal.sort(key=lambda item: item.created_at or "", reverse=True)
-        stale = terminal[MAX_TERMINAL_TASKS:]
-        for task in stale:
-            self._tasks.pop(task.id, None)
-            self._last_persisted_progress.pop(task.id, None)
-        return [task.id for task in stale]
+async def _finish_task_failure(
+    repo: TaskRepository,
+    *,
+    task_id: str,
+    owner: str,
+    status: str,
+    message: str,
+    error: str,
+    failure_handler,
+) -> None:
+    before_finish = partial(failure_handler, error=error) if failure_handler is not None else None
+    await repo.finish_owned(
+        task_id,
+        worker_id=owner,
+        status=status,
+        message=message,
+        error=error,
+        before_finish=before_finish,
+    )
 
-    async def _prune_terminal_tasks(self) -> None:
-        async with self._lock:
-            stale_ids = self._collect_stale_terminal_ids()
-        for task_id in stale_ids:
-            await self._repo.delete(task_id)
-        if stale_ids:
-            logger.info("Pruned {} old terminal tasks", len(stale_ids))
 
-    async def _load_state(self) -> None:
-        records = await self._repo.list_all()
-        interrupted = 0
-        for record in records:
-            task = Task.from_dict(record.to_dict())
-            if task.status not in TERMINAL_STATUSES:
-                # 进程重启后内存队列已丢失，无法续跑，统一标记为失败
-                task.message = "服务重启时任务中断" if task.status == "running" else "服务重启时任务未继续执行"
-                task.status = "failed"
-                task.updated_at = utc_isoformat()
-                await self._persist_task(task)
-                interrupted += 1
-            self._tasks[task.id] = task
-        if interrupted:
-            logger.info("Marked {} interrupted tasks as failed", interrupted)
-        stale_ids = self._collect_stale_terminal_ids()
-        for task_id in stale_ids:
-            await self._repo.delete(task_id)
-        if stale_ids:
-            logger.info("Pruned {} old terminal tasks on startup", len(stale_ids))
+async def process_task(ctx: dict[str, Any], task_id: str) -> None:
+    """从 PG Task 意图重建并执行一个注册 Handler。"""
+    repo = TaskRepository()
+    record = await repo.get_by_id(task_id)
+    if record is None or record.status in TERMINAL_STATUSES:
+        return
 
-    async def _persist_task(self, task: Task) -> None:
-        data: dict[str, Any] = {
-            "name": task.name,
-            "type": task.type,
-            "status": task.status,
-            "progress": task.progress,
-            "message": task.message,
-            "payload": task.payload,
-            "result": task.result,
-            "error": task.error,
-            "cancel_requested": 1 if task.cancel_requested else 0,
-            "created_at": _iso_to_utc_naive(task.created_at),
-            "updated_at": _iso_to_utc_naive(task.updated_at),
-            "started_at": _iso_to_utc_naive(task.started_at),
-            "completed_at": _iso_to_utc_naive(task.completed_at),
-        }
-        await self._repo.upsert(task.id, data)
+    handler_version = 1 if record.handler_version is None else int(record.handler_version)
+    try:
+        definition = get_task_definition(record.type, handler_version)
+    except ValueError:
+        logger.error("Durable Task has unknown Handler metadata: task_id=%s, type=%s", task_id, record.type)
+        return
+    if lite_mode_enabled() and definition.requires_knowledge:
+        return
+    if record.cancel_requested:
+        failure_handler = definition.load_failure_handler()
+        before_cancel = partial(failure_handler, error="任务已取消") if failure_handler is not None else None
+        await repo.request_cancel(task_id, before_cancel=before_cancel)
+        return
+
+    process_identity = str(ctx.get("worker_id") or "task-worker")
+    owner = f"{process_identity}:{uuid.uuid4().hex}"
+    record, claimed = await repo.claim(
+        task_id,
+        worker_id=owner,
+        lease_seconds=TASK_LEASE_SECONDS,
+        max_running=DURABLE_TASK_MAX_RUNNING,
+    )
+    if not claimed or record is None:
+        return
+
+    failure_handler = None
+    try:
+        success_handler = definition.load_success_handler()
+        failure_handler = definition.load_failure_handler()
+        handler = definition.load_handler()
+    except Exception as exc:
+        await _finish_task_failure(
+            repo,
+            task_id=task_id,
+            owner=owner,
+            status="failed",
+            message="任务 Handler 无法加载",
+            error=str(exc),
+            failure_handler=failure_handler,
+        )
+        return
+
+    context = TaskContext(task_id, owner, record.payload or {})
+    execution = asyncio.create_task(handler(context), name=f"durable-task:{task_id}")
+    heartbeat = asyncio.create_task(_heartbeat_task(context, execution), name=f"durable-task-heartbeat:{task_id}")
+    try:
+        timeout_seconds = float(record.timeout_seconds or TASKER_DEFAULT_TIMEOUT_SECONDS)
+        done, _ = await asyncio.wait({execution}, timeout=timeout_seconds)
+        if execution not in done:
+            context._request_cancel("timeout")
+            execution.cancel()
+            await asyncio.gather(execution, return_exceptions=True)
+            await _finish_task_failure(
+                repo,
+                task_id=task_id,
+                owner=owner,
+                status="failed",
+                message="任务执行超时",
+                error=f"Task exceeded the {timeout_seconds:g}-second execution timeout",
+                failure_handler=failure_handler,
+            )
+            return
+        result = await execution
+        before_finish = partial(success_handler, result=result) if success_handler is not None else None
+        before_cancel = partial(failure_handler, error="任务已取消") if failure_handler is not None else None
+        await repo.finish_owned(
+            task_id,
+            worker_id=owner,
+            status="success",
+            message="任务已完成",
+            result=result,
+            before_finish=before_finish,
+            before_cancel=before_cancel,
+        )
+    except asyncio.CancelledError:
+        if not execution.done():
+            execution.cancel()
+        await asyncio.gather(execution, return_exceptions=True)
+        if context.cancellation_reason == "cancelled":
+            await _finish_task_failure(
+                repo,
+                task_id=task_id,
+                owner=owner,
+                status="cancelled",
+                message="任务已取消",
+                error="任务已取消",
+                failure_handler=failure_handler,
+            )
+        elif context.cancellation_reason != "lease_lost":
+            shutdown_error = "worker_shutdown: worker 停止时任务中断"
+            before_fail = partial(failure_handler, error=shutdown_error) if failure_handler is not None else None
+            await repo.release_interrupted_owner(
+                task_id,
+                worker_id=owner,
+                error=shutdown_error,
+                before_fail=before_fail,
+            )
+        if asyncio.current_task() is not None and asyncio.current_task().cancelling():
+            raise
+    except Exception as exc:
+        logger.exception("Durable task failed: task_id=%s, type=%s", task_id, record.type)
+        await _finish_task_failure(
+            repo,
+            task_id=task_id,
+            owner=owner,
+            status="failed",
+            message="任务执行失败",
+            error=str(exc),
+            failure_handler=failure_handler,
+        )
+    finally:
+        heartbeat.cancel()
+        await asyncio.gather(heartbeat, return_exceptions=True)
 
 
 tasker = Tasker()
 
 
-__all__ = ["tasker", "TaskContext", "Tasker"]
+__all__ = ["process_task", "tasker", "Task", "TaskContext", "Tasker"]

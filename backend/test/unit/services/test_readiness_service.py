@@ -24,7 +24,9 @@ def reset_readiness_cache(monkeypatch: pytest.MonkeyPatch) -> None:
         async def pttl(self, key: str) -> int:
             if key == readiness_service.WORKER_HEALTH_KEY:
                 return readiness_service.WORKER_HEALTH_MAX_TTL_MS
-            return readiness_service.WORKER_RECONCILIATION_HEALTH_TTL_SECONDS * 1000
+            if key == readiness_service.WORKER_RECONCILIATION_HEALTH_KEY:
+                return readiness_service.WORKER_RECONCILIATION_HEALTH_TTL_SECONDS * 1000
+            return readiness_service.TASK_RECONCILIATION_HEALTH_TTL_SECONDS * 1000
 
     async def healthy_redis() -> HealthyWorkerRedis:
         return HealthyWorkerRedis()
@@ -148,7 +150,9 @@ async def test_worker_probe_requires_arq_and_reconciliation_leases_with_bounded_
             requested.append(("pttl", key))
             if key == readiness_service.WORKER_HEALTH_KEY:
                 return readiness_service.WORKER_HEALTH_MAX_TTL_MS
-            return readiness_service.WORKER_RECONCILIATION_HEALTH_TTL_SECONDS * 1000
+            if key == readiness_service.WORKER_RECONCILIATION_HEALTH_KEY:
+                return readiness_service.WORKER_RECONCILIATION_HEALTH_TTL_SECONDS * 1000
+            return readiness_service.TASK_RECONCILIATION_HEALTH_TTL_SECONDS * 1000
 
     async def worker_redis() -> WorkerRedis:
         return WorkerRedis()
@@ -162,6 +166,8 @@ async def test_worker_probe_requires_arq_and_reconciliation_leases_with_bounded_
         ("pttl", readiness_service.WORKER_HEALTH_KEY),
         ("get", readiness_service.WORKER_RECONCILIATION_HEALTH_KEY),
         ("pttl", readiness_service.WORKER_RECONCILIATION_HEALTH_KEY),
+        ("get", readiness_service.TASK_RECONCILIATION_HEALTH_KEY),
+        ("pttl", readiness_service.TASK_RECONCILIATION_HEALTH_KEY),
     ]
 
 

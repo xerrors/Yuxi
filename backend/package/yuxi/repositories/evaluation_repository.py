@@ -14,36 +14,73 @@ from yuxi.storage.postgres.models_knowledge import (
 
 
 class EvaluationRepository:
-    async def create_dataset(self, dataset_data: dict[str, Any]) -> EvaluationDataset:
+    @staticmethod
+    async def create_dataset_in_session(session, dataset_data: dict[str, Any]) -> EvaluationDataset:
+        """在 service 拥有的事务中创建数据集。"""
         dataset = EvaluationDataset(**dataset_data)
-        async with pg_manager.get_async_session_context() as session:
-            session.add(dataset)
+        session.add(dataset)
+        await session.flush()
         return dataset
+
+    async def create_dataset(self, dataset_data: dict[str, Any]) -> EvaluationDataset:
+        async with pg_manager.get_async_session_context() as session:
+            return await self.create_dataset_in_session(session, dataset_data)
 
     async def create_dataset_with_items(
         self, dataset_data: dict[str, Any], items_data: list[dict[str, Any]]
     ) -> EvaluationDataset:
-        dataset = EvaluationDataset(**dataset_data)
-        items = [EvaluationDatasetItem(**item) for item in items_data]
         async with pg_manager.get_async_session_context() as session:
-            session.add(dataset)
-            session.add_all(items)
-        return dataset
+            dataset = await self.create_dataset_in_session(session, dataset_data)
+            await self.add_dataset_items_in_session(session, items_data)
+            return dataset
+
+    @staticmethod
+    async def attach_dataset_generation_task_in_session(
+        session,
+        dataset_id: str,
+        task_id: str,
+    ) -> EvaluationDataset | None:
+        """在调用方事务中关联生成 Task，且不覆盖相同 Task 的终态。"""
+        record = await session.scalar(
+            select(EvaluationDataset).where(EvaluationDataset.dataset_id == dataset_id).with_for_update()
+        )
+        if record is None:
+            return None
+        metadata = dict(record.build_metadata or {})
+        if metadata.get("source") != "generated" or metadata.get("status") == "completed":
+            return record
+        if metadata.get("task_id") == task_id:
+            return record
+        metadata.update(
+            task_id=task_id,
+            status="pending",
+            message="等待 worker 执行",
+        )
+        metadata.pop("error_message", None)
+        record.build_metadata = metadata
+        await session.flush()
+        return record
+
+    @staticmethod
+    async def update_dataset_in_session(session, dataset_id: str, data: dict[str, Any]) -> EvaluationDataset | None:
+        record = await session.scalar(
+            select(EvaluationDataset).where(EvaluationDataset.dataset_id == dataset_id).with_for_update()
+        )
+        if record is None:
+            return None
+        for key, value in data.items():
+            setattr(record, key, value)
+        await session.flush()
+        return record
 
     async def update_dataset(self, dataset_id: str, data: dict[str, Any]) -> EvaluationDataset | None:
         async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(select(EvaluationDataset).where(EvaluationDataset.dataset_id == dataset_id))
-            record = result.scalar_one_or_none()
-            if record is None:
-                return None
-            for key, value in data.items():
-                setattr(record, key, value)
-            return record
+            return await self.update_dataset_in_session(session, dataset_id, data)
 
-    async def add_dataset_items(self, items_data: list[dict[str, Any]]) -> None:
-        items = [EvaluationDatasetItem(**item) for item in items_data]
-        async with pg_manager.get_async_session_context() as session:
-            session.add_all(items)
+    @staticmethod
+    async def add_dataset_items_in_session(session, items_data: list[dict[str, Any]]) -> None:
+        session.add_all(EvaluationDatasetItem(**item) for item in items_data)
+        await session.flush()
 
     async def get_dataset(self, dataset_id: str) -> EvaluationDataset | None:
         async with pg_manager.get_async_session_context() as session:
@@ -95,10 +132,12 @@ class EvaluationRepository:
             if record is not None:
                 await session.delete(record)
 
-    async def create_run(self, data: dict[str, Any]) -> EvaluationRun:
+    @staticmethod
+    async def create_run_in_session(session, data: dict[str, Any]) -> EvaluationRun:
+        """在 service 拥有的事务中创建评估 Run。"""
         run = EvaluationRun(**data)
-        async with pg_manager.get_async_session_context() as session:
-            session.add(run)
+        session.add(run)
+        await session.flush()
         return run
 
     async def get_run(self, run_id: str) -> EvaluationRun | None:
@@ -113,15 +152,19 @@ class EvaluationRepository:
             )
             return list(result.scalars().all())
 
+    @staticmethod
+    async def update_run_in_session(session, run_id: str, data: dict[str, Any]) -> EvaluationRun | None:
+        record = await session.scalar(select(EvaluationRun).where(EvaluationRun.run_id == run_id).with_for_update())
+        if record is None:
+            return None
+        for key, value in data.items():
+            setattr(record, key, value)
+        await session.flush()
+        return record
+
     async def update_run(self, run_id: str, data: dict[str, Any]) -> EvaluationRun | None:
         async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(select(EvaluationRun).where(EvaluationRun.run_id == run_id))
-            record = result.scalar_one_or_none()
-            if record is None:
-                return None
-            for key, value in data.items():
-                setattr(record, key, value)
-            return record
+            return await self.update_run_in_session(session, run_id, data)
 
     async def delete_run(self, run_id: str) -> None:
         async with pg_manager.get_async_session_context() as session:
@@ -131,21 +174,26 @@ class EvaluationRepository:
             if record is not None:
                 await session.delete(record)
 
-    async def upsert_run_item(self, run_id: str, item_index: int, data: dict[str, Any]) -> EvaluationRunItem:
-        async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(
-                select(EvaluationRunItem).where(
-                    (EvaluationRunItem.run_id == run_id) & (EvaluationRunItem.item_index == item_index)
-                )
-            )
-            record = result.scalar_one_or_none()
-            if record is None:
-                record = EvaluationRunItem(run_id=run_id, item_index=item_index, **data)
-                session.add(record)
-                return record
+    @staticmethod
+    async def upsert_run_item_in_session(
+        session,
+        run_id: str,
+        item_index: int,
+        data: dict[str, Any],
+    ) -> EvaluationRunItem:
+        record = await session.scalar(
+            select(EvaluationRunItem)
+            .where(EvaluationRunItem.run_id == run_id, EvaluationRunItem.item_index == item_index)
+            .with_for_update()
+        )
+        if record is None:
+            record = EvaluationRunItem(run_id=run_id, item_index=item_index, **data)
+            session.add(record)
+        else:
             for key, value in data.items():
                 setattr(record, key, value)
-            return record
+        await session.flush()
+        return record
 
     async def list_run_items(self, run_id: str, offset: int = 0, limit: int = 100) -> list[EvaluationRunItem]:
         async with pg_manager.get_async_session_context() as session:

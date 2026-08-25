@@ -583,7 +583,15 @@ class KnowledgeBaseManager:
             ),
         )
 
-    async def parse_file(self, kb_id: str, file_id: str, operator_id: str | None = None) -> dict:
+    async def parse_file(
+        self,
+        kb_id: str,
+        file_id: str,
+        operator_id: str | None = None,
+        *,
+        processing_task_id: str | None = None,
+        processing_owner: str | None = None,
+    ) -> dict:
         """Parse file to Markdown"""
         config = await self.get_kb_config(kb_id)
         executor = self._get_or_create_kb_instance(config.kb_type)
@@ -594,11 +602,20 @@ class KnowledgeBaseManager:
                 file_id,
                 operator_id,
                 additional_params=config.additional_params,
+                processing_task_id=processing_task_id,
+                processing_owner=processing_owner,
             ),
         )
 
     async def index_file(
-        self, kb_id: str, file_id: str, operator_id: str | None = None, params: dict | None = None
+        self,
+        kb_id: str,
+        file_id: str,
+        operator_id: str | None = None,
+        params: dict | None = None,
+        *,
+        processing_task_id: str | None = None,
+        processing_owner: str | None = None,
     ) -> dict:
         """Index parsed file"""
         config = await self.get_kb_config(kb_id)
@@ -612,6 +629,8 @@ class KnowledgeBaseManager:
                 params=params,
                 embedding_model_spec=config.embedding_model_spec,
                 additional_params=config.additional_params,
+                processing_task_id=processing_task_id,
+                processing_owner=processing_owner,
             ),
         )
 

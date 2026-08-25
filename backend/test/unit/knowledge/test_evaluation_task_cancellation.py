@@ -24,6 +24,9 @@ class FakeContext:
     def is_cancel_requested(self) -> bool:
         return self.cancel_requested
 
+    async def run_owned_transaction(self, operation) -> None:
+        await operation(None, None)
+
 
 class FakeEvaluationRepository:
     def __init__(self):
@@ -33,9 +36,13 @@ class FakeEvaluationRepository:
     async def count_dataset_items(self, dataset_id: str) -> int:
         return 0
 
-    async def update_dataset(self, dataset_id: str, data: dict) -> None:
+    async def update_dataset_in_session(self, session, dataset_id: str, data: dict):
         await asyncio.sleep(0)
         self.dataset_updates.append((dataset_id, deepcopy(data)))
+        return object()
+
+    async def update_dataset(self, dataset_id: str, data: dict) -> None:
+        await self.update_dataset_in_session(None, dataset_id, data)
 
     async def get_dataset(self, dataset_id: str):
         raise asyncio.CancelledError
@@ -45,7 +52,7 @@ class FakeEvaluationRepository:
         self.run_updates.append((run_id, deepcopy(data)))
 
 
-async def test_dataset_cancellation_updates_build_status(monkeypatch):
+async def test_dataset_cancellation_defers_terminal_status_to_task_hook(monkeypatch):
     repo = FakeEvaluationRepository()
     service = EvaluationService.__new__(EvaluationService)
     service.eval_repo = repo
@@ -78,11 +85,11 @@ async def test_dataset_cancellation_updates_build_status(monkeypatch):
         await task
 
     build_metadata = repo.dataset_updates[-1][1]["build_metadata"]
-    assert build_metadata["status"] == "failed"
-    assert build_metadata["error_message"] == "任务已取消"
+    assert build_metadata["status"] == "running"
+    assert "error_message" not in build_metadata
 
 
-async def test_evaluation_timeout_updates_run_status():
+async def test_evaluation_timeout_defers_run_terminal_to_task_hook():
     repo = FakeEvaluationRepository()
     service = EvaluationService.__new__(EvaluationService)
     service.eval_repo = repo
@@ -110,8 +117,5 @@ async def test_evaluation_timeout_updates_run_status():
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    run_id, update = repo.run_updates[-1]
-    assert run_id == "run-1"
-    assert update["status"] == "failed"
-    assert update["metrics"] == {"error": "任务执行超时"}
+    assert repo.run_updates == []
     assert context.messages == ["Error: 任务执行超时"]

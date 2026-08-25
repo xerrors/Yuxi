@@ -658,6 +658,8 @@ class MilvusKB(KnowledgeBase):
         *,
         embedding_model_spec: str | None,
         additional_params: dict[str, Any],
+        processing_task_id: str | None = None,
+        processing_owner: str | None = None,
     ) -> dict:
         """
         Index parsed file (Status: INDEXING -> INDEXED/ERROR_INDEXING)
@@ -690,16 +692,24 @@ class MilvusKB(KnowledgeBase):
             file_processing_params=file_meta.get("processing_params"),
             request_params=params,
         )
+        file_repo = KnowledgeFileRepository()
+        owner_filter = (
+            {"processing_task_id": processing_task_id, "processing_owner": processing_owner}
+            if processing_task_id is not None and processing_owner is not None
+            else {}
+        )
 
         claim_data = {
             "status": FileStatus.INDEXING,
             "processing_params": params,
             "error_message": None,
+            "processing_task_id": processing_task_id,
+            "processing_owner": processing_owner,
         }
         if operator_id:
             claim_data["updated_by"] = operator_id
 
-        claimed_record = await KnowledgeFileRepository().update_fields_if_status(
+        claimed_record = await file_repo.update_fields_if_status(
             kb_id=kb_id,
             file_id=file_id,
             allowed_statuses=allowed_statuses,
@@ -715,7 +725,23 @@ class MilvusKB(KnowledgeBase):
 
         file_meta = self._file_record_to_meta(claimed_record)
         if not file_meta.get("markdown_file"):
-            await self._mark_file_unparsed(kb_id, file_id, operator_id)
+            reset_data = {
+                "status": FileStatus.UPLOADED,
+                "error_message": None,
+                "processing_task_id": None,
+                "processing_owner": None,
+            }
+            if operator_id:
+                reset_data["updated_by"] = operator_id
+            updated_record = await file_repo.update_fields_if_status(
+                kb_id=kb_id,
+                file_id=file_id,
+                allowed_statuses={FileStatus.INDEXING},
+                data=reset_data,
+                **owner_filter,
+            )
+            if updated_record is None and processing_owner is not None:
+                raise asyncio.CancelledError("File processing owner was lost")
             raise ValueError("File has not been parsed yet (no markdown_file)")
 
         logger.debug(f"[index_file] file_id={file_id}, processing_params={params}")
@@ -747,26 +773,25 @@ class MilvusKB(KnowledgeBase):
             logger.info(f"Indexed file {file_id} into Milvus")
 
             # Update status
-            update_data = {"status": FileStatus.INDEXED, "error_message": None, **chunk_stats}
+            update_data = {
+                "status": FileStatus.INDEXED,
+                "error_message": None,
+                "processing_task_id": None,
+                "processing_owner": None,
+                **chunk_stats,
+            }
             if operator_id:
                 update_data["updated_by"] = operator_id
-            updated_record = await KnowledgeFileRepository().update_fields(
+            updated_record = await file_repo.update_fields_if_status(
                 file_id=file_id,
                 kb_id=kb_id,
+                allowed_statuses={FileStatus.INDEXING},
                 data=update_data,
+                **owner_filter,
             )
-            result = (
-                self._file_record_to_meta(updated_record)
-                if updated_record is not None
-                else {
-                    **file_meta,
-                    **chunk_stats,
-                    "status": FileStatus.INDEXED,
-                    "error": None,
-                }
-            )
-
-            return result
+            if updated_record is None:
+                raise asyncio.CancelledError("File processing owner was lost")
+            return self._file_record_to_meta(updated_record)
 
         except (Exception, asyncio.CancelledError) as e:
             if isinstance(e, asyncio.CancelledError):
@@ -775,10 +800,23 @@ class MilvusKB(KnowledgeBase):
                     current_task.uncancel()
             error_msg = "File indexing was cancelled" if isinstance(e, asyncio.CancelledError) else str(e)
             logger.error(f"Indexing failed for {file_id}: {error_msg}")
-            update_data = {"status": FileStatus.ERROR_INDEXING, "error_message": error_msg}
+            update_data = {
+                "status": FileStatus.ERROR_INDEXING,
+                "error_message": error_msg,
+                "processing_task_id": None,
+                "processing_owner": None,
+            }
             if operator_id:
                 update_data["updated_by"] = operator_id
-            await KnowledgeFileRepository().update_fields(file_id=file_id, kb_id=kb_id, data=update_data)
+            updated_record = await file_repo.update_fields_if_status(
+                file_id=file_id,
+                kb_id=kb_id,
+                allowed_statuses={FileStatus.INDEXING},
+                data=update_data,
+                **owner_filter,
+            )
+            if updated_record is None and processing_owner is not None:
+                raise asyncio.CancelledError("File processing owner was lost")
             raise
 
     async def update_content(

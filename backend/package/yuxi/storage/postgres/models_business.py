@@ -799,6 +799,10 @@ class ConfigOption(Base):
 
 class TaskRecord(Base):
     __tablename__ = "tasks"
+    __table_args__ = (
+        UniqueConstraint("type", "dedupe_key", name="uq_tasks_active_dedupe"),
+        Index("ix_tasks_status_lease_expires", "status", "lease_expires_at"),
+    )
 
     id = Column(String(32), primary_key=True)
     name = Column(String(255), nullable=False)
@@ -810,6 +814,14 @@ class TaskRecord(Base):
     result = Column(JSON, nullable=True)
     error = Column(Text, nullable=True)
     cancel_requested = Column(Integer, nullable=False, default=0)
+    recovery_strategy = Column(String(16), nullable=False, default="fail")
+    handler_version = Column(Integer, nullable=False, default=1)
+    dedupe_key = Column(String(64), nullable=True)
+    attempt_count = Column(Integer, nullable=False, default=0)
+    worker_id = Column(String(128), nullable=True)
+    heartbeat_at = Column(DateTime, nullable=True)
+    lease_expires_at = Column(DateTime, nullable=True)
+    timeout_seconds = Column(Float, nullable=False, default=21600.0)
     created_at = Column(DateTime, default=utc_now_naive, index=True)
     updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
     started_at = Column(DateTime, nullable=True)
@@ -831,6 +843,14 @@ class TaskRecord(Base):
             "result": self.result,
             "error": self.error,
             "cancel_requested": bool(self.cancel_requested),
+            "recovery_strategy": self.recovery_strategy,
+            "handler_version": int(self.handler_version if self.handler_version is not None else 1),
+            "dedupe_key": self.dedupe_key,
+            "attempt_count": int(self.attempt_count or 0),
+            "worker_id": self.worker_id,
+            "heartbeat_at": format_utc_datetime(self.heartbeat_at),
+            "lease_expires_at": format_utc_datetime(self.lease_expires_at),
+            "timeout_seconds": float(self.timeout_seconds or 0),
         }
 
     def to_summary_dict(self) -> dict[str, Any]:

@@ -19,8 +19,9 @@ Yuxi 用 `KnowledgeBaseManager` 统一读取知识库元数据、解析权限并
 flowchart LR
     subgraph Manage["文档管理链路"]
         UI["Web / API 调用"] --> Route["knowledge_router\n鉴权与输入校验"]
-        Route --> Tasker["Tasker\n进程内执行队列"]
-        Tasker --> Manager["KnowledgeBaseManager\n配置与 executor 选择"]
+        Route --> Task["Durable Task\nPG 执行意图"]
+        Task --> Worker["ARQ worker\nHandler + lease"]
+        Worker --> Manager["KnowledgeBaseManager\n配置与 executor 选择"]
         Manager --> MilvusKB["MilvusKB\n文档型 executor"]
         Manager --> Connector["DifyKB / NotionKB\n只读 connector"]
         MilvusKB --> PG[("PostgreSQL")]
@@ -66,22 +67,21 @@ stateDiagram-v2
 
 | 存储 | 拥有的事实 | 不拥有的事实 |
 | --- | --- | --- |
-| PostgreSQL | 知识库配置、共享与归属、文件元数据和状态、chunk 正文与图谱处理状态、Tasker 任务摘要 | 原文件字节、解析图片、向量相似度索引 |
+| PostgreSQL | 知识库配置、共享与归属、文件元数据和状态、chunk 正文与图谱处理状态、Durable Task 执行意图与 lease | 原文件字节、解析图片、向量相似度索引 |
 | MinIO | 上传原件、解析后的 Markdown、解析图片 | 文件当前业务状态、用户是否有权读取 |
 | Milvus | chunk 向量、BM25/混合检索所需字段、图实体与关系的向量索引 | 知识库权限、文件处理状态 |
 | Neo4j | 可选知识图谱中的实体、关系和 chunk 关联 | 文档原件、向量检索结果、知识库授权 |
-| Redis | 知识库最小运行配置缓存 | 配置最终值和任何持久化文档状态 |
-| Tasker 内存队列 | 当前 API 进程尚可执行的 coroutine 与调度顺序 | 可跨进程恢复的任务执行权 |
+| Redis / ARQ | Durable Task 投递与 worker 唤醒、知识库最小运行配置缓存 | Task 最终状态、配置最终值和任何持久化文档状态 |
 
 Milvus 文档索引会把同一批 chunk 并发写入 PostgreSQL 与 Milvus；任一侧失败时，实现尝试清理两侧数据并抛错，文件最终进入 `error_indexing`。该链路采用补偿式双写，不提供跨存储事务。故障排查需要同时核对 PostgreSQL chunk、Milvus chunk 和文件状态。
 
-## Tasker 编排与恢复语义
+## Durable Task 编排与恢复语义
 
-上传文件本身是同步对象存储动作；批量添加、解析、索引和图谱构建可以提交给进程内 `Tasker`。Tasker 把任务元数据、进度、结果与错误写入 PostgreSQL，但真正可执行的 coroutine 只存在于当前 API 进程的 `asyncio.Queue`，没有独立 worker 的可恢复投递语义。
+上传文件本身是同步对象存储动作；批量添加、解析、索引和图谱构建把 `task_type`、Handler 版本与可序列化 payload 持久化到 PostgreSQL，提交后再向 ARQ 发布 task_id。知识库、图谱与评估 Handler 位于各自 service，HTTP 路由不保存或传递 Python coroutine。
 
-服务重启时，Tasker 会重新读取任务记录，并把所有非终态任务标记为 `failed`：原来 `running` 的任务记为“服务重启时任务中断”，尚未运行的任务记为“服务重启时任务未继续执行”。它不会仅凭持久化 payload 自动重建 coroutine。取消操作也只是先持久化 `cancel_requested`，执行中的任务需要在约定检查点观察并退出。
+worker 通过条件更新取得唯一 attempt owner，并周期续租 `heartbeat_at/lease_expires_at`。重复 ARQ 消息无法取得同一 Task 的执行权；进度、结果和终态也只接受 lease 仍有效的当前 owner。Task 行锁事务在领域 callback 完成后使用 PostgreSQL 实时时钟再次验证 lease，失权时回滚整个 checkpoint 或终态投影。共享 worker 的 10 个 ARQ 槽中最多 4 个由 Durable Task claim 占用，剩余容量供 AgentRun 使用。评估领域的增量 checkpoint 通过 Task 行锁事务验证 attempt；文件进入 `parsing/indexing` 时保存 Task 与 attempt owner，进入和离开中间态都要求对应 Task 仍由该 owner 持有有效 lease。Task 失联、取消或失败时，failure hook 与 Task 终态在同一 PostgreSQL 事务中把仍由该 Task 拥有的文件改为 `error_parsing/error_indexing`，迟到 attempt 不能覆盖新状态。启动与周期 reconciler 收敛过期 lease，并补发 PG 中的 pending 意图。任务类型声明 `restart` 或 `fail`；当前知识 Handler 在外部副作用无法安全重放时明确失败。通用 runtime 不从 Python 调用栈猜测 checkpoint。
 
-批量“处理待解析/待入库文档”和图谱任务会按 payload 查找活跃任务，避免同一范围重复入队；这项去重只对当前 Tasker 所加载的任务集合负责。任务终态描述调度结果，文件记录状态才是每个文档解析或索引的业务结局。
+批量“处理待解析/待入库文档”和图谱任务使用数据库唯一 dedupe key，终态时释放该 key，防止多进程并发重复提交。取消 pending Task 会立即进入 cancelled；运行中的 Task 先持久化取消意图，由 worker 或 Handler 控制点完成清理后进入终态。LITE worker 不发布、claim、收敛或裁剪 knowledge Task，切回完整模式后再由注册 Handler 处理。Task 终态描述执行结局，文件记录状态仍是每个文档解析或索引的业务结局。
 
 ## Agent 可见性与工具激活
 
@@ -104,7 +104,7 @@ LITE 模式下 `knowledge_capability_enabled()` 返回关闭：知识库 Skill �
 - 解析失败或取消会把文件置为 `error_parsing` 并保存错误；再次解析允许从该状态重新抢占。批量“待解析”入口当前只扫描 `uploaded`，重试错误文件应明确选择文件。
 - 索引失败或取消会置为 `error_indexing`；批量“待入库”会扫描 `parsed` 和 `error_indexing`。重新索引也允许从 `indexed` 与旧 `done` 状态开始。
 - 索引发现 `markdown_file` 缺失时会把文件恢复为 `uploaded`，随后要求重新解析；该路径不会生成空索引。
-- Tasker 超时、取消或服务重启产生的任务 `failed` 不能直接推导文件状态；动作可能在写入部分外部存储后被中断，必须重新读取文件、chunk、向量和图谱状态。
+- Durable Task 超时、取消或 lease 过期产生的 `failed` 不能直接推导文件状态；动作可能在写入部分外部存储后被中断，必须重新读取文件、chunk、向量和图谱状态。当前文档解析、索引和图谱任务采用 `fail` 策略，不在未知副作用上自动重放。
 - Redis 配置缓存异常时 manager 应回源 PostgreSQL；不支持的知识库类型或已使用 executor 初始化失败会显式阻止初始化，不能静默换成其他持久化语义。
 
 恢复操作从 PostgreSQL 文件状态和错误信息开始，再按状态检查 MinIO、PostgreSQL chunk、Milvus 与 Neo4j。重新提交任务前，先保留故障现场并确认同一文件没有活跃执行 Owner，再选择重新解析、重新索引或图谱修复入口。
@@ -118,9 +118,9 @@ LITE 模式下 `knowledge_capability_enabled()` 返回关闭：知识库 Skill �
 | 通用文件状态与解析流程 | [knowledge/base.py](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/knowledge/base.py) |
 | 分块、双写、Milvus 检索与重索引 | [implementations/milvus.py](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/knowledge/implementations/milvus.py) |
 | 外部只读能力边界 | [read_only_connectors.py](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/knowledge/implementations/read_only_connectors.py) |
-| Tasker 持久化与重启结局 | [task_service.py](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/services/task_service.py) |
+| Durable Task 提交、Handler registry、ARQ 投递与 lease | [task_service.py](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/services/task_service.py)、[task_registry.py](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/services/task_registry.py)、[task_queue_service.py](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/services/task_queue_service.py) |
 | Agent 可见集合 | [knowledge_base_backend.py](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/agents/backends/knowledge_base_backend.py) |
 | Skill 工具门控与七个工具实现 | [middlewares/skills.py](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/agents/middlewares/skills.py)、[kbs/tools.py](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/agents/toolkits/kbs/tools.py) |
 | 知识图谱状态与 Neo4j 写入 | [milvus_graph_service.py](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/knowledge/graphs/milvus_graph_service.py) |
 
-纯解析或配置变化先运行对应 knowledge unit；权限、上传、状态迁移和真实存储副作用至少运行 `backend/test/integration/api/test_knowledge_router.py`，外部连接器运行 `test_knowledge_external_router.py`。Tasker 语义用 `test_tasker_behavior.py` 验证，LITE import 边界用 `test_lite_import_boundary.py` 验证。新增 guard 必须包含能恢复目标缺陷的负向案例，并从 PostgreSQL、MinIO、Milvus 或协议结果读取最终事实。
+纯解析或配置变化先运行对应 knowledge unit；权限、上传、状态迁移和真实存储副作用至少运行 `backend/test/integration/api/test_knowledge_router.py`，外部连接器运行 `test_knowledge_external_router.py`。Durable Task 纯逻辑用 `test_tasker_behavior.py` 验证，claim/lease/去重用真实 PostgreSQL `test_durable_task_repository.py` 验证，LITE import 边界用 `test_lite_import_boundary.py` 验证。新增 guard 必须包含能恢复目标缺陷的负向案例，并从 PostgreSQL、MinIO、Milvus 或协议结果读取最终事实。

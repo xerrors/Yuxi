@@ -20,7 +20,7 @@
 
 程序化导入先调用 `POST /api/knowledge/files/upload?kb_id=<kb_id>`，取得 MinIO `file_path` 与 `content_hash`。后续只能在下面两条工作流中选择一条；不要先创建记录，再调用一体化入口重复创建。
 
-一体化导入适合让 Tasker 完成“创建记录 → 解析 → 可选索引”：
+一体化导入适合让 Durable Task worker 完成“创建记录 → 解析 → 可选索引”：
 
 ```http
 POST /api/knowledge/databases/{kb_id}/documents
@@ -41,7 +41,7 @@ Content-Type: application/json
 2. 调用 `POST /api/knowledge/databases/{kb_id}/documents/parse`，请求体是待处理 `file_id` 数组；任务完成后回读文件状态，确认进入 `parsed`。
 3. 调用 `POST /api/knowledge/databases/{kb_id}/documents/index`，请求体包含 `file_ids` 与可选 `params`；任务完成后回读文件状态，确认进入 `indexed`。
 
-CLI 的 `yuxi kb upload` 封装了上传与导入链路。原文件上传会计算内容哈希，并在写入对象存储前查询当前知识库是否已有相同内容；Web 仅在 URL 模式下额外跳过同一批次的重复内容，普通文件模式没有这项批内保证。该检查发生在入口，数据库没有内容哈希唯一约束。`/documents/add` 与 `/documents` 接收并保存调用方提供的哈希，不会再次查重；并发请求或复用已有对象路径仍可能创建重复记录。文档入口会校验知识库 manage 权限，原文件上传还要求管理员身份。Tasker 的 `success` 表示编排完成，每个文档仍需通过文件状态和对应存储产物确认结果。
+CLI 的 `yuxi kb upload` 封装了上传与导入链路。原文件上传会计算内容哈希，并在写入对象存储前查询当前知识库是否已有相同内容；Web 仅在 URL 模式下额外跳过同一批次的重复内容，普通文件模式没有这项批内保证。该检查发生在入口，数据库没有内容哈希唯一约束。`/documents/add` 与 `/documents` 接收并保存调用方提供的哈希，不会再次查重；并发请求或复用已有对象路径仍可能创建重复记录。文档入口会校验知识库 manage 权限，原文件上传还要求管理员身份。Durable Task 的 `success` 表示编排完成，每个文档仍需通过文件状态和对应存储产物确认结果。
 
 ## 知识导图与示例问题
 
@@ -55,7 +55,7 @@ Milvus 知识库可以根据文件元数据生成层次化知识导图。当前�
 
 Neo4j 的 URI、用户名和密码通过部署环境配置，字段名以 `.env.template` 和 Compose 为准。开发环境通常从宿主机访问 `http://localhost:7474` 管理界面与 `bolt://localhost:7687` 端口，容器间连接使用 Compose 服务名；不要在文档、提交或排障日志中记录实际密码。
 
-图谱任务使用进程内 Tasker，服务重启不会自动续跑 coroutine。任务失败后先读取图谱状态、chunk 处理状态和外部存储，再决定重试、修复向量索引或重置，不能只根据任务列表覆盖现场。
+图谱任务由 Durable Task worker 从持久 payload 重建，重复投递受数据库 claim/lease 保护。图谱 Handler 当前使用 `fail` 恢复策略：worker 失联后任务明确失败，不在未知 Neo4j/Milvus 副作用上自动重放。失败后先读取图谱状态、chunk 处理状态和外部存储，再决定重试、修复向量索引或重置，不能只根据任务列表覆盖现场。
 
 ## 配置与契约入口
 

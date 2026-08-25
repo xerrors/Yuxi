@@ -4,6 +4,10 @@
 
 同一版本的多次更新按功能归并。后续修复 A 功能引入的缺陷时，直接改写 A 的原有条目并纳入最新结果，禁止另建重复修复条目；后续功能补充遵循同一规则。每个条目不超过 200 字。
 
+## 0.7.3 （当前）
+
+- 通用后台 Task 从 API 进程内 coroutine 队列迁至 PostgreSQL 执行意图与 ARQ worker：注册 Handler 通过 owner/heartbeat/lease 执行，数据库去重阻止并发重复提交，失联任务按 restart/fail 策略收敛；business schema 由 1 相邻升级到 2。
+
 ## v0.7.2.beta1 (2026-08-23)
 
 ::: danger Beta 版本与数据风险

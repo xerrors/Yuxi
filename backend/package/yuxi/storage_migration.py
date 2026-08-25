@@ -90,9 +90,18 @@ async def _converge_database_state(*, fail_nonterminal_runs: bool) -> None:
         await session.commit()
 
 
-def _require_supported_version(domain: str, actual: int | None, expected: int) -> None:
-    """只接受未版本化 legacy baseline 或当前精确版本。"""
-    if actual not in (None, expected):
+def _require_supported_version(
+    domain: str,
+    actual: int | None,
+    expected: int,
+    *,
+    previous: int | None = None,
+) -> None:
+    """只接受未版本化 baseline、当前版本或显式相邻升级来源。"""
+    supported = {None, expected}
+    if previous is not None:
+        supported.add(previous)
+    if actual not in supported:
         raise RuntimeError(f"Unsupported {domain} schema version: {actual}; expected {expected}")
 
 
@@ -116,9 +125,19 @@ async def main() -> None:
             await pg_manager.create_schema_version_table()
             versions = await pg_manager.get_schema_versions()
             business_version = versions.get("business")
-            _require_supported_version("business", business_version, BUSINESS_SCHEMA_VERSION)
+            _require_supported_version(
+                "business",
+                business_version,
+                BUSINESS_SCHEMA_VERSION,
+                previous=BUSINESS_SCHEMA_VERSION - 1,
+            )
             if not lite_mode_enabled():
-                _require_supported_version("knowledge", versions.get("knowledge"), KNOWLEDGE_SCHEMA_VERSION)
+                _require_supported_version(
+                    "knowledge",
+                    versions.get("knowledge"),
+                    KNOWLEDGE_SCHEMA_VERSION,
+                    previous=KNOWLEDGE_SCHEMA_VERSION - 1,
+                )
 
             if business_version is None:
                 await pg_manager.create_business_tables()
@@ -134,10 +153,16 @@ async def main() -> None:
                 await pg_manager.ensure_business_schema()
                 await pg_manager.setup_langgraph_checkpointer()
                 await pg_manager.record_schema_version("business", BUSINESS_SCHEMA_VERSION)
+            elif business_version == BUSINESS_SCHEMA_VERSION - 1:
+                await pg_manager.upgrade_business_schema_v1_to_v2()
+                await pg_manager.record_schema_version("business", BUSINESS_SCHEMA_VERSION)
 
             if not lite_mode_enabled() and versions.get("knowledge") is None:
                 await pg_manager.create_knowledge_tables()
                 await pg_manager.ensure_knowledge_schema()
+                await pg_manager.record_schema_version("knowledge", KNOWLEDGE_SCHEMA_VERSION)
+            elif not lite_mode_enabled() and versions.get("knowledge") == KNOWLEDGE_SCHEMA_VERSION - 1:
+                await pg_manager.upgrade_knowledge_schema_v1_to_v2()
                 await pg_manager.record_schema_version("knowledge", KNOWLEDGE_SCHEMA_VERSION)
 
             await _converge_database_state(fail_nonterminal_runs=requires_quiescence)

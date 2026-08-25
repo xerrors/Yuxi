@@ -370,7 +370,7 @@ async def test_index_file_persists_chunk_stats(monkeypatch):
     assert result["token_count"] == count_tokens("alpha beta") + count_tokens("中文")
     assert file_repo.records["file-1"].chunk_count == result["chunk_count"]
     assert file_repo.conditional_update_calls[0][3]["status"] == FileStatus.INDEXING
-    assert file_repo.update_calls[-1][2]["status"] == FileStatus.INDEXED
+    assert file_repo.conditional_update_calls[-1][3]["status"] == FileStatus.INDEXED
 
 
 @pytest.mark.parametrize(

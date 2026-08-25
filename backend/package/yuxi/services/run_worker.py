@@ -10,7 +10,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from arq.worker import RetryJob
+from arq.worker import RetryJob, func
 from sqlalchemy import select, text
 from sqlalchemy.exc import OperationalError
 from yuxi.agents.backends.paths import runtime_workdir_path
@@ -39,6 +39,13 @@ from yuxi.services.run_queue_service import (
     publish_cancel_signal,
     wait_for_cancel_signal,
 )
+from yuxi.services.task_queue_service import (
+    TASK_RECONCILIATION_HEALTH_KEY,
+    TASK_RECONCILIATION_HEALTH_TTL_SECONDS,
+    TASK_RECONCILIATION_SECONDS,
+    reconcile_and_publish_tasks,
+)
+from yuxi.services.task_service import TASKER_MAX_TIMEOUT_SECONDS, process_task
 from yuxi.services.workdir_service import (
     AuthorizedWorkdir,
     resolve_authorized_workdir,
@@ -60,6 +67,7 @@ RUN_HEARTBEAT_SECONDS = 30
 SUPPORTED_RUN_TYPES = {"chat", "resume", "subagent"}
 WORKER_ID = f"worker-{uuid.uuid4().hex}"
 _RECONCILIATION_TASK_KEY = "agent_run_reconciliation_task"
+_TASK_RECONCILIATION_TASK_KEY = "durable_task_reconciliation_task"
 
 
 class RetryableRunError(RetryJob):
@@ -782,7 +790,6 @@ async def process_agent_run(ctx, run_id: str):
         cleanup_was_pending = bool(getattr(run, "runtime_cleanup_pending", False))
         if cleanup_was_pending:
             await _require_runtime_cleanup(run, f"Run {run_id} 的 execution tree 尚未完成 runtime cleanup")
-        if cleanup_was_pending:
             await _append_end_event(run_id, run.status, thread_id=run.conversation_thread_id)
         if run.status == "completed":
             await dispatch_next_request(
@@ -1406,6 +1413,31 @@ async def _reconcile_agent_run_leases_forever() -> None:
             logger.error("Failed to reconcile expired AgentRun leases", exc_info=True)
 
 
+async def _reconcile_durable_tasks_forever() -> None:
+    """周期收敛失联通用 Task，并补发持久 pending 意图。"""
+    while True:
+        await asyncio.sleep(TASK_RECONCILIATION_SECONDS)
+        try:
+            reconciled = await reconcile_and_publish_tasks()
+            if reconciled:
+                logger.warning("Reconciled expired durable tasks: count=%s", len(reconciled))
+            await _publish_task_reconciliation_health()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.error("Failed to reconcile durable tasks", exc_info=True)
+
+
+async def _publish_task_reconciliation_health() -> None:
+    """续租 worker 的 Durable Task 收敛与 pending 补发能力。"""
+    redis = await get_redis_client()
+    await redis.set(
+        TASK_RECONCILIATION_HEALTH_KEY,
+        WORKER_ID,
+        ex=TASK_RECONCILIATION_HEALTH_TTL_SECONDS,
+    )
+
+
 async def _publish_reconciliation_health() -> None:
     """续租 worker 的 AgentRun lease 收敛能力；持续失败后 readiness 自动失效。"""
 
@@ -1450,18 +1482,26 @@ async def _worker_startup(ctx):
         logger.warning(f"Reconciled expired AgentRun leases at startup: count={len(reconciled_ids)}")
     await reconcile_pending_runtime_cleanups()
     await recover_pending_dispatches()
+    await reconcile_and_publish_tasks()
+    await _publish_task_reconciliation_health()
     await _publish_reconciliation_health()
     ctx[_RECONCILIATION_TASK_KEY] = asyncio.create_task(_reconcile_agent_run_leases_forever())
+    ctx[_TASK_RECONCILIATION_TASK_KEY] = asyncio.create_task(_reconcile_durable_tasks_forever())
 
 
 async def _worker_shutdown(ctx):
     """关闭 worker 共享连接。"""
 
     if isinstance(ctx, dict):
-        reconciliation_task = ctx.pop(_RECONCILIATION_TASK_KEY, None)
-        if reconciliation_task is not None:
-            reconciliation_task.cancel()
-            await asyncio.gather(reconciliation_task, return_exceptions=True)
+        reconciliation_tasks = [
+            ctx.pop(_RECONCILIATION_TASK_KEY, None),
+            ctx.pop(_TASK_RECONCILIATION_TASK_KEY, None),
+        ]
+        reconciliation_tasks = [task for task in reconciliation_tasks if task is not None]
+        for task in reconciliation_tasks:
+            task.cancel()
+        if reconciliation_tasks:
+            await asyncio.gather(*reconciliation_tasks, return_exceptions=True)
     from yuxi.services.run_queue_service import close_queue_clients
 
     await close_queue_clients()
@@ -1469,7 +1509,11 @@ async def _worker_shutdown(ctx):
 
 
 class WorkerSettings:
-    functions = [process_agent_run]
+    functions = [
+        process_agent_run,
+        func(process_task, timeout=TASKER_MAX_TIMEOUT_SECONDS + 30),
+    ]
+    max_jobs = 10
     max_tries = 2
     retry_jobs = True
     # 单任务最长执行时间（秒），可配置：超长图谱构建/深度检索场景需调大，

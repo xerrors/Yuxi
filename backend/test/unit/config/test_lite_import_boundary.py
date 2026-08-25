@@ -34,6 +34,7 @@ forbidden = (
     "yuxi.repositories.knowledge_base_repository",
     "yuxi.repositories.knowledge_file_repository",
     "yuxi.services.knowledge_dashboard_service",
+    "yuxi.services.knowledge_task_service",
     "yuxi.storage.neo4j",
     "server.routers.knowledge_dashboard_router",
 )

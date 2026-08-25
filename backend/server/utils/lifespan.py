@@ -4,7 +4,6 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from yuxi.config.runtime import lite_mode_enabled
-from yuxi.services.task_service import tasker
 from yuxi.agents.mcp.service import ensure_builtin_mcp_servers_in_db
 from yuxi.models.providers.service import ensure_builtin_model_providers_in_db
 from yuxi.services.run_queue_service import close_queue_clients, get_redis_client
@@ -185,7 +184,6 @@ async def _startup(app: FastAPI) -> None:
         operation=init_sandbox_provider,
     )
 
-    await tasker.start()
     app.state.startup_complete = True
     logger.info(f"""
 
@@ -232,7 +230,6 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         app.state.startup_complete = False
-        await _shutdown_component("tasker", tasker.shutdown)
         await _shutdown_component("sandbox_provider", shutdown_sandbox_provider)
         await _shutdown_component("queue_clients", close_queue_clients)
         if not lite_mode:
