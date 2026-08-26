@@ -1,5 +1,10 @@
 import json
+from io import BytesIO
+from unittest.mock import MagicMock
 
+import pytest
+from minio.error import S3Error
+from urllib3 import HTTPResponse
 from yuxi.storage.minio.client import MinIOClient, normalize_public_minio_url
 
 
@@ -52,3 +57,21 @@ def test_legacy_public_minio_url_preserves_query_and_fragment(monkeypatch):
         normalize_public_minio_url("http://example.test:9000/public/avatar/user.png?v=123#preview")
         == "/minio/public/avatar/user.png?v=123#preview"
     )
+
+
+@pytest.mark.asyncio
+async def test_delete_objects_by_prefix_ignores_missing_bucket():
+    client = MinIOClient()
+    client._client = MagicMock()
+    client._client.list_objects.side_effect = S3Error(
+        HTTPResponse(BytesIO(b""), status=404),
+        "NoSuchBucket",
+        "Bucket not found",
+        "kb-images",
+        "request_id",
+        "host_id",
+    )
+
+    deleted_count = await client.adelete_objects_by_prefix("kb-images", "kb_test/")
+
+    assert deleted_count == 0

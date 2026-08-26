@@ -295,6 +295,9 @@ class MinIOClient:
                     self.client.remove_object(bucket_name, obj.object_name)
                     deleted_count += 1
             except S3Error as e:
+                if e.code == "NoSuchBucket":
+                    logger.info(f"存储桶不存在，无需删除对象前缀: {bucket_name}/{prefix}")
+                    return
                 raise StorageError(f"删除对象前缀失败: {bucket_name}/{prefix}: {e}") from e
 
         await asyncio.to_thread(_delete_objects)

@@ -281,6 +281,11 @@ const deleteDatabase = (database) => {
         message.success('知识库已删除')
         await databaseStore.loadDatabases()
       } catch (error) {
+        if (error.status === 404) {
+          await databaseStore.loadDatabases()
+          message.success('知识库已删除')
+          return
+        }
         message.error(error.message || '删除失败')
         throw error
       }
