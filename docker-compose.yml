@@ -401,7 +401,7 @@ services:
     volumes:
       - type: bind
         source: ${YUXI_STATE_DIR:-./docker/volumes}/postgresql
-        target: /var/lib/postgresql/data
+        target: /var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-yuxi} || exit 1"]
       interval: 5s
