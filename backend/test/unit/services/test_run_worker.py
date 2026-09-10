@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
 import importlib
 import os
 import subprocess
 import sys
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -1693,7 +1693,7 @@ def test_retry_requires_new_manifest_fingerprint_to_match_write_once_fact():
 @pytest.mark.parametrize(
     ("cascade_flag", "should_cascade"),
     [
-        (None, True),   # 默认(用户取消路径)级联
+        (None, True),  # 默认(用户取消路径)级联
         (True, True),
         (False, False),
     ],
@@ -1708,6 +1708,7 @@ async def test_mark_run_terminal_cascade_policy(monkeypatch, cascade_flag, shoul
 
         async def set_terminal_status(self, run_id, **kwargs):
             from types import SimpleNamespace
+
             return SimpleNamespace(id=run_id, status="cancelled"), True
 
         async def cancel_active_execution_tree_descendants(self, run):
@@ -1742,6 +1743,7 @@ async def test_mark_run_terminal_explicit_cascade_override(monkeypatch):
 
         async def set_terminal_status(self, run_id, **kwargs):
             from types import SimpleNamespace
+
             return SimpleNamespace(id=run_id, status="failed"), True
 
         async def cancel_active_execution_tree_descendants(self, run):
@@ -1784,6 +1786,7 @@ async def test_finish_run_cascade_decision_by_status(monkeypatch, status, should
     async def fake_mark_run_terminal(run_id, status_arg, **kwargs):
         captured["cascade"] = kwargs.get("cascade_cancel_descendants")
         from types import SimpleNamespace
+
         return SimpleNamespace(status=status_arg, changed=True)
 
     async def fake_get_run(run_id):
@@ -1818,3 +1821,128 @@ async def test_finish_run_cascade_decision_by_status(monkeypatch, status, should
     )
 
     assert captured["cascade"] is should_cascade
+
+
+@pytest.mark.asyncio
+async def test_release_runtime_defers_failed_run_when_execution_tree_active(monkeypatch):
+    """failed 终态在子 Run 仍活跃时不抛错：保持 runtime_cleanup_pending 交由 reconcile。"""
+    run = _build_run()
+    run.status = "failed"
+    probed: list[str] = []
+
+    async def not_idle(target):
+        probed.append(target.id)
+        return False
+
+    monkeypatch.setattr(run_worker, "_release_runtime_if_idle", not_idle)
+
+    await run_worker._release_runtime_before_terminal_event(run)
+
+    assert probed == ["run-1"]
+
+
+@pytest.mark.asyncio
+async def test_release_runtime_still_fails_closed_for_cancel_statuses(monkeypatch):
+    """cancelled 终态必须立即收敛 execution tree，未收敛时保留 durable fence。"""
+    run = _build_run()
+    run.status = "cancelled"
+
+    async def not_idle(_target):
+        return False
+
+    monkeypatch.setattr(run_worker, "_release_runtime_if_idle", not_idle)
+
+    with pytest.raises(run_worker.RuntimeCleanupPendingError):
+        await run_worker._release_runtime_before_terminal_event(run)
+
+
+@pytest.mark.asyncio
+async def test_release_runtime_still_retries_when_cleanup_itself_fails(monkeypatch):
+    """cleanup 自身失败属基础设施故障，非取消终态也要重试而不是静默推迟。"""
+    run = _build_run()
+    run.status = "failed"
+
+    async def failing_cleanup(_target):
+        raise RuntimeError("provisioner delete failed")
+
+    monkeypatch.setattr(run_worker, "_release_runtime_if_idle", failing_cleanup)
+
+    with pytest.raises(run_worker.RuntimeCleanupPendingError):
+        await run_worker._release_runtime_before_terminal_event(run)
+
+
+@pytest.mark.asyncio
+async def test_terminal_skip_path_keeps_active_children_for_failed(monkeypatch):
+    """重试跳过路径与 mark_run_terminal 同策略：failed 不取消活跃子 Run。"""
+    run_obj = _build_run()
+    run_obj.status = "failed"
+    run_obj.runtime_cleanup_pending = True
+    _patch_common(monkeypatch, run_obj)
+    tree_calls: list[str] = []
+
+    async def fake_tree(run):
+        tree_calls.append(run.id)
+
+    async def not_idle(_run):
+        return False
+
+    monkeypatch.setattr(run_worker, "_finish_execution_tree_children", fake_tree)
+    monkeypatch.setattr(run_worker, "_release_runtime_if_idle", not_idle)
+    monkeypatch.setattr(run_worker, "_append_end_event", AsyncMock())
+
+    await run_worker.process_agent_run({"job_try": 1}, "run-1")
+
+    assert tree_calls == []
+
+
+@pytest.mark.asyncio
+async def test_terminal_skip_path_cancels_children_for_cancelled(monkeypatch):
+    """重试跳过路径：cancelled 仍级联取消活跃子 Run。"""
+    run_obj = _build_run()
+    run_obj.status = "cancelled"
+    run_obj.runtime_cleanup_pending = False
+    _patch_common(monkeypatch, run_obj)
+    tree_calls: list[str] = []
+
+    async def fake_tree(run):
+        tree_calls.append(run.id)
+
+    monkeypatch.setattr(run_worker, "_finish_execution_tree_children", fake_tree)
+    monkeypatch.setattr(run_worker, "_append_end_event", AsyncMock())
+
+    await run_worker.process_agent_run({"job_try": 1}, "run-1")
+
+    assert tree_calls == ["run-1"]
+
+
+@pytest.mark.asyncio
+async def test_subagent_run_update_publishes_under_parent_thread(monkeypatch):
+    """子 Run 增量事件必须挂到父 Run 的线程，而不是子会话线程。"""
+    child = _build_run()
+    child.id = "child-run"
+    child.run_type = "subagent"
+    child.created_by_run_id = "parent-run"
+    child.conversation_thread_id = "child-thread"
+    parent = _build_run()
+    parent.id = "parent-run"
+    parent.conversation_thread_id = "parent-thread"
+
+    async def fake_get_run(run_id: str):
+        return parent if run_id == "parent-run" else child
+
+    calls: list[tuple] = []
+
+    async def fake_append(run_id, event_type, payload, *, thread_id=None):
+        calls.append((run_id, event_type, thread_id))
+        return True
+
+    monkeypatch.setattr(run_worker, "_get_run", fake_get_run)
+    monkeypatch.setattr(run_worker, "_append_run_event_best_effort", fake_append)
+    monkeypatch.setattr(
+        "yuxi.services.subagent_run_service.serialize_subagent_run_state",
+        lambda run: {"run_id": run.id},
+    )
+
+    await run_worker._publish_subagent_run_update(child)
+
+    assert calls == [("parent-run", "subagent_run_update", "parent-thread")]
