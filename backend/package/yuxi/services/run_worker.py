@@ -396,15 +396,49 @@ async def _flush_writer_best_effort(writer: ChunkedEventWriter) -> None:
         logger.warning(f"Failed to flush non-authoritative AgentRun events: run={writer.run_id}", exc_info=True)
 
 
+async def _clear_cancel_signal_best_effort(run_id: str) -> None:
+    """取消键清理失败不能覆盖已经提交的 Run 终态。"""
+
+    try:
+        await clear_cancel_signal(run_id)
+    except Exception:
+        logger.warning(f"Failed to clear non-authoritative AgentRun cancel signal: run={run_id}", exc_info=True)
+
+
+async def _publish_subagent_run_update(run: AgentRun | None) -> None:
+    """子 run 生命周期变化时向父 run 事件流推送增量。
+
+    父 graph 在并行 task 阻塞期间不产生 values 事件，agent_state 冻结；
+    该增量让前端在子 run 启动/终结的瞬间更新面板，而不是等全部 task 一起返回。
+    """
+    if run is None or run.run_type != "subagent" or not run.created_by_run_id:
+        return
+    try:
+        from yuxi.services.subagent_run_service import serialize_subagent_run_state
+
+        payload = serialize_subagent_run_state(run)
+    except Exception:
+        logger.warning(f"Failed to serialize subagent run {run.id} for parent update", exc_info=True)
+        return
+    await _append_run_event_best_effort(
+        run.created_by_run_id,
+        "subagent_run_update",
+        {"subagent_run": payload},
+        thread_id=run.conversation_thread_id,
+    )
+
+
 async def mark_run_running(run_id: str, worker_id: str) -> bool:
     async with pg_manager.get_async_session_context() as db:
         repo = AgentRunRepository(db)
-        _, acquired = await repo.mark_running(
+        run, acquired = await repo.mark_running(
             run_id,
             worker_id=worker_id,
             lease_seconds=RUN_LEASE_SECONDS,
         )
-        return acquired
+    if acquired:
+        await _publish_subagent_run_update(run)
+    return acquired
 
 
 async def renew_run_lease(run_id: str, worker_id: str) -> bool:
@@ -457,6 +491,8 @@ async def mark_run_terminal(
     error_message: str | None = None,
     token_usage: dict | None = None,
     worker_id: str | None = None,
+    *,
+    cascade_cancel_descendants: bool = True,
 ):
     cancelled_descendants: list[tuple[str, str]] = []
     async with pg_manager.get_async_session_context() as db:
@@ -469,10 +505,14 @@ async def mark_run_terminal(
             token_usage=token_usage,
             worker_id=worker_id,
         )
-        if changed and run is not None:
+        # 仅用户主动取消才级联取消子 run。主 run 因模型/网络错误失败时子 run 不取消：
+        # 断网恢复后主 run 从 checkpoint 续跑，仍可收割子 run 已完成/继续执行中的成果。
+        if changed and run is not None and cascade_cancel_descendants:
             cancelled_descendants = await repo.cancel_active_execution_tree_descendants(run)
         persisted_status = run.status if run else None
     await publish_cancel_signals([child_id for child_id, _thread_id in cancelled_descendants])
+    if changed:
+        await _publish_subagent_run_update(run)
     return TerminalTransition(status=persisted_status, changed=changed)
 
 
@@ -752,6 +792,9 @@ async def _finish_run(
         error_message=error_message,
         token_usage=token_usage,
         worker_id=worker_id,
+        # 主 run 失败(failed)不级联取消子 run：子 run 继续执行落库，
+        # 主 run 之后从 checkpoint 续跑时仍可收割；用户取消走 _finish_user_cancel 仍级联。
+        cascade_cancel_descendants=status in ("cancelled", "cancel_requested", "interrupted"),
     )
     if transition.status in TERMINAL_RUN_STATUSES:
         committed_run = await _get_run(run_id)

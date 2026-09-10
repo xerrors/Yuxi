@@ -1754,3 +1754,132 @@ async def test_cancel_during_manifest_preparation_settles_without_waiting_for_le
     await run_worker.process_agent_run({"job_try": 1}, run.id)
     finish.assert_awaited_once()
     assert finish.call_args.kwargs["run_id"] == run.id
+
+@pytest.mark.parametrize(
+    ("cascade_flag", "should_cascade"),
+    [
+        (None, True),   # 默认(用户取消路径)级联
+        (True, True),
+        (False, False),
+    ],
+)
+async def test_mark_run_terminal_cascade_policy(monkeypatch, cascade_flag, should_cascade):
+    """mark_run_terminal 机制层: cascade_cancel_descendants 控制是否级联。"""
+    cascade_calls = []
+
+    class FakeRepo:
+        def __init__(self, db):
+            pass
+
+        async def set_terminal_status(self, run_id, **kwargs):
+            from types import SimpleNamespace
+            return SimpleNamespace(id=run_id, status="cancelled"), True
+
+        async def cancel_active_execution_tree_descendants(self, run):
+            cascade_calls.append(run.id)
+            return []
+
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def fake_session_ctx():
+        yield object()
+
+    monkeypatch.setattr(run_worker.pg_manager, "get_async_session_context", fake_session_ctx)
+    monkeypatch.setattr(run_worker, "AgentRunRepository", FakeRepo)
+    monkeypatch.setattr(run_worker, "publish_cancel_signals", AsyncMock())
+    monkeypatch.setattr(run_worker, "_publish_subagent_run_update", AsyncMock())
+
+    kwargs = {} if cascade_flag is None else {"cascade_cancel_descendants": cascade_flag}
+    await run_worker.mark_run_terminal("run-x", "cancelled", **kwargs)
+
+    assert bool(cascade_calls) is should_cascade
+
+
+@pytest.mark.asyncio
+async def test_mark_run_terminal_explicit_cascade_override(monkeypatch):
+    """显式传 cascade_cancel_descendants=True 时按原语义级联。"""
+    cascade_calls = []
+
+    class FakeRepo:
+        def __init__(self, db):
+            pass
+
+        async def set_terminal_status(self, run_id, **kwargs):
+            from types import SimpleNamespace
+            return SimpleNamespace(id=run_id, status="failed"), True
+
+        async def cancel_active_execution_tree_descendants(self, run):
+            cascade_calls.append(run.id)
+            return []
+
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def fake_session_ctx():
+        yield object()
+
+    monkeypatch.setattr(run_worker.pg_manager, "get_async_session_context", fake_session_ctx)
+    monkeypatch.setattr(run_worker, "AgentRunRepository", FakeRepo)
+    monkeypatch.setattr(run_worker, "publish_cancel_signals", AsyncMock())
+    monkeypatch.setattr(run_worker, "_publish_subagent_run_update", AsyncMock())
+
+    await run_worker.mark_run_terminal("run-y", "failed", cascade_cancel_descendants=True)
+
+    assert cascade_calls == ["run-y"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "should_cascade"),
+    [
+        ("failed", False),
+        ("completed", False),
+        ("cancelled", True),
+        ("cancel_requested", True),
+        ("interrupted", True),
+    ],
+)
+async def test_finish_run_cascade_decision_by_status(monkeypatch, status, should_cascade):
+    """_finish_run 决策层: 错误终态不级联取消子 run, 用户取消语义才级联。"""
+    from contextlib import asynccontextmanager
+
+    captured = {}
+
+    async def fake_mark_run_terminal(run_id, status_arg, **kwargs):
+        captured["cascade"] = kwargs.get("cascade_cancel_descendants")
+        from types import SimpleNamespace
+        return SimpleNamespace(status=status_arg, changed=True)
+
+    async def fake_get_run(run_id):
+        return None
+
+    async def fake_read_usage(**kwargs):
+        return None
+
+    async def fake_release(run):
+        pass
+
+    async def fake_append_end(run_id, status_arg, **kwargs):
+        pass
+
+    @asynccontextmanager
+    async def fake_session_ctx():
+        yield object()
+
+    monkeypatch.setattr(run_worker, "mark_run_terminal", fake_mark_run_terminal)
+    monkeypatch.setattr(run_worker, "_get_run", fake_get_run)
+    monkeypatch.setattr(run_worker, "_read_run_token_usage_from_state", fake_read_usage)
+    monkeypatch.setattr(run_worker, "_release_runtime_before_terminal_event", fake_release)
+    monkeypatch.setattr(run_worker, "_append_end_event", fake_append_end)
+
+    await run_worker._finish_run(
+        "run-z",
+        status,
+        thread_id=None,
+        chunk={},
+        current_user=None,
+        worker_id="w",
+    )
+
+    assert captured["cascade"] is should_cascade
