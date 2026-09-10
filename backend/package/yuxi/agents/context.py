@@ -50,7 +50,8 @@ DEFAULT_YUXI_SUMMARY_PROMPT = """你是对话上下文压缩助手。
 只输出压缩后的上下文，不要添加额外说明。"""
 
 
-def _role_can_access(auth: str | None, role: str | None) -> bool:
+def _role_can_modify(auth: str | None, role: str | None) -> bool:
+    """判断角色能否修改字段；auth 不限制读取与运行。"""
     if not auth:
         return True
     if auth == "admin":
@@ -115,30 +116,35 @@ async def build_agent_input_context(
     return input_context
 
 
+def filter_declared_config(
+    config_json: dict,
+    context_schema: type["BaseContext"] | None = None,
+) -> dict:
+    """读取配置时仅保留 Schema 声明的字段，不按修改权限裁剪。"""
+    if not isinstance(config_json, dict):
+        return {}
+    declared_fields = {item.name for item in fields(context_schema or BaseContext)}
+    filtered = dict(config_json)
+    context = filtered.get("context")
+    if isinstance(context, dict):
+        filtered["context"] = {key: value for key, value in context.items() if key in declared_fields}
+    return filtered
+
+
 def filter_config_by_role(
     config_json: dict,
     role: str | None,
     context_schema: type["BaseContext"] | None = None,
 ) -> dict:
-    """按 Context 字段 metadata.auth 过滤 config_json.context。"""
-    if not isinstance(config_json, dict):
-        return {}
-
+    """仅用于写入：按 Context 字段 metadata.auth 过滤可修改配置。"""
+    filtered = filter_declared_config(config_json, context_schema)
     schema = context_schema or BaseContext
     schema_fields = fields(schema)
-    declared_fields = {item.name for item in schema_fields}
-    restricted_fields = {
-        item.name
-        for item in schema_fields
-        if item.metadata.get("auth") and not _role_can_access(str(item.metadata.get("auth")), role)
-    }
+    restricted_fields = {item.name for item in schema_fields if not _role_can_modify(item.metadata.get("auth"), role)}
 
-    filtered = dict(config_json)
     context = filtered.get("context")
     if isinstance(context, dict):
-        filtered["context"] = {
-            key: value for key, value in context.items() if key in declared_fields and key not in restricted_fields
-        }
+        filtered["context"] = {key: value for key, value in context.items() if key not in restricted_fields}
     return filtered
 
 
@@ -364,7 +370,7 @@ class BaseContext:
         configurable_items = {}
         for f in fields(cls):
             if f.init and not f.metadata.get("hide", False):
-                if user_role is not None and not _role_can_access(f.metadata.get("auth"), user_role):
+                if user_role is not None and not _role_can_modify(f.metadata.get("auth"), user_role):
                     continue
                 if f.metadata.get("configurable", True):
                     type_name = cls._get_type_name(f.type)
@@ -523,7 +529,7 @@ async def normalize_agent_context_config(
 ) -> dict:
     schema = context_schema or BaseContext
     raw_context = dict(context) if isinstance(context, dict) else {}
-    filtered = filter_config_by_role({"context": raw_context}, getattr(user, "role", None), schema)
+    filtered = filter_declared_config({"context": raw_context}, schema)
     field_names = {item.name for item in fields(schema)}
     normalized = dict(filtered.get("context") or {})
     resource_fields = AGENT_RUNTIME_RESOURCE_FIELDS & field_names

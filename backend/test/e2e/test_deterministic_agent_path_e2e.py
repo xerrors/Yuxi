@@ -722,6 +722,92 @@ async def test_deterministic_agent_path_reaches_persisted_result(
         await _delete_provider(e2e_client, e2e_headers)
 
 
+async def test_standard_user_run_uses_admin_execution_limit(e2e_client, e2e_headers):
+    """普通用户执行管理员配置，以真实步数失败和成功结果证明配置生效。"""
+    departments = await e2e_client.get("/api/departments", headers=e2e_headers)
+    assert departments.status_code == 200, departments.text
+    password = f"Pw!{uuid.uuid4().hex}"
+    created = await e2e_client.post(
+        "/api/auth/users",
+        headers=e2e_headers,
+        json={
+            "username": f"pytest_limit_{uuid.uuid4().hex[:6]}",
+            "password": password,
+            "role": "user",
+            "department_id": departments.json()[0]["id"],
+        },
+    )
+    assert created.status_code == 200, created.text
+    user = created.json()
+    agent_slug = None
+    threads = []
+    run_ids = []
+    headers = None
+    try:
+        login = await e2e_client.post("/api/auth/token", data={"username": user["uid"], "password": password})
+        assert login.status_code == 200, login.text
+        headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        await _create_provider(e2e_client, e2e_headers)
+        agent_slug = await _create_agent(e2e_client, e2e_headers, str(user["uid"]))
+        for limit, expected_status in [(1, "failed"), (42, "completed")]:
+            updated = await e2e_client.put(
+                f"/api/agent/{agent_slug}",
+                headers=e2e_headers,
+                json={"config_json": {"context": {"max_execution_steps": limit}}},
+            )
+            assert updated.status_code == 200, updated.text
+            thread = await e2e_client.post(
+                "/api/chat/thread",
+                headers=headers,
+                json={
+                    "agent_id": agent_slug,
+                    "title": make_test_conversation_title("config-auth"),
+                    "metadata": make_test_conversation_metadata("config-auth", e2e=True),
+                },
+            )
+            assert thread.status_code == 200, thread.text
+            thread_id = str(thread.json()["id"])
+            threads.append(thread_id)
+            response = await e2e_client.post(
+                "/api/agent/runs",
+                headers=headers,
+                json={"agent_slug": agent_slug, "thread_id": thread_id, "query": EXPECTED_OUTPUT},
+            )
+            assert response.status_code == 200, response.text
+            run_id = str(response.json()["run_id"])
+            run_ids.append(run_id)
+            run = await wait_for_run(e2e_client, headers, run_id)
+            assert run["status"] == expected_status, run
+            conn = await asyncpg.connect(postgres_dsn())
+            try:
+                row = await conn.fetchrow(
+                    "SELECT status, error_message, manifest FROM agent_runs WHERE id = $1", run_id
+                )
+                assert row["status"] == expected_status
+                manifest = json.loads(row["manifest"]) if isinstance(row["manifest"], str) else row["manifest"]
+                assert manifest["limits"]["max_execution_steps"] == limit
+                if limit == 1:
+                    assert "Recursion limit of 1 reached" in row["error_message"]
+                else:
+                    result = await e2e_client.get(f"/api/agent/runs/{run_id}/result", headers=headers)
+                    assert result.status_code == 200, result.text
+                    assert result.json()["output"] == EXPECTED_OUTPUT
+            finally:
+                await conn.close()
+    finally:
+        if headers:
+            for run_id in run_ids:
+                await cancel_run(e2e_client, headers, run_id)
+            for thread_id in threads:
+                deleted = await e2e_client.delete(f"/api/chat/thread/{thread_id}", headers=headers)
+                assert deleted.status_code in {200, 404}, deleted.text
+        if agent_slug:
+            await delete_agent(e2e_client, e2e_headers, agent_slug)
+        await _delete_provider(e2e_client, e2e_headers)
+        deleted = await e2e_client.delete(f"/api/auth/users/{user['id']}", headers=e2e_headers)
+        assert deleted.status_code in {200, 404}, deleted.text
+
+
 async def test_scheduled_task_run_now_reaches_exact_conversation_and_result(
     e2e_client: httpx.AsyncClient,
     e2e_headers: dict[str, str],

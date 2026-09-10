@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.agents.buildin import agent_manager
-from yuxi.agents.context import filter_config_by_role
+from yuxi.agents.context import filter_declared_config
 from yuxi.repositories.agent_repository import (
     AgentRepository,
     is_builtin_agent,
@@ -90,10 +90,10 @@ def _backend_info(info: dict) -> dict:
     return data
 
 
-def _filter_agent_config_json(backend_id: str, config_json: dict | None, role: str | None) -> dict:
+def _filter_agent_config_json(backend_id: str, config_json: dict | None) -> dict:
     backend = agent_manager.get_agent(backend_id)
     context_schema = backend.context_schema if backend else None
-    return filter_config_by_role(config_json or {}, role, context_schema=context_schema)
+    return filter_declared_config(config_json or {}, context_schema=context_schema)
 
 
 async def _serialize_agent(
@@ -110,7 +110,7 @@ async def _serialize_agent(
         include_configurable_items=include_configurable_items,
         backend_info_cache=backend_info_cache,
     )
-    data["config_json"] = _filter_agent_config_json(item.backend_id, data.get("config_json"), user.role)
+    data["config_json"] = _filter_agent_config_json(item.backend_id, data.get("config_json"))
     return data
 
 

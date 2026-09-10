@@ -17,6 +17,70 @@ from yuxi.storage.postgres.models_business import User
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 
+async def test_admin_settings_are_readable_but_not_writable_by_delegated_user(
+    test_client, admin_headers, standard_user
+):
+    """普通管理用户读取管理员参数，越权保存后 PostgreSQL 仍保留原值。"""
+    slug = f"pytest-config-auth-{uuid.uuid4().hex[:10]}"
+    uid = str(standard_user["user"]["uid"])
+    headers = standard_user["headers"]
+    scope = {"access_level": "user", "department_ids": [], "user_uids": [uid]}
+    settings = {
+        "tool_approval_mode": "always_trust",
+        "summary_threshold": 37,
+        "summary_keep_messages": 7,
+        "summary_prompt": "摘要 {messages}",
+        "summary_tool_result_token_limit": 123,
+        "max_execution_steps": 42,
+        "model_retry_times": 5,
+    }
+    conn = await asyncpg.connect(os.environ["POSTGRES_URL"].replace("+asyncpg", ""))
+    try:
+        created = await test_client.post(
+            "/api/agent",
+            headers=admin_headers,
+            json={
+                "name": "Pytest config auth",
+                "slug": slug,
+                "backend_id": "ChatbotAgent",
+                "share_config": {"version": 2, "read_scope": scope, "manage_scope": scope},
+                "config_json": {"context": {**settings, "max_execution_steps": 60}},
+            },
+        )
+        assert created.status_code == 200, created.text
+        updated = await test_client.put(
+            f"/api/agent/{slug}", headers=admin_headers, json={"config_json": {"context": settings}}
+        )
+        assert updated.status_code == 200, updated.text
+        read = await test_client.get(f"/api/agent/{slug}", headers=headers)
+        assert read.status_code == 200, read.text
+        context = read.json()["agent"]["config_json"]["context"]
+        assert {key: context[key] for key in settings} == settings
+
+        overwritten = {
+            "tool_approval_mode": "default",
+            "summary_threshold": 90,
+            "summary_keep_messages": 20,
+            "summary_prompt": "替换 {messages}",
+            "summary_tool_result_token_limit": 900,
+            "max_execution_steps": 900,
+            "model_retry_times": 9,
+        }
+        saved = await test_client.put(
+            f"/api/agent/{slug}",
+            headers=headers,
+            json={"config_json": {"context": {**overwritten, "system_prompt": "user edit"}}},
+        )
+        assert saved.status_code == 200, saved.text
+        persisted = (await _read_agent_config(conn, slug))["context"]
+        assert {key: persisted[key] for key in settings} == settings
+        assert persisted["system_prompt"] == "user edit"
+    finally:
+        deleted = await test_client.delete(f"/api/agent/{slug}", headers=admin_headers)
+        assert deleted.status_code in {200, 404}, deleted.text
+        await conn.close()
+
+
 async def test_delegated_manager_resource_patch_preserves_hidden_config_and_rejects_new_reference(
     test_client,
     admin_headers,
