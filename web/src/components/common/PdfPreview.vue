@@ -30,6 +30,7 @@
 <script setup>
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { CircleAlert, LoaderCircle } from '@lucide/vue'
+import { resolvePdfLoadErrorMessage } from '@/utils/pdfPreviewErrors'
 
 const props = defineProps({
   url: {
@@ -56,6 +57,8 @@ let currentLoadingTask = null
 let resizeObserver = null
 let resizeTimer = null
 let lastRenderedWidth = 0
+// 加载代次：仅当前代次可写入组件状态，过期加载静默丢弃。
+let loadSeq = 0
 
 const setCanvasRef = (el, pageNum) => {
   if (el) {
@@ -114,12 +117,13 @@ const calculateFitScale = (page) => {
   return availableWidth / unscaledViewport.width
 }
 
-const renderSinglePage = async (pdfDoc, pageNum) => {
+const renderSinglePage = async (pdfDoc, pageNum, seq) => {
   const canvas = canvasMap.get(pageNum)
   if (!canvas || !pdfDoc) return
 
   try {
     const page = await pdfDoc.getPage(pageNum)
+    if (seq !== loadSeq) return
     const fitScale = calculateFitScale(page)
     const viewport = page.getViewport({ scale: fitScale })
 
@@ -154,7 +158,7 @@ const renderSinglePage = async (pdfDoc, pageNum) => {
 
     renderTasks.set(pageNum, renderTask)
     await renderTask.promise
-    renderTasks.delete(pageNum)
+    if (renderTasks.get(pageNum) === renderTask) renderTasks.delete(pageNum)
   } catch (err) {
     if (err?.name !== 'RenderingCancelledException') {
       console.error(`渲染 PDF 第 ${pageNum} 页失败:`, err)
@@ -164,25 +168,23 @@ const renderSinglePage = async (pdfDoc, pageNum) => {
 
 const renderAllPages = async () => {
   if (!currentPdfDoc) return
+  const seq = loadSeq
+  const pdfDoc = currentPdfDoc
   cancelOngoingRenders()
 
   lastRenderedWidth = getAvailableContainerWidth()
 
-  for (let i = 1; i <= totalPages.value; i++) {
-    await renderSinglePage(currentPdfDoc, i)
+  for (let i = 1; i <= pdfDoc.numPages && seq === loadSeq; i++) {
+    await renderSinglePage(pdfDoc, i, seq)
   }
 }
 
 const loadPdf = async () => {
-  if (!props.url) {
-    loading.value = false
-    error.value = '无效的 PDF 链接'
-    return
-  }
-
+  const seq = ++loadSeq
   loading.value = true
   error.value = ''
   totalPages.value = 0
+  currentPdfDoc = null
   cancelOngoingRenders()
 
   if (currentLoadingTask) {
@@ -194,28 +196,45 @@ const loadPdf = async () => {
     currentLoadingTask = null
   }
 
+  if (!props.url) {
+    loading.value = false
+    error.value = '无效的 PDF 链接'
+    return
+  }
+
   try {
     const pdfjs = await getPdfjs()
+    if (seq !== loadSeq) return
     const loadingTask = pdfjs.getDocument({
       url: props.url,
-      cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@' + pdfjs.version + '/cmaps/',
+      cMapUrl: '/assets/pdfjs-cmaps/',
       cMapPacked: true
     })
     currentLoadingTask = loadingTask
 
     const pdfDoc = await loadingTask.promise
+    if (seq !== loadSeq) {
+      try {
+        loadingTask.destroy()
+      } catch {
+        // 忽略
+      }
+      return
+    }
     currentPdfDoc = pdfDoc
     totalPages.value = pdfDoc.numPages
     loading.value = false
 
     await nextTick()
-    await renderAllPages()
+    if (seq === loadSeq) await renderAllPages()
   } catch (err) {
-    if (err?.name !== 'RenderingCancelledException') {
+    if (seq === loadSeq && err?.name !== 'RenderingCancelledException') {
       console.error('加载 PDF 失败:', err)
-      error.value = '无法加载 PDF 文件或文件格式受损'
+      error.value = resolvePdfLoadErrorMessage(err)
     }
-    loading.value = false
+    if (seq === loadSeq) {
+      loading.value = false
+    }
   }
 }
 
@@ -251,6 +270,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  loadSeq += 1
   clearTimeout(resizeTimer)
   if (resizeObserver) {
     resizeObserver.disconnect()
