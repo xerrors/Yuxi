@@ -1,5 +1,6 @@
 import { message } from 'ant-design-vue'
 import { handleChatError } from '@/utils/errorHandler'
+import { reconcileAgentStateSubagentRuns } from '@/utils/subagentRuns'
 import { unref } from 'vue'
 import { extractPendingInterrupt } from '@/composables/useApproval'
 
@@ -208,7 +209,8 @@ export function useAgentStreamHandler({
             todos: chunk.agent_state?.todos || []
           })
           threadState.agentStateRequestVersion = (threadState.agentStateRequestVersion || 0) + 1
-          threadState.agentState = chunk.agent_state
+          // checkpoint 里的 subagent_runs 可能落后于流式增量(subagent_run_update)，防回退。
+          threadState.agentState = reconcileAgentStateSubagentRuns(chunk.agent_state, threadState.agentState)
         } else {
           console.warn(`${debugPrefix}[agent_state_skip]`, {
             reason: 'empty_state',
