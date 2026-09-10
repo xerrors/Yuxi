@@ -4,7 +4,9 @@ import test from 'node:test'
 
 import {
   isSubagentLaunchToolName,
-  mergeSubagentRunsForDisplay
+  mergeSubagentRunIntoList,
+  mergeSubagentRunsForDisplay,
+  reconcileAgentStateSubagentRuns
 } from '../../src/utils/subagentRuns.js'
 
 test('同步 task 和异步 subagent_start 都属于子智能体启动调用', () => {
@@ -110,4 +112,71 @@ test('尚未获得 child_thread_id 的流式任务不会被误合并', () => {
     runs.map((run) => run.description),
     ['tool-1', 'tool-2']
   )
+})
+
+test('mergeSubagentRunIntoList 按 run_id 更新既有条目', () => {
+  const runs = [{ run_id: 'run-1', child_thread_id: 'thread-1', status: 'running' }]
+
+  const merged = mergeSubagentRunIntoList(runs, { run_id: 'run-1', status: 'completed' })
+
+  assert.equal(merged.length, 1)
+  assert.equal(merged[0].status, 'completed')
+  assert.equal(merged[0].child_thread_id, 'thread-1')
+})
+
+test('mergeSubagentRunIntoList 新 run 追加到列表', () => {
+  const runs = [{ run_id: 'run-1', status: 'running' }]
+
+  const merged = mergeSubagentRunIntoList(runs, { run_id: 'run-2', status: 'running' })
+
+  assert.equal(merged.length, 2)
+  assert.equal(merged[1].run_id, 'run-2')
+})
+
+test('mergeSubagentRunIntoList 拒绝终态回退到进行中', () => {
+  const runs = [{ run_id: 'run-1', status: 'completed' }]
+
+  const merged = mergeSubagentRunIntoList(runs, { run_id: 'run-1', status: 'running' })
+
+  assert.equal(merged[0].status, 'completed')
+})
+
+test('mergeSubagentRunIntoList 无 run_id 时按子线程匹配', () => {
+  const runs = [{ child_thread_id: 'thread-1', status: 'running' }]
+
+  const merged = mergeSubagentRunIntoList(runs, { child_thread_id: 'thread-1', status: 'failed' })
+
+  assert.equal(merged.length, 1)
+  assert.equal(merged[0].status, 'failed')
+})
+
+test('mergeSubagentRunIntoList 允许 running 前进到 cancel_requested', () => {
+  const runs = [{ run_id: 'run-1', status: 'running' }]
+
+  const merged = mergeSubagentRunIntoList(runs, { run_id: 'run-1', status: 'cancel_requested' })
+
+  assert.equal(merged[0].status, 'cancel_requested')
+})
+
+test('reconcileAgentStateSubagentRuns 防止 agent_state 事件回退流式增量', () => {
+  const current = {
+    todos: [],
+    subagent_runs: [{ run_id: 'run-1', status: 'running' }]
+  }
+  // 流式 agent_state 事件携带的 checkpoint 快照还是 pending
+  const incoming = {
+    todos: [{ content: '调研', status: 'in_progress' }],
+    subagent_runs: [{ run_id: 'run-1', status: 'pending' }]
+  }
+
+  const merged = reconcileAgentStateSubagentRuns(incoming, current)
+
+  assert.equal(merged.subagent_runs[0].status, 'running')
+  assert.equal(merged.todos.length, 1)
+})
+
+test('reconcileAgentStateSubagentRuns 无本地增量时原样返回', () => {
+  const incoming = { todos: [], subagent_runs: [] }
+  assert.equal(reconcileAgentStateSubagentRuns(incoming, null), incoming)
+  assert.equal(reconcileAgentStateSubagentRuns(incoming, { subagent_runs: [] }), incoming)
 })
