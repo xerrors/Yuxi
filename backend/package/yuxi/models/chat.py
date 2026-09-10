@@ -1,5 +1,6 @@
 """聊天模型加载、供应商协议适配与通用调用入口。"""
 
+from typing import Any
 from uuid import uuid4
 
 from langchain.chat_models import BaseChatModel
@@ -32,34 +33,62 @@ def _sanitize_invalid_tool_calls(messages: list[BaseMessage]) -> list[BaseMessag
     2. role='tool' must be a response to a preceding message with 'tool_calls' ——
        孤儿 ToolMessage（tool_call_id 已无对应 tool_calls）。
 
-    处理：invalid_tool_calls 属性清空、content 数组里的 invalid_tool_call block 转
-    text、孤儿 ToolMessage 删除。
+    处理：invalid_tool_calls 属性清空、additional_kwargs["tool_calls"] 收敛到合法子集、
+    content 数组里的 invalid_tool_call block 转 text、孤儿 ToolMessage 删除。
+
+    返回新消息对象，不原地修改入参：这些消息来自共享的 graph state / checkpoint。
     """
+    sanitized: list[BaseMessage] = []
     valid_ids: set[str] = set()
+
     for message in messages:
         if not isinstance(message, AIMessage):
+            sanitized.append(message)
             continue
+
+        valid_calls = list(message.tool_calls or [])
+        message_valid_ids = {tc["id"] for tc in valid_calls if tc.get("id")}
+        valid_ids |= message_valid_ids
+
+        updates: dict[str, Any] = {}
+
         invalid_calls = getattr(message, "invalid_tool_calls", None)
         if invalid_calls:
             logger.warning(f"[invalid_tool_call 过滤] 清空 {len(invalid_calls)} 条 invalid_tool_calls")
-            message.invalid_tool_calls = []
-        for tc in message.tool_calls or []:
-            if tc.get("id"):
-                valid_ids.add(tc["id"])
+            updates["invalid_tool_calls"] = []
+
+        # additional_kwargs["tool_calls"] 是 OpenAI 响应的原始 wire 表示。langchain_openai
+        # 的 _convert_message_to_dict 在 tool_calls 与 invalid_tool_calls 都为空时会回退用它
+        # 序列化——若不同步收敛，清空解析字段反而会让畸形调用被原样重发。
+        extra_tool_calls = message.additional_kwargs.get("tool_calls")
+        if isinstance(extra_tool_calls, list):
+            kept = [call for call in extra_tool_calls if isinstance(call, dict) and call.get("id") in message_valid_ids]
+            if len(kept) != len(extra_tool_calls):
+                logger.warning(
+                    f"[invalid_tool_call 过滤] additional_kwargs 里移除 "
+                    f"{len(extra_tool_calls) - len(kept)} 条原始 tool_call"
+                )
+                updates["additional_kwargs"] = {**message.additional_kwargs, "tool_calls": kept}
+
         if isinstance(message.content, list):
-            new_content = []
+            new_content: list[Any] = []
+            content_changed = False
             for block in message.content:
                 if isinstance(block, dict) and block.get("type") == "invalid_tool_call":
                     name = block.get("name") or "unknown"
                     error = block.get("error") or "arguments malformed or truncated"
                     logger.warning(f"[invalid_tool_call 过滤] content 里的 block 转 text: {name}: {error}")
                     new_content.append({"type": "text", "text": f"[工具调用失败] {name}: {error}"})
+                    content_changed = True
                 else:
                     new_content.append(block)
-            message.content = new_content
+            if content_changed:
+                updates["content"] = new_content
+
+        sanitized.append(message.model_copy(update=updates) if updates else message)
 
     filtered: list[BaseMessage] = []
-    for message in messages:
+    for message in sanitized:
         if isinstance(message, ToolMessage) and message.tool_call_id not in valid_ids:
             logger.warning(f"[invalid_tool_call 过滤] 删除孤儿 ToolMessage: {message.tool_call_id}")
             continue
