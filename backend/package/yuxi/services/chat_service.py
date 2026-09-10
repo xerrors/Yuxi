@@ -1740,6 +1740,25 @@ async def _read_checkpoint_state(agent, *, uid: str, thread_id: str, context):
     return await reader.aget_state(langgraph_config)
 
 
+async def _read_pending_interrupt(*, uid: str, thread_id: str):
+    """从 checkpoint 的 pending writes 读取中断值，不依赖执行图结构。
+
+    骨架图只有 state_reader_noop 节点，`aget_state` 无法按原图节点重建 `tasks`，
+    因此等待审批的 checkpoint 在骨架图下 `tasks` 为空、`_extract_interrupt_info`
+    取不到中断——用户刷新状态接口会丢失审批入口。中断本身写在 checkpoint 的
+    `__interrupt__` channel 里，直接读原始写入即可恢复。
+    """
+    checkpointer = pg_manager.get_langgraph_checkpointer()
+    langgraph_config = {"configurable": {"uid": uid, "thread_id": thread_id}}
+    checkpoint_tuple = await checkpointer.aget_tuple(langgraph_config)
+    if checkpoint_tuple is None:
+        return None
+    for _task_id, channel, value in checkpoint_tuple.pending_writes or []:
+        if channel == "__interrupt__" and value:
+            return value[0]
+    return None
+
+
 async def get_agent_state_view(
     *,
     thread_id: str,
@@ -1808,6 +1827,10 @@ async def get_agent_state_view(
             )
         }
         interrupt_info = _extract_interrupt_info(state) if state else None
+        if interrupt_info is None and latest_run is not None and latest_run.status == "interrupted":
+            # 骨架图重建不出 tasks，中断回退到 checkpoint 原始写入读取；只在 Run 确实
+            # 处于 interrupted 时才多读一次，普通状态查询不付这个成本。
+            interrupt_info = await _read_pending_interrupt(uid=str(current_uid), thread_id=thread_id)
         if latest_run and latest_run.status == "interrupted" and interrupt_info:
             response["interrupt"] = {
                 **_build_pending_interrupt_payload(interrupt_info, thread_id),
