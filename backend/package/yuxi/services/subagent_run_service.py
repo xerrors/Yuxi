@@ -173,11 +173,13 @@ class SubagentRunService:
             try:
                 from yuxi.services.run_queue_service import append_run_stream_event
 
+                # 事件必须挂到父 Run 的线程上：订阅方按父线程归属消费该增量；
+                # run.conversation_thread_id 是子会话线程 ID，不是父线程锚点。
                 await append_run_stream_event(
                     created_by_run_id,
                     "subagent_run_update",
                     {"subagent_run": serialize_subagent_run_state(run)},
-                    thread_id=run.conversation_thread_id,
+                    thread_id=creator_run.conversation_thread_id,
                 )
             except Exception:
                 pass  # 推送失败不影响 run 创建；后续 mark_run_running 仍会推送

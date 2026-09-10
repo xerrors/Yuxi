@@ -6,6 +6,7 @@ import pytest
 from fastapi import HTTPException
 
 import yuxi.services.agent_run_service as agent_run_service
+import yuxi.services.run_queue_service as run_queue_service
 import yuxi.services.subagent_run_service as service_module
 from yuxi.services.input_message_service import build_chat_input_message
 from yuxi.services.subagent_run_service import SubagentRunBusy, SubagentRunService
@@ -436,6 +437,74 @@ async def test_subagent_run_service_creates_child_relation_run_and_enqueue(monke
     assert captured["create_run_record"]["input_message"].raw_message()["content"] == "run in background"
     assert db.committed is True
     assert enqueued == ["child-run"]
+
+
+@pytest.mark.asyncio
+async def test_subagent_run_service_start_publishes_update_on_parent_thread(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    db = _FakeDB()
+    captured: dict[str, object] = {}
+    child_conversation = SimpleNamespace(
+        id=20,
+        uid="user-1",
+        agent_id="worker",
+        status="active",
+        project_id="project-1",
+    )
+    relation = _relation(child_thread_id="")
+    published: list[tuple] = []
+
+    _patch_repos(
+        monkeypatch,
+        captured=captured,
+        child_conversation=child_conversation,
+        created_relation=relation,
+    )
+
+    async def fake_create_run_record(_self, **kwargs):
+        return (
+            SimpleNamespace(
+                id="child-run",
+                conversation_thread_id="child-thread",
+                agent_slug="worker",
+                status="pending",
+                created_at=None,
+                finished_at=None,
+                error_message=None,
+                created_by_run_id=kwargs["creator_run"].id,
+                subagent_thread_relation_id=kwargs["relation"].id,
+                input_payload={"runtime": {"tool_call_id": kwargs["tool_call_id"]}},
+            ),
+            True,
+        )
+
+    async def fake_enqueue(run_id: str):
+        captured["enqueued"] = run_id
+
+    async def fake_append_run_stream_event(run_id: str, event_type: str, payload: dict, *, thread_id: str):
+        published.append((run_id, event_type, payload, thread_id))
+
+    monkeypatch.setattr(SubagentRunService, "_create_run_record", fake_create_run_record)
+    monkeypatch.setattr(service_module.agent_run_service, "enqueue_agent_run", fake_enqueue)
+    monkeypatch.setattr(run_queue_service, "append_run_stream_event", fake_append_run_stream_event)
+
+    await SubagentRunService(db).start(
+        uid="user-1",
+        created_by_run_id="parent-run",
+        agent_item=_agent(),
+        input_message=build_chat_input_message("run in background"),
+        tool_call_id="tool-1",
+        model_spec="provider:model",
+    )
+
+    assert len(published) == 1
+    run_id, event_type, payload, thread_id = published[0]
+    assert run_id == "parent-run"
+    assert event_type == "subagent_run_update"
+    # 事件挂父线程，而非子线程 child-thread
+    assert thread_id == "parent-thread"
+    assert payload["subagent_run"]["child_thread_id"] == "child-thread"
 
 
 @pytest.mark.asyncio
