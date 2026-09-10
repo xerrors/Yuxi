@@ -23,6 +23,7 @@ Owner：backend/package/yuxi/services/run_worker.py
 - `failed` / `completed` 不取消后代：子 Run 继续执行并落库，主 Run 续跑时可收割。
 - 非取消终态在 execution tree 未收敛时**不强求** runtime cleanup：保持 `runtime_cleanup_pending=True`，由 `reconcile_pending_runtime_cleanups` 在子 Run 收敛后完成清理；cleanup 自身抛错（provisioner 故障）仍抛 `RuntimeCleanupPendingError` 让 ARQ 重试。
 - 三处调用点（`mark_run_terminal` 决策、`finally`、`process_agent_run` 终态跳过，以及 `execute_agent_run` 的 `terminal_committed` 完成分支）共用同一常量，避免任何一处漏改重新打开该缺陷。
+- `chat_service.save_messages_from_langgraph_state` 的完成/中断终态落库路径同样遵循该策略：`completed` 不级联取消子 Run，`interrupted` 才收敛 execution tree。此处终态仅 `completed`/`interrupted` 两种，且 `chat_service` 被 `run_worker` 反向 import（循环依赖），故内联判断 `terminal_status == "interrupted"` 而非引用 `run_worker.CASCADE_CANCEL_STATUSES`，语义与该常量对齐。
 
 ## 替代方案
 
