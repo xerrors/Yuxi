@@ -180,3 +180,34 @@ test('reconcileAgentStateSubagentRuns 无本地增量时原样返回', () => {
   assert.equal(reconcileAgentStateSubagentRuns(incoming, null), incoming)
   assert.equal(reconcileAgentStateSubagentRuns(incoming, { subagent_runs: [] }), incoming)
 })
+
+test('同子线程连续两次运行：新 run 不被旧 run 的终态回退丢弃', () => {
+  const runs = [{ run_id: 'run-old', child_thread_id: 'child-thread-1', status: 'completed' }]
+
+  const merged = mergeSubagentRunIntoList(runs, {
+    run_id: 'run-new',
+    child_thread_id: 'child-thread-1',
+    status: 'running'
+  })
+
+  assert.equal(merged.length, 2)
+  assert.equal(merged[0].run_id, 'run-old')
+  assert.equal(merged[0].status, 'completed')
+  assert.equal(merged[1].run_id, 'run-new')
+  assert.equal(merged[1].status, 'running')
+})
+
+test('reconcile 不会用本地旧 run 覆盖 HTTP 返回的同子线程新 run', () => {
+  const incoming = {
+    subagent_runs: [{ run_id: 'run-new', child_thread_id: 'child-thread-1', status: 'running' }]
+  }
+  const current = {
+    subagent_runs: [{ run_id: 'run-old', child_thread_id: 'child-thread-1', status: 'completed' }]
+  }
+
+  const merged = reconcileAgentStateSubagentRuns(incoming, current)
+
+  assert.equal(merged.subagent_runs.length, 2)
+  const runIds = merged.subagent_runs.map((run) => run.run_id).sort()
+  assert.deepEqual(runIds, ['run-new', 'run-old'])
+})

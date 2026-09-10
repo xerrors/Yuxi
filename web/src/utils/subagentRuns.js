@@ -14,11 +14,18 @@ const SUBAGENT_RUN_STATUS_RANK = {
 /** 判断工具调用是否会启动或继续子智能体运行。 */
 export const isSubagentLaunchToolName = (name) => SUBAGENT_LAUNCH_TOOL_NAMES.has(name)
 
-/** 按 run_id/子线程定位既有条目。 */
+/**
+ * 按 run_id/子线程定位既有条目。
+ *
+ * 状态防回退只能限定在同一个 run_id 内：incoming 携带 run_id 却未命中时，它就是一条
+ * 全新 run（即便 child_thread_id 与旧 run 相同——「继续同一子线程」会复用线程但换新 run），
+ * 不应回退到 child_thread_id 匹配，否则新 run 会被旧 run 的终态 rank 直接丢弃。
+ * 只有 incoming 没有 run_id（旧的增量形状）才回退到 child_thread_id 匹配。
+ */
 const findSubagentRunIndex = (list, incoming) => {
   if (incoming.run_id) {
     const byRunId = list.findIndex((item) => item?.run_id === incoming.run_id)
-    if (byRunId >= 0) return byRunId
+    return byRunId >= 0 ? byRunId : -1
   }
   if (incoming.child_thread_id) {
     return list.findIndex((item) => item?.child_thread_id === incoming.child_thread_id)
