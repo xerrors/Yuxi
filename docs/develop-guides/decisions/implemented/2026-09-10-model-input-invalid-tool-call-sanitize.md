@@ -1,4 +1,4 @@
-# 模型输入净化：invalid_tool_call 必须落在 wire payload 上
+# 模型输入净化：invalid_tool_call 的截断 function 在发送边界降级为失败反馈
 
 状态：implemented
 类型：bug-fix
@@ -6,41 +6,40 @@ Owner：backend/package/yuxi/models/chat.py
 
 ## 问题
 
-DeepSeek 等接口对两类消息报错并中断整轮：
+模型生成无效工具调用（JSON 参数截断/格式错）时，LangChain 把它记在 `AIMessage.invalid_tool_calls`。`langchain_openai` 序列化时把它转成 `type:"function"`、`arguments` 为截断 JSON 的 `tool_call`，DeepSeek 等接口因参数不合法报错并中断整轮。
 
-1. `unknown variant invalid_tool_call`：模型生成的工具调用参数被截断/格式错误时，LangChain 记录 `invalid_tool_calls`，序列化后以该变体发往模型。
-2. `role='tool' must be a response to a preceding message with 'tool_calls'`：孤儿 `ToolMessage`（`tool_call_id` 已无对应 `tool_calls`）。
+## 根因澄清（对上一版假设的修正）
 
-只清空 `invalid_tool_calls` 解析字段并不能解决第 1 类：`langchain_openai` 的 `_convert_message_to_dict` 在 `tool_calls` 与 `invalid_tool_calls` **都为空**时会回退使用 `additional_kwargs["tool_calls"]`（OpenAI 响应的原始 wire 表示），把同一条截断参数的调用原样重发；而配对 `ToolMessage` 已被过滤删除，形成「有 tool_calls、无工具响应」的非法请求。
+初版把现象归为「`invalid_tool_calls` 序列化成 `invalid_tool_call` 变体」，并为此清空解析字段、收敛 `additional_kwargs`、删孤儿 `ToolMessage`、动态包装四个入口。实测 `langchain_openai` 1.6.0 的真实序列化推翻了该假设：
+
+- `AIMessage.invalid_tool_calls` 经 `_lc_invalid_tool_call_to_openai_tool_call` 转成 `type:"function"`，**不是** `invalid_tool_call` 变体；真正的问题是 `arguments` 截断导致参数解析失败。
+- content 数组里的 `{"type":"invalid_tool_call"}` block 在 `_convert_from_v1_to_chat_completions` 里已被丢弃，不会泄漏到 wire。
+- 孤儿 `ToolMessage` 的根因在历史裁剪/恢复/消息组装，不是发送边界能安全修复的。
 
 ## 决策
 
-净化必须作用在最终发送载荷上，并保持解析表示与原始表示一致：
+收窄为**只在 Chat Completions 发送边界**处理「截断 function」：`ChatCompletionsAdapter._get_request_payload` 里用原始消息（`invalid_tool_calls` 的 id）对账 wire 载荷，按 id 移除这些截断 `tool_calls`，并在 content 里追加 text 反馈「`[工具调用失败] name: error`」——给模型明确的失败反馈，而不是发出畸形参数。
 
-- 清空 `invalid_tool_calls`；
-- 把 `additional_kwargs["tool_calls"]` 收敛为「id 在合法 `tool_calls` 内」的子集（无合法调用时即为空列表，阻断 `_convert_message_to_dict` 的回退路径）；
-- content 数组里的 `invalid_tool_call` block 转文本；
-- 删除 `tool_call_id` 不在任何合法 `tool_calls` 内的孤儿 `ToolMessage`。
-
-净化返回**新的消息对象**，不原地修改入参——这些对象来自共享的 graph state 与 checkpoint。`_InvalidToolCallFilterMixin` 在 `_generate/_agenerate/_stream/_astream` 四个入口发送前统一调用。
+- 只影响 `ChatCompletionsAdapter`（OpenAI 兼容协议）；Anthropic/Gemini 有自己的消息格式，不处理。
+- 不改消息对象（原始 checkpoint 不动），净化只落在序列化后的 wire 载荷。
+- 同步/异步/流式/非流式四条路径都经 `_get_request_payload`，一处覆盖。
+- 不删孤儿 `ToolMessage`：id 存在不代表调用与响应顺序合法，按根因另行处理。
 
 ## 替代方案
 
-- 只清空 `invalid_tool_calls`：`additional_kwargs` 回退会让畸形调用重发；已被 wire payload 回归测试证伪，拒绝。
-- 只处理 `additional_kwargs`、不处理 `invalid_tool_calls`：模型侧仍收到 `invalid_tool_call` 变体；拒绝。
-- 在 `_convert_message_to_dict` 处打补丁：属于第三方内部实现，升级即失效；拒绝。
+- 动态 `_InvalidToolCallFilterMixin` 包装四个入口：覆盖所有供应商、范围过大，且掩盖消息链路本身的问题；拒绝。
+- 在 `_convert_message_to_dict` 打补丁：第三方内部实现，升级即失效；拒绝。
+- 全历史 id 集合清洗工具响应：会把「响应在前、调用在后」等非法序列保留，或误删实际执行结果；拒绝。
 
 ## 后果
 
-模型输入侧的畸形调用与孤儿工具响应在发送边界被统一消解，不再随供应商序列化实现变化而回退。过滤会丢失原始调用细节，因此每次过滤都写 warning 日志，保留可观测性。合法调用与其工具响应不受影响。
+发送给 DeepSeek 等接口的载荷不再含参数截断的 `function` 调用，改为明确的文本失败反馈。`invalid_tool_calls` 属性仍在 checkpoint 里原样保留（可观测、可追溯），仅在 wire 边界降级。非 OpenAI 兼容供应商不受影响。
 
 ## 验证
 
-`backend/test/unit/models/test_chat_invalid_tool_call_sanitize.py` 断言**最终 wire payload**（经 `_convert_message_to_dict`）：
+`backend/test/unit/models/test_chat_invalid_tool_call_sanitize.py`（真实 adapter + mock HTTP，断言最终请求体）：
 
-- 纯无效调用：wire 上不出现该调用，`invalid_tool_calls` 为空；
-- 有效/无效混合：wire 只保留 `call-good` 及其原始参数；
-- 不得原地修改入参（原消息的 `invalid_tool_calls` 与 `additional_kwargs` 不变）；
-- 孤儿 `ToolMessage` 随无效调用一起被删除；
-- content 里的 `invalid_tool_call` block 转文本，wire 上无该变体；
-- 流式入口（`_stream` / `_astream`）同样在发送前净化。
+- 纯无效调用：`tool_calls` 移除，content 追加失败反馈；
+- 有效/无效混合：wire 只保留 `call-good`，追加失败反馈；
+- 无无效调用：wire 原样不变；
+- 四条路径（`invoke`/`ainvoke`/`stream`/`astream`）都净化。

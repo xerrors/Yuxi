@@ -1,10 +1,9 @@
 """聊天模型加载、供应商协议适配与通用调用入口。"""
 
-from typing import Any
 from uuid import uuid4
 
 from langchain.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, ToolMessage, convert_to_messages
+from langchain_core.messages import AIMessage, AIMessageChunk, convert_to_messages
 from langchain_openai import ChatOpenAI
 from pydantic import Field, SecretStr
 
@@ -23,103 +22,6 @@ def resolve_chat_model_spec(model_spec: str | None, *, fallback: str | None = No
         if isinstance(candidate, str) and candidate.strip():
             return candidate.strip()
     raise ValueError("model spec 不能为空")
-
-
-def _sanitize_invalid_tool_calls(messages: list[BaseMessage]) -> list[BaseMessage]:
-    """净化消息里的 invalid_tool_call，规避 DeepSeek 等接口的两类报错：
-
-    1. unknown variant invalid_tool_call —— LLM 生成无效工具调用（JSON 参数截断/格式
-       错误）时，LangChain 记录 invalid_tool_call，序列化后以该变体发往模型。
-    2. role='tool' must be a response to a preceding message with 'tool_calls' ——
-       孤儿 ToolMessage（tool_call_id 已无对应 tool_calls）。
-
-    处理：invalid_tool_calls 属性清空、additional_kwargs["tool_calls"] 收敛到合法子集、
-    content 数组里的 invalid_tool_call block 转 text、孤儿 ToolMessage 删除。
-
-    返回新消息对象，不原地修改入参：这些消息来自共享的 graph state / checkpoint。
-    """
-    sanitized: list[BaseMessage] = []
-    valid_ids: set[str] = set()
-
-    for message in messages:
-        if not isinstance(message, AIMessage):
-            sanitized.append(message)
-            continue
-
-        valid_calls = list(message.tool_calls or [])
-        message_valid_ids = {tc["id"] for tc in valid_calls if tc.get("id")}
-        valid_ids |= message_valid_ids
-
-        updates: dict[str, Any] = {}
-
-        invalid_calls = getattr(message, "invalid_tool_calls", None)
-        if invalid_calls:
-            logger.warning(f"[invalid_tool_call 过滤] 清空 {len(invalid_calls)} 条 invalid_tool_calls")
-            updates["invalid_tool_calls"] = []
-
-        # additional_kwargs["tool_calls"] 是 OpenAI 响应的原始 wire 表示。langchain_openai
-        # 的 _convert_message_to_dict 在 tool_calls 与 invalid_tool_calls 都为空时会回退用它
-        # 序列化——若不同步收敛，清空解析字段反而会让畸形调用被原样重发。
-        extra_tool_calls = message.additional_kwargs.get("tool_calls")
-        if isinstance(extra_tool_calls, list):
-            kept = [call for call in extra_tool_calls if isinstance(call, dict) and call.get("id") in message_valid_ids]
-            if len(kept) != len(extra_tool_calls):
-                logger.warning(
-                    f"[invalid_tool_call 过滤] additional_kwargs 里移除 "
-                    f"{len(extra_tool_calls) - len(kept)} 条原始 tool_call"
-                )
-                updates["additional_kwargs"] = {**message.additional_kwargs, "tool_calls": kept}
-
-        if isinstance(message.content, list):
-            new_content: list[Any] = []
-            content_changed = False
-            for block in message.content:
-                if isinstance(block, dict) and block.get("type") == "invalid_tool_call":
-                    name = block.get("name") or "unknown"
-                    error = block.get("error") or "arguments malformed or truncated"
-                    logger.warning(f"[invalid_tool_call 过滤] content 里的 block 转 text: {name}: {error}")
-                    new_content.append({"type": "text", "text": f"[工具调用失败] {name}: {error}"})
-                    content_changed = True
-                else:
-                    new_content.append(block)
-            if content_changed:
-                updates["content"] = new_content
-
-        sanitized.append(message.model_copy(update=updates) if updates else message)
-
-    filtered: list[BaseMessage] = []
-    for message in sanitized:
-        if isinstance(message, ToolMessage) and message.tool_call_id not in valid_ids:
-            logger.warning(f"[invalid_tool_call 过滤] 删除孤儿 ToolMessage: {message.tool_call_id}")
-            continue
-        filtered.append(message)
-    return filtered
-
-
-class _InvalidToolCallFilterMixin:
-    """在消息发送前清空 invalid_tool_calls，规避 DeepSeek 等接口不支持该变体。"""
-
-    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-        return super()._generate(_sanitize_invalid_tool_calls(messages), stop=stop, run_manager=run_manager, **kwargs)
-
-    async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
-        return await super()._agenerate(
-            _sanitize_invalid_tool_calls(messages), stop=stop, run_manager=run_manager, **kwargs
-        )
-
-    def _stream(self, messages, stop=None, run_manager=None, **kwargs):
-        return super()._stream(_sanitize_invalid_tool_calls(messages), stop=stop, run_manager=run_manager, **kwargs)
-
-    async def _astream(self, messages, stop=None, run_manager=None, **kwargs):
-        async for chunk in super()._astream(
-            _sanitize_invalid_tool_calls(messages), stop=stop, run_manager=run_manager, **kwargs
-        ):
-            yield chunk
-
-
-def _wrap_model(cls: type) -> type:
-    """动态创建带 invalid_tool_call 过滤的模型子类。"""
-    return type(f"Filtered{cls.__name__}", (_InvalidToolCallFilterMixin, cls), {})
 
 
 def load_chat_model(fully_specified_name: str | None, *, session_id: str | None = None, **kwargs) -> BaseChatModel:
@@ -167,7 +69,7 @@ def load_chat_model(fully_specified_name: str | None, *, session_id: str | None 
     if info.provider_type == "anthropic":
         from langchain_anthropic import ChatAnthropic
 
-        return _wrap_model(ChatAnthropic)(
+        return ChatAnthropic(
             model=info.model_id,
             api_key=SecretStr(api_key),
             base_url=base_url,
@@ -176,13 +78,13 @@ def load_chat_model(fully_specified_name: str | None, *, session_id: str | None 
     if info.provider_type == "gemini":
         from langchain_google_genai import ChatGoogleGenerativeAI
 
-        return _wrap_model(ChatGoogleGenerativeAI)(
+        return ChatGoogleGenerativeAI(
             model=info.model_id,
             google_api_key=SecretStr(api_key),
             **kwargs,
         )
 
-    return _wrap_model(ChatCompletionsAdapter)(
+    return ChatCompletionsAdapter(
         model=info.model_id,
         api_key=SecretStr(api_key),
         base_url=base_url,
@@ -217,6 +119,41 @@ def normalize_tool_call_chunks(message: AIMessageChunk) -> None:
         for key in ("name", "id"):
             if tool.get(key) == "":
                 tool[key] = None
+
+
+def _sanitize_wire_invalid_tool_calls(messages: list[dict], originals: list) -> None:
+    """把 wire 消息里来自 invalid_tool_calls 的截断 function 转成失败反馈。
+
+    langchain_openai 把 AIMessage.invalid_tool_calls 序列化成 type:"function"、
+    arguments 为截断 JSON 的 tool_call，DeepSeek 等接口因此报参数解析失败。这里在
+    发送边界按 tool_call id 移除这些截断调用，并在 content 里给模型明确的 text 反馈，
+    而不是发出畸形参数。原始 checkpoint（LangChain 消息对象）不动。
+    """
+    for wire, original in zip(messages, originals, strict=True):
+        if not isinstance(original, AIMessage):
+            continue
+        invalid = list(original.invalid_tool_calls or [])
+        if not invalid:
+            continue
+        invalid_ids = {call.get("id") for call in invalid if call.get("id")}
+        tool_calls = wire.get("tool_calls")
+        if isinstance(tool_calls, list):
+            kept = [call for call in tool_calls if call.get("id") not in invalid_ids]
+            if kept:
+                wire["tool_calls"] = kept
+            else:
+                wire.pop("tool_calls", None)
+        feedback = "；".join(
+            f"[工具调用失败] {call.get('name') or 'unknown'}: {call.get('error') or 'arguments malformed or truncated'}"
+            for call in invalid
+        )
+        content = wire.get("content")
+        if isinstance(content, list):
+            content.append({"type": "text", "text": feedback})
+        elif content:
+            wire["content"] = [{"type": "text", "text": content}, {"type": "text", "text": feedback}]
+        else:
+            wire["content"] = [{"type": "text", "text": feedback}]
 
 
 class ChatCompletionsAdapter(ChatOpenAI):
@@ -260,8 +197,11 @@ class ChatCompletionsAdapter(ChatOpenAI):
     def _get_request_payload(self, input_, *, stop=None, **kwargs):
         """支持推理的供应商在工具续答时接收完整原文。"""
         payload = super()._get_request_payload(input_, stop=stop, **kwargs)
-        if self.preserve_reasoning and "messages" in payload:
-            originals = self._convert_input(input_).to_messages()
+        if "messages" not in payload:
+            return payload
+        originals = self._convert_input(input_).to_messages()
+        _sanitize_wire_invalid_tool_calls(payload["messages"], originals)
+        if self.preserve_reasoning:
             for original, wire in zip(originals, payload["messages"], strict=True):
                 if isinstance(original, AIMessage):
                     content = wire.get("content")
