@@ -1689,10 +1689,55 @@ def _serialize_state_messages(values: dict[str, Any]) -> list[dict[str, Any]]:
     return serialized
 
 
+# state 查询专用骨架图: channel 结构由 state_schema 决定,与工具集无关。
+# 完整 get_graph 需连接全部 MCP 装配工具(重型 Agent 60-80s,子智能体 workdir
+# 各异导致缓存全 miss);骨架图零工具、毫秒级编译,全局单例即可正确恢复任意
+# thread 的 checkpoint values(ChatBotState 为 BaseState 超集,两种图通用)。
+_STATE_READER_GRAPH = None
+
+
+def _build_state_reader_schema():
+    """构建与真实 agent graph 一致的 state schema(含 middleware 注入字段)。"""
+    from langchain.agents.factory import _resolve_schemas
+    from langchain.agents.middleware import TodoListMiddleware
+    from yuxi.agents.buildin.chatbot.state import ChatBotState
+    from yuxi.agents.middlewares import TokenUsageMiddleware
+    from yuxi.agents.middlewares.skills import SkillsMiddleware
+
+    schema, _, _ = _resolve_schemas(
+        [
+            TodoListMiddleware.state_schema,
+            TokenUsageMiddleware.state_schema,
+            SkillsMiddleware.state_schema,
+            ChatBotState,
+        ]
+    )
+    return schema
+
+
+async def _get_state_reader_graph():
+    global _STATE_READER_GRAPH
+    if _STATE_READER_GRAPH is not None:
+        return _STATE_READER_GRAPH
+    from langgraph.graph import StateGraph
+
+    # 骨架图必须复用与真实 agent graph 一致的 state schema。真实 schema 由
+    # create_agent 合并 middleware 注入字段(如 todos/token_usage/activated_skills)
+    # 得到；若只用裸 ChatBotState，aget_state 会按骨架图 schema 过滤 checkpoint，
+    # 丢失这些字段，导致前端 state-panel 的待办与 token 用量消失。
+    state_schema = _build_state_reader_schema()
+    checkpointer = pg_manager.get_langgraph_checkpointer()
+    skeleton = StateGraph(state_schema)
+    skeleton.add_node("state_reader_noop", lambda state: {})
+    skeleton.set_entry_point("state_reader_noop")
+    _STATE_READER_GRAPH = skeleton.compile(checkpointer=checkpointer)
+    return _STATE_READER_GRAPH
+
+
 async def _read_checkpoint_state(agent, *, uid: str, thread_id: str, context):
-    graph = await agent.get_graph(context=context)
+    reader = await _get_state_reader_graph()
     langgraph_config = {"configurable": {"uid": uid, "thread_id": thread_id}}
-    return await graph.aget_state(langgraph_config)
+    return await reader.aget_state(langgraph_config)
 
 
 async def get_agent_state_view(
