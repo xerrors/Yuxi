@@ -1,8 +1,12 @@
-"""网络类错误的持续重试中间件。
+"""网络类错误的持续重试中间件，同时保留非网络错误的次数重试语义。
 
 断网/APIC 连接抖动恢复后任务应自动继续(对标 Claude Code 的行为)：
 网络类异常(连接拒绝/超时/DNS)按指数退避持续重试，总预算内不向 graph 抛错；
-预算耗尽或非网络错误交给内层 ModelRetryMiddleware 按原有语义处理。
+预算耗尽显式抛出，Run 以 failed 结束，不再出现"假完成"。
+
+非网络错误(逻辑错误/鉴权/限流/参数错误)仍按 ModelRetryMiddleware 的 max_retries
+次数重试，语义不变。两类错误的重试维度(预算 vs 次数)在同一个中间件内区分，
+避免拆成两个中间件后因装配顺序/外层重试网络错误而放大预算。
 """
 
 from __future__ import annotations
@@ -13,7 +17,15 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from langchain.agents.middleware.types import AgentMiddleware, ContextT, ModelRequest, ModelResponse, ResponseT
+from langchain.agents.middleware._retry import (
+    OnFailure,
+    calculate_delay,
+    default_retry_on,
+    should_retry_exception,
+)
+from langchain.agents.middleware.model_retry import ModelRetryMiddleware
+from langchain.agents.middleware.types import ModelRequest, ModelResponse
+from langgraph.errors import GraphBubbleUp
 
 from yuxi.utils.logging_config import logger
 
@@ -34,7 +46,7 @@ _NETWORK_ERROR_MARKERS = (
     "remote_protocol",
 )
 
-# 明确非网络的错误：重试无意义，立即放行给内层处理。
+# 明确非网络的错误：重试无意义，立即放行。
 # 空字符串永远不匹配任何 marker，保持行为一致。
 _NON_NETWORK_MARKERS = ("ratelimit", "authentication", "permission", "invalid_request", "not_found", "context_length")
 
@@ -57,71 +69,136 @@ def is_network_error(exc: BaseException) -> bool:
     return False
 
 
-def retry_non_network_errors(exc: BaseException) -> bool:
-    """外层 ModelRetryMiddleware 的重试谓词：网络类错误一律不由它重试。
+class NetworkRetryMiddleware(ModelRetryMiddleware):
+    """网络错误按预算重试、非网络错误按次数重试的统一中间件。
 
-    中间件列表排后者为内层(先拦截)，网络错误先经 NetworkRetryMiddleware 按自身预算
-    退避重试。若外层也判定可重试，每轮都会为同一次模型调用开启全新的预算
-    (600s × (max_retries+1))，且预算耗尽后会被 on_failure 吞成含错误文本的 AIMessage
-    ——即"假完成"。这里显式排除，让预算耗尽按异常显式失败。
-    """
-    if is_network_error(exc):
-        return False
-    from langchain.agents.middleware.model_retry import default_retry_on
-
-    return default_retry_on(exc)
-
-
-class NetworkRetryMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
-    """对网络类模型调用错误做预算内持续重试的中间件。
-
-    挂在 ModelRetryMiddleware 之内（中间件列表排后者为内层）：网络错误在此按预算
-    退避消化，其余错误原样透传给内层重试/失败语义；预算耗尽后抛出的网络错误由外层
-    ModelRetryMiddleware 的 retry_on=retry_non_network_errors 判定为不可重试，直接失败。
+    继承 ``ModelRetryMiddleware``：非网络错误复用其 ``max_retries``/``retry_on``/
+    ``on_failure`` 语义；网络错误在 ``wrap_model_call``/``awrap_model_call`` 里按
+    ``network_budget_seconds`` 预算退避重试，耗尽后显式抛出(而非被 ``on_failure``
+    吞成含错误文本的 AIMessage)。
     """
 
     def __init__(
         self,
         *,
-        budget_seconds: float | None = None,
-        initial_delay: float = 2.0,
-        max_delay: float = 30.0,
+        max_retries: int = 2,
+        network_budget_seconds: float | None = None,
+        network_initial_delay: float = 2.0,
+        network_max_delay: float = 30.0,
+        on_failure: OnFailure = "continue",
+        backoff_factor: float = 2.0,
+        initial_delay: float = 1.0,
+        max_delay: float = 60.0,
+        jitter: bool = True,
     ) -> None:
-        super().__init__()
-        self._budget = (
-            budget_seconds
-            if budget_seconds is not None
+        super().__init__(
+            max_retries=max_retries,
+            retry_on=default_retry_on,
+            on_failure=on_failure,
+            backoff_factor=backoff_factor,
+            initial_delay=initial_delay,
+            max_delay=max_delay,
+            jitter=jitter,
+        )
+        self._network_budget = (
+            network_budget_seconds
+            if network_budget_seconds is not None
             else float(os.getenv("YUXI_NETWORK_RETRY_BUDGET_SECONDS", "600"))
         )
-        self._initial_delay = initial_delay
-        self._max_delay = max_delay
+        self._network_initial_delay = network_initial_delay
+        self._network_max_delay = network_max_delay
+
+    def _handle_network_retry(self, exc: BaseException, *, elapsed: float, delay: float, attempt: int) -> bool:
+        """预算内返回 True 继续重试，预算耗尽返回 False 由调用方抛出。"""
+        if self._network_budget <= 0 or elapsed + delay > self._network_budget:
+            logger.warning(
+                f"[network-retry] 预算耗尽({self._network_budget:.0f}s)，抛出网络错误: {type(exc).__name__}: {exc}",
+            )
+            return False
+        logger.warning(
+            f"[network-retry] 网络错误(第{attempt}次，已等待{elapsed:.0f}s，{delay:.0f}s后重试): "
+            f"{type(exc).__name__}: {exc}",
+        )
+        return True
+
+    def wrap_model_call(
+        self,
+        request: ModelRequest[Any],
+        handler: Callable[[ModelRequest[Any]], ModelResponse[Any]],
+    ) -> ModelResponse[Any]:
+        started = time.monotonic()
+        network_delay = self._network_initial_delay
+        network_attempt = 0
+        non_network_attempt = 0
+        while True:
+            try:
+                return handler(request)
+            except GraphBubbleUp:
+                raise
+            except Exception as exc:  # noqa: BLE001 — 需要拦截底层 SDK 的各种异常类型
+                if is_network_error(exc):
+                    elapsed = time.monotonic() - started
+                    if not self._handle_network_retry(
+                        exc, elapsed=elapsed, delay=network_delay, attempt=network_attempt + 1
+                    ):
+                        raise
+                    network_attempt += 1
+                    time.sleep(network_delay)
+                    network_delay = min(network_delay * 2, self._network_max_delay)
+                    continue
+                if not should_retry_exception(exc, self.retry_on):
+                    raise
+                non_network_attempt += 1
+                if non_network_attempt > self.max_retries:
+                    return self._handle_failure(exc, non_network_attempt)
+                delay = calculate_delay(
+                    non_network_attempt - 1,
+                    backoff_factor=self.backoff_factor,
+                    initial_delay=self.initial_delay,
+                    max_delay=self.max_delay,
+                    jitter=self.jitter,
+                )
+                if delay > 0:
+                    time.sleep(delay)
 
     async def awrap_model_call(
         self,
-        request: ModelRequest[ContextT],
-        handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]],
-    ) -> ModelResponse[ResponseT]:
+        request: ModelRequest[Any],
+        handler: Callable[[ModelRequest[Any]], Awaitable[ModelResponse[Any]]],
+    ) -> ModelResponse[Any]:
         started = time.monotonic()
-        delay = self._initial_delay
-        attempt = 0
+        network_delay = self._network_initial_delay
+        network_attempt = 0
+        non_network_attempt = 0
         while True:
             try:
                 return await handler(request)
+            except GraphBubbleUp:
+                raise
             except asyncio.CancelledError:
                 raise
-            except BaseException as exc:  # noqa: BLE001 — 需要拦截底层 SDK 的各种异常类型
-                if not is_network_error(exc):
+            except Exception as exc:  # noqa: BLE001 — 需要拦截底层 SDK 的各种异常类型
+                if is_network_error(exc):
+                    elapsed = time.monotonic() - started
+                    if not self._handle_network_retry(
+                        exc, elapsed=elapsed, delay=network_delay, attempt=network_attempt + 1
+                    ):
+                        raise
+                    network_attempt += 1
+                    await asyncio.sleep(network_delay)
+                    network_delay = min(network_delay * 2, self._network_max_delay)
+                    continue
+                if not should_retry_exception(exc, self.retry_on):
                     raise
-                attempt += 1
-                elapsed = time.monotonic() - started
-                if self._budget <= 0 or elapsed + delay > self._budget:
-                    logger.warning(
-                        f"[network-retry] 预算耗尽({self._budget:.0f}s)，放行网络错误: {type(exc).__name__}: {exc}",
-                    )
-                    raise
-                logger.warning(
-                    f"[network-retry] 网络错误(第{attempt}次，已等待{elapsed:.0f}s，{delay:.0f}s后重试): "
-                    f"{type(exc).__name__}: {exc}",
+                non_network_attempt += 1
+                if non_network_attempt > self.max_retries:
+                    return self._handle_failure(exc, non_network_attempt)
+                delay = calculate_delay(
+                    non_network_attempt - 1,
+                    backoff_factor=self.backoff_factor,
+                    initial_delay=self.initial_delay,
+                    max_delay=self.max_delay,
+                    jitter=self.jitter,
                 )
-                await asyncio.sleep(delay)
-                delay = min(delay * 2, self._max_delay)
+                if delay > 0:
+                    await asyncio.sleep(delay)

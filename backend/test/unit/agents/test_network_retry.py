@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
+from langchain_core.exceptions import ModelError
+from langchain_core.messages import AIMessage
+
 from yuxi.agents.middlewares.network_retry import NetworkRetryMiddleware, is_network_error
 
 pytestmark = [pytest.mark.unit]
@@ -44,7 +48,7 @@ def test_is_network_error_inspects_cause_chain():
 
 @pytest.mark.asyncio
 async def test_retries_network_error_until_success():
-    mw = NetworkRetryMiddleware(budget_seconds=30, initial_delay=0.01, max_delay=0.02)
+    mw = NetworkRetryMiddleware(network_budget_seconds=30, network_initial_delay=0.01, network_max_delay=0.02)
     calls = {"n": 0}
 
     async def handler(request):
@@ -59,22 +63,8 @@ async def test_retries_network_error_until_success():
 
 
 @pytest.mark.asyncio
-async def test_non_network_error_propagates_immediately():
-    mw = NetworkRetryMiddleware(budget_seconds=30, initial_delay=0.01, max_delay=0.02)
-    calls = {"n": 0}
-
-    async def handler(request):
-        calls["n"] += 1
-        raise FakeError("AuthenticationError: bad key")
-
-    with pytest.raises(FakeError):
-        await mw.awrap_model_call(object(), handler)
-    assert calls["n"] == 1
-
-
-@pytest.mark.asyncio
 async def test_budget_exhaustion_raises():
-    mw = NetworkRetryMiddleware(budget_seconds=0.05, initial_delay=0.03, max_delay=0.03)
+    mw = NetworkRetryMiddleware(network_budget_seconds=0.05, network_initial_delay=0.03, network_max_delay=0.03)
     calls = {"n": 0}
 
     async def handler(request):
@@ -89,7 +79,7 @@ async def test_budget_exhaustion_raises():
 
 @pytest.mark.asyncio
 async def test_cancellation_not_swallowed():
-    mw = NetworkRetryMiddleware(budget_seconds=30, initial_delay=0.01, max_delay=0.01)
+    mw = NetworkRetryMiddleware(network_budget_seconds=30, network_initial_delay=0.01, network_max_delay=0.01)
 
     async def handler(request):
         raise asyncio.CancelledError()
@@ -99,18 +89,41 @@ async def test_cancellation_not_swallowed():
 
 
 @pytest.mark.asyncio
-async def test_composed_middlewares_honor_budget_and_fail_explicitly(monkeypatch):
-    """按真实装配顺序组合两个中间件：预算不被外层重置，耗尽后显式失败而非"假完成"。
+async def test_non_network_error_retried_by_max_retries_then_continue():
+    """非网络错误仍按 max_retries 次数重试，耗尽后 on_failure=continue 返回错误 AIMessage。"""
+    mw = NetworkRetryMiddleware(max_retries=2, initial_delay=0.0, jitter=False)
+    calls = {"n": 0}
 
-    ModelRetryMiddleware 在 NetworkRetryMiddleware 之外（中间件列表排后者为内层）。
-    若外层也重试网络错误，每轮都会开启一个全新的预算(600s × 3)且最终被 on_failure
-    吞成含错误文本的 AIMessage；本用例断言预算只被消费一次且异常显式抛出。
-    """
-    from types import SimpleNamespace
+    async def handler(request):
+        calls["n"] += 1
+        raise FakeError("AuthenticationError: invalid api key")
 
-    from langchain.agents.middleware import ModelRetryMiddleware
-    from yuxi.agents.middlewares import network_retry as network_retry_module
-    from yuxi.agents.middlewares.network_retry import retry_non_network_errors
+    result = await mw.awrap_model_call(object(), handler)
+
+    # max_retries=2 → 1 次初始 + 2 次重试 = 3 次调用
+    assert calls["n"] == 3
+    assert isinstance(result.result[0], AIMessage)
+
+
+@pytest.mark.asyncio
+async def test_non_retryable_model_error_propagates():
+    """非网络错误但不可重试(ModelError.is_retryable=False)时立即抛出，不消耗重试次数。"""
+    mw = NetworkRetryMiddleware(max_retries=2, initial_delay=0.0)
+    calls = {"n": 0}
+
+    async def handler(request):
+        calls["n"] += 1
+        raise ModelError("bad request")  # ModelError.is_retryable 默认为 False
+
+    with pytest.raises(ModelError):
+        await mw.awrap_model_call(object(), handler)
+    assert calls["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_network_budget_honored_and_fails_explicitly(monkeypatch):
+    """持续网络错误下，单中间件按预算退避重试，耗尽后显式抛出而非"假完成"。"""
+    import yuxi.agents.middlewares.network_retry as module
 
     clock = {"t": 0.0}
     sleeps: list[float] = []
@@ -119,39 +132,32 @@ async def test_composed_middlewares_honor_budget_and_fail_explicitly(monkeypatch
         sleeps.append(seconds)
         clock["t"] += seconds
 
-    monkeypatch.setattr(network_retry_module, "time", SimpleNamespace(monotonic=lambda: clock["t"]))
-    monkeypatch.setattr(network_retry_module.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: clock["t"]))
+    monkeypatch.setattr(module.asyncio, "sleep", fake_sleep)
 
-    inner = NetworkRetryMiddleware(budget_seconds=600, initial_delay=2, max_delay=30)
-    outer = ModelRetryMiddleware(max_retries=2, retry_on=retry_non_network_errors)
+    mw = NetworkRetryMiddleware(network_budget_seconds=600, network_initial_delay=2, network_max_delay=30)
 
-    async def innermost(_request):
+    async def handler(_request):
         raise FakeError("OpenAIConnectionError: Connection error")
 
-    async def handler(request):
-        return await inner.awrap_model_call(request, innermost)
-
     with pytest.raises(FakeError):
-        await outer.awrap_model_call(object(), handler)
+        await mw.awrap_model_call(object(), handler)
 
-    # 总等待受单次预算约束，没有被外层放大成 3 份。
+    # 总等待受单次预算约束，不被放大，且异常显式抛出(没有返回 AIMessage)。
     assert 0 < sum(sleeps) <= 600
 
 
 @pytest.mark.asyncio
-async def test_non_network_error_still_retried_by_outer_model_retry():
-    """非网络错误仍由外层 ModelRetry 按 max_retries 重试，语义未被改变。"""
-    from langchain.agents.middleware import ModelRetryMiddleware
-    from yuxi.agents.middlewares.network_retry import retry_non_network_errors
-
+async def test_non_network_error_retry_succeeds_after_backoff():
+    """非网络错误重试成功后正常返回，语义未被网络重试分支改变。"""
+    mw = NetworkRetryMiddleware(max_retries=2, initial_delay=0.0, jitter=False)
     calls = {"n": 0}
-    outer = ModelRetryMiddleware(max_retries=2, retry_on=retry_non_network_errors, initial_delay=0.0, jitter=False)
 
-    async def handler(_request):
+    async def handler(request):
         calls["n"] += 1
         if calls["n"] < 3:
             raise FakeError("This is a logic bug")
         return "ok"
 
-    assert await outer.awrap_model_call(object(), handler) == "ok"
+    assert await mw.awrap_model_call(object(), handler) == "ok"
     assert calls["n"] == 3
