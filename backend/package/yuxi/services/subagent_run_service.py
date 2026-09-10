@@ -167,6 +167,18 @@ class SubagentRunService:
         if created:
             await self.db.commit()
             await agent_run_service.enqueue_agent_run(run.id)
+            # 创建即推送：父面板立刻出现该子智能体条目，不等 worker 领取(running)后的推送。
+            try:
+                from yuxi.services.run_queue_service import append_run_stream_event
+
+                await append_run_stream_event(
+                    created_by_run_id,
+                    "subagent_run_update",
+                    {"subagent_run": serialize_subagent_run_state(run)},
+                    thread_id=run.conversation_thread_id,
+                )
+            except Exception:
+                pass  # 推送失败不影响 run 创建；后续 mark_run_running 仍会推送
 
         return SubagentStartResult(
             run=run,
