@@ -479,6 +479,9 @@ async def _test_image_generation_model(spec: str, info) -> dict:
 
     官方文档: qwen-image 系列不支持 compatible-mode, content 必须是
     ``[{"text": ...}]`` 数组, 图片在 ``output.choices[0].message.content[0].image``。
+
+    该协议目前只有 DashScope 系供应商提供；其它供应商配置 image 类型时无法测试，
+    显式报告"暂不支持"，而不是把 DashScope 专用路径拼到它的 base_url 上。
     """
     import httpx
 
@@ -492,12 +495,21 @@ async def _test_image_generation_model(spec: str, info) -> dict:
         base = base.split("/compatible-mode")[0]
     if not base:
         base = "https://dashscope.aliyuncs.com"
+    if "dashscope" not in base:
+        return {
+            "spec": spec,
+            "status": "unavailable",
+            "message": "当前仅支持 DashScope 图像模型的连接测试",
+            "model_type": "image",
+        }
     url = f"{base}/api/v1/services/aigc/multimodal-generation/generation"
 
     payload = {
         "model": info.model_id,
         "input": {"messages": [{"role": "user", "content": [{"text": "a red circle"}]}]},
-        "parameters": {"size": "512*512", "prompt_extend": False, "watermark": False, "n": 1},
+        # 不显式传 size：不同 Qwen-Image 型号支持的分辨率集合不同(如 max/plus 只接受
+        # 文档列出的尺寸)，交给模型默认值，避免测试因参数非法而误判模型不可用。
+        "parameters": {"prompt_extend": False, "watermark": False, "n": 1},
     }
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(url, json=payload, headers={"Authorization": f"Bearer {api_key}"})

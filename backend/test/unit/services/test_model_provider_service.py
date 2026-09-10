@@ -1,3 +1,4 @@
+import json
 import os
 from types import SimpleNamespace
 
@@ -389,3 +390,52 @@ def test_normalize_remote_model_preserves_image_type():
 
     assert model["id"] == "qwen-image-3.0"
     assert model["type"] == "image"
+
+
+def _image_model_info(*, base_url: str, model_id: str = "qwen-image-3.0"):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        provider_id="alibaba-cn",
+        model_id=model_id,
+        model_type="image",
+        display_name=model_id,
+        api_key="sk-test",
+        base_url=base_url,
+        provider_type="openai",
+        spec=f"alibaba-cn:{model_id}",
+    )
+
+
+@pytest.mark.asyncio
+async def test_image_test_uses_native_endpoint_without_size_parameter(httpx_mock):
+    """图像模型测试走 DashScope 原生接口，且不硬编码 size(型号支持集合不同)。"""
+    from yuxi.models.providers.service import _test_image_generation_model
+
+    httpx_mock.add_response(
+        url="https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+        json={"output": {"choices": [{"message": {"content": [{"image": "https://example.test/a.png"}]}}]}},
+    )
+
+    info = _image_model_info(base_url="https://dashscope.aliyuncs.com/compatible-mode/v1")
+    result = await _test_image_generation_model("alibaba-cn:qwen-image-3.0", info)
+
+    assert result["status"] == "available"
+    request = httpx_mock.get_requests()[-1]
+    assert request.url.path == "/api/v1/services/aigc/multimodal-generation/generation"
+    body = json.loads(request.content)
+    assert "size" not in body["parameters"]
+    assert body["input"]["messages"][0]["content"] == [{"text": "a red circle"}]
+
+
+@pytest.mark.asyncio
+async def test_image_test_reports_unsupported_provider_without_sending_request(httpx_mock):
+    """非 DashScope 供应商的 image 模型：显式报告暂不支持，不得按其 base_url 拼 DashScope 路径。"""
+    from yuxi.models.providers.service import _test_image_generation_model
+
+    info = _image_model_info(base_url="https://api.example.com/v1/images")
+    result = await _test_image_generation_model("example:flux-pro", info)
+
+    assert result["status"] == "unavailable"
+    assert "DashScope" in result["message"]
+    assert httpx_mock.get_requests() == []
