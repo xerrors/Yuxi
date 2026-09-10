@@ -57,11 +57,27 @@ def is_network_error(exc: BaseException) -> bool:
     return False
 
 
+def retry_non_network_errors(exc: BaseException) -> bool:
+    """外层 ModelRetryMiddleware 的重试谓词：网络类错误一律不由它重试。
+
+    中间件列表排后者为内层(先拦截)，网络错误先经 NetworkRetryMiddleware 按自身预算
+    退避重试。若外层也判定可重试，每轮都会为同一次模型调用开启全新的预算
+    (600s × (max_retries+1))，且预算耗尽后会被 on_failure 吞成含错误文本的 AIMessage
+    ——即"假完成"。这里显式排除，让预算耗尽按异常显式失败。
+    """
+    if is_network_error(exc):
+        return False
+    from langchain.agents.middleware.model_retry import default_retry_on
+
+    return default_retry_on(exc)
+
+
 class NetworkRetryMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
     """对网络类模型调用错误做预算内持续重试的中间件。
 
-    挂在 ModelRetryMiddleware 外层：网络错误在此消化（等待恢复），
-    其余错误原样透传给内层重试/失败语义。
+    挂在 ModelRetryMiddleware 之内（中间件列表排后者为内层）：网络错误在此按预算
+    退避消化，其余错误原样透传给内层重试/失败语义；预算耗尽后抛出的网络错误由外层
+    ModelRetryMiddleware 的 retry_on=retry_non_network_errors 判定为不可重试，直接失败。
     """
 
     def __init__(

@@ -20,6 +20,7 @@ from yuxi.agents.middlewares import (
     TokenUsageMiddleware,
     create_memory_middleware,
     create_summary_middleware_from_context,
+    retry_non_network_errors,
 )
 from yuxi.agents.middlewares.skills import SkillsMiddleware
 from yuxi.agents.middlewares.subagent_task import create_subagent_task_middleware
@@ -53,11 +54,16 @@ async def _build_middlewares(context, backend):
             create_summary_middleware_from_context(context, backend=backend),
             TodoListMiddleware(system_prompt=TODO_MID_PROMPT),
             PatchToolCallsMiddleware(),
-            # 网络类错误(断网/连接抖动)持续重试至预算耗尽(默认600s)。langchain 中间件
-            # 列表里排后者为内层(先拦截)：必须放在 ModelRetry 之内——ModelRetry 默认
-            # on_failure=continue 会把异常吞成错误 AIMessage，NetworkRetry 若在外层
-            # 就永远看不到网络异常(实测踩坑)。
-            ModelRetryMiddleware(max_retries=getattr(context, "model_retry_times", 2)),
+            # 网络类错误(断网/连接抖动)由内层 NetworkRetryMiddleware 按单次预算(默认600s)
+            # 退避重试。langchain 中间件列表排后者为内层(先拦截)：
+            #  - NetworkRetry 必须在 ModelRetry 之内，否则 ModelRetry 的 on_failure=continue
+            #    会先把异常吞成错误 AIMessage，网络错误永远到不了 NetworkRetry；
+            #  - ModelRetry 必须用 retry_on 排除网络错误，否则它会给同一次调用反复开启
+            #    全新预算(600s × (max_retries+1))，且最终把耗尽后的网络错误吞成"假完成"。
+            ModelRetryMiddleware(
+                max_retries=getattr(context, "model_retry_times", 2),
+                retry_on=retry_non_network_errors,
+            ),
             NetworkRetryMiddleware(),
             ImageInputCompatibilityMiddleware(),
             TokenUsageMiddleware(),
