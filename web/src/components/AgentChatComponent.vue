@@ -906,7 +906,11 @@ import FallbackAvatar from '@/components/common/FallbackAvatar.vue'
 import { enrichTaskToolCalls, parseToolCallArgs } from '@/components/ToolCallingResult/toolRegistry'
 import { getConversationDisplayItems } from '@/utils/messageGrouping'
 import { makeChildThreadId } from '@/utils/subagentThread'
-import { isSubagentLaunchToolName, mergeSubagentRunsForDisplay } from '@/utils/subagentRuns'
+import {
+  isSubagentLaunchToolName,
+  mergeSubagentRunsForDisplay,
+  reconcileAgentStateSubagentRuns
+} from '@/utils/subagentRuns'
 import {
   getDockedStatePanelMaxHeight,
   getFloatingStatePanelMaxHeight
@@ -2892,7 +2896,8 @@ const fetchAgentState = async (agentId, threadId, { required = false } = {}) => 
     const latestState = getThreadState(threadId)
     if (!latestState || latestState.agentStateRequestVersion !== requestVersion) return false
 
-    latestState.agentState = res.agent_state || null
+    // HTTP 轮询拿到的 checkpoint 可能落后于流式增量(subagent_run_update)，防回退。
+    latestState.agentState = reconcileAgentStateSubagentRuns(res.agent_state || null, latestState.agentState)
     const pendingInterrupt = extractPendingInterrupt(res.interrupt, threadId)
     // resume 已开始或 active run 已切换时，旧 checkpoint 响应不能重新显示审批。
     const interruptIsCurrent =
