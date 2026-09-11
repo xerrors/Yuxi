@@ -1,0 +1,35 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "语析：启动开发服务（WSL）",
+      "type": "process",
+      "command": "wsl.exe",
+      "args": ["-d", "Ubuntu", "--cd", "${workspaceFolder}", "--", "docker", "compose", "-f", "docker-compose.yml", "-f", "docker-compose.wsl.yml", "up", "--build", "-d"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "语析：查看服务状态（WSL）",
+      "type": "process",
+      "command": "wsl.exe",
+      "args": ["-d", "Ubuntu", "--cd", "${workspaceFolder}", "--", "docker", "compose", "-f", "docker-compose.yml", "-f", "docker-compose.wsl.yml", "ps"],
+      "problemMatcher": []
+    },
+    {
+      "label": "语析：查看日志（WSL）",
+      "type": "process",
+      "command": "wsl.exe",
+      "args": ["-d", "Ubuntu", "--cd", "${workspaceFolder}", "--", "docker", "compose", "-f", "docker-compose.yml", "-f", "docker-compose.wsl.yml", "logs", "--tail=100", "-f", "api", "worker", "web"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "语析：停止服务并保留数据（WSL）",
+      "type": "process",
+      "command": "wsl.exe",
+      "args": ["-d", "Ubuntu", "--cd", "${workspaceFolder}", "--", "docker", "compose", "-f", "docker-compose.yml", "-f", "docker-compose.wsl.yml", "stop"],
+      "problemMatcher": []
+    }
+  ]
+}

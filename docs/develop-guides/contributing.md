@@ -51,6 +51,18 @@ docker compose logs --tail=100 api
 
 `api` 和 `web` 服务默认支持热重载。容器名由 Compose project 生成；使用 `docker compose logs api web` 查看当前槽位日志。修改本地代码后通常不需要手动重启。
 
+### Windows + VS Code + WSL
+
+源码位于 Windows 盘并通过 WSL Ubuntu 运行 Docker 时，使用仓库提供的覆盖文件，避免 PostgreSQL 在 Windows 挂载目录初始化时因权限语义不同而失败：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.wsl.yml up --build -d
+```
+
+Windows VS Code 可以直接打开仓库，通过“终端 → 运行任务”调用 `.vscode/tasks.json` 中的启动、状态、日志和停止任务。任务通过 `wsl.exe --cd` 把当前 `${workspaceFolder}` 作为工作目录，默认使用名为 `Ubuntu` 的 WSL 发行版；发行版名称不同的开发者应在个人任务中调整。覆盖文件只改变 PostgreSQL 数据卷，源码仍由原 Compose 挂载并保持热重载。
+
+该命令创建 Docker 命名卷保存 PostgreSQL 数据。停止服务使用 `docker compose -f docker-compose.yml -f docker-compose.wsl.yml stop`；不要对需要保留的数据执行带 `-v` 的 `down`。
+
 ## 3. 实现原则
 
 - 用满足验收标准的最小实现，保持主路径线性可读。

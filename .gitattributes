@@ -1,0 +1,2 @@
+# Linux 容器和 WSL 直接执行的脚本必须保持 LF，避免 Windows 检出后出现 ^M。
+*.sh text eol=lf

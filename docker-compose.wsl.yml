@@ -1,0 +1,9 @@
+# Windows 源码目录通过 WSL 开发时，PostgreSQL 使用 Linux 命名卷。
+# Windows 文件系统不支持 PostgreSQL 初始化所需的 chmod/chown 语义。
+services:
+  postgres:
+    volumes:
+      - postgres-wsl-data:/var/lib/postgresql/data
+
+volumes:
+  postgres-wsl-data:

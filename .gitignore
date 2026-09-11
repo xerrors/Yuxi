@@ -46,6 +46,9 @@ cache
 
 ### IDE
 .vscode
+!/.vscode/
+/.vscode/*
+!/.vscode/tasks.json
 .idea
 .vibe
 .qoder
