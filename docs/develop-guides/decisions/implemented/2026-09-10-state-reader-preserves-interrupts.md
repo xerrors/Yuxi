@@ -42,3 +42,8 @@ state 读取的中断来源从「图结构」变为「checkpoint 原始写入」
 - 修复点：`_read_pending_interrupt` 从 checkpoint 写入恢复出中断，其 `id` 与 `value` 与真实图 `tasks[0].interrupts[0]` 完全一致；
 - 骨架图 `values` 与真实图一致（确认性能优化未被破坏）；
 - 负向：已完成、无中断的 checkpoint 返回 `None`；不存在的 thread 返回 `None`。
+
+`backend/test/integration/services/test_state_reader_interrupt_integration.py`（真实 PostgreSQL 的 AsyncPostgresSaver，非 InMemorySaver）：
+
+- 停在 interrupt 的真实 checkpoint，其持久化 pending writes 里的 `__interrupt__` channel 可被 `_read_pending_interrupt` 恢复，`value` 与写入一致；
+- 已完成、无中断的真实 checkpoint 返回 `None`。
