@@ -869,7 +869,11 @@ async def save_messages_from_langgraph_state(
                 )
                 if terminal_run is None or not changed:
                     raise ValueError(f"AgentRun 输出已写入但 {terminal_status} 终态未能在同一事务提交")
-                cancelled_descendants = await run_repo.cancel_active_execution_tree_descendants(terminal_run)
+                # 与 run_worker.CASCADE_CANCEL_STATUSES 对齐：completed 不级联取消子 Run，
+                # 子 Run 继续执行落库、主 Run 续跑时收割。此处终态仅 completed/interrupted，
+                # 只有 interrupted 命中取消类终态，才收敛 execution tree。
+                if terminal_status == "interrupted":
+                    cancelled_descendants = await run_repo.cancel_active_execution_tree_descendants(terminal_run)
             await conv_repo.db.commit()
             await publish_cancel_signals([run_id for run_id, _thread_id in cancelled_descendants])
             return terminal_status is not None

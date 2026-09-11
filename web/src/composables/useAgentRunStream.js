@@ -4,6 +4,7 @@ import { handleChatError } from '@/utils/errorHandler'
 import { isSteerableMainChatRun } from '@/utils/agentRun'
 import { compareRunSeq, normalizeRunSeq, resolveRunResumeAfterSeq } from '@/utils/runStreamResume'
 import { hasPendingInterruptPayload } from '@/utils/toolApproval'
+import { mergeSubagentRunIntoList } from '@/utils/subagentRuns'
 
 const RUN_INTERRUPTED_STATUS = 'interrupted'
 const RUN_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled'])
@@ -362,6 +363,20 @@ export function useAgentRunStream({
         }
 
         const payload = data.payload || {}
+        // 子 run 生命周期增量：不等父 graph 的 values 事件，到达即合并进面板状态。
+        if (event === 'subagent_run_update') {
+          const subRun = payload.subagent_run
+          if (subRun && typeof subRun === 'object') {
+            const tsState = getThreadState(threadId)
+            if (tsState) {
+              tsState.agentState = {
+                ...(tsState.agentState || {}),
+                subagent_runs: mergeSubagentRunIntoList(tsState.agentState?.subagent_runs, subRun)
+              }
+            }
+          }
+          return
+        }
         if (event === 'metadata') {
           ts.activeRunSteerable = isSteerableMainChatRun({
             status: 'running',

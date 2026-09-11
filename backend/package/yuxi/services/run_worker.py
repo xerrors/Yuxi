@@ -71,6 +71,11 @@ RUN_DURABLE_CANCEL_POLL_SECONDS = 1.0
 RUN_LEASE_SECONDS = 120
 RUN_HEARTBEAT_SECONDS = 30
 SUPPORTED_RUN_TYPES = {"chat", "resume", "subagent"}
+# 只有「取消类」终态才级联取消后代 Run。错误/正常终态(failed/completed)刻意保留
+# 活跃子 Run 继续执行：断网恢复后主 Run 从 checkpoint 续跑时仍可收割子 Run 成果。
+# 该策略同时约束 mark_run_terminal、worker finally 与重试跳过路径——任何一处漏掉，
+# 都会让「失败不连坐子 Run」的承诺在真实执行链路上失效。
+CASCADE_CANCEL_STATUSES = frozenset({"cancelled", "cancel_requested", "interrupted"})
 WORKER_ID = f"worker-{uuid.uuid4().hex}"
 _RECONCILIATION_TASK_KEY = "agent_run_reconciliation_task"
 _TASK_RECONCILIATION_TASK_KEY = "durable_task_reconciliation_task"
@@ -329,10 +334,26 @@ async def _release_runtime_if_idle(run: AgentRun) -> bool:
 
 
 async def _release_runtime_before_terminal_event(run: AgentRun | None) -> None:
-    """在终态事件可见前收敛 runtime，避免客户端撞上随后发生的删除。"""
+    """在终态事件可见前收敛 runtime，避免客户端撞上随后发生的删除。
+
+    取消类终态已级联取消后代，execution tree 必须能立即收敛；否则抛
+    RuntimeCleanupPendingError 让 ARQ 重试。
+
+    非取消类终态(failed/completed)刻意保留活跃子 Run 继续执行，runtime 仍被子 Run
+    占用、cleanup 天然无法收敛：此时不强求立即清理，保持 runtime_cleanup_pending=True，
+    由 reconcile_pending_runtime_cleanups 在子 Run 收敛后完成清理。
+    """
     if run is None or run.run_type == "subagent":
         return
-    await _require_runtime_cleanup(run, f"Run {run.id} 的 execution tree 尚未完成 runtime cleanup")
+    if run.status in CASCADE_CANCEL_STATUSES:
+        await _require_runtime_cleanup(run, f"Run {run.id} 的 execution tree 尚未完成 runtime cleanup")
+        return
+    # failed/completed 刻意保留活跃子 Run：tree 未收敛是预期结果，保持 runtime_cleanup_pending
+    # 交由 reconcile 完成。但 provisioner/并发清理自身失败仍属基础设施故障，必须重试。
+    try:
+        await _release_runtime_if_idle(run)
+    except Exception as exc:
+        raise RuntimeCleanupPendingError(f"Run {run.id} 的 execution tree 尚未完成 runtime cleanup") from exc
 
 
 async def _require_runtime_cleanup(run: AgentRun, message: str) -> None:
@@ -393,15 +414,52 @@ async def _flush_writer_best_effort(writer: ChunkedEventWriter) -> None:
         logger.warning(f"Failed to flush non-authoritative AgentRun events: run={writer.run_id}", exc_info=True)
 
 
+async def _clear_cancel_signal_best_effort(run_id: str) -> None:
+    """取消键清理失败不能覆盖已经提交的 Run 终态。"""
+
+    try:
+        await clear_cancel_signal(run_id)
+    except Exception:
+        logger.warning(f"Failed to clear non-authoritative AgentRun cancel signal: run={run_id}", exc_info=True)
+
+
+async def _publish_subagent_run_update(run: AgentRun | None) -> None:
+    """子 run 生命周期变化时向父 run 事件流推送增量。
+
+    父 graph 在并行 task 阻塞期间不产生 values 事件，agent_state 冻结；
+    该增量让前端在子 run 启动/终结的瞬间更新面板，而不是等全部 task 一起返回。
+    """
+    if run is None or run.run_type != "subagent" or not run.created_by_run_id:
+        return
+    try:
+        from yuxi.services.subagent_run_service import serialize_subagent_run_state
+
+        payload = serialize_subagent_run_state(run)
+    except Exception:
+        logger.warning(f"Failed to serialize subagent run {run.id} for parent update", exc_info=True)
+        return
+    # 事件必须挂到父 Run 的线程上：订阅方按父线程归属消费该增量。
+    # run.conversation_thread_id 是子会话线程 ID，不是父线程锚点。
+    parent_run = await _get_run(run.created_by_run_id)
+    await _append_run_event_best_effort(
+        run.created_by_run_id,
+        "subagent_run_update",
+        {"subagent_run": payload},
+        thread_id=parent_run.conversation_thread_id if parent_run is not None else None,
+    )
+
+
 async def mark_run_running(run_id: str, worker_id: str) -> bool:
     async with pg_manager.get_async_session_context() as db:
         repo = AgentRunRepository(db)
-        _, acquired = await repo.mark_running(
+        run, acquired = await repo.mark_running(
             run_id,
             worker_id=worker_id,
             lease_seconds=RUN_LEASE_SECONDS,
         )
-        return acquired
+    if acquired:
+        await _publish_subagent_run_update(run)
+    return acquired
 
 
 async def renew_run_lease(run_id: str, worker_id: str) -> bool:
@@ -454,6 +512,8 @@ async def mark_run_terminal(
     error_message: str | None = None,
     token_usage: dict | None = None,
     worker_id: str | None = None,
+    *,
+    cascade_cancel_descendants: bool = True,
 ):
     cancelled_descendants: list[tuple[str, str]] = []
     async with pg_manager.get_async_session_context() as db:
@@ -466,10 +526,14 @@ async def mark_run_terminal(
             token_usage=token_usage,
             worker_id=worker_id,
         )
-        if changed and run is not None:
+        # 仅用户主动取消才级联取消子 run。主 run 因模型/网络错误失败时子 run 不取消：
+        # 断网恢复后主 run 从 checkpoint 续跑，仍可收割子 run 已完成/继续执行中的成果。
+        if changed and run is not None and cascade_cancel_descendants:
             cancelled_descendants = await repo.cancel_active_execution_tree_descendants(run)
         persisted_status = run.status if run else None
     await publish_cancel_signals([child_id for child_id, _thread_id in cancelled_descendants])
+    if changed:
+        await _publish_subagent_run_update(run)
     return TerminalTransition(status=persisted_status, changed=changed)
 
 
@@ -740,6 +804,9 @@ async def _finish_run(
         error_message=error_message,
         token_usage=token_usage,
         worker_id=worker_id,
+        # 主 run 失败(failed)不级联取消子 run：子 run 继续执行落库，
+        # 主 run 之后从 checkpoint 续跑时仍可收割；用户取消走 _finish_user_cancel 仍级联。
+        cascade_cancel_descendants=status in CASCADE_CANCEL_STATUSES,
     )
     if transition.status in TERMINAL_RUN_STATUSES:
         committed_run = await _get_run(run_id)
@@ -836,10 +903,16 @@ async def process_agent_run(ctx, run_id: str):
         return
 
     if run.status in TERMINAL_RUN_STATUSES:
-        await _finish_execution_tree_children(run)
+        if run.status in CASCADE_CANCEL_STATUSES:
+            await _finish_execution_tree_children(run)
         cleanup_was_pending = bool(getattr(run, "runtime_cleanup_pending", False))
         if cleanup_was_pending:
-            await _require_runtime_cleanup(run, f"Run {run_id} 的 execution tree 尚未完成 runtime cleanup")
+            if run.status in CASCADE_CANCEL_STATUSES:
+                await _require_runtime_cleanup(run, f"Run {run_id} 的 execution tree 尚未完成 runtime cleanup")
+            else:
+                # failed/completed 可能仍有活跃子 Run 占用 runtime，cleanup 交由
+                # reconcile_pending_runtime_cleanups 在子 Run 收敛后完成。
+                await _release_runtime_before_terminal_event(run)
             await _append_end_event(run_id, run.status, thread_id=run.conversation_thread_id)
         if run.status == "completed":
             await dispatch_next_request(
@@ -1139,7 +1212,10 @@ async def process_agent_run(ctx, run_id: str):
                         if status == "finished":
                             if chunk.get("terminal_committed") is True:
                                 committed_run = await _get_run(run_id)
-                                if committed_run is not None:
+                                # completed 与 failed 同策略：不取消活跃后代(见
+                                # CASCADE_CANCEL_STATUSES)。正常完成时子 Run 已收敛，
+                                # 该分支是幂等兜底；异常残留由 reconcile 按 lease 收敛。
+                                if committed_run is not None and committed_run.status in CASCADE_CANCEL_STATUSES:
                                     await _finish_execution_tree_children(committed_run)
                                 await _release_runtime_before_terminal_event(committed_run)
                                 await _append_end_event(
@@ -1455,7 +1531,9 @@ async def process_agent_run(ctx, run_id: str):
         except Exception:
             logger.error(f"Failed to load AgentRun during lifecycle cleanup: run={run_id}", exc_info=True)
             final_run = None
-        if final_run and final_run.status in TERMINAL_RUN_STATUSES:
+        # 只有取消类终态才在收尾时取消活跃后代；failed/completed 保留子 Run 继续执行
+        # (与 mark_run_terminal 的 cascade 策略同一语义，见 CASCADE_CANCEL_STATUSES)。
+        if final_run and final_run.status in CASCADE_CANCEL_STATUSES:
             await _finish_execution_tree_children(final_run)
         if final_run and final_run.status == "cancelled":
             await clear_cancel_signal(run_id)

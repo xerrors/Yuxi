@@ -14,11 +14,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
+from agent_run_test_helpers import create_agent_run
 from langchain.messages import AIMessage
 from sqlalchemy import delete, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
 from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.repositories.model_message_audit_repository import ModelMessageAuditRepository
@@ -40,8 +40,6 @@ from yuxi.storage.postgres.models_business import (
     User,
 )
 from yuxi.utils.datetime_utils import utc_now_naive
-
-from agent_run_test_helpers import create_agent_run
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -1791,3 +1789,118 @@ async def test_cancel_execution_tree_locks_root_before_descendants(lease_databas
             cancel_task.cancel()
             await asyncio.gather(cancel_task, return_exceptions=True)
         await _cleanup_runs(session_factory, [root_thread, child_thread])
+
+
+async def test_root_failed_without_cascade_keeps_live_child_running(
+    lease_database,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """显式关闭级联时，failed 根 Run 必须让活跃子 Run 继续执行并回读为仍 running。
+
+    这是「错误失败不连坐子 Run」的直接证据：父 Run 落 failed 后，子 Run 的最终状态
+    仍是 running（没有被收敛成 cancel_requested），且没有发出取消信号。
+    """
+
+    _, session_factory = lease_database
+    now = utc_now_naive()
+    parent_owner = "worker-error-parent"
+    child_owner = "worker-error-child"
+    parent_id, parent_thread_id, _ = await _create_run(session_factory)
+    child_thread_id = f"pytest-error-child-{uuid.uuid4()}"
+
+    try:
+        async with session_factory() as db:
+            parent = await db.get(AgentRun, parent_id)
+            parent_conversation = await db.get(Conversation, parent.conversation_id)
+            assert parent_conversation is not None
+            child_conversation = Conversation(
+                thread_id=child_thread_id,
+                uid=parent.uid,
+                project_id=parent_conversation.project_id,
+                agent_id="worker",
+                status="subagent",
+            )
+            db.add(child_conversation)
+            await db.flush()
+            child_message = Message(
+                conversation_id=child_conversation.id,
+                role="user",
+                content="long-running child survives parent failure",
+                request_id=f"tree-error-child-{uuid.uuid4()}",
+                delivery_status="dispatched",
+            )
+            db.add(child_message)
+            await db.flush()
+            relation = SubagentThread(
+                uid=parent.uid,
+                parent_conversation_id=parent_conversation.id,
+                child_conversation_id=child_conversation.id,
+                child_thread_id=child_thread_id,
+                subagent_slug="worker",
+                created_by_run_id=parent.id,
+            )
+            db.add(relation)
+            await db.flush()
+            child = AgentRun(
+                id=str(uuid.uuid4()),
+                conversation_thread_id=child_thread_id,
+                runtime_scope_id=parent_thread_id,
+                agent_slug="worker",
+                uid=parent.uid,
+                request_id=child_message.request_id,
+                conversation_id=child_conversation.id,
+                created_by_run_id=parent.id,
+                subagent_thread_relation_id=relation.id,
+                run_type="subagent",
+                input_message_id=child_message.id,
+                input_payload={},
+                status="pending",
+            )
+            db.add(child)
+            await db.flush()
+            repo = AgentRunRepository(db)
+            _, parent_acquired = await repo.mark_running(
+                parent.id,
+                worker_id=parent_owner,
+                lease_seconds=60,
+                now=now,
+            )
+            _, child_acquired = await repo.mark_running(
+                child.id,
+                worker_id=child_owner,
+                lease_seconds=60,
+                now=now,
+            )
+            child_id = child.id
+            await db.commit()
+
+        monkeypatch.setattr(
+            run_worker.pg_manager, "get_async_session_context", lambda: _session_context(session_factory)
+        )
+        publish_cancel = AsyncMock()
+        monkeypatch.setattr(run_worker, "publish_cancel_signals", publish_cancel)
+
+        transition = await run_worker.mark_run_terminal(
+            parent_id,
+            "failed",
+            error_type="parent_failed",
+            worker_id=parent_owner,
+            cascade_cancel_descendants=False,
+        )
+
+        async with session_factory() as db:
+            parent = await db.get(AgentRun, parent_id)
+            child = await db.get(AgentRun, child_id)
+
+        assert parent_acquired is True
+        assert child_acquired is True
+        assert transition.changed is True
+        assert parent.status == "failed"
+        # 子 Run 保持运行：未被收敛成 cancel_requested，也未被剥夺 lease。
+        assert child.status == "running"
+        assert child.worker_id == child_owner
+        assert child.lease_expires_at is not None
+        # 无级联后代：取消信号为空，子 Run 不会被通知停止。
+        publish_cancel.assert_awaited_once_with([])
+    finally:
+        await _cleanup_runs(session_factory, [parent_thread_id, child_thread_id])

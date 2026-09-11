@@ -918,6 +918,63 @@ async def test_interrupt_persists_message_and_terminal_status_in_one_commit(
 
 
 @pytest.mark.asyncio
+async def test_complete_run_does_not_cascade_cancel_descendants(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[tuple] = []
+
+    class FakeDB:
+        async def commit(self):
+            events.append(("commit",))
+
+        async def rollback(self):
+            events.append(("rollback",))
+
+    class FakeGraph:
+        async def aget_state(self, _config):
+            return SimpleNamespace(values={"messages": [AIMessage(content="done")]})
+
+    class FakeRunRepo:
+        def __init__(self, _db):
+            pass
+
+        async def lock_output_persistence(self, *_args, **_kwargs):
+            events.append(("lock",))
+            return object()
+
+        async def set_output_message(self, run_id, message_id, *, worker_id):
+            events.append(("message", run_id, message_id, worker_id))
+
+        async def set_terminal_status(self, run_id, **kwargs):
+            events.append(("terminal", run_id, kwargs))
+            return SimpleNamespace(status="completed"), True
+
+        async def cancel_active_execution_tree_descendants(self, _run):
+            events.append(("descendants",))
+            return []
+
+    fake_db = FakeDB()
+    monkeypatch.setattr(svc, "AgentRunRepository", FakeRunRepo)
+    monkeypatch.setattr(svc, "ModelMessageAuditRepository", _EmptyModelAuditRepo)
+    monkeypatch.setattr(svc, "ToolMessageAuditRepository", _EmptyToolAuditRepo)
+
+    terminal_committed = await svc.save_messages_from_langgraph_state(
+        state=await FakeGraph().aget_state({}),
+        thread_id="thread-1",
+        conv_repo=_FakeConvRepo(fake_db),
+        run_id="run-1",
+        request_id="request-1",
+        worker_id="worker-1",
+        complete_run=True,
+        token_usage={"available": False},
+    )
+
+    assert terminal_committed is True
+    # completed 不级联取消子 Run：事件序列中不得出现 descendants。
+    assert [event[0] for event in events] == ["lock", "message", "terminal", "commit"]
+
+
+@pytest.mark.asyncio
 async def test_build_agent_input_context_excludes_memory_from_shared_context(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
