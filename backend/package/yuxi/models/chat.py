@@ -162,8 +162,11 @@ class ChatCompletionsAdapter(ChatOpenAI):
     def _get_request_payload(self, input_, *, stop=None, **kwargs):
         """支持推理的供应商在工具续答时接收完整原文。"""
         payload = super()._get_request_payload(input_, stop=stop, **kwargs)
-        if self.preserve_reasoning and "messages" in payload:
-            originals = self._convert_input(input_).to_messages()
+        if "messages" not in payload:
+            return payload
+        originals = self._convert_input(input_).to_messages()
+        _sanitize_wire_invalid_tool_calls(payload["messages"], originals)
+        if self.preserve_reasoning:
             for original, wire in zip(originals, payload["messages"], strict=True):
                 if isinstance(original, AIMessage):
                     content = wire.get("content")
@@ -247,6 +250,41 @@ def select_model(model_spec: str, **kwargs) -> LangChainChatAdapter:
         base_url=info.base_url,
         info={"provider_type": info.provider_type, "provider_id": info.provider_id},
     )
+
+
+def _sanitize_wire_invalid_tool_calls(messages: list[dict], originals: list) -> None:
+    """把 wire 消息里来自 invalid_tool_calls 的截断 function 转成失败反馈。
+
+    langchain_openai 把 AIMessage.invalid_tool_calls 序列化成 type:"function"、
+    arguments 为截断 JSON 的 tool_call，DeepSeek 等接口因此报参数解析失败。这里在
+    发送边界按 tool_call id 移除这些截断调用，并在 content 里给模型明确的 text 反馈，
+    而不是发出畸形参数。原始 checkpoint（LangChain 消息对象）不动。
+    """
+    for wire, original in zip(messages, originals, strict=True):
+        if not isinstance(original, AIMessage):
+            continue
+        invalid = list(original.invalid_tool_calls or [])
+        if not invalid:
+            continue
+        invalid_ids = {call.get("id") for call in invalid if call.get("id")}
+        tool_calls = wire.get("tool_calls")
+        if isinstance(tool_calls, list):
+            kept = [call for call in tool_calls if call.get("id") not in invalid_ids]
+            if kept:
+                wire["tool_calls"] = kept
+            else:
+                wire.pop("tool_calls", None)
+        feedback = "；".join(
+            f"[工具调用失败] {call.get('name') or 'unknown'}: {call.get('error') or 'arguments malformed or truncated'}"
+            for call in invalid
+        )
+        content = wire.get("content")
+        if isinstance(content, list):
+            content.append({"type": "text", "text": feedback})
+        elif content:
+            wire["content"] = [{"type": "text", "text": content}, {"type": "text", "text": feedback}]
+        else:
+            wire["content"] = [{"type": "text", "text": feedback}]
 
 
 if __name__ == "__main__":
