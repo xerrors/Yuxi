@@ -1689,10 +1689,74 @@ def _serialize_state_messages(values: dict[str, Any]) -> list[dict[str, Any]]:
     return serialized
 
 
+# state 查询专用骨架图: channel 结构由 state_schema 决定,与工具集无关。
+# 完整 get_graph 需连接全部 MCP 装配工具(重型 Agent 60-80s,子智能体 workdir
+# 各异导致缓存全 miss);骨架图零工具、毫秒级编译,全局单例即可正确恢复任意
+# thread 的 checkpoint values(ChatBotState 为 BaseState 超集,两种图通用)。
+_STATE_READER_GRAPH = None
+
+
+def _build_state_reader_schema():
+    """构建与真实 agent graph 一致的 state schema(含 middleware 注入字段)。"""
+    from langchain.agents.factory import _resolve_schemas
+    from langchain.agents.middleware import TodoListMiddleware
+    from yuxi.agents.buildin.chatbot.state import ChatBotState
+    from yuxi.agents.middlewares import TokenUsageMiddleware
+    from yuxi.agents.middlewares.skills import SkillsMiddleware
+
+    schema, _, _ = _resolve_schemas(
+        [
+            TodoListMiddleware.state_schema,
+            TokenUsageMiddleware.state_schema,
+            SkillsMiddleware.state_schema,
+            ChatBotState,
+        ]
+    )
+    return schema
+
+
+async def _get_state_reader_graph():
+    global _STATE_READER_GRAPH
+    if _STATE_READER_GRAPH is not None:
+        return _STATE_READER_GRAPH
+    from langgraph.graph import StateGraph
+
+    # 骨架图必须复用与真实 agent graph 一致的 state schema。真实 schema 由
+    # create_agent 合并 middleware 注入字段(如 todos/token_usage/activated_skills)
+    # 得到；若只用裸 ChatBotState，aget_state 会按骨架图 schema 过滤 checkpoint，
+    # 丢失这些字段，导致前端 state-panel 的待办与 token 用量消失。
+    state_schema = _build_state_reader_schema()
+    checkpointer = pg_manager.get_langgraph_checkpointer()
+    skeleton = StateGraph(state_schema)
+    skeleton.add_node("state_reader_noop", lambda state: {})
+    skeleton.set_entry_point("state_reader_noop")
+    _STATE_READER_GRAPH = skeleton.compile(checkpointer=checkpointer)
+    return _STATE_READER_GRAPH
+
+
 async def _read_checkpoint_state(agent, *, uid: str, thread_id: str, context):
-    graph = await agent.get_graph(context=context)
+    reader = await _get_state_reader_graph()
     langgraph_config = {"configurable": {"uid": uid, "thread_id": thread_id}}
-    return await graph.aget_state(langgraph_config)
+    return await reader.aget_state(langgraph_config)
+
+
+async def _read_pending_interrupt(*, uid: str, thread_id: str):
+    """从 checkpoint 的 pending writes 读取中断值，不依赖执行图结构。
+
+    骨架图只有 state_reader_noop 节点，`aget_state` 无法按原图节点重建 `tasks`，
+    因此等待审批的 checkpoint 在骨架图下 `tasks` 为空、`_extract_interrupt_info`
+    取不到中断——用户刷新状态接口会丢失审批入口。中断本身写在 checkpoint 的
+    `__interrupt__` channel 里，直接读原始写入即可恢复。
+    """
+    checkpointer = pg_manager.get_langgraph_checkpointer()
+    langgraph_config = {"configurable": {"uid": uid, "thread_id": thread_id}}
+    checkpoint_tuple = await checkpointer.aget_tuple(langgraph_config)
+    if checkpoint_tuple is None:
+        return None
+    for _task_id, channel, value in checkpoint_tuple.pending_writes or []:
+        if channel == "__interrupt__" and value:
+            return value[0]
+    return None
 
 
 async def get_agent_state_view(
@@ -1763,6 +1827,10 @@ async def get_agent_state_view(
             )
         }
         interrupt_info = _extract_interrupt_info(state) if state else None
+        if interrupt_info is None and latest_run is not None and latest_run.status == "interrupted":
+            # 骨架图重建不出 tasks，中断回退到 checkpoint 原始写入读取；只在 Run 确实
+            # 处于 interrupted 时才多读一次，普通状态查询不付这个成本。
+            interrupt_info = await _read_pending_interrupt(uid=str(current_uid), thread_id=thread_id)
         if latest_run and latest_run.status == "interrupted" and interrupt_info:
             response["interrupt"] = {
                 **_build_pending_interrupt_payload(interrupt_info, thread_id),

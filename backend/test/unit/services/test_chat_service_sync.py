@@ -6,10 +6,9 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 from langchain.messages import AIMessage, HumanMessage, ToolMessage
-
 from yuxi.agents import context as agent_context
-from yuxi.workspace import paths as workspace_paths
 from yuxi.services import chat_service as svc
+from yuxi.workspace import paths as workspace_paths
 
 
 def _empty_agent_context(_uid: str) -> str:
@@ -1299,16 +1298,6 @@ async def test_get_agent_state_view_includes_subagent_thread_relation(monkeypatc
                 to_dict=lambda: {"created_at": "2026-06-21T01:00:00Z", "finished_at": None},
             )
 
-    class Graph:
-        async def aget_state(self, config):
-            assert config["configurable"]["thread_id"] == child_thread_id
-            return SimpleNamespace(
-                values={
-                    "messages": [HumanMessage(content="do work"), AIMessage(content="working")],
-                    "artifacts": ["out.txt"],
-                }
-            )
-
     class Context:
         def __init__(self, *, thread_id="", uid=""):
             self.thread_id = thread_id
@@ -1322,14 +1311,15 @@ async def test_get_agent_state_view_includes_subagent_thread_relation(monkeypatc
     class Agent:
         context_schema = Context
 
-        async def get_graph(self, *, context):
-            assert context.thread_id == child_thread_id
-            assert context.uid == "user-1"
-            assert context.model == "provider:run-model"
-            assert context.runtime_scope_id == "parent-thread"
-            assert context.workdir_relative_path == "projects/11111111-1111-4111-8111-111111111111"
-            assert context.workdir_path == "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111"
-            return Graph()
+    async def _fake_read_state(_agent, *, uid, thread_id, context):
+        assert thread_id == child_thread_id
+        assert uid == "user-1"
+        return SimpleNamespace(
+            values={
+                "messages": [HumanMessage(content="do work"), AIMessage(content="working")],
+                "artifacts": ["out.txt"],
+            }
+        )
 
     monkeypatch.setattr(svc, "ConversationRepository", ConvRepo)
     monkeypatch.setattr(svc, "resolve_conversation_workdir_path", _resolve_test_workdir)
@@ -1338,6 +1328,7 @@ async def test_get_agent_state_view_includes_subagent_thread_relation(monkeypatc
     monkeypatch.setattr(svc, "AgentRunRepository", RunRepo)
     monkeypatch.setattr(svc, "normalize_agent_context_config", _fake_normalize_agent_context_config)
     monkeypatch.setattr(svc.agent_manager, "get_agent", lambda backend_id: Agent())
+    monkeypatch.setattr(svc, "_read_checkpoint_state", _fake_read_state)
 
     result = await svc.get_agent_state_view(
         thread_id=child_thread_id,
@@ -1418,10 +1409,6 @@ async def test_get_agent_state_view_reports_malformed_subagent_run_as_server_err
                 input_payload={"runtime": {}},
             )
 
-    class Graph:
-        async def aget_state(self, _config):
-            return SimpleNamespace(values={})
-
     class Context:
         def __init__(self, *, thread_id="", uid=""):
             self.thread_id = thread_id
@@ -1434,10 +1421,10 @@ async def test_get_agent_state_view_reports_malformed_subagent_run_as_server_err
     class Agent:
         context_schema = Context
 
-        async def get_graph(self, *, context):
-            assert context.thread_id == child_thread_id
-            assert context.uid == "user-1"
-            return Graph()
+    async def _fake_read_state(_agent, *, uid, thread_id, context):
+        assert thread_id == child_thread_id
+        assert uid == "user-1"
+        return SimpleNamespace(values={})
 
     monkeypatch.setattr(svc, "ConversationRepository", ConvRepo)
     monkeypatch.setattr(svc, "resolve_conversation_workdir_path", _resolve_test_workdir)
@@ -1446,6 +1433,7 @@ async def test_get_agent_state_view_reports_malformed_subagent_run_as_server_err
     monkeypatch.setattr(svc, "AgentRunRepository", RunRepo)
     monkeypatch.setattr(svc, "normalize_agent_context_config", _fake_normalize_agent_context_config)
     monkeypatch.setattr(svc.agent_manager, "get_agent", lambda _backend_id: Agent())
+    monkeypatch.setattr(svc, "_read_checkpoint_state", _fake_read_state)
 
     with pytest.raises(HTTPException) as exc:
         await svc.get_agent_state_view(
@@ -1471,3 +1459,18 @@ async def test_build_agent_input_context_keeps_prompt_when_workspace_agent_conte
     )
 
     assert context["system_prompt"] == "原始系统提示词"
+
+
+def test_build_state_reader_schema_includes_middleware_fields() -> None:
+    from typing import get_type_hints
+
+    schema = svc._build_state_reader_schema()
+    hints = get_type_hints(schema)
+
+    # 骨架图若丢失这些 middleware 注入字段，aget_state 按 schema 过滤 checkpoint 后，
+    # 前端 state-panel 的待办(todos)与 token 用量(token_usage)会消失。
+    assert "todos" in hints
+    assert "token_usage" in hints
+    assert "activated_skills" in hints
+    assert "subagent_runs" in hints
+    assert "artifacts" in hints
