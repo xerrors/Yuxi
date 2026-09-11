@@ -9,7 +9,7 @@ import pytest
 from langchain_core.exceptions import ModelError
 from langchain_core.messages import AIMessage
 
-from yuxi.agents.middlewares.network_retry import NetworkRetryMiddleware, is_network_error
+from yuxi.agents.middlewares.network_retry import NetworkRetryMiddleware, _is_network_error
 
 pytestmark = [pytest.mark.unit]
 
@@ -36,14 +36,14 @@ class FakeError(Exception):
     ],
 )
 def test_is_network_error_classifies(message, expected):
-    assert is_network_error(FakeError(message)) is expected
+    assert _is_network_error(FakeError(message)) is expected
 
 
 def test_is_network_error_inspects_cause_chain():
     inner = FakeError("Connection reset by peer")
     outer = FakeError("model call wrapper failed")
     outer.__cause__ = inner
-    assert is_network_error(outer) is True
+    assert _is_network_error(outer) is True
 
 
 @pytest.mark.asyncio
@@ -161,3 +161,70 @@ async def test_non_network_error_retry_succeeds_after_backoff():
 
     assert await mw.awrap_model_call(object(), handler) == "ok"
     assert calls["n"] == 3
+
+
+@pytest.mark.asyncio
+async def test_network_then_non_network_error_routes_to_parent_retry():
+    """网络异常重试后遇到非网络异常：非网络异常交给父类按 max_retries 重试，最终成功。"""
+    mw = NetworkRetryMiddleware(
+        max_retries=2,
+        network_budget_seconds=30,
+        network_initial_delay=0.0,
+        network_max_delay=0.0,
+        initial_delay=0.0,
+        jitter=False,
+    )
+    calls = {"n": 0}
+
+    async def handler(_request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise FakeError("OpenAIConnectionError: Connection error")  # 网络 → wrapped 重试
+        if calls["n"] in (2, 3):
+            raise FakeError("AuthenticationError: invalid api key")  # 非网络 → 交给父类
+        return "ok"  # calls=4
+
+    result = await mw.awrap_model_call(object(), handler)
+
+    assert result == "ok"
+    assert calls["n"] == 4
+
+
+@pytest.mark.asyncio
+async def test_network_budget_survives_parent_retry(monkeypatch):
+    """网络异常 → 非网络异常 → 网络异常：预算起点跨父类重试保持，不被重置放大。"""
+    import yuxi.agents.middlewares.network_retry as module
+
+    clock = {"t": 0.0}
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+        clock["t"] += seconds
+
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: clock["t"]))
+    monkeypatch.setattr(module.asyncio, "sleep", fake_sleep)
+
+    mw = NetworkRetryMiddleware(
+        max_retries=1,  # 父类非网络重试 1 次
+        network_budget_seconds=5,
+        network_initial_delay=2,
+        network_max_delay=2,
+        initial_delay=0.0,
+        jitter=False,
+    )
+    calls = {"n": 0}
+
+    async def handler(_request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise FakeError("OpenAIConnectionError: Connection error")  # 网络，sleep 2
+        if calls["n"] == 2:
+            raise FakeError("AuthenticationError: invalid api key")  # 非网络 → 交给父类
+        raise FakeError("OpenAIConnectionError: Connection error")  # calls=3+ 持续网络
+
+    with pytest.raises(FakeError):
+        await mw.awrap_model_call(object(), handler)
+
+    # 预算起点在包装创建时固定，网络 sleep 累计不超过 5s（不是 5 × 父类重试份数）。
+    assert 0 < sum(sleeps) <= 5
