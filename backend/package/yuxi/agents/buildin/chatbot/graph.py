@@ -1,6 +1,6 @@
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from langchain.agents import create_agent
-from langchain.agents.middleware import ModelRetryMiddleware, TodoListMiddleware
+from langchain.agents.middleware import TodoListMiddleware
 
 from yuxi.agents import BaseAgent
 from yuxi.agents.backends import (
@@ -15,6 +15,7 @@ from yuxi.agents.context import (
 )
 from yuxi.agents.middlewares import (
     ImageInputCompatibilityMiddleware,
+    NetworkRetryMiddleware,
     SteerMiddleware,
     TokenUsageMiddleware,
     create_memory_middleware,
@@ -52,7 +53,12 @@ async def _build_middlewares(context, backend):
             create_summary_middleware_from_context(context, backend=backend),
             TodoListMiddleware(system_prompt=TODO_MID_PROMPT),
             PatchToolCallsMiddleware(),
-            ModelRetryMiddleware(max_retries=getattr(context, "model_retry_times", 2)),
+            # 网络类错误(断网/连接抖动)按预算(默认600s)持续重试，非网络错误按 max_retries
+            # 次数重试——两者合并进 NetworkRetryMiddleware，避免拆成两个中间件后因装配顺序
+            # 或外层重试网络错误而放大预算。
+            NetworkRetryMiddleware(
+                max_retries=getattr(context, "model_retry_times", 2),
+            ),
             ImageInputCompatibilityMiddleware(),
             TokenUsageMiddleware(),
         ]

@@ -2,7 +2,7 @@ from typing import Any
 
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from langchain.agents import create_agent
-from langchain.agents.middleware import ModelRetryMiddleware, TodoListMiddleware
+from langchain.agents.middleware import TodoListMiddleware
 from langchain.agents.middleware.types import AgentMiddleware
 from langchain_core.messages import ToolMessage
 
@@ -20,6 +20,7 @@ from yuxi.agents.context import (
 )
 from yuxi.agents.middlewares import (
     ImageInputCompatibilityMiddleware,
+    NetworkRetryMiddleware,
     TokenUsageMiddleware,
     create_summary_middleware_from_context,
 )
@@ -100,7 +101,7 @@ async def _build_middlewares(context, backend, tool_approval_mode: str):
         TodoListMiddleware(system_prompt=TODO_MID_PROMPT),
         PatchToolCallsMiddleware(),
         _SubAgentToolFilterMiddleware(tool_approval_mode),
-        ModelRetryMiddleware(),
+        NetworkRetryMiddleware(),
         ImageInputCompatibilityMiddleware(),
         TokenUsageMiddleware(),
     ]
