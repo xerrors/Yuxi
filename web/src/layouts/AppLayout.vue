@@ -12,7 +12,8 @@ import {
   PanelLeft,
   PanelLeftOpen,
   MessageCirclePlus,
-  Search
+  Search,
+  GraduationCap
 } from '@lucide/vue'
 
 import { useConfigStore } from '@/stores/config'
@@ -183,6 +184,18 @@ const mainList = computed(() => {
     icon: HardDrive,
     activeIcon: HardDrive
   })
+
+  if (
+    userStore.businessRoles.includes('counselor') ||
+    userStore.businessRoles.includes('business_admin')
+  ) {
+    items.push({
+      name: '学生档案',
+      path: '/students',
+      icon: GraduationCap,
+      activeIcon: GraduationCap
+    })
+  }
 
   items.push({
     name: '知识库 · 技能',

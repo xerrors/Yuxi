@@ -14,6 +14,15 @@ class StudentRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
+    async def list_department_counselors(self, department_id: int) -> list[User]:
+        """读取本部门未删除的负责人候选。"""
+        result = await self.db.execute(
+            select(User)
+            .where(User.department_id == department_id, User.is_deleted == 0)
+            .order_by(User.username, User.id)
+        )
+        return list(result.scalars().all())
+
     async def eligible_counselor(self, counselor_id: int, department_id: int) -> User | None:
         """锁定同部门且未删除的待分配用户。"""
         result = await self.db.execute(

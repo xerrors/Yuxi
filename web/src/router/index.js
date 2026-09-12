@@ -73,6 +73,24 @@ const router = createRouter({
       ]
     },
     {
+      path: '/students',
+      component: AppLayout,
+      children: [
+        {
+          path: '',
+          name: 'StudentRecords',
+          component: () => import('../views/StudentRecordsView.vue'),
+          meta: { keepAlive: false, requiresAuth: true, requiresStudentRecords: true }
+        },
+        {
+          path: ':studentId',
+          name: 'StudentRecordDetail',
+          component: () => import('../views/StudentRecordsView.vue'),
+          meta: { keepAlive: false, requiresAuth: true, requiresStudentRecords: true }
+        }
+      ]
+    },
+    {
       path: '/dashboard',
       name: 'dashboard',
       component: AppLayout,
@@ -200,6 +218,13 @@ router.beforeEach(async (to) => {
     !isAdmin &&
     !userStore.canManagePersonalKnowledge &&
     !userStore.canManageTeamKnowledge
+  )
+    return '/agent'
+
+  if (
+    to.matched.some((record) => record.meta.requiresStudentRecords) &&
+    !userStore.businessRoles.includes('counselor') &&
+    !userStore.businessRoles.includes('business_admin')
   )
     return '/agent'
 

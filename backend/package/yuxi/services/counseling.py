@@ -21,6 +21,18 @@ def _details(record) -> dict:
     return {**_metadata(record), "background_summary": record.background_summary}
 
 
+async def list_counselor_options(db: AsyncSession, actor: User) -> list[dict]:
+    """只向分配人员提供本部门可担任负责人的用户。"""
+    if BusinessCapability.ASSIGN_STUDENTS not in resolve_business_capabilities(actor):
+        raise PermissionError("需要学生分配权限")
+    users = await StudentRepository(db).list_department_counselors(actor.department_id)
+    return [
+        {"id": user.id, "username": user.username}
+        for user in users
+        if BusinessCapability.MANAGE_ASSIGNED_STUDENTS in resolve_business_capabilities(user)
+    ]
+
+
 async def create_student(db: AsyncSession, actor: User, student_code: str, counselor_id: int) -> dict:
     """由同部门业务管理员为辅导人员创建空档案。"""
     if BusinessCapability.ASSIGN_STUDENTS not in resolve_business_capabilities(actor):

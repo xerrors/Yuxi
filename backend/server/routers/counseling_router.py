@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.utils.auth_middleware import get_db, get_required_user
-from yuxi.services.counseling import create_student, get_student, list_students, update_student
+from yuxi.services.counseling import create_student, get_student, list_counselor_options, list_students, update_student
 from yuxi.storage.postgres.models_business import User
 
 counseling = APIRouter(prefix="/counseling/students", tags=["counseling"])
@@ -58,6 +58,15 @@ async def list_students_route(actor: User = Depends(get_required_user), db: Asyn
     """按角色列出可见档案的最小元数据。"""
     try:
         return await list_students(db, actor)
+    except PermissionError as exc:
+        _raise_counseling_error(exc)
+
+
+@counseling.get("/counselors")
+async def list_counselors_route(actor: User = Depends(get_required_user), db: AsyncSession = Depends(get_db)):
+    """获取当前部门可选的初始负责人。"""
+    try:
+        return await list_counselor_options(db, actor)
     except PermissionError as exc:
         _raise_counseling_error(exc)
 
