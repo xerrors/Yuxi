@@ -3,6 +3,7 @@
     <div class="tags">
       <!-- 反馈 -->
       <span
+        v-if="canSubmitFeedback"
         class="item btn"
         :class="{ disabled: feedbackState.hasSubmitted }"
         @click="likeThisResponse(msg)"
@@ -11,6 +12,7 @@
         <ThumbsUp size="12" :fill="feedbackState.rating === 'like' ? 'currentColor' : 'none'" />
       </span>
       <span
+        v-if="canSubmitFeedback"
         class="item btn"
         :class="{ disabled: feedbackState.hasSubmitted }"
         @click="dislikeThisResponse(msg)"
@@ -147,6 +149,15 @@ const props = defineProps({
 
 const msg = ref(props.message)
 
+const canSubmitFeedback = computed(
+  () =>
+    (msg.value?.role
+      ? ['assistant', 'received'].includes(msg.value.role)
+      : msg.value?.type === 'ai') &&
+    (!msg.value?.status || msg.value.status === 'finished') &&
+    !['model_audit', 'tool_audit'].includes(msg.value?.message_type)
+)
+
 // Sources state
 const isSourcesExpanded = ref(false)
 
@@ -279,6 +290,7 @@ const getModelName = (msg) => {
 }
 // Handle like action
 const likeThisResponse = async (msg) => {
+  if (!canSubmitFeedback.value) return
   if (feedbackState.hasSubmitted) {
     antMessage.info('您已经提交过反馈了')
     return
@@ -313,6 +325,7 @@ const likeThisResponse = async (msg) => {
 
 // Handle dislike action
 const dislikeThisResponse = async (msg) => {
+  if (!canSubmitFeedback.value) return
   if (feedbackState.hasSubmitted) {
     antMessage.info('您已经提交过反馈了')
     return
@@ -330,6 +343,7 @@ const dislikeThisResponse = async (msg) => {
 
 // Submit dislike feedback with reason
 const submitDislikeFeedback = async () => {
+  if (!canSubmitFeedback.value) return
   try {
     submittingFeedback.value = true
     await agentApi.submitMessageFeedback(msg.value.id, 'dislike', dislikeReason.value || null)
@@ -460,7 +474,6 @@ const cancelDislike = () => {
         }
       }
     }
-
   }
 
   .sources-panel-body {

@@ -4,7 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.services.langfuse_service import submit_user_feedback_score
-from yuxi.storage.postgres.models_business import Conversation, Message, MessageFeedback
+from yuxi.storage.postgres.models_business import AUDIT_MESSAGE_TYPES, Conversation, Message, MessageFeedback
 from yuxi.utils.logging_config import logger
 
 
@@ -29,6 +29,9 @@ async def submit_message_feedback_view(
         conversation = conversation_result.scalar_one_or_none()
         if not conversation or conversation.uid != str(current_uid):
             raise HTTPException(status_code=403, detail="Access denied")
+
+        if message.role != "assistant" or message.message_type in AUDIT_MESSAGE_TYPES:
+            raise HTTPException(status_code=422, detail="Feedback is only supported for non-audit assistant messages")
 
         existing_feedback_result = await db.execute(
             select(MessageFeedback).filter_by(message_id=message_id, uid=str(current_uid))
