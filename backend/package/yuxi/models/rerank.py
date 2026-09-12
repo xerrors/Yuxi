@@ -1,4 +1,5 @@
 import asyncio
+import math
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Sequence
 from typing import Any
@@ -95,8 +96,33 @@ class BaseReranker(ABC):
             logger.error(f"Reranking request failed: {exc}")
             raise exc
 
-        processed = sorted(self._extract_results(result), key=lambda item: item.get("index", 0))
-        return [float(entry.get("relevance_score", 0.0)) for entry in processed]
+        results = self._extract_results(result)
+        if len(results) != len(docs):
+            raise ValueError("Rerank response must contain one result per document")
+
+        scores = [0.0] * len(docs)
+        seen = set()
+        for entry in results:
+            if not isinstance(entry, dict):
+                raise ValueError("Rerank response contains an invalid result")
+            index = entry.get("index")
+            if type(index) is not int or not 0 <= index < len(docs) or index in seen:
+                raise ValueError("Rerank response contains an invalid or duplicate index")
+
+            raw_score = entry.get("relevance_score")
+            if isinstance(raw_score, bool):
+                raise ValueError("Rerank response contains an invalid relevance_score")
+            try:
+                score = float(raw_score)
+            except (TypeError, ValueError, OverflowError):
+                raise ValueError("Rerank response contains an invalid relevance_score") from None
+            if not math.isfinite(score):
+                raise ValueError("Rerank response contains a non-finite relevance_score")
+
+            seen.add(index)
+            scores[index] = score
+
+        return scores
 
     def compute_score(self, sentence_pairs, batch_size=256, max_length=512, normalize=False):
         try:
