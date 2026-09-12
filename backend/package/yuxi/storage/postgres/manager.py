@@ -18,12 +18,13 @@ from yuxi.storage.postgres.models_business import (
     UNVIEWED_RUN_MARKER,
 )
 from yuxi.storage.postgres.models_business import Base as BusinessBase
+from yuxi.storage.postgres import models_counseling  # noqa: F401 - 注册学生表到业务 metadata
 from yuxi.storage.postgres.models_knowledge import Base as KnowledgeBase
 from yuxi.utils import logger
 from yuxi.utils.singleton import SingletonMeta
 
 AGENT_RUN_TERMINAL_STATUS_SQL = ", ".join(f"'{status}'" for status in AGENT_RUN_TERMINAL_STATUSES)
-BUSINESS_SCHEMA_VERSION = 8
+BUSINESS_SCHEMA_VERSION = 9
 KNOWLEDGE_SCHEMA_VERSION = 2
 SCHEMA_VERSION_TABLE = "yuxi_schema_migrations"
 BUSINESS_ROLE_SCHEMA_STATEMENTS = (
@@ -57,6 +58,23 @@ BUSINESS_ROLE_SCHEMA_STATEMENTS = (
         END IF;
     END $$;
     """,
+)
+COUNSELING_STUDENT_SCHEMA_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS counseling_students (
+        id SERIAL PRIMARY KEY,
+        department_id INTEGER NOT NULL REFERENCES departments(id),
+        student_code VARCHAR(64) NOT NULL,
+        counselor_id INTEGER NOT NULL REFERENCES users(id),
+        background_summary TEXT NOT NULL DEFAULT '',
+        status VARCHAR(16) NOT NULL DEFAULT 'active',
+        created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_counseling_students_department_code UNIQUE (department_id, student_code),
+        CONSTRAINT ck_counseling_students_status CHECK (status IN ('active', 'closed'))
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_counseling_students_owner ON counseling_students(department_id, counselor_id)",
 )
 AGENT_RUN_LEASE_SCHEMA_STATEMENTS = (
     "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS worker_id VARCHAR(128)",
@@ -573,6 +591,13 @@ class PostgresManager(metaclass=SingletonMeta):
             for statement in BUSINESS_ROLE_SCHEMA_STATEMENTS:
                 await conn.execute(text(statement))
 
+    async def upgrade_business_schema_v8_to_v9(self) -> None:
+        """为既有业务数据库增加最小学生档案表。"""
+        self._check_initialized()
+        async with self.async_engine.begin() as conn:
+            for statement in COUNSELING_STUDENT_SCHEMA_STATEMENTS:
+                await conn.execute(text(statement))
+
     async def drop_tables(self):
         """删除所有表（慎用！）"""
         self._check_initialized()
@@ -960,6 +985,7 @@ class PostgresManager(metaclass=SingletonMeta):
         self._check_initialized()
         stmts = [
             *BUSINESS_ROLE_SCHEMA_STATEMENTS,
+            *COUNSELING_STUDENT_SCHEMA_STATEMENTS,
             "ALTER TABLE IF EXISTS skills ADD COLUMN IF NOT EXISTS tool_dependencies JSONB DEFAULT '[]'::jsonb",
             "ALTER TABLE IF EXISTS skills ADD COLUMN IF NOT EXISTS mcp_dependencies JSONB DEFAULT '[]'::jsonb",
             "ALTER TABLE IF EXISTS skills ADD COLUMN IF NOT EXISTS skill_dependencies JSONB DEFAULT '[]'::jsonb",

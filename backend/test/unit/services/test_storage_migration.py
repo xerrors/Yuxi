@@ -282,7 +282,8 @@ async def test_main_v2_business_schema_is_converged_and_versioned_as_current(mon
 
 
 @pytest.mark.asyncio
-async def test_main_v7_business_schema_runs_only_role_upgrade(monkeypatch):
+@pytest.mark.parametrize("starting_version", [7, 8])
+async def test_main_existing_business_schema_upgrades_to_student_records(monkeypatch, starting_version: int):
     calls: list[str] = []
     sessions = [_Session(), _Session(), _Session()]
 
@@ -295,13 +296,14 @@ async def test_main_v7_business_schema_runs_only_role_upgrade(monkeypatch):
         schema_migration_lock=lambda: _async_context(calls, "schema_lock"),
         create_schema_version_table=lambda: _record(calls, "create_schema_version_table"),
         get_schema_versions=lambda: _async_value(
-            {"business": 7, "knowledge": storage_migration.KNOWLEDGE_SCHEMA_VERSION}
+            {"business": starting_version, "knowledge": storage_migration.KNOWLEDGE_SCHEMA_VERSION}
         ),
         record_schema_version=lambda domain, version: _record(calls, f"version:{domain}:{version}"),
         create_business_tables=lambda: _record(calls, "create_business"),
         create_knowledge_tables=lambda: _record(calls, "create_knowledge"),
         ensure_business_schema=lambda: _record(calls, "business_schema"),
         upgrade_business_schema_v7_to_v8=lambda: _record(calls, "business_roles_schema"),
+        upgrade_business_schema_v8_to_v9=lambda: _record(calls, "student_schema"),
         ensure_knowledge_schema=lambda: _record(calls, "knowledge_schema"),
         setup_langgraph_checkpointer=lambda: _record(calls, "checkpoint"),
         get_async_session_context=session_context,
@@ -327,7 +329,8 @@ async def test_main_v7_business_schema_runs_only_role_upgrade(monkeypatch):
 
     await storage_migration.main()
 
-    assert "business_roles_schema" in calls
+    assert ("business_roles_schema" in calls) is (starting_version == 7)
+    assert "student_schema" in calls
     assert f"version:business:{storage_migration.BUSINESS_SCHEMA_VERSION}" in calls
     assert {"create_business", "business_schema", "checkpoint", "knowledge_schema"}.isdisjoint(calls)
 

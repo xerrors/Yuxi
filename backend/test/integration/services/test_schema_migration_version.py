@@ -269,7 +269,7 @@ async def test_v072_business_converges_current_schema_idempotently() -> None:
             "ix_scheduled_agent_runs_job_created",
             "ix_scheduled_agent_runs_dispatching",
         }.issubset(scheduled_indexes)
-        assert BUSINESS_SCHEMA_VERSION == 8
+        assert BUSINESS_SCHEMA_VERSION == 9
     finally:
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)
 
@@ -308,6 +308,29 @@ async def test_business_v7_to_v8_backfills_fixed_roles_and_rejects_unknown_value
                 await connection.execute(
                     text("UPDATE users SET business_roles = '[\"unknown\"]'::jsonb WHERE uid = 'counselor'")
                 )
+    finally:
+        await _drop_isolated_schema(schema, admin_engine, scoped_engine)
+
+
+async def test_business_v8_to_v9_creates_student_schema_idempotently() -> None:
+    """既有业务库重复升级后具有完整学生档案约束与默认值。"""
+    schema, admin_engine, scoped_engine, manager = await _create_isolated_manager("pytest_student_records")
+    try:
+        await manager.create_business_tables()
+        async with scoped_engine.begin() as connection:
+            await connection.execute(text("DROP TABLE counseling_students"))
+
+        await manager.upgrade_business_schema_v8_to_v9()
+        await manager.upgrade_business_schema_v8_to_v9()
+        async with scoped_engine.connect() as connection:
+            defaults = dict(
+                (await connection.execute(text(
+                    "SELECT column_name, column_default FROM information_schema.columns "
+                    "WHERE table_schema = :schema AND table_name = 'counseling_students' "
+                    "AND column_name IN ('background_summary', 'status')"
+                ), {"schema": schema})).all()
+            )
+        assert defaults == {"background_summary": "''::text", "status": "'active'::character varying"}
     finally:
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)
 
