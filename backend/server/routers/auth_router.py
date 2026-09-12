@@ -42,6 +42,11 @@ from yuxi.storage.minio.client import normalize_public_minio_url
 from yuxi.storage.postgres.models_business import User
 from yuxi.repositories.department_repository import DepartmentRepository
 from yuxi.repositories.user_repository import UserRepository
+from yuxi.permissions import (
+    BusinessRole,
+    default_business_roles_for_platform_role,
+    normalize_business_roles,
+)
 from yuxi.utils import logger
 from yuxi.utils.auth_utils import AuthUtils
 from yuxi.utils.datetime_utils import utc_now_naive
@@ -68,6 +73,7 @@ class Token(BaseModel):
     phone_number: str | None = None
     avatar: str | None = None
     role: str
+    business_roles: list[BusinessRole]
     department_id: int | None = None
     department_name: str | None = None
 
@@ -76,6 +82,7 @@ class UserCreate(BaseModel):
     username: str
     password: str = Field(min_length=8)
     role: str = "user"
+    business_roles: list[BusinessRole] | None = None
     phone_number: str | None = None
     department_id: int | None = None
 
@@ -88,6 +95,7 @@ class UserUpdate(BaseModel):
     phone_number: str | None = None
     avatar: str | None = None
     department_id: int | None = None
+    business_roles: list[BusinessRole] | None = None
 
 
 class UserProfileUpdate(BaseModel):
@@ -102,6 +110,7 @@ class UserResponse(BaseModel):
     phone_number: str | None = None
     avatar: str | None = None
     role: str
+    business_roles: list[BusinessRole]
     department_id: int | None = None
     department_name: str | None = None  # 部门名称
     created_at: str
@@ -119,6 +128,7 @@ class UserAccessOption(BaseModel):
     uid: str
     username: str
     role: str
+    business_roles: list[BusinessRole]
     department_id: int | None = None
     department_name: str | None = None
 
@@ -158,6 +168,7 @@ class OIDCLoginResponse(BaseModel):
     phone_number: str | None = None
     avatar: str | None = None
     role: str
+    business_roles: list[BusinessRole]
     department_id: int | None = None
     department_name: str | None = None
 
@@ -324,6 +335,7 @@ async def login_for_access_token(
         "phone_number": user.phone_number,
         "avatar": normalize_public_minio_url(user.avatar),
         "role": user.role,
+        "business_roles": user.business_roles,
         "department_id": user.department_id,
         "department_name": department_name,
     }
@@ -434,6 +446,7 @@ async def initialize_admin(admin_data: InitializeAdmin, db: AsyncSession = Depen
         "phone_number": new_admin.phone_number,
         "avatar": new_admin.avatar,
         "role": new_admin.role,
+        "business_roles": new_admin.business_roles,
     }
 
 
@@ -574,6 +587,18 @@ async def create_user(
             detail="管理员只能创建普通用户账户",
         )
 
+    if user_data.business_roles is not None and current_user.role != "superadmin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="只有超级管理员才能指定业务角色",
+        )
+
+    requested_business_roles = (
+        normalize_business_roles(user_data.business_roles)
+        if user_data.business_roles is not None
+        else default_business_roles_for_platform_role(user_data.role)
+    )
+
     # 部门分配逻辑
     if current_user.role == "superadmin":
         # 超级管理员创建用户时，使用指定的部门或默认部门
@@ -606,6 +631,7 @@ async def create_user(
             "phone_number": user_data.phone_number,
             "password_hash": hashed_password,
             "role": user_data.role,
+            "business_roles": [role.value for role in requested_business_roles],
             "department_id": department_id,
         }
     )
@@ -699,6 +725,7 @@ async def read_user_access_options(
             "uid": user.uid,
             "username": user.username,
             "role": user.role,
+            "business_roles": user.business_roles,
             "department_id": user.department_id,
             "department_name": dept_name,
         }
@@ -758,6 +785,15 @@ async def update_user(
 
     # 更新信息
     update_details = []
+
+    if user_data.business_roles is not None:
+        if current_user.role != "superadmin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="只有超级管理员才能修改业务角色",
+            )
+        user.business_roles = [role.value for role in normalize_business_roles(user_data.business_roles)]
+        update_details.append(f"业务角色: {', '.join(user.business_roles) or '无'}")
 
     if user_data.username is not None:
         # 检查用户名是否已被其他用户使用
@@ -999,6 +1035,7 @@ async def impersonate_user(
         "phone_number": target_user.phone_number,
         "avatar": normalize_public_minio_url(target_user.avatar),
         "role": target_user.role,
+        "business_roles": target_user.business_roles,
         "department_id": target_user.department_id,
         "department_name": department_name,
     }

@@ -1,5 +1,14 @@
 """跨资源权限能力。"""
 
+from yuxi.permissions.business_roles import (
+    BUSINESS_ROLE_CAPABILITIES,
+    BusinessCapability,
+    BusinessRole,
+    default_business_roles_for_platform_role,
+    normalize_business_roles,
+    resolve_business_capabilities,
+    resolve_business_roles,
+)
 from yuxi.permissions.resource_permission import (
     AGENT_PERMISSION_POLICY,
     KNOWLEDGE_BASE_PERMISSION_POLICY,
@@ -18,14 +27,21 @@ from yuxi.permissions.resource_permission import (
 
 __all__ = [
     "AGENT_PERMISSION_POLICY",
+    "BUSINESS_ROLE_CAPABILITIES",
     "KNOWLEDGE_BASE_PERMISSION_POLICY",
     "SKILL_PERMISSION_POLICY",
+    "BusinessCapability",
+    "BusinessRole",
     "ResourcePermission",
     "ResourcePermissionDenied",
     "normalize_permission_config",
+    "default_business_roles_for_platform_role",
+    "normalize_business_roles",
     "require_knowledge_base_permission",
     "require_resource_permission",
     "resolve_agent_permission",
+    "resolve_business_capabilities",
+    "resolve_business_roles",
     "resolve_knowledge_base_permission",
     "resolve_resource_permission",
     "resolve_skill_permission",

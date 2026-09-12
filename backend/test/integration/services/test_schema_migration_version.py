@@ -8,6 +8,7 @@ import uuid
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.storage.postgres.manager import BUSINESS_SCHEMA_VERSION, KNOWLEDGE_SCHEMA_VERSION, PostgresManager
@@ -268,7 +269,45 @@ async def test_v072_business_converges_current_schema_idempotently() -> None:
             "ix_scheduled_agent_runs_job_created",
             "ix_scheduled_agent_runs_dispatching",
         }.issubset(scheduled_indexes)
-        assert BUSINESS_SCHEMA_VERSION == 7
+        assert BUSINESS_SCHEMA_VERSION == 8
+    finally:
+        await _drop_isolated_schema(schema, admin_engine, scoped_engine)
+
+
+async def test_business_v7_to_v8_backfills_fixed_roles_and_rejects_unknown_values() -> None:
+    """v7 用户按旧平台角色获得最小默认业务角色，数据库拒绝未知角色。"""
+    schema, admin_engine, scoped_engine, manager = await _create_isolated_manager("pytest_business_roles")
+    try:
+        await manager.create_business_tables()
+        async with scoped_engine.begin() as connection:
+            await connection.execute(text("ALTER TABLE users DROP COLUMN business_roles"))
+            await connection.execute(
+                text(
+                    "INSERT INTO users (username, uid, password_hash, role, login_failed_count, is_deleted) VALUES "
+                    "('counselor', 'counselor', 'x', 'user', 0, 0), "
+                    "('business', 'business', 'x', 'admin', 0, 0), "
+                    "('technical', 'technical', 'x', 'superadmin', 0, 0)"
+                )
+            )
+
+        await manager.upgrade_business_schema_v7_to_v8()
+        async with scoped_engine.begin() as connection:
+            await connection.execute(text("UPDATE users SET business_roles = '[]'::jsonb WHERE uid = 'counselor'"))
+        await manager.upgrade_business_schema_v7_to_v8()
+
+        async with scoped_engine.connect() as connection:
+            rows = (await connection.execute(text("SELECT uid, business_roles FROM users ORDER BY uid"))).all()
+        assert {row.uid: row.business_roles for row in rows} == {
+            "business": ["business_admin"],
+            "counselor": [],
+            "technical": ["technical_admin"],
+        }
+
+        with pytest.raises(IntegrityError, match="ck_users_business_roles"):
+            async with scoped_engine.begin() as connection:
+                await connection.execute(
+                    text("UPDATE users SET business_roles = '[\"unknown\"]'::jsonb WHERE uid = 'counselor'")
+                )
     finally:
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)
 

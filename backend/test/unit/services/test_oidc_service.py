@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from urllib.parse import unquote
+from urllib.parse import parse_qs, unquote, urlparse
 
 import pytest
 import pytest_asyncio
@@ -37,6 +37,31 @@ async def _create_user(session, uid: str = "alice") -> User:
     return user
 
 
+async def test_create_oidc_user_assigns_default_business_role(oidc_session, monkeypatch):
+    monkeypatch.setattr(oidc_service.oidc_config, "use_raw_username", False)
+    monkeypatch.setattr(oidc_service.oidc_config, "default_role", "user")
+
+    created_data = None
+
+    class FakeUserRepository:
+        async def create(self, data):
+            nonlocal created_data
+            created_data = data
+            return User(**data)
+
+    monkeypatch.setattr(oidc_service, "UserRepository", FakeUserRepository)
+
+    user = await oidc_service.create_oidc_user(
+        oidc_session,
+        {"sub": "new-user", "name": "New User", "username": "new-user"},
+    )
+
+    assert user.role == "user"
+    assert user.business_roles == ["counselor"]
+    assert created_data is not None
+    assert created_data["business_roles"] == ["counselor"]
+
+
 async def test_find_user_by_oidc_sub_resolves_placeholder_when_sub_contains_colon(oidc_session):
     user = await _create_user(oidc_session)
 
@@ -67,6 +92,8 @@ async def test_find_deleted_oidc_user_by_sub_resolves_deleted_target_when_sub_co
 
 async def test_oidc_callback_allows_existing_binding_when_sub_contains_colon(oidc_session, monkeypatch):
     user = await _create_user(oidc_session)
+    user.business_roles = ["counselor"]
+    await oidc_session.commit()
     await oidc_service._create_oidc_binding_placeholder(oidc_session, "tenant:user", user)
 
     monkeypatch.setattr(oidc_service.oidc_config, "enabled", True)
@@ -100,4 +127,10 @@ async def test_oidc_callback_allows_existing_binding_when_sub_contains_colon(oid
     response = await oidc_service.oidc_callback_handler("dummy-code", "dummy-state", oidc_session)
 
     assert response.status_code == 302
-    assert unquote(response.headers["location"]).startswith("/auth/oidc/callback?code=")
+    callback_url = unquote(response.headers["location"])
+    assert callback_url.startswith("/auth/oidc/callback?code=")
+
+    exchange_code = parse_qs(urlparse(callback_url).query)["code"][0]
+    login_response = await oidc_service.oidc_exchange_code_handler(exchange_code)
+
+    assert login_response["business_roles"] == ["counselor"]

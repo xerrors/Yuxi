@@ -17,6 +17,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
+from yuxi.permissions.business_roles import default_business_roles_for_platform_role
 from yuxi.repositories.user_repository import UserRepository
 from yuxi.services.operation_log_service import log_operation
 from yuxi.storage.postgres.models_business import Department, User
@@ -572,6 +573,7 @@ async def _create_oidc_binding_placeholder(db, sub: str, target_user: User) -> N
         avatar=None,
         password_hash=password_hash,
         role=target_user.role,
+        business_roles=list(target_user.business_roles or []),
         department_id=target_user.department_id,
         is_deleted=1,  # 标记为deleted，不参与实际登录
         last_login=utc_now_naive(),
@@ -670,6 +672,9 @@ async def create_oidc_user(db, user_info: dict, department_id: int | None = None
                     "avatar": None,
                     "password_hash": password_hash,
                     "role": oidc_config.default_role,
+                    "business_roles": [
+                        role.value for role in default_business_roles_for_platform_role(oidc_config.default_role)
+                    ],
                     "department_id": department_id,
                     "last_login": utc_now_naive(),
                 }
@@ -858,6 +863,7 @@ async def oidc_callback_handler(code: str, state: str, db, request: Request | No
         "phone_number": user.phone_number,
         "avatar": user.avatar,
         "role": user.role,
+        "business_roles": list(user.business_roles or []),
         "department_id": user.department_id,
         "department_name": department_name,
     }

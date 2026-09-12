@@ -23,9 +23,41 @@ from yuxi.utils import logger
 from yuxi.utils.singleton import SingletonMeta
 
 AGENT_RUN_TERMINAL_STATUS_SQL = ", ".join(f"'{status}'" for status in AGENT_RUN_TERMINAL_STATUSES)
-BUSINESS_SCHEMA_VERSION = 7
+BUSINESS_SCHEMA_VERSION = 8
 KNOWLEDGE_SCHEMA_VERSION = 2
 SCHEMA_VERSION_TABLE = "yuxi_schema_migrations"
+BUSINESS_ROLE_SCHEMA_STATEMENTS = (
+    "ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS business_roles JSONB",
+    """
+    UPDATE users
+    SET business_roles = CASE role
+        WHEN 'user' THEN '["counselor"]'::jsonb
+        WHEN 'admin' THEN '["business_admin"]'::jsonb
+        WHEN 'superadmin' THEN '["technical_admin"]'::jsonb
+        ELSE '[]'::jsonb
+    END
+    WHERE business_roles IS NULL
+    """,
+    "ALTER TABLE IF EXISTS users ALTER COLUMN business_roles SET DEFAULT '[]'::jsonb",
+    "ALTER TABLE IF EXISTS users ALTER COLUMN business_roles SET NOT NULL",
+    """
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'ck_users_business_roles'
+              AND conrelid = 'users'::regclass
+        ) THEN
+            ALTER TABLE users
+            ADD CONSTRAINT ck_users_business_roles
+            CHECK (
+                jsonb_typeof(business_roles) = 'array'
+                AND business_roles <@ '["counselor", "business_admin", "technical_admin"]'::jsonb
+            );
+        END IF;
+    END $$;
+    """,
+)
 AGENT_RUN_LEASE_SCHEMA_STATEMENTS = (
     "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS worker_id VARCHAR(128)",
     "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMP WITHOUT TIME ZONE",
@@ -534,6 +566,13 @@ class PostgresManager(metaclass=SingletonMeta):
             for statement in KNOWLEDGE_FILE_TASK_OWNER_SCHEMA_STATEMENTS:
                 await conn.execute(text(statement))
 
+    async def upgrade_business_schema_v7_to_v8(self) -> None:
+        """增加可组合业务角色，并按旧平台角色回填最小默认值。"""
+        self._check_initialized()
+        async with self.async_engine.begin() as conn:
+            for statement in BUSINESS_ROLE_SCHEMA_STATEMENTS:
+                await conn.execute(text(statement))
+
     async def drop_tables(self):
         """删除所有表（慎用！）"""
         self._check_initialized()
@@ -920,6 +959,7 @@ class PostgresManager(metaclass=SingletonMeta):
         """确保业务 schema 包含后续新增字段（运行时 schema 演进）。"""
         self._check_initialized()
         stmts = [
+            *BUSINESS_ROLE_SCHEMA_STATEMENTS,
             "ALTER TABLE IF EXISTS skills ADD COLUMN IF NOT EXISTS tool_dependencies JSONB DEFAULT '[]'::jsonb",
             "ALTER TABLE IF EXISTS skills ADD COLUMN IF NOT EXISTS mcp_dependencies JSONB DEFAULT '[]'::jsonb",
             "ALTER TABLE IF EXISTS skills ADD COLUMN IF NOT EXISTS skill_dependencies JSONB DEFAULT '[]'::jsonb",

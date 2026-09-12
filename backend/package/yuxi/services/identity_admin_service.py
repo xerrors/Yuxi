@@ -6,6 +6,7 @@ from fastapi import Request
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from yuxi.permissions import BusinessRole
 from yuxi.repositories.department_repository import DepartmentRepository
 from yuxi.repositories.user_repository import UserRepository
 from yuxi.services.operation_log_service import log_operation
@@ -91,6 +92,7 @@ async def create_department_with_admin(
                     "phone_number": admin_phone,
                     "password_hash": password_hash,
                     "role": "admin",
+                    "business_roles": [BusinessRole.BUSINESS_ADMIN],
                     "department_id": department.id,
                 }
             )
@@ -144,6 +146,7 @@ async def initialize_system_admin(
                     "avatar": None,
                     "password_hash": password_hash,
                     "role": "superadmin",
+                    "business_roles": [BusinessRole.TECHNICAL_ADMIN],
                     "department_id": department.id,
                     "last_login": utc_now_naive(),
                 }
