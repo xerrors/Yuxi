@@ -198,7 +198,8 @@ router.beforeEach(async (to) => {
   if (
     to.matched.some((record) => record.meta.requiresKnowledgeManagement) &&
     !isAdmin &&
-    !userStore.canManagePersonalKnowledge
+    !userStore.canManagePersonalKnowledge &&
+    !userStore.canManageTeamKnowledge
   )
     return '/agent'
 

@@ -136,6 +136,56 @@ def test_global_knowledge_base_share_remains_manage_for_admin():
     assert resolve_knowledge_base_permission(_user(role="user"), resource) == ResourcePermission.READ
 
 
+def test_team_knowledge_counselor_owner_is_read_only():
+    resource = _resource(
+        created_by="counselor",
+        share_config={
+            "version": 2,
+            "read_scope": {"access_level": "global"},
+            "manage_scope": {"access_level": "global"},
+        },
+    )
+    counselor = _user(uid="counselor")
+    counselor.business_roles = ["counselor"]
+
+    assert resolve_knowledge_base_permission(counselor, resource) == ResourcePermission.READ
+
+
+def test_team_knowledge_business_admin_manages_only_authorized_scope():
+    resource = _resource(
+        share_config={
+            "version": 2,
+            "read_scope": {"access_level": "department", "department_ids": [1]},
+            "manage_scope": None,
+        }
+    )
+    business_admin = _user(role="user")
+    business_admin.business_roles = ["business_admin"]
+    counselor = _user(role="user")
+    counselor.business_roles = ["counselor"]
+    no_capability = _user(role="user")
+    no_capability.business_roles = []
+
+    assert resolve_knowledge_base_permission(business_admin, resource) == ResourcePermission.MANAGE
+    assert resolve_knowledge_base_permission(counselor, resource) == ResourcePermission.READ
+    assert resolve_knowledge_base_permission(no_capability, resource) == ResourcePermission.NONE
+    business_admin.department_id = 2
+    assert resolve_knowledge_base_permission(business_admin, resource) == ResourcePermission.NONE
+    counselor.department_id = 2
+    assert resolve_knowledge_base_permission(counselor, resource) == ResourcePermission.NONE
+
+
+def test_team_business_admin_cannot_read_another_personal_knowledge_base():
+    resource = _resource(
+        created_by="counselor",
+        share_config={"version": 2, "read_scope": None, "manage_scope": None},
+    )
+    business_admin = _user(uid="business-admin", role="user")
+    business_admin.business_roles = ["business_admin"]
+
+    assert resolve_knowledge_base_permission(business_admin, resource) == ResourcePermission.NONE
+
+
 def test_legacy_permission_config_is_rejected_at_runtime():
     from yuxi.permissions import normalize_permission_config
 

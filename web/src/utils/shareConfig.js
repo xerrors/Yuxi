@@ -3,6 +3,11 @@ export function isPersonalKnowledgeConfig(config) {
   return config?.version === 2 && config.read_scope === null && config.manage_scope === null
 }
 
+/** 按共享配置把知识库归入团队或个人入口。 */
+export function isKnowledgeBaseInScope(database, scope) {
+  return isPersonalKnowledgeConfig(database.share_config) === (scope === 'mine')
+}
+
 export function getShareConfigLabel(shareConfig) {
   const config = shareConfig || {}
   const readScope = config.version === 2 ? config.read_scope : config

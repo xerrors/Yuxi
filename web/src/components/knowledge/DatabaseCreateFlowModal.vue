@@ -196,16 +196,10 @@
               </div>
             </div>
           </div>
-          <div v-if="userStore.isAdmin" class="form-section">
-            <label>可见范围</label>
-            <a-radio-group v-model:value="personalSelected">
-              <a-radio :value="false">共享知识库</a-radio>
-              <a-radio :value="true">个人知识库</a-radio>
-            </a-radio-group>
-          </div>
           <p v-if="isPersonal">仅本人可见。创建后不能修改为共享知识库。</p>
+          <p v-else-if="!userStore.isAdmin">本部门辅导人员可读，业务管理员可维护。</p>
           <ShareConfigForm
-            v-else
+            v-else-if="userStore.isAdmin"
             ref="shareConfigFormRef"
             v-model="shareConfig"
             :auto-select-user-dept="true"
@@ -252,14 +246,14 @@ import {
 
 const props = defineProps({
   open: { type: Boolean, default: false },
-  supportedKbTypes: { type: Object, default: () => ({}) }
+  supportedKbTypes: { type: Object, default: () => ({}) },
+  defaultPersonal: { type: Boolean, default: false }
 })
 const emit = defineEmits(['update:open', 'completed'])
 const configStore = useConfigStore()
 const databaseStore = useDatabaseStore()
 const userStore = useUserStore()
-const personalSelected = ref(false)
-const isPersonal = computed(() => !userStore.isAdmin || personalSelected.value)
+const isPersonal = computed(() => props.defaultPersonal)
 const {
   chunkPresetSelectOptions: chunkPresetOptions,
   chunkPresetLoading,
@@ -305,8 +299,14 @@ const reset = () => {
   Object.assign(form, createEmptyDatabaseForm(configStore.config?.embed_model))
   const firstType = Object.keys(props.supportedKbTypes)[0] || ''
   Object.assign(form, selectDatabaseType(form, firstType, props.supportedKbTypes[firstType]))
-  shareConfig.value = createDefaultShareConfig()
-  personalSelected.value = false
+  shareConfig.value =
+    !isPersonal.value && !userStore.isAdmin
+      ? {
+          version: 2,
+          read_scope: { access_level: 'department', department_ids: [userStore.departmentId] },
+          manage_scope: null
+        }
+      : createDefaultShareConfig()
   currentStep.value = 0
 }
 

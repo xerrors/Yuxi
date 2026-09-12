@@ -12,6 +12,11 @@
 
     <PageShoulder v-model:search="searchQuery" search-placeholder="搜索知识库...">
       <template #filters>
+        <a-segmented
+          v-model:value="knowledgeScope"
+          :options="knowledgeScopes"
+          aria-label="知识库分类"
+        />
         <a-select
           v-model:value="typeFilter"
           style="width: 120px"
@@ -26,12 +31,13 @@
       </template>
       <template #actions>
         <a-button
+          v-if="canCreateCurrentScope"
           type="primary"
           class="lucide-icon-btn"
           :disabled="!kbTypes.length"
           @click="state.openNewDatabaseModel = true"
         >
-          <Plus :size="16" /> 新建知识库
+          <Plus :size="16" /> 新建{{ knowledgeScope === 'team' ? '团队' : '个人' }}知识库
         </a-button>
       </template>
     </PageShoulder>
@@ -39,6 +45,7 @@
     <DatabaseCreateFlowModal
       v-model:open="state.openNewDatabaseModel"
       :supported-kb-types="supportedKbTypes"
+      :default-personal="knowledgeScope === 'mine'"
     />
 
     <!-- 加载状态 -->
@@ -49,13 +56,14 @@
 
     <!-- 空状态显示 -->
     <ResourceEmptyState
-      v-else-if="!databases || databases.length === 0"
+      v-else-if="filteredDatabases.length === 0"
       title="暂无知识库"
-      description="创建知识库后，可以上传和维护资料。"
+      :description="emptyDescription"
       :icon="getKbTypeIcon('milvus')"
     >
       <template #actions>
         <a-button
+          v-if="canCreateCurrentScope && !searchQuery && !typeFilter"
           type="primary"
           size="large"
           class="lucide-icon-btn"
@@ -65,7 +73,7 @@
           <template #icon>
             <Plus :size="16" />
           </template>
-          创建知识库
+          创建{{ knowledgeScope === 'team' ? '团队' : '个人' }}知识库
         </a-button>
       </template>
     </ResourceEmptyState>
@@ -133,7 +141,7 @@ import ExtensionCardGrid from '@/components/extensions/ExtensionCardGrid.vue'
 import InfoCard from '@/components/shared/InfoCard.vue'
 import dayjs, { parseToShanghai } from '@/utils/time'
 import { getKbTypeLabel, getKbTypeIcon, getKbTypeColor, kbUtils } from '@/utils/kb_utils'
-import { getShareConfigLabel } from '@/utils/shareConfig'
+import { getShareConfigLabel, isKnowledgeBaseInScope } from '@/utils/shareConfig'
 
 const route = useRoute()
 const router = useRouter()
@@ -153,11 +161,26 @@ const knowledgeViewItems = [
 ]
 
 const kbTypes = computed(() => Object.keys(supportedKbTypes.value))
+const knowledgeScopes = [
+  { label: '团队', value: 'team' },
+  { label: '我的', value: 'mine' }
+]
+const knowledgeScope = ref('team')
+const canCreateCurrentScope = computed(() =>
+  knowledgeScope.value === 'team'
+    ? userStore.isAdmin || userStore.canManageTeamKnowledge
+    : userStore.isAdmin || userStore.canManagePersonalKnowledge
+)
+const emptyDescription = computed(() => {
+  if (searchQuery.value || typeFilter.value) return '没有符合筛选条件的知识库。'
+  if (knowledgeScope.value === 'team') return '暂无可访问的团队知识库。'
+  return '暂无个人知识库。'
+})
 const searchQuery = ref('')
 const typeFilter = ref(null)
 
 const filteredDatabases = computed(() => {
-  let list = databases.value
+  let list = databases.value.filter((database) => isKnowledgeBaseInScope(database, knowledgeScope.value))
   if (searchQuery.value) {
     const q = searchQuery.value.toLowerCase()
     list = list.filter(

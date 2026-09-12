@@ -16,11 +16,12 @@ from yuxi.storage.postgres.models_business import User
 
 
 async def get_knowledge_user(current_user: User = Depends(get_required_user)) -> User:
-    """允许既有管理员及具备个人知识管理能力的辅导人员进入知识管理。"""
-    if current_user.role not in {"admin", "superadmin"} and (
-        BusinessCapability.MANAGE_PERSONAL_KNOWLEDGE not in resolve_business_capabilities(current_user)
+    """允许管理员、辅导人员及业务管理员进入知识管理。"""
+    capabilities = resolve_business_capabilities(current_user)
+    if current_user.role not in {"admin", "superadmin"} and not capabilities.intersection(
+        {BusinessCapability.MANAGE_PERSONAL_KNOWLEDGE, BusinessCapability.MANAGE_TEAM_KNOWLEDGE}
     ):
-        raise HTTPException(status_code=403, detail="需要个人知识库管理权限")
+        raise HTTPException(status_code=403, detail="需要知识库业务权限")
     return current_user
 
 

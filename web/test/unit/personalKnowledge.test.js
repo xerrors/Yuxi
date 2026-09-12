@@ -118,9 +118,9 @@ test('辅导入口不开放工具和评估，个人库隐藏共享编辑并强�
   )
   assert.match(routes, /name: 'ExtensionEvaluationBenchmarkDetail'[\s\S]*?requiresAdmin: true/)
   const create = source('components/knowledge/DatabaseCreateFlowModal.vue')
-  assert.match(create, /!userStore\.isAdmin \|\| personalSelected\.value/)
+  assert.match(create, /const isPersonal = computed\(\(\) => props\.defaultPersonal\)/)
   assert.match(create, /isPersonal\.value \? createPersonalShareConfig\(\) : shareConfig\.value/)
-  assert.match(create, /<ShareConfigForm\s+v-else/)
+  assert.match(create, /<ShareConfigForm\s+v-else-if="userStore\.isAdmin"/)
   assert.match(
     source('views/DataBaseInfoView.vue'),
     /canManageDatabase\.value && !isPersonal\.value && userStore\.isAdmin/

@@ -13,7 +13,10 @@
     <div v-if="!isDetailPage" class="extensions-content">
       <div
         v-if="
-          (userStore.isAdmin || userStore.canManagePersonalKnowledge) && activeTab === 'knowledge'
+          (userStore.isAdmin ||
+            userStore.canManagePersonalKnowledge ||
+            userStore.canManageTeamKnowledge) &&
+          activeTab === 'knowledge'
         "
         class="tab-panel"
       >
@@ -63,7 +66,7 @@ const userExtensionTabs = [{ key: 'skills', label: '技能' }]
 const extensionTabs = computed(() =>
   userStore.isAdmin
     ? adminExtensionTabs.value
-    : userStore.canManagePersonalKnowledge
+    : userStore.canManagePersonalKnowledge || userStore.canManageTeamKnowledge
       ? [{ key: 'knowledge', label: '知识库' }, ...userExtensionTabs]
       : userExtensionTabs
 )
@@ -105,7 +108,7 @@ const activeChildLoading = computed(() => {
 })
 
 watch(
-  () => [route.query.tab, userStore.isAdmin, userStore.canManagePersonalKnowledge],
+  () => [route.query.tab, userStore.isAdmin, userStore.canManagePersonalKnowledge, userStore.canManageTeamKnowledge],
   ([tab]) => {
     const nextTab = normalizeTab(tab)
     if (activeTab.value !== nextTab) activeTab.value = nextTab

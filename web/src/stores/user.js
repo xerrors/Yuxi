@@ -21,6 +21,7 @@ export const useUserStore = defineStore('user', () => {
   const isAdmin = computed(() => userRole.value === 'admin' || userRole.value === 'superadmin')
   const isSuperAdmin = computed(() => userRole.value === 'superadmin')
   const canManagePersonalKnowledge = computed(() => businessRoles.value.includes('counselor'))
+  const canManageTeamKnowledge = computed(() => businessRoles.value.includes('business_admin'))
 
   // 动作
   function applySession(data) {
@@ -235,6 +236,7 @@ export const useUserStore = defineStore('user', () => {
     isAdmin,
     isSuperAdmin,
     canManagePersonalKnowledge,
+    canManageTeamKnowledge,
 
     // 方法
     login,

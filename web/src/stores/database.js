@@ -98,7 +98,7 @@ export const useDatabaseStore = defineStore('database', () => {
     state.listLoading = true
     try {
       const data =
-        userStore.isAdmin || userStore.canManagePersonalKnowledge
+        userStore.isAdmin || userStore.canManagePersonalKnowledge || userStore.canManageTeamKnowledge
           ? await databaseApi.getDatabases()
           : await databaseApi.getAccessibleDatabases()
       if (owner !== userStore.userId) return

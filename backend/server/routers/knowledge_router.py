@@ -34,8 +34,10 @@ from yuxi.knowledge.utils.sample_question_utils import (
 )
 from yuxi.knowledge.utils.url_fetcher import fetch_url_content
 from yuxi.permissions import (
+    BusinessCapability,
     ResourcePermission,
     is_personal_knowledge_base,
+    resolve_business_capabilities,
     resolve_knowledge_base_permission,
 )
 from yuxi.services.knowledge_folder_service import knowledge_folder_service
@@ -261,10 +263,28 @@ async def create_database(
     """创建知识库"""
     if current_user.role not in {"admin", "superadmin"}:
         if kb_type != "milvus":
-            raise HTTPException(status_code=403, detail="个人知识库仅支持本地文档知识库")
-        if share_config is not None and not is_personal_knowledge_base({"share_config": share_config}):
-            raise HTTPException(status_code=403, detail="个人知识库仅本人可见")
-        share_config = {"version": 2, "read_scope": None, "manage_scope": None}
+            raise HTTPException(status_code=403, detail="辅导知识库仅支持本地文档知识库")
+        capabilities = resolve_business_capabilities(current_user)
+        personal = share_config is not None and is_personal_knowledge_base({"share_config": share_config})
+        if share_config is None and BusinessCapability.MANAGE_TEAM_KNOWLEDGE not in capabilities:
+            personal = True
+        if personal:
+            if BusinessCapability.MANAGE_PERSONAL_KNOWLEDGE not in capabilities:
+                raise HTTPException(status_code=403, detail="无权创建个人知识库")
+            share_config = {"version": 2, "read_scope": None, "manage_scope": None}
+        elif BusinessCapability.MANAGE_TEAM_KNOWLEDGE not in capabilities:
+            raise HTTPException(status_code=403, detail="无权创建团队知识库")
+        else:
+            if current_user.department_id is None:
+                raise HTTPException(status_code=400, detail="业务管理员需先加入部门")
+            team_config = {
+                "version": 2,
+                "read_scope": {"access_level": "department", "department_ids": [current_user.department_id]},
+                "manage_scope": None,
+            }
+            if share_config is not None and share_config != team_config:
+                raise HTTPException(status_code=403, detail="业务管理员只能创建本部门团队知识库")
+            share_config = team_config
     logger.debug(
         f"Create database {database_name} with kb_type {kb_type}, "
         f"additional_params {additional_params}, llm_model_spec {llm_model_spec}, "
@@ -432,6 +452,9 @@ async def update_database_info(
     if is_personal_knowledge_base(database_info) and data.share_config is not None:
         if not is_personal_knowledge_base({"share_config": data.share_config}):
             raise HTTPException(status_code=403, detail="个人知识库不能修改共享范围")
+    if current_user.role not in {"admin", "superadmin"} and data.share_config is not None:
+        if not is_personal_knowledge_base(database_info):
+            raise HTTPException(status_code=403, detail="业务管理员不能修改团队共享范围")
     logger.debug(
         f"[update_database_info] 接收到的参数: name={data.name}, llm_model_spec={data.llm_model_spec}, "
         f"additional_params={data.additional_params}, share_config={data.share_config}"

@@ -48,6 +48,7 @@ async def _ensure_knowledge_read_access(current_user: User, kb_id: str) -> None:
             "uid": current_user.uid,
             "role": current_user.role,
             "department_id": current_user.department_id,
+            "business_roles": current_user.business_roles,
         },
         kb_id,
     )

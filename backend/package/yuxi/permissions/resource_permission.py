@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Protocol
 
+from yuxi.permissions.business_roles import BusinessCapability, resolve_business_capabilities
+
 
 class ResourcePermission(StrEnum):
     """资源权限等级，数值顺序用于判断权限是否足够。"""
@@ -207,18 +209,30 @@ def require_resource_permission(
 
 
 def resolve_knowledge_base_permission(user: Any, resource: ShareableResource) -> ResourcePermission:
-    """个人库仅所有者可访问，共享库继续使用既有角色上限。"""
+    """个人库仅所有者维护；团队库按共享范围和业务能力授权。"""
 
     if is_personal_knowledge_base(resource):
         owner = str(_value(resource, "created_by", "") or "")
         if not owner or owner != str(_value(user, "uid", "") or ""):
             return ResourcePermission.NONE
-        from yuxi.permissions.business_roles import BusinessCapability, resolve_business_capabilities
-
         if _value(user, "role") in {"admin", "superadmin"} or (
             BusinessCapability.MANAGE_PERSONAL_KNOWLEDGE in resolve_business_capabilities(user)
         ):
             return ResourcePermission.MANAGE
+        return ResourcePermission.NONE
+
+    if _value(user, "role") == "user":
+        config = normalize_permission_config(_value(resource, "share_config"))
+        readable = scope_matches(user, config["read_scope"]) or (
+            config["read_scope"] is None and scope_matches(user, config["manage_scope"])
+        )
+        if not readable:
+            return ResourcePermission.NONE
+        capabilities = resolve_business_capabilities(user)
+        if BusinessCapability.MANAGE_TEAM_KNOWLEDGE in capabilities:
+            return ResourcePermission.MANAGE
+        if BusinessCapability.READ_AUTHORIZED_TEAM_KNOWLEDGE in capabilities:
+            return ResourcePermission.READ
         return ResourcePermission.NONE
 
     return resolve_resource_permission(
