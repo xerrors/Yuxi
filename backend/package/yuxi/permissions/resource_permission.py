@@ -207,12 +207,36 @@ def require_resource_permission(
 
 
 def resolve_knowledge_base_permission(user: Any, resource: ShareableResource) -> ResourcePermission:
-    """解析知识库权限，普通用户最多只能获得只读权限。"""
+    """个人库仅所有者可访问，共享库继续使用既有角色上限。"""
+
+    if is_personal_knowledge_base(resource):
+        owner = str(_value(resource, "created_by", "") or "")
+        if not owner or owner != str(_value(user, "uid", "") or ""):
+            return ResourcePermission.NONE
+        from yuxi.permissions.business_roles import BusinessCapability, resolve_business_capabilities
+
+        if _value(user, "role") in {"admin", "superadmin"} or (
+            BusinessCapability.MANAGE_PERSONAL_KNOWLEDGE in resolve_business_capabilities(user)
+        ):
+            return ResourcePermission.MANAGE
+        return ResourcePermission.NONE
 
     return resolve_resource_permission(
         user,
         resource,
         KNOWLEDGE_BASE_PERMISSION_POLICY,
+    )
+
+
+def is_personal_knowledge_base(resource: ShareableResource) -> bool:
+    """用既有空共享范围识别仅所有者的个人知识库。"""
+
+    config = _value(resource, "share_config")
+    return (
+        isinstance(config, dict)
+        and config.get("version") == 2
+        and config.get("read_scope") is None
+        and config.get("manage_scope") is None
     )
 
 

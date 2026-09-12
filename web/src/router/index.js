@@ -119,7 +119,7 @@ const router = createRouter({
               meta: {
                 keepAlive: false,
                 requiresAuth: true,
-                requiresAdmin: true
+                requiresKnowledgeManagement: true
               }
             },
             {
@@ -194,6 +194,13 @@ router.beforeEach(async (to) => {
     sessionStorage.setItem('redirect', to.fullPath)
     return '/login'
   }
+
+  if (
+    to.matched.some((record) => record.meta.requiresKnowledgeManagement) &&
+    !isAdmin &&
+    !userStore.canManagePersonalKnowledge
+  )
+    return '/agent'
 
   // 如果路由需要管理员权限但用户不是管理员
   if (requiresAdmin && !isAdmin) {

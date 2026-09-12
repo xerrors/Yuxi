@@ -8,8 +8,19 @@ from server.routers import knowledge_router
 from yuxi.knowledge.read_models import KnowledgeBaseDetail
 from yuxi.services import knowledge_task_service
 from yuxi.services.task_registry import get_task_definition
+from yuxi.permissions import ResourcePermission
 
 pytestmark = pytest.mark.asyncio
+
+
+@pytest.fixture
+def authorized_database_manager(monkeypatch):
+    """隔离上传内容验证测试所不涉及的知识库授权查询。"""
+    async def allow_manage(kb_id, current_user, required):
+        assert required == ResourcePermission.MANAGE
+        return _database_detail()
+
+    monkeypatch.setattr(knowledge_router, "_ensure_database_permission", allow_manage)
 
 
 def _database_detail(**stats) -> KnowledgeBaseDetail:
@@ -108,7 +119,7 @@ async def test_upload_file_rejects_jsonl_uploads():
     upload = UploadFile(filename="dataset.jsonl", file=BytesIO(b'{"query":"hello"}\n'))
 
     with pytest.raises(HTTPException) as exc_info:
-        await knowledge_router.upload_file(upload, kb_id=None, current_user=SimpleNamespace(uid="user_1"))
+        await knowledge_router.upload_file(upload, kb_id=None, current_user=SimpleNamespace(uid="user_1", role="admin"))
 
     assert exc_info.value.status_code == 400
     assert exc_info.value.detail == "Unsupported file type: .jsonl"
@@ -122,7 +133,7 @@ async def test_upload_file_rejects_jsonl_uploads():
     ],
     ids=["upload_file", "mark_it_down"],
 )
-async def test_rejects_oversized_file(monkeypatch, call_upload):
+async def test_rejects_oversized_file(monkeypatch, call_upload, authorized_database_manager):
     monkeypatch.setattr(knowledge_router, "MAX_UPLOAD_SIZE_BYTES", 5)
 
     async def fake_ensure_database_supports_documents(kb_id: str, operation: str) -> None:
@@ -150,7 +161,9 @@ async def test_rejects_oversized_file(monkeypatch, call_upload):
         ("readonly", 400, "只支持检索，不支持文档上传"),
     ],
 )
-async def test_upload_file_fails_before_read_or_minio(monkeypatch, kb_id, status_code, error_detail):
+async def test_upload_file_fails_before_read_or_minio(
+    monkeypatch, kb_id, status_code, error_detail, authorized_database_manager
+):
     calls = {"read": 0, "upload": 0}
 
     async def fake_ensure_database_supports_documents(kb_id: str, operation: str) -> None:
@@ -179,6 +192,29 @@ async def test_upload_file_fails_before_read_or_minio(monkeypatch, kb_id, status
 
     assert exc_info.value.status_code == status_code
     assert calls == {"read": 0, "upload": 0}
+
+
+@pytest.mark.parametrize("kb_id", [None, "private_other"])
+async def test_counselor_upload_rejects_missing_or_foreign_kb_before_read(monkeypatch, kb_id):
+    """没有目标库或无所有权时，不能读取上传内容及写入对象存储。"""
+    async def deny_manage(target, current_user, required):
+        assert target == "private_other"
+        assert required == ResourcePermission.MANAGE
+        raise HTTPException(status_code=403, detail="无权操作该知识库")
+
+    async def forbidden_side_effect(*args, **kwargs):
+        pytest.fail("授权拒绝后不得读取文件或写入对象存储")
+
+    monkeypatch.setattr(knowledge_router, "_ensure_database_permission", deny_manage)
+    monkeypatch.setattr(knowledge_router, "read_upload_with_limit", forbidden_side_effect)
+    monkeypatch.setattr(knowledge_router, "aupload_file_to_minio", forbidden_side_effect)
+    with pytest.raises(HTTPException) as exc_info:
+        await knowledge_router.upload_file(
+            UploadFile(filename="notes.txt", file=BytesIO(b"private")),
+            kb_id=kb_id,
+            current_user=SimpleNamespace(uid="counselor", role="user", business_roles=["counselor"]),
+        )
+    assert exc_info.value.status_code == (400 if kb_id is None else 403)
 
 
 async def test_index_documents_uses_uid_for_operator(monkeypatch):

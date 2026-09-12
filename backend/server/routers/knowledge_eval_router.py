@@ -21,7 +21,7 @@ from yuxi.storage.postgres.models_business import User
 from yuxi.utils import logger
 
 
-evaluation = APIRouter(prefix="/evaluation", tags=["evaluation"])
+evaluation = APIRouter(prefix="/evaluation", tags=["evaluation"], dependencies=[Depends(get_admin_user)])
 
 
 class GenerateDatasetRequest(BaseModel):

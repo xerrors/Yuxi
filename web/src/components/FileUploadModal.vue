@@ -557,37 +557,39 @@ const canSubmit = computed(() => {
   return successUploadCount.value > 0 && !hasPendingUploads.value
 })
 
-const uploadModeOptions = computed(() => [
-  {
-    value: 'file',
-    label: h('div', { class: 'segmented-option' }, [
-      h(FileUp, { size: 16, class: 'option-icon' }),
-      h('span', { class: 'option-text' }, '上传文件')
-    ])
-  },
-  {
-    value: 'folder',
-    label: h('div', { class: 'segmented-option' }, [
-      h(FolderUp, { size: 16, class: 'option-icon' }),
-      h('span', { class: 'option-text' }, '上传文件夹')
-    ])
-  },
-  {
-    value: 'url',
-    label: h('div', { class: 'segmented-option' }, [
-      h(Link, { size: 16, class: 'option-icon' }),
-      h('span', { class: 'option-text' }, '解析 URL')
-    ])
-  },
-  {
-    value: 'workspace',
-    label: h('div', { class: 'segmented-option' }, [
-      h(FolderOpen, { size: 16, class: 'option-icon' }),
-      h('span', { class: 'option-text' }, '个人空间')
-    ])
-  }
-])
-
+const uploadUserStore = useUserStore()
+const uploadModeOptions = computed(() =>
+  [
+    {
+      value: 'file',
+      label: h('div', { class: 'segmented-option' }, [
+        h(FileUp, { size: 16, class: 'option-icon' }),
+        h('span', { class: 'option-text' }, '上传文件')
+      ])
+    },
+    {
+      value: 'folder',
+      label: h('div', { class: 'segmented-option' }, [
+        h(FolderUp, { size: 16, class: 'option-icon' }),
+        h('span', { class: 'option-text' }, '上传文件夹')
+      ])
+    },
+    {
+      value: 'url',
+      label: h('div', { class: 'segmented-option' }, [
+        h(Link, { size: 16, class: 'option-icon' }),
+        h('span', { class: 'option-text' }, '解析 URL')
+      ])
+    },
+    {
+      value: 'workspace',
+      label: h('div', { class: 'segmented-option' }, [
+        h(FolderOpen, { size: 16, class: 'option-icon' }),
+        h('span', { class: 'option-text' }, '个人空间')
+      ])
+    }
+  ].filter((option) => uploadUserStore.isAdmin || option.value !== 'url')
+)
 watch(uploadMode, (val) => {
   isFolderUpload.value = val === 'folder'
   // 切换模式时清空已选内容，避免混淆

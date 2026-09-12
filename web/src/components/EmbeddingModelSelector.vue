@@ -42,6 +42,7 @@
 
 <script setup>
 import { computed, ref } from 'vue'
+import { useUserStore } from '@/stores/user'
 import { modelProviderApi } from '@/apis/system_api'
 import { useModelStatus } from '@/composables/useModelStatus'
 
@@ -71,6 +72,7 @@ const props = defineProps({
 
 const emit = defineEmits(['update:value', 'change'])
 
+const userStore = useUserStore()
 const v2Models = ref({})
 const { getStatusIcon, getStatusClass, getStatusTooltip, checkV2Statuses } = useModelStatus()
 
@@ -91,7 +93,7 @@ const fetchV2Models = async () => {
     const response = await modelProviderApi.getV2Models('embedding')
     if (response.success) {
       v2Models.value = response.data || {}
-      await checkV2ModelStatuses()
+      if (userStore.isAdmin) await checkV2ModelStatuses()
     }
   } catch (error) {
     console.error('获取 embedding 模型失败:', error)

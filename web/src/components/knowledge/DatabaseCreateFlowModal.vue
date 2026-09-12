@@ -141,8 +141,15 @@
             <label>知识库描述</label>
             <small>描述会帮助智能体判断何时使用这个知识库。</small>
             <AiTextarea
+              v-if="userStore.isAdmin"
               v-model="form.description"
               :name="form.name"
+              placeholder="说明包含的内容、适用任务和使用限制"
+              :auto-size="{ minRows: 3, maxRows: 8 }"
+            />
+            <a-textarea
+              v-else
+              v-model:value="form.description"
               placeholder="说明包含的内容、适用任务和使用限制"
               :auto-size="{ minRows: 3, maxRows: 8 }"
             />
@@ -189,7 +196,16 @@
               </div>
             </div>
           </div>
+          <div v-if="userStore.isAdmin" class="form-section">
+            <label>可见范围</label>
+            <a-radio-group v-model:value="personalSelected">
+              <a-radio :value="false">共享知识库</a-radio>
+              <a-radio :value="true">个人知识库</a-radio>
+            </a-radio-group>
+          </div>
+          <p v-if="isPersonal">仅本人可见。创建后不能修改为共享知识库。</p>
           <ShareConfigForm
+            v-else
             ref="shareConfigFormRef"
             v-model="shareConfig"
             :auto-select-user-dept="true"
@@ -222,11 +238,13 @@ import EmbeddingModelSelector from '@/components/EmbeddingModelSelector.vue'
 import ShareConfigForm from '@/components/ShareConfigForm.vue'
 import { useChunkPresetOptions } from '@/composables/useChunkPresetOptions'
 import { useConfigStore } from '@/stores/config'
+import { useUserStore } from '@/stores/user'
 import { useDatabaseStore } from '@/stores/database'
 import { getKbTypeIcon, getKbTypeLabel } from '@/utils/kb_utils'
 import {
   buildDatabaseRequest,
   createDefaultShareConfig,
+  createPersonalShareConfig,
   createEmptyDatabaseForm,
   selectDatabaseType,
   validateDatabaseConfig
@@ -239,6 +257,9 @@ const props = defineProps({
 const emit = defineEmits(['update:open', 'completed'])
 const configStore = useConfigStore()
 const databaseStore = useDatabaseStore()
+const userStore = useUserStore()
+const personalSelected = ref(false)
+const isPersonal = computed(() => !userStore.isAdmin || personalSelected.value)
 const {
   chunkPresetSelectOptions: chunkPresetOptions,
   chunkPresetLoading,
@@ -285,6 +306,7 @@ const reset = () => {
   const firstType = Object.keys(props.supportedKbTypes)[0] || ''
   Object.assign(form, selectDatabaseType(form, firstType, props.supportedKbTypes[firstType]))
   shareConfig.value = createDefaultShareConfig()
+  personalSelected.value = false
   currentStep.value = 0
 }
 
@@ -333,7 +355,7 @@ const handleCreate = async () => {
   const request = buildDatabaseRequest(
     form,
     selectedTypeInfo.value,
-    shareConfig.value,
+    isPersonal.value ? createPersonalShareConfig() : shareConfig.value,
     configStore.config?.embed_model
   )
   try {

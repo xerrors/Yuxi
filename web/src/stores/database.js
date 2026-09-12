@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, reactive } from 'vue'
+import { ref, reactive, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { databaseApi, documentApi, queryApi } from '@/apis/knowledge_api'
 import { useTaskerStore } from '@/stores/tasker'
@@ -94,11 +94,14 @@ export const useDatabaseStore = defineStore('database', () => {
   // Actions
   // 管理员获取所有知识库，普通用户获取有权限访问的知识库
   async function loadDatabases() {
+    const owner = userStore.userId
     state.listLoading = true
     try {
-      const data = userStore.isAdmin
-        ? await databaseApi.getDatabases()
-        : await databaseApi.getAccessibleDatabases()
+      const data =
+        userStore.isAdmin || userStore.canManagePersonalKnowledge
+          ? await databaseApi.getDatabases()
+          : await databaseApi.getAccessibleDatabases()
+      if (owner !== userStore.userId) return
       const list = data?.databases || []
       databases.value = list.sort((a, b) => {
         const timeA = parseToShanghai(a.created_at)
@@ -149,6 +152,8 @@ export const useDatabaseStore = defineStore('database', () => {
   async function getDatabaseInfo(id, skipQueryParams = false, isBackground = false) {
     const kbIdValue = id || kbId.value
     if (!kbIdValue) return
+    const owner = userStore.userId
+    if (!isBackground) database.value = {}
 
     if (!isBackground) {
       state.lock = true
@@ -156,6 +161,7 @@ export const useDatabaseStore = defineStore('database', () => {
     }
     try {
       const data = await databaseApi.getDatabaseInfo(kbIdValue)
+      if (owner !== userStore.userId || (kbId.value && kbId.value !== kbIdValue)) return
       const currentFiles = database.value.files || {}
       database.value = { ...data, files: data?.files || currentFiles }
       ensureAutoRefreshForProcessing(data?.files, data?.stats)
@@ -672,12 +678,14 @@ export const useDatabaseStore = defineStore('database', () => {
   }
 
   async function loadQueryParams(id) {
+    const owner = userStore.userId
     const kbIdValue = id || kbId.value
     if (!kbIdValue) return
 
     state.queryParamsLoading = true
     try {
       const response = await queryApi.getKnowledgeBaseQueryParams(kbIdValue)
+      if (owner !== userStore.userId || (kbId.value && kbId.value !== kbIdValue)) return
       queryParams.value = response.params?.options || []
 
       // Create a set of currently supported parameter keys
@@ -815,6 +823,23 @@ export const useDatabaseStore = defineStore('database', () => {
 
     return ''
   }
+
+  // 账号切换立即清除个人资料，并让在途文件请求失效。
+  watch(
+    () => userStore.userId,
+    () => {
+      stopAutoRefresh()
+      databases.value = []
+      database.value = {}
+      kbId.value = null
+      queryParams.value = []
+      Object.keys(meta).forEach((key) => delete meta[key])
+      selectedRowKeys.value = []
+      closeFileDetail()
+      resetFileBrowser()
+    },
+    { flush: 'sync' }
+  )
 
   return {
     databases,

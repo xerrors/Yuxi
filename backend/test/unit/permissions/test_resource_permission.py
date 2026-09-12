@@ -100,12 +100,27 @@ def test_user_agent_and_skill_scope_preserves_user_management():
     assert resolve_skill_permission(_user(), resource) == ResourcePermission.MANAGE
 
 
-def test_knowledge_base_owner_and_superadmin_can_manage():
+def test_personal_knowledge_base_only_owner_can_manage():
     resource = _resource(created_by="owner", share_config={"version": 2})
 
     assert resolve_knowledge_base_permission(_user(uid="owner"), resource) == ResourcePermission.MANAGE
     assert resolve_knowledge_base_permission(_user(uid="owner", role="admin"), resource) == ResourcePermission.MANAGE
-    assert resolve_knowledge_base_permission(_user(role="superadmin"), resource) == ResourcePermission.MANAGE
+    assert resolve_knowledge_base_permission(_user(role="superadmin"), resource) == ResourcePermission.NONE
+    assert resolve_knowledge_base_permission(_user(uid="other"), resource) == ResourcePermission.NONE
+
+
+def test_personal_knowledge_base_requires_owner_business_capability():
+    resource = _resource(created_by="owner", share_config={"version": 2, "read_scope": None, "manage_scope": None})
+    owner = _user(uid="owner")
+    owner.business_roles = []
+    assert resolve_knowledge_base_permission(owner, resource) == ResourcePermission.NONE
+    owner.business_roles = ["counselor"]
+    assert resolve_knowledge_base_permission(owner, resource) == ResourcePermission.MANAGE
+
+
+def test_personal_knowledge_base_without_owner_is_inaccessible():
+    resource = _resource(created_by="", share_config={"version": 2})
+    assert resolve_knowledge_base_permission(_user(uid=""), resource) == ResourcePermission.NONE
 
 
 def test_global_knowledge_base_share_remains_manage_for_admin():

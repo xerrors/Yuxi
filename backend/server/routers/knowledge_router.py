@@ -18,6 +18,7 @@ from yuxi.knowledge.read_models import KnowledgeBaseDetail
 from yuxi.knowledge.parser.capabilities import SUPPORTED_FILE_EXTENSIONS, is_supported_file_extension
 from yuxi.knowledge.runtime import knowledge_base
 from yuxi.knowledge.utils import calculate_content_hash, is_minio_url, params_for_uploaded_document, parse_minio_url
+from yuxi.knowledge.utils.kb_utils import validate_uploaded_document_source
 from yuxi.knowledge.utils.mindmap_utils import (
     batch_remove_files_from_mindmap,
     generate_database_mindmap,
@@ -34,6 +35,7 @@ from yuxi.knowledge.utils.sample_question_utils import (
 from yuxi.knowledge.utils.url_fetcher import fetch_url_content
 from yuxi.permissions import (
     ResourcePermission,
+    is_personal_knowledge_base,
     resolve_knowledge_base_permission,
 )
 from yuxi.services.knowledge_folder_service import knowledge_folder_service
@@ -49,6 +51,7 @@ from server.utils.auth_middleware import get_admin_user, get_db, get_required_us
 from sqlalchemy.ext.asyncio import AsyncSession
 from server.utils.knowledge_response import serialize_knowledge_base, serialize_knowledge_base_list
 from server.utils.knowledge_permissions import (
+    get_knowledge_user,
     ensure_knowledge_base_permission as _ensure_database_permission,
     require_knowledge_base_manage,
     require_knowledge_base_read,
@@ -156,8 +159,10 @@ async def _delete_document_storage_objects(kb_id: str, doc_id: str, file_path: s
 
 
 async def _require_manage_permission_if_kb_id(kb_id: str | None, current_user: User) -> None:
-    """当请求携带 kb_id 时，校验当前用户对该知识库的管理权限。"""
-    if kb_id and getattr(current_user, "role", None):
+    """辅导人员上传必须指定知识库，指定后统一校验管理权限。"""
+    if not kb_id and current_user.role not in {"admin", "superadmin"}:
+        raise HTTPException(status_code=400, detail="请选择目标知识库")
+    if kb_id:
         await _ensure_database_permission(kb_id, current_user, ResourcePermission.MANAGE)
 
 
@@ -179,7 +184,7 @@ def _ensure_document_params(params: dict | None) -> dict:
     return params
 
 
-def _validate_uploaded_document_items(items: list[str], params: dict) -> None:
+def _validate_uploaded_document_items(items: list[str], params: dict, kb_id: str) -> None:
     if not items:
         raise HTTPException(status_code=400, detail="items must not be empty")
 
@@ -200,6 +205,14 @@ def _validate_uploaded_document_items(items: list[str], params: dict) -> None:
             raise HTTPException(status_code=400, detail="items must only contain non-empty strings")
         if not is_minio_url(item):
             raise HTTPException(status_code=400, detail="File source must be a MinIO URL")
+
+        try:
+            validate_uploaded_document_source(item, kb_id)
+            preprocessed = preprocessed_map.get(item) if isinstance(preprocessed_map, dict) else None
+            if isinstance(preprocessed, dict) and "path" in preprocessed:
+                validate_uploaded_document_source(preprocessed["path"], kb_id)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
 
         has_content_hash = isinstance(content_hashes, dict) and bool(content_hashes.get(item))
         preprocessed = preprocessed_map.get(item) if isinstance(preprocessed_map, dict) else None
@@ -225,7 +238,7 @@ async def _has_running_graph_build_task(kb_id: str) -> bool:
 
 
 @knowledge.get("/databases")
-async def get_databases(current_user: User = Depends(get_admin_user)):
+async def get_databases(current_user: User = Depends(get_knowledge_user)):
     """获取所有知识库（根据用户权限过滤）"""
     try:
         return serialize_knowledge_base_list(await knowledge_base.get_databases_by_uid(current_user.uid))
@@ -243,9 +256,15 @@ async def create_database(
     additional_params: dict | None = Body(None),
     llm_model_spec: str | None = Body(None),
     share_config: dict | None = Body(None),
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_knowledge_user),
 ):
     """创建知识库"""
+    if current_user.role not in {"admin", "superadmin"}:
+        if kb_type != "milvus":
+            raise HTTPException(status_code=403, detail="个人知识库仅支持本地文档知识库")
+        if share_config is not None and not is_personal_knowledge_base({"share_config": share_config}):
+            raise HTTPException(status_code=403, detail="个人知识库仅本人可见")
+        share_config = {"version": 2, "read_scope": None, "manage_scope": None}
     logger.debug(
         f"Create database {database_name} with kb_type {kb_type}, "
         f"additional_params {additional_params}, llm_model_spec {llm_model_spec}, "
@@ -409,6 +428,10 @@ async def update_database_info(
     current_user: User = Depends(require_knowledge_base_manage),
 ):
     """更新知识库信息"""
+    database_info = await knowledge_base.get_database_info(kb_id)
+    if is_personal_knowledge_base(database_info) and data.share_config is not None:
+        if not is_personal_knowledge_base({"share_config": data.share_config}):
+            raise HTTPException(status_code=403, detail="个人知识库不能修改共享范围")
     logger.debug(
         f"[update_database_info] 接收到的参数: name={data.name}, llm_model_spec={data.llm_model_spec}, "
         f"additional_params={data.additional_params}, share_config={data.share_config}"
@@ -726,7 +749,7 @@ async def add_documents(
     if content_type != "file":
         raise HTTPException(status_code=400, detail=f"Unsupported content_type: {content_type}")
 
-    _validate_uploaded_document_items(items, params)
+    _validate_uploaded_document_items(items, params, kb_id)
 
     try:
         database = await knowledge_base.get_database_info(kb_id)
@@ -768,7 +791,7 @@ async def add_uploaded_documents(
     if content_type != "file":
         raise HTTPException(status_code=400, detail=f"Unsupported content_type: {content_type}")
 
-    _validate_uploaded_document_items(payload.items, params)
+    _validate_uploaded_document_items(payload.items, params, kb_id)
 
     added_items: list[dict] = []
     failed_items: list[dict] = []
@@ -1549,7 +1572,7 @@ async def fetch_url(
 @knowledge.post("/files/import-workspace")
 async def import_workspace_files(
     payload: WorkspaceImportRequest,
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_knowledge_user),
 ):
     """将当前用户工作区文件导入 MinIO，返回与普通文件上传一致的预处理结果。"""
     kb_id = payload.kb_id.strip()
@@ -1613,14 +1636,14 @@ async def import_workspace_files(
 async def upload_file(
     file: UploadFile = File(...),
     kb_id: str | None = Query(None),
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_knowledge_user),
 ):
     """上传文件"""
     if not file.filename:
         raise HTTPException(status_code=400, detail="No selected file")
 
+    await _require_manage_permission_if_kb_id(kb_id, current_user)
     if kb_id:
-        await _require_manage_permission_if_kb_id(kb_id, current_user)
         await _ensure_database_supports_documents(kb_id, "文档上传")
 
     logger.debug(f"Received upload file with filename: {file.filename}")
@@ -1685,7 +1708,7 @@ async def upload_file(
 
 
 @knowledge.get("/files/supported-types")
-async def get_supported_file_types(current_user: User = Depends(get_admin_user)):
+async def get_supported_file_types(current_user: User = Depends(get_knowledge_user)):
     """获取当前支持的文件类型"""
     return {"message": "success", "file_types": sorted(SUPPORTED_FILE_EXTENSIONS)}
 
@@ -1733,10 +1756,12 @@ async def mark_it_down(file: UploadFile = File(...), current_user: User = Depend
 
 
 @knowledge.get("/types")
-async def get_knowledge_base_types(current_user: User = Depends(get_admin_user)):
+async def get_knowledge_base_types(current_user: User = Depends(get_knowledge_user)):
     """获取支持的知识库类型"""
     try:
         kb_types = knowledge_base.get_supported_kb_types()
+        if current_user.role not in {"admin", "superadmin"}:
+            kb_types = {key: value for key, value in kb_types.items() if key == "milvus"}
         return {"kb_types": kb_types, "message": "success"}
     except Exception as e:
         logger.error(f"获取知识库类型失败 {e}, {traceback.format_exc()}")
@@ -1744,7 +1769,7 @@ async def get_knowledge_base_types(current_user: User = Depends(get_admin_user))
 
 
 @knowledge.get("/chunk-presets")
-async def get_knowledge_chunk_presets(current_user: User = Depends(get_admin_user)):
+async def get_knowledge_chunk_presets(current_user: User = Depends(get_knowledge_user)):
     """获取支持的知识库分块策略"""
     return {"chunk_presets": get_chunk_preset_options(), "message": "success"}
 

@@ -11,7 +11,12 @@
     />
 
     <div v-if="!isDetailPage" class="extensions-content">
-      <div v-if="userStore.isAdmin && activeTab === 'knowledge'" class="tab-panel">
+      <div
+        v-if="
+          (userStore.isAdmin || userStore.canManagePersonalKnowledge) && activeTab === 'knowledge'
+        "
+        class="tab-panel"
+      >
         <DataBaseView ref="knowledgeRef" embedded />
       </div>
       <div v-if="userStore.isAdmin && activeTab === 'tools'" class="tab-panel">
@@ -56,7 +61,11 @@ const adminExtensionTabs = computed(() => [
 ])
 const userExtensionTabs = [{ key: 'skills', label: '技能' }]
 const extensionTabs = computed(() =>
-  userStore.isAdmin ? adminExtensionTabs.value : userExtensionTabs
+  userStore.isAdmin
+    ? adminExtensionTabs.value
+    : userStore.canManagePersonalKnowledge
+      ? [{ key: 'knowledge', label: '知识库' }, ...userExtensionTabs]
+      : userExtensionTabs
 )
 const allowedTabKeys = computed(() => extensionTabs.value.map((tab) => tab.key))
 const defaultTabKey = computed(() => extensionTabs.value[0]?.key || 'skills')
@@ -96,7 +105,7 @@ const activeChildLoading = computed(() => {
 })
 
 watch(
-  () => [route.query.tab, userStore.isAdmin],
+  () => [route.query.tab, userStore.isAdmin, userStore.canManagePersonalKnowledge],
   ([tab]) => {
     const nextTab = normalizeTab(tab)
     if (activeTab.value !== nextTab) activeTab.value = nextTab

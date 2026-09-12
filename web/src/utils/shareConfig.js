@@ -1,8 +1,13 @@
+/** 判断知识库是否固定为个人可见。 */
+export function isPersonalKnowledgeConfig(config) {
+  return config?.version === 2 && config.read_scope === null && config.manage_scope === null
+}
+
 export function getShareConfigLabel(shareConfig) {
   const config = shareConfig || {}
   const readScope = config.version === 2 ? config.read_scope : config
   const manageScope = config.manage_scope
-  if (config.version === 2 && !config.read_scope && !manageScope) return '仅所有者'
+  if (config.version === 2 && !config.read_scope && !manageScope) return '仅本人可见'
   const scopeLabel = (scope) => {
     if (!scope) return '无'
     if (scope.access_level === 'global') return '全局'

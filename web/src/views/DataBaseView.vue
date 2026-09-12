@@ -51,7 +51,7 @@
     <ResourceEmptyState
       v-else-if="!databases || databases.length === 0"
       title="暂无知识库"
-      description="创建知识库后，可以上传文件并配置检索、图谱和评估能力。"
+      description="创建知识库后，可以上传和维护资料。"
       :icon="getKbTypeIcon('milvus')"
     >
       <template #actions>
@@ -120,6 +120,7 @@
 import { ref, onMounted, reactive, watch, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
+import { useUserStore } from '@/stores/user'
 import { useDatabaseStore } from '@/stores/database'
 import { Copy, Pencil, Plus, Trash2 } from '@lucide/vue'
 import { message, Modal } from 'ant-design-vue'
@@ -137,6 +138,7 @@ import { getShareConfigLabel } from '@/utils/shareConfig'
 const route = useRoute()
 const router = useRouter()
 const databaseStore = useDatabaseStore()
+const userStore = useUserStore()
 
 const props = defineProps({
   embedded: { type: Boolean, default: false }
@@ -181,7 +183,9 @@ const supportedKbTypes = ref({})
 const loadSupportedKbTypes = async () => {
   try {
     const data = await typeApi.getKnowledgeBaseTypes()
-    supportedKbTypes.value = data.kb_types || {}
+    supportedKbTypes.value = userStore.isAdmin
+      ? data.kb_types || {}
+      : Object.fromEntries(Object.entries(data.kb_types || {}).filter(([key]) => key === 'milvus'))
   } catch (error) {
     console.error('加载知识库类型失败:', error)
     supportedKbTypes.value = {}

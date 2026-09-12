@@ -1,3 +1,10 @@
+/** 创建仅所有者可访问的个人知识库配置。 */
+export const createPersonalShareConfig = () => ({
+  version: 2,
+  read_scope: null,
+  manage_scope: null
+})
+
 export const createDefaultShareConfig = () => ({
   version: 2,
   read_scope: { access_level: 'global', department_ids: [], user_uids: [] },

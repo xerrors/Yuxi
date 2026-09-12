@@ -207,8 +207,8 @@ class KnowledgeBaseManager:
                 share_config,
                 strict=user_uid is not None or department_id is not None,
             )
-            if normalized["read_scope"] is None and (user_uid is not None or department_id is not None):
-                raise ValueError("知识库必须设置读取范围")
+            if normalized["read_scope"] is None and normalized["manage_scope"] is not None:
+                raise ValueError("共享知识库必须设置读取范围")
             read_scope = normalized["read_scope"]
             if read_scope and read_scope["access_level"] == "department" and department_id is not None:
                 read_scope["department_ids"] = sorted({*read_scope["department_ids"], int(department_id)})
@@ -335,10 +335,6 @@ class KnowledgeBaseManager:
         Returns:
             bool: 是否有权限
         """
-        # 超级管理员有权访问所有
-        if user.get("role") == "superadmin":
-            return True
-
         from yuxi.repositories.knowledge_base_repository import KnowledgeBaseRepository
 
         kb_repo = KnowledgeBaseRepository()
@@ -397,6 +393,7 @@ class KnowledgeBaseManager:
                 "uid": user.uid,
                 "role": user.role,
                 "department_id": user.department_id,
+                "business_roles": user.business_roles,
             }
 
         user_role = user_info.get("role")

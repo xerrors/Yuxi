@@ -68,6 +68,10 @@ async def prepare_item_metadata(item: str, content_type: str, kb_id: str, params
         kb_id: 数据库ID
         params: 处理参数，可选
     """
+    if content_type != "file":
+        raise ValueError(f"Unsupported content_type: {content_type}")
+    validate_uploaded_document_source(item, kb_id)
+
     # 检查是否有预处理信息 (针对 URL 转 HTML 文件的情况)
     if params and "_preprocessed_map" in params and item in params["_preprocessed_map"]:
         pre_info = params["_preprocessed_map"][item]
@@ -83,6 +87,7 @@ async def prepare_item_metadata(item: str, content_type: str, kb_id: str, params
 
         file_type = "html"  # 强制转换为 html 类型，以便后续作为文件处理
         item_path = pre_info["path"]  # MinIO path
+        validate_uploaded_document_source(item_path, kb_id)
         content_hash = pre_info["content_hash"]
 
         # 使用 item(url) 生成 ID，保证同一 URL 即使多次添加 ID 也不同（配合 time）
@@ -166,6 +171,24 @@ async def prepare_item_metadata(item: str, content_type: str, kb_id: str, params
         metadata["processing_params"] = sanitize_processing_params(params)
 
     return metadata
+
+
+def validate_uploaded_document_source(source: str, kb_id: str) -> None:
+    """在文件元数据落库前限制来源为当前知识库的上传对象。"""
+    from yuxi.storage.minio.client import MinIOClient
+
+    if not isinstance(source, str) or not is_minio_url(source):
+        raise ValueError("File source must be a MinIO URL")
+    bucket_name, object_name = parse_minio_url(source)
+    prefix = f"{kb_id}/upload/"
+    if (
+        bucket_name != MinIOClient.KB_BUCKETS["documents"]
+        or not object_name.startswith(prefix)
+        or not object_name.removeprefix(prefix)
+        or "\\" in object_name
+        or any(part in {".", "..", ""} for part in object_name.split("/"))
+    ):
+        raise ValueError("文件来源必须属于当前知识库的上传目录")
 
 
 def _normalize_source_path(value: object) -> str | None:

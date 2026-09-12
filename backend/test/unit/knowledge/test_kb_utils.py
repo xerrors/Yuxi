@@ -70,3 +70,41 @@ async def test_prepare_item_metadata_preserves_preprocessed_file_size():
 async def test_prepare_item_metadata_rejects_direct_url_content_type():
     with pytest.raises(ValueError, match="Unsupported content_type"):
         await prepare_item_metadata("https://example.com", "url", "db")
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "minio://knowledgebases/other/upload/private.txt",
+        "minio://knowledgebases/db-other/upload/private.txt",
+        "minio://kb-images/db/upload/private.txt",
+        "minio://knowledgebases/db/parsed/private.txt",
+        "minio://knowledgebases/db/upload/%2e%2e/other.txt",
+        "http://minio:9000/knowledgebases/other/upload/private.txt",
+    ],
+)
+async def test_prepare_item_metadata_rejects_foreign_document_sources(source):
+    with pytest.raises(ValueError, match="当前知识库的上传目录"):
+        await prepare_item_metadata(source, "file", "db", params={"content_hashes": {source: "hash"}})
+
+
+async def test_prepare_item_metadata_rejects_preprocessed_foreign_path():
+    item = "minio://knowledgebases/db/upload/page.html"
+    params = {
+        "_preprocessed_map": {
+            item: {
+                "path": "minio://knowledgebases/other/upload/private.html",
+                "content_hash": "hash",
+            }
+        }
+    }
+    with pytest.raises(ValueError, match="当前知识库的上传目录"):
+        await prepare_item_metadata(item, "file", "db", params=params)
+
+
+async def test_prepare_item_metadata_accepts_http_uploaded_document_source():
+    item = "http://minio:9000/knowledgebases/db/upload/my%20notes.md"
+    metadata = await prepare_item_metadata(item, "file", "db", params={"content_hashes": {item: "hash"}})
+    assert metadata["path"] == item
+    assert metadata["kb_id"] == "db"
+    assert metadata["filename"] == "my notes.md"

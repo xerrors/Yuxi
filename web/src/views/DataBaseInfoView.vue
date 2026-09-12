@@ -128,7 +128,11 @@
                 type="button"
                 class="lucide-icon-btn extension-panel-action extension-panel-action-secondary file-stat-card file-stat-summary"
                 :class="{ 'file-stat-warning': virtualFolderStatus.has_virtual_folders }"
-                :disabled="!virtualFolderStatus.has_virtual_folders || !canManageDatabase"
+                :disabled="
+                  !virtualFolderStatus.has_virtual_folders ||
+                  !canManageDatabase ||
+                  !userStore.isAdmin
+                "
                 :title="
                   virtualFolderStatus.has_virtual_folders ? '存在历史虚拟文件夹，点击转换' : ''
                 "
@@ -152,7 +156,7 @@
                 </div>
               </div>
               <button
-                v-if="canManageDatabase"
+                v-if="canManageDatabase && userStore.isAdmin"
                 type="button"
                 class="lucide-icon-btn extension-panel-action extension-panel-action-secondary file-stat-card file-stat-summary file-stat-repair"
                 :disabled="statsRepairing"
@@ -169,7 +173,7 @@
                 </div>
               </button>
               <button
-                v-if="canManageDatabase"
+                v-if="canManageDatabase && userStore.isAdmin"
                 type="button"
                 class="lucide-icon-btn extension-panel-action extension-panel-action-secondary file-stat-card file-stat-summary file-stat-repair"
                 :disabled="statsRepairing"
@@ -314,6 +318,7 @@
               </a-form-item>
               <a-form-item label="知识库描述" name="description">
                 <AiTextarea
+                  v-if="userStore.isAdmin"
                   v-model="editForm.description"
                   :name="editForm.name"
                   :files="fileList"
@@ -321,6 +326,7 @@
                   action-placement="header"
                   :rows="4"
                 />
+                <a-textarea v-else v-model:value="editForm.description" :rows="4" />
               </a-form-item>
 
               <a-form-item v-if="database?.embedding_model_spec" label="Embedding 模型">
@@ -454,6 +460,8 @@ import QuerySection from '@/components/QuerySection.vue'
 import SearchConfigPanel from '@/components/SearchConfigPanel.vue'
 import AiTextarea from '@/components/AiTextarea.vue'
 import ShareConfigForm from '@/components/ShareConfigForm.vue'
+import { useUserStore } from '@/stores/user'
+import { isPersonalKnowledgeConfig } from '@/utils/shareConfig'
 import { databaseApi } from '@/apis/knowledge_api'
 import { departmentApi } from '@/apis/department_api'
 import { authApi } from '@/apis/auth_api'
@@ -473,6 +481,7 @@ const KnowledgeEvaluationWorkspace = createAsyncPanel(
 const route = useRoute()
 const router = useRouter()
 const store = useDatabaseStore()
+const userStore = useUserStore()
 const taskerStore = useTaskerStore()
 const {
   chunkPresetSelectOptions: chunkPresetOptions,
@@ -508,7 +517,7 @@ const tabs = computed(() => {
 })
 
 const visibleTabs = computed(() =>
-  canManageDatabase.value
+  canManageDatabase.value && userStore.isAdmin
     ? tabs.value
     : tabs.value.filter((tab) => ['filetable', 'query', 'graph'].includes(tab.key))
 )
@@ -596,7 +605,7 @@ const fileStats = computed(() => {
 })
 
 const detectVirtualFolders = async () => {
-  if (!kbId.value || !canManageDatabase.value) return
+  if (!kbId.value || !canManageDatabase.value || !userStore.isAdmin) return
   try {
     virtualFolderStatus.value = await databaseApi.detectVirtualFolders(kbId.value)
   } catch (error) {
@@ -926,9 +935,14 @@ const fileList = computed(() => {
   return (store.documentFiles || []).map((f) => f.filename).filter(Boolean)
 })
 
-const canEditShareConfig = computed(() => canManageDatabase.value)
+const isPersonal = computed(() => isPersonalKnowledgeConfig(database.value?.share_config))
+const canEditShareConfig = computed(
+  () => canManageDatabase.value && !isPersonal.value && userStore.isAdmin
+)
 
 const shareConfigDisplay = computed(() => {
+  if (isPersonal.value)
+    return { color: 'default', label: '仅本人可见', detail: '创建后不能修改为共享知识库' }
   const shareConfig = database.value?.share_config || {}
   const readScope = shareConfig.version === 2 ? shareConfig.read_scope : shareConfig
   const manageScope = shareConfig.manage_scope
@@ -1036,7 +1050,7 @@ const handleEditSubmit = async () => {
       name: editForm.name,
       description: editForm.description,
       additional_params: {},
-      share_config: editShareConfig.value
+      ...(canEditShareConfig.value ? { share_config: editShareConfig.value } : {})
     }
 
     if (isDifyKb.value) {
@@ -1097,8 +1111,10 @@ const handleEditSubmit = async () => {
 
 onMounted(() => {
   loadChunkPresetOptions()
-  loadDepartments()
-  loadUsers()
+  if (userStore.isAdmin) {
+    loadDepartments()
+    loadUsers()
+  }
   document.addEventListener('click', onUploadMenuOutsideClick)
 })
 

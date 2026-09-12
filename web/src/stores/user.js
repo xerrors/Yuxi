@@ -12,6 +12,7 @@ export const useUserStore = defineStore('user', () => {
   const phoneNumber = ref('')
   const avatar = ref('')
   const userRole = ref('')
+  const businessRoles = ref([])
   const departmentId = ref(null)
   const departmentName = ref('')
 
@@ -19,6 +20,7 @@ export const useUserStore = defineStore('user', () => {
   const isLoggedIn = computed(() => !!token.value)
   const isAdmin = computed(() => userRole.value === 'admin' || userRole.value === 'superadmin')
   const isSuperAdmin = computed(() => userRole.value === 'superadmin')
+  const canManagePersonalKnowledge = computed(() => businessRoles.value.includes('counselor'))
 
   // 动作
   function applySession(data) {
@@ -29,6 +31,7 @@ export const useUserStore = defineStore('user', () => {
     phoneNumber.value = data.phone_number || ''
     avatar.value = data.avatar || ''
     userRole.value = data.role
+    businessRoles.value = data.business_roles ?? (data.role === 'user' ? ['counselor'] : [])
     departmentId.value = data.department_id || null
     departmentName.value = data.department_name || ''
     localStorage.setItem('user_token', data.access_token)
@@ -54,6 +57,7 @@ export const useUserStore = defineStore('user', () => {
     phoneNumber.value = ''
     avatar.value = ''
     userRole.value = ''
+    businessRoles.value = []
     departmentId.value = null
     departmentName.value = ''
 
@@ -181,6 +185,8 @@ export const useUserStore = defineStore('user', () => {
       phoneNumber.value = userData.phone_number || ''
       avatar.value = userData.avatar || ''
       userRole.value = userData.role
+      businessRoles.value =
+        userData.business_roles ?? (userData.role === 'user' ? ['counselor'] : [])
       departmentId.value = userData.department_id || null
       departmentName.value = userData.department_name || ''
 
@@ -220,6 +226,7 @@ export const useUserStore = defineStore('user', () => {
     phoneNumber,
     avatar,
     userRole,
+    businessRoles,
     departmentId,
     departmentName,
 
@@ -227,6 +234,7 @@ export const useUserStore = defineStore('user', () => {
     isLoggedIn,
     isAdmin,
     isSuperAdmin,
+    canManagePersonalKnowledge,
 
     // 方法
     login,

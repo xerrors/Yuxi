@@ -2,15 +2,26 @@
 
 from fastapi import Depends, HTTPException
 
-from server.utils.auth_middleware import get_admin_user
+from server.utils.auth_middleware import get_required_user
 from yuxi.knowledge.read_models import KnowledgeBaseDetail
 from yuxi.knowledge.runtime import knowledge_base
 from yuxi.permissions import (
     ResourcePermission,
+    BusinessCapability,
+    resolve_business_capabilities,
     ResourcePermissionDenied,
     require_knowledge_base_permission,
 )
 from yuxi.storage.postgres.models_business import User
+
+
+async def get_knowledge_user(current_user: User = Depends(get_required_user)) -> User:
+    """允许既有管理员及具备个人知识管理能力的辅导人员进入知识管理。"""
+    if current_user.role not in {"admin", "superadmin"} and (
+        BusinessCapability.MANAGE_PERSONAL_KNOWLEDGE not in resolve_business_capabilities(current_user)
+    ):
+        raise HTTPException(status_code=403, detail="需要个人知识库管理权限")
+    return current_user
 
 
 async def ensure_knowledge_base_permission(
@@ -33,9 +44,9 @@ async def ensure_knowledge_base_permission(
 
 async def require_knowledge_base_read(
     kb_id: str,
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_knowledge_user),
 ) -> User:
-    """校验管理员对指定知识库的读取权限。"""
+    """校验当前用户对指定知识库的读取权限。"""
 
     await ensure_knowledge_base_permission(kb_id, current_user, ResourcePermission.READ)
     return current_user
@@ -43,9 +54,9 @@ async def require_knowledge_base_read(
 
 async def require_knowledge_base_manage(
     kb_id: str,
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_knowledge_user),
 ) -> User:
-    """校验管理员对指定知识库的管理权限。"""
+    """校验当前用户对指定知识库的管理权限。"""
 
     await ensure_knowledge_base_permission(kb_id, current_user, ResourcePermission.MANAGE)
     return current_user
