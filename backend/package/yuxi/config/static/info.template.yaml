@@ -3,24 +3,23 @@
 
 # 组织信息
 organization:
-  name: "语析"               # 完整组织名称
+  name: "知伴"               # 完整组织名称
   logo: "/favicon.svg"       # Logo文件路径（放在 web/public 目录下）
   avatar: "/favicon.svg"      # 头像文件路径（放在 web/public 目录下）
   login_bg: "/login-bg.jpg"  # 登录背景图片路径（放在 web/public 目录下）
 
 # 项目信息
 branding:
-  name: "Yuxi"
-  title: "让团队知识可连接，让智能体可行动"     # 系统标题
-  subtitle: "知识库 × 知识图谱 × 智能体 Harness，开源且可私有部署"   # 副标题（subtitles 为空时使用）
+  name: "知伴"
+  title: "知伴 · 心理辅导工作台"     # 系统标题
+  subtitle: "从了解情况开始，让知识支持每一次辅导"   # 副标题（subtitles 为空时使用）
   subtitles:
-    - "知识与智能体真正协同，每个回答都可溯源"
-    - "从回答问题到交付任务，工具与沙盒一站完成"
-    - "多租户、权限与模型治理，面向团队而非 Demo"
-    - "Docker Compose 一键部署，数据不出你的内网"
+    - "从了解情况开始，让知识支持每一次辅导"
+    - "整理已有信息，逐步形成清晰的工作思路"
+    - "沉淀团队经验，为持续辅导提供参考"
 
 # 页脚信息
 footer:
-  copyright: "© 语析 2026 v{{YUXI_VERSION}}"
+  copyright: "© 知伴 2026 v{{YUXI_VERSION}}"
   user_agreement_url: "/protocols/user-agreement.template.html"
   privacy_policy_url: "/protocols/privacy-policy.template.html"
