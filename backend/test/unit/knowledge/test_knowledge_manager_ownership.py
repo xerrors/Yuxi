@@ -58,7 +58,9 @@ async def test_delete_database_cleans_resources_before_deleting_record(tmp_path,
             return {"message": "删除成功"}
 
     class FakeRepository:
-        async def delete(self, kb_id: str) -> None:
+        async def delete(self, kb_id: str, *, before_commit=None) -> None:
+            if before_commit is not None:
+                await before_commit()
             calls.append(("delete_record", kb_id))
 
     async def get_kb_executor(_kb_id: str):

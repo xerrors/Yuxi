@@ -18,6 +18,7 @@ import {
 // =============================================================================
 
 export const databaseApi = {
+  getTrashDatabases: () => apiGet('/api/knowledge/trash/databases'),
   /**
    * 获取所有知识库
    * @returns {Promise} - 知识库列表
@@ -117,6 +118,16 @@ export const databaseApi = {
 // =============================================================================
 
 export const documentApi = {
+  getTrash: (kbId, page = 1) =>
+    apiAdminGet(
+      `/api/knowledge/databases/${encodeURIComponent(kbId)}/trash?${buildQuery({ offset: (page - 1) * 10, limit: 10 })}`
+    ),
+  restoreDocument: (kbId, docId) =>
+    apiAdminPost(
+      `/api/knowledge/databases/${encodeURIComponent(kbId)}/trash/${encodeURIComponent(docId)}/restore`,
+      {}
+    ),
+
   /**
    * 分页获取知识库文档列表
    * @param {string} kbId - 知识库ID

@@ -21,6 +21,7 @@ from yuxi.agents.middlewares import (
     create_memory_middleware,
     create_summary_middleware_from_context,
 )
+from yuxi.agents.middlewares.personal_file_evidence import PersonalFileEvidenceMiddleware
 from yuxi.agents.middlewares.skills import SkillsMiddleware
 from yuxi.agents.middlewares.subagent_task import create_subagent_task_middleware
 from yuxi.agents.tool_approval import create_tool_approval_middleware, normalize_tool_approval_mode
@@ -58,6 +59,7 @@ async def _build_middlewares(context, backend):
             # 或外层重试网络错误而放大预算。
             NetworkRetryMiddleware(
                 max_retries=getattr(context, "model_retry_times", 2),
+                on_failure="error",
             ),
             ImageInputCompatibilityMiddleware(),
             TokenUsageMiddleware(),
@@ -69,6 +71,7 @@ async def _build_middlewares(context, backend):
     )
     if approval_middleware:
         middlewares.append(approval_middleware)
+    middlewares.append(PersonalFileEvidenceMiddleware())
     return middlewares
 
 

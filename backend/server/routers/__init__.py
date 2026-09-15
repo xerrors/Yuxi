@@ -18,6 +18,7 @@ from server.routers.mcp_router import mcp
 from server.routers.mention_router import mention_router
 from server.routers.model_provider_router import model_providers
 from server.routers.project_router import projects
+from server.routers.personal_trash_router import personal_trash
 from server.routers.scheduled_agent_router import scheduled_agents
 from server.routers.skill_router import skills, user_skills
 from server.routers.system_router import system
@@ -51,6 +52,7 @@ router.include_router(tools)  # /api/system/tools/* 工具列表与配置
 router.include_router(user_router)  # /api/user/* 用户级配置与凭据
 router.include_router(filesystem_router)  # /api/viewer/filesystem/* 工作台文件系统视图
 router.include_router(workspace)  # /api/workspace/* 用户个人工作区
+router.include_router(personal_trash)  # /api/personal-trash/* 个人文件与附件回收
 router.include_router(mention_router)  # /api/mention/* 提及文件搜索接口
 
 router.include_router(knowledge_dashboard)  # /api/dashboard/stats/knowledge 知识域仪表盘

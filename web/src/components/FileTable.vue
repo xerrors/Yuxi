@@ -259,7 +259,7 @@
               :disabled="!canBatchDelete"
               :icon="h(Trash2, { size: 16 })"
             >
-              批量删除
+              批量移入回收站
             </a-button>
           </div>
         </div>
@@ -397,7 +397,7 @@
                     @click="handleDeleteFolder(row)"
                   >
                     <template #icon><component :is="h(Trash2)" size="14" /></template>
-                    删除文件夹
+                    移入回收站
                   </a-button>
                 </template>
                 <template v-else>
@@ -456,7 +456,7 @@
                     :disabled="!canDeleteFile(row, lock)"
                   >
                     <template #icon><component :is="h(Trash2)" size="14" /></template>
-                    删除文件
+                    移入回收站
                   </a-button>
                 </template>
               </div>
@@ -969,7 +969,7 @@ const emptyText = computed(() => {
   return '暂无文件'
 })
 
-// 计算是否可以批量删除
+// 计算是否可以批量移入回收站
 const canBatchDelete = computed(() => {
   return selectedRowKeys.value.some((key) => {
     const file = files.value.find((f) => f.file_id === key)
@@ -1047,14 +1047,14 @@ const handleDeleteFolder = (record) => {
   if (readonly.value) return
   closePopover(record.file_id)
   Modal.confirm({
-    title: '删除文件夹',
-    content: `确定要删除文件夹 "${record.filename}" 及其包含的所有内容吗？`,
+    title: '移入回收站',
+    content: `确定将文件夹 "${record.filename}" 及其包含的所有内容移入回收站吗？保留30天，到期自动清理。`,
     okText: '确认',
     cancelText: '取消',
     onOk: async () => {
       try {
         await store.deleteFile(record.file_id)
-        message.success('删除成功')
+        message.success('已移入回收站，保留30天')
       } catch {
         // Error handled in store but we can add extra handling if needed
       }

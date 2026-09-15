@@ -15,9 +15,12 @@ from yuxi.knowledge.parser.capabilities import (
     PDF_FILE_EXTENSIONS,
     get_ocr_engines_for_extension,
 )
-from yuxi.repositories.agent_run_repository import AgentRunRepository
-from yuxi.repositories.agent_run_request_repository import AgentRunRequestRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
+from yuxi.services.personal_trash_service import (
+    lock_user_files,
+    require_no_pending_file_operations,
+    trash_personal_paths,
+)
 from yuxi.storage.minio import StorageError, get_minio_client
 from yuxi.utils.datetime_utils import utc_isoformat
 from yuxi.utils.logging_config import logger
@@ -371,6 +374,8 @@ async def confirm_tmp_thread_attachments_view(
     if not attachments:
         raise HTTPException(status_code=400, detail="请选择要添加的附件")
 
+    await lock_user_files(db, str(current_uid))
+    await require_no_pending_file_operations(db, str(current_uid))
     conv_repo = ConversationRepository(db)
     conversation = await _require_user_conversation(conv_repo, thread_id, str(current_uid))
     from yuxi.services.workdir_service import resolve_authorized_conversation_workdir
@@ -480,52 +485,24 @@ async def delete_thread_attachment_view(
     current_uid: str,
 ) -> dict:
     """删除指定对话线程的附件。"""
+    await lock_user_files(db, str(current_uid))
+    await require_no_pending_file_operations(db, str(current_uid))
     conv_repo = ConversationRepository(db)
     conversation = await _require_user_conversation(conv_repo, thread_id, str(current_uid))
-    from yuxi.services.workdir_service import resolve_authorized_conversation_workdir
-
-    binding = await resolve_authorized_conversation_workdir(
-        conversation=conversation,
-        uid=str(current_uid),
-        db=db,
-    )
-    workdir = binding.workdir
-
-    existing_attachments = await conv_repo.lock_attachments(conversation.id)
-    target_attachment = next((item for item in existing_attachments if item.get("file_id") == file_id), None)
-    if target_attachment is None:
+    existing = await conv_repo.lock_attachments(conversation.id)
+    target = next((item for item in existing if item.get("file_id") == file_id and not item.get("trash_id")), None)
+    if target is None:
         raise HTTPException(status_code=404, detail="附件不存在或已被删除")
+    from yuxi.agents.backends.paths import workspace_scope_from_runtime_path
 
-    request_id = target_attachment.get("request_id")
-    if isinstance(request_id, str) and request_id:
-        request = await AgentRunRequestRepository(db).get_by_request_id(request_id)
-        if request and request.status == "queued":
-            raise HTTPException(status_code=409, detail="附件正在被请求使用，暂时不能删除")
-
-    active_run = await AgentRunRepository(db).get_active_run_by_thread_for_user(
-        agent_slug=conversation.agent_id,
-        conversation_thread_id=thread_id,
-        uid=str(current_uid),
+    paths = sorted(
+        {
+            workspace_scope_from_runtime_path(path)
+            for path in (target.get("path"), target.get("original_path"))
+            if isinstance(path, str)
+        }
     )
-    if active_run:
-        raise HTTPException(status_code=409, detail="对话正在运行，暂时不能删除附件")
-
-    removed = await conv_repo.remove_attachment(conversation.id, file_id)
-    if not removed:
-        raise HTTPException(status_code=404, detail="附件不存在或已被删除")
-
-    await db.commit()
-
-    for path in {target_attachment.get("path"), target_attachment.get("original_path")}:
-        if not isinstance(path, str):
-            continue
-        try:
-            scope = workdir_scope_from_runtime_path(workdir.relative_path, path)
-            await asyncio.to_thread(workdir.delete, scope)
-        except FileNotFoundError:
-            pass
-        except Exception:
-            # PostgreSQL 已经移除 shipping 引用；残留文件仍留在用户可见 Workdir，后续可显式清理。
-            logger.warning("附件元数据已删除，但 Workdir 文件清理失败: thread=%s path=%s", thread_id, path)
-
-    return {"message": "附件已删除"}
+    result = await trash_personal_paths(
+        db=db, uid=str(current_uid), paths=paths, name=target.get("file_name") or file_id, kind="attachment"
+    )
+    return {"message": "附件已移入回收站，保留30天", "trash": result}

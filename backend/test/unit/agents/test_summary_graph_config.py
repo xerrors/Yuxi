@@ -83,14 +83,15 @@ def test_shared_summary_factory_uses_one_threshold(monkeypatch: pytest.MonkeyPat
 
     def create_summary_middleware(**kwargs):
         captured.update(kwargs)
-        return object()
+        return SimpleNamespace()
 
     monkeypatch.setattr(summary_module, "create_summary_middleware", create_summary_middleware)
     context = _context(summary_threshold=96)
     context.thread_id = "summary-thread"
     backend = object()
 
-    summary_module.create_summary_middleware_from_context(context, backend=backend)
+    middleware = summary_module.create_summary_middleware_from_context(context, backend=backend)
+    assert middleware.personal_file_context is context
 
     assert captured["backend"] is backend
     assert captured["session_id"] == "summary-thread"

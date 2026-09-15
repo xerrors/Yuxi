@@ -21,6 +21,7 @@ from yuxi.agents.backends.paths import (
 from yuxi.agents.skills.service import ResolvedSkill, list_accessible_skills
 from yuxi.repositories.user_repository import UserRepository
 from yuxi.services.file_preview import render_file_preview
+from yuxi.services.personal_trash_service import lock_user_files, require_no_pending_file_operations
 from yuxi.services.workdir_service import resolve_authorized_workdir
 from yuxi.utils.filepreview import (
     MAX_BINARY_PREVIEW_SIZE_BYTES,
@@ -137,6 +138,8 @@ async def resolve_thread_artifact_view(
     preview: bool = False,
 ) -> FileResponse | StreamingResponse | dict:
     """把实时授权文件导出为自动清理的 HTTP 文件响应。"""
+    await lock_user_files(db, str(current_uid))
+    await require_no_pending_file_operations(db, str(current_uid))
     access = await resolve_authorized_workdir(thread_id=thread_id, uid=current_uid, db=db)
     normalized = _normalize_artifact_path(runtime_user_data_path(access.workdir.root_path), path)
     skill_source = await _require_skill_artifact_access(normalized_path=normalized, current_uid=current_uid, db=db)
@@ -192,6 +195,8 @@ async def save_thread_artifact_to_workspace_view(
     *, thread_id: str, current_uid: str, db, path: str, destination_path: str | None = None
 ) -> dict[str, str]:
     """把可见 artifact 复制到用户选择的工作区目录。"""
+    await lock_user_files(db, str(current_uid))
+    await require_no_pending_file_operations(db, str(current_uid))
     access = await resolve_authorized_workdir(thread_id=thread_id, uid=current_uid, db=db)
     normalized = _normalize_artifact_path(runtime_user_data_path(access.workdir.root_path), path)
     raw_destination = str(destination_path or DEFAULT_ARTIFACT_DESTINATION).strip()

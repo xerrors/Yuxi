@@ -144,6 +144,8 @@ class ConversationRepository:
         metadata = (metadata or {}).copy()
         metadata["attachments"] = []
 
+        if metadata and "memory_history_started_at" in metadata:
+            raise ValueError("memory_history_started_at is owned by personal file history")
         normalized_title = self._normalize_title(title)
 
         conversation = Conversation(
@@ -238,6 +240,13 @@ class ConversationRepository:
         return metadata
 
     async def _save_metadata(self, conversation: Conversation, metadata: dict) -> None:
+        """普通元数据更新保留个人历史消费Owner持有的来源时间。"""
+        current = await self._lock_conversation_by_id(conversation.id)
+        metadata = dict(metadata)
+        metadata.pop("memory_history_started_at", None)
+        started = (current.extra_metadata or {}).get("memory_history_started_at")
+        if started is not None:
+            metadata["memory_history_started_at"] = started
         conversation.extra_metadata = metadata
         flag_modified(conversation, "extra_metadata")
         conversation.updated_at = utc_now_naive()
@@ -245,13 +254,19 @@ class ConversationRepository:
 
     async def set_model_spec(self, conversation: Conversation, model_spec: str) -> None:
         """在请求事务内更新对话绑定模型。"""
+        conversation = await self._lock_conversation_by_id(conversation.id)
         metadata = dict(conversation.extra_metadata or {})
         metadata["model_spec"] = model_spec
         await self._save_metadata(conversation, metadata)
 
     async def _lock_conversation_by_id(self, conversation_id: int) -> Conversation | None:
         """锁定会话元数据，串行化同一线程的附件更新。"""
-        result = await self.db.execute(select(Conversation).where(Conversation.id == conversation_id).with_for_update())
+        result = await self.db.execute(
+            select(Conversation)
+            .where(Conversation.id == conversation_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
         return result.scalar_one_or_none()
 
     async def add_message(
@@ -863,6 +878,9 @@ class ConversationRepository:
         if not conversation:
             return None
 
+        if metadata and "memory_history_started_at" in metadata:
+            raise ValueError("memory_history_started_at is owned by personal file history")
+        conversation = await self._lock_conversation_by_id(conversation.id)
         normalized_title = self._normalize_title(title)
         if normalized_title is not None:
             conversation.title = normalized_title
@@ -984,7 +1002,7 @@ class ConversationRepository:
         if not conversation:
             return []
         metadata = self._ensure_metadata(conversation)
-        return list(metadata.get("attachments", []))
+        return [item for item in metadata.get("attachments", []) if not item.get("trash_id")]
 
     async def lock_attachments(self, conversation_id: int) -> list[dict]:
         """锁定会话并返回当前附件，用于需要检查后更新的用例。"""
@@ -1065,7 +1083,7 @@ class ConversationRepository:
         changed = False
 
         for item in attachments:
-            if item.get("file_id") not in file_id_set:
+            if item.get("file_id") not in file_id_set or item.get("trash_id"):
                 continue
             if item.get("request_id"):
                 continue
@@ -1075,11 +1093,11 @@ class ConversationRepository:
         if changed:
             metadata["attachments"] = attachments
             await self._save_metadata(conversation, metadata)
-        return [dict(item) for item in attachments if item.get("request_id") == request_id]
+        return [dict(item) for item in attachments if item.get("request_id") == request_id and not item.get("trash_id")]
 
     async def get_attachments_by_request_id(self, conversation_id: int, request_id: str) -> list[dict]:
         attachments = await self.get_attachments(conversation_id)
-        return [item for item in attachments if item.get("request_id") == request_id]
+        return [item for item in attachments if item.get("request_id") == request_id and not item.get("trash_id")]
 
     async def remove_attachment(self, conversation_id: int, file_id: str) -> bool:
         conversation = await self._lock_conversation_by_id(conversation_id)

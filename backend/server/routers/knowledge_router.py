@@ -19,13 +19,11 @@ from yuxi.knowledge.parser.capabilities import SUPPORTED_FILE_EXTENSIONS, is_sup
 from yuxi.knowledge.runtime import knowledge_base
 from yuxi.knowledge.utils import calculate_content_hash, is_minio_url, params_for_uploaded_document, parse_minio_url
 from yuxi.knowledge.utils.mindmap_utils import (
-    batch_remove_files_from_mindmap,
     generate_database_mindmap,
     get_database_mindmap_data,
     get_mindmap_database_files,
     get_mindmap_databases_overview,
     get_mindmap_diff,
-    remove_file_from_mindmap,
 )
 from yuxi.knowledge.utils.sample_question_utils import (
     generate_database_sample_questions,
@@ -36,6 +34,7 @@ from yuxi.permissions import (
     ResourcePermission,
     resolve_knowledge_base_permission,
 )
+from yuxi.services.document_trash_service import document_trash_service
 from yuxi.services.knowledge_folder_service import knowledge_folder_service
 from yuxi.services.ocr_service import parse_document
 from yuxi.services.task_service import tasker
@@ -134,27 +133,6 @@ media_types = {
 }
 
 
-async def _delete_document_storage_objects(kb_id: str, doc_id: str, file_path: str) -> None:
-    minio_client = get_minio_client()
-
-    if is_minio_url(file_path):
-        try:
-            bucket_name, object_name = parse_minio_url(file_path)
-            await minio_client.adelete_file(bucket_name, object_name)
-        except Exception as minio_error:
-            logger.warning(f"从MinIO删除原始文件失败: {minio_error}")
-
-    try:
-        await minio_client.adelete_file(minio_client.KB_BUCKETS["parsed"], f"{kb_id}/parsed/{doc_id}.md")
-    except Exception as minio_error:
-        logger.warning(f"从MinIO删除解析结果失败: {minio_error}")
-
-    try:
-        await minio_client.adelete_file(minio_client.KB_BUCKETS["parsed"], f"{kb_id}/preview/{doc_id}.pdf")
-    except Exception as minio_error:
-        logger.warning(f"从MinIO删除预览 PDF 失败: {minio_error}")
-
-
 async def _require_manage_permission_if_kb_id(kb_id: str | None, current_user: User) -> None:
     """当请求携带 kb_id 时，校验当前用户对该知识库的管理权限。"""
     if kb_id and getattr(current_user, "role", None):
@@ -222,6 +200,22 @@ async def _has_running_graph_build_task(kb_id: str) -> bool:
 # =============================================================================
 # === 知识库管理分组 ===
 # =============================================================================
+
+
+@knowledge.get("/trash/databases")
+async def get_trash_databases(current_user: User = Depends(get_required_user)):
+    """统一入口仅列出当前可管理的托管知识库；失败保留错误状态。"""
+    from yuxi.permissions import resolve_knowledge_base_permission
+
+    databases = await knowledge_base.get_databases_by_uid(current_user.uid)
+    return {
+        "databases": [
+            {"kb_id": db.kb_id, "name": db.name}
+            for db in databases
+            if db.kb_type == "milvus"
+            and resolve_knowledge_base_permission(current_user, db) == ResourcePermission.MANAGE
+        ]
+    }
 
 
 @knowledge.get("/databases")
@@ -439,6 +433,8 @@ async def update_database_info(
 async def delete_database(kb_id: str, current_user: User = Depends(require_knowledge_base_manage)):
     """删除知识库"""
     logger.debug(f"Delete database {kb_id}")
+    if await document_trash_service.repository.has_trashed(kb_id):
+        raise HTTPException(status_code=409, detail="请先恢复回收站文件，或等待到期清理后再删除知识库")
     try:
         await knowledge_base.delete_database(kb_id)
 
@@ -448,6 +444,14 @@ async def delete_database(kb_id: str, current_user: User = Depends(require_knowl
         await agent_manager.reload_all()
 
         return {"message": "删除成功"}
+    except ValueError as error:
+        if str(error) == "Knowledge base storage is referenced by another knowledge base":
+            raise HTTPException(
+                status_code=409, detail="其他知识库仍在使用本库原件，请先解除引用再删除知识库"
+            ) from error
+        if str(error) == "Knowledge base contains trashed files":
+            raise HTTPException(status_code=409, detail="请先恢复回收站文件，或等待到期清理后再删除知识库") from error
+        raise HTTPException(status_code=400, detail="删除知识库失败，请检查当前状态") from error
     except Exception as e:
         logger.error(f"删除数据库失败 {e}, {traceback.format_exc()}")
         raise HTTPException(status_code=400, detail=f"删除数据库失败: {e}")
@@ -1041,88 +1045,63 @@ async def get_document_content(kb_id: str, doc_id: str, current_user: User = Dep
         return {"message": "Failed to get file content", "status": "failed"}
 
 
+def _trash_conflict(error: ValueError) -> HTTPException:
+    """将领域冲突映射为固定中文提示，不暴露内部错误内容。"""
+    messages = {
+        "File not found": "文件已不存在，请刷新列表后重试",
+        "Processing files cannot be moved to trash": "选中的文件仍在处理中，请等待完成后再移入回收站",
+        "Trashed file not found": "回收站项目已变化，请刷新列表",
+        "Restore window closed or purge already started": "该文件已到期或已开始清理，恢复入口已关闭",
+        "Restore parent is unavailable": "请先恢复上级文件夹，再恢复此文件",
+        "Restore name conflicts with an active file": "原目录已有同名文件，请先重命名当前文件后再恢复",
+    }
+    return HTTPException(status_code=409, detail=messages.get(str(error), "操作冲突，请刷新后重试"))
+
+
+@knowledge.get("/databases/{kb_id}/trash")
+async def list_document_trash(
+    kb_id: str,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(10, ge=1, le=100),
+    current_user: User = Depends(require_knowledge_base_manage),
+):
+    await _ensure_database_supports_documents(kb_id, "回收站")
+    return await document_trash_service.list_items(kb_id, offset=offset, limit=limit)
+
+
+@knowledge.post("/databases/{kb_id}/trash/{doc_id}/restore")
+async def restore_document(kb_id: str, doc_id: str, current_user: User = Depends(require_knowledge_base_manage)):
+    await _ensure_database_supports_documents(kb_id, "恢复文档")
+    try:
+        count = await document_trash_service.restore(kb_id, doc_id)
+        return {"message": "已恢复到原目录", "restored_count": count}
+    except ValueError as error:
+        raise _trash_conflict(error) from error
+
+
 @knowledge.delete("/databases/{kb_id}/documents/batch")
 async def batch_delete_documents(
     kb_id: str, file_ids: list[str] = Body(...), current_user: User = Depends(require_knowledge_base_manage)
 ):
-    """批量删除文档或文件夹"""
-    logger.debug(f"BATCH DELETE documents {file_ids} in {kb_id}")
-    await _ensure_database_supports_documents(kb_id, "批量文档删除")
-
-    deleted_count = 0
-    failed_items = []
-    mindmap_removals: list[tuple[str, str]] = []
-
-    for doc_id in file_ids:
-        try:
-            file_meta_info = await knowledge_base.get_file_basic_info(kb_id, doc_id)
-
-            # Check if it is a folder
-            is_folder = file_meta_info.get("meta", {}).get("is_folder", False)
-            if is_folder:
-                await knowledge_base.delete_folder(kb_id, doc_id)
-                deleted_count += 1
-                continue
-
-            file_path = file_meta_info.get("meta", {}).get("path", "")
-
-            await _delete_document_storage_objects(kb_id, doc_id, file_path)
-
-            # 无论MinIO删除是否成功，都继续从知识库删除
-            await knowledge_base.delete_file(kb_id, doc_id)
-            deleted_count += 1
-
-            # 只有成功删除的文件才同步从导图快照移除，避免部分失败导致导图与文件表失同步
-            removed_filename = file_meta_info.get("meta", {}).get("filename", "")
-            if removed_filename:
-                mindmap_removals.append((doc_id, removed_filename))
-        except Exception as e:
-            logger.error(f"批量删除过程中删除文档 {doc_id} 失败: {e}, {traceback.format_exc()}")
-            failed_items.append({"doc_id": doc_id, "error": str(e)})
-
-    # 同步清理导图快照，移除已删除文件对应的叶子节点
-    await batch_remove_files_from_mindmap(kb_id, mindmap_removals)
-
-    if failed_items:
-        if deleted_count == 0:
-            raise HTTPException(status_code=400, detail=f"批量删除失败: 所有 {len(failed_items)} 个文件均未删除。")
-        return {
-            "message": f"部分删除成功: 已删除 {deleted_count} 个文件，失败 {len(failed_items)} 个",
-            "deleted_count": deleted_count,
-            "failed_items": failed_items,
-        }
-
-    return {"message": f"批量删除成功: 已删除 {deleted_count} 个文件", "deleted_count": deleted_count}
+    """整批移入回收站；处理中项目或无效文件使整批拒绝。"""
+    await _ensure_database_supports_documents(kb_id, "移入回收站")
+    if not file_ids or len(file_ids) > MAX_DIRECT_DOCUMENT_ACTION_FILE_IDS:
+        raise HTTPException(status_code=400, detail="请选择 1 至 1000 个文件")
+    try:
+        await document_trash_service.trash(kb_id, file_ids, deleted_by=current_user.uid)
+        return {"message": "已移入回收站，保留30天", "deleted_count": len(set(file_ids)), "failed_items": []}
+    except ValueError as error:
+        raise _trash_conflict(error) from error
 
 
 @knowledge.delete("/databases/{kb_id}/documents/{doc_id}")
 async def delete_document(kb_id: str, doc_id: str, current_user: User = Depends(require_knowledge_base_manage)):
-    """删除文档或文件夹"""
-    logger.debug(f"DELETE document {doc_id} info in {kb_id}")
-    await _ensure_database_supports_documents(kb_id, "文档删除")
+    await _ensure_database_supports_documents(kb_id, "移入回收站")
     try:
-        file_meta_info = await knowledge_base.get_file_basic_info(kb_id, doc_id)
-
-        # Check if it is a folder
-        is_folder = file_meta_info.get("meta", {}).get("is_folder", False)
-        if is_folder:
-            await knowledge_base.delete_folder(kb_id, doc_id)
-            return {"message": "文件夹删除成功"}
-
-        file_path = file_meta_info.get("meta", {}).get("path", "")
-
-        await _delete_document_storage_objects(kb_id, doc_id, file_path)
-
-        # 无论MinIO删除是否成功，都继续从知识库删除
-        await knowledge_base.delete_file(kb_id, doc_id)
-
-        # 同步清理导图快照，移除已删除文件对应的叶子节点
-        removed_filename = file_meta_info.get("meta", {}).get("filename", "")
-        await remove_file_from_mindmap(kb_id, doc_id, removed_filename)
-        return {"message": "删除成功"}
-    except Exception as e:
-        logger.error(f"删除文档失败 {e}, {traceback.format_exc()}")
-        raise HTTPException(status_code=400, detail=f"删除文档失败: {e}")
+        await document_trash_service.trash(kb_id, [doc_id], deleted_by=current_user.uid)
+        return {"message": "已移入回收站，保留30天"}
+    except ValueError as error:
+        raise _trash_conflict(error) from error
 
 
 @knowledge.get("/databases/{kb_id}/documents/{doc_id}/download")
@@ -1218,6 +1197,8 @@ async def get_kb_image(kb_id: str, object_path: str, current_user: User = Depend
     if ".." in object_path or "\\" in object_path:
         raise HTTPException(status_code=400, detail="非法的知识库图片路径")
 
+    if not await document_trash_service.image_is_active(kb_id, object_path):
+        raise HTTPException(status_code=404, detail="图片所属文档不存在或已移入回收站")
     object_name = f"{kb_id}/{object_path}"
     minio_client = get_minio_client()
     try:
@@ -1244,9 +1225,7 @@ async def get_kb_image(kb_id: str, object_path: str, current_user: User = Depend
             minio_response.close()
             minio_response.release_conn()
 
-    return StreamingResponse(
-        image_stream(), media_type=content_type, headers={"Cache-Control": "private, max-age=3600"}
-    )
+    return StreamingResponse(image_stream(), media_type=content_type, headers={"Cache-Control": "private, no-store"})
 
 
 # =============================================================================

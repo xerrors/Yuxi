@@ -219,7 +219,7 @@ export const useDatabaseStore = defineStore('database', () => {
       await loadDocumentFiles({ isBackground: true })
     } catch (error) {
       console.error(error)
-      message.error(error.message || '删除失败')
+      message.error(error.message || '移入回收站失败')
       throw error
     } finally {
       state.lock = false
@@ -228,8 +228,8 @@ export const useDatabaseStore = defineStore('database', () => {
 
   function handleDeleteFile(fileId) {
     Modal.confirm({
-      title: '删除文件',
-      content: '确定要删除该文件吗？',
+      title: '移入回收站',
+      content: '确定将该文件移入回收站吗？保留30天，到期自动清理。',
       okText: '确认',
       cancelText: '取消',
       onOk: () => deleteFile(fileId)
@@ -244,13 +244,13 @@ export const useDatabaseStore = defineStore('database', () => {
     })
 
     if (validFileIds.length === 0) {
-      message.info('没有可删除的文件')
+      message.info('没有可移入回收站的文件')
       return
     }
 
     Modal.confirm({
-      title: '批量删除文件',
-      content: `确定要删除选中的 ${validFileIds.length} 个文件吗？`,
+      title: '批量移入回收站',
+      content: `确定将选中的 ${validFileIds.length} 个文件移入回收站吗？保留30天，到期自动清理。`,
       okText: '确认',
       cancelText: '取消',
       onOk: async () => {
@@ -260,7 +260,11 @@ export const useDatabaseStore = defineStore('database', () => {
         let processedCount = 0
         const totalCount = validFileIds.length
         const progressKey = `batch-delete-${Date.now()}`
-        message.loading({ content: `正在删除文件 0/${totalCount}`, key: progressKey, duration: 0 })
+        message.loading({
+          content: `正在移入回收站 0/${totalCount}`,
+          key: progressKey,
+          duration: 0
+        })
 
         try {
           const CHUNK_SIZE = 50
@@ -274,12 +278,12 @@ export const useDatabaseStore = defineStore('database', () => {
                 failureCount += res.failed_items.length
               }
             } catch (err) {
-              console.error(`删除批次 ${i / CHUNK_SIZE + 1} 失败:`, err)
+              console.error(`移入回收站批次 ${i / CHUNK_SIZE + 1} 失败:`, err)
               failureCount += chunk.length
             } finally {
               processedCount += chunk.length
               message.loading({
-                content: `正在删除文件 ${processedCount}/${totalCount}`,
+                content: `正在移入回收站 ${processedCount}/${totalCount}`,
                 key: progressKey,
                 duration: 0
               })
@@ -288,11 +292,13 @@ export const useDatabaseStore = defineStore('database', () => {
 
           message.destroy(progressKey)
           if (successCount > 0 && failureCount === 0) {
-            message.success(`成功删除 ${successCount} 个文件`)
+            message.success(`成功移入回收站 ${successCount} 个文件`)
           } else if (successCount > 0 && failureCount > 0) {
-            message.warning(`成功删除 ${successCount} 个文件，${failureCount} 个文件删除失败`)
+            message.warning(
+              `成功移入回收站 ${successCount} 个文件，${failureCount} 个文件移入回收站失败`
+            )
           } else if (failureCount > 0) {
-            message.error(`${failureCount} 个文件删除失败`)
+            message.error(`${failureCount} 个文件移入回收站失败`)
           }
 
           selectedRowKeys.value = []
@@ -300,8 +306,8 @@ export const useDatabaseStore = defineStore('database', () => {
           await loadDocumentFiles({ isBackground: true })
         } catch (error) {
           message.destroy(progressKey)
-          console.error('批量删除出错:', error)
-          message.error(error.message || '批量删除过程中发生错误')
+          console.error('批量移入回收站出错:', error)
+          message.error(error.message || '批量移入回收站过程中发生错误')
         } finally {
           state.batchDeleting = false
         }

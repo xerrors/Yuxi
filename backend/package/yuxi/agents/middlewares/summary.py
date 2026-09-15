@@ -33,6 +33,7 @@ from yuxi.agents.context import (
     DEFAULT_YUXI_SUMMARY_PROMPT,
 )
 from yuxi.models.chat import load_chat_model, resolve_chat_model_spec
+from yuxi.services.personal_file_evidence_service import validate_personal_file_evidence
 from yuxi.utils.logging_config import logger
 
 _APPROX_CHARS_PER_TOKEN = 4
@@ -358,6 +359,10 @@ class YuxiSummarizationMiddleware(SummarizationMiddleware):
         return self._lc_helper.summary_prompt.format(messages=get_buffer_string(trimmed, format="xml")).rstrip()
 
     def _create_summary(self, messages: list[AnyMessage]) -> str:
+        if getattr(self, "personal_file_context", None) is not None:
+            from yuxi.services.personal_file_evidence_service import PersonalFileEvidenceUnavailable
+
+            raise PersonalFileEvidenceUnavailable("个人文件来源复核需要异步摘要调用")
         if not messages:
             return "No previous conversation history."
         prompt = self._build_summary_prompt(messages)
@@ -374,6 +379,7 @@ class YuxiSummarizationMiddleware(SummarizationMiddleware):
         prompt = self._build_summary_prompt(messages)
         if prompt is None:
             return "Previous conversation was too long to summarize."
+        await validate_personal_file_evidence(getattr(self, "personal_file_context", None))
         try:
             response = await self.model.ainvoke(prompt, config=self._SUMMARY_INVOKE_CONFIG)
             return response.text.strip()
@@ -384,6 +390,7 @@ class YuxiSummarizationMiddleware(SummarizationMiddleware):
         prompt = self._build_summary_prompt(messages) if messages else None
         if prompt is None:
             raise RuntimeError("没有可供主动压缩的对话历史")
+        await validate_personal_file_evidence(getattr(self, "personal_file_context", None))
         response = await self.model.ainvoke(prompt, config=self._SUMMARY_INVOKE_CONFIG)
         summary = response.text.strip()
         if not summary:
@@ -488,7 +495,7 @@ def create_summary_middleware_from_context(context, *, backend) -> YuxiSummariza
     """按 Agent 运行时配置创建自动与主动压缩共用的摘要器。"""
     trigger_tokens = getattr(context, "summary_threshold", DEFAULT_SUMMARY_THRESHOLD_K) * 1024
     model_spec = resolve_chat_model_spec(context.model)
-    return create_summary_middleware(
+    middleware = create_summary_middleware(
         model=load_chat_model(fully_specified_name=model_spec, session_id=context.thread_id),
         backend=backend,
         trigger=("tokens", trigger_tokens),
@@ -501,6 +508,9 @@ def create_summary_middleware_from_context(context, *, backend) -> YuxiSummariza
             DEFAULT_SUMMARY_TOOL_RESULT_TOKEN_LIMIT,
         ),
     )
+
+    middleware.personal_file_context = context
+    return middleware
 
 
 def _emit_compression(status: str, **extra: Any) -> None:

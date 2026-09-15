@@ -48,6 +48,7 @@ Yuxi 只交付完整知识能力路径。API 始终注册 `external_kb`、`knowl
 - `storage/minio` 管理对象上传、下载和临时文件访问。
 - `storage/neo4j` 管理共享 Neo4j Driver、生命周期和图查询辅助。
 - `knowledge` 是知识库、文档解析、评估和图谱领域。`runtime.py` 暴露运行时知识库管理器；`preview.py` 拥有 Knowledge metadata、MinIO 原始对象读取和 MinIO Office PDF 缓存；`implementations` 放 Milvus、Dify、Notion 和只读连接器；`parser` 统一封装 OCR/文档解析；`chunking` 管理分块策略；`graphs` 管理 Milvus 与 Neo4j 图谱能力。
+- 托管知识文件删除经 `DocumentTrashService` / `DocumentTrashRepository` 在 PostgreSQL 提交30天回收站状态；普通读取按活动来源隔离，既有worker定时清理到期对象和索引。权限、租约与共享对象规则见[回收站生命周期](docs/mechanisms/document-trash.md)。
 - `models` 封装 chat、embedding 和 rerank 模型适配；`models/providers` 使用 PostgreSQL 保存模型供应商，并通过 Redis 缓存向 API 和 worker 提供一致视图。
 - `config` 区分系统级配置和用户级配置。PostgreSQL 持久化系统配置和用户配置；Redis 只保存带版本失效的短缓存，旧 `base.toml` 只作为一次性迁移来源。
 - `utils` 只放跨领域且足够通用的日志、时间、SSE 和轻量工具；`filepreview.py` 提供不依赖存储、领域或 HTTP 的格式识别、文本渲染和 Office 转换原语。

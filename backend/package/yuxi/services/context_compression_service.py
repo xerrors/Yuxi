@@ -25,6 +25,8 @@ from yuxi.repositories.agent_run_request_repository import AgentRunRequestReposi
 from yuxi.repositories.agent_state_repository import AgentStateRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.services.agent_run_service import resolve_agent_run_model_spec
+from yuxi.services.personal_file_evidence_service import personal_file_evidence_db
+from yuxi.services.personal_trash_service import lock_user_files, require_no_pending_file_operations
 from yuxi.services.workdir_service import ensure_conversation_workdir_available
 from yuxi.storage.postgres.models_business import User
 from yuxi.utils.logging_config import logger
@@ -38,6 +40,8 @@ async def compress_thread_context(
 ) -> dict[str, Any]:
     """在线程空闲时压缩 checkpoint；同线程新请求由 Conversation 行锁串行化。"""
     uid = str(current_user.uid)
+    await lock_user_files(db, uid)
+    await require_no_pending_file_operations(db, uid)
     conversation = await ConversationRepository(db).lock_conversation_by_thread_id(thread_id)
     if conversation is None or conversation.uid != uid or conversation.status == "deleted":
         raise HTTPException(status_code=404, detail="对话线程不存在")
@@ -83,13 +87,18 @@ async def compress_thread_context(
             "workdir_path": runtime_workdir_path(workdir_path),
         }
     )
-    result = await _compress_agent_checkpoint_in_runtime(
-        agent=agent,
-        input_context=input_context,
-        thread_id=thread_id,
-        uid=uid,
-        workdir_path=workdir_path,
-    )
+    # 复用已持有的用户/会话事务，避免摘要复核另开连接自锁。
+    token = personal_file_evidence_db.set(db)
+    try:
+        result = await _compress_agent_checkpoint_in_runtime(
+            agent=agent,
+            input_context=input_context,
+            thread_id=thread_id,
+            uid=uid,
+            workdir_path=workdir_path,
+        )
+    finally:
+        personal_file_evidence_db.reset(token)
     await db.commit()
     return result
 

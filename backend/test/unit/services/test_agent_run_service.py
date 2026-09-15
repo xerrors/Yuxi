@@ -2174,3 +2174,13 @@ def test_compact_stream_chunk_retains_status_and_field(field: str, chunk: dict):
 
     assert compact["status"] == chunk["status"]
     assert compact[field] == chunk[field]
+
+
+@pytest.fixture(autouse=True)
+def isolate_personal_file_transaction_boundary(monkeypatch):
+    """本模块使用fake/SQLite事务；PG锁与中断隔离在真实PG lifecycle集成验证。"""
+    from unittest.mock import AsyncMock
+    from yuxi.services import agent_run_service as owner
+
+    monkeypatch.setattr(owner, "lock_user_files", AsyncMock())
+    monkeypatch.setattr(owner, "require_no_pending_file_operations", AsyncMock())

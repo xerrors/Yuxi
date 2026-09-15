@@ -81,8 +81,8 @@ async def create_thread_view(
     db: AsyncSession,
     current_uid: str,
 ) -> dict:
-    if metadata and "attachments" in metadata:
-        raise HTTPException(status_code=400, detail="metadata.attachments 是服务端保留字段")
+    if metadata and ({"attachments", "memory_history_started_at"} & metadata.keys()):
+        raise HTTPException(status_code=400, detail="附件和个人文件来源时间是服务端保留字段")
 
     user_result = await db.execute(select(User).where(User.uid == str(current_uid)))
     current_user = user_result.scalar_one_or_none()

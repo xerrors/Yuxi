@@ -280,3 +280,13 @@ async def test_rejects_non_idle_thread(active_run, latest_run, queued_requests, 
 
     assert exc_info.value.status_code == 409
     assert exc_info.value.detail["code"] == "thread_busy"
+
+
+@pytest.fixture(autouse=True)
+def isolate_personal_file_lock(monkeypatch):
+    """本模块fake事务不模拟PG advisory；真实事务复用在personal evidence集成验证。"""
+    from unittest.mock import AsyncMock
+    from yuxi.services import context_compression_service as owner
+
+    monkeypatch.setattr(owner, "lock_user_files", AsyncMock())
+    monkeypatch.setattr(owner, "require_no_pending_file_operations", AsyncMock())

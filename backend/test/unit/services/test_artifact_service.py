@@ -383,3 +383,32 @@ async def test_concurrent_artifact_saves_use_distinct_atomic_names(live_files):
         b"one\ntwo\n",
         b"second",
     }
+
+
+@pytest.fixture(autouse=True)
+def isolate_personal_file_transaction_boundary(monkeypatch):
+    """本模块使用fake/SQLite事务；PG锁与中断隔离在真实PG lifecycle集成验证。"""
+    from unittest.mock import AsyncMock
+    from yuxi.services import artifact_service as owner
+
+    monkeypatch.setattr(owner, "lock_user_files", AsyncMock())
+    monkeypatch.setattr(owner, "require_no_pending_file_operations", AsyncMock())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("save", [False, True])
+async def test_artifact_pending_lifecycle_refuses_read_or_copy(monkeypatch, save):
+    from unittest.mock import AsyncMock
+    from fastapi import HTTPException
+    from yuxi.services import artifact_service as owner
+
+    monkeypatch.setattr(
+        owner, "require_no_pending_file_operations", AsyncMock(side_effect=HTTPException(409, "pending fixture"))
+    )
+    resolve = AsyncMock()
+    monkeypatch.setattr(owner, "resolve_authorized_workdir", resolve)
+    method = owner.save_thread_artifact_to_workspace_view if save else owner.resolve_thread_artifact_view
+    with pytest.raises(HTTPException) as error:
+        await method(thread_id="t", current_uid="u", db=object(), path="/x")
+    assert error.value.status_code == 409
+    resolve.assert_not_awaited()

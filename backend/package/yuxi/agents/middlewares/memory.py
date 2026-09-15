@@ -102,6 +102,7 @@ class YuxiMemoryMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
         ) -> dict:
             try:
                 return await search_thread_messages(
+                    consumer_thread_id=getattr(runtime.context, "thread_id", None),
                     uid=getattr(runtime.context, "uid", None),
                     query=query,
                     limit=limit,
@@ -126,6 +127,7 @@ class YuxiMemoryMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
         ) -> dict:
             try:
                 return await read_thread_messages(
+                    consumer_thread_id=getattr(runtime.context, "thread_id", None),
                     uid=getattr(runtime.context, "uid", None),
                     thread_id=thread_id,
                     message_id=message_id,

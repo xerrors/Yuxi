@@ -121,10 +121,35 @@ async def test_search_mentions_uses_workdir_access_and_workspace_scan(monkeypatc
     assert result == [
         {
             "name": "outputs",
-            "path": (
-                "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/outputs/"
-            ),
+            "path": ("/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/outputs/"),
             "is_dir": True,
             "source": "thread",
         }
     ]
+
+
+@pytest.fixture(autouse=True)
+def isolate_personal_file_transaction_boundary(monkeypatch):
+    """纯文件扫描fixture不实现PG事务；真实锁及pending在PG HTTP验收。"""
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(mention_service, "lock_user_files", AsyncMock())
+    monkeypatch.setattr(mention_service, "require_no_pending_file_operations", AsyncMock())
+
+
+@pytest.mark.asyncio
+async def test_pending_delete_refuses_mention_candidates(monkeypatch):
+    from fastapi import HTTPException
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(
+        mention_service, "require_no_pending_file_operations", AsyncMock(side_effect=HTTPException(409, "pending"))
+    )
+    scan = AsyncMock()
+    monkeypatch.setattr(mention_service, "_search_workspace", scan)
+    with pytest.raises(HTTPException) as error:
+        await mention_service.search_mentions(
+            thread_id=None, query="file", sources="workspace", current_user=SimpleNamespace(uid="u"), db=object()
+        )
+    assert error.value.status_code == 409
+    scan.assert_not_awaited()

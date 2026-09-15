@@ -165,28 +165,15 @@ class FailingCommitDB(FakeDB):
         raise RuntimeError("commit failed")
 
 
-class EmptyAgentRunRequestRepository:
-    def __init__(self, db):
-        del db
-
-    async def get_by_request_id(self, request_id: str):
-        del request_id
-        return None
-
-
-class EmptyAgentRunRepository:
-    def __init__(self, db):
-        del db
-
-    async def get_active_run_by_thread_for_user(self, **kwargs):
-        del kwargs
-        return None
-
-
 @pytest.fixture(autouse=True)
 def stub_attachment_usage_checks(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(service, "AgentRunRequestRepository", EmptyAgentRunRequestRepository)
-    monkeypatch.setattr(service, "AgentRunRepository", EmptyAgentRunRepository)
+    """仅隔离用例单测的PG锁；真实排队/运行拒绝由PG integration覆盖。"""
+
+    async def ready(*args):
+        return None
+
+    monkeypatch.setattr(service, "lock_user_files", ready)
+    monkeypatch.setattr(service, "require_no_pending_file_operations", ready)
 
 
 WORKDIR_RELATIVE_PATH = "projects/11111111-1111-4111-8111-111111111111"
@@ -216,18 +203,6 @@ class FakeWorkdir:
     def delete(self, scope: str) -> None:
         if self.storage.files.pop(scope, None) is None:
             raise FileNotFoundError(scope)
-
-
-class QueuedAgentRunRequestRepository(EmptyAgentRunRequestRepository):
-    async def get_by_request_id(self, request_id: str):
-        del request_id
-        return SimpleNamespace(status="queued")
-
-
-class ActiveAgentRunRepository(EmptyAgentRunRepository):
-    async def get_active_run_by_thread_for_user(self, **kwargs):
-        del kwargs
-        return SimpleNamespace(id="active-run")
 
 
 @pytest.mark.asyncio
@@ -540,117 +515,37 @@ async def test_store_attachment_normalizes_persisted_file_name(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_delete_thread_attachment_updates_live_workdir_even_during_runtime(monkeypatch):
-    fake_repo = FakeConversationRepository(db=None)
-    backend = FakeWorkdirStorage()
-    original = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/file-1_demo.pdf"
-    parsed = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/attachments/file-1_demo.md"
-    backend.files = {_scope_path(original): b"pdf", _scope_path(parsed): b"markdown"}
-    fake_repo.attachments = [{"file_id": "file-1", "file_name": "demo.pdf", "original_path": original, "path": parsed}]
+async def test_delete_attachment_delegates_both_canonical_paths_without_permanent_delete(monkeypatch):
+    """路由用例只提交原始和解析路径给生命周期Owner，不私自删除元数据或字节。"""
+    repo = FakeConversationRepository(None)
+    original = f"/home/gem/user-data/{WORKDIR_RELATIVE_PATH}/uploads/original.pdf"
+    parsed = f"/home/gem/user-data/{WORKDIR_RELATIVE_PATH}/uploads/parsed.md"
+    repo.attachments = [{"file_id": "f", "file_name": "demo", "path": parsed, "original_path": original}]
+    calls = []
 
-    async def resolve_binding(**kwargs):
-        del kwargs
-        return SimpleNamespace(workdir=FakeWorkdir(backend))
+    async def trash(**kwargs):
+        calls.append(kwargs)
+        return {"id": "journal", "state": "trashed"}
 
-    monkeypatch.setattr(service, "ConversationRepository", lambda _db: fake_repo)
-    monkeypatch.setattr(workdir_service, "resolve_authorized_conversation_workdir", resolve_binding)
-    result = await service.delete_thread_attachment_view(
-        thread_id="thread-1", file_id="file-1", db=FakeDB(), current_uid="user-1"
-    )
-
-    assert result == {"message": "附件已删除"}
-    assert fake_repo.attachments == []
-    assert backend.files == {}
-
-
-@pytest.mark.asyncio
-async def test_delete_thread_attachment_rejects_queued_request_use(monkeypatch):
-    fake_repo = FakeConversationRepository(db=None)
-    backend = FakeWorkdirStorage()
-    original = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/file-1_demo.pdf"
-    backend.files = {_scope_path(original): b"pdf"}
-    attachment = {
-        "file_id": "file-1",
-        "file_name": "demo.pdf",
-        "original_path": original,
-        "path": original,
-        "request_id": "request-1",
-    }
-    fake_repo.attachments = [attachment]
-
-    async def resolve_binding(**kwargs):
-        del kwargs
-        return SimpleNamespace(workdir=FakeWorkdir(backend))
-
-    monkeypatch.setattr(service, "ConversationRepository", lambda _db: fake_repo)
-    monkeypatch.setattr(workdir_service, "resolve_authorized_conversation_workdir", resolve_binding)
-    monkeypatch.setattr(service, "AgentRunRequestRepository", QueuedAgentRunRequestRepository)
-
-    with pytest.raises(service.HTTPException) as exc_info:
-        await service.delete_thread_attachment_view(
-            thread_id="thread-1", file_id="file-1", db=FakeDB(), current_uid="user-1"
-        )
-
-    assert exc_info.value.status_code == 409
-    assert fake_repo.attachments == [attachment]
-    assert backend.files == {_scope_path(original): b"pdf"}
-
-
-@pytest.mark.asyncio
-async def test_delete_thread_attachment_rejects_active_thread_run(monkeypatch):
-    fake_repo = FakeConversationRepository(db=None)
-    backend = FakeWorkdirStorage()
-    original = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/file-1_demo.pdf"
-    backend.files = {_scope_path(original): b"pdf"}
-    attachment = {"file_id": "file-1", "file_name": "demo.pdf", "original_path": original, "path": original}
-    fake_repo.attachments = [attachment]
-
-    async def resolve_binding(**kwargs):
-        del kwargs
-        return SimpleNamespace(workdir=FakeWorkdir(backend))
-
-    monkeypatch.setattr(service, "ConversationRepository", lambda _db: fake_repo)
-    monkeypatch.setattr(workdir_service, "resolve_authorized_conversation_workdir", resolve_binding)
-    monkeypatch.setattr(service, "AgentRunRepository", ActiveAgentRunRepository)
-
-    with pytest.raises(service.HTTPException) as exc_info:
-        await service.delete_thread_attachment_view(
-            thread_id="thread-1", file_id="file-1", db=FakeDB(), current_uid="user-1"
-        )
-
-    assert exc_info.value.status_code == 409
-    assert fake_repo.attachments == [attachment]
-    assert backend.files == {_scope_path(original): b"pdf"}
-
-
-@pytest.mark.asyncio
-async def test_delete_thread_attachment_does_not_delete_bytes_before_metadata_commit(monkeypatch):
-    fake_repo = FakeConversationRepository(db=None)
-    backend = FakeWorkdirStorage()
-    original = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/file-1_demo.pdf"
-    backend.files = {_scope_path(original): b"pdf"}
-    fake_repo.attachments = [
-        {"file_id": "file-1", "file_name": "demo.pdf", "original_path": original, "path": original}
+    monkeypatch.setattr(service, "ConversationRepository", lambda db: repo)
+    monkeypatch.setattr(service, "trash_personal_paths", trash)
+    result = await service.delete_thread_attachment_view(thread_id="t", file_id="f", db=FakeDB(), current_uid="user-1")
+    assert result["trash"]["id"] == "journal"
+    assert calls[0]["uid"] == "user-1"
+    assert calls[0]["kind"] == "attachment"
+    assert calls[0]["paths"] == [
+        f"/{WORKDIR_RELATIVE_PATH}/uploads/original.pdf",
+        f"/{WORKDIR_RELATIVE_PATH}/uploads/parsed.md",
     ]
+    assert len(repo.attachments) == 1
 
-    async def fail_remove(_conversation_id: int, _file_id: str):
-        raise RuntimeError("database unavailable")
 
-    fake_repo.remove_attachment = fail_remove
-
-    async def resolve_binding(**kwargs):
-        del kwargs
-        return SimpleNamespace(workdir=FakeWorkdir(backend))
-
-    monkeypatch.setattr(service, "ConversationRepository", lambda _db: fake_repo)
-    monkeypatch.setattr(workdir_service, "resolve_authorized_conversation_workdir", resolve_binding)
-
-    with pytest.raises(RuntimeError, match="database unavailable"):
-        await service.delete_thread_attachment_view(
-            thread_id="thread-1",
-            file_id="file-1",
-            db=FakeDB(),
-            current_uid="user-1",
-        )
-
-    assert backend.files == {_scope_path(original): b"pdf"}
+@pytest.mark.asyncio
+async def test_delete_attachment_rejects_existing_tombstone_before_files(monkeypatch):
+    """重复删除不会从旧附件记录重新取走已恢复同名路径的新文件。"""
+    repo = FakeConversationRepository(None)
+    repo.attachments = [{"file_id": "f", "trash_id": "existing"}]
+    monkeypatch.setattr(service, "ConversationRepository", lambda db: repo)
+    with pytest.raises(service.HTTPException) as error:
+        await service.delete_thread_attachment_view(thread_id="t", file_id="f", db=FakeDB(), current_uid="user-1")
+    assert error.value.status_code == 404

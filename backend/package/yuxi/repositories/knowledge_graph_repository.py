@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -287,7 +288,13 @@ class KnowledgeGraphRepository:
                     .on_conflict_do_nothing(index_elements=["triple_id", "chunk_id"])
                 )
 
-    async def delete_file_references(self, file_id: str) -> tuple[list[str], list[str]]:
+    async def delete_file_references(
+        self,
+        file_id: str,
+        *,
+        before_commit: Callable[[list[str], list[str]], Awaitable[None]] | None = None,
+    ) -> tuple[list[str], list[str]]:
+        """删除引用；外部清理失败回滚，保留孤儿标识供重试。"""
         async with pg_manager.get_async_session_context() as session:
             affected_entity_ids = list(
                 (
@@ -370,6 +377,8 @@ class KnowledgeGraphRepository:
                         delete(KnowledgeGraphEntity).where(KnowledgeGraphEntity.entity_id.in_(orphan_entity_ids))
                     )
 
+            if before_commit is not None:
+                await before_commit(orphan_entity_ids, orphan_triple_ids)
             return orphan_entity_ids, orphan_triple_ids
 
     async def delete_by_kb_id(self, kb_id: str) -> None:

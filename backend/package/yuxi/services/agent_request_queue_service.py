@@ -26,6 +26,7 @@ from yuxi.services.agent_run_service import (
     resolve_agent_run_config,
 )
 from yuxi.services.input_message_service import AgentRunInputMessage
+from yuxi.services.personal_trash_service import lock_user_files, require_no_pending_file_operations
 from yuxi.services.workdir_service import (
     WorkdirBinding,
     resolve_conversation_workdir_binding,
@@ -126,6 +127,8 @@ async def intake_request(
         raise HTTPException(status_code=422, detail="queue_policy 'steer' 仅支持主会话 Chat/Channel")
     meta = meta or {}
     uid_str = str(uid)
+    await lock_user_files(db, uid_str)
+    await require_no_pending_file_operations(db, uid_str)
     repo = AgentRunRequestRepository(db)
 
     async def existing_intake_result(binding: WorkdirBinding | None = None) -> IntakeResult | None:

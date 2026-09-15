@@ -19,13 +19,27 @@ from yuxi.storage.postgres.models_business import (
 )
 from yuxi.storage.postgres.models_business import Base as BusinessBase
 from yuxi.storage.postgres.models_knowledge import Base as KnowledgeBase
+from yuxi.storage.postgres.models_lifecycle import PersonalTrashEntry
 from yuxi.utils import logger
 from yuxi.utils.singleton import SingletonMeta
 
 AGENT_RUN_TERMINAL_STATUS_SQL = ", ".join(f"'{status}'" for status in AGENT_RUN_TERMINAL_STATUSES)
-BUSINESS_SCHEMA_VERSION = 7
-KNOWLEDGE_SCHEMA_VERSION = 2
+BUSINESS_SCHEMA_VERSION = 8
+KNOWLEDGE_SCHEMA_VERSION = 3
 SCHEMA_VERSION_TABLE = "yuxi_schema_migrations"
+KNOWLEDGE_FILE_TRASH_SCHEMA_STATEMENTS = (
+    "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ",
+    "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS purge_after TIMESTAMPTZ",
+    "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS deletion_id VARCHAR(32)",
+    "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS deleted_by VARCHAR(64)",
+    "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS purge_started_at TIMESTAMPTZ",
+    "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS purge_lease_until TIMESTAMPTZ",
+    "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS purge_token VARCHAR(32)",
+    "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS purge_error TEXT",
+    "ALTER TABLE IF EXISTS knowledge_files ADD COLUMN IF NOT EXISTS purge_objects JSONB",
+    "CREATE INDEX IF NOT EXISTS ix_knowledge_files_purge_after ON knowledge_files(purge_after)",
+)
+
 AGENT_RUN_LEASE_SCHEMA_STATEMENTS = (
     "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS worker_id VARCHAR(128)",
     "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMP WITHOUT TIME ZONE",
@@ -534,6 +548,13 @@ class PostgresManager(metaclass=SingletonMeta):
             for statement in KNOWLEDGE_FILE_TASK_OWNER_SCHEMA_STATEMENTS:
                 await conn.execute(text(statement))
 
+    async def upgrade_knowledge_schema_v2_to_v3(self) -> None:
+        """幂等增加独立文档回收站生命周期字段。"""
+        self._check_initialized()
+        async with self.async_engine.begin() as conn:
+            for statement in KNOWLEDGE_FILE_TRASH_SCHEMA_STATEMENTS:
+                await conn.execute(text(statement))
+
     async def drop_tables(self):
         """删除所有表（慎用！）"""
         self._check_initialized()
@@ -546,6 +567,7 @@ class PostgresManager(metaclass=SingletonMeta):
         """确保知识库 schema 包含所有必要字段"""
         self._check_initialized()
         stmts = [
+            *KNOWLEDGE_FILE_TRASH_SCHEMA_STATEMENTS,
             "ALTER TABLE IF EXISTS knowledge_bases ADD COLUMN IF NOT EXISTS embedding_model_spec VARCHAR(512)",
             "ALTER TABLE IF EXISTS knowledge_bases ADD COLUMN IF NOT EXISTS llm_model_spec VARCHAR(512)",
             "ALTER TABLE IF EXISTS knowledge_bases DROP COLUMN IF EXISTS embed_info",
@@ -915,6 +937,12 @@ class PostgresManager(metaclass=SingletonMeta):
         async with self.async_engine.begin() as conn:
             for stmt in stmts:
                 await conn.execute(text(stmt))
+
+    async def upgrade_business_schema_v7_to_v8(self):
+        """幂等新增个人回收journal，不改变既有业务数据。"""
+        self._check_initialized()
+        async with self.async_engine.begin() as conn:
+            await conn.run_sync(lambda sync: PersonalTrashEntry.__table__.create(sync, checkfirst=True))
 
     async def ensure_business_schema(self):
         """确保业务 schema 包含后续新增字段（运行时 schema 演进）。"""

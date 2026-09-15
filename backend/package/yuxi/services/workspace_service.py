@@ -211,24 +211,22 @@ async def write_workspace_file_content(*, path: str, content: str, current_user:
     }
 
 
-async def delete_workspace_path(*, path: str, current_user: User) -> dict:
-    backend = _workspace_backend(current_user)
+async def delete_workspace_path(*, path: str, current_user: User, db) -> dict:
+    """个人文件和目录进入30天统一回收站。"""
+    from yuxi.services.personal_trash_service import trash_personal_paths
+
+    _workspace_backend(current_user)
     workspace_path = _workspace_path(path)
     if workspace_path == WORKSPACE_SCOPE_ROOT:
         raise HTTPException(status_code=400, detail="工作区根目录不允许删除")
-
-    try:
-        await asyncio.to_thread(
-            backend.delete_authorized_path,
-            workspace_path,
-            root=WORKSPACE_SCOPE_ROOT,
-        )
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="文件不存在") from exc
-    except (PermissionError, NotADirectoryError, ValueError) as exc:
-        raise HTTPException(status_code=403, detail="Access denied") from exc
-
-    return {"success": True, "path": _normalize_workspace_path(path).as_posix()}
+    result = await trash_personal_paths(
+        db=db,
+        uid=str(current_user.uid),
+        paths=[workspace_path],
+        name=PurePosixPath(workspace_path).name,
+        kind="workspace",
+    )
+    return {"success": True, "path": workspace_path, "trash": result}
 
 
 async def create_workspace_directory(*, parent_path: str, name: str, current_user: User) -> dict:

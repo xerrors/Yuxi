@@ -902,3 +902,17 @@ async def test_subagent_run_service_rejects_run_from_another_parent_run(
             created_by_run_id="parent-run",
             run_id="child-run",
         )
+
+
+@pytest.fixture(autouse=True)
+def isolate_personal_file_transaction_boundary(monkeypatch):
+    """本模块使用fake/SQLite事务；PG锁与中断隔离在真实PG lifecycle集成验证。"""
+    from unittest.mock import AsyncMock
+    from yuxi.services import subagent_run_service as owner
+
+    monkeypatch.setattr(owner, "lock_user_files", AsyncMock())
+    monkeypatch.setattr(owner, "require_no_pending_file_operations", AsyncMock())
+    from yuxi.services import agent_run_service
+
+    monkeypatch.setattr(agent_run_service, "lock_user_files", AsyncMock())
+    monkeypatch.setattr(agent_run_service, "require_no_pending_file_operations", AsyncMock())

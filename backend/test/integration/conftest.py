@@ -48,7 +48,11 @@ def ensure_live_api_schema():
         from yuxi.storage.postgres.manager import pg_manager
 
         pg_manager.initialize()
-        await pg_manager.require_current_schema()
+        try:
+            await pg_manager.require_current_schema()
+        finally:
+            # This bootstrap loop ends with anyio.run; close pools owned by it before fixture loops start.
+            await pg_manager.close()
 
     anyio.run(verify_schema_version)
 
