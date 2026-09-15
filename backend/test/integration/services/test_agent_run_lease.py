@@ -19,11 +19,13 @@ from sqlalchemy import delete, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from yuxi.agents.context import BaseContext
 from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.repositories.model_message_audit_repository import ModelMessageAuditRepository
 from yuxi.repositories.tool_message_audit_repository import ToolMessageAuditRepository
 from yuxi.services import chat_service, run_worker
+from yuxi.services.agent_run_manifest_service import PreparedRunExecution
 from yuxi.storage.postgres.manager import (
     AGENT_RUN_LANGFUSE_SCHEMA_STATEMENTS,
     AGENT_RUN_LEASE_SCHEMA_STATEMENTS,
@@ -244,7 +246,25 @@ async def test_approval_flush_overlap_preserves_terminal_publication(lease_datab
     monkeypatch.setattr(run_worker.pg_manager, "get_async_session_context", lambda: _session_context(session_factory))
     monkeypatch.setattr(run_worker, "_run_owner_token", lambda _ctx: owner)
     monkeypatch.setattr(run_worker, "RUN_HEARTBEAT_SECONDS", 0)
-    monkeypatch.setattr(run_worker, "persist_run_manifest", AsyncMock(return_value={}))
+
+    async def prepare_execution(*, run, user, worker_id, workdir_binding):
+        """使用真实执行准备返回类型，保留当前 Run 的身份和路径。"""
+        return PreparedRunExecution(
+            manifest={},
+            backend_id="ChatbotAgent",
+            context=BaseContext(
+                uid=user.uid,
+                thread_id=run.conversation_thread_id,
+                run_id=run.id,
+                request_id=run.request_id,
+                worker_id=worker_id,
+                runtime_scope_id=run.runtime_scope_id,
+                workdir_relative_path=workdir_binding.workdir_path,
+                workdir_path=f"/home/gem/user-data/{workdir_binding.workdir_path}",
+            ),
+        )
+
+    monkeypatch.setattr(run_worker, "prepare_and_record_run_execution", prepare_execution)
     monkeypatch.setattr(
         run_worker,
         "_validate_run_workdir_binding",

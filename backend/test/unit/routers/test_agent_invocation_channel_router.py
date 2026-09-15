@@ -37,9 +37,9 @@ def test_channel_rejects_overlong_channel_at_schema_boundary():
 async def test_plain_channel_text_uses_shared_submission(monkeypatch: pytest.MonkeyPatch):
     calls: dict[str, object] = {}
 
-    async def fake_submit_run_command(*, command, **_kwargs):
-        calls["command"] = command
-        return {"run_id": "run-1", "thread_id": command.thread_id, "status": "dispatched"}
+    async def fake_submit_agent_request(*, request_input, **_kwargs):
+        calls["request_input"] = request_input
+        return {"run_id": "run-1", "thread_id": request_input.thread_id, "status": "dispatched"}
 
     class EmptyRunRepo:
         def __init__(self, db):
@@ -52,7 +52,7 @@ async def test_plain_channel_text_uses_shared_submission(monkeypatch: pytest.Mon
         async def get_latest_chat_or_resume_run(self, **_kwargs):
             return None
 
-    monkeypatch.setattr(router, "submit_run_command", fake_submit_run_command)
+    monkeypatch.setattr(router, "submit_agent_request", fake_submit_agent_request)
     monkeypatch.setattr(router, "AgentRunRepository", EmptyRunRepo)
     result = await router.receive_channel_message(
         _payload("你好", channel="cli", account_id="local", chat_id="chat-1"),
@@ -61,10 +61,10 @@ async def test_plain_channel_text_uses_shared_submission(monkeypatch: pytest.Mon
     )
 
     assert result["kind"] == "run"
-    assert calls["command"].origin.source == "channel"
-    assert calls["command"].origin.channel == "cli"
-    assert calls["command"].origin.external_id == "message-1"
-    assert calls["command"].queue_policy == "steer"
+    assert calls["request_input"].origin.source == "channel"
+    assert calls["request_input"].origin.channel == "cli"
+    assert calls["request_input"].origin.external_id == "message-1"
+    assert calls["request_input"].queue_policy == "steer"
 
 
 @pytest.mark.asyncio
@@ -72,7 +72,7 @@ async def test_channel_rejects_whitespace_text_before_submission(monkeypatch: py
     async def fail_submit(**_kwargs):
         raise AssertionError("空白消息不应进入提交服务")
 
-    monkeypatch.setattr(router, "submit_run_command", fail_submit)
+    monkeypatch.setattr(router, "submit_agent_request", fail_submit)
 
     with pytest.raises(HTTPException) as exc:
         await router.receive_channel_message(
@@ -89,9 +89,9 @@ async def test_channel_rejects_whitespace_text_before_submission(monkeypatch: py
 async def test_channel_uses_request_id_as_external_id_when_message_id_missing(monkeypatch: pytest.MonkeyPatch):
     calls: dict[str, object] = {}
 
-    async def fake_submit_run_command(*, command, **_kwargs):
-        calls["command"] = command
-        return {"run_id": "run-1", "thread_id": command.thread_id, "status": "dispatched"}
+    async def fake_submit_agent_request(*, request_input, **_kwargs):
+        calls["request_input"] = request_input
+        return {"run_id": "run-1", "thread_id": request_input.thread_id, "status": "dispatched"}
 
     class EmptyRunRepo:
         def __init__(self, db):
@@ -104,7 +104,7 @@ async def test_channel_uses_request_id_as_external_id_when_message_id_missing(mo
         async def get_latest_chat_or_resume_run(self, **_kwargs):
             return None
 
-    monkeypatch.setattr(router, "submit_run_command", fake_submit_run_command)
+    monkeypatch.setattr(router, "submit_agent_request", fake_submit_agent_request)
     monkeypatch.setattr(router, "AgentRunRepository", EmptyRunRepo)
     await router.receive_channel_message(
         router.ChannelMessageRequest(
@@ -117,8 +117,8 @@ async def test_channel_uses_request_id_as_external_id_when_message_id_missing(mo
         db=object(),
     )
 
-    assert calls["command"].request_id == "request-1"
-    assert calls["command"].origin.external_id == "request-1"
+    assert calls["request_input"].request_id == "request-1"
+    assert calls["request_input"].origin.external_id == "request-1"
 
 
 @pytest.mark.asyncio
@@ -129,7 +129,7 @@ async def test_state_command_does_not_submit(monkeypatch: pytest.MonkeyPatch):
     async def fake_state(**_kwargs):
         return {"agent_state": {"todos": []}}
 
-    monkeypatch.setattr(router, "submit_run_command", fail_submit)
+    monkeypatch.setattr(router, "submit_agent_request", fail_submit)
     monkeypatch.setattr(router, "get_agent_state_view", fake_state)
     result = await router.receive_channel_message(
         _payload("/state"),
@@ -159,7 +159,7 @@ async def test_approve_command_creates_resume_without_submit(monkeypatch: pytest
 
     calls: dict[str, object] = {}
 
-    async def fake_create_agent_run_view(**kwargs):
+    async def fake_create_resume_run_view(**kwargs):
         calls["kwargs"] = kwargs
         return {"run_id": "run-resume", "status": "pending", "thread_id": kwargs["thread_id"]}
 
@@ -167,8 +167,8 @@ async def test_approve_command_creates_resume_without_submit(monkeypatch: pytest
         raise AssertionError("/approve must not create a Request")
 
     monkeypatch.setattr(router, "AgentRunRepository", RunRepo)
-    monkeypatch.setattr(router, "create_agent_run_view", fake_create_agent_run_view)
-    monkeypatch.setattr(router, "submit_run_command", fail_submit)
+    monkeypatch.setattr(router, "create_resume_run_view", fake_create_resume_run_view)
+    monkeypatch.setattr(router, "submit_agent_request", fail_submit)
     result = await router.receive_channel_message(
         _payload("/approve"),
         current_user=SimpleNamespace(uid="user-1"),
@@ -205,7 +205,7 @@ async def test_approve_command_reuses_existing_resume_when_it_is_latest(monkeypa
         async def get_latest_chat_or_resume_run(self, **_kwargs):
             return existing_run
 
-    async def fake_create_agent_run_view(**kwargs):
+    async def fake_create_resume_run_view(**kwargs):
         assert kwargs["created_by_run_id"] == "parent-run"
         return {
             "run_id": existing_run.id,
@@ -216,7 +216,7 @@ async def test_approve_command_reuses_existing_resume_when_it_is_latest(monkeypa
         }
 
     monkeypatch.setattr(router, "AgentRunRepository", RunRepo)
-    monkeypatch.setattr(router, "create_agent_run_view", fake_create_agent_run_view)
+    monkeypatch.setattr(router, "create_resume_run_view", fake_create_resume_run_view)
 
     result = await router.receive_channel_message(
         _payload("/approve", request_id="request-1"),

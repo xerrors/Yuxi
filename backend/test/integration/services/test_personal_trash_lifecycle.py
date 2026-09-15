@@ -464,3 +464,43 @@ async def test_idle_guard_single_snapshot_survives_atomic_dispatch(env, monkeypa
         assert (await observer.get(AgentRun, run_id)).status == "running"
         request = await observer.scalar(select(AgentRunRequest).where(AgentRunRequest.request_id == request_id))
         assert request.status == "dispatched"
+
+
+async def test_new_request_owner_rejects_pending_file_journal(env):
+    """普通请求的新持久化 Owner 在写入 Request 前执行真实回收事务门禁。"""
+    from yuxi.services.agent_request_service import AgentRequestInput, RunOrigin, _persist_request
+    from yuxi.services.input_message_service import build_chat_input_message
+
+    sessions, uid, _, _, _, _, _, user = env
+    async with sessions() as db:
+        db.add(
+            PersonalTrashEntry(
+                id="pending-" + uid,
+                uid=uid,
+                name="pending.txt",
+                kind="workspace",
+                paths=[],
+                state="pending_delete",
+                deleted_at=utc_now_naive(),
+                purge_after=utc_now_naive() + timedelta(days=30),
+            )
+        )
+        await db.commit()
+    async with sessions() as db:
+        with pytest.raises(HTTPException) as exc:
+            await _persist_request(
+                db=db,
+                request_input=AgentRequestInput(
+                    request_id="request-" + uid,
+                    agent_slug="fixture",
+                    thread_id="fixture",
+                    input_message=build_chat_input_message("hello"),
+                    origin=RunOrigin(source="chat", channel="web"),
+                ),
+                current_user=user,
+                agent_item=None,
+                agent_backend=None,
+            )
+        assert exc.value.status_code == 409
+        assert exc.value.detail == "文件回收操作尚在处理，请在统一回收站重试或稍后再试"
+        assert (await db.scalars(select(AgentRunRequest).where(AgentRunRequest.uid == uid))).all() == []

@@ -13,11 +13,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.repositories.agent_run_repository import AgentRunRepository
-from yuxi.services.agent_run_service import create_agent_run_view
+from yuxi.services.agent_run_service import create_resume_run_view
 from yuxi.services.channel_command_service import parse_slash_command
 from yuxi.services.chat_service import get_agent_state_view
 from yuxi.services.input_message_service import build_chat_input_message
-from yuxi.services.run_submission_service import RunOrigin, RunSubmissionCommand, submit_run_command
+from yuxi.services.agent_request_service import RunOrigin, AgentRequestInput, submit_agent_request
 from yuxi.storage.postgres.models_business import User
 from yuxi.utils.hash_utils import hash_id
 
@@ -130,8 +130,8 @@ async def receive_channel_message(
             },
         )
 
-    result = await submit_run_command(
-        command=RunSubmissionCommand(
+    result = await submit_agent_request(
+        request_input=AgentRequestInput(
             agent_slug=agent_slug,
             thread_id=thread_id,
             request_id=request_id,
@@ -199,8 +199,7 @@ async def _approve_latest_run(
             )
         parent_run_id = latest_run.id
 
-    result = await create_agent_run_view(
-        input_message=None,
+    result = await create_resume_run_view(
         agent_slug=agent_slug,
         thread_id=thread_id,
         meta={"request_id": request_id, "source": "channel", "channel": channel},

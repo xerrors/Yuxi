@@ -141,7 +141,7 @@ def install(probe, app=None):
         return
     _installed = True
     modules = (
-        "yuxi.services.run_submission_service",
+        "yuxi.services.agent_request_service",
         "yuxi.services.agent_request_queue_service",
         "yuxi.services.agent_run_manifest_service",
         "yuxi.services.workdir_service",
