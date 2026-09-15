@@ -138,6 +138,7 @@
 
         <div class="mcp-basic-info-footer">
           <a-button @click="closeBasicInfo">关闭</a-button>
+          <a-button @click="navigateToDetail(previewServer)">查看配置与测试</a-button>
           <a-button
             type="primary"
             class="lucide-icon-btn"
@@ -207,7 +208,7 @@ const navigateToDetail = (server) => {
 }
 
 const handleCardClick = (server) => {
-  if (server.enabled || server.requires_migration) {
+  if (!server.is_builtin || server.enabled || server.requires_migration) {
     navigateToDetail(server)
     return
   }

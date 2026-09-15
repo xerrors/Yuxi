@@ -94,6 +94,9 @@ def _user(uid: str = "root", role: str = "admin") -> User:
 
 
 class _UnitOfWork:
+    async def refresh(self, item):
+        pass
+
     async def commit(self) -> None:
         pass
 
@@ -1073,6 +1076,9 @@ async def test_get_skill_dependency_options(monkeypatch: pytest.MonkeyPatch):
         ]
 
     monkeypatch.setattr(tool_service, "get_tool_metadata", fake_get_tool_metadata)
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr("yuxi.repositories.tool_display_repository.read_names", AsyncMock(return_value={}))
 
     async def fake_get_enabled_mcp_server_slugs(db=None):
         del db
@@ -1387,7 +1393,8 @@ async def test_skill_md_prepare_confirm_creates_single_file_skill(tmp_path: Path
 
 
 @pytest.mark.asyncio
-async def test_update_skill_md_syncs_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.parametrize("display_name", [None, "更新中文名称"])
+async def test_update_skill_md_syncs_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, display_name):
     skill_dir = tmp_path / "skill-sources/shared" / "demo"
     skill_dir.mkdir(parents=True, exist_ok=True)
     (skill_dir / "SKILL.md").write_text(
@@ -1402,6 +1409,7 @@ async def test_update_skill_md_syncs_metadata(tmp_path: Path, monkeypatch: pytes
         dir_path="shared/demo",
         created_by="root",
         updated_by="root",
+        share_config={"version": 2, "read_scope": {"access_level": "global"}, "manage_scope": None},
     )
 
     async def fake_get_manageable_skill_or_raise(_db, _operator, _slug: str):
@@ -1430,6 +1438,8 @@ async def test_update_skill_md_syncs_metadata(tmp_path: Path, monkeypatch: pytes
     monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
 
     new_content = "---\nname: demo\ndescription: updated desc\n---\n# updated\n"
+    if display_name:
+        new_content = new_content.replace("name: demo\n", f"name: demo\ndisplay_name: {display_name}\n")
     await svc.update_skill_file(
         _UnitOfWork(),
         slug="demo",
@@ -1439,7 +1449,7 @@ async def test_update_skill_md_syncs_metadata(tmp_path: Path, monkeypatch: pytes
         operator=_user("root"),
     )
 
-    assert updates["name"] == "demo"
+    assert updates["name"] == (display_name or "demo")
     assert updates["description"] == "updated desc"
     assert updates["updated_by"] == "admin"
     saved_content = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
@@ -1488,6 +1498,9 @@ async def test_update_skill_dependencies(monkeypatch: pytest.MonkeyPatch):
         return [{"slug": "calculator", "name": "Calculator"}]
 
     monkeypatch.setattr(tool_service, "get_tool_metadata", fake_get_tool_metadata)
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr("yuxi.repositories.tool_display_repository.read_names", AsyncMock(return_value={}))
 
     async def fake_get_enabled_mcp_server_slugs(db=None):
         del db
@@ -1673,7 +1686,22 @@ async def test_init_builtin_skills_create_missing(tmp_path: Path, monkeypatch: p
     assert len(items) == 1
     assert items[0].slug == "reporter"
     assert FakeRepo.created_payload["source_type"] == "builtin"
-    assert FakeRepo.created_payload["share_config"] == svc.BUILTIN_SKILL_SHARE_CONFIG
+    expected_permission = {
+        "version": 2,
+        "read_scope": {"access_level": "global", "department_ids": [], "user_uids": []},
+        "manage_scope": None,
+    }
+    assert FakeRepo.created_payload["share_config"] == expected_permission
+    assert svc.normalize_permission_config(items[0].share_config, strict=True) == expected_permission
+
+    # 使用真实更新方法证明两条写入路径一致，不用复制生产逻辑的替身作判据。
+    from unittest.mock import AsyncMock
+    from yuxi.agents.skills.repository import SkillRepository
+
+    updated = await SkillRepository(SimpleNamespace(flush=AsyncMock(), refresh=AsyncMock())).update_builtin_install(
+        items[0], version="next", content_hash="next", updated_by="system"
+    )
+    assert updated.share_config == expected_permission
     assert FakeRepo.created_payload["enabled"] is True
     assert FakeRepo.created_payload["created_by"] == "system"
     assert FakeRepo.created_payload["tool_dependencies"] == ["mysql_query"]
@@ -1786,7 +1814,11 @@ async def test_init_builtin_skills_updates_existing_record_and_preserves_disable
             item.version = version
             item.content_hash = content_hash
             item.source_type = "builtin"
-            item.share_config = svc.BUILTIN_SKILL_SHARE_CONFIG.copy()
+            item.share_config = {
+                "version": 2,
+                "read_scope": {"access_level": "global", "department_ids": [], "user_uids": []},
+                "manage_scope": None,
+            }
             item.updated_by = updated_by
             captured["install"] = {"version": version, "content_hash": content_hash, "updated_by": updated_by}
             return item
@@ -2217,6 +2249,256 @@ async def test_confirm_personal_skill_draft_uses_original_slug_without_database(
     assert results[0]["requested_slug"] == "demo-v2"
     assert (personal_root / "demo" / "SKILL.md").exists()
     assert not draft_dir.exists()
+
+
+@pytest.mark.parametrize(
+    "display_name,expected",
+    [("中文名称", "中文名称"), ("  中文名称  ", "中文名称"), ("", "english-name"), ("   ", "english-name")],
+)
+def test_display_name_keeps_original_identifier(display_name, expected):
+    import yaml
+
+    metadata = {"name": "english-name", "display_name": display_name, "description": "fixture"}
+    content = "---\n" + yaml.safe_dump(metadata, allow_unicode=True) + "---\nbody"
+    slug, name, _, raw = svc._parse_skill_markdown(content)
+    assert slug == "english-name"
+    assert name == expected
+    assert raw == metadata
+    rewritten = svc._rewrite_frontmatter_slug(content, "english-name-v2")
+    assert svc._parse_skill_markdown(rewritten)[:2] == (
+        "english-name-v2",
+        expected if display_name.strip() else "english-name-v2",
+    )
+
+
+@pytest.mark.parametrize("value", [None, True, 42, [], {}])
+def test_display_name_rejects_non_string(value):
+    import yaml
+
+    content = "---\n" + yaml.safe_dump({"name": "demo", "description": "fixture", "display_name": value}) + "---\n"
+    with pytest.raises(ValueError, match="display_name"):
+        svc._parse_skill_markdown(content)
+
+
+def test_display_name_does_not_replace_identifier_validation():
+    with pytest.raises(ValueError, match="frontmatter.name"):
+        svc._parse_skill_markdown("---\nname: 中文\ndisplay_name: 展示名称\ndescription: fixture\n---\n")
+
+
+def test_display_name_length_error_identifies_actual_field():
+    """超长中文展示名错误指向display_name，不误导修改稳定name。"""
+    from yuxi.agents.skills.service import _parse_skill_markdown
+
+    content = "---\nname: pptx-fixture\ndisplay_name: " + "演" * 129 + "\ndescription: fixture\n---\nbody"
+    with pytest.raises(ValueError, match=r"frontmatter\.display_name"):
+        _parse_skill_markdown(content)
+
+
+@pytest.mark.parametrize("name", ["", "  ", "x" * 129, "x\ny", "x\ty", "<b>标题</b>", "x\u2028y", 12, None])
+def test_display_name_edit_rejects_invalid_plain_text(name):
+    with pytest.raises(ValueError, match="display_name"):
+        svc._with_skill_display_name("---\nname: demo\ndescription: old\n---\nbody", name, slug="demo")
+
+
+def test_display_name_edit_preserves_unknown_metadata_and_body():
+    original = (
+        "---\nname: English Title\nslug: demo\ndescription: old\ncustom:\n  list: [one, two]\n"
+        "tool_dependencies: [tool]\n---\n# Body\n\n---\ntrailing  \n"
+    )
+    changed = svc._with_skill_display_name(original, " 中文标题 ", slug="demo")
+    slug, name, description, metadata = svc._parse_skill_markdown(changed)
+    assert (slug, name, description) == ("demo", "中文标题", "old")
+    assert metadata["name"] == "English Title"
+    assert metadata["custom"] == {"list": ["one", "two"]}
+    assert metadata["tool_dependencies"] == ["tool"]
+    assert svc._split_frontmatter(changed)[1] == svc._split_frontmatter(original)[1]
+
+
+@pytest.mark.asyncio
+async def test_personal_display_name_edit_isolated_and_rescanned(tmp_path, monkeypatch):
+    monkeypatch.setattr(svc, "_personal_skills_root", lambda uid: tmp_path / uid)
+    original = "---\nname: demo\ndescription: old\ncustom: retained\n---\n# body\n"
+    for uid in ("owner", "other"):
+        directory = tmp_path / uid / "demo"
+        directory.mkdir(parents=True)
+        (directory / "SKILL.md").write_text(original, encoding="utf-8")
+    await svc.update_personal_skill_display_name("owner", "demo", "中文技能")
+    assert (await svc.list_personal_skills("owner"))[0].name == "中文技能"
+    assert (await svc.list_personal_skills("owner"))[0].slug == "demo"
+    assert (tmp_path / "other/demo/SKILL.md").read_text(encoding="utf-8") == original
+    with pytest.raises(ValueError, match="slug"):
+        await svc.update_personal_skill_display_name("owner", "../other/demo", "非法")
+    with pytest.raises(ValueError, match="不存在"):
+        await svc.update_personal_skill_display_name("owner", "missing", "名称")
+    with pytest.raises(ValueError, match="display_name"):
+        await svc.update_personal_skill_display_name("owner", "demo", "<script>")
+    assert (await svc.list_personal_skills("owner"))[0].name == "中文技能"
+
+
+@pytest.mark.asyncio
+async def test_shared_display_name_edit_uses_permission_and_persists(tmp_path, monkeypatch):
+    original = "---\nname: demo\ndescription: old\ncustom: retained\n---\n# body\n"
+    directory = tmp_path / "skill-sources/shared/demo"
+    directory.mkdir(parents=True)
+    target = directory / "SKILL.md"
+    target.write_text(original, encoding="utf-8")
+    item = Skill(
+        slug="demo",
+        name="demo",
+        description="old",
+        dir_path="shared/demo",
+        created_by="owner",
+        source_type="upload",
+        share_config={
+            "version": 2,
+            "read_scope": {"access_level": "global"},
+            "manage_scope": {"access_level": "user", "user_uids": ["owner"]},
+        },
+    )
+
+    async def get_item(_db, _slug):
+        return item
+
+    class Repo:
+        def __init__(self, db):
+            pass
+
+        async def update_metadata(self, item, **values):
+            for key, value in values.items():
+                setattr(item, key, value)
+            return item
+
+    monkeypatch.setattr(svc, "get_skill_or_raise", get_item)
+    monkeypatch.setattr(svc, "SkillRepository", Repo)
+    with pytest.raises(ValueError, match="无权管理"):
+        await svc.update_skill_display_name(
+            _UnitOfWork(), slug="demo", display_name="偷改", operator=_user("other", "user")
+        )
+    assert target.read_text(encoding="utf-8") == original
+    await svc.update_skill_display_name(
+        _UnitOfWork(), slug="demo", display_name="中文名称", operator=_user("owner", "user")
+    )
+    assert (item.slug, item.name, item.description, item.updated_by) == ("demo", "中文名称", "old", "owner")
+    assert svc._parse_skill_markdown(target.read_text(encoding="utf-8"))[1] == "中文名称"
+    item.source_type = "builtin"
+    from yuxi.repositories import tool_display_repository
+    from unittest.mock import AsyncMock
+
+    save = AsyncMock()
+    monkeypatch.setattr(tool_display_repository, "save_name", save)
+    await svc.update_skill_display_name(_UnitOfWork(), slug="demo", display_name="覆盖", operator=_user("owner"))
+    save.assert_awaited_once_with("demo", "覆盖", "owner", key="builtin_skill_display_names")
+    assert svc._parse_skill_markdown(target.read_text(encoding="utf-8"))[1] == "中文名称"
+
+
+def test_display_name_edit_repairs_translated_legacy_identifier():
+    original = "---\nname: PPT 演示文稿\ndisplay_name: PPT 演示文稿\ndescription: old\ncustom: keep\n---\n# body\n"
+    changed = svc._with_skill_display_name(original, "演示文稿", slug="pptx")
+    slug, name, _, metadata = svc._parse_skill_markdown(changed)
+    assert (slug, name) == ("pptx", "演示文稿")
+    assert metadata["name"] == "pptx"
+    assert metadata["custom"] == "keep"
+    assert svc._split_frontmatter(changed)[1] == svc._split_frontmatter(original)[1]
+
+
+def test_display_name_edit_never_renames_valid_different_identifier():
+    with pytest.raises(ValueError, match="slug"):
+        svc._with_skill_display_name("---\nname: other\ndescription: old\n---\nbody", "名称", slug="demo")
+
+
+@pytest.mark.asyncio
+async def test_personal_display_name_publish_failure_preserves_bytes_and_mode(tmp_path, monkeypatch):
+    import os
+
+    monkeypatch.setattr(svc, "_personal_skills_root", lambda uid: tmp_path / uid)
+    directory = tmp_path / "owner/demo"
+    directory.mkdir(parents=True)
+    target = directory / "SKILL.md"
+    original = b"---\nname: demo\ndescription: old\n---\nbody"
+    target.write_bytes(original)
+    target.chmod(0o640)
+    rename = os.rename
+
+    def fail_publish(*args, **kwargs):
+        raise OSError("publish failed")
+
+    monkeypatch.setattr(os, "rename", fail_publish)
+    with pytest.raises(OSError, match="publish failed"):
+        await svc.update_personal_skill_display_name("owner", "demo", "新名称")
+    assert target.read_bytes() == original
+    assert target.stat().st_mode & 0o777 == 0o640
+    assert not list(directory.glob(".yuxi-replace-*"))
+    monkeypatch.setattr(os, "rename", rename)
+    await svc.update_personal_skill_display_name("owner", "demo", "新名称")
+    assert svc._parse_skill_markdown(target.read_text())[1] == "新名称"
+    assert target.stat().st_mode & 0o777 == 0o640
+
+
+@pytest.mark.asyncio
+async def test_shared_display_name_failed_commit_restores_file_and_unlocks(tmp_path, monkeypatch):
+    directory = tmp_path / "skill-sources/shared/demo"
+    directory.mkdir(parents=True)
+    target = directory / "SKILL.md"
+    original = b"---\nname: demo\ndescription: old\n---\nbody"
+    target.write_bytes(original)
+    target.chmod(0o640)
+    item = Skill(
+        slug="demo",
+        name="demo",
+        description="old",
+        dir_path="shared/demo",
+        source_type="upload",
+        created_by="root",
+        share_config={"version": 2, "read_scope": {"access_level": "global"}, "manage_scope": None},
+    )
+
+    async def manageable(*args):
+        return item
+
+    class Repo:
+        def __init__(self, db):
+            pass
+
+        async def update_metadata(self, item, **values):
+            item.name = values["name"]
+
+    class FailingCommit(_UnitOfWork):
+        async def commit(self):
+            assert svc._parse_skill_markdown(target.read_text())[1] == "新名称"
+            raise RuntimeError("commit failed")
+
+        async def rollback(self):
+            item.name = "demo"
+
+    monkeypatch.setattr(svc, "get_manageable_skill_or_raise", manageable)
+    monkeypatch.setattr(svc, "SkillRepository", Repo)
+    with pytest.raises(RuntimeError, match="commit failed"):
+        await svc.update_skill_display_name(FailingCommit(), slug="demo", display_name="新名称", operator=_user())
+    assert item.name == "demo"
+    assert target.read_bytes() == original
+    assert target.stat().st_mode & 0o777 == 0o640
+    await asyncio.wait_for(
+        svc.update_skill_display_name(_UnitOfWork(), slug="demo", display_name="重试", operator=_user()), 2
+    )
+    assert item.name == "重试"
+    assert svc._parse_skill_markdown(target.read_text())[1] == "重试"
+
+
+@pytest.mark.asyncio
+async def test_skill_edit_lock_wait_does_not_block_event_loop(tmp_path):
+    target = tmp_path / "demo.md"
+    entered = asyncio.Event()
+
+    async def contender():
+        async with svc._skill_edit_lock(target):
+            entered.set()
+
+    async with svc._skill_edit_lock(target):
+        task = asyncio.create_task(contender())
+        await asyncio.sleep(0.1)
+        assert not entered.is_set()
+    await asyncio.wait_for(task, 2)
+    assert entered.is_set()
 
 
 def test_resolved_shared_skill_captures_original_version_and_hash(monkeypatch, tmp_path):

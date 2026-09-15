@@ -132,6 +132,8 @@ watch(
 
 // 工具名称展示优先级：display_label > 完整工具元数据中的 display name > 前端兜底名称映射 > 工具 id
 const getToolCallLabel = (toolCall) => {
+  const override = findToolInList(getToolCallId(toolCall), agentStore.mcpToolDisplayNames)
+  if (override) return override.name
   const displayLabel = String(toolCall?.display_label || '').trim()
   if (displayLabel) return displayLabel
 
@@ -141,7 +143,7 @@ const getToolCallLabel = (toolCall) => {
     : availableTools.value
       ? Object.values(availableTools.value)
       : []
-  const tool = findToolInList(toolId, toolsList)
+  const tool = findToolInList(toolId, [...agentStore.mcpToolDisplayNames, ...toolsList])
   return tool ? tool.name : getToolName(toolId)
 }
 

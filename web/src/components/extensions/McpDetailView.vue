@@ -20,11 +20,14 @@
     <template #actions>
       <div class="extension-detail-actions">
         <a-space :size="8">
+          <a-button v-if="userStore.isAdmin" :disabled="!server" @click="openDisplayName"
+            >设置显示名称</a-button
+          >
           <button
             type="button"
             :aria-label="testLoading ? '正在测试 MCP' : '测试 MCP'"
             @click="handleTestServer"
-            :disabled="testLoading || server?.requires_migration"
+            :disabled="testLoading || !server || server?.requires_migration"
             :title="server?.requires_migration ? '请先迁移为远程 MCP' : ''"
             class="lucide-icon-btn extension-panel-action extension-panel-action-secondary"
           >
@@ -300,12 +303,13 @@
             >
               <div class="tool-header">
                 <div class="tool-info">
-                  <span class="tool-name">{{ tool.name }}</span>
+                  <span class="tool-name">{{ tool.display_name || tool.name }}</span>
                   <a-tooltip :title="`ID: ${tool.id}`">
                     <Info :size="14" class="info-icon" />
                   </a-tooltip>
                 </div>
                 <div class="tool-actions">
+                  <a-button size="small" @click="openToolDisplayName(tool)">修改显示名称</a-button>
                   <a-switch
                     :checked="tool.enabled"
                     :aria-label="`${tool.name} ${tool.enabled ? '已启用' : '已禁用'}`"
@@ -357,6 +361,23 @@
       </div>
     </template>
   </ExtensionDetailLayout>
+  <a-modal
+    v-model:open="nameOpen"
+    title="设置显示名称"
+    ok-text="保存" cancel-text="取消"
+    :confirm-loading="nameSaving"
+    @ok="saveDisplayName"
+  >
+    <p v-if="server?.is_builtin">内置 MCP 只修改展示名称，留空恢复默认；连接配置保持只读。</p>
+    <a-input v-model:value="displayName" :maxlength="80" placeholder="请输入MCP显示名称" />
+    <a-alert v-if="nameError" type="error" :message="nameError" />
+  </a-modal>
+  <a-modal v-model:open="toolNameOpen" title="修改工具显示名称" ok-text="保存" cancel-text="取消" :confirm-loading="toolNameSaving"
+    :closable="!toolNameSaving" :mask-closable="!toolNameSaving" @ok="saveToolDisplayName">
+    <p>原工具标识 {{ editingTool?.name }} 保持不变，留空恢复默认。</p>
+    <a-input v-model:value="toolDisplayName" :maxlength="80" aria-label="工具显示名称" />
+    <a-alert v-if="toolNameError" type="error" :message="toolNameError" />
+  </a-modal>
 </template>
 
 <script setup>
@@ -378,9 +399,62 @@ import {
   X
 } from '@lucide/vue'
 import ExtensionDetailLayout from '@/components/shared/ExtensionDetailLayout.vue'
+import { useUserStore } from '@/stores/user'
 import { mcpApi } from '@/apis/mcp_api'
+import { useAgentStore } from '@/stores/agent'
 import { formatFullDateTime } from '@/utils/time'
 
+const userStore = useUserStore()
+const agentStore = useAgentStore()
+const toolNameOpen = ref(false), toolNameSaving = ref(false), toolDisplayName = ref(''),
+  toolNameError = ref(''), editingTool = ref(null)
+function openToolDisplayName(tool) {
+  editingTool.value = tool
+  toolDisplayName.value = tool.display_name || tool.name
+  toolNameError.value = ''
+  toolNameOpen.value = true
+}
+async function refreshChatDisplayNames() {
+  try { await agentStore.refreshMcpDisplayNames() }
+  catch { message.warning('名称已保存，聊天候选刷新失败，请刷新页面') }
+}
+async function saveToolDisplayName() {
+  if (toolNameSaving.value) return
+  toolNameSaving.value = true
+  toolNameError.value = ''
+  try {
+    const result = await mcpApi.setToolDisplayName(server.value.slug, editingTool.value.name, toolDisplayName.value)
+    editingTool.value.display_name = result.data.display_name
+    toolNameOpen.value = false
+    await refreshChatDisplayNames()
+  } catch (error) { toolNameError.value = error.message || '工具显示名称保存失败' }
+  finally { toolNameSaving.value = false }
+}
+const nameOpen = ref(false),
+  nameSaving = ref(false),
+  displayName = ref(''),
+  nameError = ref('')
+function openDisplayName() {
+  displayName.value = server.value.name
+  nameError.value = ''
+  nameOpen.value = true
+}
+async function saveDisplayName() {
+  if (nameSaving.value) return
+  const target = server.value.slug
+  nameSaving.value = true
+  nameError.value = ''
+  try {
+    const result = await mcpApi.setDisplayName(target, displayName.value)
+    if (server.value?.slug === target) server.value.name = result.data.name
+    nameOpen.value = false
+    await refreshChatDisplayNames()
+  } catch (err) {
+    nameError.value = err.message || '显示名称保存失败'
+  } finally {
+    nameSaving.value = false
+  }
+}
 const route = useRoute()
 const router = useRouter()
 const slug = computed(() => decodeURIComponent(route.params.slug ?? route.params.name))
@@ -432,6 +506,7 @@ const filteredTools = computed(() => {
   return tools.value.filter(
     (t) =>
       t.name.toLowerCase().includes(search) ||
+      (t.display_name && t.display_name.toLowerCase().includes(search)) ||
       (t.description && t.description.toLowerCase().includes(search))
   )
 })

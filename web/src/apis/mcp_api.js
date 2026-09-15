@@ -115,6 +115,11 @@ export const toggleMcpServerTool = async (serverName, toolName) => {
 }
 
 export const mcpApi = {
+  getToolDisplayNames: () => apiGet('/api/system/tools/mcp-display-names'),
+  setToolDisplayName: (slug, tool, name) =>
+    apiAdminPut(`${BASE_URL}/${encodeURIComponent(slug)}/tools/${encodeURIComponent(tool)}/display-name`, { name }),
+  setDisplayName: (slug, name) =>
+    apiAdminPut(`${BASE_URL}/${encodeURIComponent(slug)}/display-name`, { name }),
   getMcpServers,
   getMcpServer,
   createMcpServer,

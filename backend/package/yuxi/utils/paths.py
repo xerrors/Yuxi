@@ -1,6 +1,7 @@
 import errno
 import os
 import stat
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -78,6 +79,48 @@ def open_regular_file_fd(
         os.close(parent_fd)
 
 
+def replace_regular_file(
+    root: Path | int, parts: tuple[str, ...], content: bytes, *, preserve_mode: bool = False
+) -> os.stat_result:
+    """在 no-follow 父目录内完整写入并原子替换普通文件。"""
+    if not parts:
+        raise IsADirectoryError(str(root))
+    parent_fd = open_directory_fd(root, parts[:-1])
+    target_fd = None
+    temp_name = f".yuxi-replace-{uuid.uuid4().hex}"
+    try:
+        try:
+            target_stat = os.stat(parts[-1], dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            target_stat = None
+        if target_stat is not None:
+            if stat.S_ISLNK(target_stat.st_mode):
+                raise PermissionError("symlink paths are not allowed")
+            if not stat.S_ISREG(target_stat.st_mode):
+                raise PermissionError("only regular files can be replaced")
+        target_fd = os.open(temp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent_fd)
+        if preserve_mode and target_stat is not None:
+            os.fchmod(target_fd, stat.S_IMODE(target_stat.st_mode))
+        offset = 0
+        while offset < len(content):
+            offset += os.write(target_fd, content[offset:])
+        os.fsync(target_fd)
+        final_stat = os.fstat(target_fd)
+        os.close(target_fd)
+        target_fd = None
+        os.rename(temp_name, parts[-1], src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        os.fsync(parent_fd)
+        return final_stat
+    finally:
+        if target_fd is not None:
+            os.close(target_fd)
+        try:
+            os.unlink(temp_name, dir_fd=parent_fd)
+        except FileNotFoundError:
+            pass
+        os.close(parent_fd)
+
+
 def ensure_within_root(path: Path, root: Path, *, error_message: str) -> Path:
     """确认真实路径位于指定根目录内，否则拒绝越界访问。"""
     try:
@@ -90,5 +133,6 @@ def ensure_within_root(path: Path, root: Path, *, error_message: str) -> Path:
 __all__ = [
     "open_directory_fd",
     "open_regular_file_fd",
+    "replace_regular_file",
     "ensure_within_root",
 ]

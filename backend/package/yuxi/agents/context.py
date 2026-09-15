@@ -459,10 +459,11 @@ async def resolve_agent_resource_options(
 
     if "tools" in fields_to_load:
         from yuxi.agents.toolkits.service import get_tool_metadata
+        from yuxi.services.tool_display_service import display_tools
 
         options["tools"] = [
             _resource_option(tool["slug"], tool.get("name"), tool.get("description"))
-            for tool in get_tool_metadata(category="buildin")
+            for tool in await display_tools(get_tool_metadata(category="buildin"))
             if tool.get("slug")
         ]
     if "knowledges" in fields_to_load:
@@ -473,22 +474,42 @@ async def resolve_agent_resource_options(
             _resource_option(item.kb_id, item.name, item.description) for item in databases if item.kb_id
         ]
     if "mcps" in fields_to_load:
-        from yuxi.agents.mcp.service import get_all_mcp_servers, get_enabled_mcp_server_slugs
+        from yuxi.agents.mcp.service import get_all_mcp_servers, get_enabled_mcp_server_slugs, is_builtin_mcp_server
+        from yuxi.services.resource_display_service import display_mcps
 
         servers = await get_all_mcp_servers(db)
         enabled_slugs = set(await get_enabled_mcp_server_slugs(db=db))
-        options["mcps"] = [
-            _resource_option(server.slug, server.name, server.description)
-            for server in servers
-            if server.slug in enabled_slugs
-        ]
+        rows = await display_mcps(
+            [
+                {
+                    "slug": server.slug,
+                    "name": server.name,
+                    "description": server.description,
+                    "is_builtin": is_builtin_mcp_server(server),
+                }
+                for server in servers
+                if server.slug in enabled_slugs
+            ]
+        )
+        options["mcps"] = [_resource_option(row["slug"], row["name"], row["description"]) for row in rows]
     if "skills" in fields_to_load:
         from yuxi.agents.skills.service import list_accessible_skills
+        from yuxi.services.resource_display_service import display_skills
 
         skills = await list_accessible_skills(db, user)
-        options["skills"] = [
-            _resource_option(skill.slug, skill.name, skill.description) for skill in skills if skill.slug
-        ]
+        rows = await display_skills(
+            [
+                {
+                    "slug": skill.slug,
+                    "name": skill.name,
+                    "description": skill.description,
+                    "source_type": skill.source_type,
+                }
+                for skill in skills
+                if skill.slug
+            ]
+        )
+        options["skills"] = [_resource_option(row["slug"], row["name"], row["description"]) for row in rows]
     if "subagents" in fields_to_load:
         from yuxi.repositories.agent_repository import AgentRepository
 

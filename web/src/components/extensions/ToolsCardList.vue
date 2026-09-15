@@ -48,6 +48,7 @@
       width="640px"
     >
       <template v-if="currentTool">
+        <a-button v-if="userStore.isAdmin" @click="openDisplayName">设置显示名称</a-button>
         <div class="tool-detail-content detail-section-container">
           <div class="detail-section">
             <div class="section-content description">
@@ -107,6 +108,15 @@
         </div>
       </template>
     </a-modal>
+    <a-modal
+      v-model:open="nameOpen"
+      title="设置显示名称"
+      :confirm-loading="nameSaving"
+      @ok="saveDisplayName"
+    >
+      <a-input v-model:value="displayName" :maxlength="80" placeholder="留空恢复默认名称" />
+      <a-alert v-if="nameError" type="error" :message="nameError" />
+    </a-modal>
   </div>
 </template>
 
@@ -114,6 +124,8 @@
 import { computed, onMounted, ref } from 'vue'
 import { message } from 'ant-design-vue'
 import { Wrench, RefreshCw, FileText, Tag, Tags, List } from '@lucide/vue'
+import { useAgentStore } from '@/stores/agent'
+import { useUserStore } from '@/stores/user'
 import { toolApi } from '@/apis/tool_api'
 import { getToolIcon } from '@/components/ToolCallingResult/toolRegistry'
 import ExtensionCardGrid from './ExtensionCardGrid.vue'
@@ -121,6 +133,39 @@ import InfoCard from '@/components/shared/InfoCard.vue'
 import PageShoulder from '@/components/shared/PageShoulder.vue'
 import { formatExtensionCardTitle } from '@/utils/extensionDisplayName'
 
+const userStore = useUserStore()
+const agentStore = useAgentStore()
+const nameOpen = ref(false),
+  nameSaving = ref(false),
+  displayName = ref(''),
+  nameError = ref('')
+function openDisplayName() {
+  displayName.value = currentTool.value.name
+  nameError.value = ''
+  nameOpen.value = true
+}
+async function saveDisplayName() {
+  if (nameSaving.value) return
+  const slug = getToolSlug(currentTool.value)
+  nameSaving.value = true
+  nameError.value = ''
+  try {
+    await toolApi.setDisplayName(slug, displayName.value)
+    nameOpen.value = false
+    try {
+      tools.value = await agentStore.refreshToolMetadata()
+      currentTool.value =
+        tools.value.find((tool) => getToolSlug(tool) === slug) || currentTool.value
+      message.success('显示名称已保存')
+    } catch {
+      message.warning('显示名称已保存，但界面刷新失败；请刷新工具列表')
+    }
+  } catch (err) {
+    nameError.value = err.message || '显示名称保存失败'
+  } finally {
+    nameSaving.value = false
+  }
+}
 const WrenchIcon = Wrench
 
 const loading = ref(false)
@@ -180,8 +225,7 @@ const selectTool = (tool) => {
 const fetchTools = async () => {
   loading.value = true
   try {
-    const result = await toolApi.getTools()
-    tools.value = result?.data || []
+    tools.value = await agentStore.refreshToolMetadata()
   } catch {
     message.error('加载工具失败')
   } finally {

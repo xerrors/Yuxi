@@ -35,11 +35,14 @@ from yuxi.agents.skills.service import (
     read_personal_skill_file,
     read_skill_file,
     update_skill_dependencies,
+    update_skill_display_name,
+    update_personal_skill_display_name,
     update_skill_enabled,
     update_skill_file,
     update_skill_share_config,
     user_can_manage_skill,
 )
+from yuxi.services.resource_display_service import display_skills
 from yuxi.permissions import resolve_skill_permission
 from yuxi.agents.skills.remote_install import list_remote_skills, search_remote_skills
 from yuxi.storage.postgres.models_business import User
@@ -66,6 +69,13 @@ class SkillNodeCreateRequest(BaseModel):
 class SkillFileUpdateRequest(BaseModel):
     path: str = Field(..., description="相对 skill 根目录的路径")
     content: str = Field(..., description="文件内容")
+
+
+class SkillDisplayNameRequest(BaseModel):
+    """只接收技能展示名，不接收路径或标识变更。"""
+
+    model_config = {"extra": "forbid"}
+    display_name: str = Field(..., strict=True, min_length=1, max_length=128)
 
 
 class SkillDependenciesUpdateRequest(BaseModel):
@@ -140,7 +150,7 @@ async def list_skill_cards_route(
         items = await list_skill_cards_for_user(db, current_user)
         return {
             "success": True,
-            "data": [_serialize_skill_for_user(item, current_user) for item in items],
+            "data": await display_skills([_serialize_skill_for_user(item, current_user) for item in items]),
             "allowed_access_levels": get_allowed_skill_access_levels(current_user),
         }
     except Exception as e:
@@ -155,7 +165,10 @@ async def list_accessible_skills_route(
 ):
     try:
         items = await list_accessible_skills(db, current_user)
-        return {"success": True, "data": [_serialize_skill_for_user(item, current_user) for item in items]}
+        return {
+            "success": True,
+            "data": await display_skills([_serialize_skill_for_user(item, current_user) for item in items]),
+        }
     except Exception as e:
         logger.error(f"Failed to list accessible skills: {e}")
         raise HTTPException(status_code=500, detail="获取可访问 Skills 失败")
@@ -291,6 +304,35 @@ async def read_personal_skill_file_route(
         raise HTTPException(status_code=500, detail="读取个人 Skill 文件失败")
 
 
+@user_skills.put("/personal/{slug}/display-name")
+async def update_personal_skill_display_name_route(
+    slug: str,
+    payload: SkillDisplayNameRequest,
+    current_user: User = Depends(get_required_user),
+):
+    """修改当前认证用户的个人技能名称。"""
+    try:
+        await update_personal_skill_display_name(str(current_user.uid), slug, payload.display_name)
+        return {"success": True}
+    except ValueError as e:
+        _raise_from_value_error(e)
+
+
+@skills.put("/{slug}/display-name")
+async def update_skill_display_name_route(
+    slug: str,
+    payload: SkillDisplayNameRequest,
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """修改有管理权限的共享技能名称。"""
+    try:
+        await update_skill_display_name(db, slug=slug, display_name=payload.display_name, operator=current_user)
+        return {"success": True}
+    except ValueError as e:
+        _raise_from_value_error(e)
+
+
 @user_skills.delete("/personal/{slug}")
 async def delete_personal_skill_route(
     slug: str,
@@ -327,7 +369,7 @@ async def list_skills_route(
         items = await list_visible_skills_for_management(db, current_user)
         return {
             "success": True,
-            "data": [_serialize_skill_for_user(item, current_user) for item in items],
+            "data": await display_skills([_serialize_skill_for_user(item, current_user) for item in items]),
             "allowed_access_levels": get_allowed_skill_access_levels(current_user),
         }
     except Exception as e:
@@ -359,7 +401,7 @@ async def list_builtin_skills_route(
 ):
     try:
         items = [item for item in await list_skills(db) if item.source_type == "builtin"]
-        return {"success": True, "data": [item.to_dict() for item in items]}
+        return {"success": True, "data": await display_skills([item.to_dict() for item in items])}
     except ValueError as e:
         _raise_from_value_error(e)
     except Exception as e:
@@ -374,7 +416,7 @@ async def sync_builtin_skills_route(
 ):
     try:
         items = await init_builtin_skills(db, created_by=current_user.uid)
-        return {"success": True, "data": [item.to_dict() for item in items]}
+        return {"success": True, "data": await display_skills([item.to_dict() for item in items])}
     except ValueError as e:
         _raise_from_value_error(e)
     except Exception as e:
@@ -391,7 +433,7 @@ async def update_skill_share_config_route(
 ):
     try:
         item = await update_skill_share_config(db, slug=slug, share_config=payload.share_config, operator=current_user)
-        return {"success": True, "data": _serialize_skill_for_user(item, current_user)}
+        return {"success": True, "data": (await display_skills([_serialize_skill_for_user(item, current_user)]))[0]}
     except ValueError as e:
         _raise_from_value_error(e)
     except Exception as e:
@@ -408,7 +450,7 @@ async def update_skill_enabled_route(
 ):
     try:
         item = await update_skill_enabled(db, slug=slug, enabled=payload.enabled, operator=current_user)
-        return {"success": True, "data": _serialize_skill_for_user(item, current_user)}
+        return {"success": True, "data": (await display_skills([_serialize_skill_for_user(item, current_user)]))[0]}
     except ValueError as e:
         _raise_from_value_error(e)
     except Exception as e:
@@ -515,7 +557,7 @@ async def update_skill_dependencies_route(
             skill_dependencies=payload.skill_dependencies,
             operator=current_user,
         )
-        return {"success": True, "data": _serialize_skill_for_user(item, current_user)}
+        return {"success": True, "data": (await display_skills([_serialize_skill_for_user(item, current_user)]))[0]}
     except ValueError as e:
         _raise_from_value_error(e)
     except Exception as e:

@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import os
 import uuid
-from unittest.mock import AsyncMock
-from yuxi.agents.context import BaseContext
 from typing import Annotated, Any, TypedDict
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -16,12 +15,13 @@ from langgraph.graph import START, StateGraph
 from langgraph.graph.message import add_messages
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
-from server.routers.chat_router import chat
-from server.utils.auth_middleware import get_db, get_required_user
+from yuxi.agents.context import BaseContext
 from yuxi.services import context_compression_service
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import Conversation, Project, User
+
+from server.routers.chat_router import chat
+from server.utils.auth_middleware import get_db, get_required_user
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -33,8 +33,19 @@ class _CheckpointState(TypedDict, total=False):
     token_usage: dict[str, Any]
 
 
+@pytest.fixture
+async def postgres_checkpointer():
+    """在测试自身事件循环内创建并关闭真实checkpointer连接池。"""
+    pg_manager.initialize()
+    try:
+        yield await pg_manager.setup_langgraph_checkpointer()
+    finally:
+        await pg_manager.close()
+
+
 async def test_compress_thread_persists_canonical_checkpoint_through_http(
     monkeypatch: pytest.MonkeyPatch,
+    postgres_checkpointer,
 ) -> None:
     """成功 HTTP 请求通过真实 PostgreSQL checkpointer 写入摘要事件。"""
     thread_id = f"pytest-compression-{uuid.uuid4()}"
@@ -42,7 +53,7 @@ async def test_compress_thread_persists_canonical_checkpoint_through_http(
     project_id = str(uuid.uuid4())
     engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
-    checkpointer = await pg_manager.setup_langgraph_checkpointer()
+    checkpointer = postgres_checkpointer
 
     builder = StateGraph(_CheckpointState)
     builder.add_node("idle", lambda _state: {})

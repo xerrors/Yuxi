@@ -14,7 +14,7 @@ import time
 import uuid
 import zipfile
 from collections.abc import Callable
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -33,7 +33,7 @@ from yuxi.config import (
 from yuxi.permissions import ResourcePermission, normalize_permission_config, resolve_skill_permission
 from yuxi.storage.postgres.models_business import Skill, User
 from yuxi.utils.logging_config import logger
-from yuxi.utils.paths import ensure_within_root, open_directory_fd, open_regular_file_fd
+from yuxi.utils.paths import ensure_within_root, open_directory_fd, open_regular_file_fd, replace_regular_file
 
 SKILL_SLUG_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 SKILL_NAME_PATTERN = SKILL_SLUG_PATTERN
@@ -664,14 +664,15 @@ async def get_skill_dependency_options(
     db: AsyncSession, user: User, slug: str | None = None
 ) -> dict[str, list[str] | list[dict]]:
     from yuxi.agents.toolkits.service import get_tool_metadata
+    from yuxi.services.tool_display_service import display_tools
 
-    def get_tools():
-        all_tools = get_tool_metadata()
+    async def get_tools():
+        all_tools = await display_tools(get_tool_metadata())
         return [{"slug": tool["slug"], "name": tool.get("name", tool["slug"])} for tool in all_tools]
 
     skill_slugs, tool_list, mcp_names = await asyncio.gather(
         list_skill_slugs(db, user=user),
-        asyncio.to_thread(get_tools),
+        get_tools(),
         get_enabled_mcp_server_slugs(db=db),
     )
     if slug:
@@ -790,12 +791,13 @@ def _validate_skill_slug_value(slug: str, *, field_name: str) -> str:
     return slug
 
 
-def _validate_skill_display_name(name: str) -> str:
+def _validate_skill_display_name(name: str, *, field_name: str = "name") -> str:
+    """校验展示名称并报告实际元数据字段。"""
     name = name.strip()
     if not name:
-        raise ValueError("SKILL.md frontmatter 缺少 name")
+        raise ValueError(f"SKILL.md frontmatter 缺少 {field_name}")
     if len(name) > 128:
-        raise ValueError("SKILL.md frontmatter.name 长度不能超过 128")
+        raise ValueError(f"SKILL.md frontmatter.{field_name} 长度不能超过 128")
     return name
 
 
@@ -839,6 +841,12 @@ def _parse_skill_markdown(content: str) -> tuple[str, str, str, dict[str, Any]]:
         if raw_slug
         else _validate_skill_slug_value(name, field_name="name")
     )
+    if "display_name" in data:
+        display_name = data["display_name"]
+        if not isinstance(display_name, str):
+            raise ValueError("SKILL.md frontmatter.display_name 必须是字符串")
+        if display_name.strip():
+            name = _validate_skill_display_name(display_name, field_name="display_name")
     description = str(data.get("description", "")).strip()
     if not description:
         raise ValueError("SKILL.md frontmatter 缺少 description")
@@ -959,6 +967,83 @@ async def read_personal_skill_file(uid: str, slug: str, relative_path: str) -> d
     except UnicodeDecodeError as exc:
         raise ValueError("文件编码不支持（仅支持 UTF-8）") from exc
     return {"path": normalized_path, "content": content}
+
+
+def _with_skill_display_name(content: str, display_name: str, *, slug: str) -> str:
+    """仅修改展示名，保留标识、未知元数据和完整正文。"""
+    if not isinstance(display_name, str) or not display_name.strip():
+        raise ValueError("display_name 必须是非空纯文本")
+    if any(not char.isprintable() or char in "<>" for char in display_name):
+        raise ValueError("display_name 必须是单行纯文本")
+    name = _validate_skill_display_name(display_name, field_name="display_name")
+    raw, body = _split_frontmatter(content)
+    try:
+        metadata = yaml.safe_load(raw)
+    except yaml.YAMLError as exc:
+        raise ValueError("SKILL.md frontmatter YAML 解析失败") from exc
+    if not isinstance(metadata, dict):
+        raise ValueError("SKILL.md frontmatter 必须是对象")
+    # 显式改名可修复误把稳定 name 翻译的旧文件；已有独立 slug 时保留合法展示 name。
+    if not metadata.get("slug") and not is_valid_skill_slug(str(metadata.get("name", "")).strip()):
+        metadata["name"] = slug
+    metadata["display_name"] = name
+    updated = "---\n" + yaml.safe_dump(metadata, sort_keys=False, allow_unicode=True).rstrip() + "\n---\n" + body
+    if _parse_skill_markdown(updated)[0] != slug:
+        raise ValueError("SKILL.md frontmatter.slug 必须与 skill slug 一致")
+    return updated
+
+
+@asynccontextmanager
+async def _skill_edit_lock(target: Path):
+    """串行化协作的文件编辑请求；等待 flock 不阻塞事件循环。"""
+    lock_dir = get_skill_projection_dir() / ".locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    key = hashlib.sha256(str(target).encode()).hexdigest()
+    with (lock_dir / f"edit-{key}.lock").open("a+b") as lock:
+        while True:
+            try:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                await asyncio.sleep(0.05)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+async def update_personal_skill_display_name(uid: str, slug: str, display_name: str) -> None:
+    """只更新认证用户个人技能的显示名。"""
+    skill_dir = _resolve_personal_skill_dir(_personal_skills_root(uid), slug)
+    target, _ = _resolve_relative_path(skill_dir, "SKILL.md")
+    async with _skill_edit_lock(target):
+        if not target.is_file():
+            raise ValueError("个人 Skill 不存在")
+        content = _with_skill_display_name(target.read_text(encoding="utf-8"), display_name, slug=slug)
+        replace_regular_file(target.parent, (target.name,), content.encode("utf-8"), preserve_mode=True)
+
+
+async def update_skill_display_name(db: AsyncSession, *, slug: str, display_name: str, operator: User) -> None:
+    """内置技能保存展示覆盖；共享技能同步源文件。"""
+    item = await get_manageable_skill_or_raise(db, operator, slug)
+    if is_builtin_skill(item):
+        from yuxi.repositories import tool_display_repository
+        from yuxi.services.resource_display_service import SKILL_NAMES
+
+        if any(not char.isprintable() or char in "<>" for char in display_name):
+            raise ValueError("display_name 必须是单行纯文本")
+        name = _validate_skill_display_name(display_name, field_name="display_name")
+        await tool_display_repository.save_name(slug, name, operator.uid, key=SKILL_NAMES)
+        return
+    await update_skill_file(
+        db,
+        slug=slug,
+        relative_path="SKILL.md",
+        content="",
+        display_name=display_name,
+        updated_by=operator.uid,
+        operator=operator,
+    )
 
 
 async def delete_personal_skill(uid: str, slug: str) -> None:
@@ -1564,6 +1649,7 @@ async def update_skill_file(
     content: str,
     updated_by: str | None,
     operator: User,
+    display_name: str | None = None,
 ) -> None:
     item = await get_manageable_skill_or_raise(db, operator, slug)
     if is_builtin_skill(item):
@@ -1575,10 +1661,30 @@ async def update_skill_file(
     if not _is_text_path(target):
         raise ValueError("仅支持编辑文本文件")
 
-    await _update_skill_metadata_if_skills_md(db, item, content, skill_dir, target, updated_by)
-
-    target.write_text(content, encoding="utf-8")
-    await db.commit()
+    async with _skill_edit_lock(target):
+        # 等锁期间其他事务可能已更新名称或权限；SELECT 本身不会覆盖 identity map。
+        await db.refresh(item)
+        if not user_can_manage_skill(operator, item):
+            raise ValueError(f"技能 '{slug}' 不存在或无权管理")
+        if is_builtin_skill(item):
+            raise ValueError("内置 skill 不允许直接修改文件")
+        if _resolve_skill_dir(item) != skill_dir:
+            raise ValueError("技能目录已变化，请重试")
+        original = target.read_bytes()
+        if display_name is not None:
+            content = _with_skill_display_name(original.decode("utf-8"), display_name, slug=slug)
+        try:
+            await _update_skill_metadata_if_skills_md(db, item, content, skill_dir, target, updated_by)
+            replace_regular_file(target.parent, (target.name,), content.encode("utf-8"), preserve_mode=True)
+            await db.commit()
+        except BaseException:
+            try:
+                await db.rollback()
+            finally:
+                # 补偿可处理的失败；硬崩溃仍需按持久源重新对账，不承诺跨介质原子性。
+                if target.read_bytes() != original:
+                    replace_regular_file(target.parent, (target.name,), original, preserve_mode=True)
+            raise
 
 
 async def _update_skill_metadata_if_skills_md(
@@ -1814,7 +1920,7 @@ async def init_builtin_skills(db: AsyncSession, *, created_by: str = "system") -
                 mcp_dependencies=spec["mcp_dependencies"],
                 skill_dependencies=spec["skill_dependencies"],
                 dir_path=_build_builtin_skill_dir_path(slug),
-                share_config=BUILTIN_SKILL_SHARE_CONFIG.copy(),
+                share_config=normalize_skill_share_config(None, operator_uid=created_by, source_type="builtin"),
                 enabled=True,
                 version=spec["version"],
                 content_hash=spec["content_hash"],

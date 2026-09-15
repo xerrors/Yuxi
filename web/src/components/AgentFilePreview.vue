@@ -474,7 +474,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['close', 'download', 'save'])
+const emit = defineEmits(['close', 'download', 'save', 'dirty-change'])
 
 const themeStore = useThemeStore()
 const closeTitle = computed(() =>
@@ -632,6 +632,8 @@ const openFullscreenPreview = () => {
 const closeFullscreenPreview = () => {
   fullscreenPreviewVisible.value = false
 }
+
+watch(draftChanged, (dirty) => emit('dirty-change', dirty), { immediate: true })
 
 watch(
   () => props.filePath,

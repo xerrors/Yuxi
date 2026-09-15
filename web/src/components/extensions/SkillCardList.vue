@@ -211,6 +211,7 @@
             </a-button>
           </div>
           <div class="skill-preview-footer-right">
+            <SkillDisplayNameButton :skill="previewSkill" @saved="refreshRenamedPreview" />
             <a-button @click="closeSkillPreview">关闭</a-button>
             <a-button
               v-if="previewSkill.sourceScope !== 'personal'"
@@ -514,6 +515,7 @@ import {
   Minus
 } from '@lucide/vue'
 import { skillApi } from '@/apis/skill_api'
+import SkillDisplayNameButton from './SkillDisplayNameButton.vue'
 import ExtensionCardGrid from './ExtensionCardGrid.vue'
 import SkillInstallFlowModal from './SkillInstallFlowModal.vue'
 import SkillSuiteCard from './SkillSuiteCard.vue'
@@ -859,6 +861,17 @@ const openSkillPreview = async (skill) => {
   } finally {
     if (requestSeq === previewRequestSeq) skillPreviewLoading.value = false
   }
+}
+
+/** 按来源和标识重读预览，避免个人覆盖共享时串名。 */
+const refreshRenamedPreview = async () => {
+  const target = previewSkill.value
+  await fetchSkills({ refreshPersonal: true })
+  if (previewSkill.value !== target || !skillPreviewVisible.value) return
+  const refreshed = installedSkillCards.value.find(
+    (skill) => skill.slug === target.slug && skill.sourceScope === target.sourceScope
+  )
+  if (refreshed) await openSkillPreview(refreshed)
 }
 
 const goToPreviewSkillManagement = () => {

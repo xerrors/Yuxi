@@ -669,3 +669,17 @@ async def get_all_mcp_tools(server_slug: str) -> list:
         cache=False,
         force_refresh=True,
     )
+
+
+async def inspect_mcp_server_tools(server: MCPServer) -> list:
+    """管理端严格建连，包括停用服务；不吞异常、不修改状态或运行缓存。"""
+    if requires_mcp_stdio_migration(server):
+        raise ValueError("历史自定义 stdio MCP 须迁移为远程服务后再测试")
+    config = {key: value for key, value in _to_runtime_mcp_config(server).items() if key != "disabled_tools"}
+    client = MultiServerMCPClient({server.slug: config})
+    tools = await client.get_tools()
+    for tool in tools:
+        if tool.metadata is None:
+            tool.metadata = {}
+        tool.metadata["id"] = f"mcp__{to_camel_case(server.slug)}__{to_camel_case(tool.name)}"
+    return tools
