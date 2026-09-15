@@ -773,7 +773,7 @@ def _validate_decisions(root: Path, errors: list[str]) -> list[dict[str, str]]:
                         )
             projection.append(
                 {
-                    "path": str(relative),
+                    "path": relative.as_posix(),
                     "status": status or "missing",
                     "type": decision_type or "missing",
                     "owner": owner or "missing",
@@ -794,7 +794,7 @@ def _validate_postmortems(root: Path, errors: list[str]) -> list[str]:
         if not path.is_file():
             errors.append(f"缺少 postmortem 入口或模板：{path.relative_to(root)}")
             continue
-        checked.append(str(path.relative_to(root)))
+        checked.append(path.relative_to(root).as_posix())
 
     if template.is_file():
         sections = _decision_sections(

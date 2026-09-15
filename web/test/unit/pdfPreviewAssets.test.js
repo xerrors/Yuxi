@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { Buffer } from 'node:buffer'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
+import { fileURLToPath } from 'node:url'
 import { build, createServer } from 'vite'
 
 const cmapPath = '/assets/pdfjs-cmaps/UniGB-UCS2-H.bcmap'
@@ -32,7 +33,7 @@ test('PDF 本地 CMap 开发响应和构建产物与依赖字节一致', async (
       write: false,
       minify: false,
       rollupOptions: {
-        input: new URL('../../src/utils/pdfPreviewErrors.js', import.meta.url).pathname
+        input: fileURLToPath(new URL('../../src/utils/pdfPreviewErrors.js', import.meta.url))
       }
     }
   })
