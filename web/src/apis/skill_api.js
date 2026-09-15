@@ -89,6 +89,11 @@ export const updateSkillFile = async (slug, payload) => {
   return apiPut(`${BASE_URL}/${encodeURIComponent(slug)}/file`, payload)
 }
 
+export const updateSkillDisplayName = async (slug, displayName, { personal = false } = {}) => {
+  const base = personal ? `${USER_BASE_URL}/personal` : BASE_URL
+  return apiPut(`${base}/${encodeURIComponent(slug)}/display-name`, { display_name: displayName })
+}
+
 export const updateSkillDependencies = async (slug, payload) => {
   return apiPut(`${BASE_URL}/${encodeURIComponent(slug)}/dependencies`, payload)
 }
@@ -142,6 +147,7 @@ export const skillApi = {
   getPersonalSkillFile,
   createSkillFile,
   updateSkillFile,
+  updateSkillDisplayName,
   updateSkillDependencies,
   updateSkillShareConfig,
   updateSkillEnabled,

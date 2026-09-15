@@ -39,6 +39,7 @@ export const useAgentStore = defineStore(
     const availableSkills = ref([])
     // 完整工具元数据（含 buildin / knowledge 等全部分类的 display_name），用于工具名称展示映射
     const toolMetadata = ref([])
+    const mcpToolDisplayNames = ref([])
 
     const agentConfig = ref({})
     const originalAgentConfig = ref({})
@@ -97,6 +98,28 @@ export const useAgentStore = defineStore(
       }
     }
 
+    /** 重读技能候选；失败时保留上次有效结果并交由调用方提示。 */
+    async function refreshAvailableSkills() {
+      const result = await skillApi.listAccessibleSkills()
+      availableSkills.value = result.data || []
+    }
+
+    /** 重读 MCP 展示；错误保留已知名称。 */
+    async function refreshMcpDisplayNames() {
+      const [servers, tools] = await Promise.all([
+        mcpApi.getMcpServers(), mcpApi.getToolDisplayNames()
+      ])
+      availableMcps.value = servers.data || []
+      mcpToolDisplayNames.value = tools.data || []
+    }
+
+    /** 重读工具展示；失败保留旧数据并由调用方报告。 */
+    async function refreshToolMetadata() {
+      const result = await toolApi.getTools()
+      toolMetadata.value = result.data
+      return result.data
+    }
+
     async function fetchToolMetadata() {
       try {
         const result = await toolApi.getTools()
@@ -111,7 +134,8 @@ export const useAgentStore = defineStore(
       if (isInitialized.value || isInitializing.value) return
       isInitializing.value = true
       try {
-        await Promise.all([fetchAgents(), fetchMentionResources(), fetchToolMetadata()])
+        await Promise.all([fetchAgents(), fetchMentionResources(), fetchToolMetadata(),
+          refreshMcpDisplayNames().catch((error) => console.warn('MCP display refresh failed', error))])
 
         const targetAgentId = getPreferredAgentId(agents.value, selectedAgentId.value)
         if (targetAgentId) {
@@ -303,6 +327,8 @@ export const useAgentStore = defineStore(
       availableMcps,
       availableSkills,
       toolMetadata,
+      mcpToolDisplayNames,
+      refreshMcpDisplayNames,
       agentConfig,
       originalAgentConfig,
       agentDetails,
@@ -321,6 +347,8 @@ export const useAgentStore = defineStore(
       fetchAgents,
       fetchAgentDetail,
       fetchMentionResources,
+      refreshAvailableSkills,
+      refreshToolMetadata,
       selectAgent,
       saveAgentConfig,
       createAgent,

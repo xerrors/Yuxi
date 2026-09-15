@@ -1,6 +1,6 @@
 """MCP 服务器管理路由"""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Body
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.agents.mcp.service import (
@@ -19,6 +19,8 @@ from yuxi.agents.mcp.service import (
     update_mcp_server,
 )
 from yuxi.storage.postgres.models_business import User
+from yuxi.services.resource_display_service import display_mcps, MCP_TOOL_NAMES, mcp_tool_key
+from yuxi.repositories import tool_display_repository
 from yuxi.utils import logger
 
 from server.utils.auth_middleware import get_admin_user, get_db, get_required_user
@@ -107,12 +109,14 @@ async def get_mcp_servers(
     try:
         servers = await get_all_mcp_servers(db)
         if current_user.role in ["admin", "superadmin"]:
-            return {"success": True, "data": [serialize_mcp_server(s) for s in servers]}
+            return {"success": True, "data": await display_mcps([serialize_mcp_server(s) for s in servers])}
 
         data = []
         for s in servers:
             data.append(
                 {
+                    "slug": s.slug,
+                    "is_builtin": is_builtin_mcp_server(s),
                     "name": getattr(s, "name", ""),
                     "description": getattr(s, "description", None),
                     "icon": getattr(s, "icon", None),
@@ -120,7 +124,7 @@ async def get_mcp_servers(
                     "tags": getattr(s, "tags", None) or [],
                 }
             )
-        return {"success": True, "data": data}
+        return {"success": True, "data": await display_mcps(data)}
     except Exception as e:
         logger.error(f"Failed to get MCP servers: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -157,7 +161,7 @@ async def create_mcp_server_route(
             icon=request.icon,
             created_by=current_user.username,
         )
-        return {"success": True, "data": serialize_mcp_server(server)}
+        return {"success": True, "data": (await display_mcps([serialize_mcp_server(server)]))[0]}
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
@@ -174,7 +178,7 @@ async def get_mcp_server_route(
     """获取单个 MCP 服务器配置"""
     try:
         server = await get_server_or_404(db, slug)
-        return {"success": True, "data": serialize_mcp_server(server)}
+        return {"success": True, "data": (await display_mcps([serialize_mcp_server(server)]))[0]}
     except HTTPException:
         raise
     except Exception as e:
@@ -210,7 +214,7 @@ async def update_mcp_server_route(
             icon=request.icon,
             updated_by=current_user.username,
         )
-        return {"success": True, "data": serialize_mcp_server(server)}
+        return {"success": True, "data": (await display_mcps([serialize_mcp_server(server)]))[0]}
     except HTTPException:
         raise
     except MCPServerNotFoundError as exc:
@@ -293,7 +297,7 @@ async def update_mcp_server_status_route(
         return {
             "success": True,
             "enabled": is_enabled,
-            "data": serialize_mcp_server(server),
+            "data": (await display_mcps([serialize_mcp_server(server)]))[0],
             "message": f"MCP '{slug}' 已{'添加' if is_enabled else '移除'}",
         }
     except MCPServerNotFoundError as exc:
@@ -324,8 +328,9 @@ async def get_mcp_server_tools(
 
         try:
             # 获取所有工具（不过滤 disabled_tools）
-            tools = await get_all_mcp_tools(slug)
+            tools = await inspect_mcp_server_tools(server)
             tool_list = []
+            names = await tool_display_repository.read_names(key=MCP_TOOL_NAMES)
 
             for tool in tools:
                 original_name = tool.name
@@ -333,6 +338,7 @@ async def get_mcp_server_tools(
 
                 tool_info = {
                     "name": original_name,
+                    "display_name": names.get(mcp_tool_key(slug, original_name), original_name),
                     "id": unique_id,
                     "description": getattr(tool, "description", ""),
                     "enabled": original_name not in disabled_tools,
@@ -425,3 +431,30 @@ async def toggle_mcp_server_tool_route(
     except Exception as e:
         logger.error(f"Failed to toggle MCP server tool: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@mcp.put("/{slug}/display-name")
+async def update_mcp_display_name(
+    slug: str,
+    name: str = Body(..., embed=True),
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """管理员改展示名，响应不包含连接信息或密钥。"""
+    from yuxi.services.mcp_display_service import set_mcp_display_name
+
+    return {"success": True, "data": await set_mcp_display_name(db, slug, name, current_user.uid)}
+
+
+@mcp.put("/{slug}/tools/{tool_name}/display-name")
+async def update_mcp_tool_display_name(
+    slug: str,
+    tool_name: str,
+    name: str = Body(..., embed=True),
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """管理员修改工具展示名，原始工具身份保持稳定。"""
+    from yuxi.services.mcp_display_service import set_mcp_tool_display_name
+
+    return {"success": True, "data": await set_mcp_tool_display_name(db, slug, tool_name, name, current_user.uid)}

@@ -20,6 +20,12 @@
       <div class="extension-detail-actions">
         <div class="detail-actions">
           <a-space :size="8">
+            <SkillDisplayNameButton
+              v-if="currentSkill"
+              :skill="currentSkill"
+              :disabled="fileDraftDirty || savingFile"
+              @saved="refreshDisplayName"
+            />
             <button
               v-if="activeTab === 'editor'"
               type="button"
@@ -132,6 +138,7 @@
                   container-class="skill-file-preview"
                   content-class="skill-file-preview-content"
                   @save="saveCurrentFile"
+                  @dirty-change="fileDraftDirty = $event"
                 />
               </template>
             </div>
@@ -387,6 +394,8 @@ import {
   ChevronRight
 } from '@lucide/vue'
 import { skillApi } from '@/apis/skill_api'
+import SkillDisplayNameButton from './SkillDisplayNameButton.vue'
+import { useAgentStore } from '@/stores/agent'
 import AgentFilePreview from '@/components/AgentFilePreview.vue'
 import ExtensionDetailLayout from '@/components/shared/ExtensionDetailLayout.vue'
 import FileTreeComponent from '@/components/FileTreeComponent.vue'
@@ -407,6 +416,7 @@ const skillDetailTabs = [
 ]
 
 const loading = ref(false)
+const fileDraftDirty = ref(false)
 const currentSkill = ref(null)
 const treeData = ref([])
 const selectedTreeKeys = ref([])
@@ -608,6 +618,18 @@ const fetchSkillDetail = async () => {
   }
 }
 
+/** 只刷新名称来源，保留同页未提交的范围及依赖配置。 */
+const refreshDisplayName = async () => {
+  try {
+    const result = await skillApi.listSkills()
+    skills.value = result.data || []
+    currentSkill.value = skills.value.find((skill) => skill.slug === slug.value) || currentSkill.value
+    if (selectedPath.value === 'SKILL.md') await loadSkillFile(slug.value)
+  } catch {
+    message.warning('名称已保存，详情刷新失败，请刷新页面后重试')
+  }
+}
+
 const fetchDependencyOptions = async (currentSlug) => {
   try {
     const result = await skillApi.getSkillDependencyOptions(currentSlug)
@@ -707,7 +729,14 @@ const saveCurrentFile = async (content = fileContent.value) => {
     })
     fileContent.value = content
     message.success('已保存')
-    if (selectedPath.value === 'SKILL.md') await fetchSkillDetail()
+    if (selectedPath.value === 'SKILL.md') {
+      await fetchSkillDetail()
+      try {
+        await useAgentStore().refreshAvailableSkills()
+      } catch {
+        message.warning('文件已保存，聊天候选刷新失败，请刷新页面后重试')
+      }
+    }
   } catch {
     message.error('保存失败')
   } finally {

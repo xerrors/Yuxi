@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+from unittest.mock import AsyncMock
+
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from yuxi.storage.postgres.models_business import Skill, User
@@ -394,3 +397,63 @@ def test_sync_builtin_skills_route(monkeypatch):
     assert resp.status_code == 200, resp.text
     assert resp.json()["data"][0]["slug"] == "builtin-demo"
     assert captured == {"created_by": "admin"}
+
+
+def test_personal_display_name_http_updates_only_authenticated_user(tmp_path, monkeypatch):
+    from yuxi.agents.skills import service
+
+    monkeypatch.setenv("YUXI_SKILL_PROJECTION_DIR", str(tmp_path / "projections"))
+    monkeypatch.setattr(service, "_personal_skills_root", lambda uid: tmp_path / uid)
+    original = "---\nname: demo\ndescription: old\n---\n# body\n"
+    for uid in ("user", "other"):
+        directory = tmp_path / uid / "demo"
+        directory.mkdir(parents=True)
+        (directory / "SKILL.md").write_text(original, encoding="utf-8")
+    with TestClient(_build_app(role="user")) as client:
+        path = "/api/skills/personal/demo/display-name"
+        response = client.put(path, json={"display_name": "中文技能"})
+        assert response.status_code == 200
+        saved = (tmp_path / "user/demo/SKILL.md").read_text(encoding="utf-8")
+        assert service._parse_skill_markdown(saved)[:2] == ("demo", "中文技能")
+        assert (tmp_path / "other/demo/SKILL.md").read_text(encoding="utf-8") == original
+        for payload in [
+            {"display_name": "x", "uid": "other"},
+            {"display_name": "x", "path": "../other/SKILL.md"},
+            {"display_name": "x", "slug": "changed"},
+            {"display_name": 123},
+            {"display_name": "x" * 129},
+        ]:
+            assert client.put(path, json=payload).status_code == 422
+        for name in [" ", "<script>", "line\nline"]:
+            assert client.put(path, json={"display_name": name}).status_code == 400
+        assert (tmp_path / "user/demo/SKILL.md").read_text(encoding="utf-8") == saved
+
+
+def test_shared_display_name_http_enforces_management(tmp_path, monkeypatch):
+    from yuxi.agents.skills import service
+
+    monkeypatch.setenv("YUXI_SKILL_DATA_DIR", str(tmp_path))
+    directory = tmp_path / "shared/demo"
+    directory.mkdir(parents=True)
+    target = directory / "SKILL.md"
+    original = "---\nname: demo\ndescription: old\n---\n# body\n"
+    target.write_text(original, encoding="utf-8")
+    item = _skill(created_by="other", user_uids=["user"])
+    item.share_config["manage_scope"] = {"access_level": "user", "user_uids": ["other"]}
+
+    async def get_item(_db, _slug):
+        return item
+
+    monkeypatch.setattr(service, "get_skill_or_raise", get_item)
+    with TestClient(_build_app(role="user")) as client:
+        response = client.put("/api/system/skills/demo/display-name", json={"display_name": "越权修改"})
+        assert response.status_code == 404
+        assert "无权管理" in response.json()["detail"]
+        assert target.read_text(encoding="utf-8") == original
+        assert item.name == "demo"
+
+
+@pytest.fixture(autouse=True)
+def display_config_fixture(monkeypatch):
+    """路由单元测试隔离展示持久层；真实持久化另有 PG 测试。"""
+    monkeypatch.setattr("yuxi.repositories.tool_display_repository.read_names", AsyncMock(return_value={}))

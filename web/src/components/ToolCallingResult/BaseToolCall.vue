@@ -177,7 +177,7 @@ const effectiveStatus = computed(() => {
 const toolId = computed(() => getToolCallId(props.toolCall))
 
 const toolName = computed(() => {
-  const tool = findToolInList(toolId.value, toolMetadataList.value)
+  const tool = findToolInList(toolId.value, [...agentStore.mcpToolDisplayNames, ...toolMetadataList.value])
   return tool ? tool.name : getToolName(toolId.value)
 })
 

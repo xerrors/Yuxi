@@ -1,4 +1,4 @@
-import { apiGet } from './base'
+import { apiGet, apiAdminPut } from './base'
 
 /**
  * 工具管理 API 模块
@@ -26,6 +26,8 @@ export const getToolOptions = async () => {
 }
 
 export const toolApi = {
+  setDisplayName: (slug, name) =>
+    apiAdminPut(`${BASE_URL}/${encodeURIComponent(slug)}/display-name`, { name }),
   getTools,
   getToolOptions
 }

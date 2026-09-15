@@ -180,8 +180,8 @@ async def test_normalize_agent_context_config_expands_null_and_filters_explicit_
 
     async def fake_list_skills(_db, _user):
         return [
-            types.SimpleNamespace(slug="skill-a", name="Skill A", description=""),
-            types.SimpleNamespace(slug="skill-b", name="Skill B", description=""),
+            types.SimpleNamespace(slug="skill-a", name="Skill A", description="", source_type="upload"),
+            types.SimpleNamespace(slug="skill-b", name="Skill B", description="", source_type="upload"),
         ]
 
     class FakeAgentRepository:
@@ -215,6 +215,7 @@ async def test_normalize_agent_context_config_expands_null_and_filters_explicit_
         "yuxi.agents.mcp.service",
         types.SimpleNamespace(
             get_all_mcp_servers=fake_get_all_mcp_servers,
+            is_builtin_mcp_server=lambda server: False,
             get_enabled_mcp_server_slugs=fake_get_enabled_mcp_server_slugs,
         ),
     )
@@ -303,8 +304,8 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
 
     async def fake_list_skills(_db, _user):
         return [
-            types.SimpleNamespace(slug="skill-a", name="Skill A", description=""),
-            types.SimpleNamespace(slug="skill-b", name="Skill B", description=""),
+            types.SimpleNamespace(slug="skill-a", name="Skill A", description="", source_type="upload"),
+            types.SimpleNamespace(slug="skill-b", name="Skill B", description="", source_type="upload"),
         ]
 
     async def fake_resolve_visible_knowledge_bases(context):
@@ -408,6 +409,7 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
         "yuxi.agents.mcp.service",
         types.SimpleNamespace(
             get_all_mcp_servers=fake_get_all_mcp_servers,
+            is_builtin_mcp_server=lambda server: False,
             get_enabled_mcp_server_slugs=fake_get_enabled_mcp_server_slugs,
         ),
     )
@@ -508,3 +510,11 @@ async def test_prepare_agent_runtime_context_clears_resources_for_missing_user(m
     assert prepared._visible_knowledge_bases == []
     assert prepared._effective_skill_slugs == []
     assert prepared._runtime_skills == {}
+
+
+@pytest.fixture(autouse=True)
+def display_names_fixture(monkeypatch):
+    """隔离展示持久边界，身份与访问选项断言保持原值。"""
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr("yuxi.repositories.tool_display_repository.read_names", AsyncMock(return_value={}))

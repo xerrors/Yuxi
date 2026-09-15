@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from yuxi.agents.mcp.service import MCPServerNotFoundError
@@ -228,3 +230,11 @@ def test_update_mcp_server_not_found(monkeypatch):
     )
 
     assert resp.status_code == 404, resp.text
+
+
+@pytest.fixture(autouse=True)
+def display_config_fixture(monkeypatch):
+    """路由单元测试隔离展示持久层。"""
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr("yuxi.repositories.tool_display_repository.read_names", AsyncMock(return_value={}))
