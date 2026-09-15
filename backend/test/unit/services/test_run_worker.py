@@ -1755,6 +1755,7 @@ async def test_cancel_during_manifest_preparation_settles_without_waiting_for_le
     finish.assert_awaited_once()
     assert finish.call_args.kwargs["run_id"] == run.id
 
+
 @pytest.mark.parametrize(
     ("cascade_flag", "should_cascade"),
     [
