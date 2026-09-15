@@ -1,3 +1,4 @@
+from .document_limits_router import document_limits_router
 from fastapi import APIRouter
 
 from server.routers.agent_invocation_call_router import agent_invocation_call_router
@@ -59,3 +60,5 @@ router.include_router(knowledge)  # /api/knowledge/* 知识库管理与检索
 router.include_router(evaluation)  # /api/evaluation/* 知识库评估
 router.include_router(graph)  # /api/graph/* 图谱查询与管理
 router.include_router(workspace_knowledge)  # /api/workspace/knowledge/* 工作区知识文件只读视图
+
+router.include_router(document_limits_router)

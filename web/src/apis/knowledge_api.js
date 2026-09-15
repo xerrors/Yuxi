@@ -1,3 +1,5 @@
+import { documentLimitsApi } from './system_api'
+import { assertKnowledgeUploadSize } from '@/utils/knowledgeUploadLimits'
 import {
   apiGet,
   apiAdminGet,
@@ -512,6 +514,7 @@ export const fileApi = {
    * @returns {Promise} - 上传结果
    */
   uploadFile: async (file, kbId = null) => {
+    assertKnowledgeUploadSize(file, await documentLimitsApi.get())
     const formData = new FormData()
     formData.append('file', file)
 
@@ -533,6 +536,7 @@ export const fileApi = {
    * @returns {Promise} - 上传结果
    */
   uploadFolder: async (file, kbId) => {
+    assertKnowledgeUploadSize(file, await documentLimitsApi.get())
     const formData = new FormData()
     formData.append('file', file)
 

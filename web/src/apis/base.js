@@ -220,7 +220,7 @@ export function apiAdminGet(url, options = {}, responseType = 'json') {
 }
 
 export function apiSuperAdminGet(url, options = {}, responseType = 'json') {
-  checkSuperAdminPermission()
+  if (!checkSuperAdminPermission()) throw new Error('需要超级管理员权限')
   return apiGet(url, options, true, responseType)
 }
 
@@ -252,7 +252,7 @@ export function apiAdminPost(url, data = {}, options = {}, responseType = 'json'
 }
 
 export function apiSuperAdminPost(url, data = {}, options = {}, responseType = 'json') {
-  checkSuperAdminPermission()
+  if (!checkSuperAdminPermission()) throw new Error('需要超级管理员权限')
   return apiPost(url, data, options, true, responseType)
 }
 
@@ -284,7 +284,7 @@ export function apiAdminPut(url, data = {}, options = {}, responseType = 'json')
 }
 
 export function apiSuperAdminPut(url, data = {}, options = {}, responseType = 'json') {
-  checkSuperAdminPermission()
+  if (!checkSuperAdminPermission()) throw new Error('需要超级管理员权限')
   return apiPut(url, data, options, true, responseType)
 }
 
@@ -306,6 +306,6 @@ export function apiAdminDelete(url, options = {}) {
 }
 
 export function apiSuperAdminDelete(url, options = {}) {
-  checkSuperAdminPermission()
+  if (!checkSuperAdminPermission()) throw new Error('需要超级管理员权限')
   return apiDelete(url, options, true)
 }

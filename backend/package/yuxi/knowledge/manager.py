@@ -586,6 +586,7 @@ class KnowledgeBaseManager:
         *,
         processing_task_id: str | None = None,
         processing_owner: str | None = None,
+        document_limits: dict | None = None,
     ) -> dict:
         """Parse file to Markdown"""
         config = await self.get_kb_config(kb_id)
@@ -597,6 +598,7 @@ class KnowledgeBaseManager:
                 file_id,
                 operator_id,
                 additional_params=config.additional_params,
+                **({"document_limits": document_limits} if document_limits is not None else {}),
                 processing_task_id=processing_task_id,
                 processing_owner=processing_owner,
             ),

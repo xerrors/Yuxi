@@ -1,4 +1,4 @@
-import { apiGet, apiAdminGet, apiAdminPost, apiAdminPut, apiAdminDelete } from './base'
+import { apiGet, apiAdminGet, apiAdminPost, apiAdminPut, apiAdminDelete, apiSuperAdminPut, apiSuperAdminDelete } from './base'
 
 /**
  * 系统管理API模块
@@ -122,4 +122,11 @@ export const modelProviderApi = {
       `/api/system/model-providers/${encodeURIComponent(providerId)}/remote-models`
     )
   }
+}
+
+export const documentLimitsApi = {
+  get: () => apiGet('/api/system/document-limits'),
+  update: (data) => apiSuperAdminPut('/api/system/document-limits', data),
+  reset: (revision) =>
+    apiSuperAdminDelete('/api/system/document-limits', { body: JSON.stringify({ revision }) })
 }

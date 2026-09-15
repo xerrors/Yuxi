@@ -12,6 +12,16 @@ from yuxi.services.task_registry import get_task_definition
 pytestmark = pytest.mark.asyncio
 
 
+@pytest.fixture(autouse=True)
+def configured_document_limits(monkeypatch):
+    """路由单测提供配置边界，持久化另由真实 PG 覆盖。"""
+
+    async def snapshot():
+        return {"max_file_bytes": 100 * 1024 * 1024, "max_ocr_pages": 500, "version": 0}
+
+    monkeypatch.setattr(knowledge_router, "snapshot_document_limits", snapshot)
+
+
 def _database_detail(**stats) -> KnowledgeBaseDetail:
     return KnowledgeBaseDetail(
         kb_id="kb_1",
@@ -123,7 +133,10 @@ async def test_upload_file_rejects_jsonl_uploads():
     ids=["upload_file", "mark_it_down"],
 )
 async def test_rejects_oversized_file(monkeypatch, call_upload):
-    monkeypatch.setattr(knowledge_router, "MAX_UPLOAD_SIZE_BYTES", 5)
+    async def tiny_snapshot():
+        return {"max_file_bytes": 5, "max_ocr_pages": 500, "version": 1}
+
+    monkeypatch.setattr(knowledge_router, "snapshot_document_limits", tiny_snapshot)
 
     async def fake_ensure_database_supports_documents(kb_id: str, operation: str) -> None:
         return None
@@ -140,7 +153,7 @@ async def test_rejects_oversized_file(monkeypatch, call_upload):
         await call_upload(upload)
 
     assert exc_info.value.status_code == 400
-    assert "100 MB" in exc_info.value.detail
+    assert "当前上限" in exc_info.value.detail
 
 
 @pytest.mark.parametrize(

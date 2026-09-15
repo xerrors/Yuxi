@@ -115,8 +115,11 @@ async def parse_image_async(file, params=None):
 
 async def parse_resolved_document(source: str, params: dict | None = None) -> str:
     """使用已解析的运行时参数，将本地或 MinIO 文件转换为 Markdown。"""
+    from yuxi.knowledge.parser.document_limits import validate_document_limits, validate_local_document
     from yuxi.knowledge.utils.kb_utils import is_minio_url, parse_minio_url
     from yuxi.storage.minio.client import get_minio_client
+
+    limits = validate_document_limits((params or {}).get("_document_limits"))
 
     # 1. 如果是 MinIO URL，下载文件到临时路径
     if is_minio_url(source):
@@ -135,10 +138,23 @@ async def parse_resolved_document(source: str, params: dict | None = None) -> st
         try:
             bucket_name, object_name = parse_minio_url(source)
             minio_client = get_minio_client()
-            file_content = await minio_client.adownload_file(bucket_name, object_name)
-
-            async with aiofiles.open(temp_path, "wb") as f:
-                await f.write(file_content)
+            if limits is None:
+                file_content = await minio_client.adownload_file(bucket_name, object_name)
+                async with aiofiles.open(temp_path, "wb") as f:
+                    await f.write(file_content)
+            else:
+                response = await minio_client.adownload_response(bucket_name, object_name)
+                try:
+                    total = 0
+                    async with aiofiles.open(temp_path, "wb") as f:
+                        while block := await asyncio.to_thread(response.read, 1024 * 1024):
+                            total += len(block)
+                            if total > limits["max_file_bytes"]:
+                                raise ValueError("Document exceeds accepted byte limit")
+                            await f.write(block)
+                finally:
+                    response.close()
+                    response.release_conn()
 
             logger.debug(f"File downloaded to temp path: {temp_path}")
             actual_file_path = temp_path
@@ -153,11 +169,13 @@ async def parse_resolved_document(source: str, params: dict | None = None) -> st
 
     # 2. 根据文件类型调用不同的解析器
     try:
+        await asyncio.to_thread(validate_local_document, actual_file_path, limits)
         file_path_obj = Path(actual_file_path)
         file_ext = file_path_obj.suffix.lower()
 
         if file_ext == ".pdf":
-            validate_pdf_page_tree_loadable(file_path_obj)
+            if limits is None:
+                validate_pdf_page_tree_loadable(file_path_obj)
             result = await parse_pdf_async(str(file_path_obj), params=params)
 
         elif file_ext in [".txt", ".md"]:

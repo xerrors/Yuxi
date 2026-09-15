@@ -51,6 +51,7 @@
         </div>
       </template>
 
+      <DocumentLimitsSettings v-if="userStore.isSuperAdmin" />
       <SkillSettingsSection :class="{ 'first-section': !userStore.isSuperAdmin }" />
     </template>
 
@@ -129,6 +130,7 @@ import { Globe } from '@lucide/vue'
 import ModelSelectorComponent from '@/components/ModelSelectorComponent.vue'
 import EmbeddingModelSelector from '@/components/EmbeddingModelSelector.vue'
 import RerankModelSelector from '@/components/RerankModelSelector.vue'
+import DocumentLimitsSettings from '@/components/DocumentLimitsSettings.vue'
 import SkillSettingsSection from '@/components/SkillSettingsSection.vue'
 
 const configStore = useConfigStore()

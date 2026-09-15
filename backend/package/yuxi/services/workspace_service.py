@@ -120,7 +120,9 @@ async def _filter_project_tree_entries(entries: list[dict], *, uid: str, db) -> 
     return [entry for entry, path in entries_with_paths if is_visible(path)]
 
 
-async def read_workspace_file_bytes(*, path: str, current_user: User) -> tuple[str, bytes]:
+async def read_workspace_file_bytes(
+    *, path: str, current_user: User, max_size_bytes: int = MAX_WORKSPACE_UPLOAD_SIZE_BYTES
+) -> tuple[str, bytes]:
     """在 no-follow Workspace 边界内读取知识库导入文件。"""
     backend = _workspace_backend(current_user)
     workspace_path = _workspace_path(path)
@@ -128,10 +130,12 @@ async def read_workspace_file_bytes(*, path: str, current_user: User) -> tuple[s
         content = await asyncio.to_thread(
             backend.read_authorized_file,
             workspace_path,
-            MAX_WORKSPACE_UPLOAD_SIZE_BYTES,
+            max_size_bytes,
         )
     except FileTransferLimitError as exc:
-        raise HTTPException(status_code=400, detail="文件过大，当前仅支持 100 MB 以内的工作区文件") from exc
+        raise HTTPException(
+            status_code=400, detail=f"工作区文件过大，当前上限 {max_size_bytes // (1024 * 1024)} MiB"
+        ) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"工作区文件不存在: {path}") from exc
     except IsADirectoryError as exc:

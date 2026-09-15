@@ -21,6 +21,10 @@ x-api-worker-env: &api-worker-env
   MILVUS_TOKEN: ${MILVUS_TOKEN:-}
   MINERU_API_URI: ${MINERU_API_URI:-http://mineru-api:30001}
   PADDLEX_URI: ${PADDLEX_URI:-http://paddlex:8080}
+  DOCUMENT_UPLOAD_MAX_MIB: ${DOCUMENT_UPLOAD_MAX_MIB:-100}
+  DOCUMENT_OCR_MAX_PAGES: ${DOCUMENT_OCR_MAX_PAGES:-500}
+  DOCUMENT_UPLOAD_HARD_MAX_MIB: ${DOCUMENT_UPLOAD_HARD_MAX_MIB:-100}
+  DOCUMENT_OCR_HARD_MAX_PAGES: ${DOCUMENT_OCR_HARD_MAX_PAGES:-500}
   MINIO_URI: ${MINIO_URI:-http://minio:9000}
   SANDBOX_PROVIDER: ${SANDBOX_PROVIDER:-provisioner}
   SANDBOX_PROVISIONER_URL: ${SANDBOX_PROVISIONER_URL:-http://sandbox-provisioner:8002}
@@ -233,6 +237,7 @@ services:
       - app-network
     environment:
       - NODE_ENV=production
+      - DOCUMENT_UPLOAD_HARD_MAX_MIB=${DOCUMENT_UPLOAD_HARD_MAX_MIB:-100}
     command: nginx -g "daemon off;"
     restart: unless-stopped
 

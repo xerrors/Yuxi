@@ -39,11 +39,12 @@ from yuxi.permissions import (
 from yuxi.services.knowledge_folder_service import knowledge_folder_service
 from yuxi.services.ocr_service import parse_document
 from yuxi.services.task_service import tasker
+from yuxi.services.document_limits_service import snapshot_document_limits
 from yuxi.services.workspace_service import read_workspace_file_bytes
 from yuxi.storage.minio.client import MinIOClient, StorageError, aupload_file_to_minio, get_minio_client
 from yuxi.storage.postgres.models_business import User
 from yuxi.utils import logger
-from yuxi.utils.upload_utils import MAX_UPLOAD_SIZE_BYTES, read_upload_with_limit, write_upload_to_path
+from yuxi.utils.upload_utils import read_upload_with_limit, write_upload_to_path
 
 from server.utils.auth_middleware import get_admin_user, get_db, get_required_user
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -737,6 +738,7 @@ async def add_documents(
                 "kb_id": kb_id,
                 "items": items,
                 "params": params,
+                "document_limits": await snapshot_document_limits(),
                 "content_type": content_type,
                 "operator_id": current_user.uid,
             },
@@ -854,6 +856,7 @@ async def _enqueue_document_action_task(
                 "kb_id": kb_id,
                 "file_ids": file_ids,
                 "params": params,
+                "document_limits": await snapshot_document_limits(),
                 "operator_id": operator_id,
             },
         )
@@ -894,6 +897,7 @@ async def _enqueue_pending_document_action_task(
                 "statuses": statuses,
                 "count": pending_count,
                 "params": params,
+                "document_limits": await snapshot_document_limits(),
                 "operator_id": operator_id,
             },
             payload_match={"kb_id": kb_id, "scope": "pending", "action": action},
@@ -1488,7 +1492,8 @@ async def fetch_url(
     try:
         await _require_manage_permission_if_kb_id(kb_id, current_user)
         # 1. 下载内容 (包含白名单校验、大小限制、类型检查)
-        content_bytes, final_url = await fetch_url_content(url)
+        limits = await snapshot_document_limits()
+        content_bytes, final_url = await fetch_url_content(url, max_size=limits["max_file_bytes"])
 
         # 2. 计算 Hash
         content_hash = await calculate_content_hash(content_bytes)
@@ -1564,10 +1569,12 @@ async def import_workspace_files(
 
     bucket_name = MinIOClient.KB_BUCKETS["documents"]
     results = []
+    limits = await snapshot_document_limits()
     for workspace_path in paths:
         filename, file_bytes = await read_workspace_file_bytes(
             path=workspace_path,
             current_user=current_user,
+            max_size_bytes=limits["max_file_bytes"],
         )
         ext = os.path.splitext(filename)[1].lower()
         if not is_supported_file_extension(filename):
@@ -1634,11 +1641,12 @@ async def upload_file(
     # 直接使用原始文件名（小写）
     filename = f"{basename}{ext}".lower()
 
+    limits = await snapshot_document_limits()
     try:
         file_bytes = await read_upload_with_limit(
             file,
-            max_size_bytes=MAX_UPLOAD_SIZE_BYTES,
-            too_large_message="文件过大，当前仅支持 100 MB 以内的文件",
+            max_size_bytes=limits["max_file_bytes"],
+            too_large_message=f"文件过大，当前上限 {limits['max_file_bytes'] // (1024 * 1024)} MiB",
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -1698,6 +1706,7 @@ async def mark_it_down(file: UploadFile = File(...), current_user: User = Depend
     if not file.filename:
         return {"message": "文件解析失败: 无法识别文件名", "markdown_content": ""}
 
+    limits = await snapshot_document_limits()
     suffix = os.path.splitext(file.filename)[1].lower()
     temp_path = None
 
@@ -1708,11 +1717,11 @@ async def mark_it_down(file: UploadFile = File(...), current_user: User = Depend
         await write_upload_to_path(
             file,
             temp_path,
-            max_size_bytes=MAX_UPLOAD_SIZE_BYTES,
-            too_large_message="文件过大，当前仅支持 100 MB 以内的文件",
+            max_size_bytes=limits["max_file_bytes"],
+            too_large_message=f"文件过大，当前上限 {limits['max_file_bytes'] // (1024 * 1024)} MiB",
         )
 
-        markdown_content = await parse_document(temp_path)
+        markdown_content = await parse_document(temp_path, document_limits=limits)
         return {"markdown_content": markdown_content, "message": "success"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

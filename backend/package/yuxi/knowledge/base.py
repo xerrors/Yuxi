@@ -246,6 +246,7 @@ class KnowledgeBase(ABC):
         additional_params: dict[str, Any],
         processing_task_id: str | None = None,
         processing_owner: str | None = None,
+        document_limits: dict | None = None,
     ) -> dict:
         """
         Parse file to Markdown and save to MinIO (Status: PARSING -> PARSED/ERROR_PARSING)
@@ -330,6 +331,7 @@ class KnowledgeBase(ABC):
             markdown_content = await parse_document(
                 source=file_path,
                 params=params,
+                **({"document_limits": document_limits} if document_limits is not None else {}),
             )
 
             # Save Markdown to MinIO
