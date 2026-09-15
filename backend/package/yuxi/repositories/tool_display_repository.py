@@ -1,6 +1,7 @@
 """工具展示覆盖的持久化边界，不改变工具注册表。"""
 
-from sqlalchemy import select, func
+from sqlalchemy import func, select
+
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import ConfigOption
 

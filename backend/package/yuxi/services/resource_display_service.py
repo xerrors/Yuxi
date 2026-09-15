@@ -1,6 +1,7 @@
 """资源展示覆盖只装配响应，不修改源对象或运行身份。"""
 
 import json
+
 from yuxi.repositories import tool_display_repository
 
 SKILL_NAMES = "builtin_skill_display_names"

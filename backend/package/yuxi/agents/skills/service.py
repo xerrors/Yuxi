@@ -662,7 +662,6 @@ async def get_skill_dependency_options(
     db: AsyncSession, user: User, slug: str | None = None
 ) -> dict[str, list[str] | list[dict]]:
     from yuxi.agents.toolkits.service import get_tool_metadata
-
     from yuxi.services.tool_display_service import display_tools
 
     async def get_tools():

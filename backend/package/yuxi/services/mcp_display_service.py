@@ -1,12 +1,11 @@
 """MCP 纯展示改名，保留连接字段与运行身份。"""
 
 from fastapi import HTTPException
-from yuxi.agents.mcp.service import is_builtin_mcp_server
-from yuxi.repositories.mcp_display_repository import lock_server
-from yuxi.services.tool_display_service import validate_display_name
+from yuxi.agents.mcp.service import inspect_mcp_server_tools, is_builtin_mcp_server, requires_mcp_stdio_migration
 from yuxi.repositories import tool_display_repository
+from yuxi.repositories.mcp_display_repository import lock_server
 from yuxi.services.resource_display_service import MCP_NAMES, MCP_TOOL_NAMES, mcp_tool_key
-from yuxi.agents.mcp.service import inspect_mcp_server_tools, requires_mcp_stdio_migration
+from yuxi.services.tool_display_service import validate_display_name
 
 
 async def set_mcp_display_name(db, slug, name, actor):
@@ -47,6 +46,7 @@ async def set_mcp_tool_display_name(db, slug, tool_name, name, actor):
 async def list_mcp_tool_display_names():
     """沿用运行时 MCP ID 编码，只返回展示字段。"""
     import json
+
     from yuxi.agents.mcp.service import to_camel_case
 
     names = await tool_display_repository.read_names(key=MCP_TOOL_NAMES)

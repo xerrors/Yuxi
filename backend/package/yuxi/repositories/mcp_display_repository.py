@@ -1,6 +1,7 @@
 """MCP 展示名的窄持久化写入，不经过连接配置更新。"""
 
 from sqlalchemy import select
+
 from yuxi.storage.postgres.models_business import MCPServer
 
 
