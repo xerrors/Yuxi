@@ -7,7 +7,8 @@ import os
 import uuid
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import inspect, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.storage.postgres.manager import BUSINESS_SCHEMA_VERSION, KNOWLEDGE_SCHEMA_VERSION, PostgresManager
@@ -268,7 +269,7 @@ async def test_v072_business_converges_current_schema_idempotently() -> None:
             "ix_scheduled_agent_runs_job_created",
             "ix_scheduled_agent_runs_dispatching",
         }.issubset(scheduled_indexes)
-        assert BUSINESS_SCHEMA_VERSION == 7
+        assert BUSINESS_SCHEMA_VERSION == 8
     finally:
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)
 
@@ -377,7 +378,6 @@ async def test_knowledge_v1_to_v2_adds_file_attempt_owner_idempotently() -> None
             "error_parsing",
             "service_interrupted: 旧执行实例中断，处理结果未知，请重试",
         )
-        assert KNOWLEDGE_SCHEMA_VERSION == 2
     finally:
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)
 
@@ -501,5 +501,99 @@ async def test_schema_version_is_persisted_and_runtime_validation_fails_closed()
             "business": BUSINESS_SCHEMA_VERSION,
             "knowledge": KNOWLEDGE_SCHEMA_VERSION,
         }
+    finally:
+        await _drop_isolated_schema(schema, admin_engine, scoped_engine)
+
+
+async def test_trash_adjacent_upgrades_preserve_data_and_constraints_on_replay() -> None:
+    """business7/knowledge2 升级补齐回收字段与 journal，重放保留数据及数据库约束。"""
+    schema, admin_engine, scoped_engine, manager = await _create_isolated_manager("pytest_trash_upgrade")
+    trash_columns = {
+        "deleted_at",
+        "purge_after",
+        "deletion_id",
+        "deleted_by",
+        "purge_started_at",
+        "purge_lease_until",
+        "purge_token",
+        "purge_error",
+        "purge_objects",
+    }
+    try:
+        await manager.create_business_tables()
+        await manager.create_knowledge_tables()
+        async with scoped_engine.begin() as connection:
+            await connection.execute(text("DROP TABLE personal_trash_entries"))
+            for column in trash_columns:
+                await connection.execute(text(f"ALTER TABLE knowledge_files DROP COLUMN {column}"))
+            await connection.execute(
+                text("INSERT INTO knowledge_bases (kb_id,name,kb_type) VALUES ('old','preserved','milvus')")
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO knowledge_files (file_id,kb_id,filename,status) "
+                    "VALUES ('old-file','old','preserved.pdf','done')"
+                )
+            )
+        await manager.create_schema_version_table()
+        await manager.record_schema_version("business", 7)
+        await manager.record_schema_version("knowledge", 2)
+        with pytest.raises(RuntimeError, match="incompatible"):
+            await manager.require_current_schema()
+
+        for attempt in range(2):
+            await manager.upgrade_business_schema_v7_to_v8()
+            await manager.upgrade_knowledge_schema_v2_to_v3()
+            if attempt == 0:
+                async with scoped_engine.begin() as connection:
+                    await connection.execute(
+                        text(
+                            "INSERT INTO personal_trash_entries "
+                            "(id,uid,name,kind,paths,state,deleted_at,purge_after) VALUES "
+                            "('entry','owner','example.txt','workspace','[]','trashed',NOW(),NOW()+INTERVAL '30 days')"
+                        )
+                    )
+        await manager.record_schema_version("business", BUSINESS_SCHEMA_VERSION)
+        await manager.record_schema_version("knowledge", KNOWLEDGE_SCHEMA_VERSION)
+        await manager.require_current_schema()
+        assert await manager.get_schema_versions() == {"business": 8, "knowledge": 3}
+        async with scoped_engine.connect() as connection:
+            columns = await connection.run_sync(
+                lambda conn: {column["name"] for column in inspect(conn).get_columns("knowledge_files")}
+            )
+            assert trash_columns <= columns
+            indexes = await connection.run_sync(
+                lambda conn: {
+                    index["name"]: index["column_names"]
+                    for index in inspect(conn).get_indexes("personal_trash_entries")
+                }
+            )
+            assert indexes["ix_personal_trash_owner_state"] == ["uid", "state"]
+            assert indexes["ix_personal_trash_due"] == ["state", "purge_after"]
+            file_indexes = await connection.run_sync(
+                lambda conn: {
+                    index["name"]: index["column_names"] for index in inspect(conn).get_indexes("knowledge_files")
+                }
+            )
+            assert file_indexes["ix_knowledge_files_purge_after"] == ["purge_after"]
+            row = (
+                await connection.execute(
+                    text(
+                        "SELECT filename,status,deleted_at,purge_after,purge_objects "
+                        "FROM knowledge_files WHERE file_id='old-file'"
+                    )
+                )
+            ).one()
+            assert tuple(row) == ("preserved.pdf", "done", None, None, None)
+            entry = (
+                await connection.execute(
+                    text("SELECT uid,name,kind,paths,state FROM personal_trash_entries WHERE id='entry'")
+                )
+            ).one()
+            assert tuple(entry) == ("owner", "example.txt", "workspace", [], "trashed")
+        for column, constraint in (("kind", "ck_personal_trash_kind"), ("state", "ck_personal_trash_state")):
+            with pytest.raises(IntegrityError, match=constraint):
+                async with scoped_engine.begin() as connection:
+                    await connection.execute(text(f"UPDATE personal_trash_entries SET {column}='invalid'"))
     finally:
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)
