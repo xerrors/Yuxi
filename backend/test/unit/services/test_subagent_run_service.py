@@ -494,7 +494,6 @@ async def test_subagent_run_service_start_publishes_update_on_parent_thread(
         agent_item=_agent(),
         input_message=build_chat_input_message("run in background"),
         tool_call_id="tool-1",
-        model_spec="provider:model",
     )
 
     assert len(published) == 1
