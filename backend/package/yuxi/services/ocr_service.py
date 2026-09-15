@@ -76,6 +76,8 @@ async def parse_document(
     source: str,
     params: dict[str, Any] | None = None,
     db: AsyncSession | None = None,
+    *,
+    document_limits: dict | None = None,
 ) -> str:
     """使用当前运行时配置将文件解析为 Markdown。
 
@@ -105,16 +107,22 @@ async def parse_document(
         StorageError: MinIO 文件读取失败。
     """
 
-    resolved_params = params
+    from yuxi.knowledge.parser.document_limits import validate_document_limits
+
+    limits = validate_document_limits(document_limits)
+    resolved_params = dict(params or {})
+    resolved_params.pop("_document_limits", None)
     suffix = Path(source.split("?", 1)[0]).suffix.lower()
     if suffix in OCR_FILE_EXTENSIONS:
-        resolved_params = await resolve_ocr_task_params(params, db)
+        resolved_params = await resolve_ocr_task_params(resolved_params, db)
         engine_id = resolved_params["ocr_engine"]
         if engine_id != "disable" and suffix not in get_parser_capability(engine_id).supported_extensions:
             raise ValueError(f"OCR 引擎 {engine_id} 不支持文件类型 {suffix}")
 
     from yuxi.knowledge.parser.unified import parse_resolved_document
 
+    if limits is not None:
+        resolved_params["_document_limits"] = limits
     return await parse_resolved_document(source=source, params=resolved_params)
 
 

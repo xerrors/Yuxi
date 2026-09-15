@@ -47,6 +47,9 @@ COPY --from=build-stage /app/dist /usr/share/nginx/html
 RUN find /usr/share/nginx/html -type d -exec chmod 755 {} \; \
     && find /usr/share/nginx/html -type f -exec chmod 644 {} \;
 COPY ./docker/nginx/nginx.conf /etc/nginx/nginx.conf
-COPY ./docker/nginx/default.conf /etc/nginx/conf.d/default.conf
+COPY ./docker/nginx/default.conf /etc/nginx/document-limits.conf.template
+COPY ./docker/nginx/19-document-limits.sh /docker-entrypoint.d/19-document-limits.sh
+RUN chmod +x /docker-entrypoint.d/19-document-limits.sh
+ENV DOCUMENT_UPLOAD_HARD_MAX_MIB=100
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]

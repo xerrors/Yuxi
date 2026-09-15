@@ -103,6 +103,11 @@
         <span>检测到PDF或图片文件，建议启用 OCR 以提取文本内容</span>
       </div>
 
+      <p v-if="uploadLimits" class="ant-upload-hint">
+        当前单文件上限 {{ uploadLimits.effective_upload_max_bytes / 1024 / 1024 }} MiB，OCR 上限
+        {{ uploadLimits.ocr_max_pages }} 页；服务器按接受任务时配置校验。
+      </p>
+      <a-alert v-if="uploadLimitsError" :message="uploadLimitsError" type="error" show-icon />
       <!-- 文件上传区域 -->
       <div class="upload-area" v-if="uploadMode === 'file' || uploadMode === 'folder'">
         <a-upload-dragger
@@ -289,6 +294,8 @@ import { useUserStore } from '@/stores/user'
 import { useConfigStore } from '@/stores/config'
 import { useDatabaseStore } from '@/stores/database'
 import { fileApi, documentApi } from '@/apis/knowledge_api'
+import { documentLimitsApi } from '@/apis/system_api'
+import { assertKnowledgeUploadSize } from '@/utils/knowledgeUploadLimits'
 import {
   FileUp,
   FolderUp,
@@ -335,6 +342,31 @@ const emit = defineEmits(['update:visible', 'success'])
 
 const store = useDatabaseStore()
 const configStore = useConfigStore()
+const uploadLimits = ref(null)
+const uploadLimitsError = ref('')
+let pendingLimits = null
+async function loadUploadLimits() {
+  if (pendingLimits) return pendingLimits
+  pendingLimits = documentLimitsApi
+    .get()
+    .then((result) => {
+      uploadLimits.value = result
+      uploadLimitsError.value = ''
+      return result
+    })
+    .catch((err) => {
+      uploadLimits.value = null
+      uploadLimitsError.value = '读取文档处理限制失败，请重试'
+      throw err
+    })
+    .finally(() => {
+      pendingLimits = null
+    })
+  return pendingLimits
+}
+onMounted(() => {
+  if (props.visible) loadUploadLimits().catch(() => {})
+})
 const DEFAULT_OCR_ENGINE = 'rapid_ocr'
 const defaultOcrEngine = ref(DEFAULT_OCR_ENGINE)
 
@@ -362,6 +394,7 @@ watch(
   () => props.visible,
   (newVal) => {
     if (newVal) {
+      loadUploadLimits().catch(() => {})
       ocrEngineTouched.value = false
       applyDefaultOcrEngine()
       selectedFolderId.value = props.currentFolderId
@@ -850,7 +883,7 @@ const handleCancel = () => {
   emit('update:visible', false)
 }
 
-const beforeUpload = (file) => {
+const beforeUpload = async (file) => {
   const relativePath = file?.webkitRelativePath || file?.originFileObj?.webkitRelativePath
   if (isHiddenPath(file?.name, relativePath)) {
     return Upload.LIST_IGNORE
@@ -861,7 +894,13 @@ const beforeUpload = (file) => {
     }
     return Upload.LIST_IGNORE
   }
-  return true
+  try {
+    assertKnowledgeUploadSize(file, await loadUploadLimits())
+    return true
+  } catch (error) {
+    message.error(error.message || '读取上传限制失败，请重试')
+    return Upload.LIST_IGNORE
+  }
 }
 
 const formatFileTime = (timestamp) => {

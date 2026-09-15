@@ -223,6 +223,20 @@ remote_skill_source_policy = Option(
     },
 )
 
+document_limits = Option(
+    key="document_limits",
+    name="文档处理限制",
+    description="专用文档限制服务维护的配置。",
+    params={
+        "internal": True,
+        "fields": [
+            {"key": "upload_max_mib", "type": "integer", "default": 100, "environment": "DOCUMENT_UPLOAD_MAX_MIB"},
+            {"key": "ocr_max_pages", "type": "integer", "default": 500, "environment": "DOCUMENT_OCR_MAX_PAGES"},
+            {"key": "revision", "type": "integer", "default": 0},
+        ],
+    },
+)
+
 OPTION_DEFINITIONS = {
     option.key: option
     for option in (
@@ -232,6 +246,7 @@ OPTION_DEFINITIONS = {
         paddleocr_api_opts,
         remote_skill_source_policy,
         system_options,
+        document_limits,
     )
 }
 
@@ -276,7 +291,9 @@ async def ensure_options_in_db(db: AsyncSession) -> list[ConfigOption]:
 
 async def list_options(db: AsyncSession) -> list[ConfigOption]:
     result = await db.execute(
-        select(ConfigOption).where(ConfigOption.key != system_options.key).order_by(ConfigOption.id)
+        select(ConfigOption)
+        .where(ConfigOption.key.not_in([system_options.key, document_limits.key]))
+        .order_by(ConfigOption.id)
     )
     return list(result.scalars().all())
 

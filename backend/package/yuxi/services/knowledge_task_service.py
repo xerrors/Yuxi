@@ -97,6 +97,7 @@ async def run_knowledge_ingest(context: TaskContext) -> dict:
                     kb_id,
                     record["file_id"],
                     operator_id=operator_id,
+                    **({"document_limits": payload["document_limits"]} if "document_limits" in payload else {}),
                     **processing_owner,
                 )
                 record["file_meta"] = file_meta
@@ -216,6 +217,7 @@ async def _run_file_ids(context: TaskContext, *, action: str) -> dict:
                     kb_id,
                     file_id,
                     operator_id=operator_id,
+                    **({"document_limits": payload["document_limits"]} if "document_limits" in payload else {}),
                     **processing_owner,
                 )
             else:
@@ -286,6 +288,7 @@ async def _run_pending_files(context: TaskContext, *, action: str) -> dict:
                         kb_id,
                         file_id,
                         operator_id=operator_id,
+                        **({"document_limits": payload["document_limits"]} if "document_limits" in payload else {}),
                         **processing_owner,
                     )
                 else:

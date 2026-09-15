@@ -265,7 +265,10 @@ async def put_config_option(
 ):
     """保存一个通用配置项的 JSON 值。"""
 
-    from yuxi.config.options import serialize_option, update_option_value
+    from yuxi.config.options import OPTION_DEFINITIONS, serialize_option, update_option_value
+
+    if OPTION_DEFINITIONS.get(key) and OPTION_DEFINITIONS[key].params.get("internal"):
+        raise HTTPException(status_code=403, detail="请使用对应的专用设置接口")
 
     try:
         record = await update_option_value(db, key, payload.value, current_user.username)

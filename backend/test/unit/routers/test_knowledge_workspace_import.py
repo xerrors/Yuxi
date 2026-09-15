@@ -10,6 +10,16 @@ from server.routers import knowledge_router
 pytestmark = pytest.mark.asyncio
 
 
+@pytest.fixture(autouse=True)
+def configured_document_limits(monkeypatch):
+    """路由单测提供配置边界，持久化另由真实 PG 覆盖。"""
+
+    async def snapshot():
+        return {"max_file_bytes": 100 * 1024 * 1024, "max_ocr_pages": 500, "version": 0}
+
+    monkeypatch.setattr(knowledge_router, "snapshot_document_limits", snapshot)
+
+
 async def test_import_workspace_files_uploads_workspace_file_to_minio(monkeypatch):
     async def fake_ensure_database_supports_documents(slug: str, operation: str) -> None:
         assert slug == "db_1"
@@ -39,7 +49,8 @@ async def test_import_workspace_files_uploads_workspace_file_to_minio(monkeypatc
 
     user = SimpleNamespace(id="user_1")
 
-    async def fake_read_workspace_file_bytes(*, path, current_user):
+    async def fake_read_workspace_file_bytes(*, path, current_user, max_size_bytes):
+        assert max_size_bytes == 100 * 1024 * 1024
         assert path == "/note.md"
         assert current_user is user
         return "note.md", b"# workspace note\n"
