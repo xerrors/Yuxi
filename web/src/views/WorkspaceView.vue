@@ -1,8 +1,20 @@
 <template>
   <div class="workspace-view layout-container">
-    <PageHeader title="个人空间" :loading="loadingTree || loadingPreview" :show-border="true">
+    <PageHeader
+      :title="workspaceTitle"
+      :loading="loadingDatabases || loadingTree || loadingPreview"
+      :show-border="true"
+    >
       <template #actions>
-        <a-button class="lucide-icon-btn" @click="fileSearchOpen = true">
+        <a-button
+          v-if="activeSourceKey === 'personal' || activeSourceKey === 'enterprise'"
+          @click="saveDefaultSource"
+        >设为默认入口</a-button>
+        <a-button
+          v-if="activeSourceKey === 'personal'"
+          class="lucide-icon-btn"
+          @click="fileSearchOpen = true"
+        >
           <template #icon><Search :size="16" /></template>
           搜索
         </a-button>
@@ -39,7 +51,7 @@
         <button
           type="button"
           class="sidebar-collapse-action"
-          aria-label="收起个人空间侧边栏"
+          aria-label="收起空间侧边栏"
           @click="sidebarCollapsed = true"
         >
           <ChevronLeft :size="16" />
@@ -52,6 +64,7 @@
           :current-uid="userStore.uid"
           :disabled="activeSourceKey !== 'personal' || isReadonlyWorkspacePath"
           :uploading="uploadingFile"
+          @select-enterprise="selectEnterpriseWorkspace"
           @select-personal="selectPersonalWorkspace"
           @select-database="selectDatabase"
           @select-path="selectWorkspacePath"
@@ -63,7 +76,7 @@
         v-else
         type="button"
         class="sidebar-expand-action"
-        aria-label="展开个人空间侧边栏"
+        aria-label="展开空间侧边栏"
         @click="sidebarCollapsed = false"
       >
         <ChevronRight :size="16" />
@@ -127,8 +140,23 @@
 
         <div v-else class="workspace-placeholder">
           <LibraryBig :size="32" />
-          <h2>知识库</h2>
-          <p>请选择一个可访问知识库以浏览文件。</p>
+          <h2>企业资料</h2>
+          <p>仅展示你有权访问的全员或部门共享知识库；个人资料保持原有权限。</p>
+          <p v-if="loadingDatabases">正在加载企业资料...</p>
+          <template v-else-if="databaseLoadError">
+            <p role="alert">{{ databaseLoadError }}</p>
+            <a-button @click="loadDatabases">重试</a-button>
+          </template>
+          <div v-else-if="enterpriseDatabases.length" class="enterprise-databases">
+            <a-button
+              v-for="database in enterpriseDatabases"
+              :key="database.kb_id"
+              @click="selectDatabase(database)"
+            >
+              {{ database.name }}
+            </a-button>
+          </div>
+          <p v-else>暂无可访问的企业共享资料，请联系管理员确认共享范围。</p>
         </div>
       </main>
     </div>
@@ -237,11 +265,20 @@ import {
 import GlobalSearchModal from '@/components/GlobalSearchModal.vue'
 import { normalizePreviewResponse } from '@/utils/file_preview'
 import { parseDownloadFilename } from '@/utils/file_utils'
+import { isEnterpriseDatabase, readWorkspaceDefault, saveWorkspaceDefault } from '@/utils/workspace_sources'
 
 const userStore = useUserStore()
 const route = useRoute()
 
-const activeSourceKey = ref('personal')
+const activeSourceKey = ref(readWorkspaceDefault(userStore.uid))
+
+const saveDefaultSource = () => {
+  if (saveWorkspaceDefault(userStore.uid, activeSourceKey.value)) {
+    message.success('已设为此浏览器的默认入口')
+  } else {
+    message.error('默认入口保存失败，请检查浏览器存储设置')
+  }
+}
 const currentPath = ref('/')
 const fileSearchOpen = ref(false)
 
@@ -275,10 +312,18 @@ const previewObjectUrl = ref('')
 const previewModalVisible = ref(false)
 const inlinePreviewVisible = ref(false)
 const loadingTree = ref(false)
+let directoryRequestId = 0
 const loadingPreview = ref(false)
 const savingPreviewFile = ref(false)
 const loadingDatabases = ref(false)
 const databases = ref([])
+const databaseLoadError = ref('')
+const enterpriseDatabases = computed(() => databases.value.filter(isEnterpriseDatabase))
+const workspaceTitle = computed(() =>
+  activeSourceKey.value === 'personal'
+    ? '个人空间'
+    : selectedDatabase.value?.name || '企业空间'
+)
 const selectedDatabase = ref(null)
 const workspaceMainRef = ref(null)
 const workspaceMainWidth = ref(0)
@@ -481,9 +526,12 @@ const handleSelectionModeChange = (enabled) => {
 }
 
 const loadWorkspaceEntries = async (path = '/') => {
+  if (activeSourceKey.value !== 'personal') return
+  const requestId = ++directoryRequestId
   loadingTree.value = true
   try {
     const response = await getWorkspaceTree(path)
+    if (requestId !== directoryRequestId) return
     entries.value = response.entries || []
     currentPath.value = path
     knowledgeBreadcrumbItems.value = []
@@ -493,10 +541,11 @@ const loadWorkspaceEntries = async (path = '/') => {
       selectionMode.value = false
     }
   } catch (error) {
+    if (requestId !== directoryRequestId) return
     console.warn('加载个人空间目录失败:', error)
     message.error('加载个人空间目录失败')
   } finally {
-    loadingTree.value = false
+    if (requestId === directoryRequestId) loadingTree.value = false
   }
 }
 
@@ -524,8 +573,9 @@ const loadKnowledgeEntries = async (
     breadcrumbs = null
   } = {}
 ) => {
-  if (!database?.kb_id) return
+  if (!database?.kb_id || activeSourceKey.value !== `database:${database.kb_id}`) return
 
+  const requestId = ++directoryRequestId
   loadingTree.value = true
   try {
     const response = await getWorkspaceKnowledgeTree(database.kb_id, {
@@ -534,6 +584,7 @@ const loadKnowledgeEntries = async (
       page,
       pageSize
     })
+    if (requestId !== directoryRequestId) return
     entries.value = response.entries || []
     knowledgeBreadcrumbItems.value = breadcrumbs || [
       {
@@ -558,42 +609,60 @@ const loadKnowledgeEntries = async (
       selectionMode.value = false
     }
   } catch (error) {
+    if (requestId !== directoryRequestId) return
     console.warn('加载知识库目录失败:', error)
     entries.value = []
     message.error(error?.message || '加载知识库目录失败')
   } finally {
-    loadingTree.value = false
+    if (requestId === directoryRequestId) loadingTree.value = false
   }
 }
 
 const loadDatabases = async () => {
   loadingDatabases.value = true
+  databaseLoadError.value = ''
   try {
     const response = await databaseApi.getAccessibleDatabases()
+    if (response?.message) throw new Error('加载企业资料失败，请稍后重试')
     databases.value = (response?.databases || []).filter((database) => {
       return database?.supports_documents !== false
     })
   } catch (error) {
     console.warn('加载可访问知识库失败:', error)
+    databaseLoadError.value = '加载企业资料失败，请稍后重试'
     databases.value = []
   } finally {
     loadingDatabases.value = false
   }
 }
 
+const selectEnterpriseWorkspace = async () => {
+  directoryRequestId += 1
+  loadingTree.value = false
+  activeSourceKey.value = 'enterprise'
+  selectedDatabase.value = null
+  entries.value = []
+  knowledgeBreadcrumbItems.value = []
+  closePreview()
+  clearWorkspaceSelection()
+  await loadDatabases()
+}
+
 const selectPersonalWorkspace = async () => {
-  const wasKnowledgeSource = isKnowledgeSource.value
+  const changedSource = activeSourceKey.value !== 'personal'
   activeSourceKey.value = 'personal'
   selectedDatabase.value = null
   knowledgeBreadcrumbItems.value = []
   closePreview()
   clearWorkspaceSelection()
-  if (wasKnowledgeSource || currentPath.value !== '/' || !entries.value.length) {
+  if (changedSource) entries.value = []
+  if (changedSource || currentPath.value !== '/' || !entries.value.length) {
     await loadWorkspaceEntries('/')
   }
 }
 
 const selectWorkspacePath = async (path) => {
+  if (activeSourceKey.value !== 'personal') entries.value = []
   activeSourceKey.value = 'personal'
   selectedDatabase.value = null
   knowledgeBreadcrumbItems.value = []
@@ -627,6 +696,8 @@ const selectDatabase = async (database) => {
   if (database?.supports_documents === false) return
   closePreview()
   clearWorkspaceSelection()
+  entries.value = []
+  knowledgeBreadcrumbItems.value = []
   selectedDatabase.value = database
   activeSourceKey.value = `database:${database.kb_id}`
   await loadKnowledgeEntries(database)
@@ -915,7 +986,10 @@ let workspaceResizeObserver = null
 let workspaceMounted = false
 
 onMounted(async () => {
-  await Promise.all([loadWorkspaceEntries('/'), loadDatabases()])
+  await loadDatabases()
+  if (activeSourceKey.value === 'personal' && !route.query.open) {
+    await loadWorkspaceEntries('/')
+  }
 
   if (workspaceMainRef.value && typeof ResizeObserver !== 'undefined') {
     workspaceMainWidth.value = workspaceMainRef.value.clientWidth || 0
@@ -933,7 +1007,12 @@ onMounted(async () => {
 })
 
 onActivated(async () => {
-  if (!workspaceMounted || activeSourceKey.value !== 'personal') return
+  if (!workspaceMounted) return
+  if (activeSourceKey.value === 'enterprise') {
+    await loadDatabases()
+    return
+  }
+  if (activeSourceKey.value !== 'personal') return
   await loadWorkspaceEntries(currentPath.value)
   if (!selectedEntry.value?.path) return
   const refreshedEntry = entries.value.find((entry) => entry.path === selectedEntry.value.path)
@@ -979,6 +1058,21 @@ watch(useInlinePreview, (isInline, wasInline) => {
 </script>
 
 <style scoped lang="less">
+.enterprise-databases {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  max-width: 100%;
+
+  :deep(.ant-btn) {
+    max-width: 100%;
+    height: auto;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
 .workspace-view {
   display: flex;
   flex-direction: column;

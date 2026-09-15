@@ -49,6 +49,18 @@
       <button
         type="button"
         class="workspace-nav-item"
+        :class="{ active: activeKey === 'enterprise' }"
+        @click="$emit('select-enterprise')"
+      >
+        <LibraryBig :size="16" />
+        <span>企业资料</span>
+      </button>
+    </section>
+
+    <section class="sidebar-section">
+      <button
+        type="button"
+        class="workspace-nav-item"
         :class="{ active: activeKey === 'personal' && !isQuickAccessPath(currentPath) }"
         @click="$emit('select-personal')"
       >
@@ -58,7 +70,7 @@
     </section>
 
     <section class="sidebar-section">
-      <div class="section-title">快速访问</div>
+      <div class="section-title">个人快速访问</div>
       <button
         type="button"
         class="workspace-nav-item secondary"
@@ -81,8 +93,23 @@
       </button>
     </section>
 
+    <section v-if="enterpriseDatabases.length" class="sidebar-section">
+      <div class="section-title">企业共享知识库</div>
+      <button
+        v-for="database in enterpriseDatabases"
+        :key="database.kb_id"
+        type="button"
+        class="workspace-nav-item secondary"
+        :class="{ active: activeKey === `database:${database.kb_id}` }"
+        @click="$emit('select-database', database)"
+      >
+        <FileTypeIcon is-dir :size="16" />
+        <span>{{ database.name }}</span>
+      </button>
+    </section>
+
     <section v-if="myDatabases.length" class="sidebar-section">
-      <div class="section-title">我的知识库</div>
+      <div class="section-title">我创建的知识库</div>
       <button
         v-for="database in myDatabases"
         :key="database.kb_id || database.id || database.name"
@@ -97,7 +124,7 @@
     </section>
 
     <section v-if="sharedDatabases.length" class="sidebar-section">
-      <div class="section-title">共享知识库</div>
+      <div class="section-title">其他可访问知识库</div>
       <button
         v-for="database in sharedDatabases"
         :key="database.kb_id || database.id || database.name"
@@ -122,9 +149,10 @@
 
 <script setup>
 import { computed, ref } from 'vue'
-import { ChevronDown, FolderPlus, Loader2, Upload } from '@lucide/vue'
+import { ChevronDown, FolderPlus, LibraryBig, Loader2, Upload } from '@lucide/vue'
 import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
 import { useOutsidePointerdown } from '@/composables/useOutsidePointerdown'
+import { isEnterpriseDatabase } from '@/utils/workspace_sources'
 
 const savedArtifactsPath = '/saved_artifacts'
 const agentsPath = '/agents/'
@@ -151,6 +179,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits([
+  'select-enterprise',
   'select-personal',
   'select-database',
   'select-path',
@@ -178,12 +207,14 @@ const onCreateFolderAction = () => {
 
 useOutsidePointerdown(uploadActionMenuOpen, [uploadActionMenuRef])
 
+const enterpriseDatabases = computed(() => props.databases.filter(isEnterpriseDatabase))
+
 const myDatabases = computed(() =>
-  props.databases.filter((db) => db.created_by === props.currentUid)
+  props.databases.filter((db) => !isEnterpriseDatabase(db) && db.created_by === props.currentUid)
 )
 
 const sharedDatabases = computed(() =>
-  props.databases.filter((db) => db.created_by !== props.currentUid)
+  props.databases.filter((db) => !isEnterpriseDatabase(db) && db.created_by !== props.currentUid)
 )
 </script>
 

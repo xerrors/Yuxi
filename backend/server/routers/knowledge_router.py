@@ -34,6 +34,7 @@ from yuxi.knowledge.utils.sample_question_utils import (
 from yuxi.knowledge.utils.url_fetcher import fetch_url_content
 from yuxi.permissions import (
     ResourcePermission,
+    normalize_permission_config,
     resolve_knowledge_base_permission,
 )
 from yuxi.services.knowledge_folder_service import knowledge_folder_service
@@ -293,6 +294,9 @@ async def get_accessible_databases(current_user: User = Depends(get_required_use
                 "kb_id": db.kb_id,
                 "description": db.description or "",
                 "created_by": db.created_by,
+                "is_enterprise_shared": (
+                    normalize_permission_config(db.share_config)["read_scope"] or {}
+                ).get("access_level") in {"global", "department"},
                 "kb_type": db.kb_type,
                 "supports_documents": knowledge_base.database_type_supports_documents(db.kb_type),
             }
