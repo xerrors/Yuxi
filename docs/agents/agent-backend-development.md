@@ -20,7 +20,6 @@ backend/package/yuxi/agents/buildin/<your_agent>/
 ```python
 from langchain.agents import create_agent
 from yuxi.agents import BaseAgent, BaseContext, load_chat_model
-from yuxi.agents.context import prepare_agent_runtime_context
 
 
 class MyAgent(BaseAgent):
@@ -28,11 +27,9 @@ class MyAgent(BaseAgent):
     description = "用于示例的智能体后端"
     context_schema = BaseContext
 
-    async def get_graph(self, context=None, **kwargs):
-        context = await prepare_agent_runtime_context(
-            context or self.context_schema(),
-            context_schema=self.context_schema,
-        )
+    async def get_graph(self, *, context, **kwargs):
+        if not getattr(context, "_runtime_prepared", False):
+            raise ValueError("构图需要已准备的 Context")
         return create_agent(
             model=load_chat_model(fully_specified_name=context.model),
             system_prompt=context.system_prompt,
@@ -42,7 +39,7 @@ class MyAgent(BaseAgent):
 
 这个示例展示最小的 Context、模型、提示词和 PostgreSQL checkpoint 装配。真实后端还要根据需要接入文件 backend、工具、Skills、审批、Summary、用量和子智能体 middleware。
 
-`prepare_agent_runtime_context` 会根据当前用户重新过滤资源，并在模型为空时补齐系统默认模型。不要在 `get_graph()` 中从浏览器输入、宿主机路径或数据库原始字段直接拼出可执行配置。
+worker 和主动压缩在执行入口显式调用 `prepare_agent_runtime_context`，为 Context 追加工作区提示词、按当前用户过滤资源，并在模型为空时补齐系统默认模型。`get_graph(context=...)` 只消费准备后的对象。独立调用同样先创建 `context_schema()`，用 `update_config` 装载持久配置、用 `update` 注入已授权身份和运行覆盖，再 await 准备函数；流和 invoke 接口只接受 `context`，不接收配置字典。
 
 ## Context 和配置表单
 

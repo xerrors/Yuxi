@@ -1,7 +1,7 @@
 """Agent Call HTTP 协议适配。
 
 本模块只处理 Agent Call 的请求/响应格式、同步等待和 OpenAI-compatible
-响应装配；Conversation、Request、Run 的创建统一交给 ``submit_run_command``。
+响应装配；Conversation、Request、Run 的创建统一交给 ``submit_agent_request``。
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from yuxi.services.input_message_service import (
     AgentRunInputMessage,
     build_chat_input_message_from_openai_content,
 )
-from yuxi.services.run_submission_service import RunOrigin, RunSubmissionCommand, submit_run_command
+from yuxi.services.agent_request_service import RunOrigin, AgentRequestInput, submit_agent_request
 from yuxi.storage.postgres.models_business import User
 from yuxi.utils.hash_utils import hash_id
 
@@ -76,8 +76,8 @@ async def create_agent_call_run(
     if not payload.async_mode and queue_policy != "reject":
         raise HTTPException(status_code=422, detail="同步 agent-call 仅支持 queue_policy=reject")
 
-    run_response = await submit_run_command(
-        command=RunSubmissionCommand(
+    run_response = await submit_agent_request(
+        request_input=AgentRequestInput(
             agent_slug=agent_slug,
             thread_id=str(payload.thread_id or "").strip()
             or _invocation_thread_id(current_user.uid, agent_slug, request_id),

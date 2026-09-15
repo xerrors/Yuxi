@@ -49,14 +49,14 @@ async def test_skills_prompt_uses_effective_skills_at_request_level():
     context = SimpleNamespace(
         system_prompt="context base",
         skills=["configured-only"],
-        _effective_skill_slugs=["alpha"],
-        _runtime_skills={
-            "alpha": _runtime_skill("alpha", name="Alpha", description="alpha desc"),
-            "configured-only": _runtime_skill(
-                "configured-only",
-                name="Configured Only",
-                description="should not appear",
-            ),
+        _skill_runtime_snapshot={
+            "effective_skills": ["alpha"],
+            "runtime_skills": {
+                "alpha": _runtime_skill("alpha", name="Alpha", description="alpha desc"),
+                "configured-only": _runtime_skill(
+                    "configured-only", name="Configured Only", description="should not appear"
+                ),
+            },
         },
     )
 
@@ -94,15 +94,17 @@ async def test_skills_prompt_uses_effective_skills_at_request_level():
 @pytest.mark.asyncio
 async def test_preloaded_skill_injects_full_instructions_once_and_hides_lazy_read_hint():
     context = SimpleNamespace(
-        _effective_skill_slugs=["alpha", "beta"],
-        _preloaded_skills=["alpha"],
-        _preloaded_skill_contents={"alpha": "# Alpha full instructions\nUSE_ALPHA_TOOL"},
-        _runtime_skills={
-            "alpha": _runtime_skill("alpha", name="Alpha", description="alpha desc"),
-            "beta": _runtime_skill("beta", name="Beta", description="beta desc"),
-        },
         tools=[],
         mcps=[],
+        _skill_runtime_snapshot={
+            "effective_skills": ["alpha", "beta"],
+            "preloaded_skills": ["alpha"],
+            "preloaded_skill_contents": {"alpha": "# Alpha full instructions\nUSE_ALPHA_TOOL"},
+            "runtime_skills": {
+                "alpha": _runtime_skill("alpha", name="Alpha", description="alpha desc"),
+                "beta": _runtime_skill("beta", name="Beta", description="beta desc"),
+            },
+        },
     )
 
     class FakeRequest:
@@ -147,12 +149,14 @@ async def test_awrap_model_call_mounts_dependencies_only_for_readable_activated_
         def __init__(self, tools=None):
             self.runtime = SimpleNamespace(
                 context=SimpleNamespace(
-                    _effective_skill_slugs=["alpha"],
-                    _runtime_skills={
-                        "alpha": _runtime_skill("alpha", tools=["tool-a"]),
-                        "beta": _runtime_skill("beta", tools=["tool-b"]),
-                    },
                     mcps=[],
+                    _skill_runtime_snapshot={
+                        "effective_skills": ["alpha"],
+                        "runtime_skills": {
+                            "alpha": _runtime_skill("alpha", tools=["tool-a"]),
+                            "beta": _runtime_skill("beta", tools=["tool-b"]),
+                        },
+                    },
                 )
             )
             self.state = {"activated_skills": ["alpha", "beta"]}
@@ -182,20 +186,16 @@ async def test_awrap_model_call_mounts_knowledge_base_skill_tools():
         def __init__(self, tools=None):
             self.runtime = SimpleNamespace(
                 context=SimpleNamespace(
-                    _effective_skill_slugs=["knowledge-base"],
-                    _runtime_skills={
-                        "knowledge-base": _runtime_skill(
-                            "knowledge-base",
-                            tools=[
-                                "list_kbs",
-                                "query_kb",
-                                "find_kb_document",
-                                "open_kb_document",
-                                "get_mindmap",
-                            ],
-                        )
-                    },
                     mcps=[],
+                    _skill_runtime_snapshot={
+                        "effective_skills": ["knowledge-base"],
+                        "runtime_skills": {
+                            "knowledge-base": _runtime_skill(
+                                "knowledge-base",
+                                tools=["list_kbs", "query_kb", "find_kb_document", "open_kb_document", "get_mindmap"],
+                            )
+                        },
+                    },
                 )
             )
             self.state = {"activated_skills": ["knowledge-base"]}
@@ -232,8 +232,10 @@ async def test_resolve_skill_gated_tools_registers_kb_tools():
     context = SimpleNamespace(
         tools=None,
         mcps=None,
-        _effective_skill_slugs=["knowledge-base"],
-        _runtime_skills={"knowledge-base": _runtime_skill("knowledge-base", tools=sorted(_KB_TOOL_NAMES))},
+        _skill_runtime_snapshot={
+            "effective_skills": ["knowledge-base"],
+            "runtime_skills": {"knowledge-base": _runtime_skill("knowledge-base", tools=sorted(_KB_TOOL_NAMES))},
+        },
     )
 
     gated_tools = resolve_skill_gated_tools(context)
@@ -264,9 +266,11 @@ async def test_preloaded_skill_rejects_duplicate_mcp_tool_names(monkeypatch):
     context = SimpleNamespace(
         tools=[],
         mcps=[],
-        _effective_skill_slugs=["report"],
-        _preloaded_skills=["report"],
-        _runtime_skills={"report": _runtime_skill("report", mcps=["charts", "conflicting-charts"])},
+        _skill_runtime_snapshot={
+            "effective_skills": ["report"],
+            "preloaded_skills": ["report"],
+            "runtime_skills": {"report": _runtime_skill("report", mcps=["charts", "conflicting-charts"])},
+        },
     )
 
     class FakeRequest:
@@ -301,9 +305,11 @@ async def test_preloaded_skill_exposes_mcp_tool_on_first_model_call(monkeypatch)
     context = SimpleNamespace(
         tools=[],
         mcps=[],
-        _effective_skill_slugs=["report"],
-        _preloaded_skills=["report"],
-        _runtime_skills={"report": _runtime_skill("report", mcps=["charts"])},
+        _skill_runtime_snapshot={
+            "effective_skills": ["report"],
+            "preloaded_skills": ["report"],
+            "runtime_skills": {"report": _runtime_skill("report", mcps=["charts"])},
+        },
     )
 
     class FakeRequest:
@@ -345,9 +351,11 @@ async def test_skill_reusing_explicit_mcp_server_does_not_duplicate_registered_t
     context = SimpleNamespace(
         tools=[],
         mcps=["charts"],
-        _effective_skill_slugs=["report"],
-        _preloaded_skills=["report"],
-        _runtime_skills={"report": _runtime_skill("report", mcps=["charts"])},
+        _skill_runtime_snapshot={
+            "effective_skills": ["report"],
+            "preloaded_skills": ["report"],
+            "runtime_skills": {"report": _runtime_skill("report", mcps=["charts"])},
+        },
     )
 
     class FakeRequest:
@@ -389,8 +397,10 @@ async def test_explicit_mcp_rejects_skill_local_tool_name_collision(monkeypatch)
     context = SimpleNamespace(
         tools=[],
         mcps=["configured"],
-        _effective_skill_slugs=["knowledge-base"],
-        _runtime_skills={"knowledge-base": _runtime_skill("knowledge-base", tools=["list_kbs"])},
+        _skill_runtime_snapshot={
+            "effective_skills": ["knowledge-base"],
+            "runtime_skills": {"knowledge-base": _runtime_skill("knowledge-base", tools=["list_kbs"])},
+        },
     )
 
     with pytest.raises(RuntimeError, match="Skill 本地工具 'list_kbs'"):
@@ -405,11 +415,13 @@ def _make_gated_request(activated, *, preloaded=None):
         def __init__(self, tools):
             self.runtime = SimpleNamespace(
                 context=SimpleNamespace(
-                    _effective_skill_slugs=["knowledge-base"],
-                    _runtime_skills={
-                        "knowledge-base": _runtime_skill("knowledge-base", tools=["list_kbs", "query_kb"])
-                    },
                     mcps=[],
+                    _skill_runtime_snapshot={
+                        "effective_skills": ["knowledge-base"],
+                        "runtime_skills": {
+                            "knowledge-base": _runtime_skill("knowledge-base", tools=["list_kbs", "query_kb"])
+                        },
+                    },
                 )
             )
             self.state = {"activated_skills": activated}
@@ -458,7 +470,7 @@ def test_read_file_activates_only_readable_skill() -> None:
     middleware = SkillsMiddleware()
     result = ToolMessage(content="ok", tool_call_id="tool-1", name="read_file")
     request = SimpleNamespace(
-        runtime=SimpleNamespace(context=SimpleNamespace(_effective_skill_slugs=["alpha"])),
+        runtime=SimpleNamespace(context=SimpleNamespace(_skill_runtime_snapshot={"effective_skills": ["alpha"]})),
         tool_call={"name": "read_file", "args": {"file_path": "/home/gem/skills/alpha/SKILL.md"}},
     )
 
@@ -480,7 +492,7 @@ def test_read_file_denies_skill_outside_readable_scope() -> None:
     middleware = SkillsMiddleware()
     result = ToolMessage(content="ok", tool_call_id="tool-1", name="read_file")
     request = SimpleNamespace(
-        runtime=SimpleNamespace(context=SimpleNamespace(_effective_skill_slugs=["alpha"])),
+        runtime=SimpleNamespace(context=SimpleNamespace(_skill_runtime_snapshot={"effective_skills": ["alpha"]})),
         tool_call={"name": "read_file", "args": {"file_path": "/home/gem/skills/beta/SKILL.md"}},
     )
 

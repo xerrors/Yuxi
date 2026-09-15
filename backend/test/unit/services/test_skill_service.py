@@ -2499,3 +2499,25 @@ async def test_skill_edit_lock_wait_does_not_block_event_loop(tmp_path):
         assert not entered.is_set()
     await asyncio.wait_for(task, 2)
     assert entered.is_set()
+
+
+def test_resolved_shared_skill_captures_original_version_and_hash(monkeypatch, tmp_path):
+    """数据库行后续改变不能改写首次适配得到的 Skill 元数据。"""
+    row = Skill(
+        id=1,
+        slug="versioned",
+        name="Versioned",
+        description="skill",
+        source_type="local",
+        enabled=True,
+        created_by="user",
+        share_config={"version": 2, "read_scope": None, "manage_scope": None},
+        version="v1",
+        content_hash="hash-v1",
+    )
+    monkeypatch.setattr(svc, "_resolve_skill_dir", lambda item: tmp_path)
+    resolved = svc._resolved_shared_skill(row)
+    row.version, row.content_hash = "v2", "hash-v2"
+    assert resolved.version == "v1"
+    assert resolved.content_hash == "hash-v1"
+    assert resolved.source_scope == "shared"

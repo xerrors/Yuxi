@@ -48,7 +48,11 @@ def ensure_live_api_schema():
         from yuxi.storage.postgres.manager import pg_manager
 
         pg_manager.initialize()
-        await pg_manager.require_current_schema()
+        try:
+            await pg_manager.require_current_schema()
+        finally:
+            # 此临时事件循环拥有连接池；退出前关闭其后台任务，后续测试按需重新初始化。
+            await pg_manager.close()
 
     anyio.run(verify_schema_version)
 
