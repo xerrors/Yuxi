@@ -16,6 +16,7 @@ export const modelAvatars = {
   'alibaba-coding-plan-cn': avatar('alibabacloud', '#ff6a00', 0.7),
   anthropic: avatar('anthropic', '#f1f0e8', 0.75, 'none'),
   ark: avatar('volcengine-color', '#fff', 0.75, 'none'),
+  atlascloud: avatar('atlascloud', '#7036f0'),
   dashscope: avatar('bailian-color', '#fff', 0.75, 'none'),
   deepseek: avatar('deepseek', '#4d6bfe'),
   google: avatar('google-color', '#fff', 0.75, 'none'),

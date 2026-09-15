@@ -53,6 +53,7 @@ docker compose up -d --force-recreate api worker
 | MiniMax（中国站） | `minimax-cn` | chat | `MINIMAX_API_KEY` |
 | MiniMax（国际站） | `minimax` | chat | `MINIMAX_API_KEY` |
 | OpenRouter | `openrouter` | chat、embedding | `OPENROUTER_API_KEY` |
+| Atlas Cloud | `atlascloud` | chat | `ATLASCLOUD_API_KEY` |
 | ModelScope | `modelscope` | chat | `MODELSCOPE_ACCESS_TOKEN` |
 | OpenCode | `opencode` | chat | 无默认环境变量 |
 | OpenCode Go | `opencode-go` | chat | 无默认环境变量 |
