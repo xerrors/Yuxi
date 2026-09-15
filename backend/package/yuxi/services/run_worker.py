@@ -11,6 +11,7 @@ from contextlib import aclosing
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from arq import cron
 from arq.worker import RetryJob, func
 from sqlalchemy import select, text
 from sqlalchemy.exc import OperationalError
@@ -26,8 +27,8 @@ from yuxi.services.agent_request_queue_service import (
 )
 from yuxi.services.agent_run_manifest_service import (
     PreparedRunExecution,
-    prepare_run_execution,
     compute_manifest_fingerprint,
+    prepare_run_execution,
 )
 from yuxi.services.chat_service import get_agent_state_view, stream_agent_chat, stream_agent_resume
 from yuxi.services.input_message_service import restore_chat_input_message
@@ -1614,7 +1615,25 @@ async def _worker_shutdown(ctx):
     await pg_manager.close()
 
 
+async def purge_expired_documents(ctx):
+    """通过既有worker执行到期回收站清理。"""
+    from yuxi.services.document_trash_service import document_trash_service
+
+    return await document_trash_service.purge_due()
+
+
+async def purge_personal_files(ctx):
+    """处理个人文件回收journal与到期清理。"""
+    from yuxi.services.personal_trash_service import process_due_personal_trash
+
+    return await process_due_personal_trash()
+
+
 class WorkerSettings:
+    cron_jobs = [
+        cron(purge_expired_documents, minute={0}, timeout=14400),
+        cron(purge_personal_files, minute={10, 30, 50}, timeout=3600),
+    ]
     functions = [
         process_agent_run,
         func(process_task, timeout=TASKER_DEFAULT_TIMEOUT_SECONDS + 30),

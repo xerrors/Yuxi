@@ -15,6 +15,12 @@ class _FakeResult:
     def __init__(self, row):
         self.row = row
 
+    def scalars(self):
+        return self
+
+    def all(self):
+        return []
+
     def scalar_one_or_none(self):
         return self.row
 
@@ -33,6 +39,10 @@ class _FakeSession:
     async def execute(self, statement):
         self.statements.append(statement)
         return _FakeResult(self.row)
+
+    async def scalar(self, statement):
+        self.statements.append(statement)
+        return None
 
     async def delete(self, row):
         self.deleted.append(row)

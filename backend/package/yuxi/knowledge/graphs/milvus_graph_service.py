@@ -19,6 +19,7 @@ from yuxi.knowledge.graphs.graph_utils import (
 from yuxi.knowledge.graphs.milvus_graph_vector_store import MilvusGraphVectorStore
 from yuxi.repositories.knowledge_base_repository import KnowledgeBaseRepository
 from yuxi.repositories.knowledge_chunk_repository import KnowledgeChunkRepository
+from yuxi.repositories.knowledge_file_repository import KnowledgeFileRepository
 from yuxi.repositories.knowledge_graph_repository import KnowledgeGraphRepository
 from yuxi.storage.neo4j import (
     Neo4jConnectionManager,
@@ -742,13 +743,12 @@ class MilvusGraphService:
         self.graph_vector_store.drop_graph_collections(kb_id)
 
     async def delete_file_graph(self, kb_id: str, file_id: str) -> None:
-        orphan_entity_ids, orphan_triple_ids = await self.graph_repo.delete_file_references(file_id)
-        await self.graph_vector_store.delete_graph_records(
-            kb_id,
-            entity_ids=orphan_entity_ids,
-            triple_ids=orphan_triple_ids,
-        )
-        await asyncio.to_thread(self._delete_file_graph_from_neo4j, kb_id, file_id)
+        async def clear_external(entity_ids: list[str], triple_ids: list[str]) -> None:
+            """先清外部副本，再提交引用删除，允许失败后幂等重试。"""
+            await self.graph_vector_store.delete_graph_records(kb_id, entity_ids=entity_ids, triple_ids=triple_ids)
+            await asyncio.to_thread(self._delete_file_graph_from_neo4j, kb_id, file_id)
+
+        await self.graph_repo.delete_file_references(file_id, before_commit=clear_external)
 
     def _delete_file_graph_from_neo4j(self, kb_id: str, file_id: str) -> None:
         label = safe_neo4j_label(kb_id)
@@ -767,6 +767,7 @@ class MilvusGraphService:
                 f"""
                 MATCH (:Chunk:MilvusKB:`{label}` {{kb_id: $kb_id, file_id: $file_id}})-[m:MENTIONS]->
                     (e:Entity:MilvusKB:`{label}`)
+                REMOVE e.attributes
                 DELETE m
                 WITH DISTINCT e
                 WHERE NOT ()-[:MENTIONS]->(e)
@@ -802,7 +803,7 @@ class MilvusGraphService:
         label = safe_neo4j_label(effective_kb_id)
         limit = max_nodes
         try:
-            return await _run_neo4j_query_io(
+            result = await _run_neo4j_query_io(
                 self._query_nodes_sync,
                 effective_kb_id,
                 label,
@@ -811,6 +812,7 @@ class MilvusGraphService:
                 max_depth,
                 exclude_chunk,
             )
+            return await self._filter_active_sources(effective_kb_id, result)
         except Exception as e:
             logger.error(f"Milvus graph query failed: {e}")
             return {"nodes": [], "edges": []}
@@ -868,13 +870,14 @@ class MilvusGraphService:
         RETURN graph_nodes AS nodes, collect(DISTINCT rel) AS edges
         """
         try:
-            return await _run_neo4j_query_io(
+            result = await _run_neo4j_query_io(
                 self._query_seed_subgraph_sync,
                 kb_id,
                 cypher,
                 seed_entity_ids,
                 max_nodes,
             )
+            return await self._filter_active_sources(kb_id, result)
         except Exception as e:
             logger.error(f"Milvus seed subgraph query failed: {e}")
             return {"nodes": [], "edges": []}
@@ -895,6 +898,47 @@ class MilvusGraphService:
             if not record:
                 return {"nodes": [], "edges": []}
             return self._process_subgraph_record(record, max_nodes, kb_id)
+
+    async def _filter_active_sources(self, kb_id: str, graph: dict[str, Any]) -> dict[str, Any]:
+        """按当前文件来源裁剪图谱；缺失来源与回收站内容不出站。"""
+        nodes = graph.get("nodes", [])
+        if not nodes:
+            return {"nodes": [], "edges": []}
+        origins = await _run_neo4j_query_io(self._get_node_file_origins, kb_id, [node["id"] for node in nodes])
+        file_ids = sorted({file_id for files in origins.values() for file_id in files})
+        active = await KnowledgeFileRepository().get_filenames_by_file_ids(kb_id=kb_id, file_ids=file_ids)
+        kept = []
+        for node in nodes:
+            files = origins.get(node["id"], [])
+            if not any(file_id in active for file_id in files):
+                continue
+            if any(file_id not in active for file_id in files):
+                # 共享实体 attributes 由最后抽取覆盖，缺乏逐属性来源时不回显。
+                node = {**node, "properties": {k: v for k, v in node["properties"].items() if k != "attributes"}}
+            kept.append(node)
+        node_ids = {node["id"] for node in kept}
+        edges = [
+            edge
+            for edge in graph.get("edges", [])
+            if edge["source_id"] in node_ids
+            and edge["target_id"] in node_ids
+            and (edge.get("properties") or {}).get("file_id") in active
+        ]
+        return {"nodes": kept, "edges": edges}
+
+    def _get_node_file_origins(self, kb_id: str, node_ids: list[str]) -> dict[str, list[str]]:
+        """查询实体的所有引用来源，兼容未返回 Chunk 的图谱视图。"""
+        label = safe_neo4j_label(kb_id)
+        with self.driver.session() as session:
+            records = session.run(
+                f"""MATCH (n:MilvusKB:`{label}`) WHERE elementId(n) IN $node_ids
+                OPTIONAL MATCH (c:Chunk:MilvusKB:`{label}`)-[:MENTIONS]->(n)
+                WITH n, collect(DISTINCT c.file_id) AS origins
+                RETURN elementId(n) AS id, origins +
+                    CASE WHEN n:Chunk THEN [n.file_id] ELSE [] END AS file_ids""",
+                node_ids=node_ids,
+            )
+            return {record["id"]: [value for value in record["file_ids"] if value] for record in records}
 
     async def query_and_rank_chunks_by_ppr(
         self,
@@ -969,6 +1013,17 @@ class MilvusGraphService:
         )
         return ranked[:top_k]
 
+    async def _active_graph_file_ids(self, kb_id: str) -> list[str]:
+        """只加载图中实际存在的来源，再由 PostgreSQL 判定可见性。"""
+        label = safe_neo4j_label(kb_id)
+        records = await _run_neo4j_query_io(
+            neo4j_read,
+            self.driver,
+            f"MATCH (c:Chunk:MilvusKB:`{label}`) RETURN DISTINCT c.file_id AS file_id",
+        )
+        file_ids = [record["file_id"] for record in records if record["file_id"]]
+        return list(await KnowledgeFileRepository().get_filenames_by_file_ids(kb_id=kb_id, file_ids=file_ids))
+
     async def get_labels(self, kb_id: str | None = None) -> list[str]:
         effective_kb_id = kb_id or self.kb_id
         if not effective_kb_id:
@@ -977,6 +1032,9 @@ class MilvusGraphService:
 
         cypher = f"""
         MATCH (n:MilvusKB:`{label}`)
+        WHERE n.file_id IN $active_file_ids OR EXISTS {{
+            MATCH (c:Chunk:MilvusKB:`{label}`)-[:MENTIONS]->(n) WHERE c.file_id IN $active_file_ids
+        }}
         UNWIND labels(n) AS node_label
         WITH DISTINCT node_label
         WHERE node_label <> 'MilvusKB' AND node_label <> $kb_id
@@ -984,14 +1042,15 @@ class MilvusGraphService:
         ORDER BY node_label
         """
         try:
-            records = await _run_neo4j_query_io(self._get_labels_sync, cypher, effective_kb_id)
+            active_file_ids = await self._active_graph_file_ids(effective_kb_id)
+            records = await _run_neo4j_query_io(self._get_labels_sync, cypher, effective_kb_id, active_file_ids)
             return [record["node_label"] for record in records]
         except Exception as e:
             logger.error(f"Failed to get Milvus graph labels: {e}")
             return []
 
-    def _get_labels_sync(self, cypher: str, kb_id: str) -> list[Any]:
-        return neo4j_read(self.driver, cypher, kb_id=kb_id)
+    def _get_labels_sync(self, cypher: str, kb_id: str, active_file_ids: list[str]) -> list[Any]:
+        return neo4j_read(self.driver, cypher, kb_id=kb_id, active_file_ids=active_file_ids)
 
     async def get_stats(self, kb_id: str | None = None) -> dict[str, Any]:
         effective_kb_id = kb_id or self.kb_id
@@ -1001,26 +1060,34 @@ class MilvusGraphService:
 
         stats_cypher = f"""
         MATCH (n:MilvusKB:`{label}`)
+        WHERE n.file_id IN $active_file_ids OR EXISTS {{
+            MATCH (c:Chunk:MilvusKB:`{label}`)-[:MENTIONS]->(n) WHERE c.file_id IN $active_file_ids
+        }}
         WITH count(n) AS node_count
         OPTIONAL MATCH (:MilvusKB:`{label}`)-[r]->(:MilvusKB:`{label}`)
+        WHERE r.file_id IN $active_file_ids
         RETURN node_count, count(r) AS edge_count
         """
         label_cypher = f"""
         MATCH (n:Entity:MilvusKB:`{label}`)
+        WHERE EXISTS {{
+            MATCH (c:Chunk:MilvusKB:`{label}`)-[:MENTIONS]->(n) WHERE c.file_id IN $active_file_ids
+        }}
         WITH n.label AS entity_label, count(*) AS count
         RETURN entity_label, count
         ORDER BY count DESC
         """
         try:
-            return await _run_neo4j_query_io(self._get_stats_sync, stats_cypher, label_cypher)
+            active_file_ids = await self._active_graph_file_ids(effective_kb_id)
+            return await _run_neo4j_query_io(self._get_stats_sync, stats_cypher, label_cypher, active_file_ids)
         except Exception as e:
             logger.error(f"Failed to get Milvus graph stats: {e}")
             return {"total_nodes": 0, "total_edges": 0, "entity_types": []}
 
-    def _get_stats_sync(self, stats_cypher: str, label_cypher: str) -> dict[str, Any]:
+    def _get_stats_sync(self, stats_cypher: str, label_cypher: str, active_file_ids: list[str]) -> dict[str, Any]:
         with self.driver.session() as session:
-            stats = session.run(stats_cypher).single()
-            label_stats = session.run(label_cypher)
+            stats = session.run(stats_cypher, active_file_ids=active_file_ids).single()
+            label_stats = session.run(label_cypher, active_file_ids=active_file_ids)
             return {
                 "total_nodes": stats["node_count"] if stats else 0,
                 "total_edges": stats["edge_count"] if stats else 0,

@@ -153,6 +153,10 @@ class NetworkRetryMiddleware(ModelRetryMiddleware):
 
 def _retry_non_network_errors(exc: BaseException) -> bool:
     """父类 retry_on 谓词：网络异常已由 handler 包装处理，这里排除；其余按默认语义。"""
+    from yuxi.services.personal_file_evidence_service import PersonalFileEvidenceUnavailable
+
+    if isinstance(exc, PersonalFileEvidenceUnavailable):
+        return False
     if _is_network_error(exc):
         return False
     if isinstance(exc, ModelError):
@@ -162,6 +166,10 @@ def _retry_non_network_errors(exc: BaseException) -> bool:
 
 def _is_network_error(exc: BaseException) -> bool:
     """优先按异常链的类型和 HTTP 状态分类，未知异常才匹配文本。"""
+    from yuxi.services.personal_file_evidence_service import PersonalFileEvidenceUnavailable
+
+    if isinstance(exc, PersonalFileEvidenceUnavailable):
+        return False
     seen: set[int] = set()
     details: list[str] = []
     cursor: BaseException | None = exc

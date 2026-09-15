@@ -40,6 +40,7 @@ from yuxi.services.input_message_service import (
     build_resume_input_message,
 )
 from yuxi.services.langfuse_service import get_trace_url_by_id_async
+from yuxi.services.personal_trash_service import lock_user_files, require_no_pending_file_operations
 from yuxi.services.run_queue_service import (
     build_run_event_envelope,
     get_arq_pool,
@@ -652,6 +653,8 @@ async def prepare_agent_run_creation_scope(
     if not conversation_thread_id:
         raise HTTPException(status_code=422, detail="conversation_thread_id 不能为空")
 
+    await lock_user_files(db, str(current_uid))
+    await require_no_pending_file_operations(db, str(current_uid))
     conversation = await ConversationRepository(db).lock_conversation_by_thread_id(conversation_thread_id)
     if not conversation or conversation.uid != str(current_uid) or conversation.status == "deleted":
         raise HTTPException(status_code=404, detail="对话线程不存在")

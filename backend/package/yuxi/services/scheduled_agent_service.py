@@ -19,8 +19,8 @@ from yuxi.agents.tool_approval import normalize_tool_approval_mode
 from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.project_repository import ProjectRepository
 from yuxi.repositories.scheduled_agent_repository import ScheduledAgentRepository
+from yuxi.services.agent_request_service import AgentRequestInput, RunOrigin, submit_agent_request
 from yuxi.services.input_message_service import build_chat_input_message
-from yuxi.services.agent_request_service import RunOrigin, AgentRequestInput, submit_agent_request
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import ScheduledAgentJob, ScheduledAgentRun, User
 from yuxi.utils.datetime_utils import format_utc_datetime, utc_now_naive

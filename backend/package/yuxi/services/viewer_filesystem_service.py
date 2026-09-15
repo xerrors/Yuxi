@@ -14,6 +14,11 @@ from fastapi.responses import FileResponse, StreamingResponse
 from starlette.background import BackgroundTask
 from yuxi.agents.backends.paths import is_runtime_path, runtime_path_for_workdir_scope
 from yuxi.services.file_preview import render_file_preview
+from yuxi.services.personal_trash_service import (
+    lock_user_files,
+    require_no_pending_file_operations,
+    trash_personal_paths,
+)
 from yuxi.services.workdir_service import AuthorizedWorkdir, resolve_authorized_workdir
 from yuxi.utils.datetime_utils import utc_isoformat_from_timestamp
 from yuxi.utils.filepreview import (
@@ -31,6 +36,8 @@ MAX_VIEWER_DOWNLOAD_BYTES = 1024 * 1024 * 1024
 
 
 async def _viewer_state(*, thread_id: str, current_user, db) -> AuthorizedWorkdir:
+    await lock_user_files(db, str(current_user.uid))
+    await require_no_pending_file_operations(db, str(current_user.uid))
     return await resolve_authorized_workdir(
         thread_id=thread_id,
         uid=str(current_user.uid),
@@ -175,17 +182,21 @@ async def download_viewer_file(*, thread_id: str, path: str, current_user, db) -
 
 
 async def delete_viewer_file(*, thread_id: str, path: str, current_user, db) -> dict:
-    """实时删除 Workdir 内文件或目录。"""
+    """将 Workdir 内文件或目录移入统一回收站。"""
     access = await _viewer_state(thread_id=thread_id, current_user=current_user, db=db)
     normalized = PurePosixPath(path).as_posix()
     _validate_viewer_path(access, normalized)
     if normalized == "/":
         raise HTTPException(status_code=400, detail="Project Workdir 根目录不允许删除")
-    try:
-        await asyncio.to_thread(access.workdir.delete, normalized)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="文件不存在") from exc
-    return {"success": True, "path": normalized}
+    workspace_path = "/" + str(PurePosixPath(access.workdir_path) / normalized.lstrip("/")).lstrip("/")
+    entry = await trash_personal_paths(
+        db=db,
+        uid=str(current_user.uid),
+        paths=[workspace_path],
+        name=PurePosixPath(normalized).name,
+        kind="workspace",
+    )
+    return {"success": True, "path": normalized, "trash": entry}
 
 
 async def create_viewer_directory(*, thread_id: str, parent_path: str, name: str, current_user, db) -> dict:

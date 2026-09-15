@@ -25,6 +25,7 @@ from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.repositories.project_repository import ProjectRepository
 from yuxi.repositories.subagent_thread_repository import SubagentThreadRepository
 from yuxi.services.input_message_service import AgentRunInputMessage
+from yuxi.services.personal_trash_service import lock_user_files, require_no_pending_file_operations
 from yuxi.storage.postgres.models_business import Agent, AgentRun, SubagentThread
 from yuxi.utils.datetime_utils import format_utc_datetime
 from yuxi.utils.hash_utils import hash_id, subagent_child_thread_id
@@ -114,6 +115,8 @@ class SubagentRunService:
     ) -> SubagentStartResult:
         """启动或继续一个后台子智能体 run，并在新建时入队 worker。"""
 
+        await lock_user_files(self.db, str(uid))
+        await require_no_pending_file_operations(self.db, str(uid))
         creator_run = await self.run_repo.lock_run_for_user(created_by_run_id, uid)
         if not creator_run:
             raise ValueError("父运行任务不存在")

@@ -57,7 +57,29 @@ function safeErrorData(errorData, status, publicMessage) {
   }
 }
 
-function publicErrorMessage(url, status, headers, requiresAuth) {
+const TRASH_CONFLICT_MESSAGES = new Set([
+  '文件已不存在，请刷新列表后重试',
+  '选中的文件仍在处理中，请等待完成后再移入回收站',
+  '回收站项目已变化，请刷新列表',
+  '该文件已到期或已开始清理，恢复入口已关闭',
+  '请先恢复上级文件夹，再恢复此文件',
+  '原目录已有同名文件，请先重命名当前文件后再恢复'
+])
+
+const PERSONAL_TRASH_CONFLICT_MESSAGES = new Set([
+  '请先等待本账号的运行和排队任务结束，再删除或恢复文件',
+  '文件回收操作尚在处理，请在统一回收站重试或稍后再试',
+  '该项目正在处理或已到期，暂不支持恢复',
+  '原位置冲突或父目录缺失，请先调整原位置后重试',
+  '恢复原位置冲突，请移走同名项目后重试'
+])
+
+const DATABASE_DELETE_CONFLICT_MESSAGES = new Set([
+  '其他知识库仍在使用本库原件，请先解除引用再删除知识库',
+  '请先恢复回收站文件，或等待到期清理后再删除知识库'
+])
+
+function publicErrorMessage(url, status, headers, requiresAuth, method, errorData) {
   const path = safeRequestMetadata(url, {}).path
   if (status === 400) return '请求参数错误'
   if (status === 401) {
@@ -66,7 +88,24 @@ function publicErrorMessage(url, status, headers, requiresAuth) {
   }
   if (status === 403) return '没有权限执行此操作'
   if (status === 404) return '请求资源不存在'
-  if (status === 409) return '请求冲突，请刷新后重试'
+  if (status === 409) {
+    const isTrashAction =
+      (method === 'POST' &&
+        /^\/api\/knowledge\/databases\/[^/]+\/trash\/[^/]+\/restore$/.test(path)) ||
+      (method === 'DELETE' && /^\/api\/knowledge\/databases\/[^/]+\/documents\/[^/]+$/.test(path))
+    const isPersonalTrashAction =
+      (method === 'POST' && /^\/api\/personal-trash\/[^/]+\/(restore|retry)$/.test(path)) ||
+      (method === 'DELETE' &&
+        (path === '/api/workspace/file' || path === '/api/viewer/filesystem/file' ||
+          /^\/api\/chat\/thread\/[^/]+\/attachments\/[^/]+$/.test(path)))
+    const isDatabaseDelete =
+      method === 'DELETE' && /^\/api\/knowledge\/databases\/[^/]+$/.test(path)
+    return (isPersonalTrashAction && PERSONAL_TRASH_CONFLICT_MESSAGES.has(errorData?.detail)) ||
+      (isTrashAction && TRASH_CONFLICT_MESSAGES.has(errorData?.detail)) ||
+      (isDatabaseDelete && DATABASE_DELETE_CONFLICT_MESSAGES.has(errorData?.detail))
+      ? errorData.detail
+      : '请求冲突，请刷新后重试'
+  }
   if (status === 410) return '请求已失效'
   if (status === 413) return '请求内容过大'
   if (status === 422) return '请求参数验证失败'
@@ -122,7 +161,6 @@ export async function apiRequest(url, options = {}, requiresAuth = true, respons
     // 处理API返回的错误
     if (!response.ok) {
       // 尝试解析错误信息
-      const errorMessage = publicErrorMessage(url, response.status, response.headers, requiresAuth)
       let errorData = null
 
       console.error('API请求失败:', safeRequestMetadata(url, requestOptions, response))
@@ -139,6 +177,14 @@ export async function apiRequest(url, options = {}, requiresAuth = true, respons
         console.error('API错误响应无法解析:', safeRequestMetadata(url, requestOptions, response))
       }
 
+      const errorMessage = publicErrorMessage(
+        url,
+        response.status,
+        response.headers,
+        requiresAuth,
+        (requestOptions.method || 'GET').toUpperCase(),
+        errorData
+      )
       // 特殊处理401和403错误
       const error = new Error(errorMessage)
       error.status = response.status

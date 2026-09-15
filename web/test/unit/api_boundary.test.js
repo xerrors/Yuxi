@@ -434,3 +434,106 @@ test('工具元数据 API 使用普通用户认证且普通用户可正常请求
     assert.equal(result.data[0].slug, 'web_search')
   })
 })
+
+test('回收站409仅展示固定业务提示，其他路径方法状态和私密detail保持脱敏', async () => {
+  await withServer(async (server) => {
+    const { apiRequest } = await server.ssrLoadModule('/src/apis/base.js')
+    const known = '请先恢复上级文件夹，再恢复此文件'
+    const cases = [
+      ['/api/knowledge/databases/kb/trash/doc/restore', 'POST', 409, known, known],
+      ['/api/knowledge/databases/kb/documents/doc', 'DELETE', 409, known, known],
+      ['/api/knowledge/databases/kb/documents/batch', 'DELETE', 409, known, known],
+      [
+        '/api/knowledge/databases/kb/trash/doc/restore',
+        'GET',
+        409,
+        known,
+        '请求冲突，请刷新后重试'
+      ],
+      ['/api/knowledge/databases/kb/documents/doc', 'POST', 409, known, '请求冲突，请刷新后重试'],
+      ['/api/other', 'POST', 409, known, '请求冲突，请刷新后重试'],
+      [
+        '/api/knowledge/databases/kb/trash/doc/restore',
+        'POST',
+        409,
+        'db_password=private-secret',
+        '请求冲突，请刷新后重试'
+      ],
+      [
+        '/api/knowledge/databases/kb/trash/doc/restore',
+        'POST',
+        409,
+        known + ' private-secret',
+        '请求冲突，请刷新后重试'
+      ],
+      ['/api/knowledge/databases/kb/trash/doc/restore', 'POST', 400, known, '请求参数错误']
+    ]
+    for (const [url, method, status, detail, expected] of cases) {
+      globalThis.fetch = async () => new Response(JSON.stringify({ detail }), { status })
+      await assert.rejects(apiRequest(url, { method }, false), (error) => {
+        assert.equal(error.message, expected)
+        assert.equal(error.response.data.detail, expected)
+        assert.ok(!JSON.stringify(error.response).includes('private-secret'))
+        return true
+      })
+    }
+  })
+})
+
+test('整库删除409单独限定两个提示且不扩大回收站白名单', async () => {
+  await withServer(async (server) => {
+    const { apiRequest } = await server.ssrLoadModule('/src/apis/base.js')
+    const known = '其他知识库仍在使用本库原件，请先解除引用再删除知识库'
+    const pending = '请先恢复回收站文件，或等待到期清理后再删除知识库'
+    const fallback = '请求冲突，请刷新后重试'
+    const cases = [
+      ['/api/knowledge/databases/kb', 'DELETE', known, known],
+      ['/api/knowledge/databases/kb', 'DELETE', pending, pending],
+      ['/api/knowledge/databases/kb', 'POST', known, fallback],
+      ['/api/knowledge/databases/kb', 'DELETE', 'db_password=private-secret', fallback],
+      ['/api/knowledge/databases/kb', 'DELETE', '请先恢复上级文件夹，再恢复此文件', fallback],
+      ['/api/knowledge/databases/kb/documents/doc', 'DELETE', known, fallback],
+      ['/api/knowledge/databases/kb/trash/doc/restore', 'POST', pending, fallback],
+      ['/api/other/kb', 'DELETE', known, fallback]
+    ]
+    for (const [url, method, detail, expected] of cases) {
+      globalThis.fetch = async () => new Response(JSON.stringify({ detail }), { status: 409 })
+      await assert.rejects(apiRequest(url, { method }, false), (error) => {
+        assert.equal(error.message, expected)
+        assert.equal(error.response.data.detail, expected)
+        assert.ok(!JSON.stringify(error.response).includes('private-secret'))
+        return true
+      })
+    }
+  })
+})
+
+
+test('个人回收冲突说明仅限生命周期入口及固定消息', async () => {
+  await withServer(async (server) => {
+    const { apiRequest } = await server.ssrLoadModule('/src/apis/base.js')
+    const known = '原位置冲突或父目录缺失，请先调整原位置后重试'
+    const fallback = '请求冲突，请刷新后重试'
+    const cases = [
+      ['/api/personal-trash/id/restore', 'POST', known, known],
+      ['/api/personal-trash/id/retry', 'POST', known, known],
+      ['/api/workspace/file', 'DELETE', known, known],
+      ['/api/viewer/filesystem/file', 'DELETE', known, known],
+      ['/api/chat/thread/t/attachments/f', 'DELETE', known, known],
+      ['/api/personal-trash/id/restore', 'GET', known, fallback],
+      ['/api/personal-trash/id/restore', 'POST', known + ' private-secret', fallback],
+      ['/api/personal-trash/id/restore', 'POST', 'private-secret', fallback],
+      ['/api/chat/thread/t', 'DELETE', known, fallback],
+      ['/api/knowledge/databases/kb/trash/id/restore', 'POST', known, fallback]
+    ]
+    for (const [url, method, detail, expected] of cases) {
+      globalThis.fetch = async () => new Response(JSON.stringify({ detail }), { status: 409 })
+      await assert.rejects(apiRequest(url, { method }, false), (error) => {
+        assert.equal(error.message, expected)
+        assert.equal(error.response.data.detail, expected)
+        assert.ok(!JSON.stringify(error.response).includes('private-secret'))
+        return true
+      })
+    }
+  })
+})

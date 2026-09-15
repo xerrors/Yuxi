@@ -360,6 +360,21 @@ class Workspace:
             raise
 
     @classmethod
+    def purge_detached_entry(cls, parent_fd: int, name: str) -> None:
+        """清理已隔离条目，符号链接只删除链接本身，不访问目标。"""
+        item = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        if not stat.S_ISDIR(item.st_mode):
+            os.unlink(name, dir_fd=parent_fd)
+            return
+        child_fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
+        try:
+            for child in os.listdir(child_fd):
+                cls.purge_detached_entry(child_fd, child)
+        finally:
+            os.close(child_fd)
+        os.rmdir(name, dir_fd=parent_fd)
+
+    @classmethod
     def _remove_entry(cls, parent_fd: int, name: str) -> None:
         item_stat = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
         if stat.S_ISLNK(item_stat.st_mode):

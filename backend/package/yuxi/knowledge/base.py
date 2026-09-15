@@ -130,7 +130,7 @@ class KnowledgeBase(ABC):
         from yuxi.repositories.knowledge_file_repository import KnowledgeFileRepository
 
         record = await KnowledgeFileRepository().get_by_file_id(file_id)
-        if record is None or record.kb_id != kb_id:
+        if record is None or record.kb_id != kb_id or getattr(record, "deleted_at", None) is not None:
             raise ValueError(f"File {file_id} not found")
 
         return self._file_record_to_meta(record)
@@ -325,7 +325,7 @@ class KnowledgeBase(ABC):
             from yuxi.storage.minio import get_minio_client
 
             params["image_bucket"] = get_minio_client().KB_BUCKETS["images"]
-            params["image_prefix"] = f"{kb_id}/kb-images"
+            params["image_prefix"] = f"{kb_id}/kb-images/{file_id}"
 
             markdown_content = await parse_document(
                 source=file_path,
@@ -1096,7 +1096,7 @@ class KnowledgeBase(ABC):
         """
         from yuxi.repositories.knowledge_file_repository import KnowledgeFileRepository
 
-        async with KnowledgeFileRepository().lock_file_tree(kb_id):
+        async with KnowledgeFileRepository().lock_file_tree(kb_id) as session:
             meta = await self._load_file_meta(kb_id, file_id)
 
             if meta.get("is_folder") and new_parent_id:
@@ -1120,6 +1120,7 @@ class KnowledgeBase(ABC):
                 file_id=file_id,
                 kb_id=kb_id,
                 data={"parent_id": new_parent_id},
+                session=session,
             )
             if record is None:
                 raise ValueError(f"File {file_id} not found")
@@ -1227,4 +1228,16 @@ class KnowledgeBase(ABC):
         data = self._file_meta_to_record_data(meta)
         if not data.get("kb_id"):
             return
-        await KnowledgeFileRepository().upsert(file_id=file_id, data=data)
+
+        async def verify_original_exists():
+            from yuxi.knowledge.utils.kb_utils import is_minio_url, parse_minio_url
+            from yuxi.storage.minio import get_minio_client
+
+            if not data.get("is_folder"):
+                for path in {data.get("path"), data.get("minio_url")} - {None, ""}:
+                    if is_minio_url(path):
+                        bucket, key = parse_minio_url(path)
+                        if await get_minio_client().astat_file(bucket, key) is None:
+                            raise ValueError("Original storage object no longer exists")
+
+        await KnowledgeFileRepository().upsert(file_id=file_id, data=data, before_commit=verify_original_exists)

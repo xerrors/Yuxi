@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 from sqlalchemy import func, select
 
 from yuxi.knowledge.cache import cache_kb_config, delete_cached_kb_config, kb_config_cache_lock
+from yuxi.repositories.knowledge_file_repository import STORAGE_REFERENCE_LOCK_NAMESPACE
 from yuxi.storage.postgres.manager import pg_manager
-from yuxi.storage.postgres.models_knowledge import KnowledgeBase
+from yuxi.storage.postgres.models_knowledge import KnowledgeBase, KnowledgeFile
 
 
 class KnowledgeBaseRepository:
@@ -85,11 +88,48 @@ class KnowledgeBaseRepository:
                 kb.additional_params = additional_params
             return kb
 
-    async def delete(self, kb_id: str) -> None:
+    async def delete(self, kb_id: str, *, before_commit: Callable[[], Awaitable[None]] | None = None) -> None:
+        """树锁内确认没有回收站项后清理资源，最后删除知识库。"""
         async with kb_config_cache_lock(kb_id):
             await delete_cached_kb_config(kb_id)
             async with pg_manager.get_async_session_context() as session:
+                await session.execute(select(func.pg_advisory_xact_lock(STORAGE_REFERENCE_LOCK_NAMESPACE, 0)))
+                await session.execute(select(func.pg_advisory_xact_lock(func.hashtext(kb_id))))
+                trashed = await session.scalar(
+                    select(KnowledgeFile.file_id)
+                    .where(KnowledgeFile.kb_id == kb_id, KnowledgeFile.deleted_at.is_not(None))
+                    .limit(1)
+                )
+                if trashed is not None:
+                    raise ValueError("Knowledge base contains trashed files")
                 result = await session.execute(select(KnowledgeBase).where(KnowledgeBase.kb_id == kb_id))
                 kb = result.scalar_one_or_none()
                 if kb is not None:
+                    rows = (await session.execute(select(KnowledgeFile))).scalars().all()
+
+                    def objects(row):
+                        result = set()
+                        for value in (row.path, row.minio_url, row.markdown_file):
+                            if not value:
+                                continue
+                            parsed = urlparse(value)
+                            path = unquote(parsed.path).lstrip("/")
+                            if parsed.scheme == "minio":
+                                result.add((parsed.netloc, path))
+                            elif parsed.scheme in {"http", "https"} and "/" in path:
+                                result.add(tuple(path.split("/", 1)))
+                        return result
+
+                    owned_objects = set().union(*(objects(row) for row in rows if row.kb_id == kb_id))
+                    for row in rows:
+                        if row.kb_id == kb_id:
+                            continue
+                        referenced = objects(row)
+                        if referenced & owned_objects or any(
+                            bucket in {"knowledgebases", "kb-images"} and key.startswith(f"{kb_id}/")
+                            for bucket, key in referenced
+                        ):
+                            raise ValueError("Knowledge base storage is referenced by another knowledge base")
+                    if before_commit is not None:
+                        await before_commit()
                     await session.delete(kb)

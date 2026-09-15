@@ -103,7 +103,7 @@ async def remember_memory(
         }
 
 
-async def search_thread_messages(*, uid: str, query: str, limit: int = 5) -> dict:
+async def search_thread_messages(*, uid: str, query: str, limit: int = 5, consumer_thread_id: str) -> dict:
     """搜索 Memory 已启用用户的可见主 Agent 历史。"""
     normalized_uid = str(uid or "").strip()
     if not normalized_uid:
@@ -112,11 +112,16 @@ async def search_thread_messages(*, uid: str, query: str, limit: int = 5) -> dic
         config = await UserConfig.load(db, normalized_uid)
         if not config.schema.enable_memory:
             raise ValueError("Memory 已关闭")
-        return await ConversationRepository(db).search_memory_messages(
+        result = await ConversationRepository(db).search_memory_messages(
             uid=normalized_uid,
             query=query,
             limit=limit,
         )
+
+        await consume_memory_history(
+            db, normalized_uid, consumer_thread_id, {item["thread_id"] for item in result["items"]}
+        )
+        return result
 
 
 async def read_thread_messages(
@@ -126,6 +131,7 @@ async def read_thread_messages(
     message_id: int | None = None,
     limit: int = 20,
     include_tools: bool = False,
+    consumer_thread_id: str,
 ) -> dict:
     """读取 Memory 已启用用户的可见主 Agent 历史。"""
     normalized_uid = str(uid or "").strip()
@@ -135,13 +141,41 @@ async def read_thread_messages(
         config = await UserConfig.load(db, normalized_uid)
         if not config.schema.enable_memory:
             raise ValueError("Memory 已关闭")
-        return await ConversationRepository(db).read_memory_messages(
+        result = await ConversationRepository(db).read_memory_messages(
             uid=normalized_uid,
             thread_id=thread_id,
             message_id=message_id,
             limit=limit,
             include_tools=include_tools,
         )
+
+        await consume_memory_history(db, normalized_uid, consumer_thread_id, {result["thread_id"]})
+        return result
+
+
+async def consume_memory_history(db, uid: str, consumer_thread_id: str, source_thread_ids: set[str]) -> None:
+    """历史正文返回前复核并传播个人文件来源时间，不把新会话当作来源洗白。"""
+    from fastapi import HTTPException
+    from yuxi.repositories.personal_trash_repository import PersonalTrashRepository
+    from yuxi.services.personal_file_evidence_service import (
+        MEMORY_HISTORY_STARTED_AT,
+        require_current_personal_file_history,
+    )
+
+    if not consumer_thread_id:
+        raise ValueError("历史读取缺少可信消费会话")
+    try:
+        earliest = await require_current_personal_file_history(db, uid, consumer_thread_id)
+        consumers = await PersonalTrashRepository(db).lock_conversations(uid, consumer_thread_id)
+        for thread_id in sorted(source_thread_ids | {consumer_thread_id}):
+            earliest = min(earliest, await require_current_personal_file_history(db, uid, thread_id))
+        for conversation in consumers:
+            metadata = dict(conversation.extra_metadata or {})
+            metadata[MEMORY_HISTORY_STARTED_AT] = earliest.isoformat()
+            conversation.extra_metadata = metadata
+        await db.commit()
+    except HTTPException as exc:
+        raise ValueError(str(exc.detail)) from exc
 
 
 def _validate_argument(value: str, *, name: str) -> str:

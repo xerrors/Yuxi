@@ -20,7 +20,19 @@ from yuxi.services.workspace_service import (
 )
 from yuxi.storage.postgres.models_business import User
 
-workspace = APIRouter(prefix="/workspace", tags=["workspace"])
+
+async def require_workspace_files_ready(
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """以同一用户锁隔离文件移动窗口和普通读取/写入。"""
+    from yuxi.services.personal_trash_service import lock_user_files, require_no_pending_file_operations
+
+    await lock_user_files(db, str(current_user.uid))
+    await require_no_pending_file_operations(db, str(current_user.uid))
+
+
+workspace = APIRouter(prefix="/workspace", tags=["workspace"], dependencies=[Depends(require_workspace_files_ready)])
 workspace_knowledge = APIRouter(prefix="/workspace", tags=["workspace"])
 
 
@@ -248,8 +260,9 @@ async def update_workspace_file(
 async def delete_workspace_file_route(
     path: str = Query(..., description="工作区文件或目录路径"),
     current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    return await delete_workspace_path(path=path, current_user=current_user)
+    return await delete_workspace_path(path=path, current_user=current_user, db=db)
 
 
 @workspace.post("/directory", response_model=dict)

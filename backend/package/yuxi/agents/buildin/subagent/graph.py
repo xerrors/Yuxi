@@ -23,6 +23,7 @@ from yuxi.agents.middlewares import (
     TokenUsageMiddleware,
     create_summary_middleware_from_context,
 )
+from yuxi.agents.middlewares.personal_file_evidence import PersonalFileEvidenceMiddleware
 from yuxi.agents.middlewares.skills import SkillsMiddleware
 from yuxi.agents.tool_approval import SENSITIVE_BACKEND_TOOLS, normalize_tool_approval_mode
 from yuxi.agents.toolkits.service import resolve_configured_runtime_tools
@@ -100,9 +101,10 @@ async def _build_middlewares(context, backend, tool_approval_mode: str):
         TodoListMiddleware(system_prompt=TODO_MID_PROMPT),
         PatchToolCallsMiddleware(),
         _SubAgentToolFilterMiddleware(tool_approval_mode),
-        NetworkRetryMiddleware(),
+        NetworkRetryMiddleware(on_failure="error"),
         ImageInputCompatibilityMiddleware(),
         TokenUsageMiddleware(),
+        PersonalFileEvidenceMiddleware(),
     ]
 
 

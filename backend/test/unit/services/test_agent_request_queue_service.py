@@ -1628,3 +1628,13 @@ async def test_submission_publishes_committed_request_and_replays_same_view(
     assert replay == result
     assert (await session.get(Message, result["message_id"])).content == "first input"
     assert effects == (["materialize", "enqueue"] if expected == "dispatched" or older else ["materialize"])
+
+
+@pytest.fixture(autouse=True)
+def isolate_personal_file_transaction_boundary(monkeypatch):
+    """本模块使用fake/SQLite事务；PG锁与中断隔离在真实PG lifecycle集成验证。"""
+    from unittest.mock import AsyncMock
+    from yuxi.services import agent_request_service as owner
+
+    monkeypatch.setattr(owner, "lock_user_files", AsyncMock())
+    monkeypatch.setattr(owner, "require_no_pending_file_operations", AsyncMock())

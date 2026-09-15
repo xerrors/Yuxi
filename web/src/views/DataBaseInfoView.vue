@@ -1,5 +1,11 @@
 <template>
   <div class="database-info-container">
+    <TrashDrawer
+      v-if="canManageDatabase && isMilvus"
+      v-model:open="trashOpen"
+      :kb-id="kbId"
+      @restored="refreshAfterRestore"
+    />
     <ExtensionDetailLayout
       :active-key="activeTab"
       :tabs="visibleTabs"
@@ -24,6 +30,16 @@
       <template #actions>
         <div class="extension-detail-actions">
           <a-space :size="8">
+            <button
+              v-if="canManageDatabase && isMilvus"
+              type="button"
+              aria-label="回收站"
+              title="回收站"
+              class="lucide-icon-btn extension-panel-action extension-panel-action-secondary"
+              @click="trashOpen = true"
+            >
+              <Trash2 :size="14" /><span style="display: inline">回收站</span>
+            </button>
             <button
               type="button"
               aria-label="复制知识库 ID"
@@ -441,11 +457,13 @@ import {
   Network,
   Pencil,
   Search,
-  Upload
+  Upload,
+  Trash2
 } from '@lucide/vue'
 import { QuestionCircleOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import ExtensionDetailLayout from '@/components/shared/ExtensionDetailLayout.vue'
+import TrashDrawer from '@/components/knowledge/TrashDrawer.vue'
 import FileTable from '@/components/FileTable.vue'
 import FileDetailModal from '@/components/FileDetailModal.vue'
 import FileUploadModal from '@/components/FileUploadModal.vue'
@@ -470,6 +488,15 @@ const KnowledgeEvaluationWorkspace = createAsyncPanel(
   () => import('@/components/evaluation/KnowledgeEvaluationWorkspace.vue')
 )
 
+const trashOpen = ref(false)
+async function refreshAfterRestore() {
+  try {
+    await store.getDatabaseInfo(undefined, true)
+    await store.loadDocumentFiles({ isBackground: true })
+  } catch {
+    message.warning('文件已恢复，文件列表刷新失败，请刷新页面')
+  }
+}
 const route = useRoute()
 const router = useRouter()
 const store = useDatabaseStore()

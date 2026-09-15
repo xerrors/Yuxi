@@ -40,6 +40,7 @@ async def test_storage_migration_reads_legacy_schema_before_cutover(monkeypatch)
         create_schema_version_table=lambda: _record(calls, "create_schema_version_table"),
         get_schema_versions=lambda: _async_value({}),
         record_schema_version=lambda domain, version: _record(calls, f"version:{domain}:{version}"),
+        upgrade_business_schema_v7_to_v8=lambda: _record(calls, "upgrade_business_schema_v7_to_v8"),
         create_business_tables=lambda: _record(calls, "create_business_tables"),
         create_knowledge_tables=lambda: _record(calls, "create_knowledge_tables"),
         ensure_business_schema=lambda: _record(calls, "ensure_business_schema"),
@@ -110,6 +111,7 @@ async def test_storage_migration_rejects_v071_schema_without_quiescence_proof(mo
         create_schema_version_table=lambda: _record(calls, "create_schema_version_table"),
         get_schema_versions=lambda: _async_value({}),
         record_schema_version=lambda domain, version: _record(calls, f"version:{domain}:{version}"),
+        upgrade_business_schema_v7_to_v8=lambda: _record(calls, "upgrade_business_schema_v7_to_v8"),
         create_business_tables=lambda: _record(calls, "create"),
         create_knowledge_tables=lambda: _record(calls, "create_knowledge"),
         ensure_business_schema=lambda: _record(calls, "schema"),
@@ -156,6 +158,7 @@ async def test_current_schema_skips_schema_ddl(monkeypatch):
             }
         ),
         record_schema_version=lambda domain, version: _record(calls, f"version:{domain}:{version}"),
+        upgrade_business_schema_v7_to_v8=lambda: _record(calls, "upgrade_business_schema_v7_to_v8"),
         create_business_tables=lambda: _record(calls, "create_business"),
         create_knowledge_tables=lambda: _record(calls, "create_knowledge"),
         ensure_business_schema=lambda: _record(calls, "business_schema"),
@@ -248,6 +251,7 @@ async def test_main_v2_business_schema_is_converged_and_versioned_as_current(mon
             {"business": 2, "knowledge": storage_migration.KNOWLEDGE_SCHEMA_VERSION}
         ),
         record_schema_version=lambda domain, version: _record(calls, f"version:{domain}:{version}"),
+        upgrade_business_schema_v7_to_v8=lambda: _record(calls, "upgrade_business_schema_v7_to_v8"),
         create_business_tables=lambda: _record(calls, "create_business"),
         create_knowledge_tables=lambda: _record(calls, "create_knowledge"),
         ensure_business_schema=lambda: _record(calls, "business_schema"),
@@ -299,6 +303,7 @@ async def test_failed_business_migration_does_not_record_version(monkeypatch):
         create_schema_version_table=lambda: _record(calls, "create_schema_version_table"),
         get_schema_versions=lambda: _async_value({}),
         record_schema_version=lambda domain, version: _record(calls, f"version:{domain}:{version}"),
+        upgrade_business_schema_v7_to_v8=lambda: _record(calls, "upgrade_business_schema_v7_to_v8"),
         create_business_tables=lambda: _record(calls, "create_business"),
         create_knowledge_tables=lambda: _record(calls, "create_knowledge"),
         ensure_business_schema=lambda: _record(calls, "business_schema"),
@@ -341,6 +346,7 @@ async def test_current_schema_does_not_rewrite_workdir_data(monkeypatch):
         create_schema_version_table=lambda: _record(calls, "create_schema_version_table"),
         get_schema_versions=lambda: _async_value({}),
         record_schema_version=lambda domain, version: _record(calls, f"version:{domain}:{version}"),
+        upgrade_business_schema_v7_to_v8=lambda: _record(calls, "upgrade_business_schema_v7_to_v8"),
         create_business_tables=lambda: _record(calls, "create"),
         create_knowledge_tables=lambda: _record(calls, "create_knowledge"),
         ensure_business_schema=lambda: _record(calls, "schema"),
@@ -405,3 +411,45 @@ async def _record(calls: list[object], value: str) -> None:
 
 async def _async_value(value):
     return value
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("old_version,expected", [(1, ["v1-v2", "v2-v3"]), (2, ["v2-v3"])])
+@pytest.mark.parametrize("old_business", [7, 8])
+async def test_trash_schema_upgrade_chain(monkeypatch, old_version, expected, old_business):
+    calls = []
+
+    @asynccontextmanager
+    async def session_context():
+        yield _Session()
+
+    manager = SimpleNamespace(
+        initialize=lambda: None,
+        schema_migration_lock=lambda: _async_context(calls, "schema_lock"),
+        create_schema_version_table=lambda: _record(calls, "version_table"),
+        get_schema_versions=lambda: _async_value({"business": old_business, "knowledge": old_version}),
+        record_schema_version=lambda domain, version: _record(calls, f"version:{domain}:{version}"),
+        upgrade_business_schema_v7_to_v8=lambda: _record(calls, "business7-8"),
+        upgrade_knowledge_schema_v1_to_v2=lambda: _record(calls, "v1-v2"),
+        upgrade_knowledge_schema_v2_to_v3=lambda: _record(calls, "v2-v3"),
+        get_async_session_context=session_context,
+        close=lambda: _record(calls, "close"),
+    )
+    monkeypatch.setattr(storage_migration, "pg_manager", manager)
+    monkeypatch.setattr(
+        storage_migration, "read_v071_workdir_plan", lambda _db: _async_value(V071WorkdirMigrationPlan(False, (), ()))
+    )
+    monkeypatch.setattr(storage_migration, "_legacy_skill_roots_exist", lambda: False)
+    monkeypatch.setattr(storage_migration, "_legacy_system_config_exists", lambda: False)
+    monkeypatch.setattr(storage_migration, "runtime_storage_requires_quiescence", lambda: False)
+    monkeypatch.setattr(storage_migration, "_converge_database_state", lambda **kwargs: _record(calls, "converge"))
+    monkeypatch.setattr(storage_migration, "migrate_shared_skills", lambda _db: _record(calls, "skills"))
+    monkeypatch.setattr(storage_migration, "mark_v071_skills_migrated", lambda: None)
+    monkeypatch.setattr(storage_migration, "migrate_runtime_storage_identity", lambda: None)
+    await storage_migration.main()
+    assert [call for call in calls if call in {"v1-v2", "v2-v3"}] == expected
+    assert calls.index("v2-v3") < calls.index("version:knowledge:3")
+
+    assert ("business7-8" in calls) == (old_business == 7)
+    if old_business == 7:
+        assert calls.index("business7-8") < calls.index("version:business:8")

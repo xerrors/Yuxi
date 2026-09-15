@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import AsyncIterator, Iterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from contextlib import asynccontextmanager, nullcontext
 from types import SimpleNamespace
 from typing import Any
 
@@ -22,15 +22,25 @@ SQL_IN_BATCH_SIZE = 10_000
 
 # 文件统计聚合缓存 TTL：列表页高频请求时避免反复全表聚合；文件增删后最多延迟该时长更新
 KB_FILE_STATS_CACHE_TTL = 10
+STORAGE_REFERENCE_LOCK_NAMESPACE = 94721803
+STORAGE_REFERENCE_FIELDS = {"path", "minio_url", "markdown_file"}
 
 
 class KnowledgeFileRepository:
     @asynccontextmanager
-    async def lock_file_tree(self, kb_id: str) -> AsyncIterator[None]:
+    async def lock_storage_references(self) -> AsyncIterator[AsyncSession]:
+        """串行化跨知识库对象引用登记与清理。"""
+        # ponytail: 240秒触发取消，但全局锁等待底层I/O结束才释放；负载增大后改为对象级锁。
+        async with pg_manager.get_async_session_context() as session:
+            await session.execute(select(func.pg_advisory_xact_lock(STORAGE_REFERENCE_LOCK_NAMESPACE, 0)))
+            yield session
+
+    @asynccontextmanager
+    async def lock_file_tree(self, kb_id: str) -> AsyncIterator[AsyncSession]:
         """按知识库串行化目录树结构修改。"""
         async with pg_manager.get_async_session_context() as session:
             await session.execute(select(func.pg_advisory_xact_lock(func.hashtext(kb_id))))
-            yield
+            yield session
 
     async def detect_virtual_folder_data(self, kb_id: str) -> dict[str, int | bool]:
         """检测仍以相对路径保存的历史文件记录。"""
@@ -47,6 +57,7 @@ class KnowledgeFileRepository:
                         0,
                     ),
                 ).where(
+                    KnowledgeFile.deleted_at.is_(None),
                     KnowledgeFile.kb_id == kb_id,
                     or_(KnowledgeFile.is_folder.is_(False), KnowledgeFile.is_folder.is_(None)),
                     path_record,
@@ -71,6 +82,7 @@ class KnowledgeFileRepository:
     ) -> dict[str, Any]:
         """在调用方拥有的 Task attempt 事务内迁移一批路径。"""
         filters = [
+            KnowledgeFile.deleted_at.is_(None),
             KnowledgeFile.kb_id == kb_id,
             or_(KnowledgeFile.is_folder.is_(False), KnowledgeFile.is_folder.is_(None)),
             KnowledgeFile.filename.contains("/"),
@@ -106,7 +118,10 @@ class KnowledgeFileRepository:
             siblings = list(
                 (
                     await session.execute(
-                        select(KnowledgeFile).where(
+                        select(KnowledgeFile)
+                        .where(KnowledgeFile.deleted_at.is_(None))
+                        .where(
+                            KnowledgeFile.deleted_at.is_(None),
                             KnowledgeFile.kb_id == kb_id,
                             self._parent_condition(parent_id),
                             KnowledgeFile.filename == segment,
@@ -163,7 +178,10 @@ class KnowledgeFileRepository:
                     func.coalesce(func.sum(KnowledgeFile.file_size), 0),
                     func.coalesce(func.sum(KnowledgeFile.chunk_count), 0),
                 )
-                .where(or_(KnowledgeFile.is_folder.is_(False), KnowledgeFile.is_folder.is_(None)))
+                .where(
+                    KnowledgeFile.deleted_at.is_(None),
+                    or_(KnowledgeFile.is_folder.is_(False), KnowledgeFile.is_folder.is_(None)),
+                )
                 .group_by(KnowledgeFile.file_type)
             )
             return [
@@ -210,12 +228,14 @@ class KnowledgeFileRepository:
     async def get_all(self) -> list[KnowledgeFile]:
         """获取所有文件记录"""
         async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(select(KnowledgeFile))
+            result = await session.execute(select(KnowledgeFile).where(KnowledgeFile.deleted_at.is_(None)))
             return list(result.scalars().all())
 
     async def get_by_file_id(self, file_id: str) -> KnowledgeFile | None:
         async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(select(KnowledgeFile).where(KnowledgeFile.file_id == file_id))
+            result = await session.execute(
+                select(KnowledgeFile).where(KnowledgeFile.deleted_at.is_(None)).where(KnowledgeFile.file_id == file_id)
+            )
             return result.scalar_one_or_none()
 
     async def list_by_file_ids(self, file_ids: list[str]) -> list[KnowledgeFile]:
@@ -226,13 +246,19 @@ class KnowledgeFileRepository:
         records_by_id: dict[str, KnowledgeFile] = {}
         async with pg_manager.get_async_session_context() as session:
             for batch in self._iter_batches(normalized_ids):
-                result = await session.execute(select(KnowledgeFile).where(KnowledgeFile.file_id.in_(batch)))
+                result = await session.execute(
+                    select(KnowledgeFile)
+                    .where(KnowledgeFile.deleted_at.is_(None))
+                    .where(KnowledgeFile.file_id.in_(batch))
+                )
                 records_by_id.update({record.file_id: record for record in result.scalars().all()})
         return [records_by_id[file_id] for file_id in normalized_ids if file_id in records_by_id]
 
     async def list_by_kb_id(self, kb_id: str) -> list[KnowledgeFile]:
         async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(select(KnowledgeFile).where(KnowledgeFile.kb_id == kb_id))
+            result = await session.execute(
+                select(KnowledgeFile).where(KnowledgeFile.deleted_at.is_(None), KnowledgeFile.kb_id == kb_id)
+            )
             return list(result.scalars().all())
 
     async def list_by_kb_id_after(
@@ -243,7 +269,7 @@ class KnowledgeFileRepository:
         limit: int = 500,
         files_only: bool = False,
     ) -> list[KnowledgeFile]:
-        filters = [KnowledgeFile.kb_id == kb_id]
+        filters = [KnowledgeFile.deleted_at.is_(None), KnowledgeFile.kb_id == kb_id]
         if after_file_id:
             filters.append(KnowledgeFile.file_id > after_file_id)
         if files_only:
@@ -268,7 +294,7 @@ class KnowledgeFileRepository:
         limit: int = 100,
         files_only: bool = True,
     ) -> tuple[list[KnowledgeFile], int]:
-        filters = [KnowledgeFile.kb_id == kb_id]
+        filters = [KnowledgeFile.deleted_at.is_(None), KnowledgeFile.kb_id == kb_id]
         if files_only:
             filters.append(KnowledgeFile.is_folder.is_(False))
         if statuses is not None:
@@ -302,6 +328,7 @@ class KnowledgeFileRepository:
         async with pg_manager.get_async_session_context() as session:
             result = await session.execute(
                 select(KnowledgeFile.file_id, KnowledgeFile.filename).where(
+                    KnowledgeFile.deleted_at.is_(None),
                     KnowledgeFile.kb_id == kb_id,
                     KnowledgeFile.file_id.in_(normalized_ids),
                 )
@@ -312,7 +339,9 @@ class KnowledgeFileRepository:
         async with pg_manager.get_async_session_context() as session:
             result = await session.execute(
                 select(KnowledgeFile)
-                .where(KnowledgeFile.kb_id == kb_id, self._parent_condition(parent_id))
+                .where(
+                    KnowledgeFile.deleted_at.is_(None), KnowledgeFile.kb_id == kb_id, self._parent_condition(parent_id)
+                )
                 .order_by(KnowledgeFile.is_folder.desc(), func.lower(KnowledgeFile.filename).asc())
             )
             return list(result.scalars().all())
@@ -326,6 +355,7 @@ class KnowledgeFileRepository:
             result = await session.execute(
                 select(KnowledgeFile)
                 .where(
+                    KnowledgeFile.deleted_at.is_(None),
                     KnowledgeFile.kb_id == kb_id,
                     KnowledgeFile.is_folder.is_(False),
                     func.lower(KnowledgeFile.filename) == normalized_filename.lower(),
@@ -352,6 +382,7 @@ class KnowledgeFileRepository:
             result = await session.execute(
                 select(KnowledgeFile.file_id)
                 .where(
+                    KnowledgeFile.deleted_at.is_(None),
                     KnowledgeFile.kb_id == kb_id,
                     KnowledgeFile.is_folder.is_(False),
                     func.lower(KnowledgeFile.filename).like(f"%{escaped_pattern}%", escape="\\"),
@@ -370,6 +401,7 @@ class KnowledgeFileRepository:
             result = await session.execute(
                 select(KnowledgeFile.file_id)
                 .where(
+                    KnowledgeFile.deleted_at.is_(None),
                     KnowledgeFile.kb_id == kb_id,
                     KnowledgeFile.is_folder.is_(False),
                     KnowledgeFile.content_hash == normalized_hash,
@@ -381,7 +413,9 @@ class KnowledgeFileRepository:
 
     async def count_all(self) -> int:
         async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(select(func.count()).select_from(KnowledgeFile))
+            result = await session.execute(
+                select(func.count()).select_from(KnowledgeFile).where(KnowledgeFile.deleted_at.is_(None))
+            )
             return int(result.scalar() or 0)
 
     async def list_file_ids_by_exact_statuses(
@@ -398,6 +432,7 @@ class KnowledgeFileRepository:
 
         normalized_limit = min(max(int(limit or 100), 1), 500)
         filters = [
+            KnowledgeFile.deleted_at.is_(None),
             KnowledgeFile.kb_id == kb_id,
             KnowledgeFile.is_folder.is_(False),
             KnowledgeFile.status.in_(normalized_statuses),
@@ -419,6 +454,7 @@ class KnowledgeFileRepository:
             result = await session.execute(
                 select(KnowledgeFile.file_id)
                 .where(
+                    KnowledgeFile.deleted_at.is_(None),
                     KnowledgeFile.kb_id == kb_id,
                     KnowledgeFile.filename == filename,
                     KnowledgeFile.is_folder.is_not(True),
@@ -475,7 +511,7 @@ class KnowledgeFileRepository:
         recursive: bool,
         files_only: bool,
     ) -> list:
-        filters = [KnowledgeFile.kb_id == kb_id]
+        filters = [KnowledgeFile.deleted_at.is_(None), KnowledgeFile.kb_id == kb_id]
         if not recursive:
             filters.append(self._parent_condition(parent_id))
         if files_only:
@@ -500,7 +536,12 @@ class KnowledgeFileRepository:
     ) -> tuple[list[Any], int]:
         offset = (page - 1) * page_size
         parent_condition = self._parent_condition(parent_id)
-        base_filters = [KnowledgeFile.kb_id == kb_id, parent_condition, KnowledgeFile.filename.is_not(None)]
+        base_filters = [
+            KnowledgeFile.deleted_at.is_(None),
+            KnowledgeFile.kb_id == kb_id,
+            parent_condition,
+            KnowledgeFile.filename.is_not(None),
+        ]
         if path_prefix:
             base_filters.append(KnowledgeFile.filename.like(self._like_prefix(path_prefix), escape="\\"))
             remainder = func.substr(KnowledgeFile.filename, len(path_prefix) + 1)
@@ -644,7 +685,11 @@ class KnowledgeFileRepository:
         async with pg_manager.get_async_session_context() as session:
             result = await session.execute(
                 select(KnowledgeFile.parent_id, func.count())
-                .where(KnowledgeFile.kb_id == kb_id, KnowledgeFile.parent_id.in_(parent_ids))
+                .where(
+                    KnowledgeFile.deleted_at.is_(None),
+                    KnowledgeFile.kb_id == kb_id,
+                    KnowledgeFile.parent_id.in_(parent_ids),
+                )
                 .group_by(KnowledgeFile.parent_id)
             )
             return {str(parent_id): int(count or 0) for parent_id, count in result.all() if parent_id}
@@ -696,7 +741,7 @@ class KnowledgeFileRepository:
                         else_=0,
                     )
                 ).label("processing_count"),
-            ).where(KnowledgeFile.kb_id == kb_id)
+            ).where(KnowledgeFile.deleted_at.is_(None), KnowledgeFile.kb_id == kb_id)
         )
         row = result.one()
 
@@ -712,11 +757,30 @@ class KnowledgeFileRepository:
             "processing_count": int(row.processing_count or 0),
         }
 
-    async def upsert(self, file_id: str, data: dict[str, Any]) -> KnowledgeFile:
+    async def upsert(
+        self, file_id: str, data: dict[str, Any], *, before_commit: Callable[[], Awaitable[None]] | None = None
+    ) -> KnowledgeFile:
         sanitized_data = self._sanitize_data(data)
         async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(select(KnowledgeFile).where(KnowledgeFile.file_id == file_id))
-            existing = result.scalar_one_or_none()
+            await session.execute(select(func.pg_advisory_xact_lock(STORAGE_REFERENCE_LOCK_NAMESPACE, 0)))
+            kb_id = sanitized_data.get("kb_id") or await session.scalar(
+                select(KnowledgeFile.kb_id).where(KnowledgeFile.file_id == file_id)
+            )
+            if not kb_id:
+                raise ValueError("Knowledge base is required")
+            await session.execute(select(func.pg_advisory_xact_lock(func.hashtext(kb_id))))
+            existing = await session.scalar(
+                select(KnowledgeFile).where(KnowledgeFile.file_id == file_id).with_for_update()
+            )
+            if existing is not None:
+                if existing.kb_id != kb_id:
+                    raise ValueError("File knowledge base cannot change")
+                if existing.deleted_at is not None:
+                    raise ValueError("File is in trash")
+            parent_id = sanitized_data.get("parent_id", existing.parent_id if existing else None)
+            await self._validate_parent(session, kb_id, file_id, parent_id)
+            if before_commit is not None:
+                await before_commit()
             if existing is None:
                 record = KnowledgeFile(file_id=file_id, **sanitized_data)
                 session.add(record)
@@ -731,23 +795,58 @@ class KnowledgeFileRepository:
         file_id: str,
         data: dict[str, Any],
         kb_id: str | None = None,
+        session: AsyncSession | None = None,
     ) -> KnowledgeFile | None:
+        """更新活跃文件；树结构修改与调用方复用同一事务，避免双连接自锁。"""
         sanitized_data = self._sanitize_data(data)
         if not sanitized_data:
             return await self.get_by_file_id(file_id)
-
-        filters = [KnowledgeFile.file_id == file_id]
-        if kb_id:
-            filters.append(KnowledgeFile.kb_id == kb_id)
-
-        async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(select(KnowledgeFile).where(*filters))
-            record = result.scalar_one_or_none()
+        async with nullcontext(session) if session is not None else pg_manager.get_async_session_context() as db:
+            if STORAGE_REFERENCE_FIELDS.intersection(sanitized_data):
+                await db.execute(select(func.pg_advisory_xact_lock(STORAGE_REFERENCE_LOCK_NAMESPACE, 0)))
+            owning_kb = kb_id or await db.scalar(select(KnowledgeFile.kb_id).where(KnowledgeFile.file_id == file_id))
+            if owning_kb is None:
+                return None
+            if "kb_id" in sanitized_data and sanitized_data["kb_id"] != owning_kb:
+                raise ValueError("File knowledge base cannot change")
+            if "parent_id" in sanitized_data:
+                await db.execute(select(func.pg_advisory_xact_lock(func.hashtext(owning_kb))))
+            record = await db.scalar(
+                select(KnowledgeFile)
+                .where(
+                    KnowledgeFile.file_id == file_id,
+                    KnowledgeFile.kb_id == owning_kb,
+                    KnowledgeFile.deleted_at.is_(None),
+                )
+                .with_for_update()
+            )
             if record is None:
                 return None
+            if "parent_id" in sanitized_data:
+                await self._validate_parent(db, owning_kb, file_id, sanitized_data["parent_id"])
             for key, value in sanitized_data.items():
                 setattr(record, key, value)
             return record
+
+    @staticmethod
+    async def _validate_parent(session: AsyncSession, kb_id: str, file_id: str, parent_id: str | None) -> None:
+        """持树锁验证活跃同库父链，拒绝回收站父项及循环移动。"""
+        seen = {file_id}
+        while parent_id:
+            if parent_id in seen:
+                raise ValueError("File tree cycle")
+            seen.add(parent_id)
+            parent = await session.scalar(
+                select(KnowledgeFile).where(
+                    KnowledgeFile.file_id == parent_id,
+                    KnowledgeFile.kb_id == kb_id,
+                    KnowledgeFile.deleted_at.is_(None),
+                    KnowledgeFile.is_folder.is_(True),
+                )
+            )
+            if parent is None:
+                raise ValueError("Parent is not an active folder in this knowledge base")
+            parent_id = parent.parent_id
 
     async def update_fields_if_status(
         self,
@@ -759,6 +858,8 @@ class KnowledgeFileRepository:
         processing_task_id: str | None = None,
         processing_owner: str | None = None,
     ) -> KnowledgeFile | None:
+        if {"parent_id", "kb_id"}.intersection(data):
+            raise ValueError("Processing updates cannot change file tree ownership")
         lease_task_id = processing_task_id or data.get("processing_task_id")
         lease_owner = processing_owner or data.get("processing_owner")
         sanitized_data = self._sanitize_data(data)
@@ -766,6 +867,7 @@ class KnowledgeFileRepository:
             return await self.get_by_file_id(file_id)
 
         filters = [
+            KnowledgeFile.deleted_at.is_(None),
             KnowledgeFile.kb_id == kb_id,
             KnowledgeFile.file_id == file_id,
             KnowledgeFile.status.in_(sorted(allowed_statuses)),
@@ -775,6 +877,8 @@ class KnowledgeFileRepository:
         if processing_owner is not None:
             filters.append(KnowledgeFile.processing_owner == processing_owner)
         async with pg_manager.get_async_session_context() as session:
+            if STORAGE_REFERENCE_FIELDS.intersection(sanitized_data):
+                await session.execute(select(func.pg_advisory_xact_lock(STORAGE_REFERENCE_LOCK_NAMESPACE, 0)))
             if lease_task_id is not None and lease_owner is not None:
                 task_record = await session.scalar(
                     select(TaskRecord)
@@ -809,6 +913,7 @@ class KnowledgeFileRepository:
         result = await session.execute(
             update(KnowledgeFile)
             .where(
+                KnowledgeFile.deleted_at.is_(None),
                 KnowledgeFile.processing_task_id == task_id,
                 KnowledgeFile.status.in_(["parsing", "indexing"]),
             )
@@ -827,13 +932,22 @@ class KnowledgeFileRepository:
 
     async def delete(self, file_id: str) -> None:
         async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(select(KnowledgeFile).where(KnowledgeFile.file_id == file_id))
+            result = await session.execute(
+                select(KnowledgeFile)
+                .where(KnowledgeFile.deleted_at.is_(None))
+                .where(KnowledgeFile.file_id == file_id)
+                .with_for_update()
+            )
             record = result.scalar_one_or_none()
             if record is not None:
                 await session.delete(record)
 
     async def delete_by_kb_id(self, kb_id: str) -> None:
         async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(select(KnowledgeFile).where(KnowledgeFile.kb_id == kb_id))
+            result = await session.execute(
+                select(KnowledgeFile)
+                .where(KnowledgeFile.deleted_at.is_(None), KnowledgeFile.kb_id == kb_id)
+                .with_for_update()
+            )
             for record in result.scalars().all():
                 await session.delete(record)

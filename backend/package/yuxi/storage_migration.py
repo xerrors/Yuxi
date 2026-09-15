@@ -125,14 +125,14 @@ async def main() -> None:
                 "business",
                 business_version,
                 BUSINESS_SCHEMA_VERSION,
-                upgrade_from=(2,),
+                upgrade_from=(2, 7),
             )
             knowledge_version = versions.get("knowledge")
             _require_supported_version(
                 "knowledge",
                 knowledge_version,
                 KNOWLEDGE_SCHEMA_VERSION,
-                upgrade_from=(1,),
+                upgrade_from=(1, 2),
             )
 
             if business_version is None:
@@ -149,14 +149,18 @@ async def main() -> None:
                 await pg_manager.ensure_business_schema()
                 if business_version is None:
                     await pg_manager.setup_langgraph_checkpointer()
+            if business_version in {None, 2, 7}:
+                await pg_manager.upgrade_business_schema_v7_to_v8()
                 await pg_manager.record_schema_version("business", BUSINESS_SCHEMA_VERSION)
 
             if knowledge_version is None:
                 await pg_manager.create_knowledge_tables()
                 await pg_manager.ensure_knowledge_schema()
                 await pg_manager.record_schema_version("knowledge", KNOWLEDGE_SCHEMA_VERSION)
-            elif knowledge_version == 1:
-                await pg_manager.upgrade_knowledge_schema_v1_to_v2()
+            elif knowledge_version in {1, 2}:
+                if knowledge_version == 1:
+                    await pg_manager.upgrade_knowledge_schema_v1_to_v2()
+                await pg_manager.upgrade_knowledge_schema_v2_to_v3()
                 await pg_manager.record_schema_version("knowledge", KNOWLEDGE_SCHEMA_VERSION)
 
             await _converge_database_state(fail_nonterminal_runs=requires_quiescence)

@@ -4,6 +4,7 @@ import asyncio
 
 from yuxi.agents.backends.paths import runtime_path_for_workdir_scope, runtime_user_data_path
 from yuxi.repositories.conversation_repository import ConversationRepository
+from yuxi.services.personal_trash_service import lock_user_files, require_no_pending_file_operations
 from yuxi.services.workdir_service import resolve_authorized_workdir
 from yuxi.workspace.filesystem import Workspace
 from yuxi.workspace.paths import validate_thread_id
@@ -132,6 +133,8 @@ async def search_mentions(
         return []
 
     uid = str(current_user.uid)
+    await lock_user_files(db, uid)
+    await require_no_pending_file_operations(db, uid)
     effective_thread_id: str | None = None
     if thread_id:
         conversation = await ConversationRepository(db).get_conversation_by_thread_id(thread_id)

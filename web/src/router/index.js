@@ -60,6 +60,18 @@ const router = createRouter({
       ]
     },
     {
+      path: '/trash',
+      component: AppLayout,
+      children: [
+        {
+          path: '',
+          name: 'GlobalTrash',
+          component: () => import('../views/GlobalTrashView.vue'),
+          meta: { requiresAuth: true }
+        }
+      ]
+    },
+    {
       path: '/workspace',
       name: 'workspace',
       component: AppLayout,

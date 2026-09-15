@@ -554,8 +554,14 @@ class KnowledgeBaseManager:
 
         try:
             kb_instance = await self.get_kb_executor(kb_id)
-            result = await kb_instance.cleanup_database_resources(kb_id)
-            await KnowledgeBaseRepository().delete(kb_id)
+            result = {"message": "删除成功"}
+
+            async def cleanup() -> None:
+                """在持久化删除用例持有树锁时清理外部产物。"""
+                nonlocal result
+                result = await kb_instance.cleanup_database_resources(kb_id)
+
+            await KnowledgeBaseRepository().delete(kb_id, before_commit=cleanup)
             return result
         except KBNotFoundError as e:
             logger.warning(f"Database {kb_id} not found during deletion: {e}")

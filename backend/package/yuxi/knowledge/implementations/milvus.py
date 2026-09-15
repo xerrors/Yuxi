@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import time
 import traceback
@@ -632,14 +633,14 @@ class MilvusKB(KnowledgeBase):
             {str(file_id) for chunk in chunks if (file_id := (chunk.get("metadata") or {}).get("file_id"))}
         )
         if not file_ids:
+            chunks.clear()
             return
 
         filenames = await KnowledgeFileRepository().get_filenames_by_file_ids(kb_id=kb_id, file_ids=file_ids)
+        chunks[:] = [chunk for chunk in chunks if str((chunk.get("metadata") or {}).get("file_id") or "") in filenames]
         for chunk in chunks:
-            metadata = chunk.get("metadata")
-            if not isinstance(metadata, dict):
-                continue
-            metadata["source"] = filenames.get(str(metadata.get("file_id") or ""), "") or "未知来源"
+            metadata = chunk["metadata"]
+            metadata["source"] = filenames[str(metadata["file_id"])] or "未知来源"
 
     async def _build_file_name_expr(self, kb_id: str, file_name: str | None) -> str | None:
         if not file_name:
@@ -1044,7 +1045,8 @@ class MilvusKB(KnowledgeBase):
             except Exception as exc:  # noqa: BLE001
                 logger.error(f"Reranking failed: {exc}, falling back to vector scores")
 
-            # 统一返回结果
+            # 重排等待期间文件可能进入回收站，返回前重新检查来源。
+            await self._hydrate_chunk_sources(kb_id, retrieved_chunks)
             return retrieved_chunks[:final_top_k]
 
         except Exception as e:
@@ -1191,6 +1193,19 @@ class MilvusKB(KnowledgeBase):
             merge_chunk(chunk, rank, max(graph_weight, 0.0), "graph")
 
         return sorted(fused.values(), key=lambda item: item.get("fusion_score", 0.0), reverse=True)
+
+    async def purge_file_artifacts(self, kb_id: str, file_id: str) -> None:
+        """严格清除索引产物，外部失败保留文件与分块供到期任务重试。"""
+        from yuxi.knowledge.graphs.milvus_graph_service import MilvusGraphService
+
+        chunk_repo = KnowledgeChunkRepository()
+        # Neo4j 写入早于 PG 引用，部分失败也必须按 file_id 清理。
+        await MilvusGraphService().delete_file_graph(kb_id, file_id)
+        collection = await self._get_existing_milvus_collection(kb_id)
+        if collection is not None:
+            # 不以可能滞后的查询决定跳过删除。
+            await asyncio.to_thread(collection.delete, expr=f"file_id == {json.dumps(file_id)}")
+        await chunk_repo.delete_by_file_id(file_id)
 
     async def delete_file_chunks_only(self, kb_id: str, file_id: str) -> None:
         """仅删除文件的chunks数据，保留元数据（用于更新操作）"""

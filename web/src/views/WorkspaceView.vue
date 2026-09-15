@@ -2,6 +2,7 @@
   <div class="workspace-view layout-container">
     <PageHeader title="个人空间" :loading="loadingTree || loadingPreview" :show-border="true">
       <template #actions>
+        <a-button @click="$router.push('/trash')">统一回收站</a-button>
         <a-button class="lucide-icon-btn" @click="fileSearchOpen = true">
           <template #icon><Search :size="16" /></template>
           搜索
@@ -821,8 +822,8 @@ const confirmDeleteEntries = (targetEntries) => {
         : `确认删除文件「${firstEntry.name}」？`,
     content:
       isBatch || firstEntry.is_dir
-        ? '将删除文件夹及其所有内容，删除后不可恢复。'
-        : '删除后不可恢复。',
+        ? '移入统一回收站保留30天，到期自动清理；旧会话如涉及删除文件，请恢复或新建会话。'
+        : '移入统一回收站保留30天，到期自动清理。',
     okText: '删除',
     okType: 'danger',
     cancelText: '取消',
@@ -834,7 +835,7 @@ const deleteEntries = async (targetEntries) => {
   const paths = targetEntries.map((entry) => entry.path)
   deletingPaths.value = paths
   try {
-    await Promise.all(paths.map((path) => deleteWorkspacePath(path)))
+    for (const path of paths) await deleteWorkspacePath(path)
     if (
       selectedEntry.value &&
       paths.some((path) => isSameOrChildPath(selectedEntry.value.path, path))
@@ -843,7 +844,7 @@ const deleteEntries = async (targetEntries) => {
     }
     clearWorkspaceSelection()
     await loadWorkspaceEntries(currentPath.value)
-    message.success(paths.length > 1 ? '选中项删除成功' : '删除成功')
+    message.success('已移入统一回收站，保留30天')
   } catch (error) {
     console.warn('删除个人空间文件失败:', error)
     message.error(error?.message || '删除失败')

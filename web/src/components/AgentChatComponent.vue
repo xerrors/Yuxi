@@ -842,7 +842,7 @@ import {
   onActivated,
   onDeactivated
 } from 'vue'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import {
   Bug,
   ChevronDown,
@@ -3014,26 +3014,36 @@ const handleTmpAttachmentsAdded = async () => {
   showFileTreePanel()
 }
 
-const handleAttachmentRemove = async (attachment) => {
+const handleAttachmentRemove = (attachment) => {
   const threadId = currentChatId.value
   const fileId = attachment?.file_id
   if (!threadId || !fileId) return
-
-  const previousAttachments = threadAttachmentsMap.value[threadId] || []
-  threadAttachmentsMap.value[threadId] = previousAttachments.filter(
-    (item) => item.file_id !== fileId
-  )
-
-  try {
-    await threadApi.deleteThreadAttachment(threadId, fileId)
-    await Promise.all([
-      fetchAgentState(currentAgentId.value, threadId),
-      fetchThreadAttachments(threadId)
-    ])
-  } catch (error) {
-    threadAttachmentsMap.value[threadId] = previousAttachments
-    handleChatError(error, 'delete')
-  }
+  Modal.confirm({
+    title: '将附件移入回收站？',
+    content: '保留30天后自动清理。旧会话可能含附件内容，继续聊天请恢复附件或新建会话。',
+    okText: '移入回收站',
+    cancelText: '取消',
+    onOk: async () => {
+      try {
+        await threadApi.deleteThreadAttachment(threadId, fileId)
+      } catch (error) {
+        handleChatError(error, 'delete')
+        throw error
+      }
+      threadAttachmentsMap.value[threadId] = (threadAttachmentsMap.value[threadId] || []).filter(
+        (item) => item.file_id !== fileId
+      )
+      message.success('附件已移入统一回收站')
+      try {
+        await Promise.all([
+          fetchAgentState(currentAgentId.value, threadId),
+          fetchThreadAttachments(threadId)
+        ])
+      } catch {
+        message.warning('附件已回收，列表刷新失败，请重新打开会话')
+      }
+    }
+  })
 }
 
 // ==================== 审批功能管理 ====================
