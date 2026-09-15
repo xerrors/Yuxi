@@ -9,6 +9,7 @@ from yuxi.agents.mcp.service import (
     delete_mcp_server,
     get_all_mcp_servers,
     get_all_mcp_tools,
+    inspect_mcp_server_tools,
     get_mcp_server,
     get_mcp_tools_stats,
     is_builtin_mcp_server,
@@ -264,14 +265,14 @@ async def test_mcp_server(
         ensure_mcp_server_runnable(server)
 
         try:
-            tools = await get_all_mcp_tools(slug)
+            tools = await inspect_mcp_server_tools(server)
             return {
                 "success": True,
                 "message": f"连接成功，共发现 {len(tools)} 个工具",
                 "tool_count": len(tools),
             }
-        except Exception as test_error:
-            raise HTTPException(status_code=500, detail=f"连接失败: {str(test_error)}")
+        except Exception:
+            raise HTTPException(status_code=502, detail="MCP 连接失败，请检查服务地址、凭据和网络后重试") from None
     except HTTPException:
         raise
     except Exception as e:
