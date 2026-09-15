@@ -21,7 +21,7 @@ class StageAnalysisTest(unittest.TestCase):
         spans = [
             {"name": name, "start_ns": start, "end_ns": start + 1}
             for name, start in (
-                ("run_worker.persist_run_manifest", 2),
+                ("run_worker.prepare_and_record_run_execution", 2),
                 ("ChatbotAgent.get_graph", 4),
                 ("AsyncPostgresSaver.aget_tuple", 6),
             )
@@ -48,7 +48,7 @@ class StageAnalysisTest(unittest.TestCase):
         spans = [
             {"name": name, "start_ns": start * 1_000_000, "end_ns": (start + 1) * 1_000_000}
             for name, start in (
-                ("run_worker.persist_run_manifest", 2),
+                ("run_worker.prepare_and_record_run_execution", 2),
                 ("ChatbotAgent.get_graph", 4),
                 ("AsyncPostgresSaver.aget_tuple", 6),
             )
@@ -136,7 +136,7 @@ class StageAnalysisTest(unittest.TestCase):
 
     def test_out_of_order_critical_phase_is_rejected(self):
         spans = [
-            {"name": "run_worker.persist_run_manifest", "start_ns": 20, "end_ns": 40},
+            {"name": "run_worker.prepare_and_record_run_execution", "start_ns": 20, "end_ns": 40},
             {"name": "ChatbotAgent.get_graph", "start_ns": 30, "end_ns": 50},
             {"name": "AsyncPostgresSaver.aget_tuple", "start_ns": 60, "end_ns": 70},
         ]
@@ -205,7 +205,7 @@ class StageAnalysisTest(unittest.TestCase):
         spans = [
             {"name": name, "start_ns": start * 1_000_000, "end_ns": (start + 1) * 1_000_000}
             for name, start in (
-                ("run_worker.persist_run_manifest", 2),
+                ("run_worker.prepare_and_record_run_execution", 2),
                 ("ChatbotAgent.get_graph", 4),
                 ("AsyncPostgresSaver.aget_tuple", 6),
             )

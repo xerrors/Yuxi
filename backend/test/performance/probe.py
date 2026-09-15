@@ -115,7 +115,7 @@ def run():
     from yuxi.agents import BaseAgent
     from yuxi.agents.buildin.chatbot import graph
     from yuxi.agents.skills import service
-    from yuxi.services import chat_service, run_worker as worker
+    from yuxi.services import agent_run_manifest_service, chat_service, run_worker as worker
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
     if FINE:
@@ -129,14 +129,14 @@ def run():
         "_load_input_message",
         "_load_user",
         "_validate_run_workdir_binding",
-        "persist_run_manifest",
+        "prepare_and_record_run_execution",
         "_append_run_event_best_effort",
     ):
         wrap(worker, name)
-    for name in ("_resolve_agent_runtime", "build_agent_input_context", "_persist_agent_run_langfuse_trace"):
+    for name in ("_resolve_agent_runtime", "_persist_agent_run_langfuse_trace"):
         wrap(chat_service, name)
+    wrap(agent_run_manifest_service, "prepare_agent_runtime_context")
     for name in (
-        "prepare_agent_runtime_context",
         "sync_agent_context_skills",
         "load_chat_model",
         "resolve_configured_runtime_tools",

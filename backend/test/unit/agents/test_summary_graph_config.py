@@ -111,7 +111,7 @@ async def test_graph_passes_conversation_session_to_model(monkeypatch, graph_mod
     """主 Agent 与子 Agent 构图都使用实际线程的模型会话。"""
     context = _context()
     context.thread_id = "graph-thread"
-    monkeypatch.setattr(graph_module, "prepare_agent_runtime_context", AsyncMock(return_value=context))
+    context._runtime_prepared = True
     monkeypatch.setattr(graph_module, "sync_agent_context_skills", AsyncMock())
     monkeypatch.setattr(graph_module, "resolve_configured_runtime_tools", AsyncMock(return_value=[]))
     monkeypatch.setattr(graph_module, "create_agent_composite_backend", lambda _context: object())
@@ -129,3 +129,11 @@ async def test_graph_passes_conversation_session_to_model(monkeypatch, graph_mod
     monkeypatch.setattr(graph_module, "create_agent", lambda **kwargs: kwargs)
     graph = await agent_class().get_graph(context=context)
     assert graph["model"] == {"spec": context.model, "session_id": context.thread_id}
+
+
+@pytest.mark.parametrize("agent_class", [chatbot_graph.ChatbotAgent, subagent_graph.SubAgentBackend])
+@pytest.mark.asyncio
+async def test_graph_rejects_unprepared_context(agent_class):
+    """未经权限资源准备的对象不能构建执行图。"""
+    with pytest.raises(ValueError, match="已准备"):
+        await agent_class().get_graph(context=_context())

@@ -11,7 +11,6 @@ from yuxi.agents.backends import (
 from yuxi.agents.backends.paths import runtime_workdir_path
 from yuxi.agents.context import (
     DEFAULT_TOOL_RESULT_EVICTION_K_TOKENS,
-    prepare_agent_runtime_context,
 )
 from yuxi.agents.middlewares import (
     ImageInputCompatibilityMiddleware,
@@ -81,11 +80,10 @@ class ChatbotAgent(BaseAgent):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-    async def get_graph(self, context=None, **kwargs):
-        context = await prepare_agent_runtime_context(
-            context or self.context_schema(),
-            context_schema=self.context_schema,
-        )
+    async def get_graph(self, *, context, **kwargs):
+        """从显式准备的 Context 构建执行图。"""
+        if not getattr(context, "_runtime_prepared", False):
+            raise ValueError("构图需要已准备的 Context")
         await sync_agent_context_skills(context)
 
         # DeepAgents 0.7 移除 backend factory：每次 graph 构造创建本 Run 独享的

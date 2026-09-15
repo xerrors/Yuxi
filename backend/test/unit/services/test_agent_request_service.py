@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
-from yuxi.services import run_submission_service as svc
-from yuxi.services.agent_request_queue_service import IntakeResult
+from yuxi.services import agent_request_service as svc
+from yuxi.storage.postgres.models_business import AgentRunRequest
 from yuxi.services.input_message_service import build_chat_input_message
 from yuxi.services.workdir_service import WorkdirBinding
 
@@ -37,8 +37,8 @@ class _EmptyRunRepo:
         ("chat", "x" * 33, "Run origin channel 不能超过 32 个字符"),
     ],
 )
-async def test_submit_run_command_rejects_overlong_origin_before_repository_access(source, channel, detail):
-    command = svc.RunSubmissionCommand(
+async def test_submit_agent_request_rejects_overlong_origin_before_repository_access(source, channel, detail):
+    request_input = svc.AgentRequestInput(
         agent_slug="translator",
         thread_id="thread-1",
         request_id="req-1",
@@ -47,8 +47,8 @@ async def test_submit_run_command_rejects_overlong_origin_before_repository_acce
     )
 
     with pytest.raises(HTTPException) as exc_info:
-        await svc.submit_run_command(
-            command=command,
+        await svc.submit_agent_request(
+            request_input=request_input,
             current_user=SimpleNamespace(uid="user-1"),
             db=object(),
         )
@@ -58,11 +58,17 @@ async def test_submit_run_command_rejects_overlong_origin_before_repository_acce
 
 
 @pytest.mark.asyncio
-async def test_submit_run_command_shares_conversation_intake_and_finalize(monkeypatch: pytest.MonkeyPatch):
-    calls: dict[str, object] = {}
+@pytest.mark.parametrize("commit_fails", [False, True])
+async def test_submit_agent_request_owns_commit_and_publication(monkeypatch: pytest.MonkeyPatch, commit_fails):
+    calls: dict[str, object] = {"effects": []}
     current_user = SimpleNamespace(uid="user-1", role="user")
 
     class Db:
+        async def commit(self):
+            calls["effects"].append("commit")
+            if commit_fails:
+                raise RuntimeError("commit failed")
+
         @asynccontextmanager
         async def begin_nested(self):
             yield
@@ -105,21 +111,20 @@ async def test_submit_run_command_shares_conversation_intake_and_finalize(monkey
                 project_id=kwargs["project_id"],
             )
 
-    async def fake_intake_request(**kwargs):
-        calls["intake"] = kwargs
-        return IntakeResult(
+    async def fake_persist_request(**kwargs):
+        calls["persist"] = kwargs
+        return AgentRunRequest(
             request_id="req-1",
             status="dispatched",
             queue_policy="enqueue",
-            queue_position=None,
-            message_id=10,
-            run_id="run-1",
-            thread_id="thread-1",
-            workdir_binding=kwargs["workdir_binding"],
-        )
+            input_message_id=10,
+            dispatched_run_id="run-1",
+            conversation_thread_id="thread-1",
+        ), svc.DispatchResult(request_id="req-1", run_id="run-1", workdir_binding=kwargs["workdir_binding"])
 
-    async def fake_finalize_intake(**kwargs):
-        calls["finalize"] = kwargs
+    async def enqueue(run_id):
+        calls["effects"].append("enqueue")
+        assert run_id == "run-1"
 
     monkeypatch.setattr(svc, "AgentRepository", AgentRepo)
     monkeypatch.setattr(svc, "AgentRunRequestRepository", _EmptyRequestRepo)
@@ -151,10 +156,11 @@ async def test_submit_run_command_shares_conversation_intake_and_finalize(monkey
     monkeypatch.setattr(svc, "create_implicit_project", fake_create_implicit_project)
     monkeypatch.setattr(svc, "resolve_conversation_workdir_binding", fake_resolve_binding)
     monkeypatch.setattr(svc.agent_manager, "get_agent", lambda backend_id: object())
-    monkeypatch.setattr(svc, "intake_request", fake_intake_request)
-    monkeypatch.setattr(svc, "finalize_intake", fake_finalize_intake)
+    monkeypatch.setattr(svc, "_persist_request", fake_persist_request)
+    monkeypatch.setattr(svc, "enqueue_agent_run", enqueue)
+    monkeypatch.setattr(svc, "ensure_bound_user_workdir", lambda *_: calls["effects"].append("materialize"))
 
-    command = svc.RunSubmissionCommand(
+    request_input = svc.AgentRequestInput(
         agent_slug="translator",
         thread_id="thread-1",
         request_id="req-1",
@@ -176,7 +182,13 @@ async def test_submit_run_command_shares_conversation_intake_and_finalize(monkey
         conversation_project_id="11111111-1111-4111-8111-111111111111",
     )
 
-    result = await svc.submit_run_command(command=command, current_user=current_user, db=Db())
+    if commit_fails:
+        with pytest.raises(RuntimeError, match="commit failed"):
+            await svc.submit_agent_request(request_input=request_input, current_user=current_user, db=Db())
+        assert calls["effects"] == ["commit"]
+        return
+
+    result = await svc.submit_agent_request(request_input=request_input, current_user=current_user, db=Db())
 
     assert calls["conversation"]["metadata"] == {
         "source": "agent_call",
@@ -186,18 +198,16 @@ async def test_submit_run_command_shares_conversation_intake_and_finalize(monkey
     assert calls["project_lookup"] == ("11111111-1111-4111-8111-111111111111", "user-1")
     assert calls["binding_project"].id == "11111111-1111-4111-8111-111111111111"
     assert calls["conversation"]["project_id"] == "11111111-1111-4111-8111-111111111111"
-    assert calls["intake"]["source"] == "agent_call"
-    assert calls["intake"]["channel"] == "api"
-    assert calls["intake"]["external_id"] == "external-1"
-    assert calls["intake"]["origin_metadata"] == {"agent_invocation_meta": {"trace_id": "trace-1"}}
-    assert calls["intake"]["meta"] == {
+    assert calls["persist"]["request_input"].origin.source == "agent_call"
+    assert calls["persist"]["request_input"].origin.channel == "api"
+    assert calls["persist"]["request_input"].origin.external_id == "external-1"
+    assert calls["persist"]["request_input"].origin.metadata == {"agent_invocation_meta": {"trace_id": "trace-1"}}
+    assert calls["persist"]["request_input"].request_metadata == {
         "request_id": "req-1",
         "channel": "api",
         "agent_invocation_meta": {"trace_id": "trace-1"},
     }
-    assert calls["intake"]["workdir_binding"].workdir_path == (
-        "projects/11111111-1111-4111-8111-111111111111"
-    )
+    assert calls["persist"]["workdir_binding"].workdir_path == ("projects/11111111-1111-4111-8111-111111111111")
     assert result == {
         "request_id": "req-1",
         "status": "dispatched",
@@ -209,13 +219,11 @@ async def test_submit_run_command_shares_conversation_intake_and_finalize(monkey
         "request_events_url": None,
         "thread_id": "thread-1",
     }
-    assert calls["finalize"]["intake"].run_id == "run-1"
-    assert calls["finalize"]["intake"].workdir_binding.uid == "user-1"
-    assert calls["finalize"]["intake"].workdir_binding.materialize_managed is True
+    assert calls["effects"] == ["commit", "materialize", "enqueue"]
 
 
 @pytest.mark.asyncio
-async def test_submit_run_command_requires_existing_conversation_for_web_chat(
+async def test_submit_agent_request_requires_existing_conversation_for_web_chat(
     monkeypatch: pytest.MonkeyPatch,
 ):
     current_user = SimpleNamespace(uid="user-1", role="user")
@@ -245,7 +253,7 @@ async def test_submit_run_command_requires_existing_conversation_for_web_chat(
     monkeypatch.setattr(svc, "ConversationRepository", ConvRepo)
     monkeypatch.setattr(svc.agent_manager, "get_agent", lambda backend_id: object())
 
-    command = svc.RunSubmissionCommand(
+    request_input = svc.AgentRequestInput(
         agent_slug="translator",
         thread_id="missing-thread",
         request_id="req-1",
@@ -254,6 +262,117 @@ async def test_submit_run_command_requires_existing_conversation_for_web_chat(
     )
 
     with pytest.raises(HTTPException) as exc_info:
-        await svc.submit_run_command(command=command, current_user=current_user, db=object())
+        await svc.submit_agent_request(request_input=request_input, current_user=current_user, db=object())
 
     assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status,denied",
+    [("queued", None), ("dispatched", None)]
+    + [
+        ("queued", denied)
+        for denied in (
+            "scope",
+            "agent",
+            "thread_missing",
+            "thread_owner",
+            "thread_deleted",
+            "thread_agent",
+            "project",
+            "project_deleted",
+        )
+    ],
+)
+async def test_existing_request_returns_without_runtime_preparation(monkeypatch, status, denied):
+    """重发只读既有请求；配置不可用不影响幂等，访问边界仍拒绝越权。"""
+    from unittest.mock import AsyncMock
+
+    request = SimpleNamespace(
+        request_id="req",
+        uid="user",
+        agent_slug="agent",
+        conversation_thread_id="thread",
+        source="chat",
+        channel="web",
+        external_id=None,
+        queue_policy="steer",
+        status=status,
+        input_message_id=10,
+        dispatched_run_id="run" if status == "dispatched" else None,
+        input_payload={"model_spec": "first:model"},
+    )
+    conversation = SimpleNamespace(
+        uid="other" if denied == "thread_owner" else "user",
+        status="deleted" if denied == "thread_deleted" else "active",
+        agent_id="wrong" if denied == "thread_agent" else "agent",
+        project_id="project",
+    )
+    monkeypatch.setattr(
+        svc,
+        "AgentRepository",
+        lambda db: SimpleNamespace(
+            get_visible_by_slug=AsyncMock(
+                return_value=None if denied == "agent" else SimpleNamespace(slug="agent", backend_id="removed")
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        svc,
+        "AgentRunRequestRepository",
+        lambda db: SimpleNamespace(
+            get_by_request_id=AsyncMock(return_value=request), get_queue_position=AsyncMock(return_value=1)
+        ),
+    )
+    monkeypatch.setattr(
+        svc,
+        "ConversationRepository",
+        lambda db: SimpleNamespace(
+            get_conversation_by_thread_id=AsyncMock(return_value=None if denied == "thread_missing" else conversation)
+        ),
+    )
+    monkeypatch.setattr(
+        svc,
+        "ProjectRepository",
+        lambda db: SimpleNamespace(
+            get_for_user=AsyncMock(
+                return_value=None
+                if denied == "project"
+                else SimpleNamespace(status="deleted" if denied == "project_deleted" else "active")
+            )
+        ),
+    )
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("重发不能加载运行后端、物化目录或创建新请求")
+
+    monkeypatch.setattr(svc.agent_manager, "get_agent", forbidden)
+    monkeypatch.setattr(svc, "resolve_conversation_workdir_binding", forbidden)
+    monkeypatch.setattr(svc, "_persist_request", forbidden)
+    monkeypatch.setattr(svc, "enqueue_agent_run", forbidden)
+    monkeypatch.setattr(svc, "AgentRunRepository", forbidden)
+    request_input = svc.AgentRequestInput(
+        agent_slug="agent",
+        thread_id="wrong" if denied == "scope" else "thread",
+        request_id="req",
+        input_message=build_chat_input_message("changed"),
+        model_spec="invalid:ignored",
+        origin=svc.RunOrigin(source="chat", channel="web"),
+        queue_policy="enqueue",
+    )
+    if denied:
+        with pytest.raises(HTTPException) as exc:
+            await svc.submit_agent_request(
+                request_input=request_input, current_user=SimpleNamespace(uid="user"), db=object()
+            )
+        assert exc.value.status_code == (409 if denied == "scope" else 404)
+    else:
+        result = await svc.submit_agent_request(
+            request_input=request_input, current_user=SimpleNamespace(uid="user"), db=object()
+        )
+        assert result["queue_policy"] == "steer"
+        assert result["status"] == status
+        assert result["run_id"] == ("run" if status == "dispatched" else None)
+        assert result["message_id"] == 10
+        assert request.input_payload == {"model_spec": "first:model"}

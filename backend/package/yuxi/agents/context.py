@@ -88,42 +88,24 @@ def _load_workspace_agent_context(uid: str) -> str:
     return "\n\n".join(sections)
 
 
-async def build_agent_input_context(
-    agent_config: dict | None,
-    *,
-    thread_id: str,
-    uid: str,
-    run_id: str | None = None,
-    request_id: str | None = None,
-    worker_id: str | None = None,
-) -> dict:
-    input_context = dict(agent_config or {})
-    agent_context = await asyncio.to_thread(_load_workspace_agent_context, uid)
-
-    if agent_context:
-        base_prompt = str(input_context.get("system_prompt") or "").rstrip()
-        input_context["system_prompt"] = f"{base_prompt}\n\n{agent_context}" if base_prompt else agent_context
-
-    input_context.update(
-        {
-            "uid": uid,
-            "thread_id": thread_id,
-            "run_id": run_id,
-            "request_id": request_id,
-            "worker_id": worker_id,
-        }
-    )
-    return input_context
+async def _append_workspace_agent_prompt(context: "BaseContext") -> None:
+    """在实际生效的系统提示词后追加工作区基础说明。"""
+    workspace_prompt = await asyncio.to_thread(_load_workspace_agent_context, context.uid)
+    if workspace_prompt:
+        base_prompt = str(context.system_prompt or "").rstrip()
+        context.system_prompt = f"{base_prompt}\n\n{workspace_prompt}" if base_prompt else workspace_prompt
 
 
 def filter_declared_config(
     config_json: dict,
     context_schema: type["BaseContext"] | None = None,
 ) -> dict:
-    """读取配置时仅保留 Schema 声明的字段，不按修改权限裁剪。"""
+    """读取持久配置时仅保留 Schema 可配置字段，不按角色修改权限裁剪。"""
     if not isinstance(config_json, dict):
         return {}
-    declared_fields = {item.name for item in fields(context_schema or BaseContext)}
+    declared_fields = {
+        item.name for item in fields(context_schema or BaseContext) if item.metadata.get("configurable", True)
+    }
     filtered = dict(config_json)
     context = filtered.get("context")
     if isinstance(context, dict):
@@ -157,6 +139,10 @@ class BaseContext:
     1. 运行时配置(RunnableConfig)：最高优先级，直接从函数参数传入
     2. 类默认配置：最低优先级，类中定义的默认值
     """
+
+    def update_config(self, data: dict):
+        """仅装载允许用户配置的声明字段，运行身份由执行入口注入。"""
+        self.update(filter_declared_config({"context": data}, type(self))["context"])
 
     def update(self, data: dict):
         """用运行时输入更新已声明的配置字段。"""
@@ -407,12 +393,6 @@ class BaseContext:
         else:
             return str(field_type)
 
-    def update_from_dict(self, data: dict):
-        """从字典更新配置字段"""
-        for key, value in data.items():
-            if hasattr(self, key):
-                setattr(self, key, value)
-
 
 _DEFAULT_ALL_CONTEXT_FIELDS = frozenset({"tools", "knowledges", "mcps", "skills"})
 _EMPTY_ALL_CONTEXT_FIELDS = frozenset({"subagents"})
@@ -559,11 +539,11 @@ async def normalize_agent_context_config(
 
 async def prepare_agent_runtime_context(
     context: BaseContext,
-    *,
-    context_schema: type[BaseContext] | None = None,
 ) -> BaseContext:
-    """准备 Agent 运行时上下文，主要是根据 context 中的 uid 加载用户可访问的资源列表，并进行规范化处理。"""
-    schema = context_schema or type(context)
+    """为单次运行解析资源与 Skill；同一对象再次构图时复用准备结果。"""
+    if getattr(context, "_runtime_prepared", False):
+        return context
+    schema = type(context)
     uid = str(getattr(context, "uid", "") or "").strip()
     if not uid:
         return context
@@ -571,6 +551,8 @@ async def prepare_agent_runtime_context(
     from yuxi.agents.skills.runtime import resolve_runtime_skills_for_context
     from yuxi.repositories.user_repository import UserRepository
     from yuxi.storage.postgres.manager import pg_manager
+
+    await _append_workspace_agent_prompt(context)
 
     resource_fields = AGENT_RUNTIME_RESOURCE_FIELDS
     context_resource_fields = resource_fields | {"preload_skills"}
@@ -582,11 +564,8 @@ async def prepare_agent_runtime_context(
             for field_name in context_resource_fields:
                 if hasattr(context, field_name):
                     setattr(context, field_name, [])
+            context._skill_runtime_snapshot = {}
             setattr(context, "_visible_knowledge_bases", [])
-            setattr(context, "_effective_skill_slugs", [])
-            setattr(context, "_runtime_skills", {})
-            setattr(context, "_preloaded_skills", [])
-            setattr(context, "_preloaded_skill_contents", {})
             return context
 
         raw_resources = {
@@ -607,14 +586,11 @@ async def prepare_agent_runtime_context(
         from yuxi.agents.backends.knowledge_base_backend import resolve_visible_knowledge_bases_for_context
 
         await resolve_visible_knowledge_bases_for_context(context)
-        skill_scope = getattr(context, "_skill_runtime_snapshot", None)
-        if not isinstance(skill_scope, dict):
-            skill_scope = await resolve_runtime_skills_for_context(context, db=db, user=user)
+        skill_scope = await resolve_runtime_skills_for_context(context, db=db, user=user)
+        setattr(context, "_skill_runtime_snapshot", skill_scope)
         context.skills = skill_scope["context_skills"]
         context.preload_skills = skill_scope["context_preload_skills"]
-        setattr(context, "_effective_skill_slugs", skill_scope["effective_skills"])
-        setattr(context, "_runtime_skills", skill_scope["runtime_skills"])
-        setattr(context, "_preloaded_skills", skill_scope["preloaded_skills"])
-        setattr(context, "_preloaded_skill_contents", skill_scope["preloaded_skill_contents"])
+
+    context._runtime_prepared = True
 
     return context

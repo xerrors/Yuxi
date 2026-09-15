@@ -14,19 +14,19 @@ eval_router = importlib.import_module("server.routers.agent_invocation_eval_rout
 async def test_agent_call_adapter_submits_shared_run_command(monkeypatch: pytest.MonkeyPatch):
     calls: dict[str, object] = {}
 
-    async def fake_submit_run_command(*, command, current_user, db):
-        calls.update(command=command, current_user=current_user, db=db)
+    async def fake_submit_agent_request(*, request_input, current_user, db):
+        calls.update(request_input=request_input, current_user=current_user, db=db)
         return {
-            "request_id": command.request_id,
+            "request_id": request_input.request_id,
             "status": "dispatched",
-            "queue_policy": command.queue_policy,
+            "queue_policy": request_input.queue_policy,
             "queue_position": 0,
             "message_id": 1,
             "run_id": "run-1",
-            "thread_id": command.thread_id,
+            "thread_id": request_input.thread_id,
         }
 
-    monkeypatch.setattr(call_router, "submit_run_command", fake_submit_run_command)
+    monkeypatch.setattr(call_router, "submit_agent_request", fake_submit_agent_request)
     monkeypatch.setattr(
         call_router,
         "await_agent_run_result",
@@ -45,12 +45,12 @@ async def test_agent_call_adapter_submits_shared_run_command(monkeypatch: pytest
         db=object(),
     )
 
-    command = calls["command"]
-    assert command.origin.source == "agent_call"
-    assert command.origin.channel == "api"
-    assert command.origin.external_id == "req-1"
-    assert command.origin.metadata == {"agent_invocation_meta": {"trace_id": "trace-1"}}
-    assert command.input_message.content == "hello"
+    request_input = calls["request_input"]
+    assert request_input.origin.source == "agent_call"
+    assert request_input.origin.channel == "api"
+    assert request_input.origin.external_id == "req-1"
+    assert request_input.origin.metadata == {"agent_invocation_meta": {"trace_id": "trace-1"}}
+    assert request_input.input_message.content == "hello"
     assert result["run_id"] == "run-1"
     assert result["choices"][0]["finish_reason"] is None
 
@@ -59,8 +59,8 @@ async def test_agent_call_adapter_submits_shared_run_command(monkeypatch: pytest
 async def test_agent_call_adapter_waits_and_wraps_result(monkeypatch: pytest.MonkeyPatch):
     calls: dict[str, object] = {}
 
-    async def fake_submit_run_command(*, command, **_kwargs):
-        calls["command"] = command
+    async def fake_submit_agent_request(*, request_input, **_kwargs):
+        calls["request_input"] = request_input
         return {"run_id": "run-1", "thread_id": "thread-1", "status": "dispatched", "request_id": "req-1"}
 
     async def fake_await_agent_run_result(*, run_id: str, current_uid: str):
@@ -80,7 +80,7 @@ async def test_agent_call_adapter_waits_and_wraps_result(monkeypatch: pytest.Mon
             },
         }
 
-    monkeypatch.setattr(call_router, "submit_run_command", fake_submit_run_command)
+    monkeypatch.setattr(call_router, "submit_agent_request", fake_submit_agent_request)
     monkeypatch.setattr(call_router, "await_agent_run_result", fake_await_agent_run_result)
     result = await call_router.create_agent_call_run(
         call_router.AgentCallRunCreate(
@@ -141,15 +141,15 @@ async def test_agent_call_adapter_rejects_invalid_sync_policy():
 async def test_eval_adapter_submits_evaluation_origin_and_waits(monkeypatch: pytest.MonkeyPatch):
     calls: dict[str, object] = {}
 
-    async def fake_submit_run_command(*, command, **_kwargs):
-        calls["command"] = command
+    async def fake_submit_agent_request(*, request_input, **_kwargs):
+        calls["request_input"] = request_input
         return {"run_id": "run-1", "thread_id": "thread-1", "status": "dispatched", "request_id": "eval-1"}
 
     async def fake_await_agent_run_result(**kwargs):
         calls["await"] = kwargs
         return {"status": "completed", "agent_run_id": "run-1", "request_id": "eval-1", "output": "ok"}
 
-    monkeypatch.setattr(eval_router, "submit_run_command", fake_submit_run_command)
+    monkeypatch.setattr(eval_router, "submit_agent_request", fake_submit_agent_request)
     monkeypatch.setattr(eval_router, "await_agent_run_result", fake_await_agent_run_result)
     result = await eval_router.create_agent_eval_run(
         eval_router.AgentEvalRunCreate(
@@ -162,11 +162,11 @@ async def test_eval_adapter_submits_evaluation_origin_and_waits(monkeypatch: pyt
         db=object(),
     )
 
-    command = calls["command"]
-    assert command.origin.source == "agent_evaluation"
-    assert command.origin.channel == "api"
-    assert command.origin.external_id == "eval-1"
-    assert command.origin.metadata == {"agent_invocation_meta": {"evaluation": {"dataset_name": "dataset"}}}
+    request_input = calls["request_input"]
+    assert request_input.origin.source == "agent_evaluation"
+    assert request_input.origin.channel == "api"
+    assert request_input.origin.external_id == "eval-1"
+    assert request_input.origin.metadata == {"agent_invocation_meta": {"evaluation": {"dataset_name": "dataset"}}}
     assert result["output"] == "ok"
 
 

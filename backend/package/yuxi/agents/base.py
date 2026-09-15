@@ -154,19 +154,9 @@ class BaseAgent:
             "capabilities": getattr(self, "capabilities", []),  # 智能体能力列表
         }
 
-    async def get_config(self):
-        return self.context_schema()
-
-    async def stream_values(self, messages: list[str], input_context=None, **kwargs):
-        context = self.context_schema()
-        context.update_from_dict(input_context or {})
-        graph = await self.get_graph(context=context)
-        for event in graph.astream({"messages": messages}, stream_mode="values", context=context):
-            yield event["messages"]
-
-    async def stream_messages(self, messages: list[str], input_context=None, **kwargs):
-        context = self.context_schema()
-        context.update_from_dict(input_context or {})
+    async def stream_messages(
+        self, messages: list[str], *, context: BaseContext, callbacks=None, metadata=None, tags=None
+    ):
         graph = await self.get_graph(context=context)
         logger.debug(f"stream_messages: {context=}")
 
@@ -177,11 +167,11 @@ class BaseAgent:
         }
 
         # langfuse metadata and callbacks integration
-        if callbacks := kwargs.get("callbacks"):
+        if callbacks:
             input_config["callbacks"] = list(callbacks)
-        if metadata := kwargs.get("metadata"):
+        if metadata:
             input_config["metadata"] = dict(metadata)
-        if tags := kwargs.get("tags"):
+        if tags:
             input_config["tags"] = list(tags)
 
         async for msg, metadata in graph.astream(
@@ -192,9 +182,9 @@ class BaseAgent:
         ):
             yield msg, metadata
 
-    async def _stream_input_with_state(self, graph_input, input_context=None, **kwargs):
-        context = self.context_schema()
-        context.update_from_dict(input_context or {})
+    async def _stream_input_with_state(
+        self, graph_input, *, context: BaseContext, callbacks=None, metadata=None, tags=None, on_prepared=None
+    ):
         graph = await self.get_graph(context=context)
         logger.debug(f"stream_with_state: {context=}")
 
@@ -203,11 +193,11 @@ class BaseAgent:
             "recursion_limit": _recursion_limit_from_context(context, DEFAULT_MAX_EXECUTION_STEPS),
         }
 
-        if callbacks := kwargs.get("callbacks"):
+        if callbacks:
             input_config["callbacks"] = list(callbacks)
-        if metadata := kwargs.get("metadata"):
+        if metadata:
             input_config["metadata"] = dict(metadata)
-        if tags := kwargs.get("tags"):
+        if tags:
             input_config["tags"] = list(tags)
 
         async with await graph.astream_events(
@@ -217,7 +207,7 @@ class BaseAgent:
             version="v3",
             transformers=[CustomTransformer],
         ) as run:
-            if on_prepared := kwargs.get("on_prepared"):
+            if on_prepared:
                 await on_prepared()
             subagent_routes: dict[tuple[str, ...], dict[str, str]] = {}
             route_task = asyncio.create_task(_collect_subagent_routes(run, context.thread_id, subagent_routes))
@@ -276,20 +266,20 @@ class BaseAgent:
         # 流已耗尽、checkpoint 写入已完成；收尾消费者共享本次图的持久状态。
         yield "checkpoint", await graph.aget_state(input_config)
 
-    async def stream_messages_with_state(self, messages: list[str], input_context=None, **kwargs):
+    async def stream_messages_with_state(self, messages: list[str], *, context: BaseContext, **kwargs):
         graph_input = {"messages": messages}
-        async with aclosing(self._stream_input_with_state(graph_input, input_context, **kwargs)) as stream:
+        async with aclosing(self._stream_input_with_state(graph_input, context=context, **kwargs)) as stream:
             async for event in stream:
                 yield event
 
-    async def stream_resume_with_state(self, resume_input, input_context=None, **kwargs):
-        async with aclosing(self._stream_input_with_state(resume_input, input_context, **kwargs)) as stream:
+    async def stream_resume_with_state(self, resume_input, *, context: BaseContext, **kwargs):
+        async with aclosing(self._stream_input_with_state(resume_input, context=context, **kwargs)) as stream:
             async for event in stream:
                 yield event
 
-    async def invoke_messages(self, messages: list[str], input_context=None, **kwargs):
-        context = self.context_schema()
-        context.update_from_dict(input_context or {})
+    async def invoke_messages(
+        self, messages: list[str], *, context: BaseContext, callbacks=None, metadata=None, tags=None
+    ):
         graph = await self.get_graph(context=context)
         logger.debug(f"invoke_messages: {context}")
 
@@ -300,11 +290,11 @@ class BaseAgent:
         }
 
         # langfuse metadata and callbacks integration
-        if callbacks := kwargs.get("callbacks"):
+        if callbacks:
             input_config["callbacks"] = list(callbacks)
-        if metadata := kwargs.get("metadata"):
+        if metadata:
             input_config["metadata"] = dict(metadata)
-        if tags := kwargs.get("tags"):
+        if tags:
             input_config["tags"] = list(tags)
 
         msg = await graph.ainvoke(
@@ -313,39 +303,6 @@ class BaseAgent:
             config=input_config,
         )
         return msg
-
-    async def check_checkpointer(self):
-        app = await self.get_graph()
-        if not hasattr(app, "checkpointer") or app.checkpointer is None:
-            return False
-        return True
-
-    async def get_history(self, uid, thread_id) -> list[dict]:
-        """获取历史消息"""
-        try:
-            app = await self.get_graph()
-
-            if not await self.check_checkpointer():
-                return []
-
-            config = {"configurable": {"thread_id": thread_id, "uid": uid}}
-            state = await app.aget_state(config)
-
-            result = []
-            if state:
-                messages = state.values.get("messages", [])
-                for msg in messages:
-                    if hasattr(msg, "model_dump"):
-                        msg_dict = msg.model_dump()  # 转换成字典
-                    else:
-                        msg_dict = dict(msg) if hasattr(msg, "__dict__") else {"content": str(msg)}
-                    result.append(msg_dict)
-
-            return result
-
-        except Exception as e:
-            logger.error(f"获取智能体 {self.name} 历史消息出错: {e}")
-            return []
 
     def reload_graph(self):
         """重置 graph 缓存，强制下次调用 get_graph 时重新构建"""

@@ -273,24 +273,24 @@ async def test_transient_dispatch_failure_is_recovered_exactly_once(monkeypatch)
         del db
         assert (agent_slug, user.uid) == ("chatbot", uid)
 
-    async def fail_once_then_persist(*, command, current_user, db):
+    async def fail_once_then_persist(*, request_input, current_user, db):
         nonlocal calls
         calls += 1
         if calls == 1:
             raise RuntimeError("temporary database interruption")
         conversation = Conversation(
-            thread_id=command.thread_id,
-            creation_request_id=command.request_id,
+            thread_id=request_input.thread_id,
+            creation_request_id=request_input.request_id,
             uid=str(current_user.uid),
-            agent_id=command.agent_slug,
-            title=command.conversation_title,
-            project_id=command.conversation_project_id,
+            agent_id=request_input.agent_slug,
+            title=request_input.conversation_title,
+            project_id=request_input.conversation_project_id,
         )
         db.add(conversation)
         await db.flush()
         message = Message(
             conversation_id=conversation.id,
-            request_id=command.request_id,
+            request_id=request_input.request_id,
             role="user",
             content="hello",
             delivery_status="queued",
@@ -299,10 +299,10 @@ async def test_transient_dispatch_failure_is_recovered_exactly_once(monkeypatch)
         await db.flush()
         db.add(
             AgentRunRequest(
-                request_id=command.request_id,
+                request_id=request_input.request_id,
                 uid=str(current_user.uid),
-                agent_slug=command.agent_slug,
-                conversation_thread_id=command.thread_id,
+                agent_slug=request_input.agent_slug,
+                conversation_thread_id=request_input.thread_id,
                 source="scheduled_agent",
                 channel="worker",
                 external_id=scheduled_run_id,
@@ -314,11 +314,11 @@ async def test_transient_dispatch_failure_is_recovered_exactly_once(monkeypatch)
             )
         )
         await db.flush()
-        return {"request_id": command.request_id, "status": "queued"}
+        return {"request_id": request_input.request_id, "status": "queued"}
 
     monkeypatch.setattr(service, "_validate_project", accept_project)
     monkeypatch.setattr(service, "_validate_agent", accept_agent)
-    monkeypatch.setattr(service, "submit_run_command", fail_once_then_persist)
+    monkeypatch.setattr(service, "submit_agent_request", fail_once_then_persist)
 
     class ScopedManager:
         @asynccontextmanager

@@ -301,6 +301,21 @@ async def test_upgrade_queued_chat_request_to_steer(test_client, admin_headers, 
         assert response.json()["status"] == "queued"
         assert response.json()["queue_position"] == 1
 
+        replay = await test_client.post(
+            "/api/agent/runs",
+            headers=admin_headers,
+            json={
+                "agent_slug": agent_slug,
+                "thread_id": thread_id,
+                "query": "changed replay",
+                "model_spec": "missing:ignored",
+                "queue_policy": "enqueue",
+                "meta": {"request_id": queued_request_id},
+            },
+        )
+        assert replay.status_code == 200, replay.text
+        assert replay.json()["queue_policy"] == "steer"
+        assert replay.json()["message_id"] == original_message_id
         async with session_factory() as db:
             request = await db.scalar(select(AgentRunRequest).where(AgentRunRequest.request_id == queued_request_id))
             assert request is not None

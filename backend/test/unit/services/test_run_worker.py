@@ -402,7 +402,28 @@ def _patch_common(monkeypatch: pytest.MonkeyPatch, run_obj: SimpleNamespace):
     monkeypatch.setattr(run_worker, "get_agent_state_view", fake_get_agent_state_view)
     monkeypatch.setattr(run_worker, "mark_run_running", fake_mark_run_running)
     monkeypatch.setattr(run_worker, "release_run_lease_for_retry", fake_mark_run_running)
-    monkeypatch.setattr(run_worker, "persist_run_manifest", fake_noop)
+    from test.unit.agent_context_fixtures import prepared_execution
+
+    async def fake_prepare_execution(**kwargs):
+        run = kwargs["run"]
+        execution = prepared_execution(
+            model=run.input_payload.get("model_spec"),
+            runtime_scope_id=run.runtime_scope_id,
+        )
+        if run.run_type == "subagent":
+            from dataclasses import asdict, replace
+            from yuxi.agents.buildin.subagent.context import SubAgentContext
+
+            execution = replace(
+                execution,
+                context=SubAgentContext(
+                    **asdict(execution.context),
+                    parent_thread_id=run.input_payload["runtime"]["parent_thread_id"],
+                ),
+            )
+        return execution
+
+    monkeypatch.setattr(run_worker, "prepare_and_record_run_execution", fake_prepare_execution)
     monkeypatch.setattr(run_worker, "_record_run_timing_best_effort", fake_noop)
     monkeypatch.setattr(
         run_worker,
@@ -1150,6 +1171,21 @@ async def test_process_subagent_run_restores_runtime_context(monkeypatch: pytest
     }
     _patch_common(monkeypatch, run_obj)
 
+    from test.unit.agent_context_fixtures import prepared_execution
+    from yuxi.agents.buildin.subagent.context import SubAgentContext
+    from dataclasses import asdict, replace
+
+    prepared = prepared_execution(
+        model="prepared:model",
+        tool_approval_mode="always_trust",
+        runtime_scope_id="prepared-root",
+        workdir_relative_path="projects/prepared",
+        workdir_path="/home/gem/user-data/projects/prepared",
+    )
+    prepared = replace(
+        prepared, context=SubAgentContext(**asdict(prepared.context), parent_thread_id="prepared-parent")
+    )
+    monkeypatch.setattr(run_worker, "prepare_and_record_run_execution", AsyncMock(return_value=prepared))
     captured: dict[str, object] = {}
     terminal_statuses: list[str] = []
 
@@ -1173,9 +1209,12 @@ async def test_process_subagent_run_restores_runtime_context(monkeypatch: pytest
 
     meta = captured["meta"]
     assert meta["run_type"] == "subagent"
-    assert meta["parent_thread_id"] == "parent-thread"
-    assert meta["runtime_scope_id"] == "parent-thread"
-    assert meta["workdir_relative_path"] == "projects/11111111-1111-4111-8111-111111111111"
+    assert meta["parent_thread_id"] == "prepared-parent"
+    assert meta["runtime_scope_id"] == "prepared-root"
+    assert meta["workdir_relative_path"] == "projects/prepared"
+    assert meta["workdir_path"] == "/home/gem/user-data/projects/prepared"
+    assert meta["model_spec"] == "prepared:model"
+    assert meta["tool_approval_mode"] == "always_trust"
     assert captured["agent_slug"] == "worker"
     assert captured["thread_id"] == "child-thread"
     assert captured["input_message"].content == "hello"
@@ -1668,7 +1707,7 @@ async def test_manifest_persist_failure_fails_run_before_execution(monkeypatch: 
         stream_called.set()
         return _BytesAsyncIter([])
 
-    monkeypatch.setattr(run_worker, "persist_run_manifest", fake_persist_manifest)
+    monkeypatch.setattr(run_worker, "prepare_and_record_run_execution", fake_persist_manifest)
     monkeypatch.setattr(run_worker, "mark_run_terminal", fake_mark_terminal)
     monkeypatch.setattr(run_worker, "stream_agent_chat", fake_stream_agent_chat)
 
@@ -1687,3 +1726,31 @@ def test_retry_requires_new_manifest_fingerprint_to_match_write_once_fact():
     run_worker._require_persisted_manifest_match(persisted, recorded=False, fingerprint="a" * 64)
     with pytest.raises(RuntimeError, match="运行资产已在重试前变化"):
         run_worker._require_persisted_manifest_match(persisted, recorded=False, fingerprint="b" * 64)
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_manifest_preparation_settles_without_waiting_for_lease(monkeypatch):
+    """配置准备期间取消不能被误判为固化失败并留待 lease 超时。"""
+    run = _build_run()
+    _patch_common(monkeypatch, run)
+    cancelled = False
+
+    async def persist(**kwargs):
+        """模拟取消先提交，随后 manifest 写入因状态改变失败。"""
+        nonlocal cancelled
+        cancelled = True
+        raise RuntimeError("manifest requires running")
+
+    async def is_cancelled(*args):
+        return cancelled
+
+    finish = AsyncMock(return_value=run_worker.TerminalTransition(status="cancelled", changed=True))
+    monkeypatch.setattr(run_worker, "prepare_and_record_run_execution", persist)
+    monkeypatch.setattr(run_worker, "_is_cancel_requested", is_cancelled)
+    monkeypatch.setattr(run_worker, "_confirmed_user_cancel", is_cancelled)
+    monkeypatch.setattr(run_worker, "_finish_user_cancel", finish)
+    monkeypatch.setattr(run_worker, "mark_run_terminal", AsyncMock(side_effect=AssertionError("不能转为 failed")))
+    monkeypatch.setattr(run_worker, "stream_agent_chat", lambda **kwargs: pytest.fail("取消后不能开始执行"))
+    await run_worker.process_agent_run({"job_try": 1}, run.id)
+    finish.assert_awaited_once()
+    assert finish.call_args.kwargs["run_id"] == run.id

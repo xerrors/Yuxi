@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock
 import pytest
 from langchain.messages import AIMessageChunk, HumanMessage
 
+from test.unit.agent_context_fixtures import prepared_execution
 from yuxi.services import chat_service as svc
 from yuxi.services.input_message_service import build_chat_input_message
 
@@ -72,9 +73,18 @@ async def test_service_consumer_cancel_closes_real_graph(monkeypatch, mode):
         db=_FakeSession(),
     )
     stream = (
-        svc.stream_agent_chat(**kwargs, agent_slug="test-agent", input_message=build_chat_input_message("hello"))
+        svc.stream_agent_chat(
+            prepared_execution=prepared_execution(),
+            **kwargs,
+            agent_slug="test-agent",
+            input_message=build_chat_input_message("hello"),
+        )
         if mode == "chat"
-        else svc.stream_agent_resume(**kwargs, resume_input="continue")
+        else svc.stream_agent_resume(
+            prepared_execution=prepared_execution(),
+            **kwargs,
+            resume_input="continue",
+        )
     )
 
     async def consume():
@@ -168,9 +178,18 @@ async def test_missing_final_checkpoint_cannot_publish_finished(monkeypatch, mod
         db=_FakeSession(),
     )
     stream = (
-        svc.stream_agent_chat(**kwargs, agent_slug="test-agent", input_message=build_chat_input_message("hi"))
+        svc.stream_agent_chat(
+            prepared_execution=prepared_execution(),
+            **kwargs,
+            agent_slug="test-agent",
+            input_message=build_chat_input_message("hi"),
+        )
         if mode == "chat"
-        else svc.stream_agent_resume(**kwargs, resume_input={})
+        else svc.stream_agent_resume(
+            prepared_execution=prepared_execution(),
+            **kwargs,
+            resume_input={},
+        )
     )
     chunks = [json.loads(chunk) async for chunk in stream]
     assert chunks[-1]["status"] == "error"
@@ -227,7 +246,7 @@ def _patch_stream_scaffolding(
         return (
             SimpleNamespace(slug="test-agent", backend_id="ChatbotAgent"),
             agent,
-            runtime_context or {},
+            prepared_execution(**(runtime_context or {})).context,
             resolved_conversation,
         )
 
@@ -236,7 +255,6 @@ def _patch_stream_scaffolding(
 
     monkeypatch.setattr(svc, "_resolve_agent_runtime", fake_resolve_agent_runtime)
     monkeypatch.setattr(svc, "resolve_conversation_workdir_path", fake_resolve_workdir)
-    monkeypatch.setattr(svc, "normalize_agent_context_config", _fake_normalize_agent_context_config)
     monkeypatch.setattr(
         _FakeConvRepo,
         "default_attachments",
@@ -388,10 +406,17 @@ async def test_trace_flush_yields_to_other_requests_and_is_awaited(
     }
     if mode == "chat":
         stream = svc.stream_agent_chat(
-            **kwargs, agent_slug="test-agent", input_message=build_chat_input_message("hello")
+            prepared_execution=prepared_execution(),
+            **kwargs,
+            agent_slug="test-agent",
+            input_message=build_chat_input_message("hello"),
         )
     else:
-        stream = svc.stream_agent_resume(**kwargs, resume_input={"answer": "continue"})
+        stream = svc.stream_agent_resume(
+            prepared_execution=prepared_execution(),
+            **kwargs,
+            resume_input={"answer": "continue"},
+        )
 
     async def consume():
         """耗尽真实生成器，使 finally 在消费任务中执行。"""
@@ -414,18 +439,6 @@ async def test_trace_flush_yields_to_other_requests_and_is_awaited(
             await asyncio.wait_for(consumer, timeout=3)
         # 取消不能终止已执行的线程，测试必须等它真正退出再还原 monkeypatch。
         assert await asyncio.to_thread(flush_finished.wait, 3)
-
-
-def test_main_run_discards_configured_subagent_runtime_markers() -> None:
-    input_context = {
-        "parent_thread_id": "other-parent",
-        "is_subagent_runtime": True,
-        "temperature": 0.1,
-    }
-
-    svc._apply_subagent_runtime_context(input_context, {"run_type": "chat"})
-
-    assert input_context == {"temperature": 0.1}
 
 
 def test_subagent_attachment_root_rejects_same_path_from_different_project() -> None:
@@ -562,7 +575,7 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
             assert lifecycle == ["prepared"]
             lifecycle.append("streaming")
             calls["stream_messages"] = messages
-            calls["stream_input_context"] = input_context
+            calls["stream_input_context"] = vars(kwargs.pop("context"))
             calls["stream_kwargs"] = kwargs
             yield "messages", (AIMessageChunk(content="hello"), {"node": "llm"})
 
@@ -607,7 +620,7 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
         monkeypatch,
         agent=FakeAgent(),
         runtime_context={
-            "temperature": 0.1,
+            "model_retry_times": 3,
         },
         conversation=SimpleNamespace(
             id=1,
@@ -656,6 +669,7 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
     monkeypatch.setattr(svc, "AIMessage", reject_error_fallback)
     chunks = []
     async for chunk in svc.stream_agent_chat(
+        prepared_execution=prepared_execution(),
         agent_slug="test-agent",
         thread_id="thread-1",
         meta={"request_id": "req-1", "run_id": "run-1", "worker_id": "worker-1"},
@@ -669,7 +683,7 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
     assert (
         calls["stream_input_context"].items()
         >= {
-            "temperature": 0.1,
+            "model_retry_times": 3,
             "uid": "user-1",
             "thread_id": "thread-1",
             "run_id": "run-1",
@@ -757,6 +771,7 @@ async def test_stream_agent_chat_partial_failure_preserves_trace_info(
 
     chunks = []
     async for chunk in svc.stream_agent_chat(
+        prepared_execution=prepared_execution(),
         agent_slug="test-agent",
         thread_id="thread-partial",
         meta={"request_id": "request-partial"},
@@ -776,87 +791,6 @@ async def test_stream_agent_chat_partial_failure_preserves_trace_info(
     }
     assert chunks[-1]["status"] == "error"
     assert chunks[-1]["error_type"] == "unexpected_error"
-
-
-@pytest.mark.asyncio
-async def test_stream_agent_chat_creates_conversation_before_reading_workdir(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    class FakeAgent:
-        context_schema = _FakeContext
-
-        async def stream_messages_with_state(self, messages, input_context=None, **kwargs):
-            del messages, input_context, kwargs
-            yield "messages", (AIMessageChunk(content="created"), {"node": "llm"})
-
-        async def get_graph(self, *, context=None):
-            del context
-
-            class FakeGraph:
-                async def aget_state(self, _config):
-                    return SimpleNamespace(values={"messages": []})
-
-            return FakeGraph()
-
-    agent = FakeAgent()
-    _patch_stream_scaffolding(monkeypatch, agent=agent)
-    repository_holder: dict[str, _FakeConvRepo] = {}
-
-    class NewThreadConversationRepository(_FakeConvRepo):
-        def __init__(self, db):
-            super().__init__(db)
-            repository_holder["repo"] = self
-
-        async def get_conversation_by_thread_id(self, thread_id: str):
-            del thread_id
-            return None
-
-    async def resolve_new_thread(**_kwargs):
-        return (
-            SimpleNamespace(slug="test-agent", backend_id="ChatbotAgent"),
-            agent,
-            {},
-            None,
-        )
-
-    async def create_project(**_kwargs):
-        return SimpleNamespace(
-            id="11111111-1111-4111-8111-111111111111",
-            workdir_path="projects/11111111-1111-4111-8111-111111111111",
-        )
-
-    async def add_conversation(self, **kwargs):
-        conversation = self._conversation(kwargs["thread_id"])
-        conversation.project_id = kwargs["project_id"]
-        return conversation
-
-    NewThreadConversationRepository.add_conversation = add_conversation
-
-    monkeypatch.setattr(svc, "ConversationRepository", NewThreadConversationRepository)
-    monkeypatch.setattr(svc, "_resolve_agent_runtime", resolve_new_thread)
-    monkeypatch.setattr(svc, "create_implicit_project", create_project)
-    monkeypatch.setattr(svc, "ensure_bound_user_workdir", lambda _uid, _path: None)
-
-    async def resolve_path(*, conversation, **_kwargs):
-        assert conversation.project_id == "11111111-1111-4111-8111-111111111111"
-        return "projects/11111111-1111-4111-8111-111111111111"
-
-    monkeypatch.setattr(svc, "resolve_conversation_workdir_path", resolve_path)
-
-    chunks = []
-    async for chunk in svc.stream_agent_chat(
-        agent_slug="test-agent",
-        thread_id="new-thread",
-        meta={"request_id": "new-request"},
-        input_message=build_chat_input_message("hello"),
-        current_user=SimpleNamespace(id=1, uid="user-1", role="user", department_id="dept-1"),
-        db=_FakeSession(),
-    ):
-        chunks.append(json.loads(chunk.decode("utf-8")))
-
-    assert chunks[-1]["status"] == "finished"
-    conversation = repository_holder["repo"].conversations["new-thread"]
-    assert conversation.project_id == "11111111-1111-4111-8111-111111111111"
 
 
 @pytest.mark.asyncio
@@ -903,6 +837,7 @@ async def test_stream_agent_chat_does_not_bootstrap_sandbox_before_agent_executi
 
     chunks = []
     async for chunk in svc.stream_agent_chat(
+        prepared_execution=prepared_execution(),
         agent_slug="test-agent",
         thread_id="thread-1",
         meta={"request_id": "req-1"},
@@ -948,6 +883,7 @@ async def test_stream_agent_chat_output_persistence_failure_is_terminal_error(
 
     chunks = []
     async for chunk in svc.stream_agent_chat(
+        prepared_execution=prepared_execution(),
         agent_slug="test-agent",
         thread_id="thread-output-error",
         meta={
@@ -1037,6 +973,7 @@ async def test_stream_agent_chat_maps_raw_protocol_events_to_yuxi_stream_events(
 
     chunks = []
     async for chunk in svc.stream_agent_chat(
+        prepared_execution=prepared_execution(),
         agent_slug="test-agent",
         thread_id="thread-1",
         meta={"request_id": "req-1"},
@@ -1097,6 +1034,7 @@ async def test_stream_agent_chat_emits_realtime_agent_state_from_values(
 
     chunks = []
     async for chunk in svc.stream_agent_chat(
+        prepared_execution=prepared_execution(),
         agent_slug="test-agent",
         thread_id="thread-1",
         meta={"request_id": "req-1"},
@@ -1149,6 +1087,7 @@ async def test_stream_agent_chat_maps_custom_compression_event_to_context_compre
 
     chunks = []
     async for chunk in svc.stream_agent_chat(
+        prepared_execution=prepared_execution(),
         agent_slug="test-agent",
         thread_id="thread-1",
         meta={"request_id": "req-1"},
@@ -1164,3 +1103,45 @@ async def test_stream_agent_chat_maps_custom_compression_event_to_context_compre
     assert compression_chunks[1]["compression"]["status"] == "completed"
     assert compression_chunks[1]["compression"]["cutoff_index"] == 5
     assert compression_chunks[1]["compression"]["file_path"] == "/conv/x.md"
+
+
+@pytest.mark.parametrize("mode", ["chat", "resume"])
+@pytest.mark.parametrize(
+    ("thread_id", "meta"),
+    [
+        (None, {"request_id": "req-1"}),
+        ("", {"request_id": "req-1"}),
+        ("thread-1", {}),
+        ("thread-1", {"request_id": ""}),
+    ],
+)
+async def test_execution_rejects_missing_persisted_identity(mode, thread_id, meta):
+    """执行入口在任何数据库或模型动作前拒绝缺失身份，不能自动创建请求。"""
+    kwargs = dict(
+        thread_id=thread_id,
+        meta=meta,
+        current_user=SimpleNamespace(uid="user-1"),
+        db=object(),
+        prepared_execution=prepared_execution(),
+    )
+    stream = (
+        svc.stream_agent_chat(**kwargs, agent_slug="test-agent", input_message=build_chat_input_message("hello"))
+        if mode == "chat"
+        else svc.stream_agent_resume(**kwargs, resume_input={"answer": "ok"})
+    )
+    with pytest.raises(ValueError, match="执行需要已持久化的 thread_id 和 request_id"):
+        await anext(stream)
+    await stream.aclose()
+
+
+@pytest.mark.parametrize("mode", ["chat", "resume"])
+def test_execution_requires_worker_snapshot(mode):
+    """调用方必须显式提供执行快照，不能启用重新读取配置的旧路径。"""
+    kwargs = dict(
+        thread_id="thread-1", meta={"request_id": "req-1"}, current_user=SimpleNamespace(uid="user-1"), db=object()
+    )
+    with pytest.raises(TypeError, match="prepared_execution"):
+        if mode == "chat":
+            svc.stream_agent_chat(**kwargs, agent_slug="test-agent", input_message=build_chat_input_message("hello"))
+        else:
+            svc.stream_agent_resume(**kwargs, resume_input={"answer": "ok"})

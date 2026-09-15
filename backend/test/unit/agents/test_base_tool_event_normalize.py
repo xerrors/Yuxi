@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from yuxi.agents.context import BaseContext
+
 import asyncio
 from contextlib import aclosing
 
@@ -50,7 +52,7 @@ async def test_final_checkpoint_belongs_to_each_executed_graph():
         return [
             event
             async for event in agent.stream_messages_with_state(
-                [uid], input_context={"uid": uid, "thread_id": uid + "-thread"}
+                [uid], context=BaseContext(**{"uid": uid, "thread_id": uid + "-thread"})
             )
         ]
 
@@ -154,7 +156,7 @@ async def test_stream_with_state_preserves_protocol_sequence_and_timestamp():
         event
         async for event in FakeAgent().stream_messages_with_state(
             ["hello"],
-            input_context={"thread_id": "thread-1", "uid": "user-1"},
+            context=BaseContext(**{"thread_id": "thread-1", "uid": "user-1"}),
         )
     ]
 

@@ -27,7 +27,7 @@ from yuxi.services.agent_request_queue_service import (
 from yuxi.services.agent_config_service import prepare_agent_config_write
 from yuxi.services.agent_run_service import (
     cancel_agent_run_view,
-    create_agent_run_view,
+    create_resume_run_view,
     get_active_run_by_thread,
     get_agent_run_langfuse_link,
     get_agent_run_result,
@@ -35,7 +35,7 @@ from yuxi.services.agent_run_service import (
     stream_agent_run_events,
 )
 from yuxi.services.input_message_service import build_chat_input_message
-from yuxi.services.run_submission_service import RunOrigin, RunSubmissionCommand, submit_run_command
+from yuxi.services.agent_request_service import RunOrigin, AgentRequestInput, submit_agent_request
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import User
 
@@ -299,16 +299,10 @@ async def create_agent_run(
     if payload.resume is not None:
         if payload.queue_policy != "enqueue":
             raise HTTPException(status_code=422, detail="queue_policy 仅支持普通 Chat 请求")
-        input_message = None
-        if payload.query:
-            input_message = build_chat_input_message(payload.query, payload.image_content)
-        return await create_agent_run_view(
-            input_message=input_message,
+        return await create_resume_run_view(
             agent_slug=payload.agent_slug,
             thread_id=payload.thread_id,
             meta=dict(payload.meta or {}),
-            model_spec=payload.model_spec,
-            tool_approval_mode=payload.tool_approval_mode,
             current_uid=str(current_user.uid),
             db=db,
             resume=payload.resume,
@@ -322,8 +316,8 @@ async def create_agent_run(
 
     input_message = build_chat_input_message(payload.query or "", payload.image_content)
 
-    return await submit_run_command(
-        command=RunSubmissionCommand(
+    return await submit_agent_request(
+        request_input=AgentRequestInput(
             agent_slug=payload.agent_slug,
             thread_id=payload.thread_id,
             request_id=request_id,
@@ -402,14 +396,7 @@ async def steer_request(
 ):
     result = await steer_queued_request(request_id=request_id, current_uid=str(current_user.uid), db=db)
     await db.commit()
-    return {
-        "request_id": result.request_id,
-        "thread_id": result.thread_id,
-        "status": result.status,
-        "queue_policy": result.queue_policy,
-        "queue_position": result.queue_position,
-        "request_events_url": f"/api/agent/requests/{result.request_id}/events",
-    }
+    return result
 
 
 @agent_router.get("/requests/{request_id}/events")
