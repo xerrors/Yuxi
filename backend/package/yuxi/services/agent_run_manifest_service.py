@@ -15,12 +15,12 @@ from dataclasses import dataclass, fields
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from yuxi.agents.backends.paths import runtime_workdir_path
 from yuxi.agents.buildin import agent_manager
 from yuxi.agents.context import BaseContext, prepare_agent_runtime_context
-from yuxi.agents.backends.paths import runtime_workdir_path
-from yuxi.services.workdir_service import AuthorizedWorkdir
 from yuxi.agents.skills.service import PERSONAL_SKILL_SOURCE_TYPE
 from yuxi.repositories.agent_repository import AgentRepository
+from yuxi.services.workdir_service import AuthorizedWorkdir
 from yuxi.storage.postgres.models_business import AgentRun, User
 
 MANIFEST_SCHEMA_VERSION = 2

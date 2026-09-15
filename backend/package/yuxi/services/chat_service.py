@@ -26,7 +26,6 @@ from yuxi.agents.base import _json_safe
 from yuxi.agents.buildin import agent_manager
 from yuxi.agents.callbacks.model_request_timing import FirstModelRequestRecorder
 from yuxi.agents.context import BaseContext
-from yuxi.services.agent_run_manifest_service import PreparedRunExecution
 from yuxi.agents.state import AgentStatePayload
 from yuxi.models.utils import parse_assistant_message_body
 from yuxi.repositories.agent_repository import AgentRepository
@@ -35,6 +34,7 @@ from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.repositories.model_message_audit_repository import ModelMessageAuditRepository
 from yuxi.repositories.subagent_thread_repository import SubagentThreadRepository
 from yuxi.repositories.tool_message_audit_repository import ToolMessageAuditRepository
+from yuxi.services.agent_run_manifest_service import PreparedRunExecution
 from yuxi.services.attachment_service import serialize_attachment
 from yuxi.services.input_message_service import AgentRunInputMessage
 from yuxi.services.langfuse_service import (
@@ -832,7 +832,11 @@ async def save_messages_from_langgraph_state(
                 )
                 if terminal_run is None or not changed:
                     raise ValueError(f"AgentRun 输出已写入但 {terminal_status} 终态未能在同一事务提交")
-                cancelled_descendants = await run_repo.cancel_active_execution_tree_descendants(terminal_run)
+                # 与 run_worker.CASCADE_CANCEL_STATUSES 对齐：completed 不级联取消子 Run，
+                # 子 Run 继续执行落库、主 Run 续跑时收割。此处终态仅 completed/interrupted，
+                # 只有 interrupted 命中取消类终态，才收敛 execution tree。
+                if terminal_status == "interrupted":
+                    cancelled_descendants = await run_repo.cancel_active_execution_tree_descendants(terminal_run)
             await conv_repo.db.commit()
             await publish_cancel_signals([run_id for run_id, _thread_id in cancelled_descendants])
             return terminal_status is not None
