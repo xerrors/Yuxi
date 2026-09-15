@@ -2217,3 +2217,25 @@ async def test_confirm_personal_skill_draft_uses_original_slug_without_database(
     assert results[0]["requested_slug"] == "demo-v2"
     assert (personal_root / "demo" / "SKILL.md").exists()
     assert not draft_dir.exists()
+
+
+def test_resolved_shared_skill_captures_original_version_and_hash(monkeypatch, tmp_path):
+    """数据库行后续改变不能改写首次适配得到的 Skill 元数据。"""
+    row = Skill(
+        id=1,
+        slug="versioned",
+        name="Versioned",
+        description="skill",
+        source_type="local",
+        enabled=True,
+        created_by="user",
+        share_config={"version": 2, "read_scope": None, "manage_scope": None},
+        version="v1",
+        content_hash="hash-v1",
+    )
+    monkeypatch.setattr(svc, "_resolve_skill_dir", lambda item: tmp_path)
+    resolved = svc._resolved_shared_skill(row)
+    row.version, row.content_hash = "v2", "hash-v2"
+    assert resolved.version == "v1"
+    assert resolved.content_hash == "hash-v1"
+    assert resolved.source_scope == "shared"

@@ -69,7 +69,7 @@ class SkillsMiddleware(AgentMiddleware):
         runtime_context = request.runtime.context
 
         if self.enable_skills_prompt:
-            effective_skills = getattr(runtime_context, "_effective_skill_slugs", None)
+            effective_skills = getattr(runtime_context, "_skill_runtime_snapshot", {}).get("effective_skills", None)
             if isinstance(effective_skills, list):
                 effective_skills = normalize_string_list(effective_skills)
                 preloaded_skills = self._get_preloaded_skills(runtime_context)
@@ -269,15 +269,15 @@ class SkillsMiddleware(AgentMiddleware):
         return None
 
     def _get_effective_skills(self, runtime_context) -> set[str]:
-        selected = getattr(runtime_context, "_effective_skill_slugs", [])
+        selected = getattr(runtime_context, "_skill_runtime_snapshot", {}).get("effective_skills", [])
         return set(normalize_string_list(selected if isinstance(selected, list) else []))
 
     def _get_runtime_skills(self, runtime_context) -> dict[str, RuntimeSkill]:
-        runtime_skills = getattr(runtime_context, "_runtime_skills", {})
+        runtime_skills = getattr(runtime_context, "_skill_runtime_snapshot", {}).get("runtime_skills", {})
         return runtime_skills if isinstance(runtime_skills, dict) else {}
 
     def _get_preloaded_skills(self, runtime_context) -> list[str]:
-        selected = getattr(runtime_context, "_preloaded_skills", [])
+        selected = getattr(runtime_context, "_skill_runtime_snapshot", {}).get("preloaded_skills", [])
         effective = self._get_effective_skills(runtime_context)
         return [
             slug for slug in normalize_string_list(selected if isinstance(selected, list) else []) if slug in effective
@@ -286,7 +286,7 @@ class SkillsMiddleware(AgentMiddleware):
     def _build_preloaded_skills_section(self, slugs: list[str], runtime_context) -> str:
         """构建已预加载 Skill 的完整系统提示段。"""
 
-        contents = getattr(runtime_context, "_preloaded_skill_contents", {})
+        contents = getattr(runtime_context, "_skill_runtime_snapshot", {}).get("preloaded_skill_contents", {})
         if not isinstance(contents, dict):
             contents = {}
         sections = ["# Preloaded Skills", "The following Skill instructions are already loaded and active."]

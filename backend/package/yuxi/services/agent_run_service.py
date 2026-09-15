@@ -72,22 +72,6 @@ RUN_SSE_STATUS_POLL_SECONDS = 5.0
 RUN_SSE_POLL_JITTER_RATIO = 0.2
 
 
-def _resolve_agent_run_request_id(
-    *,
-    meta: dict,
-    run_type: Literal["chat", "resume"],
-    resume: object | None,
-    created_by_run_id: str | None,
-) -> str:
-    raw_request_id = meta.get("request_id")
-    if raw_request_id:
-        return str(raw_request_id)
-    if run_type == "resume":
-        resume_key = json.dumps(resume, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
-        return hash_id("resume:", f"{created_by_run_id}:{resume_key}", length=64)
-    return str(uuid.uuid4())
-
-
 class AgentRunWaitTimeout(Exception):
     """等待结束但 run 尚未进入终态。"""
 
@@ -104,7 +88,7 @@ def load_agent_run_context(agent_item, agent_backend):
     config_json = getattr(agent_item, "config_json", None) or {}
     config_context = config_json.get("context") if isinstance(config_json, dict) else {}
     if isinstance(config_context, dict):
-        context.update_from_dict(config_context)
+        context.update_config(config_context)
     return context
 
 
@@ -415,38 +399,30 @@ async def get_agent_run_progress(run_id: str, *, message_limit: int = RUN_PROGRE
     return {"last_seq": last_seq, "messages": list(reversed(messages))}
 
 
-async def create_agent_run_view(
+async def create_resume_run_view(
     *,
-    input_message: AgentRunInputMessage | None,
     agent_slug: str,
     thread_id: str,
     meta: dict,
     current_uid: str,
     db: AsyncSession,
-    model_spec: str | None = None,
-    tool_approval_mode: str | None = None,
-    resume: object | None = None,
+    resume: object,
     created_by_run_id: str | None = None,
     source: str | None = None,
     channel: str | None = None,
     external_id: str | None = None,
     origin_metadata: dict[str, Any] | None = None,
 ) -> dict:
-    """创建 chat/resume run 的 HTTP 入口，输入正文由 Message 承载，run 只登记运行元数据。"""
+    """继承中断 Run 的配置创建恢复运行，提交后投递 worker。"""
     meta = meta or {}
-    if input_message is None and resume is None:
-        raise HTTPException(status_code=422, detail="input_message 或 resume 不能为空")
-    if resume is not None:
-        _validate_resume_input(resume)
-
-    run_type = "resume" if resume is not None else "chat"
-    run_created_by_id = created_by_run_id if run_type == "resume" else None
-    request_id = _resolve_agent_run_request_id(
-        meta=meta,
-        run_type=run_type,
-        resume=resume,
-        created_by_run_id=run_created_by_id,
-    )
+    if resume is None:
+        raise HTTPException(status_code=422, detail="resume 不能为空")
+    _validate_resume_input(resume)
+    if meta.get("request_id"):
+        request_id = str(meta["request_id"])
+    else:
+        resume_key = json.dumps(resume, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+        request_id = hash_id("resume:", f"{created_by_run_id}:{resume_key}", length=64)
 
     scope = await prepare_agent_run_creation_scope(
         agent_slug=agent_slug,
@@ -454,58 +430,40 @@ async def create_agent_run_view(
         current_uid=current_uid,
         db=db,
         request_id=request_id,
-        run_type=run_type,
+        run_type="resume",
         agent_kind="main",
-        created_by_run_id=run_created_by_id,
+        created_by_run_id=created_by_run_id,
     )
     if scope.existing_run:
         if scope.existing_run.status == "pending":
             await _commit_and_enqueue(db, scope.existing_run.id)
         return _build_run_response(scope.existing_run)
 
-    if run_type == "resume":
-        resolved_model_spec = scope.parent_run.input_payload["model_spec"]
-        # 旧版本固化的 input_payload 没有 tool_approval_mode，回退默认值以兼容历史 interrupted run。
-        resolved_tool_approval_mode = scope.parent_run.input_payload.get(
-            "tool_approval_mode", DEFAULT_TOOL_APPROVAL_MODE
-        )
-    else:
-        resolved_model_spec, resolved_tool_approval_mode = await resolve_agent_run_config(
-            model_spec, tool_approval_mode, scope.agent_item, scope.agent_backend, db
-        )
-
-    run_input_message = _prepare_run_input_message(
-        run_type=run_type,
-        input_message=input_message,
-        resume=resume,
-        request_id=request_id,
-        model_spec=resolved_model_spec,
-        tool_approval_mode=resolved_tool_approval_mode,
-        meta=meta,
-    )
-
+    parent_run = scope.parent_run
+    input_payload = {
+        "model_spec": parent_run.input_payload["model_spec"],
+        # 历史 interrupted Run 可能没有审批模式，沿用原默认值。
+        "tool_approval_mode": parent_run.input_payload.get("tool_approval_mode", DEFAULT_TOOL_APPROVAL_MODE),
+    }
+    metadata = {"request_id": request_id, "resume": resume, "source": "ask_user_question_resume"}
+    if attachment_file_ids := (meta.get("attachment_file_ids") or []):
+        metadata["attachment_file_ids"] = attachment_file_ids
+    if isinstance(meta.get("agent_invocation_meta"), dict):
+        metadata["agent_invocation_meta"] = meta["agent_invocation_meta"]
     persisted_input_message = await create_agent_run_input_message(
         db=db,
         conversation_id=scope.conversation.id,
         request_id=request_id,
-        input_message=run_input_message,
+        input_message=build_resume_input_message(resume).with_metadata(metadata),
     )
-    input_payload = {
-        "model_spec": resolved_model_spec,
-        "tool_approval_mode": resolved_tool_approval_mode,
-    }
-    if run_type == "resume" and scope.parent_run is not None:
-        if source is None:
-            source = getattr(scope.parent_run, "source", None) or "chat"
-        if channel is None:
-            channel = getattr(scope.parent_run, "channel", None) or "web"
-        if external_id is None:
-            external_id = getattr(scope.parent_run, "external_id", None)
-        if origin_metadata is None:
-            origin_metadata = getattr(scope.parent_run, "origin_metadata", None) or {}
-    else:
-        source = source or "chat"
-        channel = channel or "web"
+    if source is None:
+        source = getattr(parent_run, "source", None) or "chat"
+    if channel is None:
+        channel = getattr(parent_run, "channel", None) or "web"
+    if external_id is None:
+        external_id = getattr(parent_run, "external_id", None)
+    if origin_metadata is None:
+        origin_metadata = getattr(parent_run, "origin_metadata", None) or {}
 
     run, created = await persist_agent_run_record(
         agent_slug=agent_slug,
@@ -514,10 +472,10 @@ async def create_agent_run_view(
         db=db,
         request_id=request_id,
         conversation_id=scope.conversation.id,
-        run_type=run_type,
+        run_type="resume",
         input_payload=input_payload,
         persisted_input_message=persisted_input_message,
-        created_by_run_id=run_created_by_id,
+        created_by_run_id=created_by_run_id,
         source=source,
         channel=channel,
         external_id=external_id,
@@ -543,37 +501,6 @@ class AgentRunCreationScope:
     agent_backend: Any
     existing_run: Any | None
     parent_run: Any | None = None
-
-
-def _prepare_run_input_message(
-    *,
-    run_type: Literal["chat", "resume"],
-    input_message: AgentRunInputMessage | None,
-    resume: object | None,
-    request_id: str,
-    model_spec: str,
-    meta: dict,
-    tool_approval_mode: str | None = None,
-) -> AgentRunInputMessage:
-    metadata: dict[str, Any] = {"request_id": request_id}
-    if attachment_file_ids := (meta.get("attachment_file_ids") or []):
-        metadata["attachment_file_ids"] = attachment_file_ids
-    if source := meta.get("source"):
-        metadata["source"] = source
-    if isinstance(meta.get("agent_invocation_meta"), dict):
-        metadata["agent_invocation_meta"] = meta["agent_invocation_meta"]
-    if run_type == "chat":
-        if input_message is None:
-            raise HTTPException(status_code=422, detail="input_message 不能为空")
-        if raw_message := input_message.raw_message():
-            metadata["raw_message"] = raw_message
-        if tool_approval_mode is not None:
-            metadata["tool_approval_mode"] = tool_approval_mode  # already normalized by resolve_agent_run_config
-        return input_message.with_metadata(metadata)
-
-    metadata["resume"] = resume
-    metadata["source"] = "ask_user_question_resume"
-    return build_resume_input_message(resume).with_metadata(metadata)
 
 
 def _same_run_request_scope(

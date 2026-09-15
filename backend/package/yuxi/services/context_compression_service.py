@@ -13,8 +13,8 @@ from yuxi.agents.backends.sandbox import ProvisionerSandboxBackend, get_sandbox_
 from yuxi.agents.buildin import agent_manager
 from yuxi.agents.context import (
     DEFAULT_SUMMARY_THRESHOLD_K,
-    build_agent_input_context,
-    normalize_agent_context_config,
+    BaseContext,
+    prepare_agent_runtime_context,
 )
 from yuxi.agents.middlewares import create_summary_middleware_from_context
 from yuxi.agents.middlewares.token_usage import TOKEN_USAGE_CONTEXT_FIELDS
@@ -58,15 +58,11 @@ async def compress_thread_context(
     if "context_compression" not in getattr(agent, "capabilities", []):
         raise HTTPException(status_code=422, detail="当前智能体不支持主动上下文压缩")
 
-    agent_config = await normalize_agent_context_config(
-        (agent_item.config_json or {}).get("context", {}),
-        db=db,
-        user=current_user,
-        context_schema=agent.context_schema,
-    )
+    context = agent.context_schema()
+    context.update_config((agent_item.config_json or {}).get("context") or {})
     model_spec = await resolve_agent_run_model_spec(
         (conversation.extra_metadata or {}).get("model_spec"),
-        agent_config.get("model"),
+        context.model,
         db,
     )
     workdir_path = await ensure_conversation_workdir_available(
@@ -74,9 +70,10 @@ async def compress_thread_context(
         uid=uid,
         db=db,
     )
-    input_context = await build_agent_input_context(agent_config, thread_id=thread_id, uid=uid)
-    input_context.update(
+    context.update(
         {
+            "uid": uid,
+            "thread_id": thread_id,
             "model": model_spec,
             "runtime_scope_id": thread_id,
             "workdir_relative_path": workdir_path,
@@ -85,7 +82,7 @@ async def compress_thread_context(
     )
     result = await _compress_agent_checkpoint_in_runtime(
         agent=agent,
-        input_context=input_context,
+        context=context,
         thread_id=thread_id,
         uid=uid,
         workdir_path=workdir_path,
@@ -123,15 +120,16 @@ async def _ensure_thread_idle(*, db: AsyncSession, uid: str, agent_slug: str, th
 async def _compress_agent_checkpoint_in_runtime(
     *,
     agent,
-    input_context: dict[str, Any],
+    context: BaseContext,
     thread_id: str,
     uid: str,
     workdir_path: str,
 ) -> dict[str, Any]:
     """在一次性 Sandbox 生命周期内压缩 checkpoint。"""
     try:
+        await prepare_agent_runtime_context(context)
         await _ensure_runtime_available(thread_id=thread_id, uid=uid, workdir_path=workdir_path)
-        result = await _compress_agent_checkpoint(agent=agent, input_context=input_context)
+        result = await _compress_agent_checkpoint(agent=agent, context=context)
     except BaseException:
         try:
             await _release_runtime(thread_id=thread_id, uid=uid, workdir_path=workdir_path)
@@ -161,10 +159,8 @@ async def _release_runtime(*, thread_id: str, uid: str, workdir_path: str) -> No
     )
 
 
-async def _compress_agent_checkpoint(*, agent, input_context: dict[str, Any]) -> dict[str, Any]:
+async def _compress_agent_checkpoint(*, agent, context: BaseContext) -> dict[str, Any]:
     """使用当前 Agent 配置生成摘要并通过 canonical graph 更新 checkpoint。"""
-    context = agent.context_schema()
-    context.update_from_dict(input_context)
     graph = await agent.get_graph(context=context)
     compressor = create_summary_middleware_from_context(
         context,

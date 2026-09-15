@@ -111,7 +111,14 @@ async def resolve_runtime_skills_for_context(
         "context_preload_skills": context_preload_skills,
         "effective_skills": effective_skills,
         "runtime_skills": runtime_skills,
-        "runtime_skill_source_scopes": {slug: items_by_slug[slug].source_scope for slug in effective_skills},
+        "skill_metadata": {
+            slug: {
+                "source_scope": items_by_slug[slug].source_scope,
+                "version": items_by_slug[slug].version,
+                "content_hash": items_by_slug[slug].content_hash,
+            }
+            for slug in effective_skills
+        },
         "preloaded_skills": preloaded_skills,
         "preloaded_skill_contents": preloaded_contents,
     }
@@ -139,8 +146,8 @@ def _read_preloaded_skill_contents(slugs: list[str], skill_items: dict[str, Any]
 
 def resolve_skill_gated_tools(context) -> list:
     """解析所有可见 Skill 依赖且需注册到 ToolNode 的本地工具。"""
-    runtime_skills = getattr(context, "_runtime_skills", {}) or {}
-    effective_skills = getattr(context, "_effective_skill_slugs", []) or []
+    runtime_skills = getattr(context, "_skill_runtime_snapshot", {}).get("runtime_skills", {}) or {}
+    effective_skills = getattr(context, "_skill_runtime_snapshot", {}).get("effective_skills", []) or []
     tool_names: set[str] = set()
     for slug in effective_skills:
         node = runtime_skills.get(slug) or {}

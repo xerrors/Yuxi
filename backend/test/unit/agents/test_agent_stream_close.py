@@ -7,6 +7,7 @@ from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, MessagesState, StateGraph
 
 from yuxi.agents.base import BaseAgent
+from yuxi.agents.context import BaseContext
 from yuxi.services.run_worker import RunContext, _consume_stream_with_cancel
 from contextlib import aclosing
 
@@ -43,16 +44,19 @@ async def test_consumer_body_cancel_stops_real_graph_node(monkeypatch):
 
     monkeypatch.setattr(graph, "astream_events", track_run)
 
+    execution_context = BaseContext(thread_id="prepared-thread", uid="prepared-user")
+
     class Agent(BaseAgent):
         """执行真实图，不使用模型或数据库。"""
 
         async def get_graph(self, **kwargs):
             """返回本测试执行图。"""
+            assert kwargs["context"] is execution_context
             return graph
 
     async def consume():
         """将取消落在处理事件的消费者，而非图的迭代调用中。"""
-        stream = Agent().stream_messages_with_state(["hello"])
+        stream = Agent().stream_messages_with_state(["hello"], context=execution_context)
         async with aclosing(_consume_stream_with_cancel(stream, RunContext("run", "owner"))) as chunks:
             async for mode, _ in chunks:
                 if mode == "custom":
@@ -76,3 +80,21 @@ async def test_consumer_body_cancel_stops_real_graph_node(monkeypatch):
         await asyncio.gather(consumer, return_exceptions=True)
         for run in runs:
             await run.abort()
+
+
+@pytest.mark.asyncio
+async def test_stream_rejects_legacy_dictionary_input():
+    """显式Context不能与旧字典双输入共存。"""
+
+    class Agent(BaseAgent):
+        """只验证入口拒绝，不创建执行图。"""
+
+        async def get_graph(self, **kwargs):
+            raise AssertionError("旧输入必须在构图前拒绝")
+
+    with pytest.raises(TypeError, match="input_context"):
+        async for _ in Agent().stream_messages_with_state([], context=BaseContext(), input_context={}):
+            pass
+    with pytest.raises(TypeError, match="context"):
+        async for _ in Agent().stream_messages_with_state([]):
+            pass

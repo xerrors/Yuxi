@@ -255,6 +255,7 @@ def _patch_run_record_creation(
     monkeypatch: pytest.MonkeyPatch,
     db: _FakeDB,
     *,
+    configured_model: str | None = "agent-default-model",
     missing_subagent: bool = False,
     active_run=None,
 ):
@@ -272,9 +273,9 @@ def _patch_run_record_creation(
 
     class _FakeContext:
         def __init__(self):
-            self.model = "agent-default-model"
+            self.model = configured_model
 
-        def update_from_dict(self, data: dict):
+        def update_config(self, data: dict):
             for key, value in data.items():
                 if hasattr(self, key):
                     setattr(self, key, value)
@@ -403,7 +404,6 @@ async def test_subagent_run_service_creates_child_relation_run_and_enqueue(monke
         agent_item=_agent(),
         input_message=build_chat_input_message("run in background"),
         tool_call_id="tool-1",
-        model_spec="provider:model",
     )
 
     child_thread_id = make_child_thread_id("parent-thread", "worker", "tool-1")
@@ -429,7 +429,6 @@ async def test_subagent_run_service_creates_child_relation_run_and_enqueue(monke
         "created_by_run_id": "parent-run",
     }
     assert captured["create_run_record"]["relation"].id == 77
-    assert captured["create_run_record"]["model_spec"] == "provider:model"
     assert captured["create_run_record"]["creator_run"].id == "parent-run"
     assert captured["create_run_record"]["input_message"].content == "run in background"
     assert captured["create_run_record"]["input_message"].raw_message()["type"] == "human"
@@ -715,15 +714,28 @@ async def test_subagent_run_service_translates_busy_run(monkeypatch: pytest.Monk
     }
 
 
+@pytest.mark.parametrize(
+    "child_model,parent_model,expected_model",
+    [
+        ("child:model", "parent:model", "child:model"),
+        ("", "parent:model", "parent:model"),
+        (None, None, "system-default:model"),
+    ],
+)
 @pytest.mark.asyncio
-async def test_subagent_run_service_create_run_record_persists_subagent_context(monkeypatch: pytest.MonkeyPatch):
+async def test_subagent_run_service_create_run_record_persists_subagent_context(
+    monkeypatch: pytest.MonkeyPatch,
+    child_model,
+    parent_model,
+    expected_model,
+):
     db = _FakeDB()
-    _patch_run_record_creation(monkeypatch, db)
+    _patch_run_record_creation(monkeypatch, db, configured_model=child_model)
     creator_run = SimpleNamespace(
         id="parent-run",
         conversation_id=10,
         conversation_thread_id="parent-thread",
-        input_payload={"tool_approval_mode": "default"},
+        input_payload={"tool_approval_mode": "default", "model_spec": parent_model},
     )
     relation = _relation(child_thread_id="child-thread", parent_conversation_id=10, subagent_slug="worker")
 
@@ -731,7 +743,6 @@ async def test_subagent_run_service_create_run_record_persists_subagent_context(
         input_message=build_chat_input_message("delegate this"),
         request_id="subagent-req",
         current_uid="user-1",
-        model_spec=None,
         creator_run=creator_run,
         relation=relation,
         tool_call_id="tool-1",
@@ -752,7 +763,7 @@ async def test_subagent_run_service_create_run_record_persists_subagent_context(
     assert db.created_run_kwargs["runtime_scope_id"] == "parent-thread"
     assert db.created_run_kwargs["input_message_id"] == 10
     assert db.created_run_kwargs["input_payload"] == {
-        "model_spec": "agent-default-model",
+        "model_spec": expected_model,
         "tool_approval_mode": "default",
         "runtime": {
             "tool_call_id": "tool-1",
@@ -781,7 +792,6 @@ async def test_subagent_run_service_create_run_record_uses_creator_runtime_scope
         input_message=build_chat_input_message("continue this"),
         request_id="subagent-req-2",
         current_uid="user-1",
-        model_spec=None,
         creator_run=creator_run,
         relation=relation,
         tool_call_id="tool-2",
@@ -806,7 +816,6 @@ async def test_subagent_run_service_create_run_record_rejects_non_subagent_defin
             input_message=build_chat_input_message("delegate this"),
             request_id="subagent-req",
             current_uid="user-1",
-            model_spec=None,
             creator_run=creator_run,
             relation=relation,
             tool_call_id="tool-1",
@@ -831,7 +840,6 @@ async def test_subagent_run_service_create_run_record_rejects_relation_parent_mi
             input_message=build_chat_input_message("delegate this"),
             request_id="subagent-req",
             current_uid="user-1",
-            model_spec=None,
             creator_run=creator_run,
             relation=relation,
             tool_call_id="tool-1",

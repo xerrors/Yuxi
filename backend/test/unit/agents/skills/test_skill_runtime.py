@@ -15,6 +15,8 @@ def _skill(tmp_path, slug: str, *, dependencies: list[str] | None = None, conten
         name=slug.title(),
         description=f"{slug} desc",
         source_scope="shared",
+        version="v1",
+        content_hash="hash-v1",
         source_dir=source_dir,
         tool_dependencies=[],
         mcp_dependencies=[],
@@ -35,6 +37,8 @@ async def test_resolve_runtime_skills_derives_authorized_scope(monkeypatch):
                 name="Alpha",
                 description="alpha desc",
                 source_scope="shared",
+                version="v1",
+                content_hash="hash-v1",
                 source_dir="/tmp/shared/alpha",
                 tool_dependencies=[],
                 mcp_dependencies=[],
@@ -45,6 +49,8 @@ async def test_resolve_runtime_skills_derives_authorized_scope(monkeypatch):
                 name="Beta",
                 description="beta desc",
                 source_scope="personal",
+                version=None,
+                content_hash=None,
                 source_dir="/tmp/personal/beta",
                 tool_dependencies=[],
                 mcp_dependencies=[],
@@ -136,3 +142,27 @@ async def test_preload_rejects_symlinked_source_ancestor(tmp_path, monkeypatch):
             db=object(),
             user=object(),
         )
+
+
+@pytest.mark.asyncio
+async def test_manifest_retains_metadata_from_authorized_resolution(tmp_path, monkeypatch):
+    """源记录更新后，manifest 仍使用首次解析的版本与内容摘要。"""
+    from yuxi.services.agent_run_manifest_service import build_skill_manifest_entries
+
+    item = _skill(tmp_path, "alpha", content="original body")
+
+    async def accessible(db, user):
+        return [item]
+
+    monkeypatch.setattr(skill_runtime, "list_accessible_skills", accessible)
+    scope = await resolve_runtime_skills_for_context(
+        SimpleNamespace(skills=["alpha"], preload_skills=["alpha"]),
+        db=object(),
+        user=object(),
+    )
+    item.version, item.content_hash = "v2", "hash-v2"
+    (item.source_dir / "SKILL.md").write_text("changed body", encoding="utf-8")
+    entries = build_skill_manifest_entries({"skills": ["alpha"]}, scope)
+    assert entries[0]["version"] == "v1"
+    assert entries[0]["content_hash"] == "hash-v1"
+    assert scope["preloaded_skill_contents"]["alpha"] == "original body"

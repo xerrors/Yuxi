@@ -4,30 +4,32 @@
 
 ## 运行入口
 
-普通聊天、恢复审批和子智能体运行都会从服务端事实重建 Context：
+普通聊天、恢复审批和子智能体由各自接入服务保存 Conversation、输入 Message 与运行身份；普通消息先经过 Request 队列。worker 只执行已持久化的 Run：
 
 ```mermaid
 flowchart LR
-    Request["请求 / resume"] --> Binding["Conversation 与 Agent 绑定"]
-    Binding --> Config["Agent config_json.context"]
-    Config --> Identity["uid / thread / run / request"]
-    Identity --> Workspace["AGENTS.md / USER.md"]
-    Workspace --> Prepare["按用户权限归一化资源"]
-    Prepare --> Graph["get_graph(context)"]
+    Input["已持久化的 Run 与输入 Message"] --> Lease["worker 取得执行权"]
+    Lease --> Prepare["准备 Context：配置、身份、工作区提示词与资源"]
+    Prepare --> Manifest["从 Context 派生并提交 manifest"]
+    Manifest --> Identity["复查线程归属与 Agent 可见性"]
+    Identity --> Graph["get_graph 复用同一 Context"]
     Graph --> State["LangGraph state + PostgreSQL checkpoint"]
     State --> Result["消息、事件、文件和产物"]
 ```
 
-具体顺序是：
+worker 在取得 lease 并校验输入后，合并 Agent 可配置字段、Run 模型与审批模式、运行身份和 Workdir，准备一个 Context。准备期间持续续租，manifest 从准备结果派生并提交；固化失败时执行不开始。chat/resume 流和 BaseAgent 传递同一个 Context，构图只消费已准备的资源与 Skill 内容。执行流复查 Agent 可见性，后端发生变化时显式失败。
 
-1. 新线程根据 `agent_slug` 查找当前用户可访问的 Agent；已有线程使用已绑定的 Agent。
-2. 服务读取 `config_json.context`，加入当前用户和运行身份。
-3. 运行入口读取用户工作区的 `agents/AGENTS.md` 和 `agents/USER.md`，把非空内容追加到系统提示词；文件不存在或不可读不会阻断运行，每个文件最多读取 64 KiB。
-4. `prepare_agent_runtime_context` 重新按当前用户权限过滤工具、知识库、MCP、Skills 和子智能体，并展开 Skill 依赖。
-5. 没有配置模型时，系统读取管理员设置的默认模型；然后 `get_graph(context)` 创建模型、工具和中间件。
-6. LangGraph state 保存消息、待办、文件、产物和子智能体状态；checkpoint 只使用 PostgreSQL。
+执行流要求非空的 thread/request 身份，并检查 Conversation 存在、未删除、属于当前用户且绑定正确 Agent。缺失身份或线程时显式失败。线程创建和用户消息写入由接入服务负责；流中的 init 消息用于展示已经保存的输入。
 
-API/worker 不信任浏览器内存中的完整配置。请求可以提供受限的单次覆盖值，例如模型或工具审批模式；其余配置从已保存的 Agent 和用户权限重新计算。
+运行入口读取用户工作区的 `agents/AGENTS.md` 和 `agents/USER.md`，把非空内容追加到系统提示词；文件不存在或不可读不会阻断运行，每个文件最多读取 64 KiB。`prepare_agent_runtime_context` 按当前用户权限过滤工具、知识库、MCP、Skills 和子智能体，并展开 Skill 依赖。准备结果仅属于该 Context 对象，独立执行入口对新 Context 显式准备；`get_graph(context)` 创建模型、工具和中间件。LangGraph state 保存消息、待办、文件、产物和子智能体状态，checkpoint 只使用 PostgreSQL。
+
+API/worker 不信任浏览器内存中的完整配置。请求可以提供受限的单次覆盖值，例如模型或工具审批模式；配置快照也不能替代实时授权。
+
+状态查询在 Conversation 与 Workdir 授权后直接读取 PostgreSQL checkpointer 的根 namespace，返回最近完整快照及同批 pending writes 中的中断，仅在最新 Run 为 interrupted 时展示审批。读取不创建 Context 或模型；业务 pending writes 的合并仍由执行图拥有。当前文件由 Sandbox backend 持久化，未使用 `files` DeltaChannel 写入；启用该 channel 的状态写入前需要重新验证读取契约。
+
+普通来源构建 `AgentRequestInput` 并调用 `agent_request_service.submit_agent_request`。该用例负责访问校验、Message/Request 持久化和 FIFO 派发尝试，在事务提交后物化工作目录、投递 Run；内部持久化步骤返回 AgentRunRequest 及本事务实际派发的队头，提交后按实际派发的 Run 投递；新提交和重发通过同一个函数投影请求视图。队列服务负责后续派发、引导、取消和恢复。
+
+普通 Request 保存消息引用、不可变来源和目标作用域、当前排队策略以及接入时解析的模型/审批配置。`input_payload` 不包含完整原始请求；正文由 Message 拥有，其余 Agent 配置在 worker 准备时读取。相同 request_id 以首次接收内容为准，后续重发不改写正文或模型；enqueue 升级为 steer 不改变请求身份，重发返回当前策略。既有 Request 在 Agent、线程与 Project 访问检查后直接返回，不依赖当前后端或物化 Workdir，也不触发再次投递；pending Run 仍由周期恢复扫描补发。Request 派发后保持 dispatched，执行终态由 Run 拥有。
 
 ## 配置和运行态的区别
 
@@ -38,7 +40,11 @@ API/worker 不信任浏览器内存中的完整配置。请求可以提供受限
 | LangGraph state | Graph 执行和中间件 | 当前 checkpoint thread |
 | PostgreSQL Message/AgentRun | 服务和 worker 提交 | 业务事实和运行结果 |
 
-中间件可以在 Graph 创建和模型请求之间派生运行时字段，例如 `_visible_knowledge_bases`、`_effective_skill_slugs` 和 token 快照。这些字段不是用户可以任意提交的权限声明。
+`_visible_knowledge_bases` 与 `_skill_runtime_snapshot` 中的授权 Skill、依赖和预加载内容在 Context 准备时派生；中间件在运行期间维护 token 等状态。身份与运行标记由 worker 注入，持久 Agent 配置通过 `update_config` 仅装载 configurable 字段。接入和执行使用同一装载规则。运行事件的模型、审批与 Workdir 元数据从准备后的 Context 投影。
+
+普通请求模型依次取显式请求值、会话保存值、Agent 配置和系统默认；接入时确定并保存在 Run 输入中。SubAgent 创建服务依次取子 Agent 模型配置、父 Run 输入中的模型和系统默认，middleware 只提交调用信息。
+
+manifest v2 的配置摘要来自准备后的可配置字段，包含模型覆盖、schema 默认值和工作区提示词，排除用户、线程、worker 等运行身份。Skill 条目的来源、版本与哈希来自首次授权解析；预加载内容另保存实际读取字节的摘要，manifest 生成不再次查询 Skill。完整提示词和 Skill 正文不持久化到 manifest。MCP 工具发现、Memory 与文件动态读取发生在后续执行边界，manifest 不承诺冻结其实际可用性或字节。
 
 ## 资源权限
 
@@ -64,9 +70,11 @@ Viewer、附件和 artifact API 通过持久化 Workspace/Workdir 读取文件�
 
 ## 恢复和失败
 
-审批或用户问题中断时，系统把中断信息保存在对应 Run/checkpoint。resume 会根据线程绑定的 Agent 和当前用户重新构建 Context，再创建新的 Run；它不会从相邻 Run 猜测模型、工具或文件结果。
+审批或用户问题中断时，系统把中断信息保存在对应 Run/checkpoint。resume 继承被恢复 Run 的模型与审批模式创建新的 Run，worker 再为该 Run 准备 Context 并固化 manifest；它不会从相邻 Run 猜测结果。
 
-如果 Agent 配置、模型、权限或工作区文件在两个 Run 之间发生变化，新的运行会使用新的有效配置；已完成 Run 的输出和事件仍绑定原来的 `request_id`、`run_id` 和消息。
+新的普通请求按接入时的规则解析模型和审批模式。每个 Run 的其余 Agent 配置与基础工作区提示词在 worker 准备 Context 时读取，动态文件与权限仍在各自读取或执行边界生效；已完成 Run 的输出和事件仍绑定原来的 `request_id`、`run_id` 和消息。
+
+准备期间收到取消时，worker 使用已提交的取消状态完成取消收尾；manifest 失败不能把取消请求留待 lease 超时。manifest 使用 write-once 指纹，已有旧版 manifest 的 Run 重试若与新准备结果不一致会显式失败；历史 manifest 保留原记录。
 
 ## 源码和验证入口
 

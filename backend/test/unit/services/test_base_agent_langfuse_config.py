@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from yuxi.agents.context import BaseContext
+
 from contextlib import aclosing
 from types import SimpleNamespace
 
@@ -63,7 +65,7 @@ async def test_base_agent_passes_callbacks_metadata_and_tags(mode):
         items = []
         async for item in agent.stream_messages(
             ["hello"],
-            input_context={"uid": "user-1", "thread_id": "thread-1"},
+            context=BaseContext(**{"uid": "user-1", "thread_id": "thread-1"}),
             callbacks=["handler-1"],
             metadata={"langfuse_user_id": "user-1"},
             tags=["yuxi"],
@@ -74,7 +76,7 @@ async def test_base_agent_passes_callbacks_metadata_and_tags(mode):
     else:
         await agent.invoke_messages(
             ["hello"],
-            input_context={"uid": "user-1", "thread_id": "thread-1"},
+            context=BaseContext(**{"uid": "user-1", "thread_id": "thread-1"}),
             callbacks=["handler-1"],
             metadata={"langfuse_user_id": "user-1"},
             tags=["yuxi"],
@@ -97,7 +99,7 @@ async def test_base_agent_uses_configured_max_execution_steps():
 
     await agent.invoke_messages(
         ["hello"],
-        input_context={"uid": "user-1", "thread_id": "thread-1", "max_execution_steps": 42},
+        context=BaseContext(**{"uid": "user-1", "thread_id": "thread-1", "max_execution_steps": 42}),
     )
 
     graph = await agent.get_graph()
@@ -120,7 +122,7 @@ async def test_base_agent_records_prepared_after_stream_creation_before_first_ev
     events = []
     async for event in agent.stream_messages_with_state(
         ["hello"],
-        input_context={"uid": "user-1", "thread_id": "thread-1"},
+        context=BaseContext(**{"uid": "user-1", "thread_id": "thread-1"}),
         on_prepared=on_prepared,
     ):
         events.append(event)

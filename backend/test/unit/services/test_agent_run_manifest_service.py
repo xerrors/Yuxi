@@ -5,12 +5,11 @@ from __future__ import annotations
 import pytest
 
 from yuxi.services.agent_run_manifest_service import (
-    _manifest_skill_scope,
+    build_skill_manifest_entries,
     build_manifest_payload,
     canonical_json,
     compute_config_digest,
     compute_manifest_fingerprint,
-    resolve_skill_entries,
 )
 
 
@@ -94,62 +93,44 @@ def test_preload_skill_config_changes_config_digest():
 
 
 def test_preloaded_dependency_content_changes_manifest_fingerprint():
-    normalized_context = {"skills": ["parent"], "preload_skills": ["parent"]}
-    first_slugs, first_hashes, _ = _manifest_skill_scope(
-        normalized_context,
+    config = {"skills": ["parent"], "preload_skills": ["parent"]}
+    scope = {
+        "preloaded_skills": ["parent", "dependency"],
+        "preloaded_skill_contents": {"parent": "first", "dependency": "dependency"},
+        "skill_metadata": {
+            slug: {"source_scope": "shared", "version": "v1", "content_hash": "hash"}
+            for slug in ("parent", "dependency")
+        },
+    }
+    first = build_skill_manifest_entries(config, scope)
+    scope["preloaded_skill_contents"]["parent"] = "changed"
+    second = build_skill_manifest_entries(config, scope)
+    assert [item["slug"] for item in first] == ["parent", "dependency"]
+    assert compute_manifest_fingerprint(_manifest(skill_entries=first)) != compute_manifest_fingerprint(
+        _manifest(skill_entries=second)
+    )
+
+
+def test_personal_preloaded_skill_does_not_borrow_shared_identity():
+    """个人来源即使携带同名共享元数据，也不能用于其审计身份。"""
+    import hashlib
+
+    entries = build_skill_manifest_entries(
+        {"skills": ["shadowed"]},
         {
-            "preloaded_skills": ["parent", "dependency"],
-            "preloaded_skill_contents": {"parent": "first", "dependency": "dependency"},
+            "preloaded_skills": ["shadowed"],
+            "preloaded_skill_contents": {"shadowed": "personal content"},
+            "skill_metadata": {
+                "shadowed": {"source_scope": "personal", "version": "shared-v1", "content_hash": "shared-hash"},
+            },
         },
     )
-    second_slugs, second_hashes, _ = _manifest_skill_scope(
-        normalized_context,
-        {
-            "preloaded_skills": ["parent", "dependency"],
-            "preloaded_skill_contents": {"parent": "changed", "dependency": "dependency"},
-        },
-    )
-
-    assert first_slugs == second_slugs == ["parent", "dependency"]
-    first = _manifest(
-        skill_entries=[
-            {"slug": slug, "version": None, "content_hash": None, "preload_content_hash": first_hashes[slug]}
-            for slug in first_slugs
-        ]
-    )
-    second = _manifest(
-        skill_entries=[
-            {"slug": slug, "version": None, "content_hash": None, "preload_content_hash": second_hashes[slug]}
-            for slug in second_slugs
-        ]
-    )
-    assert compute_manifest_fingerprint(first) != compute_manifest_fingerprint(second)
-
-
-@pytest.mark.asyncio
-async def test_personal_preloaded_skill_does_not_borrow_shadowed_database_identity():
-    class FakeResult:
-        def first(self):
-            return type("Row", (), {"version": "shared-v1", "content_hash": "shared-hash"})()
-
-    class FakeDB:
-        async def execute(self, statement):
-            del statement
-            return FakeResult()
-
-    entries = await resolve_skill_entries(
-        FakeDB(),
-        ["shadowed"],
-        preload_content_hashes={"shadowed": "personal-root-hash"},
-        personal_skill_slugs={"shadowed"},
-    )
-
     assert entries == [
         {
             "slug": "shadowed",
             "version": None,
             "content_hash": None,
-            "preload_content_hash": "personal-root-hash",
+            "preload_content_hash": hashlib.sha256(b"personal content").hexdigest(),
         }
     ]
 
@@ -190,7 +171,7 @@ def test_missing_code_revision_is_explicitly_unresolved():
     manifest = _manifest()
 
     assert manifest["code_revision"] == "unresolved"
-    assert manifest["manifest_version"] == 1
+    assert manifest["manifest_version"] == 2
 
 
 def test_non_string_model_spec_normalizes_to_none():
@@ -210,15 +191,135 @@ def test_limits_captured_from_context(field, expected):
     assert _manifest()["limits"][field] == expected
 
 
-def test_effective_limits_fill_schema_defaults_for_unset_fields():
-    from yuxi.agents.context import BaseContext
-    from yuxi.services.agent_run_manifest_service import _effective_limits
+@pytest.mark.asyncio
+@pytest.mark.parametrize("run_type", ["chat", "resume", "subagent"])
+@pytest.mark.parametrize("empty_config", [False, True])
+async def test_manifest_uses_prepared_context_and_persisted_overrides(monkeypatch, run_type, empty_config):
+    """配置覆盖、默认值、工作区提示词与 Skill 摘要来自同一执行对象。"""
+    import hashlib
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from yuxi.agents.buildin.subagent.context import SubAgentContext
+    from yuxi.services import agent_run_manifest_service as service
 
-    class FakeBackend:
-        context_schema = BaseContext
+    agent = SimpleNamespace(
+        backend_id="backend",
+        config_json={
+            "context": {
+                "model": "old",
+                "system_prompt": "base",
+                "parent_thread_id": "forged",
+                "is_subagent_runtime": True,
+                "uid": "forged",
+                "worker_id": "forged",
+            }
+        },
+    )
+    if empty_config:
+        agent.config_json["context"] = None
+    expected_prompt = "You are a helpful assistant." if empty_config else "base"
+    monkeypatch.setattr(
+        service, "AgentRepository", lambda db: SimpleNamespace(get_visible_by_slug=AsyncMock(return_value=agent))
+    )
+    monkeypatch.setattr(
+        service.agent_manager, "get_agent", lambda name: SimpleNamespace(context_schema=SubAgentContext)
+    )
+    monkeypatch.setattr("yuxi.agents.context._load_workspace_agent_context", lambda uid: "workspace policy")
+    seen = []
 
-    effective = _effective_limits(FakeBackend(), {"max_execution_steps": 200})
+    async def prepare(context):
+        """模拟边界解析结果，manifest 只能读取这个对象。"""
+        from yuxi.agents.context import _append_workspace_agent_prompt
 
-    assert effective["max_execution_steps"] == 200
-    assert effective["model_retry_times"] == 2
-    assert _effective_limits(None, {"max_execution_steps": 200})["model_retry_times"] is None
+        await _append_workspace_agent_prompt(context)
+        seen.append(context)
+        context.tools = ["read_file"]
+        context.skills = ["skill-a"]
+        context.preload_skills = ["skill-a"]
+        context._runtime_prepared = True
+        context._skill_runtime_snapshot = {
+            "preloaded_skills": ["skill-a"],
+            "preloaded_skill_contents": {"skill-a": "frozen skill"},
+            "skill_metadata": {"skill-a": {"source_scope": "shared", "version": "v1", "content_hash": "hash"}},
+        }
+        return context
+
+    monkeypatch.setattr(service, "prepare_agent_runtime_context", prepare)
+    run = SimpleNamespace(
+        id="run",
+        request_id="request",
+        agent_slug="agent",
+        run_type=run_type,
+        runtime_scope_id="root",
+        conversation_thread_id="thread",
+        input_payload={
+            "model_spec": "chosen",
+            "tool_approval_mode": "always_trust",
+            "runtime": {"parent_thread_id": "parent"},
+        },
+    )
+    binding = SimpleNamespace(workdir_path="projects/project")
+    result = await service.prepare_run_execution(
+        run=run, user=SimpleNamespace(uid="user"), db=object(), workdir_binding=binding, worker_id="owner"
+    )
+    assert result.context is seen[0]
+    assert result.context.model == result.manifest["model"]["spec"] == "chosen"
+    assert result.context.tool_approval_mode == result.manifest["tool_approval_mode"] == "always_trust"
+    assert result.context.system_prompt == f"{expected_prompt}\n\nworkspace policy"
+    assert result.manifest["limits"]["model_retry_times"] == result.context.model_retry_times == 2
+    assert (
+        result.manifest["resources"]["skills"][0]["preload_content_hash"] == hashlib.sha256(b"frozen skill").hexdigest()
+    )
+    assert result.context.is_subagent_runtime is (run_type == "subagent")
+    assert result.context.parent_thread_id == ("parent" if run_type == "subagent" else None)
+    assert result.context.uid == "user"
+    assert (result.context.run_id, result.context.request_id, result.context.worker_id) == ("run", "request", "owner")
+
+    first_digest = result.manifest["config_digest"]
+    run.id, run.request_id = "different-run", "different-request"
+    same_config = await service.prepare_run_execution(
+        run=run, user=SimpleNamespace(uid="user"), db=object(), workdir_binding=binding, worker_id="different-owner"
+    )
+    assert same_config.manifest["config_digest"] == first_digest
+    monkeypatch.setattr("yuxi.agents.context._load_workspace_agent_context", lambda uid: "changed policy")
+    changed = await service.prepare_run_execution(
+        run=run, user=SimpleNamespace(uid="user"), db=object(), workdir_binding=binding, worker_id="owner"
+    )
+    assert changed.manifest["config_digest"] != first_digest
+    assert result.context.system_prompt == f"{expected_prompt}\n\nworkspace policy"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing", ["agent", "backend", "user", "parent"])
+async def test_execution_preparation_rejects_missing_dependencies(monkeypatch, missing):
+    """缺少执行依赖必须失败，不能固化空配置并进入执行。"""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from yuxi.agents.buildin.subagent.context import SubAgentContext
+    from yuxi.services import agent_run_manifest_service as service
+
+    agent = None if missing == "agent" else SimpleNamespace(backend_id="backend", config_json={})
+    backend = None if missing == "backend" else SimpleNamespace(context_schema=SubAgentContext)
+    monkeypatch.setattr(
+        service, "AgentRepository", lambda db: SimpleNamespace(get_visible_by_slug=AsyncMock(return_value=agent))
+    )
+    monkeypatch.setattr(service.agent_manager, "get_agent", lambda name: backend)
+    monkeypatch.setattr("yuxi.agents.context._load_workspace_agent_context", lambda uid: "")
+    monkeypatch.setattr(service, "prepare_agent_runtime_context", AsyncMock(side_effect=lambda context: context))
+    run = SimpleNamespace(
+        id="run",
+        request_id="req",
+        agent_slug="agent",
+        run_type="subagent",
+        runtime_scope_id="root",
+        conversation_thread_id="child",
+        input_payload={"runtime": {} if missing == "parent" else {"parent_thread_id": "parent"}},
+    )
+    with pytest.raises(ValueError):
+        await service.prepare_run_execution(
+            run=run,
+            user=SimpleNamespace(uid="user"),
+            db=object(),
+            workdir_binding=SimpleNamespace(workdir_path="projects/project"),
+            worker_id="owner",
+        )

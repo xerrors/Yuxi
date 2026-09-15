@@ -82,7 +82,7 @@ Yuxi 只交付完整知识能力路径。API 始终注册 `external_kb`、`knowl
 
 1. `AgentView` 和 `AgentChatComponent` 收集文本、图片、附件、模型与审批配置。
 2. `web/src/apis/agent_api.js` 调用 `POST /api/agent/runs`。
-3. `server/routers/agent_router.py` 校验用户和智能体，将请求交给 `agent_request_queue_service`。
+3. `server/routers/agent_router.py` 校验用户和智能体，将普通请求作为 `AgentRequestInput` 交给 `agent_request_service.submit_agent_request`；提交用例负责持久化、提交后投递，`agent_request_queue_service` 负责 FIFO 派发与恢复。
 4. 服务在同一数据库事务中创建用户消息和 AgentRunRequest，并按用户、智能体和线程检查活跃 Run 与 FIFO 队头。
 5. 请求可以立即派发、进入等待队列或按 `reject` 策略拒绝；只有数据库提交成功后才向 ARQ 投递 Run。
 6. `worker` 中的 `run_worker` 使用进程 identity 与 job-attempt token 取得 AgentRun lease；未取得 ownership 的重复任务不会执行。执行期间 heartbeat 在独立事务中续租，再加载智能体配置和运行上下文执行对应 LangGraph。Langfuse 启用时，当前 lease owner 在模型流开始前固化预创建 trace ID；Model 与 Tool lifecycle 只在 start/terminal 使用受 lease 保护的短事务，delta 期间不写 PostgreSQL。远端观测不拥有 Run 终态。
