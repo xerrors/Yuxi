@@ -228,7 +228,10 @@
       v-model:open="store.state.fileDetailModalVisible"
       :kb-id="kbId"
       :file-id="store.fileDetailFileId"
+      :editable="canManageDatabase"
+      :start-in-edit="store.fileDetailStartEdit"
       @closed="store.closeFileDetail"
+      @saved="onFileDetailSaved"
     />
 
     <FileUploadModal
@@ -729,6 +732,13 @@ const addFilesMode = ref('file')
 const isInitialLoad = ref(true)
 const detailLoading = ref(true)
 const fileTableRef = ref(null)
+
+/** 解析产物保存后：文件状态可能由「已入库」退回「待入库」，列表与统计都要重新拉 */
+const onFileDetailSaved = async () => {
+  await fileTableRef.value?.refresh?.()
+  // 已入库文件被编辑时 chunk/token 归零，知识库聚合统计需同步刷新
+  await store.getDatabaseInfo(undefined, true, true)
+}
 
 const showAddFilesModal = (options = {}) => {
   const { isFolder = false, mode = 'file' } = options

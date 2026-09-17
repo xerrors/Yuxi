@@ -101,6 +101,22 @@ export const canPreviewParsed = (record) => {
   return PARSED_PREVIEW_STATUSES.has(record.status)
 }
 
+/**
+ * 是否允许编辑解析产物（入库前复核 / 已入库修正）。
+ *
+ * 与后端 EDITABLE_MARKDOWN_STATUSES（backend/package/yuxi/knowledge/base.py）必须同集合：
+ * 只改一侧会出现「前端显示编辑按钮、后端返回 409」的错位。
+ * 复用 PARSED_PREVIEW_STATUSES 作为单一真源。
+ */
+export const canEditParsedContent = (record) =>
+  Boolean(
+    record &&
+    !record.is_folder &&
+    PARSED_PREVIEW_STATUSES.has(record.status) &&
+    canPreviewParsed(record) &&
+    !isProcessingFile(record)
+  )
+
 export const canPreviewOriginal = (record) => {
   if (!record || record.is_folder || record.file_type === 'url') return false
   if ('has_original_file' in record) return Boolean(record.has_original_file)
@@ -109,6 +125,19 @@ export const canPreviewOriginal = (record) => {
 
 export const canPreviewChunks = (record) =>
   Boolean(record && !record.is_folder && CHUNK_PREVIEW_STATUSES.has(record.status))
+
+// 保存解析产物后后端会清除索引的状态集合。
+//
+// 必须与后端同集合：backend/package/yuxi/knowledge/base.py 的
+//   was_indexed = status in INDEXED_STATS_STATUSES or status == ERROR_INDEXING
+// 即 {done, indexed, error_indexing}。刻意不复用 CHUNK_PREVIEW_STATUSES——后者是
+// 「有没有分块可看」的判据，不含 error_indexing；混用会导致 error_indexing 文件
+// 被后端清空索引，前端却既不弹确认也不换提示文案，用户以为只是改了几个字。
+const PURGE_ON_SAVE_STATUSES = new Set(['done', 'indexed', 'error_indexing'])
+
+/** 保存解析产物是否会清除该文件已有的索引（与后端 was_indexed 同集合） */
+export const willPurgeIndexOnSave = (record) =>
+  Boolean(record && PURGE_ON_SAVE_STATUSES.has(record.status))
 
 export const canOpenFileDetail = (record) =>
   canPreviewParsed(record) ||

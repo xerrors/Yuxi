@@ -54,6 +54,9 @@ stateDiagram-v2
     indexing --> indexed: chunk 和向量完成
     indexing --> error_indexing: 索引失败或取消
     indexing --> uploaded: 缺少 Markdown 产物
+    parsed --> parsed: 解析产物被编辑
+    error_indexing --> parsed: 解析产物被编辑（旧分块已清除）
+    indexed --> parsed: 解析产物被编辑（旧分块已清除）
 ```
 
 历史 `failed`、`done` 状态只作为兼容输入。`parsing` 和 `indexing` 表示当前动作已经抢到执行权；没有抢到允许状态的并发请求会失败，同一文件不会由两个动作同时推进。
@@ -62,6 +65,10 @@ stateDiagram-v2
 - `parsed`：解析后的 Markdown 路径已写入文件记录；
 - `indexed`：本次分块、向量写入和统计更新已完成；
 - `error_parsing`、`error_indexing`：对应阶段失败或取消，并保存错误信息。
+
+`parsed`、`indexed`、`error_indexing` 三种状态允许人工编辑解析产物（`uploaded` 编排在解析前，`parsing`/`indexing` 在动作中，`error_parsing` 与前端可编辑集合保持一致地排除）。编辑会把 Markdown 覆盖写回确定性路径 `{kb_id}/parsed/{file_id}.md`，并把文件退回 `parsed`；若原本已入库，同一操作内先清除该文件的分块、向量与图谱，再执行状态迁移，避免出现「状态是待入库、检索里仍挂着旧内容向量」的不一致。清理由 executor 钩子 `purge_indexed_chunks` 承担，`MilvusKB` 覆写为 `delete_file_chunks_only`；未覆写的连接器走告警 + no-op。编辑与入库之间没有互斥锁，因此状态迁移由一条 CAS 收口，且该 CAS 只接受编辑读取时观察到的那个状态：期间任何并发状态变化都会让它落空并返回冲突，用户重试时会读到新状态，从而走对应的清理分支。**不能**把 CAS 的允许集合放宽为整个可编辑集合——那样会出现「读到时尚未入库（跳过清理）→ 期间索引完成 → CAS 仍然命中」的路径，结果是状态退回待入库、旧向量却仍在，正是这条迁移要消除的不一致。
+
+清除索引排在 CAS 之前，所以 CAS 落空时旧索引可能已被清除而状态未变；这不影响正确性（最多多清一次，重新入库即恢复，`index_file` 恒为先删后建），但会留下一条 warning 以便定位。另一个已知窗口是索引器可能读到编辑前的旧 Markdown，恢复手段同样是重新入库。
 
 任务接口的响应和 Durable Task 状态只表示编排结果。验收时重新读取文件状态，并按需核对 Markdown、chunk、向量和图谱数据。
 

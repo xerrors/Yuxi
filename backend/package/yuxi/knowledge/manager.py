@@ -602,6 +602,23 @@ class KnowledgeBaseManager:
             ),
         )
 
+    async def update_file_markdown(
+        self,
+        kb_id: str,
+        file_id: str,
+        content: str,
+        operator_id: str | None = None,
+    ) -> dict:
+        """覆盖编辑后的解析产物，并把文件退回待入库状态"""
+        config = await self.get_kb_config(kb_id)
+        executor = await self._get_or_create_kb_instance(config.kb_type)
+        # 必须走 stats refresh：已入库文件被编辑时 chunk_count/token_count 归零，
+        # 知识库聚合统计需同步刷新，否则列表页数字不准。
+        return await self._run_with_stats_refresh(
+            kb_id,
+            executor.update_file_markdown(kb_id, file_id, content, operator_id),
+        )
+
     async def index_file(
         self,
         kb_id: str,

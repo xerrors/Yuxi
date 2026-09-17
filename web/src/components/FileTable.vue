@@ -411,6 +411,18 @@
                     下载文件
                   </a-button>
 
+                  <!-- 编辑解析产物：入库前复核 / 已入库修正 -->
+                  <a-button
+                    v-if="!readonly && canEditParsedContent(row)"
+                    type="text"
+                    block
+                    @click="handleEditParsedContent(row)"
+                    :disabled="lock"
+                  >
+                    <template #icon><component :is="h(Pencil)" size="14" /></template>
+                    编辑文件
+                  </a-button>
+
                   <!-- Parse Action -->
                   <a-button
                     v-if="!readonly && canParseFile(row)"
@@ -483,6 +495,7 @@ import {
   canDeleteFile,
   canDownloadFile,
   canIndexFile,
+  canEditParsedContent,
   canOpenFileDetail,
   canParseFile,
   canReindexFile,
@@ -1157,6 +1170,15 @@ const openFileDetail = (record) => {
     return
   }
   store.openFileDetail(record.file_id)
+}
+
+/** 打开详情弹层并直接进入解析产物编辑态 */
+const handleEditParsedContent = (record) => {
+  // 不加 canUseFileMutations 守卫：它描述的是目录树拖拽/重命名的可用性，按状态筛选后
+  // （recursive=true）会为 false，而编辑与树语义无关。此处若加守卫，就会出现「筛选待入库 →
+  // 行菜单 → 编辑文件」按钮可见却点了没反应。同级菜单项（解析/入库/删除）同样不做该判断。
+  closePopover(record.file_id)
+  store.openFileDetailForEdit(record.file_id)
 }
 
 const handleDownloadFile = async (record) => {

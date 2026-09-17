@@ -879,6 +879,14 @@ async def test_dify_query_params_and_documents_readonly(test_client, admin_heade
     assert index_response.status_code == 400, index_response.text
     assert "只支持检索" in index_response.json()["detail"]
 
+    edit_response = await test_client.put(
+        f"/api/knowledge/databases/{kb_id}/documents/file_id_1/content",
+        json={"content": "# x"},
+        headers=admin_headers,
+    )
+    assert edit_response.status_code == 400, edit_response.text
+    assert "只支持检索" in edit_response.json()["detail"]
+
 
 # =============================================================================
 # === Mindmap Tests ===
@@ -1198,3 +1206,176 @@ async def test_document_search_requires_admin(test_client, standard_user, knowle
         headers=standard_user["headers"],
     )
     _assert_forbidden_response(response)
+
+
+# =============================================================================
+# === 解析产物编辑（入库前复核 / 已入库修正） ===
+# =============================================================================
+
+
+async def _seed_document_with_chunks(kb_id, prefix, *, status, chunk_count=3, markdown_file=True):
+    """直接落库文档与分块，绕开耗时的真实解析/嵌入链路，聚焦编辑后的清理语义。"""
+    file_id = f"file_{prefix}"
+    engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "INSERT INTO knowledge_files "
+                    "(file_id, kb_id, parent_id, filename, file_type, status, is_folder, "
+                    " markdown_file, chunk_count, token_count) "
+                    "VALUES (:fid, :kb, NULL, :name, 'txt', :status, FALSE, :md, :cc, :tc)"
+                ),
+                {
+                    "fid": file_id,
+                    "kb": kb_id,
+                    "name": f"{prefix}.txt",
+                    "status": status,
+                    "md": (
+                        f"http://minio/knowledgebases/{kb_id}/parsed/{file_id}.md" if markdown_file else None
+                    ),
+                    "cc": chunk_count,
+                    "tc": chunk_count * 10,
+                },
+            )
+            for index in range(chunk_count):
+                await connection.execute(
+                    text(
+                        "INSERT INTO knowledge_chunks (chunk_id, file_id, kb_id, chunk_index, content) "
+                        "VALUES (:cid, :fid, :kb, :idx, :content)"
+                    ),
+                    {
+                        "cid": f"{file_id}_chunk_{index}",
+                        "fid": file_id,
+                        "kb": kb_id,
+                        "idx": index,
+                        "content": f"旧内容分块 {index}",
+                    },
+                )
+    finally:
+        await engine.dispose()
+    return file_id
+
+
+async def _chunk_rows_for_file(file_id: str) -> int:
+    engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
+    try:
+        async with engine.connect() as connection:
+            result = await connection.execute(
+                text("SELECT count(*) FROM knowledge_chunks WHERE file_id = :fid"), {"fid": file_id}
+            )
+            return result.scalar_one()
+    finally:
+        await engine.dispose()
+
+
+async def test_edit_indexed_document_purges_chunks_and_returns_to_parsed(
+    test_client, admin_headers, knowledge_database
+):
+    """核心保证：编辑已入库文件后，PG 不能残留该文件的任何分块。
+
+    残留会造成「状态显示待入库、但检索仍命中旧内容」的隐蔽不一致——这正是本次
+    功能要防的缺陷，所以断言必须落在真实表上，而不是 mock 的调用次数。
+    """
+    kb_id = knowledge_database["kb_id"]
+    file_id = await _seed_document_with_chunks(kb_id, uuid.uuid4().hex[:8], status="indexed")
+    assert await _chunk_rows_for_file(file_id) == 3
+
+    response = await test_client.put(
+        f"/api/knowledge/databases/{kb_id}/documents/{file_id}/content",
+        json={"content": "# 修订后的标题\n\n这是人工修正后的内容。"},
+        headers=admin_headers,
+    )
+    assert response.status_code == 200, response.text
+
+    meta = response.json()["meta"]
+    assert meta["status"] == "parsed"
+    assert meta["chunk_count"] == 0
+    assert meta["token_count"] == 0
+
+    # 回读三处事实：表里无残留、状态已退回、内容视图不再有幽灵 chunk
+    assert await _chunk_rows_for_file(file_id) == 0
+
+    basic = await test_client.get(
+        f"/api/knowledge/databases/{kb_id}/documents/{file_id}/basic", headers=admin_headers
+    )
+    assert basic.status_code == 200, basic.text
+    assert basic.json()["meta"]["status"] == "parsed"
+
+    content = await test_client.get(
+        f"/api/knowledge/databases/{kb_id}/documents/{file_id}/content", headers=admin_headers
+    )
+    assert content.status_code == 200, content.text
+    payload = content.json()
+    assert payload["lines"] == []
+    assert "人工修正后的内容" in payload["content"]
+
+
+async def test_edit_unindexed_document_keeps_content_without_purging(
+    test_client, admin_headers, knowledge_database
+):
+    """未入库文件编辑后仍停在待入库，且不触碰向量库（无分块可清）。"""
+    kb_id = knowledge_database["kb_id"]
+    file_id = await _seed_document_with_chunks(
+        kb_id, uuid.uuid4().hex[:8], status="parsed", chunk_count=0
+    )
+
+    response = await test_client.put(
+        f"/api/knowledge/databases/{kb_id}/documents/{file_id}/content",
+        json={"content": "# 仅修正错别字"},
+        headers=admin_headers,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["meta"]["status"] == "parsed"
+
+    content = await test_client.get(
+        f"/api/knowledge/databases/{kb_id}/documents/{file_id}/content", headers=admin_headers
+    )
+    assert content.status_code == 200, content.text
+    assert content.json()["content"] == "# 仅修正错别字"
+
+
+async def test_edit_document_rejects_empty_content_and_missing_targets(
+    test_client, admin_headers, knowledge_database
+):
+    """空内容会切出 0 个分块，必须 400；知识库不存在是 404，文档不存在是 400。"""
+    kb_id = knowledge_database["kb_id"]
+    file_id = await _seed_document_with_chunks(kb_id, uuid.uuid4().hex[:8], status="parsed")
+    url = f"/api/knowledge/databases/{kb_id}/documents/{file_id}/content"
+
+    empty = await test_client.put(url, json={"content": "   \n  "}, headers=admin_headers)
+    assert empty.status_code == 400, empty.text
+    assert "不能为空" in empty.json()["detail"]
+
+    # 文档不存在时 _load_file_meta 抛 ValueError("File ... not found")，与 move_document
+    # 等既有同级端点一样映射为 400；只有 KBNotFoundError（知识库不存在）才是 404。
+    missing_doc = await test_client.put(
+        f"/api/knowledge/databases/{kb_id}/documents/file_not_exist/content",
+        json={"content": "# x"},
+        headers=admin_headers,
+    )
+    assert missing_doc.status_code == 400, missing_doc.text
+    assert "not found" in missing_doc.json()["detail"]
+
+    missing_kb = await test_client.put(
+        "/api/knowledge/databases/kb_not_exist/documents/file_not_exist/content",
+        json={"content": "# x"},
+        headers=admin_headers,
+    )
+    assert missing_kb.status_code == 404, missing_kb.text
+
+
+async def test_edit_document_requires_manage_permission(
+    test_client, standard_user, knowledge_database
+):
+    """编辑是破坏性写入（清向量），读权限不足——必须 403，且不落库。"""
+    kb_id = knowledge_database["kb_id"]
+    file_id = await _seed_document_with_chunks(kb_id, uuid.uuid4().hex[:8], status="indexed")
+
+    response = await test_client.put(
+        f"/api/knowledge/databases/{kb_id}/documents/{file_id}/content",
+        json={"content": "# 未授权写入"},
+        headers=standard_user["headers"],
+    )
+    _assert_forbidden_response(response)
+    assert await _chunk_rows_for_file(file_id) == 3, "被拒绝的请求不得清除分块"

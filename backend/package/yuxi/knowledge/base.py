@@ -30,6 +30,16 @@ class FileStatus:
 
 INDEXED_STATS_STATUSES = {FileStatus.INDEXED, "done"}
 
+# 允许人工编辑解析产物的状态。刻意不含 error_parsing，与前端
+# web/src/utils/knowledge_file_policy.js 的 PARSED_PREVIEW_STATUSES 保持同集合，
+# 避免出现「前端显示编辑按钮、后端拒绝」的错位。
+EDITABLE_MARKDOWN_STATUSES = {
+    FileStatus.PARSED,
+    FileStatus.INDEXED,
+    FileStatus.ERROR_INDEXING,
+    "done",  # 历史遗留状态
+}
+
 
 def _should_repair_file_stats(file_meta: dict) -> bool:
     status = file_meta.get("status")
@@ -50,6 +60,15 @@ class KBNotFoundError(KnowledgeBaseException):
 
 class KBNameConflictError(KnowledgeBaseException):
     """知识库名称冲突错误。"""
+
+    pass
+
+
+class KBFileStateConflictError(KnowledgeBaseException):
+    """文件状态在操作过程中被其他动作改变（并发冲突）。
+
+    与 ValueError 区分：ValueError 表示「你传错了」，本异常表示「请稍后重试」，HTTP 上映射为 409。
+    """
 
     pass
 
@@ -455,6 +474,103 @@ class KnowledgeBase(ABC):
         )
 
         return upload_result.url
+
+    async def purge_indexed_chunks(self, kb_id: str, file_id: str) -> None:
+        """清除文件已入库的分块、向量与图谱数据（幂等）。
+
+        文档型 executor 必须覆写本钩子；只读连接器无需实现（路由层已用
+        _ensure_database_supports_documents 拦截）。
+
+        默认实现只告警不抛出：fail-loud 会让「未来某个 executor 继承本类但忘了覆写」
+        从「数据不一致」升级为「编辑功能整体不可用」，两者都不理想，而告警配合
+        单测断言（MilvusKB 已覆写）成本更低。
+        """
+        logger.warning(
+            f"[purge_indexed_chunks] {type(self).__name__} 未实现该钩子，"
+            f"kb_id={kb_id} file_id={file_id} 的旧分块可能残留"
+        )
+
+    async def update_file_markdown(
+        self,
+        kb_id: str,
+        file_id: str,
+        content: str,
+        operator_id: str | None = None,
+    ) -> dict:
+        """覆盖人工编辑后的解析产物 Markdown，并把文件退回到待入库状态。
+
+        与 parse_file 的区别：parse_file 只接受 uploaded/error_parsing 且会清空状态重解析；
+        本方法接受已解析/已入库的文件，只替换产物内容。
+
+        状态迁移：{parsed, indexed, error_indexing, done} -> parsed
+        副作用：原状态已入库时清除旧分块/向量/图谱——否则会出现「状态是待入库，
+        但检索里仍挂着旧内容向量」的隐蔽不一致。
+
+        不采用抢占式 CAS：编辑不走 Durable Task、无 lease，一旦进程崩溃文件会永久卡在
+        中间态，而 fail_task_processing_in_session 只收敛有 task 归属的状态。
+        """
+        from yuxi.repositories.knowledge_file_repository import KnowledgeFileRepository
+        from yuxi.utils.upload_utils import MAX_MARKDOWN_EDIT_SIZE_BYTES
+
+        file_meta = await self._get_file_meta(kb_id, file_id)
+
+        if file_meta.get("is_folder"):
+            raise ValueError("文件夹不支持编辑解析产物")
+        if not file_meta.get("markdown_file"):
+            raise ValueError("文件尚未生成解析结果，请先解析")
+        if not content or not content.strip():
+            # 空 Markdown 会切出 0 个分块，产生「已入库却检索不到」的哑状态
+            raise ValueError("解析内容不能为空")
+        if len(content.encode("utf-8")) > MAX_MARKDOWN_EDIT_SIZE_BYTES:
+            raise ValueError(f"解析内容超出限制（{MAX_MARKDOWN_EDIT_SIZE_BYTES // (1024 * 1024)}MB）")
+
+        status = file_meta.get("status")
+        # 早退拒绝并发：正在解析/入库时不介入，覆盖绝大多数实际竞态
+        if status in (FileStatus.PARSING, FileStatus.INDEXING):
+            raise KBFileStateConflictError("文件正在解析或入库中，请稍后重试")
+        if status not in EDITABLE_MARKDOWN_STATUSES:
+            raise KBFileStateConflictError(f"文件当前状态（{status}）不支持编辑解析产物")
+
+        was_indexed = status in INDEXED_STATS_STATUSES or status == FileStatus.ERROR_INDEXING
+
+        # 1) 覆盖产物：对象名为确定性路径 {kb_id}/parsed/{file_id}.md，重复写即幂等覆盖
+        await self._save_markdown_to_minio(kb_id, file_id, content)
+
+        # 2) 原本已入库时清掉旧分块，避免检索命中已修改的旧内容
+        if was_indexed:
+            await self.purge_indexed_chunks(kb_id, file_id)
+
+        # 3) CAS 收口：唯一的状态权威变更（单条 UPDATE ... WHERE status IN (...) RETURNING）
+        #
+        # allowed_statuses 必须是**上面读到的那一个状态**，不能放宽成整个可编辑集合：
+        # 本轮是否清向量由读取时的快照决定，若 CAS 还接受其它状态，就会出现
+        # 「读到时是 parsed（跳过清理）→ 期间并发索引完成 → CAS 因 indexed 也在集合内而命中，
+        # 把状态改成 parsed」，结果是状态显示待入库、检索里却仍挂着旧向量——正是本方法
+        # 要消除的那种不一致。收窄后任何并发状态变化都会让 CAS 落空并抛 409，用户重试时
+        # 读到的已是 indexed，自然会走清理分支。
+        record = await KnowledgeFileRepository().update_fields_if_status(
+            kb_id=kb_id,
+            file_id=file_id,
+            allowed_statuses={status},
+            data={
+                "status": FileStatus.PARSED,
+                "error_message": None,
+                # 显式归零：即使 purge 被降级为 no-op，也保证 CAS 返回值自洽
+                "chunk_count": 0,
+                "token_count": 0,
+                **({"updated_by": operator_id} if operator_id else {}),
+            },
+        )
+        if record is None:
+            # 清除排在 CAS 之前，所以落空时旧索引可能已被清掉而状态未变。这不影响正确性
+            # （最多是多清一次，重新入库即恢复），但必须留下可定位的信号。
+            if was_indexed:
+                logger.warning(
+                    f"解析产物已保存且已清除索引，但状态未改变（CAS 落空）：{kb_id=}, {file_id=}, 观察到状态={status}"
+                )
+            raise KBFileStateConflictError("文件状态已变化，请刷新后重试")
+
+        return self._file_record_to_meta(record)
 
     async def _read_minio_bytes(self, file_path: str) -> bytes:
         from yuxi.knowledge.utils.kb_utils import is_minio_url, parse_minio_url

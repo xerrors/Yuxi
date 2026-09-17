@@ -1220,6 +1220,14 @@ class MilvusKB(KnowledgeBase):
             data={"chunk_count": 0, "token_count": 0},
         )
 
+    async def purge_indexed_chunks(self, kb_id: str, file_id: str) -> None:
+        """清除已入库的分块、向量与图谱（编辑解析产物后调用）。
+
+        与 delete_file_chunks_only 同一实现，但语义是「保留文件元数据、只清索引」，
+        供 KnowledgeBase.update_file_markdown 通过钩子调用。
+        """
+        await self.delete_file_chunks_only(kb_id, file_id)
+
     async def delete_file(self, kb_id: str, file_id: str) -> None:
         """删除文件（包括元数据）"""
         # 先删除 Milvus 中的 chunks 数据

@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 from yuxi.config.options import system_options
-from yuxi.knowledge.base import KBNameConflictError, KBNotFoundError
+from yuxi.knowledge.base import KBFileStateConflictError, KBNameConflictError, KBNotFoundError
 from yuxi.knowledge.chunking.ragflow_like.presets import get_chunk_preset_options
 from yuxi.knowledge.graphs.milvus_graph_service import GRAPH_TASK_TYPE, MilvusGraphService
 from yuxi.knowledge.read_models import KnowledgeBaseDetail
@@ -1509,6 +1509,50 @@ async def move_document(
     except Exception as e:
         logger.error(f"移动文件失败 {e}, {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class UpdateDocumentMarkdownRequest(BaseModel):
+    """编辑解析产物的请求体。"""
+
+    content: str
+
+
+@knowledge.put("/databases/{kb_id}/documents/{doc_id}/content")
+async def update_document_content(
+    kb_id: str,
+    doc_id: str,
+    request: UpdateDocumentMarkdownRequest,
+    current_user: User = Depends(require_knowledge_base_manage),
+):
+    """覆盖保存编辑后的解析产物 Markdown，并把文件退回待入库状态。
+
+    已入库的文件会被清除旧分块/向量/图谱——否则会出现「状态是待入库、
+    但检索里仍挂着旧内容向量」的不一致。
+    """
+    logger.debug(f"PUT document {doc_id} content in {kb_id}")
+    if not request.content or not request.content.strip():
+        raise HTTPException(status_code=400, detail="解析内容不能为空")
+
+    try:
+        await _ensure_database_supports_documents(kb_id, "文档解析内容编辑")
+        meta = await knowledge_base.update_file_markdown(kb_id, doc_id, request.content, current_user.uid)
+        return {
+            "status": "success",
+            "message": "解析内容已保存，文件已标记为待入库",
+            "meta": meta,
+        }
+    except HTTPException:
+        raise
+    except KBFileStateConflictError as e:
+        # 并发冲突：文件正在解析/入库，或状态在保存过程中被其他动作改变
+        raise HTTPException(status_code=409, detail=str(e))
+    except KBNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"保存解析内容失败 {e}, {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"保存失败: {e}")
 
 
 @knowledge.post("/files/fetch-url")

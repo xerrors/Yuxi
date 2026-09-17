@@ -231,6 +231,18 @@ export const documentApi = {
   },
 
   /**
+   * 覆盖保存编辑后的解析产物 Markdown
+   * 后端会把文件退回「待入库」；若原本已入库，会一并清除旧分块/向量/图谱
+   * @param {string} kbId - 知识库ID
+   * @param {string} docId - 文档ID
+   * @param {string} content - 完整 Markdown 文本
+   * @returns {Promise} - { status, message, meta }
+   */
+  updateDocumentContent: async (kbId, docId, content) => {
+    return apiAdminPut(`/api/knowledge/databases/${kbId}/documents/${docId}/content`, { content })
+  },
+
+  /**
    * 删除文档
    * @param {string} kbId - 知识库ID
    * @param {string} docId - 文档ID
