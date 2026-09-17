@@ -184,7 +184,17 @@ export const createMarkdownRenderer = ({ themeName, highlighter }) =>
         }
       : undefined
   })
-    .use(markdownKatexPlugin, { throwOnError: false, errorColor: '#cc0000', trust: false })
+    .use(markdownKatexPlugin, {
+      throwOnError: false,
+      errorColor: '#cc0000',
+      trust: false,
+      // 解析产物常把表格输出成一整行 HTML（<table>...</table>）。markdown-it 在
+      // html: true 下把该行整体当 html_block 原样透传，原始 HTML 不走 inline 解析，
+      // 所以单元格里的 $...$ 到不了 KaTeX。这两个开关让插件在 html_block 内部再扫一次
+      // 数学分隔符（插件自带规则：尊重 \$ 转义与词边界，故正文里的 $5 与 $10 不会被误判）。
+      enableMathInlineInHtml: true,
+      enableMathBlockInHtml: true
+    })
     .use(taskLists, { enabled: false, label: false, labelAfter: false })
     .use(markdownItFrontmatterCard)
 
