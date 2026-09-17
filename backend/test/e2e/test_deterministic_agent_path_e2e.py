@@ -1421,3 +1421,106 @@ async def test_attachment_is_written_to_user_workspace_workdir_and_survives_runt
         if agent_slug:
             await delete_agent(e2e_client, e2e_headers, agent_slug)
         await _delete_provider(e2e_client, e2e_headers)
+
+
+async def test_subagent_end_is_observable_while_parent_awaits_slow_child(e2e_client, e2e_headers):
+    """父 graph 等待慢任务时，独立子 SSE 和数据库已能证明快任务完成。"""
+    uid = str((await e2e_client.get("/api/auth/me", headers=e2e_headers)).json()["uid"])
+    await _create_provider(e2e_client, e2e_headers)
+    agents, child_threads = [], []
+    thread_id = run_id = None
+    gate = str(uuid.uuid4())
+    try:
+        child = await _create_agent(
+            e2e_client, e2e_headers, uid, is_subagent=True, system_prompt_suffix="DETERMINISTIC_SUBAGENT_CHILD"
+        )
+        agents.append(child)
+        parent = await _create_agent(
+            e2e_client,
+            e2e_headers,
+            uid,
+            subagents=[child],
+            system_prompt_suffix=f"DETERMINISTIC_SUBAGENT_PARENT:{child}",
+        )
+        agents.append(parent)
+        response = await e2e_client.post(
+            "/api/chat/thread",
+            headers=e2e_headers,
+            json={
+                "agent_id": parent,
+                "title": make_test_conversation_title("subagent-observation"),
+                "metadata": make_test_conversation_metadata("subagent-observation", e2e=True),
+            },
+        )
+        assert response.status_code == 200, response.text
+        thread_id = response.json()["id"]
+        response = await e2e_client.post(
+            "/api/agent/runs",
+            headers=e2e_headers,
+            json={
+                "agent_slug": parent,
+                "thread_id": thread_id,
+                "query": f"{EXPECTED_OUTPUT} SUBAGENT_OBSERVATION_GATE:{gate} SUBAGENT_PATH:/tmp/not-written",
+                "tool_approval_mode": "default",
+                "meta": {"request_id": str(uuid.uuid4())},
+            },
+        )
+        assert response.status_code == 200, response.text
+        run_id = response.json()["run_id"]
+        conn = await asyncpg.connect(postgres_dsn())
+        try:
+            async with asyncio.timeout(45):
+                while True:
+                    children = await conn.fetch(
+                        "SELECT id, status, conversation_thread_id, input_payload, output_message_id "
+                        "FROM agent_runs WHERE created_by_run_id = $1 AND run_type = 'subagent'",
+                        run_id,
+                    )
+                    by_call = {json.loads(row["input_payload"])["runtime"]["tool_call_id"]: row for row in children}
+                    awaiting = await conn.fetchval(
+                        "SELECT execution_status FROM messages WHERE run_id = $1 AND message_type = 'tool_audit' "
+                        "AND operation_id = 'await-call-subagent-slow'",
+                        run_id,
+                    )
+                    if (
+                        len(by_call) == 2
+                        and by_call["call-subagent-start"]["status"] == "completed"
+                        and by_call["call-subagent-slow"]["status"] == "running"
+                        and awaiting == "running"
+                    ):
+                        break
+                    await asyncio.sleep(0.2)
+            child_threads = [row["conversation_thread_id"] for row in children]
+            fast, slow = by_call["call-subagent-start"], by_call["call-subagent-slow"]
+            assert fast["output_message_id"] is not None
+            assert await conn.fetchval("SELECT status FROM agent_runs WHERE id = $1", run_id) == "running"
+            state = await e2e_client.get(f"/api/chat/thread/{thread_id}/state", headers=e2e_headers)
+            assert state.status_code == 200, state.text
+            states = {row["run_id"]: row["status"] for row in state.json()["agent_state"]["subagent_runs"]}
+            assert states == {fast["id"]: "completed", slow["id"]: "running"}
+            async with e2e_client.stream("GET", f"/api/agent/runs/{fast['id']}/events", headers=e2e_headers) as events:
+                assert events.status_code == 200
+                body = (await events.aread()).decode()
+                assert "event: end" in body and '"completed"' in body
+            assert await conn.fetchval("SELECT status FROM agent_runs WHERE id = $1", run_id) == "running"
+        finally:
+            await conn.close()
+        async with httpx.AsyncClient() as replay:
+            await replay.get("http://localhost:8765/release-subagent", params={"token": gate})
+        final = await wait_for_run(e2e_client, e2e_headers, run_id)
+        assert final["status"] == "completed", final
+        for row in children:
+            result = await e2e_client.get(f"/api/agent/runs/{row['id']}/result", headers=e2e_headers)
+            assert result.json()["status"] == "completed", result.text
+            assert result.json()["output"] == EXPECTED_OUTPUT
+    finally:
+        async with httpx.AsyncClient() as replay:
+            await replay.get("http://localhost:8765/release-subagent", params={"token": gate})
+        if run_id:
+            await cancel_run(e2e_client, e2e_headers, run_id)
+        for target in [*child_threads, thread_id]:
+            if target:
+                await e2e_client.delete(f"/api/chat/thread/{target}", headers=e2e_headers)
+        for slug in reversed(agents):
+            await delete_agent(e2e_client, e2e_headers, slug)
+        await _delete_provider(e2e_client, e2e_headers)

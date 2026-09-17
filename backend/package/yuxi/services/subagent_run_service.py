@@ -66,7 +66,7 @@ def subagent_run_urls(run_id: str) -> dict[str, str]:
 def serialize_subagent_run_state(run: AgentRun) -> dict:
     """序列化给父智能体状态使用的子智能体 run 摘要。
 
-    任务描述不在此冗余存储：其唯一来源是父对话里 `task` 工具调用的入参，
+    任务描述不在此冗余存储：其唯一来源是父对话里 `subagent_start`（或历史 `task`）工具调用的入参，
     前端面板按 tool_call_id 回填展示。
     """
     payload = run.input_payload

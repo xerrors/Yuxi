@@ -186,6 +186,22 @@ class AgentRunRepository:
         )
         return list(result.scalars().all())
 
+    async def list_subagent_runs_for_conversation(self, conversation_id: int, uid: str) -> list[AgentRun]:
+        """按持久父子关系读取子 Run，补齐尚未进入父 checkpoint 的派发记录。"""
+        result = await self.db.execute(
+            select(AgentRun)
+            .join(SubagentThread, AgentRun.subagent_thread_relation_id == SubagentThread.id)
+            .where(
+                SubagentThread.parent_conversation_id == conversation_id,
+                SubagentThread.uid == str(uid),
+                AgentRun.uid == str(uid),
+                AgentRun.run_type == "subagent",
+                AgentRun.conversation_id == SubagentThread.child_conversation_id,
+            )
+            .order_by(AgentRun.created_at.asc(), AgentRun.id.asc())
+        )
+        return list(result.scalars().all())
+
     async def get_active_run_by_thread_for_user(
         self,
         *,

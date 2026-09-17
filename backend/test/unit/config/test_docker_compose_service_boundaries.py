@@ -1,5 +1,6 @@
 from copy import deepcopy
 import os
+import re
 from pathlib import Path
 import subprocess
 
@@ -76,7 +77,8 @@ def _volume_target(volume: object) -> str:
     if not isinstance(volume, str):
         return ""
 
-    parts = volume.split(":")
+    # 未插值的环境变量默认值含冒号，不属于挂载分隔符。
+    parts = re.sub(r"\$\{[^}]*\}", "_env_", volume).split(":")
     return parts[1] if len(parts) >= 2 else parts[0]
 
 
@@ -389,6 +391,7 @@ def test_integration_cleanup_does_not_bypass_sandbox_provisioner():
     [
         ("api", "./docker/volumes/models:/app/models", "/app/models"),
         ("worker", "/var/run/docker.sock:/var/run/docker.sock", "/var/run/docker.sock"),
+        ("api", "${YUXI_STATE_DIR:-./docker/volumes}/models:/app/models:ro", "/app/models"),
     ],
 )
 def test_mount_guard_detects_reintroduced_api_worker_host_dependencies(

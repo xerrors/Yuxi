@@ -87,18 +87,34 @@ async def test_fixed_tool_schemas_reused_without_sharing_parent_run(monkeypatch)
     second = _async_tool_middleware()
     second.parent_context.run_id = "second-parent"
 
-    async def return_parent(self, **kwargs):
-        return None, self.parent_context.run_id
+    _patch_session(monkeypatch)
 
-    monkeypatch.setattr(YuxiSubAgentMiddleware, "_start_subagent", return_parent)
+    class CaptureParentService:
+        def __init__(self, db):
+            pass
+
+        async def start(self, **kwargs):
+            raise ValueError(kwargs["created_by_run_id"])
+
+    _patch_subagent_run_service(monkeypatch, CaptureParentService)
     for left, right in zip(first.tools, second.tools, strict=True):
         assert left is not right
         assert left.args_schema is right.args_schema
         assert right.tool_call_schema.model_json_schema() == first_schemas[right.name]
         assert "runtime" not in first_schemas[right.name]["properties"]
 
-    assert await first.tools[0].coroutine(description="test", subagent_slug="worker", runtime=None) == "first-parent"
-    assert await second.tools[0].coroutine(description="test", subagent_slug="worker", runtime=None) == "second-parent"
+    assert (
+        await first.tools[0].coroutine(
+            description="test", subagent_slug="worker", runtime=SimpleNamespace(tool_call_id="test-call")
+        )
+        == "first-parent"
+    )
+    assert (
+        await second.tools[0].coroutine(
+            description="test", subagent_slug="worker", runtime=SimpleNamespace(tool_call_id="test-call")
+        )
+        == "second-parent"
+    )
 
 
 def _subagent_run(
@@ -131,66 +147,28 @@ def _subagent_run(
     )
 
 
-def _patch_task_start_and_await(
-    monkeypatch,
-    captured: dict,
-    *,
-    status: str = "completed",
-    output: str = "child done",
-    thread_id: str = "child-thread",
-    error_message: str | None = None,
-    wait_timeout: bool = False,
-):
-    class _SubagentRunService:
+def _patch_start(monkeypatch, captured: dict, *, thread_id: str = "child-thread"):
+    """模拟已提交的派发结果，并拒绝 start 隐式等待子任务。"""
+
+    class Service:
         def __init__(self, db):
             captured["db"] = db
 
         async def start(self, **kwargs):
             captured["start"] = kwargs
             return SimpleNamespace(
-                run=_subagent_run(
-                    status="pending",
-                    thread_id=thread_id,
-                    tool_call_id=kwargs["tool_call_id"],
-                    subagent_slug=kwargs["agent_item"].slug,
-                    subagent_name=kwargs["agent_item"].name,
-                    description=kwargs["input_message"].content,
-                ),
+                run=_subagent_run(status="pending", thread_id=thread_id, tool_call_id=kwargs["tool_call_id"]),
                 created=True,
                 continuing=bool(kwargs.get("requested_thread_id")),
                 relation=SimpleNamespace(id=77, child_thread_id=thread_id),
             )
 
-        async def get_run_for_creator(self, **kwargs):
-            captured["get_run_for_creator"] = kwargs
-            started = captured["start"]
-            return _subagent_run(
-                status=status,
-                thread_id=thread_id,
-                tool_call_id=started["tool_call_id"],
-                subagent_slug=started["agent_item"].slug,
-                subagent_name=started["agent_item"].name,
-                description=started["input_message"].content,
-                error_message=error_message,
-            )
-
-    async def fake_await_agent_run_result(*, run_id: str, current_uid: str):
-        captured["await"] = {"run_id": run_id, "current_uid": current_uid}
-        result = {
-            "status": status,
-            "output": output,
-            "agent_run_id": run_id,
-            "thread_id": thread_id,
-        }
-        if error_message:
-            result["error"] = {"type": "RuntimeError", "message": error_message}
-        if wait_timeout:
-            raise agent_run_service.AgentRunWaitTimeout(result)
-        return result
+    async def reject_wait(**kwargs):
+        pytest.fail("subagent_start 不得等待子 Run")
 
     _patch_session(monkeypatch)
-    _patch_subagent_run_service(monkeypatch, _SubagentRunService)
-    monkeypatch.setattr(agent_run_service, "await_agent_run_result", fake_await_agent_run_result)
+    _patch_subagent_run_service(monkeypatch, Service)
+    monkeypatch.setattr(agent_run_service, "await_agent_run_result", reject_wait)
 
 
 @pytest.mark.asyncio
@@ -232,7 +210,6 @@ async def test_create_task_middleware_loads_all_visible_subagents_when_empty(mon
 
     assert isinstance(middleware, YuxiSubAgentMiddleware)
     assert {tool.name for tool in middleware.tools} == {
-        "task",
         "subagent_start",
         "subagent_status",
         "subagent_cancel",
@@ -241,7 +218,7 @@ async def test_create_task_middleware_loads_all_visible_subagents_when_empty(mon
 
 
 @pytest.mark.asyncio
-async def test_task_tool_rejects_unconfigured_subagent() -> None:
+async def test_subagent_start_rejects_unconfigured_subagent() -> None:
     middleware = YuxiSubAgentMiddleware(
         parent_context=SimpleNamespace(thread_id="parent-thread", uid="user-1", model=""),
         subagents=[
@@ -271,9 +248,9 @@ async def test_task_tool_rejects_unconfigured_subagent() -> None:
 
 
 @pytest.mark.asyncio
-async def test_task_tool_invokes_subagent_with_child_scope(monkeypatch) -> None:
+async def test_subagent_start_invokes_subagent_with_child_scope(monkeypatch) -> None:
     captured = {}
-    _patch_task_start_and_await(monkeypatch, captured, thread_id="child-thread")
+    _patch_start(monkeypatch, captured, thread_id="child-thread")
 
     middleware = YuxiSubAgentMiddleware(
         parent_context=SimpleNamespace(
@@ -302,22 +279,22 @@ async def test_task_tool_invokes_subagent_with_child_scope(monkeypatch) -> None:
     )
 
     assert isinstance(result, Command)
-    assert result.update["messages"][0].content == "> 子智能体线程 ID: child-thread\n\n---\n\nchild done"
+    assert json.loads(result.update["messages"][0].content)["run_id"] == "child-run"
     assert result.update["messages"][0].tool_call_id == "tool-1"
     assert captured["start"]["uid"] == "user-1"
     assert captured["start"]["created_by_run_id"] == "parent-run"
     assert captured["start"]["requested_thread_id"] is None
     assert "model_spec" not in captured["start"]
-    assert captured["await"] == {"run_id": "child-run", "current_uid": "user-1"}
+    assert "await" not in captured
     assert result.update["subagent_runs"][0]["run_id"] == "child-run"
     assert result.update["subagent_runs"][0]["child_thread_id"] == "child-thread"
-    assert result.update["subagent_runs"][0]["status"] == "completed"
+    assert result.update["subagent_runs"][0]["status"] == "pending"
 
 
 @pytest.mark.asyncio
-async def test_task_tool_leaves_model_resolution_to_service(monkeypatch) -> None:
+async def test_subagent_start_leaves_model_resolution_to_service(monkeypatch) -> None:
     captured = {}
-    _patch_task_start_and_await(monkeypatch, captured)
+    _patch_start(monkeypatch, captured)
 
     middleware = YuxiSubAgentMiddleware(
         parent_context=SimpleNamespace(
@@ -349,86 +326,9 @@ async def test_task_tool_leaves_model_resolution_to_service(monkeypatch) -> None
 
 
 @pytest.mark.asyncio
-async def test_task_tool_records_failed_subagent_run(monkeypatch) -> None:
+async def test_subagent_start_continues_existing_subagent_thread(monkeypatch) -> None:
     captured = {}
-    _patch_task_start_and_await(monkeypatch, captured, status="failed", output="", error_message="child boom")
-
-    middleware = YuxiSubAgentMiddleware(
-        parent_context=SimpleNamespace(
-            thread_id="parent-thread",
-            runtime_scope_id="parent-thread",
-            workdir_path="projects/11111111-1111-4111-8111-111111111111",
-            uid="user-1",
-            run_id="parent-run",
-            model="",
-        ),
-        subagents=[
-            SimpleNamespace(
-                slug="worker",
-                name="Worker",
-                description="work on scoped tasks",
-                backend_id=SUB_AGENT_BACKEND_ID,
-                config_json={},
-            )
-        ],
-    )
-
-    result = await middleware.tools[0].coroutine(
-        description="write a report",
-        subagent_slug="worker",
-        runtime=SimpleNamespace(tool_call_id="tool-1", state={}, config={}),
-    )
-
-    assert isinstance(result, Command)
-    assert result.update["messages"][0].content == "> 子智能体线程 ID: child-thread\n\n---\n\nchild boom"
-    assert result.update["subagent_runs"][0]["status"] == "failed"
-    assert result.update["subagent_runs"][0]["error"] == "child boom"
-
-
-@pytest.mark.asyncio
-async def test_task_tool_reports_running_subagent_after_wait_timeout(monkeypatch) -> None:
-    captured = {}
-    _patch_task_start_and_await(monkeypatch, captured, status="running", output="", wait_timeout=True)
-
-    middleware = YuxiSubAgentMiddleware(
-        parent_context=SimpleNamespace(
-            thread_id="parent-thread",
-            runtime_scope_id="parent-thread",
-            workdir_path="projects/11111111-1111-4111-8111-111111111111",
-            uid="user-1",
-            run_id="parent-run",
-            model="",
-        ),
-        subagents=[
-            SimpleNamespace(
-                slug="worker",
-                name="Worker",
-                description="work on scoped tasks",
-                backend_id=SUB_AGENT_BACKEND_ID,
-                config_json={},
-            )
-        ],
-    )
-
-    result = await middleware.tools[0].coroutine(
-        description="write a long report",
-        subagent_slug="worker",
-        runtime=SimpleNamespace(tool_call_id="tool-1", state={}, config={}),
-    )
-
-    assert isinstance(result, Command)
-    content = result.update["messages"][0].content
-    assert "子智能体仍在运行" in content
-    assert "run_id: child-run" in content
-    assert "不要把当前结果视为任务已完成" in content
-    assert "子智能体已完成任务" not in content
-    assert result.update["subagent_runs"][0]["status"] == "running"
-
-
-@pytest.mark.asyncio
-async def test_task_tool_continues_existing_subagent_thread(monkeypatch) -> None:
-    captured = {}
-    _patch_task_start_and_await(monkeypatch, captured, output="continued done", thread_id="child-thread")
+    _patch_start(monkeypatch, captured, thread_id="child-thread")
 
     middleware = YuxiSubAgentMiddleware(
         parent_context=SimpleNamespace(
@@ -458,13 +358,13 @@ async def test_task_tool_continues_existing_subagent_thread(monkeypatch) -> None
     )
 
     assert isinstance(result, Command)
-    assert result.update["messages"][0].content == "> 子智能体线程 ID: child-thread\n\n---\n\ncontinued done"
+    assert json.loads(result.update["messages"][0].content)["continuing"] is True
     assert captured["start"]["requested_thread_id"] == "child-thread"
     assert result.update["subagent_runs"][0]["child_thread_id"] == "child-thread"
 
 
 @pytest.mark.asyncio
-async def test_task_tool_rejects_invalid_continuation_thread(monkeypatch) -> None:
+async def test_subagent_start_rejects_invalid_continuation_thread(monkeypatch) -> None:
     class _SubagentRunService:
         def __init__(self, db):
             del db
@@ -779,3 +679,37 @@ async def test_subagent_await_reports_timeout_when_run_is_still_active(monkeypat
     assert payload["result"]["status"] == "running"
     assert captured["await"] == {"run_id": "child-run", "current_uid": "user-1"}
     assert len(captured["loads"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_historical_unexecuted_task_is_rejected_by_current_tool_node():
+    """旧 checkpoint 的 task 调用明确报错，不隐式再次派发子 Run。"""
+    from langchain_core.messages import AIMessage
+    from langgraph.prebuilt import ToolNode
+
+    from langgraph.graph import END, START, MessagesState, StateGraph
+
+    graph = StateGraph(MessagesState)
+    graph.add_node("tools", ToolNode(_async_tool_middleware().tools))
+    graph.add_edge(START, "tools")
+    graph.add_edge("tools", END)
+    result = await graph.compile().ainvoke(
+        {
+            "messages": [
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "old-task",
+                            "name": "task",
+                            "args": {"description": "old", "subagent_slug": "worker"},
+                        }
+                    ],
+                )
+            ],
+        }
+    )
+    message = result["messages"][-1]
+    assert message.status == "error"
+    assert message.tool_call_id == "old-task"
+    assert "task is not a valid tool" in message.content

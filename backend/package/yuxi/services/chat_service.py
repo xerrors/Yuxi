@@ -26,7 +26,6 @@ from yuxi.agents.base import _json_safe
 from yuxi.agents.buildin import agent_manager
 from yuxi.agents.callbacks.model_request_timing import FirstModelRequestRecorder
 from yuxi.agents.context import BaseContext
-from yuxi.services.agent_run_manifest_service import PreparedRunExecution
 from yuxi.agents.state import AgentStatePayload
 from yuxi.models.utils import parse_assistant_message_body
 from yuxi.repositories.agent_repository import AgentRepository
@@ -35,6 +34,7 @@ from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.repositories.model_message_audit_repository import ModelMessageAuditRepository
 from yuxi.repositories.subagent_thread_repository import SubagentThreadRepository
 from yuxi.repositories.tool_message_audit_repository import ToolMessageAuditRepository
+from yuxi.services.agent_run_manifest_service import PreparedRunExecution
 from yuxi.services.attachment_service import serialize_attachment
 from yuxi.services.input_message_service import AgentRunInputMessage
 from yuxi.services.langfuse_service import (
@@ -1592,6 +1592,9 @@ async def get_agent_state_view(
                 "run_id": latest_run.id,
             }
         if include_relations:
+            # checkpoint 保存模型上下文；页面加载以持久 Run 的身份与状态为准。
+            child_runs = await run_repo.list_subagent_runs_for_conversation(conversation.id, current_uid)
+            response["agent_state"]["subagent_runs"] = [serialize_subagent_run_state(run) for run in child_runs]
             relation = await SubagentThreadRepository(db).get_by_child_conversation_for_user(
                 conversation.id,
                 str(current_uid),

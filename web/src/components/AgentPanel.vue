@@ -215,7 +215,8 @@
       >
         <SubagentThreadView
           :thread-id="section.threadId"
-          :active="activeSectionKey === section.key"
+          :run-id="section.runId"
+          :active="visible && activeSectionKey === section.key"
         />
       </div>
       <div

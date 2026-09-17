@@ -1063,6 +1063,9 @@ async def test_get_agent_state_view_returns_interrupted_checkpoint_payload(monke
             return None
 
     class RunRepo:
+        async def list_subagent_runs_for_conversation(self, conversation_id, uid):
+            return []
+
         def __init__(self, _db):
             pass
 
@@ -1119,6 +1122,9 @@ async def test_get_agent_state_view_rejects_conversation_without_workdir(monkeyp
             )
 
     class RunRepo:
+        async def list_subagent_runs_for_conversation(self, conversation_id, uid):
+            return []
+
         def __init__(self, _db):
             pass
 
@@ -1192,6 +1198,9 @@ async def test_get_agent_state_view_includes_subagent_thread_relation(monkeypatc
             )
 
     class RunRepo:
+        async def list_subagent_runs_for_conversation(self, conversation_id, uid):
+            return []
+
         def __init__(self, _db):
             pass
 
@@ -1294,6 +1303,9 @@ async def test_get_agent_state_view_reports_malformed_subagent_run_as_server_err
             )
 
     class RunRepo:
+        async def list_subagent_runs_for_conversation(self, conversation_id, uid):
+            return []
+
         def __init__(self, _db):
             pass
 

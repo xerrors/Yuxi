@@ -8,7 +8,16 @@
     hide-params
   >
     <template #header>
-      <div class="sep-header">
+      <div
+        class="sep-header"
+        :class="{ 'is-link': canOpenRun }"
+        :role="canOpenRun ? 'button' : undefined"
+        :tabindex="canOpenRun ? 0 : undefined"
+        :aria-label="canOpenRun ? '查看子智能体运行' : undefined"
+        @click="openRun"
+        @keydown.enter="openRun"
+        @keydown.space="openRun"
+      >
         <span class="note">{{ headerTitle }}</span>
         <span v-if="statusLabel" class="run-status" :class="runStatusClass">
           {{ statusLabel }}
@@ -65,7 +74,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, inject } from 'vue'
 import BaseToolCall from '../BaseToolCall.vue'
 import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
 import {
@@ -90,6 +99,15 @@ const props = defineProps({
     default: false
   }
 })
+
+const openSubagentThread = inject('openSubagentThread', null)
+const canOpenRun = computed(() => Boolean(openSubagentThread && subagentRun.value?.child_thread_id))
+const openRun = (event) => {
+  if (!canOpenRun.value) return
+  event.preventDefault()
+  event.stopPropagation()
+  openSubagentThread(subagentRun.value)
+}
 
 const TOOL_LABELS = {
   subagent_start: '启动子智能体',
@@ -251,6 +269,17 @@ const fallbackResult = computed(() => {
   font-size: 14px;
   width: 100%;
   overflow: hidden;
+}
+
+.sep-header.is-link {
+  cursor: pointer;
+  &:hover {
+    color: var(--main-color);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--main-color);
+    outline-offset: -2px;
+  }
 }
 
 .run-status {

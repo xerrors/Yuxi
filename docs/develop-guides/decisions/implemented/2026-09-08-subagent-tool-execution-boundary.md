@@ -26,6 +26,6 @@ Owner：backend/package/yuxi/agents/buildin/subagent/graph.py
 
 `backend/test/unit/agents/test_subagent_tool_filter.py` 的同步和异步拒绝用例覆盖工具执行 guard，注册检查覆盖禁用工具未进入文件系统工具集合。
 
-`backend/test/e2e/test_deterministic_agent_path_e2e.py::test_subagent_worker_enforces_inherited_write_policy` 通过真实父 task、子 Run 和 PostgreSQL checkpoint 验证审批模式继承与 ToolMessage 关联，回读共享 Workdir 证明默认模式未写入、信任模式写入。执行前拒绝保存在 checkpoint ToolMessage 中；信任模式另外核对执行阶段的 Tool audit。该参数化用例由 Runtime System Tests 的确定性 E2E 步骤执行。
+`backend/test/e2e/test_deterministic_agent_path_e2e.py::test_subagent_worker_enforces_inherited_write_policy` 通过真实父 subagent_start/subagent_await、子 Run 和 PostgreSQL checkpoint 验证审批模式继承与 ToolMessage 关联，回读共享 Workdir 证明默认模式未写入、信任模式写入。执行前拒绝保存在 checkpoint ToolMessage 中；信任模式另外核对执行阶段的 Tool audit。该参数化用例由 Runtime System Tests 的确定性 E2E 步骤执行。
 
 本地隔离 Compose 中两种模式 E2E、相关前置 integration 和 Message audit 检查通过，未复现 CI 挂起。该结果不证明 CI 根因已消除，合并前需重新检查远端 CI。修复沿用既定的禁用策略，没有新增待裁决的权限语义，因此直接记录为 implemented。
