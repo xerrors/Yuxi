@@ -16,7 +16,6 @@ from yuxi.agents.buildin.chatbot.prompt import TODO_MID_PROMPT, build_prompt_wit
 from yuxi.agents.buildin.subagent.context import SubAgentContext
 from yuxi.agents.context import (
     DEFAULT_TOOL_RESULT_EVICTION_K_TOKENS,
-    prepare_agent_runtime_context,
 )
 from yuxi.agents.middlewares import (
     ImageInputCompatibilityMiddleware,
@@ -135,11 +134,10 @@ class SubAgentBackend(BaseAgent):
             ]
         return info
 
-    async def get_graph(self, context=None, **kwargs):
-        context = await prepare_agent_runtime_context(
-            context or self.context_schema(),
-            context_schema=self.context_schema,
-        )
+    async def get_graph(self, *, context, **kwargs):
+        """从显式准备的 Context 构建执行图。"""
+        if not getattr(context, "_runtime_prepared", False):
+            raise ValueError("构图需要已准备的 Context")
         await sync_agent_context_skills(context)
         model_spec = resolve_chat_model_spec(context.model)
         tool_approval_mode = normalize_tool_approval_mode(getattr(context, "tool_approval_mode", "default"))

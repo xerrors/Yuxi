@@ -21,6 +21,32 @@ from yuxi.services import workdir_service
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.asyncio
+async def test_tmp_attachment_parse_preserves_http_exception(monkeypatch):
+    """服务层保留解析链路抛出的 HTTP 状态、详情和响应头。"""
+    from fastapi import HTTPException
+
+    error = HTTPException(503, "parser unavailable", headers={"Retry-After": "30"})
+    minio_client = FakeMinioClient()
+
+    async def parse(*args, **kwargs):
+        """模拟解析服务暂时不可用。"""
+        raise error
+
+    monkeypatch.setattr(service, "get_minio_client", lambda: minio_client)
+    monkeypatch.setattr("yuxi.services.ocr_service.parse_document", parse)
+
+    with pytest.raises(HTTPException) as caught:
+        await service.parse_tmp_attachment_view(
+            object_name="tmp/chat_attachments/user-1/file-1/original/report.pdf",
+            parse_method="disable",
+            current_uid="user-1",
+        )
+
+    assert caught.value is error
+    assert minio_client.uploads == []
+
+
 class FakeUpload:
     def __init__(self, filename: str, content: bytes, content_type: str | None = None):
         self.filename = filename

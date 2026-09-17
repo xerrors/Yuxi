@@ -4,6 +4,13 @@ from typing import Any
 
 BUILTIN_PROVIDERS: list[dict[str, Any]] = [
     {
+        "provider_id": "fluxionai",
+        "display_name": "Fluxion AI",
+        "base_url": "https://fluxionai.space/v1",
+        "api_key_env": "FLUXIONAI_API_KEY",
+        "models_endpoint": "https://fluxionai.space/v1/models",
+    },
+    {
         "provider_id": "openai",
         "display_name": "OpenAI",
         "base_url": "https://api.openai.com/v1",

@@ -47,9 +47,9 @@ def test_split_routers_keep_public_paths_and_remove_legacy_paths():
 def test_agent_call_router_adapts_payload(monkeypatch):
     calls: dict[str, object] = {}
 
-    async def fake_submit_run_command(*, command, **_kwargs):
-        calls["command"] = command
-        return {"run_id": "run-1", "thread_id": command.thread_id, "status": "dispatched", "request_id": "req-1"}
+    async def fake_submit_agent_request(*, request_input, **_kwargs):
+        calls["request_input"] = request_input
+        return {"run_id": "run-1", "thread_id": request_input.thread_id, "status": "dispatched", "request_id": "req-1"}
 
     async def fake_wait(**_kwargs):
         return {
@@ -61,7 +61,7 @@ def test_agent_call_router_adapts_payload(monkeypatch):
             "output": "done",
         }
 
-    monkeypatch.setattr(call_module, "submit_run_command", fake_submit_run_command)
+    monkeypatch.setattr(call_module, "submit_agent_request", fake_submit_agent_request)
     monkeypatch.setattr(call_module, "await_agent_run_result", fake_wait)
     response = _build_app().post(
         "/api/agent-invocation/agent-call/runs",
@@ -73,20 +73,20 @@ def test_agent_call_router_adapts_payload(monkeypatch):
     )
     assert response.status_code == 200, response.text
     assert response.json()["output"] == "done"
-    assert calls["command"].origin.source == "agent_call"
+    assert calls["request_input"].origin.source == "agent_call"
 
 
 def test_agent_eval_router_adapts_payload(monkeypatch):
     calls: dict[str, object] = {}
 
-    async def fake_submit_run_command(*, command, **_kwargs):
-        calls["command"] = command
-        return {"run_id": "run-1", "thread_id": command.thread_id, "status": "dispatched", "request_id": "eval-1"}
+    async def fake_submit_agent_request(*, request_input, **_kwargs):
+        calls["request_input"] = request_input
+        return {"run_id": "run-1", "thread_id": request_input.thread_id, "status": "dispatched", "request_id": "eval-1"}
 
     async def fake_wait(**_kwargs):
         return {"status": "completed", "agent_run_id": "run-1", "request_id": "eval-1", "output": "ok"}
 
-    monkeypatch.setattr(eval_module, "submit_run_command", fake_submit_run_command)
+    monkeypatch.setattr(eval_module, "submit_agent_request", fake_submit_agent_request)
     monkeypatch.setattr(eval_module, "await_agent_run_result", fake_wait)
     response = _build_app().post(
         "/api/agent-invocation/eval/runs",
@@ -100,8 +100,10 @@ def test_agent_eval_router_adapts_payload(monkeypatch):
     )
     assert response.status_code == 200, response.text
     assert response.json()["output"] == "ok"
-    assert calls["command"].thread_id == "YUXI_TEST_eval-thread"
-    assert calls["command"].origin.metadata == {"agent_invocation_meta": {"evaluation": {"dataset_name": "dataset-1"}}}
+    assert calls["request_input"].thread_id == "YUXI_TEST_eval-thread"
+    assert calls["request_input"].origin.metadata == {
+        "agent_invocation_meta": {"evaluation": {"dataset_name": "dataset-1"}}
+    }
 
 
 def test_agent_eval_router_rejects_thread_id_longer_than_database_limit():

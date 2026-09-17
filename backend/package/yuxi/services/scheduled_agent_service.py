@@ -20,7 +20,7 @@ from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.project_repository import ProjectRepository
 from yuxi.repositories.scheduled_agent_repository import ScheduledAgentRepository
 from yuxi.services.input_message_service import build_chat_input_message
-from yuxi.services.run_submission_service import RunOrigin, RunSubmissionCommand, submit_run_command
+from yuxi.services.agent_request_service import RunOrigin, AgentRequestInput, submit_agent_request
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import ScheduledAgentJob, ScheduledAgentRun, User
 from yuxi.utils.datetime_utils import format_utc_datetime, utc_now_naive
@@ -420,8 +420,8 @@ async def dispatch_scheduled_run(*, scheduled_run_id: str) -> dict | None:
                 return scheduled_run.to_dict()
             await _validate_project(scheduled_run.project_id, user, db)
             await _validate_agent(scheduled_run.agent_slug, user, db)
-            await submit_run_command(
-                command=RunSubmissionCommand(
+            await submit_agent_request(
+                request_input=AgentRequestInput(
                     agent_slug=scheduled_run.agent_slug,
                     thread_id=scheduled_run.thread_id,
                     request_id=scheduled_run.request_id,

@@ -90,6 +90,8 @@ async def retrieve_external(
         return await knowledge_base.retrieve(kb_id, payload.query, **options)
     except KBNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception(f"external 知识库查询失败 {e}")
         raise HTTPException(status_code=400, detail=f"知识库查询失败: {e}") from e
@@ -109,6 +111,8 @@ async def open_external_file(
         return await knowledge_base.open_document(kb_id, file_id, offset=offset, limit=limit)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception(f"external 打开知识库文件失败 {e}")
         raise HTTPException(status_code=400, detail="打开知识库文件失败") from e
@@ -137,6 +141,8 @@ async def find_external_file(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception(f"external 知识库文件内检索失败 {e}")
         raise HTTPException(status_code=400, detail="知识库文件内检索失败") from e

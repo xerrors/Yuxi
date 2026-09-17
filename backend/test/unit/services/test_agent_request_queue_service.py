@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from yuxi.services.agent_request_service import AgentRequestInput, RunOrigin, _persist_request
+from yuxi.services import agent_request_service
+
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from types import SimpleNamespace
@@ -14,15 +17,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from yuxi.services.agent_request_queue_service import (
     DispatchResult,
-    IntakeResult,
     NOT_IMPLEMENTED_QUEUE_POLICIES,
     cancel_queued_request,
     finalize_dispatch,
-    finalize_intake,
-    intake_request,
     steer_queued_request,
     validate_queue_policy,
 )
+from yuxi.services.input_message_service import build_chat_input_message
 from yuxi.services.workdir_service import WorkdirBinding
 from yuxi.storage.postgres.models_business import AgentRunRequest, Base, Message
 from yuxi.utils.datetime_utils import utc_now_naive
@@ -113,84 +114,6 @@ async def test_finalize_dispatch_does_not_materialize_when_commit_fails(monkeypa
                 ),
             ),
         )
-
-
-@pytest.mark.asyncio
-async def test_finalize_queued_intake_recovers_missing_managed_workdir(monkeypatch: pytest.MonkeyPatch):
-    """排队请求提交后仍需幂等恢复 managed Project 目录。"""
-
-    events: list[str] = []
-
-    class Db:
-        async def commit(self):
-            events.append("commit")
-
-    def ensure_workdir(uid: str, workdir_path: str):
-        assert (uid, workdir_path) == ("user-1", "projects/project-1")
-        events.append("materialize")
-
-    from yuxi.services import agent_request_queue_service as service
-
-    monkeypatch.setattr(service, "ensure_bound_user_workdir", ensure_workdir)
-
-    await finalize_intake(
-        db=Db(),
-        intake=IntakeResult(
-            request_id="request-1",
-            status="queued",
-            queue_policy="enqueue",
-            message_id=1,
-            thread_id="thread-1",
-            queue_position=1,
-            workdir_binding=WorkdirBinding(
-                conversation_id=1,
-                thread_id="thread-1",
-                uid="user-1",
-                project_id="project-1",
-                workdir_path="projects/project-1",
-                directory_mode="managed",
-            ),
-        ),
-    )
-
-    assert events == ["commit", "materialize"]
-
-
-@pytest.mark.asyncio
-async def test_finalize_rejected_intake_uses_its_workdir_binding(monkeypatch: pytest.MonkeyPatch):
-    """拒绝请求也沿用 intake 快照完成提交后的目录收敛。"""
-
-    events: list[str] = []
-
-    class Db:
-        async def commit(self):
-            events.append("commit")
-
-    monkeypatch.setattr(
-        "yuxi.services.agent_request_queue_service.ensure_bound_user_workdir",
-        lambda uid, path: events.append(f"materialize:{uid}:{path}"),
-    )
-
-    await finalize_intake(
-        db=Db(),
-        intake=IntakeResult(
-            request_id="request-1",
-            status="rejected",
-            queue_policy="reject",
-            message_id=1,
-            thread_id="thread-1",
-            workdir_binding=WorkdirBinding(
-                conversation_id=1,
-                thread_id="thread-1",
-                uid="user-1",
-                project_id="project-1",
-                workdir_path="projects/project-1",
-                directory_mode="managed",
-            ),
-        ),
-    )
-
-    assert events == ["commit", "materialize:user-1:projects/project-1"]
 
 
 @pytest.mark.asyncio
@@ -326,17 +249,19 @@ async def test_intake_rejects_steer_for_unsupported_source(session):
     from yuxi.services.input_message_service import build_chat_input_message
 
     with pytest.raises(HTTPException) as exc_info:
-        await intake_request(
+        await _persist_request(
             db=session,
-            request_id="request-agent-call-steer",
-            uid="user-1",
-            agent_slug="main",
-            thread_id="t1",
-            source="agent_call",
-            queue_policy="steer",
-            input_message=build_chat_input_message("steer"),
             agent_item=MagicMock(),
             agent_backend=MagicMock(),
+            request_input=AgentRequestInput(
+                request_id="request-agent-call-steer",
+                agent_slug="main",
+                thread_id="t1",
+                input_message=build_chat_input_message("steer"),
+                queue_policy="steer",
+                origin=RunOrigin(source="agent_call", channel="web"),
+            ),
+            current_user=SimpleNamespace(uid="user-1"),
         )
 
     assert exc_info.value.status_code == 422
@@ -347,28 +272,28 @@ async def test_intake_rejects_steer_for_unsupported_source(session):
 async def test_channel_steer_is_accepted_for_active_message_run(
     session, monkeypatch: pytest.MonkeyPatch, active_source: str
 ):
-    from yuxi.services import agent_request_queue_service
     from yuxi.services.input_message_service import build_chat_input_message
 
     async def resolve_config(*_args):
         return "model", "default"
 
-    monkeypatch.setattr(agent_request_queue_service, "resolve_agent_run_config", resolve_config)
+    monkeypatch.setattr(agent_request_service, "resolve_agent_run_config", resolve_config)
     await _seed_thread(session)
     await _seed_active_run(session, source=active_source)
 
-    result = await intake_request(
+    result, _ = await _persist_request(
         db=session,
-        request_id="request-channel-steer",
-        uid="user-1",
-        agent_slug="main",
-        thread_id="t1",
-        source="channel",
-        channel="cli",
-        queue_policy="steer",
-        input_message=build_chat_input_message("steer"),
         agent_item=MagicMock(),
         agent_backend=MagicMock(),
+        request_input=AgentRequestInput(
+            request_id="request-channel-steer",
+            agent_slug="main",
+            thread_id="t1",
+            input_message=build_chat_input_message("steer"),
+            queue_policy="steer",
+            origin=RunOrigin(source="channel", channel="cli"),
+        ),
+        current_user=SimpleNamespace(uid="user-1"),
     )
 
     assert result.status == "queued"
@@ -377,7 +302,6 @@ async def test_channel_steer_is_accepted_for_active_message_run(
 
 @pytest.mark.asyncio
 async def test_intake_request_binds_resolved_model_to_conversation(session, monkeypatch: pytest.MonkeyPatch):
-    from yuxi.services import agent_request_queue_service
     from yuxi.services.input_message_service import build_chat_input_message
     from yuxi.storage.postgres.models_business import Conversation
 
@@ -387,19 +311,22 @@ async def test_intake_request_binds_resolved_model_to_conversation(session, monk
         resolved_requests.append(model_spec)
         return model_spec or "provider:agent-default", "default"
 
-    monkeypatch.setattr(agent_request_queue_service, "resolve_agent_run_config", resolve_config)
+    monkeypatch.setattr(agent_request_service, "resolve_agent_run_config", resolve_config)
     await _seed_thread(session)
 
-    first = await intake_request(
+    first, _ = await _persist_request(
         db=session,
-        request_id="request-model-a",
-        uid="user-1",
-        agent_slug="main",
-        thread_id="t1",
-        input_message=build_chat_input_message("first"),
         agent_item=MagicMock(),
         agent_backend=MagicMock(),
-        model_spec="provider:conversation-model",
+        request_input=AgentRequestInput(
+            request_id="request-model-a",
+            agent_slug="main",
+            thread_id="t1",
+            input_message=build_chat_input_message("first"),
+            model_spec="provider:conversation-model",
+            origin=RunOrigin(source="chat", channel="web"),
+        ),
+        current_user=SimpleNamespace(uid="user-1"),
     )
 
     conversation = await session.get(Conversation, 10)
@@ -407,30 +334,36 @@ async def test_intake_request_binds_resolved_model_to_conversation(session, monk
     assert first.status == "dispatched"
     assert conversation.extra_metadata["model_spec"] == "provider:conversation-model"
 
-    second = await intake_request(
+    second, _ = await _persist_request(
         db=session,
-        request_id="request-model-b",
-        uid="user-1",
-        agent_slug="main",
-        thread_id="t1",
-        input_message=build_chat_input_message("second"),
         agent_item=MagicMock(),
         agent_backend=MagicMock(),
+        request_input=AgentRequestInput(
+            request_id="request-model-b",
+            agent_slug="main",
+            thread_id="t1",
+            input_message=build_chat_input_message("second"),
+            origin=RunOrigin(source="chat", channel="web"),
+        ),
+        current_user=SimpleNamespace(uid="user-1"),
     )
     assert second.status == "queued"
     assert resolved_requests == ["provider:conversation-model", "provider:conversation-model"]
 
-    rejected = await intake_request(
+    rejected, _ = await _persist_request(
         db=session,
-        request_id="request-model-rejected",
-        uid="user-1",
-        agent_slug="main",
-        thread_id="t1",
-        queue_policy="reject",
-        input_message=build_chat_input_message("rejected"),
         agent_item=MagicMock(),
         agent_backend=MagicMock(),
-        model_spec="provider:rejected-model",
+        request_input=AgentRequestInput(
+            request_id="request-model-rejected",
+            agent_slug="main",
+            thread_id="t1",
+            input_message=build_chat_input_message("rejected"),
+            model_spec="provider:rejected-model",
+            queue_policy="reject",
+            origin=RunOrigin(source="chat", channel="web"),
+        ),
+        current_user=SimpleNamespace(uid="user-1"),
     )
 
     await session.refresh(conversation)
@@ -440,7 +373,6 @@ async def test_intake_request_binds_resolved_model_to_conversation(session, monk
 
 @pytest.mark.asyncio
 async def test_reject_dispatch_conflict_does_not_change_conversation_model(session, monkeypatch: pytest.MonkeyPatch):
-    from yuxi.services import agent_request_queue_service
     from yuxi.services.input_message_service import build_chat_input_message
     from yuxi.storage.postgres.models_business import Conversation
 
@@ -450,24 +382,27 @@ async def test_reject_dispatch_conflict_does_not_change_conversation_model(sessi
     async def lose_dispatch_race(**_kwargs):
         return None
 
-    monkeypatch.setattr(agent_request_queue_service, "resolve_agent_run_config", resolve_config)
-    monkeypatch.setattr(agent_request_queue_service, "_dispatch_ready_head", lose_dispatch_race)
+    monkeypatch.setattr(agent_request_service, "resolve_agent_run_config", resolve_config)
+    monkeypatch.setattr(agent_request_service, "dispatch_ready_head", lose_dispatch_race)
     await _seed_thread(session)
     conversation = await session.get(Conversation, 10)
     conversation.extra_metadata = {"model_spec": "provider:existing-model"}
     await session.commit()
 
-    result = await intake_request(
+    result, _ = await _persist_request(
         db=session,
-        request_id="request-reject-race",
-        uid="user-1",
-        agent_slug="main",
-        thread_id="t1",
-        queue_policy="reject",
-        input_message=build_chat_input_message("reject race"),
         agent_item=MagicMock(),
         agent_backend=MagicMock(),
-        model_spec="provider:rejected-model",
+        request_input=AgentRequestInput(
+            request_id="request-reject-race",
+            agent_slug="main",
+            thread_id="t1",
+            input_message=build_chat_input_message("reject race"),
+            model_spec="provider:rejected-model",
+            queue_policy="reject",
+            origin=RunOrigin(source="chat", channel="web"),
+        ),
+        current_user=SimpleNamespace(uid="user-1"),
     )
 
     await session.refresh(conversation)
@@ -477,29 +412,31 @@ async def test_reject_dispatch_conflict_does_not_change_conversation_model(sessi
 
 @pytest.mark.asyncio
 async def test_intake_request_binds_attachments_in_request_transaction(session, monkeypatch: pytest.MonkeyPatch):
-    from yuxi.services import agent_request_queue_service
     from yuxi.services.input_message_service import build_chat_input_message
     from yuxi.storage.postgres.models_business import Conversation
 
     async def resolve_config(*_args):
         return "model", "default"
 
-    monkeypatch.setattr(agent_request_queue_service, "resolve_agent_run_config", resolve_config)
+    monkeypatch.setattr(agent_request_service, "resolve_agent_run_config", resolve_config)
     await _seed_thread(session)
     conversation = await session.get(Conversation, 10)
     conversation.extra_metadata = {"attachments": [{"file_id": "file-1", "file_name": "notes.txt"}]}
     await session.commit()
 
-    result = await intake_request(
+    result, _ = await _persist_request(
         db=session,
-        request_id="request-with-attachment",
-        uid="user-1",
-        agent_slug="main",
-        thread_id="t1",
-        input_message=build_chat_input_message("read it"),
         agent_item=MagicMock(),
         agent_backend=MagicMock(),
-        meta={"attachment_file_ids": ["file-1"]},
+        request_input=AgentRequestInput(
+            request_id="request-with-attachment",
+            agent_slug="main",
+            thread_id="t1",
+            input_message=build_chat_input_message("read it"),
+            request_metadata={"attachment_file_ids": ["file-1"]},
+            origin=RunOrigin(source="chat", channel="web"),
+        ),
+        current_user=SimpleNamespace(uid="user-1"),
     )
 
     await session.refresh(conversation)
@@ -513,26 +450,28 @@ async def test_intake_request_rejects_missing_attachment_without_creating_reques
     monkeypatch: pytest.MonkeyPatch,
 ):
     from fastapi import HTTPException
-    from yuxi.services import agent_request_queue_service
     from yuxi.services.input_message_service import build_chat_input_message
 
     async def resolve_config(*_args):
         return "model", "default"
 
-    monkeypatch.setattr(agent_request_queue_service, "resolve_agent_run_config", resolve_config)
+    monkeypatch.setattr(agent_request_service, "resolve_agent_run_config", resolve_config)
     await _seed_thread(session)
 
     with pytest.raises(HTTPException) as exc:
-        await intake_request(
+        await _persist_request(
             db=session,
-            request_id="request-missing-attachment",
-            uid="user-1",
-            agent_slug="main",
-            thread_id="t1",
-            input_message=build_chat_input_message("read it"),
             agent_item=MagicMock(),
             agent_backend=MagicMock(),
-            meta={"attachment_file_ids": ["missing"]},
+            request_input=AgentRequestInput(
+                request_id="request-missing-attachment",
+                agent_slug="main",
+                thread_id="t1",
+                input_message=build_chat_input_message("read it"),
+                request_metadata={"attachment_file_ids": ["missing"]},
+                origin=RunOrigin(source="chat", channel="web"),
+            ),
+            current_user=SimpleNamespace(uid="user-1"),
         )
 
     assert exc.value.status_code == 422
@@ -670,10 +609,29 @@ async def test_queued_request_can_be_upgraded_to_steer(session):
     result = await steer_queued_request(request_id="request-upgrade", current_uid="user-1", db=session)
 
     request = await session.scalar(select(AgentRunRequest).where(AgentRunRequest.request_id == "request-upgrade"))
-    assert result.status == "queued"
-    assert result.queue_policy == "steer"
-    assert result.queue_position == 1
+    assert result["status"] == "queued"
+    assert result["queue_policy"] == "steer"
+    assert result["queue_position"] == 1
     assert request.queue_policy == "steer"
+
+    replay, _ = await _persist_request(
+        db=session,
+        request_input=AgentRequestInput(
+            agent_slug="main",
+            thread_id="t1",
+            request_id="request-upgrade",
+            input_message=build_chat_input_message("changed input is ignored"),
+            origin=RunOrigin(source="chat", channel="web"),
+            queue_policy="enqueue",
+            model_spec="missing:ignored",
+        ),
+        current_user=SimpleNamespace(uid="user-1"),
+        agent_item=MagicMock(),
+        agent_backend=MagicMock(),
+    )
+    assert replay.queue_policy == "steer"
+    assert replay.input_message_id == result["message_id"]
+    assert (await session.get(Message, result["message_id"])).content == "hi"
 
 
 @pytest.mark.asyncio
@@ -726,16 +684,19 @@ async def test_steer_rejects_unsupported_active_run_before_persisting(session, s
     await _seed_active_run(session, source=source, status=status, run_type=run_type)
 
     with pytest.raises(HTTPException) as exc_info:
-        await intake_request(
+        await _persist_request(
             db=session,
-            request_id="request-steer",
-            uid="user-1",
-            agent_slug="main",
-            thread_id="t1",
-            queue_policy="steer",
-            input_message=build_chat_input_message("steer"),
             agent_item=MagicMock(),
             agent_backend=MagicMock(),
+            request_input=AgentRequestInput(
+                request_id="request-steer",
+                agent_slug="main",
+                thread_id="t1",
+                input_message=build_chat_input_message("steer"),
+                queue_policy="steer",
+                origin=RunOrigin(source="chat", channel="web"),
+            ),
+            current_user=SimpleNamespace(uid="user-1"),
         )
 
     assert exc_info.value.status_code == 409
@@ -845,21 +806,23 @@ async def test_intake_idempotent_returns_existing(session):
         directory_mode="managed",
     )
 
-    result = await intake_request(
+    result, _ = await _persist_request(
         db=session,
-        request_id="req-idem",
-        uid="user-1",
-        agent_slug="main",
-        thread_id="t1",
-        input_message=build_chat_input_message("hello"),
         agent_item=MagicMock(),
         agent_backend=MagicMock(),
         workdir_binding=binding,
+        request_input=AgentRequestInput(
+            request_id="req-idem",
+            agent_slug="main",
+            thread_id="t1",
+            input_message=build_chat_input_message("hello"),
+            origin=RunOrigin(source="chat", channel="web"),
+        ),
+        current_user=SimpleNamespace(uid="user-1"),
     )
     assert result.request_id == "req-idem"
     assert result.status == "queued"
-    assert result.message_id == 100
-    assert result.workdir_binding == binding
+    assert result.input_message_id == 100
 
     count = await session.scalar(
         select(sa_func.count(AgentRunRequest.id)).where(AgentRunRequest.request_id == "req-idem")
@@ -877,15 +840,18 @@ async def test_intake_idempotent_rejects_cross_user(session):
     await _create_request(session, request_id="req-cross")
 
     with pytest.raises(HTTPException) as exc_info:
-        await intake_request(
+        await _persist_request(
             db=session,
-            request_id="req-cross",
-            uid="user-2",
-            agent_slug="main",
-            thread_id="t1",
-            input_message=build_chat_input_message("hello"),
             agent_item=MagicMock(),
             agent_backend=MagicMock(),
+            request_input=AgentRequestInput(
+                request_id="req-cross",
+                agent_slug="main",
+                thread_id="t1",
+                input_message=build_chat_input_message("hello"),
+                origin=RunOrigin(source="chat", channel="web"),
+            ),
+            current_user=SimpleNamespace(uid="user-2"),
         )
     assert exc_info.value.status_code == 409
 
@@ -911,17 +877,19 @@ async def test_intake_idempotent_rejects_scope_mismatch(session):
     await _create_request(session, request_id="req-scope")
 
     with pytest.raises(HTTPException) as exc_info:
-        await intake_request(
+        await _persist_request(
             db=session,
-            request_id="req-scope",
-            uid="user-1",
-            agent_slug="other",
-            thread_id="t2",
-            source="chat",
-            queue_policy="reject",
-            input_message=build_chat_input_message("different request"),
             agent_item=MagicMock(),
             agent_backend=MagicMock(),
+            request_input=AgentRequestInput(
+                request_id="req-scope",
+                agent_slug="other",
+                thread_id="t2",
+                input_message=build_chat_input_message("different request"),
+                queue_policy="reject",
+                origin=RunOrigin(source="chat", channel="web"),
+            ),
+            current_user=SimpleNamespace(uid="user-1"),
         )
 
     assert exc_info.value.status_code == 409
@@ -956,7 +924,7 @@ async def test_create_message_with_queued_delivery_status(session):
 @pytest.mark.asyncio
 async def test_dispatch_sets_delivery_status_dispatched(session):
     from yuxi.repositories.agent_run_request_repository import AgentRunRequestRepository
-    from yuxi.services.agent_request_queue_service import _dispatch_ready_head
+    from yuxi.services.agent_request_queue_service import dispatch_ready_head
     from yuxi.storage.postgres.models_business import Message
 
     await _seed_thread(session, msg_id=200)
@@ -970,12 +938,11 @@ async def test_dispatch_sets_delivery_status_dispatched(session):
     )
     await session.commit()
 
-    dispatched = await _dispatch_ready_head(
+    dispatched = await dispatch_ready_head(
         db=session,
         uid="user-1",
         agent_slug="main",
         thread_id="t1",
-        conversation_id=10,
         workdir_binding=WorkdirBinding(
             conversation_id=10,
             thread_id="t1",
@@ -996,7 +963,7 @@ async def test_dispatch_sets_delivery_status_dispatched(session):
 async def test_dispatches_multiple_queued_requests_one_at_a_time(session):
     from yuxi.repositories.agent_run_repository import AgentRunRepository
     from yuxi.repositories.agent_run_request_repository import AgentRunRequestRepository
-    from yuxi.services.agent_request_queue_service import _dispatch_ready_head
+    from yuxi.services.agent_request_queue_service import dispatch_ready_head
 
     await _seed_thread(session, msg_id=300)
     session.add_all(
@@ -1016,12 +983,11 @@ async def test_dispatches_multiple_queued_requests_one_at_a_time(session):
         )
     await session.commit()
 
-    dispatched_b = await _dispatch_ready_head(
+    dispatched_b = await dispatch_ready_head(
         db=session,
         uid="user-1",
         agent_slug="main",
         thread_id="t1",
-        conversation_id=10,
         workdir_binding=WorkdirBinding(
             conversation_id=10,
             thread_id="t1",
@@ -1066,12 +1032,11 @@ async def test_dispatches_multiple_queued_requests_one_at_a_time(session):
     )
     assert completed is True
     await session.commit()
-    blocked_c = await _dispatch_ready_head(
+    blocked_c = await dispatch_ready_head(
         db=session,
         uid="user-1",
         agent_slug="main",
         thread_id="t1",
-        conversation_id=10,
         workdir_binding=WorkdirBinding(
             conversation_id=10,
             thread_id="t1",
@@ -1085,12 +1050,11 @@ async def test_dispatches_multiple_queued_requests_one_at_a_time(session):
     persisted_b = await run_repository.get_run(run_b)
     persisted_b.runtime_cleanup_pending = False
     await session.commit()
-    dispatched_c = await _dispatch_ready_head(
+    dispatched_c = await dispatch_ready_head(
         db=session,
         uid="user-1",
         agent_slug="main",
         thread_id="t1",
-        conversation_id=10,
         workdir_binding=WorkdirBinding(
             conversation_id=10,
             thread_id="t1",
@@ -1135,41 +1099,47 @@ async def test_reject_with_active_run_persists_request_and_is_idempotent(session
     )
     await session.commit()
 
-    first = await intake_request(
+    first, _ = await _persist_request(
         db=session,
-        request_id="req-reject",
-        uid="user-1",
-        agent_slug="main",
-        thread_id="t1",
-        queue_policy="reject",
-        input_message=build_chat_input_message("hello"),
         agent_item=MagicMock(),
         agent_backend=MagicMock(),
+        request_input=AgentRequestInput(
+            request_id="req-reject",
+            agent_slug="main",
+            thread_id="t1",
+            input_message=build_chat_input_message("hello"),
+            queue_policy="reject",
+            origin=RunOrigin(source="chat", channel="web"),
+        ),
+        current_user=SimpleNamespace(uid="user-1"),
     )
     await session.commit()
     assert first.status == "rejected"
-    assert first.message_id is not None
+    assert first.input_message_id is not None
 
     req = await session.scalar(select(AgentRunRequest).where(AgentRunRequest.request_id == "req-reject"))
     assert req is not None
     assert req.status == "rejected"
 
-    msg = await session.get(Message, first.message_id)
+    msg = await session.get(Message, first.input_message_id)
     assert msg.delivery_status == "rejected"
 
-    second = await intake_request(
+    second, _ = await _persist_request(
         db=session,
-        request_id="req-reject",
-        uid="user-1",
-        agent_slug="main",
-        thread_id="t1",
-        queue_policy="reject",
-        input_message=build_chat_input_message("hello"),
         agent_item=MagicMock(),
         agent_backend=MagicMock(),
+        request_input=AgentRequestInput(
+            request_id="req-reject",
+            agent_slug="main",
+            thread_id="t1",
+            input_message=build_chat_input_message("hello"),
+            queue_policy="reject",
+            origin=RunOrigin(source="chat", channel="web"),
+        ),
+        current_user=SimpleNamespace(uid="user-1"),
     )
     assert second.status == "rejected"
-    assert second.message_id == first.message_id
+    assert second.input_message_id == first.input_message_id
 
 
 # ── queue snapshot and manual continue ──
@@ -1356,16 +1326,19 @@ async def test_reject_does_not_resume_paused_queue(session):
     )
     await session.commit()
 
-    result = await intake_request(
+    result, _ = await _persist_request(
         db=session,
-        request_id="request-c",
-        uid="user-1",
-        agent_slug="main",
-        thread_id="t1",
-        queue_policy="reject",
-        input_message=build_chat_input_message("C"),
         agent_item=MagicMock(),
         agent_backend=MagicMock(),
+        request_input=AgentRequestInput(
+            request_id="request-c",
+            agent_slug="main",
+            thread_id="t1",
+            input_message=build_chat_input_message("C"),
+            queue_policy="reject",
+            origin=RunOrigin(source="chat", channel="web"),
+        ),
+        current_user=SimpleNamespace(uid="user-1"),
     )
 
     repo = AgentRunRequestRepository(session)
@@ -1380,34 +1353,36 @@ async def test_reject_marks_request_rejected_when_immediate_dispatch_loses_race(
     monkeypatch: pytest.MonkeyPatch,
 ):
     from yuxi.repositories.agent_run_request_repository import AgentRunRequestRepository
-    from yuxi.services import agent_request_queue_service
     from yuxi.services.input_message_service import build_chat_input_message
 
     async def resolve_config(*_args):
         return "model", "default"
 
-    monkeypatch.setattr(agent_request_queue_service, "resolve_agent_run_config", resolve_config)
+    monkeypatch.setattr(agent_request_service, "resolve_agent_run_config", resolve_config)
 
     async def lose_dispatch_race(**kwargs):
         return None
 
-    monkeypatch.setattr(agent_request_queue_service, "_dispatch_ready_head", lose_dispatch_race)
+    monkeypatch.setattr(agent_request_service, "dispatch_ready_head", lose_dispatch_race)
     await _seed_thread(session)
 
-    result = await intake_request(
+    result, _ = await _persist_request(
         db=session,
-        request_id="request-reject",
-        uid="user-1",
-        agent_slug="main",
-        thread_id="t1",
-        queue_policy="reject",
-        input_message=build_chat_input_message("reject me"),
         agent_item=MagicMock(),
         agent_backend=MagicMock(),
+        request_input=AgentRequestInput(
+            request_id="request-reject",
+            agent_slug="main",
+            thread_id="t1",
+            input_message=build_chat_input_message("reject me"),
+            queue_policy="reject",
+            origin=RunOrigin(source="chat", channel="web"),
+        ),
+        current_user=SimpleNamespace(uid="user-1"),
     )
 
     request = await AgentRunRequestRepository(session).get_by_request_id("request-reject")
-    message = await session.get(Message, result.message_id)
+    message = await session.get(Message, result.input_message_id)
     assert result.status == "rejected"
     assert request.status == "rejected"
     assert request.input_payload == {}
@@ -1421,13 +1396,12 @@ async def test_intake_rejects_message_while_run_is_interrupted(
 ):
     from fastapi import HTTPException
     from yuxi.repositories.agent_run_request_repository import AgentRunRequestRepository
-    from yuxi.services import agent_request_queue_service
     from yuxi.services.input_message_service import build_chat_input_message
 
     async def resolve_config(*_args):
         return "model", "default"
 
-    monkeypatch.setattr(agent_request_queue_service, "resolve_agent_run_config", resolve_config)
+    monkeypatch.setattr(agent_request_service, "resolve_agent_run_config", resolve_config)
     await _seed_thread(session)
     now = utc_now_naive()
     await _seed_queued_request(session, request_id="request-b", message_id=101, created_at=now)
@@ -1441,16 +1415,19 @@ async def test_intake_rejects_message_while_run_is_interrupted(
     await session.commit()
 
     with pytest.raises(HTTPException) as exc_info:
-        await intake_request(
+        await _persist_request(
             db=session,
-            request_id="request-c",
-            uid="user-1",
-            agent_slug="main",
-            thread_id="t1",
-            queue_policy=queue_policy,
-            input_message=build_chat_input_message("C"),
             agent_item=MagicMock(),
             agent_backend=MagicMock(),
+            request_input=AgentRequestInput(
+                request_id="request-c",
+                agent_slug="main",
+                thread_id="t1",
+                input_message=build_chat_input_message("C"),
+                queue_policy=queue_policy,
+                origin=RunOrigin(source="chat", channel="web"),
+            ),
+            current_user=SimpleNamespace(uid="user-1"),
         )
 
     repo = AgentRunRequestRepository(session)
@@ -1467,13 +1444,12 @@ async def test_intake_rejects_message_while_run_is_interrupted(
 
 @pytest.mark.asyncio
 async def test_enqueue_after_empty_failed_queue_dispatches_new_request(session, monkeypatch: pytest.MonkeyPatch):
-    from yuxi.services import agent_request_queue_service
     from yuxi.services.input_message_service import build_chat_input_message
 
     async def resolve_config(*_args):
         return "model", "default"
 
-    monkeypatch.setattr(agent_request_queue_service, "resolve_agent_run_config", resolve_config)
+    monkeypatch.setattr(agent_request_service, "resolve_agent_run_config", resolve_config)
     await _seed_thread(session)
     now = utc_now_naive()
     await _seed_terminal_run(
@@ -1485,16 +1461,170 @@ async def test_enqueue_after_empty_failed_queue_dispatches_new_request(session, 
     )
     await session.commit()
 
-    result = await intake_request(
+    result, _ = await _persist_request(
         db=session,
-        request_id="request-b",
-        uid="user-1",
-        agent_slug="main",
-        thread_id="t1",
-        input_message=build_chat_input_message("B"),
         agent_item=MagicMock(),
         agent_backend=MagicMock(),
+        request_input=AgentRequestInput(
+            request_id="request-b",
+            agent_slug="main",
+            thread_id="t1",
+            input_message=build_chat_input_message("B"),
+            origin=RunOrigin(source="chat", channel="web"),
+        ),
+        current_user=SimpleNamespace(uid="user-1"),
     )
 
     assert result.status == "dispatched"
-    assert result.run_id is not None
+    assert result.dispatched_run_id is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("requested_model", "configured_model", "expected_model"),
+    [
+        ("request:model", "agent:model", "request:model"),
+        (None, "agent:model", "agent:model"),
+        (None, "", "system:model"),
+    ],
+)
+async def test_intake_persists_multimodal_input_and_effective_config(
+    session, monkeypatch, requested_model, configured_model, expected_model
+):
+    """普通消息通过 Request 保存图片、命名空间元数据和最终选用的配置。"""
+    from yuxi.agents.context import BaseContext
+    from yuxi.services import agent_run_service
+    from yuxi.services.input_message_service import build_chat_input_message
+    from yuxi.storage.postgres.models_business import AgentRun
+
+    async def system_defaults(_options, _db=None):
+        """提供确定的系统模型默认值。"""
+        return {"default_model": "system:model"}
+
+    monkeypatch.setattr(type(agent_run_service.system_options), "get", system_defaults)
+    monkeypatch.setattr(
+        agent_run_service.model_cache, "get_model_info", lambda _spec: SimpleNamespace(model_type="chat")
+    )
+    await _seed_thread(session)
+    result, _ = await _persist_request(
+        db=session,
+        agent_item=SimpleNamespace(config_json={"context": {"model": configured_model}}),
+        agent_backend=SimpleNamespace(context_schema=BaseContext),
+        request_input=AgentRequestInput(
+            request_id="multimodal-request",
+            agent_slug="main",
+            thread_id="t1",
+            input_message=build_chat_input_message("看图", "base64-image"),
+            model_spec=requested_model,
+            tool_approval_mode="always_trust",
+            request_metadata={
+                "agent_invocation_meta": {"trace_id": "trace-1"},
+                "evaluation": {"legacy": True},
+                "custom_variables": {"legacy": True},
+            },
+            origin=RunOrigin(source="agent_call", channel="web"),
+        ),
+        current_user=SimpleNamespace(uid="user-1"),
+    )
+    await session.commit()
+    request_id = result.request_id
+    session.expire_all()
+    request = await session.scalar(select(AgentRunRequest).where(AgentRunRequest.request_id == request_id))
+    run = await session.get(AgentRun, result.dispatched_run_id)
+    message = await session.get(Message, result.input_message_id)
+    assert request.dispatched_run_id == run.id == message.run_id
+    assert request.input_message_id == run.input_message_id == message.id
+    assert (
+        request.input_payload
+        == run.input_payload
+        == {
+            "model_spec": expected_model,
+            "tool_approval_mode": "always_trust",
+        }
+    )
+    assert message.message_type == "multimodal_image"
+    assert message.image_content == "base64-image"
+    assert message.extra_metadata["raw_message"]["content"] == [
+        {"type": "text", "text": "看图"},
+        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,base64-image"}},
+    ]
+    assert message.extra_metadata["source"] == "agent_call"
+    assert message.extra_metadata["agent_invocation_meta"] == {"trace_id": "trace-1"}
+    assert "evaluation" not in message.extra_metadata
+    assert "custom_variables" not in message.extra_metadata
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "policy, active, expected, older",
+    [
+        ("enqueue", False, "dispatched", False),
+        ("enqueue", True, "queued", False),
+        ("reject", True, "rejected", False),
+        ("enqueue", False, "queued", True),
+    ],
+)
+async def test_submission_publishes_committed_request_and_replays_same_view(
+    session, monkeypatch, policy, active, expected, older
+):
+    """完整入口提交后可读持久化消息；重发保持首次输入与当前视图。"""
+    from unittest.mock import AsyncMock
+    from yuxi.repositories.agent_run_request_repository import AgentRunRequestRepository
+
+    await _seed_thread(session)
+    if active:
+        await _seed_active_run(session)
+    if older:
+        await _create_request(session, request_id="request-older")
+    agent = SimpleNamespace(slug="main", backend_id="ChatbotAgent")
+    monkeypatch.setattr(agent_request_service.AgentRepository, "get_visible_by_slug", AsyncMock(return_value=agent))
+    monkeypatch.setattr(agent_request_service.agent_manager, "get_agent", lambda _: object())
+    monkeypatch.setattr(
+        agent_request_service, "resolve_agent_run_config", AsyncMock(return_value=("provider:model", "default"))
+    )
+    effects = []
+
+    def materialize(*_):
+        assert not session.in_transaction()
+        effects.append("materialize")
+
+    async def enqueue(run_id):
+        assert not session.in_transaction()
+        request = await AgentRunRequestRepository(session).get_by_request_id(
+            "request-older" if older else "request-complete"
+        )
+        message = await session.get(Message, request.input_message_id)
+        assert request.status == "dispatched"
+        assert request.dispatched_run_id == message.run_id == run_id
+        assert message.content == ("hi" if older else "first input")
+        effects.append("enqueue")
+
+    monkeypatch.setattr(agent_request_service, "ensure_bound_user_workdir", materialize)
+    monkeypatch.setattr(agent_request_service, "enqueue_agent_run", enqueue)
+    request_input = AgentRequestInput(
+        request_id="request-complete",
+        agent_slug="main",
+        thread_id="t1",
+        input_message=build_chat_input_message("first input"),
+        origin=RunOrigin(source="chat", channel="web"),
+        queue_policy=policy,
+    )
+    user = SimpleNamespace(uid="user-1")
+    result = await agent_request_service.submit_agent_request(
+        request_input=request_input, current_user=user, db=session
+    )
+    assert result["status"] == expected
+    assert effects == (["materialize", "enqueue"] if expected == "dispatched" or older else ["materialize"])
+    session.expire_all()
+    from dataclasses import replace
+
+    replay = await agent_request_service.submit_agent_request(
+        request_input=replace(
+            request_input, input_message=build_chat_input_message("ignored"), model_spec="invalid:ignored"
+        ),
+        current_user=user,
+        db=session,
+    )
+    assert replay == result
+    assert (await session.get(Message, result["message_id"])).content == "first input"
+    assert effects == (["materialize", "enqueue"] if expected == "dispatched" or older else ["materialize"])

@@ -22,6 +22,13 @@ Yuxi 面向需要自己掌握数据、模型和权限的团队：
 - **管理团队使用范围**：按用户、部门和共享范围管理知识库、智能体、Skills 和模型。
 - **对比运行质量**：评估知识库的检索结果，也可以用 Langfuse Dataset 评估完整智能体任务。
 
+
+## 赞助商
+
+| 赞助商 | 介绍 |
+| :---: | :--- |
+| <img src="https://xerrors.oss-cn-shanghai.aliyuncs.com/github/%E4%B8%8B%E8%BD%BD.jpeg" alt="Fluxion AI LOGO" width="180" /> | Fluxion AI面向个人开发者、技术团队与企业，通过统一API接入并管理全球主流AI模型；通过多线路动态调度提升可用性，模型表现、响应时间与费用透明可查。根据不同模型与线路，API调用成本较官方或基准价格可降低40%—98%。专属链接[注册](https://fluxionai.space/register?source=github&campaign=yuxi&promo=YUXI) 获 $7 API 额度 |
+
 ## 技术栈
 
 

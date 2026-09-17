@@ -4,8 +4,8 @@
 
 ## 前置条件
 
-- Docker Engine 24.0 或更高版本；
-- Docker Compose v2.20 或更高版本；
+- Docker Engine 28.0 或更高版本；
+- Docker Compose v2.33.1 或更高版本（provisioner 使用 `gw_priority` 固定默认网关）；
 - 能访问所需镜像和模型服务的网络；
 - 使用本地 GPU OCR 时准备 NVIDIA Container Toolkit。
 
@@ -45,6 +45,21 @@ openssl rand -hex 32
 模型 API Key 按实际使用的供应商填写。生产 Compose 所有必填项都通过变量校验，缺失时会拒绝启动。
 
 后续命令必须显式使用 `--env-file .env.prod`。Compose 的 `env_file` 负责把变量注入容器，但不会替代 Compose 文件插值所需的 `--env-file`。
+
+### 环境隔离与自定义配置文件
+
+开发配置的容器环境文件默认为 `.env`，生产配置默认为 `.env.prod`。使用其他文件时，同时指定 `YUXI_ENV_FILE` 和 `--env-file`，让容器注入与 Compose 插值读取同一份配置：
+
+```bash
+YUXI_ENV_FILE=.env.staging docker compose --env-file .env.staging -f docker-compose.prod.yml config --quiet
+YUXI_ENV_FILE=.env.staging docker compose --env-file .env.staging -f docker-compose.prod.yml up -d --build
+```
+
+同机并行部署时，在各自的环境文件中设置不同的 `COMPOSE_PROJECT_NAME` 和 `YUXI_STATE_DIR`；项目名隔离容器、镜像、Compose 网络和动态沙盒名称，数据目录隔离持久文件。默认数据目录仍是 `./docker/volumes`，同一目录只允许一套运行中的环境写入。已有部署更换项目名或从固定容器名切换前，先结束任务和沙盒会话，用旧配置执行 `docker compose down`（保留数据，不加 `-v`），再用新配置启动；复用数据时保持状态目录和密钥不变。
+
+生产 Web 端口通过 `YUXI_WEB_PORT` 设置，默认 80；API 默认发布到 `127.0.0.1:6050`，管理服务端口也只绑定回环地址。具体默认值由 `docker-compose.prod.yml` 的 `ports` 定义；多套生产环境还需分别设置端口，启用 `all` profile 时包括 `YUXI_MINERU_PORT` 和 `YUXI_PADDLEX_PORT`。开发环境的端口隔离示例见[并行工作树与隔离运行环境](../develop-guides/parallel-worktree-environments.md)。
+
+MinIO 将同一宿主数据目录挂载到容器 `/data`，Neo4j 将日志目录挂载到 `/logs`；这两个容器内路径的调整不要求移动宿主文件。
 
 ## 2. 首次启动
 
@@ -169,8 +184,7 @@ YUXI_CORS_ORIGINS=https://a.example.com,https://b.example.com
 
 ```bash
 docker compose --env-file .env.prod -f docker-compose.prod.yml logs --tail=200 api worker sandbox-provisioner
-docker logs -f api-prod
-docker logs -f worker-prod
+docker compose --env-file .env.prod -f docker-compose.prod.yml logs -f api worker
 ```
 
 ### Redis 重建后恢复 worker

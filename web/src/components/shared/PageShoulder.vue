@@ -34,16 +34,24 @@ defineProps({
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 16px;
   padding: 16px var(--page-padding) 0;
 
   &-left {
+    min-width: 0;
+    max-width: 100%;
     display: flex;
     align-items: center;
     gap: 8px;
   }
 
   &-right {
+    min-width: 0;
+    max-width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    margin-left: auto;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -52,6 +60,7 @@ defineProps({
 
 .search-input {
   width: 280px;
+  max-width: 100%;
   display: flex;
   align-items: center;
 

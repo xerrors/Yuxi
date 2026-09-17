@@ -29,30 +29,33 @@ x-api-worker-env: &api-worker-env
   SANDBOX_VIRTUAL_PATH_PREFIX: ${SANDBOX_VIRTUAL_PATH_PREFIX:-/home/gem/user-data}
   SANDBOX_EXEC_TIMEOUT_SECONDS: ${SANDBOX_EXEC_TIMEOUT_SECONDS:-180}
   SANDBOX_MAX_OUTPUT_BYTES: ${SANDBOX_MAX_OUTPUT_BYTES:-262144}
+  TASKER_DEFAULT_TIMEOUT_SECONDS: ${TASKER_DEFAULT_TIMEOUT_SECONDS:-21600}
+  YUXI_DATASET_PERSIST_BATCH_SIZE: ${YUXI_DATASET_PERSIST_BATCH_SIZE:-1}
   YUXI_SKILL_DATA_DIR: /app/skill-sources
   YUXI_SKILL_PROJECTION_DIR: /app/skill-projections
-  NO_PROXY: localhost,127.0.0.1,milvus,graph,minio,milvus-etcd,etcd,mineru,paddlex,sandbox-provisioner,api.siliconflow.cn
-  no_proxy: localhost,127.0.0.1,milvus,graph,minio,milvus-etcd,etcd,mineru,paddlex,sandbox-provisioner,api.siliconflow.cn
+  NO_PROXY: localhost,127.0.0.1,milvus,graph,minio,etcd,mineru,paddlex,sandbox-provisioner,api.siliconflow.cn
+  no_proxy: localhost,127.0.0.1,milvus,graph,minio,etcd,mineru,paddlex,sandbox-provisioner,api.siliconflow.cn
 
 services:
   api:
+    ports:
+      - "${YUXI_API_PORT:-6050}:5050"
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    image: yuxi-api:${YUXI_VERSION:-0.7.3}
-    container_name: api-prod
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.7.3}
     working_dir: /app
     user: "1000:1000"
     networks:
       - app-network
     volumes:
-      - ./docker/volumes/yuxi/threads:/app/user-data
-      - ./docker/volumes/yuxi/skill-sources:/app/skill-sources
-      - ./docker/volumes/yuxi/skill-projections:/app/skill-projections
+      - ${YUXI_STATE_DIR:-./docker/volumes}/yuxi/threads:/app/user-data
+      - ${YUXI_STATE_DIR:-./docker/volumes}/yuxi/skill-sources:/app/skill-sources
+      - ${YUXI_STATE_DIR:-./docker/volumes}/yuxi/skill-projections:/app/skill-projections
     extra_hosts:
       - "host.docker.internal:host-gateway"
     env_file:
-      - .env.prod
+      - ${YUXI_ENV_FILE:-.env.prod}
     # region api_envs
     environment:
       <<: *api-worker-env
@@ -89,20 +92,19 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    image: yuxi-api:${YUXI_VERSION:-0.7.3}
-    container_name: worker-prod
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.7.3}
     working_dir: /app
     user: "1000:1000"
     networks:
       - app-network
     volumes:
-      - ./docker/volumes/yuxi/threads:/app/user-data
-      - ./docker/volumes/yuxi/skill-sources:/app/skill-sources
-      - ./docker/volumes/yuxi/skill-projections:/app/skill-projections
+      - ${YUXI_STATE_DIR:-./docker/volumes}/yuxi/threads:/app/user-data
+      - ${YUXI_STATE_DIR:-./docker/volumes}/yuxi/skill-sources:/app/skill-sources
+      - ${YUXI_STATE_DIR:-./docker/volumes}/yuxi/skill-projections:/app/skill-projections
     extra_hosts:
       - "host.docker.internal:host-gateway"
     env_file:
-      - .env.prod
+      - ${YUXI_ENV_FILE:-.env.prod}
     environment:
       <<: *api-worker-env
       YUXI_RUNTIME_DIR: /app/runtime/worker
@@ -138,18 +140,18 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    image: yuxi-api:${YUXI_VERSION:-0.7.3}
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.7.3}
     working_dir: /app
     user: "0:0"
     networks:
       - app-network
     volumes:
-      - ./docker/volumes/yuxi:/app/legacy-saves
-      - ./docker/volumes/yuxi/threads:/app/user-data
-      - ./docker/volumes/yuxi/skill-sources:/app/skill-sources
-      - ./docker/volumes/yuxi/skill-projections:/app/skill-projections
+      - ${YUXI_STATE_DIR:-./docker/volumes}/yuxi:/app/legacy-saves
+      - ${YUXI_STATE_DIR:-./docker/volumes}/yuxi/threads:/app/user-data
+      - ${YUXI_STATE_DIR:-./docker/volumes}/yuxi/skill-sources:/app/skill-sources
+      - ${YUXI_STATE_DIR:-./docker/volumes}/yuxi/skill-projections:/app/skill-projections
     env_file:
-      - .env.prod
+      - ${YUXI_ENV_FILE:-.env.prod}
     environment:
       <<: *api-worker-env
       YUXI_RUNTIME_DIR: /app/runtime/storage-migrator
@@ -162,17 +164,21 @@ services:
         condition: service_healthy
 
   sandbox-provisioner:
+    ports:
+      - "127.0.0.1:${YUXI_SANDBOX_PORT:-9002}:8002"
     build:
       context: ./docker/sandbox_provisioner
       dockerfile: Dockerfile
-    container_name: sandbox-provisioner
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-sandbox-provisioner:${YUXI_VERSION:-0.7.3}
     volumes:
-      - ./docker/volumes/yuxi/threads:/app/user-data
-      - ./docker/volumes/yuxi/skill-projections:/app/skill-projections
-      - ./docker/sandbox_provisioner/sandbox.env:/app/sandbox.env:ro
+      - ${YUXI_STATE_DIR:-./docker/volumes}/yuxi/threads:/app/user-data
+      - ${YUXI_STATE_DIR:-./docker/volumes}/yuxi/skill-projections:/app/skill-projections
+      - ${SANDBOX_ENV_FILE:-./docker/sandbox_provisioner/sandbox.env}:/app/sandbox.env:ro
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
-      - app-network
+      app-network:
+        # 动态接入沙盒网络时保留管理端口的默认路由。
+        gw_priority: 1
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
@@ -195,18 +201,19 @@ services:
       - HTTPS_PROXY=${SANDBOX_HTTPS_PROXY:-}
       - NO_PROXY=localhost,127.0.0.1,host.docker.internal
       # Docker backend only
-      - DOCKER_NETWORK_PREFIX=${SANDBOX_DOCKER_NETWORK_PREFIX:-yuxi-know-sandbox}
+      - DOCKER_NETWORK_PREFIX=${SANDBOX_DOCKER_NETWORK_PREFIX:-${COMPOSE_PROJECT_NAME:-yuxi}-sandbox}
       - DOCKER_ADDRESS_POOL=${SANDBOX_DOCKER_ADDRESS_POOL:-10.253.240.0/20}
       - DOCKER_SUBNET_PREFIX=${SANDBOX_DOCKER_SUBNET_PREFIX:-28}
       - DOCKER_USER_DATA_HOST_PATH=${SANDBOX_DOCKER_USER_DATA_HOST_PATH:-}
       - DOCKER_SKILL_PROJECTIONS_HOST_PATH=${SANDBOX_DOCKER_SKILL_PROJECTIONS_HOST_PATH:-}
-      - DOCKER_SANDBOX_PREFIX=${SANDBOX_DOCKER_SANDBOX_PREFIX:-yuxi-sandbox}
+      - DOCKER_SANDBOX_PREFIX=${SANDBOX_DOCKER_SANDBOX_PREFIX:-${COMPOSE_PROJECT_NAME:-yuxi}-sandbox}
       # Kubernetes backend only
       - K8S_NAMESPACE=${SANDBOX_K8S_NAMESPACE:-yuxi-know}
       - NODE_HOST=${SANDBOX_NODE_HOST:-host.docker.internal}
       - KUBECONFIG_PATH=${KUBECONFIG_PATH:-}
       - USER_DATA_PVC=${USER_DATA_PVC:-yuxi-user-data}
       - SKILLS_PVC=${SKILLS_PVC:-yuxi-skills}
+    command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8002"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health').read()"]
       interval: 10s
@@ -223,10 +230,9 @@ services:
       context: .
       dockerfile: docker/web.Dockerfile
       target: production
-    image: yuxi-web:${YUXI_VERSION:-0.7.3}
-    container_name: web-prod
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-web:${YUXI_VERSION:-0.7.3}
     ports:
-      - "80:80"
+      - "${YUXI_WEB_PORT:-80}:80"
     depends_on:
       - api
     networks:
@@ -237,13 +243,15 @@ services:
     restart: unless-stopped
 
   graph:
+    ports:
+      - "127.0.0.1:${YUXI_NEO4J_HTTP_PORT:-8474}:7474"
+      - "127.0.0.1:${YUXI_NEO4J_BOLT_PORT:-8687}:7687"
     image: neo4j:5.26.29
-    container_name: graph
     volumes:
-      - ./docker/volumes/neo4j/data:/data
-      - ./docker/volumes/neo4j/logs:/var/lib/neo4j/logs
+      - ${YUXI_STATE_DIR:-./docker/volumes}/neo4j/data:/data
+      - ${YUXI_STATE_DIR:-./docker/volumes}/neo4j/logs:/logs
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:7474 || exit 1"]
+      test: ["CMD-SHELL", "cypher-shell -a bolt://localhost:7687 -u \"$${NEO4J_AUTH%%/*}\" -p \"$${NEO4J_AUTH#*/}\" 'RETURN 1;' >/dev/null || exit 1"]
       interval: 20s
       timeout: 10s
       retries: 5
@@ -258,7 +266,6 @@ services:
     restart: unless-stopped
 
   etcd:
-    container_name: milvus-etcd
     image: quay.io/coreos/etcd:v3.5.5
     environment:
       - ETCD_AUTO_COMPACTION_MODE=revision
@@ -266,7 +273,7 @@ services:
       - ETCD_QUOTA_BACKEND_BYTES=4294967296
       - ETCD_SNAPSHOT_COUNT=50000
     volumes:
-      - ./docker/volumes/milvus/etcd:/etcd
+      - ${YUXI_STATE_DIR:-./docker/volumes}/milvus/etcd:/etcd
     command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
     healthcheck:
       test: ["CMD", "etcdctl", "endpoint", "health"]
@@ -279,15 +286,17 @@ services:
     restart: unless-stopped
 
   minio:
-    container_name: minio
+    ports:
+      - "127.0.0.1:${YUXI_MINIO_API_PORT:-10000}:9000"
+      - "127.0.0.1:${YUXI_MINIO_CONSOLE_PORT:-10001}:9001"
     image: quay.io/minio/minio:RELEASE.2023-03-20T20-16-18Z
     environment:
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?Set MINIO_ACCESS_KEY in .env.prod}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?Set MINIO_SECRET_KEY in .env.prod}
     volumes:
-      - ./docker/volumes/milvus/minio:/minio_data
-      - ./docker/volumes/milvus/minio_config:/root/.minio
-    command: minio server /minio_data --address 0.0.0.0:9000 --console-address 0.0.0.0:9001
+      - ${YUXI_STATE_DIR:-./docker/volumes}/milvus/minio:/data
+      - ${YUXI_STATE_DIR:-./docker/volumes}/milvus/minio_config:/root/.minio
+    command: minio server /data --address 0.0.0.0:9000 --console-address 0.0.0.0:9001
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 60s
@@ -299,8 +308,10 @@ services:
     restart: unless-stopped
 
   milvus:
+    ports:
+      - "127.0.0.1:${YUXI_MILVUS_PORT:-20530}:19530"
+      - "127.0.0.1:${YUXI_MILVUS_HEALTH_PORT:-10091}:9091"
     image: milvusdb/milvus:v2.5.6
-    container_name: milvus
     command: ["milvus", "run", "standalone"]
     security_opt:
       - seccomp:unconfined
@@ -311,8 +322,8 @@ services:
       MINIO_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:?Set MINIO_SECRET_KEY in .env.prod}
       MILVUS_LOG_LEVEL: error
     volumes:
-      - ./docker/volumes/milvus/milvus:/var/lib/milvus
-      - ./docker/volumes/milvus/logs:/var/lib/milvus/logs
+      - ${YUXI_STATE_DIR:-./docker/volumes}/milvus/milvus:/var/lib/milvus
+      - ${YUXI_STATE_DIR:-./docker/volumes}/milvus/logs:/var/lib/milvus/logs
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
       interval: 60s
@@ -327,16 +338,17 @@ services:
     restart: unless-stopped
 
   postgres:
+    ports:
+      - "127.0.0.1:${YUXI_POSTGRES_PORT:-6432}:5432"
     image: postgres:16
     command: ["postgres", "-c", "max_connections=${POSTGRES_MAX_CONNECTIONS:-600}"]
-    container_name: postgres
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.prod}
       - POSTGRES_DB=${POSTGRES_DB:-yuxi}
       - TZ=${TZ:-Asia/Shanghai}
     volumes:
-      - ./docker/volumes/postgresql:/var/lib/postgresql/data
+      - ${YUXI_STATE_DIR:-./docker/volumes}/postgresql:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-yuxi} || exit 1"]
       interval: 5s
@@ -347,8 +359,9 @@ services:
     restart: unless-stopped
 
   redis:
+    ports:
+      - "127.0.0.1:${YUXI_REDIS_PORT:-7379}:6379"
     image: redis:7.4.10-alpine
-    container_name: redis
     command: redis-server --appendonly yes
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -356,21 +369,22 @@ services:
       timeout: 5s
       retries: 10
     volumes:
-      - ./docker/volumes/redis:/data
+      - ${YUXI_STATE_DIR:-./docker/volumes}/redis:/data
     networks:
       - app-network
     restart: unless-stopped
 
   mineru-api:
+    ports:
+      - "127.0.0.1:${YUXI_MINERU_PORT:-30001}:30001"
     build:
       context: .
       dockerfile: docker/mineru.Dockerfile
-    image: mineru-vllm:latest
-    container_name: mineru-api
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-mineru:latest
     profiles:
       - all
     env_file:
-      - .env.prod
+      - ${YUXI_ENV_FILE:-.env.prod}
     environment:
       MINERU_MODEL_SOURCE: local
     entrypoint: mineru-api
@@ -398,15 +412,16 @@ services:
     restart: unless-stopped
 
   paddlex:
+    ports:
+      - "127.0.0.1:${YUXI_PADDLEX_PORT:-8080}:8080"
     build:
       context: .
       dockerfile: docker/paddlex.Dockerfile
-    image: paddlex:latest
-    container_name: paddlex-ocr
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-paddlex:latest
     profiles:
       - all
     volumes:
-      - ./docker/volumes/paddlex:/paddlex
+      - ${YUXI_STATE_DIR:-./docker/volumes}/paddlex:/paddlex
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
       interval: 20s

@@ -114,11 +114,10 @@ async def generate_database_sample_questions(kb_id: str, count: int = 10) -> dic
 
     logger.info(f"成功生成{len(questions)}个问题")
 
-    try:
-        await KnowledgeBaseRepository().update(kb_id, {"sample_questions": questions})
-        logger.info(f"成功保存 {len(questions)} 个问题到知识库 {kb_id}")
-    except Exception as save_error:
-        logger.error(f"保存问题失败: {save_error}")
+    saved = await KnowledgeBaseRepository().update(kb_id, {"sample_questions": questions})
+    if saved is None:
+        raise HTTPException(status_code=404, detail=f"知识库 {kb_id} 不存在")
+    logger.info(f"成功保存 {len(questions)} 个问题到知识库 {kb_id}")
 
     return {
         "message": "success",

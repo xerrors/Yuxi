@@ -34,8 +34,8 @@ class BumpVersionScriptTests(unittest.TestCase):
             )
             + "\n",
             "docker-compose.prod.yml": "\n".join(
-                f"image: {name}:${{YUXI_VERSION:-0.7.2.beta1}}"
-                for name in ("yuxi-api", "yuxi-api", "yuxi-api", "yuxi-web")
+                f"image: ${{COMPOSE_PROJECT_NAME:-yuxi}}-{name}:${{YUXI_VERSION:-0.7.2.beta1}}"
+                for name in ("api", "api", "api", "sandbox-provisioner", "web")
             )
             + "\n",
             "README.md": (
@@ -100,7 +100,7 @@ class BumpVersionScriptTests(unittest.TestCase):
                 (root / "docker-compose.yml").read_text().count("0.7.2.beta2"), 5
             )
             self.assertEqual(
-                (root / "docker-compose.prod.yml").read_text().count("0.7.2.beta2"), 4
+                (root / "docker-compose.prod.yml").read_text().count("0.7.2.beta2"), 5
             )
             changelog = (root / "docs/develop-guides/changelog.md").read_text()
             self.assertIn("v0.7.2.beta1", changelog)

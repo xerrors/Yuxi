@@ -18,6 +18,12 @@ export const modelAvatars = {
   ark: avatar('volcengine-color', '#fff', 0.75, 'none'),
   dashscope: avatar('bailian-color', '#fff', 0.75, 'none'),
   deepseek: avatar('deepseek', '#4d6bfe'),
+  fluxionai: {
+    icon: 'https://xerrors.oss-cn-shanghai.aliyuncs.com/github/%E4%B8%8B%E8%BD%BD.jpeg',
+    background: '#fff',
+    scale: 1,
+    filter: 'none'
+  },
   google: avatar('google-color', '#fff', 0.75, 'none'),
   minimax: avatar('minimax', 'linear-gradient(to right, #e2167e, #fe603c)'),
   'minimax-cn': avatar('minimax', 'linear-gradient(to right, #e2167e, #fe603c)'),

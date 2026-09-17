@@ -348,6 +348,8 @@ async def parse_tmp_attachment_view(
         )
     except StorageError as exc:
         raise HTTPException(status_code=400, detail=f"读取临时附件失败: {exc}") from exc
+    except HTTPException:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"Tmp attachment parse failed for {safe_name}: {exc}")
         raise HTTPException(status_code=400, detail=f"附件解析失败: {exc}") from exc

@@ -11,6 +11,7 @@ from yuxi.services.chat_service import (
     _normalize_interrupt_questions,
     stream_agent_resume,
 )
+from test.unit.agent_context_fixtures import prepared_execution
 from yuxi.services import chat_service as svc
 from yuxi.utils.question_utils import normalize_options
 
@@ -220,6 +221,7 @@ class TestNormalizeInterruptQuestions:
 @pytest.mark.asyncio
 async def test_stream_agent_resume_init_does_not_render_resume_input():
     stream = stream_agent_resume(
+        prepared_execution=prepared_execution(),
         thread_id="thread-1",
         resume_input={"language": "python"},
         meta={"request_id": "req-1"},
@@ -280,7 +282,7 @@ async def test_stream_agent_resume_commits_before_stream_and_routes_subagent_chu
         return (
             SimpleNamespace(slug="main-agent", backend_id="ChatbotAgent"),
             FakeAgent(),
-            {},
+            prepared_execution().context,
             SimpleNamespace(
                 id=1,
                 uid="user-1",
@@ -297,12 +299,8 @@ async def test_stream_agent_resume_commits_before_stream_and_routes_subagent_chu
         if False:
             yield None
 
-    async def fake_build_agent_input_context(*_args, **_kwargs):
-        return {"thread_id": "parent-thread", "uid": "user-1"}
-
     monkeypatch.setattr(svc, "_resolve_agent_runtime", fake_resolve_agent_runtime)
     monkeypatch.setattr(svc, "resolve_conversation_workdir_path", _resolve_test_workdir)
-    monkeypatch.setattr(svc, "build_agent_input_context", fake_build_agent_input_context)
     monkeypatch.setattr(
         svc,
         "_build_langfuse_run_context",
@@ -350,6 +348,7 @@ async def test_stream_agent_resume_commits_before_stream_and_routes_subagent_chu
         lifecycle.append("prepared")
 
     stream = stream_agent_resume(
+        prepared_execution=prepared_execution(),
         thread_id="parent-thread",
         resume_input={"ok": True},
         meta={"request_id": "req-1"},
@@ -386,6 +385,7 @@ async def test_stream_agent_resume_commits_before_stream_and_routes_subagent_chu
     monkeypatch.setattr(svc, "save_messages_from_langgraph_state", fail_output_persistence)
     failing_chunks = []
     async for raw in stream_agent_resume(
+        prepared_execution=prepared_execution(),
         thread_id="parent-thread",
         resume_input={"ok": True},
         meta={

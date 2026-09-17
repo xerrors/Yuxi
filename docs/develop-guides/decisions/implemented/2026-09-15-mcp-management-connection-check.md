@@ -26,13 +26,13 @@ Owner：backend/package/yuxi/agents/mcp/service.py
 
 `backend/test/unit/services/test_mcp_management_inspection.py` 验证停用服务真实调用适配器、异常保留、空列表成功、完整工具元数据和运行缓存不变，以及旧 stdio 在连接前拒绝。
 
-`backend/test/integration/services/test_mcp_management_inspection.py` 使用独立 PostgreSQL schema、真实 HTTP API 和本地 Streamable HTTP MCP 协议对端，覆盖启用/停用零工具、停用有工具、协议服务错误和连接拒绝，重新读取全部服务列并核对运行缓存不变。身份依赖使用测试管理员，SQL、路由和 MCP 适配器均保留真实实现。
+`backend/test/integration/api/test_mcp_router.py` 复用共享 `test_client`、`admin_headers` 与 Compose 的真实 API、PostgreSQL，通过管理接口创建和清理唯一命名的 MCP 配置。测试在 api 容器内启动本地 Streamable HTTP MCP 协议对端，覆盖启用/停用零工具、停用有工具、协议服务错误和连接拒绝，并通过独立 PostgreSQL 连接逐列回读配置，确认检查无持久化副作用。运行缓存与统计不变由同进程 unit 验证。
 
-独立测试仅接受 `TEST_POSTGRES_URL` 指向名为 `fixture` 的数据库，且要求 `TEST_ALLOW_MCP_INSPECTION_DB=1`；缺少显式配置时跳过。运行命令在 backend 目录执行：
+[Runtime System Tests](../../../../.github/workflows/system-tests.yml) 在既有 Compose 环境中使用测试管理员执行该 API 集成测试；本地运行复用相同环境与集成测试凭据配置：
 
 ```bash
-python -m pytest test/unit/services/test_mcp_management_inspection.py test/unit/services/test_mcp_service.py test/unit/routers/test_mcp_router.py -q
-python -m pytest --confcutdir=test/integration/services test/integration/services/test_mcp_management_inspection.py -q
+docker compose exec api uv run --group test pytest test/unit/services/test_mcp_management_inspection.py test/unit/services/test_mcp_service.py test/unit/routers/test_mcp_router.py -q
+docker compose exec api uv run --group test pytest test/integration/api/test_mcp_router.py -q
 ```
 
 测试文件定义可执行证据；外部服务可用性不由本地协议测试证明。

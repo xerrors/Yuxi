@@ -97,6 +97,8 @@ class ResolvedSkill:
     tool_dependencies: list[str]
     mcp_dependencies: list[str]
     skill_dependencies: list[str]
+    version: str | None = None
+    content_hash: str | None = None
     overrides_shared: bool = False
     shadowed_by_personal: bool = False
 
@@ -1024,6 +1026,8 @@ def _resolved_shared_skill(item: Skill, *, shadowed_by_personal: bool = False) -
         tool_dependencies=normalize_string_list(item.tool_dependencies),
         mcp_dependencies=normalize_string_list(item.mcp_dependencies),
         skill_dependencies=normalize_string_list(item.skill_dependencies),
+        version=item.version,
+        content_hash=item.content_hash,
         shadowed_by_personal=shadowed_by_personal,
     )
 

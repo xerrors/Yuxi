@@ -136,6 +136,7 @@ class MilvusGraphVectorStore:
                     logger.info(f"Dropped Milvus graph collection {collection_name}")
             except Exception as exc:
                 logger.error(f"Failed to drop Milvus graph collection {collection_name}: {exc}")
+                raise
 
     def _get_embedding_function(self, embedding_model_spec: str):
         model = select_embedding_model(embedding_model_spec)

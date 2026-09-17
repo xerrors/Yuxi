@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.services.agent_run_service import AgentRunWaitTimeout, await_agent_run_result
 from yuxi.services.input_message_service import build_chat_input_message
 from yuxi.services.run_queue_service import list_run_stream_events
-from yuxi.services.run_submission_service import RunOrigin, RunSubmissionCommand, submit_run_command
+from yuxi.services.agent_request_service import RunOrigin, AgentRequestInput, submit_agent_request
 from yuxi.storage.postgres.models_business import User
 from yuxi.utils.hash_utils import hash_id
 from yuxi.utils.logging_config import logger
@@ -68,8 +68,8 @@ async def create_agent_eval_run(
     request_id = _normalize_request_id(meta)
     evaluation = _normalize_evaluation(payload.evaluation.model_dump(exclude_none=True))
     origin_metadata = {"agent_invocation_meta": {"evaluation": evaluation}} if evaluation else {}
-    run_response = await submit_run_command(
-        command=RunSubmissionCommand(
+    run_response = await submit_agent_request(
+        request_input=AgentRequestInput(
             agent_slug=agent_slug,
             thread_id=(payload.thread_id or "").strip()
             or hash_id("invocation_", f"{current_user.uid}:{agent_slug}:{request_id}", length=64),

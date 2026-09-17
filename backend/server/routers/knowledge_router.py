@@ -229,9 +229,11 @@ async def get_databases(current_user: User = Depends(get_admin_user)):
     """获取所有知识库（根据用户权限过滤）"""
     try:
         return serialize_knowledge_base_list(await knowledge_base.get_databases_by_uid(current_user.uid))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"获取数据库列表失败 {e}, {traceback.format_exc()}")
-        return {"message": f"获取数据库列表失败 {e}", "databases": []}
+        raise HTTPException(status_code=500, detail="获取数据库列表失败") from e
 
 
 @knowledge.post("/databases")
@@ -300,9 +302,11 @@ async def get_accessible_databases(current_user: User = Depends(get_required_use
         ]
 
         return {"databases": accessible}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"获取可访问知识库列表失败: {e}, {traceback.format_exc()}")
-        return {"message": f"获取可访问知识库列表失败: {str(e)}", "databases": []}
+        raise HTTPException(status_code=500, detail="获取可访问知识库列表失败") from e
 
 
 @knowledge.get("/mindmap/databases")
@@ -397,6 +401,8 @@ async def repair_database_stats(kb_id: str, current_user: User = Depends(require
         return await knowledge_base.repair_missing_file_stats(kb_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"修复知识库统计失败 {e}, {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"修复知识库统计失败: {e}")
@@ -448,6 +454,8 @@ async def delete_database(kb_id: str, current_user: User = Depends(require_knowl
         await agent_manager.reload_all()
 
         return {"message": "删除成功"}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"删除数据库失败 {e}, {traceback.format_exc()}")
         raise HTTPException(status_code=400, detail=f"删除数据库失败: {e}")
@@ -459,6 +467,8 @@ async def get_graph_build_status(kb_id: str, current_user: User = Depends(requir
         return await MilvusGraphService().get_status(kb_id, tasker=tasker)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"获取图谱构建状态失败 {e}, {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"获取图谱构建状态失败: {e}")
@@ -481,6 +491,8 @@ async def configure_graph_build(
     except ValueError as e:
         status_code = 409 if "已锁定" in str(e) else 400
         raise HTTPException(status_code=status_code, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"配置图谱构建失败 {e}, {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"配置图谱构建失败: {e}")
@@ -532,6 +544,8 @@ async def get_graph_build_failed_chunks(
         return await MilvusGraphService().get_failed_chunk_samples(kb_id, limit=max(1, min(limit, 10)))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"获取图谱抽取失败 Chunk 样例失败 {e}, {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"获取图谱抽取失败 Chunk 样例失败: {e}")
@@ -746,6 +760,8 @@ async def add_documents(
             "status": "queued",
             "task_id": task.id,
         }
+    except HTTPException:
+        raise
     except Exception as e:  # noqa: BLE001
         logger.error(f"Failed to enqueue {content_type}s: {e}, {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Failed to enqueue task: {e}")
@@ -858,6 +874,8 @@ async def _enqueue_document_action_task(
             },
         )
         return {"message": f"{label}任务已提交", "status": "queued", "task_id": task.id}
+    except HTTPException:
+        raise
     except Exception as e:
         return {"message": f"提交失败: {e}", "status": "failed"}
 
@@ -904,6 +922,8 @@ async def _enqueue_pending_document_action_task(
             "task_id": task.id,
             "queued_count": pending_count,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         return {"message": f"提交失败: {e}", "status": "failed"}
 
@@ -1003,6 +1023,8 @@ async def get_document_info(kb_id: str, doc_id: str, current_user: User = Depend
     try:
         info = await knowledge_base.get_file_info(kb_id, doc_id)
         return info
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to get file info, {e}, {kb_id=}, {doc_id=}, {traceback.format_exc()}")
         return {"message": "Failed to get file info", "status": "failed"}
@@ -1017,6 +1039,8 @@ async def get_document_basic_info(kb_id: str, doc_id: str, current_user: User = 
     try:
         info = await knowledge_base.get_file_basic_info(kb_id, doc_id)
         return info
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to get file basic info, {e}, {kb_id=}, {doc_id=}, {traceback.format_exc()}")
         return {"message": "Failed to get file basic info", "status": "failed"}
@@ -1036,6 +1060,8 @@ async def get_document_content(kb_id: str, doc_id: str, current_user: User = Dep
             for line in info.get("lines", [])
         ]
         return info
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to get file content, {e}, {kb_id=}, {doc_id=}, {traceback.format_exc()}")
         return {"message": "Failed to get file content", "status": "failed"}
@@ -1120,6 +1146,8 @@ async def delete_document(kb_id: str, doc_id: str, current_user: User = Depends(
         removed_filename = file_meta_info.get("meta", {}).get("filename", "")
         await remove_file_from_mindmap(kb_id, doc_id, removed_filename)
         return {"message": "删除成功"}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"删除文档失败 {e}, {traceback.format_exc()}")
         raise HTTPException(status_code=400, detail=f"删除文档失败: {e}")
@@ -1174,6 +1202,8 @@ async def download_document(kb_id: str, doc_id: str, current_user: User = Depend
             )
             logger.debug(f"Successfully downloaded object: {object_name}")
 
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Failed to download MinIO file: {e}")
             raise StorageError(f"下载文件失败: {e}")
@@ -1266,6 +1296,8 @@ async def query_knowledge_base(
     try:
         result = await knowledge_base.aquery(query, kb_id=kb_id, **meta)
         return {"result": result, "status": "success"}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"知识库查询失败 {e}, {traceback.format_exc()}")
         return {"message": f"知识库查询失败: {e}", "status": "failed"}
@@ -1283,6 +1315,8 @@ async def query_test(
     try:
         result = await knowledge_base.aquery(query, kb_id=kb_id, **meta)
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"测试查询失败 {e}, {traceback.format_exc()}")
         return {"message": f"测试查询失败: {e}", "status": "failed"}
@@ -1316,6 +1350,8 @@ async def get_knowledge_base_query_params(kb_id: str, current_user: User = Depen
         params = await knowledge_base.get_kb_query_params_config(kb_id)
         return {"params": params, "message": "success"}
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"获取知识库查询参数失败 {e}, {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1696,7 +1732,7 @@ async def mark_it_down(file: UploadFile = File(...), current_user: User = Depend
     import tempfile
 
     if not file.filename:
-        return {"message": "文件解析失败: 无法识别文件名", "markdown_content": ""}
+        raise HTTPException(status_code=400, detail="无法识别文件名")
 
     suffix = os.path.splitext(file.filename)[1].lower()
     temp_path = None
@@ -1716,9 +1752,11 @@ async def mark_it_down(file: UploadFile = File(...), current_user: User = Depend
         return {"markdown_content": markdown_content, "message": "success"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"文件解析失败 {e}, {traceback.format_exc()}")
-        return {"message": f"文件解析失败 {e}", "markdown_content": ""}
+        raise HTTPException(status_code=500, detail="文件解析失败") from e
     finally:
         if temp_path and os.path.exists(temp_path):
             try:
@@ -1738,9 +1776,11 @@ async def get_knowledge_base_types(current_user: User = Depends(get_admin_user))
     try:
         kb_types = knowledge_base.get_supported_kb_types()
         return {"kb_types": kb_types, "message": "success"}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"获取知识库类型失败 {e}, {traceback.format_exc()}")
-        return {"message": f"获取知识库类型失败 {e}", "kb_types": {}}
+        raise HTTPException(status_code=500, detail="获取知识库类型失败") from e
 
 
 @knowledge.get("/chunk-presets")
@@ -1755,9 +1795,11 @@ async def get_knowledge_base_statistics(current_user: User = Depends(get_admin_u
     try:
         stats = await knowledge_base.get_statistics()
         return {"stats": stats, "message": "success"}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"获取知识库统计失败 {e}, {traceback.format_exc()}")
-        return {"message": f"获取知识库统计失败 {e}", "stats": {}}
+        raise HTTPException(status_code=500, detail="获取知识库统计失败") from e
 
 
 # =============================================================================
@@ -1816,6 +1858,8 @@ async def generate_description(
         description = response.content.strip()
         logger.debug(f"Generated description: {description}")
         return {"description": description, "status": "success"}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"生成描述失败: {e}, {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"生成描述失败: {e}")

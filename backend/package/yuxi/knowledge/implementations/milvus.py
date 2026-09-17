@@ -1049,7 +1049,7 @@ class MilvusKB(KnowledgeBase):
 
         except Exception as e:
             logger.error(f"Milvus query error: {e}, {traceback.format_exc()}")
-            return []
+            raise
 
     async def _retrieve_graph_chunks(
         self,
@@ -1202,7 +1202,7 @@ class MilvusKB(KnowledgeBase):
                 await MilvusGraphService().delete_file_graph(kb_id, file_id)
             except Exception as e:
                 logger.error(f"Failed to delete graph data for file {file_id}: {e}")
-        await chunk_repo.delete_by_file_id(file_id)
+                raise
         collection = await self._get_existing_milvus_collection(kb_id)
 
         if collection:
@@ -1211,6 +1211,9 @@ class MilvusKB(KnowledgeBase):
                 await self._delete_file_chunks_from_milvus(collection, file_id)
             except Exception as e:
                 logger.error(f"Error checking file existence in Milvus: {e}")
+                raise
+        # 外部删除成功后再移除 chunk 事实，失败时保留可重试的元数据。
+        await chunk_repo.delete_by_file_id(file_id)
         await KnowledgeFileRepository().update_fields(
             file_id=file_id,
             kb_id=kb_id,
@@ -1287,6 +1290,7 @@ class MilvusKB(KnowledgeBase):
                     logger.info(f"Milvus collection {kb_id} does not exist, skipping")
             except Exception as e:
                 logger.error(f"Failed to drop Milvus collection {kb_id}: {e}")
+                raise
 
             from yuxi.knowledge.graphs.milvus_graph_vector_store import MilvusGraphVectorStore
 

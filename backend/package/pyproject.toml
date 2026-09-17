@@ -60,6 +60,7 @@ dependencies = [
     "python-dotenv>=1.1.0",
     "python-multipart>=0.0.31",
     "pyyaml>=6.0.2",
+    "xlrd>=2.0.1",
     "rapidocr>=3.0.0",
     "readability-lxml>=0.8.1",
     "redis>=5.2.0",

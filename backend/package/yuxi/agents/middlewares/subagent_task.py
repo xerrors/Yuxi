@@ -447,7 +447,6 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
                     input_message=input_message,
                     tool_call_id=runtime.tool_call_id,
                     requested_thread_id=thread_id,
-                    model_spec=self._subagent_model_override(agent_item),
                 )
         except subagent_service.SubagentRunBusy as exc:
             payload = exc.to_payload()
@@ -455,18 +454,6 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
         except ValueError as exc:
             return None, str(exc)
         return _StartedSubagent(result=result, parent_runtime=parent_runtime, agent_item=agent_item), None
-
-    def _subagent_model_override(self, agent_item: Agent) -> str | None:
-        """当子智能体未显式配置模型时，沿用父智能体当前模型。"""
-        config_context = (
-            (agent_item.config_json or {}).get("context") if isinstance(agent_item.config_json, dict) else None
-        )
-        configured_model = ""
-        if isinstance(config_context, dict):
-            configured_model = str(config_context.get("model") or "").strip()
-        if configured_model:
-            return None
-        return str(getattr(self.parent_context, "model", None) or "").strip() or None
 
     async def _get_verified_subagent_run(self, *, run_id: str, uid: str, created_by_run_id: str):
         """在工具调用前按父 run 作用域校验子 run 归属。"""

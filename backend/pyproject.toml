@@ -14,6 +14,7 @@ dependencies = [
     "arq>=0.26.3",
     "croniter>=6.0.0",
     "yuxi",
+    "xlrd>=2.0.2",
 ]
 [tool.ruff]
 line-length = 120  # 代码最大行宽

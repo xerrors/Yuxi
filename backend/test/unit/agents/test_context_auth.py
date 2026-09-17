@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import importlib
 import sys
 import types
@@ -291,6 +293,10 @@ async def test_normalize_agent_context_config_expands_null_and_filters_explicit_
 
 @pytest.mark.asyncio
 async def test_prepare_agent_runtime_context_filters_resources_and_derives_runtime_scope(monkeypatch):
+    from yuxi.agents import context as context_module
+
+    monkeypatch.setattr(context_module, "_load_workspace_agent_context", lambda uid: "workspace policy")
+
     async def fake_get_databases_by_user(_user):
         return [_knowledge_summary("kb-a"), _knowledge_summary("kb-b")]
 
@@ -440,14 +446,33 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
     assert prepared.preload_skills == ["skill-a"]
     assert prepared.subagents == ["research-agent"]
     assert prepared._visible_knowledge_bases == [{"slug": "kb-a", "name": "Docs A"}]
-    assert prepared._effective_skill_slugs == ["skill-a", "skill-b"]
-    assert prepared._runtime_skills["skill-a"]["name"] == "Skill A"
-    assert prepared._runtime_skills["skill-a"]["skills"] == ["skill-b"]
-    assert prepared._preloaded_skills == ["skill-a", "skill-b"]
+    assert prepared._skill_runtime_snapshot.get("effective_skills", []) == ["skill-a", "skill-b"]
+    assert prepared._skill_runtime_snapshot.get("runtime_skills", {})["skill-a"]["name"] == "Skill A"
+    assert prepared._skill_runtime_snapshot.get("runtime_skills", {})["skill-a"]["skills"] == ["skill-b"]
+    assert prepared._skill_runtime_snapshot.get("preloaded_skills", []) == ["skill-a", "skill-b"]
+
+    # 已准备对象保留同次执行内容，后续构图不得重新读取配置或 Skill。
+    monkeypatch.setattr(
+        context_module,
+        "normalize_agent_context_config",
+        AsyncMock(side_effect=AssertionError("同次执行不得再次规范化")),
+    )
+    monkeypatch.setattr(
+        "yuxi.agents.skills.runtime.resolve_runtime_skills_for_context",
+        AsyncMock(side_effect=AssertionError("同次执行不得重新读取 Skill")),
+    )
+    prompt = prepared.system_prompt
+    assert "workspace policy" in prompt
+    assert await context_module.prepare_agent_runtime_context(prepared) is prepared
+    assert prepared.system_prompt == prompt
 
 
 @pytest.mark.asyncio
 async def test_prepare_agent_runtime_context_clears_resources_for_missing_user(monkeypatch):
+    from yuxi.agents import context as context_module
+
+    monkeypatch.setattr(context_module, "_load_workspace_agent_context", lambda uid: "")
+
     class FakeSessionContext:
         async def __aenter__(self):
             return object()
@@ -506,5 +531,40 @@ async def test_prepare_agent_runtime_context_clears_resources_for_missing_user(m
     assert prepared.preload_skills == []
     assert prepared.subagents == []
     assert prepared._visible_knowledge_bases == []
-    assert prepared._effective_skill_slugs == []
-    assert prepared._runtime_skills == {}
+    assert prepared._skill_runtime_snapshot.get("effective_skills", []) == []
+    assert prepared._skill_runtime_snapshot.get("runtime_skills", {}) == {}
+
+
+def test_persistent_config_cannot_replace_runtime_identity():
+    """接入与执行共用的配置装载只接受可配置字段。"""
+    from yuxi.agents.context import BaseContext
+
+    context = BaseContext(uid="owner", worker_id="worker")
+    context.update_config({"uid": "forged", "worker_id": "forged", "model": "chosen:model", "update": None})
+    assert context.uid == "owner"
+    assert context.worker_id == "worker"
+    assert context.model == "chosen:model"
+    assert callable(context.update)
+
+
+@pytest.mark.asyncio
+async def test_normalized_persistent_config_drops_subagent_runtime_flags():
+    """状态查询与主动压缩的配置归一化不接受运行标记。"""
+    from yuxi.agents.context import normalize_agent_context_config
+    from yuxi.agents.buildin.subagent.context import SubAgentContext
+
+    normalized = await normalize_agent_context_config(
+        {
+            "parent_thread_id": "forged",
+            "is_subagent_runtime": True,
+            "tools": [],
+            "knowledges": [],
+            "mcps": [],
+            "skills": [],
+        },
+        db=None,
+        user=None,
+        context_schema=SubAgentContext,
+    )
+    assert "parent_thread_id" not in normalized
+    assert "is_subagent_runtime" not in normalized

@@ -209,7 +209,7 @@ echo "  docker-compose.yml (api):"
 grep -E "image: .*api:.*YUXI_VERSION" "${PROJECT_ROOT}/docker-compose.yml" | head -1 | sed 's/^/    /'
 
 echo "  docker-compose.prod.yml (web):"
-grep -E "image: yuxi-web:" "${PROJECT_ROOT}/docker-compose.prod.yml" | head -1 | sed 's/^/    /'
+grep -E "image: .*web:.*YUXI_VERSION" "${PROJECT_ROOT}/docker-compose.prod.yml" | head -1 | sed 's/^/    /'
 
 echo ""
 echo "后续步骤:"

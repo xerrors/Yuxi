@@ -25,7 +25,8 @@ from yuxi.agents.backends.paths import runtime_workdir_path
 from yuxi.agents.base import _json_safe
 from yuxi.agents.buildin import agent_manager
 from yuxi.agents.callbacks.model_request_timing import FirstModelRequestRecorder
-from yuxi.agents.context import build_agent_input_context, normalize_agent_context_config
+from yuxi.agents.context import BaseContext
+from yuxi.services.agent_run_manifest_service import PreparedRunExecution
 from yuxi.agents.state import AgentStatePayload
 from yuxi.models.utils import parse_assistant_message_body
 from yuxi.repositories.agent_repository import AgentRepository
@@ -43,20 +44,18 @@ from yuxi.services.langfuse_service import (
     get_trace_info,
 )
 from yuxi.services.model_message_audit_service import ModelMessageAuditCollector
-from yuxi.services.project_service import create_implicit_project
 from yuxi.services.run_queue_service import publish_cancel_signals
 from yuxi.services.subagent_run_service import serialize_subagent_run_state
 from yuxi.services.tool_message_audit_service import ToolMessageAuditCollector
 from yuxi.services.workdir_service import resolve_conversation_workdir_path
 from yuxi.storage.postgres.manager import pg_manager
-from yuxi.storage.postgres.models_business import MODEL_AUDIT_MESSAGE_TYPE, Agent, User
+from yuxi.storage.postgres.models_business import MODEL_AUDIT_MESSAGE_TYPE, Agent, Conversation, User
 from yuxi.utils.datetime_utils import utc_now_naive
 from yuxi.utils.logging_config import logger
 from yuxi.utils.question_utils import (
     normalize_questions as _normalize_interrupt_questions,
 )
 from yuxi.utils.thread_utils import extract_thread_id as _metadata_thread_id
-from yuxi.workspace.paths import ensure_bound_user_workdir
 
 
 def _with_attachment_context(message: HumanMessage, attachments: list[dict]) -> HumanMessage:
@@ -82,12 +81,6 @@ def _with_attachment_context(message: HumanMessage, attachments: list[dict]) -> 
     else:
         content = [*message.content, {"type": "text", "text": context}]
     return message.model_copy(update={"content": content})
-
-
-def _build_agent_context(agent, input_context: dict):
-    context = agent.context_schema()
-    context.update(input_context)
-    return context
 
 
 def _build_langfuse_run_context(
@@ -257,36 +250,6 @@ def _metadata_namespace(metadata: dict | None) -> list[str]:
     if isinstance(namespace, list):
         return [str(item) for item in namespace]
     return []
-
-
-def _apply_model_override(input_context: dict, meta: dict | None) -> None:
-    """对话级模型覆盖：meta.model_spec 优先于智能体配置的 model。值已在创建 run 时校验。"""
-    model_spec = (meta or {}).get("model_spec")
-    model_spec = model_spec.strip() if isinstance(model_spec, str) else model_spec
-    if model_spec:
-        input_context["model"] = model_spec
-
-
-def _apply_input_context_field(input_context: dict, meta: dict | None, key: str) -> None:
-    """把 meta[key] 快照注入运行上下文，值已在 run 创建时校验。"""
-    value = (meta or {}).get(key)
-    if value:
-        input_context[key] = value
-
-
-def _apply_subagent_runtime_context(input_context: dict, meta: dict | None) -> None:
-    """把子智能体 run 的父线程信息注入运行 context。"""
-    meta = meta or {}
-    if meta.get("run_type") != "subagent":
-        for key in ("parent_thread_id", "is_subagent_runtime"):
-            input_context.pop(key, None)
-        return
-    parent_thread_id = str(meta.get("parent_thread_id") or "").strip()
-    if not parent_thread_id:
-        raise ValueError("子智能体运行缺少必需的 parent_thread_id")
-    input_context["parent_thread_id"] = parent_thread_id
-    # 标记为子智能体运行，供下游逻辑判断
-    input_context["is_subagent_runtime"] = True
 
 
 def _validate_subagent_attachment_root(*, root_conversation, conversation, uid: str) -> None:
@@ -992,31 +955,20 @@ async def _resolve_agent_runtime(
     db,
     user: User,
     requested_agent_slug: str | None,
-    thread_id: str | None,
+    thread_id: str,
+    prepared_execution: PreparedRunExecution,
     agent_kind: Literal["main", "subagent"] = "main",
-    execution_snapshot: dict | None = None,
-) -> tuple[Agent, Any, dict, Any | None]:
-    """解析智能体运行时，并返回已校验的线程快照。"""
-    agent_repo = AgentRepository(db)
-    conv_repo = ConversationRepository(db)
-    resolved_agent_slug = requested_agent_slug
-    conversation = None
+) -> tuple[Agent, Any, BaseContext, Conversation]:
+    """校验执行时的线程与 Agent 权限，使用 worker 已固化的配置。"""
+    conversation = await ConversationRepository(db).get_conversation_by_thread_id(thread_id)
+    if not conversation or conversation.uid != str(user.uid) or conversation.status == "deleted":
+        raise ValueError("对话线程不存在")
+    # Conversation.agent_id 是历史字段名，实际保存的是 Agent.slug。
+    if requested_agent_slug and requested_agent_slug != conversation.agent_id:
+        raise ValueError("已有线程已绑定智能体，不能切换")
+    await resolve_conversation_workdir_path(conversation=conversation, uid=str(user.uid), db=db)
 
-    if thread_id:
-        conversation = await conv_repo.get_conversation_by_thread_id(thread_id)
-        if conversation:
-            if conversation.uid != str(user.uid) or conversation.status == "deleted":
-                raise ValueError("对话线程不存在")
-            # Conversation.agent_id 是历史字段名，实际保存的是 Agent.slug。
-            if requested_agent_slug and requested_agent_slug != conversation.agent_id:
-                raise ValueError("已有线程已绑定智能体，不能切换")
-            await resolve_conversation_workdir_path(conversation=conversation, uid=str(user.uid), db=db)
-            resolved_agent_slug = conversation.agent_id
-
-    if not resolved_agent_slug:
-        raise ValueError("缺少必需的 agent_slug 字段")
-
-    agent_item = await agent_repo.get_visible_by_slug(slug=resolved_agent_slug, user=user, kind=agent_kind)
+    agent_item = await AgentRepository(db).get_visible_by_slug(slug=conversation.agent_id, user=user, kind=agent_kind)
     if not agent_item:
         raise ValueError("智能体不存在或无权限访问")
 
@@ -1024,18 +976,9 @@ async def _resolve_agent_runtime(
     if not backend:
         raise ValueError(f"智能体后端 {agent_item.backend_id} 不存在")
 
-    snapshot_context = execution_snapshot.get("normalized_context") if isinstance(execution_snapshot, dict) else None
-    if isinstance(snapshot_context, dict):
-        # manifest 已固化本次执行配置；Graph 准备和 executor 仍执行各自的实时授权检查。
-        agent_config = snapshot_context
-    else:
-        agent_config = await normalize_agent_context_config(
-            (agent_item.config_json or {}).get("context", {}),
-            db=db,
-            user=user,
-            context_schema=backend.context_schema,
-        )
-    return agent_item, backend, agent_config, conversation
+    if agent_item.backend_id != prepared_execution.backend_id:
+        raise ValueError("智能体后端在执行准备后发生变化")
+    return agent_item, backend, prepared_execution.context, conversation
 
 
 async def check_and_handle_interrupts(
@@ -1060,46 +1003,19 @@ async def check_and_handle_interrupts(
         logger.exception(f"Error checking interrupts: {e}")
 
 
-async def _ensure_thread_bound_agent(
-    *,
-    conv_repo: ConversationRepository,
-    conversation: Any | None,
-    thread_id: str,
-    uid: str,
-    agent_item: Agent,
-    db,
-) -> Any:
-    if not conversation:
-        project = await create_implicit_project(uid=uid, db=db)
-        conversation = await conv_repo.add_conversation(
-            uid=uid,
-            agent_id=agent_item.slug,
-            thread_id=thread_id,
-            metadata={"backend_id": agent_item.backend_id},
-            project_id=project.id,
-        )
-        await db.commit()
-        ensure_bound_user_workdir(uid, project.workdir_path)
-        return conversation
-
-    if conversation.agent_id != agent_item.slug:
-        raise ValueError("已有线程已绑定智能体，不能切换")
-    return conversation
-
-
 async def stream_agent_chat(
     *,
     agent_slug: str,
-    thread_id: str | None,
+    thread_id: str,
     meta: dict,
     input_message: AgentRunInputMessage,
     current_user,
     db,
-    save_user_message: bool = True,
-    execution_snapshot: dict | None = None,
+    prepared_execution: PreparedRunExecution,
     on_prepared: Callable[[], Awaitable[None]] | None = None,
     model_request_recorder: FirstModelRequestRecorder | None = None,
 ) -> AsyncIterator[bytes]:
+    """执行已持久化的 Run 输入，沿用 worker 固化的配置快照。"""
     start_time = asyncio.get_event_loop().time()
 
     def make_chunk(content=None, **kwargs):
@@ -1113,14 +1029,9 @@ async def stream_agent_chat(
         )
 
     meta = dict(meta or {})
-    if "request_id" not in meta or not meta.get("request_id"):
-        logger.warning("请求缺少 request_id，已自动生成一个新的 request_id")
-        meta["request_id"] = str(uuid.uuid4())
-
+    if not thread_id or not meta.get("request_id"):
+        raise ValueError("执行需要已持久化的 thread_id 和 request_id")
     uid = str(current_user.uid)
-    if not thread_id:
-        thread_id = str(uuid.uuid4())
-        logger.warning(f"No thread_id provided, generated new thread_id: {thread_id}")
 
     query = input_message.content
     image_content = input_message.image_content
@@ -1128,13 +1039,13 @@ async def stream_agent_chat(
     message_type = input_message.message_type
 
     try:
-        agent_item, agent, agent_config, conversation = await _resolve_agent_runtime(
+        agent_item, agent, context, conversation = await _resolve_agent_runtime(
             db=db,
             user=current_user,
             requested_agent_slug=agent_slug,
             thread_id=thread_id,
             agent_kind="subagent" if meta.get("run_type") == "subagent" else "main",
-            execution_snapshot=execution_snapshot,
+            prepared_execution=prepared_execution,
         )
     except ValueError as e:
         yield make_chunk(status="error", error_type="invalid_agent", error_message=str(e), meta=meta)
@@ -1157,33 +1068,7 @@ async def stream_agent_chat(
 
     try:
         conv_repo = ConversationRepository(db)
-        conversation = await _ensure_thread_bound_agent(
-            conv_repo=conv_repo,
-            conversation=conversation,
-            thread_id=thread_id,
-            uid=uid,
-            agent_item=agent_item,
-            db=db,
-        )
-        input_context = await build_agent_input_context(
-            agent_config,
-            thread_id=thread_id,
-            uid=uid,
-            run_id=meta.get("run_id"),
-            request_id=meta.get("request_id"),
-            worker_id=meta.get("worker_id"),
-        )
-        _apply_model_override(input_context, meta)
-        _apply_input_context_field(input_context, meta, "tool_approval_mode")
-        runtime_scope_id = str(meta.get("runtime_scope_id") or thread_id)
-        workdir_path = await resolve_conversation_workdir_path(conversation=conversation, uid=uid, db=db)
-        input_context["runtime_scope_id"] = runtime_scope_id
-        input_context["workdir_relative_path"] = workdir_path
-        input_context["workdir_path"] = runtime_workdir_path(workdir_path)
-        meta["runtime_scope_id"] = runtime_scope_id
-        meta["workdir_relative_path"] = workdir_path
-        meta["workdir_path"] = input_context["workdir_path"]
-        _apply_subagent_runtime_context(input_context, meta)
+        runtime_scope_id = context.runtime_scope_id
         langfuse_run = _build_langfuse_run_context(
             current_user=current_user,
             thread_id=thread_id,
@@ -1230,23 +1115,6 @@ async def stream_agent_chat(
             init_msg["image_content"] = image_content
         yield make_chunk(status="init", meta=meta, msg=init_msg)
 
-        if save_user_message:
-            try:
-                await conv_repo.add_message_by_thread_id(
-                    thread_id=thread_id,
-                    role="user",
-                    content=query,
-                    message_type=message_type,
-                    image_content=image_content,
-                    extra_metadata={
-                        "raw_message": human_message.model_dump(),
-                        "request_id": meta.get("request_id"),
-                        "attachments": request_attachments,
-                    },
-                )
-            except Exception as e:
-                logger.error(f"Error saving user message: {e}")
-
         # 智能体流式执行期间不访问业务数据库，先结束预处理事务并归还连接池。
         await db.commit()
 
@@ -1259,7 +1127,7 @@ async def stream_agent_chat(
             callbacks.append(model_request_recorder)
         stream_source = agent.stream_messages_with_state(
             messages,
-            input_context=input_context,
+            context=context,
             callbacks=callbacks,
             metadata=langfuse_run.metadata,
             tags=langfuse_run.tags,
@@ -1273,7 +1141,7 @@ async def stream_agent_chat(
                 if mode == "values":
                     agent_state = extract_agent_state(
                         payload if isinstance(payload, dict) else {},
-                        workdir_path=meta.get("workdir_path"),
+                        workdir_path=context.workdir_path,
                     )
                     signature = _agent_state_signature(agent_state)
                     if signature and signature != last_agent_state_signature:
@@ -1350,7 +1218,7 @@ async def stream_agent_chat(
             yield chunk
 
         meta["time_cost"] = asyncio.get_event_loop().time() - start_time
-        agent_state = extract_agent_state(final_state.values, workdir_path=meta.get("workdir_path"))
+        agent_state = extract_agent_state(final_state.values, workdir_path=context.workdir_path)
 
         final_signature = _agent_state_signature(agent_state)
         if final_signature and final_signature != last_agent_state_signature:
@@ -1431,10 +1299,11 @@ async def stream_agent_resume(
     meta: dict,
     current_user,
     db,
-    execution_snapshot: dict | None = None,
+    prepared_execution: PreparedRunExecution,
     on_prepared: Callable[[], Awaitable[None]] | None = None,
     model_request_recorder: FirstModelRequestRecorder | None = None,
 ) -> AsyncIterator[bytes]:
+    """执行已持久化的 Run 输入，沿用 worker 固化的配置快照。"""
     start_time = asyncio.get_event_loop().time()
 
     def make_resume_chunk(content=None, **kwargs):
@@ -1447,24 +1316,22 @@ async def stream_agent_resume(
             + b"\n"
         )
 
+    if not thread_id or not meta.get("request_id"):
+        raise ValueError("执行需要已持久化的 thread_id 和 request_id")
     yield make_resume_chunk(status="init", meta=meta)
 
-    uid = str(current_user.uid)
     try:
-        agent_item, agent, agent_config, conversation = await _resolve_agent_runtime(
+        agent_item, agent, context, conversation = await _resolve_agent_runtime(
             db=db,
             user=current_user,
             requested_agent_slug=None,
             thread_id=thread_id,
-            execution_snapshot=execution_snapshot,
+            prepared_execution=prepared_execution,
         )
     except ValueError as e:
         yield make_resume_chunk(status="error", error_type="invalid_agent", error_message=str(e), meta=meta)
         return
 
-    if conversation is None:
-        yield make_resume_chunk(status="error", error_type="invalid_thread", error_message="对话线程不存在", meta=meta)
-        return
     conv_repo = ConversationRepository(db)
     resume_command = Command(resume=resume_input)
 
@@ -1472,30 +1339,12 @@ async def stream_agent_resume(
     await db.commit()
     meta["agent_slug"] = agent_item.slug
     meta["backend_id"] = agent_item.backend_id
-    runtime_scope_id = str(meta.get("runtime_scope_id") or thread_id)
-    workdir_path = await resolve_conversation_workdir_path(conversation=conversation, uid=uid, db=db)
-    meta["runtime_scope_id"] = runtime_scope_id
-    meta["workdir_relative_path"] = workdir_path
-    meta["workdir_path"] = runtime_workdir_path(workdir_path)
-    input_context = await build_agent_input_context(
-        agent_config,
-        thread_id=thread_id,
-        uid=uid,
-        run_id=meta.get("run_id"),
-        request_id=meta.get("request_id"),
-        worker_id=meta.get("worker_id"),
-    )
-    _apply_model_override(input_context, meta)
-    _apply_input_context_field(input_context, meta, "tool_approval_mode")
-    input_context["runtime_scope_id"] = runtime_scope_id
-    input_context["workdir_relative_path"] = workdir_path
-    input_context["workdir_path"] = meta["workdir_path"]
     langfuse_run = _build_langfuse_run_context(
         current_user=current_user,
         thread_id=thread_id,
         agent_id=agent_item.slug,
         backend_id=agent_item.backend_id,
-        request_id=meta.get("request_id") or str(uuid.uuid4()),
+        request_id=meta["request_id"],
         operation="agent_chat_resume",
         message_type="resume",
         meta=meta,
@@ -1510,7 +1359,7 @@ async def stream_agent_resume(
     final_state = None
     stream_source = agent.stream_resume_with_state(
         resume_command,
-        input_context=input_context,
+        context=context,
         callbacks=callbacks,
         metadata=langfuse_run.metadata,
         tags=langfuse_run.tags,
@@ -1530,7 +1379,7 @@ async def stream_agent_resume(
                 if mode == "values":
                     agent_state = extract_agent_state(
                         payload if isinstance(payload, dict) else {},
-                        workdir_path=meta.get("workdir_path"),
+                        workdir_path=context.workdir_path,
                     )
                     signature = _agent_state_signature(agent_state)
                     if signature and signature != last_agent_state_signature:
@@ -1608,7 +1457,7 @@ async def stream_agent_resume(
 
         meta["time_cost"] = asyncio.get_event_loop().time() - start_time
 
-        agent_state = extract_agent_state(final_state.values, workdir_path=meta.get("workdir_path"))
+        agent_state = extract_agent_state(final_state.values, workdir_path=context.workdir_path)
 
         final_signature = _agent_state_signature(agent_state)
         if final_signature and final_signature != last_agent_state_signature:
@@ -1689,10 +1538,20 @@ def _serialize_state_messages(values: dict[str, Any]) -> list[dict[str, Any]]:
     return serialized
 
 
-async def _read_checkpoint_state(agent, *, uid: str, thread_id: str, context):
-    graph = await agent.get_graph(context=context)
-    langgraph_config = {"configurable": {"uid": uid, "thread_id": thread_id}}
-    return await graph.aget_state(langgraph_config)
+async def _read_checkpoint_state(*, uid: str, thread_id: str) -> tuple[dict, Any | None]:
+    """读取完整 checkpoint 快照与同批中断；调用方先校验线程可见性。"""
+    checkpointer = pg_manager.get_langgraph_checkpointer()
+    saved = await checkpointer.aget_tuple({"configurable": {"uid": uid, "thread_id": thread_id, "checkpoint_ns": ""}})
+    if saved is None:
+        return {}, None
+
+    # 面板只展示完整快照，pending writes 中的业务增量留给执行图合并。
+    interrupt_info = None
+    for _task_id, channel, interrupts in saved.pending_writes or []:
+        if channel == "__interrupt__" and interrupts:
+            interrupt_info = interrupts[0]
+            break
+    return saved.checkpoint["channel_values"], interrupt_info
 
 
 async def get_agent_state_view(
@@ -1707,62 +1566,26 @@ async def get_agent_state_view(
 
     current_uid = str(current_user.uid)
     conv_repo = ConversationRepository(db)
-    agent_repo = AgentRepository(db)
     run_repo = AgentRunRepository(db)
     conversation = await conv_repo.get_conversation_by_thread_id(thread_id)
     if conversation:
         if conversation.uid != str(current_uid) or conversation.status == "deleted":
             raise HTTPException(status_code=404, detail="对话线程不存在")
 
-        agent_item = await agent_repo.get_by_slug(conversation.agent_id)
-        if not agent_item:
-            raise HTTPException(status_code=404, detail="智能体不存在")
-        agent = agent_manager.get_agent(agent_item.backend_id)
-        if not agent:
-            raise HTTPException(status_code=404, detail="智能体后端不存在")
-        agent_config = await normalize_agent_context_config(
-            (agent_item.config_json or {}).get("context", {}),
-            db=db,
-            user=current_user,
-            context_schema=agent.context_schema,
-        )
-        input_context = await build_agent_input_context(
-            agent_config,
-            thread_id=thread_id,
-            uid=current_uid,
-        )
         latest_run = await run_repo.get_latest_run_by_thread_for_user(thread_id, current_uid)
-        conversation_model_spec = (getattr(conversation, "extra_metadata", None) or {}).get("model_spec")
-        if isinstance(conversation_model_spec, str) and conversation_model_spec.strip():
-            input_context["model"] = conversation_model_spec.strip()
-        elif conversation.status == "subagent" and latest_run and isinstance(latest_run.input_payload, dict):
-            model_spec = latest_run.input_payload.get("model_spec")
-            if isinstance(model_spec, str) and model_spec.strip():
-                input_context["model"] = model_spec.strip()
-        if latest_run and isinstance(latest_run.input_payload, dict):
-            tool_approval_mode = latest_run.input_payload.get("tool_approval_mode")
-            if tool_approval_mode:
-                input_context["tool_approval_mode"] = tool_approval_mode
         workdir_path = await resolve_conversation_workdir_path(
             conversation=conversation,
             uid=current_uid,
             db=db,
         )
         runtime_workdir = runtime_workdir_path(workdir_path)
-        runtime_scope_id = str(getattr(latest_run, "runtime_scope_id", None) or thread_id)
-        input_context["runtime_scope_id"] = runtime_scope_id
-        input_context["workdir_relative_path"] = workdir_path
-        input_context["workdir_path"] = runtime_workdir
-        context = _build_agent_context(agent, input_context)
-        state = await _read_checkpoint_state(agent, uid=current_uid, thread_id=thread_id, context=context)
-        values = getattr(state, "values", {}) if state else {}
+        values, interrupt_info = await _read_checkpoint_state(uid=current_uid, thread_id=thread_id)
         response = {
             "agent_state": extract_agent_state(
                 values,
                 workdir_path=runtime_workdir,
             )
         }
-        interrupt_info = _extract_interrupt_info(state) if state else None
         if latest_run and latest_run.status == "interrupted" and interrupt_info:
             response["interrupt"] = {
                 **_build_pending_interrupt_payload(interrupt_info, thread_id),

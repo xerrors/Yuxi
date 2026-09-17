@@ -33,6 +33,8 @@ async def read_knowledge_stats(
 
     try:
         return KnowledgeStats(**await get_knowledge_stats())
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error(f"Error getting knowledge stats: {exc}")
         logger.error(traceback.format_exc())

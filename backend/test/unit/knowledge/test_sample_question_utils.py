@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
@@ -70,8 +71,10 @@ async def test_generate_database_sample_questions_saves_and_returns_questions(mo
             return SimpleNamespace(content='{"questions": ["如何使用 demo？"]}')
 
     class FakeRepository:
-        async def update(self, kb_id: str, data: dict) -> None:
+        async def update(self, kb_id: str, data: dict):
+            """返回已保存的知识库，与 repository 契约一致。"""
             saved[kb_id] = data["sample_questions"]
+            return await self.get_by_kb_id(kb_id)
 
         async def get_by_kb_id(self, kb_id: str):
             return SimpleNamespace(name="测试知识库", sample_questions=saved.get(kb_id))
@@ -130,3 +133,27 @@ async def test_generate_database_sample_questions_maps_invalid_json(monkeypatch)
 
     assert exc_info.value.status_code == 500
     assert "AI返回格式错误" in exc_info.value.detail
+
+
+@pytest.mark.parametrize("missing", [False, True])
+@pytest.mark.asyncio
+async def test_generated_questions_require_successful_save(monkeypatch, missing):
+    """保存失败或目标消失时不能声称问题已生成并保存。"""
+    monkeypatch.setattr(sq, "knowledge_base", FakeKnowledgeBase(_database_detail({"file_1": {"filename": "demo.md"}})))
+    monkeypatch.setattr(sq.KnowledgeBaseFactory, "get_kb_class", lambda _: SimpleNamespace(supports_documents=True))
+    monkeypatch.setattr(
+        sq, "system_options", SimpleNamespace(get=AsyncMock(return_value={"default_model": "test:model"}))
+    )
+    model = SimpleNamespace(call=AsyncMock(return_value=SimpleNamespace(content='{"questions":["测试？"]}')))
+    monkeypatch.setattr(sq, "select_model", lambda **_: model)
+    error = RuntimeError("database unavailable")
+    repository = SimpleNamespace(update=AsyncMock(return_value=None, side_effect=None if missing else error))
+    monkeypatch.setattr(sq, "KnowledgeBaseRepository", lambda: repository)
+
+    with pytest.raises(HTTPException if missing else RuntimeError) as caught:
+        await sq.generate_database_sample_questions("kb_1")
+
+    if missing:
+        assert caught.value.status_code == 404
+    else:
+        assert caught.value is error

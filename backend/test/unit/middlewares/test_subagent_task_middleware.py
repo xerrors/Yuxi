@@ -307,7 +307,7 @@ async def test_task_tool_invokes_subagent_with_child_scope(monkeypatch) -> None:
     assert captured["start"]["uid"] == "user-1"
     assert captured["start"]["created_by_run_id"] == "parent-run"
     assert captured["start"]["requested_thread_id"] is None
-    assert captured["start"]["model_spec"] is None
+    assert "model_spec" not in captured["start"]
     assert captured["await"] == {"run_id": "child-run", "current_uid": "user-1"}
     assert result.update["subagent_runs"][0]["run_id"] == "child-run"
     assert result.update["subagent_runs"][0]["child_thread_id"] == "child-thread"
@@ -315,7 +315,7 @@ async def test_task_tool_invokes_subagent_with_child_scope(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_task_tool_inherits_parent_model_when_subagent_model_empty(monkeypatch) -> None:
+async def test_task_tool_leaves_model_resolution_to_service(monkeypatch) -> None:
     captured = {}
     _patch_task_start_and_await(monkeypatch, captured)
 
@@ -345,7 +345,7 @@ async def test_task_tool_inherits_parent_model_when_subagent_model_empty(monkeyp
         runtime=SimpleNamespace(tool_call_id="tool-1", state={}, config={}),
     )
 
-    assert captured["start"]["model_spec"] == "parent:model"
+    assert "model_spec" not in captured["start"]
 
 
 @pytest.mark.asyncio
@@ -553,7 +553,7 @@ async def test_subagent_start_creates_child_run_and_enqueues(monkeypatch) -> Non
     assert captured["start"]["input_message"].raw_message()["content"] == "run in background"
     assert "description" not in captured["start"]
     assert captured["start"]["requested_thread_id"] is None
-    assert captured["start"]["model_spec"] == "provider:parent-model"
+    assert "model_spec" not in captured["start"]
     assert result.update["subagent_runs"][0]["child_thread_id"] == child_thread_id
     assert result.update["subagent_runs"][0]["run_id"] == "child-run"
 

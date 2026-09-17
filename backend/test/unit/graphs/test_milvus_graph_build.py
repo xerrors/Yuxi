@@ -1038,3 +1038,20 @@ def test_milvus_graph_service_query_nodes_sync_caps_max_depth():
 async def test_milvus_graph_service_early_returns_empty_for_missing_kb_id(method, kwargs, expected):
     service = MilvusGraphService()
     assert await getattr(service, method)(kb_id=None, **kwargs) == expected
+
+
+@pytest.mark.parametrize("operation", ["has_collection", "drop_collection"])
+def test_drop_graph_collections_propagates_storage_failure(monkeypatch, operation):
+    """图集合检查或删除失败必须向上传播。"""
+    from yuxi.knowledge.graphs import milvus_graph_vector_store as module
+
+    store = MilvusGraphVectorStore.__new__(MilvusGraphVectorStore)
+    store.connection_alias = "test"
+    error = RuntimeError("Milvus unavailable")
+    monkeypatch.setattr(module.utility, "has_collection", MagicMock(return_value=True))
+    monkeypatch.setattr(module.utility, operation, MagicMock(side_effect=error))
+
+    with pytest.raises(RuntimeError) as caught:
+        store.drop_graph_collections("kb_test")
+
+    assert caught.value is error

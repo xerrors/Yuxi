@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
@@ -39,7 +40,11 @@ class FakeKnowledgeBaseRepository:
         return self.kb if kb_id == self.kb.kb_id else None
 
     async def update(self, kb_id, data):
+        """保存并返回记录，与 repository 契约一致。"""
         self.updates.append((kb_id, data))
+        for key, value in data.items():
+            setattr(self.kb, key, value)
+        return self.kb
 
 
 @pytest.mark.asyncio
@@ -159,3 +164,51 @@ async def test_generate_database_mindmap_rejects_missing_selected_files(monkeypa
 
     with pytest.raises(HTTPException, match="选择的文件不存在"):
         await mm.generate_database_mindmap("kb_1", file_ids=["missing"])
+
+
+@pytest.mark.parametrize("incremental", [False, True])
+@pytest.mark.parametrize("outcome", ["saved", "missing", "error"])
+@pytest.mark.asyncio
+async def test_mindmap_success_requires_saved_state(monkeypatch, incremental, outcome):
+    """全量和增量生成均以保存结果为成功依据，失败保留原状态。"""
+    kb = make_kb()
+    repository = FakeKnowledgeBaseRepository(kb)
+    error = RuntimeError("database unavailable")
+
+    async def update(_kb_id, data):
+        """模拟持久化结果并允许成功后回读。"""
+        if outcome == "error":
+            raise error
+        if outcome == "missing":
+            return None
+        for key, value in data.items():
+            setattr(kb, key, value)
+        return kb
+
+    monkeypatch.setattr(repository, "update", update)
+    monkeypatch.setattr(mm, "KnowledgeBaseRepository", lambda: repository)
+    monkeypatch.setattr(mm, "_load_mindmap_current_files", AsyncMock(return_value=({}, 0)))
+    files = {"new": {"filename": "new.pdf", "file_type": "pdf"}}
+    file_repository = SimpleNamespace(search_files=AsyncMock(return_value=([make_file("new", "new.pdf")], 1)))
+    monkeypatch.setattr("yuxi.repositories.knowledge_file_repository.KnowledgeFileRepository", lambda: file_repository)
+    monkeypatch.setattr(
+        mm, "system_options", SimpleNamespace(get=AsyncMock(return_value={"default_model": "test:model"}))
+    )
+    generated = '{"content":"知识库","children":[{"content":"new.pdf","children":[]}]}'
+    model = SimpleNamespace(call=AsyncMock(return_value=SimpleNamespace(content=generated)))
+    monkeypatch.setattr(mm, "select_model", lambda **_: model)
+    operation = mm.update_mindmap_incremental if incremental else mm.generate_database_mindmap
+
+    if outcome == "saved":
+        result = await operation("kb_1")
+        stored = await repository.get_by_kb_id("kb_1")
+        assert result["mindmap"] == stored.mindmap
+        assert stored.mindmap_file_ids == ({} if incremental else {"new": files["new"]["filename"]})
+    else:
+        with pytest.raises(HTTPException if outcome == "missing" else RuntimeError) as caught:
+            await operation("kb_1")
+        assert kb.mindmap_file_ids == {"tracked": "tracked.pdf"}
+        if outcome == "missing":
+            assert caught.value.status_code == 404
+        else:
+            assert caught.value is error

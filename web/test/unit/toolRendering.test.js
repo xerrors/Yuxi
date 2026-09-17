@@ -159,18 +159,24 @@ test('明确的 ToolMessage 错误不会被专用工具覆盖为完成', async (
   assert.doesNotMatch(html, /执行完成/)
 })
 
-test('思考复用工具行显示脑图标、思考标签和摘要，默认折叠详情', async () => {
+test('思考描述显示最后一行，展开后保留完整内容', async () => {
   const content = '先检查文件。\n再确认结果。'
   const html = await render(ReasoningBlock, { content, isActive: true })
   assert.match(html, /is-timeline/)
   assert.match(html, /lucide-brain/)
   assert.match(html, /思考/)
-  assert.match(html, /先检查文件。 再确认结果。/)
+  assert.match(html, /再确认结果。/)
+  assert.doesNotMatch(html, /先检查文件。/)
   assert.match(html, /aria-expanded="false"/)
   assert.doesNotMatch(html, /<p class="reasoning-content"/)
   const expanded = await render(ReasoningBlock, { content, defaultExpanded: true })
   assert.match(expanded, /<p class="reasoning-content"/)
   assert.match(expanded, /先检查文件。\n再确认结果。/)
+  for (const text of ['先检查文件。\r\n再确认结果。\r\n  ', '再确认结果。', '先检查文件。\r再确认结果。']) {
+    const preview = await render(ReasoningBlock, { content: text, isActive: true })
+    assert.match(preview, /再确认结果。/)
+    assert.doesNotMatch(preview, /先检查文件。/)
+  }
 })
 
 test('子智能体运行失败在专用行和分组摘要中一致展示', async () => {

@@ -404,18 +404,17 @@ async def update_mindmap_incremental(kb_id: str, user_prompt: str = "") -> dict[
         "incremental": True,
     }
 
-    try:
-        await KnowledgeBaseRepository().update(
-            kb_id,
-            {
-                "mindmap": mindmap_data,
-                "mindmap_file_ids": updated_file_ids,
-                "mindmap_metadata": metadata,
-            },
-        )
-        logger.info(f"思维导图增量更新成功: {kb_id}")
-    except Exception as save_error:
-        logger.error(f"保存思维导图失败: {save_error}")
+    saved = await KnowledgeBaseRepository().update(
+        kb_id,
+        {
+            "mindmap": mindmap_data,
+            "mindmap_file_ids": updated_file_ids,
+            "mindmap_metadata": metadata,
+        },
+    )
+    if saved is None:
+        raise HTTPException(status_code=404, detail=f"知识库 {kb_id} 不存在")
+    logger.info(f"思维导图增量更新成功: {kb_id}")
 
     no_ai = not changes["added_files"]
     return {
@@ -492,18 +491,17 @@ async def generate_database_mindmap(
         "incremental": False,
     }
 
-    try:
-        await KnowledgeBaseRepository().update(
-            kb_id,
-            {
-                "mindmap": mindmap_data,
-                "mindmap_file_ids": mindmap_file_ids,
-                "mindmap_metadata": mindmap_metadata,
-            },
-        )
-        logger.info(f"思维导图已保存到知识库: {kb_id}")
-    except Exception as save_error:
-        logger.error(f"保存思维导图失败: {save_error}")
+    saved = await KnowledgeBaseRepository().update(
+        kb_id,
+        {
+            "mindmap": mindmap_data,
+            "mindmap_file_ids": mindmap_file_ids,
+            "mindmap_metadata": mindmap_metadata,
+        },
+    )
+    if saved is None:
+        raise HTTPException(status_code=404, detail=f"知识库 {kb_id} 不存在")
+    logger.info(f"思维导图已保存到知识库: {kb_id}")
 
     return {
         "message": "success",

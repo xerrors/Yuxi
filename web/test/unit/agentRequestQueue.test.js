@@ -14,6 +14,7 @@ let dispatchRunEventChunks
 let useAgentStreamHandler
 let MessageProcessor
 let getConversationDisplayItems
+let groupConversationContinuations
 
 before(async () => {
   const storage = new Map()
@@ -35,11 +36,76 @@ before(async () => {
   ))
   ;({ default: MessageProcessor } = await server.ssrLoadModule('/src/utils/messageProcessor.js'))
   ;({ getConversationDisplayItems } = await server.ssrLoadModule('/src/utils/messageGrouping.js'))
+  ;({ groupConversationContinuations } = await server.ssrLoadModule(
+    '/src/utils/conversationProcessGrouping.js'
+  ))
 })
 
 after(async () => {
   await server?.close()
   delete globalThis.localStorage
+})
+
+test('审批前后的工具和思考跨关联 Run 连续展示，正文仍独立', () => {
+  const runs = [
+    { run_id: 'first', status: 'interrupted', timing: { created_at: '2026-09-16T00:00:00Z' } },
+    {
+      run_id: 'resume',
+      run_type: 'resume',
+      created_by_run_id: 'first',
+      status: 'completed',
+      timing: { created_at: '2026-09-16T00:01:00Z' }
+    }
+  ]
+  const history = [
+    { id: 'human', run_id: 'first', type: 'human', content: '完成任务' },
+    { id: 'm1', run_id: 'first', type: 'ai', tool_calls: [{ id: 't1', name: 'ls', args: {} }] },
+    {
+      id: 'm2',
+      run_id: 'first',
+      type: 'ai',
+      reasoning_content: 'thinking1',
+      tool_calls: [
+        { id: 't2', name: 'read_file', args: {} },
+        { id: 't3', name: 'ask_user_question', args: {}, status: 'success' }
+      ]
+    },
+    {
+      id: 'answer',
+      run_id: 'resume',
+      type: 'human',
+      content: '同意',
+      extra_metadata: { source: 'ask_user_question_resume' }
+    },
+    {
+      id: 'm3',
+      run_id: 'resume',
+      type: 'ai',
+      reasoning_content: 'thinking2',
+      tool_calls: [{ id: 't4', name: 'ls', args: {} }]
+    },
+    { id: 'm4', run_id: 'resume', type: 'ai', content: '最终回答' }
+  ]
+  const runGroups = MessageProcessor.convertServerHistoryToMessages(history, runs)
+  const groups = groupConversationContinuations(runGroups)
+  assert.equal(groups.length, 1)
+  const items = getConversationDisplayItems(groups[0])
+  assert.deepEqual(
+    items.map((item) => item.type),
+    ['message', 'tool-group', 'message']
+  )
+  assert.deepEqual(
+    items[1].entries.map((entry) => (entry.type === 'tool' ? entry.toolCall.id : entry.content)),
+    ['t1', 'thinking1', 't2', 't3', 'thinking2', 't4']
+  )
+  assert.equal(items[2].message.content, '最终回答')
+  assert.equal(runGroups.length, 2)
+  const streaming = groupConversationContinuations([
+    runGroups[0],
+    { ...runGroups[1], status: 'streaming', messages: runGroups[1].messages.slice(0, 1) }
+  ])
+  assert.equal(streaming[0].status, 'streaming')
+  assert.equal(getConversationDisplayItems(streaming[0])[1].key, items[1].key)
 })
 
 test('thinking 与相邻工具按顺序合并，正文和错误仍独立显示', () => {

@@ -1,5 +1,42 @@
 import { formatRunTimingDuration, getRunTotalLatencyMs } from './runTiming.js'
 
+/** 在展示层连接具有明确父子关系的相邻续跑。 */
+export const groupConversationContinuations = (conversations) => {
+  const groups = []
+  for (const conv of conversations) {
+    const previous = groups.at(-1)
+    if (
+      conv.run?.run_type !== 'resume' ||
+      !previous?.run?.run_id ||
+      conv.run.created_by_run_id !== previous.run.run_id ||
+      !previous.messages.length ||
+      !conv.messages.length ||
+      conv.messages.some((message) => message.type === 'human')
+    ) {
+      groups.push(conv)
+      continue
+    }
+
+    const previousDuration = getRunTotalLatencyMs(previous.processTiming || previous.run.timing)
+    const duration = getRunTotalLatencyMs(conv.run.timing)
+    groups[groups.length - 1] = {
+      ...conv,
+      displayKey: previous.displayKey || previous.run.run_id,
+      messages: [
+        ...previous.messages.map((message) =>
+          message.isLast ? { ...message, isLast: false } : message
+        ),
+        ...conv.messages
+      ],
+      processTiming: {
+        total_latency_ms:
+          previousDuration === null || duration === null ? null : previousDuration + duration
+      }
+    }
+  }
+  return groups
+}
+
 export const formatProcessDuration = (durationMs) => {
   const formattedDuration = formatRunTimingDuration(durationMs)
   return formattedDuration ? `耗时 ${formattedDuration}` : '处理过程'

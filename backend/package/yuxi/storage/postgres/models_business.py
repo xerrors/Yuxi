@@ -1354,7 +1354,9 @@ class AgentRunRequest(Base):
     )
     input_message_id = Column(Integer, ForeignKey("messages.id"), nullable=False, comment="关联输入消息 ID")
     dispatched_run_id = Column(String(64), ForeignKey("agent_runs.id"), nullable=True, comment="已派发的 AgentRun ID")
-    input_payload = Column(JSON, nullable=False, default=dict, comment="原始输入载荷快照")
+    input_payload = Column(
+        JSON, nullable=False, default=dict, comment="接入时解析的模型与审批配置；消息由 input_message_id 关联"
+    )
     error_message = Column(Text, nullable=True, comment="rejected/failed 时的错误信息")
     created_at = Column(DateTime, nullable=False, default=utc_now_naive, comment="创建时间")
     dispatched_at = Column(DateTime, nullable=True, comment="派发时间")

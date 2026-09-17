@@ -1,6 +1,83 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { collapseConversationProcess, formatProcessDuration, isConversationSettled, formatEmptyRunStatus } from '../../src/utils/conversationProcessGrouping.js'
+import {
+  groupConversationContinuations,
+  collapseConversationProcess,
+  formatProcessDuration,
+  isConversationSettled,
+  formatEmptyRunStatus
+} from '../../src/utils/conversationProcessGrouping.js'
+
+test('关联续跑组成连续回答，消息归属不变且只累计执行耗时', () => {
+  const groups = [
+    {
+      run: { run_id: 'a', timing: { total_latency_ms: 1000 } },
+      status: 'finished',
+      messages: [{ id: 'a1', run_id: 'a', type: 'ai', isLast: true }]
+    },
+    {
+      run: {
+        run_id: 'b',
+        run_type: 'resume',
+        created_by_run_id: 'a',
+        timing: { total_latency_ms: 2000 }
+      },
+      status: 'finished',
+      messages: [{ id: 'b1', run_id: 'b', type: 'ai', isLast: true }]
+    },
+    {
+      run: {
+        run_id: 'c',
+        run_type: 'resume',
+        created_by_run_id: 'b',
+        timing: { total_latency_ms: 3000 }
+      },
+      status: 'streaming',
+      messages: [{ id: 'c1', run_id: 'c', type: 'ai', isLast: true }]
+    }
+  ]
+  const original = structuredClone(groups)
+  const result = groupConversationContinuations(groups)
+  assert.equal(result.length, 1)
+  assert.deepEqual(
+    result[0].messages.map((message) => message.run_id),
+    ['a', 'b', 'c']
+  )
+  assert.equal(result[0].run, groups[2].run)
+  assert.equal(result[0].status, 'streaming')
+  assert.equal(result[0].displayKey, 'a')
+  assert.equal(result[0].processTiming.total_latency_ms, 6000)
+  assert.deepEqual(result[0].messages.map((message) => message.isLast), [false, false, true])
+  assert.deepEqual(groups, original)
+  groups[1].run.timing = null
+  assert.equal(groupConversationContinuations(groups)[0].processTiming.total_latency_ms, null)
+})
+
+test('新用户、独立 Run、未知关系及零消息失败不并入前一回答', () => {
+  const first = { run: { run_id: 'a' }, messages: [{ type: 'ai' }] }
+  for (const next of [
+    { run: { run_id: 'b', run_type: 'chat', created_by_run_id: 'a' }, messages: [{ type: 'ai' }] },
+    {
+      run: { run_id: 'b', run_type: 'resume', created_by_run_id: 'other' },
+      messages: [{ type: 'ai' }]
+    },
+    { messages: [{ type: 'ai' }] },
+    {
+      run: { run_id: 'b', run_type: 'resume', created_by_run_id: 'a' },
+      messages: [{ type: 'human' }, { type: 'ai' }]
+    },
+    {
+      run: { run_id: 'b', run_type: 'resume', created_by_run_id: 'a', status: 'failed' },
+      messages: []
+    }
+  ]) {
+    assert.deepEqual(groupConversationContinuations([first, next]), [first, next])
+  }
+  const resume = { run: { run_id: 'b', run_type: 'resume', created_by_run_id: 'a' }, messages: [{ type: 'ai' }] }
+  for (const previous of [{ messages: [{ type: 'ai' }] }, { run: { run_id: 'a', status: 'failed' }, messages: [] }]) {
+    assert.deepEqual(groupConversationContinuations([previous, resume]), [previous, resume])
+  }
+})
 
 test('已完成对话使用后端 Run 总耗时聚合过程组', () => {
   const items = collapseConversationProcess(

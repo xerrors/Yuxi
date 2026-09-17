@@ -10,6 +10,11 @@ const METRICS = [
     description: 'Worker 取得执行权到 Agent 运行上下文与模型流准备完成'
   },
   {
+    key: 'first_model_request_latency_ms',
+    label: '首次模型调用',
+    description: 'Run 创建到首次发起模型供应商请求'
+  },
+  {
     key: 'model_first_output_latency_ms',
     label: '模型首响',
     description: '准备完成到首个非空模型文本、推理或工具调用数据'

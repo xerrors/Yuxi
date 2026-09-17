@@ -45,6 +45,8 @@ async def get_graphs(current_user: User = Depends(get_admin_user)):
                 }
             )
         return {"success": True, "data": graphs}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception(f"Failed to list graphs: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to list graphs: {str(e)}")

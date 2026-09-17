@@ -1,6 +1,9 @@
 <template>
   <div class="thread-message-list">
-    <template v-for="(conv, convIndex) in conversations" :key="`conv-${convIndex}`">
+    <template
+      v-for="(conv, convIndex) in conversations"
+      :key="conv.displayKey || conv.run?.run_id || `conv-${convIndex}`"
+    >
       <template
         v-for="(displayItem, itemIndex) in displayItemsList[convIndex]"
         :key="displayItem.key"
@@ -29,7 +32,10 @@
 </template>
 
 <script setup>
-import { formatEmptyRunStatus } from '@/utils/conversationProcessGrouping'
+import {
+  formatEmptyRunStatus,
+  groupConversationContinuations
+} from '@/utils/conversationProcessGrouping'
 import { computed } from 'vue'
 import AgentMessageComponent from '@/components/AgentMessageComponent.vue'
 import ToolCallsGroupComponent from '@/components/ToolCallsGroupComponent.vue'
@@ -60,7 +66,7 @@ const historyConversations = computed(() =>
   MessageProcessor.convertServerHistoryToMessages(props.messages, props.runs)
 )
 
-const conversations = computed(() => {
+const runConversations = computed(() => {
   if (!props.ongoingMessages.length) return historyConversations.value
   const liveRunId = props.ongoingMessages.find((message) => message.run_id)?.run_id
   const liveGroup = { messages: props.ongoingMessages, status: 'streaming' }
@@ -71,6 +77,8 @@ const conversations = computed(() => {
   }
   return [...historyConversations.value, liveGroup]
 })
+
+const conversations = computed(() => groupConversationContinuations(runConversations.value))
 
 const displayItemsList = computed(() =>
   conversations.value.map((conv) =>

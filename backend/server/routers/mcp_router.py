@@ -121,6 +121,8 @@ async def get_mcp_servers(
                 }
             )
         return {"success": True, "data": data}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to get MCP servers: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -160,6 +162,8 @@ async def create_mcp_server_route(
         return {"success": True, "data": serialize_mcp_server(server)}
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to create MCP server: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -271,6 +275,8 @@ async def test_mcp_server(
                 "message": f"连接成功，共发现 {len(tools)} 个工具",
                 "tool_count": len(tools),
             }
+        except HTTPException:
+            raise
         except Exception:
             raise HTTPException(status_code=502, detail="MCP 连接失败，请检查服务地址、凭据和网络后重试") from None
     except HTTPException:
@@ -300,6 +306,8 @@ async def update_mcp_server_status_route(
         raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to toggle MCP server: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -352,6 +360,8 @@ async def get_mcp_server_tools(
                 "data": tool_list,
                 "total": len(tool_list),
             }
+        except HTTPException:
+            raise
         except Exception as tool_error:
             logger.error(f"Failed to get tools from MCP server '{slug}': {tool_error}")
             raise HTTPException(status_code=500, detail=f"获取工具失败: {str(tool_error)}")
@@ -395,6 +405,8 @@ async def refresh_mcp_server_tools(
                 "enabled_count": enabled_count,
                 "disabled_count": disabled_count,
             }
+        except HTTPException:
+            raise
         except Exception as tool_error:
             raise HTTPException(status_code=500, detail=f"刷新失败: {str(tool_error)}")
     except HTTPException:
@@ -422,6 +434,8 @@ async def toggle_mcp_server_tool_route(
         }
     except ValueError as ve:
         raise HTTPException(status_code=404, detail=str(ve))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to toggle MCP server tool: {e}")
         raise HTTPException(status_code=500, detail=str(e))

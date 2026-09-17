@@ -31,7 +31,7 @@ const props = defineProps({
   isActive: { type: Boolean, default: false }
 })
 
-const preview = computed(() => props.content.replace(/\s+/g, ' ').trim())
+const preview = computed(() => props.content.trim().split(/\r\n|\r|\n/).at(-1).trim())
 </script>
 
 <style lang="less" scoped>
