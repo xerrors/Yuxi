@@ -51,9 +51,7 @@ class LLMGraphExtractor(GraphExtractor):
             raise ValueError("LLM 抽取器 timeout_seconds 必须是数字") from exc
         # NaN 与 ±inf 会让下面的区间比较全部为 False，必须显式挡掉
         if not math.isfinite(timeout) or timeout <= 0 or timeout > MAX_EXTRACTION_TIMEOUT_SECONDS:
-            raise ValueError(
-                f"LLM 抽取器 timeout_seconds 必须大于 0 且不超过 {MAX_EXTRACTION_TIMEOUT_SECONDS:g} 秒"
-            )
+            raise ValueError(f"LLM 抽取器 timeout_seconds 必须大于 0 且不超过 {MAX_EXTRACTION_TIMEOUT_SECONDS:g} 秒")
         return timeout
 
     def validate_options(self) -> None:
