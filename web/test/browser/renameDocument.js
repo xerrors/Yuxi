@@ -8,7 +8,9 @@
 // prettier-ignore
 async (page) => {
   const check = (condition, message) => { if (!condition) throw new Error(message) }
-  const web = 'http://localhost:5173'
+  // 必须用 SSO 回调所在的来源：OIDC 只会把会话写回 172.25.104.79:5173，
+  // localhost:5173 是另一个来源（localStorage 不共享），在那里跑会停在登录页
+  const web = 'http://172.25.104.79:5173'
   const rows = () => page.locator('table tbody tr:has(.file-browser-row-actions)')
   const menu = () => page.locator('.file-action-popover')
   const modal = () => page.locator('.ant-modal-wrap:visible')
