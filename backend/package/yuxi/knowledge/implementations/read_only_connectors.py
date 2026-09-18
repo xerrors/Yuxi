@@ -77,6 +77,9 @@ class ReadOnlyConnectors(KnowledgeBase):
     async def rename_folder(self, kb_id: str, folder_id: str, folder_name: str) -> dict:
         raise self._readonly_error()
 
+    async def rename_file(self, kb_id: str, file_id: str, filename: str, operator_id: str | None = None) -> dict:
+        raise self._readonly_error()
+
     async def delete_folder(self, kb_id: str, folder_id: str) -> None:
         raise self._readonly_error()
 

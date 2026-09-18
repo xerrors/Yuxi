@@ -80,17 +80,20 @@
     </a-modal>
 
     <a-modal
-      v-model:open="renameFolderModalVisible"
-      title="重命名文件夹"
-      :confirm-loading="renameFolderLoading"
-      @ok="handleRenameFolder"
+      v-model:open="renameModalVisible"
+      :title="renameModalTitle"
+      :confirm-loading="renameLoading"
+      @ok="handleRename"
     >
       <a-input
-        v-model:value="renamedFolderName"
-        aria-label="文件夹名称"
-        placeholder="请输入文件夹名称"
-        @pressEnter="handleRenameFolder"
+        v-model:value="renamedName"
+        :aria-label="renamingFolder ? '文件夹名称' : '文件名'"
+        :placeholder="renamingFolder ? '请输入文件夹名称' : '请输入文件名'"
+        @pressEnter="handleRename"
       />
+      <div v-if="!renamingFolder" class="rename-file-hint">
+        只改展示名，内容与已入库的分块、向量都不受影响，无需重新入库；文件扩展名不可修改。
+      </div>
     </a-modal>
 
     <FileBrowserTable
@@ -375,7 +378,7 @@
                     v-if="canUseFileMutations"
                     type="text"
                     block
-                    @click="showRenameFolderModal(row)"
+                    @click="showRenameModal(row)"
                   >
                     <template #icon><component :is="h(Pencil)" size="14" /></template>
                     重命名
@@ -409,6 +412,18 @@
                   >
                     <template #icon><component :is="h(Download)" size="14" /></template>
                     下载文件
+                  </a-button>
+
+                  <!-- Rename Action：只改展示名，故不受 canUseFileMutations 的 filtered 约束；
+                       但会丢失目录语义的名字（虚拟视图、带目录前缀）一律不提供入口 -->
+                  <a-button
+                    v-if="canRenameFile(row)"
+                    type="text"
+                    block
+                    @click="showRenameModal(row)"
+                  >
+                    <template #icon><component :is="h(Pencil)" size="14" /></template>
+                    重命名
                   </a-button>
 
                   <!-- Parse Action -->
@@ -496,6 +511,7 @@ import {
   canDropKnowledgeFileIntoFolder,
   canMutateKnowledgeFiles
 } from '@/utils/knowledgeFileMutations'
+import { canRenameFileRecord, filenameExtension, isAllDotsName } from '@/utils/knowledge_filename'
 import {
   CheckCircleFilled,
   HourglassFilled,
@@ -714,38 +730,72 @@ const handleCreateFolder = async () => {
   }
 }
 
-const renameFolderModalVisible = ref(false)
-const renameFolderLoading = ref(false)
-const renamedFolderName = ref('')
-const folderBeingRenamed = ref(null)
+// 文件夹与文件共用同一个重命名弹窗：两者的差别只有接口与文案
+const renameModalVisible = ref(false)
+const renameLoading = ref(false)
+const renamedName = ref('')
+const recordBeingRenamed = ref(null)
 
-const showRenameFolderModal = (record) => {
-  if (!canUseFileMutations.value || record.is_virtual_folder) return
+const renamingFolder = computed(() => Boolean(recordBeingRenamed.value?.is_folder))
+const renameModalTitle = computed(() => (renamingFolder.value ? '重命名文件夹' : '重命名文件'))
+
+// 文件重命名只看 readonly 与目录语义：不看 filtered（按状态筛选后 canUseFileMutations 会为 false，
+// 点了没反应），但虚拟视图与带目录前缀的名字都会被搬出目录，见 canRenameFileRecord
+const canRenameFile = (record) =>
+  canRenameFileRecord({
+    filename: record?.filename,
+    isVirtualPathView: isVirtualPathView.value,
+    readonly: readonly.value
+  })
+
+const showRenameModal = (record) => {
+  if (!record || record.is_virtual_folder) return
+  if (record.is_folder ? !canUseFileMutations.value : !canRenameFile(record)) return
   closePopover(record.file_id)
-  folderBeingRenamed.value = record
-  renamedFolderName.value = record.filename || ''
-  renameFolderModalVisible.value = true
+  recordBeingRenamed.value = record
+  renamedName.value = record.filename || ''
+  renameModalVisible.value = true
 }
 
-const handleRenameFolder = async () => {
-  if (!canUseFileMutations.value || !folderBeingRenamed.value) return
-  const folderName = renamedFolderName.value.trim()
-  if (!folderName) {
-    message.warning('请输入文件夹名称')
+const handleRename = async () => {
+  const record = recordBeingRenamed.value
+  if (!record) return
+  const nextName = renamedName.value.trim()
+  if (!nextName) {
+    message.warning(record.is_folder ? '请输入文件夹名称' : '请输入文件名')
     return
   }
+  // 预校验只为让用户看到具体原因：apis/base.js 对所有 400 一律返回「请求参数错误」，
+  // 服务端写好的 detail 到不了用户眼前。判据与后端一致，服务端仍是唯一权威。
+  if (!record.is_folder) {
+    if (isAllDotsName(nextName)) {
+      message.warning('文件名不能只由点组成')
+      return
+    }
+    const currentExt = filenameExtension(record.filename || '')
+    if (filenameExtension(nextName) !== currentExt) {
+      message.warning(`不能修改文件扩展名（当前为 ${currentExt || '无后缀'}）`)
+      return
+    }
+  }
 
-  renameFolderLoading.value = true
+  renameLoading.value = true
   try {
-    await documentApi.renameFolder(store.kbId, folderBeingRenamed.value.file_id, folderName)
-    renameFolderModalVisible.value = false
+    const result = record.is_folder
+      ? await documentApi.renameFolder(store.kbId, record.file_id, nextName)
+      : await documentApi.renameDocument(store.kbId, record.file_id, nextName)
+    renameModalVisible.value = false
     message.success('重命名成功')
+    // 思维导图是派生产物：同名歧义时后端会跳过同步，不说的话用户会以为导图也跟着改了
+    if (result?.mindmap_synced === false) {
+      message.warning('文件已重命名，但思维导图未同步，请重新生成思维导图')
+    }
     await refreshAfterMutation()
   } catch (error) {
     console.error(error)
     message.error('重命名失败: ' + (error.message || '未知错误'))
   } finally {
-    renameFolderLoading.value = false
+    renameLoading.value = false
   }
 }
 
@@ -1784,6 +1834,13 @@ import { generatePixelAvatar } from '@/utils/pixelAvatar'
   .ant-popover-arrow {
     display: none;
   }
+}
+
+.rename-file-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--gray-600, #6b7280);
 }
 
 .file-action-list {

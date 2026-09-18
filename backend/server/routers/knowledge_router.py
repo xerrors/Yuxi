@@ -26,6 +26,7 @@ from yuxi.knowledge.utils.mindmap_utils import (
     get_mindmap_databases_overview,
     get_mindmap_diff,
     remove_file_from_mindmap,
+    rename_file_in_mindmap,
 )
 from yuxi.knowledge.utils.sample_question_utils import (
     generate_database_sample_questions,
@@ -1478,6 +1479,36 @@ async def rename_folder(
     except Exception as e:
         logger.error(f"重命名文件夹失败 {e}, {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@knowledge.put("/databases/{kb_id}/documents/{doc_id}/rename")
+async def rename_document(
+    kb_id: str,
+    doc_id: str,
+    filename: str = Body(..., embed=True),
+    current_user: User = Depends(require_knowledge_base_manage),
+):
+    """重命名文档的展示名。
+
+    不改内容，因此不触发重新入库，也不影响知识图谱（图谱抽取只依赖分块正文）。
+    思维导图的叶子节点就是文件名，需同步改名。
+    """
+    try:
+        await _ensure_database_supports_documents(kb_id, "文档重命名")
+        meta = await knowledge_base.rename_file(kb_id, doc_id, filename, current_user.uid)
+    except HTTPException:
+        raise
+    except KBNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"重命名文档失败 {e}, {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"重命名失败: {e}")
+
+    # 导图是派生产物：同步失败不让改名失败，但必须让用户看得见，否则他会以为导图已经改了
+    mindmap_synced = await rename_file_in_mindmap(kb_id, doc_id, meta.get("filename") or filename.strip())
+    return {**meta, "mindmap_synced": mindmap_synced}
 
 
 @knowledge.put("/databases/{kb_id}/documents/{doc_id}/move")

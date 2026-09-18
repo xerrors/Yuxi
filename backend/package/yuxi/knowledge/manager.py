@@ -129,6 +129,11 @@ class KnowledgeBaseManager:
         kb_instance = await self.get_kb_executor(kb_id)
         return await kb_instance.rename_folder(kb_id, folder_id, folder_name)
 
+    async def rename_file(self, kb_id: str, file_id: str, filename: str, operator_id: str | None = None) -> dict:
+        """重命名文档的展示名。不改内容，因此不需要刷新分块/向量统计。"""
+        kb_instance = await self.get_kb_executor(kb_id)
+        return await kb_instance.rename_file(kb_id, file_id, filename, operator_id)
+
     async def get_kb_config(self, kb_id: str) -> KnowledgeBaseConfig:
         """读取知识库运行配置，Redis 未命中时回源 PostgreSQL。
 

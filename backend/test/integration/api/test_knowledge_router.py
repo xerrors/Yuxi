@@ -5,6 +5,7 @@ Integration tests for knowledge router endpoints.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import uuid
 from pathlib import Path
@@ -1198,3 +1199,135 @@ async def test_document_search_requires_admin(test_client, standard_user, knowle
         headers=standard_user["headers"],
     )
     _assert_forbidden_response(response)
+
+
+async def test_document_rename_persists_display_name_without_touching_storage_path(
+    test_client, admin_headers, standard_user, knowledge_database
+):
+    """文档重命名只改展示名：落库、列表、思维导图叶子同步，存储路径不动。
+
+    同名不做限制（上传链路本就允许同名），所以这里不覆盖同名用例 —— 同名时导图会
+    fail-closed 跳过同步，那一条由 test_mindmap_utils 直接断言。
+    """
+    kb_id = knowledge_database["kb_id"]
+    suffix = uuid.uuid4().hex[:8]
+    file_id = f"file_{suffix}"
+    old_name = f"MinerU_markdown_{suffix}.pdf"
+    new_name = f"涡轮叶片气膜冷却_{suffix}.pdf"
+    stored_path = f"http://minio/upload/{old_name}"
+    rename_url = f"/api/knowledge/databases/{kb_id}/documents/{file_id}/rename"
+    engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
+
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "INSERT INTO knowledge_files "
+                    "(file_id, kb_id, parent_id, filename, path, file_type, status, is_folder) VALUES "
+                    "(:id, :kb, NULL, :name, :path, 'pdf', 'parsed', FALSE)"
+                ),
+                {"id": file_id, "kb": kb_id, "name": old_name, "path": stored_path},
+            )
+            # 思维导图的叶子就是文件名，重命名后必须同步，否则界面继续显示旧名
+            await connection.execute(
+                text(
+                    "UPDATE knowledge_bases SET mindmap = CAST(:mindmap AS JSONB), "
+                    "mindmap_file_ids = CAST(:ids AS JSONB) WHERE kb_id = :kb"
+                ),
+                {
+                    "mindmap": json.dumps(
+                        {"content": "知识库", "children": [{"content": old_name, "children": []}]}
+                    ),
+                    "ids": json.dumps({file_id: old_name}),
+                    "kb": kb_id,
+                },
+            )
+
+        # 改名是写操作，与删除、入库同级：普通用户拿不到
+        denied = await test_client.put(rename_url, json={"filename": new_name}, headers=standard_user["headers"])
+        _assert_forbidden_response(denied)
+
+        renamed = await test_client.put(rename_url, json={"filename": new_name}, headers=admin_headers)
+        assert renamed.status_code == 200, renamed.text
+        payload = renamed.json()
+        # 与 rename_folder 同形：直接返回元数据
+        assert payload["filename"] == new_name
+        assert payload["original_filename"] == old_name
+        # 对文件而言 path 是存储路径，改名绝不能动它，否则下载与解析链路会断
+        assert payload["path"] == stored_path
+
+        listing = await test_client.get(
+            f"/api/knowledge/databases/{kb_id}/documents", headers=admin_headers
+        )
+        assert listing.status_code == 200, listing.text
+        assert new_name in [item["filename"] for item in listing.json()["items"]]
+
+        async with engine.connect() as connection:
+            file_row = (
+                await connection.execute(
+                    text(
+                        "SELECT filename, original_filename, path, updated_by FROM knowledge_files "
+                        "WHERE file_id = :id"
+                    ),
+                    {"id": file_id},
+                )
+            ).one()
+            assert file_row.filename == new_name
+            assert file_row.original_filename == old_name
+            assert file_row.path == stored_path
+            assert file_row.updated_by == payload["updated_by"]
+
+            mindmap_row = (
+                await connection.execute(
+                    text("SELECT mindmap, mindmap_file_ids FROM knowledge_bases WHERE kb_id = :kb"),
+                    {"kb": kb_id},
+                )
+            ).one()
+            assert mindmap_row.mindmap["children"][0]["content"] == new_name
+            assert mindmap_row.mindmap_file_ids[file_id] == new_name
+
+        # 扩展名会决定 file_type、预览与解析器选择，锁定后拒绝
+        bad_ext = await test_client.put(rename_url, json={"filename": f"{suffix}.txt"}, headers=admin_headers)
+        assert bad_ext.status_code == 400, bad_ext.text
+        assert "扩展名" in bad_ext.json()["detail"]
+
+        # 超过 varchar(512)：必须是 400，而不是让 UPDATE 抛成 500
+        too_long = await test_client.put(rename_url, json={"filename": "a" * 501}, headers=admin_headers)
+        assert too_long.status_code == 400, too_long.text
+
+        # splitext 把 "." 判成无后缀，光靠扩展名比较拦不住，必须显式拒绝
+        dots = await test_client.put(rename_url, json={"filename": ".."}, headers=admin_headers)
+        assert dots.status_code == 400, dots.text
+
+        # 不存在的文档：KB 存在但文档不在，_load_file_meta 抛 ValueError
+        missing_doc = await test_client.put(
+            f"/api/knowledge/databases/{kb_id}/documents/file_not_exist/rename",
+            json={"filename": "x.pdf"},
+            headers=admin_headers,
+        )
+        assert missing_doc.status_code == 400, missing_doc.text
+
+        # 不存在的知识库：_ensure_database_supports_documents 抛 404
+        missing_kb = await test_client.put(
+            "/api/knowledge/databases/kb_not_exist/documents/file_not_exist/rename",
+            json={"filename": "x.pdf"},
+            headers=admin_headers,
+        )
+        assert missing_kb.status_code == 404, missing_kb.text
+
+        # 文件夹有专属接口，走这里应当被拒
+        folder = await test_client.post(
+            f"/api/knowledge/databases/{kb_id}/folders",
+            json={"folder_name": f"folder-{suffix}", "parent_id": None},
+            headers=admin_headers,
+        )
+        assert folder.status_code == 200, folder.text
+        folder_rename = await test_client.put(
+            f"/api/knowledge/databases/{kb_id}/documents/{folder.json()['file_id']}/rename",
+            json={"filename": f"folder-{suffix}"},
+            headers=admin_headers,
+        )
+        assert folder_rename.status_code == 400, folder_rename.text
+        assert "文件夹" in folder_rename.json()["detail"]
+    finally:
+        await engine.dispose()

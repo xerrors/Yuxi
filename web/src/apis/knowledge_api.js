@@ -166,6 +166,18 @@ export const documentApi = {
     })
   },
 
+  /**
+   * 重命名文档的展示名
+   * 只改展示名，不改内容，因此不触发重新入库，也不影响知识图谱（图谱只依赖分块正文）
+   * @param {string} kbId - 知识库ID
+   * @param {string} docId - 文档ID
+   * @param {string} filename - 新的文件名（扩展名必须与原文件一致）
+   * @returns {Promise} - 更新后的文件元数据（与 renameFolder 同形）
+   */
+  renameDocument: async (kbId, docId, filename) => {
+    return apiAdminPut(`/api/knowledge/databases/${kbId}/documents/${docId}/rename`, { filename })
+  },
+
   moveDocument: async (kbId, documentId, newParentId) => {
     return apiAdminPut(`/api/knowledge/databases/${kbId}/documents/${documentId}/move`, {
       new_parent_id: newParentId

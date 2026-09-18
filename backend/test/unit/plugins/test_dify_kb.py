@@ -50,6 +50,19 @@ async def test_dify_rejects_folder_rename(tmp_path):
         await kb.rename_folder("kb-1", "folder-1", "renamed")
 
 
+@pytest.mark.asyncio
+async def test_dify_rejects_file_rename(tmp_path):
+    """只读连接器的写操作必须在 executor 处 fail-closed。
+
+    HTTP 侧虽然会被 _ensure_database_supports_documents 先拦下，但 KnowledgeBaseManager.rename_file
+    是公开入口，漏掉这条覆写就可能被别的调用路径绕过。
+    """
+    kb = DifyKB(str(tmp_path))
+
+    with pytest.raises(ValueError, match="只读检索连接器不支持该操作"):
+        await kb.rename_file("kb-1", "file-1", "renamed.pdf")
+
+
 def test_dify_create_params_config_and_validation():
     config = DifyKB.get_create_params_config()
     keys = [option["key"] for option in config["options"]]

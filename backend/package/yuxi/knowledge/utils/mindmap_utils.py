@@ -3,6 +3,7 @@
 import copy
 import json
 import textwrap
+from collections.abc import Collection, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
@@ -296,6 +297,86 @@ def remove_files_from_mindmap(mindmap_data: dict[str, Any], removed_filenames: s
     root_name = mindmap_copy.get("content", "")
     result = _prune_mindmap_node(mindmap_copy, removed_filenames, root_name)
     return result if result is not None else {"content": root_name, "children": []}
+
+
+def _rename_mindmap_node(node: dict[str, Any], renames: Mapping[str, str]) -> dict[str, Any]:
+    """递归把叶子节点的文件名替换为新名。"""
+    if not node.get("children"):
+        content = node.get("content", "")
+        if content in renames:
+            node["content"] = renames[content]
+        return node
+
+    for child in node.get("children", []):
+        _rename_mindmap_node(child, renames)
+    return node
+
+
+def _count_renamed_leaves(node: dict[str, Any], names: Collection[str]) -> int:
+    """统计会被替换的叶子数，用于判断按名字做树手术是否会误伤同名叶子。"""
+    if not node.get("children"):
+        return 1 if node.get("content", "") in names else 0
+    return sum(_count_renamed_leaves(child, names) for child in node.get("children", []))
+
+
+def rename_files_in_mindmap(mindmap_data: dict[str, Any], renames: dict[str, str]) -> dict[str, Any]:
+    """把思维导图里的叶子文件名替换为新名，无需 AI 调用。
+
+    与删除同理：重命名只改展示名、不动内容，属纯树手术。交给 AI 反而可能顺手改动分类结构。
+    """
+    if not renames:
+        return mindmap_data
+
+    return _rename_mindmap_node(copy.deepcopy(mindmap_data), renames)
+
+
+async def rename_file_in_mindmap(kb_id: str, file_id: str, new_filename: str) -> bool:
+    """把思维导图中该文件的叶子名改成新名（纯树手术，无 AI 调用）。
+
+    返回 False 表示这次没能同步（同名歧义跳过、或写入失败），调用方应把它透出去让用户知道；
+    返回 True 表示树与文件名一致（无需改动或已成功更新）。
+
+    失败只记日志不抛出：重命名本身已经落库生效，思维导图是派生产物，不应因为它的
+    更新失败而让整个重命名请求失败。同理，读取失败也不能冒成 500 —— 那会让用户以为
+    重命名没成功，而库里其实已经改了。
+    """
+    try:
+        kb = await KnowledgeBaseRepository().get_by_kb_id(kb_id)
+        if not kb or not kb.mindmap:
+            return True
+
+        old_filename = (kb.mindmap_file_ids or {}).get(file_id)
+        if not old_filename or old_filename == new_filename:
+            return True
+
+        # 按名字替换的树手术只在「会命中多个叶子」时才有歧义：那种情况下改成谁都可能改错，
+        # 而 mindmap_file_ids 只记 id 集合，detect_mindmap_changes 不会报「已变更」，改错的名字
+        # 再也回不来，故 fail-closed 跳过。旧名同时挂在多个被跟踪文件上但树里只有一个同名叶子时
+        # 不算歧义：那个叶子本来就没法区分两个同名文件，改它不会覆盖任何别的文件的独立叶子
+        # （实测库里有 13 组「原稿 + 译文」同名文件，一律跳过会让导图同步在真实数据上基本失效）。
+        matched = _count_renamed_leaves(kb.mindmap, {old_filename})
+        if matched > 1:
+            logger.warning(
+                f"思维导图中文件名「{old_filename}」命中 {matched} 个叶子节点，无法判断归属，"
+                f"跳过同步: {old_filename} -> {new_filename}"
+            )
+            return False
+
+        updated_mindmap = rename_files_in_mindmap(kb.mindmap, {old_filename: new_filename})
+        updated_file_ids = {**(kb.mindmap_file_ids or {}), file_id: new_filename}
+
+        saved = await KnowledgeBaseRepository().update(
+            kb_id,
+            {"mindmap": updated_mindmap, "mindmap_file_ids": updated_file_ids},
+        )
+        if saved is None:
+            logger.error(f"思维导图重命名未生效（知识库不存在）: {old_filename} -> {new_filename}")
+            return False
+        logger.info(f"思维导图中已重命名文件: {old_filename} -> {new_filename}")
+        return True
+    except Exception as e:
+        logger.error(f"思维导图重命名文件失败: {e}")
+        return False
 
 
 async def get_mindmap_database_files(kb_id: str) -> dict[str, Any]:

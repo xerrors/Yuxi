@@ -3,6 +3,7 @@ import mimetypes
 import os
 import re
 from abc import ABC, abstractmethod
+from pathlib import PurePosixPath
 from typing import Any
 
 from yuxi.knowledge.chunking.ragflow_like.presets import ensure_chunk_defaults_in_additional_params
@@ -29,6 +30,20 @@ class FileStatus:
 
 
 INDEXED_STATS_STATUSES = {FileStatus.INDEXED, "done"}
+
+# knowledge_files.filename 是 varchar(512)；上传链路截断到 500，重命名按同一上限拒绝
+MAX_FILENAME_LENGTH = 500
+
+
+def _filename_extensions(name: str) -> tuple[str, str]:
+    """返回文件名的两种后缀判据（均已小写）。
+
+    两者在 "..pdf"、"x."、".env" 这类名字上会给出不同结论，而仓库下游一边用 pathlib
+    （parser/capabilities 的收录判定、filepreview 的预览类型、下载的 content-type）、
+    一边用 splitext（重命名自身的历史判据），因此改名必须两种都守住，否则会出现
+    「声明扩展名已锁死、实际仍可改」的组合。
+    """
+    return os.path.splitext(name)[1].lower(), PurePosixPath(name).suffix.lower()
 
 
 def _should_repair_file_stats(file_meta: dict) -> bool:
@@ -908,6 +923,61 @@ class KnowledgeBase(ABC):
         )
         if record is None:
             raise ValueError(f"File {folder_id} not found")
+        return self._file_record_to_meta(record)
+
+    async def rename_file(self, kb_id: str, file_id: str, filename: str, operator_id: str | None = None) -> dict:
+        """重命名文档的展示名。
+
+        只改 filename：对文件而言 path 是存储路径（下载、预览与解析都取 minio_url or path），
+        内容、分块与向量都不动，因此不需要重新入库；知识图谱也不受影响——图谱抽取只依赖
+        分块正文（filename 从不进入正文）。
+        """
+        normalized_name = (filename or "").strip()
+        if not normalized_name:
+            raise ValueError("文件名不能为空")
+        if "/" in normalized_name or "\\" in normalized_name:
+            raise ValueError("文件名不能包含路径分隔符")
+        # splitext 会把 "." / ".." / "..." 都判成「无后缀」，光靠下面的扩展名比较拦不住，
+        # 而这类名字在列表里没有意义，直接挡掉
+        if set(normalized_name) == {"."}:
+            raise ValueError("文件名不能只由点组成")
+        # 上传链路把超长名截断到 500 以适配 varchar(512)；这里改为显式拒绝：
+        # 改名是用户盯着输入框的主动操作，静默截断比报错更让人意外
+        if len(normalized_name) > MAX_FILENAME_LENGTH:
+            raise ValueError(f"文件名不能超过 {MAX_FILENAME_LENGTH} 个字符")
+
+        meta = await self._load_file_meta(kb_id, file_id)
+        if meta.get("is_folder"):
+            raise ValueError("文件夹请使用文件夹重命名接口")
+
+        current_name = str(meta.get("filename") or "")
+        # 后缀决定 file_type、预览类型、下载 content-type 与解析器选择，放开会让整条链路错位，故锁定。
+        # 两种判据都要守：上游收录用 pathlib（parser/capabilities.is_supported_file_extension）、
+        # 预览与下载用 pathlib/mimetypes，而它们与 os.path.splitext 在 "..pdf"、"x." 这类名字上结论相反，
+        # 只守一种就会放过「声明锁死、实际可改」的组合。
+        current_exts = _filename_extensions(current_name)
+        if _filename_extensions(normalized_name) != current_exts:
+            raise ValueError(f"不能修改文件扩展名（当前为 {current_exts[0] or '无后缀'}）")
+
+        if normalized_name == current_name:
+            # meta 已经是 _file_record_to_meta 的输出形状，直接返回，不必再走一遍转换
+            return meta
+
+        from yuxi.repositories.knowledge_file_repository import KnowledgeFileRepository
+
+        repo = KnowledgeFileRepository()
+        # 刻意不查重名：上传链路允许同名（只在客户端提示），rename_folder 也不查，
+        # 在此设卡会让「改回原名」在已有同名的库里被永久拒绝。
+        data: dict[str, Any] = {"filename": normalized_name}
+        # 首次重命名时留下上传原名，便于追溯；已经有了就不覆盖
+        if not meta.get("original_filename"):
+            data["original_filename"] = current_name
+        if operator_id:
+            data["updated_by"] = operator_id
+
+        record = await repo.update_fields(file_id=file_id, kb_id=kb_id, data=data)
+        if record is None:
+            raise ValueError(f"File {file_id} not found")
         return self._file_record_to_meta(record)
 
     @abstractmethod
