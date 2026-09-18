@@ -390,6 +390,50 @@ async def test_清除会真正打到_milvus_而不只是清_PG(monkeypatch, tmp_
     assert milvus_delete.await_args.args[1] == "file_1"
 
 
+@pytest.mark.asyncio
+async def test_已建图谱的分块清除时会一并删图谱(monkeypatch, tmp_path):
+    """断言图谱数据也被清除，而不只是分块与向量。
+
+    图谱只对该文件已建立图谱的分块才需要清理（count_graph_indexed_by_file_id > 0）。
+    漏掉这一步会留下「分块没了、图谱里还挂着这个文件的实体与关系」的残留——
+    图谱检索会命中已修改内容的旧实体。本用例同时覆盖「没有图谱时不调用」。
+    """
+    from yuxi.knowledge.implementations.milvus import MilvusKB
+
+    async def run(graph_indexed_count: int):
+        kb = object.__new__(MilvusKB)  # 跳过 __init__，避免真连 Milvus
+        kb.work_dir = str(tmp_path)
+        kb.collections = {}
+        kb.connection_alias = "unit-test-alias"
+
+        monkeypatch.setattr(kb, "_get_existing_milvus_collection", AsyncMock(return_value=None))
+        monkeypatch.setattr(
+            "yuxi.knowledge.implementations.milvus.KnowledgeChunkRepository",
+            lambda: types.SimpleNamespace(
+                count_graph_indexed_by_file_id=AsyncMock(return_value=graph_indexed_count),
+                delete_by_file_id=AsyncMock(),
+            ),
+        )
+        monkeypatch.setattr(
+            "yuxi.knowledge.implementations.milvus.KnowledgeFileRepository",
+            lambda: types.SimpleNamespace(update_fields=AsyncMock()),
+        )
+        graph_delete = AsyncMock()
+        monkeypatch.setattr(
+            "yuxi.knowledge.graphs.milvus_graph_service.MilvusGraphService",
+            lambda *a, **kw: types.SimpleNamespace(delete_file_graph=graph_delete),
+        )
+        await kb.purge_indexed_chunks("kb_1", "file_1")
+        return graph_delete
+
+    called = await run(graph_indexed_count=3)
+    assert called.await_count == 1, "该文件已建图谱，清除时必须一并删除图谱数据"
+    assert called.await_args.args == ("kb_1", "file_1")
+
+    not_called = await run(graph_indexed_count=0)
+    assert not_called.await_count == 0, "该文件没有图谱数据时不应调用图谱删除"
+
+
 def test_所有文档型_executor_都必须覆写清除钩子():
     """遍历注册表，要求每个文档型 executor 自己声明清除钩子。
 
