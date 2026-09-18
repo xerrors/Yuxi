@@ -94,6 +94,112 @@ def test_llm_graph_extractor_rejects_custom_prompt():
         extractor.validate_options()
 
 
+def test_llm_graph_extractor_defaults_extraction_timeout():
+    """不配置时保持历史默认值，避免改变既有部署的行为。"""
+    extractor = LLMGraphExtractor({"model_spec": "test/model"})
+
+    assert extractor._resolve_timeout_seconds() == 60.0
+
+
+@pytest.mark.asyncio
+async def test_llm_graph_extractor_passes_configured_timeout_to_model(monkeypatch):
+    """抽取超时必须真的传到模型调用上。
+
+    它不能走 model_params：select_model 会把显式 timeout 覆盖到 model_params 之上，
+    所以在 model_params 里写 timeout 是无效的，只能由抽取器显式传入。
+    """
+    captured = {}
+
+    class FakeModel:
+        async def call(self, prompt, stream=False):
+            return SimpleNamespace(content='{"relations": []}')
+
+    def fake_select_model(**kwargs):
+        captured.update(kwargs)
+        return FakeModel()
+
+    monkeypatch.setattr("yuxi.knowledge.graphs.extractors.llm.select_model", fake_select_model)
+    extractor = LLMGraphExtractor({"model_spec": "test/model", "timeout_seconds": 300})
+
+    await extractor.extract("某型发动机的涵道比设计值为 9.0")
+
+    assert captured["timeout"] == 300.0
+    assert captured["model_spec"] == "test/model"
+
+
+@pytest.mark.asyncio
+async def test_llm_graph_extractor_defaults_timeout_when_absent(monkeypatch):
+    """不配置超时时，默认值也必须真的传到模型调用上（与硬编码 60s 的旧行为等价）。"""
+    captured = {}
+
+    class FakeModel:
+        async def call(self, prompt, stream=False):
+            return SimpleNamespace(content='{"relations": []}')
+
+    def fake_select_model(**kwargs):
+        captured.update(kwargs)
+        return FakeModel()
+
+    monkeypatch.setattr("yuxi.knowledge.graphs.extractors.llm.select_model", fake_select_model)
+
+    await LLMGraphExtractor({"model_spec": "test/model"}).extract("文本")
+
+    assert captured["timeout"] == 60.0
+
+
+@pytest.mark.parametrize("value", [300, "300", 600, 0.5])
+def test_llm_graph_extractor_accepts_valid_timeout(value):
+    """上界 600 与字符串数字都应当被接受（字符串数字与既有 concurrency_count 风格一致）。"""
+    extractor = LLMGraphExtractor({"model_spec": "test/model", "timeout_seconds": value})
+
+    extractor.validate_options()
+
+    assert extractor._resolve_timeout_seconds() == float(value)
+
+
+@pytest.mark.parametrize(
+    "bad_value",
+    [
+        0,
+        -1,
+        600.0001,
+        "abc",
+        None,
+        "",  # 空字符串
+        True,  # bool 是 int 子类，float(True)==1.0 会被区间校验放行
+        False,
+        float("nan"),  # NaN 让区间比较全部为 False
+        "NaN",
+        float("inf"),
+        10**400,  # 超大整数在 float() 上抛 OverflowError
+    ],
+    ids=[
+        "zero",
+        "negative",
+        "above_max",
+        "text",
+        "null",
+        "empty",
+        "true",
+        "false",
+        "nan",
+        "nan_str",
+        "inf",
+        "huge_int",
+    ],
+)
+def test_llm_graph_extractor_rejects_invalid_timeout(bad_value):
+    """越界、非数字、非有限值与布尔要显式失败。
+
+    这几类如果被静默放行，会变成「配置保存成功、构建时整库全挂」：bool 会配出 1 秒超时，
+    NaN/inf 会让每次调用直接报错，超大整数则会在路由兜底分支变成 500 而非 400。
+    """
+    extractor = LLMGraphExtractor({"model_spec": "test/model", "timeout_seconds": bad_value})
+
+    with pytest.raises(ValueError, match="timeout_seconds"):
+        extractor.validate_options()
+
+
 def test_llm_graph_extractor_appends_schema_to_fixed_prompt():
     extractor = LLMGraphExtractor(
         {

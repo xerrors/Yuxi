@@ -367,13 +367,26 @@
               style="width: 100%"
             />
           </a-form-item>
-          <a-form-item label="模型参数 JSON">
-            <a-input
-              v-model:value="graphConfigForm.model_params_text"
-              placeholder='例如 {"temperature":0.1}'
+          <a-form-item label="单次抽取超时（秒）">
+            <a-input-number
+              v-model:value="graphConfigForm.timeout_seconds"
+              :min="1"
+              :max="600"
+              :step="10"
+              style="width: 100%"
             />
+            <div class="form-item-hint">
+              默认 60 秒。推理型抽取模型单块耗时可达数十秒，若日志出现反复超时重试，可调大至
+              180–300。
+            </div>
           </a-form-item>
         </div>
+        <a-form-item label="模型参数 JSON">
+          <a-input
+            v-model:value="graphConfigForm.model_params_text"
+            placeholder='例如 {"temperature":0.1}（不能用于设置超时，请用上方字段）'
+          />
+        </a-form-item>
       </a-form>
     </a-modal>
 
@@ -578,11 +591,13 @@ watch(
   },
   { immediate: true }
 )
+const DEFAULT_EXTRACTION_TIMEOUT_SECONDS = 60
 const graphConfigForm = reactive({
   extractor_type: 'llm',
   model_spec: '',
   schema: '',
   concurrency_count: 50,
+  timeout_seconds: DEFAULT_EXTRACTION_TIMEOUT_SECONDS,
   model_params_text: ''
 })
 
@@ -663,6 +678,7 @@ const fillGraphConfigForm = () => {
   graphConfigForm.model_spec = options.model_spec || configStore.config?.default_model || ''
   graphConfigForm.schema = options.schema || ''
   graphConfigForm.concurrency_count = Number(options.concurrency_count || 50)
+  graphConfigForm.timeout_seconds = Number(options.timeout_seconds || DEFAULT_EXTRACTION_TIMEOUT_SECONDS)
   graphConfigForm.model_params_text = options.model_params
     ? JSON.stringify(options.model_params)
     : ''
@@ -683,6 +699,7 @@ const buildExtractorOptions = () => {
     model_spec: graphConfigForm.model_spec,
     schema: graphConfigForm.schema.trim(),
     concurrency_count: graphConfigForm.concurrency_count || 50,
+    timeout_seconds: graphConfigForm.timeout_seconds || DEFAULT_EXTRACTION_TIMEOUT_SECONDS,
     model_params: parseModelParams()
   }
 }
@@ -1313,6 +1330,13 @@ onUnmounted(() => {
   @media (max-width: 640px) {
     grid-template-columns: 1fr;
   }
+}
+
+.form-item-hint {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--gray-600, #6b7280);
 }
 
 .slide-fade-enter-active {
