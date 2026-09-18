@@ -228,7 +228,10 @@
       v-model:open="store.state.fileDetailModalVisible"
       :kb-id="kbId"
       :file-id="store.fileDetailFileId"
+      :editable="canManageDatabase"
+      :start-in-edit="store.fileDetailStartEdit"
       @closed="store.closeFileDetail"
+      @saved="onFileDetailSaved"
     />
 
     <FileUploadModal
@@ -729,6 +732,13 @@ const addFilesMode = ref('file')
 const isInitialLoad = ref(true)
 const detailLoading = ref(true)
 const fileTableRef = ref(null)
+
+/** 解析产物保存后：列表要刷新（产物内容变了）；本阶段状态保持「待入库」不变 */
+const onFileDetailSaved = async () => {
+  await fileTableRef.value?.refresh?.()
+  // 保存会推进文件行的版本（updated_at），列表页的更新时间等字段要跟着刷新
+  await store.getDatabaseInfo(undefined, true, true)
+}
 
 const showAddFilesModal = (options = {}) => {
   const { isFolder = false, mode = 'file' } = options

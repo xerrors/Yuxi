@@ -602,6 +602,22 @@ class KnowledgeBaseManager:
             ),
         )
 
+    async def update_file_markdown(
+        self,
+        kb_id: str,
+        file_id: str,
+        content: str,
+        operator_id: str,
+        revision: str,
+    ) -> dict:
+        """覆盖编辑后的解析产物（仅 parsed 状态；见 KnowledgeBase.update_file_markdown）"""
+        config = await self.get_kb_config(kb_id)
+        executor = await self._get_or_create_kb_instance(config.kb_type)
+        return await self._run_with_stats_refresh(
+            kb_id,
+            executor.update_file_markdown(kb_id, file_id, content, operator_id, revision),
+        )
+
     async def index_file(
         self,
         kb_id: str,

@@ -1276,6 +1276,10 @@ class MilvusKB(KnowledgeBase):
             except Exception as e:
                 logger.error(f"Failed to read markdown file for {file_id}: {e}")
 
+        # 与本次内容同一次读取带出文件版本：调用方（编辑保存的期望版本）若另起一次查询，
+        # 两次查询之间发生的写入会让「旧内容 + 新版本」配成一对，保存即覆盖对方
+        content_info["updated_at"] = file_meta.get("updated_at")
+
         return content_info
 
     async def get_file_content(self, kb_id: str, file_id: str) -> dict:

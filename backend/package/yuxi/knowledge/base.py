@@ -3,6 +3,7 @@ import mimetypes
 import os
 import re
 from abc import ABC, abstractmethod
+from datetime import UTC, datetime
 from typing import Any
 
 from yuxi.knowledge.chunking.ragflow_like.presets import ensure_chunk_defaults_in_additional_params
@@ -30,6 +31,36 @@ class FileStatus:
 
 INDEXED_STATS_STATUSES = {FileStatus.INDEXED, "done"}
 
+# 允许人工编辑解析产物的状态。本阶段只放开 parsed：该状态没有派生索引，
+# 覆盖写回产物即发布本身。已入库内容（indexed / error_indexing / 遗留 done）的编辑需要
+# 走「重新入库」Durable Task 取得 ownership 后再切换权威内容，不在本阶段范围内。
+# 不含 error_parsing（没有可信产物）。前端 web/src/utils/knowledge_file_policy.js
+# 保持同集合，避免出现「前端显示编辑按钮、后端拒绝」的错位。
+EDITABLE_MARKDOWN_STATUSES = {FileStatus.PARSED}
+
+
+def parse_file_revision(revision: str) -> datetime:
+    """把客户端回传的修订（文件行的 updated_at ISO 串）解析成可比较的时间。
+
+    编辑是「读—改—写」，期望版本必须参与落库的等值条件才能挡住并发（见 update_file_markdown）。
+    前端原样回传 utc_isoformat 的输出（带 Z 后缀），Python 3.10 的 fromisoformat 不认 Z，
+    故先归一化再解析。解析出的朴素时间按 UTC 解释——注意这与 utils.datetime_utils.ensure_utc
+    对朴素值按 Asia/Shanghai 解释的假设相反；当前列的 timestamptz 经 asyncpg 返回 aware 值，
+    走不到这条分支，这里保持与 utc_isoformat 同源以免产生新的时区错配。
+    """
+    normalized = (revision or "").strip()
+    if not normalized:
+        raise ValueError("缺少内容修订标识，请重新打开编辑")
+    if normalized.endswith("Z"):
+        normalized = f"{normalized[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise ValueError("内容修订标识无效，请重新打开编辑") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
+
 
 def _should_repair_file_stats(file_meta: dict) -> bool:
     status = file_meta.get("status")
@@ -50,6 +81,15 @@ class KBNotFoundError(KnowledgeBaseException):
 
 class KBNameConflictError(KnowledgeBaseException):
     """知识库名称冲突错误。"""
+
+    pass
+
+
+class KBFileStateConflictError(KnowledgeBaseException):
+    """文件状态在操作过程中被其他动作改变（并发冲突）。
+
+    与 ValueError 区分：ValueError 表示「你传错了」，本异常表示「请稍后重试」，HTTP 上映射为 409。
+    """
 
     pass
 
@@ -455,6 +495,76 @@ class KnowledgeBase(ABC):
         )
 
         return upload_result.url
+
+    async def update_file_markdown(
+        self,
+        kb_id: str,
+        file_id: str,
+        content: str,
+        operator_id: str,
+        revision: str,
+    ) -> dict:
+        """覆盖人工编辑后的解析产物 Markdown（本阶段只接受 parsed）。
+
+        与 parse_file 的区别：parse_file 只接受 uploaded/error_parsing 且会清空状态重解析；
+        本方法只替换 parsed 文件的产物内容，状态保持 parsed，用户继续走既有「入库」。
+        parsed 没有派生索引，确定性路径 {kb_id}/parsed/{file_id}.md 就是权威内容，
+        覆盖即发布，因此不存在「草稿 / 版本切换」的问题；已入库内容的编辑要复用
+        「重新入库」Durable Task 取得 ownership 后再切换权威内容，见决策记录。
+
+        并发控制：「期望版本 + 允许状态」是**同一条 UPDATE 的等值条件**（期望版本是文件行的
+        updated_at，任何写入都会推进它）。因此校验与发布是一个原子步骤：
+        - 两个并发保存只有一个能命中，另一个拿到 None → 409，不会出现「都通过校验、后写覆盖先写」；
+        - 编辑期间解析/入库任务把状态或版本推进，也同样让条件落空 → 409。
+        刻意不在校验与发布之间做「读产物算哈希」式的比较：那是非原子读，两个并发请求会双双通过。
+
+        顺序是**先条件更新、再覆盖产物**：反过来（先覆盖再条件更新）会在条件落空时留下
+        「产物已更新、状态/版本未变」的组合，且接口返回 409 的同时内容已经持久化。
+        本顺序最坏只是条件更新成功后写对象失败——此时状态与内容仍是旧的一对，自洽，重试即可。
+
+        不采用抢占式 CAS：编辑不走 Durable Task、无 lease，一旦进程崩溃文件会永久卡在
+        中间态，而 fail_task_processing_in_session 只收敛有 task 归属的状态。
+        """
+        from yuxi.repositories.knowledge_file_repository import KnowledgeFileRepository
+        from yuxi.utils.upload_utils import MAX_MARKDOWN_EDIT_SIZE_BYTES
+
+        file_meta = await self._get_file_meta(kb_id, file_id)
+
+        if file_meta.get("is_folder"):
+            raise ValueError("文件夹不支持编辑解析产物")
+        if not file_meta.get("markdown_file"):
+            raise ValueError("文件尚未生成解析结果，请先解析")
+        if not content or not content.strip():
+            # 空 Markdown 会切出 0 个分块，产生「已入库却检索不到」的哑状态
+            raise ValueError("解析内容不能为空")
+        if len(content.encode("utf-8")) > MAX_MARKDOWN_EDIT_SIZE_BYTES:
+            raise ValueError(f"解析内容超出限制（{MAX_MARKDOWN_EDIT_SIZE_BYTES // (1024 * 1024)}MB）")
+
+        expected_updated_at = parse_file_revision(revision)
+
+        status = file_meta.get("status")
+        # 早退拒绝并发：正在解析/入库时不介入，并给出比「条件落空」更准确的提示
+        if status in (FileStatus.PARSING, FileStatus.INDEXING):
+            raise KBFileStateConflictError("文件正在解析或入库中，请稍后重试")
+        if status not in EDITABLE_MARKDOWN_STATUSES:
+            raise KBFileStateConflictError(f"文件当前状态（{status}）不支持编辑解析产物")
+
+        # operator_id 必填：update_fields_if_status 在 data 为空时不做 UPDATE（直接按 id 取记录），
+        # 那会让状态与版本条件一起失效——编辑始终有操作人，就不该给这条路径留空子。
+        record = await KnowledgeFileRepository().update_fields_if_status(
+            kb_id=kb_id,
+            file_id=file_id,
+            allowed_statuses={status},
+            data={"updated_by": operator_id},
+            expected_updated_at=expected_updated_at,
+        )
+        if record is None:
+            raise KBFileStateConflictError("解析产物或文件状态已被其他人修改，请重新打开编辑后再保存")
+
+        # 覆盖产物：对象名为确定性路径 {kb_id}/parsed/{file_id}.md，重复写即幂等覆盖
+        await self._save_markdown_to_minio(kb_id, file_id, content)
+
+        return self._file_record_to_meta(record)
 
     async def _read_minio_bytes(self, file_path: str) -> bytes:
         from yuxi.knowledge.utils.kb_utils import is_minio_url, parse_minio_url
