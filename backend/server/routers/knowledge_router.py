@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 from yuxi.config.options import system_options
-from yuxi.knowledge.base import KBNameConflictError, KBNotFoundError
+from yuxi.knowledge.base import KBFileStateConflictError, KBNameConflictError, KBNotFoundError
 from yuxi.knowledge.chunking.ragflow_like.presets import get_chunk_preset_options
 from yuxi.knowledge.graphs.milvus_graph_service import GRAPH_TASK_TYPE, MilvusGraphService
 from yuxi.knowledge.read_models import KnowledgeBaseDetail
@@ -1048,7 +1048,12 @@ async def get_document_basic_info(kb_id: str, doc_id: str, current_user: User = 
 
 @knowledge.get("/databases/{kb_id}/documents/{doc_id}/content")
 async def get_document_content(kb_id: str, doc_id: str, current_user: User = Depends(require_knowledge_base_read)):
-    """获取文档内容信息（chunks和lines）"""
+    """获取文档内容信息（chunks和lines）。
+
+    同时返回 `content_revision`：文件行的 updated_at，编辑保存时必须原样回传。
+    它是保存时那条条件更新的期望版本——任何对文件的写入（另一个编辑者、重新解析、
+    状态推进）都会改变它，从而让过期保存落空并返回 409。
+    """
     logger.debug(f"GET document {doc_id} content in {kb_id}")
     await _ensure_database_supports_documents(kb_id, "文档查看")
 
@@ -1059,6 +1064,11 @@ async def get_document_content(kb_id: str, doc_id: str, current_user: User = Dep
             {key: value for key, value in line.items() if key not in internal_graph_fields}
             for line in info.get("lines", [])
         ]
+        # 版本随内容同一次读取带出（见 _get_file_content_from_meta），不另起查询，
+        # 否则两次查询之间的写入会让「旧内容 + 新版本」配成一对
+        revision = info.pop("updated_at", None)
+        if revision:
+            info["content_revision"] = revision
         return info
     except HTTPException:
         raise
@@ -1509,6 +1519,60 @@ async def move_document(
     except Exception as e:
         logger.error(f"移动文件失败 {e}, {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class UpdateDocumentMarkdownRequest(BaseModel):
+    """编辑解析产物的请求体。"""
+
+    content: str
+    revision: str
+
+
+@knowledge.put("/databases/{kb_id}/documents/{doc_id}/content")
+async def update_document_content(
+    kb_id: str,
+    doc_id: str,
+    request: UpdateDocumentMarkdownRequest,
+    current_user: User = Depends(require_knowledge_base_manage),
+):
+    """覆盖保存编辑后的解析产物 Markdown（只接受待入库文件）。
+
+    只放开 parsed：该状态没有派生索引，覆盖即发布，状态保持 parsed，
+    用户继续走既有「入库」。已入库内容的编辑要复用「重新入库」Durable Task，
+    见 docs/develop-guides/decisions 里的决策记录。
+
+    `revision` 是 GET 内容时返回的 `content_revision`（文件行的 updated_at），
+    保存时作为条件更新的期望版本：文件在编辑期间被改过（另一个编辑者、重新解析、
+    状态推进）就会落空并返回 409，而不是静默覆盖。
+    """
+    logger.debug(f"PUT document {doc_id} content in {kb_id}")
+    if not request.content or not request.content.strip():
+        raise HTTPException(status_code=400, detail="解析内容不能为空")
+
+    try:
+        await _ensure_database_supports_documents(kb_id, "文档解析内容编辑")
+        meta = await knowledge_base.update_file_markdown(
+            kb_id, doc_id, request.content, current_user.uid, request.revision
+        )
+        return {
+            "status": "success",
+            "message": "解析内容已保存",
+            "meta": meta,
+            # 回传这次保存后的新版本：前端连续编辑时下一步要拿它当期望版本，否则必然 409
+            "content_revision": meta.get("updated_at"),
+        }
+    except HTTPException:
+        raise
+    except KBFileStateConflictError as e:
+        # 并发冲突：产物已被他人修改，或文件正在解析/入库、状态被其他动作改变
+        raise HTTPException(status_code=409, detail=str(e))
+    except KBNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"保存解析内容失败 {e}, {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"保存失败: {e}")
 
 
 @knowledge.post("/files/fetch-url")

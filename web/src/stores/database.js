@@ -24,6 +24,8 @@ export const useDatabaseStore = defineStore('database', () => {
   const database = ref({})
   const kbId = ref(null)
   const fileDetailFileId = ref(null)
+  // 打开详情弹层时是否直接进入编辑态（由文件行菜单的「编辑文件」置位）
+  const fileDetailStartEdit = ref(false)
   const documentFiles = ref([])
   const folderBreadcrumbs = ref([{ file_id: null, filename: '全部文件', path_prefix: '' }])
 
@@ -656,19 +658,27 @@ export const useDatabaseStore = defineStore('database', () => {
     }
   }
 
-  function openFileDetail(fileId) {
+  function openFileDetail(fileId, { startEdit = false } = {}) {
     const nextFileId = typeof fileId === 'object' ? fileId?.file_id : fileId
     if (!nextFileId) {
       message.error('文件信息不完整')
       return
     }
     fileDetailFileId.value = nextFileId
+    fileDetailStartEdit.value = Boolean(startEdit)
     state.fileDetailModalVisible = true
+  }
+
+  /** 打开详情并直接进入编辑态（供文件行菜单的「编辑文件」使用） */
+  function openFileDetailForEdit(fileId) {
+    openFileDetail(fileId, { startEdit: true })
   }
 
   function closeFileDetail() {
     state.fileDetailModalVisible = false
     fileDetailFileId.value = null
+    // 关闭即清意图，避免下次打开时残留上一次的编辑请求
+    fileDetailStartEdit.value = false
   }
 
   async function loadQueryParams(id) {
@@ -821,6 +831,7 @@ export const useDatabaseStore = defineStore('database', () => {
     database,
     kbId,
     fileDetailFileId,
+    fileDetailStartEdit,
     documentFiles,
     folderBreadcrumbs,
     queryParams,
@@ -842,6 +853,7 @@ export const useDatabaseStore = defineStore('database', () => {
     indexFiles,
     indexPendingFiles,
     openFileDetail,
+    openFileDetailForEdit,
     closeFileDetail,
     loadQueryParams,
     loadDocumentFiles,
