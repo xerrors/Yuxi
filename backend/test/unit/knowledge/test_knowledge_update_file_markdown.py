@@ -348,6 +348,48 @@ def test_基类提供默认清除钩子且不抛错(tmp_path):
     assert asyncio.run(kb.purge_indexed_chunks("kb_1", "file_1")) is None
 
 
+@pytest.mark.asyncio
+async def test_清除会真正打到_milvus_而不只是清_PG(monkeypatch, tmp_path):
+    """断言删除同时落到 Milvus 与 PostgreSQL。
+
+    集成测试 seed 出来的文件本就没有向量，所以「Milvus 侧漏删」在那条链路上测不出来。
+    这条在 executor 层直接断言 Milvus 删除被调用，并且带对了 file_id——少了它，
+    「状态退回待入库、向量却还在」这个本功能要消除的不一致就没有自动化守卫。
+    """
+    from yuxi.knowledge.implementations.milvus import MilvusKB
+
+    # 跳过 __init__：它会立刻连接 Milvus，而这里要测的是删除路径的分派
+    kb = object.__new__(MilvusKB)
+    kb.work_dir = str(tmp_path)
+    kb.collections = {}
+    kb.connection_alias = "unit-test-alias"
+
+    fake_collection = object()
+    monkeypatch.setattr(kb, "_get_existing_milvus_collection", AsyncMock(return_value=fake_collection))
+    milvus_delete = AsyncMock()
+    monkeypatch.setattr(kb, "_delete_file_chunks_from_milvus", milvus_delete)
+
+    pg_delete = AsyncMock()
+    monkeypatch.setattr(
+        "yuxi.knowledge.implementations.milvus.KnowledgeChunkRepository",
+        lambda: types.SimpleNamespace(
+            count_graph_indexed_by_file_id=AsyncMock(return_value=0),
+            delete_by_file_id=pg_delete,
+        ),
+    )
+    monkeypatch.setattr(
+        "yuxi.knowledge.implementations.milvus.KnowledgeFileRepository",
+        lambda: types.SimpleNamespace(update_fields=AsyncMock()),
+    )
+
+    await kb.purge_indexed_chunks("kb_1", "file_1")
+
+    assert pg_delete.await_args.args == ("file_1",), "PG 分块行要按 file_id 删除"
+    assert milvus_delete.await_count == 1, "必须打到 Milvus，否则向量会残留"
+    assert milvus_delete.await_args.args[0] is fake_collection
+    assert milvus_delete.await_args.args[1] == "file_1"
+
+
 def test_所有文档型_executor_都必须覆写清除钩子():
     """遍历注册表，要求每个文档型 executor 自己声明清除钩子。
 
