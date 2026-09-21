@@ -95,8 +95,13 @@
         <div v-if="contentState.loading" class="loading-container">
           <a-spin tip="正在加载分块内容..." />
         </div>
-        <div v-else class="chunk-grid">
-          <div v-for="chunk in mappedChunks" :key="chunk.id" class="chunk-card">
+        <div v-else ref="chunksPanelRef" class="chunk-grid">
+          <div
+            v-for="chunk in mappedChunks"
+            :key="chunk.id"
+            :data-chunk-id="String(chunk.id ?? '')"
+            class="chunk-card"
+          >
             <div class="chunk-card-header">
               <span class="chunk-order">#{{ chunk.chunk_order_index }}</span>
             </div>
@@ -118,7 +123,7 @@
 </template>
 
 <script setup>
-import { computed, h, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, h, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { documentApi } from '@/apis/knowledge_api'
 import { getWorkspaceKnowledgeFileContent } from '@/apis/workspace_api'
@@ -147,6 +152,11 @@ const props = defineProps({
   },
   fileId: {
     type: [String, Number],
+    default: ''
+  },
+  // 打开后定位到该分块；分块 id 对不上时静默退回默认视图
+  focusChunkId: {
+    type: String,
     default: ''
   }
 })
@@ -345,7 +355,9 @@ const loadBasicInfo = async () => {
     }
 
     file.value = nextFile
-    viewMode.value = getDefaultDetailView(nextFile)
+    viewMode.value = props.focusChunkId && hasChunkPreview.value
+      ? 'chunks'
+      : getDefaultDetailView(nextFile)
   } catch (error) {
     if (requestId !== basicRequestSeq) return
     console.error('加载文件基本信息失败:', error)
@@ -454,6 +466,42 @@ const charCount = computed(() => mergedContent.value.length)
 const chunkCount = computed(
   () => mappedChunks.value.length || contentState.value.lines?.length || 0
 )
+// 引用溯源跳转：定位到具体分块，找不到就保持原样，不影响其它入口
+const chunksPanelRef = ref(null)
+
+const focusChunkCard = async () => {
+  const wanted = String(props.focusChunkId || '')
+  if (!wanted) return
+
+  await nextTick()
+  const panel = chunksPanelRef.value
+  if (!panel) return
+
+  const cards = Array.from(panel.children || [])
+  const target = cards.find((el) => el.dataset?.chunkId === wanted)
+  if (!target) return
+
+  for (const el of cards) el.classList.remove('chunk-card-focused')
+  target.classList.add('chunk-card-focused')
+  if (typeof target.scrollIntoView === 'function') {
+    target.scrollIntoView({ block: 'center' })
+  }
+}
+
+watch(
+  () => [
+    props.open,
+    viewMode.value,
+    contentState.value.loading,
+    mappedChunks.value.length,
+    props.focusChunkId
+  ],
+  ([open]) => {
+    if (!open || viewMode.value !== 'chunks' || contentState.value.loading) return
+    focusChunkCard()
+  }
+)
+
 const viewInfoText = computed(() => {
   if (viewMode.value === 'chunks') {
     if (contentState.value.loading) return ''
@@ -678,6 +726,11 @@ onBeforeUnmount(resetLocalState)
   border-radius: 8px;
   padding: 12px;
   transition: all 0.2s ease;
+}
+
+.chunk-card-focused {
+  border-color: var(--main-700);
+  box-shadow: 0 0 0 2px var(--main-100);
 }
 
 .chunk-card:hover {

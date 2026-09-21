@@ -12,6 +12,11 @@ from pydantic import BaseModel, Field
 
 from yuxi.agents.backends.sandbox import ProvisionerSandboxBackend
 from yuxi.agents.toolkits.registry import tool
+from yuxi.knowledge.citations import (
+    build_citation_entries,
+    count_prior_citations,
+    render_citation_hint,
+)
 from yuxi.knowledge.schemas import (
     FindInputSchema,
     OpenInputSchema,
@@ -151,7 +156,8 @@ async def query_kb(kb_id: str, query_text: str, file_name: str | None = None, ru
     """在指定知识库中检索内容
 
     当用户需要查询具体内容时使用此工具。kb_id 是知识库资源 ID，也就是 kb_id；返回结果中的
-    file_id 可继续用于 find_kb_document 或 open_kb_document。
+    file_id 可继续用于 find_kb_document 或 open_kb_document。返回结果的 cite 字段是本轮检索的
+    引用编号，回答需要引用时必须使用该编号，不要另写来源名称。
     """
     if not kb_id:
         return "请提供 kb_id"
@@ -165,10 +171,38 @@ async def query_kb(kb_id: str, query_text: str, file_name: str | None = None, ru
 
     try:
         kwargs = {"file_name": file_name} if file_name else {}
-        return await _get_knowledge_base().retrieve(target_kb_id, query_text, **kwargs)
+        payload = await _get_knowledge_base().retrieve(target_kb_id, query_text, **kwargs)
     except Exception as e:
         logger.error(f"检索失败: {e}")
         return f"检索失败: {str(e)}"
+
+    return _with_citation_numbers(payload, runtime)
+
+
+def _with_citation_numbers(payload: Any, runtime: Any = None) -> Any:
+    """给检索结果附加引用编号；编号无来源可依时保持原样返回。"""
+    results = payload.get("results") if isinstance(payload, dict) else None
+    if not isinstance(results, list):
+        return payload
+
+    entries = build_citation_entries(results, offset=_citation_offset(runtime))
+    if not entries:
+        return payload
+
+    for entry, result in zip(entries, (item for item in results if isinstance(item, dict))):
+        result["cite"] = entry["index"]
+    return {**payload, "citation_hint": render_citation_hint(entries)}
+
+
+def _citation_offset(runtime: Any) -> int:
+    """本次检索之前已用掉的编号数量，让编号在一次会话内连续。"""
+    if runtime is None:
+        return 0
+    try:
+        return count_prior_citations(getattr(runtime, "state", {}).get("messages"))
+    except Exception:  # noqa: BLE001 - 计数失败时退回从 1 编号，不能让检索失败
+        logger.warning("引用编号基数统计失败，本次检索从 1 开始编号")
+        return 0
 
 
 OpenKBDocumentInput = OpenInputSchema

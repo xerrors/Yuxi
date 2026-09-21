@@ -49,8 +49,10 @@
         v-if="parsedData.content"
         :key="message.id"
         :content="parsedData.content"
+        :citations="kbCitationRegistries"
         code-copy
         class="message-md"
+        @citation-click="openCitationSource"
       />
 
       <!-- 错误提示块 -->
@@ -124,6 +126,13 @@
       <img :src="imagePreview.src" :alt="imagePreview.alt" class="message-image-preview-img" />
     </div>
   </Teleport>
+
+  <FileDetailModal
+    v-model:open="citationFileOpen"
+    :kb-id="citationFileTarget.kbId"
+    :file-id="citationFileTarget.fileId"
+    :focus-chunk-id="citationFileTarget.chunkId"
+  />
 </template>
 
 <script setup>
@@ -140,6 +149,8 @@ import { inferImageMimeTypeFromBase64, normalizeAttachmentPreviews } from '@/uti
 import { buildMentionDisplayLabels } from '@/utils/mention_utils'
 import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
 import { enrichTaskToolCalls } from '@/components/ToolCallingResult/toolRegistry'
+import { collectKbCitationRegistries } from '@/utils/kbCitations'
+import FileDetailModal from '@/components/FileDetailModal.vue'
 
 const props = defineProps({
   // 消息角色：'user'|'assistant'|'sent'|'received'
@@ -310,6 +321,22 @@ const parsedData = computed(() => {
     reasoning_content: reasoningContent
   }
 })
+
+// 同一条助手消息里携带的工具调用结果，就是回答中引用编号的唯一来源
+const kbCitationRegistries = computed(() => collectKbCitationRegistries(validToolCalls.value))
+
+const citationFileOpen = ref(false)
+const citationFileTarget = ref({ kbId: '', fileId: '', chunkId: '' })
+
+const openCitationSource = (citation) => {
+  if (!citation?.kbId || !citation?.fileId) return
+  citationFileTarget.value = {
+    kbId: citation.kbId,
+    fileId: citation.fileId,
+    chunkId: String(citation.chunkId || '')
+  }
+  citationFileOpen.value = true
+}
 </script>
 
 <style lang="less" scoped>
@@ -321,7 +348,7 @@ const parsedData = computed(() => {
   user-select: text;
   word-break: break-word;
   word-wrap: break-word;
-  font-size: 14px;
+  font-size: 15px;
   line-height: 24px;
   box-sizing: border-box;
   color: var(--gray-10000);

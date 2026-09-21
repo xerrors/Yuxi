@@ -1,3 +1,10 @@
+/** 取片段的引用编号；后端未写入时返回 null，由调用方自行按位置编号。 */
+export function getChunkCite(chunk) {
+  const raw = chunk?.cite ?? chunk?.citation ?? chunk?.citation_index
+  const parsed = Number.parseInt(String(raw ?? ''), 10)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null
+}
+
 /** 按知识库文件身份聚合检索片段。 */
 export function groupKnowledgeChunks(chunks) {
   const groups = new Map()
@@ -14,11 +21,20 @@ export function groupKnowledgeChunks(chunks) {
         filename,
         kb_id: kbId,
         file_id: fileId,
-        chunks: []
+        chunks: [],
+        cites: []
       })
     }
-    groups.get(key).chunks.push(item)
+    const group = groups.get(key)
+    group.chunks.push(item)
+
+    const cite = getChunkCite(item)
+    if (cite !== null) group.cites.push(cite)
   }
 
-  return Array.from(groups.values()).sort((a, b) => a.filename.localeCompare(b.filename))
+  const sorted = Array.from(groups.values()).sort((a, b) => a.filename.localeCompare(b.filename))
+  for (const group of sorted) {
+    group.cites.sort((a, b) => a - b)
+  }
+  return sorted
 }

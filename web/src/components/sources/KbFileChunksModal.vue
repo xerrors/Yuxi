@@ -50,6 +50,9 @@
             <div class="chunk-heading">
               <span class="chunk-index">{{ formatChunkIndex(index) }}</span>
               <span class="chunk-label">片段</span>
+              <span v-if="getChunkCite(chunk) !== null" class="chunk-cite">
+                [{{ getChunkCite(chunk) }}]
+              </span>
             </div>
 
             <div
@@ -94,6 +97,7 @@
 import { computed, useId } from 'vue'
 import { FileText, X } from '@lucide/vue'
 import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
+import { getChunkCite as getChunkCiteUtil } from '@/utils/kbResultGroups'
 
 const props = defineProps({
   open: {
@@ -129,6 +133,9 @@ const hasScore = (value) => typeof value === 'number' && Number.isFinite(value)
 const formatScore = (value) => `${(value * 100).toFixed(1)}%`
 
 const formatChunkIndex = (index) => String(index + 1).padStart(2, '0')
+
+// 引用编号由检索侧写入，用于在回答里按编号溯源；缺失时不显示，不猜测编号
+const getChunkCite = (chunk) => getChunkCiteUtil(chunk)
 
 const getLineRange = (chunk) => {
   const startLine = Number(chunk?.metadata?.start_line || 0)
@@ -296,6 +303,17 @@ const getLineRange = (chunk) => {
     font-variant-numeric: tabular-nums;
     font-weight: 600;
     line-height: 18px;
+  }
+
+  .chunk-cite {
+    color: var(--main-700);
+    background: var(--main-50);
+    border: 1px solid var(--main-100);
+    border-radius: 4px;
+    font-size: 11px;
+    line-height: 16px;
+    padding: 0 4px;
+    font-variant-numeric: tabular-nums;
   }
 
   .chunk-label {

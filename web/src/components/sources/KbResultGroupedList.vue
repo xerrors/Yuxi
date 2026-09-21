@@ -13,6 +13,9 @@
         >
           <FileText :size="15" class="file-icon" />
           <span class="file-name" :title="fileGroup.filename">{{ fileGroup.filename }}</span>
+          <span v-if="fileGroup.cites.length > 0" class="file-cites">
+            <span v-for="cite in fileGroup.cites" :key="cite" class="file-cite">[{{ cite }}]</span>
+          </span>
           <span class="chunk-count">{{ fileGroup.chunks.length }} 个片段</span>
         </button>
         <div class="file-actions">
@@ -194,6 +197,24 @@ const openFileDetail = (fileGroup) => {
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+      }
+
+      .file-cites {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        flex-shrink: 0;
+
+        .file-cite {
+          font-size: 11px;
+          line-height: 1.4;
+          color: var(--main-700);
+          background: var(--main-50);
+          border: 1px solid var(--main-100);
+          border-radius: 4px;
+          padding: 0 4px;
+          font-variant-numeric: tabular-nums;
+        }
       }
 
       .chunk-count {

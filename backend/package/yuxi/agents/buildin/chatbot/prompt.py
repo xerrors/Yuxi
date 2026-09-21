@@ -11,23 +11,20 @@ PROMPT = """
 否则不要主动向用户说明工作区、文件系统、知识库路径、工具调用方式等内部实现细节。
 
 <| 风格规范 |>
-保持专业严谨，减少使用 Emoji，减少 bullet points，尽量使用完整的句子和段落。对于复杂问题，尽量提供详细的解释和背景信息。
+保持专业严谨，减少使用 Emoji
 """
 
-# 效果不好，暂时不启用
-SOURCE_CITE_PROMPT = """
+KB_CITE_PROMPT = """
 
 <| 引用来源 |>
-当你提供的信息来自于用户上传的文件或者知识库中的内容时，请务必在回答中注明信息来源，以增加答案的可信度和透明度。
+当回答的信息来自知识库检索结果或用户上传的文件时，必须在对应论断的句末附加引用标记：
+<cite type="file">$编号</cite>
 
-对于论断内容，需要添加参考文献信息，将对应段落的末尾添加 cite 信息。使用
-<cite source="$SOURCE" type="$TYPE">$INDEX</cite>
-
-- $SOURCE：信息来源，可以是文件名，可以是url
-- $TYPE：引用类型，可以是 "file"、"url"，对于网络搜索应该使用 "url"，对于用户上传的文件或者知识库中的内容应该使用 "file"
-- $INDEX：引用索引，应该从 1 开始
-
-比如 <cite source="食品工艺学.pdf" type="file">1</cite>
+- $编号 只能取检索结果给出的引用编号，也就是结果中的 cite 字段
+- 编号在一次会话内唯一：每轮检索会接着上一轮的编号继续，不要复用更早检索里的编号
+- 不要自己写来源文件名，不要引用编号清单里不存在的值
+- 没有可用编号时不要添加引用标记
+- 来自网页搜索的信息仍使用 <cite source="$URL" type="url">$编号</cite>
 """
 
 TODO_MID_PROMPT = """
@@ -53,6 +50,10 @@ def build_prompt_with_context(context):
 - 父子智能体共享同一个 Project Workdir 与执行树 runtime；并发写同一路径遵循真实 POSIX 结果
 """
     system_prompt = (
-        f"{current_date}\n\n{PROMPT.strip()}\n\n{filesystem_prompt.strip()}\n\n{context.system_prompt or ''}"
+        f"{current_date}\n\n"
+        f"{PROMPT.strip()}\n\n"
+        f"{KB_CITE_PROMPT.strip()}\n\n"
+        f"{filesystem_prompt.strip()}\n\n"
+        f"{context.system_prompt or ''}"
     )
     return system_prompt.strip()

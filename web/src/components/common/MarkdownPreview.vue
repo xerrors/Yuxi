@@ -7,6 +7,8 @@
       { 'is-dark': themeStore.isDark, 'is-compact': compact }
     ]"
     @click="handleMarkdownAction"
+    @keydown.enter="handleMarkdownKeydown"
+    @keydown.space.prevent="handleMarkdownKeydown"
   ></div>
 </template>
 
@@ -15,6 +17,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useThemeStore } from '@/stores/theme'
 import { useUserStore } from '@/stores/user'
 import { renderMarkdown } from '@/utils/markdown_preview'
+import { resolveKbCitation } from '@/utils/kbCitations'
 import { HTML_PREVIEW_MAX_HEIGHT, HTML_PREVIEW_MIN_HEIGHT } from '@/utils/htmlPreviewRenderer'
 import 'katex/dist/katex.min.css'
 const props = defineProps({
@@ -29,8 +32,14 @@ const props = defineProps({
   codeCopy: {
     type: Boolean,
     default: false
+  },
+  citations: {
+    type: Map,
+    default: () => new Map()
   }
 })
+
+const emit = defineEmits(['citation-click'])
 
 const themeStore = useThemeStore()
 const userStore = useUserStore()
@@ -287,6 +296,50 @@ const enhanceCodeBlocks = () => {
   })
 }
 
+const enhanceKbCitations = () => {
+  const root = previewRef.value
+  if (!root) return
+
+  root.querySelectorAll('cite').forEach((citeEl) => {
+    if (citeEl.getAttribute('type') !== 'file') return
+
+    const rawText = citeEl.textContent || ''
+    const entry = resolveKbCitation(props.citations, rawText)
+
+    // 解析不到的编号降级成纯文本：既不让编造的引用显示成真实引用，也不吞掉正文
+    if (!entry || !entry.kb_id || !entry.file_id) {
+      const fallback = document.createTextNode(`[${rawText.trim()}]`)
+      citeEl.replaceWith(fallback)
+      return
+    }
+
+    citeEl.classList.add('kb-citation-link')
+    citeEl.setAttribute('source', entry.source)
+    citeEl.dataset.citationIndex = String(entry.index)
+    citeEl.dataset.citationKbId = entry.kb_id
+    citeEl.dataset.citationFileId = entry.file_id
+    citeEl.dataset.citationChunkId = entry.chunk_id
+    citeEl.setAttribute('title', `跳转到 ${entry.source}（引用 ${entry.index}）`)
+    citeEl.setAttribute('role', 'button')
+    citeEl.setAttribute('tabindex', '0')
+    citeEl.setAttribute('aria-label', `跳转到来源 ${entry.source}`)
+  })
+}
+
+const handleKbCitationActivate = (target) => {
+  const citeEl = target?.closest?.('cite.kb-citation-link')
+  if (!citeEl) return false
+
+  emit('citation-click', {
+    index: Number(citeEl.dataset.citationIndex),
+    kbId: citeEl.dataset.citationKbId,
+    fileId: citeEl.dataset.citationFileId,
+    chunkId: citeEl.dataset.citationChunkId,
+    source: citeEl.getAttribute('source') || ''
+  })
+  return true
+}
+
 const enhanceHtmlPreviews = () => {
   const root = previewRef.value
   if (!root) return
@@ -394,16 +447,24 @@ watch(
       enhanceHtmlPreviews()
       enhanceKbImages()
       if (codeCopy) enhanceCodeBlocks()
+      if (props.citations.size > 0) enhanceKbCitations()
       cleanupHtmlPreviewFrames()
     }
   },
   { immediate: true }
 )
 
+const handleMarkdownKeydown = (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return
+  if (handleKbCitationActivate(e.target)) e.preventDefault()
+}
+
 // === Markdown 内嵌操作按钮事件委托 ===
 const handleMarkdownAction = async (e) => {
   const target = e.target instanceof Element ? e.target : e.target?.parentElement
   if (!target) return
+
+  if (handleKbCitationActivate(target)) return
 
   const codeCopyBtn = target.closest('.markdown-code-copy-btn')
   if (codeCopyBtn) {
@@ -683,6 +744,23 @@ const showCopiedFeedback = (btn) => {
       transform: translateX(-50%);
       border: 5px solid transparent;
       border-top-color: var(--gray-900);
+    }
+  }
+
+  cite.kb-citation-link {
+    outline: 2px solid var(--main-100);
+    background-color: var(--main-50);
+    color: var(--main-700);
+    font-weight: 600;
+
+    &:hover,
+    &:focus-visible {
+      outline-color: var(--main-300);
+      background-color: var(--main-100);
+    }
+
+    &:focus-visible {
+      box-shadow: 0 0 0 3px var(--main-100);
     }
   }
 
