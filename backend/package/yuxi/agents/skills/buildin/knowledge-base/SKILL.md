@@ -24,7 +24,7 @@ tool_dependencies: ["list_kbs", "query_kb", "find_kb_document", "open_kb_documen
 
 1. 需要先确认当前会话有哪些知识库可用；不确定时调用 `list_kbs`。
 2. 针对用户问题选择最相关的知识库，使用 `query_kb` 检索。
-3. 如果检索片段不足以回答，使用返回的 `file_id` 调用 `open_kb_document` 查看上下文。
+3. 检索结果的 `metadata.chunk_count == 1` 表示文件只有一个分片；除非需要原文行号或额外上下文，否则无需打开。大于 1 且当前片段不足以回答时，使用返回的 `file_id` 调用 `open_kb_document` 查看上下文。字段缺失或为 0 表示未知，不据此判断文档完整。
 4. 如果用户要求定位术语、指标、章节或原文证据，使用 `find_kb_document` 在候选文档内查找。
 5. 当用户关心知识库结构、文件分类或知识框架时，使用 `get_mindmap`。
 

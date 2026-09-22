@@ -294,19 +294,23 @@ class KnowledgeFileRepository:
             )
             return list(result.scalars().all()), total
 
-    async def get_filenames_by_file_ids(self, *, kb_id: str, file_ids: list[str]) -> dict[str, str]:
+    async def get_chunk_sources_by_file_ids(self, *, kb_id: str, file_ids: list[str]) -> dict[str, dict]:
+        """批量读取检索分片的文件来源与总分片数。"""
         normalized_ids = [file_id for file_id in file_ids if file_id]
         if not normalized_ids:
             return {}
 
         async with pg_manager.get_async_session_context() as session:
             result = await session.execute(
-                select(KnowledgeFile.file_id, KnowledgeFile.filename).where(
+                select(KnowledgeFile.file_id, KnowledgeFile.filename, KnowledgeFile.chunk_count).where(
                     KnowledgeFile.kb_id == kb_id,
                     KnowledgeFile.file_id.in_(normalized_ids),
                 )
             )
-            return {str(file_id): str(filename or "") for file_id, filename in result.all()}
+            return {
+                str(file_id): {"source": str(filename or ""), "chunk_count": int(chunk_count or 0)}
+                for file_id, filename, chunk_count in result.all()
+            }
 
     async def list_children(self, *, kb_id: str, parent_id: str | None) -> list[KnowledgeFile]:
         async with pg_manager.get_async_session_context() as session:

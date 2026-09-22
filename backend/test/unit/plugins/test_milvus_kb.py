@@ -134,9 +134,9 @@ class FakeKnowledgeFileRepository:
         self.update_calls.append((file_id, kb_id, dict(data)))
         return record
 
-    async def get_filenames_by_file_ids(self, *, kb_id: str, file_ids: list[str]):
+    async def get_chunk_sources_by_file_ids(self, *, kb_id: str, file_ids: list[str]):
         return {
-            file_id: record.filename
+            file_id: {"source": record.filename, "chunk_count": record.chunk_count}
             for file_id in file_ids
             if (record := self.records.get(file_id)) is not None and record.kb_id == kb_id
         }
@@ -908,3 +908,23 @@ async def test_query_filters_orphaned_chunks_from_search_results(monkeypatch):
 
     assert len(chunks) == 1
     assert chunks[0]["content"] == "live content"
+
+
+@pytest.mark.parametrize("chunk_count", [0, 1, 4])
+async def test_hydrate_chunk_sources_includes_file_chunk_count(monkeypatch, chunk_count):
+    """文件级分片数来自 PG，命中的分片索引保持不变。"""
+    file_repo = FakeKnowledgeFileRepository(
+        {"file-live": make_file_record(file_id="file-live", filename="live.md", chunk_count=chunk_count)}
+    )
+    patch_file_repository(monkeypatch, file_repo)
+    kb = MilvusKB.__new__(MilvusKB)
+    chunks = [{"metadata": {"file_id": "file-live", "chunk_index": 0}, "content": "text"}]
+
+    result = await kb._hydrate_chunk_sources("db", chunks)
+
+    assert result[0]["metadata"] == {
+        "file_id": "file-live",
+        "chunk_index": 0,
+        "source": "live.md",
+        "chunk_count": chunk_count,
+    }
