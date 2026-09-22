@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.repositories.dashboard_repository import DashboardRepository
 from yuxi.storage.minio.client import normalize_public_minio_url
+from yuxi.utils.datetime_utils import format_utc_datetime
 
 
 class DashboardService:
@@ -47,7 +48,7 @@ class DashboardService:
                 "avatar": normalize_public_minio_url(user.avatar) if user else None,
                 "rating": feedback.rating,
                 "reason": feedback.reason,
-                "created_at": feedback.created_at.isoformat() if feedback.created_at else "",
+                "created_at": format_utc_datetime(feedback.created_at) or "",
                 "message_content": message.content if message else "",
                 "conversation_title": conversation.title if conversation else None,
                 "agent_id": conversation.agent_id if conversation else "",
@@ -116,7 +117,7 @@ class DashboardService:
                 "role": message.role,
                 "content": message.content,
                 "message_type": message.message_type,
-                "created_at": message.created_at.isoformat() if message.created_at else "",
+                "created_at": format_utc_datetime(message.created_at) or "",
                 "token_count": message.token_count,
             }
             if message.tool_calls:
@@ -147,8 +148,8 @@ class DashboardService:
             "status": conversation.status,
             "is_pinned": bool(conversation.is_pinned),
             "message_count": stats.message_count if stats else len(message_list),
-            "created_at": conversation.created_at.isoformat() if conversation.created_at else "",
-            "updated_at": conversation.updated_at.isoformat() if conversation.updated_at else "",
+            "created_at": format_utc_datetime(conversation.created_at) or "",
+            "updated_at": format_utc_datetime(conversation.updated_at) or "",
             **await self.repo.get_conversation_token_usage(conversation.id),
             "messages": message_list,
         }
