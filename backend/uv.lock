@@ -3,8 +3,8 @@ revision = 3
 requires-python = ">=3.12, <3.14"
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform != 'darwin'",
-    "python_full_version < '3.13' and sys_platform != 'darwin'",
     "python_full_version >= '3.13' and sys_platform == 'darwin'",
+    "python_full_version < '3.13' and sys_platform != 'darwin'",
     "python_full_version < '3.13' and sys_platform == 'darwin'",
 ]
 
@@ -3302,10 +3302,10 @@ resolution-markers = [
     "python_full_version < '3.13' and sys_platform == 'darwin'",
 ]
 dependencies = [
-    { name = "annotated-doc", marker = "sys_platform == 'darwin'" },
-    { name = "click", marker = "sys_platform == 'darwin'" },
-    { name = "rich", marker = "sys_platform == 'darwin'" },
-    { name = "shellingham", marker = "sys_platform == 'darwin'" },
+    { name = "annotated-doc" },
+    { name = "click" },
+    { name = "rich" },
+    { name = "shellingham" },
 ]
 sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/f2/1e/a27cc02a0cd715118c71fa2aef2c687fdefc3c28d90fd0dd789c5118154c/typer-0.21.2.tar.gz", hash = "sha256:1abd95a3b675e17ff61b0838ac637fe9478d446d62ad17fa4bb81ea57cc54028", size = 120426, upload-time = "2026-02-10T19:33:46.182Z" }
 wheels = [
@@ -3321,10 +3321,10 @@ resolution-markers = [
     "python_full_version < '3.13' and sys_platform != 'darwin'",
 ]
 dependencies = [
-    { name = "annotated-doc", marker = "sys_platform != 'darwin'" },
+    { name = "annotated-doc" },
     { name = "colorama", marker = "sys_platform == 'win32'" },
-    { name = "rich", marker = "sys_platform != 'darwin'" },
-    { name = "shellingham", marker = "sys_platform != 'darwin'" },
+    { name = "rich" },
+    { name = "shellingham" },
 ]
 sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/7c/f7/68adc395201b20b872d68e975386832e8005ffeacedd43a1d837a32815be/typer-0.26.8.tar.gz", hash = "sha256:c244a6bd558886fe3f8780efb6bdd28bb9aff005a94eedebaa5cb32926fe2f7e", size = 202097, upload-time = "2026-06-26T09:22:45.705Z" }
 wheels = [
@@ -3778,6 +3778,7 @@ dependencies = [
     { name = "deepagents" },
     { name = "docling-slim", extra = ["format-office", "format-pdf-pypdfium2"] },
     { name = "docx2txt" },
+    { name = "httpcore" },
     { name = "httpx" },
     { name = "json-repair" },
     { name = "langchain" },
@@ -3849,6 +3850,7 @@ requires-dist = [
     { name = "deepagents", specifier = ">=0.7.7,<0.8" },
     { name = "docling-slim", extras = ["format-office", "format-pdf-pypdfium2"], specifier = "==2.122.0" },
     { name = "docx2txt", specifier = ">=0.9" },
+    { name = "httpcore", specifier = ">=1.0.9,<1.1" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "json-repair", specifier = ">=0.54.0" },
     { name = "langchain", specifier = ">=1.3.15" },

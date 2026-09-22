@@ -4,6 +4,7 @@ import ipaddress
 import socket
 
 import httpcore
+import httpx
 import pytest
 from yuxi.knowledge.utils import url_fetcher
 from yuxi.knowledge.utils.url_fetcher import (
@@ -15,13 +16,19 @@ from yuxi.knowledge.utils.url_fetcher import (
 
 
 class RecordingBackend(httpcore.AsyncNetworkBackend):
-    """记录 connect_tcp 目标的假 backend，不发起真实连接。"""
+    """记录 connect_tcp 目标的假 backend，不发起真实连接。
 
-    def __init__(self):
-        self.calls: list[tuple[str, int]] = []
+    fail_hosts 中的地址会抛出 ConnectionError，用于模拟不可达。
+    """
+
+    def __init__(self, fail_hosts: set[str] | None = None):
+        self.calls: list[tuple[str, int, float | None]] = []
+        self.fail_hosts = fail_hosts or set()
 
     async def connect_tcp(self, host, port, timeout=None, local_address=None, socket_options=None):
-        self.calls.append((host, port))
+        self.calls.append((host, port, timeout))
+        if host in self.fail_hosts:
+            raise ConnectionError(f"unreachable: {host}")
         return object()
 
 
@@ -113,7 +120,7 @@ async def test_backend_connects_to_resolved_public_ip(monkeypatch, recording_bac
     await backend.connect_tcp("example.com", 443)
 
     # 连接目标必须是校验过的 IP，而不是再解析一次 hostname
-    assert recording_backend.calls == [("93.184.216.34", 443)]
+    assert recording_backend.calls == [("93.184.216.34", 443, None)]
 
 
 async def test_backend_blocks_private_resolution_without_connecting(monkeypatch, recording_backend):
@@ -144,3 +151,65 @@ async def test_backend_blocks_metadata_address(monkeypatch, recording_backend):
         await backend.connect_tcp("metadata.example.com", 80)
 
     assert recording_backend.calls == []
+
+
+async def test_backend_falls_back_to_next_validated_address(monkeypatch, recording_backend):
+    """首个已校验地址不可达时，依次回退到下一个已校验地址。"""
+    _patch_getaddrinfo(monkeypatch, _addr_infos("93.184.216.34", "8.8.8.8"))
+    recording_backend.fail_hosts = {"93.184.216.34"}
+    backend = SSRFGuardBackend(default_backend=recording_backend)
+
+    await backend.connect_tcp("example.com", 443)
+
+    assert [host for host, _, _ in recording_backend.calls] == ["93.184.216.34", "8.8.8.8"]
+
+
+async def test_backend_never_falls_back_to_unvalidated_address(monkeypatch, recording_backend):
+    """回退只能在已通过校验的地址集合内进行。"""
+    _patch_getaddrinfo(monkeypatch, _addr_infos("93.184.216.34"))
+    recording_backend.fail_hosts = {"93.184.216.34"}
+    backend = SSRFGuardBackend(default_backend=recording_backend)
+
+    with pytest.raises(ConnectionError):
+        await backend.connect_tcp("example.com", 443)
+
+    assert [host for host, _, _ in recording_backend.calls] == ["93.184.216.34"]
+
+
+async def test_backend_splits_timeout_budget_across_addresses(monkeypatch):
+    """超时预算按地址数量均分到每次尝试。"""
+    _patch_getaddrinfo(monkeypatch, _addr_infos("93.184.216.34", "8.8.8.8"))
+    recording = RecordingBackend(fail_hosts={"93.184.216.34"})
+    backend = SSRFGuardBackend(default_backend=recording)
+
+    await backend.connect_tcp("example.com", 443, timeout=2.0)
+
+    assert recording.calls == [("93.184.216.34", 443, 1.0), ("8.8.8.8", 443, 1.0)]
+
+
+async def test_backend_rejects_without_connecting_when_single_address_unreachable(monkeypatch, recording_backend):
+    """单地址且不可达时抛出最后一次连接错误。"""
+    _patch_getaddrinfo(monkeypatch, _addr_infos("8.8.4.4"))
+    recording_backend.fail_hosts = {"8.8.4.4"}
+    backend = SSRFGuardBackend(default_backend=recording_backend)
+
+    with pytest.raises(ConnectionError):
+        await backend.connect_tcp("example.com", 443)
+
+    assert recording_backend.calls == [("8.8.4.4", 443, None)]
+
+
+async def test_transport_wires_ssrf_backend_into_pool(monkeypatch):
+    """接线测试：经 SSRFGuardTransport 的请求必须走到 SSRFGuardBackend.connect_tcp。"""
+    _patch_getaddrinfo(monkeypatch, _addr_infos("93.184.216.34"))
+    recording = RecordingBackend()
+    transport = url_fetcher.SSRFGuardTransport(backend=SSRFGuardBackend(default_backend=recording))
+
+    request = httpx.Request("GET", "https://example.com/")
+    with pytest.raises(Exception):
+        # 假 backend 返回的流不支持 HTTP 握手，请求必然失败；
+        # 断言点在于建连必须先经过 SSRF 校验层
+        await transport.handle_async_request(request)
+
+    assert recording.calls, "SSRFGuardTransport 未接入 SSRFGuardBackend"
+    assert recording.calls[0][0] == "93.184.216.34"

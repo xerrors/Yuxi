@@ -88,13 +88,25 @@ class SSRFGuardBackend(httpcore.AsyncNetworkBackend):
     ) -> AsyncNetworkStream:
         addresses = await resolve_hostname_addresses(host)
         assert_no_blocked_address(addresses)
-        return await self._default.connect_tcp(
-            str(addresses[0]),
-            port,
-            timeout=timeout,
-            local_address=local_address,
-            socket_options=socket_options,
-        )
+
+        # 所有解析地址都已完成安全校验，按统一超时预算依次尝试，
+        # 保留多地址（IPv6/IPv4、多 A 记录）的可用性回退。
+        per_attempt_timeout = timeout / len(addresses) if timeout is not None else None
+        last_error: OSError | None = None
+        for address in addresses:
+            try:
+                return await self._default.connect_tcp(
+                    str(address),
+                    port,
+                    timeout=per_attempt_timeout,
+                    local_address=local_address,
+                    socket_options=socket_options,
+                )
+            except OSError as e:
+                last_error = e
+
+        assert last_error is not None
+        raise last_error
 
 
 def _create_default_backend() -> httpcore.AsyncNetworkBackend:
