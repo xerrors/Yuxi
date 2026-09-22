@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -713,3 +714,57 @@ async def test_historical_unexecuted_task_is_rejected_by_current_tool_node():
     assert message.status == "error"
     assert message.tool_call_id == "old-task"
     assert "task is not a valid tool" in message.content
+
+
+@pytest.mark.asyncio
+async def test_subagent_start_returns_busy_through_session_context(monkeypatch) -> None:
+    """忙异常跨过真实异步上下文管理器后仍返回结构化工具结果。"""
+
+    @asynccontextmanager
+    async def session():
+        """使用标准库上下文管理器传播异常。"""
+        yield object()
+
+    monkeypatch.setattr(
+        subagent_task_middleware,
+        "pg_manager",
+        SimpleNamespace(get_async_session_context=session),
+    )
+
+    class BusyService:
+        """模拟已有活跃子任务的服务结果。"""
+
+        def __init__(self, db):
+            """接收会话以匹配实际服务接口。"""
+
+        async def start(self, **kwargs):
+            """抛出携带活跃任务信息的忙异常。"""
+            raise subagent_run_service.SubagentRunBusy(
+                thread_id="child-thread",
+                active_run_id="active-run",
+                active_run_status="running",
+                message="already running",
+            )
+
+    _patch_subagent_run_service(monkeypatch, BusyService)
+    result = (
+        await _async_tool_middleware()
+        .tools[0]
+        .coroutine(
+            description="continue work",
+            subagent_slug="worker",
+            thread_id="child-thread",
+            runtime=SimpleNamespace(tool_call_id="busy-call"),
+        )
+    )
+
+    assert isinstance(result, Command)
+    message = result.update["messages"][0]
+    assert message.tool_call_id == "busy-call"
+    assert json.loads(message.content) == {
+        "status": "busy",
+        "thread_id": "child-thread",
+        "active_run_id": "active-run",
+        "active_run_status": "running",
+        "message": "already running",
+    }
