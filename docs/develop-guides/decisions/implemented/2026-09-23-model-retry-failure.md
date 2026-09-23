@@ -10,6 +10,8 @@ Owner：backend/package/yuxi/agents/middlewares/network_retry.py
 
 ## 决策
 
+本决定部分取代[网络重试预算](./2026-09-10-network-retry-budget-ownership.md)中的次数重试耗尽策略；该记录拥有的网络预算、退避计时与异常分类规则继续有效。
+
 统一中间件使用上游的 on_failure="error"，保留次数重试和网络预算，耗尽后抛出原异常。Run service/worker 拥有失败终态、错误与清理，chat_service 保留输出关联检查。已有部分输出由失败通道保存，带 is_error 和当前错误元数据。范围不含限流调度、并发配额或历史 checkpoint 迁移。
 
 ## 替代方案
