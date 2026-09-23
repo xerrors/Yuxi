@@ -181,6 +181,11 @@ class BaseContext:
         metadata={"name": "Sandbox Runtime Scope", "configurable": False, "hide": True},
     )
 
+    agent_slug: str = field(
+        default="",
+        metadata={"name": "Agent Slug", "configurable": False, "hide": True},
+    )
+
     workdir_relative_path: str | None = field(
         default=None,
         metadata={"name": "Workdir Relative Path", "configurable": False, "hide": True},
@@ -193,7 +198,11 @@ class BaseContext:
 
     system_prompt: str = field(
         default="You are a helpful assistant.",
-        metadata={"name": "系统提示词", "description": "用来描述智能体的角色和行为", "kind": "prompt"},
+        metadata={
+            "name": "系统提示词",
+            "description": "用来描述智能体的角色和行为。建议把智能体要遵循的技能规范写到专属技能里，技能中还可以上传智能体可能用到的脚本、参考文档、其他要求等资料。",
+            "kind": "prompt",
+        },
     )
 
     model: str = field(
@@ -487,7 +496,9 @@ async def resolve_agent_resource_options(
 
         skills = await list_accessible_skills(db, user)
         options["skills"] = [
-            _resource_option(skill.slug, skill.name, skill.description) for skill in skills if skill.slug
+            _resource_option(skill.slug, skill.name, skill.description)
+            for skill in skills
+            if skill.slug and skill.bound_agent_id is None
         ]
     if "subagents" in fields_to_load:
         from yuxi.repositories.agent_repository import AgentRepository

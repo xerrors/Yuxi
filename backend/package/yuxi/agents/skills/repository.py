@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from sqlalchemy import select
+from collections.abc import Collection
+
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.storage.postgres.models_business import Skill
@@ -20,6 +22,35 @@ class SkillRepository:
             select(Skill).where(Skill.enabled.is_(True)).order_by(Skill.updated_at.desc(), Skill.id.desc())
         )
         return list(result.scalars().all())
+
+    async def list_unbound(self) -> list[Skill]:
+        """返回不属于任何 Agent 的普通 Skill，用于对外的选择器与依赖列表。"""
+        result = await self.db.execute(
+            select(Skill).where(Skill.bound_agent_id.is_(None)).order_by(Skill.updated_at.desc(), Skill.id.desc())
+        )
+        return list(result.scalars().all())
+
+    async def list_bound_by_agent_ids(self, agent_ids: Collection[int]) -> list[Skill]:
+        """按 Agent ID 批量返回绑定 Skill，避免逐 Agent 查询。"""
+        ids = sorted({int(value) for value in agent_ids})
+        if not ids:
+            return []
+        result = await self.db.execute(select(Skill).where(Skill.bound_agent_id.in_(ids)))
+        return list(result.scalars().all())
+
+    async def get_by_bound_agent_id(self, agent_id: int, *, for_update: bool = False) -> Skill | None:
+        """按绑定 Agent 读取专属技能；删除路径需要行锁避免并发重复删目录。"""
+        stmt = select(Skill).where(Skill.bound_agent_id == int(agent_id))
+        if for_update:
+            stmt = stmt.with_for_update()
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def count_by_bound_agent_id(self, agent_id: int) -> int:
+        result = await self.db.execute(
+            select(func.count()).select_from(Skill).where(Skill.bound_agent_id == int(agent_id))
+        )
+        return int(result.scalar_one())
 
     async def get_by_slug(self, slug: str, *, for_update: bool = False) -> Skill | None:
         stmt = select(Skill).where(Skill.slug == slug)
@@ -46,6 +77,7 @@ class SkillRepository:
         enabled: bool = True,
         version: str | None = None,
         content_hash: str | None = None,
+        bound_agent_id: int | None = None,
         created_by: str | None,
     ) -> Skill:
         now = utc_now_naive()
@@ -60,6 +92,7 @@ class SkillRepository:
             dir_path=dir_path,
             version=version,
             content_hash=content_hash,
+            bound_agent_id=bound_agent_id,
             share_config=share_config,
             enabled=enabled,
             created_by=created_by,

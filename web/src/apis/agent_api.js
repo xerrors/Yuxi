@@ -119,6 +119,32 @@ export const agentApi = {
   deleteAgent: (agentId) => apiDelete(`/api/agent/${agentId}`),
 
   /**
+   * 读取 Agent 专属技能的绑定信息；内容管理跳转到既有 Skill 管理页
+   * @param {string} agentId - Agent slug
+   * @returns {Promise<{exists: boolean, slug: string, can_manage: boolean}>}
+   */
+  getAgentSelfSkill: (agentId) => apiGet(`/api/agent/${agentId}/self-skill`),
+
+  /**
+   * 创建 Agent 专属技能（幂等）；已存在时原样返回
+   * @param {string} agentId - Agent slug
+   * @returns {Promise<{success: boolean, slug: string}>}
+   */
+  createAgentSelfSkill: (agentId) => apiPost(`/api/agent/${agentId}/self-skill`),
+
+  /**
+   * 上传 ZIP 或 SKILL.md 创建/覆盖 Agent 专属技能；slug 按 Agent 派生，忽略包内 slug
+   * @param {string} agentId - Agent slug
+   * @param {File} file - .zip 或 SKILL.md 文件
+   * @returns {Promise<{success: boolean, slug: string}>}
+   */
+  uploadAgentSelfSkill: (agentId, file) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return apiPost(`/api/agent/${agentId}/self-skill/upload`, formData)
+  },
+
+  /**
    * 创建异步运行任务（Run）
    * @param {Object} data - run 请求体
    * @returns {Promise<Object>}

@@ -11,7 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.agents.backends.paths import VIRTUAL_PERSONAL_SKILLS_PATH, VIRTUAL_SKILLS_PATH
 from yuxi.agents.skills.service import list_accessible_skills, normalize_string_list
+from yuxi.agents.skills.repository import SkillRepository
 from yuxi.agents.toolkits import get_all_tool_instances
+from yuxi.repositories.agent_repository import AgentRepository, user_can_access_agent
 from yuxi.storage.postgres.models_business import User
 from yuxi.utils.logging_config import logger
 from yuxi.utils.paths import open_regular_file_fd
@@ -90,15 +92,24 @@ async def resolve_runtime_skills_for_context(
     db: AsyncSession,
     user: User,
 ) -> dict:
-    """从已授权 Skill 派生当前 Agent Run 的运行时 scope 与预加载快照。"""
+    """从已授权 Skill 派生当前 Agent Run 的运行时 scope 与预加载快照。
+
+    Agent 专属技能不来自用户配置：即使 context.skills 为空也强制生效并预加载。
+    """
     skill_items = [item for item in await list_accessible_skills(db, user) if item.slug]
     runtime_skills = build_runtime_skills(skill_items)
     available = set(runtime_skills)
     selected = normalize_string_list(getattr(context, "skills", None))
     context_skills = [slug for slug in selected if slug in available]
+    bound_slug = await _resolve_bound_self_skill_slug(context, db=db, user=user)
+    if bound_slug:
+        if bound_slug not in context_skills:
+            context_skills.append(bound_slug)
     effective_skills = expand_skill_closure(context_skills, runtime_skills)
     configured_preloads = normalize_string_list(getattr(context, "preload_skills", None))
     context_preload_skills = [slug for slug in configured_preloads if slug in context_skills]
+    if bound_slug and bound_slug not in context_preload_skills:
+        context_preload_skills.append(bound_slug)
     preloaded_skills = expand_skill_closure(context_preload_skills, runtime_skills)
     items_by_slug = {item.slug: item for item in skill_items}
     preloaded_contents = (
@@ -122,6 +133,20 @@ async def resolve_runtime_skills_for_context(
         "preloaded_skills": preloaded_skills,
         "preloaded_skill_contents": preloaded_contents,
     }
+
+
+async def _resolve_bound_self_skill_slug(context, *, db: AsyncSession, user: User) -> str | None:
+    """解析当前 Agent 的绑定 self-skill；无绑定、无权限或 Agent 缺失时返回 None。"""
+    agent_slug = str(getattr(context, "agent_slug", "") or "").strip()
+    if not agent_slug:
+        return None
+    agent = await AgentRepository(db).get_by_slug(agent_slug)
+    if agent is None or not user_can_access_agent(user, agent):
+        return None
+    bound = await SkillRepository(db).get_by_bound_agent_id(agent.id)
+    if bound is None or not bound.enabled:
+        return None
+    return bound.slug
 
 
 def _read_preloaded_skill_contents(slugs: list[str], skill_items: dict[str, Any]) -> dict[str, str]:

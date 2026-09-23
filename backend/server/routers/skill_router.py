@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.utils.auth_middleware import get_admin_user, get_db, get_required_user
 from yuxi.agents.skills.service import (
+    _effective_skill_permission,
     confirm_personal_skill_install_draft,
     confirm_skill_install_draft,
     create_skill_node,
@@ -22,9 +23,11 @@ from yuxi.agents.skills.service import (
     export_skill_zip,
     get_allowed_skill_access_levels,
     get_manageable_skill_or_raise,
+    get_management_readable_skill_or_raise,
     get_skill_dependency_options,
     get_skill_tree,
     init_builtin_skills,
+    is_agent_bound_skill,
     is_builtin_skill,
     list_accessible_skills,
     list_skill_cards_for_user,
@@ -40,7 +43,7 @@ from yuxi.agents.skills.service import (
     update_skill_share_config,
     user_can_manage_skill,
 )
-from yuxi.permissions import resolve_skill_permission
+from yuxi.permissions import ResourcePermission, resolve_skill_permission
 from yuxi.agents.skills.remote_install import list_remote_skills, search_remote_skills
 from yuxi.storage.postgres.models_business import User
 from yuxi.utils.logging_config import logger
@@ -124,9 +127,25 @@ def _summarize_results(results: list[dict]) -> dict[str, int]:
 
 
 def _serialize_skill_for_user(item, user: User) -> dict:
+    if is_agent_bound_skill(item):
+        # 绑定 Skill 的权限来自 Agent，用普通 share_config 计算会返回错误答案。
+        raise ValueError("Agent 专属技能不通过普通 Skill 序列化入口返回")
     data = item.to_dict()
     data["can_manage"] = user_can_manage_skill(user, item)
     data["effective_permission"] = resolve_skill_permission(user, item).value
+    data["is_builtin"] = is_builtin_skill(item)
+    return data
+
+
+async def _serialize_skill_with_permission(db: AsyncSession, item, user: User) -> dict:
+    """序列化 Skill 并附带有效权限；绑定 Skill 的权限按绑定 Agent 派生。"""
+    data = item.to_dict()
+    if is_agent_bound_skill(item):
+        permission = await _effective_skill_permission(db, user, item)
+    else:
+        permission = resolve_skill_permission(user, item)
+    data["can_manage"] = permission == ResourcePermission.MANAGE
+    data["effective_permission"] = permission.value
     data["is_builtin"] = is_builtin_skill(item)
     return data
 
@@ -157,7 +176,11 @@ async def list_accessible_skills_route(
 ):
     try:
         items = await list_accessible_skills(db, current_user)
-        return {"success": True, "data": [_serialize_skill_for_user(item, current_user) for item in items]}
+        # 该入口服务于普通选择与聊天 mention；Agent 专属技能由 Agent 自动加载，不在这里暴露。
+        return {
+            "success": True,
+            "data": [_serialize_skill_for_user(item, current_user) for item in items if item.bound_agent_id is None],
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -395,6 +418,27 @@ async def list_builtin_skills_route(
         raise HTTPException(status_code=500, detail="获取内置 skill 列表失败")
 
 
+@skills.get("/{slug}")
+async def get_skill_route(
+    slug: str, current_user: User = Depends(get_required_user), db: AsyncSession = Depends(get_db)
+):
+    """按 slug 读取单个 Skill 元数据。
+
+    与列表入口不同，这里允许返回 Agent 专属技能：它不出现在任何列表里，
+    但需要能被 Skill 管理页直接打开，权限按绑定 Agent 派生。
+    """
+    try:
+        item = await get_management_readable_skill_or_raise(db, current_user, slug)
+        return {"success": True, "data": await _serialize_skill_with_permission(db, item, current_user)}
+    except ValueError as e:
+        _raise_from_value_error(e)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to read skill '{slug}': {e}")
+        raise HTTPException(status_code=500, detail="获取 skill 详情失败")
+
+
 @skills.post("/builtin/sync")
 async def sync_builtin_skills_route(
     current_user: User = Depends(get_admin_user),
@@ -557,7 +601,7 @@ async def update_skill_dependencies_route(
             skill_dependencies=payload.skill_dependencies,
             operator=current_user,
         )
-        return {"success": True, "data": _serialize_skill_for_user(item, current_user)}
+        return {"success": True, "data": await _serialize_skill_with_permission(db, item, current_user)}
     except ValueError as e:
         _raise_from_value_error(e)
     except HTTPException:

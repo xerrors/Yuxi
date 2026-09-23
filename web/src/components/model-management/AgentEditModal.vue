@@ -7,12 +7,14 @@ import {
   RefreshCw,
   Settings2,
   SlidersHorizontal,
+  Sparkles,
   Upload,
   Wrench
 } from '@lucide/vue'
 
 import { userApi } from '@/apis/user_api'
 import AgentRuntimeConfigForm from '@/components/AgentRuntimeConfigForm.vue'
+import AgentSelfSkillEntry from '@/components/AgentSelfSkillEntry.vue'
 import ShareConfigForm from '@/components/ShareConfigForm.vue'
 import FallbackAvatar from '@/components/common/FallbackAvatar.vue'
 import { isBuiltinAgent, useAgentStore } from '@/stores/agent'
@@ -36,6 +38,8 @@ const runtimeAgentModalTabs = ['model', 'tools', 'other']
 
 const showAgentModal = ref(false)
 const editingAgentId = ref(null)
+// openEdit 已用 detail.can_manage 把关；这里显式记录，避免把「能打开弹窗」误当成「能改专属技能」。
+const canManageEditingAgent = ref(false)
 const agentModalActiveTab = ref('basic')
 const agentIconUploading = ref(false)
 const saving = ref(false)
@@ -145,6 +149,7 @@ const agentModalMenuItems = computed(() => {
     items.push(
       { key: 'model', label: '模型配置', icon: SlidersHorizontal },
       { key: 'tools', label: '工具配置', icon: Wrench },
+      { key: 'self-skill', label: '专属技能', icon: Sparkles },
       { key: 'other', label: '其他配置', icon: Settings2 }
     )
   }
@@ -244,6 +249,7 @@ const handleAgentModalAfterOpenChange = (open) => {
 
 const openCreate = () => {
   editingAgentId.value = null
+  canManageEditingAgent.value = false
   agentModalActiveTab.value = 'basic'
   resetAgentForm()
   agentStore.resetAgentConfig()
@@ -262,6 +268,7 @@ const openEdit = async (agent) => {
   }
 
   editingAgentId.value = detail.id
+  canManageEditingAgent.value = Boolean(detail?.can_manage)
   agentModalActiveTab.value = 'basic'
   Object.assign(agentForm, {
     slug: detail.id || detail.slug || '',
@@ -545,6 +552,14 @@ defineExpose({
         >
           <AgentRuntimeConfigForm :segment="runtimeConfigSegment" :show-segmented="false" />
         </section>
+
+        <section
+          v-if="editingAgentId"
+          v-show="agentModalActiveTab === 'self-skill'"
+          class="agent-modal-section self-skill-section"
+        >
+          <AgentSelfSkillEntry :agent-id="editingAgentId" :can-manage="canManageEditingAgent" />
+        </section>
       </div>
     </div>
   </a-modal>
@@ -736,6 +751,20 @@ defineExpose({
     min-height: 0;
     padding: 0;
     overflow: visible;
+  }
+}
+
+.self-skill-section {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  padding: 4px 0;
+
+  :deep(.agent-self-skill-entry) {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
   }
 }
 

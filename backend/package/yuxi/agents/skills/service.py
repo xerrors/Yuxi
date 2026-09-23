@@ -31,13 +31,20 @@ from yuxi.config import (
     get_skill_data_dir,
     get_skill_projection_dir,
 )
-from yuxi.permissions import ResourcePermission, normalize_permission_config, resolve_skill_permission
-from yuxi.storage.postgres.models_business import Skill, User
+from yuxi.permissions import (
+    ResourcePermission,
+    normalize_permission_config,
+    resolve_agent_permission,
+    resolve_skill_permission,
+)
+from yuxi.storage.postgres.models_business import Agent, Skill, User
 from yuxi.utils.logging_config import logger
 from yuxi.utils.paths import ensure_within_root, open_directory_fd, open_regular_file_fd
 
 SKILL_SLUG_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 SKILL_NAME_PATTERN = SKILL_SLUG_PATTERN
+AGENT_BOUND_SKILL_SOURCE_TYPE = "agent_bound"
+SELF_SKILL_SLUG_SUFFIX = "-self-skill"
 
 TEXT_FILE_EXTENSIONS = {
     ".md",
@@ -100,6 +107,7 @@ class ResolvedSkill:
     skill_dependencies: list[str]
     version: str | None = None
     content_hash: str | None = None
+    bound_agent_id: int | None = None
     overrides_shared: bool = False
     shadowed_by_personal: bool = False
 
@@ -112,6 +120,8 @@ class ResolvedSkill:
             "description": self.description,
             "source_type": self.source_type,
             "source_scope": self.source_scope,
+            "bound_agent_id": self.bound_agent_id,
+            "is_agent_bound": self.bound_agent_id is not None,
             "enabled": self.enabled,
             "created_by": self.created_by,
             "tool_dependencies": self.tool_dependencies,
@@ -177,6 +187,93 @@ def is_builtin_skill(item: Skill | dict) -> bool:
     return source_type == "builtin"
 
 
+def is_agent_bound_skill(item: Skill | dict) -> bool:
+    """判断 Skill 是否绑定到某个 Agent。"""
+    if isinstance(item, dict):
+        return item.get("bound_agent_id") is not None
+    return item.bound_agent_id is not None
+
+
+def _ensure_not_agent_bound(item: Skill) -> None:
+    """拒绝针对 Agent 专属技能的独立共享、启停与删除操作。"""
+    if is_agent_bound_skill(item):
+        raise ValueError("Agent 专属技能不允许单独共享、启停或删除，请通过所属智能体管理")
+
+
+async def resolve_bound_agent(db: AsyncSession, item: Skill) -> Agent | None:
+    """读取绑定 Skill 所属的 Agent；归属缺失时返回 None 表示 fail-closed。"""
+    from yuxi.repositories.agent_repository import AgentRepository
+
+    if item.bound_agent_id is None:
+        return None
+    return await AgentRepository(db).get_by_id(item.bound_agent_id)
+
+
+async def resolve_agent_bound_permission_source(db: AsyncSession, item: Skill) -> Agent:
+    """返回绑定 Skill 的权限来源 Agent；缺失或未绑定时显式失败。"""
+    agent = await resolve_bound_agent(db, item)
+    if agent is None:
+        raise ValueError("Agent 专属技能的绑定智能体不存在")
+    return agent
+
+
+async def resolve_agent_bound_permission(db: AsyncSession, user: User, item: Skill) -> ResourcePermission:
+    """解析 Agent 专属技能的权限：完全派生自绑定 Agent 的共享配置。"""
+    agent = await resolve_bound_agent(db, item)
+    if agent is None:
+        return ResourcePermission.NONE
+    return resolve_agent_permission(user, agent)
+
+
+async def _bound_agents_by_agent_id(db: AsyncSession, items: list[Skill]) -> dict[int, Agent]:
+    """批量加载绑定 Skill 对应的 Agent，避免逐条查询。"""
+    from yuxi.repositories.agent_repository import AgentRepository
+
+    agent_ids = {item.bound_agent_id for item in items if item.bound_agent_id is not None}
+    if not agent_ids:
+        return {}
+    agents = await AgentRepository(db).list_by_ids(sorted(agent_ids))
+    return {agent.id: agent for agent in agents}
+
+
+async def _effective_skill_permission(
+    db: AsyncSession,
+    user: User,
+    item: Skill,
+    bound_agents: dict[int, Agent] | None = None,
+) -> ResourcePermission:
+    """按 Skill 归属解析有效权限；普通 Skill 走自身共享配置。"""
+    if item.bound_agent_id is None:
+        return resolve_skill_permission(user, item)
+    agents = bound_agents if bound_agents is not None else await _bound_agents_by_agent_id(db, [item])
+    agent = agents.get(item.bound_agent_id)
+    if agent is None:
+        return ResourcePermission.NONE
+    return resolve_agent_permission(user, agent)
+
+
+async def user_can_access_skill_async(
+    db: AsyncSession,
+    user: User,
+    item: Skill,
+    *,
+    require_enabled: bool = True,
+) -> bool:
+    """异步版可访问判断，覆盖 Agent 专属技能的派生权限。"""
+    if require_enabled and not item.enabled:
+        return False
+    if item.bound_agent_id is None:
+        return resolve_skill_permission(user, item) != ResourcePermission.NONE
+    return await _effective_skill_permission(db, user, item) != ResourcePermission.NONE
+
+
+async def user_can_manage_skill_async(db: AsyncSession, user: User, item: Skill) -> bool:
+    """异步版可管理判断，覆盖 Agent 专属技能的派生权限。"""
+    if item.bound_agent_id is None:
+        return user_can_manage_skill(user, item)
+    return await _effective_skill_permission(db, user, item) == ResourcePermission.MANAGE
+
+
 def get_allowed_skill_access_levels(user: User) -> list[str]:
     if user.role in ADMIN_ROLES:
         return ["global", "department", "user"]
@@ -219,20 +316,42 @@ def user_can_manage_skill(user: User, skill: Skill) -> bool:
 
 
 def can_skill_depend_on(parent: Skill, dependency: Skill) -> bool:
+    """判断 Skill 是否可以把另一个 Skill 声明为依赖。"""
+    return _can_depend_on(
+        parent_config=normalize_permission_config(parent.share_config),
+        parent_created_by=parent.created_by,
+        parent_is_bound=is_agent_bound_skill(parent),
+        dependency=dependency,
+    )
+
+
+def _can_depend_on(
+    *,
+    parent_config: dict,
+    parent_created_by: str | None,
+    parent_is_bound: bool,
+    dependency: Skill,
+) -> bool:
+    """按父 Skill 的有效权限范围校验依赖可见性。
+
+    Agent 专属技能的父范围是绑定 Agent 的共享范围，因此这里必须使用派生后的配置。
+    """
     if not dependency.enabled:
         return False
     if is_builtin_skill(dependency):
         return True
 
     dep_config = normalize_permission_config(dependency.share_config)
-    parent_config = normalize_permission_config(parent.share_config)
     dependency_scopes = [scope for scope in (dep_config["read_scope"], dep_config["manage_scope"]) if scope]
     parent_scopes = [scope for scope in (parent_config["read_scope"], parent_config["manage_scope"]) if scope]
     owner_scope = {"access_level": "user", "department_ids": [], "user_uids": []}
     if not dependency_scopes:
         dependency_scopes = [{**owner_scope, "user_uids": [str(dependency.created_by or "")]}]
+    if parent_is_bound:
+        # 绑定 Skill 的可访问范围等于绑定 Agent 的读取范围（权限派生，不是自身 share_config）。
+        parent_scopes = [parent_config["read_scope"]] if parent_config["read_scope"] else []
     if not parent_scopes:
-        parent_scopes = [{**owner_scope, "user_uids": [str(parent.created_by or "")]}]
+        parent_scopes = [{**owner_scope, "user_uids": [str(parent_created_by or "")]}]
     return all(
         any(_scope_contains(dependency_scope, parent_scope) for dependency_scope in dependency_scopes)
         for parent_scope in parent_scopes
@@ -591,7 +710,7 @@ async def list_accessible_skills(
     *,
     require_enabled: bool = True,
 ) -> list[ResolvedSkill]:
-    """返回当前用户最终生效的共享与个人 Skill。"""
+    """返回当前用户最终生效的共享、内置与 Agent 专属技能。"""
     shared_items, personal_items = await asyncio.gather(
         _list_accessible_shared_skills(db, user, require_enabled=require_enabled),
         list_personal_skills(str(user.uid)),
@@ -599,7 +718,16 @@ async def list_accessible_skills(
     personal_by_slug = {item.slug: item for item in personal_items}
 
     effective: dict[str, ResolvedSkill] = {}
+    bound_agents = await _bound_agents_by_agent_id(db, shared_items)
     for item in shared_items:
+        if item.bound_agent_id is not None:
+            agent = bound_agents.get(item.bound_agent_id)
+            if agent is None:
+                # 绑定 Agent 已不存在：fail-closed，不退回普通 Skill 语义。
+                logger.warning(f"跳过绑定智能体缺失的专属技能: slug={item.slug}")
+                continue
+            effective[item.slug] = _resolved_agent_bound_skill(item, agent)
+            continue
         effective[item.slug] = _resolved_shared_skill(
             item,
             shadowed_by_personal=item.slug in personal_by_slug,
@@ -612,8 +740,13 @@ async def list_accessible_skills(
 async def list_skill_cards_for_user(
     db: AsyncSession,
     user: User,
+    *,
+    include_agent_bound: bool = False,
 ) -> list[ResolvedSkill]:
-    """返回管理页所需的共享与个人 Skill 卡片。"""
+    """返回管理页所需的共享、内置与个人 Skill 卡片。
+
+    Agent 专属技能默认不进入普通管理列表；显式include_agent_bound 才返回。
+    """
     shared_items, personal_items = await asyncio.gather(
         list_visible_skills_for_management(db, user),
         list_personal_skills(str(user.uid)),
@@ -622,20 +755,44 @@ async def list_skill_cards_for_user(
     shared_slugs = {item.slug for item in shared_items}
 
     personal_cards = [replace(item, overrides_shared=item.slug in shared_slugs) for item in personal_items]
-    shared_cards = [
-        _resolved_shared_skill(item, shadowed_by_personal=item.slug in personal_slugs) for item in shared_items
-    ]
+    bound_agents = await _bound_agents_by_agent_id(db, shared_items)
+    shared_cards: list[ResolvedSkill] = []
+    for item in shared_items:
+        if item.bound_agent_id is not None:
+            if not include_agent_bound:
+                continue
+            agent = bound_agents.get(item.bound_agent_id)
+            if agent is None:
+                continue
+            shared_cards.append(_resolved_agent_bound_skill(item, agent))
+            continue
+        shared_cards.append(_resolved_shared_skill(item, shadowed_by_personal=item.slug in personal_slugs))
     return [*personal_cards, *shared_cards]
 
 
-async def list_visible_skills_for_management(db: AsyncSession, user: User) -> list[Skill]:
+async def list_visible_skills_for_management(
+    db: AsyncSession,
+    user: User,
+    *,
+    include_agent_bound: bool = False,
+) -> list[Skill]:
+    """返回管理页可见 Skill：Agent 专属技能的可见性跟随绑定 Agent 权限。
+
+    管理列表属于「普通 Skill 管理面」，默认不返回 Agent 专属技能；
+    显式 include_agent_bound 才用于 self-skill 本身的读写入口。
+    """
     repo = SkillRepository(db)
+    items = await repo.list_all()
+    bound_agents = await _bound_agents_by_agent_id(db, items)
     visible: list[Skill] = []
     seen: set[str] = set()
-    for item in await repo.list_all():
+    for item in items:
         if item.slug in seen:
             continue
-        if user_can_manage_skill(user, item) or (item.enabled and user_can_access_skill(user, item)):
+        if item.bound_agent_id is not None and not include_agent_bound:
+            continue
+        permission = await _effective_skill_permission(db, user, item, bound_agents)
+        if permission == ResourcePermission.MANAGE or (item.enabled and permission != ResourcePermission.NONE):
             visible.append(item)
             seen.add(item.slug)
     return visible
@@ -647,10 +804,17 @@ async def list_skills(db: AsyncSession) -> list[Skill]:
 
 
 async def list_skill_slugs(db: AsyncSession, *, user: User | None = None) -> list[str]:
+    """返回对外的 Skill slug 列表；Agent 专属技能不参与普通选择与依赖引用。"""
     if user is not None:
-        return await _list_shared_skill_slugs(db, user)
+        return [
+            item.slug
+            for item in await _list_accessible_shared_skills(db, user)
+            if isinstance(item.slug, str) and not is_agent_bound_skill(item)
+        ]
     result = await db.execute(
-        select(Skill.slug).where(Skill.enabled.is_(True)).order_by(Skill.updated_at.desc(), Skill.id.desc())
+        select(Skill.slug)
+        .where(Skill.enabled.is_(True), Skill.bound_agent_id.is_(None))
+        .order_by(Skill.updated_at.desc(), Skill.id.desc())
     )
     return [slug for slug in result.scalars().all() if isinstance(slug, str)]
 
@@ -685,10 +849,18 @@ async def _list_accessible_shared_skills(
     *,
     require_enabled: bool = True,
 ) -> list[Skill]:
-    """按现有共享范围返回用户可访问的数据库 Skill。"""
+    """按现有共享范围返回用户可访问的数据库 Skill。
+
+    Agent 专属技能的权限派生自绑定 Agent：能访问 Agent 即可访问其专属技能。
+    """
     repo = SkillRepository(db)
     items = await repo.list_enabled() if require_enabled else await repo.list_all()
-    return [item for item in items if user_can_access_skill(user, item, require_enabled=require_enabled)]
+    bound_agents = await _bound_agents_by_agent_id(db, items)
+    return [
+        item
+        for item in items
+        if await _effective_skill_permission(db, user, item, bound_agents) != ResourcePermission.NONE
+    ]
 
 
 async def _list_shared_skill_slugs(db: AsyncSession, user: User) -> list[str]:
@@ -707,6 +879,7 @@ def _get_all_tool_names() -> list[str]:
 async def _validate_dependencies(
     *,
     parent: Skill,
+    parent_share_config: dict | None = None,
     tool_dependencies: list[str],
     mcp_dependencies: list[str],
     skill_dependencies: list[str],
@@ -734,7 +907,21 @@ async def _validate_dependencies(
     if parent.slug in skills:
         raise ValueError("skill_dependencies 不允许包含自身")
 
-    forbidden_skills = [name for name in skills if not can_skill_depend_on(parent, available_skills[name])]
+    parent_config = (
+        normalize_permission_config(parent_share_config)
+        if parent_share_config is not None
+        else normalize_permission_config(parent.share_config)
+    )
+    forbidden_skills = [
+        name
+        for name in skills
+        if not _can_depend_on(
+            parent_config=parent_config,
+            parent_created_by=parent.created_by,
+            parent_is_bound=is_agent_bound_skill(parent),
+            dependency=available_skills[name],
+        )
+    ]
     if forbidden_skills:
         raise ValueError(f"存在权限范围不匹配的 skill 依赖: {', '.join(forbidden_skills)}")
 
@@ -755,8 +942,14 @@ async def update_skill_dependencies(
     repo = SkillRepository(db)
     skill_items = await _list_accessible_shared_skills(db, operator)
     available_skills = {skill.slug: skill for skill in skill_items}
+    parent_share_config = (
+        normalize_permission_config((await resolve_agent_bound_permission_source(db, item)).share_config)
+        if is_agent_bound_skill(item)
+        else None
+    )
     tools, mcps, skills = await _validate_dependencies(
         parent=item,
+        parent_share_config=parent_share_config,
         tool_dependencies=tool_dependencies,
         mcp_dependencies=mcp_dependencies,
         skill_dependencies=skill_dependencies,
@@ -1023,7 +1216,36 @@ def _resolved_shared_skill(item: Skill, *, shadowed_by_personal: bool = False) -
         skill_dependencies=normalize_string_list(item.skill_dependencies),
         version=item.version,
         content_hash=item.content_hash,
+        bound_agent_id=item.bound_agent_id,
         shadowed_by_personal=shadowed_by_personal,
+    )
+
+
+def _resolved_agent_bound_skill(item: Skill, agent: Agent) -> ResolvedSkill:
+    """将 Agent 专属技能适配为运行时视图。
+
+    权限与身份从绑定 Agent 派生：share_config 是 Agent 共享配置的读时投影，
+    不是本行可写的副本，因此 Agent 改共享范围会立即生效且不会漂移。
+    运行时可见路径与普通共享 Skill 一致（/home/gem/skills/<slug>），
+    需要出现在 uid 授权投影里，否则沙盒内路径不可读。
+    """
+    return ResolvedSkill(
+        id=item.id,
+        slug=item.slug,
+        name=item.name,
+        description=item.description,
+        source_type=item.source_type,
+        source_scope=AGENT_BOUND_SKILL_SOURCE_TYPE,
+        source_dir=_resolve_skill_dir(item),
+        enabled=bool(item.enabled),
+        created_by=agent.created_by,
+        share_config=normalize_permission_config(agent.share_config),
+        tool_dependencies=normalize_string_list(item.tool_dependencies),
+        mcp_dependencies=normalize_string_list(item.mcp_dependencies),
+        skill_dependencies=normalize_string_list(item.skill_dependencies),
+        version=item.version,
+        content_hash=item.content_hash,
+        bound_agent_id=item.bound_agent_id,
     )
 
 
@@ -1475,14 +1697,18 @@ async def get_skill_or_raise(db: AsyncSession, slug: str) -> Skill:
 
 async def get_management_readable_skill_or_raise(db: AsyncSession, user: User, slug: str) -> Skill:
     item = await get_skill_or_raise(db, slug)
-    if not user_can_manage_skill(user, item) and not user_can_access_skill(user, item):
+    permission = await _effective_skill_permission(db, user, item)
+    if permission == ResourcePermission.NONE:
         raise ValueError(f"技能 '{slug}' 不存在或无权访问")
     return item
 
 
 async def get_manageable_skill_or_raise(db: AsyncSession, user: User, slug: str) -> Skill:
     item = await get_skill_or_raise(db, slug)
-    if not user_can_manage_skill(user, item):
+    permission = await _effective_skill_permission(db, user, item)
+    if item.bound_agent_id is None and is_builtin_skill(item):
+        permission = ResourcePermission.MANAGE if user.role in ADMIN_ROLES else permission
+    if permission != ResourcePermission.MANAGE:
         raise ValueError(f"技能 '{slug}' 不存在或无权管理")
     return item
 
@@ -1513,7 +1739,6 @@ async def read_skill_file(
         content = target.read_text(encoding="utf-8")
     except UnicodeDecodeError as e:
         raise ValueError(f"文件编码不支持（仅支持 UTF-8）: {e}") from e
-
     return {"path": rel, "content": content}
 
 
@@ -1642,9 +1867,10 @@ async def delete_skill(db: AsyncSession, *, slug: str, operator: User) -> None:
     item = await repo.get_by_slug(slug, for_update=True)
     if not item:
         raise ValueError(f"技能 '{slug}' 不存在")
-    if not user_can_manage_skill(operator, item):
+    if not await user_can_manage_skill_async(db, operator, item):
         raise ValueError(f"技能 '{slug}' 不存在或无权管理")
     _ensure_non_builtin(item)
+    _ensure_not_agent_bound(item)
 
     skill_dir = _resolve_skill_dir(item)
     trash_dir: Path | None = None
@@ -1690,6 +1916,7 @@ async def update_skill_share_config(
 ) -> Skill:
     item = await get_manageable_skill_or_raise(db, operator, slug)
     _ensure_non_builtin(item)
+    _ensure_not_agent_bound(item)
     normalized = normalize_skill_share_config(
         share_config,
         operator_uid=operator.uid,
@@ -1704,6 +1931,7 @@ async def update_skill_share_config(
 
 async def update_skill_enabled(db: AsyncSession, *, slug: str, enabled: bool, operator: User) -> Skill:
     item = await get_manageable_skill_or_raise(db, operator, slug)
+    _ensure_not_agent_bound(item)
     repo = SkillRepository(db)
     updated = await repo.update_enabled(item, enabled=enabled, updated_by=operator.uid)
     await apply_skill_projection_policy_change(db, slug)
@@ -1811,3 +2039,221 @@ async def init_builtin_skills(db: AsyncSession, *, created_by: str = "system") -
     if db is not None:
         await db.commit()
     return synced_items
+
+
+SELF_SKILL_TEMPLATE = """---
+slug: {slug}
+name: {name}
+description: {description}
+---
+
+# {name}
+
+{description}
+
+"""
+
+
+def _self_skill_slug(agent_slug: str) -> str:
+    """按 Agent slug 派生稳定的 self-skill slug。"""
+    base = f"{agent_slug}{SELF_SKILL_SLUG_SUFFIX}"
+    candidate = base[:128]
+    if not SKILL_NAME_PATTERN.match(candidate):
+        raise ValueError(f"无法为智能体 '{agent_slug}' 生成合法的专属技能 slug")
+    return candidate
+
+
+async def create_agent_self_skill(db: AsyncSession, *, agent: Agent) -> Skill:
+    """为 Agent 创建唯一的绑定 Skill；已存在时原样返回（幂等）。
+
+    self-skill 不是 Agent 创建时的副产品：没有内容需求的 Agent 不该产生空行，
+    运行时也允许 Agent 尚不存在绑定 Skill。
+    """
+    repo = SkillRepository(db)
+    existing = await repo.get_by_bound_agent_id(agent.id)
+    if existing is not None:
+        return existing
+
+    slug = _self_skill_slug(agent.slug)
+    if await repo.exists_slug(slug):
+        raise ValueError(f"专属技能 slug '{slug}' 已被占用")
+
+    skill_dir = get_skills_root_dir() / slug
+    skill_dir.mkdir(parents=True, exist_ok=False)
+    description = agent.description or f"{agent.name} 的专属技能"
+    (skill_dir / "SKILL.md").write_text(
+        SELF_SKILL_TEMPLATE.format(slug=slug, name=agent.name, description=description),
+        encoding="utf-8",
+    )
+
+    # 绑定 Skill 不维护独立共享配置；权限在读取时从绑定 Agent 派生。
+    placeholder_share_config = {
+        "version": 2,
+        "read_scope": {"access_level": "global", "department_ids": [], "user_uids": []},
+        "manage_scope": None,
+    }
+    return await repo.create(
+        slug=slug,
+        name=agent.name,
+        description=description,
+        source_type="upload",
+        tool_dependencies=[],
+        mcp_dependencies=[],
+        skill_dependencies=[],
+        dir_path=(Path("shared") / slug).as_posix(),
+        share_config=placeholder_share_config,
+        enabled=True,
+        bound_agent_id=agent.id,
+        created_by=agent.created_by,
+    )
+
+
+async def upload_agent_self_skill(
+    db: AsyncSession,
+    *,
+    agent: Agent,
+    filename: str,
+    file_bytes: bytes,
+) -> Skill:
+    """创建或覆盖 Agent 专属技能内容。
+
+    slug 固定按 Agent 派生并重写上传包 frontmatter，不使用包内 slug；
+    ZIP 必须且只能包含一个技能。覆盖为整体替换：上传包之外的历史文件不保留。
+    目录先换后写库，失败时回滚内容与事务，不留下半替换状态。
+    """
+    normalized_filename = filename.lower()
+    is_zip_upload = normalized_filename.endswith(".zip")
+    is_skill_md_upload = normalized_filename.endswith("skill.md")
+    if not is_zip_upload and not is_skill_md_upload:
+        raise ValueError("仅支持上传 .zip 或 SKILL.md 文件")
+
+    repo = SkillRepository(db)
+    existing = await repo.get_by_bound_agent_id(agent.id, for_update=True)
+    if existing is None and await repo.exists_slug(_self_skill_slug(agent.slug)):
+        raise ValueError("专属技能 slug 已被占用")
+    slug = _self_skill_slug(agent.slug)
+
+    skills_root = get_skills_root_dir()
+    final_dir = skills_root / slug
+    temp_target = skills_root / f".{slug}.upload-{uuid.uuid4().hex[:8]}"
+    trash_dir = None
+    replaced = False
+    try:
+        with tempfile.TemporaryDirectory(prefix=".self-skill-upload-", dir=str(skills_root.parent)) as temp_root:
+            extract_dir = Path(temp_root) / "extract"
+            extract_dir.mkdir(parents=True, exist_ok=True)
+            if is_zip_upload:
+                zip_path = Path(temp_root) / "upload.zip"
+                zip_path.write_bytes(file_bytes)
+                with zipfile.ZipFile(zip_path, "r") as zf:
+                    _validate_zip_paths(zf)
+                    zf.extractall(extract_dir)
+                skill_md_files = list(extract_dir.rglob("SKILL.md"))
+                if len(skill_md_files) != 1:
+                    raise ValueError("ZIP 必须且只能包含一个技能（检测到一个 SKILL.md）")
+                source_dir = skill_md_files[0].parent
+            else:
+                source_dir = extract_dir
+                (source_dir / "SKILL.md").write_bytes(file_bytes)
+
+            parsed = _copy_skill_snapshot(source_dir, temp_target, final_slug=slug)
+
+            if final_dir.exists():
+                trash_dir = final_dir.with_name(f".deleted-{slug}-{uuid.uuid4().hex[:8]}")
+                final_dir.rename(trash_dir)
+                replaced = True
+            temp_target.rename(final_dir)
+
+        if existing is None:
+            item = await repo.create(
+                slug=slug,
+                name=parsed["name"],
+                description=parsed["description"],
+                source_type="upload",
+                tool_dependencies=parsed["tool_dependencies"],
+                mcp_dependencies=parsed["mcp_dependencies"],
+                skill_dependencies=parsed["skill_dependencies"],
+                dir_path=(Path("shared") / slug).as_posix(),
+                share_config={
+                    "version": 2,
+                    "read_scope": {"access_level": "global", "department_ids": [], "user_uids": []},
+                    "manage_scope": None,
+                },
+                enabled=True,
+                bound_agent_id=agent.id,
+                created_by=agent.created_by,
+            )
+        else:
+            item = await repo.update_metadata(
+                existing,
+                name=parsed["name"],
+                description=parsed["description"],
+                updated_by=agent.created_by,
+            )
+            item = await repo.update_dependencies(
+                item,
+                tool_dependencies=parsed["tool_dependencies"],
+                mcp_dependencies=parsed["mcp_dependencies"],
+                skill_dependencies=parsed["skill_dependencies"],
+                updated_by=agent.created_by,
+            )
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        # 内容回滚：删掉新目录并放回旧目录，避免「行在、内容丢」或反向的半替换。
+        if final_dir.exists():
+            shutil.rmtree(final_dir, ignore_errors=True)
+        if replaced and trash_dir is not None and trash_dir.exists():
+            trash_dir.rename(final_dir)
+        shutil.rmtree(temp_target, ignore_errors=True)
+        raise
+    finally:
+        if trash_dir is not None and trash_dir.exists():
+            shutil.rmtree(trash_dir, ignore_errors=True)
+    return item
+
+
+async def get_agent_self_skill(db: AsyncSession, *, agent: Agent) -> Skill | None:
+    """读取 Agent 的绑定 Skill，不存在时返回 None。"""
+    return await SkillRepository(db).get_by_bound_agent_id(agent.id)
+
+
+async def delete_agent_self_skill(db: AsyncSession, *, agent: Agent) -> tuple[Path, Path] | None:
+    """删除 Agent 绑定 Skill 的行，并返回 (垃圾目录, 原目录)。
+
+    不在此处提交：由 Agent 删除路径在同一事务落库，避免出现
+    「专属技能已删、Agent 仍在」的部分状态。绑定 Skill 不存在时返回 None。
+    self-skill 没有独立的删除入口，这里只服务 Agent 删除的级联。
+    """
+    repo = SkillRepository(db)
+    item = await repo.get_by_bound_agent_id(agent.id, for_update=True)
+    if item is None:
+        return None
+
+    skill_dir = _resolve_skill_dir(item)
+    if not skill_dir.exists():
+        await repo.delete(item)
+        return None
+
+    trash_dir = skill_dir.with_name(f".deleted-{item.slug}-{uuid.uuid4().hex[:8]}")
+    skill_dir.rename(trash_dir)
+    await repo.delete(item)
+    return trash_dir, skill_dir
+
+
+async def discard_trashed_skill_dir(trashed: tuple[Path, Path] | None) -> None:
+    """提交成功后清理垃圾目录。"""
+    if trashed is None:
+        return
+    trash_dir, _original = trashed
+    if trash_dir.exists():
+        await asyncio.to_thread(shutil.rmtree, trash_dir, ignore_errors=True)
+
+
+async def restore_trashed_skill_dir(trashed: tuple[Path, Path] | None) -> None:
+    """提交失败时把内容目录放回原位，避免留下「行在、内容丢」的绑定 Skill。"""
+    if trashed is None:
+        return
+    trash_dir, original = trashed
+    if trash_dir.exists() and not original.exists():
+        trash_dir.rename(original)

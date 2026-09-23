@@ -182,8 +182,8 @@ async def test_normalize_agent_context_config_expands_null_and_filters_explicit_
 
     async def fake_list_skills(_db, _user):
         return [
-            types.SimpleNamespace(slug="skill-a", name="Skill A", description=""),
-            types.SimpleNamespace(slug="skill-b", name="Skill B", description=""),
+            types.SimpleNamespace(slug="skill-a", name="Skill A", description="", bound_agent_id=None),
+            types.SimpleNamespace(slug="skill-b", name="Skill B", description="", bound_agent_id=None),
         ]
 
     class FakeAgentRepository:
@@ -309,8 +309,8 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
 
     async def fake_list_skills(_db, _user):
         return [
-            types.SimpleNamespace(slug="skill-a", name="Skill A", description=""),
-            types.SimpleNamespace(slug="skill-b", name="Skill B", description=""),
+            types.SimpleNamespace(slug="skill-a", name="Skill A", description="", bound_agent_id=None),
+            types.SimpleNamespace(slug="skill-b", name="Skill B", description="", bound_agent_id=None),
         ]
 
     async def fake_resolve_visible_knowledge_bases(context):

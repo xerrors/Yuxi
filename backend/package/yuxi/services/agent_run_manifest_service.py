@@ -154,6 +154,7 @@ async def prepare_run_execution(
     context.update(
         {
             "thread_id": run.conversation_thread_id,
+            "agent_slug": run.agent_slug,
             "uid": str(user.uid),
             "run_id": run.id,
             "request_id": run.request_id,

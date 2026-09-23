@@ -365,12 +365,24 @@ class Skill(Base):
     dir_path = Column(String(512), nullable=False, comment="共享技能目录路径（相对 Skill 数据根目录）")
     version = Column(String(64), nullable=True, comment="技能版本（内置 skill 使用语义化版本）")
     content_hash = Column(String(128), nullable=True, comment="技能目录内容哈希（内置 skill 安装时计算）")
+    # Agent 专属技能的归属列：非空表示该 Skill 只属于对应 Agent，权限派生自该 Agent。
+    bound_agent_id = Column(Integer, nullable=True, index=True, comment="绑定的 Agent ID；NULL 表示普通 Skill")
     share_config = Column(JSON_VALUE, nullable=False, comment="共享权限配置")
     enabled = Column(Boolean, nullable=False, default=True, comment="是否启用")
     created_by = Column(String(64), nullable=True)
     updated_by = Column(String(64), nullable=True)
     created_at = Column(DateTime, default=utc_now_naive)
     updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+    __table_args__ = (
+        Index(
+            "uq_skills_bound_agent",
+            "bound_agent_id",
+            unique=True,
+            postgresql_where=bound_agent_id.is_not(None),
+            sqlite_where=bound_agent_id.is_not(None),
+        ),
+    )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -385,6 +397,8 @@ class Skill(Base):
             "dir_path": self.dir_path,
             "version": self.version,
             "content_hash": self.content_hash,
+            "bound_agent_id": self.bound_agent_id,
+            "is_agent_bound": self.bound_agent_id is not None,
             "share_config": self.share_config or {},
             "enabled": bool(self.enabled),
             "created_by": self.created_by,

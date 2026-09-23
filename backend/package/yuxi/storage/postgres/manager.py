@@ -941,6 +941,12 @@ class PostgresManager(metaclass=SingletonMeta):
             "ALTER TABLE IF EXISTS skills ALTER COLUMN share_config DROP DEFAULT",
             "ALTER TABLE IF EXISTS skills ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE",
             "ALTER TABLE IF EXISTS skills ADD COLUMN IF NOT EXISTS content_hash VARCHAR(128)",
+            "ALTER TABLE IF EXISTS skills ADD COLUMN IF NOT EXISTS bound_agent_id INTEGER",
+            (
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_skills_bound_agent ON skills (bound_agent_id) "
+                "WHERE bound_agent_id IS NOT NULL"
+            ),
+            "CREATE INDEX IF NOT EXISTS ix_skills_bound_agent_id ON skills (bound_agent_id)",
             "ALTER TABLE IF EXISTS conversations ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN NOT NULL DEFAULT FALSE",
             "ALTER TABLE IF EXISTS conversations ADD COLUMN IF NOT EXISTS last_viewed_run_id VARCHAR(64)",
             "ALTER TABLE IF EXISTS mcp_servers ADD COLUMN IF NOT EXISTS env JSONB",
