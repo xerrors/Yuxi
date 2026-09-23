@@ -62,15 +62,22 @@ jobs:
         uses: docker/setup-buildx-action@v3
       - name: Prepare Compose environment
         run: bash scripts/ci_prepare_system_tests_env.sh
-      - name: Restore Docker layer cache
+      - name: Restore api image layer cache
         uses: actions/cache@v4
         with:
-          path: /tmp/yuxi-buildkit-cache
-          key: buildkit-${{ runner.os }}-${{ hashFiles('backend/uv.lock', 'backend/pyproject.toml', 'docker/api.Dockerfile', 'docker/sandbox_provisioner/requirements.txt', 'docker/sandbox_provisioner/Dockerfile') }}
+          path: /tmp/yuxi-buildkit-cache/api
+          key: buildkit-api-${{ runner.os }}-${{ hashFiles('backend/uv.lock', 'backend/pyproject.toml', 'docker/api.Dockerfile') }}
           restore-keys: |
-            buildkit-${{ runner.os }}-
+            buildkit-api-${{ runner.os }}-
+      - name: Restore sandbox-provisioner image layer cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/yuxi-buildkit-cache/sandbox-provisioner
+          key: buildkit-sandbox-provisioner-${{ runner.os }}-${{ hashFiles('docker/sandbox_provisioner/requirements.txt', 'docker/sandbox_provisioner/Dockerfile') }}
+          restore-keys: |
+            buildkit-sandbox-provisioner-${{ runner.os }}-
       - name: Build topology images with cached layers
-        run: bash scripts/ci_build_topology_images.sh /tmp/yuxi-buildkit-cache
+        run: bash scripts/ci_build_topology_images.sh /tmp/yuxi-buildkit-cache/api /tmp/yuxi-buildkit-cache/sandbox-provisioner
       - name: Start durable-task runtime topology
         run: docker compose up -d postgres redis minio etcd milvus sandbox-provisioner api worker
       - name: Wait for durable-task topology readiness
@@ -158,15 +165,22 @@ jobs:
         uses: docker/setup-buildx-action@v3
       - name: Prepare Compose environment
         run: bash scripts/ci_prepare_system_tests_env.sh
-      - name: Restore Docker layer cache
+      - name: Restore api image layer cache
         uses: actions/cache@v4
         with:
-          path: /tmp/yuxi-buildkit-cache
-          key: buildkit-${{ runner.os }}-${{ hashFiles('backend/uv.lock', 'backend/pyproject.toml', 'docker/api.Dockerfile', 'docker/sandbox_provisioner/requirements.txt', 'docker/sandbox_provisioner/Dockerfile') }}
+          path: /tmp/yuxi-buildkit-cache/api
+          key: buildkit-api-${{ runner.os }}-${{ hashFiles('backend/uv.lock', 'backend/pyproject.toml', 'docker/api.Dockerfile') }}
           restore-keys: |
-            buildkit-${{ runner.os }}-
+            buildkit-api-${{ runner.os }}-
+      - name: Restore sandbox-provisioner image layer cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/yuxi-buildkit-cache/sandbox-provisioner
+          key: buildkit-sandbox-provisioner-${{ runner.os }}-${{ hashFiles('docker/sandbox_provisioner/requirements.txt', 'docker/sandbox_provisioner/Dockerfile') }}
+          restore-keys: |
+            buildkit-sandbox-provisioner-${{ runner.os }}-
       - name: Build topology images with cached layers
-        run: bash scripts/ci_build_topology_images.sh /tmp/yuxi-buildkit-cache
+        run: bash scripts/ci_build_topology_images.sh /tmp/yuxi-buildkit-cache/api /tmp/yuxi-buildkit-cache/sandbox-provisioner
       - name: Start focused runtime topology
         run: docker compose up -d postgres redis minio sandbox-provisioner api worker
       - name: Wait for truthful readiness
