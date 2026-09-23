@@ -5,9 +5,13 @@
 set -euo pipefail
 
 cp .env.template .env
-sed -i "s/^JWT_SECRET_KEY=.*/JWT_SECRET_KEY=${JWT_SECRET_KEY}/" .env
-sed -i "s/^API_KEY_DERIVATION_SECRET=.*/API_KEY_DERIVATION_SECRET=${API_KEY_DERIVATION_SECRET}/" .env
-sed -i "s/^SANDBOX_PROVISIONER_TOKEN=.*/SANDBOX_PROVISIONER_TOKEN=${SANDBOX_PROVISIONER_TOKEN}/" .env
+# sed 替换文本需转义 &、\ 与分隔符 /：密钥含这些字符时未转义会写错值或失败。
+sed_escape() {
+  printf '%s' "$1" | sed -e 's/[\\&/]/\\&/g'
+}
+sed -i "s/^JWT_SECRET_KEY=.*/JWT_SECRET_KEY=$(sed_escape "${JWT_SECRET_KEY}")/" .env
+sed -i "s/^API_KEY_DERIVATION_SECRET=.*/API_KEY_DERIVATION_SECRET=$(sed_escape "${API_KEY_DERIVATION_SECRET}")/" .env
+sed -i "s/^SANDBOX_PROVISIONER_TOKEN=.*/SANDBOX_PROVISIONER_TOKEN=$(sed_escape "${SANDBOX_PROVISIONER_TOKEN}")/" .env
 cat >> .env <<'EOF'
 LANGFUSE_PUBLIC_KEY=ci-langfuse-public-key
 LANGFUSE_SECRET_KEY=ci-langfuse-secret-key

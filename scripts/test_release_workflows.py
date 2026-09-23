@@ -57,7 +57,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
     def test_runtime_system_tests_reject_short_build_budget(self) -> None:
         """恢复 35 分钟冷构建预算时 gate 必须失败。"""
         workflow = (WORKFLOWS / "system-tests.yml").read_text().replace(
-            "    timeout-minutes: 60\n", "    timeout-minutes: 35\n", 1
+            "    timeout-minutes: 60\n", "    timeout-minutes: 35\n"
         )
         with self.assertRaises(AssertionError):
             self.assert_cold_build_budget(workflow)

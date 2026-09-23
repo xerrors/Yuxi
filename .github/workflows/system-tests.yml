@@ -14,6 +14,8 @@ on:
       - 'docker/**'
       - 'docker-compose.yml'
       - 'docker-compose.prod.yml'
+      - 'scripts/ci_prepare_system_tests_env.sh'
+      - 'scripts/ci_build_topology_images.sh'
       - 'scripts/migrate-storage.sh'
       - '.github/workflows/system-tests.yml'
   push:
@@ -31,6 +33,8 @@ on:
       - 'docker/**'
       - 'docker-compose.yml'
       - 'docker-compose.prod.yml'
+      - 'scripts/ci_prepare_system_tests_env.sh'
+      - 'scripts/ci_build_topology_images.sh'
       - 'scripts/migrate-storage.sh'
       - '.github/workflows/system-tests.yml'
   workflow_dispatch:
@@ -55,7 +59,8 @@ jobs:
   durable-task-worker-path:
     name: Durable Task worker path
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 与主链路相同：冷缓存构建（含 provisioner Debian/Python 下载）叠加 Milvus 拓扑热身，预算需覆盖最慢真实构建。
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - name: Set up Docker Buildx
