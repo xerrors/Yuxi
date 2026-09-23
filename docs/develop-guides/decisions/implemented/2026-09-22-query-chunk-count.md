@@ -22,8 +22,6 @@ query_kb 返回分片索引但没有文件总分片数，模型无法识别单�
 
 ## 验证
 
-- `uv run --frozen --group test pytest test/unit/plugins/test_milvus_kb.py -q`：32 passed，覆盖 repository 返回数据的 hydration；恢复上游实现时新增 3 个场景因缺少字段失败。
-- 在设置独立测试 `POSTGRES_URL` 后运行 `uv run --frozen --group test pytest test/integration/services/test_knowledge_chunk_sources.py -q`：真实 PostgreSQL 16 上 4 passed。repository 执行真实 SQL，覆盖 NULL/0/1/4 计数、外库文件排除、PG 中不存在的文件排除和原索引保留；测试使用唯一 schema 并自动清理。
-- 完整 Milvus 向量检索与 HTTP E2E 未运行；真实 PostgreSQL 测试调用 hydration，但不证明向量数据库或完整 API 装配。
+复用 `test/unit/plugins/test_milvus_kb.py` 的孤儿分片过滤测试，覆盖 0/1/4 分片数、来源文件名和原分片索引保留。运行命令：`uv run --frozen --group test pytest test/unit/plugins/test_milvus_kb.py -q`。
 
-本地完整 unit 命令 `uv run --frozen --group test pytest test/unit -m "not slow" -q`：2275 passed。
+测试使用现有 fake repository，不证明真实 PostgreSQL SQL、Milvus 向量检索或 HTTP 装配。独立 schema、连接池和公共 fixture 覆盖带来的维护成本高于本次字段透传所需，因此不保留专用数据库测试脚本；真实数据库查询证据与完整链路的未验证范围在 PR 中记录。

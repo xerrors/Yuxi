@@ -829,18 +829,19 @@ def test_collection_supports_bm25_requires_analyzed_content_sparse_field_and_fun
     assert kb._collection_supports_bm25(collection)
 
 
-async def test_hydrate_chunk_sources_filters_orphaned_file_chunks(monkeypatch):
+@pytest.mark.parametrize("chunk_count", [0, 1, 4])
+async def test_hydrate_chunk_sources_filters_orphaned_file_chunks(monkeypatch, chunk_count):
     """已从 PG 删除的文件（孤儿向量）不能出现在检索结果中。"""
     file_repo = FakeKnowledgeFileRepository(
         {
-            "file-live": make_file_record(file_id="file-live", filename="live.md"),
+            "file-live": make_file_record(file_id="file-live", filename="live.md", chunk_count=chunk_count),
         }
     )
     patch_file_repository(monkeypatch, file_repo)
     kb = MilvusKB.__new__(MilvusKB)
 
     chunks = [
-        {"metadata": {"file_id": "file-live"}, "content": "live content", "score": 0.9},
+        {"metadata": {"file_id": "file-live", "chunk_index": 0}, "content": "live content", "score": 0.9},
         {"metadata": {"file_id": "file-deleted"}, "content": "orphan content", "score": 0.8},
     ]
 
@@ -849,6 +850,8 @@ async def test_hydrate_chunk_sources_filters_orphaned_file_chunks(monkeypatch):
     assert len(result) == 1
     assert result[0]["metadata"]["file_id"] == "file-live"
     assert result[0]["metadata"]["source"] == "live.md"
+    assert result[0]["metadata"]["chunk_count"] == chunk_count
+    assert result[0]["metadata"]["chunk_index"] == 0
 
 
 async def test_hydrate_chunk_sources_returns_all_chunks_when_no_orphans(monkeypatch):
@@ -908,23 +911,3 @@ async def test_query_filters_orphaned_chunks_from_search_results(monkeypatch):
 
     assert len(chunks) == 1
     assert chunks[0]["content"] == "live content"
-
-
-@pytest.mark.parametrize("chunk_count", [0, 1, 4])
-async def test_hydrate_chunk_sources_includes_file_chunk_count(monkeypatch, chunk_count):
-    """文件级分片数来自 PG，命中的分片索引保持不变。"""
-    file_repo = FakeKnowledgeFileRepository(
-        {"file-live": make_file_record(file_id="file-live", filename="live.md", chunk_count=chunk_count)}
-    )
-    patch_file_repository(monkeypatch, file_repo)
-    kb = MilvusKB.__new__(MilvusKB)
-    chunks = [{"metadata": {"file_id": "file-live", "chunk_index": 0}, "content": "text"}]
-
-    result = await kb._hydrate_chunk_sources("db", chunks)
-
-    assert result[0]["metadata"] == {
-        "file_id": "file-live",
-        "chunk_index": 0,
-        "source": "live.md",
-        "chunk_count": chunk_count,
-    }
