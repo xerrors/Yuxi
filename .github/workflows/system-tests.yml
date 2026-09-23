@@ -282,8 +282,26 @@ jobs:
       - name: Verify Message audit HTTP contract
         timeout-minutes: 3
         run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/api/test_chat_router.py::test_thread_message_audits_return_persisted_facts_without_leaking_into_history -q --setup-show -o faulthandler_timeout=60
-      - name: Verify deterministic Agent assembled path
-        run: docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD api uv run --no-sync --no-dev pytest test/e2e/test_deterministic_agent_path_e2e.py -q
+      - name: Verify attachment HTTP and object contract
+        timeout-minutes: 3
+        run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/api/test_chat_router.py::test_thread_artifact_uses_image_signature_for_content_type -q
+      - name: Verify deterministic E2E stage assignment
+        run: |
+          if docker compose exec -T api uv run --no-sync --no-dev pytest test/e2e/test_deterministic_agent_path_e2e.py --collect-only -q -m 'e2e and not (e2e_smoke or e2e_lifecycle or e2e_boundaries)'; then
+            echo "Unassigned deterministic E2E test detected" >&2
+            exit 1
+          else
+            test "$?" -eq 5
+          fi
+      - name: Verify deterministic Agent Run, scheduling and tool result
+        timeout-minutes: 10
+        run: docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD api uv run --no-sync --no-dev pytest test/e2e/test_deterministic_agent_path_e2e.py -q -m e2e_smoke --durations=10
+      - name: Verify deterministic Agent failure, resume and cancellation
+        timeout-minutes: 12
+        run: docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD api uv run --no-sync --no-dev pytest test/e2e/test_deterministic_agent_path_e2e.py -q -m e2e_lifecycle --durations=10
+      - name: Verify deterministic SubAgent and Workdir paths
+        timeout-minutes: 12
+        run: docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD api uv run --no-sync --no-dev pytest test/e2e/test_deterministic_agent_path_e2e.py -q -m e2e_boundaries --durations=10
       - name: Verify identity transaction and replayable secret publication
         run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/services/test_identity_admin_service.py test/integration/services/test_api_key_schema_migration.py test/integration/services/test_api_key_user_lifecycle.py test/integration/api/test_apikey_router.py -q
       - name: Verify destructive storage migration and Skill authorization

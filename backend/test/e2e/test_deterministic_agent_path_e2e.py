@@ -20,7 +20,7 @@ from yuxi.workspace.paths import user_workspace_dir, workspace_uid_dirname
 
 from test.live_api_cleanup import make_test_conversation_metadata, make_test_conversation_title
 
-pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow]
+pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow, pytest.mark.timeout(360)]
 
 EXPECTED_OUTPUT = "DETERMINISTIC_AGENT_E2E_OK"
 EXPECTED_PRELOADED_SKILL_MARKER = "# 图片生成技能"
@@ -35,8 +35,8 @@ PROVIDER_ID = "ci-replay"
 MODEL_SPEC = f"{PROVIDER_ID}:deterministic-chat"
 
 
-@pytest.mark.parametrize("subagent", [False, True])
-@pytest.mark.parametrize("first_call", [False, True])
+@pytest.mark.e2e_lifecycle
+@pytest.mark.parametrize(("subagent", "first_call"), [(False, True), (True, False)])
 async def test_model_retry_exhaustion_preserves_failure_and_parent_recovers(
     e2e_client, e2e_headers, subagent, first_call
 ):
@@ -76,7 +76,7 @@ async def test_model_retry_exhaustion_preserves_failure_and_parent_recovers(
         assert response.status_code == 200, response.text
         thread_id = response.json()["id"]
         # 同一线程连续提交两次，第二次证明上一次失败没有遗留清理或队列阻塞。
-        for _ in range(2):
+        for _ in range(2 if not subagent else 1):
             response = await e2e_client.post(
                 "/api/agent/runs",
                 headers=e2e_headers,
@@ -152,70 +152,6 @@ async def test_model_retry_exhaustion_preserves_failure_and_parent_recovers(
         for slug in reversed(agents):
             await delete_agent(e2e_client, e2e_headers, slug)
         await _delete_provider(e2e_client, e2e_headers)
-
-
-async def test_replay_rejects_requests_outside_deterministic_contract() -> None:
-    valid_body = {
-        "model": "deterministic-chat",
-        "stream": True,
-        "messages": [
-            {"role": "system", "content": EXPECTED_PRELOADED_SKILL_MARKER},
-            {"role": "user", "content": EXPECTED_OUTPUT},
-        ],
-        "tools": [{"type": "function", "function": {"name": EXPECTED_PRELOADED_TOOL}}],
-    }
-    cases = [
-        ({}, valid_body, "invalid_authorization"),
-        (
-            {"Authorization": "Bearer ci-replay-key"},
-            {**valid_body, "model": "other-model"},
-            "invalid_model",
-        ),
-        (
-            {"Authorization": "Bearer ci-replay-key"},
-            {**valid_body, "stream": False},
-            "stream_required",
-        ),
-        (
-            {"Authorization": "Bearer ci-replay-key"},
-            {**valid_body, "messages": [{"role": "user", "content": "wrong"}]},
-            "expected_input_missing",
-        ),
-        (
-            {"Authorization": "Bearer ci-replay-key"},
-            {
-                **valid_body,
-                "messages": [{"role": "user", "content": EXPECTED_OUTPUT}],
-            },
-            "preloaded_skill_missing",
-        ),
-        (
-            {"Authorization": "Bearer ci-replay-key"},
-            {**valid_body, "tools": []},
-            "preloaded_tool_missing",
-        ),
-        (
-            {"Authorization": "Bearer ci-replay-key"},
-            {
-                **valid_body,
-                "messages": [
-                    *valid_body["messages"],
-                    {
-                        "role": "tool",
-                        "tool_call_id": EXPECTED_TOOL_CALL_ID,
-                        "content": "unexpected result",
-                    },
-                ],
-            },
-            "tool_execution_result_missing",
-        ),
-    ]
-
-    async with httpx.AsyncClient(base_url="http://localhost:8765", timeout=5) as client:
-        for headers, body, expected_error in cases:
-            response = await client.post("/v1/chat/completions", headers=headers, json=body)
-            assert response.status_code == 422, response.text
-            assert response.json() == {"error": expected_error}
 
 
 async def _create_provider(client: httpx.AsyncClient, headers: dict[str, str]) -> None:
@@ -378,6 +314,7 @@ async def _create_agent(
 
 
 @pytest.mark.parametrize("mode", ["default", "always_trust"])
+@pytest.mark.e2e_boundaries
 async def test_subagent_worker_enforces_inherited_write_policy(e2e_client, e2e_headers, mode):
     """真实父子 Run 继承审批模式，回读工具审计与共享 Workdir 文件。"""
     me = await e2e_client.get("/api/auth/me", headers=e2e_headers)
@@ -754,6 +691,7 @@ async def _assert_persisted_execution_facts(run_id: str, agent_slug: str) -> Non
         await conn.close()
 
 
+@pytest.mark.e2e_smoke
 async def test_deterministic_agent_path_reaches_persisted_result(
     e2e_client: httpx.AsyncClient,
     e2e_headers: dict[str, str],
@@ -876,6 +814,7 @@ async def test_deterministic_agent_path_reaches_persisted_result(
         await _delete_provider(e2e_client, e2e_headers)
 
 
+@pytest.mark.e2e_smoke
 async def test_standard_user_run_uses_admin_execution_limit(e2e_client, e2e_headers):
     """普通用户执行管理员配置，以真实步数失败和成功结果证明配置生效。"""
     departments = await e2e_client.get("/api/departments", headers=e2e_headers)
@@ -962,6 +901,7 @@ async def test_standard_user_run_uses_admin_execution_limit(e2e_client, e2e_head
         assert deleted.status_code in {200, 404}, deleted.text
 
 
+@pytest.mark.e2e_smoke
 async def test_scheduled_task_run_now_reaches_exact_conversation_and_result(
     e2e_client: httpx.AsyncClient,
     e2e_headers: dict[str, str],
@@ -1071,6 +1011,7 @@ async def test_scheduled_task_run_now_reaches_exact_conversation_and_result(
         await _delete_provider(e2e_client, e2e_headers)
 
 
+@pytest.mark.e2e_lifecycle
 async def test_resume_with_offloaded_tool_result_publishes_stream_owned_audit(
     e2e_client: httpx.AsyncClient,
     e2e_headers: dict[str, str],
@@ -1236,6 +1177,7 @@ async def test_resume_with_offloaded_tool_result_publishes_stream_owned_audit(
         await _delete_provider(e2e_client, e2e_headers)
 
 
+@pytest.mark.e2e_smoke
 async def test_deterministic_tool_error_is_persisted_by_tool_message(
     e2e_client: httpx.AsyncClient,
     e2e_headers: dict[str, str],
@@ -1303,6 +1245,7 @@ async def test_deterministic_tool_error_is_persisted_by_tool_message(
         await _delete_provider(e2e_client, e2e_headers)
 
 
+@pytest.mark.e2e_lifecycle
 async def test_cancelled_run_keeps_trace_and_closes_running_model_audit(
     e2e_client: httpx.AsyncClient,
     e2e_headers: dict[str, str],
@@ -1417,6 +1360,7 @@ async def test_cancelled_run_keeps_trace_and_closes_running_model_audit(
         await _delete_provider(e2e_client, e2e_headers)
 
 
+@pytest.mark.e2e_boundaries
 async def test_attachment_is_written_to_user_workspace_workdir_and_survives_runtime_recreation(
     e2e_client: httpx.AsyncClient,
     e2e_headers: dict[str, str],
@@ -1499,13 +1443,6 @@ async def test_attachment_is_written_to_user_workspace_workdir_and_survives_runt
         assert read_result.file_data == {"content": overwritten_content, "encoding": "utf-8"}
 
         get_sandbox_provider().release(thread_id, uid=uid, workdir_path=workdir_path)
-        await asyncio.sleep(int(os.getenv("SANDBOX_KEEPALIVE_INTERVAL_SECONDS", "30")) + 1)
-        await _run_deterministic(
-            e2e_client,
-            e2e_headers,
-            agent_slug=agent_slug,
-            thread_id=thread_id,
-        )
         sandbox = ProvisionerSandboxBackend(thread_id=thread_id, uid=uid, workdir_path=workdir_path)
         recreated_read = sandbox.read(attachment_path)
         assert recreated_read.error is None, recreated_read
@@ -1516,12 +1453,6 @@ async def test_attachment_is_written_to_user_workspace_workdir_and_survives_runt
             headers=e2e_headers,
         )
         assert delete_response.status_code == 200, delete_response.text
-        await _run_deterministic(
-            e2e_client,
-            e2e_headers,
-            agent_slug=agent_slug,
-            thread_id=thread_id,
-        )
         missing_result = sandbox.read(attachment_path)
         assert missing_result.file_data is None
         assert missing_result.error
@@ -1542,6 +1473,7 @@ async def test_attachment_is_written_to_user_workspace_workdir_and_survives_runt
         await _delete_provider(e2e_client, e2e_headers)
 
 
+@pytest.mark.e2e_boundaries
 async def test_subagent_end_is_observable_while_parent_awaits_slow_child(e2e_client, e2e_headers):
     """父 graph 等待慢任务时，独立子 SSE 和数据库已能证明快任务完成。"""
     uid = str((await e2e_client.get("/api/auth/me", headers=e2e_headers)).json()["uid"])

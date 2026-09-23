@@ -2621,6 +2621,18 @@ wheels = [
 ]
 
 [[package]]
+name = "pytest-timeout"
+version = "2.4.0"
+source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
+dependencies = [
+    { name = "pytest" },
+]
+sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/ac/82/4c9ecabab13363e72d880f2fb504c5f750433b2b6f16e99f4ec21ada284c/pytest_timeout-2.4.0.tar.gz", hash = "sha256:7e68e90b01f9eff71332b25001f85c75495fc4e3a836701876183c4bcfd0540a", size = 17973, upload-time = "2025-05-05T19:44:34.99Z" }
+wheels = [
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/fa/b6/3127540ecdf1464a00e5a01ee60a1b09175f6913f0644ac748494d9c4b21/pytest_timeout-2.4.0-py3-none-any.whl", hash = "sha256:c42667e5cdadb151aeb5b26d114aff6bdf5a907f176a007a30b940d3d865b5c2", size = 14382, upload-time = "2025-05-05T19:44:33.502Z" },
+]
+
+[[package]]
 name = "python-dateutil"
 version = "2.9.0.post0"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
@@ -3302,10 +3314,10 @@ resolution-markers = [
     "python_full_version < '3.13' and sys_platform == 'darwin'",
 ]
 dependencies = [
-    { name = "annotated-doc" },
-    { name = "click" },
-    { name = "rich" },
-    { name = "shellingham" },
+    { name = "annotated-doc", marker = "sys_platform == 'darwin'" },
+    { name = "click", marker = "sys_platform == 'darwin'" },
+    { name = "rich", marker = "sys_platform == 'darwin'" },
+    { name = "shellingham", marker = "sys_platform == 'darwin'" },
 ]
 sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/f2/1e/a27cc02a0cd715118c71fa2aef2c687fdefc3c28d90fd0dd789c5118154c/typer-0.21.2.tar.gz", hash = "sha256:1abd95a3b675e17ff61b0838ac637fe9478d446d62ad17fa4bb81ea57cc54028", size = 120426, upload-time = "2026-02-10T19:33:46.182Z" }
 wheels = [
@@ -3321,10 +3333,10 @@ resolution-markers = [
     "python_full_version < '3.13' and sys_platform != 'darwin'",
 ]
 dependencies = [
-    { name = "annotated-doc" },
+    { name = "annotated-doc", marker = "sys_platform != 'darwin'" },
     { name = "colorama", marker = "sys_platform == 'win32'" },
-    { name = "rich" },
-    { name = "shellingham" },
+    { name = "rich", marker = "sys_platform != 'darwin'" },
+    { name = "shellingham", marker = "sys_platform != 'darwin'" },
 ]
 sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/7c/f7/68adc395201b20b872d68e975386832e8005ffeacedd43a1d837a32815be/typer-0.26.8.tar.gz", hash = "sha256:c244a6bd558886fe3f8780efb6bdd28bb9aff005a94eedebaa5cb32926fe2f7e", size = 202097, upload-time = "2026-06-26T09:22:45.705Z" }
 wheels = [
@@ -3927,6 +3939,7 @@ test = [
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
     { name = "pytest-httpx" },
+    { name = "pytest-timeout" },
 ]
 
 [package.metadata]
@@ -3946,6 +3959,7 @@ test = [
     { name = "pytest-asyncio", specifier = ">=0.24.0" },
     { name = "pytest-cov", specifier = ">=6.0.0" },
     { name = "pytest-httpx", specifier = ">=0.32.0" },
+    { name = "pytest-timeout", specifier = ">=2.4.0" },
 ]
 
 [[package]]

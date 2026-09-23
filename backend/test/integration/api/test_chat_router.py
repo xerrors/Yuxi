@@ -421,6 +421,9 @@ async def test_thread_artifact_uses_image_signature_for_content_type(test_client
     )
     assert confirm_response.status_code == 200, confirm_response.text
     attachment = confirm_response.json()["attachments"][0]
+    listed = await test_client.get(f"/api/chat/thread/{thread_id}/attachments", headers=admin_headers)
+    assert listed.status_code == 200, listed.text
+    assert any(item["file_id"] == attachment["file_id"] for item in listed.json()["attachments"])
 
     artifact_response = await test_client.get(attachment["original_artifact_url"], headers=admin_headers)
 

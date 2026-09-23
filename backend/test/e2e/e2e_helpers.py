@@ -84,8 +84,14 @@ async def wait_for_run(client: httpx.AsyncClient, headers: dict[str, str], run_i
     deadline = asyncio.get_running_loop().time() + RUN_TIMEOUT_SECONDS
     last_payload: dict | None = None
 
-    while asyncio.get_running_loop().time() < deadline:
-        response = await client.get(f"/api/agent/runs/{run_id}", headers=headers)
+    while (remaining := deadline - asyncio.get_running_loop().time()) > 0:
+        try:
+            async with asyncio.timeout_at(deadline):
+                response = await client.get(f"/api/agent/runs/{run_id}", headers=headers, timeout=min(10.0, remaining))
+        except TimeoutError:
+            pytest.fail("Run timed out: " + json.dumps(last_payload or {}, ensure_ascii=False))
+        except httpx.TimeoutException:
+            pytest.fail("Run status request timed out: " + json.dumps(last_payload or {}, ensure_ascii=False))
         assert response.status_code == 200, response.text
 
         last_payload = response.json().get("run") or {}
@@ -93,6 +99,6 @@ async def wait_for_run(client: httpx.AsyncClient, headers: dict[str, str], run_i
         if status in {"completed", "failed", "cancelled", "interrupted"}:
             return last_payload
 
-        await asyncio.sleep(POLL_INTERVAL_SECONDS)
+        await asyncio.sleep(min(POLL_INTERVAL_SECONDS, max(0.0, deadline - asyncio.get_running_loop().time())))
 
     pytest.fail("Run timed out: " + json.dumps(last_payload or {}, ensure_ascii=False))
