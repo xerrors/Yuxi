@@ -62,8 +62,15 @@ jobs:
         uses: docker/setup-buildx-action@v3
       - name: Prepare Compose environment
         run: bash scripts/ci_prepare_system_tests_env.sh
+      - name: Restore Docker layer cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/yuxi-buildkit-cache
+          key: buildkit-${{ runner.os }}-${{ hashFiles('backend/uv.lock', 'backend/pyproject.toml', 'docker/api.Dockerfile', 'docker/sandbox_provisioner/requirements.txt', 'docker/sandbox_provisioner/Dockerfile') }}
+          restore-keys: |
+            buildkit-${{ runner.os }}-
       - name: Build topology images with cached layers
-        run: bash scripts/ci_build_topology_images.sh
+        run: bash scripts/ci_build_topology_images.sh /tmp/yuxi-buildkit-cache
       - name: Start durable-task runtime topology
         run: docker compose up -d postgres redis minio etcd milvus sandbox-provisioner api worker
       - name: Wait for durable-task topology readiness
@@ -158,15 +165,26 @@ jobs:
           E2E_RUN_POLL_INTERVAL_SECONDS=1
           SANDBOX_KEEPALIVE_INTERVAL_SECONDS=5
           EOF
-      - name: Diagnose build layer cache export
+      - name: Probe Actions cache availability
         run: |
-          env | grep -E '^ACTIONS_(CACHE_URL|RUNTIME_TOKEN|RESULTS_URL|GITHUB_REF)=' | sed -E 's/(TOKEN|URL)=.*/\1=<set>/' || echo 'ACTIONS_* cache env missing'
-          workdir=$(mktemp -d)
-          printf 'FROM alpine:3.20\nRUN echo diagnostic\n' > "$workdir/Dockerfile"
-          docker buildx build --file "$workdir/Dockerfile" --tag yuxi-ci-cache-diagnostic:probe \
-            --cache-from type=gha,scope=yuxi-ci-diagnostic --cache-to type=gha,scope=yuxi-ci-diagnostic --load "$workdir"
+          env | sort | grep -E '^(ACTIONS|GITHUB)_' | cut -d= -f1 | tr '\n' ' '
+          echo
+          mkdir -p /tmp/yuxi-cache-probe
+          head -c 65536 /dev/urandom > /tmp/yuxi-cache-probe/blob
+      - name: Cache service probe entry
+        uses: actions/cache@v4
+        with:
+          path: /tmp/yuxi-cache-probe
+          key: yuxi-ci-cache-probe
+      - name: Restore Docker layer cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/yuxi-buildkit-cache
+          key: buildkit-${{ runner.os }}-${{ hashFiles('backend/uv.lock', 'backend/pyproject.toml', 'docker/api.Dockerfile', 'docker/sandbox_provisioner/requirements.txt', 'docker/sandbox_provisioner/Dockerfile') }}
+          restore-keys: |
+            buildkit-${{ runner.os }}-
       - name: Build topology images with cached layers
-        run: bash scripts/ci_build_topology_images.sh
+        run: bash scripts/ci_build_topology_images.sh /tmp/yuxi-buildkit-cache
       - name: Start focused runtime topology
         run: docker compose up -d postgres redis minio sandbox-provisioner api worker
       - name: Wait for truthful readiness
