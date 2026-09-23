@@ -22,6 +22,7 @@ import httpx
 from langchain.agents.middleware.model_retry import ModelRetryMiddleware
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_core.exceptions import ModelAPIError, ModelConnectionError, ModelError, ModelTimeoutError
+from langchain_core.messages import AIMessage
 from langgraph.errors import GraphBubbleUp
 
 from yuxi.utils.logging_config import logger
@@ -45,6 +46,10 @@ _NETWORK_ERROR_MARKERS = (
 
 # 明确非网络的错误：重试无意义，立即放行。
 _NON_NETWORK_MARKERS = ("ratelimit", "authentication", "permission", "invalid_request", "not_found", "context_length")
+
+# 重试耗尽时合成的错误 AIMessage 标记：该消息未经过 model lifecycle 事件流，
+# 不会有 model audit 记录（#1062）。下游 save_messages 一致性检查据此豁免。
+MODEL_RETRY_FAILURE_MARKER = "lc_model_retry_failure"
 
 
 class NetworkRetryMiddleware(ModelRetryMiddleware):
@@ -72,6 +77,12 @@ class NetworkRetryMiddleware(ModelRetryMiddleware):
         )
         self._network_initial_delay = network_initial_delay
         self._network_max_delay = network_max_delay
+
+    @staticmethod
+    def _format_failure_message(exc: Exception, attempts_made: int) -> AIMessage:
+        message = ModelRetryMiddleware._format_failure_message(exc, attempts_made)
+        message.additional_kwargs[MODEL_RETRY_FAILURE_MARKER] = True
+        return message
 
     def wrap_model_call(
         self,

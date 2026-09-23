@@ -8,8 +8,11 @@ from types import SimpleNamespace
 import pytest
 from langchain_core.exceptions import ModelError
 from langchain_core.messages import AIMessage
-
-from yuxi.agents.middlewares.network_retry import NetworkRetryMiddleware, _is_network_error
+from yuxi.agents.middlewares.network_retry import (
+    MODEL_RETRY_FAILURE_MARKER,
+    NetworkRetryMiddleware,
+    _is_network_error,
+)
 
 pytestmark = [pytest.mark.unit]
 
@@ -311,3 +314,20 @@ async def test_invalid_model_request_with_timeout_text_is_not_retried():
         await mw.awrap_model_call(object(), handler)
     assert raised.value is error
     assert calls == 1
+
+
+def test_format_failure_message_carries_retry_failure_marker():
+    message = NetworkRetryMiddleware._format_failure_message(FakeError("rate limit"), 3)
+
+    # 重试耗尽合成的错误 AIMessage 必须带标记：它未经 model lifecycle 事件流，
+    # 无 model audit 记录属预期，下游 save_messages 一致性检查据此豁免（#1062）
+    assert message.additional_kwargs[MODEL_RETRY_FAILURE_MARKER] is True
+    assert message.content.startswith("Model call failed after 3 attempts")
+
+
+def test_format_failure_message_does_not_mutate_parent_result_metadata():
+    message = NetworkRetryMiddleware._format_failure_message(FakeError("boom"), 1)
+
+    assert message.response_metadata == {}
+    assert message.tool_calls == []
+    assert not (message.id or "").startswith("lc_run-")

@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from langchain.messages import AIMessage, HumanMessage, ToolMessage
 
 from yuxi.agents import context as agent_context
+from yuxi.agents.middlewares.network_retry import MODEL_RETRY_FAILURE_MARKER
 from yuxi.workspace import paths as workspace_paths
 from test.unit.agent_context_fixtures import prepared_execution
 from yuxi.services import chat_service as svc
@@ -1417,3 +1418,90 @@ async def test_execution_does_not_rebuild_missing_snapshot_context(monkeypatch, 
             thread_id="thread-1",
             prepared_execution=snapshot,
         )
+
+
+@pytest.mark.asyncio
+async def test_completed_run_accepts_retry_failure_final_message(monkeypatch: pytest.MonkeyPatch) -> None:
+    """重试耗尽合成的错误 AIMessage 无 audit 记录属预期，不得导致一致性检查崩溃（#1062）。"""
+    audit_message = SimpleNamespace(
+        id=9,
+        operation_id="known-intermediate",
+        content="",
+        extra_metadata={},
+        execution_status="completed",
+        message_type="model_audit",
+        conversation_id=1,
+    )
+
+    class FakeDB:
+        async def commit(self):
+            pass
+
+        async def rollback(self):
+            pass
+
+        async def flush(self):
+            pass
+
+    class FakeGraph:
+        async def aget_state(self, _config):
+            return SimpleNamespace(
+                values={
+                    "messages": [
+                        AIMessage(content="known", id="known-intermediate"),
+                        AIMessage(
+                            content="Model call failed after 3 attempts with ModelAPIError: 429",
+                            id="missing-final",
+                            additional_kwargs={MODEL_RETRY_FAILURE_MARKER: True},
+                        ),
+                    ]
+                }
+            )
+
+    class FakeAuditRepo:
+        def __init__(self, _db):
+            pass
+
+        async def list_for_run(self, _run_id):
+            return [audit_message]
+
+        async def get(self, *, run_id, operation_id):
+            assert run_id == "run-1"
+            return audit_message if operation_id == "known-intermediate" else None
+
+    terminal_calls: list[str] = []
+
+    class FakeRunRepo:
+        def __init__(self, _db):
+            pass
+
+        async def lock_output_persistence(self, *_args, **_kwargs):
+            return object()
+
+        async def set_terminal_status(self, *_args, **_kwargs):
+            terminal_calls.append("completed")
+            return SimpleNamespace(status="completed"), True
+
+        async def cancel_active_execution_tree_descendants(self, _run):
+            return []
+
+    fake_db = FakeDB()
+    conv_repo = _FakeConvRepo(fake_db)
+    monkeypatch.setattr(svc, "AgentRunRepository", FakeRunRepo)
+    monkeypatch.setattr(svc, "ModelMessageAuditRepository", FakeAuditRepo)
+    monkeypatch.setattr(svc, "ToolMessageAuditRepository", _EmptyToolAuditRepo)
+
+    committed = await svc.save_messages_from_langgraph_state(
+        state=await FakeGraph().aget_state({}),
+        thread_id="thread-1",
+        conv_repo=conv_repo,
+        run_id="run-1",
+        request_id="request-1",
+        worker_id="worker-1",
+        complete_run=True,
+    )
+
+    # 不再 raise：Run 正常落终态，且不发布合成错误消息为助手输出
+    assert committed is True
+    assert terminal_calls == ["completed"]
+    assert conv_repo.published_message_ids == []

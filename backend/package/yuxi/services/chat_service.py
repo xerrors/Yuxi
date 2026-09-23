@@ -26,6 +26,7 @@ from yuxi.agents.base import _json_safe
 from yuxi.agents.buildin import get_agent_backend
 from yuxi.agents.callbacks.model_request_timing import FirstModelRequestRecorder
 from yuxi.agents.context import BaseContext
+from yuxi.agents.middlewares.network_retry import MODEL_RETRY_FAILURE_MARKER
 from yuxi.agents.state import AgentStatePayload
 from yuxi.models.utils import parse_assistant_message_body
 from yuxi.repositories.agent_repository import AgentRepository
@@ -680,6 +681,18 @@ def _should_reconcile_tool_state(audit: Any, tool_message: dict[str, Any]) -> bo
     return metadata.get("awaiting_run_terminal") is True and tool_message.get("status") == "error"
 
 
+def _is_model_retry_failure_state_message(msg_dict: dict[str, Any] | None) -> bool:
+    """判断 State 中的 AIMessage 是否为 ModelRetryMiddleware 重试耗尽时合成的错误消息。
+
+    这类消息未经过 model lifecycle 事件流，不会有 model audit 记录，
+    属预期行为而非一致性破坏（#1062）。
+    """
+    if not msg_dict:
+        return False
+    additional_kwargs = msg_dict.get("additional_kwargs") or {}
+    return bool(additional_kwargs.get(MODEL_RETRY_FAILURE_MARKER))
+
+
 async def save_messages_from_langgraph_state(
     state,
     thread_id: str,
@@ -727,6 +740,7 @@ async def save_messages_from_langgraph_state(
         state_model_messages: dict[str, dict[str, Any]] = {}
         state_tool_messages: dict[str, dict[str, Any]] = {}
         last_state_ai_id: str | None = None
+        last_state_ai_message: dict[str, Any] | None = None
         last_ai_message = None
         for msg in messages or []:
             if hasattr(msg, "model_dump"):
@@ -752,6 +766,7 @@ async def save_messages_from_langgraph_state(
 
             if msg_type == "ai":
                 last_state_ai_id = str(msg_id) if msg_id else None
+                last_state_ai_message = msg_dict
                 if run_id and msg_id and str(msg_id) in current_audit_operation_ids:
                     # Checkpoint 包含线程完整历史；同一来源键只对账最后一次 AIMessage。
                     state_model_messages[str(msg_id)] = msg_dict
@@ -803,7 +818,11 @@ async def save_messages_from_langgraph_state(
                 )
             if current_model_audits and (complete_run or interrupt_run):
                 terminal_ai_message = reconciled_audits.get(last_state_ai_id or "")
-                if complete_run and terminal_ai_message is None:
+                if (
+                    complete_run
+                    and terminal_ai_message is None
+                    and not _is_model_retry_failure_state_message(last_state_ai_message)
+                ):
                     raise ValueError("最终 State AIMessage 无法与当前 Run 的 Model lifecycle 事实关联")
                 last_ai_message = terminal_ai_message
             if last_ai_message is not None:
