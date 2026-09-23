@@ -26,8 +26,8 @@ Runtime System Tests 单次运行约 14m38s：`docker compose up --build` 312s�
 
 ## 后果
 
-首个冷运行耗时不降；后续运行预计主链路从约 14m38s 降到约 9min（热缓存 + 并行拆分，e2e 保持默认 env 的 ~282s）。`type=gha` 缓存导出在该环境的 job 中静默失效（`ACTIONS_CACHE_URL` 等未注入，缓存条目从未生成），层缓存改用 `actions/cache` 持久化 buildkit `type=local` 缓存目录（实测生成 969MB 缓存条目）。CI 依赖 GitHub Actions 缓存服务。拆分后 CI 总分钟数上升约一套拓扑的启动成本，PR 墙钟下降。
+首个冷运行耗时不降（约 14m23s，与原 `--build` 等价）；热缓存下构建从 312-347s 降到 90s（20 个 CACHED 步骤，uv sync 与 provisioner pip 不再执行），主 job 从 14m38s 降到约 10m15s，Durable Task job 约 4min 并行完成，PR 墙钟约 10m15s。CI 总分钟数因第二套拓扑上升约 4min。缓存回退读取默认分支缓存暂无数据（新 key 首次运行必冷）。`type=gha` 缓存导出在该环境的 job 中静默失效（缓存条目从未生成且无导出日志），层缓存改用 `actions/cache` 持久化 buildkit `type=local` 缓存目录，两个镜像必须使用互相隔离的缓存目录与 key：共用一个目录时后导出者会覆盖前者的 manifest，导致 api 镜像层永不命中。
 
 ## 验证
 
-本地 `docker compose config --format json | jq -r '.services.api.image, .services["sandbox-provisioner"].image'` 解析出 `yuxi-api:0.7.3` 与 `yuxi-sandbox-provisioner:0.7.3`；两个 `docker buildx build --check` 均通过；YAML 解析与两个 job 的步骤顺序核对无误；`bash -n` 与临时目录 env 脚本烟测通过；`git diff --check` 无告警。CI 实测：run 35818751748 生成 `buildkit-Linux` 969MB 缓存条目，证明 actions/cache 路线在该 workflow 的 job 中可用；`type=gha` 同一 job 零缓存条目且无导出日志。热缓存收益、并行拆分后的墙钟与 e2e 默认 env 下的稳定性需按本 PR 下一轮真实 run 计时复核。
+本地 `docker compose config --format json | jq -r '.services.api.image, .services["sandbox-provisioner"].image'` 解析出 `yuxi-api:0.7.3` 与 `yuxi-sandbox-provisioner:0.7.3`；两个 `docker buildx build --check` 均通过；YAML 解析与两个 job 步骤顺序核对无误；`bash -n` 通过。本地全新 buildx builder 验证 type=local 缓存往返：冷构建 2m36s、热构建 7s 且 20 个步骤 CACHED。CI 实测（run 35823445478）：冷运行主 job 14m23s 后按新 key 保存缓存，重跑热缓存构建 90s、主 job 10m15s、Durable job 3m58s，两 job 均 success；`gh run rerun` 前一次失败（e2e env 覆写期间的两次同签名失败见决策）后撤回覆写连续两次 success。未验证：e2e 在默认 env 下的长期稳定性（失败根因未定位，仅有撤回后恢复的相关性证据）；缓存命中依赖 key 涉及文件不变，`backend/uv.lock` 或 Dockerfile 变更会退回冷构建。
