@@ -7,7 +7,6 @@ from types import SimpleNamespace
 
 import pytest
 from langchain_core.exceptions import ModelError
-from langchain_core.messages import AIMessage
 
 from yuxi.agents.middlewares.network_retry import NetworkRetryMiddleware, _is_network_error
 
@@ -88,21 +87,39 @@ async def test_cancellation_not_swallowed():
         await mw.awrap_model_call(object(), handler)
 
 
+@pytest.mark.parametrize("sync", [False, True])
+@pytest.mark.parametrize("max_retries", [0, 2])
 @pytest.mark.asyncio
-async def test_non_network_error_retried_by_max_retries_then_continue():
-    """非网络错误仍按 max_retries 次数重试，耗尽后 on_failure=continue 返回错误 AIMessage。"""
-    mw = NetworkRetryMiddleware(max_retries=2, initial_delay=0.0, jitter=False)
-    calls = {"n": 0}
+async def test_rate_limit_exhaustion_preserves_original_error(sync, max_retries):
+    """429 按配置重试，耗尽后保留原异常供 Run 失败通道处理。"""
+    import httpx
+    import openai
 
-    async def handler(request):
-        calls["n"] += 1
-        raise FakeError("AuthenticationError: invalid api key")
+    error = openai.RateLimitError(
+        "rate limit exhausted",
+        response=httpx.Response(429, request=httpx.Request("POST", "https://example.invalid/v1/chat/completions")),
+        body=None,
+    )
+    mw = NetworkRetryMiddleware(max_retries=max_retries, initial_delay=0, jitter=False)
+    calls = 0
 
-    result = await mw.awrap_model_call(object(), handler)
+    def handler(_request):
+        """重复抛出同一个 provider 异常。"""
+        nonlocal calls
+        calls += 1
+        raise error
 
-    # max_retries=2 → 1 次初始 + 2 次重试 = 3 次调用
-    assert calls["n"] == 3
-    assert isinstance(result.result[0], AIMessage)
+    async def async_handler(request):
+        """异步入口保留同一异常对象。"""
+        return handler(request)
+
+    with pytest.raises(openai.RateLimitError) as raised:
+        if sync:
+            mw.wrap_model_call(object(), handler)
+        else:
+            await mw.awrap_model_call(object(), async_handler)
+    assert raised.value is error
+    assert calls == max_retries + 1
 
 
 @pytest.mark.asyncio

@@ -35,6 +35,125 @@ PROVIDER_ID = "ci-replay"
 MODEL_SPEC = f"{PROVIDER_ID}:deterministic-chat"
 
 
+@pytest.mark.parametrize("subagent", [False, True])
+@pytest.mark.parametrize("first_call", [False, True])
+async def test_model_retry_exhaustion_preserves_failure_and_parent_recovers(
+    e2e_client, e2e_headers, subagent, first_call
+):
+    """真实 429 耗尽后保留失败原因，父任务可消费失败且线程仍可继续。"""
+    uid = str((await e2e_client.get("/api/auth/me", headers=e2e_headers)).json()["uid"])
+    await _create_provider(e2e_client, e2e_headers)
+    agents, child_threads, run_ids = [], [], []
+    thread_id = None
+    marker = "DETERMINISTIC_RATE_LIMIT"
+    query = f"{EXPECTED_OUTPUT} {marker} SUBAGENT_PATH:/tmp/not-written"
+    if first_call:
+        query += " RATE_LIMIT_FIRST_CALL"
+    try:
+        child = None
+        if subagent:
+            child = await _create_agent(
+                e2e_client, e2e_headers, uid, is_subagent=True, system_prompt_suffix="DETERMINISTIC_SUBAGENT_CHILD"
+            )
+            agents.append(child)
+        agent = await _create_agent(
+            e2e_client,
+            e2e_headers,
+            uid,
+            subagents=[child] if child else [],
+            system_prompt_suffix=f"DETERMINISTIC_SUBAGENT_PARENT:{child}" if child else "",
+        )
+        agents.append(agent)
+        response = await e2e_client.post(
+            "/api/chat/thread",
+            headers=e2e_headers,
+            json={
+                "agent_id": agent,
+                "title": make_test_conversation_title("model-retry-failure"),
+                "metadata": make_test_conversation_metadata("model-retry-failure", e2e=True),
+            },
+        )
+        assert response.status_code == 200, response.text
+        thread_id = response.json()["id"]
+        # 同一线程连续提交两次，第二次证明上一次失败没有遗留清理或队列阻塞。
+        for _ in range(2):
+            response = await e2e_client.post(
+                "/api/agent/runs",
+                headers=e2e_headers,
+                json={
+                    "agent_slug": agent,
+                    "thread_id": thread_id,
+                    "query": query,
+                    "tool_approval_mode": "default",
+                    "meta": {"request_id": str(uuid.uuid4())},
+                },
+            )
+            assert response.status_code == 200, response.text
+            run_id = response.json()["run_id"]
+            run_ids.append(run_id)
+            final = await wait_for_run(e2e_client, e2e_headers, run_id)
+            assert final["status"] == ("completed" if subagent else "failed"), final
+            failed_id = run_id
+            conn = await asyncpg.connect(postgres_dsn())
+            try:
+                if subagent:
+                    children = await conn.fetch(
+                        "SELECT id, conversation_thread_id FROM agent_runs WHERE created_by_run_id = $1", run_id
+                    )
+                    assert len(children) == 1, children
+                    failed_id = children[0]["id"]
+                    child_threads.append(children[0]["conversation_thread_id"])
+                    tool_content = await conn.fetchval(
+                        "SELECT content FROM messages WHERE run_id = $1 AND message_type = 'tool_audit' "
+                        "AND operation_id = 'await-call-subagent-start'",
+                        run_id,
+                    )
+                    observed = json.loads(tool_content)
+                    assert observed["status"] == "failed", observed
+                    assert marker in observed["result"]["error"]["message"], observed
+                    parent_result = await e2e_client.get(f"/api/agent/runs/{run_id}/result", headers=e2e_headers)
+                    assert parent_result.json()["output"] == EXPECTED_OUTPUT, parent_result.text
+                failed = await conn.fetchrow(
+                    "SELECT status, error_message, output_message_id FROM agent_runs WHERE id = $1", failed_id
+                )
+                assert failed["status"] == "failed", failed
+                assert marker in failed["error_message"], failed
+                assert "Model lifecycle" not in failed["error_message"], failed
+                assert await conn.fetchval("SELECT COUNT(*) FROM agent_run_attempts WHERE run_id = $1", failed_id) == 1
+                # 失败通道允许保存同 Run 的部分输出，但必须携带明确错误元数据。
+                output = await conn.fetchrow(
+                    "SELECT run_id, content, extra_metadata FROM messages WHERE id = $1",
+                    failed["output_message_id"],
+                )
+                assert output["run_id"] == failed_id, output
+                metadata = json.loads(output["extra_metadata"])
+                assert metadata["is_error"] is True, metadata
+                assert marker in metadata["error_message"], metadata
+                assert "Model call failed after" not in output["content"], output
+            finally:
+                await conn.close()
+            result = await e2e_client.get(f"/api/agent/runs/{failed_id}/result", headers=e2e_headers)
+            assert result.status_code == 200, result.text
+            assert result.json()["status"] == "failed", result.text
+            assert result.json()["output"] == "", result.text
+            assert marker in result.json()["error"]["message"], result.text
+            async with e2e_client.stream("GET", f"/api/agent/runs/{failed_id}/events", headers=e2e_headers) as events:
+                assert events.status_code == 200
+                body = (await events.aread()).decode()
+                assert "event: end" in body and '"failed"' in body
+            await _wait_for_runtime_cleanup(failed_id)
+            await _wait_for_runtime_cleanup(run_id)
+    finally:
+        for run_id in run_ids:
+            await cancel_run(e2e_client, e2e_headers, run_id)
+        for target in [*child_threads, thread_id]:
+            if target:
+                await e2e_client.delete(f"/api/chat/thread/{target}", headers=e2e_headers)
+        for slug in reversed(agents):
+            await delete_agent(e2e_client, e2e_headers, slug)
+        await _delete_provider(e2e_client, e2e_headers)
+
+
 async def test_replay_rejects_requests_outside_deterministic_contract() -> None:
     valid_body = {
         "model": "deterministic-chat",

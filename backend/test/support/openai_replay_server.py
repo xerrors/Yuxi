@@ -238,7 +238,24 @@ class ReplayHandler(BaseHTTPRequestHandler):
             self._write_json(422, {"error": request_error})
             return
 
-        serialized_messages = json.dumps(request["messages"], ensure_ascii=False)
+        messages = request["messages"]
+        serialized_messages = json.dumps(messages, ensure_ascii=False)
+        if "DETERMINISTIC_RATE_LIMIT" in serialized_messages:
+            last_user = max(index for index, message in enumerate(messages) if message.get("role") == "user")
+            messages = [message for message in messages[:last_user] if message.get("role") == "system"] + messages[
+                last_user:
+            ]
+            is_parent = (
+                "DETERMINISTIC_SUBAGENT_PARENT:" in serialized_messages
+                and "DETERMINISTIC_SUBAGENT_CHILD" not in serialized_messages
+            )
+            has_tool_result = any(message.get("role") == "tool" for message in messages)
+            if not is_parent and (has_tool_result or "RATE_LIMIT_FIRST_CALL" in serialized_messages):
+                self._write_json(
+                    429,
+                    {"error": {"message": "DETERMINISTIC_RATE_LIMIT exhausted", "type": "rate_limit_error"}},
+                )
+                return
         gate = re.search(r"SUBAGENT_OBSERVATION_GATE:([0-9a-f-]+)", serialized_messages)
         if gate and "DETERMINISTIC_SUBAGENT_CHILD" in serialized_messages and "SUBAGENT_SLOW" in serialized_messages:
             with BLOCKING_REQUEST_TOKENS_LOCK:
@@ -248,7 +265,7 @@ class ReplayHandler(BaseHTTPRequestHandler):
                 return
         blocking_match = re.search(rf"{BLOCK_BEFORE_RESPONSE_MARKER}:([0-9a-f-]+)", serialized_messages)
         model = str(request["model"])
-        payloads = _stream_payloads(model, request["messages"])
+        payloads = _stream_payloads(model, messages)
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
