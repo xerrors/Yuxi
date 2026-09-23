@@ -39,6 +39,11 @@ CONTENT_ANALYZER_PARAMS = {"type": "chinese"}
 VECTOR_METRIC_TYPE = "COSINE"
 MILVUS_CHUNK_EMBED_BATCH_SIZE = 200
 MILVUS_QUERY_OFFLOAD_LIMIT = 8
+# Milvus 为派生索引：PG 先行落库（权威源），Milvus upsert 失败有限次重试，
+# 重试耗尽则抛错由上层标记文件状态；不回滚 PG（避免单边数据）。
+# 重新索引时 PG batch_upsert 与 Milvus upsert 均按主键幂等，重跑即可收敛。
+MILVUS_CHUNK_UPSERT_ATTEMPTS = 3
+MILVUS_CHUNK_UPSERT_RETRY_DELAY_SECONDS = 1.0
 _milvus_query_offload_semaphore_refs: dict[
     int,
     tuple[weakref.ReferenceType[asyncio.AbstractEventLoop], weakref.ReferenceType[asyncio.Semaphore]],
@@ -564,26 +569,28 @@ class MilvusKB(KnowledgeBase):
         ]
         chunk_repo = KnowledgeChunkRepository()
 
-        def _insert_milvus_records():
-            collection.insert(entities)
+        def _upsert_milvus_records():
+            collection.upsert(entities)
 
-        pg_task = chunk_repo.batch_upsert(self._build_chunk_pg_records(kb_id, chunks))
-        milvus_task = asyncio.to_thread(_insert_milvus_records)
-        results = await asyncio.gather(pg_task, milvus_task, return_exceptions=True)
-        errors = [result for result in results if isinstance(result, Exception)]
-        if not errors:
-            return
+        # PG 为权威源，先落 chunk 事实；Milvus 只是派生索引，失败不回滚 PG。
+        await chunk_repo.batch_upsert(self._build_chunk_pg_records(kb_id, chunks))
 
-        logger.error(f"Chunk double-write failed for file {file_id}, rolling back PostgreSQL and Milvus chunks")
-        try:
-            await chunk_repo.delete_by_file_id(file_id)
-        except Exception as cleanup_error:
-            logger.error(f"Failed to rollback PostgreSQL chunks for {file_id}: {cleanup_error}")
-        try:
-            await self._delete_file_chunks_from_milvus(collection, file_id)
-        except Exception as cleanup_error:
-            logger.error(f"Failed to rollback Milvus chunks for {file_id}: {cleanup_error}")
-        raise errors[0]
+        last_error: Exception | None = None
+        for attempt in range(MILVUS_CHUNK_UPSERT_ATTEMPTS):
+            try:
+                await asyncio.to_thread(_upsert_milvus_records)
+                return
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    f"Milvus chunk upsert failed for file {file_id} "
+                    f"(attempt {attempt + 1}/{MILVUS_CHUNK_UPSERT_ATTEMPTS}): {e}"
+                )
+                if attempt + 1 < MILVUS_CHUNK_UPSERT_ATTEMPTS:
+                    await asyncio.sleep(MILVUS_CHUNK_UPSERT_RETRY_DELAY_SECONDS)
+
+        assert last_error is not None
+        raise last_error
 
     async def _embed_and_store_chunks(
         self,

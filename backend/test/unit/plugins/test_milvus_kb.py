@@ -44,6 +44,7 @@ class FakeCollection:
         self.search_calls = []
         self.hybrid_calls = []
         self.insert_calls = []
+        self.upsert_calls = []
         self.distance = distance
 
     def search(self, **kwargs):
@@ -56,6 +57,9 @@ class FakeCollection:
 
     def insert(self, entities):
         self.insert_calls.append(entities)
+
+    def upsert(self, entities):
+        self.upsert_calls.append(entities)
 
 
 def make_kb(collection: FakeCollection) -> MilvusKB:
@@ -583,39 +587,40 @@ async def test_milvus_chunk_delete_is_offloaded_from_event_loop():
     assert all(thread_id != event_loop_thread for thread_id in call_threads)
 
 
-async def test_insert_chunks_to_stores_inserts_current_batch(monkeypatch):
-    repos = []
+async def test_insert_chunks_to_stores_writes_pg_first_then_milvus_upsert(monkeypatch):
+    event_log = []
 
     class FakeChunkRepo:
-        def __init__(self):
-            self.upsert_calls = []
-            self.delete_calls = []
-            repos.append(self)
-
         async def batch_upsert(self, chunks):
-            self.upsert_calls.append(chunks)
+            event_log.append("pg")
             return []
-
-        async def delete_by_file_id(self, file_id):
-            self.delete_calls.append(file_id)
-            return 0
 
     monkeypatch.setattr("yuxi.knowledge.implementations.milvus.KnowledgeChunkRepository", FakeChunkRepo)
     kb = MilvusKB.__new__(MilvusKB)
     collection = FakeCollection()
+
+    original_upsert = collection.upsert
+
+    def upsert(entities):
+        event_log.append("milvus")
+        original_upsert(entities)
+
+    collection.upsert = upsert
     chunks = [make_chunk(index) for index in range(3)]
     embeddings = [[0.1, 0.2] for _ in chunks]
 
     await kb._insert_chunks_to_stores("db", "file-1", collection, chunks, embeddings)
 
-    assert len(collection.insert_calls) == 1
-    assert collection.insert_calls[0][0] == ["id-0", "id-1", "id-2"]
-    assert collection.insert_calls[0][5] == embeddings
-    assert len(repos[0].upsert_calls) == 1
-    assert [record["chunk_id"] for record in repos[0].upsert_calls[0]] == ["chunk-0", "chunk-1", "chunk-2"]
+    # PG 为权威源先行落库，Milvus 只做派生索引
+    assert event_log == ["pg", "milvus"]
+    assert len(collection.upsert_calls) == 1
+    assert collection.upsert_calls[0][0] == ["id-0", "id-1", "id-2"]
+    assert collection.upsert_calls[0][5] == embeddings
+    assert collection.insert_calls == []
 
 
-async def test_insert_chunks_to_stores_rolls_back_file_when_milvus_insert_fails(monkeypatch):
+async def test_insert_chunks_to_stores_retries_milvus_upsert_and_keeps_pg_facts(monkeypatch):
+    monkeypatch.setattr(milvus_module, "MILVUS_CHUNK_UPSERT_RETRY_DELAY_SECONDS", 0)
     repos = []
 
     class FakeChunkRepo:
@@ -632,13 +637,57 @@ async def test_insert_chunks_to_stores_rolls_back_file_when_milvus_insert_fails(
             self.delete_calls.append(file_id)
             return 0
 
-    class FailingCollection(FakeCollection):
-        def insert(self, entities):
-            super().insert(entities)
-            raise RuntimeError("milvus boom")
+    monkeypatch.setattr("yuxi.knowledge.implementations.milvus.KnowledgeChunkRepository", FakeChunkRepo)
+    kb = MilvusKB.__new__(MilvusKB)
+
+    class FlakyCollection(FakeCollection):
+        def __init__(self):
+            super().__init__()
+            self.attempts = 0
+
+        def upsert(self, entities):
+            self.attempts += 1
+            if self.attempts == 1:
+                raise RuntimeError("milvus transient")
+            self.upsert_calls.append(entities)
+
+    collection = FlakyCollection()
+    chunks = [make_chunk(index) for index in range(2)]
+    embeddings = [[0.1, 0.2] for _ in chunks]
+
+    await kb._insert_chunks_to_stores("db", "file-1", collection, chunks, embeddings)
+
+    # 重试成功即收敛：PG 事实保留，不触发回滚
+    assert collection.attempts == 2
+    assert len(collection.upsert_calls) == 1
+    assert repos[0].delete_calls == []
+
+
+async def test_insert_chunks_to_stores_raises_after_retry_exhaustion_without_rollback(monkeypatch):
+    monkeypatch.setattr(milvus_module, "MILVUS_CHUNK_UPSERT_RETRY_DELAY_SECONDS", 0)
+    repos = []
+
+    class FakeChunkRepo:
+        def __init__(self):
+            self.upsert_calls = []
+            self.delete_calls = []
+            repos.append(self)
+
+        async def batch_upsert(self, chunks):
+            self.upsert_calls.append(chunks)
+            return []
+
+        async def delete_by_file_id(self, file_id):
+            self.delete_calls.append(file_id)
+            return 0
 
     monkeypatch.setattr("yuxi.knowledge.implementations.milvus.KnowledgeChunkRepository", FakeChunkRepo)
     kb = MilvusKB.__new__(MilvusKB)
+
+    class FailingCollection(FakeCollection):
+        def upsert(self, entities):
+            raise RuntimeError("milvus boom")
+
     collection = FailingCollection()
     milvus_delete_calls = []
 
@@ -652,8 +701,27 @@ async def test_insert_chunks_to_stores_rolls_back_file_when_milvus_insert_fails(
     with pytest.raises(RuntimeError, match="milvus boom"):
         await kb._insert_chunks_to_stores("db", "file-1", collection, chunks, embeddings)
 
-    assert repos[0].delete_calls == ["file-1"]
-    assert milvus_delete_calls == [(collection, "file-1")]
+    # 重试耗尽后抛错且不回滚：PG 事实保留，等待重新索引幂等收敛
+    assert repos[0].delete_calls == []
+    assert milvus_delete_calls == []
+
+
+async def test_insert_chunks_to_stores_propagates_pg_failure_without_milvus_write(monkeypatch):
+    class FakeChunkRepo:
+        async def batch_upsert(self, chunks):
+            raise RuntimeError("pg boom")
+
+    monkeypatch.setattr("yuxi.knowledge.implementations.milvus.KnowledgeChunkRepository", FakeChunkRepo)
+    kb = MilvusKB.__new__(MilvusKB)
+    collection = FakeCollection()
+    chunks = [make_chunk(index) for index in range(2)]
+    embeddings = [[0.1, 0.2] for _ in chunks]
+
+    with pytest.raises(RuntimeError, match="pg boom"):
+        await kb._insert_chunks_to_stores("db", "file-1", collection, chunks, embeddings)
+
+    # PG 失败时 Milvus 不应被写入
+    assert collection.upsert_calls == []
 
 
 async def test_keyword_mode_uses_milvus_bm25_search():
