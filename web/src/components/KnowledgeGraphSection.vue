@@ -329,7 +329,8 @@
             placeholder='例如 {"temperature":0.1}'
           />
           <div class="form-item-hint">
-            输入的 JSON 对象会作为 model_params 传给抽取模型调用；如需设置超时，请使用上方字段。
+            输入的 JSON 对象会作为 model_params 传给抽取模型调用；如需设置超时，请使用上方字段。关闭百炼等模型的思考模式需写在
+            extra_body 中，例如 {"extra_body":{"enable_thinking":false}}。
           </div>
         </a-form-item>
       </a-form>
