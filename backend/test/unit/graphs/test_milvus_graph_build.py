@@ -357,6 +357,22 @@ def test_llm_graph_extractor_rejects_invalid_timeout(bad_value):
         extractor.validate_options()
 
 
+def test_llm_graph_extractor_rejects_top_level_enable_thinking():
+    """顶层 enable_thinking 会被当成 create() 的未知参数，保存配置时就要报错。"""
+    extractor = LLMGraphExtractor({"model_spec": "test/model", "model_params": {"enable_thinking": False}})
+
+    with pytest.raises(ValueError, match="extra_body"):
+        extractor.validate_options()
+
+
+def test_llm_graph_extractor_accepts_enable_thinking_in_extra_body():
+    extractor = LLMGraphExtractor(
+        {"model_spec": "test/model", "model_params": {"extra_body": {"enable_thinking": False}}}
+    )
+
+    extractor.validate_options()
+
+
 def test_llm_graph_extractor_appends_schema_to_fixed_prompt():
     extractor = LLMGraphExtractor(
         {
