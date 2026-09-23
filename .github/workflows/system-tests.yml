@@ -157,25 +157,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Prepare Compose environment
-        run: |
-          bash scripts/ci_prepare_system_tests_env.sh
-          # CI-only：缩短 e2e 的 run 状态轮询间隔；容器 exec 测试进程继承该 env。
-          # CI-only：缩短沙箱保活 touch 节奏（不影响回收语义），使 e2e 等待仍大于节奏即可复现 runtime recreation。
-          cat >> .env <<'EOF'
-          E2E_RUN_POLL_INTERVAL_SECONDS=1
-          SANDBOX_KEEPALIVE_INTERVAL_SECONDS=5
-          EOF
-      - name: Probe Actions cache availability
-        run: |
-          env | sort | grep -E '^(ACTIONS|GITHUB)_' | cut -d= -f1 | tr '\n' ' '
-          echo
-          mkdir -p /tmp/yuxi-cache-probe
-          head -c 65536 /dev/urandom > /tmp/yuxi-cache-probe/blob
-      - name: Cache service probe entry
-        uses: actions/cache@v4
-        with:
-          path: /tmp/yuxi-cache-probe
-          key: yuxi-ci-cache-probe
+        run: bash scripts/ci_prepare_system_tests_env.sh
       - name: Restore Docker layer cache
         uses: actions/cache@v4
         with:
