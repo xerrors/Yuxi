@@ -1,10 +1,11 @@
 // 已登录开发环境：playwright-cli -s=<session> run-code --filename=web/test/browser/parsedMarkdownEdit.js
 //
-// 覆盖「编辑解析产物」的交互：入口在筛选视图下必须可用、编辑态可进入、分栏同步滚动、
-// 未保存草稿不被 ESC 静默丢弃。
+// 覆盖「编辑解析产物」的交互：入口在筛选视图下必须可用、编辑态可进入、未保存草稿不被 ESC
+// 静默丢弃、保存请求挂起期间禁止继续编辑且草稿不被误标为已保存。若该文档有可预览原件
+// （存在「源文件 / Markdown」两个视图），还验证编辑期间视图切换被禁用。
 //
-// 前置：知识库中至少有一个「待入库」(parsed) 状态的文档。脚本全程只读 + 取消，
-// 不会保存任何修改，也不改动词料状态。
+// 前置：知识库中至少有一个「待入库」(parsed) 状态的文档。脚本不改动知识库数据：
+// 编辑一律取消，唯一一次「保存」被路由拦截扣住并 abort，不会到达服务端。
 // 文件内容由 CLI 作为函数表达式执行，不添加前导分号。
 // prettier-ignore
 async (page) => {
@@ -42,37 +43,32 @@ async (page) => {
   await editEntry.click()
   await page.waitForTimeout(1500)
 
-  const editor = page.locator('textarea.markdown-editor')
-  const preview = page.locator('.markdown-editor-preview')
-  const toolbar = page.locator('.markdown-edit-toolbar')
+  // 编辑态复用 AgentFilePreview：它的 textarea 与浮动操作条就是编辑态的判据
+  const editor = page.locator('.ant-modal-content textarea.file-edit-textarea')
+  const floating = page.locator('.edit-floating-actions')
   check((await editor.count()) === 1, '筛选视图下点「编辑文件」没有进入编辑态')
-  check((await preview.count()) === 1, '编辑态缺少右侧预览')
-  check((await toolbar.innerText()).includes('编辑中'), '编辑态缺少「编辑中」标识')
 
-  // 分栏同步滚动：两侧内容高度不同，按滚动比例映射；程序化写入会触发回声事件，
-  // 实现需忽略它，否则左右会互相驱动来回抖动。
   await editor.evaluate((el) => {
-    const parts = []
-    for (let i = 1; i <= 60; i += 1) parts.push(`## 第 ${i} 节\n\n用于把内容撑长以便验证同步滚动的段落。\n`)
-    el.value = parts.join('\n')
+    el.value = '# 修订后的标题\n\n这是人工修正后的内容。\n'
     el.dispatchEvent(new Event('input', { bubbles: true }))
   })
   await page.waitForTimeout(800)
-  check((await toolbar.innerText()).includes('已修改'), '修改后未标记「已修改」')
+  check((await floating.count()) === 1, '修改后未出现浮动操作条')
+  check((await floating.innerText()).includes('未保存'), '修改后浮动操作条未标记「未保存」')
 
-  const sync = await page.evaluate(() => {
-    const ta = document.querySelector('textarea.markdown-editor')
-    const pv = document.querySelector('.markdown-editor-preview')
-    if (!ta || !pv) return null
-    const range = (el) => el.scrollHeight - el.clientHeight
-    const ratio = (el) => (range(el) > 0 ? el.scrollTop / range(el) : 0)
-    if (range(ta) <= 0) return { scrollable: false }
-    ta.scrollTop = Math.round(range(ta) * 0.5)
-    ta.dispatchEvent(new Event('scroll'))
-    return { scrollable: true, editorRatio: ratio(ta), previewRatio: ratio(pv) }
-  })
-  if (sync && sync.scrollable) {
-    check(Math.abs(sync.previewRatio - sync.editorRatio) < 0.05, `分栏未同步滚动：编辑器 ${sync.editorRatio.toFixed(3)} vs 预览 ${sync.previewRatio.toFixed(3)}`)
+  // 编辑期间必须挡住视图切换：草稿存在 AgentFilePreview 的局部状态里，而 markdown 分支是
+  // v-if 渲染的，切到「源文件」会让它连同草稿一起被卸载，且切换本身没有任何确认步骤。
+  // 只有存在可预览原件（源文件 + Markdown 两种视图）的文档才有切换器，故条件执行。
+  const viewItems = page.locator('.view-controls .ant-segmented-item')
+  if ((await viewItems.count()) > 1) {
+    check(
+      (await page.locator('.view-controls .ant-segmented-disabled').count()) === 1,
+      '编辑期间视图切换未被禁用，草稿会被静默丢弃'
+    )
+    await viewItems.nth(0).click({ force: true })
+    await page.waitForTimeout(1200)
+    check((await editor.count()) === 1, '编辑期间切视图把编辑态（连同草稿）丢掉了')
+    check((await editor.inputValue()).includes('这是人工修正后的内容'), '切视图后草稿丢失')
   }
 
   // ESC 不得静默丢弃草稿
@@ -86,6 +82,37 @@ async (page) => {
   await confirm.getByRole('button', { name: '继续编辑' }).click()
   await page.waitForTimeout(900)
   check((await editor.count()) === 1, '选择「继续编辑」后编辑态丢失')
+
+  // 保存挂起窗口：扣住 PUT 不放行，核对「保存期间禁止编辑」这条收敛方式真的生效，
+  // 且草稿不会被错误标记为已保存。abort 收尾，请求不会到达服务端。
+  let held = null
+  await page.route('**/api/knowledge/databases/*/documents/*/content', async (route) => {
+    if (route.request().method() === 'PUT') {
+      held = route
+      return
+    }
+    await route.continue()
+  })
+
+  await floating.getByRole('button', { name: '保存', exact: true }).click()
+  await page.waitForTimeout(1200)
+  check(Boolean(held), '没有截到保存请求，无法验证挂起窗口')
+  check(await editor.isDisabled(), '保存请求挂起期间 textarea 仍可编辑，草稿可能被覆盖')
+  check(
+    (await page.locator('.edit-floating-actions button[aria-label="保存中"]').count()) === 1,
+    '保存期间保存按钮未被禁用'
+  )
+  check((await floating.innerText()).includes('未保存'), '保存期间草稿被错误标记为已保存')
+
+  await held.abort()
+  await page.waitForTimeout(1500)
+  check(!(await editor.isDisabled()), '保存失败后 textarea 未恢复可编辑')
+  check(
+    (await editor.inputValue()).includes('这是人工修正后的内容'),
+    '保存失败后草稿丢失'
+  )
+  check((await floating.innerText()).includes('未保存'), '保存失败后草稿被标记为已保存')
+  await page.unrouteAll({ behavior: 'ignoreErrors' })
 
   // 关闭并放弃：不得落库
   await page.locator('.custom-close-btn').click()
@@ -108,5 +135,13 @@ async (page) => {
   await page.getByRole('menuitem', { name: '全部状态', exact: true }).click()
   await page.waitForTimeout(800)
 
-  return { target: targetName, filteredRows: rowCount, syncVerified: Boolean(sync && sync.scrollable), escGuard: true, savedNothing: true }
+  return {
+    target: targetName,
+    filteredRows: rowCount,
+    reusedEditor: true,
+    escGuard: true,
+    viewSwitchGuard: true,
+    saveWindowGuard: true,
+    savedNothing: true
+  }
 }

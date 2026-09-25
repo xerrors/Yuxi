@@ -1,7 +1,7 @@
 <template>
   <a-modal
     v-model:open="visible"
-    :width="isEditing ? '1180px' : '800px'"
+    width="800px"
     :footer="null"
     :closable="false"
     wrap-class-name="file-detail"
@@ -20,16 +20,15 @@
           <!-- 字符数/片段数显示在 segment 左边 -->
           <span v-if="viewInfoText" class="view-info">{{ viewInfoText }}</span>
 
-          <!-- 视图模式切换 -->
+          <!-- 视图模式切换：编辑期间禁用，否则切视图会静默丢弃草稿（见 isEditingMarkdown） -->
           <div class="view-controls" v-if="file && viewModeOptions.length > 1">
-            <a-segmented v-model:value="viewMode" :options="viewModeOptions" />
+            <a-segmented v-model:value="viewMode" :options="viewModeOptions" :disabled="isEditingMarkdown" />
           </div>
 
           <!-- 编辑解析产物：与视图切换并列（不放进下载菜单，语义不同） -->
           <a-button
-            v-if="canEditMarkdown && !isEditing"
+            v-if="canEditMarkdown && !isEditingMarkdown"
             type="text"
-            class="edit-md-btn"
             title="编辑 Markdown"
             aria-label="编辑 Markdown"
             @click="startEditing"
@@ -87,56 +86,24 @@
         />
       </div>
 
-      <!-- Markdown 模式 -->
+      <!-- Markdown 模式：预览与编辑都交给 AgentFilePreview（与 source 视图、工作区预览同一套）。
+           编辑态由它内部管理，保存期间它会禁用 textarea，因此不存在"回包覆盖新输入"的窗口。 -->
       <div v-else-if="viewMode === 'markdown'" class="content-panel flat-md-preview">
-        <!-- 编辑态：左编辑 + 右实时预览。预览复用项目同一套渲染栈，
-             与保存后页面展示、Agent 引用时看到的完全一致 -->
-        <div v-if="isEditing" class="markdown-edit-layout">
-          <div class="markdown-edit-toolbar">
-            <span class="edit-badge">编辑中</span>
-            <span v-if="draftChanged" class="edit-unsaved">已修改</span>
-            <span class="edit-count">{{ draftContent.length }} 字符</span>
-            <div class="edit-actions">
-              <a-button size="small" :disabled="savingMarkdown" @click="cancelEditing">取消</a-button>
-              <a-button
-                size="small"
-                type="primary"
-                :loading="savingMarkdown"
-                :disabled="!draftChanged"
-                @click="saveMarkdown"
-              >
-                保存
-              </a-button>
-            </div>
-          </div>
-          <div class="markdown-edit-panes">
-            <textarea
-              ref="editorPane"
-              v-model="draftContent"
-              class="markdown-editor"
-              spellcheck="false"
-              @scroll="onEditorScroll"
-            />
-            <div ref="previewPane" class="markdown-editor-preview" @scroll="onPreviewScroll">
-              <MarkdownPreview :content="draftContent" />
-            </div>
-          </div>
-        </div>
-
-        <!-- 只读态 -->
-        <template v-else>
-          <div v-if="contentState.loading" class="loading-container">
-            <a-spin tip="正在加载解析内容..." />
-          </div>
-          <MarkdownPreview
-            v-else-if="mergedContent"
-            :content="mergedContent"
-            class="markdown-content"
-          />
-          <div v-else class="empty-content">
-            <p>{{ contentState.error || '暂无文件内容' }}</p>
-          </div>
-        </template>
+        <AgentFilePreview
+          ref="parsedPreviewRef"
+          :file="parsedPreviewFile"
+          :file-path="file?.filename || ''"
+          :editable="canEditMarkdown"
+          :edit-all-text="true"
+          :saving="savingMarkdown"
+          :show-header="false"
+          :show-download="false"
+          :full-height="true"
+          :borderless="true"
+          container-class="parsed-preview-container"
+          content-class="parsed-preview-content"
+          @save="saveMarkdown"
+        />
       </div>
 
       <!-- Chunks 模式：使用 Grid 布局 -->
@@ -181,7 +148,6 @@ import {
   canPreviewParsed,
   getDefaultDetailView
 } from '@/utils/knowledge_file_policy'
-import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
 import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
 import AgentFilePreview from '@/components/AgentFilePreview.vue'
 import { Download, ChevronDown, FileSearch, FileText, Pencil, Rows3, X } from '@lucide/vue'
@@ -247,6 +213,8 @@ const sourcePreview = ref({
 let basicRequestSeq = 0
 let contentRequestSeq = 0
 let sourceRequestSeq = 0
+// 保存的上下文序号：关闭弹窗或切换到另一份文档时自增，让在飞的保存响应作废
+let markdownSaveSeq = 0
 
 const revokeSourcePreviewUrl = () => {
   if (sourcePreview.value.url) {
@@ -280,46 +248,30 @@ const resetSourcePreview = () => {
 }
 
 // ── 解析产物编辑（入库前复核；只对待入库文件开放）──────────────
-const isEditing = ref(false)
-const draftContent = ref('')
+// 编辑态与草稿由 AgentFilePreview 自己管理（复用工作区/source 视图同一套编辑器，
+// 它在保存期间禁用 textarea，因此不存在"回包覆盖等待期新输入"的窗口）。
+// 这里只保留本弹窗需要的两个状态：保存中、以及「打开即编辑」的一次性意图。
 const savingMarkdown = ref(false)
 // 「打开即编辑」是一次性意图：消费后即失效。否则保存时 file.value 更新会再次触发
 // 内容 watch，把刚落地的保存又拉回编辑态（保存按钮还是灰的，用户会以为没存上）。
 const pendingStartEdit = ref(false)
 
-const draftChanged = computed(() => draftContent.value !== (contentState.value.content || ''))
+const parsedPreviewRef = ref(null)
 
-// ── 分栏同步滚动 ──────────────────────────────────────────────
-// 两侧内容高度不同（左是纯文本源码，右是渲染后的 HTML），只能按滚动比例映射。
-// lastSynced 记录本端「上一次被对侧写入」的位置：程序化写入会触发一次回声 scroll
-// 事件，其 scrollTop 与该值相等，据此忽略，否则左右会互相驱动来回抖动。
-const editorPane = ref(null)
-const previewPane = ref(null)
-const lastSynced = { editor: -1, preview: -1 }
-const SCROLL_ECHO_TOLERANCE = 1.5
-
-const syncScroll = (fromKey, fromEl, toEl, toKey) => {
-  if (!fromEl || !toEl) return
-  if (Math.abs(fromEl.scrollTop - lastSynced[fromKey]) < SCROLL_ECHO_TOLERANCE) return
-
-  const fromRange = fromEl.scrollHeight - fromEl.clientHeight
-  const toRange = toEl.scrollHeight - toEl.clientHeight
-  const ratio = fromRange > 0 ? fromEl.scrollTop / fromRange : 0
-  // ratio 恒在 [0,1]，故写入值不会超出对侧可滚动范围，不会触发浏览器截断
-  const next = ratio * Math.max(toRange, 0)
-
-  lastSynced[toKey] = next
-  toEl.scrollTop = next
-}
-
-const onEditorScroll = () => syncScroll('editor', editorPane.value, previewPane.value, 'preview')
-const onPreviewScroll = () => syncScroll('preview', previewPane.value, editorPane.value, 'editor')
-
-/** 进入编辑态时清掉上一轮的位置记忆，否则首屏会被误判为回声而不同步 */
-const resetScrollSync = () => {
-  lastSynced.editor = -1
-  lastSynced.preview = -1
-}
+/** 解析产物视图的数据源：预览与编辑共用（内容为合并后的 Markdown） */
+const parsedPreviewFile = computed(() => {
+  if (!file.value) return null
+  return {
+    ...file.value,
+    content: mergedContent.value,
+    previewType: 'markdown',
+    supported: true,
+    status: contentState.value.loading ? 'loading' : contentState.value.error ? 'error' : 'ready',
+    errorMessage: contentState.value.error,
+    loadingMessage: '正在加载解析内容...',
+    message: contentState.value.error
+  }
+})
 
 const canEditMarkdown = computed(
   () =>
@@ -327,22 +279,30 @@ const canEditMarkdown = computed(
     viewMode.value === 'markdown' &&
     canEditParsedContent(file.value) &&
     !contentState.value.loading &&
-    // 没有修订说明这次读取没拿到权威产物（对象缺失/读取失败），此时编辑必然保存失败
-    // （服务端要求 revision），入口本身就不该出现
+    // 保存时服务端要求回传修订，没有修订必然失败，入口本身就不该出现。
+    // 修订来自文件行的 updated_at（随内容同一次读取返回），行在读到时就有值。
     Boolean(contentState.value.revision)
 )
 
+// 编辑是独占态：草稿存在 AgentFilePreview 的局部状态里，而 markdown 分支是 v-if 渲染的，
+// 切到 source/chunks 会让它连同草稿一起被卸载且没有任何确认步骤。因此编辑期间禁用视图切换
+// ——与「保存期间禁用输入」同一种收敛方式。
+const isEditingMarkdown = computed(() => parsedPreviewRef.value?.editMode === 'edit')
+
 const startEditing = () => {
   if (!canEditMarkdown.value) return
-  draftContent.value = mergedContent.value
-  resetScrollSync()
-  isEditing.value = true
+  parsedPreviewRef.value?.startEditing()
 }
 
-/** 关闭前拦一道：有未保存草稿先确认，避免静默丢失 */
 /** 关闭请求的唯一出口：自定义关闭按钮、ESC 与点击遮罩都经此，未保存的草稿都要先确认 */
 const requestClose = () => {
-  if (!isEditing.value || !draftChanged.value) {
+  // 保存中不弹「放弃未保存的修改」：服务端已经在写，此时说「关闭后将丢失」与事实相反
+  if (savingMarkdown.value) {
+    message.info('正在保存，请稍候')
+    return
+  }
+  // 草稿由 AgentFilePreview 持有，它把 draftChanged 暴露出来供宿主判断
+  if (!parsedPreviewRef.value?.draftChanged) {
     emit('update:open', false)
     return
   }
@@ -360,37 +320,23 @@ const requestClose = () => {
 
 const handleClose = () => requestClose()
 
-const cancelEditing = () => {
+/** 保存解析产物。content 是 AgentFilePreview 提交那一刻的全文快照——
+ *  它在保存期间禁用 textarea，所以不存在"等待期继续输入"的窗口。 */
+const saveMarkdown = async (content) => {
   if (savingMarkdown.value) return
-  const doCancel = () => {
-    isEditing.value = false
-    draftContent.value = ''
-  }
-  if (!draftChanged.value) {
-    doCancel()
-    return
-  }
-  Modal.confirm({
-    title: '放弃未保存的修改？',
-    content: '当前编辑内容尚未保存，关闭后将丢失。',
-    okText: '放弃修改',
-    okButtonProps: { danger: true },
-    cancelText: '继续编辑',
-    onOk: doCancel
-  })
-}
 
-const saveMarkdown = async () => {
-  if (!draftChanged.value || savingMarkdown.value) return
-
+  // 与 basic/content 同一套序号守卫：保存是弹窗里最慢的一次往返，若返回时弹窗已关闭
+  // 或已换文档，旧响应不得把新上下文的 meta、修订和提示改掉
+  const requestId = ++markdownSaveSeq
   savingMarkdown.value = true
   try {
     const data = await documentApi.updateDocumentContent(
       props.kbId,
       props.fileId,
-      draftContent.value,
+      content,
       contentState.value.revision
     )
+    if (requestId !== markdownSaveSeq) return
     ensureApiSuccess(data, '保存解析内容失败')
     const nextMeta = normalizeFileMeta(data?.meta || {})
     file.value = nextMeta
@@ -400,15 +346,14 @@ const saveMarkdown = async () => {
       loading: false,
       loaded: true,
       lines: contentState.value.lines,
-      content: draftContent.value,
+      content,
       revision: data?.content_revision || '',
       error: ''
     }
-    isEditing.value = false
-    draftContent.value = ''
     message.success('已保存')
     emit('saved', { meta: nextMeta })
   } catch (error) {
+    if (requestId !== markdownSaveSeq) return
     // apis/base.js 会把非 422 的响应 detail 统一替换成公共文案（409 →「请求冲突」），
     // 所以冲突要在这里补一条可操作提示：几乎总是「产物已被他人改动」
     message.error(
@@ -417,7 +362,7 @@ const saveMarkdown = async () => {
         : `保存失败，请重新打开编辑后再试${error?.message ? `（${error.message}）` : ''}`
     )
   } finally {
-    savingMarkdown.value = false
+    if (requestId === markdownSaveSeq) savingMarkdown.value = false
   }
 }
 
@@ -432,9 +377,6 @@ const resetLocalState = () => {
   resetContentState()
   resetSourcePreview()
   viewMode.value = 'markdown'
-  // 编辑态一并复位，避免下次打开时残留草稿
-  isEditing.value = false
-  draftContent.value = ''
   savingMarkdown.value = false
 }
 
@@ -612,6 +554,10 @@ const loadParsedContent = async () => {
 watch(
   () => [props.open, props.kbId, props.fileId],
   ([open]) => {
+    // 换文档也走这里（open 不变、fileId 变），此时在飞的保存响应同样属于旧上下文。
+    // 序号自增让旧响应作废，同时解除「保存中」——否则那次保存之后 textarea 会一直禁用
+    markdownSaveSeq += 1
+    savingMarkdown.value = false
     if (!open) {
       resetLocalState()
       pendingStartEdit.value = false
@@ -851,80 +797,15 @@ onBeforeUnmount(resetLocalState)
   overflow: hidden;
 }
 
-/* ── 解析产物编辑态 ───────────────────────────────── */
-.markdown-edit-layout {
-  display: flex;
-  flex-direction: column;
+:deep(.parsed-preview-container) {
   height: 100%;
+  max-height: none;
+}
+
+:deep(.parsed-preview-content) {
+  flex: 1 1 auto;
+  max-height: none;
   min-height: 0;
-}
-
-.markdown-edit-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--gray-200, #e5e7eb);
-  flex-shrink: 0;
-}
-
-.edit-badge {
-  font-size: 12px;
-  padding: 1px 8px;
-  border-radius: 10px;
-  background: var(--color-primary-50, #eff6ff);
-  color: var(--color-primary-700, #2563eb);
-}
-
-.edit-unsaved {
-  font-size: 12px;
-  color: #d97706;
-}
-
-.edit-count {
-  font-size: 12px;
-  color: var(--gray-500, #6b7280);
-  margin-right: auto;
-}
-
-.edit-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.markdown-edit-panes {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-}
-
-.markdown-editor {
-  flex: 1;
-  min-width: 0;
-  resize: none;
-  border: none;
-  outline: none;
-  padding: 14px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 13px;
-  line-height: 1.7;
-  background: var(--gray-25, #fafafa);
-  color: inherit;
-}
-
-.markdown-editor-preview {
-  flex: 1;
-  min-width: 0;
-  overflow-y: auto;
-  border-left: 1px solid var(--gray-200, #e5e7eb);
-  padding: 0 14px;
-}
-
-/* 窄屏放不下分栏，降级为纯编辑（预览仍可在保存后查看） */
-@media (max-width: 1024px) {
-  .markdown-editor-preview {
-    display: none;
-  }
 }
 
 :deep(.source-preview-container) {

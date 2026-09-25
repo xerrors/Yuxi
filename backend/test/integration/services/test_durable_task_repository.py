@@ -852,8 +852,7 @@ async def test_update_fields_if_status_requires_matching_expected_version(
     """期望版本参与条件更新的等值条件——「两个并发保存只有一个能命中」的回归守卫。
 
     编辑解析产物时，期望版本（文件行的 updated_at）与允许状态一起构成 UPDATE 的 WHERE。
-    少了这一项，两个并发保存会双双命中，后写静默覆盖先写；把它改回「data 为空就按 id
-    取记录」的短路，则会连状态条件一起失效。
+    少了这一项，两个并发保存会双双命中，后写静默覆盖先写。
     """
     kb_id = f"pytest_kb_{uuid.uuid4().hex[:8]}"
     file_id = f"file_{uuid.uuid4().hex[:8]}"
@@ -886,15 +885,15 @@ async def test_update_fields_if_status_requires_matching_expected_version(
     )
     assert stale is None, "过期版本的保存必须落空（并发里的输家）"
 
-    # data 为空时也必须逐条校验过滤条件：否则借写操作做条件检查的调用方会静默失去保护
-    without_data = await repo.update_fields_if_status(
-        kb_id=kb_id,
-        file_id=file_id,
-        allowed_statuses={"parsed"},
-        data={},
-        expected_updated_at=observed.updated_at,
-    )
-    assert without_data is None
+    # 期望版本不能脱离写入单独下发：没有可写字段时直接返回一行，调用方会把它当成 CAS 命中
+    with pytest.raises(ValueError, match="expected_updated_at 必须与至少一个可写字段同批下发"):
+        await repo.update_fields_if_status(
+            kb_id=kb_id,
+            file_id=file_id,
+            allowed_statuses={"parsed"},
+            data={"not_a_writable_field": "x"},
+            expected_updated_at=observed.updated_at,
+        )
 
     # 不传期望版本时保持既有语义（其余调用方不使用该参数）
     assert (

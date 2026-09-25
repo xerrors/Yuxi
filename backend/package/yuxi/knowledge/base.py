@@ -15,7 +15,7 @@ from yuxi.knowledge.schemas import (
     SearchResultSchema,
 )
 from yuxi.knowledge.utils import resolve_processing_params, sanitize_processing_params
-from yuxi.utils import logger
+from yuxi.utils import hashstr, logger
 from yuxi.utils.datetime_utils import utc_isoformat
 
 
@@ -476,15 +476,26 @@ class KnowledgeBase(ABC):
         if record is None:
             raise ValueError(f"File {file_id} not found")
 
-    async def _save_markdown_to_minio(self, kb_id: str, file_id: str, content: str) -> str:
-        """Save markdown content to MinIO and return HTTP URL"""
+    async def _save_markdown_to_minio(
+        self,
+        kb_id: str,
+        file_id: str,
+        content: str,
+        *,
+        object_name: str | None = None,
+    ) -> str:
+        """Save markdown content to MinIO and return HTTP URL.
+
+        `object_name` 缺省为解析产物用的确定性路径 `{kb_id}/parsed/{file_id}.md`；
+        编辑路径传内容寻址名（见 `update_file_markdown`）。
+        """
         from yuxi.storage.minio import get_minio_client
 
         minio_client = get_minio_client()
         bucket_name = minio_client.KB_BUCKETS["parsed"]
         await asyncio.to_thread(minio_client.ensure_bucket_exists, bucket_name)
 
-        object_name = f"{kb_id}/parsed/{file_id}.md"
+        object_name = object_name or f"{kb_id}/parsed/{file_id}.md"
         data = content.encode("utf-8")
 
         # Return standard HTTP URL from UploadResult
@@ -496,6 +507,25 @@ class KnowledgeBase(ABC):
 
         return upload_result.url
 
+    async def _delete_parsed_objects(self, kb_id: str, file_id: str) -> None:
+        """按前缀清理某文件的全部解析产物对象（解析产出的确定性名 + 编辑产出的内容寻址名）。
+
+        点号是必要锚点：不带时 file_id 互为前缀的文档（如 `abc` 与 `abcdef`）会被误删；
+        file_id 为空同样不能退化成 `{kb_id}/parsed/`，那是整个知识库的产物目录。
+        """
+        if not file_id:
+            return
+
+        from yuxi.storage.minio import get_minio_client
+
+        minio_client = get_minio_client()
+        try:
+            await minio_client.adelete_objects_by_prefix(
+                minio_client.KB_BUCKETS["parsed"], f"{kb_id}/parsed/{file_id}."
+            )
+        except Exception as minio_error:
+            logger.warning(f"清理解析产物对象失败（{kb_id}/{file_id}）: {minio_error}")
+
     async def update_file_markdown(
         self,
         kb_id: str,
@@ -504,26 +534,27 @@ class KnowledgeBase(ABC):
         operator_id: str,
         revision: str,
     ) -> dict:
-        """覆盖人工编辑后的解析产物 Markdown（本阶段只接受 parsed）。
+        """人工编辑后的解析产物 Markdown 发布（本阶段只接受 parsed）。
 
         与 parse_file 的区别：parse_file 只接受 uploaded/error_parsing 且会清空状态重解析；
         本方法只替换 parsed 文件的产物内容，状态保持 parsed，用户继续走既有「入库」。
-        parsed 没有派生索引，确定性路径 {kb_id}/parsed/{file_id}.md 就是权威内容，
-        覆盖即发布，因此不存在「草稿 / 版本切换」的问题；已入库内容的编辑要复用
-        「重新入库」Durable Task 取得 ownership 后再切换权威内容，见决策记录。
+        已入库内容的编辑要复用「重新入库」Durable Task 取得 ownership 后再切换权威内容。
 
-        并发控制：「期望版本 + 允许状态」是**同一条 UPDATE 的等值条件**（期望版本是文件行的
-        updated_at，任何写入都会推进它）。因此校验与发布是一个原子步骤：
-        - 两个并发保存只有一个能命中，另一个拿到 None → 409，不会出现「都通过校验、后写覆盖先写」；
-        - 编辑期间解析/入库任务把状态或版本推进，也同样让条件落空 → 409。
-        刻意不在校验与发布之间做「读产物算哈希」式的比较：那是非原子读，两个并发请求会双双通过。
+        发布：先写**内容寻址**的新对象，再用**一条**条件更新把 `markdown_file` 切过去，于是
+        「引用即内容身份」成立——任何读者（含入库）读到的对象由它读到的那一行唯一确定。
+        顺序不能反过来：条件成功后、对象写入前的窗口里入库认领会通过并读到旧内容，
+        形成「产物新、分块与向量旧」。
 
-        顺序是**先条件更新、再覆盖产物**：反过来（先覆盖再条件更新）会在条件落空时留下
-        「产物已更新、状态/版本未变」的组合，且接口返回 409 的同时内容已经持久化。
-        本顺序最坏只是条件更新成功后写对象失败——此时状态与内容仍是旧的一对，自洽，重试即可。
+        并发：`expected_updated_at`（文件行的 updated_at，任何写入都会推进它）与允许状态是
+        **同一条 UPDATE 的等值条件**，校验与引用切换因此是一步；两个并发保存只有一个命中，
+        另一个拿到 None → 409。入库认领只校验状态与租约，与本方法由行锁串行——任一顺序下
+        入库建索引所用的内容都与该行最终引用一致。不做「读产物算哈希」式的比较（非原子读，
+        两个并发请求会双双通过），也不采用抢占式 CAS（编辑无 lease，崩溃会永久卡中间态）。
 
-        不采用抢占式 CAS：编辑不走 Durable Task、无 lease，一旦进程崩溃文件会永久卡在
-        中间态，而 fail_task_processing_in_session 只收敛有 task 归属的状态。
+        失败面：条件落空时新对象已落盘但无人引用，**刻意不删**——内容寻址名是内容的纯函数，
+        同名对象可能正是并发赢家已切换引用的那个（两个编辑者提交同一份文本），删它会删掉
+        活对象。孤儿由删除文件时的前缀清理收敛。完整论证与被否方案见
+        docs/develop-guides/decisions/implemented/2026-09-18-parsed-only-markdown-edit.md。
         """
         from yuxi.repositories.knowledge_file_repository import KnowledgeFileRepository
         from yuxi.utils.upload_utils import MAX_MARKDOWN_EDIT_SIZE_BYTES
@@ -549,22 +580,38 @@ class KnowledgeBase(ABC):
         if status not in EDITABLE_MARKDOWN_STATUSES:
             raise KBFileStateConflictError(f"文件当前状态（{status}）不支持编辑解析产物")
 
+        # 先写不可变的新对象，再切换引用（顺序理由见 docstring 的失败面一段）
+        new_url = await self._save_markdown_to_minio(
+            kb_id,
+            file_id,
+            content,
+            object_name=self._parsed_object_name(kb_id, file_id, content),
+        )
+
         # operator_id 必填：update_fields_if_status 在 data 为空时不做 UPDATE（直接按 id 取记录），
         # 那会让状态与版本条件一起失效——编辑始终有操作人，就不该给这条路径留空子。
+        # markdown_file 与它同批下发，使「校验 + 引用切换」落在同一条 UPDATE 上。
         record = await KnowledgeFileRepository().update_fields_if_status(
             kb_id=kb_id,
             file_id=file_id,
             allowed_statuses={status},
-            data={"updated_by": operator_id},
+            data={"updated_by": operator_id, "markdown_file": new_url},
             expected_updated_at=expected_updated_at,
         )
         if record is None:
+            # 刻意不删刚写的 new_url：同名对象可能正是并发赢家已切换引用的那个（见 docstring）
             raise KBFileStateConflictError("解析产物或文件状态已被其他人修改，请重新打开编辑后再保存")
 
-        # 覆盖产物：对象名为确定性路径 {kb_id}/parsed/{file_id}.md，重复写即幂等覆盖
-        await self._save_markdown_to_minio(kb_id, file_id, content)
-
         return self._file_record_to_meta(record)
+
+    @staticmethod
+    def _parsed_object_name(kb_id: str, file_id: str, content: str) -> str:
+        """编辑产物的内容寻址对象名。
+
+        与解析产物的确定性名共用一个前缀（`{kb_id}/parsed/{file_id}.`），删除文件时按该前缀
+        即可一并清理（`.md` 与 `.{hash}.md` 都落在其中）。
+        """
+        return f"{kb_id}/parsed/{file_id}.{hashstr(content, 16)}.md"
 
     async def _read_minio_bytes(self, file_path: str) -> bytes:
         from yuxi.knowledge.utils.kb_utils import is_minio_url, parse_minio_url
@@ -919,7 +966,6 @@ class KnowledgeBase(ABC):
                 break
             after_file_id = records[-1].file_id
             for record in records:
-                file_id = record.file_id
                 file_path = record.minio_url or record.path
                 if file_path and is_minio_url(file_path):
                     try:
@@ -927,10 +973,6 @@ class KnowledgeBase(ABC):
                         await minio_client.adelete_file(bucket_name, object_name)
                     except Exception as e:
                         logger.warning(f"Failed to delete MinIO file {file_path}: {e}")
-
-                # 删除解析后的 markdown 文件
-                parsed_object = f"{kb_id}/parsed/{file_id}.md"
-                await minio_client.adelete_file(minio_client.KB_BUCKETS["parsed"], parsed_object)
 
         # 2. 并行删除所有知识库 bucket 中该 kb_id 下的文件
         prefix = f"{kb_id}/"
@@ -1186,6 +1228,8 @@ class KnowledgeBase(ABC):
                 await self.delete_folder(kb_id, child_id)
             else:
                 await self.delete_file(kb_id, child_id)
+                # 文件夹删除路径不经过 HTTP 层的对象清理，产物对象要在这里收口
+                await self._delete_parsed_objects(kb_id, child_id)
 
         # Delete the folder itself
         # We call delete_file which should handle the actual removal.
