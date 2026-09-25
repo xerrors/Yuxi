@@ -104,14 +104,14 @@ curl --fail "$BASE_URL/api/agent/runs" \
 | 字段 | 作用 |
 | --- | --- |
 | `meta.request_id` | 请求幂等和追踪标识；不传时服务端生成 UUID |
-| `image_content` | 可选的 base64 图片内容；普通 Chat 会把它作为图片消息提交 |
+| `image_content` | 可选的 base64 图片：单张传字符串，多张传数组（最多 10 张、总量约 80MB）；普通 Chat 会把它作为图片消息提交 |
 | `model_spec` | 本次运行的模型覆盖，格式为 `provider_id:model_id` |
 | `tool_approval_mode` | 本次运行的工具审批模式覆盖 |
 | `queue_policy` | 普通 Chat 可用 `enqueue`、`reject` 或 `steer`；默认是 `enqueue` |
 | `resume` | LangGraph 恢复载荷；非空时走恢复路径，不进入普通 Request 队列 |
 | `created_by_run_id` | 恢复时填写被恢复的 Run ID |
 
-`resume` 不是布尔开关。恢复请求可以同时带 `query` 和 `image_content`，但 `queue_policy` 只适用于普通 Chat；恢复和 Steer 的状态、权限与失败语义见[Agent 请求队列与调度设计](../agents/agent-request-queue.md)。
+`resume` 不是布尔开关。恢复请求可以同时带 `query` 和 `image_content`（同样接受单值或数组），但 `queue_policy` 只适用于普通 Chat；恢复和 Steer 的状态、权限与失败语义见[Agent 请求队列与调度设计](../agents/agent-request-queue.md)。
 
 ### 读取 SSE
 
@@ -152,7 +152,7 @@ Authorization: Bearer yxkey_<your-secret>
 | `POST /api/agent-invocation/agent-call/runs/result` | 按 `run_id` 读取 OpenAI 风格的结果 | `run_id`、可选 `agent_slug` |
 | `POST /api/agent-invocation/eval/runs` | 运行一次评估样例并返回结果 | `query`、`agent_slug`、`thread_id`、`evaluation`、`image_content`、`model_spec`、`tool_approval_mode`、`include_trajectory_summary` |
 
-`evaluation` 可以包含 `dataset_name`、`dataset_item_id` 和 `experiment_name`，用于关联 Langfuse 评估上下文。`include_trajectory_summary=true` 时，响应附带最多 500 个运行事件聚合出的工具调用、错误、中断和事件范围摘要；它不是完整事件流。
+`evaluation` 可以包含 `dataset_name`、`dataset_item_id` 和 `experiment_name`，用于关联 Langfuse 评估上下文。评估端点的 `image_content` 同样接受数组，但它与普通 Run 走的是不同路径：网关只对 `/api/agent/runs` 放宽了请求体上限，打到本端点的多图请求会在网关处按默认上限被拒，需要部署侧一并放行。`include_trajectory_summary=true` 时，响应附带最多 500 个运行事件聚合出的工具调用、错误、中断和事件范围摘要；它不是完整事件流。
 
 同步 Agent Call 不能排队，线程忙碌时会返回拒绝结果；异步调用默认使用 `enqueue`。一个最小请求：
 

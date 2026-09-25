@@ -11,6 +11,7 @@ from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.repositories.conversation_repository import INVOCATION_CONVERSATION_SOURCES, ConversationRepository
 from yuxi.repositories.project_repository import ProjectRepository
 from yuxi.services.attachment_service import serialize_attachment
+from yuxi.services.input_message_service import extract_image_contents
 from yuxi.services.project_service import create_implicit_project
 from yuxi.services.workdir_service import (
     ensure_conversation_workdir_available,
@@ -464,6 +465,10 @@ async def get_thread_history_view(
             "extra_metadata": extra_metadata,
             "message_type": msg.message_type,
             "image_content": msg.image_content,
+            # 多图的权威来源是 raw_message；更早的历史行没有它，退化为只列那一张。
+            # 在服务端投影成窄形状，浏览器不必理解 LangChain 的 content parts。
+            "image_contents": extract_image_contents(extra_metadata.get("raw_message"))
+            or ([msg.image_content] if msg.image_content else []),
             "feedback": user_feedback,
         }
 

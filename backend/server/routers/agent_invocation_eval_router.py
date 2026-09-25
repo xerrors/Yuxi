@@ -45,7 +45,9 @@ class AgentEvalRunCreate(BaseModel):
     )
     evaluation: AgentEvaluationContext = Field(default_factory=AgentEvaluationContext, description="评估上下文")
     meta: dict = Field(default_factory=dict, description="可选请求追踪信息")
-    image_content: str | None = Field(None, description="可选，base64 图片内容")
+    image_content: str | list[str] | None = Field(
+        None, description="可选，base64 图片内容：单张传字符串，多张传数组（最多 10 张）"
+    )
     model_spec: str | None = Field(None, description="可选模型覆盖")
     tool_approval_mode: str | None = Field(None, description="可选工具审批模式覆盖")
     include_trajectory_summary: bool = Field(False, description="是否返回轻量工具调用轨迹摘要")
@@ -67,6 +69,11 @@ async def create_agent_eval_run(
     meta = dict(payload.meta or {})
     request_id = _normalize_request_id(meta)
     evaluation = _normalize_evaluation(payload.evaluation.model_dump(exclude_none=True))
+    try:
+        input_message = build_chat_input_message(payload.query, payload.image_content)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     origin_metadata = {"agent_invocation_meta": {"evaluation": evaluation}} if evaluation else {}
     run_response = await submit_agent_request(
         request_input=AgentRequestInput(
@@ -74,7 +81,7 @@ async def create_agent_eval_run(
             thread_id=(payload.thread_id or "").strip()
             or hash_id("invocation_", f"{current_user.uid}:{agent_slug}:{request_id}", length=64),
             request_id=request_id,
-            input_message=build_chat_input_message(payload.query, payload.image_content),
+            input_message=input_message,
             origin=RunOrigin(
                 source=EVALUATION_SOURCE,
                 channel="api",

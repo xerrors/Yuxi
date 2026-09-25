@@ -18,17 +18,20 @@
       :show-options-left="showInputOptions"
       @send="handleSend"
       @keydown="handleKeyDown"
-      @paste-image="handlePastedImage"
+      @paste-images="handlePastedImages"
       @drop-files="handleDroppedFiles"
     >
       <template #top>
-        <div v-if="currentImage || previewAttachments.length" class="input-top-stack">
-          <ImagePreviewComponent
-            v-if="currentImage"
-            :image-data="currentImage"
-            @remove="handleImageRemoved"
-            class="image-preview-wrapper"
-          />
+        <div v-if="currentImages.length || previewAttachments.length" class="input-top-stack">
+          <div v-if="currentImages.length" class="image-preview-list">
+            <ImagePreviewComponent
+              v-for="(image, index) in currentImages"
+              :key="image.localId"
+              :image-data="image"
+              @remove="handleImageRemoved(index)"
+              class="image-preview-wrapper"
+            />
+          </div>
 
           <div v-if="previewAttachments.length" class="attachment-preview-list">
             <div
@@ -63,8 +66,7 @@
           :file-upload-enabled="supportsFileUpload"
           :mention="mention"
           @upload="handleAttachmentUpload"
-          @upload-image="handleImageUpload"
-          @upload-image-success="handleImageUploadSuccess"
+          @upload-image-files="handleImageFilesSelected"
           @select-mention="handleMentionSelect"
         />
       </template>
@@ -84,12 +86,20 @@
 
 <script setup>
 import { computed, ref } from 'vue'
+import { message } from 'ant-design-vue'
 import MessageInputComponent from '@/components/MessageInputComponent.vue'
 import ImagePreviewComponent from '@/components/ImagePreviewComponent.vue'
 import AttachmentOptionsComponent from '@/components/AttachmentOptionsComponent.vue'
 import { X } from '@lucide/vue'
 import { normalizeAttachmentPreviews } from '@/utils/file_utils'
 import { uploadMultimodalImage } from '@/utils/multimodal_image_upload'
+import {
+  MAX_MULTIMODAL_IMAGES,
+  MAX_MULTIMODAL_TOTAL_BASE64_BYTES,
+  isWithinBase64Budget,
+  remainingImageSlots,
+  splitDroppedFiles
+} from '@/utils/multimodal_image_limits'
 import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
 
 const props = defineProps({
@@ -116,7 +126,11 @@ const emit = defineEmits([
 ])
 
 const inputRef = ref(null)
-const currentImage = ref(null)
+// 已上传成功的图片（每项就是 uploadMultimodalImage 的返回值 + localId）。
+// 只放成功项：上传中与失败由 message 提示承担，避免列表里出现不可用的空卡片。
+const currentImages = ref([])
+let localIdSeed = 0
+const nextLocalId = () => `image-${(localIdSeed += 1)}`
 const placeholder = '问点什么？使用 @ 可以选择文件、知识库或技能进行引用。'
 
 const previewAttachments = computed(() => normalizeAttachmentPreviews(props.attachments))
@@ -135,31 +149,49 @@ const handleAttachmentUpload = (files = []) => {
   emit('upload-attachment', files)
 }
 
-const handleImageUpload = (imageData) => {
-  if (imageData && imageData.success) {
-    currentImage.value = imageData
+/** 并行上传一批图片文件，成功的逐张进列表。 */
+const uploadImageFiles = async (files = []) => {
+  const { images } = splitDroppedFiles(files)
+  if (!images.length) return
+
+  const accepted = images.slice(0, remainingImageSlots(currentImages.value))
+  if (accepted.length < images.length) {
+    message.error(`最多添加 ${MAX_MULTIMODAL_IMAGES} 张图片，超出的未添加`)
   }
+
+  await Promise.all(
+    accepted.map(async (file) => {
+      const localId = nextLocalId()
+      // 失败按张分 key：多张同时失败时每条都看得见，而不是只剩最后一条
+      const imageData = await uploadMultimodalImage(file, `image-upload-${localId}`)
+      if (imageData?.success) {
+        currentImages.value.push({ ...imageData, localId })
+      }
+    })
+  )
 }
 
-const handlePastedImage = async (file) => {
+/** 菜单选图：关掉选项面板后与粘贴/拖拽同路。 */
+const handleImageFilesSelected = (files = []) => {
+  inputRef.value?.closeOptions()
+  uploadImageFiles(files)
+}
+
+/** 粘贴：载荷是剪贴板里的全部图片（原先只取第一张）。 */
+const handlePastedImages = async (files = []) => {
   if (props.disabled || !props.supportsFileUpload) return
-
-  try {
-    const imageData = await uploadMultimodalImage(file)
-    handleImageUpload(imageData)
-  } catch (error) {
-    console.error('图片上传失败:', error)
-  }
+  await uploadImageFiles(files)
 }
 
+/** 拖拽分流：图片走多模态直读；其它文件仍走附件通道（图片的 OCR 入口在「添加附件」菜单）。 */
 const handleDroppedFiles = (files = []) => {
   if (props.disabled || !props.supportsFileUpload || !files.length) return
-  handleAttachmentUpload(files)
-}
-
-const handleImageUploadSuccess = () => {
-  if (inputRef.value) {
-    inputRef.value.closeOptions()
+  const { images, others } = splitDroppedFiles(files)
+  if (images.length) {
+    uploadImageFiles(images)
+  }
+  if (others.length) {
+    handleAttachmentUpload(others)
   }
 }
 
@@ -168,14 +200,14 @@ const handleMentionSelect = (item) => {
   inputRef.value?.closeOptions()
 }
 
-const handleImageRemoved = () => {
-  currentImage.value = null
+const handleImageRemoved = (index) => {
+  currentImages.value.splice(index, 1)
 }
 
 // 发送被后端拒绝时把旧图片恢复到输入区，覆盖等待期间可能新选的图片，
 // 避免旧图片被悄悄丢弃；用户可重新选择新图片。
-const restoreImage = (image) => {
-  currentImage.value = image || null
+const restoreImages = (images = []) => {
+  currentImages.value = images.map((image) => ({ ...image, localId: nextLocalId() }))
 }
 
 const handleAttachmentRemoved = (attachment) => {
@@ -183,8 +215,15 @@ const handleAttachmentRemoved = (attachment) => {
 }
 
 const handleSend = () => {
-  emit('send', { image: currentImage.value })
-  currentImage.value = null
+  if (currentImages.value.length && !isWithinBase64Budget(currentImages.value)) {
+    // 请求体是内联 base64，体积上限由网关与后端共同决定；超了就地拦下，不发请求。
+    const limitMb = Math.round(MAX_MULTIMODAL_TOTAL_BASE64_BYTES / (1024 * 1024))
+    message.error(`图片总大小超出单次请求上限（约 ${limitMb}MB），请减少张数或改用更小的图片`)
+    return
+  }
+
+  emit('send', { images: [...currentImages.value] })
+  currentImages.value = []
 }
 
 const handleKeyDown = (e) => {
@@ -203,7 +242,7 @@ const handleKeyDown = (e) => {
 defineExpose({
   focus: () => inputRef.value?.focus(),
   closeOptions: () => inputRef.value?.closeOptions(),
-  restoreImage
+  restoreImages
 })
 </script>
 
@@ -248,6 +287,13 @@ defineExpose({
   flex-direction: column;
   gap: 8px;
   margin-bottom: 8px;
+}
+
+.image-preview-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 .attachment-preview-list {

@@ -95,8 +95,6 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { ArrowLeft, ChevronRight, Database, FileText, Image, WandSparkles } from '@lucide/vue'
-import { message } from 'ant-design-vue'
-import { uploadMultimodalImage } from '@/utils/multimodal_image_upload'
 import { getMentionIconComponent } from '@/utils/mention_icon_utils'
 import { buildMentionResourceItems } from '@/utils/mention_resource_items'
 
@@ -120,7 +118,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['upload', 'upload-image', 'upload-image-success', 'select-mention'])
+const emit = defineEmits(['upload', 'upload-image-files', 'select-mention'])
 const activeResourceType = ref('')
 const resourceItems = computed(() => buildMentionResourceItems(props.mention || {}))
 const visibleResourceGroups = computed(() =>
@@ -137,55 +135,33 @@ const handleAttachmentClick = () => {
   emit('upload')
 }
 
-// 处理图片上传
+// 选择图片：菜单只负责选文件，上传与张数/体积限流统一由父级处理，
+// 这样菜单、粘贴、拖拽三条入口走同一条路径，限额只在一处判定。
 const handleImageUpload = () => {
   if (props.disabled) return
 
-  // 创建隐藏的文件输入
   const input = document.createElement('input')
   input.type = 'file'
   input.accept = 'image/*'
-  input.multiple = false
+  input.multiple = true
   input.style.display = 'none'
 
-  input.onchange = async (event) => {
-    const file = event.target.files[0]
-    if (file) {
-      await processImageUpload(file)
-    }
+  input.onchange = (event) => {
+    const files = Array.from(event.target.files || [])
     document.body.removeChild(input)
+    if (files.length) {
+      emit('upload-image-files', files)
+    }
   }
 
   document.body.appendChild(input)
   input.click()
-
-  emit('upload-image')
 }
 
 const selectMention = (item) => {
   if (props.disabled) return
   emit('select-mention', item)
   activeResourceType.value = ''
-}
-
-// 处理图片上传逻辑
-const processImageUpload = async (file) => {
-  try {
-    const imageData = await uploadMultimodalImage(file)
-    if (!imageData) return
-
-    // 发出上传成功事件，包含处理后的图片数据
-    emit('upload-image', imageData)
-
-    // 发出上传成功通知事件，用于关闭选项面板
-    emit('upload-image-success')
-  } catch (error) {
-    console.error('图片上传失败:', error)
-    message.error({
-      content: `图片上传失败: ${error.message || '未知错误'}`,
-      key: 'image-upload'
-    })
-  }
 }
 </script>
 
