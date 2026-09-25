@@ -16,6 +16,10 @@ export const listAccessibleSkills = async () => {
   return apiGet(`${USER_BASE_URL}/accessible`)
 }
 
+export const getSkill = async (slug) => {
+  return apiGet(`${BASE_URL}/${encodeURIComponent(slug)}`)
+}
+
 export const prepareSkillUpload = async (file) => {
   const formData = new FormData()
   formData.append('file', file)
@@ -135,6 +139,7 @@ export const skillApi = {
   confirmPersonalSkillInstallDraft,
   discardSkillInstallDraft,
   getSkillDependencyOptions,
+  getSkill,
   listBuiltinSkills,
   syncBuiltinSkills,
   getSkillTree,

@@ -44,7 +44,7 @@
               <span>导出</span>
             </button>
             <button
-              v-if="isInstalledSkill && canManageCurrentSkill && !isBuiltinInstalledSkill"
+              v-if="isInstalledSkill && canManageCurrentSkill && !isBuiltinInstalledSkill && !isAgentBoundSkill"
               type="button"
               aria-label="删除 Skill"
               @click="confirmDeleteSkill"
@@ -142,7 +142,8 @@
 
     <template #panel-config>
       <div class="extension-detail-view extension-detail-gray-switches config-view">
-        <section class="config-section extension-detail-section">
+        <!-- 可用范围与启用状态跟随绑定 Agent，对专属技能属于不可配置项；运行依赖仍然保留。 -->
+        <section v-if="!isAgentBoundSkill" class="config-section extension-detail-section">
           <div class="config-section-header extension-detail-section-header">
             <div class="text extension-detail-section-heading">
               <h3>可用范围</h3>
@@ -446,6 +447,10 @@ const isInstalledSkill = computed(() => !!currentSkill.value?.dir_path)
 const isBuiltinInstalledSkill = computed(() => {
   return !!(isInstalledSkill.value && currentSkill.value?.source_type === 'builtin')
 })
+// Agent 专属技能：内容可编辑，但共享范围、启用状态与删除都跟随绑定 Agent。
+const isAgentBoundSkill = computed(() => {
+  return !!(isInstalledSkill.value && currentSkill.value?.is_agent_bound)
+})
 const canManageCurrentSkill = computed(() => currentSkill.value?.can_manage !== false)
 const isReadOnlySkill = computed(() => isInstalledSkill.value && !canManageCurrentSkill.value)
 const canEditSkillFiles = computed(
@@ -592,7 +597,11 @@ const fetchSkillDetail = async () => {
     skills.value = skillResult?.data || []
     allowedSkillAccessLevels.value = skillResult?.allowed_access_levels || ['user']
 
-    const found = skills.value.find((s) => s.slug === slug.value)
+    let found = skills.value.find((s) => s.slug === slug.value)
+    if (!found) {
+      // Agent 专属技能不出现在列表里，但需要能按 slug 直接打开管理页。
+      found = await fetchSkillBySlug(slug.value)
+    }
     if (found) {
       currentSkill.value = found
       syncDependencyFormFromSkill(found)
@@ -605,6 +614,16 @@ const fetchSkillDetail = async () => {
     message.error('加载失败')
   } finally {
     loading.value = false
+  }
+}
+
+const fetchSkillBySlug = async (targetSlug) => {
+  if (!targetSlug) return null
+  try {
+    const result = await skillApi.getSkill(targetSlug)
+    return result?.data || null
+  } catch {
+    return null
   }
 }
 
@@ -717,7 +736,7 @@ const saveCurrentFile = async (content = fileContent.value) => {
 
 const confirmDeleteSkill = () => {
   const target = currentSkill.value
-  if (!target || !canManageCurrentSkill.value || isBuiltinInstalledSkill.value) return
+  if (!target || !canManageCurrentSkill.value || isBuiltinInstalledSkill.value || isAgentBoundSkill.value) return
   const actionText = '删除'
   Modal.confirm({
     title: `确认${actionText}技能「${target.slug}」？`,

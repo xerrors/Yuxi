@@ -180,6 +180,19 @@ class AgentRepository:
         result = await self.db.execute(select(Agent).where(Agent.slug.in_(slugs)))
         return list(result.scalars().all())
 
+    async def get_by_id(self, agent_id: int) -> Agent | None:
+        """按主键读取智能体，供绑定 Skill 的权限派生使用。"""
+        result = await self.db.execute(select(Agent).where(Agent.id == int(agent_id)))
+        return result.scalar_one_or_none()
+
+    async def list_by_ids(self, agent_ids: list[int]) -> list[Agent]:
+        """按主键批量读取智能体，避免绑定 Skill 权限逐条查询。"""
+        ids = sorted({int(value) for value in agent_ids})
+        if not ids:
+            return []
+        result = await self.db.execute(select(Agent).where(Agent.id.in_(ids)))
+        return list(result.scalars().all())
+
     async def get_visible_by_slug(
         self, *, slug: str, user: User, kind: Literal["main", "subagent", "any"] = "main"
     ) -> Agent | None:
@@ -351,8 +364,20 @@ class AgentRepository:
         return agent
 
     async def delete(self, *, agent: Agent) -> None:
-        await self.db.delete(agent)
-        await self.db.commit()
+        from yuxi.agents.skills.service import (
+            delete_agent_self_skill,
+            discard_trashed_skill_dir,
+            restore_trashed_skill_dir,
+        )
+
+        trashed = await delete_agent_self_skill(self.db, agent=agent)
+        try:
+            await self.db.delete(agent)
+            await self.db.commit()
+        except Exception:
+            await restore_trashed_skill_dir(trashed)
+            raise
+        await discard_trashed_skill_dir(trashed)
 
     async def serialize(
         self,

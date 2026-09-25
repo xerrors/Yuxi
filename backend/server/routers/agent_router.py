@@ -3,12 +3,18 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.agents.buildin import AgentBackendNotFoundError, get_agent_backend, list_agent_backend_info
 from yuxi.agents.context import filter_declared_config
+from yuxi.agents.skills.service import (
+    SELF_SKILL_SLUG_SUFFIX,
+    create_agent_self_skill,
+    get_agent_self_skill as get_bound_self_skill,
+    upload_agent_self_skill,
+)
 from yuxi.repositories.agent_repository import (
     AgentRepository,
     is_builtin_agent,
@@ -37,7 +43,7 @@ from yuxi.services.agent_run_service import (
 from yuxi.services.input_message_service import build_chat_input_message
 from yuxi.services.agent_request_service import RunOrigin, AgentRequestInput, submit_agent_request
 from yuxi.storage.postgres.manager import pg_manager
-from yuxi.storage.postgres.models_business import User
+from yuxi.storage.postgres.models_business import Agent, User
 
 from server.utils.auth_middleware import get_admin_user, get_db, get_required_user, get_superadmin_user
 
@@ -288,6 +294,68 @@ async def set_agent_default(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"agent": await _serialize_agent(repo, updated, current_user, include_configurable_items=True)}
+
+
+async def _visible_agent_or_404(db: AsyncSession, agent_id: str, current_user: User) -> Agent:
+    """解析当前用户可见的 Agent，供 self-skill 入口复用。"""
+    repo = AgentRepository(db)
+    item = await repo.get_visible_by_slug(slug=agent_id, user=current_user, kind="any")
+    if not item:
+        raise HTTPException(status_code=404, detail="智能体不存在")
+    return item
+
+
+@agent_router.get("/{agent_id}/self-skill")
+async def get_agent_self_skill(
+    agent_id: str, current_user: User = Depends(get_required_user), db: AsyncSession = Depends(get_db)
+):
+    """返回 Agent 专属技能的绑定信息；内容由 Skill 管理页按 slug 自行加载。"""
+    item = await _visible_agent_or_404(db, agent_id, current_user)
+    bound = await get_bound_self_skill(db, agent=item)
+    return {
+        "exists": bound is not None,
+        "slug": f"{item.slug}{SELF_SKILL_SLUG_SUFFIX}",
+        "can_manage": user_can_manage_agent(current_user, item),
+    }
+
+
+@agent_router.post("/{agent_id}/self-skill")
+async def create_agent_self_skill_route(
+    agent_id: str, current_user: User = Depends(get_required_user), db: AsyncSession = Depends(get_db)
+):
+    """首次打开时创建绑定关系；已存在时原样返回（幂等）。"""
+    item = await _visible_agent_or_404(db, agent_id, current_user)
+    if not user_can_manage_agent(current_user, item):
+        raise HTTPException(status_code=403, detail="不能管理非自己创建的智能体")
+    try:
+        bound = await create_agent_self_skill(db, agent=item)
+        await db.commit()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"success": True, "slug": bound.slug}
+
+
+@agent_router.post("/{agent_id}/self-skill/upload")
+async def upload_agent_self_skill_route(
+    agent_id: str,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """上传 ZIP 或 SKILL.md 创建/覆盖专属技能；slug 固定按 Agent 派生，忽略包内 slug。"""
+    item = await _visible_agent_or_404(db, agent_id, current_user)
+    if not user_can_manage_agent(current_user, item):
+        raise HTTPException(status_code=403, detail="不能管理非自己创建的智能体")
+    try:
+        bound = await upload_agent_self_skill(
+            db,
+            agent=item,
+            filename=file.filename or "",
+            file_bytes=await file.read(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"success": True, "slug": bound.slug}
 
 
 @agent_router.post("/runs")

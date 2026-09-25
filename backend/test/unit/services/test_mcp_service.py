@@ -7,6 +7,7 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from yuxi.agents.mcp import service as mcp_service
+from yuxi.agents.mcp.builtin import BUILTIN_MCP_MANIFEST
 from yuxi.storage.postgres import manager as postgres_manager
 from yuxi.storage.postgres.models_business import MCPServer
 
@@ -49,6 +50,31 @@ class _FakeClient:
 
     async def get_tools(self):
         return self._tools
+
+
+def test_builtin_mcp_uses_standard_manifest_and_extra_data():
+    """内置定义和页面清单具有相同的连接与系统信息层级。"""
+    config = BUILTIN_MCP_MANIFEST["mcpServers"]["deepwiki-official"]
+    assert mcp_service.normalize_mcp_manifest_entry("deepwiki-official", config) == {
+        "slug": "deepwiki-official",
+        "name": "DeepWiki",
+        "description": "查询公开 GitHub 仓库的文档、架构与代码，支持针对仓库提问。",
+        "transport": "streamable_http",
+        "url": "https://mcp.deepwiki.com/mcp",
+        "headers": None,
+        "timeout": None,
+        "sse_read_timeout": None,
+        "tags": ["内置", "代码", "文档"],
+        "icon": "📚",
+    }
+
+
+def test_builtin_mcp_rejects_metadata_outside_extra_data():
+    """内置清单不接受旧的展示字段位置。"""
+    with pytest.raises(ValueError, match="unsupported connection fields"):
+        mcp_service.normalize_mcp_manifest_entry(
+            "bad", {"type": "http", "url": "https://example.com/mcp", "name": "旧位置"}
+        )
 
 
 async def test_ensure_builtin_mcp_servers_removes_retired_system_server(monkeypatch, mcp_session):
@@ -477,6 +503,9 @@ async def test_retire_chart_and_sync_deepwiki_idempotently(monkeypatch, mcp_sess
     server = await mcp_session.scalar(select(MCPServer).where(MCPServer.slug == "deepwiki-official"))
     assert server.transport == "streamable_http"
     assert server.url == "https://mcp.deepwiki.com/mcp"
+    assert server.name == "DeepWiki"
+    assert server.tags == ["内置", "代码", "文档"]
+    assert server.icon == "📚"
     assert server.command is None
     assert server.enabled == 0
     server.url = "https://tampered.example/mcp"

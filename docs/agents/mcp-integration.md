@@ -13,18 +13,26 @@ MCP（Model Context Protocol）让智能体调用外部服务提供的工具。�
 
 ## 添加远程 MCP
 
-在“扩展 → MCP”点击“添加 MCP”，填写稳定标识、名称、传输方式和 URL。例如：
+在“扩展 → MCP”点击“添加 MCP”，填写稳定标识、传输方式和 URL，并在系统信息字段中填写名称等展示信息。表单和智能体创建时的清单使用同一结构：
 
 ```json
 {
-  "slug": "custom-remote-mcp",
-  "name": "Example MCP",
-  "transport": "streamable_http",
-  "url": "https://example.com/mcp"
+  "mcpServers": {
+    "custom-remote-mcp": {
+      "type": "http",
+      "url": "https://example.com/mcp",
+      "extra_data": {
+        "name": "Example MCP",
+        "description": "提供示例查询工具",
+        "tags": ["查询"],
+        "icon": "🔎"
+      }
+    }
+  }
 }
 ```
 
-管理接口对应：
+`extra_data` 仅包含 Yuxi 展示字段 `name`、`description`、`tags`、`icon`；连接字段在服务配置顶层。`type: "http"` 规范化为数据库中的 `streamable_http`。管理页和智能体创建页使用同一解析器，然后调用现有管理接口；该接口的平铺 JSON 契约保持不变：
 
 ```http
 POST /api/system/mcp-servers
@@ -59,16 +67,21 @@ MCP 配置从 PostgreSQL 读取，工具对象按配置哈希缓存。修改连�
 
 内置 DeepWiki 使用 `deepwiki-official` 标识，通过 `https://mcp.deepwiki.com/mcp` 提供 Streamable HTTP 服务，无需认证即可查询公开 GitHub 仓库。详见 [DeepWiki 官方文档](https://docs.devin.ai/work-with-devin/deepwiki-mcp)。
 
-开发者在 [`builtin.py`](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/agents/mcp/builtin.py) 的 `BUILTIN_MCP_SERVERS` 中添加固定远程定义：
+开发者在 [`builtin.py`](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/agents/mcp/builtin.py) 的 `BUILTIN_MCP_MANIFEST` 中添加固定远程定义：
 
 ```python
-BUILTIN_MCP_SERVERS = {
-    "deepwiki-official": {
-        "transport": "streamable_http",
-        "url": "https://mcp.deepwiki.com/mcp",
-        "description": "查询公开 GitHub 仓库的文档、架构与代码",
-        "icon": "📚",
-        "tags": ["内置", "代码", "文档"],
+BUILTIN_MCP_MANIFEST = {
+    "mcpServers": {
+        "deepwiki-official": {
+            "type": "http",
+            "url": "https://mcp.deepwiki.com/mcp",
+            "extra_data": {
+                "name": "DeepWiki",
+                "description": "查询公开 GitHub 仓库的文档、架构与代码",
+                "icon": "📚",
+                "tags": ["内置", "代码", "文档"],
+            },
+        },
     },
 }
 ```

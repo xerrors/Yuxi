@@ -7,12 +7,16 @@ import {
   RefreshCw,
   Settings2,
   SlidersHorizontal,
+  Sparkles,
   Upload,
   Wrench
 } from '@lucide/vue'
 
 import { userApi } from '@/apis/user_api'
+import { agentApi } from '@/apis/agent_api'
+import { mcpApi } from '@/apis/mcp_api'
 import AgentRuntimeConfigForm from '@/components/AgentRuntimeConfigForm.vue'
+import AgentSelfSkillEntry from '@/components/AgentSelfSkillEntry.vue'
 import ShareConfigForm from '@/components/ShareConfigForm.vue'
 import FallbackAvatar from '@/components/common/FallbackAvatar.vue'
 import { isBuiltinAgent, useAgentStore } from '@/stores/agent'
@@ -20,6 +24,8 @@ import { useUserStore } from '@/stores/user'
 import { generatePixelAvatar } from '@/utils/pixelAvatar'
 import { MAX_IMAGE_UPLOAD_SIZE_BYTES, MAX_IMAGE_UPLOAD_SIZE_MB } from '@/utils/upload_limits'
 import { normalizeAgent } from '@/utils/agentConfigUtils'
+import { parseMcpManifest } from '@/utils/mcpManifest'
+import { createAgentResources } from '@/utils/agentCreateResources'
 
 const props = defineProps({
   backendOptions: { type: Array, default: () => [] }
@@ -36,11 +42,34 @@ const runtimeAgentModalTabs = ['model', 'tools', 'other']
 
 const showAgentModal = ref(false)
 const editingAgentId = ref(null)
+// openEdit 已用 detail.can_manage 把关；这里显式记录，避免把「能打开弹窗」误当成「能改专属技能」。
+const canManageEditingAgent = ref(false)
 const agentModalActiveTab = ref('basic')
 const agentIconUploading = ref(false)
 const saving = ref(false)
 const agentShareConfigFormRef = ref(null)
 const agentNameInputRef = ref(null)
+const createSkillFile = ref(null)
+const mcpManifestText = ref('')
+const createProgress = reactive({
+  createdMcpSlugs: [],
+  createdMcpConfigs: {},
+  agent: null,
+  skillUploaded: false,
+  uncertainStep: ''
+})
+const createError = ref('')
+const createCompleted = ref(false)
+const pendingCreateDraft = ref(null)
+const hasPendingCreate = computed(() =>
+  createProgress.createdMcpSlugs.length > 0 || Boolean(createProgress.agent) || Boolean(createProgress.uncertainStep)
+)
+const createAgentAlreadySaved = computed(() => !editingAgentId.value && Boolean(createProgress.agent))
+const createActionLabel = computed(() => {
+  if (createProgress.uncertainStep) return '结果待核对'
+  if (createProgress.agent && !createSkillFile.value) return '完成创建'
+  return hasPendingCreate.value ? '重试剩余步骤' : '创建'
+})
 const agentShareConfig = ref({
   version: 2,
   read_scope: { access_level: 'user', department_ids: [], user_uids: [] },
@@ -145,6 +174,7 @@ const agentModalMenuItems = computed(() => {
     items.push(
       { key: 'model', label: '模型配置', icon: SlidersHorizontal },
       { key: 'tools', label: '工具配置', icon: Wrench },
+      { key: 'self-skill', label: '专属技能', icon: Sparkles },
       { key: 'other', label: '其他配置', icon: Settings2 }
     )
   }
@@ -242,10 +272,52 @@ const handleAgentModalAfterOpenChange = (open) => {
   if (open && !editingAgentId.value) focusAgentNameInput()
 }
 
+/** 清空创建草稿及其步骤记录。 */
+const resetCreateResources = () => {
+  createSkillFile.value = null
+  mcpManifestText.value = ''
+  Object.assign(createProgress, {
+    createdMcpSlugs: [],
+    createdMcpConfigs: {},
+    agent: null,
+    skillUploaded: false,
+    uncertainStep: ''
+  })
+  createError.value = ''
+  createCompleted.value = false
+  pendingCreateDraft.value = null
+}
+
+/** 放弃当前草稿并准备新的创建表单。 */
+const startNewCreate = () => {
+  resetAgentForm()
+  resetCreateResources()
+}
+
+/** 放弃部分创建结果前刷新列表，让已落库智能体可见。 */
+const abandonCreateDraft = async () => {
+  saving.value = true
+  try {
+    await agentStore.fetchAgents()
+    emit('saved', { mode: 'discard' })
+    startNewCreate()
+  } catch (error) {
+    message.error(error.message || '刷新智能体列表失败')
+  } finally {
+    saving.value = false
+  }
+}
+
 const openCreate = () => {
   editingAgentId.value = null
+  canManageEditingAgent.value = false
   agentModalActiveTab.value = 'basic'
-  resetAgentForm()
+  if (!hasPendingCreate.value || createCompleted.value) {
+    startNewCreate()
+  } else if (pendingCreateDraft.value) {
+    Object.assign(agentForm, pendingCreateDraft.value.form)
+    agentShareConfig.value = pendingCreateDraft.value.shareConfig
+  }
   agentStore.resetAgentConfig()
   showAgentModal.value = true
   focusAgentNameInput()
@@ -261,7 +333,14 @@ const openEdit = async (agent) => {
     return
   }
 
+  if (hasPendingCreate.value && !createCompleted.value) {
+    pendingCreateDraft.value = {
+      form: { ...agentForm },
+      shareConfig: cloneShareConfig(agentShareConfig.value)
+    }
+  }
   editingAgentId.value = detail.id
+  canManageEditingAgent.value = Boolean(detail?.can_manage)
   agentModalActiveTab.value = 'basic'
   Object.assign(agentForm, {
     slug: detail.id || detail.slug || '',
@@ -339,6 +418,41 @@ const buildAgentPayload = () => {
   return payload
 }
 
+/** 在提交前保存待上传的专属技能 ZIP。 */
+const beforeCreateSkillUpload = (file) => {
+  if (!file.name.toLowerCase().endsWith('.zip')) {
+    message.error('请选择 ZIP 格式的 Skill')
+    return false
+  }
+  createSkillFile.value = file
+  createProgress.skillUploaded = false
+  createError.value = ''
+  return false
+}
+
+/** 取消可选技能上传，保留已经创建的智能体。 */
+const removeCreateSkill = () => {
+  createSkillFile.value = null
+  createError.value = ''
+}
+
+/** 将表单值交给资源创建用例并保留步骤进度。 */
+const createAgentWithResources = async (payload) => {
+  const servers = userStore.isAdmin ? parseMcpManifest(mcpManifestText.value) : []
+  return createAgentResources({
+    payload,
+    servers,
+    skillFile: createSkillFile.value,
+    progress: createProgress,
+    api: {
+      listMcps: mcpApi.getMcpServers,
+      createMcp: mcpApi.createMcpServer,
+      createAgent: async (data) => normalizeAgent((await agentApi.createAgent(data)).agent),
+      uploadSkill: agentApi.uploadAgentSelfSkill
+    }
+  })
+}
+
 const saveAgent = async () => {
   if (!agentForm.name.trim()) {
     agentModalActiveTab.value = 'basic'
@@ -367,14 +481,37 @@ const saveAgent = async () => {
       emit('saved', { mode: 'edit', agent: updated })
       message.success('智能体已保存')
     } else {
-      const created = await agentStore.createAgent(payload)
+      const created = await createAgentWithResources(payload)
+      await agentStore.fetchAgents()
+      if (!created.is_subagent) {
+        try {
+          await agentStore.selectAgent(created.id)
+        } catch {
+          message.warning('智能体已创建，但自动切换失败，请从列表中选择')
+        }
+      }
       emit('saved', { mode: 'create', agent: normalizeAgent(created) })
       message.success('智能体已创建')
+      createCompleted.value = true
     }
     showAgentModal.value = false
     await restoreChatAgentSelectionIfNeeded()
   } catch (error) {
-    message.error(error.message || '保存智能体失败')
+    if (editingAgentId.value) {
+      message.error(error.message || '保存智能体失败')
+    } else {
+      const progress = [
+        ...(createProgress.createdMcpSlugs.length ? [`已创建 MCP：${createProgress.createdMcpSlugs.join('、')}`] : []),
+        ...(createProgress.agent ? [`已创建智能体：${createProgress.agent.id}`] : [])
+      ]
+      const nextStep = createProgress.uncertainStep
+        ? `${createProgress.uncertainStep}请求结果未确认，已停止自动重试。请在管理列表核对后手动处理`
+        : progress.length ? '后续步骤失败，可重试剩余步骤；关闭后再次新增也会保留进度' : ''
+      createError.value = [progress.join('；'), nextStep, error.message || '保存智能体失败']
+        .filter(Boolean)
+        .join('。')
+      message.error(createError.value)
+    }
   } finally {
     saving.value = false
   }
@@ -402,8 +539,8 @@ defineExpose({
         <span class="agent-modal-title">{{ agentModalTitle }}</span>
         <div class="agent-modal-actions" v-if="hasAnyUnsavedChanges || !editingAgentId">
           <a-button size="small" :disabled="saving" @click="closeAgentModal">取消</a-button>
-          <a-button size="small" type="primary" :loading="saving" @click="saveAgent">
-            {{ editingAgentId ? '保存（有修改）' : '创建' }}
+          <a-button size="small" type="primary" :loading="saving" :disabled="!editingAgentId && Boolean(createProgress.uncertainStep)" @click="saveAgent">
+            {{ editingAgentId ? '保存（有修改）' : createActionLabel }}
           </a-button>
         </div>
       </div>
@@ -440,7 +577,7 @@ defineExpose({
                 <a-upload
                   :show-upload-list="false"
                   :before-upload="beforeAgentIconUpload"
-                  :disabled="agentIconUploading"
+                  :disabled="agentIconUploading || saving || createAgentAlreadySaved"
                   accept="image/*"
                 >
                   <div
@@ -473,6 +610,7 @@ defineExpose({
                   <input
                     ref="agentNameInputRef"
                     v-model="agentForm.name"
+                    :disabled="saving || createAgentAlreadySaved"
                     class="agent-inline-name-input"
                     type="text"
                     placeholder="点击输入智能体名称"
@@ -481,6 +619,7 @@ defineExpose({
                   <input
                     v-if="!editingAgentId"
                     v-model="agentForm.slug"
+                    :disabled="saving || createAgentAlreadySaved"
                     class="agent-inline-slug-input"
                     type="text"
                     placeholder="标识可选，留空自动生成"
@@ -504,6 +643,7 @@ defineExpose({
                   <a-select
                     v-if="!editingAgentId"
                     v-model:value="agentForm.backend_id"
+                    :disabled="saving || createAgentAlreadySaved"
                     class="agent-backend-select"
                     :bordered="false"
                     :options="backendOptions"
@@ -518,6 +658,7 @@ defineExpose({
               <span>描述</span>
               <a-textarea
                 v-model:value="agentForm.description"
+                :disabled="saving || createAgentAlreadySaved"
                 class="agent-description-textarea"
                 :rows="3"
                 placeholder="可选"
@@ -525,7 +666,29 @@ defineExpose({
             </label>
           </div>
 
-          <div v-if="canEditAgentShareConfig" class="share-config-block">
+          <div v-if="!editingAgentId" class="create-resources">
+            <div class="section-heading">创建时配置能力</div>
+            <a-alert v-if="createError" type="warning" show-icon :message="createError" />
+            <a-button v-if="hasPendingCreate" type="link" size="small" class="create-reset" :disabled="saving" @click="abandonCreateDraft">
+              放弃当前草稿并新建（已创建资源会保留）
+            </a-button>
+            <label class="form-label full-width">
+              <span>专属技能 ZIP（可选）</span>
+              <a-upload :show-upload-list="false" :before-upload="beforeCreateSkillUpload" accept=".zip" :disabled="saving || Boolean(createProgress.uncertainStep)">
+                <span class="skill-upload-trigger"><Upload :size="14" /> 选择 ZIP</span>
+              </a-upload>
+              <span v-if="createSkillFile" class="resource-hint">{{ createSkillFile.name }}</span>
+              <a-button v-if="createSkillFile" type="link" size="small" :disabled="saving || Boolean(createProgress.uncertainStep)" @click="removeCreateSkill">移除</a-button>
+            </label>
+            <label v-if="userStore.isAdmin" class="form-label full-width">
+              <span>MCP 清单（可选）</span>
+              <a-textarea v-model:value="mcpManifestText" :rows="5" :disabled="saving || Boolean(createProgress.agent) || Boolean(createProgress.uncertainStep)" placeholder='{"mcpServers":{"search":{"type":"http","url":"https://example.com/mcp","extra_data":{"name":"搜索"}}}}' />
+              <span class="resource-hint">支持远程 HTTP / SSE 服务。清单中的服务会创建为系统 MCP，并绑定到此智能体。</span>
+              <span v-if="createProgress.createdMcpSlugs.length && !createProgress.agent" class="resource-hint">已创建的 MCP 条目不能修改；可以修正尚未创建的条目后重试。</span>
+            </label>
+          </div>
+
+          <div v-if="canEditAgentShareConfig && !createAgentAlreadySaved" class="share-config-block">
             <div class="section-heading">
               <span>共享权限</span>
             </div>
@@ -544,6 +707,14 @@ defineExpose({
           class="agent-modal-section runtime-section"
         >
           <AgentRuntimeConfigForm :segment="runtimeConfigSegment" :show-segmented="false" />
+        </section>
+
+        <section
+          v-if="editingAgentId"
+          v-show="agentModalActiveTab === 'self-skill'"
+          class="agent-modal-section self-skill-section"
+        >
+          <AgentSelfSkillEntry :agent-id="editingAgentId" :can-manage="canManageEditingAgent" />
         </section>
       </div>
     </div>
@@ -601,8 +772,8 @@ defineExpose({
   }
 
   &.create-mode {
-    height: auto;
-    min-height: 360px;
+    height: min(72vh, 640px);
+    min-height: 0;
   }
 }
 
@@ -736,6 +907,20 @@ defineExpose({
     min-height: 0;
     padding: 0;
     overflow: visible;
+  }
+}
+
+.self-skill-section {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  padding: 4px 0;
+
+  :deep(.agent-self-skill-entry) {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
   }
 }
 
@@ -987,6 +1172,51 @@ defineExpose({
   border-top: 1px solid var(--gray-150);
 }
 
+.create-resources {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--gray-150);
+}
+
+.create-resources .section-heading {
+  margin-bottom: 0;
+}
+
+.create-reset {
+  align-self: flex-start;
+  height: auto;
+  padding: 0;
+  white-space: normal;
+  text-align: left;
+}
+
+.create-resources .resource-hint {
+  color: var(--gray-500);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.skill-upload-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 4px 10px;
+  border: 1px solid var(--gray-200);
+  border-radius: 6px;
+  color: var(--gray-800);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.skill-upload-trigger:hover {
+  border-color: var(--main-500);
+  color: var(--main-700);
+}
+
 .modal-form {
   display: flex;
   flex-direction: column;
@@ -1064,6 +1294,19 @@ defineExpose({
     overflow-x: auto;
     border-right: 0;
     border-bottom: 1px solid var(--gray-150);
+  }
+
+  .agent-icon-preview {
+    flex-wrap: wrap;
+  }
+
+  .agent-profile-main,
+  .agent-backend-summary {
+    width: 100%;
+  }
+
+  .agent-icon-preview-text {
+    flex: 1;
   }
 }
 
