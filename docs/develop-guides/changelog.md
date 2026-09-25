@@ -10,6 +10,8 @@
 
 ### 升级注意事项
 
+- MCP 仅支持远程 SSE / Streamable HTTP，移除内置 `mcp-server-chart`，所有历史 stdio 配置停用；新增远程 DeepWiki，默认待管理员启用。MySQL 报表技能改用 Markdown 表格。自定义角色或 Skill 对旧图表 MCP 的引用需调整，详见 [MCP 集成](../agents/mcp-integration.md)。
+
 - 数据库一次迁移 business 2 → 7、knowledge 1 → 2，无需经过未发布的中间版本。先停机并成套备份，再运行迁移器，最后协调重启 API 与 worker；旧知识文件的无 owner 处理中间态会标记失败，需要显式重试。操作见[生产部署与升级](../advanced/deployment.md)。
 - 移除 LITE 模式，部署统一包含知识库、图谱和评估能力；原 LITE 实例须补齐完整拓扑资源。
 - Sandbox 默认使用 `core` 规格；网页自动化部署须配置 `SANDBOX_RUNTIME_PROFILE=browser`，需要 Jupyter、code-server 等完整服务时使用 `full`。配置方式见[升级指南](../advanced/deployment.md)。
@@ -19,6 +21,7 @@
 
 ### 功能与修复
 
+- 深度研究 Skill 不再依赖 `html-preview`，默认在当前 Workdir 的 `outputs/` 目录生成独立、响应式的 HTML 阅读文档并作为交付物展示；宽屏可使用侧栏目录，窄屏隐藏或折叠侧栏，并可按内容需要使用外部图片等公开资源。来源在 HTML 中以普通链接呈现；用户明确指定其他格式时仍以用户要求为准。
 - 新增用户定时智能体任务（Beta），支持 cron、时区、独立 Project 和立即运行；重叠执行跳过，错过的触发合并处理。边界见[定时任务决策](./decisions/implemented/2026-08-26-user-agent-scheduled-tasks.md)。
 - 支持空闲线程主动压缩上下文；达到预算 85% 时提示操作。自动压缩统一使用一个阈值，大工具结果保留完整文件及模型可读摘要，检索预览保留来源信息。
 - 完善 Model/Tool 增量审计和按 Run 分组的调试时间线，收紧审计与普通聊天记录的隔离；审计接口返回最新 500 条并明确标记截断，详见[审计接口决策](./decisions/implemented/2026-09-03-unify-message-audit-read-api.md)。
@@ -124,7 +127,7 @@ v0.7.2.beta1 包含不可逆的数据与文件布局迁移，主要影响历史�
 - CLI 新增 `yuxi chat` 本地网页调试入口：临时服务仅监听 `127.0.0.1`，使用本地保存的 remote 与 API Key 代理 Agent Call 和 Run SSE，浏览器可连续对话并实时显示文本增量；API Key 不进入页面，支持指定智能体、remote 及仅打印地址。
 - 新增纯文本 Channel 入口：`/api/agent-invocation/channel/messages` 统一接收 CLI/未来 IM 消息，普通文本复用 `submit_run_command` 并默认使用 `steer`，首版支持 `/state` 查询线程状态与 `/approve` 恢复工具审批；`yuxi chat` 已切换到该入口，并将工具审批中断显示为等待 `/approve` 的正常状态，页面采用无侧边栏的微信 PC 对话布局与色块头像，暂不处理 `ask_user_question`。同步修复测试模块重名、Subagent Run 来源快照错误，并在 HTTP 与共享提交边界拒绝超长来源字段。
 - 优化知识图谱构建：以持续队列并发执行 LLM 抽取、结构写入和向量索引，失败自动重试并持久化进度；已有结果支持断点恢复，新增按最近 Chunk 查询失败样例和向量 reconcile 接口，任务与前端分别展示抽取、结构、向量进度，索引面板支持键盘操作。
-- HTML 辅助可视化迁移为内置 `html-preview` Skill：默认 Chatbot Prompt 不再常驻注入 `html:preview` 专属说明，Agent 改为通过统一的 Skill 描述发现并按需读取静态 HTML/CSS 的适用场景、布局和安全边界；未显式配置 Skills 的 Agent 按现有默认规则自动获得该能力，使用显式 Skills 允许列表的 Agent 需选择 `html-preview`，内置 `deep-research` 已声明依赖；保留前端既有围栏清洗、sandboxed iframe、自适应高度和流式占位行为，普通 HTML 源码继续使用 `html` 代码块。
+- HTML 辅助可视化迁移为内置 `html-preview` Skill：默认 Chatbot Prompt 不再常驻注入 `html:preview` 专属说明，Agent 改为通过统一的 Skill 描述发现并按需读取静态 HTML/CSS 的适用场景、布局和安全边界；未显式配置 Skills 的 Agent 按现有默认规则自动获得该能力，使用显式 Skills 允许列表的 Agent 需选择 `html-preview`；保留前端既有围栏清洗、sandboxed iframe、自适应高度和流式占位行为，普通 HTML 源码继续使用 `html` 代码块。`deep-research` 独立生成 Workdir HTML 文件，不依赖该 Skill。
 - 模型供应商的单个 chat 模型配置新增“模型请求参数 JSON”：管理员可为每个模型独立保存、回显、修改和清空思考参数，未配置或空对象保持原行为；运行时模型缓存会携带该配置，测试模型连接与正式聊天/Agent 调用统一在模型加载入口合并。该字段仅面向 OpenAI/OpenRouter 等 OpenAI 兼容供应商，并通过 `extra_body` 透传；出于安全考虑，顶层字段采用白名单机制，当前支持 `enable_thinking`、`thinking_budget`、`thinking`、`reasoning` 和 `reasoning_effort`，对象内部结构交由供应商校验。
 - 新增通用管理员配置 Options 模块：系统运行时配置迁移到 PostgreSQL，API 与 worker 通过带版本失效的 Redis 短缓存共享最新值，Redis 故障时回源数据库；旧 `base.toml` 只补充缺失字段且读取失败后可重试。LangGraph checkpoint 默认使用 PostgreSQL，跨进程串行初始化且异常解锁时销毁持锁连接；附件正式文件迁移到 MinIO，本地按需缓存，Run 在提交数据库快照后恢复附件，避免重复查询和长事务。
 - 修复部署配置：开发与生产 Compose 中的 Milvus 现在复用对应环境文件里的自定义 MinIO 凭据，避免对象存储认证失败导致服务无法健康启动；Web 生产镜像会统一将静态资源目录设为 `755`、文件设为 `644`，避免 Nginx 因构建产物权限过严返回 403。

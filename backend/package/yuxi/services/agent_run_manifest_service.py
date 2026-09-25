@@ -15,12 +15,12 @@ from dataclasses import dataclass, fields
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from yuxi.agents.buildin import agent_manager
-from yuxi.agents.context import BaseContext, prepare_agent_runtime_context
 from yuxi.agents.backends.paths import runtime_workdir_path
-from yuxi.services.workdir_service import AuthorizedWorkdir
+from yuxi.agents.buildin import get_agent_backend
+from yuxi.agents.context import BaseContext, prepare_agent_runtime_context
 from yuxi.agents.skills.service import PERSONAL_SKILL_SOURCE_TYPE
 from yuxi.repositories.agent_repository import AgentRepository
+from yuxi.services.workdir_service import AuthorizedWorkdir
 from yuxi.storage.postgres.models_business import AgentRun, User
 
 MANIFEST_SCHEMA_VERSION = 2
@@ -144,9 +144,7 @@ async def prepare_run_execution(
     )
     if agent_item is None:
         raise ValueError("智能体不存在或无权限访问")
-    backend = agent_manager.get_agent(agent_item.backend_id)
-    if backend is None:
-        raise ValueError(f"智能体后端 {agent_item.backend_id} 不存在")
+    backend = get_agent_backend(agent_item.backend_id)
 
     context = backend.context_schema()
     configured = (agent_item.config_json or {}).get("context") or {}

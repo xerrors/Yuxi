@@ -38,6 +38,13 @@ x-api-worker-env: &api-worker-env
   NO_PROXY: localhost,127.0.0.1,milvus,graph,minio,etcd,mineru,paddlex,sandbox-provisioner,api.siliconflow.cn
   no_proxy: localhost,127.0.0.1,milvus,graph,minio,etcd,mineru,paddlex,sandbox-provisioner,api.siliconflow.cn
 
+# 长驻服务的容器日志轮转上界，防止 docker json.log 无限增长占满磁盘。
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "3"
+
 services:
   api:
     build:
@@ -236,6 +243,10 @@ services:
       - SANDBOX_EXEC_TIMEOUT_SECONDS=${SANDBOX_EXEC_TIMEOUT_SECONDS:-180}
       - SANDBOX_DELETE_CONCURRENCY=${SANDBOX_DELETE_CONCURRENCY:-32}
       - SANDBOX_CONTAINER_STOP_TIMEOUT_SECONDS=${SANDBOX_CONTAINER_STOP_TIMEOUT_SECONDS:-2}
+      # 单沙盒执行的资源上界
+      - SANDBOX_MEM_LIMIT=${SANDBOX_MEM_LIMIT:-2g}
+      - SANDBOX_CPUS=${SANDBOX_CPUS:-2}
+      - SANDBOX_PIDS_LIMIT=${SANDBOX_PIDS_LIMIT:-512}
       # Optional proxy for sandbox-provisioner container
       - HTTP_PROXY=${SANDBOX_HTTP_PROXY:-}
       - HTTPS_PROXY=${SANDBOX_HTTPS_PROXY:-}
@@ -322,6 +333,7 @@ services:
 
   etcd:
     image: quay.io/coreos/etcd:v3.5.5
+    logging: *default-logging
     environment:
       - ETCD_AUTO_COMPACTION_MODE=revision
       - ETCD_AUTO_COMPACTION_RETENTION=1000
@@ -371,6 +383,12 @@ services:
   milvus:
     image: milvusdb/milvus:v2.5.6
     command: ["milvus", "run", "standalone"]
+    # v2.5.6 不读取 MILVUS_LOG_LEVEL；日志级别只能由镜像内 milvus.yaml 拥有，
+    # 这里只对 stdout/stderr 轮转封顶。内存随知识库数据量线性增长，不设 mem_limit：
+    # 硬上界终会被合法增长击穿，击穿模式是 OOM→重启→重加载→再 OOM 的循环。
+    # cpus 上限同时让内置 maxprocs 按 cgroup quota 收敛 GOMAXPROCS。
+    logging: *default-logging
+    cpus: ${YUXI_MILVUS_CPUS:-2}
     security_opt:
       - seccomp:unconfined
     environment:
@@ -378,7 +396,6 @@ services:
       MINIO_ADDRESS: minio:9000
       MINIO_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:-minioadmin}
-      MILVUS_LOG_LEVEL: error
     volumes:
       - type: bind
         source: ${YUXI_STATE_DIR:-./docker/volumes}/milvus/milvus

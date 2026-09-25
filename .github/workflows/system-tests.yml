@@ -14,6 +14,8 @@ on:
       - 'docker/**'
       - 'docker-compose.yml'
       - 'docker-compose.prod.yml'
+      - 'scripts/ci_prepare_system_tests_env.sh'
+      - 'scripts/ci_build_topology_images.sh'
       - 'scripts/migrate-storage.sh'
       - '.github/workflows/system-tests.yml'
   push:
@@ -31,6 +33,8 @@ on:
       - 'docker/**'
       - 'docker-compose.yml'
       - 'docker-compose.prod.yml'
+      - 'scripts/ci_prepare_system_tests_env.sh'
+      - 'scripts/ci_build_topology_images.sh'
       - 'scripts/migrate-storage.sh'
       - '.github/workflows/system-tests.yml'
   workflow_dispatch:
@@ -42,34 +46,160 @@ concurrency:
   group: system-tests-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  JWT_SECRET_KEY: ci-jwt-secret-at-least-thirty-two-characters
+  API_KEY_DERIVATION_SECRET: ci-api-key-derivation-secret-at-least-32-chars
+  SANDBOX_PROVISIONER_TOKEN: ci-sandbox-token-at-least-thirty-two-characters
+  E2E_USERNAME: ci_e2e_admin
+  E2E_PASSWORD: ci-e2e-password-at-least-eight
+
 jobs:
+  # Durable Task 验证与主链路互斥（会停 api/worker 并强制重建 Milvus），
+  # 单独成 job 与主链路并行；两个 job 共享层缓存，各自持有完整拓扑。
+  durable-task-worker-path:
+    name: Durable Task worker path
+    runs-on: ubuntu-latest
+    # 与主链路相同：冷缓存构建（含 provisioner Debian/Python 下载）叠加 Milvus 拓扑热身，预算需覆盖最慢真实构建。
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Prepare Compose environment
+        run: bash scripts/ci_prepare_system_tests_env.sh
+      - name: Restore api image layer cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/yuxi-buildkit-cache/api
+          key: buildkit-api-${{ runner.os }}-${{ hashFiles('backend/uv.lock', 'backend/pyproject.toml', 'docker/api.Dockerfile') }}
+          restore-keys: |
+            buildkit-api-${{ runner.os }}-
+      - name: Restore sandbox-provisioner image layer cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/yuxi-buildkit-cache/sandbox-provisioner
+          key: buildkit-sandbox-provisioner-${{ runner.os }}-${{ hashFiles('docker/sandbox_provisioner/requirements.txt', 'docker/sandbox_provisioner/Dockerfile') }}
+          restore-keys: |
+            buildkit-sandbox-provisioner-${{ runner.os }}-
+      - name: Build topology images with cached layers
+        run: bash scripts/ci_build_topology_images.sh /tmp/yuxi-buildkit-cache/api /tmp/yuxi-buildkit-cache/sandbox-provisioner
+      - name: Start durable-task runtime topology
+        run: docker compose up -d postgres redis minio etcd milvus sandbox-provisioner api worker
+      - name: Wait for durable-task topology readiness
+        run: |
+          for attempt in $(seq 1 60); do
+            if docker compose exec -T milvus curl -fsS http://localhost:9091/healthz >/dev/null; then
+              break
+            fi
+            if [ "$attempt" = 60 ]; then
+              docker compose logs etcd minio milvus --tail 200
+              exit 1
+            fi
+            sleep 2
+          done
+          for attempt in $(seq 1 90); do
+            if curl -fsS http://localhost:5050/api/system/ready >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose logs api worker --tail 200
+          exit 1
+      - name: Initialize isolated E2E administrator
+        run: |
+          curl -fsS -X POST http://localhost:5050/api/auth/initialize \
+            -H 'Content-Type: application/json' \
+            --data "{\"uid\":\"${E2E_USERNAME}\",\"password\":\"${E2E_PASSWORD}\"}" >/dev/null
+      - name: Verify Durable Task worker path
+        run: |
+          docker compose stop api worker
+          docker compose run --rm storage-migrator
+          docker compose run --rm --no-deps api \
+            uv run --no-sync --no-dev pytest test/integration/services/test_durable_task_repository.py -q
+          docker compose run --rm --no-deps \
+            -e DURABLE_TASK_GATE_ID=${{ github.run_id }} api \
+            uv run --no-sync --no-dev pytest \
+              test/integration/services/test_durable_task_worker_path.py::test_prepare_task_with_failed_initial_arq_publication -q
+          docker compose up -d --force-recreate milvus api worker
+          for attempt in $(seq 1 60); do
+            if docker compose exec -T milvus curl -fsS http://localhost:9091/healthz >/dev/null; then
+              break
+            fi
+            if [ "$attempt" = 60 ]; then
+              docker compose logs etcd minio milvus --tail 200
+              exit 1
+            fi
+            sleep 2
+          done
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://localhost:5050/api/system/ready >/dev/null; then
+              break
+            fi
+            if [ "$attempt" = 60 ]; then
+              docker compose logs api worker --tail 200
+              exit 1
+            fi
+            sleep 2
+          done
+          docker compose exec -T -e DURABLE_TASK_GATE_ID=${{ github.run_id }} api \
+            uv run --no-sync --no-dev pytest \
+              test/integration/services/test_durable_task_worker_path.py::test_shipping_worker_startup_recovers_pending_publication -q
+          docker compose exec -T -e DURABLE_TASK_GATE_ID=${{ github.run_id }} api \
+            uv run --no-sync --no-dev pytest \
+              test/integration/services/test_durable_task_worker_path.py::test_shipping_worker_failure_runs_domain_hook -q
+          docker compose exec -T \
+            -e TEST_USERNAME=${E2E_USERNAME} \
+            -e TEST_PASSWORD=${E2E_PASSWORD} api \
+            uv run --no-sync --no-dev pytest \
+              test/integration/api/test_task_router.py::test_enqueue_document_creates_task -q
+          # 解析产物编辑的真实 HTTP 契约：需要凭据，且清理知识库会 drop Milvus collection，
+          # 因此放在本 job。对象存储那一半由 system-tests job 的 publish window 用例覆盖。
+          docker compose exec -T \
+            -e TEST_USERNAME=${E2E_USERNAME} \
+            -e TEST_PASSWORD=${E2E_PASSWORD} api \
+            uv run --no-sync --no-dev pytest -q \
+              test/integration/api/test_knowledge_router.py::test_edit_parsed_document_writes_content_and_keeps_status \
+              test/integration/api/test_knowledge_router.py::test_edit_rejects_stale_revision_without_overwriting \
+              test/integration/api/test_knowledge_router.py::test_concurrent_edits_leave_exactly_one_winner \
+              test/integration/api/test_knowledge_router.py::test_edit_rejects_indexed_document_and_keeps_chunks \
+              test/integration/api/test_knowledge_router.py::test_edit_document_rejects_invalid_requests \
+              test/integration/api/test_knowledge_router.py::test_edit_document_requires_manage_permission
+      - name: Runtime logs on failure
+        if: failure() || cancelled()
+        run: docker compose logs api worker --tail 300
+      - name: Stop runtime topology
+        if: always()
+        run: docker compose down -v
+
   system-tests:
     name: PostgreSQL, readiness and deterministic Agent path
     runs-on: ubuntu-latest
     # 新 runner 首次构建 sandbox-provisioner 会下载 Debian 与 Python 依赖，启动预算需覆盖冷缓存构建。
     timeout-minutes: 60
-    env:
-      JWT_SECRET_KEY: ci-jwt-secret-at-least-thirty-two-characters
-      API_KEY_DERIVATION_SECRET: ci-api-key-derivation-secret-at-least-32-chars
-      SANDBOX_PROVISIONER_TOKEN: ci-sandbox-token-at-least-thirty-two-characters
-      E2E_USERNAME: ci_e2e_admin
-      E2E_PASSWORD: ci-e2e-password-at-least-eight
     steps:
       - uses: actions/checkout@v7
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
       - name: Prepare Compose environment
-        run: |
-          cp .env.template .env
-          sed -i "s/^JWT_SECRET_KEY=.*/JWT_SECRET_KEY=${JWT_SECRET_KEY}/" .env
-          sed -i "s/^API_KEY_DERIVATION_SECRET=.*/API_KEY_DERIVATION_SECRET=${API_KEY_DERIVATION_SECRET}/" .env
-          sed -i "s/^SANDBOX_PROVISIONER_TOKEN=.*/SANDBOX_PROVISIONER_TOKEN=${SANDBOX_PROVISIONER_TOKEN}/" .env
-          cat >> .env <<'EOF'
-          LANGFUSE_PUBLIC_KEY=ci-langfuse-public-key
-          LANGFUSE_SECRET_KEY=ci-langfuse-secret-key
-          LANGFUSE_BASE_URL=http://api:8765
-          EOF
-          grep -E "^(JWT_SECRET_KEY|API_KEY_DERIVATION_SECRET|SANDBOX_PROVISIONER_TOKEN|LANGFUSE_PUBLIC_KEY|LANGFUSE_SECRET_KEY|LANGFUSE_BASE_URL)=.+" .env
+        run: bash scripts/ci_prepare_system_tests_env.sh
+      - name: Restore api image layer cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/yuxi-buildkit-cache/api
+          key: buildkit-api-${{ runner.os }}-${{ hashFiles('backend/uv.lock', 'backend/pyproject.toml', 'docker/api.Dockerfile') }}
+          restore-keys: |
+            buildkit-api-${{ runner.os }}-
+      - name: Restore sandbox-provisioner image layer cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/yuxi-buildkit-cache/sandbox-provisioner
+          key: buildkit-sandbox-provisioner-${{ runner.os }}-${{ hashFiles('docker/sandbox_provisioner/requirements.txt', 'docker/sandbox_provisioner/Dockerfile') }}
+          restore-keys: |
+            buildkit-sandbox-provisioner-${{ runner.os }}-
+      - name: Build topology images with cached layers
+        run: bash scripts/ci_build_topology_images.sh /tmp/yuxi-buildkit-cache/api /tmp/yuxi-buildkit-cache/sandbox-provisioner
       - name: Start focused runtime topology
-        run: docker compose up -d --build postgres redis minio sandbox-provisioner api worker
+        run: docker compose up -d postgres redis minio sandbox-provisioner api worker
       - name: Wait for truthful readiness
         run: |
           for attempt in $(seq 1 90); do
@@ -147,6 +277,8 @@ jobs:
           exit 1
       - name: Verify readiness API
         run: docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/api/test_system_router_api.py::test_health_endpoint_is_public test/integration/api/test_system_router_api.py::test_readiness_endpoint_proves_core_runtime_dependencies test/integration/api/test_system_router_api.py::test_discovery_and_openapi_declare_full_knowledge_capabilities -q
+      - name: Verify MCP management connection contract
+        run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/api/test_mcp_router.py -q
       - name: Verify versioned Schema migration contract
         run: docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/services/test_schema_migration_version.py -q
       - name: Verify knowledge statistics projection
@@ -159,6 +291,8 @@ jobs:
         run: docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/services/test_agent_run_lease.py -q
       - name: Verify Run result causality
         run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/api/test_agent_run_result_causality.py -q
+      - name: Verify Subagent state recovery and visibility
+        run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/api/test_subagent_state_recovery.py -q
       - name: Verify Message audit HTTP contract
         timeout-minutes: 3
         run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/api/test_chat_router.py::test_thread_message_audits_return_persisted_facts_without_leaking_into_history -q --setup-show -o faulthandler_timeout=60
@@ -174,60 +308,6 @@ jobs:
             test/integration/api/test_skill_artifact_authorization.py -q
       - name: Verify real Sandbox storage isolation and shared projections
         run: docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/services/test_project_workdir_provisioner.py -q
-      - name: Verify Durable Task worker path
-        run: |
-          docker compose stop api worker
-          docker compose run --rm storage-migrator
-          docker compose run --rm --no-deps api \
-            uv run --no-sync --no-dev pytest test/integration/services/test_durable_task_repository.py -q
-          docker compose run --rm --no-deps \
-            -e DURABLE_TASK_GATE_ID=${{ github.run_id }} api \
-            uv run --no-sync --no-dev pytest \
-              test/integration/services/test_durable_task_worker_path.py::test_prepare_task_with_failed_initial_arq_publication -q
-          docker compose up -d --force-recreate milvus api worker
-          for attempt in $(seq 1 60); do
-            if docker compose exec -T milvus curl -fsS http://localhost:9091/healthz >/dev/null; then
-              break
-            fi
-            if [ "$attempt" = 60 ]; then
-              docker compose logs etcd minio milvus --tail 200
-              exit 1
-            fi
-            sleep 2
-          done
-          for attempt in $(seq 1 60); do
-            if curl -fsS http://localhost:5050/api/system/ready >/dev/null; then
-              break
-            fi
-            if [ "$attempt" = 60 ]; then
-              docker compose logs api worker --tail 200
-              exit 1
-            fi
-            sleep 2
-          done
-          docker compose exec -T -e DURABLE_TASK_GATE_ID=${{ github.run_id }} api \
-            uv run --no-sync --no-dev pytest \
-              test/integration/services/test_durable_task_worker_path.py::test_shipping_worker_startup_recovers_pending_publication -q
-          docker compose exec -T -e DURABLE_TASK_GATE_ID=${{ github.run_id }} api \
-            uv run --no-sync --no-dev pytest \
-              test/integration/services/test_durable_task_worker_path.py::test_shipping_worker_failure_runs_domain_hook -q
-          docker compose exec -T \
-            -e TEST_USERNAME=${E2E_USERNAME} \
-            -e TEST_PASSWORD=${E2E_PASSWORD} api \
-            uv run --no-sync --no-dev pytest \
-              test/integration/api/test_task_router.py::test_enqueue_document_creates_task -q
-          # 解析产物编辑的真实 HTTP 契约。放在这里是因为：需要凭据、且清理会动 Milvus，
-          # 本步骤之前 Milvus 尚未拉起。对象存储那半边由上面的 publish window 用例覆盖。
-          docker compose exec -T \
-            -e TEST_USERNAME=${E2E_USERNAME} \
-            -e TEST_PASSWORD=${E2E_PASSWORD} api \
-            uv run --no-sync --no-dev pytest -q \
-              test/integration/api/test_knowledge_router.py::test_edit_parsed_document_writes_content_and_keeps_status \
-              test/integration/api/test_knowledge_router.py::test_edit_rejects_stale_revision_without_overwriting \
-              test/integration/api/test_knowledge_router.py::test_concurrent_edits_leave_exactly_one_winner \
-              test/integration/api/test_knowledge_router.py::test_edit_rejects_indexed_document_and_keeps_chunks \
-              test/integration/api/test_knowledge_router.py::test_edit_document_rejects_invalid_requests \
-              test/integration/api/test_knowledge_router.py::test_edit_document_requires_manage_permission
       - name: Runtime logs on failure
         if: failure() || cancelled()
         run: docker compose logs api worker sandbox-provisioner --tail 300

@@ -244,7 +244,7 @@ def _patch_stream_scaffolding(
 
     async def fake_resolve_agent_runtime(**_kwargs):
         return (
-            SimpleNamespace(slug="test-agent", backend_id="ChatbotAgent"),
+            SimpleNamespace(slug="test-agent", name="测试智能体", backend_id="ChatbotAgent"),
             agent,
             prepared_execution(**(runtime_context or {})).context,
             resolved_conversation,
@@ -694,6 +694,7 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
         "callbacks": ["handler-1"],
         "metadata": {"langfuse_user_id": "user-1", "langfuse_session_id": "thread-1"},
         "tags": ["yuxi", "chat"],
+        "run_name": "测试智能体",
     }
     model_message = calls["stream_messages"][0]
     assert model_message.content.startswith("hello\n\n<attachment_context>")

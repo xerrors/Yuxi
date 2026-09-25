@@ -66,6 +66,34 @@ def test_ask_user_question_accepts_json_string_questions(monkeypatch):
     assert result["answer"] == {"q-1": "A"}
 
 
+def test_ask_user_question_accepts_free_text_question_without_options(monkeypatch):
+    assert "纯问答不提供 options" in tools.ASK_USER_QUESTION_DESCRIPTION
+
+    captured_payloads = []
+    expected_answer = {"destination": "杭州"}
+    monkeypatch.setattr(tools, "interrupt", lambda payload: captured_payloads.append(payload) or expected_answer)
+
+    result = tools.ask_user_question.func(
+        questions=[{"question_id": "destination", "question": "你想去哪个城市？"}]
+    )
+
+    assert captured_payloads == [
+        {
+            "questions": [
+                {
+                    "question_id": "destination",
+                    "question": "你想去哪个城市？",
+                    "options": [],
+                    "multi_select": False,
+                    "allow_other": True,
+                }
+            ],
+            "source": "ask_user_question",
+        }
+    ]
+    assert result["answer"] == expected_answer
+
+
 def test_ask_user_question_rejects_empty_questions():
     with pytest.raises(ValueError, match="questions 至少需要包含一个有效问题"):
         tools.ask_user_question.func(questions=[])

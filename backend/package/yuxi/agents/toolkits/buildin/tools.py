@@ -458,11 +458,12 @@ ASK_USER_QUESTION_DESCRIPTION = """
 4. 在有明显权衡时让用户做取舍
 
 使用规范：
-1. questions 提供 1-5 个问题，每项包含：question、options、multi_select、allow_other
-2. 每个问题的 options 提供 2-5 个有区分度的选项，每项包含 label 和 value
-3. 若有推荐选项：把推荐项放在第一位，并在 label 末尾加 "(Recommended)"
-4. 若需要多选：将该问题的 multi_select 设为 true
-5. allow_other 通常保持 true，用户可通过 Other 输入自定义答案
+1. questions 提供 1-5 个问题，每项包含 question，并可包含 options、multi_select、allow_other
+2. 纯问答不提供 options（或传空列表），用户将直接填写文本
+3. 选择题的 options 提供 2-5 个有区分度的选项，每项包含 label 和 value
+4. 若有推荐选项：把推荐项放在第一位，并在 label 末尾加 "(Recommended)"
+5. 若需要多选：将该问题的 multi_select 设为 true
+6. allow_other 只用于选择题，通常保持 true，让用户可自行填写答案
 
 注意事项：
 1. 不要用这个工具询问“是否继续执行”“计划是否准备好”这类流程控制问题
@@ -471,7 +472,8 @@ ASK_USER_QUESTION_DESCRIPTION = """
 
 返回结果：
 answer 为 object，格式为 {question_id: answer}。
-其中 answer 可能是 string（单选）、list（多选）或 object（Other 文本）。
+跳过的问题不会出现在 answer 中。answer 的值可能是 string（纯问答或单选）、list（多选）
+或 object（选择题的自行填写文本）。
 """
 
 
@@ -484,7 +486,8 @@ answer 为 object，格式为 {question_id: answer}。
 def ask_user_question(
     questions: Annotated[
         list[dict] | str | None,
-        "问题列表，每项格式 {question, options, multi_select, allow_other, question_id(optional)}",
+        "问题列表；纯问答格式 {question}，选择题格式 "
+        "{question, options, multi_select, allow_other, question_id(optional)}",
     ] = None,
 ) -> dict:
     """向用户发起问题并等待回答。"""

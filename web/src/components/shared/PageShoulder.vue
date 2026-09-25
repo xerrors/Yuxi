@@ -34,16 +34,24 @@ defineProps({
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 16px;
   padding: 16px var(--page-padding) 0;
 
   &-left {
+    min-width: 0;
+    max-width: 100%;
     display: flex;
     align-items: center;
     gap: 8px;
   }
 
   &-right {
+    min-width: 0;
+    max-width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    margin-left: auto;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -52,6 +60,7 @@ defineProps({
 
 .search-input {
   width: 280px;
+  max-width: 100%;
   display: flex;
   align-items: center;
 
@@ -83,5 +92,15 @@ defineProps({
 
 .text-muted {
   color: var(--gray-400);
+}
+
+:deep(.page-shoulder-refresh-icon.is-spinning) {
+  animation: page-shoulder-refresh-spin 0.9s linear infinite;
+}
+
+@keyframes page-shoulder-refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

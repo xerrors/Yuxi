@@ -310,7 +310,7 @@ async def test_subagent_stream_records_run_and_shares_output_files(
                         "subagents": [sub_slug],
                         "system_prompt": (
                             "你是主智能体。严格按用户给出的工具顺序执行：先用 execute 创建 /tmp 运行时标记，"
-                            "再由你写入父文件，然后调用 task 子智能体，"
+                            "再由你写入父文件，然后调用 subagent_start 派发子智能体，再用 subagent_await 等待，"
                             "子智能体完成后由你读取其结果；最后一个工具调用必须是 present_artifacts，"
                             "且必须传入目标文件。"
                             "在 present_artifacts 成功前不得结束回答，也不得用 execute 代替展示。"
@@ -344,9 +344,9 @@ async def test_subagent_stream_records_run_and_shares_output_files(
         query = (
             f"请严格依次完成：1）你先用 execute 执行 `printf '%s' '{runtime_content}' > '{runtime_marker}'`；"
             f"2）用 write_file 创建 {parent_input_path}，内容只有一行“{expected_content}”；"
-            f"3）通过 task 调用子智能体 {sub_slug}，要求它先用 execute 执行 `cat '{runtime_marker}'`，"
+            f"3）通过 subagent_start 派发子智能体 {sub_slug}，要求它先用 execute 执行 `cat '{runtime_marker}'`，"
             f"确认内容是 {runtime_content}，再读取 {parent_input_path}，并把完全相同的内容写入 {output_path}；"
-            f"4）task 返回后，你必须用 read_file 读取 {output_path}；"
+            f"4）subagent_await 等待完成后，你必须用 read_file 读取 {output_path}；"
             f"5）最后调用 present_artifacts 展示 {output_path}。不要省略任何一步。"
         )
         run_id = await _create_run(

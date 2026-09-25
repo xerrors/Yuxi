@@ -3,9 +3,9 @@
     <div
       v-if="visible"
       class="approval-modal"
-      :class="{ 'is-tool-approval': isToolApproval }"
-      :role="isToolApproval ? 'dialog' : undefined"
-      :aria-labelledby="isToolApproval ? 'tool-approval-question' : undefined"
+      :class="{ 'is-tool-approval': isToolApproval, 'is-question-dialog': !isToolApproval }"
+      role="dialog"
+      :aria-labelledby="isToolApproval ? 'tool-approval-question' : 'question-dialog-title'"
       :aria-describedby="isToolApproval ? 'tool-approval-summary' : undefined"
     >
       <div class="approval-content">
@@ -75,37 +75,68 @@
           </div>
         </div>
 
-        <div v-else-if="normalizedQuestions.length > 1" class="question-tabs">
-          <button
-            v-for="(questionItem, questionIndex) in normalizedQuestions"
-            :key="questionItem.questionId"
-            class="tab-item"
-            :class="{
-              active: questionIndex === activeQuestionIndex,
-              completed: isQuestionAnswered(questionItem)
-            }"
-            :disabled="isProcessing"
-            @click="setActiveQuestion(questionIndex)"
-          >
-            <span class="tab-index">{{ questionIndex + 1 }}</span>
-          </button>
+        <div v-else class="question-dialog-header">
+          <div class="question-dialog-heading">
+            <CircleHelp :size="19" aria-hidden="true" />
+            <span>问题</span>
+          </div>
+          <div class="question-dialog-navigation">
+            <button
+              type="button"
+              class="question-icon-button"
+              aria-label="上一题"
+              :disabled="isProcessing || activeQuestionIndex === 0"
+              @click="setActiveQuestion(activeQuestionIndex - 1)"
+            >
+              <ChevronLeft :size="19" />
+            </button>
+            <span class="question-progress" aria-live="polite">
+              {{ activeQuestionIndex + 1 }} / {{ normalizedQuestions.length }}
+            </span>
+            <button
+              type="button"
+              class="question-icon-button"
+              aria-label="下一题"
+              :disabled="isProcessing || activeQuestionIndex >= normalizedQuestions.length - 1"
+              @click="setActiveQuestion(activeQuestionIndex + 1)"
+            >
+              <ChevronRight :size="19" />
+            </button>
+            <button
+              type="button"
+              class="question-icon-button question-close-button"
+              aria-label="关闭问题"
+              :disabled="isProcessing"
+              @click="handleCancel"
+            >
+              <X :size="19" />
+            </button>
+          </div>
         </div>
 
         <div v-if="!isToolApproval && activeQuestion" class="question-block">
-          <div class="approval-header">
-            <h4>{{ activeQuestionIndex + 1 }}. {{ activeQuestion.question }}</h4>
-          </div>
+          <h4
+            id="question-dialog-title"
+            ref="questionTitleRef"
+            class="question-title"
+            tabindex="-1"
+          >
+            <span>{{ questionTypeLabel }}：</span>{{ activeQuestion.question }}
+          </h4>
 
           <div v-if="activeQuestion.operation" class="approval-operation">
             <span class="label">操作：</span>
             <span class="operation-text">{{ activeQuestion.operation }}</span>
           </div>
 
-          <div class="question-options">
+          <div v-if="activeQuestion.answerMode !== 'text'" class="question-options">
             <label
               v-for="(optionItem, optionIndex) in activeQuestion.options"
               :key="`${activeQuestion.questionId}-${optionItem.value}-${optionIndex}`"
               class="option-item"
+              :class="{
+                selected: getSelected(activeQuestion.questionId).includes(optionItem.value)
+              }"
             >
               <input
                 v-if="activeQuestion.multiSelect"
@@ -124,6 +155,7 @@
                 :disabled="isProcessing"
                 @change="setSingle(activeQuestion.questionId, optionItem.value)"
               />
+              <span class="option-index" aria-hidden="true">{{ optionIndex + 1 }}</span>
               <div class="option-content">
                 <span
                   class="option-label"
@@ -139,16 +171,59 @@
                 </span>
               </div>
             </label>
+          </div>
 
-            <div v-if="shouldShowOtherInput(activeQuestion)" class="other-input">
+          <div
+            class="question-response-bar"
+            :class="{
+              'free-text-answer': activeQuestion.answerMode === 'text',
+              'other-input': activeQuestion.answerMode !== 'text',
+              selected:
+                activeQuestion.answerMode !== 'text' && isCustomAnswerSelected(activeQuestion)
+            }"
+          >
+            <template v-if="activeQuestion.answerMode === 'text'">
+              <label class="visually-hidden" :for="`question-answer-${activeQuestion.questionId}`">
+                回答 {{ activeQuestion.question }}
+              </label>
               <textarea
+                :id="`question-answer-${activeQuestion.questionId}`"
+                ref="answerTextareaRef"
+                :value="answerTexts[activeQuestion.questionId] || ''"
+                :disabled="isProcessing"
+                rows="2"
+                placeholder="请输入你的回答…"
+                @input="handleTextInput(activeQuestion.questionId, $event)"
+              ></textarea>
+            </template>
+            <template v-else-if="activeQuestion.allowOther">
+              <PencilLine :size="17" aria-hidden="true" />
+              <label class="visually-hidden" :for="`other-answer-${activeQuestion.questionId}`">
+                自行填写回答
+              </label>
+              <textarea
+                :id="`other-answer-${activeQuestion.questionId}`"
                 ref="otherTextareaRef"
-                :value="otherTexts[activeQuestion.questionId] || ''"
+                :value="answerTexts[activeQuestion.questionId] || ''"
                 :disabled="isProcessing"
                 rows="1"
-                placeholder="其他：请输入自定义内容"
-                @input="handleOtherTextInput(activeQuestion.questionId, $event)"
+                placeholder="或自行填写回答"
+                @focus="selectOtherAnswer(activeQuestion.questionId)"
+                @input="handleTextInput(activeQuestion.questionId, $event)"
               ></textarea>
+            </template>
+            <span v-else class="response-bar-spacer" aria-hidden="true"></span>
+            <div class="question-inline-actions">
+              <button class="btn btn-skip" @click="handleSkip" :disabled="isProcessing">
+                跳过
+              </button>
+              <button
+                class="btn btn-approve"
+                @click="handlePrimaryAction"
+                :disabled="isPrimaryButtonDisabled"
+              >
+                {{ primaryButtonText }}
+              </button>
             </div>
           </div>
         </div>
@@ -174,17 +249,6 @@
         </button>
       </div>
 
-      <div v-else class="approval-actions">
-        <button class="btn btn-reject" @click="handleCancel" :disabled="isProcessing">取消</button>
-        <button
-          class="btn btn-approve"
-          @click="handlePrimaryAction"
-          :disabled="isPrimaryButtonDisabled"
-        >
-          {{ primaryButtonText }}
-        </button>
-      </div>
-
       <div v-if="isProcessing" class="approval-processing">
         <span class="processing-spinner"></span>
         处理中...
@@ -195,11 +259,19 @@
 
 <script setup>
 import { computed, nextTick, ref, watch } from 'vue'
-import { ChevronDown, Wrench } from '@lucide/vue'
 import {
-  isOtherOption,
-  normalizeQuestions,
-  DEFAULT_OTHER_OPTION_VALUE
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  CircleHelp,
+  PencilLine,
+  Wrench,
+  X
+} from '@lucide/vue'
+import {
+  buildQuestionAnswer as buildQuestionAnswerValue,
+  isQuestionAnswered as hasQuestionAnswer,
+  normalizeQuestions
 } from '@/utils/questionUtils'
 import { getToolIcon } from '@/components/ToolCallingResult/toolRegistry'
 import {
@@ -226,8 +298,12 @@ const emit = defineEmits(['submit', 'cancel'])
 const isProcessing = ref(false)
 const activeQuestionIndex = ref(0)
 const selectedValues = ref({})
-const otherTexts = ref({})
+const answerTexts = ref({})
+const skippedQuestionIds = ref([])
+const customAnswerQuestionIds = ref([])
 const otherTextareaRef = ref(null)
+const answerTextareaRef = ref(null)
+const questionTitleRef = ref(null)
 const toolRejectButtonRef = ref(null)
 const toolArgsExpanded = ref(false)
 const toolDecisions = ref({})
@@ -235,15 +311,7 @@ const activeToolIndex = ref(0)
 const OTHER_TEXTAREA_MAX_ROWS = 4
 
 const normalizedQuestions = computed(() => {
-  const questions = normalizeQuestions(props.questions)
-  // 添加 otherOptionValue 字段
-  return questions.map((q) => {
-    const otherOption = q.options.find((opt) => isOtherOption(opt))
-    return {
-      ...q,
-      otherOptionValue: otherOption?.value || DEFAULT_OTHER_OPTION_VALUE
-    }
-  })
+  return normalizeQuestions(props.questions)
 })
 const isToolApproval = computed(() => props.kind === 'tool_approval')
 const activeToolRequest = computed(() => props.actionRequests[activeToolIndex.value] || null)
@@ -261,19 +329,26 @@ const activeQuestion = computed(() => {
   const index = Math.min(activeQuestionIndex.value, normalizedQuestions.value.length - 1)
   return normalizedQuestions.value[index]
 })
+const questionTypeLabel = computed(() => {
+  if (activeQuestion.value?.answerMode === 'text') return '问答题'
+  return activeQuestion.value?.multiSelect ? '多选题' : '单选题'
+})
 
 const resetForm = () => {
   isProcessing.value = false
   activeQuestionIndex.value = 0
   selectedValues.value = {}
-  otherTexts.value = {}
+  answerTexts.value = {}
+  skippedQuestionIds.value = []
+  customAnswerQuestionIds.value = []
   toolArgsExpanded.value = false
   toolDecisions.value = {}
   activeToolIndex.value = 0
 }
 
 const adjustOtherTextareaHeight = () => {
-  const textarea = otherTextareaRef.value
+  const textarea =
+    activeQuestion.value?.answerMode === 'text' ? answerTextareaRef.value : otherTextareaRef.value
   if (!textarea) return
 
   const style = window.getComputedStyle(textarea)
@@ -291,9 +366,36 @@ const adjustOtherTextareaHeight = () => {
   textarea.style.overflowY = textarea.scrollHeight > maxHeight ? 'auto' : 'hidden'
 }
 
-const handleOtherTextInput = (questionId, event) => {
-  otherTexts.value[questionId] = event.target.value
+const focusActiveQuestion = () => {
+  if (activeQuestion.value?.answerMode === 'text') {
+    answerTextareaRef.value?.focus()
+    return
+  }
+  questionTitleRef.value?.focus()
+}
+
+const markQuestionAnswered = (questionId) => {
+  skippedQuestionIds.value = skippedQuestionIds.value.filter((id) => id !== questionId)
+}
+
+const handleTextInput = (questionId, event) => {
+  answerTexts.value[questionId] = event.target.value
+  if (activeQuestion.value?.answerMode !== 'text') {
+    selectOtherAnswer(questionId)
+  }
+  markQuestionAnswered(questionId)
   adjustOtherTextareaHeight()
+}
+
+const selectOtherAnswer = (questionId) => {
+  const question = normalizedQuestions.value.find((item) => item.questionId === questionId)
+  if (!question || question.answerMode === 'text' || !question.allowOther) return
+
+  if (!question.multiSelect) selectedValues.value[questionId] = []
+  if (!customAnswerQuestionIds.value.includes(questionId)) {
+    customAnswerQuestionIds.value = [...customAnswerQuestionIds.value, questionId]
+  }
+  markQuestionAnswered(questionId)
 }
 
 const setActiveQuestion = (index) => {
@@ -302,12 +404,19 @@ const setActiveQuestion = (index) => {
   activeQuestionIndex.value = index
   nextTick(() => {
     adjustOtherTextareaHeight()
+    focusActiveQuestion()
   })
 }
 
 const syncAnswersWithQuestions = () => {
   const nextSelectedValues = {}
   const nextOtherTexts = {}
+  const validQuestionIds = new Set(normalizedQuestions.value.map((question) => question.questionId))
+  const eligibleCustomAnswerIds = new Set(
+    normalizedQuestions.value
+      .filter((question) => question.answerMode !== 'text' && question.allowOther)
+      .map((question) => question.questionId)
+  )
 
   normalizedQuestions.value.forEach((questionItem) => {
     const questionId = questionItem.questionId
@@ -325,21 +434,23 @@ const syncAnswersWithQuestions = () => {
       const current = validSelected[0]
       if (current) {
         nextSelectedValues[questionId] = [current]
-      } else if (questionItem.options.length > 0) {
-        nextSelectedValues[questionId] = [questionItem.options[0].value]
       } else {
         nextSelectedValues[questionId] = []
       }
     }
 
-    const text = String(otherTexts.value[questionId] || '').trim()
+    const text = String(answerTexts.value[questionId] || '').trim()
     if (text) {
       nextOtherTexts[questionId] = text
     }
   })
 
   selectedValues.value = nextSelectedValues
-  otherTexts.value = nextOtherTexts
+  answerTexts.value = nextOtherTexts
+  skippedQuestionIds.value = skippedQuestionIds.value.filter((id) => validQuestionIds.has(id))
+  customAnswerQuestionIds.value = customAnswerQuestionIds.value.filter((id) =>
+    eligibleCustomAnswerIds.has(id)
+  )
 }
 
 const getSelected = (questionId) => {
@@ -347,15 +458,8 @@ const getSelected = (questionId) => {
   return Array.isArray(selected) ? selected : []
 }
 
-const isQuestionOtherSelected = (questionItem) => {
-  const selected = getSelected(questionItem.questionId)
-  return selected.includes(questionItem.otherOptionValue)
-}
-
-const shouldShowOtherInput = (questionItem) => {
-  if (!questionItem || !questionItem.allowOther) return false
-  return isQuestionOtherSelected(questionItem)
-}
+const isCustomAnswerSelected = (questionItem) =>
+  customAnswerQuestionIds.value.includes(questionItem.questionId)
 
 watch(
   () => props.visible,
@@ -368,6 +472,8 @@ watch(
         adjustOtherTextareaHeight()
         if (isToolApproval.value) {
           toolRejectButtonRef.value?.focus()
+        } else {
+          focusActiveQuestion()
         }
       })
       return
@@ -376,7 +482,8 @@ watch(
     if (!newVal) {
       resetForm()
     }
-  }
+  },
+  { immediate: true }
 )
 
 watch(
@@ -396,12 +503,14 @@ watch(
 const toggleSelect = (questionId, value) => {
   if (isProcessing.value) return
 
+  customAnswerQuestionIds.value = customAnswerQuestionIds.value.filter((id) => id !== questionId)
   const current = getSelected(questionId)
   if (current.includes(value)) {
     selectedValues.value[questionId] = current.filter((item) => item !== value)
   } else {
     selectedValues.value[questionId] = [...current, value]
   }
+  markQuestionAnswered(questionId)
   nextTick(() => {
     adjustOtherTextareaHeight()
   })
@@ -410,28 +519,33 @@ const toggleSelect = (questionId, value) => {
 const setSingle = (questionId, value) => {
   if (isProcessing.value) return
   selectedValues.value[questionId] = [value]
+  customAnswerQuestionIds.value = customAnswerQuestionIds.value.filter((id) => id !== questionId)
+  markQuestionAnswered(questionId)
   nextTick(() => {
     adjustOtherTextareaHeight()
   })
 }
 
 const isQuestionAnswered = (questionItem) => {
-  const selected = getSelected(questionItem.questionId)
-  if (selected.length === 0) return false
-
-  const other = String(otherTexts.value[questionItem.questionId] || '').trim()
-  if (questionItem.allowOther && isQuestionOtherSelected(questionItem)) {
-    return Boolean(other)
-  }
-
-  return true
+  return hasQuestionAnswer(
+    questionItem,
+    getSelected(questionItem.questionId),
+    answerTexts.value[questionItem.questionId],
+    isCustomAnswerSelected(questionItem)
+  )
 }
+
+const isQuestionSkipped = (questionItem) =>
+  skippedQuestionIds.value.includes(questionItem.questionId)
+
+const isQuestionComplete = (questionItem) =>
+  isQuestionAnswered(questionItem) || isQuestionSkipped(questionItem)
 
 const isSubmitDisabled = computed(() => {
   if (isProcessing.value) return true
   if (normalizedQuestions.value.length === 0) return true
 
-  return normalizedQuestions.value.some((questionItem) => !isQuestionAnswered(questionItem))
+  return normalizedQuestions.value.some((questionItem) => !isQuestionComplete(questionItem))
 })
 
 const isLastQuestion = computed(() => {
@@ -444,7 +558,7 @@ const isCurrentQuestionAnswered = computed(() => {
   return isQuestionAnswered(activeQuestion.value)
 })
 
-const primaryButtonText = computed(() => (isLastQuestion.value ? '提交' : '下一项'))
+const primaryButtonText = computed(() => (isLastQuestion.value ? '提交' : '下一步'))
 
 const isPrimaryButtonDisabled = computed(() => {
   if (isProcessing.value) return true
@@ -457,30 +571,21 @@ const isPrimaryButtonDisabled = computed(() => {
   return !isCurrentQuestionAnswered.value
 })
 
-const buildQuestionAnswer = (questionItem) => {
-  const selected = getSelected(questionItem.questionId)
-  const other = String(otherTexts.value[questionItem.questionId] || '').trim()
-
-  if (questionItem.allowOther && isQuestionOtherSelected(questionItem)) {
-    const selectedWithoutOther = selected.filter((value) => value !== questionItem.otherOptionValue)
-    return {
-      type: 'other',
-      text: other,
-      selected: selectedWithoutOther
-    }
-  }
-
-  if (questionItem.multiSelect) {
-    return selected
-  }
-
-  return selected[0]
+const getQuestionAnswer = (questionItem) => {
+  return buildQuestionAnswerValue(
+    questionItem,
+    getSelected(questionItem.questionId),
+    answerTexts.value[questionItem.questionId],
+    isCustomAnswerSelected(questionItem)
+  )
 }
 
 const buildAnswer = () => {
   const answer = {}
   normalizedQuestions.value.forEach((questionItem) => {
-    answer[questionItem.questionId] = buildQuestionAnswer(questionItem)
+    if (isQuestionAnswered(questionItem) && !isQuestionSkipped(questionItem)) {
+      answer[questionItem.questionId] = getQuestionAnswer(questionItem)
+    }
   })
   return answer
 }
@@ -505,6 +610,22 @@ const handlePrimaryAction = () => {
 const handleCancel = () => {
   if (isProcessing.value) return
   emit('cancel')
+}
+
+const handleSkip = () => {
+  if (isProcessing.value || !activeQuestion.value) return
+
+  const questionId = activeQuestion.value.questionId
+  if (!skippedQuestionIds.value.includes(questionId)) {
+    skippedQuestionIds.value = [...skippedQuestionIds.value, questionId]
+  }
+
+  if (isLastQuestion.value) {
+    handleSubmit()
+    return
+  }
+
+  setActiveQuestion(activeQuestionIndex.value + 1)
 }
 
 const handleToolDecision = (decision) => {
@@ -541,6 +662,16 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
   width: fit-content;
   border: 1px solid var(--gray-200);
 
+  &.is-question-dialog {
+    align-self: stretch;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+    margin: 0;
+    border-radius: 24px;
+    box-shadow: 0 6px 18px var(--shadow-1);
+  }
+
   &.is-tool-approval {
     align-self: stretch;
     display: flex;
@@ -561,62 +692,73 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
   padding: 16px 20px;
 }
 
-.question-tabs {
-  display: flex;
-  flex-wrap: nowrap;
-  justify-content: center;
-  gap: 8px;
-  margin-bottom: 14px;
-  width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding-bottom: 2px;
-  box-sizing: border-box;
-  overscroll-behavior-x: contain;
+.is-question-dialog .approval-content {
+  padding: 13px 16px 12px;
 }
 
-.tab-item {
-  flex: 0 0 auto;
+.question-dialog-header {
   display: flex;
   align-items: center;
-  justify-content: center;
-  min-width: 36px;
-  width: 36px;
-  height: 30px;
-  border: 1px solid var(--gray-200);
-  background: var(--gray-25);
-  color: var(--gray-700);
-  border-radius: 8px;
-  padding: 0;
-  font-size: 12px;
-  cursor: pointer;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
 }
 
-.tab-item:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+.question-dialog-heading,
+.question-dialog-navigation {
+  display: flex;
+  align-items: center;
 }
 
-.tab-item.active {
-  border-color: var(--main-color);
-  background: var(--main-50);
-  color: var(--main-700);
+.question-dialog-heading {
+  gap: 8px;
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  font-weight: 500;
 }
 
-.tab-item.completed .tab-index {
-  color: var(--green-700);
-  border-color: var(--green-200);
-  background: var(--green-50);
+.question-dialog-navigation {
+  gap: 4px;
 }
 
-.tab-index {
-  width: 100%;
+.question-progress {
+  min-width: 54px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  text-align: center;
+}
+
+.question-icon-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--gray-600);
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    background: var(--gray-50);
+    color: var(--color-text);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--main-color);
+    outline-offset: 1px;
+  }
+
+  &:disabled {
+    color: var(--gray-300);
+    cursor: not-allowed;
+  }
+}
+
+.question-close-button {
+  margin-left: 4px;
 }
 
 .approval-header {
@@ -632,6 +774,23 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
   font-weight: 500;
   color: var(--gray-800);
   text-align: left;
+}
+
+.question-block {
+  min-height: 0;
+}
+
+.question-title {
+  margin: 0 0 10px;
+  color: var(--color-text);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+
+  span {
+    font-weight: 600;
+  }
 }
 
 .tool-approval-header {
@@ -835,21 +994,63 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
 .question-options {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 2px;
 }
 
 .option-item {
   display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  color: var(--gray-800);
+  align-items: center;
+  gap: 12px;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 40px;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--color-text);
   font-size: 14px;
   cursor: pointer;
 
   input {
-    margin-top: 3px;
-    flex-shrink: 0;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
   }
+
+  &:hover {
+    background: var(--gray-25);
+  }
+
+  &:focus-within {
+    border-color: var(--main-color);
+    outline: 2px solid var(--main-50);
+  }
+
+  &.selected {
+    background: var(--main-10);
+
+    .option-index {
+      border-color: var(--main-color);
+      background: var(--main-color);
+      color: var(--gray-0);
+    }
+  }
+}
+
+.option-index {
+  display: inline-flex;
+  flex: 0 0 30px;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--gray-200);
+  border-radius: 999px;
+  background: var(--gray-25);
+  color: var(--color-text-secondary);
+  font-size: 13px;
 }
 
 .option-content {
@@ -862,7 +1063,7 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
 
 .option-label {
   line-height: 1.4;
-  color: var(--gray-800);
+  color: var(--color-text);
 
   &.recommended {
     color: var(--main-color);
@@ -872,22 +1073,40 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
 
 .option-description {
   font-size: 12px;
-  color: var(--gray-500);
+  color: var(--color-text-secondary);
   line-height: 1.45;
   word-break: break-word;
 }
 
-.other-input {
-  margin-top: 10px;
+.question-response-bar {
+  box-sizing: border-box;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  margin-top: 4px;
+  padding: 4px 5px 4px 14px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease;
+
+  &:hover {
+    background: var(--gray-25);
+  }
 }
 
-.other-input textarea {
-  width: 100%;
-  background: var(--gray-0);
+.question-response-bar textarea {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
   color: var(--color-text);
-  border: 1px solid var(--gray-300);
-  border-radius: 6px;
-  padding: 8px 10px;
+  border: 0;
+  padding: 5px 10px;
   font-size: 13px;
   line-height: 1.5;
   font-family: inherit;
@@ -897,17 +1116,72 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
   box-sizing: border-box;
 }
 
-.other-input textarea::placeholder {
+.question-response-bar textarea::placeholder {
   color: var(--color-text-secondary);
   opacity: 1;
 }
 
-.other-input textarea:focus {
+.question-response-bar textarea:focus {
+  outline: none;
+}
+
+.question-response-bar:focus-within {
   border-color: var(--main-color);
+  background: var(--gray-25);
+  box-shadow: 0 0 0 2px var(--main-50);
+}
+
+.other-input.selected {
+  border-color: var(--main-300);
+  background: var(--main-10);
+}
+
+.free-text-answer {
+  align-items: flex-end;
+  min-height: 70px;
+  border-color: var(--gray-150);
+  background: var(--gray-0);
+
+  textarea {
+    min-height: 54px;
+    max-height: 112px;
+    font-size: 14px;
+    overflow-y: auto;
+  }
+}
+
+.response-bar-spacer {
+  flex: 1;
+}
+
+.question-inline-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+
+  .btn {
+    min-width: 64px;
+    min-height: 34px;
+    padding: 5px 12px;
+    border-radius: 6px;
+  }
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .approval-actions {
   display: flex;
+  justify-content: flex-end;
   gap: 8px;
   padding: 10px 20px 14px;
 }
@@ -923,7 +1197,8 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
 }
 
 .btn {
-  flex: 1;
+  flex: 0 0 auto;
+  min-width: 76px;
   min-height: 34px;
   padding: 7px 16px;
   border: none;
@@ -948,6 +1223,17 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
   border: 1px solid var(--gray-200);
   background: var(--gray-25);
   color: var(--gray-700);
+}
+
+.btn-skip {
+  border: 1px solid var(--gray-200);
+  background: var(--gray-0);
+  color: var(--color-text);
+}
+
+.btn-skip:hover:not(:disabled) {
+  border-color: var(--gray-300);
+  background: var(--gray-25);
 }
 
 .btn-reject:hover:not(:disabled) {
@@ -1019,18 +1305,25 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
     padding: 12px 16px;
   }
 
-  .tab-item {
-    min-width: 30px;
-    width: 30px;
-    height: 26px;
-    padding: 0;
-    font-size: 11px;
+  .question-dialog-header {
+    margin-bottom: 10px;
   }
 
-  .tab-index {
-    font-size: 10px;
+  .question-dialog-heading {
+    font-size: 13px;
   }
 
+  .question-icon-button {
+    width: 40px;
+    height: 40px;
+  }
+
+  .question-progress {
+    min-width: 46px;
+    font-size: 12px;
+  }
+
+  .question-title,
   .approval-header h4 {
     font-size: 14px;
   }
@@ -1043,6 +1336,20 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
   .approval-actions {
     padding: 10px 16px 12px;
     gap: 8px;
+  }
+
+  .question-response-bar {
+    padding-right: 4px;
+  }
+
+  .question-inline-actions {
+    gap: 6px;
+
+    .btn {
+      min-width: 58px;
+      min-height: 40px;
+      padding: 6px 10px;
+    }
   }
 
   .tool-approval-context code {

@@ -114,26 +114,27 @@ test('dashboardApi.getAllStats 始终请求知识库统计', async () => {
   })
 })
 
-test('会话分析保持紧凑摘要、彩色排行、无刷新 loading 与统一头像 fallback', () => {
+test('会话分析保持紧凑摘要、彩色排行、刷新 loading 与统一头像 fallback', () => {
   const source = readFileSync(
     new URL('../../src/components/dashboard/ThreadStatsComponent.vue', import.meta.url),
     'utf8'
   )
-  const refreshButton = source.match(/<button[^>]*class="refresh-btn"[\s\S]*?<\/button>/)?.[0]
+  const refreshButton = source.match(/<a-button[^>]*class="refresh-btn"[\s\S]*?<\/a-button>/)?.[0]
   const summaryStart = source.indexOf('<DashboardMetricGrid class="thread-summary-grid">')
-  const summaryEnd = source.indexOf('<!-- 2x2 可视化图表区域 -->')
+  const summaryEnd = source.indexOf('<!-- 筛选工具栏：位于指标卡与图表之间 -->')
   const summarySource = source.slice(summaryStart, summaryEnd)
   const agentChartStart = source.indexOf('const renderAgentChart')
   const agentChartEnd = source.indexOf('const handleResize')
   const agentChartSource = source.slice(agentChartStart, agentChartEnd)
 
   assert.ok(refreshButton)
-  assert.equal(refreshButton.includes(':loading'), false)
+  assert.ok(refreshButton.includes(':loading="loading"'))
   assert.match(source, /:default-src="generatePixelAvatar\(record\.agent_id\)"/)
   assert.match(source, /:default-src="generatePixelAvatar\(record\.uid\)"/)
-  assert.match(source, /role="switch"/)
-  assert.match(source, /:aria-checked="includeSubagents"/)
-  assert.match(source, /includeSubagents \? '包含' : '不含'/)
+  assert.match(source, /label: '全部', value: true/)
+  assert.match(source, /label: '仅主智能体', value: false/)
+  assert.match(source, /@change="changeSubagentScope"/)
+  assert.doesNotMatch(source, /includeSubagents \? '包含' : '不含'/)
   assert.equal(summarySource.includes('#meta'), false)
   assert.equal((summarySource.match(/<DashboardMetricCard/g) || []).length, 4)
   assert.equal(summarySource.includes('Token'), false)
@@ -156,7 +157,7 @@ test('会话统计源码包含筛选请求代次和 loading 回写守卫', () =>
     new URL('../../src/components/dashboard/ThreadStatsComponent.vue', import.meta.url),
     'utf8'
   )
-  const statsLoader = source.slice(source.indexOf('const loadData'), source.indexOf('const toggleSubagents'))
+  const statsLoader = source.slice(source.indexOf('const loadData'), source.indexOf('const changeSubagentScope'))
   const conversationLoader = source.slice(
     source.indexOf('const loadConversations'),
     source.indexOf('const resetFilters')

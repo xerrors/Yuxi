@@ -102,14 +102,10 @@ async def _startup(app: FastAPI) -> None:
     async def initialize_default_agents() -> None:
         """确保平台至少具有可用的默认 Agent 定义。"""
 
-        from yuxi.repositories.agent_repository import AgentRepository
+        from yuxi.services.agent_config_service import initialize_agent_presets
 
         async with pg_manager.get_async_session_context() as session:
-            repository = AgentRepository(session)
-            await repository.ensure_default_agent()
-            await repository.ensure_general_purpose_subagent()
-            await repository.ensure_web_search_subagent()
-            await repository.ensure_deep_research_agents()
+            await initialize_agent_presets(session)
 
     await _initialize_startup_component(
         app,

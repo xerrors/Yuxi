@@ -198,8 +198,8 @@ async def test_context_compression_holds_thread_lock_until_checkpoint_update(mon
 
     monkeypatch.setattr(context_compression_service, "AgentRepository", AgentRepo)
     monkeypatch.setattr(
-        context_compression_service.agent_manager,
-        "get_agent",
+        context_compression_service,
+        "get_agent_backend",
         lambda _backend_id: MagicMock(capabilities=["context_compression"], context_schema=BaseContext),
     )
     monkeypatch.setattr(context_compression_service, "resolve_agent_run_model_spec", model_spec)

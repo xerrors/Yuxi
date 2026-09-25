@@ -16,8 +16,17 @@
       </template>
       <template #actions>
         <a-tooltip title="刷新工具" placement="bottom">
-          <a-button class="lucide-icon-btn" :disabled="loading" @click="fetchTools">
-            <RefreshCw :size="14" />
+          <a-button
+            class="lucide-icon-btn"
+            aria-label="刷新工具"
+            :disabled="loading"
+            @click="fetchTools"
+          >
+            <RefreshCw
+              :size="14"
+              class="page-shoulder-refresh-icon"
+              :class="{ 'is-spinning': loading }"
+            />
           </a-button>
         </a-tooltip>
       </template>

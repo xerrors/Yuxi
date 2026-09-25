@@ -1,12 +1,13 @@
 ---
 name: mysql reporter
 slug: mysql-reporter
-description: "生成 MySQL 查询报表并生成可视化图表。当用户需要查询 MySQL 数据库并以报表形式展示结果时使用此技能，包括：统计销售数据、分析用户行为、生成业务报表、查询业务指标等。"
+description: "生成 MySQL 查询报表。当用户需要查询 MySQL 数据库并以报表形式展示结果时使用此技能，包括：统计销售数据、分析用户行为、生成业务报表、查询业务指标等。"
+version: "2026.09.17"
 ---
 
 # MySQL 报表技能
 
-根据用户的指令，通过终端脚本访问 MySQL 数据库，并结合图表绘制工具构建 SQL 查询报告。
+根据用户的指令，通过终端脚本访问 MySQL 数据库，根据查询结果构建报表。
 
 ## 操作流程
 
@@ -15,8 +16,7 @@ description: "生成 MySQL 查询报表并生成可视化图表。当用户需�
 3. 使用 `uv run scripts/list_tables.py` 查看可用表；如果脚本提示缺少 MySQL 配置，按“环境变量缺失处理”回复用户
 4. 必要时用 `uv run scripts/describe_table.py --table 表名` 查看表结构
 5. 生成正确且高效的只读 SQL，通过 `uv run scripts/query.py --sql "SQL语句" --timeout 60` 执行查询并获取结果
-6. 使用 Charts MCP 生成图表
-7. 将图表以 markdown 图片格式嵌入报表
+6. 使用 Markdown 表格呈现查询结果，说明关键指标、变化与结论
 
 ## 环境变量缺失处理
 
@@ -39,11 +39,9 @@ description: "生成 MySQL 查询报表并生成可视化图表。当用户需�
 - 生成的 SQL 查询必须正确且高效，避免全表扫描
 - MySQL 操作必须通过本技能 `scripts/` 下的 CLI 脚本执行，不要调用平台内置 MySQL tools
 - 不要在报表或错误说明中输出 `MYSQL_PASSWORD` 等敏感环境变量的值，只能说明缺少哪些变量名
-- 图表生成工具的返回结果不会默认渲染，必须在最终报表中以 `![描述](图片URL)` 格式嵌入
 - 只返回报表相关的结论，不要返回原始 SQL 查询语句
 
 ## 允许的工具
 
 - terminal：执行 `scripts/list_tables.py`、`scripts/describe_table.py`、`scripts/query.py`
-- Charts MCP：生成可视化图表
 - 网络检索工具：必要时补充背景信息

@@ -11,15 +11,12 @@ from types import ModuleType
 
 import pytest
 
-from yuxi.agents.skills.buildin import BUILTIN_SKILLS
+from yuxi.agents.skills.buildin import BUILTIN_SKILLS_DIR
 from yuxi.agents.skills.service import copy_skill_tree_no_symlinks
 
 
 def _mysql_reporter_dir() -> Path:
-    for spec in BUILTIN_SKILLS:
-        if spec.slug == "mysql-reporter":
-            return spec.source_dir
-    raise AssertionError("mysql-reporter builtin skill spec not found")
+    return BUILTIN_SKILLS_DIR / "mysql-reporter"
 
 
 @contextmanager

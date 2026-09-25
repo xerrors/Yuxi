@@ -448,6 +448,29 @@ async def test_dashboard_service_list_conversations_search(dashboard_db):
     assert next(item for item in options["agents"] if item["agent_id"] == "removed-agent")["is_deleted"] is True
 
 
+async def test_dashboard_audit_timestamps_carry_timezone_designator(dashboard_db):
+    """审计接口对外时间必须带时区标识（约定 UTC + Z 后缀），否则前端会按本地时间误读。"""
+    service = DashboardService(dashboard_db)
+
+    conversations = await service.list_conversations(limit=20)
+    assert conversations["items"]
+    for item in conversations["items"]:
+        assert item["created_at"].endswith("Z")
+        assert item["updated_at"].endswith("Z")
+
+    detail = await service.get_conversation_detail("thread-102")
+    assert detail is not None
+    assert detail["created_at"].endswith("Z")
+    assert detail["updated_at"].endswith("Z")
+    for message in detail["messages"]:
+        assert message["created_at"].endswith("Z")
+
+    feedbacks = await service.get_feedbacks()
+    assert feedbacks
+    for feedback in feedbacks:
+        assert feedback["created_at"].endswith("Z")
+
+
 async def test_dashboard_service_conversation_detail(dashboard_db):
     service = DashboardService(dashboard_db)
     detail = await service.get_conversation_detail("thread-102")

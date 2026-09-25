@@ -241,6 +241,7 @@ async def test_stream_agent_resume_init_does_not_render_resume_input():
 async def test_stream_agent_resume_commits_before_stream_and_routes_subagent_chunks(monkeypatch):
     db = _FakeSession()
     lifecycle: list[str] = []
+    calls: dict[str, object] = {}
 
     class FakeContext:
         def __init__(self):
@@ -262,6 +263,8 @@ async def test_stream_agent_resume_commits_before_stream_and_routes_subagent_chu
             assert db.commit_count == 1
             assert lifecycle[-1] == "prepared"
             lifecycle.append("streaming")
+            kwargs.pop("context")
+            calls["stream_kwargs"] = kwargs
             yield (
                 "messages",
                 (
@@ -280,7 +283,7 @@ async def test_stream_agent_resume_commits_before_stream_and_routes_subagent_chu
 
     async def fake_resolve_agent_runtime(**_kwargs):
         return (
-            SimpleNamespace(slug="main-agent", backend_id="ChatbotAgent"),
+            SimpleNamespace(slug="main-agent", name="主智能体", backend_id="ChatbotAgent"),
             FakeAgent(),
             prepared_execution().context,
             SimpleNamespace(
@@ -377,6 +380,12 @@ async def test_stream_agent_resume_commits_before_stream_and_routes_subagent_chu
     assert finished["meta"]["agent_slug"] == "main-agent"
     assert "agent_id" not in finished["meta"]
     assert lifecycle == ["prepared", "streaming"]
+    assert calls["stream_kwargs"] == {
+        "callbacks": [],
+        "metadata": {},
+        "tags": [],
+        "run_name": "主智能体",
+    }
 
     async def fail_output_persistence(**_kwargs):
         raise ValueError("output binding rejected")

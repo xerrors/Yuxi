@@ -48,6 +48,7 @@ def _docker_backend(module, tmp_path, run_container):
     backend._sandbox_locks = {}
     backend._delete_slots = threading.BoundedSemaphore(16)
     backend._stop_timeout_seconds = 2
+    backend._container_limits = module.sandbox_container_limits()
     backend._container_port = 8080
     backend._network_prefix = "yuxi-know-sandbox"
     backend._network_pool = None
@@ -247,6 +248,96 @@ def test_sandbox_delete_concurrency_rejects_invalid_configuration():
         module.sandbox_delete_concurrency("0")
     with pytest.raises(RuntimeError, match="must be an integer"):
         module.sandbox_delete_concurrency("invalid")
+
+
+def test_sandbox_container_limits_defaults_and_environment_overrides(monkeypatch):
+    module = _load_module()
+    for name in ("SANDBOX_MEM_LIMIT", "SANDBOX_CPUS", "SANDBOX_PIDS_LIMIT"):
+        monkeypatch.delenv(name, raising=False)
+
+    assert module.sandbox_container_limits() == {
+        "mem_limit": "2g",
+        "nano_cpus": 2_000_000_000,
+        "pids_limit": 512,
+    }
+
+    monkeypatch.setenv("SANDBOX_MEM_LIMIT", "512m")
+    monkeypatch.setenv("SANDBOX_CPUS", "1.5")
+    monkeypatch.setenv("SANDBOX_PIDS_LIMIT", "256")
+
+    assert module.sandbox_container_limits() == {
+        "mem_limit": "512m",
+        "nano_cpus": 1_500_000_000,
+        "pids_limit": 256,
+    }
+
+
+@pytest.mark.parametrize(
+    ("mem_limit", "cpus", "pids_limit", "error_match"),
+    [
+        ("", "2", "512", "SANDBOX_MEM_LIMIT"),
+        ("lots", "2", "512", "SANDBOX_MEM_LIMIT"),
+        ("0g", "2", "512", "SANDBOX_MEM_LIMIT"),
+        ("2g", "nan", "512", "SANDBOX_CPUS"),
+        ("2g", "inf", "512", "SANDBOX_CPUS"),
+        ("2g", "1e-10", "512", "SANDBOX_CPUS"),
+        ("2g", "2", "0", "SANDBOX_PIDS_LIMIT"),
+        ("2g", "2", "many", "SANDBOX_PIDS_LIMIT"),
+    ],
+)
+def test_sandbox_container_limits_reject_invalid_configuration(
+    mem_limit, cpus, pids_limit, error_match
+):
+    """非法上限显式失败，不回退到默认值；每个案例覆盖一条守卫路径。"""
+    module = _load_module()
+
+    with pytest.raises(RuntimeError, match=error_match):
+        module.sandbox_container_limits(
+            mem_limit=mem_limit, cpus=cpus, pids_limit=pids_limit
+        )
+
+
+def test_sandbox_container_limits_reject_invalid_environment_at_startup(monkeypatch):
+    module = _load_module()
+    monkeypatch.setenv("SANDBOX_CPUS", "two")
+
+    with pytest.raises(RuntimeError, match="SANDBOX_CPUS"):
+        module.sandbox_container_limits()
+
+
+def test_docker_backend_init_fails_on_invalid_container_limits(monkeypatch):
+    """非法上限让构造期显式失败，不创建 docker client 也不带病启动。"""
+    monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
+    module = _load_module()
+    monkeypatch.setenv("SANDBOX_CPUS", "nan")
+    errors_module = ModuleType("docker.errors")
+    errors_module.DockerException = type("DockerException", (Exception,), {})
+    docker_module = ModuleType("docker")
+    docker_module.errors = errors_module
+    docker_module.from_env = lambda: pytest.fail(
+        "docker client was created before container limits were validated"
+    )
+    monkeypatch.setitem(sys.modules, "docker", docker_module)
+    monkeypatch.setitem(sys.modules, "docker.errors", errors_module)
+
+    with pytest.raises(RuntimeError, match="SANDBOX_CPUS"):
+        module.LocalContainerProvisionerBackend()
+
+
+def test_docker_create_applies_resource_limits_to_sandbox_container(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
+    _module, backend, captured = _docker_backend_with_running_container(
+        monkeypatch, tmp_path
+    )
+
+    backend.create("sandbox-1", "thread-1", "user-1")
+
+    run_kwargs = captured[0][1]
+    assert run_kwargs["mem_limit"] == "2g"
+    assert run_kwargs["nano_cpus"] == 2_000_000_000
+    assert run_kwargs["pids_limit"] == 512
 
 
 def test_normalize_env_converts_values_to_strings(monkeypatch):

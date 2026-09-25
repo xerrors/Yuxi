@@ -15,9 +15,10 @@ from collections.abc import Callable
 from typing import Any, cast
 
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yuxi.agents.mcp.builtin import BUILTIN_MCP_SERVERS
 from yuxi.storage.postgres.models_business import MCPServer
 from yuxi.utils import logger
 
@@ -34,22 +35,9 @@ _mcp_tools_cache: dict[str, list[Callable[..., Any]]] = {}
 
 # MCP tools statistics (for reporting enabled/disabled counts)
 _mcp_tools_stats: dict[str, dict[str, int]] = {}
-_USER_CONFIGURABLE_TRANSPORTS = ("sse", "streamable_http")
+_SUPPORTED_TRANSPORTS = ("sse", "streamable_http")
 
-# Default MCP Server configurations (Imported to DB on first run)
-_DEFAULT_MCP_SERVERS = {
-    "mcp-server-chart": {
-        "command": "npx",
-        "args": ["-y", "@antv/mcp-server-chart"],
-        "transport": "stdio",
-        "description": "图表生成工具，支持生成各类图表（柱状图、折线图、饼图等）",
-        "icon": "📊",
-        "tags": ["内置", "图表"],
-    },
-}
-_BUILTIN_MCP_SERVER_SLUGS = tuple(_DEFAULT_MCP_SERVERS)
-
-_RETIRED_BUILTIN_MCP_SERVER_SLUGS = ("sequentialthinking",)
+_RETIRED_BUILTIN_MCP_SERVER_SLUGS = ("sequentialthinking", "mcp-server-chart")
 
 _SYNCED_MCP_FIELDS = (
     "description",
@@ -72,12 +60,18 @@ class MCPServerNotFoundError(ValueError):
 
 def is_builtin_mcp_server(server: MCPServer) -> bool:
     """判断 MCP 是否由代码中的内置定义管理。"""
-    return server.slug in _BUILTIN_MCP_SERVER_SLUGS
+    return server.slug in BUILTIN_MCP_SERVERS
 
 
-def requires_mcp_stdio_migration(server: MCPServer) -> bool:
-    """判断 MCP 是否为升级后需要迁移的用户 stdio 配置。"""
-    return server.transport == "stdio" and not is_builtin_mcp_server(server)
+def requires_mcp_transport_migration(server: MCPServer) -> bool:
+    """判断历史 MCP 配置是否需要迁移为支持的远程传输。"""
+    return server.transport not in _SUPPORTED_TRANSPORTS
+
+
+def _validate_remote_transport(config: dict[str, Any]) -> None:
+    """在客户端与工具缓存边界拒绝非远程连接。"""
+    if config.get("transport") not in _SUPPORTED_TRANSPORTS:
+        raise ValueError("MCP 仅支持 sse 或 streamable_http，不支持 stdio 等其他 transport")
 
 
 def _to_runtime_mcp_config(server: MCPServer) -> dict[str, Any]:
@@ -85,10 +79,10 @@ def _to_runtime_mcp_config(server: MCPServer) -> dict[str, Any]:
     if not is_builtin_mcp_server(server):
         return server.to_mcp_config()
 
-    builtin = _DEFAULT_MCP_SERVERS[server.slug]
+    builtin = BUILTIN_MCP_SERVERS[server.slug]
     config = {
         key: builtin[key]
-        for key in ("transport", "url", "command", "args", "env", "headers", "timeout", "sse_read_timeout")
+        for key in ("transport", "url", "headers", "timeout", "sse_read_timeout")
         if builtin.get(key) is not None
     }
     if server.disabled_tools:
@@ -110,8 +104,7 @@ async def ensure_builtin_mcp_servers_in_db() -> None:
 
         result = await session.execute(
             select(MCPServer).where(
-                MCPServer.transport == "stdio",
-                ~MCPServer.slug.in_(_BUILTIN_MCP_SERVER_SLUGS),
+                MCPServer.transport.not_in(_SUPPORTED_TRANSPORTS),
                 MCPServer.enabled == 1,
             )
         )
@@ -120,7 +113,7 @@ async def ensure_builtin_mcp_servers_in_db() -> None:
             server.updated_by = "system"
             clear_mcp_server_tools_cache(server.slug)
             any_changed = True
-            logger.warning(f"Disabled legacy user stdio MCP server '{server.slug}'")
+            logger.warning(f"Disabled unsupported MCP server '{server.slug}'")
 
         for slug in _RETIRED_BUILTIN_MCP_SERVER_SLUGS:
             result = await session.execute(
@@ -133,7 +126,7 @@ async def ensure_builtin_mcp_servers_in_db() -> None:
                 any_changed = True
                 logger.info(f"Removed retired built-in MCP server '{slug}' from database")
 
-        for slug, config in _DEFAULT_MCP_SERVERS.items():
+        for slug, config in BUILTIN_MCP_SERVERS.items():
             result = await session.execute(select(MCPServer).filter(MCPServer.slug == slug))
             existing = result.scalar_one_or_none()
             if not existing:
@@ -144,15 +137,14 @@ async def ensure_builtin_mcp_servers_in_db() -> None:
                         description=config.get("description"),
                         transport=config["transport"],
                         url=config.get("url"),
-                        command=config.get("command"),
-                        args=config.get("args"),
-                        env=config.get("env"),
                         headers=config.get("headers"),
                         timeout=config.get("timeout"),
                         sse_read_timeout=config.get("sse_read_timeout"),
                         tags=config.get("tags"),
                         icon=config.get("icon"),
-                        enabled=0,
+                        # 内置定义可用 enabled 声明默认启停；未声明时保持停用，
+                        # 由管理员按需启用（如对外部服务 DeepWiki）。
+                        enabled=config.get("enabled", 0),
                         created_by="system",
                         updated_by="system",
                     )
@@ -167,6 +159,11 @@ async def ensure_builtin_mcp_servers_in_db() -> None:
                 if getattr(existing, field) != next_value:
                     setattr(existing, field, next_value)
                     server_changed = True
+            # 内置连接与启停都由代码声明，启动时收敛，避免手工改动造成漂移。
+            wanted_enabled = config.get("enabled")
+            if wanted_enabled is not None and existing.enabled != wanted_enabled:
+                existing.enabled = wanted_enabled
+                server_changed = True
             if existing.created_by != "system":
                 existing.created_by = "system"
                 server_changed = True
@@ -182,6 +179,8 @@ async def get_mcp_client(
     server_configs: dict[str, Any] | None = None,
 ) -> MultiServerMCPClient | None:
     """Initializes an MCP client with the given server configurations."""
+    for config in (server_configs or {}).values():
+        _validate_remote_transport(config)
     try:
         client = MultiServerMCPClient(server_configs)  # pyright: ignore[reportArgumentType]
         logger.info(f"Initialized MCP client with servers: {list(server_configs.keys())}")
@@ -211,7 +210,7 @@ async def _load_enabled_mcp_server_configs(
     if db is not None:
         stmt = select(MCPServer).where(
             MCPServer.enabled == 1,
-            or_(MCPServer.transport != "stdio", MCPServer.slug.in_(_BUILTIN_MCP_SERVER_SLUGS)),
+            MCPServer.transport.in_(_SUPPORTED_TRANSPORTS),
         )
         if names:
             stmt = stmt.where(MCPServer.slug.in_(names))
@@ -237,7 +236,7 @@ async def get_enabled_mcp_server_slugs(*, db: AsyncSession | None = None) -> lis
         result = await db.execute(
             select(MCPServer.slug).where(
                 MCPServer.enabled == 1,
-                or_(MCPServer.transport != "stdio", MCPServer.slug.in_(_BUILTIN_MCP_SERVER_SLUGS)),
+                MCPServer.transport.in_(_SUPPORTED_TRANSPORTS),
             )
         )
         return [name for name in result.scalars().all() if isinstance(name, str)]
@@ -277,6 +276,8 @@ async def get_mcp_tools(
     if server_config is None:
         logger.warning(f"MCP server '{server_slug}' not found in database or disabled")
         return []
+
+    _validate_remote_transport(server_config)
 
     # 配置 hash 直接基于完整配置生成。只要数据库中的配置发生变化，
     # 本地工具缓存 key 就会变化，从而自然触发重建。
@@ -424,10 +425,10 @@ async def create_mcp_server(
     created_by: str = None,
 ) -> MCPServer:
     """Create server."""
-    if slug in _BUILTIN_MCP_SERVER_SLUGS:
+    if slug in BUILTIN_MCP_SERVERS:
         raise ValueError("系统内置 MCP 的 slug 由代码保留，无法通过接口创建")
-    if transport not in _USER_CONFIGURABLE_TRANSPORTS:
-        raise ValueError("用户创建的 MCP 仅支持 sse 或 streamable_http，不允许启动 stdio 本地进程")
+    if transport not in _SUPPORTED_TRANSPORTS:
+        raise ValueError("MCP 仅支持 sse 或 streamable_http，不允许启动 stdio 本地进程")
 
     existing = await get_mcp_server(db, slug)
     if existing:
@@ -480,8 +481,8 @@ async def update_mcp_server(
         raise PermissionError("系统内置 MCP 的连接配置由代码管理，无法通过接口修改")
 
     next_transport = transport or server.transport
-    if next_transport not in _USER_CONFIGURABLE_TRANSPORTS:
-        raise ValueError("用户创建的 MCP 仅支持 sse 或 streamable_http，不允许启动 stdio 本地进程")
+    if next_transport not in _SUPPORTED_TRANSPORTS:
+        raise ValueError("MCP 仅支持 sse 或 streamable_http，不允许启动 stdio 本地进程")
 
     next_url = url if url is not None else server.url
     if not next_url or not next_url.strip():
@@ -547,7 +548,7 @@ async def set_server_enabled(
     server = await get_mcp_server(db, slug)
     if not server:
         raise MCPServerNotFoundError(f"Server '{slug}' does not exist")
-    if enabled and requires_mcp_stdio_migration(server):
+    if enabled and requires_mcp_transport_migration(server):
         raise ValueError("历史 stdio MCP 已被禁用，请改为 sse 或 streamable_http 后再启用")
 
     server.enabled = 1 if enabled else 0
@@ -669,3 +670,18 @@ async def get_all_mcp_tools(server_slug: str) -> list:
         cache=False,
         force_refresh=True,
     )
+
+
+async def inspect_mcp_server_tools(server: MCPServer) -> list:
+    """管理端严格建连，包括停用服务；不吞异常、不修改状态或运行缓存。"""
+    if requires_mcp_transport_migration(server):
+        raise ValueError("不支持的 MCP transport（包括 stdio）须迁移为远程服务后再测试")
+    config = {key: value for key, value in _to_runtime_mcp_config(server).items() if key != "disabled_tools"}
+    _validate_remote_transport(config)
+    client = MultiServerMCPClient({server.slug: config})
+    tools = await client.get_tools()
+    for tool in tools:
+        if tool.metadata is None:
+            tool.metadata = {}
+        tool.metadata["id"] = f"mcp__{to_camel_case(server.slug)}__{to_camel_case(tool.name)}"
+    return tools

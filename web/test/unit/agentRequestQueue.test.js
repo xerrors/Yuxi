@@ -784,6 +784,48 @@ test('旧 Run 终态清理保留排队 Request SSE', async () => {
   }
 })
 
+for (const reuseCursor of [false, true]) {
+  test(`数据库补发 end ${reuseCursor ? '复用游标会被丢弃（缺陷对照）' : '无游标时直接结束生成'}`, async () => {
+    const threadState = {
+      activeRunId: null,
+      runLastSeq: '0-0',
+      runStreamAbortController: null,
+      replyLoadingVisible: true,
+      onGoingConv: { msgChunks: {} }
+    }
+    const originalStream = agentApi.streamAgentRunEvents
+    const originalGetRun = agentApi.getAgentRun
+    let statusReads = 0
+    const chunks = []
+    const message =
+      'event: messages\nid: 1700000000002-0\ndata: {"payload":{"chunk":{"content":"final"}}}\n\n'
+    const end = `event: end\n${reuseCursor ? 'id: 1700000000002-0\n' : ''}data: {"payload":{"status":"completed"}}\n\n`
+    agentApi.streamAgentRunEvents = async () => new Response(message + message + end)
+    agentApi.getAgentRun = async () => {
+      statusReads += 1
+      return { run: { id: 'run-fallback', status: 'completed' } }
+    }
+    try {
+      const stream = createRunStream({
+        threadState,
+        handleStreamChunk: (chunk) => chunks.push(chunk),
+        resetOnGoingConv: () => {}
+      })
+      await stream.startRunStream('thread-fallback', 'run-fallback')
+      assert.equal(statusReads, reuseCursor ? 1 : 0)
+      assert.equal(chunks.length, 1)
+      assert.equal(chunks[0].content, 'final')
+      assert.equal(threadState.activeRunId, null)
+      assert.equal(threadState.isStreaming, false)
+      assert.equal(threadState.replyLoadingVisible, false)
+      assert.equal(localStorage.getItem('active_run:thread-fallback'), null)
+    } finally {
+      agentApi.streamAgentRunEvents = originalStream
+      agentApi.getAgentRun = originalGetRun
+    }
+  })
+}
+
 test('自然断流后从 PG 终态复用统一清理并刷新历史', async () => {
   const threadState = {
     activeRunId: null,

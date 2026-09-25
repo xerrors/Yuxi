@@ -19,7 +19,7 @@ from yuxi.storage.postgres.models_business import (
     ToolCall,
     User,
 )
-from yuxi.utils.datetime_utils import UTC, ensure_shanghai, shanghai_now, utc_now
+from yuxi.utils.datetime_utils import UTC, ensure_shanghai, format_utc_datetime, shanghai_now, utc_now
 
 
 class DashboardRepository:
@@ -164,8 +164,8 @@ class DashboardRepository:
                     "message_count": stats.message_count if stats else 0,
                     "total_tokens": usage.total_tokens,
                     "token_usage_complete": bool(usage.complete),
-                    "created_at": conversation.created_at.isoformat() if conversation.created_at else "",
-                    "updated_at": conversation.updated_at.isoformat() if conversation.updated_at else "",
+                    "created_at": format_utc_datetime(conversation.created_at) or "",
+                    "updated_at": format_utc_datetime(conversation.updated_at) or "",
                 }
             )
         return {
@@ -981,7 +981,7 @@ class DashboardRepository:
                 "avatar": normalize_public_minio_url(row.avatar) if row.avatar else None,
                 "thread_count": int(row.thread_count or 0),
                 "message_count": int(row.message_count or 0),
-                "last_active_at": row.last_active_at.isoformat() if row.last_active_at else None,
+                "last_active_at": format_utc_datetime(row.last_active_at),
             }
             for row in user_rows
         ]

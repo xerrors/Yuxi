@@ -480,12 +480,20 @@ const segmentConfigKeys = computed(() => {
   }
 })
 
+/** 列表选择项没有任何可选资源且无既有引用时，整个选择器不渲染，避免展示空选择器。 */
+const hasSelectableOptions = (key, value) => {
+  if (!isListConfig(key, value)) return true
+  return getConfigOptions(value).length > 0 || getHiddenSelection(key).length > 0
+}
+
 const filteredConfigurableItems = computed(() => {
   if (isEmptyConfig.value) return {}
   const keys = segmentConfigKeys.value[activeSegment.value] || []
   const filtered = {}
   keys.forEach((key) => {
-    filtered[key] = configurableItems.value[key]
+    const value = configurableItems.value[key]
+    if (!hasSelectableOptions(key, value)) return
+    filtered[key] = value
   })
   return filtered
 })

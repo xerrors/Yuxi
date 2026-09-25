@@ -2,8 +2,6 @@
  * 问题和选项规范化工具
  */
 
-const DEFAULT_OTHER_OPTION_VALUE = '__other__'
-
 const WRAPPER_OPTION_KEYS = ['item', 'items', 'options', 'list', 'choices', 'data']
 const WRAPPER_QUESTION_KEYS = ['questions', 'items', 'item', 'list', 'data']
 
@@ -49,26 +47,6 @@ export const parseBool = (val, defaultVal = false) => {
     if (['false', '0', 'no', 'n', 'f', ''].includes(s)) return false
   }
   return defaultVal
-}
-
-/**
- * 判断选项是否为"其他"选项
- */
-export const isOtherOption = (option) => {
-  if (!option || typeof option !== 'object') return false
-  const label = String(option.label || '')
-    .trim()
-    .toLowerCase()
-  const value = String(option.value || '')
-    .trim()
-    .toLowerCase()
-
-  return (
-    value === DEFAULT_OTHER_OPTION_VALUE ||
-    value === 'other' ||
-    label.includes('其他') ||
-    label.includes('other')
-  )
 }
 
 /**
@@ -125,12 +103,11 @@ export const normalizeQuestions = (rawQuestions) => {
       const allowOther = parseBool(item.allowOther ?? item.allow_other, true)
       const multiSelect = parseBool(item.multiSelect ?? item.multi_select, false)
       const optionsVal = item.options !== undefined ? item.options : item.choices
-      const baseOptions = normalizeOptions(optionsVal || [])
-      const hasOtherOption = baseOptions.some((option) => isOtherOption(option))
-      const options =
-        allowOther && !hasOtherOption
-          ? [...baseOptions, { label: '其他', value: DEFAULT_OTHER_OPTION_VALUE }]
-          : baseOptions
+      const options = normalizeOptions(optionsVal || [])
+      let answerMode = 'text'
+      if (options.length > 0) {
+        answerMode = multiSelect ? 'multiple' : 'single'
+      }
 
       return {
         questionId,
@@ -138,10 +115,47 @@ export const normalizeQuestions = (rawQuestions) => {
         options,
         multiSelect,
         allowOther,
-        operation
+        operation,
+        answerMode
       }
     })
     .filter(Boolean)
 }
 
-export { DEFAULT_OTHER_OPTION_VALUE }
+/**
+ * 判断问题是否已有可提交答案
+ */
+export const isQuestionAnswered = (
+  question,
+  selectedValues = [],
+  text = '',
+  customAnswer = false
+) => {
+  const normalizedText = String(text || '').trim()
+  if (question?.answerMode === 'text') return Boolean(normalizedText)
+  if (question?.allowOther && customAnswer) return Boolean(normalizedText)
+  return Array.isArray(selectedValues) && selectedValues.length > 0
+}
+
+/**
+ * 构建单题的 resume 答案
+ */
+export const buildQuestionAnswer = (
+  question,
+  selectedValues = [],
+  text = '',
+  customAnswer = false
+) => {
+  const normalizedText = String(text || '').trim()
+  if (question?.answerMode === 'text') return normalizedText
+
+  const selected = Array.isArray(selectedValues) ? selectedValues : []
+  if (question?.allowOther && customAnswer) {
+    return {
+      type: 'other',
+      text: normalizedText,
+      selected
+    }
+  }
+  return question?.multiSelect ? selected : selected[0]
+}

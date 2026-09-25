@@ -103,3 +103,92 @@ async def test_legacy_stdio_mcp_is_disabled_without_starting_process(
             await db.execute(delete(MCPServer).where(MCPServer.slug == slug))
             await db.commit()
         marker.unlink(missing_ok=True)
+
+
+async def test_direct_stdio_config_cannot_start_process(tmp_path):
+    """直接传入内置标识的 stdio 配置也不能启动命令。"""
+    from yuxi.agents.mcp.service import get_mcp_client
+
+    marker = tmp_path / "stdio.marker"
+    config = {"deepwiki-official": {"transport": "stdio", "command": "sh", "args": ["-c", f"touch {marker}"]}}
+    with pytest.raises(ValueError, match="不支持 stdio"):
+        await get_mcp_tools("deepwiki-official", additional_servers=config, cache=False)
+    with pytest.raises(ValueError, match="不支持 stdio"):
+        client = await get_mcp_client(config)
+        if client is not None:
+            await client.get_tools()
+    assert not marker.exists()
+
+
+async def test_retired_chart_removed_and_deepwiki_registered(current_loop_pg_manager):
+    """真实 PostgreSQL 同步删除系统图表，注册固定远程 DeepWiki。"""
+    async with current_loop_pg_manager.get_async_session_context() as db:
+        existing = await db.scalar(select(MCPServer).where(MCPServer.slug == "mcp-server-chart"))
+        assert existing is None, "retired chart must be absent before seeding the migration case"
+        db.add(
+            MCPServer(
+                slug="mcp-server-chart",
+                name="Legacy chart",
+                transport="stdio",
+                command="npx",
+                args=["-y", "@antv/mcp-server-chart"],
+                enabled=1,
+                created_by="system",
+                updated_by="system",
+            )
+        )
+        await db.commit()
+    try:
+        await ensure_builtin_mcp_servers_in_db()
+        await ensure_builtin_mcp_servers_in_db()
+        async with current_loop_pg_manager.get_async_session_context() as db:
+            assert await db.scalar(select(MCPServer).where(MCPServer.slug == "mcp-server-chart")) is None
+            server = await db.scalar(select(MCPServer).where(MCPServer.slug == "deepwiki-official"))
+            assert server is not None
+            assert server.transport == "streamable_http"
+            assert server.url == "https://mcp.deepwiki.com/mcp"
+            assert server.command is None
+    finally:
+        async with current_loop_pg_manager.get_async_session_context() as db:
+            await db.execute(
+                delete(MCPServer).where(MCPServer.slug == "mcp-server-chart", MCPServer.created_by == "system")
+            )
+            await db.commit()
+
+
+async def test_official_builtin_preserves_user_deepwiki(current_loop_pg_manager):
+    """官方内置标识不占用已有用户 deepwiki 配置。"""
+    from yuxi.agents.mcp.service import get_enabled_mcp_server_config, is_builtin_mcp_server
+
+    async with current_loop_pg_manager.get_async_session_context() as db:
+        assert await db.scalar(select(MCPServer.id).where(MCPServer.slug == "deepwiki")) is None, (
+            "测试要求未占用的 deepwiki 标识，不能覆盖共享环境的已有配置"
+        )
+        server = MCPServer(
+            slug="deepwiki",
+            name="User DeepWiki",
+            transport="streamable_http",
+            url="https://private.example/mcp",
+            headers={"X-Test": "preserve"},
+            enabled=1,
+            created_by="admin",
+            updated_by="admin",
+        )
+        db.add(server)
+        await db.commit()
+        server_id = server.id
+    try:
+        await ensure_builtin_mcp_servers_in_db()
+        await ensure_builtin_mcp_servers_in_db()
+        async with current_loop_pg_manager.get_async_session_context() as db:
+            server = await db.get(MCPServer, server_id)
+            assert server.created_by == "admin"
+            assert server.enabled == 1
+            assert not is_builtin_mcp_server(server)
+            config = await get_enabled_mcp_server_config("deepwiki", db=db)
+            assert config["url"] == "https://private.example/mcp"
+            assert config["headers"] == {"X-Test": "preserve"}
+    finally:
+        async with current_loop_pg_manager.get_async_session_context() as db:
+            await db.execute(delete(MCPServer).where(MCPServer.id == server_id))
+            await db.commit()

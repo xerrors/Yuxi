@@ -151,7 +151,7 @@
         <span>项目名称</span>
         <a-input
           v-model:value="projectName"
-          :maxlength="100"
+          :maxlength="PROJECT_NAME_MAX_LENGTH"
           autofocus
           placeholder="例如：产品发布计划"
           @press-enter="canCreateProject && handleCreateProject()"
@@ -164,7 +164,9 @@
           v-model="linkedPath"
           :active="createModalOpen"
           :disabled="creatingProject"
+          :suggested-folder-name="projectName"
           include-unbound-project-dirs
+          @folder-created="handleFolderCreated"
         />
       </div>
     </div>
@@ -191,7 +193,13 @@ import {
 import { projectApi } from '@/apis/project_api'
 import WorkspacePathPicker from '@/components/WorkspacePathPicker.vue'
 import { useProjectsStore } from '@/stores/projects'
-import { AUTO_PROJECT_ID, filterProjects, formatRelativeTime } from '@/utils/projectSelection'
+import {
+  AUTO_PROJECT_ID,
+  PROJECT_NAME_MAX_LENGTH,
+  filterProjects,
+  fillProjectNameFromFolder,
+  formatRelativeTime
+} from '@/utils/projectSelection'
 
 const props = defineProps({
   upward: { type: Boolean, default: false },
@@ -294,6 +302,11 @@ const handleCreateProject = async () => {
   } finally {
     creatingProject.value = false
   }
+}
+
+/** 文件夹创建成功后与项目名称互补：名称为空时用文件夹名补齐，已有输入保持不变。 */
+const handleFolderCreated = ({ name } = {}) => {
+  projectName.value = fillProjectNameFromFolder(projectName.value, name)
 }
 
 const openHistoryView = () => {

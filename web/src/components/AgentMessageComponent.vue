@@ -321,7 +321,7 @@ const parsedData = computed(() => {
   user-select: text;
   word-break: break-word;
   word-wrap: break-word;
-  font-size: 15px;
+  font-size: 14px;
   line-height: 24px;
   box-sizing: border-box;
   color: var(--gray-10000);

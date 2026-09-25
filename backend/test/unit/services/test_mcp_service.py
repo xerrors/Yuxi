@@ -74,14 +74,15 @@ async def test_ensure_builtin_mcp_servers_removes_retired_system_server(monkeypa
     await mcp_service.ensure_builtin_mcp_servers_in_db()
 
     retired = await mcp_session.scalar(select(MCPServer).where(MCPServer.slug == "sequentialthinking"))
-    chart = await mcp_session.scalar(select(MCPServer).where(MCPServer.slug == "mcp-server-chart"))
+    deepwiki = await mcp_session.scalar(select(MCPServer).where(MCPServer.slug == "deepwiki-official"))
     assert retired is None
-    assert chart is not None
+    assert deepwiki is not None
 
 
-async def test_ensure_builtin_mcp_servers_preserves_user_server_with_retired_slug(monkeypatch, mcp_session):
+@pytest.mark.parametrize("slug", ["sequentialthinking", "deepwiki"])
+async def test_ensure_builtin_mcp_servers_preserves_user_slug(monkeypatch, mcp_session, slug):
     user_server = MCPServer(
-        slug="sequentialthinking",
+        slug=slug,
         name="用户自定义 MCP",
         description="user managed",
         transport="streamable_http",
@@ -101,9 +102,14 @@ async def test_ensure_builtin_mcp_servers_preserves_user_server_with_retired_slu
 
     await mcp_service.ensure_builtin_mcp_servers_in_db()
 
-    server = await mcp_session.scalar(select(MCPServer).where(MCPServer.slug == "sequentialthinking"))
+    server = await mcp_session.scalar(select(MCPServer).where(MCPServer.slug == slug))
     assert server is not None
     assert server.created_by == "admin"
+    assert server.url == "https://example.com/mcp"
+    assert server.enabled == 1
+    assert not mcp_service.is_builtin_mcp_server(server)
+    configs = await mcp_service._load_enabled_mcp_server_configs(db=mcp_session)
+    assert configs[slug]["url"] == "https://example.com/mcp"
 
 
 async def test_ensure_builtin_mcp_servers_disables_legacy_user_stdio(monkeypatch, mcp_session):
@@ -193,10 +199,8 @@ async def test_runtime_configs_exclude_user_created_stdio_servers(mcp_session):
     configs = await mcp_service._load_enabled_mcp_server_configs(db=mcp_session)
     slugs = await mcp_service.get_enabled_mcp_server_slugs(db=mcp_session)
 
-    assert set(configs) == {"mcp-server-chart", "remote-http"}
-    assert set(slugs) == {"mcp-server-chart", "remote-http"}
-    assert configs["mcp-server-chart"]["command"] == "npx"
-    assert configs["mcp-server-chart"]["args"] == ["-y", "@antv/mcp-server-chart"]
+    assert set(configs) == {"remote-http"}
+    assert set(slugs) == {"remote-http"}
     assert "command" not in configs["remote-http"]
     assert "args" not in configs["remote-http"]
 
@@ -219,7 +223,7 @@ async def test_create_mcp_server_rejects_builtin_slug(mcp_session):
     with pytest.raises(ValueError, match="slug"):
         await mcp_service.create_mcp_server(
             mcp_session,
-            slug="mcp-server-chart",
+            slug="deepwiki-official",
             name="伪造内置 MCP",
             transport="streamable_http",
             url="https://example.com/mcp",
@@ -229,7 +233,7 @@ async def test_create_mcp_server_rejects_builtin_slug(mcp_session):
 
 async def test_update_builtin_mcp_server_rejects_connection_changes(mcp_session):
     server = MCPServer(
-        slug="mcp-server-chart",
+        slug="deepwiki-official",
         name="内置 stdio",
         transport="stdio",
         command="trusted-command",
@@ -243,7 +247,7 @@ async def test_update_builtin_mcp_server_rejects_connection_changes(mcp_session)
     with pytest.raises(PermissionError, match="系统内置"):
         await mcp_service.update_mcp_server(
             mcp_session,
-            slug="mcp-server-chart",
+            slug="deepwiki-official",
             transport="streamable_http",
             url="https://example.com/mcp",
             updated_by="admin",
@@ -286,7 +290,7 @@ async def test_get_enabled_mcp_tools_loads_latest_config_from_db(monkeypatch):
     async def fake_get_enabled_mcp_server_config(server_name: str, db=None):
         del db
         assert server_name == "demo"
-        return {"transport": "stdio", "command": "demo", "disabled_tools": ["tool_b"]}
+        return {"transport": "streamable_http", "url": "demo", "disabled_tools": ["tool_b"]}
 
     async def fake_get_mcp_tools(server_name: str, additional_servers=None, disabled_tools=None, **kwargs):
         del kwargs
@@ -308,7 +312,9 @@ async def test_get_enabled_mcp_tools_loads_latest_config_from_db(monkeypatch):
     assert captured == [
         {
             "server_name": "demo",
-            "additional_servers": {"demo": {"transport": "stdio", "command": "demo", "disabled_tools": ["tool_b"]}},
+            "additional_servers": {
+                "demo": {"transport": "streamable_http", "url": "demo", "disabled_tools": ["tool_b"]}
+            },
             "disabled_tools": ["tool_b"],
         }
     ]
@@ -318,8 +324,8 @@ async def test_get_mcp_tools_rebuilds_cache_when_config_hash_changes(monkeypatch
     mcp_service.clear_mcp_cache()
 
     configs = [
-        {"transport": "stdio", "command": "demo-v1", "disabled_tools": []},
-        {"transport": "stdio", "command": "demo-v2", "disabled_tools": []},
+        {"transport": "streamable_http", "url": "demo-v1", "disabled_tools": []},
+        {"transport": "streamable_http", "url": "demo-v2", "disabled_tools": []},
     ]
     build_calls: list[str] = []
 
@@ -330,8 +336,8 @@ async def test_get_mcp_tools_rebuilds_cache_when_config_hash_changes(monkeypatch
 
     async def fake_get_mcp_client(server_configs):
         config = server_configs["demo"]
-        build_calls.append(config["command"])
-        tool = SimpleNamespace(name=f"tool_for_{config['command']}", metadata={})
+        build_calls.append(config["url"])
+        tool = SimpleNamespace(name=f"tool_for_{config['url']}", metadata={})
         return _FakeClient([tool])
 
     monkeypatch.setattr(mcp_service, "get_enabled_mcp_server_config", fake_get_enabled_mcp_server_config)
@@ -353,8 +359,8 @@ async def test_get_mcp_tools_rebuilds_cache_when_config_hash_changes(monkeypatch
 
 async def test_get_tools_from_all_servers_loads_names_from_db_once(monkeypatch):
     server_configs = {
-        "alpha": {"transport": "stdio", "command": "cmd-a", "disabled_tools": []},
-        "beta": {"transport": "stdio", "command": "cmd-b", "disabled_tools": []},
+        "alpha": {"transport": "streamable_http", "url": "cmd-a", "disabled_tools": []},
+        "beta": {"transport": "streamable_http", "url": "cmd-b", "disabled_tools": []},
     }
     calls: list[tuple[str, dict[str, dict]]] = []
 
@@ -382,7 +388,7 @@ async def test_get_tools_from_all_servers_loads_names_from_db_once(monkeypatch):
 async def test_get_mcp_tools_sets_handle_tool_error(monkeypatch):
     mcp_service.clear_mcp_cache()
 
-    config = {"transport": "stdio", "command": "demo-tool", "disabled_tools": []}
+    config = {"transport": "streamable_http", "url": "demo-tool", "disabled_tools": []}
 
     async def fake_get_enabled_mcp_server_config(server_name: str, db=None):
         del db
@@ -400,3 +406,88 @@ async def test_get_mcp_tools_sets_handle_tool_error(monkeypatch):
     assert tools[0].handle_tool_error is True
 
     mcp_service.clear_mcp_cache()
+
+
+@pytest.mark.parametrize("transport", ["stdio", "websocket", None])
+async def test_client_rejects_unsupported_transport_before_adapter(monkeypatch, transport):
+    """直接客户端入口不能绕过远程传输限制。"""
+
+    def forbidden_client(*_args, **_kwargs):
+        pytest.fail("unsupported transport reached MCP adapter")
+
+    monkeypatch.setattr(mcp_service, "MultiServerMCPClient", forbidden_client)
+    with pytest.raises(ValueError, match="仅支持 sse 或 streamable_http"):
+        await mcp_service.get_mcp_client({"deepwiki-official": {"transport": transport, "command": "sh"}})
+
+
+async def test_additional_stdio_config_cannot_reuse_cached_tools():
+    """历史缓存和内置 slug 都不能使直接 stdio 配置生效。"""
+    import hashlib
+    import json
+
+    config = {"transport": "stdio", "command": "sh"}
+    digest = hashlib.sha256(json.dumps(config, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
+    key = f"deepwiki-official:{digest}"
+    mcp_service._mcp_tools_cache[key] = [SimpleNamespace(name="unsafe_cached_tool")]
+    try:
+        with pytest.raises(ValueError, match="不支持 stdio"):
+            await mcp_service.get_mcp_tools("deepwiki-official", additional_servers={"deepwiki-official": config})
+    finally:
+        mcp_service.clear_mcp_cache()
+
+
+def test_model_cannot_serialize_stdio_for_execution():
+    """持久化模型不再生成本地进程配置。"""
+    server = MCPServer(slug="legacy", transport="stdio", command="sh", args=["-c", "exit"])
+    with pytest.raises(ValueError, match="不支持 stdio"):
+        server.to_mcp_config()
+
+
+async def test_retire_chart_and_sync_deepwiki_idempotently(monkeypatch, mcp_session):
+    """退役图表且固定 DeepWiki 连接，不恢复历史启用状态。"""
+    mcp_session.add_all(
+        [
+            MCPServer(
+                slug="mcp-server-chart",
+                name="Chart",
+                transport="stdio",
+                command="npx",
+                enabled=1,
+                created_by="system",
+                updated_by="system",
+            ),
+            MCPServer(
+                slug="deepwiki-official",
+                name="DeepWiki",
+                transport="stdio",
+                command="sh",
+                enabled=1,
+                created_by="system",
+                updated_by="system",
+            ),
+        ]
+    )
+    await mcp_session.commit()
+    monkeypatch.setattr(
+        postgres_manager.pg_manager, "get_async_session_context", lambda: _AsyncSessionContext(mcp_session)
+    )
+    await mcp_service.ensure_builtin_mcp_servers_in_db()
+    await mcp_service.ensure_builtin_mcp_servers_in_db()
+    assert await mcp_session.scalar(select(MCPServer).where(MCPServer.slug == "mcp-server-chart")) is None
+    server = await mcp_session.scalar(select(MCPServer).where(MCPServer.slug == "deepwiki-official"))
+    assert server.transport == "streamable_http"
+    assert server.url == "https://mcp.deepwiki.com/mcp"
+    assert server.command is None
+    assert server.enabled == 0
+    server.url = "https://tampered.example/mcp"
+    assert mcp_service._to_runtime_mcp_config(server) == {
+        "transport": "streamable_http",
+        "url": "https://mcp.deepwiki.com/mcp",
+    }
+
+
+async def test_inspection_rejects_stdio_even_for_builtin_slug():
+    """内置标识不再提供 stdio 豁免。"""
+    server = MCPServer(slug="deepwiki-official", transport="stdio", command="sh")
+    with pytest.raises(ValueError, match="stdio"):
+        await mcp_service.inspect_mcp_server_tools(server)

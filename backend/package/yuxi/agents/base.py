@@ -108,18 +108,10 @@ class BaseAgent:
     capabilities: list[str] = []  # 智能体能力列表，如 ["file_upload", "web_search"] 等
     context_schema: type[BaseContext] = BaseContext  # 智能体上下文 schema
 
-    def __init__(self, **kwargs):
-        self.graph = None  # will be covered by get_graph
-
     @property
     def module_name(self) -> str:
         """Get the module name of the agent class."""
         return self.__class__.__module__.split(".")[-2]
-
-    @property
-    def id(self) -> str:
-        """Get the agent's class name."""
-        return self.__class__.__name__
 
     async def get_info(
         self,
@@ -146,7 +138,6 @@ class BaseAgent:
 
         # Merge metadata with class attributes, metadata takes precedence
         return {
-            "id": self.id,
             "name": getattr(self, "name", "Unknown"),
             "description": getattr(self, "description", "Unknown"),
             "metadata": metadata,
@@ -155,7 +146,7 @@ class BaseAgent:
         }
 
     async def stream_messages(
-        self, messages: list[str], *, context: BaseContext, callbacks=None, metadata=None, tags=None
+        self, messages: list[str], *, context: BaseContext, callbacks=None, metadata=None, tags=None, run_name=None
     ):
         graph = await self.get_graph(context=context)
         logger.debug(f"stream_messages: {context=}")
@@ -173,6 +164,9 @@ class BaseAgent:
             input_config["metadata"] = dict(metadata)
         if tags:
             input_config["tags"] = list(tags)
+        # run_name 让 Langfuse/LangSmith 等 tracer 用智能体名而非默认的 "LangGraph" 命名 trace
+        if run_name:
+            input_config["run_name"] = run_name
 
         async for msg, metadata in graph.astream(
             {"messages": messages},
@@ -183,7 +177,15 @@ class BaseAgent:
             yield msg, metadata
 
     async def _stream_input_with_state(
-        self, graph_input, *, context: BaseContext, callbacks=None, metadata=None, tags=None, on_prepared=None
+        self,
+        graph_input,
+        *,
+        context: BaseContext,
+        callbacks=None,
+        metadata=None,
+        tags=None,
+        run_name=None,
+        on_prepared=None,
     ):
         graph = await self.get_graph(context=context)
         logger.debug(f"stream_with_state: {context=}")
@@ -199,6 +201,8 @@ class BaseAgent:
             input_config["metadata"] = dict(metadata)
         if tags:
             input_config["tags"] = list(tags)
+        if run_name:
+            input_config["run_name"] = run_name
 
         async with await graph.astream_events(
             graph_input,
@@ -278,7 +282,7 @@ class BaseAgent:
                 yield event
 
     async def invoke_messages(
-        self, messages: list[str], *, context: BaseContext, callbacks=None, metadata=None, tags=None
+        self, messages: list[str], *, context: BaseContext, callbacks=None, metadata=None, tags=None, run_name=None
     ):
         graph = await self.get_graph(context=context)
         logger.debug(f"invoke_messages: {context}")
@@ -296,6 +300,8 @@ class BaseAgent:
             input_config["metadata"] = dict(metadata)
         if tags:
             input_config["tags"] = list(tags)
+        if run_name:
+            input_config["run_name"] = run_name
 
         msg = await graph.ainvoke(
             {"messages": messages},
@@ -303,11 +309,6 @@ class BaseAgent:
             config=input_config,
         )
         return msg
-
-    def reload_graph(self):
-        """重置 graph 缓存，强制下次调用 get_graph 时重新构建"""
-        self.graph = None
-        logger.info(f"{self.name} graph 缓存已清空，将在下次调用时重新构建")
 
     @abstractmethod
     async def get_graph(self, **kwargs) -> CompiledStateGraph:

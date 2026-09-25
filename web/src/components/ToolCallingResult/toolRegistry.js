@@ -182,10 +182,10 @@ export const getSubagentRunStatus = (toolCall) => {
   if (getToolCallStatus(toolCall) === 'error') return 'error'
   const result = parseToolCallResult(toolCall)
   return (
+    toolCall?.subagent_run?.status ||
     result?.run_status ||
     result?.active_run_status ||
     result?.status ||
-    toolCall?.subagent_run?.status ||
     ''
   )
 }
@@ -217,6 +217,7 @@ export const enrichSubagentToolCall = (
   const subagentRun =
     (toolCall.id ? subagentRunById?.get?.(String(toolCall.id)) : null) ||
     (result?.run_id ? subagentRunById?.get?.(String(result.run_id)) : null) ||
+    (args.run_id ? subagentRunById?.get?.(String(args.run_id)) : null) ||
     (args.thread_id ? subagentRunByThreadId?.get?.(String(args.thread_id)) : null) ||
     (result?.thread_id ? subagentRunByThreadId?.get?.(String(result.thread_id)) : null)
   const subagentOption = args.subagent_slug

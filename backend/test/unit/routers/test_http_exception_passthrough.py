@@ -92,7 +92,7 @@ async def test_nested_mcp_connection_preserves_http_exception(monkeypatch):
     error = HTTPException(429, "请求过于频繁", headers={"Retry-After": "30"})
     monkeypatch.setattr(mcp_router, "get_server_or_404", AsyncMock(return_value=SimpleNamespace()))
     monkeypatch.setattr(mcp_router, "ensure_mcp_server_runnable", lambda _server: None)
-    monkeypatch.setattr(mcp_router, "get_all_mcp_tools", AsyncMock(side_effect=error))
+    monkeypatch.setattr(mcp_router, "inspect_mcp_server_tools", AsyncMock(side_effect=error))
 
     with pytest.raises(HTTPException) as caught:
         await mcp_router.test_mcp_server("remote", current_user=SimpleNamespace(uid="user-1"), db=None)

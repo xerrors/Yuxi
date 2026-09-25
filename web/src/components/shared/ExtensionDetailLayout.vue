@@ -236,6 +236,7 @@ const emit = defineEmits(['update:activeKey'])
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
+  flex-shrink: 0;
 }
 
 :deep(.extension-detail-back:hover),

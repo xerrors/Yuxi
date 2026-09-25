@@ -5,7 +5,8 @@ import {
   parseBool,
   normalizeOptions,
   normalizeQuestions,
-  DEFAULT_OTHER_OPTION_VALUE
+  isQuestionAnswered,
+  buildQuestionAnswer
 } from '../../src/utils/questionUtils.js'
 
 test('parseBool 能够正确解析字符串、数值和布尔值', () => {
@@ -85,15 +86,47 @@ test('normalizeQuestions 能够正确解析复杂嵌套提问及字符串 multi_
   assert.equal(q1.questionId, 'final_deliverable')
   assert.equal(q1.multiSelect, false)
   assert.equal(q1.allowOther, true)
-  assert.equal(q1.options.length, 3) // 2 个业务选项 + 1 个自动追加的其他
+  assert.equal(q1.answerMode, 'single')
+  assert.equal(q1.options.length, 2)
   assert.equal(q1.options[0].label, '给公司内部决策用的战略建议 (Recommended)')
   assert.equal(q1.options[0].value, 'strategy')
   assert.equal(q1.options[0].description, '战略建议说明')
-  assert.equal(q1.options[2].value, DEFAULT_OTHER_OPTION_VALUE)
 
   // 问题 2：多选
   const q2 = result[1]
   assert.equal(q2.questionId, 'target_systems')
   assert.equal(q2.multiSelect, true)
+  assert.equal(q2.answerMode, 'multiple')
   assert.equal(q2.options[0].value, 'im')
+})
+
+test('normalizeQuestions 将无选项问题保留为纯问答', () => {
+  const [question] = normalizeQuestions([
+    { question_id: 'destination', question: '你想去哪个城市？', allow_other: true }
+  ])
+
+  assert.equal(question.answerMode, 'text')
+  assert.deepEqual(question.options, [])
+  assert.equal(isQuestionAnswered(question, [], '  杭州  '), true)
+  assert.equal(isQuestionAnswered(question, [], '   '), false)
+  assert.equal(buildQuestionAnswer(question, [], '  杭州  '), '杭州')
+})
+
+test('选择题答案保持单选、多选和自行填写格式', () => {
+  const [single, multiple] = normalizeQuestions([
+    { question: '季节？', options: ['春天', '夏天'] },
+    { question: '城市？', options: ['杭州', '上海'], multi_select: true }
+  ])
+
+  assert.equal(buildQuestionAnswer(single, ['春天']), '春天')
+  assert.deepEqual(buildQuestionAnswer(multiple, ['杭州', '上海']), ['杭州', '上海'])
+  assert.deepEqual(buildQuestionAnswer(single, [], '  秋天  ', true), {
+    type: 'other',
+    text: '秋天',
+    selected: []
+  })
+  assert.equal(
+    buildQuestionAnswer({ ...single, allowOther: false }, [], '补充说明', true),
+    undefined
+  )
 })

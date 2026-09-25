@@ -3,8 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from yuxi.agents.buildin import get_agent_backend
 from yuxi.agents.context import BaseContext, filter_config_by_role, resolve_agent_resource_options
-from yuxi.repositories.agent_repository import AGENT_RESOURCE_CONFIG_FIELDS
+from yuxi.agents.presets import discover_agent_presets
+from yuxi.repositories.agent_repository import AGENT_RESOURCE_CONFIG_FIELDS, AgentRepository
 from yuxi.storage.postgres.models_business import User
 
 
@@ -41,3 +43,13 @@ async def prepare_agent_config_write(
             raise RuntimeError(f"智能体资源字段 {field_name} 缺少权限解析结果")
         resource_access[field_name] = {option["key"] for option in options[option_field]}
     return filtered, resource_access
+
+
+async def initialize_agent_presets(db: AsyncSession) -> None:
+    """确认所有角色后端存在，再按既有落库规则初始化。"""
+    presets = discover_agent_presets()
+    for preset in presets:
+        get_agent_backend(preset.backend_id)
+    repository = AgentRepository(db)
+    for preset in presets:
+        await repository.ensure_preset(preset)

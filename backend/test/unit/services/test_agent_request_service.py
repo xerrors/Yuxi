@@ -155,7 +155,7 @@ async def test_submit_agent_request_owns_commit_and_publication(monkeypatch: pyt
 
     monkeypatch.setattr(svc, "create_implicit_project", fake_create_implicit_project)
     monkeypatch.setattr(svc, "resolve_conversation_workdir_binding", fake_resolve_binding)
-    monkeypatch.setattr(svc.agent_manager, "get_agent", lambda backend_id: object())
+    monkeypatch.setattr(svc, "get_agent_backend", lambda backend_id: object())
     monkeypatch.setattr(svc, "_persist_request", fake_persist_request)
     monkeypatch.setattr(svc, "enqueue_agent_run", enqueue)
     monkeypatch.setattr(svc, "ensure_bound_user_workdir", lambda *_: calls["effects"].append("materialize"))
@@ -251,7 +251,7 @@ async def test_submit_agent_request_requires_existing_conversation_for_web_chat(
     monkeypatch.setattr(svc, "AgentRunRequestRepository", _EmptyRequestRepo)
     monkeypatch.setattr(svc, "AgentRunRepository", _EmptyRunRepo)
     monkeypatch.setattr(svc, "ConversationRepository", ConvRepo)
-    monkeypatch.setattr(svc.agent_manager, "get_agent", lambda backend_id: object())
+    monkeypatch.setattr(svc, "get_agent_backend", lambda backend_id: object())
 
     request_input = svc.AgentRequestInput(
         agent_slug="translator",
@@ -347,7 +347,7 @@ async def test_existing_request_returns_without_runtime_preparation(monkeypatch,
     def forbidden(*args, **kwargs):
         raise AssertionError("重发不能加载运行后端、物化目录或创建新请求")
 
-    monkeypatch.setattr(svc.agent_manager, "get_agent", forbidden)
+    monkeypatch.setattr(svc, "get_agent_backend", forbidden)
     monkeypatch.setattr(svc, "resolve_conversation_workdir_binding", forbidden)
     monkeypatch.setattr(svc, "_persist_request", forbidden)
     monkeypatch.setattr(svc, "enqueue_agent_run", forbidden)

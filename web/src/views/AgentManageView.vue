@@ -20,9 +20,9 @@ const schedulePanelRef = ref(null)
 const modelManageTabs = computed(() => {
   const tabs = [
     { key: 'agents', label: '智能体' },
-    { key: 'schedules', label: '定时任务 (beta)' }
   ]
   if (userStore.isAdmin) tabs.push({ key: 'providers', label: '模型供应商' })
+  tabs.push({ key: 'schedules', label: '定时任务 (beta)' })
   return tabs
 })
 
@@ -78,12 +78,9 @@ onBeforeRouteUpdate((to) => canChangeTab(normalizeTab(to.query.tab)))
       <template #info>
         <div v-if="activeTab === 'agents'" class="summary-strip">
           <span>{{ activeStats.total || 0 }} 个智能体</span>
-          <span>{{ activeStats.global || 0 }} 个全局</span>
-          <span v-if="activeStats.builtin">{{ activeStats.builtin }} 个内置</span>
           <span>{{ activeStats.manageable || 0 }} 个可管理</span>
         </div>
         <div v-else-if="activeTab === 'providers'" class="summary-strip">
-          <span>{{ activeStats.total || 0 }} 个供应商</span>
           <span>{{ activeStats.enabled || 0 }} 个启用</span>
           <span v-if="activeStats.warning > 0" class="warning-count">
             {{ activeStats.warning }} 个凭证缺失

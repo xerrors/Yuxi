@@ -33,13 +33,6 @@ def _agent(slug: str, *, backend_id: str = "ChatbotAgent", is_subagent: bool = F
     )
 
 
-class _FakeAgentManager:
-    def get_agent(self, backend_id: str):
-        if backend_id in {"ChatbotAgent", "SubAgentBackend"}:
-            return SimpleNamespace(context_schema=None)
-        return None
-
-
 class _ListRepo:
     items = [
         _agent("chatbot", backend_id="ChatbotAgent"),
@@ -88,7 +81,6 @@ class _RejectingCreateRepo(_ListRepo):
 
 
 def _build_app(monkeypatch, repo_cls, *, role: str = "admin") -> TestClient:
-    monkeypatch.setattr(agent_router_module, "agent_manager", _FakeAgentManager())
     monkeypatch.setattr(agent_router_module, "AgentRepository", repo_cls)
 
     app = FastAPI()

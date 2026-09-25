@@ -12,34 +12,42 @@
         <GraphCanvas
           ref="graphRef"
           :graph-data="graph.graphData"
-          @node-click="graph.handleNodeClick"
-          @edge-click="graph.handleEdgeClick"
+          @node-click="handleGraphNodeClick"
+          @edge-click="handleGraphEdgeClick"
           @canvas-click="graph.handleCanvasClick"
         >
           <template #top>
             <div class="compact-actions">
               <div class="actions-left">
+                <a-button
+                  class="action-btn search-action-btn"
+                  @click="onSearch"
+                  title="搜索"
+                  aria-label="搜索"
+                >
+                  <component
+                    :is="graph.fetching ? Loader2 : Search"
+                    :size="16"
+                    :class="{ spin: graph.fetching }"
+                  />
+                </a-button>
                 <a-input
                   v-model:value="searchInput"
                   placeholder="搜索实体"
-                  style="width: 240px"
+                  class="graph-search-input"
                   @keydown.enter="onSearch"
                   allow-clear
+                />
+                <a-button
+                  class="action-btn settings-action-btn"
+                  @click="toggleSettingsPanel"
+                  title="图谱展示设置"
+                  aria-label="图谱展示设置"
                 >
-                  <template #suffix>
-                    <component
-                      :is="graph.fetching ? Loader2 : Search"
-                      :size="14"
-                      class="search-suffix-icon"
-                      @click="onSearch"
-                    />
-                  </template>
-                </a-input>
-                <a-button class="action-btn" @click="loadGraph" title="刷新">
-                  <RefreshCw :size="16" :class="{ spin: graph.fetching }" />
+                  <Settings :size="16" />
                 </a-button>
               </div>
-              <div class="actions-right">
+              <div v-if="isMilvus && !readonly" class="actions-right">
                 <a-button
                   v-if="isMilvus && !readonly"
                   class="action-btn index-action-btn"
@@ -57,9 +65,6 @@
                     class="status-dot"
                     :class="`status-dot--${graphIndexDotStatus}`"
                   ></span>
-                </a-button>
-                <a-button class="action-btn" @click="toggleSettingsPanel" title="设置">
-                  <Settings :size="16" />
                 </a-button>
               </div>
             </div>
@@ -122,10 +127,10 @@
         />
 
         <!-- 设置浮动面板 -->
-        <transition name="slide-fade">
+        <transition name="settings-expand">
           <div v-if="showSettings" class="floating-panel settings-panel">
             <div class="panel-header">
-              <span class="panel-title">图谱设置</span>
+              <span class="panel-title">图谱展示设置</span>
             </div>
             <div class="panel-body">
               <a-form layout="vertical">
@@ -147,14 +152,17 @@
                     style="width: 100%"
                   />
                 </a-form-item>
-                <a-form-item label="排除 Chunk 节点">
+                <div class="settings-exclude-row">
+                  <span class="settings-field-label">排除 Chunk 节点</span>
                   <a-switch v-model:checked="subgraphParams.excludeChunk" />
-                </a-form-item>
-                <a-form-item>
-                  <a-button type="primary" @click="applySettings" style="width: 100%">
-                    应用
+                </div>
+                <div class="settings-actions">
+                  <a-button @click="loadGraph" :disabled="graph.fetching">
+                    <RefreshCw :size="14" :class="{ spin: graph.fetching }" />
+                    刷新
                   </a-button>
-                </a-form-item>
+                  <a-button type="primary" @click="applySettings">应用</a-button>
+                </div>
               </a-form>
             </div>
           </div>
@@ -166,32 +174,18 @@
             <div class="panel-header">
               <span class="panel-title">索引管理</span>
               <a-button
+                v-if="graphBuildStatus?.locked && !isBuildActive"
                 size="small"
                 type="text"
-                :disabled="graphBuildLoading"
-                @click="loadGraphBuildStatus"
-                class="panel-refresh-btn"
+                title="修改配置"
+                aria-label="修改配置"
+                class="panel-config-btn"
+                @click="openGraphConfig"
               >
-                <RefreshCw :size="14" :class="{ spin: graphBuildLoading }" />
+                <Settings :size="14" />
               </a-button>
             </div>
             <div class="panel-body">
-              <div class="status-row">
-                <span class="status-label">状态</span>
-                <a-tag v-if="isBuildActive" color="blue" size="small">构建中</a-tag>
-                <a-tag v-else-if="isBuildFailed" color="red" size="small">执行异常</a-tag>
-                <a-tag
-                  v-else-if="graphBuildStatus?.build_task_status === 'completed'"
-                  color="green"
-                  size="small"
-                >
-                  执行完成
-                </a-tag>
-                <a-tag v-else-if="graphBuildStatus?.locked" color="green" size="small">
-                  已配置
-                </a-tag>
-                <a-tag v-else color="orange" size="small">未配置</a-tag>
-              </div>
               <a-progress
                 v-if="isBuildActive"
                 :percent="graphBuildStatus?.build_task_progress ?? 0"
@@ -275,24 +269,6 @@
                 >
                   开始索引
                 </a-button>
-                <div class="actions-secondary">
-                  <a-button
-                    v-if="graphBuildStatus?.locked && !isBuildActive"
-                    size="small"
-                    type="text"
-                    @click="openGraphConfig"
-                  >
-                    修改配置
-                  </a-button>
-                  <a-button
-                    size="small"
-                    type="text"
-                    danger
-                    v-if="graphBuildStatus?.locked && !isBuildActive"
-                    @click="confirmResetGraph"
-                    >重置</a-button
-                  >
-                </div>
               </div>
             </div>
           </div>
@@ -304,60 +280,17 @@
       v-model:open="showGraphConfig"
       :title="graphConfigTitle"
       width="640px"
-      @ok="configureGraphBuild"
+      @cancel="showGraphConfig = false"
     >
       <a-form layout="vertical">
-        <a-alert
-          v-if="isEditingGraphConfig"
-          class="config-warning"
-          type="warning"
-          show-icon
-          message="修改配置仅影响后续构建；已构建的图谱不会自动重算，如需一致请重置后重新抽取。抽取器类型创建后不可修改。"
-        />
-        <a-form-item label="抽取器类型">
-          <div class="extractor-type-cards" role="radiogroup" aria-label="抽取器类型">
-            <div
-              v-for="option in extractorTypeOptions"
-              :key="option.value"
-              class="extractor-type-card"
-              :class="{
-                active: graphConfigForm.extractor_type === option.value,
-                disabled: isEditingGraphConfig || option.disabled
-              }"
-              role="radio"
-              :aria-checked="graphConfigForm.extractor_type === option.value"
-              :aria-disabled="isEditingGraphConfig || option.disabled"
-              :tabindex="isEditingGraphConfig || option.disabled ? -1 : 0"
-              @click="selectExtractorType(option)"
-              @keydown.enter.prevent="selectExtractorType(option)"
-              @keydown.space.prevent="selectExtractorType(option)"
-            >
-              <div class="card-header">
-                <component :is="option.icon" class="type-icon" />
-                <span class="type-title">{{ option.label }}</span>
-              </div>
-              <div class="card-description">{{ option.description }}</div>
-              <div v-if="option.helper" class="card-helper" :class="{ warning: option.disabled }">
-                {{ option.helper }}
-              </div>
-            </div>
-          </div>
-        </a-form-item>
-        <a-form-item label="模型">
-          <ModelSelectorComponent
-            :model_spec="graphConfigForm.model_spec"
-            placeholder="选择抽取模型"
-            @select-model="(spec) => (graphConfigForm.model_spec = spec)"
-          />
-        </a-form-item>
-        <a-form-item label="Schema">
-          <a-textarea
-            v-model:value="graphConfigForm.schema"
-            :rows="6"
-            placeholder="描述实体类型、关系类型和属性约束。后端会把 Schema 拼接到固定抽取 Prompt 中。"
-          />
-        </a-form-item>
-        <div class="form-grid two-columns">
+        <div class="form-grid model-config-grid">
+          <a-form-item label="模型">
+            <ModelSelectorComponent
+              :model_spec="graphConfigForm.model_spec"
+              placeholder="选择抽取模型"
+              @select-model="(spec) => (graphConfigForm.model_spec = spec)"
+            />
+          </a-form-item>
           <a-form-item label="LLM 抽取并发数">
             <a-input-number
               v-model:value="graphConfigForm.concurrency_count"
@@ -367,14 +300,49 @@
               style="width: 100%"
             />
           </a-form-item>
-          <a-form-item label="模型参数 JSON">
-            <a-input
-              v-model:value="graphConfigForm.model_params_text"
-              placeholder='例如 {"temperature":0.1}'
-            />
-          </a-form-item>
         </div>
+        <a-form-item label="Schema">
+          <div v-if="isEditingGraphConfig" class="schema-description">
+            修改配置仅影响后续构建；已构建的图谱不会自动重算，如需一致请重置后重新抽取。抽取器类型创建后不可修改。
+          </div>
+          <a-textarea
+            v-model:value="graphConfigForm.schema"
+            :rows="6"
+            placeholder="描述实体类型、关系类型和属性约束。后端会把 Schema 拼接到固定抽取 Prompt 中。"
+          />
+        </a-form-item>
+        <a-form-item label="单次抽取超时（秒）">
+          <a-input-number
+            v-model:value="graphConfigForm.timeout_seconds"
+            :min="1"
+            :max="600"
+            :step="10"
+            style="width: 100%"
+          />
+          <div class="form-item-hint">
+            默认 60 秒。推理型抽取模型单块耗时可达数十秒，若日志出现反复超时重试，可调大至 180–300。
+          </div>
+        </a-form-item>
+        <a-form-item label="模型参数 JSON">
+          <a-input
+            v-model:value="graphConfigForm.model_params_text"
+            placeholder='例如 {"temperature":0.1}'
+          />
+          <div class="form-item-hint">
+            输入的 JSON 对象会作为 model_params 传给抽取模型调用；如需设置超时，请使用上方字段。关闭百炼等模型的思考模式需写在
+            extra_body 中，例如 {"extra_body":{"enable_thinking":false}}。
+          </div>
+        </a-form-item>
       </a-form>
+      <template #footer>
+        <div class="graph-config-footer">
+          <a-button v-if="isEditingGraphConfig" danger @click="confirmResetGraph">重置</a-button>
+          <div class="graph-config-footer-actions">
+            <a-button @click="showGraphConfig = false">取消</a-button>
+            <a-button type="primary" @click="configureGraphBuild">确认</a-button>
+          </div>
+        </div>
+      </template>
     </a-modal>
 
     <a-modal v-model:open="showFailedChunkSamples" title="样例 Chunk" width="760px" :footer="null">
@@ -417,9 +385,7 @@ import {
   Search,
   Loader2,
   Database,
-  Network,
-  BrainCircuit,
-  ScanText
+  Network
 } from '@lucide/vue'
 import GraphCanvas from '@/components/GraphCanvas.vue'
 import GraphDetailPanel from '@/components/GraphDetailPanel.vue'
@@ -473,25 +439,6 @@ const failedChunkSamples = ref([])
 const activeFailedChunkKey = ref('')
 let buildStatusPollTimer = null
 
-const extractorTypeOptions = [
-  {
-    value: 'llm',
-    label: 'LLM',
-    description: '使用大模型按 Schema 抽取实体和关系',
-    helper: '当前唯一支持的图谱抽取方式',
-    icon: BrainCircuit,
-    disabled: false
-  },
-  {
-    value: 'more',
-    label: '更多',
-    description: '更多抽取方式正在拓展中',
-    helper: '拓展中',
-    icon: ScanText,
-    disabled: true
-  }
-]
-
 const isBuildActive = computed(() => {
   const s = graphBuildStatus.value?.build_task_status
   return s === 'pending' || s === 'running'
@@ -540,17 +487,31 @@ const graphIndexButtonTitle = computed(() => {
 const toggleBuildPanel = () => {
   showBuildPanel.value = !showBuildPanel.value
   showSettings.value = false
+  if (showBuildPanel.value) graph.handleCanvasClick()
 }
 
 const toggleSettingsPanel = () => {
   showSettings.value = !showSettings.value
   showBuildPanel.value = false
+  if (showSettings.value) graph.handleCanvasClick()
+}
+
+const handleGraphNodeClick = (nodeData) => {
+  showSettings.value = false
+  showBuildPanel.value = false
+  graph.handleNodeClick(nodeData)
+}
+
+const handleGraphEdgeClick = (edgeData) => {
+  showSettings.value = false
+  showBuildPanel.value = false
+  graph.handleEdgeClick(edgeData)
 }
 
 const isEditingGraphConfig = computed(() => Boolean(graphBuildStatus.value?.locked))
 
 const graphConfigTitle = computed(() =>
-  isEditingGraphConfig.value ? '修改图谱抽取配置' : '配置图谱抽取器'
+  isEditingGraphConfig.value ? '修改图谱抽取配置' : '图谱展示配置'
 )
 
 const stopBuildStatusPoll = () => {
@@ -578,11 +539,12 @@ watch(
   },
   { immediate: true }
 )
+const DEFAULT_EXTRACTION_TIMEOUT_SECONDS = 60
 const graphConfigForm = reactive({
-  extractor_type: 'llm',
   model_spec: '',
   schema: '',
   concurrency_count: 50,
+  timeout_seconds: DEFAULT_EXTRACTION_TIMEOUT_SECONDS,
   model_params_text: ''
 })
 
@@ -659,10 +621,10 @@ const parseModelParams = () => {
 const fillGraphConfigForm = () => {
   const config = graphBuildStatus.value?.config
   const options = config?.extractor_options || {}
-  graphConfigForm.extractor_type = 'llm'
   graphConfigForm.model_spec = options.model_spec || configStore.config?.default_model || ''
   graphConfigForm.schema = options.schema || ''
   graphConfigForm.concurrency_count = Number(options.concurrency_count || 50)
+  graphConfigForm.timeout_seconds = Number(options.timeout_seconds || DEFAULT_EXTRACTION_TIMEOUT_SECONDS)
   graphConfigForm.model_params_text = options.model_params
     ? JSON.stringify(options.model_params)
     : ''
@@ -673,16 +635,12 @@ const openGraphConfig = () => {
   showGraphConfig.value = true
 }
 
-const selectExtractorType = (option) => {
-  if (isEditingGraphConfig.value || option.disabled) return
-  graphConfigForm.extractor_type = option.value
-}
-
 const buildExtractorOptions = () => {
   return {
     model_spec: graphConfigForm.model_spec,
     schema: graphConfigForm.schema.trim(),
     concurrency_count: graphConfigForm.concurrency_count || 50,
+    timeout_seconds: graphConfigForm.timeout_seconds || DEFAULT_EXTRACTION_TIMEOUT_SECONDS,
     model_params: parseModelParams()
   }
 }
@@ -781,6 +739,7 @@ const resetGraphBuild = async () => {
       clear_config: true
     })
     message.success('图谱构建状态已重置')
+    showGraphConfig.value = false
     graphLoaded.value = false
     graph.clearGraph()
     await loadGraphBuildStatus()
@@ -930,6 +889,8 @@ onUnmounted(() => {
   height: 100%;
   width: 100%;
   position: relative;
+  --graph-search-input-width: 240px;
+  --graph-search-toolbar-width: calc(var(--graph-search-input-width) + 78px);
 }
 
 .graph-empty-state {
@@ -958,7 +919,7 @@ onUnmounted(() => {
     pointer-events: auto; /* Re-enable clicks for buttons/inputs */
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 0;
     background: var(--color-trans-light);
     backdrop-filter: blur(12px);
     padding: 2px;
@@ -984,6 +945,20 @@ onUnmounted(() => {
     input {
       background: transparent;
     }
+  }
+
+  .graph-search-input {
+    flex: 0 0 var(--graph-search-input-width);
+    width: var(--graph-search-input-width);
+    border-radius: 0;
+  }
+
+  .search-action-btn {
+    border-radius: 6px 0 0 6px;
+  }
+
+  .settings-action-btn {
+    border-radius: 0 6px 6px 0;
   }
 
   .action-btn {
@@ -1048,10 +1023,6 @@ onUnmounted(() => {
     background: var(--color-success-500);
   }
 
-  .search-suffix-icon {
-    cursor: pointer;
-  }
-
   .spin {
     animation: spin 1s linear infinite;
   }
@@ -1112,7 +1083,7 @@ onUnmounted(() => {
       color: var(--gray-1000);
     }
 
-    .panel-refresh-btn {
+    .panel-config-btn {
       padding: 2px 6px;
     }
   }
@@ -1122,19 +1093,45 @@ onUnmounted(() => {
   }
 }
 
-.build-panel {
-  .status-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 10px;
+.settings-panel {
+  left: 10px;
+  right: auto;
+  width: min(var(--graph-search-toolbar-width), calc(100% - 20px));
 
-    .status-label {
-      color: var(--gray-600);
-      font-size: 12px;
+  .panel-body {
+    :deep(.ant-form-item) {
+      margin-bottom: 12px;
     }
   }
 
+  .settings-exclude-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 32px;
+    margin: 4px 0 14px;
+    color: var(--gray-800);
+  }
+
+  .settings-field-label {
+    font-size: 13px;
+  }
+
+  .settings-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+
+    :deep(.ant-btn) {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+  }
+}
+
+.build-panel {
   .stats-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -1148,7 +1145,8 @@ onUnmounted(() => {
     align-items: center;
     padding: 6px 4px;
     border-radius: 4px;
-    background: var(--gray-50);
+    background: var(--gray-0);
+    outline: 1px solid var(--gray-100);
 
     &.is-clickable {
       cursor: pointer;
@@ -1184,11 +1182,6 @@ onUnmounted(() => {
     display: flex;
     flex-direction: column;
     gap: 8px;
-  }
-
-  .actions-secondary {
-    display: flex;
-    justify-content: space-between;
   }
 }
 
@@ -1226,93 +1219,52 @@ onUnmounted(() => {
   word-break: break-word;
 }
 
-.config-warning {
-  margin-bottom: 16px;
+.schema-description {
+  margin-bottom: 8px;
+  color: var(--gray-600);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
-.extractor-type-cards {
+.form-grid.model-config-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-
-  .extractor-type-card {
-    border: 1px solid var(--gray-150);
-    border-radius: 8px;
-    padding: 14px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    background: var(--gray-0);
-
-    &:hover {
-      border-color: var(--main-color);
-    }
-
-    &.active {
-      border-color: var(--main-color);
-      background: var(--main-10);
-      box-shadow: 0 0 0 1px var(--main-20);
-
-      .type-icon {
-        color: var(--main-color);
-      }
-    }
-
-    &.disabled {
-      cursor: not-allowed;
-      opacity: 0.72;
-      background: var(--gray-50);
-
-      &:hover {
-        border-color: var(--gray-150);
-      }
-    }
-
-    .card-header {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      margin-bottom: 10px;
-    }
-
-    .type-icon {
-      width: 20px;
-      height: 20px;
-      color: var(--main-color);
-      flex-shrink: 0;
-    }
-
-    .type-title {
-      font-size: 15px;
-      font-weight: 600;
-      color: var(--gray-800);
-    }
-
-    .card-description {
-      font-size: 13px;
-      color: var(--gray-600);
-      line-height: 1.5;
-    }
-
-    .card-helper {
-      margin-top: 8px;
-      font-size: 12px;
-      color: var(--gray-500);
-
-      &.warning {
-        color: var(--color-warning-500);
-      }
-    }
-  }
-}
-
-.form-grid.two-columns {
-  display: grid;
-  grid-template-columns: 180px 1fr;
+  grid-template-columns: minmax(0, 1fr) 180px;
   gap: 12px;
 
   @media (max-width: 640px) {
     grid-template-columns: 1fr;
   }
+}
+
+.form-item-hint {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--gray-600, #6b7280);
+}
+
+.graph-config-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.graph-config-footer-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.settings-expand-enter-active,
+.settings-expand-leave-active {
+  transform-origin: top left;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.settings-expand-enter-from,
+.settings-expand-leave-to {
+  transform: translateY(-8px) scaleY(0.96);
+  opacity: 0;
 }
 
 .slide-fade-enter-active {

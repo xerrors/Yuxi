@@ -121,6 +121,9 @@ jobs:
       - 'backend/test/e2e/**'
       - 'backend/test/support/**'
       - 'docker/**'
+      - 'scripts/ci_prepare_system_tests_env.sh'
+      - 'scripts/ci_build_topology_images.sh'
+      - 'scripts/migrate-storage.sh'
       - '.github/workflows/system-tests.yml'
 jobs:
   system:

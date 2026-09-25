@@ -17,6 +17,7 @@ from yuxi.agents.middlewares import (
     NetworkRetryMiddleware,
     SteerMiddleware,
     TokenUsageMiddleware,
+    ToolErrorGuardMiddleware,
     create_memory_middleware,
     create_summary_middleware_from_context,
 )
@@ -34,6 +35,8 @@ from .state import ChatBotState
 async def _build_middlewares(context, backend):
     """构建中间件列表"""
     middlewares = [
+        # 最外层隔离普通工具异常，保留取消与 interrupt 的传播。
+        ToolErrorGuardMiddleware(),
         SteerMiddleware(),
         create_agent_filesystem_middleware(
             getattr(context, "tool_token_limit", DEFAULT_TOOL_RESULT_EVICTION_K_TOKENS) * 1024,
@@ -76,9 +79,6 @@ class ChatbotAgent(BaseAgent):
     description = "基础的对话机器人，可以回答问题，可在配置中启用需要的工具。"
     capabilities = ["file_upload", "files", "context_compression"]
     context_schema = ChatBotContext
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
 
     async def get_graph(self, *, context, **kwargs):
         """从显式准备的 Context 构建执行图。"""

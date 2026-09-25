@@ -27,7 +27,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from yuxi.agents.buildin import agent_manager
+from yuxi.agents.buildin import AgentBackendNotFoundError, get_agent_backend
 from yuxi.agents.tool_approval import DEFAULT_TOOL_APPROVAL_MODE, normalize_tool_approval_mode
 from yuxi.config.options import system_options
 from yuxi.models.providers.cache import model_cache
@@ -43,7 +43,6 @@ from yuxi.services.langfuse_service import get_trace_url_by_id_async
 from yuxi.services.run_queue_service import (
     build_run_event_envelope,
     get_arq_pool,
-    get_last_run_stream_seq,
     list_recent_run_stream_events,
     list_run_stream_events,
     normalize_after_seq,
@@ -111,7 +110,14 @@ async def resolve_agent_run_model_spec(
 
     info = model_cache.get_model_info(model_spec)
     if not info or info.model_type != "chat":
-        raise HTTPException(status_code=422, detail=f"未找到可用聊天模型: '{model_spec}'")
+        # dict detail 带 code/message 属于用户可见业务错误契约，前端按形态透传 message；message 不得包含敏感信息。
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "chat_model_not_found",
+                "message": f"未找到可用聊天模型: '{model_spec}'",
+            },
+        )
     return model_spec
 
 
@@ -669,9 +675,10 @@ async def prepare_agent_run_creation_scope(
     if not agent_item:
         raise HTTPException(status_code=404, detail="智能体不存在")
 
-    agent_backend = agent_manager.get_agent(agent_item.backend_id)
-    if not agent_backend:
-        raise HTTPException(status_code=404, detail=f"智能体后端 {agent_item.backend_id} 不存在")
+    try:
+        agent_backend = get_agent_backend(agent_item.backend_id)
+    except AgentBackendNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     run_repo = AgentRunRepository(db)
     existing = await run_repo.get_run_by_request_id(request_id)
@@ -991,11 +998,7 @@ async def stream_agent_run_events(
                 and not bool(getattr(run, "runtime_cleanup_pending", False))
                 and not events
             ):
-                terminal_seq = last_seq
-                if terminal_seq in {"", "0-0"}:
-                    terminal_seq = await get_last_run_stream_seq(run_id)
-                if terminal_seq in {"", "0-0"}:
-                    terminal_seq = None
+                # 数据库补发通知没有 Redis ID，不能复用已消费事件的游标。
                 terminal_envelope = build_run_event_envelope(
                     run_id=run_id,
                     thread_id=run.conversation_thread_id,
@@ -1008,7 +1011,6 @@ async def stream_agent_run_events(
                 yield format_sse(
                     terminal_envelope,
                     event="end",
-                    event_id=terminal_seq,
                 )
                 return
 

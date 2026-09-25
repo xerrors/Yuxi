@@ -1,6 +1,8 @@
 ---
 name: image-gen
 description: "在 Agent 沙盒中生成图片并保存到 outputs。当用户要求生成图片、海报、插画、文生图，或指定 Qwen-Image、其它兼容图片生成接口时使用此技能。"
+version: "2026.06.02"
+tool_dependencies: ["present_artifacts"]
 ---
 
 # 图片生成技能

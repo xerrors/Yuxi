@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { filterProjects, formatRelativeTime } from '../../src/utils/projectSelection.js'
+import { fillProjectNameFromFolder, filterProjects, formatRelativeTime } from '../../src/utils/projectSelection.js'
 
 test('Project 搜索按名称过滤且无匹配时返回空列表', () => {
   const projects = [{ name: 'Desktop' }, { name: '论文写作' }, { name: 'Agent Skills' }]
@@ -9,6 +9,14 @@ test('Project 搜索按名称过滤且无匹配时返回空列表', () => {
   assert.deepEqual(filterProjects(projects, '  agent  '), [{ name: 'Agent Skills' }])
   assert.deepEqual(filterProjects(projects, '不存在'), [])
   assert.equal(filterProjects(projects, ''), projects)
+})
+
+test('新建文件夹后按互补规则补齐项目名称', () => {
+  assert.equal(fillProjectNameFromFolder('', '资料归档'), '资料归档')
+  assert.equal(fillProjectNameFromFolder('   ', '  资料归档  '), '资料归档')
+  assert.equal(fillProjectNameFromFolder('产品发布计划', '资料归档'), '产品发布计划')
+  assert.equal(fillProjectNameFromFolder('', ''), '')
+  assert.equal(fillProjectNameFromFolder('', 'x'.repeat(150)), 'x'.repeat(100))
 })
 
 test('历史项目时间按分钟到年份显示相对时间', () => {

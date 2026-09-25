@@ -5,13 +5,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from yuxi.agents.presets.subagents.general_purpose import PRESET as GENERAL_PURPOSE
 from yuxi.repositories.agent_repository import (
     AgentRepository,
     DEFAULT_AGENT_DESCRIPTION,
     DEFAULT_SHARE_CONFIG,
-    GENERAL_PURPOSE_AGENT_DESCRIPTION,
-    GENERAL_PURPOSE_AGENT_NAME,
-    GENERAL_PURPOSE_AGENT_SLUG,
     SUB_AGENT_BACKEND_ID,
     merge_agent_config_json,
     user_can_access_agent,
@@ -199,7 +197,7 @@ async def test_ensure_default_agent_backfills_missing_description(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_ensure_general_purpose_subagent_creates_empty_config_subagent(monkeypatch):
+async def test_ensure_preset_creates_empty_config_subagent(monkeypatch):
     db = FakeDb()
     repo = AgentRepository(db)
 
@@ -208,11 +206,11 @@ async def test_ensure_general_purpose_subagent_creates_empty_config_subagent(mon
 
     monkeypatch.setattr(repo, "get_by_slug", get_by_slug)
 
-    agent = await repo.ensure_general_purpose_subagent(created_by="system")
+    agent = await repo.ensure_preset(GENERAL_PURPOSE, created_by="system")
 
-    assert agent.slug == GENERAL_PURPOSE_AGENT_SLUG
-    assert agent.name == GENERAL_PURPOSE_AGENT_NAME
-    assert agent.description == GENERAL_PURPOSE_AGENT_DESCRIPTION
+    assert agent.slug == GENERAL_PURPOSE.slug
+    assert agent.name == GENERAL_PURPOSE.name
+    assert agent.description == GENERAL_PURPOSE.description
     assert agent.backend_id == SUB_AGENT_BACKEND_ID
     assert agent.is_subagent is True
     assert agent.is_default is False
@@ -225,17 +223,17 @@ async def test_ensure_general_purpose_subagent_creates_empty_config_subagent(mon
 
 
 @pytest.mark.asyncio
-async def test_ensure_general_purpose_subagent_is_idempotent(monkeypatch):
+async def test_ensure_preset_is_idempotent(monkeypatch):
     db = FakeDb()
     repo = AgentRepository(db)
-    existing = SimpleNamespace(slug=GENERAL_PURPOSE_AGENT_SLUG, config_json={"context": {"model": "custom:model"}})
+    existing = SimpleNamespace(slug=GENERAL_PURPOSE.slug, config_json={"context": {"model": "custom:model"}})
 
     async def get_by_slug(_slug):
         return existing
 
     monkeypatch.setattr(repo, "get_by_slug", get_by_slug)
 
-    agent = await repo.ensure_general_purpose_subagent()
+    agent = await repo.ensure_preset(GENERAL_PURPOSE)
 
     assert agent is existing
     assert db.added is None

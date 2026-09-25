@@ -718,12 +718,21 @@ defineExpose({
   <div class="model-provider-manage-panel">
     <PageShoulder v-model:search="searchQuery" search-placeholder="搜索供应商...">
       <template #actions>
+        <a-button
+          class="lucide-icon-btn"
+          @click="loadProviders"
+          :disabled="loading"
+          aria-label="刷新供应商"
+        >
+          <RefreshCw
+            :size="14"
+            class="page-shoulder-refresh-icon"
+            :class="{ 'is-spinning': loading }"
+          />
+        </a-button>
         <a-button type="primary" class="lucide-icon-btn" @click="openCreateProviderModal">
           <Plus :size="14" />
           新增供应商
-        </a-button>
-        <a-button class="lucide-icon-btn" @click="loadProviders" :loading="loading">
-          <RefreshCw :size="14" :class="{ spinning: loading }" />
         </a-button>
       </template>
     </PageShoulder>

@@ -1,5 +1,6 @@
 from copy import deepcopy
 import os
+import re
 from pathlib import Path
 import subprocess
 
@@ -76,7 +77,8 @@ def _volume_target(volume: object) -> str:
     if not isinstance(volume, str):
         return ""
 
-    parts = volume.split(":")
+    # 未插值的环境变量默认值含冒号，不属于挂载分隔符。
+    parts = re.sub(r"\$\{[^}]*\}", "_env_", volume).split(":")
     return parts[1] if len(parts) >= 2 else parts[0]
 
 
@@ -176,6 +178,32 @@ def test_default_agent_capacity_supports_one_hundred_concurrent_runs(filename: s
     assert "DOCKER_ADDRESS_POOL=${SANDBOX_DOCKER_ADDRESS_POOL:-10.253.240.0/20}" in provisioner_environment
     assert "DOCKER_SUBNET_PREFIX=${SANDBOX_DOCKER_SUBNET_PREFIX:-28}" in provisioner_environment
     assert services["postgres"]["command"][-1] == "max_connections=${POSTGRES_MAX_CONNECTIONS:-600}"
+
+
+@pytest.mark.parametrize("filename", ["docker-compose.yml", "docker-compose.prod.yml"])
+def test_sandbox_provisioner_exposes_resource_limit_environment(filename: str) -> None:
+    """单沙盒资源上界必须可由部署覆盖，缺失即回退到无上界创建。"""
+    environment = _load_compose(filename)["services"]["sandbox-provisioner"]["environment"]
+
+    assert "SANDBOX_MEM_LIMIT=${SANDBOX_MEM_LIMIT:-2g}" in environment
+    assert "SANDBOX_CPUS=${SANDBOX_CPUS:-2}" in environment
+    assert "SANDBOX_PIDS_LIMIT=${SANDBOX_PIDS_LIMIT:-512}" in environment
+
+
+@pytest.mark.parametrize("filename", ["docker-compose.yml", "docker-compose.prod.yml"])
+def test_milvus_suite_has_log_rotation_and_cpus_bound(filename: str) -> None:
+    """milvus/etcd 日志轮转封顶；milvus 只保留 cpus 上界；不保留无效日志级别配置。"""
+    services = _load_compose(filename)["services"]
+
+    for service_name in ("milvus", "etcd"):
+        logging_config = services[service_name]["logging"]
+        assert logging_config["driver"] == "json-file"
+        assert logging_config["options"] == {"max-size": "50m", "max-file": "3"}
+
+    milvus = services["milvus"]
+    assert milvus["cpus"] == "${YUXI_MILVUS_CPUS:-2}"
+    assert "mem_limit" not in milvus
+    assert "MILVUS_LOG_LEVEL" not in milvus.get("environment", {})
 
 
 @pytest.mark.parametrize("filename", ["docker-compose.yml", "docker-compose.prod.yml"])
@@ -389,6 +417,7 @@ def test_integration_cleanup_does_not_bypass_sandbox_provisioner():
     [
         ("api", "./docker/volumes/models:/app/models", "/app/models"),
         ("worker", "/var/run/docker.sock:/var/run/docker.sock", "/var/run/docker.sock"),
+        ("api", "${YUXI_STATE_DIR:-./docker/volumes}/models:/app/models:ro", "/app/models"),
     ],
 )
 def test_mount_guard_detects_reintroduced_api_worker_host_dependencies(

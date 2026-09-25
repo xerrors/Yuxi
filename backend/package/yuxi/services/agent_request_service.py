@@ -13,32 +13,32 @@ from typing import Any
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from yuxi.agents.buildin import agent_manager
+from yuxi.agents.buildin import AgentBackendNotFoundError, get_agent_backend
 from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.repositories.agent_run_request_repository import AgentRunRequestRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.repositories.project_repository import ProjectRepository
 from yuxi.services.agent_request_queue_service import (
-    DispatchResult,
-    request_view,
-    validate_queue_policy,
-    get_thread_conversation,
-    is_steerable_message_run,
-    dispatch_ready_head,
-    queue_conflict,
-    REQUEST_STATUS_QUEUED,
-    REQUEST_STATUS_REJECTED,
     DELIVERY_STATUS_QUEUED,
     DELIVERY_STATUS_REJECTED,
+    REQUEST_STATUS_QUEUED,
+    REQUEST_STATUS_REJECTED,
+    DispatchResult,
+    dispatch_ready_head,
+    get_thread_conversation,
+    is_steerable_message_run,
+    queue_conflict,
+    request_view,
+    validate_queue_policy,
 )
 from yuxi.services.agent_run_service import create_agent_run_input_message, enqueue_agent_run, resolve_agent_run_config
-from yuxi.utils.datetime_utils import utc_now_naive
-from yuxi.workspace.paths import ensure_bound_user_workdir
 from yuxi.services.input_message_service import AgentRunInputMessage
 from yuxi.services.project_service import create_implicit_project
 from yuxi.services.workdir_service import WorkdirBinding, resolve_conversation_workdir_binding
 from yuxi.storage.postgres.models_business import AgentRunRequest, User
+from yuxi.utils.datetime_utils import utc_now_naive
+from yuxi.workspace.paths import ensure_bound_user_workdir
 
 
 @dataclass(frozen=True)
@@ -144,9 +144,10 @@ async def submit_agent_request(
             raise HTTPException(status_code=404, detail="Project 不存在或不可访问")
         return await request_view(repo=AgentRunRequestRepository(db), request=existing_request)
 
-    agent_backend = agent_manager.get_agent(agent_item.backend_id)
-    if not agent_backend:
-        raise HTTPException(status_code=404, detail=f"智能体后端 {agent_item.backend_id} 不存在")
+    try:
+        agent_backend = get_agent_backend(agent_item.backend_id)
+    except AgentBackendNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     conversation_repo = ConversationRepository(db)
     project = None

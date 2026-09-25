@@ -568,8 +568,8 @@ def test_html_preview_builtin_skill_spec(builtin_skill_specs):
     assert "普通 `html` 代码块" in content
 
 
-def test_deep_research_builtin_skill_includes_html_preview_dependency(builtin_skill_specs):
-    assert builtin_skill_specs["deep-research"]["skill_dependencies"] == ["html-preview"]
+def test_deep_research_builtin_skill_has_no_html_preview_dependency(builtin_skill_specs):
+    assert builtin_skill_specs["deep-research"]["skill_dependencies"] == []
 
 
 def test_knowledge_base_builtin_skill_spec(builtin_skill_specs):
@@ -595,7 +595,7 @@ def test_mysql_reporter_builtin_skill_spec_replaces_reporter_and_deep_reporter(b
     mysql_reporter = builtin_skill_specs["mysql-reporter"]
     assert mysql_reporter["name"] == "mysql reporter"
     assert mysql_reporter["tool_dependencies"] == []
-    assert mysql_reporter["mcp_dependencies"] == ["mcp-server-chart"]
+    assert mysql_reporter["mcp_dependencies"] == []
     assert (mysql_reporter["source_dir"] / "SKILL.md").exists()
     for script_name in ("list_tables.py", "describe_table.py", "query.py"):
         script_path = mysql_reporter["source_dir"] / "scripts" / script_name
@@ -1604,24 +1604,21 @@ def test_owner_only_skill_can_depend_on_visible_skill():
     assert svc.can_skill_depend_on(parent, dependency) is True
 
 
-def test_list_builtin_skill_specs_rejects_missing_required_directory(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-):
-    missing_dir = tmp_path / "buildin" / "deep-research"
-    monkeypatch.setattr(
-        svc,
-        "get_builtin_skill_specs",
-        lambda: [
-            SimpleNamespace(
-                slug="deep-research",
-                source_dir=missing_dir,
-                description="required builtin skill",
-            )
-        ],
-    )
+def test_list_builtin_skill_specs_rejects_missing_skill_file(tmp_path, monkeypatch):
+    """发现的目录必须包含 Skill 定义，不能静默漏装。"""
+    (tmp_path / "incomplete").mkdir()
+    monkeypatch.setattr(svc, "BUILTIN_SKILLS_DIR", tmp_path)
+    with pytest.raises(ValueError, match="内置 skill 缺少 SKILL.md"):
+        svc.list_builtin_skill_specs()
 
-    with pytest.raises(ValueError, match="内置 skill 目录不存在"):
+
+def test_list_builtin_skill_specs_rejects_mismatched_slug(tmp_path, monkeypatch):
+    """目录名与声明标识不一致时拒绝加载。"""
+    source = tmp_path / "expected"
+    source.mkdir()
+    (source / "SKILL.md").write_text("---\nname: other\ndescription: test\n---\n")
+    monkeypatch.setattr(svc, "BUILTIN_SKILLS_DIR", tmp_path)
+    with pytest.raises(ValueError, match="frontmatter.slug 必须等于 slug"):
         svc.list_builtin_skill_specs()
 
 
@@ -1631,26 +1628,15 @@ async def test_init_builtin_skills_create_missing(tmp_path: Path, monkeypatch: p
     source_dir = tmp_path / "builtin-skills" / "reporter"
     source_dir.mkdir(parents=True, exist_ok=True)
     (source_dir / "SKILL.md").write_text(
-        "---\nname: reporter\ndescription: SQL report\n---\n# SQL Reporter\n",
+        "---\nname: reporter\ndescription: SQL report from markdown\n"
+        "tool_dependencies: [mysql_query]\nmcp_dependencies: [charts]\n"
+        "skill_dependencies: [common-report]\n---\n# SQL Reporter\n",
         encoding="utf-8",
     )
     (source_dir / "prompts").mkdir(parents=True, exist_ok=True)
     (source_dir / "prompts" / "system.md").write_text("prompt", encoding="utf-8")
 
-    monkeypatch.setattr(
-        svc,
-        "get_builtin_skill_specs",
-        lambda: [
-            SimpleNamespace(
-                slug="reporter",
-                source_dir=source_dir,
-                description="SQL report from python",
-                tool_dependencies=("mysql_query",),
-                mcp_dependencies=("charts",),
-                skill_dependencies=("common-report",),
-            )
-        ],
-    )
+    monkeypatch.setattr(svc, "BUILTIN_SKILLS_DIR", source_dir.parent)
 
     class FakeRepo:
         created_payload: dict | None = None
@@ -1693,7 +1679,8 @@ async def test_init_builtin_skills_updates_existing_record_and_preserves_disable
     source_dir = tmp_path / "builtin-skills" / "reporter"
     source_dir.mkdir(parents=True, exist_ok=True)
     (source_dir / "SKILL.md").write_text(
-        "---\nname: reporter\ndescription: new markdown description\n---\n# SQL Reporter\n",
+        "---\nname: reporter\ndescription: new description\nversion: 1.0.1\n"
+        "tool_dependencies: [mysql_query]\nmcp_dependencies: [charts]\n---\n# SQL Reporter\n",
         encoding="utf-8",
     )
     (source_dir / "prompt.md").write_text("new builtin content", encoding="utf-8")
@@ -1702,21 +1689,7 @@ async def test_init_builtin_skills_updates_existing_record_and_preserves_disable
     target_dir.mkdir(parents=True, exist_ok=True)
     (target_dir / "prompt.md").write_text("old content", encoding="utf-8")
 
-    monkeypatch.setattr(
-        svc,
-        "get_builtin_skill_specs",
-        lambda: [
-            SimpleNamespace(
-                slug="reporter",
-                source_dir=source_dir,
-                description="new description",
-                version="1.0.1",
-                tool_dependencies=("mysql_query",),
-                mcp_dependencies=("charts",),
-                skill_dependencies=(),
-            )
-        ],
-    )
+    monkeypatch.setattr(svc, "BUILTIN_SKILLS_DIR", source_dir.parent)
 
     existing_item = Skill(
         slug="reporter",

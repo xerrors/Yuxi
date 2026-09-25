@@ -9,27 +9,29 @@
         <slot name="content" />
       </div>
       <div class="graph-stats-wrapper" v-if="graphData.nodes.length > 0">
-        <div v-if="activeStatsPanel" class="floating-panel type-stats-card">
-          <div class="panel-header">
-            <span class="panel-title">
-              {{ activeStatsPanel === 'node' ? '实体类型' : '关系类型' }}
-            </span>
-          </div>
-          <div class="panel-body">
-            <div class="type-stats-list">
-              <div
-                v-for="item in activeTypeStats"
-                :key="item.name"
-                class="type-stats-row"
-                :title="`${item.name}: ${item.count}`"
-              >
-                <span class="type-color" :style="{ backgroundColor: item.color }"></span>
-                <span class="type-name">{{ item.name }}</span>
-                <span class="type-count">{{ item.count }}</span>
+        <transition name="stats-panel">
+          <div v-if="activeStatsPanel" class="floating-panel type-stats-card">
+            <div class="panel-header">
+              <span class="panel-title">
+                {{ activeStatsPanel === 'node' ? '实体类型' : '关系类型' }}
+              </span>
+            </div>
+            <div class="panel-body">
+              <div class="type-stats-list">
+                <div
+                  v-for="item in activeTypeStats"
+                  :key="item.name"
+                  class="type-stats-row"
+                  :title="`${item.name}: ${item.count}`"
+                >
+                  <span class="type-color" :style="{ backgroundColor: item.color }"></span>
+                  <span class="type-name">{{ item.name }}</span>
+                  <span class="type-count">{{ item.count }}</span>
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        </transition>
         <div class="floating-panel graph-stats-panel">
           <button
             class="stat-item"
@@ -222,6 +224,12 @@ function toggleStatsPanel(type) {
   activeStatsPanel.value = activeStatsPanel.value === type ? '' : type
 }
 
+function handleStatsOutsideClick(event) {
+  if (!activeStatsPanel.value || !rootEl.value) return
+  const statsWrapper = rootEl.value.querySelector('.graph-stats-wrapper')
+  if (!statsWrapper?.contains(event.target)) activeStatsPanel.value = ''
+}
+
 function formatData() {
   const data = props.graphData || { nodes: [], edges: [] }
   const degrees = new Map()
@@ -354,6 +362,7 @@ function initGraph() {
 
   // 绑定事件
   graphInstance.on('node:click', (evt) => {
+    activeStatsPanel.value = ''
     const { target } = evt
     // 获取节点ID
     const nodeId = target.id
@@ -362,6 +371,7 @@ function initGraph() {
   })
 
   graphInstance.on('edge:click', (evt) => {
+    activeStatsPanel.value = ''
     const { target } = evt
     const edgeId = target.id
     const edgeData = graphInstance.getEdgeData(edgeId)
@@ -369,6 +379,7 @@ function initGraph() {
   })
 
   graphInstance.on('canvas:click', (evt) => {
+    activeStatsPanel.value = ''
     // 只有点击画布空白处才触发
     if (!evt.target) {
       emit('canvas-click')
@@ -573,6 +584,7 @@ watch(
 
 onMounted(() => {
   isMounted = true
+  document.addEventListener('click', handleStatsOutsideClick)
   // ResizeObserver 监听容器尺寸，自动重渲染
   if (window.ResizeObserver) {
     resizeObserver = new ResizeObserver(() => {
@@ -601,6 +613,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   isMounted = false
+  document.removeEventListener('click', handleStatsOutsideClick)
   window.removeEventListener('resize', refreshGraph)
   if (resizeObserver && container.value) resizeObserver.unobserve(container.value)
   clearTimeout(renderTimeout)
@@ -644,10 +657,10 @@ defineExpose({
   .graph-stats-wrapper {
     position: absolute;
     bottom: 10px;
-    left: 10px;
+    right: 10px;
     display: flex;
     flex-direction: column;
-    align-items: flex-start;
+    align-items: flex-end;
     gap: 8px;
     pointer-events: auto;
     z-index: 10;
@@ -728,6 +741,7 @@ defineExpose({
     width: 220px;
     max-width: calc(100vw - 40px);
     overflow: hidden;
+    transform-origin: bottom right;
   }
 
   .type-stats-list {
@@ -812,6 +826,18 @@ defineExpose({
       pointer-events: none;
     }
   }
+}
+
+.stats-panel-enter-active,
+.stats-panel-leave-active {
+  transform-origin: bottom right;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.stats-panel-enter-from,
+.stats-panel-leave-to {
+  transform: translateY(8px) scaleY(0.96);
+  opacity: 0;
 }
 
 /* 高亮节点的脉冲动画效果 */

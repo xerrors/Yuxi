@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.agents.backends import create_agent_composite_backend
 from yuxi.agents.backends.paths import runtime_workdir_path
 from yuxi.agents.backends.sandbox import ProvisionerSandboxBackend, get_sandbox_provider
-from yuxi.agents.buildin import agent_manager
+from yuxi.agents.buildin import AgentBackendNotFoundError, get_agent_backend
 from yuxi.agents.context import (
     DEFAULT_SUMMARY_THRESHOLD_K,
     BaseContext,
@@ -52,9 +52,10 @@ async def compress_thread_context(
     )
     if agent_item is None:
         raise HTTPException(status_code=404, detail="智能体不存在")
-    agent = agent_manager.get_agent(agent_item.backend_id)
-    if agent is None:
-        raise HTTPException(status_code=404, detail="智能体后端不存在")
+    try:
+        agent = get_agent_backend(agent_item.backend_id)
+    except AgentBackendNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     if "context_compression" not in getattr(agent, "capabilities", []):
         raise HTTPException(status_code=422, detail="当前智能体不支持主动上下文压缩")
 

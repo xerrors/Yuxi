@@ -179,12 +179,14 @@ BUILTIN_PROVIDERS: list[dict[str, Any]] = [
     {
         "provider_id": "opencode",
         "display_name": "OpenCode",
+        "api_key_env": "OPENCODE_API_KEY",
         "base_url": "https://opencode.ai/zen/v1",
         "models_endpoint": "https://opencode.ai/zen/v1/models",
     },
     {
         "provider_id": "opencode-go",
         "display_name": "OpenCode Go",
+        "api_key_env": "OPENCODE_GO_API_KEY",
         "base_url": "https://opencode.ai/zen/go/v1",
         "models_endpoint": "https://opencode.ai/zen/go/v1/models",
     },

@@ -57,6 +57,18 @@ function safeErrorData(errorData, status, publicMessage) {
   }
 }
 
+/**
+ * 提取后端业务错误的可展示 detail。仅当 detail 是含字符串 code 与 message 的对象时
+ * 透传这两个字段（其余字段一律丢弃）；message 由后端保证已脱敏、可直接展示。
+ * 数组形态（FastAPI schema 校验，可能回显敏感输入）与字符串 detail 不适用此契约。
+ */
+function extractBusinessErrorDetail(errorData) {
+  const detail = errorData?.detail
+  if (!detail || typeof detail !== 'object' || Array.isArray(detail)) return null
+  if (typeof detail.code !== 'string' || typeof detail.message !== 'string') return null
+  return { code: detail.code, message: detail.message }
+}
+
 function publicErrorMessage(url, status, headers, requiresAuth) {
   const path = safeRequestMetadata(url, {}).path
   if (status === 400) return '请求参数错误'
@@ -140,12 +152,15 @@ export async function apiRequest(url, options = {}, requiresAuth = true, respons
       }
 
       // 特殊处理401和403错误
-      const error = new Error(errorMessage)
+      const businessDetail = extractBusinessErrorDetail(errorData)
+      const error = new Error(businessDetail?.message || errorMessage)
       error.status = response.status
       error.headers = safeResponseHeaders(response.headers)
       error.response = {
         status: response.status,
-        data: safeErrorData(errorData, response.status, errorMessage),
+        data: businessDetail
+          ? { detail: businessDetail }
+          : safeErrorData(errorData, response.status, errorMessage),
         headers: error.headers
       }
 

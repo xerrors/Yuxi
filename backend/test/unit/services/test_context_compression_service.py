@@ -93,7 +93,7 @@ async def test_compress_thread_context_uses_locked_idle_thread(monkeypatch: pyte
     monkeypatch.setattr(service, "_ensure_runtime_available", runtime)
     monkeypatch.setattr(service, "_release_runtime", release)
     monkeypatch.setattr(service, "_compress_agent_checkpoint", compress)
-    monkeypatch.setattr(service.agent_manager, "get_agent", lambda _backend_id: agent)
+    monkeypatch.setattr(service, "get_agent_backend", lambda _backend_id: agent)
 
     result = await service.compress_thread_context(
         thread_id="thread-1",

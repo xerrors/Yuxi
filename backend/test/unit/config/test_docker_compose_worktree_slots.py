@@ -134,13 +134,12 @@ def test_slot_isolation_guard_rejects_fixed_host_resources() -> None:
     } <= _slot_isolation_violations(compose)
 
 
-def test_production_compose_keeps_existing_deployment_image_identity() -> None:
-    """开发槽位参数化不得改变生产 Compose 的镜像身份。"""
+def test_production_compose_scopes_images_by_project_with_legacy_default() -> None:
+    """生产镜像按项目隔离，未配置项目名时仍使用 yuxi 前缀。"""
     compose = _load_compose("docker-compose.prod.yml")
 
-    assert compose["services"]["api"]["image"].startswith("yuxi-api:${YUXI_VERSION:-")
-    assert compose["services"]["web"]["image"].startswith("yuxi-web:${YUXI_VERSION:-")
-    assert "COMPOSE_PROJECT_NAME" not in compose["services"]["api"]["image"]
+    assert compose["services"]["api"]["image"].startswith("${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-")
+    assert compose["services"]["web"]["image"].startswith("${COMPOSE_PROJECT_NAME:-yuxi}-web:${YUXI_VERSION:-")
 
 
 def test_host_test_runner_probes_current_compose_slot() -> None:

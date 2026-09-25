@@ -1,38 +1,5 @@
 <template>
   <div class="thread-stats-wrapper">
-    <div class="thread-filter-header">
-      <div class="header-controls">
-        <div class="filter-group">
-          <span class="filter-label">统计周期</span>
-          <a-segmented
-            v-model:value="timeRange"
-            :options="timeRangeOptions"
-            size="middle"
-            @change="loadData()"
-          />
-        </div>
-
-        <button
-          type="button"
-          class="subagent-toggle"
-          :class="{ active: includeSubagents }"
-          role="switch"
-          :aria-checked="includeSubagents"
-          :disabled="loading"
-          @click="toggleSubagents"
-        >
-          <Bot class="control-icon" aria-hidden="true" />
-          <span>子智能体</span>
-          <span class="toggle-state">{{ includeSubagents ? '包含' : '不含' }}</span>
-        </button>
-
-        <button type="button" class="refresh-btn" @click="loadData()">
-          <RefreshCw class="control-icon" aria-hidden="true" />
-          <span>刷新</span>
-        </button>
-      </div>
-    </div>
-
     <!-- 顶部核心指标 -->
     <DashboardMetricGrid class="thread-summary-grid">
       <DashboardMetricCard
@@ -63,6 +30,30 @@
         tone="accent"
       />
     </DashboardMetricGrid>
+
+    <!-- 筛选工具栏：位于指标卡与图表之间 -->
+    <div class="thread-filter-header">
+      <div class="filter-group">
+        <span class="filter-label">统计周期</span>
+        <a-segmented
+          v-model:value="timeRange"
+          :options="timeRangeOptions"
+          size="middle"
+          @change="loadData()"
+        />
+        <a-button class="refresh-btn" :loading="loading" @click="loadData()">
+          <template #icon><RefreshCw class="btn-icon" aria-hidden="true" /></template>
+          刷新
+        </a-button>
+      </div>
+
+      <a-segmented
+        :value="includeSubagents"
+        :options="subagentScopeOptions"
+        size="middle"
+        @change="changeSubagentScope"
+      />
+    </div>
 
     <!-- 2x2 可视化图表区域 -->
     <div class="charts-2x2-grid">
@@ -368,7 +359,7 @@
 import { formatTokenUsage } from '@/utils/dashboard'
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import * as echarts from '@/utils/dashboardCharts'
-import { Activity, Bot, Layers, Mail, MessageSquare, RefreshCw, Search } from '@lucide/vue'
+import { Activity, Layers, Mail, MessageSquare, RefreshCw, Search } from '@lucide/vue'
 import { message } from 'ant-design-vue'
 import { dashboardApi } from '@/apis/dashboard_api'
 import { getColorByIndex } from '@/utils/chartColors'
@@ -405,6 +396,11 @@ const timeRangeOptions = [
   { label: '近14天', value: '14days' },
   { label: '近30天', value: '30days' },
   { label: '近90天', value: '90days' }
+]
+
+const subagentScopeOptions = [
+  { label: '全部', value: true },
+  { label: '仅主智能体', value: false }
 ]
 
 const tablePagination = ref({
@@ -473,8 +469,8 @@ const loadData = async (requestedIncludeSubagents = includeSubagents.value) => {
   }
 }
 
-const toggleSubagents = () => {
-  void loadData(!includeSubagents.value)
+const changeSubagentScope = (value) => {
+  void loadData(value)
 }
 
 const loadFilterOptions = async () => {
@@ -791,112 +787,34 @@ watch(
 
 .thread-filter-header {
   display: flex;
-  justify-content: flex-end;
   align-items: center;
+  justify-content: space-between;
   flex-wrap: wrap;
   gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--gray-150);
+  border-radius: 8px;
+  background: var(--gray-0);
 
-  .header-controls {
+  .filter-group {
     display: flex;
     align-items: center;
-    justify-content: flex-end;
-    flex-wrap: wrap;
-    gap: 16px;
+    gap: 10px;
 
-    .filter-group {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-
-      .filter-label {
-        font-size: 12px;
-        color: var(--gray-600);
-        font-weight: 500;
-      }
-    }
-
-    :deep(.ant-segmented) {
+    .filter-label {
       font-size: 13px;
-    }
-  }
-
-  .refresh-btn,
-  .subagent-toggle {
-    display: inline-flex;
-    flex: 0 0 auto;
-    align-items: center;
-    justify-content: center;
-    height: 36px;
-    gap: 7px;
-    padding: 0 12px;
-    border: 1px solid var(--gray-200);
-    border-radius: 9px;
-    background: var(--gray-0);
-    color: var(--gray-700);
-    font: inherit;
-    font-size: 13px;
-    font-weight: 500;
-    line-height: 1;
-    cursor: pointer;
-    transition:
-      color 0.18s ease,
-      border-color 0.18s ease,
-      background-color 0.18s ease,
-      transform 0.18s ease;
-
-    &:hover {
-      border-color: var(--main-100);
-      background: var(--main-10);
-      color: var(--main-color);
-    }
-
-    &:active {
-      transform: translateY(1px);
-    }
-
-    &:focus-visible {
-      outline: 2px solid var(--main-color);
-      outline-offset: 2px;
-    }
-
-    .control-icon {
-      width: 15px;
-      height: 15px;
-      stroke-width: 2;
+      color: var(--gray-700);
+      font-weight: 500;
     }
   }
 
   .refresh-btn {
-    padding-inline: 14px;
+    color: var(--gray-700);
   }
 
-  .subagent-toggle {
-    background: var(--gray-50);
-
-    .toggle-state {
-      min-width: 28px;
-      padding: 3px 6px;
-      border-radius: 5px;
-      background: var(--gray-150);
-      color: var(--gray-500);
-      font-size: 11px;
-      line-height: 1;
-      text-align: center;
-      transition:
-        color 0.18s ease,
-        background-color 0.18s ease;
-    }
-
-    &.active {
-      border-color: var(--main-100);
-      background: var(--main-20);
-      color: var(--main-color);
-
-      .toggle-state {
-        background: var(--main-color);
-        color: var(--gray-0);
-      }
-    }
+  .btn-icon {
+    width: 14px;
+    height: 14px;
   }
 }
 
@@ -1228,9 +1146,7 @@ watch(
     flex-direction: column;
     align-items: flex-start;
 
-    .header-controls,
     .filter-group {
-      width: 100%;
       flex-wrap: wrap;
     }
   }

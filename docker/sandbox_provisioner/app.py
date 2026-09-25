@@ -292,6 +292,59 @@ def sandbox_container_stop_timeout_seconds(value: str | None = None) -> int:
     return timeout_seconds
 
 
+def sandbox_container_limits(
+    mem_limit: str | None = None,
+    cpus: str | None = None,
+    pids_limit: str | None = None,
+) -> dict:
+    """解析单沙盒容器的 mem/cpu/pids 上限，非法配置显式失败而不回退默认。"""
+    raw_mem = (
+        os.getenv("SANDBOX_MEM_LIMIT", "2g") if mem_limit is None else mem_limit
+    ).strip()
+    # 本配置只接受纯字节数或 k/m/g 单位后缀（窄于 Docker 完整格式），
+    # 提前拒绝，避免运行期才暴露。
+    if not re.fullmatch(r"[1-9][0-9]*([kKmMgG][bB]?)?", raw_mem):
+        raise RuntimeError(
+            f"SANDBOX_MEM_LIMIT must be bytes or a k/m/g value, got {raw_mem!r}"
+        )
+
+    raw_cpus = (
+        os.getenv("SANDBOX_CPUS", "2") if cpus is None else cpus
+    ).strip()
+    # nan/inf/溢出在 int() 转换处失败；小于 1e-9 核会截断为 0 并被
+    # docker-py 的 `if nano_cpus` 静默丢弃，两者都必须在启动期拒绝。
+    try:
+        nano_cpus = int(float(raw_cpus) * 1_000_000_000)
+    except (ValueError, OverflowError) as exc:
+        raise RuntimeError(
+            f"SANDBOX_CPUS must be a finite number, got {raw_cpus!r}"
+        ) from exc
+    if nano_cpus < 1:
+        raise RuntimeError(
+            f"SANDBOX_CPUS must be > 0 with at least 1 nano-cpu, got {raw_cpus!r}"
+        )
+
+    raw_pids = (
+        os.getenv("SANDBOX_PIDS_LIMIT", "512")
+        if pids_limit is None
+        else pids_limit
+    ).strip()
+    try:
+        pids = int(raw_pids)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"SANDBOX_PIDS_LIMIT must be an integer, got {raw_pids!r}"
+        ) from exc
+    if pids < 1:
+        raise RuntimeError(f"SANDBOX_PIDS_LIMIT must be >= 1, got {raw_pids!r}")
+
+    return {
+        "mem_limit": raw_mem,
+        "nano_cpus": nano_cpus,
+        "pids_limit": pids,
+    }
+
+
 def provisioner_token() -> str:
     token = os.getenv("SANDBOX_PROVISIONER_TOKEN", "").strip()
     if len(token) < 32:
@@ -559,6 +612,7 @@ class LocalContainerProvisionerBackend:
         self._sandbox_locks = weakref.WeakValueDictionary()
         self._delete_slots = threading.BoundedSemaphore(sandbox_delete_concurrency())
         self._stop_timeout_seconds = sandbox_container_stop_timeout_seconds()
+        self._container_limits = sandbox_container_limits()
         self._container_port = int(os.getenv("SANDBOX_CONTAINER_PORT", "8080"))
         self._sandbox_image = os.getenv(
             "SANDBOX_IMAGE",
@@ -1068,6 +1122,8 @@ class LocalContainerProvisionerBackend:
                 # The sandbox image expects /home/gem to be writable during boot.
                 # Keep it ephemeral and mount persistent user-data underneath it.
                 "tmpfs": {"/home/gem": "rw,exec,mode=777"},
+                # 单次执行的资源上界，防止一次命令吃满宿主机。
+                **self._container_limits,
             }
             if not ephemeral_storage and user_skills is not None:
                 run_kwargs["volumes"][str(user_skills)] = {

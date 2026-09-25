@@ -2,7 +2,7 @@
 
 断网/APIC 连接抖动恢复后任务应自动继续(对标 Claude Code 的行为)：
 网络类异常(连接拒绝/超时/DNS)按指数退避持续重试，总预算内不向 graph 抛错；
-预算耗尽显式抛出，Run 以 failed 结束，不再出现"假完成"。
+网络预算或次数重试耗尽时显式抛出，由 Run 失败通道记录错误。
 
 网络重试通过 handler 包装实现：wrapped handler 在预算内吞掉网络异常退避重试，
 预算耗尽或非网络异常原样抛出，交给父类的 wrap_model_call/awrap_model_call 按
@@ -51,7 +51,7 @@ class NetworkRetryMiddleware(ModelRetryMiddleware):
     """网络错误按预算重试、非网络错误按次数重试的统一中间件。
 
     网络重试通过 handler 包装实现，非网络错误复用父类 ``ModelRetryMiddleware`` 的
-    ``max_retries``/``retry_on``/``on_failure`` 语义。网络预算起点在包装创建时固定，
+    ``max_retries``/``retry_on`` 语义，耗尽后保留原异常。网络预算起点在包装创建时固定，
     跨父类的非网络重试保持，不会被放大成多份。
     """
 
@@ -64,7 +64,8 @@ class NetworkRetryMiddleware(ModelRetryMiddleware):
         network_max_delay: float = 30.0,
         **kwargs,
     ) -> None:
-        super().__init__(max_retries=max_retries, retry_on=_retry_non_network_errors, **kwargs)
+        # Run 失败由 worker 持久化；合成 AIMessage 没有对应的 model lifecycle 审计。
+        super().__init__(max_retries=max_retries, retry_on=_retry_non_network_errors, on_failure="error", **kwargs)
         self._network_budget = (
             network_budget_seconds
             if network_budget_seconds is not None

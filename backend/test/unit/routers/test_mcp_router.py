@@ -205,7 +205,7 @@ def test_update_builtin_mcp_server_rejects_connection_changes(monkeypatch):
 
     client = TestClient(_build_app())
     resp = client.put(
-        "/api/system/mcp-servers/mcp-server-chart",
+        "/api/system/mcp-servers/deepwiki-official",
         json={
             "transport": "streamable_http",
             "url": "https://example.com/mcp",

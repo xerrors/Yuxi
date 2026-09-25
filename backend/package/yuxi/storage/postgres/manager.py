@@ -391,7 +391,7 @@ class PostgresManager(metaclass=SingletonMeta):
             )
 
             self._initialized = True
-            logger.info(f"PostgreSQL manager initialized for knowledge base: {db_url.split('@')[0]}://***")
+            logger.info("PostgreSQL manager initialized for knowledge base")
         except Exception as e:
             logger.error(f"Failed to initialize PostgreSQL manager: {e}")
             # 不抛出异常，允许应用启动，但在使用时会报错

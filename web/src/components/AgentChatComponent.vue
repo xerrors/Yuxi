@@ -766,6 +766,13 @@
                               />
                             </div>
                             <div class="state-list-item-meta">{{ run.description }}</div>
+                            <div
+                              v-if="run.observation_error"
+                              class="state-list-item-meta"
+                              role="status"
+                            >
+                              状态暂不可用，正在重连
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -797,7 +804,7 @@
           :thread-id="currentChatId"
           :active-run-id="currentThreadState?.activeRunId || null"
           :run-active="Boolean(currentThreadState?.activeRunId && currentThreadState?.isStreaming)"
-          :visible="isFilePanelOpen"
+          :visible="isFilePanelOpen && subagentObservationEnabled"
           :messages="currentDebugMessages"
           :runs="currentThreadRuns"
           :panel-ratio="panelRatio"
@@ -901,6 +908,7 @@ import HumanApprovalModal from '@/components/HumanApprovalModal.vue'
 import { extractPendingInterrupt, useApproval } from '@/composables/useApproval'
 import { useAgentThreadState, IDLE_QUEUE_SNAPSHOT } from '@/composables/useAgentThreadState'
 import { useAgentRunStream } from '@/composables/useAgentRunStream'
+import { useSubagentRuns } from '@/composables/useSubagentRuns'
 import { useAgentStreamHandler } from '@/composables/useAgentStreamHandler'
 import { useStreamSmoother } from '@/composables/useStreamSmoother'
 import { useAgentRequestQueue } from '@/composables/useAgentRequestQueue'
@@ -1792,9 +1800,18 @@ const currentTodos = computed(() => {
     }
   })
 })
-const currentSubagentRuns = computed(() => {
-  const runs = currentAgentState.value?.subagent_runs
-  return Array.isArray(runs) ? runs : []
+const subagentObservationEnabled = ref(true)
+const currentSubagentRuns = useSubagentRuns({
+  scope: computed(() =>
+    userStore.isLoggedIn && userStore.uid && currentChatId.value
+      ? `${userStore.uid}:${currentChatId.value}`
+      : ''
+  ),
+  enabled: subagentObservationEnabled,
+  runs: computed(() => {
+    const runs = currentAgentState.value?.subagent_runs
+    return Array.isArray(runs) ? runs : []
+  })
 })
 const currentSubagentRunById = computed(() => {
   const runById = new Map()
@@ -1822,10 +1839,11 @@ const currentSubagentOptionBySlug = computed(() => {
 const openSubagentThread = (run) => {
   if (!run?.child_thread_id) return
   const threadId = String(run.child_thread_id)
-  const key = `subagent:${threadId}`
+  const key = `subagent:${run.run_id || threadId}`
   const section = {
     key,
     type: 'subagent',
+    runId: run.run_id || '',
     title: getSubagentRunName(run),
     threadId,
     avatar: getSubagentIconSrc(run),
@@ -1837,6 +1855,8 @@ const openSubagentThread = (run) => {
   statePanelOpen.value = false
   panelRatio.value = clampPanelRatio(previewPanelRatio)
 }
+
+provide('openSubagentThread', openSubagentThread)
 
 const toggleMessageDebugPanel = () => {
   if (isFilePanelOpen.value && agentPanelActiveSectionKey.value === MESSAGE_DEBUG_SECTION.key) {
@@ -2776,6 +2796,7 @@ onMounted(() => {
 })
 
 onActivated(() => {
+  subagentObservationEnabled.value = true
   nextTick(() => {
     startChatMainResizeObserver()
   })
@@ -2785,6 +2806,7 @@ onActivated(() => {
 })
 
 onDeactivated(() => {
+  subagentObservationEnabled.value = false
   stopChatMainResizeObserver()
   stopStreamingStateRefresh()
   stopReplyElapsedTimer()

@@ -553,17 +553,15 @@ provide('settingsModal', {
 <style lang="less" scoped>
 // Less 变量定义
 @sidebar-width: 230px;
-@sidebar-collapsed-width: 56px;
+@sidebar-collapsed-width: 52px;
 @sidebar-padding-y: 6px;
 @sidebar-padding-x: 8px;
-@sidebar-padding: @sidebar-padding-y @sidebar-padding-x;
 @sidebar-border-width: 1px;
 @sidebar-item-height: 32px;
-@sidebar-item-padding-x: 10px;
+@sidebar-item-padding-x: 6px;
 @sidebar-icon-size: 16px;
-@brand-avatar-size: 28px;
-@sidebar-collapsed-content-width: @sidebar-collapsed-width - (2 * @sidebar-padding-x) -
-  @sidebar-border-width;
+@brand-avatar-size: 24px;
+@sidebar-collapsed-content-width: @sidebar-collapsed-width - @sidebar-border-width;
 @sidebar-collapsed-icon-padding-x: (
   (@sidebar-collapsed-content-width - @sidebar-icon-size - (2 * @sidebar-border-width)) / 2
 );
@@ -605,7 +603,6 @@ div.header,
   height: 100%;
   width: @sidebar-width;
   border-right: 1px solid var(--gray-100);
-  padding: @sidebar-padding;
   overflow: hidden;
   user-select: none;
   transition:
@@ -621,12 +618,14 @@ div.header,
     position: relative;
     gap: 2px;
     margin-top: 12px;
+    padding: 0 @sidebar-padding-x;
   }
 
   .sidebar-conversations {
     height: 100%;
     min-height: 0;
     overflow: hidden;
+    padding-left: @sidebar-padding-x;
   }
 
   .sidebar-brand,
@@ -646,6 +645,7 @@ div.header,
     z-index: 1;
     flex: 0 0 auto;
     background: var(--main-5);
+    padding: 0 @sidebar-padding-x @sidebar-padding-y;
   }
 
   .sidebar-brand {
@@ -653,6 +653,8 @@ div.header,
     align-items: center;
     justify-content: space-between;
     height: @sidebar-item-height;
+    margin-top: @sidebar-padding-y;
+    padding: 0 @sidebar-padding-x;
     gap: 8px;
   }
 
@@ -943,11 +945,12 @@ div.header,
     flex-basis: @sidebar-collapsed-width;
     width: @sidebar-collapsed-width;
     align-items: stretch;
-    padding: @sidebar-padding;
 
     .sidebar-brand {
       justify-content: flex-start;
       width: 100%;
+      margin-top: @sidebar-padding-y;
+      padding: 0;
     }
 
     .brand-expand-button {
@@ -987,6 +990,11 @@ div.header,
     .nav {
       align-items: stretch;
       width: 100%;
+      padding: 0;
+    }
+
+    .foo {
+      padding: 0 0 @sidebar-padding-y;
     }
 
     .nav-item {

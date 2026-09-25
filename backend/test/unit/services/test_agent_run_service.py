@@ -694,10 +694,6 @@ async def test_stream_agent_run_events_refreshes_pg_before_cleanup_fallback(
         del run_id, after_seq, limit
         return []
 
-    async def fake_last_stream_seq(run_id: str):
-        del run_id
-        return "0-0"
-
     clock = 0.0
     sleep_intervals = []
 
@@ -709,7 +705,6 @@ async def test_stream_agent_run_events_refreshes_pg_before_cleanup_fallback(
     monkeypatch.setattr(agent_run_service, "_load_stream_run_for_user", fake_load_run)
     monkeypatch.setattr(agent_run_service, "_load_stream_run", fake_refresh_run)
     monkeypatch.setattr(agent_run_service, "list_run_stream_events", fake_list_events)
-    monkeypatch.setattr(agent_run_service, "get_last_run_stream_seq", fake_last_stream_seq)
     monkeypatch.setattr(agent_run_service.asyncio, "sleep", fake_sleep)
     monkeypatch.setattr(agent_run_service, "monotonic", lambda: clock)
     monkeypatch.setattr(agent_run_service, "uniform", lambda _low, _high: 1.2)
@@ -960,14 +955,9 @@ async def test_stream_agent_run_events_compact_fallback_end_keeps_request_id(mon
         del run_id, after_seq, limit
         return []
 
-    async def fake_get_last_run_stream_seq(run_id: str):
-        del run_id
-        return "1700000000004-0"
-
     monkeypatch.setattr(agent_run_service.pg_manager, "get_async_session_context", fake_session_ctx)
     monkeypatch.setattr(agent_run_service, "AgentRunRepository", Repo)
     monkeypatch.setattr(agent_run_service, "list_run_stream_events", fake_list_events)
-    monkeypatch.setattr(agent_run_service, "get_last_run_stream_seq", fake_get_last_run_stream_seq)
 
     chunks = []
     async for chunk in agent_run_service.stream_agent_run_events(
@@ -980,7 +970,7 @@ async def test_stream_agent_run_events_compact_fallback_end_keeps_request_id(mon
 
     assert len(chunks) == 1
     assert chunks[0].startswith("event: end")
-    assert "id: 1700000000004-0" in chunks[0]
+    assert "\nid:" not in chunks[0]
     data = _sse_data(chunks[0])
     assert data["request_id"] == "req-1"
     assert data["payload"] == {"status": "completed"}
@@ -1904,6 +1894,10 @@ async def test_resolve_agent_run_model_spec_rejects_unknown_explicit_model(monke
     with pytest.raises(agent_run_service.HTTPException) as exc:
         await agent_run_service.resolve_agent_run_model_spec("nope", "default:model")
     assert exc.value.status_code == 422
+    assert exc.value.detail == {
+        "code": "chat_model_not_found",
+        "message": "未找到可用聊天模型: 'nope'",
+    }
 
 
 @pytest.mark.asyncio
@@ -1916,6 +1910,7 @@ async def test_resolve_agent_run_model_spec_rejects_non_chat_explicit_model(monk
     with pytest.raises(agent_run_service.HTTPException) as exc:
         await agent_run_service.resolve_agent_run_model_spec("embed-1", "default:model")
     assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "chat_model_not_found"
 
 
 @pytest.mark.asyncio
@@ -1957,6 +1952,7 @@ async def test_resolve_agent_run_model_spec_validates_configured_model(monkeypat
         await agent_run_service.resolve_agent_run_model_spec(None, "missing:model")
 
     assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "chat_model_not_found"
 
 
 def _patch_agent_run_creation(
@@ -2027,7 +2023,7 @@ def _patch_agent_run_creation(
     async def fake_get_arq_pool():
         return Queue()
 
-    monkeypatch.setattr(agent_run_service.agent_manager, "get_agent", lambda backend_id: _FakeBackend())
+    monkeypatch.setattr(agent_run_service, "get_agent_backend", lambda backend_id: _FakeBackend())
     monkeypatch.setattr(agent_run_service, "AgentRepository", AgentRepo)
     monkeypatch.setattr(agent_run_service, "ConversationRepository", ConvRepo)
     monkeypatch.setattr(agent_run_service, "AgentRunRepository", _CreateRunRepo)
@@ -2167,3 +2163,41 @@ async def test_create_resume_run_rejects_missing_resume():
         )
     assert exc.value.status_code == 422
     assert exc.value.detail == "resume 不能为空"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("after_seq", ["0-0", "1700000000002-0"])
+async def test_stream_agent_run_fallback_drains_events_without_reusing_cursor(monkeypatch, after_seq):
+    """有限尾部事件读完后补发无游标终态，重连也不冒用已消费事件 ID。"""
+
+    async def load_run(*args):
+        return _run_state("completed")
+
+    pending = [
+        _run_stream_event("1700000000001-0", "messages", {"content": "first"}),
+        _run_stream_event("1700000000002-0", "messages", {"content": "last"}),
+    ]
+    cursors = []
+
+    async def list_events(run_id, *, after_seq, limit):
+        cursors.append(after_seq)
+        return [event for event in pending if event["seq"] > after_seq]
+
+    async def no_sleep(seconds):
+        pass
+
+    monkeypatch.setattr(agent_run_service, "_load_stream_run_for_user", load_run)
+    monkeypatch.setattr(agent_run_service, "list_run_stream_events", list_events)
+    monkeypatch.setattr(agent_run_service.asyncio, "sleep", no_sleep)
+
+    chunks = [
+        chunk
+        async for chunk in agent_run_service.stream_agent_run_events(
+            run_id="run-1", after_seq=after_seq, current_uid="user-1"
+        )
+    ]
+    expected_events = ["event: end"] if after_seq != "0-0" else ["event: messages", "event: messages", "event: end"]
+    assert [chunk.splitlines()[0] for chunk in chunks] == expected_events
+    assert "\nid:" not in chunks[-1]
+    assert _sse_data(chunks[-1])["payload"]["status"] == "completed"
+    assert cursors[-1] == "1700000000002-0"

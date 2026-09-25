@@ -1578,7 +1578,7 @@ async def test_submission_publishes_committed_request_and_replays_same_view(
         await _create_request(session, request_id="request-older")
     agent = SimpleNamespace(slug="main", backend_id="ChatbotAgent")
     monkeypatch.setattr(agent_request_service.AgentRepository, "get_visible_by_slug", AsyncMock(return_value=agent))
-    monkeypatch.setattr(agent_request_service.agent_manager, "get_agent", lambda _: object())
+    monkeypatch.setattr(agent_request_service, "get_agent_backend", lambda _: object())
     monkeypatch.setattr(
         agent_request_service, "resolve_agent_run_config", AsyncMock(return_value=("provider:model", "default"))
     )

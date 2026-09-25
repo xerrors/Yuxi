@@ -30,7 +30,7 @@ def checkpoint_reader(monkeypatch):
     """使用真实内存 saver，并封锁所有执行准备入口。"""
     saver = InMemorySaver()
     monkeypatch.setattr(svc.pg_manager, "get_langgraph_checkpointer", lambda: saver)
-    monkeypatch.setattr(svc.agent_manager, "get_agent", _unexpected_runtime)
+    monkeypatch.setattr(svc, "get_agent_backend", _unexpected_runtime)
     monkeypatch.setattr(svc, "AgentRepository", _unexpected_runtime)
     return saver
 

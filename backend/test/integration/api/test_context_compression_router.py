@@ -42,6 +42,7 @@ async def test_compress_thread_persists_canonical_checkpoint_through_http(
     project_id = str(uuid.uuid4())
     engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    pg_manager.initialize()
     checkpointer = await pg_manager.setup_langgraph_checkpointer()
 
     builder = StateGraph(_CheckpointState)
@@ -134,7 +135,7 @@ async def test_compress_thread_persists_canonical_checkpoint_through_http(
         return None
 
     monkeypatch.setattr(context_compression_service, "AgentRepository", AgentRepo)
-    monkeypatch.setattr(context_compression_service.agent_manager, "get_agent", lambda _backend_id: Agent())
+    monkeypatch.setattr(context_compression_service, "get_agent_backend", lambda _backend_id: Agent())
     monkeypatch.setattr(context_compression_service, "resolve_agent_run_model_spec", resolve_model)
     monkeypatch.setattr(context_compression_service, "ensure_conversation_workdir_available", workdir)
     monkeypatch.setattr(context_compression_service, "_ensure_runtime_available", runtime)
@@ -184,3 +185,4 @@ async def test_compress_thread_persists_canonical_checkpoint_through_http(
             await db.execute(delete(User).where(User.uid == uid))
             await db.commit()
         await engine.dispose()
+        await pg_manager.close()

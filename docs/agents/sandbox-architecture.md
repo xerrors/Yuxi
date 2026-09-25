@@ -70,6 +70,11 @@ Compose 中的 `sandbox-provisioner` 使用以下变量：
 | `SANDBOX_IDLE_TIMEOUT_SECONDS` | 空闲实例回收时间 | `120` |
 | `SANDBOX_IDLE_CHECK_INTERVAL_SECONDS` | idle reaper 扫描间隔 | `10` |
 | `SANDBOX_EXEC_TIMEOUT_SECONDS` | 命令超时，也用于计算安全回收下限 | `180` |
+| `SANDBOX_MEM_LIMIT` | 单个沙盒容器的内存上限，只接受纯字节数或整数加 `k/m/g` 后缀，不是完整 Docker 内存格式 | `2g` |
+| `SANDBOX_CPUS` | 单个沙盒容器的 CPU 上限（核），至少 `1e-9` 核 | `2` |
+| `SANDBOX_PIDS_LIMIT` | 单个沙盒容器的进程数上限，必须 ≥ 1 | `512` |
+
+`SANDBOX_MEM_LIMIT`、`SANDBOX_CPUS`、`SANDBOX_PIDS_LIMIT` 只在 `SANDBOX_PROVISIONER_BACKEND=docker` 时生效；非法值在 provisioner 启动时抛错，不回退默认值。
 
 当空闲回收时间小于等于命令超时时，provisioner 会把它提高到“命令超时 + 30 秒”，避免回收正在执行的任务。直接运行 provisioner 且没有 Compose 默认值时，代码默认的 idle timeout 是 600 秒；以实际 `/health` 响应为准。
 

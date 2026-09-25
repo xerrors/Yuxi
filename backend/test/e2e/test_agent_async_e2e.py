@@ -236,6 +236,24 @@ async def test_async_agent_run_stream_result_and_persistence(
             agent_slug=agent_slug,
             uid=uid,
         )
+
+        replay = await e2e_client.get(f"/api/agent/runs/{run_id}/events", headers=e2e_headers)
+        assert replay.status_code == 200, replay.text
+        event_ids = [line.removeprefix("id: ") for line in replay.text.splitlines() if line.startswith("id: ")]
+        assert event_ids, "真实 worker 事件必须携带 Redis 游标"
+        for _ in range(2):
+            resumed = await e2e_client.get(
+                f"/api/agent/runs/{run_id}/events",
+                headers={**e2e_headers, "Last-Event-ID": event_ids[-1]},
+            )
+            assert resumed.status_code == 200, resumed.text
+            assert resumed.text.count("event: end\n") == 1
+            assert "\nid:" not in resumed.text
+            data = next(line.removeprefix("data: ") for line in resumed.text.splitlines() if line.startswith("data: "))
+            terminal = json.loads(data)
+            assert terminal["run_id"] == run_id
+            assert terminal["payload"]["status"] == "completed"
+            assert terminal["payload"]["request_id"] == request_id
         run_completed = True
     finally:
         if not run_completed:

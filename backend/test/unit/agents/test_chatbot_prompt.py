@@ -1,6 +1,12 @@
 from types import SimpleNamespace
 
-from yuxi.agents.buildin.chatbot.prompt import build_prompt_with_context
+from yuxi.agents.buildin.chatbot.prompt import PROMPT, build_prompt_with_context
+
+
+def test_chatbot_prompt_prefers_complete_explanatory_paragraphs():
+    assert "减少 bullet points" in PROMPT
+    assert "完整的句子和段落" in PROMPT
+    assert "详细的解释和背景信息" in PROMPT
 
 
 def test_chatbot_prompt_declares_workspace_visibility_and_default_write_boundary():

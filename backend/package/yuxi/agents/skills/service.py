@@ -24,6 +24,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.agents.mcp.service import get_enabled_mcp_server_slugs
+from yuxi.agents.skills.buildin import BUILTIN_SKILLS_DIR
 from yuxi.agents.skills.repository import SkillRepository
 from yuxi.config import (
     get_runtime_dir,
@@ -442,12 +443,6 @@ def _remove_skill_projection_entry(path: Path) -> None:
         shutil.rmtree(path)
     else:
         path.unlink()
-
-
-def get_builtin_skill_specs() -> list[Any]:
-    from yuxi.agents.skills.buildin import BUILTIN_SKILLS
-
-    return BUILTIN_SKILLS
 
 
 def _build_builtin_skill_dir_path(slug: str) -> str:
@@ -1716,21 +1711,12 @@ async def update_skill_enabled(db: AsyncSession, *, slug: str, enabled: bool, op
 
 
 def list_builtin_skill_specs() -> list[dict[str, Any]]:
+    """发现源码目录中的 Skill，并以 frontmatter 作为唯一元数据。"""
     specs: list[dict[str, Any]] = []
-    for raw_spec in get_builtin_skill_specs():
-        slug = str(getattr(raw_spec, "slug", "")).strip()
-        source_dir = Path(str(getattr(raw_spec, "source_dir", ""))).resolve()
-        configured_description = str(getattr(raw_spec, "description", "")).strip()
-        version = str(getattr(raw_spec, "version", "1.0.0")).strip() or "1.0.0"
-        configured_tools = normalize_string_list(getattr(raw_spec, "tool_dependencies", None))
-        configured_mcps = normalize_string_list(getattr(raw_spec, "mcp_dependencies", None))
-        configured_skills = normalize_string_list(getattr(raw_spec, "skill_dependencies", None))
-
-        if not is_valid_skill_slug(slug):
-            raise ValueError(f"内置 skill slug 非法: {slug}")
-        if not source_dir.exists() or not source_dir.is_dir():
-            raise ValueError(f"内置 skill 目录不存在: {source_dir}")
-
+    for source_dir in sorted(BUILTIN_SKILLS_DIR.iterdir()):
+        if not source_dir.is_dir() or source_dir.name.startswith(("_", ".")):
+            continue
+        slug = source_dir.name
         skill_md = source_dir / "SKILL.md"
         if not skill_md.exists():
             raise ValueError(f"内置 skill 缺少 SKILL.md: {source_dir}")
@@ -1744,11 +1730,11 @@ def list_builtin_skill_specs() -> list[dict[str, Any]]:
             {
                 "slug": slug,
                 "name": parsed_name,
-                "description": configured_description or parsed_desc,
-                "version": version,
-                "tool_dependencies": configured_tools or normalize_string_list(meta.get("tool_dependencies")),
-                "mcp_dependencies": configured_mcps or normalize_string_list(meta.get("mcp_dependencies")),
-                "skill_dependencies": configured_skills or normalize_string_list(meta.get("skill_dependencies")),
+                "description": parsed_desc,
+                "version": str(meta.get("version", "1.0.0")),
+                "tool_dependencies": normalize_string_list(meta.get("tool_dependencies")),
+                "mcp_dependencies": normalize_string_list(meta.get("mcp_dependencies")),
+                "skill_dependencies": normalize_string_list(meta.get("skill_dependencies")),
                 "content_hash": _compute_dir_hash(source_dir),
                 "source_dir": source_dir,
             }

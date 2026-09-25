@@ -276,11 +276,6 @@ async def create_database(
             **(additional_params or {}),
         )
 
-        # 需要重新加载所有智能体，因为工具刷新了
-        from yuxi.agents.buildin import agent_manager
-
-        await agent_manager.reload_all()
-
         response = serialize_knowledge_base(database_info)
         response["files"] = {}
         return response
@@ -457,11 +452,6 @@ async def delete_database(kb_id: str, current_user: User = Depends(require_knowl
     logger.debug(f"Delete database {kb_id}")
     try:
         await knowledge_base.delete_database(kb_id)
-
-        # 需要重新加载所有智能体，因为工具刷新了
-        from yuxi.agents.buildin import agent_manager
-
-        await agent_manager.reload_all()
 
         return {"message": "删除成功"}
     except HTTPException:

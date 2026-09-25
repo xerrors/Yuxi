@@ -208,6 +208,8 @@ async def load_info_config():
 
         return config
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to load info config: {e}")
         return {}

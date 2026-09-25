@@ -221,9 +221,7 @@ async def test_manifest_uses_prepared_context_and_persisted_overrides(monkeypatc
     monkeypatch.setattr(
         service, "AgentRepository", lambda db: SimpleNamespace(get_visible_by_slug=AsyncMock(return_value=agent))
     )
-    monkeypatch.setattr(
-        service.agent_manager, "get_agent", lambda name: SimpleNamespace(context_schema=SubAgentContext)
-    )
+    monkeypatch.setattr(service, "get_agent_backend", lambda name: SimpleNamespace(context_schema=SubAgentContext))
     monkeypatch.setattr("yuxi.agents.context._load_workspace_agent_context", lambda uid: "workspace policy")
     seen = []
 
@@ -303,7 +301,16 @@ async def test_execution_preparation_rejects_missing_dependencies(monkeypatch, m
     monkeypatch.setattr(
         service, "AgentRepository", lambda db: SimpleNamespace(get_visible_by_slug=AsyncMock(return_value=agent))
     )
-    monkeypatch.setattr(service.agent_manager, "get_agent", lambda name: backend)
+
+    def get_backend(name):
+        """模拟工厂的明确缺失错误，保留其他依赖测试。"""
+        from yuxi.agents.buildin import AgentBackendNotFoundError
+
+        if backend is None:
+            raise AgentBackendNotFoundError(f"智能体后端 {name} 不存在")
+        return backend
+
+    monkeypatch.setattr(service, "get_agent_backend", get_backend)
     monkeypatch.setattr("yuxi.agents.context._load_workspace_agent_context", lambda uid: "")
     monkeypatch.setattr(service, "prepare_agent_runtime_context", AsyncMock(side_effect=lambda context: context))
     run = SimpleNamespace(

@@ -31,7 +31,7 @@ Callback 归位不改变实现、触发点或持久化规则，对应单测位�
 | 执行边界与 Owner | 保留的最小优化 | 不变的约束 |
 | --- | --- | --- |
 | [Skill 投影](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/agents/skills/service.py) | 锁内比较路径、类型、执行位与内容，未变则跳过 staging 复制及删除 | fd-relative、no-follow、跨进程锁及锁内授权重读不变；非法来源清理旧投影并失败，非法目标重建 |
-| [SubAgent 工具](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/agents/middlewares/subagent_task.py) | 进程内只复用五个不可变输入 Schema | 工具实例、动态描述、闭包与父 Run 上下文逐次创建 |
+| [SubAgent 工具](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/agents/middlewares/subagent_task.py) | 进程内只复用四个不可变输入 Schema | 工具实例、动态描述、闭包与父 Run 上下文逐次创建 |
 | [聊天服务](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/services/chat_service.py) | 复用同 Run manifest 的规范化配置，直接调用拥有查询的 repository | 线程归属、Agent 可见性和 executor 权限不缓存、不跳过 |
 | [短期事件发布](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/services/run_queue_service.py) | XADD 与 EXPIRE 使用一次非事务 pipeline | 发布顺序、事件 ID 与 TTL 保留；PostgreSQL 终态不依赖 Redis 成功 |
 | [PostgreSQL checkpoint factory](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/storage/postgres/manager.py) | 每次构图创建独立 saver，连接池继续按进程共享 | 单图内 saver 锁、SQL、持久化频率及迁移 advisory lock 不变 |

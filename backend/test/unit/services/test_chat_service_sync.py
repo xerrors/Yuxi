@@ -94,8 +94,8 @@ async def test_resolve_agent_runtime_includes_subagents_only_when_requested(
 
     monkeypatch.setattr(agent_context, "normalize_agent_context_config", normalize)
     monkeypatch.setattr(
-        svc.agent_manager,
-        "get_agent",
+        svc,
+        "get_agent_backend",
         lambda backend_id: SimpleNamespace(context_schema=None) if backend_id == "SubAgentBackend" else None,
     )
 
@@ -1063,6 +1063,9 @@ async def test_get_agent_state_view_returns_interrupted_checkpoint_payload(monke
             return None
 
     class RunRepo:
+        async def list_subagent_runs_for_conversation(self, conversation_id, uid):
+            return []
+
         def __init__(self, _db):
             pass
 
@@ -1119,6 +1122,9 @@ async def test_get_agent_state_view_rejects_conversation_without_workdir(monkeyp
             )
 
     class RunRepo:
+        async def list_subagent_runs_for_conversation(self, conversation_id, uid):
+            return []
+
         def __init__(self, _db):
             pass
 
@@ -1192,6 +1198,9 @@ async def test_get_agent_state_view_includes_subagent_thread_relation(monkeypatc
             )
 
     class RunRepo:
+        async def list_subagent_runs_for_conversation(self, conversation_id, uid):
+            return []
+
         def __init__(self, _db):
             pass
 
@@ -1294,6 +1303,9 @@ async def test_get_agent_state_view_reports_malformed_subagent_run_as_server_err
             )
 
     class RunRepo:
+        async def list_subagent_runs_for_conversation(self, conversation_id, uid):
+            return []
+
         def __init__(self, _db):
             pass
 
@@ -1392,7 +1404,7 @@ async def test_execution_does_not_rebuild_missing_snapshot_context(monkeypatch, 
     monkeypatch.setattr(
         svc, "AgentRepository", lambda _db: SimpleNamespace(get_visible_by_slug=AsyncMock(return_value=agent))
     )
-    monkeypatch.setattr(svc.agent_manager, "get_agent", lambda _backend: object())
+    monkeypatch.setattr(svc, "get_agent_backend", lambda _backend: object())
     monkeypatch.setattr(svc, "resolve_conversation_workdir_path", _resolve_test_workdir)
     monkeypatch.setattr(
         agent_context, "normalize_agent_context_config", AsyncMock(side_effect=AssertionError("不得重新解析配置"))

@@ -2,15 +2,24 @@
   <div class="mcp-cards-page extension-page-root">
     <PageShoulder search-placeholder="搜索 MCP..." v-model:search="searchQuery">
       <template #actions>
+        <a-tooltip title="刷新 MCP" placement="bottom">
+          <a-button
+            class="lucide-icon-btn"
+            aria-label="刷新 MCP"
+            :disabled="loading"
+            @click="fetchServers"
+          >
+            <RefreshCw
+              :size="14"
+              class="page-shoulder-refresh-icon"
+              :class="{ 'is-spinning': loading }"
+            />
+          </a-button>
+        </a-tooltip>
         <a-button type="primary" @click="handleMcpAdd" class="lucide-icon-btn">
           <Plus :size="14" />
           <span>添加 MCP</span>
         </a-button>
-        <a-tooltip title="刷新 MCP" placement="bottom">
-          <a-button class="lucide-icon-btn" :disabled="loading" @click="fetchServers">
-            <RefreshCw :size="14" />
-          </a-button>
-        </a-tooltip>
       </template>
     </PageShoulder>
 
