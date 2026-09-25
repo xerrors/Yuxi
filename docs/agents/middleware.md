@@ -40,7 +40,7 @@
 
 ## Skills 和知识库
 
-Skills middleware 将 Skill 说明按模型请求注入：预加载 Skill 从首轮开放依赖，普通 Skill 在模型读取对应 `SKILL.md` 后激活，再开放声明的工具和 MCP。
+Skills middleware 将 Skill 说明按模型请求注入：预加载 Skill 从首轮开放工具和 MCP 依赖，普通 Skill 在模型读取对应 `SKILL.md` 后激活，再开放声明的依赖。Agent 显式选择的 MCP 服务器从运行开始提供工具。
 
 知识库能力由内置 `knowledge-base` Skill 提供。它的工具是否注册、模型是否可见、参数是否能访问目标知识库分别由工具组装、Skill 激活和知识库权限检查负责。完整链路见[工具系统](./tools-system.md)和[知识库机制详解](../mechanisms/knowledge-base.md)。
 

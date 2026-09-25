@@ -105,6 +105,7 @@ class SkillsMiddleware(AgentMiddleware):
         # 排除基础工具集中的工具（如 present_artifacts），它们始终可见、不受 Skill 激活影响。
         gated_tool_names = self._resolve_gated_tool_names(runtime_context) - activated_tool_names
         model_tools = list(request.tools or [])
+        registered_tool_names = {tool.name for tool in model_tools}
         if gated_tool_names:
             model_tools = [t for t in model_tools if t.name not in gated_tool_names]
 
@@ -130,7 +131,7 @@ class SkillsMiddleware(AgentMiddleware):
             model_tools.append(t)
             existing_tool_names.add(t.name)
         for t in active_mcp_tools:
-            if t.name in existing_tool_names:
+            if t.name in registered_tool_names or t.name in existing_tool_names:
                 raise RuntimeError(f"Skill MCP 工具名冲突：{t.name}")
             model_tools.append(t)
             existing_tool_names.add(t.name)
@@ -205,7 +206,15 @@ class SkillsMiddleware(AgentMiddleware):
         if request.tool_call.get("name") != "read_file":
             return result
 
+        from langchain_core.messages import ToolMessage
+
+        messages = (result.update or {}).get("messages", []) if isinstance(result, Command) else [result]
+        if any(isinstance(message, ToolMessage) and message.status == "error" for message in messages):
+            return result
+
         args = request.tool_call.get("args") or {}
+        if isinstance(args, dict) and isinstance(args.get("limit"), int) and args["limit"] <= 0:
+            return result
         file_path = args.get("file_path") if isinstance(args, dict) else None
         slug = self._extract_skill_slug_from_skill_md_path(file_path)
 

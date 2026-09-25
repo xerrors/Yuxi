@@ -18,13 +18,25 @@ test('共享智能体保存只提交修改字段，并使用后端合并结果�
     const skills = Array.from({ length: 10 }, (_, i) => `skill-${i}`)
     const agent = {
       id: 'shared-agent',
-      config_json: { context: { model: 'old-model', skills, mcps: null, knowledges: [] } },
+      config_json: {
+        context: { model: 'old-model', skills, preload_skills: null, mcps: null, knowledges: [] }
+      },
       configurable_items: {
-        skills: { type: 'list', kind: 'skills', options: skills.slice(0, 5) }
+        skills: { type: 'list', kind: 'skills', options: skills.slice(0, 5) },
+        preload_skills: {
+          type: 'list',
+          kind: 'skills',
+          default: null,
+          options: skills.slice(0, 5),
+          x_oap_ui_config: { default: [] }
+        }
       }
     }
     store.agentDetails[agent.id] = agent
     await store.selectAgent(agent.id)
+    assert.deepEqual(store.agentConfig.preload_skills, [])
+    assert.deepEqual(store.configurableItems.preload_skills.default, [])
+    assert.equal(store.hasConfigChanges, false)
     store.updateAgentConfig({ model: 'new-model' })
     const requests = []
     agentApi.updateAgent = async (id, payload) => {
