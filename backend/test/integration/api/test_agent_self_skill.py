@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import uuid
+import zipfile
 
 import asyncpg
 import pytest
@@ -61,6 +63,79 @@ async def _read_skill_row(dsn: str, slug: str) -> dict | None:
         return dict(row) if row else None
     finally:
         await conn.close()
+
+
+async def test_create_agent_with_remote_mcp_and_uploaded_skill(test_client, admin_headers, standard_user):
+    """创建时选定的 MCP 与 ZIP 最终分别绑定到 Agent 配置和专属 Skill。"""
+    suffix = uuid.uuid4().hex[:10]
+    agent_slug = f"pytest-create-resources-{suffix}"
+    mcp_slug = f"pytest-create-mcp-{suffix}"
+    skill_slug = f"{agent_slug}{SELF_SKILL_SLUG_SUFFIX}"
+    dsn = os.environ["POSTGRES_URL"].replace("+asyncpg", "")
+
+    denied = await test_client.post(
+        "/api/system/mcp-servers",
+        headers=standard_user["headers"],
+        json={"slug": mcp_slug, "name": mcp_slug, "transport": "streamable_http", "url": "https://example.com/mcp"},
+    )
+    assert denied.status_code == 403, denied.text
+
+    try:
+        mcp = await test_client.post(
+            "/api/system/mcp-servers",
+            headers=admin_headers,
+            json={"slug": mcp_slug, "name": mcp_slug, "transport": "streamable_http", "url": "https://example.com/mcp"},
+        )
+        assert mcp.status_code == 200, mcp.text
+
+        agent = await test_client.post(
+            "/api/agent",
+            headers=admin_headers,
+            json={
+                "name": "Imported resources",
+                "slug": agent_slug,
+                "backend_id": "ChatbotAgent",
+                "config_json": {"context": {"mcps": [mcp_slug]}},
+            },
+        )
+        assert agent.status_code == 200, agent.text
+
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as bundle:
+            bundle.writestr("sample/SKILL.md", _skill_md("ignored-package-slug", "Imported Skill", "Imported rules"))
+        uploaded = await test_client.post(
+            f"/api/agent/{agent_slug}/self-skill/upload",
+            headers=admin_headers,
+            files={"file": ("skill.zip", archive.getvalue(), "application/zip")},
+        )
+        assert uploaded.status_code == 200, uploaded.text
+
+        conn = await asyncpg.connect(dsn)
+        try:
+            row = await conn.fetchrow(
+                "SELECT a.id, a.config_json, s.bound_agent_id FROM agents a "
+                "JOIN skills s ON s.bound_agent_id = a.id WHERE a.slug = $1 AND s.slug = $2",
+                agent_slug,
+                skill_slug,
+            )
+            assert row is not None
+            assert row["bound_agent_id"] == row["id"]
+            assert json.loads(row["config_json"])["context"]["mcps"] == [mcp_slug]
+            mcp_row = await conn.fetchrow("SELECT transport, url FROM mcp_servers WHERE slug = $1", mcp_slug)
+            assert mcp_row is not None
+            assert mcp_row["transport"] == "streamable_http"
+            assert mcp_row["url"] == "https://example.com/mcp"
+        finally:
+            await conn.close()
+
+        content = await test_client.get(
+            f"/api/system/skills/{skill_slug}/file", headers=admin_headers, params={"path": "SKILL.md"}
+        )
+        assert content.status_code == 200, content.text
+        assert "# Imported Skill" in content.json()["data"]["content"]
+    finally:
+        await test_client.delete(f"/api/agent/{agent_slug}", headers=admin_headers)
+        await test_client.delete(f"/api/system/mcp-servers/{mcp_slug}", headers=admin_headers)
 
 
 @pytest.mark.asyncio

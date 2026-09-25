@@ -14,6 +14,25 @@
 
 内置 `ChatbotAgent` 用于普通对话，`SubAgentBackend` 用于被主智能体委派的任务。子智能体的配置入口与普通智能体相同。
 
+## 创建时导入能力
+
+“新增智能体”表单可以同时选择一个专属 Skill ZIP。ZIP 必须包含且只包含一个 `SKILL.md`；上传后 Skill 绑定当前 Agent，运行时自动预加载。没有选择 ZIP 时不会创建空的专属 Skill，创建后仍可在“专属技能”页上传或编辑。
+
+管理员还可以在创建表单粘贴 `mcpServers` JSON 清单，批量创建远程 MCP，并把清单中的标识保存到新 Agent 的 `mcps` 配置。清单只接受 `sse` 和 `streamable_http`，其中 `type: "http"` 对应 `streamable_http`：
+
+```json
+{
+  "mcpServers": {
+    "example-search": {
+      "type": "http",
+      "url": "https://example.com/mcp"
+    }
+  }
+}
+```
+
+MCP 是系统资源，普通用户不能通过创建 Agent 添加 MCP。创建按 MCP、Agent、ZIP 上传顺序完成；明确失败时，表单列出已创建的资源并允许重试剩余步骤。若部分 MCP 已创建，可以修改尚未创建的清单条目；已创建条目的标识和配置保持固定。ZIP 上传被明确拒绝后，可以更换 ZIP，也可以移除这个可选文件并完成已创建的 Agent。关闭后再次打开“新增智能体”会保留进度。请求结果不明时自动重试会停用，管理员需先到管理列表核对已创建资源，再手动处理；放弃草稿会刷新 Agent 列表，但不会删除已经创建的资源。MCP 的连接检查仍在[集成 MCP](./mcp-integration.md)页面进行。
+
 ## 配置页面从哪里来
 
 `BaseContext` 的 dataclass 字段和 metadata 会生成配置项描述，前端不再维护一份独立字段清单：
