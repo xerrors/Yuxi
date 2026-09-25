@@ -125,7 +125,7 @@ async def main() -> None:
                 "business",
                 business_version,
                 BUSINESS_SCHEMA_VERSION,
-                upgrade_from=(2,),
+                upgrade_from=(2, 7, 8),
             )
             knowledge_version = versions.get("knowledge")
             _require_supported_version(
@@ -145,7 +145,7 @@ async def main() -> None:
                     await rewrite_v071_workdir_paths(session)
                     await verify_workdir_bindings(session)
                     await session.commit()
-            if business_version in {None, 2}:
+            if business_version in {None, 2, 7, 8}:
                 await pg_manager.ensure_business_schema()
                 if business_version is None:
                     await pg_manager.setup_langgraph_checkpointer()

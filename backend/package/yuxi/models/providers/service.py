@@ -10,6 +10,7 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.models.providers.builtin import BUILTIN_PROVIDERS
+from yuxi.models.providers.cache import USER_UID_SIGNATURE_SECRET_ENV
 from yuxi.models.providers.repository import (
     create_model_provider,
     delete_model_provider,
@@ -44,6 +45,13 @@ def _normalize_dict(value: Any) -> dict:
 def _validate_provider_id(provider_id: str) -> None:
     if not _PROVIDER_ID_RE.match(provider_id):
         raise ValueError("provider_id 只能包含字母、数字、下划线和中划线，长度 2-100")
+
+
+def _normalize_include_user_uid(value: Any) -> bool:
+    """uid 头开关只接受真实 JSON 布尔值，拒绝字符串等易被 truthiness 误判的输入。"""
+    if isinstance(value, bool):
+        return value
+    raise ValueError("include_user_uid 必须是布尔值")
 
 
 def _normalize_model_item(model: dict[str, Any]) -> dict[str, Any]:
@@ -146,6 +154,7 @@ _FIELD_DEFAULTS: dict[str, Any] = {
     "extra_json": {},
     "is_enabled": True,
     "is_builtin": False,
+    "include_user_uid": False,
 }
 _FIELD_NORMALIZERS = {
     "capabilities": _normalize_list,
@@ -154,6 +163,7 @@ _FIELD_NORMALIZERS = {
     "extra_json": _normalize_dict,
     "is_enabled": bool,
     "is_builtin": bool,
+    "include_user_uid": _normalize_include_user_uid,
 }
 
 
@@ -314,11 +324,22 @@ async def ensure_builtin_model_providers_in_db(db: AsyncSession) -> None:
         await create_model_provider(db, _normalize_payload(payload))
 
 
+def _require_user_uid_signature_secret(include_user_uid: bool) -> None:
+    """开启 UID 头前必须已配置签名密钥：保存期给出可操作提示，运行期 fail-closed 兜底。"""
+    if include_user_uid and not (os.getenv(USER_UID_SIGNATURE_SECRET_ENV) or "").strip():
+        raise ValueError(
+            f"开启“请求携带用户 ID”前，需要先在 API/worker 环境变量配置 {USER_UID_SIGNATURE_SECRET_ENV}"
+            "（专用随机密钥，勿复用 JWT_SECRET_KEY）；配置方法详见"
+            "https://xerrors.github.io/Yuxi/intro/model-config"
+        )
+
+
 async def create_provider_config(db: AsyncSession, data: dict[str, Any], username: str) -> ModelProvider:
     """创建独立模型供应商配置。"""
     payload = _normalize_payload(data)
     if await get_model_provider(db, payload["provider_id"]):
         raise ValueError(f"供应商 {payload['provider_id']} 已存在")
+    _require_user_uid_signature_secret(payload["include_user_uid"])
     payload["created_by"] = username
     payload["updated_by"] = username
     return await create_model_provider(db, payload)
@@ -345,6 +366,7 @@ async def update_provider_config(
             payload.get("enabled_models", provider.enabled_models or []),
             payload.get("provider_type", provider.provider_type),
         )
+    _require_user_uid_signature_secret(payload.get("include_user_uid", provider.include_user_uid))
     payload["updated_by"] = username
     return await update_model_provider(db, provider, payload)
 

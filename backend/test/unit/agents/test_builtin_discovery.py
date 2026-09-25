@@ -156,12 +156,17 @@ async def test_each_graph_uses_its_own_run_context(monkeypatch, backend_id):
     monkeypatch.setattr(
         module,
         "load_chat_model",
-        lambda fully_specified_name, session_id: FakeListChatModel(responses=[session_id]),
+        lambda fully_specified_name, session_id, uid: FakeListChatModel(responses=[session_id, uid]),
     )
     monkeypatch.setattr(backend, "_get_checkpointer", AsyncMock(return_value=None))
     graphs = []
-    for thread_id in ["first-thread", "second-thread"]:
-        context = SimpleNamespace(_runtime_prepared=True, model="test:model", thread_id=thread_id)
+    for thread_id, uid in [("first-thread", "first-uid"), ("second-thread", "second-uid")]:
+        context = SimpleNamespace(
+            _runtime_prepared=True,
+            model="test:model",
+            thread_id=thread_id,
+            uid=uid,
+        )
         graph = await backend.get_graph(context=context)
         result = await graph.ainvoke({"messages": [("user", "hello")]})
         assert result["messages"][-1].content == thread_id

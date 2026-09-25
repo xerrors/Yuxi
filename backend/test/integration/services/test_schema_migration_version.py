@@ -129,6 +129,7 @@ async def test_v072_business_converges_current_schema_idempotently() -> None:
             # v0.7.2 tag 没有这些字段，不能用当前 ORM 预建它们来证明迁移。
             for column in ("prepared_at", "first_output_at", "first_model_request_at"):
                 await connection.execute(text(f"ALTER TABLE agent_runs DROP COLUMN {column}"))
+            await connection.execute(text("ALTER TABLE model_providers DROP COLUMN include_user_uid"))
             await connection.execute(text("ALTER TABLE agent_runs ADD COLUMN last_event_id VARCHAR(64)"))
             await connection.execute(text("DROP TABLE scheduled_agent_runs"))
             await connection.execute(text("DROP TABLE scheduled_agent_jobs"))
@@ -162,6 +163,17 @@ async def test_v072_business_converges_current_schema_idempotently() -> None:
                         text(
                             "SELECT column_name FROM information_schema.columns "
                             "WHERE table_schema = :schema AND table_name = 'agent_runs'"
+                        ),
+                        {"schema": schema},
+                    )
+                ).scalars()
+            )
+            provider_columns = set(
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT column_name FROM information_schema.columns "
+                            "WHERE table_schema = :schema AND table_name = 'model_providers'"
                         ),
                         {"schema": schema},
                     )
@@ -244,6 +256,7 @@ async def test_v072_business_converges_current_schema_idempotently() -> None:
             "timeout_seconds",
         } <= task_columns
         assert {"prepared_at", "first_output_at", "first_model_request_at"} <= run_columns
+        assert {"include_user_uid"} <= provider_columns
         assert "last_event_id" not in run_columns
         assert tuple(row) == ("running", None, 0, 0)
         assert scheduled_tables == {"scheduled_agent_jobs", "scheduled_agent_runs"}
@@ -268,7 +281,7 @@ async def test_v072_business_converges_current_schema_idempotently() -> None:
             "ix_scheduled_agent_runs_job_created",
             "ix_scheduled_agent_runs_dispatching",
         }.issubset(scheduled_indexes)
-        assert BUSINESS_SCHEMA_VERSION == 7
+        assert BUSINESS_SCHEMA_VERSION == 9
     finally:
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)
 

@@ -18,6 +18,9 @@ from yuxi.utils.logging_config import logger
 
 REDIS_CACHE_KEY = "yuxi:model_cache"
 _CACHE_TTL_SECONDS = 5
+# UID 签名密钥只从这一个固定环境变量读取：provider 配置不接收环境变量名，
+# 从结构上消除借签名头探测或离线猜解服务器其他环境变量的通道。
+USER_UID_SIGNATURE_SECRET_ENV = "YUXI_UID_SIGNATURE_SECRET"
 
 
 @dataclass(frozen=True)
@@ -39,6 +42,8 @@ class ModelInfo:
     # provider 级 extra_json，不是 OpenAI chat 的 extra_body。
     extra: dict[str, Any] = field(default_factory=dict)
     request_body_overrides: dict[str, Any] = field(default_factory=dict)
+    # 开启后聊天模型请求注入带 HMAC 签名的 x-yuxi-uid 头，供外部网关按用户计量。
+    include_user_uid: bool = False
 
     # Embedding 专属
     dimension: int | None = None
@@ -60,6 +65,7 @@ class ModelInfo:
             "headers": self.headers,
             "extra": self.extra,
             "request_body_overrides": self.request_body_overrides,
+            "include_user_uid": self.include_user_uid,
             "dimension": self.dimension,
             "batch_size": self.batch_size,
         }
@@ -77,6 +83,7 @@ class ModelInfo:
             headers=data.get("headers", {}),
             extra=data.get("extra", {}),
             request_body_overrides=data.get("request_body_overrides", {}),
+            include_user_uid=bool(data.get("include_user_uid", False)),
             dimension=data.get("dimension"),
             batch_size=data.get("batch_size", 40),
         )
@@ -161,6 +168,7 @@ class ModelCache:
                     headers=dict(provider.headers_json or {}),
                     extra=dict(provider.extra_json or {}),
                     request_body_overrides=dict(model.get("request_body_overrides") or {}),
+                    include_user_uid=bool(provider.include_user_uid),
                     dimension=model.get("dimension"),
                     batch_size=model.get("batch_size", 40),
                 )
