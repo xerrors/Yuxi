@@ -613,7 +613,9 @@ const startEditing = () => {
   editMode.value = 'edit'
 }
 
-defineExpose({ startEditing })
+// draftChanged / editMode 一并暴露：宿主弹窗要据此判断草稿是否会丢、以及隐藏自己的编辑入口
+// （只读引用，不影响既有消费者）
+defineExpose({ startEditing, draftChanged, editMode })
 
 const requestSave = () => {
   if (!canEdit.value || props.saving) return

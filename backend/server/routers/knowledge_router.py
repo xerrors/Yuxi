@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 from yuxi.config.options import system_options
-from yuxi.knowledge.base import KBNameConflictError, KBNotFoundError
+from yuxi.knowledge.base import KBFileStateConflictError, KBNameConflictError, KBNotFoundError
 from yuxi.knowledge.chunking.ragflow_like.presets import get_chunk_preset_options
 from yuxi.knowledge.graphs.milvus_graph_service import GRAPH_TASK_TYPE, MilvusGraphService
 from yuxi.knowledge.read_models import KnowledgeBaseDetail
@@ -135,6 +135,11 @@ media_types = {
 
 
 async def _delete_document_storage_objects(kb_id: str, doc_id: str, file_path: str) -> None:
+    if not doc_id:
+        # 空前缀会退化成 {kb_id}/parsed/，那是整个知识库的产物目录
+        logger.warning("删除文档存储对象时缺少 doc_id，跳过解析产物清理")
+        return
+
     minio_client = get_minio_client()
 
     if is_minio_url(file_path):
@@ -145,7 +150,12 @@ async def _delete_document_storage_objects(kb_id: str, doc_id: str, file_path: s
             logger.warning(f"从MinIO删除原始文件失败: {minio_error}")
 
     try:
-        await minio_client.adelete_file(minio_client.KB_BUCKETS["parsed"], f"{kb_id}/parsed/{doc_id}.md")
+        # 解析产物按前缀清理：解析产出用确定性名（{doc_id}.md），编辑产出用内容寻址名
+        # （{doc_id}.{hash}.md）——只删确定性名会漏掉历次编辑留下的对象。
+        # 点号是必要锚点：不带时 {doc_id} 互为前缀的文档（如 abc 与 abcdef）会被误删。
+        await minio_client.adelete_objects_by_prefix(
+            minio_client.KB_BUCKETS["parsed"], f"{kb_id}/parsed/{doc_id}."
+        )
     except Exception as minio_error:
         logger.warning(f"从MinIO删除解析结果失败: {minio_error}")
 
@@ -1038,7 +1048,12 @@ async def get_document_basic_info(kb_id: str, doc_id: str, current_user: User = 
 
 @knowledge.get("/databases/{kb_id}/documents/{doc_id}/content")
 async def get_document_content(kb_id: str, doc_id: str, current_user: User = Depends(require_knowledge_base_read)):
-    """获取文档内容信息（chunks和lines）"""
+    """获取文档内容信息（chunks和lines）。
+
+    同时返回 `content_revision`：文件行的 updated_at，编辑保存时必须原样回传。
+    它是保存时那条条件更新的期望版本——任何对文件的写入（另一个编辑者、重新解析、
+    状态推进）都会改变它，从而让过期保存落空并返回 409。
+    """
     logger.debug(f"GET document {doc_id} content in {kb_id}")
     await _ensure_database_supports_documents(kb_id, "文档查看")
 
@@ -1049,6 +1064,11 @@ async def get_document_content(kb_id: str, doc_id: str, current_user: User = Dep
             {key: value for key, value in line.items() if key not in internal_graph_fields}
             for line in info.get("lines", [])
         ]
+        # 版本随内容同一次读取带出（见 _get_file_content_from_meta），不另起查询，
+        # 否则两次查询之间的写入会让「旧内容 + 新版本」配成一对
+        revision = info.pop("updated_at", None)
+        if revision:
+            info["content_revision"] = revision
         return info
     except HTTPException:
         raise
@@ -1082,10 +1102,14 @@ async def batch_delete_documents(
 
             file_path = file_meta_info.get("meta", {}).get("path", "")
 
-            await _delete_document_storage_objects(kb_id, doc_id, file_path)
-
-            # 无论MinIO删除是否成功，都继续从知识库删除
+            # 先删行再清理对象：行先消失，任何 CAS 成功的编辑其对象都写在删行之前，最坏只是
+            # 多删一个对象。反过来（先列举清对象、后删行）在两步之间提交的编辑会让行指向已被
+            # 删掉的对象——预览与下载失败、入库转 error_parsing。孤儿窗口仍在，但更窄。
             await knowledge_base.delete_file(kb_id, doc_id)
+
+            # 走到这里说明行已删除；对象清理自己吞异常，失败只留孤儿不影响一致性。
+            # delete_file 抛异常时直接进下面的 except，行与对象都还在，不会出现半删状态。
+            await _delete_document_storage_objects(kb_id, doc_id, file_path)
             deleted_count += 1
 
             # 只有成功删除的文件才同步从导图快照移除，避免部分失败导致导图与文件表失同步
@@ -1127,10 +1151,10 @@ async def delete_document(kb_id: str, doc_id: str, current_user: User = Depends(
 
         file_path = file_meta_info.get("meta", {}).get("path", "")
 
-        await _delete_document_storage_objects(kb_id, doc_id, file_path)
-
-        # 无论MinIO删除是否成功，都继续从知识库删除
+        # 与批量删除同一顺序：先删行再清理对象，避免两步之间提交的编辑让行指向已被删掉的
+        # 对象。delete_file 抛异常时行与对象都还在，由 400 返回。
         await knowledge_base.delete_file(kb_id, doc_id)
+        await _delete_document_storage_objects(kb_id, doc_id, file_path)
 
         # 同步清理导图快照，移除已删除文件对应的叶子节点
         removed_filename = file_meta_info.get("meta", {}).get("filename", "")
@@ -1499,6 +1523,63 @@ async def move_document(
     except Exception as e:
         logger.error(f"移动文件失败 {e}, {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class UpdateDocumentMarkdownRequest(BaseModel):
+    """编辑解析产物的请求体。"""
+
+    content: str
+    revision: str
+
+
+@knowledge.put("/databases/{kb_id}/documents/{doc_id}/content")
+async def update_document_content(
+    kb_id: str,
+    doc_id: str,
+    request: UpdateDocumentMarkdownRequest,
+    current_user: User = Depends(require_knowledge_base_manage),
+):
+    """保存编辑后的解析产物 Markdown（只接受待入库文件）。
+
+    只放开 parsed：该状态没有派生索引，发布就是切换引用，状态保持 parsed，
+    用户继续走既有「入库」。已入库内容的编辑要复用「重新入库」Durable Task，
+    见 docs/develop-guides/decisions 里的决策记录。
+
+    内容写入**新的内容寻址对象**，再用一条条件更新把文件行的 `markdown_file` 切过去；
+    因此任何读者（含并发入库）读到的对象由它读到的那一行唯一确定，不会读到覆盖一半的内容。
+
+    `revision` 是 GET 内容时返回的 `content_revision`（文件行的 updated_at），
+    保存时作为条件更新的期望版本：文件在编辑期间被改过（另一个编辑者、重新解析、
+    状态推进）就会落空并返回 409，而不是静默覆盖。
+    """
+    logger.debug(f"PUT document {doc_id} content in {kb_id}")
+    if not request.content or not request.content.strip():
+        raise HTTPException(status_code=400, detail="解析内容不能为空")
+
+    try:
+        await _ensure_database_supports_documents(kb_id, "文档解析内容编辑")
+        meta = await knowledge_base.update_file_markdown(
+            kb_id, doc_id, request.content, current_user.uid, request.revision
+        )
+        return {
+            "status": "success",
+            "message": "解析内容已保存",
+            "meta": meta,
+            # 回传这次保存后的新版本：前端连续编辑时下一步要拿它当期望版本，否则必然 409
+            "content_revision": meta.get("updated_at"),
+        }
+    except HTTPException:
+        raise
+    except KBFileStateConflictError as e:
+        # 并发冲突：产物已被他人修改，或文件正在解析/入库、状态被其他动作改变
+        raise HTTPException(status_code=409, detail=str(e))
+    except KBNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"保存解析内容失败 {e}, {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"保存失败: {e}")
 
 
 @knowledge.post("/files/fetch-url")

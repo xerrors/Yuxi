@@ -301,14 +301,18 @@ async def test_knowledge_virtual_folder_migration_runs_without_sse_and_is_resuma
         assert final_detection.json()["has_virtual_folders"] is False
         async with engine.connect() as connection:
             folder_creators = (
-                await connection.execute(
-                    text(
-                        "SELECT created_by FROM knowledge_files WHERE kb_id = :kb "
-                        "AND is_folder IS TRUE AND filename IN (:root, 'shared', 'other')"
-                    ),
-                    {"kb": kb_id, "root": f"history-{prefix}"},
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT created_by FROM knowledge_files WHERE kb_id = :kb "
+                            "AND is_folder IS TRUE AND filename IN (:root, 'shared', 'other')"
+                        ),
+                        {"kb": kb_id, "root": f"history-{prefix}"},
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
         assert len(folder_creators) == 3
         assert all(folder_creators)
     finally:
@@ -362,26 +366,28 @@ async def test_virtual_folder_migration_keeps_conflicts_and_commits_other_paths(
 
         async with engine.connect() as connection:
             rows = (
-                await connection.execute(
-                    text(
-                        "SELECT filename, parent_id FROM knowledge_files WHERE file_id IN "
-                        "(:blocked_file, :movable_file) ORDER BY file_id"
-                    ),
-                    {
-                        "blocked_file": f"file_{suffix}_blocked",
-                        "movable_file": f"file_{suffix}_movable",
-                    },
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT filename, parent_id FROM knowledge_files WHERE file_id IN "
+                            "(:blocked_file, :movable_file) ORDER BY file_id"
+                        ),
+                        {
+                            "blocked_file": f"file_{suffix}_blocked",
+                            "movable_file": f"file_{suffix}_movable",
+                        },
+                    )
                 )
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
         assert {row["filename"] for row in rows} == {f"{blocked}/a.txt", "b.txt"}
         assert sum(row["parent_id"] is not None for row in rows) == 1
     finally:
         await engine.dispose()
 
 
-async def test_folder_mutations_reject_invalid_name_and_directory_cycle(
-    test_client, admin_headers, knowledge_database
-):
+async def test_folder_mutations_reject_invalid_name_and_directory_cycle(test_client, admin_headers, knowledge_database):
     kb_id = knowledge_database["kb_id"]
 
     parent_response = await test_client.post(
@@ -604,9 +610,7 @@ async def test_knowledge_routes_enforce_permissions(test_client, standard_user, 
     _assert_forbidden_response(forbidden_exists)
 
 
-async def test_kb_image_proxy_requires_auth_and_streams_private_image(
-    test_client, admin_headers, knowledge_database
-):
+async def test_kb_image_proxy_requires_auth_and_streams_private_image(test_client, admin_headers, knowledge_database):
     """知识库图片代理：未登录不可访问，鉴权后可读取私有 bucket 图片"""
     from yuxi.storage.minio.client import MinIOClient, get_minio_client
 
@@ -878,6 +882,15 @@ async def test_dify_query_params_and_documents_readonly(test_client, admin_heade
     )
     assert index_response.status_code == 400, index_response.text
     assert "只支持检索" in index_response.json()["detail"]
+
+    edit_response = await test_client.put(
+        f"/api/knowledge/databases/{kb_id}/documents/file_id_1/content",
+        # revision 是必填项：不传会先撞 422，到不了只读连接器那道 400
+        json={"content": "# x", "revision": "2026-01-01T00:00:00Z"},
+        headers=admin_headers,
+    )
+    assert edit_response.status_code == 400, edit_response.text
+    assert "只支持检索" in edit_response.json()["detail"]
 
 
 # =============================================================================
@@ -1198,3 +1211,286 @@ async def test_document_search_requires_admin(test_client, standard_user, knowle
         headers=standard_user["headers"],
     )
     _assert_forbidden_response(response)
+
+
+# =============================================================================
+# === 解析产物编辑（入库前复核；只对待入库文件开放） ===
+# =============================================================================
+
+
+async def _seed_document_with_chunks(kb_id, prefix, *, status, chunk_count=3, markdown_file=True):
+    """直接落库文档与分块，绕开耗时的真实解析/嵌入链路，聚焦编辑后的清理语义。
+
+    `markdown_file=True` 时同时把产物对象写进 MinIO——真实的 parsed 文件必然有产物，
+    只落库会让「产物内容」在编辑前无从比对（读引用会 NoSuchKey）。
+    """
+    file_id = f"file_{prefix}"
+    if markdown_file:
+        from yuxi.storage.minio import get_minio_client
+
+        await get_minio_client().aupload_file(
+            "knowledgebases",
+            f"{kb_id}/parsed/{file_id}.md",
+            f"# {prefix}\n\n种子产物内容。".encode(),
+            content_type="text/markdown",
+        )
+    engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "INSERT INTO knowledge_files "
+                    "(file_id, kb_id, parent_id, filename, file_type, status, is_folder, "
+                    " markdown_file, chunk_count, token_count, created_at, updated_at) "
+                    "VALUES (:fid, :kb, NULL, :name, 'txt', :status, FALSE, :md, :cc, :tc,"
+                    " now(), now())"
+                ),
+                {
+                    "fid": file_id,
+                    "kb": kb_id,
+                    "name": f"{prefix}.txt",
+                    "status": status,
+                    "md": (f"http://minio/knowledgebases/{kb_id}/parsed/{file_id}.md" if markdown_file else None),
+                    "cc": chunk_count,
+                    "tc": chunk_count * 10,
+                },
+            )
+            for index in range(chunk_count):
+                await connection.execute(
+                    text(
+                        "INSERT INTO knowledge_chunks (chunk_id, file_id, kb_id, chunk_index, content) "
+                        "VALUES (:cid, :fid, :kb, :idx, :content)"
+                    ),
+                    {
+                        "cid": f"{file_id}_chunk_{index}",
+                        "fid": file_id,
+                        "kb": kb_id,
+                        "idx": index,
+                        "content": f"旧内容分块 {index}",
+                    },
+                )
+    finally:
+        await engine.dispose()
+    return file_id
+
+
+async def _chunk_rows_for_file(file_id: str) -> int:
+    engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
+    try:
+        async with engine.connect() as connection:
+            result = await connection.execute(
+                text("SELECT count(*) FROM knowledge_chunks WHERE file_id = :fid"), {"fid": file_id}
+            )
+            return result.scalar_one()
+    finally:
+        await engine.dispose()
+
+
+async def _read_markdown_object(test_client, kb_id: str, file_id: str, headers) -> str:
+    """读取该文件**当前权威**的产物对象。
+
+    编辑产物用内容寻址名（`{file_id}.{hash}.md`），所以必须先取行上的 `markdown_file`
+    引用再下载——拼固定路径只能读到解析产出那一份，编辑后就会读到旧内容。
+    引用从 HTTP 元数据接口取：测试进程与 app 不共享连接池，直接用 pg_manager 会撞上
+    「Future attached to a different loop」。
+    """
+    from yuxi.knowledge.utils.kb_utils import parse_minio_url
+    from yuxi.storage.minio import get_minio_client
+
+    meta = await test_client.get(f"/api/knowledge/databases/{kb_id}/documents/{file_id}/basic", headers=headers)
+    assert meta.status_code == 200, meta.text
+    url = meta.json()["meta"]["markdown_file"]
+    assert url, "文件行没有 markdown_file，产物引用缺失"
+
+    bucket_name, object_name = parse_minio_url(url)
+    raw = await get_minio_client().adownload_file(bucket_name, object_name)
+    return raw.decode("utf-8")
+
+
+async def _fetch_content(test_client, kb_id: str, file_id: str, headers) -> dict:
+    response = await test_client.get(f"/api/knowledge/databases/{kb_id}/documents/{file_id}/content", headers=headers)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _content_url(kb_id: str, file_id: str) -> str:
+    return f"/api/knowledge/databases/{kb_id}/documents/{file_id}/content"
+
+
+async def test_edit_parsed_document_writes_content_and_keeps_status(test_client, admin_headers, knowledge_database):
+    """第一阶段的核心闭环：待入库文件可改产物，状态不变，用户继续走既有「入库」。"""
+    kb_id = knowledge_database["kb_id"]
+    file_id = await _seed_document_with_chunks(kb_id, uuid.uuid4().hex[:8], status="parsed", chunk_count=0)
+
+    before = await _fetch_content(test_client, kb_id, file_id, admin_headers)
+    revision = before["content_revision"]
+    assert revision
+
+    response = await test_client.put(
+        _content_url(kb_id, file_id),
+        json={"content": "# 修订后的标题\n\n这是人工修正后的内容。", "revision": revision},
+        headers=admin_headers,
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["meta"]["status"] == "parsed"
+    # 期望版本必须随保存推进，否则用户紧接着再保存一次会拿旧版本去比对
+    assert payload["content_revision"] != revision
+
+    edited = "# 修订后的标题\n\n这是人工修正后的内容。"
+    assert await _read_markdown_object(test_client, kb_id, file_id, admin_headers) == edited
+    after = await _fetch_content(test_client, kb_id, file_id, admin_headers)
+    # 内容与修订必须配成**同一次读取**的一对：分别取两次可能拿到（旧内容 + 新版本），
+    # 那正是编辑保存要防的组合
+    assert after["content"] == edited
+    assert after["content_revision"] == payload["content_revision"]
+
+    basic = await test_client.get(f"/api/knowledge/databases/{kb_id}/documents/{file_id}/basic", headers=admin_headers)
+    assert basic.status_code == 200, basic.text
+    assert basic.json()["meta"]["status"] == "parsed"
+
+
+async def test_edit_rejects_stale_revision_without_overwriting(test_client, admin_headers, knowledge_database):
+    """用过期的期望版本保存：409，且不覆盖先写入的内容。"""
+    kb_id = knowledge_database["kb_id"]
+    file_id = await _seed_document_with_chunks(kb_id, uuid.uuid4().hex[:8], status="parsed", chunk_count=0)
+    stale = (await _fetch_content(test_client, kb_id, file_id, admin_headers))["content_revision"]
+
+    first = await test_client.put(
+        _content_url(kb_id, file_id),
+        json={"content": "# 先到的修改", "revision": stale},
+        headers=admin_headers,
+    )
+    assert first.status_code == 200, first.text
+
+    second = await test_client.put(
+        _content_url(kb_id, file_id),
+        json={"content": "# 迟到的修改", "revision": stale},
+        headers=admin_headers,
+    )
+    assert second.status_code == 409, second.text
+    assert "已被其他人修改" in second.json()["detail"]
+    assert await _read_markdown_object(test_client, kb_id, file_id, admin_headers) == "# 先到的修改"
+
+
+async def test_concurrent_edits_leave_exactly_one_winner(test_client, admin_headers, knowledge_database):
+    """两个**同时**提交的保存：期望版本是同一条条件更新的等值条件，只能有一个命中。
+
+    这条是本功能并发语义的直接证据：状态 CAS 单独用挡不住两个 parsed 编辑者
+    （两边状态都成立），所以期望版本必须参与落库条件。
+    """
+    kb_id = knowledge_database["kb_id"]
+    file_id = await _seed_document_with_chunks(kb_id, uuid.uuid4().hex[:8], status="parsed", chunk_count=0)
+    revision = (await _fetch_content(test_client, kb_id, file_id, admin_headers))["content_revision"]
+
+    responses = await asyncio.gather(
+        test_client.put(
+            _content_url(kb_id, file_id),
+            json={"content": "# 编辑A", "revision": revision},
+            headers=admin_headers,
+        ),
+        test_client.put(
+            _content_url(kb_id, file_id),
+            json={"content": "# 编辑B", "revision": revision},
+            headers=admin_headers,
+        ),
+    )
+    codes = sorted(response.status_code for response in responses)
+    assert codes == [200, 409], [response.text for response in responses]
+
+    # 落库内容是赢家的，且版本已推进（输家不能静默覆盖）
+    winner = next(response for response in responses if response.status_code == 200).json()
+    assert await _read_markdown_object(test_client, kb_id, file_id, admin_headers) in {"# 编辑A", "# 编辑B"}
+    after = await _fetch_content(test_client, kb_id, file_id, admin_headers)
+    assert after["content_revision"] == winner["content_revision"]
+
+
+async def test_edit_rejects_indexed_document_and_keeps_chunks(test_client, admin_headers, knowledge_database):
+    """已入库文件不能从这个接口改：它的修改要走「重新入库」链路，不能借编辑绕过清理。"""
+    kb_id = knowledge_database["kb_id"]
+    file_id = await _seed_document_with_chunks(kb_id, uuid.uuid4().hex[:8], status="indexed")
+    assert await _chunk_rows_for_file(file_id) == 3
+    revision = (await _fetch_content(test_client, kb_id, file_id, admin_headers))["content_revision"]
+
+    response = await test_client.put(
+        _content_url(kb_id, file_id),
+        json={"content": "# 想直接改已入库内容", "revision": revision},
+        headers=admin_headers,
+    )
+    assert response.status_code == 409, response.text
+    assert "不支持编辑解析产物" in response.json()["detail"]
+    # 被拒绝时既不碰分块、也不推进版本（版本未动即产物未写）
+    assert await _chunk_rows_for_file(file_id) == 3
+    assert (await _fetch_content(test_client, kb_id, file_id, admin_headers))["content_revision"] == revision
+
+
+async def test_edit_document_rejects_invalid_requests(test_client, admin_headers, knowledge_database):
+    """空内容 400；缺 revision 422；revision 非法 400；文档不存在 400；知识库不存在 404。"""
+    kb_id = knowledge_database["kb_id"]
+    file_id = await _seed_document_with_chunks(kb_id, uuid.uuid4().hex[:8], status="parsed", chunk_count=0)
+    revision = (await _fetch_content(test_client, kb_id, file_id, admin_headers))["content_revision"]
+
+    empty = await test_client.put(
+        _content_url(kb_id, file_id),
+        json={"content": "   \n  ", "revision": revision},
+        headers=admin_headers,
+    )
+    assert empty.status_code == 400, empty.text
+    assert "不能为空" in empty.json()["detail"]
+
+    missing_revision = await test_client.put(
+        _content_url(kb_id, file_id), json={"content": "# x"}, headers=admin_headers
+    )
+    assert missing_revision.status_code == 422, missing_revision.text
+
+    bad_revision = await test_client.put(
+        _content_url(kb_id, file_id),
+        json={"content": "# x", "revision": "not-a-time"},
+        headers=admin_headers,
+    )
+    assert bad_revision.status_code == 400, bad_revision.text
+    assert "修订标识" in bad_revision.json()["detail"]
+
+    # 文档不存在时 _load_file_meta 抛 ValueError("File ... not found")，与 move_document
+    # 等既有同级端点一样映射为 400；只有 KBNotFoundError（知识库不存在）才是 404。
+    missing_doc = await test_client.put(
+        _content_url(kb_id, "file_not_exist"),
+        json={"content": "# x", "revision": revision},
+        headers=admin_headers,
+    )
+    assert missing_doc.status_code == 400, missing_doc.text
+    assert "not found" in missing_doc.json()["detail"]
+
+    missing_kb = await test_client.put(
+        _content_url("kb_not_exist", "file_not_exist"),
+        json={"content": "# x", "revision": revision},
+        headers=admin_headers,
+    )
+    assert missing_kb.status_code == 404, missing_kb.text
+
+
+async def test_edit_document_requires_manage_permission(test_client, admin_headers, standard_user, knowledge_database):
+    """非管理员不得编辑产物；被拒绝的请求不得改动产物。
+
+    知识库文档路由两侧都由 `get_admin_user` 收口（读是 `require_knowledge_base_read`，
+    写是 `require_knowledge_base_manage`），因此 HTTP 层构造不出「能读不能管」的用户，
+    这里断言的是「非管理员整体被拒」这一真实边界；产物的前置与回读用管理员凭据完成，
+    否则读接口本身就会 403，断言的不是写入被拦。
+    """
+    kb_id = knowledge_database["kb_id"]
+    file_id = await _seed_document_with_chunks(kb_id, uuid.uuid4().hex[:8], status="parsed", chunk_count=0)
+
+    before_revision = (await _fetch_content(test_client, kb_id, file_id, admin_headers))["content_revision"]
+    before_object = await _read_markdown_object(test_client, kb_id, file_id, admin_headers)
+
+    response = await test_client.put(
+        _content_url(kb_id, file_id),
+        json={"content": "# 未授权写入", "revision": before_revision},
+        headers=standard_user["headers"],
+    )
+    _assert_forbidden_response(response)
+
+    # 被拒绝的请求不得推进版本，也不得换掉权威产物（版本未动即引用未切换）
+    after_revision = (await _fetch_content(test_client, kb_id, file_id, admin_headers))["content_revision"]
+    assert after_revision == before_revision
+    assert await _read_markdown_object(test_client, kb_id, file_id, admin_headers) == before_object

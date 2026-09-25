@@ -20,10 +20,21 @@
           <!-- 字符数/片段数显示在 segment 左边 -->
           <span v-if="viewInfoText" class="view-info">{{ viewInfoText }}</span>
 
-          <!-- 视图模式切换 -->
+          <!-- 视图模式切换：编辑期间禁用，否则切视图会静默丢弃草稿（见 isEditingMarkdown） -->
           <div class="view-controls" v-if="file && viewModeOptions.length > 1">
-            <a-segmented v-model:value="viewMode" :options="viewModeOptions" />
+            <a-segmented v-model:value="viewMode" :options="viewModeOptions" :disabled="isEditingMarkdown" />
           </div>
+
+          <!-- 编辑解析产物：与视图切换并列（不放进下载菜单，语义不同） -->
+          <a-button
+            v-if="canEditMarkdown && !isEditingMarkdown"
+            type="text"
+            title="编辑 Markdown"
+            aria-label="编辑 Markdown"
+            @click="startEditing"
+          >
+            <Pencil :size="16" />
+          </a-button>
 
           <!-- 下载按钮下拉菜单 -->
           <a-dropdown trigger="click" v-if="file">
@@ -46,7 +57,7 @@
           </a-dropdown>
 
           <!-- 自定义关闭按钮 -->
-          <button class="custom-close-btn" @click="visible = false">
+          <button class="custom-close-btn" @click="handleClose">
             <X :size="16" />
           </button>
         </div>
@@ -75,19 +86,24 @@
         />
       </div>
 
-      <!-- Markdown 模式 -->
+      <!-- Markdown 模式：预览与编辑都交给 AgentFilePreview（与 source 视图、工作区预览同一套）。
+           编辑态由它内部管理，保存期间它会禁用 textarea，因此不存在"回包覆盖新输入"的窗口。 -->
       <div v-else-if="viewMode === 'markdown'" class="content-panel flat-md-preview">
-        <div v-if="contentState.loading" class="loading-container">
-          <a-spin tip="正在加载解析内容..." />
-        </div>
-        <MarkdownPreview
-          v-else-if="mergedContent"
-          :content="mergedContent"
-          class="markdown-content"
+        <AgentFilePreview
+          ref="parsedPreviewRef"
+          :file="parsedPreviewFile"
+          :file-path="file?.filename || ''"
+          :editable="canEditMarkdown"
+          :edit-all-text="true"
+          :saving="savingMarkdown"
+          :show-header="false"
+          :show-download="false"
+          :full-height="true"
+          :borderless="true"
+          container-class="parsed-preview-container"
+          content-class="parsed-preview-content"
+          @save="saveMarkdown"
         />
-        <div v-else class="empty-content">
-          <p>{{ contentState.error || '暂无文件内容' }}</p>
-        </div>
       </div>
 
       <!-- Chunks 模式：使用 Grid 布局 -->
@@ -119,22 +135,22 @@
 
 <script setup>
 import { computed, h, onBeforeUnmount, ref, watch } from 'vue'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import { documentApi } from '@/apis/knowledge_api'
 import { getWorkspaceKnowledgeFileContent } from '@/apis/workspace_api'
 import { mergeChunks } from '@/utils/chunkUtils'
 import { getPreviewTypeByPath, normalizePreviewResponse } from '@/utils/file_preview'
 import { parseDownloadFilename } from '@/utils/file_utils'
 import {
+  canEditParsedContent,
   canPreviewChunks,
   canPreviewOriginal,
   canPreviewParsed,
   getDefaultDetailView
 } from '@/utils/knowledge_file_policy'
-import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
 import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
 import AgentFilePreview from '@/components/AgentFilePreview.vue'
-import { Download, ChevronDown, FileSearch, FileText, Rows3, X } from '@lucide/vue'
+import { Download, ChevronDown, FileSearch, FileText, Pencil, Rows3, X } from '@lucide/vue'
 
 const props = defineProps({
   open: {
@@ -148,14 +164,27 @@ const props = defineProps({
   fileId: {
     type: [String, Number],
     default: ''
+  },
+  // 是否允许编辑解析产物。默认关闭：检索结果面板等场景不传，避免
+  // 「在检索结果里编辑却没有列表可刷新」的死角。
+  editable: {
+    type: Boolean,
+    default: false
+  },
+  // 打开时是否直接进入编辑态（文件行菜单的「编辑文件」会置位）
+  startInEdit: {
+    type: Boolean,
+    default: false
   }
 })
 
-const emit = defineEmits(['update:open', 'closed'])
+const emit = defineEmits(['update:open', 'closed', 'saved'])
 
 const visible = computed({
   get: () => props.open,
-  set: (value) => emit('update:open', value)
+  // 关闭请求统一走脏检查：a-modal 的 ESC 与点击遮罩都会写这个 model，
+  // 若直接透传就会绕过下面的确认逻辑，静默丢弃未保存的草稿。
+  set: (value) => (value ? emit('update:open', true) : requestClose())
 })
 
 const file = ref(null)
@@ -168,6 +197,8 @@ const contentState = ref({
   loaded: false,
   lines: [],
   content: '',
+  // 读取内容时服务端返回的内容修订；保存时必须原样回传，用于检出并发修改
+  revision: '',
   error: ''
 })
 const sourcePreview = ref({
@@ -182,6 +213,8 @@ const sourcePreview = ref({
 let basicRequestSeq = 0
 let contentRequestSeq = 0
 let sourceRequestSeq = 0
+// 保存的上下文序号：关闭弹窗或切换到另一份文档时自增，让在飞的保存响应作废
+let markdownSaveSeq = 0
 
 const revokeSourcePreviewUrl = () => {
   if (sourcePreview.value.url) {
@@ -196,6 +229,7 @@ const resetContentState = () => {
     loaded: false,
     lines: [],
     content: '',
+    revision: '',
     error: ''
   }
 }
@@ -213,6 +247,125 @@ const resetSourcePreview = () => {
   }
 }
 
+// ── 解析产物编辑（入库前复核；只对待入库文件开放）──────────────
+// 编辑态与草稿由 AgentFilePreview 自己管理（复用工作区/source 视图同一套编辑器，
+// 它在保存期间禁用 textarea，因此不存在"回包覆盖等待期新输入"的窗口）。
+// 这里只保留本弹窗需要的两个状态：保存中、以及「打开即编辑」的一次性意图。
+const savingMarkdown = ref(false)
+// 「打开即编辑」是一次性意图：消费后即失效。否则保存时 file.value 更新会再次触发
+// 内容 watch，把刚落地的保存又拉回编辑态（保存按钮还是灰的，用户会以为没存上）。
+const pendingStartEdit = ref(false)
+
+const parsedPreviewRef = ref(null)
+
+/** 解析产物视图的数据源：预览与编辑共用（内容为合并后的 Markdown） */
+const parsedPreviewFile = computed(() => {
+  if (!file.value) return null
+  return {
+    ...file.value,
+    content: mergedContent.value,
+    previewType: 'markdown',
+    supported: true,
+    status: contentState.value.loading ? 'loading' : contentState.value.error ? 'error' : 'ready',
+    errorMessage: contentState.value.error,
+    loadingMessage: '正在加载解析内容...',
+    message: contentState.value.error
+  }
+})
+
+const canEditMarkdown = computed(
+  () =>
+    props.editable &&
+    viewMode.value === 'markdown' &&
+    canEditParsedContent(file.value) &&
+    !contentState.value.loading &&
+    // 保存时服务端要求回传修订，没有修订必然失败，入口本身就不该出现。
+    // 修订来自文件行的 updated_at（随内容同一次读取返回），行在读到时就有值。
+    Boolean(contentState.value.revision)
+)
+
+// 编辑是独占态：草稿存在 AgentFilePreview 的局部状态里，而 markdown 分支是 v-if 渲染的，
+// 切到 source/chunks 会让它连同草稿一起被卸载且没有任何确认步骤。因此编辑期间禁用视图切换
+// ——与「保存期间禁用输入」同一种收敛方式。
+const isEditingMarkdown = computed(() => parsedPreviewRef.value?.editMode === 'edit')
+
+const startEditing = () => {
+  if (!canEditMarkdown.value) return
+  parsedPreviewRef.value?.startEditing()
+}
+
+/** 关闭请求的唯一出口：自定义关闭按钮、ESC 与点击遮罩都经此，未保存的草稿都要先确认 */
+const requestClose = () => {
+  // 保存中不弹「放弃未保存的修改」：服务端已经在写，此时说「关闭后将丢失」与事实相反
+  if (savingMarkdown.value) {
+    message.info('正在保存，请稍候')
+    return
+  }
+  // 草稿由 AgentFilePreview 持有，它把 draftChanged 暴露出来供宿主判断
+  if (!parsedPreviewRef.value?.draftChanged) {
+    emit('update:open', false)
+    return
+  }
+  Modal.confirm({
+    title: '放弃未保存的修改？',
+    content: '当前编辑内容尚未保存，关闭后将丢失。',
+    okText: '放弃并关闭',
+    okButtonProps: { danger: true },
+    cancelText: '继续编辑',
+    onOk: () => {
+      emit('update:open', false)
+    }
+  })
+}
+
+const handleClose = () => requestClose()
+
+/** 保存解析产物。content 是 AgentFilePreview 提交那一刻的全文快照——
+ *  它在保存期间禁用 textarea，所以不存在"等待期继续输入"的窗口。 */
+const saveMarkdown = async (content) => {
+  if (savingMarkdown.value) return
+
+  // 与 basic/content 同一套序号守卫：保存是弹窗里最慢的一次往返，若返回时弹窗已关闭
+  // 或已换文档，旧响应不得把新上下文的 meta、修订和提示改掉
+  const requestId = ++markdownSaveSeq
+  savingMarkdown.value = true
+  try {
+    const data = await documentApi.updateDocumentContent(
+      props.kbId,
+      props.fileId,
+      content,
+      contentState.value.revision
+    )
+    if (requestId !== markdownSaveSeq) return
+    ensureApiSuccess(data, '保存解析内容失败')
+    const nextMeta = normalizeFileMeta(data?.meta || {})
+    file.value = nextMeta
+    // 保存后产物换成新内容，修订也要跟着换：服务端返回的是刚写入内容的修订，
+    // 不回填的话用户连续第二次保存会拿旧修订去比对，必然 409
+    contentState.value = {
+      loading: false,
+      loaded: true,
+      lines: contentState.value.lines,
+      content,
+      revision: data?.content_revision || '',
+      error: ''
+    }
+    message.success('已保存')
+    emit('saved', { meta: nextMeta })
+  } catch (error) {
+    if (requestId !== markdownSaveSeq) return
+    // apis/base.js 会把非 422 的响应 detail 统一替换成公共文案（409 →「请求冲突」），
+    // 所以冲突要在这里补一条可操作提示：几乎总是「产物已被他人改动」
+    message.error(
+      error?.status === 409
+        ? '解析产物已被其他人修改，请关闭后重新打开编辑再保存'
+        : `保存失败，请重新打开编辑后再试${error?.message ? `（${error.message}）` : ''}`
+    )
+  } finally {
+    if (requestId === markdownSaveSeq) savingMarkdown.value = false
+  }
+}
+
 const resetLocalState = () => {
   basicRequestSeq += 1
   contentRequestSeq += 1
@@ -224,6 +377,7 @@ const resetLocalState = () => {
   resetContentState()
   resetSourcePreview()
   viewMode.value = 'markdown'
+  savingMarkdown.value = false
 }
 
 const normalizeFileMeta = (meta = {}) => ({
@@ -378,6 +532,7 @@ const loadParsedContent = async () => {
       loaded: true,
       lines: data?.lines || [],
       content: data?.content || '',
+      revision: data?.content_revision || '',
       error: ''
     }
   } catch (error) {
@@ -389,6 +544,7 @@ const loadParsedContent = async () => {
       loaded: false,
       lines: [],
       content: '',
+      revision: '',
       error: errorMessage
     }
     message.error(errorMessage)
@@ -398,10 +554,17 @@ const loadParsedContent = async () => {
 watch(
   () => [props.open, props.kbId, props.fileId],
   ([open]) => {
+    // 换文档也走这里（open 不变、fileId 变），此时在飞的保存响应同样属于旧上下文。
+    // 序号自增让旧响应作废，同时解除「保存中」——否则那次保存之后 textarea 会一直禁用
+    markdownSaveSeq += 1
+    savingMarkdown.value = false
     if (!open) {
       resetLocalState()
+      pendingStartEdit.value = false
       return
     }
+    // 每次打开时取一次父层意图，之后由内容 watch 消费
+    pendingStartEdit.value = props.startInEdit
     loadBasicInfo()
   },
   { immediate: true }
@@ -426,6 +589,11 @@ watch(
       (currentViewMode === 'chunks' && canPreviewChunks(currentFile))
     ) {
       await loadParsedContent()
+      // 从文件行菜单点「编辑文件」进来时，等内容就绪后直接进编辑态（仅消费一次）
+      if (currentViewMode === 'markdown' && pendingStartEdit.value && canEditMarkdown.value) {
+        pendingStartEdit.value = false
+        startEditing()
+      }
     }
   },
   { immediate: true }
@@ -627,6 +795,17 @@ onBeforeUnmount(resetLocalState)
 
 .source-panel {
   overflow: hidden;
+}
+
+:deep(.parsed-preview-container) {
+  height: 100%;
+  max-height: none;
+}
+
+:deep(.parsed-preview-content) {
+  flex: 1 1 auto;
+  max-height: none;
+  min-height: 0;
 }
 
 :deep(.source-preview-container) {

@@ -152,6 +152,18 @@ jobs:
             -e TEST_PASSWORD=${E2E_PASSWORD} api \
             uv run --no-sync --no-dev pytest \
               test/integration/api/test_task_router.py::test_enqueue_document_creates_task -q
+          # 解析产物编辑的真实 HTTP 契约：需要凭据，且清理知识库会 drop Milvus collection，
+          # 因此放在本 job。对象存储那一半由 system-tests job 的 publish window 用例覆盖。
+          docker compose exec -T \
+            -e TEST_USERNAME=${E2E_USERNAME} \
+            -e TEST_PASSWORD=${E2E_PASSWORD} api \
+            uv run --no-sync --no-dev pytest -q \
+              test/integration/api/test_knowledge_router.py::test_edit_parsed_document_writes_content_and_keeps_status \
+              test/integration/api/test_knowledge_router.py::test_edit_rejects_stale_revision_without_overwriting \
+              test/integration/api/test_knowledge_router.py::test_concurrent_edits_leave_exactly_one_winner \
+              test/integration/api/test_knowledge_router.py::test_edit_rejects_indexed_document_and_keeps_chunks \
+              test/integration/api/test_knowledge_router.py::test_edit_document_rejects_invalid_requests \
+              test/integration/api/test_knowledge_router.py::test_edit_document_requires_manage_permission
       - name: Runtime logs on failure
         if: failure() || cancelled()
         run: docker compose logs api worker --tail 300
@@ -271,6 +283,8 @@ jobs:
         run: docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/services/test_schema_migration_version.py -q
       - name: Verify knowledge statistics projection
         run: docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/services/test_knowledge_stats_refresh.py -q
+      - name: Verify parsed Markdown publish is atomic against indexing
+        run: docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/services/test_knowledge_parsed_edit_publish_window.py -q
       - name: Verify queue transaction and recovery
         run: docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/services/test_agent_request_queue_concurrency.py -q
       - name: Verify AgentRun lease ownership

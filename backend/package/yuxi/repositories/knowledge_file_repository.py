@@ -4,6 +4,7 @@ import json
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -762,11 +763,16 @@ class KnowledgeFileRepository:
         data: dict[str, Any],
         processing_task_id: str | None = None,
         processing_owner: str | None = None,
+        expected_updated_at: datetime | None = None,
     ) -> KnowledgeFile | None:
         lease_task_id = processing_task_id or data.get("processing_task_id")
         lease_owner = processing_owner or data.get("processing_owner")
         sanitized_data = self._sanitize_data(data)
+        # 没有可写字段时不做 UPDATE。期望版本只有与写入同批下发才有意义：单独传它等于
+        # 「只校验不写」，静默返回一行会被调用方当成 CAS 命中，因此显式失败。
         if not sanitized_data:
+            if expected_updated_at is not None:
+                raise ValueError("expected_updated_at 必须与至少一个可写字段同批下发")
             return await self.get_by_file_id(file_id)
 
         filters = [
@@ -778,6 +784,10 @@ class KnowledgeFileRepository:
             filters.append(KnowledgeFile.processing_task_id == processing_task_id)
         if processing_owner is not None:
             filters.append(KnowledgeFile.processing_owner == processing_owner)
+        if expected_updated_at is not None:
+            # 期望版本（文件行的 updated_at）：把「读到的版本」变成 UPDATE 的等值条件，
+            # 使「校验 + 发布」成为单条原子语句，两个并发写只有一个能命中。
+            filters.append(KnowledgeFile.updated_at == expected_updated_at)
         async with pg_manager.get_async_session_context() as session:
             if lease_task_id is not None and lease_owner is not None:
                 task_record = await session.scalar(
