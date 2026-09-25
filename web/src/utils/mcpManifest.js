@@ -21,11 +21,16 @@ export function parseMcpManifest(text) {
       throw new Error(`MCP「${slug}」的配置必须是对象`)
     }
     const allowed = new Set([
-      'type', 'transport', 'url', 'name', 'description', 'headers',
-      'timeout', 'sse_read_timeout', 'tags', 'icon'
+      'type', 'transport', 'url', 'headers', 'timeout', 'sse_read_timeout', 'extra_data'
     ])
     if (Object.keys(config).some((key) => !allowed.has(key))) {
-      throw new Error(`MCP「${slug}」包含不支持的字段；仅支持远程 HTTP 或 SSE 服务`)
+      throw new Error(`MCP「${slug}」包含不支持的字段；系统展示信息请放入 extra_data`)
+    }
+
+    const extraData = config.extra_data === undefined ? {} : config.extra_data
+    if (!extraData || typeof extraData !== 'object' || Array.isArray(extraData) ||
+      Object.keys(extraData).some((key) => !['name', 'description', 'tags', 'icon'].includes(key))) {
+      throw new Error(`MCP「${slug}」的 extra_data 只支持 name、description、tags、icon`)
     }
 
     const transport = config.transport || config.type
@@ -50,16 +55,16 @@ export function parseMcpManifest(text) {
       throw new Error(`MCP「${slug}」的 type 与 transport 不一致`)
     }
     for (const [key, limit] of [['name', 100], ['description', 500], ['icon', 50]]) {
-      if (config[key] !== undefined && (
-        typeof config[key] !== 'string' || config[key].length > limit
+      if (extraData[key] !== undefined && (
+        typeof extraData[key] !== 'string' || extraData[key].length > limit
       )) {
-        throw new Error(`MCP「${slug}」的 ${key} 必须是不超过 ${limit} 字符的字符串`)
+        throw new Error(`MCP「${slug}」的 extra_data.${key} 必须是不超过 ${limit} 字符的字符串`)
       }
     }
-    if (config.tags !== undefined && (
-      !Array.isArray(config.tags) || config.tags.some((tag) => typeof tag !== 'string')
+    if (extraData.tags !== undefined && (
+      !Array.isArray(extraData.tags) || extraData.tags.some((tag) => typeof tag !== 'string')
     )) {
-      throw new Error(`MCP「${slug}」的 tags 必须是字符串数组`)
+      throw new Error(`MCP「${slug}」的 extra_data.tags 必须是字符串数组`)
     }
     if (config.headers !== undefined && (
       !config.headers || typeof config.headers !== 'object' || Array.isArray(config.headers) ||
@@ -77,15 +82,15 @@ export function parseMcpManifest(text) {
 
     return {
       slug,
-      name: config.name || slug,
+      name: extraData.name || slug,
       transport: normalizedTransport,
       url: url.toString(),
-      ...(config.description !== undefined && { description: config.description }),
+      ...(extraData.description !== undefined && { description: extraData.description }),
       ...(config.headers !== undefined && { headers: config.headers }),
       ...(config.timeout !== undefined && { timeout: config.timeout }),
       ...(config.sse_read_timeout !== undefined && { sse_read_timeout: config.sse_read_timeout }),
-      ...(config.tags !== undefined && { tags: config.tags }),
-      ...(config.icon !== undefined && { icon: config.icon })
+      ...(extraData.tags !== undefined && { tags: extraData.tags }),
+      ...(extraData.icon !== undefined && { icon: extraData.icon })
     }
   })
 }

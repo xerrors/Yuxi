@@ -13,12 +13,13 @@ import json
 import re
 from collections.abc import Callable
 from typing import Any, cast
+from urllib.parse import urlparse
 
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.agents.mcp.builtin import BUILTIN_MCP_SERVERS
+from yuxi.agents.mcp.builtin import BUILTIN_MCP_MANIFEST
 from yuxi.storage.postgres.models_business import MCPServer
 from yuxi.utils import logger
 
@@ -36,10 +37,12 @@ _mcp_tools_cache: dict[str, list[Callable[..., Any]]] = {}
 # MCP tools statistics (for reporting enabled/disabled counts)
 _mcp_tools_stats: dict[str, dict[str, int]] = {}
 _SUPPORTED_TRANSPORTS = ("sse", "streamable_http")
+BUILTIN_MCP_SERVERS = BUILTIN_MCP_MANIFEST["mcpServers"]
 
 _RETIRED_BUILTIN_MCP_SERVER_SLUGS = ("sequentialthinking", "mcp-server-chart")
 
 _SYNCED_MCP_FIELDS = (
+    "name",
     "description",
     "transport",
     "url",
@@ -68,6 +71,40 @@ def requires_mcp_transport_migration(server: MCPServer) -> bool:
     return server.transport not in _SUPPORTED_TRANSPORTS
 
 
+def normalize_mcp_manifest_entry(slug: str, config: dict[str, Any]) -> dict[str, Any]:
+    """把标准远程连接和 Yuxi 展示信息转换为持久化字段。"""
+    if set(config) - {"type", "transport", "url", "headers", "timeout", "sse_read_timeout", "extra_data"}:
+        raise ValueError(f"MCP '{slug}' contains unsupported connection fields")
+    extra_data = config.get("extra_data", {})
+    if not isinstance(extra_data, dict) or set(extra_data) - {"name", "description", "icon", "tags"}:
+        raise ValueError(f"MCP '{slug}' has invalid extra_data")
+    transport = config.get("transport", config.get("type"))
+    if transport == "http":
+        transport = "streamable_http"
+    if config.get("type") and config.get("transport"):
+        declared_type = "streamable_http" if config["type"] == "http" else config["type"]
+        if declared_type != transport:
+            raise ValueError(f"MCP '{slug}' has conflicting type and transport")
+    if transport not in _SUPPORTED_TRANSPORTS:
+        raise ValueError(f"MCP '{slug}' only supports remote HTTP or SSE")
+    url = config.get("url")
+    parsed_url = urlparse(url) if isinstance(url, str) else None
+    if not parsed_url or parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
+        raise ValueError(f"MCP '{slug}' requires an HTTP URL")
+    return {
+        "slug": slug,
+        "name": extra_data.get("name") or slug,
+        "description": extra_data.get("description"),
+        "transport": transport,
+        "url": url,
+        "headers": config.get("headers"),
+        "timeout": config.get("timeout"),
+        "sse_read_timeout": config.get("sse_read_timeout"),
+        "tags": extra_data.get("tags"),
+        "icon": extra_data.get("icon"),
+    }
+
+
 def _validate_remote_transport(config: dict[str, Any]) -> None:
     """在客户端与工具缓存边界拒绝非远程连接。"""
     if config.get("transport") not in _SUPPORTED_TRANSPORTS:
@@ -79,7 +116,7 @@ def _to_runtime_mcp_config(server: MCPServer) -> dict[str, Any]:
     if not is_builtin_mcp_server(server):
         return server.to_mcp_config()
 
-    builtin = BUILTIN_MCP_SERVERS[server.slug]
+    builtin = normalize_mcp_manifest_entry(server.slug, BUILTIN_MCP_SERVERS[server.slug])
     config = {
         key: builtin[key]
         for key in ("transport", "url", "headers", "timeout", "sse_read_timeout")
@@ -126,7 +163,8 @@ async def ensure_builtin_mcp_servers_in_db() -> None:
                 any_changed = True
                 logger.info(f"Removed retired built-in MCP server '{slug}' from database")
 
-        for slug, config in BUILTIN_MCP_SERVERS.items():
+        for slug, entry in BUILTIN_MCP_SERVERS.items():
+            config = normalize_mcp_manifest_entry(slug, entry)
             result = await session.execute(select(MCPServer).filter(MCPServer.slug == slug))
             existing = result.scalar_one_or_none()
             if not existing:

@@ -84,7 +84,15 @@ async def test_create_agent_with_remote_mcp_and_uploaded_skill(test_client, admi
         mcp = await test_client.post(
             "/api/system/mcp-servers",
             headers=admin_headers,
-            json={"slug": mcp_slug, "name": mcp_slug, "transport": "streamable_http", "url": "https://example.com/mcp"},
+            json={
+                "slug": mcp_slug,
+                "name": "Imported MCP",
+                "description": "Imported from mcpServers extra_data",
+                "transport": "streamable_http",
+                "url": "https://example.com/mcp",
+                "tags": ["imported"],
+                "icon": "🔎",
+            },
         )
         assert mcp.status_code == 200, mcp.text
 
@@ -121,10 +129,16 @@ async def test_create_agent_with_remote_mcp_and_uploaded_skill(test_client, admi
             assert row is not None
             assert row["bound_agent_id"] == row["id"]
             assert json.loads(row["config_json"])["context"]["mcps"] == [mcp_slug]
-            mcp_row = await conn.fetchrow("SELECT transport, url FROM mcp_servers WHERE slug = $1", mcp_slug)
+            mcp_row = await conn.fetchrow(
+                "SELECT name, description, transport, url, tags, icon FROM mcp_servers WHERE slug = $1", mcp_slug
+            )
             assert mcp_row is not None
+            assert mcp_row["name"] == "Imported MCP"
+            assert mcp_row["description"] == "Imported from mcpServers extra_data"
             assert mcp_row["transport"] == "streamable_http"
             assert mcp_row["url"] == "https://example.com/mcp"
+            assert json.loads(mcp_row["tags"]) == ["imported"]
+            assert mcp_row["icon"] == "🔎"
         finally:
             await conn.close()
 

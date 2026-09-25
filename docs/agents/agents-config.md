@@ -25,11 +25,19 @@
   "mcpServers": {
     "example-search": {
       "type": "http",
-      "url": "https://example.com/mcp"
+      "url": "https://example.com/mcp",
+      "extra_data": {
+        "name": "示例搜索",
+        "description": "查询公开资料",
+        "tags": ["搜索"],
+        "icon": "🔎"
+      }
     }
   }
 }
 ```
+
+`extra_data` 保存 Yuxi 的展示名、描述、标签和图标；连接字段留在服务配置顶层。没有展示名时以清单标识作为名称。管理页表单和内置 MCP 定义使用相同的清单结构，最终都规范化到 MCP 数据库字段。
 
 MCP 是系统资源，普通用户不能通过创建 Agent 添加 MCP。创建按 MCP、Agent、ZIP 上传顺序完成；明确失败时，表单列出已创建的资源并允许重试剩余步骤。若部分 MCP 已创建，可以修改尚未创建的清单条目；已创建条目的标识和配置保持固定。ZIP 上传被明确拒绝后，可以更换 ZIP，也可以移除这个可选文件并完成已创建的 Agent。关闭后再次打开“新增智能体”会保留进度。请求结果不明时自动重试会停用，管理员需先到管理列表核对已创建资源，再手动处理；放弃草稿会刷新 Agent 列表，但不会删除已经创建的资源。MCP 的连接检查仍在[集成 MCP](./mcp-integration.md)页面进行。
 

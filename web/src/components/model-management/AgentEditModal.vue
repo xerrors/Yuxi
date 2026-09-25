@@ -682,7 +682,7 @@ defineExpose({
             </label>
             <label v-if="userStore.isAdmin" class="form-label full-width">
               <span>MCP 清单（可选）</span>
-              <a-textarea v-model:value="mcpManifestText" :rows="5" :disabled="saving || Boolean(createProgress.agent) || Boolean(createProgress.uncertainStep)" placeholder='{"mcpServers":{"search":{"type":"http","url":"https://example.com/mcp"}}}' />
+              <a-textarea v-model:value="mcpManifestText" :rows="5" :disabled="saving || Boolean(createProgress.agent) || Boolean(createProgress.uncertainStep)" placeholder='{"mcpServers":{"search":{"type":"http","url":"https://example.com/mcp","extra_data":{"name":"搜索"}}}}' />
               <span class="resource-hint">支持远程 HTTP / SSE 服务。清单中的服务会创建为系统 MCP，并绑定到此智能体。</span>
               <span v-if="createProgress.createdMcpSlugs.length && !createProgress.agent" class="resource-hint">已创建的 MCP 条目不能修改；可以修正尚未创建的条目后重试。</span>
             </label>

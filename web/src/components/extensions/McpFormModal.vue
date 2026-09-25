@@ -6,7 +6,8 @@
     :confirmLoading="formLoading"
     @cancel="visible = false"
     :maskClosable="false"
-    width="560px"
+    :body-style="{ maxHeight: 'min(68vh, 560px)', overflowY: 'auto' }"
+    width="min(560px, calc(100vw - 32px))"
     class="server-modal"
   >
     <a-form layout="vertical" class="extension-form">
@@ -17,28 +18,14 @@
           :disabled="editMode"
         />
       </a-form-item>
-      <a-form-item label="MCP 名称" required class="form-item">
-        <a-input v-model:value="form.name" placeholder="请输入 MCP 展示名称" />
+      <div class="mcp-form-section-title">标准连接配置</div>
+      <a-form-item label="传输类型" required class="form-item">
+        <a-select v-model:value="form.transport">
+          <a-select-option value="http">HTTP（Streamable）</a-select-option>
+          <a-select-option value="sse">sse</a-select-option>
+        </a-select>
       </a-form-item>
-      <a-form-item label="描述" class="form-item">
-        <a-input v-model:value="form.description" placeholder="请输入 MCP 描述" />
-      </a-form-item>
-      <a-row :gutter="16">
-        <a-col :span="12">
-          <a-form-item label="传输类型" required class="form-item">
-            <a-select v-model:value="form.transport">
-              <a-select-option value="streamable_http">streamable_http</a-select-option>
-              <a-select-option value="sse">sse</a-select-option>
-            </a-select>
-          </a-form-item>
-        </a-col>
-        <a-col :span="12">
-          <a-form-item label="图标" class="form-item">
-            <a-input v-model:value="form.icon" placeholder="输入 emoji，如 🧠" :maxlength="2" />
-          </a-form-item>
-        </a-col>
-      </a-row>
-      <template v-if="form.transport === 'streamable_http' || form.transport === 'sse'">
+      <template v-if="form.transport === 'http' || form.transport === 'sse'">
         <a-form-item label="MCP URL" required class="form-item">
           <a-input v-model:value="form.url" placeholder="https://example.com/mcp" />
         </a-form-item>
@@ -72,6 +59,16 @@
           </a-col>
         </a-row>
       </template>
+      <div class="mcp-form-section-title">系统信息（extra_data）</div>
+      <a-form-item label="MCP 名称" required class="form-item">
+        <a-input v-model:value="form.name" placeholder="请输入 MCP 展示名称" />
+      </a-form-item>
+      <a-form-item label="描述" class="form-item">
+        <a-input v-model:value="form.description" placeholder="请输入 MCP 描述" />
+      </a-form-item>
+      <a-form-item label="图标" class="form-item">
+        <a-input v-model:value="form.icon" placeholder="输入 emoji，如 🧠" :maxlength="2" />
+      </a-form-item>
       <a-form-item label="标签" class="form-item">
         <a-select
           v-model:value="form.tags"
@@ -88,6 +85,7 @@
 import { ref, reactive, computed, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { mcpApi } from '@/apis/mcp_api'
+import { parseMcpManifest } from '@/utils/mcpManifest'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -108,7 +106,7 @@ const form = reactive({
   slug: '',
   name: '',
   description: '',
-  transport: 'streamable_http',
+  transport: 'http',
   url: '',
   headersText: '',
   timeout: null,
@@ -125,7 +123,7 @@ watch(
         slug: props.editData.slug || '',
         name: props.editData.name || '',
         description: props.editData.description || '',
-        transport: props.editData.transport || 'streamable_http',
+        transport: props.editData.transport === 'streamable_http' ? 'http' : props.editData.transport || 'http',
         url: props.editData.url || '',
         headersText: props.editData.headers ? JSON.stringify(props.editData.headers, null, 2) : '',
         timeout: props.editData.timeout,
@@ -138,7 +136,7 @@ watch(
         slug: '',
         name: '',
         description: '',
-        transport: 'streamable_http',
+        transport: 'http',
         url: '',
         headersText: '',
         timeout: null,
@@ -163,36 +161,28 @@ const handleFormSubmit = async () => {
         return
       }
     }
-    const data = {
-      slug: form.slug,
-      name: form.name,
-      description: form.description || null,
-      transport: form.transport,
-      url: form.url || null,
-      headers,
-      timeout: form.timeout || null,
-      sse_read_timeout: form.sse_read_timeout || null,
-      tags: form.tags.length > 0 ? form.tags : null,
-      icon: form.icon || null
-    }
-    if (!data.slug?.trim()) {
+    if (!form.slug?.trim()) {
       message.error('MCP 标识不能为空')
       return
     }
-    if (!data.name?.trim()) {
+    if (!form.name?.trim()) {
       message.error('MCP 名称不能为空')
       return
     }
-    if (!data.transport) {
-      message.error('请选择传输类型')
-      return
-    }
-    if (['sse', 'streamable_http'].includes(data.transport)) {
-      if (!data.url?.trim()) {
-        message.error('HTTP 类型必须填写 MCP URL')
-        return
+    const entry = {
+      type: form.transport,
+      url: form.url,
+      ...(headers && { headers }),
+      ...(form.timeout != null && { timeout: form.timeout }),
+      ...(form.sse_read_timeout != null && { sse_read_timeout: form.sse_read_timeout }),
+      extra_data: {
+        name: form.name,
+        ...(form.description && { description: form.description }),
+        ...(form.tags.length && { tags: form.tags }),
+        ...(form.icon && { icon: form.icon })
       }
     }
+    const [data] = parseMcpManifest(JSON.stringify({ mcpServers: { [form.slug]: entry } }))
     if (props.editMode) {
       const { slug, ...updateData } = data
       const result = await mcpApi.updateMcpServer(props.editData?.slug || slug, updateData)
@@ -223,4 +213,11 @@ const handleFormSubmit = async () => {
 
 <style lang="less" scoped>
 @import '@/assets/css/extensions.less';
+
+.mcp-form-section-title {
+  margin: 4px 0 14px;
+  color: var(--gray-700);
+  font-size: 13px;
+  font-weight: 600;
+}
 </style>
