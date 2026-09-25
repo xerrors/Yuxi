@@ -200,7 +200,10 @@ class BaseContext:
         default="You are a helpful assistant.",
         metadata={
             "name": "系统提示词",
-            "description": "用来描述智能体的角色和行为。建议把智能体要遵循的技能规范写到专属技能里，技能中还可以上传智能体可能用到的脚本、参考文档、其他要求等资料。",
+            "description": (
+                "用来描述智能体的角色和行为。建议把智能体要遵循的技能规范写到专属技能里，"
+                "技能中还可以上传智能体可能用到的脚本、参考文档、其他要求等资料。"
+            ),
             "kind": "prompt",
         },
     )

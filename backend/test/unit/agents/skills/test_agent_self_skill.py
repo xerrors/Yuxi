@@ -312,7 +312,10 @@ def _zip_with_skill_md(skill_md: str) -> bytes:
 
 
 def _uploaded_skill_md(slug: str, name: str = "上传规则") -> str:
-    return f"---\nslug: {slug}\nname: {name}\ndescription: 来自上传包\ntool_dependencies: [file_read]\n---\n\n# {name}\n\n上传内容。\n"
+    return (
+        f"---\nslug: {slug}\nname: {name}\n"
+        f"description: 来自上传包\ntool_dependencies: [file_read]\n---\n\n# {name}\n\n上传内容。\n"
+    )
 
 
 @pytest.mark.asyncio
@@ -344,7 +347,9 @@ async def test_upload_agent_self_skill_uses_derived_slug_and_ignores_package_slu
     assert result.bound_agent_id == 7
     assert repo_holder["repo"].created_kwargs["tool_dependencies"] == ["file_read"]
     assert db.committed == 1
-    assert (skills_root / derived_slug / "SKILL.md").read_text(encoding="utf-8").startswith(f"---\nslug: {derived_slug}")
+    assert (
+        (skills_root / derived_slug / "SKILL.md").read_text(encoding="utf-8").startswith(f"---\nslug: {derived_slug}")
+    )
 
 
 @pytest.mark.asyncio
@@ -394,9 +399,7 @@ async def test_upload_agent_self_skill_rejects_unsupported_file_and_restores_con
     monkeypatch.setattr(skill_service, "get_skills_root_dir", lambda: skills_root)
 
     with pytest.raises(ValueError, match="仅支持上传"):
-        await skill_service.upload_agent_self_skill(
-            _FakeDb(), agent=_agent(), filename="readme.txt", file_bytes=b"x"
-        )
+        await skill_service.upload_agent_self_skill(_FakeDb(), agent=_agent(), filename="readme.txt", file_bytes=b"x")
     assert (existing_dir / "SKILL.md").read_text(encoding="utf-8") == "---\nslug: old\nname: 旧\n---\n"
 
     monkeypatch.setattr(skill_service, "SkillRepository", lambda db: _UploadRepo(db, item=_bound_skill()))
