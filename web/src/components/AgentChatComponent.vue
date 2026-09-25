@@ -976,6 +976,10 @@ const userInput = ref(threadDraftStore.read(currentThreadId.value || DRAFT_THREA
 watch(userInput, (text) => threadDraftSession.saveInput(text))
 const agentInputAreaRef = ref(null)
 const sendCooldownActive = ref(false)
+// 本次发出的图片（requestId -> base64 列表）。发送时的乐观消息可能被后续重置清掉，
+// 而运行开始时的消息重建只认得服务端请求对象（其中没有图片字段），所以这里留一份，
+// 供队列重建用户消息时取用；消费或进入终态后即删，避免长期持有 base64。
+const sentImagesByRequest = new Map()
 const cancellingRequestIds = reactive(new Set())
 const steeringRequestIds = reactive(new Set())
 let sendCooldownTimer = null
@@ -3132,7 +3136,8 @@ const { stopAllRequestStreams, cancelRequest, resumeQueuedRequests, continueQueu
     getThreadState,
     resetOnGoingConv,
     startRunStream,
-    onStreamError: () => {}
+    onStreamError: () => {},
+    sentImagesByRequest
   })
 
 const handleCancelQueuedRequest = async (requestId) => {
@@ -3374,6 +3379,9 @@ const handleSendMessage = async ({ images = [], queuePolicy = 'enqueue' } = {}) 
   }
 
   const requestId = createClientRequestId()
+  if (imageContents.length) {
+    sentImagesByRequest.set(requestId, imageContents)
+  }
   const previousAttachments = markAttachmentsRequestId(threadId, pendingAttachments, requestId)
   if (!hadActiveRun) {
     resetOnGoingConv(threadId)
@@ -3392,7 +3400,11 @@ const handleSendMessage = async ({ images = [], queuePolicy = 'enqueue' } = {}) 
       request_id: requestId,
       status: 'sending',
       content: text,
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
+      // 图片必须一并记住：这条本地排队项会在派发时被用来重建用户消息
+      ...(imageContents.length
+        ? { message_type: 'multimodal_image', image_contents: imageContents, image_content: imageContents[0] }
+        : {})
     })
   }
 
@@ -3466,6 +3478,7 @@ const handleSendMessage = async ({ images = [], queuePolicy = 'enqueue' } = {}) 
     threadState.queuedRequests = threadState.queuedRequests.filter(
       (request) => request.request_id !== requestId
     )
+    sentImagesByRequest.delete(requestId)
     if (!hadActiveRun) {
       threadState.isStreaming = false
       threadState.replyLoadingVisible = false

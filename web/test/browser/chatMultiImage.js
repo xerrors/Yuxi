@@ -48,7 +48,30 @@ async (page) => {
   check((await previews().count()) === 2, '两张图片没有同时出现在输入区')
   check((await attachmentCards().count()) === 0, '图片被误当成附件')
 
-  // ---- 2. 拖拽分流：图片进 vision，PDF 进附件 ----
+  // ---- 2. 运行开始后用户消息必须一直带着图片 ----
+  // 回归守卫：运行开始时的消息重建只认得服务端请求对象（其中没有图片字段），
+  // 一旦重建路径丢图，运行期间用户消息会只剩文字、运行结束后才被历史刷新补回。
+  await page.evaluate(() => {
+    window.__imgSamples = []
+    const timer = setInterval(() => {
+      const humans = Array.from(document.querySelectorAll('.message-box.human'))
+      window.__imgSamples.push({
+        humanBoxes: humans.length,
+        msgImgs: document.querySelectorAll('.message-image img').length
+      })
+    }, 150)
+    window.__stopImgSampling = () => clearInterval(timer)
+  })
+  await page.waitForTimeout(15000)
+  await page.evaluate(() => window.__stopImgSampling && window.__stopImgSampling())
+  const imgSamples = await page.evaluate(() => window.__imgSamples || [])
+  const strandedWithoutImages = imgSamples.filter((s) => s.humanBoxes > 0 && s.msgImgs === 0).length
+  check(
+    strandedWithoutImages === 0,
+    `运行期间有 ${strandedWithoutImages} 次采样显示用户消息没有图片（运行中丢图）`
+  )
+
+  // ---- 3. 拖拽分流：图片进 vision，PDF 进附件 ----
   await composer.drop({ files: `${FIXTURES}/imgA.png` })
   await page.waitForTimeout(5000)
   check((await previews().count()) === 3, '拖入图片没有进入图片通道')
@@ -64,7 +87,7 @@ async (page) => {
     await page.waitForTimeout(800)
   }
 
-  // ---- 3. 发送：请求体是数组，且模型确实读到了两张 ----
+  // ---- 4. 发送：请求体是数组，且模型确实读到了两张 ----
   const posted = []
   page.on('request', (request) => {
     if (request.url().includes('/api/agent/runs') && request.method() === 'POST') {
@@ -90,7 +113,7 @@ async (page) => {
   check(joinedText.includes('IMG-A'), '模型回复里没有第一张图的文字')
   check(joinedText.includes('IMG-B'), '模型回复里没有第二张图的文字')
 
-  // ---- 4. 历史回显：刷新后仍能看到多图，且接口给的是窄投影 ----
+  // ---- 5. 历史回显：刷新后仍能看到多图，且接口给的是窄投影 ----
   const threadId = page.url().split('/').pop()
   await page.reload()
   await page.waitForTimeout(6000)
@@ -112,7 +135,7 @@ async (page) => {
     '历史里的 image_contents 不是字符串数组（不应透传 raw_message 的 part 形状）'
   )
 
-  // ---- 5. 运行中只带图片发送：必须发起新请求，不能被当成「停止」把运行取消 ----
+  // ---- 6. 运行中只带图片发送：不得取消运行、不得静默丢图 ----
   // 这一条是回归守卫：发送载荷的键从 image 改为 images 时，若消费端还读旧键，
   // 只带图片发送会被判定成「没有新输入」→ 取消运行并静默丢图。
   const cancels = []
@@ -149,7 +172,7 @@ async (page) => {
     '运行中只带图片发送既没有发起新请求，图片也从输入区消失了（静默丢图）'
   )
 
-  // ---- 6. 上限：第 11 张被拒且给出提示 ----
+  // ---- 7. 上限：第 11 张被拒且给出提示 ----
   for (let index = 0; index < 20; index++) {
     const button = page.locator('.image-preview .remove-button')
     if (!(await button.count())) break
@@ -183,6 +206,7 @@ async (page) => {
 
   return {
     multiSelect: 2,
+    noImageLossDuringRun: true,
     imageOnlySendGuarded: true,
     dragImageToVision: true,
     dragFileToAttachment: true,
