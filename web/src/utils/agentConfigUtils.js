@@ -1,14 +1,6 @@
-export const DEFAULT_ALL_AGENT_RESOURCE_KINDS = Object.freeze([
+export const DEFAULT_ALL_AGENT_RESOURCE_FIELDS = Object.freeze([
   'tools',
   'knowledges',
-  'mcps',
-  'skills',
-  'subagents'
-])
-
-export const MENTION_AGENT_RESOURCE_KINDS = Object.freeze([
-  'knowledges',
-  'mcps',
   'skills',
   'subagents'
 ])
@@ -27,10 +19,8 @@ export const normalizeAgentBackendOption = (backend) => ({
   value: backend.backend_id
 })
 
-export const isDefaultAllAgentResourceKind = (kind) =>
-  DEFAULT_ALL_AGENT_RESOURCE_KINDS.includes(kind)
-
-export const isMentionAgentResourceKind = (kind) => MENTION_AGENT_RESOURCE_KINDS.includes(kind)
+export const isDefaultAllAgentResourceField = (field) =>
+  DEFAULT_ALL_AGENT_RESOURCE_FIELDS.includes(field)
 
 export const getAgentConfigOptions = (item) => (Array.isArray(item?.options) ? item.options : [])
 
@@ -69,15 +59,27 @@ export const mergeVisibleAgentResourceSelection = (current, available, selected)
   return [...retained, ...selected.filter((value) => !retainedKeys.has(String(value)))]
 }
 
-/** 按各资源的空值契约投影可见选择，子智能体空列表表示使用全部。 */
-export const getVisibleAgentResourceSelection = (current, kind, available) => {
+/** 按配置字段的空值契约投影可见选择，子智能体空列表表示使用全部。 */
+export const getVisibleAgentResourceSelection = (current, field, available) => {
   if (
-    isDefaultAllAgentResourceKind(kind) &&
-    (current === null || (kind === 'subagents' && Array.isArray(current) && current.length === 0))
+    isDefaultAllAgentResourceField(field) &&
+    (current === null ||
+      current === undefined ||
+      (field === 'subagents' && Array.isArray(current) && current.length === 0))
   ) {
     return [...available]
   }
   if (!Array.isArray(current)) return []
   const visible = new Set(available.map(String))
   return current.filter((value) => visible.has(String(value)))
+}
+
+/** 预加载候选项受当前 Agent 的 Skill 选择约束。 */
+export const getAgentResourceSelectionOptions = (field, item, config, configItems) => {
+  const options = getAgentConfigOptions(item)
+  if (field !== 'preload_skills') return options
+
+  const availableSkills = getAgentConfigOptions(configItems.skills).map(getAgentConfigOptionValue)
+  const enabled = new Set(getVisibleAgentResourceSelection(config.skills, 'skills', availableSkills))
+  return options.filter((option) => enabled.has(getAgentConfigOptionValue(option)))
 }

@@ -48,7 +48,7 @@ manifest v2 的配置摘要来自准备后的可配置字段，包含模型覆�
 
 ## 资源权限
 
-- `tools`、`knowledges`、`mcps` 和 `skills` 未配置时，使用当前用户可访问的全部资源；显式列表只保留列表中的资源；显式空列表不启用该类资源。
+- `tools`、`knowledges` 和 `skills` 未配置时，使用当前用户可访问的全部资源；显式列表只保留列表中的资源；显式空列表不启用该类资源。Agent 的 MCP 字段未配置、为 `null` 或空列表时不直接加载服务器，显式列表只保留当前可用的服务器；有效 Skill 激活后可按需加载其 MCP 依赖。
 - `ChatBotContext.subagents` 未配置或保存空列表时，使用当前用户可见的全部子智能体；显式列表才会收窄范围。
 - Agent 的知识库选择只能缩小用户已经拥有的读取权限。
 - Skill 选择控制 Prompt 和工具激活；共享 Skill 的文件投影按用户授权生成，个人 Skill 位于 UserWorkspace。

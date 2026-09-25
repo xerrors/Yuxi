@@ -84,6 +84,9 @@ def test_get_configurable_items_filters_admin_fields_for_user():
     assert "system_prompt" in items
     assert items["preload_skills"]["default"] == []
     assert items["preload_skills"]["kind"] == "skills"
+    assert items["mcps"]["default"] == []
+    assert "默认不直接加载" in items["mcps"]["description"]
+    assert "MCP 依赖在激活后开放" in items["skills"]["description"]
     assert "summary_threshold" not in items
     assert "summary_keep_messages" not in items
     assert "summary_prompt" not in items
@@ -166,7 +169,7 @@ async def test_resolve_agent_resource_options_empty_fields_loads_nothing(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_normalize_agent_context_config_expands_null_and_filters_explicit_lists(monkeypatch):
+async def test_normalize_agent_context_config_defaults_mcps_off_and_filters_explicit_lists(monkeypatch):
     async def fake_get_databases_by_user(_user):
         return [_knowledge_summary("kb-a"), _knowledge_summary("kb-b")]
 
@@ -253,7 +256,7 @@ async def test_normalize_agent_context_config_expands_null_and_filters_explicit_
 
     assert normalized["tools"] == ["ask_user_question", "web_search"]
     assert normalized["knowledges"] == ["kb-b"]
-    assert normalized["mcps"] == ["mcp-a"]
+    assert normalized["mcps"] == []
     assert normalized["skills"] == []
     assert normalized["preload_skills"] == []
     assert normalized["subagents"] == ["research-agent"]
@@ -264,6 +267,22 @@ async def test_normalize_agent_context_config_expands_null_and_filters_explicit_
     assert "summary_l2_trigger_ratio" not in normalized
     assert normalized["max_execution_steps"] == 50
 
+    selected_mcp = await normalize_agent_context_config(
+        {"tools": [], "knowledges": [], "mcps": ["mcp-a", "mcp-b"], "skills": []},
+        db=object(),
+        user=types.SimpleNamespace(role="user", uid="u1", department_id=None),
+        context_schema=ChatBotContext,
+    )
+    assert selected_mcp["mcps"] == ["mcp-a"]
+
+    omitted_mcp = await normalize_agent_context_config(
+        {"tools": [], "knowledges": [], "skills": []},
+        db=object(),
+        user=types.SimpleNamespace(role="user", uid="u1", department_id=None),
+        context_schema=ChatBotContext,
+    )
+    assert omitted_mcp["mcps"] == []
+
     empty_subagents_normalized = await normalize_agent_context_config(
         {"tools": [], "knowledges": [], "mcps": [], "skills": [], "subagents": []},
         db=object(),
@@ -271,6 +290,7 @@ async def test_normalize_agent_context_config_expands_null_and_filters_explicit_
         context_schema=ChatBotContext,
     )
 
+    assert empty_subagents_normalized["mcps"] == []
     assert empty_subagents_normalized["subagents"] == ["research-agent", "critique-agent"]
 
     preloaded_normalized = await normalize_agent_context_config(
@@ -441,7 +461,7 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
 
     assert prepared.tools == ["ask_user_question"]
     assert prepared.knowledges == ["kb-a"]
-    assert prepared.mcps == ["mcp-a"]
+    assert prepared.mcps == []
     assert prepared.skills == ["skill-a"]
     assert prepared.preload_skills == ["skill-a"]
     assert prepared.subagents == ["research-agent"]
@@ -458,7 +478,8 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
         AsyncMock(side_effect=AssertionError("同次执行不得再次规范化")),
     )
     monkeypatch.setattr(
-        "yuxi.agents.skills.runtime.resolve_runtime_skills_for_context",
+        sys.modules["yuxi.agents.skills.runtime"],
+        "resolve_runtime_skills_for_context",
         AsyncMock(side_effect=AssertionError("同次执行不得重新读取 Skill")),
     )
     prompt = prepared.system_prompt

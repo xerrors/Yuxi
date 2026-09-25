@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { agentApi, databaseApi, mcpApi, skillApi, toolApi } from '@/apis'
-import { isDefaultAllAgentResourceKind, normalizeAgent } from '@/utils/agentConfigUtils'
+import { agentApi, databaseApi, toolApi } from '@/apis'
+import { isDefaultAllAgentResourceField, normalizeAgent } from '@/utils/agentConfigUtils'
 import { handleChatError } from '@/utils/errorHandler'
 
 export const BUILTIN_AGENT_ID = 'default-chatbot'
@@ -28,6 +28,19 @@ function extractContext(agent) {
   return { ...(configJson.context || configJson || {}) }
 }
 
+/** 将后端声明的 UI 覆盖应用到配置项。 */
+function getConfigurableItems(agent) {
+  const items = { ...(agent?.configurable_items || {}) }
+  Object.keys(items).forEach((key) => {
+    const item = items[key]
+    if (item?.x_oap_ui_config) {
+      items[key] = { ...item, ...item.x_oap_ui_config }
+      delete items[key].x_oap_ui_config
+    }
+  })
+  return items
+}
+
 export const useAgentStore = defineStore(
   'agent',
   () => {
@@ -35,8 +48,6 @@ export const useAgentStore = defineStore(
     const selectedAgentId = ref(null)
 
     const availableKnowledgeBases = ref([])
-    const availableMcps = ref([])
-    const availableSkills = ref([])
     // 完整工具元数据（含 buildin / knowledge 等全部分类的 display_name），用于工具名称展示映射
     const toolMetadata = ref([])
 
@@ -60,17 +71,7 @@ export const useAgentStore = defineStore(
 
     const agentsList = computed(() => agents.value)
 
-    const configurableItems = computed(() => {
-      const items = { ...(selectedAgent.value?.configurable_items || {}) }
-      Object.keys(items).forEach((key) => {
-        const item = items[key]
-        if (item?.x_oap_ui_config) {
-          items[key] = { ...item, ...item.x_oap_ui_config }
-          delete items[key].x_oap_ui_config
-        }
-      })
-      return items
-    })
+    const configurableItems = computed(() => getConfigurableItems(selectedAgent.value))
 
     const availableTools = computed(() => configurableItems.value.tools?.options || [])
     const changedAgentConfig = computed(() =>
@@ -82,18 +83,14 @@ export const useAgentStore = defineStore(
     )
     const hasConfigChanges = computed(() => Object.keys(changedAgentConfig.value).length > 0)
 
-    async function fetchMentionResources() {
+    /** 加载消息来源展示所需的知识库名称。 */
+    async function fetchAccessibleKnowledgeBases() {
       try {
-        const [dbsRes, mcpsRes, skillsRes] = await Promise.all([
-          databaseApi.getAccessibleDatabases().catch(() => ({ databases: [] })),
-          mcpApi.getMcpServers().catch(() => ({ data: [] })),
-          skillApi.listAccessibleSkills().catch(() => ({ data: [] }))
-        ])
-        availableKnowledgeBases.value = dbsRes.databases || []
-        availableMcps.value = mcpsRes.data || []
-        availableSkills.value = skillsRes.data || []
+        const response = await databaseApi.getAccessibleDatabases()
+        availableKnowledgeBases.value = response.databases || []
       } catch (e) {
-        console.warn('Failed to fetch mention resources:', e)
+        console.warn('Failed to fetch accessible knowledge bases:', e)
+        availableKnowledgeBases.value = []
       }
     }
 
@@ -111,7 +108,7 @@ export const useAgentStore = defineStore(
       if (isInitialized.value || isInitializing.value) return
       isInitializing.value = true
       try {
-        await Promise.all([fetchAgents(), fetchMentionResources(), fetchToolMetadata()])
+        await Promise.all([fetchAgents(), fetchAccessibleKnowledgeBases(), fetchToolMetadata()])
 
         const targetAgentId = getPreferredAgentId(agents.value, selectedAgentId.value)
         if (targetAgentId) {
@@ -143,14 +140,10 @@ export const useAgentStore = defineStore(
       }
     }
 
-    function applyConfigDefaults(loadedConfig, configItems = configurableItems.value) {
-      const items = { ...configItems }
-      Object.keys(items).forEach((key) => {
-        const item = items[key]?.x_oap_ui_config
-          ? { ...items[key], ...items[key].x_oap_ui_config }
-          : items[key]
-        const isDefaultAllList = isDefaultAllAgentResourceKind(item?.kind)
-        if (loadedConfig[key] === undefined || (loadedConfig[key] === null && !isDefaultAllList)) {
+    function applyConfigDefaults(loadedConfig, configItems) {
+      Object.entries(configItems).forEach(([key, item]) => {
+        const usesAllByDefault = isDefaultAllAgentResourceField(key)
+        if (loadedConfig[key] === undefined || (loadedConfig[key] === null && !usesAllByDefault)) {
           if (item.default !== undefined) loadedConfig[key] = item.default
         }
         if (
@@ -201,7 +194,7 @@ export const useAgentStore = defineStore(
         const detail = agentDetails.value[agentId] || (await fetchAgentDetail(agentId))
         const loadedConfig = applyConfigDefaults(
           extractContext(detail),
-          detail?.configurable_items || {}
+          getConfigurableItems(detail)
         )
         selectedAgentId.value = agentId
         agentConfig.value = loadedConfig
@@ -249,7 +242,7 @@ export const useAgentStore = defineStore(
       if (selectedAgentId.value === updated.id) {
         const loadedConfig = applyConfigDefaults(
           extractContext(updated),
-          updated.configurable_items || {}
+          getConfigurableItems(updated)
         )
         agentConfig.value = loadedConfig
         originalAgentConfig.value = { ...loadedConfig }
@@ -282,8 +275,6 @@ export const useAgentStore = defineStore(
       agents.value = []
       selectedAgentId.value = null
       availableKnowledgeBases.value = []
-      availableMcps.value = []
-      availableSkills.value = []
       toolMetadata.value = []
       agentConfig.value = {}
       originalAgentConfig.value = {}
@@ -300,8 +291,6 @@ export const useAgentStore = defineStore(
       agents,
       selectedAgentId,
       availableKnowledgeBases,
-      availableMcps,
-      availableSkills,
       toolMetadata,
       agentConfig,
       originalAgentConfig,
@@ -320,7 +309,6 @@ export const useAgentStore = defineStore(
       initialize,
       fetchAgents,
       fetchAgentDetail,
-      fetchMentionResources,
       selectAgent,
       saveAgentConfig,
       createAgent,

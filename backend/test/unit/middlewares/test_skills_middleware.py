@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 from langchain_core.messages import SystemMessage, ToolMessage
 from langchain_core.tools import tool
+from langchain.tools.tool_node import ToolCallRequest
 from langgraph.types import Command
 
 import yuxi.agents.middlewares.skills as skills_middleware
@@ -290,6 +291,49 @@ async def test_preloaded_skill_rejects_duplicate_mcp_tool_names(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_activated_mcp_rejects_name_of_inactive_registered_skill_tool(monkeypatch):
+    """未激活本地工具虽对模型隐藏，仍占用 ToolNode 的工具名。"""
+
+    @tool("chart_tool")
+    async def chart_tool(value: int) -> str:
+        """模拟已激活 Skill 的 MCP 工具。"""
+
+        return f"mcp:{value}"
+
+    async def fake_get_enabled_mcp_tools(server_name):
+        assert server_name == "charts"
+        return [chart_tool]
+
+    monkeypatch.setattr(skills_middleware, "get_enabled_mcp_tools", fake_get_enabled_mcp_tools)
+    context = SimpleNamespace(
+        tools=[],
+        mcps=[],
+        _skill_runtime_snapshot={
+            "effective_skills": ["report", "other"],
+            "runtime_skills": {
+                "report": _runtime_skill("report", mcps=["charts"]),
+                "other": _runtime_skill("other", tools=["chart_tool"]),
+            },
+        },
+    )
+
+    class FakeRequest:
+        def __init__(self, tools):
+            self.runtime = SimpleNamespace(context=context)
+            self.state = {"activated_skills": ["report"]}
+            self.tools = tools
+
+        def override(self, *, tools):
+            return FakeRequest(tools)
+
+    registered_local_tool = SimpleNamespace(name="chart_tool")
+    with pytest.raises(RuntimeError, match="Skill MCP 工具名冲突：chart_tool"):
+        await SkillsMiddleware(enable_skills_prompt=False).awrap_model_call(
+            FakeRequest([registered_local_tool]), AsyncMock()
+        )
+
+
+@pytest.mark.asyncio
 async def test_preloaded_skill_exposes_mcp_tool_on_first_model_call(monkeypatch):
     @tool("chart_tool")
     async def chart_tool(value: int) -> str:
@@ -331,6 +375,69 @@ async def test_preloaded_skill_exposes_mcp_tool_on_first_model_call(monkeypatch)
 
     assert await SkillsMiddleware(enable_skills_prompt=False).awrap_model_call(FakeRequest([]), handler) == "ok"
     assert captured == [["chart_tool"]]
+
+
+@pytest.mark.asyncio
+async def test_activated_skill_loads_mcp_without_agent_selection(monkeypatch):
+    """普通 Skill 激活后才加载依赖的 MCP，Agent 无需直接选择。"""
+
+    @tool("chart_tool")
+    async def chart_tool(value: int) -> str:
+        """渲染测试图表。"""
+
+        return f"rendered:{value}"
+
+    calls = []
+
+    async def fake_get_enabled_mcp_tools(server_name):
+        calls.append(server_name)
+        return [chart_tool]
+
+    monkeypatch.setattr(skills_middleware, "get_enabled_mcp_tools", fake_get_enabled_mcp_tools)
+    context = SimpleNamespace(
+        tools=[],
+        mcps=[],
+        _skill_runtime_snapshot={
+            "effective_skills": ["report"],
+            "runtime_skills": {"report": _runtime_skill("report", mcps=["charts"])},
+        },
+    )
+
+    class FakeRequest:
+        def __init__(self, state, tools=None):
+            self.runtime = SimpleNamespace(context=context)
+            self.state = state
+            self.tools = tools or []
+
+        def override(self, *, tools):
+            return FakeRequest(self.state, tools)
+
+    captured = []
+
+    async def handler(request):
+        captured.append([item.name for item in request.tools])
+        return "ok"
+
+    middleware = SkillsMiddleware(enable_skills_prompt=False)
+    await middleware.awrap_model_call(FakeRequest({}), handler)
+    assert calls == []
+    await middleware.awrap_model_call(FakeRequest({"activated_skills": ["report"]}), handler)
+
+    assert calls == ["charts"]
+    assert captured == [[], ["chart_tool"]]
+
+    tool_request = ToolCallRequest(
+        tool_call={"name": "chart_tool", "args": {"value": 3}, "id": "call-1", "type": "tool_call"},
+        tool=None,
+        state={},
+        runtime=SimpleNamespace(context=context),
+    )
+
+    async def execute_bound_tool(request):
+        assert request.tool is chart_tool
+        return await request.tool.ainvoke(request.tool_call["args"])
+
+    assert await middleware.awrap_tool_call(tool_request, execute_bound_tool) == "rendered:3"
 
 
 @pytest.mark.asyncio
@@ -478,6 +585,33 @@ def test_read_file_activates_only_readable_skill() -> None:
 
     assert isinstance(updated, Command)
     assert updated.update["activated_skills"] == ["alpha"]
+
+
+@pytest.mark.parametrize("wrapped_in_command", [False, True])
+def test_failed_read_file_does_not_activate_skill(wrapped_in_command) -> None:
+    """读取说明失败时不得开放 Skill 声明的 MCP 依赖。"""
+    middleware = SkillsMiddleware()
+    error = ToolMessage(content="read failed", tool_call_id="tool-1", name="read_file", status="error")
+    result = Command(update={"messages": [error]}) if wrapped_in_command else error
+    request = SimpleNamespace(
+        runtime=SimpleNamespace(context=SimpleNamespace(_skill_runtime_snapshot={"effective_skills": ["alpha"]})),
+        tool_call={"name": "read_file", "args": {"file_path": "/home/gem/skills/alpha/SKILL.md"}},
+    )
+
+    assert middleware._process_tool_call_result(result, request) is result
+
+
+@pytest.mark.parametrize("limit", [0, -1])
+def test_zero_line_read_does_not_activate_skill(limit) -> None:
+    """零行读取返回成功提示时仍未读取 Skill 说明。"""
+    middleware = SkillsMiddleware()
+    result = ToolMessage(content="No lines requested", tool_call_id="tool-1", name="read_file")
+    request = SimpleNamespace(
+        runtime=SimpleNamespace(context=SimpleNamespace(_skill_runtime_snapshot={"effective_skills": ["alpha"]})),
+        tool_call={"name": "read_file", "args": {"file_path": "/home/gem/skills/alpha/SKILL.md", "limit": limit}},
+    )
+
+    assert middleware._process_tool_call_result(result, request) is result
 
 
 def test_personal_workspace_path_activates_skill() -> None:

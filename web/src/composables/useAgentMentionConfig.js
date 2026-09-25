@@ -4,22 +4,15 @@ import {
   getAgentConfigOptionLabel,
   getAgentConfigOptions,
   getAgentConfigOptionValue,
-  isDefaultAllAgentResourceKind,
-  isMentionAgentResourceKind
+  getVisibleAgentResourceSelection
 } from '@/utils/agentConfigUtils'
 
-const createResourceMap = (createValue) => ({
-  knowledges: createValue(),
-  mcps: createValue(),
-  skills: createValue(),
-  subagents: createValue()
-})
-
-const getMentionResourceKind = (key, kind) => {
-  if (isMentionAgentResourceKind(kind)) return kind
-  if (isMentionAgentResourceKind(key)) return key
-  return null
-}
+const MENTION_FIELDS = [
+  ['knowledges', 'knowledgeBases'],
+  ['mcps', 'mcps'],
+  ['skills', 'skills'],
+  ['subagents', 'subagents']
+]
 
 const normalizeMentionResource = (option, kind) => {
   const value = getAgentConfigOptionValue(option)
@@ -97,65 +90,17 @@ export function useAgentMentionConfig({
 
     const configItems = configurableItems.value || {}
     const currentConfig = agentConfig.value || {}
-    const includeAllByKind = createResourceMap(() => false)
-    const selectedByKind = createResourceMap(() => new Set())
-    const optionsByKind = createResourceMap(() => new Map())
-    const resourceItems = []
-
-    Object.entries(configItems).forEach(([key, item]) => {
-      const kind = getMentionResourceKind(key, item?.kind)
-      if (!kind) return
-
-      resourceItems.push({ kind, item })
-      const val = currentConfig[key]
-      if (val === null && isDefaultAllAgentResourceKind(kind)) {
-        includeAllByKind[kind] = true
-      } else if (Array.isArray(val)) {
-        val.forEach((value) => selectedByKind[kind].add(value))
-      }
+    const resources = {}
+    MENTION_FIELDS.forEach(([field, output]) => {
+      const options = getAgentConfigOptions(configItems[field])
+      const byValue = new Map(options.map((option) => [getAgentConfigOptionValue(option), option]))
+      const selected = getVisibleAgentResourceSelection(currentConfig[field], field, [...byValue.keys()])
+      resources[output] = [...new Set(selected)]
+        .map((value) => normalizeMentionResource(byValue.get(value), field))
+        .filter(Boolean)
     })
 
-    resourceItems.forEach(({ kind, item }) => {
-      const selectedValues = selectedByKind[kind]
-      if (!includeAllByKind[kind] && !selectedValues.size) return
-
-      getAgentConfigOptions(item).forEach((option) => {
-        const value = getAgentConfigOptionValue(option)
-        if (!value || (!includeAllByKind[kind] && !selectedValues.has(value))) return
-
-        const normalized = normalizeMentionResource(option, kind)
-        if (normalized) optionsByKind[kind].set(value, normalized)
-      })
-    })
-
-    const selectOptions = (kind) => {
-      const result = []
-      const optionMap = optionsByKind[kind]
-
-      if (includeAllByKind[kind]) {
-        optionMap.forEach((option) => result.push(option))
-        return result
-      }
-
-      selectedByKind[kind].forEach((value) => {
-        const option = optionMap.get(value)
-        if (option) result.push(option)
-      })
-      return result
-    }
-
-    const knowledgeBases = selectOptions('knowledges')
-    const mcps = selectOptions('mcps')
-    const skills = selectOptions('skills')
-    const subagents = selectOptions('subagents')
-
-    return {
-      files,
-      knowledgeBases,
-      mcps,
-      skills,
-      subagents
-    }
+    return { files, ...resources }
   })
 
   return {
