@@ -10,8 +10,11 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from yuxi import storage_migration
+from yuxi.agents.skills.repository import SkillRepository
 from yuxi.storage.postgres.manager import BUSINESS_SCHEMA_VERSION, KNOWLEDGE_SCHEMA_VERSION, PostgresManager
 from yuxi.storage.postgres.models_knowledge import KnowledgeBase
+from yuxi.storage_migrations.v071_workdirs import V071WorkdirMigrationPlan
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -268,7 +271,84 @@ async def test_v072_business_converges_current_schema_idempotently() -> None:
             "ix_scheduled_agent_runs_job_created",
             "ix_scheduled_agent_runs_dispatching",
         }.issubset(scheduled_indexes)
-        assert BUSINESS_SCHEMA_VERSION == 7
+        assert BUSINESS_SCHEMA_VERSION == 8
+    finally:
+        await _drop_isolated_schema(schema, admin_engine, scoped_engine)
+
+
+async def test_business_v7_upgrade_preserves_skills_before_orm_read(monkeypatch, tmp_path) -> None:
+    """版本 7 的既有 Skill 在补列后可被 ORM 读取，重复迁移不丢数据。"""
+    schema, admin_engine, scoped_engine, manager = await _create_isolated_manager("pytest_skill_v8")
+    manager.AsyncSession = async_sessionmaker(scoped_engine, expire_on_commit=False)
+    read_slugs: list[str] = []
+
+    async def read_plan(_session):
+        return V071WorkdirMigrationPlan(False, (), ())
+
+    async def converge(*, fail_nonterminal_runs):
+        assert fail_nonterminal_runs is False
+
+    async def read_skills(session):
+        read_slugs.extend(skill.slug for skill in await SkillRepository(session).list_all())
+
+    async def keep_scoped_engine_open():
+        """迁移重放期间保留隔离 schema 的会话工厂。"""
+
+    manager.close = keep_scoped_engine_open
+
+    try:
+        await manager.create_business_tables()
+        await manager.create_schema_version_table()
+        await manager.record_schema_version("business", 7)
+        await manager.record_schema_version("knowledge", KNOWLEDGE_SCHEMA_VERSION)
+        async with scoped_engine.begin() as connection:
+            await connection.execute(text("ALTER TABLE skills DROP COLUMN bound_agent_id CASCADE"))
+            await connection.execute(
+                text(
+                    "INSERT INTO skills (slug, name, description, source_type, dir_path, "
+                    "tool_dependencies, mcp_dependencies, skill_dependencies, share_config, enabled) "
+                    "VALUES ('legacy-skill', 'Legacy', 'Existing skill', 'builtin', 'shared/legacy-skill', "
+                    "'[]'::json, '[]'::json, '[]'::json, '{}'::jsonb, true)"
+                )
+            )
+
+        monkeypatch.setattr(storage_migration, "pg_manager", manager)
+        monkeypatch.setattr(storage_migration, "read_v071_workdir_plan", read_plan)
+        monkeypatch.setattr(storage_migration, "_legacy_skill_roots_exist", lambda: False)
+        monkeypatch.setattr(storage_migration, "_legacy_system_config_exists", lambda: False)
+        monkeypatch.setattr(storage_migration, "runtime_storage_requires_quiescence", lambda: False)
+        monkeypatch.setattr(storage_migration, "_converge_database_state", converge)
+        monkeypatch.setattr(storage_migration, "migrate_shared_skills", read_skills)
+        monkeypatch.setattr(storage_migration, "mark_v071_skills_migrated", lambda: None)
+        monkeypatch.setattr(storage_migration, "migrate_runtime_storage_identity", lambda: None)
+        monkeypatch.setattr(storage_migration, "get_legacy_storage_dir", lambda: tmp_path)
+
+        await storage_migration.main()
+        await storage_migration.main()
+
+        async with scoped_engine.connect() as connection:
+            column_exists = await connection.scalar(
+                text(
+                    "SELECT EXISTS (SELECT 1 FROM information_schema.columns "
+                    "WHERE table_schema = :schema AND table_name = 'skills' "
+                    "AND column_name = 'bound_agent_id')"
+                ),
+                {"schema": schema},
+            )
+            index_exists = await connection.scalar(
+                text(
+                    "SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = :schema "
+                    "AND tablename = 'skills' AND indexname = 'uq_skills_bound_agent')"
+                ),
+                {"schema": schema},
+            )
+            preserved = await connection.execute(text("SELECT slug, bound_agent_id FROM skills"))
+
+        assert column_exists is True
+        assert index_exists is True
+        assert preserved.all() == [("legacy-skill", None)]
+        assert read_slugs == ["legacy-skill", "legacy-skill"]
+        assert (await manager.get_schema_versions())["business"] == BUSINESS_SCHEMA_VERSION
     finally:
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)
 

@@ -16,6 +16,8 @@ Agent 需要一份只属于自己的 Skill 内容（例如 `mysql-reader-agent` 
 
 `skills` 表新增可空列 `bound_agent_id`，并以部分唯一索引保证一个 Agent 最多有一个绑定 Skill。绑定关系是数据库事实，不依赖 slug 命名约定：`bound_agent_id` 非空即 Agent 专属技能，`source_type` 仍表达 builtin/upload/remote 来源。`ResolvedSkill` 新增第四种 `source_scope = "agent_bound"`，与既有 `builtin`/`shared`/`personal` 并列。
 
+业务 schema 版本从 7 升至 8。已有版本 7 的数据库先执行幂等的 `ensure_business_schema`，补齐绑定列和索引，再读取 Skill ORM 和迁移共享技能；迁移成功后才记录版本 8。保持当前版本重复启动跳过 DDL，避免版本 7 数据库因查询尚不存在的列而无法启动。
+
 绑定 Skill 不维护独立权限。`_resolved_agent_bound_skill` 在读取时把**绑定 Agent 的** `created_by` 和 `share_config` 装进运行时视图；这是读时投影而非持久副本，因此 Agent 修改共享范围后绑定 Skill 权限立即跟随，不存在同步任务或漂移。由于 `resolve_resource_permission` 只鸭子类型读取这两个字段，现有 `resolve_skill_permission`、`user_can_access_skill`、`user_can_manage_skill` 不为此改变。绑定 Agent 缺失时权限解析返回 `NONE`，不退化为普通 Skill 语义。
 
 self-skill 是**按需创建**的，不是 Agent 创建的副产品：没有内容需求的 Agent 不产生空行，运行时允许 Agent 尚不存在绑定 Skill。`create_agent_self_skill` 幂等。创建之后没有独立删除入口——需要停用时把内容改成最小说明即可，删除只随 Agent 删除级联发生，因此 Agent 不会进入「专属技能丢失但自身仍在」的中间状态。`AgentRepository.delete` 在同一个事务里删除绑定 Skill 行与 Agent 行，提交失败时把内容目录放回原位，提交成功后才清理垃圾目录。
@@ -38,6 +40,7 @@ self-skill 是**按需创建**的，不是 Agent 创建的副产品：没有内�
 - self-skill 提供独立删除入口：删除只会让 Agent 失去自己的资产并进入残缺状态，而「改成空说明」已能满足停用需求；独立删除还会多一条需要级联保护的破坏性路径。
 - 为 self-skill 新建平行内容编辑器：`SkillDetailView` 已拥有文件树、文件 CRUD 与三类依赖编辑，且这些接口本就按 slug 寻址、权限已按绑定 Agent 派生。平行编辑器只能覆盖 SKILL.md，会持续落后于普通 Skill 的管理能力，并制造第二套需要同步演进的表面。
 - self-skill 随 Agent 创建自动落库：把文件系统副作用耦合进持久化路径，并为没有内容需求的 Agent 产生空行。
+- 不提升业务 schema 版本、仅在现有版本 7 上新增字段：迁移器对当前版本跳过 DDL，随后读取 Skill ORM 时会查询不存在的绑定列，无法升级已有安装。
 - self-skill 只做预注入文本、不进 uid 投影：self-skill 若包含脚本或参考文件，模型在沙盒内读不到；且需要为它单独处理虚拟路径契约。
 
 ## 后果
@@ -61,3 +64,4 @@ self-skill 是**按需创建**的，不是 Agent 创建的副产品：没有内�
 | 前端编辑器不要求管理者猜测绑定 slug，保存链路无控制台错误 | `docker compose exec web pnpm run lint:check`；`pnpm run test:unit`；`pnpm run build`；真实页面打开「专属技能」空态与已存在态 | Passed：351 tests；lint 与 build 通过；预填模板携带正确 slug，空态与已存在态都显示 slug 约束提示 |
 | Agent 编辑页跳转到既有 Skill 管理页，且绑定 Skill 在該页隐藏共享/启停/删除 | 真实页面：智能体编辑 → 「专属技能」→ 「打开 Skill 管理」→ 技能详情代码管理与配置两个 tab | Passed：SKILL.md 内容、依赖编辑可用；「保存范围」按钮隐藏、启用开关禁用、删除按钮隐藏、只读说明就位；控制台 0 error |
 | 工程契约保持可验证 | `python3 scripts/verify_engineering_contracts.py`；`python3 -m unittest scripts.test_verify_engineering_contracts` | Passed：112 decisions / 5 workflows / 4 agents files / 161 docs / 26 routers / 250 web sources；62 contract tests |
+| 已有 business=7 数据库先补齐绑定列，再查询 Skill ORM，成功后记录 business=8 | `pytest test/unit/services/test_storage_migration.py` 14 passed；`pytest test/integration/services/test_schema_migration_version.py` 9 passed（隔离 PostgreSQL schema 中保留旧 Skill，重复运行迁移并回读列、索引、数据和版本）；alpha 槽位升级后回读 business=8 与绑定列 | Passed |
