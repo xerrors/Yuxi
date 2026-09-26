@@ -1,5 +1,8 @@
 # PowerShell脚本，用于在Windows系统上打包Docker镜像
 
+# 输出目录与 docker/minio 都相对仓库根；从别处调用时先切过去。
+Set-Location (Split-Path -Parent $PSScriptRoot)
+
 # 创建输出目录
 $OutputDir = "docker_images_backup"
 if (!(Test-Path $OutputDir)) {
@@ -21,11 +24,24 @@ $Images = @(
     "nginx:alpine",
     "neo4j:5.26.29",
     "quay.io/coreos/etcd:v3.5.5",
-    "quay.io/minio/minio:RELEASE.2023-03-20T20-16-18Z",
     "milvusdb/milvus:v2.5.6",
     # "lmsysorg/sglang:v0.4.9.post3-cu126",
     # "ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlex/paddlex:paddlex3.0.1-paddlepaddle3.0.0-gpu-cuda11.8-cudnn8.9-trt8.6"
 )
+
+# MinIO 的官方镜像已不再公开分发，改为按仓库内 Dockerfile 构建后再导出。
+# 镜像名从 Compose 解析而不是拼装：它跟随 .env 里的 COMPOSE_PROJECT_NAME，与 docker compose up 实际
+# 使用的名字一致；硬编码会在用户改过项目名时导出另一个 tag，目标机器上只能现场构建，离线环境直接失败。
+docker compose build minio
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "❌ MinIO 镜像构建失败" -ForegroundColor Red
+    exit 1
+}
+$MinioImage = docker compose config --images | Where-Object { $_ -match '-minio:RELEASE' } | Select-Object -First 1
+if (-not $MinioImage) {
+    Write-Host "❌ 未能从 Compose 配置解析出 MinIO 镜像名" -ForegroundColor Red
+    exit 1
+}
 
 # 确保所有镜像都已下载
 foreach ($Image in $Images) {
@@ -35,7 +51,7 @@ foreach ($Image in $Images) {
 
 # 保存所有镜像到单个tar文件
 Write-Host "正在保存镜像到tar文件..." -ForegroundColor Yellow
-docker save $Images -o $OutputFile
+docker save ($Images + $MinioImage) -o $OutputFile
 
 # 计算文件大小
 $FileInfo = Get-Item $OutputFile
