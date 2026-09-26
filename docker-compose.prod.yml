@@ -298,10 +298,13 @@ services:
     restart: unless-stopped
 
   minio:
+    build:
+      context: ./docker/minio
+      dockerfile: Dockerfile
     ports:
       - "127.0.0.1:${YUXI_MINIO_API_PORT:-10000}:9000"
       - "127.0.0.1:${YUXI_MINIO_CONSOLE_PORT:-10001}:9001"
-    image: quay.io/minio/minio:RELEASE.2023-03-20T20-16-18Z
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-minio:RELEASE.2023-03-20T20-16-18Z
     environment:
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?Set MINIO_ACCESS_KEY in .env.prod}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?Set MINIO_SECRET_KEY in .env.prod}
