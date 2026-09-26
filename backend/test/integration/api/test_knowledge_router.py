@@ -167,6 +167,68 @@ async def test_document_exists_returns_false_for_missing_relative_path(test_clie
     assert response.json() == {"kb_id": kb_id, "filename": filename, "exists": False}
 
 
+async def test_folder_create_and_rename_reject_duplicate_sibling_names(test_client, admin_headers, knowledge_database):
+    """同级目录下创建或重命名为同名文件夹必须被拒绝，异名与跨父级不受影响。"""
+    kb_id = knowledge_database["kb_id"]
+
+    async def create_folder(name, parent_id=None):
+        return await test_client.post(
+            f"/api/knowledge/databases/{kb_id}/folders",
+            json={"folder_name": name, "parent_id": parent_id},
+            headers=admin_headers,
+        )
+
+    unique = uuid.uuid4().hex[:6]
+    folder_a_response = await create_folder(f"dup-{unique}")
+    assert folder_a_response.status_code == 200, folder_a_response.text
+    folder_a = folder_a_response.json()
+
+    duplicate_response = await create_folder(f"dup-{unique}")
+    assert duplicate_response.status_code == 409, duplicate_response.text
+    assert duplicate_response.json()["detail"]["code"] == "folder_name_conflict"
+
+    case_variant_response = await create_folder(f"DUP-{unique}")
+    assert case_variant_response.status_code == 409, case_variant_response.text
+
+    nested_response = await create_folder(f"dup-{unique}", folder_a["file_id"])
+    assert nested_response.status_code == 200, nested_response.text
+
+    folder_b_response = await create_folder(f"other-{unique}")
+    assert folder_b_response.status_code == 200, folder_b_response.text
+    folder_b = folder_b_response.json()
+
+    rename_conflict_response = await test_client.put(
+        f"/api/knowledge/databases/{kb_id}/folders/{folder_b['file_id']}/rename",
+        json={"folder_name": f"dup-{unique}"},
+        headers=admin_headers,
+    )
+    assert rename_conflict_response.status_code == 409, rename_conflict_response.text
+    assert rename_conflict_response.json()["detail"]["code"] == "folder_name_conflict"
+
+    rename_self_response = await test_client.put(
+        f"/api/knowledge/databases/{kb_id}/folders/{folder_b['file_id']}/rename",
+        json={"folder_name": f"other-{unique}"},
+        headers=admin_headers,
+    )
+    assert rename_self_response.status_code == 200, rename_self_response.text
+
+    rename_self_case_response = await test_client.put(
+        f"/api/knowledge/databases/{kb_id}/folders/{folder_b['file_id']}/rename",
+        json={"folder_name": f"OTHER-{unique}"},
+        headers=admin_headers,
+    )
+    assert rename_self_case_response.status_code == 200, rename_self_case_response.text
+    assert rename_self_case_response.json()["filename"] == f"OTHER-{unique}"
+
+    rename_ok_response = await test_client.put(
+        f"/api/knowledge/databases/{kb_id}/folders/{folder_b['file_id']}/rename",
+        json={"folder_name": f"renamed-{unique}"},
+        headers=admin_headers,
+    )
+    assert rename_ok_response.status_code == 200, rename_ok_response.text
+    assert rename_ok_response.json()["filename"] == f"renamed-{unique}"
+
+
 async def test_folder_rename_and_move_persist_tree_changes(test_client, admin_headers, knowledge_database):
     kb_id = knowledge_database["kb_id"]
 
