@@ -47,6 +47,7 @@ def test_model_cache_prefers_model_base_url_override(monkeypatch):
         rerank_base_url = "https://dashscope.aliyuncs.com/compatible-api/v1/reranks"
         headers_json = {}
         extra_json = {}
+        include_user_uid = True
         enabled_models = [
             {
                 "id": "qwen3-rerank",
@@ -62,6 +63,7 @@ def test_model_cache_prefers_model_base_url_override(monkeypatch):
     cache.rebuild([Provider()])
 
     assert saved_cache["alibaba-cn:qwen3-rerank"].base_url == "https://invalid.example/rerank"
+    assert saved_cache["alibaba-cn:qwen3-rerank"].include_user_uid is True
 
 
 def test_model_cache_loads_from_redis_and_uses_local_ttl(monkeypatch: pytest.MonkeyPatch):
@@ -106,6 +108,7 @@ def test_model_cache_save_writes_redis_json(monkeypatch: pytest.MonkeyPatch):
         base_url="https://example.com/v1",
         provider_type="openai",
         request_body_overrides={"enable_thinking": True},
+        include_user_uid=True,
     )
 
     cache._save_cache({info.spec: info})
@@ -113,3 +116,29 @@ def test_model_cache_save_writes_redis_json(monkeypatch: pytest.MonkeyPatch):
     payload = json.loads(redis.data[REDIS_CACHE_KEY])
     assert payload[info.spec]["base_url"] == "https://example.com/v1"
     assert payload[info.spec]["request_body_overrides"] == {"enable_thinking": True}
+    assert payload[info.spec]["include_user_uid"] is True
+
+    reloaded = ModelCache()
+    assert reloaded.get_model_info("provider:chat").include_user_uid is True
+
+
+def test_model_cache_defaults_include_user_uid_to_false(monkeypatch: pytest.MonkeyPatch):
+    """存量 Redis 缓存缺省该字段时按关闭处理，不因 KeyError 中断模型加载。"""
+    redis = _FakeRedis()
+    _patch_redis(monkeypatch, redis)
+    redis.data[REDIS_CACHE_KEY] = json.dumps(
+        {
+            "provider:chat": {
+                "provider_id": "provider",
+                "model_id": "chat",
+                "model_type": "chat",
+                "display_name": "Chat",
+                "api_key": "sk-test",
+                "base_url": "https://example.com/v1",
+                "provider_type": "openai",
+            }
+        }
+    )
+
+    info = ModelCache().get_model_info("provider:chat")
+    assert info.include_user_uid is False

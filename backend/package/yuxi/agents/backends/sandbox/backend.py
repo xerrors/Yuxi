@@ -13,6 +13,7 @@ from typing import Any
 
 import httpx
 from deepagents.backends.protocol import (
+    ASYNC_GREP_TIMEOUT,
     EditResult,
     ExecuteResponse,
     FileDownloadResponse,
@@ -714,6 +715,52 @@ finally:
 
         return EditResult(path=normalized_path, occurrences=count if replace_all else 1)
 
+    def _grep_root(self, pattern: str, path: str, glob: str | None, max_count: int | None) -> GrepResult:
+        """调用沙盒原生文件搜索并映射结构化结果。"""
+        if glob and ".." in glob.replace("\\", "/").split("/"):
+            return GrepResult(error="Invalid glob pattern: path traversal is not allowed")
+        kwargs: dict[str, Any] = {
+            "path": path,
+            "pattern": pattern,
+            "fixed_strings": True,
+            "recursive": True,
+        }
+        if glob:
+            # 原生 include 按完整路径匹配，目录 glob 必须锚定到当前搜索根。
+            escaped_root = "".join("\\" + char if char in "\\*?[]{}" else char for char in path.rstrip("/"))
+            kwargs["include"] = [f"{escaped_root}/{glob.lstrip('/')}" if "/" in glob else glob]
+        if max_count is not None:
+            kwargs["max_results"] = max_count
+        try:
+            from agent_sandbox.types import FileGrepResult
+
+            connection = self._get_connection()
+            # SDK 0.0.30 把失败响应也解码为成功模型，HTTP 边界先区分两者。
+            response = httpx.post(
+                f"{connection.sandbox_url.rstrip('/')}/v1/file/grep",
+                json=kwargs,
+                headers={"Authorization": f"Bearer {sandbox_provisioner_token()}"},
+                timeout=ASYNC_GREP_TIMEOUT,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            if payload.get("success") is not True:
+                if (payload.get("data") or {}).get("error_type") == "not_found":
+                    return GrepResult(matches=[])
+                return GrepResult(error=payload.get("message") or "Sandbox grep failed")
+            data = FileGrepResult.model_validate(payload["data"])
+            if data.truncated is None:
+                return GrepResult(error="Invalid sandbox grep result")
+            matches = [
+                {"path": match.file, "line": match.line_number, "text": match.line_content}
+                for match in data.matches or []
+            ]
+            if len(json.dumps(matches, ensure_ascii=False).encode("utf-8")) > self._max_output_bytes:
+                return GrepResult(error="grep output exceeded sandbox limit")
+            return GrepResult(matches=matches, truncated=data.truncated)
+        except Exception as exc:  # noqa: BLE001
+            return GrepResult(error=str(exc) or "Sandbox grep failed")
+
     def grep(
         self,
         pattern: str,
@@ -742,7 +789,7 @@ finally:
                     break
             else:
                 remaining = None
-            result = super().grep(pattern=pattern, path=search_path, glob=glob, max_count=remaining)
+            result = self._grep_root(pattern, search_path, glob, remaining)
             if result.error:
                 return result
             matches.extend(result.matches or [])
@@ -752,6 +799,28 @@ finally:
             matches = matches[:max_count]
             truncated = True
         return GrepResult(matches=self._filter_readable_matches(matches), truncated=truncated)
+
+    async def agrep(
+        self,
+        pattern: str,
+        path: str | None = None,
+        glob: str | None = None,
+        *,
+        max_count: int | None = None,
+    ) -> GrepResult:
+        """在线程中执行同一授权搜索，避免阻塞 Agent 事件循环。"""
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(self.grep, pattern, path, glob, max_count=max_count),
+                timeout=ASYNC_GREP_TIMEOUT,
+            )
+        except TimeoutError:
+            return GrepResult(
+                error=(
+                    f"Error: grep timed out after {ASYNC_GREP_TIMEOUT}s. "
+                    "Try a more specific pattern or a narrower path."
+                )
+            )
 
     def glob(self, pattern: str, path: str = "/") -> GlobResult:
         """Return files matching a glob pattern under allowed sandbox paths."""

@@ -73,6 +73,7 @@ const providerForm = reactive({
   api_key: '',
   capabilities: ['chat'],
   is_enabled: true,
+  include_user_uid: false,
   headers_text: '{}',
   extra_text: '{}'
 })
@@ -304,10 +305,16 @@ const loadProviders = async () => {
   }
 }
 
+function getUserUidHeaderDisplay(provider) {
+  if (!provider.include_user_uid) return '关闭'
+  return 'x-yuxi-uid（签名）'
+}
+
 function getProviderInfo(provider) {
   return [
     { label: 'Base URL', value: provider.base_url || '-' },
-    { label: '能力', value: provider.capabilities?.join(', ') || 'chat' }
+    { label: '能力', value: provider.capabilities?.join(', ') || 'chat' },
+    { label: '请求用户 ID', value: getUserUidHeaderDisplay(provider) }
   ]
 }
 
@@ -333,6 +340,7 @@ const openCreateProviderModal = () => {
     api_key: '',
     capabilities: ['chat'],
     is_enabled: true,
+    include_user_uid: false,
     headers_text: '{}',
     extra_text: '{}'
   })
@@ -356,6 +364,7 @@ const openEditProviderModal = (provider) => {
     api_key: provider.api_key || '',
     capabilities: provider.capabilities?.length ? provider.capabilities : ['chat'],
     is_enabled: provider.is_enabled !== false,
+    include_user_uid: provider.include_user_uid === true,
     headers_text: formatJsonText(provider.headers_json),
     extra_text: formatJsonText(provider.extra_json)
   })
@@ -377,6 +386,7 @@ const buildProviderPayload = () => ({
   api_key: providerForm.api_key || null,
   capabilities: providerForm.capabilities,
   is_enabled: providerForm.is_enabled,
+  include_user_uid: providerForm.provider_type !== 'gemini' && providerForm.include_user_uid,
   headers_json: parseJsonObject(providerForm.headers_text, '请求头'),
   extra_json: parseJsonObject(providerForm.extra_text, '扩展配置')
 })
@@ -991,6 +1001,20 @@ defineExpose({
             v-model:checked="providerForm.is_enabled"
             checked-children="启用"
             un-checked-children="停用"
+          />
+        </div>
+
+        <div class="form-switch">
+          <a-tooltip
+            :title="providerForm.provider_type === 'gemini' ? 'Gemini 供应商暂不支持请求携带用户 ID。' : '开启后，智能体对话产生的聊天模型请求会携带带 HMAC 签名的 x-yuxi-uid 请求头（值为当前用户 UID），外部网关验签后即可按用户统计用量并防止伪造。需要先在 API/worker 环境变量配置 YUXI_UID_SIGNATURE_SECRET，保存时会校验；仅影响该供应商且仅在开启时生效。'"
+          >
+            <span>请求携带用户 ID</span>
+          </a-tooltip>
+          <a-switch
+            v-model:checked="providerForm.include_user_uid"
+            :disabled="providerForm.provider_type === 'gemini'"
+            checked-children="携带"
+            un-checked-children="关闭"
           />
         </div>
 

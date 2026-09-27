@@ -26,7 +26,7 @@ BLOCKING_REQUEST_TOKENS_LOCK = Lock()
 SUBAGENT_GATES: dict[str, Event] = {}
 
 
-def _validate_request(authorization: str | None, request: dict) -> str | None:
+def validate_request(authorization: str | None, request: dict) -> str | None:
     """拒绝没有走预期模型适配契约的 replay 请求。"""
 
     if authorization != EXPECTED_AUTHORIZATION:
@@ -233,7 +233,7 @@ class ReplayHandler(BaseHTTPRequestHandler):
             self._write_json(400, {"error": "invalid_json"})
             return
 
-        request_error = _validate_request(self.headers.get("authorization"), request)
+        request_error = validate_request(self.headers.get("authorization"), request)
         if request_error:
             self._write_json(422, {"error": request_error})
             return

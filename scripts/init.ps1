@@ -284,7 +284,6 @@ $images = @(
     "node:24-alpine",
     "milvusdb/milvus:v2.5.6",
     "neo4j:5.26.29",
-    "quay.io/minio/minio:RELEASE.2023-03-20T20-16-18Z",
     "ghcr.io/astral-sh/uv:0.12.6",
     "nginx:alpine",
     "quay.io/coreos/etcd:v3.5.5",
@@ -311,6 +310,14 @@ foreach ($image in $images) {
         Write-Host "❌ Error pulling ${image}: $_" -ForegroundColor Red
         exit 1
     }
+}
+
+# MinIO 官方镜像已全面下架，改为从仓库内 Dockerfile 构建
+Write-Host "🔄 Building minio image..." -ForegroundColor Yellow
+docker compose build minio
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "❌ Failed to build minio image" -ForegroundColor Red
+    exit 1
 }
 
 $sandboxImage = "enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:1.11.0"

@@ -18,9 +18,11 @@
 - 移除内置内容安全检查能力及其配置入口；需要内容审核的部署须自行接入相应策略。
 - 默认对话模型和快速响应模型改为硅基流动 `deepseek-ai/DeepSeek-V4-Flash`，管理员已保存的模型选择保持优先。
 - History 接口独立返回 `runs`，移除消息上的 `run_started_at` / `run_finished_at`；外部客户端须通过消息的 `run_id` 读取对应 Run 的 `timing`，前后端需同步发布。契约见[线程阅读数据](../mechanisms/agent-runtime.md#线程阅读数据)。
+- MinIO 镜像改为本地构建，首次 `docker compose up` 需要联网下载二进制（约 97 MB，之后由 Docker 层缓存复用）；完全离线的部署须先在联网机器上构建并导出镜像，见[部署说明](../advanced/deployment.md)。
 
 ### 功能与修复
 
+- 修复官方 MinIO 镜像下架导致的部署与 CI 中断：MinIO 在 Docker Hub 与 quay.io 上的镜像已不再公开分发，`dl.min.io` 返回 410。两份 Compose 改为按 `docker/minio/Dockerfile` 构建该镜像，构建时从官方 GitHub Release 下载固定版本的二进制并校验 sha256，运行与下架前完全相同的 MinIO 二进制；数据卷、凭据、端口与 `command` 不变，离线导出的脚本会先构建再打包。
 - 深度研究 Skill 不再依赖 `html-preview`，默认在当前 Workdir 的 `outputs/` 目录生成独立、响应式的 HTML 阅读文档并作为交付物展示；宽屏可使用侧栏目录，窄屏隐藏或折叠侧栏，并可按内容需要使用外部图片等公开资源。来源在 HTML 中以普通链接呈现；用户明确指定其他格式时仍以用户要求为准。
 - 新增用户定时智能体任务（Beta），支持 cron、时区、独立 Project 和立即运行；重叠执行跳过，错过的触发合并处理。边界见[定时任务决策](./decisions/implemented/2026-08-26-user-agent-scheduled-tasks.md)。
 - 支持空闲线程主动压缩上下文；达到预算 85% 时提示操作。自动压缩统一使用一个阈值，大工具结果保留完整文件及模型可读摘要，检索预览保留来源信息。

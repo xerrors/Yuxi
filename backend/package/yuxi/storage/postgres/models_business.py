@@ -805,6 +805,7 @@ class ModelProvider(Base):
 
     is_enabled = Column(Boolean, nullable=False, default=True, index=True, comment="供应商是否启用")
     is_builtin = Column(Boolean, nullable=False, default=False, comment="是否内置")
+    include_user_uid = Column(Boolean, nullable=False, default=False, comment="聊天模型请求是否注入带签名的用户 UID 头")
 
     created_by = Column(String(100), nullable=True)
     updated_by = Column(String(100), nullable=True)
@@ -832,6 +833,7 @@ class ModelProvider(Base):
             "extra_json": self.extra_json or {},
             "is_enabled": bool(self.is_enabled),
             "is_builtin": bool(self.is_builtin),
+            "include_user_uid": bool(self.include_user_uid),
             "created_by": self.created_by,
             "updated_by": self.updated_by,
             "created_at": format_utc_datetime(self.created_at),

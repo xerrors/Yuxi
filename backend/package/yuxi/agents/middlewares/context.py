@@ -18,7 +18,7 @@ def context_aware_prompt(request: ModelRequest) -> str:
 async def context_based_model(request: ModelRequest, handler: Callable[[ModelRequest], ModelResponse]) -> ModelResponse:
     """从 runtime context 动态选择模型"""
     model_spec = resolve_chat_model_spec(request.runtime.context.model)
-    model = load_chat_model(model_spec, session_id=request.runtime.context.thread_id)
+    model = load_chat_model(model_spec, session_id=request.runtime.context.thread_id, uid=request.runtime.context.uid)
 
     request = request.override(model=model)
     logger.debug(f"Using model {model_spec} for request {request.messages[-1].content[:200]}")

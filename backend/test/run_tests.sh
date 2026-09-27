@@ -31,7 +31,13 @@ run_integration_tests() {
 }
 
 run_e2e_tests() {
-    echo "运行端到端测试..."
+    echo "运行确定性 Agent 端到端测试..."
+    check_server
+    "${PYTEST_CMD[@]}" test/e2e/test_deterministic_agent_path_e2e.py -m e2e
+}
+
+run_all_e2e_tests() {
+    echo "运行全部端到端测试（包括真实模型与外部服务探针）..."
     check_server
     "${PYTEST_CMD[@]}" test/e2e -m e2e
 }
@@ -39,7 +45,7 @@ run_e2e_tests() {
 run_all_tests() {
     echo "运行全部测试..."
     check_server
-    "${PYTEST_CMD[@]}" test
+    "${PYTEST_CMD[@]}" test/unit test/integration test/e2e/test_deterministic_agent_path_e2e.py
 }
 
 show_help() {
@@ -48,8 +54,9 @@ show_help() {
     echo "选项:"
     echo "  unit         - 运行单元测试"
     echo "  integration  - 运行集成测试"
-    echo "  e2e          - 运行端到端测试"
-    echo "  all          - 运行全部测试"
+    echo "  e2e          - 运行确定性 Agent 端到端测试"
+    echo "  e2e-all      - 运行全部端到端测试，包括外部探针"
+    echo "  all          - 运行 unit、integration 与确定性 Agent E2E"
     echo "  check        - 检查测试服务"
     echo "  help         - 显示此帮助"
     echo ""
@@ -69,6 +76,9 @@ case "${1:-all}" in
         ;;
     "e2e")
         run_e2e_tests
+        ;;
+    "e2e-all")
+        run_all_e2e_tests
         ;;
     "all")
         run_all_tests

@@ -9,6 +9,7 @@ import threading
 import weakref
 from types import MethodType, SimpleNamespace
 
+import httpx
 import pytest
 import yuxi.agents.backends.sandbox.backend as sandbox_backend_module
 from deepagents.backends import CompositeBackend
@@ -1350,7 +1351,7 @@ def test_provisioner_grep_applies_global_max_count_across_roots(monkeypatch) -> 
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
     grep_calls: list[dict] = []
 
-    def _super_grep(self, pattern, path=None, glob=None, *, max_count=None):
+    def _grep_root(pattern, path, glob, max_count):
         grep_calls.append({"path": path, "max_count": max_count})
         count = 3 if path == "/home/gem/user-data" else 2
         matches = [{"path": f"{path}/file-{index}.md", "line": 1, "text": pattern} for index in range(count)]
@@ -1360,13 +1361,138 @@ def test_provisioner_grep_applies_global_max_count_across_roots(monkeypatch) -> 
             truncated = True
         return GrepResult(matches=matches, truncated=truncated)
 
-    monkeypatch.setattr(sandbox_backend_module.BaseSandbox, "grep", _super_grep)
+    monkeypatch.setattr(backend, "_grep_root", _grep_root)
 
     result = backend.grep("NEEDLE", path="/", max_count=4)
 
     assert grep_calls == [{"path": "/home/gem/user-data", "max_count": 4}, {"path": "/home/gem/skills", "max_count": 1}]
     assert len(result.matches) == 4
     assert result.truncated is True
+
+
+@pytest.fixture
+def native_grep_backend(monkeypatch):
+    """装配只替换 HTTP 传输的原生搜索后端。"""
+    monkeypatch.setattr(sandbox_backend_module, "get_sandbox_provider", lambda: object())
+    monkeypatch.setattr(sandbox_backend_module, "sandbox_provisioner_token", lambda: "test-token")
+    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
+    monkeypatch.setattr(backend, "_get_connection", lambda: SimpleNamespace(sandbox_url="http://sandbox.test"))
+    return backend
+
+
+@pytest.mark.asyncio
+async def test_provisioner_grep_maps_native_results_for_sync_and_async(monkeypatch, native_grep_backend) -> None:
+    """原生搜索的字段、过滤参数与异步入口保持一致。"""
+    backend = native_grep_backend
+    calls = []
+
+    def post(url, **kwargs):
+        calls.append(kwargs["json"])
+        assert url == "http://sandbox.test/v1/file/grep"
+        return httpx.Response(
+            200,
+            request=httpx.Request("POST", url),
+            json={
+                "success": True,
+                "data": {
+                    "path": "/home/gem/user-data",
+                    "pattern": "a.b",
+                    "matches": [
+                        {"file": "/home/gem/user-data/nested/note:one.py", "line_number": 2, "line_content": "a.b"}
+                    ],
+                    "truncated": True,
+                },
+            },
+        )
+
+    monkeypatch.setattr(sandbox_backend_module.httpx, "post", post)
+    for result in (
+        backend.grep("a.b", path="/home/gem/user-data", glob="nested/**/*.py", max_count=1),
+        await backend.agrep("a.b", path="/home/gem/user-data", glob="nested/**/*.py", max_count=1),
+    ):
+        assert result.error is None
+        assert result.matches == [{"path": "/home/gem/user-data/nested/note:one.py", "line": 2, "text": "a.b"}]
+        assert result.truncated is True
+    assert all(call["fixed_strings"] is True and call["recursive"] is True for call in calls)
+    assert all(call["include"] == ["/home/gem/user-data/nested/**/*.py"] for call in calls)
+    assert all(call["max_results"] == 1 for call in calls)
+
+
+@pytest.mark.parametrize("failure", ["remote", "exception", "malformed", "oversize", "missing", "http"])
+def test_provisioner_grep_handles_native_failures(monkeypatch, native_grep_backend, failure) -> None:
+    """缺失可读根返回空结果，其他失败不能伪装成无匹配。"""
+    backend = native_grep_backend
+
+    def post(url, **kwargs):
+        if failure == "exception":
+            raise httpx.ReadTimeout("request timed out")
+        payload = {
+            "success": True,
+            "data": {
+                "path": "/home/gem/user-data",
+                "pattern": "x",
+                "matches": [
+                    {
+                        "file": "/home/gem/user-data/a",
+                        "line_number": 1,
+                        "line_content": "x" * (backend._max_output_bytes + 1),
+                    }
+                ],
+                "truncated": None if failure == "malformed" else False,
+            },
+        }
+        if failure in {"remote", "missing"}:
+            payload = {
+                "success": False,
+                "message": "read failed",
+                "data": {"error_type": "not_found" if failure == "missing" else "permission_denied"},
+            }
+        return httpx.Response(503 if failure == "http" else 200, request=httpx.Request("POST", url), json=payload)
+
+    monkeypatch.setattr(sandbox_backend_module.httpx, "post", post)
+    result = backend.grep("x", path="/home/gem/user-data")
+    if failure == "missing":
+        assert result.error is None
+        assert result.matches == []
+    else:
+        assert result.error
+        assert result.matches is None
+
+
+@pytest.mark.parametrize(("path", "glob"), [("/etc", None), ("/home/gem/user-data", "../private/*")])
+def test_provisioner_grep_rejects_outside_requests_before_native_call(monkeypatch, path, glob) -> None:
+    """非法请求必须在调用搜索服务前被拒绝。"""
+    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
+
+    def unexpected_client():
+        pytest.fail("invalid search reached sandbox")
+
+    monkeypatch.setattr(backend, "_get_connection", unexpected_client)
+    result = backend.grep("secret", path=path, glob=glob)
+    assert result.error
+    assert result.matches is None
+
+
+@pytest.mark.asyncio
+async def test_provisioner_agrep_preserves_timeout(monkeypatch) -> None:
+    """异步搜索停滞时恢复 DeepAgents 的有界工具响应。"""
+    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr(sandbox_backend_module, "ASYNC_GREP_TIMEOUT", 0.01)
+    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
+    release = threading.Event()
+
+    def slow_grep(*_args, **_kwargs):
+        release.wait(1)
+        return GrepResult(matches=[])
+
+    monkeypatch.setattr(backend, "grep", slow_grep)
+    try:
+        result = await backend.agrep("PEARL")
+        assert result.error is not None
+        assert "timed out" in result.error
+    finally:
+        release.set()
 
 
 def test_provisioner_download_files_distinguishes_invalid_path_from_read_failure(monkeypatch) -> None:

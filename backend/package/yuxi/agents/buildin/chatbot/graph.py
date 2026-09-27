@@ -91,7 +91,11 @@ class ChatbotAgent(BaseAgent):
         backend = create_agent_composite_backend(context)
         model_spec = resolve_chat_model_spec(context.model)
         graph = create_agent(
-            model=load_chat_model(fully_specified_name=model_spec, session_id=context.thread_id),
+            model=load_chat_model(
+                fully_specified_name=model_spec,
+                session_id=context.thread_id,
+                uid=context.uid,
+            ),
             tools=await resolve_configured_runtime_tools(context),
             system_prompt=build_prompt_with_context(context),
             middleware=await _build_middlewares(context, backend),

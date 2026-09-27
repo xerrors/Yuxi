@@ -4,7 +4,7 @@ from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.utils.auth_middleware import get_admin_user, get_db, get_required_user
@@ -57,6 +57,7 @@ class ModelProviderPayload(BaseModel):
     extra_json: dict[str, Any] | None = Field(None, description="扩展配置")
     is_enabled: bool | None = Field(None, description="是否启用")
     is_builtin: bool | None = Field(None, description="是否内置")
+    include_user_uid: StrictBool | None = Field(None, description="聊天模型请求是否注入带 HMAC 签名的用户 UID 头")
 
 
 @model_providers.get("")
