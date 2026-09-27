@@ -7,8 +7,7 @@ export function useAgentRequestQueue({
   getThreadState,
   resetOnGoingConv,
   startRunStream,
-  onStreamError,
-  sentImagesByRequest = null
+  onStreamError
 }) {
   const removeRequestFromQueue = (ts, requestId) => {
     if (!ts || !ts.queuedRequests) return
@@ -125,8 +124,9 @@ export function useAgentRequestQueue({
           if (data.run_id) {
             const request = tsInner.queuedRequests?.find((item) => item.request_id === requestId)
             // 派发时若本地已无该请求的消息（发送时的乐观消息可能已被重置清掉），
-            // 就用请求重新拼一条；图片必须带上，否则运行期间用户消息会只剩文字。
-            const localImages = sentImagesByRequest?.get(requestId) || request?.image_contents || []
+            // 就用请求重新拼一条；图片来自排队记录自带的 image_contents，
+            // 不另设缓存——独立缓存需要覆盖所有终态清理，容易漏。
+            const localImages = request?.image_contents || []
             const requestMessages =
               tsInner.onGoingConv?.msgChunks?.[requestId] ||
               (request
@@ -158,7 +158,6 @@ export function useAgentRequestQueue({
             if (requestMessages && tsInner.onGoingConv?.msgChunks) {
               tsInner.onGoingConv.msgChunks[requestId] = requestMessages
             }
-            sentImagesByRequest?.delete(requestId)
             tsInner.pendingRequestId = requestId
             void startRunStream(threadId, data.run_id, '0-0', { requestId })
           }
@@ -168,7 +167,6 @@ export function useAgentRequestQueue({
           tsInner.replyLoadingVisible = false
           tsInner.pendingRequestId = null
           delete tsInner.onGoingConv.msgChunks[requestId]
-          sentImagesByRequest?.delete(requestId)
           removeRequestFromQueue(tsInner, requestId)
           stopRequestStream(threadId, requestId)
           if (typeof onStreamError === 'function') {

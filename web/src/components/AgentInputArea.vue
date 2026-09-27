@@ -24,13 +24,25 @@
       <template #top>
         <div v-if="currentImages.length || previewAttachments.length" class="input-top-stack">
           <div v-if="currentImages.length" class="image-preview-list">
-            <ImagePreviewComponent
-              v-for="(image, index) in currentImages"
-              :key="image.localId"
-              :image-data="image"
-              @remove="handleImageRemoved(index)"
-              class="image-preview-wrapper"
-            />
+            <template v-for="(image, index) in currentImages" :key="image.localId">
+              <div v-if="image.status === 'uploading'" class="image-preview-wrapper image-uploading-tile">
+                <span class="image-uploading-text">上传中…</span>
+                <button
+                  class="image-uploading-remove"
+                  type="button"
+                  aria-label="移除上传中的图片"
+                  @click.stop="handleImageRemoved(index)"
+                >
+                  <X :size="14" />
+                </button>
+              </div>
+              <ImagePreviewComponent
+                v-else
+                :image-data="image"
+                @remove="handleImageRemoved(index)"
+                class="image-preview-wrapper"
+              />
+            </template>
           </div>
 
           <div v-if="previewAttachments.length" class="attachment-preview-list">
@@ -97,7 +109,9 @@ import {
   MAX_MULTIMODAL_IMAGES,
   MAX_MULTIMODAL_TOTAL_BASE64_BYTES,
   isWithinBase64Budget,
-  remainingImageSlots,
+  removeUploadedImage,
+  reserveImageSlots,
+  settleUploadedImage,
   splitDroppedFiles
 } from '@/utils/multimodal_image_limits'
 import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
@@ -154,18 +168,26 @@ const uploadImageFiles = async (files = []) => {
   const { images } = splitDroppedFiles(files)
   if (!images.length) return
 
-  const accepted = images.slice(0, remainingImageSlots(currentImages.value))
-  if (accepted.length < images.length) {
+  // 选图即按顺序占位：上传中的项计入张数上限（两批并发选图不会超限），
+  // 占位顺序即最终顺序，上传完成只回填对应项，不按完成先后追加。
+  const { accepted, placeholders, rejected } = reserveImageSlots(currentImages.value, images, {
+    nextId: () => nextLocalId()
+  })
+  if (rejected > 0) {
     message.error(`最多添加 ${MAX_MULTIMODAL_IMAGES} 张图片，超出的未添加`)
   }
+  currentImages.value.push(...placeholders)
 
   await Promise.all(
-    accepted.map(async (file) => {
-      const localId = nextLocalId()
+    accepted.map(async (file, index) => {
+      const { localId } = placeholders[index]
       // 失败按张分 key：多张同时失败时每条都看得见，而不是只剩最后一条
       const imageData = await uploadMultimodalImage(file, `image-upload-${localId}`)
       if (imageData?.success) {
-        currentImages.value.push({ ...imageData, localId })
+        // 等待期间用户移除了该项时返回 null，上传结果直接丢弃
+        settleUploadedImage(currentImages.value, localId, imageData)
+      } else {
+        removeUploadedImage(currentImages.value, localId)
       }
     })
   )
@@ -215,6 +237,11 @@ const handleAttachmentRemoved = (attachment) => {
 }
 
 const handleSend = () => {
+  if (currentImages.value.some((image) => image.status === 'uploading')) {
+    // 占位中的图还没有 base64，此时发送等于丢图；等上传完再发。
+    message.warning('图片还在上传中，请稍候再发送')
+    return
+  }
   if (currentImages.value.length && !isWithinBase64Budget(currentImages.value)) {
     // 请求体是内联 base64，体积上限由网关与后端共同决定；超了就地拦下，不发请求。
     const limitMb = Math.round(MAX_MULTIMODAL_TOTAL_BASE64_BYTES / (1024 * 1024))
@@ -294,6 +321,39 @@ defineExpose({
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+
+/* 上传占位卡：与 ImagePreviewComponent 的 80x80 预览同尺寸，虚线边框区分等待态 */
+.image-uploading-tile {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  border: 1px dashed var(--gray-200);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.image-uploading-text {
+  font-size: 12px;
+  color: var(--gray-600); /* 调和中灰，适合次要文本 */
+}
+
+.image-uploading-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  background: var(--primary-purple, #6b4fd8);
+  color: #fff;
 }
 
 .attachment-preview-list {
