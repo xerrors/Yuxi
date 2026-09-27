@@ -81,8 +81,15 @@ jobs:
           key: buildkit-sandbox-provisioner-${{ runner.os }}-${{ hashFiles('docker/sandbox_provisioner/requirements.txt', 'docker/sandbox_provisioner/Dockerfile') }}
           restore-keys: |
             buildkit-sandbox-provisioner-${{ runner.os }}-
+      - name: Restore minio image layer cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/yuxi-buildkit-cache/minio
+          key: buildkit-minio-${{ runner.os }}-${{ hashFiles('docker/minio/Dockerfile', 'docker/minio/docker-entrypoint.sh') }}
+          restore-keys: |
+            buildkit-minio-${{ runner.os }}-
       - name: Build topology images with cached layers
-        run: bash scripts/ci_build_topology_images.sh /tmp/yuxi-buildkit-cache/api /tmp/yuxi-buildkit-cache/sandbox-provisioner
+        run: bash scripts/ci_build_topology_images.sh /tmp/yuxi-buildkit-cache/api /tmp/yuxi-buildkit-cache/sandbox-provisioner /tmp/yuxi-buildkit-cache/minio
       - name: Start durable-task runtime topology
         run: docker compose up -d postgres redis minio etcd milvus sandbox-provisioner api worker
       - name: Wait for durable-task topology readiness
@@ -184,8 +191,15 @@ jobs:
           key: buildkit-sandbox-provisioner-${{ runner.os }}-${{ hashFiles('docker/sandbox_provisioner/requirements.txt', 'docker/sandbox_provisioner/Dockerfile') }}
           restore-keys: |
             buildkit-sandbox-provisioner-${{ runner.os }}-
+      - name: Restore minio image layer cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/yuxi-buildkit-cache/minio
+          key: buildkit-minio-${{ runner.os }}-${{ hashFiles('docker/minio/Dockerfile', 'docker/minio/docker-entrypoint.sh') }}
+          restore-keys: |
+            buildkit-minio-${{ runner.os }}-
       - name: Build topology images with cached layers
-        run: bash scripts/ci_build_topology_images.sh /tmp/yuxi-buildkit-cache/api /tmp/yuxi-buildkit-cache/sandbox-provisioner
+        run: bash scripts/ci_build_topology_images.sh /tmp/yuxi-buildkit-cache/api /tmp/yuxi-buildkit-cache/sandbox-provisioner /tmp/yuxi-buildkit-cache/minio
       - name: Start focused runtime topology
         run: docker compose up -d postgres redis minio sandbox-provisioner api worker
       - name: Wait for truthful readiness
