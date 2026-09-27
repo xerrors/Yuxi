@@ -3935,6 +3935,24 @@ watch(
   { flush: 'post' }
 )
 
+// 流式输出期间正文/工具调用持续增长，但现有滚动只在 Run 终态或会话列表变化时触发，
+// 长输出会停在提问弹窗出现时的位置（#753）。用轻量的内容长度和值作为变化信号，
+// 非强制滚动以保留用户上翻查看历史的控制权。
+const streamingContentLength = computed(() => {
+  if (!isStreaming.value) return 0
+  let total = 0
+  onGoingConvMessages.value.forEach((message) => {
+    if (typeof message?.content === 'string') total += message.content.length
+    if (Array.isArray(message?.tool_calls)) total += message.tool_calls.length
+  })
+  return total
+})
+
+watch(streamingContentLength, () => {
+  if (!isStreaming.value) return
+  scrollController.scrollToBottom()
+}, { flush: 'post' })
+
 watch(
   configNoticeScrollVersion,
   () => {

@@ -308,7 +308,7 @@ const toolRejectButtonRef = ref(null)
 const toolArgsExpanded = ref(false)
 const toolDecisions = ref({})
 const activeToolIndex = ref(0)
-const OTHER_TEXTAREA_MAX_ROWS = 4
+const OTHER_TEXTAREA_MAX_ROWS = 10
 
 const normalizedQuestions = computed(() => {
   return normalizeQuestions(props.questions)
@@ -1144,7 +1144,7 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
 
   textarea {
     min-height: 54px;
-    max-height: 112px;
+    max-height: 224px;
     font-size: 14px;
     overflow-y: auto;
   }
