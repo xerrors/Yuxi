@@ -613,7 +613,11 @@ const startEditing = () => {
   editMode.value = 'edit'
 }
 
-defineExpose({ startEditing })
+defineExpose({
+  startEditing,
+  discardChanges: syncDraftContent,
+  hasUnsavedChanges: () => editMode.value === 'edit' && draftChanged.value
+})
 
 const requestSave = () => {
   if (!canEdit.value || props.saving) return

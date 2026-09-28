@@ -333,23 +333,27 @@ def test_skill_export_route_still_checks_manage_permission(monkeypatch, tmp_path
 def test_update_skill_dependencies_route_passes_operator(monkeypatch):
     captured: dict[str, object] = {}
 
-    async def fake_update_skill_dependencies(
+    async def fake_edit_shared_skill_dependencies(
         _db,
         *,
         slug,
         tool_dependencies,
         mcp_dependencies,
         skill_dependencies,
+        expected_revision,
         operator,
     ):
         captured["slug"] = slug
         captured["tool_dependencies"] = tool_dependencies
         captured["mcp_dependencies"] = mcp_dependencies
         captured["skill_dependencies"] = skill_dependencies
+        captured["expected_revision"] = expected_revision
         captured["operator_uid"] = operator.uid
-        return _skill(slug=slug)
+        return _skill(slug=slug), "next-revision"
 
-    monkeypatch.setattr("server.routers.skill_router.update_skill_dependencies", fake_update_skill_dependencies)
+    monkeypatch.setattr(
+        "server.routers.skill_router.edit_shared_skill_dependencies", fake_edit_shared_skill_dependencies
+    )
 
     client = TestClient(_build_app())
     resp = client.put(
@@ -358,6 +362,7 @@ def test_update_skill_dependencies_route_passes_operator(monkeypatch):
             "tool_dependencies": ["calculator"],
             "mcp_dependencies": ["mcp-a"],
             "skill_dependencies": ["other-skill"],
+            "expected_revision": "old-revision",
         },
     )
 
@@ -367,8 +372,10 @@ def test_update_skill_dependencies_route_passes_operator(monkeypatch):
         "tool_dependencies": ["calculator"],
         "mcp_dependencies": ["mcp-a"],
         "skill_dependencies": ["other-skill"],
+        "expected_revision": "old-revision",
         "operator_uid": "admin",
     }
+    assert resp.json()["data"]["revision"] == "next-revision"
 
 
 def test_builtin_routes_require_admin():

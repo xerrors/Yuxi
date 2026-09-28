@@ -34,11 +34,14 @@ from yuxi.agents.skills.service import (
     prepare_skill_upload,
     read_personal_skill_file,
     read_skill_file,
-    update_skill_dependencies,
     update_skill_enabled,
-    update_skill_file,
     update_skill_share_config,
     user_can_manage_skill,
+)
+from yuxi.services.skill_edit_service import (
+    SkillEditConflict,
+    edit_shared_skill_dependencies,
+    edit_shared_skill_file,
 )
 from yuxi.permissions import resolve_skill_permission
 from yuxi.agents.skills.remote_install import list_remote_skills, search_remote_skills
@@ -66,12 +69,14 @@ class SkillNodeCreateRequest(BaseModel):
 class SkillFileUpdateRequest(BaseModel):
     path: str = Field(..., description="相对 skill 根目录的路径")
     content: str = Field(..., description="文件内容")
+    expected_revision: str = Field(..., description="读取文件时取得的 SHA-256 修订值")
 
 
 class SkillDependenciesUpdateRequest(BaseModel):
     tool_dependencies: list[str] = Field(default_factory=list, description="依赖的内置工具列表")
     mcp_dependencies: list[str] = Field(default_factory=list, description="依赖的 MCP 服务列表")
     skill_dependencies: list[str] = Field(default_factory=list, description="依赖的其他 skill slug 列表")
+    expected_revision: str = Field(..., description="读取根级 SKILL.md 时取得的修订值")
 
 
 class RemoteSkillSourceRequest(BaseModel):
@@ -523,15 +528,17 @@ async def update_skill_file_route(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        await update_skill_file(
+        item, revision = await edit_shared_skill_file(
             db,
             slug=slug,
             relative_path=payload.path,
             content=payload.content,
-            updated_by=current_user.uid,
+            expected_revision=payload.expected_revision,
             operator=current_user,
         )
-        return {"success": True}
+        return {"success": True, "data": {"skill": _serialize_skill_for_user(item, current_user), "revision": revision}}
+    except SkillEditConflict as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except ValueError as e:
         _raise_from_value_error(e)
     except HTTPException:
@@ -549,15 +556,18 @@ async def update_skill_dependencies_route(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        item = await update_skill_dependencies(
+        item, revision = await edit_shared_skill_dependencies(
             db,
             slug=slug,
             tool_dependencies=payload.tool_dependencies,
             mcp_dependencies=payload.mcp_dependencies,
             skill_dependencies=payload.skill_dependencies,
+            expected_revision=payload.expected_revision,
             operator=current_user,
         )
-        return {"success": True, "data": _serialize_skill_for_user(item, current_user)}
+        return {"success": True, "data": {"skill": _serialize_skill_for_user(item, current_user), "revision": revision}}
+    except SkillEditConflict as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except ValueError as e:
         _raise_from_value_error(e)
     except HTTPException:

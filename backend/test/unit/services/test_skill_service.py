@@ -510,7 +510,7 @@ async def test_confirm_skill_install_draft_rejects_invalid_selection(
 
 def test_parse_skill_markdown_ok():
     content = "---\nname: demo-skill\ndescription: demo description\n---\n# Demo\n"
-    slug, name, desc, meta = svc._parse_skill_markdown(content)
+    slug, name, desc, meta = svc.parse_skill_markdown(content)
     assert slug == "demo-skill"
     assert name == "demo-skill"
     assert desc == "demo description"
@@ -529,7 +529,7 @@ def test_parse_skill_markdown_supports_display_name_with_slug():
         "---\n"
         "# Word / DOCX\n"
     )
-    slug, name, desc, meta = svc._parse_skill_markdown(content)
+    slug, name, desc, meta = svc.parse_skill_markdown(content)
     assert slug == "word-docx"
     assert name == "Word / DOCX"
     assert desc == "Create, inspect, and edit Microsoft Word documents."
@@ -538,7 +538,7 @@ def test_parse_skill_markdown_supports_display_name_with_slug():
 
 def test_parse_skill_markdown_requires_frontmatter():
     with pytest.raises(ValueError, match="frontmatter"):
-        svc._parse_skill_markdown("# missing")
+        svc.parse_skill_markdown("# missing")
 
 
 @pytest.fixture
@@ -967,7 +967,7 @@ async def test_refresh_user_skill_projection_serializes_authorization_snapshots(
     advisory_lock = asyncio.Lock()
     first_sync_started = asyncio.Event()
     allow_first_sync = asyncio.Event()
-    current_items = [SimpleNamespace(slug="legacy", source_dir=Path("/tmp/legacy"))]
+    current_items = [SimpleNamespace(slug="legacy", source_dir=Path("/tmp/legacy"), enabled=True)]
     synchronized_sources: list[dict[str, str]] = []
 
     class FakeDb:
@@ -986,8 +986,9 @@ async def test_refresh_user_skill_projection_serializes_authorization_snapshots(
         assert uid == "user-1"
         return SimpleNamespace(is_deleted=0)
 
-    async def list_shared(_db, _user, *, require_enabled=True):
-        del require_enabled
+    async def list_shared(_db, _user, *, require_enabled=True, for_share=False):
+        assert not require_enabled
+        assert for_share
         return list(current_items)
 
     async def to_thread(_func, _uid, sources):
@@ -1024,7 +1025,7 @@ async def test_refresh_user_skill_projection_excludes_personal_skills(monkeypatc
     from yuxi.storage.postgres import manager as postgres_manager
 
     synchronized_sources: list[dict[str, str]] = []
-    shared = SimpleNamespace(slug="shared")
+    shared = SimpleNamespace(slug="shared", enabled=True)
 
     class FakeDb:
         async def execute(self, _statement, _parameters):
@@ -1040,8 +1041,9 @@ async def test_refresh_user_skill_projection_excludes_personal_skills(monkeypatc
     async def get_user(_self, _db, _uid):
         return SimpleNamespace(is_deleted=0)
 
-    async def list_shared(_db, _user, *, require_enabled=True):
-        del require_enabled
+    async def list_shared(_db, _user, *, require_enabled=True, for_share=False):
+        assert not require_enabled
+        assert for_share
         return [shared]
 
     async def fail_combined_list(*_args, **_kwargs):
@@ -1386,168 +1388,6 @@ async def test_skill_md_prepare_confirm_creates_single_file_skill(tmp_path: Path
     assert (tmp_path / "skill-sources/shared" / "demo" / "SKILL.md").read_text(encoding="utf-8") == skill_md
 
 
-@pytest.mark.asyncio
-async def test_update_skill_md_syncs_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    skill_dir = tmp_path / "skill-sources/shared" / "demo"
-    skill_dir.mkdir(parents=True, exist_ok=True)
-    (skill_dir / "SKILL.md").write_text(
-        "---\nname: demo\ndescription: old\n---\n# old\n",
-        encoding="utf-8",
-    )
-
-    item = Skill(
-        slug="demo",
-        name="demo",
-        description="old",
-        dir_path="shared/demo",
-        created_by="root",
-        updated_by="root",
-    )
-
-    async def fake_get_manageable_skill_or_raise(_db, _operator, _slug: str):
-        return item
-
-    updates: dict[str, str | None] = {}
-
-    class FakeRepo:
-        def __init__(self, _db):
-            pass
-
-        async def update_metadata(
-            self,
-            _item: Skill,
-            *,
-            name: str,
-            description: str,
-            updated_by: str | None,
-        ) -> Skill:
-            updates["name"] = name
-            updates["description"] = description
-            updates["updated_by"] = updated_by
-            return item
-
-    monkeypatch.setattr(svc, "get_manageable_skill_or_raise", fake_get_manageable_skill_or_raise)
-    monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
-
-    new_content = "---\nname: demo\ndescription: updated desc\n---\n# updated\n"
-    await svc.update_skill_file(
-        _UnitOfWork(),
-        slug="demo",
-        relative_path="SKILL.md",
-        content=new_content,
-        updated_by="admin",
-        operator=_user("root"),
-    )
-
-    assert updates["name"] == "demo"
-    assert updates["description"] == "updated desc"
-    assert updates["updated_by"] == "admin"
-    saved_content = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
-    assert "description: updated desc" in saved_content
-
-
-@pytest.mark.asyncio
-async def test_update_skill_dependencies(monkeypatch: pytest.MonkeyPatch):
-    item = Skill(
-        slug="alpha",
-        name="alpha",
-        description="alpha",
-        source_type="upload",
-        dir_path="shared/alpha",
-        created_by="root",
-        share_config={
-            "version": 2,
-            "read_scope": {"access_level": "user", "user_uids": ["root"]},
-            "manage_scope": {"access_level": "user", "user_uids": ["root"]},
-        },
-        enabled=True,
-        tool_dependencies=[],
-        mcp_dependencies=[],
-        skill_dependencies=[],
-    )
-    dependency = Skill(
-        slug="beta",
-        name="beta",
-        description="beta",
-        source_type="upload",
-        dir_path="shared/beta",
-        created_by="root",
-        share_config={
-            "version": 2,
-            "read_scope": {"access_level": "user", "user_uids": ["root"]},
-            "manage_scope": {"access_level": "user", "user_uids": ["root"]},
-        },
-        enabled=True,
-        tool_dependencies=[],
-        mcp_dependencies=[],
-        skill_dependencies=[],
-    )
-
-    # Mock get_tool_metadata to return tool list
-    def fake_get_tool_metadata(category=None):
-        return [{"slug": "calculator", "name": "Calculator"}]
-
-    monkeypatch.setattr(tool_service, "get_tool_metadata", fake_get_tool_metadata)
-
-    async def fake_get_enabled_mcp_server_slugs(db=None):
-        del db
-        return ["mcp-a"]
-
-    monkeypatch.setattr(svc, "get_enabled_mcp_server_slugs", fake_get_enabled_mcp_server_slugs)
-
-    async def fake_get_skill_or_raise(_db, _operator, slug: str):
-        assert slug == "alpha"
-        return item
-
-    captured: dict[str, list[str] | str | None] = {}
-
-    class FakeRepo:
-        def __init__(self, _db):
-            pass
-
-        async def list_all(self):
-            return [item, dependency]
-
-        async def update_dependencies(
-            self,
-            _item: Skill,
-            *,
-            tool_dependencies: list[str],
-            mcp_dependencies: list[str],
-            skill_dependencies: list[str],
-            updated_by: str | None,
-        ):
-            captured["tool_dependencies"] = tool_dependencies
-            captured["mcp_dependencies"] = mcp_dependencies
-            captured["skill_dependencies"] = skill_dependencies
-            captured["updated_by"] = updated_by
-            _item.tool_dependencies = tool_dependencies
-            _item.mcp_dependencies = mcp_dependencies
-            _item.skill_dependencies = skill_dependencies
-            return _item
-
-    async def fake_list_accessible_shared_skills(_db, _operator):
-        return [item, dependency]
-
-    monkeypatch.setattr(svc, "get_manageable_skill_or_raise", fake_get_skill_or_raise)
-    monkeypatch.setattr(svc, "list_accessible_shared_skills", fake_list_accessible_shared_skills)
-    monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
-
-    updated = await svc.update_skill_dependencies(
-        _UnitOfWork(),
-        slug="alpha",
-        tool_dependencies=["calculator", "calculator"],
-        mcp_dependencies=["mcp-a", "mcp-a"],
-        skill_dependencies=["beta", "beta"],
-        operator=_user("root"),
-    )
-    assert captured["tool_dependencies"] == ["calculator"]
-    assert captured["mcp_dependencies"] == ["mcp-a"]
-    assert captured["skill_dependencies"] == ["beta"]
-    assert captured["updated_by"] == "root"
-    assert updated.skill_dependencies == ["beta"]
-
-
 def test_skill_dependency_scope_covers_read_and_manage_audiences():
     parent = Skill(
         slug="parent",
@@ -1863,37 +1703,46 @@ async def test_update_skill_enabled_allows_builtin(monkeypatch: pytest.MonkeyPat
 
 
 @pytest.mark.asyncio
-async def test_builtin_skill_file_edit_blocked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-
-    target_dir = tmp_path / "skill-sources/shared" / "reporter"
-    target_dir.mkdir(parents=True, exist_ok=True)
-    (target_dir / "SKILL.md").write_text(
-        "---\nname: reporter\ndescription: builtin\n---\n# Reporter\n",
-        encoding="utf-8",
+async def test_skill_node_mutations_lock_skill_row(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    item = Skill(
+        slug="demo",
+        name="demo",
+        description="demo",
+        source_type="upload",
+        dir_path="shared/demo",
+        share_config={
+            "version": 2,
+            "read_scope": {"access_level": "global", "department_ids": [], "user_uids": []},
+            "manage_scope": {"access_level": "global", "department_ids": [], "user_uids": []},
+        },
     )
+    locked_reads = []
 
-    builtin_item = Skill(
-        slug="reporter",
-        name="reporter",
-        description="builtin",
-        dir_path="shared/reporter",
-        source_type="builtin",
+    class FakeRepo:
+        def __init__(self, _db):
+            pass
+
+        async def get_by_slug(self, slug, *, for_update=False):
+            locked_reads.append((slug, for_update))
+            return item
+
+    monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
+    monkeypatch.setattr(svc, "_resolve_skill_dir", lambda _item: tmp_path)
+    await svc.create_skill_node(
+        None,
+        slug="demo",
+        relative_path="notes",
+        is_dir=True,
+        content=None,
+        updated_by="root",
+        operator=_user("root", role="admin"),
     )
+    note = tmp_path / "notes" / "note.md"
+    note.write_text("before", encoding="utf-8")
+    await svc.delete_skill_node(None, slug="demo", relative_path="notes/note.md", operator=_user("root", role="admin"))
 
-    async def fake_get_skill_or_raise(_db, _operator, _slug: str):
-        return builtin_item
-
-    monkeypatch.setattr(svc, "get_manageable_skill_or_raise", fake_get_skill_or_raise)
-
-    with pytest.raises(ValueError, match="内置 skill 不允许直接修改文件"):
-        await svc.update_skill_file(
-            _UnitOfWork(),
-            slug="reporter",
-            relative_path="SKILL.md",
-            content="new content",
-            updated_by="root",
-            operator=_user("root"),
-        )
+    assert locked_reads == [("demo", True), ("demo", True)]
+    assert not note.exists()
 
 
 @pytest.mark.asyncio

@@ -222,7 +222,7 @@
               class="lucide-icon-btn"
               @click="goToPreviewSkillManagement"
             >
-              <span>去管理</span>
+              <span>{{ canManageSkill(previewSkill) ? '编辑 Skill' : '查看 Skill' }}</span>
             </a-button>
           </div>
         </div>

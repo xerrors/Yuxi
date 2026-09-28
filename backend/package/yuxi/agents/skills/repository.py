@@ -11,14 +11,18 @@ class SkillRepository:
     def __init__(self, db_session: AsyncSession):
         self.db = db_session
 
-    async def list_all(self) -> list[Skill]:
-        result = await self.db.execute(select(Skill).order_by(Skill.updated_at.desc(), Skill.id.desc()))
+    async def list_all(self, *, for_share: bool = False) -> list[Skill]:
+        stmt = select(Skill).order_by(Skill.updated_at.desc(), Skill.id.desc())
+        if for_share:
+            stmt = stmt.with_for_update(read=True).execution_options(populate_existing=True)
+        result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
-    async def list_enabled(self) -> list[Skill]:
-        result = await self.db.execute(
-            select(Skill).where(Skill.enabled.is_(True)).order_by(Skill.updated_at.desc(), Skill.id.desc())
-        )
+    async def list_enabled(self, *, for_share: bool = False) -> list[Skill]:
+        stmt = select(Skill).where(Skill.enabled.is_(True)).order_by(Skill.updated_at.desc(), Skill.id.desc())
+        if for_share:
+            stmt = stmt.with_for_update(read=True).execution_options(populate_existing=True)
+        result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
     async def get_by_slug(self, slug: str, *, for_update: bool = False) -> Skill | None:

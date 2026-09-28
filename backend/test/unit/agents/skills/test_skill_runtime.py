@@ -1,8 +1,10 @@
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy.dialects import postgresql
 
 import yuxi.agents.skills.runtime as skill_runtime
+from yuxi.agents.skills.repository import SkillRepository
 from yuxi.agents.skills.runtime import build_dependency_bundle, expand_skill_closure, resolve_runtime_skills_for_context
 
 
@@ -58,7 +60,7 @@ async def test_personal_skills_are_available_independently_of_shared_selection(
         def __init__(self, db):
             """接收测试会话。"""
 
-        async def list_enabled(self):
+        async def list_enabled(self, *, for_share=False):
             """返回测试共享记录。"""
             return [shared, extra]
 
@@ -118,7 +120,7 @@ async def test_personal_skill_is_not_a_direct_preload_candidate(tmp_path, monkey
     personal = _skill(tmp_path, "personal")
     personal.source_scope = "personal"
 
-    async def accessible(_db, _user):
+    async def accessible(_db, _user, *, for_share=False):
         return [personal]
 
     monkeypatch.setattr(skill_runtime, "list_accessible_skills", accessible)
@@ -135,9 +137,10 @@ async def test_personal_skill_is_not_a_direct_preload_candidate(tmp_path, monkey
 async def test_resolve_runtime_skills_derives_authorized_scope(monkeypatch):
     """运行时 scope 只保留授权选择，并按依赖闭包区分共享与个人来源。"""
 
-    async def fake_list_accessible_skills(db, user):
+    async def fake_list_accessible_skills(db, user, *, for_share=False):
         assert db is not None
         assert user is not None
+        assert for_share
         return [
             SimpleNamespace(
                 slug="alpha",
@@ -211,7 +214,7 @@ async def test_preload_reads_authorized_dependency_closure(tmp_path, monkeypatch
         _skill(tmp_path, "beta", content="# Beta\nUSE_BETA"),
     ]
 
-    async def fake_list_accessible_skills(_db, _user):
+    async def fake_list_accessible_skills(_db, _user, *, for_share=False):
         return skills
 
     monkeypatch.setattr(skill_runtime, "list_accessible_skills", fake_list_accessible_skills)
@@ -238,7 +241,7 @@ async def test_preload_rejects_symlinked_source_ancestor(tmp_path, monkeypatch):
     linked_parent.symlink_to(real_parent, target_is_directory=True)
     item.source_dir = linked_parent / "alpha"
 
-    async def fake_list_accessible_skills(_db, _user):
+    async def fake_list_accessible_skills(_db, _user, *, for_share=False):
         return [item]
 
     monkeypatch.setattr(skill_runtime, "list_accessible_skills", fake_list_accessible_skills)
@@ -258,7 +261,7 @@ async def test_manifest_retains_metadata_from_authorized_resolution(tmp_path, mo
 
     item = _skill(tmp_path, "alpha", content="original body")
 
-    async def accessible(db, user):
+    async def accessible(db, user, *, for_share=False):
         return [item]
 
     monkeypatch.setattr(skill_runtime, "list_accessible_skills", accessible)
@@ -291,7 +294,7 @@ async def test_preload_all_reads_only_enabled_authorized_skill_closure(tmp_path,
         _skill(tmp_path, "gamma"),
     ]
 
-    async def accessible(db, user):
+    async def accessible(db, user, *, for_share=False):
         return skills
 
     monkeypatch.setattr(service, "list_accessible_shared_skills", accessible)
@@ -305,3 +308,19 @@ async def test_preload_all_reads_only_enabled_authorized_skill_closure(tmp_path,
     assert scope["preloaded_skills"] == expected
     assert scope["preloaded_skill_contents"] == {slug: f"# {slug}" for slug in expected}
     assert scope["context_preload_skills"] == normalized["skills"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_skill_query_holds_shared_row_locks():
+    """运行时读元数据时等待共享 Skill 编辑事务完成。"""
+    statements = []
+
+    class Session:
+        async def execute(self, stmt):
+            statements.append(stmt)
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: []))
+
+    await SkillRepository(Session()).list_enabled(for_share=True)
+
+    assert "FOR SHARE" in str(statements[0].compile(dialect=postgresql.dialect()))
+    assert statements[0].get_execution_options()["populate_existing"] is True

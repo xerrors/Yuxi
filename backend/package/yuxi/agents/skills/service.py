@@ -351,19 +351,19 @@ async def refresh_user_skill_projection_async(uid: str) -> dict[str, str]:
         raise ValueError("uid is required to refresh the user Skill projection")
 
     async with pg_manager.get_async_session_context() as db:
-        await db.execute(
-            text("SELECT pg_advisory_xact_lock(hashtext(:lock_scope))"),
-            {"lock_scope": f"{_USER_SKILL_PROJECTION_LOCK_SCOPE}{normalized_uid}"},
-        )
         user = await UserRepository().get_by_uid_with_db(db, normalized_uid)
         if user is None or bool(user.is_deleted):
             source_dirs: dict[str, str] = {}
         else:
             source_dirs = {
                 item.slug: str(_resolve_skill_dir(item))
-                for item in await list_accessible_shared_skills(db, user)
-                if item.slug
+                for item in await list_accessible_shared_skills(db, user, require_enabled=False, for_share=True)
+                if item.enabled and item.slug
             }
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:lock_scope))"),
+            {"lock_scope": f"{_USER_SKILL_PROJECTION_LOCK_SCOPE}{normalized_uid}"},
+        )
         await sync_user_accessible_skills_async(normalized_uid, source_dirs)
         return source_dirs
 
@@ -590,10 +590,13 @@ async def list_accessible_skills(
     user: User,
     *,
     require_enabled: bool = True,
+    for_share: bool = False,
 ) -> list[ResolvedSkill]:
     """返回当前用户最终生效的共享与个人 Skill。"""
     shared_items, personal_items = await asyncio.gather(
-        list_accessible_shared_skills(db, user, require_enabled=require_enabled),
+        list_accessible_shared_skills(db, user, require_enabled=require_enabled, for_share=for_share)
+        if for_share
+        else list_accessible_shared_skills(db, user, require_enabled=require_enabled),
         list_personal_skills(str(user.uid)),
     )
     personal_by_slug = {item.slug: item for item in personal_items}
@@ -684,10 +687,14 @@ async def list_accessible_shared_skills(
     user: User,
     *,
     require_enabled: bool = True,
+    for_share: bool = False,
 ) -> list[Skill]:
     """按现有共享范围返回用户可访问的数据库 Skill。"""
     repo = SkillRepository(db)
-    items = await repo.list_enabled() if require_enabled else await repo.list_all()
+    if require_enabled:
+        items = await repo.list_enabled(for_share=True) if for_share else await repo.list_enabled()
+    else:
+        items = await repo.list_all(for_share=True) if for_share else await repo.list_all()
     return [item for item in items if user_can_access_skill(user, item, require_enabled=require_enabled)]
 
 
@@ -704,7 +711,7 @@ def _get_all_tool_names() -> list[str]:
     return [tool["slug"] for tool in all_tools]
 
 
-async def _validate_dependencies(
+async def validate_skill_dependencies(
     *,
     parent: Skill,
     tool_dependencies: list[str],
@@ -741,39 +748,6 @@ async def _validate_dependencies(
     return tools, mcps, skills
 
 
-async def update_skill_dependencies(
-    db: AsyncSession,
-    *,
-    slug: str,
-    tool_dependencies: list[str],
-    mcp_dependencies: list[str],
-    skill_dependencies: list[str],
-    operator: User,
-) -> Skill:
-    item = await get_manageable_skill_or_raise(db, operator, slug)
-    _ensure_non_builtin(item)
-    repo = SkillRepository(db)
-    skill_items = await list_accessible_shared_skills(db, operator)
-    available_skills = {skill.slug: skill for skill in skill_items}
-    tools, mcps, skills = await _validate_dependencies(
-        parent=item,
-        tool_dependencies=tool_dependencies,
-        mcp_dependencies=mcp_dependencies,
-        skill_dependencies=skill_dependencies,
-        available_skills=available_skills,
-    )
-
-    updated = await repo.update_dependencies(
-        item,
-        tool_dependencies=tools,
-        mcp_dependencies=mcps,
-        skill_dependencies=skills,
-        updated_by=operator.uid,
-    )
-    await db.commit()
-    return updated
-
-
 def _validate_skill_slug_value(slug: str, *, field_name: str) -> str:
     slug = slug.strip()
     if not slug:
@@ -794,7 +768,7 @@ def _validate_skill_display_name(name: str) -> str:
     return name
 
 
-def _split_frontmatter(content: str) -> tuple[str, str]:
+def split_skill_frontmatter(content: str) -> tuple[str, str]:
     if not content.startswith("---"):
         raise ValueError("SKILL.md 缺少有效 frontmatter（--- ... ---）")
 
@@ -817,8 +791,8 @@ def _split_frontmatter(content: str) -> tuple[str, str]:
     return frontmatter_raw, body
 
 
-def _parse_skill_markdown(content: str) -> tuple[str, str, str, dict[str, Any]]:
-    frontmatter_raw, _body = _split_frontmatter(content)
+def parse_skill_markdown(content: str) -> tuple[str, str, str, dict[str, Any]]:
+    frontmatter_raw, _body = split_skill_frontmatter(content)
     try:
         data = yaml.safe_load(frontmatter_raw)
     except yaml.YAMLError as e:
@@ -842,7 +816,7 @@ def _parse_skill_markdown(content: str) -> tuple[str, str, str, dict[str, Any]]:
 
 
 def _rewrite_frontmatter_slug(content: str, new_slug: str) -> str:
-    frontmatter_raw, body = _split_frontmatter(content)
+    frontmatter_raw, body = split_skill_frontmatter(content)
     data = yaml.safe_load(frontmatter_raw)
     if not isinstance(data, dict):
         raise ValueError("SKILL.md frontmatter 必须是对象")
@@ -882,7 +856,7 @@ def parse_skill_dir_metadata(source_skill_dir: Path) -> dict[str, Any]:
         raise ValueError("技能目录缺少根级 SKILL.md")
 
     content = skill_md_path.read_text(encoding="utf-8")
-    parsed_slug, parsed_name, parsed_desc, meta = _parse_skill_markdown(content)
+    parsed_slug, parsed_name, parsed_desc, meta = parse_skill_markdown(content)
     return {
         "slug": parsed_slug,
         "name": parsed_name,
@@ -1423,27 +1397,29 @@ async def discard_skill_install_draft(*, draft_id: str, operator: User) -> None:
     shutil.rmtree(draft_dir, ignore_errors=True)
 
 
-async def get_skill_or_raise(db: AsyncSession, slug: str) -> Skill:
+async def get_skill_or_raise(db: AsyncSession, slug: str, *, for_update: bool = False) -> Skill:
     slug = slug.strip() if isinstance(slug, str) else ""
     if not is_valid_skill_slug(slug):
         raise ValueError("无效 skill slug")
 
     repo = SkillRepository(db)
-    item = await repo.get_by_slug(slug)
+    item = await repo.get_by_slug(slug, for_update=True) if for_update else await repo.get_by_slug(slug)
     if not item:
         raise ValueError(f"技能 '{slug}' 不存在")
     return item
 
 
-async def get_management_readable_skill_or_raise(db: AsyncSession, user: User, slug: str) -> Skill:
-    item = await get_skill_or_raise(db, slug)
+async def get_management_readable_skill_or_raise(
+    db: AsyncSession, user: User, slug: str, *, for_update: bool = False
+) -> Skill:
+    item = await get_skill_or_raise(db, slug, for_update=for_update)
     if not user_can_manage_skill(user, item) and not user_can_access_skill(user, item):
         raise ValueError(f"技能 '{slug}' 不存在或无权访问")
     return item
 
 
-async def get_manageable_skill_or_raise(db: AsyncSession, user: User, slug: str) -> Skill:
-    item = await get_skill_or_raise(db, slug)
+async def get_manageable_skill_or_raise(db: AsyncSession, user: User, slug: str, *, for_update: bool = False) -> Skill:
+    item = await get_skill_or_raise(db, slug, for_update=for_update)
     if not user_can_manage_skill(user, item):
         raise ValueError(f"技能 '{slug}' 不存在或无权管理")
     return item
@@ -1464,7 +1440,7 @@ async def read_skill_file(
     relative_path: str,
     operator: User,
 ) -> dict[str, Any]:
-    item = await get_management_readable_skill_or_raise(db, operator, slug)
+    item = await get_management_readable_skill_or_raise(db, operator, slug, for_update=True)
     skill_dir = _resolve_skill_dir(item)
     target, rel = _resolve_relative_path(skill_dir, relative_path)
     if not target.exists() or not target.is_file():
@@ -1472,11 +1448,27 @@ async def read_skill_file(
     if not _is_text_path(target):
         raise ValueError("仅支持读取文本文件")
     try:
-        content = target.read_text(encoding="utf-8")
+        raw = target.read_bytes()
+        content = raw.decode("utf-8")
     except UnicodeDecodeError as e:
         raise ValueError(f"文件编码不支持（仅支持 UTF-8）: {e}") from e
 
-    return {"path": rel, "content": content}
+    return {
+        "path": rel,
+        "content": content,
+        "revision": hashlib.sha256(raw).hexdigest(),
+        "skill": (
+            {
+                "name": item.name,
+                "description": item.description,
+                "tool_dependencies": item.tool_dependencies or [],
+                "mcp_dependencies": item.mcp_dependencies or [],
+                "skill_dependencies": item.skill_dependencies or [],
+            }
+            if rel == "SKILL.md"
+            else None
+        ),
+    }
 
 
 async def create_skill_node(
@@ -1489,7 +1481,7 @@ async def create_skill_node(
     updated_by: str | None,
     operator: User,
 ) -> None:
-    item = await get_manageable_skill_or_raise(db, operator, slug)
+    item = await get_manageable_skill_or_raise(db, operator, slug, for_update=True)
     if is_builtin_skill(item):
         raise ValueError("内置 skill 不允许直接修改文件")
     skill_dir = _resolve_skill_dir(item)
@@ -1513,31 +1505,6 @@ async def create_skill_node(
     await db.commit()
 
 
-async def update_skill_file(
-    db: AsyncSession,
-    *,
-    slug: str,
-    relative_path: str,
-    content: str,
-    updated_by: str | None,
-    operator: User,
-) -> None:
-    item = await get_manageable_skill_or_raise(db, operator, slug)
-    if is_builtin_skill(item):
-        raise ValueError("内置 skill 不允许直接修改文件")
-    skill_dir = _resolve_skill_dir(item)
-    target, _ = _resolve_relative_path(skill_dir, relative_path)
-    if not target.exists() or not target.is_file():
-        raise ValueError("文件不存在")
-    if not _is_text_path(target):
-        raise ValueError("仅支持编辑文本文件")
-
-    await _update_skill_metadata_if_skills_md(db, item, content, skill_dir, target, updated_by)
-
-    target.write_text(content, encoding="utf-8")
-    await db.commit()
-
-
 async def _update_skill_metadata_if_skills_md(
     db: AsyncSession,
     item: Skill,
@@ -1548,7 +1515,7 @@ async def _update_skill_metadata_if_skills_md(
 ) -> None:
     """如果目标文件是 SKILL.md，则解析并更新元数据"""
     if target.name == "SKILL.md" and target.parent == skill_dir:
-        parsed_slug, parsed_name, parsed_desc, _ = _parse_skill_markdown(content)
+        parsed_slug, parsed_name, parsed_desc, _ = parse_skill_markdown(content)
         if parsed_slug != item.slug:
             raise ValueError("SKILL.md frontmatter.slug 必须与 skill slug 一致")
         repo = SkillRepository(db)
@@ -1562,7 +1529,7 @@ async def delete_skill_node(
     relative_path: str,
     operator: User,
 ) -> None:
-    item = await get_manageable_skill_or_raise(db, operator, slug)
+    item = await get_manageable_skill_or_raise(db, operator, slug, for_update=True)
     if is_builtin_skill(item):
         raise ValueError("内置 skill 不允许直接修改文件")
     skill_dir = _resolve_skill_dir(item)
@@ -1684,7 +1651,7 @@ def list_builtin_skill_specs() -> list[dict[str, Any]]:
             raise ValueError(f"内置 skill 缺少 SKILL.md: {source_dir}")
 
         content = skill_md.read_text(encoding="utf-8")
-        parsed_slug, parsed_name, parsed_desc, meta = _parse_skill_markdown(content)
+        parsed_slug, parsed_name, parsed_desc, meta = parse_skill_markdown(content)
         if parsed_slug != slug:
             raise ValueError(f"内置 skill frontmatter.slug 必须等于 slug: {slug}")
 

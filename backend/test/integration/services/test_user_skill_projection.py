@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import delete, select, text, update
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.agents.skills import service as skill_service
@@ -118,6 +119,28 @@ async def test_projection_refresh_waits_for_lock_then_reloads_revoked_authorizat
         projection = skill_service.get_user_skills_root_dir(uid)
         assert (projection / slug / "SKILL.md").is_file()
 
+        source_file = source_dir / "SKILL.md"
+        async with session_factory() as edit_db:
+            await edit_db.execute(select(Skill).where(Skill.id == skill_id).with_for_update())
+            source_file.write_text("# uncommitted\n", encoding="utf-8")
+            try:
+                refresh_task = asyncio.create_task(skill_service.refresh_user_skill_projection_async(uid))
+                await asyncio.sleep(0.2)
+                assert not refresh_task.done(), "投影不得读取尚未提交的 Skill 文件"
+                assert (projection / slug / "SKILL.md").read_text(encoding="utf-8") == "# authorized\n"
+            finally:
+                source_file.write_text("# authorized\n", encoding="utf-8")
+                await edit_db.rollback()
+
+        await asyncio.wait_for(refresh_task, timeout=5)
+        assert (projection / slug / "SKILL.md").read_text(encoding="utf-8") == "# authorized\n"
+
+        async with session_factory() as db:
+            await db.execute(update(Skill).where(Skill.id == skill_id).values(enabled=False))
+            await db.commit()
+        await skill_service.refresh_user_skill_projection_async(uid)
+        assert not (projection / slug).exists()
+
         async with session_factory() as lock_db:
             await lock_db.execute(
                 text("SELECT pg_advisory_xact_lock(hashtext(:lock_scope))"),
@@ -132,32 +155,45 @@ async def test_projection_refresh_waits_for_lock_then_reloads_revoked_authorizat
                     )
                 )
             ).one()
-            refresh_task = asyncio.create_task(skill_service.refresh_user_skill_projection_async(uid))
+            try:
+                refresh_task = asyncio.create_task(skill_service.refresh_user_skill_projection_async(uid))
+                assert await _wait_for_advisory_waiter(session_factory, lock_identity)
+                async with session_factory() as checker:
+                    await checker.execute(text("SET LOCAL lock_timeout = '200ms'"))
+                    with pytest.raises(DBAPIError, match="lock timeout"):
+                        await checker.execute(select(Skill).where(Skill.id == skill_id).with_for_update())
+                    await checker.rollback()
+            finally:
+                await lock_db.commit()
 
-            assert await _wait_for_advisory_waiter(session_factory, lock_identity), (
-                "refresh did not wait on the expected PostgreSQL advisory lock"
-            )
-            assert not refresh_task.done()
+        await asyncio.wait_for(refresh_task, timeout=5)
+        async with session_factory() as db:
+            await db.execute(update(Skill).where(Skill.id == skill_id).values(enabled=True))
+            await db.commit()
+        await skill_service.refresh_user_skill_projection_async(uid)
+        assert (projection / slug / "SKILL.md").is_file()
 
-            async with session_factory() as revoke_db:
-                await revoke_db.execute(
-                    update(Skill)
-                    .where(Skill.id == skill_id)
-                    .values(
-                        share_config={
-                            "version": 2,
-                            "read_scope": {
-                                "access_level": "user",
-                                "department_ids": [],
-                                "user_uids": ["different-user"],
-                            },
-                            "manage_scope": None,
-                        }
-                    )
+        async with session_factory() as policy_db:
+            await policy_db.execute(
+                update(Skill)
+                .where(Skill.id == skill_id)
+                .values(
+                    share_config={
+                        "version": 2,
+                        "read_scope": {
+                            "access_level": "user",
+                            "department_ids": [],
+                            "user_uids": ["different-user"],
+                        },
+                        "manage_scope": None,
+                    }
                 )
-                await revoke_db.commit()
-
-            await lock_db.commit()
+            )
+            refresh_task = asyncio.create_task(skill_service.refresh_user_skill_projection_async(uid))
+            await asyncio.sleep(0.2)
+            assert not refresh_task.done()
+            policy_task = asyncio.create_task(skill_service.apply_skill_projection_policy_change(policy_db, slug))
+            await asyncio.wait_for(policy_task, timeout=5)
 
         refreshed_sources = await asyncio.wait_for(refresh_task, timeout=5)
         assert slug not in refreshed_sources
