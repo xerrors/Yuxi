@@ -369,7 +369,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['update:modelValue', 'send', 'keydown', 'paste-image', 'drop-files'])
+const emit = defineEmits(['update:modelValue', 'send', 'keydown', 'paste-images', 'drop-files'])
 const slots = useSlots()
 
 // @ 提及功能是否启用
@@ -1055,16 +1055,23 @@ const hasTransferFiles = (dataTransfer) =>
 
 const canAcceptUploadFiles = () => props.fileUploadEnabled && !props.disabled && !props.isLoading
 
-const getImageFileFromClipboard = (clipboardData) => {
-  const items = Array.from(clipboardData?.items || [])
-  for (const item of items) {
+/** 剪贴板里的全部图片：一次粘多张时不能只留第一张。 */
+const getImageFilesFromClipboard = (clipboardData) => {
+  const files = []
+  for (const item of Array.from(clipboardData?.items || [])) {
     if (item.kind === 'file' && item.type?.startsWith('image/')) {
       const file = item.getAsFile()
-      if (file) return file
+      if (file) files.push(file)
     }
   }
 
-  return Array.from(clipboardData?.files || []).find((file) => file.type?.startsWith('image/'))
+  for (const file of Array.from(clipboardData?.files || [])) {
+    if (file.type?.startsWith('image/') && !files.includes(file)) {
+      files.push(file)
+    }
+  }
+
+  return files
 }
 
 const handleMentionDeletion = (e) => {
@@ -1154,10 +1161,10 @@ const handleInput = () => {
 const handlePaste = (e) => {
   if (props.disabled) return
 
-  const imageFile = canAcceptUploadFiles() ? getImageFileFromClipboard(e.clipboardData) : null
-  if (imageFile) {
+  const imageFiles = canAcceptUploadFiles() ? getImageFilesFromClipboard(e.clipboardData) : []
+  if (imageFiles.length) {
     e.preventDefault()
-    emit('paste-image', imageFile)
+    emit('paste-images', imageFiles)
     return
   }
 

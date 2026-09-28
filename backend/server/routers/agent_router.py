@@ -72,7 +72,9 @@ class AgentRunCreate(BaseModel):
     agent_slug: str = Field(..., description="智能体 slug")
     thread_id: str = Field(..., description="会话线程 ID")
     meta: dict = Field(default_factory=dict, description="可选，请求追踪信息，例如 request_id")
-    image_content: str | None = Field(None, description="可选，base64 图片内容")
+    image_content: str | list[str] | None = Field(
+        None, description="可选，base64 图片内容：单张传字符串，多张传数组（最多 10 张）"
+    )
     model_spec: str | None = Field(None, description="可选，对话级模型覆盖，优先级高于智能体配置")
     tool_approval_mode: str | None = Field(None, description="可选，本次运行的工具审批模式覆盖")
     resume: Any | None = Field(None, description="可选，恢复时传给 LangGraph 的输入载荷，非布尔值")
@@ -315,7 +317,10 @@ async def create_agent_run(
     request_id = meta.get("request_id") or str(uuid.uuid4())
     meta["request_id"] = request_id
 
-    input_message = build_chat_input_message(payload.query or "", payload.image_content)
+    try:
+        input_message = build_chat_input_message(payload.query or "", payload.image_content)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     return await submit_agent_request(
         request_input=AgentRequestInput(

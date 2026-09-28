@@ -73,7 +73,7 @@ class FakeAgentClient:
                         "model": "openai:gpt-5",
                         "skills": ["deep-research"],
                         "tools": ["web_search", "read_file"],
-                        "mcps": [],
+                        "mcps": None,
                         "subagents": [],
                         "system_prompt": "先核验证据。\n再给结论。",
                         "max_execution_steps": 100,

@@ -207,7 +207,7 @@
           <div class="config-section-header extension-detail-section-header">
             <div class="text extension-detail-section-heading">
               <h3>运行依赖</h3>
-              <p>声明运行时需一并加载的工具、MCP 与其他 Skill。</p>
+              <p>声明所需依赖；MCP 服务在此 Skill 激活后按需加载。</p>
             </div>
             <a-button
               v-if="canEditSkillDependencies"

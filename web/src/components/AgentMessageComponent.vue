@@ -1,14 +1,11 @@
 <template>
-  <div v-if="message.type === 'human' && message.image_content" class="message-image">
+  <div v-if="message.type === 'human' && messageImages.length" class="message-image">
     <img
-      :src="`data:${messageImageMimeType};base64,${message.image_content}`"
+      v-for="(image, index) in messageImages"
+      :key="index"
+      :src="`data:${image.mimeType};base64,${image.content}`"
       alt="用户上传的图片"
-      @click="
-        openImagePreview(
-          `data:${messageImageMimeType};base64,${message.image_content}`,
-          '用户上传的图片'
-        )
-      "
+      @click="openImagePreview(`data:${image.mimeType};base64,${image.content}`, '用户上传的图片')"
     />
   </div>
   <div
@@ -288,9 +285,16 @@ const { availableKnowledgeBases } = storeToRefs(agentStore)
 const messageAttachments = computed(() =>
   normalizeAttachmentPreviews(props.message.extra_metadata?.attachments)
 )
-const messageImageMimeType = computed(
-  () => inferImageMimeTypeFromBase64(props.message.image_content) || 'image/jpeg'
-)
+// 后端投影的 image_contents 是权威；更早的响应可能只有单值 image_content，兜底成单元素。
+const messageImages = computed(() => {
+  const contents = props.message.image_contents?.length
+    ? props.message.image_contents
+    : [props.message.image_content].filter(Boolean)
+  return contents.map((content) => ({
+    content,
+    mimeType: inferImageMimeTypeFromBase64(content) || 'image/jpeg'
+  }))
+})
 
 const mentionDisplayLabels = computed(() => buildMentionDisplayLabels(props.mention || {}))
 
@@ -574,17 +578,20 @@ const parsedData = computed(() => {
 
 // 多模态消息样式
 .message-image {
-  border-radius: 12px;
-  overflow: hidden;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: flex-start;
+  gap: 6px;
   margin-left: auto;
-  /* max-height: 200px; */
-  border: 1px solid rgba(255, 255, 255, 0.2);
 
   img {
     max-width: 100%;
     max-height: 200px;
     object-fit: contain;
     cursor: pointer;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
   }
 }
 

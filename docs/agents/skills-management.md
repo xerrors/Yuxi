@@ -1,6 +1,6 @@
 # 管理 Skills
 
-Skill 是一个可复用的能力包，通常包含一个 `SKILL.md`、提示词、参考资料和可选脚本。智能体先看到 Skill 的描述，再按需要读取 `SKILL.md`；Skill 声明的工具和 MCP 依赖会随激活状态加入模型请求。
+Skill 是一个可复用的能力包，通常包含一个 `SKILL.md`、提示词、参考资料和可选脚本。智能体先看到 Skill 的描述，再按需要读取 `SKILL.md`；本地工具和 MCP 依赖随 Skill 激活进入模型请求。
 
 ## 什么时候用 Skill
 
@@ -116,19 +116,19 @@ API/worker 启动时同步文件、元数据和依赖，保留数据库中的启
 
 ## 依赖和加载时机
 
-系统先根据当前用户权限和 Agent 的 `skills` 配置得到有效 Skill 集合，再展开 `skill_dependencies`。依赖链会进入 Skill 描述范围，但依赖工具和 MCP 不会因此全部立刻暴露。
+系统先根据当前用户权限和 Agent 的 `skills` 配置得到有效 Skill 集合，再展开 `skill_dependencies`。依赖链会进入 Skill 描述范围；本地工具和 `mcp_dependencies` 声明的 MCP 服务器在 Skill 激活后按需加载。MCP 服务器仍须由管理员启用；Agent 的 `mcps` 字段只控制直接添加的服务器。
 
 ### 普通渐进加载
 
 1. 创建 Graph 前，模型得到有效 Skill 的名称、描述和 `SKILL.md` 路径。
 2. 模型读取某个可见 Skill 的 `SKILL.md` 后，该 Skill 进入 `activated_skills`。
-3. 后续模型请求加入它声明的本地工具和 MCP 工具。
+3. 后续模型请求加入它声明的本地工具，并加载已启用的 MCP 依赖服务器提供的工具。
 
-模型没有读取的 Skill 依赖继续隐藏。未激活的 Skill 工具即使已注册到 ToolNode，也不能被模型调用。
+模型没有读取的 Skill 的依赖工具继续隐藏。未激活的 Skill 本地工具即使已注册到 ToolNode，也不能被模型调用。
 
 ### 预加载
 
-Agent 配置可以用 `preload_skills` 指定少量需要从首轮就可用的 Skill。预加载项必须属于 `skills` 中当前用户可访问的 Skill；系统会展开其依赖闭包，读取根级 `SKILL.md`，并从首轮模型请求开放依赖。
+Agent 配置可以用 `preload_skills` 指定少量需要从首轮就可用的 Skill。预加载项必须属于 `skills` 中当前用户可访问的 Skill；系统会展开其依赖闭包，读取根级 `SKILL.md`，并从首轮模型请求开放本地工具和已启用的 MCP 依赖。
 
 预加载的根文件缺失或不可读时，Graph 创建会明确失败，不会静默退回渐进加载。默认值为空，适合大多数 Skill。
 

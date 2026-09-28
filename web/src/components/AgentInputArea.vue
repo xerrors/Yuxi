@@ -18,17 +18,32 @@
       :show-options-left="showInputOptions"
       @send="handleSend"
       @keydown="handleKeyDown"
-      @paste-image="handlePastedImage"
+      @paste-images="handlePastedImages"
       @drop-files="handleDroppedFiles"
     >
       <template #top>
-        <div v-if="currentImage || previewAttachments.length" class="input-top-stack">
-          <ImagePreviewComponent
-            v-if="currentImage"
-            :image-data="currentImage"
-            @remove="handleImageRemoved"
-            class="image-preview-wrapper"
-          />
+        <div v-if="currentImages.length || previewAttachments.length" class="input-top-stack">
+          <div v-if="currentImages.length" class="image-preview-list">
+            <template v-for="(image, index) in currentImages" :key="image.localId">
+              <div v-if="image.status === 'uploading'" class="image-preview-wrapper image-uploading-tile">
+                <span class="image-uploading-text">上传中…</span>
+                <button
+                  class="image-uploading-remove"
+                  type="button"
+                  aria-label="移除上传中的图片"
+                  @click.stop="handleImageRemoved(index)"
+                >
+                  <X :size="14" />
+                </button>
+              </div>
+              <ImagePreviewComponent
+                v-else
+                :image-data="image"
+                @remove="handleImageRemoved(index)"
+                class="image-preview-wrapper"
+              />
+            </template>
+          </div>
 
           <div v-if="previewAttachments.length" class="attachment-preview-list">
             <div
@@ -63,8 +78,7 @@
           :file-upload-enabled="supportsFileUpload"
           :mention="mention"
           @upload="handleAttachmentUpload"
-          @upload-image="handleImageUpload"
-          @upload-image-success="handleImageUploadSuccess"
+          @upload-image-files="handleImageFilesSelected"
           @select-mention="handleMentionSelect"
         />
       </template>
@@ -84,12 +98,22 @@
 
 <script setup>
 import { computed, ref } from 'vue'
+import { message } from 'ant-design-vue'
 import MessageInputComponent from '@/components/MessageInputComponent.vue'
 import ImagePreviewComponent from '@/components/ImagePreviewComponent.vue'
 import AttachmentOptionsComponent from '@/components/AttachmentOptionsComponent.vue'
 import { X } from '@lucide/vue'
 import { normalizeAttachmentPreviews } from '@/utils/file_utils'
 import { uploadMultimodalImage } from '@/utils/multimodal_image_upload'
+import {
+  MAX_MULTIMODAL_IMAGES,
+  MAX_MULTIMODAL_TOTAL_BASE64_BYTES,
+  isWithinBase64Budget,
+  removeUploadedImage,
+  reserveImageSlots,
+  settleUploadedImage,
+  splitDroppedFiles
+} from '@/utils/multimodal_image_limits'
 import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
 
 const props = defineProps({
@@ -116,7 +140,10 @@ const emit = defineEmits([
 ])
 
 const inputRef = ref(null)
-const currentImage = ref(null)
+// 按选择顺序保存上传占位和成功结果，上传中的项也占用名额。
+const currentImages = ref([])
+let localIdSeed = 0
+const nextLocalId = () => `image-${(localIdSeed += 1)}`
 const placeholder = '问点什么？使用 @ 可以选择文件、知识库或技能进行引用。'
 
 const previewAttachments = computed(() => normalizeAttachmentPreviews(props.attachments))
@@ -135,31 +162,57 @@ const handleAttachmentUpload = (files = []) => {
   emit('upload-attachment', files)
 }
 
-const handleImageUpload = (imageData) => {
-  if (imageData && imageData.success) {
-    currentImage.value = imageData
+/** 并行上传一批图片文件，成功的逐张进列表。 */
+const uploadImageFiles = async (files = []) => {
+  const { images } = splitDroppedFiles(files)
+  if (!images.length) return
+
+  // 选图即按顺序占位：上传中的项计入张数上限（两批并发选图不会超限），
+  // 占位顺序即最终顺序，上传完成只回填对应项，不按完成先后追加。
+  const { accepted, placeholders, rejected } = reserveImageSlots(currentImages.value, images, {
+    nextId: () => nextLocalId()
+  })
+  if (rejected > 0) {
+    message.error(`最多添加 ${MAX_MULTIMODAL_IMAGES} 张图片，超出的未添加`)
   }
+  currentImages.value.push(...placeholders)
+
+  await Promise.all(
+    accepted.map(async (file, index) => {
+      const { localId } = placeholders[index]
+      // 失败按张分 key：多张同时失败时每条都看得见，而不是只剩最后一条
+      const imageData = await uploadMultimodalImage(file, `image-upload-${localId}`)
+      if (imageData?.success) {
+        // 等待期间用户移除了该项时返回 null，上传结果直接丢弃
+        settleUploadedImage(currentImages.value, localId, imageData)
+      } else {
+        removeUploadedImage(currentImages.value, localId)
+      }
+    })
+  )
 }
 
-const handlePastedImage = async (file) => {
+/** 菜单选图：关掉选项面板后与粘贴/拖拽同路。 */
+const handleImageFilesSelected = (files = []) => {
+  inputRef.value?.closeOptions()
+  uploadImageFiles(files)
+}
+
+/** 粘贴：载荷是剪贴板里的全部图片（原先只取第一张）。 */
+const handlePastedImages = async (files = []) => {
   if (props.disabled || !props.supportsFileUpload) return
-
-  try {
-    const imageData = await uploadMultimodalImage(file)
-    handleImageUpload(imageData)
-  } catch (error) {
-    console.error('图片上传失败:', error)
-  }
+  await uploadImageFiles(files)
 }
 
+/** 拖拽分流：图片走多模态直读；其它文件仍走附件通道（图片的 OCR 入口在「添加附件」菜单）。 */
 const handleDroppedFiles = (files = []) => {
   if (props.disabled || !props.supportsFileUpload || !files.length) return
-  handleAttachmentUpload(files)
-}
-
-const handleImageUploadSuccess = () => {
-  if (inputRef.value) {
-    inputRef.value.closeOptions()
+  const { images, others } = splitDroppedFiles(files)
+  if (images.length) {
+    uploadImageFiles(images)
+  }
+  if (others.length) {
+    handleAttachmentUpload(others)
   }
 }
 
@@ -168,14 +221,14 @@ const handleMentionSelect = (item) => {
   inputRef.value?.closeOptions()
 }
 
-const handleImageRemoved = () => {
-  currentImage.value = null
+const handleImageRemoved = (index) => {
+  currentImages.value.splice(index, 1)
 }
 
 // 发送被后端拒绝时把旧图片恢复到输入区，覆盖等待期间可能新选的图片，
 // 避免旧图片被悄悄丢弃；用户可重新选择新图片。
-const restoreImage = (image) => {
-  currentImage.value = image || null
+const restoreImages = (images = []) => {
+  currentImages.value = images.map((image) => ({ ...image, localId: nextLocalId() }))
 }
 
 const handleAttachmentRemoved = (attachment) => {
@@ -183,8 +236,20 @@ const handleAttachmentRemoved = (attachment) => {
 }
 
 const handleSend = () => {
-  emit('send', { image: currentImage.value })
-  currentImage.value = null
+  if (currentImages.value.some((image) => image.status === 'uploading')) {
+    // 占位中的图还没有 base64，此时发送等于丢图；等上传完再发。
+    message.warning('图片还在上传中，请稍候再发送')
+    return
+  }
+  if (currentImages.value.length && !isWithinBase64Budget(currentImages.value)) {
+    // 请求体是内联 base64，体积上限由网关与后端共同决定；超了就地拦下，不发请求。
+    const limitMb = Math.round(MAX_MULTIMODAL_TOTAL_BASE64_BYTES / (1024 * 1024))
+    message.error(`图片总大小超出单次请求上限（约 ${limitMb}MB），请减少张数或改用更小的图片`)
+    return
+  }
+
+  emit('send', { images: [...currentImages.value] })
+  currentImages.value = []
 }
 
 const handleKeyDown = (e) => {
@@ -203,7 +268,7 @@ const handleKeyDown = (e) => {
 defineExpose({
   focus: () => inputRef.value?.focus(),
   closeOptions: () => inputRef.value?.closeOptions(),
-  restoreImage
+  restoreImages
 })
 </script>
 
@@ -248,6 +313,46 @@ defineExpose({
   flex-direction: column;
   gap: 8px;
   margin-bottom: 8px;
+}
+
+.image-preview-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 上传占位卡：与 ImagePreviewComponent 的 80x80 预览同尺寸，虚线边框区分等待态 */
+.image-uploading-tile {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  border: 1px dashed var(--gray-200);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.image-uploading-text {
+  font-size: 12px;
+  color: var(--gray-600); /* 调和中灰，适合次要文本 */
+}
+
+.image-uploading-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  background: var(--primary-purple, #6b4fd8);
+  color: #fff;
 }
 
 .attachment-preview-list {

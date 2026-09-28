@@ -212,6 +212,11 @@ jobs:
             buildkit-minio-${{ runner.os }}-
       - name: Build topology images with cached layers
         run: bash scripts/ci_build_topology_images.sh /tmp/yuxi-buildkit-cache/api /tmp/yuxi-buildkit-cache/sandbox-provisioner /tmp/yuxi-buildkit-cache/minio
+      # 冷 runner 的镜像下载属于环境准备，不能消耗单个 Run 的执行预算。
+      - name: Pull sandbox runtime image before timed E2E runs
+        run: |
+          sandbox_runtime_image=$(docker compose config --format json | python3 -c 'import json, sys; print(json.load(sys.stdin)["services"]["sandbox-provisioner"]["environment"]["SANDBOX_IMAGE"])')
+          docker pull "$sandbox_runtime_image"
       - name: Start focused runtime topology
         run: docker compose up -d postgres redis minio sandbox-provisioner api worker
       - name: Wait for truthful readiness

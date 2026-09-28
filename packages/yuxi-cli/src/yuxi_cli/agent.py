@@ -118,7 +118,7 @@ def _render_agent_detail(data: dict, console: Console, *, as_json: bool) -> None
     details.add_row("Model", _text(context.get("model"), default="系统默认"))
     details.add_row("Skills", _selection(context.get("skills")))
     details.add_row("Tools", _selection(context.get("tools")))
-    details.add_row("MCP servers", _selection(context.get("mcps")))
+    details.add_row("MCP servers", _selection(context.get("mcps") or []))
     details.add_row("Knowledge bases", _selection(context.get("knowledges")))
     details.add_row(
         "Subagents",

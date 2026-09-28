@@ -1072,3 +1072,112 @@ test('接入未完成的发送项只展示，不订阅或取消尚未持久化�
       originals
   }
 })
+
+for (const images of [['A'], ['A', 'B']]) {
+  test(`排队消息经过同步、派发和 init 后保留 ${images.length} 张图片及附件`, async () => {
+    const message = {
+      id: 'request-images',
+      type: 'human',
+      request_id: 'request-images',
+      content: '比较图片',
+      image_contents: images,
+      image_content: images[0],
+      message_type: 'multimodal_image',
+      extra_metadata: { attachments: [{ file_id: 'attachment-1' }] }
+    }
+    const threadState = {
+      queuedRequests: [{ request_id: 'request-images', status: 'sending', message }],
+      requestStreams: {},
+      onGoingConv: { msgChunks: {} }
+    }
+    const originals = [agentApi.listThreadQueuedRequests, agentApi.streamRequestEvents]
+    agentApi.listThreadQueuedRequests = async () => ({
+      requests: [{ request_id: 'request-images', status: 'queued', content: '比较图片', queue_position: 2 }]
+    })
+    agentApi.streamRequestEvents = async () =>
+      new Response('event: run_created\ndata: {"run_id":"run-images"}\n\n')
+    try {
+      const queue = useAgentRequestQueue({
+        getThreadState: () => threadState,
+        resetOnGoingConv: () => { threadState.onGoingConv = { msgChunks: {} } },
+        startRunStream: () => {}
+      })
+      await queue.syncQueuedRequests('thread-images', 'agent-1')
+      assert.equal(threadState.queuedRequests[0].status, 'queued')
+      assert.equal(threadState.queuedRequests[0].queue_position, 2)
+      await queue.startRequestStream('thread-images', 'request-images')
+      const [dispatched] = threadState.onGoingConv.msgChunks['request-images']
+      assert.deepEqual(dispatched.image_contents, images)
+      assert.deepEqual(dispatched.extra_metadata.attachments, [{ file_id: 'attachment-1' }])
+      assert.deepEqual(threadState.queuedRequests, [])
+      const { handleStreamChunk } = useAgentStreamHandler({ getThreadState: () => threadState })
+      handleStreamChunk({
+        status: 'init', request_id: 'request-images',
+        msg: { id: 'persisted-id', type: 'human', content: '比较图片' }
+      }, 'thread-images')
+      const [initialized] = threadState.onGoingConv.msgChunks['request-images']
+      assert.equal(initialized.id, 'persisted-id')
+      assert.deepEqual(initialized.image_contents, images)
+    } finally {
+      ;[agentApi.listThreadQueuedRequests, agentApi.streamRequestEvents] = originals
+    }
+  })
+}
+
+test('取消排队请求释放其本地用户消息，不影响其他请求', async () => {
+  const threadState = {
+    queuedRequests: [
+      { request_id: 'cancelled', status: 'queued', message: { image_contents: ['A'] } },
+      { request_id: 'remaining', status: 'queued', message: { image_contents: ['B'] } }
+    ],
+    requestStreams: {},
+    onGoingConv: { msgChunks: {} }
+  }
+  const original = agentApi.cancelRequest
+  agentApi.cancelRequest = async () => ({})
+  try {
+    const queue = useAgentRequestQueue({ getThreadState: () => threadState })
+    assert.equal(await queue.cancelRequest('thread-1', 'cancelled'), true)
+    assert.deepEqual(threadState.queuedRequests.map((request) => request.message.image_contents), [['B']])
+  } finally {
+    agentApi.cancelRequest = original
+  }
+})
+
+for (const action of ['resumeQueuedRequests', 'continueQueue', 'steerRequest']) {
+  test(`${action} 在派发后的空快照到达时保留请求消息直到 run_created`, async () => {
+    const message = { type: 'human', content: '图片', image_contents: ['A', 'B'] }
+    const threadState = {
+      queuedRequests: [{ request_id: 'images', status: 'queued', message }],
+      requestStreams: {}, onGoingConv: { msgChunks: {} }
+    }
+    const originals = [agentApi.listThreadQueuedRequests, agentApi.streamRequestEvents,
+      agentApi.continueThreadQueue, agentApi.steerRequest]
+    let controller
+    const dispatched = Promise.withResolvers()
+    agentApi.listThreadQueuedRequests = async () => ({ requests: [] })
+    agentApi.streamRequestEvents = async () => new Response(new ReadableStream({
+      start(value) { controller = value }
+    }))
+    agentApi.continueThreadQueue = async () => ({ request_id: 'images' })
+    agentApi.steerRequest = async () => ({})
+    try {
+      const queue = useAgentRequestQueue({
+        getThreadState: () => threadState,
+        resetOnGoingConv: () => { threadState.onGoingConv = { msgChunks: {} } },
+        startRunStream: () => dispatched.resolve()
+      })
+      await queue[action]('thread', 'agent', 'images')
+      assert.deepEqual(threadState.queuedRequests, [])
+      assert.ok(controller, '同步前必须订阅已接入的本地请求')
+      controller.enqueue(new TextEncoder().encode('event: run_created\ndata: {"run_id":"run-images"}\n\n'))
+      controller.close()
+      await dispatched.promise
+      assert.deepEqual(threadState.onGoingConv.msgChunks.images[0].image_contents, ['A', 'B'])
+      assert.equal(threadState.requestStreams.images, undefined)
+    } finally {
+      ;[agentApi.listThreadQueuedRequests, agentApi.streamRequestEvents,
+        agentApi.continueThreadQueue, agentApi.steerRequest] = originals
+    }
+  })
+}

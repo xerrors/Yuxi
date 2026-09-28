@@ -240,13 +240,14 @@ class BaseContext:
         },
     )
 
-    mcps: list[str] | None = field(
-        default=None,
+    mcps: list[str] = field(
+        default_factory=list,
         metadata={
             "name": "MCP服务器",
             "options": [],
             "description": (
-                "MCP服务器列表，默认选择当前用户可用的全部 MCP 服务器。建议使用支持 SSE 的 MCP 服务器，"
+                "选择要直接添加到智能体的 MCP 服务器；默认不直接加载，Skill 激活后仍可加载其依赖。"
+                "建议使用支持 SSE 的 MCP 服务器，"
                 "如果需要使用 uvx 或 npx 运行的服务器，也请在项目外部启动 MCP 服务器，并在项目中配置 MCP 服务器。"
             ),
             "type": "list",
@@ -260,7 +261,7 @@ class BaseContext:
             "name": "Skills",
             "options": [],
             "description": "可选 Skill 拓展列表，默认选择当前用户可用的全部 Skill 拓展。"
-            "Skill 拓展依赖的工具和 MCP 服务器也会被自动挂载。",
+            "Skill 的本地工具和 MCP 依赖在激活后开放；预加载 Skill 从首轮开放依赖。",
             "type": "list",
             "kind": "skills",
         },
@@ -394,9 +395,9 @@ class BaseContext:
             return str(field_type)
 
 
-_DEFAULT_ALL_CONTEXT_FIELDS = frozenset({"tools", "knowledges", "mcps", "skills"})
+_DEFAULT_ALL_CONTEXT_FIELDS = frozenset({"tools", "knowledges", "skills"})
 _EMPTY_ALL_CONTEXT_FIELDS = frozenset({"subagents"})
-AGENT_RUNTIME_RESOURCE_FIELDS = _DEFAULT_ALL_CONTEXT_FIELDS | _EMPTY_ALL_CONTEXT_FIELDS
+AGENT_RUNTIME_RESOURCE_FIELDS = _DEFAULT_ALL_CONTEXT_FIELDS | _EMPTY_ALL_CONTEXT_FIELDS | {"mcps"}
 
 
 def _normalize_selected_resource_keys(value: Any, available: list[str]) -> list[str]:

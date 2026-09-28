@@ -3,7 +3,7 @@ import { multimodalApi } from '@/apis/agent_api'
 
 const MAX_IMAGE_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024
 
-export const uploadMultimodalImage = async (file) => {
+export const uploadMultimodalImage = async (file, errorKey = 'image-upload') => {
   if (!file) return null
 
   if (file.size > MAX_IMAGE_UPLOAD_SIZE_BYTES) {
@@ -17,13 +17,15 @@ export const uploadMultimodalImage = async (file) => {
   }
 
   try {
+    // 加载与成功共用一个 key：多张并发时只留一条进度提示，不必刷屏。
+    // 失败必须按张分 key，否则多张同时失败只会看见最后一条错误。
     message.loading({ content: '正在处理图片...', key: 'image-upload' })
 
     const result = await multimodalApi.uploadImage(file)
     if (!result.success) {
       message.error({
         content: `图片处理失败: ${result.error}`,
-        key: 'image-upload'
+        key: errorKey
       })
       return null
     }
@@ -49,7 +51,7 @@ export const uploadMultimodalImage = async (file) => {
     console.error('图片上传失败:', error)
     message.error({
       content: `图片上传失败: ${error.message || '未知错误'}`,
-      key: 'image-upload'
+      key: errorKey
     })
     return null
   }

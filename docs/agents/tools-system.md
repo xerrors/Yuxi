@@ -88,7 +88,7 @@ Agent 配置 + 用户权限
 
 ## MCP 和 Skills
 
-MCP 工具由已启用的 MCP 服务器提供，服务器配置和工具禁用列表由 MCP 管理链路读取。Skills 可以声明本地工具、MCP 和其他 Skill 依赖：预加载 Skill 从首轮开放依赖，普通 Skill 在读取 `SKILL.md` 激活后开放依赖。
+MCP 工具可由 Agent 直接选择的已启用服务器提供，也可由已激活 Skill 的 `mcp_dependencies` 按需加载；服务器配置和工具禁用列表由 MCP 管理链路读取。预加载 Skill 从首轮开放本地工具和 MCP 依赖，普通 Skill 在读取 `SKILL.md` 激活后开放这些依赖。
 
 - 工具实现放在 `toolkits`；
 - Skill 的使用说明和依赖放在 Skill 目录；

@@ -17,6 +17,92 @@ from yuxi.storage.postgres.models_business import User
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 
+async def test_mcp_selection_requires_explicit_agent_config(test_client, admin_headers):
+    """真实保存与运行边界只启用 Agent 显式选择的 MCP。"""
+    suffix = uuid.uuid4().hex[:10]
+    agent_slug = f"pytest-mcp-selection-agent-{suffix}"
+    mcp_slug = f"pytest-mcp-selection-{suffix}"
+    mcp_path = f"/api/system/mcp-servers/{mcp_slug}"
+    agent_path = f"/api/agent/{agent_slug}"
+    conn = await asyncpg.connect(os.environ["POSTGRES_URL"].replace("+asyncpg", ""))
+    engine = create_async_engine(os.environ["POSTGRES_URL"])
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    created_mcp = False
+    created_agent = False
+    try:
+        response = await test_client.post(
+            "/api/system/mcp-servers",
+            headers=admin_headers,
+            json={
+                "slug": mcp_slug,
+                "name": "Pytest MCP selection",
+                "transport": "streamable_http",
+                "url": "http://127.0.0.1:1/mcp",
+            },
+        )
+        assert response.status_code == 200, response.text
+        created_mcp = True
+        response = await test_client.put(mcp_path + "/status", headers=admin_headers, json={"enabled": True})
+        assert response.status_code == 200, response.text
+        assert bool(await conn.fetchval("SELECT enabled FROM mcp_servers WHERE slug = $1", mcp_slug))
+
+        response = await test_client.post(
+            "/api/agent",
+            headers=admin_headers,
+            json={
+                "name": "Pytest MCP selection agent",
+                "slug": agent_slug,
+                "backend_id": "ChatbotAgent",
+                "config_json": {"context": {}},
+            },
+        )
+        assert response.status_code == 200, response.text
+        created_agent = True
+
+        current_admin = await test_client.get("/api/auth/me", headers=admin_headers)
+        assert current_admin.status_code == 200, current_admin.text
+        owner_uid = str(current_admin.json()["uid"])
+        async with session_factory() as db:
+            owner = await db.scalar(select(User).where(User.uid == owner_uid))
+            assert owner is not None
+            persisted = (await _read_agent_config(conn, agent_slug))["context"]
+            assert "mcps" not in persisted
+            normalized = await normalize_agent_context_config(
+                persisted, db=db, user=owner, context_schema=ChatBotContext
+            )
+            assert normalized["mcps"] == []
+            for saved_value, expected in ((None, []), ([], []), ([mcp_slug], [mcp_slug])):
+                response = await test_client.put(
+                    agent_path,
+                    headers=admin_headers,
+                    json={"config_json": {"context": {"mcps": saved_value}}},
+                )
+                assert response.status_code == 200, response.text
+                persisted = (await _read_agent_config(conn, agent_slug))["context"]
+                assert persisted.get("mcps") == saved_value
+                normalized = await normalize_agent_context_config(
+                    persisted, db=db, user=owner, context_schema=ChatBotContext
+                )
+                assert normalized["mcps"] == expected
+
+            response = await test_client.put(mcp_path + "/status", headers=admin_headers, json={"enabled": False})
+            assert response.status_code == 200, response.text
+            persisted = (await _read_agent_config(conn, agent_slug))["context"]
+            normalized = await normalize_agent_context_config(
+                persisted, db=db, user=owner, context_schema=ChatBotContext
+            )
+            assert normalized["mcps"] == []
+    finally:
+        if created_agent:
+            response = await test_client.delete(agent_path, headers=admin_headers)
+            assert response.status_code in {200, 404}, response.text
+        if created_mcp:
+            response = await test_client.delete(mcp_path, headers=admin_headers)
+            assert response.status_code in {200, 404}, response.text
+        await engine.dispose()
+        await conn.close()
+
+
 async def test_admin_settings_are_readable_but_not_writable_by_delegated_user(
     test_client, admin_headers, standard_user
 ):

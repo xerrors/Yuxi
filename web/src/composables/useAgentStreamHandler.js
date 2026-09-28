@@ -121,9 +121,13 @@ export function useAgentStreamHandler({
               initMessage.run_id = resolvedRunId
               initMessage.extra_metadata.run_id = resolvedRunId
             }
-            if (localHumanMessage?.image_content && !initMessage.image_content) {
+            // 服务端 init 事件只带首图与布尔标记（重放裁剪刻意不含图片字段），
+            // 多图靠发送端本地这条乐观消息补齐。
+            const localImages = localHumanMessage?.image_contents || []
+            if (localImages.length && !initMessage.image_contents?.length) {
               initMessage.message_type = localHumanMessage.message_type || initMessage.message_type
-              initMessage.image_content = localHumanMessage.image_content
+              initMessage.image_contents = localImages
+              initMessage.image_content = localHumanMessage.image_content || localImages[0]
             }
             threadState.onGoingConv.msgChunks[resolvedRequestId] = [initMessage]
           }
