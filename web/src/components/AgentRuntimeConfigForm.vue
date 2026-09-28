@@ -497,14 +497,10 @@ const segmentConfigKeys = computed(() => {
   }
 })
 
-/** 资源为空时仍保留全部模式与清空操作，供用户决定后续新增资源的范围。 */
+/** 隐藏空资源分组；已有不可见选择仍保留清理入口。 */
 const hasSelectableOptions = (key, value) => {
   if (value?.type !== 'list') return true
-  return (
-    supportsAllAgentResources(configurableItems.value[key]) ||
-    getSelectionOptions(key, value).length > 0 ||
-    getHiddenSelection(key).length > 0
-  )
+  return getSelectionOptions(key, value).length > 0 || getHiddenSelection(key).length > 0
 }
 
 const filteredConfigurableItems = computed(() => {

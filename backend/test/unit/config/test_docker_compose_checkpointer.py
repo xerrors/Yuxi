@@ -130,8 +130,10 @@ def test_worker_healthcheck_uses_arq_health_contract_in_development_and_producti
         compose = yaml.safe_load((project_root / filename).read_text())
 
         assert compose["services"]["worker"]["healthcheck"]["test"] == [
-            "CMD-SHELL",
-            "uv run --no-sync --no-dev arq --check server.worker_main.WorkerSettings",
+            "CMD",
+            "python",
+            "-m",
+            "yuxi.services.worker_health",
         ]
 
 

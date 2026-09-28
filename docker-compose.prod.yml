@@ -126,7 +126,7 @@ services:
     command: uv run --no-sync --no-dev python -m server.worker_main
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "uv run --no-sync --no-dev arq --check server.worker_main.WorkerSettings"]
+      test: ["CMD", "python", "-m", "yuxi.services.worker_health"]
       interval: 10s
       timeout: 10s
       retries: 6
