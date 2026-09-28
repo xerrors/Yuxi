@@ -88,7 +88,7 @@ async def create_subagent_task_middleware(parent_context) -> YuxiSubAgentMiddlew
         str(slug).strip() for slug in (getattr(parent_context, "subagents", None) or []) if str(slug).strip()
     ]
     uid = str(getattr(parent_context, "uid", "") or "").strip()
-    if not uid:
+    if not uid or not selected_slugs:
         return None
 
     async with pg_manager.get_async_session_context() as db:
@@ -96,18 +96,11 @@ async def create_subagent_task_middleware(parent_context) -> YuxiSubAgentMiddlew
         if user is None:
             return None
         repo = AgentRepository(db)
-        if selected_slugs:
-            subagents: list[Agent] = []
-            seen: set[str] = set()
-            for slug in selected_slugs:
-                if slug in seen:
-                    continue
-                seen.add(slug)
-                agent = await repo.get_visible_by_slug(slug=slug, user=user, kind="subagent")
-                if agent:
-                    subagents.append(agent)
-        else:
-            subagents = await repo.list_visible_subagents(user=user)
+        subagents: list[Agent] = []
+        for slug in dict.fromkeys(selected_slugs):
+            agent = await repo.get_visible_by_slug(slug=slug, user=user, kind="subagent")
+            if agent:
+                subagents.append(agent)
 
     if not subagents:
         return None

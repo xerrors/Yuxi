@@ -126,11 +126,7 @@ class BaseAgent:
         if include_configurable_items:
             configurable_items = self.context_schema.get_configurable_items(user_role=user_role)
             if db is not None and user is not None:
-                resource_fields = {
-                    item["kind"]
-                    for item in configurable_items.values()
-                    if item.get("kind") in {"tools", "knowledges", "mcps", "skills", "subagents"}
-                }
+                resource_fields = {item["kind"] for item in configurable_items.values() if item.get("supports_all")}
                 resource_options = await resolve_agent_resource_options(resource_fields, db=db, user=user)
                 for item in configurable_items.values():
                     if item.get("kind") in resource_options:

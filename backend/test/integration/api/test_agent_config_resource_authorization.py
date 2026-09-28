@@ -71,7 +71,7 @@ async def test_mcp_selection_requires_explicit_agent_config(test_client, admin_h
                 persisted, db=db, user=owner, context_schema=ChatBotContext
             )
             assert normalized["mcps"] == []
-            for saved_value, expected in ((None, []), ([], []), ([mcp_slug], [mcp_slug])):
+            for saved_value, expected in (([], []), ([mcp_slug], [mcp_slug])):
                 response = await test_client.put(
                     agent_path,
                     headers=admin_headers,
@@ -382,3 +382,40 @@ async def _read_agent_config(conn, slug: str) -> dict:
     value = await conn.fetchval("SELECT config_json FROM agents WHERE slug = $1", slug)
     assert value is not None
     return json.loads(value) if isinstance(value, str) else value
+
+
+async def test_resource_selection_protocol_persists_intent_and_rejects_invalid_values(test_client, admin_headers):
+    """通过真实 HTTP 保存三态，并从数据库回读拒绝后的原值。"""
+    slug = f"pytest-selection-{uuid.uuid4().hex[:10]}"
+    path = f"/api/agent/{slug}"
+    conn = await asyncpg.connect(os.environ["POSTGRES_URL"].replace("+asyncpg", ""))
+    try:
+        response = await test_client.post(
+            "/api/agent",
+            headers=admin_headers,
+            json={
+                "name": "Selection test",
+                "slug": slug,
+                "backend_id": "ChatbotAgent",
+                "config_json": {"context": {"skills": "all", "subagents": [], "mcps": "all", "preload_skills": "all"}},
+            },
+        )
+        assert response.status_code == 200, response.text
+        expected = {"skills": "all", "subagents": [], "mcps": "all", "preload_skills": "all"}
+        assert (await _read_agent_config(conn, slug))["context"] == expected
+        response = await test_client.put(path, headers=admin_headers, json={"config_json": {"context": {"model": ""}}})
+        assert response.status_code == 200, response.text
+        expected["model"] = ""
+        for field in ("tools", "knowledges", "skills", "subagents", "mcps", "preload_skills"):
+            for invalid in (None, "full", ["ok", 1], [""]):
+                response = await test_client.put(
+                    path, headers=admin_headers, json={"config_json": {"context": {field: invalid}}}
+                )
+                assert response.status_code == 422, response.text
+                assert field in response.json()["detail"]
+                assert (await _read_agent_config(conn, slug))["context"] == expected
+        read = await test_client.get(path, headers=admin_headers)
+        assert read.json()["agent"]["config_json"]["context"] == expected
+    finally:
+        await test_client.delete(path, headers=admin_headers)
+        await conn.close()

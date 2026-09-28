@@ -166,3 +166,35 @@ async def test_manifest_retains_metadata_from_authorized_resolution(tmp_path, mo
     assert entries[0]["version"] == "v1"
     assert entries[0]["content_hash"] == "hash-v1"
     assert scope["preloaded_skill_contents"]["alpha"] == "original body"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "selection, expected",
+    [([], []), (["missing"], []), (["alpha", "missing"], ["alpha", "beta"]), ("all", ["alpha", "beta", "gamma"])],
+)
+async def test_preload_all_reads_only_enabled_authorized_skill_closure(tmp_path, monkeypatch, selection, expected):
+    """全部预加载沿真实解析链读取已启用 Skill 及其授权依赖的文件。"""
+    from yuxi.agents.context import normalize_agent_context_config
+    from yuxi.agents.skills import service
+
+    skills = [
+        _skill(tmp_path, "alpha", dependencies=["beta"]),
+        _skill(tmp_path, "beta"),
+        _skill(tmp_path, "gamma"),
+    ]
+
+    async def accessible(db, user):
+        return skills
+
+    monkeypatch.setattr(service, "list_accessible_skills", accessible)
+    monkeypatch.setattr(skill_runtime, "list_accessible_skills", accessible)
+    normalized = await normalize_agent_context_config(
+        {"tools": [], "knowledges": [], "skills": selection, "preload_skills": "all"},
+        db=None,
+        user=None,
+    )
+    scope = await resolve_runtime_skills_for_context(SimpleNamespace(**normalized), db=None, user=None)
+    assert scope["preloaded_skills"] == expected
+    assert scope["preloaded_skill_contents"] == {slug: f"# {slug}" for slug in expected}
+    assert scope["context_preload_skills"] == normalized["skills"]

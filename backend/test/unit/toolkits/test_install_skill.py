@@ -221,12 +221,12 @@ async def test_enable_skills_updates_explicit_agent_selection(monkeypatch, confi
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("configured_skills", [None, ["new-skill"]])
-async def test_enable_skills_skips_update_for_all_mode_or_unchanged_selection(monkeypatch, configured_skills):
+@pytest.mark.parametrize("context", [{}, {"skills": "all"}, {"skills": ["new-skill"]}])
+async def test_enable_skills_skips_update_for_all_mode_or_unchanged_selection(monkeypatch, context):
     conv = SimpleNamespace(uid="user-1", agent_id="agent-1")
     agent = SimpleNamespace(
         created_by="user-1",
-        config_json={"context": {"skills": configured_skills}},
+        config_json={"context": context},
     )
 
     class FakeConversationRepository:
@@ -258,6 +258,7 @@ async def test_enable_skills_skips_update_for_all_mode_or_unchanged_selection(mo
         uid="user-1",
         skill_slugs=["new-skill"],
     )
+    assert agent.config_json == {"context": context}
 
 
 @pytest.mark.asyncio

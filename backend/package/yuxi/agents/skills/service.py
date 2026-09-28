@@ -23,6 +23,7 @@ import yaml
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yuxi.agents.context import validate_resource_selection
 from yuxi.agents.mcp.service import get_enabled_mcp_server_slugs
 from yuxi.agents.skills.buildin import BUILTIN_SKILLS_DIR
 from yuxi.agents.skills.repository import SkillRepository
@@ -984,11 +985,11 @@ async def enable_personal_skills_for_agent_config(
         return False
 
     context = (agent.config_json or {}).get("context") or {}
-    configured_skills = context.get("skills")
-    if configured_skills is None:
+    configured_skills = validate_resource_selection("skills", context.get("skills", "all"))
+    if configured_skills == "all":
         return True
 
-    selected_skills = normalize_string_list(configured_skills if isinstance(configured_skills, list) else [])
+    selected_skills = configured_skills
     updated_skills = normalize_string_list([*selected_skills, *skill_slugs])
     if updated_skills == selected_skills:
         return True

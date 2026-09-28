@@ -73,7 +73,7 @@ class FakeAgentClient:
                         "model": "openai:gpt-5",
                         "skills": ["deep-research"],
                         "tools": ["web_search", "read_file"],
-                        "mcps": None,
+                        "mcps": [],
                         "subagents": [],
                         "system_prompt": "先核验证据。\n再给结论。",
                         "max_execution_steps": 100,
@@ -188,7 +188,7 @@ def test_agent_show_renders_key_and_remaining_configuration(tmp_path):
     mcp_line = next(line for line in output.splitlines() if "MCP servers" in line)
     subagents_line = next(line for line in output.splitlines() if "Subagents" in line)
     assert "无" in mcp_line
-    assert "默认（全部可用）" in subagents_line
+    assert "无" in subagents_line
     assert "先核验证据。\n再给结论。" in output
     assert '"max_execution_steps": 100' in output
     assert FakeAgentClient.calls == [("get_agent", ("research-agent",))]
@@ -314,3 +314,20 @@ def test_agent_show_preserves_not_found_error(tmp_path):
         )
 
     assert exc_info.value.status_code == 404
+
+
+def test_agent_show_renders_dynamic_all_selection(tmp_path):
+    """显式全部与空列表在命令行展示不同含义。"""
+
+    class AllClient(FakeAgentClient):
+        def get_agent(self, agent_slug):
+            result = super().get_agent(agent_slug)
+            result["agent"]["config_json"]["context"]["subagents"] = "all"
+            return result
+
+    console = _console()
+    run_agent_show(
+        _store(tmp_path), None, "research-agent", console, client_factory=AllClient
+    )
+    line = next(line for line in _output(console).splitlines() if "Subagents" in line)
+    assert "全部可用（含新增）" in line

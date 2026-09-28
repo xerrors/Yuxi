@@ -39,7 +39,7 @@ normalize_agent_context_config = context_module.normalize_agent_context_config
 
 @dataclass(kw_only=True)
 class ChatBotContext(BaseContext):
-    subagents: list[str] | None = field(default=None, metadata={"kind": "subagents"})
+    subagents: context_module.ResourceSelection = field(default="all", metadata={"kind": "subagents"})
 
 
 @dataclass
@@ -236,9 +236,9 @@ async def test_normalize_agent_context_config_defaults_mcps_off_and_filters_expl
 
     normalized = await normalize_agent_context_config(
         {
-            "tools": None,
+            "tools": "all",
             "knowledges": ["kb-b", "missing", "kb-b"],
-            "mcps": None,
+            "mcps": [],
             "skills": [],
             "preload_skills": ["skill-a"],
             "subagents": ["research-agent", "missing"],
@@ -291,7 +291,7 @@ async def test_normalize_agent_context_config_defaults_mcps_off_and_filters_expl
     )
 
     assert empty_subagents_normalized["mcps"] == []
-    assert empty_subagents_normalized["subagents"] == ["research-agent", "critique-agent"]
+    assert empty_subagents_normalized["subagents"] == []
 
     preloaded_normalized = await normalize_agent_context_config(
         {
@@ -451,10 +451,10 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
         uid="u1",
         tools=["ask_user_question", "missing"],
         knowledges=["kb-a", "missing"],
-        mcps=None,
+        mcps=[],
         skills=["skill-a", "missing"],
         preload_skills=["skill-a", "missing"],
-        subagents=[],
+        subagents="all",
     )
 
     prepared = await context_module.prepare_agent_runtime_context(context)
@@ -589,3 +589,138 @@ async def test_normalized_persistent_config_drops_subagent_runtime_flags():
     )
     assert "parent_thread_id" not in normalized
     assert "is_subagent_runtime" not in normalized
+
+
+@pytest.mark.asyncio
+async def test_all_selection_resolves_new_resources_without_mutating_config(monkeypatch):
+    """all 跟随资源变化，固定列表和空列表保留意图。"""
+    available = ["first"]
+
+    async def options(names, **kwargs):
+        return {name: [{"key": key} for key in available] for name in names}
+
+    monkeypatch.setattr(context_module, "resolve_agent_resource_options", options)
+    config = {"tools": "all", "skills": ["first", "hidden"], "subagents": [], "mcps": "all"}
+    first = await normalize_agent_context_config(config, db=None, user=None, context_schema=ChatBotContext)
+    assert first["tools"] == ["first"]
+    available.append("second")
+    second = await normalize_agent_context_config(config, db=None, user=None, context_schema=ChatBotContext)
+    assert second["tools"] == second["mcps"] == ["first", "second"]
+    assert second["skills"] == ["first"]
+    assert second["subagents"] == []
+    assert config["tools"] == "all"
+    assert config["skills"] == ["first", "hidden"]
+
+
+@pytest.mark.parametrize("invalid", [None, "full", [1], [""]])
+def test_update_config_rejects_invalid_resource_input(invalid):
+    """配置装载边界不把非法值静默当作禁用或全部。"""
+    context = BaseContext()
+    with pytest.raises(ValueError, match="skills"):
+        context.update_config({"skills": invalid})
+    assert context.skills == "all"
+
+
+@pytest.mark.asyncio
+async def test_preload_all_follows_enabled_skills_and_keeps_default_off(monkeypatch):
+    """MCP 与预加载同为默认空；预加载全部跟随有效 Skill 范围变化。"""
+    available = ["alpha"]
+
+    async def options(names, **kwargs):
+        return {name: [{"key": key} for key in available] for name in names}
+
+    monkeypatch.setattr(context_module, "resolve_agent_resource_options", options)
+    defaults = await normalize_agent_context_config({}, db=None, user=None)
+    assert defaults["mcps"] == defaults["preload_skills"] == []
+    config = {"skills": "all", "preload_skills": "all", "mcps": "all"}
+    first = await normalize_agent_context_config(config, db=None, user=None)
+    assert first["skills"] == first["preload_skills"] == first["mcps"] == ["alpha"]
+    assert first["skills"] is not first["preload_skills"]
+    available.append("beta")
+    second = await normalize_agent_context_config(config, db=None, user=None)
+    assert second["preload_skills"] == second["mcps"] == ["alpha", "beta"]
+    assert config == {"skills": "all", "preload_skills": "all", "mcps": "all"}
+    disabled = await normalize_agent_context_config({"skills": [], "preload_skills": "all"}, db=None, user=None)
+    assert disabled["preload_skills"] == []
+
+
+@dataclass(kw_only=True)
+class ResourceFieldContext(BaseContext):
+    """用别名资源与普通列表验证字段声明是唯一来源。"""
+
+    selected_tools: context_module.ResourceSelection = field(default="all", metadata={"kind": "tools"})
+    labels: list[str] = field(default_factory=list, metadata={"type": "list"})
+    skills: context_module.ResourceSelection = field(default_factory=list, metadata={"kind": "skills"})
+
+
+@pytest.mark.asyncio
+async def test_resource_field_declarations_drive_write_runtime_and_schema(monkeypatch):
+    """新增声明自动参与写入校验和展开，普通列表保持原样。"""
+    from types import SimpleNamespace
+    from yuxi.repositories.agent_repository import merge_agent_config_json
+    from yuxi.services.agent_config_service import prepare_agent_config_write
+
+    async def options(names, **kwargs):
+        return {name: [{"key": "visible"}] for name in names}
+
+    monkeypatch.setattr(context_module, "resolve_agent_resource_options", options)
+    monkeypatch.setattr("yuxi.services.agent_config_service.resolve_agent_resource_options", options)
+    context = ResourceFieldContext()
+    with pytest.raises(ValueError, match="selected_tools"):
+        context.update_config({"selected_tools": None})
+    context.update_config({"labels": ["plain"], "selected_tools": ["visible"]})
+    assert context.labels == ["plain"]
+    schema = context.get_configurable_items()
+    assert schema["selected_tools"]["supports_all"] is True
+    assert schema["labels"]["supports_all"] is False
+    assert schema["skills"]["default"] == []
+    patch, access = await prepare_agent_config_write(
+        {"context": {"selected_tools": ["visible"], "labels": ["plain"]}},
+        context_schema=ResourceFieldContext,
+        db=None,
+        user=SimpleNamespace(role="user"),
+    )
+    merged = merge_agent_config_json({}, patch, resource_access=access, context_schema=ResourceFieldContext)
+    assert merged == patch
+    with pytest.raises(ValueError, match="未经过权限校验"):
+        merge_agent_config_json({}, patch, resource_access={}, context_schema=ResourceFieldContext)
+    normalized = await normalize_agent_context_config(
+        {"selected_tools": "all", "labels": ["plain"]},
+        db=None,
+        user=None,
+        context_schema=ResourceFieldContext,
+    )
+    assert normalized["selected_tools"] == ["visible"]
+    assert normalized["labels"] == ["plain"]
+    assert normalized["skills"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "selection, expected", [(None, ["general-purpose"]), ("all", ["general-purpose", "specialist"]), ([], [])]
+)
+async def test_chatbot_defaults_to_general_purpose_subagent(monkeypatch, selection, expected):
+    """真实 Chatbot 默认仅通用角色，显式全部与空选择保持原意。"""
+    from yuxi.agents.buildin.chatbot.context import ChatBotContext
+
+    async def options(names, **kwargs):
+        return {name: [{"key": slug} for slug in ["general-purpose", "specialist"]] for name in names}
+
+    monkeypatch.setattr(context_module, "resolve_agent_resource_options", options)
+    config = {} if selection is None else {"subagents": selection}
+    normalized = await normalize_agent_context_config(config, db=None, user=None, context_schema=ChatBotContext)
+    assert normalized["subagents"] == expected
+    assert ChatBotContext.get_configurable_items()["subagents"]["default"] == ["general-purpose"]
+
+
+@pytest.mark.asyncio
+async def test_invisible_default_subagent_does_not_enable_other_roles(monkeypatch):
+    """默认通用角色不可见时不扩大选择范围。"""
+    from yuxi.agents.buildin.chatbot.context import ChatBotContext
+
+    async def options(names, **kwargs):
+        return {name: [{"key": "specialist"}] for name in names}
+
+    monkeypatch.setattr(context_module, "resolve_agent_resource_options", options)
+    normalized = await normalize_agent_context_config({}, db=None, user=None, context_schema=ChatBotContext)
+    assert normalized["subagents"] == []

@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { agentApi, databaseApi, toolApi } from '@/apis'
-import { isDefaultAllAgentResourceField, normalizeAgent } from '@/utils/agentConfigUtils'
+import { normalizeAgent } from '@/utils/agentConfigUtils'
 import { handleChatError } from '@/utils/errorHandler'
 
 export const BUILTIN_AGENT_ID = 'default-chatbot'
@@ -142,8 +142,7 @@ export const useAgentStore = defineStore(
 
     function applyConfigDefaults(loadedConfig, configItems) {
       Object.entries(configItems).forEach(([key, item]) => {
-        const usesAllByDefault = isDefaultAllAgentResourceField(key)
-        if (loadedConfig[key] === undefined || (loadedConfig[key] === null && !usesAllByDefault)) {
+        if (loadedConfig[key] === undefined || (loadedConfig[key] === null && !item.supports_all)) {
           if (item.default !== undefined) loadedConfig[key] = item.default
         }
         if (

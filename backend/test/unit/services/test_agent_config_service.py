@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from yuxi.agents.context import BaseContext, ResourceSelection
 from yuxi.services import agent_config_service
 
 pytestmark = pytest.mark.unit
@@ -77,7 +78,10 @@ async def test_prepare_agent_config_write_does_not_load_resources_for_unrelated_
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("subagents", [[], ["undeclared-subagent"]])
-async def test_prepare_agent_config_write_does_not_load_resources_for_strategy_switch(monkeypatch, subagents):
+@pytest.mark.parametrize("selection", [[], "all"])
+async def test_prepare_agent_config_write_does_not_load_resources_for_strategy_switch(
+    monkeypatch, subagents, selection
+):
     """显式策略切换保留原值，未声明的字段在资源解析前被移除。"""
     monkeypatch.setattr(
         agent_config_service,
@@ -86,24 +90,19 @@ async def test_prepare_agent_config_write_does_not_load_resources_for_strategy_s
     )
 
     config, resource_access = await agent_config_service.prepare_agent_config_write(
-        {"context": {"skills": None, "subagents": subagents}},
+        {"context": {"skills": selection, "mcps": selection, "preload_skills": selection, "subagents": subagents}},
         context_schema=None,
         db=object(),
         user=SimpleNamespace(role="user"),
     )
 
-    assert config == {"context": {"skills": None}}
+    assert config == {"context": {"skills": selection, "mcps": selection, "preload_skills": selection}}
     assert resource_access == {}
 
 
-@dataclass
-class ConfigContext:
+@dataclass(kw_only=True)
+class ConfigContext(BaseContext):
     """覆盖保存资源字段的最小测试 Schema。"""
 
-    tools: list[str] | None = None
-    knowledges: list[str] | None = None
-    mcps: list[str] | None = None
-    skills: list[str] | None = None
-    subagents: list[str] | None = None
-    preload_skills: list[str] | None = None
+    subagents: ResourceSelection = "all"
     title: str = ""

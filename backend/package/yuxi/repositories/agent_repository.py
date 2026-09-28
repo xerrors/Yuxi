@@ -9,7 +9,7 @@ from typing import Any, Literal
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.agents.context import AGENT_RUNTIME_RESOURCE_FIELDS
+from yuxi.agents.context import BaseContext, validate_resource_selection
 from yuxi.agents.presets import AgentPreset
 from yuxi.agents.presets.default_chatbot import PRESET as DEFAULT_AGENT
 from yuxi.permissions import ResourcePermission, normalize_permission_config, resolve_agent_permission
@@ -28,7 +28,6 @@ DEFAULT_SHARE_CONFIG = {
 }
 
 ADMIN_ROLES = {"admin", "superadmin"}
-AGENT_RESOURCE_CONFIG_FIELDS = AGENT_RUNTIME_RESOURCE_FIELDS | {"preload_skills"}
 
 
 def is_builtin_agent(agent: Agent) -> bool:
@@ -272,6 +271,8 @@ class AgentRepository:
         if is_default and (normalized_share_config.get("read_scope") or {}).get("access_level") != "global":
             raise ValueError("默认智能体必须全局共享")
 
+        from yuxi.agents.buildin import get_agent_backend
+
         agent = Agent(
             slug=await self._unique_slug(slug, name),
             backend_id=backend_id,
@@ -283,6 +284,7 @@ class AgentRepository:
                 {"context": {}},
                 config_json or {},
                 resource_access=config_resource_access or {},
+                context_schema=get_agent_backend(backend_id).context_schema,
             ),
             share_config=normalized_share_config,
             is_default=False,
@@ -325,6 +327,8 @@ class AgentRepository:
         if pics is not None:
             agent.pics = pics
         if config_json is not None:
+            from yuxi.agents.buildin import get_agent_backend
+
             result = await self.db.execute(select(Agent.config_json).where(Agent.id == agent.id).with_for_update())
             row = result.one_or_none()
             if row is None:
@@ -333,6 +337,7 @@ class AgentRepository:
                 row[0],
                 config_json,
                 resource_access=config_resource_access or {},
+                context_schema=get_agent_backend(agent.backend_id).context_schema,
             )
         if share_config is not None:
             if is_builtin_agent(agent):
@@ -399,6 +404,7 @@ def merge_agent_config_json(
     patch: dict,
     *,
     resource_access: dict[str, Collection[str]],
+    context_schema: type[BaseContext] = BaseContext,
 ) -> dict:
     """合并 Agent 配置补丁，并在资源字段上保留旧的不可见引用。"""
     if not isinstance(patch, dict):
@@ -419,16 +425,19 @@ def merge_agent_config_json(
         current_context = {}
     merged_context = {**current_context, **patch_context}
 
-    for field_name in AGENT_RESOURCE_CONFIG_FIELDS & patch_context.keys():
-        requested = _normalize_resource_references(field_name, patch_context[field_name])
-        if not requested:
+    for field_name in context_schema.get_resource_fields().keys() & patch_context.keys():
+        requested = validate_resource_selection(field_name, patch_context[field_name])
+        if requested == "all" or not requested:
             merged_context[field_name] = requested
             continue
 
         if field_name not in resource_access:
             raise ValueError(f"智能体资源字段 {field_name} 未经过权限校验")
         accessible = {str(item) for item in resource_access[field_name]}
-        previous = _normalize_resource_references(field_name, current_context.get(field_name)) or []
+        previous = current_context.get(field_name, [])
+        if previous == "all":
+            previous = []
+        previous = validate_resource_selection(field_name, previous)
         previous_set = set(previous)
         unauthorized_new = [item for item in requested if item not in accessible and item not in previous_set]
         if unauthorized_new:
@@ -441,22 +450,3 @@ def merge_agent_config_json(
 
     merged["context"] = merged_context
     return merged
-
-
-def _normalize_resource_references(field_name: str, value: Any) -> list[str] | None:
-    """规范化一个资源引用字段，并拒绝非字符串列表。"""
-    if value is None:
-        return None
-    if not isinstance(value, list):
-        raise ValueError(f"智能体资源字段 {field_name} 必须是字符串列表或 null")
-
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for item in value:
-        if not isinstance(item, str) or not item.strip():
-            raise ValueError(f"智能体资源字段 {field_name} 必须是字符串列表或 null")
-        key = item.strip()
-        if key not in seen:
-            normalized.append(key)
-            seen.add(key)
-    return normalized
