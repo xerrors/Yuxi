@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import hashlib
 import errno
+import hashlib
 import os
 import stat
 import uuid
@@ -11,7 +11,6 @@ from pathlib import Path, PurePosixPath
 
 import yaml
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from yuxi.agents.skills.repository import SkillRepository
 from yuxi.agents.skills.service import (
     TEXT_FILE_EXTENSIONS,
