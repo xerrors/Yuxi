@@ -13,8 +13,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.agents.skills.repository import SkillRepository
-from yuxi.agents.skills.service import get_skills_root_dir, get_user_skills_root_dir, sync_user_accessible_skills
-from yuxi.storage.postgres.models_business import Skill
+from yuxi.agents.skills.service import (
+    get_skills_root_dir,
+    get_user_skills_root_dir,
+    list_accessible_shared_skills,
+    sync_user_accessible_skills,
+)
+from yuxi.storage.postgres.models_business import Skill, User
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -119,7 +124,7 @@ async def test_shared_skill_edit_updates_file_and_index_and_rejects_stale_or_una
 
             async with session_factory() as editor, session_factory() as runtime:
                 await editor.execute(select(Skill).where(Skill.slug == slug).with_for_update())
-                runtime_read = asyncio.create_task(SkillRepository(runtime).list_enabled(for_share=True))
+                runtime_read = asyncio.create_task(SkillRepository(runtime).lock_rows_for_read([row.id]))
                 await asyncio.sleep(0.2)
                 assert not runtime_read.done(), "运行时读取必须等待编辑行锁释放"
                 await editor.rollback()
@@ -132,6 +137,104 @@ async def test_shared_skill_edit_updates_file_and_index_and_rejects_stale_or_una
         uid = profile.json()["uid"]
         sync_user_accessible_skills(uid, {slug: source.parent})
         assert (get_user_skills_root_dir(uid) / slug / "SKILL.md").read_text(encoding="utf-8") == persisted_content
+    finally:
+        deleted = await test_client.delete(f"/api/system/skills/{slug}", headers=admin_headers)
+        assert deleted.status_code == 200, deleted.text
+
+
+async def test_runtime_read_does_not_lock_unrelated_private_skill():
+    """其他用户的私有 Skill 正在编辑时，当前用户仍可读取自己的共享快照。"""
+    suffix = uuid.uuid4().hex[:10]
+    reader_uid = f"reader-{suffix}"
+    engine = create_async_engine(os.environ["POSTGRES_URL"])
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    visible = Skill(
+        slug=f"visible-{suffix}",
+        name="visible",
+        description="visible",
+        source_type="upload",
+        dir_path=f"shared/visible-{suffix}",
+        enabled=True,
+        created_by=reader_uid,
+        share_config={"version": 2, "read_scope": {"access_level": "user", "user_uids": [reader_uid]}},
+    )
+    hidden = Skill(
+        slug=f"hidden-{suffix}",
+        name="hidden",
+        description="hidden",
+        source_type="upload",
+        dir_path=f"shared/hidden-{suffix}",
+        enabled=True,
+        created_by=f"owner-{suffix}",
+        share_config={"version": 2, "read_scope": {"access_level": "user", "user_uids": [f"owner-{suffix}"]}},
+    )
+    try:
+        async with session_factory() as setup:
+            setup.add_all([visible, hidden])
+            await setup.commit()
+
+        async with session_factory() as editor, session_factory() as runtime:
+            await editor.execute(select(Skill).where(Skill.id == hidden.id).with_for_update())
+            reader = User(uid=reader_uid, role="user")
+            items = await asyncio.wait_for(
+                list_accessible_shared_skills(runtime, reader, lock_shared_rows=True), timeout=2
+            )
+            slugs = {item.slug for item in items}
+            assert visible.slug in slugs
+            assert hidden.slug not in slugs
+            await editor.rollback()
+    finally:
+        async with session_factory() as cleanup:
+            for item_id in (visible.id, hidden.id):
+                if item_id is not None:
+                    found = await cleanup.get(Skill, item_id)
+                    if found is not None:
+                        await cleanup.delete(found)
+            await cleanup.commit()
+        await engine.dispose()
+
+
+async def test_unquoted_multiline_description_can_be_saved_through_http(test_client, admin_headers):
+    """预览支持的多行描述可经真实安装和依赖编辑路径保存。"""
+    slug = f"pytest-multiline-{uuid.uuid4().hex[:10]}"
+    content = (
+        f"---\nname: {slug}\ndescription:\n"
+        '  Use this skill for PDFs.\n  CREATE (from scratch): "make a PDF".\n'
+        "license: MIT\n---\n# Body\n"
+    )
+    prepared = await test_client.post(
+        "/api/skills/import/prepare",
+        headers=admin_headers,
+        files={"file": ("SKILL.md", content.encode(), "text/markdown")},
+    )
+    assert prepared.status_code == 200, prepared.text
+    draft_id = prepared.json()["data"]["draft_id"]
+    confirmed = await test_client.post(
+        f"/api/skills/install-drafts/{draft_id}/confirm",
+        headers=admin_headers,
+        json={"slugs": [slug], "share_config": None},
+    )
+    assert confirmed.status_code == 200, confirmed.text
+
+    try:
+        read = await test_client.get(
+            f"/api/system/skills/{slug}/file", params={"path": "SKILL.md"}, headers=admin_headers
+        )
+        assert read.status_code == 200, read.text
+        saved = await test_client.put(
+            f"/api/system/skills/{slug}/dependencies",
+            headers=admin_headers,
+            json={
+                "tool_dependencies": [],
+                "mcp_dependencies": [],
+                "skill_dependencies": [],
+                "expected_revision": read.json()["data"]["revision"],
+            },
+        )
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["data"]["skill"]["description"] == (
+            'Use this skill for PDFs. CREATE (from scratch): "make a PDF".'
+        )
     finally:
         deleted = await test_client.delete(f"/api/system/skills/{slug}", headers=admin_headers)
         assert deleted.status_code == 200, deleted.text

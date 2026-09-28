@@ -357,7 +357,7 @@ async def refresh_user_skill_projection_async(uid: str) -> dict[str, str]:
         else:
             source_dirs = {
                 item.slug: str(_resolve_skill_dir(item))
-                for item in await list_accessible_shared_skills(db, user, require_enabled=False, for_share=True)
+                for item in await list_accessible_shared_skills(db, user, require_enabled=False, lock_shared_rows=True)
                 if item.enabled and item.slug
             }
         await db.execute(
@@ -590,13 +590,11 @@ async def list_accessible_skills(
     user: User,
     *,
     require_enabled: bool = True,
-    for_share: bool = False,
+    lock_shared_rows: bool = False,
 ) -> list[ResolvedSkill]:
     """返回当前用户最终生效的共享与个人 Skill。"""
     shared_items, personal_items = await asyncio.gather(
-        list_accessible_shared_skills(db, user, require_enabled=require_enabled, for_share=for_share)
-        if for_share
-        else list_accessible_shared_skills(db, user, require_enabled=require_enabled),
+        list_accessible_shared_skills(db, user, require_enabled=require_enabled, lock_shared_rows=lock_shared_rows),
         list_personal_skills(str(user.uid)),
     )
     personal_by_slug = {item.slug: item for item in personal_items}
@@ -687,15 +685,21 @@ async def list_accessible_shared_skills(
     user: User,
     *,
     require_enabled: bool = True,
-    for_share: bool = False,
+    lock_shared_rows: bool = False,
 ) -> list[Skill]:
     """按现有共享范围返回用户可访问的数据库 Skill。"""
     repo = SkillRepository(db)
-    if require_enabled:
-        items = await repo.list_enabled(for_share=True) if for_share else await repo.list_enabled()
-    else:
-        items = await repo.list_all(for_share=True) if for_share else await repo.list_all()
-    return [item for item in items if user_can_access_skill(user, item, require_enabled=require_enabled)]
+    items = await repo.list_enabled() if require_enabled else await repo.list_all()
+    visible = [item for item in items if user_can_access_skill(user, item, require_enabled=require_enabled)]
+    if not lock_shared_rows:
+        return visible
+
+    locked = {item.id: item for item in await repo.lock_rows_for_read([item.id for item in visible])}
+    return [
+        locked[item.id]
+        for item in visible
+        if item.id in locked and user_can_access_skill(user, locked[item.id], require_enabled=require_enabled)
+    ]
 
 
 async def _list_shared_skill_slugs(db: AsyncSession, user: User) -> list[str]:
@@ -791,15 +795,31 @@ def split_skill_frontmatter(content: str) -> tuple[str, str]:
     return frontmatter_raw, body
 
 
-def parse_skill_markdown(content: str) -> tuple[str, str, str, dict[str, Any]]:
-    frontmatter_raw, _body = split_skill_frontmatter(content)
+def _load_skill_frontmatter(raw: str) -> dict[str, Any]:
+    """兼容未引用且含冒号的多行 description。"""
     try:
-        data = yaml.safe_load(frontmatter_raw)
-    except yaml.YAMLError as e:
-        raise ValueError(f"SKILL.md frontmatter YAML 解析失败: {e}") from e
-
+        data = yaml.safe_load(raw)
+    except yaml.YAMLError as error:
+        folded = re.sub(
+            r"(?m)^description:[ \t]*(\r?\n)(?=[ \t]+\S)",
+            lambda match: f"description: >-{match.group(1)}",
+            raw,
+            count=1,
+        )
+        if folded == raw:
+            raise ValueError(f"SKILL.md frontmatter YAML 解析失败: {error}") from error
+        try:
+            data = yaml.safe_load(folded)
+        except yaml.YAMLError as folded_error:
+            raise ValueError(f"SKILL.md frontmatter YAML 解析失败: {folded_error}") from folded_error
     if not isinstance(data, dict):
         raise ValueError("SKILL.md frontmatter 必须是对象")
+    return data
+
+
+def parse_skill_markdown(content: str) -> tuple[str, str, str, dict[str, Any]]:
+    frontmatter_raw, _body = split_skill_frontmatter(content)
+    data = _load_skill_frontmatter(frontmatter_raw)
 
     name = _validate_skill_display_name(str(data.get("name", "")))
     raw_slug = str(data.get("slug", "")).strip()
@@ -817,9 +837,7 @@ def parse_skill_markdown(content: str) -> tuple[str, str, str, dict[str, Any]]:
 
 def _rewrite_frontmatter_slug(content: str, new_slug: str) -> str:
     frontmatter_raw, body = split_skill_frontmatter(content)
-    data = yaml.safe_load(frontmatter_raw)
-    if not isinstance(data, dict):
-        raise ValueError("SKILL.md frontmatter 必须是对象")
+    data = _load_skill_frontmatter(frontmatter_raw)
     if data.get("slug"):
         data["slug"] = new_slug
     else:
@@ -1440,7 +1458,10 @@ async def read_skill_file(
     relative_path: str,
     operator: User,
 ) -> dict[str, Any]:
-    item = await get_management_readable_skill_or_raise(db, operator, slug, for_update=True)
+    candidate = await get_management_readable_skill_or_raise(db, operator, slug)
+    item = await SkillRepository(db).get_by_slug_for_read(candidate.slug)
+    if item is None or (not user_can_manage_skill(operator, item) and not user_can_access_skill(operator, item)):
+        raise ValueError(f"技能 '{candidate.slug}' 不存在或无权访问")
     skill_dir = _resolve_skill_dir(item)
     target, rel = _resolve_relative_path(skill_dir, relative_path)
     if not target.exists() or not target.is_file():

@@ -91,7 +91,7 @@ async def resolve_runtime_skills_for_context(
     user: User,
 ) -> dict:
     """合并已选共享与全部个人 Skill，派生运行范围和预加载快照。"""
-    skill_items = [item for item in await list_accessible_skills(db, user, for_share=True) if item.slug]
+    skill_items = [item for item in await list_accessible_skills(db, user, lock_shared_rows=True) if item.slug]
     runtime_skills = build_runtime_skills(skill_items)
     available = set(runtime_skills)
     selected = normalize_string_list(getattr(context, "skills", None))

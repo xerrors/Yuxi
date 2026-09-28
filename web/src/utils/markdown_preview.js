@@ -70,7 +70,7 @@ const renderFrontmatterField = (key, value) => {
 }
 
 const getMarkdownLine = (state, line) => {
-  const start = state.bMarks[line] + state.tShift[line]
+  const start = state.bMarks[line]
   const end = state.eMarks[line]
   return state.src.slice(start, end)
 }
@@ -112,7 +112,17 @@ const markdownItFrontmatterCard = (md) => {
     try {
       data = yamlLoad(rawYaml) || {}
     } catch {
-      return false
+      const foldedDescription = rawYaml.replace(
+        /^description:[ \t]*\n(?=[ \t]+\S)/m,
+        'description: >-\n'
+      )
+      if (foldedDescription === rawYaml) return false
+
+      try {
+        data = yamlLoad(foldedDescription) || {}
+      } catch {
+        return false
+      }
     }
 
     if (!data || typeof data !== 'object' || Array.isArray(data)) return false

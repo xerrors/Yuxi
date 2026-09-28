@@ -11,19 +11,37 @@ class SkillRepository:
     def __init__(self, db_session: AsyncSession):
         self.db = db_session
 
-    async def list_all(self, *, for_share: bool = False) -> list[Skill]:
+    async def list_all(self) -> list[Skill]:
         stmt = select(Skill).order_by(Skill.updated_at.desc(), Skill.id.desc())
-        if for_share:
-            stmt = stmt.with_for_update(read=True).execution_options(populate_existing=True)
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
-    async def list_enabled(self, *, for_share: bool = False) -> list[Skill]:
+    async def list_enabled(self) -> list[Skill]:
         stmt = select(Skill).where(Skill.enabled.is_(True)).order_by(Skill.updated_at.desc(), Skill.id.desc())
-        if for_share:
-            stmt = stmt.with_for_update(read=True).execution_options(populate_existing=True)
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
+
+    async def lock_rows_for_read(self, ids: list[int]) -> list[Skill]:
+        """只锁定调用方已筛出的共享 Skill，并刷新会话内旧值。"""
+        if not ids:
+            return []
+        stmt = (
+            select(Skill)
+            .where(Skill.id.in_(ids))
+            .order_by(Skill.id)
+            .with_for_update(read=True)
+            .execution_options(populate_existing=True)
+        )
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_by_slug_for_read(self, slug: str) -> Skill | None:
+        """读取文件期间取得单个共享 Skill 的共享行锁。"""
+        stmt = (
+            select(Skill).where(Skill.slug == slug).with_for_update(read=True).execution_options(populate_existing=True)
+        )
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
 
     async def get_by_slug(self, slug: str, *, for_update: bool = False) -> Skill | None:
         stmt = select(Skill).where(Skill.slug == slug)

@@ -60,9 +60,13 @@ async def test_personal_skills_are_available_independently_of_shared_selection(
         def __init__(self, db):
             """接收测试会话。"""
 
-        async def list_enabled(self, *, for_share=False):
+        async def list_enabled(self):
             """返回测试共享记录。"""
             return [shared, extra]
+
+        async def lock_rows_for_read(self, ids):
+            """模拟按可见 ID 锁定共享来源。"""
+            return [item for item in (shared, extra) if item.id in ids]
 
     monkeypatch.setattr(service, "SkillRepository", SkillRepository)
     for uid, slug in [("user-a", "personal"), ("user-a", "shared"), ("user-b", "other-user")]:
@@ -120,7 +124,7 @@ async def test_personal_skill_is_not_a_direct_preload_candidate(tmp_path, monkey
     personal = _skill(tmp_path, "personal")
     personal.source_scope = "personal"
 
-    async def accessible(_db, _user, *, for_share=False):
+    async def accessible(_db, _user, *, lock_shared_rows=False):
         return [personal]
 
     monkeypatch.setattr(skill_runtime, "list_accessible_skills", accessible)
@@ -137,10 +141,10 @@ async def test_personal_skill_is_not_a_direct_preload_candidate(tmp_path, monkey
 async def test_resolve_runtime_skills_derives_authorized_scope(monkeypatch):
     """运行时 scope 只保留授权选择，并按依赖闭包区分共享与个人来源。"""
 
-    async def fake_list_accessible_skills(db, user, *, for_share=False):
+    async def fake_list_accessible_skills(db, user, *, lock_shared_rows=False):
         assert db is not None
         assert user is not None
-        assert for_share
+        assert lock_shared_rows
         return [
             SimpleNamespace(
                 slug="alpha",
@@ -214,7 +218,7 @@ async def test_preload_reads_authorized_dependency_closure(tmp_path, monkeypatch
         _skill(tmp_path, "beta", content="# Beta\nUSE_BETA"),
     ]
 
-    async def fake_list_accessible_skills(_db, _user, *, for_share=False):
+    async def fake_list_accessible_skills(_db, _user, *, lock_shared_rows=False):
         return skills
 
     monkeypatch.setattr(skill_runtime, "list_accessible_skills", fake_list_accessible_skills)
@@ -241,7 +245,7 @@ async def test_preload_rejects_symlinked_source_ancestor(tmp_path, monkeypatch):
     linked_parent.symlink_to(real_parent, target_is_directory=True)
     item.source_dir = linked_parent / "alpha"
 
-    async def fake_list_accessible_skills(_db, _user, *, for_share=False):
+    async def fake_list_accessible_skills(_db, _user, *, lock_shared_rows=False):
         return [item]
 
     monkeypatch.setattr(skill_runtime, "list_accessible_skills", fake_list_accessible_skills)
@@ -261,7 +265,7 @@ async def test_manifest_retains_metadata_from_authorized_resolution(tmp_path, mo
 
     item = _skill(tmp_path, "alpha", content="original body")
 
-    async def accessible(db, user, *, for_share=False):
+    async def accessible(db, user, *, lock_shared_rows=False):
         return [item]
 
     monkeypatch.setattr(skill_runtime, "list_accessible_skills", accessible)
@@ -294,7 +298,7 @@ async def test_preload_all_reads_only_enabled_authorized_skill_closure(tmp_path,
         _skill(tmp_path, "gamma"),
     ]
 
-    async def accessible(db, user, *, for_share=False):
+    async def accessible(db, user, *, lock_shared_rows=False):
         return skills
 
     monkeypatch.setattr(service, "list_accessible_shared_skills", accessible)
@@ -320,7 +324,23 @@ async def test_runtime_skill_query_holds_shared_row_locks():
             statements.append(stmt)
             return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: []))
 
-    await SkillRepository(Session()).list_enabled(for_share=True)
+    await SkillRepository(Session()).lock_rows_for_read([1])
 
     assert "FOR SHARE" in str(statements[0].compile(dialect=postgresql.dialect()))
     assert statements[0].get_execution_options()["populate_existing"] is True
+
+
+@pytest.mark.asyncio
+async def test_skill_file_read_uses_shared_row_lock():
+    """普通读取允许其他读取并发，仍阻止编辑发布。"""
+    statements = []
+
+    class Session:
+        async def execute(self, stmt):
+            statements.append(stmt)
+            return SimpleNamespace(scalar_one_or_none=lambda: None)
+
+    await SkillRepository(Session()).get_by_slug_for_read("demo")
+
+    assert "FOR SHARE" in str(statements[0].compile(dialect=postgresql.dialect()))
+    assert "FOR UPDATE" not in str(statements[0].compile(dialect=postgresql.dialect()))

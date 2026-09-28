@@ -232,6 +232,48 @@ async def test_list_visible_skills_for_management_includes_owned_disabled_and_en
 
 
 @pytest.mark.asyncio
+async def test_locked_shared_list_only_locks_visible_rows_and_rechecks_permission(monkeypatch):
+    """无权行不参与运行时锁；等待期间撤销的权限也不能进入结果。"""
+    visible = Skill(
+        id=1,
+        slug="visible",
+        enabled=True,
+        created_by="other",
+        share_config={"version": 2, "read_scope": {"access_level": "user", "user_uids": ["root"]}},
+    )
+    hidden = Skill(
+        id=2,
+        slug="hidden",
+        enabled=True,
+        created_by="other",
+        share_config={"version": 2, "read_scope": {"access_level": "user", "user_uids": ["other"]}},
+    )
+    locked_ids = []
+
+    class FakeRepo:
+        def __init__(self, _db):
+            pass
+
+        async def list_enabled(self):
+            return [visible, hidden]
+
+        async def lock_rows_for_read(self, ids):
+            locked_ids.extend(ids)
+            visible.share_config = {
+                "version": 2,
+                "read_scope": {"access_level": "user", "user_uids": ["other"]},
+            }
+            return [visible]
+
+    monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
+
+    result = await svc.list_accessible_shared_skills(None, _user("root", role="user"), lock_shared_rows=True)
+
+    assert locked_ids == [1]
+    assert result == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "skill,operator",
     [
@@ -986,9 +1028,9 @@ async def test_refresh_user_skill_projection_serializes_authorization_snapshots(
         assert uid == "user-1"
         return SimpleNamespace(is_deleted=0)
 
-    async def list_shared(_db, _user, *, require_enabled=True, for_share=False):
+    async def list_shared(_db, _user, *, require_enabled=True, lock_shared_rows=False):
         assert not require_enabled
-        assert for_share
+        assert lock_shared_rows
         return list(current_items)
 
     async def to_thread(_func, _uid, sources):
@@ -1041,9 +1083,9 @@ async def test_refresh_user_skill_projection_excludes_personal_skills(monkeypatc
     async def get_user(_self, _db, _uid):
         return SimpleNamespace(is_deleted=0)
 
-    async def list_shared(_db, _user, *, require_enabled=True, for_share=False):
+    async def list_shared(_db, _user, *, require_enabled=True, lock_shared_rows=False):
         assert not require_enabled
-        assert for_share
+        assert lock_shared_rows
         return [shared]
 
     async def fail_combined_list(*_args, **_kwargs):

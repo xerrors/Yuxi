@@ -272,6 +272,34 @@ async def test_dependency_form_updates_root_file_and_index(tmp_path, monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_dependency_edit_accepts_unquoted_multiline_description(tmp_path, monkeypatch):
+    """预览可识别的多行描述也必须能保存依赖。"""
+    skill_dir, item, _old = _setup_shared_skill(tmp_path, monkeypatch)
+    original = (
+        "---\nname: demo\nslug: demo\ndescription:\n"
+        '  Use this skill for PDFs.\n  CREATE (from scratch): "make a PDF".\n'
+        "license: MIT\n---\n# Body\n"
+    )
+    (skill_dir / "SKILL.md").write_text(original, encoding="utf-8")
+
+    result, revision = await edit_service.edit_shared_skill_dependencies(
+        _Session(),
+        slug="demo",
+        tool_dependencies=[],
+        mcp_dependencies=[],
+        skill_dependencies=[],
+        expected_revision=hashlib.sha256(original.encode()).hexdigest(),
+        operator=_user("owner"),
+    )
+
+    saved = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+    assert result is item
+    assert item.description == 'Use this skill for PDFs. CREATE (from scratch): "make a PDF".'
+    assert skill_service.parse_skill_markdown(saved)[2] == item.description
+    assert revision == hashlib.sha256(saved.encode()).hexdigest()
+
+
+@pytest.mark.asyncio
 async def test_edit_rejects_invalid_dependency_without_publishing_file(tmp_path, monkeypatch):
     skill_dir, item, old = _setup_shared_skill(tmp_path, monkeypatch)
     invalid = old.replace("description: old", "description: changed\ntool_dependencies:\n- missing-tool")

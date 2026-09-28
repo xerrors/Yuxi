@@ -24,25 +24,27 @@
       <template #actions>
         <div class="extension-detail-actions">
           <a-space :size="8">
-            <button
-              type="button"
+            <a-button
+              type="text"
               aria-label="复制知识库 ID"
-              class="lucide-icon-btn extension-panel-action extension-panel-action-secondary"
+              title="复制知识库 ID"
+              class="lucide-icon-btn extension-detail-action"
               @click="copyDatabaseId"
             >
               <Copy :size="14" />
               <span>复制 ID</span>
-            </button>
-            <button
+            </a-button>
+            <a-button
               v-if="canManageDatabase"
-              type="button"
+              type="text"
               aria-label="配置知识库"
-              class="lucide-icon-btn extension-panel-action extension-panel-action-primary"
+              title="配置知识库"
+              class="lucide-icon-btn extension-detail-action"
               @click="showEditModal"
             >
               <Pencil :size="14" />
               <span>配置</span>
-            </button>
+            </a-button>
           </a-space>
         </div>
       </template>
@@ -1517,7 +1519,7 @@ onUnmounted(() => {
 }
 
 @media (max-width: 767px) {
-  .extension-detail-actions :deep(.extension-panel-action span) {
+  .extension-detail-actions :deep(.extension-detail-action span) {
     display: none;
   }
 
