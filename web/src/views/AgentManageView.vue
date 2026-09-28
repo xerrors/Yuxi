@@ -1,11 +1,10 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
-import { onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import PageHeader from '@/components/shared/PageHeader.vue'
 import AgentManagePanel from '@/components/model-management/AgentManagePanel.vue'
 import ModelProviderManagePanel from '@/components/model-management/ModelProviderManagePanel.vue'
-import ScheduledAgentsView from '@/views/ScheduledAgentsView.vue'
 import { useUserStore } from '@/stores/user'
 
 const route = useRoute()
@@ -15,19 +14,16 @@ const userStore = useUserStore()
 const activeTab = ref('agents')
 const agentPanelRef = ref(null)
 const providerPanelRef = ref(null)
-const schedulePanelRef = ref(null)
 
 const modelManageTabs = computed(() => {
   const tabs = [
     { key: 'agents', label: '智能体' },
   ]
   if (userStore.isAdmin) tabs.push({ key: 'providers', label: '模型供应商' })
-  tabs.push({ key: 'schedules', label: '定时任务 (beta)' })
   return tabs
 })
 
 const activePanel = computed(() => {
-  if (activeTab.value === 'schedules') return schedulePanelRef.value
   if (activeTab.value === 'providers') return providerPanelRef.value
   return agentPanelRef.value
 })
@@ -37,7 +33,6 @@ const activeStats = computed(() => activePanel.value?.stats || {})
 
 const normalizeTab = (tab) => {
   if (tab === 'providers' && userStore.isAdmin) return 'providers'
-  if (tab === 'schedules') return 'schedules'
   return 'agents'
 }
 
@@ -50,18 +45,11 @@ watch(
   { immediate: true }
 )
 
-function canChangeTab(nextTab) {
-  if (activeTab.value !== 'schedules' || nextTab === 'schedules') return true
-  return schedulePanelRef.value?.beforeLeave?.() ?? true
-}
-
 async function requestTabChange(item) {
   const nextTab = normalizeTab(item.key)
   if (nextTab === activeTab.value) return
   await router.replace({ query: { ...route.query, tab: nextTab } })
 }
-
-onBeforeRouteUpdate((to) => canChangeTab(normalizeTab(to.query.tab)))
 </script>
 
 <template>
@@ -97,9 +85,6 @@ onBeforeRouteUpdate((to) => canChangeTab(normalizeTab(to.query.tab)))
       <div v-if="userStore.isAdmin && activeTab === 'providers'" class="tab-panel">
         <ModelProviderManagePanel ref="providerPanelRef" />
       </div>
-      <div v-if="activeTab === 'schedules'" class="tab-panel schedule-tab-panel">
-        <ScheduledAgentsView ref="schedulePanelRef" />
-      </div>
     </div>
   </div>
 </template>
@@ -122,10 +107,6 @@ onBeforeRouteUpdate((to) => canChangeTab(normalizeTab(to.query.tab)))
     height: 100%;
     min-height: 0;
     overflow-y: auto;
-  }
-
-  .schedule-tab-panel {
-    overflow: hidden;
   }
 }
 

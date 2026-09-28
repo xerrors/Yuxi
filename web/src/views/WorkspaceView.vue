@@ -1,19 +1,29 @@
 <template>
   <div class="workspace-view layout-container">
-    <PageHeader title="个人空间" :loading="loadingTree || loadingPreview" :show-border="true">
+    <PageHeader
+      title="个人空间"
+      :loading="headerLoading"
+      :active-key="activeTab"
+      :tabs="workspaceTabs"
+      :show-border="true"
+      aria-label="个人空间视图切换"
+      @change="handleTabChange"
+    >
       <template #actions>
-        <a-button class="lucide-icon-btn" @click="fileSearchOpen = true">
-          <template #icon><Search :size="16" /></template>
-          搜索
-        </a-button>
-        <a-button
-          v-if="isAgentsWorkspacePath"
-          class="lucide-icon-btn"
-          @click="openAgentsGuideModal"
-        >
-          <template #icon><CircleHelp :size="16" /></template>
-          使用说明
-        </a-button>
+        <template v-if="activeTab === 'files'">
+          <a-button class="lucide-icon-btn" @click="fileSearchOpen = true">
+            <template #icon><Search :size="16" /></template>
+            搜索
+          </a-button>
+          <a-button
+            v-if="isAgentsWorkspacePath"
+            class="lucide-icon-btn"
+            @click="openAgentsGuideModal"
+          >
+            <template #icon><CircleHelp :size="16" /></template>
+            使用说明
+          </a-button>
+        </template>
       </template>
     </PageHeader>
 
@@ -34,7 +44,11 @@
       @select-file="handleFileSearchSelect"
     />
 
-    <div class="workspace-shell" :class="{ 'is-sidebar-collapsed': sidebarCollapsed }">
+    <div
+      v-show="activeTab === 'files'"
+      class="workspace-shell"
+      :class="{ 'is-sidebar-collapsed': sidebarCollapsed }"
+    >
       <div v-if="!sidebarCollapsed" class="workspace-sidebar-slot">
         <button
           type="button"
@@ -133,6 +147,10 @@
       </main>
     </div>
 
+    <div v-if="activeTab === 'schedules'" class="workspace-schedule-panel">
+      <ScheduledAgentsView ref="schedulePanelRef" />
+    </div>
+
     <a-modal
       v-model:open="createDirectoryModalVisible"
       title="新建文件夹"
@@ -219,6 +237,7 @@ import AgentFilePreview from '@/components/AgentFilePreview.vue'
 import WorkspaceFileList from '@/components/workspace/WorkspaceFileList.vue'
 import WorkspacePreviewPane from '@/components/workspace/WorkspacePreviewPane.vue'
 import WorkspaceSidebar from '@/components/workspace/WorkspaceSidebar.vue'
+import ScheduledAgentsView from '@/views/ScheduledAgentsView.vue'
 import { databaseApi } from '@/apis/knowledge_api'
 import { useUserStore } from '@/stores/user'
 import {
@@ -244,6 +263,31 @@ const route = useRoute()
 const activeSourceKey = ref('personal')
 const currentPath = ref('/')
 const fileSearchOpen = ref(false)
+const activeTab = ref('files')
+const schedulePanelRef = ref(null)
+
+const workspaceTabs = [
+  { key: 'files', label: '文件' },
+  { key: 'schedules', label: '定时任务 (beta)' }
+]
+
+const headerLoading = computed(() => {
+  if (activeTab.value === 'schedules') {
+    return Boolean(schedulePanelRef.value?.loading || schedulePanelRef.value?.saving)
+  }
+  return loadingTree.value || loadingPreview.value
+})
+
+// 从定时任务切走前先落盘未保存的编辑内容
+async function handleTabChange(item) {
+  const nextTab = item?.key
+  if (!nextTab || nextTab === activeTab.value) return
+  if (activeTab.value === 'schedules') {
+    const canLeave = await schedulePanelRef.value?.beforeLeave?.()
+    if (canLeave === false) return
+  }
+  activeTab.value = nextTab
+}
 
 const searchWorkspace = (query) => searchWorkspaceFiles(query)
 
@@ -1002,6 +1046,13 @@ watch(useInlinePreview, (isInline, wasInline) => {
   &.is-sidebar-collapsed {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+.workspace-schedule-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--gray-0);
 }
 
 .workspace-sidebar-slot {
