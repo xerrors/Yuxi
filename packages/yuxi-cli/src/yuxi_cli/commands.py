@@ -67,7 +67,12 @@ def login_with_api_key(
     remote = config.get_remote(remote_name)
     with client_factory(remote) as client:
         _ensure_server_compatible(client, "cli.api_key_auth")
-        client.me(api_key=api_key)  # 校验 Key 是否可用
+        try:
+            client.me(api_key=api_key)
+        except ClientError as exc:
+            if exc.status_code != 403:
+                raise
+            client.list_external_databases(api_key=api_key)
 
     remote.api_key = api_key
     remote.api_key_id = ""
@@ -135,7 +140,13 @@ def whoami(store: ConfigStore, remote_name: str | None, console: Console, client
     if not remote.api_key:
         raise CommandError(f"remote 尚未登录: {remote.name}")
     with client_factory(remote) as client:
-        user = client.me()
+        try:
+            user = client.me()
+        except ClientError as exc:
+            if exc.status_code != 403:
+                raise
+            console.print("受限 API Key 可用，但无权读取用户身份。")
+            return
     console.print(f"{user.get('username')} ({user.get('uid')}) - {user.get('role')}")
 
 
@@ -149,8 +160,8 @@ def status(store: ConfigStore, remote_name: str | None, console: Console, client
             try:
                 user = client.me()
                 auth = f"{user.get('username')} ({user.get('uid')})"
-            except ClientError:
-                auth = "API Key 无效"
+            except ClientError as exc:
+                auth = "受限 API Key 可用（无身份读取权限）" if exc.status_code == 403 else "API Key 无效"
 
     table = Table(show_header=False)
     table.add_row("Remote", remote.name)

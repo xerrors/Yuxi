@@ -58,7 +58,7 @@ class AgentCallRunResultRequest(BaseModel):
     agent_slug: str | None = Field(None, description="可选，传入时校验 run 归属")
 
 
-@agent_invocation_call_router.post("/runs")
+@agent_invocation_call_router.post("/runs", deprecated=True)
 async def create_agent_call_run(
     payload: AgentCallRunCreate,
     current_user: User = Depends(get_required_user),
@@ -112,6 +112,7 @@ async def create_agent_call_run(
                 "thread_id": run_response["thread_id"],
                 "status": run_response["status"],
                 "request_id": run_response["request_id"],
+                "result_url": run_response.get("result_url"),
                 "output": "",
             }
         )
@@ -125,10 +126,10 @@ async def create_agent_call_run(
             status_code=504,
             detail={"message": "运行仍在进行中，等待最终结果超时", "run": exc.result},
         ) from exc
-    return _build_agent_call_response(result)
+    return _build_agent_call_response({**result, "result_url": run_response.get("result_url")})
 
 
-@agent_invocation_call_router.post("/runs/result")
+@agent_invocation_call_router.post("/runs/result", deprecated=True)
 async def get_agent_call_run_result(
     payload: AgentCallRunResultRequest,
     current_user: User = Depends(get_required_user),
@@ -221,6 +222,7 @@ def _build_agent_call_response(result: dict[str, Any]) -> dict[str, Any]:
         "thread_id": result.get("thread_id"),
         "status": status,
         "request_id": result.get("request_id"),
+        "result_url": result.get("result_url"),
         "output": output,
         "choices": [
             {

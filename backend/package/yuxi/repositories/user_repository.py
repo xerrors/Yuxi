@@ -1,5 +1,6 @@
 """用户数据访问层 - Repository"""
 
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC
@@ -7,10 +8,12 @@ from datetime import datetime as dt
 from typing import Annotated, Any
 
 from sqlalchemy import delete, func, or_, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import APIKey, ScheduledAgentJob, User
+from yuxi.utils.hash_utils import hash_id
 
 
 def _utc_now() -> dt:
@@ -23,6 +26,41 @@ class UserRepository:
 
     def __init__(self, db_session: AsyncSession | None = None):
         self.db_session = db_session
+
+    async def get_or_create_public_end_user(self, *, owner: User, app_id: str, end_user_id: str) -> User:
+        """按 Key 用户、APP 和外部 ID 并发安全地解析终端用户。"""
+        if self.db_session is None:
+            raise RuntimeError("终端用户身份解析需要请求事务")
+
+        query = select(User).where(
+            User.owner_user_id == owner.id,
+            User.app_id == app_id,
+            User.end_user_id == end_user_id,
+        )
+        existing = await self.db_session.scalar(query)
+        if existing is not None:
+            return existing
+
+        identity = json.dumps([owner.id, app_id, end_user_id], ensure_ascii=False, separators=(",", ":"))
+        uid = hash_id("endusr_", identity, length=64)
+        await self.db_session.execute(
+            pg_insert(User)
+            .values(
+                username=uid,
+                uid=uid,
+                password_hash="!disabled",
+                role="user",
+                user_kind="end_user",
+                owner_user_id=owner.id,
+                app_id=app_id,
+                end_user_id=end_user_id,
+            )
+            .on_conflict_do_nothing()
+        )
+        result = await self.db_session.scalar(query)
+        if result is None:
+            raise RuntimeError("终端用户 UID 与既有用户冲突")
+        return result
 
     @asynccontextmanager
     async def _session(self) -> AsyncIterator[AsyncSession]:

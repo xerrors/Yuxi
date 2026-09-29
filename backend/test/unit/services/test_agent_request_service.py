@@ -115,6 +115,7 @@ async def test_submit_agent_request_owns_commit_and_publication(monkeypatch: pyt
         calls["persist"] = kwargs
         return AgentRunRequest(
             request_id="req-1",
+            turn_id="req-1",
             status="dispatched",
             queue_policy="enqueue",
             input_message_id=10,
@@ -210,6 +211,8 @@ async def test_submit_agent_request_owns_commit_and_publication(monkeypatch: pyt
     assert calls["persist"]["workdir_binding"].workdir_path == ("projects/11111111-1111-4111-8111-111111111111")
     assert result == {
         "request_id": "req-1",
+        "turn_id": "req-1",
+        "result_url": "/api/agent/request-result?request_id=req-1",
         "status": "dispatched",
         "queue_policy": "enqueue",
         "queue_position": None,
@@ -291,12 +294,15 @@ async def test_existing_request_returns_without_runtime_preparation(monkeypatch,
 
     request = SimpleNamespace(
         request_id="req",
+        turn_id="req",
         uid="user",
         agent_slug="agent",
         conversation_thread_id="thread",
         source="chat",
         channel="web",
         external_id=None,
+        app_id=None,
+        intent_hash=None,
         queue_policy="steer",
         status=status,
         input_message_id=10,

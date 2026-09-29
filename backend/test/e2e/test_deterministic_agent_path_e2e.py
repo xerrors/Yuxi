@@ -14,8 +14,9 @@ import httpx
 import pytest
 from e2e_helpers import cancel_run, consume_events, delete_agent, postgres_dsn, wait_for_run
 from yuxi.agents.backends.sandbox import ProvisionerSandboxBackend, get_sandbox_provider
-from yuxi.models.utils import parse_assistant_message_body
 from yuxi.config import get_skill_projection_dir
+from yuxi.models.utils import parse_assistant_message_body
+from yuxi.utils.hash_utils import hash_id
 from yuxi.workspace.paths import user_workspace_dir, workspace_uid_dirname
 
 from test.live_api_cleanup import make_test_conversation_metadata, make_test_conversation_title
@@ -33,6 +34,1103 @@ LARGE_TOOL_RESULT_MARKER = "DETERMINISTIC_LARGE_TOOL_RESULT"
 LARGE_TOOL_CALL_ID = "call-large-tool-result"
 PROVIDER_ID = "ci-replay"
 MODEL_SPEC = f"{PROVIDER_ID}:deterministic-chat"
+
+
+async def test_public_agents_key_request_and_run_keep_source_and_result(e2e_client, e2e_headers):
+    """受限 Key 从外部提交到 worker 终态时保持 APP、幂等意图和同一 Run 结果。"""
+    me = await e2e_client.get("/api/auth/me", headers=e2e_headers)
+    assert me.status_code == 200, me.text
+    uid = str(me.json()["uid"])
+    await _create_provider(e2e_client, e2e_headers)
+    agent_slug = None
+    session_id = None
+    run_id = None
+    second_run_id = None
+    key_ids = []
+    collision_thread_ids = []
+    collision_request_ids = []
+    try:
+        agent_slug = await _create_agent(e2e_client, e2e_headers, uid)
+        created = await e2e_client.post(
+            "/api/user/apikey/",
+            headers=e2e_headers,
+            json={
+                "request_id": str(uuid.uuid4()),
+                "name": "Public deterministic E2E",
+                "access_level": "agents",
+                "app_id": "ci-public-e2e",
+            },
+        )
+        assert created.status_code == 200, created.text
+        key_ids.append(created.json()["api_key"]["id"])
+        public_headers = {
+            "Authorization": f"Bearer {created.json()['secret']}",
+            "Idempotency-Key": f"public-deterministic-first-{uuid.uuid4().hex}",
+            "X-App-Id": "forged",
+        }
+        visible_agent = await e2e_client.get(f"/api/v1/agents/{agent_slug}", headers=public_headers)
+        assert visible_agent.status_code == 200, visible_agent.text
+        assert visible_agent.json()["id"] == agent_slug
+        body = {
+            "agent_id": agent_slug,
+            "input": [{"role": "user", "content": [{"type": "input_text", "text": f"只输出\n{EXPECTED_OUTPUT}"}]}],
+        }
+        response = await e2e_client.post("/api/v1/agents/threads", headers=public_headers, json=body)
+        assert response.status_code == 200, response.text
+        assert response.headers["X-App-Id"] == "ci-public-e2e"
+        session_id = response.json()["thread_id"]
+        turn_id = response.json()["request_id"]
+        assert response.json()["result_url"] == f"/api/v1/agents/threads/{session_id}/requests/{turn_id}"
+
+        replay = await e2e_client.post("/api/v1/agents/sessions", headers=public_headers, json=body)
+        assert replay.status_code == 200, replay.text
+        assert replay.json()["id"] == session_id
+        assert replay.json()["turn_id"] == turn_id
+        native_thread = await e2e_client.get(f"/api/v1/agents/threads/{session_id}", headers=public_headers)
+        assert native_thread.status_code == 200, native_thread.text
+        assert native_thread.json()["request_id"] == turn_id
+        conflict = await e2e_client.post(
+            "/api/v1/agents/sessions",
+            headers=public_headers,
+            json={**body, "input": [{"role": "user", "content": [{"type": "input_text", "text": "其他输入"}]}]},
+        )
+        assert conflict.status_code == 409, conflict.text
+        split_conflict = await e2e_client.post(
+            "/api/v1/agents/sessions",
+            headers=public_headers,
+            json={
+                **body,
+                "input": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": "只输出"},
+                            {"type": "input_text", "text": EXPECTED_OUTPUT},
+                        ],
+                    }
+                ],
+            },
+        )
+        assert split_conflict.status_code == 409, split_conflict.text
+        blocked = await e2e_client.get("/api/agent", headers=public_headers)
+        assert blocked.status_code == 403, blocked.text
+
+        result_url = f"/api/v1/agents/sessions/{session_id}/turns/{turn_id}"
+        for _ in range(150):
+            result = await e2e_client.get(result_url, headers=public_headers)
+            assert result.status_code == 200, result.text
+            if result.json()["status"] in {"completed", "failed", "cancelled"}:
+                break
+            await asyncio.sleep(0.1)
+        else:
+            pytest.fail("Public API Turn did not reach a terminal status")
+        assert result.json()["status"] == "completed", result.text
+        assert result.json()["output"] == EXPECTED_OUTPUT
+        run_id = result.json()["run_id"]
+        assert run_id
+        native_result = await e2e_client.get(response.json()["result_url"], headers=public_headers)
+        assert native_result.status_code == 200, native_result.text
+        assert native_result.json()["request_id"] == turn_id
+        assert native_result.json()["run_id"] == run_id
+        assert native_result.json()["output"] == EXPECTED_OUTPUT
+        assert "session_id" not in native_result.json()
+
+        async with e2e_client.stream("GET", response.json()["events_url"], headers=public_headers) as native_events:
+            assert native_events.status_code == 200, native_events.text
+            native_stream_body = (await native_events.aread()).decode()
+            assert native_stream_body.startswith("event: run_created\n")
+            assert f'"run_id": "{run_id}"' in native_stream_body
+            assert "event: end" in native_stream_body
+
+        async with e2e_client.stream(
+            "GET",
+            f"/api/v1/agents/sessions/{session_id}/events",
+            params={"turn_id": turn_id},
+            headers=public_headers,
+        ) as events:
+            assert events.status_code == 200, events.text
+            assert events.headers["X-App-Id"] == "ci-public-e2e"
+            stream_body = (await events.aread()).decode()
+        assert "event: end" in stream_body
+
+        next_headers = {**public_headers, "Idempotency-Key": "public-deterministic-second"}
+        next_event = {
+            "events": [
+                {
+                    "type": "agent.session.input.message",
+                    "mode": "follow_up",
+                    "input": [
+                        {"role": "user", "content": [{"type": "input_text", "text": f"只输出 {EXPECTED_OUTPUT}"}]}
+                    ],
+                }
+            ]
+        }
+        accepted = await e2e_client.post(
+            f"/api/v1/agents/sessions/{session_id}/events", headers=next_headers, json=next_event
+        )
+        assert accepted.status_code == 202, accepted.text
+        second_turn_id = accepted.json()["turn_id"]
+        assert second_turn_id != turn_id
+        stale_cancel = await e2e_client.post(
+            f"/api/v1/agents/sessions/{session_id}/events",
+            headers={**public_headers, "Idempotency-Key": f"stale-cancel-{uuid.uuid4().hex}"},
+            json={"events": [{"type": "agent.session.input.cancel", "run_id": run_id}]},
+        )
+        assert stale_cancel.status_code == 409, stale_cancel.text
+        native_replay = await e2e_client.post(
+            f"/api/v1/agents/threads/{session_id}/requests",
+            headers=next_headers,
+            json={"input": next_event["events"][0]["input"]},
+        )
+        assert native_replay.status_code == 202, native_replay.text
+        assert native_replay.json()["request_id"] == second_turn_id
+        assert native_replay.json()["thread_id"] == session_id
+        receipt_identity = json.dumps(
+            [uid, "ci-public-e2e", session_id, next_headers["Idempotency-Key"]],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        pg = await asyncpg.connect(postgres_dsn())
+        try:
+            await pg.execute(
+                "DELETE FROM agent_session_input_receipts WHERE id = $1",
+                hash_id("pubevt_", receipt_identity, length=64),
+            )
+        finally:
+            await pg.close()
+        omitted_mode_event = {
+            "events": [{key: value for key, value in next_event["events"][0].items() if key != "mode"}]
+        }
+        old_client_replay = await e2e_client.post(
+            f"/api/v1/agents/sessions/{session_id}/events", headers=next_headers, json=omitted_mode_event
+        )
+        assert old_client_replay.status_code == 202, old_client_replay.text
+        assert old_client_replay.json()["request_id"] == second_turn_id
+        native_conflict = await e2e_client.post(
+            f"/api/v1/agents/threads/{session_id}/requests",
+            headers=next_headers,
+            json={"input": [{"role": "user", "content": [{"type": "input_text", "text": "不同输入"}]}]},
+        )
+        assert native_conflict.status_code == 409, native_conflict.text
+        for _ in range(150):
+            second = await e2e_client.get(
+                f"/api/v1/agents/sessions/{session_id}/turns/{second_turn_id}", headers=public_headers
+            )
+            assert second.status_code == 200, second.text
+            if second.json()["status"] in {"completed", "failed", "cancelled"}:
+                break
+            await asyncio.sleep(0.1)
+        else:
+            pytest.fail("Second Public API Turn did not reach a terminal status")
+        assert second.json()["status"] == "completed", second.text
+        assert second.json()["output"] == EXPECTED_OUTPUT
+        second_run_id = second.json()["run_id"]
+        session = await e2e_client.get(f"/api/v1/agents/sessions/{session_id}", headers=public_headers)
+        assert session.status_code == 200, session.text
+        assert session.json()["turn_id"] == second_turn_id
+        assert session.json()["status"] == "idle"
+        late_native_replay = await e2e_client.post("/api/v1/agents/threads", headers=public_headers, json=body)
+        assert late_native_replay.status_code == 200, late_native_replay.text
+        assert late_native_replay.json()["request_id"] == turn_id
+        assert late_native_replay.json()["run_id"] == run_id
+        assert late_native_replay.json()["result_url"] == response.json()["result_url"]
+        pg = await asyncpg.connect(postgres_dsn())
+        try:
+            await pg.execute(
+                "UPDATE conversations SET creation_request_id = NULL, "
+                "extra_metadata = (extra_metadata::jsonb - 'public_creation_intent')::json "
+                "WHERE thread_id = $1",
+                session_id,
+            )
+        finally:
+            await pg.close()
+        late_session_replay = await e2e_client.post("/api/v1/agents/sessions", headers=public_headers, json=body)
+        assert late_session_replay.status_code == 200, late_session_replay.text
+        assert late_session_replay.json()["turn_id"] == turn_id
+        assert late_session_replay.json()["run_id"] == run_id
+
+        conn = await asyncpg.connect(postgres_dsn())
+        try:
+            persisted = await conn.fetchrow(
+                """
+                SELECT req.app_id, req.api_key_id, req.intent_hash, run.app_id AS run_app_id,
+                       run.api_key_id AS run_api_key_id, run.id AS run_id,
+                       conversation.app_id AS conversation_app_id
+                FROM agent_run_requests req
+                JOIN agent_runs run ON run.id = req.dispatched_run_id
+                JOIN conversations conversation ON conversation.thread_id = req.conversation_thread_id
+                WHERE req.request_id = $1
+                """,
+                turn_id,
+            )
+            assert persisted["app_id"] == persisted["run_app_id"] == "ci-public-e2e", persisted
+            assert persisted["conversation_app_id"] == "ci-public-e2e", persisted
+            assert persisted["api_key_id"] == persisted["run_api_key_id"] == key_ids[0], persisted
+            assert persisted["run_id"] == run_id and persisted["intent_hash"], persisted
+            assert await conn.fetchval("SELECT COUNT(*) FROM agent_run_requests WHERE request_id = $1", turn_id) == 1
+        finally:
+            await conn.close()
+
+        other = await e2e_client.post(
+            "/api/user/apikey/",
+            headers=e2e_headers,
+            json={
+                "request_id": str(uuid.uuid4()),
+                "name": "Other APP E2E",
+                "access_level": "agents",
+                "app_id": "ci-other-app",
+            },
+        )
+        assert other.status_code == 200, other.text
+        key_ids.append(other.json()["api_key"]["id"])
+        other_headers = {"Authorization": f"Bearer {other.json()['secret']}"}
+        cross_app = await e2e_client.get(result_url, headers=other_headers)
+        assert cross_app.status_code == 404, cross_app.text
+        native_cross_app = await e2e_client.get(response.json()["result_url"], headers=other_headers)
+        assert native_cross_app.status_code == 404, native_cross_app.text
+
+        collision_prefix = f"ci-{uuid.uuid4().hex[:8]}"
+        collision_results = []
+        for app_id, idempotency_key in (
+            (f"{collision_prefix}:new-session:b", "c"),
+            (collision_prefix, "b:new-session:c"),
+        ):
+            app_key = await e2e_client.post(
+                "/api/user/apikey/",
+                headers=e2e_headers,
+                json={
+                    "request_id": str(uuid.uuid4()),
+                    "name": "Public ID collision E2E",
+                    "access_level": "agents",
+                    "app_id": app_id,
+                },
+            )
+            assert app_key.status_code == 200, app_key.text
+            key_ids.append(app_key.json()["api_key"]["id"])
+            submitted = await e2e_client.post(
+                "/api/v1/agents/threads",
+                headers={
+                    "Authorization": f"Bearer {app_key.json()['secret']}",
+                    "Idempotency-Key": idempotency_key,
+                },
+                json=body,
+            )
+            assert submitted.status_code == 200, submitted.text
+            collision_thread_ids.append(submitted.json()["thread_id"])
+            collision_request_ids.append(submitted.json()["request_id"])
+            collision_results.append(
+                (submitted.json()["result_url"], {"Authorization": f"Bearer {app_key.json()['secret']}"})
+            )
+        assert len(set(collision_thread_ids)) == len(set(collision_request_ids)) == 2
+        for result_url, headers in collision_results:
+            for _ in range(150):
+                collision_result = await e2e_client.get(result_url, headers=headers)
+                assert collision_result.status_code == 200, collision_result.text
+                if collision_result.json()["status"] in {"completed", "failed", "cancelled"}:
+                    break
+                await asyncio.sleep(0.1)
+            else:
+                pytest.fail("Colliding legacy identities did not reach independent terminal results")
+            assert collision_result.json()["status"] == "completed", collision_result.text
+            assert collision_result.json()["output"] == EXPECTED_OUTPUT
+    finally:
+        if second_run_id:
+            await cancel_run(e2e_client, e2e_headers, second_run_id)
+        if run_id:
+            await cancel_run(e2e_client, e2e_headers, run_id)
+        for request_id in collision_request_ids:
+            cancelled = await e2e_client.post(f"/api/agent/requests/{request_id}/cancel", headers=e2e_headers)
+            if cancelled.status_code == 409:
+                await cancel_run(e2e_client, e2e_headers, cancelled.json()["detail"]["run_id"])
+            else:
+                assert cancelled.status_code == 200, cancelled.text
+        if session_id:
+            await e2e_client.delete(f"/api/chat/thread/{session_id}", headers=e2e_headers)
+        for thread_id in collision_thread_ids:
+            await e2e_client.delete(f"/api/chat/thread/{thread_id}", headers=e2e_headers)
+        for key_id in key_ids:
+            await e2e_client.delete(f"/api/user/apikey/{key_id}", headers=e2e_headers)
+        if agent_slug:
+            await delete_agent(e2e_client, e2e_headers, agent_slug)
+        await _delete_provider(e2e_client, e2e_headers)
+
+
+async def test_public_session_create_stream_survives_disconnect_and_replay(e2e_client, e2e_headers):
+    """创建流贯穿首轮执行，断线重放仍绑定同一持久 Turn。"""
+    me = await e2e_client.get("/api/auth/me", headers=e2e_headers)
+    assert me.status_code == 200, me.text
+    await _create_provider(e2e_client, e2e_headers)
+    token = str(uuid.uuid4())
+    agent_slug = key_id = session_id = run_id = streamed_session_id = streamed_run_id = empty_session_id = None
+    corrected_session_id = corrected_run_id = legacy_empty_session_id = None
+    try:
+        agent_slug = await _create_agent(
+            e2e_client,
+            e2e_headers,
+            str(me.json()["uid"]),
+            system_prompt_suffix=f"{BLOCK_BEFORE_RESPONSE_MARKER}:{token}",
+        )
+        key = await e2e_client.post(
+            "/api/user/apikey/",
+            headers=e2e_headers,
+            json={
+                "request_id": str(uuid.uuid4()),
+                "name": "Public session stream E2E",
+                "access_level": "agents",
+                "app_id": "ci-session-stream",
+            },
+        )
+        assert key.status_code == 200, key.text
+        key_id = key.json()["api_key"]["id"]
+        headers = {
+            "Authorization": f"Bearer {key.json()['secret']}",
+            "Idempotency-Key": f"session-stream-{uuid.uuid4().hex}",
+        }
+        body = {
+            "agent_id": agent_slug,
+            "input": [{"role": "user", "content": [{"type": "input_text", "text": f"只输出 {EXPECTED_OUTPUT}"}]}],
+        }
+        bad_key = f"session-invalid-{uuid.uuid4().hex}"
+        bad_headers = {**headers, "Idempotency-Key": bad_key}
+        invalid_config = await e2e_client.post(
+            "/api/v1/agents/sessions", headers=bad_headers,
+            json={**body, "tool_approval_mode": "invalid-mode"},
+        )
+        assert invalid_config.status_code == 422, invalid_config.text
+        invalid_input = await e2e_client.post(
+            "/api/v1/agents/sessions",
+            headers=bad_headers,
+            json={
+                "agent_id": agent_slug,
+                "input": [{"role": "user", "content": [
+                    {"type": "input_image", "image_url": "https://example.invalid/image.png"}
+                ]}],
+            },
+        )
+        assert invalid_input.status_code == 422, invalid_input.text
+        creation_id = hash_id(
+            "pubsess_",
+            json.dumps(
+                [str(me.json()["uid"]), "ci-session-stream", "new-session", bad_key],
+                separators=(",", ":"),
+            ),
+            length=64,
+        )
+        pg = await asyncpg.connect(postgres_dsn())
+        try:
+            assert await pg.fetchval(
+                "SELECT count(*) FROM conversations WHERE creation_request_id = $1", creation_id
+            ) == 0
+        finally:
+            await pg.close()
+        corrected = await e2e_client.post("/api/v1/agents/sessions", headers=bad_headers, json=body)
+        assert corrected.status_code == 200, corrected.text
+        corrected_session_id = corrected.json()["id"]
+        corrected_run_id = corrected.json()["run_id"]
+        invalid = await e2e_client.post("/api/v1/agents/sessions", headers=headers, json={**body, "stream": "yes"})
+        assert invalid.status_code == 422, invalid.text
+
+        async with e2e_client.stream(
+            "POST", "/api/v1/agents/sessions", headers=headers, json={**body, "stream": True}
+        ) as stream:
+            assert stream.status_code == 200, stream.text
+            assert stream.headers["content-type"].startswith("text/event-stream")
+            assert stream.headers["X-App-Id"] == "ci-session-stream"
+            lines = stream.aiter_lines()
+            assert await anext(lines) == "event: session_created"
+            created = json.loads((await anext(lines)).removeprefix("data: "))
+            session_id = created["id"]
+            turn_id = created["turn_id"]
+            assert created["status"] == "in_progress"
+            assert created["events_url"] == f"/api/v1/agents/sessions/{session_id}/events?turn_id={turn_id}"
+            await _wait_for_blocking_replay(token)
+            active = await e2e_client.get(created["result_url"], headers=headers)
+            assert active.status_code == 200, active.text
+            assert active.json()["status"] == "in_progress"
+            run_id = active.json()["run_id"]
+            assert run_id
+
+        async with httpx.AsyncClient(base_url="http://localhost:8765", timeout=5) as replay:
+            released = await replay.get("/release-blocking", params={"token": token})
+            assert released.status_code == 200, released.text
+
+        result = None
+        for _ in range(150):
+            response = await e2e_client.get(created["result_url"], headers=headers)
+            assert response.status_code == 200, response.text
+            result = response.json()
+            if result["status"] in {"completed", "failed", "cancelled"}:
+                break
+            await asyncio.sleep(0.1)
+        assert result is not None and result["status"] == "completed", result
+        assert result["output"] == EXPECTED_OUTPUT
+        assert result["run_id"] == run_id
+
+        session = await e2e_client.get(f"/api/v1/agents/sessions/{session_id}", headers=headers)
+        assert session.status_code == 200, session.text
+        assert session.json()["status"] == "idle"
+        assert session.json()["turn_id"] == turn_id
+
+        async with e2e_client.stream(
+            "POST", "/api/v1/agents/sessions", headers=headers, json={**body, "stream": True}
+        ) as replay:
+            assert replay.status_code == 200, replay.text
+            replay_body = (await replay.aread()).decode()
+        assert "event: session_created" in replay_body
+        assert "event: end" in replay_body
+        assert json.loads(replay_body.split("data: ", 1)[1].split("\n", 1)[0])["turn_id"] == turn_id
+
+        native = await e2e_client.post("/api/v1/agents/threads", headers=headers, json=body)
+        assert native.status_code == 200, native.text
+        assert native.json()["request_id"] == turn_id
+        assert native.json()["run_id"] == run_id
+        rejected = await e2e_client.post("/api/v1/agents/threads", headers=headers, json={**body, "stream": True})
+        assert rejected.status_code == 422, rejected.text
+
+        conn = await asyncpg.connect(postgres_dsn())
+        try:
+            assert await conn.fetchval("SELECT COUNT(*) FROM agent_run_requests WHERE request_id = $1", turn_id) == 1
+            dispatched_run_id = await conn.fetchval(
+                "SELECT dispatched_run_id FROM agent_run_requests WHERE request_id = $1", turn_id
+            )
+            assert dispatched_run_id == run_id
+        finally:
+            await conn.close()
+
+        full_headers = {**headers, "Idempotency-Key": f"session-full-stream-{uuid.uuid4().hex}"}
+        async with e2e_client.stream(
+            "POST", "/api/v1/agents/sessions", headers=full_headers, json={**body, "stream": True}
+        ) as full_stream:
+            assert full_stream.status_code == 200, full_stream.text
+            full_body = (await full_stream.aread()).decode()
+        assert full_body.startswith("event: session_created\n")
+        assert "event: end" in full_body
+        full_created = json.loads(full_body.split("data: ", 1)[1].split("\n", 1)[0])
+        streamed_session_id = full_created["id"]
+        assert streamed_session_id != session_id
+        full_result = await e2e_client.get(full_created["result_url"], headers=full_headers)
+        assert full_result.status_code == 200, full_result.text
+        assert full_result.json()["status"] == "completed"
+        assert full_result.json()["output"] == EXPECTED_OUTPUT
+        streamed_run_id = full_result.json()["run_id"]
+
+        empty_key = f"product-empty-{uuid.uuid4().hex}"
+        empty_headers = {**e2e_headers, "Idempotency-Key": empty_key}
+        empty = await e2e_client.post(
+            "/api/v1/agents/sessions",
+            headers=empty_headers,
+            json={"agent_id": agent_slug, "title": "产品空对话"},
+        )
+        assert empty.status_code == 200, empty.text
+        empty_session_id = empty.json()["id"]
+        assert empty.json()["status"] == "idle"
+        assert empty.json()["turn_id"] is None
+        same_empty = await e2e_client.post(
+            "/api/v1/agents/sessions", headers=empty_headers,
+            json={"agent_id": agent_slug, "title": "产品空对话"},
+        )
+        assert same_empty.status_code == 200, same_empty.text
+        assert same_empty.json()["id"] == empty_session_id
+        for conflicting_body in (
+            {"agent_id": agent_slug, "title": "另一标题"},
+            {"agent_id": agent_slug, "title": "产品空对话", "model_spec": MODEL_SPEC},
+            {"agent_id": agent_slug, "title": "产品空对话", "tool_approval_mode": "always_trust"},
+            {**body, "title": "产品空对话"},
+        ):
+            conflict = await e2e_client.post(
+                "/api/v1/agents/sessions", headers=empty_headers, json=conflicting_body
+            )
+            assert conflict.status_code == 409, conflict.text
+        accepted = await e2e_client.post(
+            f"/api/v1/agents/sessions/{empty_session_id}/events",
+            headers={**e2e_headers, "Idempotency-Key": f"product-message-{uuid.uuid4().hex}"},
+            json={"events": [{
+                "type": "agent.session.input.message",
+                "mode": "follow_up",
+                "input": [{"role": "user", "content": [{"type": "input_text", "text": EXPECTED_OUTPUT}]}],
+            }]},
+        )
+        assert accepted.status_code == 202, accepted.text
+        product_turn_id = accepted.json()["turn_id"]
+        assert product_turn_id
+        for _ in range(150):
+            product_turn = await e2e_client.get(
+                f"/api/v1/agents/sessions/{empty_session_id}/turns/{product_turn_id}", headers=e2e_headers
+            )
+            assert product_turn.status_code == 200, product_turn.text
+            if product_turn.json()["status"] in {"completed", "failed", "cancelled"}:
+                break
+            await asyncio.sleep(0.1)
+        assert product_turn.json()["status"] == "completed", product_turn.text
+        assert product_turn.json()["output"] == EXPECTED_OUTPUT
+        items = await e2e_client.get(
+            f"/api/v1/agents/sessions/{empty_session_id}/turns/{product_turn_id}/items", headers=e2e_headers
+        )
+        assert items.status_code == 200, items.text
+        assert {item["role"] for item in items.json()["data"]} == {"user", "assistant"}
+        pg = await asyncpg.connect(postgres_dsn())
+        try:
+            conversation_id = await pg.fetchval(
+                "SELECT id FROM conversations WHERE thread_id = $1", empty_session_id
+            )
+            await pg.execute(
+                "INSERT INTO messages (conversation_id, role, content, message_type, run_id, delivery_status) "
+                "VALUES ($1, 'assistant', 'INTERNAL_MODEL_AUDIT', 'model_audit', $2, 'complete')",
+                conversation_id,
+                product_turn.json()["run_id"],
+            )
+        finally:
+            await pg.close()
+        after_audit = await e2e_client.get(
+            f"/api/v1/agents/sessions/{empty_session_id}/turns/{product_turn_id}/items", headers=e2e_headers
+        )
+        assert after_audit.status_code == 200, after_audit.text
+        assert len(after_audit.json()["data"]) == len(items.json()["data"])
+        assert "INTERNAL_MODEL_AUDIT" not in after_audit.text
+        legacy_key = f"legacy-empty-{uuid.uuid4().hex}"
+        legacy_creation_id = hash_id(
+            "pubsess_",
+            json.dumps([str(me.json()["uid"]), None, "new-session", legacy_key], separators=(",", ":")),
+            length=64,
+        )
+        legacy_created = await e2e_client.post(
+            "/api/chat/thread",
+            headers=e2e_headers,
+            json={
+                "request_id": legacy_creation_id,
+                "agent_id": agent_slug,
+                "title": "旧空会话",
+                "metadata": {"source": "public_api", "channel": "web"},
+            },
+        )
+        assert legacy_created.status_code == 200, legacy_created.text
+        legacy_empty_session_id = legacy_created.json()["id"]
+        legacy_headers = {**e2e_headers, "Idempotency-Key": legacy_key}
+        legacy_replay = await e2e_client.post(
+            "/api/v1/agents/sessions", headers=legacy_headers,
+            json={"agent_id": agent_slug, "title": "旧空会话"},
+        )
+        assert legacy_replay.status_code == 200, legacy_replay.text
+        assert legacy_replay.json()["id"] == legacy_empty_session_id
+        legacy_conflict = await e2e_client.post(
+            "/api/v1/agents/sessions", headers=legacy_headers,
+            json={"agent_id": agent_slug, "title": "更改后的标题"},
+        )
+        assert legacy_conflict.status_code == 409, legacy_conflict.text
+    finally:
+        if corrected_run_id:
+            await cancel_run(e2e_client, e2e_headers, corrected_run_id)
+        if corrected_session_id:
+            await e2e_client.delete(f"/api/chat/thread/{corrected_session_id}", headers=e2e_headers)
+        if legacy_empty_session_id:
+            await e2e_client.delete(f"/api/chat/thread/{legacy_empty_session_id}", headers=e2e_headers)
+        async with httpx.AsyncClient(base_url="http://localhost:8765", timeout=5) as replay:
+            await replay.get("/release-blocking", params={"token": token})
+        if streamed_run_id:
+            await cancel_run(e2e_client, e2e_headers, streamed_run_id)
+        if run_id:
+            await cancel_run(e2e_client, e2e_headers, run_id)
+        if streamed_session_id:
+            await e2e_client.delete(f"/api/chat/thread/{streamed_session_id}", headers=e2e_headers)
+        if session_id:
+            await e2e_client.delete(f"/api/chat/thread/{session_id}", headers=e2e_headers)
+        if empty_session_id:
+            await e2e_client.delete(f"/api/chat/thread/{empty_session_id}", headers=e2e_headers)
+        if key_id:
+            await e2e_client.delete(f"/api/user/apikey/{key_id}", headers=e2e_headers)
+        if agent_slug:
+            await delete_agent(e2e_client, e2e_headers, agent_slug)
+        await _delete_provider(e2e_client, e2e_headers)
+
+
+async def test_public_session_status_keeps_earlier_queued_request_visible(e2e_client, e2e_headers):
+    """最新 Request 已取消时，较早排队请求仍使 Session 处于进行中。"""
+    me = await e2e_client.get("/api/auth/me", headers=e2e_headers)
+    assert me.status_code == 200, me.text
+    await _create_provider(e2e_client, e2e_headers)
+    token = str(uuid.uuid4())
+    agent_slug = key_id = session_id = run_id = queued_request_id = None
+    try:
+        agent_slug = await _create_agent(
+            e2e_client,
+            e2e_headers,
+            str(me.json()["uid"]),
+            system_prompt_suffix=f"{BLOCK_BEFORE_RESPONSE_MARKER}:{token}",
+        )
+        key = await e2e_client.post(
+            "/api/user/apikey/",
+            headers=e2e_headers,
+            json={
+                "request_id": str(uuid.uuid4()),
+                "name": "Public session queued status E2E",
+                "access_level": "agents",
+                "app_id": "ci-session-queued-status",
+            },
+        )
+        assert key.status_code == 200, key.text
+        key_id = key.json()["api_key"]["id"]
+        headers = {"Authorization": f"Bearer {key.json()['secret']}"}
+        first = await e2e_client.post(
+            "/api/v1/agents/sessions",
+            headers={**headers, "Idempotency-Key": f"first-{uuid.uuid4().hex}"},
+            json={
+                "agent_id": agent_slug,
+                "input": [{"role": "user", "content": [{"type": "input_text", "text": "等待模型响应"}]}],
+            },
+        )
+        assert first.status_code == 200, first.text
+        session_id = first.json()["id"]
+        for _ in range(50):
+            current = await e2e_client.get(first.json()["result_url"], headers=headers)
+            assert current.status_code == 200, current.text
+            run_id = current.json()["run_id"]
+            if run_id:
+                break
+            await asyncio.sleep(0.1)
+        assert run_id
+        await _wait_for_blocking_replay(token)
+
+        requests = []
+        for label in ("second", "third"):
+            submitted = await e2e_client.post(
+                f"/api/v1/agents/threads/{session_id}/requests",
+                headers={**headers, "Idempotency-Key": f"{label}-{uuid.uuid4().hex}"},
+                json={"input": [{"role": "user", "content": [{"type": "input_text", "text": label}]}]},
+            )
+            assert submitted.status_code == 202, submitted.text
+            assert submitted.json()["status"] == "queued"
+            requests.append(submitted.json()["request_id"])
+        queued_request_id, latest_request_id = requests
+        cancelled = await e2e_client.post(
+            f"/api/agent/requests/{latest_request_id}/cancel", headers=e2e_headers
+        )
+        assert cancelled.status_code == 200, cancelled.text
+        cancel_headers = {**headers, "Idempotency-Key": f"cancel-{uuid.uuid4().hex}"}
+        cancel_payload = {"events": [{"type": "agent.session.input.cancel"}]}
+        accepted_cancel = await e2e_client.post(
+            f"/api/v1/agents/sessions/{session_id}/events",
+            headers=cancel_headers,
+            json=cancel_payload,
+        )
+        assert accepted_cancel.status_code == 202, accepted_cancel.text
+        assert accepted_cancel.json()["turn_id"] == first.json()["turn_id"]
+        assert accepted_cancel.json()["run_id"] == run_id
+        async with httpx.AsyncClient(base_url="http://localhost:8765", timeout=5) as replay:
+            released = await replay.get("/release-blocking", params={"token": token})
+            assert released.status_code == 200, released.text
+        run = await wait_for_run(e2e_client, e2e_headers, run_id)
+        assert run["status"] == "cancelled", run
+
+        conn = await asyncpg.connect(postgres_dsn())
+        try:
+            rows = await conn.fetch(
+                "SELECT request_id, status FROM agent_run_requests WHERE request_id = ANY($1::text[])",
+                requests,
+            )
+            assert {row["request_id"]: row["status"] for row in rows} == {
+                queued_request_id: "queued",
+                latest_request_id: "cancelled",
+            }
+        finally:
+            await conn.close()
+        session = await e2e_client.get(f"/api/v1/agents/sessions/{session_id}", headers=headers)
+        assert session.status_code == 200, session.text
+        assert session.json()["turn_id"] == queued_request_id
+        assert session.json()["status"] == "in_progress"
+        replayed_cancel = await e2e_client.post(
+            f"/api/v1/agents/sessions/{session_id}/events",
+            headers=cancel_headers,
+            json=cancel_payload,
+        )
+        assert replayed_cancel.status_code == 202, replayed_cancel.text
+        assert replayed_cancel.json() == accepted_cancel.json()
+    finally:
+        async with httpx.AsyncClient(base_url="http://localhost:8765", timeout=5) as replay:
+            await replay.get("/release-blocking", params={"token": token})
+        if queued_request_id:
+            await e2e_client.post(f"/api/agent/requests/{queued_request_id}/cancel", headers=e2e_headers)
+        if run_id:
+            await cancel_run(e2e_client, e2e_headers, run_id)
+        if session_id:
+            await e2e_client.delete(f"/api/chat/thread/{session_id}", headers=e2e_headers)
+        if key_id:
+            await e2e_client.delete(f"/api/user/apikey/{key_id}", headers=e2e_headers)
+        if agent_slug:
+            await delete_agent(e2e_client, e2e_headers, agent_slug)
+        await _delete_provider(e2e_client, e2e_headers)
+
+
+async def test_public_end_user_private_agent_run_keeps_own_uid(e2e_client, e2e_headers):
+    """私有 Agent 由 Key 用户授权，真实 worker 仍把结果绑定终端用户。"""
+    me = await e2e_client.get("/api/auth/me", headers=e2e_headers)
+    assert me.status_code == 200, me.text
+    owner_id, owner_uid = me.json()["id"], str(me.json()["uid"])
+    await _create_provider(e2e_client, e2e_headers)
+    app_id = f"ci-end-user-{uuid.uuid4().hex[:12]}"
+    end_user_id = f"visitor-{uuid.uuid4().hex}"
+    other_end_user_id = f"other-{uuid.uuid4().hex}"
+    agent_slug = None
+    key_id = None
+    thread_id = None
+    conn = await asyncpg.connect(postgres_dsn())
+    try:
+        agent_slug = await _create_agent(e2e_client, e2e_headers, owner_uid)
+        key = await e2e_client.post(
+            "/api/user/apikey/",
+            headers=e2e_headers,
+            json={
+                "request_id": str(uuid.uuid4()),
+                "name": "Public end user E2E",
+                "access_level": "agents",
+                "app_id": app_id,
+            },
+        )
+        assert key.status_code == 200, key.text
+        key_id = key.json()["api_key"]["id"]
+        public_headers = {
+            "Authorization": f"Bearer {key.json()['secret']}",
+            "X-End-User-Id": end_user_id,
+            "Idempotency-Key": f"end-user-first-{uuid.uuid4().hex}",
+        }
+        visible = await e2e_client.get(f"/api/v1/agents/{agent_slug}", headers=public_headers)
+        assert visible.status_code == 200, visible.text
+        body = {
+            "agent_id": agent_slug,
+            "input": [{"role": "user", "content": [{"type": "input_text", "text": f"只输出 {EXPECTED_OUTPUT}"}]}],
+        }
+        submitted = await e2e_client.post("/api/v1/agents/threads", headers=public_headers, json=body)
+        assert submitted.status_code == 200, submitted.text
+        receipt = submitted.json()
+        thread_id, request_id = receipt["thread_id"], receipt["request_id"]
+
+        for other_headers in (
+            {"Authorization": public_headers["Authorization"]},
+            {**public_headers, "X-End-User-Id": other_end_user_id},
+        ):
+            hidden = await e2e_client.get(f"/api/v1/agents/threads/{thread_id}", headers=other_headers)
+            assert hidden.status_code == 404, hidden.text
+            hidden_result = await e2e_client.get(receipt["result_url"], headers=other_headers)
+            assert hidden_result.status_code == 404, hidden_result.text
+            hidden_stream = await e2e_client.get(receipt["events_url"], headers=other_headers)
+            assert hidden_stream.status_code == 404, hidden_stream.text
+
+        replay = await e2e_client.post("/api/v1/agents/sessions", headers=public_headers, json=body)
+        assert replay.status_code == 200, replay.text
+        assert replay.json()["id"] == thread_id
+        assert replay.json()["turn_id"] == request_id
+
+        for _ in range(300):
+            result = await e2e_client.get(receipt["result_url"], headers=public_headers)
+            assert result.status_code == 200, result.text
+            if result.json()["status"] in {"completed", "failed", "cancelled"}:
+                break
+            await asyncio.sleep(0.1)
+        else:
+            pytest.fail("Public end user Request did not reach a terminal status")
+        assert result.json()["status"] == "completed", result.text
+        assert result.json()["output"] == EXPECTED_OUTPUT
+        assert result.json()["run_id"]
+
+        persisted = await conn.fetchrow(
+            """
+            SELECT u.uid, u.user_kind, u.role, c.uid AS conversation_uid,
+                   p.uid AS project_uid, p.workdir_path,
+                   req.uid AS request_uid, run.uid AS run_uid, run.app_id AS run_app_id
+            FROM users u
+            JOIN conversations c ON c.uid = u.uid
+            JOIN projects p ON p.id = c.project_id
+            JOIN agent_run_requests req ON req.conversation_thread_id = c.thread_id
+            JOIN agent_runs run ON run.id = req.dispatched_run_id
+            WHERE c.thread_id = $1 AND req.request_id = $2
+            """,
+            thread_id,
+            request_id,
+        )
+        assert persisted is not None
+        assert persisted["uid"] != owner_uid
+        assert persisted["user_kind"] == "end_user" and persisted["role"] == "user"
+        assert persisted["uid"] == persisted["conversation_uid"] == persisted["project_uid"]
+        assert persisted["uid"] == persisted["request_uid"] == persisted["run_uid"]
+        assert persisted["run_app_id"] == app_id
+        assert (user_workspace_dir(persisted["uid"]) / persisted["workdir_path"]).is_dir()
+        assert not (user_workspace_dir(owner_uid) / persisted["workdir_path"]).exists()
+
+        async with e2e_client.stream("GET", receipt["events_url"], headers=public_headers) as events:
+            assert events.status_code == 200, events.text
+            assert "event: end" in (await events.aread()).decode()
+    finally:
+        if thread_id:
+            await conn.execute("UPDATE conversations SET status = 'deleted' WHERE thread_id = $1", thread_id)
+        users = await conn.fetch(
+            """
+            UPDATE users SET is_deleted = 1, deleted_at = NOW()
+            WHERE owner_user_id = $1 AND app_id = $2 AND end_user_id = ANY($3::varchar[])
+            RETURNING uid
+            """,
+            owner_id,
+            app_id,
+            [end_user_id, other_end_user_id],
+        )
+        for user in users:
+            shutil.rmtree(user_workspace_dir(user["uid"]), ignore_errors=True)
+        await conn.close()
+        if key_id:
+            await e2e_client.delete(f"/api/user/apikey/{key_id}", headers=e2e_headers)
+        if agent_slug:
+            await delete_agent(e2e_client, e2e_headers, agent_slug)
+        await _delete_provider(e2e_client, e2e_headers)
+
+
+@pytest.mark.e2e_lifecycle
+@pytest.mark.parametrize("endpoint", ["create", "request", "session"])
+async def test_public_sse_releases_validation_transaction(e2e_client, e2e_headers, endpoint):
+    """流仍在等待模型时，PostgreSQL 不保留入口的空闲事务。"""
+    me = await e2e_client.get("/api/auth/me", headers=e2e_headers)
+    assert me.status_code == 200, me.text
+    await _create_provider(e2e_client, e2e_headers)
+    token = str(uuid.uuid4())
+    agent_slug = key_id = session_id = run_id = None
+    conn = await asyncpg.connect(postgres_dsn())
+    try:
+        agent_slug = await _create_agent(
+            e2e_client,
+            e2e_headers,
+            str(me.json()["uid"]),
+            system_prompt_suffix=f"{BLOCK_BEFORE_RESPONSE_MARKER}:{token}",
+        )
+        key = await e2e_client.post(
+            "/api/user/apikey/",
+            headers=e2e_headers,
+            json={
+                "request_id": str(uuid.uuid4()),
+                "name": "SSE transaction E2E",
+                "access_level": "agents",
+                "app_id": "ci-sse-transaction",
+            },
+        )
+        assert key.status_code == 200, key.text
+        key_id = key.json()["api_key"]["id"]
+        headers = {"Authorization": f"Bearer {key.json()['secret']}", "Idempotency-Key": token}
+        body = {
+            "agent_id": agent_slug,
+            "input": [{"role": "user", "content": [{"type": "input_text", "text": f"只输出 {EXPECTED_OUTPUT}"}]}],
+        }
+        # 非流式创建提供清理标识；create 分支重放同一持久请求，仍执行完整 Session 查询。
+        created = await e2e_client.post("/api/v1/agents/sessions", headers=headers, json=body)
+        assert created.status_code == 200, created.text
+        receipt = created.json()
+        session_id, turn_id = receipt["id"], receipt["turn_id"]
+        await _wait_for_blocking_replay(token)
+        active = await e2e_client.get(receipt["result_url"], headers=headers)
+        assert active.status_code == 200, active.text
+        run_id = active.json()["run_id"]
+        assert run_id and active.json()["status"] == "in_progress"
+
+        started = await conn.fetchval("SELECT clock_timestamp()")
+        path = receipt["events_url"]
+        kwargs = {}
+        if endpoint == "request":
+            path = f"/api/v1/agents/threads/{session_id}/requests/{turn_id}/events"
+        elif endpoint == "create":
+            path = "/api/v1/agents/sessions"
+            kwargs["json"] = {**body, "stream": True}
+        async with e2e_client.stream(
+            "POST" if endpoint == "create" else "GET", path, headers=headers, **kwargs
+        ) as stream:
+            assert stream.status_code == 200
+            assert stream.headers["content-type"].startswith("text/event-stream")
+            # 只拒绝贯穿观察窗口的事务，排除轮询和心跳在提交前的瞬时 idle。
+            cutoff = await conn.fetchval("SELECT clock_timestamp()")
+            await asyncio.sleep(0.5)
+            idle = await conn.fetch(
+                """SELECT pid, state FROM pg_stat_activity
+                   WHERE datname = current_database() AND xact_start >= $1 AND xact_start <= $2
+                     AND state = 'idle in transaction'
+                     AND query ~ '(agent_run_requests|agent_runs)'""",
+                started,
+                cutoff,
+            )
+            assert not idle, f"{endpoint} SSE retains validation transactions: {idle}"
+            # 同时验证流未结束时普通数据库请求仍能取得当前状态。
+            active = await e2e_client.get(receipt["result_url"], headers=headers)
+            assert active.status_code == 200, active.text
+            assert active.json()["status"] == "in_progress"
+
+        async with httpx.AsyncClient(base_url="http://localhost:8765", timeout=5) as replay:
+            released = await replay.get("/release-blocking", params={"token": token})
+            assert released.status_code == 200, released.text
+        result = await wait_for_run(e2e_client, e2e_headers, run_id)
+        assert result["status"] == "completed", result
+        output = await e2e_client.get(receipt["result_url"], headers=headers)
+        assert output.status_code == 200, output.text
+        assert output.json()["output"] == EXPECTED_OUTPUT
+        assert output.json()["run_id"] == run_id
+    finally:
+        await conn.close()
+        async with httpx.AsyncClient(base_url="http://localhost:8765", timeout=5) as replay:
+            await replay.get("/release-blocking", params={"token": token})
+        if run_id:
+            await cancel_run(e2e_client, e2e_headers, run_id)
+        if session_id:
+            await e2e_client.delete(f"/api/chat/thread/{session_id}", headers=e2e_headers)
+        if key_id:
+            await e2e_client.delete(f"/api/user/apikey/{key_id}", headers=e2e_headers)
+        if agent_slug:
+            await delete_agent(e2e_client, e2e_headers, agent_slug)
+        await _delete_provider(e2e_client, e2e_headers)
+
+
+@pytest.mark.parametrize("native", [False, True])
+async def test_public_agents_queued_sse_keeps_public_run_url(e2e_client, e2e_headers, native):
+    """排队流交接到唯一 Run 时只提供当前 Public API 可访问的地址。"""
+    me = await e2e_client.get("/api/auth/me", headers=e2e_headers)
+    assert me.status_code == 200, me.text
+    await _create_provider(e2e_client, e2e_headers)
+    agent_slug = None
+    session_id = None
+    first_run_id = None
+    second_run_id = None
+    key_id = None
+    stream_task = None
+    token = None
+    try:
+        token = str(uuid.uuid4())
+        agent_slug = await _create_agent(
+            e2e_client,
+            e2e_headers,
+            str(me.json()["uid"]),
+            system_prompt_suffix=f"{BLOCK_BEFORE_RESPONSE_MARKER}:{token}",
+        )
+        created = await e2e_client.post(
+            "/api/user/apikey/",
+            headers=e2e_headers,
+            json={
+                "request_id": str(uuid.uuid4()),
+                "name": "Public queued SSE E2E",
+                "access_level": "agents",
+                "app_id": "ci-public-queue",
+            },
+        )
+        assert created.status_code == 200, created.text
+        key_id = created.json()["api_key"]["id"]
+        headers = {
+            "Authorization": f"Bearer {created.json()['secret']}",
+            "Idempotency-Key": f"first-{uuid.uuid4().hex}",
+        }
+        first = await e2e_client.post(
+            "/api/v1/agents/threads" if native else "/api/v1/agents/sessions",
+            headers=headers,
+            json={
+                "agent_id": agent_slug,
+                "input": [{"role": "user", "content": [{"type": "input_text", "text": "等待模型响应"}]}],
+            },
+        )
+        assert first.status_code == 200, first.text
+        session_id = first.json()["thread_id" if native else "id"]
+        conn = await asyncpg.connect(postgres_dsn())
+        try:
+            assert (
+                await conn.fetchval("SELECT app_id FROM conversations WHERE thread_id = $1", session_id)
+                == "ci-public-queue"
+            )
+        finally:
+            await conn.close()
+        first_run_id = first.json()["run_id"]
+        for _ in range(50):
+            if first_run_id:
+                break
+            first_result = await e2e_client.get(
+                (
+                    f"/api/v1/agents/threads/{session_id}/requests/{first.json()['request_id']}"
+                    if native
+                    else f"/api/v1/agents/sessions/{session_id}/turns/{first.json()['turn_id']}"
+                ),
+                headers=headers,
+            )
+            assert first_result.status_code == 200, first_result.text
+            first_run_id = first_result.json()["run_id"]
+            await asyncio.sleep(0.1)
+        assert first_run_id
+        await _wait_for_blocking_replay(token)
+
+        second = await e2e_client.post(
+            (
+                f"/api/v1/agents/threads/{session_id}/requests"
+                if native
+                else f"/api/v1/agents/sessions/{session_id}/events"
+            ),
+            headers={**headers, "Idempotency-Key": f"second-{uuid.uuid4().hex}"},
+            json=(
+                {"input": [{"role": "user", "content": [{"type": "input_text", "text": "继续"}]}]}
+                if native
+                else {
+                    "events": [
+                        {
+                            "type": "agent.session.input.message",
+                            "mode": "follow_up",
+                            "input": [{"role": "user", "content": [{"type": "input_text", "text": "继续"}]}],
+                        }
+                    ]
+                }
+            ),
+        )
+        assert second.status_code == 202, second.text
+        assert second.json()["status"] == "queued"
+        opened = asyncio.Event()
+
+        async def collect_events() -> tuple[dict, str]:
+            """消费队列交接事件，并在 Run 建立后取消阻塞模型。"""
+            nonlocal second_run_id
+            observed = []
+            run_created = None
+            event_name = ""
+            async with e2e_client.stream(
+                "GET",
+                second.json()["events_url"],
+                headers=headers,
+            ) as events:
+                assert events.status_code == 200, events.text
+                opened.set()
+                async for line in events.aiter_lines():
+                    observed.append(line)
+                    if line.startswith("event: "):
+                        event_name = line[7:]
+                    elif line.startswith("data: ") and event_name == "run_created":
+                        run_created = json.loads(line[6:])
+                        second_run_id = run_created["run_id"]
+                        await cancel_run(e2e_client, e2e_headers, second_run_id)
+                    elif line == "" and event_name == "end":
+                        break
+            return run_created, "\n".join(observed)
+
+        stream_task = asyncio.create_task(collect_events())
+        await asyncio.wait_for(opened.wait(), timeout=10)
+        # 取消首个 Run 会按队列契约暂停后续请求；等待正常完成才能验证自动交接。
+        async with httpx.AsyncClient(base_url="http://localhost:8765", timeout=5) as replay:
+            released = await replay.get("/release-blocking", params={"token": token})
+            assert released.status_code == 200, released.text
+        run_created, stream_body = await asyncio.wait_for(stream_task, timeout=30)
+        assert run_created is not None, stream_body
+        assert run_created["stream_url"] == second.json()["events_url"]
+        assert "/api/agent/runs/" not in stream_body
+        assert "event: end" in stream_body
+    finally:
+        if token:
+            async with httpx.AsyncClient(base_url="http://localhost:8765", timeout=5) as replay:
+                await replay.get("/release-blocking", params={"token": token})
+        if stream_task and not stream_task.done():
+            stream_task.cancel()
+            await asyncio.gather(stream_task, return_exceptions=True)
+        for target in (second_run_id, first_run_id):
+            if target:
+                await cancel_run(e2e_client, e2e_headers, target)
+        if session_id:
+            await e2e_client.delete(f"/api/chat/thread/{session_id}", headers=e2e_headers)
+        if key_id:
+            await e2e_client.delete(f"/api/user/apikey/{key_id}", headers=e2e_headers)
+        if agent_slug:
+            await delete_agent(e2e_client, e2e_headers, agent_slug)
+        await _delete_provider(e2e_client, e2e_headers)
 
 
 @pytest.mark.e2e_lifecycle
@@ -188,7 +1286,7 @@ async def _delete_provider(client: httpx.AsyncClient, headers: dict[str, str]) -
 async def _wait_for_blocking_replay(token: str) -> None:
     """等待 replay 确认本次模型请求已开始但尚未返回任何消息。"""
     async with httpx.AsyncClient(base_url="http://localhost:8765", timeout=5) as client:
-        for _ in range(100):
+        for _ in range(300):
             response = await client.get("/blocking-started", params={"token": token})
             assert response.status_code == 200, response.text
             if response.json().get("started") is True:
@@ -755,6 +1853,12 @@ async def test_deterministic_agent_path_reaches_persisted_result(
         assert result.json()["request_id"] == request_id
         assert result.json()["thread_id"] == thread_id
 
+        request_result = await e2e_client.get(
+            "/api/agent/request-result", params={"request_id": request_id}, headers=e2e_headers
+        )
+        assert request_result.status_code == 200, request_result.text
+        assert (request_result.json()["run_id"], request_result.json()["output"]) == (run_id, EXPECTED_OUTPUT)
+
         await _assert_persisted_causality(run_id, request_id)
         await _assert_persistent_workdir_binding(run_id, thread_id)
         await _assert_persisted_execution_facts(run_id, agent_slug)
@@ -797,6 +1901,13 @@ async def test_deterministic_agent_path_reaches_persisted_result(
         await consume_events(e2e_client, e2e_headers, run_id)
         followup_run = await wait_for_run(e2e_client, e2e_headers, run_id)
         assert followup_run["status"] == "completed", followup_run
+        followup_result = await e2e_client.get(
+            "/api/agent/request-result", params={"request_id": second_request_id}, headers=e2e_headers
+        )
+        assert followup_result.status_code == 200, followup_result.text
+        assert followup_result.json()["request_id"] == second_request_id
+        assert followup_result.json()["run_id"] == run_id
+        assert followup_result.json()["output"] == EXPECTED_OUTPUT
         await _assert_followup_run_does_not_rebind_prior_audits(
             first_run_id=first_run_id,
             second_run_id=run_id,
@@ -1079,23 +2190,41 @@ async def test_resume_with_offloaded_tool_result_publishes_stream_owned_audit(
         assert "messages" not in state_response.json()
         await _create_provider(e2e_client, e2e_headers)
 
+        session_response = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}", headers=e2e_headers)
+        assert session_response.status_code == 200, session_response.text
+        assert session_response.json()["status"] == "requires_action"
+        turn_id = session_response.json()["turn_id"]
+        assert turn_id
+
         resume_request_id = f"deterministic-large-resume-{uuid.uuid4()}"
-        resume_response = await e2e_client.post(
-            "/api/agent/runs",
-            json={
-                "agent_slug": agent_slug,
-                "thread_id": thread_id,
-                "meta": {"request_id": resume_request_id},
+        resume_event = {
+            "events": [{
+                "type": "yuxi.session.input.resume",
+                "turn_id": turn_id,
+                "run_id": parent_run_id,
                 "resume": {"decisions": [{"type": "approve"}]},
-                "created_by_run_id": parent_run_id,
-                "query": "此字段不应进入恢复消息",
-                "model_spec": "missing:ignored-model",
-                "tool_approval_mode": "always_trust",
-            },
-            headers=e2e_headers,
+            }]
+        }
+        resume_headers = {**e2e_headers, "Idempotency-Key": resume_request_id}
+        resume_response = await e2e_client.post(
+            f"/api/v1/agents/sessions/{thread_id}/events",
+            json=resume_event,
+            headers=resume_headers,
         )
-        assert resume_response.status_code == 200, resume_response.text
+        assert resume_response.status_code == 202, resume_response.text
+        assert resume_response.json()["turn_id"] == turn_id
         resume_run_id = str(resume_response.json()["run_id"])
+        replayed = await e2e_client.post(
+            f"/api/v1/agents/sessions/{thread_id}/events", json=resume_event, headers=resume_headers
+        )
+        assert replayed.status_code == 202, replayed.text
+        assert replayed.json() == resume_response.json()
+        wrong_parent = await e2e_client.post(
+            f"/api/v1/agents/sessions/{thread_id}/events",
+            json={"events": [{**resume_event["events"][0], "run_id": resume_run_id}]},
+            headers={**e2e_headers, "Idempotency-Key": f"wrong-{uuid.uuid4().hex}"},
+        )
+        assert wrong_parent.status_code == 409, wrong_parent.text
         active_run_id = resume_run_id
         await consume_events(e2e_client, e2e_headers, resume_run_id)
         resume_run = await wait_for_run(e2e_client, e2e_headers, resume_run_id)
@@ -1107,6 +2236,23 @@ async def test_resume_with_offloaded_tool_result_publishes_stream_owned_audit(
         result = await e2e_client.get(f"/api/agent/runs/{resume_run_id}/result", headers=e2e_headers)
         assert result.status_code == 200, result.text
         assert result.json()["output"] == EXPECTED_OUTPUT
+        turn_response = await e2e_client.get(
+            f"/api/v1/agents/sessions/{thread_id}/turns/{turn_id}", headers=e2e_headers
+        )
+        assert turn_response.status_code == 200, turn_response.text
+        assert turn_response.json()["run_ids"] == [parent_run_id, resume_run_id]
+        assert turn_response.json()["output"] == EXPECTED_OUTPUT
+        async with e2e_client.stream(
+            "GET",
+            f"/api/v1/agents/sessions/{thread_id}/events",
+            params={"turn_id": turn_id},
+            headers={**e2e_headers, "Last-Event-ID": f"{parent_run_id}:end"},
+        ) as resumed_events:
+            assert resumed_events.status_code == 200, resumed_events.text
+            resumed_body = (await resumed_events.aread()).decode()
+        assert resumed_body.startswith("event: run_created\n")
+        assert f"id: {resume_run_id}:0-0\n" in resumed_body
+        assert f"id: {parent_run_id}:end\n" not in resumed_body
 
         completed_state = await e2e_client.get(
             f"/api/chat/thread/{thread_id}/state", params={"include_messages": "true"}, headers=e2e_headers

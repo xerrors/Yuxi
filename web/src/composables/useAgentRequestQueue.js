@@ -9,6 +9,9 @@ export function useAgentRequestQueue({
   startRunStream,
   onStreamError
 }) {
+  const isPermanentRequestError = (error) =>
+    error?.status >= 400 && error.status < 500 && ![408, 429].includes(error.status)
+
   const removeRequestFromQueue = (ts, requestId) => {
     if (!ts || !ts.queuedRequests) return
     ts.queuedRequests = ts.queuedRequests.filter((r) => r.request_id !== requestId)
@@ -16,6 +19,10 @@ export function useAgentRequestQueue({
 
   const stopRequestStream = (threadId, requestId) => {
     const ts = getThreadState(threadId)
+    if (ts?.requestRetryTimers?.[requestId]) {
+      clearTimeout(ts.requestRetryTimers[requestId])
+      delete ts.requestRetryTimers[requestId]
+    }
     const entry = ts?.requestStreams?.[requestId]
     if (!entry) return
     entry.controller?.abort()
@@ -24,8 +31,11 @@ export function useAgentRequestQueue({
 
   const stopAllRequestStreams = (threadId) => {
     const ts = getThreadState(threadId)
-    if (!ts?.requestStreams) return
-    for (const rid of Object.keys(ts.requestStreams)) {
+    if (!ts) return
+    for (const rid of Object.keys(ts.requestRetryTimers || {})) {
+      stopRequestStream(threadId, rid)
+    }
+    for (const rid of Object.keys(ts.requestStreams || {})) {
       stopRequestStream(threadId, rid)
     }
   }
@@ -108,20 +118,26 @@ export function useAgentRequestQueue({
       ts.requestStreams[requestId].message ||= message
       return
     }
+    if (ts.requestRetryTimers?.[requestId]) {
+      clearTimeout(ts.requestRetryTimers[requestId])
+      delete ts.requestRetryTimers[requestId]
+    }
 
     const controller = new AbortController()
     const entry = { controller, position: 0, status: 'queued', message }
     ts.requestStreams[requestId] = entry
 
-    try {
-      const response = await agentApi.streamRequestEvents(requestId, {
-        signal: controller.signal
-      })
-      if (!response.ok) {
-        throw new Error(`Request SSE response not ok: ${response.status}`)
+    const reconcileRequest = async () => {
+      if (entry.status !== 'queued' || controller.signal.aborted) return
+      const result = await agentApi.getRequestResult(threadId, requestId)
+      if (result.run_id) {
+        handleEvent('run_created', { run_id: result.run_id })
+      } else if (['cancelled', 'rejected', 'failed'].includes(result.status)) {
+        handleEvent(result.status, result)
       }
+    }
 
-      const handleEvent = (event, data) => {
+    const handleEvent = (event, data) => {
         // 一次性取 ts/entry，避免每个分支重复 getThreadState 触发响应式追踪。
         const tsInner = getThreadState(threadId)
         const innerEntry = tsInner?.requestStreams?.[requestId]
@@ -175,18 +191,65 @@ export function useAgentRequestQueue({
             onStreamError(threadId, requestId, event)
           }
         }
-      }
+    }
 
+    try {
+      const response = await agentApi.streamRequestEvents(threadId, requestId, {
+        signal: controller.signal
+      })
+      if (!response.ok) {
+        const error = new Error(`Request SSE response not ok: ${response.status}`)
+        error.status = response.status
+        throw error
+      }
       await processRunSseResponse(response, handleEvent)
+      await reconcileRequest()
     } catch (error) {
       if (error?.name !== 'AbortError') {
-        console.error('Request SSE stream error:', error)
-        handleChatError(error, 'stream')
+        let permanentError = isPermanentRequestError(error) ? error : null
+        try {
+          await reconcileRequest()
+        } catch (lookupError) {
+          console.warn('Failed to reconcile request after SSE error:', lookupError)
+          if (isPermanentRequestError(lookupError)) permanentError = lookupError
+        }
+        if (entry.status === 'queued') {
+          if (permanentError) {
+            entry.status = 'unavailable'
+            const tsInner = getThreadState(threadId)
+            if (tsInner?.requestStreams?.[requestId]?.controller === controller) {
+              tsInner.isStreaming = false
+              tsInner.replyLoadingVisible = false
+              tsInner.pendingRequestId = null
+              if (tsInner.onGoingConv?.msgChunks) delete tsInner.onGoingConv.msgChunks[requestId]
+              removeRequestFromQueue(tsInner, requestId)
+              handleChatError(permanentError, 'stream')
+              onStreamError?.(threadId, requestId, 'unavailable')
+            }
+          } else {
+            console.warn('Request SSE disconnected; retrying from persistent status:', error)
+          }
+        }
       }
     } finally {
       const tsFinal = getThreadState(threadId)
       if (tsFinal?.requestStreams?.[requestId]?.controller === controller) {
         delete tsFinal.requestStreams[requestId]
+      }
+      if (
+        entry.status === 'queued' &&
+        !controller.signal.aborted &&
+        tsFinal?.queuedRequests?.some((request) => request.request_id === requestId)
+      ) {
+        tsFinal.requestRetryTimers = tsFinal.requestRetryTimers || {}
+        const timer = setTimeout(() => {
+          if (tsFinal.requestRetryTimers?.[requestId] !== timer) return
+          delete tsFinal.requestRetryTimers[requestId]
+          if (tsFinal.queuedRequests?.some((request) => request.request_id === requestId)) {
+            void startRequestStream(threadId, requestId)
+          }
+        }, 1000)
+        tsFinal.requestRetryTimers[requestId] = timer
       }
     }
   }

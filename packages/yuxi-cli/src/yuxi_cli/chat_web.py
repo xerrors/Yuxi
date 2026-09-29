@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import secrets
+import time
 import uuid
 import webbrowser
 from collections.abc import Callable, Iterator
@@ -16,6 +17,7 @@ from yuxi_cli.client import ClientError, YuxiClient
 from yuxi_cli.config import ConfigStore
 
 MAX_MESSAGE_BYTES = 32 * 1024
+LOOKUP_FAILURE_TIMEOUT = 60
 
 
 class ChatWebError(Exception):
@@ -136,7 +138,67 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             return
         except (ChatWebError, ClientError) as exc:
-            self._write_event({"type": "error", "message": str(exc)})
+            if not run.get("result_url") or not run.get("request_id"):
+                self._write_event({"type": "error", "message": str(exc)})
+                return
+            lookup_failure_started = None
+            while True:
+                try:
+                    result = self.server.client.get_agent_request_result(
+                        str(run["request_id"])
+                    )
+                except ClientError as lookup_error:
+                    if (
+                        lookup_error.status_code is not None
+                        and lookup_error.status_code < 500
+                        and lookup_error.status_code != 429
+                    ):
+                        self._write_event(
+                            {"type": "error", "message": str(lookup_error)}
+                        )
+                        return
+                    lookup_failure_started = lookup_failure_started or time.monotonic()
+                    if (
+                        time.monotonic() - lookup_failure_started
+                        >= LOOKUP_FAILURE_TIMEOUT
+                    ):
+                        self._write_event(
+                            {
+                                "type": "error",
+                                "message": f"结果查询持续失败，request_id={run['request_id']}: {lookup_error}",
+                            }
+                        )
+                        return
+                    time.sleep(1)
+                    continue
+                lookup_failure_started = None
+                if result.get("run_id") != run_id:
+                    self._write_event(
+                        {"type": "error", "message": "请求结果与当前 Run 不匹配"}
+                    )
+                    return
+                status = result.get("status")
+                if status == "completed":
+                    self._write_event(
+                        {"type": "snapshot", "content": result.get("output") or ""}
+                    )
+                    self._write_event({"type": "done", "status": "completed"})
+                    return
+                if status == "waiting":
+                    self._write_event(
+                        {
+                            "type": "approval_required",
+                            "message": "等待工具审批，请输入 /approve 继续",
+                        }
+                    )
+                    self._write_event({"type": "done", "status": "waiting_approval"})
+                    return
+                if status in {"failed", "cancelled", "rejected"}:
+                    self._write_event(
+                        {"type": "error", "message": str(result.get("error") or status)}
+                    )
+                    return
+                time.sleep(1)
 
     def _write_command_response(
         self, response: dict[str, Any], *, thread_id: str | None
@@ -163,29 +225,70 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
         if not request_events_url:
             raise ChatWebError("远端未返回 request_events_url")
 
-        for event in self.server.client.stream_agent_request_events(request_events_url):
+        request_id = str(response.get("request_id") or "").strip()
+        lookup_failure_started = None
+        while True:
             try:
-                data = json.loads(event.get("data") or "{}")
-            except json.JSONDecodeError as exc:
-                raise ChatWebError("远端返回了无效的排队事件") from exc
-            if not isinstance(data, dict):
+                for event in self.server.client.stream_agent_request_events(
+                    request_events_url
+                ):
+                    try:
+                        data = json.loads(event.get("data") or "{}")
+                    except json.JSONDecodeError as exc:
+                        raise ChatWebError("远端返回了无效的排队事件") from exc
+                    if not isinstance(data, dict):
+                        continue
+
+                    event_type = event.get("event") or "message"
+                    if event_type == "run_created":
+                        run_id = str(data.get("run_id") or "").strip()
+                        if not run_id:
+                            raise ChatWebError("排队事件缺少 run_id")
+                        return {
+                            **response,
+                            "run_id": run_id,
+                            "thread_id": data.get("thread_id")
+                            or response.get("thread_id"),
+                        }
+                    if event_type in {"cancelled", "rejected", "failed", "error"}:
+                        message = (
+                            data.get("message") or data.get("status") or event_type
+                        )
+                        raise ChatWebError(f"排队请求结束：{message}")
+            except ClientError as exc:
+                if (
+                    exc.status_code is not None
+                    and exc.status_code < 500
+                    and exc.status_code != 429
+                ):
+                    raise
+
+            if not request_id:
+                raise ChatWebError("排队事件流在创建 Run 前断开，且缺少 request_id")
+            try:
+                result = self.server.client.get_agent_request_result(request_id)
+            except ClientError as exc:
+                if (
+                    exc.status_code is not None
+                    and exc.status_code < 500
+                    and exc.status_code != 429
+                ):
+                    raise
+                lookup_failure_started = lookup_failure_started or time.monotonic()
+                if time.monotonic() - lookup_failure_started >= LOOKUP_FAILURE_TIMEOUT:
+                    raise ChatWebError(
+                        f"排队状态查询持续失败，request_id={request_id}: {exc}"
+                    ) from exc
+                time.sleep(1)
                 continue
-
-            event_type = event.get("event") or "message"
-            if event_type == "run_created":
-                run_id = str(data.get("run_id") or "").strip()
-                if not run_id:
-                    raise ChatWebError("排队事件缺少 run_id")
-                return {
-                    **response,
-                    "run_id": run_id,
-                    "thread_id": data.get("thread_id") or response.get("thread_id"),
-                }
-            if event_type in {"cancelled", "rejected", "failed", "error"}:
-                message = data.get("message") or data.get("status") or event_type
-                raise ChatWebError(f"排队请求结束：{message}")
-
-        raise ChatWebError("排队事件流在创建 Run 前断开，请重试")
+            lookup_failure_started = None
+            if result.get("run_id"):
+                return {**response, "run_id": result["run_id"]}
+            if result.get("status") in {"cancelled", "rejected", "failed"}:
+                raise ChatWebError(
+                    f"排队请求结束：{result.get('error') or result['status']}"
+                )
+            time.sleep(1)
 
     def _is_local_request(self) -> bool:
         origin = self.headers.get("Origin")

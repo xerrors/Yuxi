@@ -18,6 +18,7 @@ from server.routers.mcp_router import mcp
 from server.routers.mention_router import mention_router
 from server.routers.model_provider_router import model_providers
 from server.routers.project_router import projects
+from server.routers.public_v1 import public_agents_router, public_knowledge_router
 from server.routers.scheduled_agent_router import scheduled_agents
 from server.routers.skill_router import skills, user_skills
 from server.routers.system_router import system
@@ -27,6 +28,8 @@ from server.routers.user_router import user_router
 from server.routers.workspace_router import workspace, workspace_knowledge
 
 router = APIRouter()
+router.include_router(public_agents_router)
+router.include_router(public_knowledge_router)
 
 # 基础系统接口：健康检查、配置、认证与聊天主链路。
 router.include_router(system)  # /api/system/* 系统状态与全局配置
@@ -54,8 +57,8 @@ router.include_router(workspace)  # /api/workspace/* 用户个人工作区
 router.include_router(mention_router)  # /api/mention/* 提及文件搜索接口
 
 router.include_router(knowledge_dashboard)  # /api/dashboard/stats/knowledge 知识域仪表盘
-router.include_router(external_kb)  # /api/knowledge/databases/external* CLI 与外部 Agent 调用
-router.include_router(knowledge)  # /api/knowledge/* 知识库管理与检索
+router.include_router(external_kb, deprecated=True)  # /api/knowledge/databases/external* 迁移兼容
+router.include_router(knowledge)  # /api/knowledge/* 知识库管理
 router.include_router(evaluation)  # /api/evaluation/* 知识库评估
 router.include_router(graph)  # /api/graph/* 图谱查询与管理
 router.include_router(workspace_knowledge)  # /api/workspace/knowledge/* 工作区知识文件只读视图

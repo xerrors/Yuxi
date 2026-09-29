@@ -33,7 +33,15 @@ RATE_LIMIT_WINDOW_SECONDS = 60
 RATE_LIMIT_ENDPOINTS = {("/api/auth/token", "POST")}
 DEFAULT_DEVELOPMENT_CORS_ORIGINS = ("http://localhost:5173", "http://127.0.0.1:5173")
 EXPLICIT_CORS_METHODS = ("DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT")
-EXPLICIT_CORS_HEADERS = ("Accept", "Authorization", "Content-Type", "Last-Event-ID", "X-Requested-With")
+EXPLICIT_CORS_HEADERS = (
+    "Accept",
+    "Authorization",
+    "Content-Type",
+    "Idempotency-Key",
+    "Last-Event-ID",
+    "X-End-User-Id",
+    "X-Requested-With",
+)
 
 # In-memory login attempt tracker to reduce brute-force exposure per worker
 _login_attempts: defaultdict[str, deque[float]] = defaultdict(deque)
@@ -68,7 +76,7 @@ def _build_cors_options(origins: list[str] | None = None) -> dict[str, object]:
         "allow_credentials": True,
         "allow_methods": list(EXPLICIT_CORS_METHODS),
         "allow_headers": list(EXPLICIT_CORS_HEADERS),
-        "expose_headers": ["Content-Disposition", "X-Lock-Remaining"],
+        "expose_headers": ["Content-Disposition", "X-Lock-Remaining", "X-App-Id"],
     }
 
 
@@ -133,6 +141,16 @@ app.add_middleware(AccessLogMiddleware)
 
 # 添加登录限流中间件
 app.add_middleware(LoginRateLimitMiddleware)
+
+
+@app.middleware("http")
+async def add_app_source_header(request: Request, call_next):
+    """仅回显已认证 API Key 绑定的调用来源。"""
+    response = await call_next(request)
+    app_id = getattr(request.state, "app_id", None)
+    if app_id:
+        response.headers["X-App-Id"] = app_id
+    return response
 
 if __name__ == "__main__":
     # uvicorn.run(app, host="0.0.0.0", port=5050, threads=10, workers=10, reload=True)

@@ -130,6 +130,129 @@ class QueuedChatClient(FakeChatClient):
         }
 
 
+@pytest.mark.parametrize("stream_fails", [False, True])
+def test_queued_request_recovers_run_after_event_stream_ends(stream_fails):
+    """排队流漏掉派发事件时，从持久结果恢复绑定的 Run。"""
+
+    class LostEventClient(FakeChatClient):
+        def stream_agent_request_events(self, request_events_url):
+            assert request_events_url == "/api/agent/requests/req-2/events"
+            if stream_fails:
+                raise chat_web_module.ClientError("SSE connection lost")
+            yield {"event": "queued", "data": "{}"}
+
+        def get_agent_request_result(self, request_id):
+            assert request_id == "req-2"
+            return {"status": "in_progress", "run_id": "run-2"}
+
+    server = ChatWebServer(("127.0.0.1", 0), LostEventClient(), "agent-1", "secret")
+    try:
+        handler = server.RequestHandlerClass.__new__(server.RequestHandlerClass)
+        handler.server = server
+        result = handler._wait_queued_run(
+            {
+                "request_id": "req-2",
+                "request_events_url": "/api/agent/requests/req-2/events",
+            }
+        )
+    finally:
+        server.server_close()
+    assert result["run_id"] == "run-2"
+
+
+def test_queued_request_keeps_tracking_after_disconnect(monkeypatch):
+    """流断开时持久状态仍排队，继续跟踪同一 request_id。"""
+
+    class DelayedRunClient(FakeChatClient):
+        checks = 0
+
+        def stream_agent_request_events(self, request_events_url):
+            assert request_events_url == "/api/agent/requests/req-3/events"
+            return iter(())
+
+        def get_agent_request_result(self, request_id):
+            assert request_id == "req-3"
+            self.checks += 1
+            return (
+                {"status": "queued", "run_id": None}
+                if self.checks == 1
+                else {"status": "in_progress", "run_id": "run-3"}
+            )
+
+    monkeypatch.setattr(chat_web_module.time, "sleep", lambda _: None)
+    client = DelayedRunClient()
+    server = ChatWebServer(("127.0.0.1", 0), client, "agent-1", "secret")
+    try:
+        handler = server.RequestHandlerClass.__new__(server.RequestHandlerClass)
+        handler.server = server
+        result = handler._wait_queued_run(
+            {
+                "request_id": "req-3",
+                "request_events_url": "/api/agent/requests/req-3/events",
+            }
+        )
+    finally:
+        server.server_close()
+    assert client.checks == 2
+    assert result["run_id"] == "run-3"
+
+
+@pytest.mark.parametrize("status_code", [401, 403, 404])
+def test_queued_request_stops_on_permanent_lookup_error(status_code):
+    """永久查询错误不能使本地聊天一直等待。"""
+
+    class MissingRequestClient(FakeChatClient):
+        def stream_agent_request_events(self, _url):
+            return iter(())
+
+        def get_agent_request_result(self, _request_id):
+            raise chat_web_module.ClientError("查询失败", status_code=status_code)
+
+    server = ChatWebServer(
+        ("127.0.0.1", 0), MissingRequestClient(), "agent-1", "secret"
+    )
+    try:
+        handler = server.RequestHandlerClass.__new__(server.RequestHandlerClass)
+        handler.server = server
+        with pytest.raises(chat_web_module.ClientError, match="查询失败"):
+            handler._wait_queued_run(
+                {
+                    "request_id": "req-4",
+                    "request_events_url": "/api/agent/requests/req-4/events",
+                }
+            )
+    finally:
+        server.server_close()
+
+
+def test_queued_request_bounds_transient_lookup_failures(monkeypatch):
+    """状态查询持续不可用时带着 Request ID 结束等待。"""
+
+    class UnavailableClient(FakeChatClient):
+        def stream_agent_request_events(self, _url):
+            return iter(())
+
+        def get_agent_request_result(self, _request_id):
+            raise chat_web_module.ClientError("暂不可用", status_code=503)
+
+    ticks = iter([1, 2, 62, 63])
+    monkeypatch.setattr(chat_web_module.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(chat_web_module.time, "sleep", lambda _: None)
+    server = ChatWebServer(("127.0.0.1", 0), UnavailableClient(), "agent-1", "secret")
+    try:
+        handler = server.RequestHandlerClass.__new__(server.RequestHandlerClass)
+        handler.server = server
+        with pytest.raises(ChatWebError, match="request_id=req-4"):
+            handler._wait_queued_run(
+                {
+                    "request_id": "req-4",
+                    "request_events_url": "/api/agent/requests/req-4/events",
+                }
+            )
+    finally:
+        server.server_close()
+
+
 class ApprovalChatClient(FakeChatClient):
     def stream_agent_run_events(self, run_id):
         assert run_id == "run-1"
@@ -462,6 +585,91 @@ def test_local_server_reports_truncated_remote_stream():
         {"type": "delta", "content": "未完成"},
         {"type": "error", "message": "运行事件流在终态前断开，请重试"},
     ]
+
+
+def test_local_server_restores_final_output_after_run_stream_disconnect():
+    """Run SSE 丢失终态时，以同一 Request 的持久输出替换部分文本。"""
+
+    class RecoveringClient(TruncatedChatClient):
+        def create_agent_chat_run(self, **kwargs):
+            return {
+                "run_id": "run-1",
+                "thread_id": "thread-1",
+                "request_id": "req-1",
+                "result_url": "/api/agent/request-result?request_id=req-1",
+            }
+
+        def get_agent_request_result(self, request_id):
+            assert request_id == "req-1"
+            return {"status": "completed", "run_id": "run-1", "output": "完整回答"}
+
+    server = ChatWebServer(
+        ("127.0.0.1", 0), RecoveringClient(), "default-chatbot", "session-secret"
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    connection = http.client.HTTPConnection(*server.server_address, timeout=5)
+    body = json.dumps({"message": "截断测试", "thread_id": None})
+    try:
+        connection.request(
+            "POST",
+            "/api/chat",
+            body=body,
+            headers={"X-Yuxi-Chat-Token": "session-secret"},
+        )
+        response = connection.getresponse()
+        events = [json.loads(line) for line in response.read().decode().splitlines()]
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+    assert response.status == 200
+    assert events[-3:] == [
+        {"type": "delta", "content": "未完成"},
+        {"type": "snapshot", "content": "完整回答"},
+        {"type": "done", "status": "completed"},
+    ]
+
+
+def test_local_server_reports_permanent_result_lookup_error():
+    """Run 断流后若认证失效，应向浏览器返回错误并结束请求。"""
+
+    class UnauthorizedClient(TruncatedChatClient):
+        def create_agent_chat_run(self, **kwargs):
+            return {
+                "run_id": "run-1",
+                "thread_id": "thread-1",
+                "request_id": "req-1",
+                "result_url": "/api/agent/request-result?request_id=req-1",
+            }
+
+        def get_agent_request_result(self, request_id):
+            assert request_id == "req-1"
+            raise chat_web_module.ClientError("认证已失效", status_code=401)
+
+    server = ChatWebServer(
+        ("127.0.0.1", 0), UnauthorizedClient(), "default-chatbot", "session-secret"
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    connection = http.client.HTTPConnection(*server.server_address, timeout=5)
+    try:
+        connection.request(
+            "POST",
+            "/api/chat",
+            body=json.dumps({"message": "测试", "thread_id": None}),
+            headers={"X-Yuxi-Chat-Token": "session-secret"},
+        )
+        response = connection.getresponse()
+        events = [json.loads(line) for line in response.read().decode().splitlines()]
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+    assert response.status == 200
+    assert events[-1] == {"type": "error", "message": "认证已失效"}
 
 
 @pytest.mark.parametrize(

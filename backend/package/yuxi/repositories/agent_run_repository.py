@@ -50,7 +50,10 @@ class AgentRunRepository:
         """锁定用户 Run，串行化 execution tree 创建与父 Run 终态提交。"""
 
         result = await self.db.execute(
-            select(AgentRun).where(and_(AgentRun.id == run_id, AgentRun.uid == str(uid))).with_for_update()
+            select(AgentRun)
+            .where(and_(AgentRun.id == run_id, AgentRun.uid == str(uid)))
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
         return result.scalar_one_or_none()
 
@@ -257,6 +260,7 @@ class AgentRunRepository:
         agent_slug: str,
         uid: str,
         request_id: str,
+        turn_id: str | None = None,
         input_payload: dict,
         source: str = "chat",
         channel: str = "web",
@@ -267,6 +271,8 @@ class AgentRunRepository:
         subagent_thread_relation_id: int | None = None,
         run_type: str = "chat",
         input_message_id: int | None = None,
+        app_id: str | None = None,
+        api_key_id: int | None = None,
     ) -> AgentRun:
         """登记一条 run 记录；输入正文和图片应通过 input_message_id 指向 Message。"""
         runtime_scope = str(conversation_thread_id) if runtime_scope_id is None else str(runtime_scope_id).strip()
@@ -277,6 +283,9 @@ class AgentRunRepository:
             agent_slug=agent_slug,
             uid=str(uid),
             request_id=request_id,
+            turn_id=turn_id,
+            app_id=app_id,
+            api_key_id=api_key_id,
             source=source,
             channel=channel,
             external_id=external_id,
@@ -648,8 +657,8 @@ class AgentRunRepository:
     ) -> tuple[AgentRun | None, list[str]]:
         """按 root 到 descendants 的固定锁顺序取消一棵执行树。"""
         run = await self.lock_run_for_user(run_id, str(uid))
-        if run is None:
-            return None, []
+        if run is None or run.status in TERMINAL_RUN_STATUSES:
+            return run, []
         await self._request_cancel_locked(run)
         cancelled_ids = [run.id]
         if cascade_descendants:

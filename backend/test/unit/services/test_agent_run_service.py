@@ -1976,6 +1976,9 @@ def _patch_agent_run_creation(
     }
     if parent_run:
         parent_run.agent_slug = getattr(parent_run, "agent_slug", "default")
+        parent_run.turn_id = getattr(parent_run, "turn_id", "parent-turn")
+        parent_run.app_id = getattr(parent_run, "app_id", None)
+        parent_run.api_key_id = getattr(parent_run, "api_key_id", None)
         runs_by_id["parent-run"] = parent_run
     db = _CreateRunDb(
         message_id=message_id,

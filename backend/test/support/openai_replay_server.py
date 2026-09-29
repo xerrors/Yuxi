@@ -23,6 +23,7 @@ LARGE_TOOL_RESULT_MARKER = "DETERMINISTIC_LARGE_TOOL_RESULT"
 LARGE_TOOL_CALL_ID = "call-large-tool-result"
 BLOCKING_REQUEST_TOKENS: set[str] = set()
 BLOCKING_REQUEST_TOKENS_LOCK = Lock()
+BLOCKING_GATES: dict[str, Event] = {}
 SUBAGENT_GATES: dict[str, Event] = {}
 
 
@@ -210,6 +211,12 @@ class ReplayHandler(BaseHTTPRequestHandler):
                 SUBAGENT_GATES.setdefault(token, Event()).set()
             self._write_json(200, {"released": True})
             return
+        if parsed.path == "/release-blocking":
+            token = parse_qs(parsed.query).get("token", [""])[0]
+            with BLOCKING_REQUEST_TOKENS_LOCK:
+                BLOCKING_GATES.setdefault(token, Event()).set()
+            self._write_json(200, {"released": True})
+            return
         if parsed.path == "/health":
             self._write_json(200, {"status": "ok"})
             return
@@ -276,7 +283,8 @@ class ReplayHandler(BaseHTTPRequestHandler):
             self.wfile.flush()
             with BLOCKING_REQUEST_TOKENS_LOCK:
                 BLOCKING_REQUEST_TOKENS.add(blocking_match.group(1))
-            time.sleep(60)
+                gate = BLOCKING_GATES.setdefault(blocking_match.group(1), Event())
+            gate.wait(60)
         for payload in payloads:
             self.wfile.write(f"data: {json.dumps(payload)}\n\n".encode())
             self.wfile.flush()

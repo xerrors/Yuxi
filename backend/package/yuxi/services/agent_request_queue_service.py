@@ -12,6 +12,7 @@ import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlencode
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -118,7 +119,11 @@ async def steer_queued_request(
     )
     if active_run is None or not await is_steerable_message_run(db=db, run=active_run):
         raise queue_conflict("run_not_steerable", "当前运行不支持引导")
+    if active_run.turn_id is None:
+        raise queue_conflict("turn_not_available", "当前运行尚未关联 Turn")
 
+    # 已对外分配的原 Turn ID 保留；查询时由首个 Request 明确解析到目标 Turn。
+    request.turn_id = active_run.turn_id
     request.queue_policy = "steer"
     request.updated_at = utc_now_naive()
     await db.flush()
@@ -395,6 +400,7 @@ async def stream_request_events(
     request_id: str,
     uid: str,
     db_session_factory,
+    run_stream_url: str | None = None,
 ) -> AsyncIterator[str]:
     """Request SSE：发送 queued 心跳、位置变化，dispatched 时发送 run_created 并结束。"""
     started_at = utc_now_naive()
@@ -415,7 +421,7 @@ async def stream_request_events(
                         {
                             "request_id": request_id,
                             "run_id": request.dispatched_run_id,
-                            "stream_url": f"/api/agent/runs/{request.dispatched_run_id}/events",
+                            "stream_url": run_stream_url or f"/api/agent/runs/{request.dispatched_run_id}/events",
                         },
                         event="run_created",
                     )
@@ -455,6 +461,8 @@ async def request_view(*, repo: AgentRunRequestRepository, request: AgentRunRequ
     run_id = request.dispatched_run_id
     return {
         "request_id": request.request_id,
+        "turn_id": request.turn_id,
+        "result_url": f"/api/agent/request-result?{urlencode({'request_id': request.request_id})}",
         "status": request.status,
         "queue_policy": request.queue_policy,
         "queue_position": await repo.get_queue_position(request.request_id) if request.status == "queued" else None,
@@ -474,10 +482,10 @@ def queue_conflict(code: str, message: str) -> HTTPException:
 
 async def is_steerable_message_run(*, db: AsyncSession, run: AgentRun) -> bool:
     """确认 Run 正在运行且来自支持 Steer 的消息入口。"""
-    if run.status != "running" or run.run_type != "chat":
+    if run.status not in {"pending", "running"} or run.run_type != "chat":
         return False
     request = await AgentRunRequestRepository(db).get_by_request_id(run.request_id)
-    return request is not None and request.source in {"chat", "channel"}
+    return request is not None and request.source in {"chat", "channel", "public_api"}
 
 
 async def get_thread_conversation(
@@ -604,6 +612,9 @@ async def _dispatch_locked_head(
                 agent_slug=head.agent_slug,
                 uid=head.uid,
                 request_id=head.request_id,
+                turn_id=head.turn_id,
+                app_id=head.app_id,
+                api_key_id=head.api_key_id,
                 input_payload=head.input_payload or {},
                 source=head.source,
                 channel=head.channel,

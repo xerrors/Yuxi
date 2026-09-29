@@ -29,6 +29,8 @@ API/worker 不信任浏览器内存中的完整配置。请求可以提供受限
 
 普通来源构建 `AgentRequestInput` 并调用 `agent_request_service.submit_agent_request`：该用例完成访问校验、Message/Request 持久化与 FIFO 派发尝试，事务提交后物化 Workdir 并投递 Run。Request 只保存消息引用、不可变来源与目标作用域、排队策略和接入时解析的模型/审批配置；正文由 Message 拥有，其余 Agent 配置在 worker 准备时读取。提交、重发、排队策略、引导和恢复收敛的完整契约见 [Agent 请求队列与调度](./agent-request-queue.md)。
 
+`GET /api/agent/request-result?request_id=...` 按当前用户与持久 Request 查询调用结果。排队时 `run_id`、输出和 usage 为 `null`；派发后只读取 Request 绑定的 Run 及其输出消息，返回 Request/Run 原始状态和统一的 `status`。`pending`、`running` 投影为 `in_progress`，`interrupted` 投影为 `waiting`；完整 usage 尚不可得时返回 `null`。SSE 断开后调用方用此接口核对状态，不能以流结束推断成功。审批 resume 创建独立 Run，通过原有父 Run 关系查询，不并入普通 Request 的结果。
+
 ## 配置和运行态的区别
 
 | 数据 | 来源 | 生命周期 |

@@ -1,6 +1,6 @@
 import hashlib
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +12,18 @@ from yuxi.utils.auth_utils import AuthUtils
 
 # 定义OAuth2密码承载器，指定token URL
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token", auto_error=False)
+
+KNOWLEDGE_TOOL_PATHS = frozenset(
+    f"/api/v1/knowledge/tools/{name}"
+    for name in (
+        "list_kbs",
+        "get_mindmap",
+        "query_kb",
+        "open_kb_document",
+        "find_kb_document",
+        "search_file",
+    )
+)
 
 
 # 获取数据库会话（异步版本）
@@ -41,7 +53,7 @@ async def _verify_api_key(key: str, db: AsyncSession) -> tuple[User | None, APIK
 
     result = await db.execute(select(User).filter(User.id == api_key.user_id))
     user = result.scalar_one_or_none()
-    if user and not user.is_deleted:
+    if user and not user.is_deleted and user.user_kind == "human":
         return user, api_key
 
     return None, None
@@ -49,6 +61,7 @@ async def _verify_api_key(key: str, db: AsyncSession) -> tuple[User | None, APIK
 
 # 获取当前用户（异步版本）
 async def get_current_user(
+    request: Request,
     authorization: str | None = Header(None),
     db: AsyncSession = Depends(get_db),
 ):
@@ -73,6 +86,18 @@ async def get_current_user(
         # API Key 认证
         user, api_key_obj = await _verify_api_key(token, db)
         if user is not None and api_key_obj is not None:
+            request.state.api_key = api_key_obj
+            request.state.app_id = api_key_obj.app_id
+            route_path = request.scope.get("path", "")
+            permitted_root = {
+                "agents": "/api/v1/agents",
+                "knowledge": "/api/v1/knowledge/databases/external",
+            }.get(api_key_obj.access_level)
+            if api_key_obj.access_level != "full" and not (
+                (permitted_root and (route_path == permitted_root or route_path.startswith(f"{permitted_root}/")))
+                or (api_key_obj.access_level == "knowledge" and route_path in KNOWLEDGE_TOOL_PATHS)
+            ):
+                raise HTTPException(status_code=403, detail="该 API Key 无权访问此 API 面")
             api_key_obj.last_used_at = utc_now_naive()
             await db.commit()
         return user
@@ -94,6 +119,8 @@ async def get_current_user(
     user = result.scalar_one_or_none()
     if user is None:
         raise credentials_exception
+    if user.user_kind == "end_user":
+        raise HTTPException(status_code=403, detail="终端用户只能通过 Public API 使用")
     if user.is_login_locked():
         raise HTTPException(
             status_code=status.HTTP_423_LOCKED,

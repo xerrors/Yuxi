@@ -45,7 +45,8 @@ export function useAgentThreadState({
         queuedRequests: [],
         queueSnapshot: { ...IDLE_QUEUE_SNAPSHOT },
         continueQueueInFlight: false,
-        requestStreams: {}
+        requestStreams: {},
+        requestRetryTimers: {}
       }
     }
     return chatState.threadStates[threadId]
@@ -59,10 +60,14 @@ export function useAgentThreadState({
   }
 
   const abortAllRequestStreams = (threadState) => {
-    if (!threadState?.requestStreams) return
-    for (const entry of Object.values(threadState.requestStreams)) {
+    if (!threadState) return
+    for (const entry of Object.values(threadState.requestStreams || {})) {
       entry.controller?.abort()
     }
+    for (const timer of Object.values(threadState.requestRetryTimers || {})) {
+      clearTimeout(timer)
+    }
+    threadState.requestRetryTimers = {}
   }
 
   const cleanupThreadState = (threadId) => {
@@ -97,7 +102,7 @@ export function useAgentThreadState({
         threadState.runStreamAbortController.abort()
         threadState.runStreamAbortController = null
       }
-      if (!preserveRequestStreams && threadState.requestStreams) {
+      if (!preserveRequestStreams) {
         abortAllRequestStreams(threadState)
         threadState.requestStreams = {}
       }

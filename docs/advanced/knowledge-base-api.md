@@ -56,17 +56,30 @@ Durable Task 的 `success` 只代表 worker 已完成编排，任务状态不拥
 
 ## 外部查询接口
 
-登录用户可以调用自己有权限的知识库：
+普通登录用户 JWT、`full` Key 或 `knowledge` 级 API Key 可以查询绑定用户有读取权限的知识库。旧 external 路径在迁移期保留；管理、上传等接口仍使用 `/api/knowledge/*`。
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
-| `GET` | `/api/knowledge/databases/external` | 列出可见知识库 |
-| `GET` | `/api/knowledge/databases/external/{kb_id}/files` | 列出或按文件名搜索文件 |
-| `POST` | `/api/knowledge/databases/external/{kb_id}/retrieve` | 检索片段 |
-| `GET` | `/api/knowledge/databases/external/{kb_id}/files/{file_id}/open` | 按行打开解析后的 Markdown |
-| `POST` | `/api/knowledge/databases/external/{kb_id}/files/{file_id}/find` | 在文件内按关键词或正则查找 |
+| `GET` | `/api/v1/knowledge/databases/external` | 列出可见知识库 |
+| `GET` | `/api/v1/knowledge/databases/external/{kb_id}/files` | 列出或按文件名搜索文件 |
+| `POST` | `/api/v1/knowledge/databases/external/{kb_id}/retrieve` | 检索片段 |
+| `GET` | `/api/v1/knowledge/databases/external/{kb_id}/files/{file_id}/open` | 按行打开解析后的 Markdown |
+| `POST` | `/api/v1/knowledge/databases/external/{kb_id}/files/{file_id}/find` | 在文件内按关键词或正则查找 |
 
 `files` 的查询参数只匹配文件名，不搜索正文。`open` 默认从第 0 行开始读取，单次最多 1800 行；`find` 返回匹配窗口。
+
+Public v1 也提供与 Agent 内部 Skill 同名的只读工具入口。Agent 工具与这些 HTTP 入口共用 `yuxi.services.knowledge.tools`；API 根据 JWT 或 Key 绑定的用户重新解析知识库读取权限，调用方不能指定别人的用户身份。
+
+| 方法 | 路径 | 请求体或结果 |
+| --- | --- | --- |
+| `GET` | `/api/v1/knowledge/tools/list_kbs` | 返回可见知识库数组 |
+| `POST` | `/api/v1/knowledge/tools/get_mindmap` | `{"kb_name":"名称"}`，返回文本导图 |
+| `POST` | `/api/v1/knowledge/tools/query_kb` | `{"kb_id":"ID","query_text":"关键词","file_name":null}` |
+| `POST` | `/api/v1/knowledge/tools/open_kb_document` | `{"kb_id":"ID","file_id":"ID","line":1}` |
+| `POST` | `/api/v1/knowledge/tools/find_kb_document` | `{"kb_id":"ID","file_id":"ID","patterns":["词"]}` |
+| `POST` | `/api/v1/knowledge/tools/search_file` | `{"kb_name":"名称","query":"文件名","offset":0,"limit":300}` |
+
+`search_file` 至少需要 `kb_name` 或 `query`。不可见资源返回 `404`；业务条件不满足时返回 `400`，请求体字段缺失或数值越界时返回 `422`。Agent 的 `download_kb_file` 依赖会话沙盒路径，本次不提供对外工具入口；原有文件下载 API 的权限不变。
 
 Dify 和 Notion 只提供外部检索能力。它们不支持 Yuxi 的文档上传、解析、索引和全文打开；调用不支持的接口时，服务会明确返回错误。
 

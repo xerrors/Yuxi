@@ -15,6 +15,7 @@ let useAgentStreamHandler
 let MessageProcessor
 let getConversationDisplayItems
 let groupConversationContinuations
+let ErrorHandler
 
 before(async () => {
   const storage = new Map()
@@ -35,6 +36,7 @@ before(async () => {
     '/src/composables/useAgentStreamHandler.js'
   ))
   ;({ default: MessageProcessor } = await server.ssrLoadModule('/src/utils/messageProcessor.js'))
+  ;({ ErrorHandler } = await server.ssrLoadModule('/src/utils/errorHandler.js'))
   ;({ getConversationDisplayItems } = await server.ssrLoadModule('/src/utils/messageGrouping.js'))
   ;({ groupConversationContinuations } = await server.ssrLoadModule(
     '/src/utils/conversationProcessGrouping.js'
@@ -456,7 +458,7 @@ test('恢复队列在同步后重新读取线程状态并启动当前请求流',
       queue: { status: 'running' }
     }
   }
-  agentApi.streamRequestEvents = async (requestId) =>
+  agentApi.streamRequestEvents = async (_threadId, requestId) =>
     new Response(`event: run_created\ndata: {"run_id":"run-for-${requestId}"}\n\n`, {
       headers: { 'Content-Type': 'text/event-stream' }
     })
@@ -531,6 +533,160 @@ test('run_created 立即完成状态交接并订阅新 Run SSE', async () => {
     assert.deepEqual(threadState.queuedRequests, [])
   } finally {
     agentApi.streamRequestEvents = originalStreamRequestEvents
+  }
+})
+
+test('Request SSE 建连失败后按持久请求结果接入绑定的 Run', async () => {
+  const threadState = {
+    queuedRequests: [{ request_id: 'request-2', status: 'queued' }],
+    requestStreams: {},
+    onGoingConv: { msgChunks: { 'request-2': [{ content: '待执行' }] } },
+    pendingRequestId: null
+  }
+  const originalStream = agentApi.streamRequestEvents
+  const originalResult = agentApi.getRequestResult
+  const started = []
+  agentApi.streamRequestEvents = async () => {
+    throw new Error('SSE connection lost')
+  }
+  agentApi.getRequestResult = async (threadId, requestId) => {
+    assert.equal(threadId, 'thread-1')
+    assert.equal(requestId, 'request-2')
+    return { request_id: requestId, run_id: 'run-2', status: 'in_progress' }
+  }
+  try {
+    const queue = useAgentRequestQueue({
+      getThreadState: () => threadState,
+      resetOnGoingConv: () => {},
+      startRunStream: (...args) => started.push(args),
+      onStreamError: () => assert.fail('已恢复的请求不应报错')
+    })
+    await queue.startRequestStream('thread-1', 'request-2')
+    assert.deepEqual(started, [['thread-1', 'run-2', '0-0', { requestId: 'request-2' }]])
+    assert.deepEqual(threadState.queuedRequests, [])
+  } finally {
+    agentApi.streamRequestEvents = originalStream
+    agentApi.getRequestResult = originalResult
+  }
+})
+
+test('Request SSE 断开而请求仍排队时继续订阅直到派发', async () => {
+  const threadState = {
+    queuedRequests: [{ request_id: 'request-3', status: 'queued' }],
+    requestStreams: {},
+    onGoingConv: { msgChunks: { 'request-3': [{ content: '待执行' }] } },
+    pendingRequestId: null
+  }
+  const originalStream = agentApi.streamRequestEvents
+  const originalResult = agentApi.getRequestResult
+  let subscriptions = 0
+  const started = []
+  agentApi.streamRequestEvents = async () => {
+    subscriptions += 1
+    return new Response(
+      subscriptions === 1 ? '' : 'event: run_created\ndata: {"run_id":"run-3"}\n\n',
+      { headers: { 'Content-Type': 'text/event-stream' } }
+    )
+  }
+  agentApi.getRequestResult = async () => ({ status: 'queued', run_id: null })
+  try {
+    const queue = useAgentRequestQueue({
+      getThreadState: () => threadState,
+      resetOnGoingConv: () => {},
+      startRunStream: (...args) => started.push(args),
+      onStreamError: () => assert.fail('排队中不应报错')
+    })
+    await queue.startRequestStream('thread-1', 'request-3')
+    await new Promise((resolve) => setTimeout(resolve, 1200))
+    assert.equal(subscriptions, 2)
+    assert.deepEqual(started, [['thread-1', 'run-3', '0-0', { requestId: 'request-3' }]])
+  } finally {
+    agentApi.streamRequestEvents = originalStream
+    agentApi.getRequestResult = originalResult
+  }
+})
+
+test('Request SSE 与结果查询遇到永久 4xx 时清理队列并停止重连', async () => {
+  const originalStream = agentApi.streamRequestEvents
+  const originalResult = agentApi.getRequestResult
+  const originalHandleError = ErrorHandler.handleError
+  const notifications = []
+  ErrorHandler.handleError = (error, context) => notifications.push([error.status, context])
+  try {
+    for (const source of ['sse', 'result']) {
+      const threadState = {
+        queuedRequests: [{ request_id: 'request-denied', status: 'queued' }],
+        requestStreams: {},
+        onGoingConv: { msgChunks: { 'request-denied': [{ content: '待执行' }] } },
+        pendingRequestId: 'request-denied',
+        replyLoadingVisible: true
+      }
+      let subscriptions = 0
+      const errors = []
+      agentApi.streamRequestEvents = async () => {
+        subscriptions += 1
+        return source === 'sse'
+          ? new Response('', { status: 403 })
+          : new Response('', { headers: { 'Content-Type': 'text/event-stream' } })
+      }
+      agentApi.getRequestResult = async () => {
+        if (source === 'sse') return { status: 'queued', run_id: null }
+        const error = new Error('请求资源不存在')
+        error.status = 404
+        throw error
+      }
+      const queue = useAgentRequestQueue({
+        getThreadState: () => threadState,
+        resetOnGoingConv: () => {},
+        startRunStream: () => assert.fail('永久错误不应启动 Run'),
+        onStreamError: (...args) => errors.push(args)
+      })
+      await queue.startRequestStream('thread-1', 'request-denied')
+      await new Promise((resolve) => setTimeout(resolve, 1100))
+      assert.equal(subscriptions, 1, source)
+      assert.deepEqual(errors, [['thread-1', 'request-denied', 'unavailable']])
+      assert.deepEqual(threadState.queuedRequests, [])
+      assert.equal(threadState.pendingRequestId, null)
+      assert.equal(threadState.replyLoadingVisible, false)
+      assert.equal(threadState.requestRetryTimers?.['request-denied'], undefined)
+    }
+    assert.deepEqual(notifications, [[403, '流式处理'], [404, '流式处理']])
+  } finally {
+    agentApi.streamRequestEvents = originalStream
+    agentApi.getRequestResult = originalResult
+    ErrorHandler.handleError = originalHandleError
+  }
+})
+
+test('切换线程会取消排队 Request 的延迟重订阅', async () => {
+  const threadState = {
+    queuedRequests: [{ request_id: 'request-old', status: 'queued' }],
+    requestStreams: {},
+    onGoingConv: { msgChunks: {} }
+  }
+  const originalStream = agentApi.streamRequestEvents
+  const originalResult = agentApi.getRequestResult
+  let subscriptions = 0
+  agentApi.streamRequestEvents = async () => {
+    subscriptions += 1
+    return new Response('', { headers: { 'Content-Type': 'text/event-stream' } })
+  }
+  agentApi.getRequestResult = async () => ({ status: 'queued', run_id: null })
+  try {
+    const queue = useAgentRequestQueue({
+      getThreadState: () => threadState,
+      resetOnGoingConv: () => {},
+      startRunStream: () => assert.fail('旧线程不应启动 Run'),
+      onStreamError: () => {}
+    })
+    await queue.startRequestStream('thread-old', 'request-old')
+    queue.stopAllRequestStreams('thread-old')
+    await new Promise((resolve) => setTimeout(resolve, 1200))
+    assert.equal(subscriptions, 1)
+    assert.deepEqual(threadState.requestRetryTimers, {})
+  } finally {
+    agentApi.streamRequestEvents = originalStream
+    agentApi.getRequestResult = originalResult
   }
 })
 
@@ -920,6 +1076,52 @@ test('自然断流遇到仍持有的 pending interrupt 时保留 Run 快照', as
   } finally {
     agentApi.streamAgentRunEvents = originalStreamAgentRunEvents
     agentApi.getAgentRun = originalGetAgentRun
+    localStorage.removeItem(`active_run:${threadId}`)
+  }
+})
+
+test('Public Session 的终止游标会触发审批中断收尾', async () => {
+  const threadId = 'thread-terminal-cursor'
+  const threadState = {
+    activeRunId: null,
+    runLastSeq: '0-0',
+    runStreamAbortController: null,
+    replyLoadingVisible: true,
+    pendingRequestId: 'request-1',
+    pendingInterrupt: { interruptedRunId: 'run-1', questions: [{ question: '继续吗？' }] },
+    onGoingConv: { msgChunks: {} }
+  }
+  const interrupts = []
+  const originalStream = agentApi.streamAgentRunEvents
+  const originalGetRun = agentApi.getAgentRun
+  let statusReads = 0
+  agentApi.streamAgentRunEvents = async () =>
+    new Response('event: end\nid: run-1:end\ndata: {"run_id":"run-1","payload":{"status":"interrupted"}}\n\n')
+  agentApi.getAgentRun = async () => {
+    statusReads += 1
+    throw new Error('终止事件应直接完成收尾')
+  }
+  try {
+    const runStream = useAgentRunStream({
+      getThreadState: () => threadState,
+      currentAgentId: { value: 'agent-1' },
+      handleStreamChunk: () => {},
+      fetchThreadMessages: async () => {},
+      fetchAgentState: () => {},
+      resetOnGoingConv: () => {},
+      onScrollToBottom: () => {},
+      streamSmoother: { flushThread: () => {} },
+      onInterruptDetected: ({ runId }) => interrupts.push(runId)
+    })
+    await runStream.startRunStream(threadId, 'run-1')
+    await Promise.resolve()
+    assert.equal(statusReads, 0)
+    assert.equal(threadState.isStreaming, false)
+    assert.equal(threadState.activeRunId, 'run-1')
+    assert.deepEqual(interrupts, ['run-1'])
+  } finally {
+    agentApi.streamAgentRunEvents = originalStream
+    agentApi.getAgentRun = originalGetRun
     localStorage.removeItem(`active_run:${threadId}`)
   }
 })

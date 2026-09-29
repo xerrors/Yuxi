@@ -24,6 +24,7 @@ async def test_agent_call_adapter_submits_shared_run_command(monkeypatch: pytest
             "message_id": 1,
             "run_id": "run-1",
             "thread_id": request_input.thread_id,
+            "result_url": "/api/agent/request-result?request_id=req-1",
         }
 
     monkeypatch.setattr(call_router, "submit_agent_request", fake_submit_agent_request)
@@ -52,6 +53,7 @@ async def test_agent_call_adapter_submits_shared_run_command(monkeypatch: pytest
     assert request_input.origin.metadata == {"agent_invocation_meta": {"trace_id": "trace-1"}}
     assert request_input.input_message.content == "hello"
     assert result["run_id"] == "run-1"
+    assert result["result_url"] == "/api/agent/request-result?request_id=req-1"
     assert result["choices"][0]["finish_reason"] is None
 
 
@@ -61,7 +63,13 @@ async def test_agent_call_adapter_waits_and_wraps_result(monkeypatch: pytest.Mon
 
     async def fake_submit_agent_request(*, request_input, **_kwargs):
         calls["request_input"] = request_input
-        return {"run_id": "run-1", "thread_id": "thread-1", "status": "dispatched", "request_id": "req-1"}
+        return {
+            "run_id": "run-1",
+            "thread_id": "thread-1",
+            "status": "dispatched",
+            "request_id": "req-1",
+            "result_url": "/api/agent/request-result?request_id=req-1",
+        }
 
     async def fake_await_agent_run_result(*, run_id: str, current_uid: str):
         calls["await"] = (run_id, current_uid)
@@ -93,6 +101,7 @@ async def test_agent_call_adapter_waits_and_wraps_result(monkeypatch: pytest.Mon
     )
 
     assert result["output"] == "你好"
+    assert result["result_url"] == "/api/agent/request-result?request_id=req-1"
     assert result["choices"][0]["finish_reason"] == "stop"
     assert result["usage"] == {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5}
     assert calls["await"] == ("run-1", "user-1")

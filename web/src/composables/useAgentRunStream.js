@@ -203,16 +203,6 @@ export function useAgentRunStream({
     }
   }
 
-  const resolveRunSteerable = async (run) => {
-    if (!run?.request_id || run.status !== 'running' || run.run_type !== 'chat') return false
-    try {
-      const response = await agentApi.getRequest(run.request_id)
-      return response?.request?.source === 'chat'
-    } catch {
-      return false
-    }
-  }
-
   const finalizeRunStream = (
     threadId,
     runId,
@@ -344,7 +334,10 @@ export function useAgentRunStream({
 
     try {
       const response = await agentApi.streamAgentRunEvents(runId, ts.runLastSeq, {
-        signal: runController.signal
+        publicSession: true,
+        signal: runController.signal,
+        threadId,
+        turnId: options.turnId
       })
       if (!response.ok) {
         throw new Error(`SSE response not ok: ${response.status}`)
@@ -355,10 +348,15 @@ export function useAgentRunStream({
         lastEventAt = Date.now()
 
         if (eventId) {
-          const incomingSeq = normalizeRunSeq(eventId)
-          if (compareRunSeq(incomingSeq, ts.runLastSeq) <= 0) return
-          ts.runLastSeq = incomingSeq
-          saveActiveRunSnapshot(threadId, runId, incomingSeq)
+          const scopedSeq = eventId.startsWith(`${runId}:`)
+            ? eventId.slice(runId.length + 1)
+            : eventId
+          if (!(event === 'end' && scopedSeq === 'end')) {
+            const incomingSeq = normalizeRunSeq(scopedSeq)
+            if (compareRunSeq(incomingSeq, ts.runLastSeq) <= 0) return
+            ts.runLastSeq = incomingSeq
+            saveActiveRunSnapshot(threadId, runId, incomingSeq)
+          }
         }
 
         const payload = data.payload || {}
@@ -518,7 +516,7 @@ export function useAgentRunStream({
               resetOnGoingConv(threadId)
             }
             await startRunStream(threadId, run.id, afterSeq, {
-              steerable: await resolveRunSteerable(run)
+              steerable: isSteerableMainChatRun(run)
             })
             return
           }
@@ -540,7 +538,7 @@ export function useAgentRunStream({
         }
         resetOnGoingConv(threadId)
         await startRunStream(threadId, run.id, '0-0', {
-          steerable: await resolveRunSteerable(run)
+          steerable: isSteerableMainChatRun(run)
         })
         return
       }

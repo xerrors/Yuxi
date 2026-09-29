@@ -23,7 +23,7 @@ from yuxi.utils import logger
 from yuxi.utils.singleton import SingletonMeta
 
 AGENT_RUN_TERMINAL_STATUS_SQL = ", ".join(f"'{status}'" for status in AGENT_RUN_TERMINAL_STATUSES)
-BUSINESS_SCHEMA_VERSION = 9
+BUSINESS_SCHEMA_VERSION = 10
 KNOWLEDGE_SCHEMA_VERSION = 2
 SCHEMA_VERSION_TABLE = "yuxi_schema_migrations"
 AGENT_RUN_LEASE_SCHEMA_STATEMENTS = (
@@ -559,6 +559,18 @@ class PostgresManager(metaclass=SingletonMeta):
             await conn.run_sync(BusinessBase.metadata.create_all)
         logger.info("PostgreSQL business tables created/checked")
 
+    async def ensure_api_key_knowledge_scope(self) -> None:
+        """将现有 API Key 约束升级为包含知识库权限。"""
+        self._check_initialized()
+        async with self.async_engine.begin() as conn:
+            await conn.execute(text("ALTER TABLE api_keys DROP CONSTRAINT IF EXISTS ck_api_keys_access_level"))
+            await conn.execute(
+                text(
+                    "ALTER TABLE api_keys ADD CONSTRAINT ck_api_keys_access_level "
+                    "CHECK (access_level IN ('full', 'agents', 'knowledge'))"
+                )
+            )
+
     async def upgrade_knowledge_schema_v1_to_v2(self) -> None:
         """为知识文件处理中间态增加 Durable Task attempt owner。"""
         self._check_initialized()
@@ -975,6 +987,7 @@ class PostgresManager(metaclass=SingletonMeta):
             "ALTER TABLE IF EXISTS skills ADD COLUMN IF NOT EXISTS content_hash VARCHAR(128)",
             "ALTER TABLE IF EXISTS conversations ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN NOT NULL DEFAULT FALSE",
             "ALTER TABLE IF EXISTS conversations ADD COLUMN IF NOT EXISTS last_viewed_run_id VARCHAR(64)",
+            "ALTER TABLE IF EXISTS conversations ADD COLUMN IF NOT EXISTS app_id VARCHAR(64)",
             "ALTER TABLE IF EXISTS mcp_servers ADD COLUMN IF NOT EXISTS env JSONB",
             *AGENT_RUN_CURSOR_SCHEMA_STATEMENTS,
             """
@@ -1041,6 +1054,60 @@ class PostgresManager(metaclass=SingletonMeta):
             "ALTER TABLE IF EXISTS api_keys ADD COLUMN IF NOT EXISTS request_id VARCHAR(64)",
             "ALTER TABLE IF EXISTS api_keys ADD COLUMN IF NOT EXISTS intent_hash VARCHAR(64)",
             "ALTER TABLE IF EXISTS api_keys ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMP WITHOUT TIME ZONE",
+            "ALTER TABLE IF EXISTS api_keys ADD COLUMN IF NOT EXISTS access_level VARCHAR(16) NOT NULL DEFAULT 'full'",
+            "ALTER TABLE IF EXISTS api_keys ADD COLUMN IF NOT EXISTS app_id VARCHAR(64)",
+            "ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS user_kind VARCHAR(16) NOT NULL DEFAULT 'human'",
+            "ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS owner_user_id INTEGER",
+            "ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS app_id VARCHAR(64)",
+            "ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS end_user_id VARCHAR(128)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_users_public_end_user_identity "
+            "ON users(owner_user_id, app_id, end_user_id)",
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'fk_users_owner_user_id'
+                      AND conrelid = 'users'::regclass
+                ) THEN
+                    ALTER TABLE users ADD CONSTRAINT fk_users_owner_user_id
+                    FOREIGN KEY (owner_user_id) REFERENCES users(id);
+                END IF;
+            END $$
+            """,
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'ck_users_public_end_user_shape'
+                      AND conrelid = 'users'::regclass
+                ) THEN
+                    ALTER TABLE users ADD CONSTRAINT ck_users_public_end_user_shape CHECK (
+                        (user_kind = 'human' AND owner_user_id IS NULL AND app_id IS NULL AND end_user_id IS NULL)
+                        OR (user_kind = 'end_user' AND owner_user_id IS NOT NULL AND app_id IS NOT NULL
+                            AND end_user_id IS NOT NULL AND role = 'user')
+                    );
+                END IF;
+            END $$
+            """,
+            "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS app_id VARCHAR(64)",
+            "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS api_key_id INTEGER",
+            "CREATE INDEX IF NOT EXISTS ix_agent_runs_app_id ON agent_runs(app_id)",
+            "CREATE INDEX IF NOT EXISTS ix_agent_runs_api_key_id ON agent_runs(api_key_id)",
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'ck_api_keys_access_level'
+                      AND conrelid = 'api_keys'::regclass
+                ) THEN
+                    ALTER TABLE api_keys ADD CONSTRAINT ck_api_keys_access_level
+                    CHECK (access_level IN ('full', 'agents', 'knowledge'));
+                END IF;
+            END $$
+            """,
             """
             UPDATE api_keys AS api_key
             SET is_enabled = FALSE,
@@ -1450,12 +1517,110 @@ class PostgresManager(metaclass=SingletonMeta):
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
             """,
+            "ALTER TABLE IF EXISTS agent_run_requests ADD COLUMN IF NOT EXISTS intent_hash VARCHAR(64)",
+            "ALTER TABLE IF EXISTS agent_run_requests ADD COLUMN IF NOT EXISTS app_id VARCHAR(64)",
+            "ALTER TABLE IF EXISTS agent_run_requests ADD COLUMN IF NOT EXISTS api_key_id INTEGER",
+            "CREATE INDEX IF NOT EXISTS ix_agent_run_requests_app_id ON agent_run_requests(app_id)",
+            "CREATE INDEX IF NOT EXISTS ix_agent_run_requests_api_key_id ON agent_run_requests(api_key_id)",
             "CREATE UNIQUE INDEX IF NOT EXISTS ix_agent_run_requests_request_id ON agent_run_requests(request_id)",
             """
             CREATE INDEX IF NOT EXISTS ix_agent_run_requests_queue
             ON agent_run_requests(uid, agent_slug, conversation_thread_id, status, created_at, id)
             """,
             "CREATE INDEX IF NOT EXISTS ix_agent_run_requests_dispatched_run_id ON agent_run_requests(dispatched_run_id)",  # noqa: E501
+            """
+            CREATE TABLE IF NOT EXISTS agent_turns (
+                id VARCHAR(64) PRIMARY KEY,
+                conversation_thread_id VARCHAR(64) NOT NULL
+                    REFERENCES conversations(thread_id) ON DELETE CASCADE,
+                uid VARCHAR(64) NOT NULL,
+                app_id VARCHAR(64),
+                created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+                cancelled_at TIMESTAMP WITHOUT TIME ZONE
+            )
+            """,
+            "ALTER TABLE IF EXISTS agent_turns ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP WITHOUT TIME ZONE",
+            "CREATE INDEX IF NOT EXISTS ix_agent_turns_conversation_thread_id ON agent_turns(conversation_thread_id)",
+            "CREATE INDEX IF NOT EXISTS ix_agent_turns_uid ON agent_turns(uid)",
+            "CREATE INDEX IF NOT EXISTS ix_agent_turns_app_id ON agent_turns(app_id)",
+            "ALTER TABLE IF EXISTS agent_run_requests ADD COLUMN IF NOT EXISTS turn_id VARCHAR(64)",
+            "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS turn_id VARCHAR(64)",
+            "CREATE INDEX IF NOT EXISTS ix_agent_run_requests_turn_id ON agent_run_requests(turn_id)",
+            "CREATE INDEX IF NOT EXISTS ix_agent_runs_turn_id ON agent_runs(turn_id)",
+            """
+            INSERT INTO agent_turns(id, conversation_thread_id, uid, app_id, created_at)
+            SELECT request.request_id, request.conversation_thread_id, request.uid,
+                   request.app_id, request.created_at
+            FROM agent_run_requests AS request
+            JOIN conversations AS conversation ON conversation.thread_id = request.conversation_thread_id
+            WHERE request.turn_id IS NULL
+            ON CONFLICT (id) DO NOTHING
+            """,
+            """
+            UPDATE agent_run_requests AS request SET turn_id = request.request_id
+            WHERE request.turn_id IS NULL AND EXISTS (
+                SELECT 1 FROM agent_turns AS turn WHERE turn.id = request.request_id
+            )
+            """,
+            """
+            INSERT INTO agent_turns(id, conversation_thread_id, uid, app_id, created_at)
+            SELECT run.request_id, run.conversation_thread_id, run.uid, run.app_id, run.created_at
+            FROM agent_runs AS run
+            JOIN conversations AS conversation ON conversation.thread_id = run.conversation_thread_id
+            WHERE run.run_type = 'chat' AND run.turn_id IS NULL
+            ON CONFLICT (id) DO NOTHING
+            """,
+            """
+            UPDATE agent_runs AS run SET turn_id = request.turn_id
+            FROM agent_run_requests AS request
+            WHERE run.request_id = request.request_id AND run.run_type = 'chat'
+              AND run.turn_id IS NULL AND request.turn_id IS NOT NULL
+            """,
+            """
+            UPDATE agent_runs AS run SET turn_id = turn.id
+            FROM agent_turns AS turn
+            WHERE run.request_id = turn.id AND run.run_type = 'chat' AND run.turn_id IS NULL
+            """,
+            """
+            WITH RECURSIVE resume_turns AS (
+                SELECT id, turn_id FROM agent_runs WHERE run_type = 'chat' AND turn_id IS NOT NULL
+                UNION ALL
+                SELECT child.id, parent.turn_id
+                FROM agent_runs AS child
+                JOIN resume_turns AS parent ON child.created_by_run_id = parent.id
+                WHERE child.run_type = 'resume'
+            )
+            UPDATE agent_runs AS run SET turn_id = lineage.turn_id
+            FROM resume_turns AS lineage
+            WHERE run.id = lineage.id AND run.run_type = 'resume' AND run.turn_id IS NULL
+            """,
+            """
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_run_requests_turn') THEN
+                    ALTER TABLE agent_run_requests ADD CONSTRAINT fk_agent_run_requests_turn
+                    FOREIGN KEY (turn_id) REFERENCES agent_turns(id);
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_runs_turn') THEN
+                    ALTER TABLE agent_runs ADD CONSTRAINT fk_agent_runs_turn
+                    FOREIGN KEY (turn_id) REFERENCES agent_turns(id);
+                END IF;
+            END $$
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS agent_session_input_receipts (
+                id VARCHAR(64) PRIMARY KEY,
+                uid VARCHAR(64) NOT NULL,
+                app_id VARCHAR(64),
+                conversation_thread_id VARCHAR(64) NOT NULL REFERENCES conversations(thread_id),
+                event_type VARCHAR(48) NOT NULL,
+                intent_hash VARCHAR(64) NOT NULL,
+                turn_id VARCHAR(64) REFERENCES agent_turns(id),
+                run_id VARCHAR(64) REFERENCES agent_runs(id),
+                created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS ix_agent_session_input_receipts_scope "
+            "ON agent_session_input_receipts(uid, conversation_thread_id)",
             *TASK_DURABLE_SCHEMA_STATEMENTS,
         ]
         async with self.async_engine.begin() as conn:

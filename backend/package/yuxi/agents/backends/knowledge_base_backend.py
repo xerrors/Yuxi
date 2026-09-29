@@ -4,23 +4,14 @@ from typing import Any
 
 
 async def resolve_visible_knowledge_bases_for_context(context) -> list[dict[str, Any]]:
-    from yuxi.knowledge.runtime import knowledge_base
+    from yuxi.services.knowledge.tools import visible_knowledge_bases
 
     uid = getattr(context, "uid", None)
     if not uid:
         setattr(context, "_visible_knowledge_bases", [])
         return []
 
-    summaries = await knowledge_base.get_databases_by_uid(str(uid))
-    databases = [
-        {
-            "kb_id": summary.kb_id,
-            "name": summary.name,
-            "description": summary.description,
-            "kb_type": summary.kb_type,
-        }
-        for summary in summaries
-    ]
+    databases = await visible_knowledge_bases(str(uid))
     enabled_knowledges = getattr(context, "knowledges", None)
     if enabled_knowledges is not None:
         enabled_ids = {str(value).strip() for value in enabled_knowledges if str(value).strip()}

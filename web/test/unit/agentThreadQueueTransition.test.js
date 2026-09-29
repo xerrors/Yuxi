@@ -25,3 +25,25 @@ test('starting the next queued run preserves remaining request streams', () => {
   assert.deepEqual(Object.keys(threadState.requestStreams), ['request-c'])
   assert.deepEqual(threadState.onGoingConv.msgChunks, {})
 })
+
+for (const action of ['reset', 'cleanup']) {
+  test(`${action} clears pending request retry timers`, async () => {
+    const chatState = { threadStates: {} }
+    const { getThreadState, resetOnGoingConv, cleanupThreadState } = useAgentThreadState({
+      chatState,
+      getCurrentThreadId: () => 'thread-1'
+    })
+    const threadState = getThreadState('thread-1')
+    let retried = false
+    threadState.requestRetryTimers['request-1'] = setTimeout(() => {
+      retried = true
+    }, 20)
+
+    if (action === 'reset') resetOnGoingConv('thread-1')
+    else cleanupThreadState('thread-1')
+
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    assert.equal(retried, false)
+    assert.deepEqual(threadState.requestRetryTimers, {})
+  })
+}

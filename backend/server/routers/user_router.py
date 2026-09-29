@@ -2,6 +2,7 @@
 
 import re
 from typing import Any
+from typing import Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, Field
@@ -36,18 +37,24 @@ class APIKeyCreate(BaseModel):
     user_id: int | None = None
     department_id: int | None = None
     expires_at: str | None = None
+    access_level: Literal["full", "agents", "knowledge"] = "full"
+    app_id: str | None = Field(default=None, min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
 
 
 class APIKeyUpdate(BaseModel):
     name: str | None = None
     expires_at: str | None = None
     is_enabled: bool | None = None
+    access_level: Literal["full", "agents", "knowledge"] | None = None
+    app_id: str | None = Field(default=None, min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
 
 
 class APIKeyResponse(BaseModel):
     id: int
     key_prefix: str
     name: str
+    access_level: Literal["full", "agents", "knowledge"]
+    app_id: str | None
     user_id: int
     department_id: int | None
     expires_at: str | None
@@ -182,6 +189,8 @@ async def create_api_key(
 ):
     if data.user_id and data.user_id != current_user.id and current_user.role != "superadmin":
         raise HTTPException(status_code=403, detail="无权为其他用户创建 API Key")
+    if data.access_level == "agents" and not data.app_id:
+        raise HTTPException(status_code=422, detail="Agents API Key 必须填写 app_id")
 
     target_user_id = data.user_id or current_user.id
 
@@ -205,6 +214,8 @@ async def create_api_key(
             department_id=data.department_id,
             expires_at=expires_at,
             created_by=str(current_user.id),
+            access_level=data.access_level,
+            app_id=data.app_id,
         )
         await db.commit()
     except APIKeyIdempotencyConflict as exc:
@@ -242,6 +253,10 @@ async def update_api_key(
 ):
     repository = APIKeyRepository(db)
     api_key = await get_accessible_api_key(repository, api_key_id, current_user)
+    access_level = data.access_level or api_key.access_level
+    app_id = data.app_id if "app_id" in data.model_fields_set else api_key.app_id
+    if access_level == "agents" and not app_id:
+        raise HTTPException(status_code=422, detail="Agents API Key 必须填写 app_id")
 
     updates = {}
     if data.name is not None:
@@ -251,6 +266,10 @@ async def update_api_key(
         updates["expires_at"] = aware_dt.replace(tzinfo=None) if aware_dt else None
     if data.is_enabled is not None:
         updates["is_enabled"] = data.is_enabled
+    if data.access_level is not None:
+        updates["access_level"] = data.access_level
+    if "app_id" in data.model_fields_set:
+        updates["app_id"] = data.app_id
 
     api_key = await repository.update(api_key, updates)
     return {"api_key": api_key.to_dict()}

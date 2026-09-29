@@ -1,7 +1,7 @@
 """
 Integration tests for the knowledge external API exposed to the CLI / external agents.
 
-External routes live under `/api/knowledge/databases/external/...` and reuse the
+External routes live under `/api/v1/knowledge/databases/external/...` and reuse the
 existing knowledge_base service. These tests cover the main paths, parameter
 errors and the per-user access boundary.
 """
@@ -51,13 +51,13 @@ async def _delete_database(test_client, admin_headers, kb_id):
 
 
 async def test_external_list_requires_auth(test_client):
-    response = await test_client.get("/api/knowledge/databases/external")
+    response = await test_client.get("/api/v1/knowledge/databases/external")
     assert response.status_code == 401
 
 
 async def test_external_list_returns_user_databases(test_client, admin_headers, knowledge_database):
     kb_id = knowledge_database["kb_id"]
-    response = await test_client.get("/api/knowledge/databases/external", headers=admin_headers)
+    response = await test_client.get("/api/v1/knowledge/databases/external", headers=admin_headers)
     assert response.status_code == 200, response.text
     databases = response.json().get("databases", [])
     matching = [db for db in databases if db.get("kb_id") == kb_id]
@@ -70,7 +70,7 @@ async def test_external_files_lists_and_searches(test_client, admin_headers, kno
     kb_id = knowledge_database["kb_id"]
 
     list_response = await test_client.get(
-        f"/api/knowledge/databases/external/{kb_id}/files",
+        f"/api/v1/knowledge/databases/external/{kb_id}/files",
         headers=admin_headers,
     )
     assert list_response.status_code == 200, list_response.text
@@ -78,7 +78,7 @@ async def test_external_files_lists_and_searches(test_client, admin_headers, kno
     assert isinstance(payload.get("files"), list)
 
     search_response = await test_client.get(
-        f"/api/knowledge/databases/external/{kb_id}/files",
+        f"/api/v1/knowledge/databases/external/{kb_id}/files",
         params={"query": "nonexistent-needle-xyz", "offset": 0, "limit": 50},
         headers=admin_headers,
     )
@@ -88,7 +88,7 @@ async def test_external_files_lists_and_searches(test_client, admin_headers, kno
 
 async def test_external_files_unknown_kb_returns_404(test_client, admin_headers):
     response = await test_client.get(
-        "/api/knowledge/databases/external/kb_does_not_exist/files",
+        "/api/v1/knowledge/databases/external/kb_does_not_exist/files",
         headers=admin_headers,
     )
     assert response.status_code == 404
@@ -97,7 +97,7 @@ async def test_external_files_unknown_kb_returns_404(test_client, admin_headers)
 async def test_external_open_unknown_file_returns_400(test_client, admin_headers, knowledge_database):
     kb_id = knowledge_database["kb_id"]
     response = await test_client.get(
-        f"/api/knowledge/databases/external/{kb_id}/files/file_does_not_exist/open",
+        f"/api/v1/knowledge/databases/external/{kb_id}/files/file_does_not_exist/open",
         headers=admin_headers,
     )
     assert response.status_code == 400
@@ -107,7 +107,7 @@ async def test_external_open_unknown_file_returns_400(test_client, admin_headers
 async def test_external_find_rejects_bad_patterns(test_client, admin_headers, knowledge_database, patterns):
     kb_id = knowledge_database["kb_id"]
     response = await test_client.post(
-        f"/api/knowledge/databases/external/{kb_id}/files/file_does_not_exist/find",
+        f"/api/v1/knowledge/databases/external/{kb_id}/files/file_does_not_exist/find",
         json={"patterns": patterns},
         headers=admin_headers,
     )
@@ -117,7 +117,7 @@ async def test_external_find_rejects_bad_patterns(test_client, admin_headers, kn
 async def test_external_retrieve_returns_structured_response(test_client, admin_headers, knowledge_database):
     kb_id = knowledge_database["kb_id"]
     response = await test_client.post(
-        f"/api/knowledge/databases/external/{kb_id}/retrieve",
+        f"/api/v1/knowledge/databases/external/{kb_id}/retrieve",
         json={"query": "hello", "file_name": None, "options": {}},
         headers=admin_headers,
     )
@@ -130,10 +130,10 @@ async def test_external_retrieve_returns_structured_response(test_client, admin_
 async def test_external_parse_and_index_routes_are_not_exposed(test_client, admin_headers, knowledge_database):
     kb_id = knowledge_database["kb_id"]
     for path in (
-        f"/api/knowledge/databases/external/{kb_id}/parse",
-        f"/api/knowledge/databases/external/{kb_id}/parse-pending",
-        f"/api/knowledge/databases/external/{kb_id}/index",
-        f"/api/knowledge/databases/external/{kb_id}/index-pending",
+        f"/api/v1/knowledge/databases/external/{kb_id}/parse",
+        f"/api/v1/knowledge/databases/external/{kb_id}/parse-pending",
+        f"/api/v1/knowledge/databases/external/{kb_id}/index",
+        f"/api/v1/knowledge/databases/external/{kb_id}/index-pending",
     ):
         response = await test_client.post(path, json={}, headers=admin_headers)
         assert response.status_code in (404, 405), path
@@ -142,25 +142,49 @@ async def test_external_parse_and_index_routes_are_not_exposed(test_client, admi
 async def test_external_access_is_restricted_to_owner(test_client, admin_headers, standard_user):
     database = await _create_restricted_database(test_client, admin_headers)
     kb_id = database["kb_id"]
+    key_id = None
     try:
         owner_response = await test_client.get(
-            "/api/knowledge/databases/external",
+            "/api/v1/knowledge/databases/external",
             headers=admin_headers,
         )
         assert owner_response.status_code == 200
         assert any(db.get("kb_id") == kb_id for db in owner_response.json()["databases"])
 
         other_response = await test_client.get(
-            "/api/knowledge/databases/external",
+            "/api/v1/knowledge/databases/external",
             headers=standard_user["headers"],
         )
         assert other_response.status_code == 200
         assert all(db.get("kb_id") != kb_id for db in other_response.json()["databases"])
 
         forbidden = await test_client.get(
-            f"/api/knowledge/databases/external/{kb_id}/files",
+            f"/api/v1/knowledge/databases/external/{kb_id}/files",
             headers=standard_user["headers"],
         )
         assert forbidden.status_code == 404
+
+        key_created = await test_client.post(
+            "/api/user/apikey/",
+            json={
+                "request_id": str(uuid.uuid4()),
+                "name": "Restricted external test",
+                "access_level": "knowledge",
+            },
+            headers=standard_user["headers"],
+        )
+        assert key_created.status_code == 200, key_created.text
+        key_id = key_created.json()["api_key"]["id"]
+        key_headers = {"Authorization": f"Bearer {key_created.json()['secret']}"}
+        key_list = await test_client.get("/api/v1/knowledge/databases/external", headers=key_headers)
+        assert key_list.status_code == 200, key_list.text
+        assert all(db.get("kb_id") != kb_id for db in key_list.json()["databases"])
+        key_forbidden = await test_client.get(
+            f"/api/v1/knowledge/databases/external/{kb_id}/files",
+            headers=key_headers,
+        )
+        assert key_forbidden.status_code == 404, key_forbidden.text
     finally:
+        if key_id is not None:
+            await test_client.delete(f"/api/user/apikey/{key_id}", headers=standard_user["headers"])
         await _delete_database(test_client, admin_headers, kb_id)

@@ -214,7 +214,8 @@ async def test_api_key_schema_upgrade_is_idempotent_and_preserves_safe_history()
                     await connection.execute(
                         text(
                             """
-                            SELECT id, user_id, is_enabled, revoked_at, request_id, intent_hash
+                            SELECT id, user_id, is_enabled, revoked_at, request_id, intent_hash,
+                                   access_level, app_id
                             FROM api_keys
                             ORDER BY id
                             """
@@ -227,13 +228,16 @@ async def test_api_key_schema_upgrade_is_idempotent_and_preserves_safe_history()
                 for row in (await connection.execute(text("SELECT id, api_key_id FROM cli_auth_sessions ORDER BY id")))
             }
 
-        assert {"request_id", "intent_hash", "revoked_at"}.issubset(columns)
+        assert {"request_id", "intent_hash", "revoked_at", "access_level", "app_id"}.issubset(columns)
+        assert columns["access_level"] == "NO"
         assert columns["user_id"] == "NO"
         assert "UNIQUE" in indexes["ix_api_keys_request_id"]
         assert "ix_api_keys_revoked_at" in indexes
         assert set(key_rows) == {active_key_id, disabled_key_id, deleted_key_id}
         assert key_rows[active_key_id].is_enabled is True
         assert key_rows[active_key_id].revoked_at is None
+        assert key_rows[active_key_id].access_level == "full"
+        assert key_rows[active_key_id].app_id is None
         assert key_rows[disabled_key_id].is_enabled is False
         assert key_rows[disabled_key_id].revoked_at is None
         assert key_rows[deleted_key_id].is_enabled is False

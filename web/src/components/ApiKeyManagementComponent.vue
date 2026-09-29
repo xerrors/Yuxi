@@ -5,7 +5,7 @@
       <div class="header-content">
         <div class="section-title">API Key 管理</div>
         <p class="section-description">
-          用于外部系统调用 Agent 对话接口。密钥仅显示一次，请妥善保管。
+          用于外部系统调用 Agent 对话或知识库查询接口。密钥仅显示一次，请妥善保管。
         </p>
       </div>
       <div class="header-actions">
@@ -38,6 +38,7 @@
               :columns="columns"
               :rowKey="(record) => record.id"
               :pagination="false"
+              :scroll="{ x: 1040 }"
               class="settings-table"
             >
               <template #bodyCell="{ column, record }">
@@ -49,6 +50,12 @@
                 </template>
                 <template v-if="column.key === 'prefix'">
                   <code class="code-badge">{{ record.key_prefix }}****</code>
+                </template>
+                <template v-if="column.key === 'access'">
+                  <span>{{ accessLevelLabel(record.access_level) }}</span>
+                </template>
+                <template v-if="column.key === 'app'">
+                  <span class="time-text">{{ record.app_id || '未设置' }}</span>
                 </template>
                 <template v-if="column.key === 'status'">
                   <div class="status-cell">
@@ -66,6 +73,11 @@
                   <span class="time-text">{{ record.expires_at || '永不过期' }}</span>
                 </template>
                 <template v-if="column.key === 'action'">
+                  <a-tooltip title="调整权限和来源">
+                    <a-button type="text" size="small" class="action-btn lucide-icon-btn" @click="openEdit(record)">
+                      <Pencil :size="14" />
+                    </a-button>
+                  </a-tooltip>
                   <a-popconfirm
                     title="确定要删除此 API Key 吗？此操作不可恢复。"
                     @confirm="deleteKey(record)"
@@ -104,6 +116,22 @@
         <a-form-item label="名称" required>
           <a-input v-model:value="createForm.name" placeholder="如：生产环境API" />
         </a-form-item>
+        <a-form-item label="访问权限" required>
+          <a-select v-model:value="createForm.access_level">
+            <a-select-option value="agents">仅 Agents Public API</a-select-option>
+            <a-select-option value="knowledge">仅知识库 external 查询 API</a-select-option>
+            <a-select-option value="full">完整访问（含产品内接口）</a-select-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item label="调用来源" :required="createForm.access_level === 'agents'">
+          <a-input v-model:value="createForm.app_id" maxlength="64" placeholder="如：customer-service" />
+        </a-form-item>
+        <a-alert
+          v-if="createForm.access_level === 'full'"
+          type="warning"
+          message="完整访问允许这把 Key 调用产品内接口。"
+          show-icon
+        />
         <a-form-item label="过期时间">
           <a-date-picker
             v-model:value="createForm.expires_at"
@@ -112,6 +140,33 @@
             style="width: 100%"
           />
         </a-form-item>
+      </a-form>
+    </a-modal>
+
+    <a-modal
+      v-model:open="editModalVisible"
+      title="调整 API Key 权限"
+      ok-text="保存"
+      :confirmLoading="editLoading"
+      @ok="handleEdit"
+    >
+      <a-form layout="vertical" :model="editForm">
+        <a-form-item label="访问权限" required>
+          <a-select v-model:value="editForm.access_level">
+            <a-select-option value="agents">仅 Agents Public API</a-select-option>
+            <a-select-option value="knowledge">仅知识库 external 查询 API</a-select-option>
+            <a-select-option value="full">完整访问（含产品内接口）</a-select-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item label="调用来源" :required="editForm.access_level === 'agents'">
+          <a-input v-model:value="editForm.app_id" maxlength="64" placeholder="如：customer-service" />
+        </a-form-item>
+        <a-alert
+          v-if="editForm.access_level === 'full'"
+          type="warning"
+          message="完整访问允许这把 Key 调用产品内接口；保存后立即生效。"
+          show-icon
+        />
       </a-form>
     </a-modal>
 
@@ -146,7 +201,7 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { message } from 'ant-design-vue'
-import { Plus, RefreshCw, Trash2, Copy } from '@lucide/vue'
+import { Plus, RefreshCw, Trash2, Copy, Pencil } from '@lucide/vue'
 import { Key as KeyIcon } from '@lucide/vue'
 import { apikeyApi } from '@/apis/apikey_api'
 
@@ -158,23 +213,43 @@ const apiKeys = ref([])
 const createModalVisible = ref(false)
 const secretModalVisible = ref(false)
 const createLoading = ref(false)
+const editModalVisible = ref(false)
+const editLoading = ref(false)
+const editingKey = ref(null)
 const createdSecret = ref('')
 const createRequestId = ref('')
 const CREATE_REQUEST_STORAGE_KEY = 'yuxi_pending_api_key_request_id'
 
 const columns = [
-  { title: '名称', dataIndex: 'name', key: 'name', width: '22%' },
-  { title: '前缀', dataIndex: 'key_prefix', key: 'prefix', width: '18%' },
-  { title: '状态', dataIndex: 'is_enabled', key: 'status', width: '14%' },
-  { title: '最后使用', dataIndex: 'last_used_at', key: 'lastUsed', width: '18%' },
-  { title: '过期时间', dataIndex: 'expires_at', key: 'expiresAt', width: '18%' },
-  { title: '操作', key: 'action', width: '10%', align: 'center' }
+  { title: '名称', dataIndex: 'name', key: 'name', width: 180 },
+  { title: '前缀', dataIndex: 'key_prefix', key: 'prefix', width: 140 },
+  { title: '权限', dataIndex: 'access_level', key: 'access', width: 130 },
+  { title: '来源', dataIndex: 'app_id', key: 'app', width: 150 },
+  { title: '状态', dataIndex: 'is_enabled', key: 'status', width: 80 },
+  { title: '最后使用', dataIndex: 'last_used_at', key: 'lastUsed', width: 140 },
+  { title: '过期时间', dataIndex: 'expires_at', key: 'expiresAt', width: 130 },
+  { title: '操作', key: 'action', width: 90, align: 'center' }
 ]
 
 const createForm = reactive({
   name: '',
-  expires_at: null
+  expires_at: null,
+  access_level: 'agents',
+  app_id: ''
 })
+const editForm = reactive({ access_level: 'agents', app_id: '' })
+const APP_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/
+
+const accessLevelLabel = (level) => ({
+  agents: '仅 Agents API',
+  knowledge: '仅知识库 external 查询',
+  full: '完整访问'
+}[level] || level)
+
+const validAppId = (appId, required) => {
+  if (!appId) return !required
+  return appId.length <= 64 && APP_ID_PATTERN.test(appId)
+}
 
 const formatTime = (timeStr) => {
   if (!timeStr) return '-'
@@ -219,6 +294,8 @@ const handleRefresh = async () => {
 const showCreateModal = () => {
   createForm.name = ''
   createForm.expires_at = null
+  createForm.access_level = 'agents'
+  createForm.app_id = ''
   createRequestId.value =
     sessionStorage.getItem(CREATE_REQUEST_STORAGE_KEY) ||
     Array.from(globalThis.crypto.getRandomValues(new Uint8Array(16)), (byte) =>
@@ -238,10 +315,19 @@ const handleCreate = async () => {
     message.error('请输入名称')
     return
   }
+  if (!validAppId(createForm.app_id, createForm.access_level === 'agents')) {
+    message.error('来源须为 1–64 位字母、数字、点、下划线、冒号或短横线，且以字母或数字开头')
+    return
+  }
 
   createLoading.value = true
   try {
-    const data = { name: createForm.name, request_id: createRequestId.value }
+    const data = {
+      name: createForm.name,
+      request_id: createRequestId.value,
+      access_level: createForm.access_level,
+      app_id: createForm.app_id || null
+    }
     if (createForm.expires_at) {
       data.expires_at = createForm.expires_at.format('YYYY-MM-DDTHH:mm:ss')
     }
@@ -257,6 +343,35 @@ const handleCreate = async () => {
     message.error(e.message || '创建失败')
   } finally {
     createLoading.value = false
+  }
+}
+
+const openEdit = (key) => {
+  editingKey.value = key
+  editForm.access_level = key.access_level
+  editForm.app_id = key.app_id || ''
+  editModalVisible.value = true
+}
+
+const handleEdit = async () => {
+  if (!editingKey.value) return
+  if (!validAppId(editForm.app_id, editForm.access_level === 'agents')) {
+    message.error('请填写有效的调用来源')
+    return
+  }
+  editLoading.value = true
+  try {
+    await apikeyApi.update(editingKey.value.id, {
+      access_level: editForm.access_level,
+      app_id: editForm.app_id || null
+    })
+    editModalVisible.value = false
+    message.success('权限已更新')
+    await loadApiKeys()
+  } catch (e) {
+    message.error(e.message || '更新失败')
+  } finally {
+    editLoading.value = false
   }
 }
 

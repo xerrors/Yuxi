@@ -6,7 +6,7 @@ import pytest
 from rich.console import Console
 
 from yuxi_cli.client import CLIAuthSession, ClientError
-from yuxi_cli.commands import CommandError, login_with_api_key, login_with_browser, logout
+from yuxi_cli.commands import CommandError, login_with_api_key, login_with_browser, logout, status, whoami
 from yuxi_cli.config import ConfigStore, Remote
 
 
@@ -81,6 +81,48 @@ def test_login_with_api_key_saves_remote_credentials(tmp_path):
     loaded = store.load().get_remote("local")
     assert remote.api_key == "yxkey_existing"
     assert loaded.api_key == "yxkey_existing"
+
+
+def test_login_with_knowledge_key_uses_external_query_for_validation(tmp_path):
+    """knowledge Key 无法访问 auth/me，仍可经 external 查询验证并保存。"""
+
+    class KnowledgeClient(FakeClient):
+        def me(self, api_key=None):
+            raise ClientError("scope forbidden", status_code=403)
+
+        def list_external_databases(self, api_key=None):
+            assert api_key == "yxkey_existing"
+            return {"databases": []}
+
+    store = ConfigStore(tmp_path / "config.toml")
+    remote = login_with_api_key(store, None, "yxkey_existing", _console(), client_factory=KnowledgeClient)
+
+    assert remote.api_key == "yxkey_existing"
+    assert store.load().get_remote("local").api_key == "yxkey_existing"
+
+
+def test_restricted_key_status_and_whoami_do_not_report_it_invalid(tmp_path):
+    """受限 Key 无法读取 auth/me 时显示权限范围，而不误报凭据失效。"""
+
+    class RestrictedClient(FakeClient):
+        def health(self):
+            return {"status": "healthy"}
+
+        def me(self, api_key=None):
+            raise ClientError("scope forbidden", status_code=403)
+
+    store = ConfigStore(tmp_path / "config.toml")
+    config = store.load()
+    config.get_remote(None).api_key = "yxkey_existing"
+    store.save(config)
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=False)
+
+    status(store, None, console, client_factory=RestrictedClient)
+    whoami(store, None, console, client_factory=RestrictedClient)
+
+    assert "受限 API Key 可用" in output.getvalue()
+    assert "API Key 无效" not in output.getvalue()
 
 
 def test_login_with_browser_polls_until_token_and_saves_credentials(tmp_path):

@@ -311,6 +311,10 @@ async def delete_e2e_run_rows(thread_ids: set[str]) -> None:
                 thread_ids_list,
             )
             await conn.execute(
+                "DELETE FROM agent_session_input_receipts WHERE conversation_thread_id = ANY($1::text[])",
+                thread_ids_list,
+            )
+            await conn.execute(
                 f"DELETE FROM messages WHERE run_id IN ({run_ids_sql})",
                 thread_ids_list,
             )
@@ -611,6 +615,10 @@ async def _delete_test_conversation_rows(conn: asyncpg.Connection, thread_ids_li
         thread_ids_list,
         message_ids,
         run_ids,
+    )
+    await conn.execute(
+        "DELETE FROM agent_session_input_receipts WHERE conversation_thread_id = ANY($1::text[])",
+        thread_ids_list,
     )
     await conn.execute("DELETE FROM tool_calls WHERE message_id = ANY($1::int[])", message_ids)
     await conn.execute("DELETE FROM message_feedbacks WHERE message_id = ANY($1::int[])", message_ids)

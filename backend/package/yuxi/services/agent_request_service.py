@@ -17,6 +17,7 @@ from yuxi.agents.buildin import AgentBackendNotFoundError, get_agent_backend
 from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.repositories.agent_run_request_repository import AgentRunRequestRepository
+from yuxi.repositories.agents.turn import AgentTurnRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.repositories.project_repository import ProjectRepository
 from yuxi.services.agent_request_queue_service import (
@@ -32,7 +33,12 @@ from yuxi.services.agent_request_queue_service import (
     request_view,
     validate_queue_policy,
 )
-from yuxi.services.agent_run_service import create_agent_run_input_message, enqueue_agent_run, resolve_agent_run_config
+from yuxi.services.agent_run_service import (
+    create_agent_run_input_message,
+    enqueue_agent_run,
+    get_agent_run_result,
+    resolve_agent_run_config,
+)
 from yuxi.services.input_message_service import AgentRunInputMessage
 from yuxi.services.project_service import create_implicit_project
 from yuxi.services.workdir_service import WorkdirBinding, resolve_conversation_workdir_binding
@@ -67,6 +73,62 @@ class AgentRequestInput:
     create_conversation: bool = False
     conversation_title: str | None = None
     conversation_project_id: str | None = None
+    conversation_creation_request_id: str | None = None
+    conversation_metadata: dict[str, Any] = field(default_factory=dict)
+    intent_hash: str | None = None
+    app_id: str | None = None
+    api_key_id: int | None = None
+
+
+async def get_agent_request_result(
+    *, request_id: str, current_uid: str, db: AsyncSession, app_id: str | None = None
+) -> dict[str, Any]:
+    """按持久 Request 及其绑定的 Run 读取调用状态与结果。"""
+    request = await AgentRunRequestRepository(db).get_by_request_id(request_id)
+    if request is None or request.uid != str(current_uid) or (app_id is not None and request.app_id != app_id):
+        raise HTTPException(status_code=404, detail="请求不存在")
+
+    run_id = request.dispatched_run_id
+    result: dict[str, Any] = {
+        "request_id": request.request_id,
+        "turn_id": request.turn_id,
+        "thread_id": request.conversation_thread_id,
+        "agent_slug": request.agent_slug,
+        "run_id": run_id,
+        "request_status": request.status,
+        "run_status": None,
+        "status": request.status,
+        "output": None,
+        "final_message_id": None,
+        "token_usage": None,
+        "usage": None,
+        "error": {"type": request.status, "message": request.error_message}
+        if request.status in {"failed", "rejected", "cancelled"}
+        else None,
+    }
+    if run_id is None:
+        return result
+
+    run_result = await get_agent_run_result(run_id=run_id, current_uid=current_uid, db=db)
+    if (run_result.get("error") or {}).get("type") == "run_not_found":
+        raise HTTPException(status_code=409, detail="请求绑定的运行不存在")
+    if run_result.get("request_id") != request_id:
+        raise HTTPException(status_code=409, detail="请求与运行关联不一致")
+
+    run_status = run_result["status"]
+    token_usage = run_result.get("token_usage") or None
+    result.update(
+        run_status=run_status,
+        status={"pending": "in_progress", "running": "in_progress", "interrupted": "waiting"}.get(
+            run_status, run_status
+        ),
+        output=run_result["output"] if run_result.get("final_message_id") is not None else None,
+        final_message_id=run_result.get("final_message_id"),
+        token_usage=token_usage,
+        usage=token_usage.get("total") if token_usage and token_usage.get("complete") is True else None,
+        error=run_result.get("error"),
+    )
+    return result
 
 
 async def submit_agent_request(
@@ -92,8 +154,12 @@ async def submit_agent_request(
     if external_id == "":
         external_id = None
     origin_metadata = {
-        key: value for key, value in origin.metadata.items() if key not in {"source", "channel", "external_id"}
+        key: value
+        for key, value in origin.metadata.items()
+        if key not in {"source", "channel", "external_id", "app_id", "api_key_id"}
     }
+    if request_input.app_id is not None:
+        origin_metadata["app_id"] = request_input.app_id
 
     agent_repo = AgentRepository(db)
     agent_item = await agent_repo.get_visible_by_slug(
@@ -109,6 +175,8 @@ async def submit_agent_request(
         None if existing_request else await AgentRunRepository(db).get_run_by_request_id(request_input.request_id)
     )
     if existing_run and not existing_request:
+        if request_input.intent_hash is not None:
+            raise HTTPException(status_code=409, detail="request_id 已绑定无法核对意图的历史运行")
         if existing_run.uid != str(current_user.uid):
             raise HTTPException(status_code=409, detail="request_id 冲突")
         if existing_run.agent_slug != agent_item.slug or existing_run.run_type != "chat":
@@ -179,8 +247,11 @@ async def submit_agent_request(
                         **origin_metadata,
                         "source": origin.source,
                         "channel": origin.channel,
+                        **request_input.conversation_metadata,
                     },
                     project_id=project.id,
+                    creation_request_id=request_input.conversation_creation_request_id,
+                    app_id=request_input.app_id if origin.source == "public_api" else None,
                 )
         except IntegrityError:
             conversation = await conversation_repo.get_conversation_by_thread_id(request_input.thread_id)
@@ -189,6 +260,9 @@ async def submit_agent_request(
 
     request_metadata = dict(request_input.request_metadata or {})
     request_metadata["channel"] = origin.channel
+    if request_input.app_id is not None:
+        request_metadata.pop("app_id", None)
+        request_metadata.pop("api_key_id", None)
     for key, value in origin_metadata.items():
         if key in {"source", "channel"}:
             continue
@@ -244,8 +318,8 @@ async def _persist_request(
     model_spec, tool_approval_mode = request_input.model_spec, request_input.tool_approval_mode
     meta = request_input.request_metadata
     policy = validate_queue_policy(request_input.queue_policy)
-    if policy == "steer" and source not in {"chat", "channel"}:
-        raise HTTPException(status_code=422, detail="queue_policy 'steer' 仅支持主会话 Chat/Channel")
+    if policy == "steer" and source not in {"chat", "channel", "public_api"}:
+        raise HTTPException(status_code=422, detail="queue_policy 'steer' 仅支持主会话消息")
     meta = meta or {}
     uid_str = str(uid)
     repo = AgentRunRequestRepository(db)
@@ -301,7 +375,11 @@ async def _persist_request(
         agent_slug=agent_slug,
         conversation_thread_id=thread_id,
     )
-    if latest_run is not None and latest_run.status == "interrupted":
+    if (
+        latest_run is not None
+        and latest_run.status == "interrupted"
+        and (source != "public_api" or policy != "enqueue")
+    ):
         raise queue_conflict("run_interrupted", "线程正在等待用户回答或审批")
     if policy == "steer" and active_run is not None and not await is_steerable_message_run(db=db, run=active_run):
         raise queue_conflict("run_not_steerable", "当前运行不支持引导")
@@ -311,6 +389,10 @@ async def _persist_request(
         conversation_thread_id=thread_id,
     ):
         raise queue_conflict("steer_already_pending", "线程已有等待执行的引导请求")
+
+    turn_id = active_run.turn_id if policy == "steer" and active_run is not None else request_id
+    if turn_id is None:
+        raise queue_conflict("turn_not_available", "当前运行尚未关联 Turn")
 
     # reject 表示“不能立即成为并派发 FIFO 队头就拒绝”。
     reject_without_immediate_dispatch = policy == "reject" and (active_run is not None or existing_head is not None)
@@ -338,6 +420,13 @@ async def _persist_request(
     )
     try:
         async with db.begin_nested():
+            if turn_id == request_id:
+                await AgentTurnRepository(db).create(
+                    turn_id=turn_id,
+                    thread_id=thread_id,
+                    uid=uid_str,
+                    app_id=request_input.app_id,
+                )
             attachment_file_ids = _normalize_attachment_file_ids(meta.get("attachment_file_ids"))
             if not reject_without_immediate_dispatch and attachment_file_ids:
                 bound_attachments = await ConversationRepository(db).bind_attachments_to_request(
@@ -361,6 +450,7 @@ async def _persist_request(
             )
             persisted_request = await repo.create(
                 request_id=request_id,
+                turn_id=turn_id,
                 uid=uid_str,
                 agent_slug=agent_slug,
                 conversation_thread_id=thread_id,
@@ -372,6 +462,9 @@ async def _persist_request(
                 input_message_id=persisted_message.id,
                 input_payload=input_payload,
                 status=request_status,
+                intent_hash=request_input.intent_hash,
+                app_id=request_input.app_id,
+                api_key_id=request_input.api_key_id,
             )
     except IntegrityError:
         if result := await existing_request(workdir_binding):
@@ -414,6 +507,8 @@ def _validate_request_scope(request: AgentRunRequest, *, request_input: AgentReq
         origin.source,
         origin.channel,
         origin.external_id,
+        request_input.app_id,
+        request_input.intent_hash,
     )
     actual_scope = (
         request.uid,
@@ -422,6 +517,8 @@ def _validate_request_scope(request: AgentRunRequest, *, request_input: AgentReq
         request.source,
         request.channel,
         request.external_id,
+        request.app_id,
+        request.intent_hash,
     )
     if actual_scope != expected_scope:
         raise queue_conflict("request_id_conflict", "request_id 已用于其他请求作用域")

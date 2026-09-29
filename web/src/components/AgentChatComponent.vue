@@ -3382,20 +3382,38 @@ const handleSendMessage = async ({ images = [], queuePolicy = 'enqueue' } = {}) 
     })
   }
 
+  let acceptedRequestId = requestId
   try {
-    const runResp = await agentApi.createAgentRun({
+    const runResp = await agentApi.sendSessionMessage(threadId, {
       query: text,
-      agent_slug: currentAgentId.value,
-      thread_id: threadId,
-      meta: {
-        request_id: requestId,
-        attachment_file_ids: pendingAttachmentFileIds
-      },
+      request_id: requestId,
+      attachment_file_ids: pendingAttachmentFileIds,
       image_content: imageContents.length ? imageContents : null,
       model_spec: modelSpec,
       tool_approval_mode: toolApprovalMode,
       queue_policy: queuePolicy
     })
+    acceptedRequestId = runResp.request_id
+    if (!acceptedRequestId) throw new Error('Public API 未返回 request_id')
+    if (acceptedRequestId !== requestId) {
+      const optimistic = threadState.onGoingConv.msgChunks[requestId]
+      if (optimistic) {
+        threadState.onGoingConv.msgChunks[acceptedRequestId] = optimistic.map((item) => ({
+          ...item,
+          id: item.id === requestId ? acceptedRequestId : item.id,
+          extra_metadata: { ...item.extra_metadata, request_id: acceptedRequestId }
+        }))
+        delete threadState.onGoingConv.msgChunks[requestId]
+      }
+      markAttachmentsRequestId(threadId, pendingAttachments, acceptedRequestId)
+    }
+    const acceptedMessage = acceptedRequestId === requestId
+      ? inputMessage
+      : {
+          ...inputMessage,
+          id: acceptedRequestId,
+          extra_metadata: { ...inputMessage.extra_metadata, request_id: acceptedRequestId }
+        }
     const status = runResp?.status
     const runId = runResp?.run_id
     threadState.queuedRequests = threadState.queuedRequests.filter(
@@ -3409,16 +3427,19 @@ const handleSendMessage = async ({ images = [], queuePolicy = 'enqueue' } = {}) 
       }
     }
     if (status === 'queued' || (!runId && status !== 'rejected')) {
-      inputMessage.delivery_status = 'queued'
+      for (const msg of threadState.onGoingConv.msgChunks[acceptedRequestId] || []) {
+        if (msg.type === 'human') msg.delivery_status = 'queued'
+      }
+      acceptedMessage.delivery_status = 'queued'
       threadState.queuedRequests = threadState.queuedRequests || []
       threadState.queuedRequests.push({
-        request_id: requestId,
+        request_id: acceptedRequestId,
         status: 'queued',
         queue_policy: runResp?.queue_policy || queuePolicy,
         queue_position: runResp?.queue_position || 1,
         content: text,
         created_at: inputMessage.created_at,
-        message: inputMessage
+        message: acceptedMessage
       })
       if (!hadActiveRun) {
         threadState.isStreaming = false
@@ -3426,15 +3447,15 @@ const handleSendMessage = async ({ images = [], queuePolicy = 'enqueue' } = {}) 
       }
       await resumeQueuedRequests(threadId, resolveAgentSlugForThread(threadId))
     } else if (runId) {
-      threadState.onGoingConv.msgChunks[requestId] = [inputMessage]
-      threadState.pendingRequestId = requestId
-      await startRunStream(threadId, runId, 0, { requestId })
+      threadState.onGoingConv.msgChunks[acceptedRequestId] ||= [acceptedMessage]
+      threadState.pendingRequestId = acceptedRequestId
+      await startRunStream(threadId, runId, 0, { requestId: acceptedRequestId, turnId: runResp.turn_id })
     } else {
       throw new Error('创建 run 失败：缺少 run_id')
     }
   } catch (error) {
     threadState.queuedRequests = threadState.queuedRequests.filter(
-      (request) => request.request_id !== requestId
+      (request) => ![requestId, acceptedRequestId].includes(request.request_id)
     )
     if (!hadActiveRun) {
       threadState.isStreaming = false
@@ -3507,7 +3528,7 @@ const handleSendOrStop = async (payload) => {
   const hasNewInput = Boolean(String(userInput.value || '').trim() || payload?.images?.length)
   if (threadState?.activeRunId && threadState?.isStreaming && !hasNewInput) {
     try {
-      await agentApi.cancelAgentRun(threadState.activeRunId)
+      await agentApi.cancelSessionTurn(threadId, `cancel-${threadState.activeRunId}`, threadState.activeRunId)
       threadState.pendingInterrupt = null
       if (approvalState.threadId === threadId) {
         hideApprovalState()
@@ -3552,14 +3573,15 @@ const handleApprovalWithStream = async (answer) => {
     threadState.pendingInterrupt = null
     threadState.isStreaming = true
     resetOnGoingConv(threadId, { preserveRequestStreams: true })
-    const requestId = createClientRequestId()
-    const runResp = await agentApi.createAgentRun({
-      query: null,
-      agent_slug: currentAgentId.value,
-      thread_id: threadId,
-      meta: { request_id: requestId },
+    const session = await agentApi.getPublicSession(threadId)
+    if (session.status !== 'requires_action' || session.run_id !== interruptedRunId || !session.turn_id) {
+      throw new Error('当前审批所属 Turn 已变化，请刷新后重试')
+    }
+    const runResp = await agentApi.resumeSessionTurn(threadId, {
+      turn_id: session.turn_id,
+      run_id: interruptedRunId,
       resume: answer,
-      created_by_run_id: interruptedRunId
+      request_id: `resume-${interruptedRunId}`
     })
     const runId = runResp?.run_id
     if (!runId) {
@@ -3571,7 +3593,7 @@ const handleApprovalWithStream = async (answer) => {
     } catch (error) {
       console.warn('Failed to refresh history before resume stream:', error)
     }
-    await startRunStream(threadId, runId, '0-0')
+    await startRunStream(threadId, runId, '0-0', { turnId: session.turn_id })
   } catch (error) {
     if (pendingInterrupt) {
       threadState.pendingInterrupt = pendingInterrupt

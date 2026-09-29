@@ -153,23 +153,29 @@ class AgentRepository:
 
     async def list_visible(self, *, user: User, include_subagent_definitions: bool = False) -> list[Agent]:
         """列出用户可见的主智能体，只有显式请求时才包含子智能体定义。"""
+        visibility_user = await self._visibility_user(user)
+        if visibility_user is None:
+            return []
         stmt = select(Agent)
         if not include_subagent_definitions:
             stmt = stmt.where(Agent.is_subagent.is_(False))
         result = await self.db.execute(stmt.order_by(Agent.is_default.desc(), Agent.id.asc()))
         agents = list(result.scalars().all())
-        if user.role == "superadmin":
+        if visibility_user.role == "superadmin":
             return agents
-        return [agent for agent in agents if user_can_access_agent(user, agent)]
+        return [agent for agent in agents if user_can_access_agent(visibility_user, agent)]
 
     async def list_visible_subagents(self, *, user: User) -> list[Agent]:
+        visibility_user = await self._visibility_user(user)
+        if visibility_user is None:
+            return []
         result = await self.db.execute(
             select(Agent).where(Agent.is_subagent.is_(True)).order_by(Agent.name.asc(), Agent.id.asc())
         )
         agents = list(result.scalars().all())
-        if user.role == "superadmin":
+        if visibility_user.role == "superadmin":
             return agents
-        return [agent for agent in agents if user_can_access_agent(user, agent)]
+        return [agent for agent in agents if user_can_access_agent(visibility_user, agent)]
 
     async def get_by_slug(self, slug: str) -> Agent | None:
         result = await self.db.execute(select(Agent).where(Agent.slug == slug))
@@ -183,10 +189,13 @@ class AgentRepository:
         self, *, slug: str, user: User, kind: Literal["main", "subagent", "any"] = "main"
     ) -> Agent | None:
         """按 slug 读取用户可见智能体，并按入口语义过滤主/子智能体。"""
+        visibility_user = await self._visibility_user(user)
+        if visibility_user is None:
+            return None
         agent = await self.get_by_slug(slug)
         if not agent:
             return None
-        if not user_can_access_agent(user, agent):
+        if not user_can_access_agent(visibility_user, agent):
             return None
         if kind == "any":
             return agent
@@ -195,6 +204,18 @@ class AgentRepository:
         if kind == "subagent":
             return agent if agent.is_subagent else None
         raise ValueError(f"未知智能体入口类型: {kind}")
+
+    async def _visibility_user(self, user: User) -> User | None:
+        """终端用户只借用 Key 用户的 Agent 可见性，执行 UID 保持不变。"""
+        if getattr(user, "user_kind", "human") != "end_user":
+            return user
+        return await self.db.scalar(
+            select(User).where(
+                User.id == user.owner_user_id,
+                User.user_kind == "human",
+                User.is_deleted == 0,
+            )
+        )
 
     async def get_default(self) -> Agent | None:
         result = await self.db.execute(select(Agent).where(Agent.is_default.is_(True)))

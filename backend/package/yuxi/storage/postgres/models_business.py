@@ -166,6 +166,15 @@ class User(Base):
     """用户模型"""
 
     __tablename__ = "users"
+    __table_args__ = (
+        UniqueConstraint("owner_user_id", "app_id", "end_user_id", name="uq_users_public_end_user_identity"),
+        CheckConstraint(
+            "(user_kind = 'human' AND owner_user_id IS NULL AND app_id IS NULL AND end_user_id IS NULL) "
+            "OR (user_kind = 'end_user' AND owner_user_id IS NOT NULL AND app_id IS NOT NULL "
+            "AND end_user_id IS NOT NULL AND role = 'user')",
+            name="ck_users_public_end_user_shape",
+        ),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     username = Column(String, nullable=False, unique=True, index=True)  # 显示名称
@@ -174,6 +183,10 @@ class User(Base):
     avatar = Column(String, nullable=True)  # 头像URL
     password_hash = Column(String, nullable=False)
     role = Column(String, nullable=False, default="user")  # 角色: superadmin, admin, user
+    user_kind = Column(String(16), nullable=False, default="human", server_default="human")
+    owner_user_id = Column(Integer, ForeignKey("users.id", name="fk_users_owner_user_id"), nullable=True)
+    app_id = Column(String(64), nullable=True)
+    end_user_id = Column(String(128), nullable=True)
     department_id = Column(Integer, ForeignKey("departments.id"), nullable=True)  # 部门ID
     created_at = Column(DateTime, default=utc_now_naive)
     last_login = Column(DateTime, nullable=True)
@@ -207,6 +220,7 @@ class User(Base):
             "phone_number": self.phone_number,
             "avatar": normalize_public_minio_url(self.avatar),
             "role": self.role,
+            "user_kind": self.user_kind,
             "department_id": self.department_id,
             "created_at": format_utc_datetime(self.created_at),
             "last_login": format_utc_datetime(self.last_login),
@@ -403,6 +417,7 @@ class Conversation(Base):
     thread_id = Column(String(64), unique=True, index=True, nullable=False, comment="Thread ID (UUID)")
     creation_request_id = Column(String(64), nullable=True, comment="新建 Conversation 幂等请求 ID")
     uid = Column(String(64), index=True, nullable=False, comment="UID")
+    app_id = Column(String(64), nullable=True, comment="Public API 可信 APP 归属")
     # 历史字段名，实际保存的是 Agent.slug。
     agent_id = Column(String(64), index=True, nullable=False, comment="Agent slug (legacy column name: agent_id)")
     title = Column(String(255), nullable=True, comment="Conversation title")
@@ -446,6 +461,37 @@ class Conversation(Base):
             "updated_at": format_utc_datetime(self.updated_at),
             "metadata": metadata,
         }
+
+
+class AgentTurn(Base):
+    """线程内一轮工作；输入 Request 和执行 Run 分别关联同一身份。"""
+
+    __tablename__ = "agent_turns"
+
+    id = Column(String(64), primary_key=True, comment="Turn ID；首个普通 Request 的 ID")
+    conversation_thread_id = Column(
+        String(64), ForeignKey("conversations.thread_id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    uid = Column(String(64), nullable=False, index=True)
+    app_id = Column(String(64), nullable=True, index=True)
+    created_at = Column(DateTime, nullable=False, default=utc_now_naive)
+    cancelled_at = Column(DateTime, nullable=True)
+
+
+class AgentSessionInputReceipt(Base):
+    """记录 Session 输入意图并固定控制事件目标。"""
+
+    __tablename__ = "agent_session_input_receipts"
+
+    id = Column(String(64), primary_key=True)
+    uid = Column(String(64), nullable=False)
+    app_id = Column(String(64), nullable=True)
+    conversation_thread_id = Column(String(64), ForeignKey("conversations.thread_id"), nullable=False)
+    event_type = Column(String(48), nullable=False)
+    intent_hash = Column(String(64), nullable=False)
+    turn_id = Column(String(64), ForeignKey("agent_turns.id"), nullable=True)
+    run_id = Column(String(64), ForeignKey("agent_runs.id"), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=utc_now_naive)
 
 
 class SubagentThread(Base):
@@ -1032,6 +1078,9 @@ class APIKey(Base):
     """API Key 模型"""
 
     __tablename__ = "api_keys"
+    __table_args__ = (
+        CheckConstraint("access_level IN ('full', 'agents', 'knowledge')", name="ck_api_keys_access_level"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     key_hash = Column(String(64), nullable=False, unique=True, index=True)
@@ -1039,6 +1088,8 @@ class APIKey(Base):
     request_id = Column(String(64), nullable=True, unique=True, index=True)
     intent_hash = Column(String(64), nullable=True)
     name = Column(String(100), nullable=False)
+    access_level = Column(String(16), nullable=False, default="full", server_default="full")
+    app_id = Column(String(64), nullable=True)
 
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     department_id = Column(Integer, ForeignKey("departments.id"), nullable=True, index=True)
@@ -1060,6 +1111,8 @@ class APIKey(Base):
             "id": self.id,
             "key_prefix": self.key_prefix,
             "name": self.name,
+            "access_level": self.access_level,
+            "app_id": self.app_id,
             "user_id": self.user_id,
             "department_id": self.department_id,
             "expires_at": format_utc_datetime(self.expires_at),
@@ -1143,6 +1196,9 @@ class AgentRun(Base):
         comment="Run status: pending/running/completed/failed/cancel_requested/cancelled/interrupted",
     )
     request_id = Column(String(64), unique=True, index=True, nullable=False, comment="Idempotency request ID")
+    turn_id = Column(String(64), ForeignKey("agent_turns.id", name="fk_agent_runs_turn"), nullable=True, index=True)
+    app_id = Column(String(64), nullable=True, index=True, comment="API Key 来源快照")
+    api_key_id = Column(Integer, nullable=True, index=True, comment="发起调用的 API Key ID 快照")
     source = Column(String(32), nullable=False, default="chat", comment="Run source snapshot")
     channel = Column(String(32), nullable=False, default="web", comment="Run channel snapshot")
     external_id = Column(String(128), nullable=True, index=True, comment="Source-specific external ID snapshot")
@@ -1206,6 +1262,9 @@ class AgentRun(Base):
             "uid": self.uid,
             "status": self.status,
             "request_id": self.request_id,
+            "turn_id": self.turn_id,
+            "app_id": self.app_id,
+            "api_key_id": self.api_key_id,
             "source": self.source,
             "channel": self.channel,
             "external_id": self.external_id,
@@ -1320,6 +1379,12 @@ class AgentRunRequest(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True, comment="Primary key")
     request_id = Column(String(64), unique=True, index=True, nullable=False, comment="幂等请求 ID")
+    turn_id = Column(
+        String(64), ForeignKey("agent_turns.id", name="fk_agent_run_requests_turn"), nullable=True, index=True
+    )
+    intent_hash = Column(String(64), nullable=True, comment="Public API 原始提交意图哈希")
+    app_id = Column(String(64), nullable=True, index=True, comment="API Key 来源快照")
+    api_key_id = Column(Integer, nullable=True, index=True, comment="发起调用的 API Key ID 快照")
     uid = Column(String(64), nullable=False, comment="UID")
     agent_slug = Column(String(64), nullable=False, comment="Agent slug")
     conversation_thread_id = Column(String(64), nullable=False, comment="Conversation thread ID")
@@ -1362,6 +1427,9 @@ class AgentRunRequest(Base):
     def to_dict(self) -> dict[str, Any]:
         return {
             "request_id": self.request_id,
+            "turn_id": self.turn_id,
+            "app_id": self.app_id,
+            "api_key_id": self.api_key_id,
             "uid": self.uid,
             "agent_slug": self.agent_slug,
             "thread_id": self.conversation_thread_id,

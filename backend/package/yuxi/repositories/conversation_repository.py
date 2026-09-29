@@ -136,6 +136,7 @@ class ConversationRepository:
         metadata: dict | None = None,
         project_id: str,
         creation_request_id: str | None = None,
+        app_id: str | None = None,
     ) -> Conversation:
         """创建对话和统计记录但只 flush，供外层事务继续绑定关系。"""
         if not thread_id:
@@ -150,6 +151,7 @@ class ConversationRepository:
             thread_id=thread_id,
             creation_request_id=creation_request_id,
             uid=str(uid),
+            app_id=app_id,
             agent_id=agent_id,
             title=normalized_title or "New Conversation",
             status="active",

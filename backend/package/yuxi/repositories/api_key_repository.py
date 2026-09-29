@@ -47,6 +47,8 @@ class APIKeyRepository:
         department_id: int | None,
         expires_at: datetime | None,
         created_by: str,
+        access_level: str = "full",
+        app_id: str | None = None,
     ) -> str:
         """稳定标识原始创建意图，不受资源后续可变字段影响。"""
 
@@ -57,6 +59,9 @@ class APIKeyRepository:
             "expires_at": expires_at.isoformat() if expires_at else None,
             "created_by": created_by,
         }
+        if access_level != "full" or app_id is not None:
+            payload["access_level"] = access_level
+            payload["app_id"] = app_id
         encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
         return hashlib.sha256(encoded).hexdigest()
 
@@ -108,6 +113,8 @@ class APIKeyRepository:
         department_id: int | None,
         expires_at: datetime | None,
         created_by: str,
+        access_level: str = "full",
+        app_id: str | None = None,
     ) -> APIKey:
         """在幂等锁内创建或重放同一 API Key 事实。"""
 
@@ -121,7 +128,7 @@ class APIKeyRepository:
         subject = await self.db_session.scalar(
             select(User).where(User.id == user_id, User.is_deleted == 0).with_for_update()
         )
-        if subject is None:
+        if subject is None or subject.user_kind == "end_user":
             raise APIKeySubjectUnavailable("关联的用户不存在")
         if department_id is not None and department_id != subject.department_id:
             raise APIKeyDepartmentConflict("API Key 部门必须与关联用户部门一致")
@@ -132,6 +139,8 @@ class APIKeyRepository:
             department_id=department_id,
             expires_at=expires_at,
             created_by=created_by,
+            access_level=access_level,
+            app_id=app_id,
         )
         existing = await self.db_session.scalar(select(APIKey).where(APIKey.request_id == request_id))
         if existing is not None:
@@ -144,6 +153,8 @@ class APIKeyRepository:
                     and existing.department_id == department_id
                     and existing.expires_at == expires_at
                     and existing.created_by == created_by
+                    and existing.access_level == access_level
+                    and existing.app_id == app_id
                 )
                 if expected:
                     existing.intent_hash = intent_hash
@@ -166,6 +177,8 @@ class APIKeyRepository:
             department_id=department_id,
             expires_at=expires_at,
             created_by=created_by,
+            access_level=access_level,
+            app_id=app_id,
         )
         self.db_session.add(api_key)
         await self.db_session.flush()

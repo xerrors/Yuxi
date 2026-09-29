@@ -532,15 +532,17 @@ async def _seed_thread(session, *, uid="user-1", msg_id=100, conv_id=10):
 async def _seed_active_run(session, *, source="chat", status="running", run_type="chat"):
     """在线程内创建可供 Steer 门禁识别的活跃 Run。"""
     from yuxi.repositories.agent_run_request_repository import AgentRunRequestRepository
-    from yuxi.storage.postgres.models_business import AgentRun
+    from yuxi.storage.postgres.models_business import AgentRun, AgentTurn
 
     session.add(Message(id=101, conversation_id=10, role="user", content="active"))
+    session.add(AgentTurn(id="active-request", conversation_thread_id="t1", uid="user-1"))
     await AgentRunRequestRepository(session).create(
         request_id="active-request",
         uid="user-1",
         agent_slug="main",
         conversation_thread_id="t1",
         source=source,
+        turn_id="active-request",
         input_message_id=101,
         status="dispatched",
     )
@@ -553,6 +555,7 @@ async def _seed_active_run(session, *, source="chat", status="running", run_type
             uid="user-1",
             status=status,
             request_id="active-request",
+            turn_id="active-request",
             conversation_id=10,
             run_type=run_type,
             created_by_run_id="interrupted-run" if run_type == "resume" else None,
@@ -564,10 +567,13 @@ async def _seed_active_run(session, *, source="chat", status="running", run_type
 
 async def _create_request(session, *, request_id, uid="user-1", msg_id=100, queue_policy="enqueue"):
     from yuxi.repositories.agent_run_request_repository import AgentRunRequestRepository
+    from yuxi.storage.postgres.models_business import AgentTurn
 
     repo = AgentRunRequestRepository(session)
+    session.add(AgentTurn(id=request_id, conversation_thread_id="t1", uid=uid))
     await repo.create(
         request_id=request_id,
+        turn_id=request_id,
         uid=uid,
         agent_slug="main",
         conversation_thread_id="t1",
@@ -673,7 +679,6 @@ async def test_second_pending_steer_is_rejected(session):
         ("agent_call", "running", "chat"),
         ("chat", "running", "resume"),
         ("chat", "cancel_requested", "chat"),
-        ("chat", "pending", "chat"),
     ],
 )
 async def test_steer_rejects_unsupported_active_run_before_persisting(session, source, status, run_type):
@@ -707,6 +712,33 @@ async def test_steer_rejects_unsupported_active_run_before_persisting(session, s
         )
         == 0
     )
+
+
+@pytest.mark.asyncio
+async def test_pending_chat_run_accepts_steer_on_same_turn(session, monkeypatch: pytest.MonkeyPatch):
+    """已持久化但尚未启动的 Run 也能安全接收同轮引导。"""
+    async def resolve_config(*_args):
+        return "model", "default"
+
+    monkeypatch.setattr(agent_request_service, "resolve_agent_run_config", resolve_config)
+    await _seed_thread(session)
+    await _seed_active_run(session, status="pending")
+
+    request, _ = await _persist_request(
+        db=session,
+        agent_item=MagicMock(),
+        agent_backend=MagicMock(),
+        request_input=AgentRequestInput(
+            request_id="request-pending-steer",
+            agent_slug="main",
+            thread_id="t1",
+            input_message=build_chat_input_message("steer"),
+            queue_policy="steer",
+            origin=RunOrigin(source="chat", channel="web"),
+        ),
+        current_user=SimpleNamespace(uid="user-1"),
+    )
+    assert request.turn_id == "active-request"
 
 
 @pytest.mark.asyncio

@@ -35,7 +35,12 @@ from yuxi.services.agent_run_service import (
     stream_agent_run_events,
 )
 from yuxi.services.input_message_service import build_chat_input_message
-from yuxi.services.agent_request_service import RunOrigin, AgentRequestInput, submit_agent_request
+from yuxi.services.agent_request_service import (
+    RunOrigin,
+    AgentRequestInput,
+    get_agent_request_result,
+    submit_agent_request,
+)
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import User
 
@@ -192,6 +197,16 @@ async def create_agent(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"agent": await _serialize_agent(repo, item, current_user, include_configurable_items=True)}
+
+
+@agent_router.get("/request-result")
+async def get_request_result(
+    request_id: str,
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """按请求 ID 读取排队或执行结果。"""
+    return await get_agent_request_result(request_id=request_id, current_uid=str(current_user.uid), db=db)
 
 
 @agent_router.get("/{agent_id}")

@@ -28,6 +28,7 @@ from yuxi.services.input_message_service import build_chat_input_message
 from yuxi.storage.postgres.models_business import (
     AgentRun,
     AgentRunRequest,
+    AgentTurn,
     Conversation,
     Message,
     Project,
@@ -282,6 +283,8 @@ async def test_concurrent_steer_requests_keep_one_pending(monkeypatch: pytest.Mo
         conversation = await _queue_test_conversation(db, thread_id=thread_id, uid=uid)
         db.add(conversation)
         await db.flush()
+        db.add(AgentTurn(id=active_request_id, conversation_thread_id=thread_id, uid=uid))
+        await db.flush()
         active_message = Message(
             conversation_id=conversation.id,
             request_id=active_request_id,
@@ -294,6 +297,7 @@ async def test_concurrent_steer_requests_keep_one_pending(monkeypatch: pytest.Mo
         db.add(
             AgentRunRequest(
                 request_id=active_request_id,
+                turn_id=active_request_id,
                 uid=uid,
                 agent_slug="main",
                 conversation_thread_id=thread_id,
@@ -313,6 +317,7 @@ async def test_concurrent_steer_requests_keep_one_pending(monkeypatch: pytest.Mo
                 uid=uid,
                 status="running",
                 request_id=active_request_id,
+                turn_id=active_request_id,
                 conversation_id=conversation.id,
                 run_type="chat",
                 input_payload={},
@@ -364,6 +369,7 @@ async def test_concurrent_steer_requests_keep_one_pending(monkeypatch: pytest.Mo
             ).all()
         assert len(requests) == 1
         assert requests[0].queue_policy == "steer"
+        assert requests[0].turn_id == active_request_id
         assert requests[0].status == "queued"
     finally:
         await _cleanup_queue_test_thread(session_factory, engine, thread_id)

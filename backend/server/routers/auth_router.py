@@ -240,7 +240,7 @@ async def login_for_access_token(
     user = await user_repository.get_by_login_identifier(login_identifier)
 
     # 如果用户不存在，为防止用户名枚举攻击，返回通用错误信息
-    if not user:
+    if not user or user.user_kind == "end_user":
         await record_login_failure(client_ip, login_identifier)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -970,10 +970,10 @@ async def impersonate_user(
         )
 
     # 不能模拟超级管理员
-    if target_user.role == "superadmin":
+    if target_user.role == "superadmin" or target_user.user_kind == "end_user":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="不能模拟超级管理员账户",
+            detail="不能模拟该账户",
         )
 
     # 生成访问令牌

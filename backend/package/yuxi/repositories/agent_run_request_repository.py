@@ -26,10 +26,43 @@ class AgentRunRequestRepository:
         result = await self.db.execute(select(AgentRunRequest).where(AgentRunRequest.request_id == request_id))
         return result.scalar_one_or_none()
 
+    async def get_latest_for_public_thread(
+        self, *, uid: str, app_id: str | None, thread_id: str
+    ) -> AgentRunRequest | None:
+        """读取当前资源命名空间最近接收的请求。"""
+        result = await self.db.execute(
+            select(AgentRunRequest)
+            .where(
+                AgentRunRequest.uid == uid,
+                AgentRunRequest.app_id == app_id,
+                AgentRunRequest.conversation_thread_id == thread_id,
+            )
+            .order_by(AgentRunRequest.id.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def has_queued_for_thread(self, *, uid: str, agent_slug: str, thread_id: str) -> bool:
+        """判断线程内是否仍有待派发请求。"""
+        result = await self.db.execute(
+            select(AgentRunRequest.id)
+            .where(
+                AgentRunRequest.uid == str(uid),
+                AgentRunRequest.agent_slug == agent_slug,
+                AgentRunRequest.conversation_thread_id == thread_id,
+                AgentRunRequest.status == "queued",
+            )
+            .limit(1)
+        )
+        return result.scalar_one_or_none() is not None
+
     async def lock_by_request_id(self, request_id: str) -> AgentRunRequest | None:
         """``SELECT ... FOR UPDATE`` by request_id; caller decides status branch."""
         result = await self.db.execute(
-            select(AgentRunRequest).where(AgentRunRequest.request_id == request_id).with_for_update()
+            select(AgentRunRequest)
+            .where(AgentRunRequest.request_id == request_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
         return result.scalar_one_or_none()
 
@@ -37,6 +70,7 @@ class AgentRunRequestRepository:
         self,
         *,
         request_id: str,
+        turn_id: str | None = None,
         uid: str,
         agent_slug: str,
         conversation_thread_id: str,
@@ -48,9 +82,16 @@ class AgentRunRequestRepository:
         input_message_id: int,
         input_payload: dict | None = None,
         status: str = "queued",
+        intent_hash: str | None = None,
+        app_id: str | None = None,
+        api_key_id: int | None = None,
     ) -> AgentRunRequest:
         request = AgentRunRequest(
             request_id=request_id,
+            turn_id=turn_id,
+            intent_hash=intent_hash,
+            app_id=app_id,
+            api_key_id=api_key_id,
             uid=str(uid),
             agent_slug=agent_slug,
             conversation_thread_id=conversation_thread_id,
@@ -121,6 +162,17 @@ class AgentRunRequestRepository:
             self._queued_for_thread_query(uid=uid, agent_slug=agent_slug, conversation_thread_id=conversation_thread_id)
             .limit(1)
             .with_for_update()
+        )
+        return result.scalar_one_or_none()
+
+    async def get_first_queued(
+        self, *, uid: str, agent_slug: str, conversation_thread_id: str
+    ) -> AgentRunRequest | None:
+        """只读当前优先级最高的排队输入，不获取派发锁。"""
+        result = await self.db.execute(
+            self._queued_for_thread_query(
+                uid=uid, agent_slug=agent_slug, conversation_thread_id=conversation_thread_id
+            ).limit(1)
         )
         return result.scalar_one_or_none()
 

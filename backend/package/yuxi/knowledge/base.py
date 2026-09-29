@@ -664,7 +664,10 @@ class KnowledgeBase(ABC):
         lines = content.splitlines()
         flags = 0 if case_sensitive else re.IGNORECASE
         if use_regex:
-            matchers = [re.compile(pattern, flags) for pattern in patterns]
+            try:
+                matchers = [re.compile(pattern, flags) for pattern in patterns]
+            except re.error as exc:
+                raise ValueError(f"无效正则表达式: {exc}") from exc
 
             def line_matches(line: str) -> bool:
                 return any(matcher.search(line) for matcher in matchers)
@@ -716,13 +719,13 @@ class KnowledgeBase(ABC):
         try:
             file_meta = await self._load_file_meta(kb_id, file_id)
         except ValueError as exc:
-            raise Exception(f"文件不存在: {file_id}") from exc
+            raise ValueError(f"文件不存在: {file_id}") from exc
         if file_meta.get("is_folder"):
-            raise Exception(f"文件 {file_id} 是文件夹")
+            raise ValueError(f"文件 {file_id} 是文件夹")
 
         markdown_file = file_meta.get("markdown_file")
         if not markdown_file:
-            raise Exception(f"文件 {file_id} 没有解析后的 Markdown 内容")
+            raise ValueError(f"文件 {file_id} 没有解析后的 Markdown 内容")
 
         content = await self._read_markdown_from_minio(markdown_file)
         return self._build_open_file_window(content, offset=offset, limit=limit)
@@ -741,13 +744,13 @@ class KnowledgeBase(ABC):
         try:
             file_meta = await self._load_file_meta(kb_id, file_id)
         except ValueError as exc:
-            raise Exception(f"文件不存在: {file_id}") from exc
+            raise ValueError(f"文件不存在: {file_id}") from exc
         if file_meta.get("is_folder"):
-            raise Exception(f"文件 {file_id} 是文件夹")
+            raise ValueError(f"文件 {file_id} 是文件夹")
 
         markdown_file = file_meta.get("markdown_file")
         if not markdown_file:
-            raise Exception(f"文件 {file_id} 没有解析后的 Markdown 内容")
+            raise ValueError(f"文件 {file_id} 没有解析后的 Markdown 内容")
 
         content = await self._read_markdown_from_minio(markdown_file)
         return self._build_find_file_windows(

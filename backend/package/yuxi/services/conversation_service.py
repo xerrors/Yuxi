@@ -81,9 +81,12 @@ async def create_thread_view(
     project_id: str | None = None,
     db: AsyncSession,
     current_uid: str,
+    app_id: str | None = None,
 ) -> dict:
     if metadata and "attachments" in metadata:
         raise HTTPException(status_code=400, detail="metadata.attachments 是服务端保留字段")
+    if metadata and "app_id" in metadata:
+        raise HTTPException(status_code=400, detail="metadata.app_id 是服务端保留字段")
 
     user_result = await db.execute(select(User).where(User.uid == str(current_uid)))
     current_user = user_result.scalar_one_or_none()
@@ -129,6 +132,8 @@ async def create_thread_view(
     thread_id = str(uuid.uuid4())
     thread_metadata = dict(metadata or {})
     thread_metadata["backend_id"] = agent_item.backend_id
+    if app_id is not None:
+        thread_metadata["app_id"] = app_id
     if project_id:
         project = await project_repo.lock_active_selectable_for_user(
             project_id,
@@ -163,6 +168,7 @@ async def create_thread_view(
             metadata=thread_metadata,
             project_id=project.id,
             creation_request_id=normalized_request_id,
+            app_id=app_id,
         )
         await db.commit()
     except IntegrityError:
@@ -185,6 +191,7 @@ async def create_thread_view(
                 metadata=thread_metadata,
                 project_id=project.id,
                 creation_request_id=normalized_request_id,
+                app_id=app_id,
             )
             await db.commit()
         existing_project = await project_repo.get_for_user(conversation.project_id, str(current_uid))

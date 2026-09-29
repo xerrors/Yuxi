@@ -4,7 +4,7 @@ API Key 适合服务之间调用 Yuxi。它绑定到一个具体的 Yuxi 用户�
 
 ## 创建 API Key
 
-登录 Web 后，进入“设置 → API Keys”，点击“创建 API Key”。创建时填写名称和可选的过期时间。
+登录 Web 后，进入“设置 → API Keys”，点击“创建 API Key”。创建时填写名称、权限、可选的 APP 标识与过期时间。Web 默认选择 `agents`；管理 API 省略 `access_level` 时仍默认 `full`，以保持既有调用兼容。`agents` 权限必须绑定 `app_id`，只允许访问 [Agents Public API](./agents-public-api.md)；`knowledge` 权限只允许访问版本化的 [external 知识库查询接口](./knowledge-base-api.md#外部查询接口)，不要求 `app_id`；`full` 权限保留绑定用户可访问的产品接口。升级前创建的 Key 保持 `full`，不会被自动收窄。
 
 也可以调用管理接口：
 
@@ -16,6 +16,8 @@ Content-Type: application/json
 {
   "request_id": "crm-integration-2026",
   "name": "外部客服系统",
+  "access_level": "agents",
+  "app_id": "crm-service",
   "expires_at": "2027-01-01T00:00:00Z"
 }
 ```
@@ -30,6 +32,8 @@ Content-Type: application/json
     "id": 12,
     "key_prefix": "yxkey_abcdef",
     "name": "外部客服系统",
+    "access_level": "agents",
+    "app_id": "crm-service",
     "user_id": 3,
     "is_enabled": true
   },
@@ -45,10 +49,10 @@ Content-Type: application/json
 | --- | --- | --- |
 | `GET` | `/api/user/apikey/` | 查看当前用户可见的 Key |
 | `POST` | `/api/user/apikey/` | 创建 Key |
-| `PUT` | `/api/user/apikey/{api_key_id}` | 修改名称、过期时间或启用状态 |
+| `PUT` | `/api/user/apikey/{api_key_id}` | 修改名称、过期时间、启用状态、权限或 APP 来源 |
 | `DELETE` | `/api/user/apikey/{api_key_id}` | 撤销 Key |
 
-`superadmin` 可以查看和管理全局可见的 Key；其他用户只能操作自己有权限的 Key。删除用户或撤销 Key 后，旧 secret 不能继续使用，也不会因为重复提交旧的创建请求而复活。列表和详情响应还包含 `last_used_at`：它表示最近一次成功认证时间，`null` 表示尚未使用；`key_prefix` 只用于识别 Key，服务端不会再次返回完整 secret。
+`superadmin` 可以查看和管理全局可见的 Key；其他用户只能操作自己有权限的 Key。管理接口也支持修改 `access_level` 与 `app_id`。删除用户或撤销 Key 后，旧 secret 不能继续使用，也不会因为重复提交旧的创建请求而复活。列表和详情响应还包含 `last_used_at`：它表示最近一次成功认证时间，`null` 表示尚未使用；`key_prefix` 只用于识别 Key，服务端不会再次返回完整 secret。
 
 ## 选择调用地址
 
@@ -66,9 +70,16 @@ API Key 通过 `Authorization` 请求头发送。生产环境必须使用 HTTPS�
 Authorization: Bearer yxkey_<your-secret>
 ```
 
-服务端会根据 `yxkey_` 前缀进入 API Key 校验；其他 Bearer token 按 JWT 校验。当前派生的 secret 由 `yxkey_` 加 48 位十六进制字符组成，总长度为 54 个字符；客户端不要记录或打印完整 secret。两种方式可以调用同一个受保护接口，但 API Key 的实际权限仍等于它绑定的用户。
+服务端会根据 `yxkey_` 前缀进入 API Key 校验；其他 Bearer token 按 JWT 校验。当前派生的 secret 由 `yxkey_` 加 48 位十六进制字符组成，总长度为 54 个字符；客户端不要记录或打印完整 secret。`full` Key 的权限受绑定用户约束；`agents` Key 还受 Agents Public API 路由边界约束，访问旧产品接口会返回 `403`。普通登录用户的 JWT 也可调用 Public API；`agents` Key 必须绑定 `app_id`。`knowledge` Key 只可访问 `/api/v1/knowledge/databases/external*` 和[六个只读知识库工具](./knowledge-base-api.md#外部查询接口)；旧 external 路径、知识库管理与上传接口返回 `403`，未注册的下载工具路径返回 `404`，具体知识库仍按绑定用户的资源权限过滤。
 
-## 运行一次 Agent
+例如，用 `knowledge` Key 列出可见知识库：
+
+```bash
+curl --fail "https://yuxi.example.com/api/v1/knowledge/databases/external" \
+  -H 'Authorization: Bearer yxkey_<your-secret>'
+```
+
+## 使用旧产品接口运行 Agent（仅 `full` Key）
 
 通用 Run API 分为创建线程、提交运行和读取事件三步。创建线程时，`agent_id` 的值是智能体 slug，不是数据库自增 ID：
 
@@ -142,14 +153,17 @@ Authorization: Bearer yxkey_<your-secret>
 
 结果接口只读，不会重复执行 Run。最终输出必须从该 `run_id` 绑定的结果读取，不要从相邻 Run 或最近一条消息猜测。
 
-## Agent Call 接口
+## Agent Call 接口（仅 `full` Key，已弃用）
+
+新接入使用 [Agents Public API](./agents-public-api.md) 的 Session 创建、输入事件、Turn 查询和 SSE。此接口保留给现有调用方：同步等待和 `choices` 响应不是 Public Session 契约，迁移时由客户端消费 SSE 或轮询 Turn 获得最终结果。停止注册旧路由须先确认仓库外调用方的迁移窗口。
 
 外部系统也可以使用面向调用方的 `agent-invocation` 接口。它不支持 `stream=true`：
 
 | 接口 | 用途 | 关键字段 |
 | --- | --- | --- |
 | `POST /api/agent-invocation/agent-call/runs` | 创建 Agent Call；默认等待终态，`async_mode=true` 时立即返回运行信息 | `agent_slug`、`messages`、`thread_id`、`request_id`、`model_spec`、`tool_approval_mode`、`agent_call_meta`、`async_mode`、`queue_policy`、`stream` |
-| `POST /api/agent-invocation/agent-call/runs/result` | 按 `run_id` 读取 OpenAI 风格的结果 | `run_id`、可选 `agent_slug` |
+| `POST /api/agent-invocation/agent-call/runs/result` | 按 `run_id` 读取既有 Agent Call 结果 | `run_id`、可选 `agent_slug` |
+| `GET /api/agent/request-result?request_id=...` | 按请求读取排队、执行与终态结果，断流后可用 | 查询参数 `request_id` |
 | `POST /api/agent-invocation/eval/runs` | 运行一次评估样例并返回结果 | `query`、`agent_slug`、`thread_id`、`evaluation`、`image_content`、`model_spec`、`tool_approval_mode`、`include_trajectory_summary` |
 
 `evaluation` 可以包含 `dataset_name`、`dataset_item_id` 和 `experiment_name`，用于关联 Langfuse 评估上下文。评估端点的 `image_content` 同样接受数组，但它与普通 Run 走的是不同路径：网关只对 `/api/agent/runs` 放宽了请求体上限，打到本端点的多图请求会在网关处按默认上限被拒，需要部署侧一并放行。`include_trajectory_summary=true` 时，响应附带最多 500 个运行事件聚合出的工具调用、错误、中断和事件范围摘要；它不是完整事件流。

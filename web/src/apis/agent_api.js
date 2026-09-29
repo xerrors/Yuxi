@@ -118,29 +118,61 @@ export const agentApi = {
 
   deleteAgent: (agentId) => apiDelete(`/api/agent/${agentId}`),
 
-  /**
-   * 创建异步运行任务（Run）
-   * @param {Object} data - run 请求体
-   * @returns {Promise<Object>}
-   */
-  createAgentRun: (data) =>
-    apiPost('/api/agent/runs', {
-      query: data.query,
-      agent_slug: data.agent_slug,
-      thread_id: data.thread_id,
-      meta: data.meta || {},
-      image_content: data.image_content || null,
-      model_spec: data.model_spec || null,
-      tool_approval_mode: data.tool_approval_mode ?? null,
-      resume: data.resume ?? null,
-      created_by_run_id: data.created_by_run_id || null,
-      queue_policy: data.queue_policy || 'enqueue'
-    }),
+  /** 产品对话通过 Public Session 提交消息，默认保留 follow-up 排队语义。 */
+  sendSessionMessage: (threadId, data) => {
+    const content = [
+      ...(data.query ? [{ type: 'input_text', text: data.query }] : []),
+      ...(data.image_content || []).map((image) => ({
+        type: 'input_image',
+        image_url: image.startsWith('data:image/') ? image : `data:image/jpeg;base64,${image}`
+      }))
+    ]
+    return apiPost(
+      `/api/v1/agents/sessions/${threadId}/events`,
+      {
+        events: [{
+          type: 'agent.session.input.message',
+          input: [{ role: 'user', content }],
+          mode: data.queue_policy === 'steer' ? 'steer' : 'follow_up',
+          model_spec: data.model_spec,
+          tool_approval_mode: data.tool_approval_mode,
+          attachment_file_ids: data.attachment_file_ids || []
+        }]
+      },
+      { headers: { 'Idempotency-Key': data.request_id } }
+    )
+  },
 
-  /**
-   * 获取请求详情
-   */
-  getRequest: (requestId) => apiGet(`/api/agent/requests/${requestId}`),
+  resumeSessionTurn: (threadId, data) =>
+    apiPost(
+      `/api/v1/agents/sessions/${threadId}/events`,
+      { events: [{ type: 'yuxi.session.input.resume', turn_id: data.turn_id,
+        run_id: data.run_id, resume: data.resume }] },
+      { headers: { 'Idempotency-Key': data.request_id } }
+    ),
+
+  cancelSessionTurn: (threadId, requestId, runId = null) =>
+    apiPost(
+      `/api/v1/agents/sessions/${threadId}/events`,
+      { events: [{ type: 'agent.session.input.cancel', ...(runId ? { run_id: runId } : {}) }] },
+      { headers: { 'Idempotency-Key': requestId } }
+    ),
+
+  getPublicSession: (threadId) => apiGet(`/api/v1/agents/sessions/${threadId}`),
+
+  streamPublicTurnEvents: (threadId, turnId, runId, afterSeq = '0-0', { signal } = {}) => {
+    const headers = {
+      ...useUserStore().getAuthHeaders(),
+      'Last-Event-ID': `${runId}:${afterSeq}`
+    }
+    const params = new URLSearchParams({ turn_id: turnId })
+    return fetch(`/api/v1/agents/sessions/${threadId}/events?${params}`, {
+      method: 'GET', headers, signal
+    })
+  },
+
+  getRequestResult: (threadId, requestId) =>
+    apiGet(`/api/v1/agents/threads/${threadId}/requests/${requestId}`),
 
   /**
    * 列出线程内 queued 请求
@@ -171,10 +203,10 @@ export const agentApi = {
   /**
    * 打开 Request 事件 SSE 连接（调用方负责关闭）
    */
-  streamRequestEvents: (requestId, options = {}) => {
+  streamRequestEvents: (threadId, requestId, options = {}) => {
     const { signal } = options
     const headers = { ...useUserStore().getAuthHeaders() }
-    return fetch(`/api/agent/requests/${requestId}/events`, {
+    return fetch(`/api/v1/agents/threads/${threadId}/requests/${requestId}/events`, {
       method: 'GET',
       headers,
       signal
@@ -196,13 +228,6 @@ export const agentApi = {
   getAgentRunLangfuseLink: (runId) => apiGet(`/api/agent/runs/${runId}/langfuse`),
 
   /**
-   * 取消 Run
-   * @param {string} runId - run ID
-   * @returns {Promise<Object>}
-   */
-  cancelAgentRun: (runId) => apiPost(`/api/agent/runs/${runId}/cancel`, {}),
-
-  /**
    * 获取线程活跃 Run
    * @param {string} threadId - 线程ID
    * @returns {Promise<Object>}
@@ -216,21 +241,20 @@ export const agentApi = {
    * @param {Object} options - { signal, verbose }
    * @returns {Promise<Response>}
    */
-  streamAgentRunEvents: (runId, afterSeq = '0-0', options = {}) => {
-    const { signal, verbose = false } = options
-    const headers = {
-      ...useUserStore().getAuthHeaders()
+  streamAgentRunEvents: async (runId, afterSeq = '0-0', options = {}) => {
+    if (!options.publicSession) {
+      const params = new URLSearchParams({ verbose: String(options.verbose ?? false) })
+      return fetch(`/api/agent/runs/${runId}/events?${params}`, {
+        method: 'GET',
+        headers: { ...useUserStore().getAuthHeaders(), 'Last-Event-ID': afterSeq },
+        signal: options.signal
+      })
     }
-    const cursor = String(afterSeq || '0-0')
-    if (cursor && cursor !== '0-0') {
-      headers['Last-Event-ID'] = cursor
-    }
-    const params = new URLSearchParams({ verbose: String(verbose) })
-    return fetch(`/api/agent/runs/${runId}/events?${params.toString()}`, {
-      method: 'GET',
-      headers,
-      signal
-    })
+    const run = options.turnId ? null : (await agentApi.getAgentRun(runId))?.run
+    const threadId = options.threadId || run?.conversation_thread_id
+    const turnId = options.turnId || run?.turn_id
+    if (!threadId || !turnId) throw new Error('运行任务缺少 Public Session/Turn 关联')
+    return agentApi.streamPublicTurnEvents(threadId, turnId, runId, afterSeq, options)
   }
 }
 
@@ -311,14 +335,26 @@ export const threadApi = {
    * @param {Object} metadata - 元数据
    * @returns {Promise} - 创建结果
    */
-  createThread: (agentId, title, metadata, { requestId, projectId } = {}) =>
-    apiPost('/api/chat/thread', {
-      request_id: requestId,
+  createThread: async (agentId, title, metadata, { requestId, projectId } = {}) => {
+    const session = await apiPost(
+      '/api/v1/agents/sessions',
+      {
+        agent_id: agentId,
+        title: title || '新的对话',
+        tool_approval_mode: metadata?.tool_approval_mode,
+        ...(projectId ? { project_id: projectId } : {})
+      },
+      { headers: { 'Idempotency-Key': requestId } }
+    )
+    return {
+      id: session.id,
       agent_id: agentId,
-      title: title || '新的对话',
+      title: session.title,
+      project_id: session.project_id,
       metadata: metadata || {},
-      ...(projectId ? { project_id: projectId } : {})
-    }),
+      thread_status: 'active'
+    }
+  },
 
   /**
    * 更新对话线程

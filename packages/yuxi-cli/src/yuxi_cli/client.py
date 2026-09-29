@@ -109,8 +109,9 @@ class YuxiClient:
             json={"items": items, "params": params},
         )
 
-    def list_external_databases(self) -> dict:
-        return self._request("GET", "/knowledge/databases/external")
+    def list_external_databases(self, api_key: str | None = None) -> dict:
+        """列出 external 知识库，也可使用尚未保存的 Key 验证访问。"""
+        return self._request("GET", "/v1/knowledge/databases/external", api_key=api_key)
 
     def list_agents(self) -> dict:
         """读取当前用户可调用的主 Agent。"""
@@ -132,7 +133,7 @@ class YuxiClient:
         params: dict[str, Any] = {"offset": offset, "limit": limit, "status": status}
         if query:
             params["query"] = query
-        return self._request("GET", f"/knowledge/databases/external/{kb_id}/files", params=params)
+        return self._request("GET", f"/v1/knowledge/databases/external/{kb_id}/files", params=params)
 
     def retrieve_external(
         self,
@@ -144,14 +145,14 @@ class YuxiClient:
     ) -> dict:
         return self._request(
             "POST",
-            f"/knowledge/databases/external/{kb_id}/retrieve",
+            f"/v1/knowledge/databases/external/{kb_id}/retrieve",
             json={"query": query, "file_name": file_name, "options": options or {}},
         )
 
     def open_external_file(self, kb_id: str, file_id: str, *, offset: int = 0, limit: int = 200) -> dict:
         return self._request(
             "GET",
-            f"/knowledge/databases/external/{kb_id}/files/{file_id}/open",
+            f"/v1/knowledge/databases/external/{kb_id}/files/{file_id}/open",
             params={"offset": offset, "limit": limit},
         )
 
@@ -168,7 +169,7 @@ class YuxiClient:
     ) -> dict:
         return self._request(
             "POST",
-            f"/knowledge/databases/external/{kb_id}/files/{file_id}/find",
+            f"/v1/knowledge/databases/external/{kb_id}/files/{file_id}/find",
             json={
                 "patterns": patterns,
                 "use_regex": use_regex,
@@ -237,6 +238,10 @@ class YuxiClient:
         if path.startswith("/api/"):
             path = path[4:]
         yield from self._stream_events(path)
+
+    def get_agent_request_result(self, request_id: str) -> dict:
+        """按请求 ID 读取持久状态，供事件流断开后恢复。"""
+        return self._request("GET", "/agent/request-result", params={"request_id": request_id})
 
     def _stream_events(
         self,

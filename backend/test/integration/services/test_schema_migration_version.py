@@ -130,6 +130,10 @@ async def test_v072_business_converges_current_schema_idempotently() -> None:
             # v0.7.2 tag 没有这些字段，不能用当前 ORM 预建它们来证明迁移。
             for column in ("prepared_at", "first_output_at", "first_model_request_at"):
                 await connection.execute(text(f"ALTER TABLE agent_runs DROP COLUMN {column}"))
+            for column in ("app_id", "api_key_id"):
+                await connection.execute(text(f"ALTER TABLE agent_runs DROP COLUMN {column}"))
+                await connection.execute(text(f"ALTER TABLE agent_run_requests DROP COLUMN {column}"))
+            await connection.execute(text("ALTER TABLE agent_run_requests DROP COLUMN intent_hash"))
             await connection.execute(text("ALTER TABLE model_providers DROP COLUMN include_user_uid"))
             await connection.execute(text("ALTER TABLE agent_runs ADD COLUMN last_event_id VARCHAR(64)"))
             await connection.execute(text("DROP TABLE scheduled_agent_runs"))
@@ -164,6 +168,17 @@ async def test_v072_business_converges_current_schema_idempotently() -> None:
                         text(
                             "SELECT column_name FROM information_schema.columns "
                             "WHERE table_schema = :schema AND table_name = 'agent_runs'"
+                        ),
+                        {"schema": schema},
+                    )
+                ).scalars()
+            )
+            request_columns = set(
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT column_name FROM information_schema.columns "
+                            "WHERE table_schema = :schema AND table_name = 'agent_run_requests'"
                         ),
                         {"schema": schema},
                     )
@@ -257,6 +272,8 @@ async def test_v072_business_converges_current_schema_idempotently() -> None:
             "timeout_seconds",
         } <= task_columns
         assert {"prepared_at", "first_output_at", "first_model_request_at"} <= run_columns
+        assert {"app_id", "api_key_id"} <= run_columns
+        assert {"app_id", "api_key_id", "intent_hash"} <= request_columns
         assert {"include_user_uid"} <= provider_columns
         assert "last_event_id" not in run_columns
         assert tuple(row) == ("running", None, 0, 0)
@@ -282,7 +299,88 @@ async def test_v072_business_converges_current_schema_idempotently() -> None:
             "ix_scheduled_agent_runs_job_created",
             "ix_scheduled_agent_runs_dispatching",
         }.issubset(scheduled_indexes)
-        assert BUSINESS_SCHEMA_VERSION == 9
+        assert BUSINESS_SCHEMA_VERSION == 10
+    finally:
+        await _drop_isolated_schema(schema, admin_engine, scoped_engine)
+
+
+async def test_v9_conversation_app_scope_does_not_trust_legacy_metadata() -> None:
+    """旧产品 metadata 即使伪造 APP 和 Public 来源也不能回填可信 APP 列。"""
+    schema, admin_engine, scoped_engine, manager = await _create_isolated_manager("pytest_public_app_scope")
+    try:
+        await manager.create_business_tables()
+        async with scoped_engine.begin() as connection:
+            await connection.execute(text("ALTER TABLE conversations DROP COLUMN app_id"))
+            await connection.execute(
+                text(
+                    "INSERT INTO users (username, uid, password_hash, role, login_failed_count, is_deleted) "
+                    "VALUES ('legacy-user', 'legacy-user', 'hash', 'user', 0, 0)"
+                )
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO projects (id, uid, selection_status, workdir_path, directory_mode) "
+                    "VALUES ('legacy-project', 'legacy-user', 'implicit', 'projects/legacy-project', 'managed')"
+                )
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO conversations (thread_id, uid, agent_id, project_id, is_pinned, extra_metadata) "
+                    "VALUES ('legacy-product-thread', 'legacy-user', 'main', 'legacy-project', false, "
+                    "CAST(:metadata AS json))"
+                ),
+                {"metadata": json.dumps({"app_id": "integration-app", "source": "public_api"})},
+            )
+
+        await manager.ensure_business_schema()
+        await manager.ensure_business_schema()
+        async with scoped_engine.connect() as connection:
+            row = (
+                await connection.execute(
+                    text(
+                        "SELECT app_id, extra_metadata::text AS metadata_json "
+                        "FROM conversations WHERE thread_id = 'legacy-product-thread'"
+                    )
+                )
+            ).one()
+        assert row.app_id is None
+        assert json.loads(row.metadata_json) == {"app_id": "integration-app", "source": "public_api"}
+    finally:
+        await _drop_isolated_schema(schema, admin_engine, scoped_engine)
+
+
+async def test_api_key_knowledge_scope_upgrades_legacy_constraint_idempotently() -> None:
+    """旧约束经历史 schema 收敛后仍需升级，重复迁移保持同一约束。"""
+    schema, admin_engine, scoped_engine, manager = await _create_isolated_manager("pytest_key_scope")
+    try:
+        await manager.create_business_tables()
+        async with scoped_engine.begin() as connection:
+            await connection.execute(text("ALTER TABLE api_keys DROP CONSTRAINT ck_api_keys_access_level"))
+            await connection.execute(
+                text(
+                    "ALTER TABLE api_keys ADD CONSTRAINT ck_api_keys_access_level "
+                    "CHECK (access_level IN ('full', 'agents'))"
+                )
+            )
+        await manager.ensure_business_schema()
+        async with scoped_engine.connect() as connection:
+            before_upgrade = await connection.scalar(
+                text(
+                    "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                    "WHERE conrelid = 'api_keys'::regclass AND conname = 'ck_api_keys_access_level'"
+                )
+            )
+        assert before_upgrade is not None and "'knowledge'" not in before_upgrade
+        for _ in range(2):
+            await manager.ensure_api_key_knowledge_scope()
+        async with scoped_engine.connect() as connection:
+            definition = await connection.scalar(
+                text(
+                    "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                    "WHERE conrelid = 'api_keys'::regclass AND conname = 'ck_api_keys_access_level'"
+                )
+            )
+        assert definition is not None and "'knowledge'" in definition
     finally:
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)
 
@@ -346,6 +444,49 @@ async def test_release_upgrade_adds_audit_columns_idempotently() -> None:
         assert {("messages", column) for column in audit_columns} <= columns
         assert "uq_messages_run_operation_id" not in audit_indexes
         assert "(run_id, role, operation_id)" in audit_indexes["uq_messages_run_role_operation_id"]
+    finally:
+        await _drop_isolated_schema(schema, admin_engine, scoped_engine)
+
+
+async def test_public_end_user_columns_upgrade_existing_users_idempotently() -> None:
+    """现有用户保持 human，终端用户唯一键与形状约束可重放迁移。"""
+    schema, admin_engine, scoped_engine, manager = await _create_isolated_manager("pytest_public_end_user")
+    try:
+        await manager.create_business_tables()
+        async with scoped_engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "INSERT INTO users (username, uid, password_hash, role, login_failed_count, is_deleted) "
+                    "VALUES ('old', 'old', 'hash', 'user', 0, 0)"
+                )
+            )
+            await connection.execute(text("ALTER TABLE users DROP CONSTRAINT uq_users_public_end_user_identity"))
+            await connection.execute(text("ALTER TABLE users DROP CONSTRAINT ck_users_public_end_user_shape"))
+            await connection.execute(text("ALTER TABLE users DROP CONSTRAINT fk_users_owner_user_id"))
+            for column in ("user_kind", "owner_user_id", "app_id", "end_user_id"):
+                await connection.execute(text(f"ALTER TABLE users DROP COLUMN {column}"))
+
+        await manager.ensure_business_schema()
+        await manager.ensure_business_schema()
+        async with scoped_engine.connect() as connection:
+            row = (
+                await connection.execute(text("SELECT user_kind, owner_user_id, app_id, end_user_id FROM users"))
+            ).one()
+            constraint_names = set(
+                (
+                    await connection.execute(
+                        text("SELECT conname FROM pg_constraint WHERE conrelid = 'users'::regclass")
+                    )
+                ).scalars()
+            )
+            index_names = set(
+                (
+                    await connection.execute(text("SELECT indexname FROM pg_indexes WHERE tablename = 'users'"))
+                ).scalars()
+            )
+        assert tuple(row) == ("human", None, None, None)
+        assert {"fk_users_owner_user_id", "ck_users_public_end_user_shape"}.issubset(constraint_names)
+        assert "uq_users_public_end_user_identity" in index_names
     finally:
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)
 

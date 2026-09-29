@@ -230,6 +230,39 @@ async def _cleanup_runs(session_factory, thread_ids: list[str]) -> None:
         await db.commit()
 
 
+async def test_cancel_lock_refreshes_run_completed_while_waiting(lease_database):
+    """取消方预读的运行态不得覆盖另一个事务提交的完成态。"""
+    _, session_factory = lease_database
+    run_id, thread_id, _ = await _create_run(session_factory, status="running", worker_id="test-worker")
+    try:
+        async with session_factory() as cancel_db, session_factory() as worker_db:
+            stale_run = await cancel_db.get(AgentRun, run_id)
+            assert stale_run.status == "running"
+            locked_run = await worker_db.scalar(select(AgentRun).where(AgentRun.id == run_id).with_for_update())
+            locked_run.status = "completed"
+            await worker_db.flush()
+
+            cancel_task = asyncio.create_task(
+                AgentRunRepository(cancel_db).request_cancel_execution_tree(
+                    run_id=run_id, uid=stale_run.uid, cascade_descendants=True
+                )
+            )
+            await asyncio.sleep(0.1)
+            assert not cancel_task.done()
+            await worker_db.commit()
+
+            refreshed, cancelled_ids = await asyncio.wait_for(cancel_task, 5)
+            assert refreshed.status == "completed"
+            assert cancelled_ids == []
+            await cancel_db.commit()
+
+        async with session_factory() as db:
+            persisted = await db.get(AgentRun, run_id)
+            assert persisted.status == "completed"
+    finally:
+        await _cleanup_runs(session_factory, [thread_id])
+
+
 @pytest.mark.parametrize("run_type", ["chat", "resume"])
 async def test_approval_flush_overlap_preserves_terminal_publication(lease_database, monkeypatch, run_type):
     """本 attempt 已提交审批终态时，flush 与心跳重叠仍完成清理和发布。"""

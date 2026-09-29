@@ -371,6 +371,7 @@
               output.textContent += event.content;
               messages.scrollTop = messages.scrollHeight;
             }
+            if (event.type === "snapshot") output.textContent = event.content;
             if (event.type === "command") {
               output.textContent = JSON.stringify(event.result, null, 2);
             }

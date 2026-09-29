@@ -474,7 +474,9 @@ async def find_user_by_oidc_sub(db, sub: str) -> User | None:
     # 方法1: 检查是否有用户的 uid 直接等于 "oidc:{sub}"（标准 OIDC 用户）
     standard_oidc_uid = f"oidc:{sub}"
     # 占位绑定记录会被标记为 is_deleted=1，但我们仍需要查询它们来获取绑定关系
-    result = await db.execute(select(User).filter(User.uid == standard_oidc_uid, User.is_deleted == 0))
+    result = await db.execute(
+        select(User).filter(User.uid == standard_oidc_uid, User.is_deleted == 0, User.user_kind == "human")
+    )
     user = result.scalar_one_or_none()
     if user:
         return user
@@ -491,7 +493,9 @@ async def find_user_by_oidc_sub(db, sub: str) -> User | None:
             target_user_id = _extract_oidc_placeholder_target_user_id(placeholder.uid)
             if target_user_id is None:
                 continue
-            result = await db.execute(select(User).filter(User.id == target_user_id, User.is_deleted == 0))
+            result = await db.execute(
+                select(User).filter(User.id == target_user_id, User.is_deleted == 0, User.user_kind == "human")
+            )
             target_user = result.scalar_one_or_none()
             if target_user:
                 logger.debug(f"Resolved OIDC binding placeholder {placeholder.uid} to user {target_user_id}")
@@ -504,7 +508,9 @@ async def find_deleted_oidc_user_by_sub(db, sub: str) -> User | None:
     """查找已注销的 OIDC 账户（标准与历史后缀）"""
     oidc_uid = f"oidc:{sub}"
 
-    result = await db.execute(select(User).filter(User.uid == oidc_uid, User.is_deleted == 1))
+    result = await db.execute(
+        select(User).filter(User.uid == oidc_uid, User.is_deleted == 1, User.user_kind == "human")
+    )
     deleted_user = result.scalar_one_or_none()
     if deleted_user:
         return deleted_user
@@ -518,7 +524,9 @@ async def find_deleted_oidc_user_by_sub(db, sub: str) -> User | None:
             target_user_id = _extract_oidc_placeholder_target_user_id(placeholder.uid)
             if target_user_id is None:
                 continue
-            result = await db.execute(select(User).filter(User.id == target_user_id, User.is_deleted == 1))
+            result = await db.execute(
+                select(User).filter(User.id == target_user_id, User.is_deleted == 1, User.user_kind == "human")
+            )
             target_user = result.scalar_one_or_none()
             if target_user:
                 return target_user
@@ -627,8 +635,12 @@ async def create_oidc_user(db, user_info: dict, department_id: int | None = None
     # 根据配置决定 uid 是否带 oidc 前缀
     if oidc_config.use_raw_username:
         uid = user_info["username"]
-        result = await db.execute(select(User).filter(User.uid == uid, User.is_deleted == 0))
+        result = await db.execute(select(User).filter(User.uid == uid))
         existing_user = result.scalar_one_or_none()
+        if existing_user and existing_user.user_kind == "end_user":
+            raise HTTPException(status_code=403, detail="终端用户不能用于 OIDC 登录")
+        if existing_user and existing_user.is_deleted:
+            existing_user = None
         if existing_user:
             # 用户已存在，必须验证当前sub是否已经绑定到这个用户
             # 如果sub未绑定该用户，不能直接复用，存在账号冒用风险
@@ -695,6 +707,8 @@ async def create_oidc_user(db, user_info: dict, department_id: int | None = None
 
 async def restore_deleted_oidc_user(db, deleted_user: User, user_info: dict) -> User:
     """恢复已注销的 OIDC 用户并返回可登录用户"""
+    if deleted_user.user_kind == "end_user":
+        raise HTTPException(status_code=403, detail="终端用户不能用于 OIDC 登录")
     preferred_username = user_info["name"] or user_info["username"]
 
     deleted_user.is_deleted = 0
@@ -778,8 +792,12 @@ async def oidc_callback_handler(code: str, state: str, db, request: Request | No
         username = extracted_info["username"]
         user = None
         if username:
-            result = await db.execute(select(User).filter(User.uid == username, User.is_deleted == 0))
+            result = await db.execute(select(User).filter(User.uid == username))
             user_by_name = result.scalar_one_or_none()
+            if user_by_name and user_by_name.user_kind == "end_user":
+                return _redirect_to_login_with_error("终端用户不能用于 OIDC 登录")
+            if user_by_name and user_by_name.is_deleted:
+                user_by_name = None
 
             if user_by_sub:
                 # sub 已经绑定到一个用户
@@ -836,6 +854,8 @@ async def oidc_callback_handler(code: str, state: str, db, request: Request | No
     else:
         return _redirect_to_login_with_error("用户未注册，请联系管理员开通账号")
 
+    if user.user_kind == "end_user":
+        return _redirect_to_login_with_error("终端用户不能用于 OIDC 登录")
     if user.is_deleted:
         return _redirect_to_login_with_error("该账户已注销")
 

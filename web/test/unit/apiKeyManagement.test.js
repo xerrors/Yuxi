@@ -15,12 +15,13 @@ const storageKey = 'yuxi_pending_api_key_request_id'
 /** 在无 randomUUID 的环境执行真实组件脚本。 */
 function setupComponent({
   storage = new Map(),
-  create = async () => ({ secret: 'test-secret' })
+  create = async () => ({ secret: 'test-secret' }),
+  update = async () => ({})
 } = {}) {
   const { descriptor } = parse(source)
   const script = descriptor.scriptSetup.content.replace(/^import .* from .*$/gm, '')
   return runInNewContext(
-    `${script}\n;({ showCreateModal, handleCreate, handleCreateCancel, createForm, createRequestId, createModalVisible, secretModalVisible, createdSecret })`,
+    `${script}\n;({ showCreateModal, handleCreate, handleCreateCancel, createForm, createRequestId, createModalVisible, secretModalVisible, createdSecret, openEdit, handleEdit, editForm, editModalVisible })`,
     {
       ref,
       reactive,
@@ -31,8 +32,8 @@ function setupComponent({
         setItem: (key, value) => storage.set(key, value),
         removeItem: (key) => storage.delete(key)
       },
-      apikeyApi: { create, list: async () => ({ api_keys: [] }) },
-      message: { error: () => {} }
+      apikeyApi: { create, update, list: async () => ({ api_keys: [] }) },
+      message: { error: () => {}, success: () => {} }
     }
   )
 }
@@ -53,12 +54,15 @@ test('HTTP 环境打开创建弹窗，重试复用请求 ID，成功后清除', 
   const id = storage.get(storageKey)
   assert.match(id, /^[0-9a-f]{32}$/)
   component.createForm.name = 'test-key'
+  component.createForm.app_id = 'test-app'
   await component.handleCreate()
   assert.equal(storage.get(storageKey), id)
   assert.equal(component.createModalVisible.value, true)
   await component.handleCreate()
   assert.equal(requests[0].request_id, id)
   assert.equal(requests[1].request_id, id)
+  assert.equal(requests[0].access_level, 'agents')
+  assert.equal(requests[1].app_id, 'test-app')
   assert.equal(storage.has(storageKey), false)
   assert.equal(component.secretModalVisible.value, true)
   assert.equal(component.createdSecret.value, 'test-secret')
@@ -78,4 +82,22 @@ test('已有 UUID 请求 ID 在重新打开弹窗时保留，取消后生成新 
   component.handleCreateCancel()
   component.showCreateModal()
   assert.notEqual(component.createRequestId.value, first)
+})
+
+test('权限编辑要求 Agents Key 有有效来源，并提交明确的权限范围', async () => {
+  const changes = []
+  const component = setupComponent({ update: async (id, data) => changes.push({ id, data }) })
+  component.openEdit({ id: 7, access_level: 'full', app_id: null })
+  component.editForm.access_level = 'agents'
+  await component.handleEdit()
+  assert.equal(changes.length, 0)
+  assert.equal(component.editModalVisible.value, true)
+
+  component.editForm.app_id = 'service-a'
+  await component.handleEdit()
+  assert.equal(changes.length, 1)
+  assert.equal(changes[0].id, 7)
+  assert.equal(changes[0].data.access_level, 'agents')
+  assert.equal(changes[0].data.app_id, 'service-a')
+  assert.equal(component.editModalVisible.value, false)
 })

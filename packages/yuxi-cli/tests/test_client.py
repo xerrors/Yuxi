@@ -122,7 +122,7 @@ def test_list_external_databases_uses_external_path(monkeypatch):
     finally:
         client.close()
     assert calls[-1]["method"] == "GET"
-    assert calls[-1]["path"] == "/knowledge/databases/external"
+    assert calls[-1]["path"] == "/v1/knowledge/databases/external"
 
 
 def test_list_agents_uses_visible_agent_path(monkeypatch):
@@ -190,7 +190,7 @@ def test_list_external_files_passes_query_params(monkeypatch):
         client.close()
     call = calls[-1]
     assert call["method"] == "GET"
-    assert call["path"] == "/knowledge/databases/external/kb_1/files"
+    assert call["path"] == "/v1/knowledge/databases/external/kb_1/files"
     params = call["params"]
     assert params["query"] == "report"
     assert params["offset"] == 10
@@ -206,7 +206,7 @@ def test_retrieve_external_posts_json_body(monkeypatch):
         client.close()
     call = calls[-1]
     assert call["method"] == "POST"
-    assert call["path"] == "/knowledge/databases/external/kb_1/retrieve"
+    assert call["path"] == "/v1/knowledge/databases/external/kb_1/retrieve"
     assert call["json"] == {"query": "hello", "file_name": "a.md", "options": {"final_top_k": 5}}
 
 
@@ -218,7 +218,7 @@ def test_open_external_file_passes_offset_limit(monkeypatch):
         client.close()
     call = calls[-1]
     assert call["method"] == "GET"
-    assert call["path"] == "/knowledge/databases/external/kb_1/files/file_1/open"
+    assert call["path"] == "/v1/knowledge/databases/external/kb_1/files/file_1/open"
     assert call["params"] == {"offset": 20, "limit": 80}
 
 
@@ -238,7 +238,7 @@ def test_find_external_file_posts_patterns(monkeypatch):
         client.close()
     call = calls[-1]
     assert call["method"] == "POST"
-    assert call["path"] == "/knowledge/databases/external/kb_1/files/file_1/find"
+    assert call["path"] == "/v1/knowledge/databases/external/kb_1/files/file_1/find"
     assert call["json"]["patterns"] == ["foo", "bar"]
     assert call["json"]["use_regex"] is True
     assert call["json"]["case_sensitive"] is True
