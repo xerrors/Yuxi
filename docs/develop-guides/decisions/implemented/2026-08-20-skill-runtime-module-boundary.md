@@ -25,14 +25,14 @@ Skill 的存储和授权边界已经由共享 Skill 投影与个人 UserWorkspac
 `get_dependency_map()`，以及依赖包中没有消费者的 `skills` 字段；仓库没有旧 Python API 的
 公开兼容承诺，因此不保留 re-export 或第二份实现。
 
-Skill 文件、安装、个人缓存、共享投影和路径权限仍由 `agents/skills/service.py` 拥有；数据库
-索引仍由 repository 拥有；Middleware 的激活时机、MCP best-effort 语义、共享/个人路径与
+Skill 文件与安装由 `services/skills` 按来源拥有，共享投影由
+`services/skills/projection.py` 拥有，数据库索引由 `repositories/skill_repository.py` 拥有；Middleware 的激活时机、MCP best-effort 语义、共享/个人路径与
 Sandbox 来源校验不变。
 
 ## 替代方案
 
 - 保持所有解析函数位于 Middleware：改动风险最低，但不能解决反向依赖和职责混杂。
-- 移入 `agents/skills/service.py`：会把存储、安装、缓存、授权和运行时编排重新堆入同一服务，
+- 移入 Agent 业务 service：会把存储、安装、缓存、授权和运行时编排重新堆入同一服务，
   因此不采用。
 - 保留 Middleware 兼容门面：仓库没有公开承诺或真实消费者证据，保留它只会制造长期维护面。
 - 删除整个 Middleware：工具可见性门控、动态激活和 MCP 生命周期仍需要请求级 Owner，不能删除。

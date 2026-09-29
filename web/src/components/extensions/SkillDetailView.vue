@@ -1,6 +1,7 @@
 <template>
   <ExtensionDetailLayout
-    v-model:active-key="activeTab"
+    :active-key="activeTab"
+    @update:active-key="changeTab"
     :tabs="skillDetailTabs"
     :loading="loading"
     :ready="Boolean(currentSkill && isInstalledSkill)"
@@ -20,10 +21,22 @@
       <div class="extension-detail-actions">
         <div class="detail-actions">
           <a-space :size="8">
-            <button
+            <a-button
+              v-if="activeTab === 'editor' && canEditSkill && selectedPath && !selectedIsDir"
+              type="text"
+              class="lucide-icon-btn extension-detail-action"
+              :disabled="savingAny || pendingFileLoad"
+              aria-label="编辑当前文件"
+              title="编辑当前文件"
+              @click="startEditingCurrentFile"
+            >
+              <FilePen :size="14" />
+              <span>编辑</span>
+            </a-button>
+            <a-button
               v-if="activeTab === 'editor'"
-              type="button"
-              class="lucide-icon-btn extension-panel-action extension-panel-action-secondary tree-toggle"
+              type="text"
+              class="lucide-icon-btn extension-detail-action tree-toggle"
               :class="{ active: treeVisible }"
               :aria-expanded="treeVisible"
               aria-controls="skill-project-tree"
@@ -32,27 +45,31 @@
               :aria-label="treeVisible ? '隐藏项目结构' : '显示项目结构'"
             >
               <FolderTree :size="14" aria-hidden="true" />
-            </button>
-            <button
+              <span>文件</span>
+            </a-button>
+            <a-button
               v-if="isInstalledSkill && canManageCurrentSkill"
-              type="button"
+              type="text"
               aria-label="导出 Skill"
+              title="导出 Skill"
               @click="handleExport"
-              class="lucide-icon-btn extension-panel-action extension-panel-action-secondary"
+              class="lucide-icon-btn extension-detail-action"
             >
               <Download :size="14" />
               <span>导出</span>
-            </button>
-            <button
+            </a-button>
+            <a-button
               v-if="isInstalledSkill && canManageCurrentSkill && !isBuiltinInstalledSkill"
-              type="button"
+              type="text"
+              danger
               aria-label="删除 Skill"
+              title="删除 Skill"
               @click="confirmDeleteSkill"
-              class="lucide-icon-btn extension-panel-action extension-panel-action-danger"
+              class="lucide-icon-btn extension-detail-action"
             >
               <Trash2 :size="14" />
               <span>删除</span>
-            </button>
+            </a-button>
           </a-space>
         </div>
       </div>
@@ -70,24 +87,24 @@
                 <span class="label">项目结构</span>
                 <div class="tree-actions">
                   <a-tooltip
-                    v-if="canEditSkillFiles && selectedPath && !selectedIsDir"
+                    v-if="canEditSkill && selectedPath && !selectedIsDir"
                     title="编辑当前文件"
                   >
                     <button
                       type="button"
                       aria-label="编辑当前文件"
-                      :disabled="savingFile"
+                      :disabled="savingAny || pendingFileLoad"
                       @click="startEditingCurrentFile"
                     >
                       <FilePen :size="14" />
                     </button>
                   </a-tooltip>
-                  <a-tooltip v-if="canEditSkillFiles" title="新建文件">
+                  <a-tooltip v-if="canEditSkill" title="新建文件">
                     <button type="button" aria-label="新建文件" @click="openCreateModal(false)">
                       <FilePlus :size="14" />
                     </button>
                   </a-tooltip>
-                  <a-tooltip v-if="canEditSkillFiles" title="新建目录">
+                  <a-tooltip v-if="canEditSkill" title="新建目录">
                     <button type="button" aria-label="新建目录" @click="openCreateModal(true)">
                       <FolderPlus :size="14" />
                     </button>
@@ -125,9 +142,9 @@
                   :show-download="false"
                   :show-inline-html-controls="true"
                   :borderless="true"
-                  :editable="canEditSkillFiles"
+                  :editable="canEditSkill && !pendingFileLoad"
                   :edit-all-text="true"
-                  :saving="savingFile"
+                  :saving="savingAny"
                   :full-height="true"
                   container-class="skill-file-preview"
                   content-class="skill-file-preview-content"
@@ -149,18 +166,15 @@
               <p>决定此 Skill 是否可被选择，以及哪些用户可在运行时使用它。</p>
             </div>
             <a-button
-              v-if="canManageCurrentSkill"
+              v-if="canManageCurrentSkill && (hasUnsavedShareConfigChanges || savingShareConfig)"
               type="primary"
-              size="small"
               :loading="savingShareConfig"
               @click="saveShareConfig"
-              class="lucide-icon-btn"
             >
-              <Save :size="14" />
-              <span>保存范围</span>
+              保存范围
             </a-button>
           </div>
-          <div class="settings-stack extension-detail-divider-list">
+          <div class="settings-stack extension-detail-divider-list config-section-body">
             <section class="settings-card extension-detail-divider-row">
               <div class="settings-card-main">
                 <div class="settings-card-title">启用状态</div>
@@ -210,41 +224,42 @@
               <p>声明所需依赖；MCP 服务在此 Skill 激活后按需加载。</p>
             </div>
             <a-button
-              v-if="canEditSkillDependencies"
+              v-if="canEditSkill && (hasUnsavedDependencyChanges || savingDependencies)"
               type="primary"
-              size="small"
               :loading="savingDependencies"
               @click="saveDependencies"
-              class="lucide-icon-btn"
             >
-              <Save :size="14" />
-              <span>更新依赖</span>
+              更新依赖
             </a-button>
           </div>
-          <div class="dependency-groups extension-detail-divider-list">
+          <div class="dependency-groups extension-detail-divider-list config-section-body">
             <section
               v-for="group in dependencyGroups"
               :key="group.key"
               class="dependency-card extension-detail-divider-row"
-              :class="{ readonly: !canEditSkillDependencies }"
+                :class="{ readonly: !canEditSkill }"
             >
               <div class="dependency-card-header">
                 <div class="dependency-title-block">
                   <div class="dependency-title-row">
                     <h4>{{ group.title }}</h4>
-                    <span class="dependency-count"
+                    <span v-if="getDependencyValues(group).length" class="dependency-count"
                       >已选择 {{ getDependencyValues(group).length }} 项</span
                     >
                   </div>
                   <p>{{ group.description }}</p>
                 </div>
                 <a-dropdown
-                  v-if="canEditSkillDependencies"
+                  v-if="canEditSkill"
                   :trigger="['click']"
                   placement="bottomRight"
                   overlay-class-name="dependency-selection-popover"
                 >
-                  <a-button size="small" class="dependency-action-btn dependency-select-btn">
+                  <a-button
+                    size="small"
+                    class="dependency-action-btn dependency-select-btn"
+                    :disabled="savingAny"
+                  >
                     <Plus :size="13" />
                     <span>选择依赖</span>
                     <ChevronDown :size="12" class="dependency-select-chevron" />
@@ -301,6 +316,7 @@
                           <span class="selection-item-content">
                             <a-checkbox
                               :checked="isDependencySelected(group, option.value)"
+                              :disabled="savingAny"
                               @click.stop
                               @change="toggleDependency(group, option.value, $event.target.checked)"
                             />
@@ -328,9 +344,10 @@
                 >
                   <span>{{ getDependencyOptionLabel(group, value) }}</span>
                   <button
-                    v-if="canEditSkillDependencies"
+                    v-if="canEditSkill"
                     type="button"
                     class="dependency-chip-remove"
+                    :disabled="savingAny"
                     :aria-label="`移除 ${getDependencyOptionLabel(group, value)}`"
                     @click="removeDependency(group, value)"
                   >
@@ -367,13 +384,12 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import {
   Download,
   Trash2,
-  Save,
   FilePen,
   FileText,
   Settings,
@@ -408,16 +424,24 @@ const skillDetailTabs = [
 
 const loading = ref(false)
 const currentSkill = ref(null)
+const skillDeleted = ref(false)
 const treeData = ref([])
 const selectedTreeKeys = ref([])
 const expandedKeys = ref([])
 const selectedPath = ref('')
 const selectedIsDir = ref(false)
 const fileContent = ref('')
+const fileRevision = ref('')
+const rootRevision = ref('')
+const pendingFileLoad = ref(false)
+let fileLoadId = 0
 const savingFile = ref(false)
 const creatingNode = ref(false)
 const savingDependencies = ref(false)
 const savingShareConfig = ref(false)
+const savingAny = computed(
+  () => savingFile.value || savingDependencies.value || savingShareConfig.value
+)
 const activeTab = ref('editor')
 const treeVisible = ref(false)
 const filePreviewRef = ref(null)
@@ -448,18 +472,31 @@ const isBuiltinInstalledSkill = computed(() => {
 })
 const canManageCurrentSkill = computed(() => currentSkill.value?.can_manage !== false)
 const isReadOnlySkill = computed(() => isInstalledSkill.value && !canManageCurrentSkill.value)
-const canEditSkillFiles = computed(
+const canEditSkill = computed(
   () => canManageCurrentSkill.value && !isBuiltinInstalledSkill.value
 )
-const canEditSkillDependencies = computed(
-  () => canManageCurrentSkill.value && !isBuiltinInstalledSkill.value
+const hasUnsavedDependencyChanges = computed(() =>
+  ['tool_dependencies', 'mcp_dependencies', 'skill_dependencies'].some(
+    (key) => JSON.stringify(dependencyForm[key]) !== JSON.stringify(currentSkill.value?.[key] || [])
+  )
 )
+const hasUnsavedShareConfigChanges = computed(() =>
+  currentSkill.value
+    ? enabledForm.value !== (currentSkill.value.enabled !== false) ||
+      JSON.stringify(shareConfigForm.value) !==
+        JSON.stringify(cloneShareConfig(currentSkill.value.share_config))
+    : false
+)
+const hasUnsavedSettings = computed(() => {
+  if (!currentSkill.value) return false
+  return hasUnsavedDependencyChanges.value || hasUnsavedShareConfigChanges.value
+})
 
 const selectedFilePreview = computed(() => ({
   content: fileContent.value,
   previewType: 'text',
   supported: true,
-  status: 'ready'
+  status: pendingFileLoad.value ? 'loading' : 'ready'
 }))
 
 const toolDependencyOptions = computed(() =>
@@ -533,7 +570,7 @@ const getFilteredDependencyOptions = (group) => {
 const isDependencySelected = (group, value) => getDependencyValues(group).includes(value)
 
 const toggleDependency = (group, value, checked) => {
-  if (!canEditSkillDependencies.value) return
+  if (!canEditSkill.value || savingAny.value) return
   const values = getDependencyValues(group)
   if (checked) {
     if (!values.includes(value)) dependencyForm[group.formKey] = [...values, value]
@@ -550,7 +587,45 @@ const goBack = () => {
   router.push({ path: '/extensions', query: { tab: 'skills' } })
 }
 
+const confirmDiscardFileDraft = (includeSettings = false) => {
+  const hasFileDraft = filePreviewRef.value?.hasUnsavedChanges?.()
+  if (!hasFileDraft && !(includeSettings && hasUnsavedSettings.value)) return Promise.resolve(true)
+  return new Promise((resolve) => {
+    Modal.confirm({
+      title: '放弃未保存的修改？',
+      content: includeSettings ? '当前文件或配置还有未保存的修改。' : '当前文件的修改还没有保存。',
+      okText: '放弃修改',
+      okType: 'danger',
+      cancelText: '继续编辑',
+      onOk: () => {
+        if (hasFileDraft) filePreviewRef.value?.discardChanges?.()
+        resolve(true)
+      },
+      onCancel: () => resolve(false)
+    })
+  })
+}
+
+const changeTab = async (nextTab) => {
+  if (nextTab === activeTab.value) return
+  if (savingAny.value || pendingFileLoad.value) {
+    message.warning('请等待保存完成')
+    return
+  }
+  if (!(await confirmDiscardFileDraft())) return
+  activeTab.value = nextTab
+}
+
+const warnBeforeUnload = (event) => {
+  if (skillDeleted.value) return
+  if (!savingAny.value && !filePreviewRef.value?.hasUnsavedChanges?.() && !hasUnsavedSettings.value)
+    return
+  event.preventDefault()
+  event.returnValue = ''
+}
+
 const startEditingCurrentFile = () => {
+  if (pendingFileLoad.value) return
   filePreviewRef.value?.startEditing?.()
 }
 
@@ -637,11 +712,24 @@ const normalizeTree = (nodes) =>
   }))
 
 const resetFileState = () => {
+  fileLoadId += 1
+  pendingFileLoad.value = false
   selectedPath.value = ''
   selectedIsDir.value = false
   selectedTreeKeys.value = []
   expandedKeys.value = []
   fileContent.value = ''
+  fileRevision.value = ''
+}
+
+const syncRootFileSnapshot = (data) => {
+  if (!data?.skill) return
+  const hasDependencyDraft = hasUnsavedDependencyChanges.value
+  currentSkill.value = { ...currentSkill.value, ...data.skill }
+  if (!hasDependencyDraft) {
+    syncDependencyFormFromSkill(data.skill)
+    rootRevision.value = data.revision || ''
+  }
 }
 
 const reloadTree = async () => {
@@ -660,19 +748,40 @@ const reloadTree = async () => {
 }
 
 const loadSkillFile = async (skillSlug, path = 'SKILL.md') => {
+  const requestId = ++fileLoadId
+  pendingFileLoad.value = true
   try {
     const fileResult = await skillApi.getSkillFile(skillSlug, path)
-    const content = fileResult?.data?.content || ''
+    if (requestId !== fileLoadId) return false
+    const data = fileResult?.data || {}
+    const content = data.content || ''
     fileContent.value = content
+    fileRevision.value = data.revision || ''
+    if (path === 'SKILL.md') syncRootFileSnapshot(data)
     selectedPath.value = path
     selectedIsDir.value = false
     selectedTreeKeys.value = [path]
-  } catch {
-    // file not found is ok
+    return true
+  } catch (error) {
+    if (requestId === fileLoadId) message.error(error?.response?.data?.detail || '读取文件失败')
+    return false
+  } finally {
+    if (requestId === fileLoadId) pendingFileLoad.value = false
   }
 }
 
 const handleTreeSelect = async (keys, info) => {
+  const previousPath = selectedPath.value
+  const previousIsDir = selectedIsDir.value
+  if (savingAny.value || pendingFileLoad.value) {
+    selectedTreeKeys.value = previousPath ? [previousPath] : []
+    message.warning('请等待保存完成')
+    return
+  }
+  if ((keys?.[0] || '') !== previousPath && !(await confirmDiscardFileDraft())) {
+    selectedTreeKeys.value = previousPath ? [previousPath] : []
+    return
+  }
   if (!keys?.length) {
     resetFileState()
     return
@@ -684,32 +793,47 @@ const handleTreeSelect = async (keys, info) => {
   selectedPath.value = path
   selectedIsDir.value = isDir
   if (isDir) {
+    fileLoadId += 1
+    pendingFileLoad.value = false
     fileContent.value = ''
+    fileRevision.value = ''
     return
   }
-  try {
-    const result = await skillApi.getSkillFile(currentSkill.value.slug, path)
-    const content = result?.data?.content || ''
-    fileContent.value = content
-  } catch {
-    message.error('文件读取失败')
+  if (!(await loadSkillFile(currentSkill.value.slug, path)) && selectedPath.value === path) {
+    selectedPath.value = previousPath
+    selectedIsDir.value = previousIsDir
+    selectedTreeKeys.value = previousPath ? [previousPath] : []
   }
 }
 
 const saveCurrentFile = async (content = fileContent.value) => {
-  if (!currentSkill.value || !selectedPath.value || selectedIsDir.value || !canEditSkillFiles.value)
+  if (
+    savingAny.value ||
+    pendingFileLoad.value ||
+    !currentSkill.value ||
+    !selectedPath.value ||
+    selectedIsDir.value ||
+    !canEditSkill.value
+  )
     return
   savingFile.value = true
   try {
-    await skillApi.updateSkillFile(currentSkill.value.slug, {
+    const dependenciesWereClean = !hasUnsavedDependencyChanges.value
+    const result = await skillApi.updateSkillFile(currentSkill.value.slug, {
       path: selectedPath.value,
-      content
+      content,
+      expected_revision: fileRevision.value
     })
     fileContent.value = content
+    fileRevision.value = result?.data?.revision || ''
+    if (result?.data?.skill) {
+      currentSkill.value = result.data.skill
+      if (dependenciesWereClean) syncDependencyFormFromSkill(result.data.skill)
+    }
+    if (selectedPath.value === 'SKILL.md') rootRevision.value = fileRevision.value
     message.success('已保存')
-    if (selectedPath.value === 'SKILL.md') await fetchSkillDetail()
-  } catch {
-    message.error('保存失败')
+  } catch (error) {
+    message.error(error?.response?.data?.detail || '保存失败，修改仍保留在编辑器中')
   } finally {
     savingFile.value = false
   }
@@ -728,6 +852,7 @@ const confirmDeleteSkill = () => {
     onOk: async () => {
       try {
         await skillApi.deleteSkill(target.slug)
+        skillDeleted.value = true
         message.success(`已${actionText}`)
         router.push({ path: '/extensions', query: { tab: 'skills' } })
       } catch {
@@ -754,7 +879,7 @@ const handleExport = async () => {
 }
 
 const openCreateModal = (isDir) => {
-  if (!currentSkill.value || !canEditSkillFiles.value) return
+  if (!currentSkill.value || !canEditSkill.value) return
   createForm.path = ''
   createForm.content = ''
   createForm.isDir = isDir
@@ -762,7 +887,7 @@ const openCreateModal = (isDir) => {
 }
 
 const handleCreateNode = async () => {
-  if (!currentSkill.value || !createForm.path.trim() || !canEditSkillFiles.value) return
+  if (!currentSkill.value || !createForm.path.trim() || !canEditSkill.value) return
   creatingNode.value = true
   try {
     await skillApi.createSkillFile(currentSkill.value.slug, {
@@ -781,7 +906,13 @@ const handleCreateNode = async () => {
 }
 
 const saveShareConfig = async () => {
-  if (!currentSkill.value || !isInstalledSkill.value || !canManageCurrentSkill.value) return
+  if (
+    savingAny.value ||
+    !currentSkill.value ||
+    !isInstalledSkill.value ||
+    !canManageCurrentSkill.value
+  )
+    return
   if (!isBuiltinInstalledSkill.value) {
     const validation = shareConfigFormRef.value?.validate?.()
     if (validation && !validation.valid) {
@@ -809,29 +940,89 @@ const saveShareConfig = async () => {
 }
 
 const saveDependencies = async () => {
-  if (!currentSkill.value || !isInstalledSkill.value || !canEditSkillDependencies.value) return
+  if (
+    savingAny.value ||
+    pendingFileLoad.value ||
+    !currentSkill.value ||
+    !isInstalledSkill.value ||
+    !canEditSkill.value
+  )
+    return
+  if (filePreviewRef.value?.hasUnsavedChanges?.()) {
+    message.warning('请先保存或取消当前文件修改')
+    return
+  }
   savingDependencies.value = true
   try {
     const result = await skillApi.updateSkillDependencies(currentSkill.value.slug, {
       tool_dependencies: dependencyForm.tool_dependencies,
       mcp_dependencies: dependencyForm.mcp_dependencies,
-      skill_dependencies: dependencyForm.skill_dependencies
+      skill_dependencies: dependencyForm.skill_dependencies,
+      expected_revision: rootRevision.value
     })
-    const updated = result?.data
+    const updated = result?.data?.skill
     if (updated) {
       currentSkill.value = updated
       syncDependencyFormFromSkill(updated)
     }
+    rootRevision.value = result?.data?.revision || ''
+    if (selectedPath.value === 'SKILL.md') {
+      fileRevision.value = ''
+      try {
+        const file = await skillApi.getSkillFile(currentSkill.value.slug, 'SKILL.md')
+        fileContent.value = file?.data?.content || ''
+        fileRevision.value = file?.data?.revision || ''
+        syncRootFileSnapshot(file?.data)
+      } catch {
+        resetFileState()
+        message.warning('依赖已保存，请重新选择 SKILL.md 查看最新内容')
+      }
+    }
     message.success('依赖已更新')
-  } catch {
-    message.error('更新失败')
+  } catch (error) {
+    if (error?.response?.status === 409) {
+      Modal.confirm({
+        title: '依赖已被其他编辑更新',
+        content: '加载最新文件后会保留你当前的依赖选择；再次保存将以这些选择替换最新依赖。',
+        okText: '加载最新文件',
+        cancelText: '稍后处理',
+        onOk: async () => {
+          try {
+            const file = await skillApi.getSkillFile(currentSkill.value.slug, 'SKILL.md')
+            const data = file?.data || {}
+            currentSkill.value = { ...currentSkill.value, ...data.skill }
+            rootRevision.value = data.revision || ''
+            if (selectedPath.value === 'SKILL.md') {
+              fileContent.value = data.content || ''
+              fileRevision.value = data.revision || ''
+            }
+          } catch (reloadError) {
+            message.error(reloadError?.response?.data?.detail || '加载最新文件失败')
+          }
+        }
+      })
+    } else {
+      message.error(error?.response?.data?.detail || '更新失败，依赖选择仍保留')
+    }
   } finally {
     savingDependencies.value = false
   }
 }
 
 onMounted(() => {
+  window.addEventListener('beforeunload', warnBeforeUnload)
   fetchSkillDetail()
+})
+
+onUnmounted(() => window.removeEventListener('beforeunload', warnBeforeUnload))
+
+onBeforeRouteLeave(async () => {
+  if (skillDeleted.value) return true
+  if (savingAny.value) {
+    message.warning('请等待保存完成')
+    return false
+  }
+  return confirmDiscardFileDraft(true)
 })
 </script>
 
@@ -845,11 +1036,7 @@ onMounted(() => {
   }
 
   .tree-toggle {
-    width: 30px;
-    padding: 0;
-
     &.active {
-      border-color: var(--main-100);
       background: var(--main-10);
       color: var(--main-color);
     }
@@ -1012,6 +1199,10 @@ onMounted(() => {
   :deep(.skill-file-preview-content .file-content-pre.code-highlight code) {
     min-height: 100%;
   }
+
+  :deep(.skill-file-preview .frontmatter-card .fm-row) {
+    grid-template-columns: minmax(150px, 180px) minmax(0, 1fr);
+  }
 }
 
 .settings-card {
@@ -1024,6 +1215,19 @@ onMounted(() => {
   &.scope-card {
     display: block;
   }
+}
+
+.config-view .config-section-body {
+  padding: 0 20px;
+  border: 1px solid var(--gray-150);
+  border-radius: 10px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.settings-stack > .settings-card:last-child,
+.dependency-groups > .dependency-card:last-child {
+  border-bottom: 0;
 }
 
 .settings-card-main {
@@ -1247,6 +1451,19 @@ onMounted(() => {
 }
 
 @media (max-width: 768px) {
+  .config-view .config-section-body {
+    padding: 0 16px;
+  }
+
+  .editor-main :deep(.skill-file-preview .frontmatter-card .fm-row) {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+
+  .editor-main :deep(.skill-file-preview .frontmatter-card .fm-value) {
+    overflow-wrap: anywhere;
+  }
+
   .workspace,
   .workspace.tree-visible {
     width: min(calc(100% - 32px), 768px);

@@ -114,7 +114,7 @@ def run():
     from yuxi.services.arq_worker import run_worker
     from yuxi.agents import BaseAgent
     from yuxi.agents.buildin.chatbot import graph
-    from yuxi.agents.skills import service
+    from yuxi.services.skills import projection as skill_projection_service
     from yuxi.services import agent_run_manifest_service, chat_service, run_worker as worker
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
@@ -149,7 +149,7 @@ def run():
     wrap(BaseAgent, "_get_checkpointer")
     wrap(graph.ChatbotAgent, "get_graph")
     wrap(AsyncPostgresSaver, "aget_tuple")
-    wrap(service, "sync_user_accessible_skills")
+    wrap(skill_projection_service, "sync_user_accessible_skills")
     original_process = worker.process_agent_run
 
     @functools.wraps(original_process)

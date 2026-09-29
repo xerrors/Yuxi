@@ -278,7 +278,7 @@ def test_create_agent_filesystem_middleware_uses_context_scope(monkeypatch):
 
 def test_context_backend_construction_does_not_sync_skill_projection(monkeypatch, tmp_path) -> None:
     """每轮模型调用重建 backend 时不得扫描或复制 Skill。"""
-    from yuxi.agents.skills import service as skill_service
+    from yuxi.services.skills import projection as projection_service
 
     monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
@@ -296,7 +296,7 @@ def test_context_backend_construction_does_not_sync_skill_projection(monkeypatch
     create_agent_composite_backend(context)
     create_agent_composite_backend(context)
 
-    user_skill = skill_service.get_user_skills_root_dir("user-1") / "shared-skill"
+    user_skill = projection_service.get_user_skills_root_dir("user-1") / "shared-skill"
     assert not user_skill.exists()
 
 

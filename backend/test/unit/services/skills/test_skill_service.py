@@ -6,24 +6,34 @@ import json
 import socket
 import subprocess
 import sys
+import time
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from yuxi.agents.skills import service as svc
 from yuxi.agents.toolkits import service as tool_service
+from yuxi.repositories.skill_repository import SkillRepository as RealSkillRepository
+from yuxi.services.skills import catalog
+from yuxi.services.skills import draft as draft_service
+from yuxi.services.skills import draft as skill_draft
+from yuxi.services.skills import edit as edit_service
+from yuxi.services.skills import personal as personal_service
+from yuxi.services.skills import projection as projection_service
+from yuxi.services.skills import shared as svc
+from yuxi.services.skills.remote import DownloadedSkill
 from yuxi.storage.postgres.models_business import Skill, User
-
+from yuxi.workspace.paths import user_workspace_dir
 
 _MULTIPROCESS_SKILL_SYNC_SCRIPT = """
 import json
 import os
 import select
 import sys
+import time
 import traceback
 from pathlib import Path
-from yuxi.agents.skills import service
+from yuxi.services.skills import projection as service
 
 save_dir, uid, encoded_sources = sys.argv[1:]
 sources = json.loads(encoded_sources)
@@ -117,7 +127,7 @@ def test_allowed_skill_access_levels_by_role():
 
 
 @pytest.mark.asyncio
-async def test_prepare_remote_skill_install_stages_success_and_failure(
+async def test_create_remote_skill_draft_stages_success_and_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -130,17 +140,11 @@ async def test_prepare_remote_skill_install_stages_success_and_failure(
         encoding="utf-8",
     )
 
-    class FakeRepo:
-        def __init__(self, _db):
-            pass
-
-        async def exists_slug(self, _slug: str) -> bool:
-            return False
-
     class FakePreparation:
         results = [
-            {"slug": "pdf", "success": True, "source_dir": valid_dir},
-            {"slug": "broken", "success": True, "source_dir": invalid_dir},
+            DownloadedSkill(slug="pdf", source_dir=valid_dir),
+            DownloadedSkill(slug="broken", source_dir=invalid_dir),
+            DownloadedSkill(slug="duplicate", source_dir=valid_dir),
         ]
         cleaned = False
 
@@ -149,24 +153,28 @@ async def test_prepare_remote_skill_install_stages_success_and_failure(
 
     preparation = FakePreparation()
 
-    async def fake_prepare_remote_skills_batch(*, source, skills):
+    async def fake_download_remote_skills(*, source, skills):
         assert source == "anthropics/skills"
-        assert skills == ["pdf", "broken"]
+        assert skills == ["pdf", "broken", "duplicate"]
         return preparation
 
-    monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
     monkeypatch.setattr(
-        "yuxi.agents.skills.remote_install.prepare_remote_skills_batch",
-        fake_prepare_remote_skills_batch,
+        "yuxi.services.skills.remote.download_remote_skills",
+        fake_download_remote_skills,
     )
-    draft = await svc.prepare_remote_skill_install(
-        None,
+    draft = await draft_service.create_remote_skill_draft(
         source="anthropics/skills",
-        skills=["pdf", "broken"],
+        skills=["pdf", "broken", "duplicate"],
         operator=_user(),
     )
 
-    assert [item["success"] for item in draft["items"]] == [True, False]
+    assert [item["slug"] for item in draft["items"]] == ["pdf"]
+    assert draft["failures"] == [
+        {"slug": "broken", "error": "技能目录缺少根级 SKILL.md"},
+        {"slug": "duplicate", "error": "Skill slug 重复: pdf"},
+    ]
+    staged_items = skill_draft.get_skill_drafts_root_dir() / draft["draft_id"] / "items"
+    assert [item.name for item in staged_items.iterdir()] == [Path(draft["items"][0]["source_dir"]).name]
     assert preparation.cleaned is True
 
 
@@ -217,7 +225,7 @@ async def test_list_visible_skills_for_management_includes_owned_disabled_and_en
         ),
     ]
 
-    class FakeRepo:
+    class FakeRepo(RealSkillRepository):
         def __init__(self, _db):
             pass
 
@@ -226,9 +234,51 @@ async def test_list_visible_skills_for_management_includes_owned_disabled_and_en
 
     monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
 
-    visible = await svc.list_visible_skills_for_management(None, _user("root", role="user"))
+    visible = await svc.SkillRepository(None).list_visible_for_management(_user("root", role="user"))
 
     assert [item.slug for item in visible] == ["owned-disabled", "shared-enabled", "shared-disabled"]
+
+
+@pytest.mark.asyncio
+async def test_locked_shared_list_only_locks_visible_rows_and_rechecks_permission(monkeypatch):
+    """无权行不参与运行时锁；等待期间撤销的权限也不能进入结果。"""
+    visible = Skill(
+        id=1,
+        slug="visible",
+        enabled=True,
+        created_by="other",
+        share_config={"version": 2, "read_scope": {"access_level": "user", "user_uids": ["root"]}},
+    )
+    hidden = Skill(
+        id=2,
+        slug="hidden",
+        enabled=True,
+        created_by="other",
+        share_config={"version": 2, "read_scope": {"access_level": "user", "user_uids": ["other"]}},
+    )
+    locked_ids = []
+
+    class FakeRepo(RealSkillRepository):
+        def __init__(self, _db):
+            pass
+
+        async def list_all(self):
+            return [visible, hidden]
+
+        async def lock_rows_for_read(self, ids):
+            locked_ids.extend(ids)
+            visible.share_config = {
+                "version": 2,
+                "read_scope": {"access_level": "user", "user_uids": ["other"]},
+            }
+            return [visible]
+
+    monkeypatch.setattr(projection_service, "SkillRepository", FakeRepo)
+
+    result = await projection_service.lock_accessible_shared_skills_for_projection(None, _user("root", role="user"))
+
+    assert locked_ids == [1]
+    assert result == []
 
 
 @pytest.mark.asyncio
@@ -283,7 +333,7 @@ async def test_management_readable_skill_allows_manageable_disabled_and_enabled_
     skill: Skill,
     operator: User,
 ):
-    class FakeRepo:
+    class FakeRepo(RealSkillRepository):
         def __init__(self, _db):
             pass
 
@@ -313,7 +363,7 @@ async def test_management_readable_skill_allows_disabled_user_shared_manager(mon
         },
     )
 
-    class FakeRepo:
+    class FakeRepo(RealSkillRepository):
         def __init__(self, _db):
             pass
 
@@ -343,51 +393,35 @@ async def test_runtime_access_still_excludes_disabled_shared_skill(monkeypatch: 
         },
     )
 
-    class FakeRepo:
+    class FakeRepo(RealSkillRepository):
         def __init__(self, _db):
             pass
 
         async def list_enabled(self):
             return []
 
-    monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
+    monkeypatch.setattr(catalog, "SkillRepository", FakeRepo)
 
     async def no_personal_skills(_uid):
         return []
 
-    monkeypatch.setattr(svc, "list_personal_skills", no_personal_skills)
+    monkeypatch.setattr(catalog, "list_personal_skills", no_personal_skills)
 
     assert svc.user_can_access_skill(_user("root", role="user"), skill) is False
-    assert await svc.list_accessible_skills(None, _user("root", role="user")) == []
+    assert await catalog.list_accessible_skills(None, _user("root", role="user")) == []
 
 
 @pytest.mark.asyncio
-async def test_normal_user_skill_upload_draft_defaults_to_personal_read_scope(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-
-    class FakeRepo:
-        def __init__(self, _db):
-            pass
-
-        async def exists_slug(self, _slug: str) -> bool:
-            return False
-
-    monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
-
-    draft = await svc.prepare_skill_upload(
-        None,
+async def test_upload_draft_does_not_include_shared_policy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    draft = await draft_service.create_uploaded_skill_draft(
         filename="SKILL.md",
         file_bytes=b"---\nname: demo\ndescription: demo skill\n---\n# Demo\n",
         operator=_user("normal-user", role="user"),
     )
 
-    assert draft["default_share_config"] == {
-        "version": 2,
-        "read_scope": {"access_level": "user", "department_ids": [], "user_uids": ["normal-user"]},
-        "manage_scope": None,
-    }
-    assert draft["allowed_access_levels"] == ["user"]
+    assert "default_share_config" not in draft
+    assert "allowed_access_levels" not in draft
+    assert draft["items"][0]["slug"] == "demo"
 
 
 @pytest.mark.parametrize(
@@ -412,7 +446,7 @@ async def test_normal_user_confirm_skill_draft_rejects_wider_share_scope(
     share_config: dict,
 ):
 
-    class FakeRepo:
+    class FakeRepo(RealSkillRepository):
         def __init__(self, _db):
             pass
 
@@ -424,8 +458,7 @@ async def test_normal_user_confirm_skill_draft_rejects_wider_share_scope(
 
     monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
     operator = _user("normal-user", role="user")
-    draft = await svc.prepare_skill_upload(
-        None,
+    draft = await draft_service.create_uploaded_skill_draft(
         filename="SKILL.md",
         file_bytes=b"---\nname: demo\ndescription: demo skill\n---\n# Demo\n",
         operator=operator,
@@ -441,40 +474,30 @@ async def test_normal_user_confirm_skill_draft_rejects_wider_share_scope(
 
 
 @pytest.mark.asyncio
-async def test_confirm_skill_install_draft_only_processes_selected_slugs(
+async def test_install_draft_loader_only_selects_ready_slugs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
     draft_dir = tmp_path / "draft"
-    draft_dir.mkdir()
+    items_dir = draft_dir / "items"
+    items_dir.mkdir(parents=True)
+    for item_id in ("a" * 32, "b" * 32):
+        (items_dir / item_id).mkdir()
     data = {
         "created_by": "root",
         "source_type": "remote",
         "items": [
-            {"slug": "alpha", "success": False, "error": "alpha failed"},
-            {"slug": "beta", "success": False, "error": "beta failed"},
+            {"slug": "alpha", "source_dir": f"items/{'a' * 32}"},
+            {"slug": "beta", "source_dir": f"items/{'b' * 32}"},
         ],
+        "failures": [{"slug": "broken", "error": "加载失败"}],
     }
+    monkeypatch.setattr(skill_draft, "load_skill_draft", lambda _draft_id: (draft_dir, data))
+    _draft_dir, _data, selected = skill_draft.load_and_select_draft_items("draft-1", ["beta"], _user())
 
-    class FakeRepo:
-        def __init__(self, _db):
-            pass
-
-    monkeypatch.setattr(svc, "_load_skill_draft", lambda _draft_id: (draft_dir, data))
-    monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
-    results = await svc.confirm_skill_install_draft(
-        _UnitOfWork(),
-        draft_id="draft-1",
-        share_config={
-            "version": 2,
-            "read_scope": {"access_level": "user", "user_uids": ["root"]},
-            "manage_scope": {"access_level": "user", "user_uids": ["root"]},
-        },
-        slugs=["beta"],
-        operator=_user(),
-    )
-
-    assert results == [{"slug": "beta", "success": False, "error": "beta failed"}]
+    assert [item.slug for item in selected] == ["beta"]
+    with pytest.raises(ValueError, match="不可安装"):
+        skill_draft.load_and_select_draft_items("draft-1", ["broken"], _user())
 
 
 @pytest.mark.parametrize(("slugs", "message"), [([], "至少选择一个 Skill"), (["missing"], "草稿外的 Skill")])
@@ -486,13 +509,15 @@ async def test_confirm_skill_install_draft_rejects_invalid_selection(
     message: str,
 ):
     draft_dir = tmp_path / "draft"
-    draft_dir.mkdir()
+    item_dir = draft_dir / "items" / ("a" * 32)
+    item_dir.mkdir(parents=True)
     data = {
         "created_by": "root",
         "source_type": "remote",
-        "items": [{"slug": "alpha", "success": True}],
+        "items": [{"slug": "alpha", "source_dir": f"items/{'a' * 32}"}],
+        "failures": [],
     }
-    monkeypatch.setattr(svc, "_load_skill_draft", lambda _draft_id: (draft_dir, data))
+    monkeypatch.setattr(skill_draft, "load_skill_draft", lambda _draft_id: (draft_dir, data))
 
     with pytest.raises(ValueError, match=message):
         await svc.confirm_skill_install_draft(
@@ -510,7 +535,7 @@ async def test_confirm_skill_install_draft_rejects_invalid_selection(
 
 def test_parse_skill_markdown_ok():
     content = "---\nname: demo-skill\ndescription: demo description\n---\n# Demo\n"
-    slug, name, desc, meta = svc._parse_skill_markdown(content)
+    slug, name, desc, meta = svc.parse_skill_markdown(content)
     assert slug == "demo-skill"
     assert name == "demo-skill"
     assert desc == "demo description"
@@ -529,7 +554,7 @@ def test_parse_skill_markdown_supports_display_name_with_slug():
         "---\n"
         "# Word / DOCX\n"
     )
-    slug, name, desc, meta = svc._parse_skill_markdown(content)
+    slug, name, desc, meta = svc.parse_skill_markdown(content)
     assert slug == "word-docx"
     assert name == "Word / DOCX"
     assert desc == "Create, inspect, and edit Microsoft Word documents."
@@ -538,7 +563,7 @@ def test_parse_skill_markdown_supports_display_name_with_slug():
 
 def test_parse_skill_markdown_requires_frontmatter():
     with pytest.raises(ValueError, match="frontmatter"):
-        svc._parse_skill_markdown("# missing")
+        svc.parse_skill_markdown("# missing")
 
 
 @pytest.fixture
@@ -610,6 +635,8 @@ def test_is_valid_skill_slug():
     # Test invalid slugs
     assert svc.is_valid_skill_slug("../bad") is False
     assert svc.is_valid_skill_slug("Invalid") is False  # uppercase not allowed
+    assert svc.is_valid_skill_slug(" demo ") is False
+    assert svc.is_valid_skill_slug("demo\n") is False
     assert svc.is_valid_skill_slug("") is False
 
 
@@ -657,7 +684,7 @@ def test_sync_user_accessible_skills(
             (tmp_path / rel_path / "SKILL.md").write_text(new_content, encoding="utf-8")
 
         resolved_sources = {slug: tmp_path / rel for slug, rel in source_dirs.items()}
-        user_root = svc.sync_user_accessible_skills("user_1", resolved_sources)
+        user_root = projection_service.sync_user_accessible_skills("user_1", resolved_sources)
 
         assert user_root == tmp_path / "skill-projections" / "user_1"
         assert sorted(path.name for path in user_root.iterdir()) == sorted(expected_entries)
@@ -673,15 +700,15 @@ def test_unchanged_skill_projection_does_not_create_staging(tmp_path: Path, monk
     source = tmp_path / "sources/demo"
     source.mkdir(parents=True)
     (source / "SKILL.md").write_text("# unchanged\n", encoding="utf-8")
-    projection = svc.sync_user_accessible_skills("user-1", {"demo": source})
+    projection = projection_service.sync_user_accessible_skills("user-1", {"demo": source})
     projected_file = projection / "demo/SKILL.md"
     original_inode = projected_file.stat().st_ino
 
     def refuse_staging(*args, **kwargs):
         raise AssertionError("未变化的投影不应创建 staging")
 
-    monkeypatch.setattr(svc, "copy_skill_tree_no_symlinks", refuse_staging)
-    svc.sync_user_accessible_skills("user-1", {"demo": source})
+    monkeypatch.setattr(projection_service, "copy_skill_tree_no_symlinks", refuse_staging)
+    projection_service.sync_user_accessible_skills("user-1", {"demo": source})
 
     assert projected_file.read_text(encoding="utf-8") == "# unchanged\n"
     assert projected_file.stat().st_ino == original_inode
@@ -696,7 +723,7 @@ def test_projection_comparison_does_not_accept_equal_symlink(
     source = tmp_path / "sources/demo"
     source.mkdir(parents=True)
     (source / "SKILL.md").write_text("# identical\n", encoding="utf-8")
-    projection = svc.sync_user_accessible_skills("user-1", {"demo": source})
+    projection = projection_service.sync_user_accessible_skills("user-1", {"demo": source})
     outside = tmp_path / "outside.md"
     outside.write_text("# identical\n", encoding="utf-8")
     linked_file = (source if linked_side == "source" else projection / "demo") / "SKILL.md"
@@ -705,39 +732,13 @@ def test_projection_comparison_does_not_accept_equal_symlink(
 
     if linked_side == "source":
         with pytest.raises(PermissionError, match="symlink"):
-            svc.sync_user_accessible_skills("user-1", {"demo": source})
+            projection_service.sync_user_accessible_skills("user-1", {"demo": source})
         assert not (projection / "demo").exists()
     else:
-        svc.sync_user_accessible_skills("user-1", {"demo": source})
+        projection_service.sync_user_accessible_skills("user-1", {"demo": source})
         assert not linked_file.is_symlink()
         assert linked_file.read_text(encoding="utf-8") == "# identical\n"
     assert outside.read_text(encoding="utf-8") == "# identical\n"
-
-
-@pytest.mark.asyncio
-async def test_sync_user_accessible_skills_async_runs_in_thread(monkeypatch: pytest.MonkeyPatch):
-    """异步同步入口必须把目录扫描和复制下沉到工作线程。"""
-    calls = []
-    expected_root = Path("/tmp/thread-skills")
-
-    async def to_thread(func, *args):
-        calls.append((func, args))
-        return expected_root
-
-    monkeypatch.setattr(svc.asyncio, "to_thread", to_thread)
-
-    result = await svc.sync_user_accessible_skills_async(
-        "user-1",
-        {"alpha": "/tmp/alpha"},
-    )
-
-    assert result == expected_root
-    assert calls == [
-        (
-            svc.sync_user_accessible_skills,
-            ("user-1", {"alpha": "/tmp/alpha"}),
-        )
-    ]
 
 
 @pytest.mark.parametrize("component", ["root", "ancestor"])
@@ -748,11 +749,13 @@ def test_projection_comparison_rejects_symlinked_source_directory(
     source = tmp_path / "sources/demo"
     source.mkdir(parents=True)
     (source / "SKILL.md").write_text("# same\n", encoding="utf-8")
-    projection = svc.sync_user_accessible_skills("user-1", {"demo": source})
+    projection = projection_service.sync_user_accessible_skills("user-1", {"demo": source})
     linked = tmp_path / "linked"
     linked.symlink_to(source if component == "root" else source.parent, target_is_directory=True)
     with pytest.raises(OSError):
-        svc.sync_user_accessible_skills("user-1", {"demo": linked if component == "root" else linked / "demo"})
+        projection_service.sync_user_accessible_skills(
+            "user-1", {"demo": linked if component == "root" else linked / "demo"}
+        )
     assert not (projection / "demo").exists()
 
 
@@ -762,19 +765,19 @@ def test_projection_comparison_rejects_file_replaced_after_stat(tmp_path: Path, 
     source.mkdir(parents=True)
     source_file = source / "SKILL.md"
     source_file.write_text("# same\n", encoding="utf-8")
-    projection = svc.sync_user_accessible_skills("user-1", {"demo": source})
+    projection = projection_service.sync_user_accessible_skills("user-1", {"demo": source})
     outside = tmp_path / "outside.md"
     outside.write_text("# same\n", encoding="utf-8")
-    original_open = svc.open_regular_file_fd
+    original_open = projection_service.open_regular_file_fd
 
     def swap_before_open(*args, **kwargs):
         source_file.unlink()
         source_file.symlink_to(outside)
         return original_open(*args, **kwargs)
 
-    monkeypatch.setattr(svc, "open_regular_file_fd", swap_before_open)
+    monkeypatch.setattr(projection_service, "open_regular_file_fd", swap_before_open)
     with pytest.raises(PermissionError, match="symlink"):
-        svc.sync_user_accessible_skills("user-1", {"demo": source})
+        projection_service.sync_user_accessible_skills("user-1", {"demo": source})
     assert not (projection / "demo").exists()
     assert outside.read_text(encoding="utf-8") == "# same\n"
 
@@ -810,9 +813,9 @@ async def test_skill_policy_change_removes_stale_projection_before_refresh(
         lifecycle.append(f"refresh:{uid}")
         return {}
 
-    monkeypatch.setattr(svc, "refresh_user_skill_projection_async", refresh)
+    monkeypatch.setattr(projection_service, "refresh_user_skill_projection_async", refresh)
 
-    await svc.apply_skill_projection_policy_change(Db(), "reporter")
+    await projection_service.commit_skill_policy_and_refresh_projections(Db(), "reporter")
 
     assert lifecycle == ["commit", "refresh:user-1", "refresh:user-2"]
 
@@ -853,7 +856,7 @@ def test_sync_user_accessible_skills_rejects_special_files(
     source_dir = tmp_path / "s"
     source_dir.mkdir(parents=True)
     (source_dir / "SKILL.md").write_text("# personal\n", encoding="utf-8")
-    projection = svc.sync_user_accessible_skills("user-1", {slug: source_dir})
+    projection = projection_service.sync_user_accessible_skills("user-1", {slug: source_dir})
     assert (projection / slug / "SKILL.md").is_file()
 
     unix_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -861,7 +864,7 @@ def test_sync_user_accessible_skills_rejects_special_files(
     unix_socket.bind("stream.sock")
     try:
         with pytest.raises((OSError, ValueError)):
-            svc.sync_user_accessible_skills("user-1", {slug: source_dir})
+            projection_service.sync_user_accessible_skills("user-1", {slug: source_dir})
     finally:
         unix_socket.close()
 
@@ -874,7 +877,7 @@ def test_personal_skill_root_is_inside_user_workspace(tmp_path: Path, monkeypatc
 
     monkeypatch.setattr(sandbox_paths, "get_user_data_dir", lambda: tmp_path / "user-data")
 
-    root = svc.get_personal_skills_root_dir("user-1")
+    root = user_workspace_dir("user-1") / "agents" / "skills"
 
     assert root == tmp_path / "user-data/shared/user-1/workspace/agents/skills"
 
@@ -900,7 +903,9 @@ def test_personal_skill_root_rejects_symlinked_components(
     monkeypatch.setattr(sandbox_paths, "get_user_data_dir", lambda: user_data)
 
     with pytest.raises(ValueError, match="路径"):
-        svc._scan_personal_skills("user-1")
+        personal_service._scan_personal_skills("user-1")
+    if component == "agents":
+        assert not (outside / "skills").exists()
 
 
 @pytest.mark.asyncio
@@ -912,8 +917,8 @@ async def test_read_personal_skill_file_rejects_symlink(tmp_path: Path, monkeypa
     outside.write_text("secret", encoding="utf-8")
     (skill_dir / "leak.txt").symlink_to(outside)
 
-    with pytest.raises(ValueError, match="越界访问"):
-        await svc.read_personal_skill_file("user-1", "demo", "leak.txt")
+    with pytest.raises(ValueError, match="路径非法"):
+        await personal_service.read_personal_skill_file("user-1", "demo", "leak.txt")
 
 
 def test_install_personal_skill_preserves_concurrent_target(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -932,7 +937,7 @@ def test_install_personal_skill_preserves_concurrent_target(tmp_path: Path, monk
     monkeypatch.setattr(svc.shutil, "copytree", copytree_with_concurrent_target)
 
     with pytest.raises(ValueError, match="已存在同名 Skill"):
-        svc._install_personal_skill_dir_sync("user-1", source)
+        personal_service._install_personal_skill_dir_sync("user-1", source)
 
     assert (root / "demo/user-file.txt").read_text(encoding="utf-8") == "keep"
 
@@ -948,12 +953,12 @@ def test_sync_user_accessible_skills_updates_executable_mode(
     script.write_text("#!/bin/sh\n", encoding="utf-8")
     script.chmod(0o644)
 
-    projection = svc.sync_user_accessible_skills("user-1", {slug: source_dir})
+    projection = projection_service.sync_user_accessible_skills("user-1", {slug: source_dir})
     projected_script = projection / slug / "run.sh"
     assert projected_script.stat().st_mode & 0o111 == 0
 
     script.chmod(0o755)
-    svc.sync_user_accessible_skills("user-1", {slug: source_dir})
+    projection_service.sync_user_accessible_skills("user-1", {slug: source_dir})
 
     assert projected_script.stat().st_mode & 0o111 == 0o111
 
@@ -967,7 +972,7 @@ async def test_refresh_user_skill_projection_serializes_authorization_snapshots(
     advisory_lock = asyncio.Lock()
     first_sync_started = asyncio.Event()
     allow_first_sync = asyncio.Event()
-    current_items = [SimpleNamespace(slug="legacy", source_dir=Path("/tmp/legacy"))]
+    current_items = [SimpleNamespace(slug="legacy", source_dir=Path("/tmp/legacy"), enabled=True)]
     synchronized_sources: list[dict[str, str]] = []
 
     class FakeDb:
@@ -986,8 +991,7 @@ async def test_refresh_user_skill_projection_serializes_authorization_snapshots(
         assert uid == "user-1"
         return SimpleNamespace(is_deleted=0)
 
-    async def list_shared(_db, _user, *, require_enabled=True):
-        del require_enabled
+    async def list_shared(_db, _user):
         return list(current_items)
 
     async def to_thread(_func, _uid, sources):
@@ -1002,14 +1006,14 @@ async def test_refresh_user_skill_projection_serializes_authorization_snapshots(
         lambda: FakeSessionContext(),
     )
     monkeypatch.setattr(user_repository.UserRepository, "get_by_uid_with_db", get_user)
-    monkeypatch.setattr(svc, "list_accessible_shared_skills", list_shared)
-    monkeypatch.setattr(svc, "_resolve_skill_dir", lambda item: item.source_dir)
+    monkeypatch.setattr(projection_service, "lock_accessible_shared_skills_for_projection", list_shared)
+    monkeypatch.setattr(projection_service, "_resolve_shared_skill_dir", lambda item: item.source_dir)
     monkeypatch.setattr(svc.asyncio, "to_thread", to_thread)
 
-    old_run = asyncio.create_task(svc.refresh_user_skill_projection_async("user-1"))
+    old_run = asyncio.create_task(projection_service.refresh_user_skill_projection_async("user-1"))
     await first_sync_started.wait()
     current_items.clear()
-    new_run = asyncio.create_task(svc.refresh_user_skill_projection_async("user-1"))
+    new_run = asyncio.create_task(projection_service.refresh_user_skill_projection_async("user-1"))
     allow_first_sync.set()
 
     await asyncio.gather(old_run, new_run)
@@ -1024,7 +1028,7 @@ async def test_refresh_user_skill_projection_excludes_personal_skills(monkeypatc
     from yuxi.storage.postgres import manager as postgres_manager
 
     synchronized_sources: list[dict[str, str]] = []
-    shared = SimpleNamespace(slug="shared")
+    shared = SimpleNamespace(slug="shared", enabled=True)
 
     class FakeDb:
         async def execute(self, _statement, _parameters):
@@ -1040,24 +1044,25 @@ async def test_refresh_user_skill_projection_excludes_personal_skills(monkeypatc
     async def get_user(_self, _db, _uid):
         return SimpleNamespace(is_deleted=0)
 
-    async def list_shared(_db, _user, *, require_enabled=True):
-        del require_enabled
+    async def list_shared(_db, _user):
         return [shared]
 
     async def fail_combined_list(*_args, **_kwargs):
         raise AssertionError("共享投影不得扫描或合并个人 Skill")
 
-    async def sync_projection(_uid, sources):
+    async def to_thread(func, uid, sources):
+        assert func is projection_service.sync_user_accessible_skills
+        assert uid == "user-1"
         synchronized_sources.append(dict(sources))
 
     monkeypatch.setattr(postgres_manager.pg_manager, "get_async_session_context", lambda: FakeSessionContext())
     monkeypatch.setattr(user_repository.UserRepository, "get_by_uid_with_db", get_user)
-    monkeypatch.setattr(svc, "list_accessible_shared_skills", list_shared)
-    monkeypatch.setattr(svc, "list_accessible_skills", fail_combined_list)
-    monkeypatch.setattr(svc, "_resolve_skill_dir", lambda item: Path(f"/tmp/{item.slug}"))
-    monkeypatch.setattr(svc, "sync_user_accessible_skills_async", sync_projection)
+    monkeypatch.setattr(projection_service, "lock_accessible_shared_skills_for_projection", list_shared)
+    monkeypatch.setattr(catalog, "list_accessible_skills", fail_combined_list)
+    monkeypatch.setattr(projection_service, "_resolve_shared_skill_dir", lambda item: Path(f"/tmp/{item.slug}"))
+    monkeypatch.setattr(projection_service.asyncio, "to_thread", to_thread)
 
-    sources = await svc.refresh_user_skill_projection_async("user-1")
+    sources = await projection_service.refresh_user_skill_projection_async("user-1")
 
     assert sources == {"shared": "/tmp/shared"}
     assert synchronized_sources == [{"shared": "/tmp/shared"}]
@@ -1082,11 +1087,11 @@ async def test_get_skill_dependency_options(monkeypatch: pytest.MonkeyPatch):
 
     user = SimpleNamespace(uid="user")
 
-    async def fake_list_skill_slugs(_db, *, user):
+    async def fake_list_accessible_shared_skills(_db, user):
         assert user.uid == "user"
-        return ["alpha", "beta"]
+        return [SimpleNamespace(slug="alpha"), SimpleNamespace(slug="beta")]
 
-    monkeypatch.setattr(svc, "list_skill_slugs", fake_list_skill_slugs)
+    monkeypatch.setattr(svc.SkillRepository, "list_enabled_readable", fake_list_accessible_shared_skills)
 
     result = await svc.get_skill_dependency_options(None, user)
     assert result["tools"] == [{"slug": "calculator", "name": "Calculator"}, {"slug": "search", "name": "Search"}]
@@ -1094,18 +1099,15 @@ async def test_get_skill_dependency_options(monkeypatch: pytest.MonkeyPatch):
     assert result["skills"] == ["alpha", "beta"]
 
 
-def test_resolve_relative_path_blocks_traversal(tmp_path: Path):
-    skill_dir = tmp_path / "skill"
-    skill_dir.mkdir(parents=True, exist_ok=True)
-
-    with pytest.raises(ValueError, match="上级路径"):
-        svc._resolve_relative_path(skill_dir, "../outside.txt")
+def test_shared_skill_path_blocks_traversal():
+    with pytest.raises(ValueError, match="非法 Skill 文件路径"):
+        edit_service._skill_path_parts("../outside.txt")
 
 
 @pytest.mark.asyncio
 async def test_skill_upload_prepare_confirm_rewrites_conflicting_name(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
-    class FakeRepo:
+    class FakeRepo(RealSkillRepository):
         existing_slugs = {"demo"}
         created_item: Skill | None = None
 
@@ -1131,8 +1133,7 @@ async def test_skill_upload_prepare_confirm_rewrites_conflicting_name(tmp_path: 
     )
     operator = _user("root")
 
-    draft = await svc.prepare_skill_upload(
-        None,
+    draft = await draft_service.create_uploaded_skill_draft(
         filename="demo.zip",
         file_bytes=zip_bytes,
         operator=operator,
@@ -1140,7 +1141,7 @@ async def test_skill_upload_prepare_confirm_rewrites_conflicting_name(tmp_path: 
     results = await svc.confirm_skill_install_draft(
         _UnitOfWork(),
         draft_id=draft["draft_id"],
-        share_config=draft["default_share_config"],
+        share_config=None,
         operator=operator,
     )
 
@@ -1154,7 +1155,7 @@ async def test_skill_upload_prepare_confirm_rewrites_conflicting_name(tmp_path: 
 @pytest.mark.asyncio
 async def test_skill_zip_import_uses_skill_md_name_not_zip_or_root_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
-    class FakeRepo:
+    class FakeRepo(RealSkillRepository):
         created_item: Skill | None = None
 
         def __init__(self, _db):
@@ -1178,8 +1179,7 @@ async def test_skill_zip_import_uses_skill_md_name_not_zip_or_root_dir(tmp_path:
     )
     operator = _user("root")
 
-    draft = await svc.prepare_skill_upload(
-        None,
+    draft = await draft_service.create_uploaded_skill_draft(
         filename="Bad--Archive-Name.zip",
         file_bytes=zip_bytes,
         operator=operator,
@@ -1187,11 +1187,10 @@ async def test_skill_zip_import_uses_skill_md_name_not_zip_or_root_dir(tmp_path:
     results = await svc.confirm_skill_install_draft(
         _UnitOfWork(),
         draft_id=draft["draft_id"],
-        share_config=draft["default_share_config"],
+        share_config=None,
         operator=operator,
     )
 
-    assert draft["items"][0]["original_name"] == "valid-skill"
     assert draft["items"][0]["slug"] == "valid-skill"
     assert results[0]["success"] is True
     assert results[0]["slug"] == "valid-skill"
@@ -1204,7 +1203,7 @@ async def test_skill_zip_import_validates_skill_md_name_not_zip_filename(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
 
-    class FakeRepo:
+    class FakeRepo(RealSkillRepository):
         def __init__(self, _db):
             pass
 
@@ -1220,8 +1219,7 @@ async def test_skill_zip_import_validates_skill_md_name_not_zip_filename(
     )
 
     with pytest.raises(ValueError, match="SKILL.md frontmatter.name 必须是小写字母/数字/短横线"):
-        await svc.prepare_skill_upload(
-            None,
+        await draft_service.create_uploaded_skill_draft(
             filename="valid-archive.zip",
             file_bytes=zip_bytes,
             operator=_user("root"),
@@ -1233,7 +1231,7 @@ async def test_skill_zip_import_uses_frontmatter_slug_and_keeps_display_name(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
 
-    class FakeRepo:
+    class FakeRepo(RealSkillRepository):
         created_item: Skill | None = None
 
         def __init__(self, _db):
@@ -1267,8 +1265,7 @@ async def test_skill_zip_import_uses_frontmatter_slug_and_keeps_display_name(
     )
     operator = _user("root")
 
-    draft = await svc.prepare_skill_upload(
-        None,
+    draft = await draft_service.create_uploaded_skill_draft(
         filename="Word Skill.zip",
         file_bytes=zip_bytes,
         operator=operator,
@@ -1276,7 +1273,7 @@ async def test_skill_zip_import_uses_frontmatter_slug_and_keeps_display_name(
     results = await svc.confirm_skill_install_draft(
         _UnitOfWork(),
         draft_id=draft["draft_id"],
-        share_config=draft["default_share_config"],
+        share_config=None,
         operator=operator,
     )
 
@@ -1293,7 +1290,7 @@ async def test_skill_zip_import_rewrites_conflicting_slug_not_display_name(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
 
-    class FakeRepo:
+    class FakeRepo(RealSkillRepository):
         existing_slugs = {"word-docx"}
         created_item: Skill | None = None
 
@@ -1325,8 +1322,7 @@ async def test_skill_zip_import_rewrites_conflicting_slug_not_display_name(
     )
     operator = _user("root")
 
-    draft = await svc.prepare_skill_upload(
-        None,
+    draft = await draft_service.create_uploaded_skill_draft(
         filename="Word Skill.zip",
         file_bytes=zip_bytes,
         operator=operator,
@@ -1334,7 +1330,7 @@ async def test_skill_zip_import_rewrites_conflicting_slug_not_display_name(
     results = await svc.confirm_skill_install_draft(
         _UnitOfWork(),
         draft_id=draft["draft_id"],
-        share_config=draft["default_share_config"],
+        share_config=None,
         operator=operator,
     )
 
@@ -1349,7 +1345,7 @@ async def test_skill_zip_import_rewrites_conflicting_slug_not_display_name(
 @pytest.mark.asyncio
 async def test_skill_md_prepare_confirm_creates_single_file_skill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
-    class FakeRepo:
+    class FakeRepo(RealSkillRepository):
         created_item: Skill | None = None
 
         def __init__(self, _db):
@@ -1367,8 +1363,7 @@ async def test_skill_md_prepare_confirm_creates_single_file_skill(tmp_path: Path
 
     skill_md = "---\nname: demo\ndescription: this is demo\n---\n# Demo\n"
     operator = _user("root")
-    draft = await svc.prepare_skill_upload(
-        None,
+    draft = await draft_service.create_uploaded_skill_draft(
         filename="SKILL.md",
         file_bytes=skill_md.encode("utf-8"),
         operator=operator,
@@ -1376,7 +1371,7 @@ async def test_skill_md_prepare_confirm_creates_single_file_skill(tmp_path: Path
     results = await svc.confirm_skill_install_draft(
         _UnitOfWork(),
         draft_id=draft["draft_id"],
-        share_config=draft["default_share_config"],
+        share_config=None,
         operator=operator,
     )
 
@@ -1384,168 +1379,6 @@ async def test_skill_md_prepare_confirm_creates_single_file_skill(tmp_path: Path
     assert results[0]["success"] is True
     assert FakeRepo.created_item.name == "demo"
     assert (tmp_path / "skill-sources/shared" / "demo" / "SKILL.md").read_text(encoding="utf-8") == skill_md
-
-
-@pytest.mark.asyncio
-async def test_update_skill_md_syncs_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    skill_dir = tmp_path / "skill-sources/shared" / "demo"
-    skill_dir.mkdir(parents=True, exist_ok=True)
-    (skill_dir / "SKILL.md").write_text(
-        "---\nname: demo\ndescription: old\n---\n# old\n",
-        encoding="utf-8",
-    )
-
-    item = Skill(
-        slug="demo",
-        name="demo",
-        description="old",
-        dir_path="shared/demo",
-        created_by="root",
-        updated_by="root",
-    )
-
-    async def fake_get_manageable_skill_or_raise(_db, _operator, _slug: str):
-        return item
-
-    updates: dict[str, str | None] = {}
-
-    class FakeRepo:
-        def __init__(self, _db):
-            pass
-
-        async def update_metadata(
-            self,
-            _item: Skill,
-            *,
-            name: str,
-            description: str,
-            updated_by: str | None,
-        ) -> Skill:
-            updates["name"] = name
-            updates["description"] = description
-            updates["updated_by"] = updated_by
-            return item
-
-    monkeypatch.setattr(svc, "get_manageable_skill_or_raise", fake_get_manageable_skill_or_raise)
-    monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
-
-    new_content = "---\nname: demo\ndescription: updated desc\n---\n# updated\n"
-    await svc.update_skill_file(
-        _UnitOfWork(),
-        slug="demo",
-        relative_path="SKILL.md",
-        content=new_content,
-        updated_by="admin",
-        operator=_user("root"),
-    )
-
-    assert updates["name"] == "demo"
-    assert updates["description"] == "updated desc"
-    assert updates["updated_by"] == "admin"
-    saved_content = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
-    assert "description: updated desc" in saved_content
-
-
-@pytest.mark.asyncio
-async def test_update_skill_dependencies(monkeypatch: pytest.MonkeyPatch):
-    item = Skill(
-        slug="alpha",
-        name="alpha",
-        description="alpha",
-        source_type="upload",
-        dir_path="shared/alpha",
-        created_by="root",
-        share_config={
-            "version": 2,
-            "read_scope": {"access_level": "user", "user_uids": ["root"]},
-            "manage_scope": {"access_level": "user", "user_uids": ["root"]},
-        },
-        enabled=True,
-        tool_dependencies=[],
-        mcp_dependencies=[],
-        skill_dependencies=[],
-    )
-    dependency = Skill(
-        slug="beta",
-        name="beta",
-        description="beta",
-        source_type="upload",
-        dir_path="shared/beta",
-        created_by="root",
-        share_config={
-            "version": 2,
-            "read_scope": {"access_level": "user", "user_uids": ["root"]},
-            "manage_scope": {"access_level": "user", "user_uids": ["root"]},
-        },
-        enabled=True,
-        tool_dependencies=[],
-        mcp_dependencies=[],
-        skill_dependencies=[],
-    )
-
-    # Mock get_tool_metadata to return tool list
-    def fake_get_tool_metadata(category=None):
-        return [{"slug": "calculator", "name": "Calculator"}]
-
-    monkeypatch.setattr(tool_service, "get_tool_metadata", fake_get_tool_metadata)
-
-    async def fake_get_enabled_mcp_server_slugs(db=None):
-        del db
-        return ["mcp-a"]
-
-    monkeypatch.setattr(svc, "get_enabled_mcp_server_slugs", fake_get_enabled_mcp_server_slugs)
-
-    async def fake_get_skill_or_raise(_db, _operator, slug: str):
-        assert slug == "alpha"
-        return item
-
-    captured: dict[str, list[str] | str | None] = {}
-
-    class FakeRepo:
-        def __init__(self, _db):
-            pass
-
-        async def list_all(self):
-            return [item, dependency]
-
-        async def update_dependencies(
-            self,
-            _item: Skill,
-            *,
-            tool_dependencies: list[str],
-            mcp_dependencies: list[str],
-            skill_dependencies: list[str],
-            updated_by: str | None,
-        ):
-            captured["tool_dependencies"] = tool_dependencies
-            captured["mcp_dependencies"] = mcp_dependencies
-            captured["skill_dependencies"] = skill_dependencies
-            captured["updated_by"] = updated_by
-            _item.tool_dependencies = tool_dependencies
-            _item.mcp_dependencies = mcp_dependencies
-            _item.skill_dependencies = skill_dependencies
-            return _item
-
-    async def fake_list_accessible_shared_skills(_db, _operator):
-        return [item, dependency]
-
-    monkeypatch.setattr(svc, "get_manageable_skill_or_raise", fake_get_skill_or_raise)
-    monkeypatch.setattr(svc, "list_accessible_shared_skills", fake_list_accessible_shared_skills)
-    monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
-
-    updated = await svc.update_skill_dependencies(
-        _UnitOfWork(),
-        slug="alpha",
-        tool_dependencies=["calculator", "calculator"],
-        mcp_dependencies=["mcp-a", "mcp-a"],
-        skill_dependencies=["beta", "beta"],
-        operator=_user("root"),
-    )
-    assert captured["tool_dependencies"] == ["calculator"]
-    assert captured["mcp_dependencies"] == ["mcp-a"]
-    assert captured["skill_dependencies"] == ["beta"]
-    assert captured["updated_by"] == "root"
-    assert updated.skill_dependencies == ["beta"]
 
 
 def test_skill_dependency_scope_covers_read_and_manage_audiences():
@@ -1638,7 +1471,7 @@ async def test_init_builtin_skills_create_missing(tmp_path: Path, monkeypatch: p
 
     monkeypatch.setattr(svc, "BUILTIN_SKILLS_DIR", source_dir.parent)
 
-    class FakeRepo:
+    class FakeRepo(RealSkillRepository):
         created_payload: dict | None = None
 
         def __init__(self, _db):
@@ -1714,7 +1547,7 @@ async def test_init_builtin_skills_updates_existing_record_and_preserves_disable
 
     captured: dict[str, object] = {}
 
-    class FakeRepo:
+    class FakeRepo(RealSkillRepository):
         def __init__(self, _db):
             pass
 
@@ -1814,7 +1647,7 @@ async def test_init_builtin_skills_rejects_non_builtin_conflict(tmp_path: Path, 
         ],
     )
 
-    class FakeRepo:
+    class FakeRepo(RealSkillRepository):
         def __init__(self, _db):
             pass
 
@@ -1843,7 +1676,7 @@ async def test_update_skill_enabled_allows_builtin(monkeypatch: pytest.MonkeyPat
         assert slug == "reporter"
         return builtin_item
 
-    class FakeRepo:
+    class FakeRepo(RealSkillRepository):
         def __init__(self, _db):
             pass
 
@@ -1854,7 +1687,7 @@ async def test_update_skill_enabled_allows_builtin(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setattr(svc, "get_manageable_skill_or_raise", fake_get_manageable_skill_or_raise)
     monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
-    monkeypatch.setattr(svc, "apply_skill_projection_policy_change", lambda *_args: asyncio.sleep(0))
+    monkeypatch.setattr(svc, "commit_skill_policy_and_refresh_projections", lambda *_args: asyncio.sleep(0))
 
     updated = await svc.update_skill_enabled(_UnitOfWork(), slug="reporter", enabled=False, operator=_user("root"))
 
@@ -1863,37 +1696,48 @@ async def test_update_skill_enabled_allows_builtin(monkeypatch: pytest.MonkeyPat
 
 
 @pytest.mark.asyncio
-async def test_builtin_skill_file_edit_blocked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+async def test_skill_node_mutations_lock_skill_row(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    item = Skill(
+        slug="demo",
+        name="demo",
+        description="demo",
+        source_type="upload",
+        dir_path="shared/demo",
+        share_config={
+            "version": 2,
+            "read_scope": {"access_level": "global", "department_ids": [], "user_uids": []},
+            "manage_scope": {"access_level": "global", "department_ids": [], "user_uids": []},
+        },
+    )
+    locked_reads = []
 
-    target_dir = tmp_path / "skill-sources/shared" / "reporter"
-    target_dir.mkdir(parents=True, exist_ok=True)
-    (target_dir / "SKILL.md").write_text(
-        "---\nname: reporter\ndescription: builtin\n---\n# Reporter\n",
-        encoding="utf-8",
+    class FakeRepo(RealSkillRepository):
+        def __init__(self, _db):
+            pass
+
+        async def get_by_slug(self, slug, *, for_update=False):
+            locked_reads.append((slug, for_update))
+            return item
+
+    monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
+    source = tmp_path / "skill-sources/shared/demo"
+    source.mkdir(parents=True)
+    await edit_service.create_skill_node(
+        _UnitOfWork(),
+        slug="demo",
+        relative_path="notes",
+        is_dir=True,
+        content=None,
+        operator=_user("root", role="admin"),
+    )
+    note = source / "notes" / "note.md"
+    note.write_text("before", encoding="utf-8")
+    await edit_service.delete_skill_node(
+        _UnitOfWork(), slug="demo", relative_path="notes/note.md", operator=_user("root", role="admin")
     )
 
-    builtin_item = Skill(
-        slug="reporter",
-        name="reporter",
-        description="builtin",
-        dir_path="shared/reporter",
-        source_type="builtin",
-    )
-
-    async def fake_get_skill_or_raise(_db, _operator, _slug: str):
-        return builtin_item
-
-    monkeypatch.setattr(svc, "get_manageable_skill_or_raise", fake_get_skill_or_raise)
-
-    with pytest.raises(ValueError, match="内置 skill 不允许直接修改文件"):
-        await svc.update_skill_file(
-            _UnitOfWork(),
-            slug="reporter",
-            relative_path="SKILL.md",
-            content="new content",
-            updated_by="root",
-            operator=_user("root"),
-        )
+    assert locked_reads == [("demo", True), ("demo", True)]
+    assert not note.exists()
 
 
 @pytest.mark.asyncio
@@ -1928,7 +1772,7 @@ async def test_delete_skills_batch_ok(tmp_path: Path, monkeypatch: pytest.Monkey
     db_items = {"skill-a": item_a, "skill-b": item_b}
     deleted_slugs = []
 
-    class FakeRepo:
+    class FakeRepo(RealSkillRepository):
         def __init__(self, _db):
             pass
 
@@ -1986,7 +1830,7 @@ async def test_delete_skill_commits_database_before_removing_trash(tmp_path: Pat
         async def commit(self) -> None:
             events.append("commit")
 
-    class FakeRepo:
+    class FakeRepo(RealSkillRepository):
         def __init__(self, _db):
             pass
 
@@ -2033,9 +1877,9 @@ async def test_personal_skill_list_reads_current_workspace_state(
     root = _personal_skill_root(tmp_path, monkeypatch)
     _write_personal_skill(root, "demo", "first")
 
-    first = await svc.list_personal_skills("user-1")
+    first = await personal_service.list_personal_skills("user-1")
     _write_personal_skill(root, "demo", "changed")
-    current = await svc.list_personal_skills("user-1")
+    current = await personal_service.list_personal_skills("user-1")
 
     assert first[0].description == "first"
     assert current[0].description == "changed"
@@ -2067,16 +1911,16 @@ async def test_personal_skill_overrides_shared_skill_and_drops_dependencies(
         skill_dependencies=["base"],
     )
 
-    class FakeRepo:
+    class FakeRepo(RealSkillRepository):
         def __init__(self, _db):
             pass
 
         async def list_enabled(self):
             return [shared]
 
-    monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
+    monkeypatch.setattr(catalog, "SkillRepository", FakeRepo)
 
-    items = await svc.list_accessible_skills(None, _user("user-1", role="user"))
+    items = await catalog.list_accessible_skills(None, _user("user-1", role="user"))
 
     assert len(items) == 1
     assert items[0].source_scope == "personal"
@@ -2098,8 +1942,8 @@ async def test_personal_skills_are_isolated_by_uid(
     _write_personal_skill(roots["user-a"], "demo", "from a")
     _write_personal_skill(roots["user-b"], "demo", "from b")
 
-    user_a = await svc.list_personal_skills("user-a")
-    user_b = await svc.list_personal_skills("user-b")
+    user_a = await personal_service.list_personal_skills("user-a")
+    user_b = await personal_service.list_personal_skills("user-b")
 
     assert user_a[0].description == "from a"
     assert user_b[0].description == "from b"
@@ -2125,16 +1969,16 @@ async def test_skill_cards_keep_shadowed_shared_item_for_management(
         share_config={"version": 2, "read_scope": None, "manage_scope": None},
     )
 
-    class FakeRepo:
+    class FakeRepo(RealSkillRepository):
         def __init__(self, _db):
             pass
 
         async def list_all(self):
             return [shared]
 
-    monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
+    monkeypatch.setattr(catalog, "SkillRepository", FakeRepo)
 
-    cards = await svc.list_skill_cards_for_user(None, _user("user-1", role="user"))
+    cards = await catalog.list_skill_cards_for_user(None, _user("user-1", role="user"))
 
     assert [(item.slug, item.source_scope) for item in cards] == [
         ("demo", "personal"),
@@ -2145,31 +1989,30 @@ async def test_skill_cards_keep_shadowed_shared_item_for_management(
 
 
 @pytest.mark.asyncio
-async def test_confirm_personal_skill_draft_uses_original_slug_without_database(
+async def test_confirm_personal_skill_draft_uses_package_slug_without_database(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
     personal_root = _personal_skill_root(tmp_path, monkeypatch)
     draft_id = "11111111-1111-1111-1111-111111111111"
     draft_dir = tmp_path / "runtime/skill_import_drafts" / draft_id
-    item_dir = draft_dir / "items" / "item-1"
+    item_dir = draft_dir / "items" / ("a" * 32)
     item_dir.mkdir(parents=True)
     (item_dir / "SKILL.md").write_text(
         "---\nname: demo\ndescription: personal demo\n---\n# Demo\n",
         encoding="utf-8",
     )
     (draft_dir / "metadata.json").write_text(
-        svc.json.dumps(
+        json.dumps(
             {
                 "created_by": "user-1",
                 "source_type": "remote",
-                "expires_at": svc.time.time() + 300,
+                "expires_at": time.time() + 300,
+                "failures": [],
                 "items": [
                     {
-                        "slug": "demo-v2",
-                        "original_name": "demo",
-                        "source_dir": "items/item-1",
-                        "success": True,
+                        "slug": "demo",
+                        "source_dir": f"items/{'a' * 32}",
                     }
                 ],
             }
@@ -2179,15 +2022,15 @@ async def test_confirm_personal_skill_draft_uses_original_slug_without_database(
 
     monkeypatch.setenv("YUXI_RUNTIME_DIR", str(tmp_path / "runtime"))
 
-    results = await svc.confirm_personal_skill_install_draft(
+    results = await personal_service.confirm_personal_skill_install_draft(
         draft_id=draft_id,
-        slugs=["demo-v2"],
+        slugs=["demo"],
         operator=_user("user-1", role="user"),
     )
 
     assert results[0]["success"] is True
     assert results[0]["slug"] == "demo"
-    assert results[0]["requested_slug"] == "demo-v2"
+    assert results[0]["requested_slug"] == "demo"
     assert (personal_root / "demo" / "SKILL.md").exists()
     assert not draft_dir.exists()
 
@@ -2207,7 +2050,7 @@ def test_resolved_shared_skill_captures_original_version_and_hash(monkeypatch, t
         content_hash="hash-v1",
     )
     monkeypatch.setattr(svc, "_resolve_skill_dir", lambda item: tmp_path)
-    resolved = svc._resolved_shared_skill(row)
+    resolved = svc.resolved_shared_skill(row)
     row.version, row.content_hash = "v2", "hash-v2"
     assert resolved.version == "v1"
     assert resolved.content_hash == "hash-v1"

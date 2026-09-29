@@ -14,8 +14,8 @@ from yuxi.agents.backends.paths import VIRTUAL_PATH_PREFIX
 from yuxi.agents.backends.sandbox import ProvisionerSandboxBackend
 from yuxi.agents.backends.sandbox.download import download_sandbox_directory
 from yuxi.agents.backends.sandbox.provider import get_sandbox_provider
-from yuxi.agents.skills.service import is_valid_skill_slug
 from yuxi.config.options import remote_skill_source_policy
+from yuxi.services.skills.package import is_valid_skill_slug
 from yuxi.utils.logging_config import logger
 
 ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
@@ -27,14 +27,143 @@ INVALID_SOURCE_MESSAGE = "source 仅支持远程 Skill 来源白名单中的 HTT
 REMOTE_SKILL_SANDBOX_ROOT = f"{VIRTUAL_PATH_PREFIX.rstrip('/')}/outputs"
 
 
+@dataclass(frozen=True, slots=True)
+class DownloadedSkill:
+    """已下载的目录；包格式由草稿或安装边界校验。"""
+
+    slug: str
+    source_dir: Path
+
+
+@dataclass(frozen=True, slots=True)
+class SkillDownloadFailure:
+    """一个请求条目的获取失败原因。"""
+
+    slug: str
+    error: str
+
+
 @dataclass(slots=True)
-class RemoteSkillsBatchPreparation:
+class RemoteSkillDownloads:
+    """一次远程批量获取的临时目录与逐项结果。"""
+
     temp_home: str | None
-    results: list[dict]
+    results: list[DownloadedSkill | SkillDownloadFailure]
 
     async def cleanup(self) -> None:
+        """释放本批获取持有的宿主临时目录。"""
         if self.temp_home:
             await asyncio.to_thread(shutil.rmtree, self.temp_home, ignore_errors=True)
+
+
+async def list_remote_skills(source: str) -> list[dict[str, str]]:
+    """列出允许来源中的可安装 Skill。"""
+    policy = await remote_skill_source_policy.get()
+    normalized_source = _normalize_source(source, policy["allowed_hosts"])
+
+    sandbox = _RemoteSkillSandbox.create()
+    try:
+        output = await sandbox.run(["npx", "-y", "skills", "add", normalized_source, "--list"])
+    finally:
+        await sandbox.cleanup()
+
+    skills = _parse_available_skills(output)
+    if not skills:
+        raise ValueError("未发现可安装的 skills")
+    return skills
+
+
+async def download_remote_skills(
+    *,
+    source: str,
+    skills: list[str],
+) -> RemoteSkillDownloads:
+    """批量从远程仓库拉取 skill 目录，但不写数据库。"""
+    policy = await remote_skill_source_policy.get()
+    normalized_source = _normalize_source(source, policy["allowed_hosts"])
+    if not skills:
+        raise ValueError("skills 列表不能为空")
+
+    results: dict[int, DownloadedSkill | SkillDownloadFailure] = {}
+    requests: list[tuple[int, str]] = []
+    for index, skill in enumerate(skills):
+        try:
+            requests.append((index, _normalize_skill_name(skill)))
+        except ValueError as exc:
+            results[index] = SkillDownloadFailure(slug=skill, error=str(exc))
+
+    if not requests:
+        return RemoteSkillDownloads(temp_home=None, results=list(results.values()))
+
+    sandbox = _RemoteSkillSandbox.create()
+    temp_home: str | None = None
+    try:
+        try:
+            temp_home = tempfile.mkdtemp(prefix=".remote-skills-")
+            skill_args: list[str] = []
+            for _index, name in requests:
+                skill_args.extend(["--skill", name])
+
+            cli_failed = False
+            try:
+                await sandbox.run(
+                    [
+                        "npx",
+                        "-y",
+                        "skills",
+                        "add",
+                        normalized_source,
+                        *skill_args,
+                        "-g",
+                        "-y",
+                        "--copy",
+                    ]
+                )
+            except ValueError:
+                # CLI 对不匹配的 skill 会退出码非零，但已安装的目录仍在
+                cli_failed = True
+
+            downloaded_dirs: dict[str, Path | None] = {}
+            for original_index, name in requests:
+                installed_dir = Path(temp_home) / name
+                if name not in downloaded_dirs:
+                    try:
+                        await sandbox.download_skill(name, installed_dir)
+                        downloaded_dirs[name] = installed_dir
+                    except ValueError:
+                        downloaded_dirs[name] = None
+                installed_dir = downloaded_dirs[name]
+                if installed_dir is None:
+                    error_msg = "CLI 安装失败" if cli_failed else "skills CLI 未生成预期的技能目录"
+                    results[original_index] = SkillDownloadFailure(slug=name, error=error_msg)
+                    continue
+                results[original_index] = DownloadedSkill(slug=name, source_dir=installed_dir)
+
+        finally:
+            await sandbox.cleanup()
+    except BaseException:
+        if temp_home:
+            await asyncio.to_thread(shutil.rmtree, temp_home, ignore_errors=True)
+        raise
+
+    return RemoteSkillDownloads(temp_home=temp_home, results=[results[index] for index in range(len(skills))])
+
+
+async def search_remote_skills(query: str) -> list[dict[str, str]]:
+    """使用 npx skills find <query> 搜索远程 skills。"""
+    query_val = str(query or "").strip()
+    if not query_val:
+        return []
+    if any(ch in query_val for ch in ("\n", "\r", "\x00")):
+        raise ValueError("搜索关键字包含非法字符")
+
+    sandbox = _RemoteSkillSandbox.create()
+    try:
+        output = await sandbox.run(["npx", "-y", "skills", "find", query_val])
+    finally:
+        await sandbox.cleanup()
+
+    return _parse_search_skills(output)
 
 
 @dataclass(slots=True)
@@ -206,103 +335,6 @@ def _parse_available_skills(output: str) -> list[dict[str, str]]:
     return items
 
 
-async def list_remote_skills(source: str) -> list[dict[str, str]]:
-    policy = await remote_skill_source_policy.get()
-    normalized_source = _normalize_source(source, policy["allowed_hosts"])
-
-    sandbox = _RemoteSkillSandbox.create()
-    try:
-        output = await sandbox.run(["npx", "-y", "skills", "add", normalized_source, "--list"])
-    finally:
-        await sandbox.cleanup()
-
-    skills = _parse_available_skills(output)
-    if not skills:
-        raise ValueError("未发现可安装的 skills")
-    return skills
-
-
-async def prepare_remote_skills_batch(
-    *,
-    source: str,
-    skills: list[str],
-) -> RemoteSkillsBatchPreparation:
-    """批量从远程仓库拉取 skill 目录，但不写数据库。"""
-    policy = await remote_skill_source_policy.get()
-    normalized_source = _normalize_source(source, policy["allowed_hosts"])
-    if not skills:
-        raise ValueError("skills 列表不能为空")
-
-    # 预分配结果数组（按请求顺序），校验非法名并记录失败
-    results: list[dict] = [{"slug": "", "success": False, "error": "unset"} for _ in range(len(skills))]
-    normalized_skills: list[str] = []
-    valid_indices: list[int] = []
-    for i, skill in enumerate(skills):
-        try:
-            normalized_skills.append(_normalize_skill_name(skill))
-            valid_indices.append(i)
-        except ValueError as e:
-            results[i] = {"slug": skill, "success": False, "error": str(e)}
-
-    if not normalized_skills:
-        return RemoteSkillsBatchPreparation(temp_home=None, results=results)
-
-    sandbox = _RemoteSkillSandbox.create()
-    temp_home: str | None = None
-    keep_temp_home = False
-    try:
-        try:
-            temp_home = tempfile.mkdtemp(prefix=".remote-skills-")
-            skill_args: list[str] = []
-            for name in normalized_skills:
-                skill_args.extend(["--skill", name])
-
-            cli_failed = False
-            try:
-                await sandbox.run(
-                    [
-                        "npx",
-                        "-y",
-                        "skills",
-                        "add",
-                        normalized_source,
-                        *skill_args,
-                        "-g",
-                        "-y",
-                        "--copy",
-                    ]
-                )
-            except ValueError:
-                # CLI 对不匹配的 skill 会退出码非零，但已安装的目录仍在
-                cli_failed = True
-
-            downloaded_dirs: dict[str, Path | None] = {}
-            for original_index, name in zip(valid_indices, normalized_skills):
-                installed_dir = Path(temp_home) / name
-                if name not in downloaded_dirs:
-                    try:
-                        await sandbox.download_skill(name, installed_dir)
-                        downloaded_dirs[name] = installed_dir
-                    except ValueError:
-                        downloaded_dirs[name] = None
-                installed_dir = downloaded_dirs[name]
-                if installed_dir is None:
-                    error_msg = "CLI 安装失败" if cli_failed else "skills CLI 未生成预期的技能目录"
-                    results[original_index] = {"slug": name, "success": False, "error": error_msg}
-                    continue
-                results[original_index] = {"slug": name, "success": True, "source_dir": installed_dir}
-
-            preparation = RemoteSkillsBatchPreparation(temp_home=temp_home, results=results)
-        finally:
-            await sandbox.cleanup()
-
-        keep_temp_home = True
-        return preparation
-    finally:
-        if temp_home and not keep_temp_home:
-            await asyncio.to_thread(shutil.rmtree, temp_home, ignore_errors=True)
-
-
 def _parse_search_skills(output: str) -> list[dict[str, str]]:
     """解析 npx skills find 命令的输出。"""
     lines = _clean_cli_output(output)
@@ -326,20 +358,3 @@ def _parse_search_skills(output: str) -> list[dict[str, str]]:
                 }
             )
     return results
-
-
-async def search_remote_skills(query: str) -> list[dict[str, str]]:
-    """使用 npx skills find <query> 搜索远程 skills。"""
-    query_val = str(query or "").strip()
-    if not query_val:
-        return []
-    if any(ch in query_val for ch in ("\n", "\r", "\x00")):
-        raise ValueError("搜索关键字包含非法字符")
-
-    sandbox = _RemoteSkillSandbox.create()
-    try:
-        output = await sandbox.run(["npx", "-y", "skills", "find", query_val])
-    finally:
-        await sandbox.cleanup()
-
-    return _parse_search_skills(output)

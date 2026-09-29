@@ -3,7 +3,8 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.storage.postgres.models_business import Skill
+from yuxi.permissions import ResourcePermission, resolve_skill_permission
+from yuxi.storage.postgres.models_business import Skill, User
 from yuxi.utils.datetime_utils import utc_now_naive
 
 
@@ -11,20 +12,76 @@ class SkillRepository:
     def __init__(self, db_session: AsyncSession):
         self.db = db_session
 
+    async def list_enabled_readable(self, user: User) -> list[Skill]:
+        """只返回当前用户可使用的已启用共享索引。"""
+        return [
+            item
+            for item in await self.list_enabled()
+            if resolve_skill_permission(user, item) != ResourcePermission.NONE
+        ]
+
+    async def list_authorized_for_projection(self, user: User) -> list[Skill]:
+        """为投影锁定阶段包含当前用户可读的停用项。"""
+        return [
+            item for item in await self.list_all() if resolve_skill_permission(user, item) != ResourcePermission.NONE
+        ]
+
+    async def list_visible_for_management(self, user: User) -> list[Skill]:
+        """返回可管理项和可读取的已启用项。"""
+        visible = []
+        for item in await self.list_all():
+            permission = resolve_skill_permission(user, item)
+            can_manage_builtin = item.source_type == "builtin" and user.role in {"admin", "superadmin"}
+            if (
+                permission == ResourcePermission.MANAGE
+                or can_manage_builtin
+                or (item.enabled and permission != ResourcePermission.NONE)
+            ):
+                visible.append(item)
+        return visible
+
+    async def lock_rows_for_read(self, ids: list[int]) -> list[Skill]:
+        """只锁定调用方已筛出的共享 Skill，并刷新会话内旧值。"""
+        if not ids:
+            return []
+        stmt = (
+            select(Skill)
+            .where(Skill.id.in_(ids))
+            .order_by(Skill.id)
+            .with_for_update(read=True)
+            .execution_options(populate_existing=True)
+        )
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_by_slug_for_read(self, slug: str) -> Skill | None:
+        """读取文件期间取得单个共享 Skill 的共享行锁。"""
+        stmt = (
+            select(Skill).where(Skill.slug == slug).with_for_update(read=True).execution_options(populate_existing=True)
+        )
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def list_builtin(self) -> list[Skill]:
+        """在数据库中过滤内置来源，保持索引的更新时间排序。"""
+        stmt = select(Skill).where(Skill.source_type == "builtin").order_by(Skill.updated_at.desc(), Skill.id.desc())
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
     async def list_all(self) -> list[Skill]:
-        result = await self.db.execute(select(Skill).order_by(Skill.updated_at.desc(), Skill.id.desc()))
+        stmt = select(Skill).order_by(Skill.updated_at.desc(), Skill.id.desc())
+        result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
     async def list_enabled(self) -> list[Skill]:
-        result = await self.db.execute(
-            select(Skill).where(Skill.enabled.is_(True)).order_by(Skill.updated_at.desc(), Skill.id.desc())
-        )
+        stmt = select(Skill).where(Skill.enabled.is_(True)).order_by(Skill.updated_at.desc(), Skill.id.desc())
+        result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
     async def get_by_slug(self, slug: str, *, for_update: bool = False) -> Skill | None:
         stmt = select(Skill).where(Skill.slug == slug)
         if for_update:
-            stmt = stmt.with_for_update()
+            stmt = stmt.with_for_update().execution_options(populate_existing=True)
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 

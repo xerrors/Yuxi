@@ -9,15 +9,11 @@ from pathlib import Path
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.agents.skills.repository import SkillRepository
-from yuxi.agents.skills.service import (
-    SKILL_STORAGE_LOCK,
-    copy_skill_tree_no_symlinks,
-    get_skills_root_dir,
-    parse_skill_dir_metadata,
-    skill_dirs_equal,
-)
 from yuxi.config import get_legacy_storage_dir, get_skill_data_dir
+from yuxi.repositories.skill_repository import SkillRepository
+from yuxi.services.skills.package import copy_skill_tree_no_symlinks, parse_skill_dir_metadata
+from yuxi.services.skills.projection import skill_dirs_equal
+from yuxi.services.skills.shared import SKILL_STORAGE_LOCK, get_skills_root_dir
 
 _MIGRATION_MARKER = ".legacy-migration-complete"
 

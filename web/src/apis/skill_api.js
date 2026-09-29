@@ -7,10 +7,7 @@ export const listSkills = async () => {
   return apiGet(BASE_URL)
 }
 
-export const listSkillCards = async ({ refreshPersonal = false } = {}) => {
-  const query = refreshPersonal ? '?refresh_personal=true' : ''
-  return apiGet(`${USER_BASE_URL}${query}`)
-}
+export const listSkillCards = async () => apiGet(USER_BASE_URL)
 
 export const listAccessibleSkills = async () => {
   return apiGet(`${USER_BASE_URL}/accessible`)

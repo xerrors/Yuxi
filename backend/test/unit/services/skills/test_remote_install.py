@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from yuxi.agents.skills import remote_install as svc
+from yuxi.services.skills import remote as svc
 
 
 @pytest.fixture(autouse=True)
@@ -206,18 +206,18 @@ def test_remote_skill_sandbox_uses_unique_workspace_uid(monkeypatch: pytest.Monk
 
 
 @pytest.mark.asyncio
-async def test_prepare_remote_skills_batch_downloads_duplicate_skill_once(monkeypatch: pytest.MonkeyPatch):
+async def test_download_remote_skills_downloads_duplicate_skill_once(monkeypatch: pytest.MonkeyPatch):
     sandbox = _FakeRemoteSkillSandbox(available={"frontend-design"})
     _use_fake_sandbox(monkeypatch, sandbox)
 
-    preparation = await svc.prepare_remote_skills_batch(
+    preparation = await svc.download_remote_skills(
         source="anthropics/skills",
         skills=["frontend-design", "frontend-design"],
     )
     try:
-        assert [item["success"] for item in preparation.results] == [True, True]
+        assert [isinstance(item, svc.DownloadedSkill) for item in preparation.results] == [True, True]
         assert sandbox.download_calls == ["frontend-design"]
-        assert preparation.results[0]["source_dir"] == preparation.results[1]["source_dir"]
+        assert preparation.results[0].source_dir == preparation.results[1].source_dir
     finally:
         await preparation.cleanup()
 
@@ -248,7 +248,7 @@ async def test_prepare_remote_skills_batch_downloads_duplicate_skill_once(monkey
         ),
     ],
 )
-async def test_prepare_remote_skills_batch_preserves_partial_results(
+async def test_download_remote_skills_preserves_partial_results(
     monkeypatch: pytest.MonkeyPatch,
     skills: list[str],
     available: set[str],
@@ -258,10 +258,15 @@ async def test_prepare_remote_skills_batch_preserves_partial_results(
     sandbox = _FakeRemoteSkillSandbox(available=available)
     _use_fake_sandbox(monkeypatch, sandbox)
 
-    preparation = await svc.prepare_remote_skills_batch(source="test/repo", skills=skills)
+    preparation = await svc.download_remote_skills(source="test/repo", skills=skills)
     try:
         results = [
-            {key: value for key, value in result.items() if key != "source_dir"} for result in preparation.results
+            (
+                {"slug": result.slug, "success": False, "error": result.error}
+                if isinstance(result, svc.SkillDownloadFailure)
+                else {"slug": result.slug, "success": True}
+            )
+            for result in preparation.results
         ]
         assert results == expected_results
         assert len(sandbox.calls) == 1
@@ -274,7 +279,7 @@ async def test_prepare_remote_skills_batch_preserves_partial_results(
 
 
 @pytest.mark.asyncio
-async def test_prepare_remote_skills_batch_removes_temp_home_when_sandbox_cleanup_fails(
+async def test_download_remote_skills_removes_temp_home_when_sandbox_cleanup_fails(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ):
@@ -293,7 +298,7 @@ async def test_prepare_remote_skills_batch_removes_temp_home_when_sandbox_cleanu
     monkeypatch.setattr(svc.tempfile, "mkdtemp", make_temp_home)
 
     with pytest.raises(RuntimeError, match="cleanup failed"):
-        await svc.prepare_remote_skills_batch(
+        await svc.download_remote_skills(
             source="anthropics/skills",
             skills=["frontend-design"],
         )
@@ -302,7 +307,7 @@ async def test_prepare_remote_skills_batch_removes_temp_home_when_sandbox_cleanu
 
 
 @pytest.mark.asyncio
-async def test_prepare_remote_skills_batch_creates_sandbox_before_temp_home(monkeypatch: pytest.MonkeyPatch):
+async def test_download_remote_skills_creates_sandbox_before_temp_home(monkeypatch: pytest.MonkeyPatch):
     def fail_create():
         raise RuntimeError("provider init failed")
 
@@ -314,7 +319,7 @@ async def test_prepare_remote_skills_batch_creates_sandbox_before_temp_home(monk
     )
 
     with pytest.raises(RuntimeError, match="provider init failed"):
-        await svc.prepare_remote_skills_batch(source="anthropics/skills", skills=["frontend-design"])
+        await svc.download_remote_skills(source="anthropics/skills", skills=["frontend-design"])
 
 
 @pytest.mark.asyncio

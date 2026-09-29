@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
-
 import importlib
 import sys
 import types
 from dataclasses import dataclass, field
+from unittest.mock import AsyncMock
 
 import pytest
 from yuxi.knowledge.read_models import KnowledgeBaseSummary
@@ -225,8 +224,12 @@ async def test_normalize_agent_context_config_defaults_mcps_off_and_filters_expl
     )
     monkeypatch.setitem(
         sys.modules,
-        "yuxi.agents.skills.service",
-        types.SimpleNamespace(list_accessible_shared_skills=fake_list_skills),
+        "yuxi.repositories.skill_repository",
+        types.SimpleNamespace(
+            SkillRepository=lambda db: types.SimpleNamespace(
+                list_enabled_readable=lambda user: fake_list_skills(db, user)
+            )
+        ),
     )
     monkeypatch.setitem(
         sys.modules,
@@ -439,8 +442,12 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
     )
     monkeypatch.setitem(
         sys.modules,
-        "yuxi.agents.skills.service",
-        types.SimpleNamespace(list_accessible_shared_skills=fake_list_skills),
+        "yuxi.repositories.skill_repository",
+        types.SimpleNamespace(
+            SkillRepository=lambda db: types.SimpleNamespace(
+                list_enabled_readable=lambda user: fake_list_skills(db, user)
+            )
+        ),
     )
     monkeypatch.setitem(
         sys.modules,
@@ -571,8 +578,8 @@ def test_persistent_config_cannot_replace_runtime_identity():
 @pytest.mark.asyncio
 async def test_normalized_persistent_config_drops_subagent_runtime_flags():
     """状态查询与主动压缩的配置归一化不接受运行标记。"""
-    from yuxi.agents.context import normalize_agent_context_config
     from yuxi.agents.buildin.subagent.context import SubAgentContext
+    from yuxi.agents.context import normalize_agent_context_config
 
     normalized = await normalize_agent_context_config(
         {
@@ -657,6 +664,7 @@ class ResourceFieldContext(BaseContext):
 async def test_resource_field_declarations_drive_write_runtime_and_schema(monkeypatch):
     """新增声明自动参与写入校验和展开，普通列表保持原样。"""
     from types import SimpleNamespace
+
     from yuxi.repositories.agent_repository import merge_agent_config_json
     from yuxi.services.agent_config_service import prepare_agent_config_write
 

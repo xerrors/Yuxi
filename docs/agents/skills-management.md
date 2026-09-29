@@ -77,7 +77,9 @@ skill_dependencies: []
 4. **在线编辑**：编辑已有且有管理权限的共享 Skill 文件和依赖。
 5. **Agent 内安装**：主智能体使用 `install_skill` 把 Skill 安装到当前用户的个人来源；子智能体不能使用该工具。
 
-上传和远程安装都先解析为草稿，再选择个人或共享位置并确认。确认前可以检查名称、说明、文件和依赖；取消草稿不会写入正式 Skill。
+上传和远程安装都先解析为草稿，再选择个人或共享位置并确认。草稿中的可安装条目只包含已解析的临时包；远程拉取或解析失败会单独显示，不能被确认安装。确认前可以检查名称、说明、文件和依赖；取消草稿不会写入正式 Skill。
+
+有管理权限的用户可在共享 Skill 详情页编辑文本文件。保存 `SKILL.md` 时，根文件的名称、描述及依赖声明会同步到数据库索引；“配置”中的依赖选择也会回写根文件。每次保存都使用打开文件时取得的修订值；如果其他人已修改该文件，页面会拒绝覆盖并保留当前草稿，用户需核对最新内容后重试。切换文件或离开页面时，未保存的修改会触发确认。共享范围和启停状态仍在配置页分别保存。新的共享内容在后续 Agent Run 准备时生效；已准备 Run 的预加载内容保留原有快照，按需读取的用户投影可随之后的编辑刷新。
 
 ### 远程来源限制
 
@@ -161,4 +163,4 @@ Skill 的选择影响 Prompt 和工具激活；共享投影按用户授权集合
 - 脚本按不可信输入处理，不读取或输出运行环境中的秘密。
 - 修改共享 Skill 的依赖、范围或文件后，用一个真实 Agent Run 验证模型可见工具和最终产物。
 
-实现入口见 [Skill 服务](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/agents/skills/service.py)、[运行时解析](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/agents/skills/runtime.py) 和 [Skills middleware](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/agents/middlewares/skills.py)。
+实现入口见 [包格式解析](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/services/skills/package.py)、[安装草稿生命周期](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/services/skills/draft.py)、[共享 Skill 索引与安装](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/services/skills/shared.py)、[共享文件编辑](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/services/skills/edit.py)、[个人 Skill 安装与文件操作](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/services/skills/personal.py)、[用户投影](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/services/skills/projection.py)、[运行时解析](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/agents/skills/runtime.py) 和 [Skills middleware](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/agents/middlewares/skills.py)。

@@ -17,7 +17,6 @@ from sqlalchemy.exc import OperationalError
 from yuxi.agents.backends.sandbox.provider import get_sandbox_provider
 from yuxi.agents.callbacks.model_request_timing import FirstModelRequestRecorder
 from yuxi.agents.mcp.service import ensure_builtin_mcp_servers_in_db
-from yuxi.agents.skills.service import init_builtin_skills
 from yuxi.config import get_int_env
 from yuxi.repositories.agent_run_repository import TERMINAL_RUN_STATUSES, AgentRunRepository
 from yuxi.services.agent_request_queue_service import (
@@ -45,6 +44,7 @@ from yuxi.services.scheduled_agent_service import (
     claim_and_dispatch_due_jobs,
     recover_scheduled_dispatches,
 )
+from yuxi.services.skills.shared import init_builtin_skills
 from yuxi.services.task_queue_service import (
     TASK_RECONCILIATION_HEALTH_KEY,
     TASK_RECONCILIATION_HEALTH_TTL_SECONDS,

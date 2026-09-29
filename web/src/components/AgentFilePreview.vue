@@ -147,6 +147,16 @@
     <div v-if="canEdit && editMode === 'edit'" class="edit-floating-actions">
       <span v-if="draftChanged" class="edit-status-badge">未保存</span>
       <button
+        class="edit-floating-btn edit-floating-wrap-btn"
+        :class="{ active: lineWrapEnabled }"
+        :aria-pressed="lineWrapEnabled"
+        :title="lineWrapEnabled ? '关闭自动换行' : '开启自动换行'"
+        :aria-label="lineWrapEnabled ? '关闭自动换行' : '开启自动换行'"
+        @click="lineWrapEnabled = !lineWrapEnabled"
+      >
+        <WrapText :size="14" />
+      </button>
+      <button
         v-if="draftChanged"
         class="edit-floating-btn edit-floating-btn-primary"
         :disabled="saving"
@@ -182,7 +192,9 @@
         <textarea
           v-model="draftContent"
           class="file-edit-textarea"
+          :class="{ 'no-wrap': !lineWrapEnabled }"
           :disabled="saving"
+          :wrap="lineWrapEnabled ? 'soft' : 'off'"
           spellcheck="false"
         />
       </template>
@@ -370,6 +382,7 @@ import {
   PanelRight,
   FilePen,
   Save,
+  WrapText,
   X,
   ZoomIn,
   ZoomOut
@@ -506,6 +519,7 @@ const currentErrorMessage = computed(() => {
 const htmlPreviewMode = ref('render')
 const editMode = ref('preview')
 const draftContent = ref('')
+const lineWrapEnabled = ref(true)
 const fullscreenPreviewVisible = ref(false)
 const htmlPreviewRenderKey = ref(0)
 const htmlPreviewScale = ref(HTML_PREVIEW_DEFAULT_SCALE)
@@ -613,7 +627,11 @@ const startEditing = () => {
   editMode.value = 'edit'
 }
 
-defineExpose({ startEditing })
+defineExpose({
+  startEditing,
+  discardChanges: syncDraftContent,
+  hasUnsavedChanges: () => editMode.value === 'edit' && draftChanged.value
+})
 
 const requestSave = () => {
   if (!canEdit.value || props.saving) return
@@ -857,7 +875,12 @@ onUnmounted(() => {
   z-index: 5;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--gray-150);
+  border-radius: 999px;
+  background: var(--gray-0);
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.14);
   pointer-events: none;
 }
 
@@ -869,14 +892,14 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   height: 24px;
-  padding: 0 8px;
-  border: 1px solid var(--color-warning-100);
+  margin: 0 4px;
+  padding: 0 6px;
+  border: 0;
   border-radius: 999px;
-  background: var(--color-warning-50);
+  background: var(--gray-50);
   font-size: 11px;
   line-height: 1;
-  color: var(--color-warning-700);
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+  color: var(--gray-700);
   pointer-events: auto;
   white-space: nowrap;
 }
@@ -888,12 +911,11 @@ onUnmounted(() => {
   width: 30px;
   height: 30px;
   padding: 0;
-  border: 1px solid var(--gray-150);
-  border-radius: 50%;
-  background: var(--gray-0);
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
   color: var(--gray-700);
   cursor: pointer;
-  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.14);
   pointer-events: auto;
   transition:
     background-color 0.15s ease,
@@ -901,7 +923,6 @@ onUnmounted(() => {
     color 0.15s ease;
 
   &:hover:not(:disabled) {
-    border-color: var(--gray-250);
     background: var(--gray-50);
     color: var(--gray-900);
   }
@@ -912,34 +933,35 @@ onUnmounted(() => {
     opacity: 0.7;
 
     &:hover {
-      border-color: var(--gray-150);
-      background: var(--gray-0);
+      background: transparent;
     }
   }
 }
 
 .edit-floating-btn-primary {
-  background: var(--color-primary-500);
-  border-color: var(--color-primary-500);
-  color: #fff;
+  color: var(--color-primary-600);
 
   &:hover:not(:disabled) {
-    background: var(--color-primary-700);
-    border-color: var(--color-primary-700);
-    color: #fff;
+    background: var(--color-primary-50);
+    color: var(--color-primary-700);
   }
 
   &:disabled {
-    background: var(--color-primary-500);
-    border-color: var(--color-primary-500);
-    color: rgba(255, 255, 255, 0.5);
+    background: transparent;
+    color: var(--gray-400);
     cursor: not-allowed;
 
     &:hover {
-      background: var(--color-primary-500);
-      border-color: var(--color-primary-500);
-      color: rgba(255, 255, 255, 0.5);
+      background: transparent;
+      color: var(--gray-400);
     }
+  }
+}
+
+.edit-floating-wrap-btn {
+  &.active {
+    background: var(--main-10);
+    color: var(--main-color);
   }
 }
 
@@ -955,7 +977,8 @@ onUnmounted(() => {
   width: 100%;
   min-height: 100%;
   padding: 12px;
-  border: 0;
+  border: 1px solid var(--gray-150);
+  border-radius: 8px;
   outline: none;
   resize: none;
   background: var(--gray-0);
@@ -963,6 +986,11 @@ onUnmounted(() => {
   font-family: 'JetBrains Mono', 'Fira Code', 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
   font-size: 13px;
   line-height: 1.5;
+
+  &.no-wrap {
+    white-space: pre;
+    overflow-x: auto;
+  }
 }
 
 .file-edit-textarea:disabled {

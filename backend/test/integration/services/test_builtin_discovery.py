@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.agents import presets
 from yuxi.agents.buildin import AgentBackendNotFoundError
-from yuxi.agents.skills import service as skill_service
+from yuxi.services.skills import shared as skill_service
 from yuxi.services.agent_config_service import initialize_agent_presets
 from yuxi.storage.postgres.models_business import Agent, Skill
 

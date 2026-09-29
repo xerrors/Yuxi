@@ -39,10 +39,10 @@ Yuxi 只交付完整知识能力路径。API 始终注册 `external_kb`、`knowl
 
 ### `backend/package/yuxi`
 
-- `agents` 定义 LangGraph 智能体体系。`BaseAgent` 是智能体基类，`BaseContext` 是运行上下文；`buildin/chatbot` 和 `buildin/subagent` 放由 `buildin.BUILTIN_BACKENDS` 显式注册、按需创建的无共享运行状态后端；`presets` 按模块发现预置角色定义，由 service 统一初始化、repository 保留既有配置；`middlewares` 组合文件系统、Skills、SubAgent、摘要、审批、模型兼容和用量统计；`toolkits` 管理本地工具；`backends` 对接沙盒、知识库和 Skills 文件系统；`skills` 与 `mcp` 管理扩展能力及其运行时加载。
+- `agents` 定义 LangGraph 智能体体系。`BaseAgent` 是智能体基类，`BaseContext` 是运行上下文；`buildin/chatbot` 和 `buildin/subagent` 放由 `buildin.BUILTIN_BACKENDS` 显式注册、按需创建的无共享运行状态后端；`presets` 按模块发现预置角色定义，由 service 统一初始化、repository 保留既有配置；`middlewares` 组合文件系统、Skills、SubAgent、摘要、审批、模型兼容和用量统计；`toolkits` 管理本地工具；`backends` 对接沙盒、知识库和 Skills 文件系统；`skills` 保留运行时解析与内置包，`mcp` 管理 MCP 扩展能力。
 - `workspace` 是持久化 UserWorkspace Owner。`paths.py` 拥有 uid、宿主根和数据库 `projects/<managed-name>` 映射，`filesystem.py` 拥有 no-follow 文件原语，`workdir.py` 提供以一个 Project 为根的持久化视图，`preview.py` 拥有 UserWorkspace 文件预览和 runtime 本地 Office 缓存。Agent Backend 单独拥有 `/home/gem/...` runtime 路径。
-- `services` 是用例层。智能体主链路重点分为请求接入与排队、Run 生命周期、运行时配置、worker 执行和 SubAgent 调用；聊天历史、附件、工作区、文件预览、评估、认证和观测等跨模块流程也从这里找入口。
-- `repositories` 是 PostgreSQL 访问边界，封装业务对象、知识库元数据、AgentRun、请求队列、Task 和扩展配置查询。路由不应绕过 repository 直接拼装持久化逻辑。
+- `services` 是用例层。智能体主链路重点分为请求接入与排队、Run 生命周期、运行时配置、worker 执行和 SubAgent 调用；聊天历史、附件、工作区、文件预览、评估、认证和观测等跨模块流程也从这里找入口。`services/skills` 拥有 Skill 草稿生命周期、远程获取、个人与共享安装、编辑和投影；`catalog.py` 组合个人与共享查询，`package.py` 集中包解析、快照复制与包内 slug 改写，`resolved.py` 保存最终来源描述；Agent 工具通过个人 service 执行安装。
+- `repositories` 是 PostgreSQL 访问边界，封装业务对象、知识库元数据、AgentRun、请求队列、Task 和扩展配置查询；`skill_repository.py` 持有共享 Skill 索引查询。路由不应绕过 repository 直接拼装持久化逻辑。
 - `storage/postgres` 管理 SQLAlchemy 模型、业务连接池和 LangGraph checkpoint 连接池。
 - `storage/redis` 管理同步/异步 Redis 客户端和 ARQ 连接参数；业务 key、事件格式和缓存语义留在各自服务中。
 - `storage/minio` 管理对象上传、下载和临时文件访问。
@@ -110,7 +110,7 @@ Yuxi 只交付完整知识能力路径。API 始终注册 `external_kb`、`knowl
 - 智能体能力通过 context、middleware、toolkits、Skills、MCP 和 backends 组合；不要把知识库、沙盒或扩展逻辑硬编码进单个页面或路由。
 - Skill 的依赖工具只有在对应 Skill 被显式预加载或动态激活后才对模型开放；基础工具与受 Skill 门控的工具保持边界。
 - Shipping 进程始终装配知识库、图谱和评估能力；解析器等只服务实际动作的重运行时继续保持惰性加载。
-- 文件边界只使用三种跨层路径：数据库中的 Project `workdir_path`、Viewer 当前 scope 相对 `/foo`、Agent/artifact runtime 绝对 `/home/gem/user-data/...`；宿主 `Path` 由 `yuxi.workspace` 或显式 v0.7.1 storage migration 内部持有，普通 Service/Repository 不得取得。
+- 文件边界只使用三种跨层路径：数据库中的 Project `workdir_path`、Viewer 当前 scope 相对 `/foo`、Agent/artifact runtime 绝对 `/home/gem/user-data/...`；普通 Service/Repository 不得取得 UserWorkspace 宿主 `Path`。个人 Skill 的文件 Owner `services/skills/personal.py` 可在已认证 uid 下定位 UserWorkspace 的固定 `agents/skills` 子目录，其他路径解析由 `yuxi.workspace` 或显式 v0.7.1 storage migration 拥有。
 - 沙盒虚拟路径由当前 Project Workdir、User Data 与共享 Skills 根共同约束；个人 Skill 保存在 UserWorkspace 的 `agents/skills`，共享与内置 Skill 才投影到只读 `/home/gem/skills`。Sandbox 的惰性创建不得绕过 runtime scope、uid、Workdir 或 generation 校验，Run 终态仍清理 runtime 进程并保留 Workdir。用户可见路径、对象存储 URL 与宿主机真实路径不能混用。
 - 面向用户和外部系统的输入在边界校验；内部服务优先依赖已有类型、事务和仓储约束，避免用静默回退掩盖设计错误。
 

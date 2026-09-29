@@ -15,7 +15,7 @@ from yuxi.workspace.paths import (
     user_workspace_dir,
     workspace_uid_dirname,
 )
-from yuxi.agents.skills.service import get_user_skills_root_dir, sync_user_accessible_skills_async
+from yuxi.services.skills.projection import get_user_skills_root_dir, sync_user_accessible_skills
 from yuxi.config import get_skill_projection_dir, get_user_data_dir
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
@@ -241,14 +241,15 @@ async def test_user_skill_projection_is_shared_across_sandboxes_but_isolated_by_
     (selected_source / "SKILL.md").write_text("selected-skill", encoding="utf-8")
     (unselected_source / "SKILL.md").write_text("authorized-unselected-skill", encoding="utf-8")
 
-    await sync_user_accessible_skills_async(
+    await asyncio.to_thread(
+        sync_user_accessible_skills,
         uid,
         {
             "selected": selected_source,
             "authorized-unselected": unselected_source,
         },
     )
-    await sync_user_accessible_skills_async(other_uid, {})
+    await asyncio.to_thread(sync_user_accessible_skills, other_uid, {})
     ensure_user_workspace(uid)
     ensure_user_workspace(other_uid)
 
@@ -283,8 +284,8 @@ async def test_user_skill_projection_is_shared_across_sandboxes_but_isolated_by_
         canonical_not_found = f"file '{selected_skill_path}' not found"
         assert any(marker in other_error for marker in ("does not exist", canonical_not_found, "filenotfounderror"))
     finally:
-        await sync_user_accessible_skills_async(uid, {})
-        await sync_user_accessible_skills_async(other_uid, {})
+        await asyncio.to_thread(sync_user_accessible_skills, uid, {})
+        await asyncio.to_thread(sync_user_accessible_skills, other_uid, {})
         for scope, scope_uid in (
             (first_scope, uid),
             (second_scope, uid),

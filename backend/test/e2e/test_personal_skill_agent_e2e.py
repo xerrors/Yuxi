@@ -14,7 +14,8 @@ from test.live_api_cleanup import (
     make_test_conversation_title,
     remove_e2e_thread_storage,
 )
-from yuxi.agents.skills.service import get_personal_skills_root_dir, get_user_skills_root_dir
+from yuxi.services.skills.projection import get_user_skills_root_dir
+from yuxi.workspace.paths import user_workspace_dir
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow]
 
@@ -133,7 +134,7 @@ async def test_main_agent_reads_personal_skill_directly_from_user_workspace(
         finally:
             await conn.close()
 
-        personal_skill = get_personal_skills_root_dir(uid) / slug / "SKILL.md"
+        personal_skill = user_workspace_dir(uid) / "agents" / "skills" / slug / "SKILL.md"
         assert personal_skill.read_text(encoding="utf-8") == skill_md
         projected_skill = get_user_skills_root_dir(uid) / slug / "SKILL.md"
         assert not projected_skill.exists()

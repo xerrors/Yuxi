@@ -6,8 +6,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from yuxi.agents.skills import service as skill_service
 from yuxi.agents.toolkits.buildin import install_skill as exported_install_skill
+from yuxi.services.skills import personal as personal_service
+from yuxi.workspace.paths import user_workspace_dir
 
 install_skill_module = importlib.import_module("yuxi.agents.toolkits.buildin.install_skill")
 sandbox_backend_module = importlib.import_module("yuxi.agents.backends.sandbox")
@@ -33,12 +34,14 @@ async def test_install_personal_skill_does_not_require_agent_config_access(monke
     source_dir.mkdir()
     content = "---\nname: demo-skill\ndescription: Personal skill\n---\n# Demo\n"
     (source_dir / "SKILL.md").write_text(content, encoding="utf-8")
-    monkeypatch.setattr(install_skill_module, "_prepare_skill_from_sandbox", lambda *args: source_dir)
+    monkeypatch.setattr(personal_service, "_download_sandbox_skill", lambda *args: source_dir)
     runtime = _runtime(uid="user-1", thread_id="shared-agent-thread", skills=[])
 
-    result = await install_skill_module._run_install_task("/home/gem/user-data/demo-skill", runtime, "tool-1")
+    result = await install_skill_module.install_skill.coroutine(
+        "/home/gem/user-data/demo-skill", runtime=runtime, tool_call_id="tool-1"
+    )
 
-    installed = skill_service.get_personal_skills_root_dir("user-1") / "demo-skill" / "SKILL.md"
+    installed = user_workspace_dir("user-1") / "agents" / "skills" / "demo-skill" / "SKILL.md"
     assert installed.read_text(encoding="utf-8") == content
     assert result.update["messages"][0].content.splitlines() == [
         "已安装 Skill: demo-skill",
@@ -88,11 +91,11 @@ async def test_install_skill_from_sandbox_installs_as_current_user_private_skill
         )
 
     monkeypatch.setattr(
-        install_skill_module,
-        "_prepare_skill_from_sandbox",
+        personal_service,
+        "_download_sandbox_skill",
         prepare_skill_from_sandbox,
     )
-    monkeypatch.setattr(skill_service, "install_personal_skill_dir", install_personal_skill_dir)
+    monkeypatch.setattr(personal_service, "install_personal_skill_dir", install_personal_skill_dir)
     runtime = _runtime(
         uid="normal-user",
         thread_id="thread-1",
@@ -100,10 +103,10 @@ async def test_install_skill_from_sandbox_installs_as_current_user_private_skill
         workdir_path="/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111",
         skills=["existing-skill"],
     )
-    result = await install_skill_module._run_install_task(
+    result = await install_skill_module.install_skill.coroutine(
         " /home/gem/user-data/demo-skill ",
-        runtime,
-        "tool-1",
+        runtime=runtime,
+        tool_call_id="tool-1",
     )
 
     assert "activated_skills" not in result.update
@@ -124,15 +127,15 @@ async def test_install_skill_rejects_subagent_runtime_before_install(monkeypatch
         raise AssertionError("子智能体运行态不应执行安装")
 
     monkeypatch.setattr(
-        skill_service,
+        personal_service,
         "install_personal_skill_dir",
         fail_install,
     )
 
-    result = await install_skill_module._run_install_task(
+    result = await install_skill_module.install_skill.coroutine(
         "/home/gem/user-data/demo-skill",
-        _runtime(uid="user-1", thread_id="child-thread", is_subagent_runtime=True),
-        "tool-1",
+        runtime=_runtime(uid="user-1", thread_id="child-thread", is_subagent_runtime=True),
+        tool_call_id="tool-1",
     )
 
     assert "只能在主智能体中使用" in result.update["messages"][0].content
@@ -141,10 +144,10 @@ async def test_install_skill_rejects_subagent_runtime_before_install(monkeypatch
 
 @pytest.mark.asyncio
 async def test_install_skill_git_source_requires_skill_names():
-    result = await install_skill_module._run_install_task(
+    result = await install_skill_module.install_skill.coroutine(
         "owner/repo",
-        _runtime(uid="user-1", thread_id="thread-1"),
-        "tool-1",
+        runtime=_runtime(uid="user-1", thread_id="thread-1"),
+        tool_call_id="tool-1",
     )
 
     assert "必须通过 skill_names 指定技能名称" in result.update["messages"][0].content
@@ -152,16 +155,16 @@ async def test_install_skill_git_source_requires_skill_names():
 
 @pytest.mark.asyncio
 async def test_install_skill_rejects_empty_source():
-    result = await install_skill_module._run_install_task(
+    result = await install_skill_module.install_skill.coroutine(
         " ",
-        _runtime(uid="user-1", thread_id="thread-1"),
-        "tool-1",
+        runtime=_runtime(uid="user-1", thread_id="thread-1"),
+        tool_call_id="tool-1",
     )
 
     assert "Skill 来源不能为空" in result.update["messages"][0].content
 
 
-def test_prepare_skill_from_sandbox_uses_sandbox_api_without_host_path_resolution(monkeypatch, tmp_path: Path):
+def test_download_sandbox_skill_uses_sandbox_api_without_host_path_resolution(monkeypatch, tmp_path: Path):
     remote_dir = "/home/gem/user-data/demo-skill"
 
     class FakeProvisionerSandboxBackend:
@@ -184,7 +187,7 @@ def test_prepare_skill_from_sandbox_uses_sandbox_api_without_host_path_resolutio
 
     monkeypatch.setattr(sandbox_backend_module, "ProvisionerSandboxBackend", FakeProvisionerSandboxBackend)
 
-    staging = install_skill_module._prepare_skill_from_sandbox(
+    staging = personal_service._download_sandbox_skill(
         remote_dir,
         "thread-1",
         "user-1",
@@ -194,7 +197,7 @@ def test_prepare_skill_from_sandbox_uses_sandbox_api_without_host_path_resolutio
     assert (staging / "SKILL.md").read_text(encoding="utf-8") == "# demo"
 
 
-def test_prepare_skill_from_sandbox_preserves_download_error_message(monkeypatch, tmp_path: Path):
+def test_download_sandbox_skill_preserves_download_error_message(monkeypatch, tmp_path: Path):
     remote_dir = "/home/gem/user-data/demo-skill"
 
     class FakeProvisionerSandboxBackend:
@@ -216,7 +219,7 @@ def test_prepare_skill_from_sandbox_preserves_download_error_message(monkeypatch
     monkeypatch.setattr(sandbox_backend_module, "ProvisionerSandboxBackend", FakeProvisionerSandboxBackend)
 
     with pytest.raises(ValueError, match="下载沙盒文件失败"):
-        install_skill_module._prepare_skill_from_sandbox(
+        personal_service._download_sandbox_skill(
             remote_dir,
             "thread-1",
             "user-1",

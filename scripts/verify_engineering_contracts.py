@@ -66,6 +66,7 @@ WORKSPACE_HOST_PATH_EXPORTS = frozenset(
         "user_workdir_host_dir",
     }
 )
+PERSONAL_SKILL_WORKSPACE_OWNER = Path("backend/package/yuxi/services/skills/personal.py")
 DIRECT_WEB_API_LITERAL = re.compile(r"(?P<quote>['\"`])/api(?:[/ ?]|(?P=quote))")
 AGENTS_FILE_BUDGETS = {
     "AGENTS.md": 5000,
@@ -963,6 +964,8 @@ def _validate_workspace_host_path_boundary(root: Path, errors: list[str]) -> int
                             alias.name for alias in node.names
                         )
                     )
+                    if relative == PERSONAL_SKILL_WORKSPACE_OWNER:
+                        forbidden.discard("user_workspace_dir")
                 elif isinstance(node, ast.ImportFrom) and node.module == "yuxi.config":
                     if any(alias.name == "get_user_data_dir" for alias in node.names):
                         forbidden.add("get_user_data_dir")
