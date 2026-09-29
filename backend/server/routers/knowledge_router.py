@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 from yuxi.config.options import system_options
-from yuxi.knowledge.base import KBNameConflictError, KBNotFoundError
+from yuxi.knowledge.base import FolderNameConflictError, KBNameConflictError, KBNotFoundError
 from yuxi.knowledge.chunking.ragflow_like.presets import get_chunk_preset_options
 from yuxi.knowledge.graphs.milvus_graph_service import GRAPH_TASK_TYPE, MilvusGraphService
 from yuxi.knowledge.read_models import KnowledgeBaseDetail
@@ -1399,6 +1399,10 @@ async def create_folder(
         return await knowledge_base.create_folder(kb_id, folder_name, parent_id, current_user.uid)
     except HTTPException:
         raise
+    except FolderNameConflictError as e:
+        raise HTTPException(status_code=409, detail={"code": "folder_name_conflict", "message": str(e)}) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         logger.error(f"创建文件夹失败 {e}, {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1473,6 +1477,8 @@ async def rename_folder(
         return await knowledge_base.rename_folder(kb_id, folder_id, folder_name)
     except HTTPException:
         raise
+    except FolderNameConflictError as e:
+        raise HTTPException(status_code=409, detail={"code": "folder_name_conflict", "message": str(e)}) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

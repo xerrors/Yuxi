@@ -54,6 +54,22 @@ class KBNameConflictError(KnowledgeBaseException):
     pass
 
 
+class FolderNameConflictError(KnowledgeBaseException):
+    """同级目录下文件夹名称冲突错误。"""
+
+    pass
+
+
+def _normalize_folder_name(folder_name: str) -> str:
+    """规范化文件夹名称，拒绝空名与路径分隔符。"""
+    normalized_name = (folder_name or "").strip()
+    if not normalized_name:
+        raise ValueError("Folder name cannot be empty")
+    if "/" in normalized_name or "\\" in normalized_name:
+        raise ValueError("Folder name cannot contain path separators")
+    return normalized_name
+
+
 class KnowledgeBase(ABC):
     """知识库抽象基类，定义统一接口"""
 
@@ -862,25 +878,34 @@ class KnowledgeBase(ABC):
         parent_id: str | None = None,
         operator_id: str | None = None,
     ) -> dict:
-        """创建文件夹并记录操作者。"""
+        """创建文件夹并记录操作者，同级目录下不允许重名。"""
         import uuid
+
+        from yuxi.repositories.knowledge_file_repository import KnowledgeFileRepository
+
+        normalized_name = _normalize_folder_name(folder_name)
 
         if parent_id:
             parent_meta = await self._load_file_meta(kb_id, parent_id)
             if not parent_meta.get("is_folder"):
                 raise ValueError("Parent is not a folder")
 
+        if await KnowledgeFileRepository().find_folder_by_name(
+            kb_id=kb_id, parent_id=parent_id, filename=normalized_name
+        ):
+            raise FolderNameConflictError(f"同级目录下已存在同名文件夹「{normalized_name}」")
+
         folder_id = f"folder-{uuid.uuid4()}"
 
         folder_meta = {
             "file_id": folder_id,
-            "filename": folder_name,
+            "filename": normalized_name,
             "is_folder": True,
             "parent_id": parent_id,
             "kb_id": kb_id,
             "created_at": utc_isoformat(),
             "status": "done",
-            "path": folder_name,
+            "path": normalized_name,
             "file_type": "folder",
             "created_by": operator_id,
         }
@@ -888,18 +913,20 @@ class KnowledgeBase(ABC):
         return folder_meta
 
     async def rename_folder(self, kb_id: str, folder_id: str, folder_name: str) -> dict:
-        """重命名真实文件夹，不改写其子记录。"""
-        normalized_name = folder_name.strip()
-        if not normalized_name:
-            raise ValueError("Folder name cannot be empty")
-        if "/" in normalized_name or "\\" in normalized_name:
-            raise ValueError("Folder name cannot contain path separators")
+        """重命名真实文件夹，不改写其子记录，同级目录下不允许重名。"""
+        from yuxi.repositories.knowledge_file_repository import KnowledgeFileRepository
+
+        normalized_name = _normalize_folder_name(folder_name)
 
         meta = await self._load_file_meta(kb_id, folder_id)
         if not meta.get("is_folder"):
             raise ValueError("Document is not a folder")
 
-        from yuxi.repositories.knowledge_file_repository import KnowledgeFileRepository
+        conflict = await KnowledgeFileRepository().find_folder_by_name(
+            kb_id=kb_id, parent_id=meta.get("parent_id"), filename=normalized_name
+        )
+        if conflict is not None and conflict.file_id != folder_id:
+            raise FolderNameConflictError(f"同级目录下已存在同名文件夹「{normalized_name}」")
 
         record = await KnowledgeFileRepository().update_fields(
             file_id=folder_id,

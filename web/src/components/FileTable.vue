@@ -702,10 +702,10 @@ const handleCreateFolder = async () => {
 
   createFolderLoading.value = true
   try {
-    await documentApi.createFolder(store.kbId, newFolderName.value, currentParentId.value)
+    const folder = await documentApi.createFolder(store.kbId, newFolderName.value, currentParentId.value)
     message.success('创建成功')
     createFolderModalVisible.value = false
-    await refreshAfterMutation()
+    await openFolder({ file_id: folder.file_id, filename: folder.filename, is_folder: true })
   } catch (error) {
     console.error(error)
     message.error('创建失败: ' + (error.message || '未知错误'))
