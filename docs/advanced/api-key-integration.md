@@ -111,7 +111,7 @@ curl --fail "$BASE_URL/api/agent/runs" \
 | `resume` | LangGraph 恢复载荷；非空时走恢复路径，不进入普通 Request 队列 |
 | `created_by_run_id` | 恢复时填写被恢复的 Run ID |
 
-`resume` 不是布尔开关。恢复请求可以同时带 `query` 和 `image_content`（同样接受单值或数组），但 `queue_policy` 只适用于普通 Chat；恢复和 Steer 的状态、权限与失败语义见[Agent 请求队列与调度设计](../agents/agent-request-queue.md)。
+`resume` 不是布尔开关。恢复请求可以同时带 `query` 和 `image_content`（同样接受单值或数组），但 `queue_policy` 只适用于普通 Chat；恢复和 Steer 的状态、权限与失败语义见[Agent 请求队列与调度设计](../mechanisms/agent-request-queue.md)。
 
 ### 读取 SSE
 
@@ -200,4 +200,4 @@ Content-Type: application/json
 - 生产调用使用 HTTPS；HTTP 只适合本机开发。
 - 排查时同时记录 `request_id`、`run_id` 和 `thread_id`，但不要记录完整 API Key。
 
-完整请求 Schema、状态码和当前字段以部署实例的 Swagger 页面为准：`<base-url>/docs`。更多关于 Run、FIFO、SSE 和取消语义的说明见[Agent 请求队列与调度设计](../agents/agent-request-queue.md)。
+完整请求 Schema、状态码和当前字段以部署实例的 Swagger 页面为准：`<base-url>/docs`。更多关于 Run、FIFO、SSE 和取消语义的说明见[Agent 请求队列与调度设计](../mechanisms/agent-request-queue.md)。

@@ -65,6 +65,23 @@ kb_tools = get_common_kb_tools()
 
 返回的具体顺序由函数实现维护，不要把顺序当作协议。
 
+## 内置工具：网页搜索
+
+`web_search` 让 Agent 从外部网页获取实时信息，当前支持豆包和 Tavily 两个供应商。搜索结果属于外部来源，不能自动替代知识库或人工核验；对重要结论应回到原网页核实。
+
+供应商在 API/worker 环境中选择并提供凭证：
+
+```bash
+WEB_SEARCH_PROVIDER=doubao
+DOUBAO_SEARCH_API_KEY=<your-doubao-key>
+```
+
+或 `WEB_SEARCH_PROVIDER=tavily` 加 `TAVILY_API_KEY=<your-tavily-key>`。`WEB_SEARCH_PROVIDER` 只接受这两个值；留空时按已配置的 API Key 自动选择，两个 Key 都配置时优先豆包，没有有效 Key 时不会注册该工具。密钥只放在受保护的环境变量或密钥管理器中，不要写进 Skill、Agent 用户环境、代码或日志。
+
+工具在 API 和 worker 进程加载时注册，修改环境变量后需要 `docker compose up -d --force-recreate api worker`。验证方式：在智能体详情确认工具列表出现「网页搜索」，用一个需要最新信息的问题发起真实对话，并检查工具调用返回的 URL、标题和摘要。没有该工具时检查 `WEB_SEARCH_PROVIDER` 拼写、对应 Key 是否存在以及容器是否已重建。
+
+实现入口：[网页搜索工具](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/agents/toolkits/buildin/tools.py)。
+
 ## 工具组装流程
 
 内置 Agent 创建 Graph 时执行：
@@ -88,14 +105,7 @@ Agent 配置 + 用户权限
 
 ## MCP 和 Skills
 
-MCP 工具可由 Agent 直接选择的已启用服务器提供，也可由已激活 Skill 的 `mcp_dependencies` 按需加载；服务器配置和工具禁用列表由 MCP 管理链路读取。预加载 Skill 从首轮开放本地工具和 MCP 依赖，普通 Skill 在读取 `SKILL.md` 激活后开放这些依赖。
-
-- 工具实现放在 `toolkits`；
-- Skill 的使用说明和依赖放在 Skill 目录；
-- MCP 的连接和工具发现由 MCP 服务负责；
-- Agent 配置只选择资源范围，不直接复制工具实现。
-
-详细规则见 [Skills 管理](./skills-management.md) 和 [MCP 集成](./mcp-integration.md)。
+MCP 工具可由 Agent 直接选择的已启用服务器提供，也可由已激活 Skill 的 `mcp_dependencies` 按需加载；预加载 Skill 从首轮开放本地工具和 MCP 依赖，普通 Skill 在读取 `SKILL.md` 激活后开放这些依赖。这一节只回答“工具从哪里来、谁决定模型可见”；服务器配置和启停归 [MCP 集成](./mcp-integration.md)，Skill 的创建、依赖与激活时机归 [Skills 管理](./skills-management.md)，资源选择的字段语义归[智能体配置](./agents-config.md)。
 
 ## 新增工具时检查
 

@@ -84,7 +84,7 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml --profile all up 
 `v0.7.2` 正式版的 Schema 基线是 business=2、knowledge=1。迁移器一次补齐业务结构并记录 business=7，知识域升级到 knowledge=2；无需逐级执行 3～6。业务版本号保留开发期间的 revision，不与产品版本号一一对应。未发布的中间 Schema 会被明确拒绝；不要手工修改版本表绕过结构校验。
 
 - LITE 模式已移除，原 LITE 部署须补齐 Milvus、etcd、Neo4j 等完整拓扑资源，并清理失效的 LITE 配置。
-- Sandbox 默认规格为 `SANDBOX_RUNTIME_PROFILE=core`，不启动浏览器、browser MCP、VNC、Jupyter、code-server 或 NodeJS REPL 服务。依赖网页自动化的部署在 `.env.prod` 设置 `SANDBOX_RUNTIME_PROFILE=browser`；需要完整交互式开发环境时设置 `full`。升级时重新创建 provisioner，规格对随后创建的沙盒生效；能力范围见[沙盒配置](../agents/sandbox-architecture.md)。
+- Sandbox 默认规格为 `SANDBOX_RUNTIME_PROFILE=core`，不启动浏览器、browser MCP、VNC、Jupyter、code-server 或 NodeJS REPL 服务。依赖网页自动化的部署在 `.env.prod` 设置 `SANDBOX_RUNTIME_PROFILE=browser`；需要完整交互式开发环境时设置 `full`。升级时重新创建 provisioner，规格对随后创建的沙盒生效；能力范围见[沙盒配置](sandbox-operations.md)。
 - 通用后台任务改由独立 worker 执行。迁移后须用同一版本协调启动 API 与 worker；混用旧 worker 不能满足新版本的就绪条件。
 - 旧知识文件中没有执行 owner 的 `parsing` / `indexing` 状态会收敛为 `error_parsing` / `error_indexing`，升级后检查失败文件并显式重试，不假定旧任务会自动续跑。
 - 新建托管 Project 使用可读的时间戳目录名；既有 UUID 目录继续有效，无需重命名。
@@ -163,6 +163,27 @@ worker 的 Compose 健康检查通过 `python -m yuxi.services.worker_health` �
 就绪接口返回 `ready` 后，再用浏览器完成登录和一次真实对话。健康或就绪状态不能证明知识库、模型、沙盒或外部服务的业务链路正确。
 
 公开头像和智能体图片通过同源 `/minio/public/...` 只读代理访问。不要把 MinIO 的 9000 对象 API 或 9001 控制台暴露到公网；知识库等私有 bucket 不经过该代理。需要单独的静态资源域名时，设置 `MINIO_PUBLIC_URL`，并在域名侧保持同样的只读限制。
+
+## 开发环境端口与入口
+
+开发 Compose 发布到宿主机的端口如下；生产 Compose 默认只发布 Web 入口，其余服务通过 Compose 内网访问。
+
+| 端口 | 服务 | 用途 |
+| --- | --- | --- |
+| 5173 | Web | 开发 Web 界面 |
+| 5050 | API | API 和 Swagger 文档 |
+| 8002 | `sandbox-provisioner` | 本机排查 provisioner；只绑定 `127.0.0.1` |
+| 7474 / 7687 | Neo4j | HTTP 管理界面 / Bolt |
+| 9000 / 9001 | MinIO | 对象 API / 管理控制台 |
+| 19530 / 9091 | Milvus | gRPC / 健康检查 |
+| 5432 | PostgreSQL | 本机数据库维护 |
+| 6379 | Redis | 本机缓存和队列维护 |
+
+`all` profile 下还有两个可选 OCR 服务：`mineru-api`（30001，`/file_parse` 接口）和 `paddlex`（8080，PP-Structure-V3）。etcd 只在 Compose 网络内供 Milvus 使用，没有发布到宿主机。
+
+PostgreSQL、Redis、MinIO、Milvus 和 Neo4j 的端口只绑定 `127.0.0.1`，不要把它们暴露到公网；Web 与 API 发布到所有接口。各端口可用环境变量覆盖（`YUXI_WEB_PORT`、`YUXI_API_PORT`、`YUXI_NEO4J_HTTP_PORT`、`YUXI_MINIO_API_PORT`、`YUXI_MILVUS_PORT`、`YUXI_POSTGRES_PORT`、`YUXI_REDIS_PORT`），完整映射以 [docker-compose.yml](https://github.com/xerrors/Yuxi/blob/main/docker-compose.yml) 为准。
+
+常用入口：Web <http://localhost:5173>，API 文档 <http://localhost:5050/docs>，Neo4j <http://localhost:7474>，沙盒 provisioner <http://localhost:8002/health>。health 与 ready 接口的语义见上方「验证部署」。
 
 ## 跨域（CORS）
 

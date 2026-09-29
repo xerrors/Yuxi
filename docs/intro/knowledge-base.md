@@ -8,7 +8,7 @@
 - 一份不含敏感信息的测试文档；
 - 一个管理员账号。
 
-Dify、Notion 连接器、知识库管理 API 和图谱运维见[知识库管理与 API 参考](../advanced/knowledge-base-operations.md)。
+Dify、Notion 连接器见[知识库管理 API](../advanced/knowledge-base-api.md)，图谱运维见[知识导图与知识图谱](../advanced/knowledge-base-graph.md)。
 
 ## 你会得到什么
 
@@ -88,6 +88,7 @@ Dify 和 Notion 是只读连接器，不能在 Yuxi 中上传、解析、索引�
 ## 下一步
 
 - [文档处理与 OCR](../advanced/document-processing.md)：调整解析器、OCR 和分块参数。
-- [知识库管理与 API 参考](../advanced/knowledge-base-operations.md)：使用 API、知识导图和知识图谱。
+- [知识库管理 API](../advanced/knowledge-base-api.md)：用 HTTP 或 CLI 批量导入和查询。
+- [知识导图与知识图谱](../advanced/knowledge-base-graph.md)：构建和修复图谱。
 - [知识库评估](./evaluation.md)：建立检索质量基准。
 - [知识库机制详解](../mechanisms/knowledge-base.md)：理解状态、存储、权限和恢复。

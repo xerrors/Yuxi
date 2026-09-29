@@ -293,7 +293,7 @@ A multi-tenant permission system maps to organizational structures, with departm
 
 **Model providers and centralized credentials**
 
-Connect providers including OpenAI, Anthropic, DeepSeek, Qwen, and local Ollama/vLLM deployments. Maintain API Key credentials centrally and assign model capabilities while keeping secrets hidden from ordinary members.
+Connect providers including OpenAI, Anthropic, DeepSeek, Qwen, and OpenAI-compatible self-hosted endpoints such as vLLM. Maintain API Key credentials centrally and assign model capabilities while keeping secrets hidden from ordinary members.
 
 ![Model providers and capabilities](https://xerrors.oss-cn-shanghai.aliyuncs.com/github/image-20260825152458034.png)
 

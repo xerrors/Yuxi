@@ -17,6 +17,7 @@
 
 Yuxi 是面向需要企业自部署的多用户 Agent 产品，且需要自己掌握数据、模型和权限的团队：
 
+- **二开友好**：MIT 协议、代码简洁、可拓展性强、高并发部署友好。
 - **Harness**：功能完善的云端多用户 Harness，自定义智能体，沉淀企业轨迹。
 - **Knowledge**： 高效、精准的 Agentic RAG 套件，上传文档，解析、分块和向量索引。
 - **执行多步骤任务**：组合工具、MCP、Skills、子智能体和沙盒，产出可预览、可下载的文件。
@@ -299,7 +300,7 @@ Yuxi 把知识进入系统、Agent 执行任务和团队治理放在一条完整
 
 **模型供应商与统一凭据管理**
 
-支持接入主流大模型供应商（OpenAI、Anthropic、DeepSeek、Qwen、本地 Ollama/vLLM 等），集中维护 API Key 凭据并统一分配模型能力，密钥对普通成员完全脱敏。
+支持接入主流大模型供应商（OpenAI、Anthropic、DeepSeek、Qwen 及 OpenAI 兼容自建端点如 vLLM 等），集中维护 API Key 凭据并统一分配模型能力，密钥对普通成员完全脱敏。
 
 ![模型供应商与模型能力](https://xerrors.oss-cn-shanghai.aliyuncs.com/github/image-20260825152458034.png)
 

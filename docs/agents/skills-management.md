@@ -55,7 +55,9 @@ skill_dependencies: []
 写出 Agent 应遵循的步骤、限制和验收方式。
 ```
 
-必填字段是 `name` 和 `description`。`slug` 可省略，省略时直接使用 `name`，因此省略 slug 时 `name` 本身也必须是小写字母、数字和单个短横线组成的值；中文或带空格的展示名称会校验失败。建议显式填写 slug，把自然语言名称和稳定标识分开。名称和 slug 最多 128 个字符。
+必填字段是 `name` 和 `description`。名称和 `slug` 最多 128 个字符。`slug` 可省略，省略时直接使用 `name`，因此省略 slug 时 `name` 本身也必须是小写字母、数字和单个短横线组成的值，中文或带空格的展示名称会校验失败。
+
+建议显式填写 slug，把自然语言名称和稳定标识分开。
 
 依赖字段含义：
 
@@ -106,19 +108,11 @@ GitHub 的 `owner/repo` 简写会被转换为 HTTPS 地址。远程来源会在�
 
 API/worker 启动时同步文件、元数据和依赖，保留数据库中的启停状态。重启后在“扩展 → Skills”核对新增项的说明和依赖；新增脚本或资源也必须随发行包携带。源码目录与共享投影分别拥有发布内容和安装文件，编辑应落在源码目录。
 
-### 内置 `html-preview`
-
-系统启动时会同步仓库内置 Skills。`html-preview` 用于在普通 Markdown 难以清晰表达指标、对比、流程、时间线或层级关系时，指导 Agent 输出静态 `html:preview` 围栏；普通 HTML 源码仍使用 `html` 代码块。前端会把该围栏清洗后放入 sandboxed iframe 预览，不依赖额外工具。
-
-未显式配置 Skills 的 Agent 按现有资源规则自动获得该 Skill；使用显式 Skills 允许列表的 Agent 需要选择 `html-preview`。
-
-内置 `deep-research` 不依赖 `html-preview`。它默认在当前 Workdir 的 `outputs/` 目录生成独立、响应式的 HTML 阅读文档，并通过交付物入口展示；用户明确指定其他格式时除外。宽屏报告可以提供侧栏目录，窄屏隐藏或折叠侧栏；报告可以按内容需要使用外部图片等公开资源，来源以普通链接呈现。
-
 安装前仍应审查 Skill 的提示词、脚本、依赖和网络行为。不要把数据库密码、云平台密钥或 `SANDBOX_PROVISIONER_TOKEN` 放进 Skill 或 Agent 环境。
 
 ## 依赖和加载时机
 
-Agent 的 `skills` 配置只选择共享和内置 Skill。每个 Run 准备 Context 时，系统按权限解析共享选择，合并当前用户全部个人 Skill，再展开 `skill_dependencies`；主智能体和子智能体使用同一规则。`skills=[]` 时个人 Skill 仍进入模型可见的描述列表。个人 Skill 安装不修改 Agent 配置，新增 Skill 在下一次 Run 准备时自动加入，已准备的运行保留快照。依赖链会进入 Skill 描述范围；本地工具和 `mcp_dependencies` 声明的 MCP 服务器在 Skill 激活后按需加载。MCP 服务器仍须由管理员启用；Agent 的 `mcps` 字段只控制直接添加的服务器。
+Agent 的 `skills` 配置语义（`"all"`、固定数组与默认值）由[资源选择契约](./agents-config.md)拥有，本页描述激活时机。每个 Run 准备 Context 时，系统按权限解析共享选择，合并当前用户全部个人 Skill，再展开 `skill_dependencies`；主智能体和子智能体使用同一规则。`skills=[]` 时个人 Skill 仍进入模型可见的描述列表，只是没有共享选择。个人 Skill 安装不修改 Agent 配置，新增 Skill 在下一次 Run 准备时自动加入，已准备的运行保留快照。
 
 ### 普通渐进加载
 
@@ -147,6 +141,12 @@ Agent 配置可以用 `preload_skills` 指定少量需要从首轮就可用的 S
 普通用户安装的新 Skill 固定进入个人来源，不配置共享范围。管理员安装到共享来源时才会写入 PostgreSQL 索引，并可以配置部门或用户范围。扩展管理页展示当前用户可访问的共享和个人 Skill；Agent 配置选项只展示可访问的共享和内置 Skill。后端在保存时校验共享引用，运行时按当前用户身份加载个人目录。
 
 Agent 配置中的 Skill 选择不能扩大用户的文件、知识库或 MCP 权限。
+
+## 内置 Skill 说明
+
+系统启动时会同步仓库内置 Skills，其中两个内置 Skill 有产品级行为约定。`html-preview` 用于在普通 Markdown 难以清晰表达指标、对比、流程、时间线或层级关系时，指导 Agent 输出静态 `html:preview` 围栏；普通 HTML 源码仍使用 `html` 代码块，前端把该围栏清洗后放入 sandboxed iframe 预览。未显式配置 Skills 的 Agent 按现有资源规则自动获得该 Skill；使用显式 Skills 允许列表的 Agent 需要选择 `html-preview`。
+
+内置 `deep-research` 不依赖 `html-preview`。它默认在当前 Workdir 的 `outputs/` 目录生成独立、响应式的 HTML 阅读文档，并通过交付物入口展示；用户明确指定其他格式时除外。宽屏报告可以提供侧栏目录，窄屏隐藏或折叠侧栏；报告可以按内容需要使用外部图片等公开资源，来源以普通链接呈现。
 
 ## 运行时文件行为
 

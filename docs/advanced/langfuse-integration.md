@@ -51,7 +51,7 @@ docker compose up -d --force-recreate api worker
 
 超级管理员还可以在 Yuxi 的调试面板中开启对话 Debug，从消息对应的 Run 入口打开 Langfuse trace。Yuxi 会先检查当前用户是否能看到这个 Run，再读取 Run 自身的 trace ID；历史 Run 可以从其权威输出消息兼容读取。配置 Langfuse 的 Run 在模型执行前固化关联，因此执行中失败、取消或中断且没有最终输出时仍可跳转。没有持久化 trace、Langfuse 未配置或 URL 不在允许来源时，页面会提示不可用，不会从相邻 Run 推测结果。
 
-PostgreSQL 同时按 LangGraph lifecycle 保存可见 Model 与 Tool 调用的关键审计事实，包括稳定来源键、严格顺序、观察时间、执行状态和 monotonic 耗时；Model 另外保存可靠的 Provider usage，Tool 保存 effective input、输出或错误。运行中的 `model_audit` AIMessage 和 `tool_audit` ToolMessage 不进入普通历史；Model 声明的 pending ToolCall 用于审批兼容，工具开始后的执行事实由 ToolMessage 单向覆盖，最终回答仍由 AgentRun 的 `output_message_id` 确定。超级管理员可在消息时序调试面板按 Run 查看交错时间线。本地审计不依赖 Langfuse 导出，也不宣称每条 AIMessage/ToolMessage 已关联 Langfuse observation。
+Yuxi 同时在 PostgreSQL 按运行生命周期保存本地 Model/Tool 审计事实（来源键、顺序、观察时间、执行状态和耗时），调试面板按 Run 展示交错时间线。本地审计不依赖 Langfuse 导出，也不宣称每条 AIMessage/ToolMessage 已关联 Langfuse observation；核对业务结果时以 PostgreSQL 记录为准。
 
 ## 常见问题
 
