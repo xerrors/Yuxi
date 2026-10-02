@@ -11,7 +11,12 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 from yuxi.config.options import system_options
-from yuxi.knowledge.base import KBFileStateConflictError, KBNameConflictError, KBNotFoundError
+from yuxi.knowledge.base import (
+    KBFileStateConflictError,
+    KBNameConflictError,
+    KBNotFoundError,
+    ParsedArtifactReadError,
+)
 from yuxi.knowledge.chunking.ragflow_like.presets import get_chunk_preset_options
 from yuxi.knowledge.graphs.milvus_graph_service import GRAPH_TASK_TYPE, MilvusGraphService
 from yuxi.knowledge.read_models import KnowledgeBaseDetail
@@ -149,15 +154,10 @@ async def _delete_document_storage_objects(kb_id: str, doc_id: str, file_path: s
         except Exception as minio_error:
             logger.warning(f"从MinIO删除原始文件失败: {minio_error}")
 
-    try:
-        # 解析产物按前缀清理：解析产出用确定性名（{doc_id}.md），编辑产出用内容寻址名
-        # （{doc_id}.{hash}.md）——只删确定性名会漏掉历次编辑留下的对象。
-        # 点号是必要锚点：不带时 {doc_id} 互为前缀的文档（如 abc 与 abcdef）会被误删。
-        await minio_client.adelete_objects_by_prefix(
-            minio_client.KB_BUCKETS["parsed"], f"{kb_id}/parsed/{doc_id}."
-        )
-    except Exception as minio_error:
-        logger.warning(f"从MinIO删除解析结果失败: {minio_error}")
+    # 解析产物的前缀清理统一走 KnowledgeBase.delete_parsed_objects（与文件夹删除同一实现）：
+    # 解析产出用确定性名（{doc_id}.md）、编辑产出用内容寻址名（{doc_id}.{hash}.md），
+    # 只删确定性名会漏掉历次编辑留下的对象。
+    await knowledge_base.delete_parsed_objects(kb_id, doc_id)
 
     try:
         await minio_client.adelete_file(minio_client.KB_BUCKETS["parsed"], f"{kb_id}/preview/{doc_id}.pdf")
@@ -1070,6 +1070,10 @@ async def get_document_content(kb_id: str, doc_id: str, current_user: User = Dep
         if revision:
             info["content_revision"] = revision
         return info
+    except ParsedArtifactReadError as e:
+        # 正文读取失败必须以错误状态返回且不带修订号：200 + 修订号会让前端开放
+        # 空白编辑器，用户一次保存就用空内容替换原产物。
+        raise HTTPException(status_code=502, detail=f"解析产物读取失败，编辑不可用: {e}")
     except HTTPException:
         raise
     except Exception as e:

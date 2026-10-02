@@ -128,7 +128,7 @@ def wire(monkeypatch, kb, *, meta, cas_result=...):
     async def delete(*_args, **_kwargs):
         events.append("delete")
 
-    monkeypatch.setattr(kb, "_delete_parsed_objects", delete)
+    monkeypatch.setattr(kb, "delete_parsed_objects", delete)
 
     record = make_record({**meta, "status": FileStatus.PARSED})
 
@@ -286,7 +286,7 @@ async def test_删除按前缀清理且带点号锚点(monkeypatch, kb):
     )
     monkeypatch.setattr("yuxi.storage.minio.get_minio_client", lambda: fake_minio)
 
-    await kb._delete_parsed_objects("kb_1", "file_1")
+    await KnowledgeBase.delete_parsed_objects("kb_1", "file_1")
 
     fake_minio.adelete_objects_by_prefix.assert_awaited_once_with("knowledgebases", "kb_1/parsed/file_1.")
 
@@ -300,6 +300,6 @@ async def test_空文件ID不触发前缀清理(monkeypatch, kb):
     )
     monkeypatch.setattr("yuxi.storage.minio.get_minio_client", lambda: fake_minio)
 
-    await kb._delete_parsed_objects("kb_1", "")
+    await KnowledgeBase.delete_parsed_objects("kb_1", "")
 
     fake_minio.adelete_objects_by_prefix.assert_not_awaited()

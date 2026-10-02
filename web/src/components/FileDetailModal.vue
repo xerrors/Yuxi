@@ -170,11 +170,6 @@ const props = defineProps({
   editable: {
     type: Boolean,
     default: false
-  },
-  // 打开时是否直接进入编辑态（文件行菜单的「编辑文件」会置位）
-  startInEdit: {
-    type: Boolean,
-    default: false
   }
 })
 
@@ -254,8 +249,6 @@ const resetSourcePreview = () => {
 const savingMarkdown = ref(false)
 // 「打开即编辑」是一次性意图：消费后即失效。否则保存时 file.value 更新会再次触发
 // 内容 watch，把刚落地的保存又拉回编辑态（保存按钮还是灰的，用户会以为没存上）。
-const pendingStartEdit = ref(false)
-
 const parsedPreviewRef = ref(null)
 
 /** 解析产物视图的数据源：预览与编辑共用（内容为合并后的 Markdown） */
@@ -278,7 +271,11 @@ const canEditMarkdown = computed(
     props.editable &&
     viewMode.value === 'markdown' &&
     canEditParsedContent(file.value) &&
+    // 正文加载成功才允许编辑：读取失败时后端以 502 返回且不带修订号，
+    // 此时开放编辑器等于让用户用空白内容覆盖原产物。
     !contentState.value.loading &&
+    !contentState.value.error &&
+    contentState.value.loaded &&
     // 保存时服务端要求回传修订，没有修订必然失败，入口本身就不该出现。
     // 修订来自文件行的 updated_at（随内容同一次读取返回），行在读到时就有值。
     Boolean(contentState.value.revision)
@@ -560,11 +557,8 @@ watch(
     savingMarkdown.value = false
     if (!open) {
       resetLocalState()
-      pendingStartEdit.value = false
       return
     }
-    // 每次打开时取一次父层意图，之后由内容 watch 消费
-    pendingStartEdit.value = props.startInEdit
     loadBasicInfo()
   },
   { immediate: true }
@@ -589,11 +583,6 @@ watch(
       (currentViewMode === 'chunks' && canPreviewChunks(currentFile))
     ) {
       await loadParsedContent()
-      // 从文件行菜单点「编辑文件」进来时，等内容就绪后直接进编辑态（仅消费一次）
-      if (currentViewMode === 'markdown' && pendingStartEdit.value && canEditMarkdown.value) {
-        pendingStartEdit.value = false
-        startEditing()
-      }
     }
   },
   { immediate: true }

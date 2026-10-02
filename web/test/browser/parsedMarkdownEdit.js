@@ -24,9 +24,8 @@ async (page) => {
   await page.waitForURL(/\/extensions\/knowledgebase\//)
   await page.locator('.file-browser-row-actions button').first().waitFor()
 
-  // 关键场景：按状态筛选后，行菜单里的「编辑文件」必须仍然可用。
-  // 筛选会让 fileBrowser.recursive 为真，若处理器上挂了目录树相关的守卫，
-  // 这里会变成「按钮可见但点了没反应」。
+  // 关键场景：按状态筛选后，打开详情仍可进入编辑。
+  // 编辑入口只在详情弹窗内（正文加载成功后才出现），不再提供行菜单快捷入口。
   await page.getByTitle('筛选状态').click()
   await page.getByRole('menuitem', { name: '待入库', exact: true }).click()
   await page.waitForTimeout(1200)
@@ -37,16 +36,18 @@ async (page) => {
   const targetName = (await rows.first().locator('td').first().innerText()).trim()
   check(Boolean(targetName), '读不到目标文档名')
 
-  await rows.first().locator('.file-browser-row-actions button').first().click()
-  const editEntry = page.getByRole('button', { name: '编辑文件', exact: true })
-  check((await editEntry.count()) > 0, '行菜单里没有「编辑文件」')
+  await rows.first().locator('td').first().click()
+  await page.waitForTimeout(1500)
+  const editEntry = page.locator('.ant-modal-content button[aria-label="编辑 Markdown"]')
+  await editEntry.waitFor({ state: 'visible', timeout: 10000 })
+  check((await editEntry.count()) === 1, '详情弹窗里没有「编辑 Markdown」入口')
   await editEntry.click()
   await page.waitForTimeout(1500)
 
   // 编辑态复用 AgentFilePreview：它的 textarea 与浮动操作条就是编辑态的判据
   const editor = page.locator('.ant-modal-content textarea.file-edit-textarea')
   const floating = page.locator('.edit-floating-actions')
-  check((await editor.count()) === 1, '筛选视图下点「编辑文件」没有进入编辑态')
+  check((await editor.count()) === 1, '筛选视图下详情内进入编辑没有生效')
 
   await editor.evaluate((el) => {
     el.value = '# 修订后的标题\n\n这是人工修正后的内容。\n'

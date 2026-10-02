@@ -1494,3 +1494,159 @@ async def test_edit_document_requires_manage_permission(test_client, admin_heade
     after_revision = (await _fetch_content(test_client, kb_id, file_id, admin_headers))["content_revision"]
     assert after_revision == before_revision
     assert await _read_markdown_object(test_client, kb_id, file_id, admin_headers) == before_object
+
+
+# =============================================================================
+# 读取失败禁编辑 & 解析产物清理收敛（第三轮 review）
+# =============================================================================
+
+
+async def _file_row(file_id: str) -> dict:
+    """读取行的权威引用与版本，用于断言「读取失败不改动行」。"""
+    engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
+    try:
+        async with engine.connect() as connection:
+            result = await connection.execute(
+                text("SELECT markdown_file, updated_at FROM knowledge_files WHERE file_id = :fid"),
+                {"fid": file_id},
+            )
+            row = result.mappings().first()
+            return dict(row) if row else {}
+    finally:
+        await engine.dispose()
+
+
+async def _parsed_object_names(kb_id: str, file_id: str) -> list[str]:
+    """按清理用的同款点号前缀列出产物对象（确定性名 + 历次编辑的内容寻址名）。"""
+    from yuxi.storage.minio import get_minio_client
+
+    metadata = await get_minio_client().alist_object_metadata(
+        "knowledgebases", f"{kb_id}/parsed/{file_id}."
+    )
+    return sorted(item["object_name"] for item in metadata)
+
+
+async def test_edit_content_unavailable_returns_error_and_preserves_row(
+    test_client, admin_headers, knowledge_database
+):
+    """正文对象读取失败：以 502 返回且不带修订号，行（权威引用与版本）保持不变。
+
+    若此路径照常 200 + 修订号，前端会开放空白编辑器，一次保存即用空内容替换原产物。
+    """
+    kb_id = knowledge_database["kb_id"]
+    file_id = await _seed_document_with_chunks(kb_id, uuid.uuid4().hex[:8], status="parsed", chunk_count=0)
+
+    before = await _fetch_content(test_client, kb_id, file_id, admin_headers)
+    assert before["content_revision"]
+
+    # 删掉产物对象，模拟「行指向的对象不可读」（对象丢失 / MinIO 异常同形）
+    from yuxi.storage.minio import get_minio_client
+
+    await get_minio_client().adelete_file("knowledgebases", f"{kb_id}/parsed/{file_id}.md")
+
+    row_before = await _file_row(file_id)
+
+    response = await test_client.get(_content_url(kb_id, file_id), headers=admin_headers)
+    assert response.status_code == 502, response.text
+    assert "content_revision" not in response.json()
+
+    # 行未被任何写路径触碰：读取失败本身不产生副作用，后续也不存在可用的修订号
+    assert await _file_row(file_id) == row_before
+
+
+async def _edit_parsed_content(test_client, kb_id, file_id, headers, content: str) -> None:
+    revision = (await _fetch_content(test_client, kb_id, file_id, headers))["content_revision"]
+    response = await test_client.put(
+        _content_url(kb_id, file_id), json={"content": content, "revision": revision}, headers=headers
+    )
+    assert response.status_code == 200, response.text
+
+
+async def test_delete_document_cleans_edited_parsed_objects(test_client, admin_headers, knowledge_database):
+    """单文件与批量删除都清掉全部产物对象：确定性名 + 历次编辑的内容寻址名（同一实现）。"""
+    kb_id = knowledge_database["kb_id"]
+    single_id = await _seed_document_with_chunks(kb_id, uuid.uuid4().hex[:8], status="parsed", chunk_count=0)
+    batch_id = await _seed_document_with_chunks(kb_id, uuid.uuid4().hex[:8], status="parsed", chunk_count=0)
+
+    await _edit_parsed_content(test_client, kb_id, single_id, admin_headers, "# 已编辑 single")
+    await _edit_parsed_content(test_client, kb_id, batch_id, admin_headers, "# 已编辑 batch")
+    # 编辑后至少两个对象：旧的确定性名成为待清理孤儿，新引用指向内容寻址名
+    assert len(await _parsed_object_names(kb_id, single_id)) >= 2
+
+    response = await test_client.delete(
+        f"/api/knowledge/databases/{kb_id}/documents/{single_id}", headers=admin_headers
+    )
+    assert response.status_code == 200, response.text
+    assert await _parsed_object_names(kb_id, single_id) == []
+
+    response = await test_client.request(
+        "DELETE", f"/api/knowledge/databases/{kb_id}/documents/batch", json=[batch_id], headers=admin_headers
+    )
+    assert response.status_code == 200, response.text
+    assert await _parsed_object_names(kb_id, batch_id) == []
+
+
+async def test_delete_folder_cleans_child_parsed_objects(test_client, admin_headers, knowledge_database):
+    """文件夹删除与单删/批删走同一个清理实现：子文件的产物对象一并清掉。"""
+    kb_id = knowledge_database["kb_id"]
+    prefix = uuid.uuid4().hex[:8]
+    folder_id = f"folder_{prefix}"
+    child_id = f"file_{prefix}c"
+
+    from yuxi.storage.minio import get_minio_client
+
+    await get_minio_client().aupload_file(
+        "knowledgebases",
+        f"{kb_id}/parsed/{child_id}.md",
+        f"# {prefix}\n\n子文件产物。".encode(),
+        content_type="text/markdown",
+    )
+    engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "INSERT INTO knowledge_files "
+                    "(file_id, kb_id, parent_id, filename, file_type, status, is_folder, markdown_file, "
+                    " chunk_count, token_count, created_at, updated_at) "
+                    "VALUES (:fid, :kb, NULL, :name, 'txt', 'parsed', TRUE, NULL, 0, 0, now(), now())"
+                ),
+                {"fid": folder_id, "kb": kb_id, "name": f"{prefix}目录"},
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO knowledge_files "
+                    "(file_id, kb_id, parent_id, filename, file_type, status, is_folder, markdown_file, "
+                    " chunk_count, token_count, created_at, updated_at) "
+                    "VALUES (:fid, :kb, :parent, :name, 'txt', 'parsed', FALSE, :md, 0, 0, now(), now())"
+                ),
+                {
+                    "fid": child_id,
+                    "kb": kb_id,
+                    "parent": folder_id,
+                    "name": f"{prefix}子文件.txt",
+                    "md": f"http://minio/knowledgebases/{kb_id}/parsed/{child_id}.md",
+                },
+            )
+    finally:
+        await engine.dispose()
+
+    await _edit_parsed_content(test_client, kb_id, child_id, admin_headers, "# 已编辑的子文件")
+    assert len(await _parsed_object_names(kb_id, child_id)) >= 2
+
+    response = await test_client.delete(
+        f"/api/knowledge/databases/{kb_id}/documents/{folder_id}", headers=admin_headers
+    )
+    assert response.status_code == 200, response.text
+
+    assert await _parsed_object_names(kb_id, child_id) == []
+    engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
+    try:
+        async with engine.connect() as connection:
+            remaining = await connection.execute(
+                text("SELECT count(*) FROM knowledge_files WHERE file_id IN (:a, :b)"),
+                {"a": folder_id, "b": child_id},
+            )
+            assert remaining.scalar_one() == 0
+    finally:
+        await engine.dispose()

@@ -229,7 +229,6 @@
       :kb-id="kbId"
       :file-id="store.fileDetailFileId"
       :editable="canManageDatabase"
-      :start-in-edit="store.fileDetailStartEdit"
       @closed="store.closeFileDetail"
       @saved="onFileDetailSaved"
     />

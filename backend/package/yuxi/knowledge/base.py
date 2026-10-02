@@ -94,6 +94,16 @@ class KBFileStateConflictError(KnowledgeBaseException):
     pass
 
 
+class ParsedArtifactReadError(KnowledgeBaseException):
+    """解析产物对象读取失败（正文不可用）。
+
+    读取失败必须显式传播而不是静默降级：若照常返回修订号，前端会开放空白编辑器，
+    用户一次保存就会用空内容替换原产物。HTTP 上映射为 502，且响应不携带 content_revision。
+    """
+
+    pass
+
+
 class KnowledgeBase(ABC):
     """知识库抽象基类，定义统一接口"""
 
@@ -507,10 +517,12 @@ class KnowledgeBase(ABC):
 
         return upload_result.url
 
-    async def _delete_parsed_objects(self, kb_id: str, file_id: str) -> None:
+    @staticmethod
+    async def delete_parsed_objects(kb_id: str, file_id: str) -> None:
         """按前缀清理某文件的全部解析产物对象（解析产出的确定性名 + 编辑产出的内容寻址名）。
 
-        点号是必要锚点：不带时 file_id 互为前缀的文档（如 `abc` 与 `abcdef`）会被误删；
+        这是解析产物清理的唯一实现：单文件删除、批量删除（路由层）与文件夹删除（delete_folder）
+        都调用它。点号是必要锚点：不带时 file_id 互为前缀的文档（如 `abc` 与 `abcdef`）会被误删；
         file_id 为空同样不能退化成 `{kb_id}/parsed/`，那是整个知识库的产物目录。
         """
         if not file_id:
@@ -1228,8 +1240,8 @@ class KnowledgeBase(ABC):
                 await self.delete_folder(kb_id, child_id)
             else:
                 await self.delete_file(kb_id, child_id)
-                # 文件夹删除路径不经过 HTTP 层的对象清理，产物对象要在这里收口
-                await self._delete_parsed_objects(kb_id, child_id)
+                # 文件夹删除路径不经过 HTTP 层的对象清理，产物对象在这里走同一个收口实现
+                await self.delete_parsed_objects(kb_id, child_id)
 
         # Delete the folder itself
         # We call delete_file which should handle the actual removal.

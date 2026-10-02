@@ -1029,6 +1029,14 @@ class KnowledgeBaseManager:
         kb_instance = await self.get_kb_executor(kb_id)
         return await kb_instance.get_file_content(kb_id, file_id)
 
+    async def delete_parsed_objects(self, kb_id: str, file_id: str) -> None:
+        """清理解析产物对象（唯一实现的透传入口，供删除用例调用）。
+
+        不经 get_kb_executor：清理只依赖 MinIO 前缀，与具体 executor 无关，
+        且删除路径里知识库元数据可能已处于中间态。
+        """
+        await KnowledgeBase.delete_parsed_objects(kb_id, file_id)
+
     async def open_file_content(self, kb_id: str, file_id: str, offset: int = 0, limit: int = 800) -> dict:
         """按行窗口打开文件解析后的 Markdown 内容"""
         kb_instance = await self.get_kb_executor(kb_id)
