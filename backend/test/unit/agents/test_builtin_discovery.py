@@ -8,7 +8,7 @@ import pytest
 from yuxi.agents import buildin, presets
 from yuxi.agents.buildin.chatbot.graph import ChatbotAgent
 from yuxi.agents.buildin.subagent.graph import SubAgentBackend
-from yuxi.agents.skills import service as skill_service
+from yuxi.services.skills import shared as skill_service
 
 
 @pytest.fixture(autouse=True)

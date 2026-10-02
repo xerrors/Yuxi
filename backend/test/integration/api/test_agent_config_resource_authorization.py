@@ -71,7 +71,7 @@ async def test_mcp_selection_requires_explicit_agent_config(test_client, admin_h
                 persisted, db=db, user=owner, context_schema=ChatBotContext
             )
             assert normalized["mcps"] == []
-            for saved_value, expected in ((None, []), ([], []), ([mcp_slug], [mcp_slug])):
+            for saved_value, expected in (([], []), ([mcp_slug], [mcp_slug])):
                 response = await test_client.put(
                     agent_path,
                     headers=admin_headers,
@@ -382,3 +382,140 @@ async def _read_agent_config(conn, slug: str) -> dict:
     value = await conn.fetchval("SELECT config_json FROM agents WHERE slug = $1", slug)
     assert value is not None
     return json.loads(value) if isinstance(value, str) else value
+
+
+async def test_personal_skills_are_automatic_and_absent_from_agent_options(test_client, standard_user):
+    """真实 HTTP 选项只含共享，个人文件自动进入空、固定和全部运行范围。"""
+    from types import SimpleNamespace
+
+    from yuxi.agents.skills.runtime import resolve_runtime_skills_for_context
+
+    uid = str(standard_user["user"]["uid"])
+    headers = standard_user["headers"]
+    suffix = uuid.uuid4().hex[:10]
+    shared_slug, personal_slug = f"pytest-shared-{suffix}", f"pytest-personal-{suffix}"
+    agent_slug = f"pytest-personal-agent-{suffix}"
+    conn = await asyncpg.connect(os.environ["POSTGRES_URL"].replace("+asyncpg", ""))
+    engine = create_async_engine(os.environ["POSTGRES_URL"])
+    installed = []
+    try:
+        for slug in (shared_slug, personal_slug):
+            body = f"---\nname: {slug}\ndescription: Personal description\n---\n# Personal body\n"
+            prepared = await test_client.post(
+                "/api/skills/import/prepare",
+                headers=headers,
+                files={"file": ("SKILL.md", body.encode(), "text/markdown")},
+            )
+            assert prepared.status_code == 200, prepared.text
+            draft_id = prepared.json()["data"]["draft_id"]
+            confirmed = await test_client.post(
+                f"/api/skills/personal/install-drafts/{draft_id}/confirm",
+                headers=headers,
+                json={"slugs": [slug]},
+            )
+            assert confirmed.status_code == 200, confirmed.text
+            installed.append(slug)
+
+        await conn.execute(
+            """INSERT INTO skills (slug, name, description, source_type, dir_path, share_config,
+                enabled, created_by, updated_by, tool_dependencies, mcp_dependencies, skill_dependencies)
+                VALUES ($1, 'Shared title', 'Shared description', 'upload', $1, $2::jsonb,
+                true, $3, $3, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb)""",
+            shared_slug,
+            _user_share_config(uid),
+            uid,
+        )
+
+        created = await test_client.post(
+            "/api/agent",
+            headers=headers,
+            json={
+                "name": "Personal skills test",
+                "slug": agent_slug,
+                "backend_id": "ChatbotAgent",
+                "config_json": {"context": {"skills": [], "tools": [], "knowledges": [], "subagents": []}},
+            },
+        )
+        assert created.status_code == 200, created.text
+        response = await test_client.get(f"/api/agent/{agent_slug}", headers=headers)
+        assert response.status_code == 200, response.text
+        items = response.json()["agent"]["configurable_items"]
+        for field in ("skills", "preload_skills"):
+            options = {item["key"]: item for item in items[field]["options"]}
+            assert personal_slug not in options
+            assert options[shared_slug]["name"] == "Shared title"
+
+        for selection in ([], [shared_slug], "all"):
+            saved = await test_client.put(
+                f"/api/agent/{agent_slug}",
+                headers=headers,
+                json={"config_json": {"context": {"skills": selection}}},
+            )
+            assert saved.status_code == 200, saved.text
+            config = await _read_agent_config(conn, agent_slug)
+            assert config["context"]["skills"] == selection
+            async with async_sessionmaker(engine, expire_on_commit=False)() as db:
+                user = await db.scalar(select(User).where(User.uid == uid))
+                normalized = await normalize_agent_context_config(
+                    config["context"],
+                    db=db,
+                    user=user,
+                    context_schema=ChatBotContext,
+                )
+                scope = await resolve_runtime_skills_for_context(SimpleNamespace(**normalized), db=db, user=user)
+            assert {shared_slug, personal_slug}.issubset(scope["effective_skills"])
+            assert scope["skill_metadata"][shared_slug]["source_scope"] == "personal"
+            assert scope["skill_metadata"][personal_slug]["source_scope"] == "personal"
+            assert await _read_agent_config(conn, agent_slug) == config
+
+        rejected = await test_client.put(
+            f"/api/agent/{agent_slug}",
+            headers=headers,
+            json={"config_json": {"context": {"skills": [personal_slug]}}},
+        )
+        assert rejected.status_code == 422, rejected.text
+        assert await _read_agent_config(conn, agent_slug) == config
+    finally:
+        await engine.dispose()
+        await test_client.delete(f"/api/agent/{agent_slug}", headers=headers)
+        for slug in installed:
+            await test_client.delete(f"/api/skills/personal/{slug}", headers=headers)
+        await conn.execute("DELETE FROM skills WHERE slug = $1", shared_slug)
+        await conn.close()
+
+
+async def test_resource_selection_protocol_persists_intent_and_rejects_invalid_values(test_client, admin_headers):
+    """通过真实 HTTP 保存三态，并从数据库回读拒绝后的原值。"""
+    slug = f"pytest-selection-{uuid.uuid4().hex[:10]}"
+    path = f"/api/agent/{slug}"
+    conn = await asyncpg.connect(os.environ["POSTGRES_URL"].replace("+asyncpg", ""))
+    try:
+        response = await test_client.post(
+            "/api/agent",
+            headers=admin_headers,
+            json={
+                "name": "Selection test",
+                "slug": slug,
+                "backend_id": "ChatbotAgent",
+                "config_json": {"context": {"skills": "all", "subagents": [], "mcps": "all", "preload_skills": "all"}},
+            },
+        )
+        assert response.status_code == 200, response.text
+        expected = {"skills": "all", "subagents": [], "mcps": "all", "preload_skills": "all"}
+        assert (await _read_agent_config(conn, slug))["context"] == expected
+        response = await test_client.put(path, headers=admin_headers, json={"config_json": {"context": {"model": ""}}})
+        assert response.status_code == 200, response.text
+        expected["model"] = ""
+        for field in ("tools", "knowledges", "skills", "subagents", "mcps", "preload_skills"):
+            for invalid in (None, "full", ["ok", 1], [""]):
+                response = await test_client.put(
+                    path, headers=admin_headers, json={"config_json": {"context": {field: invalid}}}
+                )
+                assert response.status_code == 422, response.text
+                assert field in response.json()["detail"]
+                assert (await _read_agent_config(conn, slug))["context"] == expected
+        read = await test_client.get(path, headers=admin_headers)
+        assert read.json()["agent"]["config_json"]["context"] == expected
+    finally:
+        await test_client.delete(path, headers=admin_headers)
+        await conn.close()

@@ -110,7 +110,16 @@ yuxi agent list
 yuxi agent show default-chatbot
 ```
 
-未显式绑定的工具、知识库、Skills 和子 Agent 显示为“默认（全部可用）”；MCP 未显式添加时不直接加载，激活 Skill 后仍可加载其 MCP 依赖。`tools`、`knowledges`、`mcps` 和 `skills` 的显式空列表显示为“无”；`subagents` 的空列表仍按服务端契约显示为“默认（全部可用）”。这两条命令都支持 `--remote <name>` 切换实例，以及 `--json` 输出完整服务端响应。
+CLI 只显示服务端授权返回的内容，不在本地推测运行时解析。资源选择的显示语义如下（字段的实际默认范围由服务端 Context 决定，解释见[智能体配置](../agents/agents-config.md)）：
+
+| 配置内容 | CLI 显示 |
+| --- | --- |
+| 字段缺省 | `默认（由服务端决定）`；MCP 缺省显示 `无` |
+| 显式 `"all"` | `全部可用（含新增）` |
+| 空列表（含子 Agent 空列表） | `无` |
+| MCP 未直接选择 | 仍按配置显示；激活的 Skill 依旧会加载其 MCP 依赖 |
+
+这两条命令都支持 `--remote <name>` 切换实例，以及 `--json` 输出完整服务端响应。
 
 ## 上传知识库文件
 

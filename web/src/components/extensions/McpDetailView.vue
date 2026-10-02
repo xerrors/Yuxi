@@ -20,44 +20,40 @@
     <template #actions>
       <div class="extension-detail-actions">
         <a-space :size="8">
-          <button
-            type="button"
+          <a-button
+            type="text"
             :aria-label="testLoading ? '正在测试 MCP' : '测试 MCP'"
             @click="handleTestServer"
             :disabled="testLoading || server?.requires_migration"
-            :title="server?.requires_migration ? '请先迁移为远程 MCP' : ''"
-            class="lucide-icon-btn extension-panel-action extension-panel-action-secondary"
+            :title="server?.requires_migration ? '请先迁移为远程 MCP' : '测试 MCP'"
+            class="lucide-icon-btn extension-detail-action"
           >
             <Zap :size="14" v-if="!testLoading" />
             <span>测试</span>
-          </button>
-          <button
-            type="button"
+          </a-button>
+          <a-button
+            type="text"
             aria-label="编辑 MCP"
             @click="startEdit"
             :disabled="isEditing || !server || server.is_builtin"
-            :title="server?.is_builtin ? '系统内置 MCP 的连接配置由代码管理' : ''"
-            class="lucide-icon-btn extension-panel-action extension-panel-action-secondary"
+            :title="server?.is_builtin ? '系统内置 MCP 的连接配置由代码管理' : '编辑 MCP'"
+            class="lucide-icon-btn extension-detail-action"
           >
             <Pencil :size="14" />
             <span>编辑</span>
-          </button>
-          <button
-            type="button"
+          </a-button>
+          <a-button
+            type="text"
+            :danger="server?.enabled !== false || server?.requires_migration"
             :aria-label="`${actionLabel} MCP`"
+            :title="`${actionLabel} MCP`"
             @click="handleDangerAction"
-            :class="[
-              'lucide-icon-btn',
-              'extension-panel-action',
-              server?.enabled === false && !server?.requires_migration
-                ? 'extension-panel-action-primary'
-                : 'extension-panel-action-danger'
-            ]"
+            class="lucide-icon-btn extension-detail-action"
           >
             <Plus v-if="server?.enabled === false && !server?.requires_migration" :size="14" />
             <Trash2 v-else :size="14" />
             <span>{{ actionLabel }}</span>
-          </button>
+          </a-button>
         </a-space>
       </div>
     </template>

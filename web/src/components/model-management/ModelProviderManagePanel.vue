@@ -58,6 +58,8 @@ const REQUEST_BODY_OVERRIDES_PLACEHOLDER = '{\n  "enable_thinking": false\n}'
 // Provider form state
 const showProviderModal = ref(false)
 const editingProviderId = ref(null) // null = creating, string = editing
+const originalProviderEnabled = ref(null)
+const originalProviderFields = ref('')
 const providerForm = reactive({
   provider_id: '',
   display_name: '',
@@ -77,6 +79,10 @@ const providerForm = reactive({
   headers_text: '{}',
   extra_text: '{}'
 })
+// 启用状态由标题栏独立保存，不计入其他字段的未保存判断。
+const hasUnsavedProviderFields = computed(
+  () => JSON.stringify({ ...providerForm, is_enabled: null }) !== originalProviderFields.value
+)
 
 // Model form state
 const showModelModal = ref(false)
@@ -325,6 +331,7 @@ function getProviderStatus(provider) {
 
 const openCreateProviderModal = () => {
   editingProviderId.value = null
+  originalProviderEnabled.value = null
   Object.assign(providerForm, {
     provider_id: '',
     display_name: '',
@@ -349,6 +356,7 @@ const openCreateProviderModal = () => {
 
 const openEditProviderModal = (provider) => {
   editingProviderId.value = provider.provider_id
+  originalProviderEnabled.value = provider.is_enabled !== false
   Object.assign(providerForm, {
     provider_id: provider.provider_id,
     display_name: provider.display_name,
@@ -368,6 +376,7 @@ const openEditProviderModal = (provider) => {
     headers_text: formatJsonText(provider.headers_json),
     extra_text: formatJsonText(provider.extra_json)
   })
+  originalProviderFields.value = JSON.stringify({ ...providerForm, is_enabled: null })
   showProviderModal.value = true
 }
 
@@ -428,19 +437,46 @@ const saveProvider = async () => {
   }
 }
 
-const saveProviderAndEnable = async () => {
+/** 只提交供应商启用状态，并在停用成功后关闭编辑弹窗。 */
+const applyProviderEnabled = async (enabled) => {
   saving.value = true
   try {
-    const payload = { ...buildProviderPayload(), is_enabled: true }
-    await modelProviderApi.updateProvider(providerForm.provider_id, payload)
-    message.success('供应商已保存并启用')
-    showProviderModal.value = false
+    await modelProviderApi.updateProvider(providerForm.provider_id, { is_enabled: enabled })
+    originalProviderEnabled.value = enabled
+    providerForm.is_enabled = enabled
+    if (!enabled) showProviderModal.value = false
     await loadProviders()
+    message.success(`供应商已${enabled ? '启用' : '停用'}`)
   } catch (error) {
-    message.error(error.message || '保存失败')
+    message.error(error?.response?.data?.detail || error.message || '切换供应商状态失败')
   } finally {
     saving.value = false
   }
+}
+
+/** 切换启用状态前保护默认模型与未保存的其他配置。 */
+const toggleProviderEnabled = (enabled) => {
+  if (saving.value) return
+  if (!editingProviderId.value) {
+    providerForm.is_enabled = enabled
+    return
+  }
+  if (!enabled && providerContainsDefaultModel(providerForm.provider_id)) {
+    warnDefaultModelProtected()
+    return
+  }
+  if (!enabled && hasUnsavedProviderFields.value) {
+    Modal.confirm({
+      title: '停用供应商？',
+      content: '弹窗内未保存的其他修改将丢弃；此操作只保存启用状态。',
+      okText: '停用',
+      okType: 'danger',
+      cancelText: '继续编辑',
+      onOk: () => applyProviderEnabled(enabled)
+    })
+    return
+  }
+  applyProviderEnabled(enabled)
 }
 
 const deleteProvider = async (provider) => {
@@ -476,6 +512,7 @@ const deleteProvider = async (provider) => {
 }
 
 const deleteProviderFromEdit = async () => {
+  if (saving.value) return
   const provider = providers.value.find((p) => p.provider_id === editingProviderId.value)
   if (provider) {
     deleteProvider(provider)
@@ -831,16 +868,33 @@ defineExpose({
     <!-- Provider Edit Modal -->
     <a-modal
       v-model:open="showProviderModal"
-      :title="editingProviderId ? '编辑供应商' : '新增供应商'"
       :width="560"
-      :confirm-loading="saving"
+      :closable="false"
+      :mask-closable="!saving"
+      :keyboard="!saving"
     >
+      <template #title>
+        <div class="provider-modal-titlebar">
+          <span>{{ editingProviderId ? '编辑供应商' : '新增供应商' }}</span>
+          <div class="provider-modal-status">
+            <span>启用</span>
+            <a-switch
+              :checked="editingProviderId ? originalProviderEnabled : providerForm.is_enabled"
+              :loading="saving"
+              :disabled="saving"
+              :aria-label="editingProviderId ? (originalProviderEnabled ? '停用供应商' : '启用供应商') : '创建时启用供应商'"
+              @change="toggleProviderEnabled"
+            />
+          </div>
+        </div>
+      </template>
       <template #footer>
         <div class="provider-modal-footer">
           <a-button
             v-if="editingProviderId"
             danger
             class="lucide-icon-btn"
+            :disabled="saving"
             @click="deleteProviderFromEdit"
           >
             <Trash2 :size="14" />
@@ -848,25 +902,18 @@ defineExpose({
           </a-button>
           <span v-else></span>
           <div class="provider-modal-footer-actions">
-            <a-button @click="showProviderModal = false">取消</a-button>
-            <template v-if="editingProviderId && !providerForm.is_enabled">
-              <a-button :loading="saving" @click="saveProvider">仅保存</a-button>
-              <a-button type="primary" :loading="saving" @click="saveProviderAndEnable">
-                保存并启用
-              </a-button>
-            </template>
+            <a-button :disabled="saving" @click="showProviderModal = false">取消</a-button>
             <a-button
-              v-else
               type="primary"
               :loading="saving"
               @click="editingProviderId ? saveProvider() : createProvider()"
             >
-              确认
+              {{ editingProviderId ? '保存' : '确认' }}
             </a-button>
           </div>
         </div>
       </template>
-      <div class="modal-form" autocomplete="off">
+      <div class="modal-form" autocomplete="off" :inert="saving">
         <div class="form-row">
           <label class="form-label">
             <span>Provider ID</span>
@@ -994,15 +1041,6 @@ defineExpose({
             <a-select-option value="rerank">rerank</a-select-option>
           </a-select>
         </label>
-
-        <div class="form-switch">
-          <span>状态</span>
-          <a-switch
-            v-model:checked="providerForm.is_enabled"
-            checked-children="启用"
-            un-checked-children="停用"
-          />
-        </div>
 
         <div class="form-switch">
           <a-tooltip
@@ -1831,6 +1869,22 @@ defineExpose({
   :deep(.ant-collapse-header) {
     padding-inline: 0;
   }
+}
+
+.provider-modal-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.provider-modal-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--gray-600);
+  font-size: 12px;
+  font-weight: 400;
 }
 
 .provider-modal-footer {

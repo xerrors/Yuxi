@@ -94,7 +94,9 @@ export function useAgentMentionConfig({
     MENTION_FIELDS.forEach(([field, output]) => {
       const options = getAgentConfigOptions(configItems[field])
       const byValue = new Map(options.map((option) => [getAgentConfigOptionValue(option), option]))
-      const selected = getVisibleAgentResourceSelection(currentConfig[field], field, [...byValue.keys()])
+      const selected = getVisibleAgentResourceSelection(currentConfig[field], configItems[field], [
+        ...byValue.keys()
+      ])
       resources[output] = [...new Set(selected)]
         .map((value) => normalizeMentionResource(byValue.get(value), field))
         .filter(Boolean)

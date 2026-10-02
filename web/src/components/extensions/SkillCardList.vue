@@ -7,7 +7,7 @@
             class="lucide-icon-btn"
             aria-label="刷新 Skills"
             :disabled="loading"
-            @click="fetchSkills({ refreshPersonal: true })"
+            @click="fetchSkills"
           >
             <RefreshCw
               :size="14"
@@ -222,7 +222,7 @@
               class="lucide-icon-btn"
               @click="goToPreviewSkillManagement"
             >
-              <span>去管理</span>
+              <span>{{ canManageSkill(previewSkill) ? '编辑 Skill' : '查看 Skill' }}</span>
             </a-button>
           </div>
         </div>
@@ -1023,10 +1023,10 @@ const handleBatchDelete = () => {
   })
 }
 
-const fetchSkills = async ({ refreshPersonal = false } = {}) => {
+const fetchSkills = async () => {
   loading.value = true
   try {
-    const skillResult = await skillApi.listSkillCards({ refreshPersonal })
+    const skillResult = await skillApi.listSkillCards()
     skills.value = skillResult?.data || []
   } catch {
     message.error('加载失败')

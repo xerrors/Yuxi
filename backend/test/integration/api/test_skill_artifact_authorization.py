@@ -11,7 +11,8 @@ import pytest
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from yuxi.agents.skills import service as skill_service
+from yuxi.services.skills import shared as skill_service
+from yuxi.services.skills import projection as projection_service
 from yuxi.storage.postgres.models_business import Skill
 from test.live_api_cleanup import make_test_conversation_metadata, make_test_conversation_title
 
@@ -58,7 +59,7 @@ async def test_skill_artifact_rechecks_authorization_after_share_revoke(
     engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     skill_id: int | None = None
-    projection_paths = [skill_service.get_user_skills_root_dir(uid) / slug for uid in (admin_uid, user_uid)]
+    projection_paths = [projection_service.get_user_skills_root_dir(uid) / slug for uid in (admin_uid, user_uid)]
     try:
         async with session_factory() as db:
             skill = Skill(
@@ -87,7 +88,7 @@ async def test_skill_artifact_rechecks_authorization_after_share_revoke(
             skill_id = skill.id
 
         for uid in (admin_uid, user_uid):
-            skill_service.sync_user_accessible_skills(uid, {slug: source_dir})
+            projection_service.sync_user_accessible_skills(uid, {slug: source_dir})
 
         admin_thread = await _create_thread(test_client, admin_headers, f"skill-artifact-admin-{suffix[:8]}")
         user_thread = await _create_thread(test_client, user_headers, f"skill-artifact-user-{suffix[:8]}")

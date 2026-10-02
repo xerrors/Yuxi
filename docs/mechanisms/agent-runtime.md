@@ -27,9 +27,7 @@ API/worker 不信任浏览器内存中的完整配置。请求可以提供受限
 
 状态查询在 Conversation 与 Workdir 授权后直接读取 PostgreSQL checkpointer 的根 namespace，返回最近完整快照及同批 pending writes 中的中断，仅在最新 Run 为 interrupted 时展示审批。读取不创建 Context 或模型；业务 pending writes 的合并仍由执行图拥有。当前文件由 Sandbox backend 持久化，未使用 `files` DeltaChannel 写入；启用该 channel 的状态写入前需要重新验证读取契约。
 
-普通来源构建 `AgentRequestInput` 并调用 `agent_request_service.submit_agent_request`。该用例负责访问校验、Message/Request 持久化和 FIFO 派发尝试，在事务提交后物化工作目录、投递 Run；内部持久化步骤返回 AgentRunRequest 及本事务实际派发的队头，提交后按实际派发的 Run 投递；新提交和重发通过同一个函数投影请求视图。队列服务负责后续派发、引导、取消和恢复。
-
-普通 Request 保存消息引用、不可变来源和目标作用域、当前排队策略以及接入时解析的模型/审批配置。`input_payload` 不包含完整原始请求；正文由 Message 拥有，其余 Agent 配置在 worker 准备时读取。相同 request_id 以首次接收内容为准，后续重发不改写正文或模型；enqueue 升级为 steer 不改变请求身份，重发返回当前策略。既有 Request 在 Agent、线程与 Project 访问检查后直接返回，不依赖当前后端或物化 Workdir，也不触发再次投递；pending Run 仍由周期恢复扫描补发。Request 派发后保持 dispatched，执行终态由 Run 拥有。
+普通来源构建 `AgentRequestInput` 并调用 `agent_request_service.submit_agent_request`：该用例完成访问校验、Message/Request 持久化与 FIFO 派发尝试，事务提交后物化 Workdir 并投递 Run。Request 只保存消息引用、不可变来源与目标作用域、排队策略和接入时解析的模型/审批配置；正文由 Message 拥有，其余 Agent 配置在 worker 准备时读取。提交、重发、排队策略、引导和恢复收敛的完整契约见 [Agent 请求队列与调度](./agent-request-queue.md)。
 
 ## 配置和运行态的区别
 
@@ -48,8 +46,8 @@ manifest v2 的配置摘要来自准备后的可配置字段，包含模型覆�
 
 ## 资源权限
 
-- `tools`、`knowledges` 和 `skills` 未配置时，使用当前用户可访问的全部资源；显式列表只保留列表中的资源；显式空列表不启用该类资源。Agent 的 MCP 字段未配置、为 `null` 或空列表时不直接加载服务器，显式列表只保留当前可用的服务器；有效 Skill 激活后可按需加载其 MCP 依赖。
-- `ChatBotContext.subagents` 未配置或保存空列表时，使用当前用户可见的全部子智能体；显式列表才会收窄范围。
+- Context 准备阶段将 `"all"` 展开为当前执行用户可用的资源列表，将固定列表与可用资源取交集，空列表保持为空；后续构图消费解析后的列表。字段默认值、界面操作与 API 写入规则见[智能体配置](../agents/agents-config.md)。
+- MCP 选择控制直接加载的服务器；有效 Skill 激活后仍可按需加载其 MCP 依赖。
 - Agent 的知识库选择只能缩小用户已经拥有的读取权限。
 - Skill 选择控制 Prompt 和工具激活；共享 Skill 的文件投影按用户授权生成，个人 Skill 位于 UserWorkspace。
 资源快照只解决运行时“能看见哪些资源”。产生文件、知识库、MCP 或外部系统副作用的工具还要在执行处校验具体目标和当前身份。
@@ -97,4 +95,4 @@ Viewer、附件和 artifact API 通过持久化 Workspace/Workdir 读取文件�
 
 History 读取不改变已读标记。页面加载历史后以 `POST /api/chat/thread/{thread_id}/viewed` 显式标记已查看，并使用该操作返回的 Thread 更新侧栏。读取未知、已删除或其他用户的线程返回 404。多个查询遵循当前数据库事务隔离；响应不承诺跨 SQL 原子快照，运行中变化通过 SSE 与持久化重读收敛。
 
-接口契约由 `conversation_service` 装配、`ConversationRepository` 查询和前端 History consumers 共同拥有；真实 HTTP 测试回读 Run、消息和 PostgreSQL 已读标记，覆盖超过审计窗口的完整历史与用户隔离。取舍与兼容影响见 [前端优化](../develop-guides/decisions/implemented/2026-09-05-frontend-optimization.md)。
+接口契约由 `conversation_service` 装配、`ConversationRepository` 查询和前端 History consumers 共同拥有；真实 HTTP 测试回读 Run、消息和 PostgreSQL 已读标记，覆盖超过审计窗口的完整历史与用户隔离。取舍与兼容影响见 [前端优化](../develop-guides/decisions/archived/0.7.3/12-concurrency/2026-09-05-frontend-optimization.md)。

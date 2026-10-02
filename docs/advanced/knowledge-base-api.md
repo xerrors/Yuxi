@@ -48,11 +48,11 @@ Content-Type: application/json
 
 按状态处理整批文件时，使用 `/documents/parse-pending` 和 `/documents/index-pending`。直接提交的文件 ID 数量有限制，大批量导入应使用按状态入口。
 
-URL 导入需要管理员身份和目标知识库的管理权限。先调用 `POST /api/knowledge/files/fetch-url`，通过 URL 白名单校验并得到对象地址，再进入导入流程。抓取器在 DNS 正常解析到 loopback、私有网段或 link-local 地址时会拒绝请求，并逐跳检查重定向目标，最多跟随 5 次重定向，只接受 HTML，响应体默认不超过 10 MB；DNS 解析失败目前会记录日志后继续请求，生产环境还应在网络层限制出口。不要把 `content_type=url` 直接传给文档导入接口；完整配置说明见[文档处理与 OCR](./document-processing.md#从-url-导入网页)。
+URL 导入需要管理员身份和目标知识库的管理权限。先调用 `POST /api/knowledge/files/fetch-url`，通过 URL 白名单校验并得到对象地址，再进入导入流程。白名单配置与抓取器的 SSRF 防护、重定向和大小限制由[文档处理与 OCR](./document-processing.md#从-url-导入网页)拥有。不要把 `content_type=url` 直接传给文档导入接口。
 
 上传入口会检查内容哈希，但数据库没有内容哈希唯一约束。并发请求仍可能产生重复记录；`/documents/add` 和一体化入口会保存调用方提供的哈希，不会替调用方再次完成幂等去重。
 
-Durable Task 的 `success` 只代表 worker 已完成编排。最终结论要检查文件状态，并在需要时回读 MinIO、chunk 和向量索引。
+Durable Task 的 `success` 只代表 worker 已完成编排，任务状态不拥有文件事实；最终结论要按[知识库机制](../mechanisms/knowledge-base.md#文档状态机)回读文件状态，并在需要时核对 MinIO、chunk 和向量索引。完整请求 Schema 和错误响应以部署实例的 Swagger 页面为准：`<base-url>/docs`。
 
 ## 外部查询接口
 

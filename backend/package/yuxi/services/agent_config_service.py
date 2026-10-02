@@ -4,9 +4,13 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.agents.buildin import get_agent_backend
-from yuxi.agents.context import BaseContext, filter_config_by_role, resolve_agent_resource_options
+from yuxi.agents.context import (
+    BaseContext,
+    filter_config_by_role,
+    resolve_agent_resource_options,
+)
 from yuxi.agents.presets import discover_agent_presets
-from yuxi.repositories.agent_repository import AGENT_RESOURCE_CONFIG_FIELDS, AgentRepository
+from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.storage.postgres.models_business import User
 
 
@@ -23,22 +27,21 @@ async def prepare_agent_config_write(
     if not isinstance(context, dict):
         return filtered, {}
 
+    resource_fields = (context_schema or BaseContext).get_resource_fields()
     submitted_fields = {
         field_name
-        for field_name in AGENT_RESOURCE_CONFIG_FIELDS & context.keys()
+        for field_name in resource_fields.keys() & context.keys()
         if isinstance(context[field_name], list) and context[field_name]
     }
     if not submitted_fields:
         return filtered, {}
 
-    option_fields = submitted_fields - {"preload_skills"}
-    if "preload_skills" in submitted_fields:
-        option_fields.add("skills")
+    option_fields = {resource_fields[name] for name in submitted_fields}
     options = await resolve_agent_resource_options(option_fields, db=db, user=user)
 
     resource_access: dict[str, set[str]] = {}
     for field_name in submitted_fields:
-        option_field = "skills" if field_name == "preload_skills" else field_name
+        option_field = resource_fields[field_name]
         if option_field not in options:
             raise RuntimeError(f"智能体资源字段 {field_name} 缺少权限解析结果")
         resource_access[field_name] = {option["key"] for option in options[option_field]}

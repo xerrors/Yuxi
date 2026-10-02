@@ -11,10 +11,10 @@ Yuxi 把文档处理拆成两步：先把原文件保存到知识库，再根据
 - 文本：`.txt`、`.md`、`.html`、`.htm`、`.json`、`.csv`；
 - Office：`.docx`、`.pptx`、`.xls`、`.xlsx`；
 - PDF：`.pdf`；
-- 图片：`.jpg`、`.jpeg`、`.png`、`.bmp`、`.tiff`、`.tif`；
+- 图片：`.jpg`、`.jpeg`、`.png`、`.bmp`、`.tiff`、`.tif`、`.webp`；
 - ZIP：压缩包内必须包含 UTF-8 编码的 `.md` 文件。
 
-图片文件必须使用 OCR 引擎。PDF 可以选择 OCR；选择 `disable` 时，系统会尝试直接读取 PDF 文本层，扫描版 PDF 通常得不到内容。
+Office 文件不走 OCR 引擎：系统用内置的 docling-slim 在本地把它们转成 Markdown（`.docx`、`.pptx`、`.xlsx`、`.xls` 都有对应解析后端，API 镜像已附带所需的 LibreOffice 组件）。选择 MinerU Official 引擎时，`.docx` 和 `.pptx` 也可以直接交给该云服务解析。其余类型中，图片文件必须使用 OCR 引擎；PDF 可以选择 OCR，选择 `disable` 时系统尝试直接读取 PDF 文本层，扫描版 PDF 通常得不到内容。
 
 ZIP 处理会优先使用名为 `full.md` 的 Markdown 文件，否则使用压缩包中找到的第一个 `.md` 文件，并把 `images/` 下的图片上传到知识库图片存储。压缩包内的绝对路径和 `..` 路径会被拒绝。
 
@@ -26,7 +26,7 @@ ZIP 处理会优先使用名为 `full.md` 的 Markdown 文件，否则使用压�
 YUXI_URL_WHITELIST=github.com,docs.example.com,*.wikipedia.org
 ```
 
-列表以逗号分隔；配置的域名及其子域名可以通过校验，空列表表示关闭 URL 导入。抓取器在 DNS 正常解析到 loopback、私有网段或 link-local 地址时会拒绝请求，并逐跳检查重定向目标；最多跟随 5 次重定向，只接受 HTML，响应体默认不超过 10 MB。DNS 解析失败目前会记录日志后继续请求，因此 URL 白名单和地址检查不能当作网络出口防火墙；生产环境还应在网络层限制出口。
+列表以逗号分隔；配置的域名及其子域名可以通过校验，空列表表示关闭 URL 导入。抓取器的安全边界由本页拥有：DNS 解析到 loopback、私有网段或 link-local 地址时拒绝请求，并逐跳检查重定向目标，最多跟随 5 次重定向，只接受 HTML，响应体默认不超过 10 MB。DNS 解析失败目前会记录日志后继续请求，因此 URL 白名单和地址检查不能当作网络出口防火墙；生产环境还应在网络层限制出口。
 
 ## 选择 OCR 方案
 

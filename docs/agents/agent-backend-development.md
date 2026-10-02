@@ -81,38 +81,9 @@ worker 和主动压缩在执行入口显式调用 `prepare_agent_runtime_context
 
 ## Context 和配置表单
 
-需要让管理员或用户配置 Agent 行为时，在 `context.py` 扩展 `BaseContext`：
+需要让管理员或用户配置 Agent 行为时，在 `context.py` 扩展 `BaseContext`。字段定义、metadata、权限和保存结构的完整规则由[智能体配置](./agents-config.md#自定义-context-字段)拥有，本页只描述扩展时的代码路径：新增 dataclass 字段后，`get_configurable_items()` 自动把它暴露给 Agent 详情接口和 `AgentRuntimeConfigForm`，保存值进入 `config_json.context`，`get_graph(context)` 消费准备后的 Context。
 
-```python
-from dataclasses import dataclass, field
-from yuxi.agents import BaseContext
-
-
-@dataclass(kw_only=True)
-class MyAgentContext(BaseContext):
-    response_style: str = field(
-        default="concise",
-        metadata={
-            "name": "回答风格",
-            "description": "控制回答的详细程度",
-            "type": "string",
-            "options": ["concise", "detailed"],
-        },
-    )
-```
-
-metadata 会影响 Agent 详情接口和 `AgentRuntimeConfigForm`。不要只在前端添加一个字段，也不要把运行期 ID、worker 身份和权限快照暴露成可保存配置。
-
-新增字段后，沿下面的链路检查：
-
-```text
-context_schema
-  → get_configurable_items()
-  → Agent 详情接口
-  → 前端配置表单
-  → config_json.context
-  → get_graph(context)
-```
+不要只在前端添加一个字段，也不要把运行期 ID、worker 身份和权限快照暴露成可保存配置。新增字段后，沿 context_schema → get_configurable_items() → 详情接口 → 配置表单 → `config_json.context` → `get_graph(context)` 的链路检查每一环的测试和文档。
 
 ## 中间件和工具
 

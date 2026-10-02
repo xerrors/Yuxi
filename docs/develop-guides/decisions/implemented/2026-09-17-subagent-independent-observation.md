@@ -44,7 +44,7 @@ useSubagentRuns 按 run_id 独立保存观察结果，不被父 checkpoint 的�
 
 重新引入条件：只有实测模型往返成本不可接受且能在等待前可靠交付持久身份时，才重新评估阻塞快捷工具。
 
-本决定取代[状态面板展示](./2026-08-25-state-panel-display.md)中从父 state 直接展示子任务状态的部分，保留其按子线程收敛和历史描述回填规则。
+本决定取代[状态面板展示](../archived/0.7.3/14-frontend-ux/2026-08-25-state-panel-display.md)中从父 state 直接展示子任务状态的部分，保留其按子线程收敛和历史描述回填规则。
 
 独立 Reviewer 已复核完整 diff、生命周期、权限、连接预算、历史 consumer 和验证边界，未发现剩余必须修复的问题。
 

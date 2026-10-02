@@ -87,7 +87,7 @@ async def _startup(app: FastAPI) -> None:
     async def initialize_builtin_skills() -> None:
         """在独立事务中安装内置 Skills。"""
 
-        from yuxi.agents.skills.service import init_builtin_skills
+        from yuxi.services.skills.shared import init_builtin_skills
 
         async with pg_manager.get_async_session_context() as session:
             await init_builtin_skills(session)

@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import re
-import warnings
 from collections.abc import Awaitable, Callable, Iterable
 from contextvars import ContextVar
 from typing import Any
@@ -215,7 +213,7 @@ class YuxiSummarizationMiddleware(SummarizationMiddleware):
         offloaded_messages, failed_media = self._offload_inline_media(self._backend, messages_to_summarize)
         session_id = self._get_session_id(request.state)
         file_path = self._offload_to_backend(self._backend, offloaded_messages, session_id)
-        self._report_offload_result(file_path, failed_media)
+        self._require_offload_result(file_path, failed_media)
 
         summary = self._create_summary(offloaded_messages)
         new_messages = self._build_new_messages_with_path(summary, file_path)
@@ -283,12 +281,10 @@ class YuxiSummarizationMiddleware(SummarizationMiddleware):
             messages_to_summarize,
         )
         session_id = self._get_session_id(request.state)
-        file_path, summary = await asyncio.gather(
-            self._aoffload_to_backend(self._backend, offloaded_messages, session_id),
-            self._acreate_summary(offloaded_messages),
-        )
-        self._report_offload_result(file_path, failed_media)
+        file_path = await self._aoffload_to_backend(self._backend, offloaded_messages, session_id)
+        self._require_offload_result(file_path, failed_media)
 
+        summary = await self._acreate_summary(offloaded_messages)
         new_messages = self._build_new_messages_with_path(summary, file_path)
         new_event = self._build_summary_event(request.state, cutoff_index, new_messages[0], file_path)
         response = await handler(request.override(messages=[*new_messages, *preserved_messages]))
@@ -358,27 +354,23 @@ class YuxiSummarizationMiddleware(SummarizationMiddleware):
         return self._lc_helper.summary_prompt.format(messages=get_buffer_string(trimmed, format="xml")).rstrip()
 
     def _create_summary(self, messages: list[AnyMessage]) -> str:
-        if not messages:
-            return "No previous conversation history."
-        prompt = self._build_summary_prompt(messages)
+        prompt = self._build_summary_prompt(messages) if messages else None
         if prompt is None:
-            return "Previous conversation was too long to summarize."
-        try:
-            return self.model.invoke(prompt, config=self._SUMMARY_INVOKE_CONFIG).text.strip()
-        except Exception as exc:
-            return f"Error generating summary: {exc!s}"
+            raise RuntimeError("没有可供自动压缩的对话历史")
+        summary = self.model.invoke(prompt, config=self._SUMMARY_INVOKE_CONFIG).text.strip()
+        if not summary:
+            raise RuntimeError("摘要模型返回空内容")
+        return summary
 
     async def _acreate_summary(self, messages: list[AnyMessage]) -> str:
-        if not messages:
-            return "No previous conversation history."
-        prompt = self._build_summary_prompt(messages)
+        prompt = self._build_summary_prompt(messages) if messages else None
         if prompt is None:
-            return "Previous conversation was too long to summarize."
-        try:
-            response = await self.model.ainvoke(prompt, config=self._SUMMARY_INVOKE_CONFIG)
-            return response.text.strip()
-        except Exception as exc:
-            return f"Error generating summary: {exc!s}"
+            raise RuntimeError("没有可供自动压缩的对话历史")
+        response = await self.model.ainvoke(prompt, config=self._SUMMARY_INVOKE_CONFIG)
+        summary = response.text.strip()
+        if not summary:
+            raise RuntimeError("摘要模型返回空内容")
+        return summary
 
     async def _acreate_summary_or_raise(self, messages: list[AnyMessage]) -> str:
         prompt = self._build_summary_prompt(messages) if messages else None
@@ -426,15 +418,10 @@ class YuxiSummarizationMiddleware(SummarizationMiddleware):
         return update
 
     @staticmethod
-    def _report_offload_result(file_path: str | None, failed_media: int) -> None:
+    def _require_offload_result(file_path: str | None, failed_media: int) -> None:
         if file_path is None:
-            message = (
-                "Offloading conversation history to backend failed during summarization. "
-                "Older messages will not be recoverable."
-            )
-            logger.error(message)
-            warnings.warn(message, stacklevel=3)
-        elif failed_media:
+            raise RuntimeError("自动压缩无法保存可恢复的对话历史")
+        if failed_media:
             logger.warning(
                 "Conversation history offloaded to %s, but %d media block(s) could not be offloaded.",
                 file_path,

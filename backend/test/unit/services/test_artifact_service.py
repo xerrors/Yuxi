@@ -5,12 +5,12 @@ import threading
 from pathlib import Path
 
 import pytest
-from fastapi import HTTPException
-
 import yuxi.services.artifact_service as svc
+from fastapi import HTTPException
 from yuxi.agents.backends.paths import workspace_scope_from_runtime_path
-from yuxi.workspace.errors import FileTransferLimitError
+from yuxi.services.skills import edit as skill_edit
 from yuxi.services.workdir_service import AuthorizedWorkdir
+from yuxi.workspace.errors import FileTransferLimitError
 from yuxi.workspace.workdir import Workdir
 
 
@@ -67,7 +67,9 @@ class _Workspace:
 
 @pytest.fixture
 def live_files(monkeypatch, tmp_path):
-    backend = _Workspace(tmp_path / "reporter")
+    (tmp_path / "shared").mkdir()
+    backend = _Workspace(tmp_path / "shared/reporter")
+    monkeypatch.setattr(skill_edit, "get_skill_data_dir", lambda: tmp_path)
     binding = AuthorizedWorkdir(
         conversation_id=1,
         thread_id="thread-1",
@@ -93,8 +95,12 @@ def live_files(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         svc,
-        "list_accessible_skills",
-        lambda _db, _user: _async_value([type("Skill", (), {"slug": "reporter", "source_dir": backend.skill_root})()]),
+        "lock_accessible_shared_skill_for_file",
+        lambda _db, _user, slug: _async_value(
+            type("Skill", (), {"slug": "reporter", "dir_path": "shared/reporter", "source_type": "upload"})()
+            if slug == "reporter"
+            else None
+        ),
     )
     return backend
 
@@ -223,7 +229,7 @@ async def test_artifact_rejects_workdir_viewer_scope(live_files):
 
 @pytest.mark.asyncio
 async def test_artifact_rechecks_current_skill_authorization(live_files, monkeypatch):
-    monkeypatch.setattr(svc, "list_accessible_skills", lambda _db, _user: _async_value([]))
+    monkeypatch.setattr(svc, "lock_accessible_shared_skill_for_file", lambda _db, _user, _slug: _async_value(None))
 
     with pytest.raises(HTTPException) as exc:
         await svc.resolve_thread_artifact_view(

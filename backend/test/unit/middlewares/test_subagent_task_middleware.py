@@ -173,49 +173,54 @@ def _patch_start(monkeypatch, captured: dict, *, thread_id: str = "child-thread"
 
 
 @pytest.mark.asyncio
-async def test_create_task_middleware_loads_all_visible_subagents_when_empty(monkeypatch) -> None:
-    class _UserRepository:
-        async def get_by_uid_with_db(self, _db, uid):
-            assert uid == "user-1"
-            return SimpleNamespace(uid="user-1", role="user")
+@pytest.mark.parametrize("selection, expected", [([], False), (["invisible"], False), ("all", True)])
+async def test_chatbot_assembly_respects_resolved_subagent_selection(monkeypatch, selection, expected):
+    """经过资源解析与真实中间件装配，空范围不会重新开放子智能体工具。"""
+    from unittest.mock import AsyncMock
+    from langchain.agents.middleware.types import AgentMiddleware
+    from yuxi.agents import context as context_module
+    from yuxi.agents.buildin.chatbot import graph
+    from yuxi.agents.buildin.chatbot.context import ChatBotContext
 
-    class _AgentRepository:
-        def __init__(self, _db):
+    worker = SimpleNamespace(
+        slug="worker", name="Worker", description="work", config_json={}, backend_id=SUB_AGENT_BACKEND_ID
+    )
+
+    class UserRepository:
+        async def get_by_uid_with_db(self, db, uid):
+            return SimpleNamespace(uid=uid, role="user")
+
+    class AgentRepository:
+        def __init__(self, db):
             pass
 
         async def list_visible_subagents(self, *, user):
-            assert user.uid == "user-1"
-            return [
-                SimpleNamespace(
-                    slug="worker",
-                    name="Worker",
-                    description="work on scoped tasks",
-                    backend_id=SUB_AGENT_BACKEND_ID,
-                    config_json={},
-                ),
-            ]
+            return [worker]
 
-        async def get_visible_by_slug(self, *, slug, user, kind="main"):
-            del slug
-            del user
-            del kind
-            raise AssertionError("empty subagents should load all visible subagents")
+        async def get_visible_by_slug(self, *, slug, user, kind):
+            return worker if slug == worker.slug else None
+
+    async def options(names, **kwargs):
+        return {name: [{"key": "worker"}] for name in names}
 
     _patch_session(monkeypatch)
-    monkeypatch.setattr(subagent_task_middleware, "UserRepository", _UserRepository)
-    monkeypatch.setattr(subagent_task_middleware, "AgentRepository", _AgentRepository)
-
-    middleware = await subagent_task_middleware.create_subagent_task_middleware(
-        SimpleNamespace(thread_id="parent-thread", uid="user-1", subagents=[]),
+    monkeypatch.setattr(subagent_task_middleware, "UserRepository", UserRepository)
+    monkeypatch.setattr(subagent_task_middleware, "AgentRepository", AgentRepository)
+    monkeypatch.setattr(context_module, "resolve_agent_resource_options", options)
+    monkeypatch.setattr(graph, "create_memory_middleware", AsyncMock(return_value=None))
+    monkeypatch.setattr(graph, "create_summary_middleware_from_context", lambda *args, **kwargs: AgentMiddleware())
+    normalized = await context_module.normalize_agent_context_config(
+        {"subagents": selection, "tools": [], "skills": [], "knowledges": []},
+        db=None,
+        user=None,
+        context_schema=ChatBotContext,
     )
-
-    assert isinstance(middleware, YuxiSubAgentMiddleware)
-    assert {tool.name for tool in middleware.tools} == {
-        "subagent_start",
-        "subagent_status",
-        "subagent_cancel",
-        "subagent_await",
-    }
+    context = ChatBotContext(uid="user-1", workdir_relative_path="projects/test")
+    context.update(normalized)
+    middlewares = await graph._build_middlewares(context, backend=SimpleNamespace())
+    tool_names = {tool.name for middleware in middlewares for tool in getattr(middleware, "tools", [])}
+    subagent_tools = {"subagent_start", "subagent_status", "subagent_cancel", "subagent_await"}
+    assert tool_names & subagent_tools == (subagent_tools if expected else set())
 
 
 @pytest.mark.asyncio

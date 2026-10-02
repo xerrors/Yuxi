@@ -85,7 +85,7 @@ API/worker 启动时同步固定定义到数据库；运行时直接读取代码
 | --- | --- | --- |
 | `GET` | `/api/system/mcp-servers` | 查看服务器；普通用户只得到脱敏基础信息 |
 | `POST` / `PUT` | `/api/system/mcp-servers`、`/{slug}` | 添加或修改远程 MCP |
-| `PUT` | `/api/system/mcp-servers/{slug}/status` | 添加或移除服务器 |
+| `PUT` | `/api/system/mcp-servers/{slug}/status` | 启用或停用服务器（对应页面上的添加/移除状态） |
 | `POST` | `/api/system/mcp-servers/{slug}/test` | 测试连接并发现工具 |
 | `GET` | `/api/system/mcp-servers/{slug}/tools` | 查看工具 |
 | `PUT` | `/api/system/mcp-servers/{slug}/tools/{tool_name}/toggle` | 启用或禁用单个工具 |

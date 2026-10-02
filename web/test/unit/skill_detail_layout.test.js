@@ -13,7 +13,7 @@ test('Skill 详情暴露编辑、配置面板及内联 HTML 控件', () => {
   assert.match(source, /:show-inline-html-controls="true"/)
 })
 
-test('Skill 操作保留可访问名称且编辑入口属于项目结构操作区', () => {
+test('Skill 编辑入口在详情顶部和项目结构中都可访问', () => {
   const source = readSource('../../src/components/extensions/SkillDetailView.vue')
   const actionsStart = source.indexOf('<template #actions>')
   const topBarActions = source.slice(actionsStart, source.indexOf('</template>', actionsStart))
@@ -23,7 +23,8 @@ test('Skill 操作保留可访问名称且编辑入口属于项目结构操作�
     source.indexOf('<div class="tree-content">', treeActionsStart)
   )
 
-  assert.doesNotMatch(topBarActions, /startEditingCurrentFile/)
+  assert.match(topBarActions, /aria-label="编辑当前文件"/)
+  assert.match(topBarActions, /@click="startEditingCurrentFile"/)
   assert.match(topBarActions, /aria-label="导出 Skill"/)
   assert.match(topBarActions, /aria-label="删除 Skill"/)
   assert.match(treeActions, /aria-label="编辑当前文件"/)
@@ -65,6 +66,17 @@ test('保存运行依赖不会重载并覆盖同页尚未保存的范围配置',
 
   assert.ok(saveStart >= 0)
   assert.doesNotMatch(saveDependencies, /fetchSkillDetail\(\)/)
+})
+
+test('文件保存携带修订值并局部更新，切换文件前检查草稿', () => {
+  const source = readSource('../../src/components/extensions/SkillDetailView.vue')
+  const saveStart = source.indexOf('const saveCurrentFile = async')
+  const saveFile = source.slice(saveStart, source.indexOf('const confirmDeleteSkill', saveStart))
+
+  assert.match(saveFile, /expected_revision: fileRevision\.value/)
+  assert.doesNotMatch(saveFile, /fetchSkillDetail\(\)/)
+  assert.match(source, /confirmDiscardFileDraft\(\)/)
+  assert.match(source, /onBeforeRouteLeave/)
 })
 
 test('无预览 header 的 HTML 文件在编辑态隐藏模式控件', () => {

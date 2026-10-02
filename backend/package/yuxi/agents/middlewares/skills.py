@@ -16,8 +16,8 @@ from langgraph.types import Command
 from yuxi.agents.backends.paths import VIRTUAL_PERSONAL_SKILLS_PATH, VIRTUAL_SKILLS_PATH
 from yuxi.agents.mcp.service import get_enabled_mcp_tools
 from yuxi.agents.skills.runtime import RuntimeSkill, build_dependency_bundle
-from yuxi.agents.skills.service import is_valid_skill_slug, normalize_string_list
 from yuxi.agents.toolkits import get_all_tool_instances
+from yuxi.services.skills.package import is_valid_skill_slug, normalize_string_list
 from yuxi.utils.logging_config import logger
 
 

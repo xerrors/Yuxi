@@ -17,7 +17,6 @@ from sqlalchemy.exc import OperationalError
 from yuxi.agents.backends.sandbox.provider import get_sandbox_provider
 from yuxi.agents.callbacks.model_request_timing import FirstModelRequestRecorder
 from yuxi.agents.mcp.service import ensure_builtin_mcp_servers_in_db
-from yuxi.agents.skills.service import init_builtin_skills
 from yuxi.config import get_int_env
 from yuxi.repositories.agent_run_repository import TERMINAL_RUN_STATUSES, AgentRunRepository
 from yuxi.services.agent_request_queue_service import (
@@ -33,8 +32,6 @@ from yuxi.services.chat_service import get_agent_state_view, stream_agent_chat, 
 from yuxi.services.input_message_service import restore_chat_input_message
 from yuxi.services.run_queue_service import (
     RUN_RECONCILIATION_SECONDS,
-    WORKER_HEALTH_INTERVAL_SECONDS,
-    WORKER_HEALTH_KEY,
     WORKER_RECONCILIATION_HEALTH_KEY,
     WORKER_RECONCILIATION_HEALTH_TTL_SECONDS,
     append_run_stream_event,
@@ -47,6 +44,7 @@ from yuxi.services.scheduled_agent_service import (
     claim_and_dispatch_due_jobs,
     recover_scheduled_dispatches,
 )
+from yuxi.services.skills.shared import init_builtin_skills
 from yuxi.services.task_queue_service import (
     TASK_RECONCILIATION_HEALTH_KEY,
     TASK_RECONCILIATION_HEALTH_TTL_SECONDS,
@@ -59,6 +57,7 @@ from yuxi.services.workdir_service import (
     resolve_authorized_workdir,
     resolve_conversation_workdir_path,
 )
+from yuxi.services.worker_health import WORKER_HEALTH_INTERVAL_SECONDS, WORKER_HEALTH_KEY
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import AgentRun, Conversation, Message, User
 from yuxi.storage.redis import get_arq_redis_settings

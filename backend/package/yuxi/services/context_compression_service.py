@@ -18,13 +18,13 @@ from yuxi.agents.context import (
 )
 from yuxi.agents.middlewares import create_summary_middleware_from_context
 from yuxi.agents.middlewares.token_usage import TOKEN_USAGE_CONTEXT_FIELDS
-from yuxi.agents.skills.service import get_user_skills_root_dir
 from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.repositories.agent_run_request_repository import AgentRunRequestRepository
 from yuxi.repositories.agent_state_repository import AgentStateRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.services.agent_run_service import resolve_agent_run_model_spec
+from yuxi.services.skills.projection import get_user_skills_root_dir
 from yuxi.services.workdir_service import ensure_conversation_workdir_available
 from yuxi.storage.postgres.models_business import User
 from yuxi.utils.logging_config import logger

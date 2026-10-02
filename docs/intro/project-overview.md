@@ -55,11 +55,11 @@ Worker 执行 LangGraph，写入事件和最终结果
 PostgreSQL 保存状态，前端通过 SSE 获取过程
 ```
 
-PostgreSQL 保存请求、运行、消息、知识库元数据和 LangGraph checkpoint；Redis 负责任务投递、短期事件、取消信号和缓存；MinIO 保存对象文件；Milvus 负责向量检索；Neo4j 保存可选知识图谱。
+这些组件的分工是：PostgreSQL 保存业务状态、知识库元数据和 LangGraph checkpoint，Redis 负责投递、短期事件、取消信号和缓存，MinIO 保存对象文件，Milvus 提供向量检索，Neo4j 保存可选的知识图谱。各组件在运行链路中的具体职责见[机制详解](../mechanisms/index.md)。
 
 ## 部署与沙盒
 
-开发环境和单机部署使用 Docker Compose，默认启动知识库、图谱和评估所需的依赖。应用通过 `sandbox-provisioner` 访问动态沙盒，底层可以使用 Docker 或 Kubernetes。`memory` 仅用于测试，不提供真实隔离。
+开发环境和单机部署使用 Docker Compose，默认启动知识库、图谱和评估所需的完整拓扑。应用通过 `sandbox-provisioner` 访问动态沙盒，底层可以使用 Docker 或 Kubernetes；沙盒规格与生产部署边界见[生产部署](../advanced/deployment.md)与[沙盒配置与运维](../advanced/sandbox-operations.md)。
 
 开发环境和默认服务拓扑以仓库根目录的 [ARCHITECTURE.md](https://github.com/xerrors/Yuxi/blob/main/ARCHITECTURE.md) 与 [docker-compose.yml](https://github.com/xerrors/Yuxi/blob/main/docker-compose.yml) 为准。
 
@@ -72,7 +72,7 @@ PostgreSQL 保存请求、运行、消息、知识库元数据和 LangGraph chec
 | 持久化 | PostgreSQL | 业务状态、知识库元数据和 checkpoint |
 | 缓存与事件 | Redis | 投递、短期事件、取消和缓存 |
 | 对象与检索 | MinIO、Milvus、Neo4j | 文件对象、向量索引和知识图谱 |
-| 文档处理 | MinerU、PaddleX、RapidOCR 等 | 文档解析、版面分析和 OCR |
+| 文档处理 | MinerU、PaddleX、docling、RapidOCR 等 | 文档解析、版面分析和 OCR |
 | 部署 | Docker Compose | 开发与单机部署拓扑 |
 
 Yuxi 本体使用 MIT License；Compose 引入的第三方组件遵循各自许可证，生产部署和再分发边界见[生产部署指南](../advanced/deployment.md)。

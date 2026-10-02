@@ -10,7 +10,7 @@ sandbox-provisioner 通过 `containers.run` 创建沙盒时不带 `mem_limit`、
 
 ## 决策
 
-Docker backend 由 `sandbox_container_limits()` 解析三个环境变量并在 `containers.run` 时注入：`SANDBOX_MEM_LIMIT`（默认 `2g`，只接受纯字节数或整数加 `k/m/g` 后缀）、`SANDBOX_CPUS`（默认 `2`，转 `nano_cpus`，截断后不足 1 nano-cpu 即拒绝，堵住 docker-py `if nano_cpus` 静默丢弃的 fail-open）、`SANDBOX_PIDS_LIMIT`（默认 `512`）。非法值启动时抛 `RuntimeError` 显式失败，不回退默认。两份 Compose 的 `sandbox-provisioner` 透传同名变量并给相同默认值，参数表记录在 `docs/agents/sandbox-architecture.md`。
+Docker backend 由 `sandbox_container_limits()` 解析三个环境变量并在 `containers.run` 时注入：`SANDBOX_MEM_LIMIT`（默认 `2g`，只接受纯字节数或整数加 `k/m/g` 后缀）、`SANDBOX_CPUS`（默认 `2`，转 `nano_cpus`，截断后不足 1 nano-cpu 即拒绝，堵住 docker-py `if nano_cpus` 静默丢弃的 fail-open）、`SANDBOX_PIDS_LIMIT`（默认 `512`）。非法值启动时抛 `RuntimeError` 显式失败，不回退默认。两份 Compose 的 `sandbox-provisioner` 透传同名变量并给相同默认值，参数表记录在 `docs/advanced/sandbox-operations.md`。
 
 ## 替代方案
 

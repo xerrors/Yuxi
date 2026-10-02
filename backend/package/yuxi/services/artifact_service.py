@@ -18,10 +18,12 @@ from yuxi.agents.backends.paths import (
     runtime_user_data_path,
     workspace_scope_from_runtime_path,
 )
-from yuxi.agents.skills.service import ResolvedSkill, list_accessible_skills
 from yuxi.repositories.user_repository import UserRepository
 from yuxi.services.file_preview import render_file_preview
+from yuxi.services.skills.edit import open_shared_skill_dir
+from yuxi.services.skills.shared import lock_accessible_shared_skill_for_file
 from yuxi.services.workdir_service import resolve_authorized_workdir
+from yuxi.storage.postgres.models_business import Skill
 from yuxi.utils.filepreview import (
     MAX_BINARY_PREVIEW_SIZE_BYTES,
     OfficePreviewConversionError,
@@ -48,9 +50,7 @@ def _normalize_artifact_path(workdir_path: str, path: str) -> str:
     return normalized
 
 
-async def _require_skill_artifact_access(
-    *, normalized_path: str, current_uid: str, db
-) -> tuple[ResolvedSkill, str] | None:
+async def _require_skill_artifact_access(*, normalized_path: str, current_uid: str, db) -> tuple[Skill, str] | None:
     skills_prefix = f"{VIRTUAL_SKILLS_PATH}/"
     if not normalized_path.startswith(skills_prefix):
         return None
@@ -58,23 +58,31 @@ async def _require_skill_artifact_access(
     user = await UserRepository(db).get_by_uid(str(current_uid))
     if user is None or bool(user.is_deleted):
         raise HTTPException(status_code=403, detail="artifact access denied")
-    accessible = {skill.slug: skill for skill in await list_accessible_skills(db, user)}
-    skill = accessible.get(slug)
-    if skill is None:
+    shared = await lock_accessible_shared_skill_for_file(db, user, slug)
+    if shared is None:
         raise HTTPException(status_code=403, detail="artifact access denied")
     relative_path = normalized_path[len(skills_prefix) + len(slug) :].lstrip("/")
     if not relative_path:
         raise HTTPException(status_code=400, detail="artifact path is not a regular file")
-    return skill, relative_path
+    return shared, relative_path
 
 
-def _copy_skill_file_to_path(skill: ResolvedSkill, relative_path: str, target_path: str, max_bytes: int) -> int:
+def _copy_skill_file_to_path(skill: Skill, relative_path: str, target_path: str, max_bytes: int) -> int:
     """从已授权 Skill 真实来源有界复制普通文件。"""
     parts = tuple(PurePosixPath(relative_path).parts)
     if not parts or ".." in parts:
         raise ValueError("invalid skill artifact path")
+    skill_fd = open_shared_skill_dir(skill)
+    try:
+        return _copy_from_shared_skill_fd(skill_fd, parts, target_path, max_bytes)
+    finally:
+        os.close(skill_fd)
+
+
+def _copy_from_shared_skill_fd(skill_fd: int, parts: tuple[str, ...], target_path: str, max_bytes: int) -> int:
+    """从已打开的共享目录复制普通文件。"""
     target_fd = None
-    with open_regular_file_fd(skill.source_dir, parts) as (source_fd, source_stat):
+    with open_regular_file_fd(skill_fd, parts) as (source_fd, source_stat):
         if source_stat.st_size > max_bytes:
             raise FileTransferLimitError("file exceeds transfer limit")
         try:

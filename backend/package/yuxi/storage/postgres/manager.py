@@ -23,7 +23,7 @@ from yuxi.utils import logger
 from yuxi.utils.singleton import SingletonMeta
 
 AGENT_RUN_TERMINAL_STATUS_SQL = ", ".join(f"'{status}'" for status in AGENT_RUN_TERMINAL_STATUSES)
-BUSINESS_SCHEMA_VERSION = 8
+BUSINESS_SCHEMA_VERSION = 9
 KNOWLEDGE_SCHEMA_VERSION = 2
 SCHEMA_VERSION_TABLE = "yuxi_schema_migrations"
 AGENT_RUN_LEASE_SCHEMA_STATEMENTS = (
@@ -480,6 +480,38 @@ class PostgresManager(metaclass=SingletonMeta):
                 return {}
             rows = await conn.execute(text(f"SELECT domain, version FROM {SCHEMA_VERSION_TABLE}"))
             return {str(row.domain): int(row.version) for row in rows}
+
+    async def upgrade_agent_resource_selection(self) -> None:
+        """原子迁移旧资源选择并记录版本，重试时保留新协议的空数组。"""
+        self._check_initialized()
+        async with self.async_engine.begin() as conn:
+            version = await conn.scalar(
+                text(f"SELECT version FROM {SCHEMA_VERSION_TABLE} WHERE domain = 'business' FOR UPDATE")
+            )
+            if version == 9:
+                return
+            if version not in (None, 2, 7, 8):
+                raise RuntimeError(f"Unsupported business schema version: {version}")
+            for name in ("tools", "knowledges", "skills", "subagents", "mcps", "preload_skills"):
+                replacement = '"all"' if name in {"tools", "knowledges", "skills", "subagents"} else "[]"
+                await conn.execute(
+                    text("""
+                        UPDATE agents
+                        SET config_json = jsonb_set(
+                            config_json::jsonb, ARRAY['context', :name], CAST(:replacement AS jsonb)
+                        )
+                        WHERE config_json::jsonb -> 'context' -> :name = 'null'::jsonb
+                           OR (:name = 'subagents' AND config_json::jsonb -> 'context' -> :name = '[]'::jsonb)
+                    """),
+                    {"name": name, "replacement": replacement},
+                )
+            await conn.execute(
+                text(f"""
+                    INSERT INTO {SCHEMA_VERSION_TABLE} (domain, version, applied_at)
+                    VALUES ('business', 9, CURRENT_TIMESTAMP)
+                    ON CONFLICT (domain) DO UPDATE SET version = 9, applied_at = EXCLUDED.applied_at
+                """)
+            )
 
     async def record_schema_version(self, domain: str, version: int) -> None:
         """在对应域迁移完整成功后记录当前版本。"""

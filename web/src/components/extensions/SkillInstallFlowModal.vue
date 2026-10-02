@@ -98,7 +98,7 @@
           <div class="review-list">
             <div
               v-for="item in reviewItems"
-              :key="`${item.draft_id}:${item.slug}`"
+              :key="item.review_key"
               class="review-item"
               :class="{ failed: item.success === false }"
             >
@@ -298,7 +298,7 @@ const currentStep = computed(
 const canClose = computed(
   () => phase.value !== 'installing' && (phase.value !== 'preparing' || Boolean(flowError.value))
 )
-const readyItems = computed(() => reviewItems.value.filter((item) => item.success !== false))
+const readyItems = computed(() => reviewItems.value.filter((item) => item.success === true))
 const loadingSourceCount = computed(
   () => new Set(progressItems.value.map((item) => item.source).filter(Boolean)).size
 )
@@ -380,7 +380,7 @@ const toggleSelection = (slug, checked) => {
 
 const removeReviewItem = (item) => {
   reviewItems.value = reviewItems.value.filter(
-    (candidate) => candidate.draft_id !== item.draft_id || candidate.slug !== item.slug
+    (candidate) => candidate.review_key !== item.review_key
   )
 }
 
@@ -422,14 +422,26 @@ const prepareRequests = async (requests) => {
 
 const openReview = (draftPayloads) => {
   drafts.value = draftPayloads.filter((draft) => draft?.draft_id)
-  reviewItems.value = drafts.value.flatMap((draft) =>
-    (draft.items || []).map((item) => ({
+  reviewItems.value = drafts.value.flatMap((draft) => [
+    ...(draft.items || []).map((item, index) => ({
       ...item,
+      success: true,
+      retryable: true,
+      review_key: `${draft.draft_id}:ready:${index}`,
+      source: draft.source,
+      source_type: draft.source_type,
+      draft_id: draft.draft_id
+    })),
+    ...(draft.failures || []).map((item, index) => ({
+      ...item,
+      success: false,
+      retryable: false,
+      review_key: `${draft.draft_id}:failed:${index}`,
       source: draft.source,
       source_type: draft.source_type,
       draft_id: draft.draft_id
     }))
-  )
+  ])
   const first = drafts.value[0] || {}
   shareConfig.value = cloneShareConfig(first.default_share_config)
   allowedAccessLevels.value = first.allowed_access_levels || ['user']
@@ -463,7 +475,11 @@ const installDrafts = async () => {
 
   phase.value = 'installing'
   flowError.value = ''
-  installItems.value = readyItems.value.map((item) => ({ ...item, status: 'waiting' }))
+  installItems.value = reviewItems.value.map((item) => ({
+    ...item,
+    status: item.success === false ? 'failed' : 'waiting',
+    error: item.success === false ? item.error || '' : ''
+  }))
   try {
     for (const draft of drafts.value) {
       const slugs = readyItems.value
@@ -480,11 +496,12 @@ const installDrafts = async () => {
           ? await skillApi.confirmPersonalSkillInstallDraft(draft.draft_id, slugs)
           : await skillApi.confirmSkillInstallDraft(draft.draft_id, shareConfig.value, slugs)
       const results = result?.data || []
-      applyInstallResults(results, draft.source)
-      if (!results.some((item) => item.success)) {
-        await skillApi.discardSkillInstallDraft(draft.draft_id)
-      }
-      forgetDraft(draft.draft_id)
+      applyInstallResults(results, draft.draft_id)
+      const installed = new Set(
+        results.filter((item) => item.success).map((item) => item.requested_slug || item.slug)
+      )
+      draft.items = (draft.items || []).filter((item) => !installed.has(item.slug))
+      if (!draft.items.length) forgetDraft(draft.draft_id)
     }
   } catch (error) {
     await discardDrafts()
@@ -497,11 +514,11 @@ const installDrafts = async () => {
   }
 }
 
-const applyInstallResults = (results, source) => {
+const applyInstallResults = (results, draftId) => {
   results.forEach((result) => {
     const item = installItems.value.find(
       (candidate) =>
-        candidate.slug === (result.requested_slug || result.slug) && candidate.source === source
+        candidate.slug === (result.requested_slug || result.slug) && candidate.draft_id === draftId
     )
     if (!item) return
     Object.assign(item, {
@@ -531,7 +548,27 @@ const handleClose = async () => {
   emit('close')
 }
 
-const retryFailedItems = () => {
+const retryFailedItems = async () => {
+  const retryableItems = failedInstallItems.value.filter(
+    (item) =>
+      item.retryable &&
+      drafts.value.some(
+        (draft) =>
+          draft.draft_id === item.draft_id &&
+          draft.items.some((entry) => entry.slug === item.slug)
+      )
+  )
+  if (retryableItems.length) {
+    reviewItems.value = [
+      ...failedInstallItems.value
+        .filter((item) => !retryableItems.includes(item))
+        .map((item) => ({ ...item, success: false })),
+      ...retryableItems.map((item) => ({ ...item, success: true }))
+    ]
+    flowError.value = ''
+    phase.value = 'reviewing'
+    return
+  }
   const requestsBySource = new Map()
   failedInstallItems.value.forEach((item) => {
     if (item.source_type !== 'remote' || !item.source) return
@@ -543,10 +580,13 @@ const retryFailedItems = () => {
     flowError.value = '该失败项需要从原入口重新上传'
     return
   }
-  prepareRequests(requests)
+  phase.value = 'preparing'
+  await discardDrafts()
+  await prepareRequests(requests)
 }
 
-const finishFlow = () => {
+const finishFlow = async () => {
+  await discardDrafts()
   emit('completed', {
     success: successfulInstallCount.value,
     failed: failedInstallItems.value.length

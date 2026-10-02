@@ -18,8 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.agents.backends.paths import runtime_workdir_path
 from yuxi.agents.buildin import get_agent_backend
 from yuxi.agents.context import BaseContext, prepare_agent_runtime_context
-from yuxi.agents.skills.service import PERSONAL_SKILL_SOURCE_TYPE
 from yuxi.repositories.agent_repository import AgentRepository
+from yuxi.services.skills.personal import PERSONAL_SKILL_SOURCE_TYPE
 from yuxi.services.workdir_service import AuthorizedWorkdir
 from yuxi.storage.postgres.models_business import AgentRun, User
 

@@ -83,25 +83,34 @@
 
                 <!-- 多选 / 工具列表 (统一处理) -->
                 <div v-else-if="value?.type === 'list'" class="list-config-container">
-                  <div v-if="value.kind === 'subagents'" class="hidden-selection-note">
-                    未指定子智能体时，使用全部可访问的子智能体。
+                  <div
+                    v-if="supportsAllAgentResources(configurableItems[key])"
+                    class="hidden-selection-note"
+                  >
+                    <a-checkbox
+                      :checked="
+                        isAllAgentResourceSelection(agentConfig[key], configurableItems[key])
+                      "
+                      :disabled="isReadOnlyConfig"
+                      @change="(event) => setAllSelection(key, event.target.checked)"
+                      >全部（含新增）</a-checkbox
+                    >
+                    <span>逐项选择将保存固定范围，清空表示不选择。</span>
                   </div>
                   <div
                     v-if="getHiddenSelection(key).length"
                     class="hidden-selection-note"
                     role="status"
                   >
-                    另有 {{ getHiddenSelection(key).length }} 项当前不在可选范围，修改可见选择时会保留。
-                    <template v-if="!isReadOnlyConfig">
-                      {{
-                        value.kind === 'subagents'
-                          ? '使用全部会替换固定选择范围。'
-                          : '清空全部会移除这些选择。'
-                      }}
-                    </template>
+                    另有
+                    {{ getHiddenSelection(key).length }} 项当前不在可选范围，修改可见选择时会保留。
+                    <template v-if="!isReadOnlyConfig"> 清空全部会移除这些选择。 </template>
                   </div>
                   <!-- Case 1: <= 5 options, inline list -->
-                  <div v-if="getSelectionOptions(key, value).length <= 5" class="multi-select-cards">
+                  <div
+                    v-if="getSelectionOptions(key, value).length <= 5"
+                    class="multi-select-cards"
+                  >
                     <div class="multi-select-label">
                       <span
                         >已选择 {{ getSelectedCount(key) }} 项 | 共
@@ -115,7 +124,7 @@
                           @click="clearSelection(key)"
                           v-if="canResetSelection(key)"
                         >
-                          {{ value.kind === 'subagents' ? '使用全部' : '清空全部' }}
+                          清空全部
                         </a-button>
                         <template v-if="isResourceConfigKind(value.kind)">
                           <a-divider type="vertical" />
@@ -188,7 +197,7 @@
                           class="clear-btn"
                           @click="clearSelection(key)"
                         >
-                          {{ value.kind === 'subagents' ? '使用全部' : '清空全部' }}
+                          清空全部
                         </a-button>
                       </div>
 
@@ -414,6 +423,8 @@ import {
   getAgentConfigOptionValue as getOptionValue,
   getAgentResourceSelectionOptions,
   isSingleSelectAgentConfig,
+  isAllAgentResourceSelection,
+  supportsAllAgentResources,
   mergeVisibleAgentResourceSelection,
   getVisibleAgentResourceSelection
 } from '@/utils/agentConfigUtils'
@@ -486,7 +497,7 @@ const segmentConfigKeys = computed(() => {
   }
 })
 
-/** 列表选择项没有任何可选资源且无既有引用时，整个选择器不渲染，避免展示空选择器。 */
+/** 隐藏空资源分组；已有不可见选择仍保留清理入口。 */
 const hasSelectableOptions = (key, value) => {
   if (value?.type !== 'list') return true
   return getSelectionOptions(key, value).length > 0 || getHiddenSelection(key).length > 0
@@ -548,7 +559,7 @@ const navigateToConfigPage = (kind) => {
   }, 100)
 }
 
-const isDefaultEnabledResourceValue = (value) => value === null || value === undefined
+const isDefaultEnabledResourceValue = (value) => value === 'all' || value === undefined
 
 const isResourceEnabled = (value) => {
   if (Array.isArray(value)) return value.length > 0
@@ -646,7 +657,7 @@ const ensureArray = (key) => {
   const configItem = configurableItems.value[key]
   return getVisibleAgentResourceSelection(
     agentConfig.value[key],
-    key,
+    configItem,
     getSelectionOptions(key, configItem).map(getOptionValue)
   )
 }
@@ -774,12 +785,15 @@ const getHiddenSelection = (key) =>
     []
   )
 
-/** 子智能体仅在固定列表模式提供恢复全部的动作。 */
-const canResetSelection = (key) => {
-  if (configurableItems.value[key]?.kind === 'subagents') {
-    return Array.isArray(agentConfig.value[key]) && agentConfig.value[key].length > 0
-  }
-  return getSelectedCount(key) > 0 || getHiddenSelection(key).length > 0
+const canResetSelection = (key) =>
+  isAllAgentResourceSelection(agentConfig.value[key], configurableItems.value[key]) ||
+  getSelectedCount(key) > 0 ||
+  getHiddenSelection(key).length > 0
+
+/** 关闭全部模式时固定当前可见范围，后续新增资源不自动加入。 */
+const setAllSelection = (key, checked) => {
+  if (isReadOnlyConfig.value) return
+  agentStore.updateAgentConfig({ [key]: checked ? 'all' : [...ensureArray(key)] })
 }
 </script>
 

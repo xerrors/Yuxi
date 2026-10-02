@@ -4,9 +4,9 @@
 
 同一版本的多次更新按功能归并。后续修复某项功能引入的问题时，直接更新原条目，避免同一问题在多个位置重复出现。当前版本的条目优先说明用户影响、操作变化和验证边界；实现细节只保留对升级、排障或贡献有帮助的部分。
 
-## v0.7.3（待发布）
+## v0.7.3 (2026-09-09)
 
-以下变更以 `v0.7.2` 正式 tag 为基线。0.7.3 新增定时智能体任务和主动上下文压缩，完善推理与工具结果展示、执行审计及后台任务恢复，并优化并发与解析依赖。CLI 沿用 0.1.4，本次应用更新不发布新的 CLI 包。
+以下变更以 `v0.7.2` 正式 tag 为基线。0.7.3 新增定时智能体任务和主动上下文压缩，完善推理与工具结果展示、执行审计及后台任务恢复，并优化并发与解析依赖。CLI 沿用 0.1.4，本次应用更新不发布新的 CLI 包。本版本发布前生效的全部工程决策记录已归档至[0.7.3 发布决策变更记录](./decisions/archived/0.7.3/CHANGELOG.md)。
 
 ### 升级注意事项
 
@@ -24,10 +24,10 @@
 
 - 修复官方 MinIO 镜像下架导致的部署与 CI 中断：MinIO 在 Docker Hub 与 quay.io 上的镜像已不再公开分发，`dl.min.io` 返回 410。两份 Compose 改为按 `docker/minio/Dockerfile` 构建该镜像，构建时从官方 GitHub Release 下载固定版本的二进制并校验 sha256，运行与下架前完全相同的 MinIO 二进制；数据卷、凭据、端口与 `command` 不变，离线导出的脚本会先构建再打包。
 - 深度研究 Skill 不再依赖 `html-preview`，默认在当前 Workdir 的 `outputs/` 目录生成独立、响应式的 HTML 阅读文档并作为交付物展示；宽屏可使用侧栏目录，窄屏隐藏或折叠侧栏，并可按内容需要使用外部图片等公开资源。来源在 HTML 中以普通链接呈现；用户明确指定其他格式时仍以用户要求为准。
-- 新增用户定时智能体任务（Beta），支持 cron、时区、独立 Project 和立即运行；重叠执行跳过，错过的触发合并处理。边界见[定时任务决策](./decisions/implemented/2026-08-26-user-agent-scheduled-tasks.md)。
+- 新增用户定时智能体任务（Beta），支持 cron、时区、独立 Project 和立即运行；重叠执行跳过，错过的触发合并处理。边界见[定时任务决策](decisions/archived/0.7.3/11-background-tasks/2026-08-26-user-agent-scheduled-tasks.md)。
 - 支持空闲线程主动压缩上下文；达到预算 85% 时提示操作。自动压缩统一使用一个阈值，大工具结果保留完整文件及模型可读摘要，检索预览保留来源信息。
-- 完善 Model/Tool 增量审计和按 Run 分组的调试时间线，收紧审计与普通聊天记录的隔离；审计接口返回最新 500 条并明确标记截断，详见[审计接口决策](./decisions/implemented/2026-09-03-unify-message-audit-read-api.md)。
-- 修复硅基流动、OpenCode 与 GLM Coding Plan 推理内容在流式输出和历史回读中的丢失；旧记录仅恢复已保存内容。OpenCode/Go 请求补齐稳定会话头，修复 `MissingSessionID`；同时修复首块工具调用不显示及处理过程布局。配置差异见[推理适配决策](./decisions/implemented/2026-09-07-provider-reasoning-adapter.md)。
+- 完善 Model/Tool 增量审计和按 Run 分组的调试时间线，收紧审计与普通聊天记录的隔离；审计接口返回最新 500 条并明确标记截断，详见[审计接口决策](decisions/archived/0.7.3/10-audit-debug/2026-09-03-unify-message-audit-read-api.md)。
+- 修复硅基流动、OpenCode 与 GLM Coding Plan 推理内容在流式输出和历史回读中的丢失；旧记录仅恢复已保存内容。OpenCode/Go 请求补齐稳定会话头，修复 `MissingSessionID`；同时修复首块工具调用不显示及处理过程布局。配置差异见[推理适配决策](decisions/archived/0.7.3/14-frontend-ux/2026-09-07-provider-reasoning-adapter.md)。
 - 修复普通 HTTP 环境创建 API Key 无响应（[#998](https://github.com/xerrors/Yuxi/issues/998)），重试沿用同一幂等请求 ID；公网部署仍须配置 HTTPS。
 - 修复知识库统计刷新命中过期缓存（[#997](https://github.com/xerrors/Yuxi/issues/997)）及带时区字段处理错误（[#988](https://github.com/xerrors/Yuxi/issues/988)）。
 - 修复共享智能体编辑时误删不可见的既有资源选择；运行时仍只使用当前用户有权访问的资源。新建托管 Project 使用可读目录名，既有 UUID 目录保持有效。
@@ -41,10 +41,10 @@
 - 优化任务领取、checkpoint 连接与模型请求前的等待，连接池可按 API/worker 分别配置；SSE 自适应轮询，取消改为 Redis key 轮询与 PostgreSQL 兜底。Sandbox 在首次文件或命令操作时创建，纯文本 Run 免去容器冷启动，首次工具调用仍可能等待启动。
 - AgentRun 持久保存准备完成、首次模型请求及首次输出时间，结果与历史统一派生阶段耗时；缺失指标保持为空。完成、取消和恢复按同一 Run 收敛 checkpoint、消息、审计与执行清理，保持同线程 FIFO 和 Workdir 持久化边界。
 - Office 解析使用 Docling slim，移除无消费者的解析依赖及 NLTK；PDF 解析路径保留。更新依赖审计负向控制，避免漏洞 fixture 被误当作生产依赖。
-- 精简测试中的重复准备、低信息量断言和无引用夹具，保留不同观察边界的 unit、真实 provider 探针与 E2E；测试运行器使用 readiness gate。并发评测统一为 `python -m backend.test.performance`，既有实测与环境限制见[并发优化决策](./decisions/implemented/2026-09-07-agent-concurrency-optimization.md)。
+- 精简测试中的重复准备、低信息量断言和无引用夹具，保留不同观察边界的 unit、真实 provider 探针与 E2E；测试运行器使用 readiness gate。并发评测统一为 `python -m backend.test.performance`，既有实测与环境限制见[并发优化决策](decisions/archived/0.7.3/12-concurrency/2026-09-07-agent-concurrency-optimization.md)。
 - 更新文档首页、导航和并发配置说明，补齐迁移基线、模型配置与运行机制文档。
 
-## v0.7.2 (2026-08-26)
+## v0.7.2 (2026-09-02)
 
 ::: warning Beta 升级说明
 从 v0.7.1 或更早版本升级时，仍须先完整备份 PostgreSQL、MinIO 和文件卷，并按[生产部署与升级](../advanced/deployment.md)执行停机迁移；不要只恢复其中一项。

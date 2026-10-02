@@ -599,6 +599,15 @@ jobs:
                     any(expected_error in error for error in self._errors())
                 )
 
+    def test_personal_skill_service_is_the_only_service_with_workspace_root_access(self) -> None:
+        """个人 Skill 文件 Owner 可定位用户根，其余 Service 仍被拒绝。"""
+        source = "from yuxi.workspace.paths import user_workspace_dir\n"
+        self._write("backend/package/yuxi/services/skills/personal.py", source)
+        self.assertFalse(any("UserWorkspace 宿主 Path" in error for error in self._errors()))
+
+        self._write("backend/package/yuxi/services/skills/other.py", source)
+        self.assertTrue(any("UserWorkspace 宿主 Path" in error for error in self._errors()))
+
     def test_agents_instruction_file_missing_is_rejected(self) -> None:
         (self.root / "backend/AGENTS.md").unlink()
 

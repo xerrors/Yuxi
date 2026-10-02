@@ -7,18 +7,13 @@ import json
 import os
 from datetime import UTC, datetime
 
+from yuxi.services.worker_health import WORKER_HEALTH_KEY
 from yuxi.storage.redis import close_async_redis_client, create_arq_redis_pool, get_async_redis_client
 from yuxi.utils.logging_config import logger
 
 RUN_CANCEL_KEY_TTL_SECONDS = int(os.getenv("RUN_CANCEL_KEY_TTL_SECONDS", "1800"))
 RUN_EVENTS_STREAM_TTL_SECONDS = int(os.getenv("RUN_EVENTS_STREAM_TTL_SECONDS", "7200"))
 RUN_EVENTS_STREAM_MAXLEN = int(os.getenv("RUN_EVENTS_STREAM_MAXLEN", "0"))
-WORKER_HEALTH_CONTRACT = "agent-run-v1"
-WORKER_HEALTH_KEY = f"yuxi:worker:health:{WORKER_HEALTH_CONTRACT}"
-WORKER_HEALTH_INTERVAL_SECONDS = float(os.getenv("WORKER_HEALTH_INTERVAL_SECONDS", "5"))
-if not 0 < WORKER_HEALTH_INTERVAL_SECONDS <= 10:
-    raise ValueError("WORKER_HEALTH_INTERVAL_SECONDS 必须大于 0 且不超过 10")
-WORKER_HEALTH_MAX_TTL_MS = int((WORKER_HEALTH_INTERVAL_SECONDS + 1) * 1000)
 RUN_RECONCILIATION_SECONDS = 30
 WORKER_RECONCILIATION_HEALTH_KEY = f"{WORKER_HEALTH_KEY}:lease-reconciliation"
 WORKER_RECONCILIATION_HEALTH_TTL_SECONDS = RUN_RECONCILIATION_SECONDS * 2 + 5

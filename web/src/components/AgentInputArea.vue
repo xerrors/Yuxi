@@ -257,6 +257,11 @@ const handleKeyDown = (e) => {
     return
   }
 
+  // 输入法仍在组合状态时，回车用于确认候选词，不应触发发送
+  if (e.isComposing || e.keyCode === 229) {
+    return
+  }
+
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     handleSend()
