@@ -5,6 +5,12 @@ from fastapi import UploadFile
 
 MAX_UPLOAD_SIZE_BYTES = 100 * 1024 * 1024
 
+# 编辑解析产物（Markdown）的请求体上限。
+# 注意不是 100MB：docker/nginx/default.conf 的 client_max_body_size 为 20M（server 级硬墙），
+# 且 JSON 转义会膨胀（换行 -> \n 两字节），故取 5MiB 留足余量。
+# 若将来调高此值，必须同步修改 nginx 配置，否则用户拿到的是 nginx 的 413 HTML 而非后端 JSON 错误。
+MAX_MARKDOWN_EDIT_SIZE_BYTES = 5 * 1024 * 1024
+
 
 async def write_upload_to_buffer(
     upload: UploadFile,

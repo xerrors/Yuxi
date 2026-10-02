@@ -22,7 +22,7 @@ from pymilvus import (
 )
 
 from yuxi.config.options import system_options
-from yuxi.knowledge.base import FileStatus, KnowledgeBase
+from yuxi.knowledge.base import FileStatus, KnowledgeBase, ParsedArtifactReadError
 from yuxi.knowledge.chunking.ragflow_like.dispatcher import chunk_markdown
 from yuxi.knowledge.chunking.ragflow_like.nlp import count_tokens
 from yuxi.knowledge.read_models import KnowledgeBaseConfig
@@ -1275,13 +1275,19 @@ class MilvusKB(KnowledgeBase):
         if not content_info["lines"]:
             logger.warning(f"No chunks found in PostgreSQL for file {file_id}, file may not have been indexed")
 
-        # Try to read markdown content if available
+        # 解析产物的正文是编辑链路的输入：读取失败必须显式传播，静默降级会让调用方拿到
+        # 「有修订号但没有内容」的响应，前端据此开放空白编辑器，一次保存即用空内容替换原产物。
         if file_meta.get("markdown_file"):
             try:
                 content = await self._read_markdown_from_minio(file_meta["markdown_file"])
                 content_info["content"] = content
             except Exception as e:
                 logger.error(f"Failed to read markdown file for {file_id}: {e}")
+                raise ParsedArtifactReadError(f"解析产物读取失败（{file_id}）: {e}") from e
+
+        # 与本次内容同一次读取带出文件版本：调用方（编辑保存的期望版本）若另起一次查询，
+        # 两次查询之间发生的写入会让「旧内容 + 新版本」配成一对，保存即覆盖对方
+        content_info["updated_at"] = file_meta.get("updated_at")
 
         return content_info
 

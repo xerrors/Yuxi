@@ -25,6 +25,9 @@ const STATUS_ACTION = {
 }
 
 const PARSED_PREVIEW_STATUSES = new Set(['done', 'parsed', 'indexed', 'error_indexing'])
+// 可编辑解析产物的状态，与后端 EDITABLE_MARKDOWN_STATUSES 同集合（当前只放开 parsed：
+// 该状态没有派生索引，覆盖即发布；已入库内容的编辑要走「重新入库」，不在本阶段范围）。
+const EDITABLE_MARKDOWN_STATUSES = new Set(['parsed'])
 const SOURCE_ONLY_PREVIEW_STATUSES = new Set(['uploaded', 'error_parsing'])
 const TABLE_SELECTION_BLOCKED_STATUSES = new Set(['processing', 'waiting'])
 const DELETE_BLOCKED_STATUSES = new Set(['processing', 'parsing', 'indexing'])
@@ -100,6 +103,21 @@ export const canPreviewParsed = (record) => {
   if ('has_parsed_markdown' in record) return Boolean(record.has_parsed_markdown)
   return PARSED_PREVIEW_STATUSES.has(record.status)
 }
+
+/**
+ * 是否允许编辑解析产物（入库前复核）。
+ *
+ * 与后端 EDITABLE_MARKDOWN_STATUSES（backend/package/yuxi/knowledge/base.py）必须同集合：
+ * 只改一侧会出现「前端显示编辑按钮、后端返回 409」的错位。两端当前都只放开 parsed。
+ */
+export const canEditParsedContent = (record) =>
+  Boolean(
+    record &&
+    !record.is_folder &&
+    EDITABLE_MARKDOWN_STATUSES.has(record.status) &&
+    canPreviewParsed(record) &&
+    !isProcessingFile(record)
+  )
 
 export const canPreviewOriginal = (record) => {
   if (!record || record.is_folder || record.file_type === 'url') return false

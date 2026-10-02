@@ -1159,6 +1159,7 @@ const openFileDetail = (record) => {
   store.openFileDetail(record.file_id)
 }
 
+/** 打开详情弹层并直接进入解析产物编辑态 */
 const handleDownloadFile = async (record) => {
   closePopover(record.file_id)
   const kbId = store.kbId

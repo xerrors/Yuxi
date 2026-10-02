@@ -231,6 +231,18 @@ export const documentApi = {
   },
 
   /**
+   * 覆盖保存编辑后的解析产物 Markdown（仅「待入库」文件）
+   * @param {string} kbId - 知识库ID
+   * @param {string} docId - 文档ID
+   * @param {string} content - 完整 Markdown 文本
+   * @param {string} revision - 读取内容时返回的 content_revision，用于检出并发修改
+   * @returns {Promise} - { status, message, meta }
+   */
+  updateDocumentContent: async (kbId, docId, content, revision) => {
+    return apiAdminPut(`/api/knowledge/databases/${kbId}/documents/${docId}/content`, { content, revision })
+  },
+
+  /**
    * 删除文档
    * @param {string} kbId - 知识库ID
    * @param {string} docId - 文档ID
