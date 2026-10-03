@@ -8,10 +8,14 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 
 from yuxi.agents.middlewares.model_input import ImageInputCompatibilityMiddleware
+from yuxi.agents.toolkits.buildin.tools import ocr_parse_file
 
 
-def _request(model, messages) -> ModelRequest:
-    return ModelRequest(model=model, messages=messages)
+def _request(model, messages, tools=None) -> ModelRequest:
+    request = ModelRequest(model=model, messages=messages)
+    if tools is not None:
+        request = request.override(tools=tools)
+    return request
 
 
 def _openai_model() -> ChatOpenAI:
@@ -95,6 +99,7 @@ async def test_translates_provider_image_rejection_to_ocr_fallback(error_message
     request = _request(
         SimpleNamespace(),
         [_read_file_image_message()],
+        tools=[ocr_parse_file],
     )
     calls = 0
 
@@ -108,10 +113,54 @@ async def test_translates_provider_image_rejection_to_ocr_fallback(error_message
     response = await middleware.awrap_model_call(request, handler)
 
     assert calls == 1
-    assert [tool.name for tool in middleware.tools] == ["ocr_parse_file"]
     assert response.result[0].content == "当前模型不支持图片输入，正在改用 OCR 工具提取图片文字。"
     assert response.result[0].tool_calls[0]["name"] == "ocr_parse_file"
     assert response.result[0].tool_calls[0]["args"] == {"file_path": "/home/gem/user-data/uploads/image.png"}
+
+
+@pytest.mark.asyncio
+async def test_no_ocr_fallback_when_tool_disabled() -> None:
+    """OCR 工具被禁用（不在请求工具集中）时，图片输入拒绝不得伪造 OCR tool_call。"""
+    middleware = ImageInputCompatibilityMiddleware()
+    # 契约：中间件不得通过 tools 属性向模型注入工具，否则会绕过智能体工具开关
+    assert getattr(middleware, "tools", []) == []
+    request = _request(
+        SimpleNamespace(),
+        [_read_file_image_message()],
+    )
+
+    async def handler(_request):
+        error = RuntimeError("This model does not support image input")
+        error.status_code = 400
+        raise error
+
+    response = await middleware.awrap_model_call(request, handler)
+
+    message = response.result[0]
+    assert not message.tool_calls
+    assert "OCR" in message.content
+    assert "禁用" in message.content
+
+
+def test_no_ocr_fallback_when_tool_disabled_sync() -> None:
+    """同步路径同样遵守工具开关：OCR 禁用时不伪造 tool_call。"""
+    middleware = ImageInputCompatibilityMiddleware()
+    request = _request(
+        SimpleNamespace(),
+        [_read_file_image_message()],
+    )
+
+    def handler(_request):
+        error = RuntimeError("This model does not support image input")
+        error.status_code = 400
+        raise error
+
+    response = middleware.wrap_model_call(request, handler)
+
+    message = response.result[0]
+    assert not message.tool_calls
+    assert "OCR" in message.content
+    assert "禁用" in message.content
 
 
 @pytest.mark.asyncio
@@ -137,6 +186,7 @@ async def test_translates_openrouter_missing_vision_endpoint() -> None:
     request = _request(
         SimpleNamespace(),
         [_read_file_image_message()],
+        tools=[ocr_parse_file],
     )
 
     async def handler(_request):
