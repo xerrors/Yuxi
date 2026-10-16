@@ -26,6 +26,18 @@ test('知识库详情页下拉菜单提供上传文件夹入口', () => {
   assert.match(source, /showAddFilesModal\(\{\s*isFolder:\s*true,\s*mode:\s*'folder'\s*\}\)/)
 })
 
+test('FileTable 创建文件夹成功后进入新文件夹，使其成为上传默认目标', () => {
+  const source = readSource('../../src/components/FileTable.vue')
+  const handler = source.slice(
+    source.indexOf('const handleCreateFolder'),
+    source.indexOf('const renameFolderModalVisible')
+  )
+
+  assert.match(handler, /const folder = await documentApi\.createFolder\(/)
+  assert.match(handler, /await openFolder\(\{ file_id: folder\.file_id, filename: folder\.filename, is_folder: true \}\)/)
+  assert.doesNotMatch(handler, /refreshAfterMutation/)
+})
+
 test('FileUploadModal 收集相对路径 source_paths 并过滤隐藏文件', () => {
   const source = readSource('../../src/components/FileUploadModal.vue')
 

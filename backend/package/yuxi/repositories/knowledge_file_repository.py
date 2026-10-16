@@ -321,6 +321,22 @@ class KnowledgeFileRepository:
             )
             return list(result.scalars().all())
 
+    async def find_folder_by_name(self, *, kb_id: str, parent_id: str | None, filename: str) -> KnowledgeFile | None:
+        """按同级目录与名称（忽略大小写）查找文件夹。"""
+        async with pg_manager.get_async_session_context() as session:
+            result = await session.execute(
+                select(KnowledgeFile)
+                .where(
+                    KnowledgeFile.kb_id == kb_id,
+                    KnowledgeFile.is_folder.is_(True),
+                    self._parent_condition(parent_id),
+                    func.lower(KnowledgeFile.filename) == filename.lower(),
+                )
+                .order_by(KnowledgeFile.created_at.asc())
+                .limit(1)
+            )
+            return result.scalars().first()
+
     async def list_same_name_files(self, *, kb_id: str, filename: str) -> list[KnowledgeFile]:
         normalized_filename = filename.strip()
         if not normalized_filename:
