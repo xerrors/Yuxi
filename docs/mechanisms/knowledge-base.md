@@ -54,6 +54,7 @@ stateDiagram-v2
     indexing --> indexed: chunk 和向量完成
     indexing --> error_indexing: 索引失败或取消
     indexing --> uploaded: 缺少 Markdown 产物
+    parsed --> parsed: 解析产物被编辑
 ```
 
 历史 `failed`、`done` 状态只作为兼容输入。`parsing` 和 `indexing` 表示当前动作已经抢到执行权；没有抢到允许状态的并发请求会失败，同一文件不会由两个动作同时推进。
@@ -62,6 +63,10 @@ stateDiagram-v2
 - `parsed`：解析后的 Markdown 路径已写入文件记录；
 - `indexed`：本次分块、向量写入和统计更新已完成；
 - `error_parsing`、`error_indexing`：对应阶段失败或取消，并保存错误信息。
+
+只有 `parsed` 允许人工编辑解析产物（`uploaded` 编排在解析前，`parsing`/`indexing` 在动作中，`error_parsing` 没有可信产物；已入库状态的内容修改要复用「重新入库」Durable Task 取得 ownership 后再切换权威内容，见 [决策记录](../develop-guides/decisions/implemented/2026-09-18-parsed-only-markdown-edit.md)）。编辑先写**内容寻址**的新对象 `{kb_id}/parsed/{file_id}.{hash16}.md`，再用一条条件更新把 `markdown_file` 切过去，状态保持 `parsed`，用户继续走既有「入库」。于是「引用即内容身份」成立：任何读者（含入库）读到的对象由它读到的那一行唯一确定，不会读到被覆盖一半的内容；这一点是必需的，因为入库任务与本接口并发时，覆盖写会让它读到旧内容。
+
+编辑是「读—改—写」，并发由**期望版本参与落库条件**收口：`revision` 是文件行的 `updated_at`（随读取内容返回、保存时原样回传），与允许状态一起构成同一条 UPDATE 的等值条件，**引用切换与该 UPDATE 同批下发**，因此「校验 + 发布」是原子的——两个并发保存只有一条能命中，另一条返回 409。单纯的状态 CAS 挡不住两个 `parsed` 编辑者（两边状态都成立），必须带上版本。**顺序是先写新对象、再条件更新**（与解析路径一致）：反过来会在条件成功后、对象写入前的窗口里让入库认领通过并读到旧内容。入库读的是它认领 CAS 返回的那一行，因此两侧由行锁串行，任一顺序下入库建索引所用的内容都与该行最终的 `markdown_file` 一致。条件落空时新对象已落盘但无人引用，刻意**不删**（同名对象可能正是并发赢家已切换引用的那个），由删除文件时的前缀清理收敛。
 
 任务接口的响应和 Durable Task 状态只表示编排结果。验收时重新读取文件状态，并按需核对 Markdown、chunk、向量和图谱数据。
 

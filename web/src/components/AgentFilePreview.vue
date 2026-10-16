@@ -627,8 +627,13 @@ const startEditing = () => {
   editMode.value = 'edit'
 }
 
+// 暴露面是两组消费者的并集：详情弹窗（FileDetailModal）直接读 editMode / draftChanged
+// 判断草稿与编辑态；技能详情页（SkillDetailView）走 hasUnsavedChanges() / discardChanges()
+// 的函数式接口。两边语义同源，改这里需同步核对两组调用方。
 defineExpose({
   startEditing,
+  editMode,
+  draftChanged,
   discardChanges: syncDraftContent,
   hasUnsavedChanges: () => editMode.value === 'edit' && draftChanged.value
 })
