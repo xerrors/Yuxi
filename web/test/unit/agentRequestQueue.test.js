@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import path from 'node:path'
 import { after, before, test } from 'node:test'
+import { setImmediate } from 'node:timers'
 import { fileURLToPath } from 'node:url'
 
 import { createServer } from 'vite'
@@ -878,6 +879,85 @@ test('自然断流后从 PG 终态复用统一清理并刷新历史', async () =
     agentApi.getAgentRun = originalGetAgentRun
   }
 })
+
+test('终态清理未完成时看门狗继续等待，清理完成后才结束', async (t) => {
+  const threadState = { activeRunId: null, runLastSeq: '0-0', replyLoadingVisible: true }
+  let clock = 1000
+  let watchdog
+  let body
+  let cleanupPending = true
+  t.mock.method(Date, 'now', () => clock)
+  t.mock.method(globalThis, 'setInterval', (callback) => {
+    watchdog = callback
+    return 0
+  })
+  t.mock.method(agentApi, 'streamAgentRunEvents', async () =>
+    new Response(new ReadableStream({ start: (controller) => { body = controller } }))
+  )
+  t.mock.method(agentApi, 'getAgentRun', async () => ({
+    run: { id: 'run-cleanup', status: 'completed', runtime_cleanup_pending: cleanupPending }
+  }))
+  const stream = createRunStream({ threadState, handleStreamChunk: () => {}, resetOnGoingConv: () => {} })
+  const running = stream.startRunStream('thread-cleanup', 'run-cleanup')
+  try {
+    await new Promise((resolve) => setImmediate(resolve))
+    clock += 60000
+    await watchdog()
+    assert.equal(threadState.activeRunId, 'run-cleanup')
+    assert.equal(threadState.isStreaming, true)
+    assert.equal(threadState.replyLoadingVisible, true)
+    cleanupPending = false
+    await watchdog()
+    assert.equal(threadState.activeRunId, null)
+    assert.equal(threadState.replyLoadingVisible, false)
+  } finally {
+    body.close()
+    await running
+    threadState.activeRunId = null
+    localStorage.removeItem('active_run:thread-cleanup')
+  }
+})
+
+test('自然断流时清理未完成不能显示已结束', async (t) => {
+  const threadState = { activeRunId: null, runLastSeq: '0-0', replyLoadingVisible: true }
+  t.mock.method(agentApi, 'streamAgentRunEvents', async () => new Response(''))
+  t.mock.method(agentApi, 'getAgentRun', async () => ({
+    run: { id: 'run-cleanup', status: 'cancelled', runtime_cleanup_pending: true }
+  }))
+  const stream = createRunStream({ threadState, handleStreamChunk: () => {}, resetOnGoingConv: () => {} })
+  try {
+    await stream.startRunStream('thread-cleanup', 'run-cleanup')
+    assert.equal(threadState.activeRunId, 'run-cleanup')
+    assert.equal(threadState.replyLoadingVisible, true)
+  } finally {
+    threadState.activeRunId = null
+    localStorage.removeItem('active_run:thread-cleanup')
+  }
+})
+
+for (const status of ['completed', 'cancelled', 'interrupted']) {
+  test(`新标签页恢复 ${status} 且清理未完成的 Run 时继续订阅`, async (t) => {
+    const threadId = `cleanup-${status}`
+    const threadState = { activeRunId: null, runLastSeq: '0-0', replyLoadingVisible: true }
+    t.mock.method(agentApi, 'getThreadActiveRun', async () => ({
+      run: { id: 'run-cleanup', status, runtime_cleanup_pending: true }
+    }))
+    t.mock.method(agentApi, 'getAgentRun', async () => ({
+      run: { id: 'run-cleanup', status, runtime_cleanup_pending: true }
+    }))
+    t.mock.method(agentApi, 'streamAgentRunEvents', async () => new Response(''))
+    const stream = createRunStream({ threadState, handleStreamChunk: () => {}, resetOnGoingConv: () => {} })
+    try {
+      await stream.resumeActiveRunForThread(threadId)
+      assert.equal(threadState.activeRunId, 'run-cleanup')
+      assert.equal(threadState.isStreaming, true)
+      assert.equal(threadState.replyLoadingVisible, true)
+    } finally {
+      threadState.activeRunId = null
+      localStorage.removeItem(`active_run:${threadId}`)
+    }
+  })
+}
 
 test('自然断流遇到仍持有的 pending interrupt 时保留 Run 快照', async () => {
   const threadId = 'thread-with-pending-interrupt'

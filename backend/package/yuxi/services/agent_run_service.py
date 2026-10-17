@@ -1051,6 +1051,6 @@ async def get_active_run_by_thread(*, thread_id: str, current_uid: str, db: Asyn
         .limit(1)
     )
     run = result.scalar_one_or_none()
-    if run and run.status in ("pending", "running", "cancel_requested", "interrupted"):
+    if run and (run.runtime_cleanup_pending or run.status in ("pending", "running", "cancel_requested", "interrupted")):
         return {"run": run.to_dict()}
     return {"run": None}

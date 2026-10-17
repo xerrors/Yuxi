@@ -109,6 +109,8 @@ Compose 默认把 `/var/run/docker.sock`、UserWorkspace 和 Skill projection �
 
 provisioner 会扫描 Docker 已占用网段，从专用地址池中为新 Sandbox 选择不重叠的独立子网；并发分配冲突时重新选择，池耗尽时返回 503。`SANDBOX_DOCKER_SUBNET_PREFIX` 留空时 provisioner 使用 `/28`，最大只能设置为 `/29`，确保网络有足够地址容纳网关、provisioner 和 Sandbox。网络删除后子网可再次使用。部署者必须确认地址池不与宿主机路由、VPN 或其他 Docker 网络重叠，并在冲突时通过 `SANDBOX_DOCKER_ADDRESS_POOL` 覆盖 Compose 默认值。
 
+运行中点击停止会终止当前 GEM 命令，再由 worker 清理 execution runtime。`503 sandbox busy` 表示当前实例仍有代理操作或删除正在进行，调用方保留清理意图并重试；`/health` 正常不代表该实例已经清理。判断同一会话能否继续执行，需要同时核对 Run 终态和 `runtime_cleanup_pending=false`，详见[命令取消和清理完成](../mechanisms/sandbox.md#命令取消和清理完成)。
+
 ## Kubernetes 后端
 
 Kubernetes 后端由 provisioner 创建沙盒 Pod 和 NodePort Service。Compose/宿主变量与容器变量如下：

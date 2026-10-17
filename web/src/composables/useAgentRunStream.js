@@ -332,8 +332,9 @@ export function useAgentRunStream({
       if (Date.now() - lastEventAt < 45000) return
       try {
         const runRes = await agentApi.getAgentRun(runId)
-        const st = runRes?.run?.status
-        if (st && RUN_TERMINAL_STATUSES.has(st)) {
+        const run = runRes?.run
+        const st = run?.status
+        if (st && !run.runtime_cleanup_pending && RUN_TERMINAL_STATUSES.has(st)) {
           clearInterval(idleWatchdog)
           finalizeRunStream(threadId, runId, touchedThreadIds, { status: st })
         }
@@ -423,7 +424,9 @@ export function useAgentRunStream({
         try {
           const runRes = await agentApi.getAgentRun(runId)
           const run = runRes?.run
-          if (run?.status === RUN_INTERRUPTED_STATUS) {
+          if (run?.runtime_cleanup_pending) {
+            scheduleRunReconnect(threadId, runId)
+          } else if (run?.status === RUN_INTERRUPTED_STATUS) {
             if (hasPendingInterruptInThreads(touchedThreadIds, run.id)) {
               await preserveInterruptedRun(threadId, run)
             } else {
@@ -472,6 +475,7 @@ export function useAgentRunStream({
       try {
         const runRes = await agentApi.getAgentRun(ts.activeRunId)
         const run = runRes?.run
+        if (run?.runtime_cleanup_pending) return
         if (run?.status === RUN_INTERRUPTED_STATUS) {
           stopRunStreamSubscription(threadId)
           const snapshot = loadActiveRunSnapshot(threadId)
@@ -502,14 +506,14 @@ export function useAgentRunStream({
         try {
           const runRes = await agentApi.getAgentRun(snapshot.run_id)
           const run = runRes?.run
-          if (run?.status === RUN_INTERRUPTED_STATUS) {
+          if (run?.status === RUN_INTERRUPTED_STATUS && !run.runtime_cleanup_pending) {
             // 仅当本地仍持有该中断时才据快照恢复；否则不能仅凭快照重放旧中断
             // （可能已被回复），交由下方 active_run 做权威判定。
             if (hasPendingInterruptForRun(ts, run.id)) {
               await preserveInterruptedRun(threadId, run, snapshot)
               return
             }
-          } else if (run && !RUN_TERMINAL_STATUSES.has(run.status)) {
+          } else if (run && (run.runtime_cleanup_pending || !RUN_TERMINAL_STATUSES.has(run.status))) {
             const afterSeq = resolveRunResumeAfterSeq({
               snapshot,
               threadState: ts
@@ -533,7 +537,7 @@ export function useAgentRunStream({
     try {
       const active = await agentApi.getThreadActiveRun(threadId)
       const run = active?.run
-      if (run?.status === RUN_INTERRUPTED_STATUS) {
+      if (run?.status === RUN_INTERRUPTED_STATUS && !run.runtime_cleanup_pending) {
         if (hasPendingInterruptForRun(ts, run.id)) {
           await preserveInterruptedRun(threadId, run)
           return
@@ -544,7 +548,7 @@ export function useAgentRunStream({
         })
         return
       }
-      if (run && !RUN_TERMINAL_STATUSES.has(run.status)) {
+      if (run && (run.runtime_cleanup_pending || !RUN_TERMINAL_STATUSES.has(run.status))) {
         resetOnGoingConv(threadId)
         await startRunStream(threadId, run.id, '0-0')
         return

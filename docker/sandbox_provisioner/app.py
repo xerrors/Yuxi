@@ -21,7 +21,7 @@ from urllib import request
 import httpx
 from dotenv import dotenv_values
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -432,18 +432,26 @@ class SandboxQuiesceTimeoutError(RuntimeError):
     """Sandbox 全局静默未在调用方 deadline 内完成。"""
 
 
+class SandboxBusyError(RuntimeError):
+    """操作无法在有界窗口内排空，调用方应保留清理意图并重试。"""
+
+
 class SandboxOperationPins:
     """让删除等待已经开始的 proxy 请求排空，并阻止新的请求穿过删除。"""
 
-    def __init__(self):
+    def __init__(self, *, wait_timeout_seconds: float = 5):
         self._condition = threading.Condition()
         self._active: dict[str, int] = {}
         self._deleting: set[str] = set()
+        self._wait_timeout_seconds = wait_timeout_seconds
 
     def acquire(self, sandbox_id: str) -> None:
         with self._condition:
-            while sandbox_id in self._deleting:
-                self._condition.wait()
+            if not self._condition.wait_for(
+                lambda: sandbox_id not in self._deleting,
+                timeout=self._wait_timeout_seconds,
+            ):
+                raise SandboxBusyError("sandbox busy")
             self._active[sandbox_id] = self._active.get(sandbox_id, 0) + 1
 
     def release(self, sandbox_id: str) -> None:
@@ -457,9 +465,20 @@ class SandboxOperationPins:
 
     def begin_delete(self, sandbox_id: str) -> None:
         with self._condition:
+            deadline = time.monotonic() + self._wait_timeout_seconds
+            if not self._condition.wait_for(
+                lambda: sandbox_id not in self._deleting,
+                timeout=max(0, deadline - time.monotonic()),
+            ):
+                raise SandboxBusyError("sandbox busy")
             self._deleting.add(sandbox_id)
-            while self._active.get(sandbox_id, 0):
-                self._condition.wait()
+            if not self._condition.wait_for(
+                lambda: not self._active.get(sandbox_id, 0),
+                timeout=max(0, deadline - time.monotonic()),
+            ):
+                self._deleting.remove(sandbox_id)
+                self._condition.notify_all()
+                raise SandboxBusyError("sandbox busy")
 
     def end_delete(self, sandbox_id: str) -> None:
         with self._condition:
@@ -1883,8 +1902,10 @@ class SandboxIdleReaper:
             ]
 
     def _delete_expired_sandbox(self, sandbox_id: str, generation: str | None) -> None:
-        self._operation_pins.begin_delete(sandbox_id)
+        acquired = False
         try:
+            self._operation_pins.begin_delete(sandbox_id)
+            acquired = True
             cutoff = time.time() - self._idle_timeout_seconds
             with self._lock:
                 current = self._last_activity_at.get(sandbox_id)
@@ -1896,7 +1917,8 @@ class SandboxIdleReaper:
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"Failed to delete idle sandbox {sandbox_id}: {exc}")
         finally:
-            self._operation_pins.end_delete(sandbox_id)
+            if acquired:
+                self._operation_pins.end_delete(sandbox_id)
 
     def _run(self) -> None:
         while not self._stop_event.wait(self._check_interval_seconds):
@@ -1960,6 +1982,16 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Yuxi Sandbox Provisioner", lifespan=lifespan)
 
 
+@app.exception_handler(SandboxBusyError)
+async def sandbox_busy_response(_request: Request, _exc: SandboxBusyError):
+    """忙碌只影响当前 runtime，不把重试误报成清理成功。"""
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "sandbox busy"},
+        headers={"Retry-After": "1"},
+    )
+
+
 def sandbox_response(record: SandboxRecord) -> SandboxResponse:
     return SandboxResponse(
         sandbox_id=record.sandbox_id,
@@ -1971,7 +2003,7 @@ def sandbox_response(record: SandboxRecord) -> SandboxResponse:
 
 
 @app.get("/health")
-def health():
+async def health():
     tracked = len(idle_reaper._last_activity_at)  # noqa: SLF001
     return {
         "status": "ok",
@@ -2210,7 +2242,20 @@ def delete_sandbox(sandbox_id: str, expected_generation: str | None = None):
     dependencies=[Depends(require_provisioner_auth)],
 )
 async def proxy_sandbox_request(sandbox_id: str, request: Request, path: str = ""):
-    await asyncio.to_thread(sandbox_operation_pins.acquire, sandbox_id)
+    acquiring = asyncio.create_task(
+        asyncio.to_thread(sandbox_operation_pins.acquire, sandbox_id)
+    )
+    try:
+        await asyncio.shield(acquiring)
+    except asyncio.CancelledError:
+
+        def release_after_acquire(task):
+            """线程等待不会随协程取消，取得 pin 后仍须归还。"""
+            if not task.cancelled() and task.exception() is None:
+                sandbox_operation_pins.release(sandbox_id)
+
+        acquiring.add_done_callback(release_after_acquire)
+        raise
     try:
         record = await asyncio.to_thread(backend_impl.discover, sandbox_id)
     except asyncio.CancelledError:

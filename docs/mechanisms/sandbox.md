@@ -42,6 +42,16 @@ Conversation 通过 `project_id` 绑定 Project；Project 拥有这项绑定和 
 
 `uid + runtime_scope_id` 派生稳定 `sandbox_id`。同一 runtime 存活期间不能改绑到另一个 Workdir。根执行树终态后，worker 清理 runtime，但保留 UserWorkspace 文件。
 
+## 命令取消和清理完成
+
+Agent 的异步 `execute` 为每条命令创建独立 GEM shell session，异步启动命令并用短请求等待结果。工具的 `timeout` 同时限制远端进程的硬执行时间；未指定时使用 `SANDBOX_EXEC_TIMEOUT_SECONDS`。取消会先收敛已发出的启动请求，再调用该 session 的 `kill_process`。重复取消仍等待这个有界收尾完成，避免终止请求先到、命令后启动。
+
+worker 将取消写入 PostgreSQL 后继续清理根 execution runtime。Run 进入终态与 runtime 清理完成是两个事实：`runtime_cleanup_pending=true` 时，同一用户、智能体和 Conversation 的 FIFO 仍被阻挡，终态 `end` 事件等待清理成功后发布。当前运行接口也返回终态但尚未清理的 Run，前端在无事件轮询、断线和刷新恢复时检查这项标记。
+
+provisioner 的操作 pin 保护正在进行的代理请求。删除等待这些请求排空，新的发现和代理请求等待删除结束；单次锁等待最多 5 秒，超时返回 `503 sandbox busy` 和 `Retry-After: 1`，不删除活跃实例、不宣称清理成功。超时会释放本次删除栅栏，worker 保留数据库中的清理意图，由周期恢复重试。健康检查使用异步路由，避免与同步锁等待竞争线程池。
+
+远端进程终止失败会记录包含 thread/session 身份的异常；实际 runtime 删除仍须由 provisioner 确认，数据库清理标记不会因终止请求失败而被直接清除。已经完成的文件写入和外部请求保留，取消不回滚这些副作用。
+
 ## 挂载和文件 Owner
 
 | 虚拟路径 | 内容 | Agent 权限 |

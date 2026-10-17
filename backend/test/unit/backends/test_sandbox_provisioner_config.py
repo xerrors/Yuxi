@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import asyncio
 import os
 import sys
 import threading
@@ -584,6 +585,95 @@ def test_operation_pins_drain_started_requests_and_block_new_requests_during_del
     assert next_request_started.wait(timeout=1)
     delete_thread.join(timeout=1)
     next_thread.join(timeout=1)
+
+
+def test_operation_pin_timeout_keeps_active_request_and_reopens_discovery():
+    """清理超时不能删活跃实例，也不能留下永久 deleting 标记。"""
+    module = _load_module()
+    pins = module.SandboxOperationPins(wait_timeout_seconds=0.02)
+    pins.acquire("busy")
+    with pytest.raises(module.SandboxBusyError):
+        pins.begin_delete("busy")
+    assert pins._active == {"busy": 1}
+    pins.acquire("busy")
+    pins.release("busy")
+    pins.release("busy")
+    pins.begin_delete("busy")
+    with pytest.raises(module.SandboxBusyError):
+        pins.acquire("busy")
+    pins.end_delete("busy")
+    pins.acquire("busy")
+    pins.release("busy")
+
+
+def test_busy_delete_returns_retryable_http_error_without_deleting(monkeypatch):
+    """活跃命令阻止删除时 HTTP 有界失败，其他实例仍可发现。"""
+    module = _load_module()
+    monkeypatch.setenv("SANDBOX_PROVISIONER_TOKEN", "test-provisioner-token-32-characters-long")
+    pins = module.SandboxOperationPins(wait_timeout_seconds=0.02)
+    monkeypatch.setattr(module, "sandbox_operation_pins", pins)
+    deleted = []
+    monkeypatch.setattr(module.backend_impl, "delete", lambda *args, **kwargs: deleted.append(args))
+    pins.acquire("busy")
+    try:
+        with TestClient(module.app) as client:
+            response = client.delete(
+                "/api/sandboxes/busy",
+                headers={"Authorization": "Bearer test-provisioner-token-32-characters-long"},
+            )
+            assert response.status_code == 503
+            assert response.json()["detail"] == "sandbox busy"
+            assert client.get("/health").status_code == 200
+        assert deleted == []
+    finally:
+        pins.release("busy")
+
+
+@pytest.mark.asyncio
+async def test_cancelled_proxy_waiter_does_not_leak_an_operation_pin(monkeypatch):
+    """等待删除的代理已断开时，线程晚取得的 pin 必须归还。"""
+    module = _load_module()
+    pins = module.SandboxOperationPins()
+    monkeypatch.setattr(module, "sandbox_operation_pins", pins)
+    entered = threading.Event()
+    acquired = threading.Event()
+    acquire = pins.acquire
+
+    def blocked_acquire(sandbox_id):
+        """确认代理线程已进入等待，再取消其异步调用。"""
+        entered.set()
+        acquire(sandbox_id)
+        acquired.set()
+
+    monkeypatch.setattr(pins, "acquire", blocked_acquire)
+    pins.begin_delete("busy")
+    proxy = asyncio.create_task(module.proxy_sandbox_request("busy", None))
+    try:
+        assert await asyncio.to_thread(entered.wait, 1)
+        proxy.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await proxy
+    finally:
+        pins.end_delete("busy")
+    assert await asyncio.to_thread(acquired.wait, 1)
+    async with asyncio.timeout(1):
+        while pins._active:
+            await asyncio.sleep(0.01)
+    assert pins._active == {}
+
+
+def test_second_delete_cannot_release_first_delete_ownership():
+    """并发删除超时不允许第二个调用释放第一个调用的 deleting 栅栏。"""
+    module = _load_module()
+    pins = module.SandboxOperationPins(wait_timeout_seconds=0.02)
+    pins.begin_delete("busy")
+    with pytest.raises(module.SandboxBusyError):
+        pins.begin_delete("busy")
+    with pytest.raises(module.SandboxBusyError):
+        pins.acquire("busy")
+    pins.end_delete("busy")
+    pins.acquire("busy")
+    pins.release("busy")
 
 
 def test_docker_mount_checks_reject_uploads_and_outputs_mounts(monkeypatch, tmp_path):

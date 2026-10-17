@@ -494,7 +494,7 @@ async def reconcile_pending_runtime_cleanups() -> list[str]:
             if not await _release_runtime_if_idle(run):
                 continue
         except Exception:
-            logger.error("Failed to reconcile execution-tree runtime cleanup: run=%s", run.id, exc_info=True)
+            logger.exception(f"Failed to reconcile execution-tree runtime cleanup: run={run.id}")
             continue
         if run.status in TERMINAL_RUN_STATUSES:
             await _append_end_event(run.id, run.status, thread_id=run.conversation_thread_id)

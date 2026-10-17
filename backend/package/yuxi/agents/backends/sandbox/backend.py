@@ -545,30 +545,98 @@ class ProvisionerSandboxBackend(BaseSandbox):
         payload size before being returned.
         """
         try:
-            kwargs: dict[str, Any] = {"command": command}
-            if timeout is not None:
-                kwargs["timeout"] = timeout
-                kwargs["hard_timeout"] = timeout
-                kwargs["request_options"] = {"timeout_in_seconds": timeout}
+            effective_timeout = timeout if timeout is not None else self._command_timeout_seconds
+            kwargs: dict[str, Any] = {
+                "command": command,
+                "timeout": effective_timeout,
+                "hard_timeout": effective_timeout,
+                "request_options": {"timeout_in_seconds": effective_timeout},
+            }
             result = self._get_client().shell.exec_command(**kwargs)
-
-            output = result.data.output or ""
-            exit_code = result.data.exit_code
-
-            truncated = False
-            encoded = output.encode("utf-8", errors="ignore")
-            if len(encoded) > self._max_output_bytes:
-                output = encoded[: self._max_output_bytes].decode("utf-8", errors="ignore")
-                truncated = True
-
-            return ExecuteResponse(
-                output=output,
-                exit_code=exit_code if isinstance(exit_code, int) else None,
-                truncated=truncated,
-            )
+            return self._execute_response(result.data)
         except Exception as exc:  # noqa: BLE001
             logger.error(f"Sandbox execute failed for thread {self._thread_id}: {exc}")
             return ExecuteResponse(output=f"Error: {exc}", exit_code=1, truncated=False)
+
+    async def aexecute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
+        """以独立 GEM session 执行命令，取消时显式终止远端进程。"""
+        effective_timeout = timeout if timeout is not None else self._command_timeout_seconds
+        try:
+            connection = await asyncio.to_thread(self._get_connection)
+            async with httpx.AsyncClient(timeout=10, trust_env=False) as http_client:
+                client = self._build_async_client(connection.sandbox_url, http_client)
+                session_id = f"yuxi-{uuid.uuid4().hex}"
+                await client.shell.create_session(id=session_id, request_options={"timeout_in_seconds": 10})
+                launch = asyncio.create_task(
+                    client.shell.exec_command(
+                        id=session_id,
+                        command=command,
+                        async_mode=True,
+                        hard_timeout=effective_timeout,
+                        request_options={"timeout_in_seconds": 10},
+                    )
+                )
+                try:
+                    async with asyncio.timeout(effective_timeout + 10):
+                        # 启动确认先于终止，避免 kill 到达后命令才在远端开始。
+                        result = await asyncio.shield(launch)
+                        status = result.data.status
+                        while status in {"running", "no_change_timeout"}:
+                            waited = await client.shell.wait_for_process(
+                                id=session_id,
+                                seconds=1,
+                                max_wait_seconds=1,
+                                request_options={"timeout_in_seconds": 5},
+                            )
+                            status = waited.data.status
+                        final = await client.shell.view(id=session_id, request_options={"timeout_in_seconds": 5})
+                        return self._execute_response(final.data)
+                except BaseException:
+                    await self._terminate_command(client, session_id, launch)
+                    raise
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"Sandbox execute failed for thread {self._thread_id}: {exc}")
+            return ExecuteResponse(output=f"Error: {exc}", exit_code=1, truncated=False)
+
+    async def _terminate_command(self, client: Any, session_id: str, launch: asyncio.Task) -> None:
+        """收敛启动与 kill，重复取消不能打断这个有界的远端收尾。"""
+
+        async def stop():
+            """启动失败仍尝试 kill，处理响应丢失但远端已执行的情形。"""
+            with suppress(Exception):
+                async with asyncio.timeout(10):
+                    await launch
+            async with asyncio.timeout(5):
+                await client.shell.kill_process(id=session_id, request_options={"timeout_in_seconds": 5})
+
+        cleanup = asyncio.create_task(stop())
+        while not cleanup.done():
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        try:
+            cleanup.result()
+        except Exception:
+            logger.exception(f"Sandbox command termination failed: thread={self._thread_id}, session={session_id}")
+
+    def _execute_response(self, data: Any) -> ExecuteResponse:
+        """归一化最终命令输出并限制返回字节数。"""
+        output = data.output or ""
+        encoded = output.encode("utf-8", errors="ignore")
+        truncated = len(encoded) > self._max_output_bytes
+        if truncated:
+            output = encoded[: self._max_output_bytes].decode("utf-8", errors="ignore")
+        exit_code = data.exit_code
+        if exit_code is None and getattr(data, "status", None) in {"hard_timeout", "terminated"}:
+            exit_code = 124 if data.status == "hard_timeout" else 130
+        return ExecuteResponse(
+            output=output,
+            exit_code=exit_code if isinstance(exit_code, int) else None,
+            truncated=truncated,
+        )
 
     def ls(self, path: str) -> LsResult:
         """List direct children of an allowed sandbox path with lightweight metadata."""
