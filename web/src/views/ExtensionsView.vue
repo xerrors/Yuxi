@@ -11,7 +11,7 @@
     />
 
     <div v-if="!isDetailPage" class="extensions-content">
-      <div v-if="userStore.isAdmin && activeTab === 'knowledge'" class="tab-panel">
+      <div v-if="activeTab === 'knowledge'" class="tab-panel">
         <DataBaseView ref="knowledgeRef" embedded />
       </div>
       <div v-if="userStore.isAdmin && activeTab === 'tools'" class="tab-panel">
@@ -54,7 +54,10 @@ const adminExtensionTabs = computed(() => [
   { key: 'tools', label: '工具' },
   { key: 'mcp', label: 'MCP' }
 ])
-const userExtensionTabs = [{ key: 'skills', label: '技能' }]
+const userExtensionTabs = [
+  { key: 'knowledge', label: '知识库' },
+  { key: 'skills', label: '技能' }
+]
 const extensionTabs = computed(() =>
   userStore.isAdmin ? adminExtensionTabs.value : userExtensionTabs
 )

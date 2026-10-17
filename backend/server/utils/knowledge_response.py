@@ -29,6 +29,7 @@ def serialize_knowledge_base(
     database: KnowledgeBaseSummary,
     *,
     permission: ResourcePermission | None = None,
+    can_manage: bool | None = None,
     redact_secrets: bool = False,
     row_count_fallback: bool = False,
 ) -> dict[str, Any]:
@@ -60,7 +61,8 @@ def serialize_knowledge_base(
     effective_permission = permission or database.effective_permission
     if effective_permission is not None:
         response["effective_permission"] = effective_permission.value
-        response["can_manage"] = effective_permission == ResourcePermission.MANAGE
+        response["can_manage"] = database.can_manage if can_manage is None else can_manage
+        response["can_edit_documents"] = effective_permission == ResourcePermission.MANAGE
 
     if isinstance(database, KnowledgeBaseDetail):
         response["mindmap"] = database.mindmap

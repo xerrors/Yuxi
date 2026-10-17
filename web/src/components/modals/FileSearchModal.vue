@@ -85,11 +85,12 @@
 </template>
 
 <script setup>
-import { nextTick, ref, watch } from 'vue'
+import { nextTick, onUnmounted, ref, watch } from 'vue'
 import { FileText, Search, X } from '@lucide/vue'
 import dayjs, { parseToShanghai } from '@/utils/time'
 import { formatFileSize } from '@/utils/file_utils'
 import { documentApi } from '@/apis/knowledge_api'
+import { useUserStore } from '@/stores/user'
 
 const SEARCH_LIMIT = 100
 
@@ -99,6 +100,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['update:open', 'select'])
+const userStore = useUserStore()
 
 const searchInputRef = ref(null)
 const resultListRef = ref(null)
@@ -117,7 +119,10 @@ const resetState = () => {
   hasMore.value = false
 }
 
-const close = () => emit('update:open', false)
+const close = () => {
+  resetState()
+  emit('update:open', false)
+}
 
 const selectResult = (item) => {
   emit('select', item)
@@ -128,26 +133,35 @@ let searchToken = 0
 
 const handleSearch = async () => {
   const query = keyword.value.trim()
-  if (!query || !props.kbId) return
+  if (!props.open || !query || !props.kbId) return
   const token = ++searchToken
+  const kbId = props.kbId
+  const session = userStore.token
+  const role = userStore.userRole
+  const isCurrentSearch = () =>
+    token === searchToken &&
+    props.open &&
+    props.kbId === kbId &&
+    userStore.token === session &&
+    userStore.userRole === role
   loading.value = true
   hasSearched.value = true
   try {
-    const response = await documentApi.searchDocuments(props.kbId, {
+    const response = await documentApi.searchDocuments(kbId, {
       query,
       offset: 0,
       limit: SEARCH_LIMIT
     })
-    if (token !== searchToken) return
+    if (!isCurrentSearch()) return
     results.value = response?.files || []
     hasMore.value = Boolean(response?.has_more)
   } catch (error) {
-    if (token !== searchToken) return
+    if (!isCurrentSearch()) return
     console.warn('搜索文件失败:', error)
     results.value = []
     hasMore.value = false
   } finally {
-    if (token === searchToken) loading.value = false
+    if (isCurrentSearch()) loading.value = false
   }
 }
 
@@ -174,13 +188,15 @@ const formatResultDate = (value) => {
 }
 
 watch(
-  () => props.open,
-  (nextOpen) => {
-    if (!nextOpen) return
+  [() => props.open, () => props.kbId, () => userStore.token, () => userStore.userRole],
+  ([nextOpen]) => {
     resetState()
-    nextTick(() => searchInputRef.value?.focus())
-  }
+    if (nextOpen && props.kbId) nextTick(() => searchInputRef.value?.focus())
+  },
+  { flush: 'sync' }
 )
+
+onUnmounted(resetState)
 </script>
 
 <style lang="less" scoped>

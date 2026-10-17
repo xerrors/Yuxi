@@ -18,7 +18,7 @@
           class="parse-pending-alert"
           type="info"
           show-icon
-          :message="`将提交 ${pendingParseTotalText} 个待解析文件，任务会在后台按批处理，可在任务中心查看进度。`"
+          :message="`将提交 ${pendingParseTotalText} 个待解析文件，任务会在后台按批处理，${taskProgressHint}。`"
         />
         <div class="setting-item">
           <div class="setting-label">OCR 引擎（仅应用于 PDF/图片文件）</div>
@@ -52,7 +52,7 @@
           class="index-pending-alert"
           type="info"
           show-icon
-          :message="`将提交 ${pendingIndexTotalText} 个待入库文件，任务会在后台按批处理，可在任务中心查看进度。`"
+          :message="`将提交 ${pendingIndexTotalText} 个待入库文件，任务会在后台按批处理，${taskProgressHint}。`"
         />
         <ChunkParamsConfig
           :temp-chunk-params="indexParams"
@@ -471,8 +471,9 @@
 </template>
 
 <script setup>
-import { ref, computed, h, watch } from 'vue'
+import { ref, computed, h, watch, onUnmounted } from 'vue'
 import { useDatabaseStore } from '@/stores/database'
+import { useUserStore } from '@/stores/user'
 import { useConfigStore } from '@/stores/config'
 import OCRSelector from '@/components/OCRSelector.vue'
 import { message, Modal } from 'ant-design-vue'
@@ -521,6 +522,10 @@ import {
 } from '@lucide/vue'
 
 const store = useDatabaseStore()
+const userStore = useUserStore()
+const taskProgressHint = computed(() =>
+  userStore.isAdmin ? '可在任务中心查看进度' : '可在文件列表查看处理状态'
+)
 
 const emit = defineEmits(['mindmap', 'search'])
 
@@ -529,6 +534,9 @@ const props = defineProps({
 })
 
 const readonly = computed(() => props.readonly)
+let editContextId = 0
+let folderDeleteDialog = null
+const isCurrentEdit = (contextId) => contextId === editContextId && !readonly.value
 
 const applyFilters = async (overrides = {}) => {
   const nextStatus = overrides.status ?? statusFilter.value
@@ -649,6 +657,7 @@ const createFolderLoading = ref(false)
 const currentParentId = ref(null)
 
 const showCreateFolderModal = (parentId = null) => {
+  if (readonly.value) return
   if (typeof parentId === 'string') {
     closePopover(parentId)
   }
@@ -695,22 +704,26 @@ const refreshAfterMutation = async () => {
 }
 
 const handleCreateFolder = async () => {
+  if (readonly.value || !createFolderModalVisible.value) return
   if (!newFolderName.value.trim()) {
     message.warning('请输入文件夹名称')
     return
   }
 
+  const contextId = editContextId
   createFolderLoading.value = true
   try {
     await documentApi.createFolder(store.kbId, newFolderName.value, currentParentId.value)
+    if (!isCurrentEdit(contextId)) return
     message.success('创建成功')
     createFolderModalVisible.value = false
     await refreshAfterMutation()
   } catch (error) {
+    if (!isCurrentEdit(contextId)) return
     console.error(error)
     message.error('创建失败: ' + (error.message || '未知错误'))
   } finally {
-    createFolderLoading.value = false
+    if (isCurrentEdit(contextId)) createFolderLoading.value = false
   }
 }
 
@@ -735,17 +748,20 @@ const handleRenameFolder = async () => {
     return
   }
 
+  const contextId = editContextId
   renameFolderLoading.value = true
   try {
     await documentApi.renameFolder(store.kbId, folderBeingRenamed.value.file_id, folderName)
+    if (!isCurrentEdit(contextId)) return
     renameFolderModalVisible.value = false
     message.success('重命名成功')
     await refreshAfterMutation()
   } catch (error) {
+    if (!isCurrentEdit(contextId)) return
     console.error(error)
     message.error('重命名失败: ' + (error.message || '未知错误'))
   } finally {
-    renameFolderLoading.value = false
+    if (isCurrentEdit(contextId)) renameFolderLoading.value = false
   }
 }
 
@@ -1045,13 +1061,15 @@ const handleDeleteFile = (fileId) => {
 
 const handleDeleteFolder = (record) => {
   if (readonly.value) return
+  const contextId = editContextId
   closePopover(record.file_id)
-  Modal.confirm({
+  folderDeleteDialog = Modal.confirm({
     title: '删除文件夹',
     content: `确定要删除文件夹 "${record.filename}" 及其包含的所有内容吗？`,
     okText: '确认',
     cancelText: '取消',
     onOk: async () => {
+      if (!isCurrentEdit(contextId)) return
       try {
         await store.deleteFile(record.file_id)
         message.success('删除成功')
@@ -1089,6 +1107,7 @@ const handleBatchParse = async () => {
 }
 
 const startPendingParse = (count = 0) => {
+  if (readonly.value) return false
   if (lock.value) {
     message.warning('当前有文件处理中，请稍后再试')
     return false
@@ -1111,6 +1130,7 @@ const startPendingParse = (count = 0) => {
 }
 
 const handleBatchIndex = async () => {
+  if (readonly.value) return
   const validKeys = selectedRowKeys.value.filter((key) => {
     const file = files.value.find((f) => f.file_id === key)
     return canIndexFile(file)
@@ -1130,6 +1150,7 @@ const handleBatchIndex = async () => {
 }
 
 const startPendingIndex = (count = 0) => {
+  if (readonly.value) return false
   if (lock.value) {
     message.warning('当前有文件处理中，请稍后再试')
     return false
@@ -1194,6 +1215,8 @@ const handleDownloadFile = async (record) => {
 }
 
 const handleParseFile = async (record) => {
+  if (readonly.value) return
+  const contextId = ++editContextId
   closePopover(record.file_id)
   currentParseFileIds.value = [record.file_id]
   isBatchParseOperation.value = false
@@ -1203,17 +1226,21 @@ const handleParseFile = async (record) => {
     record.status === 'error_parsing' ? '重试解析参数配置' : '解析参数配置'
 
   const processingParams = await loadRecordProcessingParams(record)
+  if (!isCurrentEdit(contextId)) return
   resetParseParams(processingParams)
 
   parseConfigModalVisible.value = true
 }
 
 const handleParseConfigConfirm = async () => {
+  if (readonly.value || !parseConfigModalVisible.value) return
+  const contextId = editContextId
   try {
     const params = { ocr_engine: parseParams.value.ocr_engine }
     const result = isPendingParseOperation.value
       ? await store.parsePendingFiles(params, pendingParseTotal.value)
       : await store.parseFiles(currentParseFileIds.value, params)
+    if (!isCurrentEdit(contextId)) return
     if (result) {
       currentParseFileIds.value = []
       pendingParseTotal.value = 0
@@ -1226,6 +1253,7 @@ const handleParseConfigConfirm = async () => {
       resetParseParams()
     }
   } catch (error) {
+    if (!isCurrentEdit(contextId)) return
     console.error('解析失败:', error)
     const errorMessage = error.message || '解析失败，请稍后重试'
     message.error(errorMessage)
@@ -1233,6 +1261,7 @@ const handleParseConfigConfirm = async () => {
 }
 
 const handleParseConfigCancel = () => {
+  editContextId += 1
   parseConfigModalVisible.value = false
   currentParseFileIds.value = []
   isBatchParseOperation.value = false
@@ -1242,6 +1271,7 @@ const handleParseConfigCancel = () => {
 }
 
 const handleStatusAction = async (record) => {
+  if (readonly.value) return
   if (lock.value || !hasStatusAction(record)) return
 
   const action = getFilePrimaryAction(record)
@@ -1278,6 +1308,8 @@ const loadRecordProcessingParams = async (record) => {
 }
 
 const handleIndexFile = async (record) => {
+  if (readonly.value) return
+  const contextId = ++editContextId
   closePopover(record.file_id)
   currentIndexFileIds.value = [record.file_id]
   isBatchIndexOperation.value = false
@@ -1286,12 +1318,15 @@ const handleIndexFile = async (record) => {
   indexConfigModalTitle.value = '入库参数配置'
 
   const processingParams = await loadRecordProcessingParams(record)
+  if (!isCurrentEdit(contextId)) return
   resetIndexParams(processingParams)
 
   indexConfigModalVisible.value = true
 }
 
 const handleReindexFile = async (record) => {
+  if (readonly.value) return
+  const contextId = ++editContextId
   closePopover(record.file_id)
   currentIndexFileIds.value = [record.file_id]
   isBatchIndexOperation.value = false
@@ -1300,6 +1335,7 @@ const handleReindexFile = async (record) => {
   indexConfigModalTitle.value = '重新入库参数配置'
 
   const processingParams = await loadRecordProcessingParams(record)
+  if (!isCurrentEdit(contextId)) return
   resetIndexParams(processingParams)
 
   indexConfigModalVisible.value = true
@@ -1307,11 +1343,14 @@ const handleReindexFile = async (record) => {
 
 // 入库确认 (统一处理 Index 和 Reindex)
 const handleIndexConfigConfirm = async () => {
+  if (readonly.value || !indexConfigModalVisible.value) return
+  const contextId = editContextId
   try {
     const params = buildIndexParamsPayload()
     const result = isPendingIndexOperation.value
       ? await store.indexPendingFiles(params, pendingIndexTotal.value)
       : await store.indexFiles(currentIndexFileIds.value, params)
+    if (!isCurrentEdit(contextId)) return
     if (result) {
       currentIndexFileIds.value = []
       pendingIndexTotal.value = 0
@@ -1329,6 +1368,7 @@ const handleIndexConfigConfirm = async () => {
       // message.error(`入库失败: ${result.message}`); // store already shows message
     }
   } catch (error) {
+    if (!isCurrentEdit(contextId)) return
     console.error('入库失败:', error)
     const errorMessage = error.message || '入库失败，请稍后重试'
     message.error(errorMessage)
@@ -1337,6 +1377,7 @@ const handleIndexConfigConfirm = async () => {
 
 // 入库取消
 const handleIndexConfigCancel = () => {
+  editContextId += 1
   indexConfigModalVisible.value = false
   currentIndexFileIds.value = []
   isBatchIndexOperation.value = false
@@ -1344,6 +1385,34 @@ const handleIndexConfigCancel = () => {
   pendingIndexTotal.value = 0
   resetIndexParams()
 }
+
+/** 清除旧会话或权限的文档操作载荷，并使参数请求失效。 */
+const resetEditState = () => {
+  handleParseConfigCancel()
+  handleIndexConfigCancel()
+  createFolderModalVisible.value = false
+  renameFolderModalVisible.value = false
+  newFolderName.value = ''
+  renamedFolderName.value = ''
+  currentParentId.value = null
+  folderBeingRenamed.value = null
+  createFolderLoading.value = false
+  renameFolderLoading.value = false
+  selectedRowKeys.value = []
+  popoverVisibleMap.value = {}
+  overflowMenuOpen.value = false
+  isSelectionMode.value = false
+  folderDeleteDialog?.destroy()
+  folderDeleteDialog = null
+  resetDragState()
+}
+
+watch(
+  [() => store.kbId, () => userStore.token, () => userStore.userRole, readonly],
+  resetEditState,
+  { flush: 'sync' }
+)
+onUnmounted(resetEditState)
 
 watch(
   () => store.kbId,

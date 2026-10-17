@@ -4,7 +4,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
-from server.utils.auth_middleware import get_admin_user
+from server.utils.auth_middleware import get_admin_user, get_required_user
 from server.utils.knowledge_permissions import (
     ensure_knowledge_base_permission,
     require_knowledge_base_manage,
@@ -56,9 +56,9 @@ async def _get_evaluation_dataset_or_raise(dataset_id: str) -> Any:
 
 async def require_evaluation_dataset_read(
     dataset_id: str,
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_required_user),
 ) -> User:
-    """校验管理员对评估数据集所属知识库的读取权限。"""
+    """校验登录用户对评估数据集所属知识库的读取权限。"""
 
     dataset = await _get_evaluation_dataset_or_raise(dataset_id)
     await ensure_knowledge_base_permission(str(dataset.kb_id), current_user, ResourcePermission.READ)

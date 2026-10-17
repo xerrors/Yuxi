@@ -31,7 +31,7 @@ def test_serialize_knowledge_base_redacts_credentials_from_compatibility_fields(
     assert "dify_token" not in response["metadata"]
 
 
-@pytest.mark.parametrize(("uid", "role", "can_read"), [("admin-1", "admin", True), ("other-user", "user", False)])
+@pytest.mark.parametrize(("uid", "role", "can_read"), [("admin-1", "admin", True), ("other-user", "user", True)])
 @pytest.mark.asyncio
 async def test_non_manager_cannot_manage_global_read_knowledge_base(monkeypatch, uid, role, can_read):
     database = {

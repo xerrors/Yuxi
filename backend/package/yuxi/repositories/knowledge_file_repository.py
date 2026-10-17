@@ -717,6 +717,7 @@ class KnowledgeFileRepository:
         }
 
     async def upsert(self, file_id: str, data: dict[str, Any]) -> KnowledgeFile:
+        """新增或更新同库文件，拒绝跨库文件 ID 碰撞。"""
         sanitized_data = self._sanitize_data(data)
         async with pg_manager.get_async_session_context() as session:
             result = await session.execute(select(KnowledgeFile).where(KnowledgeFile.file_id == file_id))
@@ -725,6 +726,8 @@ class KnowledgeFileRepository:
                 record = KnowledgeFile(file_id=file_id, **sanitized_data)
                 session.add(record)
                 return record
+            if existing.kb_id != sanitized_data.get("kb_id"):
+                raise ValueError("File ID already belongs to another knowledge base")
             for key, value in sanitized_data.items():
                 setattr(existing, key, value)
             return existing

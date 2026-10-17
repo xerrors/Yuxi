@@ -56,7 +56,7 @@ async def test_dataset_manage_route_rejects_admin_without_manage_permission(monk
     assert exc_info.value.status_code == 403
 
 
-def test_evaluation_routes_require_admin_role():
+def test_evaluation_mutation_routes_require_admin_role():
     app = FastAPI()
     app.include_router(knowledge_eval_router.evaluation)
 
@@ -65,7 +65,42 @@ def test_evaluation_routes_require_admin_role():
 
     app.dependency_overrides[get_required_user] = fake_required_user
 
-    response = TestClient(app).get("/evaluation/databases/kb-1/datasets")
+    response = TestClient(app).delete("/evaluation/datasets/dataset-1")
 
     assert response.status_code == 403
     assert response.json()["detail"] == "需要管理员权限"
+
+
+@pytest.mark.parametrize(("uid", "expected_status"), [("reader", 200), ("unshared", 403)])
+def test_dataset_download_uses_the_owning_database_read_scope(monkeypatch, uid, expected_status):
+    app = FastAPI()
+    app.include_router(knowledge_eval_router.evaluation)
+
+    async def fake_required_user():
+        return SimpleNamespace(uid=uid, role="user", department_id=1)
+
+    async def fake_get_dataset(_repository, _dataset_id):
+        return SimpleNamespace(kb_id="kb-1")
+
+    async def fake_get_database_info(_kb_id):
+        return {
+            "created_by": "owner",
+            "share_config": {
+                "version": 2,
+                "read_scope": {"access_level": "user", "user_uids": ["reader"]},
+                "manage_scope": None,
+            },
+        }
+
+    async def fake_export(_service, _dataset_id):
+        return {"filename": "dataset.jsonl", "content": '{"query":"authorized"}\n'}
+
+    app.dependency_overrides[get_required_user] = fake_required_user
+    monkeypatch.setattr(knowledge_eval_router.EvaluationRepository, "get_dataset", fake_get_dataset)
+    monkeypatch.setattr(knowledge_permissions.knowledge_base, "get_database_info", fake_get_database_info)
+    monkeypatch.setattr(knowledge_eval_router.EvaluationService, "export_dataset_jsonl", fake_export)
+    response = TestClient(app).get("/evaluation/datasets/dataset-1/download")
+
+    assert response.status_code == expected_status
+    if expected_status == 200:
+        assert response.content == b'{"query":"authorized"}\n'

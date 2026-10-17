@@ -90,13 +90,15 @@ async def _delete_department_with_admin(test_client, admin_headers, department):
     assert response.status_code in (200, 404), response.text
 
 
-async def _create_test_database(test_client, admin_headers, share_config=None):
+async def _create_test_database(
+    test_client, admin_headers, share_config=None, embedding_model_spec="siliconflow-cn:Pro/BAAI/bge-m3"
+):
     response = await test_client.post(
         "/api/knowledge/databases",
         json={
             "database_name": f"pytest_acl_{uuid.uuid4().hex[:8]}",
             "description": "Knowledge permission test",
-            "embedding_model_spec": "siliconflow-cn:Pro/BAAI/bge-m3",
+            "embedding_model_spec": embedding_model_spec,
             "kb_type": "milvus",
             "additional_params": {},
             "share_config": share_config,
@@ -301,14 +303,18 @@ async def test_knowledge_virtual_folder_migration_runs_without_sse_and_is_resuma
         assert final_detection.json()["has_virtual_folders"] is False
         async with engine.connect() as connection:
             folder_creators = (
-                await connection.execute(
-                    text(
-                        "SELECT created_by FROM knowledge_files WHERE kb_id = :kb "
-                        "AND is_folder IS TRUE AND filename IN (:root, 'shared', 'other')"
-                    ),
-                    {"kb": kb_id, "root": f"history-{prefix}"},
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT created_by FROM knowledge_files WHERE kb_id = :kb "
+                            "AND is_folder IS TRUE AND filename IN (:root, 'shared', 'other')"
+                        ),
+                        {"kb": kb_id, "root": f"history-{prefix}"},
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
         assert len(folder_creators) == 3
         assert all(folder_creators)
     finally:
@@ -362,26 +368,28 @@ async def test_virtual_folder_migration_keeps_conflicts_and_commits_other_paths(
 
         async with engine.connect() as connection:
             rows = (
-                await connection.execute(
-                    text(
-                        "SELECT filename, parent_id FROM knowledge_files WHERE file_id IN "
-                        "(:blocked_file, :movable_file) ORDER BY file_id"
-                    ),
-                    {
-                        "blocked_file": f"file_{suffix}_blocked",
-                        "movable_file": f"file_{suffix}_movable",
-                    },
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT filename, parent_id FROM knowledge_files WHERE file_id IN "
+                            "(:blocked_file, :movable_file) ORDER BY file_id"
+                        ),
+                        {
+                            "blocked_file": f"file_{suffix}_blocked",
+                            "movable_file": f"file_{suffix}_movable",
+                        },
+                    )
                 )
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
         assert {row["filename"] for row in rows} == {f"{blocked}/a.txt", "b.txt"}
         assert sum(row["parent_id"] is not None for row in rows) == 1
     finally:
         await engine.dispose()
 
 
-async def test_folder_mutations_reject_invalid_name_and_directory_cycle(
-    test_client, admin_headers, knowledge_database
-):
+async def test_folder_mutations_reject_invalid_name_and_directory_cycle(test_client, admin_headers, knowledge_database):
     kb_id = knowledge_database["kb_id"]
 
     parent_response = await test_client.post(
@@ -590,23 +598,23 @@ async def test_knowledge_routes_enforce_permissions(test_client, standard_user, 
     forbidden_list = await test_client.get("/api/knowledge/databases", headers=standard_user["headers"])
     _assert_forbidden_response(forbidden_list)
 
-    forbidden_chunk_presets = await test_client.get("/api/knowledge/chunk-presets", headers=standard_user["headers"])
-    _assert_forbidden_response(forbidden_chunk_presets)
+    chunk_presets = await test_client.get("/api/knowledge/chunk-presets", headers=standard_user["headers"])
+    assert chunk_presets.status_code == 200, chunk_presets.text
 
-    forbidden_get = await test_client.get(f"/api/knowledge/databases/{kb_id}", headers=standard_user["headers"])
-    _assert_forbidden_response(forbidden_get)
+    readable = await test_client.get(f"/api/knowledge/databases/{kb_id}", headers=standard_user["headers"])
+    assert readable.status_code == 200, readable.text
+    assert readable.json()["can_manage"] is False
+    assert readable.json()["can_edit_documents"] is False
 
-    forbidden_exists = await test_client.get(
+    exists = await test_client.get(
         f"/api/knowledge/databases/{kb_id}/documents/exists",
         params={"filename": "demo.txt"},
         headers=standard_user["headers"],
     )
-    _assert_forbidden_response(forbidden_exists)
+    assert exists.status_code == 200, exists.text
 
 
-async def test_kb_image_proxy_requires_auth_and_streams_private_image(
-    test_client, admin_headers, knowledge_database
-):
+async def test_kb_image_proxy_requires_auth_and_streams_private_image(test_client, admin_headers, knowledge_database):
     """知识库图片代理：未登录不可访问，鉴权后可读取私有 bucket 图片"""
     from yuxi.storage.minio.client import MinIOClient, get_minio_client
 
@@ -1147,14 +1155,14 @@ async def test_mindmap_permissions(test_client, standard_user, knowledge_databas
     """测试思维导图接口的权限控制"""
     kb_id = knowledge_database["kb_id"]
 
-    # 普通用户应该无法访问
+    # 普通用户不能使用管理员概览，但可以读取已共享库。
     forbidden_list = await test_client.get("/api/knowledge/mindmap/databases", headers=standard_user["headers"])
     _assert_forbidden_response(forbidden_list)
 
-    forbidden_files = await test_client.get(
+    readable_files = await test_client.get(
         f"/api/knowledge/databases/{kb_id}/mindmap/files", headers=standard_user["headers"]
     )
-    _assert_forbidden_response(forbidden_files)
+    assert readable_files.status_code == 200, readable_files.text
 
     forbidden_generate = await test_client.post(
         f"/api/knowledge/databases/{kb_id}/mindmap/generate",
@@ -1189,12 +1197,214 @@ async def test_document_search_returns_empty_results(test_client, admin_headers,
         assert payload["limit"] == search_params["limit"]
 
 
-async def test_document_search_requires_admin(test_client, standard_user, knowledge_database):
-    """普通用户不能访问管理端搜索接口。"""
+async def test_document_search_allows_authorized_reader(test_client, standard_user, knowledge_database):
+    """普通用户可以搜索已有读取授权的知识库。"""
     kb_id = knowledge_database["kb_id"]
     response = await test_client.get(
         f"/api/knowledge/databases/{kb_id}/documents/search",
         params={"query": "x"},
         headers=standard_user["headers"],
     )
-    _assert_forbidden_response(response)
+    assert response.status_code == 200, response.text
+
+
+@pytest.mark.parametrize("access", ["manage", "read", "none"])
+async def test_delegated_knowledge_content_permissions(test_client, admin_headers, standard_user, access):
+    """通过真实 HTTP 与持久化数据验证普通编辑者、读取者和未授权用户的边界。"""
+    from yuxi.models.providers.cache import model_cache
+
+    embedding_models = model_cache.get_all_specs("embedding")
+    embedding_spec = os.getenv("TEST_KB_EMBEDDING_MODEL")
+    if not embedding_spec:
+        if not embedding_models:
+            pytest.skip("No embedding model is configured; set TEST_KB_EMBEDDING_MODEL or configure a provider.")
+        embedding_spec = embedding_models[0].spec
+    scope = {"access_level": "user", "user_uids": [standard_user["user"]["uid"]]}
+    owner = await test_client.get("/api/auth/me", headers=admin_headers)
+    assert owner.status_code == 200, owner.text
+    private_scope = {"access_level": "user", "user_uids": [owner.json()["uid"]]}
+    database = await _create_test_database(
+        test_client,
+        admin_headers,
+        {
+            "version": 2,
+            "read_scope": scope if access != "none" else private_scope,
+            "manage_scope": scope if access == "manage" else None,
+        },
+        embedding_model_spec=embedding_spec,
+    )
+    kb_id = database["kb_id"]
+    user_headers = standard_user["headers"]
+    try:
+        configuration = await test_client.put(
+            f"/api/knowledge/databases/{kb_id}",
+            headers=admin_headers,
+            json={
+                "name": database["name"],
+                "description": "Delegated knowledge content test",
+                "additional_params": {"api_key": "delegation-test-secret"},
+            },
+        )
+        assert configuration.status_code == 200, configuration.text
+
+        listing = await test_client.get("/api/knowledge/databases/accessible", headers=user_headers)
+        assert listing.status_code == 200, listing.text
+        visible = {item["kb_id"]: item for item in listing.json()["databases"]}
+        assert (kb_id in visible) is (access != "none")
+        detail = await test_client.get(f"/api/knowledge/databases/{kb_id}", headers=user_headers)
+        assert detail.status_code == (403 if access == "none" else 200), detail.text
+        if access != "none":
+            for response in (visible[kb_id], detail.json()):
+                assert response["can_edit_documents"] is (access == "manage")
+                assert response["can_manage"] is False
+                assert "api_key" not in response["metadata"]
+                assert "api_key" not in response["additional_params"]
+
+        for method, route, payload in [
+            ("put", f"/api/knowledge/databases/{kb_id}", {"name": "forbidden", "description": "forbidden"}),
+            ("delete", f"/api/knowledge/databases/{kb_id}", None),
+            ("post", f"/api/knowledge/databases/{kb_id}/graph-build/reset", {}),
+            ("put", f"/api/knowledge/databases/{kb_id}/query-params", {}),
+            ("post", f"/api/evaluation/databases/{kb_id}/datasets/generate", {"llm_model_spec": "unused"}),
+        ]:
+            forbidden = await test_client.request(method, route, json=payload, headers=user_headers)
+            _assert_forbidden_response(forbidden)
+
+        folder = await test_client.post(
+            f"/api/knowledge/databases/{kb_id}/folders",
+            json={"folder_name": "delegated", "parent_id": None},
+            headers=user_headers,
+        )
+        assert folder.status_code == (200 if access == "manage" else 403), folder.text
+        text_bytes = b"Delegated editors can maintain documents inside their assigned knowledge base."
+        upload = await test_client.post(
+            "/api/knowledge/files/upload",
+            params={"kb_id": kb_id},
+            files={"file": ("delegated.txt", text_bytes, "text/plain")},
+            headers=user_headers,
+        )
+        assert upload.status_code == (200 if access == "manage" else 403), upload.text
+        without_database = await test_client.post(
+            "/api/knowledge/files/upload",
+            files={"file": ("unscoped.txt", text_bytes, "text/plain")},
+            headers=user_headers,
+        )
+        _assert_forbidden_response(without_database)
+        if access != "manage":
+            forbidden_parse = await test_client.post(
+                f"/api/knowledge/databases/{kb_id}/documents/parse",
+                json={"file_ids": ["unavailable"]},
+                headers=user_headers,
+            )
+            _assert_forbidden_response(forbidden_parse)
+            return
+
+        folder_id = folder.json()["file_id"]
+        uploaded = upload.json()
+        item = uploaded["file_path"]
+        content_params = {
+            "content_hashes": {item: uploaded["content_hash"]},
+            "file_sizes": {item: uploaded["size"]},
+            "parent_id": folder_id,
+        }
+        for route in ("documents", "documents/add"):
+            foreign = "minio://knowledgebases/other-kb/upload/private.txt"
+            for source, params in [
+                (foreign, {"content_hashes": {foreign: "hash"}}),
+                (item, {"_preprocessed_map": {item: {"path": foreign, "content_hash": "hash"}}}),
+            ]:
+                denied_import = await test_client.post(
+                    f"/api/knowledge/databases/{kb_id}/{route}",
+                    json={"items": [source], "params": params},
+                    headers=user_headers,
+                )
+                _assert_forbidden_response(denied_import)
+                assert "该知识库" in denied_import.json()["detail"]
+
+        added = await test_client.post(
+            f"/api/knowledge/databases/{kb_id}/documents/add",
+            json={"items": [item], "params": content_params},
+            headers=user_headers,
+        )
+        assert added.status_code == 200, added.text
+        assert added.json()["added"] == 1
+        doc_id = added.json()["items"][0]["file_id"]
+        original = await test_client.get(
+            f"/api/knowledge/databases/{kb_id}/documents/{doc_id}/download",
+            headers=user_headers,
+        )
+        assert original.status_code == 200, original.text
+        assert original.content == text_bytes
+
+        parsed = await test_client.post(
+            f"/api/knowledge/databases/{kb_id}/documents/parse",
+            json={"file_ids": [doc_id]},
+            headers=user_headers,
+        )
+        assert parsed.status_code == 200, parsed.text
+        for _ in range(120):
+            persisted = await test_client.get(
+                f"/api/knowledge/databases/{kb_id}/documents/{doc_id}/basic", headers=user_headers
+            )
+            assert persisted.status_code == 200, persisted.text
+            status = persisted.json()["meta"]["status"]
+            if status in {"parsed", "indexed", "error_parsing"}:
+                break
+            await asyncio.sleep(0.5)
+        assert status == "parsed", persisted.text
+        parsed_content = await test_client.get(
+            f"/api/knowledge/databases/{kb_id}/documents/{doc_id}/content", headers=user_headers
+        )
+        assert parsed_content.status_code == 200, parsed_content.text
+        assert "Delegated editors" in str(parsed_content.json())
+
+        indexed = await test_client.post(
+            f"/api/knowledge/databases/{kb_id}/documents/index",
+            json={"file_ids": [doc_id]},
+            headers=user_headers,
+        )
+        assert indexed.status_code == 200, indexed.text
+        for _ in range(120):
+            persisted = await test_client.get(
+                f"/api/knowledge/databases/{kb_id}/documents/{doc_id}/basic", headers=user_headers
+            )
+            assert persisted.status_code == 200, persisted.text
+            status = persisted.json()["meta"]["status"]
+            if status in {"indexed", "error_indexing"}:
+                break
+            await asyncio.sleep(0.5)
+        assert status == "indexed", persisted.text
+        indexed_content = await test_client.get(
+            f"/api/knowledge/databases/{kb_id}/documents/{doc_id}/content", headers=user_headers
+        )
+        assert indexed_content.status_code == 200, indexed_content.text
+        indexed_chunks = indexed_content.json()["lines"]
+        assert indexed_chunks
+        assert "Delegated editors" in indexed_chunks[0]["content"]
+
+        renamed = await test_client.put(
+            f"/api/knowledge/databases/{kb_id}/folders/{folder_id}/rename",
+            json={"folder_name": "renamed"},
+            headers=user_headers,
+        )
+        assert renamed.status_code == 200, renamed.text
+        moved = await test_client.put(
+            f"/api/knowledge/databases/{kb_id}/documents/{doc_id}/move",
+            json={"new_parent_id": None},
+            headers=user_headers,
+        )
+        assert moved.status_code == 200, moved.text
+        root_listing = await test_client.get(f"/api/knowledge/databases/{kb_id}/documents", headers=user_headers)
+        assert root_listing.status_code == 200, root_listing.text
+        assert doc_id in {row["file_id"] for row in root_listing.json()["items"]}
+        deleted = await test_client.delete(f"/api/knowledge/databases/{kb_id}/documents/{doc_id}", headers=user_headers)
+        assert deleted.status_code == 200, deleted.text
+        final_listing = await test_client.get(f"/api/knowledge/databases/{kb_id}/documents", headers=user_headers)
+        assert final_listing.status_code == 200, final_listing.text
+        assert doc_id not in {row["file_id"] for row in final_listing.json()["items"]}
+        persisted_database = await test_client.get(f"/api/knowledge/databases/{kb_id}", headers=admin_headers)
+        assert persisted_database.json()["can_manage"] is True
+        assert persisted_database.json()["additional_params"]["api_key"] == "delegation-test-secret"
+    finally:
+        deleted_database = await test_client.delete(f"/api/knowledge/databases/{kb_id}", headers=admin_headers)
+        assert deleted_database.status_code in {200, 404}, deleted_database.text

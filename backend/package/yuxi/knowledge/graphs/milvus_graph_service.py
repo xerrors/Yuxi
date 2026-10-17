@@ -17,6 +17,7 @@ from yuxi.knowledge.graphs.graph_utils import (
     normalize_entity_name,
 )
 from yuxi.knowledge.graphs.milvus_graph_vector_store import MilvusGraphVectorStore
+from yuxi.knowledge.utils.security import redact_sensitive_params
 from yuxi.repositories.knowledge_base_repository import KnowledgeBaseRepository
 from yuxi.repositories.knowledge_chunk_repository import KnowledgeChunkRepository
 from yuxi.repositories.knowledge_graph_repository import KnowledgeGraphRepository
@@ -129,7 +130,8 @@ class MilvusGraphService:
     def driver(self):
         return self.connection.driver
 
-    async def get_status(self, kb_id: str, *, tasker: Any = None) -> dict[str, Any]:
+    async def get_status(self, kb_id: str, *, tasker: Any = None, redact_secrets: bool = True) -> dict[str, Any]:
+        """返回图谱构建状态，默认隐藏配置中的凭据。"""
         kb = await self._get_milvus_kb(kb_id)
         params = dict(kb.additional_params or {})
         config = params.get(GRAPH_CONFIG_KEY) or {}
@@ -175,7 +177,7 @@ class MilvusGraphService:
             "kb_type": kb.kb_type,
             "configured": bool(config),
             "locked": bool(config.get("locked")),
-            "config": self._public_config(config),
+            "config": self._public_config(config, redact_secrets=redact_secrets),
             "total_chunks": total_chunks,
             "pending_chunks": pending_chunks,
             "indexed_chunks": indexed_chunks,
@@ -1043,13 +1045,17 @@ class MilvusGraphService:
             raise ValueError("图谱抽取配置缺少 extractor_type")
         return config
 
-    def _public_config(self, config: dict[str, Any]) -> dict[str, Any] | None:
+    def _public_config(self, config: dict[str, Any], *, redact_secrets: bool = True) -> dict[str, Any] | None:
+        """组装状态响应配置，保留运行时使用的原始参数。"""
         if not config:
             return None
+        extractor_options = self._runtime_extractor_options(config)
+        if redact_secrets:
+            extractor_options = redact_sensitive_params(extractor_options)
         return {
             "locked": bool(config.get("locked")),
             "extractor_type": config.get("extractor_type"),
-            "extractor_options": self._runtime_extractor_options(config),
+            "extractor_options": extractor_options,
             "created_at": config.get("created_at"),
             "created_by": config.get("created_by"),
             "updated_at": config.get("updated_at"),

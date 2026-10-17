@@ -10,6 +10,16 @@ from server.routers import knowledge_router
 pytestmark = pytest.mark.asyncio
 
 
+@pytest.fixture(autouse=True)
+def allow_authorized_upload(monkeypatch):
+    async def fake_permission(kb_id, current_user, required):
+        assert kb_id == "db_1"
+        assert current_user.role == "admin"
+        assert required == knowledge_router.ResourcePermission.MANAGE
+
+    monkeypatch.setattr(knowledge_router, "_ensure_database_permission", fake_permission)
+
+
 async def test_import_workspace_files_uploads_workspace_file_to_minio(monkeypatch):
     async def fake_ensure_database_supports_documents(slug: str, operation: str) -> None:
         assert slug == "db_1"
@@ -37,7 +47,7 @@ async def test_import_workspace_files_uploads_workspace_file_to_minio(monkeypatc
         fake_ensure_database_supports_documents,
     )
 
-    user = SimpleNamespace(id="user_1")
+    user = SimpleNamespace(uid="user_1", role="admin")
 
     async def fake_read_workspace_file_bytes(*, path, current_user):
         assert path == "/note.md"
@@ -83,7 +93,7 @@ async def test_import_workspace_files_rejects_directory(monkeypatch):
     with pytest.raises(HTTPException) as exc_info:
         await knowledge_router.import_workspace_files(
             knowledge_router.WorkspaceImportRequest(kb_id="db_1", paths=["/folder"]),
-            current_user=SimpleNamespace(id="user_1"),
+            current_user=SimpleNamespace(uid="user_1", role="admin"),
         )
 
     assert exc_info.value.status_code == 400

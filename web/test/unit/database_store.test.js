@@ -94,7 +94,11 @@ test('知识库提交跨账号返回时，不把旧入队任务登记给新账�
   const user = useUserStore()
   const tasker = useTaskerStore()
   t.mock.method(message, 'success', () => {})
-  t.mock.method(databaseApi, 'getDatabaseInfo', async () => ({ stats: { processing_count: 0 } }))
+  t.mock.method(databaseApi, 'getDatabaseInfo', async () => ({
+    kb_id: database.kbId,
+    can_edit_documents: true,
+    stats: { processing_count: 0 }
+  }))
   t.mock.method(documentApi, 'listDocuments', async () => ({
     items: [],
     stats: { processing_count: 0 }
@@ -108,9 +112,10 @@ test('知识库提交跨账号返回时，不把旧入队任务登记给新账�
       ['indexPendingFiles', 'indexPendingDocuments', []]
     ]) {
       await t.test(action, async () => {
-        database.kbId = 'test-kb'
         user.token = `old-${action}`
         user.userRole = 'admin'
+        database.kbId = 'test-kb'
+        database.database = { kb_id: 'test-kb', can_edit_documents: true }
         let resolve
         t.mock.method(
           documentApi,
@@ -124,9 +129,14 @@ test('知识库提交跨账号返回时，不把旧入队任务登记给新账�
         user.logout()
         user.token = `new-${action}`
         user.userRole = 'admin'
+        database.kbId = 'new-kb'
+        database.database = { kb_id: 'new-kb', can_edit_documents: true }
+        database.state.chunkLoading = true
         resolve({ status: 'queued', task_id: 'old-task' })
-        assert.equal(await pending, true)
+        assert.equal(await pending, undefined)
         assert.deepEqual(tasker.tasks, [])
+        assert.equal(database.state.chunkLoading, true)
+        assert.equal(database.state.autoRefresh, false)
         const current = database[action](...args)
         resolve({ status: 'queued', task_id: `new-${action}` })
         assert.equal(await current, true)

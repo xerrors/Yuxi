@@ -19,6 +19,9 @@
           @change="(enabled) => toggleScope(scope.key, enabled)"
         />
       </div>
+      <p v-if="scope.key === 'manage_scope' && manageScopeDescription" class="scope-description">
+        {{ manageScopeDescription }}
+      </p>
       <template v-if="scopes[scope.key]">
         <div
           class="share-mode-cards"
@@ -191,6 +194,7 @@ const props = defineProps({
   disabled: { type: Boolean, default: false },
   disabledReason: { type: String, default: '' },
   requireReadScope: { type: Boolean, default: false },
+  manageScopeDescription: { type: String, default: '' },
   allowedAccessLevels: {
     type: Array,
     default: () => ['global', 'department', 'user']
@@ -473,6 +477,12 @@ defineExpose({ scopes, validate })
   border: 0;
   border-radius: 0;
   background: transparent;
+}
+
+.scope-description {
+  margin: 0 0 12px;
+  color: var(--gray-600);
+  font-size: 12px;
 }
 
 .permission-scope-header {

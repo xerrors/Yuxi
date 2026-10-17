@@ -50,6 +50,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from server.utils.knowledge_response import serialize_knowledge_base, serialize_knowledge_base_list
 from server.utils.knowledge_permissions import (
     ensure_knowledge_base_permission as _ensure_database_permission,
+    require_knowledge_base_content_edit,
     require_knowledge_base_manage,
     require_knowledge_base_read,
 )
@@ -135,12 +136,21 @@ media_types = {
 
 
 async def _delete_document_storage_objects(kb_id: str, doc_id: str, file_path: str) -> None:
+    """仅清理本库拥有的对象，跨库原件引用不授予删除权。"""
     minio_client = get_minio_client()
 
     if is_minio_url(file_path):
         try:
             bucket_name, object_name = parse_minio_url(file_path)
-            await minio_client.adelete_file(bucket_name, object_name)
+            if (
+                bucket_name == minio_client.KB_BUCKETS["documents"]
+                and object_name.startswith(f"{kb_id}/")
+                and "\\" not in object_name
+                and not any(part in {".", ".."} for part in object_name.split("/"))
+            ):
+                await minio_client.adelete_file(bucket_name, object_name)
+            else:
+                logger.warning(f"保留不属于本知识库的文档原件: {kb_id=}, {doc_id=}")
         except Exception as minio_error:
             logger.warning(f"从MinIO删除原始文件失败: {minio_error}")
 
@@ -155,10 +165,14 @@ async def _delete_document_storage_objects(kb_id: str, doc_id: str, file_path: s
         logger.warning(f"从MinIO删除预览 PDF 失败: {minio_error}")
 
 
-async def _require_manage_permission_if_kb_id(kb_id: str | None, current_user: User) -> None:
-    """当请求携带 kb_id 时，校验当前用户对该知识库的管理权限。"""
-    if kb_id and getattr(current_user, "role", None):
-        await _ensure_database_permission(kb_id, current_user, ResourcePermission.MANAGE)
+async def _require_upload_permission(kb_id: str | None, current_user: User) -> None:
+    """上传前校验单库内容权限，未指定库的上传仅允许管理员。"""
+    if not kb_id:
+        if current_user.role not in {"admin", "superadmin"}:
+            raise HTTPException(status_code=403, detail="普通用户上传必须指定知识库")
+        return
+
+    await _ensure_database_permission(kb_id, current_user, ResourcePermission.MANAGE)
 
 
 async def _ensure_database_supports_documents(kb_id: str, operation: str) -> dict:
@@ -179,7 +193,9 @@ def _ensure_document_params(params: dict | None) -> dict:
     return params
 
 
-def _validate_uploaded_document_items(items: list[str], params: dict) -> None:
+def _validate_uploaded_document_items(
+    items: list[str], params: dict, *, kb_id: str, restrict_to_database: bool
+) -> None:
     if not items:
         raise HTTPException(status_code=400, detail="items must not be empty")
 
@@ -206,6 +222,23 @@ def _validate_uploaded_document_items(items: list[str], params: dict) -> None:
         has_preprocessed_hash = isinstance(preprocessed, dict) and bool(preprocessed.get("content_hash"))
         if not has_content_hash and not has_preprocessed_hash:
             raise HTTPException(status_code=400, detail=f"Missing content_hash for file: {item}")
+
+        if restrict_to_database:
+            sources = [item]
+            if isinstance(preprocessed, dict):
+                sources.append(preprocessed.get("path", ""))
+            for source in sources:
+                if not isinstance(source, str) or not is_minio_url(source):
+                    raise HTTPException(status_code=403, detail="只允许导入该知识库已上传的文件")
+                bucket_name, object_name = parse_minio_url(source)
+                if (
+                    bucket_name != MinIOClient.KB_BUCKETS["documents"]
+                    or not object_name.startswith(f"{kb_id}/upload/")
+                    or not object_name.removeprefix(f"{kb_id}/upload/")
+                    or "\\" in object_name
+                    or any(part in {".", ".."} for part in object_name.split("/"))
+                ):
+                    raise HTTPException(status_code=403, detail="只允许导入该知识库已上传的文件")
 
 
 async def _has_running_graph_build_task(kb_id: str) -> bool:
@@ -266,7 +299,7 @@ async def create_database(
             **(additional_params or {}),
         )
 
-        response = serialize_knowledge_base(database_info)
+        response = serialize_knowledge_base(database_info, permission=ResourcePermission.MANAGE, can_manage=True)
         response["files"] = {}
         return response
     except KBNameConflictError as e:
@@ -280,17 +313,13 @@ async def create_database(
 
 @knowledge.get("/databases/accessible")
 async def get_accessible_databases(current_user: User = Depends(get_required_user)):
-    """获取当前用户有权访问的知识库列表（用于智能体配置）"""
+    """获取当前用户有权访问的知识库摘要，供页面和智能体配置使用。"""
     try:
         databases = await knowledge_base.get_databases_by_uid(current_user.uid)
 
         accessible = [
             {
-                "name": db.name,
-                "kb_id": db.kb_id,
-                "description": db.description or "",
-                "created_by": db.created_by,
-                "kb_type": db.kb_type,
+                **serialize_knowledge_base(db, redact_secrets=True, row_count_fallback=True),
                 "supports_documents": knowledge_base.database_type_supports_documents(db.kb_type),
             }
             for db in databases
@@ -381,10 +410,12 @@ async def get_database_info(
     if database is None:
         raise HTTPException(status_code=404, detail="Database not found")
     permission = resolve_knowledge_base_permission(current_user, database)
+    can_manage = current_user.role in {"admin", "superadmin"} and permission == ResourcePermission.MANAGE
     return serialize_knowledge_base(
         database,
         permission=permission,
-        redact_secrets=permission != ResourcePermission.MANAGE,
+        can_manage=can_manage,
+        redact_secrets=not can_manage,
     )
 
 
@@ -428,7 +459,10 @@ async def update_database_info(
             operator_uid=current_user.uid,
             operator_department_id=current_user.department_id,
         )
-        return {"message": "更新成功", "database": serialize_knowledge_base(database)}
+        return {
+            "message": "更新成功",
+            "database": serialize_knowledge_base(database, permission=ResourcePermission.MANAGE, can_manage=True),
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -454,7 +488,10 @@ async def delete_database(kb_id: str, current_user: User = Depends(require_knowl
 @knowledge.get("/databases/{kb_id}/graph-build/status")
 async def get_graph_build_status(kb_id: str, current_user: User = Depends(require_knowledge_base_read)):
     try:
-        return await MilvusGraphService().get_status(kb_id, tasker=tasker)
+        database = await _ensure_database_permission(kb_id, current_user, ResourcePermission.READ)
+        permission = resolve_knowledge_base_permission(current_user, database)
+        can_manage = current_user.role in {"admin", "superadmin"} and permission == ResourcePermission.MANAGE
+        return await MilvusGraphService().get_status(kb_id, tasker=tasker, redact_secrets=not can_manage)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:
@@ -717,7 +754,7 @@ async def add_documents(
     kb_id: str,
     items: list[str] = Body(...),
     params: dict = Body(...),
-    current_user: User = Depends(require_knowledge_base_manage),
+    current_user: User = Depends(require_knowledge_base_content_edit),
 ):
     """添加文档到知识库（上传 -> 解析 -> 可选入库）"""
     logger.debug(f"Add documents for kb_id {kb_id}: {items} {params=}")
@@ -730,7 +767,9 @@ async def add_documents(
     if content_type != "file":
         raise HTTPException(status_code=400, detail=f"Unsupported content_type: {content_type}")
 
-    _validate_uploaded_document_items(items, params)
+    _validate_uploaded_document_items(
+        items, params, kb_id=kb_id, restrict_to_database=current_user.role not in {"admin", "superadmin"}
+    )
 
     try:
         database = await knowledge_base.get_database_info(kb_id)
@@ -761,7 +800,7 @@ async def add_documents(
 async def add_uploaded_documents(
     kb_id: str,
     payload: AddUploadedDocumentsRequest,
-    current_user: User = Depends(require_knowledge_base_manage),
+    current_user: User = Depends(require_knowledge_base_content_edit),
 ):
     """将已上传的 MinIO 文件同步添加为知识库文档记录，不解析、不入库。"""
     logger.debug(f"Add uploaded documents for kb_id {kb_id}: {payload.items} params={payload.params}")
@@ -774,7 +813,9 @@ async def add_uploaded_documents(
     if content_type != "file":
         raise HTTPException(status_code=400, detail=f"Unsupported content_type: {content_type}")
 
-    _validate_uploaded_document_items(payload.items, params)
+    _validate_uploaded_document_items(
+        payload.items, params, kb_id=kb_id, restrict_to_database=current_user.role not in {"admin", "superadmin"}
+    )
 
     added_items: list[dict] = []
     failed_items: list[dict] = []
@@ -922,7 +963,7 @@ async def _enqueue_pending_document_action_task(
 async def parse_documents(
     kb_id: str,
     payload: ParseDocumentsRequest | list[str] = Body(...),
-    current_user: User = Depends(require_knowledge_base_manage),
+    current_user: User = Depends(require_knowledge_base_content_edit),
 ):
     """手动触发文档解析"""
     if isinstance(payload, list):
@@ -948,7 +989,7 @@ async def parse_documents(
 async def parse_pending_documents(
     kb_id: str,
     payload: PendingParseDocumentsRequest | None = None,
-    current_user: User = Depends(require_knowledge_base_manage),
+    current_user: User = Depends(require_knowledge_base_content_edit),
 ):
     """按状态手动触发全部待解析文档解析。"""
     params = (payload.params if payload else None) or {}
@@ -968,7 +1009,7 @@ async def index_documents(
     kb_id: str,
     file_ids: list[str] = Body(...),
     params: dict | None = Body(None),
-    current_user: User = Depends(require_knowledge_base_manage),
+    current_user: User = Depends(require_knowledge_base_content_edit),
 ):
     """手动触发文档入库（Indexing），支持更新参数"""
     file_ids = _validate_direct_document_action_file_ids(file_ids)
@@ -989,7 +1030,7 @@ async def index_documents(
 async def index_pending_documents(
     kb_id: str,
     payload: PendingIndexDocumentsRequest | None = None,
-    current_user: User = Depends(require_knowledge_base_manage),
+    current_user: User = Depends(require_knowledge_base_content_edit),
 ):
     """按状态手动触发全部待入库文档入库。"""
     params = (payload.params if payload else None) or {}
@@ -1059,7 +1100,7 @@ async def get_document_content(kb_id: str, doc_id: str, current_user: User = Dep
 
 @knowledge.delete("/databases/{kb_id}/documents/batch")
 async def batch_delete_documents(
-    kb_id: str, file_ids: list[str] = Body(...), current_user: User = Depends(require_knowledge_base_manage)
+    kb_id: str, file_ids: list[str] = Body(...), current_user: User = Depends(require_knowledge_base_content_edit)
 ):
     """批量删除文档或文件夹"""
     logger.debug(f"BATCH DELETE documents {file_ids} in {kb_id}")
@@ -1112,7 +1153,7 @@ async def batch_delete_documents(
 
 
 @knowledge.delete("/databases/{kb_id}/documents/{doc_id}")
-async def delete_document(kb_id: str, doc_id: str, current_user: User = Depends(require_knowledge_base_manage)):
+async def delete_document(kb_id: str, doc_id: str, current_user: User = Depends(require_knowledge_base_content_edit)):
     """删除文档或文件夹"""
     logger.debug(f"DELETE document {doc_id} info in {kb_id}")
     await _ensure_database_supports_documents(kb_id, "文档删除")
@@ -1391,7 +1432,7 @@ async def create_folder(
     kb_id: str,
     folder_name: str = Body(..., embed=True),
     parent_id: str | None = Body(None, embed=True),
-    current_user: User = Depends(require_knowledge_base_manage),
+    current_user: User = Depends(require_knowledge_base_content_edit),
 ):
     """创建文件夹"""
     try:
@@ -1465,7 +1506,7 @@ async def rename_folder(
     kb_id: str,
     folder_id: str,
     folder_name: str = Body(..., embed=True),
-    current_user: User = Depends(require_knowledge_base_manage),
+    current_user: User = Depends(require_knowledge_base_content_edit),
 ):
     """重命名真实文件夹。"""
     try:
@@ -1485,7 +1526,7 @@ async def move_document(
     kb_id: str,
     doc_id: str,
     request: MoveDocumentRequest,
-    current_user: User = Depends(require_knowledge_base_manage),
+    current_user: User = Depends(require_knowledge_base_content_edit),
 ):
     """移动文件或文件夹"""
     logger.debug(f"Move document {doc_id} to {request.new_parent_id} in {kb_id}")
@@ -1512,7 +1553,7 @@ async def fetch_url(
     """
     logger.debug(f"Fetching URL: {url} for kb_id: {kb_id}")
     try:
-        await _require_manage_permission_if_kb_id(kb_id, current_user)
+        await _require_upload_permission(kb_id, current_user)
         # 1. 下载内容 (包含白名单校验、大小限制、类型检查)
         content_bytes, final_url = await fetch_url_content(url)
 
@@ -1575,7 +1616,7 @@ async def fetch_url(
 @knowledge.post("/files/import-workspace")
 async def import_workspace_files(
     payload: WorkspaceImportRequest,
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_required_user),
 ):
     """将当前用户工作区文件导入 MinIO，返回与普通文件上传一致的预处理结果。"""
     kb_id = payload.kb_id.strip()
@@ -1585,7 +1626,7 @@ async def import_workspace_files(
     if not paths:
         raise HTTPException(status_code=400, detail="请选择至少一个工作区文件")
 
-    await _require_manage_permission_if_kb_id(kb_id, current_user)
+    await _require_upload_permission(kb_id, current_user)
     await _ensure_database_supports_documents(kb_id, "文档添加/解析/入库")
 
     bucket_name = MinIOClient.KB_BUCKETS["documents"]
@@ -1639,14 +1680,16 @@ async def import_workspace_files(
 async def upload_file(
     file: UploadFile = File(...),
     kb_id: str | None = Query(None),
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_required_user),
 ):
     """上传文件"""
     if not file.filename:
         raise HTTPException(status_code=400, detail="No selected file")
+    if current_user.role not in {"admin", "superadmin"} and ("/" in file.filename or "\\" in file.filename):
+        raise HTTPException(status_code=400, detail="上传文件名不能包含目录路径")
 
+    await _require_upload_permission(kb_id, current_user)
     if kb_id:
-        await _require_manage_permission_if_kb_id(kb_id, current_user)
         await _ensure_database_supports_documents(kb_id, "文档上传")
 
     logger.debug(f"Received upload file with filename: {file.filename}")
@@ -1711,7 +1754,7 @@ async def upload_file(
 
 
 @knowledge.get("/files/supported-types")
-async def get_supported_file_types(current_user: User = Depends(get_admin_user)):
+async def get_supported_file_types(current_user: User = Depends(get_required_user)):
     """获取当前支持的文件类型"""
     return {"message": "success", "file_types": sorted(SUPPORTED_FILE_EXTENSIONS)}
 
@@ -1774,7 +1817,7 @@ async def get_knowledge_base_types(current_user: User = Depends(get_admin_user))
 
 
 @knowledge.get("/chunk-presets")
-async def get_knowledge_chunk_presets(current_user: User = Depends(get_admin_user)):
+async def get_knowledge_chunk_presets(current_user: User = Depends(get_required_user)):
     """获取支持的知识库分块策略"""
     return {"chunk_presets": get_chunk_preset_options(), "message": "success"}
 

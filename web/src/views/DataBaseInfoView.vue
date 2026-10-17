@@ -54,11 +54,7 @@
           <div class="file-management-info">
             <div class="file-info-title">
               <div class="file-info-title-row">
-                <div
-                  v-if="canManageDatabase"
-                  ref="uploadActionMenuRef"
-                  class="file-action-dropdown"
-                >
+                <div v-if="canEditDocuments" ref="uploadActionMenuRef" class="file-action-dropdown">
                   <button
                     type="button"
                     class="lucide-icon-btn extension-panel-action extension-panel-action-primary"
@@ -101,7 +97,7 @@
             </div>
             <div class="file-panel-status">
               <button
-                v-if="canManageDatabase && pendingParseCount > 0"
+                v-if="canEditDocuments && pendingParseCount > 0"
                 type="button"
                 class="lucide-icon-btn extension-panel-action extension-panel-action-secondary file-stat-card file-stat-warning file-stat-summary"
                 :disabled="store.state.chunkLoading"
@@ -114,7 +110,7 @@
                 </div>
               </button>
               <button
-                v-if="canManageDatabase && pendingIndexCount > 0"
+                v-if="canEditDocuments && pendingIndexCount > 0"
                 type="button"
                 class="lucide-icon-btn extension-panel-action extension-panel-action-secondary file-stat-card file-stat-warning file-stat-summary"
                 :disabled="store.state.chunkLoading"
@@ -191,7 +187,7 @@
           </div>
           <FileTable
             ref="fileTableRef"
-            :readonly="!canManageDatabase"
+            :readonly="!canEditDocuments"
             @mindmap="mindmapModalVisible = true"
             @search="fileSearchModalVisible = true"
           />
@@ -234,6 +230,7 @@
     />
 
     <FileUploadModal
+      v-if="canEditDocuments"
       v-model:visible="addFilesModalVisible"
       :folder-tree="folderTree"
       :current-folder-id="currentFolderId"
@@ -294,6 +291,7 @@
     </a-modal>
 
     <a-modal
+      v-if="canManageDatabase"
       v-model:open="editModalVisible"
       title="配置知识库"
       width="720px"
@@ -399,6 +397,7 @@
                     v-model="editShareConfig"
                     :auto-select-user-dept="true"
                     :require-read-scope="true"
+                    manage-scope-description="普通用户获得此权限后可上传、维护和删除文档；管理员还可配置知识库、调整共享范围及删除整库。"
                   />
                 </a-form-item-rest>
               </a-form-item>
@@ -428,6 +427,7 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDatabaseStore } from '@/stores/database'
 import { useTaskerStore } from '@/stores/tasker'
+import { useUserStore } from '@/stores/user'
 import {
   BarChart3,
   ChevronDown,
@@ -476,6 +476,8 @@ const route = useRoute()
 const router = useRouter()
 const store = useDatabaseStore()
 const taskerStore = useTaskerStore()
+const userStore = useUserStore()
+let overlayGeneration = 0
 const {
   chunkPresetSelectOptions: chunkPresetOptions,
   chunkPresetLoading,
@@ -486,6 +488,7 @@ const {
 const kbId = computed(() => store.kbId)
 const database = computed(() => store.database)
 const canManageDatabase = computed(() => database.value?.can_manage === true)
+const canEditDocuments = computed(() => database.value?.can_edit_documents === true)
 const isCurrentDatabaseLoaded = computed(() => database.value?.kb_id === kbId.value)
 const kbType = computed(() =>
   isCurrentDatabaseLoaded.value ? database.value.kb_type?.toLowerCase() || 'milvus' : ''
@@ -788,7 +791,7 @@ const folderTree = computed(() => {
 })
 
 const onFileUploadSuccess = () => {
-  taskerStore.loadTasks()
+  if (userStore.isAdmin) taskerStore.loadTasks()
 }
 
 const resetFileSelectionState = () => {
@@ -970,8 +973,10 @@ const getUserName = (uid) => {
 }
 
 const loadDepartments = async () => {
+  const generation = overlayGeneration
   try {
     const res = await departmentApi.getDepartments()
+    if (generation !== overlayGeneration || !userStore.isAdmin) return
     departments.value = res.departments || res || []
   } catch {
     departments.value = []
@@ -979,8 +984,11 @@ const loadDepartments = async () => {
 }
 
 const loadUsers = async () => {
+  const generation = overlayGeneration
   try {
-    users.value = await authApi.getUserAccessOptions()
+    const options = await authApi.getUserAccessOptions()
+    if (generation !== overlayGeneration || !userStore.isAdmin) return
+    users.value = options
   } catch {
     users.value = []
   }
@@ -1097,10 +1105,56 @@ const handleEditSubmit = async () => {
   }
 }
 
+/** 会话、知识库或有效权限改变时，清除页面本地的编辑与预览载荷。 */
+const resetOverlays = () => {
+  overlayGeneration += 1
+  fileSearchModalVisible.value = false
+  addFilesModalVisible.value = false
+  editModalVisible.value = false
+  mindmapModalVisible.value = false
+  virtualFolderModalVisible.value = false
+  uploadActionMenuOpen.value = false
+  virtualFolderStreamController.value?.abort()
+  virtualFolderTask.value = null
+  virtualFolderStatus.value = { has_virtual_folders: false, file_count: 0, remaining_steps: 0 }
+  currentFolderId.value = null
+  departments.value = []
+  users.value = []
+  editShareConfig.value = {
+    version: 2,
+    read_scope: { access_level: 'global', department_ids: [], user_uids: [] },
+    manage_scope: null
+  }
+  for (const key of Object.keys(editForm)) editForm[key] = ''
+}
+
+watch(
+  [
+    () => userStore.token,
+    () => userStore.userRole,
+    kbId,
+    isCurrentDatabaseLoaded,
+    canEditDocuments,
+    canManageDatabase
+  ],
+  (current, previous) => {
+    if (
+      current.slice(0, 3).some((value, index) => value !== previous[index]) ||
+      !current[3] ||
+      (previous[4] && !current[4]) ||
+      (previous[5] && !current[5])
+    )
+      resetOverlays()
+  },
+  { flush: 'sync' }
+)
+
 onMounted(() => {
   loadChunkPresetOptions()
-  loadDepartments()
-  loadUsers()
+  if (userStore.isAdmin) {
+    loadDepartments()
+    loadUsers()
+  }
   document.addEventListener('click', onUploadMenuOutsideClick)
 })
 

@@ -244,12 +244,17 @@ async def test_get_databases_skips_rows_with_invalid_metadata(monkeypatch):
     assert [db.kb_id for db in result] == ["kb_good"]
 
 
-async def test_get_databases_by_user_sets_permission_and_redacts_readonly_secrets(monkeypatch):
+async def test_get_databases_by_user_redacts_secrets_except_for_admin_managers(monkeypatch):
     class SecretKnowledgeBaseRepository(FakeKnowledgeBaseRepository):
         async def get_all(self):
             record = await self.get_by_kb_id("kb_1")
             record.additional_params = {"dify_token": "secret", "chunk_preset_id": "general"}
             record.created_by = "user_1"
+            record.share_config = {
+                "version": 2,
+                "read_scope": {"access_level": "global"},
+                "manage_scope": {"access_level": "user", "user_uids": ["editor"]},
+            }
             return [record]
 
     monkeypatch.setattr(
@@ -260,6 +265,8 @@ async def test_get_databases_by_user_sets_permission_and_redacts_readonly_secret
 
     readonly = await manager.get_databases_by_user({"uid": "user_2", "role": "admin", "department_id": None})
     owner = await manager.get_databases_by_user({"uid": "user_1", "role": "admin", "department_id": None})
+    editor = await manager.get_databases_by_user({"uid": "editor", "role": "user", "department_id": None})
+    ordinary_owner = await manager.get_databases_by_user({"uid": "user_1", "role": "user", "department_id": None})
 
     assert readonly[0].effective_permission == ResourcePermission.READ
     assert readonly[0].can_manage is False
@@ -267,6 +274,11 @@ async def test_get_databases_by_user_sets_permission_and_redacts_readonly_secret
     assert owner[0].effective_permission == ResourcePermission.MANAGE
     assert owner[0].can_manage is True
     assert owner[0].additional_params["dify_token"] == "secret"
+    for content_editor in (editor[0], ordinary_owner[0]):
+        assert content_editor.effective_permission == ResourcePermission.MANAGE
+        assert content_editor.can_edit_documents is True
+        assert content_editor.can_manage is False
+        assert "dify_token" not in content_editor.additional_params
 
 
 @pytest.mark.parametrize(

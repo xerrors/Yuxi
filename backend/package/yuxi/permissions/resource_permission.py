@@ -43,7 +43,7 @@ RESOURCE_PERMISSION_ORDER = {
 DEFAULT_SCOPE = {"access_level": "global", "department_ids": [], "user_uids": []}
 KNOWLEDGE_BASE_PERMISSION_POLICY = ResourcePermissionPolicy(
     role_ceiling={
-        "user": ResourcePermission.READ,
+        "user": ResourcePermission.MANAGE,
         "admin": ResourcePermission.MANAGE,
         "superadmin": ResourcePermission.MANAGE,
     }
@@ -207,7 +207,7 @@ def require_resource_permission(
 
 
 def resolve_knowledge_base_permission(user: Any, resource: ShareableResource) -> ResourcePermission:
-    """解析知识库权限，普通用户最多只能获得只读权限。"""
+    """解析知识库共享权限；整库管理另由管理员身份约束。"""
 
     return resolve_resource_permission(
         user,

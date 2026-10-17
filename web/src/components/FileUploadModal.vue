@@ -283,7 +283,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch, h } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, h } from 'vue'
 import { message, Upload, Modal } from 'ant-design-vue'
 import { useUserStore } from '@/stores/user'
 import { useConfigStore } from '@/stores/config'
@@ -334,6 +334,7 @@ const props = defineProps({
 const emit = defineEmits(['update:visible', 'success'])
 
 const store = useDatabaseStore()
+const userStore = useUserStore()
 const configStore = useConfigStore()
 const DEFAULT_OCR_ENGINE = 'rapid_ocr'
 const defaultOcrEngine = ref(DEFAULT_OCR_ENGINE)
@@ -366,7 +367,8 @@ watch(
       applyDefaultOcrEngine()
       selectedFolderId.value = props.currentFolderId
       isFolderUpload.value = props.isFolderMode
-      uploadMode.value = props.mode || (props.isFolderMode ? 'folder' : 'file')
+      const requestedMode = props.mode || (props.isFolderMode ? 'folder' : 'file')
+      uploadMode.value = requestedMode === 'url' && !userStore.isAdmin ? 'file' : requestedMode
     }
   }
 )
@@ -485,6 +487,62 @@ const activeUploadCount = ref(0)
 const uploadTaskStatus = ref({})
 const uploadTaskProgress = ref({})
 const progressExpanded = ref(false)
+let uploadGeneration = 0
+let disposed = false
+let chunkOperationContext = null
+let sameNameDeleteDialog = null
+let sameNameDeleteLoading = null
+const activeUploadTasks = new Set()
+
+// 上传队列固定使用选择文件时的身份和知识库，不能在等待后取新会话。
+const captureUploadContext = () => ({
+  generation: uploadGeneration,
+  kbId: kbId.value,
+  token: userStore.token,
+  role: userStore.userRole,
+  headers: { ...userStore.getAuthHeaders() },
+  isAdmin: userStore.isAdmin,
+  isFolder: isFolderUpload.value
+})
+
+const isUploadIdentityCurrent = (context) =>
+  !disposed &&
+  context.generation === uploadGeneration &&
+  context.kbId === kbId.value &&
+  context.token === userStore.token &&
+  context.role === userStore.userRole
+
+const isUploadContextCurrent = (context) => props.visible && isUploadIdentityCurrent(context)
+
+const invalidateUploads = (clearFolder = true) => {
+  if (chunkOperationContext && isUploadIdentityCurrent(chunkOperationContext)) {
+    store.state.chunkLoading = false
+  }
+  chunkOperationContext = null
+  uploadGeneration += 1
+  sameNameDeleteDialog?.destroy()
+  sameNameDeleteDialog = null
+  sameNameDeleteLoading?.()
+  sameNameDeleteLoading = null
+  for (const task of [...uploadQueue.value, ...activeUploadTasks]) {
+    task.canceled = true
+    task.xhr?.abort()
+  }
+  uploadQueue.value = []
+  activeUploadTasks.clear()
+  activeUploadCount.value = 0
+  uploadTaskStatus.value = {}
+  uploadTaskProgress.value = {}
+  fileList.value = []
+  sameNameFiles.value = []
+  urlList.value = []
+  newUrl.value = ''
+  fetchingUrls.value = false
+  selectedWorkspacePaths.value = []
+  workspaceLoading.value = false
+  progressExpanded.value = false
+  if (clearFolder) selectedFolderId.value = null
+}
 
 const totalUploadCount = computed(() => validFileList.value.length)
 const validUidSet = computed(
@@ -557,53 +615,55 @@ const canSubmit = computed(() => {
   return successUploadCount.value > 0 && !hasPendingUploads.value
 })
 
-const uploadModeOptions = computed(() => [
-  {
-    value: 'file',
-    label: h('div', { class: 'segmented-option' }, [
-      h(FileUp, { size: 16, class: 'option-icon' }),
-      h('span', { class: 'option-text' }, '上传文件')
-    ])
-  },
-  {
-    value: 'folder',
-    label: h('div', { class: 'segmented-option' }, [
-      h(FolderUp, { size: 16, class: 'option-icon' }),
-      h('span', { class: 'option-text' }, '上传文件夹')
-    ])
-  },
-  {
-    value: 'url',
-    label: h('div', { class: 'segmented-option' }, [
-      h(Link, { size: 16, class: 'option-icon' }),
-      h('span', { class: 'option-text' }, '解析 URL')
-    ])
-  },
-  {
-    value: 'workspace',
-    label: h('div', { class: 'segmented-option' }, [
-      h(FolderOpen, { size: 16, class: 'option-icon' }),
-      h('span', { class: 'option-text' }, '个人空间')
-    ])
-  }
-])
+const uploadModeOptions = computed(() =>
+  [
+    {
+      value: 'file',
+      label: h('div', { class: 'segmented-option' }, [
+        h(FileUp, { size: 16, class: 'option-icon' }),
+        h('span', { class: 'option-text' }, '上传文件')
+      ])
+    },
+    {
+      value: 'folder',
+      label: h('div', { class: 'segmented-option' }, [
+        h(FolderUp, { size: 16, class: 'option-icon' }),
+        h('span', { class: 'option-text' }, '上传文件夹')
+      ])
+    },
+    {
+      value: 'url',
+      label: h('div', { class: 'segmented-option' }, [
+        h(Link, { size: 16, class: 'option-icon' }),
+        h('span', { class: 'option-text' }, '解析 URL')
+      ])
+    },
+    {
+      value: 'workspace',
+      label: h('div', { class: 'segmented-option' }, [
+        h(FolderOpen, { size: 16, class: 'option-icon' }),
+        h('span', { class: 'option-text' }, '个人空间')
+      ])
+    }
+  ].filter((option) => option.value !== 'url' || userStore.isAdmin)
+)
 
 watch(uploadMode, (val) => {
-  isFolderUpload.value = val === 'folder'
-  // 切换模式时清空已选内容，避免混淆
-  fileList.value = []
-  sameNameFiles.value = []
-  urlList.value = []
-  newUrl.value = ''
-  selectedWorkspacePaths.value = []
-  for (const task of uploadQueue.value) {
-    task.canceled = true
+  if (val === 'url' && !userStore.isAdmin) {
+    uploadMode.value = 'file'
+    return
   }
-  uploadQueue.value = []
-  uploadTaskStatus.value = {}
-  uploadTaskProgress.value = {}
-  progressExpanded.value = false
+  isFolderUpload.value = val === 'folder'
+  invalidateUploads(false)
 })
+
+watch(
+  () => userStore.isAdmin,
+  (isAdmin) => {
+    if (!isAdmin && uploadMode.value === 'url') uploadMode.value = 'file'
+  },
+  { flush: 'sync' }
+)
 
 watch(fileList, (newFileList) => {
   const validUidSet = new Set(newFileList.map((file) => file.uid).filter(Boolean))
@@ -654,14 +714,17 @@ const mergeSameNameFiles = (sameNameList = []) => {
   sameNameFiles.value.push(...newConflicts)
 }
 
-const fetchSingleUrlItem = async (item) => {
+const fetchSingleUrlItem = async (item, context) => {
+  if (!isUploadContextCurrent(context) || !context.isAdmin) return
   item.status = 'fetching'
   try {
-    const res = await fileApi.fetchUrl(item.url, kbId.value)
+    const res = await fileApi.fetchUrl(item.url, context.kbId)
+    if (!isUploadContextCurrent(context)) return
     item.status = 'success'
     item.data = res
     mergeSameNameFiles(res.same_name_files)
   } catch (error) {
+    if (!isUploadContextCurrent(context)) return
     console.error('Failed to fetch URL:', error)
     item.status = 'error'
 
@@ -678,6 +741,8 @@ const fetchSingleUrlItem = async (item) => {
 }
 
 const handleFetchUrls = async () => {
+  const context = captureUploadContext()
+  if (!isUploadContextCurrent(context) || !context.isAdmin) return
   const text = newUrl.value
   if (!text) return
 
@@ -710,8 +775,8 @@ const handleFetchUrls = async () => {
   newUrl.value = '' // 清空输入框
   fetchingUrls.value = true
 
-  await Promise.all(newItems.map(fetchSingleUrlItem))
-  fetchingUrls.value = false
+  await Promise.all(newItems.map((item) => fetchSingleUrlItem(item, context)))
+  if (isUploadContextCurrent(context)) fetchingUrls.value = false
 }
 
 const removeUrl = (index) => {
@@ -744,6 +809,21 @@ const buildAutoIndexParams = () => {
 }
 
 const isFolderUpload = ref(false)
+
+watch(
+  () => [kbId.value, userStore.token, userStore.userRole, props.visible],
+  (current, previous) => {
+    if (current.slice(0, 3).some((value, index) => value !== previous[index]) || !current[3]) {
+      invalidateUploads()
+    }
+  },
+  { flush: 'sync' }
+)
+
+onUnmounted(() => {
+  invalidateUploads()
+  disposed = true
+})
 
 // 计算属性：是否启用了OCR
 const isOcrEnabled = computed(() => {
@@ -847,6 +927,7 @@ const validateOcrService = () => {
 }
 
 const handleCancel = () => {
+  invalidateUploads()
   emit('update:visible', false)
 }
 
@@ -912,31 +993,34 @@ const downloadSameNameFile = async (file) => {
 }
 
 const deleteSameNameFile = (file) => {
-  Modal.confirm({
+  const context = captureUploadContext()
+  if (!isUploadContextCurrent(context) || !context.kbId) return
+  const fileId = file.file_id
+  const filename = file.filename
+  sameNameDeleteDialog?.destroy()
+  sameNameDeleteDialog = Modal.confirm({
     title: '确认删除文件',
-    content: `确定要删除文件 "${file.filename}" 吗？此操作不可恢复。`,
+    content: `确定要删除文件 "${filename}" 吗？此操作不可恢复。`,
     okText: '删除',
     okType: 'danger',
     cancelText: '取消',
     onOk: async () => {
+      if (!isUploadContextCurrent(context)) return
       try {
-        // 获取当前数据库ID
-        const currentDbId = kbId.value
-        if (!currentDbId) {
-          message.error('知识库ID不存在')
-          return
-        }
-
-        message.loading('正在删除文件...', 0)
-        await documentApi.deleteDocument(currentDbId, file.file_id)
-        message.destroy()
+        sameNameDeleteLoading = message.loading('正在删除文件...', 0)
+        await documentApi.deleteDocument(context.kbId, fileId)
+        if (!isUploadContextCurrent(context)) return
+        sameNameDeleteLoading?.()
+        sameNameDeleteLoading = null
 
         // 从同名文件列表中移除
-        sameNameFiles.value = sameNameFiles.value.filter((f) => f.file_id !== file.file_id)
+        sameNameFiles.value = sameNameFiles.value.filter((f) => f.file_id !== fileId)
 
-        message.success(`文件 ${file.filename} 删除成功`)
+        message.success(`文件 ${filename} 删除成功`)
       } catch (error) {
-        message.destroy()
+        if (!isUploadContextCurrent(context)) return
+        sameNameDeleteLoading?.()
+        sameNameDeleteLoading = null
         console.error('删除文件失败:', error)
         message.error(`删除文件失败: ${error.message || '未知错误'}`)
       }
@@ -945,6 +1029,8 @@ const deleteSameNameFile = (file) => {
 }
 
 const customRequest = async (options) => {
+  const context = captureUploadContext()
+  if (!isUploadContextCurrent(context)) return
   const fileUid = options.file?.uid
   if (fileUid) {
     uploadTaskStatus.value[fileUid] = 'queued'
@@ -953,6 +1039,7 @@ const customRequest = async (options) => {
 
   const task = {
     options,
+    context,
     xhr: null,
     canceled: false
   }
@@ -970,7 +1057,7 @@ const customRequest = async (options) => {
       if (queueIndex !== -1) {
         uploadQueue.value.splice(queueIndex, 1)
       }
-      if (fileUid) {
+      if (fileUid && isUploadContextCurrent(context)) {
         uploadTaskStatus.value[fileUid] = 'error'
       }
     }
@@ -980,7 +1067,7 @@ const customRequest = async (options) => {
 const processUploadQueue = () => {
   while (activeUploadCount.value < MAX_UPLOAD_CONCURRENCY && uploadQueue.value.length > 0) {
     const task = uploadQueue.value.shift()
-    if (!task || task.canceled) {
+    if (!task || task.canceled || !isUploadContextCurrent(task.context)) {
       continue
     }
 
@@ -990,6 +1077,7 @@ const processUploadQueue = () => {
         // 错误已经在 runUploadTask 内处理，这里只保证队列继续消费
       })
       .finally(() => {
+        if (!isUploadContextCurrent(task.context)) return
         activeUploadCount.value -= 1
         processUploadQueue()
       })
@@ -997,6 +1085,9 @@ const processUploadQueue = () => {
 }
 
 const runUploadTask = (task) => {
+  const context = (task.context ||= captureUploadContext())
+  const isCurrent = () => !task.canceled && isUploadContextCurrent(context)
+  if (!isCurrent()) return Promise.resolve()
   const { file, onProgress, onSuccess, onError } = task.options
   const fileUid = file?.uid
 
@@ -1007,10 +1098,12 @@ const runUploadTask = (task) => {
   return new Promise((resolve, reject) => {
     const formData = new FormData()
     const filename =
-      isFolderUpload.value && file.webkitRelativePath ? file.webkitRelativePath : file.name
+      context.isAdmin && context.isFolder && file.webkitRelativePath
+        ? file.webkitRelativePath
+        : file.name
     formData.append('file', file, filename)
 
-    const currentKbId = kbId.value
+    const currentKbId = context.kbId
     if (!currentKbId) {
       const error = new Error('Database ID is missing')
       if (fileUid) {
@@ -1023,15 +1116,16 @@ const runUploadTask = (task) => {
 
     const xhr = new XMLHttpRequest()
     task.xhr = xhr
+    activeUploadTasks.add(task)
     xhr.open('POST', fileApi.getUploadUrl(currentKbId))
 
-    const headers = getAuthHeaders()
+    const headers = context.headers
     for (const [key, value] of Object.entries(headers)) {
       xhr.setRequestHeader(key, value)
     }
 
     xhr.upload.onprogress = (event) => {
-      if (!event.lengthComputable) {
+      if (!isCurrent() || !event.lengthComputable) {
         return
       }
       const percent = Math.min(100, (event.loaded / event.total) * 100)
@@ -1042,7 +1136,7 @@ const runUploadTask = (task) => {
     }
 
     xhr.onload = () => {
-      if (task.canceled) {
+      if (!isCurrent()) {
         resolve()
         return
       }
@@ -1082,6 +1176,10 @@ const runUploadTask = (task) => {
     }
 
     xhr.onerror = (errorEvent) => {
+      if (!isCurrent()) {
+        resolve()
+        return
+      }
       if (fileUid) {
         uploadTaskStatus.value[fileUid] = 'error'
       }
@@ -1090,6 +1188,10 @@ const runUploadTask = (task) => {
     }
 
     xhr.onabort = () => {
+      if (!isCurrent()) {
+        resolve()
+        return
+      }
       if (fileUid) {
         uploadTaskStatus.value[fileUid] = 'error'
       }
@@ -1099,7 +1201,7 @@ const runUploadTask = (task) => {
     }
 
     xhr.send(formData)
-  })
+  }).finally(() => activeUploadTasks.delete(task))
 }
 
 const handleFileUpload = (info) => {
@@ -1143,6 +1245,10 @@ const openDocLink = () => {
 }
 
 const chunkData = async () => {
+  const context = captureUploadContext()
+  if (!isUploadContextCurrent(context) || store.state.chunkLoading) return
+  if (uploadMode.value === 'url' && !context.isAdmin) return
+  const parentId = selectedFolderId.value
   if (!kbId.value) {
     message.error('请先选择知识库')
     return
@@ -1160,8 +1266,12 @@ const chunkData = async () => {
     }
 
     try {
+      chunkOperationContext = context
       store.state.chunkLoading = true
-      const res = await fileApi.importWorkspaceFiles(kbId.value, selectedWorkspacePaths.value)
+      const res = await fileApi.importWorkspaceFiles(context.kbId, [
+        ...selectedWorkspacePaths.value
+      ])
+      if (!isUploadContextCurrent(context)) return
       const importedItems = Array.isArray(res?.items) ? res.items : []
       if (importedItems.length === 0) {
         message.error('个人空间文件导入失败')
@@ -1200,17 +1310,22 @@ const chunkData = async () => {
         items,
         contentType: 'file',
         params,
-        parentId: selectedFolderId.value
+        parentId
       })
 
+      if (!isUploadContextCurrent(context)) return
       emit('success')
       handleCancel()
       selectedWorkspacePaths.value = []
     } catch (error) {
+      if (!isUploadContextCurrent(context)) return
       console.error('个人空间文件导入失败:', error)
       message.error('个人空间文件导入失败: ' + (error.message || '未知错误'))
     } finally {
-      store.state.chunkLoading = false
+      if (isUploadContextCurrent(context) && chunkOperationContext === context) {
+        store.state.chunkLoading = false
+        chunkOperationContext = null
+      }
     }
     return
   }
@@ -1248,6 +1363,7 @@ const chunkData = async () => {
     }
 
     try {
+      chunkOperationContext = context
       store.state.chunkLoading = true
       const params = { ...processingParams.value }
       if (autoIndex.value) {
@@ -1278,18 +1394,23 @@ const chunkData = async () => {
         items: items,
         contentType: 'file', // 重要：这里改为 file，因为我们已经转成了 minio 上的文件
         params,
-        parentId: selectedFolderId.value
+        parentId
       })
 
+      if (!isUploadContextCurrent(context)) return
       emit('success')
       handleCancel()
       urlList.value = []
       newUrl.value = ''
     } catch (error) {
+      if (!isUploadContextCurrent(context)) return
       console.error('URL 提交失败:', error)
       message.error('URL 提交失败: ' + (error.message || '未知错误'))
     } finally {
-      store.state.chunkLoading = false
+      if (isUploadContextCurrent(context) && chunkOperationContext === context) {
+        store.state.chunkLoading = false
+        chunkOperationContext = null
+      }
     }
     return
   }
@@ -1334,6 +1455,7 @@ const chunkData = async () => {
   }
 
   try {
+    chunkOperationContext = context
     store.state.chunkLoading = true
     const params = { ...processingParams.value, content_hashes, file_sizes }
     if (Object.keys(source_paths).length > 0) {
@@ -1348,18 +1470,23 @@ const chunkData = async () => {
       items,
       contentType: 'file',
       params,
-      parentId: selectedFolderId.value
+      parentId
     })
 
+    if (!isUploadContextCurrent(context)) return
     emit('success')
     handleCancel()
     fileList.value = []
     sameNameFiles.value = []
   } catch (error) {
+    if (!isUploadContextCurrent(context)) return
     console.error('文件上传失败:', error)
     message.error('文件上传失败: ' + (error.message || '未知错误'))
   } finally {
-    store.state.chunkLoading = false
+    if (isUploadContextCurrent(context) && chunkOperationContext === context) {
+      store.state.chunkLoading = false
+      chunkOperationContext = null
+    }
   }
 }
 </script>

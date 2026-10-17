@@ -194,6 +194,7 @@
             v-model="shareConfig"
             :auto-select-user-dept="true"
             :require-read-scope="true"
+            manage-scope-description="普通用户获得此权限后可上传、维护和删除文档；管理员还可配置知识库、调整共享范围及删除整库。"
           />
         </section>
       </main>

@@ -51,10 +51,11 @@ class KnowledgeBaseSummary:
     pending_index_count: int = 0
     processing_count: int = 0
     effective_permission: ResourcePermission | None = None
+    can_manage: bool = False
 
     @property
-    def can_manage(self) -> bool:
-        """返回当前调用者是否拥有管理权限。"""
+    def can_edit_documents(self) -> bool:
+        """返回当前调用者是否拥有知识库内容编辑权限。"""
         return self.effective_permission == ResourcePermission.MANAGE
 
 

@@ -412,13 +412,15 @@ class KnowledgeBaseManager:
             if permission == ResourcePermission.NONE:
                 continue
             additional_params = database.additional_params
-            if permission == ResourcePermission.READ:
+            can_manage = user_role in {"admin", "superadmin"} and permission == ResourcePermission.MANAGE
+            if not can_manage:
                 additional_params = redact_sensitive_params(additional_params)
             filtered_databases.append(
                 replace(
                     database,
                     additional_params=additional_params,
                     effective_permission=permission,
+                    can_manage=can_manage,
                 )
             )
 

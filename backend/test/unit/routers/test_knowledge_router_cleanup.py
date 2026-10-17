@@ -12,6 +12,15 @@ from yuxi.services.task_registry import get_task_definition
 pytestmark = pytest.mark.asyncio
 
 
+@pytest.fixture(autouse=True)
+def allow_authorized_upload(monkeypatch):
+    async def fake_permission(kb_id, current_user, required):
+        assert current_user.role == "admin"
+        assert required == knowledge_router.ResourcePermission.MANAGE
+
+    monkeypatch.setattr(knowledge_router, "_ensure_database_permission", fake_permission)
+
+
 def _database_detail(**stats) -> KnowledgeBaseDetail:
     return KnowledgeBaseDetail(
         kb_id="kb_1",
@@ -69,7 +78,7 @@ async def test_document_file_exists_returns_boolean_for_relative_path(monkeypatc
     result = await knowledge_router.document_file_exists(
         "kb_1",
         filename=" google_drive/shared_drives/engineering/playbook.txt ",
-        current_user=SimpleNamespace(uid="user_1"),
+        current_user=SimpleNamespace(uid="user_1", role="admin"),
     )
 
     assert result == {
@@ -97,7 +106,7 @@ async def test_document_file_exists_rejects_blank_filename(monkeypatch):
         await knowledge_router.document_file_exists(
             "kb_1",
             filename="   ",
-            current_user=SimpleNamespace(uid="user_1"),
+            current_user=SimpleNamespace(uid="user_1", role="admin"),
         )
 
     assert exc_info.value.status_code == 400
@@ -108,7 +117,7 @@ async def test_upload_file_rejects_jsonl_uploads():
     upload = UploadFile(filename="dataset.jsonl", file=BytesIO(b'{"query":"hello"}\n'))
 
     with pytest.raises(HTTPException) as exc_info:
-        await knowledge_router.upload_file(upload, kb_id=None, current_user=SimpleNamespace(uid="user_1"))
+        await knowledge_router.upload_file(upload, kb_id=None, current_user=SimpleNamespace(uid="user_1", role="admin"))
 
     assert exc_info.value.status_code == 400
     assert exc_info.value.detail == "Unsupported file type: .jsonl"
@@ -117,8 +126,10 @@ async def test_upload_file_rejects_jsonl_uploads():
 @pytest.mark.parametrize(
     "call_upload",
     [
-        lambda upload: knowledge_router.upload_file(upload, kb_id="kb_1", current_user=SimpleNamespace(uid="user_1")),
-        lambda upload: knowledge_router.mark_it_down(upload, current_user=SimpleNamespace(uid="user_1")),
+        lambda upload: knowledge_router.upload_file(
+            upload, kb_id="kb_1", current_user=SimpleNamespace(uid="user_1", role="admin")
+        ),
+        lambda upload: knowledge_router.mark_it_down(upload, current_user=SimpleNamespace(uid="user_1", role="admin")),
     ],
     ids=["upload_file", "mark_it_down"],
 )
@@ -175,7 +186,9 @@ async def test_upload_file_fails_before_read_or_minio(monkeypatch, kb_id, status
     upload = UploadFile(filename="demo.txt", file=BytesIO(b"demo"))
 
     with pytest.raises(HTTPException) as exc_info:
-        await knowledge_router.upload_file(upload, kb_id=kb_id, current_user=SimpleNamespace(uid="user_1"))
+        await knowledge_router.upload_file(
+            upload, kb_id=kb_id, current_user=SimpleNamespace(uid="user_1", role="admin")
+        )
 
     assert exc_info.value.status_code == status_code
     assert calls == {"read": 0, "upload": 0}
@@ -227,7 +240,7 @@ async def test_parse_documents_rejects_oversized_direct_batch():
         await knowledge_router.parse_documents(
             "kb_1",
             file_ids,
-            current_user=SimpleNamespace(uid="uid-user"),
+            current_user=SimpleNamespace(uid="uid-user", role="admin"),
         )
 
     assert exc_info.value.status_code == 400
@@ -276,7 +289,7 @@ async def test_parse_pending_documents_enqueues_status_scoped_task(monkeypatch):
 
     result = await knowledge_router.parse_pending_documents(
         "kb_1",
-        current_user=SimpleNamespace(uid="uid-user"),
+        current_user=SimpleNamespace(uid="uid-user", role="admin"),
     )
 
     assert result["status"] == "queued"
@@ -336,7 +349,7 @@ async def test_reconcile_graph_build_mutates_state_only_after_unique_task_is_cre
     result = await knowledge_router.reconcile_graph_build(
         "kb_1",
         data={"mode": "all_vectors"},
-        current_user=SimpleNamespace(uid="uid-user"),
+        current_user=SimpleNamespace(uid="uid-user", role="admin"),
     )
 
     assert result == {
@@ -406,7 +419,7 @@ async def test_index_pending_documents_uses_pending_statuses_and_params(monkeypa
     result = await knowledge_router.index_pending_documents(
         "kb_1",
         payload=knowledge_router.PendingIndexDocumentsRequest(params=params),
-        current_user=SimpleNamespace(uid="uid-user"),
+        current_user=SimpleNamespace(uid="uid-user", role="admin"),
     )
 
     assert result["status"] == "queued"
@@ -471,7 +484,7 @@ async def test_add_documents_auto_index_returns_one_final_result_per_item(monkey
         "kb_1",
         [item],
         params={"content_type": "file", "auto_index": True, "content_hashes": {item: "hash_1"}},
-        current_user=SimpleNamespace(uid="uid-user"),
+        current_user=SimpleNamespace(uid="uid-user", role="admin"),
     )
 
     assert result["status"] == "queued"
@@ -523,7 +536,7 @@ async def test_add_documents_passes_source_path_to_file_record(monkeypatch):
             "content_hashes": {item1: "hash_1", item2: "hash_2"},
             "source_paths": {item1: "folder_a/sub/doc1.txt", item2: "folder_a/doc2.txt"},
         },
-        current_user=SimpleNamespace(uid="uid-user"),
+        current_user=SimpleNamespace(uid="uid-user", role="admin"),
     )
 
     assert len(captured_records) == 2
@@ -567,7 +580,7 @@ async def test_add_uploaded_documents_rejects_invalid_payload(monkeypatch, paylo
         await knowledge_router.add_uploaded_documents(
             "kb_1",
             payload,
-            current_user=SimpleNamespace(uid="uid-user"),
+            current_user=SimpleNamespace(uid="uid-user", role="admin"),
         )
 
     assert exc_info.value.status_code == 400
@@ -609,7 +622,7 @@ async def test_add_uploaded_documents_creates_records_without_task(monkeypatch):
                 "source_paths": {item: "docs/demo.txt"},
             },
         ),
-        current_user=SimpleNamespace(uid="uid-user"),
+        current_user=SimpleNamespace(uid="uid-user", role="admin"),
     )
 
     assert result["status"] == "success"
@@ -652,7 +665,7 @@ async def test_virtual_folder_migration_uses_registered_durable_handler(monkeypa
 
     response = await knowledge_router.start_virtual_folder_migration(
         "kb_1",
-        current_user=SimpleNamespace(uid="uid-user"),
+        current_user=SimpleNamespace(uid="uid-user", role="admin"),
     )
 
     assert response == {"task_id": "task_migration_1", "created": True}
@@ -711,7 +724,7 @@ async def test_parse_documents_accepts_payload_with_params(monkeypatch):
     result = await knowledge_router.parse_documents(
         "kb_1",
         payload=knowledge_router.ParseDocumentsRequest(file_ids=["file_1"], params=params),
-        current_user=SimpleNamespace(uid="uid-user"),
+        current_user=SimpleNamespace(uid="uid-user", role="admin"),
     )
 
     assert result["status"] == "queued"
@@ -764,7 +777,7 @@ async def test_parse_pending_documents_uses_params(monkeypatch):
     result = await knowledge_router.parse_pending_documents(
         "kb_1",
         payload=knowledge_router.PendingParseDocumentsRequest(params=params),
-        current_user=SimpleNamespace(uid="uid-user"),
+        current_user=SimpleNamespace(uid="uid-user", role="admin"),
     )
 
     assert result["status"] == "queued"

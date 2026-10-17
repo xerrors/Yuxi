@@ -26,6 +26,7 @@
       </template>
       <template #actions>
         <a-button
+          v-if="userStore.isAdmin"
           type="primary"
           class="lucide-icon-btn"
           :disabled="!kbTypes.length"
@@ -37,6 +38,7 @@
     </PageShoulder>
 
     <DatabaseCreateFlowModal
+      v-if="userStore.isAdmin"
       v-model:open="state.openNewDatabaseModel"
       :supported-kb-types="supportedKbTypes"
     />
@@ -51,11 +53,16 @@
     <ResourceEmptyState
       v-else-if="!databases || databases.length === 0"
       title="暂无知识库"
-      description="创建知识库后，可以上传文件并配置检索、图谱和评估能力。"
+      :description="
+        userStore.isAdmin
+          ? '创建知识库后，可以上传文件并配置检索、图谱和评估能力。'
+          : '请联系管理员为你授权知识库；获得文档编辑权限后可以上传和维护文件。'
+      "
       :icon="getKbTypeIcon('milvus')"
     >
       <template #actions>
         <a-button
+          v-if="userStore.isAdmin"
           type="primary"
           size="large"
           class="lucide-icon-btn"
@@ -121,6 +128,7 @@ import { ref, onMounted, reactive, watch, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useDatabaseStore } from '@/stores/database'
+import { useUserStore } from '@/stores/user'
 import { Copy, Pencil, Plus, Trash2 } from '@lucide/vue'
 import { message, Modal } from 'ant-design-vue'
 import { databaseApi, typeApi } from '@/apis/knowledge_api'
@@ -137,6 +145,7 @@ import { getShareConfigLabel } from '@/utils/shareConfig'
 const route = useRoute()
 const router = useRouter()
 const databaseStore = useDatabaseStore()
+const userStore = useUserStore()
 
 const props = defineProps({
   embedded: { type: Boolean, default: false }
@@ -150,7 +159,11 @@ const knowledgeViewItems = [
   { key: 'documents', label: '文档知识库', path: '/extensions?tab=knowledge' }
 ]
 
-const kbTypes = computed(() => Object.keys(supportedKbTypes.value))
+const kbTypes = computed(() =>
+  userStore.isAdmin
+    ? Object.keys(supportedKbTypes.value)
+    : [...new Set(databases.value.map((database) => database.kb_type || 'milvus'))]
+)
 const searchQuery = ref('')
 const typeFilter = ref(null)
 
@@ -317,7 +330,7 @@ watch(
 )
 
 onMounted(() => {
-  loadSupportedKbTypes()
+  if (userStore.isAdmin) loadSupportedKbTypes()
   databaseStore.loadDatabases()
 })
 
