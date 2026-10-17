@@ -641,14 +641,22 @@ class KnowledgeBaseManager:
             additional_params=config.additional_params,
         )
 
-    async def aquery(self, query_text: str, kb_id: str, **kwargs) -> str:
-        """异步查询知识库"""
+    async def aquery(
+        self,
+        query_text: str,
+        kb_id: str,
+        *,
+        raise_on_error: bool = False,
+        **kwargs,
+    ) -> str:
+        """异步查询知识库；`raise_on_error` 供评估等调用方关闭执行器层静默降级。"""
         config = await self.get_kb_config(kb_id)
         executor = await self._get_or_create_kb_instance(config.kb_type)
         return await executor.aquery(
             query_text,
             kb_id,
             config=config,
+            raise_on_error=raise_on_error,
             **kwargs,
         )
 

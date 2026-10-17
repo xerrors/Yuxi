@@ -48,8 +48,25 @@ async def test_evaluate_question_uses_runtime_kb_manager(monkeypatch):
         select_model_fn=lambda **_: None,
     )
 
-    aquery.assert_awaited_once_with("问题", "kb-1", final_top_k=3)
+    aquery.assert_awaited_once_with("问题", "kb-1", raise_on_error=False, final_top_k=3)
     assert result["detail"]["retrieved_chunks"] == [{"content": "检索结果"}]
+
+
+async def test_evaluate_question_splits_and_forwards_raise_on_error(monkeypatch):
+    aquery = AsyncMock(return_value=[])
+    monkeypatch.setattr(evaluator, "kb_manager", SimpleNamespace(aquery=aquery))
+
+    await evaluate_question(
+        kb_id="kb-1",
+        question_data={"query": "问题"},
+        retrieval_config={"final_top_k": 3, "raise_on_error": True},
+        has_gold_chunks=False,
+        has_gold_answers=False,
+        judge_llm=None,
+        select_model_fn=lambda **_: None,
+    )
+
+    aquery.assert_awaited_once_with("问题", "kb-1", final_top_k=3, raise_on_error=True)
 
 
 def test_aggregate_metrics_matches_service_output_shape():

@@ -399,7 +399,13 @@ const runOptions = computed(() =>
 
 const getRunName = (run) => run?.name || run?.run_name || '未命名测试'
 const getRunStatusText = (status) =>
-  ({ running: '运行中', completed: '已完成', failed: '失败', paused: '已暂停' })[status] || '未知状态'
+  ({
+    running: '运行中',
+    completed: '已完成',
+    failed: '失败',
+    cancelled: '已取消',
+    paused: '已暂停'
+  })[status] || '未知状态'
 const formatMetric = (value) => (Number.isFinite(value) ? Number(value).toFixed(2) : '-')
 const formatScore = (value) => (Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : '-')
 const formatTime = (value) => (value ? new Date(value).toLocaleString('zh-CN') : '-')
@@ -408,6 +414,7 @@ const formatRunItems = (run) => `${run?.completed_items || 0}/${run?.total_items
 const formatRunDuration = (run) => {
   if (!run) return '-'
   if (run.status === 'running') return '进行中'
+  if (run.status === 'cancelled') return '已停止'
   if (!run.started_at || !run.completed_at) return '-'
   const seconds = Math.max(0, (new Date(run.completed_at) - new Date(run.started_at)) / 1000)
   if (seconds < 60) return `${Math.round(seconds)} 秒`
@@ -956,6 +963,7 @@ onUnmounted(() => {
   }
 
   &.status-failed,
+  &.status-cancelled,
   &.score-error {
     background: var(--color-error-50);
     color: var(--color-error-700);

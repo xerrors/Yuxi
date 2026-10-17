@@ -234,6 +234,7 @@ class NotionKB(ReadOnlyConnectors):
         kb_id: str,
         *,
         config: KnowledgeBaseConfig,
+        raise_on_error: bool = False,
         agent_call: bool = False,
         **kwargs,
     ) -> list[dict]:
@@ -279,6 +280,8 @@ class NotionKB(ReadOnlyConnectors):
             return sorted(results, key=lambda item: item.get("score", 0.0), reverse=True)[:final_top_k]
         except (NotionAPIError, httpx.HTTPError, ValueError) as exc:
             logger.error(f"Notion query failed for kb_id={kb_id}: {exc}, {traceback.format_exc()}")
+            if raise_on_error:
+                raise
             return []
 
     async def _search_candidate_pages(

@@ -234,6 +234,7 @@
                   />
                   <CircleCheck v-else-if="run.status === 'completed'" :size="17" />
                   <CircleX v-else-if="run.status === 'failed'" :size="17" />
+                  <Ban v-else-if="run.status === 'cancelled'" :size="17" />
                   <BarChart3 v-else :size="17" />
                 </span>
                 <span class="evaluation-row-main">
@@ -282,6 +283,16 @@
                 />
               </button>
               <span v-if="canManage" class="evaluation-row-actions">
+                <button
+                  v-if="run.status === 'running'"
+                  type="button"
+                  class="evaluation-icon-button"
+                  :disabled="cancellingRunId === run.run_id"
+                  :aria-label="`取消评估 ${getRunName(run)}`"
+                  @click="cancelRun(run)"
+                >
+                  <Ban :size="15" aria-hidden="true" />
+                </button>
                 <a-popconfirm
                   title="删除这条评估记录？"
                   description="删除后无法恢复。"
@@ -329,6 +340,7 @@ import { message, Modal } from 'ant-design-vue'
 import { useRouter } from 'vue-router'
 import {
   BarChart3,
+  Ban,
   ChevronDown,
   ChevronRight,
   CircleAlert,
@@ -366,6 +378,7 @@ const runs = ref([])
 const uploadModalOpen = ref(false)
 const generateModalOpen = ref(false)
 const runModalOpen = ref(false)
+const cancellingRunId = ref('')
 const downloading = reactive({})
 let refreshTimer = null
 
@@ -403,7 +416,13 @@ const getDatasetBuildMessage = (dataset) =>
 
 const getRunName = (run) => run?.name || run?.run_name || run?.run_id?.slice(0, 8) || '-'
 const getRunStatusText = (status) =>
-  ({ running: '运行中', completed: '已完成', failed: '失败', paused: '已暂停' })[status] || status
+  ({
+    running: '运行中',
+    completed: '已完成',
+    failed: '失败',
+    cancelled: '已取消',
+    paused: '已暂停'
+  })[status] || status
 
 const getRunProgress = (run) => {
   if (Number.isFinite(run?.progress)) return Math.max(0, Math.min(Math.round(run.progress), 100))
@@ -536,6 +555,21 @@ const handleDatasetAction = async (key, dataset) => {
       console.error('继续生成评估基准失败:', error)
       message.error(error.message || '继续生成评估基准失败')
     }
+  }
+}
+
+const cancelRun = async (run) => {
+  cancellingRunId.value = run.run_id
+  try {
+    await evaluationApi.cancelRun(props.kbId, run.run_id)
+    message.success('已请求取消评估')
+    taskerStore.loadTasks()
+    await loadOverview()
+  } catch (error) {
+    console.error('取消评估记录失败:', error)
+    message.error(error.message || '取消评估记录失败')
+  } finally {
+    cancellingRunId.value = ''
   }
 }
 
@@ -715,6 +749,11 @@ defineExpose({ loadOverview })
     background: var(--color-error-50);
     color: var(--color-error-700);
   }
+
+  &.run-cancelled {
+    background: var(--gray-100);
+    color: var(--gray-600);
+  }
 }
 
 .evaluation-row-main {
@@ -803,6 +842,11 @@ defineExpose({ loadOverview })
   &.status-failed {
     background: var(--color-error-50);
     color: var(--color-error-700);
+  }
+
+  &.status-cancelled {
+    background: var(--gray-100);
+    color: var(--gray-600);
   }
 
   &.status-pending,

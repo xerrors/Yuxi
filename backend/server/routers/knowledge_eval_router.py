@@ -336,6 +336,28 @@ async def get_evaluation_run_results(
         raise HTTPException(status_code=500, detail=f"获取评估运行结果失败: {str(e)}")
 
 
+@evaluation.post("/databases/{kb_id}/runs/{run_id}/cancel")
+async def cancel_evaluation_run(
+    kb_id: str,
+    run_id: str,
+    current_user: User = Depends(require_knowledge_base_manage),
+):
+    """取消运行中的 RAG 评估"""
+    try:
+        service = EvaluationService()
+        result = await service.cancel_run(kb_id, run_id)
+        return {"message": "success", "data": result}
+    except ValueError as e:
+        if "not found" in str(e).lower():
+            raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"取消评估运行失败: {e}")
+        raise HTTPException(status_code=500, detail=f"取消评估运行失败: {str(e)}")
+
+
 @evaluation.delete("/databases/{kb_id}/runs/{run_id}")
 async def delete_evaluation_run(
     kb_id: str,

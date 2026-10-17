@@ -14,6 +14,13 @@ def normalize_query_result(query_result: Any) -> tuple[str, list[dict[str, Any]]
     return "", []
 
 
+def split_raise_on_error_config(retrieval_config: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """拆出查询层错误开关，避免它作为普通检索参数泄漏给底层实现。"""
+    config = dict(retrieval_config or {})
+    raise_on_error = bool(config.pop("raise_on_error", False))
+    return config, raise_on_error
+
+
 def build_answer_prompt(query: str, retrieved_chunks: list[dict[str, Any]], max_docs: int = 5) -> str:
     context_docs = []
     for idx, chunk in enumerate(retrieved_chunks[:max_docs]):
@@ -67,7 +74,8 @@ async def evaluate_question(
     select_model_fn: Callable[..., Any],
 ) -> dict[str, Any]:
     query = question_data["query"]
-    query_result = await kb_manager.aquery(query, kb_id, **retrieval_config)
+    retrieval_options, raise_on_error = split_raise_on_error_config(retrieval_config)
+    query_result = await kb_manager.aquery(query, kb_id, raise_on_error=raise_on_error, **retrieval_options)
     generated_answer, retrieved_chunks = normalize_query_result(query_result)
     generated_answer = await generate_answer_if_needed(
         query=query,

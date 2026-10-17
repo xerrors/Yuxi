@@ -160,6 +160,7 @@ class EvaluationService:
         completed_at = None
         if task is not None and task.status in {"failed", "cancelled"}:
             error = task.error or task.message or "评估任务失败"
+            status = "cancelled" if task.status == "cancelled" else "failed"
             completed_at = task.completed_at or utc_now()
             if completed_at.tzinfo is None:
                 completed_at = completed_at.replace(tzinfo=UTC)
@@ -168,15 +169,16 @@ class EvaluationService:
             and row.started_at
             and coerce_any_to_utc_datetime(row.started_at).replace(tzinfo=None) < utc_now_naive() - timedelta(minutes=1)
         ):
+            status = "failed"
             error = "评估任务提交中断"
             completed_at = utc_now()
 
         if error is not None:
             await self.eval_repo.update_run(
                 row.run_id,
-                {"status": "failed", "metrics": {"error": error}, "completed_at": completed_at},
+                {"status": status, "metrics": {"error": error}, "completed_at": completed_at},
             )
-            row.status = "failed"
+            row.status = status
             row.metrics = {"error": error}
             row.completed_at = completed_at
         return task
@@ -333,6 +335,10 @@ class EvaluationService:
             row = await self.eval_repo.get_dataset(dataset_id)
             if row is None:
                 raise ValueError("Dataset not found")
+            # 先按 Durable Task 终态收敛元数据，避免任务已取消或失败后仍被陈旧 running 状态误拦。
+            await self._sync_dataset_build_metadata(row)
+            if (row.build_metadata or {}).get("status") in {"pending", "running"}:
+                raise ValueError("评估数据集正在生成，请先取消生成任务")
             await self.eval_repo.delete_dataset(dataset_id)
             logger.info(f"成功删除评估数据集: {dataset_id}")
         except Exception as e:
@@ -663,6 +669,8 @@ class EvaluationService:
 
             if model_config:
                 retrieval_config.update(model_config)
+            # 评估必须区分真实零命中和检索故障；底层接口失败时让整条 Run 进入 failed。
+            retrieval_config["raise_on_error"] = True
 
             task_payload = {
                 "run_id": run_id,
@@ -672,6 +680,7 @@ class EvaluationService:
                 "retrieval_config": retrieval_config,
                 "created_by": created_by,
             }
+
             async with pg_manager.get_async_session_context() as session:
                 task = await tasker.create_in_session(
                     session,
@@ -703,6 +712,32 @@ class EvaluationService:
         except Exception as e:
             logger.error(f"启动评估失败: {e}")
             raise
+
+    async def cancel_run(self, kb_id: str, run_id: str) -> dict[str, Any]:
+        """取消一条运行中的评估，并把终态语义交给 Durable Task 失败钩子。"""
+        if not re.match(r"^run_[a-f0-9]{8}$", run_id):
+            raise ValueError("Invalid run_id format")
+        run = await self.eval_repo.get_run(run_id)
+        if run is None or run.kb_id != kb_id:
+            raise ValueError(f"Run not found for {run_id}")
+        if run.status != "running":
+            raise ValueError("评估任务已结束")
+        task = await self.task_repo.find_latest_by_payload(
+            task_type="rag_evaluation",
+            payload_match={"run_id": run_id},
+            statuses={"pending", "running"},
+        )
+        if task is None:
+            raise ValueError("评估任务不存在")
+        cancelled = await tasker.cancel_task(task.id)
+        if cancelled is None:
+            raise ValueError("评估任务已结束")
+        return {
+            "run_id": run_id,
+            "task_id": task.id,
+            "status": cancelled.status,
+            "cancel_requested": cancelled.cancel_requested,
+        }
 
     async def _run_evaluation_task(self, context: TaskContext):
         try:
@@ -927,6 +962,8 @@ class EvaluationService:
         row = await self.eval_repo.get_run(run_id)
         if row is None or row.kb_id != kb_id:
             raise ValueError("Run not found")
+        if row.status == "running":
+            raise ValueError("评估任务仍在运行，请先取消")
         await self.eval_repo.delete_run(run_id)
         logger.info(f"成功删除评估运行: {run_id}")
 
@@ -995,6 +1032,7 @@ async def fail_rag_evaluation_task(session, task_record, error: str) -> None:
     run = await session.scalar(select(EvaluationRun).where(EvaluationRun.run_id == run_id).with_for_update())
     if run is None or run.status == "completed":
         return
-    run.status = "failed"
+    run.status = "cancelled" if task_record.cancel_requested else "failed"
+    run.completed_items = int(run.completed_items or 0)
     run.metrics = {"error": error}
     run.completed_at = utc_now()

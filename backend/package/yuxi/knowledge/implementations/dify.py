@@ -70,6 +70,7 @@ class DifyKB(ReadOnlyConnectors):
         kb_id: str,
         *,
         config: KnowledgeBaseConfig,
+        raise_on_error: bool = False,
         agent_call: bool = False,
         **kwargs,
     ) -> list[dict]:
@@ -81,6 +82,8 @@ class DifyKB(ReadOnlyConnectors):
 
         if not api_url or not token or not dataset_id:
             logger.error(f"Dify config incomplete for kb_id={kb_id}")
+            if raise_on_error:
+                raise ValueError(f"Dify 配置缺失，无法查询 kb_id={kb_id}")
             return []
 
         merged = {**config.query_options, **kwargs}
@@ -130,6 +133,8 @@ class DifyKB(ReadOnlyConnectors):
                 logger.error(
                     f"Dify query fallback failed for kb_id={kb_id}: {fallback_error}, {traceback.format_exc()}"
                 )
+                if raise_on_error:
+                    raise e
                 return []
 
         records = response_json.get("records", []) if isinstance(response_json, dict) else []

@@ -874,10 +874,12 @@ class MilvusKB(KnowledgeBase):
         kb_id: str,
         *,
         config: KnowledgeBaseConfig,
+        raise_on_error: bool = False,
         agent_call: bool = False,
         **kwargs,
     ) -> list[dict]:
         """异步查询知识库"""
+        del raise_on_error
         embedding_model_spec = config.embedding_model_spec
         collection = await self._get_or_create_milvus_collection(kb_id, embedding_model_spec)
         if not collection:

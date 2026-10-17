@@ -646,6 +646,10 @@ export const evaluationApi = {
     return apiAdminGet(`/api/evaluation/databases/${kbId}/runs`)
   },
 
+  cancelRun: async (kbId, runId) => {
+    return apiAdminPost(`/api/evaluation/databases/${kbId}/runs/${runId}/cancel`, {})
+  },
+
   getRunResults: async (kbId, runId, params = {}) => {
     const queryParams = new URLSearchParams()
 
