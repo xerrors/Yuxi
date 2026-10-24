@@ -274,6 +274,7 @@ export const useTaskerStore = defineStore('tasker', () => {
     loading,
     lastError,
     activeCount,
+    hasActiveTasks,
     loadTasks,
     refreshTask,
     cancelTask,

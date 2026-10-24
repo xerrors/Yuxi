@@ -338,6 +338,13 @@ export const useDatabaseStore = defineStore('database', () => {
     if (hasPending) {
       enableAutoRefresh('auto')
     } else if (autoRefreshSource === 'auto' && state.autoRefresh) {
+      // 任务已提交但尚未被 worker 领取时，文件状态停留在 uploaded（不计入处理中），
+      // 直接停止会让入库完成后的列表无人刷新。任务中心由 admin 登记并轮询到终态，
+      // admin 在任务活跃期间跨过领取间隙继续轮询；非 admin 无本地任务事实可依，
+      // 维持既有停止行为（提交后需手动刷新，属已知边界）。
+      if (userStore.isAdmin && taskerStore.hasActiveTasks) {
+        return hasPending
+      }
       state.autoRefresh = false
       autoRefreshSource = null
       autoRefreshManualOverride = false
@@ -734,7 +741,9 @@ export const useDatabaseStore = defineStore('database', () => {
     }
     refreshLastProcessingCount = processingCount
 
-    if (refreshStablePolls >= AUTO_REFRESH_STALE_POLLS_LIMIT) {
+    // 非 admin 无法把本地登记任务轮询到终态，hasActiveTasks 不能作为无限续轮询的依据
+    const taskerBlocksStop = userStore.isAdmin && taskerStore.hasActiveTasks
+    if (refreshStablePolls >= AUTO_REFRESH_STALE_POLLS_LIMIT && !taskerBlocksStop) {
       state.autoRefresh = false
       autoRefreshSource = null
       autoRefreshManualOverride = false
