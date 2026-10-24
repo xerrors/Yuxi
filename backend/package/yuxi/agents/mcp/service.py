@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.agents.mcp.builtin import BUILTIN_MCP_SERVERS
 from yuxi.storage.postgres.models_business import MCPServer
+from yuxi.storage.redis import get_async_redis_client
 from yuxi.utils import logger
 
 # =============================================================================
@@ -30,11 +31,16 @@ from yuxi.utils import logger
 _mcp_lock = asyncio.Lock()
 
 # 本地仅缓存工具对象。配置始终以数据库为准，每次按 server_slug 现查。
-# cache key 使用 server_slug:config_hash，当配置变化时会自然失效。
+# cache key 使用 server_slug:config_hash，当配置变化时会自然失效；
+# 远端 tool 集合变化不改变 hash，因此每次命中前与 Redis 全局版本号比对。
 _mcp_tools_cache: dict[str, list[Callable[..., Any]]] = {}
 
-# MCP tools statistics (for reporting enabled/disabled counts)
-_mcp_tools_stats: dict[str, dict[str, int]] = {}
+# MCP 工具快照的全局失效代数：任一进程在配置 CRUD 或管理端刷新后 INCR；
+# 读侧每次命中前比对，本进程镜像落后即整体丢弃快照重建，解决远端新增 tool
+# 不改变 config_hash、worker 永远命中旧快照的问题（原行为需重启才生效）。
+MCP_TOOLS_VERSION_KEY = "yuxi:mcp:tools-version"
+_mcp_tools_cache_generation = -1
+
 _SUPPORTED_TRANSPORTS = ("sse", "streamable_http")
 
 _RETIRED_BUILTIN_MCP_SERVER_SLUGS = ("sequentialthinking", "mcp-server-chart")
@@ -99,6 +105,8 @@ async def ensure_builtin_mcp_servers_in_db() -> None:
     """Ensure built-in MCP server definitions exist in the database."""
     from yuxi.storage.postgres.manager import pg_manager
 
+    invalidated_slugs: list[str] = []
+
     async with pg_manager.get_async_session_context() as session:
         any_changed = False
 
@@ -111,7 +119,7 @@ async def ensure_builtin_mcp_servers_in_db() -> None:
         for server in result.scalars().all():
             server.enabled = 0
             server.updated_by = "system"
-            clear_mcp_server_tools_cache(server.slug)
+            invalidated_slugs.append(server.slug)
             any_changed = True
             logger.warning(f"Disabled unsupported MCP server '{server.slug}'")
 
@@ -122,7 +130,7 @@ async def ensure_builtin_mcp_servers_in_db() -> None:
             retired = result.scalar_one_or_none()
             if retired:
                 await session.delete(retired)
-                clear_mcp_server_tools_cache(slug)
+                invalidated_slugs.append(slug)
                 any_changed = True
                 logger.info(f"Removed retired built-in MCP server '{slug}' from database")
 
@@ -163,6 +171,7 @@ async def ensure_builtin_mcp_servers_in_db() -> None:
             wanted_enabled = config.get("enabled")
             if wanted_enabled is not None and existing.enabled != wanted_enabled:
                 existing.enabled = wanted_enabled
+                invalidated_slugs.append(existing.slug)
                 server_changed = True
             if existing.created_by != "system":
                 existing.created_by = "system"
@@ -173,6 +182,10 @@ async def ensure_builtin_mcp_servers_in_db() -> None:
 
         if any_changed:
             await session.commit()
+
+    # 失效通知晚于 owning transaction 的 commit point，避免其他进程按未提交状态重建快照
+    for slug in invalidated_slugs:
+        await invalidate_mcp_tools_cache(slug)
 
 
 async def get_mcp_client(
@@ -287,6 +300,9 @@ async def get_mcp_tools(
 
     all_processed_tools: list[Callable[..., Any]] = []
 
+    if cache and not force_refresh:
+        await _sync_mcp_tools_cache_generation()
+
     async with _mcp_lock:
         if not force_refresh and cache and cache_key in _mcp_tools_cache:
             all_processed_tools = _mcp_tools_cache[cache_key]
@@ -324,14 +340,6 @@ async def get_mcp_tools(
                         _mcp_tools_cache.pop(stale_key, None)
                     _mcp_tools_cache[cache_key] = all_processed_tools
 
-                global_config_disabled = server_config.get("disabled_tools") or []
-                enabled_count = len([t for t in all_processed_tools if t.name not in global_config_disabled])
-                _mcp_tools_stats[server_slug] = {
-                    "total": len(all_processed_tools),
-                    "enabled": enabled_count,
-                    "disabled": len(all_processed_tools) - enabled_count,
-                }
-
                 logger.info(
                     f"Refreshed MCP tools cache for '{server_slug}' with key '{cache_key}': "
                     f"{len(all_processed_tools)} tools loaded."
@@ -368,29 +376,52 @@ async def get_tools_from_all_servers() -> list[Callable[..., Any]]:
 
 def clear_mcp_cache() -> None:
     """Clear the MCP tools cache (useful for testing)."""
-    global _mcp_tools_cache, _mcp_tools_stats
+    global _mcp_tools_cache, _mcp_tools_cache_generation
     _mcp_tools_cache = {}
-    _mcp_tools_stats = {}
+    _mcp_tools_cache_generation = -1
+
+
+async def _sync_mcp_tools_cache_generation() -> None:
+    """命中前对齐本进程镜像与 Redis 全局失效代数；落后即丢弃快照。
+
+    Redis 不可用时保持现有缓存（退化为改造前的进程内行为），只记录 warning。
+    """
+    global _mcp_tools_cache_generation
+    try:
+        redis = await get_async_redis_client()
+        version = int(await redis.get(MCP_TOOLS_VERSION_KEY) or 0)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"Failed to read MCP tools cache version: {exc}")
+        return
+    if _mcp_tools_cache_generation == version:
+        return
+    async with _mcp_lock:
+        if _mcp_tools_cache_generation != version:
+            if _mcp_tools_cache:
+                logger.info(f"Discarding stale MCP tools cache: generation {_mcp_tools_cache_generation} -> {version}")
+            _mcp_tools_cache.clear()
+            _mcp_tools_cache_generation = version
+
+
+async def invalidate_mcp_tools_cache(server_slug: str) -> None:
+    """数据库提交后调用：清本进程该 server 快照并递增全局代数，使 API/worker 各进程重建。"""
+    global _mcp_tools_cache_generation
+    clear_mcp_server_tools_cache(server_slug)
+    try:
+        redis = await get_async_redis_client()
+        _mcp_tools_cache_generation = int(await redis.incr(MCP_TOOLS_VERSION_KEY))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"Failed to bump MCP tools cache version: {exc}")
 
 
 def clear_mcp_server_tools_cache(server_slug: str) -> None:
     """Clear the tools cache for a specific MCP server."""
-    global _mcp_tools_cache, _mcp_tools_stats
+    global _mcp_tools_cache
     server_prefix = f"{server_slug}:"
     stale_keys = [key for key in _mcp_tools_cache if key.startswith(server_prefix)]
     for stale_key in stale_keys:
         _mcp_tools_cache.pop(stale_key, None)
-    _mcp_tools_stats.pop(server_slug, None)
     logger.info(f"Cleared tools cache for MCP server '{server_slug}'")
-
-
-def get_mcp_tools_stats(server_slug: str) -> dict[str, int] | None:
-    """Get tools statistics for a MCP server.
-
-    Returns:
-        dict with 'total', 'enabled', 'disabled' counts, or None if not available
-    """
-    return _mcp_tools_stats.get(server_slug)
 
 
 # =============================================================================
@@ -453,7 +484,7 @@ async def create_mcp_server(
     await db.commit()
     await db.refresh(server)
 
-    clear_mcp_server_tools_cache(slug)
+    await invalidate_mcp_tools_cache(slug)
 
     logger.info(f"Created MCP server '{slug}'")
     return server
@@ -515,7 +546,7 @@ async def update_mcp_server(
     await db.commit()
     await db.refresh(server)
 
-    clear_mcp_server_tools_cache(slug)
+    await invalidate_mcp_tools_cache(slug)
 
     logger.info(f"Updated MCP server '{slug}'")
     return server
@@ -530,7 +561,7 @@ async def delete_mcp_server(db: AsyncSession, slug: str) -> bool:
     await db.delete(server)
     await db.commit()
 
-    clear_mcp_server_tools_cache(slug)
+    await invalidate_mcp_tools_cache(slug)
 
     logger.info(f"Deleted MCP server '{slug}'")
     return True
@@ -557,7 +588,7 @@ async def set_server_enabled(
     await db.commit()
 
     is_enabled = bool(server.enabled)
-    clear_mcp_server_tools_cache(slug)
+    await invalidate_mcp_tools_cache(slug)
 
     logger.info(f"Set MCP server '{slug}' enabled={is_enabled}")
     return is_enabled, server
@@ -599,7 +630,7 @@ async def toggle_tool_enabled(
     await db.commit()
 
     # Clear tool cache (re-filtered on next fetch)
-    clear_mcp_server_tools_cache(server_slug)
+    await invalidate_mcp_tools_cache(server_slug)
 
     logger.info(f"Toggled tool '{tool_name}' for server '{server_slug}' enabled={enabled}")
     return enabled, server
@@ -663,13 +694,18 @@ async def get_all_mcp_tools(server_slug: str) -> list:
         return []
 
     # Get all tools (no filtering, force refresh, no cache update)
-    return await get_mcp_tools(
+    tools = await get_mcp_tools(
         server_slug,
         additional_servers={server_slug: config},
         disabled_tools=[],
         cache=False,
         force_refresh=True,
     )
+
+    # 管理端已真实建连取到最新 tool 集合：广播跨进程失效，使持有旧快照的 worker
+    # 在下一次取 tools 时重建。远端新增 tool 不改变 config_hash，仅靠管理动作触发。
+    await invalidate_mcp_tools_cache(server_slug)
+    return tools
 
 
 async def inspect_mcp_server_tools(server: MCPServer) -> list:

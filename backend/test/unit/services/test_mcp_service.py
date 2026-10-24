@@ -51,6 +51,14 @@ class _FakeClient:
         return self._tools
 
 
+@pytest.fixture(autouse=True)
+def mcp_fake_redis(monkeypatch):
+    """本文件所有单测注入内存失效代数客户端；用例内再次 setattr 可覆盖为专用替身。"""
+    client = _VersionRedis()
+    monkeypatch.setattr(mcp_service, "get_async_redis_client", _fake_redis_client(client))
+    return client
+
+
 async def test_ensure_builtin_mcp_servers_removes_retired_system_server(monkeypatch, mcp_session):
     retired_server = MCPServer(
         slug="sequentialthinking",
@@ -77,6 +85,51 @@ async def test_ensure_builtin_mcp_servers_removes_retired_system_server(monkeypa
     deepwiki = await mcp_session.scalar(select(MCPServer).where(MCPServer.slug == "deepwiki-official"))
     assert retired is None
     assert deepwiki is not None
+
+
+async def test_ensure_builtin_invalidates_after_commit(monkeypatch, mcp_session):
+    """跨进程失效通知必须晚于事务 commit point，避免其他进程按未提交状态重建快照。"""
+    retired_server = MCPServer(
+        slug="sequentialthinking",
+        name="sequentialthinking",
+        description="old builtin",
+        transport="streamable_http",
+        url="https://remote.mcpservers.org/sequentialthinking/mcp",
+        enabled=1,
+        created_by="system",
+        updated_by="system",
+    )
+    mcp_session.add(retired_server)
+    await mcp_session.commit()
+
+    events: list[str] = []
+
+    class _RecordingRedis:
+        async def get(self, key: str):
+            return None
+
+        async def incr(self, key: str):
+            events.append("incr")
+            return 1
+
+    real_commit = mcp_session.commit
+
+    async def logged_commit():
+        events.append("commit")
+        await real_commit()
+
+    monkeypatch.setattr(mcp_session, "commit", logged_commit)
+    monkeypatch.setattr(mcp_service, "get_async_redis_client", _fake_redis_client(_RecordingRedis()))
+    monkeypatch.setattr(
+        postgres_manager.pg_manager,
+        "get_async_session_context",
+        lambda: _AsyncSessionContext(mcp_session),
+    )
+
+    await mcp_service.ensure_builtin_mcp_servers_in_db()
+
+    assert events[0] == "commit"
+    assert "incr" in events
 
 
 @pytest.mark.parametrize("slug", ["sequentialthinking", "deepwiki"])
@@ -353,6 +406,116 @@ async def test_get_mcp_tools_rebuilds_cache_when_config_hash_changes(monkeypatch
     assert [tool.name for tool in tools_v1_second] == ["tool_for_demo-v1"]
     assert [tool.name for tool in tools_v2] == ["tool_for_demo-v2"]
     assert build_calls == ["demo-v1", "demo-v2"]
+
+    mcp_service.clear_mcp_cache()
+
+
+class _VersionRedis:
+    """内存版失效代数客户端，支持 get/incr，供单测隔离真实 Redis。"""
+
+    def __init__(self):
+        self.values: dict[str, str] = {}
+
+    async def get(self, key: str):
+        return self.values.get(key)
+
+    async def incr(self, key: str):
+        value = int(self.values.get(key, "0")) + 1
+        self.values[key] = str(value)
+        return value
+
+
+def _fake_redis_client(client):
+    """把已建好的替身包装成 get_async_redis_client。"""
+
+    async def _get_client():
+        return client
+
+    return _get_client
+
+
+async def _stub_demo(monkeypatch, remote_tools, build_calls):
+    """stub demo server 的配置与建连；remote_tools 为可变列表以模拟远端 tool 集演化。"""
+
+    async def fake_config(server_name: str, db=None):
+        del server_name, db
+        return {"transport": "streamable_http", "url": "demo", "disabled_tools": []}
+
+    async def fake_get_mcp_client(server_configs):
+        del server_configs
+        build_calls.append("build")
+        return _FakeClient([SimpleNamespace(name=name, metadata={}) for name in remote_tools])
+
+    monkeypatch.setattr(mcp_service, "get_enabled_mcp_server_config", fake_config)
+    monkeypatch.setattr(mcp_service, "get_mcp_client", fake_get_mcp_client)
+
+
+async def test_get_mcp_tools_rebuilds_after_other_process_invalidates(monkeypatch):
+    """远端新增 tool 不改 config_hash 时，其他进程失效（版本号递增）必须使本进程重建。"""
+    mcp_service.clear_mcp_cache()
+    fake_redis = _VersionRedis()
+    monkeypatch.setattr(mcp_service, "get_async_redis_client", _fake_redis_client(fake_redis))
+    remote_tools = ["tool_1"]
+    build_calls: list[str] = []
+    await _stub_demo(monkeypatch, remote_tools, build_calls)
+
+    first = await mcp_service.get_mcp_tools("demo")
+    assert [tool.name for tool in first] == ["tool_1"]
+
+    remote_tools.append("tool_2")
+    cached = await mcp_service.get_mcp_tools("demo")
+    assert [tool.name for tool in cached] == ["tool_1"]
+
+    # 模拟另一进程（API）管理端刷新：只递增全局代数，不动本进程 dict
+    await fake_redis.incr(mcp_service.MCP_TOOLS_VERSION_KEY)
+
+    refreshed = await mcp_service.get_mcp_tools("demo")
+    assert sorted(tool.name for tool in refreshed) == ["tool_1", "tool_2"]
+    assert len(build_calls) == 2
+
+    mcp_service.clear_mcp_cache()
+
+
+async def test_invalidate_mcp_tools_cache_bumps_version_and_clears_local(monkeypatch):
+    mcp_service.clear_mcp_cache()
+    fake_redis = _VersionRedis()
+    monkeypatch.setattr(mcp_service, "get_async_redis_client", _fake_redis_client(fake_redis))
+    build_calls: list[str] = []
+    await _stub_demo(monkeypatch, ["tool_1"], build_calls)
+
+    await mcp_service.get_mcp_tools("demo")
+    assert fake_redis.values.get(mcp_service.MCP_TOOLS_VERSION_KEY) is None
+
+    # 自失效只清该 slug，其他 server 的本地快照保留
+    mcp_service._mcp_tools_cache["other:deadbeef"] = [SimpleNamespace(name="other_tool")]
+    await mcp_service.invalidate_mcp_tools_cache("demo")
+    assert fake_redis.values[mcp_service.MCP_TOOLS_VERSION_KEY] == "1"
+    assert mcp_service._mcp_tools_cache_generation == 1
+    assert all(key.startswith("other:") for key in mcp_service._mcp_tools_cache)
+
+    mcp_service.clear_mcp_cache()
+
+
+async def test_mcp_tools_cache_degrades_when_redis_unavailable(monkeypatch):
+    """Redis 不可读时保留进程内缓存（与改造前行为一致），失效调用不抛异常。"""
+    mcp_service.clear_mcp_cache()
+
+    def _boom():
+        raise ConnectionError("redis down")
+
+    monkeypatch.setattr(mcp_service, "get_async_redis_client", _boom)
+    remote_tools = ["tool_1"]
+    build_calls: list[str] = []
+    await _stub_demo(monkeypatch, remote_tools, build_calls)
+
+    await mcp_service.get_mcp_tools("demo")
+    remote_tools.append("tool_2")
+    cached = await mcp_service.get_mcp_tools("demo")
+    assert [tool.name for tool in cached] == ["tool_1"]
+    assert len(build_calls) == 1
+
+    await mcp_service.invalidate_mcp_tools_cache("demo")
+    assert mcp_service._mcp_tools_cache == {}
 
     mcp_service.clear_mcp_cache()
 

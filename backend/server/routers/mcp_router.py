@@ -11,7 +11,6 @@ from yuxi.agents.mcp.service import (
     get_all_mcp_tools,
     inspect_mcp_server_tools,
     get_mcp_server,
-    get_mcp_tools_stats,
     is_builtin_mcp_server,
     requires_mcp_transport_migration,
     set_server_enabled,
@@ -384,13 +383,13 @@ async def refresh_mcp_server_tools(
         ensure_mcp_server_runnable(server)
 
         try:
-            # 获取所有工具（不过滤 disabled_tools）
+            # 获取所有工具（不过滤 disabled_tools）；get_all_mcp_tools 成功后已广播跨进程失效
             tools = await get_all_mcp_tools(slug)
 
-            # 获取统计信息
-            stats = get_mcp_tools_stats(slug)
-            enabled_count = stats.get("enabled", len(tools)) if stats else len(tools)
-            disabled_count = stats.get("disabled", 0) if stats else 0
+            # 计数以事实闭合：远端新鲜工具列表 + DB 中的禁用名单，不读进程内统计快照
+            disabled_names = set(server.disabled_tools or [])
+            enabled_count = sum(1 for tool in tools if tool.name not in disabled_names)
+            disabled_count = len(tools) - enabled_count
 
             message = "工具列表已刷新"
             if disabled_count > 0:

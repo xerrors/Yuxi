@@ -149,3 +149,109 @@ async def test_management_connection_uses_real_protocol_and_preserves_state(test
             protocol.shutdown()
             protocol.server_close()
             protocol_thread.join(timeout=5)
+
+
+async def test_management_refresh_rebuilds_other_process_tool_cache(test_client, admin_headers):
+    """worker 进程的旧 tool 快照经 API 刷新后必须跨进程失效，不重启也能看到远端新增 tool。"""
+    from yuxi.agents.mcp import service as mcp_service
+
+    tool_count = {"n": 1}
+
+    class ProtocolHandler(BaseHTTPRequestHandler):
+        """tools/list 结果随远端状态增长，模拟 server 新增 tool 而 DB 配置不变。"""
+
+        def do_POST(self):
+            request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            method = request.get("method")
+            if "id" not in request:
+                self.send_response(202)
+                self.end_headers()
+                return
+            if method == "initialize":
+                result = {
+                    "protocolVersion": request["params"]["protocolVersion"],
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "fixture", "version": "1"},
+                }
+            elif method == "tools/list":
+                result = {
+                    "tools": [
+                        {
+                            "name": f"fixture_tool_{index}",
+                            "description": "Fixture tool",
+                            "inputSchema": {"type": "object", "properties": {}},
+                        }
+                        for index in range(tool_count["n"])
+                    ]
+                }
+            else:
+                raise AssertionError(f"Unexpected MCP method: {method}")
+            payload = json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def do_GET(self):
+            self.send_response(405)
+            self.end_headers()
+
+        def log_message(self, *_):
+            pass
+
+    protocol = ThreadingHTTPServer(("127.0.0.1", 0), ProtocolHandler)
+    protocol_thread = Thread(target=protocol.serve_forever, daemon=True)
+    protocol_thread.start()
+    slug = "pytest-mcp-refresh-" + uuid4().hex[:12]
+    server_path = f"/api/system/mcp-servers/{slug}"
+    runtime_config = {
+        "transport": "streamable_http",
+        "url": f"http://127.0.0.1:{protocol.server_port}/mcp",
+        "timeout": 5,
+        "sse_read_timeout": 5,
+    }
+    created = False
+    mcp_service.clear_mcp_cache()
+    try:
+        response = await test_client.post(
+            "/api/system/mcp-servers",
+            headers=admin_headers,
+            json={
+                "slug": slug,
+                "name": "Pytest MCP refresh",
+                "transport": "streamable_http",
+                "url": runtime_config["url"],
+                "timeout": 5,
+                "sse_read_timeout": 5,
+            },
+        )
+        assert response.status_code == 200, response.text
+        created = True
+
+        # "worker" 进程（本测试进程）经真实 MCP 客户端建立快照
+        tools = await mcp_service.get_mcp_tools(slug, additional_servers={slug: runtime_config})
+        assert [tool.name for tool in tools] == ["fixture_tool_0"]
+
+        tool_count["n"] = 2
+        cached = await mcp_service.get_mcp_tools(slug, additional_servers={slug: runtime_config})
+        assert [tool.name for tool in cached] == ["fixture_tool_0"], "未失效时远端新增 tool 不应出现在旧快照中"
+
+        # API 进程刷新：真实建连拿到 2 个 tool，并递增全局失效代数
+        refresh_response = await test_client.post(f"{server_path}/tools/refresh", headers=admin_headers)
+        assert refresh_response.status_code == 200, refresh_response.text
+        assert refresh_response.json()["tool_count"] == 2
+
+        # "worker" 下一个请求发现版本落后即重建，无需重启
+        refreshed = await mcp_service.get_mcp_tools(slug, additional_servers={slug: runtime_config})
+        assert sorted(tool.name for tool in refreshed) == ["fixture_tool_0", "fixture_tool_1"]
+    finally:
+        try:
+            if created:
+                response = await test_client.delete(server_path, headers=admin_headers)
+                assert response.status_code == 200, response.text
+        finally:
+            mcp_service.clear_mcp_cache()
+            protocol.shutdown()
+            protocol.server_close()
+            protocol_thread.join(timeout=5)

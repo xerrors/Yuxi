@@ -55,7 +55,7 @@ Content-Type: application/json
 
 共享 Skill 的 `mcp_dependencies` 声明所需服务器。Skill 激活后按需加载这些服务器的工具；预加载 Skill 从首轮加载，均无需在 Agent 的 MCP 字段重复选择。服务器必须由管理员启用，禁用的服务器不会提供工具。
 
-MCP 配置从 PostgreSQL 读取，工具对象按配置哈希缓存。修改连接配置或工具禁用列表后，下一次运行会使用新的配置键。
+MCP 配置从 PostgreSQL 读取，工具对象按配置哈希缓存在各服务进程内。修改连接配置或工具禁用列表后，下一次运行会使用新的配置键；远端 server 新增 tool 不改变配置键，由管理员在扩展页查看或刷新该服务器的工具列表时经 Redis 全局失效代数跨进程广播，worker 在下一次取工具时重建快照，无需重启服务。Redis 不可用时退化为保留现有进程内快照。机制与时序见[决策记录](../develop-guides/decisions/implemented/2026-10-07-mcp-tools-cache-cross-process-invalidation.md)。
 
 ## 内置远程 MCP
 

@@ -34,7 +34,7 @@ async def test_inspection_connects_disabled_server_without_mutating_runtime(monk
         return SimpleNamespace(get_tools=get_tools)
 
     monkeypatch.setattr(service, "MultiServerMCPClient", client)
-    cache, stats = dict(service._mcp_tools_cache), dict(service._mcp_tools_stats)
+    cache = dict(service._mcp_tools_cache)
     if outcome == "error":
         with pytest.raises(RuntimeError, match="fixture-credential"):
             await service.inspect_mcp_server_tools(server)
@@ -49,7 +49,6 @@ async def test_inspection_connects_disabled_server_without_mutating_runtime(monk
     assert "disabled_tools" not in configs[0][server.slug]
     assert server.enabled == 0 and server.disabled_tools == ["fixture_tool"]
     assert service._mcp_tools_cache == cache
-    assert service._mcp_tools_stats == stats
 
 
 @pytest.mark.asyncio
