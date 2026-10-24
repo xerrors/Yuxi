@@ -646,3 +646,59 @@ def test_rapid_ocr_resolves_model_dir_from_env(tmp_path: Path, monkeypatch: pyte
 
     assert params["Global.model_root_dir"] == str(target_dir)
     assert target_dir.exists()
+
+
+def _bundled_rapidocr_models_dir() -> Path:
+    import rapidocr
+
+    return Path(rapidocr.__file__).resolve().parent / "models"
+
+
+def _bundled_model_name(prefix: str, task, params: dict) -> str:
+    from rapidocr.inference_engine.base import FileInfo, InferSession
+
+    model_info = InferSession.get_model_url(
+        FileInfo(
+            engine_type=params[f"{prefix}.engine_type"],
+            ocr_version=params[f"{prefix}.ocr_version"],
+            task_type=task,
+            lang_type=params[f"{prefix}.lang_type"],
+            model_type=params[f"{prefix}.model_type"],
+        )
+    )
+    return Path(model_info["model_dir"]).name
+
+
+def test_rapid_ocr_requests_models_bundled_in_wheel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """离线部署无法运行时下载模型：解析器请求的 det/rec 模型必须由 rapidocr wheel 自带。"""
+    from rapidocr.utils.typings import ModelType, OCRVersion, TaskType
+
+    monkeypatch.setenv("RAPIDOCR_MODEL_DIR", str(tmp_path / "empty_models"))
+    params = RapidOCRParser()._get_model_params()
+
+    assert params["Det.ocr_version"] == OCRVersion.PPOCRV6
+    assert params["Rec.ocr_version"] == OCRVersion.PPOCRV6
+    assert params["Det.model_type"] == ModelType.SMALL
+    assert params["Rec.model_type"] == ModelType.SMALL
+
+    bundled_dir = _bundled_rapidocr_models_dir()
+    for prefix, task in (("Det", TaskType.DET), ("Rec", TaskType.REC)):
+        model_name = _bundled_model_name(prefix, task, params)
+        assert (bundled_dir / model_name).is_file(), f"{model_name} 未随 rapidocr 提供，离线部署会下载失败"
+
+
+def test_wheel_bundled_check_rejects_ppocrv5_mobile() -> None:
+    """负控：rapidocr wheel 不含 PP-OCRv5 mobile，回到 v5 配置时捆绑检查必须失败。"""
+    from rapidocr.utils.typings import EngineType, LangDet, ModelType, OCRVersion, TaskType
+
+    params = {
+        "Det.engine_type": EngineType.ONNXRUNTIME,
+        "Det.lang_type": LangDet.CH,
+        "Det.model_type": ModelType.MOBILE,
+        "Det.ocr_version": OCRVersion.PPOCRV5,
+    }
+
+    model_name = _bundled_model_name("Det", TaskType.DET, params)
+
+    assert model_name == "ch_PP-OCRv5_det_mobile.onnx"
+    assert not (_bundled_rapidocr_models_dir() / model_name).is_file()

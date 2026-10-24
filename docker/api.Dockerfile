@@ -60,9 +60,12 @@ RUN uv sync --no-cache --group test --no-dev --frozen
 COPY --chown=1000:1000 backend/server /app/server
 COPY --chown=1000:1000 docker/api-entrypoint.sh /usr/local/bin/yuxi-entrypoint
 
+# RapidOCR 解析器使用 rapidocr 包内自带的 PP-OCRv6 模型；若不预置，首次解析会联网到
+# modelscope.cn 下载且离线部署不可行，因此构建期把模型预置进 RAPIDOCR_MODEL_DIR 指向的目录。
 RUN groupadd --gid 1000 yuxi \
     && useradd --uid 1000 --gid 1000 --create-home yuxi \
     && mkdir -p /app/runtime /home/yuxi/.cache/rapidocr/models \
+    && cp "$(python -c 'import os, sysconfig; print(os.path.join(sysconfig.get_paths()["purelib"], "rapidocr", "models"))')"/*.onnx /home/yuxi/.cache/rapidocr/models/ \
     && chown -R 1000:1000 /app/runtime /home/yuxi /app/package \
     && chmod 0755 /usr/local/bin/yuxi-entrypoint
 

@@ -1,7 +1,7 @@
 """
 RapidOCR 解析器 - 纯OCR文字识别
 
-使用 RapidOCR (PP-OCRv5) 进行文字识别
+使用 RapidOCR (PP-OCRv6) 进行文字识别
 """
 
 import os
@@ -55,19 +55,20 @@ class RapidOCRParser(BaseDocumentProcessor):
         return cache_dir
 
     def _get_model_params(self) -> dict[str, object]:
+        """选择 rapidocr wheel 内自带的 PP-OCRv6 small 模型，避免解析时联网下载。"""
         model_dir = self._resolve_model_dir()
         return {
             "Global.model_root_dir": str(model_dir),
             "Det.engine_type": EngineType.ONNXRUNTIME,
             "Det.lang_type": LangDet.CH,
-            "Det.model_type": ModelType.MOBILE,
-            "Det.ocr_version": OCRVersion.PPOCRV5,
+            "Det.model_type": ModelType.SMALL,
+            "Det.ocr_version": OCRVersion.PPOCRV6,
             "Det.box_thresh": self.det_box_thresh,
             "Cls.engine_type": EngineType.ONNXRUNTIME,
             "Rec.engine_type": EngineType.ONNXRUNTIME,
             "Rec.lang_type": LangRec.CH,
-            "Rec.model_type": ModelType.MOBILE,
-            "Rec.ocr_version": OCRVersion.PPOCRV5,
+            "Rec.model_type": ModelType.SMALL,
+            "Rec.ocr_version": OCRVersion.PPOCRV6,
         }
 
     def check_health(self) -> dict:
@@ -75,9 +76,9 @@ class RapidOCRParser(BaseDocumentProcessor):
 
         return {
             "status": "healthy",
-            "message": "RapidOCR PP-OCRv5 组件可用",
+            "message": "RapidOCR PP-OCRv6 组件可用",
             "details": {
-                "ocr_version": "PP-OCRv5",
+                "ocr_version": "PP-OCRv6",
                 "engine": "onnxruntime",
                 "det_box_thresh": self.det_box_thresh,
             },
@@ -92,7 +93,7 @@ class RapidOCRParser(BaseDocumentProcessor):
 
         try:
             self.ocr = RapidOCR(params=self._get_model_params())
-            logger.info(f"RapidOCR PP-OCRv5 模型加载成功 (det_box_thresh={self.det_box_thresh})")
+            logger.info(f"RapidOCR PP-OCRv6 模型加载成功 (det_box_thresh={self.det_box_thresh})")
         except Exception as e:
             raise OCRException(f"RapidOCR模型加载失败: {str(e)}", self.get_service_name(), "load_failed")
 

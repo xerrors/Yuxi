@@ -307,9 +307,65 @@ def test_api_dockerfile_copy_chown_guard_detects_omitted_owner() -> None:
     )
     copy_lines = _api_dockerfile_app_copy_lines(broken)
 
-    assert any(
-        "backend/pyproject.toml" in line and "--chown=1000:1000" not in line for line in copy_lines
-    )
+    assert any("backend/pyproject.toml" in line and "--chown=1000:1000" not in line for line in copy_lines)
+
+
+_ENV_DIR_PATTERN = re.compile(
+    r"""RAPIDOCR_MODEL_DIR=\s*("[^"]*"|'[^']*'|[^\s]+?)(?:\s+\w+=.*|)\s*$""",
+    re.MULTILINE,
+)
+
+
+def _api_dockerfile_text() -> str:
+    return (_project_root() / "docker/api.Dockerfile").read_text(encoding="utf-8")
+
+
+def _rapidocr_compose_dirs() -> dict[str, str]:
+    dirs = {}
+    for name in ("docker-compose.yml", "docker-compose.prod.yml"):
+        env = _load_compose(name).get("x-api-worker-env") or {}
+        dirs[name] = str(env.get("RAPIDOCR_MODEL_DIR", ""))
+    return dirs
+
+
+def _rapidocr_model_preinstall_defects(dockerfile: str, compose_dirs: dict[str, str]) -> list[str]:
+    """检查镜像是否把 rapidocr 包内模型预置到 RAPIDOCR_MODEL_DIR 指向的目录，并与 Compose 注入值一致。"""
+    env_match = _ENV_DIR_PATTERN.search(dockerfile)
+    if env_match is None:
+        return ["缺少 RAPIDOCR_MODEL_DIR 配置"]
+    model_dir = env_match.group(1).strip("\"'").rstrip("/")
+
+    copy_match = re.search(r"\*\.onnx\s+(\S+?)/?\s*(?:\\\n|\n)", dockerfile)
+    if copy_match is None:
+        return [f"未把 rapidocr 包内 *.onnx 拷贝到 {model_dir}"]
+
+    copy_target = copy_match.group(1).rstrip("/")
+    if copy_target != model_dir:
+        return [f"模型拷贝目标 {copy_target} 与 RAPIDOCR_MODEL_DIR {model_dir} 不一致"]
+    for name, injected in compose_dirs.items():
+        if injected.rstrip("/") != model_dir:
+            return [f"{name} 注入的 RAPIDOCR_MODEL_DIR {injected} 与镜像预置目录 {model_dir} 不一致"]
+    return []
+
+
+def test_api_image_preinstalls_bundled_rapidocr_models() -> None:
+    """运行时联网下载 OCR 模型会拖慢首次解析且离线部署不可行，api 镜像必须预置包内模型。"""
+    assert _rapidocr_model_preinstall_defects(_api_dockerfile_text(), _rapidocr_compose_dirs()) == []
+
+
+def test_rapidocr_preinstall_guard_detects_missing_or_mismatched_copy() -> None:
+    """负控：删除拷贝步骤或拷错目录时 guard 必须报出对应缺陷。"""
+    dockerfile = _api_dockerfile_text()
+    compose_dirs = _rapidocr_compose_dirs()
+
+    without_copy = "\n".join(line for line in dockerfile.splitlines() if "*.onnx" not in line)
+    assert "未把 rapidocr 包内" in _rapidocr_model_preinstall_defects(without_copy, compose_dirs)[0]
+
+    mismatched = dockerfile.replace("*.onnx /home/yuxi/.cache/rapidocr/models/", "*.onnx /opt/rapidocr/models/")
+    assert "不一致" in _rapidocr_model_preinstall_defects(mismatched, compose_dirs)[0]
+
+    drifted = {**compose_dirs, "docker-compose.yml": "/srv/other/models"}
+    assert "docker-compose.yml 注入" in _rapidocr_model_preinstall_defects(dockerfile, drifted)[0]
 
 
 def test_workspace_owners_do_not_reintroduce_cross_uid_permission_patches() -> None:
