@@ -362,6 +362,9 @@ services:
       - "127.0.0.1:${YUXI_POSTGRES_PORT:-6432}:5432"
     image: postgres:16
     command: ["postgres", "-c", "max_connections=${POSTGRES_MAX_CONNECTIONS:-600}"]
+    # Docker 默认 /dev/shm 仅 64MiB，并行查询/hash 聚合会报
+    # could not resize shared memory segment ... No space left on device
+    shm_size: 1g
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.prod}
