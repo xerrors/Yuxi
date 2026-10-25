@@ -106,6 +106,7 @@ export default defineConfig({
           },
           { text: 'Langfuse 集成', link: '/advanced/langfuse-integration' },
           { text: 'API Key 外部集成', link: '/advanced/api-key-integration' },
+          { text: '嵌入式登录与集成', link: '/advanced/embedded-auth' }
           { text: 'Agents Public API', link: '/advanced/agents-public-api' },
           { text: 'Web 反馈接口', link: '/advanced/agent-feedback' },
           { text: 'OIDC 认证', link: '/advanced/third-party-auth' },
