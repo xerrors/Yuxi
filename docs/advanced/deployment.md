@@ -239,6 +239,19 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml logs --tail=200 a
 docker compose --env-file .env.prod -f docker-compose.prod.yml logs -f api worker
 ```
 
+### PostgreSQL 共享内存配额
+
+开发与生产 Compose 为 PostgreSQL 配置 `shm_size: 1g`，这是 `/dev/shm` 的使用上限，不是启动时预占内存。并行查询共享内存不足时，可能出现 `could not resize shared memory segment ... No space left on device`；该错误不等同于数据盘已满。
+
+已有部署修改该配置后需要重建 PostgreSQL 容器，`restart` 不会更新配额。重建会中断 API 与 worker 的数据库连接；在维护窗口停止接收任务、等待活动 Run 和后台作业收敛后执行：
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --no-deps --force-recreate postgres
+docker compose --env-file .env.prod -f docker-compose.prod.yml exec postgres df -h /dev/shm
+```
+
+确认 `/dev/shm` 容量为 1.0G、PostgreSQL 健康且 `/api/system/ready` 恢复后，再开放入口。开发环境使用同样的服务命令并去掉生产配置参数。
+
 ### Redis 重建后恢复 worker
 
 ARQ worker 不会在 Redis 容器重建后自动恢复连接。重建 Redis 后重启 worker：

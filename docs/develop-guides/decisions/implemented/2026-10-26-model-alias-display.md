@@ -32,4 +32,6 @@ Owner：frontend/src/modules/settings/model/modelDirectory.js
 | 失效后乱序完成的在途旧响应不污染共享目录 | epoch 缺失时旧响应覆盖新缓存 | `load` epoch 守卫 | `modelDirectory.test.js`「失效后乱序完成的在途旧响应不回写共享目录」 | 移除 epoch 守卫后用例失败于 `旧别名 !== 新别名`（实测）；恢复后通过 | Passed |
 | 加载期间切换 spec 不回写过期别名 | 过期结果覆盖新选中态 | `syncResolvedModelAlias` 捕获序检查 | `modelSelectorAlias.test.js`「慢目录返回期间切换 spec 时不回写过期别名」 | 移除捕获序检查后用例失败（实测 2 failed）；恢复后通过 | Passed |
 
-未验证范围：浏览器内真实页面视觉表现（浅/深色与响应式）`Not run`；引用栏"加载期间原始名变化放弃过期结果"与选择器同型，因 SSR 单实例内切换 props 受限，组件级负向用例 `Not run`（composable 层 epoch 与选择器层已覆盖同型缺陷）。
+浏览器验证：独立页面装配真实选择器与消息引用组件，所有业务请求由浏览器合成响应；浅/深色、768/1440 像素宽度及中文长别名的 DOM 与截图已核对，目录未命中与 503 错误均回退原始名称，`Passed`。
+
+未验证范围：完整登录会话中的真实后端模型目录链路 `Not run`；引用栏"加载期间原始名变化放弃过期结果"与选择器同型，因 SSR 单实例内切换 props 受限，组件级负向用例 `Not run`（composable 层 epoch 与选择器层已覆盖同型缺陷）。

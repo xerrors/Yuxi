@@ -12,11 +12,11 @@ Owner：backend/yuxi/infrastructure/document_parsing/engines/rapid_ocr.py
 
 ### 实现方案
 
-`RapidOCRParser._get_model_params()` 请求 `PP-OCRv6` + `ModelType.SMALL`（rapidocr 3.9 wheel 自带的 det/rec 模型；cls 沿用包内 PP-OCRv4 方向分类模型），health 与日志文案同步。`docker/api.Dockerfile` 在创建运行身份时把 site-packages 内 `rapidocr/models/*.onnx` 预置到 `RAPIDOCR_MODEL_DIR` 指向目录，guard 测试同时交叉校验两份 Compose 注入的 `RAPIDOCR_MODEL_DIR` 与镜像预置目录一致（漂移即失败）。依赖下限提升为 `rapidocr>=3.9.0`（v6/SMALL 枚举自 3.9 才有）。健康检查保持"不加载引擎"的行为不变。
+`RapidOCRParser._get_model_params()` 请求 `PP-OCRv6` + `ModelType.SMALL`（rapidocr 3.9 wheel 自带的 det/rec 模型；cls 沿用包内 PP-OCRv2 方向分类模型），health 与日志文案同步。`docker/api.Dockerfile` 在创建运行身份时把 site-packages 内 `rapidocr/models/*.onnx` 预置到 `RAPIDOCR_MODEL_DIR` 指向目录，guard 测试同时交叉校验两份 Compose 注入的 `RAPIDOCR_MODEL_DIR` 与镜像预置目录一致（漂移即失败）。依赖下限提升为 `rapidocr>=3.9.0`（v6/SMALL 枚举自 3.9 才有）。健康检查保持"不加载引擎"的行为不变。
 
 ## 替代方案
 
-- 构建期预下载 PP-OCRv5 的 det/rec ONNX：拒绝。需为每个 rapidocr 版本维护 URL 与 SHA256，模型仍不在依赖闭包里，且 3.9 起的 API 本就不提供 v5 资源。
+- 构建期预下载 PP-OCRv5 的 det/rec ONNX：拒绝。需为每个 rapidocr 版本维护 URL 与 SHA256，模型仍不在依赖闭包里，3.9.2 仍保留 v5 下载定义，但 wheel 未预置对应模型。
 - 给 `~/.cache/rapidocr` 挂持久卷：拒绝。保留运行时网络依赖，只是把首次下载推迟到部署机，离线环境仍失败。
 - 让 `check_health()` 真正实例化引擎：拒绝作为本次修复。它能提前暴露问题，但不能让离线环境解析成功，还会让配置页刷新反复加载模型。
 
@@ -33,7 +33,7 @@ Owner：backend/yuxi/infrastructure/document_parsing/engines/rapid_ocr.py
 | 解析器请求的 det/rec 模型由 wheel 自带，无需下载 | 运行时联网 modelscope 下载，离线失败 | `_get_model_params` | `test/unit/knowledge/test_rapid_ocr_models.py::test_rapid_ocr_requests_models_bundled_in_wheel`（3.9.2 wheel 实测含 `PP-OCRv6_det_small.onnx`/`PP-OCRv6_rec_small.onnx`） | `::test_wheel_bundled_check_rejects_ppocrv5_mobile`：回退 v5+MOBILE 时 wheel 中不存在对应 ONNX，检查在正确原因上失败 | Passed |
 | api 镜像预置且与 Compose 注入目录一致 | 目录为空或两处配置漂移使预置失效 | `docker/api.Dockerfile` + Compose `x-api-worker-env` | `test/unit/config/test_docker_compose_service_boundaries.py::test_api_image_preinstalls_bundled_rapidocr_models` | `::test_rapidocr_preinstall_guard_detects_missing_or_mismatched_copy`：删除拷贝步骤、拷错目录、改任一侧 `RAPIDOCR_MODEL_DIR` 时分别报对应缺陷 | Passed |
 | 预置目录下加载引擎零网络请求并真实识别 | 首次解析隐式联网 | rapidocr DownloadFile SHA 命中跳过 | 预置 3 个包内 ONNX 到临时目录、`HTTP(S)_PROXY` 指向黑洞后 `RapidOCRParser().process_image("test/data/测试图片.png")` 成功识别中文（模型日志 `File exists and is valid`） | 同条件空目录请求 v5 抛 `DownloadFileException`（modelscope URL）——缺陷存在性 | Passed |
-| 依赖下限与代码匹配 | 非 lock 环境安装 3.8 缺枚举/模型 | `pyproject.toml` / lock | `rapidocr>=3.9.0`；`uv lock` 仅更新该 specifier；`uv lock --check` 通过 | 3.8.4 wheel 实测无 v6 模型与枚举 | Passed |
+| 依赖下限与代码匹配 | 非 lock 环境安装 3.8 缺枚举/模型 | `pyproject.toml` / lock | `rapidocr>=3.9.0`；lock 同时包含[文本解码](2026-10-26-parser-text-encoding.md)使用的 chardet 直接依赖及 typer marker 规范化；`uv lock --check` 通过 | 3.8.4 wheel 实测无 v6 模型与枚举 | Passed |
 | 回归 | 既有解析行为漂移 | `test/unit/knowledge`、boundaries | `pytest test/unit/knowledge` → 390 passed / 1 skipped；rapidocr guard 2 passed；`ruff check`/`format` 干净 | 不适用 | Passed |
 
 未验证范围：无出口网络目标环境的端到端 PDF 入库 `Not run`；v5/v6 同批文档逐份文本对比未做（发布说明口径差异已声明）。
