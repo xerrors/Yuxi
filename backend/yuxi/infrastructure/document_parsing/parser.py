@@ -57,7 +57,6 @@ _OFFICE_BACKENDS = {
     ".docx": (InputFormat.DOCX, WordDocumentBackend),
     ".pptx": (InputFormat.PPTX, MsPowerpointDocumentBackend),
     ".xlsx": (InputFormat.XLSX, MsExcelDocumentBackend),
-    ".xls": (InputFormat.XLS, MsExcelDocumentBackend),
 }
 _docling_office_lock = threading.Lock()
 
@@ -92,7 +91,7 @@ def _convert_document(source: Path, output_dir: Path, options: ParseOptions) -> 
     elif suffix in (".docx", ".pptx", ".xlsx"):
         markdown = _convert_with_docling(source, output_dir)
     elif suffix == ".xls":
-        markdown = _convert_xls_to_markdown(source)
+        markdown = _convert_legacy_excel_to_markdown(source)
     elif suffix == ".csv":
         markdown = _convert_csv_to_markdown(source)
     elif suffix in (".html", ".htm"):
@@ -218,12 +217,42 @@ def _convert_csv_to_markdown(file_path: Path) -> str:
     return "\n\n".join(tables)
 
 
-def _convert_xls_to_markdown(file_path: Path) -> str:
-    """使用 pandas + xlrd 解析旧版 .xls 文件并转为 Markdown（Docling 不支持该格式）。"""
-    import pandas as pd
+def _convert_legacy_excel_to_markdown(file_path: Path) -> str:
+    """按真实文件头解析 .xls，兼容常见的"伪 xls"。
 
-    # 文档提取不假定首行是表头，也不把文本编号和 NA 等字面值转换成分析数据。
-    sheet_map = pd.read_excel(file_path, engine="xlrd", sheet_name=None, header=None, dtype=object, keep_default_na=False)
+    WPS 与各类网页系统导出的 `.xls` 实际可能是 xlsx 改名、XML Spreadsheet 2003 或
+    网页表格另存，而 xlrd 只认旧版 BIFF 二进制；扩展名直读会让这些文件原样抛出底层
+    英文异常并落为解析失败。嗅探失败时给出可执行的中文错误。
+    """
+    with file_path.open("rb") as handle:
+        head = handle.read(8)
+
+    if head.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+        return _convert_xls_to_markdown(file_path)
+    if head.startswith(b"PK\x03\x04"):
+        return _convert_xlsx_workbook_to_markdown(file_path)
+    if head[:2] in (b"\xff\xfe", b"\xfe\xff") or head.lstrip(b" \t\r\n\xef\xbb\xbf").startswith(b"<"):
+        raw = file_path.read_bytes()
+        text = _decode_legacy_markup(raw, file_path.name)
+        if "schemas-microsoft-com:office:spreadsheet" in text:
+            return _convert_spreadsheetml_to_markdown(text, file_path.name)
+        return _convert_html_tables_to_markdown(text, file_path.name)
+    raise ValueError(f"{file_path.name} 不是可识别的 Excel 工作簿，请在 WPS/Excel 中另存为 .xlsx 后重新上传")
+
+
+def _decode_legacy_markup(raw: bytes, filename: str) -> str:
+    """解码 markup 类 .xls（SpreadsheetML/HTML）的声明编码；不依赖其它解码模块。"""
+    for encoding in ("utf-8-sig", "utf-16", "gb18030"):
+        try:
+            return raw.decode(encoding)
+        except (UnicodeDecodeError, UnicodeError):
+            continue
+    logger.warning(f"{filename} 声明的编码无法解码，按 UTF-8 替换兜底")
+    return raw.decode("utf-8", errors="replace")
+
+
+def _render_sheet_map_to_markdown(sheet_map: dict, filename: str) -> str:
+    """把工作表字典渲染为 Markdown；无任何非空表时显式失败，不产出空文档。"""
     blocks: list[str] = []
     for sheet_name, dataframe in sheet_map.items():
         if dataframe.empty:
@@ -231,4 +260,65 @@ def _convert_xls_to_markdown(file_path: Path) -> str:
         if len(sheet_map) > 1:
             blocks.append(f"## {sheet_name}")
         blocks.append(dataframe.to_markdown(index=False, headers=[""] * len(dataframe.columns), disable_numparse=True))
+    if not blocks:
+        raise ValueError(f"{filename} 未解析出任何表格内容，工作簿可能为空")
     return "\n\n".join(blocks)
+
+
+def _convert_xls_to_markdown(file_path: Path) -> str:
+    """使用 pandas + xlrd 解析旧版 BIFF .xls 文件并转为 Markdown（Docling 不支持该格式）。"""
+    import pandas as pd
+
+    # 文档提取不假定首行是表头，也不把文本编号和 NA 等字面值转换成分析数据。
+    sheet_map = pd.read_excel(file_path, engine="xlrd", sheet_name=None, header=None, dtype=object, keep_default_na=False)
+    return _render_sheet_map_to_markdown(sheet_map, file_path.name)
+
+
+def _convert_xlsx_workbook_to_markdown(file_path: Path) -> str:
+    """解析 zip 容器（以 .xls 命名的 xlsx）：openpyxl 读取，渲染口径与 BIFF 路径一致。"""
+    import pandas as pd
+
+    sheet_map = pd.read_excel(file_path, engine="openpyxl", sheet_name=None, header=None, dtype=object, keep_default_na=False)
+    return _render_sheet_map_to_markdown(sheet_map, file_path.name)
+
+
+def _convert_spreadsheetml_to_markdown(text: str, filename: str) -> str:
+    """解析 XML Spreadsheet 2003（WPS/Excel 早期另存格式）为 Markdown 网格。"""
+    import xml.etree.ElementTree as ET
+
+    import pandas as pd
+
+    ns = "urn:schemas-microsoft-com:office:spreadsheet"
+    sheet_map: dict[str, pd.DataFrame] = {}
+    for worksheet in ET.fromstring(text).findall(f"{{{ns}}}Worksheet"):
+        sheet_name = worksheet.get(f"{{{ns}}}Name", "")
+        rows: list[list[str]] = []
+        width = 0
+        for row in worksheet.findall(f".//{{{ns}}}Row"):
+            cells: list[str] = []
+            for cell in row.findall(f"{{{ns}}}Cell"):
+                index = cell.get(f"{{{ns}}}Index")
+                if index is not None:
+                    cells.extend([""] * (int(index) - len(cells) - 1))
+                data = cell.find(f"{{{ns}}}Data")
+                cells.append((data.text or "") if data is not None else "")
+                cells.extend([""] * int(cell.get(f"{{{ns}}}MergeAcross") or 0))
+            rows.append(cells)
+            width = max(width, len(cells))
+        grid = [row + [""] * (width - len(row)) for row in rows]
+        sheet_map[sheet_name] = pd.DataFrame(grid, columns=range(width)) if grid else pd.DataFrame()
+    return _render_sheet_map_to_markdown(sheet_map, filename)
+
+
+def _convert_html_tables_to_markdown(text: str, filename: str) -> str:
+    """解析网页另存的 .xls（HTML 表格）：read_html 保留 <th> 表头。"""
+    import io
+
+    import pandas as pd
+
+    tables = [table for table in pd.read_html(io.StringIO(text)) if not table.empty]
+    if not tables:
+        raise ValueError(f"{filename} 未解析出任何表格内容，页面可能不含数据表")
+    if len(tables) == 1:
+        return tables[0].to_markdown(index=False, disable_numparse=True)
+    return "\n\n".join(f"## 表 {i + 1}\n\n{table.to_markdown(index=False, disable_numparse=True)}" for i, table in enumerate(tables))
