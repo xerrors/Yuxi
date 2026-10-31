@@ -207,7 +207,10 @@ PR 由无路径过滤的 `.github/workflows/ci.yml` 调用可复用质量工作�
 | 初始化、Schema/关系约束、Input/FIFO、Run lease、反馈、协作持久化、OAuth 和局部 HTTP | 临时 PostgreSQL、Redis、文件与测试自建 HTTP 服务 | `service-integration.yml` → `scripts/ci/run_service_integration.sh` |
 | 附件服务持久化与对象读写 | PostgreSQL、MinIO 与文件系统；测试主体无需 VM | `system-tests.yml` 中附件服务步骤，随完整拓扑执行 |
 | API readiness、正式 worker 启动恢复、Agent E2E 和沙盒隔离 | 完整 Compose 拓扑、container runner 与 sandbox 镜像 | `system-tests.yml` 的两个 ubuntu-24.04 job，使用 `container` profile，执行完整测试 |
+| 真实供应商 Agent SSE 与持久结果 | 临时托管执行器、完整 Compose 拓扑和 `SILICONFLOW_API_KEY` 仓库 Secret | `real-provider-probe.yml`，仅手动运行 |
 | GitHub 托管机器的 KVM/Cube 兼容性探针 | KVM、临时 XFS、Cube 安装、正式模板和共享挂载 | `cube-hosted-probe.yml`，仅手动运行 |
+
+真实供应商探针在明确的外部配额或限流错误时会跳过用例；必须核对 pytest 结果，不能把跳过当作真实模型通过。
 
 独立服务 job 使用一次性数据库，运行应用初始化并创建基线测试管理员后执行已有集成测试；显式选择 container 配置，共享 API、container runner 与 Cube 地址固定为不可达，用真实数据库结果证明独立性。该入口会写入数据库及 Skill 目录，本地复用时必须提供独立的 `POSTGRES_URL`、`REDIS_URL` 与 `YUXI_SKILL_DATA_DIR`，并使用没有 `backend/.env` 的干净 checkout，禁止指向运行中的业务环境。基线管理员保留在临时库中，测试账号的创建、修改和清理继续受数据库的最后管理员约束保护。
 

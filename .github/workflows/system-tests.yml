@@ -40,10 +40,10 @@ env:
   E2E_PASSWORD: ci-e2e-password-at-least-eight
 
 jobs:
-  # 后台作业 验证与主链路互斥（会停 api/worker 并强制重建 Milvus），
-  # 单独成 job 与主链路并行；两个 job 共享层缓存，各自持有完整拓扑。
+  # 后台作业验证会重建 api/worker 和 Milvus；其独立拓扑也执行检索测试。
+  # 两个 job 各自持有完整拓扑，并共享镜像层缓存。
   background-job-worker-path:
-    name: 后台作业 worker path
+    name: 后台作业与检索
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -178,6 +178,8 @@ jobs:
           docker compose exec -T api uv run --no-sync --no-dev pytest --junitxml=test/ci-reports/system-05.xml --durations=20 \
             test/integration/graphs/test_file_graph_clear.py \
             test/integration/services/test_knowledge_document_resets.py -q
+      - name: Verify Milvus 3 text retrieval through worker
+        run: docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD api uv run --no-sync --no-dev pytest --junitxml=test/ci-reports/system-19.xml --durations=20 test/e2e/test_milvus_text_retrieval_e2e.py -q
       - name: Make container test reports readable
         if: always()
         run: sudo chown -R "$(id -u):$(id -g)" backend/test/ci-reports
@@ -218,18 +220,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Prepare Compose environment
-        run: |
-          bash scripts/ci/prepare_system_tests_env.sh
-          python3 - <<'PYKEY'
-          import base64
-          import secrets
-          from pathlib import Path
-
-          path = Path(".env")
-          lines = [line for line in path.read_text().splitlines() if not line.startswith("YUXI_ENCRYPTION_KEY=")]
-          lines.append("YUXI_ENCRYPTION_KEY=" + base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())
-          path.write_text("\n".join(lines) + "\n")
-          PYKEY
+        run: bash scripts/ci/prepare_system_tests_env.sh
       - name: Restore api image layer cache
         id: api-cache
         uses: actions/cache/restore@v4
@@ -418,8 +409,6 @@ jobs:
         run: docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD api uv run --no-sync --no-dev pytest --junitxml=test/ci-reports/system-17.xml --durations=20 test/e2e/test_agent_bound_skill_e2e.py -q
       - name: Verify atomic Agent creation with Skill and MCP
         run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest --junitxml=test/ci-reports/system-18.xml --durations=20 test/integration/api/test_agent_create_resources.py -q
-      - name: Verify Milvus 3 text retrieval through worker
-        run: docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD api uv run --no-sync --no-dev pytest --junitxml=test/ci-reports/system-19.xml --durations=20 test/e2e/test_milvus_text_retrieval_e2e.py -q
       - name: Verify Agent knowledge MCP tools and sources
         run: docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD api uv run --no-sync --no-dev pytest --junitxml=test/ci-reports/system-20.xml --durations=20 test/e2e/test_knowledge_mcp_agent.py -q
       - name: Verify Input attachment persistence and object storage
