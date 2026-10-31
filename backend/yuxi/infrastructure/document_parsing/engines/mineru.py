@@ -13,7 +13,6 @@ import httpx
 from yuxi.infrastructure.document_parsing import DocumentParserException
 from yuxi.infrastructure.document_parsing.artifacts import extract_markdown_archive
 from yuxi.infrastructure.document_parsing.engines import DocumentEngine
-from yuxi.infrastructure.document_parsing.mineru_options import migrate_mineru_options
 from yuxi.infrastructure.observability.logging import logger
 
 
@@ -53,7 +52,7 @@ class MinerUParser(DocumentEngine):
         if not self.supports_file_type(source.suffix.lower()):
             raise DocumentParserException(f"不支持的文件类型: {source.suffix}", self.engine_id, "unsupported_file_type")
         try:
-            options = migrate_mineru_options(params or {})
+            options = params or {}
             manifest = self._build_manifest(source, options)
             budget = float(options.get("timeout_seconds", os.environ.get("MINERU_TIMEOUT", 1800)))
             if not math.isfinite(budget) or budget <= 0:
@@ -136,20 +135,9 @@ class MinerUParser(DocumentEngine):
                 yield chunk
 
     def _build_manifest(self, source: Path, params: dict[str, Any]) -> dict[str, Any]:
-        """只发送 4.1 参数，拒绝无法等价迁移的旧协议选项。"""
-        removed = {
-            "lang_list",
-            "formula_enable",
-            "table_enable",
-            "image_analysis",
-            "server_url",
-            "start_page_id",
-            "end_page_id",
-        }.intersection(params)
-        if removed:
-            raise ValueError(f"MinerU 4.1 不再支持参数 {', '.join(sorted(removed))}；页范围请使用 page_range")
+        """从本次解析参数构造 4.1 Tasks 请求。"""
         tier = params.get("tier", self.tier)
-        ocr_mode = params.get("ocr_mode", params.get("parse_method", "auto"))
+        ocr_mode = params.get("ocr_mode", "auto")
         if tier not in {"flash", "basic", "standard", "advanced"}:
             raise ValueError("不支持的 MinerU tier")
         if ocr_mode not in {"auto", "txt", "ocr"}:

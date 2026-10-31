@@ -10,8 +10,6 @@ import httpx
 from yuxi.infrastructure.document_parsing import DocumentParserException, ParseOptions
 from yuxi.infrastructure.document_parsing.parser import parse
 from yuxi.infrastructure.document_parsing.engines.mineru import MinerUParser
-from yuxi.infrastructure.document_parsing.engines.pp_structure_v3 import PPStructureV3Parser
-from yuxi.infrastructure.document_parsing.mineru_options import migrate_mineru_options
 
 
 @pytest.fixture
@@ -71,9 +69,7 @@ def wire(monkeypatch, tmp_path):
     return state, MinerUParser(base + "/"), source, tmp_path / "output"
 
 
-@pytest.mark.parametrize(
-    ("params", "tier"), [({}, "standard"), ({"tier": "advanced"}, "advanced"), ({"backend": "hybrid-engine", "effort": "high"}, "advanced")]
-)
+@pytest.mark.parametrize(("params", "tier"), [({}, "standard"), ({"tier": "advanced"}, "advanced")])
 def test_tasks_upload_and_publish_complete_result(wire, params, tier):
     """请求字段与返回的真实 Markdown/图片字节共同证明完整转换。"""
     state, parser, source, output = wire
@@ -89,6 +85,25 @@ def test_tasks_upload_and_publish_complete_result(wire, params, tier):
     assert text == "# Parsed\n![chart](images/images/chart.png)"
     assert (output / "images/images/chart.png").read_bytes() == b"fixture-image"
     assert not state["canceled"]
+
+
+def test_shared_params_do_not_change_mineru_manifest(wire):
+    """通用解析参数中的旧字段不改变新协议请求或阻止解析。"""
+    state, parser, source, output = wire
+    parser.tier = "basic"
+    text = parser.process_file(
+        str(source),
+        output,
+        {"backend": "hybrid-engine", "effort": "high", "parse_method": "ocr", "formula_enable": False, "start_page_id": 2},
+    )
+    assert state["manifest"] == {
+        "files": [{"file_name": "report.pdf", "bytes": 15}],
+        "tier": "basic",
+        "ocr_mode": "auto",
+        "page_range": "all",
+        "output_formats": ["default"],
+    }
+    assert text == "# Parsed\n![chart](images/images/chart.png)"
 
 
 def test_cached_source_needs_no_upload(wire):
@@ -176,38 +191,16 @@ def test_unknown_creation_outcome_is_not_retried(wire):
     [
         {"tier": "invalid"},
         {"ocr_mode": "invalid"},
-        {"formula_enable": False},
-        {"start_page_id": 2},
         {"timeout_seconds": 0},
         {"timeout_seconds": float("inf")},
-        {"backend": "pipeline"},
-        {"effort": "extreme"},
     ],
 )
-def test_invalid_or_removed_options_fail_before_submission(wire, params):
-    """不能把不可支持的旧选项静默丢弃或创建错误档位的任务。"""
+def test_invalid_task_params_fail_before_submission(wire, params):
+    """当前协议参数无效时不能创建任务。"""
     state, parser, source, output = wire
     with pytest.raises(DocumentParserException):
         parser.process_file(str(source), output, params)
     assert state["manifest"] is None
-
-
-@pytest.mark.parametrize(
-    ("values", "expected"),
-    [
-        ({"backend": "hybrid-engine", "effort": "high"}, "advanced"),
-        ({"backend": "hybrid-engine", "effort": "medium"}, "standard"),
-        ({"backend": "vlm-engine", "effort": "high"}, "standard"),
-        ({"tier": "basic", "backend": "old-unknown"}, "basic"),
-    ],
-)
-def test_legacy_options_migrate_once_and_preserve_other_fields(values, expected):
-    """只迁移拥有明确语义的旧字段，显式新档位和其他字段不被覆盖。"""
-    source = {**values, "server_url": "https://example.com/prefix"}
-    result = migrate_mineru_options(source)
-    assert result == {"tier": expected, "server_url": source["server_url"]}
-    assert migrate_mineru_options(result) == result
-    assert source == {**values, "server_url": "https://example.com/prefix"}
 
 
 def test_health_checks_tasks_and_requested_tier(wire):
@@ -220,15 +213,6 @@ def test_health_checks_tasks_and_requested_tier(wire):
     assert "4.1" in parser.check_health()["message"]
     state["health"] = []
     assert parser.check_health()["status"] == "unhealthy"
-
-
-def test_unconfigured_paddlex_never_contacts_localhost(monkeypatch):
-    """移除内置服务后，缺配置不能意外调用其他 localhost 服务。"""
-    monkeypatch.setattr("requests.post", lambda *a, **kw: pytest.fail("must not contact a default service"))
-    parser = PPStructureV3Parser()
-    assert parser.check_health()["status"] == "unavailable"
-    with pytest.raises(DocumentParserException, match="地址未配置"):
-        parser._call_layout_api("unused.pdf")
 
 
 @pytest.mark.parametrize("slow_stage", ["create", "download"])

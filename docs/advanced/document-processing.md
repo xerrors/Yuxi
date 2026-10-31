@@ -53,13 +53,13 @@ YUXI_URL_WHITELIST=github.com,docs.example.com,*.wikipedia.org
 | MinerU 官方云服务 | MinerU 云服务 | 使用现有官方 v4 API，无需本地 GPU |
 | PaddleOCR-VL-1.6 | 百度 AI Studio 云服务 | 文档版面解析，输出 Markdown |
 | PP-OCRv6 | 百度 AI Studio 云服务 | 基础 OCR，输出纯文本 |
+| PP-StructureV3 | 百度 AI Studio 云服务 | 文档版面解析，输出 Markdown，与 PaddleOCR-VL、PP-OCRv6 共用配置 |
 | DeepSeek OCR | SiliconFlow API | 使用 SiliconFlow 的 DeepSeek OCR 模型 |
 | MinerU 自托管 | 可选 GPU 服务 | 社区 4.1 Tasks，文件保留在自行维护的服务内 |
-| PP-Structure-V3 | 外接服务 | 保留 HTTP 接入，Yuxi 不附带 PaddleX 部署 |
 
 需要轻量部署时，配置云服务凭证即可，不必启用 `all` profile。云服务会接收待解析文件；需要离线或私有化处理时，选择 RapidOCR 或自托管 MinerU。
 
-系统内部引擎 ID 为 `rapid_ocr`、`mineru_ocr`、`mineru_official`、`pp_structure_v3_ocr`、`deepseek_ocr`、`paddleocr_vl_1_6` 和 `paddleocr_pp_ocrv6`。页面中的健康状态只表示配置或服务探测结果，真正解析时仍会验证凭证和接口。
+系统内部引擎 ID 为 `rapid_ocr`、`mineru_ocr`、`mineru_official`、`deepseek_ocr`、`paddleocr_vl_1_6`、`paddleocr_pp_ocrv6` 和 `paddleocr_pp_structure_v3`。页面中的健康状态只表示配置或服务探测结果，真正解析时仍会验证凭证和接口。
 
 登录用户通过 `/api/system/ocr/health` 获取各引擎的状态和固定说明。`configured` 只表示凭据已配置，解析时仍会验证；响应中的 `details` 为空，不包含提供者原始消息、内部服务地址或凭据。配置检查或调用抛出异常时返回 `error`，具体异常记录在服务端日志。
 
@@ -116,17 +116,7 @@ API/worker 默认使用 `MINERU_API_URI=http://mineru-api:30001`。外接实例�
 
 `ocr_mode` 接受 `auto`、`txt`、`ocr`；`page_range` 默认 `all`。等待预算包含任务排队和结果下载，默认 1800 秒，也可由 API/worker 的 `MINERU_TIMEOUT` 设置。超时或协议错误会尝试取消已知任务并返回失败；创建结果未知时不自动重试。服务重启后的任务恢复和调用方取消的即时传播不在当前保证范围内。
 
-升级时先更新自托管服务，再重建 API/worker 并运行 Compose 的 `app-init`。初始化幂等迁移数据库中的旧 `backend`/`effort`：Hybrid + high 转为 `advanced`，其余已支持组合转为 `standard`；已有 `tier` 优先，服务地址保留。历史单次参数执行相同映射，`parse_method` 兼容为 `ocr_mode`。这是计算投入的迁移政策，不保证新旧结果质量等价。旧 `lang_list`、`formula_enable`、`table_enable`、`image_analysis`、`server_url` 和页码起止参数不再接受；页范围改用 `page_range`。旧 `/file_parse` 服务必须升级后才能继续解析。
-
-### PP-Structure-V3 外接服务
-
-Yuxi 保留 `/layout-parsing` HTTP 接入，内置 PaddleX 镜像、流水线与 Compose 服务已移除。已有外部服务可在 OCR 设置中填写地址，或给 API/worker 设置：
-
-```bash
-PADDLEX_URI=https://ocr.example.com
-```
-
-地址未配置时明确显示不可用。需要无 GPU 部署时，可选择下面的 PaddleOCR 云端引擎。升级不会自动修改系统默认引擎；如果原来选用内置 PP-Structure-V3，需要配置外接地址或改选其他引擎。
+升级时先更新自托管服务，再重建 API/worker 并运行 Compose 的 `app-init`。初始化幂等迁移数据库中 `mineru_ocr_host_opts` 的旧 `backend`/`effort`：Hybrid + high 转为 `advanced`，其余已支持组合转为 `standard`；已有 `tier` 优先，服务地址保留。这是计算投入的迁移政策，不保证新旧结果质量等价。单次解析只读取上列新协议参数。旧 `/file_parse` 服务必须升级后才能继续解析。
 
 ### DeepSeek OCR
 
@@ -141,7 +131,9 @@ PADDLEOCR_API_TOKEN=<your-paddleocr-token>
 PADDLEOCR_API_URL=https://paddleocr.aistudio-app.com/api/v2/ocr/jobs
 ```
 
-`PADDLEOCR_API_URL` 可省略，默认使用上面的地址。`PaddleOCR-VL-1.6` 和 `PP-OCRv6` 共用这组配置；前者输出 Markdown，后者输出纯文本。
+`PADDLEOCR_API_URL` 可省略，默认使用上面的地址。`PaddleOCR-VL-1.6`、`PP-OCRv6` 和 `PP-StructureV3` 共用这组配置。两个版面模型输出 Markdown 和图片，PP-OCRv6 输出纯文本；接口及模型见[官网说明](https://www.paddleocr.ai/latest/en/version3.x/inference_deployment/serving/paddleocr_official_api/python.html)。
+
+内置 PaddleX 部署与旧 `/layout-parsing` 外接服务均已移除，`PADDLEX_URI` 不再生效。`app-init` 删除旧 `pp_structure_v3_ocr_host_opts` 配置；旧引擎 ID `pp_structure_v3_ocr` 明确报不支持，不自动转换为云端。原默认引擎或文件解析设置使用该 ID 时，管理员须重新选择云端 PP-StructureV3 或其他引擎，再执行解析。
 
 ## 分块参数和配置快照
 

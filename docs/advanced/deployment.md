@@ -111,7 +111,7 @@ Compose 自动创建缺失的挂载目录，`storage-init` 在无网络、无平
 
 API、Web 与 MinIO 的项目文件在构建时明确权限：源码和配置归 root 持有，普通文件可读、目录可进入、入口脚本可执行；API 与 worker 仍以 `1000:1000` 运行，仅在专用数据与运行目录写入。构建输入的 `600/700` 模式不会使镜像内的项目文件失去可读性。开发 Compose 的源码 bind mount 使用宿主文件实际权限，宿主 checkout 仍须允许容器用户读取与遍历；镜像权限不会覆盖挂载内容。实现与回归入口见[权限决策](../develop-guides/decisions/implemented/2026-10-17-container-storage-permissions.md)。
 
-需要自托管 MinerU 时，再启用 `all` profile；云端与外接服务配置见[文档处理与 OCR](./document-processing.md)：
+需要自托管 MinerU 时，再启用 `all` profile；云端与自托管服务配置见[文档处理与 OCR](./document-processing.md)：
 
 ```bash
 docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container --profile all up -d --build

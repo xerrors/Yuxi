@@ -21,7 +21,6 @@ x-api-worker-env: &api-worker-env
   MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
   # 文档解析
   MINERU_API_URI: ${MINERU_API_URI:-http://mineru-api:30001}
-  PADDLEX_URI: ${PADDLEX_URI:-}
   # 沙盒后端：cube 使用执行节点 VM，container 使用独立 runner 的临时容器
   SANDBOX_BACKEND: ${SANDBOX_BACKEND:-container}
   SANDBOX_RUNNER_URL: ${SANDBOX_RUNNER_URL:-http://sandbox-runner:8090}

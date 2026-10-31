@@ -61,28 +61,10 @@ mineru_official_api_opts = Option(
     },
 )
 
-pp_structure_v3_ocr_host_opts = Option(
-    key="pp_structure_v3_ocr_host_opts",
-    name="PP-Structure-V3 服务",
-    description="连接自行维护的 PP-Structure-V3 服务；Yuxi 不附带 PaddleX 部署。",
-    params={
-        "fields": [
-            {
-                "key": "server_url",
-                "label": "服务地址",
-                "type": "url",
-                "environment": "PADDLEX_URI",
-                "placeholder": "https://ocr.example.com",
-                "help": "填写外部服务地址，或通过 PADDLEX_URI 设置；未配置时不可用。",
-            }
-        ]
-    },
-)
-
 paddleocr_api_opts = Option(
     key="paddleocr_api_opts",
     name="PaddleOCR API",
-    description="PaddleOCR-VL 和 PP-OCRv6 共用此配置。",
+    description="PaddleOCR-VL、PP-OCRv6 和 PP-StructureV3 共用此配置。",
     params={
         "fields": [
             {
@@ -108,8 +90,8 @@ paddleocr_api_opts = Option(
 OCR_ENGINE_OPTIONS = {
     "mineru_ocr": mineru_ocr_host_opts,
     "mineru_official": mineru_official_api_opts,
-    "pp_structure_v3_ocr": pp_structure_v3_ocr_host_opts,
     "paddleocr_vl_1_6": paddleocr_api_opts,
     "paddleocr_pp_ocrv6": paddleocr_api_opts,
+    "paddleocr_pp_structure_v3": paddleocr_api_opts,
 }
 DOCUMENT_OPTIONS = tuple({option.key: option for option in OCR_ENGINE_OPTIONS.values()}.values())

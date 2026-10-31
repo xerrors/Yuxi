@@ -142,14 +142,16 @@ async def test_ocr_options_and_config_options_permissions(
     configs_response = await test_client.get("/api/system/config/options", headers=admin_headers)
     assert configs_response.status_code == 200, configs_response.text
     configs = configs_response.json()["options"]
-    assert {item["key"] for item in configs} == {
+    assert set(options["option_keys"]) == {
         "mineru_ocr_host_opts",
         "mineru_official_api_opts",
-        "pp_structure_v3_ocr_host_opts",
         "paddleocr_api_opts",
-        "remote_skill_source_policy",
     }
-    assert all("deepseek" not in item["key"] for item in configs)
+    config_keys = {item["key"] for item in configs}
+    assert set(options["option_keys"]).issubset(config_keys)
+    assert {"pp_structure_v3_ocr_host_opts", "deepseek_ocr_host_opts"}.isdisjoint(config_keys)
+    assert "paddleocr_pp_structure_v3" in {engine["engine_id"] for engine in options["engines"]}
+    assert "pp_structure_v3_ocr" not in {engine["engine_id"] for engine in options["engines"]}
     official = next(item for item in configs if item["key"] == "mineru_official_api_opts")
     assert official["params"]["fields"][0]["sensitive"] is True
     assert official["value"]["api_key"] == ""

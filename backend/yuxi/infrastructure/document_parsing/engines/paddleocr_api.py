@@ -246,6 +246,13 @@ class PaddleOCRVLParser(PaddleOCRAPIParser):
         return "\n\n".join(markdown_parts).strip()
 
 
+class PaddleOCRPPStructureV3Parser(PaddleOCRVLParser):
+    """复用官网版面解析协议，选择 PP-StructureV3 模型。"""
+
+    model = "PP-StructureV3"
+    engine_id = "paddleocr_pp_structure_v3"
+
+
 class PaddleOCRPPOCRv6Parser(PaddleOCRAPIParser):
     """PP-OCRv6 parser that returns plain OCR text."""
 

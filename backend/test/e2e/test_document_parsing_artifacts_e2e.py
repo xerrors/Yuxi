@@ -8,6 +8,8 @@ import json
 import threading
 import zipfile
 from copy import deepcopy
+from email import policy
+from email.parser import BytesParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import PurePosixPath
 from urllib.parse import quote
@@ -59,12 +61,12 @@ def _result_archive() -> tuple[bytes, bytes]:
 
 
 @pytest.fixture
-async def mineru_replay():
-    """在真实 HTTP 边界回放 4.1 Tasks，供 API 与 worker 共同访问。"""
-    archive, _ = _result_archive()
+async def ocr_replay():
+    """在真实 HTTP 边界回放 MinerU Tasks 与 PaddleOCR Jobs。"""
+    archive, image = _result_archive()
     tasks = {}
 
-    class MinerUReplay(BaseHTTPRequestHandler):
+    class OCRReplay(BaseHTTPRequestHandler):
         """固定远端协议独立拥有请求记录与已上传字节。"""
 
         def respond(self, body, status=200, content_type="application/json"):
@@ -77,12 +79,26 @@ async def mineru_replay():
             self.wfile.write(data)
 
         def do_POST(self):
-            """创建任务只返回身份，不返回同步产物。"""
-            assert self.path == "/v1/tasks"
-            manifest = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            """按各自协议读取 JSON 清单或带模型名的 multipart 文件。"""
+            body = self.rfile.read(int(self.headers["Content-Length"]))
             task_id = uuid4().hex
-            tasks[task_id] = {"manifest": manifest, "uploaded": None}
-            self.respond({"task_id": task_id, "status": "waiting-file", "files": [{"file_id": task_id}]}, 202)
+            if self.path == "/v1/tasks":
+                tasks[task_id] = {"manifest": json.loads(body), "uploaded": None}
+                self.respond({"task_id": task_id, "status": "waiting-file", "files": [{"file_id": task_id}]}, 202)
+            else:
+                assert self.path == "/jobs"
+                assert self.headers["Authorization"] == "bearer fixture-ocr-token"
+                message = BytesParser(policy=policy.default).parsebytes(
+                    f"Content-Type: {self.headers['Content-Type']}\r\n\r\n".encode() + body
+                )
+                fields = {
+                    part.get_param("name", header="content-disposition"): part.get_payload(decode=True) for part in message.iter_parts()
+                }
+                tasks[task_id] = {
+                    "manifest": {"model": fields["model"].decode(), "optionalPayload": json.loads(fields["optionalPayload"])},
+                    "uploaded": fields["file"],
+                }
+                self.respond({"data": {"jobId": task_id}})
 
         def do_PUT(self):
             """保存原始文件内容，供测试与输入源独立比对。"""
@@ -91,13 +107,36 @@ async def mineru_replay():
             self.respond({})
 
         def do_GET(self):
-            """查询前后状态与下载端点遵循异步 Tasks 契约。"""
+            """返回任务状态与独立构造的 ZIP、JSONL 或图片产物。"""
             task_id = self.path.rsplit("/", 1)[1]
+            base = f"http://{self.headers['Host']}"
+            if self.path.startswith("/jobs/"):
+                assert self.headers["Authorization"] == "bearer fixture-ocr-token"
+                self.respond({"data": {"state": "done", "resultUrl": {"jsonUrl": f"{base}/jsonl/{task_id}"}}})
+                return
+            if self.path.startswith("/jsonl/"):
+                if tasks[task_id]["manifest"]["model"] == "PP-OCRv6":
+                    result = {"ocrResults": [{"prunedResult": {"rec_texts": ["Artifact replay"]}}]}
+                else:
+                    result = {
+                        "layoutParsingResults": [
+                            {
+                                "markdown": {
+                                    "text": "# Artifact replay\n\n![chart](images/chart.png)",
+                                    "images": {"images/chart.png": f"{base}/chart.png"},
+                                }
+                            }
+                        ]
+                    }
+                self.respond(json.dumps({"result": result}).encode(), content_type="application/jsonl")
+                return
+            if self.path == "/chart.png":
+                self.respond(image, content_type="image/png")
+                return
             if self.path.startswith("/result/"):
                 self.respond(archive, content_type="application/zip")
                 return
             task = tasks[task_id]
-            base = f"http://{self.headers['Host']}"
             status = "completed" if task["uploaded"] is not None else "waiting-file"
             file = {"file_id": task_id, "status": status}
             if status == "completed":
@@ -109,7 +148,7 @@ async def mineru_replay():
         def log_message(self, *args):
             """测试不记录 HTTP 访问日志。"""
 
-    replay = ThreadingHTTPServer(("0.0.0.0", 0), MinerUReplay)
+    replay = ThreadingHTTPServer(("0.0.0.0", 0), OCRReplay)
     threading.Thread(target=replay.serve_forever, daemon=True).start()
     try:
         yield replay, tasks
@@ -118,19 +157,39 @@ async def mineru_replay():
         replay.server_close()
 
 
-@pytest.mark.parametrize("tier", ["standard", "advanced"])
-async def test_mineru_options_reach_draft_parser_and_preserve_artifacts(e2e_client, e2e_headers, e2e_agent_context, tier, mineru_replay):
+@pytest.mark.parametrize(
+    ("engine_id", "option_key", "settings", "expected"),
+    [
+        ("mineru_ocr", "mineru_ocr_host_opts", {"tier": "standard"}, {"tier": "standard", "output_formats": ["default"]}),
+        ("mineru_ocr", "mineru_ocr_host_opts", {"tier": "advanced"}, {"tier": "advanced", "output_formats": ["default"]}),
+        ("paddleocr_vl_1_6", "paddleocr_api_opts", {}, {"model": "PaddleOCR-VL-1.6"}),
+        ("paddleocr_pp_ocrv6", "paddleocr_api_opts", {}, {"model": "PP-OCRv6"}),
+        ("paddleocr_pp_structure_v3", "paddleocr_api_opts", {}, {"model": "PP-StructureV3"}),
+    ],
+)
+async def test_ocr_options_reach_draft_parser_and_preserve_artifacts(
+    e2e_client,
+    e2e_headers,
+    e2e_agent_context,
+    engine_id,
+    option_key,
+    settings,
+    expected,
+    ocr_replay,
+):
     """真实设置与解析入口证明默认参数到达引擎，正文和图片完整落盘。"""
     _, image = _result_archive()
-    replay, requests_received = mineru_replay
+    replay, requests_received = ocr_replay
     async with pg_manager.get_async_session_context() as db:
-        previous = await get_option(db, "mineru_ocr_host_opts")
+        previous = await get_option(db, option_key)
         previous_state = {"value": deepcopy(previous.value), "updated_by": previous.updated_by, "updated_at": previous.updated_at}
     uploaded_id = None
     try:
+        base = f"http://127.0.0.1:{replay.server_port}"
+        values = {"server_url": base} if engine_id == "mineru_ocr" else {"api_url": f"{base}/jobs", "api_token": "fixture-ocr-token"}
         configured = await e2e_client.put(
-            "/api/system/config/options/mineru_ocr_host_opts",
-            json={"value": {"server_url": f"http://127.0.0.1:{replay.server_port}", "tier": tier}},
+            f"/api/system/config/options/{option_key}",
+            json={"value": {**values, **settings}},
             headers=e2e_headers,
         )
         assert configured.status_code == 200, configured.text
@@ -143,25 +202,29 @@ async def test_mineru_options_reach_draft_parser_and_preserve_artifacts(e2e_clie
         )
         assert uploaded.status_code == 201, uploaded.text
         uploaded_id = uploaded.json()["id"]
-        parsed = await e2e_client.post(f"/api/agent/files/{uploaded_id}/parse", json={"parse_method": "mineru_ocr"}, headers=e2e_headers)
+        parsed = await e2e_client.post(f"/api/agent/files/{uploaded_id}/parse", json={"parse_method": engine_id}, headers=e2e_headers)
         assert parsed.status_code == 200, parsed.text
         assert len(requests_received) == 1
         [received] = requests_received.values()
-        assert received["manifest"]["tier"] == tier
-        assert received["manifest"]["output_formats"] == ["default"]
+        for field, value in expected.items():
+            assert received["manifest"][field] == value
         assert received["uploaded"] == source.getvalue()
         async with pg_manager.get_async_session_context() as db:
             draft = await db.get(AgentAttachment, uploaded_id)
             assert draft.status == "draft" and draft.parsed_source
             workspace = Workspace(e2e_agent_context["uid"])
             markdown = workspace.read_authorized_file(f"/{draft.parsed_source}", 1024).decode()
-            image_path = PurePosixPath(draft.parsed_source).parent / "images/images/chart.png"
-            assert "![chart](images/images/chart.png)" in markdown
-            assert workspace.read_authorized_file(f"/{image_path}", 1024) == image
+            assert "Artifact replay" in markdown
+            if engine_id != "paddleocr_pp_ocrv6":
+                from yuxi.infrastructure.document_parsing.artifacts import local_image_links
+
+                [relative] = local_image_links(markdown)
+                image_path = PurePosixPath(draft.parsed_source).parent / relative
+                assert workspace.read_authorized_file(f"/{image_path}", 1024) == image
     finally:
         async with pg_manager.get_async_session_context() as db:
-            await db.execute(update(ConfigOption).where(ConfigOption.key == "mineru_ocr_host_opts").values(**previous_state))
-        await invalidate_option_cache("mineru_ocr_host_opts")
+            await db.execute(update(ConfigOption).where(ConfigOption.key == option_key).values(**previous_state))
+        await invalidate_option_cache(option_key)
         if uploaded_id:
             deleted = await e2e_client.delete(f"/api/v1/agents/files/{uploaded_id}", headers=e2e_headers)
             assert deleted.status_code == 200 and deleted.json()["deleted"] is True, deleted.text
@@ -173,11 +236,11 @@ async def test_private_draft_parse_send_and_delete_preserve_complete_local_direc
     e2e_client,
     e2e_headers,
     e2e_agent_context,
-    mineru_replay,
+    ocr_replay,
 ):
     """真实入口确认完整本地目录；资源不进入 MinIO，删除覆盖全部文件。"""
     _, image = _result_archive()
-    replay, _ = mineru_replay
+    replay, _ = ocr_replay
     thread_id = None
     turn_id = None
     uploaded = None
@@ -300,11 +363,11 @@ async def test_knowledge_worker_hosts_document_resources_and_file_delete_reclaim
     e2e_client,
     e2e_headers,
     monkeypatch,
-    mineru_replay,
+    ocr_replay,
 ):
     """真实 worker 发布资源，PG 拥有结果，删除单个文档不影响其他文档。"""
     _, image = _result_archive()
-    replay, received = mineru_replay
+    replay, received = ocr_replay
     source = io.BytesIO()
     writer = PdfWriter()
     writer.add_blank_page(width=100, height=100)

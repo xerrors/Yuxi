@@ -77,9 +77,10 @@ async def test_mineru_official_resolves_model_default_with_environment_credentia
     ("engine_id", "environment", "field", "value"),
     [
         ("mineru_ocr", "MINERU_API_URI", "server_url", "http://mineru-fixture:30001"),
-        ("pp_structure_v3_ocr", "PADDLEX_URI", "server_url", "http://paddle-fixture:8080"),
         ("mineru_official", "MINERU_API_KEY", "api_key", "fixture-key"),
         ("paddleocr_vl_1_6", "PADDLEOCR_API_TOKEN", "api_token", "fixture-token"),
+        ("paddleocr_pp_ocrv6", "PADDLEOCR_API_TOKEN", "api_token", "fixture-token"),
+        ("paddleocr_pp_structure_v3", "PADDLEOCR_API_TOKEN", "api_token", "fixture-token"),
     ],
 )
 async def test_engine_consumes_resolved_configuration(db_session, monkeypatch, engine_id, environment, field, value):

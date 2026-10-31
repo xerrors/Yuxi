@@ -22,7 +22,6 @@ x-api-worker-env: &api-worker-env
   MILVUS_TOKEN: ${MILVUS_TOKEN:-}
   MILVUS_DB: ${MILVUS_DB:-yuxi}
   MINERU_API_URI: ${MINERU_API_URI:-http://mineru-api:30001}
-  PADDLEX_URI: ${PADDLEX_URI:-}
   MINIO_URI: ${MINIO_URI:-http://minio:9000}
   # 沙盒后端：cube 使用执行节点 VM，container 使用独立 runner 的临时容器
   SANDBOX_BACKEND: ${SANDBOX_BACKEND:-container}
