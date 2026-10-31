@@ -192,7 +192,7 @@ class RuntimeTopologyTests(unittest.TestCase):
 
     def assert_milvus_e2e_is_required(self, workflow: str) -> None:
         """检索 E2E 必须在独立拓扑中执行并由最终结果汇总。"""
-        background = workflow.split("  background-job-worker-path:\n", 1)[1].split("\n  system-tests:\n", 1)[0]
+        background = workflow.split("  background-job-worker-path:\n", 1)[1].split("\n  cooperation-e2e:\n", 1)[0]
         selector = "test/e2e/test_milvus_text_retrieval_e2e.py"
         self.assertEqual(workflow.count(selector), 1)
         step = background.split("      - name: Verify Milvus 3 text retrieval through worker\n", 1)[1].split("\n      - ", 1)[0]
@@ -201,7 +201,10 @@ class RuntimeTopologyTests(unittest.TestCase):
         self.assertNotIn("if:", step)
         self.assertNotIn("continue-on-error:", step)
         result = workflow.split("\n  result:\n", 1)[1]
-        self.assertIn("needs: [background-job-worker-path, system-tests]", result)
+        self.assertIn(
+            "needs: [background-job-worker-path, cooperation-e2e, lifecycle-worker-e2e, runtime-contracts, sandbox-isolation]",
+            result,
+        )
         self.assertIn("scripts/ci/gate.py check-jobs", result)
 
     def test_milvus_e2e_is_required_in_background_topology(self):
@@ -215,40 +218,59 @@ class RuntimeTopologyTests(unittest.TestCase):
                 "uv run --no-sync --no-dev pytest --junitxml=test/ci-reports/system-19.xml",
                 "run: true #",
             ),
-            ("needs: [background-job-worker-path, system-tests]", "needs: [system-tests]"),
+            (
+                "needs: [background-job-worker-path, cooperation-e2e, lifecycle-worker-e2e, runtime-contracts, sandbox-isolation]",
+                "needs: [cooperation-e2e, lifecycle-worker-e2e, runtime-contracts, sandbox-isolation]",
+            ),
         ):
             with self.subTest(original=original), self.assertRaises(AssertionError):
                 self.assert_milvus_e2e_is_required(workflow.replace(original, replacement))
 
-    def assert_replay_starts_after_knowledge_switch(self, workflow: str) -> None:
-        """共享重放属于 API 容器，启动后不能再被 Knowledge 开关测试重建。"""
-        self.assertLess(
-            workflow.index("      - name: Verify optional Knowledge deployment and chat recovery"),
-            workflow.index("      - name: Start deterministic OpenAI-compatible replay"),
-            "Knowledge 拓扑切换必须先于共享模型重放启动",
-        )
+    REPLAY_JOBS = ("cooperation-e2e", "lifecycle-worker-e2e", "runtime-contracts")
 
-    def test_replay_starts_after_knowledge_switch(self):
-        """实际工作流必须先完成会重建 API 的 Knowledge 开关测试。"""
-        self.assert_replay_starts_after_knowledge_switch((ROOT / ".github/workflows/system-tests.yml").read_text())
+    def assert_toggle_and_replay_wiring(self, workflow: str) -> None:
+        """每个运行 pytest 的拓扑 job 启动共享重放；Knowledge 开关只在契约 job 且先于重放启动。"""
+        toggle = "      - name: Verify optional Knowledge deployment and chat recovery"
+        replay = "      - name: Start deterministic OpenAI-compatible replay"
+        self.assertEqual(workflow.count(toggle), 1)
+        self.assertEqual(workflow.count(replay), 3)
+        jobs = re.split(r"(?m)^  ([\w-]+):\n", workflow.split("\njobs:\n", 1)[1])
+        bodies = dict(zip(jobs[1::2], jobs[2::2], strict=True))
+        for name in self.REPLAY_JOBS:
+            self.assertIn(replay, bodies[name])
+        self.assertNotIn(replay, bodies["background-job-worker-path"])
+        self.assertNotIn(replay, bodies["sandbox-isolation"])
+        contracts = bodies["runtime-contracts"]
+        self.assertLess(contracts.index(toggle), contracts.index(replay), "Knowledge 开关会重建 api 容器，必须先于共享模型重放启动")
 
-    def test_knowledge_switch_after_replay_is_rejected(self):
-        """恢复启动重放后重建 API 的旧顺序时，约束必须失败。"""
+    def test_replay_and_knowledge_switch_wiring(self):
+        """重放归属与开关顺序必须与实际工作流一致。"""
+        self.assert_toggle_and_replay_wiring((ROOT / ".github/workflows/system-tests.yml").read_text())
+
+    def test_knowledge_switch_or_replay_wiring_broken_is_rejected(self):
+        """删除开关、删除重放或将开关移到重放启动之后时，接线检查必须失败。"""
         workflow = (ROOT / ".github/workflows/system-tests.yml").read_text()
-        start = workflow.index("      - name: Verify optional Knowledge deployment and chat recovery")
+        toggle = "      - name: Verify optional Knowledge deployment and chat recovery"
+        replay = "      - name: Start deterministic OpenAI-compatible replay"
+        without_toggle = workflow.replace(toggle, "      - name: removed-toggle")
+        without_replay = workflow.replace(replay, "      - name: removed-replay", 1)
+        start = workflow.index(toggle)
         end = workflow.index("      - name:", start + 1)
         switch = workflow[start:end]
-        without_switch = workflow[:start] + workflow[end:]
-        lifecycle = without_switch.index("      - name: Verify deterministic Agent lifecycle")
-        broken = without_switch[:lifecycle] + switch + without_switch[lifecycle:]
-        with self.assertRaisesRegex(AssertionError, "Knowledge 拓扑切换必须先于共享模型重放启动"):
-            self.assert_replay_starts_after_knowledge_switch(broken)
+        without_switch_block = workflow[:start] + workflow[end:]
+        late_target = without_switch_block.index("      - name: Verify worker shipping health")
+        late_switch = without_switch_block[:late_target] + switch + without_switch_block[late_target:]
+        for broken in (without_toggle, without_replay, late_switch):
+            with self.subTest(broken=broken[:80]), self.assertRaises(AssertionError):
+                self.assert_toggle_and_replay_wiring(broken)
+
+    TOPOLOGY_JOBS = ("background-job-worker-path", "cooperation-e2e", "lifecycle-worker-e2e", "runtime-contracts")
 
     def assert_hosted_jobs(self, workflow: str) -> None:
-        """两个 job 均准备 container 镜像和 runner，保留构建缓存。"""
+        """四个拓扑 job 均准备 container 镜像和 runner，保留构建缓存；沙盒 job 复用镜像但不建拓扑。"""
         jobs = re.split(r"(?m)^  [\w-]+:\n", workflow.split("\njobs:\n", 1)[1])[1:]
-        self.assertEqual(len(jobs), 3)
-        for job in jobs[:2]:
+        self.assertEqual(len(jobs), 6)
+        for job in jobs[:4]:
             self.assertIn("runs-on: ubuntu-24.04", job)
             self.assertNotIn("probe_kvm.py", job)
             self.assertNotIn("probe_hosted_cube.sh", job)
@@ -263,16 +285,30 @@ class RuntimeTopologyTests(unittest.TestCase):
             for save in saves:
                 self.assertLess(job.index("bash scripts/ci/build_topology_images.sh"), save.start())
                 self.assertLess(save.start(), job.index("docker compose up -d"))
+        sandbox = jobs[4]
+        self.assertIn("runs-on: ubuntu-24.04", sandbox)
+        self.assertNotIn("self-hosted", sandbox)
+        self.assertIn("id: sandbox-cache", sandbox)
+        self.assertLess(
+            sandbox.index("bash scripts/ci/prepare_system_tests_env.sh"),
+            sandbox.index("scripts/ci/build_topology_images.sh"),
+        )
+        self.assertIn("SANDBOX_CONTAINER_TEST=1", sandbox)
+        self.assertIn("test/integration/sandbox/test_container_sandbox.py", sandbox)
 
-    def test_both_runtime_jobs_use_container(self):
+    def test_runtime_jobs_use_container(self):
         """遗漏 runner、镜像缓存或恢复真实 Cube 安装时拒绝。"""
         workflow = (ROOT / ".github/workflows/system-tests.yml").read_text()
         self.assert_hosted_jobs(workflow)
         for original in ("runs-on: ubuntu-24.04", "sandbox-runner", "id: sandbox-cache", "uses: actions/cache/save@v4"):
-            for name in ("background-job-worker-path", "system-tests"):
+            for name in self.TOPOLOGY_JOBS:
                 with self.subTest(original=original, job=name), self.assertRaises((AssertionError, ValueError)):
                     before, section = workflow.split(f"  {name}:\n", 1)
                     self.assert_hosted_jobs(before + f"  {name}:\n" + section.replace(original, "removed", 1))
+        for original in ("SANDBOX_CONTAINER_TEST=1", "id: sandbox-cache", "runs-on: ubuntu-24.04"):
+            with self.subTest(original=original, job="sandbox-isolation"), self.assertRaises((AssertionError, ValueError)):
+                before, section = workflow.split("  sandbox-isolation:\n", 1)
+                self.assert_hosted_jobs(before + "  sandbox-isolation:\n" + section.replace(original, "removed", 1))
         with self.assertRaises(AssertionError):
             self.assert_hosted_jobs(workflow.replace("steps:\n", "steps:\n      - run: bash scripts/ci/probe_hosted_cube.sh\n", 1))
 

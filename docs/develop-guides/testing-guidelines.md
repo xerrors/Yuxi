@@ -100,7 +100,7 @@ docker compose --profile container logs --tail=100 api
 
 默认 Container 需启用 `container` profile；显式选择 Cube 时去掉该参数并先准备执行节点。`make up` 同样默认启用 Container，Cube 可用 `make COMPOSE="docker compose" up`。
 
-后端按 unit、integration/api、其余 integration 子树、E2E 分批运行。各套件的模块和 helper 按当前目录加载；脚本的 `integration` 与 `all` 同样分批执行。确定性 E2E 的用例集合由 `backend/test/run_tests.sh` 唯一维护，CI 复用此入口，避免重复执行相同文件。涉及不兼容 Schema 时，先使用[独立槽位](./parallel-worktree-environments.md)装配完整环境，再运行测试；脚本只负责选择和执行套件。
+后端按 unit、integration/api、其余 integration 子树、E2E 分批运行。各套件的模块和 helper 按当前目录加载；脚本的 `integration` 与 `all` 同样分批执行。确定性 E2E 的用例集合由 `backend/test/run_tests.sh` 唯一维护，CI 复用此入口，避免重复执行相同文件；`e2e-cooperation` 与 `e2e-core` 把同一集合拆成两个并行拓扑的子集，`e2e` 仍等于二者之和。涉及不兼容 Schema 时，先使用[独立槽位](./parallel-worktree-environments.md)装配完整环境，再运行测试；脚本只负责选择和执行套件。
 
 后台作业启动恢复由 `system-tests.yml` 的现有拓扑步骤单独验证：先停止 worker，保存未发布 intent，再启动 worker 并回读领域结果。`test_background_job_worker_path.py` 的这组跨进程阶段不进入普通 integration 批次；通用脚本不会重启正在使用的服务。完整系统验证须同时完成该拓扑步骤。
 
@@ -109,6 +109,8 @@ docker compose exec api uv run --no-sync --group test pytest test/unit -m "not s
 docker compose exec api uv run --no-sync --group test pytest test/integration/api
 docker compose exec api uv run --no-sync --group test pytest test/integration --ignore=test/integration/api --ignore=test/integration/services/test_background_job_worker_path.py
 backend/test/run_tests.sh e2e
+backend/test/run_tests.sh e2e-cooperation  # 只运行会话协作子集（CI 独立拓扑并行）
+backend/test/run_tests.sh e2e-core         # 只运行其余生命周期子集（CI 独立拓扑并行）
 backend/test/run_tests.sh all
 ```
 
@@ -197,7 +199,7 @@ pwsh -NoProfile -File scripts/ci/test_init_security.ps1
 
 PR 由无路径过滤的 `.github/workflows/ci.yml` 调用可复用质量工作流，粗粒度选择由 `scripts/ci/gate.py` 拥有；共享或无法分类的变更保守扩大检查。各工作流通过 `workflow_call` 复用既有测试主体，保留原有 push、tag 和手动入口。汇总检查名为 `CI required`，选择失败、必需结果缺失、失败、取消或意外跳过均不能通过。仓库接线本身不启用 GitHub required 规则：须先部署 workflow 并产生真实检查，再配置规则并验证远端行为。
 
-顶层选择系统测试时，两个系统 job 执行完整测试，并由 `check-jobs` 汇总；缺失、失败、取消或意外跳过均不能通过。push、tag 和手动入口沿用各自触发条件。远端执行耗时尚未验证。
+顶层选择系统测试时，五个系统 job 执行完整测试，并由 `check-jobs` 汇总；缺失、失败、取消或意外跳过均不能通过。四个拓扑 job（后台作业与检索、会话协作 E2E、生命周期与 worker E2E、运行时契约）各自构建镜像并持有独立 Compose 拓扑，共享镜像层缓存；沙盒容器隔离 job 在宿主机只复用 sandbox 镜像，不启动拓扑。push、tag 和手动入口沿用各自触发条件。
 
 测试运行脚本在显式设置 `CI_TEST_REPORT_DIR` 时输出独立 JUnit 报告和慢测试信息；目录相对于 pytest 进程的工作目录，不设置时原有命令行为不变。workflow 直接调用 pytest 时显式传入独立报告路径。CI 测试报告 artifact 保留 7 天，失败与 skip 仍须分别审查。
 
@@ -206,7 +208,7 @@ PR 由无路径过滤的 `.github/workflows/ci.yml` 调用可复用质量工作�
 | 工程契约、Ruff、后端 unit、前端、文档、依赖审计 | 执行器上的语言工具链 | `.github/workflows` 中对应质量工作流 |
 | 初始化、Schema/关系约束、Input/FIFO、Run lease、反馈、协作持久化、OAuth 和局部 HTTP | 临时 PostgreSQL、Redis、文件与测试自建 HTTP 服务 | `service-integration.yml` → `scripts/ci/run_service_integration.sh` |
 | 附件服务持久化与对象读写 | PostgreSQL、MinIO 与文件系统；测试主体无需 VM | `system-tests.yml` 中附件服务步骤，随完整拓扑执行 |
-| API readiness、正式 worker 启动恢复、Agent E2E 和沙盒隔离 | 完整 Compose 拓扑、container runner 与 sandbox 镜像 | `system-tests.yml` 的两个 ubuntu-24.04 job，使用 `container` profile，执行完整测试 |
+| API readiness、正式 worker 启动恢复、Agent E2E 和沙盒隔离 | 完整 Compose 拓扑、container runner 与 sandbox 镜像 | `system-tests.yml` 的四个拓扑 ubuntu-24.04 job 与沙盒隔离 job，使用 `container` profile，执行完整测试 |
 | 真实供应商 Agent SSE 与持久结果 | 临时托管执行器、完整 Compose 拓扑和 `SILICONFLOW_API_KEY` 仓库 Secret | `real-provider-probe.yml`，仅手动运行 |
 | GitHub 托管机器的 KVM/Cube 兼容性探针 | KVM、临时 XFS、Cube 安装、正式模板和共享挂载 | `cube-hosted-probe.yml`，仅手动运行 |
 
