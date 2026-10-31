@@ -1,13 +1,10 @@
 <template>
-  <BaseToolCall :tool-call="toolCall">
-    <template #result="{ resultContent }">
-      <div class="web-fetch-result">
-        <template v-if="resultData?.content">
-          <strong>{{ resultData.title || '网页正文' }}</strong>
-          <p>{{ resultData.provider }} · {{ resultData.url }}</p>
-          <pre>{{ resultData.content }}</pre>
-        </template>
-        <p v-else>{{ resultData?.error || resultContent }}</p>
+  <BaseToolCall :tool-call="toolCall" summary-only>
+    <template #header>
+      <div class="sep-header">
+        <span class="note">网页抓取</span>
+        <span v-if="label" class="separator">|</span>
+        <span class="description" :title="url">{{ label }}</span>
       </div>
     </template>
   </BaseToolCall>
@@ -16,14 +13,10 @@
 <script setup>
 import { computed } from 'vue'
 import BaseToolCall from '../BaseToolCall.vue'
-import { parseToolCallResult } from '../toolRegistry'
+import { parseToolCallArgs, parseToolCallResult } from '../toolRegistry'
 
 const props = defineProps({ toolCall: { type: Object, required: true } })
 const resultData = computed(() => parseToolCallResult(props.toolCall))
+const url = computed(() => resultData.value?.url || parseToolCallArgs(props.toolCall).url || '')
+const label = computed(() => resultData.value?.title || url.value)
 </script>
-
-<style scoped lang="less">
-.web-fetch-result { padding: 12px; overflow-wrap: anywhere; }
-p { color: var(--gray-600); font-size: 12px; }
-pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 480px; overflow: auto; font-size: 12px; }
-</style>

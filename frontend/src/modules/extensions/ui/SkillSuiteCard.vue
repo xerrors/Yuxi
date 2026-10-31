@@ -164,7 +164,7 @@ const statusText = computed(() => {
 .suite-card-action {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
   color: var(--gray-700);
   font-size: 12px;
   font-weight: 600;

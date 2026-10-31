@@ -14,6 +14,8 @@ export function useAgentThreadState({
     if (!threadState) return
     threadState.replyLoadingVisible = false
     threadState.pendingInputId = null
+    threadState.activeReasoning = null
+    threadState.hiddenReasoningParts.clear()
   }
 
   const getThreadState = (threadId) => {
@@ -30,6 +32,8 @@ export function useAgentThreadState({
         runReconnectTimer: null,
         runReconnectAttempts: 0,
         activeRunId: null,
+        activeReasoning: null,
+        hiddenReasoningParts: new Set(),
         currentTurnId: null,
         turnStatus: null,
         activeRunSteerable: false,

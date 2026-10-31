@@ -25,6 +25,7 @@ before(async () => {
     getElementsByTagName: () => []
   }
   globalThis.window = { addEventListener() {}, removeEventListener() {} }
+  globalThis.getComputedStyle = () => ({ getPropertyValue: () => '' })
   server = await createTestServer({
     root: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..'),
     server: { middlewareMode: true }
@@ -60,6 +61,7 @@ after(async () => {
   delete globalThis.localStorage
   delete globalThis.document
   delete globalThis.window
+  delete globalThis.getComputedStyle
 })
 
 /** 渲染真实组件并检查用户可见状态与结果。 */
@@ -251,7 +253,7 @@ test('生成图片工具的普通 URL 和内联图片共用图片结果，普通
   assert.doesNotMatch(html, /<img/)
 })
 
-test('协作工具保留 0 和 false 结果', async () => {
+test('协作工具的 0 和 false 结果仍视为完成，摘要不展开原文', async () => {
   for (const [name, content] of [
     ['create_session', 0],
     ['create_session', false],
@@ -263,8 +265,8 @@ test('协作工具保留 0 和 false 结果', async () => {
       defaultExpanded: true
     })
     assert.equal(parseToolCallResult({ tool_call_result: { content } }), content)
-    assert.match(html, /tool-result/)
-    assert.match(html, /tool-success/)
+    assert.match(html, /cooperation-event/)
+    assert.doesNotMatch(html, /tool-result|进行中|操作失败/)
   }
 })
 
@@ -279,8 +281,8 @@ test('明确的 ToolMessage 错误不会被专用工具覆盖为完成', async (
       },
       defaultExpanded: true
     })
-    assert.match(html, /tool-error/)
-    assert.match(html, /启动失败/)
+    assert.match(html, /has-error|tool-error/)
+    if (name === 'subagent_start') assert.match(html, /启动失败/)
     assert.doesNotMatch(html, /已完成|已启动/)
     assert.match(html, /失败/)
   }
@@ -316,15 +318,15 @@ test('思考描述显示最后一行，展开后保留完整内容', async () =>
   }
 })
 
-test('派发成功保留工具结果，后续会话失败由协作状态展示', async () => {
+test('派发成功显示创建摘要，后续会话状态不冒充调用状态', async () => {
   const toolCall = {
     name: 'create_session',
     args: {},
     tool_call_result: { content: { status: 'accepted', session_id: 'child', turn_id: 'turn' } }
   }
   const row = await render(ToolCallRenderer, { toolCall })
-  assert.match(row, /tool-success/)
-  assert.doesNotMatch(row, /tool-error/)
+  assert.match(row, /创建/)
+  assert.doesNotMatch(row, /has-error|进行中|操作失败/)
 })
 
 test('知识库列表错误不显示暂无知识库', async () => {
@@ -376,4 +378,92 @@ test('知识库检索失败显示错误结果，正常空检索仍显示空状�
   })
   assert.match(empty, /未找到相关知识库内容/)
   assert.doesNotMatch(empty, /tool-error/)
+})
+
+test('新增工具只显示有用摘要，即使默认展开也不重复展示正文与原始结果', async () => {
+  const cases = [
+    ['list_agents', {}, { agents: [{ id: 'research', name: '资料研究员', description: '完整智能体描述' }] }, /查看智能体/, /1 个可用/],
+    ['search_thread_messages', { query: '部署' }, { items: [{ title: '部署记录', role: 'user', content: '完整历史消息' }] }, /搜索历史消息/, /部署/],
+    ['read_thread_messages', {}, { title: '部署记录', messages: [{ role: 'assistant', content: '完整历史消息' }], tool_calls: [] }, /读取历史消息/, /部署记录/],
+    ['install_skill', { source: 'example/research', skill_names: ['research'] }, '已安装 Skill: research\nSkill 路径: /workspace/skills/research/SKILL.md', /安装技能/, /research/],
+    ['mark_for_improvement', { reason: '完整改进原因' }, { id: 'feedback-1', saved: true }, /记录改进线索/, /tool-success/],
+    ['web_fetch', { url: 'https://example.com' }, { title: '部署指南', content: '完整网页正文', provider: 'tavily' }, /网页抓取/, /部署指南/]
+  ]
+  for (const [name, args, result, action, target] of cases) {
+    const html = await render(ToolCallRenderer, { toolCall: { name, args, result }, defaultExpanded: true, appearance: 'timeline' })
+    assert.match(html, action, name)
+    assert.match(html, target, name)
+    assert.match(html, /is-timeline/, name)
+    assert.doesNotMatch(html, /完整|Skill 路径|原始结果|调用详情|tool-content|tool-expand-icon|aria-expanded|role="button"/, name)
+  }
+})
+
+test('协作工具保留动作、会话入口和超时状态，不展示请求或结果正文', async () => {
+  const context = { sessions: [{ session_id: 'child', name: '资料研究员' }], tasks: new Map(), openSession() {} }
+  for (const cooperationView of [null, context]) {
+    for (const [name, args, result, expected] of [
+      ['get_result', {}, { session_id: 'child', status: 'completed', output: '完整任务输出', terminal: true }, /查看结果/],
+      ['send_message', { target: 'child', content: '完整请求正文' }, { status: 'received', session_id: 'child' }, /发送消息至/],
+      ['wait_inputs', { input_ids: ['input-1'] }, { wait_timed_out: true, results: [{ input_id: 'input-1', session_id: 'child', status: 'running', output: null }] }, /等待超时/],
+      ['wait_sessions', { targets: ['child'] }, { updates: [{ sender_session_id: 'child', content: '完整更新正文', kind: 'message' }] }, /等待/]
+    ]) {
+      const html = await render(ToolCallRenderer, { toolCall: { name, args, result }, cooperationView, defaultExpanded: true })
+      assert.match(html, expected)
+      assert.doesNotMatch(html, /完整|原始结果|调用详情|<details/)
+      if (cooperationView) {
+        assert.match(html, /资料研究员/)
+        assert.match(html, /<button/)
+      } else assert.doesNotMatch(html, /<button/)
+    }
+  }
+})
+
+test('摘要保留失败、等待、中断和空计数，不显示回执详情', async () => {
+  for (const name of ['list_agents', 'get_result', 'search_thread_messages', 'read_thread_messages', 'install_skill', 'mark_for_improvement', 'web_fetch']) {
+    for (const [fields, label] of [
+      [{ tool_call_result: { status: 'error', content: '完整错误堆栈' } }, /失败/],
+      [{ status: 'waiting' }, /等待/],
+      [{ status: 'incomplete' }, /已中断/],
+      [{}, /tool-loading|进行中/]
+    ]) {
+      const html = await render(ToolCallRenderer, { toolCall: { name, args: {}, ...fields }, defaultExpanded: true })
+      assert.match(html, label, name)
+      assert.doesNotMatch(html, /完整错误堆栈|tool-content|改进线索已记录/, name)
+    }
+  }
+  for (const [name, result, expected] of [
+    ['list_agents', { agents: [] }, /0 个可用/],
+    ['search_thread_messages', { items: [] }, /0 条/],
+    ['read_thread_messages', { messages: [], tool_calls: [] }, /0 条/],
+    ['list_sessions', { sessions: [] }, /查看了 0 个会话/]
+  ]) {
+    assert.match(await render(ToolCallRenderer, { toolCall: { name, result }, defaultExpanded: true }), expected)
+  }
+})
+
+test('技能安装的纯文本失败回执不被摘要隐藏，成功名称中的错误字样不误判', async () => {
+  for (const content of [
+    '错误：无法获取当前会话信息',
+    '错误：Skill 来源不能为空',
+    '安装异常：连接被拒绝',
+    '安装失败 (research): 未找到技能',
+    '已安装 Skill: research\nSkill 路径: /workspace/skills/research/SKILL.md\n安装失败 (report): 未找到技能'
+  ]) {
+    const html = await render(ToolCallRenderer, {
+      toolCall: { name: 'install_skill', args: { source: 'example/research' }, tool_call_result: { status: 'success', content } },
+      defaultExpanded: true
+    })
+    assert.match(html, /tool-error/)
+    assert.match(html, /执行失败/)
+    assert.doesNotMatch(html, /tool-success|tool-content|Skill 路径/)
+  }
+  const success = await render(ToolCallRenderer, {
+    toolCall: { name: 'install_skill', result: '已安装 Skill: error-helper\nSkill 路径: /workspace/skills/error-helper/SKILL.md' }
+  })
+  assert.match(success, /tool-success/)
+  assert.doesNotMatch(success, /执行失败/)
+  const empty = await render(ToolCallRenderer, {
+    toolCall: { name: 'install_skill', result: '未发现需要安装的 Skill' }
+  })
+  assert.match(empty, /未发现技能/)
 })

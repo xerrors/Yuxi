@@ -3,7 +3,7 @@
     :is="currentRenderer"
     v-if="currentRenderer"
     :tool-call="toolCall"
-    v-bind="cooperationView && toolId in COOPERATION_ACTIONS ? { cooperationView } : {}"
+    v-bind="toolId in COOPERATION_ACTIONS ? { cooperationView } : {}"
     :appearance="appearance"
     :default-expanded="defaultExpanded"
     ref="toolRendererRef"
@@ -33,6 +33,10 @@ const createRenderer = (loader) => defineAsyncComponent({
 })
 
 const CooperationTool = createRenderer(() => import('./renderers/CooperationTool.vue'))
+const ListAgentsTool = createRenderer(() => import('./renderers/ListAgentsTool.vue'))
+const ThreadMessagesTool = createRenderer(() => import('./renderers/ThreadMessagesTool.vue'))
+const InstallSkillTool = createRenderer(() => import('./renderers/InstallSkillTool.vue'))
+const ImprovementTool = createRenderer(() => import('./renderers/ImprovementTool.vue'))
 const WebSearchTool = createRenderer(() => import('./renderers/WebSearchTool.vue'))
 const WebFetchTool = createRenderer(() => import('./renderers/WebFetchTool.vue'))
 const ListKbsTool = createRenderer(() => import('./renderers/ListKbsTool.vue'))
@@ -76,6 +80,11 @@ const props = defineProps({
 const toolId = computed(() => getToolCallId(props.toolCall))
 
 const TOOL_RENDERERS = {
+  list_agents: ListAgentsTool,
+  search_thread_messages: ThreadMessagesTool,
+  read_thread_messages: ThreadMessagesTool,
+  install_skill: InstallSkillTool,
+  mark_for_improvement: ImprovementTool,
   ask_user_question: AskUserQuestionTool,
   bash: ExecuteTool,
   calculator: CalculatorTool,
@@ -109,7 +118,7 @@ const TOOL_RENDERERS = {
 }
 
 const currentRenderer = computed(() =>
-  props.cooperationView && toolId.value in COOPERATION_ACTIONS
+  toolId.value in COOPERATION_ACTIONS
     ? CooperationTool
     : TOOL_RENDERERS[toolId.value] || null
 )

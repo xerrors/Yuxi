@@ -160,7 +160,8 @@ defineEmits(['click'])
 .dashboard-metric-label-row {
   display: flex;
   min-width: 0;
-  align-items: baseline;
+  min-height: 24px;
+  align-items: center;
   gap: 6px;
   margin-top: 5px;
 }
@@ -179,6 +180,7 @@ defineEmits(['click'])
 }
 
 .dashboard-metric-meta {
+  display: inline-flex;
   color: var(--gray-500);
   font-size: 11px;
 }
@@ -215,6 +217,8 @@ defineEmits(['click'])
 }
 
 .compact .dashboard-metric-label-row {
+  min-height: 0;
+  align-items: baseline;
   margin-top: 2px;
 }
 </style>

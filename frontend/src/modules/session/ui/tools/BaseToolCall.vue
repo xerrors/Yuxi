@@ -1,15 +1,15 @@
 <template>
   <div
     class="tool-call-display"
-    :class="{ 'is-collapsed': !isExpanded, 'is-timeline': isTimeline }"
+    :class="{ 'is-collapsed': summaryOnly || !isExpanded, 'is-timeline': isTimeline, 'is-summary': summaryOnly }"
   >
     <!-- Header Slot -->
     <div
       class="tool-header"
-      role="button"
-      tabindex="0"
-      :aria-expanded="headerAction ? undefined : isExpanded"
-      :title="headerAction ? '打开详情面板' : undefined"
+      :role="summaryOnly ? undefined : 'button'"
+      :tabindex="summaryOnly ? undefined : 0"
+      :aria-expanded="summaryOnly || headerAction ? undefined : isExpanded"
+      :title="!summaryOnly && headerAction ? '打开详情面板' : undefined"
       @click="toggleExpand"
       @keydown.enter.self="toggleExpand"
       @keydown.space.self.prevent="toggleExpand"
@@ -36,7 +36,8 @@
         <!-- Generic Header Slot (Overrides specific slots if provided) -->
         <template v-if="$slots.header">
           <slot name="header" :tool-call="toolCall" :tool-name="toolName"></slot>
-          <span v-if="effectiveStatus === 'incomplete'" class="tool-incomplete-label">已中断</span>
+          <span v-if="summaryOnly && effectiveStatus === 'error'" class="tool-incomplete-label">执行失败</span>
+          <span v-else-if="effectiveStatus === 'incomplete'" class="tool-incomplete-label">已中断</span>
           <span v-else-if="effectiveStatus === 'waiting'" class="tool-incomplete-label"
             >等待协作</span
           >
@@ -77,7 +78,7 @@
       </div>
 
       <!-- Fixed Expand Icon -->
-      <span class="tool-expand-icon">
+      <span v-if="!summaryOnly" class="tool-expand-icon">
         <ChevronRight v-if="headerAction" size="14" />
         <ChevronsDownUp v-else-if="isExpanded" size="14" />
         <ChevronsUpDown v-else size="14" />
@@ -86,7 +87,7 @@
 
     <!-- Content Area -->
     <CollapseTransition>
-      <div v-if="!headerAction && isExpanded" class="tool-content">
+      <div v-if="!summaryOnly && !headerAction && isExpanded" class="tool-content">
         <!-- Params Slot -->
         <div class="tool-params" v-if="hasParams && !hideParams">
           <slot name="params" :tool-call="toolCall" :args="formattedArgs">
@@ -148,6 +149,8 @@ import { getToolCallResultContent } from '@/modules/session/model/toolCallProjec
 
 const props = defineProps({
   headerAction: { type: Function, default: null },
+  // 仅展示动作摘要的工具没有展开入口，完整回执由消息调试面板承载。
+  summaryOnly: { type: Boolean, default: false },
   toolCall: {
     type: Object,
     default: () => ({})
@@ -183,6 +186,7 @@ const isExpanded = ref(props.defaultExpanded)
 const isTimeline = computed(() => props.appearance === 'timeline')
 
 const toggleExpand = () => {
+  if (props.summaryOnly) return
   if (props.headerAction) {
     props.headerAction()
     return
@@ -336,6 +340,11 @@ const hasResult = computed(() => {
       text-overflow: ellipsis;
       color: var(--gray-600);
 
+      .tool-incomplete-label {
+        flex-shrink: 0;
+        margin-left: 8px;
+      }
+
       :deep(.sep-header) {
         display: flex;
         align-items: center;
@@ -409,6 +418,12 @@ const hasResult = computed(() => {
         }
       }
     }
+  }
+
+  &.is-summary .tool-header {
+    cursor: default;
+    &:hover { background-color: transparent; }
+    .tool-header-content :deep(.sep-header) { width: auto; }
   }
 
   &.is-collapsed {

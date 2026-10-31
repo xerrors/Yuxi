@@ -1631,15 +1631,13 @@ defineExpose({
 
 .mention-popup {
   width: 100%;
-  max-height: 280px;
+  max-height: 320px;
   overflow-y: auto;
   background: var(--gray-0);
-  border-radius: 12px;
-  box-shadow:
-    0 -4px 16px var(--shadow-2),
-    0 4px 16px var(--shadow-3);
+  border-radius: 16px;
+  box-shadow: 0 2px 8px var(--shadow-1);
   border: 1px solid var(--gray-200);
-  padding: 8px 0;
+  padding: 12px;
 
   .session-search-hint {
     margin-left: auto;
@@ -1709,7 +1707,6 @@ defineExpose({
     display: flex;
     align-items: center;
     gap: 4px;
-    border-bottom: 1px solid var(--gray-100);
     margin-bottom: 2px;
   }
 
@@ -1742,6 +1739,9 @@ defineExpose({
         color: var(--gray-800);
         font-weight: 500;
         flex: 0 0 auto;
+        max-width: 50%;
+        overflow: hidden;
+        text-overflow: ellipsis;
         white-space: nowrap;
       }
 

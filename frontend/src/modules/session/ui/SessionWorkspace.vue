@@ -764,7 +764,6 @@ import { useUserStore } from '@/modules/identity'
 import { storeToRefs } from 'pinia'
 import { getMessageRunId } from '@/modules/session/model/messageDebug'
 import { MessageProcessor } from '@/modules/session/model/messageProcessor'
-import { itemsToMessages } from '@/modules/session/model/agentItems'
 import dayjs, { parseToShanghai } from '@/shared/lib/time'
 import { agentApi, threadApi } from '@/apis'
 import HumanApprovalModal from '@/modules/session/ui/HumanApprovalModal.vue'
@@ -1724,10 +1723,9 @@ const getThreadOngoingMessages = (threadId) => {
   const threadState = getThreadState(threadId)
   if (!threadState || !threadState.itemState) return []
 
-  const items = Object.values(threadState.itemState.items).filter(
-    (item) => item.yuxi?.run_id === threadState.activeRunId
-  )
-  const visible = itemsToMessages(items).map((item) => ({
+  const visible = (threadMessages.value[threadId] || []).filter(
+    (item) => item.run_id === threadState.activeRunId
+  ).map((item) => ({
     ...item,
     content: threadState.displayText[item.id] ?? item.content
   }))

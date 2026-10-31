@@ -15,7 +15,10 @@ class QuestionOption(BaseModel):
 
     label: str = Field(min_length=1, description="向用户展示的选项名称")
     value: str = Field(min_length=1, description="提交答案时使用的选项值")
-    description: str | None = Field(default=None, description="选项补充说明")
+    description: str | None = Field(
+        default=None,
+        description="可选的简短说明；必要时解释选项含义、适用场景或关键取舍，含义明确时省略，避免重复 label",
+    )
 
 
 class UserQuestion(BaseModel):
@@ -63,9 +66,11 @@ ASK_USER_QUESTION_DESCRIPTION = """
 1. questions 提供 1-5 个问题，每项包含 question，并可包含 options、multi_select、allow_other
 2. 纯问答不提供 options（或传空列表），用户将直接填写文本
 3. 选择题的 options 提供 2-5 个有区分度的选项，每项包含 label 和 value
-4. 若有推荐选项：把推荐项放在第一位，并在 label 末尾加 "(Recommended)"
-5. 若需要多选：将该问题的 multi_select 设为 true
-6. allow_other 只用于选择题，通常保持 true，让用户可自行填写答案
+4. label 保持简短；必要时用 description 补充一句说明，解释选项含义、适用场景或关键取舍，帮助用户理解和区分选项。
+   含义明确的选项省略 description，不重复 label，也不为每个选项机械添加说明
+5. 若有推荐选项：把推荐项放在第一位，并在 label 末尾加 "(Recommended)"
+6. 若需要多选：将该问题的 multi_select 设为 true
+7. allow_other 只用于选择题，通常保持 true，让用户可自行填写答案
 
 注意事项：
 1. 不要用这个工具询问“是否继续执行”“计划是否准备好”这类流程控制问题

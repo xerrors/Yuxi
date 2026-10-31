@@ -4,7 +4,7 @@
       <template #actions>
         <template v-if="!isBatchDeleteMode">
           <a-button
-            class="lucide-icon-btn"
+            class="yuxi-refresh-button lucide-icon-btn"
             aria-label="刷新 Skills"
             :disabled="loading"
             @click="fetchSkills"

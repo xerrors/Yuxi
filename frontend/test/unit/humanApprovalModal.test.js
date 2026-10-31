@@ -164,7 +164,7 @@ test('问题弹窗按顺序收集全部答案', async () => {
     )
     assert.equal(textContent(next), '下一步')
     assert.equal(next.props.disabled, false)
-    assert.equal(next.parent?.parent?.props.class, 'question-response-bar free-text-answer')
+    assert.equal(next.parent?.parent?.props.class, 'question-footer')
     next.props.onClick()
     await nextTick()
 
@@ -177,7 +177,7 @@ test('问题弹窗按顺序收集全部答案', async () => {
       (node) => node.type === 'button' && node.props.class === 'btn btn-approve'
     )
     assert.equal(textContent(submit), '提交')
-    assert.equal(submit.parent?.parent?.props.class, 'question-response-bar other-input')
+    assert.equal(submit.parent?.parent?.props.class, 'question-footer')
     submit.props.onClick()
     assert.deepEqual(submissions, [{ destination: '杭州', season: '春天' }])
 

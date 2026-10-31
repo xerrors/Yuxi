@@ -75,8 +75,19 @@ export function applyAgentEvent(state, event) {
   return true
 }
 
-/** 从标准 item 派生现有展示组件的消息视图；不还原模型供应商的 chunk。 */
-export function itemsToMessages(items) {
+/** 只投影当前运行仍在产出的思考段，历史与已关闭内容保留在原始 item。 */
+export function getStreamingReasoning(state) {
+  const active = state.activeReasoning
+  if (!state.isStreaming || state.cancellationPending || state.cooperationWaiting ||
+      state.pendingInterrupt || !active) return null
+  const item = state.itemState.items[active.itemId]
+  if (item?.status !== 'in_progress' || item.yuxi?.run_id !== state.activeRunId ||
+      state.itemState.closedParts.has(`reasoning:${active.itemId}:${active.contentIndex}`)) return null
+  return { itemId: item.id, content: item.yuxi?.reasoning?.[active.contentIndex] || '' }
+}
+
+/** 从标准 item 派生消息视图；思考仅接受当前流式展示投影。 */
+export function itemsToMessages(items, reasoning = null) {
   const sorted = [...items].sort((left, right) =>
     (left.yuxi?.message_id || 0) - (right.yuxi?.message_id || 0) ||
     (left.yuxi?.output_index || 0) - (right.yuxi?.output_index || 0))
@@ -105,7 +116,7 @@ export function itemsToMessages(items) {
       message.id = item.id
       message.content = item.content.filter((part) => part.type === 'output_text' || part.type === 'input_text')
         .map((part) => part.text).join('')
-      message.reasoning_content = Object.values(item.yuxi?.reasoning || {}).join('')
+      message.reasoning_content = item.id === reasoning?.itemId ? reasoning.content : ''
       message.image_urls = item.content.filter((part) => part.type === 'input_image')
         .map((part) => part.image_url)
       message.phase = item.phase

@@ -77,32 +77,38 @@
         </div>
 
         <div v-else class="question-dialog-header">
-          <div class="question-dialog-heading">
-            <CircleHelp :size="19" aria-hidden="true" />
-            <span>问题</span>
-          </div>
+          <h4
+            id="question-dialog-title"
+            ref="questionTitleRef"
+            class="question-title"
+            tabindex="-1"
+          >
+            {{ activeQuestion?.question || '问题' }}
+          </h4>
           <div class="question-dialog-navigation">
-            <button
-              type="button"
-              class="question-icon-button"
-              aria-label="上一题"
-              :disabled="isProcessing || activeQuestionIndex === 0"
-              @click="setActiveQuestion(activeQuestionIndex - 1)"
-            >
-              <ChevronLeft :size="19" />
-            </button>
-            <span class="question-progress" aria-live="polite">
-              {{ activeQuestionIndex + 1 }} / {{ normalizedQuestions.length }}
-            </span>
-            <button
-              type="button"
-              class="question-icon-button"
-              aria-label="下一题"
-              :disabled="isProcessing || activeQuestionIndex >= normalizedQuestions.length - 1"
-              @click="setActiveQuestion(activeQuestionIndex + 1)"
-            >
-              <ChevronRight :size="19" />
-            </button>
+            <template v-if="normalizedQuestions.length > 1">
+              <button
+                type="button"
+                class="question-icon-button"
+                aria-label="上一题"
+                :disabled="isProcessing || activeQuestionIndex === 0"
+                @click="setActiveQuestion(activeQuestionIndex - 1)"
+              >
+                <ChevronLeft :size="19" />
+              </button>
+              <span class="question-progress" aria-live="polite">
+                {{ activeQuestionIndex + 1 }} / {{ normalizedQuestions.length }}
+              </span>
+              <button
+                type="button"
+                class="question-icon-button"
+                aria-label="下一题"
+                :disabled="isProcessing || activeQuestionIndex >= normalizedQuestions.length - 1"
+                @click="setActiveQuestion(activeQuestionIndex + 1)"
+              >
+                <ChevronRight :size="19" />
+              </button>
+            </template>
             <button
               type="button"
               class="question-icon-button question-close-button"
@@ -116,15 +122,6 @@
         </div>
 
         <div v-if="!isToolApproval && activeQuestion" class="question-block">
-          <h4
-            id="question-dialog-title"
-            ref="questionTitleRef"
-            class="question-title"
-            tabindex="-1"
-          >
-            <span>{{ questionTypeLabel }}：</span>{{ activeQuestion.question }}
-          </h4>
-
           <div v-if="activeQuestion.operation" class="approval-operation">
             <span class="label">操作：</span>
             <span class="operation-text">{{ activeQuestion.operation }}</span>
@@ -149,6 +146,7 @@
               />
               <input
                 v-else
+                class="visually-hidden"
                 type="radio"
                 :name="`approval-option-${activeQuestion.questionId}`"
                 :value="optionItem.value"
@@ -156,7 +154,9 @@
                 :disabled="isProcessing"
                 @change="setSingle(activeQuestion.questionId, optionItem.value)"
               />
-              <span class="option-index" aria-hidden="true">{{ optionIndex + 1 }}</span>
+              <span v-if="!activeQuestion.multiSelect" class="option-number" aria-hidden="true">
+                {{ optionIndex + 1 }}
+              </span>
               <div class="option-content">
                 <span
                   class="option-label"
@@ -171,49 +171,57 @@
                   {{ optionItem.description }}
                 </span>
               </div>
+              <Check
+                v-if="!activeQuestion.multiSelect"
+                class="option-check"
+                :size="16"
+                aria-hidden="true"
+              />
             </label>
           </div>
 
-          <div
-            class="question-response-bar"
-            :class="{
-              'free-text-answer': activeQuestion.answerMode === 'text',
-              'other-input': activeQuestion.answerMode !== 'text',
-              selected:
-                activeQuestion.answerMode !== 'text' && isCustomAnswerSelected(activeQuestion)
-            }"
-          >
-            <template v-if="activeQuestion.answerMode === 'text'">
-              <label class="visually-hidden" :for="`question-answer-${activeQuestion.questionId}`">
-                回答 {{ activeQuestion.question }}
-              </label>
-              <textarea
-                :id="`question-answer-${activeQuestion.questionId}`"
-                ref="answerTextareaRef"
-                :value="answerTexts[activeQuestion.questionId] || ''"
-                :disabled="isProcessing"
-                rows="2"
-                placeholder="请输入你的回答…"
-                @input="handleTextInput(activeQuestion.questionId, $event)"
-              ></textarea>
-            </template>
-            <template v-else-if="activeQuestion.allowOther">
-              <PencilLine :size="17" aria-hidden="true" />
-              <label class="visually-hidden" :for="`other-answer-${activeQuestion.questionId}`">
-                自行填写回答
-              </label>
-              <textarea
-                :id="`other-answer-${activeQuestion.questionId}`"
-                ref="otherTextareaRef"
-                :value="answerTexts[activeQuestion.questionId] || ''"
-                :disabled="isProcessing"
-                rows="1"
-                placeholder="或自行填写回答"
-                @focus="selectOtherAnswer(activeQuestion.questionId)"
-                @input="handleTextInput(activeQuestion.questionId, $event)"
-              ></textarea>
-            </template>
-            <span v-else class="response-bar-spacer" aria-hidden="true"></span>
+          <div class="question-footer">
+            <div
+              v-if="activeQuestion.answerMode === 'text' || activeQuestion.allowOther"
+              class="question-response-bar"
+              :class="{
+                'free-text-answer': activeQuestion.answerMode === 'text',
+                'other-input': activeQuestion.answerMode !== 'text',
+                selected:
+                  activeQuestion.answerMode !== 'text' && isCustomAnswerSelected(activeQuestion)
+              }"
+            >
+              <template v-if="activeQuestion.answerMode === 'text'">
+                <label class="visually-hidden" :for="`question-answer-${activeQuestion.questionId}`">
+                  回答 {{ activeQuestion.question }}
+                </label>
+                <textarea
+                  :id="`question-answer-${activeQuestion.questionId}`"
+                  ref="answerTextareaRef"
+                  :value="answerTexts[activeQuestion.questionId] || ''"
+                  :disabled="isProcessing"
+                  rows="2"
+                  placeholder="请输入你的回答…"
+                  @input="handleTextInput(activeQuestion.questionId, $event)"
+                ></textarea>
+              </template>
+              <template v-else-if="activeQuestion.allowOther">
+                <label class="other-input-icon" :for="`other-answer-${activeQuestion.questionId}`">
+                  <PencilLine :size="16" aria-hidden="true" />
+                  <span class="visually-hidden">自行填写回答</span>
+                </label>
+                <textarea
+                  :id="`other-answer-${activeQuestion.questionId}`"
+                  ref="otherTextareaRef"
+                  :value="answerTexts[activeQuestion.questionId] || ''"
+                  :disabled="isProcessing"
+                  rows="1"
+                  placeholder="或自行填写回答"
+                  @focus="selectOtherAnswer(activeQuestion.questionId)"
+                  @input="handleTextInput(activeQuestion.questionId, $event)"
+                ></textarea>
+              </template>
+            </div>
             <div class="question-inline-actions">
               <button
                 class="btn btn-approve"
@@ -258,10 +266,10 @@
 <script setup>
 import { computed, nextTick, ref, watch } from 'vue'
 import {
+  Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  CircleHelp,
   PencilLine,
   Wrench,
   X
@@ -326,10 +334,6 @@ const activeQuestion = computed(() => {
   if (normalizedQuestions.value.length === 0) return null
   const index = Math.min(activeQuestionIndex.value, normalizedQuestions.value.length - 1)
   return normalizedQuestions.value[index]
-})
-const questionTypeLabel = computed(() => {
-  if (activeQuestion.value?.answerMode === 'text') return '问答题'
-  return activeQuestion.value?.multiSelect ? '多选题' : '单选题'
 })
 
 const resetForm = () => {
@@ -625,13 +629,15 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
   border: 1px solid var(--gray-200);
 
   &.is-question-dialog {
+    color-scheme: light;
     align-self: stretch;
     width: 100%;
     max-width: none;
     min-width: 0;
     margin: 0 0 12px;
-    border-radius: 12px;
-    box-shadow: 0 6px 18px var(--shadow-1);
+    border-color: var(--gray-150);
+    border-radius: 1.4rem;
+    box-shadow: 0 2px 8px var(--shadow-1);
   }
 
   &.is-tool-approval {
@@ -650,36 +656,37 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
   }
 }
 
+.dark .is-question-dialog {
+  color-scheme: dark;
+  background: var(--gray-30);
+  box-shadow: none;
+
+  .option-item.selected {
+    background: var(--gray-100);
+  }
+}
+
 .approval-content {
   padding: 16px 20px;
 }
 
 .is-question-dialog .approval-content {
-  padding: 13px 16px 12px;
+  padding: 12px;
 }
 
 .question-dialog-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 12px;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding-left: 8px;
 }
 
-.question-dialog-heading,
 .question-dialog-navigation {
   display: flex;
   align-items: center;
-}
-
-.question-dialog-heading {
-  gap: 8px;
-  color: var(--color-text-secondary);
-  font-size: 14px;
-  font-weight: 500;
-}
-
-.question-dialog-navigation {
+  flex-shrink: 0;
   gap: 4px;
 }
 
@@ -743,16 +750,13 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
 }
 
 .question-title {
-  margin: 0 0 10px;
+  min-width: 0;
+  margin: 0;
   color: var(--color-text);
-  font-size: 16px;
-  font-weight: 400;
+  font-size: 15px;
+  font-weight: 600;
   line-height: 1.55;
   overflow-wrap: anywhere;
-
-  span {
-    color: var(--color-text-secondary);
-  }
 }
 
 .tool-approval-header {
@@ -960,59 +964,72 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
 }
 
 .option-item {
+  position: relative;
   display: flex;
-  align-items: center;
-  gap: 12px;
+  align-items: flex-start;
+  gap: 8px;
   box-sizing: border-box;
   width: 100%;
-  min-height: 40px;
-  padding: 4px 8px;
-  border: 1px solid transparent;
-  border-radius: 12px;
+  min-height: 36px;
+  padding: 6px 8px;
+  border-radius: 8px;
   color: var(--color-text);
   font-size: 14px;
   cursor: pointer;
 
-  input {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    opacity: 0;
-    pointer-events: none;
+  input[type='checkbox'] {
+    flex: 0 0 16px;
+    width: 16px;
+    height: 16px;
+    margin: 2px 0 0;
+    accent-color: var(--main-color);
+    cursor: inherit;
+    outline: none;
   }
 
-  &:hover {
-    background: var(--gray-25);
+  &:hover:not(.selected):not(:has(input:disabled)) {
+    background: var(--gray-50);
   }
 
-  &:focus-within {
-    border-color: var(--main-color);
-    outline: 2px solid var(--main-50);
+  &:has(input:focus-visible) {
+    outline: 2px solid var(--main-color);
+    outline-offset: 1px;
+  }
+
+  &:has(input:disabled) {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
 
   &.selected {
-    background: var(--main-10);
-
-    .option-index {
-      border-color: var(--main-color);
-      background: var(--main-color);
-      color: var(--gray-0);
-    }
+    background: var(--gray-50);
   }
 }
 
-.option-index {
+.option-number {
   display: inline-flex;
-  flex: 0 0 30px;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  box-sizing: border-box;
+  flex: 0 0 20px;
+  height: 20px;
   border: 1px solid var(--gray-200);
-  border-radius: 999px;
-  background: var(--gray-25);
+  border-radius: 5px;
+  background: var(--gray-50);
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.option-check {
+  flex-shrink: 0;
+  align-self: center;
+  color: var(--main-color);
+  visibility: hidden;
+
+  .selected & {
+    visibility: visible;
+  }
 }
 
 .option-content {
@@ -1024,6 +1041,7 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
 }
 
 .option-label {
+  font-weight: 500;
   line-height: 1.4;
   color: var(--color-text);
 
@@ -1040,17 +1058,24 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
   word-break: break-word;
 }
 
+.question-footer {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .question-response-bar {
   box-sizing: border-box;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 42px;
-  margin-top: 4px;
-  padding: 4px 5px 4px 14px;
+  min-height: 36px;
+  padding: 2px 0;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 6px;
   background: transparent;
   color: var(--color-text-secondary);
   transition:
@@ -1093,9 +1118,25 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
   box-shadow: 0 0 0 2px var(--main-50);
 }
 
-.other-input.selected {
-  border-color: var(--main-300);
-  background: var(--main-10);
+.other-input {
+  gap: 8px;
+  padding-inline: 8px;
+
+  textarea {
+    padding-inline: 0;
+  }
+
+  &.selected {
+    background: var(--gray-50);
+  }
+}
+
+.other-input-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 7px;
+  cursor: text;
 }
 
 .free-text-answer {
@@ -1112,10 +1153,6 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
   }
 }
 
-.response-bar-spacer {
-  flex: 1;
-}
-
 .question-inline-actions {
   display: flex;
   flex: 0 0 auto;
@@ -1124,7 +1161,7 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
 
   .btn {
     min-width: 64px;
-    min-height: 34px;
+    min-height: 36px;
     padding: 5px 12px;
     border-radius: 6px;
   }

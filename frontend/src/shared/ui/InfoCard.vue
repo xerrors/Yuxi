@@ -288,12 +288,12 @@ const normalizedTags = computed(() => {
   &-desc {
     font-size: 13px;
     color: var(--gray-600);
-    line-height: 1.4;
+    line-height: 20px;
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
-    min-height: 2.8em;
+    min-height: 40px;
   }
 
   &-info-rows {

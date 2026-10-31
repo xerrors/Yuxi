@@ -11,56 +11,31 @@
         <span class="note">提问</span>
         <span class="separator">|</span>
         <span class="description">{{ shortQuestionSummary }}</span>
-        <span v-if="displayAnswer" class="tag tag-answered"> 已回答: {{ displayAnswer }} </span>
+        <span v-if="displayAnswer" class="tag tag-answered">
+          已回答<span v-if="questions.length === 1">: {{ displayAnswer }}</span>
+        </span>
       </div>
     </template>
 
     <template #result>
       <div class="ask-question-result">
-        <div v-if="questions.length" class="question-list">
+        <div v-if="questions.length" class="answer-list">
           <div
             v-for="(questionItem, questionIndex) in questions"
             :key="questionItem.questionId || questionIndex"
-            class="question-item"
+            class="answer-item"
           >
-            <div class="question-title">
-              <span class="question-index">{{ questionIndex + 1 }}</span>
-              <span class="question-text">{{ questionItem.question }}</span>
+            <div v-if="questions.length > 1" class="question-title">
+              <span class="question-index">{{ questionIndex + 1 }}.</span>
+              <span>{{ questionItem.question }}</span>
             </div>
-
-            <div v-if="questionItem.operation" class="operation-row">
-              <span class="row-label">操作</span>
-              <span class="operation-text">{{ questionItem.operation }}</span>
-            </div>
-
-            <div v-if="questionItem.options && questionItem.options.length" class="options-row">
-              <span class="row-label">选项</span>
-              <div class="options-list">
-                <div
-                  v-for="(opt, optIdx) in questionItem.options"
-                  :key="`${opt.value}-${optIdx}`"
-                  class="option-pill"
-                  :class="{
-                    'is-recommended': optIdx === 0 && String(opt.label).includes('(Recommended)')
-                  }"
-                >
-                  <div class="option-pill-main">
-                    <span class="option-pill-label">{{ opt.label }}</span>
-                    <span v-if="opt.description" class="option-pill-desc">{{
-                      opt.description
-                    }}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div v-if="getQuestionAnswerText(questionItem)" class="answer-row">
+            <div class="answer-row">
               <span class="row-label">回答</span>
-              <span class="answer-text">{{ getQuestionAnswerText(questionItem) }}</span>
+              <span class="answer-text">{{ getQuestionAnswerText(questionItem) || '尚未回答' }}</span>
             </div>
           </div>
         </div>
-        <div v-else class="no-question">暂无提问内容</div>
+        <div v-else class="no-answer">暂无回答</div>
       </div>
     </template>
   </BaseToolCall>
@@ -115,13 +90,10 @@ const questions = computed(() => {
 
 const shortQuestionSummary = computed(() => {
   if (!questions.value.length) return '无问题'
+  if (questions.value.length > 1) return `${questions.value.length} 个问题`
 
   const firstQuestion = questions.value[0].question
-  const shortFirstQuestion =
-    firstQuestion.length > 36 ? firstQuestion.slice(0, 36) + '...' : firstQuestion
-
-  if (questions.value.length === 1) return shortFirstQuestion
-  return `${shortFirstQuestion} 等 ${questions.value.length} 题`
+  return firstQuestion.length > 36 ? firstQuestion.slice(0, 36) + '...' : firstQuestion
 })
 
 const userAnswer = computed(() => {
@@ -226,123 +198,51 @@ const displayAnswer = computed(() => {
 .ask-question-result {
   padding: 8px 0;
 
-  .question-list {
+  .answer-list {
     display: flex;
     flex-direction: column;
-    gap: 10px;
-  }
-
-  .question-item {
-    border: 1px solid var(--gray-100);
-    background: var(--gray-25);
-    border-radius: 6px;
-    padding: 10px 12px;
+    gap: 16px;
   }
 
   .question-title {
     display: flex;
     align-items: flex-start;
     gap: 8px;
-    color: var(--gray-800);
+    margin-bottom: 4px;
+    color: var(--color-text);
     font-size: 13px;
-    line-height: 1.5;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
   }
 
   .question-index {
-    width: 20px;
-    height: 20px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    flex: 0 0 20px;
-    border-radius: 50%;
-    color: var(--main-700);
-    background: var(--main-50);
-    font-size: 12px;
-    font-weight: 600;
+    flex: 0 0 auto;
+    color: var(--color-text-secondary);
   }
 
-  .question-text {
-    min-width: 0;
-    word-break: break-word;
-  }
-
-  .operation-row,
-  .options-row,
   .answer-row {
-    margin-top: 8px;
     display: flex;
     align-items: flex-start;
-    gap: 8px;
-    font-size: 12px;
-    line-height: 1.5;
+    gap: 12px;
+    font-size: 13px;
+    line-height: 1.6;
   }
 
   .row-label {
-    color: var(--gray-500);
+    color: var(--color-text-secondary);
     flex: 0 0 auto;
   }
 
-  .operation-text,
   .answer-text {
     min-width: 0;
-    color: var(--gray-700);
-    word-break: break-word;
+    color: var(--color-text);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
 
-  .options-list {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .option-pill {
-    background: var(--gray-50);
-    border: 1px solid var(--gray-150);
-    border-radius: 6px;
-    padding: 6px 10px;
-
-    &.is-recommended {
-      border-color: var(--main-200);
-      background: var(--main-30);
-    }
-  }
-
-  .option-pill-main {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  .option-pill-label {
-    color: var(--gray-800);
-    font-weight: 500;
-  }
-
-  .option-pill-desc {
-    color: var(--gray-500);
-    font-size: 11px;
-    line-height: 1.4;
-    word-break: break-word;
-  }
-
-  .answer-row {
-    padding-top: 8px;
-    border-top: 1px solid var(--gray-100);
-  }
-
-  .answer-text {
-    color: var(--color-success-700);
-    font-weight: 500;
-  }
-
-  .no-question {
-    padding: 12px;
-    color: var(--gray-500);
+  .no-answer {
+    color: var(--color-text-secondary);
     font-size: 13px;
-    text-align: center;
   }
 }
 </style>

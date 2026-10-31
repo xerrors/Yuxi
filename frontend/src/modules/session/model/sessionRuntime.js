@@ -8,7 +8,7 @@ import { useAgentRunStream } from './useAgentRunStream'
 import { useAgentInputQueue } from './useAgentInputQueue'
 import { useAgentStreamHandler } from './useAgentStreamHandler'
 import { useStreamSmoother } from './useStreamSmoother'
-import { itemsToMessages, mergeItemSnapshot } from './agentItems'
+import { getStreamingReasoning, itemsToMessages, mergeItemSnapshot } from './agentItems'
 import { extractPendingInterrupt, pendingInterruptFromWaitpoint } from './useApproval'
 import { useSessionFeedbackStore } from './sessionFeedback'
 
@@ -21,7 +21,9 @@ export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
     Object.fromEntries(
       Object.entries(chatState.threadStates)
         .filter(([, state]) => state.historyLoaded || Object.keys(state.itemState.items).length)
-        .map(([id, state]) => [id, itemsToMessages(Object.values(state.itemState.items))])
+        .map(([id, state]) => [id, itemsToMessages(
+          Object.values(state.itemState.items), getStreamingReasoning(state)
+        )])
     )
   )
   const threadRuns = ref({})

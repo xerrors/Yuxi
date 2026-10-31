@@ -96,6 +96,7 @@ const iconSize = computed(() => (props.size === 'compact' ? 22 : 24))
     color: var(--gray-600);
     font-size: 14px;
     line-height: 1.6;
+    text-wrap: balance;
   }
 
   &__actions {

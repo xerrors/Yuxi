@@ -3,6 +3,7 @@ import { after, before, test } from 'node:test'
 import { setImmediate } from 'node:timers'
 import { createTestServer } from '../helpers/createTestServer.js'
 import { createPinia, setActivePinia, disposePinia } from 'pinia'
+import { message as toast } from 'ant-design-vue'
 
 let server, api, useRuntime, ErrorHandler
 before(async () => {
@@ -67,6 +68,165 @@ function setup(t) {
     emit: (event) => wire.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`))
   }
 }
+
+/** 通过实际 SSE 消费入口驱动思考展示，原始 item 与展示结果分别断言。 */
+async function setupReasoningStream(t) {
+  t.mock.method(toast, 'error', () => {})
+  const harness = setup(t)
+  const detach = harness.runtime.observeThread('thread', {})
+  void harness.runtime.startRunStream('thread', 'run', null, { turnId: 'turn' })
+  await tick()
+  t.after(detach)
+  let sequence = 0
+  const send = async (fields) => {
+    harness.emit({ session_id: 'thread', turn_id: 'turn', yuxi: { run_id: 'run' },
+      event_id: `reasoning-event-${++sequence}`, ...fields })
+    await tick()
+  }
+  const item = { id: 'thinking', type: 'message', role: 'assistant', status: 'in_progress',
+    turn_id: 'turn', content: [], yuxi: { run_id: 'run', message_id: 1, output_index: 0 } }
+  await send({ type: 'agent.session.turn.item.added', item })
+  const reasoning = (delta, content_index = 0) => send({
+    type: 'yuxi.session.turn.reasoning.delta', item_id: item.id, content_index, delta
+  })
+  return { ...harness, send, item, reasoning,
+    state: harness.runtime.getThreadState('thread'),
+    visible: () => harness.runtime.threadMessages.thread.filter(message => message.reasoning_content)
+  }
+}
+
+test('流式只展示当前思考段，完成后隐藏且原始文本完整', async (t) => {
+  const h = await setupReasoningStream(t)
+  await h.reasoning('先检查')
+  await h.reasoning('输入')
+  assert.equal(h.visible()[0].reasoning_content, '先检查输入')
+  await h.send({ type: 'yuxi.session.turn.state', agent_state: { todos: [] } })
+  await h.reasoning('')
+  await h.send({ type: 'agent.session.turn.output_text.delta', item_id: h.item.id,
+    content_index: 0, delta: '' })
+  assert.equal(h.visible()[0].reasoning_content, '先检查输入')
+  await h.send({ type: 'yuxi.session.turn.reasoning.done', item_id: h.item.id,
+    content_index: 0, text: '先检查输入，已完成' })
+  assert.deepEqual(h.visible(), [])
+  await h.reasoning('迟到增量')
+  assert.deepEqual(h.visible(), [])
+  assert.equal(h.state.itemState.items.thinking.yuxi.reasoning[0], '先检查输入，已完成')
+  await h.reasoning('另一段', 2)
+  assert.equal(h.visible()[0].reasoning_content, '另一段')
+  assert.equal(h.state.itemState.items.thinking.yuxi.reasoning[0], '先检查输入，已完成')
+  await h.send({ type: 'agent.session.turn.item.done', item: {
+    ...h.state.itemState.items.thinking, status: 'completed'
+  } })
+  assert.equal(h.state.isStreaming, true)
+  assert.deepEqual(h.visible(), [], '模型消息结束时不等待整轮结束才隐藏')
+})
+
+test('没有 reasoning.done 时，正文或工具开始仍隐藏当前思考', async (t) => {
+  const h = await setupReasoningStream(t)
+  for (const [index, transition] of [
+    { type: 'agent.session.turn.content_part.added', item_id: h.item.id,
+      content_index: 0, part: { type: 'output_text', text: '' } },
+    { type: 'agent.session.turn.output_text.delta', item_id: h.item.id,
+      content_index: 0, delta: '回答正文' },
+    { type: 'agent.session.turn.output_text.done', item_id: h.item.id,
+      content_index: 0, text: '完整回答正文' },
+    { type: 'agent.session.turn.content_part.done', item_id: h.item.id,
+      content_index: 0, part: { type: 'output_text', text: '完整回答正文' } },
+    { type: 'agent.session.turn.item.added', item: { id: 'tool', type: 'function_call',
+      name: 'read_file', call_id: 'call', arguments: {}, status: 'in_progress', turn_id: 'turn',
+      yuxi: { run_id: 'run', message_id: 2, output_index: 1 } } }
+  ].entries()) {
+    await h.reasoning('正在分析', index)
+    assert.equal(h.visible().length, 1)
+    await h.send(transition)
+    assert.deepEqual(h.visible(), [], transition.type)
+    await h.reasoning('迟到增量', index)
+    assert.deepEqual(h.visible(), [], `${transition.type} 后旧段不能重新出现`)
+    assert.equal(h.state.itemState.items.thinking.yuxi.reasoning[index], '正在分析迟到增量')
+  }
+  const messages = h.runtime.threadMessages.thread
+  assert.equal(messages[0].content, '完整回答正文')
+  assert.equal(messages[1].tool_calls[0].name, 'read_file')
+  assert.ok(h.state.itemState.items.thinking.yuxi.reasoning[0])
+})
+
+test('新思考替换旧思考，重复事件和其他 Run 事件不改变当前展示', async (t) => {
+  const h = await setupReasoningStream(t)
+  await h.reasoning('旧段')
+  const tool = { type: 'agent.session.turn.item.added', item: { id: 'old-tool',
+    type: 'function_call', name: 'read_file', call_id: 'old-call', arguments: {},
+    status: 'in_progress', turn_id: 'turn', yuxi: { run_id: 'run', message_id: 2 } } }
+  await h.send(tool)
+  const old = { type: 'yuxi.session.turn.reasoning.delta', item_id: h.item.id,
+    content_index: 0, delta: '旧事件', event_id: 'same-event' }
+  await h.send(old)
+  await h.reasoning('当前段', 2)
+  await h.send(tool)
+  await h.send(old)
+  await h.send({ type: 'agent.session.turn.item.added', item: {
+    ...h.item, id: 'other-run', yuxi: { run_id: 'old-run', message_id: 2 }
+  } })
+  await h.send({ type: 'yuxi.session.turn.reasoning.delta', item_id: 'other-run',
+    content_index: 0, delta: '其他运行', yuxi: { run_id: 'old-run' } })
+  await h.send({ type: 'agent.session.turn.output_text.delta', item_id: 'other-run',
+    content_index: 0, delta: '其他正文', yuxi: { run_id: 'old-run' } })
+  assert.equal(h.visible().length, 1)
+  assert.equal(h.visible()[0].reasoning_content, '当前段')
+  await h.send({ type: 'yuxi.session.turn.reasoning.done', item_id: h.item.id,
+    content_index: 0, text: '旧段完成' })
+  assert.equal(h.visible()[0].reasoning_content, '当前段')
+  await h.reasoning('新段', 4)
+  await h.reasoning('迟到增量', 2)
+  assert.equal(h.visible()[0].reasoning_content, '新段', '旧段不能抢回新段的展示')
+  assert.equal(h.state.itemState.items.thinking.yuxi.reasoning[2], '当前段迟到增量')
+})
+
+test('断线恢复的完成索引关闭旧思考，历史快照不会制造正在思考', async (t) => {
+  const h = await setupReasoningStream(t)
+  await h.reasoning('未完成片段')
+  const snapshot = { ...h.item, yuxi: { ...h.item.yuxi,
+    reasoning: { 0: '完整思考' }, completed_reasoning_indices: [0] } }
+  api.getSessionItems = async () => ({ data: [snapshot], yuxi: { runs: [] }, has_more: false })
+  await h.send({ type: 'yuxi.session.resync' })
+  await tick()
+  assert.deepEqual(h.visible(), [])
+  assert.equal(h.state.itemState.items.thinking.yuxi.reasoning[0], '完整思考')
+  await h.reasoning('重放旧片段')
+  assert.deepEqual(h.visible(), [])
+  h.runtime.resetThreadExecution('thread')
+  await h.runtime.fetchThreadMessages({ threadId: 'thread', fresh: true })
+  assert.deepEqual(h.visible(), [])
+  assert.equal(h.state.activeReasoning, null)
+})
+
+for (const status of ['completed', 'failed', 'cancelled', 'requires_action']) {
+  test(`运行 ${status} 后回读包含思考的历史也不显示`, async (t) => {
+    const h = await setupReasoningStream(t)
+    await h.reasoning('终态前思考')
+    const snapshot = { ...h.item, status: status === 'failed' ? 'failed' : 'completed',
+      content: [{ type: 'output_text', text: '保留正文' }],
+      yuxi: { ...h.item.yuxi, reasoning: { 0: '完整思考' } } }
+    api.getSessionItems = async () => ({ data: [snapshot], yuxi: { runs: [] }, has_more: false })
+    await h.send({ type: `agent.session.turn.${status}`, turn: { id: 'turn', status,
+      yuxi: { waitpoint: { kind: 'question', id: 'waiting' } } } })
+    await tick()
+    assert.equal(h.state.isStreaming, false)
+    assert.deepEqual(h.visible(), [])
+    assert.equal(h.runtime.threadMessages.thread[0].content, '保留正文')
+    assert.equal(h.state.itemState.items.thinking.yuxi.reasoning[0], '完整思考')
+  })
+}
+
+test('取消请求和协作等待撤下思考，不删除协议内容', async (t) => {
+  const h = await setupReasoningStream(t)
+  await h.reasoning('保留的原文')
+  for (const flag of ['cancellationPending', 'cooperationWaiting']) {
+    h.state[flag] = true
+    assert.deepEqual(h.visible(), [], flag)
+    h.state[flag] = false
+  }
+  assert.equal(h.state.itemState.items.thinking.yuxi.reasoning[0], '保留的原文')
+})
 
 test('首次观察与清理后重建声明运行版本、协作等待和审批默认值，并隔离 Thread', (t) => {
   const { runtime } = setup(t)

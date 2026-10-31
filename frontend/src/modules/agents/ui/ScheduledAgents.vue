@@ -240,7 +240,7 @@ defineExpose({ beforeLeave: flushAutoSave, loading, saving })
         >
           <template #actions>
             <a-button
-              class="lucide-icon-btn"
+              class="yuxi-refresh-button lucide-icon-btn"
               :disabled="loading"
               aria-label="刷新定时任务"
               @click="load()"

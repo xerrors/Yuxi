@@ -170,7 +170,7 @@ defineExpose({
     <PageShoulder v-model:search="searchQuery" search-placeholder="搜索智能体...">
       <template #actions>
         <a-button
-          class="lucide-icon-btn"
+          class="yuxi-refresh-button lucide-icon-btn"
           @click="refreshAgents"
           :disabled="agentLoading"
           aria-label="刷新智能体"
@@ -363,7 +363,7 @@ defineExpose({
   box-shadow: none;
   color: var(--gray-600);
   font-size: 12px;
-  gap: 1px;
+  gap: 4px;
 
   &:hover {
     border: 0;

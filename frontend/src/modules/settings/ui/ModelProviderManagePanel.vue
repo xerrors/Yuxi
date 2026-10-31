@@ -770,7 +770,7 @@ defineExpose({
     <PageShoulder v-model:search="searchQuery" search-placeholder="搜索供应商...">
       <template #actions>
         <a-button
-          class="lucide-icon-btn"
+          class="yuxi-refresh-button lucide-icon-btn"
           @click="loadProviders"
           :disabled="loading"
           aria-label="刷新供应商"

@@ -4,7 +4,7 @@
       <template #actions>
         <a-tooltip title="刷新 MCP" placement="bottom">
           <a-button
-            class="lucide-icon-btn"
+            class="yuxi-refresh-button lucide-icon-btn"
             aria-label="刷新 MCP"
             :disabled="loading"
             @click="fetchServers"
