@@ -71,7 +71,7 @@ async page => {
     for (const mode of ['light', 'dark']) {
       await page.evaluate(mode => window.fileViewCheck.theme.setTheme(mode), mode)
       const trigger = host.getByRole('button', { name: /文件操作，当前视图为/ })
-      for (const [name, panel] of [['Markdown 源码', '.document-source'], ['Chunks', '.chunk-grid'], ['源文件', '.source-panel'], ['Markdown 预览', '.markdown-content']]) {
+      for (const [name, panel] of [['Markdown 源码', '.document-source'], ['Chunks', '.chunk-browser'], ['源文件', '.source-panel'], ['Markdown 预览', '.markdown-content']]) {
         await trigger.click()
         const viewMenu = page.locator('.knowledge-file-actions:visible').last()
         await viewMenu.getByRole('menuitem', { name, exact: true }).click()
@@ -112,17 +112,17 @@ async page => {
       const menu = page.locator('.knowledge-file-actions:visible').last()
       await menu.getByRole('menuitem', { name: 'Chunks', exact: true }).click()
       await menu.waitFor({ state: 'hidden' })
-      await host.locator('.chunk-card').waitFor()
+      await host.locator('.chunk-list-item').waitFor()
       const surfaces = await host.evaluate(el => {
         const style = selector => getComputedStyle(el.querySelector(selector))
         const title = style('.modal-title-wrapper')
         const content = style('.file-detail-content')
-        const card = style('.chunk-card')
+        const card = style('.chunk-list-item.selected')
         const bounds = el.getBoundingClientRect()
-        return { title: title.backgroundColor, content: content.backgroundColor, card: card.backgroundColor, cardBorder: card.borderTopColor, cardBorderWidth: card.borderTopWidth, left: bounds.left, right: bounds.right }
+        return { title: title.backgroundColor, content: content.backgroundColor, card: card.backgroundColor, selection: card.boxShadow, sidebarBorderWidth: style('.chunk-sidebar').borderRightWidth, left: bounds.left, right: bounds.right }
       })
-      check(surfaces.title !== surfaces.content && surfaces.card !== surfaces.content, `暗色分块区分不足：${JSON.stringify(surfaces)}`)
-      check(surfaces.cardBorder === 'rgba(0, 0, 0, 0)', `暗色分块卡片边框仍然可见：${JSON.stringify(surfaces)}`)
+      check(surfaces.card !== surfaces.content && surfaces.selection !== 'none' && surfaces.sidebarBorderWidth === '1px', `暗色分块区分不足：${JSON.stringify(surfaces)}`)
+      check(surfaces.card !== surfaces.title, `暗色选中分块与标题区分不足：${JSON.stringify(surfaces)}`)
       check(surfaces.left >= 0 && surfaces.right <= width, `文件详情超出视口：${JSON.stringify(surfaces)}`)
       await page.screenshot({ path: `/tmp/yuxi-file-detail-dark-${width}.png` })
     }
@@ -145,7 +145,7 @@ async page => {
     await more.click()
     await compactMenu.getByRole('menuitem', { name: 'Chunks', exact: true }).focus()
     await page.keyboard.press('Enter')
-    await host.locator('.chunk-grid').waitFor()
+    await host.locator('.chunk-browser').waitFor()
     await compactMenu.waitFor({ state: 'hidden', timeout: 4000 }).catch(() => { throw new Error('菜单关闭超时：阶段 2') })
     check(await more.evaluate(el => document.activeElement === el), '紧凑菜单键盘选择后未返回焦点')
     await host.evaluate(el => { el.style.width = '800px' })
@@ -210,12 +210,12 @@ async page => {
     check(await restoredTrigger.evaluate(el => document.activeElement === el), '键盘选择后未返回焦点')
     await page.evaluate(() => { window.fileViewCheck.embedded.value = false })
     const modal = page.locator('.file-detail .ant-modal-content:visible')
-    await modal.locator('.chunk-card').waitFor()
+    await modal.locator('.chunk-list-item.selected').waitFor()
     const modalSurfaces = await modal.evaluate(el => {
       const background = selector => getComputedStyle(el.querySelector(selector)).backgroundColor
-      return { title: background('.modal-title-wrapper'), content: background('.file-detail-content'), card: background('.chunk-card'), cardBorder: getComputedStyle(el.querySelector('.chunk-card')).borderTopColor }
+      return { title: background('.modal-title-wrapper'), content: background('.file-detail-content'), card: background('.chunk-list-item.selected'), selection: getComputedStyle(el.querySelector('.chunk-list-item.selected')).boxShadow, sidebarBorderWidth: getComputedStyle(el.querySelector('.chunk-sidebar')).borderRightWidth }
     })
-    check(modalSurfaces.title !== modalSurfaces.content && modalSurfaces.card !== modalSurfaces.content && modalSurfaces.cardBorder === 'rgba(0, 0, 0, 0)', `暗色弹窗分块区分不足：${JSON.stringify(modalSurfaces)}`)
+    check(modalSurfaces.card !== modalSurfaces.content && modalSurfaces.selection !== 'none' && modalSurfaces.sidebarBorderWidth === '1px', `暗色弹窗分块区分不足：${JSON.stringify(modalSurfaces)}`)
     await page.waitForTimeout(3000)
     for (const width of [1024, 768]) {
       await page.setViewportSize({ width, height: 800 })

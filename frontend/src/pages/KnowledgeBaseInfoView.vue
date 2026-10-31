@@ -165,7 +165,7 @@
       :kb-id="kbId"
       :file-id="store.fileDetailFileId"
       :editable="canManageKnowledgeBase && isMilvus"
-      :edit-requested="markdownEditRequested"
+      v-model:edit-requested="markdownEditRequested"
       @saved="handleMarkdownSaved"
       @closed="closeFileDetail"
     />

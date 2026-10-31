@@ -190,6 +190,7 @@
     >
       <template v-if="canEdit && editMode === 'edit'">
         <textarea
+          ref="editTextarea"
           v-model="draftContent"
           @input="emit('draft-change', draftContent)"
           class="file-edit-textarea"
@@ -379,7 +380,7 @@
 </template>
 
 <script setup>
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import {
   CircleAlert,
   Code2,
@@ -633,9 +634,19 @@ const resetHtmlPreviewZoom = () => {
   htmlPreviewScale.value = HTML_PREVIEW_DEFAULT_SCALE
 }
 
-const startEditing = () => {
+const editTextarea = ref(null)
+/** 进入编辑后定位源文件行，焦点交接让浏览器滚动到光标。 */
+const startEditing = async (startLine = 1) => {
   if (!canEdit.value || props.saving) return
   editMode.value = 'edit'
+  await nextTick()
+  const textarea = editTextarea.value
+  if (!textarea) return
+  const line = Number.isInteger(startLine) && startLine > 0 ? startLine : 1
+  const lines = textarea.value.split('\n')
+  const offset = lines.slice(0, Math.min(line - 1, lines.length - 1)).reduce((total, text) => total + text.length + 1, 0)
+  textarea.setSelectionRange(offset, offset)
+  textarea.focus()
 }
 
 defineExpose({

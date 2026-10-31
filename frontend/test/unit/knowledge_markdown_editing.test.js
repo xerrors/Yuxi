@@ -69,6 +69,7 @@ async function editorLogic(overrides = {}) {
     editor = component.setup(props, { expose() {}, emit: (...event) => {
       events.push(event)
       if (event[0] === 'update:open') props.open = event[1]
+      if (event[0] === 'update:editRequested') props.editRequested = event[1]
     } })
     return () => null
   } })
@@ -226,6 +227,7 @@ test('共享编辑器显式取消事件和详情 opt-in，原有只读调用点�
   assert.match(preview, /const cancelEdit[\s\S]*?emit\('cancel-edit'\)/)
   assert.match(page, /:editable="canManageKnowledgeBase && isMilvus"/)
   assert.match(page, /@saved="handleMarkdownSaved"/)
+  assert.match(page, /v-model:edit-requested="markdownEditRequested"/)
   assert.match(detail, /保存将撤销此文件的分块、普通检索和图谱/)
   assert.doesNotMatch(detail.slice(detail.indexOf('<a-modal\n')), /danger/)
 })
@@ -393,4 +395,40 @@ test('同库切换视图不打断草稿，只有更换知识库需要导航确�
   assert.equal(action.markdownExitOpen.value, true)
   action.confirmMarkdownExit()
   assert.equal(await navigation, true)
+})
+
+
+test('编辑请求只消费一次，取消、关闭重开和换文件均恢复阅读', async () => {
+  const action = await editorLogic({ props: { editRequested: true } })
+  assert.equal(action.markdownEditor.value.active, true)
+  assert.equal(action.props.editRequested, false)
+  assert.deepEqual(action.events, [['update:editRequested', false]])
+  action.cancelMarkdownEdit()
+  assert.equal(action.markdownEditor.value.active, false)
+  action.props.open = false
+  await new Promise(resolve => setImmediate(resolve))
+  action.props.open = true
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(action.markdownEditor.value.active, false)
+  action.props.fileId = 'file-b'
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(action.markdownEditor.value.active, false)
+})
+
+test('分块编辑传递起始行，切换文件后迟到的全文读取不能恢复编辑', async () => {
+  const action = await editorLogic()
+  let line
+  action.markdownPreview.value = { startEditing: value => { line = value } }
+  await action.startMarkdownEdit(42)
+  assert.equal(line, 42)
+  action.cancelMarkdownEdit()
+  let resolveRead
+  action.documentApi.getDocumentMarkdown = () => new Promise(resolve => { resolveRead = resolve })
+  const pending = action.startMarkdownEdit(7)
+  action.props.fileId = 'file-b'
+  await new Promise(resolve => setImmediate(resolve))
+  resolveRead({ content: '迟到全文', revision: 'old', has_parsed_markdown: true })
+  await pending
+  assert.equal(action.markdownEditor.value.active, false)
+  assert.notEqual(action.markdownEditor.value.draft, '迟到全文')
 })

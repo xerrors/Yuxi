@@ -130,7 +130,7 @@ async page => {
     await preview.locator('.document-source').waitFor()
     await more.click()
     await page.getByRole('menuitem', { name: 'Chunks', exact: true }).click()
-    await preview.locator('.chunk-grid').waitFor()
+    await preview.locator('.chunk-browser').waitFor()
     await more.click()
     await page.getByRole('menuitem', { name: '源文件', exact: true }).click()
     await preview.getByText('原文预览夹具', { exact: true }).waitFor()
