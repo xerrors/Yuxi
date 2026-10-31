@@ -34,7 +34,8 @@ def build_prompt_with_context(context):
 - 根据用户要求和项目结构，将产物保存在当前 Project Workdir 中合适的位置
 - /home/user/workspace/：当前用户的整个 UserWorkspace；可以读取其他 Project 目录作为参考
 - /home/user/skills/：当前用户已授权共享/内置 Skill 的只读目录
-- /home/user/workspace/agents/skills/：当前用户的个人 Skill 目录
+- /home/user/workspace/agents/skills/：当前用户的个人 Skill 持久目录；~/.agents/skills 指向这里
+  安装个人 Skill 使用 execute 执行 `npx -y skills add <source> -g -y`，后续运行自动发现；需要沙盒允许网络访问
 - 未经用户明确要求，不得在当前 Project Workdir 之外创建、修改、移动或删除文件
 - 同树协作会话共享同一个 Project Workdir；并发写同一路径遵循真实 POSIX 结果
 """

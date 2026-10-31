@@ -120,7 +120,7 @@ Yuxi 默认交付完整知识能力。部署开关 `YUXI_KNOWLEDGE_ENABLED` 由�
 - Skill 的依赖工具只有在对应 Skill 被显式预加载或动态激活后才对模型开放；基础工具与受 Skill 门控的工具保持边界。
 - Shipping 默认装配知识库、图谱和评估能力；显式关闭 Knowledge 时集中停止相关入口与后台工作，保留数据库结构和数据，Agent 通过 MCP 不可用路径继续运行；实际动作使用的解析器保持惰性加载。
 - 文件边界只使用三种跨层路径：数据库中的 Project `workdir_path`、Viewer 当前 scope 相对 `/foo`、Agent/artifact runtime 绝对 `/home/user/workspace/...`；宿主 `Path` 由 `yuxi.modules.workspace` 持有，普通 Service/Repository 不得取得。
-- 沙盒虚拟路径由当前 Project Workdir、Workspace 与共享 Skills 根共同约束；个人 Skill 保存在 UserWorkspace 的 `agents/skills`，共享与内置 Skill 才投影到只读 `/home/user/skills`。Cube 的惰性创建与恢复不得绕过 uid、代次及 Run/attempt owner 校验。Run 终态必须确认所属命令清理；用户环境在无活动 Run 与命令时空闲五分钟休眠。重建保留 Workspace 与 Skills，文件工具访问其他 VM 路径会自动唤醒。用户可见路径、对象存储 URL 与宿主机真实路径不能混用。
+- 沙盒虚拟路径由当前 Project Workdir、Workspace 与共享 Skills 根共同约束；个人 Skill 保存在 UserWorkspace 的 `agents/skills`，沙盒标准入口 `~/.agents/skills` 链接到该目录，CLI 全局安装直接写入个人目录，运行时直接扫描；Container 单独挂载个人目录。共享与内置 Skill 才投影到只读 `/home/user/skills`。Cube 的惰性创建与恢复不得绕过 uid、代次及 Run/attempt owner 校验。Run 终态必须确认所属命令清理；用户环境在无活动 Run 与命令时空闲五分钟休眠。重建保留 Workspace 与 Skills，文件工具访问其他 VM 路径会自动唤醒。用户可见路径、对象存储 URL 与宿主机真实路径不能混用。
 - 面向用户和外部系统的输入在边界校验；内部服务优先依赖已有类型、事务和仓储约束，避免用静默回退掩盖设计错误。
 
 ## 跨切面关注点

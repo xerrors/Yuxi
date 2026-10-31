@@ -155,14 +155,18 @@ def test_unpinned_or_mismatched_image_fails_startup(tmp_path, environment):
         ContainerManager(config, engine=FakeEngine())
 
 
-def test_create_uses_only_workdir_and_skills_mounts(manager):
-    """容器只挂载当前 Workdir 与只读 Skill 投影。"""
+def test_create_mounts_workdir_personal_skills_and_readonly_shared_skills(manager):
+    """容器挂载当前 Workdir、个人技能与只读共享投影。"""
     value, engine, workdir = manager
     result = value.create(uid="one", run_id="run-1", owner="worker:1", workdir="projects/demo")
     assert result["state"] == "running"
     config = engine.configs[0]
     mounts = {(item["Target"], item["ReadOnly"]) for item in config["HostConfig"]["Mounts"]}
-    assert mounts == {("/home/user/workspace/projects/demo", False), ("/home/user/skills", True)}
+    assert mounts == {
+        ("/home/user/workspace/projects/demo", False),
+        ("/home/user/skills", True),
+        ("/home/user/workspace/agents/skills", False),
+    }
     assert config["Image"] == "sha256:" + "a" * 64
     assert config["User"] == f"{os.getuid()}:{os.getgid()}"
     assert config["HostConfig"]["ReadonlyRootfs"] is True
@@ -500,3 +504,30 @@ def test_run_owner_lookup_fails_closed(manager, monkeypatch, unavailable):
     with pytest.raises(ConnectionError if unavailable else SandboxConflictError):
         value.create(uid="one", run_id="run-1", owner="worker:1", workdir="projects/demo")
     assert engine.configs == []
+
+
+@pytest.mark.parametrize("component", ["agents", "skills"])
+def test_personal_skill_mount_rejects_symlinked_components(manager, tmp_path, component):
+    """用户可写目录不能通过链接将别的目录挂进容器。"""
+    value, engine, workdir = manager
+    workspace = workdir.parents[1]
+    target = tmp_path / "outside"
+    target.mkdir()
+    (target / "sentinel").write_text("keep")
+    link = workspace / "agents" if component == "agents" else workspace / "agents" / "skills"
+    link.parent.mkdir(exist_ok=True)
+    link.symlink_to(target, target_is_directory=True)
+    with pytest.raises(SandboxValidationError, match="个人 Skill"):
+        value.create(uid="one", run_id="run-1", owner="worker:1", workdir="projects/demo")
+    assert not engine.configs
+    assert (target / "sentinel").read_text() == "keep"
+
+
+def test_skill_link_initialization_failure_removes_container(manager):
+    """映射建立失败不能返回可用环境，已创建的容器必须回收。"""
+    value, engine, _ = manager
+    engine.probe_result = (1, "failed")
+    with pytest.raises(SandboxError, match="个人 Skill"):
+        value.create(uid="one", run_id="run-1", owner="worker:1", workdir="projects/demo")
+    assert engine.container is None
+    assert engine.removed == ["cid1"]

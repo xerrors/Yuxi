@@ -2,6 +2,19 @@
 
 本页供部署管理员准备和维护显式选择的 Cube 用户 VM（`SANDBOX_BACKEND=cube`）。默认部署使用 [Container 沙盒](container-sandbox.md)；它提供单租户轻量执行环境，不替代 Cube 的强隔离。Yuxi 固定使用 CubeSandbox v0.7.3，应用服务使用 Compose，执行节点需要专用 Linux/KVM；Yuxi 与 Cube 的 Workspace/Skills 挂载必须指向同一份文件。运行时只装配当前 `SANDBOX_BACKEND`，节点或实例故障会明确失败。
 
+## 个人 Skill 标准目录
+
+模板提供 `~/.agents/skills → /home/user/workspace/agents/skills`，CLI 的全局安装直接进入持久 Workspace。安装命令与发现规则见[管理 Skills](../agents/skills-management.md#安装方式)。
+
+模板更新不修改已有 VM。在已有 VM 内以普通用户执行以下命令补建入口，无需重建环境：
+
+```bash
+mkdir -p /home/user/workspace/agents/skills /home/user/.agents
+ln -sT /home/user/workspace/agents/skills /home/user/.agents/skills
+```
+
+若入口已存在，`ln` 明确失败且保留原内容；用 `readlink /home/user/.agents/skills` 核对目标。若是已有真实目录，先备份并核对其中技能与 Workspace 的同名内容，再由用户显式整理，不能强制覆盖或删除。
+
 ## 原生执行节点
 
 在专用执行节点以管理员运行 `docker/cube/setup-node.sh` 安装 Cube，上传 `Dockerfile.user` 和 `build-template.sh` 到 `/opt/yuxi-cube` 后运行后者。安装脚本会将该节点的 SELinux 设为 permissive；脚本只用于专用执行节点，不能运行在 Yuxi 应用容器或用户 VM。普通账号 UID/GID 固定 1000，与 API/worker 文件身份一致，禁用 sudo。模板更新只影响新建实例；现有实例采用下文的显式重建流程，并先确认 Home 文件的保留需求。

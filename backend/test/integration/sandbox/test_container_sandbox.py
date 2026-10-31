@@ -15,16 +15,15 @@ from contextvars import copy_context
 from dataclasses import replace
 from datetime import timedelta
 
-from yuxi.modules.agents.repositories.sandbox import SandboxRepository
-from yuxi.shared.datetime import utc_now
-
 import pytest
 
+from yuxi.modules.agents.repositories.sandbox import SandboxRepository
 from yuxi.modules.agents.runtime.sandbox.container import ContainerSandboxProvider
 from yuxi.sandbox_runner import engine as engine_module
 from yuxi.sandbox_runner.engine import EngineError
 from yuxi.sandbox_runner.manager import ContainerManager, SandboxConflictError, SandboxError
 from yuxi.sandbox_runner.settings import RunnerSettings
+from yuxi.shared.datetime import utc_now
 
 pytestmark = [
     pytest.mark.integration,
@@ -110,7 +109,7 @@ def run(manager, run_id, command, *, timeout=30, budget=65536, stdin=None, workd
         owner="integration-owner",
         command_id=uuid.uuid4().hex,
         command=command,
-        cwd="/home/user/workspace/projects/demo" if workdir else "/home/user",
+        cwd=f"/home/user/workspace/{workdir}" if workdir else "/home/user",
         workdir=workdir,
         timeout_seconds=timeout,
         output_budget=budget,
@@ -178,7 +177,8 @@ def test_inspect_proves_user_network_caps_and_resource_limits(manager):
     assert host["Init"] is True
     assert set(host["Tmpfs"]) == {"/home/user", "/tmp"}
     mounts = {item["Destination"]: item for item in inspected["Mounts"]}
-    assert set(mounts) == {"/home/user/workspace/projects/demo", "/home/user/skills"}
+    assert set(mounts) == {"/home/user/workspace/projects/demo", "/home/user/skills", "/home/user/workspace/agents/skills"}
+    assert mounts["/home/user/workspace/agents/skills"]["RW"] is True
     assert mounts["/home/user/workspace/projects/demo"]["RW"] is True
     assert mounts["/home/user/skills"]["RW"] is False
 
@@ -371,6 +371,7 @@ def test_completed_command_stops_background_group_without_touching_parallel_comm
         "env -i /bin/sh -c " + shlex.quote(script) + " >/dev/null 2>&1 </dev/null & "
         f"while [ ! -f {ready.name} ]; do sleep .02; done; printf done; exit 7"
     )
+    value.create(uid="one", run_id=run_id, owner="integration-owner", workdir="projects/demo")
     remove = value.engine.remove_container
     if mode == "timeout_without_control":
         command = "exec env -i /bin/sh -c " + shlex.quote(script)
@@ -719,3 +720,51 @@ def test_late_exec_cannot_recreate_cleaned_run(manager, run_owner, monkeypatch, 
             resume.set()
             value.remove_run(uid="one", run_id=run_id)
             marker.unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize("workdir", [None, "projects/demo", "agents/skills"])
+def test_global_skill_directory_persists_between_run_containers(manager, workdir):
+    """标准入口写入宿主个人目录，重建 Run 后保留，其他用户不可见。"""
+    value, root, _ = manager
+    first, second = str(uuid.uuid4()), str(uuid.uuid4())
+    skill = root / "shared/one/workspace/agents/skills/directory-probe/SKILL.md"
+    try:
+        written = run(
+            value,
+            first,
+            "mkdir -p ~/.agents/skills/directory-probe && printf persistent-skill > ~/.agents/skills/directory-probe/SKILL.md",
+            workdir=workdir,
+        )
+        assert written["exit_code"] == 0, written
+        assert skill.read_text() == "persistent-skill"
+        value.remove_run(uid="one", run_id=first)
+        reread = run(value, second, "cat ~/.agents/skills/directory-probe/SKILL.md", workdir=workdir)
+        assert reread["exit_code"] == 0, reread
+        assert reread["output"].strip() == "persistent-skill"
+        assert not (root / "shared/two/workspace/agents/skills/directory-probe").exists()
+        assert (root / "shared/two/workspace/secret.txt").read_text() == "other-user-secret\n"
+    finally:
+        value.remove_run(uid="one", run_id=first)
+        value.remove_run(uid="one", run_id=second)
+
+
+def test_skills_cli_global_install_writes_real_personal_files(manager):
+    """真实 npm CLI 安装本地包，宿主独立回读原字节和实际目录。"""
+    value, root, workdir = manager
+    source = workdir / "cli-source"
+    source.mkdir(exist_ok=True)
+    content = "---\nname: cli-probe\ndescription: CLI integration fixture\n---\nCLI_FILE_MARKER\n"
+    (source / "SKILL.md").write_text(content)
+    cli = ContainerManager(replace(value.settings, network="bridge", home_bytes=256 * 1024 * 1024, memory_bytes=512 * 1024 * 1024))
+    run_id = str(uuid.uuid4())
+    try:
+        installed = run(cli, run_id, "npx -y skills add ./cli-source -g -y", timeout=300)
+        assert installed["exit_code"] == 0, installed
+        directory = root / "shared/one/workspace/agents/skills/cli-probe"
+        assert directory.is_dir() and not directory.is_symlink()
+        assert (directory / "SKILL.md").read_text() == content
+        removed = run(cli, run_id, "npx -y skills remove cli-probe -g -y", timeout=120)
+        assert removed["exit_code"] == 0, removed
+        assert not directory.exists()
+    finally:
+        cli.remove_run(uid="one", run_id=run_id)

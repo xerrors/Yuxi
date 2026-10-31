@@ -18,7 +18,7 @@ from weakref import WeakValueDictionary
 from yuxi.infrastructure.filesystem import open_directory_fd
 from yuxi.modules.agents.repositories.sandbox import SandboxRepository
 from yuxi.modules.workspace.paths import normalize_workdir_path, workspace_uid_dirname
-from yuxi.modules.workspace.runtime_paths import normalize_runtime_path
+from yuxi.modules.workspace.runtime_paths import PERSONAL_SKILLS_PATH, normalize_runtime_path
 from yuxi.sandbox_runner.engine import DockerEngine, EngineError, ExecDeadlineExceeded
 from yuxi.sandbox_runner.settings import RunnerSettings
 from yuxi.shared.datetime import utc_now
@@ -219,6 +219,16 @@ class ContainerManager:
                 container_id = created["Id"]
                 try:
                     self.engine.start_container(container_id)
+                    # HOME 为 tmpfs；必须在挂载完成后、接受用户命令前建立 CLI 入口。
+                    exit_code, _ = self.engine.run_probe(
+                        container_id,
+                        cmd=["/bin/sh", "-ec", f"mkdir -p /home/user/.agents && ln -s {PERSONAL_SKILLS_PATH} /home/user/.agents/skills"],
+                        env=[],
+                        workdir="/home/user",
+                        user=config["User"],
+                    )
+                    if exit_code != 0:
+                        raise SandboxError("个人 Skill 目录映射失败")
                 except Exception:
                     self.engine.remove_container(container_id)
                     raise
@@ -470,7 +480,26 @@ class ContainerManager:
         """装配固定镜像、固定用户、资源限制和最小挂载。"""
         mounts = []
         safe_uid = workspace_uid_dirname(uid)
-        if workdir:
+        personal_parts = ("shared", safe_uid, "workspace", "agents", "skills")
+        try:
+            personal_fd = open_directory_fd(self.local_data_root, personal_parts, create=True)
+            try:
+                # runner 可用 root 建目录，但个人文件必须由沙盒普通账号写入。
+                if os.geteuid() == 0:
+                    os.fchown(personal_fd, self.settings.run_uid, self.settings.run_gid)
+            finally:
+                os.close(personal_fd)
+        except OSError as exc:
+            raise SandboxValidationError("个人 Skill 目录不可用或包含符号链接") from exc
+        mounts.append(
+            {
+                "Type": "bind",
+                "Source": str(self.host_data_root.joinpath(*personal_parts)),
+                "Target": PERSONAL_SKILLS_PATH,
+                "ReadOnly": False,
+            }
+        )
+        if workdir and f"/home/user/workspace/{workdir}" != PERSONAL_SKILLS_PATH:
             _, host_workdir = self._validated_workdir(safe_uid, workdir)
             mounts.append(
                 {
@@ -503,7 +532,7 @@ class ContainerManager:
                 "Mounts": mounts,
                 "Tmpfs": {
                     "/home/user": (
-                        f"rw,nosuid,nodev,size={self.settings.home_bytes},mode=0755,uid={self.settings.run_uid},gid={self.settings.run_gid}"
+                        f"rw,exec,nosuid,nodev,size={self.settings.home_bytes},mode=0755,uid={self.settings.run_uid},gid={self.settings.run_gid}"
                     ),
                     "/tmp": f"rw,noexec,nosuid,nodev,size={self.settings.tmp_bytes}",
                 },
