@@ -93,8 +93,9 @@ WORKFLOW_ENTRIES = {
     "trust.yml": (
         "scripts/ci/verify_engineering_contracts.py",
         "scripts.ci.test_verify_engineering_contracts",
+        "scripts/ci/test_init_security.ps1",
     ),
-    "test.yml": ("pytest test/unit", "scripts/ci/test_init_security.ps1"),
+    "test.yml": ("pytest test/unit",),
     "frontend.yml": ("pnpm run lint:check", "pnpm run test:unit", "pnpm run build"),
     "service-integration.yml": ("scripts/ci/run_service_integration.sh",),
     "system-tests.yml": (

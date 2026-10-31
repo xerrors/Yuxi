@@ -293,6 +293,8 @@ class RuntimeTopologyTests(unittest.TestCase):
             sandbox.index("bash scripts/ci/prepare_system_tests_env.sh"),
             sandbox.index("scripts/ci/build_topology_images.sh"),
         )
+        self.assertIn("--sandbox-only", sandbox)
+        self.assertNotIn("buildkit-api-", sandbox, "沙盒 job 不需要 api 镜像及其缓存")
         self.assertIn("SANDBOX_CONTAINER_TEST=1", sandbox)
         self.assertIn("test/integration/sandbox/test_container_sandbox.py", sandbox)
 
@@ -305,7 +307,7 @@ class RuntimeTopologyTests(unittest.TestCase):
                 with self.subTest(original=original, job=name), self.assertRaises((AssertionError, ValueError)):
                     before, section = workflow.split(f"  {name}:\n", 1)
                     self.assert_hosted_jobs(before + f"  {name}:\n" + section.replace(original, "removed", 1))
-        for original in ("SANDBOX_CONTAINER_TEST=1", "id: sandbox-cache", "runs-on: ubuntu-24.04"):
+        for original in ("SANDBOX_CONTAINER_TEST=1", "--sandbox-only", "id: sandbox-cache", "runs-on: ubuntu-24.04"):
             with self.subTest(original=original, job="sandbox-isolation"), self.assertRaises((AssertionError, ValueError)):
                 before, section = workflow.split("  sandbox-isolation:\n", 1)
                 self.assert_hosted_jobs(before + "  sandbox-isolation:\n" + section.replace(original, "removed", 1))
@@ -457,6 +459,45 @@ class RuntimeTopologyTests(unittest.TestCase):
                     self.assertEqual(sandbox[sandbox.index("--tag") + 1], "test-sandbox-image")
                     self.assertIn(f"type=local,dest={base}/sandbox-cache,mode=max", sandbox)
                     self.assertIn("--load", sandbox)
+
+    def test_image_builder_sandbox_only_mode(self):
+        """--sandbox-only 只构建 sandbox 镜像，遗漏配置时仍在构建前失败。"""
+        with tempfile.TemporaryDirectory() as root:
+            base = Path(root)
+            docker = base / "docker"
+            docker.write_text(
+                '#!/bin/sh\n'
+                'if [ "$1" = compose ]; then cat "$BUILD_CONFIG"; else printf "%s\\n" "$*" >> "$BUILD_LOG"; fi\n'
+            )
+            docker.chmod(0o700)
+            config = {"services": {name: {"image": f"test-{name}"} for name in ("api", "minio", "storage-init", "sandbox-image")}}
+            config_file = base / "config.json"
+            log = base / "build.log"
+            env = {
+                **os.environ, "PATH": f"{base}:{os.environ['PATH']}",
+                "BUILD_CONFIG": str(config_file), "BUILD_LOG": str(log),
+            }
+            for configured in (True, False):
+                with self.subTest(configured=configured):
+                    log.unlink(missing_ok=True)
+                    value = copy.deepcopy(config)
+                    if not configured:
+                        del value["services"]["sandbox-image"]
+                    config_file.write_text(json.dumps(value))
+                    result = subprocess.run(
+                        ["bash", str(ROOT / "scripts/ci/build_topology_images.sh"), "", "",
+                         str(base / "sandbox-cache"), "--sandbox-only"],
+                        env=env, capture_output=True, text=True, timeout=10, check=False,
+                    )
+                    if not configured:
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertFalse(log.exists())
+                        continue
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    commands = [shlex.split(line) for line in log.read_text().splitlines()]
+                    self.assertEqual(len(commands), 1)
+                    self.assertIn("docker/sandbox.Dockerfile", commands[0])
+                    self.assertIn(f"type=local,dest={base}/sandbox-cache,mode=max", commands[0])
 
     def assert_container_state(self, config: dict) -> None:
         """API、worker 和 runner 共享认证与物理数据，socket 只归 runner。"""

@@ -69,10 +69,10 @@ Owner 与 gate 必须在同一变更中保持一致。
             "trust.yml": [
                 "python3 scripts/ci/verify_engineering_contracts.py",
                 "python3 -m unittest scripts.ci.test_verify_engineering_contracts",
+                "pwsh -NoProfile -File scripts/ci/test_init_security.ps1",
             ],
             "test.yml": [
                 "uv run pytest test/unit -m 'not slow' -q",
-                "pwsh -File scripts/ci/test_init_security.ps1",
             ],
             "frontend.yml": [
                 "pnpm run lint:check && pnpm run test:unit && pnpm run build"
