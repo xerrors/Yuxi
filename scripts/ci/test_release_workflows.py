@@ -67,7 +67,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         for name in self.TOPOLOGY_JOBS:
             body = bodies[name]
             self.assertIn(command, body)
-            self.assertLess(body.index("bash scripts/ci/build_topology_images.sh"), body.index(command))
+            self.assertLess(body.index("uses: ./.github/actions/prepare-topology"), body.index(command))
             self.assertLess(body.index(command), body.index("docker compose up -d"))
 
     def test_runtime_mounts_are_owned_before_service_startup(self) -> None:
