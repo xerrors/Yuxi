@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import io
 import zipfile
 from types import SimpleNamespace
 
@@ -10,74 +9,8 @@ import re
 from pathlib import Path
 
 from yuxi.infrastructure.document_parsing import DocumentParserException
-from yuxi.infrastructure.document_parsing.engines.mineru import MinerUParser
 from yuxi.infrastructure.document_parsing.engines.mineru_official import MinerUOfficialParser
 from yuxi.infrastructure.document_parsing.engines.rapid_ocr import RapidOCRParser
-
-
-def test_mineru_parser_normalizes_trailing_slash():
-    parser = MinerUParser(server_url="http://mineru-api:30001/")
-
-    assert parser.server_url == "http://mineru-api:30001"
-    assert parser.parse_endpoint == "http://mineru-api:30001/file_parse"
-
-
-def test_mineru_error_detail_falls_back_for_non_object_json():
-    """错误响应不是 JSON 对象时仍返回正文，不改变 HTTP 错误分类。"""
-    parser = MinerUParser()
-    response = SimpleNamespace(status_code=500, text="fixture failure", json=lambda: ["not-an-object"])
-
-    assert parser._response_error_detail(response) == "fixture failure"
-
-
-def test_mineru_health_check_reports_malformed_info_as_unhealthy(monkeypatch):
-    """发现文档的 info 非对象时保留“响应格式错误”，不升级为通用 error。"""
-    response = SimpleNamespace(
-        status_code=200,
-        json=lambda: {"paths": {"/file_parse": {}}, "info": []},
-    )
-    monkeypatch.setattr("yuxi.infrastructure.document_parsing.engines.mineru.requests.get", lambda *args, **kwargs: response)
-
-    health = MinerUParser().check_health()
-
-    assert health["status"] == "unhealthy"
-    assert "响应格式错误" in health["message"]
-
-
-@pytest.mark.parametrize(
-    ("defaults", "params", "expected"),
-    [
-        ({}, {}, ("hybrid-engine", "medium")),
-        ({"backend": "vlm-engine", "effort": "high"}, {}, ("vlm-engine", "high")),
-        (
-            {"backend": "vlm-engine", "effort": "high"},
-            {"backend": "hybrid-engine", "effort": "medium"},
-            ("hybrid-engine", "medium"),
-        ),
-    ],
-)
-def test_mineru_request_uses_configured_defaults_and_task_overrides(tmp_path, monkeypatch, defaults, params, expected):
-    """断言出站参数和真实 ZIP 解包正文，避免只检查调用次数。"""
-    source = tmp_path / "source.pdf"
-    source.write_bytes(b"pdf")
-    archive = io.BytesIO()
-    with zipfile.ZipFile(archive, "w") as output:
-        output.writestr("full.md", "# MinerU result")
-    captured = {}
-
-    def post(url, *, files, data, timeout):
-        """捕获解析器提交的协议参数并返回固定产物。"""
-        captured.update(data)
-        return SimpleNamespace(status_code=200, content=archive.getvalue(), headers={})
-
-    monkeypatch.setattr("yuxi.infrastructure.document_parsing.engines.mineru.requests.post", post)
-    parser = MinerUParser(**defaults)
-    result = parser.process_file(str(source), tmp_path / "parsed", params)
-
-    assert (captured["backend"], captured["effort"]) == expected
-    assert captured["image_analysis"] is True
-    assert captured["return_images"] is True
-    assert result == "# MinerU result"
 
 
 def test_mineru_official_health_check_does_not_create_task(monkeypatch: pytest.MonkeyPatch):

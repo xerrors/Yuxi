@@ -61,24 +61,17 @@ ENGINE_SPECS = {
     ),
     "mineru_ocr": EngineSpec(
         service_name="mineru_ocr",
-        display_name="MinerU OCR",
+        display_name="MinerU 自托管",
         supported_extensions=_STANDARD_OCR_EXTENSIONS,
         module_path="yuxi.infrastructure.document_parsing.engines.mineru",
         class_name="MinerUParser",
     ),
     "mineru_official": EngineSpec(
         service_name="mineru_official",
-        display_name="MinerU Official API",
+        display_name="MinerU 官方云服务",
         supported_extensions=_MINERU_OFFICIAL_EXTENSIONS,
         module_path="yuxi.infrastructure.document_parsing.engines.mineru_official",
         class_name="MinerUOfficialParser",
-    ),
-    "pp_structure_v3_ocr": EngineSpec(
-        service_name="pp_structure_v3_ocr",
-        display_name="PP-Structure-V3",
-        supported_extensions=_STANDARD_OCR_EXTENSIONS,
-        module_path="yuxi.infrastructure.document_parsing.engines.pp_structure_v3",
-        class_name="PPStructureV3Parser",
     ),
     "deepseek_ocr": EngineSpec(
         service_name="deepseek_ocr",
@@ -100,6 +93,13 @@ ENGINE_SPECS = {
         supported_extensions=_STANDARD_OCR_EXTENSIONS,
         module_path="yuxi.infrastructure.document_parsing.engines.paddleocr_api",
         class_name="PaddleOCRPPOCRv6Parser",
+    ),
+    "paddleocr_pp_structure_v3": EngineSpec(
+        service_name="paddleocr_pp_structure_v3",
+        display_name="PP-StructureV3（云服务）",
+        supported_extensions=_STANDARD_OCR_EXTENSIONS,
+        module_path="yuxi.infrastructure.document_parsing.engines.paddleocr_api",
+        class_name="PaddleOCRPPStructureV3Parser",
     ),
 }
 

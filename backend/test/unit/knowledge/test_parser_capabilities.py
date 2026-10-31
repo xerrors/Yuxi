@@ -84,10 +84,10 @@ def test_capability_registry_declares_shipping_processors() -> None:
         "rapid_ocr",
         "mineru_ocr",
         "mineru_official",
-        "pp_structure_v3_ocr",
         "deepseek_ocr",
         "paddleocr_vl_1_6",
         "paddleocr_pp_ocrv6",
+        "paddleocr_pp_structure_v3",
     )
 
 

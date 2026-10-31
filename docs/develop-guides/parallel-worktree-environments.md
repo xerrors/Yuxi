@@ -50,7 +50,7 @@ YUXI_NEO4J_HTTP_PORT=27474
 YUXI_NEO4J_BOLT_PORT=27687
 ```
 
-使用 `all` profile 时，再设置 `YUXI_MINERU_PORT` 和 `YUXI_PADDLEX_PORT`。
+使用 `all` profile 时，再设置 `YUXI_MINERU_PORT`。
 
 启动：
 

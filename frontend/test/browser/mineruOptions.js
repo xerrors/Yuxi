@@ -4,7 +4,7 @@
 async page => {
   const check = (value, message) => { if (!value) throw new Error(message) }
   const panel = page.locator('.ocr-settings-section')
-  const card = panel.locator('.settings-service-card').filter({ has: page.getByRole('heading', { name: 'MinerU 服务', exact: true }) })
+  const card = panel.locator('.settings-service-card').filter({ has: page.getByRole('heading', { name: 'MinerU 自托管', exact: true }) })
   const open = async () => {
     await page.locator('.user-info-dropdown:visible').click()
     await page.getByRole('menuitem', { name: '设置', exact: true }).click()
@@ -22,22 +22,17 @@ async page => {
   try {
     await card.hover()
     await card.getByRole('button', { name: /^编\s*辑$/ }).click()
-    const backend = card.getByRole('combobox', { name: '解析后端' })
-    const effort = card.getByRole('combobox', { name: '解析强度' })
-    await backend.focus()
-    await backend.press('ArrowDown')
-    await page.getByTitle('VLM（视觉模型解析）', { exact: true }).click()
-    await effort.focus()
-    await effort.press('ArrowDown')
-    await page.getByTitle('高精度（high）', { exact: true }).click()
+    const tier = card.getByRole('combobox', { name: '解析档位' })
+    await tier.focus()
+    await tier.press('ArrowDown')
+    await page.getByTitle('高精度（Advanced）', { exact: true }).click()
     const saved = page.waitForResponse(response => response.request().method() === 'PUT' && response.url().endsWith('/config/options/mineru_ocr_host_opts'))
     await card.getByRole('button', { name: /^保\s*存$/ }).click()
     check((await saved).ok(), '真实配置保存失败')
-    await card.getByRole('textbox', { name: '解析后端' }).waitFor()
+    await card.getByRole('textbox', { name: '解析档位' }).waitFor()
     await page.reload()
     await open()
-    check(await card.getByRole('textbox', { name: '解析后端' }).inputValue() === 'VLM（视觉模型解析）', '重载后端选择丢失')
-    check(await card.getByRole('textbox', { name: '解析强度' }).inputValue() === '高精度（high）', '重载强度选择丢失')
+    check(await card.getByRole('textbox', { name: '解析档位' }).inputValue() === '高精度（Advanced）', '重载档位选择丢失')
     const screenshots = []
     for (const [width, theme] of [[1440, 'light'], [768, 'dark']]) {
       await page.setViewportSize({ width, height: 1000 })
@@ -47,8 +42,8 @@ async page => {
       }, theme)
       await card.hover()
       await card.getByRole('button', { name: /^编\s*辑$/ }).click()
-      check(await card.getByRole('combobox').count() === 2, '解析选项没有渲染为下拉框')
-      check((await card.innerText()).includes('仅对 Hybrid 生效'), '缺少强度适用范围说明')
+      check(await card.getByRole('combobox').count() === 1, '解析选项没有渲染为下拉框')
+      check((await card.innerText()).includes('服务必须开放所选档位'), '缺少档位适用范围说明')
       check(await card.evaluate(el => el.scrollWidth <= el.clientWidth), '设置卡片横向溢出')
       const path = `/tmp/yuxi-mineru-options-${theme}-${width}.png`
       await card.screenshot({ path })
@@ -60,7 +55,7 @@ async page => {
     await page.evaluate(async value => {
       const { configOptionsApi } = await import('/src/apis/system_api.js')
       await configOptionsApi.updateOption('mineru_ocr_host_opts', {
-        backend: value.backend ?? 'hybrid-engine', effort: value.effort ?? 'medium'
+        tier: value.tier ?? 'standard'
       })
     }, original)
   }

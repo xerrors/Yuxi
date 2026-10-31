@@ -44,11 +44,10 @@ async function createForm(deps) {
   return state
 }
 
-test('MinerU 旧配置显示默认值，保存选择并重载，取消与失败保留正确状态', async () => {
+test('MinerU 档位显示默认值，保存选择并重载，取消与失败保留正确状态', async () => {
   const fields = [
     { key: 'server_url', environment: 'MINERU_API_URI' },
-    { key: 'backend', default: 'hybrid-engine', choice_labels: { 'hybrid-engine': 'Hybrid（混合解析）', 'vlm-engine': 'VLM（视觉模型解析）' } },
-    { key: 'effort', default: 'medium', choice_labels: { medium: '标准（medium）', high: '高精度（high）' } }
+    { key: 'tier', default: 'standard', choice_labels: { standard: '标准（standard）', advanced: '高精度（advanced）' } }
   ]
   let saved = { key: 'mineru_ocr_host_opts', params: { fields }, value: { server_url: '' } }
   let failSave = false
@@ -68,31 +67,27 @@ test('MinerU 旧配置显示默认值，保存选择并重载，取消与失败�
   const form = await createForm(deps)
   await form.loadConfigOptions()
   let option = form.configOptions.value[0]
-  assert.equal(form.getFieldDisplay(option, fields[1]), 'Hybrid（混合解析）')
-  assert.equal(form.getFieldDisplay(option, fields[2]), '标准（medium）')
+  assert.equal(form.getFieldDisplay(option, fields[1]), '标准（standard）')
   assert.equal(form.getFieldDisplay(option, fields[0]), '读取 MINERU_API_URI')
   form.startEditing(option)
-  assert.deepEqual(form.draftValue.value, { server_url: '', backend: 'hybrid-engine', effort: 'medium' })
-  form.draftValue.value.backend = 'vlm-engine'
-  form.draftValue.value.effort = 'high'
+  assert.deepEqual(form.draftValue.value, { server_url: '', tier: 'standard' })
+  form.draftValue.value.tier = 'advanced'
   form.cancelEditing()
   assert.deepEqual(option.value, { server_url: '' })
   form.startEditing(option)
-  form.draftValue.value.backend = 'vlm-engine'
-  form.draftValue.value.effort = 'high'
+  form.draftValue.value.tier = 'advanced'
   await form.saveOption(option)
   assert.equal(form.editingKey.value, '')
   await form.loadConfigOptions()
   option = form.configOptions.value[0]
-  assert.equal(form.getFieldDisplay(option, fields[1]), 'VLM（视觉模型解析）')
-  assert.equal(form.getFieldDisplay(option, fields[2]), '高精度（high）')
+  assert.equal(form.getFieldDisplay(option, fields[1]), '高精度（advanced）')
   form.startEditing(option)
-  form.draftValue.value.effort = 'medium'
+  form.draftValue.value.tier = 'standard'
   failSave = true
   await form.saveOption(option)
   assert.equal(form.editingKey.value, option.key)
-  assert.equal(form.draftValue.value.effort, 'medium')
-  assert.equal(option.value.effort, 'high')
+  assert.equal(form.draftValue.value.tier, 'standard')
+  assert.equal(option.value.tier, 'advanced')
   assert.equal(form.savingOption.value, '')
   assert.deepEqual(errors, ['保存失败'])
 })

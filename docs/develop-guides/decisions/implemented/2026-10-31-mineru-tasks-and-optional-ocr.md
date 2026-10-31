@@ -1,0 +1,62 @@
+# MinerU Tasks 接入与可选 OCR 部署收敛
+
+状态：implemented
+类型：simplification
+Owner：backend/yuxi/infrastructure/document_parsing/engines/mineru.py
+
+## 问题
+
+自托管 MinerU 固定在 3.4.4，旧同步协议不能调用 4.1 服务。项目同时维护 PaddleX GPU 镜像和流水线，而云端 PaddleOCR 已覆盖主要解析场景。官方 MinerU 云服务公开 v4 协议与社区 4.1 Tasks 不同，不能仅通过切换 URL 合并。
+
+## 决策
+
+### 实现方案
+
+Compose 保留按需启用的 MinerU，固定安装 4.1.3 并使用官方 Torch/vLLM 模型与新命令。移除内置 PaddleX 服务、构建材料、旧 `/layout-parsing` 适配器和 `PADDLEX_URI`。PP-StructureV3 通过现有 PaddleOCR 官网 Jobs 流程提交与下载版面产物，与 PaddleOCR-VL、PP-OCRv6 共用 `paddleocr_api_opts`。
+
+云端 PP-StructureV3 使用新引擎 ID `paddleocr_pp_structure_v3`；旧 ID 不注册为别名，保留旧选择的解析会明确失败。`app-init` 在配置事务中删除失效的 `pp_structure_v3_ocr_host_opts`，保留已有云端配置和默认引擎值。管理员重新选择后才改变文件去向。
+
+MinerU 引擎按单文件执行 Tasks 创建、原始字节上传、状态查询和 ZIP 下载。仅完整成功产物进入既有 Markdown 与图片发布边界。创建不自动重试；创建、上传、查询和下载共享 asyncio 总时限，持续缓慢响应也会中断；超时尝试取消已知非终态任务并明确报错，清理另限 10 秒。业务状态仍归 Yuxi，跨 worker 重启恢复、即时取消传播和多文件批处理不在范围内。
+
+在[全局默认配置决定](./2026-10-23-mineru-default-options.md)之上，documents 仅迁移数据库中 `mineru_ocr_host_opts` 的旧设置：已保存的 Hybrid high 转为 advanced，其余已支持组合转为 standard；显式新 tier 优先，保留地址和其他字段。启动装配在既有配置同步事务中幂等迁移。单次解析只读取新协议参数；迁移逻辑直接归配置服务拥有。该政策保留计算投入意图，不宣称新旧质量等价。官网云端适配和默认 RapidOCR 保持独立。
+
+用户文档优先介绍云端配置，再说明可选私有部署。首次范围限于现有 PDF/图片，Office 路由与结构化引用不扩展。
+
+## 替代方案
+
+- 保留旧部署：维护负担不变，无法支持社区 4.1。
+- 全部改云端：改变文件去向且失去离线/私有化部署，超出授权条件。
+- 加独立 file-parse 包装服务：新增进程和恢复存储，仍需处理超时查询，不适合已有后台作业体系。
+- 保留 PP-Structure 外接协议：继续维护已由官网同模型覆盖的服务配置、同步请求与产物提取；使用同一云端 Jobs 适配器可删除这些表面。
+- 旧 PP-Structure ID 自动指向云端：会静默改变既有文件去向；明确的新引擎选择由管理员负责。
+- 在解析入口兼容全部旧参数：将没有持久化兼容承诺的调用参数当作系统 options，增加无消费者的别名、映射和拒绝规则；兼容范围限于数据库已有设置。
+
+## 验证
+
+| 验收主张 | 失败面 | 语义 Owner | 直接证据 / 命令 | 负向案例 | 当前结果 |
+|---|---|---|---|---|---|
+| 新协议生成完整 Markdown 与图片 | 错认 202/失败状态为产物、下载错误文件 | MinerU 引擎、artifacts | 协议 unit、真实 HTTP E2E、4.1.3 探针 | 缺结果、ID 错配、失败/超时、坏 ZIP、持续滴流、同步解包超时 | Passed |
+| 旧设置迁移幂等且保留地址 | 高强度被默认值覆盖、管理员值丢失 | documents 配置、bootstrap/options | 真实 PostgreSQL 迁移与 HTTP 配置测试 | 非法旧组合、新 tier 优先、重跑 | Passed |
+| PP-StructureV3 共用云配置，旧自托管入口退役 | 模型错误、重复配置、旧选择静默发往云端 | PaddleOCR 适配器、注册表、bootstrap/options | 协议 unit、真实 PostgreSQL/HTTP、解析 E2E | 缺凭据、坏结果、旧引擎 ID | Passed |
+| 可选 MinerU 可按文档部署 | 镜像依赖、命令或健康端点不匹配 | Dockerfile、Compose | 构建/运行探针、部署契约检查 | 旧命令与版本负向搜索 | Passed |
+
+独立 Compose 测试环境使用独立 PostgreSQL、Redis、MinIO、Milvus、Neo4j、文件目录及宿主端口，挂载本工作树源码；API/Web 复用已构建的依赖镜像，MinerU 镜像按本次 Dockerfile 构建。以下命令省略本地隔离环境的 Compose 配置参数：
+
+- `docker compose exec -T api uv run --no-sync --group test pytest test/unit -m 'not slow'`：3522 passed、125 skipped、7 subtests passed；跳过项不计为通过。
+- 主机 `pytest backend/test/unit/config -q`：207 passed，覆盖容器内没有仓库根目录而跳过的部署配置检查。
+- `docker compose exec -T api uv run --no-sync --group test pytest test/integration/services/test_app_initialization.py -q`：12 passed，独立 PostgreSQL 回读迁移后的值、审计归属和重跑结果，验证退役配置删除、旧引擎 ID 失效及三种 PaddleOCR 模型共用配置。
+- `docker compose exec -T api uv run --no-sync --group test pytest test/integration/api/test_system_router_api.py -q`：16 passed，OCR 所属配置目录只含 MinerU 自托管、官方云和共享 PaddleOCR 配置；旧服务配置与引擎均不再暴露。
+- `docker compose exec -T api uv run --no-sync --group test pytest test/e2e/test_document_parsing_artifacts_e2e.py -q`：7 passed，覆盖三种 PaddleOCR 模型共用配置的真实 HTTP 请求与正文/图片回读、MinerU 草稿配置、完整附件目录、真实 worker 的知识库发布、重试和回收。
+- `docker compose exec -T frontend pnpm run lint:check`、`pnpm run test:unit`、`pnpm run build`：通过，994 tests passed。`playwright-cli run-code --filename=frontend/test/browser/mineruOptions.js` 验证保存与重载；`playwright-cli run-code --filename=frontend/test/browser/paddleocrOptions.js` 验证三模型共用配置、旧引擎不展示，1440 浅色与 768 深色截图通过。
+- `docker compose --profile all build mineru-api`：构建与两组模型校验通过；启动后 `/v1/health` 返回 4.1.3，`/v1/tiers` 包含四个档位。真实扫描 PDF 经 `parse` 生成的 Standard/Advanced 目录独立回读通过。
+- `python3 scripts/ci/verify_engineering_contracts.py`、`python3 -m unittest scripts.ci.test_verify_engineering_contracts`、`pnpm --dir docs run build`、任务 Python 文件 Ruff 与 `git diff --check`：通过。
+
+旧能力不存在：内置 paddlex 服务、Dockerfile、流水线 YAML、PP-Structure 外接适配器与服务配置定义被删除；自托管 MinerU 不再调用旧 /file_parse。解析入口没有旧 backend/effort 映射、parse_method 别名或旧参数拒绝列表；共享迁移模块被删除，数据库迁移由 documents 配置服务直接执行。历史 changelog 与归档记录保留其时间语义。
+
+重新引入条件：只有出现当前云端和自托管 MinerU 不能满足、且有维护 Owner 的部署需求时，才重新评估内置 PaddleX；调用参数兼容需要明确的现存消费者与兼容承诺。
+
+## 后果
+
+GPU 镜像与模型下载仍需要网络、磁盘与兼容驱动，默认部署不启用该服务。MinerU 任务索引不保证服务端重启恢复，创建结果未知时不能盲目重试。MinerU 云端与自托管协议独立维护；PaddleOCR 三种模型共用官网配置，原 PP-Structure 自托管用户需要显式重新选择解析引擎。
+
+真实探针使用 NVIDIA RTX 4090、驱动 595.91.07、vLLM 0.21.0、MinerU 4.1.3。Standard 与 Advanced 对一页扫描 PDF 生成的 `document.md` 均包含独立预置的验证文字。该证据不代表复杂表格、图片分析质量、性能或其他 GPU 的兼容性结论。真实 MinerU、PaddleOCR 官方云端调用为 Not run，协议回放不能证明实时服务可用性。

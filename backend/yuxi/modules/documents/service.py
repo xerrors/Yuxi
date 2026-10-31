@@ -16,6 +16,26 @@ from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.documents.options import DOCUMENT_OPTIONS, OCR_ENGINE_OPTIONS
 from yuxi.modules.models.providers.service import resolve_deepseek_ocr_credentials
 from yuxi.modules.system.options import system_options
+from yuxi.modules.system.repositories.options import get_option, save_option_value
+
+
+async def migrate_mineru_configuration(db: AsyncSession) -> bool:
+    """在启动配置事务中迁移已持久化的旧档位，保留其他字段与审计归属。"""
+    record = await get_option(db, "mineru_ocr_host_opts", for_update=True)
+    if record is None:
+        return False
+    values = record.value or {}
+    if not {"backend", "effort"}.intersection(values):
+        return False
+    migrated = dict(values)
+    backend = migrated.pop("backend", "hybrid-engine")
+    effort = migrated.pop("effort", "medium")
+    if "tier" not in migrated:
+        if backend not in {"hybrid-engine", "vlm-engine"} or effort not in {"medium", "high"}:
+            raise ValueError("MinerU 旧 backend/effort 配置无法迁移，请显式选择 tier")
+        migrated["tier"] = "advanced" if backend == "hybrid-engine" and effort == "high" else "standard"
+    await save_option_value(db, record, migrated, record.updated_by)
+    return True
 
 
 async def get_ocr_options(db: AsyncSession | None = None) -> dict[str, Any]:

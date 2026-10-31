@@ -29,7 +29,7 @@ Yuxi is built for teams that need control over their data, models, and permissio
 | Frontend | Vue 3 · Vite · Ant Design · G6 |
 | Backend | FastAPI · LangGraph · ARQ worker |
 | Storage | PostgreSQL · Redis · MinIO · Milvus · Neo4j |
-| Document processing | MinerU · PaddleX · RapidOCR |
+| Document processing | MinerU · PaddleOCR · RapidOCR |
 | Deployment | Docker Compose |
 
 ## Quick Start
@@ -139,7 +139,7 @@ Manage team materials centrally and parse them into structured knowledge bases. 
 
 **Document parsing and chunk management**
 
-Support common formats including PDF, Word, PowerPoint, Excel, and Markdown. Built-in parsing engines such as MinerU, PaddleX, and RapidOCR extract text, images, and tables, split content into chunks, and build vector indexes for retrieval.
+Support common formats including PDF, Word, PowerPoint, Excel, and Markdown. MinerU and PaddleOCR cloud services, optional self-hosted MinerU, and lightweight RapidOCR extract text, images, and tables for chunking and vector retrieval.
 
 ![Document ingestion and parsing status](https://oss-img.xerrors.cn/github/image-20260825155256725.png)
 

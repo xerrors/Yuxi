@@ -11,8 +11,11 @@ import pytest
 import yuxi.infrastructure.document_parsing.engines.paddleocr_api as paddleocr_api
 from yuxi.infrastructure.document_parsing import DocumentParserException
 from yuxi.infrastructure.document_parsing.artifacts import local_image_links
-from yuxi.infrastructure.document_parsing.engines.paddleocr_api import PaddleOCRPPOCRv6Parser, PaddleOCRVLParser
-from yuxi.infrastructure.document_parsing.engines.pp_structure_v3 import PPStructureV3Parser
+from yuxi.infrastructure.document_parsing.engines.paddleocr_api import (
+    PaddleOCRPPOCRv6Parser,
+    PaddleOCRPPStructureV3Parser,
+    PaddleOCRVLParser,
+)
 
 
 @dataclass
@@ -34,7 +37,7 @@ def _build_file(tmp_path: Path, suffix: str = ".png") -> Path:
     return file_path
 
 
-@pytest.mark.parametrize("engine", ["paddle", "pp_structure"])
+@pytest.mark.parametrize("parser_type", [PaddleOCRVLParser, PaddleOCRPPStructureV3Parser])
 @pytest.mark.parametrize(
     "markdown",
     [
@@ -43,7 +46,7 @@ def _build_file(tmp_path: Path, suffix: str = ".png") -> Path:
         '![chart](https://images.example.test/chart.png "title")',
     ],
 )
-def test_layout_images_preserve_titles_and_reference_links(tmp_path, monkeypatch, engine, markdown):
+def test_layout_images_preserve_titles_and_reference_links(tmp_path, monkeypatch, parser_type, markdown):
     """版面图片的标题、引用式和远端链接都指向实际本地资源。"""
     monkeypatch.setattr(
         paddleocr_api.requests,
@@ -56,12 +59,8 @@ def test_layout_images_preserve_titles_and_reference_links(tmp_path, monkeypatch
         ),
     )
     item = {"markdown": {"text": markdown, "images": {"images/chart.png": "https://images.example.test/chart.png"}}}
-    if engine == "paddle":
-        parser = PaddleOCRVLParser(api_token="test-token")
-        text = parser._extract_markdown([{"result": {"layoutParsingResults": [item]}}], tmp_path)
-    else:
-        parser = PPStructureV3Parser(server_url="https://ocr.example.test")
-        text = parser._parse_api_result({"result": {"layoutParsingResults": [item]}}, tmp_path)
+    parser = parser_type(api_token="test-token")
+    text = parser._extract_markdown([{"result": {"layoutParsingResults": [item]}}], tmp_path)
     links = local_image_links(text)
     assert len(links) == 1
     assert (tmp_path / links[0]).read_bytes() == b"chart"
@@ -89,6 +88,16 @@ def test_layout_images_preserve_titles_and_reference_links(tmp_path, monkeypatch
                 "useChartRecognition": True,
             },
             id="vl-upload",
+        ),
+        pytest.param(
+            PaddleOCRPPStructureV3Parser,
+            "job-structure",
+            {"result": {"layoutParsingResults": [{"markdown": {"text": "Structure markdown", "images": {}}}]}},
+            "Structure markdown",
+            "PP-StructureV3",
+            None,
+            {"useDocOrientationClassify": False, "useDocUnwarping": False, "useChartRecognition": False},
+            id="pp-structure-upload",
         ),
         pytest.param(
             PaddleOCRPPOCRv6Parser,
@@ -196,10 +205,11 @@ def test_paddleocr_failed_job_raises_parser_exception(tmp_path: Path, monkeypatc
         parser.process_file(str(file_path), tmp_path)
 
 
-def test_paddleocr_missing_token_health_and_parse_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("parser_type", [PaddleOCRVLParser, PaddleOCRPPOCRv6Parser, PaddleOCRPPStructureV3Parser])
+def test_paddleocr_missing_token_health_and_parse_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, parser_type) -> None:
     file_path = _build_file(tmp_path)
     monkeypatch.delenv("PADDLEOCR_API_TOKEN", raising=False)
-    parser = PaddleOCRVLParser()
+    parser = parser_type()
 
     health = parser.check_health()
 

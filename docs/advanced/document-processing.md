@@ -50,14 +50,16 @@ YUXI_URL_WHITELIST=github.com,docs.example.com,*.wikipedia.org
 | 引擎 | 运行位置 | 输出和适用场景 |
 | --- | --- | --- |
 | RapidOCR | 本地 CPU | 轻量图片/PDF 文字识别，默认方案 |
-| MinerU | 本地 GPU 服务 | 复杂 PDF、表格和版面分析，输出 Markdown |
-| MinerU Official | MinerU 云服务 | 不在本机部署 GPU，使用官方解析服务 |
-| PP-Structure-V3 | 本地 GPU 服务 | 表格、票据和版面解析 |
-| DeepSeek OCR | SiliconFlow API | 使用 SiliconFlow 的 DeepSeek OCR 模型 |
+| MinerU 官方云服务 | MinerU 云服务 | 使用现有官方 v4 API，无需本地 GPU |
 | PaddleOCR-VL-1.6 | 百度 AI Studio 云服务 | 文档版面解析，输出 Markdown |
 | PP-OCRv6 | 百度 AI Studio 云服务 | 基础 OCR，输出纯文本 |
+| PP-StructureV3 | 百度 AI Studio 云服务 | 文档版面解析，输出 Markdown，与 PaddleOCR-VL、PP-OCRv6 共用配置 |
+| DeepSeek OCR | SiliconFlow API | 使用 SiliconFlow 的 DeepSeek OCR 模型 |
+| MinerU 自托管 | 可选 GPU 服务 | 社区 4.1 Tasks，文件保留在自行维护的服务内 |
 
-系统内部引擎 ID 为 `rapid_ocr`、`mineru_ocr`、`mineru_official`、`pp_structure_v3_ocr`、`deepseek_ocr`、`paddleocr_vl_1_6` 和 `paddleocr_pp_ocrv6`。页面中的健康状态只表示配置或服务探测结果，真正解析时仍会验证凭证和接口。
+需要轻量部署时，配置云服务凭证即可，不必启用 `all` profile。云服务会接收待解析文件；需要离线或私有化处理时，选择 RapidOCR 或自托管 MinerU。
+
+系统内部引擎 ID 为 `rapid_ocr`、`mineru_ocr`、`mineru_official`、`deepseek_ocr`、`paddleocr_vl_1_6`、`paddleocr_pp_ocrv6` 和 `paddleocr_pp_structure_v3`。页面中的健康状态只表示配置或服务探测结果，真正解析时仍会验证凭证和接口。
 
 登录用户通过 `/api/system/ocr/health` 获取各引擎的状态和固定说明。`configured` 只表示凭据已配置，解析时仍会验证；响应中的 `details` 为空，不包含提供者原始消息、内部服务地址或凭据。配置检查或调用抛出异常时返回 `error`，具体异常记录在服务端日志。
 
@@ -75,45 +77,46 @@ YUXI_URL_WHITELIST=github.com,docs.example.com,*.wikipedia.org
 
 RapidOCR 随 API/worker 安装，第一次实际解析时加载 ONNX 模型；同一进程的并发首次请求共享实例并串行初始化。模型目录优先使用 `RAPIDOCR_MODEL_DIR`，否则优先使用已安装 wheel 的可写模型目录，不可用时使用用户缓存；默认 PP-OCRv6 模型随 wheel 提供，不需要单独启动服务。
 
-### MinerU
+### MinerU 官方云服务
 
-管理员可以在「设置 → OCR 配置 → MinerU 服务」选择默认解析后端与强度，保存后对后续解析生效；单次解析显式提供的参数优先。默认使用 Hybrid 混合解析与标准强度（medium）。强度仅对 Hybrid 生效：标准模式更快，但不分析图片与图表；需要分析这些内容时选择高精度（high），解析耗时会增加。VLM 使用视觉模型解析，不受该强度选项影响。
-
-开发 Compose 已提供 `mineru-api`，它属于 `all` profile，端口为 `30001`，解析端点是 `/file_parse`：
-
-```bash
-docker compose --profile all up -d --build mineru-api
-```
-
-API/worker 在 Compose 中默认使用 `MINERU_API_URI=http://mineru-api:30001`。如果显存不足导致 MinerU 启动失败，可以在 `docker-compose.yml` 的 `mineru-api.command` 中启用并调整：
-
-```yaml
-# --gpu-memory-utilization 0.5
-```
-
-该参数用于减小 vLLM KV cache；仍然不足时可以继续尝试 `0.4` 或更低值。模型下载和其余显存参数以 `docker/mineru.Dockerfile` 与 Compose 为准。解析超时可以用 `MINERU_TIMEOUT` 调整，或在单次处理参数中传入 `timeout_seconds`。
-
-### MinerU Official
-
-在[官方服务](https://mineru.net)申请 API Key，放入 API/worker 的环境：
+在[官方服务](https://mineru.net/apiManage/docs)申请 API Key，放入 API/worker 的环境：
 
 ```bash
 MINERU_API_KEY=<your-mineru-api-key>
 ```
 
-页面中配置也可以保存该凭证；生产环境优先使用环境变量。该服务会把文件发送到外部服务，请先确认数据合规和供应商条款。
+也可以在「设置 → OCR 配置 → MinerU 官方云服务」保存凭证，并选择默认解析模型：Pipeline（`pipeline`，默认）或 VLM（`vlm`）。单次解析显式提供的 `model_version` 优先。
 
-管理员可以在「设置 → OCR 配置 → MinerU Official」选择默认解析模型：Pipeline（`pipeline`，默认）或 VLM（`vlm`）。保存后对后续解析生效；单次解析显式提供的 `model_version` 优先。该选项使用官方云 API 的模型参数，与自托管 MinerU 的后端和强度选项分别配置。
+Yuxi 的官方云适配器使用 v4 上传链接、批处理状态和结果下载接口。社区 4.1 Tasks 使用另一套端点、参数和结果字段，因此两者分别选择引擎，不能仅替换服务 URL。云端额度、文件限制与模型以供应商当前文档为准。
 
-### PP-Structure-V3
+### MinerU 自托管
 
-开发 Compose 的 `paddlex` 服务属于 `all` profile，默认在容器内的 `8080` 端口提供版面解析：
+开发 Compose 的 `mineru-api` 属于 `all` profile，固定安装 MinerU 4.1.3，使用 Torch/vLLM 后端。构建会下载模型，运行需要兼容 CUDA 13 的 NVIDIA 驱动和足够 GPU 显存；基础镜像与模型命令由 `docker/mineru.Dockerfile` 拥有。上游部署要求见[官方 Docker 文档](https://opendatalab.github.io/MinerU/quick_start/docker_deployment/)。
 
 ```bash
-docker compose --profile all up -d --build paddlex
+docker compose --profile all up -d --build mineru-api
 ```
 
-API/worker 默认使用 `PADDLEX_URI=http://paddlex:8080`。本地 GPU 和镜像构建要求以 Compose 为准。
+API/worker 默认使用 `MINERU_API_URI=http://mineru-api:30001`。外接实例必须提供 [4.1 Tasks 协议](https://opendatalab.github.io/MinerU/zh/usage/tasks/)；健康探测核验 `/v1/health` 的默认任务产物能力和 `/v1/tiers` 的档位。反向代理须返回客户端可访问的同源上传与下载链接。
+
+管理员在「设置 → OCR 配置 → MinerU 自托管」选择默认 `tier`：`flash`、`basic`、`standard`（默认）或 `advanced`。服务必须开放所选档位，附带 Compose 以 `--tier advanced` 开放全部档位。单次解析参数可以覆盖默认值：
+
+```json
+{
+  "file_ids": ["<file_id>"],
+  "params": {
+    "ocr_engine": "mineru_ocr",
+    "tier": "advanced",
+    "ocr_mode": "auto",
+    "page_range": "1-5",
+    "timeout_seconds": 1800
+  }
+}
+```
+
+`ocr_mode` 接受 `auto`、`txt`、`ocr`；`page_range` 默认 `all`。等待预算包含任务排队和结果下载，默认 1800 秒，也可由 API/worker 的 `MINERU_TIMEOUT` 设置。超时或协议错误会尝试取消已知任务并返回失败；创建结果未知时不自动重试。服务重启后的任务恢复和调用方取消的即时传播不在当前保证范围内。
+
+升级时先更新自托管服务，再重建 API/worker 并运行 Compose 的 `app-init`。初始化幂等迁移数据库中 `mineru_ocr_host_opts` 的旧 `backend`/`effort`：Hybrid + high 转为 `advanced`，其余已支持组合转为 `standard`；已有 `tier` 优先，服务地址保留。这是计算投入的迁移政策，不保证新旧结果质量等价。单次解析只读取上列新协议参数。旧 `/file_parse` 服务必须升级后才能继续解析。
 
 ### DeepSeek OCR
 
@@ -128,7 +131,9 @@ PADDLEOCR_API_TOKEN=<your-paddleocr-token>
 PADDLEOCR_API_URL=https://paddleocr.aistudio-app.com/api/v2/ocr/jobs
 ```
 
-`PADDLEOCR_API_URL` 可省略，默认使用上面的地址。`PaddleOCR-VL-1.6` 和 `PP-OCRv6` 共用这组配置；前者输出 Markdown，后者输出纯文本。
+`PADDLEOCR_API_URL` 可省略，默认使用上面的地址。`PaddleOCR-VL-1.6`、`PP-OCRv6` 和 `PP-StructureV3` 共用这组配置。两个版面模型输出 Markdown 和图片，PP-OCRv6 输出纯文本；接口及模型见[官网说明](https://www.paddleocr.ai/latest/en/version3.x/inference_deployment/serving/paddleocr_official_api/python.html)。
+
+内置 PaddleX 部署与旧 `/layout-parsing` 外接服务均已移除，`PADDLEX_URI` 不再生效。`app-init` 删除旧 `pp_structure_v3_ocr_host_opts` 配置；旧引擎 ID `pp_structure_v3_ocr` 明确报不支持，不自动转换为云端。原默认引擎或文件解析设置使用该 ID 时，管理员须重新选择云端 PP-StructureV3 或其他引擎，再执行解析。
 
 ## 分块参数和配置快照
 

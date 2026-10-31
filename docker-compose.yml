@@ -21,7 +21,6 @@ x-api-worker-env: &api-worker-env
   MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
   # 文档解析
   MINERU_API_URI: ${MINERU_API_URI:-http://mineru-api:30001}
-  PADDLEX_URI: ${PADDLEX_URI:-http://paddlex:8080}
   # 沙盒后端：cube 使用执行节点 VM，container 使用独立 runner 的临时容器
   SANDBOX_BACKEND: ${SANDBOX_BACKEND:-container}
   SANDBOX_RUNNER_URL: ${SANDBOX_RUNNER_URL:-http://sandbox-runner:8090}
@@ -48,8 +47,8 @@ x-api-worker-env: &api-worker-env
   YUXI_SKILL_DATA_DIR: /app/skill-sources
   YUXI_SKILL_PROJECTION_DIR: /app/skill-projections
   # 其他环境变量
-  NO_PROXY: localhost,127.0.0.1,milvus,graph,minio,etcd,mineru,paddlex,api.siliconflow.cn
-  no_proxy: localhost,127.0.0.1,milvus,graph,minio,etcd,mineru,paddlex,api.siliconflow.cn
+  NO_PROXY: localhost,127.0.0.1,milvus,graph,minio,etcd,mineru-api,api.siliconflow.cn
+  no_proxy: localhost,127.0.0.1,milvus,graph,minio,etcd,mineru-api,api.siliconflow.cn
 
 # 长驻服务的容器日志轮转上界，防止 docker json.log 无限增长占满磁盘。
 x-logging: &default-logging
@@ -478,12 +477,11 @@ services:
       - app-network
     restart: unless-stopped
 
-  # lastest version: wget https://gcore.jsdelivr.net/gh/opendatalab/MinerU@master/docker/compose.yaml
   mineru-api:
     build:
       context: .
       dockerfile: docker/mineru.Dockerfile
-    image: ${COMPOSE_PROJECT_NAME:-yuxi}-mineru:latest
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-mineru:4.1.3
     profiles:
       - all
     env_file:
@@ -493,55 +491,27 @@ services:
     environment:
       MINERU_MODEL_SOURCE: local
       VLLM_USE_V1: "1"
-    entrypoint: mineru-api
+    entrypoint: ["mineru-kit"]
     command:
-      --host 0.0.0.0
-      --port 30001
-      # --allow-public-http-client  # Disabled by default; when binding to 0.0.0.0 or ::, this re-enables *-http-client backends and server_url. Enable only if you accept the SSRF risk.
-      # parameters for vllm-engine
-      # --gpu-memory-utilization 0.5  # If encountering VRAM shortage, reduce the KV cache size by this parameter; if VRAM issues persist, try lowering it further to `0.4` or below.
+      - api-server
+      - --host
+      - 0.0.0.0
+      - --port
+      - "30001"
+      - --tier
+      - advanced
     ulimits:
       memlock: -1
       stack: 67108864
     ipc: host
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:30001/health || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://localhost:30001/v1/health || exit 1"]
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
               device_ids: ["0"]  # Modify for multiple GPUs: ["0", "1"]
-              capabilities: [gpu]
-    networks:
-      - app-network
-    restart: unless-stopped
-
-  paddlex:
-    build:
-      context: .
-      dockerfile: docker/paddlex.Dockerfile
-    image: ${COMPOSE_PROJECT_NAME:-yuxi}-paddlex:latest
-    profiles:
-      - all
-    volumes:
-      - type: bind
-        source: ${YUXI_STATE_DIR:-./docker/volumes}/paddlex
-        target: /paddlex
-    ports:
-      - "127.0.0.1:${YUXI_PADDLEX_PORT:-8080}:8080"
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
-      interval: 20s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: ['0']
               capabilities: [gpu]
     networks:
       - app-network

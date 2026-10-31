@@ -213,3 +213,89 @@ async def test_app_lock_covers_shared_writes_until_completion(isolated_app, monk
             if task and not task.done():
                 task.cancel()
         await asyncio.gather(*(task for task in (first, second) if task), return_exceptions=True)
+
+
+@pytest.mark.parametrize(
+    ("saved", "tier"),
+    [
+        ({"backend": "hybrid-engine", "effort": "high"}, "advanced"),
+        ({"backend": "vlm-engine", "effort": "high"}, "standard"),
+        ({"backend": "hybrid-engine", "effort": "medium"}, "standard"),
+        ({"backend": "vlm-engine"}, "standard"),
+        ({"effort": "high"}, "advanced"),
+        ({"backend": "old-unknown", "tier": "basic"}, "basic"),
+    ],
+)
+async def test_mineru_upgrade_persists_tier_without_overwriting_admin_fields(isolated_app, saved, tier):
+    """升级通过独立连接验证档位迁移、管理员字段保留及重跑幂等。"""
+    import json
+
+    manager, engine, _ = isolated_app
+    await app_init.main()
+    saved["server_url"] = "https://mineru.example/prefix"
+    async with engine.begin() as conn:
+        await conn.execute(
+            text("UPDATE config_options SET value=CAST(:value AS json), updated_by='migration-admin' WHERE key='mineru_ocr_host_opts'"),
+            {"value": json.dumps(saved)},
+        )
+    await app_init.main()
+    async with engine.connect() as conn:
+        row = (await conn.execute(text("SELECT value, updated_by, updated_at FROM config_options WHERE key='mineru_ocr_host_opts'"))).one()
+    assert row.value == {"server_url": saved["server_url"], "tier": tier}
+    assert row.updated_by == "migration-admin"
+    await app_init.main()
+    async with engine.connect() as conn:
+        assert (
+            await conn.execute(text("SELECT value, updated_by, updated_at FROM config_options WHERE key='mineru_ocr_host_opts'"))
+        ).one() == row
+    assert await get_schema_versions(manager) == {"business": 1, "knowledge": 2}
+
+
+async def test_invalid_legacy_mineru_config_fails_without_replacing_value(isolated_app):
+    """不能将未知旧档位静默迁移为默认值；失败事务保留原配置。"""
+    _, engine, _ = isolated_app
+    await app_init.main()
+    async with engine.begin() as conn:
+        await conn.execute(text("UPDATE config_options SET value='{\"backend\":\"unknown\"}' WHERE key='mineru_ocr_host_opts'"))
+    with pytest.raises(ValueError, match="MinerU"):
+        await app_init.main()
+    async with engine.connect() as conn:
+        assert await conn.scalar(text("SELECT value FROM config_options WHERE key='mineru_ocr_host_opts'")) == {"backend": "unknown"}
+
+
+async def test_retired_pp_structure_config_is_removed_without_redirecting_to_cloud(isolated_app):
+    """删除失效服务配置，保留旧选择为显式错误，云端三模型共用既有凭据。"""
+    from yuxi.modules.documents.service import resolve_parse_options
+
+    manager, engine, _ = isolated_app
+    await app_init.main()
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO config_options (key, name, description, params, value) "
+                "VALUES ('pp_structure_v3_ocr_host_opts', 'retired', '', '{}', "
+                '\'{"server_url":"https://private.example.test"}\')'
+            )
+        )
+        await conn.execute(
+            text("UPDATE config_options SET value='{\"default_ocr_engine\":\"pp_structure_v3_ocr\"}' WHERE key='system_options'")
+        )
+        await conn.execute(
+            text(
+                'UPDATE config_options SET value=\'{"api_token":"fixture-token","api_url":"https://cloud.example.test/jobs"}\' '
+                "WHERE key='paddleocr_api_opts'"
+            )
+        )
+    await app_init.main()
+    await app_init.main()
+    async with engine.connect() as conn:
+        assert await conn.scalar(text("SELECT count(*) FROM config_options WHERE key='pp_structure_v3_ocr_host_opts'")) == 0
+        assert await conn.scalar(text("SELECT value FROM config_options WHERE key='system_options'")) == {
+            "default_ocr_engine": "pp_structure_v3_ocr"
+        }
+    async with manager.get_async_session_context() as session:
+        with pytest.raises(ValueError, match="不支持的 OCR 引擎: pp_structure_v3_ocr"):
+            await resolve_parse_options(db=session)
+        for engine_id in ("paddleocr_vl_1_6", "paddleocr_pp_ocrv6", "paddleocr_pp_structure_v3"):
+            resolved = await resolve_parse_options({"ocr_engine": engine_id}, session)
+            assert resolved.processor_kwargs == {"api_token": "fixture-token", "api_url": "https://cloud.example.test/jobs"}

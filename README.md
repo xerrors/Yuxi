@@ -140,7 +140,7 @@ Yuxi 把知识进入系统、Agent 执行任务和团队治理放在一条完整
 
 **文档解析与切片管理**
 
-支持 PDF、Word、PPT、Excel、Markdown 等多种常见文档格式。内置 MinerU、PaddleX、RapidOCR 等解析引擎，提取文本、图片和表格内容并切分为 Chunk，生成向量索引供检索使用。
+支持 PDF、Word、PPT、Excel、Markdown 等多种常见文档格式。接入 MinerU、PaddleOCR 云服务与可选自托管 MinerU，保留轻量 RapidOCR，提取文本、图片和表格内容并切分为 Chunk，生成向量索引供检索使用。
 
 ![文档入库与解析状态](https://oss-img.xerrors.cn/github/image-20260825155256725.png)
 
