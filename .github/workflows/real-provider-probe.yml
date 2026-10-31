@@ -13,16 +13,11 @@ concurrency:
 jobs:
   real-provider-probe:
     name: Shipping Agent path against SiliconFlow
-    runs-on: [self-hosted, linux, x64, yuxi-cube]
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
     env:
       JWT_SECRET_KEY: probe-jwt-secret-at-least-thirty-two-characters
       API_KEY_DERIVATION_SECRET: probe-api-key-derivation-secret-at-least-32-chars
-      CUBE_API_URL: ${{ vars.CUBE_API_URL }}
-      CUBE_API_KEY: ${{ secrets.CUBE_API_KEY }}
-      CUBE_PROXY_NODE_IP: ${{ vars.CUBE_PROXY_NODE_IP }}
-      CUBE_PROXY_PORT_HTTP: ${{ vars.CUBE_PROXY_PORT_HTTP || '80' }}
-      CUBE_TEMPLATE_ID: yuxi-user
       E2E_USERNAME: real_probe_admin
       E2E_PASSWORD: real-probe-password-at-least-eight
       SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
@@ -37,7 +32,7 @@ jobs:
       - name: Prepare isolated Compose environment
         run: bash scripts/ci/prepare_system_tests_env.sh
       - name: Start shipping topology
-        run: docker compose up -d --build postgres redis minio api worker
+        run: docker compose up -d --build postgres redis minio etcd milvus graph sandbox-runner api worker
       - name: Wait for readiness
         run: |
           for attempt in $(seq 1 90); do

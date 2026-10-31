@@ -7,6 +7,7 @@ if [[ ${GITHUB_ACTIONS:-} != true || ${RUNNER_ENVIRONMENT:-} != github-hosted ]]
 fi
 : "${RUNNER_TEMP:?需要临时托管执行器的 RUNNER_TEMP}"
 python3 - <<'PY'
+import base64
 import os
 import secrets
 from pathlib import Path
@@ -21,6 +22,7 @@ values.update(
     SANDBOX_BACKEND="container",
     SANDBOX_RUNNER_URL="http://sandbox-runner:8090",
     SANDBOX_RUNNER_TOKEN=secrets.token_urlsafe(32),
+    YUXI_ENCRYPTION_KEY=base64.urlsafe_b64encode(secrets.token_bytes(32)).decode(),
     CUBE_API_URL="",
     CUBE_API_KEY="",
     CUBE_PROXY_NODE_IP="",

@@ -90,7 +90,7 @@ def test_backend_unit_workflow_runs_for_initialization_contract_changes():
 
     select_checks = runpy.run_path(str(root / "scripts/ci/gate.py"))["select_checks"]
 
-    paths = (".env.template", "scripts/init.sh", "scripts/init.ps1", "scripts/ci/test_init_security.ps1")
+    paths = (".env.template", "scripts/init.sh")
     for path in paths:
         assert path in workflow["on"]["push"]["paths"]
         assert select_checks([path])["backend"]

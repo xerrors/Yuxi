@@ -32,5 +32,9 @@ jobs:
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - name: Run read-only frontend gates
-        run: pnpm run lint:check && pnpm run test:unit && pnpm run build
+      - name: Lint
+        run: pnpm run lint:check
+      - name: Unit tests
+        run: pnpm run test:unit
+      - name: Production build
+        run: pnpm run build

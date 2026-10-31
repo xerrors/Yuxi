@@ -69,17 +69,18 @@ Owner 与 gate 必须在同一变更中保持一致。
             "trust.yml": [
                 "python3 scripts/ci/verify_engineering_contracts.py",
                 "python3 -m unittest scripts.ci.test_verify_engineering_contracts",
+                "pwsh -NoProfile -File scripts/ci/test_init_security.ps1",
             ],
             "test.yml": [
                 "uv run pytest test/unit -m 'not slow' -q",
-                "pwsh -File scripts/ci/test_init_security.ps1",
             ],
             "frontend.yml": [
                 "pnpm run lint:check && pnpm run test:unit && pnpm run build"
             ],
             "service-integration.yml": ["bash scripts/ci/run_service_integration.sh"],
             "system-tests.yml": [
-                "bash backend/test/run_tests.sh e2e",
+                "bash backend/test/run_tests.sh e2e-cooperation",
+                "bash backend/test/run_tests.sh e2e-core",
                 "pytest test/integration/sandbox/test_container_sandbox.py",
             ],
             "real-provider-probe.yml": ["pytest test/e2e/test_real_provider_e2e.py"],
@@ -372,7 +373,7 @@ Owner 与 gate 必须在同一变更中保持一致。
         )
         path.write_text(
             original.replace(
-                "backend/test/run_tests.sh e2e", "backend/test/run_tests.sh unit"
+                "backend/test/run_tests.sh e2e-core", "backend/test/run_tests.sh unit"
             )
         )
         self.assertTrue(any("缺少实际 run step" in error for error in self._errors()))
