@@ -31,6 +31,7 @@ RUN rm -f /etc/sudoers.d/user \
     && groupmod -g ${CUBE_GID} user \
     && usermod -u ${CUBE_UID} -g user user \
     && chown -R user:user /home/user \
-    && mkdir -p /home/user/workspace /home/user/skills \
-    && chown user:user /home/user/workspace \
+    && mkdir -p /home/user/workspace /home/user/skills /home/user/.agents \
+    && ln -s /home/user/workspace/agents/skills /home/user/.agents/skills \
+    && chown user:user /home/user/workspace /home/user/.agents \
     && touch /var/log/envd.log && chmod 0600 /var/log/envd.log

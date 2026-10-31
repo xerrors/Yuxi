@@ -1,4 +1,6 @@
 # Yuxi 轻量沙盒镜像：单租户、非 root、按 Run 用完即弃。
+FROM node:24-bullseye-slim AS node-runtime
+
 FROM python:3.13-slim
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -29,6 +31,12 @@ RUN groupadd --gid 1000 user \
     && ln -sf /usr/local/bin/pip3 /usr/bin/pip3 \
     && mkdir -p /home/user/workspace /home/user/skills \
     && chown -R 1000:1000 /home/user
+
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-runtime /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+    && node --version && npm --version
 
 RUN pip install --no-cache-dir \
         beautifulsoup4 \

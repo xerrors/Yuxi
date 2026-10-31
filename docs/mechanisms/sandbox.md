@@ -34,7 +34,7 @@ Container 模式的部署、挂载、资源限制和能力差异见[Container �
 
 `runtime/sandbox/backend.py` 保持现有文件和 execute 工具返回协议。`modules/workspace/runtime_files.py` 将共享路径交给宿主文件边界，拒绝 symlink 越界；其他路径通过固定普通账号的受追踪进程访问。Cube v0.7.3 的 HTTP 文件接口不能证明普通用户权限，因此不使用该接口；读写、编辑和搜索均由 VM 内核执行权限边界。模型不能指定执行账号。
 
-共享 Workspace 是用户工作文件，不是 Home 的备份。成果登记、预览和下载继续读取 Workspace 的最新文件；Home 中的成果需要先复制到 Workspace。个人 Skills 位于 Workspace 的 `agents/skills`，共享投影只包含用户获授权的来源。远程 Skill CLI 在操作者 VM 的请求专属目录中运行，宿主安装边界校验发布文件，只清理该请求目录。
+共享 Workspace 是用户工作文件，不是 Home 的备份。成果登记、预览和下载继续读取 Workspace 的最新文件；Home 中的成果需要先复制到 Workspace。个人 Skills 位于 Workspace 的 `agents/skills`，共享投影只包含用户获授权的来源。管理页远程 Skill CLI 在操作者 VM 的请求专属目录中运行，宿主安装边界校验发布文件，只清理该请求目录。
 
 收到当前线程的轮次终态通知时，文件面板使该线程的预览缓存失效，并重新读取正在展示的产物。面板关闭或切到其它标签期间也保留此失效结果，返回产物时读取最新内容；重复打开缺少修改时间和大小信息的交付卡片也重新读取。运行期间从文件树打开的 Workdir 文件继续按元数据变化刷新。预览读取失败时显示文件错误，重新打开或手动刷新可再次读取。当前预览读取实时文件，保留历史版本需要另存文件，缓存不提供历史快照。前端行为由[文件面板](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/session/ui/workspace/AgentPanel.vue)与[会话工作区](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/session/ui/SessionWorkspace.vue)拥有。
 

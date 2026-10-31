@@ -58,14 +58,15 @@ runner 直接运行在宿主机（不在 Compose 内）时，需要把 `SANDBOX_
 | 容器内路径 | 来源 | 权限 |
 |---|---|---|
 | `/home/user/workspace/<workdir>` | 当前用户 Workspace 中已绑定的 Project Workdir | 读写 |
+| `/home/user/workspace/agents/skills` | 当前用户个人 Skill 持久目录 | 读写 |
 | `/home/user/skills` | 当前用户获授权的共享 Skill 投影 | 只读 |
-| `/home/user` | tmpfs | 读写，随容器销毁 |
+| `/home/user` | tmpfs | 读写及执行 CLI 缓存，随容器销毁 |
 | `/tmp` | tmpfs | 读写，随容器销毁 |
 | 根文件系统 | 镜像 | 只读 |
 
-runner 从自身容器的 `/sandbox-data`、`/sandbox-skill-projections` 挂载反查 Docker daemon 视角的宿主路径；API/worker 不传宿主路径，模型也不能选择挂载。Workdir 逐段以 `O_NOFOLLOW` 打开，拒绝 `..`、符号链接、非目录和越界。Skill 投影不存在时跳过该挂载，不创建空宿主目录。
+runner 从自身容器的 `/sandbox-data`、`/sandbox-skill-projections` 挂载反查 Docker daemon 视角的宿主路径；API/worker 不传宿主路径，模型也不能选择挂载。Workdir 与个人 Skill 目录逐段以 `O_NOFOLLOW` 打开，拒绝 `..`、符号链接、非目录和越界。Skill 投影不存在时跳过该挂载，不创建空宿主目录。
 
-容器固定以 `SANDBOX_CONTAINER_UID:GID`（默认 1000:1000）运行；宿主 Workspace 和 Skill 投影必须允许该身份读写/读取。镜像由 [docker/sandbox.Dockerfile](https://github.com/xerrors/Yuxi/blob/main/docker/sandbox.Dockerfile) 构建，包含 bash、python3、pip、uv、git、curl、jq、ripgrep、unzip 和常用 Python 库。镜像不包含 sudo，且 root 文件系统只读。
+容器固定以 `SANDBOX_CONTAINER_UID:GID`（默认 1000:1000）运行；宿主 Workspace 和 Skill 投影必须允许该身份读写/读取。镜像由 [docker/sandbox.Dockerfile](https://github.com/xerrors/Yuxi/blob/main/docker/sandbox.Dockerfile) 构建，包含 Node 24、npm/npx、bash、python3、pip、uv、git、curl、jq、ripgrep、unzip 和常用 Python 库。镜像不包含 sudo，且 root 文件系统只读。
 
 ## 资源与网络
 
@@ -92,7 +93,7 @@ runner 从自身容器的 `/sandbox-data`、`/sandbox-skill-projections` 挂载�
 
 保留：Workspace 文件读写/编辑/搜索、共享 Skill 读取、`execute`、依赖当前 Workdir 或 `/home/user/skills` 的 Skill、附件与 OCR、成果登记/预览/下载、摘要、Memory、MCP、网络搜索、深度研究、协作和定时任务。
 
-Shell 命名空间只包含当前 Run 的 Workdir（挂到 `/home/user/workspace/<workdir>`）和 `/home/user/skills`。同一用户的个人 Skills（`/home/user/workspace/agents/skills`）、其他 Workdir 和其他 Workspace 路径仍可由文件工具通过宿主边界访问，但 shell 命令看不到它们。
+Shell 命名空间包含当前 Run 的 Workdir、当前用户个人 Skill 目录与只读共享 Skill 投影。runner 在启动后建立 `~/.agents/skills → /home/user/workspace/agents/skills`，完成后才接受命令。个人文件跨 Run 保留；其他 Workdir 和其他 Workspace 路径仍只能由文件工具通过宿主边界访问。
 
 在 Container 模式下不可用或语义变化：
 
@@ -100,7 +101,7 @@ Shell 命名空间只包含当前 Run 的 Workdir（挂到 `/home/user/workspace
 - `--network none` 下，需要联网的 Skill（如图片生成、在线安装依赖）会失败。
 - 设置页的“重建环境”和磁盘用量不适用；状态卡显示任务级临时环境。
 - 环境变量仍会在 Run 内注入，但设置页的“验证配置”没有活动 Run，会显式失败。
-- 远程 Skill CLI 安装没有可用的操作者 VM；Git 来源安装还会因缺少 Workdir 上下文显式失败。
+- 对话中的个人安装可执行 `npx -y skills add <source> -g -y`，联网安装需要 `bridge`；管理页远程安装（个人或共享）没有活动 Run，仍不可用。网页上传不依赖沙盒。
 - 不提供多镜像、模型自建沙盒、持久 Home 或多租户强隔离。
 
 ## 运维与验证

@@ -136,7 +136,7 @@ def test_model_visible_schema_has_typed_questions_and_options():
 
 def test_split_builtin_tools_are_registered_once_with_stable_metadata():
     """真实包导入装配每个内置工具一次并保留工具名称。"""
-    for name in ("ask_user_question", "ocr_parse_file", "present_artifacts", "install_skill"):
+    for name in ("ask_user_question", "ocr_parse_file", "present_artifacts"):
         instance = getattr(builtin, name)
         assert instance.name == name
         assert sum(tool is instance for tool in get_all_tool_instances()) == 1
@@ -220,3 +220,10 @@ def test_checkpoint_replay_preserves_standard_calls_and_requires_legacy_drain(ra
     else:
         assert result.status == "error"
         assert "Error invoking tool" in result.content
+
+
+def test_personal_skill_installer_is_not_registered():
+    """个人安装交给沙盒 CLI，模型工具目录不再暴露专用安装工具。"""
+    from yuxi.modules.extensions.tools.catalog import get_tool_metadata
+
+    assert "install_skill" not in {item["slug"] for item in get_tool_metadata()}

@@ -5,14 +5,12 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
-import tempfile
 import uuid
 from pathlib import Path
 from typing import Any
 
 from yuxi.infrastructure.filesystem import await_io, ensure_within_root, open_directory_fd, open_regular_file_fd, publish_directory_fd
 from yuxi.infrastructure.observability.logging import logger
-from yuxi.modules.agents.runtime.sandbox.download import download_sandbox_directory
 from yuxi.modules.extensions.skills.install_draft import consume_installed_draft_items, load_and_select_draft_items
 from yuxi.modules.extensions.skills.package import (
     TEXT_FILE_EXTENSIONS,
@@ -25,7 +23,6 @@ from yuxi.modules.extensions.skills.package import (
 from yuxi.modules.extensions.skills.resolved import ResolvedSkill
 from yuxi.modules.identity.models import User
 from yuxi.modules.workspace.paths import ensure_user_workspace, user_workspace_dir
-from yuxi.modules.workspace.runtime_paths import normalize_runtime_path, workspace_scope_from_runtime_path
 
 PERSONAL_SKILL_SOURCE_TYPE = "personal"
 
@@ -68,44 +65,6 @@ async def confirm_personal_skill_install_draft(
 
     consume_installed_draft_items(draft_dir, data, {item["requested_slug"] for item in results if item["success"]})
     return results
-
-
-async def install_personal_skills_from_source(
-    *,
-    uid: str,
-    source: str,
-    skill_names: list[str] | None = None,
-) -> tuple[list[str], list[dict[str, str]]]:
-    """获取沙盒或远程包并安装到用户个人来源，汇总逐项结果。"""
-    source = source.strip()
-    if not source:
-        raise ValueError("Skill 来源不能为空")
-    if source.startswith("/"):
-        with tempfile.TemporaryDirectory(prefix=".skill-install-") as tmp:
-            source_dir = await await_io(asyncio.to_thread(_download_sandbox_skill, source, uid, Path(tmp)))
-            item = await install_personal_skill_dir(uid, source_dir)
-            return [item.slug], []
-    if not skill_names:
-        raise ValueError("从 Git 安装时必须通过 skill_names 指定技能名称")
-
-    from yuxi.modules.extensions.skills.remote import SkillDownloadFailure, download_remote_skills
-
-    installed: list[str] = []
-    failures: list[dict[str, str]] = []
-    downloads = await download_remote_skills(source=source, skills=skill_names, uid=uid)
-    try:
-        for result in downloads.results:
-            if isinstance(result, SkillDownloadFailure):
-                failures.append({"slug": result.slug, "error": result.error})
-                continue
-            try:
-                item = await install_personal_skill_dir(uid, result.source_dir)
-                installed.append(item.slug)
-            except Exception as exc:
-                failures.append({"slug": result.slug, "error": str(exc)})
-    finally:
-        await downloads.cleanup()
-    return installed, failures
 
 
 async def list_personal_skills(uid: str) -> list[ResolvedSkill]:
@@ -242,28 +201,3 @@ def _resolve_personal_skill_dir(root: Path, slug: str) -> Path:
     if target.is_symlink():
         raise ValueError("个人 Skill 路径非法")
     return target
-
-
-def _download_sandbox_skill(
-    sandbox_path: str,
-    uid: str,
-    staging_root: Path,
-) -> Path:
-    """从当前用户沙盒下载 Skill 目录到本地暂存区。"""
-    from yuxi.modules.agents.runtime.sandbox import UserSandboxBackend
-
-    sandbox_path = normalize_runtime_path(sandbox_path)
-    workspace_scope_from_runtime_path(sandbox_path)
-    staging = staging_root / "package"
-    backend = UserSandboxBackend(uid=uid)
-    download_sandbox_directory(
-        backend,
-        sandbox_path,
-        staging,
-        empty_message=f"沙盒路径 {sandbox_path} 中未发现可下载文件",
-    )
-    if not (staging / "SKILL.md").exists():
-        shutil.rmtree(staging, ignore_errors=True)
-        raise ValueError(f"沙盒路径 {sandbox_path} 中未找到 SKILL.md")
-
-    return staging

@@ -20,6 +20,8 @@ Skill 是一个可复用的能力包，通常包含一个 `SKILL.md`、提示词
 - 共享和内置 Skill：`/home/user/skills/<slug>/`，对 Agent 只读；
 - 个人 Skill：`/home/user/workspace/agents/skills/<slug>/`，位于当前用户的 UserWorkspace。
 
+沙盒标准目录 `~/.agents/skills` 链接到 `/home/user/workspace/agents/skills`，CLI 全局安装与网页个人安装使用同一份持久文件。
+
 同一用户有个人 Skill 和共享 Skill 使用同一个 slug 时，个人版本覆盖该用户看到的共享版本。删除个人版本后，如果共享版本仍可访问，会恢复共享版本。
 
 ## 对话组件 Skill
@@ -90,7 +92,7 @@ skill_dependencies: []
 2. **上传**：上传 ZIP 或单个 `SKILL.md`，解析后生成草稿。
 3. **远程安装**：从 GitHub 仓库、ModelScope Skill 或合集拉取一个或多个 Skill。
 4. **在线编辑**：编辑已有且有管理权限的共享 Skill 文件和依赖。
-5. **Agent 内安装**：所有获授权会话使用 `install_skill` 把 Skill 安装到当前用户的个人来源。
+5. **Agent 内安装**：通过 `execute` 执行 `npx -y skills add <source> -g -y`，全局安装直接进入当前用户的个人目录；联网来源需要沙盒允许网络访问。
 
 上传和远程安装都先解析为草稿，再选择个人或共享位置并确认。草稿中的可安装条目只包含已解析的临时包；远程拉取或解析失败会单独显示，不能被确认安装。确认前可以检查名称、说明、文件和依赖；取消草稿不会写入正式 Skill。共享安装在权限允许时默认全局共享，可在确认前改为部门或指定人；受限账号沿用后端提供的允许范围和默认值。
 
@@ -118,7 +120,7 @@ skill_dependencies: []
 
 ### 远程来源限制
 
-管理员在“设置 → 基本设置 → Skill 配置 → 远程来源白名单”中维护 `remote_skill_source_policy.allowed_hosts`。默认允许 `github.com` 和 `modelscope.cn`；主机名必须精确匹配，保存空列表会关闭远程安装。
+管理员在“设置 → 基本设置 → Skill 配置 → 远程来源白名单”中维护 `remote_skill_source_policy.allowed_hosts`。默认允许 `github.com` 和 `modelscope.cn`；主机名必须精确匹配，保存空列表会关闭管理页远程安装。此设置不约束用户在沙盒中自行执行 CLI 的网络访问。
 
 示例来源：
 
@@ -185,9 +187,9 @@ Agent 配置中的 Skill 选择不能扩大用户的文件、知识库或 MCP �
 
 解析结果的 `source_type` 记录安装来源，`source_scope` 区分个人、共享和专属范围，内部 `source_dir` 指向真实文件；列表中的 `overrides_shared` 与 `shadowed_by_personal` 分别描述个人卡片和被覆盖共享卡片，管理页仍需要显示后者。整包编辑和版本恢复比较包含路径、文件字节及可执行位的目录 `revision`；单文件编辑比较该文件 sha256，根说明接口比较 `SKILL.md` sha256。`content_hash` 始终使用整目录算法，内置同步与安装包一致。修订冲突返回领域冲突，HTTP 层映射为 409。
 
-远程安装和安装确认草稿共用远程下载、白名单及提取边界。个人来源采用创建型原子发布，同名目录即使为空也失败；共享内容先发布唯一不可变包再提交数据库引用，失败清理未提交包；内置更新保留旧目录用于失败恢复。投影按 uid 锁定并核对完整授权集合：单项变更先撤销旧投影，再重建用户集合，失败保留撤销结果并由下一次执行刷新补偿。不同发布点保留各自的覆盖与撤权规则。
+远程安装和安装确认草稿共用远程下载、白名单及提取边界。网页个人安装采用创建型原子发布，同名目录即使为空也失败；共享内容先发布唯一不可变包再提交数据库引用，失败清理未提交包；内置更新保留旧目录用于失败恢复。投影按 uid 锁定并核对完整授权集合：单项变更先撤销旧投影，再重建用户集合，失败保留撤销结果并由下一次执行刷新补偿。不同发布点保留各自的覆盖与撤权规则。沙盒 CLI 直接维护个人文件，其覆盖和更新遵循 CLI 自身语义。
 
-远程 CLI 的临时 HOME 按请求清理；递归删除遇到符号链接时只移除链接本身，不访问目标。文件读取、复制和父目录遍历继续拒绝符号链接。CLI 的 Node/npm 与 Git 依赖由[沙盒模板](../advanced/sandbox-operations.md)提供。
+管理页远程 CLI 的临时 HOME 按请求清理；递归删除遇到符号链接时只移除链接本身，不访问目标。文件读取、复制和父目录遍历继续拒绝符号链接。CLI 的 Node/npm 与 Git 依赖由[沙盒模板](../advanced/sandbox-operations.md)提供。
 
 共享和内置 Skill 投影对 Agent 只读，但沙盒命令仍可能执行其中的脚本。脚本如需写文件，应写入当前 Project Workdir 或 User Data，而不是 Skill 目录。个人 Skill 直接从当前用户工作区读取，不会复制到共享投影。
 
@@ -206,4 +208,4 @@ Skill 的选择影响 Prompt 和工具激活；共享投影按用户授权集合
 
 [Skill 访问契约](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/extensions/skills/access.py)拥有权限、依赖与带锁读取，[内容编辑](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/extensions/skills/edit.py)拥有修订校验与不可变包发布，[安装草稿](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/extensions/skills/install_draft.py)拥有安装确认前的暂存。[内置同步](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/extensions/skills/builtin/sync.py)由 `app-init` 调用；[运行时解析](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/extensions/skills/runtime.py)和[Skills middleware](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/middlewares/skills.py)分别拥有资源快照与模型可见性。
 
-[编辑 HTTP 测试](https://github.com/xerrors/Yuxi/blob/main/backend/test/integration/api/test_shared_skill_edit_router.py)覆盖修订冲突和保存结果，[投影集成测试](https://github.com/xerrors/Yuxi/blob/main/backend/test/integration/services/test_user_skill_projection.py)核对授权后的实际文件，[远程安装测试](https://github.com/xerrors/Yuxi/blob/main/backend/test/integration/sandbox/test_remote_skill_install.py)检查个人安装与请求目录清理。源码和固定测试不能证明第三方 Skill 的当前内容安全，安装前仍需审查目标包。
+[编辑 HTTP 测试](https://github.com/xerrors/Yuxi/blob/main/backend/test/integration/api/test_shared_skill_edit_router.py)覆盖修订冲突和保存结果，[投影集成测试](https://github.com/xerrors/Yuxi/blob/main/backend/test/integration/services/test_user_skill_projection.py)核对授权后的实际文件，[远程安装测试](https://github.com/xerrors/Yuxi/blob/main/backend/test/integration/sandbox/test_remote_skill_install.py)检查 CLI 全局安装后的个人文件和运行时发现。源码和固定测试不能证明第三方 Skill 的当前内容安全，安装前仍需审查目标包。

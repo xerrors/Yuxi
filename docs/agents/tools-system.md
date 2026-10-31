@@ -34,7 +34,6 @@ def example_tool(text: str) -> str:
 | `ask_user_question` | 等待用户回答交互式问题 |
 | `ocr_parse_file` | 把工作区中受支持的 PDF、Office 或图片转换为 Markdown |
 | `present_artifacts` | 展示当前用户可见的文件产物 |
-| `install_skill` | 从允许的沙盒路径或 Git 来源安装个人 Skill |
 | `web_search` | 使用已配置的 Tavily、DeepSeek 或豆包 Custom 搜索网页 |
 | `web_fetch` | 通过 Tavily Extract 或 DeepSeek Fetch 读取指定网页的 Markdown 正文 |
 

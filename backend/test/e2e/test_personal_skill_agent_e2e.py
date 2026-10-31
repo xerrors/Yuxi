@@ -1,19 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
-import uuid
 import re
+import uuid
 from http.server import BaseHTTPRequestHandler
 from typing import Any
 
 import asyncpg
 import httpx
 import pytest
-
-from test.e2e.e2e_helpers import output_text, register_replay_provider
-from test.support.openai_replay_server import send_json_response, send_openai_sse_response, serve_replay_handler
-
 from e2e_helpers import (
     RUN_TIMEOUT_SECONDS,
     archive_public_thread,
@@ -21,10 +18,14 @@ from e2e_helpers import (
     postgres_dsn,
     skip_if_external_quota,
     wait_for_consumed_input,
+    wait_for_terminal_turn,
 )
+
+from test.e2e.e2e_helpers import output_text, register_replay_provider
 from test.live_api_cleanup import (
     make_test_session_title,
 )
+from test.support.openai_replay_server import send_json_response, send_openai_sse_response, serve_replay_handler
 from yuxi.modules.extensions.skills.projection import get_user_skills_root_dir
 from yuxi.modules.workspace.paths import user_workspace_dir
 
@@ -44,7 +45,26 @@ def personal_replay():
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             scenario["requests"].append(body)
             tools = [item for item in body["messages"] if item["role"] == "tool"]
-            if tools:
+            if scenario.get("install_command"):
+                if tools:
+                    if scenario["marker"] not in json.dumps(tools[-1]["content"]):
+                        send_json_response(self, 400, {"error": {"message": "个人目录写入未返回实际文件标记"}})
+                        return
+                    delta, finish = {"role": "assistant", "content": "installed"}, "stop"
+                else:
+                    delta = {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "personal-install",
+                                "type": "function",
+                                "function": {"name": "execute", "arguments": json.dumps({"command": scenario["install_command"]})},
+                            }
+                        ],
+                    }
+                    finish = "tool_calls"
+            elif tools:
                 marker = re.search(r"PERSONAL_SKILL_E2E_[A-F0-9]{10}", json.dumps(tools[-1]["content"]))
                 if marker is None:
                     send_json_response(self, 400, {"error": {"message": "真实文件读取未返回 Skill 标记"}})
@@ -93,13 +113,15 @@ def personal_replay():
         yield {"url": url, **scenario, "scenario": scenario}
 
 
-async def test_main_agent_reads_personal_skill_directly_from_user_workspace(
+@pytest.mark.parametrize("install_method", ["web", "standard_directory"])
+async def test_main_agent_reads_personal_skill_from_web_or_standard_directory(
     e2e_client: httpx.AsyncClient,
     e2e_headers: dict[str, str],
     e2e_agent_context: dict[str, str],
     personal_replay,
+    install_method,
 ):
-    """共享选择为空时，真实主 Agent 仍发现并读取个人 SKILL.md。"""
+    """网页安装与沙盒标准入口写入后，主 Agent 均能发现并读取个人技能。"""
     uid = e2e_agent_context["uid"]
     marker = f"PERSONAL_SKILL_E2E_{uuid.uuid4().hex[:10].upper()}"
     slug = f"pytest-personal-agent-{uuid.uuid4().hex[:8]}"
@@ -116,20 +138,6 @@ async def test_main_agent_reads_personal_skill_directly_from_user_workspace(
     provider_id = f"ci-personal-{uuid.uuid4().hex[:8]}"
     personal_replay["scenario"]["slug"] = slug
 
-    prepare_response = await e2e_client.post(
-        "/api/skills/import/prepare",
-        headers=e2e_headers,
-        files={"file": ("SKILL.md", skill_md.encode(), "text/markdown")},
-    )
-    assert prepare_response.status_code == 200, prepare_response.text
-    draft = prepare_response.json()["data"]
-    confirm_response = await e2e_client.post(
-        f"/api/skills/personal/install-drafts/{draft['draft_id']}/confirm",
-        headers=e2e_headers,
-        json={"slugs": [draft["items"][0]["slug"]]},
-    )
-    assert confirm_response.status_code == 200, confirm_response.text
-
     try:
         await register_replay_provider(e2e_client, e2e_headers, base_url=personal_replay["url"], provider_id=provider_id)
         provider_created = True
@@ -140,6 +148,7 @@ async def test_main_agent_reads_personal_skill_directly_from_user_workspace(
             ),
             "model": f"{provider_id}:deterministic-chat",
             "tools": [],
+            "tool_approval_mode": "always_trust",
             "knowledges": [],
             "mcps": [],
             "skills": [],
@@ -164,6 +173,65 @@ async def test_main_agent_reads_personal_skill_directly_from_user_workspace(
         )
         assert agent_response.status_code == 200, agent_response.text
         agent_created = True
+
+        if install_method == "web":
+            prepare_response = await e2e_client.post(
+                "/api/skills/import/prepare",
+                headers=e2e_headers,
+                files={"file": ("SKILL.md", skill_md.encode(), "text/markdown")},
+            )
+            assert prepare_response.status_code == 200, prepare_response.text
+            draft = prepare_response.json()["data"]
+            confirm_response = await e2e_client.post(
+                f"/api/skills/personal/install-drafts/{draft['draft_id']}/confirm",
+                headers=e2e_headers,
+                json={"slugs": [draft["items"][0]["slug"]]},
+            )
+            assert confirm_response.status_code == 200, confirm_response.text
+        else:
+            # 首个真实 Run 通过标准入口写文件；CLI 自身由真实沙盒安装探针独立验证。
+            scenario = personal_replay["scenario"]
+            encoded = base64.b64encode(skill_md.encode()).decode()
+            scenario["marker"] = marker
+            scenario["install_command"] = (
+                f"mkdir -p ~/.agents/skills/{slug} && "
+                f"printf %s {encoded} | base64 -d > ~/.agents/skills/{slug}/SKILL.md && "
+                f"cat ~/.agents/skills/{slug}/SKILL.md"
+            )
+            installed_thread = await e2e_client.post(
+                "/api/v1/agents/sessions",
+                headers={**e2e_headers, "Idempotency-Key": f"install-{uuid.uuid4().hex}"},
+                json={"agent_id": agent_slug, "title": make_test_session_title("personal-install-e2e")},
+            )
+            assert installed_thread.status_code == 201, installed_thread.text
+            thread_id = str(installed_thread.json()["id"])
+            installed_input = await e2e_client.post(
+                f"/api/v1/agents/sessions/{thread_id}/events",
+                headers={**e2e_headers, "Idempotency-Key": f"install-input-{uuid.uuid4().hex}"},
+                json={
+                    "events": [
+                        {
+                            "type": "agent.session.input.message",
+                            "input": [
+                                {
+                                    "role": "user",
+                                    "content": [{"type": "input_text", "text": "将个人 Skill 写入标准目录。"}],
+                                }
+                            ],
+                            "yuxi": {"mode": "follow_up"},
+                        }
+                    ]
+                },
+            )
+            assert installed_input.status_code == 202, installed_input.text
+            installed_run = await wait_for_consumed_input(e2e_client, e2e_headers, installed_input.json())
+            turn_id = installed_run["turn_id"]
+            installed_turn = await wait_for_terminal_turn(e2e_client, e2e_headers, thread_id, turn_id, timeout=RUN_TIMEOUT_SECONDS)
+            assert installed_turn["status"] == "completed", installed_turn
+            assert (user_workspace_dir(uid) / "agents" / "skills" / slug / "SKILL.md").read_text() == skill_md
+            await archive_public_thread(e2e_client, e2e_headers, thread_id, turn_id=turn_id)
+            thread_id, turn_id = None, None
+            scenario.pop("install_command")
 
         thread_response = await e2e_client.post(
             "/api/v1/agents/sessions",
@@ -232,9 +300,9 @@ async def test_main_agent_reads_personal_skill_directly_from_user_workspace(
         finally:
             await conn.close()
 
-        assert len(personal_replay["requests"]) == 2
+        assert len(personal_replay["requests"]) == (2 if install_method == "web" else 4)
         # 移除真实首请求的发现路径，保留测试原提示中的 slug 与工具 schema。
-        first_request = personal_replay["requests"][0]
+        first_request = personal_replay["requests"][-2]
         discovered_path = f"/home/user/workspace/agents/skills/{slug}/SKILL.md"
         missing_discovery = json.loads(json.dumps(first_request).replace(discovered_path, ""))
         async with httpx.AsyncClient() as replay_client:
