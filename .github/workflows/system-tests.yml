@@ -20,6 +20,7 @@ on:
       - 'docker-compose.no-knowledge.yml'
       - 'scripts/ci/prepare_system_tests_env.sh'
       - 'scripts/ci/build_topology_images.sh'
+      - '.github/actions/**'
       - '.github/workflows/system-tests.yml'
   workflow_dispatch:
 
@@ -50,54 +51,8 @@ jobs:
       - uses: actions/checkout@v7
       - name: Prepare writable test report directory
         run: mkdir -p backend/test/ci-reports && chmod 777 backend/test/ci-reports
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Prepare Compose environment
-        run: bash scripts/ci/prepare_system_tests_env.sh
-      - name: Restore api image layer cache
-        id: api-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: /tmp/yuxi-buildkit-cache/api
-          key: buildkit-api-${{ runner.os }}-${{ hashFiles('backend/uv.lock', 'backend/pyproject.toml', 'docker/api.Dockerfile') }}
-          restore-keys: |
-            buildkit-api-${{ runner.os }}-
-      - name: Restore minio image layer cache
-        id: minio-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: /tmp/yuxi-buildkit-cache/minio
-          key: buildkit-minio-${{ runner.os }}-${{ hashFiles('docker/minio/Dockerfile', 'docker/minio/docker-entrypoint.sh') }}
-          restore-keys: |
-            buildkit-minio-${{ runner.os }}-
-      - name: Restore sandbox image layer cache
-        id: sandbox-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: /tmp/yuxi-buildkit-cache/sandbox
-          key: buildkit-sandbox-${{ runner.os }}-${{ hashFiles('docker/sandbox.Dockerfile') }}
-          restore-keys: |
-            buildkit-sandbox-${{ runner.os }}-
-      - name: Build topology images with cached layers
-        run: bash scripts/ci/build_topology_images.sh /tmp/yuxi-buildkit-cache/api /tmp/yuxi-buildkit-cache/minio /tmp/yuxi-buildkit-cache/sandbox
-      - name: Save successful api build before runtime tests
-        if: steps.api-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: /tmp/yuxi-buildkit-cache/api
-          key: ${{ steps.api-cache.outputs.cache-primary-key }}
-      - name: Save successful minio build before runtime tests
-        if: steps.minio-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: /tmp/yuxi-buildkit-cache/minio
-          key: ${{ steps.minio-cache.outputs.cache-primary-key }}
-      - name: Save successful sandbox build before runtime tests
-        if: steps.sandbox-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: /tmp/yuxi-buildkit-cache/sandbox
-          key: ${{ steps.sandbox-cache.outputs.cache-primary-key }}
+      - name: Prepare topology images
+        uses: ./.github/actions/prepare-topology
       - name: Prepare isolated storage for runtime identity
         run: |
           docker compose run --rm --no-deps --user 0:0 api \
@@ -214,54 +169,8 @@ jobs:
       - uses: actions/checkout@v7
       - name: Prepare writable test report directory
         run: mkdir -p backend/test/ci-reports && chmod 777 backend/test/ci-reports
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Prepare Compose environment
-        run: bash scripts/ci/prepare_system_tests_env.sh
-      - name: Restore api image layer cache
-        id: api-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: /tmp/yuxi-buildkit-cache/api
-          key: buildkit-api-${{ runner.os }}-${{ hashFiles('backend/uv.lock', 'backend/pyproject.toml', 'docker/api.Dockerfile') }}
-          restore-keys: |
-            buildkit-api-${{ runner.os }}-
-      - name: Restore minio image layer cache
-        id: minio-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: /tmp/yuxi-buildkit-cache/minio
-          key: buildkit-minio-${{ runner.os }}-${{ hashFiles('docker/minio/Dockerfile', 'docker/minio/docker-entrypoint.sh') }}
-          restore-keys: |
-            buildkit-minio-${{ runner.os }}-
-      - name: Restore sandbox image layer cache
-        id: sandbox-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: /tmp/yuxi-buildkit-cache/sandbox
-          key: buildkit-sandbox-${{ runner.os }}-${{ hashFiles('docker/sandbox.Dockerfile') }}
-          restore-keys: |
-            buildkit-sandbox-${{ runner.os }}-
-      - name: Build topology images with cached layers
-        run: bash scripts/ci/build_topology_images.sh /tmp/yuxi-buildkit-cache/api /tmp/yuxi-buildkit-cache/minio /tmp/yuxi-buildkit-cache/sandbox
-      - name: Save successful api build before runtime tests
-        if: steps.api-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: /tmp/yuxi-buildkit-cache/api
-          key: ${{ steps.api-cache.outputs.cache-primary-key }}
-      - name: Save successful minio build before runtime tests
-        if: steps.minio-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: /tmp/yuxi-buildkit-cache/minio
-          key: ${{ steps.minio-cache.outputs.cache-primary-key }}
-      - name: Save successful sandbox build before runtime tests
-        if: steps.sandbox-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: /tmp/yuxi-buildkit-cache/sandbox
-          key: ${{ steps.sandbox-cache.outputs.cache-primary-key }}
+      - name: Prepare topology images
+        uses: ./.github/actions/prepare-topology
       - name: Prepare isolated storage for runtime identity
         run: |
           docker compose run --rm --no-deps --user 0:0 api \
@@ -343,54 +252,8 @@ jobs:
       - uses: actions/checkout@v7
       - name: Prepare writable test report directory
         run: mkdir -p backend/test/ci-reports && chmod 777 backend/test/ci-reports
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Prepare Compose environment
-        run: bash scripts/ci/prepare_system_tests_env.sh
-      - name: Restore api image layer cache
-        id: api-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: /tmp/yuxi-buildkit-cache/api
-          key: buildkit-api-${{ runner.os }}-${{ hashFiles('backend/uv.lock', 'backend/pyproject.toml', 'docker/api.Dockerfile') }}
-          restore-keys: |
-            buildkit-api-${{ runner.os }}-
-      - name: Restore minio image layer cache
-        id: minio-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: /tmp/yuxi-buildkit-cache/minio
-          key: buildkit-minio-${{ runner.os }}-${{ hashFiles('docker/minio/Dockerfile', 'docker/minio/docker-entrypoint.sh') }}
-          restore-keys: |
-            buildkit-minio-${{ runner.os }}-
-      - name: Restore sandbox image layer cache
-        id: sandbox-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: /tmp/yuxi-buildkit-cache/sandbox
-          key: buildkit-sandbox-${{ runner.os }}-${{ hashFiles('docker/sandbox.Dockerfile') }}
-          restore-keys: |
-            buildkit-sandbox-${{ runner.os }}-
-      - name: Build topology images with cached layers
-        run: bash scripts/ci/build_topology_images.sh /tmp/yuxi-buildkit-cache/api /tmp/yuxi-buildkit-cache/minio /tmp/yuxi-buildkit-cache/sandbox
-      - name: Save successful api build before runtime tests
-        if: steps.api-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: /tmp/yuxi-buildkit-cache/api
-          key: ${{ steps.api-cache.outputs.cache-primary-key }}
-      - name: Save successful minio build before runtime tests
-        if: steps.minio-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: /tmp/yuxi-buildkit-cache/minio
-          key: ${{ steps.minio-cache.outputs.cache-primary-key }}
-      - name: Save successful sandbox build before runtime tests
-        if: steps.sandbox-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: /tmp/yuxi-buildkit-cache/sandbox
-          key: ${{ steps.sandbox-cache.outputs.cache-primary-key }}
+      - name: Prepare topology images
+        uses: ./.github/actions/prepare-topology
       - name: Prepare isolated storage for runtime identity
         run: |
           docker compose run --rm --no-deps --user 0:0 api \
@@ -480,54 +343,8 @@ jobs:
       - uses: actions/checkout@v7
       - name: Prepare writable test report directory
         run: mkdir -p backend/test/ci-reports && chmod 777 backend/test/ci-reports
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Prepare Compose environment
-        run: bash scripts/ci/prepare_system_tests_env.sh
-      - name: Restore api image layer cache
-        id: api-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: /tmp/yuxi-buildkit-cache/api
-          key: buildkit-api-${{ runner.os }}-${{ hashFiles('backend/uv.lock', 'backend/pyproject.toml', 'docker/api.Dockerfile') }}
-          restore-keys: |
-            buildkit-api-${{ runner.os }}-
-      - name: Restore minio image layer cache
-        id: minio-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: /tmp/yuxi-buildkit-cache/minio
-          key: buildkit-minio-${{ runner.os }}-${{ hashFiles('docker/minio/Dockerfile', 'docker/minio/docker-entrypoint.sh') }}
-          restore-keys: |
-            buildkit-minio-${{ runner.os }}-
-      - name: Restore sandbox image layer cache
-        id: sandbox-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: /tmp/yuxi-buildkit-cache/sandbox
-          key: buildkit-sandbox-${{ runner.os }}-${{ hashFiles('docker/sandbox.Dockerfile') }}
-          restore-keys: |
-            buildkit-sandbox-${{ runner.os }}-
-      - name: Build topology images with cached layers
-        run: bash scripts/ci/build_topology_images.sh /tmp/yuxi-buildkit-cache/api /tmp/yuxi-buildkit-cache/minio /tmp/yuxi-buildkit-cache/sandbox
-      - name: Save successful api build before runtime tests
-        if: steps.api-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: /tmp/yuxi-buildkit-cache/api
-          key: ${{ steps.api-cache.outputs.cache-primary-key }}
-      - name: Save successful minio build before runtime tests
-        if: steps.minio-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: /tmp/yuxi-buildkit-cache/minio
-          key: ${{ steps.minio-cache.outputs.cache-primary-key }}
-      - name: Save successful sandbox build before runtime tests
-        if: steps.sandbox-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: /tmp/yuxi-buildkit-cache/sandbox
-          key: ${{ steps.sandbox-cache.outputs.cache-primary-key }}
+      - name: Prepare topology images
+        uses: ./.github/actions/prepare-topology
       - name: Prepare isolated storage for runtime identity
         run: |
           docker compose run --rm --no-deps --user 0:0 api \
@@ -779,26 +596,10 @@ jobs:
           cache-dependency-glob: backend/uv.lock
       - name: Prepare writable test report directory
         run: mkdir -p backend/test/ci-reports
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Prepare Compose environment
-        run: bash scripts/ci/prepare_system_tests_env.sh
-      - name: Restore sandbox image layer cache
-        id: sandbox-cache
-        uses: actions/cache/restore@v4
+      - name: Prepare topology images
+        uses: ./.github/actions/prepare-topology
         with:
-          path: /tmp/yuxi-buildkit-cache/sandbox
-          key: buildkit-sandbox-${{ runner.os }}-${{ hashFiles('docker/sandbox.Dockerfile') }}
-          restore-keys: |
-            buildkit-sandbox-${{ runner.os }}-
-      - name: Build sandbox image with cached layers
-        run: bash scripts/ci/build_topology_images.sh "" "" /tmp/yuxi-buildkit-cache/sandbox --sandbox-only
-      - name: Save successful sandbox build before runtime tests
-        if: steps.sandbox-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: /tmp/yuxi-buildkit-cache/sandbox
-          key: ${{ steps.sandbox-cache.outputs.cache-primary-key }}
+          sandbox-only: 'true'
       - name: Verify real container storage and process isolation
         timeout-minutes: 12
         run: SANDBOX_CONTAINER_TEST=1 SANDBOX_CONTAINER_IMAGE="$(docker compose config --format json | jq -r '.services["sandbox-image"].image')" uv run --project backend --locked --group test pytest --junitxml=backend/test/ci-reports/system-32.xml --durations=20 backend/test/integration/sandbox/test_container_sandbox.py -q

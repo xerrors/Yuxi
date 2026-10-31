@@ -1,0 +1,67 @@
+name: 'Prepare runtime topology images'
+description: '准备 Compose 环境并以 buildkit 层缓存构建拓扑镜像；四个系统 job 共用同一构建路径，防止逐 job 手抄漂移。'
+inputs:
+  sandbox-only:
+    description: '只构建 sandbox 镜像（宿主沙盒隔离测试，不需要拓扑）'
+    required: false
+    default: 'false'
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    - name: Prepare Compose environment
+      run: bash scripts/ci/prepare_system_tests_env.sh
+      shell: bash
+    - name: Restore api image layer cache
+      id: api-cache
+      if: inputs.sandbox-only != 'true'
+      uses: actions/cache/restore@v4
+      with:
+        path: /tmp/yuxi-buildkit-cache/api
+        key: buildkit-api-${{ runner.os }}-${{ hashFiles('backend/uv.lock', 'backend/pyproject.toml', 'docker/api.Dockerfile') }}
+        restore-keys: |
+          buildkit-api-${{ runner.os }}-
+    - name: Restore minio image layer cache
+      id: minio-cache
+      if: inputs.sandbox-only != 'true'
+      uses: actions/cache/restore@v4
+      with:
+        path: /tmp/yuxi-buildkit-cache/minio
+        key: buildkit-minio-${{ runner.os }}-${{ hashFiles('docker/minio/Dockerfile', 'docker/minio/docker-entrypoint.sh') }}
+        restore-keys: |
+          buildkit-minio-${{ runner.os }}-
+    - name: Restore sandbox image layer cache
+      id: sandbox-cache
+      uses: actions/cache/restore@v4
+      with:
+        path: /tmp/yuxi-buildkit-cache/sandbox
+        key: buildkit-sandbox-${{ runner.os }}-${{ hashFiles('docker/sandbox.Dockerfile') }}
+        restore-keys: |
+          buildkit-sandbox-${{ runner.os }}-
+    - name: Build topology images with cached layers
+      if: inputs.sandbox-only != 'true'
+      run: bash scripts/ci/build_topology_images.sh /tmp/yuxi-buildkit-cache/api /tmp/yuxi-buildkit-cache/minio /tmp/yuxi-buildkit-cache/sandbox
+      shell: bash
+    - name: Build sandbox image with cached layers
+      if: inputs.sandbox-only == 'true'
+      run: bash scripts/ci/build_topology_images.sh "" "" /tmp/yuxi-buildkit-cache/sandbox --sandbox-only
+      shell: bash
+    - name: Save successful api build before runtime tests
+      if: inputs.sandbox-only != 'true' && steps.api-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: /tmp/yuxi-buildkit-cache/api
+        key: ${{ steps.api-cache.outputs.cache-primary-key }}
+    - name: Save successful minio build before runtime tests
+      if: inputs.sandbox-only != 'true' && steps.minio-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: /tmp/yuxi-buildkit-cache/minio
+        key: ${{ steps.minio-cache.outputs.cache-primary-key }}
+    - name: Save successful sandbox build before runtime tests
+      if: steps.sandbox-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: /tmp/yuxi-buildkit-cache/sandbox
+        key: ${{ steps.sandbox-cache.outputs.cache-primary-key }}

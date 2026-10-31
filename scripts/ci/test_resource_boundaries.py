@@ -265,9 +265,25 @@ class RuntimeTopologyTests(unittest.TestCase):
                 self.assert_toggle_and_replay_wiring(broken)
 
     TOPOLOGY_JOBS = ("background-job-worker-path", "cooperation-e2e", "lifecycle-worker-e2e", "runtime-contracts")
+    PREPARE_ACTION = "uses: ./.github/actions/prepare-topology"
 
-    def assert_hosted_jobs(self, workflow: str) -> None:
-        """四个拓扑 job 均准备 container 镜像和 runner，保留构建缓存；沙盒 job 复用镜像但不建拓扑。"""
+    def assert_hosted_jobs(self, workflow: str, action: str | None = None) -> None:
+        """四个拓扑 job 经共享动作准备镜像，沙盒 job 以 sandbox-only 输入复用同一动作。"""
+        if action is None:
+            action = (ROOT / ".github/actions/prepare-topology/action.yml").read_text()
+        self.assertIn("'.github/actions/**'", workflow, "动作必须能触发系统测试")
+        # 动作自身拥有环境准备、层缓存恢复与构建保存的完整接线。
+        self.assertIn("id: sandbox-cache", action)
+        self.assertLess(
+            action.index("bash scripts/ci/prepare_system_tests_env.sh"),
+            action.index("scripts/ci/build_topology_images.sh"),
+        )
+        saves = list(re.finditer(r"(?m)^      uses: actions/cache/save@v4$", action))
+        self.assertEqual(len(saves), 3)
+        build_last = max(m.start() for m in re.finditer(r"scripts/ci/build_topology_images\.sh", action))
+        for save in saves:
+            self.assertLess(build_last, save.start())
+        self.assertIn("--sandbox-only", action)
         jobs = re.split(r"(?m)^  [\w-]+:\n", workflow.split("\njobs:\n", 1)[1])[1:]
         self.assertEqual(len(jobs), 6)
         for job in jobs[:4]:
@@ -275,44 +291,53 @@ class RuntimeTopologyTests(unittest.TestCase):
             self.assertNotIn("probe_kvm.py", job)
             self.assertNotIn("probe_hosted_cube.sh", job)
             self.assertNotIn("test_cube_worker_recovery.sh", job)
-            self.assertLess(job.index("bash scripts/ci/prepare_system_tests_env.sh"), job.index("docker compose up -d"))
+            self.assertIn(self.PREPARE_ACTION, job)
+            # 拓扑 job 不能误传 sandbox-only：compose up 会自动补建镜像，job 照常变绿但静默丢失预构建。
+            self.assertIsNone(re.search(r"uses: \./\.github/actions/prepare-topology\n        with:", job))
+            self.assertNotIn("sandbox-only: 'true'", job)
+            self.assertLess(job.index(self.PREPARE_ACTION), job.index("docker compose up -d"))
             start = re.search(r"(?m)^        run: docker compose up -d (.+)$", job)
             self.assertIsNotNone(start)
             self.assertIn("sandbox-runner", shlex.split(start.group(1)))
-            self.assertIn("id: sandbox-cache", job)
-            saves = list(re.finditer(r"(?m)^        uses: actions/cache/save@v4$", job))
-            self.assertEqual(len(saves), 3)
-            for save in saves:
-                self.assertLess(job.index("bash scripts/ci/build_topology_images.sh"), save.start())
-                self.assertLess(save.start(), job.index("docker compose up -d"))
         sandbox = jobs[4]
         self.assertIn("runs-on: ubuntu-24.04", sandbox)
         self.assertNotIn("self-hosted", sandbox)
-        self.assertIn("id: sandbox-cache", sandbox)
-        self.assertLess(
-            sandbox.index("bash scripts/ci/prepare_system_tests_env.sh"),
-            sandbox.index("scripts/ci/build_topology_images.sh"),
-        )
-        self.assertIn("--sandbox-only", sandbox)
-        self.assertNotIn("buildkit-api-", sandbox, "沙盒 job 不需要 api 镜像及其缓存")
+        self.assertIn(self.PREPARE_ACTION, sandbox)
+        self.assertIsNotNone(re.search(r"uses: \./\.github/actions/prepare-topology\n        with:\n          sandbox-only: 'true'", sandbox))
+        self.assertNotIn("install -d -o 1000", sandbox, "沙盒 job 不启动拓扑，无需挂载准备")
         self.assertIn("SANDBOX_CONTAINER_TEST=1", sandbox)
         self.assertIn("test/integration/sandbox/test_container_sandbox.py", sandbox)
 
     def test_runtime_jobs_use_container(self):
-        """遗漏 runner、镜像缓存或恢复真实 Cube 安装时拒绝。"""
+        """遗漏 runner、共享动作接线或恢复真实 Cube 安装时拒绝。"""
         workflow = (ROOT / ".github/workflows/system-tests.yml").read_text()
         self.assert_hosted_jobs(workflow)
-        for original in ("runs-on: ubuntu-24.04", "sandbox-runner", "id: sandbox-cache", "uses: actions/cache/save@v4"):
+        # 挂载准备命令的归属与顺序由 test_release_workflows 的挂载守卫负责。
+        for original in (
+            "runs-on: ubuntu-24.04", "sandbox-runner", self.PREPARE_ACTION,
+            "        with:\n          sandbox-only: 'true'",
+        ):
             for name in self.TOPOLOGY_JOBS:
                 with self.subTest(original=original, job=name), self.assertRaises((AssertionError, ValueError)):
                     before, section = workflow.split(f"  {name}:\n", 1)
                     self.assert_hosted_jobs(before + f"  {name}:\n" + section.replace(original, "removed", 1))
-        for original in ("SANDBOX_CONTAINER_TEST=1", "--sandbox-only", "id: sandbox-cache", "runs-on: ubuntu-24.04"):
+        for original in ("SANDBOX_CONTAINER_TEST=1", "        with:\n          sandbox-only: 'true'", self.PREPARE_ACTION, "runs-on: ubuntu-24.04"):
             with self.subTest(original=original, job="sandbox-isolation"), self.assertRaises((AssertionError, ValueError)):
                 before, section = workflow.split("  sandbox-isolation:\n", 1)
                 self.assert_hosted_jobs(before + "  sandbox-isolation:\n" + section.replace(original, "removed", 1))
         with self.assertRaises(AssertionError):
             self.assert_hosted_jobs(workflow.replace("steps:\n", "steps:\n      - run: bash scripts/ci/probe_hosted_cube.sh\n", 1))
+        action = (ROOT / ".github/actions/prepare-topology/action.yml").read_text()
+        for original in ("bash scripts/ci/prepare_system_tests_env.sh", "id: sandbox-cache", "--sandbox-only"):
+            with self.subTest(original=original, target="action"), self.assertRaises((AssertionError, ValueError)):
+                self.assert_hosted_jobs(workflow, action.replace(original, "removed", 1))
+        # 动作内的保存必须晚于全部构建：把 api 保存移到恢复之前时拒绝。
+        save_api = action[action.index("    - name: Save successful api build") : action.index("    - name: Save successful minio build")]
+        early = action.index("    - name: Restore api image layer cache")
+        mutated = action.replace(save_api, "", 1)
+        mutated = mutated[:early] + save_api + mutated[early:]
+        with self.assertRaises(AssertionError):
+            self.assert_hosted_jobs(workflow, mutated)
 
     def test_cube_probe_only_runs_manually(self):
         """Cube 安装不能重新进入普通 push 或 PR 路径。"""
