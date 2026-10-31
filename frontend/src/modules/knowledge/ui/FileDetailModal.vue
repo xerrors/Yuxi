@@ -13,9 +13,6 @@
       </div>
 
       <div class="header-controls">
-        <a-button v-if="canEditMarkdown && !markdownEditor.active" size="small" @click="startMarkdownEdit">
-          <Pencil :size="14" aria-hidden="true" /> 编辑 Markdown
-        </a-button>
         <!-- 字符数/片段数显示在视图选择器左边 -->
         <span v-if="viewInfoText && !markdownEditor.active" class="view-info expanded-controls">{{ viewInfoText }}</span>
 
@@ -55,6 +52,13 @@
                 <template #icon><FileText :size="16" aria-hidden="true" /></template>
                 下载 Markdown
               </a-menu-item>
+              <template v-if="canEditMarkdown">
+                <a-menu-divider />
+                <a-menu-item key="edit-file" @click="startMarkdownEdit()">
+                  <template #icon><Pencil :size="16" aria-hidden="true" /></template>
+                  编辑文件
+                </a-menu-item>
+              </template>
             </a-menu>
           </template>
         </a-dropdown>
@@ -97,6 +101,13 @@
                 <template #icon><FileText :size="16" aria-hidden="true" /></template>
                 下载 Markdown
               </a-menu-item>
+              <template v-if="canEditMarkdown">
+                <a-menu-divider />
+                <a-menu-item key="edit-file" @click="startMarkdownEdit()">
+                  <template #icon><Pencil :size="16" aria-hidden="true" /></template>
+                  编辑文件
+                </a-menu-item>
+              </template>
             </a-menu>
           </template>
         </a-dropdown>
@@ -115,7 +126,7 @@
     <div v-if="markdownEditor.active" class="markdown-editor-panel" :aria-busy="markdownEditor.loading || markdownEditor.saving">
       <div class="markdown-editor-toolbar">
         <div class="markdown-editor-view">
-          <a-radio-group v-model:value="markdownEditorView" name="knowledge-markdown-editor-view" size="small" :disabled="!markdownEditor.loaded" aria-label="Markdown 编辑视图">
+          <a-radio-group v-model:value="markdownEditorView" name="knowledge-markdown-editor-view" size="small" :disabled="!markdownEditor.loaded" aria-label="文件编辑视图">
             <a-radio-button value="edit">编辑</a-radio-button>
             <a-radio-button value="preview">预览</a-radio-button>
           </a-radio-group>
@@ -219,25 +230,15 @@
         </template>
       </div>
 
-      <!-- Chunks 模式：使用 Grid 布局 -->
-      <div v-else-if="viewMode === 'chunks'" class="chunks-panel">
-        <div v-if="contentState.loading" class="loading-container">
-          <a-spin tip="正在加载分块内容..." />
-        </div>
-        <div v-else class="chunk-grid">
-          <div v-for="chunk in mappedChunks" :key="chunk.id" class="chunk-card">
-            <div class="chunk-card-header">
-              <span class="chunk-order">#{{ chunk.chunk_order_index }}</span>
-            </div>
-            <div class="chunk-card-content">
-              {{ chunk.content.replace(/\n+/g, ' ') }}
-            </div>
-          </div>
-        </div>
-        <div v-if="!contentState.loading && mappedChunks.length === 0" class="empty-content">
-          <p>{{ contentState.error || '暂无分块信息' }}</p>
-        </div>
-      </div>
+      <ChunkBrowser
+        v-else-if="viewMode === 'chunks'"
+        class="chunks-panel"
+        :chunks="contentState.lines"
+        :loading="contentState.loading"
+        :error="contentState.error"
+        :editable="canEditMarkdown"
+        @edit="startMarkdownEdit(locationNotice ? 1 : $event.start_line)"
+      />
     </div>
 
     <div v-else-if="file" class="empty-content">
@@ -298,6 +299,7 @@ import {
   getDefaultDetailView
 } from '@/modules/knowledge/model/knowledge_file_policy'
 import MarkdownDocumentPreview from '@/modules/workspace/ui/MarkdownDocumentPreview.vue'
+import ChunkBrowser from './ChunkBrowser.vue'
 import FileTypeIcon from '@/shared/ui/FileTypeIcon.vue'
 import AgentFilePreview from '@/modules/session/ui/workspace/AgentFilePreview.vue'
 import { Download, ChevronDown, FileSearch, FileText, Rows3, Code2, X, MoreHorizontal, Pencil } from '@lucide/vue'
@@ -324,7 +326,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['update:open', 'closed', 'saved'])
+const emit = defineEmits(['update:open', 'update:editRequested', 'closed', 'saved'])
 
 const visible = computed({
   get: () => props.open,
@@ -370,7 +372,7 @@ const markdownExitRequired = computed(() => markdownEditor.value.active && (mark
 const canSaveMarkdown = computed(() => canEditMarkdown.value && markdownEditor.value.loaded && !markdownEditor.value.loading && !markdownEditor.value.saving && !markdownEditor.value.conflict && (!markdownEditor.value.hasParsed || markdownEditor.value.draft !== markdownEditor.value.content))
 
 /** 严格读取完整解析对象，任何读取失败都不能替换为空稿或分块。 */
-const startMarkdownEdit = async () => {
+const startMarkdownEdit = async (startLine = 1) => {
   if (!canEditMarkdown.value || markdownEditor.value.saving) return
   markdownEditorView.value = 'edit'
   const requestId = ++markdownRequestSeq
@@ -382,7 +384,7 @@ const startMarkdownEdit = async () => {
     if (typeof data.content !== 'string' || typeof data.revision !== 'string' || typeof data.has_parsed_markdown !== 'boolean') throw new Error('Markdown 响应不完整，请重试读取')
     Object.assign(markdownEditor.value, { loading: false, loaded: true, content: data.content, draft: data.content, revision: data.revision, hasParsed: data.has_parsed_markdown })
     await nextTick()
-    markdownPreview.value?.startEditing()
+    markdownPreview.value?.startEditing(startLine)
   } catch (error) {
     if (requestId === markdownRequestSeq && userStore.token === token) markdownEditor.value.error = error.message || '读取 Markdown 失败'
   } finally {
@@ -737,6 +739,8 @@ const loadBasicInfo = async () => {
   const fileId = String(props.fileId || '')
   if (!kbId || !fileId) return
 
+  const editRequested = props.editRequested
+  if (editRequested) emit('update:editRequested', false)
   resetLocalState()
   const requestId = ++basicRequestSeq
   basicLoading.value = true
@@ -757,7 +761,7 @@ const loadBasicInfo = async () => {
       (props.startLine || props.chunkId || props.embedded) && canPreviewParsed(nextFile)
         ? 'markdown'
         : getDefaultDetailView(nextFile)
-    if (props.editRequested) await startMarkdownEdit()
+    if (editRequested) await startMarkdownEdit()
   } catch (error) {
     if (requestId !== basicRequestSeq) return
     console.error('加载文件基本信息失败:', error)
@@ -865,7 +869,6 @@ watch(
 
 // 统计信息
 const mergeResult = computed(() => mergeChunks(contentState.value.lines || []))
-const mappedChunks = computed(() => mergeResult.value.chunks)
 const mergedContent = computed(
   () =>
     contentState.value.content ||
@@ -874,7 +877,7 @@ const mergedContent = computed(
 )
 const charCount = computed(() => mergedContent.value.length)
 const chunkCount = computed(
-  () => mappedChunks.value.length || contentState.value.lines?.length || 0
+  () => contentState.value.lines?.length || 0
 )
 const viewInfoText = computed(() => {
   if (viewMode.value === 'chunks') {
@@ -1146,7 +1149,7 @@ onBeforeUnmount(() => {
 }
 
 .chunks-panel {
-  padding: 12px 16px;
+  overflow: hidden;
 }
 
 .source-panel {
@@ -1187,49 +1190,6 @@ onBeforeUnmount(() => {
   padding: 40px 0;
   color: var(--gray-400);
   width: 100%;
-}
-
-/* Chunks 面板样式 */
-.chunk-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 12px;
-}
-
-.chunk-card {
-  background: var(--gray-0);
-  border: 1px solid var(--gray-200);
-  border-radius: 8px;
-  padding: 12px;
-  transition: all 0.2s ease;
-}
-
-.chunk-card:hover {
-  border-color: var(--main-color);
-  box-shadow: 0 2px 8px rgba(1, 97, 121, 0.1);
-}
-
-.chunk-card-header {
-  display: flex;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.chunk-order {
-  font-weight: 600;
-  color: var(--main-color);
-  font-size: 12px;
-}
-
-.chunk-card-content {
-  font-size: 12px;
-  color: var(--gray-600);
-  line-height: 1.5;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 4;
-  -webkit-box-orient: vertical;
 }
 
 </style>
@@ -1400,17 +1360,6 @@ onBeforeUnmount(() => {
   .file-detail .modal-title-wrapper,
   .file-detail-embedded .modal-title-wrapper {
     border-bottom-color: var(--gray-150);
-  }
-
-  .file-detail .chunk-card,
-  .file-detail-embedded .chunk-card {
-    background: var(--gray-40);
-    border-color: transparent;
-
-    &:hover {
-      background: var(--gray-50);
-      box-shadow: none;
-    }
   }
 
   .file-detail .view-controls,

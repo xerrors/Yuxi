@@ -513,7 +513,7 @@
                     @click="editFileMarkdown(row)"
                   >
                     <template #icon><component :is="h(Pencil)" size="14" aria-hidden="true" /></template>
-                    编辑 Markdown
+                    编辑文件
                   </a-button>
 
                   <!-- Parse Action -->
