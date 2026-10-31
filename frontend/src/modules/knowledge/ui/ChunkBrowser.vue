@@ -5,13 +5,9 @@
   <div v-else class="chunk-browser">
     <aside class="chunk-sidebar" aria-label="分块列表">
       <div class="chunk-search">
-        <label :for="searchId">搜索分块</label>
-        <a-input :id="searchId" v-model:value="query" placeholder="搜索文本或 chunk_id" allow-clear>
+        <a-input v-model:value="query" aria-label="搜索分块" placeholder="搜索文本或 chunk_id" allow-clear>
           <template #prefix><Search :size="14" aria-hidden="true" /></template>
         </a-input>
-        <span class="chunk-count" role="status"
-          >{{ filteredChunks.length }} / {{ chunks.length }} 个片段</span
-        >
       </div>
       <div class="chunk-list">
         <button
@@ -36,17 +32,13 @@
     <section v-if="selectedChunk" class="chunk-preview" aria-label="分块完整内容">
       <header class="chunk-preview-header">
         <code class="chunk-id">{{ selectedChunk.id }}</code>
-        <a-button v-if="editable" type="link" size="small" @click="$emit('edit', selectedChunk)">
+        <a-button v-if="editable" class="chunk-edit-button" type="link" size="small" @click="$emit('edit', selectedChunk)">
           <template #icon><Pencil :size="14" aria-hidden="true" /></template>
           编辑文件
         </a-button>
       </header>
       <div :key="selectedChunk.id" class="chunk-preview-body">
-        <MarkdownDocumentPreview
-          v-if="selectedChunk.content"
-          :content="selectedChunk.content"
-          source
-        />
+        <pre v-if="selectedChunk.content" class="chunk-content">{{ selectedChunk.content }}</pre>
         <div v-else class="chunk-empty">此分块内容为空。</div>
       </div>
     </section>
@@ -55,9 +47,8 @@
 </template>
 
 <script setup>
-import { computed, ref, useId } from 'vue'
+import { computed, ref } from 'vue'
 import { Pencil, Search } from '@lucide/vue'
-import MarkdownDocumentPreview from '@/modules/workspace/ui/MarkdownDocumentPreview.vue'
 
 const props = defineProps({
   chunks: { type: Array, default: () => [] },
@@ -66,7 +57,6 @@ const props = defineProps({
   editable: { type: Boolean, default: false }
 })
 defineEmits(['edit'])
-const searchId = useId()
 const query = ref('')
 const selectedId = ref(null)
 const filteredChunks = computed(() => {
@@ -105,15 +95,6 @@ const selectedChunk = computed(
   padding: 16px;
   border-bottom: 1px solid var(--gray-150);
 }
-.chunk-search label {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--color-text);
-}
-.chunk-count {
-  font-size: 12px;
-  color: var(--color-text-secondary);
-}
 .chunk-list {
   overflow-y: auto;
   min-height: 0;
@@ -123,6 +104,7 @@ const selectedChunk = computed(
   flex-direction: column;
   gap: 8px;
   width: 100%;
+  height: 88px;
   padding: 12px 16px;
   text-align: left;
   color: var(--color-text);
@@ -135,8 +117,7 @@ const selectedChunk = computed(
   background: var(--gray-50);
 }
 .chunk-list-item.selected {
-  background: var(--main-10);
-  box-shadow: inset 3px 0 var(--main-color);
+  background: var(--gray-100);
 }
 .chunk-list-item:focus-visible {
   outline: 2px solid var(--main-color);
@@ -147,6 +128,7 @@ const selectedChunk = computed(
   gap: 8px;
   width: 100%;
   font-size: 12px;
+  line-height: 16px;
 }
 .chunk-list-title code {
   overflow: hidden;
@@ -186,6 +168,21 @@ const selectedChunk = computed(
 }
 .chunk-preview-header :deep(.ant-btn) {
   flex-shrink: 0;
+}
+.chunk-edit-button {
+  color: var(--gray-600);
+  &:hover {
+    color: var(--gray-900);
+    background: var(--gray-50);
+  }
+}
+.chunk-content {
+  margin: 0;
+  padding: 16px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 13px/1.7 var(--font-family-mono, monospace);
+  color: var(--color-text);
 }
 .chunk-preview-body {
   flex: 1;

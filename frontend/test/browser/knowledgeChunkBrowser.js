@@ -173,7 +173,9 @@ async (page) => {
   ]) {
     await page.setViewportSize({ width, height: 900 })
     await page.evaluate((theme) => window.chunkUi.theme.setTheme(theme), theme)
-    await page.waitForTimeout(150)
+    await page.locator('.chunk-browser').evaluate(async el => {
+      await Promise.allSettled(el.getAnimations({ subtree: true }).map(animation => animation.finished))
+    })
     const bounds = await page.locator('.chunk-browser').evaluate((el) => {
       const sidebar = el.querySelector('.chunk-sidebar').getBoundingClientRect()
       const preview = el.querySelector('.chunk-preview').getBoundingClientRect()
@@ -194,6 +196,35 @@ async (page) => {
         !bounds.overlap,
       `split layout fits ${width}: ${JSON.stringify(bounds)}`
     )
+    const appearance = await page.locator('.chunk-browser').evaluate(el => {
+      const rows = [...el.querySelectorAll('.chunk-list-item')]
+      const selected = getComputedStyle(el.querySelector('.chunk-list-item.selected'))
+      const edit = el.querySelector('.chunk-edit-button')
+      return {
+        heights: rows.map(row => row.getBoundingClientRect().height),
+        labels: el.querySelectorAll('.chunk-search label, .chunk-count, .line-number').length,
+        shadow: selected.boxShadow,
+        border: selected.borderLeftWidth,
+        background: selected.backgroundColor,
+        expectedBackground: getComputedStyle(document.documentElement).getPropertyValue('--gray-100').trim(),
+        color: getComputedStyle(edit).color,
+        expectedColor: getComputedStyle(document.documentElement).getPropertyValue('--gray-600').trim()
+      }
+    })
+    check(appearance.labels === 0, 'search label, count and preview line numbers must be absent')
+    check(new Set(appearance.heights).size === 1, 'all chunk list rows must have equal height')
+    check(appearance.shadow === 'none' && appearance.border === '0px', 'selection must use only background')
+    const colorsMatch = await page.locator('.chunk-browser').evaluate((el, expected) => {
+      const probe = document.createElement('span')
+      el.append(probe)
+      probe.style.color = expected.expectedColor
+      const editMatches = getComputedStyle(probe).color === expected.color
+      probe.style.backgroundColor = expected.expectedBackground
+      const selectedMatches = getComputedStyle(probe).backgroundColor === expected.background
+      probe.remove()
+      return editMatches && selectedMatches
+    }, appearance)
+    check(colorsMatch, 'selection and edit link must use gray tokens')
     await page.screenshot({ path: `/tmp/yuxi-chunks-${theme}-${width}.png` })
     await trigger().click()
     await menu().getByRole('menuitem', { name: '编辑文件', exact: true }).waitFor()

@@ -121,7 +121,7 @@ async page => {
         const bounds = el.getBoundingClientRect()
         return { title: title.backgroundColor, content: content.backgroundColor, card: card.backgroundColor, selection: card.boxShadow, sidebarBorderWidth: style('.chunk-sidebar').borderRightWidth, left: bounds.left, right: bounds.right }
       })
-      check(surfaces.card !== surfaces.content && surfaces.selection !== 'none' && surfaces.sidebarBorderWidth === '1px', `暗色分块区分不足：${JSON.stringify(surfaces)}`)
+      check(surfaces.card !== surfaces.content && surfaces.selection === 'none' && surfaces.sidebarBorderWidth === '1px', `暗色分块区分不足：${JSON.stringify(surfaces)}`)
       check(surfaces.card !== surfaces.title, `暗色选中分块与标题区分不足：${JSON.stringify(surfaces)}`)
       check(surfaces.left >= 0 && surfaces.right <= width, `文件详情超出视口：${JSON.stringify(surfaces)}`)
       await page.screenshot({ path: `/tmp/yuxi-file-detail-dark-${width}.png` })
@@ -215,7 +215,7 @@ async page => {
       const background = selector => getComputedStyle(el.querySelector(selector)).backgroundColor
       return { title: background('.modal-title-wrapper'), content: background('.file-detail-content'), card: background('.chunk-list-item.selected'), selection: getComputedStyle(el.querySelector('.chunk-list-item.selected')).boxShadow, sidebarBorderWidth: getComputedStyle(el.querySelector('.chunk-sidebar')).borderRightWidth }
     })
-    check(modalSurfaces.card !== modalSurfaces.content && modalSurfaces.selection !== 'none' && modalSurfaces.sidebarBorderWidth === '1px', `暗色弹窗分块区分不足：${JSON.stringify(modalSurfaces)}`)
+    check(modalSurfaces.card !== modalSurfaces.content && modalSurfaces.selection === 'none' && modalSurfaces.sidebarBorderWidth === '1px', `暗色弹窗分块区分不足：${JSON.stringify(modalSurfaces)}`)
     await page.waitForTimeout(3000)
     for (const width of [1024, 768]) {
       await page.setViewportSize({ width, height: 800 })
