@@ -1,5 +1,6 @@
 """验证临时托管探针拒绝普通机器及 self-hosted runner。"""
 
+import base64
 import copy
 import json
 import os
@@ -8,6 +9,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -188,6 +190,36 @@ class ServiceIntegrationTests(unittest.TestCase):
 class RuntimeTopologyTests(unittest.TestCase):
     """常规系统拓扑使用 container，真实 Cube 只由手动探针验证。"""
 
+    def assert_milvus_e2e_is_required(self, workflow: str) -> None:
+        """检索 E2E 必须在独立拓扑中执行并由最终结果汇总。"""
+        background = workflow.split("  background-job-worker-path:\n", 1)[1].split("\n  system-tests:\n", 1)[0]
+        selector = "test/e2e/test_milvus_text_retrieval_e2e.py"
+        self.assertEqual(workflow.count(selector), 1)
+        step = background.split("      - name: Verify Milvus 3 text retrieval through worker\n", 1)[1].split("\n      - ", 1)[0]
+        self.assertIn("run: docker compose exec -T", step)
+        self.assertIn(selector, step)
+        self.assertNotIn("if:", step)
+        self.assertNotIn("continue-on-error:", step)
+        result = workflow.split("\n  result:\n", 1)[1]
+        self.assertIn("needs: [background-job-worker-path, system-tests]", result)
+        self.assertIn("scripts/ci/gate.py check-jobs", result)
+
+    def test_milvus_e2e_is_required_in_background_topology(self):
+        """移动检索测试后，遗漏执行入口或结果汇总必须拒绝。"""
+        workflow = (ROOT / ".github/workflows/system-tests.yml").read_text()
+        self.assert_milvus_e2e_is_required(workflow)
+        for original, replacement in (
+            ("test/e2e/test_milvus_text_retrieval_e2e.py", "test/e2e/removed.py"),
+            (
+                "run: docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD api "
+                "uv run --no-sync --no-dev pytest --junitxml=test/ci-reports/system-19.xml",
+                "run: true #",
+            ),
+            ("needs: [background-job-worker-path, system-tests]", "needs: [system-tests]"),
+        ):
+            with self.subTest(original=original), self.assertRaises(AssertionError):
+                self.assert_milvus_e2e_is_required(workflow.replace(original, replacement))
+
     def assert_replay_starts_after_knowledge_switch(self, workflow: str) -> None:
         """共享重放属于 API 容器，启动后不能再被 Knowledge 开关测试重建。"""
         self.assertLess(
@@ -252,6 +284,45 @@ class RuntimeTopologyTests(unittest.TestCase):
             with self.subTest(event=event), self.assertRaises(AssertionError):
                 self.assert_manual_probe(workflow.replace("on:\n", f"on:\n  {event}:\n"))
 
+    def assert_real_provider_probe_uses_hosted_container(self, workflow: str) -> None:
+        """真实供应商探针使用与环境准备脚本一致的临时托管拓扑。"""
+        self.assert_manual_probe(workflow)
+        self.assertIn("runs-on: ubuntu-24.04", workflow)
+        self.assertNotIn("self-hosted", workflow)
+        self.assertLess(workflow.index("Require real-provider credential"), workflow.index("Prepare isolated Compose environment"))
+        self.assertIn("bash scripts/ci/prepare_system_tests_env.sh", workflow)
+        self.assertIn("docker compose up -d --build postgres redis minio etcd milvus graph sandbox-runner api worker", workflow)
+        self.assertIn("secrets.SILICONFLOW_API_KEY", workflow)
+        self.assertNotIn("CUBE_API_KEY", workflow)
+
+    def test_real_provider_probe_uses_hosted_container(self):
+        """恢复 self-hosted 或遗漏沙盒时，手动探针接线检查失败。"""
+        workflow = (ROOT / ".github/workflows/real-provider-probe.yml").read_text()
+        self.assert_real_provider_probe_uses_hosted_container(workflow)
+        for original, replacement in (
+            ("runs-on: ubuntu-24.04", "runs-on: self-hosted"),
+            ("graph sandbox-runner api worker", "graph api worker"),
+            ("minio etcd milvus graph", "minio"),
+            ("secrets.SILICONFLOW_API_KEY", "vars.SILICONFLOW_API_KEY"),
+        ):
+            with self.subTest(original=original), self.assertRaises(AssertionError):
+                self.assert_real_provider_probe_uses_hosted_container(workflow.replace(original, replacement))
+
+    def test_real_provider_probe_requires_credential(self):
+        """实际凭据准入脚本在密钥缺失时退出，不能启动拓扑。"""
+        workflow = (ROOT / ".github/workflows/real-provider-probe.yml").read_text()
+        step = workflow.split("      - name: Require real-provider credential\n", 1)[1].split("\n      - ", 1)[0]
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+        for credential, expected in (("", 1), ("fixture-provider-key", 0)):
+            with self.subTest(configured=bool(credential)):
+                result = subprocess.run(
+                    ["bash", "-c", script], env={"SILICONFLOW_API_KEY": credential},
+                    capture_output=True, text=True, timeout=5, check=False,
+                )
+                self.assertEqual(result.returncode, expected)
+                if not credential:
+                    self.assertIn("repository secret is required", result.stderr)
+
     def assert_manual_probe(self, workflow: str) -> None:
         """读取实际事件声明，手动入口必须保留。"""
         events = workflow.split("\non:\n", 1)[1].split("\npermissions:", 1)[0]
@@ -279,7 +350,19 @@ class RuntimeTopologyTests(unittest.TestCase):
             for name in ("api", "worker"):
                 for key in ("SILICONFLOW_API_KEY", "WEB_SEARCH_PROVIDER", "DOUBAO_SEARCH_API_KEY", "TAVILY_API_KEY", "DEEPSEEK_API_KEY"):
                     self.assertEqual(config["services"][name]["environment"][key], "", f"{name}.{key} 必须保留模板空值")
+            api_key = config["services"]["api"]["environment"]["YUXI_ENCRYPTION_KEY"]
+            self.assertEqual(len(base64.urlsafe_b64decode(api_key)), 32)
+            self.assertEqual(api_key, config["services"]["worker"]["environment"]["YUXI_ENCRYPTION_KEY"])
             self.assert_container_state(config)
+            probe_env = {**env, "SILICONFLOW_API_KEY": "fixture-provider-key"}
+            subprocess.run(["bash", str(ROOT / "scripts/ci/prepare_system_tests_env.sh")], cwd=base, env=probe_env, check=True)
+            probe_config = json.loads(subprocess.check_output(
+                ["docker", "compose", "--env-file", str(base / ".env"), "-f", str(ROOT / "docker-compose.yml"),
+                 "config", "--format", "json"],
+                env={**probe_env, "YUXI_ENV_FILE": str(base / ".env")}, text=True,
+            ))
+            for name in ("api", "worker"):
+                self.assertEqual(probe_config["services"][name]["environment"]["SILICONFLOW_API_KEY"], "fixture-provider-key")
             for target in ("/app/user-data", "/app/skill-projections"):
                 broken = copy.deepcopy(config)
                 next(m for m in broken["services"]["worker"]["volumes"] if m["target"] == target)["source"] = "/wrong-checkout"
