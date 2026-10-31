@@ -19,6 +19,8 @@ export class ScrollController {
     this.isUserScrolling = false
     this.shouldAutoScroll = true
     this.isProgrammaticScroll = false
+    this.readingPosition = null
+    this.resizeScrollTop = null
 
     // Bind the context of 'this' for the event handler
     this.handleScroll = this.handleScroll.bind(this)
@@ -75,6 +77,15 @@ export class ScrollController {
    * 处理滚动事件
    */
   handleScroll() {
+    const container = this.getContainer()
+    // 重排产生的 scroll 可能早于 ResizeObserver，不能据此取消原本的贴底意图。
+    if (this.hasLayoutChanged(container)) return
+    if (container && this.resizeScrollTop === container.scrollTop) {
+      this.resizeScrollTop = null
+      return
+    }
+    this.resizeScrollTop = null
+    this.rememberReadingPosition()
     if (this.scrollTimer) {
       clearTimeout(this.scrollTimer)
     }
@@ -110,6 +121,87 @@ export class ScrollController {
     this.scrollTimer = setTimeout(() => {
       this.isUserScrolling = false
     }, this.options.scrollDelay)
+  }
+
+  /** 判断视窗尺寸是否已经变化但尚未补偿。 */
+  hasLayoutChanged(container = this.getContainer()) {
+    const position = this.readingPosition
+    return Boolean(container && position && (
+      position.width !== container.clientWidth || position.height !== container.clientHeight
+    ))
+  }
+
+  /** 保存可见字符的位置，长消息内部也能随自动换行恢复。 */
+  rememberReadingPosition() {
+    const container = this.getContainer()
+    if (!container?.getBoundingClientRect || !container.querySelectorAll) return
+    const viewport = container.getBoundingClientRect()
+    if (!viewport.width || !viewport.height) return
+    const element = [...container.querySelectorAll('.history-display-item')].find(element => {
+      const rect = element.getBoundingClientRect()
+      return rect.bottom > viewport.top && rect.top < viewport.bottom
+    })
+    let range = null
+    if (element) {
+      const walker = container.ownerDocument.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+      let node
+      while ((node = walker.nextNode())) {
+        if (!node.textContent.trim()) continue
+        const candidate = container.ownerDocument.createRange()
+        candidate.selectNodeContents(node)
+        const rect = candidate.getBoundingClientRect()
+        if (!rect.height || rect.bottom <= viewport.top || rect.top >= viewport.bottom) continue
+        // 字符的纵坐标随文本顺序递增，二分定位首个可见行，避免逐字符测量。
+        let low = 0
+        let high = node.length - 1
+        while (low < high) {
+          const mid = Math.floor((low + high) / 2)
+          candidate.setStart(node, mid)
+          candidate.setEnd(node, mid + 1)
+          if (candidate.getBoundingClientRect().bottom <= viewport.top) low = mid + 1
+          else high = mid
+        }
+        candidate.setStart(node, low)
+        candidate.setEnd(node, low + 1)
+        range = candidate
+        break
+      }
+    }
+    this.readingPosition = {
+      width: container.clientWidth,
+      height: container.clientHeight,
+      element,
+      range,
+      top: (range || element)?.getBoundingClientRect().top - viewport.top
+    }
+  }
+
+  /** 重排后保持原字符的视窗位置，原本贴底时继续跟随底部。 */
+  handleResize() {
+    const container = this.getContainer()
+    if (!container?.clientWidth || !container.clientHeight) return
+    const position = this.readingPosition
+    if (this.shouldAutoScroll) {
+      this.scrollContainerToBottom(container)
+    } else if (position?.element?.isConnected && container.contains(position.element)) {
+      const target = position.range || position.element
+      const rect = target.getBoundingClientRect()
+      // Markdown 替换文字节点后 Range 可能折叠，不能把零坐标当作新的阅读位置。
+      if (rect.height) {
+        container.scrollTop += rect.top - container.getBoundingClientRect().top - position.top
+      } else {
+        this.rememberReadingPosition()
+      }
+    } else {
+      this.rememberReadingPosition()
+    }
+    this.resizeScrollTop = container.scrollTop
+    if (this.readingPosition) {
+      this.readingPosition.width = container.clientWidth
+      this.readingPosition.height = container.clientHeight
+    } else {
+      this.rememberReadingPosition()
+    }
   }
 
   /**
@@ -202,6 +294,8 @@ export class ScrollController {
    * 清理定时器
    */
   cleanup() {
+    this.readingPosition = null
+    this.resizeScrollTop = null
     if (this.scrollTimer) {
       clearTimeout(this.scrollTimer)
       this.scrollTimer = null

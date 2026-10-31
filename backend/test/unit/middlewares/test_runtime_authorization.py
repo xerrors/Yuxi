@@ -58,11 +58,21 @@ def test_direct_mcp_disconnect_rejects_registered_tool_before_outbound(context, 
 
 @pytest.mark.parametrize("name", ["ask_user_question", "mark_for_improvement"])
 def test_base_tool_is_allowed_without_configuration_skill_or_run(context, mcp_policy, name):
-    """基础工具使用统一白名单，不依赖配置、Skill 或 Run 是否存在。"""
+    """Backend 显式装配的基础工具不依赖资源选择，MCP 同名仍按来源授权。"""
+    context.middleware_tool_names = {name}
     context.registered_builtin_tool_names.add(name)
     assert tool_allowed(context, name, {}, mcp_policy)
     context.mcp_tool_servers[name] = "remote"
     assert not tool_allowed(context, name, {}, mcp_policy)
+
+
+def test_registered_tool_does_not_bypass_mcp_source_authorization(context, mcp_policy):
+    """工具名称已允许时，MCP 来源仍需在当前资源与权限内。"""
+    assert not tool_allowed(context, "remote_tool", {}, mcp_policy)
+    context.mcps = ["remote"]
+    assert tool_allowed(context, "remote_tool", {}, mcp_policy)
+    mcp_policy["remote"].add("remote_tool")
+    assert not tool_allowed(context, "remote_tool", {}, mcp_policy)
 
 
 @pytest.mark.asyncio
@@ -72,6 +82,7 @@ async def test_network_retry_rechecks_before_each_model_request(monkeypatch, con
     from langchain_core.language_models import BaseChatModel
     from langchain_core.messages import AIMessage, HumanMessage
     from langchain_core.outputs import ChatGeneration, ChatResult
+
     from yuxi.modules.agents.runtime.middlewares import authorization
     from yuxi.modules.agents.runtime.middlewares.network_retry import NetworkRetryMiddleware
 
@@ -129,7 +140,9 @@ async def test_context_overflow_does_not_send_summary_after_revocation(monkeypat
     from langchain_core.language_models import BaseChatModel
     from langchain_core.messages import AIMessage, HumanMessage
     from langchain_core.outputs import ChatGeneration, ChatResult
-    from yuxi.modules.agents.runtime.middlewares import authorization, summary as summary_module
+
+    from yuxi.modules.agents.runtime.middlewares import authorization
+    from yuxi.modules.agents.runtime.middlewares import summary as summary_module
 
     requests, summaries = [], []
     revoked = False
@@ -215,6 +228,7 @@ async def test_context_overflow_does_not_send_summary_after_revocation(monkeypat
 async def test_mcp_failure_becomes_safe_tool_result_and_disables_service(monkeypatch, context):
     """工具边界保留安全原因并关闭本轮失败 MCP。"""
     from unittest.mock import AsyncMock
+
     from yuxi.modules.agents.runtime.middlewares import authorization
     from yuxi.shared.errors import StateConflictError
 
@@ -245,8 +259,10 @@ async def test_mcp_failure_becomes_safe_tool_result_and_disables_service(monkeyp
 async def test_failed_mcp_filters_skill_dependencies_and_updates_warning_state(monkeypatch, context):
     """失败服务仍在数据库显示已连接时，模型与执行权限以发现结果收敛。"""
     from unittest.mock import AsyncMock
+
     from langchain.agents.middleware import ModelRequest
     from langchain_core.messages import SystemMessage
+
     from yuxi.modules.agents.runtime.middlewares import authorization
 
     context.mcps, context.mcp_unavailable = ["remote"], {"remote": "授权凭据不可用，请重新连接"}
@@ -307,7 +323,9 @@ async def test_mcp_tool_preserves_execution_control_exceptions(monkeypatch, cont
     """取消、人工等待和撤权不能转换成可继续聊天的 MCP 故障。"""
     import asyncio
     from unittest.mock import AsyncMock
+
     from langgraph.errors import GraphInterrupt
+
     from yuxi.modules.agents.runtime.middlewares import authorization
 
     failure = {
@@ -328,10 +346,12 @@ async def test_warning_checkpoint_is_replaced_after_capability_recovers(monkeypa
     """同一线程下一轮恢复能力后，checkpoint 不残留上一轮警告。"""
     from contextlib import asynccontextmanager
     from unittest.mock import AsyncMock
+
     from langchain.agents import create_agent
     from langchain_core.language_models.fake_chat_models import FakeListChatModel
     from langchain_core.messages import HumanMessage
     from langgraph.checkpoint.memory import InMemorySaver
+
     from yuxi.modules.agents.runtime.middlewares import authorization
 
     @asynccontextmanager
@@ -441,6 +461,7 @@ async def test_successful_resource_refresh_publishes_context_fields_after_transa
 async def test_tool_boundary_refreshes_resources_without_syncing_projection(monkeypatch, context):
     """工具边界刷新授权资源与 MCP 策略，不重建文件投影。"""
     from unittest.mock import AsyncMock
+
     from yuxi.modules.agents.runtime.middlewares import authorization
 
     class SessionContext:
@@ -479,7 +500,9 @@ async def test_tool_boundary_refreshes_resources_without_syncing_projection(monk
 @pytest.mark.asyncio
 async def test_transient_mcp_failure_does_not_disable_later_call(monkeypatch, context):
     from unittest.mock import AsyncMock
+
     from langchain_core.messages import ToolMessage
+
     from yuxi.modules.agents.runtime.middlewares import authorization
 
     context.mcps, context.mcp_unavailable, context.run_id = ["remote"], {}, "run"
@@ -499,6 +522,7 @@ async def test_skill_request_identity_survives_authorization_retry(monkeypatch, 
     """已注入身份固定，撤权或换来源拒绝，未注入的临时授权不触发误判。"""
     from langchain.agents.middleware.types import ModelRequest, ModelResponse
     from langchain_core.messages import AIMessage
+
     from yuxi.modules.agents.runtime.middlewares import authorization
     from yuxi.modules.agents.runtime.middlewares.network_retry import NetworkRetryMiddleware
     from yuxi.modules.agents.runtime.middlewares.skills import SkillsMiddleware
@@ -582,6 +606,7 @@ async def test_skill_request_identity_survives_authorization_retry(monkeypatch, 
 async def test_mcp_permission_error_is_not_converted_to_tool_failure(monkeypatch, context, error_kind):
     """真实外层 Guard 不得把 MCP 权限拒绝转为可继续运行的工具结果。"""
     from unittest.mock import AsyncMock
+
     from yuxi.modules.agents.runtime.middlewares import authorization
     from yuxi.modules.agents.runtime.middlewares.tool_error_guard import ToolErrorGuardMiddleware
     from yuxi.shared.errors import PermissionDeniedError

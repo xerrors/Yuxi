@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi import get_version
 from yuxi.api.dependencies.auth import get_db, get_required_user, get_superadmin_user
 from yuxi.api.routers.agents.feedback import FeedbackPage
-from yuxi.bootstrap.capabilities import knowledge_enabled
+from yuxi.bootstrap.capabilities import knowledge_enabled, personal_assistant_enabled
 from yuxi.infrastructure.observability.logging import LOG_FILE, logger
 from yuxi.modules.agents.scope import ActorScope
 from yuxi.modules.agents.services.feedback import list_feedback
@@ -59,7 +59,7 @@ async def discovery():
         "version": get_version(),
         "api_prefix": "/api",
         "capabilities": {
-            "features": {"knowledge": enabled},
+            "features": {"knowledge": enabled, "personal_assistant": personal_assistant_enabled()},
             "cli": {
                 "min_cli_version": "0.1.0",
                 "browser_login": True,

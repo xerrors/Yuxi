@@ -1,5 +1,14 @@
 <template>
-  <div class="chat-container" :class="{ 'embedded-session': embedded }">
+  <div class="chat-container" :class="{ 'embedded-session': embedded, 'personal-mode': effectivePersonalMode }">
+    <slot
+      v-if="effectivePersonalMode"
+      name="personal-actions"
+      :sessions="cooperationSessions"
+      :error="cooperationError"
+      :refresh="refreshCooperation"
+      :actions-target="personalActionsRef"
+      :profile-dock-target="personalProfileEmbedded ? personalProfileDockRef : null"
+    />
     <div
       class="chat"
       ref="workspaceChatRef"
@@ -12,7 +21,17 @@
       :style="{ '--file-panel-width': filePanelWidthStyle }"
     >
       <div
-        v-if="!embedded && !isAgentPanelMaximized"
+        v-if="effectivePersonalMode"
+        v-show="!isAgentPanelMaximized"
+        ref="personalActionsRef"
+        class="personal-workspace-actions"
+        :style="{
+          right: `${localUIState.chatContentWidth - localUIState.chatMainVisibleWidth + 16}px`,
+          '--personal-profile-max-width': `${Math.max(0, localUIState.chatMainVisibleWidth - 32)}px`
+        }"
+      />
+      <div
+        v-if="!embedded && !isAgentPanelMaximized && !effectivePersonalMode"
         class="chat-header"
         :class="{ 'has-active-thread': !!currentChatId }"
       >
@@ -27,7 +46,7 @@
         </div>
         <div class="header__right">
           <button
-            v-if="messageDebugEnabled"
+            v-if="!effectivePersonalMode && messageDebugEnabled"
             type="button"
             class="agent-nav-btn agent-debug-mode-btn"
             title="调试模式已开启：点击打开消息时序调试面板"
@@ -51,7 +70,7 @@
             <span class="hide-text">状态</span>
           </button>
           <button
-            v-if="showFileEntry && !isFilePanelOpen"
+            v-if="!effectivePersonalMode && showFileEntry && !isFilePanelOpen"
             type="button"
             class="agent-nav-btn agent-state-btn file-entry-btn"
             title="打开侧边栏"
@@ -91,6 +110,8 @@
             ref="chatMainRef"
             :class="{
               'is-loading-history': earlierMessagesLoading,
+              'personal-chat-main': effectivePersonalMode,
+              'has-personal-profile': personalProfileEmbedded,
               'has-embedded-state': statePanelOpen && statePanelPlacement.mode === 'embedded'
             }"
           >
@@ -99,6 +120,7 @@
               <span>正在加载对话...</span>
             </div>
             <div class="chat-box">
+              <div v-if="effectivePersonalMode && !isSessionLoading && !currentThreadHasHistory && !isReplyLoading" class="personal-chat-empty"><slot name="personal-empty">和助理聊聊你的想法，或告诉它你需要什么帮助。</slot></div>
               <button
                 v-if="historyPages[currentChatId]?.hasMore"
                 type="button"
@@ -120,37 +142,50 @@
                     class="history-display-item"
                     :data-history-key="displayItem.key"
                   >
+                    <button
+                      v-if="effectivePersonalMode && displayItem.message?.type === 'created-session'"
+                      type="button"
+                      class="personal-session-bubble"
+                      :data-session-id="displayItem.message.session.id"
+                      :aria-label="`查看新建对话：${displayItem.message.session.name}`"
+                      @click="navigateToSession(displayItem.message.session.id)"
+                    >
+                      <MessageSquarePlus :size="16" aria-hidden="true" />
+                      <span class="personal-session-label">新建对话</span>
+                      <span class="personal-session-name" :title="displayItem.message.session.name">{{ displayItem.message.session.name }}</span>
+                      <ArrowUpRight :size="14" aria-hidden="true" />
+                    </button>
                     <AgentMessageComponent
-                      v-if="displayItem.type === 'message'"
+                      v-else-if="displayItem.type === 'message'"
                       :message="displayItem.message"
                       :thread-id="currentChatId"
                       :is-processing="isDisplayMessageProcessing(row.group, displayItem)"
                       :show-refs="showMsgRefs(displayItem.message, row.group)"
                       :hide-tool-calls="true"
-                      :mention="mentionConfig"
+                      :mention="effectivePersonalMode ? null : mentionConfig"
                       :widget-action="handleWidgetAction"
-                      :widgets-disabled="row.group.status === 'streaming' || widgetActionsDisabled"
+                      :widgets-disabled="readOnly || row.group.status === 'streaming' || widgetActionsDisabled"
                       @retry="retryMessage(displayItem.message)"
                       @open-refs="openTurnSourcesPanel"
                       @open-session="navigateToSession"
                     >
                     </AgentMessageComponent>
                     <ToolCallsGroupComponent
-                      v-else-if="displayItem.type === 'tool-group'"
+                      v-else-if="!effectivePersonalMode && displayItem.type === 'tool-group'"
                       :tool-calls="displayItem.toolCalls"
                       :entries="displayItem.entries"
                       :cooperation-view="cooperationToolView"
                       :is-active="isToolGroupActive(row.group, itemIndex, row.displayItems)"
                     />
                     <RunProcessGroupComponent
-                      v-else
+                      v-else-if="!effectivePersonalMode"
                       :items="displayItem.items"
                       :cooperation-view="cooperationToolView"
                       :message-count="displayItem.messageCount"
                       :tool-call-count="displayItem.toolCallCount"
                       :duration-ms="displayItem.durationMs"
-                      :widgets-disabled="row.group.status === 'streaming' || widgetActionsDisabled"
-                      :mention="mentionConfig"
+                      :widgets-disabled="readOnly || row.group.status === 'streaming' || widgetActionsDisabled"
+                      :mention="effectivePersonalMode ? null : mentionConfig"
                       :widget-action="handleWidgetAction"
                     />
                   </div>
@@ -177,7 +212,7 @@
                     :thread-id="currentChatId"
                     :message="getLastMessage(row.group)"
                     :run="getMessageRun(getLastMessage(row.group))"
-                    :show-refs="['model', 'copy', 'sources']"
+                    :show-refs="effectivePersonalMode ? ['copy', 'sources'] : ['model', 'copy', 'sources']"
                     :is-latest-message="false"
                     :sources="getMessageGroupSources(row.group)"
                     @open-refs="openTurnSourcesPanel"
@@ -193,7 +228,7 @@
                   <span class="loading-spark" aria-hidden="true"></span>
                   <span class="generating-text">{{ replyLoadingText }}</span>
                   <button
-                    v-if="primaryQueuedInput && !currentThreadState?.activeRunId"
+                    v-if="!effectivePersonalMode && !readOnly && primaryQueuedInput && !currentThreadState?.activeRunId"
                     type="button"
                     class="generating-cancel lucide-icon-btn"
                     aria-label="取消这条待处理输入"
@@ -209,6 +244,7 @@
             <div
               ref="messageInputDockRef"
               class="bottom"
+              v-if="!readOnly || currentApprovalModalVisible"
               :class="{ 'start-screen': showStartScreen }"
             >
               <div class="message-input-wrapper">
@@ -228,7 +264,7 @@
                 </div>
 
                 <section
-                  v-if="visibleQueuedInputs.length"
+                  v-if="!effectivePersonalMode && !readOnly && visibleQueuedInputs.length"
                   class="queued-request-panel"
                   aria-label="排队请求"
                 >
@@ -302,7 +338,7 @@
                 </section>
 
                 <CooperationAttention
-                  v-if="!embedded"
+                  v-if="!embedded && !effectivePersonalMode"
                   :key="currentChatId"
                   :actions="cooperationPendingActions"
                   :error="cooperationError"
@@ -339,13 +375,15 @@
                     :aria-hidden="currentToolApprovalVisible ? 'true' : undefined"
                   >
                     <AgentInputArea
+                      v-if="!readOnly"
                       ref="agentInputAreaRef"
                       v-model="userInput"
                       :is-loading="shouldShowStopButton"
                       :disabled="threadCreationInFlight || !agentExecutionAvailable || currentToolApprovalVisible"
                       :send-button-disabled="isSendButtonDisabled"
-                      :mention="mentionConfig"
+                      :mention="effectivePersonalMode ? null : mentionConfig"
                       :thread-id="currentChatId"
+                      :personal-mode="effectivePersonalMode"
                       :show-extra="showStartScreen"
                       :attachments="currentPendingThreadAttachments"
                       @send="handleSendOrStop"
@@ -362,11 +400,13 @@
                       </template>
                       <template #actions-left-extra>
                         <ToolApprovalModeSelector
+                          v-if="!effectivePersonalMode"
                           upward
                           :model-value="currentToolApprovalMode"
                           @update:model-value="handleToolApprovalModeSelect"
                         />
                         <slot
+                          v-if="!effectivePersonalMode"
                           name="input-actions-left"
                           :agent-id="currentAgentId"
                           :has-active-thread="!!currentChatId"
@@ -375,7 +415,7 @@
                       </template>
                       <template #actions-right-extra>
                         <button
-                          v-if="canSubmitSteer"
+                          v-if="!effectivePersonalMode && canSubmitSteer"
                           type="button"
                           class="direct-steer-button"
                           title="当前步骤结束后优先执行这条消息"
@@ -385,13 +425,13 @@
                           引导
                         </button>
                         <ContextUsageRing
-                          v-if="showStateEntry"
+                          v-if="!effectivePersonalMode && showStateEntry"
                           :used-tokens="contextUsageSummary.usedTokens"
                           :limit-tokens="contextUsageSummary.limitTokens"
                           :ratio="contextUsageSummary.ratio"
                           @click="toggleStatePanel"
                         />
-                        <div class="input-model-selector">
+                        <div v-if="!effectivePersonalMode" class="input-model-selector">
                           <ModelSelectorComponent
                             upward
                             :model_spec="currentModelSpec"
@@ -417,7 +457,7 @@
                   @added="handleTmpAttachmentsAdded"
                 />
 
-                <div class="bottom-actions" v-if="!showStartScreen">
+                <div class="bottom-actions" v-if="!showStartScreen && !effectivePersonalMode">
                   <p class="note">
                     当前智能体：{{ currentThreadAgentName }}；请注意辨别内容的可靠性
                   </p>
@@ -426,6 +466,12 @@
             </div>
           </div>
         </Teleport>
+        <div
+          v-show="personalProfileEmbedded"
+          ref="personalProfileDockRef"
+          class="personal-profile-dock"
+          :style="{ right: `${localUIState.chatContentWidth - localUIState.chatMainVisibleWidth + 24}px` }"
+        />
       </div>
 
       <div
@@ -677,13 +723,15 @@
               <SessionWorkspace
                 :ref="(workspace) => setCooperationWorkspaceRef(section.sessionId, workspace)"
                 :embedded="true"
+                :read-only="effectivePersonalMode"
+                :send-disabled="sendDisabled"
                 :visible="
                   workspaceActive && isFilePanelOpen && agentPanelActiveSectionKey === section.key
                 "
                 @open-session="navigateToSession"
                 :cooperation-members="cooperationSessions"
                 :embedded-thread-id="section.sessionId"
-                :agent-id="currentAgentId"
+                :agent-id="effectivePersonalMode ? '' : currentAgentId"
                 :is-new-session="false"
               />
             </div>
@@ -714,6 +762,8 @@ import { useRouter } from 'vue-router'
 import { createSessionLinkNavigator } from '@/modules/session/model/sessionLinks'
 import {
   ArrowUpFromLine,
+  ArrowUpRight,
+  MessageSquarePlus,
   Bug,
   ChevronDown,
   CornerDownRight,
@@ -775,6 +825,7 @@ import { useSessionRuntimeStore } from '@/modules/session/model/sessionRuntime'
 import { resumeSessionWaitpoint } from '@/modules/session/model/sessionCommands'
 import { useSessionCooperation } from '@/modules/session/model/useSessionCooperation'
 import CooperationTree from '@/modules/session/ui/CooperationTree.vue'
+import { personalMessages } from '@/modules/session/model/personalMessages'
 import { useAgentMentionConfig } from '@/modules/session/model/useAgentMentionConfig'
 import { getToolCallId, parseToolCallResult } from '@/modules/session/model/toolCallProjection'
 import { collectCooperationTasks } from '@/modules/session/model/cooperationToolView'
@@ -816,9 +867,12 @@ const props = defineProps({
   agentId: { type: String, default: '' },
   initialProjectId: { type: String, default: '' },
   isNewSession: { type: Boolean, required: true },
-  sendDisabled: { type: Boolean, default: false }
+  sendDisabled: { type: Boolean, default: false },
+  personalMode: { type: Boolean, default: false },
+  personalProfileOpen: { type: Boolean, default: false },
+  readOnly: { type: Boolean, default: false }
 })
-const emit = defineEmits(['thread-change', 'open-session'])
+const emit = defineEmits(['thread-change', 'open-session', 'status-change'])
 const router = useRouter()
 
 // ==================== STORE MANAGEMENT ====================
@@ -864,6 +918,7 @@ function composeWidgetDraft(text) {
 
 /** 表单和按钮独立发送用户回答，旧列表动作继续填写草稿。 */
 function handleWidgetAction(action) {
+  if (props.readOnly) return false
   if (typeof action === 'string') return composeWidgetDraft(action)
   if (action?.type !== 'send_message' || widgetActionsDisabled.value) return false
   return handleSendMessage({
@@ -920,7 +975,7 @@ const {
 const { threadMessages, threadRuns, historyPages, pendingSends } = storeToRefs(sessionRuntime)
 const setCurrentThreadId = (threadId, options) => {
   currentThreadId.value = threadId || null
-  if (!props.embedded && workspaceActive.value) {
+  if (!props.embedded && !effectivePersonalMode.value && workspaceActive.value) {
     chatThreadsStore.setCurrentThreadId(threadId || null, options)
   }
 }
@@ -949,6 +1004,7 @@ const configNoticeScrollVersion = ref(0)
 // 本地 UI 状态（仅在本组件使用）
 const localUIState = reactive({
   chatMainWidth: typeof window !== 'undefined' ? window.innerWidth : 0,
+  chatMainVisibleWidth: 0,
   chatContentWidth: typeof window !== 'undefined' ? window.innerWidth : 0
 })
 
@@ -1023,8 +1079,8 @@ const agentPanelPreviewTabs = ref([])
 const agentPanelPreviewCache = reactive(new Map())
 const agentPanelActivePreviewPath = ref('')
 const agentPanelViewMode = ref('tree')
-const agentPanelSections = ref([FILE_TREE_SECTION])
-const agentPanelActiveSectionKey = ref(FILE_TREE_SECTION.key)
+const agentPanelSections = ref([])
+const agentPanelActiveSectionKey = ref('')
 watch(
   [
     statePanelOpen,
@@ -1141,8 +1197,8 @@ const resetAgentPanelState = () => {
   agentPanelPreviewTabs.value = []
   agentPanelActivePreviewPath.value = ''
   agentPanelViewMode.value = 'tree'
-  agentPanelSections.value = [FILE_TREE_SECTION]
-  agentPanelActiveSectionKey.value = FILE_TREE_SECTION.key
+  agentPanelSections.value = effectivePersonalMode.value ? [] : [FILE_TREE_SECTION]
+  agentPanelActiveSectionKey.value = agentPanelSections.value[0]?.key || ''
 }
 
 const previewCacheKey = (path, threadId = currentChatId.value) => `${threadId}:${path}`
@@ -1216,7 +1272,7 @@ const openPanelPreview = (file, keepTreeOpen = false) => {
     title: tab.name,
     path: tab.path
   })
-  agentPanelActiveSectionKey.value = keepTreeOpen ? FILE_TREE_SECTION.key : `file:${tab.path}`
+  agentPanelActiveSectionKey.value = keepTreeOpen && !effectivePersonalMode.value ? FILE_TREE_SECTION.key : `file:${tab.path}`
   showFilePanel('preview')
 }
 
@@ -1233,7 +1289,8 @@ const closePanelPreviewTab = (path) => {
     `file:${path}`
   )
   agentPanelSections.value = nextSectionState.sections
-  agentPanelActiveSectionKey.value = nextSectionState.activeKey || FILE_TREE_SECTION.key
+  agentPanelActiveSectionKey.value = nextSectionState.activeKey
+  if (!nextSectionState.sections.length) closeFilePanel()
 
   if (agentPanelActivePreviewPath.value !== path) return
 
@@ -1264,8 +1321,9 @@ const closePanelPreviewPath = (targetPath) => {
     (section) => !removedPaths.includes(section.key)
   )
   if (removedPaths.includes(agentPanelActiveSectionKey.value)) {
-    agentPanelActiveSectionKey.value = FILE_TREE_SECTION.key
+    agentPanelActiveSectionKey.value = agentPanelSections.value[0]?.key || ''
   }
+  if (!agentPanelSections.value.length) closeFilePanel()
 
   if (!shouldCloseActive) return
 
@@ -1307,13 +1365,30 @@ const currentAgentName = computed(() => {
 })
 
 const currentAgent = computed(() => {
-  if (!currentAgentId.value || !agents.value || !agents.value.length) return null
+  if (!currentAgentId.value) return null
   return (
     agentDetails.value[currentAgentId.value] ||
-    agents.value.find((agent) => agent.agent_id === currentAgentId.value) ||
+    (agents.value || []).find((agent) => agent.agent_id === currentAgentId.value) ||
     null
   )
 })
+// 直接打开个人会话时同样使用受限的个人界面。
+const effectivePersonalMode = computed(() => !props.readOnly && (props.personalMode || currentAgent.value?.is_personal_assistant === true))
+const personalProfileDockRef = ref(null)
+const personalActionsRef = ref(null)
+// 使用主对话的未扣除卡片宽度，避免预留空间后反复触发平铺/悬浮切换。
+const personalProfileEmbedded = computed(() =>
+  effectivePersonalMode.value && props.personalProfileOpen &&
+  !isAgentPanelMaximized.value && localUIState.chatMainVisibleWidth >= 1100
+)
+watch(effectivePersonalMode, (personal) => {
+  agentPanelSections.value = personal
+    ? agentPanelSections.value.filter(section => section.type !== 'file-tree')
+    : upsertAgentPanelSection(agentPanelSections.value, FILE_TREE_SECTION)
+  if (!agentPanelSections.value.some(section => section.key === agentPanelActiveSectionKey.value)) {
+    agentPanelActiveSectionKey.value = agentPanelSections.value[0]?.key || ''
+  }
+}, { immediate: true })
 const agentConfig = computed(() => {
   if (!currentThread.value) return agentStore.agentConfig
   const config = currentAgent.value?.config_json || {}
@@ -1445,7 +1520,8 @@ const {
 } = useSessionCooperation({
   threadId: computed(() => (userStore.isLoggedIn ? currentChatId.value : '')),
   enabled: cooperationObservationEnabled,
-  onSnapshot: sessionRuntime.reconcileCooperationSessions
+  onSnapshot: sessionRuntime.reconcileCooperationSessions,
+  loadSummary: (id) => effectivePersonalMode.value ? agentApi.getPersonalSessions() : agentApi.getCooperationSummary(id)
 })
 
 const toggleMessageDebugPanel = () => {
@@ -1560,6 +1636,16 @@ onUnmounted(() => sessionLinkNavigator.invalidate())
 
 /** 嵌入会话把导航交给根工作区，避免侧栏递归嵌套。 */
 async function navigateToSession(target) {
+  if (effectivePersonalMode.value) {
+    try {
+      const destination = await agentApi.getSessionNavigation(typeof target === 'string' ? target : target.session_id)
+      openCooperationSession(destination.session_id, destination.name)
+      await router.replace({ query: { ...router.currentRoute.value.query, session_id: destination.session_id } })
+    } catch (error) {
+      handleChatError(error, 'load')
+    }
+    return
+  }
   if (props.embedded) emit('open-session', target)
   else await sessionLinkNavigator.navigate(target)
 }
@@ -1574,14 +1660,14 @@ async function openSessionFromRoute(sessionId) {
     return
   }
   const target = await agentApi.getSessionNavigation(sessionId)
-  if (target.tree_root_session_id !== currentChatId.value || !target.parent_session_id) {
+  if (!effectivePersonalMode.value && (target.tree_root_session_id !== currentChatId.value || !target.parent_session_id)) {
     throw new Error('会话不属于当前主页面')
   }
   openCooperationSession(target.session_id, target.name)
 }
 
 const openCooperationSession = (sessionId, title) => {
-  if (sessionId === currentChatId.value) {
+  if (!effectivePersonalMode.value && sessionId === currentChatId.value) {
     if (isAgentPanelMaximized.value) agentPanelActiveSectionKey.value = 'main-session'
     return
   }
@@ -1590,7 +1676,7 @@ const openCooperationSession = (sessionId, title) => {
   agentPanelSections.value = upsertAgentPanelSection(agentPanelSections.value, {
     key,
     type: 'session',
-    title: title || session?.name || session?.path?.split('/').pop() || '协作会话',
+    title: title || session?.title || session?.name || (sessionId === currentChatId.value ? '助理轨迹' : '') || session?.path?.split('/').pop() || '会话轨迹',
     sessionId,
     avatarSeed: sessionId
   })
@@ -1620,6 +1706,7 @@ const closeAgentPanelSection = (key) => {
   )
   agentPanelSections.value = next.sections
   agentPanelActiveSectionKey.value = next.activeKey
+  if (!next.sections.length) closeFilePanel()
 }
 
 watch(messageDebugEnabled, (enabled) => {
@@ -1654,7 +1741,7 @@ const currentStateFiles = computed(() => {
 
   return files
 })
-const showStateEntry = computed(() => !props.embedded && Boolean(currentChatId.value))
+const showStateEntry = computed(() => !effectivePersonalMode.value && !props.embedded && Boolean(currentChatId.value))
 const showFileEntry = computed(() => Boolean(currentChatId.value))
 const hasVisibleStateSections = computed(
   () =>
@@ -1666,7 +1753,7 @@ const hasVisibleStateSections = computed(
 )
 
 const { mentionConfig } = useAgentMentionConfig({
-  agents,
+  agents: computed(() => effectivePersonalMode.value ? [] : agents.value),
   currentThreadAttachments,
   configurableItems,
   agentConfig
@@ -1773,11 +1860,24 @@ const runGroups = computed(() => {
   const inputIds = new Set(
     messages.filter((item) => item.type === 'human').map((item) => item.input_id)
   )
-  const optimistic = Object.values(state?.optimisticInputs || {})
-    .flat()
-    .filter((item) => !inputIds.has(item.extra_metadata?.input_id))
+  const pending = Object.values(state?.optimisticInputs || {}).flat()
+  if (effectivePersonalMode.value) {
+    for (const input of state?.queuedInputs || []) {
+      pending.push(input.message || {
+        id: input.input_id, type: 'human', content: input.content || '',
+        created_at: input.created_at, delivery_status: input.status,
+        extra_metadata: { input_id: input.input_id }
+      })
+    }
+  }
+  const optimistic = pending.filter((item) => {
+    const inputId = item.extra_metadata?.input_id
+    if (inputIds.has(inputId)) return false
+    inputIds.add(inputId)
+    return true
+  })
   const groups = MessageProcessor.convertServerHistoryToMessages(
-    [...messages, ...optimistic],
+    effectivePersonalMode.value ? personalMessages([...messages, ...optimistic]) : [...messages, ...optimistic],
     currentThreadRuns.value
   )
   for (const group of groups) {
@@ -1826,11 +1926,11 @@ const messageGroupRows = computed(() => {
       (group.status === 'streaming' ? 'ongoing-message-group' : `history-${index}`),
     group,
     timeLabel: getMessageGroupTimeLabel(group, runGroups.value[index - 1]),
-    displayItems: getDisplayItems(group),
+    displayItems: effectivePersonalMode.value ? getDisplayItems(group).filter((item) => item.type === 'message') : getDisplayItems(group),
     artifacts: MessageProcessor.extractArtifactsFromMessageGroup(group)
   }))
 
-  if (currentThreadConfigNotice.value) {
+  if (!effectivePersonalMode.value && currentThreadConfigNotice.value) {
     const insertAfterCount = Math.max(
       0,
       Math.min(Number(currentThreadConfigNotice.value.insertAfterGroupCount) || 0, rows.length)
@@ -1842,7 +1942,9 @@ const messageGroupRows = computed(() => {
     })
   }
 
-  return rows
+  return effectivePersonalMode.value
+    ? rows.filter((row) => row.displayItems.length || row.group.run?.status === 'failed')
+    : rows
 })
 
 const isStreaming = computed(() => {
@@ -1872,19 +1974,33 @@ const isWaitingForUserAction = computed(() =>
   isThreadWaitingForUserAction(currentThreadState.value)
 )
 const queuePausedMessage = '后续队列已暂停。发送新消息将优先处理并继续队列。'
+const hasDraftContent = computed(
+  () => Boolean(String(userInput.value || '').trim() || agentInputAreaRef.value?.hasImages)
+)
 const shouldShowStopButton = computed(
   () =>
+    !effectivePersonalMode.value && !props.readOnly &&
     (isStreaming.value || currentThreadState.value?.cooperationWaiting) &&
-    !String(userInput.value || '').trim()
+    !hasDraftContent.value
+)
+const inputSubmissionBlocked = computed(
+  () =>
+    props.readOnly ||
+    !agentExecutionAvailable.value ||
+    sendCooldownActive.value ||
+    isLoadingMessages.value ||
+    isWaitingForUserAction.value ||
+    !!pendingSends.value[currentChatId.value] ||
+    Boolean(currentThreadState.value?.cancellationPending)
 )
 const canSubmitSteer = computed(
   () =>
-    agentExecutionAvailable.value &&
+    !inputSubmissionBlocked.value &&
     isStreaming.value &&
+    Boolean(currentThreadState.value?.activeRunId) &&
+    !currentThreadState.value?.cooperationWaiting &&
     currentThreadState.value?.activeRunSteerable === true &&
-    (Boolean(String(userInput.value || '').trim()) || agentInputAreaRef.value?.hasImages) &&
-    !sendCooldownActive.value &&
-    !isWaitingForUserAction.value
+    hasDraftContent.value
 )
 const canCancelQueuedInput = (input) => input?.status !== 'sending'
 const canPromoteQueuedInput = (input) =>
@@ -1947,18 +2063,27 @@ const replyLoadingText = computed(() => {
     return `排队中（${queuedInputCount.value} 条）...`
   return '正在生成回复...'
 })
-const isSendButtonDisabled = computed(() => {
-  if (currentThreadState.value?.cancellationPending) return true
-  return (
-    sendCooldownActive.value ||
-    props.sendDisabled ||
-    isLoadingMessages.value ||
-    isWaitingForUserAction.value ||
-    !!pendingSends.value[currentChatId.value] ||
-    (!userInput.value && !isProcessing.value) ||
-    !agentExecutionAvailable.value
-  )
-})
+// 身份栏只展示当前会话已有的可观察状态。
+watch(
+  () => {
+    if (!currentChatId.value || isSessionLoading.value || sessionAgentStatus.value === 'loading') return '正在加载对话'
+    if (sessionAgentStatus.value === 'error' || sessionAgentStatus.value === 'unavailable') return '助理暂不可用'
+    if (currentThreadState.value?.cancellationPending) return '正在停止'
+    if (isWaitingForUserAction.value) return '等待你的回应'
+    if (currentThreadState.value?.cooperationWaiting) return '等待协作结果'
+    if (isStreaming.value) return '正在处理'
+    return '对话已就绪'
+  },
+  (status) => emit('status-change', status),
+  { immediate: true }
+)
+
+const isSendButtonDisabled = computed(
+  () =>
+    inputSubmissionBlocked.value ||
+    (props.sendDisabled && !(effectivePersonalMode.value && canSubmitSteer.value) && !shouldShowStopButton.value) ||
+    (!hasDraftContent.value && (effectivePersonalMode.value || !isProcessing.value))
+)
 
 const startSendCooldown = () => {
   sendCooldownActive.value = true
@@ -2169,6 +2294,7 @@ const loadEarlierMessages = async () => {
 
 const handleWorkspaceScroll = () => {
   if (!workspaceActive.value) return
+  if (scrollController.hasLayoutChanged()) return
   const scrollTop = chatMainRef.value?.scrollTop || 0
   const scrollingUp = scrollTop < retainedScrollTop
   retainedScrollTop = scrollTop
@@ -2235,6 +2361,13 @@ const startChatMainResizeObserver = () => {
     localUIState.chatContentWidth =
       chatContentContainerRef.value?.clientWidth || localUIState.chatMainWidth
 
+    const main = chatMainRef.value?.getBoundingClientRect()
+    const panel = isFilePanelOpen.value ? panelWrapperRef.value?.getBoundingClientRect() : null
+    // 窄屏的主区有最小宽度，实际可见区域还须扣除覆盖它的轨迹面板。
+    localUIState.chatMainVisibleWidth = main
+      ? Math.max(0, Math.min(main.right, panel?.left ?? main.right) - main.left)
+      : 0
+
     updateStatePanelPlacement()
   }
 
@@ -2246,17 +2379,26 @@ const startChatMainResizeObserver = () => {
     if (!isResizeObserverReady) return
 
     if (!entries.length) return
+    if (!earlierMessagesLoading.value) {
+      scrollController.handleResize()
+      retainedScrollTop = chatMainRef.value?.scrollTop || 0
+    }
     syncLayoutMetrics()
   })
   if (panelWrapperRef.value) chatMainResizeObserver.observe(panelWrapperRef.value)
   chatMainResizeObserver.observe(chatMainRef.value)
+  const chatBox = chatMainRef.value.querySelector('.chat-box')
+  if (chatBox) chatMainResizeObserver.observe(chatBox)
   if (chatContentContainerRef.value) {
     chatMainResizeObserver.observe(chatContentContainerRef.value)
   }
   if (messageInputDockRef.value) {
     chatMainResizeObserver.observe(messageInputDockRef.value)
   }
-  armResizeObserver(syncLayoutMetrics)
+  armResizeObserver(() => {
+    scrollController.rememberReadingPosition()
+    syncLayoutMetrics()
+  })
 }
 
 onMounted(() => {
@@ -2644,7 +2786,7 @@ const selectThreadFromRoute = async (threadId) => {
   }
 
   if (loadedCurrentThread) {
-    if (!props.embedded && workspaceActive.value) chatThreadsStore.setCurrentThreadId(threadId)
+    if (!props.embedded && !effectivePersonalMode.value && workspaceActive.value) chatThreadsStore.setCurrentThreadId(threadId)
     await resumeCurrentRunForVisiblePage()
     return true
   }
@@ -2714,6 +2856,8 @@ const handleSendMessage = async ({
   fromWidget = false,
   onWidgetAccepted
 } = {}) => {
+  if (props.readOnly) return false
+  if (effectivePersonalMode.value) mode = 'steer'
   const original = pendingSends.value[currentChatId.value]
   if ((original && !retry) || (retry && !original)) return false
   const text = original?.text ?? submittedText ?? userInput.value.trim()
@@ -2721,7 +2865,8 @@ const handleSendMessage = async ({
     (!text && !images.length && !original?.images.length) ||
     !agentExecutionAvailable.value ||
     sendCooldownActive.value ||
-    props.sendDisabled ||
+    (props.sendDisabled && !retry && !(mode === 'steer' && canSubmitSteer.value)) ||
+    (effectivePersonalMode.value && isProcessing.value && !canSubmitSteer.value) ||
     isLoadingMessages.value ||
     isWaitingForUserAction.value
   )
@@ -2738,8 +2883,8 @@ const handleSendMessage = async ({
     attachments: fromWidget
       ? []
       : currentPendingThreadAttachments.value.map((file) => ({ ...file })),
-    modelSpec: currentModelSpec.value || null,
-    toolApprovalMode: currentToolApprovalMode.value,
+    modelSpec: effectivePersonalMode.value ? null : currentModelSpec.value || null,
+    toolApprovalMode: effectivePersonalMode.value ? null : currentToolApprovalMode.value,
     mode
   }
   if (!threadId) {
@@ -2804,7 +2949,7 @@ const handleSendOrStop = async (payload) => {
   const threadState = getThreadState(threadId)
   const hasNewInput = Boolean(String(userInput.value || '').trim() || payload?.images?.length)
   if (
-    threadState?.activeRunId &&
+    !effectivePersonalMode.value && !props.readOnly && threadState?.activeRunId &&
     (threadState.isStreaming || threadState.cooperationWaiting) &&
     !hasNewInput
   ) {
@@ -2929,6 +3074,7 @@ defineExpose({
   getExportPayload: buildExportPayload,
   selectThreadFromRoute,
   openSessionFromRoute,
+  navigateToSession,
   focusPendingAction
 })
 
@@ -2993,6 +3139,11 @@ const closeFilePanel = () => {
   isFilePanelOpen.value = false
   isAgentPanelMaximized.value = false
   filePanelDragWidth.value = null
+  if (effectivePersonalMode.value && router.currentRoute.value.query.session_id) {
+    const query = { ...router.currentRoute.value.query }
+    delete query.session_id
+    void router.replace({ query })
+  }
 }
 
 const toggleAgentPanelMaximized = () => {
@@ -3074,7 +3225,7 @@ const getDisplayItems = (group) =>
   getMessageGroupDisplayItems(group, {
     enrichToolCalls: getMessageToolCalls,
     runTiming: group.processTiming || getMessageRun(getLastMessage(group))?.timing,
-    collapseIntermediate: group?.status !== 'streaming' && isRunGroupSettled(group)
+    collapseIntermediate: !effectivePersonalMode.value && group?.status !== 'streaming' && isRunGroupSettled(group)
   })
 
 const isDisplayMessageProcessing = (group, displayItem) => {
@@ -3259,6 +3410,43 @@ watch(currentChatId, (threadId, oldThreadId) => {
 </script>
 
 <style lang="less" scoped>
+.personal-session-bubble {
+  display: inline-flex; align-items: center; gap: 8px;
+  align-self: flex-start; width: fit-content; max-width: min(100%, 360px); min-height: 40px;
+  margin: 6px 0; padding: 9px 12px;
+  border: 1px solid var(--border-surface); border-radius: 12px;
+  background: var(--gray-25); color: var(--color-text); font: inherit;
+  font-size: 13px; line-height: 1.5; text-align: left; cursor: pointer;
+  svg, .personal-session-label { flex-shrink: 0; color: var(--color-text-secondary); }
+  &:hover { background: var(--gray-50); border-color: var(--border-surface-hover); }
+  &:focus-visible { outline: 2px solid var(--main-color); outline-offset: 2px; }
+}
+.personal-session-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.personal-chat-empty { margin: auto; padding: 40px 24px; color: var(--color-text-secondary); text-align: center; }
+.personal-chat-main > .chat-box { max-width: 768px; padding: 20px 24px 36px; }
+.personal-chat-main > .bottom { padding: 12px 24px 18px; background: var(--bg-page); }
+.personal-chat-main > .bottom > .message-input-wrapper { max-width: 720px; }
+.personal-chat-main > .chat-box > .group-box { margin-bottom: 12px; }
+.personal-chat-main > .chat-box > .group-box > .message-group-time { margin: 20px 0 16px; font-size: 12px; }
+.personal-chat-main > .chat-box :deep(.message-box.ai) {
+  width: fit-content;
+  max-width: 88%;
+  margin: 4px 0;
+  padding: 12px 16px;
+  border-radius: 18px;
+  background: var(--gray-50);
+  color: var(--color-text);
+  line-height: 1.6;
+}
+.personal-chat-main > .chat-box :deep(.message-box.human) {
+  max-width: 80%;
+  margin: 4px 0;
+  padding: 10px 16px;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--main-50) 45%, var(--gray-100));
+  line-height: 1.6;
+}
+
 .agent-availability-notice {
   position: absolute;
   bottom: calc(100% + 8px);
@@ -3380,10 +3568,7 @@ watch(currentChatId, (threadId, oldThreadId) => {
   min-width: 0; /* Prevent flex item from overflowing */
 
   scrollbar-width: none;
-}
-
-.chat-main.is-loading-history {
-  overflow-anchor: none; /* 追加期间由视图补偿阅读位置，避免浏览器重复锚定。 */
+  overflow-anchor: none; /* 字符锚点与分页补偿统一拥有位置，避免浏览器二次调整。 */
 }
 
 .chat-content-container.has-file-panel .chat-main {
@@ -3393,6 +3578,29 @@ watch(currentChatId, (threadId, oldThreadId) => {
 .chat-main.has-embedded-state {
   box-sizing: border-box;
   padding-right: 364px;
+}
+
+.chat-main.has-personal-profile {
+  box-sizing: border-box;
+  padding-right: 352px;
+}
+
+.personal-profile-dock {
+  position: absolute;
+  top: 60px;
+  bottom: 24px;
+  width: 320px;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.personal-workspace-actions {
+  position: absolute;
+  top: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .chat.has-maximized-panel .chat-main {

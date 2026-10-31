@@ -13,6 +13,7 @@ from yuxi.modules.workspace.filesystem import Workspace
 
 type ResourceSelection = Literal["all"] | list[str]
 
+
 WORKSPACE_AGENTS_PROMPT_MAX_BYTES = 64 * 1024
 WORKSPACE_BASE_CONTEXT_FILES = ("AGENTS.md", "USER.md")
 DEFAULT_SUMMARY_THRESHOLD_K = 256  # 262144 tokens（256 × 1024）
@@ -363,11 +364,7 @@ class BaseContext:
     def get_resource_fields(cls) -> dict[str, str]:
         """从字段类型识别资源选择，并读取声明的候选资源种类。"""
         types = get_type_hints(cls)
-        return {
-            item.name: item.metadata.get("kind", item.name)
-            for item in fields(cls)
-            if types[item.name] is ResourceSelection and item.metadata.get("configurable", True)
-        }
+        return {item.name: item.metadata.get("kind", item.name) for item in fields(cls) if types[item.name] is ResourceSelection}
 
     @classmethod
     def get_configurable_items(cls, user_role: str | None = None):

@@ -294,7 +294,7 @@ async def test_delegated_admin_update_preserves_shared_agent_acl():
     agent.visibility = "shared"
     db.execute = AsyncMock(return_value=SimpleNamespace(scalars=lambda: ["manager"]))
     user = User(uid="manager", role="admin", user_kind="human", is_deleted=0)
-    db.scalar = AsyncMock(side_effect=[agent, user])
+    db.scalar = AsyncMock(side_effect=[agent, user, None])
     await update_agent_definition(db, agent, share_config=_MANAGER_USER_SCOPE, updater=user)
     assert agent.share_config["manage_scope"]["user_uids"] == ["manager"]
     db.commit.assert_awaited_once()
@@ -307,7 +307,7 @@ async def test_normal_user_cannot_update_private_agent_grants():
     agent.id = 1
     agent.visibility = "private"
     user = User(uid="manager", role="user", user_kind="human", is_deleted=0)
-    db.scalar = AsyncMock(side_effect=[agent, user])
+    db.scalar = AsyncMock(side_effect=[agent, user, None])
     with pytest.raises(ValueError, match="私有智能体不接受共享授权"):
         await update_agent_definition(db, agent, share_config=_MANAGER_USER_SCOPE, updater=user)
     assert agent.share_config == _MANAGER_USER_SCOPE
@@ -323,7 +323,7 @@ async def test_share_private_agent_updates_same_definition(role, owner):
     agent.id, agent.visibility = 1, "private"
     agent.config_json = {"context": {"system_prompt": "original", "skills": ["existing"]}}
     user = User(uid="manager", role=role, user_kind="human", is_deleted=0)
-    db.scalar = AsyncMock(side_effect=[agent, user])
+    db.scalar = AsyncMock(side_effect=[agent, user, None])
 
     updated = await update_agent_definition(db, agent, visibility="shared", share_config=DEFAULT_SHARE_CONFIG, updater=user)
 
@@ -348,7 +348,7 @@ async def test_share_private_agent_requires_admin_and_explicit_grants(role, gran
     agent = _agent_for_update(created_by="manager", share_config=original)
     agent.id, agent.visibility = 1, "private"
     user = User(uid="manager", role=role, user_kind="human", is_deleted=0)
-    db.scalar = AsyncMock(side_effect=[agent, user])
+    db.scalar = AsyncMock(side_effect=[agent, user, None])
 
     with pytest.raises(error, match=message):
         await update_agent_definition(db, agent, visibility="shared", share_config=grants, updater=user)
@@ -385,9 +385,14 @@ def test_opt_in_resource_selection_preserves_all_intent(field):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("backend_id", ["ChatbotAgent"])
-async def test_serialize_agent_omits_capabilities(backend_id):
-    """主子智能体响应保留权限与元信息且不再声明静态能力。"""
+@pytest.mark.parametrize("backend_id", ["ChatbotAgent", "PersonalAssistantAgent"])
+@pytest.mark.parametrize("include_configurable_items", [False, True])
+async def test_serialize_agent_preserves_backend_response_contract(monkeypatch, backend_id, include_configurable_items):
+    """统一响应保留权限，个人助理始终带身份且不提供通用配置描述。"""
+    from yuxi.modules.agents.runtime.agent_backends import AGENT_BACKENDS
+    from yuxi.modules.agents.runtime.agent_backends.personal_assistant.graph import PersonalAssistantAgent
+
+    monkeypatch.setitem(AGENT_BACKENDS, "PersonalAssistantAgent", PersonalAssistantAgent)
     agent = Agent(
         slug="test-agent",
         name="测试智能体",
@@ -399,7 +404,7 @@ async def test_serialize_agent_omits_capabilities(backend_id):
     )
     user = User(uid="owner", username="owner", role="user", password_hash="test")
 
-    result = await serialize_agent_definition(FakeDb(), agent, user=user)
+    result = await serialize_agent_definition(None, agent, user=user, include_configurable_items=include_configurable_items)
 
     assert result["backend_id"] == backend_id
     assert "is_subagent" not in result
@@ -407,6 +412,14 @@ async def test_serialize_agent_omits_capabilities(backend_id):
     assert result["can_manage"] is True
     assert "metadata" in result
     assert "capabilities" not in result
+    if backend_id == "PersonalAssistantAgent":
+        assert result["is_personal_assistant"] is True
+        assert "configurable_items" not in result
+    else:
+        assert "is_personal_assistant" not in result
+        assert ("configurable_items" in result) == include_configurable_items
+        if include_configurable_items:
+            assert "model" in result["configurable_items"]
 
 
 @pytest_asyncio.fixture()

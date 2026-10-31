@@ -70,6 +70,15 @@ const router = createRouter({
       ]
     },
     {
+      path: '/assistant',
+      component: AppLayout,
+      children: [{
+        path: '', name: 'PersonalAssistant',
+        component: () => import('@/pages/PersonalAssistantView.vue'),
+        meta: { keepAlive: true, requiresAuth: true }
+      }]
+    },
+    {
       path: '/workspace',
       name: 'workspace',
       component: AppLayout,

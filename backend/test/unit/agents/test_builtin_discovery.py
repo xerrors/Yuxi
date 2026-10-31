@@ -1,13 +1,15 @@
 """内置定义发现与失败边界。"""
 
-from importlib import invalidate_caches
 import sys
+from importlib import invalidate_caches
 
 import pytest
 
-from yuxi.modules.agents.runtime import agent_backends
+from yuxi.bootstrap.capabilities import personal_assistant_enabled
 from yuxi.modules.agents import presets
+from yuxi.modules.agents.runtime import agent_backends
 from yuxi.modules.agents.runtime.agent_backends.chatbot.graph import ChatbotAgent
+from yuxi.modules.agents.runtime.agent_backends.personal_assistant.graph import PersonalAssistantAgent
 from yuxi.modules.extensions.skills import shared as skill_service
 
 
@@ -42,7 +44,8 @@ def test_new_preset_file_is_discovered_without_registry(tmp_path, monkeypatch):
     monkeypatch.setattr(presets, "__file__", str(tmp_path / "__init__.py"))
     monkeypatch.setattr(presets, "__path__", [str(tmp_path)])
     (tmp_path / "test_new_role.py").write_text(
-        'from yuxi.modules.agents.presets import AgentPreset\nPRESET = AgentPreset(slug="new-role", name="新增角色", description="测试发现")\n'
+        "from yuxi.modules.agents.presets import AgentPreset\n"
+        'PRESET = AgentPreset(slug="new-role", name="新增角色", description="测试发现")\n'
     )
     invalidate_caches()
     found = presets.discover_agent_presets()
@@ -82,9 +85,10 @@ def test_duplicate_preset_slug_is_rejected(tmp_path, monkeypatch):
 
 def test_explicit_backend_ids_create_independent_instances():
     """后端工厂不共享可变实例状态。"""
-    assert agent_backends.AGENT_BACKENDS == {
-        "ChatbotAgent": ChatbotAgent,
-    }
+    expected = {"ChatbotAgent": ChatbotAgent}
+    if personal_assistant_enabled():
+        expected["PersonalAssistantAgent"] = PersonalAssistantAgent
+    assert agent_backends.AGENT_BACKENDS == expected
     for backend_id, expected_type in agent_backends.AGENT_BACKENDS.items():
         first = agent_backends.get_agent_backend(backend_id)
         second = agent_backends.get_agent_backend(backend_id)
@@ -116,50 +120,63 @@ async def test_backend_info_uses_registry_id_after_class_rename(monkeypatch):
     assert "capabilities" not in infos[0]
 
 
-def test_backend_import_does_not_scan_or_create_instances():
-    """隔离进程中验证导入只声明能力，不扫描目录或创建后端。"""
+@pytest.mark.parametrize(
+    ("enabled", "expected"),
+    [("false", {"ChatbotAgent"}), ("true", {"ChatbotAgent", "PersonalAssistantAgent"})],
+)
+def test_backend_import_does_not_scan_or_create_instances(monkeypatch, enabled, expected):
+    """隔离进程验证两种开关下的导入不扫描目录或创建后端。"""
     import subprocess
 
-    code = """
+    monkeypatch.setenv("YUXI_PERSONAL_ASSISTANT_ENABLED", enabled)
+    code = f"""
 from importlib import reload
 from unittest.mock import patch
 import yuxi.modules.agents.runtime.agent_backends as agent_backends
 with patch('pathlib.Path.iterdir', side_effect=AssertionError('directory scan')), \
-     patch.object(agent_backends.ChatbotAgent, '__init__', side_effect=AssertionError('eager instance')):
+     patch.object(agent_backends.ChatbotAgent, '__init__', side_effect=AssertionError('eager instance')), \
+     patch.object(agent_backends.PersonalAssistantAgent, '__init__', side_effect=AssertionError('eager personal instance')):
     reload(agent_backends)
-assert set(agent_backends.AGENT_BACKENDS) == {'ChatbotAgent'}
+assert set(agent_backends.AGENT_BACKENDS) == {expected!r}
 """
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("backend_id", ["ChatbotAgent"])
-async def test_each_graph_uses_its_own_run_context(monkeypatch, backend_id):
+async def test_each_graph_uses_its_own_run_context(monkeypatch):
     """实际编译并执行两个图，后一个运行不能复用前一个模型或上下文。"""
     from importlib import import_module
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
+
     from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
-    backend = agent_backends.get_agent_backend(backend_id)
+    backend = agent_backends.get_agent_backend("ChatbotAgent")
     module = import_module(type(backend).__module__)
-    monkeypatch.setattr(module, "sync_agent_context_skills", AsyncMock())
-    monkeypatch.setattr(module, "resolve_configured_runtime_tools", AsyncMock(return_value=[]))
-    monkeypatch.setattr(module, "_build_middlewares", AsyncMock(return_value=[]))
-    monkeypatch.setattr(module, "create_agent_composite_backend", lambda _context: object())
-    monkeypatch.setattr(module, "resolve_chat_model_spec", lambda spec: spec)
+    from yuxi.modules.agents.runtime import graph as runtime_graph
+
+    monkeypatch.setattr(runtime_graph, "sync_agent_context_skills", AsyncMock())
+    monkeypatch.setattr(runtime_graph, "resolve_configured_runtime_tools", AsyncMock(return_value=[]))
+    monkeypatch.setattr(runtime_graph, "create_memory_middleware", AsyncMock(return_value=None))
+    monkeypatch.setattr(runtime_graph, "create_agent_composite_backend", lambda _context: object())
+    monkeypatch.setattr(runtime_graph, "resolve_chat_model_spec", lambda spec: spec)
     monkeypatch.setattr(module, "build_prompt_with_context", lambda context: context.thread_id)
     monkeypatch.setattr(
-        module,
+        runtime_graph,
         "load_chat_model",
         lambda fully_specified_name, session_id, uid, max_retries: FakeListChatModel(responses=[session_id, uid]),
     )
-    monkeypatch.setattr(module, "get_langgraph_checkpointer", lambda _manager: None)
+    monkeypatch.setattr(runtime_graph, "get_langgraph_checkpointer", lambda _manager: None)
+    from langchain.agents import create_agent
+
+    monkeypatch.setattr(runtime_graph, "create_summary_middleware_from_context", lambda *args, **kwargs: object())
+    monkeypatch.setattr(runtime_graph, "create_agent", lambda **kwargs: create_agent(**(kwargs | {"middleware": [], "tools": []})))
     graphs = []
     for thread_id, uid in [("first-thread", "first-uid"), ("second-thread", "second-uid")]:
         context = SimpleNamespace(
             _runtime_prepared=True,
+            workdir_relative_path="projects/test",
             model="test:model",
             thread_id=thread_id,
             uid=uid,
@@ -172,14 +189,14 @@ async def test_each_graph_uses_its_own_run_context(monkeypatch, backend_id):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("backend_id", ["ChatbotAgent"])
-async def test_reused_prepared_context_refreshes_skills_before_each_graph(monkeypatch, tmp_path, backend_id):
+async def test_reused_prepared_context_refreshes_skills_before_each_graph(monkeypatch, tmp_path):
     """准备后的 Context 复用时，每次构图仍发布最新 Skill 投影。"""
     from importlib import import_module
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
     from langchain_core.language_models.fake_chat_models import FakeListChatModel
+
     from yuxi.modules.extensions.skills import runtime as skill_runtime
 
     source = tmp_path / "source.md"
@@ -190,21 +207,29 @@ async def test_reused_prepared_context_refreshes_skills_before_each_graph(monkey
         assert uid == "test-uid"
         projection.write_text(source.read_text())
 
-    backend = agent_backends.get_agent_backend(backend_id)
+    backend = agent_backends.get_agent_backend("ChatbotAgent")
     module = import_module(type(backend).__module__)
+    from yuxi.modules.agents.runtime import graph as runtime_graph
+
     monkeypatch.setattr(skill_runtime, "refresh_user_skill_projection_async", refresh_projection)
-    monkeypatch.setattr(module, "resolve_configured_runtime_tools", AsyncMock(return_value=[]))
-    monkeypatch.setattr(module, "_build_middlewares", AsyncMock(return_value=[]))
-    monkeypatch.setattr(module, "create_agent_composite_backend", lambda _context: object())
-    monkeypatch.setattr(module, "resolve_chat_model_spec", lambda spec: spec)
+    monkeypatch.setattr(runtime_graph, "resolve_configured_runtime_tools", AsyncMock(return_value=[]))
+    monkeypatch.setattr(runtime_graph, "create_memory_middleware", AsyncMock(return_value=None))
+    monkeypatch.setattr(runtime_graph, "create_agent_composite_backend", lambda _context: object())
+    monkeypatch.setattr(runtime_graph, "resolve_chat_model_spec", lambda spec: spec)
     monkeypatch.setattr(module, "build_prompt_with_context", lambda context: "test prompt")
     monkeypatch.setattr(
-        module,
+        runtime_graph,
         "load_chat_model",
         lambda **kwargs: FakeListChatModel(responses=[projection.read_text()]),
     )
-    monkeypatch.setattr(module, "get_langgraph_checkpointer", lambda _manager: None)
-    context = SimpleNamespace(_runtime_prepared=True, model="test:model", thread_id="test-thread", uid="test-uid")
+    monkeypatch.setattr(runtime_graph, "get_langgraph_checkpointer", lambda _manager: None)
+    from langchain.agents import create_agent
+
+    monkeypatch.setattr(runtime_graph, "create_summary_middleware_from_context", lambda *args, **kwargs: object())
+    monkeypatch.setattr(runtime_graph, "create_agent", lambda **kwargs: create_agent(**(kwargs | {"middleware": [], "tools": []})))
+    context = SimpleNamespace(
+        _runtime_prepared=True, workdir_relative_path="projects/test", model="test:model", thread_id="test-thread", uid="test-uid"
+    )
 
     for content in ["first skill revision", "second skill revision"]:
         source.write_text(content)
@@ -231,3 +256,16 @@ def test_shipping_skills_keep_required_dependencies():
     assert found["deep-research"]["skill_dependencies"] == []
     assert found["mysql-reporter"]["mcp_dependencies"] == []
     assert "html-preview" not in found
+
+
+@pytest.mark.parametrize("enabled", ["true", "false"])
+def test_personal_backend_registration_follows_startup_flag(enabled):
+    """部署开关只在新进程装配时决定助理 Backend 是否可运行。"""
+    import os
+    import subprocess
+
+    source = (
+        "from yuxi.modules.agents.runtime.agent_backends import AGENT_BACKENDS; "
+        f"assert ('PersonalAssistantAgent' in AGENT_BACKENDS) == {enabled == 'true'}"
+    )
+    subprocess.run([sys.executable, "-c", source], env={**os.environ, "YUXI_PERSONAL_ASSISTANT_ENABLED": enabled}, check=True)

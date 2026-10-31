@@ -23,6 +23,12 @@ async def resolve_agent_context_snapshot(
     """保存配置值与 Schema 默认值，保留资源选择而不固化授权结果。"""
     context = agent_backend.context_schema()
     context.update_config((agent_item.config_json or {}).get("context") or {})
+    if agent_item.backend_id == "PersonalAssistantAgent":
+        context.personal_assistant_name = agent_item.name
+        if model_spec is None and not context.model:
+            context.model = str((await system_options.get(db))["personal_assistant_model"] or "").strip()
+            if not context.model:
+                raise InvalidInputError("请联系管理员配置个人助理模型", code="personal_assistant_model_missing")
     context.model = await resolve_agent_run_model_spec(model_spec, context.model, db)
     context.tool_approval_mode = resolve_agent_run_tool_approval_mode(tool_approval_mode, context.tool_approval_mode)
     return {item.name: deepcopy(getattr(context, item.name)) for item in fields(context) if item.metadata.get("configurable", True)}

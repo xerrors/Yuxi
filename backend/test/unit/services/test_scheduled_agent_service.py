@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -90,6 +91,17 @@ def test_scheduled_run_model_owns_execution_configuration_snapshot():
     assert {"project_id", "agent_slug", "session_title", "prompt", "tool_approval_mode", "model_spec"}.issubset(
         ScheduledAgentRun.__table__.c.keys()
     )
+
+
+@pytest.mark.asyncio
+async def test_validate_agent_keeps_ordinary_agents_available(monkeypatch):
+    """个人助理限制不影响已有普通 Agent 定时任务。"""
+    agent = SimpleNamespace(backend_id="ChatbotAgent")
+    repo = SimpleNamespace(get_visible_by_slug=AsyncMock(return_value=agent))
+    monkeypatch.setattr(service, "AgentRepository", lambda _db: repo)
+    monkeypatch.setattr(service, "get_agent_backend", lambda _backend: object())
+
+    assert await service._validate_agent("ordinary-agent", SimpleNamespace(uid="user-1"), object()) is agent
 
 
 def test_scheduled_run_model_uses_unique_thread_per_execution_and_preserves_history():

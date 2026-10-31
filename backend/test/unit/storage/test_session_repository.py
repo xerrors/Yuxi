@@ -847,3 +847,54 @@ async def test_outer_transaction_rollback_removes_new_session(session):
     await session.rollback()
 
     assert await SessionRepository(session).get_session_by_thread_id("thread-outer-rollback") is None
+
+
+async def test_personal_sessions_are_excluded_before_pagination_search_and_project_history(session):
+    """主会话和子会话不进入通用列表，按 Agent 筛选也不能绕过。"""
+    from yuxi.modules.agents.models.definitions import Agent
+    from yuxi.modules.agents.models.personal_assistants import PersonalAssistant
+    from yuxi.modules.agents.scope import ActorScope
+    from yuxi.modules.agents.services.threads import list_session_page, search_threads
+    from yuxi.modules.workspace.models import Project
+    from yuxi.modules.workspace.repositories.projects import ProjectRepository
+
+    now = utc_now()
+    agent = Agent(slug="personal", name="助手", backend_id="ChatbotAgent", share_config={}, created_by="user-a")
+    session.add_all([
+        agent,
+        Project(id="personal-project", uid="user-a", selection_status="implicit", workdir_path="agents/assistant", directory_mode="linked"),
+        Project(id="regular-project", uid="user-a", selection_status="implicit", workdir_path="regular", directory_mode="linked"),
+    ])
+    await session.flush()
+    for thread, slug, project, root, parent, path, seconds in [
+        ("regular", "ordinary", "regular-project", "regular", None, "/root", 0),
+        ("personal-root", "personal", "personal-project", "personal-root", None, "/root", 1),
+        ("personal-child", "personal", "personal-project", "personal-root", "personal-root", "/root/child", 2),
+        ("regular-2", "ordinary", "regular-project", "regular-2", None, "/root", 3),
+    ]:
+        session.add(Session(
+            thread_id=thread, agent_id=slug, project_id=project, uid="user-a", tree_root_thread_id=root,
+            parent_thread_id=parent, cooperation_path=path, title="needle", status="active", is_pinned=True,
+            config_snapshot={"model": "test:model", "tool_approval_mode": "default"},
+            created_at=now + timedelta(seconds=seconds), updated_at=now + timedelta(seconds=seconds),
+        ))
+    await session.flush()
+    session.add(PersonalAssistant(uid="user-a", agent_id=agent.id, project_id="personal-project", main_thread_id="personal-root"))
+    await session.commit()
+
+    scope = ActorScope(uid="user-a", app_id=None)
+    page, more = await list_session_page(db=session, scope=scope, agent_slug=None, after=None, limit=1, order="desc", is_pinned=True)
+    assert [item["id"] for item in page] == ["regular-2"]
+    assert more
+    page, more = await list_session_page(db=session, scope=scope, agent_slug=None, after="regular-2", limit=1, order="desc", is_pinned=True)
+    assert [item["id"] for item in page] == ["regular"]
+    assert not more
+    filtered, _ = await list_session_page(db=session, scope=scope, agent_slug="personal", after=None, limit=10, order="desc")
+    assert filtered == []
+    search = await search_threads(db=session, scope=scope, query="needle", agent_slug=None, limit=1, offset=1)
+    assert [item["session"]["id"] for item in search["items"]] == ["regular"]
+    assert not search["has_more"]
+    assert (await search_threads(db=session, scope=scope, query="needle", agent_slug="personal"))["items"] == []
+    candidates = await ProjectRepository(session).list_history_candidates("user-a")
+    assert {row.thread_id for row, _ in candidates} == {"regular", "regular-2"}
+    assert (await SessionRepository(session).get_session_by_thread_id("personal-child")).thread_id == "personal-child"

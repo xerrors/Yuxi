@@ -117,7 +117,27 @@ API、Web 与 MinIO 的项目文件在构建时明确权限：源码和配置归
 docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container --profile all up -d --build
 ```
 
-`app-init` 以 UID/GID 1000 运行，等待 PostgreSQL 健康与 `storage-init` 成功后，在数据库锁内完成 Schema 和共享内容初始化。它为确认空库建立 business 版本 1 与 knowledge 版本 2 基线，包含当前表、索引、约束和 LangGraph checkpoint 表；当前版本跳过建表，其他版本不匹配会明确失败。随后同步系统配置定义、内置模型供应商、Agent、MCP 和 Skill 来源文件，API 与 worker 等待全部步骤成功。应用启动不自动迁移历史数据。[版本 1 基线决定](../develop-guides/decisions/implemented/2026-10-19-schema-baseline-one.md)说明当前结构和历史升级路径的收敛；编号重置不代表旧库已完成结构变更，历史 `1/1` 标记也不能作为结构完整的证明。
+`app-init` 以 UID/GID 1000 运行，等待 PostgreSQL 健康与 `storage-init` 成功后，在数据库锁内完成 Schema 和共享内容初始化。它为确认空库建立 business 版本 2 与 knowledge 版本 2 基线，包含当前表、索引、约束和 LangGraph checkpoint 表；当前版本跳过建表，其他版本不匹配会明确失败。随后同步系统配置定义、内置模型供应商、Agent、MCP 和 Skill 来源文件，API 与 worker 等待全部步骤成功。应用启动不自动迁移历史数据。[版本 1 基线决定](../develop-guides/decisions/implemented/2026-10-19-schema-baseline-one.md)说明当前结构和历史升级路径的收敛；编号重置不代表旧库已完成结构变更，历史 `1/1` 标记也不能作为结构完整的证明。
+
+### 可选启用个人助理
+
+个人助理默认关闭。部署方在环境文件中设置 `YUXI_PERSONAL_ASSISTANT_ENABLED=true`，并重新创建 API 和 worker 后，主导航在“对话”下方、“智能体”上方显示“个人助理”入口。超级管理员在系统设置的 Options 中选择“个人助理模型”；该值用于新建会话或尚未选择模型的主会话首次输入，不覆盖已有会话模型。实际选用的模型不可用时，用户仍可创建助理和查看对话，但不能提交新的工作。专用默认值不回退到普通默认对话模型。
+
+已有 business v1、knowledge v2 数据库需要先备份并停止 API、worker，再使用待部署版本执行一次显式升级。无论是否启用个人助理，当前程序都要求 business v2；升级增加登记表、更新版本，保留既有数据。已存在 business v2 登记且仍使用普通 Backend 的部署也执行同一命令，切换到专用 Backend；旧助理的待处理输入、未结束轮次及清理责任必须先处理。完成后可安全重跑：
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml stop api worker
+docker compose --env-file .env.prod -f docker-compose.prod.yml build app-init frontend
+docker compose --env-file .env.prod -f docker-compose.prod.yml run --rm --no-deps app-init uv run --no-sync python -m yuxi.migrations.personal_assistants
+docker compose --env-file .env.prod -f docker-compose.prod.yml run --rm --no-deps app-init
+docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container up -d --no-build api worker frontend
+```
+
+这些命令在目标版本源码目录执行；`app-init`、API 和 worker 共享同一后端镜像，构建步骤确保迁移与运行使用相同版本。开发环境使用相同顺序，将 Compose 文件替换为 `docker-compose.yml`，环境文件使用对应的开发配置。空数据库由 `app-init` 直接建立当前基线，不执行旧库升级命令。其他历史版本仍需按其对应升级路径处理，不能手动修改版本号跳过结构校验。
+
+每位用户拥有一个助理和固定主对话，工作记录位于用户空间 `agents/assistant`。助理页面明确发送 steer，后端按普通输入协议处理。会话保留模型和审批选择，资料编辑只同步主会话名称与个性化说明；已接收输入及运行中的 steer 保留原快照。助理通过 `send_to_user` 显式沟通，普通正文仅在完整轨迹保留。委派创建普通 Agent 的独立 root，默认不选择项目，使用独立 managed Workdir，不继承助理个性化内容；进度、结果和失败可从右侧完整轨迹查看。任务完成不自动唤醒助理。
+
+关闭功能时，先等待正在执行的任务结束，再把环境值改为 `false` 并重新创建 API 和 worker。入口与专用助理接口不可用，执行 Backend 不再注册，已有数据保留。普通会话历史仍按既有权限读取；遗留执行因 Backend 不可用而明确失败。已有 API Key 沿用普通用户与 APP 作用域访问已知会话，没有新增专用对外接口或定时触发入口。
 
 ### 可选关闭知识库
 

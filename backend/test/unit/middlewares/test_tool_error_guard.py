@@ -22,11 +22,11 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.tools import tool
 from langchain_mcp_adapters.tools import convert_mcp_tool_to_langchain_tool
-from mcp import types as mcp_types
 from langgraph.errors import GraphBubbleUp
 from langgraph.types import interrupt
+from mcp import types as mcp_types
 
-from yuxi.modules.agents.runtime.agent_backends.chatbot import graph as chatbot_graph
+from yuxi.modules.agents.runtime import graph as runtime_graph
 from yuxi.modules.agents.runtime.middlewares import ToolErrorGuardMiddleware
 from yuxi.modules.agents.tool_results import normalize_tool_result
 
@@ -176,6 +176,7 @@ async def test_tool_runtime_error_becomes_tool_message_and_run_continues():
 async def test_guard_streams_final_middleware_result(outcome, monkeypatch):
     """真实图验证逻辑生命周期覆盖异常与短路返回，结果只取最外层结局。"""
     from langgraph.types import Command
+
     from yuxi.modules.agents.runtime.base import BaseAgent, GraphExecutionResult
     from yuxi.modules.agents.runtime.context import BaseContext
     from yuxi.modules.agents.services.message_recorder import tool_event_output
@@ -414,45 +415,25 @@ async def test_guard_does_not_expose_exception_details(caplog):
     assert "SECRET_SENTINEL" not in str(request.runtime.emitted)
 
 
-@pytest.mark.parametrize(
-    "module,build_kwargs",
-    [
-        (chatbot_graph, {"extra_async_patches": ("create_memory_middleware",)}),
-    ],
-)
-async def test_graph_mounts_guard_as_outermost_tool_wrapper(monkeypatch, module, build_kwargs):
-    """主 Agent 与子 Agent 都必须挂载异常隔离，且位于最外层包装位置。
+async def test_graph_mounts_guard_as_outermost_tool_wrapper(monkeypatch):
+    """通过公共实际装配确认异常隔离最外层、授权先于审批生效。"""
+    from yuxi.modules.agents.runtime.middlewares.authorization import RuntimeAuthorizationMiddleware
+    from yuxi.modules.agents.runtime.state import BaseState
 
-    langchain 的中间件约定是列表中第一个为最外层；只有最外层才能在其它中间件与
-    工具体之后兜住异常，同时仍然让 interrupt 冒泡出去。
-    """
-    monkeypatch.setattr(module, "create_agent_filesystem_middleware", lambda *_args, **_kwargs: object())
-    monkeypatch.setattr(module, "create_summary_middleware_from_context", lambda _context, **_kwargs: object())
-
-    async def no_optional_middleware(_context):
-        return None
-
-    for name in build_kwargs["extra_async_patches"]:
-        monkeypatch.setattr(module, name, no_optional_middleware)
-
+    monkeypatch.setattr(runtime_graph, "create_summary_middleware_from_context", lambda *args, **kwargs: object())
+    monkeypatch.setattr(runtime_graph, "create_agent", lambda **kwargs: kwargs)
+    monkeypatch.setattr(runtime_graph, "get_langgraph_checkpointer", lambda _: None)
     context = SimpleNamespace(
         model="test-provider:test-model",
         tool_approval_mode="default",
         workdir_relative_path="projects/11111111-1111-4111-8111-111111111111",
-        tool_token_limit=8,
     )
-    tool_approval_mode = build_kwargs.get("tool_approval_mode")
-    if tool_approval_mode is None:
-        middlewares = await module._build_middlewares(context, object())
-    else:
-        middlewares = await module._build_middlewares(context, object(), tool_approval_mode)
-
-    from yuxi.modules.agents.runtime.middlewares.authorization import RuntimeAuthorizationMiddleware
-
+    graph = await runtime_graph.build_agent_graph(context, prompt_builder=lambda _: "", state_schema=BaseState, checkpoint_only=True)
+    middlewares = graph["middleware"]
     assert isinstance(middlewares[-3], RuntimeAuthorizationMiddleware)
-    assert isinstance(middlewares[-2], chatbot_graph.ImageInputCompatibilityMiddleware)
-    assert isinstance(middlewares[-1], chatbot_graph.TokenUsageMiddleware)
-    assert isinstance(middlewares[0], ToolErrorGuardMiddleware), "授权失败必须在异常隔离外传播"
+    assert isinstance(middlewares[-2], runtime_graph.ImageInputCompatibilityMiddleware)
+    assert isinstance(middlewares[-1], runtime_graph.TokenUsageMiddleware)
+    assert isinstance(middlewares[0], ToolErrorGuardMiddleware)
 
 
 async def test_guard_keeps_normal_tool_result_untouched():

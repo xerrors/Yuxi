@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import threading
 import uuid
 from contextlib import asynccontextmanager
@@ -12,28 +11,31 @@ from datetime import timedelta
 import pytest
 import pytest_asyncio
 from sqlalchemy import delete, select, text, update
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from yuxi.modules.agents.services.memory_history import MemoryHistoryService
 import yuxi.modules.agents.services.memory as memory_service
+from test.integration.support.postgres_schema import create_isolated_manager, drop_isolated_schema
 from yuxi.infrastructure.postgres.manager import pg_manager
-from yuxi.modules.agents.models.runs import AgentRun
-from yuxi.modules.agents.models.turns import AgentTurn
-from yuxi.modules.agents.models.sessions import Session
+from yuxi.migrations.schema import create_business_tables
 from yuxi.modules.agents.models.messages import Message
-from yuxi.modules.workspace.models import Project
+from yuxi.modules.agents.models.runs import AgentRun
+from yuxi.modules.agents.models.sessions import Session
+from yuxi.modules.agents.models.turns import AgentTurn
+from yuxi.modules.agents.services.memory_history import MemoryHistoryService
 from yuxi.modules.identity.models import User, UserConfig
-from yuxi.shared.datetime import utc_now
 from yuxi.modules.workspace import paths as workspace_paths
 from yuxi.modules.workspace.filesystem import Workspace
+from yuxi.modules.workspace.models import Project
+from yuxi.shared.datetime import utc_now
 
-pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
+pytestmark = [pytest.mark.asyncio, pytest.mark.integration, pytest.mark.self_managed_resources]
 
 
 @pytest_asyncio.fixture()
 async def memory_database(tmp_path, monkeypatch: pytest.MonkeyPatch):
     """提供独立连接与临时 UserWorkspace，并在用例后清理数据库事实。"""
-    engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
+    schema, admin, engine, manager = await create_isolated_manager("memory_service")
+    await create_business_tables(manager)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
     @asynccontextmanager
@@ -109,17 +111,7 @@ async def memory_database(tmp_path, monkeypatch: pytest.MonkeyPatch):
     try:
         yield session_factory, identity
     finally:
-        async with session_factory() as db:
-            await db.execute(delete(AgentRun).where(AgentRun.id == run_id))
-            await db.execute(delete(AgentTurn).where(AgentTurn.id == turn_id))
-
-            await db.execute(delete(Message).where(Message.session_record_id.in_(select(Session.id).where(Session.uid == uid))))
-            await db.execute(delete(Session).where(Session.uid == uid))
-            await db.execute(delete(Project).where(Project.uid == uid))
-            await db.execute(delete(UserConfig).where(UserConfig.uid == uid))
-            await db.execute(delete(User).where(User.uid == uid))
-            await db.commit()
-        await engine.dispose()
+        await drop_isolated_schema(schema, admin, engine)
 
 
 async def test_concurrent_writes_are_serialized_without_lost_updates(memory_database):
@@ -269,7 +261,8 @@ async def test_history_query_uses_postgres_visibility_and_field_allowlists(memor
                 content="",
                 execution_status="completed",
                 started_at=visible_message.created_at,
-                extra_metadata={"output": "TOOLCALL-OUTPUT",
+                extra_metadata={
+                    "output": "TOOLCALL-OUTPUT",
                     "source_model_message_id": visible_message.id,
                     "tool_name": "history_fixture",
                     "input": {"secret": "TOOLCALL-INPUT"},

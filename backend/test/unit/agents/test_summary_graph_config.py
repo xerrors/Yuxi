@@ -5,8 +5,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from yuxi.modules.agents.runtime import graph as runtime_graph
 from yuxi.modules.agents.runtime.agent_backends.chatbot import graph as chatbot_graph
+from yuxi.modules.agents.runtime.agent_backends.personal_assistant.graph import PersonalAssistantAgent
 from yuxi.modules.agents.runtime.middlewares import summary as summary_module
+from yuxi.modules.agents.runtime.state import BaseState
 
 
 def _context(summary_threshold: int = 123) -> SimpleNamespace:
@@ -23,47 +26,33 @@ def _context(summary_threshold: int = 123) -> SimpleNamespace:
     )
 
 
-def _patch_common_graph_deps(monkeypatch: pytest.MonkeyPatch, graph_module, captured: dict) -> None:
-    monkeypatch.setattr(graph_module, "create_agent_filesystem_middleware", lambda *_args, **_kwargs: object())
+def _patch_common_graph_deps(monkeypatch: pytest.MonkeyPatch, captured: dict) -> None:
+    monkeypatch.setattr(runtime_graph, "create_agent", lambda **kwargs: kwargs)
+    monkeypatch.setattr(runtime_graph, "get_langgraph_checkpointer", lambda _: None)
 
-    def create_summary_middleware_from_context(context, *, backend):
+    def create_summary_middleware_from_context(context, *, backend, model=None):
         captured["summary_context"] = context
         captured["summary_backend"] = backend
         return object()
 
     monkeypatch.setattr(
-        graph_module,
+        runtime_graph,
         "create_summary_middleware_from_context",
         create_summary_middleware_from_context,
     )
 
 
-@pytest.mark.parametrize(
-    ("graph_module", "threshold", "build_args", "patch_cooperation"),
-    [
-        (chatbot_graph, 123, (object(),), True),
-    ],
-)
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_graph_uses_shared_summary_middleware_factory(
-    monkeypatch: pytest.MonkeyPatch, graph_module, threshold: int, build_args, patch_cooperation: bool
-) -> None:
-    captured: dict = {}
-    _patch_common_graph_deps(monkeypatch, graph_module, captured)
-
-    def no_cooperation_middleware(_context):
-        return None
-
-    if patch_cooperation:
-        monkeypatch.setattr(graph_module, "create_cooperation_middleware", no_cooperation_middleware)
-
-    middlewares = await graph_module._build_middlewares(_context(summary_threshold=threshold), *build_args)
-
-    assert captured["summary_context"].summary_threshold == threshold
-    assert captured["summary_backend"] is build_args[0]
-    middleware_names = [type(middleware).__name__ for middleware in middlewares]
-    assert middleware_names.index("NetworkRetryMiddleware") < middleware_names.index("ImageInputCompatibilityMiddleware")
+async def test_graph_uses_shared_summary_middleware_factory(monkeypatch):
+    """实际构图使用同一个摘要配置，并保留公共中间件顺序。"""
+    captured = {}
+    _patch_common_graph_deps(monkeypatch, captured)
+    graph = await runtime_graph.build_agent_graph(_context(), prompt_builder=lambda _: "", state_schema=BaseState, checkpoint_only=True)
+    assert captured["summary_context"].summary_threshold == 123
+    assert captured["summary_backend"] is None
+    names = [type(middleware).__name__ for middleware in graph["middleware"]]
+    assert names.index("NetworkRetryMiddleware") < names.index("ImageInputCompatibilityMiddleware")
 
 
 @pytest.mark.unit
@@ -98,55 +87,49 @@ def test_shared_summary_factory_uses_one_threshold(monkeypatch: pytest.MonkeyPat
     assert "l1_l2_trigger_ratio" not in captured
 
 
-@pytest.mark.parametrize(
-    "graph_module,agent_class",
-    [
-        (chatbot_graph, chatbot_graph.ChatbotAgent),
-    ],
-)
 @pytest.mark.asyncio
-async def test_graph_passes_session_session_to_model(monkeypatch, graph_module, agent_class):
-    """统一 Agent 构图使用实际线程的模型会话。"""
+async def test_graph_passes_session_session_to_model(monkeypatch):
+    """公共构图使用实际线程和用户的模型会话。"""
     context = _context()
-    context.thread_id = "graph-thread"
-    context.uid = "graph-uid"
+    context.thread_id, context.uid = "graph-thread", "graph-uid"
     context._runtime_prepared = True
-    monkeypatch.setattr(graph_module, "sync_agent_context_skills", AsyncMock())
-    monkeypatch.setattr(graph_module, "resolve_configured_runtime_tools", AsyncMock(return_value=[]))
-    monkeypatch.setattr(graph_module, "create_agent_composite_backend", lambda _context: object())
-    monkeypatch.setattr(graph_module, "build_prompt_with_context", lambda _context: "test")
-    monkeypatch.setattr(graph_module, "_build_middlewares", AsyncMock(return_value=[]))
-    monkeypatch.setattr(graph_module, "get_langgraph_checkpointer", lambda _manager: None)
+    monkeypatch.setattr(runtime_graph, "sync_agent_context_skills", AsyncMock())
+    monkeypatch.setattr(runtime_graph, "create_agent_composite_backend", lambda _: object())
+    monkeypatch.setattr(runtime_graph, "create_memory_middleware", AsyncMock(return_value=None))
     captured = {}
+    _patch_common_graph_deps(monkeypatch, {})
+    monkeypatch.setattr(runtime_graph, "resolve_configured_runtime_tools", AsyncMock(return_value=[]))
 
     def load_model(fully_specified_name, *, session_id, uid, max_retries):
-        """用装配参数作为模型占位，核对传给图的对象。"""
+        """记录传给主模型的实际身份参数。"""
         captured.update(spec=fully_specified_name, session_id=session_id, uid=uid)
         return captured
 
-    monkeypatch.setattr(graph_module, "load_chat_model", load_model)
-    monkeypatch.setattr(graph_module, "create_agent", lambda **kwargs: kwargs)
-    graph = await agent_class().get_graph(context=context)
+    monkeypatch.setattr(runtime_graph, "load_chat_model", load_model)
+    graph = await runtime_graph.build_agent_graph(context, prompt_builder=lambda _: "test", state_schema=BaseState)
     assert graph["model"] == {"spec": context.model, "session_id": context.thread_id, "uid": context.uid}
 
 
-@pytest.mark.parametrize("agent_class", [chatbot_graph.ChatbotAgent])
 @pytest.mark.asyncio
-async def test_graph_rejects_unprepared_context(agent_class):
+@pytest.mark.parametrize("agent_class", [chatbot_graph.ChatbotAgent, PersonalAssistantAgent])
+async def test_graph_rejects_unprepared_context(agent_class, monkeypatch):
     """未经权限资源准备的对象不能构建执行图。"""
+
+    def unexpected(*args, **kwargs):
+        """拒绝未准备输入必须发生在运行资源读取前。"""
+        raise AssertionError("读取了运行资源")
+
+    for name in ("sync_agent_context_skills", "create_memory_middleware", "create_agent_composite_backend", "load_chat_model"):
+        monkeypatch.setattr(runtime_graph, name, unexpected)
+    context = _context()
+    context.uid, context.run_id = "user", "run"
     with pytest.raises(ValueError, match="已准备"):
-        await agent_class().get_graph(context=_context())
+        await agent_class().get_graph(context=context)
 
 
-@pytest.mark.parametrize(
-    "graph_module,agent_class",
-    [
-        (chatbot_graph, chatbot_graph.ChatbotAgent),
-    ],
-)
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_checkpoint_cleanup_preserves_original_tasks_and_state(monkeypatch, graph_module, agent_class):
+async def test_checkpoint_cleanup_preserves_original_tasks_and_state(monkeypatch):
     """维护图保留真实拓扑与状态，不依赖模型、资源或有效账号。"""
     from langchain_core.messages import AIMessage
     from langgraph.checkpoint.memory import InMemorySaver
@@ -158,17 +141,17 @@ async def test_checkpoint_cleanup_preserves_original_tasks_and_state(monkeypatch
     context._runtime_prepared = True
     context.tool_approval_mode = "default"
     saver = InMemorySaver()
-    monkeypatch.setattr(graph_module, "get_langgraph_checkpointer", lambda _manager: saver)
-    monkeypatch.setattr(graph_module, "sync_agent_context_skills", AsyncMock())
-    monkeypatch.setattr(graph_module, "resolve_configured_runtime_tools", AsyncMock(return_value=[]))
-    monkeypatch.setattr(graph_module, "create_agent_composite_backend", lambda _context: None)
-    monkeypatch.setattr(graph_module, "build_prompt_with_context", lambda _context: "")
-    monkeypatch.setattr(graph_module, "load_chat_model", lambda **_kwargs: CheckpointCleanupModel())
+    monkeypatch.setattr(runtime_graph, "get_langgraph_checkpointer", lambda _manager: saver)
+    monkeypatch.setattr(runtime_graph, "sync_agent_context_skills", AsyncMock())
+    monkeypatch.setattr(runtime_graph, "resolve_configured_runtime_tools", AsyncMock(return_value=[]))
+    monkeypatch.setattr(runtime_graph, "create_agent_composite_backend", lambda _context: None)
+    monkeypatch.setattr(chatbot_graph, "build_prompt_with_context", lambda _context: "")
+    monkeypatch.setattr(runtime_graph, "load_chat_model", lambda **_kwargs: CheckpointCleanupModel())
     monkeypatch.setattr(summary_module, "load_chat_model", lambda **_kwargs: CheckpointCleanupModel())
-    if graph_module is chatbot_graph:
-        monkeypatch.setattr(graph_module, "create_memory_middleware", AsyncMock(return_value=None))
-        monkeypatch.setattr(graph_module, "create_cooperation_middleware", lambda context: None)
-    original = await agent_class().get_graph(context=context)
+    context.run_id = "cleanup-run"
+    monkeypatch.setattr(runtime_graph, "create_memory_middleware", AsyncMock(return_value=None))
+    original = await chatbot_graph.ChatbotAgent().get_graph(context=context)
+    assert "CooperationMiddleware.before_model" in original.nodes
     config = {"configurable": {"thread_id": context.thread_id}}
     await original.aupdate_state(
         config,
@@ -184,10 +167,18 @@ async def test_checkpoint_cleanup_preserves_original_tasks_and_state(monkeypatch
         """维护构图不得解析外部模型或沙盒。"""
         raise AssertionError("清理读取了运行资源")
 
-    for name in ("load_chat_model", "create_agent_composite_backend", "resolve_chat_model_spec"):
-        monkeypatch.setattr(graph_module, name, unexpected)
+    for name in (
+        "load_chat_model",
+        "resolve_chat_model_spec",
+        "sync_agent_context_skills",
+        "create_memory_middleware",
+        "resolve_configured_runtime_tools",
+    ):
+        monkeypatch.setattr(runtime_graph, name, unexpected)
+    monkeypatch.setattr(runtime_graph, "create_agent_composite_backend", unexpected)
     monkeypatch.setattr(summary_module, "load_chat_model", unexpected)
-    cleanup = await agent_class().get_graph(context=context, checkpoint_only=True)
+    monkeypatch.setattr(chatbot_graph, "build_prompt_with_context", unexpected)
+    cleanup = await chatbot_graph.ChatbotAgent().get_graph(context=context, checkpoint_only=True)
     assert set(cleanup.nodes) == set(original.nodes)
     assert set(cleanup.channels) == set(original.channels)
     await cancel_waitpoint_checkpoint(cleanup, config)
@@ -204,6 +195,7 @@ async def test_image_fallback_uses_authorized_tools_from_shipping_middleware_ord
     """生产装配下，图片回退与实际模型看到的授权工具集一致。"""
     from langchain.agents.middleware.types import ModelRequest
     from langchain_core.messages import ToolMessage
+
     from yuxi.modules.agents.runtime.middlewares import authorization
     from yuxi.modules.extensions.tools.builtin.ocr_parse_file import ocr_parse_file
 
@@ -213,15 +205,14 @@ async def test_image_fallback_uses_authorized_tools_from_shipping_middleware_ord
     context.registered_builtin_tool_names = {"ocr_parse_file"}
     context.mcp_tool_servers = {}
     context.skill_runtime_snapshot = {"preloaded_skills": [], "effective_skills": [], "runtime_skills": {}}
-    _patch_common_graph_deps(monkeypatch, chatbot_graph, {})
-    monkeypatch.setattr(chatbot_graph, "create_memory_middleware", AsyncMock(return_value=None))
-    monkeypatch.setattr(chatbot_graph, "create_cooperation_middleware", lambda _context: None)
+    _patch_common_graph_deps(monkeypatch, {})
     monkeypatch.setattr(authorization, "refresh_execution_authorization", AsyncMock(return_value={}))
-    middlewares = await chatbot_graph._build_middlewares(context, object())
+    graph = await runtime_graph.build_agent_graph(context, prompt_builder=lambda _: "", state_schema=BaseState, checkpoint_only=True)
+    middlewares = graph["middleware"]
     wrappers = [
         middleware
         for middleware in middlewares
-        if isinstance(middleware, (authorization.RuntimeAuthorizationMiddleware, chatbot_graph.ImageInputCompatibilityMiddleware))
+        if isinstance(middleware, (authorization.RuntimeAuthorizationMiddleware, runtime_graph.ImageInputCompatibilityMiddleware))
     ]
     seen_tools = []
 
@@ -262,6 +253,7 @@ async def test_usage_counts_actual_authorized_and_bridged_model_request(monkeypa
     from langchain.agents.middleware.types import ModelRequest, ModelResponse
     from langchain_core.messages import AIMessage, ToolMessage
     from langchain_openai import ChatOpenAI
+
     from yuxi.modules.agents.runtime.middlewares import authorization
     from yuxi.modules.extensions.tools.builtin.ocr_parse_file import ocr_parse_file
 
@@ -270,11 +262,10 @@ async def test_usage_counts_actual_authorized_and_bridged_model_request(monkeypa
     context.registered_builtin_tool_names = {"ocr_parse_file"}
     context.mcp_tool_servers = {}
     context.skill_runtime_snapshot = {"preloaded_skills": [], "effective_skills": [], "runtime_skills": {}}
-    _patch_common_graph_deps(monkeypatch, chatbot_graph, {})
-    monkeypatch.setattr(chatbot_graph, "create_memory_middleware", AsyncMock(return_value=None))
-    monkeypatch.setattr(chatbot_graph, "create_cooperation_middleware", lambda _context: None)
+    _patch_common_graph_deps(monkeypatch, {})
     monkeypatch.setattr(authorization, "refresh_execution_authorization", AsyncMock(return_value={}))
-    middlewares = await chatbot_graph._build_middlewares(context, object())
+    graph = await runtime_graph.build_agent_graph(context, prompt_builder=lambda _: "", state_schema=BaseState, checkpoint_only=True)
+    middlewares = graph["middleware"]
     wrappers = [
         m
         for m in middlewares
@@ -282,8 +273,8 @@ async def test_usage_counts_actual_authorized_and_bridged_model_request(monkeypa
             m,
             (
                 authorization.RuntimeAuthorizationMiddleware,
-                chatbot_graph.ImageInputCompatibilityMiddleware,
-                chatbot_graph.TokenUsageMiddleware,
+                runtime_graph.ImageInputCompatibilityMiddleware,
+                runtime_graph.TokenUsageMiddleware,
             ),
         )
     ]
@@ -311,7 +302,7 @@ async def test_usage_counts_actual_authorized_and_bridged_model_request(monkeypa
     response = await handler(request)
     actual = received[0]
     usage = response.command.update["token_usage"]
-    counter = next(m for m in wrappers if isinstance(m, chatbot_graph.TokenUsageMiddleware))
+    counter = next(m for m in wrappers if isinstance(m, runtime_graph.TokenUsageMiddleware))
     assert actual.tools == []
     assert [message.type for message in actual.messages] == ["tool", "human"]
     assert usage["tool_count"] == len(actual.tools)

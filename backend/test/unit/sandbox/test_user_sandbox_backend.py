@@ -239,9 +239,9 @@ async def test_async_file_tools_delegate_to_native_sync_implementations(backend)
 
 def test_agent_filesystem_tools_do_not_expose_delete(backend):
     """检查真实注册的模型工具，恢复删除暴露时必须失败。"""
-    from yuxi.modules.agents.runtime.middlewares.filesystem import create_agent_filesystem_middleware
+    from yuxi.modules.agents.runtime.middlewares.filesystem import YuxiFilesystemMiddleware
 
-    middleware = create_agent_filesystem_middleware(backend=backend)
+    middleware = YuxiFilesystemMiddleware(backend=backend)
     names = {tool.name for tool in middleware.tools}
     assert "read_file" in names
     assert "delete" not in names

@@ -10,18 +10,21 @@ from test.integration.services.agent_input_fixtures import SCOPE
 from test.integration.support.module_audit import serve_http
 from yuxi.api.dependencies.auth import get_db, get_required_user
 from yuxi.api.routers.agents.mentions import mention_router
+from yuxi.modules.agents.models.definitions import Agent
+from yuxi.modules.agents.models.personal_assistants import PersonalAssistant
 from yuxi.modules.agents.repositories.messages import MessageRepository
 from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.agents.services.memory import read_thread_messages
 from yuxi.modules.identity.models import APIKey, Department, User
 from yuxi.modules.identity.security import AuthUtils
+from yuxi.modules.workspace.models import Project
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration, pytest.mark.self_managed_resources]
 pytest_plugins = ["test.integration.services.agent_input_fixtures"]
 
 
 async def test_session_mentions_only_search_titles_and_keep_user_app_scope(sessions):
-    """正文命中、其他用户、APP、归档和通配符均不能混入标题结果。"""
+    """正文、个人助理、其他用户、APP、归档和通配符均不能混入标题结果。"""
     query = r"方案%_\设计"
     async with sessions() as db:
         await db.execute(
@@ -56,6 +59,24 @@ async def test_session_mentions_only_search_titles_and_keep_user_app_scope(sessi
             )
             row.status = status
             await MessageRepository(db).add_message(row.id, "user", query + " 私密正文")
+        personal_agent = Agent(slug="personal-mention", name="个人助理", backend_id="ChatbotAgent", share_config={}, created_by=SCOPE.uid)
+        db.add_all(
+            [
+                personal_agent,
+                Project(
+                    id="personal-project",
+                    uid=SCOPE.uid,
+                    selection_status="implicit",
+                    workdir_path="agents/assistant",
+                    directory_mode="linked",
+                ),
+            ]
+        )
+        await db.flush()
+        await repo.add_session(
+            uid=SCOPE.uid, agent_id=personal_agent.slug, title=query, thread_id="personal-root", project_id="personal-project"
+        )
+        db.add(PersonalAssistant(uid=SCOPE.uid, agent_id=personal_agent.id, project_id="personal-project", main_thread_id="personal-root"))
         await db.commit()
 
     app = FastAPI()

@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from yuxi.modules.agents.runtime.agent_backends.chatbot import graph as chatbot_graph
+from yuxi.modules.agents.runtime import graph as runtime_graph
 from yuxi.modules.agents.runtime.tool_approval import create_tool_approval_middleware, normalize_tool_approval_mode
 
 PROJECT_ROOT = "/home/user/workspace/projects/11111111-1111-4111-8111-111111111111"
@@ -57,25 +57,19 @@ def test_default_mode_without_current_project_keeps_writes_behind_approval():
 
 @pytest.mark.asyncio
 async def test_chatbot_graph_assembles_approval_with_current_project(monkeypatch):
-    monkeypatch.setattr(chatbot_graph, "create_agent_filesystem_middleware", lambda *_args, **_kwargs: object())
-    monkeypatch.setattr(
-        chatbot_graph,
-        "create_summary_middleware_from_context",
-        lambda _context, **_kwargs: object(),
-    )
-
-    async def no_optional_middleware(_context):
-        return None
-
-    monkeypatch.setattr(chatbot_graph, "create_memory_middleware", no_optional_middleware)
-    monkeypatch.setattr(chatbot_graph, "create_cooperation_middleware", lambda context: None)
+    monkeypatch.setattr(runtime_graph, "create_summary_middleware_from_context", lambda _context, **kwargs: object())
+    monkeypatch.setattr(runtime_graph, "create_agent", lambda **kwargs: kwargs)
+    monkeypatch.setattr(runtime_graph, "get_langgraph_checkpointer", lambda _: None)
     context = SimpleNamespace(
         model="test-provider:test-model",
         tool_approval_mode="default",
         workdir_relative_path="projects/11111111-1111-4111-8111-111111111111",
     )
 
-    middlewares = await chatbot_graph._build_middlewares(context, object())
+    from yuxi.modules.agents.runtime.state import BaseState
+
+    graph = await runtime_graph.build_agent_graph(context, prompt_builder=lambda _: "", state_schema=BaseState, checkpoint_only=True)
+    middlewares = graph["middleware"]
     approval = next(middleware for middleware in middlewares if hasattr(middleware, "interrupt_on"))
 
     assert _requires_approval(approval, "write_file", f"{PROJECT_ROOT}/report.md") is False

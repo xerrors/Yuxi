@@ -9,3 +9,11 @@ def knowledge_enabled() -> bool:
     if value not in {"true", "false"}:
         raise ValueError("YUXI_KNOWLEDGE_ENABLED 必须为 true 或 false")
     return value == "true"
+
+
+def personal_assistant_enabled() -> bool:
+    """读取个人助理部署开关，默认关闭。"""
+    value = os.getenv("YUXI_PERSONAL_ASSISTANT_ENABLED", "false").strip().lower()
+    if value not in {"true", "false"}:
+        raise ValueError("YUXI_PERSONAL_ASSISTANT_ENABLED 必须为 true 或 false")
+    return value == "true"

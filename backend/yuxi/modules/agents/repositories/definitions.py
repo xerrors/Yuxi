@@ -113,7 +113,9 @@ class AgentRepository:
         visibility_user = await self._visibility_user(user)
         if visibility_user is None:
             return []
-        stmt = select(Agent)
+        from yuxi.modules.agents.models.personal_assistants import PersonalAssistant
+
+        stmt = select(Agent).where(~select(PersonalAssistant.uid).where(PersonalAssistant.agent_id == Agent.id).exists())
         result = await self.db.execute(stmt.order_by(Agent.is_default.desc(), Agent.id.asc()))
         agents = list(result.scalars().all())
         if visibility_user.role == "superadmin":
@@ -307,6 +309,10 @@ class AgentRepository:
             raise PermissionError("不能删除非自己创建的智能体")
         if is_builtin_agent(current):
             raise ValueError("内置智能体不能删除")
+        from yuxi.modules.agents.repositories.personal_assistants import is_personal_assistant
+
+        if await is_personal_assistant(self.db, current.slug):
+            raise ValueError("个人助理不能通过通用接口删除")
 
         # Thread 是接收与调度的先行锁；按共同顺序锁定，随后读取持久工作事实。
         result = await self.db.execute(

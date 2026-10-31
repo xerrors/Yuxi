@@ -64,7 +64,7 @@ async def _authorized_model_call(monkeypatch, middleware, request, handler, *, m
     context = request.runtime.context
     context.tools = getattr(context, "tools", [])
     context.mcps = getattr(context, "mcps", [])
-    context.middleware_tool_names = {"read_file"}
+    context.middleware_tool_names = {"read_file"} | getattr(context, "middleware_tool_names", set())
     context.registered_builtin_tool_names = {
         tool.name for tool in request.tools if tool.name not in context.mcp_tool_servers and tool.name != "read_file"
     }
@@ -312,8 +312,8 @@ async def test_resolve_skill_gated_tools_registers_local_skill_tools(monkeypatch
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("run_id", [None, "test-run"])
-async def test_base_tools_are_registered_once_without_configuration_or_skill(run_id):
-    """基础工具来自同一注册循环，空配置可用，重复选择不会重复注册。"""
+async def test_tool_resolver_only_registers_explicit_selection(run_id):
+    """通用解析器不隐式追加基础工具，只注册显式选择且去重。"""
     context = SimpleNamespace(
         run_id=run_id,
         tools=[],
@@ -332,10 +332,10 @@ async def test_base_tools_are_registered_once_without_configuration_or_skill(run
         },
     )
     tools = await resolve_configured_runtime_tools(context)
-    assert [tool.name for tool in tools] == ["ask_user_question", "mark_for_improvement"]
-    context.tools = ["mark_for_improvement", "ask_user_question", "present_artifacts"]
+    assert tools == []
+    context.tools = ["mark_for_improvement", "ask_user_question", "present_artifacts", "ask_user_question"]
     tools = await resolve_configured_runtime_tools(context)
-    assert [tool.name for tool in tools] == ["ask_user_question", "mark_for_improvement", "present_artifacts"]
+    assert [tool.name for tool in tools] == ["mark_for_improvement", "ask_user_question", "present_artifacts"]
 
 
 @pytest.mark.asyncio
@@ -343,6 +343,7 @@ async def test_unactivated_skill_cannot_hide_base_tools(monkeypatch):
     """Skill 声明基础工具依赖时，模型仍能看到基础工具，普通依赖保持隐藏。"""
     context = SimpleNamespace(
         tools=[],
+        middleware_tool_names={"ask_user_question", "mark_for_improvement"},
         mcps=[],
         mcp_tool_servers={},
         mcp_tools={},

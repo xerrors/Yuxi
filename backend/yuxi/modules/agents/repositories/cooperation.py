@@ -9,6 +9,7 @@ from yuxi.modules.agents.models.messages import Message
 from yuxi.modules.agents.models.runs import AGENT_RUN_TERMINAL_STATUSES, AgentRun
 from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.models.turns import AgentTurn
+from yuxi.modules.agents.repositories.sessions import exclude_personal_sessions
 from yuxi.modules.agents.runtime_locks import cooperation_lock_key, user_environment_lock_key
 from yuxi.modules.system.options import system_options
 
@@ -83,7 +84,7 @@ class CooperationRepository:
         )
         return bool(await self.db.scalar(select(or_(active_turn, active_run))))
 
-    async def summary(self, caller: Session, *, all_sessions: bool = False) -> list:
+    async def summary(self, caller: Session, *, all_sessions: bool = False, created_by_thread_id: str | None = None) -> list:
         """批量读取整树协作状态，不加载 checkpoint 或结果正文。"""
         members = list(
             (
@@ -92,6 +93,12 @@ class CooperationRepository:
                     .options(defer(Session.config_snapshot), defer(Session.extra_metadata))
                     .where(
                         *([] if all_sessions else [Session.tree_root_thread_id == caller.tree_root_thread_id]),
+                        *([exclude_personal_sessions()] if all_sessions else []),
+                        *(
+                            []
+                            if created_by_thread_id is None
+                            else [Session.created_by_run_id.in_(select(AgentRun.id).where(AgentRun.thread_id == created_by_thread_id))]
+                        ),
                         Session.uid == caller.uid,
                         Session.app_id == caller.app_id,
                         Session.status != "deleted",
@@ -105,7 +112,7 @@ class CooperationRepository:
             trees = {}
             for member in members:
                 trees.setdefault(member.tree_root_thread_id, []).append(member)
-            members = [member for tree in trees.values() for member in order_tree_members(tree)]
+            members = [member for tree in trees.values() for member in order_tree_members(tree, allow_hidden_parents=True)]
         else:
             members = order_tree_members(members)
         ids = [member.thread_id for member in members]
@@ -290,15 +297,20 @@ class CooperationRepository:
         return True
 
 
-def order_tree_members(members: list[Session]) -> list[Session]:
-    """从根开始按 parent 关系先序遍历；兄弟按名称排序，路径字符序不得决定层级。"""
+def order_tree_members(members: list[Session], *, allow_hidden_parents: bool = False) -> list[Session]:
+    """先序遍历成员；列表过滤后的父节点缺席不阻止子节点展示。"""
     children: dict[str | None, list[Session]] = {}
     for member in members:
         children.setdefault(member.parent_thread_id, []).append(member)
     for siblings in children.values():
         siblings.sort(key=lambda member: member.cooperation_name)
     ordered = []
-    pending = [member for member in members if member.parent_thread_id is None]
+    member_ids = {member.thread_id for member in members}
+    pending = [
+        member
+        for member in members
+        if member.parent_thread_id is None or (allow_hidden_parents and member.parent_thread_id not in member_ids)
+    ]
     while pending:
         member = pending.pop()
         ordered.append(member)

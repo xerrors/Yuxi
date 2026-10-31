@@ -1,7 +1,7 @@
 <template>
   <div
     class="input-box"
-    :class="[customClasses, { 'dragging-files': isDraggingFiles }]"
+    :class="[customClasses, { 'dragging-files': isDraggingFiles, 'compact-composer': compact }]"
     @click="handleInputBoxClick"
     @dragenter="handleDragEnter"
     @dragover="handleDragOver"
@@ -61,7 +61,7 @@
           </button>
         </div>
         <!-- 文件列表 -->
-        <div class="mention-group session-mention-group">
+        <div v-if="mentionEnabled" class="mention-group session-mention-group">
           <div class="mention-group-title">
             对话 <span class="session-search-hint">{{ mentionQuery ? '仅搜索标题' : '最近对话 · 输入标题搜索' }}</span>
           </div>
@@ -407,6 +407,8 @@ const props = defineProps({
     default: ''
   },
   enableUploads: { type: Boolean, default: false },
+  disableMentions: { type: Boolean, default: false },
+  compact: { type: Boolean, default: false },
   showOptionsLeft: {
     type: Boolean,
     default: true
@@ -417,7 +419,7 @@ const emit = defineEmits(['update:modelValue', 'send', 'keydown', 'paste-images'
 
 // @ 提及功能是否启用
 const mentionEnabled = computed(() => {
-  return !!props.mention || props.enableUploads
+  return !props.disableMentions && (!!props.mention || props.enableUploads)
 })
 
 const mentionDisplayLabels = computed(() => buildMentionDisplayLabels(props.mention || {}))
@@ -619,11 +621,17 @@ const renderEditorContent = (raw = '') => {
   unmountEditorMentions()
   editor.replaceChildren()
   parseMentionText(raw).forEach((segment) => {
-    editor.appendChild(
-      segment.kind === 'text'
-        ? document.createTextNode(segment.text)
-        : createEditorMentionElement(segment)
-    )
+    if (segment.kind !== 'text') {
+      editor.appendChild(createEditorMentionElement(segment))
+    } else if (props.compact) {
+      // 显式换行用 BR 表示，浏览器才能在末尾换行后正确删除和移动光标。
+      segment.text.split('\n').forEach((line, index) => {
+        if (index) editor.appendChild(document.createElement('br'))
+        if (line) editor.appendChild(document.createTextNode(line))
+      })
+    } else {
+      editor.appendChild(document.createTextNode(segment.text))
+    }
   })
   lastSyncedEditorValue = String(raw || '')
 }
@@ -802,6 +810,12 @@ const updateMentionItems = (query = '') => {
   activeAbortController?.abort()
   activeAbortController = null
   const currentId = ++searchRequestId.value
+  if (!mentionEnabled.value) {
+    mentionItems.value = { sessions: [], files: [], knowledgeBases: [], mcps: [], skills: [], agents: [] }
+    sessionSearchLoading.value = false
+    sessionSearchError.value = false
+    return
+  }
   sessionSearchLoading.value = true
   sessionSearchError.value = false
 
@@ -1047,7 +1061,7 @@ const handleMentionNavigation = (e) => {
   }
 }
 
-const hasOptionsLeft = computed(() => props.showOptionsLeft && mentionEnabled.value)
+const hasOptionsLeft = computed(() => props.showOptionsLeft && (mentionEnabled.value || props.enableUploads))
 const addActions = computed(() => {
   if (!props.enableUploads || props.disabled) return []
   return [
@@ -1110,7 +1124,7 @@ const isDraggingFiles = ref(false)
 const hasTransferFiles = (dataTransfer) =>
   Array.from(dataTransfer?.types || []).some((type) => type === 'Files')
 
-const canAcceptUploadFiles = () => !props.disabled && !props.isLoading
+const canAcceptUploadFiles = () => props.enableUploads && !props.disabled
 
 /** 剪贴板里的全部图片：一次粘多张时不能只留第一张。 */
 const getImageFilesFromClipboard = (clipboardData) => {
@@ -1157,6 +1171,9 @@ const handleMentionDeletion = (e) => {
 
 // 处理键盘事件
 const handleKeyPress = (e) => {
+  // 输入法确认候选词期间，按键不参与发送或换行处理。
+  if (isComposing.value || e.isComposing || e.keyCode === 229) return
+
   // @ 提及键盘导航
   if (mentionPopupVisible.value) {
     if (['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape'].includes(e.key)) {
@@ -1167,6 +1184,16 @@ const handleKeyPress = (e) => {
 
   if (handleMentionDeletion(e)) {
     return
+  }
+
+  if (props.compact && e.key === 'Backspace') {
+    const range = getRawSelectionRange()
+    const value = getEditorRawValue()
+    if (range.collapsed && value[range.start - 1] === '\n') {
+      e.preventDefault()
+      updateRawValue(replaceRawRange(value, range.start - 1, range.end, ''), range.start - 1)
+      return
+    }
   }
 
   if (e.key === 'Enter' && e.shiftKey) {
@@ -1296,6 +1323,10 @@ const adjustTextareaHeight = () => {
   }
 
   const textarea = inputRef.value
+  if (props.compact) {
+    textarea.style.height = ''
+    return
+  }
   textarea.style.height = 'auto'
   textarea.style.height = `${textarea.scrollHeight}px`
 }
@@ -1337,6 +1368,8 @@ watch(
   () => inputRef.value?.querySelectorAll('[data-vue-mention]').forEach(renderEditorMention),
   { deep: true }
 )
+
+watch(() => props.compact, () => nextTick(adjustTextareaHeight))
 
 // 监听输入值变化
 watch(inputValue, (value) => {
@@ -1518,6 +1551,40 @@ defineExpose({
 
   &[contenteditable='false'] {
     cursor: not-allowed;
+  }
+}
+
+.input-box.compact-composer {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto;
+  grid-template-areas:
+    'top top top'
+    'options input send'
+    'bottom bottom bottom';
+  align-items: end;
+  gap: 0 8px;
+  padding: 7px 8px;
+  border-radius: 24px;
+  box-shadow: none;
+
+  .user-input {
+    min-width: 0;
+    min-height: 22.5px;
+    max-height: 180px;
+    margin: 4.75px 0;
+  }
+
+  .bottom-slot {
+    grid-area: bottom;
+  }
+
+  .user-input.mention-editor:empty::before {
+    color: var(--gray-500);
+  }
+
+  // 末尾换行也需要占据可编辑的一行，不改写编辑器 DOM 或光标。
+  .user-input::after {
+    content: '\200b';
   }
 }
 

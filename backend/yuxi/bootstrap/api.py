@@ -6,7 +6,7 @@ from collections.abc import Callable
 from fastapi import FastAPI
 
 from yuxi import get_version
-from yuxi.bootstrap.capabilities import knowledge_enabled
+from yuxi.bootstrap.capabilities import knowledge_enabled, personal_assistant_enabled
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.infrastructure.postgres.schema import require_current_schema
@@ -31,6 +31,7 @@ async def startup(app: FastAPI) -> None:
 
     app.state.startup_complete = False
     app.state.startup_components = {}
+    personal_assistant_enabled()
     knowledge = knowledge_enabled()
 
     if knowledge:

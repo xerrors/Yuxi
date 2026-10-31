@@ -13,8 +13,10 @@ import {
   MessageCircle,
   SquarePen,
   Search,
+  Bot,
 } from '@lucide/vue'
 
+import { healthApi } from '@/apis/system_api'
 import { useConfigStore } from '@/modules/settings/model/config'
 import { useAgentStore } from '@/modules/agents/model/agent'
 import { useChatThreadsStore } from '@/modules/session/model/chatThreads'
@@ -44,6 +46,7 @@ const { activeCount: activeCountRef, isDrawerOpen } = storeToRefs(jobsStore)
 const { threadCreationInFlight } = storeToRefs(chatThreadsStore)
 
 // Add state for settings modal
+const personalAssistantEnabled = ref(false)
 const showSettingsModal = ref(false)
 const settingsInitialTab = ref('')
 
@@ -98,6 +101,7 @@ const handleGlobalKeydown = (e) => {
 
 onMounted(() => {
   window.addEventListener('keydown', handleGlobalKeydown)
+  void healthApi.getDiscovery().then((data) => { personalAssistantEnabled.value = data?.capabilities?.features?.personal_assistant === true }).catch(() => {})
   // 各 Store 自行处理错误，导航不等待无依赖的品牌、知识库或配置请求。
   void infoStore.loadInfoConfig()
   void getRemoteKnowledgeBase()
@@ -154,6 +158,15 @@ const mainList = computed(() => {
       activeIcon: MessageCircle
     }
   ]
+
+  if (personalAssistantEnabled.value) {
+    items.push({
+      name: '个人助理',
+      path: '/assistant',
+      icon: Bot,
+      activeIcon: Bot
+    })
+  }
 
   items.push({
     name: '智能体',
@@ -329,6 +342,7 @@ provide('settingsModal', {
           v-show="!item.hidden"
           class="nav-item"
           :class="{ active: isNavItemActive(item) }"
+          :aria-label="item.name"
           :active-class="item.action ? '' : 'active'"
           @click.stop
         >
@@ -338,6 +352,7 @@ provide('settingsModal', {
               class="icon"
               :is="isNavItemActive(item) ? item.activeIcon : item.icon"
               size="18"
+              aria-hidden="true"
             />
           </a-tooltip>
           <span class="nav-text">{{ item.name }}</span>

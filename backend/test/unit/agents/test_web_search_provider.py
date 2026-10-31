@@ -301,7 +301,7 @@ async def test_runtime_excludes_unconfigured_web_tools_and_binds_after_configura
 
     context = SimpleNamespace(tools=["web_search", "web_fetch"], mcps=[], skill_runtime_snapshot=None)
     configured["keys"] = {provider: "" for provider in WEB_PROVIDER_OPTIONS}
-    assert {tool.name for tool in await resolve_configured_runtime_tools(context)} == {"ask_user_question", "mark_for_improvement"}
+    assert await resolve_configured_runtime_tools(context) == []
     configured["keys"]["doubao"] = "new-doubao-key"
     configured["keys"]["deepseek"] = "new-deepseek-key"
     assert {tool.name for tool in await resolve_configured_runtime_tools(context)} >= {"web_search", "web_fetch"}

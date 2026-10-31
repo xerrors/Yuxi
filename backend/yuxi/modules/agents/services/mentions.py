@@ -33,7 +33,9 @@ MAX_MENTION_CANDIDATES = 500
 
 async def search_session_mentions(*, db, scope: ActorScope, query: str) -> list[dict]:
     """仅按标题列出当前用户与 APP 可见的最近对话。"""
-    rows, _ = await SessionRepository(db).search_sessions(uid=scope.uid, app_id=scope.app_id, query=query, limit=10, title_only=True)
+    rows, _ = await SessionRepository(db).search_sessions(
+        uid=scope.uid, app_id=scope.app_id, query=query, limit=10, title_only=True, exclude_personal=True
+    )
     return [
         {
             "thread_id": row["agent_session"].thread_id,

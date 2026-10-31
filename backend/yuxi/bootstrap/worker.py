@@ -3,7 +3,7 @@
 import asyncio
 import inspect
 
-from yuxi.bootstrap.capabilities import knowledge_enabled
+from yuxi.bootstrap.capabilities import knowledge_enabled, personal_assistant_enabled
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.infrastructure.postgres.schema import require_current_schema
@@ -40,6 +40,7 @@ async def startup(ctx: dict) -> None:
     if not isinstance(ctx, dict):
         raise TypeError("ARQ worker context 必须是字典")
     ctx["worker_id"] = WORKER_ID
+    personal_assistant_enabled()
     knowledge = knowledge_enabled()
     if knowledge:
         require_knowledge_delegation_config()

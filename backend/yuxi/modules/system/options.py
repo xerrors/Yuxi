@@ -26,6 +26,12 @@ system_options = Option(
                 "choices": ["", *FETCH_PROVIDER_IDS],
             },
             {
+                "key": "personal_assistant_model",
+                "label": "个人助理模型",
+                "type": "model",
+                "default": "",
+            },
+            {
                 "key": "default_model",
                 "label": "默认对话模型",
                 "type": "model",

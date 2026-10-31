@@ -4,6 +4,7 @@ from yuxi.api.routers.agents.feedback import router as feedback_router
 from yuxi.api.routers.agents.files import router as agent_files_router
 from yuxi.api.routers.agents.management import agent_router
 from yuxi.api.routers.agents.mentions import mention_router
+from yuxi.api.routers.agents.personal import router as personal_router
 from yuxi.api.routers.agents.references import reference_router
 from yuxi.api.routers.agents.session_links import router as session_links_router
 from yuxi.api.routers.agents.tracing import trace_router
@@ -38,6 +39,7 @@ router.include_router(public_agents_router)
 router.include_router(system_routes)  # /api/system/* 系统状态与全局配置
 router.include_router(auth)  # /api/auth/* 登录、用户信息与 CLI 浏览器登录授权
 router.include_router(agent_files_router)  # /api/agent/files* 与 /api/agent/images 产品预处理
+router.include_router(personal_router)
 router.include_router(agent_router)  # /api/agent/* 智能体管理与运行态
 router.include_router(session_links_router)
 router.include_router(feedback_router)  # /api/agent/threads/* Web 用户反馈

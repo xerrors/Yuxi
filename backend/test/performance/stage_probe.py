@@ -154,6 +154,7 @@ def install(probe, app=None):
         "yuxi.modules.extensions.skills.shared",
         "yuxi.modules.agents.runtime.sandbox.backend",
         "yuxi.modules.agents.runtime.agent_backends.chatbot.graph",
+        "yuxi.modules.agents.runtime.graph",
         "yuxi.api.dependencies.auth",
     )
     for name in modules:

@@ -73,7 +73,9 @@ def test_runtime_fields_are_declared_and_excluded_from_user_configuration():
 async def test_dynamic_mcp_loading_requires_prior_tool_source_assembly():
     """Skill 动态建连不能在缺失来源记录时开始。"""
     from unittest.mock import AsyncMock
+
     from langchain.agents.middleware.types import ModelRequest
+
     from yuxi.modules.agents.runtime.middlewares.skills import SkillsMiddleware
 
     context = BaseContext()

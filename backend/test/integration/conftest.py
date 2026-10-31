@@ -41,8 +41,7 @@ def _has_shared_integration_tests(request: pytest.FixtureRequest) -> bool:
     """存在非自管测试时才触碰共享服务。"""
     integration_root = Path(__file__).parent.resolve()
     return any(
-        item.path.resolve().is_relative_to(integration_root)
-        and item.get_closest_marker("self_managed_resources") is None
+        item.path.resolve().is_relative_to(integration_root) and item.get_closest_marker("self_managed_resources") is None
         for item in request.session.items
     )
 
@@ -53,6 +52,15 @@ def load_orm_models():
     from yuxi.infrastructure.postgres.models import load_models
 
     load_models()
+
+
+@pytest.fixture
+def enabled_personal_assistant(monkeypatch):
+    """在当前用例中启用助理并注册 Backend，结束后恢复进程原状态。"""
+    from yuxi.modules.agents.runtime import agent_backends
+
+    monkeypatch.setenv("YUXI_PERSONAL_ASSISTANT_ENABLED", "true")
+    monkeypatch.setitem(agent_backends.AGENT_BACKENDS, "PersonalAssistantAgent", agent_backends.PersonalAssistantAgent)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -191,6 +199,7 @@ async def knowledge_base_resource(
     admin_headers: dict[str, str],
 ) -> AsyncGenerator[dict, None]:
     import time
+
     from test.support.knowledge import default_embedding_model_spec
 
     unique_id = uuid.uuid4().hex

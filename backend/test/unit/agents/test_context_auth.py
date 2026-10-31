@@ -176,7 +176,9 @@ async def test_resolve_agent_resource_options_empty_fields_loads_nothing(monkeyp
     monkeypatch.setitem(
         sys.modules,
         "yuxi.modules.knowledge.mcp.client",
-        types.SimpleNamespace(knowledge_resource_options=fail_if_loaded, KnowledgeMCPError=RuntimeError, KnowledgeMCPUnavailable=RuntimeError),
+        types.SimpleNamespace(
+            knowledge_resource_options=fail_if_loaded, KnowledgeMCPError=RuntimeError, KnowledgeMCPUnavailable=RuntimeError
+        ),
     )
 
     assert await context_module.resolve_agent_resource_options(set(), db=object(), user=object()) == {}
@@ -709,6 +711,8 @@ async def test_workspace_prompt_appends_only_available_agent_context(monkeypatch
     await context_module._append_workspace_agent_prompt(context)
     assert context.system_prompt == "快照中的系统提示词" + (f"\n\n{workspace_text}" if workspace_text else "")
     assert context.thread_id == "thread-1" and context.uid == "user-1"
+
+
 @pytest.mark.asyncio
 async def test_refresh_does_not_pair_replaced_bound_skill_with_old_body(monkeypatch):
     """专属 Skill 同名替换后，新身份必须对应新正文。"""
@@ -738,3 +742,45 @@ async def test_refresh_does_not_pair_replaced_bound_skill_with_old_body(monkeypa
     monkeypatch.setattr(skill_runtime, "resolve_runtime_skills_for_context", resolve)
     await context_module.refresh_agent_context_resources(context, db=None, user=None)
     assert context.skill_runtime_snapshot["preloaded_skill_contents"]["bound"] == "new body"
+
+
+async def test_personal_empty_shared_selection_keeps_personal_skills(monkeypatch, tmp_path):
+    """助理不选择共享 Skill，个人 Skill 仍经普通解析加入且依赖须激活。"""
+    from yuxi.modules.agents.runtime.agent_backends.personal_assistant.graph import PersonalAssistantContext
+    from yuxi.modules.agents.runtime.middlewares.authorization import tool_allowed
+    from yuxi.modules.extensions.skills import runtime as skills_runtime
+    from yuxi.modules.extensions.skills.resolved import ResolvedSkill
+
+    (tmp_path / "SKILL.md").write_text("# 私人工作指南\n")
+    item = ResolvedSkill(
+        id="personal-guide",
+        slug="personal-guide",
+        name="私人指南",
+        description="测试",
+        source_type="local",
+        source_scope="personal",
+        source_dir=tmp_path,
+        enabled=True,
+        created_by="person",
+        share_config=None,
+        tool_dependencies=["present_artifacts", "ask_user_question"],
+        mcp_dependencies=["remote"],
+        skill_dependencies=[],
+    )
+    monkeypatch.setattr(context_module, "resolve_agent_resource_options", AsyncMock(return_value={"tools": [{"key": "web_search"}]}))
+    monkeypatch.setattr(skills_runtime, "list_personal_skills", AsyncMock(return_value=[item]))
+    monkeypatch.setattr(skills_runtime, "lock_accessible_shared_skills_for_runtime", AsyncMock(return_value=[]))
+    context = PersonalAssistantContext(uid="person")
+    await context_module.refresh_agent_context_resources(context, db=object(), user=types.SimpleNamespace(uid="person"))
+    assert context.tools == ["web_search"]
+    assert context.mcps == context.knowledges == context.preload_skills == []
+    assert context.skills == ["personal-guide"]
+    assert context.skill_runtime_snapshot["effective_skills"] == ["personal-guide"]
+    assert context.skill_runtime_snapshot["preloaded_skills"] == []
+    context.registered_builtin_tool_names = {"present_artifacts", "ask_user_question"}
+    context.mcp_tool_servers = {"remote_tool": "remote"}
+    policy = {"remote": set()}
+    for name in ("present_artifacts", "ask_user_question", "remote_tool"):
+        assert not tool_allowed(context, name, {}, policy)
+        assert tool_allowed(context, name, {"activated_skills": ["personal-guide"]}, policy)
+        assert not tool_allowed(context, name, {"activated_skills": ["unselected"]}, policy)

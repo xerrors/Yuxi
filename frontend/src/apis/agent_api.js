@@ -30,6 +30,11 @@ export const agentApi = {
    */
   getAgents: () => apiGet('/api/agent'),
 
+  getPersonalAssistant: () => apiGet('/api/agents/personal'),
+  getPersonalSessions: () => apiGet('/api/agents/personal/sessions'),
+  createPersonalAssistant: (data) => apiPost('/api/agents/personal', data),
+  updatePersonalAssistant: (data) => apiRequest('/api/agents/personal', { method: 'PATCH', body: JSON.stringify(data) }),
+
   getAgentBoundSkill: (slug) => apiGet(`/api/agent/${encodeURIComponent(slug)}/self-skill`),
 
   createAgentBoundSkill: (slug) => apiPost(`/api/agent/${encodeURIComponent(slug)}/self-skill`),

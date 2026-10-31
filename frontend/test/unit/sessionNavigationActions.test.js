@@ -56,6 +56,18 @@ test('旧账号归档响应不能将新账号的同名线程导航到空白页',
   assert.equal(navigations, 0)
 })
 
+test('详情加载后的个人助理与子会话不进入侧栏及最近搜索', async (t) => {
+  const h = await setup(t)
+  h.chatThreadsStore.threads = [
+    { id: 'ordinary', agent: { id: 'chat' }, yuxi: {} },
+    { id: 'assistant', agent: { id: 'personal' }, yuxi: {} },
+    { id: 'child', agent: { id: 'chat' }, yuxi: { parent_session_id: 'ordinary' } }
+  ]
+  h.state.agentStore.agentDetails.personal = { is_personal_assistant: true }
+  assert.deepEqual(h.state.visibleThreads.value.map(thread => thread.id), ['ordinary'])
+  assert.equal(h.chatThreadsStore.threads.length, 3, '隐藏导航不应丢弃正在使用的会话详情')
+})
+
 test('旧账号重命名响应不能改写新账号项目或解除其等待状态', async (t) => {
   let finish, replacements = 0
   const h = await setup(t)

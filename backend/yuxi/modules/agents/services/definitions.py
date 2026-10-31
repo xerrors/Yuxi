@@ -42,6 +42,8 @@ async def set_default_agent_definition(db, *, agent: Agent, operator: User) -> A
 
 async def create_agent_definition(db, *, operator, skill_upload=None, **fields):
     """提交 Agent、Context 与可选专属包，共享资源通过独立入口创建。"""
+    if fields["backend_id"] == "PersonalAssistantAgent":
+        raise ValueError("个人助理只能通过专用入口创建")
     backend = get_agent_backend(fields["backend_id"])
     if fields.pop("set_default", False):
         raise ValueError("默认智能体已固定为内置智能助手")
@@ -172,6 +174,10 @@ async def serialize_agent_definition(
 ) -> dict[str, Any]:
     """装配治理权限、后端元数据与配置项。"""
     data = agent.to_dict()
+    if agent.backend_id == "PersonalAssistantAgent":
+        data["is_personal_assistant"] = True
+        include_configurable_items = False
+
     data["share_config_invalid"] = False
     try:
         data["share_config"] = normalize_permission_config(agent.share_config)

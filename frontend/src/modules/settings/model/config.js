@@ -21,5 +21,5 @@ export const useConfigStore = defineStore('config', () => {
     return data
   }
 
-  return { config, setConfigValue, refreshConfig }
+  return { config, setConfig, setConfigValue, refreshConfig }
 })

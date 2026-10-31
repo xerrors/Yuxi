@@ -17,7 +17,6 @@ from yuxi.modules.agents.runtime.middlewares.skills import injected_skill_identi
 from yuxi.modules.agents.runtime.state import BaseState, RuntimeWarning
 from yuxi.modules.extensions.mcp.service import available_mcp_servers, runtime_mcp_failure
 from yuxi.modules.extensions.skills.runtime import connected_skills, expand_skill_closure, sync_agent_context_skills
-from yuxi.modules.extensions.tools.builtin import BASE_TOOL_NAMES
 from yuxi.modules.identity.models import User
 from yuxi.shared.errors import PermissionDeniedError
 
@@ -105,7 +104,7 @@ def tool_allowed(context, name: str, state: dict, mcp_policy: dict[str, set[str]
     if servers is None or registered is None or snapshot is None:
         return False
     allowed_mcps = set(context.mcps)
-    allowed_tools = set(context.tools) | set(BASE_TOOL_NAMES)
+    allowed_tools = set(context.tools)
     active = set(state.get("activated_skills", [])) | set(snapshot["preloaded_skills"])
     for slug in connected_skills(
         list(active & set(snapshot["effective_skills"])),
@@ -117,9 +116,7 @@ def tool_allowed(context, name: str, state: dict, mcp_policy: dict[str, set[str]
     server = servers.get(name)
     if server:
         return server in allowed_mcps and server in mcp_policy and name not in mcp_policy[server]
-    if name in registered:
-        return name in allowed_tools
-    return name in getattr(context, "middleware_tool_names", set())
+    return name in getattr(context, "middleware_tool_names", set()) or (name in registered and name in allowed_tools)
 
 
 async def refresh_execution_authorization(context, *, state=None) -> dict[str, set[str]]:

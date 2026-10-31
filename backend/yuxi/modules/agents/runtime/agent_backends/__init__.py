@@ -1,9 +1,14 @@
+from yuxi.bootstrap.capabilities import personal_assistant_enabled
 from yuxi.modules.agents.runtime.agent_backends.chatbot.graph import ChatbotAgent
+from yuxi.modules.agents.runtime.agent_backends.personal_assistant.graph import PersonalAssistantAgent
 from yuxi.modules.agents.runtime.base import BaseAgent
 
 AGENT_BACKENDS: dict[str, type[BaseAgent]] = {
     "ChatbotAgent": ChatbotAgent,
 }
+
+if personal_assistant_enabled():
+    AGENT_BACKENDS["PersonalAssistantAgent"] = PersonalAssistantAgent
 
 
 class AgentBackendNotFoundError(ValueError):
@@ -24,4 +29,5 @@ async def list_agent_backend_info() -> list[dict]:
     return [
         {**await get_agent_backend(backend_id).get_info(include_configurable_items=False), "backend_id": backend_id}
         for backend_id in AGENT_BACKENDS
+        if backend_id != "PersonalAssistantAgent"
     ]

@@ -2,7 +2,7 @@ import { computed, onScopeDispose, ref, watch } from 'vue'
 import { agentApi } from '@/apis'
 
 /** 一次读取完整协作摘要，状态查询不读取 checkpoint。 */
-export function useSessionCooperation({ threadId, enabled, onSnapshot }) {
+export function useSessionCooperation({ threadId, enabled, onSnapshot, loadSummary = (id) => agentApi.getCooperationSummary(id) }) {
   const tree = ref(null)
   const error = ref('')
   const loading = ref(false)
@@ -13,7 +13,7 @@ export function useSessionCooperation({ threadId, enabled, onSnapshot }) {
     const id = threadId.value
     loading.value = true
     try {
-      const response = await agentApi.getCooperationSummary(id)
+      const response = await loadSummary(id)
       if (current !== generation) return
       tree.value = response
       error.value = ''

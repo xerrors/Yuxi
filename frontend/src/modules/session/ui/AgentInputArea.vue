@@ -17,6 +17,8 @@
       :mention="mention"
       :thread-id="threadId"
       enable-uploads
+      :disable-mentions="personalMode"
+      :compact="personalMode"
       @upload-attachment="handleAttachmentUpload"
       @add-images="openImagePicker"
       @send="handleSend"
@@ -115,6 +117,7 @@ const props = defineProps({
   sendButtonDisabled: { type: Boolean, default: false },
   mention: { type: Object, default: () => null },
   threadId: { type: String, default: '' },
+  personalMode: { type: Boolean, default: false },
   showExtra: { type: Boolean, default: false },
   attachments: {
     type: Array,
@@ -135,7 +138,9 @@ const inputRef = ref(null)
 const currentImages = ref([])
 let localIdSeed = 0
 const nextLocalId = () => `image-${(localIdSeed += 1)}`
-const placeholder = '问点什么？使用 @ 可以引用对话、文件、知识库、技能或智能体。'
+const placeholder = computed(() => props.personalMode
+  ? '向你的助理发送消息'
+  : '问点什么？使用 @ 可以引用对话、文件、知识库、技能或智能体。')
 
 const previewAttachments = computed(() => normalizeAttachmentPreviews(props.attachments))
 const updateValue = (val) => {

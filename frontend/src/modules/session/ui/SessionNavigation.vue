@@ -8,6 +8,7 @@ import { MessageCirclePlus, PanelLeft, Search } from '@lucide/vue'
 import { useChatThreadsStore } from '../model/chatThreads'
 import { useChatUIStore } from '../model/chatUI'
 import { useProjectsStore } from '@/modules/projects'
+import { useAgentStore } from '@/modules/agents'
 import { useInfoStore } from '@/modules/settings'
 import { useUserStore } from '@/modules/identity'
 import { searchWorkspaceFiles } from '@/apis/workspace_api'
@@ -23,6 +24,7 @@ const props = defineProps({
 const route = useRoute()
 const router = useRouter()
 const chatThreadsStore = useChatThreadsStore()
+const agentStore = useAgentStore()
 const projectsStore = useProjectsStore()
 const infoStore = useInfoStore()
 const userStore = useUserStore()
@@ -30,6 +32,10 @@ const { threads, currentThreadId, hasMoreThreads, isLoadingMoreThreads, threadCr
   storeToRefs(chatThreadsStore)
 const { projects, isLoading: projectsLoading, error: projectsError } = storeToRefs(projectsStore)
 const { sessionsPinned, sessionPeekOpen, projectPendingId } = storeToRefs(useChatUIStore())
+// 详情缓存也包含个人助理与子会话，不能直接当作普通导航目录。
+const visibleThreads = computed(() => threads.value.filter((thread) =>
+  !thread.yuxi.parent_session_id && !agentStore.agentDetails[thread.agent?.id]?.is_personal_assistant
+))
 const sessionPanel = ref(null)
 const sessionTrigger = ref(null)
 const sessionSearchOpen = ref(false)
@@ -322,7 +328,7 @@ const handleDeleteProject = async (projectId) => {
           :visible="visible"
           class="sidebar-sessions"
           :current-chat-id="activeSessionThreadId"
-          :chats-list="threads.filter((thread) => !thread.yuxi.parent_session_id)"
+          :chats-list="visibleThreads"
           :projects="projects"
           :projects-loading="projectsLoading && !projectsStore.hasLoaded"
           :projects-error="projectsStore.hasLoaded ? '' : projectsError"
@@ -345,7 +351,7 @@ const handleDeleteProject = async (projectId) => {
       v-model:open="sessionSearchOpen"
       :modes="['session', 'file']"
       default-mode="session"
-      :recent-threads="threads.filter((thread) => !thread.yuxi.parent_session_id)"
+      :recent-threads="visibleThreads"
       :file-search="searchWorkspace"
       file-placeholder="搜索个人空间文件..."
       file-scope-hint="仅搜索个人空间，不包含知识库文件。"

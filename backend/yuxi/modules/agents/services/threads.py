@@ -56,6 +56,7 @@ async def list_session_page(
             order=order,
             archived=archived,
             is_pinned=is_pinned,
+            exclude_personal=True,
         )
     except ValueError as exc:
         raise InvalidOperationError(str(exc)) from exc
@@ -82,6 +83,7 @@ async def search_threads(
         app_id=scope.app_id,
         agent_id=agent_slug,
         query=normalized_query,
+        exclude_personal=True,
         limit=limit,
         offset=offset,
     )
@@ -156,6 +158,10 @@ async def update_thread(
 async def archive_thread(*, db: AsyncSession, scope: ActorScope, thread_id: str) -> None:
     """归档前保留未结束工作的入口，根会话承担整棵协作树的可达性。"""
     agent_session = await require_thread(db=db, scope=scope, thread_id=thread_id)
+    from yuxi.modules.agents.repositories.personal_assistants import is_personal_main_thread
+
+    if await is_personal_main_thread(db, thread_id):
+        raise InvalidOperationError("个人助理主对话需要持续保留，不能归档")
     if agent_session.status == "archived":
         return
     repo = SessionRepository(db)

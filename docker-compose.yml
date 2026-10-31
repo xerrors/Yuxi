@@ -1,6 +1,7 @@
 x-api-worker-env: &api-worker-env
   HOST_IP: ${HOST_IP:-}
   YUXI_KNOWLEDGE_ENABLED: ${YUXI_KNOWLEDGE_ENABLED:-true}
+  YUXI_PERSONAL_ASSISTANT_ENABLED: ${YUXI_PERSONAL_ASSISTANT_ENABLED:-false}
   RUNNING_IN_DOCKER: "true"
   YUXI_ENV: development
   JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in .env, or rerun `bash scripts/init.sh`.}

@@ -6,6 +6,7 @@ from yuxi.infrastructure.postgres.base import BusinessBase, KnowledgeBase
 
 MODEL_MODULES = (
     "yuxi.modules.agents.models.definitions",
+    "yuxi.modules.agents.models.personal_assistants",
     "yuxi.modules.agents.models.sessions",
     "yuxi.modules.agents.models.cooperation",
     "yuxi.modules.agents.models.inputs",

@@ -20,6 +20,22 @@
               />
             </div>
           </div>
+          <div v-if="personalAssistantEnabled" class="settings-form-row">
+            <div class="settings-form-copy">
+              <div class="settings-form-label">个人助理模型</div>
+              <p class="settings-form-description">用于所有个人助理；未配置时可以创建助理，但无法发送消息。</p>
+            </div>
+            <div class="settings-form-control">
+              <ModelSelectorComponent
+                display-name="mini"
+                :model_spec="configStore.config?.personal_assistant_model || ''"
+                :disabled="personalModelSaving"
+                placeholder="请选择个人助理模型"
+                @select-model="savePersonalModel"
+              />
+              <p v-if="personalModelError" role="alert">{{ personalModelError }}</p>
+            </div>
+          </div>
           <div class="settings-form-row">
             <div class="settings-form-copy">
               <div class="settings-form-label">{{ items?.fast_model?.des || '快速响应模型' }}</div>
@@ -137,7 +153,8 @@
 
 <script setup>
 import { message } from 'ant-design-vue'
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { configApi, healthApi } from '@/apis/system_api'
 import { useConfigStore } from '@/modules/settings/model/config'
 import {
   COOPERATION_CONCURRENCY_KEY,
@@ -153,6 +170,31 @@ import SkillSettingsSection from '@/modules/agents/ui/SkillSettingsSection.vue'
 
 const configStore = useConfigStore()
 const userStore = useUserStore()
+const personalAssistantEnabled = ref(false)
+const personalModelSaving = ref(false)
+const personalModelError = ref('')
+onMounted(async () => {
+  try {
+    const discovery = await healthApi.getDiscovery()
+    personalAssistantEnabled.value = discovery?.capabilities?.features?.personal_assistant === true
+  } catch {
+    personalAssistantEnabled.value = false
+  }
+})
+
+/** 保存后以服务端配置刷新选择，不用乐观值代替最终结果。 */
+async function savePersonalModel(spec) {
+  personalModelSaving.value = true
+  personalModelError.value = ''
+  try {
+    configStore.setConfig(await configApi.updateConfigBatch({ personal_assistant_model: spec || '' }))
+  } catch (error) {
+    personalModelError.value = error.message || '个人助理模型保存失败，请重试。'
+  } finally {
+    personalModelSaving.value = false
+  }
+}
+
 const items = computed(() => configStore.config?._config_items || {})
 const saving = ref(false)
 const handleChange = async (key, value) => {

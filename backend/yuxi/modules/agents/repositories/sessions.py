@@ -176,6 +176,7 @@ class SessionRepository:
         order: str,
         archived: bool = False,
         is_pinned: bool | None = None,
+        exclude_personal: bool = False,
     ) -> tuple[list[Session], bool]:
         """按完整作用域和稳定创建顺序读取有界会话页。"""
         conditions = [
@@ -183,6 +184,8 @@ class SessionRepository:
             Session.app_id == app_id,
             Session.status == ("archived" if archived else "active"),
         ]
+        if exclude_personal:
+            conditions.append(exclude_personal_sessions())
         if agent_id:
             conditions.append(Session.agent_id == agent_id)
         if is_pinned is not None:
@@ -231,6 +234,7 @@ class SessionRepository:
         offset: int = 0,
         app_id: str | None | object = ALL_APP_SCOPES,
         title_only: bool = False,
+        exclude_personal: bool = False,
     ) -> tuple[list[dict], bool]:
         """搜索当前作用域的标题，可选联合可见消息并返回实际命中片段。"""
         normalized_query = str(query or "").strip()
@@ -241,6 +245,8 @@ class SessionRepository:
             Session.uid == str(uid),
             Session.status == "active",
         ]
+        if exclude_personal:
+            session_conditions.append(exclude_personal_sessions())
         if agent_id:
             session_conditions.append(Session.agent_id == agent_id)
         if app_id is not ALL_APP_SCOPES:
@@ -339,3 +345,16 @@ class SessionRepository:
             )
 
         return items, has_more
+
+
+def exclude_personal_sessions():
+    """在查询分页前排除个人助理会话。"""
+    from yuxi.modules.agents.models.definitions import Agent
+    from yuxi.modules.agents.models.personal_assistants import PersonalAssistant
+
+    return (
+        ~select(PersonalAssistant.uid)
+        .join(Agent, Agent.id == PersonalAssistant.agent_id)
+        .where(or_(Agent.slug == Session.agent_id, PersonalAssistant.main_thread_id == Session.tree_root_thread_id))
+        .exists()
+    )

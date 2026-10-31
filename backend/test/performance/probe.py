@@ -120,6 +120,7 @@ def run():
     from yuxi.workers.arq import run_worker
     from yuxi.workers.settings import WorkerSettings
     from yuxi.modules.agents.runtime.agent_backends.chatbot import graph
+    from yuxi.modules.agents.runtime import graph as runtime_graph
     from yuxi.modules.extensions.skills import projection as service
     import yuxi.modules.agents.services.runner as worker
     import yuxi.modules.agents.services.execution as execution
@@ -144,17 +145,16 @@ def run():
     for name in ("_resolve_agent_runtime", "_persist_agent_run_langfuse_trace"):
         wrap(execution, name)
     wrap(preparation, "prepare_run_execution")
+    wrap(graph, "create_cooperation_middleware")
     for name in (
         "sync_agent_context_skills",
+        "create_memory_middleware",
         "load_chat_model",
         "resolve_configured_runtime_tools",
-        "_build_middlewares",
         "create_agent",
-        "create_memory_middleware",
-        "create_cooperation_middleware",
+        "get_langgraph_checkpointer",
     ):
-        wrap(graph, name)
-    wrap(graph, "get_langgraph_checkpointer")
+        wrap(runtime_graph, name)
     wrap(graph.ChatbotAgent, "get_graph")
     wrap(AsyncPostgresSaver, "aget_tuple")
     wrap(service, "sync_user_accessible_skills")

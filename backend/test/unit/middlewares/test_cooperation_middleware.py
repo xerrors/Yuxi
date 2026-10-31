@@ -13,10 +13,27 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 from pydantic import ValidationError
 
-from yuxi.modules.agents.runtime.middlewares.cooperation import CooperationMiddleware
+from yuxi.modules.agents.runtime.middlewares.cooperation import CooperationMiddleware, create_cooperation_middleware
 from yuxi.modules.agents.services.execution import _extract_interrupts
 
 pytestmark = pytest.mark.unit
+
+
+def test_ordinary_cooperation_always_registers_agent_discovery():
+    """普通协作显式提供 Agent 目录，不按另一份白名单裁剪。"""
+    middleware = create_cooperation_middleware(SimpleNamespace(uid="user", run_id="run"))
+    assert "list_agents" in {tool.name for tool in middleware.tools}
+
+
+def test_independent_tasks_expose_only_nonblocking_cooperation_tools():
+    """独立任务使用同一协作入口，但不暴露树创建参数、持久等待或用户沟通。"""
+    middleware = create_cooperation_middleware(SimpleNamespace(uid="user", run_id="run"), independent_tasks=True)
+    tools = {tool.name: tool for tool in middleware.tools}
+    assert set(tools) == {"create_session", "submit_input", "send_message", "cancel_turn", "list_sessions", "list_agents", "get_result"}
+    schema = tools["create_session"].tool_call_schema.model_json_schema()
+    assert set(schema["properties"]) == {"name", "description", "agent_id"}
+    assert set(schema["required"]) == {"name", "description"}
+    assert schema["properties"]["agent_id"]["default"] is None
 
 
 @pytest.mark.asyncio

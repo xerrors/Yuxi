@@ -275,9 +275,7 @@ async def get_receipt_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id
 
 async def get_input_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: str, input_id: str) -> dict:
     """按完整作用域回读 Input 的接收与消费事实。"""
-    agent_session = await SessionRepository(db).get_session_by_thread_id(thread_id)
-    if agent_session is None or agent_session.uid != scope.uid or agent_session.app_id != scope.app_id:
-        raise ResourceNotFoundError("Thread 不存在")
+    await require_thread(db=db, scope=scope, thread_id=thread_id)
     input_item = await AgentInputRepository(db).get_for_scope(input_id=input_id, thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
     if input_item is None:
         raise ResourceNotFoundError("Input 不存在")
@@ -358,6 +356,11 @@ async def accept_locked(
         current = await AgentRunRepository(db).get_run(active_turn.current_run_id)
         snapshot = deepcopy(current.input_payload["context_snapshot"])
     else:
+        # 助理可先建入口再配置模型；首次输入补齐默认值，之后沿用会话选择。
+        if not snapshot.get("model") and model_spec is None:
+            defaults = await resolve_agent_context_snapshot(None, None, agent_item, get_agent_backend(agent_item.backend_id), db)
+            snapshot["model"] = defaults["model"]
+            agent_session.config_snapshot = deepcopy(snapshot)
         if model_spec is not None:
             snapshot["model"] = await resolve_agent_run_model_spec(model_spec, None, db)
         if tool_approval_mode is not None:

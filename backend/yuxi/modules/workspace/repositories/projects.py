@@ -9,6 +9,7 @@ from yuxi.modules.agents.models.inputs import AgentInput
 from yuxi.modules.agents.models.runs import AGENT_RUN_TERMINAL_STATUSES, AgentRun
 from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.models.turns import AgentTurn
+from yuxi.modules.agents.repositories.sessions import exclude_personal_sessions
 from yuxi.modules.workspace.errors import ProjectHasPendingAgentWorkError
 from yuxi.modules.workspace.models import Project
 
@@ -98,6 +99,7 @@ class ProjectRepository:
                 Session.uid == str(uid),
                 Session.status == "active",
                 Project.status == "active",
+                exclude_personal_sessions(),
             )
             .order_by(Session.updated_at.desc(), Session.id.desc())
         )

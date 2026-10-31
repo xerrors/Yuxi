@@ -39,6 +39,7 @@ from yuxi.modules.identity.models import User
 from yuxi.modules.system.options import system_options
 from yuxi.modules.workspace.repositories.projects import ProjectRepository
 from yuxi.modules.workspace.services.bindings import resolve_session_workdir_binding
+from yuxi.modules.workspace.services.projects import create_implicit_project
 from yuxi.shared.datetime import format_utc_datetime, utc_now
 from yuxi.shared.errors import InvalidOperationError, ResourceNotFoundError, StateConflictError
 
@@ -55,8 +56,31 @@ class SessionCooperationService:
         self.config_snapshot = config_snapshot
         self.repo = CooperationRepository(db)
 
-    async def create_session(self, *, name: str, description: str, call_id: str, agent_id: str | None = None, mode: str = "child") -> dict:
-        """创建直属成员或继承当前项目的独立顶层会话。"""
+    async def create_task(self, *, name: str, description: str, call_id: str, agent_id: str | None = None) -> dict:
+        """委派独立任务：默认普通 Agent，创建自己的 Project，不继承调用方配置。"""
+        if agent_id is None:
+            agent, _ = await AgentRepository(self.db).ensure_default_agent()
+            agent_id = agent.slug
+        return await self.create_session(
+            name=name,
+            description=description,
+            call_id=call_id,
+            agent_id=agent_id,
+            mode="root",
+            new_project=True,
+        )
+
+    async def create_session(
+        self,
+        *,
+        name: str,
+        description: str,
+        call_id: str,
+        agent_id: str | None = None,
+        mode: str = "child",
+        new_project: bool = False,
+    ) -> dict:
+        """创建协作成员或独立会话，统一拥有授权、锁、幂等和输入派发。"""
         if mode not in {"child", "root"}:
             raise ValueError("创建模式必须是 child 或 root")
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name) or not description.strip():
@@ -101,6 +125,8 @@ class SessionCooperationService:
                     get_agent_backend(agent.backend_id),
                     self.db,
                 )
+            if new_project:
+                project = await create_implicit_project(uid=run.uid, db=self.db)
             child = Session(
                 thread_id=child_id,
                 tree_root_thread_id=caller.tree_root_thread_id if mode == "child" else child_id,
@@ -111,7 +137,7 @@ class SessionCooperationService:
                 agent_id=selected_agent_id,
                 uid=run.uid,
                 app_id=run.app_id,
-                project_id=caller.project_id,
+                project_id=project.id,
                 title=name,
                 status="active",
                 config_snapshot=copy.deepcopy(snapshot),
@@ -381,9 +407,9 @@ def session_identity(member: Session) -> dict:
     }
 
 
-async def tree_snapshot(db, caller: Session, *, all_sessions: bool = False) -> dict:
+async def tree_snapshot(db, caller: Session, *, all_sessions: bool = False, created_by_thread_id: str | None = None) -> dict:
     """返回完整协作摘要；结果正文由精确任务查询拥有。"""
-    rows = await CooperationRepository(db).summary(caller, all_sessions=all_sessions)
+    rows = await CooperationRepository(db).summary(caller, all_sessions=all_sessions, created_by_thread_id=created_by_thread_id)
     return {
         "tree_root_session_id": caller.tree_root_thread_id,
         "sessions": [
