@@ -53,18 +53,22 @@ class ReleaseWorkflowTests(unittest.TestCase):
             "CLI 必须独立手动发布",
         )
 
+    TOPOLOGY_JOBS = ("background-job-worker-path", "cooperation-e2e", "lifecycle-worker-e2e", "runtime-contracts")
+
     def assert_runtime_mount_ownership(self, workflow: str) -> None:
-        """两个运行链路 job 在首次启动前为非 root 进程准备挂载目录。"""
+        """四个拓扑 job 在首次启动前为非 root 进程准备挂载目录。"""
         command = (
             "docker compose run --rm --no-deps --user 0:0 api "
             "install -d -o 1000 -g 1000 -m 0700 /app/user-data /app/skill-sources /app/skill-projections"
         )
         workflow = re.sub(r"\\\n\s*", "", workflow)
-        jobs = workflow.split("  background-job-worker-path:\n", 1)[1].split("\n  system-tests:", 1)
-        for job in jobs:
-            self.assertIn(command, job)
-            self.assertLess(job.index("bash scripts/ci/build_topology_images.sh"), job.index(command))
-            self.assertLess(job.index(command), job.index("docker compose up -d"))
+        jobs = re.split(r"(?m)^  ([\w-]+):\n", workflow.split("\njobs:\n", 1)[1])
+        bodies = dict(zip(jobs[1::2], jobs[2::2], strict=True))
+        for name in self.TOPOLOGY_JOBS:
+            body = bodies[name]
+            self.assertIn(command, body)
+            self.assertLess(body.index("bash scripts/ci/build_topology_images.sh"), body.index(command))
+            self.assertLess(body.index(command), body.index("docker compose up -d"))
 
     def test_runtime_mounts_are_owned_before_service_startup(self) -> None:
         """首次启动的 API 和 worker 不依赖 Docker 创建目录的默认所有权。"""
@@ -76,7 +80,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         for mount in ("/app/user-data", "/app/skill-sources", "/app/skill-projections"):
             with self.subTest(mount=mount), self.assertRaises(AssertionError):
                 self.assert_runtime_mount_ownership(workflow.replace(" " + mount, ""))
-        for job in ("background-job-worker-path", "system-tests"):
+        for job in self.TOPOLOGY_JOBS:
             with self.subTest(job=job), self.assertRaises(AssertionError):
                 before, section = workflow.split("  " + job + ":\n", 1)
                 section = section.replace("install -d -o 1000 -g 1000", "true", 1)

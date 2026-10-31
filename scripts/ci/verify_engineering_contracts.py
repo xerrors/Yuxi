@@ -98,7 +98,8 @@ WORKFLOW_ENTRIES = {
     "frontend.yml": ("pnpm run lint:check", "pnpm run test:unit", "pnpm run build"),
     "service-integration.yml": ("scripts/ci/run_service_integration.sh",),
     "system-tests.yml": (
-        "backend/test/run_tests.sh e2e",
+        "backend/test/run_tests.sh e2e-cooperation",
+        "backend/test/run_tests.sh e2e-core",
         "test/integration/sandbox/test_container_sandbox.py",
     ),
     "real-provider-probe.yml": ("test/e2e/test_real_provider_e2e.py",),
