@@ -26,12 +26,15 @@ class PPStructureV3Parser(DocumentEngine):
     engine_id = "pp_structure_v3_ocr"
 
     def __init__(self, server_url: str | None = None):
-        self.server_url = server_url or "http://localhost:8080"
+        """仅连接显式配置的外部服务。"""
+        self.server_url = (server_url or "").strip()
         self.base_url = self.server_url.rstrip("/")
         self.endpoint = f"{self.base_url}/layout-parsing"
 
     def check_health(self) -> dict[str, Any]:
         """检查 PP-Structure-V3 服务健康状态。"""
+        if not self.server_url:
+            return {"status": "unavailable", "message": "PP-Structure-V3 外部服务地址未配置", "details": {}}
         try:
             response = requests.get(f"{self.base_url}/health", timeout=5)
 
@@ -120,6 +123,8 @@ class PPStructureV3Parser(DocumentEngine):
         timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
     ) -> dict[str, Any]:
         """调用版面解析 API，返回协议 JSON。"""
+        if not self.server_url:
+            raise DocumentParserException("PP-Structure-V3 外部服务地址未配置", self.engine_id, "missing_server_url")
         payload = {"file": base64.b64encode(Path(file_input).read_bytes()).decode("utf-8")}
         optional_params = {
             "fileType": file_type,

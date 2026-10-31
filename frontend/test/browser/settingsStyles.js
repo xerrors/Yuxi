@@ -26,13 +26,12 @@ async page => {
   const longName = '用于验证设置列表长名称与操作边界的知识平台研发部门'
   const options = [
     {
-      key: 'mineru_ocr_host_opts', name: 'MinerU 服务',
+      key: 'mineru_ocr_host_opts', name: 'MinerU 自托管',
       description: '文档版面与内容解析服务，长说明应在卡片内自然换行。',
-      value: { host: '', backend: 'hybrid-engine', effort: 'medium' },
+      value: { server_url: '', tier: 'standard' },
       params: { fields: [
-        { key: 'host', label: '服务地址', environment: 'MINERU_API_HOST', default: '' },
-        { key: 'backend', label: '解析后端', choices: ['hybrid-engine', 'vlm'], choice_labels: { 'hybrid-engine': 'Hybrid（混合解析）', vlm: 'VLM（视觉模型解析）' }, default: 'hybrid-engine' },
-        { key: 'effort', label: '解析强度', choices: ['medium', 'high'], choice_labels: { medium: '均衡（medium）', high: '高精度（high）' }, help: '仅对 Hybrid 生效', default: 'medium' }
+        { key: 'server_url', label: '服务地址', environment: 'MINERU_API_URI', default: '' },
+        { key: 'tier', label: '解析档位', choices: ['standard', 'advanced'], choice_labels: { standard: '标准（Standard）', advanced: '高精度（Advanced）' }, help: '服务必须开放所选档位', default: 'standard' }
       ] }
     },
     {

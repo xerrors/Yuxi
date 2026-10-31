@@ -1,7 +1,5 @@
 """协议失败必须阻止发布解析产物，合法空白页仍可解析。"""
 
-import io
-import zipfile
 from types import SimpleNamespace
 
 import pytest
@@ -11,27 +9,6 @@ from yuxi.infrastructure.document_parsing.engines.deepseek_ocr import DeepSeekOC
 from yuxi.infrastructure.document_parsing.engines.paddleocr_api import PaddleOCRPPOCRv6Parser, PaddleOCRVLParser
 from yuxi.infrastructure.document_parsing.engines.pp_structure_v3 import PPStructureV3Parser
 from yuxi.infrastructure.document_parsing.parser import parse
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("has_markdown", [True, False])
-async def test_mineru_blank_document_is_distinct_from_missing_document(tmp_path, monkeypatch, has_markdown):
-    """空正文可以发布，缺少正文文件的归档必须失败并清理输出。"""
-    archive = io.BytesIO()
-    with zipfile.ZipFile(archive, "w") as output:
-        output.writestr("full.md" if has_markdown else "metadata.json", "")
-    response = SimpleNamespace(status_code=200, headers={"content-type": "application/zip"}, content=archive.getvalue())
-    monkeypatch.setattr("requests.post", lambda *args, **kwargs: response)
-    source = tmp_path / "scan.png"
-    source.write_bytes(b"image")
-    output = tmp_path / "parsed"
-    if has_markdown:
-        await parse(source, output, ParseOptions("mineru_ocr"))
-        assert (output / "document.md").read_text() == ""
-    else:
-        with pytest.raises(DocumentParserException, match="未找到 .md 文件"):
-            await parse(source, output, ParseOptions("mineru_ocr"))
-        assert not output.exists()
 
 
 def test_deepseek_requires_resolved_credentials(monkeypatch):

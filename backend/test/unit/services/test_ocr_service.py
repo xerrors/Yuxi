@@ -37,8 +37,7 @@ async def test_task_resolution_uses_database_option(db_session):
 
     assert resolved.processor_kwargs == {
         "server_url": "http://mineru-config:30001/",
-        "backend": "hybrid-engine",
-        "effort": "medium",
+        "tier": "standard",
     }
 
 
@@ -48,18 +47,16 @@ async def test_mineru_task_resolution_uses_saved_defaults_and_keeps_task_overrid
     await update_option_value(
         db_session,
         "mineru_ocr_host_opts",
-        {"backend": "vlm-engine", "effort": "high"},
+        {"tier": "advanced"},
         "tester",
     )
 
     resolved = await ocr_service.resolve_parse_options(
-        {"ocr_engine": "mineru_ocr", "backend": "hybrid-engine", "effort": "medium"}, db_session
+        {"ocr_engine": "mineru_ocr", "tier": "standard"}, db_session
     )
 
-    assert resolved.processor_kwargs["backend"] == "vlm-engine"
-    assert resolved.processor_kwargs["effort"] == "high"
-    assert resolved.params["backend"] == "hybrid-engine"
-    assert resolved.params["effort"] == "medium"
+    assert resolved.processor_kwargs["tier"] == "advanced"
+    assert resolved.params["tier"] == "standard"
 
 
 @pytest.mark.asyncio

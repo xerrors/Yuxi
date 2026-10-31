@@ -3,7 +3,7 @@
 // prettier-ignore
 async page => {
   const check = (value, message) => { if (!value) throw new Error(message) }
-  const card = page.locator('.ocr-settings-section .settings-service-card').filter({ has: page.getByRole('heading', { name: 'MinerU Official', exact: true }) })
+  const card = page.locator('.ocr-settings-section .settings-service-card').filter({ has: page.getByRole('heading', { name: 'MinerU 官方云服务', exact: true }) })
   const open = async () => {
     await page.locator('.user-info-dropdown:visible').click()
     await page.getByRole('menuitem', { name: '设置', exact: true }).click()

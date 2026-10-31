@@ -32,9 +32,8 @@ IMAGES=(
     "ghcr.io/tencentcloud/cubesandbox-base:2026.16"
     "ubuntu:24.04"
     "registry:2"
-    # 按需：在目标机器上本地构建 mineru/paddlex 时才需要的基础镜像
-    # "docker.m.daocloud.io/vllm/vllm-openai:v0.11.2"
-    # "ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlex/paddlex:paddlex3.0.1-paddlepaddle3.0.0-gpu-cuda11.8-cudnn8.9-trt8.6"
+    # 按需：在目标机器上本地构建 MinerU 时才需要的基础镜像
+    # "docker.m.daocloud.io/vllm/vllm-openai:v0.21.0"
 )
 
 # MinIO 的官方镜像已不再公开分发，改为按仓库内 Dockerfile 构建后再导出。

@@ -4,8 +4,8 @@ from yuxi.modules.system.services.options import Option
 
 mineru_ocr_host_opts = Option(
     key="mineru_ocr_host_opts",
-    name="MinerU 服务",
-    description="配置自托管 MinerU 服务地址、默认解析后端与强度。",
+    name="MinerU 自托管",
+    description="配置 MinerU 4.1 Tasks 服务，与官方云服务分别接入。",
     params={
         "fields": [
             {
@@ -17,22 +17,18 @@ mineru_ocr_host_opts = Option(
                 "help": "留空时读取 MINERU_API_URI。",
             },
             {
-                "key": "backend",
-                "label": "解析后端",
+                "key": "tier",
+                "label": "解析档位",
                 "type": "string",
-                "default": "hybrid-engine",
-                "choices": ["hybrid-engine", "vlm-engine"],
-                "choice_labels": {"hybrid-engine": "Hybrid（混合解析）", "vlm-engine": "VLM（视觉模型解析）"},
-                "help": "Hybrid 结合传统解析与视觉模型；VLM 使用视觉模型解析。",
-            },
-            {
-                "key": "effort",
-                "label": "解析强度",
-                "type": "string",
-                "default": "medium",
-                "choices": ["medium", "high"],
-                "choice_labels": {"medium": "标准（medium）", "high": "高精度（high）"},
-                "help": "对 Hybrid 生效；高精度支持图片与图表分析，耗时更长。",
+                "default": "standard",
+                "choices": ["flash", "basic", "standard", "advanced"],
+                "choice_labels": {
+                    "flash": "快速（Flash）",
+                    "basic": "基础（Basic）",
+                    "standard": "标准（Standard）",
+                    "advanced": "高精度（Advanced）",
+                },
+                "help": "服务必须开放所选档位。旧 Hybrid 高强度迁移为 Advanced，其余组合为 Standard；新旧质量不保证等价。",
             },
         ]
     },
@@ -40,7 +36,7 @@ mineru_ocr_host_opts = Option(
 
 mineru_official_api_opts = Option(
     key="mineru_official_api_opts",
-    name="MinerU Official",
+    name="MinerU 官方云服务",
     description="配置 MinerU 官方云服务凭证与默认解析模型。",
     params={
         "fields": [
@@ -68,7 +64,7 @@ mineru_official_api_opts = Option(
 pp_structure_v3_ocr_host_opts = Option(
     key="pp_structure_v3_ocr_host_opts",
     name="PP-Structure-V3 服务",
-    description="配置自托管 PaddleX 服务地址。",
+    description="连接自行维护的 PP-Structure-V3 服务；Yuxi 不附带 PaddleX 部署。",
     params={
         "fields": [
             {
@@ -76,8 +72,8 @@ pp_structure_v3_ocr_host_opts = Option(
                 "label": "服务地址",
                 "type": "url",
                 "environment": "PADDLEX_URI",
-                "placeholder": "http://paddlex:8080",
-                "help": "留空时读取 PADDLEX_URI。",
+                "placeholder": "https://ocr.example.com",
+                "help": "填写外部服务地址，或通过 PADDLEX_URI 设置；未配置时不可用。",
             }
         ]
     },

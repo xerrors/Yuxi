@@ -4,6 +4,8 @@
 类型：feature
 Owner：backend/yuxi/modules/documents/options.py
 
+当前仍保留 documents 拥有全局默认配置、单次参数优先的决定。自托管协议、`backend`/`effort` 字段和 `/file_parse` 已由 [MinerU Tasks 接入决定](./2026-10-31-mineru-tasks-and-optional-ocr.md)替代；下文对应细节与验证属于 3.x 实施时的记录。
+
 ## 问题
 
 管理员不能在 OCR 设置中选择自托管 MinerU 的解析后端与强度。解析请求没有发送 effort，Hybrid 使用上游 medium 默认值时关闭图片与图表分析。

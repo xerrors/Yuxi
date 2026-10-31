@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import threading
 import zipfile
 from copy import deepcopy
-from email.parser import BytesParser
-from email.policy import default
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import PurePosixPath
 from urllib.parse import quote
@@ -54,42 +53,76 @@ def _result_archive() -> tuple[bytes, bytes]:
     Image.new("RGB", (20, 20), "red").save(image, format="PNG")
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, "w") as output:
-        output.writestr("full.md", "# Artifact replay\n\n![chart](images/chart.png)")
+        output.writestr("markdown.md", "# Artifact replay\n\n![chart](images/chart.png)")
         output.writestr("images/chart.png", image.getvalue())
     return archive.getvalue(), image.getvalue()
 
 
-@pytest.mark.parametrize(("backend", "effort"), [("hybrid-engine", "high"), ("vlm-engine", "medium")])
-async def test_mineru_options_reach_draft_parser_and_preserve_artifacts(e2e_client, e2e_headers, e2e_agent_context, backend, effort):
-    """真实设置与解析入口证明默认参数到达引擎，正文和图片完整落盘。"""
-    archive, image = _result_archive()
-    requests_received = []
+@pytest.fixture
+async def mineru_replay():
+    """在真实 HTTP 边界回放 4.1 Tasks，供 API 与 worker 共同访问。"""
+    archive, _ = _result_archive()
+    tasks = {}
 
     class MinerUReplay(BaseHTTPRequestHandler):
-        """在真实 HTTP 边界读取解析参数并返回固定产物。"""
+        """固定远端协议独立拥有请求记录与已上传字节。"""
+
+        def respond(self, body, status=200, content_type="application/json"):
+            """返回有明确长度的响应，避免连接关闭语义掩盖协议错误。"""
+            data = json.dumps(body).encode() if content_type == "application/json" else body
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
 
         def do_POST(self):
-            """读取 multipart 请求，保留可独立断言的字段。"""
-            body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
-            envelope = f"Content-Type: {self.headers['Content-Type']}\r\nMIME-Version: 1.0\r\n\r\n".encode() + body
-            parts = BytesParser(policy=default).parsebytes(envelope)
-            requests_received.append(
-                {
-                    part.get_param("name", header="content-disposition"): part.get_content()
-                    for part in parts.iter_parts()
-                    if part.get_filename() is None
-                }
-            )
-            self.send_response(200)
-            self.send_header("Content-Type", "application/zip")
-            self.end_headers()
-            self.wfile.write(archive)
+            """创建任务只返回身份，不返回同步产物。"""
+            assert self.path == "/v1/tasks"
+            manifest = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            task_id = uuid4().hex
+            tasks[task_id] = {"manifest": manifest, "uploaded": None}
+            self.respond({"task_id": task_id, "status": "waiting-file", "files": [{"file_id": task_id}]}, 202)
+
+        def do_PUT(self):
+            """保存原始文件内容，供测试与输入源独立比对。"""
+            task_id = self.path.rsplit("/", 1)[1]
+            tasks[task_id]["uploaded"] = self.rfile.read(int(self.headers["Content-Length"]))
+            self.respond({})
+
+        def do_GET(self):
+            """查询前后状态与下载端点遵循异步 Tasks 契约。"""
+            task_id = self.path.rsplit("/", 1)[1]
+            if self.path.startswith("/result/"):
+                self.respond(archive, content_type="application/zip")
+                return
+            task = tasks[task_id]
+            base = f"http://{self.headers['Host']}"
+            status = "completed" if task["uploaded"] is not None else "waiting-file"
+            file = {"file_id": task_id, "status": status}
+            if status == "completed":
+                file["result_url"] = f"{base}/result/{task_id}"
+            else:
+                file["upload"] = {"url": f"{base}/upload/{task_id}", "headers": {}}
+            self.respond({"task_id": task_id, "status": status, "files": [file]})
 
         def log_message(self, *args):
             """测试不记录 HTTP 访问日志。"""
 
-    replay = ThreadingHTTPServer(("127.0.0.1", 0), MinerUReplay)
+    replay = ThreadingHTTPServer(("0.0.0.0", 0), MinerUReplay)
     threading.Thread(target=replay.serve_forever, daemon=True).start()
+    try:
+        yield replay, tasks
+    finally:
+        await asyncio.to_thread(replay.shutdown)
+        replay.server_close()
+
+
+@pytest.mark.parametrize("tier", ["standard", "advanced"])
+async def test_mineru_options_reach_draft_parser_and_preserve_artifacts(e2e_client, e2e_headers, e2e_agent_context, tier, mineru_replay):
+    """真实设置与解析入口证明默认参数到达引擎，正文和图片完整落盘。"""
+    _, image = _result_archive()
+    replay, requests_received = mineru_replay
     async with pg_manager.get_async_session_context() as db:
         previous = await get_option(db, "mineru_ocr_host_opts")
         previous_state = {"value": deepcopy(previous.value), "updated_by": previous.updated_by, "updated_at": previous.updated_at}
@@ -97,7 +130,7 @@ async def test_mineru_options_reach_draft_parser_and_preserve_artifacts(e2e_clie
     try:
         configured = await e2e_client.put(
             "/api/system/config/options/mineru_ocr_host_opts",
-            json={"value": {"server_url": f"http://127.0.0.1:{replay.server_port}", "backend": backend, "effort": effort}},
+            json={"value": {"server_url": f"http://127.0.0.1:{replay.server_port}", "tier": tier}},
             headers=e2e_headers,
         )
         assert configured.status_code == 200, configured.text
@@ -113,9 +146,10 @@ async def test_mineru_options_reach_draft_parser_and_preserve_artifacts(e2e_clie
         parsed = await e2e_client.post(f"/api/agent/files/{uploaded_id}/parse", json={"parse_method": "mineru_ocr"}, headers=e2e_headers)
         assert parsed.status_code == 200, parsed.text
         assert len(requests_received) == 1
-        assert requests_received[0]["backend"] == backend
-        assert requests_received[0]["effort"] == effort
-        assert requests_received[0]["image_analysis"].lower() == "true"
+        [received] = requests_received.values()
+        assert received["manifest"]["tier"] == tier
+        assert received["manifest"]["output_formats"] == ["default"]
+        assert received["uploaded"] == source.getvalue()
         async with pg_manager.get_async_session_context() as db:
             draft = await db.get(AgentAttachment, uploaded_id)
             assert draft.status == "draft" and draft.parsed_source
@@ -133,34 +167,17 @@ async def test_mineru_options_reach_draft_parser_and_preserve_artifacts(e2e_clie
             assert deleted.status_code == 200 and deleted.json()["deleted"] is True, deleted.text
             async with pg_manager.get_async_session_context() as db:
                 assert await db.get(AgentAttachment, uploaded_id) is None
-        await asyncio.to_thread(replay.shutdown)
-        replay.server_close()
 
 
 async def test_private_draft_parse_send_and_delete_preserve_complete_local_directory(
     e2e_client,
     e2e_headers,
     e2e_agent_context,
+    mineru_replay,
 ):
     """真实入口确认完整本地目录；资源不进入 MinIO，删除覆盖全部文件。"""
-    archive, image = _result_archive()
-
-    class MinerUReplay(BaseHTTPRequestHandler):
-        """在真实 HTTP 边界提供确定性的引擎协议结果。"""
-
-        def do_POST(self):
-            self.rfile.read(int(self.headers.get("Content-Length", "0")))
-            self.send_response(200)
-            self.send_header("Content-Type", "application/zip")
-            self.end_headers()
-            self.wfile.write(archive)
-
-        def log_message(self, *args):
-            pass
-
-    replay = ThreadingHTTPServer(("127.0.0.1", 0), MinerUReplay)
-    thread = threading.Thread(target=replay.serve_forever, daemon=True)
-    thread.start()
+    _, image = _result_archive()
+    replay, _ = mineru_replay
     thread_id = None
     turn_id = None
     uploaded = None
@@ -277,17 +294,24 @@ async def test_private_draft_parse_send_and_delete_preserve_complete_local_direc
             await e2e_client.delete(f"/api/v1/agents/sessions/{thread_id}/attachments/{attachment['file_id']}", headers=e2e_headers)
         if uploaded:
             await cleanup_uploaded_chat_attachment(uid, uploaded["id"])
-        await asyncio.to_thread(replay.shutdown)
-        replay.server_close()
 
 
 async def test_knowledge_worker_hosts_document_resources_and_file_delete_reclaims_objects(
     e2e_client,
     e2e_headers,
     monkeypatch,
+    mineru_replay,
 ):
     """真实 worker 发布资源，PG 拥有结果，删除单个文档不影响其他文档。"""
-    archive, image = _result_archive()
+    _, image = _result_archive()
+    replay, received = mineru_replay
+    source = io.BytesIO()
+    writer = PdfWriter()
+    writer.add_blank_page(width=100, height=100)
+    writer.write(source)
+    async with pg_manager.get_async_session_context() as db:
+        previous = await get_option(db, "mineru_ocr_host_opts")
+        previous_state = {"value": deepcopy(previous.value), "updated_by": previous.updated_by, "updated_at": previous.updated_at}
     created = await e2e_client.post(
         "/api/knowledge/knowledge-bases",
         json={
@@ -303,9 +327,15 @@ async def test_knowledge_worker_hosts_document_resources_and_file_delete_reclaim
     kb_id = created.json()["kb_id"]
     client = get_minio_client()
     try:
+        configured = await e2e_client.put(
+            "/api/system/config/options/mineru_ocr_host_opts",
+            json={"value": {"server_url": f"http://api:{replay.server_port}", "tier": "standard"}},
+            headers=e2e_headers,
+        )
+        assert configured.status_code == 200, configured.text
         uploaded = await e2e_client.post(
             f"/api/knowledge/files/upload?kb_id={kb_id}",
-            files={"file": ("source.zip", archive, "application/zip")},
+            files={"file": ("source.pdf", source.getvalue(), "application/pdf")},
             headers=e2e_headers,
         )
         assert uploaded.status_code == 200, uploaded.text
@@ -325,7 +355,7 @@ async def test_knowledge_worker_hosts_document_resources_and_file_delete_reclaim
         file_id = added.json()["items"][0]["file_id"]
         parsing = await e2e_client.post(
             f"/api/knowledge/knowledge-bases/{kb_id}/documents/parse",
-            json={"file_ids": [file_id], "params": {}},
+            json={"file_ids": [file_id], "params": {"ocr_engine": "mineru_ocr"}},
             headers=e2e_headers,
         )
         assert parsing.status_code == 200, parsing.text
@@ -340,6 +370,9 @@ async def test_knowledge_worker_hosts_document_resources_and_file_delete_reclaim
         assert job["status"] == "success", job
         record = await KnowledgeFileRepository().get_by_file_id(file_id)
         assert record.status == "parsed"
+        [task] = received.values()
+        assert task["manifest"]["tier"] == "standard"
+        assert task["uploaded"] == source.getvalue()
         from yuxi.infrastructure.minio.object_urls import parse_minio_url
 
         bucket, markdown_name = parse_minio_url(record.markdown_file)
@@ -383,7 +416,7 @@ async def test_knowledge_worker_hosts_document_resources_and_file_delete_reclaim
             patch.setattr(document_service, "parse_to_hosted_markdown", lose_owner_after_upload)
             with pytest.raises(asyncio.CancelledError):
                 await MilvusKB.__new__(MilvusKB).parse_file(
-                    kb_id, file_id, additional_params={}, processing_job_id=job_id, processing_owner="test-owner"
+                    kb_id, file_id, additional_params={"ocr_engine": "mineru_ocr"}, processing_job_id=job_id, processing_owner="test-owner"
                 )
         assert await client.adownload_file(bucket, markdown_name)
         assert await client.adownload_file(client.KB_BUCKETS["images"], image_name) == image
@@ -407,7 +440,7 @@ async def test_knowledge_worker_hosts_document_resources_and_file_delete_reclaim
         )
         retry = await e2e_client.post(
             f"/api/knowledge/knowledge-bases/{kb_id}/documents/parse",
-            json={"file_ids": [file_id], "params": {}},
+            json={"file_ids": [file_id], "params": {"ocr_engine": "mineru_ocr"}},
             headers=e2e_headers,
         )
         assert retry.status_code == 200, retry.text
@@ -441,5 +474,8 @@ async def test_knowledge_worker_hosts_document_resources_and_file_delete_reclaim
         assert parsed == []
         assert await client.adownload_file(client.KB_BUCKETS["images"], other_name) == image
     finally:
+        async with pg_manager.get_async_session_context() as db:
+            await db.execute(update(ConfigOption).where(ConfigOption.key == "mineru_ocr_host_opts").values(**previous_state))
+        await invalidate_option_cache("mineru_ocr_host_opts")
         deleted = await e2e_client.delete(f"/api/knowledge/knowledge-bases/{kb_id}", headers=e2e_headers)
         assert deleted.status_code == 200, deleted.text

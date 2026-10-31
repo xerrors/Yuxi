@@ -12,10 +12,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.infrastructure.document_parsing import OCR_FILE_EXTENSIONS, ParseOptions, ParseResult
 from yuxi.infrastructure.document_parsing.engines import ENGINE_SPECS, get_engine, get_engine_spec
+from yuxi.infrastructure.document_parsing.mineru_options import migrate_mineru_options
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.documents.options import DOCUMENT_OPTIONS, OCR_ENGINE_OPTIONS
 from yuxi.modules.models.providers.service import resolve_deepseek_ocr_credentials
 from yuxi.modules.system.options import system_options
+from yuxi.modules.system.repositories.options import get_option, save_option_value
+
+
+async def migrate_mineru_configuration(db: AsyncSession) -> bool:
+    """在启动配置事务中迁移旧档位，保留管理员地址、凭据与审计归属。"""
+    record = await get_option(db, "mineru_ocr_host_opts", for_update=True)
+    if record is None:
+        return False
+    values = record.value or {}
+    migrated = migrate_mineru_options(values)
+    if migrated == values:
+        return False
+    await save_option_value(db, record, migrated, record.updated_by)
+    return True
 
 
 async def get_ocr_options(db: AsyncSession | None = None) -> dict[str, Any]:

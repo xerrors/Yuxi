@@ -1,210 +1,188 @@
-"""
-MinerU 文档解析器
+"""通过 MinerU 4.1 Tasks 协议生成完整 Markdown 目录。"""
 
-使用 MinerU 服务进行文档版面分析和内容提取
-"""
-
+import asyncio
+import math
 import os
 import tempfile
-import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, urlsplit
 
-import requests
+import httpx
 
 from yuxi.infrastructure.document_parsing import DocumentParserException
 from yuxi.infrastructure.document_parsing.artifacts import extract_markdown_archive
 from yuxi.infrastructure.document_parsing.engines import DocumentEngine
+from yuxi.infrastructure.document_parsing.mineru_options import migrate_mineru_options
 from yuxi.infrastructure.observability.logging import logger
 
 
 class MinerUParser(DocumentEngine):
-    """MinerU 文档解析器 - 使用 HTTP API 进行文档理解和解析"""
+    """自托管单文件 Tasks 客户端，业务终态由调用方拥有。"""
 
     engine_id = "mineru_ocr"
 
-    def __init__(self, server_url: str | None = None, backend: str = "hybrid-engine", effort: str = "medium"):
-        """接收服务配置作为默认值，单次解析参数优先。"""
+    def __init__(self, server_url: str | None = None, tier: str = "standard"):
+        """接收已解析的服务地址与默认档位。"""
         self.server_url = (server_url or "http://localhost:30001").rstrip("/")
-        self.parse_endpoint = f"{self.server_url}/file_parse"
-        self.backend = backend
-        self.effort = effort
+        self.tier = tier
 
     def check_health(self) -> dict[str, Any]:
-        """检查 MinerU 服务健康状态。"""
+        """核验 Tasks 协议和所选档位，不提交真实解析任务。"""
         try:
-            response = requests.get(f"{self.server_url}/openapi.json", timeout=5)
-            if response.status_code != 200:
-                return {
-                    "status": "unhealthy",
-                    "message": f"MinerU 服务响应异常: {response.status_code}",
-                    "details": {"server_url": self.server_url},
-                }
+            asyncio.run(self._check_health())
+            return {"status": "healthy", "message": "MinerU Tasks 服务可用", "details": {"tier": self.tier}}
+        except (httpx.HTTPError, DocumentParserException, TimeoutError, ValueError, KeyError, TypeError, AttributeError) as exc:
+            return {"status": "unhealthy", "message": f"MinerU 服务检查失败: {exc}", "details": {}}
 
-            try:
-                openapi_data = response.json()
-                has_file_parse = "/file_parse" in openapi_data.get("paths", {})
-                if not has_file_parse:
-                    return {
-                        "status": "unhealthy",
-                        "message": "MinerU 服务缺少必要的端点",
-                        "details": {"server_url": self.server_url},
-                    }
-                return {
-                    "status": "healthy",
-                    "message": "MinerU 服务运行正常",
-                    "details": {
-                        "server_url": self.server_url,
-                        "api_version": openapi_data.get("info", {}).get("version", "unknown"),
-                    },
-                }
-            except Exception as e:
-                return {
-                    "status": "unhealthy",
-                    "message": f"MinerU 响应格式错误: {str(e)}",
-                    "details": {"server_url": self.server_url},
-                }
-
-        except requests.exceptions.ConnectionError:
-            return {
-                "status": "unavailable",
-                "message": "MinerU 服务无法连接,请检查服务是否启动",
-                "details": {"server_url": self.server_url},
-            }
-        except requests.exceptions.Timeout:
-            return {
-                "status": "timeout",
-                "message": "MinerU 服务连接超时",
-                "details": {"server_url": self.server_url},
-            }
-        except Exception as e:
-            return {
-                "status": "error",
-                "message": f"MinerU 健康检查失败: {str(e)}",
-                "details": {"server_url": self.server_url, "error": str(e)},
-            }
+    async def _check_health(self) -> None:
+        """两个探测共享总时限，缓慢响应也不能无限延长检查。"""
+        async with asyncio.timeout(5), httpx.AsyncClient(follow_redirects=False) as client:
+            health = (await self._request(client, "GET", f"{self.server_url}/v1/health")).json()
+            tiers = (await self._request(client, "GET", f"{self.server_url}/v1/tiers")).json()
+            if "default" not in health.get("features", {}).get("task_output_formats", []):
+                raise ValueError("服务不支持 MinerU 4.1 Tasks 默认产物")
+            if self.tier not in {item["id"] for item in tiers["data"]}:
+                raise ValueError(f"服务未开放 {self.tier} 档位")
 
     def process_file(self, file_path: str, output_dir: Path, params: dict[str, Any] | None = None) -> str:
-        """
-        使用 MinerU 处理文档
-
-        Args:
-            file_path: 文件路径
-            params: 处理参数
-                - lang_list: 语言列表 (默认: ["ch"])
-                - backend: 后端类型 (默认使用实例配置)
-                - effort: Hybrid 解析强度 (默认使用实例配置)
-                - parse_method: 解析方法 (默认: "auto")
-                - start_page_id: 起始页码 (默认: 0)
-                - end_page_id: 结束页码 (默认: 99999)
-                - formula_enable: 启用公式解析 (默认: True)
-                - table_enable: 启用表格解析 (默认: True)
-                - image_analysis: 启用图像/图表解析 (默认: True)
-                - server_url: OpenAI 兼容服务地址 (*-http-client 后端时可选)
-
-        Returns:
-            str: 提取的 Markdown 文本
-        """
-        if not os.path.exists(file_path):
-            raise DocumentParserException(f"文件不存在: {file_path}", self.get_service_name(), "file_not_found")
-
-        file_ext = Path(file_path).suffix.lower()
-        if not self.supports_file_type(file_ext):
-            raise DocumentParserException(f"不支持的文件类型: {file_ext}", self.get_service_name(), "unsupported_file_type")
-
-        params = params or {}
-        data = self._build_request_data(params)
+        """在线程入口运行异步协议；创建结果未知时不自动重试。"""
+        source = Path(file_path)
+        if not source.is_file():
+            raise DocumentParserException("文件不存在", self.engine_id, "file_not_found")
+        if not self.supports_file_type(source.suffix.lower()):
+            raise DocumentParserException(f"不支持的文件类型: {source.suffix}", self.engine_id, "unsupported_file_type")
         try:
-            start_time = time.time()
-            logger.info(
-                f"MinerU 开始处理: {os.path.basename(file_path)} "
-                f"(backend={data['backend']}, effort={data['effort']}, lang={data['lang_list']})"
-            )
-
-            with open(file_path, "rb") as stream:
-                response = requests.post(
-                    self.parse_endpoint,
-                    files={"files": (os.path.basename(file_path), stream, "application/octet-stream")},
-                    data=data,
-                    timeout=int(params.get("timeout_seconds") or os.environ.get("MINERU_TIMEOUT", 1800)),
-                )
-
-            logger.debug(f"MinerU 响应状态: {response.status_code}, Content-Type: {response.headers.get('content-type')}")
-            if response.status_code != 200:
-                error_detail = self._response_error_detail(response)
-                logger.error(f"MinerU HTTP错误 {response.status_code}: {error_detail}")
-                raise DocumentParserException(
-                    f"MinerU 处理失败: {error_detail}",
-                    self.get_service_name(),
-                    f"http_{response.status_code}",
-                )
-
-            text = self._extract_archive_text(response, output_dir)
-            processing_time = time.time() - start_time
-            logger.info(f"MinerU 处理成功: {os.path.basename(file_path)} - {len(text)} 字符 ({processing_time:.2f}s)")
-            return text
-
+            options = migrate_mineru_options(params or {})
+            manifest = self._build_manifest(source, options)
+            budget = float(options.get("timeout_seconds", os.environ.get("MINERU_TIMEOUT", 1800)))
+            if not math.isfinite(budget) or budget <= 0:
+                raise ValueError("MinerU timeout_seconds 必须为有限正数")
+            return asyncio.run(self._process_task(source, output_dir, manifest, budget))
         except DocumentParserException:
             raise
-        except requests.exceptions.Timeout:
-            error_msg = f"MinerU 处理超时 ({time.time() - start_time:.2f}s), 可以配置 MINERU_TIMEOUT 环境变量。"
-            logger.error(error_msg)
-            raise DocumentParserException(error_msg, self.get_service_name(), "timeout")
-        except requests.exceptions.ConnectionError:
-            error_msg = "MinerU 连接失败,请检查服务是否运行"
-            logger.error(error_msg)
-            raise DocumentParserException(error_msg, self.get_service_name(), "connection_error")
-        except Exception as e:
-            error_msg = f"MinerU 处理失败: {str(e)}"
-            logger.error(f"{error_msg} ({time.time() - start_time:.2f}s)")
-            raise DocumentParserException(error_msg, self.get_service_name(), "processing_failed") from e
+        except (httpx.TimeoutException, TimeoutError) as exc:
+            raise DocumentParserException("MinerU 任务处理超时", self.engine_id, "timeout") from exc
+        except Exception as exc:
+            raise DocumentParserException(f"MinerU 解析失败: {exc}", self.engine_id, "processing_failed") from exc
 
-    def _build_request_data(self, params: dict[str, Any]) -> dict[str, Any]:
-        """合并实例默认值、单次任务参数与固定响应选项。"""
-        data = {
-            "lang_list": params.get("lang_list", ["ch"]),
-            "backend": params.get("backend", self.backend),
-            "effort": params.get("effort", self.effort),
-            "parse_method": params.get("parse_method", "auto"),
-            "formula_enable": params.get("formula_enable", True),
-            "table_enable": params.get("table_enable", True),
-            "image_analysis": params.get("image_analysis", True),
-            "start_page_id": params.get("start_page_id", 0),
-            "end_page_id": params.get("end_page_id", 99999),
-            "return_md": True,
-            "response_format_zip": True,
-            "return_images": True,
+    async def _process_task(self, source: Path, output_dir: Path, manifest: dict, budget: float) -> str:
+        """创建、上传、轮询和下载共享总时限，清理拥有独立的短时限。"""
+        task_url = None
+        terminal = False
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10), follow_redirects=False) as client:
+            try:
+                async with asyncio.timeout(budget) as timer:
+                    receipt = (await self._request(client, "POST", f"{self.server_url}/v1/tasks", expected=202, json=manifest)).json()
+                    task_id = receipt["task_id"]
+                    if not isinstance(task_id, str) or not task_id:
+                        raise ValueError("MinerU 未返回有效 task_id")
+                    task_url = f"{self.server_url}/v1/tasks/{quote(task_id, safe='')}"
+                    [created_file] = receipt["files"]
+                    file_id = created_file["file_id"]
+                    if not isinstance(file_id, str) or not file_id:
+                        raise ValueError("MinerU 未返回有效 file_id")
+
+                    # 创建回执只绑定身份；查询快照决定上传和结果，不重放不确定的创建或上传。
+                    uploaded = False
+                    while True:
+                        detail = (await self._request(client, "GET", task_url)).json()
+                        [file] = detail["files"]
+                        if detail["task_id"] != task_id or file["file_id"] != file_id:
+                            raise ValueError("MinerU 返回的任务或文件身份不匹配")
+                        state = file["status"]
+                        if state == "completed":
+                            if detail["status"] != "completed":
+                                raise ValueError("MinerU 单文件任务终态不一致")
+                            terminal = True
+                            result = await self._download_result(client, self._same_origin_url(file["result_url"]), output_dir)
+                            # 本地解包是同步工作，返回前仍须确认没有超过本次预算。
+                            if asyncio.get_running_loop().time() >= timer.when():
+                                raise TimeoutError("MinerU 结果处理超时")
+                            return result
+                        if state in {"failed", "canceled"}:
+                            terminal = True
+                            error = file.get("error") or detail.get("error") or {}
+                            raise DocumentParserException(
+                                f"MinerU 解析{state}: {error.get('message', state)}", self.engine_id, "parsing_failed"
+                            )
+                        if state not in {"waiting-file", "pending", "running"}:
+                            raise ValueError(f"MinerU 返回未知状态: {state}")
+                        upload = file.get("upload")
+                        if state == "waiting-file" and upload and not uploaded:
+                            await self._request(
+                                client,
+                                "PUT",
+                                self._same_origin_url(upload["url"]),
+                                content=self._source_chunks(source),
+                                headers={**upload["headers"], "Content-Length": str(manifest["files"][0]["bytes"])},
+                            )
+                            uploaded = True
+                            continue
+                        await asyncio.sleep(1)
+            finally:
+                # 超时或协议错误后尽力取消已知任务；清理失败不得覆盖原始结局。
+                if task_url and not terminal:
+                    try:
+                        async with asyncio.timeout(10):
+                            await self._request(client, "POST", f"{task_url}/cancel")
+                    except Exception:
+                        logger.warning("MinerU 远端任务取消未确认，服务端任务可能继续运行")
+
+    async def _source_chunks(self, source: Path):
+        """分块上传原始字节，避免将整个文档复制进内存。"""
+        with source.open("rb") as stream:
+            while chunk := stream.read(1024 * 1024):
+                yield chunk
+
+    def _build_manifest(self, source: Path, params: dict[str, Any]) -> dict[str, Any]:
+        """只发送 4.1 参数，拒绝无法等价迁移的旧协议选项。"""
+        removed = {
+            "lang_list",
+            "formula_enable",
+            "table_enable",
+            "image_analysis",
+            "server_url",
+            "start_page_id",
+            "end_page_id",
+        }.intersection(params)
+        if removed:
+            raise ValueError(f"MinerU 4.1 不再支持参数 {', '.join(sorted(removed))}；页范围请使用 page_range")
+        tier = params.get("tier", self.tier)
+        ocr_mode = params.get("ocr_mode", params.get("parse_method", "auto"))
+        if tier not in {"flash", "basic", "standard", "advanced"}:
+            raise ValueError("不支持的 MinerU tier")
+        if ocr_mode not in {"auto", "txt", "ocr"}:
+            raise ValueError("不支持的 MinerU ocr_mode")
+        return {
+            "files": [{"file_name": source.name, "bytes": source.stat().st_size}],
+            "tier": tier,
+            "ocr_mode": ocr_mode,
+            "page_range": params.get("page_range", "all"),
+            "output_formats": ["default"],
         }
-        server_url = params.get("server_url")
-        if server_url:
-            data["server_url"] = server_url
-        return data
 
-    def _response_error_detail(self, response: requests.Response) -> str:
-        """读取服务端错误详情，非 JSON 响应回退到正文或状态码。"""
-        try:
-            error_data = response.json()
-        except ValueError:
-            return response.text or f"HTTP {response.status_code}"
-        if not isinstance(error_data, dict):
-            return response.text or f"HTTP {response.status_code}"
-        return error_data.get("detail", str(error_data))
+    async def _request(self, client: httpx.AsyncClient, method: str, url: str, *, expected: int = 200, **kwargs) -> httpx.Response:
+        """拒绝重定向和非协议状态码，网络读取由调用方总时限约束。"""
+        response = await client.request(method, url, **kwargs)
+        if response.status_code != expected:
+            raise DocumentParserException(f"MinerU HTTP 请求失败: {response.status_code}", self.engine_id, "http_error")
+        return response
 
-    def _extract_archive_text(self, response: requests.Response, output_dir: Path) -> str:
-        """把响应 ZIP 解包为 Markdown；失败统一为响应解析错误。"""
-        try:
-            with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp_zip:
-                tmp_zip.write(response.content)
-                tmp_zip.flush()
-                try:
-                    text = extract_markdown_archive(tmp_zip.name, output_dir)
-                finally:
-                    os.unlink(tmp_zip.name)
+    def _same_origin_url(self, url: str) -> str:
+        """自托管上传和产物必须来自配置的服务，不能重定向到其他主机。"""
+        target, origin = urlsplit(url), urlsplit(self.server_url)
+        if (target.scheme, target.netloc) != (origin.scheme, origin.netloc) or target.username or target.password or target.fragment:
+            raise ValueError("MinerU 返回了非同源的上传或结果地址")
+        return url
 
-            return text
-        except Exception as e:
-            raise DocumentParserException(
-                f"MinerU 响应解析失败: {str(e)}",
-                self.get_service_name(),
-                "response_parse_error",
-            ) from e
+    async def _download_result(self, client: httpx.AsyncClient, url: str, output_dir: Path) -> str:
+        """流式接收 ZIP，复用归档路径及图片完整性校验。"""
+        async with client.stream("GET", url) as response:
+            if response.status_code != 200:
+                raise DocumentParserException(f"MinerU HTTP 请求失败: {response.status_code}", self.engine_id, "http_error")
+            with tempfile.NamedTemporaryFile(suffix=".zip") as archive:
+                async for chunk in response.aiter_bytes(1024 * 1024):
+                    archive.write(chunk)
+                archive.flush()
+                return extract_markdown_archive(archive.name, output_dir)

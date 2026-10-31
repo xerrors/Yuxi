@@ -18,6 +18,7 @@ from yuxi.modules.agents.services.configuration import initialize_agent_presets
 from yuxi.modules.extensions.mcp.service import ensure_builtin_mcp_servers_in_db
 from yuxi.modules.extensions.skills.builtin.sync import init_builtin_skills
 from yuxi.modules.models.providers.service import ensure_builtin_model_providers_in_db
+from yuxi.modules.system.services.options import invalidate_option_cache
 
 
 async def main() -> None:
@@ -31,8 +32,10 @@ async def main() -> None:
             await initialize_schema(pg_manager)
             logger.info("app-init: options and model providers")
             async with pg_manager.get_async_session_context() as session:
-                await ensure_options_in_db(session)
+                mineru_migrated = await ensure_options_in_db(session)
                 await ensure_builtin_model_providers_in_db(session)
+            if mineru_migrated:
+                await invalidate_option_cache("mineru_ocr_host_opts")
             logger.info("app-init: agent presets")
             async with pg_manager.get_async_session_context() as session:
                 await initialize_agent_presets(session)

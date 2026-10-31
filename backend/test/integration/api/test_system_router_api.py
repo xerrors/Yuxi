@@ -183,7 +183,7 @@ async def test_config_option_update_is_visible_and_restored(test_client, admin_h
 @pytest.mark.parametrize(
     ("key", "values", "invalid_values"),
     [
-        ("mineru_ocr_host_opts", {"backend": "vlm-engine", "effort": "high"}, [{"backend": "unsupported"}, {"effort": "extreme"}]),
+        ("mineru_ocr_host_opts", {"tier": "advanced"}, [{"tier": "unsupported"}, {"tier": ""}]),
         ("mineru_official_api_opts", {"model_version": "vlm"}, [{"model_version": "hybrid"}, {"model_version": ""}]),
     ],
 )

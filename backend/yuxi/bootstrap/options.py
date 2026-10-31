@@ -3,6 +3,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.modules.documents.options import DOCUMENT_OPTIONS
+from yuxi.modules.documents.service import migrate_mineru_configuration
 from yuxi.modules.extensions.options import WEB_PROVIDER_OPTIONS, remote_skill_source_policy
 from yuxi.modules.system.options import system_options
 from yuxi.modules.system.repositories.options import sync_option_definitions
@@ -16,6 +17,7 @@ def get_option_definitions() -> dict[str, Option]:
     }
 
 
-async def ensure_options_in_db(db: AsyncSession) -> None:
-    """保留管理员值，幂等更新代码拥有的定义。"""
+async def ensure_options_in_db(db: AsyncSession) -> bool:
+    """同步定义并迁移 MinerU 旧设置，返回是否需要在提交后失效缓存。"""
     await sync_option_definitions(db, get_option_definitions())
+    return await migrate_mineru_configuration(db)

@@ -76,7 +76,7 @@ PostgreSQL 保存状态，前端通过 SSE 获取过程
 | 持久化 | PostgreSQL | 业务状态、知识库元数据和 checkpoint |
 | 缓存与事件 | Redis | 投递、短期事件、取消和缓存 |
 | 对象与检索 | MinIO、Milvus、Neo4j | 文件对象、向量索引和知识图谱 |
-| 文档处理 | MinerU、PaddleX、docling、RapidOCR 等 | 文档解析、版面分析和 OCR |
+| 文档处理 | MinerU、PaddleOCR、docling、RapidOCR 等 | 文档解析、版面分析和 OCR |
 | 部署 | Docker Compose | 开发与单机部署拓扑 |
 
 Yuxi 本体使用 MIT License；Compose 引入的第三方组件遵循各自许可证，生产部署和再分发边界见[生产部署指南](../advanced/deployment.md)。

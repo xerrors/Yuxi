@@ -28,7 +28,6 @@ PORT_MARKERS = {
     "postgres": {"127.0.0.1:${YUXI_POSTGRES_PORT:-5432}:5432"},
     "redis": {"127.0.0.1:${YUXI_REDIS_PORT:-6379}:6379"},
     "mineru-api": {"127.0.0.1:${YUXI_MINERU_PORT:-30001}:30001"},
-    "paddlex": {"127.0.0.1:${YUXI_PADDLEX_PORT:-8080}:8080"},
 }
 LOCAL_IMAGE_SUFFIXES = {
     "storage-init": "-storage-init:",
@@ -37,7 +36,6 @@ LOCAL_IMAGE_SUFFIXES = {
     "app-init": "-api:",
     "frontend": "-frontend:",
     "mineru-api": "-mineru:",
-    "paddlex": "-paddlex:",
 }
 
 

@@ -87,7 +87,7 @@ YUXI_ENV_FILE=.env.staging docker compose --env-file .env.staging -f docker-comp
 
 同机并行部署时，在各自的环境文件中设置不同的 `COMPOSE_PROJECT_NAME` 和 `YUXI_STATE_DIR`；项目名隔离应用容器、镜像与 Compose 网络，数据目录隔离持久文件。Cube 用户 VM 的引用保存在各自 PostgreSQL，节点共享路径需要另行隔离；Compose 项目名不会创建隔离的执行节点或共享挂载。默认数据目录为 `./docker/volumes`，同一目录只允许一套运行中的环境写入。已有部署更换项目名前，先停止接收任务、等待 Run 和命令清理并核对原执行环境，再用旧配置执行 `docker compose down`（保留数据，不加 `-v`），用新配置启动；复用数据时保持状态目录、节点挂载、实例身份和密钥不变。
 
-生产 Web 端口通过 `YUXI_FRONTEND_PORT` 设置，默认 80；API 默认发布到 `127.0.0.1:6050`，管理服务端口也只绑定回环地址。具体默认值由 `docker-compose.prod.yml` 的 `ports` 定义；多套生产环境还需分别设置端口，启用 `all` profile 时包括 `YUXI_MINERU_PORT` 和 `YUXI_PADDLEX_PORT`。开发环境的端口隔离示例见[并行工作树与隔离运行环境](../develop-guides/parallel-worktree-environments.md)。
+生产 Web 端口通过 `YUXI_FRONTEND_PORT` 设置，默认 80；API 默认发布到 `127.0.0.1:6050`，管理服务端口也只绑定回环地址。具体默认值由 `docker-compose.prod.yml` 的 `ports` 定义；多套生产环境还需分别设置端口，启用 `all` profile 时包括 `YUXI_MINERU_PORT`。开发环境的端口隔离示例见[并行工作树与隔离运行环境](../develop-guides/parallel-worktree-environments.md)。
 
 MinIO 将同一宿主数据目录挂载到容器 `/data`，Neo4j 将日志目录挂载到 `/logs`；这两个容器内路径的调整不要求移动宿主文件。
 
@@ -111,7 +111,7 @@ Compose 自动创建缺失的挂载目录，`storage-init` 在无网络、无平
 
 API、Web 与 MinIO 的项目文件在构建时明确权限：源码和配置归 root 持有，普通文件可读、目录可进入、入口脚本可执行；API 与 worker 仍以 `1000:1000` 运行，仅在专用数据与运行目录写入。构建输入的 `600/700` 模式不会使镜像内的项目文件失去可读性。开发 Compose 的源码 bind mount 使用宿主文件实际权限，宿主 checkout 仍须允许容器用户读取与遍历；镜像权限不会覆盖挂载内容。实现与回归入口见[权限决策](../develop-guides/decisions/implemented/2026-10-17-container-storage-permissions.md)。
 
-需要本地 MinerU 或 PaddleX OCR 时，再启用 `all` profile：
+需要自托管 MinerU 时，再启用 `all` profile；云端与外接服务配置见[文档处理与 OCR](./document-processing.md)：
 
 ```bash
 docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container --profile all up -d --build
@@ -209,7 +209,7 @@ worker 的 Compose 健康检查通过 `python -m yuxi.workers.health` 轻量读�
 | 5432 | PostgreSQL | 本机数据库维护 |
 | 6379 | Redis | 本机缓存和队列维护 |
 
-`all` profile 下还有两个可选 OCR 服务：`mineru-api`（30001，`/file_parse` 接口）和 `paddlex`（8080，PP-Structure-V3）。etcd 只在 Compose 网络内供 Milvus 使用，没有发布到宿主机。
+`all` profile 提供可选的 `mineru-api`（30001，4.1 Tasks 接口），不包含 PaddleX。etcd 只在 Compose 网络内供 Milvus 使用，没有发布到宿主机。
 
 PostgreSQL、Redis、MinIO、Milvus 和 Neo4j 的端口只绑定 `127.0.0.1`，不要把它们暴露到公网；Web 与 API 发布到所有接口。各端口可用环境变量覆盖（`YUXI_FRONTEND_PORT`、`YUXI_API_PORT`、`YUXI_NEO4J_HTTP_PORT`、`YUXI_MINIO_API_PORT`、`YUXI_MILVUS_PORT`、`YUXI_POSTGRES_PORT`、`YUXI_REDIS_PORT`），完整映射以 [docker-compose.yml](https://github.com/xerrors/Yuxi/blob/main/docker-compose.yml) 为准。
 
@@ -334,7 +334,7 @@ Milvus 3.0.2 与 PyMilvus 3.0.2 配套部署，知识库与图向量通过 `MILV
 
 Yuxi 本体使用 MIT License。Compose 依赖以独立进程运行，Yuxi 通过公开协议访问它们；第三方组件的许可证不会因为使用 Compose 就变成 MIT。
 
-当前 Compose 引用的主要组件如下。表中的版本是镜像 tag；只有明确写死的 tag 才能提供对应的版本预期，`postgres:16`、`mineru-vllm:latest` 和 `paddlex:latest` 仍可能随重新拉取而变化：
+当前 Compose 引用的主要组件如下。表中的版本是镜像 tag；只有明确写死的 tag 才能提供对应的版本预期，`postgres:16` 仍可能随重新拉取而变化：
 
 | 组件 | 镜像引用 | 许可证 |
 | --- | --- | --- |
@@ -344,7 +344,7 @@ Yuxi 本体使用 MIT License。Compose 依赖以独立进程运行，Yuxi 通�
 | etcd | `quay.io/coreos/etcd:v3.5.25` | Apache-2.0 |
 | PostgreSQL | `postgres:16` | PostgreSQL License |
 | Redis | `redis:7.4.10-alpine` | RSALv2 / SSPLv1（均非 OSI 许可证） |
-| MinerU / PaddleX（可选） | `mineru-vllm:latest` / `paddlex:latest` | 以各自 Dockerfile 和上游声明为准 |
+| MinerU（可选） | 本地构建：`<项目名>-mineru:4.1.3`，vLLM 基础镜像 `v0.21.0` | 以 `docker/mineru.Dockerfile` 与上游许可证为准 |
 
 MinIO 的镜像由本仓库构建：MinIO 在 Docker Hub 与 quay.io 上的镜像已不再公开分发（同一 registry 上其他镜像仍可匿名拉取），`dl.min.io` 返回 410。Compose 按 `docker/minio/Dockerfile` 构建该镜像，构建时从官方 GitHub Release 下载固定版本的二进制并校验 sha256；它运行与下架前镜像逐字节相同的 MinIO 二进制，基础镜像与镜像内附带文件则不同（不再包含 `mc`、`minisig` 与 `*_FILE` 变量默认值）。
 

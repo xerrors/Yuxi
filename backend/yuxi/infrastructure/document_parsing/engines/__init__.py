@@ -61,14 +61,14 @@ ENGINE_SPECS = {
     ),
     "mineru_ocr": EngineSpec(
         service_name="mineru_ocr",
-        display_name="MinerU OCR",
+        display_name="MinerU 自托管",
         supported_extensions=_STANDARD_OCR_EXTENSIONS,
         module_path="yuxi.infrastructure.document_parsing.engines.mineru",
         class_name="MinerUParser",
     ),
     "mineru_official": EngineSpec(
         service_name="mineru_official",
-        display_name="MinerU Official API",
+        display_name="MinerU 官方云服务",
         supported_extensions=_MINERU_OFFICIAL_EXTENSIONS,
         module_path="yuxi.infrastructure.document_parsing.engines.mineru_official",
         class_name="MinerUOfficialParser",
