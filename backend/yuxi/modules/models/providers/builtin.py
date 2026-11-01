@@ -196,6 +196,13 @@ BUILTIN_PROVIDERS: list[dict[str, Any]] = [
         "models_endpoint": "https://opencode.ai/zen/go/v1/models",
     },
     {
+        "provider_id": "runcrate",
+        "display_name": "Runcrate",
+        "base_url": "https://api.runcrate.ai/v1",
+        "api_key_env": "RUNCRATE_API_KEY",
+        "models_endpoint": "https://api.runcrate.ai/v1/models",
+    },
+    {
         "provider_id": "siliconflow-cn",
         "display_name": "SiliconFlow",
         "base_url": "https://api.siliconflow.cn/v1",

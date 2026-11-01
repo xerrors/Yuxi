@@ -39,6 +39,7 @@ export const modelAvatars = {
     0.75,
     'brightness(0) saturate(100%) invert(94%) sepia(94%) saturate(1636%) hue-rotate(24deg) brightness(105%) contrast(106%)'
   ),
+  runcrate: avatar('default', 'var(--gray-100)', 0.72, 'none'),
   siliconflow: avatar('siliconcloud', '#6e29f6', 0.7),
   'siliconflow-cn': avatar('siliconcloud', '#6e29f6', 0.7),
   together: avatar('together', '#fff', 0.75, 'none'),
