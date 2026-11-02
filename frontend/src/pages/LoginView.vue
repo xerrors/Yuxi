@@ -40,7 +40,10 @@
             <header class="form-header">
               <!-- 如果是在初始化，显示特定标题 -->
               <h2 v-if="isFirstRun" class="init-title">系统初始化，请创建超级管理员</h2>
-              <p v-else class="welcome-text">欢迎登录</p>
+              <template v-else>
+                <h2 class="welcome-title">欢迎登录</h2>
+                <p class="welcome-subtitle">登录后继续使用 {{ brandName }}</p>
+              </template>
             </header>
 
             <div class="login-content" :class="{ 'is-initializing': isFirstRun }">
@@ -687,6 +690,11 @@ onUnmounted(() => {
       display: flex;
       align-items: center;
       gap: 12px;
+
+      /* 可点击返回首页：hover 仅加深品牌文字，不做位移 */
+      &:hover .brand-main {
+        color: var(--gray-900);
+      }
     }
   }
 }
@@ -703,6 +711,7 @@ onUnmounted(() => {
   .brand-main {
     color: var(--gray-700);
     font-weight: 600;
+    transition: color 0.2s ease;
   }
 }
 
@@ -740,10 +749,15 @@ onUnmounted(() => {
 .login-card {
   width: 900px;
   max-width: 95vw;
-  height: 560px;
+  /* 表单与错误信息决定卡片高度，避免居中内容被圆角裁切。 */
+  min-height: 560px;
   background: var(--gray-0);
   border-radius: 16px;
   border: 1px solid var(--border-surface);
+  /* 独立悬浮卡片的极轻环境光，压暗主题下 token 自动减弱 */
+  box-shadow:
+    0 1px 2px var(--shadow-1),
+    0 12px 32px -16px var(--shadow-2);
   display: flex;
   overflow: hidden;
 }
@@ -756,9 +770,12 @@ onUnmounted(() => {
 .card-side.is-image {
   flex: 1.4;
   background-color: var(--main-10);
+  border-right: 1px solid var(--border-surface);
   overflow: hidden;
 
   .login-bg-image {
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
     object-fit: cover;
@@ -785,13 +802,18 @@ onUnmounted(() => {
 
 .form-header {
   text-align: left;
-  .welcome-text {
-    font-size: 14px;
+  .welcome-title {
+    margin: 0;
+    font-size: 20px;
     font-weight: 600;
+    color: var(--gray-900);
+    line-height: 1.4;
+  }
+  .welcome-subtitle {
+    margin: 6px 0 0;
+    font-size: 13px;
     color: var(--gray-500);
-    margin-bottom: 4px;
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    line-height: 1.6;
   }
   .init-title {
     font-size: 18px;
@@ -804,7 +826,7 @@ onUnmounted(() => {
 
 .login-form {
   :deep(.ant-input-affix-wrapper) {
-    padding: 10px 12px;
+    padding: 10px 14px;
     border-radius: 8px;
   }
   :deep(.ant-btn) {
@@ -812,9 +834,21 @@ onUnmounted(() => {
     font-size: 16px;
     border-radius: 8px;
   }
+  :deep(.ant-input) {
+    caret-color: var(--main-color);
+  }
   :deep(.ant-input-prefix) {
     margin-right: 8px;
-    color: var(--gray-500);
+    color: var(--gray-400);
+    transition: color 0.2s ease;
+  }
+  /* 聚焦时前缀图标随主色点亮，标示当前输入位置 */
+  :deep(.ant-input-affix-wrapper-focused .ant-input-prefix),
+  :deep(.ant-input-affix-wrapper:focus-within .ant-input-prefix) {
+    color: var(--main-color);
+  }
+  :deep(.ant-form-item-label > label) {
+    font-weight: 500;
   }
 }
 
@@ -825,30 +859,27 @@ onUnmounted(() => {
 .third-party-login {
   margin-top: 16px;
   .divider {
-    position: relative;
-    text-align: center;
+    display: flex;
+    align-items: center;
+    gap: 12px;
     margin: 24px 0 16px;
     &::before,
     &::after {
       content: '';
-      position: absolute;
-      top: 50%;
-      width: 30%;
+      flex: 1;
       height: 1px;
-      background-color: var(--gray-200);
     }
+    /* 两端渐隐的分割线，比硬截断更柔和 */
     &::before {
-      left: 0;
+      background: linear-gradient(to right, transparent, var(--gray-200));
     }
     &::after {
-      right: 0;
+      background: linear-gradient(to right, var(--gray-200), transparent);
     }
     span {
-      display: inline-block;
-      padding: 0 8px;
-      background-color: var(--gray-0);
       color: var(--gray-400);
       font-size: 12px;
+      white-space: nowrap;
     }
   }
 
@@ -905,9 +936,18 @@ onUnmounted(() => {
 
 .agreement-link {
   color: var(--main-color);
+  text-underline-offset: 3px;
+  transition: color 0.2s ease;
 
   &:hover {
+    color: var(--main-800);
     text-decoration: underline;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--main-color);
+    outline-offset: 2px;
+    border-radius: 2px;
   }
 }
 
@@ -916,7 +956,7 @@ onUnmounted(() => {
   padding: 10px 12px;
   background-color: var(--color-error-50);
   border: 1px solid color-mix(in srgb, var(--color-error-500) 25%, transparent);
-  border-radius: 6px;
+  border-radius: 8px;
   color: var(--color-error-700);
   font-size: 13px;
   text-align: center;
@@ -938,8 +978,17 @@ onUnmounted(() => {
   a {
     color: var(--gray-500);
     font-size: 13px;
+    text-underline-offset: 3px;
+    transition: color 0.2s ease;
+
     &:hover {
       color: var(--main-color);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--main-color);
+      outline-offset: 2px;
+      border-radius: 2px;
     }
   }
 
@@ -1022,8 +1071,8 @@ onUnmounted(() => {
 
   .login-card {
     flex-direction: column;
-    height: auto;
-    max-height: none;
+    /* 纵向单列时卡片随内容收缩，不沿用双栏的最小高度 */
+    min-height: unset;
     width: 100%;
     margin-top: 20px;
   }

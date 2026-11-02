@@ -361,17 +361,17 @@
                         />
                       </template>
                       <template #actions-left-extra>
-                        <ToolApprovalModeSelector
-                          upward
-                          :model-value="currentToolApprovalMode"
-                          @update:model-value="handleToolApprovalModeSelect"
-                        />
                         <slot
                           name="input-actions-left"
                           :agent-id="currentAgentId"
                           :has-active-thread="!!currentChatId"
                           :is-creating-thread="threadCreationInFlight"
                         ></slot>
+                        <ToolApprovalModeSelector
+                          upward
+                          :model-value="currentToolApprovalMode"
+                          @update:model-value="handleToolApprovalModeSelect"
+                        />
                       </template>
                       <template #actions-right-extra>
                         <button
