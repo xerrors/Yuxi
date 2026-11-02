@@ -16,7 +16,8 @@ pytest_plugins = ["test.integration.services.agent_input_fixtures"]
 
 
 @pytest.mark.parametrize(
-    "outcome", ["generated", "timeout", "quota", "manual", "placeholder", "thinking", "dangling_think", "unclosed_think", "unrelated"]
+    "outcome",
+    ["generated", "timeout", "quota", "manual", "placeholder", "thinking", "dangling_think", "unclosed_think", "truncated_reference"],
 )
 async def test_auto_title_persists_once_and_preserves_manual_rename(sessions, monkeypatch, outcome):
     """回读真实数据库验证生成、失败回退及手动改名优先。"""
@@ -52,7 +53,7 @@ async def test_auto_title_persists_once_and_preserves_manual_rename(sessions, mo
                 "thinking": "<think>PRIVATE_REASONING</think>PostgreSQL 慢查询优化",
                 "dangling_think": "PRIVATE_REASONING</think>PostgreSQL 慢查询优化",
                 "unclosed_think": "<think>PRIVATE_REASONING",
-                "unrelated": "浏览器UA",
+                "truncated_reference": "PostgreSQL 慢查询优化" + "建议" * 6 + "@session:private-thread",
             }.get(outcome, "PostgreSQL 慢查询优化")
         )
 
@@ -70,21 +71,39 @@ async def test_auto_title_persists_once_and_preserves_manual_rename(sessions, mo
         assert persisted.title == ("PostgreSQL 慢查询优化" if outcome in {"generated", "thinking", "dangling_think"} else fallback)
 
 
-@pytest.mark.parametrize("message", ["回复字母 A", "回复字母 B", "回复字母 C"])
-async def test_short_letter_requests_keep_source_title_instead_of_unrelated_subject(sessions, monkeypatch, message):
-    """模型给出浏览器主题时，短指令标题保持原用户消息。"""
+@pytest.mark.parametrize(
+    ("message", "candidate", "expected"),
+    [
+        ("你好", "日常问候", "日常问候"),
+        ("谢谢", "表达感谢", "表达感谢"),
+        ("如何提升速度", "性能优化建议", "性能优化建议"),
+        ("回复字母 A", "浏览器UA", "浏览器UA"),
+        ("Hello", "Greetings", "Greetings"),
+        ("你好", "こんにちは", "こんにちは"),
+        ("回复字母 A", "A", "A"),
+        ("给我一个数字", "123", "123"),
+        ("如何提升速度", ' 标题："性能优化建议" ', "性能优化建议"),
+        ("如何提升速度", "## **标题：性能优化建议**", "性能优化建议"),
+        ("如何提升速度", "“Title: **性能优化建议**”", "性能优化建议"),
+        ("如何提升速度", "性能\n\t优化建议", "性能 优化建议"),
+        ("如何提升速度", "性能优化建议" * 10, ("性能优化建议" * 10)[:30]),
+    ],
+)
+async def test_generated_titles_are_normalized_without_source_word_matching(sessions, monkeypatch, message, candidate, expected):
+    """规范化标题持久化成功，不要求复用用户消息中的字词。"""
     from yuxi.modules.agents.services import titles
 
     async with sessions() as db:
         await SessionRepository(db).add_session(uid=SCOPE.uid, agent_id="main", project_id="input-project", thread_id="letter-title")
         await db.commit()
     monkeypatch.setattr(titles, "system_options", SimpleNamespace(get=AsyncMock(return_value={"fast_model": "test:fast"})))
-    model = SimpleNamespace(ainvoke=AsyncMock(return_value=SimpleNamespace(text="浏览器UA")))
+    model = SimpleNamespace(ainvoke=AsyncMock(return_value=SimpleNamespace(text=candidate)))
     monkeypatch.setattr(titles, "load_chat_model", lambda *args, **kwargs: model)
     await titles.generate_session_title(thread_id="letter-title", uid=SCOPE.uid, app_id=None, content=message)
     async with sessions() as db:
         session = await SessionRepository(db).get_session_by_thread_id("letter-title")
-        assert session.title == message
+        assert session.title == expected
+        assert "auto_title" not in session.extra_metadata
 
 
 @pytest.mark.parametrize(
