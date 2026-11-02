@@ -500,7 +500,7 @@ async def recover_scheduled_dispatches(*, limit: int = 100) -> int:
             await dispatch_scheduled_run(scheduled_run_id=record.id)
             recovered += 1
         except Exception:
-            logger.error(f"恢复定时任务触发失败: scheduled_run={record.id}", exc_info=True)
+            logger.opt(exception=True).error(f"恢复定时任务触发失败: scheduled_run={record.id}")
     return recovered
 
 
@@ -515,10 +515,7 @@ async def _claim_due_run(*, db: AsyncSession, now: datetime) -> ScheduledAgentRu
             job.enabled = False
             job.updated_at = now
             await db.commit()
-            logger.error(
-                f"已停用无法计算下次触发时间的定时任务: scheduled_job={job.id}",
-                exc_info=True,
-            )
+            logger.opt(exception=True).error(f"已停用无法计算下次触发时间的定时任务: scheduled_job={job.id}")
             continue
         job.updated_at = now
         run = await _create_run_record(
@@ -546,6 +543,6 @@ async def claim_and_dispatch_due_jobs(*, limit: int = 20) -> int:
             try:
                 await dispatch_scheduled_run(scheduled_run_id=run_id)
             except Exception:
-                logger.error(f"提交到期定时任务失败: scheduled_run={run_id}", exc_info=True)
+                logger.opt(exception=True).error(f"提交到期定时任务失败: scheduled_run={run_id}")
         count += 1
     return count

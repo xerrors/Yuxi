@@ -506,7 +506,7 @@ async def stream_agent_execution(
         try:
             await adapter.persist_incomplete()
         except Exception:
-            logger.warning("失败执行的部分 item 未能持久化", exc_info=True)
+            logger.opt(exception=True).warning("失败执行的部分 item 未能持久化")
         await _persist_model_request_timing(model_request_recorder, meta)
         async with pg_manager.get_async_session_context() as new_db:
             output = await save_partial_message(

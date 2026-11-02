@@ -46,7 +46,7 @@ class PublicEventWriter:
         try:
             await append_run_stream_events(self.run_id, events)
         except Exception:
-            logger.warning("公开事件发布失败: run=%s", self.run_id, exc_info=True)
+            logger.opt(exception=True).warning("公开事件发布失败: run={}", self.run_id)
 
 
 async def append_run_event_best_effort(run_id: str, event: dict) -> bool:
@@ -54,7 +54,7 @@ async def append_run_event_best_effort(run_id: str, event: dict) -> bool:
     try:
         await append_run_stream_events(run_id, [event])
     except Exception:
-        logger.warning("公开事件发布失败: run=%s type=%s", run_id, event.get("type"), exc_info=True)
+        logger.opt(exception=True).warning("公开事件发布失败: run={} type={}", run_id, event.get("type"))
         return False
     return True
 

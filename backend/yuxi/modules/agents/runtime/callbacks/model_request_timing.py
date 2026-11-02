@@ -52,4 +52,4 @@ class FirstModelRequestRecorder(BaseCallbackHandler):
                 )
             self._persisted = True
         except Exception:
-            logger.warning(f"Failed to persist first model request timing: run={run_id}", exc_info=True)
+            logger.opt(exception=True).warning(f"Failed to persist first model request timing: run={run_id}")

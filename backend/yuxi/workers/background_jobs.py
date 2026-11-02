@@ -34,7 +34,7 @@ async def process_background_job(ctx: dict[str, Any], job_id: str) -> None:
     try:
         definition = get_job_definition(record.type, handler_version)
     except ValueError:
-        logger.error("后台作业 has unknown Handler metadata: job_id=%s, type=%s", job_id, record.type)
+        logger.error("后台作业 has unknown Handler metadata: job_id={}, type={}", job_id, record.type)
         return
     if record.cancel_requested:
         failure_handler = definition.load_failure_handler()
@@ -136,7 +136,7 @@ async def process_background_job(ctx: dict[str, Any], job_id: str) -> None:
         if asyncio.current_task() is not None and asyncio.current_task().cancelling():
             raise
     except Exception as exc:
-        logger.exception("Background job failed: job_id=%s, type=%s", job_id, record.type)
+        logger.exception("Background job failed: job_id={}, type={}", job_id, record.type)
         await _finish_job_failure(
             repo,
             job_id=job_id,
@@ -193,14 +193,14 @@ async def publish_pending_jobs(*, limit: int = 200) -> list[str]:
         try:
             get_job_definition(record.type)
         except ValueError as exc:
-            logger.error("Cannot publish unknown durable job: job_id=%s, type=%s", record.id, record.type)
+            logger.error("Cannot publish unknown durable job: job_id={}, type={}", record.id, record.type)
             await repository.fail_pending(record.id, error=str(exc))
             continue
         try:
             definition = get_job_definition(record.type, handler_version)
         except ValueError as exc:
             error = str(exc)
-            logger.error("Cannot rebuild durable job: job_id=%s, type=%s", record.id, record.type)
+            logger.error("Cannot rebuild durable job: job_id={}, type={}", record.id, record.type)
             failure_handler = _failure_handler_for(record)
             before_fail = partial(failure_handler, error=error) if failure_handler is not None else None
             await repository.fail_pending(record.id, error=error, before_fail=before_fail)
@@ -227,7 +227,7 @@ async def _heartbeat_job(context: BackgroundJobContext, execution: asyncio.Task[
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.error("Job heartbeat failed; cancelling owner: job_id=%s", context.job_id, exc_info=True)
+            logger.opt(exception=True).error("Job heartbeat failed; cancelling owner: job_id={}", context.job_id)
             context._request_cancel("lease_lost")
             execution.cancel()
             return
@@ -266,4 +266,4 @@ async def _publish_pending_after_slot_release() -> None:
     try:
         await publish_pending_jobs(limit=BACKGROUND_JOB_MAX_RUNNING)
     except Exception:
-        logger.error("Failed to publish pending jobs after slot release", exc_info=True)
+        logger.opt(exception=True).error("Failed to publish pending jobs after slot release")

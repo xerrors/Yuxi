@@ -95,7 +95,7 @@ async def reconcile_expired_run_leases(*, now: datetime | None = None) -> list[s
                 reconciled.append(run.id)
         except Exception:
             failures += 1
-            logger.exception("Expired lease recovery failed: run_id=%s", run_id)
+            logger.exception("Expired lease recovery failed: run_id={}", run_id)
     for turn_id in terminal_turn_ids:
         await finish_turn_observation_if_terminal(turn_id)
     await reconcile_pending_runtime_cleanups()
@@ -123,7 +123,7 @@ async def reconcile_pending_runtime_cleanups() -> list[str]:
             cleaned.append(run.id)
         except Exception:
             failures += 1
-            logger.exception("Run cleanup recovery failed: run_id=%s", run.id)
+            logger.exception("Run cleanup recovery failed: run_id={}", run.id)
     await reconcile_cancelling_turns()
     if failures:
         raise RuntimeError(f"执行清理恢复失败：{failures} 条")

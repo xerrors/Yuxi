@@ -304,7 +304,7 @@ async def reconcile_cancelling_turns() -> list[str]:
                     settled.append(candidate.id)
         except Exception:
             failures += 1
-            logger.exception("Failed to reconcile cancelling Turn: %s", candidate.id)
+            logger.exception("Failed to reconcile cancelling Turn: {}", candidate.id)
     if failures:
         raise RuntimeError(f"cancelling Turn recovery failed for {failures} records")
     return settled

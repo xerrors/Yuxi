@@ -187,7 +187,7 @@ class RunContext:
             try:
                 cancelled = await _is_cancel_requested(self.run_id)
             except Exception:
-                logger.error(f"Failed to read durable AgentRun cancellation: run={self.run_id}", exc_info=True)
+                logger.opt(exception=True).error(f"Failed to read durable AgentRun cancellation: run={self.run_id}")
                 self.cancel_event.set()
                 return
             else:
@@ -213,7 +213,7 @@ class RunContext:
                     # 终态事务已清除 lease；本 attempt 仍需完成流收尾、清理和事件发布。
                     return
             except Exception:
-                logger.error(f"Failed to renew AgentRun lease: run={self.run_id}", exc_info=True)
+                logger.opt(exception=True).error(f"Failed to renew AgentRun lease: run={self.run_id}")
                 renewed = False
             if not renewed:
                 self.lease_lost = True
@@ -231,7 +231,7 @@ class RunContext:
         try:
             await await_io(asyncio.to_thread(get_sandbox_provider().cleanup_run, self.uid, self.run_id, self.worker_id))
         except Exception:
-            logger.exception("Run 外部命令尚未确认停止，保留持久清理责任: run=%s", self.run_id)
+            logger.exception("Run 外部命令尚未确认停止，保留持久清理责任: run={}", self.run_id)
 
 
 async def _require_runtime_cleanup(run: AgentRun, message: str) -> None:
@@ -306,7 +306,7 @@ async def _record_run_timing_best_effort(
             else:
                 raise ValueError(f"不支持的 AgentRun timing phase: {phase}")
     except Exception:
-        logger.warning("Failed to persist AgentRun timing: run=%s, phase=%s", run_id, phase, exc_info=True)
+        logger.opt(exception=True).warning("Failed to persist AgentRun timing: run={}, phase={}", run_id, phase)
 
 
 async def _load_user(uid: str):
@@ -326,7 +326,7 @@ async def _confirmed_user_cancel(run_id: str) -> bool:
     try:
         return await _is_cancel_requested(run_id)
     except Exception:
-        logger.error(f"Failed to confirm durable AgentRun cancellation: run={run_id}", exc_info=True)
+        logger.opt(exception=True).error(f"Failed to confirm durable AgentRun cancellation: run={run_id}")
         return False
 
 
@@ -342,7 +342,7 @@ async def _read_run_token_usage_from_state(*, run_id: str, thread_id: str, curre
                 include_relations=False,
             )
     except Exception:
-        logger.warning(f"Failed to read token usage from state for run {run_id}", exc_info=True)
+        logger.opt(exception=True).warning(f"Failed to read token usage from state for run {run_id}")
         return None
 
     agent_state = view.get("agent_state") if isinstance(view, dict) else None
@@ -613,7 +613,7 @@ async def _process_agent_run(ctx, run_id: str, execution_timeout: asyncio.Timeou
             except Exception as manifest_error:
                 if await _is_cancel_requested(run_id):
                     raise asyncio.CancelledError(f"run {run_id} cancelled during preparation")
-                logger.error(f"Failed to persist AgentRun manifest: run={run_id}", exc_info=True)
+                logger.opt(exception=True).error(f"Failed to persist AgentRun manifest: run={run_id}")
                 raise RunAdmissionRejected("manifest_persist_failed", f"运行清单固化失败，执行未开始：{manifest_error}")
 
         except RunAdmissionRejected as rejection:
@@ -764,7 +764,7 @@ async def _process_agent_run(ctx, run_id: str, execution_timeout: asyncio.Timeou
         try:
             released = await release_run_lease_for_retry(run_id, worker_id)
         except Exception:
-            logger.error(f"Infrastructure cancellation could not release AgentRun lease: run={run_id}", exc_info=True)
+            logger.opt(exception=True).error(f"Infrastructure cancellation could not release AgentRun lease: run={run_id}")
             raise cancellation
         if not released and await _confirmed_user_cancel(run_id):
             transition = await _settle_uncommitted_run(
@@ -810,7 +810,7 @@ async def _process_agent_run(ctx, run_id: str, execution_timeout: asyncio.Timeou
                 ),
             )
             raise RetryableRunError(str(exc)) from exc
-        logger.error("Run failed %s: %s", run_id, exc)
+        logger.error("Run failed {}: {}", run_id, exc)
         await _settle_uncommitted_run(
             run_id,
             "failed",
@@ -827,7 +827,7 @@ async def _process_agent_run(ctx, run_id: str, execution_timeout: asyncio.Timeou
         try:
             final_run = await _get_run(run_id)
         except Exception:
-            logger.error(f"Failed to load AgentRun during lifecycle cleanup: run={run_id}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to load AgentRun during lifecycle cleanup: run={run_id}")
             final_run = None
         if final_run:
             await finish_run_lifecycle(final_run)
