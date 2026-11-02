@@ -37,6 +37,16 @@ class KBNameConflictError(KnowledgeBaseException):
     pass
 
 
+class KBEmbeddingModelMissingError(KnowledgeBaseException):
+    """提供不含内部配置或凭据的缺少向量模型提示。"""
+
+    public_message = "知识库未配置 Embedding 模型，无法入库。请联系管理员修复模型配置后重试。"
+
+    def __init__(self):
+        """使用固定的可公开消息。"""
+        super().__init__(self.public_message)
+
+
 class KnowledgeExecutor(ABC):
     """知识库执行器基类：定义解析、索引、检索、外部阅读与投影清理的契约和共享流程。"""
 

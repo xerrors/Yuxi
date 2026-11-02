@@ -1,5 +1,14 @@
 <template>
   <div class="knowledge-base-info-container">
+    <a-alert
+      v-if="isCurrentKnowledgeBaseLoaded && kbUtils.isEmbeddingModelMissing(knowledgeBase)"
+      class="embedding-config-warning"
+      type="warning"
+      show-icon
+      role="alert"
+      message="未配置 Embedding 模型"
+      description="文件可以上传和解析，但无法入库或进行向量检索。请联系管理员修复该知识库的模型配置后重试。"
+    />
     <ExtensionDetailLayout
       :active-key="activeTab"
       :tabs="visibleTabs"
@@ -946,6 +955,20 @@ onUnmounted(() => {
   width: 100%;
   height: 100%;
   min-height: 0;
+}
+
+.knowledge-base-info-container {
+  display: flex;
+  flex-direction: column;
+}
+
+.embedding-config-warning {
+  flex-shrink: 0;
+  margin: 12px var(--page-padding) 0;
+}
+
+.knowledge-detail-layout {
+  flex: 1;
 }
 
 .tab-panel {

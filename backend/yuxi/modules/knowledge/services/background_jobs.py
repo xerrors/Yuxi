@@ -6,6 +6,7 @@ import asyncio
 from typing import TYPE_CHECKING
 
 from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.knowledge.base import KBEmbeddingModelMissingError
 from yuxi.modules.knowledge.graphs.service import KnowledgeGraphService
 from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
 from yuxi.modules.knowledge.runtime import knowledge_base
@@ -98,6 +99,8 @@ async def run_knowledge_ingest(context: BackgroundJobContext) -> dict:
                     "error": f"入库失败: {exc}",
                     "error_type": "index_failed",
                 }
+                if isinstance(exc, KBEmbeddingModelMissingError):
+                    processed_items[result_index]["public_error"] = exc.public_message
     except asyncio.CancelledError:
         # 取消只发生在安全点：保留最终提示后把取消信号原样交还给 worker。
         await context.set_progress(100.0, "任务已取消")
@@ -302,7 +305,10 @@ async def _process_document_file(
         return await knowledge_base.index_file(kb_id, file_id, operator_id=operator_id, params=params, **processing_owner)
     except Exception as exc:
         _log_document_failure(context, kb_id=kb_id, action=action, exc=exc, file_id=file_id)
-        return {"file_id": file_id, "status": "failed", "error": str(exc)}
+        result = {"file_id": file_id, "status": "failed", "error": str(exc)}
+        if isinstance(exc, KBEmbeddingModelMissingError):
+            result["public_error"] = exc.public_message
+        return result
 
 
 # ---- 失败日志与有界结果装配 ----
@@ -342,11 +348,11 @@ def _document_result(items: list[dict], *, processed: int, failed: int) -> dict:
     """任务结果保留计数和有限文件引用，文件详情由知识库拥有。"""
     samples = []
     for item in items[:DOCUMENT_ACTION_RESULT_ITEM_LIMIT]:
-        sample = {key: item[key] for key in ("file_id", "status", "error") if key in item}
+        sample = {key: item[key] for key in ("file_id", "status", "error", "public_error") if key in item}
         if sample.get("error"):
             sample["error"] = "处理失败，详情请查看文件状态或日志"
         samples.append(sample)
-    return {
+    result = {
         "items": samples,
         "processed": processed,
         "succeeded": processed - failed,
@@ -354,3 +360,8 @@ def _document_result(items: list[dict], *, processed: int, failed: int) -> dict:
         "outcome": "partial" if failed else "completed",
         "result_truncated": processed > len(samples),
     }
+    # 只公开领域明确生成的业务提示；原始异常不进入公开字段。
+    public_error = next((item["public_error"] for item in samples if item.get("public_error")), None)
+    if public_error:
+        result["public_error"] = f"文件处理失败（{failed} 个）：{public_error}"
+    return result

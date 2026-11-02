@@ -14,6 +14,72 @@ from test.support.knowledge import default_embedding_model_spec
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 
+@pytest.mark.self_managed_resources
+async def test_missing_embedding_failure_through_http_worker_and_postgres(test_client, admin_headers, postgres_sessions):
+    """模拟历史缺失配置，经真实 HTTP 和 worker 后独立回读任务与文件事实。"""
+    from sqlalchemy import delete, select, update
+
+    from yuxi.modules.background_jobs.models import BackgroundJobRecord
+    from yuxi.modules.knowledge.cache import delete_cached_kb_config
+    from yuxi.modules.knowledge.models import KnowledgeBase, KnowledgeChunk, KnowledgeFile
+
+    response = await test_client.post(
+        "/api/knowledge/knowledge-bases",
+        headers=admin_headers,
+        json={
+            "name": f"pytest_embedding_warning_{uuid.uuid4().hex[:8]}",
+            "kb_type": "milvus",
+            "description": "Missing embedding regression",
+            "embedding_model_spec": default_embedding_model_spec(),
+        },
+    )
+    assert response.status_code == 200, response.text
+    kb_id = response.json()["kb_id"]
+    file_id = f"file_{uuid.uuid4().hex}"
+    job_id = None
+    try:
+        async with postgres_sessions() as session:
+            await session.execute(update(KnowledgeBase).where(KnowledgeBase.kb_id == kb_id).values(embedding_model_spec=None))
+            session.add(KnowledgeFile(file_id=file_id, kb_id=kb_id, filename="embedding-check.txt", status="parsed", is_folder=False))
+            await session.commit()
+        await delete_cached_kb_config(kb_id)
+
+        response = await test_client.post(
+            f"/api/knowledge/knowledge-bases/{kb_id}/documents/index",
+            headers=admin_headers,
+            json={"file_ids": [file_id], "params": {}},
+        )
+        assert response.status_code == 200, response.text
+        job_id = response.json()["job_id"]
+        for _ in range(100):
+            response = await test_client.get(f"/api/background-jobs/{job_id}", headers=admin_headers)
+            assert response.status_code == 200, response.text
+            job = response.json()["job"]
+            if job["status"] in {"failed", "success", "cancelled"}:
+                break
+            await asyncio.sleep(0.1)
+        else:
+            pytest.fail("Missing embedding job did not reach a terminal state")
+
+        assert job["status"] == "failed", job
+        assert "未配置 Embedding 模型" in job["error"]
+        assert "未配置 Embedding 模型" in job["result"]["items"][0]["error"]
+        async with postgres_sessions() as observer:
+            persisted = await observer.get(BackgroundJobRecord, job_id)
+            assert persisted.status == "failed" and persisted.completed_at is not None
+            assert "未配置 Embedding 模型" in persisted.result["public_error"]
+            file = await observer.scalar(select(KnowledgeFile).where(KnowledgeFile.file_id == file_id))
+            assert file.status == "parsed" and file.chunk_count == 0
+            assert await observer.scalar(select(KnowledgeChunk.id).where(KnowledgeChunk.file_id == file_id)) is None
+    finally:
+        response = await test_client.delete(f"/api/knowledge/knowledge-bases/{kb_id}", headers=admin_headers)
+        assert response.status_code == 200, response.text
+        if job_id:
+            async with postgres_sessions() as session:
+                await session.execute(delete(BackgroundJobRecord).where(BackgroundJobRecord.id == job_id))
+                await session.commit()
+
+
 async def test_job_routes_require_admin(test_client, standard_user):
     """Non-admin users should be blocked from accessing job APIs."""
     headers = standard_user["headers"]

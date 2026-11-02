@@ -22,7 +22,7 @@ from pymilvus import (
 
 from yuxi.infrastructure.filesystem import await_io
 from yuxi.infrastructure.observability.logging import logger
-from yuxi.modules.knowledge.base import FileStatus, KnowledgeExecutor
+from yuxi.modules.knowledge.base import FileStatus, KBEmbeddingModelMissingError, KnowledgeExecutor
 from yuxi.modules.knowledge.chunking.dispatcher import IngestionChunk, chunk_markdown
 from yuxi.modules.knowledge.chunking.ragflow_like.nlp import count_tokens
 from yuxi.modules.knowledge.read_models import KnowledgeBaseConfig
@@ -615,6 +615,8 @@ class MilvusKB(KnowledgeExecutor):
             self.collections[kb_id] = collection
             return collection
 
+        except KBEmbeddingModelMissingError:
+            raise
         except Exception as e:
             logger.error(f"Failed to create Milvus collection for {kb_id}: {e}")
             logger.error(f"Traceback: {traceback.format_exc()}")
@@ -642,7 +644,7 @@ class MilvusKB(KnowledgeExecutor):
         logger.info(f"Creating Milvus collection for {kb_id}")
 
         if not embedding_model_spec:
-            raise ValueError(f"Embedding model spec not found for knowledge_base {kb_id}")
+            raise KBEmbeddingModelMissingError()
 
         embedding_info = model_cache.get_model_info(embedding_model_spec)
         if not embedding_info or embedding_info.model_type != "embedding":

@@ -580,6 +580,80 @@ def test_document_job_result_keeps_bounded_references_and_counts():
     assert "private-token" not in str(result) and "private-body" not in str(result)
 
 
+@pytest.mark.parametrize("scope", ["files", "pending", "ingest"])
+async def test_missing_embedding_reason_survives_job_result_projection(monkeypatch, scope):
+    """缺少模型的固定业务提示穿过任务执行与观察投影，其他异常仍不公开。"""
+    from yuxi.modules.background_jobs.models import BackgroundJobRecord
+    from yuxi.modules.knowledge.base import KBEmbeddingModelMissingError
+
+    async def index(*_args, **_kwargs):
+        raise KBEmbeddingModelMissingError()
+
+    async def parse(_kb_id, file_id, **_kwargs):
+        return {"file_id": file_id, "status": "parsed"}
+
+    async def pending(_kb_id, *, after_file_id, **_kwargs):
+        return [] if after_file_id else ["file-1"]
+
+    monkeypatch.setattr(knowledge_job_service.knowledge_base, "index_file", index)
+    monkeypatch.setattr(knowledge_job_service.knowledge_base, "parse_file", parse)
+    monkeypatch.setattr(knowledge_job_service.knowledge_base, "list_document_file_ids_by_statuses", pending)
+    record = make_record(
+        type="knowledge_index",
+        payload={
+            "kb_id": "kb-1",
+            "operator_id": "user-1",
+            "file_ids": ["file-1"],
+            "scope": scope,
+            "statuses": ["parsed"],
+            "count": 1,
+            "params": {"auto_index": True},
+        },
+    )
+    repository = FakeRepo(record)
+    handler = knowledge_job_service.run_knowledge_ingest if scope == "ingest" else knowledge_job_service.run_knowledge_index
+    monkeypatch.setattr(job_service, "BackgroundJobRepository", lambda: repository)
+    monkeypatch.setattr(job_worker, "get_job_definition", lambda *_args: FakeDefinition(handler))
+
+    await process_background_job({"worker_id": "worker-1"}, record.id)
+
+    observation = BackgroundJobRecord(**vars(record)).to_observation_dict()
+    assert observation["status"] == "failed"
+    assert "未配置 Embedding 模型" in observation["error"]
+    assert observation["message"] == observation["error"]
+    assert "未配置 Embedding 模型" in observation["result"]["items"][0]["error"]
+    assert observation["result"]["failed"] == 1
+
+
+def test_raw_job_errors_stay_private():
+    """没有刻意公开消息时，顶层和单文件错误都不能泄露原始异常。"""
+    from yuxi.modules.background_jobs.models import BackgroundJobRecord
+
+    record = BackgroundJobRecord(
+        id="private-job",
+        type="knowledge_index",
+        name="test",
+        status="failed",
+        error="secret-token",
+        message="secret-token",
+        result={"items": [{"file_id": "f1", "status": "failed", "error": "secret-token"}]},
+    )
+    observation = record.to_observation_dict()
+    assert "secret-token" not in str(observation)
+    assert "任务执行失败" in observation["error"]
+
+
+async def test_milvus_preserves_missing_embedding_error():
+    """已有集合创建校验保留业务异常，避免被通用连接错误覆盖。"""
+    from yuxi.modules.knowledge.base import KBEmbeddingModelMissingError
+    from yuxi.modules.knowledge.implementations.milvus import MilvusKB
+
+    executor = object.__new__(MilvusKB)
+    executor.collections = {}
+    with pytest.raises(KBEmbeddingModelMissingError, match="未配置 Embedding 模型"):
+        await executor._get_or_create_milvus_collection("kb-missing", None)
+
+
 @pytest.mark.parametrize("action", ["parse", "index"])
 @pytest.mark.parametrize("scope", ["files", "pending"])
 @pytest.mark.parametrize("failure", ["exception", "result", "params", None])

@@ -53,6 +53,10 @@ class BackgroundJobRecord(Base):
     def to_observation_dict(self, *, include_result: bool = True) -> dict[str, Any]:
         """只序列化公开观察字段，结果详情按需生成。"""
         error = "任务已取消" if self.status == "cancelled" else "任务执行失败，请查看业务资源状态或日志"
+        # public_error 由领域生产者显式脱敏，不能从 error 或 message 推断可公开内容。
+        public_error = self.result.get("public_error") if isinstance(self.result, dict) else None
+        if self.status == "failed" and isinstance(public_error, str) and public_error:
+            error = public_error[:512]
         data = {
             "id": self.id,
             "name": self.name,
@@ -117,7 +121,10 @@ class BackgroundJobRecord(Base):
                     continue
                 reference = {key: item[key][:128] for key in ("file_id", "status") if isinstance(item.get(key), str)}
                 if item.get("error"):
-                    reference["error"] = "处理失败，详情请查看文件状态或日志"
+                    public_error = item.get("public_error")
+                    reference["error"] = (
+                        public_error[:512] if isinstance(public_error, str) and public_error else "处理失败，详情请查看文件状态或日志"
+                    )
                 references.append(reference)
             summary["items"] = references
             summary["result_truncated"] = bool(result.get("result_truncated")) or len(items) > 200

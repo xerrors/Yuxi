@@ -1,11 +1,22 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { isReadOnlyKnowledgeBase, supportsKnowledgeBaseDetail } from '../../src/modules/knowledge/model/kb_utils.js'
+import { isReadOnlyKnowledgeBase, supportsKnowledgeBaseDetail, isEmbeddingModelMissing } from '../../src/modules/knowledge/model/kb_utils.js'
 
 function readSource(relativePath) {
   return readFileSync(new URL(relativePath, import.meta.url), 'utf8')
 }
+
+test('仅缺少向量模型的本地知识库需要提醒', () => {
+  for (const embedding_model_spec of [undefined, null, '', '  ']) {
+    assert.equal(isEmbeddingModelMissing({ kb_type: 'milvus', embedding_model_spec }), true)
+  }
+  assert.equal(isEmbeddingModelMissing({ kb_type: 'milvus', embedding_model_spec: 'provider:embedding' }), false)
+  for (const kb_type of ['feishu', 'dify', 'notion']) {
+    assert.equal(isEmbeddingModelMissing({ kb_type }), false)
+  }
+  assert.equal(isEmbeddingModelMissing({}), false)
+})
 
 test('知识库详情提供面板插槽并校验深链接 Tab', () => {
   const source = readSource('../../src/pages/KnowledgeBaseInfoView.vue')

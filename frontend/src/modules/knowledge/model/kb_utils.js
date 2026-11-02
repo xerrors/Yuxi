@@ -66,10 +66,16 @@ export const isReadOnlyKnowledgeBase = (knowledgeBase, kbTypes = {}) => {
 export const supportsKnowledgeBaseDetail = (knowledgeBase) =>
   knowledgeBase?.supports_document_read === true
 
+/** 本地向量库缺少模型时提示，外部连接器不依赖此配置。 */
+export const isEmbeddingModelMissing = (knowledgeBase) =>
+  knowledgeBase?.kb_type?.toLowerCase() === 'milvus' &&
+  !knowledgeBase.embedding_model_spec?.trim()
+
 export const kbUtils = {
   getKbTypeLabel,
   getKbTypeIcon,
   getKbTypeColor,
   isReadOnlyKnowledgeBase,
-  supportsKnowledgeBaseDetail
+  supportsKnowledgeBaseDetail,
+  isEmbeddingModelMissing
 }
