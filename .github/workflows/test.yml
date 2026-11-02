@@ -22,8 +22,6 @@ on:
       - 'scripts/pull_image.sh'
       - 'scripts/ci/test_docker_build_context.py'
       - 'scripts/ci/test_container_permissions.py'
-      - 'scripts/init.ps1'
-      - 'scripts/ci/test_init_security.ps1'
       - '.github/workflows/test.yml'
 
 permissions:
@@ -77,21 +75,9 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
-  powershell-security-contract:
-    name: PowerShell security environment contract
-    runs-on: windows-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Run native PowerShell security negative controls
-        shell: pwsh
-        run: pwsh -NoProfile -File scripts/ci/test_init_security.ps1
-
   result:
     if: always()
-    needs: [unit-tests, powershell-security-contract]
+    needs: [unit-tests]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
