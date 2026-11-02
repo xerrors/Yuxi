@@ -98,7 +98,7 @@ async def deliver(dispatch: Dispatch) -> bool:
     try:
         await enqueue_agent_run(dispatch.run_id)
     except Exception:
-        logger.exception("Failed to publish committed AgentRun: %s", dispatch.run_id)
+        logger.exception("Failed to publish committed AgentRun: {}", dispatch.run_id)
         return False
     return True
 
@@ -150,7 +150,7 @@ async def recover_pending_dispatches() -> None:
                 failures += 1
         except Exception:
             failures += 1
-            logger.exception("Failed to republish pending AgentRun: %s", run.id)
+            logger.exception("Failed to republish pending AgentRun: {}", run.id)
 
     for uid, agent_slug, thread_id in scopes:
         try:
@@ -158,7 +158,7 @@ async def recover_pending_dispatches() -> None:
                 failures += 1
         except Exception:
             failures += 1
-            logger.exception("Failed to recover ready AgentInput: %s", thread_id)
+            logger.exception("Failed to recover ready AgentInput: {}", thread_id)
 
     if failures:
         raise RuntimeError(f"待执行任务补投失败：{failures} 条")

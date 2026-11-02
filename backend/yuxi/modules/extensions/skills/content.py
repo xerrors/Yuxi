@@ -167,7 +167,7 @@ async def commit_skill_content(
                 await asyncio.to_thread(target.parent.rmdir)
             except OSError as exc:
                 if exc.errno not in {errno.ENOTEMPTY, errno.ENOENT}:
-                    logger.exception("Skill 失败内容的空目录清理失败: %s", target.parent)
+                    logger.exception("Skill 失败内容的空目录清理失败: {}", target.parent)
     await prune_skill_content(db, slug)
     return result
 
@@ -211,7 +211,7 @@ async def prune_skill_content(owner_db: AsyncSession, slug: str) -> None:
                         validated_shared_skill_parts(slug, relative)
                         await asyncio.to_thread(shutil.rmtree, child)
     except Exception:
-        logger.exception("Skill 无引用内容清理失败: %s", slug)
+        logger.exception("Skill 无引用内容清理失败: {}", slug)
 
 
 def content_path(item: Skill) -> Path:

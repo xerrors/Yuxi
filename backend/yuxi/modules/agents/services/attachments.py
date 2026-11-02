@@ -159,7 +159,7 @@ async def parse_draft_file(*, file_id: str, parse_method: str | None, scope: Act
             pass
         if isinstance(exc, (asyncio.CancelledError, DomainError)):
             raise
-        logger.warning("Draft attachment parse failed: id=%s error=%s", file_id, exc)
+        logger.warning("Draft attachment parse failed: id={} error={}", file_id, exc)
         raise InvalidOperationError("附件解析失败") from exc
     return {**_file_response(attachment), "parse_method": method}
 
@@ -231,7 +231,7 @@ async def prepare_input_attachments(*, db, agent_session, input_item, binding) -
             await db.refresh(attachment)
             attachment.error = "附件准备失败，等待恢复重试"
         await db.flush()
-        logger.exception("附件准备失败，保留 Input 等待重试: %s", input_item.id)
+        logger.exception("附件准备失败，保留 Input 等待重试: {}", input_item.id)
         return False
     return True
 
@@ -246,7 +246,7 @@ async def cleanup_prepared_sources(*, db, thread_id: str) -> None:
         try:
             await _delete_draft_storage(client, attachment)
         except (StorageError, OSError):
-            logger.exception("就绪附件临时内容清理失败: %s", attachment.id)
+            logger.exception("就绪附件临时内容清理失败: {}", attachment.id)
             continue
         attachment.object_name = None
         attachment.parsed_source = None
@@ -307,7 +307,7 @@ async def delete_thread_attachment_view(
         except FileNotFoundError:
             pass
         except OSError:
-            logger.exception("附件记录已删除，Workdir 内容清理失败: session=%s scope=%s", thread_id, scope)
+            logger.exception("附件记录已删除，Workdir 内容清理失败: session={} scope={}", thread_id, scope)
     return {"message": "附件已删除"}
 
 
@@ -359,7 +359,7 @@ async def _cleanup_expired_drafts(scope, db) -> None:
         try:
             await _delete_draft_storage(client, attachment)
         except (StorageError, OSError):
-            logger.exception("过期草稿清理失败: %s", attachment.id)
+            logger.exception("过期草稿清理失败: {}", attachment.id)
             continue
         await db.delete(attachment)
     await db.commit()

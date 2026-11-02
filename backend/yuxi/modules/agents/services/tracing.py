@@ -131,7 +131,7 @@ def build_run_context(
             trace_context["parent_span_id"] = parent_observation_id
         handler = CallbackHandler(trace_context=trace_context)
     except Exception as exc:
-        logger.warning("初始化 Langfuse Run 回调失败: %s", exc)
+        logger.warning("初始化 Langfuse Run 回调失败: {}", exc)
         return LangfuseRunContext(metadata=metadata, tags=tags)
     return LangfuseRunContext(callbacks=[handler], metadata=metadata, tags=tags, trace_id=trace_id)
 
@@ -178,7 +178,7 @@ async def finish_turn_observation_if_terminal(turn_id: str) -> None:
             }
         await asyncio.wait_for(asyncio.to_thread(export_turn_root, **details), timeout=3)
     except Exception as exc:
-        logger.warning("结束 Langfuse Turn 根观察失败: %s", exc)
+        logger.warning("结束 Langfuse Turn 根观察失败: {}", exc)
 
 
 def attach_run_observation(
@@ -205,12 +205,12 @@ def attach_run_observation(
             context.run_observation = observation
             observation_id = str(observation.id)
         except Exception as exc:
-            logger.warning("创建 Langfuse Run 观察失败: %s", exc)
+            logger.warning("创建 Langfuse Run 观察失败: {}", exc)
             return None
     try:
         callback = CallbackHandler(trace_context={"trace_id": context.trace_id, "parent_span_id": observation_id})
     except Exception as exc:
-        logger.warning("初始化 Langfuse 观察回调失败: %s", exc)
+        logger.warning("初始化 Langfuse 观察回调失败: {}", exc)
         if context.run_observation is not None:
             context.terminal_status = "abandoned"
             finish_run_observation(context)
@@ -233,7 +233,7 @@ def finish_run_observation(context: LangfuseRunContext | None) -> None:
         context.run_observation.end()
         context.run_observation = None
     except Exception as exc:
-        logger.warning("结束 Langfuse Run 观察失败: %s", exc)
+        logger.warning("结束 Langfuse Run 观察失败: {}", exc)
 
 
 def get_trace_info(run_context: LangfuseRunContext | None) -> dict[str, Any]:

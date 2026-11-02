@@ -491,7 +491,7 @@ async def recover_cooperation_waits() -> None:
                 await _recover_cooperation_wait(turn_id)
             except Exception:
                 failures += 1
-                logger.exception("Cooperation recovery failed: turn_id=%s", turn_id)
+                logger.exception("Cooperation recovery failed: turn_id={}", turn_id)
         after = ids[-1]
     if failures:
         raise RuntimeError(f"协作等待恢复失败：{failures} 条")
@@ -697,13 +697,13 @@ async def reconcile_stopped_trees(*, tree_root_thread_id: str | None = None) -> 
                         waiting.append((target, turn.id))
         except Exception:
             failures += 1
-            logger.exception("Stopped tree recovery failed: thread_id=%s", member.thread_id)
+            logger.exception("Stopped tree recovery failed: thread_id={}", member.thread_id)
     for target, turn_id in waiting:
         try:
             await settle_waiting_cancel(thread_id=target.thread_id, turn_id=turn_id, uid=target.uid, app_id=target.app_id)
         except Exception:
             failures += 1
-            logger.exception("Stopped waiting cleanup failed: turn_id=%s", turn_id)
+            logger.exception("Stopped waiting cleanup failed: turn_id={}", turn_id)
     if failures:
         raise RuntimeError(f"停止会话恢复失败：{failures} 条")
 

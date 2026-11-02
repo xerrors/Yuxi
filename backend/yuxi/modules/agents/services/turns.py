@@ -207,7 +207,7 @@ async def cancel_turn(
             await settle_waiting_cancel(thread_id=thread_id, turn_id=turn.id, uid=scope.uid, app_id=scope.app_id)
         except Exception:
             # 取消已提交；保留 cancelling，由后台重试并报告恢复失败。
-            logger.exception("Failed to settle accepted cancellation: %s", turn.id)
+            logger.exception("Failed to settle accepted cancellation: {}", turn.id)
     return _accepted(receipt)
 
 

@@ -142,7 +142,7 @@ async def stream_thread_events(
                     events = await list_run_stream_events(run.id, after_seq=cursor.event_seq)
                     oldest = await list_run_stream_events(run.id, after_seq="0-0", limit=1)
                 except Exception as exc:
-                    logger.warning("读取 Run 增量失败: run=%s error=%s", run.id, exc)
+                    logger.warning("读取 Run 增量失败: run={} error={}", run.id, exc)
                     events, oldest = [], []
                 expired = (cursor.event_seq != "0-0" and (not oldest or _redis_id(oldest[0]["seq"]) > _redis_id(cursor.event_seq))) or (
                     run.status in TERMINAL_RUN_STATUSES and not events and not oldest

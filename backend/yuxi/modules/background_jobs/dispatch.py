@@ -42,7 +42,7 @@ async def dispatch_job(job_id: str) -> None:
     try:
         await publish_job(job_id)
     except Exception:
-        logger.error("BackgroundJob publication failed; pending intent will be retried: job_id=%s", job_id, exc_info=True)
+        logger.opt(exception=True).error("BackgroundJob publication failed; pending intent will be retried: job_id={}", job_id)
 
 
 async def publish_job(job_id: str) -> None:

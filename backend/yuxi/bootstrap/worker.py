@@ -123,7 +123,7 @@ async def _reconcile_agent_runs_once() -> None:
             await operation()
         except Exception:
             healthy = False
-            logger.exception("Agent reconciliation failed: phase=%s", phase)
+            logger.exception("Agent reconciliation failed: phase={}", phase)
     if healthy:
         try:
             await _publish_reconciliation_health()
@@ -148,12 +148,12 @@ async def _reconcile_background_jobs_forever() -> None:
         try:
             reconciled = await reconcile_and_publish_jobs()
             if reconciled:
-                logger.warning("Reconciled expired durable jobs: count=%s", len(reconciled))
+                logger.warning("Reconciled expired durable jobs: count={}", len(reconciled))
             await _publish_job_reconciliation_health()
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.error("Failed to reconcile durable jobs", exc_info=True)
+            logger.opt(exception=True).error("Failed to reconcile durable jobs")
 
 
 async def _publish_job_reconciliation_health() -> None:
