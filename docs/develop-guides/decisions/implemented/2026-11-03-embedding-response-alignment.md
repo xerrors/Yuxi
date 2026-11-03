@@ -16,7 +16,20 @@ Owner：backend/yuxi/modules/models/embed.py
 
 ## 决策
 
-在响应边界校验，不在写入端补救：
+### 实现方案
+
+校验点在 `BaseEmbeddingModel`（`backend/yuxi/modules/models/embed.py`），覆盖供应商响应解析与批次累加两处：
+
+- `_extract_embeddings(result, expected)` 是 HTTP 响应进入系统的唯一入口。`OtherEmbedding.encode` / `aencode` 在 `response.json()` 之后调用它，并传入 `_expected_count(message)`（字符串输入计 1 条，列表输入计其长度，与 `build_payload` 的输入形态一致）。条数不符即抛出固定 `ValueError`，不返回任何向量。
+- 提供者在条目上声明 `index` 时，`_order_by_reported_index` 按索引归位；索引非整数、负数、超出请求条数、重复，或同一响应混用带与不带 `index` 的条目，均整批失败。
+- 未声明 `index` 的响应保持原顺序，兼容既有供应商。
+- `batch_encode` / `abatch_encode` 在 `data.extend(...)` 前调用 `_require_one_vector_per_input`，使每批独立满足同一约束，避免子集被拼进更大的列表。
+
+失败边界的语义：任何一批不满足逐条对应，该批抛错，调用方不写入向量；`MilvusKB._insert_chunks_to_stores` 与 PostgreSQL 的写入顺序、事务边界与重试策略均不变。异常文本固定，不回显供应商字段。
+
+不在写入端（`_insert_chunks_to_stores`）补长度校验：那里已丢失请求条数语义，且同一校验会散落到多个调用方。
+
+以下四条规则共同构成契约：
 
 1. `_extract_embeddings` 接收请求条数 `expected`，返回条数不符直接抛出带条数信息的 `ValueError`。
 2. 提供者返回 `index` 时按 `index` 归位；缺失、重复、越界（含超出 `expected`）的索引整批失败，混用带与不带 `index` 的条目同样失败。
@@ -31,6 +44,8 @@ Owner：backend/yuxi/modules/models/embed.py
 - 静默截断到较短长度：同样产生位置错配，且失败不可见，不采用。
 - 让调用方（`_insert_chunks_to_stores`）逐批对比长度：校验点分散在多个调用方，且此时 HTTP 响应语义已丢失，不采用。
 - 重试整批：重试属于既有 `_prepare_retry` 的职责，本变更只定义「部分结果不满足契约」，不改变重试策略。
+
+本变更直接落为 `implemented` 而不经过 `proposed`：它把同一模块内 rerank 已生效的契约（#1016）**应用到相邻的 Embedding 路径**，没有新增抽象、依赖、配置或状态机，也不改变持久化顺序、权限或兼容承诺；唯一需要裁决的是「部分结果如何处理」，而同类契约已在上游合并并留下决策记录，因此不构成有待裁决的取舍。
 
 ## 后果
 
