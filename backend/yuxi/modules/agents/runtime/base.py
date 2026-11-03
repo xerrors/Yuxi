@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from contextlib import aclosing
 from dataclasses import dataclass
 from typing import Any
@@ -38,7 +38,7 @@ def _recursion_limit_from_context(context: BaseContext, default: int) -> int:
     return int(value) if isinstance(value, int) and value > 0 else default
 
 
-class BaseAgent:
+class BaseAgent(ABC):
     """
     定义一个基础 Agent 供 各类 graph 继承
     """
