@@ -90,46 +90,34 @@ class BaseEmbeddingModel(ABC):
         items = result["data"]
         if not isinstance(items, list):
             raise ValueError("Embedding response data must be a list")
-        if expected is not None and len(items) != expected:
-            raise ValueError(f"Embedding response returned {len(items)} vectors for {expected} inputs")
+        if expected is not None:
+            BaseEmbeddingModel._require_one_vector_per_input(items, expected)
 
         for item in items:
-            if not isinstance(item, dict) or "embedding" not in item:
+            if not isinstance(item, dict) or item.get("embedding") is None:
                 raise ValueError("Embedding response contains an invalid item")
 
-        if any(item.get("index") is not None for item in items):
-            return BaseEmbeddingModel._order_by_reported_index(items, expected)
+        if not any(item.get("index") is not None for item in items):
+            return [item["embedding"] for item in items]
 
-        return [item["embedding"] for item in items]
-
-    @staticmethod
-    def _order_by_reported_index(items: list[dict], expected: int | None) -> list[list[float]]:
-        """按提供者声明的 index 归位，拒绝缺失、重复、越界的索引。"""
-        if any(item.get("index") is None for item in items):
-            raise ValueError("Embedding response mixes indexed and unindexed items")
-
-        top = expected if expected is not None else len(items)
-        ordered: list[list[float] | None] = [None] * len(items)
+        indexed = {}
         for item in items:
             index = item.get("index")
-            if type(index) is not int or index < 0 or index >= top or index >= len(items):
+            if index is None:
+                raise ValueError("Embedding response mixes indexed and unindexed items")
+            if type(index) is not int or not 0 <= index < len(items):
                 raise ValueError("Embedding response contains an out-of-range index")
-            if ordered[index] is not None:
+            if index in indexed:
                 raise ValueError("Embedding response contains a duplicate index")
-            ordered[index] = item["embedding"]
+            indexed[index] = item["embedding"]
 
-        return [embedding for embedding in ordered if embedding is not None]
+        return [indexed[index] for index in range(len(items))]
 
     @staticmethod
-    def _require_one_vector_per_input(embeddings: list[list[float]], expected: int) -> None:
-        """批次累加前校验条数，避免把子集拼进更大的错位列表。"""
+    def _require_one_vector_per_input(embeddings: list, expected: int) -> None:
+        """校验响应或批次条数，拒绝部分结果。"""
         if len(embeddings) != expected:
             raise ValueError(f"Embedding response returned {len(embeddings)} vectors for {expected} inputs")
-
-    @staticmethod
-    def _expected_count(message: list[str] | str) -> int:
-        """单条输入按 1 条计，与 build_payload 的输入形态保持一致。"""
-        return 1 if isinstance(message, str) else len(message)
 
 
 class OtherEmbedding(BaseEmbeddingModel):
@@ -151,7 +139,7 @@ class OtherEmbedding(BaseEmbeddingModel):
             try:
                 response = requests.post(self.base_url, json=payload, headers=self.headers, timeout=60)
                 response.raise_for_status()
-                return self._extract_embeddings(response.json(), BaseEmbeddingModel._expected_count(message))
+                return self._extract_embeddings(response.json(), 1 if isinstance(message, str) else len(message))
             except requests.RequestException as e:
                 retry = self._prepare_retry(
                     message,
@@ -177,7 +165,7 @@ class OtherEmbedding(BaseEmbeddingModel):
                 try:
                     response = await client.post(self.base_url, json=payload, headers=self.headers, timeout=60)
                     response.raise_for_status()
-                    return self._extract_embeddings(response.json(), BaseEmbeddingModel._expected_count(message))
+                    return self._extract_embeddings(response.json(), 1 if isinstance(message, str) else len(message))
                 except httpx.HTTPStatusError as e:
                     retry = self._prepare_retry(
                         message,
