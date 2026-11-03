@@ -30,15 +30,30 @@ const member = (sessionId, waitingFor, status = 'waiting') => ({
 })
 const render = async (actions, error = '') => {
   const app = createSSRApp(CooperationAttention, { actions, error })
-  app.component('a-popover', {
-    props: ['trigger', 'placement', 'open', 'afterVisibleChange'],
-    emits: ['openChange'],
-    setup:
-      (_, { slots }) =>
-      () =>
-        slots.default()
-  })
   return renderToString(app)
+}
+
+/** 挂载真实状态逻辑，让响应式输入变化触发组件自身的收起规则。 */
+function mountAttention(t, actions) {
+  const props = reactive({ actions, error: '' })
+  const opened = []
+  let state
+  const renderer = createRenderer({
+    createElement: () => ({ children: [] }), createText: () => ({}), createComment: () => ({}),
+    insert: (child, parent) => parent.children.push(child), remove() {}, setText() {}, setElementText() {},
+    parentNode: () => null, nextSibling: () => null, patchProp() {}
+  })
+  const app = renderer.createApp({ setup() {
+    state = CooperationAttention.setup(props, {
+      expose() {},
+      emit: (event, id) => opened.push([event, id])
+    })
+    return () => h('div')
+  } })
+  app.provide(ssrContextKey, {})
+  app.mount({ children: [] })
+  t.after(() => app.unmount())
+  return { props, state, opened }
 }
 
 test('人工待办只来自其他成员当前等待中的回答或审批', () => {
@@ -80,33 +95,48 @@ test('单项和多项提供明确动作，空列表移除胶囊，查询失败�
   assert.match(await render([], 'offline'), /协作状态更新失败/)
 })
 
-test('查看单项或选择列表成员只发起导航，不消费待办', async () => {
+test('单项直接导航，多项切换原地列表，选择成员后收起且不消费待办', async (t) => {
   const actions = getCooperationPendingActions([member('child', 'answer')], 'root')
-  const opened = []
-  let state
-  await renderToString(
-    createSSRApp({
-      setup() {
-        state = CooperationAttention.setup(
-          { actions, error: '' },
-          {
-            expose() {},
-            emit: (event, id) => opened.push([event, id])
-          }
-        )
-        return () => h('div')
-      }
-    })
-  )
+  const { props, state, opened } = mountAttention(t, actions)
   state.handleClick()
   assert.deepEqual(opened, [['open', 'child']])
-  assert.equal(actions.length, 1)
-  actions.push({ sessionId: 'second', name: 'second', label: '待审批', action: '查看审批' })
+  assert.equal(state.expanded.value, false)
+  props.actions.push({ sessionId: 'second', name: 'second', label: '待审批', action: '查看审批' })
+  await nextTick()
   state.handleClick()
+  assert.equal(state.expanded.value, true)
   assert.equal(opened.length, 1, '多项不能默认替用户选择成员')
-  state.openAction(actions[1])
+  state.handleClick()
+  assert.equal(state.expanded.value, false, '再次点击胶囊应收起列表')
+  state.handleClick()
+  state.openAction(props.actions[1])
   assert.deepEqual(opened.at(-1), ['open', 'second'])
-  assert.equal(actions.length, 2)
+  assert.equal(state.expanded.value, false)
+  assert.deepEqual(props.actions.map(item => item.sessionId), ['child', 'second'])
+})
+
+test('关闭及多项变为单项或空列表都会清除旧的展开意图', async (t) => {
+  const actions = getCooperationPendingActions([
+    member('child', 'answer'), member('second', 'approval')
+  ], 'root')
+  const { props, state, opened } = mountAttention(t, actions)
+  state.handleClick()
+  state.closeList()
+  assert.equal(state.expanded.value, false)
+  assert.equal(opened.length, 0, '收起列表不能导航或消费待办')
+  assert.equal(props.actions.length, 2)
+
+  for (const remaining of [actions.slice(0, 1), []]) {
+    state.handleClick()
+    assert.equal(state.expanded.value, true)
+    props.actions = remaining
+    await nextTick()
+    assert.equal(state.expanded.value, false, '待办减少后仍保留旧展开状态')
+    props.actions = [...actions]
+    await nextTick()
+    assert.equal(state.expanded.value, false, '新待办出现时不能恢复旧展开意图')
+  }
+  assert.equal(opened.length, 0)
 })
 
 test('慢等待点恢复后才聚焦，隐藏或轮次变化撤销聚焦', async (t) => {

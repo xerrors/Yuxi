@@ -53,7 +53,7 @@
                       }}</span>
                     </button>
                     <span
-                      v-if="SESSION_ACTIVITY_LABELS[group.status] && !isProjectExpanded(group.project.id)"
+                      v-if="group.status === 'requires_action' && !isProjectExpanded(group.project.id)"
                       class="project-activity-badge"
                       :class="{ 'needs-action': group.status === 'requires_action' }"
                       role="status"

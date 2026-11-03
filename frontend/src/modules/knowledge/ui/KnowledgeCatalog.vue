@@ -246,9 +246,7 @@ const cardTags = (knowledgeBase) => {
       color: 'gray'
     }
   ]
-  if (kbUtils.isEmbeddingModelMissing(knowledgeBase)) {
-    tags.push({ name: '未配置 Embedding 模型', color: 'orange' })
-  } else if (knowledgeBase.embedding_model_spec) {
+  if (knowledgeBase.embedding_model_spec) {
     tags.push({
       name: knowledgeBase.embedding_model_spec.split('/').slice(-1)[0],
       color: 'gray'

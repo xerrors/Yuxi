@@ -420,6 +420,7 @@ provide('settingsModal', {
 @sidebar-collapsed-brand-icon-padding-x: (
   (@sidebar-collapsed-content-width - @sidebar-icon-size) / 2
 );
+@sidebar-footer-fade-height: 40px;
 
 .app-layout {
   display: flex;
@@ -486,6 +487,12 @@ div.header,
     flex-direction: column;
     flex: 1 1 0;
     min-height: 0;
+
+    :deep(.session-list) {
+      // 末行和键盘焦点滚入渐隐区域上方，避免始终被用户栏遮住。
+      padding-bottom: @sidebar-footer-fade-height;
+      scroll-padding-bottom: @sidebar-footer-fade-height;
+    }
   }
 
   .foo {
@@ -495,6 +502,17 @@ div.header,
     margin-top: auto;
     background: var(--bg-sider);
     padding: 0 @sidebar-padding-x @sidebar-padding-y;
+
+    &::before {
+      content: '';
+      position: absolute;
+      right: 0;
+      bottom: 100%;
+      left: 0;
+      height: @sidebar-footer-fade-height;
+      background: linear-gradient(to bottom, transparent, var(--bg-sider));
+      pointer-events: none;
+    }
   }
 
   .sidebar-brand {
@@ -724,7 +742,6 @@ div.header,
       }
     }
     &.user-info {
-      margin-bottom: 8px;
       height: 40px;
       padding: 0;
       overflow: hidden;
@@ -885,6 +902,10 @@ div.header,
 
     .foo {
       padding: 0 0 @sidebar-padding-y;
+
+      &::before {
+        display: none;
+      }
     }
 
     .nav-item {

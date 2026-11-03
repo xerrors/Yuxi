@@ -1,14 +1,5 @@
 <template>
   <div class="knowledge-base-info-container">
-    <a-alert
-      v-if="isCurrentKnowledgeBaseLoaded && kbUtils.isEmbeddingModelMissing(knowledgeBase)"
-      class="embedding-config-warning"
-      type="warning"
-      show-icon
-      role="alert"
-      message="未配置 Embedding 模型"
-      description="文件可以上传和解析，但无法入库或进行向量检索。请联系管理员修复该知识库的模型配置后重试。"
-    />
     <ExtensionDetailLayout
       :active-key="activeTab"
       :tabs="visibleTabs"
@@ -118,16 +109,29 @@
                 </div>
               </div>
             </div>
-            <KnowledgeFileSummary
-              :stats="knowledgeBase.stats || {}"
-              :can-manage="canManageKnowledgeBase"
-              :busy="store.state.chunkLoading"
-              :refreshing="refreshingStatistics"
-              @filter="fileTableRef?.applyStatusFilter($event)"
-              @parse-pending="confirmBatchParse"
-              @index-pending="confirmBatchIndex"
-              @refresh="refreshStatistics"
-            />
+            <div class="file-management-status">
+              <a-button
+                v-if="hasEmbeddingConfigError"
+                type="text"
+                class="embedding-config-trigger"
+                aria-haspopup="dialog"
+                :aria-expanded="embeddingConfigModalVisible"
+                @click="embeddingConfigModalVisible = true"
+              >
+                <template #icon><CircleAlert :size="16" aria-hidden="true" /></template>
+                配置异常
+              </a-button>
+              <KnowledgeFileSummary
+                :stats="knowledgeBase.stats || {}"
+                :can-manage="canManageKnowledgeBase"
+                :busy="store.state.chunkLoading"
+                :refreshing="refreshingStatistics"
+                @filter="fileTableRef?.applyStatusFilter($event)"
+                @parse-pending="confirmBatchParse"
+                @index-pending="confirmBatchIndex"
+                @refresh="refreshStatistics"
+              />
+            </div>
           </div>
           <FileTable
             ref="fileTableRef"
@@ -168,6 +172,20 @@
         </div>
       </template>
     </ExtensionDetailLayout>
+
+    <a-modal
+      v-model:open="embeddingConfigModalVisible"
+      title="未配置 Embedding 模型"
+      :width="480"
+    >
+      <div class="embedding-config-description">
+        <p>文件可以上传和解析，但无法入库或进行向量检索。</p>
+        <p>请联系管理员修复该知识库的模型配置后重试。</p>
+      </div>
+      <template #footer>
+        <a-button @click="embeddingConfigModalVisible = false">关闭</a-button>
+      </template>
+    </a-modal>
 
     <FileDetailModal
       v-model:open="store.state.fileDetailModalVisible"
@@ -343,6 +361,7 @@ import {
   BarChart3,
   ChevronDown,
   ChevronRight,
+  CircleAlert,
   Copy,
   Plug,
   FileText,
@@ -395,6 +414,13 @@ const kbId = computed(() => store.kbId)
 const knowledgeBase = computed(() => store.knowledgeBase)
 const canManageKnowledgeBase = computed(() => knowledgeBase.value?.can_manage === true)
 const isCurrentKnowledgeBaseLoaded = computed(() => knowledgeBase.value?.kb_id === kbId.value)
+const hasEmbeddingConfigError = computed(
+  () => isCurrentKnowledgeBaseLoaded.value && kbUtils.isEmbeddingModelMissing(knowledgeBase.value)
+)
+const embeddingConfigModalVisible = ref(false)
+watch([kbId, hasEmbeddingConfigError], () => {
+  embeddingConfigModalVisible.value = false
+})
 const kbType = computed(() =>
   isCurrentKnowledgeBaseLoaded.value ? knowledgeBase.value.kb_type?.toLowerCase() || 'milvus' : ''
 )
@@ -962,11 +988,6 @@ onUnmounted(() => {
   flex-direction: column;
 }
 
-.embedding-config-warning {
-  flex-shrink: 0;
-  margin: 12px var(--page-padding) 0;
-}
-
 .knowledge-detail-layout {
   flex: 1;
 }
@@ -1037,6 +1058,32 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: 20px;
   flex-shrink: 0;
+}
+
+.file-management-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.embedding-config-trigger {
+  color: var(--color-error-700);
+  font-size: 12px;
+
+  &:hover {
+    color: var(--color-error-700);
+    background: var(--color-error-50);
+  }
+}
+
+.embedding-config-description {
+  color: var(--color-text-secondary);
+  line-height: 1.7;
+
+  p:last-child {
+    margin-bottom: 0;
+  }
 }
 
 .file-info-title {

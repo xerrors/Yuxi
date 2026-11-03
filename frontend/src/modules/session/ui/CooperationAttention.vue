@@ -3,37 +3,7 @@
     <span class="attention-announcement" role="status" aria-live="polite" aria-atomic="true">
       {{ announcement }}
     </span>
-    <a-popover
-      v-if="actions.length"
-      trigger="click"
-      placement="topLeft"
-      :after-visible-change="focusList"
-      :open="expanded && actions.length > 1"
-      @open-change="handleOpenChange"
-    >
-      <template #content>
-        <div
-          :id="listId"
-          ref="listRef"
-          class="attention-list"
-          role="group"
-          aria-label="协作会话待办"
-          @keydown.esc.stop.prevent="closeList"
-        >
-          <button
-            v-for="item in actions"
-            :key="item.sessionId"
-            type="button"
-            class="attention-item"
-            :aria-label="`${item.name} ${item.label}，${item.action}`"
-            @click="openAction(item)"
-          >
-            <span class="attention-name" :title="item.name">{{ item.name }}</span>
-            <span class="attention-label">{{ item.label }}</span>
-            <span class="attention-action">{{ item.action }} <ArrowRight :size="14" /></span>
-          </button>
-        </div>
-      </template>
+    <div v-if="actions.length" class="attention-card" :class="{ 'is-expanded': expanded }">
       <button
         ref="pillRef"
         type="button"
@@ -47,11 +17,45 @@
         <CircleHelp class="attention-icon" :size="16" aria-hidden="true" />
         <span class="attention-summary" :title="announcement">{{ summary }}</span>
         <span class="attention-action">{{
-          actions.length === 1 ? actions[0].action : '查看待办'
+          actions.length === 1 ? actions[0].action : expanded ? '收起待办' : '查看待办'
         }}</span>
-        <ArrowRight :size="14" aria-hidden="true" />
+        <ChevronDown
+          v-if="actions.length > 1"
+          class="attention-chevron"
+          :class="{ 'is-expanded': expanded }"
+          :size="14"
+          aria-hidden="true"
+        />
+        <ArrowRight v-else :size="14" aria-hidden="true" />
       </button>
-    </a-popover>
+      <CollapseTransition @after-enter="focusList">
+        <div v-if="expanded" class="attention-list-collapse">
+          <div
+            :id="listId"
+            ref="listRef"
+            class="attention-list"
+            role="group"
+            aria-label="协作会话待办"
+            @keydown.esc.stop.prevent="closeList"
+          >
+            <button
+              v-for="item in actions"
+              :key="item.sessionId"
+              type="button"
+              class="attention-item"
+              :aria-label="`${item.name} ${item.label}，${item.action}`"
+              @click="openAction(item)"
+            >
+              <span class="attention-name" :title="item.name">{{ item.name }}</span>
+              <span class="attention-label">{{ item.label }}</span>
+              <span class="attention-action">
+                {{ item.action }} <ArrowRight :size="14" aria-hidden="true" />
+              </span>
+            </button>
+          </div>
+        </div>
+      </CollapseTransition>
+    </div>
     <div v-if="error" class="attention-error">
       <span>协作状态更新失败{{ actions.length ? '，显示最近已知待办' : '' }}</span>
       <button type="button" :title="error" @click="emit('refresh')">重试</button>
@@ -60,8 +64,9 @@
 </template>
 
 <script setup>
-import { computed, ref, useId } from 'vue'
-import { ArrowRight, CircleHelp } from '@lucide/vue'
+import { computed, ref, useId, watch } from 'vue'
+import { ArrowRight, ChevronDown, CircleHelp } from '@lucide/vue'
+import CollapseTransition from '@/shared/ui/CollapseTransition.vue'
 
 const props = defineProps({
   actions: { type: Array, default: () => [] },
@@ -72,6 +77,9 @@ const expanded = ref(false)
 const listId = useId()
 const listRef = ref(null)
 const pillRef = ref(null)
+watch(() => props.actions.length, (count) => {
+  if (count <= 1) expanded.value = false
+})
 const summary = computed(() => {
   if (props.actions.length === 1) {
     const item = props.actions[0]
@@ -92,22 +100,18 @@ function openAction(item) {
   emit('open', item.sessionId)
 }
 
-/** 单项直达，多项由浮层提供明确选择。 */
+/** 单项直达，多项在胶囊原位展开或收起。 */
 function handleClick() {
   if (props.actions.length === 1) openAction(props.actions[0])
+  else expanded.value = !expanded.value
 }
 
-/** 记录浮层显示意图，单项请求始终直接导航。 */
-function handleOpenChange(open) {
-  expanded.value = open && props.actions.length > 1
+/** 展开过渡完成后聚焦首项，保留输入区的滚动位置。 */
+function focusList() {
+  if (expanded.value) listRef.value?.querySelector('button')?.focus({ preventScroll: true })
 }
 
-/** 浮层完成显示与定位后聚焦，避免挂载时仍处于隐藏状态。 */
-function focusList(open) {
-  if (open && expanded.value) listRef.value?.querySelector('button')?.focus()
-}
-
-/** 键盘关闭浮层后返回触发入口。 */
+/** 键盘收起卡片后返回触发入口。 */
 function closeList() {
   expanded.value = false
   pillRef.value?.focus()
@@ -150,16 +154,50 @@ function closeList() {
   }
 }
 .attention-pill {
-  border: 1px solid var(--gray-150);
-  border-radius: 999px;
-  background: var(--gray-0);
+  width: 100%;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
   color: var(--color-text-secondary);
   &:hover {
-    border-color: var(--gray-200);
     background: var(--gray-25);
+  }
+  .attention-summary {
+    flex: 1;
+    text-align: left;
   }
   .attention-action {
     color: var(--color-text);
+  }
+}
+.attention-card {
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid var(--gray-150);
+  border-radius: 22px;
+  background: var(--gray-0);
+  transition: border-radius 0.2s ease;
+
+  &.is-expanded {
+    width: 100%;
+    border-radius: 16px;
+
+    .attention-pill {
+      border-radius: 15px 15px 0 0;
+    }
+  }
+}
+.attention-chevron {
+  transition: transform 0.2s ease;
+
+  &.is-expanded {
+    transform: rotate(180deg);
+  }
+}
+.attention-list-collapse {
+  &.yuxi-collapse-enter-active,
+  &.yuxi-collapse-leave-active {
+    transition-duration: 0.2s;
   }
 }
 .attention-icon {
@@ -180,9 +218,11 @@ function closeList() {
   font-weight: 500;
 }
 .attention-list {
-  width: min(360px, calc(100vw - 56px));
-  max-height: 280px;
+  max-height: min(280px, 30vh);
+  padding: 4px 8px 8px;
+  border-top: 1px solid var(--gray-100);
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .attention-item {
   width: 100%;
@@ -195,6 +235,7 @@ function closeList() {
   }
   .attention-name {
     flex: 1;
+    text-align: left;
   }
   .attention-action {
     color: var(--main-color);
@@ -217,6 +258,14 @@ function closeList() {
     background: transparent;
     color: var(--main-color);
     cursor: pointer;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .attention-card,
+  .attention-chevron,
+  .attention-list-collapse.yuxi-collapse-enter-active,
+  .attention-list-collapse.yuxi-collapse-leave-active {
+    transition: none;
   }
 }
 </style>
