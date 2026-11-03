@@ -48,6 +48,7 @@ class BaseEmbeddingModel(ABC):
             group_msg = messages[i : i + batch_size]
             logger.info(f"Encoding [{i}/{len(messages)}] messages (bsz={batch_size})")
             response = self.encode(group_msg)
+            self._require_one_vector_per_input(response, len(group_msg))
             data.extend(response)
 
         return data
@@ -60,6 +61,7 @@ class BaseEmbeddingModel(ABC):
             group_msg = messages[i : i + batch_size]
             logger.info(f"Async encoding [{i}/{len(messages)}] messages (bsz={batch_size})")
             res = await self.aencode(group_msg)
+            self._require_one_vector_per_input(res, len(group_msg))
             data.extend(res)
 
         return data
@@ -78,6 +80,56 @@ class BaseEmbeddingModel(ABC):
             error_msg += f", maybe you can check the `{self.base_url}` end with /embeddings as examples."
             logger.error(error_msg)
             return False, error_msg
+
+    @staticmethod
+    def _extract_embeddings(result: dict, expected: int | None = None) -> list[list[float]]:
+        """只接受逐条对应的向量；提供者带 index 时按 index 归位，否则保持响应顺序。"""
+        if not isinstance(result, dict) or "data" not in result:
+            raise ValueError(f"Embedding failed: Invalid response format {result}")
+
+        items = result["data"]
+        if not isinstance(items, list):
+            raise ValueError("Embedding response data must be a list")
+        if expected is not None and len(items) != expected:
+            raise ValueError(f"Embedding response returned {len(items)} vectors for {expected} inputs")
+
+        for item in items:
+            if not isinstance(item, dict) or "embedding" not in item:
+                raise ValueError("Embedding response contains an invalid item")
+
+        if any(item.get("index") is not None for item in items):
+            return BaseEmbeddingModel._order_by_reported_index(items, expected)
+
+        return [item["embedding"] for item in items]
+
+    @staticmethod
+    def _order_by_reported_index(items: list[dict], expected: int | None) -> list[list[float]]:
+        """按提供者声明的 index 归位，拒绝缺失、重复、越界的索引。"""
+        if any(item.get("index") is None for item in items):
+            raise ValueError("Embedding response mixes indexed and unindexed items")
+
+        top = expected if expected is not None else len(items)
+        ordered: list[list[float] | None] = [None] * len(items)
+        for item in items:
+            index = item.get("index")
+            if type(index) is not int or index < 0 or index >= top or index >= len(items):
+                raise ValueError("Embedding response contains an out-of-range index")
+            if ordered[index] is not None:
+                raise ValueError("Embedding response contains a duplicate index")
+            ordered[index] = item["embedding"]
+
+        return [embedding for embedding in ordered if embedding is not None]
+
+    @staticmethod
+    def _require_one_vector_per_input(embeddings: list[list[float]], expected: int) -> None:
+        """批次累加前校验条数，避免把子集拼进更大的错位列表。"""
+        if len(embeddings) != expected:
+            raise ValueError(f"Embedding response returned {len(embeddings)} vectors for {expected} inputs")
+
+    @staticmethod
+    def _expected_count(message: list[str] | str) -> int:
+        """单条输入按 1 条计，与 build_payload 的输入形态保持一致。"""
+        return 1 if isinstance(message, str) else len(message)
 
 
 class OtherEmbedding(BaseEmbeddingModel):
@@ -99,7 +151,7 @@ class OtherEmbedding(BaseEmbeddingModel):
             try:
                 response = requests.post(self.base_url, json=payload, headers=self.headers, timeout=60)
                 response.raise_for_status()
-                return self._extract_embeddings(response.json())
+                return self._extract_embeddings(response.json(), BaseEmbeddingModel._expected_count(message))
             except requests.RequestException as e:
                 retry = self._prepare_retry(
                     message,
@@ -125,7 +177,7 @@ class OtherEmbedding(BaseEmbeddingModel):
                 try:
                     response = await client.post(self.base_url, json=payload, headers=self.headers, timeout=60)
                     response.raise_for_status()
-                    return self._extract_embeddings(response.json())
+                    return self._extract_embeddings(response.json(), BaseEmbeddingModel._expected_count(message))
                 except httpx.HTTPStatusError as e:
                     retry = self._prepare_retry(
                         message,
@@ -194,12 +246,6 @@ class OtherEmbedding(BaseEmbeddingModel):
             f"input_count={len(messages)}, body={response_text[:1000]}"
         )
         return next_retry_index, delay
-
-    @staticmethod
-    def _extract_embeddings(result: dict) -> list[list[float]]:
-        if not isinstance(result, dict) or "data" not in result:
-            raise ValueError(f"Embedding failed: Invalid response format {result}")
-        return [item["embedding"] for item in result["data"]]
 
     @staticmethod
     def _log_long_inputs(message: list[str] | str, threshold: int = 4000) -> None:
