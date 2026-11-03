@@ -120,7 +120,11 @@ DOCX 解析在 VML 输入边界区分图片资源与空图形元数据：仅无�
 
 Milvus 索引会把 chunk 写入 PostgreSQL 和 Milvus。它不是跨存储事务：任一侧失败时会尝试补偿并把文件置为 `error_indexing`，排查时需要同时查看两侧。
 
-分块时保存 `chunk_index`、`start_line` 和 `end_line`，行号以 MinIO 保存的完整解析文本为基准，从 1 开始且包含首尾行；空行也计数，Markdown 和 TXT 使用同一规则。切片、合并与重叠携带原始字符位置，生成的标题与问答前缀不作为原文行。HTML 表格转键值对后的片段保留原表格块范围；CSV 和 Excel 先由 parser 生成 Markdown 表格，QA 分块读取表体，来源范围指向持久化 Markdown 的对应表格行。CSV 首行为列名，不生成问答；XLS/XLSX 不猜测首行用途，使用空结构表头并保留全部原始行，包括未声明的首行内容。字段中的换行、竖线和 HTML 字面值由 parser 编码，QA 按 Markdown 单元格语义读取。检索从当前 active generation 的 PostgreSQL chunk 补齐行号与文件名。当前知识域 Schema 持有这些行号列，部署前提见[部署参考](../advanced/deployment.md#_3-数据库与文件目录)。
+分块时保存 `chunk_index`、`start_line` 和 `end_line`，行号以 MinIO 保存的完整解析文本为基准，从 1 开始且包含首尾行；空行也计数，Markdown 和 TXT 使用同一规则。切片、合并与重叠携带原始字符位置，生成的标题与问答前缀不作为原文行。HTML 表格转键值对后的片段保留原 HTML 块范围。
+
+Semantic 将可转换的 HTML 表格的每个数据行生成独立检索块：横向合并只输出一次，纵向合并的类别和条件随行继承，跨逻辑字段的说明保留为正文，不猜测它属于哪个字段。多层列名取显式 `thead`，没有 `thead` 时使用第一行。每行作为完整单元保留，极长行允许超过分块长度目标。`Table KV` 是生成的块标题提示，不是解析引擎或分块开关。已有文件重新分块后应用这些规则；取舍与回归证据见[合并表格行语义](../develop-guides/decisions/implemented/2026-11-02-semantic-merged-table-rows.md)。
+
+CSV 和 Excel 先由 parser 生成 Markdown 表格，QA 分块读取表体，来源范围指向持久化 Markdown 的对应表格行。CSV 首行为列名，不生成问答；XLS/XLSX 不猜测首行用途，使用空结构表头并保留全部原始行，包括未声明的首行内容。字段中的换行、竖线和 HTML 字面值由 parser 编码，QA 按 Markdown 单元格语义读取。检索从当前 active generation 的 PostgreSQL chunk 补齐行号与文件名。当前知识域 Schema 持有这些行号列，部署前提见[部署参考](../advanced/deployment.md#_3-数据库与文件目录)。
 
 文件内容接口同时返回完整解析文本与片段范围，并以 `line_location` 标明能否定位：完整原文可读、文件快照已完成入库、chunk 与该快照的 active generation 相同才可用。原文缺失、入库尚未完成、片段读取失败或读取期间代次改变时，预览显示原因并禁用高亮；失效的检索结果需重新检索。
 
