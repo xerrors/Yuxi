@@ -49,7 +49,7 @@
             @mouseleave="downplayFileTypeSlice(index)"
           >
             <span class="legend-swatch" :style="{ backgroundColor: getColorByIndex(index) }"></span>
-            <span class="legend-name" :title="item.name">{{ item.name }}</span>
+            <span class="legend-name" :title="item.name" tabindex="0">{{ item.name }}</span>
             <span class="legend-value">{{ item.value.toLocaleString() }}</span>
             <span class="legend-percent">{{
               item.value / totalFiles < 0.001
@@ -177,7 +177,8 @@ defineExpose({ cleanup })
   list-style: none;
   li {
     display: grid;
-    grid-template-columns: 8px minmax(0, 1fr) auto 52px;
+    // 名称列优先分配空间；数值/百分比用内容宽度，避免固定 52px 挤压名称
+    grid-template-columns: 8px minmax(0, 1fr) max-content max-content;
     align-items: center;
     gap: 10px;
     padding: 7px 0;
@@ -188,8 +189,35 @@ defineExpose({ cleanup })
   &.legend-two-columns {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    column-gap: 28px;
+    column-gap: 20px;
     align-items: start;
+
+    // 两列时单列宽度有限：名称独占一行，数值与占比另起一行，避免名称被截断
+    li {
+      grid-template-columns: 8px minmax(0, 1fr);
+      grid-template-areas:
+        'swatch name'
+        '.      stats';
+      row-gap: 2px;
+      column-gap: 8px;
+
+      .legend-swatch {
+        grid-area: swatch;
+      }
+
+      .legend-name {
+        grid-area: name;
+      }
+
+      .legend-value,
+      .legend-percent {
+        grid-area: stats;
+      }
+
+      .legend-value {
+        display: none;
+      }
+    }
   }
 }
 .legend-swatch {
@@ -202,6 +230,14 @@ defineExpose({ cleanup })
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--color-text);
+  // 名称被截断时保留可发现性：悬停提示全名（原生 title）。
+  cursor: help;
+
+  &:focus-visible {
+    outline: 2px solid var(--main-color);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
 }
 .legend-value,
 .legend-percent {

@@ -266,7 +266,7 @@ def test_invalid_delegate_returns_bearer_challenge_before_mcp(client, monkeypatc
     monkeypatch.setattr(client.app.state.knowledge_mcp.manager, "handle_request", manager)
     response = rpc(client, "tools/list", headers={**HEADERS, "Authorization": authorization})
     assert response.status_code == 401
-    assert response.json() == {"detail": "Invalid Knowledge delegation"}
+    assert response.json() == {"detail": "未提供有效的知识库访问凭据：请使用 Access Token 或具备知识库权限的 API Key，并在 Authorization: Bearer 中传入"}
     assert response.headers["WWW-Authenticate"] == "Bearer"
     manager.assert_not_awaited()
 

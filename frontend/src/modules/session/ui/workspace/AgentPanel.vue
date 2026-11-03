@@ -775,6 +775,9 @@ const setTreeScope = (scope) => {
   syncFilesystemRefreshPolling()
   if (scope === 'workspace') {
     void refreshWorkspaceTree({ force: workspaceLoaded.value, refreshPreview: true })
+  } else if (scope === 'thread') {
+    // 切到对话目录时立即拉取，避免沿用运行前渲染出的空树。
+    void refreshFileSystem({ silent: true })
   }
 }
 

@@ -53,10 +53,13 @@
       v-if="overviewActivated"
       v-show="activeTab === 'overview'"
       :basic-stats="basicStats"
+      :basic-stats-loading="loading"
+      :basic-stats-error="basicStatsError"
       :vm-stats="vmStats"
       :vm-stats-loading="vmStatsLoading"
       :vm-stats-error="vmStatsError"
       @refresh-vms="loadVmStats"
+      @refresh-basic="retryBasicStats"
     />
 
     <div v-if="overviewActivated" v-show="activeTab === 'overview'" class="dashboard-grid">
@@ -129,6 +132,7 @@ const activeJobCount = computed(() => activeCount.value || 0)
 
 // 统计数据
 const basicStats = ref({})
+const basicStatsError = ref(false)
 const vmStats = ref(null)
 const vmStatsLoading = ref(false)
 const vmStatsError = ref(false)
@@ -166,6 +170,7 @@ const loadVmStats = async () => {
 const loadAllStats = async () => {
   if (overviewLoaded.value) return
   loading.value = true
+  basicStatsError.value = false
   try {
     const response = await dashboardApi.getAllStats()
 
@@ -185,11 +190,21 @@ const loadAllStats = async () => {
       message.warning('详细统计暂不可用，当前仅显示基础指标')
     } catch (basicError) {
       console.error('加载基础统计数据失败:', basicError)
+      // 基础指标同样失败：卡片保持错误态，不把失败投影为 0。
+      basicStats.value = {}
+      basicStatsError.value = true
       message.error('无法加载统计数据')
     }
   } finally {
     loading.value = false
   }
+}
+
+/** 错误态下重试基础统计。 */
+const retryBasicStats = async () => {
+  if (loading.value) return
+  overviewLoaded.value = false
+  await loadAllStats()
 }
 
 // 切换 Tab 处理

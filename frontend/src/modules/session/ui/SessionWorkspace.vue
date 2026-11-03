@@ -159,8 +159,9 @@
                     :error-message="row.group.run.error_message"
                   />
                   <div
-                    v-else-if="!row.displayItems.length && row.group.run"
+                    v-else-if="shouldShowRunStatusNotice(row)"
                     class="chat-inline-notice"
+                    :class="{ 'is-terminal': isUserStoppedRun(row.group.run) }"
                   >
                     {{ formatEmptyRunStatus(row.group.run.status) }}
                   </div>
@@ -338,6 +339,9 @@
                     :inert="currentToolApprovalVisible"
                     :aria-hidden="currentToolApprovalVisible ? 'true' : undefined"
                   >
+                    <p v-if="threadArchived" class="archived-thread-notice" role="status">
+                      该对话已归档，只能查看历史记录，不能继续发送消息。
+                    </p>
                     <AgentInputArea
                       ref="agentInputAreaRef"
                       v-model="userInput"
@@ -1284,8 +1288,14 @@ const currentAgentId = computed(() => {
 const { status: sessionAgentStatus, refresh: refreshSessionAgent } = useSessionAgentAvailability(
   currentThreadId, (agentId) => agentStore.fetchAgentDetail(agentId, true, { notify: false })
 )
+/** 归档会话只读：后端会拒绝新输入，前端同步禁用而不是让发送失败。 */
+const threadArchived = computed(() => currentThread.value?.yuxi?.archived === true)
+
 const agentExecutionAvailable = computed(() =>
-  currentChatId.value ? sessionAgentStatus.value === 'ready' : Boolean(currentAgent.value?.can_run !== false && currentAgent.value)
+  !threadArchived.value &&
+  (currentChatId.value
+    ? sessionAgentStatus.value === 'ready'
+    : Boolean(currentAgent.value?.can_run !== false && currentAgent.value))
 )
 const isSessionLoading = computed(() =>
   (props.isNewSession && threadCreationInFlight.value) ||
@@ -1965,7 +1975,21 @@ const startSendCooldown = () => {
 }
 
 const CONFIG_CHANGE_NOTICE_MESSAGE =
-  '在运行过程中切换或修改配置可能会影响最终效果，建议新建一个对话。'
+  '本会话沿用创建时的智能体配置；之后的修改只对新会话生效，建议新建对话以使用最新配置。'
+
+/** 用户主动停止的 Run 终态：即使已有工具摘要也要显式告知结果。 */
+const USER_STOPPED_RUN_STATUSES = new Set(['cancelled', 'interrupted', 'cancel_requested'])
+
+const isUserStoppedRun = (run) =>
+  Boolean(run) && USER_STOPPED_RUN_STATUSES.has(run.status)
+
+const shouldShowRunStatusNotice = (row) => {
+  const run = row?.group?.run
+  if (!run) return false
+  if (isUserStoppedRun(run)) return true
+  return !row.displayItems.length
+}
+
 
 const withConfigNoticeSync = async (task) => {
   configNoticeSyncDepth.value += 1
@@ -3663,6 +3687,21 @@ watch(currentChatId, (threadId, oldThreadId) => {
   color: var(--gray-500);
   font-size: 12px;
   line-height: 1.6;
+  text-align: center;
+
+  &.is-terminal {
+    color: var(--color-text-secondary);
+    font-weight: 500;
+  }
+}
+
+.archived-thread-notice {
+  margin: 0 0 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--gray-25);
+  color: var(--color-text-secondary);
+  font-size: 12px;
   text-align: center;
 }
 

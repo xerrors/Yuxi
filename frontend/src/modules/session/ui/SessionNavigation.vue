@@ -39,6 +39,10 @@ const productName = computed(() => infoStore.branding.name || 'Yuxi')
 const visible = computed(() =>
   props.panel ? props.active && (sessionsPinned.value || sessionPeekOpen.value) : props.visible
 )
+/** 侧栏与搜索只列顶层且未归档的会话；归档会话仍可经 URL 打开。 */
+const visibleThreads = computed(() =>
+  threads.value.filter((thread) => !thread.yuxi?.parent_session_id && !thread.yuxi?.archived)
+)
 let sessionCloseTimer
 
 /** 打开临时面板，悬停不改变焦点与常驻偏好。 */
@@ -322,7 +326,7 @@ const handleDeleteProject = async (projectId) => {
           :visible="visible"
           class="sidebar-sessions"
           :current-chat-id="activeSessionThreadId"
-          :chats-list="threads.filter((thread) => !thread.yuxi.parent_session_id)"
+          :chats-list="visibleThreads"
           :projects="projects"
           :projects-loading="projectsLoading && !projectsStore.hasLoaded"
           :projects-error="projectsStore.hasLoaded ? '' : projectsError"
@@ -345,7 +349,7 @@ const handleDeleteProject = async (projectId) => {
       v-model:open="sessionSearchOpen"
       :modes="['session', 'file']"
       default-mode="session"
-      :recent-threads="threads.filter((thread) => !thread.yuxi.parent_session_id)"
+      :recent-threads="visibleThreads"
       :file-search="searchWorkspace"
       file-placeholder="搜索个人空间文件..."
       file-scope-hint="仅搜索个人空间，不包含知识库文件。"

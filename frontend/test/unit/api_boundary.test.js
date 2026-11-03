@@ -314,6 +314,23 @@ test('错误文案解析保留脱敏字符串、冲突提示和默认文案', as
   })
 })
 
+test('409 冲突优先展示后端业务文案而不是刷新兜底', async () => {
+  await withServer(async (server) => {
+    storageValues.set('user_token', 'fixture-token')
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify({ detail: 'Thread 已归档' }), {
+        status: 409,
+        headers: { 'content-type': 'application/json' }
+      })
+    const { apiRequest } = await server.ssrLoadModule('/src/apis/base.js')
+    await assert.rejects(apiRequest('/api/v1/agents/sessions/x/events', { method: 'POST' }), (error) => {
+      assert.equal(error.status, 409)
+      assert.equal(error.message, 'Thread 已归档')
+      return true
+    })
+  })
+})
+
 test('用户管理分页 API 只请求当前页并编码服务端筛选条件', async () => {
   await withServer(async (server) => {
     storageValues.set('user_token', 'test-token')

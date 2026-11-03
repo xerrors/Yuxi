@@ -64,12 +64,24 @@ function safeErrorData(errorData, status, publicMessage) {
 }
 
 /**
- * 提取后端业务错误的可展示 detail。仅当 detail 是含字符串 code 与 message 的对象时
- * 透传这两个字段（其余字段一律丢弃）；message 由后端保证已脱敏、可直接展示。
- * 数组形态（FastAPI schema 校验，可能回显敏感输入）与字符串 detail 不适用此契约。
+ * 提取后端业务错误的可展示 detail。对象形态仅透传 code 与 message 两个字符串字段
+ * （其余字段一律丢弃）。
+ *
+ * 字符串 detail 只在状态码本身表达"请求与当前资源状态冲突"时透传（409/410），
+ * 例如 {"detail":"Thread 已归档"}；这类文案说明的是用户可自行处理的状态，且比
+ * "请刷新后重试" 更准确。401/403/422/5xx 仍使用脱敏兜底文案，避免把权限或
+ * 服务端内部信息原样展示给终端用户。
+ * 数组形态（FastAPI schema 校验，可能回显敏感输入）不适用此契约。
  */
-function extractBusinessErrorDetail(errorData) {
+const STRING_DETAIL_STATUSES = new Set([409, 410])
+
+function extractBusinessErrorDetail(errorData, status) {
   const detail = errorData?.detail
+  if (typeof detail === 'string') {
+    if (!STRING_DETAIL_STATUSES.has(status)) return null
+    const message = detail.trim()
+    return message ? { code: '', message } : null
+  }
   if (!detail || typeof detail !== 'object' || Array.isArray(detail)) return null
   if (typeof detail.code !== 'string' || typeof detail.message !== 'string') return null
   return { code: detail.code, message: detail.message }
@@ -170,7 +182,7 @@ export async function apiRequest(url, options = {}, requiresAuth = true, respons
       }
 
       // 特殊处理401和403错误
-      const businessDetail = extractBusinessErrorDetail(errorData)
+      const businessDetail = extractBusinessErrorDetail(errorData, response.status)
       const error = new Error(businessDetail?.message || errorMessage)
       error.status = response.status
       error.headers = safeResponseHeaders(response.headers)

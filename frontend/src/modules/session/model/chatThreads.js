@@ -46,9 +46,14 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
     threadCreationInFlight.value = Boolean(value)
   }
 
+  /**
+   * 合并线程到列表。归档线程不作为新条目进入侧栏，但当前正在打开的线程仍需保留
+   * 详情（URL 直达归档会话时用于只读提示）；侧栏渲染负责隐藏归档项。
+   */
   const upsertThread = (thread) => {
     if (!thread?.id) return
     const index = threads.value.findIndex((item) => item.id === thread.id)
+    const archived = thread.yuxi?.archived === true
     if (index >= 0) {
       threads.value[index] = {
         ...threads.value[index],
@@ -57,6 +62,7 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
       }
       return
     }
+    if (archived && thread.id !== currentThreadId.value) return
     threads.value = [thread, ...threads.value]
   }
 

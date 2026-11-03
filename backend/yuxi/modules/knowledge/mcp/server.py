@@ -116,7 +116,13 @@ class KnowledgeMCP:
                     # 无效或过期的委托视同未认证，统一落到下方 401 质询
                     pass
         if user is None:
-            user = JSONResponse({"detail": "Invalid Knowledge delegation"}, status_code=401, headers={"WWW-Authenticate": "Bearer"})
+            user = JSONResponse(
+                {
+                    "detail": "未提供有效的知识库访问凭据：请使用 Access Token 或具备知识库权限的 API Key，并在 Authorization: Bearer 中传入"
+                },
+                status_code=401,
+                headers={"WWW-Authenticate": "Bearer"}
+            )
         if isinstance(user, Response):
             await user(scope, receive, send)
             return

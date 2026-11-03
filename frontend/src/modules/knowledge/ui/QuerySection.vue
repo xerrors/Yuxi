@@ -41,6 +41,14 @@
           </div>
         </div>
 
+        <div v-if="queryError" class="query-error" role="alert">
+          <div class="query-error-body">
+            <span class="query-error-title">检索失败</span>
+            <p class="query-error-message">{{ queryError }}</p>
+          </div>
+          <a-button size="small" type="primary" ghost @click="onQuery">重试</a-button>
+        </div>
+
         <div class="query-results" v-if="queryResult">
           <!-- 原始数据显示 -->
           <div v-if="showRawData" class="result-raw">
@@ -183,6 +191,7 @@ defineEmits(['toggleVisible'])
 
 const searchLoading = computed(() => store.state.searchLoading)
 const queryResult = ref('')
+const queryError = ref('')
 const selectedChunk = ref(null)
 let queryRequest = 0
 
@@ -300,6 +309,7 @@ const clearQueryResult = () => {
   store.state.searchLoading = false
   selectedChunk.value = null
   queryResult.value = ''
+  queryError.value = ''
 }
 
 // 监听知识库ID变化，切换知识库时重新加载问题
@@ -335,7 +345,10 @@ const onQuery = async () => {
   } catch (error) {
     if (requestId !== queryRequest) return
     console.error(error)
-    message.error(error.message)
+    // toast 只做即时提醒；错误原因留在结果区，避免错过提示后无从得知失败原因。
+    const reason = error?.message || '未知错误'
+    message.error(reason)
+    queryError.value = reason
     queryResult.value = ''
   } finally {
     if (requestId === queryRequest) store.state.searchLoading = false
@@ -551,6 +564,36 @@ defineExpose({
   &.active {
     color: var(--main-color);
     background-color: var(--main-50);
+  }
+}
+
+.query-error {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--color-error-200, #f3c2c2);
+  border-radius: 8px;
+  background: var(--color-error-50, #fdf3f3);
+
+  .query-error-body {
+    min-width: 0;
+  }
+
+  .query-error-title {
+    color: var(--color-error-700);
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .query-error-message {
+    margin: 4px 0 0;
+    color: var(--color-text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+    word-break: break-word;
   }
 }
 
