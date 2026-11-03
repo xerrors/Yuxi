@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 
+from bs4 import BeautifulSoup, NavigableString, Tag
 from markdown_it import MarkdownIt
 from mdit_py_plugins.dollarmath import dollarmath_plugin
 
@@ -118,30 +119,24 @@ def chunk_markdown(markdown_content: str, parser_config: dict[str, Any] | None =
         elif token.type == "html_block":
             _flush_content(result, current_content, title_stack, max_length, embed_fn)
             content = token.content.strip()
-            is_converted_table = False
-            if "<table" in content.lower():
-                try:
-                    kv_list = html_table_to_key_value(content)
-                    if kv_list:
-                        content = "\n".join([f"- {item}" for item in kv_list])
-                        is_converted_table = True
-                except Exception as e:
-                    logger.warning(f"HTML表格转KV失败: {e}")
+            parts = _iter_html_table_parts(BeautifulSoup(content, "html.parser")) if "<table" in content.lower() else [content]
+            for part in parts:
+                kv_list = []
+                if isinstance(part, Tag) and part.name == "table":
+                    try:
+                        kv_list = html_table_to_key_value(str(part))
+                    except ValueError as e:
+                        logger.warning(f"HTML表格转KV失败，保留原表: {e}")
+                if not kv_list:
+                    current_content.append(LocatedText(str(part), tuple(token.map)))
+                    continue
 
-            current_content.append(LocatedText(content, tuple(token.map)))
-            if is_converted_table:
-                # KV 化后的表格允许继续细分，来源仍归属原表格块
-                _flush_content(
-                    result,
-                    current_content,
-                    title_stack,
-                    max_length,
-                    embed_fn,
-                    special_element="Table KV",
-                    allow_split=True,
-                )
-            else:
                 _flush_content(result, current_content, title_stack, max_length, embed_fn, special_element=token.type)
+                for row in kv_list:
+                    current_content.append(LocatedText(f"- {row}", tuple(token.map)))
+                    # 一行的类别与条件是完整事实；即使超出长度目标也不能拆散。
+                    _flush_content(result, current_content, title_stack, max_length, embed_fn, special_element="Table KV")
+            _flush_content(result, current_content, title_stack, max_length, embed_fn, special_element=token.type)
             i += 1
             continue
         elif token.type == "math_block":
@@ -175,6 +170,15 @@ def chunk_markdown(markdown_content: str, parser_config: dict[str, Any] | None =
 # ---------- chunk 落盘 ----------
 
 
+def _iter_html_table_parts(node: Tag) -> Iterator[Tag | NavigableString]:
+    """只拆开含表格的容器，按原顺序保留所有表格与周围正文。"""
+    for child in node.children:
+        if isinstance(child, Tag) and child.name != "table" and child.find("table") is not None:
+            yield from _iter_html_table_parts(child)
+        else:
+            yield child
+
+
 def _flush_content(
     result: list[str],
     current_content: list[str],
@@ -182,7 +186,6 @@ def _flush_content(
     max_length: int,
     embed_fn: Callable[[list[str]], Any],
     special_element: str | None = None,
-    allow_split: bool = False,
 ) -> None:
     """把累积正文落盘为 chunk：拼接标题头，超长正文细分并保留来源区间。"""
     if not current_content:
@@ -207,7 +210,7 @@ def _flush_content(
     title_path = get_title_path(title_stack)
     base_header = f"{'#' * level} {title_path}" if title_path else "#" * level
 
-    if special_element and not allow_split:
+    if special_element:
         # 保型元素（表格、图注、公式）不细分，元素名直接并入头
         header = f"{base_header}|{special_element}" if title_path else f"{'#' * level} {special_element}"
         result.extend([header, content, _CHUNK_SEPARATOR])
@@ -215,19 +218,18 @@ def _flush_content(
         chunks = split_text_by_length_and_newline(content, max_length, embed_fn=embed_fn, token_count_fn=count_tokens)
         cursor = 0
         for idx, chunk in enumerate(chunks, 1):
-            header = f"{base_header}|{special_element}|Part {idx}" if special_element else f"{base_header}|Part {idx}"
+            header = f"{base_header}|Part {idx}"
             if isinstance(content, SourceText):
                 located, cursor = content.map_fragment(chunk, cursor)
                 if not any(position >= 0 for position in located.source_positions):
                     # 未闭合 fence 补出的独立围栏没有原文正文，不单独入库。
                     continue
             else:
-                # HTML 表格转 KV 会重复表头和合并单元格，来源属于原表格块。
+                # 重写正文的来源属于原始 token 块，不按生成内容反查位置。
                 located = LocatedText(chunk, source_range) if source_range else chunk
             result.extend([header, located, _CHUNK_SEPARATOR])
     else:
-        header = f"{base_header}|{special_element}" if special_element else base_header
-        result.append(header)
+        result.append(base_header)
         result.append("")
         result.extend([content, _CHUNK_SEPARATOR])
 
