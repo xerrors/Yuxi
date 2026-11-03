@@ -117,11 +117,9 @@ class KnowledgeMCP:
                     pass
         if user is None:
             user = JSONResponse(
-                {
-                    "detail": "未提供有效的知识库访问凭据：请使用 Access Token 或具备知识库权限的 API Key，并在 Authorization: Bearer 中传入"
-                },
+                {"detail": "未提供有效的知识库访问凭据：请使用 Access Token 或具备知识库权限的 API Key（Authorization: Bearer）"},
                 status_code=401,
-                headers={"WWW-Authenticate": "Bearer"}
+                headers={"WWW-Authenticate": "Bearer"},
             )
         if isinstance(user, Response):
             await user(scope, receive, send)
