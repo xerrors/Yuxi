@@ -25,13 +25,6 @@ Yuxi 是面向需要企业自部署的多用户 Agent 产品，且需要自己�
 - **管理团队使用范围**：按用户、部门和共享范围管理知识库、智能体、Skills 和模型。
 - **对比运行质量**：评估知识库的检索结果；完整智能体评估可通过公开 API 自行构建，见[智能体评估](docs/agents/agent-evaluation.md)。
 
-
-## 赞助商
-
-| 赞助商 | 介绍 |
-| :---: | :--- |
-| <img src="https://oss-img.xerrors.cn/github/%E4%B8%8B%E8%BD%BD.jpeg" alt="Fluxion AI LOGO" width="180" /> | Fluxion AI面向个人开发者、技术团队与企业，通过统一API接入并管理全球主流AI模型；通过多线路动态调度提升可用性，模型表现、响应时间与费用透明可查。根据不同模型与线路，API调用成本较官方或基准价格可降低40%—98%。专属链接[注册](https://fluxionai.space/register?source=github&campaign=yuxi&promo=YUXI) 获 $7 API 额度 |
-
 ## 快速启动
 
 语析（Yuxi）默认使用 Docker Compose 和 Container 沙盒启动。每段智能体执行使用独立临时容器，工作目录文件持久保留，无需额外准备 KVM 节点。

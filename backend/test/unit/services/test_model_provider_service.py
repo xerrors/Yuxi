@@ -466,6 +466,7 @@ def test_builtin_provider_templates_default_to_openai_provider_type():
     }
     assert provider_types == {"openai"}
     assert all("ollama" not in provider["provider_id"] for provider in BUILTIN_PROVIDERS)
+    assert "fluxionai" not in {provider["provider_id"] for provider in BUILTIN_PROVIDERS}
 
 
 @pytest.mark.parametrize(
