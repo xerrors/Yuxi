@@ -61,7 +61,7 @@ def manager(tmp_path_factory):
     other.write_text("other-user-secret\n", encoding="utf-8")
     (root / "skills" / "one" / "demo").mkdir(parents=True)
     (root / "skills" / "one" / "demo" / "SKILL.md").write_text("shared-skill\n", encoding="utf-8")
-    image = os.environ.get("SANDBOX_CONTAINER_IMAGE", "yuxi-sandbox:0.8.0.beta6")
+    image = os.environ.get("SANDBOX_CONTAINER_IMAGE", "yuxi-sandbox:0.8.0.beta7")
     digest = os.environ.get("SANDBOX_CONTAINER_IMAGE_DIGEST", "")
     run_uid = os.getuid() or 65534
     run_gid = os.getgid() or 65534
@@ -578,7 +578,7 @@ def test_runner_http_contract_auth_lazy_exec_and_remove(tmp_path, monkeypatch, r
     (tmp_path / "shared" / "one" / "workspace" / "projects" / "demo").mkdir(parents=True)
     (tmp_path / "skills" / "one").mkdir(parents=True)
     monkeypatch.setenv("SANDBOX_RUNNER_TOKEN", "integration-token-1234567890")
-    monkeypatch.setenv("SANDBOX_CONTAINER_IMAGE", os.environ.get("SANDBOX_CONTAINER_IMAGE", "yuxi-sandbox:0.8.0.beta6"))
+    monkeypatch.setenv("SANDBOX_CONTAINER_IMAGE", os.environ.get("SANDBOX_CONTAINER_IMAGE", "yuxi-sandbox:0.8.0.beta7"))
     monkeypatch.setenv("SANDBOX_CONTAINER_IMAGE_DIGEST", os.environ.get("SANDBOX_CONTAINER_IMAGE_DIGEST", ""))
     monkeypatch.setenv("SANDBOX_CONTAINER_HOST_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("SANDBOX_CONTAINER_HOST_SKILL_DIR", str(tmp_path / "skills"))
@@ -665,7 +665,7 @@ def test_matches_plain_docker_exit_code_and_output(manager):
             "--rm",
             "--network",
             "none",
-            os.environ.get("SANDBOX_CONTAINER_IMAGE", "yuxi-sandbox:0.8.0.beta6"),
+            os.environ.get("SANDBOX_CONTAINER_IMAGE", "yuxi-sandbox:0.8.0.beta7"),
             "bash",
             "-lc",
             command,
