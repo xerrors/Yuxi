@@ -27,6 +27,7 @@ LIFECYCLE_CORE_E2E_TESTS=(
     test/e2e/test_agent_feedback_e2e.py
     test/e2e/test_session_mentions_e2e.py
     test/e2e/test_malformed_tool_recovery_e2e.py
+    test/e2e/test_session_config_e2e.py::test_session_approval_selection_reaches_worker_without_legacy_agent_default
 )
 
 # 只在显式收集 CI 证据时追加报告参数，保留 pytest 退出状态。

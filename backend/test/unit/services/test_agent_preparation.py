@@ -279,6 +279,12 @@ async def test_manifest_uses_prepared_context_and_persisted_overrides(monkeypatc
     assert result.context is seen[0]
     assert result.context.model == result.manifest["model"]["spec"] == "chosen"
     assert result.context.tool_approval_mode == result.manifest["tool_approval_mode"] == "always_trust"
+    assert result.context._cooperation_config_snapshot["tool_approval_mode"] == "always_trust"
+    effective_config = {
+        **result.context._cooperation_config_snapshot,
+        "system_prompt": result.context.system_prompt,
+    }
+    assert result.manifest["config_digest"] == compute_config_digest(effective_config)
     assert result.context.system_prompt == f"{expected_prompt}\n\nworkspace policy"
     assert result.manifest["limits"]["model_retry_times"] == result.context.model_retry_times == 2
     assert result.manifest["resources"]["skills"][0]["preload_content_hash"] == hashlib.sha256(b"frozen skill").hexdigest()

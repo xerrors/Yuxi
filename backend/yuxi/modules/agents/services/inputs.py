@@ -361,7 +361,7 @@ async def accept_locked(
         if model_spec is not None:
             snapshot["model"] = await resolve_agent_run_model_spec(model_spec, None, db)
         if tool_approval_mode is not None:
-            snapshot["tool_approval_mode"] = resolve_agent_run_tool_approval_mode(tool_approval_mode, None)
+            snapshot["tool_approval_mode"] = resolve_agent_run_tool_approval_mode(tool_approval_mode)
     input_payload = {**(frozen_payload or {}), "context_snapshot": snapshot}
 
     input_item = await input_repo.create(

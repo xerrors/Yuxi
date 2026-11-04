@@ -105,7 +105,6 @@ async def test_admin_settings_are_readable_but_not_writable_by_private_owner(tes
     slug = f"pytest-config-auth-{uuid.uuid4().hex[:10]}"
     headers = standard_user["headers"]
     settings = {
-        "tool_approval_mode": "always_trust",
         "summary_threshold": 37,
         "summary_keep_messages": 7,
         "summary_prompt": "摘要 {messages}",
@@ -135,7 +134,6 @@ async def test_admin_settings_are_readable_but_not_writable_by_private_owner(tes
         assert {key: context[key] for key in settings} == settings
 
         overwritten = {
-            "tool_approval_mode": "default",
             "summary_threshold": 90,
             "summary_keep_messages": 20,
             "summary_prompt": "替换 {messages}",
@@ -161,6 +159,65 @@ async def test_admin_settings_are_readable_but_not_writable_by_private_owner(tes
         assert persisted["system_prompt"] == "user edit"
     finally:
         deleted = await test_client.delete(f"/api/agent/{slug}", headers=admin_headers)
+        assert deleted.status_code in {200, 404}, deleted.text
+        await conn.close()
+
+
+@pytest.mark.self_managed_resources
+@pytest.mark.parametrize("role", ["user", "admin", "superadmin"])
+async def test_agent_approval_mode_is_rejected_and_hidden_for_all_roles(test_client, admin_headers, standard_user, role):
+    """各产品角色均不能配置审批模式，历史值也不进入配置响应。"""
+    headers = standard_user["headers"]
+    if role != "user":
+        promoted = await test_client.put(f"/api/auth/users/{standard_user['user']['id']}", headers=admin_headers, json={"role": role})
+        assert promoted.status_code == 200, promoted.text
+    current_user = await test_client.get("/api/auth/me", headers=headers)
+    assert current_user.status_code == 200, current_user.text
+    assert current_user.json()["role"] == role
+
+    slug = f"pytest-approval-config-{uuid.uuid4().hex[:10]}"
+    path = f"/api/agent/{slug}"
+    payload = {
+        "name": "Pytest approval config",
+        "slug": slug,
+        "backend_id": "ChatbotAgent",
+        "visibility": "private",
+        "config_json": {"context": {"system_prompt": "owner prompt", "tool_approval_mode": "always_trust"}},
+    }
+    conn = await asyncpg.connect(os.environ["POSTGRES_URL"].replace("+asyncpg", ""))
+    try:
+        rejected = await test_client.post("/api/agent", headers=headers, json=payload)
+        assert rejected.status_code == 422, rejected.text
+        assert "不可写或未声明的字段" in rejected.json()["detail"]["message"]
+        assert await conn.fetchval("SELECT count(*) FROM agents WHERE slug = $1", slug) == 0
+
+        payload["config_json"] = {"context": {"system_prompt": "owner prompt"}}
+        created = await test_client.post("/api/agent", headers=headers, json=payload)
+        assert created.status_code == 200, created.text
+        persisted = await _read_agent_config(conn, slug)
+        assert persisted["context"] == {"system_prompt": "owner prompt"}
+
+        rejected = await test_client.put(
+            path,
+            headers=headers,
+            json={"config_json": {"context": {"tool_approval_mode": "always_trust", "system_prompt": "rejected prompt"}}},
+        )
+        assert rejected.status_code == 422, rejected.text
+        assert "不可写或未声明的字段" in rejected.json()["detail"]
+        assert await _read_agent_config(conn, slug) == persisted
+
+        # 直接写入本例旧配置，独立验证历史值的读取投影。
+        persisted["context"]["tool_approval_mode"] = "always_trust"
+        await conn.execute("UPDATE agents SET config_json = $2::jsonb WHERE slug = $1", slug, json.dumps(persisted))
+        assert (await _read_agent_config(conn, slug))["context"]["tool_approval_mode"] == "always_trust"
+        read = await test_client.get(path, headers=headers)
+        assert read.status_code == 200, read.text
+        agent = read.json()["agent"]
+        assert agent["config_json"]["context"] == {"system_prompt": "owner prompt"}
+        assert "tool_approval_mode" not in agent["configurable_items"]
+        assert "system_prompt" in agent["configurable_items"]
+    finally:
+        deleted = await test_client.delete(path, headers=admin_headers)
         assert deleted.status_code in {200, 404}, deleted.text
         await conn.close()
 

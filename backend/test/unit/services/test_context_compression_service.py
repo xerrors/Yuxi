@@ -42,7 +42,7 @@ class _Graph:
     [
         None,
         {"model": "provider:model", "tool_approval_mode": "default"},
-        {"model": "provider:model", "tool_approval_mode": "default", "summary_prompt": "FROZEN_SUMMARY"},
+        {"model": "provider:model", "tool_approval_mode": "always_trust", "summary_prompt": "FROZEN_SUMMARY"},
     ],
 )
 async def test_compress_thread_context_uses_locked_idle_thread(
@@ -99,6 +99,7 @@ async def test_compress_thread_context_uses_locked_idle_thread(
         if config_snapshot is not None:
             expected_prompt = config_snapshot.get("summary_prompt", _Context().summary_prompt)
         assert kwargs["context"].summary_prompt == expected_prompt
+        assert kwargs["context"].tool_approval_mode == config_snapshot["tool_approval_mode"]
         events.append(("compress", kwargs["context"].model))
         if compression_fails:
             raise RuntimeError("compression failed")

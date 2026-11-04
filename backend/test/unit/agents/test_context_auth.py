@@ -40,14 +40,19 @@ def test_summary_default_and_schema_preserve_explicit_overrides():
     assert BaseContext(summary_threshold=37).summary_threshold == 37
 
 
-def test_tool_approval_is_hidden_in_form_but_preserved_in_context():
-    """审批字段仅从表单隐藏，仍可保存并用于运行。"""
+def test_tool_approval_is_runtime_only():
+    """智能体配置不能读写审批模式，运行入口仍可显式注入。"""
+    saved = {"context": {"tool_approval_mode": "always_trust", "system_prompt": "agent prompt"}}
     for role in ("user", "admin", "superadmin", None):
         assert "tool_approval_mode" not in BaseContext.get_configurable_items(user_role=role)
-    saved = {"context": {"tool_approval_mode": "always_trust"}}
-    assert filter_config_by_role(saved, "admin", BaseContext) == saved
+        assert filter_config_by_role(saved, role, BaseContext) == {"context": {"system_prompt": "agent prompt"}}
+    assert context_module.filter_declared_config(saved, BaseContext) == {"context": {"system_prompt": "agent prompt"}}
     context = BaseContext()
     context.update_config(saved["context"])
+    assert context.tool_approval_mode == "default"
+    assert context.system_prompt == "agent prompt"
+    context.update({"tool_approval_mode": "always_trust"})
+    context.update_config({"tool_approval_mode": "default"})
     assert context.tool_approval_mode == "always_trust"
 
 
@@ -66,7 +71,6 @@ class SuperAdminOnlyContext(BaseContext):
 async def test_saved_restricted_settings_survive_runtime_but_writes_require_role(role):
     """运行保留已保存参数，写入仍受角色限制且不接收未知字段。"""
     saved = {
-        "tool_approval_mode": "always_trust",
         "summary_threshold": 37,
         "summary_keep_messages": 7,
         "summary_prompt": "摘要 {messages}",

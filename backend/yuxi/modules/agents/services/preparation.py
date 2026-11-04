@@ -186,6 +186,7 @@ async def prepare_run_execution(
     context.update_config(configured)
     context.update(
         {
+            "tool_approval_mode": configured["tool_approval_mode"],
             "agent_slug": run.agent_slug,
             "thread_id": run.thread_id,
             "uid": str(user.uid),
@@ -201,8 +202,9 @@ async def prepare_run_execution(
     if not getattr(context, "_runtime_prepared", False):
         raise ValueError("执行用户不存在，无法准备 Context")
 
-    # 身份、租约与路径不属于可配置字段；完整 prompt 仅通过摘要进入 manifest。
+    # 会话审批独立于智能体配置，仍参与协作继承与 manifest 摘要。
     effective_config = {name: getattr(context, name) for name in configurable_fields}
+    effective_config["tool_approval_mode"] = context.tool_approval_mode
     # 工作区提示由每个成员准备时加载，配置继承不能重复拼接派发方的展开文本。
     context._cooperation_config_snapshot = {**effective_config, "system_prompt": configured_prompt}
     manifest = build_manifest_payload(

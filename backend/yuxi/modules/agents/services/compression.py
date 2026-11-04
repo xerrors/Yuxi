@@ -64,6 +64,7 @@ async def compress_thread_context(
     )
     context.update(
         {
+            "tool_approval_mode": configured["tool_approval_mode"],
             "uid": uid,
             "thread_id": thread_id,
             "model": model_spec,

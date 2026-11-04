@@ -96,3 +96,65 @@ async def test_dispatch_materializes_bound_workdir_before_publishing(monkeypatch
     binding = SimpleNamespace(materialize_managed=True, uid="user-1", workdir_path="projects/p-1")
     await deliver(Dispatch(run_id="run-1", binding=binding))
     assert calls == [("workdir", "user-1", "projects/p-1"), ("publish", "run-1")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("approval_mode", ["default", "always_trust"])
+async def test_waitpoint_cleanup_preserves_run_approval_mode(monkeypatch, approval_mode):
+    """取消清理从 Run 快照恢复审批模式，不能回退到智能体默认值。"""
+    from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock
+
+    from yuxi.modules.agents.runtime.context import BaseContext
+    from yuxi.modules.agents.services import run_lifecycle
+
+    @asynccontextmanager
+    async def session_context():
+        """隔离数据库，只检查清理图的装配输入。"""
+        yield object()
+
+    seen = []
+    graph = SimpleNamespace(cleared=False)
+
+    async def get_graph(*, context, checkpoint_only):
+        """记录真正传给清理图的运行上下文。"""
+        assert checkpoint_only
+        seen.append(context)
+        return graph
+
+    async def cancel_checkpoint(actual_graph, config):
+        """清理结果仅来自当前 Run 对应的图与线程。"""
+        assert actual_graph is graph
+        assert config == {"configurable": {"uid": "user-1", "thread_id": "thread-1"}}
+        actual_graph.cleared = True
+
+    monkeypatch.setattr(run_lifecycle, "pg_manager", SimpleNamespace(get_async_session_context=session_context))
+    monkeypatch.setattr(
+        "yuxi.modules.agents.repositories.definitions.AgentRepository",
+        lambda db: SimpleNamespace(get_by_slug=AsyncMock(return_value=SimpleNamespace(backend_id="ChatbotAgent"))),
+    )
+    monkeypatch.setattr(
+        "yuxi.modules.agents.runtime.agent_backends.get_agent_backend",
+        lambda backend_id: SimpleNamespace(context_schema=BaseContext, get_graph=get_graph),
+    )
+    monkeypatch.setattr(run_lifecycle, "require_thread", AsyncMock(return_value=object()))
+    monkeypatch.setattr(
+        "yuxi.modules.workspace.services.bindings.resolve_session_workdir_binding",
+        AsyncMock(return_value=SimpleNamespace(workdir_path="projects/p-1")),
+    )
+    monkeypatch.setattr("yuxi.modules.agents.runtime.checkpoint_cleanup.cancel_waitpoint_checkpoint", cancel_checkpoint)
+    run = SimpleNamespace(
+        id="run-1",
+        uid="user-1",
+        thread_id="thread-1",
+        agent_slug="agent-1",
+        app_id=None,
+        runtime_scope_id="thread-1",
+        input_payload={"context_snapshot": {"model": "test:model", "tool_approval_mode": approval_mode}},
+    )
+
+    await run_lifecycle._clear_waitpoint_checkpoint(run)
+
+    assert graph.cleared
+    assert seen[0].tool_approval_mode == approval_mode
+    assert seen[0].run_id == "run-1"

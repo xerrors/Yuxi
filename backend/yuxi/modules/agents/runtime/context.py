@@ -197,6 +197,11 @@ class BaseContext:
 
     agent_slug: str | None = field(default=None, metadata={"configurable": False, "hide": True})
 
+    tool_approval_mode: str = field(
+        default=DEFAULT_TOOL_APPROVAL_MODE,
+        metadata={"name": "工具审批模式", "configurable": False, "hide": True},
+    )
+
     skill_runtime_snapshot: SkillRuntimeSnapshot | None = field(default=None, repr=False, metadata={"configurable": False, "hide": True})
     mcp_tool_servers: dict[str, str] | None = field(default=None, repr=False, metadata={"configurable": False, "hide": True})
     registered_builtin_tool_names: set[str] | None = field(default=None, repr=False, metadata={"configurable": False, "hide": True})
@@ -222,21 +227,6 @@ class BaseContext:
             "options": [],
             "description": "智能体的驱动模型，留空时使用系统默认模型。",
             "kind": "llm",
-        },
-    )
-
-    tool_approval_mode: str = field(
-        default=DEFAULT_TOOL_APPROVAL_MODE,
-        metadata={
-            "name": "工具审批模式",
-            "hide": True,
-            "description": "默认审批会在写文件、编辑文件或执行命令前询问；完全信任会自动执行这些工具。",
-            "options": [
-                {"key": "default", "name": "默认审批", "description": "敏感工具执行前请求确认"},
-                {"key": "always_trust", "name": "完全信任", "description": "敏感工具无需确认，自动执行"},
-            ],
-            "type": "string",
-            "auth": "admin",
         },
     )
 

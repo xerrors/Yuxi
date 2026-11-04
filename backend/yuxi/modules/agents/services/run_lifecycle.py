@@ -365,6 +365,7 @@ async def _clear_waitpoint_checkpoint(run: AgentRun) -> None:
     context.update_config(run.input_payload["context_snapshot"])
     context.update(
         {
+            "tool_approval_mode": run.input_payload["context_snapshot"]["tool_approval_mode"],
             "thread_id": run.thread_id,
             "uid": run.uid,
             "run_id": run.id,

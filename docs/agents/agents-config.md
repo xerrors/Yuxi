@@ -56,7 +56,6 @@ metadata 可以定义展示名称、说明、控件类型、选项和角色权�
 | --- | --- |
 | `system_prompt` | 智能体角色和行为说明 |
 | `model` | 主模型；留空时使用系统默认模型 |
-| `tool_approval_mode` | `default` 或 `always_trust`；保留在 Context 中，配置表单隐藏 |
 | `tools` | 可使用的内置工具 |
 | `knowledges` | 可检索的知识库范围 |
 | `mcps` | 直接添加到 Agent 的已启用 MCP 服务器 |
@@ -66,6 +65,8 @@ metadata 可以定义展示名称、说明、控件类型、选项和角色权�
 | `summary_prompt`、`summary_tool_result_token_limit` | 摘要提示词和工具结果预览上限 |
 | `max_execution_steps` | 单次运行的 LangGraph 执行步数上限，默认 2000，对应 `recursion_limit` |
 | `model_retry_times` | 模型重试次数，默认 2 |
+
+工具审批模式由会话或定时任务选择，不属于智能体配置。省略时使用 `default`；历史智能体 Context 中的审批值不参与新会话配置，已有会话和 Input 的审批快照继续生效。
 
 遇到 `Recursion limit ... reached` 时，管理员可在智能体的高级配置中调整“最大执行步数”并保存，再新建会话。已保存的显式值优先于默认值；保存为 300 的智能体需要将该字段改为 2000。已有会话继续使用创建时的配置快照。提高上限允许更长的执行；如果任务反复执行相同步骤，还需检查循环的停止条件。
 

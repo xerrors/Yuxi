@@ -145,7 +145,7 @@ async def update_thread(
             raise ValueError("Session 缺少配置快照")
         snapshot = deepcopy(agent_session.config_snapshot)
         if tool_approval_mode is not None:
-            snapshot["tool_approval_mode"] = resolve_agent_run_tool_approval_mode(tool_approval_mode, None)
+            snapshot["tool_approval_mode"] = resolve_agent_run_tool_approval_mode(tool_approval_mode)
         if model_spec is not None:
             snapshot["model"] = await resolve_agent_run_model_spec(model_spec, None, db)
         agent_session.config_snapshot = snapshot
