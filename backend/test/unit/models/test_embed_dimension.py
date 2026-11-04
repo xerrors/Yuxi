@@ -103,3 +103,20 @@ async def test_batch_encode_rejects_wrong_dimension_in_later_batch(client, monke
             client.batch_encode(["a", "b", "c"])
         else:
             await client.abatch_encode(["a", "b", "c"])
+
+
+@pytest.mark.parametrize("dimension", ["", "2"])
+async def test_string_dimension_configuration(response_data, dimension):
+    client = OtherEmbedding(model="test-model", base_url="http://test.local/embeddings", dimension=dimension)
+    response_data.append({"embedding": [0.1, 0.2]})
+
+    assert client.encode("a") == [[0.1, 0.2]]
+    assert await client.aencode("a") == [[0.1, 0.2]]
+    assert client.batch_encode(["a"]) == [[0.1, 0.2]]
+    assert await client.abatch_encode(["a"]) == [[0.1, 0.2]]
+    assert (await client.test_connection())[0]
+
+    if dimension:
+        response_data[0]["embedding"] = [0.1]
+        with pytest.raises(ValueError, match="dimension"):
+            client.encode("a")

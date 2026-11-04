@@ -27,7 +27,7 @@ class BaseEmbeddingModel(ABC):
     ):
         """接收供应商已解析的执行配置。"""
         self.model = model
-        self.dimension = dimension
+        self.dimension = int(dimension) if dimension not in (None, "") else None
         self.base_url = get_docker_safe_url(base_url)
         self.api_key = api_key
         self.batch_size = int(batch_size or 40)
