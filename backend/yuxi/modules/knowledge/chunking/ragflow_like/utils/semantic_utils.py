@@ -76,7 +76,7 @@ def semantic_chunking_with_auto_clusters(
         chunks = []
         current_chunk = ""
         current_chunk_tokens = 0
-        for sentence, token_count in zip(sentences, sentence_token_counts):
+        for sentence, token_count in zip(sentences, sentence_token_counts, strict=True):
             # 首句置空时 current_chunk 为空串，避免产出空 chunk
             if current_chunk and current_chunk_tokens + token_count > max_chunk_size:
                 chunks.append(current_chunk.strip())
@@ -90,6 +90,11 @@ def semantic_chunking_with_auto_clusters(
         return chunks
 
     embeddings = embed_fn(sentences)
+    # 聚类标签的条数等于向量行数；不足或多余都会让下面的 zip 截断，静默丢弃句子。
+    if len(embeddings) != len(sentences):
+        raise ValueError(
+            f"semantic chunking expects one embedding per sentence, got {len(embeddings)} embeddings for {len(sentences)} sentences"
+        )
 
     # 簇数按预算向上取整，避免整除时多切一块；聚类数不能超过句子数
     best_k = min((total_tokens + max_chunk_size - 1) // max_chunk_size, len(sentences))
@@ -102,7 +107,7 @@ def semantic_chunking_with_auto_clusters(
     current_chunk_tokens = 0
     current_label = labels[0]
 
-    for sentence, label, token_count in zip(sentences, labels, sentence_token_counts):
+    for sentence, label, token_count in zip(sentences, labels, sentence_token_counts, strict=True):
         if label != current_label or current_chunk_tokens + token_count > max_chunk_size:
             # 空块只会出现在首句超预算时，跳过避免产出空 chunk
             if current_chunk.strip():
