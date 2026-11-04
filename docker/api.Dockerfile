@@ -57,7 +57,7 @@ COPY --chown=0:0 backend/yuxi /app/yuxi
 RUN find /app/yuxi -type d -exec chmod 0755 {} + \
     && find /app/yuxi -type f -exec chmod 0644 {} +
 
-# 如果网络还是不好，可以在后面添加 --index-url https://pypi.tuna.tsinghua.edu.cn/simple
+# 依赖版本与发行文件下载地址由锁文件固定。
 RUN uv sync --no-cache --group test --no-dev --frozen
 
 COPY --chown=0:0 --chmod=0755 docker/api-entrypoint.sh /usr/local/bin/yuxi-entrypoint
