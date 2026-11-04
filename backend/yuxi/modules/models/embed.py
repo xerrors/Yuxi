@@ -48,7 +48,7 @@ class BaseEmbeddingModel(ABC):
             group_msg = messages[i : i + batch_size]
             logger.info(f"Encoding [{i}/{len(messages)}] messages (bsz={batch_size})")
             response = self.encode(group_msg)
-            self._require_one_vector_per_input(response, len(group_msg))
+            self._require_one_vector_per_input(response, len(group_msg), self.dimension)
             data.extend(response)
 
         return data
@@ -61,7 +61,7 @@ class BaseEmbeddingModel(ABC):
             group_msg = messages[i : i + batch_size]
             logger.info(f"Async encoding [{i}/{len(messages)}] messages (bsz={batch_size})")
             res = await self.aencode(group_msg)
-            self._require_one_vector_per_input(res, len(group_msg))
+            self._require_one_vector_per_input(res, len(group_msg), self.dimension)
             data.extend(res)
 
         return data
@@ -82,8 +82,8 @@ class BaseEmbeddingModel(ABC):
             return False, error_msg
 
     @staticmethod
-    def _extract_embeddings(result: dict, expected: int | None = None) -> list[list[float]]:
-        """只接受逐条对应的向量；提供者带 index 时按 index 归位，否则保持响应顺序。"""
+    def _extract_embeddings(result: dict, expected: int | None = None, dimension: int | None = None) -> list[list[float]]:
+        """只接受逐条对应且维度一致的向量；提供者带 index 时按 index 归位，否则保持响应顺序。"""
         if not isinstance(result, dict) or "data" not in result:
             raise ValueError(f"Embedding failed: Invalid response format {result}")
 
@@ -96,6 +96,11 @@ class BaseEmbeddingModel(ABC):
         for item in items:
             if not isinstance(item, dict) or item.get("embedding") is None:
                 raise ValueError("Embedding response contains an invalid item")
+            if dimension is not None and len(item["embedding"]) != dimension:
+                raise ValueError(
+                    f"Embedding response returned a vector of dimension {len(item['embedding'])}"
+                    f" for a model configured with dimension {dimension}"
+                )
 
         if not any(item.get("index") is not None for item in items):
             return [item["embedding"] for item in items]
@@ -114,10 +119,17 @@ class BaseEmbeddingModel(ABC):
         return [indexed[index] for index in range(len(items))]
 
     @staticmethod
-    def _require_one_vector_per_input(embeddings: list, expected: int) -> None:
-        """校验响应或批次条数，拒绝部分结果。"""
+    def _require_one_vector_per_input(embeddings: list, expected: int, dimension: int | None = None) -> None:
+        """校验响应或批次条数与维度，拒绝部分结果和维度不符的批次。"""
         if len(embeddings) != expected:
             raise ValueError(f"Embedding response returned {len(embeddings)} vectors for {expected} inputs")
+        if dimension is not None:
+            for embedding in embeddings:
+                if len(embedding) != dimension:
+                    raise ValueError(
+                        f"Embedding response returned a vector of dimension {len(embedding)}"
+                        f" for a model configured with dimension {dimension}"
+                    )
 
 
 class OtherEmbedding(BaseEmbeddingModel):
@@ -139,7 +151,11 @@ class OtherEmbedding(BaseEmbeddingModel):
             try:
                 response = requests.post(self.base_url, json=payload, headers=self.headers, timeout=60)
                 response.raise_for_status()
-                return self._extract_embeddings(response.json(), 1 if isinstance(message, str) else len(message))
+                return self._extract_embeddings(
+                    response.json(),
+                    1 if isinstance(message, str) else len(message),
+                    self.dimension,
+                )
             except requests.RequestException as e:
                 retry = self._prepare_retry(
                     message,
@@ -165,7 +181,11 @@ class OtherEmbedding(BaseEmbeddingModel):
                 try:
                     response = await client.post(self.base_url, json=payload, headers=self.headers, timeout=60)
                     response.raise_for_status()
-                    return self._extract_embeddings(response.json(), 1 if isinstance(message, str) else len(message))
+                    return self._extract_embeddings(
+                        response.json(),
+                        1 if isinstance(message, str) else len(message),
+                        self.dimension,
+                    )
                 except httpx.HTTPStatusError as e:
                     retry = self._prepare_retry(
                         message,
