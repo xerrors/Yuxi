@@ -28,6 +28,8 @@ Runtime System Tests 单次运行约 14m38s：`docker compose up --build` 312s�
 
 ## 后果
 
+缓存导出的旧层回收与命名版本由 [Runtime 构建缓存回收决定](./2026-11-04-runtime-cache-garbage-collection.md)补充，独立缓存目录的约束继续生效。
+
 首个冷运行耗时不降（约 14m23s，与原 `--build` 等价）；热缓存下构建从 312-347s 降到 90s（20 个 CACHED 步骤，uv sync 与 provisioner pip 不再执行），主 job 从 14m38s 降到约 10m15s，后台作业 job 约 4min 并行完成，PR 墙钟约 10m15s。CI 总分钟数因第二套拓扑上升约 4min。缓存回退读取默认分支缓存暂无数据（新 key 首次运行必冷）。`type=gha` 缓存导出在该环境的 job 中静默失效（缓存条目从未生成且无导出日志），层缓存改用 `actions/cache` 持久化 buildkit `type=local` 缓存目录，两个镜像必须使用互相隔离的缓存目录与 key：共用一个目录时后导出者会覆盖前者的 manifest，导致 api 镜像层永不命中。
 
 ## 验证

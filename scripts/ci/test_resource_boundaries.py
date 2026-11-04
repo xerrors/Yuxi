@@ -274,6 +274,10 @@ class RuntimeTopologyTests(unittest.TestCase):
         self.assertIn("'.github/actions/**'", workflow, "动作必须能触发系统测试")
         # 动作自身拥有环境准备、层缓存恢复与构建保存的完整接线。
         self.assertIn("id: sandbox-cache", action)
+        self.assertIn("version: v0.38.0", action)
+        for image in ("api", "minio", "sandbox"):
+            self.assertIn(f"key: buildkit-v2-{image}-", action)
+            self.assertRegex(action, rf"restore-keys: \|\n\s+buildkit-v2-{image}-")
         self.assertLess(
             action.index("bash scripts/ci/prepare_system_tests_env.sh"),
             action.index("scripts/ci/build_topology_images.sh"),
@@ -328,9 +332,13 @@ class RuntimeTopologyTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             self.assert_hosted_jobs(workflow.replace("steps:\n", "steps:\n      - run: bash scripts/ci/probe_hosted_cube.sh\n", 1))
         action = (ROOT / ".github/actions/prepare-topology/action.yml").read_text()
-        for original in ("bash scripts/ci/prepare_system_tests_env.sh", "id: sandbox-cache", "--sandbox-only"):
+        for original in ("bash scripts/ci/prepare_system_tests_env.sh", "id: sandbox-cache", "--sandbox-only", "version: v0.38.0"):
             with self.subTest(original=original, target="action"), self.assertRaises((AssertionError, ValueError)):
                 self.assert_hosted_jobs(workflow, action.replace(original, "removed", 1))
+        for image in ("api", "minio", "sandbox"):
+            for original in (f"key: buildkit-v2-{image}-", f"\n          buildkit-v2-{image}-"):
+                with self.subTest(original=original), self.assertRaises(AssertionError):
+                    self.assert_hosted_jobs(workflow, action.replace(original, original.replace("buildkit-v2-", "buildkit-"), 1))
         # 动作内的保存必须晚于全部构建：把 api 保存移到恢复之前时拒绝。
         save_api = action[action.index("    - name: Save successful api build") : action.index("    - name: Save successful minio build")]
         early = action.index("    - name: Restore api image layer cache")
@@ -482,7 +490,7 @@ class RuntimeTopologyTests(unittest.TestCase):
                     self.assertEqual(len(commands), 4)
                     sandbox = next(command for command in commands if "docker/sandbox.Dockerfile" in command)
                     self.assertEqual(sandbox[sandbox.index("--tag") + 1], "test-sandbox-image")
-                    self.assertIn(f"type=local,dest={base}/sandbox-cache,mode=max", sandbox)
+                    self.assertIn(f"type=local,dest={base}/sandbox-cache,mode=max,reset=true", sandbox)
                     self.assertIn("--load", sandbox)
 
     def test_image_builder_sandbox_only_mode(self):
@@ -522,7 +530,7 @@ class RuntimeTopologyTests(unittest.TestCase):
                     commands = [shlex.split(line) for line in log.read_text().splitlines()]
                     self.assertEqual(len(commands), 1)
                     self.assertIn("docker/sandbox.Dockerfile", commands[0])
-                    self.assertIn(f"type=local,dest={base}/sandbox-cache,mode=max", commands[0])
+                    self.assertIn(f"type=local,dest={base}/sandbox-cache,mode=max,reset=true", commands[0])
 
     def assert_container_state(self, config: dict) -> None:
         """API、worker 和 runner 共享认证与物理数据，socket 只归 runner。"""

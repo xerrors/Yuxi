@@ -4,6 +4,7 @@
 # 镜像名从 compose 配置解析，跟随 docker-compose.yml 与 .env.template，不硬编码版本。
 # $1/$2/$3 为可选的 buildkit 本地缓存目录（分别对应 api、minio 与 sandbox 镜像）：
 # type=local 缓存的 manifest 槽位按镜像隔离，各镜像不得共用目录，否则后导出者覆盖前者。
+# 导出时回收无引用层，要求 Buildx >= 0.35；共享 CI action 固定兼容版本。
 # 不提供目录时退化为无缓存构建（与 docker compose build 等价）。
 # 追加 --sandbox-only 时只构建 sandbox 镜像（供不需要拓扑的宿主沙盒测试复用）。
 set -euo pipefail
@@ -26,7 +27,7 @@ build_with_cache() {
   local cache_flags=()
   if [ -n "$cache_dir" ]; then
     mkdir -p "$cache_dir"
-    cache_flags=(--cache-from "type=local,src=$cache_dir" --cache-to "type=local,dest=$cache_dir,mode=max")
+    cache_flags=(--cache-from "type=local,src=$cache_dir" --cache-to "type=local,dest=$cache_dir,mode=max,reset=true")
   fi
   docker buildx build \
     --file "$dockerfile" \

@@ -10,6 +10,8 @@ runs:
   steps:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
+      with:
+        version: v0.38.0
     - name: Prepare Compose environment
       run: bash scripts/ci/prepare_system_tests_env.sh
       shell: bash
@@ -19,26 +21,26 @@ runs:
       uses: actions/cache/restore@v4
       with:
         path: /tmp/yuxi-buildkit-cache/api
-        key: buildkit-api-${{ runner.os }}-${{ hashFiles('backend/uv.lock', 'backend/pyproject.toml', 'docker/api.Dockerfile') }}
+        key: buildkit-v2-api-${{ runner.os }}-${{ hashFiles('backend/uv.lock', 'backend/pyproject.toml', 'docker/api.Dockerfile') }}
         restore-keys: |
-          buildkit-api-${{ runner.os }}-
+          buildkit-v2-api-${{ runner.os }}-
     - name: Restore minio image layer cache
       id: minio-cache
       if: inputs.sandbox-only != 'true'
       uses: actions/cache/restore@v4
       with:
         path: /tmp/yuxi-buildkit-cache/minio
-        key: buildkit-minio-${{ runner.os }}-${{ hashFiles('docker/minio/Dockerfile', 'docker/minio/docker-entrypoint.sh') }}
+        key: buildkit-v2-minio-${{ runner.os }}-${{ hashFiles('docker/minio/Dockerfile', 'docker/minio/docker-entrypoint.sh') }}
         restore-keys: |
-          buildkit-minio-${{ runner.os }}-
+          buildkit-v2-minio-${{ runner.os }}-
     - name: Restore sandbox image layer cache
       id: sandbox-cache
       uses: actions/cache/restore@v4
       with:
         path: /tmp/yuxi-buildkit-cache/sandbox
-        key: buildkit-sandbox-${{ runner.os }}-${{ hashFiles('docker/sandbox.Dockerfile') }}
+        key: buildkit-v2-sandbox-${{ runner.os }}-${{ hashFiles('docker/sandbox.Dockerfile') }}
         restore-keys: |
-          buildkit-sandbox-${{ runner.os }}-
+          buildkit-v2-sandbox-${{ runner.os }}-
     - name: Build topology images with cached layers
       if: inputs.sandbox-only != 'true'
       run: bash scripts/ci/build_topology_images.sh /tmp/yuxi-buildkit-cache/api /tmp/yuxi-buildkit-cache/minio /tmp/yuxi-buildkit-cache/sandbox
