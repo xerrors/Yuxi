@@ -33,4 +33,4 @@ Runtime System Tests 在导入 sandbox 镜像时耗尽托管 runner 的 72 GB �
 - Passed：工程契约检查及其 56 项单测，`bash -n scripts/ci/build_topology_images.sh`、文档构建和 `git diff --check`。
 - Passed：`docker compose exec -T api uv run --no-sync --group test pytest test/unit -m 'not slow' -q -p no:cacheprovider`，3605 项通过；容器缺少仓库根目录的 127 项跳过，由宿主机配置测试的 209 项通过补足。
 
-- Not run：本次修复在托管 runner 上的完整镜像构建与拓扑运行，须推送后回读 CI 结果；小型缓存实验只证明回收语义，不替代实际容量结果。
+- Passed：[Runtime System Tests](https://github.com/xerrors/Yuxi/actions/runs/41781428345) 在代码提交 `03b1acc94` 上的五个业务 job 及汇总检查全部成功，全部拓扑镜像完成构建与导入。回读五组 JUnit 报告，454 项无失败、无跳过，其中包含知识库 MCP 的 4 项与 Container 执行的 2 项。
