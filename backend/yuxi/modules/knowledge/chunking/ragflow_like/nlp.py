@@ -100,8 +100,11 @@ def naive_merge(
     if custom_delimiters:
         return _split_by_custom_delimiters(typed_sections, custom_delimiters)
 
+    # 分隔符为空时回退到换行，与切段阶段的默认语义保持一致。
+    separator = delimiter or "\n"
+
     if chunk_token_num <= 0:
-        merged = join_source_text((sec for sec, _ in typed_sections if sec and sec.strip()), "\n")
+        merged = join_source_text((sec for sec, _ in typed_sections if sec and sec.strip()), separator)
         return [merged] if merged.strip() else []
 
     # 当前块 token 超过该阈值就开启新块；overlap 越大，上一块可继续追加的预算越小。
@@ -131,7 +134,9 @@ def naive_merge(
     for sec, pos in typed_sections:
         if not sec:
             continue
-        add_chunk("\n" + sec, pos)
+        # 首片段不带前导分隔符，其余按配置的分隔符连接。
+        piece = sec if not any(chunk.strip() for chunk in chunks) else separator + sec
+        add_chunk(piece, pos)
 
     return [chunk for chunk in chunks if chunk.strip()]
 
