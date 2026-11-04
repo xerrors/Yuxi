@@ -201,7 +201,6 @@ async def test_agent_execute_runs_in_ephemeral_container(replay_server, handoff)
                     "config_json": {
                         "context": {
                             "model": f"{provider_id}:container-chat",
-                            "tool_approval_mode": "always_trust",
                             "tools": [],
                             "skills": [],
                             "preload_skills": [],
@@ -217,6 +216,7 @@ async def test_agent_execute_runs_in_ephemeral_container(replay_server, handoff)
                 headers={**headers, "Idempotency-Key": uuid.uuid4().hex},
                 json={
                     "agent_id": slug,
+                    "tool_approval_mode": "always_trust",
                     "input": f"Use the terminal to run exactly this command: `{COMMAND}`. Then reply {DONE}.",
                     "title": "YUXI_TEST_SESSION_CONTAINER_E2E",
                 },

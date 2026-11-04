@@ -223,7 +223,6 @@ async def test_worker_uses_mcp_for_five_tools_and_preserves_sources(e2e_client, 
                     "config_json": {
                         "context": {
                             "model": f"{provider}:deterministic-chat",
-                            "tool_approval_mode": "always_trust",
                             "tools": [],
                             "knowledges": [kb_id],
                             "mcps": [],

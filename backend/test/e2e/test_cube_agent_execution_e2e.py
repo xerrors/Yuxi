@@ -203,7 +203,6 @@ async def test_agent_shared_vm_cancellation_preserves_other_run(execution_resour
                     "config_json": {
                         "context": {
                             "model": f"{provider_id}:cube-model",
-                            "tool_approval_mode": "always_trust",
                             "tools": ["present_artifacts"],
                             "skills": [],
                             "preload_skills": [],
@@ -228,7 +227,12 @@ async def test_agent_shared_vm_cancellation_preserves_other_run(execution_resour
                 response = await client.post(
                     "/api/v1/agents/sessions",
                     headers={**headers, "Idempotency-Key": uuid.uuid4().hex},
-                    json={"agent_id": slug, "input": marker, "title": "YUXI_TEST_SESSION_CUBE_" + marker},
+                    json={
+                        "agent_id": slug,
+                        "tool_approval_mode": "always_trust",
+                        "input": marker,
+                        "title": "YUXI_TEST_SESSION_CUBE_" + marker,
+                    },
                 )
                 assert response.status_code == 201, response.text
                 thread_id = response.json()["id"]
@@ -273,7 +277,12 @@ async def test_agent_shared_vm_cancellation_preserves_other_run(execution_resour
             response = await client.post(
                 "/api/v1/agents/sessions",
                 headers={**headers, "Idempotency-Key": uuid.uuid4().hex},
-                json={"agent_id": slug, "input": "CUBE_THIRD", "title": "YUXI_TEST_SESSION_CUBE_THIRD"},
+                json={
+                    "agent_id": slug,
+                    "tool_approval_mode": "always_trust",
+                    "input": "CUBE_THIRD",
+                    "title": "YUXI_TEST_SESSION_CUBE_THIRD",
+                },
             )
             assert response.status_code == 201, response.text
             third = (response.json()["id"], await wait_for_consumed_input(client, headers, response.json()["yuxi"]["receipt"]))
@@ -292,7 +301,12 @@ async def test_agent_shared_vm_cancellation_preserves_other_run(execution_resour
                     response = await client.post(
                         "/api/v1/agents/sessions",
                         headers={**headers, "Idempotency-Key": uuid.uuid4().hex},
-                        json={"agent_id": slug, "input": marker, "title": "YUXI_TEST_SESSION_CUBE_RECOVERY"},
+                        json={
+                            "agent_id": slug,
+                            "tool_approval_mode": "always_trust",
+                            "input": marker,
+                            "title": "YUXI_TEST_SESSION_CUBE_RECOVERY",
+                        },
                     )
                     assert response.status_code == 201, response.text
                     item = (response.json()["id"], await wait_for_consumed_input(client, headers, response.json()["yuxi"]["receipt"]))

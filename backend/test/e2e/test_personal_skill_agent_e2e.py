@@ -148,7 +148,6 @@ async def test_main_agent_reads_personal_skill_from_web_or_standard_directory(
             ),
             "model": f"{provider_id}:deterministic-chat",
             "tools": [],
-            "tool_approval_mode": "always_trust",
             "knowledges": [],
             "mcps": [],
             "skills": [],
@@ -201,7 +200,11 @@ async def test_main_agent_reads_personal_skill_from_web_or_standard_directory(
             installed_thread = await e2e_client.post(
                 "/api/v1/agents/sessions",
                 headers={**e2e_headers, "Idempotency-Key": f"install-{uuid.uuid4().hex}"},
-                json={"agent_id": agent_slug, "title": make_test_session_title("personal-install-e2e")},
+                json={
+                    "agent_id": agent_slug,
+                    "tool_approval_mode": "always_trust",
+                    "title": make_test_session_title("personal-install-e2e"),
+                },
             )
             assert installed_thread.status_code == 201, installed_thread.text
             thread_id = str(installed_thread.json()["id"])
@@ -238,6 +241,7 @@ async def test_main_agent_reads_personal_skill_from_web_or_standard_directory(
             headers={**e2e_headers, "Idempotency-Key": f"personal-skill-create-{uuid.uuid4().hex}"},
             json={
                 "agent_id": agent_slug,
+                "tool_approval_mode": "always_trust",
                 "title": make_test_session_title("personal-skill-e2e"),
             },
         )

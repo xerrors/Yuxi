@@ -108,7 +108,6 @@ async def test_worker_persists_knowledge_error_and_consistent_grep(e2e_client, e
                     "config_json": {
                         "context": {
                             "model": f"{provider_id}:deterministic-chat",
-                            "tool_approval_mode": "always_trust",
                             "tools": [],
                             "knowledges": [],
                             "mcps": [],
@@ -122,7 +121,12 @@ async def test_worker_persists_knowledge_error_and_consistent_grep(e2e_client, e
             response = await e2e_client.post(
                 "/api/v1/agents/sessions",
                 headers={**e2e_headers, "Idempotency-Key": suffix},
-                json={"agent_id": slug, "input": "P2_TOOL_CONSISTENCY", "title": make_test_session_title("p2-tools")},
+                json={
+                    "agent_id": slug,
+                    "tool_approval_mode": "always_trust",
+                    "input": "P2_TOOL_CONSISTENCY",
+                    "title": make_test_session_title("p2-tools"),
+                },
             )
             assert response.status_code == 201, response.text
             thread_id = response.json()["id"]
