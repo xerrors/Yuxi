@@ -119,7 +119,8 @@ def naive_merge(
     def add_chunk(sec: str, pos: str, sep: str) -> None:
         """把片段并入当前块；预算耗尽时按 overlap 截取上一块尾部作为新块前缀。
 
-        连接符只在并入已有块时加；片段自己开启新块时不带前导分隔符。
+        连接符只在并入已有块时加；片段自己开启新块时不带前导分隔符。overlap 留下
+        的尾部非空时它仍与当前块相邻，需要连接符隔开，否则尾部会和片段粘成一个词。
         """
         tnum = count_tokens(sec)
         local_pos = pos if tnum >= 8 and pos else ""
@@ -133,7 +134,8 @@ def naive_merge(
 
         prev = _remove_pdf_tags(chunks[-1])
         start = int(len(prev) * (100 - overlap) / 100.0)
-        text = prev[start:] + sec
+        tail = prev[start:]
+        text = tail + sep + sec if tail and sep else tail + sec
         if local_pos and local_pos not in text:
             text += local_pos
         chunks.append(text)
@@ -640,3 +642,16 @@ def _remove_pdf_tags(text: str) -> str:
 def _extract_custom_delimiters(delimiter: str) -> list[str]:
     """提取 delimiter 配置中反引号包裹的自定义分隔符。"""
     return [m.group(1) for m in re.finditer(r"`([^`]+)`", delimiter or "")]
+
+
+def custom_delimiter_config(delimiter: str) -> str | None:
+    """只保留反引号声明的自定义切分部分，供按行取段的分块器透传给 naive_merge。
+
+    book/laws 的片段边界来自文档结构，配置里的普通值对它们是切分配置而不是连接符；
+    直接透传原值会把行间换行改写成该分隔符。返回 None 表示没有自定义切分配置，
+    由 naive_merge 回退到换行连接。
+    """
+    custom_delimiters = _extract_custom_delimiters(delimiter)
+    if not custom_delimiters:
+        return None
+    return "".join(f"`{item}`" for item in custom_delimiters)

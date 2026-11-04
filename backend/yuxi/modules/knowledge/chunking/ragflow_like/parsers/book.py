@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from yuxi.modules.knowledge.chunking.ragflow_like import nlp
+from yuxi.modules.knowledge.chunking.ragflow_like.parsers.general import unescape_delimiter
 from yuxi.modules.knowledge.chunking.source_spans import SourceText, join_source_text
 
 
@@ -12,6 +13,9 @@ def chunk_markdown(markdown_content: str, parser_config: dict[str, Any] | None =
     """书籍分块主入口：识别层级后优先层级合并，退回 naive 合并兜底。"""
     parser_config = parser_config or {}
 
+    # 只有反引号声明的自定义切分配置需要透传；普通值对按行取段的 book 是切分配置，
+    # 不是连接符，透传会把行间换行改写掉。
+    delimiter = nlp.custom_delimiter_config(unescape_delimiter(str(parser_config.get("delimiter", "") or "")))
     chunk_token_num = int(parser_config.get("chunk_token_num", 512) or 512)
     overlapped_percent = int(parser_config.get("overlapped_percent", 0) or 0)
 
@@ -27,11 +31,10 @@ def chunk_markdown(markdown_content: str, parser_config: dict[str, Any] | None =
     if bull >= 0:
         chunks = [join_source_text(ck, "\n") for ck in nlp.hierarchical_merge(bull, sections, depth=5)]
     else:
-        # sections 由 _iter_sections 按行取得，片段边界是文档结构而不是 delimiter，
-        # 因此不传连接符，让 naive_merge 保留行间换行。
         chunks = nlp.naive_merge(
             sections,
             chunk_token_num=chunk_token_num,
+            delimiter=delimiter,
             overlapped_percent=overlapped_percent,
         )
 
@@ -42,6 +45,7 @@ def chunk_markdown(markdown_content: str, parser_config: dict[str, Any] | None =
         nlp.naive_merge(
             sections,
             chunk_token_num=chunk_token_num,
+            delimiter=delimiter,
             overlapped_percent=overlapped_percent,
         ),
         chunk_token_num,

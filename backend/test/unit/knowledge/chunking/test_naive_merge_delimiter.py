@@ -57,6 +57,25 @@ def test_line_sections_keep_their_newlines_without_a_connector():
     assert merged == ["alpha\nbeta\ngamma\ndelta"]
 
 
+def test_overlap_tail_is_separated_from_the_appended_fragment():
+    """overlap 留下的尾部与当前片段相邻，尾部非空时必须用连接符隔开，否则会粘成新词。"""
+    merged = nlp.naive_merge(
+        ["alpha", "beta", "gamma", "delta", "epsilon", "zeta"],
+        chunk_token_num=2,
+        delimiter="|",
+        overlapped_percent=25,
+    )
+
+    assert merged == ["alpha|beta", "eta|gamma|delta", "elta|epsilon|zeta"]
+
+
+def test_custom_delimiter_config_still_reaches_line_based_chunkers():
+    """反引号声明的自定义切分能力必须保留，不能被「保留行间换行」的修复吞掉。"""
+    assert nlp.custom_delimiter_config("`CUT`") == "`CUT`"
+    assert nlp.custom_delimiter_config("|") is None
+    assert nlp.custom_delimiter_config("") is None
+
+
 def test_merge_does_not_rewrite_spaces_in_source():
     """分隔符不是空白时，原文中的空格必须保留。"""
     merged = nlp.naive_merge(
