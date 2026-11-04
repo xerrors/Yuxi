@@ -14,7 +14,11 @@ def _token_count(text: str) -> int:
 
 
 def test_short_embeddings_raise_instead_of_dropping_sentences():
-    """4 句只返回 2 个向量时，后半句会被 zip 截断丢失，必须报错。"""
+    """4 句只返回 2 个向量时，后两句会被 zip 截断丢失，必须报错。
+
+    预算取 30 时簇数为 2，与返回的向量行数一致，旧代码能正常聚类后再丢句；
+    取 10 时簇数算成 4，会先被聚类以「簇数多于样本数」拒绝，测不到本问题。
+    """
     text = "Sentence one. Sentence two. Sentence three. Sentence four."
     embeddings = np.array([[1.0, 0.0], [0.0, 1.0]])
 
@@ -23,7 +27,7 @@ def test_short_embeddings_raise_instead_of_dropping_sentences():
             text,
             embed_fn=lambda texts: embeddings,
             token_count_fn=_token_count,
-            max_chunk_size=10,
+            max_chunk_size=30,
         )
 
 
