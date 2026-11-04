@@ -36,6 +36,27 @@ def test_merge_keeps_newline_separator_by_default():
     assert merged == ["alpha\nbeta"]
 
 
+def test_new_chunk_does_not_start_with_the_separator():
+    """片段自己开启新块时不能带前导分隔符，分隔符只用于连接块内片段。"""
+    merged = nlp.naive_merge(
+        ["alpha", "beta", "gamma", "delta", "epsilon", "zeta"],
+        chunk_token_num=2,
+        delimiter="|",
+    )
+
+    assert merged == ["alpha|beta", "gamma|delta", "epsilon|zeta"]
+
+
+def test_line_sections_keep_their_newlines_without_a_connector():
+    """book/laws 按行取段，行间换行属于原文结构，不能被分隔符配置改写。"""
+    merged = nlp.naive_merge(
+        [("alpha", ""), ("beta", ""), ("gamma", ""), ("delta", "")],
+        chunk_token_num=1000,
+    )
+
+    assert merged == ["alpha\nbeta\ngamma\ndelta"]
+
+
 def test_merge_does_not_rewrite_spaces_in_source():
     """分隔符不是空白时，原文中的空格必须保留。"""
     merged = nlp.naive_merge(

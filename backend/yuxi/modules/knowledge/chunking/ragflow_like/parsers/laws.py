@@ -6,7 +6,6 @@ import re
 from typing import Any
 
 from yuxi.modules.knowledge.chunking.ragflow_like import nlp
-from yuxi.modules.knowledge.chunking.ragflow_like.parsers.general import unescape_delimiter
 from yuxi.modules.knowledge.chunking.source_spans import SourceText, join_source_text
 
 _ARTICLE_PATTERN = re.compile(r"^(第[零一二三四五六七八九十百千万0-9]+条)[\s　:：]*(.*)$")
@@ -22,14 +21,13 @@ def chunk_markdown(filename: str, markdown_content: str, parser_config: dict[str
     parser_config = parser_config or {}
     markdown_content = SourceText(markdown_content or "")
 
-    delimiter = unescape_delimiter(str(parser_config.get("delimiter", "\n") or "\n"))
     chunk_token_num = int(parser_config.get("chunk_token_num", 512) or 512)
     overlapped_percent = int(parser_config.get("overlapped_percent", 0) or 0)
 
     if re.search(r"\.docx$", filename or "", re.IGNORECASE):
         docx_chunks = _docx_heading_tree(markdown_content)
         if len(docx_chunks) > 1:
-            return _ensure_chunk_token_limit(docx_chunks, chunk_token_num, delimiter, overlapped_percent)
+            return _ensure_chunk_token_limit(docx_chunks, chunk_token_num, overlapped_percent)
 
     sections = _iter_law_sections(markdown_content)
     if not sections:
@@ -48,11 +46,10 @@ def chunk_markdown(filename: str, markdown_content: str, parser_config: dict[str
         merged = nlp.naive_merge(
             typed_sections,
             chunk_token_num=chunk_token_num,
-            delimiter=delimiter,
             overlapped_percent=overlapped_percent,
         )
 
-    return _ensure_chunk_token_limit(merged, chunk_token_num, delimiter, overlapped_percent)
+    return _ensure_chunk_token_limit(merged, chunk_token_num, overlapped_percent)
 
 
 def _iter_lines(markdown_content: str) -> list[str]:
@@ -141,7 +138,7 @@ def _docx_heading_tree(markdown_content: str) -> list[str]:
     return [element for element in root.get_tree() if element]
 
 
-def _ensure_chunk_token_limit(chunks: list[str], chunk_token_num: int, delimiter: str, overlapped_percent: int) -> list[str]:
+def _ensure_chunk_token_limit(chunks: list[str], chunk_token_num: int, overlapped_percent: int) -> list[str]:
     """
     对输出 chunk 做 token 上限保护：
     1) 先尝试按行用 naive_merge 再切一次；
@@ -161,7 +158,6 @@ def _ensure_chunk_token_limit(chunks: list[str], chunk_token_num: int, delimiter
         refined = nlp.naive_merge(
             [(_line, "") for _line in _iter_lines(chunk)],
             chunk_token_num=max_tokens,
-            delimiter=delimiter,
             overlapped_percent=overlapped_percent,
         )
         if not refined:
@@ -179,7 +175,6 @@ def _ensure_chunk_token_limit(chunks: list[str], chunk_token_num: int, delimiter
                 sentence_refined = nlp.naive_merge(
                     [(sentence, "") for sentence in sentences if sentence.strip()],
                     chunk_token_num=max_tokens,
-                    delimiter=delimiter,
                     overlapped_percent=overlapped_percent,
                 )
                 if not sentence_refined:
