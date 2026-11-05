@@ -15,6 +15,7 @@ import {
   Search,
 } from '@lucide/vue'
 
+import { healthApi } from '@/apis/system_api'
 import { useConfigStore } from '@/modules/settings/model/config'
 import { useAgentStore } from '@/modules/agents/model/agent'
 import { useChatThreadsStore } from '@/modules/session/model/chatThreads'
@@ -98,9 +99,14 @@ const handleGlobalKeydown = (e) => {
 
 onMounted(() => {
   window.addEventListener('keydown', handleGlobalKeydown)
-  // 各 Store 自行处理错误，导航不等待无依赖的品牌、知识库或配置请求。
+  // 可选能力未明确开启或发现失败时，跳过知识库请求；普通导航独立加载。
+  void healthApi.getDiscovery().then((data) => {
+    if (data?.capabilities?.features?.knowledge === true) void getRemoteKnowledgeBase()
+  }).catch((error) => {
+    console.warn('加载系统能力失败，跳过知识库列表:', error)
+  })
+  // 各 Store 自行处理错误，导航不等待无依赖的品牌或配置请求。
   void infoStore.loadInfoConfig()
-  void getRemoteKnowledgeBase()
   void initAgentNavigation()
   void getRemoteConfig()
   // 仅管理员加载后台作业数据
@@ -295,6 +301,7 @@ provide('settingsModal', {
             :to="primaryNavItem.path"
             class="nav-item"
             :class="{ active: isNavItemActive(primaryNavItem) }"
+            :aria-label="primaryNavItem.name"
             :active-class="primaryNavItem.action ? '' : 'active'"
             @click.stop
           >
@@ -306,6 +313,7 @@ provide('settingsModal', {
                   isNavItemActive(primaryNavItem) ? primaryNavItem.activeIcon : primaryNavItem.icon
                 "
                 size="18"
+                aria-hidden="true"
               />
             </a-tooltip>
             <span class="nav-text">{{ primaryNavItem.name }}</span>
@@ -329,6 +337,7 @@ provide('settingsModal', {
           v-show="!item.hidden"
           class="nav-item"
           :class="{ active: isNavItemActive(item) }"
+          :aria-label="item.name"
           :active-class="item.action ? '' : 'active'"
           @click.stop
         >
@@ -338,6 +347,7 @@ provide('settingsModal', {
               class="icon"
               :is="isNavItemActive(item) ? item.activeIcon : item.icon"
               size="18"
+              aria-hidden="true"
             />
           </a-tooltip>
           <span class="nav-text">{{ item.name }}</span>

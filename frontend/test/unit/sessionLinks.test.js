@@ -70,3 +70,20 @@ test('页面失活或新点击后，旧导航错误不再显示', async () => {
   assert.deepEqual(h.opened, [])
   assert.deepEqual(h.errors, [])
 })
+
+test('路由恢复不重复导航，最新读取生效，过期错误不显示，当前错误继续抛出', async () => {
+  const h = await navigationFixture()
+  const route = h.router.currentRoute.value
+  const old = h.navigator.navigate('old', { restore: true })
+  const latest = h.navigator.navigate('latest', { restore: true })
+  h.pending.get('latest').resolve(rootTarget('latest'))
+  await latest
+  h.pending.get('old').reject(new Error('过期恢复失败'))
+  await old
+  assert.equal(h.router.currentRoute.value, route)
+  assert.deepEqual(h.opened, ['latest'])
+  assert.deepEqual(h.errors, [])
+  const failed = h.navigator.navigate('failed', { restore: true })
+  h.pending.get('failed').reject(new Error('当前恢复失败'))
+  await assert.rejects(failed, /当前恢复失败/)
+})

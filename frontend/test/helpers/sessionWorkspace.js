@@ -62,7 +62,7 @@ export async function mountSessionWorkspace(t, fetchThreadMessages = async () =>
   app = renderer.createApp({ ...component, render: () => h('div') }, { isNewSession: true, visible: true, ...options.props })
   app.provide(ssrContextKey, { modules: new Set() })
   app.use(pinia)
-  app.use(createRouter({ history: createMemoryHistory(), routes: [] }))
+  app.use(options.router || createRouter({ history: createMemoryHistory(), routes: [] }))
   app.mount({})
   mounted = true
   const state = toRaw(app._instance.setupState)

@@ -488,7 +488,7 @@ const isLineBreakNode = (node) => isElementNode(node) && node.tagName === 'BR'
 const childIndex = (node) => Array.prototype.indexOf.call(node.parentNode?.childNodes || [], node)
 
 const getRawNodeLength = (node) => {
-  if (!node) return 0
+  if (!node || node.dataset?.editorPlaceholder) return 0
   if (isTextNode(node)) return node.textContent?.length || 0
   if (isMentionNode(node)) return node.dataset.mentionRaw?.length || 0
   if (isLineBreakNode(node)) return 1
@@ -499,7 +499,7 @@ const getRawNodeLength = (node) => {
 }
 
 const serializeEditorNode = (node) => {
-  if (!node) return ''
+  if (!node || node.dataset?.editorPlaceholder) return ''
   if (isTextNode(node)) return node.textContent || ''
   if (isMentionNode(node)) return node.dataset.mentionRaw || ''
   if (isLineBreakNode(node)) return '\n'
@@ -620,12 +620,22 @@ const renderEditorContent = (raw = '') => {
   unmountEditorMentions()
   editor.replaceChildren()
   parseMentionText(raw).forEach((segment) => {
-    editor.appendChild(
-      segment.kind === 'text'
-        ? document.createTextNode(segment.text)
-        : createEditorMentionElement(segment)
-    )
+    if (segment.kind !== 'text') {
+      editor.appendChild(createEditorMentionElement(segment))
+    } else {
+      // 显式 BR 让连续换行和末尾光标使用同一原始偏移。
+      segment.text.split('\n').forEach((line, index) => {
+        if (index) editor.appendChild(document.createElement('br'))
+        if (line) editor.appendChild(document.createTextNode(line))
+      })
+    }
   })
+  // 尾占位只承载光标，不进入正文、剪贴板或原始偏移。
+  if (raw.endsWith('\n')) {
+    const placeholder = document.createElement('br')
+    placeholder.dataset.editorPlaceholder = 'true'
+    editor.appendChild(placeholder)
+  }
   lastSyncedEditorValue = String(raw || '')
 }
 
@@ -1113,7 +1123,7 @@ const isDraggingFiles = ref(false)
 const hasTransferFiles = (dataTransfer) =>
   Array.from(dataTransfer?.types || []).some((type) => type === 'Files')
 
-const canAcceptUploadFiles = () => !props.disabled && !props.isLoading
+const canAcceptUploadFiles = () => props.enableUploads && !props.disabled
 
 /** 剪贴板里的全部图片：一次粘多张时不能只留第一张。 */
 const getImageFilesFromClipboard = (clipboardData) => {
@@ -1160,6 +1170,9 @@ const handleMentionDeletion = (e) => {
 
 // 处理键盘事件
 const handleKeyPress = (e) => {
+  // 输入法确认候选词期间，按键不参与发送、提及导航或换行处理。
+  if (isComposing.value || e.isComposing || e.keyCode === 229) return
+
   // @ 提及键盘导航
   if (mentionPopupVisible.value) {
     if (['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape'].includes(e.key)) {
@@ -1170,6 +1183,16 @@ const handleKeyPress = (e) => {
 
   if (handleMentionDeletion(e)) {
     return
+  }
+
+  if (e.key === 'Backspace') {
+    const range = getRawSelectionRange()
+    const value = getEditorRawValue()
+    if (range.collapsed && value[range.start - 1] === '\n') {
+      e.preventDefault()
+      updateRawValue(replaceRawRange(value, range.start - 1, range.end, ''), range.start - 1)
+      return
+    }
   }
 
   if (e.key === 'Enter' && e.shiftKey) {

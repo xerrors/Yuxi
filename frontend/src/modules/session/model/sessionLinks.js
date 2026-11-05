@@ -12,7 +12,7 @@ export function createSessionLinkNavigator({ router, resolveTarget, isActive, op
   let revision = 0
   return {
     invalidate() { revision++ },
-    async navigate(target) {
+    async navigate(target, { restore = false } = {}) {
       const request = ++revision
       const route = router.currentRoute.value
       const current = () => request === revision && isActive() && router.currentRoute.value === route
@@ -20,10 +20,12 @@ export function createSessionLinkNavigator({ router, resolveTarget, isActive, op
       try {
         const destination = typeof target === 'string' ? await resolveTarget(target) : target
         if (!current()) return
-        openTarget(destination)
-        await router.push(sessionLinkLocation(destination))
+        openTarget(destination, { restore })
+        if (!restore) await router.push(sessionLinkLocation(destination))
       } catch (error) {
-        if (current()) onError(error)
+        if (!current()) return
+        if (restore) throw error
+        onError(error)
       }
     }
   }
