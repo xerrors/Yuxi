@@ -12,7 +12,7 @@ Owner：backend/yuxi/api/routers/public_v1/agents/auth.py
 
 ### 实现方案
 
-API Key 持久化 `access_level` 和 `app_id`；`agents` Key 的认证依赖只允许其访问 `/api/v1/agents/**`。无 APP 的本人 Key 沿用 Key 所属用户作用域，见[本人身份的受限 Agent Key](./2026-10-29-personal-agents-api-key.md)；绑定 APP 的 Key 使用下述终端用户隔离。服务端从已认证 Key 得到 APP，响应中的来源头来自该快照。产品 JWT 的 `app_id` 为 `None`，不接受 `X-End-User-Id`；绑定 APP 的 Key 可用该 Header 声明 1–128 字符且无首尾空白的外部用户标识。APP Key 未带 Header 时使用该 APP 固定的默认终端用户，拥有独立 UID 与 Workspace。
+API Key 持久化 `access_level` 和 `app_id`；`agents` Key 的认证依赖只允许其访问 `/api/v1/agents/**`。无 APP 的本人 Key 沿用 Key 所属用户作用域，见[本人身份的受限 Agent Key](./2026-10-29-user-agents-api-key.md)；绑定 APP 的 Key 使用下述终端用户隔离。服务端从已认证 Key 得到 APP，响应中的来源头来自该快照。产品 JWT 的 `app_id` 为 `None`，不接受 `X-End-User-Id`；绑定 APP 的 Key 可用该 Header 声明 1–128 字符且无首尾空白的外部用户标识。APP Key 未带 Header 时使用该 APP 固定的默认终端用户，拥有独立 UID 与 Workspace。
 
 `modules/identity/services/public_auth.py` 以 Key 所属用户、APP 和外部 ID 解析独立 User。`modules/identity/models.py` 的唯一约束固定终端用户身份；Thread、Input、Turn、Run、Project 和 Workdir 属于该真实用户和 APP 作用域。Agent 可见性以 Key 所属用户判断，实际文件和业务副作用以终端用户执行。终端用户没有可用的产品登录或签发 Key 凭据，认证入口拒绝其作为 JWT 主体。
 

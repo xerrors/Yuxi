@@ -3,10 +3,85 @@
 import uuid
 
 import pytest
+from sqlalchemy import select
 
 from test.integration.api.helpers import delete_created_threads
+from test.live_api_cleanup import make_test_session_title
+from yuxi.modules.agents.models.runs import AgentRun
+from yuxi.modules.agents.models.sessions import Session
+from yuxi.modules.agents.models.turns import AgentTurn
+from yuxi.modules.workspace.filesystem import Workspace
+from yuxi.modules.workspace.models import Project
+from yuxi.modules.workspace.runtime_paths import runtime_workspace_path
+from yuxi.shared.datetime import utc_now
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
+
+
+async def test_public_error_and_media_projections_preserve_stored_resources(test_client, standard_user, postgres_sessions):
+    """真实 HTTP 隐藏解释器转储、保留原始错误并按音频字节响应。"""
+    headers = standard_user["headers"]
+    created = await test_client.post(
+        "/api/v1/agents/sessions",
+        json={"agent_id": "default-chatbot", "title": make_test_session_title("resource-projections")},
+        headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+    )
+    assert created.status_code == 201, created.text
+    session_id = created.json()["id"]
+    turn_id, run_id = str(uuid.uuid4()), str(uuid.uuid4())
+    stored_error = "Token <ContextVar name='input_messages' at 0x12345678> belongs to another Context"
+    workspace, file_path = None, None
+    try:
+        async with postgres_sessions() as db:
+            session = await db.scalar(select(Session).where(Session.thread_id == session_id))
+            project = await db.get(Project, session.project_id)
+            workspace = Workspace(session.uid)
+            file_path = f"/{project.workdir_path.strip('/')}/recording.txt"
+            turn = AgentTurn(id=turn_id, thread_id=session_id, uid=session.uid, status="failed", finished_at=utc_now())
+            db.add(turn)
+            await db.flush()
+            db.add(
+                AgentRun(
+                    id=run_id,
+                    thread_id=session_id,
+                    runtime_scope_id=session.tree_root_thread_id,
+                    session_record_id=session.id,
+                    turn_id=turn_id,
+                    uid=session.uid,
+                    agent_slug="default-chatbot",
+                    status="failed",
+                    error_type="worker_error",
+                    error_message=stored_error,
+                    finished_at=utc_now(),
+                )
+            )
+            await db.flush()
+            turn.current_run_id = turn.result_run_id = run_id
+            await db.commit()
+
+        audio = b"RIFF\x10\x00\x00\x00WAVEfmt "
+        workspace.replace_authorized_file(file_path, audio)
+        base = f"/api/v1/agents/sessions/{session_id}"
+        artifact = await test_client.get(f"{base}/artifacts/{runtime_workspace_path(file_path).lstrip('/')}", headers=headers)
+        assert artifact.status_code == 200, artifact.text
+        assert artifact.content == audio
+        assert artifact.headers["content-type"] == "audio/wav"
+        for error, expected in ((stored_error, "执行未能完成，请稍后重试。"), ("权限已撤销", "权限已撤销")):
+            async with postgres_sessions() as db:
+                run = await db.get(AgentRun, run_id)
+                run.error_message = error
+                await db.commit()
+            run_response = await test_client.get(f"{base}/runs/{run_id}", headers=headers)
+            turn_response = await test_client.get(f"{base}/turns/{turn_id}", headers=headers)
+            assert run_response.status_code == turn_response.status_code == 200
+            assert run_response.json()["error_message"] == expected
+            assert turn_response.json()["error"]["message"] == expected
+            async with postgres_sessions() as db:
+                assert (await db.get(AgentRun, run_id)).error_message == error
+    finally:
+        if workspace is not None and file_path is not None:
+            workspace.delete_authorized_path(file_path, root="/")
+        await delete_created_threads(session_id)
 
 
 async def test_session_resource_operations_preserve_identity_and_activity(test_client, admin_headers, standard_user):

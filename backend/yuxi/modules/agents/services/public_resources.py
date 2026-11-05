@@ -1,12 +1,24 @@
 """HTTP 与实时事件共享的公开资源投影。"""
 
+import re
 from datetime import datetime
+
+_INTERPRETER_DUMP = re.compile(r"<(?:[A-Za-z_][\w.]*)(?: [^>\n]*)? at 0x[0-9a-fA-F]+>|Traceback \(most recent call last\)")
+PUBLIC_RUN_FAILURE = "执行未能完成，请稍后重试。"
+
+
+def public_run_error_message(message: str | None) -> str | None:
+    """公开执行错误保留有意文本；解释器对象地址和堆栈换成稳定说明。"""
+    if not message or not _INTERPRETER_DUMP.search(message):
+        return message
+    return PUBLIC_RUN_FAILURE
 
 
 def turn_core(turn, run, *, started_at: datetime | None, status: str | None = None) -> dict:
     """从明确 Turn 与 Run 生成公开核心，不掩盖取消清理。"""
     if status is None:
         status = turn_status(turn, run)
+    public_error = public_run_error_message(run.error_message) if run else None
     return {
         "id": turn.id,
         "object": "agent.session.turn",
@@ -17,7 +29,7 @@ def turn_core(turn, run, *, started_at: datetime | None, status: str | None = No
         "created_at": turn.created_at.timestamp(),
         "started_at": started_at.timestamp() if started_at else None,
         "completed_at": turn.finished_at.timestamp() if turn.finished_at and status in {"completed", "failed", "cancelled"} else None,
-        "error": {"code": "internal_error", "message": run.error_message or "执行失败"} if status == "failed" and run else None,
+        "error": {"code": "internal_error", "message": public_error or "执行失败"} if status == "failed" and run else None,
         "usage": None,
     }
 

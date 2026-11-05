@@ -53,26 +53,12 @@ class PreviewResult:
 
 
 def detect_media_type(path: str, raw_content: bytes | None = None) -> str:
-    """优先按文件签名识别响应媒体类型。"""
-    head = (raw_content or b"")[:512]
-    if head.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "image/png"
-    if head.startswith(b"\xff\xd8\xff"):
-        return "image/jpeg"
-    if head.startswith(b"GIF87a") or head.startswith(b"GIF89a"):
-        return "image/gif"
-    if head.startswith(b"RIFF") and b"WEBP" in head[:16]:
-        return "image/webp"
-    if head.startswith(b"BM"):
-        return "image/bmp"
-    if head.startswith(b"%PDF-"):
-        return "application/pdf"
-
-    stripped_head = head.lstrip()
-    if stripped_head.startswith(b"<svg") or stripped_head.startswith(b"<?xml"):
-        suffix = PurePosixPath(path).suffix.lower()
-        if suffix == ".svg" or b"<svg" in stripped_head[:256]:
-            return "image/svg+xml"
+    """优先按内容签名识别，无法识别时使用文件名的媒体类型。"""
+    detected = sniff_media_type(raw_content or b"")
+    if detected:
+        return detected
+    if PurePosixPath(path).suffix.lower() == ".svg" and (raw_content or b"").lstrip().startswith(b"<?xml"):
+        return "image/svg+xml"
 
     office_media_types = {
         ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -93,3 +79,49 @@ def detect_media_type(path: str, raw_content: bytes | None = None) -> str:
         ".tiff": "image/tiff",
     }
     return mimetypes.guess_type(path)[0] or fallback_media_types.get(suffix, "application/octet-stream")
+
+
+def sniff_media_type(raw_content: bytes) -> str | None:
+    """仅按内容签名识别常见媒体，未知格式返回空值。"""
+    head = raw_content[: 16 * 1024]
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if head.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if head.startswith(b"GIF87a") or head.startswith(b"GIF89a"):
+        return "image/gif"
+    if head.startswith(b"RIFF") and b"WEBP" in head[:16]:
+        return "image/webp"
+    if head.startswith(b"BM"):
+        return "image/bmp"
+    if head.startswith(b"%PDF-"):
+        return "application/pdf"
+
+    stripped_head = head.lstrip()
+    if stripped_head.startswith(b"<svg") or (stripped_head.startswith(b"<?xml") and b"<svg" in stripped_head[:256]):
+        return "image/svg+xml"
+    if head.startswith(b"RIFF") and head[8:12] == b"WAVE":
+        return "audio/wav"
+    if head.startswith(b"fLaC"):
+        return "audio/flac"
+    if head.startswith(b"ID3"):
+        return "audio/mpeg"
+    if len(head) > 1 and head[0] == 0xFF:
+        # ADTS 与 MPEG 共用同步前缀；MPEG 的版本和层不能取保留值。
+        if head[1] & 0xF6 == 0xF0:
+            return "audio/aac"
+        if head[1] & 0xE0 == 0xE0 and head[1] & 0x18 != 0x08 and head[1] & 0x06:
+            return "audio/mpeg"
+    if head.startswith(b"OggS"):
+        if b"theora" in head:
+            return "video/ogg"
+        if b"OpusHead" in head or b"vorbis" in head:
+            return "audio/ogg"
+    if head[4:8] == b"ftyp":
+        if head[8:12] in (b"M4A ", b"M4B "):
+            return "audio/mp4"
+        if head[8:12] in (b"isom", b"iso2", b"mp41", b"mp42", b"avc1", b"M4V ", b"dash"):
+            return "video/mp4"
+    if head.startswith(b"\x1aE\xdf\xa3") and b"webm" in head:
+        return "video/webm"
+    return None

@@ -10,6 +10,7 @@ from yuxi.modules.agents.models.messages import Message
 from yuxi.modules.agents.models.runs import AgentRun, build_agent_run_timing
 from yuxi.modules.agents.repositories.attachments import AttachmentRepository
 from yuxi.modules.agents.services.attachments import serialize_attachment
+from yuxi.modules.agents.services.public_resources import public_run_error_message
 from yuxi.shared.datetime import format_utc_datetime
 from yuxi.shared.errors import InvalidOperationError, ResourceNotFoundError
 
@@ -152,6 +153,7 @@ def serialize_public_run(run: AgentRun, input_ids: list[str]) -> dict:
             "error_message",
         )
     }
+    result["error_message"] = public_run_error_message(result["error_message"])
     timestamps = (
         "started_at",
         "prepared_at",

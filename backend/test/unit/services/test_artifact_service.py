@@ -132,6 +132,73 @@ async def test_artifact_reads_workspace_and_authorized_skill_projection(live_fil
 
 
 @pytest.mark.asyncio
+async def test_artifact_response_uses_audio_signature_with_wrong_extension(live_files):
+    """真实导出字节与 HTTP 响应类型使用内容签名。"""
+    path = "/home/user/workspace/projects/11111111-1111-4111-8111-111111111111/audio.txt"
+    content = b"RIFF\x10\x00\x00\x00WAVEfmt "
+    live_files.add_runtime_file(path, content)
+    prepared = await svc.resolve_thread_artifact_view(thread_id="thread-1", current_uid="user-1", db=object(), path=path)
+    response = render_file_result(prepared)
+    try:
+        assert Path(prepared.path).read_bytes() == content
+        assert response.headers["content-type"] == "audio/wav"
+    finally:
+        await response.background()
+    assert not Path(prepared.path).exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["download", "preview", "save"])
+async def test_cancelled_artifact_copy_waits_for_thread_and_reclaims_temp(live_files, monkeypatch, operation):
+    """取消必须等实际复制结束，清理后不能再出现线程的晚写文件。"""
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    targets = []
+    original = live_files.download_authorized_file_to_path
+
+    def paused_copy(path, target, max_bytes):
+        """保留真实文件写入，只控制复制线程的释放时机。"""
+        targets.append(Path(target))
+        started.set()
+        try:
+            assert release.wait(5)
+            return original(path, target, max_bytes)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(live_files, "download_authorized_file_to_path", paused_copy)
+    kwargs = {
+        "thread_id": "thread-1",
+        "current_uid": "user-1",
+        "db": object(),
+        "path": "/home/user/workspace/projects/11111111-1111-4111-8111-111111111111/report.md",
+    }
+    coroutine = (
+        svc.save_thread_artifact_to_workspace_view(**kwargs)
+        if operation == "save"
+        else svc.resolve_thread_artifact_view(**kwargs, preview=operation == "preview")
+    )
+    task = asyncio.create_task(coroutine)
+    try:
+        assert await asyncio.to_thread(started.wait, 5)
+        task.cancel()
+        done, _ = await asyncio.wait({task}, timeout=0.05)
+        assert not done, "复制线程结束前不能传播取消或删除临时文件"
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert targets and all(not target.exists() for target in targets)
+        assert "/saved_artifacts/report.md" not in live_files.files
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+        assert await asyncio.to_thread(finished.wait, 5)
+        for target in targets:
+            target.unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
 async def test_artifact_missing_projection_never_reads_skill_source(live_files):
     """源文件仍存在时，缺失用户投影也必须返回不存在。"""
     (live_files.skill_root / "SKILL.md").unlink()

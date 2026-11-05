@@ -9,6 +9,7 @@ import tempfile
 from pathlib import PurePosixPath
 
 from yuxi.infrastructure.file_preview import prepare_file_preview, preview_too_large
+from yuxi.infrastructure.filesystem import await_io
 from yuxi.infrastructure.office_conversion import (
     OfficeConversionError,
     convert_office_to_pdf,
@@ -70,7 +71,7 @@ async def resolve_thread_artifact_view(
         if is_preview and isinstance(exc, ContentTooLargeError):
             return preview_too_large().payload()
         raise
-    except Exception:
+    except BaseException:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(temp_path)
         raise
@@ -217,11 +218,13 @@ async def _copy_artifact_to_path(
 ) -> None:
     """把已授权的 Workspace 或 Skill artifact 有界复制到临时文件。"""
     try:
-        await asyncio.to_thread(
-            RuntimeFiles(access.uid).download_to_path,
-            normalized_path,
-            target_path,
-            max_bytes,
+        await await_io(
+            asyncio.to_thread(
+                RuntimeFiles(access.uid).download_to_path,
+                normalized_path,
+                target_path,
+                max_bytes,
+            )
         )
     except PermissionError as exc:
         raise PermissionDeniedError("artifact access denied") from exc
