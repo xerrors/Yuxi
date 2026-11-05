@@ -78,7 +78,7 @@ def test_replay_handles_many_unterminated_attachment_tags_with_bounded_work(kind
         ],
         "tools": [{"type": "function", "function": {"name": "present_artifacts"}}],
     }
-    expected = "attachment_anchor_missing" if kind == "anchor" else "future_attachment_in_current_input"
+    expected = "attachment_anchor_missing" if kind == "anchor" else None
     assert validate_request("Bearer ci-replay-key", body) == expected
 
 
@@ -174,3 +174,30 @@ def test_replay_requires_imported_mcp_tool_in_creation_flow():
     assert validate_request("Bearer ci-replay-key", body) == "creation_mcp_tool_missing"
     body["tools"].append({"type": "function", "function": {"name": "effect_probe"}})
     assert validate_request("Bearer ci-replay-key", body) is None
+
+
+@pytest.mark.parametrize(
+    ("context", "error"),
+    [
+        ("", None),
+        ("<attachment_context></attachment_context>", None),
+        ("<attachment_context>current.txt</attachment_context>", None),
+        ("<attachment_context>batch-1.txt</attachment_context>", "future_attachment_in_current_input"),
+        (
+            "<attachment_context>batch-1.txt</attachment_context><attachment_context>current.txt</attachment_context>",
+            "future_attachment_in_current_input",
+        ),
+    ],
+)
+def test_replay_allows_empty_attachment_context_but_rejects_forbidden_files(context, error):
+    """当前输入可以没有附件，禁止文件出现在任一附件上下文仍须拒绝。"""
+    body = {
+        "model": "deterministic-chat",
+        "stream": True,
+        "messages": [
+            {"role": "system", "content": "# 图片生成技能"},
+            {"role": "user", "content": f"DETERMINISTIC_AGENT_E2E_OK DETERMINISTIC_ATTACHMENT_ABSENT:batch-1.txt {context}"},
+        ],
+        "tools": [{"type": "function", "function": {"name": "present_artifacts"}}],
+    }
+    assert validate_request("Bearer ci-replay-key", body) == error

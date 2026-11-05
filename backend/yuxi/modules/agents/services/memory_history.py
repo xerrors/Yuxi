@@ -57,6 +57,8 @@ class MemoryHistoryService:
                 "role": row.role,
                 "content": snippet,
             }
+            if row.input_source:
+                item["input_source"] = row.input_source
             if snippet_truncated:
                 item["truncated"] = True
             items.append(item)
@@ -115,6 +117,8 @@ class MemoryHistoryService:
                 "role": row.role,
                 "content": content,
             }
+            if row.input_source:
+                msg_item["input_source"] = row.input_source
             if truncated:
                 msg_item["truncated"] = True
             messages.append(msg_item)

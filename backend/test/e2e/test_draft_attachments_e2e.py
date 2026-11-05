@@ -22,6 +22,7 @@ from test.e2e.e2e_helpers import (
     postgres_dsn,
     public_message as _message,
     register_replay_provider as _provider,
+    wait_for_consumed_input,
     wait_for_terminal_turn as _turn,
 )
 from test.live_api_cleanup import make_test_session_title
@@ -56,12 +57,14 @@ async def test_draft_initial_send_queue_cancel_and_model_attachment_isolation(e2
             png = BytesIO()
             Image.new("RGB", (16, 12), "red").save(png, format="PNG")
             image_url = "data:image/png;base64," + base64.b64encode(png.getvalue()).decode()
-            initial = _message(f"{OUTPUT} DETERMINISTIC_PNG_INPUT DETERMINISTIC_BLOCK_BEFORE_RESPONSE:{gate}")
+            initial_text = f"{OUTPUT} DETERMINISTIC_PNG_INPUT DETERMINISTIC_ATTACHMENT_ANCHOR:none"
+            anchor_text = f"{OUTPUT} DETERMINISTIC_ATTACHMENT_ANCHOR:first.txt DETERMINISTIC_BLOCK_BEFORE_RESPONSE:{gate}"
+            initial = _message(initial_text)
             initial["content"].append({"type": "input_image", "image_url": image_url})
             body = {
                 "agent_id": slug,
                 "title": make_test_session_title("draft-send"),
-                "input": [initial],
+                "input": [initial, _message(anchor_text)],
                 "yuxi": {"attachment_file_ids": [first["id"]]},
             }
             headers = {**e2e_headers, "Idempotency-Key": str(uuid.uuid4())}
@@ -70,10 +73,13 @@ async def test_draft_initial_send_queue_cancel_and_model_attachment_isolation(e2
             session = created.json()
             session_id = session["id"]
             receipt = session["yuxi"]["receipt"]
-            from test.e2e.e2e_helpers import wait_for_consumed_input
-
             consumed = await wait_for_consumed_input(e2e_client, e2e_headers, receipt)
             turn_id = consumed["turn_id"]
+            original_messages = await conn.fetchval("SELECT messages FROM agent_inputs WHERE id=$1", receipt["input_id"])
+            raw = json.loads(original_messages)
+            assert [message["content"][0]["text"] for message in raw] == [initial_text, anchor_text]
+            assert raw[0]["content"][1] == {"type": "image_url", "image_url": {"url": image_url}}
+            assert "<attachment_context>" not in original_messages
             repeated = await e2e_client.post("/api/v1/agents/sessions", headers=headers, json=body)
             assert repeated.status_code == 201, repeated.text
             assert repeated.json()["yuxi"]["receipt"] == receipt
@@ -111,7 +117,12 @@ async def test_draft_initial_send_queue_cancel_and_model_attachment_isolation(e2
                     "events": [
                         {
                             "type": "agent.session.input.message",
-                            "input": [_message(f"{OUTPUT} DETERMINISTIC_ATTACHMENT_ABSENT:future.txt")],
+                            "input": [
+                                _message(
+                                    f"{OUTPUT} DETERMINISTIC_ATTACHMENT_ANCHOR:none "
+                                    "DETERMINISTIC_ATTACHMENT_ABSENT:first.txt DETERMINISTIC_ATTACHMENT_ABSENT:future.txt"
+                                )
+                            ],
                             "yuxi": {"mode": "steer"},
                         }
                     ]
@@ -125,6 +136,8 @@ async def test_draft_initial_send_queue_cancel_and_model_attachment_isolation(e2
             )
             assert cancelled.status_code == 202, cancelled.text
             await replay.get("/release-blocking", params={"token": gate})
+            steered = await wait_for_consumed_input(e2e_client, e2e_headers, steer.json())
+            assert steered["turn_id"] == turn_id
             result = await _turn(e2e_client, e2e_headers, session_id, turn_id)
             assert result["status"] == "completed", result
             assert output_text(result["yuxi"]["output"]) == OUTPUT
@@ -151,6 +164,17 @@ async def test_draft_initial_send_queue_cancel_and_model_attachment_isolation(e2
             assert all(row["object_name"] is None and row["parsed_source"] is None for row in rows)
             assert {row["input_id"] for row in rows} == {receipt["input_id"], queued_id}
             assert all((row["message_id"] is None) == (row["input_id"] == queued_id) for row in rows)
+            anchor = await conn.fetchrow(
+                "SELECT m.source_input_id,m.input_position FROM agent_attachments a JOIN messages m ON m.id=a.message_id WHERE a.id=$1",
+                first["id"],
+            )
+            assert (anchor["source_input_id"], anchor["input_position"]) == (receipt["input_id"], 1)
+            assert await conn.fetchval("SELECT messages FROM agent_inputs WHERE id=$1", receipt["input_id"]) == original_messages
+            originals = await conn.fetch(
+                "SELECT content,input_position FROM messages WHERE source_input_id=$1 ORDER BY input_position", receipt["input_id"]
+            )
+            assert [(row["content"], row["input_position"]) for row in originals] == [(initial_text, 0), (anchor_text, 1)]
+            assert await conn.fetchval("SELECT count(*) FROM messages WHERE source_input_id=$1", steered["input_id"]) == 1
             items = await e2e_client.get(f"/api/v1/agents/sessions/{session_id}/items", headers=e2e_headers, params={"order": "asc"})
             assert items.status_code == 200, items.text
             user_item = next(

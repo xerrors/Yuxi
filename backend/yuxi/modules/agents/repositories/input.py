@@ -208,7 +208,11 @@ class AgentInputRepository:
                     content=message.content,
                     message_type=message.message_type,
                     image_content=message.image_content,
-                    extra_metadata={**message.extra_metadata, "raw_message": message.raw_message()},
+                    extra_metadata={
+                        **message.extra_metadata,
+                        "raw_message": message.raw_message(),
+                        "input_source": {"source": item.source, "channel": item.channel, "external_id": item.external_id},
+                    },
                     source_input_id=item.id,
                     input_position=position,
                     received_at=item.created_at,

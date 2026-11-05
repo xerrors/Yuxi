@@ -124,7 +124,7 @@ def validate_request(authorization: str | None, request: dict) -> str | None:
     current_content = json.dumps(user_messages[-1].get("content"), ensure_ascii=False)
     forbidden = re.findall(r"DETERMINISTIC_ATTACHMENT_ABSENT:([a-z0-9.-]+)", current_content)
     contexts = attachment_contexts(current_content)
-    if forbidden and (not contexts or any(name in contexts[-1] for name in forbidden)):
+    if any(name in context for name in forbidden for context in contexts):
         return "future_attachment_in_current_input"
     if "DETERMINISTIC_PNG_INPUT" in serialized_messages:
         image_urls = [

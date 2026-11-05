@@ -275,9 +275,7 @@ async def get_receipt_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id
 
 async def get_input_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: str, input_id: str) -> dict:
     """按完整作用域回读 Input 的接收与消费事实。"""
-    agent_session = await SessionRepository(db).get_session_by_thread_id(thread_id)
-    if agent_session is None or agent_session.uid != scope.uid or agent_session.app_id != scope.app_id:
-        raise ResourceNotFoundError("Thread 不存在")
+    await require_thread(db=db, scope=scope, thread_id=thread_id)
     input_item = await AgentInputRepository(db).get_for_scope(input_id=input_id, thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
     if input_item is None:
         raise ResourceNotFoundError("Input 不存在")

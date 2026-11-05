@@ -45,7 +45,8 @@ async def _build_middlewares(context, backend, *, cleanup_model=None):
     memory_middleware = None if cleanup_model else await create_memory_middleware(context)
     if memory_middleware:
         middlewares.append(memory_middleware)
-    cooperation_middleware = None if cleanup_model else create_cooperation_middleware(context)
+    # 清理只调用状态 API，也必须保留持久 checkpoint 的协作节点和通道。
+    cooperation_middleware = create_cooperation_middleware(context)
     if cooperation_middleware:
         middlewares.append(cooperation_middleware)
     middlewares.extend(
@@ -104,6 +105,10 @@ class ChatbotAgent(BaseAgent):
             tools = await resolve_configured_runtime_tools(context)
             prompt = build_prompt_with_context(context)
             middlewares = await _build_middlewares(context, backend)
+        for tool in tools:
+            if tool.name in context.middleware_tool_names and tool.name in context.mcp_tool_servers:
+                server = context.mcp_tool_servers[tool.name]
+                raise RuntimeError(f"工具名冲突：MCP '{server}' 的 '{tool.name}' 与 Backend 工具同名")
         return create_agent(
             model=model,
             tools=tools,

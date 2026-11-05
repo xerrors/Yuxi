@@ -29,6 +29,7 @@ class MemoryHistoryRepository:
                 Message.id,
                 Message.role,
                 Message.content,
+                Message.extra_metadata["input_source"].label("input_source"),
             )
             .join(Session, Session.id == Message.session_record_id)
             .where(
@@ -117,4 +118,5 @@ class MemoryHistoryRepository:
             Message.id,
             Message.role,
             Message.content,
+            Message.extra_metadata["input_source"].label("input_source"),
         )

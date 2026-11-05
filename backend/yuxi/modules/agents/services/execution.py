@@ -45,7 +45,7 @@ from yuxi.shared.hashing import hash_id
 
 
 def _with_attachment_context(message: HumanMessage, attachments: list[dict]) -> HumanMessage:
-    """把已消费来源的附件路径追加到模型输入。"""
+    """只把本条正式消息的附件路径追加到模型输入。"""
     attachment_lines = [
         f"- {item.get('file_name') or '未知文件'}: {item['path']}"
         for item in attachments
@@ -57,7 +57,7 @@ def _with_attachment_context(message: HumanMessage, attachments: list[dict]) -> 
     context = "\n".join(
         [
             "<attachment_context>",
-            "以下附件来自本次输入或此前已消费的输入。需要内容时，请使用 read_file 读取对应路径：",
+            "以下附件属于本条输入。需要内容时，请使用 read_file 读取对应路径：",
             *attachment_lines,
             "</attachment_context>",
         ]
@@ -362,7 +362,7 @@ async def stream_agent_execution(
     accumulated_content = []
     trace_info = {}
     try:
-        agent_item, agent, context, agent_session = await _resolve_agent_runtime(
+        agent_item, agent, context, _ = await _resolve_agent_runtime(
             db=db,
             user=current_user,
             requested_agent_slug=None if is_resume else agent_slug,
@@ -375,24 +375,11 @@ async def stream_agent_execution(
         else:
             graph_input = [message.require_langchain_message() for message in input_messages]
             message_type = input_messages[0].message_type
-            attachments = await AttachmentRepository(db).list_for_thread(
-                thread_id,
-                agent_session.uid,
-                agent_session.app_id,
-                for_model=True,
-            )
-            authorized_attachments = [serialize_attachment(item, thread_id=thread_id) for item in attachments]
-            if authorized_attachments:
-                message_ids = {message.extra_metadata["message_id"] for message in input_messages}
-                for position, message in enumerate(input_messages):
-                    own_id = message.extra_metadata["message_id"]
-                    visible = [
-                        attachment
-                        for attachment in authorized_attachments
-                        if attachment["message_id"] == own_id
-                        or (position == len(input_messages) - 1 and attachment["message_id"] not in message_ids)
-                    ]
-                    graph_input[position] = _with_attachment_context(graph_input[position], visible)
+            message_ids = [message.extra_metadata["message_id"] for message in input_messages]
+            attachments = await AttachmentRepository(db).for_messages(message_ids)
+            for position, message_id in enumerate(message_ids):
+                visible = [serialize_attachment(item, thread_id=thread_id) for item in attachments[message_id]]
+                graph_input[position] = _with_attachment_context(graph_input[position], visible)
         langfuse_run = _build_langfuse_run_context(
             current_user=current_user,
             thread_id=thread_id,

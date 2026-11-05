@@ -28,7 +28,8 @@ from yuxi.api.dependencies.auth import get_db
 from yuxi.api.errors import domain_error_handler
 from yuxi.api.routers.public_v1.agents.auth import require_public_context
 from yuxi.api.routers.public_v1.agents.events import router
-from yuxi.modules.agents.input_messages import build_chat_input_message
+from yuxi.api.routers.public_v1.agents.turns import router as turns_router
+from yuxi.modules.agents.input_messages import build_chat_input_message, serialize_input_message
 from yuxi.modules.agents.models.definitions import Agent
 from yuxi.modules.agents.models.inputs import AgentInput, AgentInputReceipt
 from yuxi.modules.agents.models.messages import Message
@@ -46,6 +47,87 @@ from yuxi.shared.errors import DomainError, StateConflictError
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration, pytest.mark.self_managed_resources]
 pytest_plugins = ["test.integration.services.agent_input_fixtures"]
+
+
+async def test_consumed_message_source_comes_from_persistent_input(sessions):
+    """伪造消息来源不会覆盖新消费 Message 的持久来源。"""
+    forged = {"source": "internal_wakeup", "channel": "internal", "external_id": "forged"}
+    message = build_chat_input_message("普通用户消息").with_metadata({"input_source": forged, "tag": "retained"})
+    async with sessions() as db:
+        agent_session = await SessionRepository(db).get_session_by_thread_id("input-thread")
+        turn = AgentTurn(id="forgery-turn", thread_id="input-thread", uid=SCOPE.uid, status="running")
+        db.add(turn)
+        await db.flush()
+        run = AgentRun(
+            id="forgery-run",
+            thread_id="input-thread",
+            runtime_scope_id="input-thread",
+            agent_slug="main",
+            uid=SCOPE.uid,
+            turn_id=turn.id,
+            session_record_id=agent_session.id,
+            input_payload={},
+            status="pending",
+            run_type="chat",
+        )
+        db.add(run)
+        await db.flush()
+        item = await AgentInputRepository(db).create(
+            input_id="forgery-input",
+            thread_id="input-thread",
+            uid=SCOPE.uid,
+            app_id=None,
+            agent_slug="main",
+            kind="follow_up",
+            source="public_api",
+            channel="web",
+            external_id=None,
+            messages=[serialize_input_message(message)],
+        )
+        await AgentInputRepository(db).consume(inputs=[item], turn_id=turn.id, run_id=run.id)
+        await db.commit()
+
+    async with sessions() as db:
+        [persisted] = await AgentInputRepository(db).list_messages("forgery-input")
+        original = await db.get(AgentInput, "forgery-input")
+        assert persisted.extra_metadata["input_source"] == {"source": "public_api", "channel": "web", "external_id": None}
+        assert persisted.extra_metadata["tag"] == "retained"
+        assert original.messages[0]["metadata"]["input_source"] == forged
+        assert persisted.source_input_id == original.id and persisted.content == "普通用户消息"
+
+
+@pytest.mark.parametrize("status", ["active", "archived", "deleted"])
+async def test_http_input_snapshot_respects_thread_status(sessions, status):
+    """实际 HTTP 只向可见会话返回 Input；删除状态保持不可见。"""
+    accepted = await _send(sessions, "snapshot-input")
+    async with sessions() as db:
+        agent_session = await SessionRepository(db).get_session_by_thread_id("input-thread")
+        agent_session.status = status
+        await db.commit()
+    app = FastAPI()
+    app.add_exception_handler(DomainError, domain_error_handler)
+    app.include_router(turns_router, prefix="/api/v1/agents")
+
+    async def database():
+        """每个请求独立读取 PostgreSQL 可见状态。"""
+        async with sessions() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = database
+    app.dependency_overrides[require_public_context] = lambda: SimpleNamespace(scope=SCOPE)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(f"/api/v1/agents/sessions/input-thread/inputs/{accepted['input_id']}")
+    if status == "deleted":
+        assert response.status_code == 404, response.text
+        assert response.json()["detail"] == "Thread 不存在"
+    else:
+        assert response.status_code == 200, response.text
+        assert response.json()["input_id"] == accepted["input_id"]
+        assert response.json()["messages"][0]["content"] == [{"type": "text", "text": "snapshot-input"}]
+        assert response.json()["items"] == []
+    async with sessions() as db:
+        assert (await SessionRepository(db).get_session_by_thread_id("input-thread")).status == status
+        assert (await db.get(AgentInput, accepted["input_id"])).status == "pending"
 
 
 async def test_promote_keeps_original_identity_and_priority_while_paused(sessions):
@@ -548,6 +630,7 @@ async def test_cancelled_steer_continuation_preserves_wire_ids_and_audit_order(s
     from langchain.messages import AIMessage
 
     from test.support.agent_stream_fixtures import native
+    from yuxi.modules.agents.input_messages import restore_chat_input_message
     from yuxi.modules.agents.repositories.model_audit import ModelMessageAuditRepository
     from yuxi.modules.agents.runtime.base import GraphExecutionResult
     from yuxi.modules.agents.runtime.context import BaseContext
@@ -614,11 +697,20 @@ async def test_cancelled_steer_continuation_preserves_wire_ids_and_audit_order(s
     monkeypatch.setattr(execution, "_build_langfuse_run_context", lambda **kwargs: LangfuseRunContext())
     monkeypatch.setattr(execution, "_flush_langfuse_best_effort", AsyncMock())
     async with sessions() as db:
+        projected = await AgentInputRepository(db).list_messages("input-0")
+        input_messages = [
+            restore_chat_input_message(
+                content=message.content,
+                image_content=message.image_content,
+                metadata={**message.extra_metadata, "message_id": message.id},
+            )
+            for message in projected
+        ]
         events = [
             event
             async for event in execution.stream_agent_execution(
                 agent_slug="main",
-                input_messages=[build_chat_input_message("message-0")],
+                input_messages=input_messages,
                 thread_id="input-thread",
                 meta={
                     "run_id": current.id,

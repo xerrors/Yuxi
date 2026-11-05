@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import threading
 import uuid
 from contextlib import asynccontextmanager
@@ -11,7 +12,7 @@ from datetime import timedelta
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import delete, select, text, update
+from sqlalchemy import delete, event, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.modules.agents.services.memory_history import MemoryHistoryService
@@ -369,3 +370,47 @@ async def test_memory_tools_reject_forged_source_from_other_session_or_turn(memo
             await db.execute(delete(Project).where(Project.uid == foreign_uid))
             await db.execute(delete(User).where(User.uid == foreign_uid))
             await db.commit()
+
+
+@pytest.mark.parametrize(
+    "source", [None, "public_api", "assistant_wakeup", {"source": "assistant_wakeup", "channel": "internal", "external_id": "fixture"}]
+)
+@pytest.mark.self_managed_resources
+async def test_memory_history_reads_only_source_metadata(memory_database, source):
+    """搜索与锚点读取保留来源，不传输 metadata 中的大正文。"""
+    factory, identity = memory_database
+    async with factory() as db:
+        session = await db.scalar(select(Session).where(Session.thread_id == identity["thread_id"]))
+        item = Message(
+            session_record_id=session.id,
+            role="user",
+            message_type="text",
+            content="needle 正文",
+            extra_metadata={"input_source": source, "raw_message": "大载荷" * 100_000},
+        )
+        db.add(item)
+        await db.commit()
+        message_id = item.id
+    queries = []
+
+    def record(_conn, _cursor, statement, _params, _context, _many):
+        """检查实际执行的来源投影。"""
+        if "FROM messages" in statement and "messages.content" in statement:
+            queries.append(statement.partition("FROM")[0])
+
+    async with factory() as db:
+        connection = (await db.connection()).sync_connection
+        event.listen(connection, "before_cursor_execute", record)
+        try:
+            history = MemoryHistoryService(db)
+            search = await history.search_memory_messages(uid=identity["uid"], query="needle")
+            read = await history.read_memory_messages(uid=identity["uid"], thread_id=identity["thread_id"], message_id=message_id)
+        finally:
+            event.remove(connection, "before_cursor_execute", record)
+        for row in (search["items"][0], read["messages"][0]):
+            assert row["content"] == "needle 正文"
+            assert row.get("input_source") == source
+            assert ("input_source" in row) == bool(source)
+        assert len(queries) == 3
+        assert all(" AS input_source" in query for query in queries)
+        assert all(re.search(r"messages\.extra_metadata\s*(?:,|AS|$)", query.strip()) is None for query in queries)

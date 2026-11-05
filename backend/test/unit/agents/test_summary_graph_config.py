@@ -138,6 +138,40 @@ async def test_graph_rejects_unprepared_context(agent_class):
         await agent_class().get_graph(context=_context())
 
 
+@pytest.mark.parametrize("tool_name", ["read_file", "create_session", "remote_probe"])
+async def test_graph_rejects_mcp_tools_that_shadow_middleware(monkeypatch, tool_name):
+    """远端工具经过真实 loader 后不能覆盖文件和协作工具。"""
+    from langchain_core.tools import StructuredTool
+
+    from yuxi.modules.extensions.mcp import service as mcp_service
+    from yuxi.modules.extensions.tools.builtin import BASE_TOOL_NAMES
+
+    assert tool_name not in BASE_TOOL_NAMES
+    context = _context()
+    context.thread_id, context.uid, context.run_id = "collision-thread", "collision-user", "collision-run"
+    context._runtime_prepared = True
+    context.mcps = ["remote"]
+    context.tools = []
+    remote = StructuredTool.from_function(lambda: "remote", name=tool_name, description="远端测试工具")
+    monkeypatch.setattr(mcp_service, "resolve_runtime_mcp_tools", AsyncMock(return_value={"remote": [remote]}))
+    monkeypatch.setattr(chatbot_graph, "sync_agent_context_skills", AsyncMock())
+    monkeypatch.setattr(chatbot_graph, "create_agent_composite_backend", lambda _context: object())
+    monkeypatch.setattr(chatbot_graph, "load_chat_model", lambda **_kwargs: object())
+    monkeypatch.setattr(chatbot_graph, "create_memory_middleware", AsyncMock(return_value=None))
+    monkeypatch.setattr(chatbot_graph, "build_prompt_with_context", lambda _context: "")
+    monkeypatch.setattr(chatbot_graph, "create_summary_middleware_from_context", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(chatbot_graph, "get_langgraph_checkpointer", lambda _manager: None)
+    monkeypatch.setattr(chatbot_graph, "create_agent", lambda **kwargs: kwargs)
+
+    if tool_name == "remote_probe":
+        graph = await chatbot_graph.ChatbotAgent().get_graph(context=context)
+        assert remote in graph["tools"]
+        assert context.mcp_tool_servers[tool_name] == "remote"
+    else:
+        with pytest.raises(RuntimeError, match=f"工具名冲突.*remote.*{tool_name}"):
+            await chatbot_graph.ChatbotAgent().get_graph(context=context)
+
+
 @pytest.mark.parametrize(
     "graph_module,agent_class",
     [
@@ -155,6 +189,7 @@ async def test_checkpoint_cleanup_preserves_original_tasks_and_state(monkeypatch
 
     context = _context()
     context.thread_id, context.uid = "cleanup-thread", "deleted-user"
+    context.run_id = "cleanup-run"
     context._runtime_prepared = True
     context.tool_approval_mode = "default"
     saver = InMemorySaver()
@@ -167,8 +202,8 @@ async def test_checkpoint_cleanup_preserves_original_tasks_and_state(monkeypatch
     monkeypatch.setattr(summary_module, "load_chat_model", lambda **_kwargs: CheckpointCleanupModel())
     if graph_module is chatbot_graph:
         monkeypatch.setattr(graph_module, "create_memory_middleware", AsyncMock(return_value=None))
-        monkeypatch.setattr(graph_module, "create_cooperation_middleware", lambda context: None)
     original = await agent_class().get_graph(context=context)
+    assert "CooperationMiddleware.before_model" in original.nodes
     config = {"configurable": {"thread_id": context.thread_id}}
     await original.aupdate_state(
         config,
@@ -184,7 +219,15 @@ async def test_checkpoint_cleanup_preserves_original_tasks_and_state(monkeypatch
         """维护构图不得解析外部模型或沙盒。"""
         raise AssertionError("清理读取了运行资源")
 
-    for name in ("load_chat_model", "create_agent_composite_backend", "resolve_chat_model_spec"):
+    for name in (
+        "load_chat_model",
+        "create_agent_composite_backend",
+        "resolve_chat_model_spec",
+        "sync_agent_context_skills",
+        "create_memory_middleware",
+        "resolve_configured_runtime_tools",
+        "build_prompt_with_context",
+    ):
         monkeypatch.setattr(graph_module, name, unexpected)
     monkeypatch.setattr(summary_module, "load_chat_model", unexpected)
     cleanup = await agent_class().get_graph(context=context, checkpoint_only=True)

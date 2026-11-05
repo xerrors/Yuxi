@@ -246,3 +246,62 @@ async def test_load_memory_prompt_respects_switch_and_budget(tmp_path, monkeypat
 
     enabled = False
     assert await memory_service.load_memory_prompt("user-1") is None
+
+
+@pytest.fixture
+def history_settings(monkeypatch: pytest.MonkeyPatch):
+    """用独立历史数据替换持久边界，验证开关控制查询能力。"""
+    settings = SimpleNamespace(enable_memory=False)
+    rows = [{"thread_id": "current-thread", "content": "needle current"}, {"thread_id": "other-thread", "content": "needle other"}]
+
+    @asynccontextmanager
+    async def database():
+        """历史用例不访问真实数据库。"""
+        yield object()
+
+    async def config(_db, _uid):
+        """每次读取当前开关值。"""
+        return SimpleNamespace(schema=settings)
+
+    class History:
+        """返回当前用户的独立固定历史数据。"""
+
+        def __init__(self, _db):
+            """只替换历史查询边界。"""
+            pass
+
+        async def search_memory_messages(self, *, uid, query, limit):
+            """启用后返回当前用户跨线程的搜索结果。"""
+            return {"items": rows}
+
+        async def read_memory_messages(self, *, uid, thread_id, **_kwargs):
+            """返回指定线程正文。"""
+            return {"messages": [row for row in rows if row["thread_id"] == thread_id]}
+
+    monkeypatch.setattr(memory_service.pg_manager, "get_async_session_context", database)
+    monkeypatch.setattr(memory_service.UserConfig, "load", config)
+    monkeypatch.setattr(memory_service, "MemoryHistoryService", History)
+    return settings
+
+
+async def test_disabled_memory_rejects_history_search(history_settings):
+    """关闭 Memory 后不能搜索历史。"""
+    with pytest.raises(ValueError, match="Memory 已关闭"):
+        await memory_service.search_thread_messages(uid="user-1", query="needle")
+
+
+@pytest.mark.parametrize("thread_id", ["current-thread", "other-thread"])
+async def test_disabled_memory_rejects_history_reads(history_settings, thread_id: str):
+    """关闭 Memory 后当前线程和其他线程都不能读取。"""
+    with pytest.raises(ValueError, match="Memory 已关闭"):
+        await memory_service.read_thread_messages(uid="user-1", thread_id=thread_id)
+
+
+async def test_enabled_memory_retains_cross_thread_search_and_read(history_settings):
+    """开启开关后沿用当前用户跨线程历史能力。"""
+    history_settings.enable_memory = True
+    search = await memory_service.search_thread_messages(uid="user-1", query="needle")
+    read = await memory_service.read_thread_messages(uid="user-1", thread_id="other-thread")
+
+    assert {row["thread_id"] for row in search["items"]} == {"current-thread", "other-thread"}
+    assert read["messages"] == [{"thread_id": "other-thread", "content": "needle other"}]

@@ -55,6 +55,10 @@ def _patch_stream_scaffolding(monkeypatch, *, agent, supply_checkpoint=True, **_
         async def list_for_thread(self, *_args, **_kwargs):
             return []
 
+        async def for_messages(self, message_ids):
+            """不含附件的正式消息仍返回完整键集合。"""
+            return {message_id: [] for message_id in message_ids}
+
     async def save(**kwargs):
         return "interrupted" if kwargs["interrupt_run"] else "completed"
 
@@ -79,7 +83,11 @@ def _patch_stream_scaffolding(monkeypatch, *, agent, supply_checkpoint=True, **_
         return None
 
     monkeypatch.setattr(svc, "_persist_agent_run_langfuse_trace", persist_trace)
-    monkeypatch.setattr(svc, "_build_langfuse_run_context", lambda **kw: LangfuseRunContext())
+    monkeypatch.setattr(
+        svc,
+        "_build_langfuse_run_context",
+        lambda **kw: LangfuseRunContext(metadata={"run_id": kw["run_id"], "turn_id": kw["turn_id"]}),
+    )
     monkeypatch.setattr(svc, "get_trace_info", lambda _: {"langfuse_trace_id": "trace"})
     monkeypatch.setattr(svc, "flush_langfuse", lambda: None)
     monkeypatch.setattr(svc, "save_messages_from_langgraph_state", save)
@@ -126,7 +134,11 @@ def execute(mode="chat", *, db=None, on_prepared=None, image=None):
         on_prepared=on_prepared,
     )
     return (
-        svc.stream_agent_execution(**kwargs, agent_slug="test-agent", input_messages=[build_chat_input_message("hello", image)])
+        svc.stream_agent_execution(
+            **kwargs,
+            agent_slug="test-agent",
+            input_messages=[build_chat_input_message("hello", image).with_metadata({"message_id": 1})],
+        )
         if mode == "chat"
         else svc.stream_agent_execution(is_resume=True, **kwargs, resume_input={"answer": "yes"})
     )
@@ -142,6 +154,76 @@ def text_events(text="hello", metadata=None):
         for event in events:
             event["params"]["data"] = (event["params"]["data"][0], metadata)
     return events
+
+
+async def test_execution_keeps_attachments_on_each_inputs_message(monkeypatch):
+    """各 Input 的附件只补入自己的末条消息，保留正文和图片。"""
+    from yuxi.shared.datetime import utc_now
+
+    agent = FakeAgent()
+    _patch_stream_scaffolding(monkeypatch, agent=agent)
+    attachments = [
+        SimpleNamespace(
+            id=f"file-{message_id}",
+            filename=f"file-{message_id}.txt",
+            mime_type="text/plain",
+            size_bytes=1,
+            status="ready",
+            created_at=utc_now(),
+            path=f"/home/user/workspace/uploads/file-{message_id}.txt",
+            original_path=f"/home/user/workspace/uploads/file-{message_id}.txt",
+            input_id=input_id,
+            message_id=message_id,
+        )
+        for message_id, input_id in ((2, "input-a"), (4, "input-b"), (99, "input-old"))
+    ]
+    attachments_by_message = {1: [], 2: [attachments[0]], 3: [], 4: [attachments[1]], 99: [attachments[2]]}
+
+    async def for_messages(message_ids):
+        """只返回正式 Message 已有的附件归属。"""
+        return {message_id: attachments_by_message[message_id] for message_id in message_ids}
+
+    monkeypatch.setattr(
+        svc,
+        "AttachmentRepository",
+        lambda db: SimpleNamespace(
+            for_messages=for_messages,
+            # 恢复旧扫描时返回历史附件，让负控因附件错挂而失败。
+            list_for_thread=AsyncMock(return_value=attachments),
+        ),
+    )
+    messages = [
+        build_chat_input_message("INPUT_A_FIRST").with_metadata({"message_id": 1}),
+        build_chat_input_message("INPUT_A_LAST").with_metadata({"message_id": 2}),
+        build_chat_input_message("INPUT_B_FIRST").with_metadata({"message_id": 3}),
+        build_chat_input_message("INPUT_B_LAST", "image-proof").with_metadata({"message_id": 4}),
+    ]
+    original_messages = deepcopy(messages)
+
+    results = [
+        event
+        async for event in svc.stream_agent_execution(
+            prepared_execution=prepared_execution(),
+            thread_id="thread-1",
+            meta={"turn_id": "turn-1", "run_id": "run-1", "worker_id": "worker-1", "input_id": "input-1"},
+            current_user=SimpleNamespace(uid="user-1"),
+            db=_FakeSession(),
+            agent_slug="test-agent",
+            input_messages=messages,
+        )
+        if isinstance(event, RunExecutionResult)
+    ]
+
+    assert results[0].status == "completed"
+    assert len(agent.input) == 4
+    assert agent.input[0].content == "INPUT_A_FIRST"
+    assert agent.input[2].content == "INPUT_B_FIRST"
+    assert "file-2.txt" in agent.input[1].content and "file-4.txt" not in agent.input[1].content
+    assert "file-4.txt" in str(agent.input[3].content) and "file-2.txt" not in str(agent.input[3].content)
+    assert all("file-99.txt" not in str(message.content) for message in agent.input)
+    assert messages == original_messages
+    assert agent.input[3].content[:2] == messages[3].require_langchain_message().content
+
 
 
 @pytest.mark.parametrize("boundary", ["before_model", "after_tools", "after_model"])
@@ -231,6 +313,7 @@ async def test_cancelled_steer_continues_real_graph_without_replaying_input(monk
     assert len(checkpoints) == (1 if boundary == "after_model" else 2)
     assert model.call_count == (2 if boundary == "after_tools" else 1)
     assert tool_calls == (1 if boundary == "after_tools" else 0)
+    assert all(state.metadata["yuxi_run_id"] == "run-1" and "run_id" not in state.metadata for state in checkpoints)
     messages = results[0].checkpoint.values["messages"]
     assert [message.content for message in messages if isinstance(message, HumanMessage)] == ["hello"]
     assert len([message for message in messages if isinstance(message, AIMessage)]) == model.call_count
@@ -622,7 +705,7 @@ async def test_service_consumer_cancel_closes_real_graph(monkeypatch, mode):
             prepared_execution=prepared_execution(),
             **kwargs,
             agent_slug="test-agent",
-            input_messages=[build_chat_input_message("hello")],
+            input_messages=[build_chat_input_message("hello").with_metadata({"message_id": 1})],
         )
         if mode == "chat"
         else svc.stream_agent_execution(

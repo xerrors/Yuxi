@@ -44,18 +44,13 @@ class AttachmentRepository:
             )
         )
 
-    async def list_for_thread(self, thread_id, uid, app_id, *, for_model=False) -> list[AgentAttachment]:
-        """模型只看到本次输入及此前已消费输入的就绪文件。"""
+    async def list_for_thread(self, thread_id, uid, app_id) -> list[AgentAttachment]:
+        """返回当前作用域中已提交到会话的文件。"""
         statement = (
             select(AgentAttachment)
             .join(AgentInput, AgentInput.id == AgentAttachment.input_id)
             .where(AgentInput.thread_id == thread_id, AgentAttachment.uid == uid, AgentAttachment.app_id == app_id)
         )
-        if for_model:
-            statement = statement.where(
-                AgentAttachment.status == "ready",
-                AgentInput.status == "consumed",
-            )
         return list(await self.db.scalars(statement.order_by(AgentAttachment.created_at, AgentAttachment.id)))
 
     async def list_for_input(self, input_id, *, lock=False) -> list[AgentAttachment]:

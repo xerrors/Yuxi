@@ -456,7 +456,7 @@ async def test_worker_preserves_selection_and_completes_after_knowledge_error(e2
                 async with AsyncPostgresSaver.from_conn_string(postgres_dsn()) as saver:
                     saved = await saver.aget_tuple({"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}})
                 assert saved is not None
-                assert saved.metadata["run_id"] == accepted["run_id"]
+                assert saved.metadata["yuxi_run_id"] == accepted["run_id"]
                 assert saved.metadata["turn_id"] == turn_id
                 messages = saved.checkpoint["channel_values"]["messages"]
                 source_models = [message for message in messages if isinstance(message, AIMessage) and message.id == operation_id]

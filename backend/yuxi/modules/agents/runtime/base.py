@@ -101,7 +101,11 @@ class BaseAgent(ABC):
         if callbacks:
             input_config["callbacks"] = list(callbacks)
         if metadata:
-            input_config["metadata"] = dict(metadata)
+            graph_metadata = dict(metadata)
+            # LangGraph 的 run_id 用于图流重连，业务身份不能占用该保留字段。
+            if "run_id" in graph_metadata:
+                graph_metadata["yuxi_run_id"] = graph_metadata.pop("run_id")
+            input_config["metadata"] = graph_metadata
         if tags:
             input_config["tags"] = list(tags)
         if run_name:

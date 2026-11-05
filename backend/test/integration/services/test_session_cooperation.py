@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock
 import pytest
 import pytest_asyncio
 from agent_run_test_helpers import cleanup_agent_run_threads, create_agent_run
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, event, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.modules.agents.services.run_lifecycle import complete_run_runtime_cleanup, settle_run
@@ -1490,8 +1490,26 @@ async def test_exact_result_survives_next_turn_and_queued_input_keeps_identity(t
         assert dispatch is not None
     async with factory() as db:
         service = SessionCooperationService(db, run_id=run_id, uid=uid, worker_id="root-worker")
-        a = await service.get_result(input_id=member["input_id"])
-        assert a == await service.get_result(turn_id=member["turn_id"])
+        queries = []
+
+        def record(_conn, _cursor, statement, _params, _context, _many):
+            """只记录精确任务查询实际选择的列。"""
+            if "FROM sessions" in statement and "JOIN agent_inputs" in statement:
+                queries.append(statement.partition("FROM")[0])
+
+        connection = (await db.connection()).sync_connection
+        event.listen(connection, "before_cursor_execute", record)
+        try:
+            a = await service.get_result(input_id=member["input_id"])
+            assert a == await service.get_result(turn_id=member["turn_id"])
+        finally:
+            event.remove(connection, "before_cursor_execute", record)
+        assert len(queries) == 2
+        assert all(
+            field not in query
+            for query in queries
+            for field in ("agent_inputs.messages", "agent_inputs.input_payload", "agent_inputs.config_snapshot", "agent_runs.input_payload")
+        )
         assert a["output"] == "EXACT_A" and a["terminal"] and a["result_run_id"] == member["run_id"]
         b = await service.get_result(input_id=queued["input_id"])
         assert b["turn_id"] != a["turn_id"] and not b["terminal"] and b["output"] is None

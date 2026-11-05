@@ -155,7 +155,24 @@ class CooperationRepository:
 
     async def task_rows(self, caller: Session, *, input_ids: list[str] | None = None, turn_id: str | None = None):
         """按已提交身份读取授权用户与 APP 的结果，归档成员仍可读取历史。"""
-        query = select(Session, AgentInput, AgentTurn, AgentRun, Message).select_from(Session)
+        query = select(
+            Session.id.label("session_record_id"),
+            Session.thread_id.label("session_id"),
+            AgentInput.id.label("input_id"),
+            AgentInput.status.label("input_status"),
+            AgentTurn.id.label("turn_id"),
+            AgentTurn.status.label("turn_status"),
+            AgentTurn.current_run_id,
+            AgentTurn.result_run_id,
+            AgentRun.id.label("run_id"),
+            AgentRun.error_type,
+            AgentRun.error_message,
+            Message.id.label("message_id"),
+            Message.turn_id.label("message_turn_id"),
+            Message.run_id.label("message_run_id"),
+            Message.session_record_id.label("message_session_record_id"),
+            Message.content.label("output"),
+        ).select_from(Session)
         if input_ids is not None:
             query = (
                 query.join(AgentInput, AgentInput.thread_id == Session.thread_id)
