@@ -62,7 +62,7 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.8.0.beta7}
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.8.0.beta8}
     working_dir: /app
     user: "1000:1000"
     volumes:
@@ -122,7 +122,7 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.8.0.beta7}
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.8.0.beta8}
     working_dir: /app
     user: "1000:1000"
     volumes:
@@ -181,7 +181,7 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.8.0.beta7}
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.8.0.beta8}
     working_dir: /app
     volumes:
       - ${YUXI_STATE_DIR:-./docker/volumes}/yuxi/skill-sources:/app/skill-sources
@@ -207,7 +207,7 @@ services:
     build:
       context: .
       dockerfile: docker/sandbox.Dockerfile
-    image: ${SANDBOX_CONTAINER_IMAGE:-yuxi-sandbox:${YUXI_VERSION:-0.8.0.beta7}}
+    image: ${SANDBOX_CONTAINER_IMAGE:-yuxi-sandbox:${YUXI_VERSION:-0.8.0.beta8}}
     command: ["true"]
     network_mode: none
     profiles:
@@ -218,7 +218,7 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.8.0.beta7}
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.8.0.beta8}
     working_dir: /app
     # Docker socket 等价于宿主 root；只允许这个专用进程持有。
     user: "0:0"
@@ -239,7 +239,7 @@ services:
       YUXI_ENV: ${YUXI_ENV:-development}
       SANDBOX_RUNNER_TOKEN: ${SANDBOX_RUNNER_TOKEN:-}
       SANDBOX_CONTAINER_SOCKET: /var/run/docker.sock
-      SANDBOX_CONTAINER_IMAGE: ${SANDBOX_CONTAINER_IMAGE:-yuxi-sandbox:${YUXI_VERSION:-0.8.0.beta7}}
+      SANDBOX_CONTAINER_IMAGE: ${SANDBOX_CONTAINER_IMAGE:-yuxi-sandbox:${YUXI_VERSION:-0.8.0.beta8}}
       SANDBOX_CONTAINER_IMAGE_DIGEST: ${SANDBOX_CONTAINER_IMAGE_DIGEST:-}
       SANDBOX_CONTAINER_NETWORK: ${SANDBOX_CONTAINER_NETWORK:-none}
       SANDBOX_CONTAINER_MEMORY_BYTES: ${SANDBOX_CONTAINER_MEMORY_BYTES:-1073741824}
@@ -273,7 +273,7 @@ services:
       context: .
       dockerfile: docker/frontend.Dockerfile
       target: development
-    image: ${COMPOSE_PROJECT_NAME:-yuxi}-frontend:${YUXI_VERSION:-0.8.0.beta7}
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-frontend:${YUXI_VERSION:-0.8.0.beta8}
     volumes:
       - ./frontend/src:/app/src
       - ./frontend/test:/app/test
@@ -377,7 +377,7 @@ services:
     build:
       context: .
       dockerfile: docker/storage-init.Dockerfile
-    image: ${COMPOSE_PROJECT_NAME:-yuxi}-storage-init:${YUXI_VERSION:-0.8.0.beta7}
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-storage-init:${YUXI_VERSION:-0.8.0.beta8}
     network_mode: none
     user: "0:0"
     volumes:

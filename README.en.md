@@ -40,14 +40,14 @@ Yuxi starts with Docker Compose and the Container sandbox by default. Each agent
 
 Install Git, [Docker Engine](https://docs.docker.com/get-docker/), and Docker Compose v2, and prepare a working LLM API. On macOS or Windows, use Docker Desktop in Linux container mode and allow access to the project directory.
 
-This guide uses the `v0.8.0.beta7` beta release. Version 0.8 requires a fresh deployment with separate data directories and provides no automatic upgrade of older databases, indexes, or file layouts. See the [0.8.0 release notes](docs/develop-guides/releases/0.8.0.md).
+This guide uses the `v0.8.0.beta8` beta release. Version 0.8 requires a fresh deployment with separate data directories and provides no automatic upgrade of older databases, indexes, or file layouts. See the [0.8.0 release notes](docs/develop-guides/releases/0.8.0.md).
 
 Container shares the host kernel and suits local evaluation and trusted single-tenant workloads. For VM isolation or persistent user environments, select Cube in the [quick start](docs/intro/quick-start.md) and prepare a Linux/KVM execution node.
 
 ### 1. Get the Code and Initialize
 
 ```bash
-git clone --branch v0.8.0.beta7 --depth 1 https://github.com/xerrors/Yuxi.git
+git clone --branch v0.8.0.beta8 --depth 1 https://github.com/xerrors/Yuxi.git
 cd Yuxi
 ./scripts/init.sh
 ```

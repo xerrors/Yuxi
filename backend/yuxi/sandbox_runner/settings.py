@@ -45,7 +45,7 @@ class RunnerSettings:
         network = os.environ.get("SANDBOX_CONTAINER_NETWORK", "none").strip().lower()
         if network not in {"none", "bridge"}:
             raise RuntimeError("SANDBOX_CONTAINER_NETWORK 只能是 none 或 bridge")
-        image = os.environ.get("SANDBOX_CONTAINER_IMAGE", "yuxi-sandbox:0.8.0.beta7").strip()
+        image = os.environ.get("SANDBOX_CONTAINER_IMAGE", "yuxi-sandbox:0.8.0.beta8").strip()
         if not image:
             raise RuntimeError("SANDBOX_CONTAINER_IMAGE 不能为空")
         digest = os.environ.get("SANDBOX_CONTAINER_IMAGE_DIGEST", "").strip()

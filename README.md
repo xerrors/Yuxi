@@ -33,14 +33,14 @@ Yuxi 是面向需要企业自部署的多用户 Agent 产品，且需要自己�
 
 安装 Git、[Docker Engine](https://docs.docker.com/get-docker/) 和 Docker Compose v2，准备一个可用的大模型 API。macOS/Windows 使用 Docker Desktop 的 Linux 容器模式，并允许项目目录共享。
 
-本教程使用 `v0.8.0.beta7` 测试版本。0.8 仅面向全新部署，旧数据库、索引和文件布局不提供自动升级；请用独立数据目录试用，见[0.8.0 更新说明](docs/develop-guides/releases/0.8.0.md)。
+本教程使用 `v0.8.0.beta8` 测试版本。0.8 仅面向全新部署，旧数据库、索引和文件布局不提供自动升级；请用独立数据目录试用，见[0.8.0 更新说明](docs/develop-guides/releases/0.8.0.md)。
 
 Container 适合本地试用和单租户可信代码，共享宿主内核。需要 VM 隔离或持久用户环境时，在[快速开始](docs/intro/quick-start.md)选择 Cube 并准备 Linux/KVM 执行节点。
 
 ### 1. 获取代码并初始化
 
 ```bash
-git clone --branch v0.8.0.beta7 --depth 1 https://github.com/xerrors/Yuxi.git
+git clone --branch v0.8.0.beta8 --depth 1 https://github.com/xerrors/Yuxi.git
 cd Yuxi
 ./scripts/init.sh
 ```

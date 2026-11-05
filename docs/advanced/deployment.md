@@ -19,7 +19,7 @@
 
 ## 1. 准备生产配置
 
-先按[下载代码](../intro/quick-start.md#_1-下载代码)获取 `v0.8.0.beta7` 测试版本源码，后续命令均在仓库根目录执行。该版本用于独立环境试用。
+先按[下载代码](../intro/quick-start.md#_1-下载代码)获取 `v0.8.0.beta8` 测试版本源码，后续命令均在仓库根目录执行。该版本用于独立环境试用。
 
 Linux/macOS 可以使用初始化脚本准备 `.env.prod`。默认使用 Container；先构建固定的沙盒镜像，再通过安全环境注入模型 Key。首次部署使用空状态目录和独立项目名：
 
@@ -31,7 +31,7 @@ export YUXI_STATE_DIR=./.yuxi/production/state
 export YUXI_INSTANCE_ID=Production
 export SILICONFLOW_API_KEY='<siliconflow-api-key>'
 export SANDBOX_BACKEND=container
-export SANDBOX_CONTAINER_IMAGE=yuxi-sandbox:0.8.0.beta7
+export SANDBOX_CONTAINER_IMAGE=yuxi-sandbox:0.8.0.beta8
 docker build -f docker/sandbox.Dockerfile -t "$SANDBOX_CONTAINER_IMAGE" .
 export SANDBOX_CONTAINER_IMAGE_DIGEST="$(docker image inspect "$SANDBOX_CONTAINER_IMAGE" --format '{{.Id}}')"
 YUXI_INIT_NON_INTERACTIVE=1 ./scripts/init.sh
