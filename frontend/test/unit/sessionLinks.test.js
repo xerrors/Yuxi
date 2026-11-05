@@ -87,3 +87,57 @@ test('路由恢复不重复导航，最新读取生效，过期错误不显示�
   h.pending.get('failed').reject(new Error('当前恢复失败'))
   await assert.rejects(failed, /当前恢复失败/)
 })
+
+
+test('同一路由的迟到恢复不能抢占新点击，旧点击清理也不影响当前请求', async () => {
+  const h = await navigationFixture()
+  await h.router.push('/agent/root?member_session_id=previous')
+  const abandoned = h.navigator.navigate('abandoned')
+  const next = h.navigator.navigate('next')
+  h.pending.get('abandoned').reject(new Error('旧点击失败'))
+  await abandoned
+  const restore = h.navigator.navigate('previous', { restore: true })
+  h.pending.get('previous')?.resolve({
+    session_id: 'previous', tree_root_session_id: 'root', parent_session_id: 'root'
+  })
+  await restore
+  h.pending.get('next').resolve({
+    session_id: 'next', tree_root_session_id: 'root', parent_session_id: 'root'
+  })
+  await next
+  assert.equal(h.router.currentRoute.value.fullPath, '/agent/root?member_session_id=next')
+  assert.deepEqual(h.opened, ['next'])
+  assert.deepEqual(h.errors, [])
+})
+
+test('真实 URL 变化并失效后，路由恢复仍可接管未完成的旧点击', async () => {
+  const h = await navigationFixture()
+  const old = h.navigator.navigate('old')
+  await h.router.push('/agent/root?member_session_id=from-url')
+  h.navigator.invalidate()
+  const restore = h.navigator.navigate('from-url', { restore: true })
+  h.pending.get('from-url').resolve({
+    session_id: 'from-url', tree_root_session_id: 'root', parent_session_id: 'root'
+  })
+  await restore
+  h.pending.get('old').resolve(rootTarget('old'))
+  await old
+  assert.equal(h.router.currentRoute.value.fullPath, '/agent/root?member_session_id=from-url')
+  assert.deepEqual(h.opened, ['from-url'])
+})
+
+test('当前点击失败后，原路由恢复可以继续打开成员', async () => {
+  const h = await navigationFixture()
+  await h.router.push('/agent/root?member_session_id=previous')
+  const failed = h.navigator.navigate('failed')
+  h.pending.get('failed').reject(new Error('当前点击失败'))
+  await failed
+  const restore = h.navigator.navigate('previous', { restore: true })
+  h.pending.get('previous').resolve({
+    session_id: 'previous', tree_root_session_id: 'root', parent_session_id: 'root'
+  })
+  await restore
+  assert.equal(h.router.currentRoute.value.fullPath, '/agent/root?member_session_id=previous')
+  assert.deepEqual(h.opened, ['previous'])
+  assert.equal(h.errors[0].message, '当前点击失败')
+})
