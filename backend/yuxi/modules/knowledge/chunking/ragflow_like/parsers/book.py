@@ -13,7 +13,9 @@ def chunk_markdown(markdown_content: str, parser_config: dict[str, Any] | None =
     """书籍分块主入口：识别层级后优先层级合并，退回 naive 合并兜底。"""
     parser_config = parser_config or {}
 
-    delimiter = unescape_delimiter(str(parser_config.get("delimiter", "\n") or "\n"))
+    # 只有反引号声明的自定义切分配置需要透传；普通值对按行取段的 book 是切分配置，
+    # 不是连接符，透传会把行间换行改写掉。
+    delimiter = nlp.custom_delimiter_config(unescape_delimiter(str(parser_config.get("delimiter", "") or "")))
     chunk_token_num = int(parser_config.get("chunk_token_num", 512) or 512)
     overlapped_percent = int(parser_config.get("overlapped_percent", 0) or 0)
 

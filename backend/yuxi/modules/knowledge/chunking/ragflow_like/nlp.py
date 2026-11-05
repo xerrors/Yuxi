@@ -75,13 +75,17 @@ def count_tokens(text: str) -> int:
 def naive_merge(
     sections: str | list[str] | list[tuple[str, str]],
     chunk_token_num: int = 128,
-    delimiter: str = "\n。；！？",
+    delimiter: str | None = None,
     overlapped_percent: int = 0,
 ) -> list[str]:
     """按 token 预算贪心合并相邻段落；general 的主路径，也是其余分块器的兜底。
 
     sections 允许整篇文本、纯段落列表或 (文本, 布局) 列表；位置标记 pos 仅在
     片段达 8 token 时随块附带（RAGFlow 遗留的 PDF 定位协议）。
+
+    delimiter 是片段之间的连接符，不是切分符——切分已由调用方完成。传 None 表示
+    片段边界来自文档结构（book/laws 按行取段），此时保留换行，避免把原文的行间
+    换行改写成分隔符配置。
     """
     if not sections:
         return []
@@ -96,12 +100,15 @@ def naive_merge(
     chunk_token_num = max(int(chunk_token_num or 0), 0)
     overlap = max(0, min(int(overlapped_percent or 0), 99))
 
-    custom_delimiters = _extract_custom_delimiters(delimiter)
+    custom_delimiters = _extract_custom_delimiters(delimiter or "")
     if custom_delimiters:
         return _split_by_custom_delimiters(typed_sections, custom_delimiters)
 
+    # 连接符默认换行：未传 delimiter 时片段边界来自文档结构，行间换行必须保留。
+    separator = delimiter or "\n"
+
     if chunk_token_num <= 0:
-        merged = join_source_text((sec for sec, _ in typed_sections if sec and sec.strip()), "\n")
+        merged = join_source_text((sec for sec, _ in typed_sections if sec and sec.strip()), separator)
         return [merged] if merged.strip() else []
 
     # 当前块 token 超过该阈值就开启新块；overlap 越大，上一块可继续追加的预算越小。
@@ -109,29 +116,37 @@ def naive_merge(
     chunks: list[str] = [""]  # 首个空串是哨兵，返回前统一过滤
     token_nums = [0]
 
-    def add_chunk(text: str, pos: str) -> None:
-        """追加进当前块；预算耗尽时按 overlap 截取上一块尾部作为新块前缀。"""
-        tnum = count_tokens(text)
+    def add_chunk(sec: str, pos: str, sep: str) -> None:
+        """把片段并入当前块；预算耗尽时按 overlap 截取上一块尾部作为新块前缀。
+
+        连接符只在并入已有块时加；片段自己开启新块时不带前导分隔符。overlap 留下
+        的尾部非空时它仍与当前块相邻，需要连接符隔开，否则尾部会和片段粘成一个词。
+        """
+        tnum = count_tokens(sec)
         local_pos = pos if tnum >= 8 and pos else ""
         if chunks[-1] and token_nums[-1] <= threshold:
-            if local_pos and local_pos not in chunks[-1]:
+            text = chunks[-1] + sep + sec if sep else chunks[-1] + sec
+            if local_pos and local_pos not in text:
                 text += local_pos
-            chunks[-1] += text
-            token_nums[-1] += tnum
+            chunks[-1] = text
+            token_nums[-1] += tnum + count_tokens(sep)
             return
 
         prev = _remove_pdf_tags(chunks[-1])
         start = int(len(prev) * (100 - overlap) / 100.0)
-        text = prev[start:] + text
+        tail = prev[start:]
+        text = tail + sep + sec if tail and sep else tail + sec
         if local_pos and local_pos not in text:
             text += local_pos
         chunks.append(text)
         token_nums.append(tnum)
 
+    is_first = True
     for sec, pos in typed_sections:
         if not sec:
             continue
-        add_chunk("\n" + sec, pos)
+        add_chunk(sec, pos, "" if is_first else separator)
+        is_first = False
 
     return [chunk for chunk in chunks if chunk.strip()]
 
@@ -627,3 +642,16 @@ def _remove_pdf_tags(text: str) -> str:
 def _extract_custom_delimiters(delimiter: str) -> list[str]:
     """提取 delimiter 配置中反引号包裹的自定义分隔符。"""
     return [m.group(1) for m in re.finditer(r"`([^`]+)`", delimiter or "")]
+
+
+def custom_delimiter_config(delimiter: str) -> str | None:
+    """只保留反引号声明的自定义切分部分，供按行取段的分块器透传给 naive_merge。
+
+    book/laws 的片段边界来自文档结构，配置里的普通值对它们是切分配置而不是连接符；
+    直接透传原值会把行间换行改写成该分隔符。返回 None 表示没有自定义切分配置，
+    由 naive_merge 回退到换行连接。
+    """
+    custom_delimiters = _extract_custom_delimiters(delimiter)
+    if not custom_delimiters:
+        return None
+    return "".join(f"`{item}`" for item in custom_delimiters)

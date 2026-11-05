@@ -22,7 +22,9 @@ def chunk_markdown(filename: str, markdown_content: str, parser_config: dict[str
     parser_config = parser_config or {}
     markdown_content = SourceText(markdown_content or "")
 
-    delimiter = unescape_delimiter(str(parser_config.get("delimiter", "\n") or "\n"))
+    # 只有反引号声明的自定义切分配置需要透传；普通值对按行取段的 laws 是切分配置，
+    # 不是连接符，透传会把行间换行改写掉。
+    delimiter = nlp.custom_delimiter_config(unescape_delimiter(str(parser_config.get("delimiter", "") or "")))
     chunk_token_num = int(parser_config.get("chunk_token_num", 512) or 512)
     overlapped_percent = int(parser_config.get("overlapped_percent", 0) or 0)
 
@@ -141,7 +143,7 @@ def _docx_heading_tree(markdown_content: str) -> list[str]:
     return [element for element in root.get_tree() if element]
 
 
-def _ensure_chunk_token_limit(chunks: list[str], chunk_token_num: int, delimiter: str, overlapped_percent: int) -> list[str]:
+def _ensure_chunk_token_limit(chunks: list[str], chunk_token_num: int, delimiter: str | None, overlapped_percent: int) -> list[str]:
     """
     对输出 chunk 做 token 上限保护：
     1) 先尝试按行用 naive_merge 再切一次；
