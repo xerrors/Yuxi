@@ -83,7 +83,30 @@ class CooperationRepository:
         )
         return bool(await self.db.scalar(select(or_(active_turn, active_run))))
 
-    async def summary(self, caller: Session, *, all_sessions: bool = False) -> list:
+    async def directory(self, caller: Session, *, all_projects: bool = False, offset: int = 0) -> list:
+        """按授权范围读取会话及最新轮次，历史页在数据库中限量。"""
+        latest_turn_id = (
+            select(AgentTurn.id)
+            .where(AgentTurn.thread_id == Session.thread_id)
+            .order_by(AgentTurn.created_at.desc(), AgentTurn.id.desc())
+            .limit(1)
+            .correlate(Session)
+            .scalar_subquery()
+        )
+        query = (
+            select(Session, AgentTurn)
+            .outerjoin(AgentTurn, AgentTurn.id == latest_turn_id)
+            .options(defer(Session.config_snapshot), defer(Session.extra_metadata))
+            .where(Session.uid == caller.uid, Session.app_id == caller.app_id, Session.status != "deleted")
+            .order_by(Session.updated_at.desc(), Session.thread_id.desc())
+        )
+        if all_projects:
+            query = query.limit(10).offset(offset)
+        else:
+            query = query.where(Session.project_id == caller.project_id)
+        return list((await self.db.execute(query)).all())
+
+    async def summary(self, caller: Session) -> list:
         """批量读取整树协作状态，不加载 checkpoint 或结果正文。"""
         members = list(
             (
@@ -91,7 +114,7 @@ class CooperationRepository:
                     select(Session)
                     .options(defer(Session.config_snapshot), defer(Session.extra_metadata))
                     .where(
-                        *([] if all_sessions else [Session.tree_root_thread_id == caller.tree_root_thread_id]),
+                        Session.tree_root_thread_id == caller.tree_root_thread_id,
                         Session.uid == caller.uid,
                         Session.app_id == caller.app_id,
                         Session.status != "deleted",
@@ -101,13 +124,7 @@ class CooperationRepository:
         )
         if not members:
             return []
-        if all_sessions:
-            trees = {}
-            for member in members:
-                trees.setdefault(member.tree_root_thread_id, []).append(member)
-            members = [member for tree in trees.values() for member in order_tree_members(tree)]
-        else:
-            members = order_tree_members(members)
+        members = order_tree_members(members)
         ids = [member.thread_id for member in members]
         turns = {
             turn.thread_id: turn

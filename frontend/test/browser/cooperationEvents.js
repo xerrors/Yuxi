@@ -37,8 +37,8 @@ async (page) => {
     const calls = (name, messageId, targets) => {
       for (const [index, target] of targets.entries()) {
         const key = `${name}-${index}`
-        const args = name === 'create_session' ? { name: names[target] } : name === 'wait_inputs' ? { input_ids: [`task-${target}`] } : {}
-        const payload = name === 'list_sessions' ? { sessions: ids.map(identity) } : { ...identity(target), input_id: `task-${target}`, results: [{ session_id: target, input_id: `task-${target}`, terminal: true }] }
+        const args = name === 'create_session' ? { name: names[target] } : name === 'wait_inputs' ? { input_ids: [`task-${target}`] } : name === 'get_result' ? { input_id: `task-${target}` } : {}
+        const payload = name === 'list_sessions' ? { scope: 'project', sessions: ids.map(identity) } : { ...identity(target), input_id: `task-${target}`, results: [{ session_id: target, input_id: `task-${target}`, terminal: true }] }
         result.push({ id: `call-${key}`, type: 'function_call', call_id: key, name, arguments: JSON.stringify(args), status: 'completed', turn_id: `turn-${id}`, yuxi: meta(messageId) })
         result.push({ id: `output-${key}`, type: 'function_call_output', call_id: key, output: JSON.stringify(payload), status: 'completed', turn_id: `turn-${id}`, yuxi: { ...meta(messageId + 1), call_item_id: `call-${key}` } })
       }
@@ -47,6 +47,7 @@ async (page) => {
     result.push(message('dispatched', 5, '三路工作已派发，现在等待它们交付。'))
     calls('wait_inputs', 6, [child, 'event-fx', 'event-return'])
     calls('list_sessions', 8, [root])
+    calls('get_result', 8, [grandchild, other])
     if (edgeCase) {
       result.push({ id: 'call-error', type: 'function_call', call_id: 'error', name: 'send_message', arguments: JSON.stringify({ target: child }), status: 'failed', turn_id: `turn-${id}`, yuxi: meta(9) })
       result.push({ id: 'output-error', type: 'function_call_output', call_id: 'error', output: '会话已归档，请选择其他目标。', error: '协作消息未投递', status: 'failed', turn_id: `turn-${id}`, yuxi: { ...meta(9), call_item_id: 'call-error' } })
@@ -108,8 +109,12 @@ async (page) => {
       await page.getByRole('tab', { name, exact: true }).waitFor()
     }
   }
-  await page.getByRole('button', { name: '查看了 6 个会话', exact: true }).click()
-  await page.locator('.event-session-list').getByRole('button', { name: 'factcheck', exact: true }).click()
+  await page.getByText('查看了本项目会话', { exact: true }).waitFor()
+  const sessionSummary = page.locator('.tool-call-display.is-timeline.is-summary').filter({ has: page.getByText('查看了本项目会话', { exact: true }) })
+  check(await sessionSummary.count() === 1, '真实聊天分组中的会话查询未复用通用工具摘要')
+  check(!await page.locator('.event-list-toggle, .event-session-list').count(), '会话查询仍显示展开入口或名单')
+  const results = page.locator('.cooperation-event:visible').filter({ has: page.locator('.event-action', { hasText: /^查看结果$/ }) })
+  await results.getByRole('button', { name: 'factcheck', exact: true }).click()
   await page.locator('.panel-session-chat:visible').getByRole('button', { name: '由 quicksort 创建', exact: true }).waitFor()
   await page.locator('.panel-session-chat:visible').getByRole('button', { name: '由 quicksort 创建', exact: true }).click()
   await page.waitForURL(`**/agent/${root}?member_session_id=${child}`)
@@ -132,13 +137,11 @@ async (page) => {
   await page.waitForFunction(() => document.querySelector('.side-panel--file')?.getAttribute('aria-hidden') === 'true')
   check(!await page.locator('.side-panel--file.is-visible').count(), '根来源没有恢复主会话')
   await expand()
-  if (await page.locator('.event-list-toggle').getAttribute('aria-expanded') === 'false') await page.locator('.event-list-toggle').click()
-  await page.locator('.event-session-list').getByRole('button', { name: '研究总览', exact: true }).click()
+  await results.getByRole('button', { name: '研究总览', exact: true }).click()
   await page.waitForURL(`**/agent/${other}`)
   await page.getByRole('button', { name: '由 并行研究 创建', exact: true }).click()
   await page.waitForURL(`**/agent/${root}`)
   await expand()
-  if (await page.locator('.event-list-toggle').getAttribute('aria-expanded') === 'true') await page.locator('.event-list-toggle').click()
   await page.evaluate(async () => { const { useThemeStore } = await import('/src/shared/model/theme.js'); useThemeStore().setTheme(false) })
   await page.locator('.agent-view').screenshot({ path: '/tmp/yuxi-cooperation-events-light.png', animations: 'disabled' })
   await page.evaluate(async () => { const { useThemeStore } = await import('/src/shared/model/theme.js'); useThemeStore().setTheme(true) })
@@ -155,11 +158,11 @@ async (page) => {
   await expand()
   await create.getByRole('button', { name: 'quicksort', exact: true }).waitFor()
   check(!await page.locator('.cooperation-event').getByText('普通文件中的同名字段', { exact: true }).count(), '普通工具结果覆盖了协作身份')
-  await page.locator('.event-error summary').click()
-  await page.getByText('会话已归档，请选择其他目标。', { exact: true }).waitFor()
+  await page.locator('.event-error').getByText('操作失败', { exact: true }).waitFor()
+  check(!await page.getByText('会话已归档，请选择其他目标。', { exact: true }).count(), '失败摘要泄露了原始错误正文')
   check(await page.locator('.cooperation-event-row:visible').evaluateAll(rows => rows.every(row => row.getBoundingClientRect().right <= innerWidth + 1)), '长标题或错误详情使事件行溢出')
   await page.locator('.agent-view').screenshot({ path: '/tmp/yuxi-cooperation-events-error.png', animations: 'disabled' })
   page.off('pageerror', onError)
   check(!errors.length, `页面异常：${errors.join('; ')}`)
-  return { groupedCreate: 3, groupedWait: 3, individualTargets: true, maximizedMemberSource: true, browserHistory: true, errorDetails: true, longName: true, thirdLevelSource: true, rootSource: true, crossRoot: true, widths: [1440, 1024, 768], themes: ['light', 'dark'], evidence: 'real DOM with deterministic HTTP fixture' }
+  return { groupedCreate: 3, groupedWait: 3, individualTargets: true, maximizedMemberSource: true, browserHistory: true, errorSummary: true, summaryOnlySessions: true, longName: true, thirdLevelSource: true, rootSource: true, crossRoot: true, widths: [1440, 1024, 768], themes: ['light', 'dark'], evidence: 'real DOM with deterministic HTTP fixture' }
 }

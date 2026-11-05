@@ -21,7 +21,7 @@ from yuxi.shared.errors import InvalidOperationError
 PROMPT = (
     "## Session 协作\n"
     "所有 Session 独立保存上下文，不继承对话。只有同项目共享工作目录；跨项目任务使用目标自己的目录，description 必须提供目标和必要资料。\n"
-    "list_agents 列出当前用户可调用的 Agent 配置，返回 id、name、description；list_sessions 查询当前用户和 APP 已存在的会话。\n"
+    "list_agents 列出当前用户可调用的 Agent 配置，返回 id、name、description；list_sessions 默认查询当前项目的会话。\n"
     "create_session 省略 agent_id 时继承当前配置与实际模型；指定目录中的 id 时使用目标 Agent 的配置和模型。\n"
     "用户消息中的 @agent:<id>（也可使用双引号包裹 id）引用已创建的 Agent 配置；"
     "按任务需要协作时，将引用的 id 用作 create_session 的 agent_id，并在 description "
@@ -33,7 +33,8 @@ PROMPT = (
     "submit_input 提交工作并返回稳定 input_id；send_message 只投递信息，不启动工作。\n"
     "submit_input 在目标忙碌或等待协作时进入 FIFO 队列，不能打断或催促当前任务。\n"
     "wait_inputs 等待提交的 input_id 全部结束，get_result 按 input_id 或 turn_id 读取精确结果。\n"
-    "list_sessions 查看当前用户和 APP 的全部会话进度和项目，不包含结果正文。\n"
+    "list_sessions 默认 scope=project 查看当前项目的全部会话；明确查看历史时使用 scope=all，"
+    "每次最多返回 10 个会话，可用 offset 翻页。只包含当前用户和 APP 的会话，不包含结果正文。\n"
     "wait_sessions 从返回的 cursor 等待更新，等待时释放执行名额；cancel_turn 只取消指定 Turn。\n"
     "整棵树共用执行名额，名额数见当前协作身份；超出名额的任务排队执行。不要等待尚未派发的任务。父 Session 结束不取消后代。\n"
     "子会话优先完成被分配的任务并交付结果；继承的 Agent 配置不代表你负责根会话的整体编排。\n"
@@ -120,8 +121,15 @@ class CooperationMiddleware(AgentMiddleware):
         async def cancel_turn(target: str, turn_id: str, runtime: ToolRuntime) -> dict:
             return await invoke(runtime, "cancel_turn", target=target, turn_id=turn_id, call_id=runtime.tool_call_id)
 
-        async def list_sessions(runtime: ToolRuntime) -> dict:
-            return await invoke(runtime, "list_sessions")
+        async def list_sessions(
+            runtime: ToolRuntime,
+            scope: Annotated[
+                Literal["project", "all"], Field(description="project 查询当前项目；all 分页查询当前用户与 APP 的历史会话。")
+            ] = "project",
+            offset: Annotated[int, Field(ge=0, description="仅 scope=all 时生效的历史偏移，每页最多 10 条。")] = 0,
+        ) -> dict:
+            """按项目或历史范围读取精简会话目录。"""
+            return await invoke(runtime, "list_sessions", scope=scope, offset=offset)
 
         async def list_agents(runtime: ToolRuntime) -> dict:
             """查询当前持久执行身份可调用的配置。"""
@@ -172,7 +180,11 @@ class CooperationMiddleware(AgentMiddleware):
                 ("submit_input", submit_input, "向当前用户与 APP 的 Session 提交新工作，忙碌时排队，等待用户时拒绝。"),
                 ("send_message", send_message, "向当前用户与 APP 的 Session 投递信息，不创建 Turn 或唤醒空闲会话。"),
                 ("cancel_turn", cancel_turn, "取消目标 Session 的精确 Turn，保留历史和已产生副作用。"),
-                ("list_sessions", list_sessions, "一次读取当前用户与 APP 的全部 Session 状态摘要，不包含结果正文。"),
+                (
+                    "list_sessions",
+                    list_sessions,
+                    "默认读取当前项目的全部会话；显式 scope=all 查看历史，每页最多 10 条，支持 offset。返回精简进度，不包含结果正文。",
+                ),
                 ("list_agents", list_agents, "列出当前执行用户可调用的 Agent 配置，只返回 id、name 和 description。"),
                 ("get_result", get_result, "按 input_id 或 turn_id 读取精确结果，二选一；下一轮不会覆盖结果。"),
                 (

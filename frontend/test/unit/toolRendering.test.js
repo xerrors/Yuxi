@@ -265,7 +265,7 @@ test('协作工具的 0 和 false 结果仍视为完成，摘要不展开原文'
       defaultExpanded: true
     })
     assert.equal(parseToolCallResult({ tool_call_result: { content } }), content)
-    assert.match(html, /cooperation-event/)
+    assert.match(html, name === 'list_sessions' ? /tool-call-display[^>]*is-summary/ : /cooperation-event/)
     assert.doesNotMatch(html, /tool-result|进行中|操作失败/)
   }
 })
@@ -418,8 +418,54 @@ test('协作工具保留动作、会话入口和超时状态，不展示请求�
   }
 })
 
+test('会话查询只展示真实范围和本页计数，历史回执不冒充本项目查询', async () => {
+  const sessions = [{ session_id: 'hidden-session', title: '不应展示的会话标题', current_run_id: '不应展示的执行标识' }]
+  for (const [args, result, label] of [
+    [{ scope: 'all' }, { scope: 'project', sessions }, '本项目'],
+    [{ scope: 'project' }, { scope: 'all', sessions }, '历史'],
+    [{}, { sessions }, '历史'],
+    [{ scope: 'project' }, { sessions }, '本项目']
+  ]) {
+    const html = await render(ToolCallRenderer, {
+      toolCall: { name: 'list_sessions', args, result },
+      appearance: 'timeline',
+      defaultExpanded: true,
+      cooperationView: { sessions, tasks: new Map(), openSession() {} }
+    })
+    assert.match(html, /tool-call-display[^>]*is-timeline[^>]*is-summary/)
+    assert.match(html, /class="sep-header"/)
+    assert.match(html, /class="note"/)
+    assert.match(html, /class="description"/)
+    assert.match(html, new RegExp(`查看了${label}会话`))
+    assert.match(html, /1 个/)
+    assert.doesNotMatch(html, /不应展示|hidden-session|cooperation-event|event-list-toggle|event-session-list|event-target|<button|aria-expanded/)
+  }
+  for (const [args, label] of [[{}, '本项目'], [{ scope: 'all' }, '历史']]) {
+    const html = await render(ToolCallRenderer, { toolCall: { name: 'list_sessions', args } })
+    assert.match(html, new RegExp(`查看${label}会话`))
+    assert.match(html, /tool-loading/)
+    assert.doesNotMatch(html, /查看了|0 个|进行中|event-state/)
+  }
+})
+
+test('真实工具分组中的会话查询与智能体列表共用摘要结构和状态', async () => {
+  const html = await render(ToolCallsGroup, {
+    toolCalls: [
+      { id: 'agents', name: 'list_agents', args: {}, result: { agents: [] } },
+      { id: 'sessions', name: 'list_sessions', args: {}, result: { scope: 'project', sessions: [] } }
+    ],
+    cooperationView: { sessions: [], tasks: new Map(), openSession() {} }
+  })
+  assert.equal((html.match(/tool-call-display[^>]*is-timeline[^>]*is-summary/g) || []).length, 2)
+  assert.equal((html.match(/class="sep-header"/g) || []).length, 2)
+  assert.equal((html.match(/class="note"/g) || []).length, 2)
+  assert.equal((html.match(/class="description"/g) || []).length, 2)
+  assert.match(html, /查看了本项目会话/)
+  assert.doesNotMatch(html, /cooperation-event|event-state|event-list-toggle|event-session-list/)
+})
+
 test('摘要保留失败、等待、中断和空计数，不显示回执详情', async () => {
-  for (const name of ['list_agents', 'get_result', 'search_thread_messages', 'read_thread_messages', 'install_skill', 'mark_for_improvement', 'web_fetch']) {
+  for (const name of ['list_agents', 'list_sessions', 'get_result', 'search_thread_messages', 'read_thread_messages', 'install_skill', 'mark_for_improvement', 'web_fetch']) {
     for (const [fields, label] of [
       [{ tool_call_result: { status: 'error', content: '完整错误堆栈' } }, /失败/],
       [{ status: 'waiting' }, /等待/],
@@ -429,13 +475,20 @@ test('摘要保留失败、等待、中断和空计数，不显示回执详情',
       const html = await render(ToolCallRenderer, { toolCall: { name, args: {}, ...fields }, defaultExpanded: true })
       assert.match(html, label, name)
       assert.doesNotMatch(html, /完整错误堆栈|tool-content|改进线索已记录/, name)
+      if (name === 'list_sessions') {
+        assert.match(html, /tool-call-display[^>]*is-summary/)
+        assert.doesNotMatch(html, /event-state|操作失败|进行中/)
+        if (fields.tool_call_result?.status === 'error') assert.match(html, /执行失败/)
+        if (fields.status === 'waiting') assert.match(html, /等待协作/)
+      }
     }
   }
   for (const [name, result, expected] of [
     ['list_agents', { agents: [] }, /0 个可用/],
     ['search_thread_messages', { items: [] }, /0 条/],
     ['read_thread_messages', { messages: [], tool_calls: [] }, /0 条/],
-    ['list_sessions', { sessions: [] }, /查看了 0 个会话/]
+    ['list_sessions', { sessions: [] }, /查看了历史会话.*0 个/],
+    ['list_sessions', { scope: 'project', sessions: [] }, /查看了本项目会话.*0 个/]
   ]) {
     assert.match(await render(ToolCallRenderer, { toolCall: { name, result }, defaultExpanded: true }), expected)
   }

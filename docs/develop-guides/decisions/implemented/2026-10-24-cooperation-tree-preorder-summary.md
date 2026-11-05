@@ -12,7 +12,7 @@ Owner：backend/yuxi/modules/agents/repositories/cooperation.py
 
 ### 实现方案
 
-`summary` 查询不再按 `cooperation_path` 排序，改由 `order_tree_members` 在内存中按 `parent_thread_id` 分组、从根会话先序遍历；兄弟按 `cooperation_name` 排序（与原路径序在兄弟间等价）。树的形状约束（单根、父必须在同树内）由 `ck_sessions_tree_shape` 与外键保证；当过滤条件（`status != "deleted"`）使某个后代不可达时，摘要显式抛出 ValueError 失败，不静默丢弃成员。输出顺序同时服务 HTTP 协作摘要、模型工具 `list_sessions` 与前端按序缩进渲染。
+`summary` 查询不再按 `cooperation_path` 排序，改由 `order_tree_members` 在内存中按 `parent_thread_id` 分组、从根会话先序遍历；兄弟按 `cooperation_name` 排序（与原路径序在兄弟间等价）。树的形状约束（单根、父必须在同树内）由 `ck_sessions_tree_shape` 与外键保证；当过滤条件（`status != "deleted"`）使某个后代不可达时，摘要显式抛出 ValueError 失败，不静默丢弃成员。输出顺序服务 HTTP 协作摘要与前端按序缩进渲染；模型工具采用独立的[项目与历史目录查询](./2026-11-05-session-directory-scope.md)。
 
 ## 替代方案
 

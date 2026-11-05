@@ -91,7 +91,7 @@ def user_scope_calls(messages, results):
         return [
             ("user-message", "send_message", {"target": target["session_id"], "content": "CROSS_TREE_MESSAGE"}),
             ("user-submit", "submit_input", {"target": target["session_id"], "description": "USER_SCOPE_CHILD FOLLOWUP"}),
-            ("user-list", "list_sessions", {}),
+            ("user-list", "list_sessions", {"scope": "all"}),
         ]
     if "user-followup-wait" not in results:
         followup = json.loads(results["user-submit"])

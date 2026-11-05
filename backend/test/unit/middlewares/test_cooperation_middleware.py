@@ -109,10 +109,25 @@ async def test_identity_lookup_failure_does_not_call_model(monkeypatch):
     handler.assert_not_awaited()
 
 
-def test_list_sessions_schema_has_no_pagination_arguments():
-    """模型一次读取完整协作摘要，无需携带游标或页大小。"""
+def test_list_sessions_schema_defaults_to_project_and_bounds_history_offset():
+    """目录默认当前项目，历史页固定大小且只开放非负偏移。"""
     tool = next(tool for tool in CooperationMiddleware().tools if tool.name == "list_sessions")
-    assert tool.tool_call_schema.model_json_schema()["properties"] == {}
+    schema = tool.tool_call_schema.model_json_schema()
+    assert set(schema["properties"]) == {"scope", "offset"}
+    assert schema["properties"]["scope"]["enum"] == ["project", "all"]
+    assert schema["properties"]["scope"]["default"] == "project"
+    assert schema["properties"]["offset"]["default"] == 0
+    assert schema["properties"]["offset"]["minimum"] == 0
+    assert "required" not in schema
+
+
+@pytest.mark.parametrize("arguments,field", [({"scope": "other"}, "scope"), ({"offset": -1}, "offset")])
+def test_list_sessions_tool_rejects_invalid_scope_or_offset(arguments, field):
+    """无效范围与负偏移在工具输入边界显式失败。"""
+    tool = next(tool for tool in CooperationMiddleware().tools if tool.name == "list_sessions")
+    with pytest.raises(ValidationError) as rejected:
+        tool.tool_call_schema.model_validate(arguments)
+    assert any(error["loc"] == (field,) for error in rejected.value.errors())
 
 
 def test_agent_directory_schema_uses_persisted_execution_identity():

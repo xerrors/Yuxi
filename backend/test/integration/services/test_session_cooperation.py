@@ -4,6 +4,7 @@ import asyncio
 import os
 import uuid
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -31,6 +32,7 @@ from yuxi.modules.agents.scope import ActorScope
 from yuxi.modules.agents.services.cooperation import SessionCooperationService, recover_cooperation_waits, tree_snapshot
 from yuxi.modules.agents.services.scheduler import deliver
 from yuxi.modules.identity.models import User
+from yuxi.modules.workspace.models import Project
 from yuxi.shared.datetime import utc_now
 from yuxi.shared.errors import DomainError, StateConflictError
 
@@ -158,6 +160,142 @@ async def test_agent_directory_returns_only_callable_role_metadata(tree):
         assert hidden_private not in roles and hidden_shared not in roles
         assert roles[allowed] == {"id": allowed, "name": "独立核验角色", "description": "核验并交付证据"}
         assert all(set(role) == {"id", "name", "description"} for role in roles.values())
+
+
+async def test_session_directory_defaults_to_full_project_and_pages_compact_history(tree):
+    """项目目录完整、历史 SQL 分页，工具精简不改变完整树摘要。"""
+    from sqlalchemy import event
+
+    factory, run_id, root_id, uid = tree
+    member = await child(tree, name="directory", call_id="directory-child")
+    project_session_ids = [str(uuid.uuid4()) for _ in range(10)]
+    history_session_ids = [str(uuid.uuid4()) for _ in range(13)]
+    other_project_id = str(uuid.uuid4())
+    timestamp = utc_now() - timedelta(days=1)
+    recent_updates = {
+        history_session_ids[0]: timestamp + timedelta(hours=2),
+        project_session_ids[0]: timestamp + timedelta(hours=1),
+    }
+    async with factory() as db:
+        root = await db.scalar(select(Session).where(Session.thread_id == root_id))
+        root.title = None
+        db.add(
+            Project(
+                id=other_project_id,
+                uid=uid,
+                selection_status="implicit",
+                workdir_path=f"projects/{other_project_id}",
+                directory_mode="managed",
+            )
+        )
+        await db.flush()
+        for thread_id in project_session_ids + history_session_ids:
+            db.add(
+                Session(
+                    thread_id=thread_id,
+                    uid=uid,
+                    app_id=root.app_id,
+                    project_id=root.project_id if thread_id in project_session_ids else other_project_id,
+                    agent_id=root.agent_id,
+                    title=f"目录 {thread_id}",
+                    status="archived" if thread_id == history_session_ids[0] else "active",
+                    updated_at=recent_updates.get(thread_id, timestamp),
+                )
+            )
+        for status, app_id in [("deleted", root.app_id), ("active", "another-app")]:
+            db.add(
+                Session(
+                    thread_id=str(uuid.uuid4()),
+                    uid=uid,
+                    app_id=app_id,
+                    project_id=root.project_id,
+                    agent_id=root.agent_id,
+                    status=status,
+                    updated_at=timestamp,
+                )
+            )
+        await db.flush()
+        root.updated_at = timestamp
+        (await db.scalar(select(Session).where(Session.thread_id == member["session_id"]))).updated_at = timestamp
+        member_turn = await db.get(AgentTurn, member["turn_id"])
+        member_turn.status = "waiting"
+        member_turn.waitpoint = {"kind": "cooperation"}
+        (await db.get(AgentRun, member["run_id"])).status = "interrupted"
+        previous_turn_id, latest_turn_id = f"directory-a-{uuid.uuid4()}", f"directory-z-{uuid.uuid4()}"
+        db.add_all(
+            [
+                AgentTurn(id=previous_turn_id, thread_id=project_session_ids[0], uid=uid, status="completed", created_at=timestamp),
+                AgentTurn(id=latest_turn_id, thread_id=project_session_ids[0], uid=uid, status="failed", created_at=timestamp),
+            ]
+        )
+        await db.commit()
+
+    expected_project = {root_id, member["session_id"], *project_session_ids}
+    expected_history = [history_session_ids[0], project_session_ids[0]]
+    expected_history += sorted((expected_project | set(history_session_ids)) - set(expected_history), reverse=True)
+    async with factory() as db:
+        service = SessionCooperationService(db, run_id=run_id, uid=uid, worker_id="root-worker")
+        project = await service.list_sessions()
+        assert set(project) == {"scope", "sessions"} and project["scope"] == "project"
+        assert {item["session_id"] for item in project["sessions"]} == expected_project
+        assert len(project["sessions"]) == 12
+        assert await service.list_sessions(offset=10) == project
+        fields = {"session_id", "title", "path", "tree_root_session_id", "project_id", "turn_id", "turn_status", "waiting_for"}
+        assert all(set(item) == fields for item in project["sessions"])
+        by_id = {item["session_id"]: item for item in project["sessions"]}
+        assert by_id[root_id]["title"] == "root"
+        assert by_id[member["session_id"]]["path"] == "/root/directory"
+        assert by_id[member["session_id"]]["tree_root_session_id"] == root_id
+        assert by_id[member["session_id"]]["turn_id"] == member["turn_id"]
+        assert by_id[member["session_id"]]["turn_status"] == "waiting"
+        assert by_id[member["session_id"]]["waiting_for"] == "cooperation"
+        assert by_id[project_session_ids[0]]["turn_id"] == latest_turn_id
+        assert by_id[project_session_ids[0]]["turn_status"] == "failed"
+        assert by_id[project_session_ids[1]]["turn_id"] is None
+        assert by_id[project_session_ids[1]]["turn_status"] is None
+        assert by_id[project_session_ids[1]]["waiting_for"] is None
+
+        queries = []
+
+        def record(_conn, _cursor, statement, parameters, _context, _many):
+            """记录真实目录 SQL，防止全量读取后在内存中截页。"""
+            if "FROM sessions" in statement:
+                queries.append((statement, parameters))
+
+        engine = factory.kw["bind"].sync_engine
+        event.listen(engine, "before_cursor_execute", record)
+        try:
+            pages = [await service.list_sessions(scope="all", offset=offset) for offset in (0, 10, 20, 30)]
+        finally:
+            event.remove(engine, "before_cursor_execute", record)
+        assert [len(page["sessions"]) for page in pages] == [10, 10, 5, 0]
+        assert all(page["scope"] == "all" for page in pages)
+        assert [item["session_id"] for page in pages for item in page["sessions"]] == expected_history
+        assert all(set(item) == fields for page in pages for item in page["sessions"])
+        assert {item["project_id"] for page in pages for item in page["sessions"]} == {root.project_id, other_project_id}
+        directory_queries = [(statement, parameters) for statement, parameters in queries if "ORDER BY sessions.updated_at" in statement]
+        assert len(directory_queries) == 4
+        assert all("LIMIT" in statement and "OFFSET" in statement for statement, _ in directory_queries)
+        assert [parameters[-2:] for _, parameters in directory_queries] == [(10, 0), (10, 10), (10, 20), (10, 30)]
+
+        root = await db.scalar(select(Session).where(Session.thread_id == root_id))
+        snapshot = await tree_snapshot(db, root)
+        assert set(snapshot) == {"tree_root_session_id", "sessions"}
+        assert {item["session_id"] for item in snapshot["sessions"]} == {root_id, member["session_id"]}
+        assert all(
+            {"queue_paused", "has_pending_input", "run_status", "current_run_id", "result_run_id"} <= set(item)
+            for item in snapshot["sessions"]
+        )
+
+
+@pytest.mark.parametrize("arguments,error", [({"scope": "other"}, "范围"), ({"offset": -1}, "offset")])
+async def test_session_directory_rejects_invalid_scope_or_negative_offset(tree, arguments, error):
+    """服务入口也显式拒绝无效目录范围及负偏移。"""
+    factory, run_id, _, uid = tree
+    async with factory() as db:
+        service = SessionCooperationService(db, run_id=run_id, uid=uid, worker_id="root-worker")
+        with pytest.raises(ValueError, match=error):
+            await service.list_sessions(**arguments)
 
 
 async def test_agent_directory_does_not_turn_private_governance_into_run_permission(tree):
@@ -2544,7 +2682,8 @@ async def test_user_scope_cooperation_rejects_other_users_for_all_target_operati
             ]:
                 with pytest.raises(ValueError, match="授权范围"):
                     await getattr(service, operation)(**kwargs)
-            assert foreign_id not in {item["session_id"] for item in (await service.list_sessions())["sessions"]}
+            for scope in ("project", "all"):
+                assert foreign_id not in {item["session_id"] for item in (await service.list_sessions(scope=scope))["sessions"]}
             assert (
                 await db.scalar(
                     select(func.count()).select_from(CooperationEvent).where(CooperationEvent.recipient_thread_id == foreign_id)

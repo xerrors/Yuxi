@@ -1,49 +1,45 @@
 <template>
-  <div class="cooperation-event" :class="{ 'has-error': status === 'error' }">
+  <BaseToolCall v-if="isList" :tool-call="toolCall" :appearance="appearance" summary-only>
+    <template #header>
+      <div class="sep-header">
+        <span class="note">{{ status === 'completed' ? '查看了' : '查看' }}{{ listScope }}会话</span>
+        <span v-if="status === 'completed' && listSessions" class="description">{{ listSessions.length }} 个</span>
+      </div>
+    </template>
+  </BaseToolCall>
+  <div v-else class="cooperation-event" :class="{ 'has-error': status === 'error' }">
     <div class="cooperation-event-row">
       <component :is="eventIcon" :size="15" class="event-icon" aria-hidden="true" />
-      <component v-if="isList" :is="targets.length ? 'button' : 'span'" :type="targets.length ? 'button' : undefined" class="event-list-toggle" :aria-expanded="targets.length ? expanded : undefined" @click="targets.length && (expanded = !expanded)">
-        <span>{{ status === 'completed' ? `查看了 ${targets.length} 个会话` : '查看会话' }}</span>
-        <ChevronDown v-if="targets.length" :size="13" :class="{ expanded }" aria-hidden="true" />
-      </component>
-      <template v-else>
-        <span class="event-action">{{ action }}</span>
-        <span class="event-targets">
-          <template v-for="(target, index) in targets" :key="target.sessionId || index">
-            <component
-              :is="target.sessionId && cooperationView ? 'button' : 'span'"
-              :type="target.sessionId && cooperationView ? 'button' : undefined"
-              class="event-target"
-              :title="target.name || '会话信息尚未返回'"
-              @click="target.sessionId && cooperationView?.openSession(target.sessionId)"
-            >
-              <FallbackAvatar v-if="target.sessionId" :name="target.name" :seed="target.sessionId" kind="session" :size="18" shape="rounded" decorative />
-              <span>{{ target.name || '会话' }}</span>
-            </component>
-          </template>
-        </span>
-      </template>
+      <span class="event-action">{{ action }}</span>
+      <span class="event-targets">
+        <template v-for="(target, index) in targets" :key="target.sessionId || index">
+          <component
+            :is="target.sessionId && cooperationView ? 'button' : 'span'"
+            :type="target.sessionId && cooperationView ? 'button' : undefined"
+            class="event-target"
+            :title="target.name || '会话信息尚未返回'"
+            @click="target.sessionId && cooperationView?.openSession(target.sessionId)"
+          >
+            <FallbackAvatar v-if="target.sessionId" :name="target.name" :seed="target.sessionId" kind="session" :size="18" shape="rounded" decorative />
+            <span>{{ target.name || '会话' }}</span>
+          </component>
+        </template>
+      </span>
       <span v-if="status === 'error'" class="event-state event-error">操作失败</span>
       <span v-else-if="status === 'waiting'" class="event-state">等待中</span>
       <span v-else-if="status === 'running'" class="event-state">进行中</span>
       <span v-else-if="status === 'incomplete'" class="event-state">已中断</span>
       <span v-else-if="timedOut" class="event-state">等待超时</span>
     </div>
-    <div v-if="isList && expanded" class="event-session-list">
-      <component v-for="(target, index) in targets" :key="target.sessionId || index" :is="target.sessionId && cooperationView ? 'button' : 'span'" :type="target.sessionId && cooperationView ? 'button' : undefined" class="event-target" @click="target.sessionId && cooperationView?.openSession(target.sessionId)">
-        <FallbackAvatar :name="target.name" :seed="target.sessionId" kind="session" :size="18" shape="rounded" decorative />
-        <span>{{ target.name || '会话' }}</span>
-        <ChevronRight v-if="target.sessionId && cooperationView" :size="13" aria-hidden="true" />
-      </component>
-    </div>
   </div>
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
-import { CirclePlus, Clock, Workflow, Send, Square, ChevronDown, ChevronRight, CircleAlert } from '@lucide/vue'
+import { computed } from 'vue'
+import { CirclePlus, Clock, Workflow, Send, Square, CircleAlert } from '@lucide/vue'
+import BaseToolCall from '../BaseToolCall.vue'
 import FallbackAvatar from '@/shared/ui/FallbackAvatar.vue'
-import { getToolCallId, getToolCallStatus, parseToolCallResult } from '@/modules/session/model/toolCallProjection'
+import { getToolCallId, getToolCallStatus, parseToolCallArgs, parseToolCallResult } from '@/modules/session/model/toolCallProjection'
 import { COOPERATION_ACTIONS, getCooperationToolTargets } from '@/modules/session/model/cooperationToolView'
 
 const props = defineProps({
@@ -53,12 +49,21 @@ const props = defineProps({
   defaultExpanded: { type: Boolean, default: false },
   cooperationView: { type: Object, default: null }
 })
-const expanded = ref(props.defaultExpanded)
 const calls = computed(() => props.toolCalls.length ? props.toolCalls : [props.toolCall])
 const toolId = computed(() => getToolCallId(props.toolCall))
 const action = computed(() => COOPERATION_ACTIONS[toolId.value])
 const status = computed(() => getToolCallStatus(props.toolCall))
 const isList = computed(() => toolId.value === 'list_sessions')
+const listSessions = computed(() => {
+  const result = parseToolCallResult(props.toolCall)
+  return Array.isArray(result?.sessions) ? result.sessions : null
+})
+const listScope = computed(() => {
+  const result = parseToolCallResult(props.toolCall)
+  // 旧回执没有范围字段，其契约是查询全部历史会话。
+  const scope = result?.scope || parseToolCallArgs(props.toolCall).scope || (listSessions.value ? 'all' : 'project')
+  return scope === 'all' ? '历史' : '本项目'
+})
 const timedOut = computed(() => calls.value.some((call) => parseToolCallResult(call)?.wait_timed_out))
 const eventIcon = computed(() => {
   if (status.value === 'error') return CircleAlert
@@ -72,7 +77,7 @@ const targets = computed(() => {
   const context = props.cooperationView || { sessions: [], tasks: new Map() }
   const items = calls.value.flatMap((call) => getCooperationToolTargets(call, context))
   const unique = items.filter((target, index) => !target.sessionId || items.findIndex((item) => item.sessionId === target.sessionId) === index)
-  return unique.length ? unique : isList.value ? [] : [{ name: '' }]
+  return unique.length ? unique : [{ name: '' }]
 })
 </script>
 
@@ -87,14 +92,10 @@ const targets = computed(() => {
 .event-target > span:last-of-type { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .event-target :deep(.fallback-avatar) { flex-shrink: 0; }
 .event-target svg { flex-shrink: 0; }
-button.event-target, button.event-list-toggle {
+button.event-target {
   font: inherit; color: inherit; line-height: inherit; border: 0; padding: 0; background: transparent; cursor: pointer; text-align: left;
   &:hover { color: var(--color-text); }
   &:focus-visible { outline: 2px solid var(--main-300); outline-offset: 2px; border-radius: 3px; }
 }
-.event-list-toggle { display: inline-flex; align-items: center; gap: 8px; }
-.event-list-toggle .expanded { transform: rotate(180deg); }
-.event-session-list { display: grid; gap: 4px; padding: 4px 0 4px 23px; }
-.event-session-list .event-target { max-width: 100%; }
 .event-error { color: var(--color-error-600); }
 </style>

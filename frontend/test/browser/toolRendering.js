@@ -3,6 +3,7 @@
 // prettier-ignore
 async page => {
   const errors = []
+  const styleEvidence = []
   const onError = error => errors.push(error.message)
   page.on('pageerror', onError)
   try {
@@ -25,10 +26,15 @@ async page => {
         { name: 'web_fetch', args: { url: 'https://example.com/loading' } },
         { name: 'wait_inputs', args: { input_ids: ['task-1'] }, status: 'waiting' },
         { name: 'list_sessions', status: 'incomplete' },
-        { name: 'list_sessions', result: { sessions: [{ session_id: 'research-session', name: '资料研究员' }] } },
+        { name: 'list_sessions', result: { scope: 'project', sessions: [{ session_id: 'research-session', title: '不应展示会话列表' }] } },
         { name: 'get_result', result: { session_id: 'research-session', status: 'completed', output: '不应展示无导航上下文的完整结果' } },
         { name: 'send_message', args: { target: 'research-session' }, status: 'error', error_message: '不应展示错误堆栈' },
-        { name: 'install_skill', args: { source: 'example/unavailable' }, tool_call_result: { status: 'success', content: '安装失败 (research): 不应展示完整错误详情' } }
+        { name: 'install_skill', args: { source: 'example/unavailable' }, tool_call_result: { status: 'success', content: '安装失败 (research): 不应展示完整错误详情' } },
+        { name: 'list_sessions', args: { scope: 'all', offset: 10 }, result: { scope: 'all', sessions: Array.from({ length: 10 }, (_, index) => ({ session_id: `hidden-session-${index}`, title: '不应展示历史会话' })) } },
+        { name: 'list_sessions', result: { sessions: [{ session_id: 'hidden-legacy', title: '不应展示旧回执会话' }] } },
+        { name: 'list_sessions', result: { scope: 'project', sessions: [] } },
+        { name: 'list_sessions', args: { scope: 'all' }, tool_call_result: { status: 'error', content: '不应展示会话查询堆栈' } },
+        { name: 'list_sessions' }
       ].map((call, index) => ({ id: `tool-fixture-${index}`, args: {}, ...call }))
       const context = { sessions: [{ session_id: 'research-session', name: '资料研究员' }], tasks: new Map([['task-1', 'research-session']]), openSession: id => { window.__openedToolSession = id } }
       const groupCalls = ['甲', '乙'].map((label, index) => ({
@@ -45,7 +51,8 @@ async page => {
           toolCall: call, appearance: 'timeline', defaultExpanded: true,
           cooperationView: index === 13 ? null : context
         })])),
-        h('section', { 'data-case': 'grouped' }, [h(Group, { toolCalls: groupCalls, cooperationView: context })])
+        h('section', { 'data-case': 'grouped' }, [h(Group, { toolCalls: groupCalls, cooperationView: context })]),
+        h('section', { 'data-case': 'grouped-sessions' }, [h(Group, { toolCalls: [calls[0], calls[12], calls[16]], cooperationView: context })])
       ]) })
       const root = document.querySelector('#app').__vue_app__
       const pinia = root.config.globalProperties.$pinia
@@ -60,25 +67,31 @@ async page => {
     const host = page.locator('#tool-rendering-check')
     await host.locator('[data-case="0"] .is-summary').waitFor()
     await host.locator('[data-case="2"] .event-target').waitFor()
-    for (const [index, text] of [[0, '1 个可用'], [1, '部署与协作指南'], [2, '查看结果'], [3, '搜索历史消息'], [4, '部署验证记录'], [5, 'research'], [6, '记录改进线索'], [7, '0 个可用'], [8, '执行失败'], [10, '等待中'], [11, '已中断'], [12, '查看了 1 个会话'], [14, '操作失败'], [15, '执行失败']]) {
+    for (const [index, text] of [[0, '1 个可用'], [1, '部署与协作指南'], [2, '查看结果'], [3, '搜索历史消息'], [4, '部署验证记录'], [5, 'research'], [6, '记录改进线索'], [7, '0 个可用'], [8, '执行失败'], [10, '等待中'], [11, '已中断'], [12, '查看了本项目会话'], [14, '操作失败'], [15, '执行失败'], [16, '查看了历史会话'], [17, '查看了历史会话'], [18, '查看了本项目会话'], [19, '执行失败'], [20, '查看本项目会话']]) {
       await host.locator(`[data-case="${index}"]`).getByText(text, { exact: true }).waitFor()
     }
     if (await host.locator('[data-case="9"] .tool-loading').count() !== 1) throw new Error('加载状态缺失')
+    if (await host.locator('[data-case="20"] .tool-loading').count() !== 1) throw new Error('会话查询未复用通用加载图标')
+    if (await host.locator('[data-case="19"] .tool-error').count() !== 1) throw new Error('会话查询未复用通用失败图标')
     if (await host.locator('[data-case="13"] button').count()) throw new Error('无导航上下文却显示会话按钮')
     const target = host.locator('[data-case="2"] .event-target')
     await target.focus()
     await page.keyboard.press('Enter')
     if (await page.evaluate(() => window.__openedToolSession) !== 'research-session') throw new Error('会话入口归属错误')
-    const list = host.locator('[data-case="12"]')
-    await list.locator('.event-list-toggle').click()
-    if (await list.locator('.event-session-list').count()) throw new Error('会话列表无法收起')
-    await list.locator('.event-list-toggle').focus()
-    await page.keyboard.press('Enter')
-    await list.locator('.event-session-list .event-target').waitFor()
+    for (const [index, count] of [[12, 1], [16, 10], [17, 1], [18, 0]]) {
+      const list = host.locator(`[data-case="${index}"]`)
+      await list.getByText(`${count} 个`, { exact: true }).waitFor()
+      if (await list.locator('button, [aria-expanded], .event-target, .event-session-list').count()) throw new Error('会话摘要仍有名单或展开入口')
+    }
     const group = host.locator('[data-case="grouped"]')
     await group.locator('.tool-calls-summary').click()
     await group.locator('.event-target').waitFor()
     if (await group.locator('.cooperation-event').count() !== 1) throw new Error('连续协作调用未合并')
+    const groupedSessions = host.locator('[data-case="grouped-sessions"]')
+    await groupedSessions.locator('.tool-calls-summary').click()
+    await groupedSessions.getByText('查看了历史会话', { exact: true }).waitFor()
+    if (await groupedSessions.locator('.tool-call-display.is-timeline.is-summary').count() !== 3) throw new Error('真实工具分组未共用通用摘要')
+    if (await groupedSessions.locator('.cooperation-event, .tool-content, .tool-expand-icon').count()) throw new Error('分组会话查询保留了特制布局或展开区域')
     await host.locator('[data-case="1"] .tool-header').click()
     const text = await host.innerText()
     if (/不应|原始结果|调用详情/.test(text)) throw new Error('工具摘要重复展示了正文或原始结果')
@@ -88,13 +101,38 @@ async page => {
       await page.evaluate(value => { window.__toolCheck.theme.themeMode = value ? 'dark' : 'light' }, dark)
       for (const width of [1440, 1024, 768]) {
         await page.setViewportSize({ width, height: 1000 })
+        await page.mouse.move(1, 1)
         await host.evaluate(node => { node.scrollTop = 0 })
         if (await host.evaluate(node => node.scrollWidth > node.clientWidth)) throw new Error('工具展示横向溢出')
-        await host.screenshot({ path: `/tmp/yuxi-tool-rendering-${dark ? 'dark' : 'light'}-${width}.png` })
+        const styles = await host.evaluate(node => {
+          const properties = ['color', 'fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'display', 'alignItems', 'gap', 'padding', 'margin', 'height']
+          const sample = root => {
+            const result = {}
+            for (const selector of ['.tool-header', '.sep-header', '.note', '.description', '.tool-loader']) {
+              const element = root.querySelector(selector)
+              if (!element) throw new Error(`通用摘要缺少 ${selector}`)
+              const style = getComputedStyle(element)
+              result[selector] = Object.fromEntries(properties.map(property => [property, style[property]]))
+            }
+            const header = root.querySelector('.tool-header').getBoundingClientRect()
+            const note = root.querySelector('.note').getBoundingClientRect()
+            const description = root.querySelector('.description').getBoundingClientRect()
+            result.spacing = { iconToLabel: Math.round((note.left - header.left) * 100) / 100, labelToCount: Math.round((description.left - note.right) * 100) / 100, rowHeight: header.height }
+            return result
+          }
+          const baseline = sample(node.querySelector('[data-case="0"]'))
+          const roots = [12, 16, 17, 18].map(index => node.querySelector(`[data-case="${index}"]`))
+          roots.push(...node.querySelectorAll('[data-case="grouped-sessions"] .tool-call-container'))
+          for (const root of roots) if (JSON.stringify(sample(root)) !== JSON.stringify(baseline)) throw new Error('会话查询与查看智能体的实际颜色、字体或布局间距不同')
+          return { baseline, matchedRows: roots.length }
+        })
+        styleEvidence.push({ theme: dark ? 'dark' : 'light', width, ...styles })
+        await host.screenshot({ path: `/tmp/yuxi-session-directory-shared-${dark ? 'dark' : 'light'}-${width}.png` })
+        await groupedSessions.screenshot({ path: `/tmp/yuxi-session-directory-shared-group-${dark ? 'dark' : 'light'}-${width}.png` })
       }
     }
     if (errors.length) throw new Error(errors.join('\n'))
-    return { cases: 16, themes: 2, widths: [1440, 1024, 768], groupedMessages: 2, summaryOnly: true, errors }
+    return { cases: 21, themes: 2, widths: [1440, 1024, 768], groupedMessages: 2, summaryOnly: true, scopedSessions: true, legacySessions: true, sharedSummaryStyles: styleEvidence, errors }
   } finally {
     await page.evaluate(() => {
       const check = window.__toolCheck

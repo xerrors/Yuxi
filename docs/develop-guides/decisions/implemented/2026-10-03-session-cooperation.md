@@ -42,7 +42,7 @@ Owner：backend/yuxi/modules/agents/services/cooperation.py
 | `submit_input` | 向同用户同 APP 会话提交新工作；空闲时调度，忙碌时按 FIFO 排队，等待用户回答或审批时明确拒绝 |
 | `cancel_turn` | 按 Session ID 与 Turn ID 取消指定工作；保留历史与既有副作用，不暂停、不承诺断点恢复 |
 | `wait_sessions` | 等待指定其他成员的消息或工作状态更新，任一有更新即返回；空列表和自身拒绝，携带消费位置与明确超时结果 |
-| `list_sessions` | 一次返回同用户同 APP 的全部轻量会话，区分会话存在、当前 Turn 状态和输入排队状态，不包含结果正文 |
+| `list_sessions` | 默认读取本项目目录，历史查询分页与工具字段见[会话目录决定](./2026-11-05-session-directory-scope.md)；完整队列与 Run 状态由面板摘要提供 |
 | `wait_inputs` | 按精确 Input 等待任务终态，支持排队输入与明确超时 |
 | `get_result` | 按 Input 或 Turn 读取其 result Run 对应的精确结果 |
 

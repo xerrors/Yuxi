@@ -7,6 +7,7 @@ import copy
 import re
 import uuid
 from datetime import timedelta
+from typing import Literal
 
 from sqlalchemy import select
 
@@ -157,10 +158,30 @@ class SessionCooperationService:
         )
         return {"status": "received", "message_id": event.id, "session_id": member.thread_id}
 
-    async def list_sessions(self) -> dict:
-        """返回当前用户和 APP 的全部会话及进度。"""
+    async def list_sessions(self, *, scope: Literal["project", "all"] = "project", offset: int = 0) -> dict:
+        """默认返回当前项目目录，历史会话按十条分页。"""
+        if scope not in {"project", "all"}:
+            raise ValueError("会话查询范围必须是 project 或 all")
+        if offset < 0:
+            raise ValueError("offset 不能为负数")
         _, caller = await self.caller()
-        return await tree_snapshot(self.db, caller, all_sessions=True)
+        rows = await self.repo.directory(caller, all_projects=scope == "all", offset=offset)
+        return {
+            "scope": scope,
+            "sessions": [
+                {
+                    "session_id": member.thread_id,
+                    "title": member.title or member.cooperation_name,
+                    "path": member.cooperation_path,
+                    "tree_root_session_id": member.tree_root_thread_id,
+                    "project_id": member.project_id,
+                    "turn_id": turn.id if turn else None,
+                    "turn_status": turn.status if turn else None,
+                    "waiting_for": (turn.waitpoint or {}).get("kind") if turn else None,
+                }
+                for member, turn in rows
+            ],
+        }
 
     async def list_agents(self) -> dict:
         """复用公开目录的可调用范围，只输出最小角色信息。"""
@@ -381,15 +402,14 @@ def session_identity(member: Session) -> dict:
     }
 
 
-async def tree_snapshot(db, caller: Session, *, all_sessions: bool = False) -> dict:
+async def tree_snapshot(db, caller: Session) -> dict:
     """返回完整协作摘要；结果正文由精确任务查询拥有。"""
-    rows = await CooperationRepository(db).summary(caller, all_sessions=all_sessions)
+    rows = await CooperationRepository(db).summary(caller)
     return {
         "tree_root_session_id": caller.tree_root_thread_id,
         "sessions": [
             {
                 **session_identity(member),
-                **({"project_id": member.project_id} if all_sessions else {}),
                 "title": member.title,
                 "status": member.status,
                 "queue_paused": member.queue_paused,
