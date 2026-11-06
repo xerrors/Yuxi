@@ -51,7 +51,7 @@ for (const editMode of [false, true]) {
         expose() {}, emit: (...args) => events.push(args)
       })
       Object.assign(form.form, {
-        slug: 'example', name: 'Example', url: 'https://example.com/mcp', headersText
+        slug: 'example', name: 'Example', url: 'https://example.com/mcp', headersText, auth_mode: 'headers'
       })
       await form.handleFormSubmit()
       assert.match(errors[0], /headers 必须是字符串键值对象/)
@@ -100,5 +100,20 @@ for (const [label, clearSecret, clientSecret, expectedSecret] of [
     await form.handleFormSubmit()
     assert.equal(Object.hasOwn(writes[0].oauth_config, 'client_secret'), expectedSecret !== undefined)
     assert.equal(writes[0].oauth_config.client_secret, expectedSecret)
+  })
+}
+
+for (const mode of ['none', 'bearer', 'api_key']) {
+  test(`创建 ${mode} 服务只提交该方式的配置`, async () => {
+    const writes = []
+    const { form, handleFormSubmit } = await setupForm({
+      message: { error: assert.fail, success() {} },
+      mcpApi: { createMcpServer: async (data) => { writes.push(data); return { success: true, data } } }
+    }, { open: true, editMode: false, editData: null }, { expose() {}, emit() {} })
+    Object.assign(form, { slug: 'personal', name: 'Personal', url: 'https://example.com/mcp', auth_mode: mode, client_secret: 'hidden-oauth-secret' })
+    await handleFormSubmit()
+    assert.equal(writes[0].auth_mode, mode)
+    assert.equal(writes[0].api_key_header, mode === 'api_key' ? 'X-API-Key' : undefined)
+    assert.equal(Object.hasOwn(writes[0], 'oauth_config'), false)
   })
 }

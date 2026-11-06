@@ -81,7 +81,7 @@ test('独立 MCP 发布等待时禁止重复提交与关闭，成功才返回资
     message: { success() {}, error: (message) => assert.fail(message) },
     mcpApi: { createMcpServer: (data) => { calls.push(data); return new Promise((resolve) => { resolveCreate = resolve }) } }
   })
-  Object.assign(modal.form, { slug: 'query', name: '查询', url: 'https://example.com/mcp' })
+  Object.assign(modal.form, { slug: 'query', name: '查询', url: 'https://example.com/mcp', auth_mode: 'none' })
   const request = modal.handleFormSubmit()
   await modal.handleFormSubmit()
   modal.visible.value = false

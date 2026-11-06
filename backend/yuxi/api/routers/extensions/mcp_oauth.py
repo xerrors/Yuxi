@@ -4,9 +4,9 @@ import re
 import secrets
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError
 
 from yuxi.api.dependencies.auth import get_db, get_required_user
 from yuxi.modules.extensions.mcp.oauth_config import redirect_uri
@@ -24,6 +24,26 @@ class CompleteMCPAuthorization(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     result: str = Field(min_length=20, max_length=100)
+
+
+class SaveMCPCredentials(BaseModel):
+    """用户只提交秘密与打开表单时的配置修订。"""
+
+    model_config = ConfigDict(extra="forbid")
+    secret: StrictStr = Field(min_length=1, max_length=32768, pattern=r"^[!-~]+$", repr=False)
+    config_revision: str = Field(min_length=64, max_length=64)
+
+
+@router.put("/{slug}/connection")
+async def save_credentials(slug: str, request: Request, response: Response, user=Depends(get_required_user), db=Depends(get_db)):
+    """保存本人凭证，验证错误不回显原始 secret。"""
+    try:
+        body = SaveMCPCredentials.model_validate(await request.json())
+    except (ValueError, ValidationError):
+        raise HTTPException(status_code=422, detail="凭证格式无效，请填写原始 Token 或 API Key 并重新打开过期表单") from None
+    status = await MCPOAuthService(db).save_credentials(slug, user.id, body.secret, body.config_revision)
+    response.headers.update(NO_STORE)
+    return {"success": True, "connection_status": status}
 
 
 @router.get("/oauth/callback")

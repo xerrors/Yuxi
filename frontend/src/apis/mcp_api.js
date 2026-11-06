@@ -1,4 +1,4 @@
-import { apiPost, apiDelete, apiGet, apiAdminGet, apiAdminPost, apiAdminPut, apiAdminDelete } from './base'
+import { apiPost, apiPut, apiDelete, apiGet, apiAdminGet, apiAdminPost, apiAdminPut, apiAdminDelete } from './base'
 
 /**
  * MCP 服务器管理 API 模块
@@ -106,6 +106,8 @@ export const toggleMcpServerTool = async (serverName, toolName) => {
 }
 
 export const mcpApi = {
+  saveCredentials: (slug, secret, configRevision) => apiPut(`${BASE_URL}/${encodeURIComponent(slug)}/connection`, { secret, config_revision: configRevision }),
+  testConnection: (slug) => apiPost(`${BASE_URL}/${encodeURIComponent(slug)}/test`, {}),
   connect: (slug) => apiPost(`${BASE_URL}/${encodeURIComponent(slug)}/connection`, {}),
   disconnect: (slug) => apiDelete(`${BASE_URL}/${encodeURIComponent(slug)}/connection`),
   complete: (result) => apiPost(`${BASE_URL}/oauth/complete`, { result }),

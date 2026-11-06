@@ -94,8 +94,8 @@ async def get_mcp_tools(
         return []
     validate_remote_transport(server_config)
     try:
-        client_config = {key: value for key, value in server_config.items() if key != "disabled_tools"}
-        client_config.setdefault("auth", SharedMCPAuth(server_slug, client_config))
+        client_config = {key: value for key, value in server_config.items() if key not in {"disabled_tools", "auth_mode"}}
+        client_config.setdefault("auth", SharedMCPAuth(server_slug, client_config, auth_mode=server_config.get("auth_mode", "headers")))
         client = await get_mcp_client({server_slug: client_config})
         tools = cast(list[Any], await client.get_tools())
         for tool in tools:

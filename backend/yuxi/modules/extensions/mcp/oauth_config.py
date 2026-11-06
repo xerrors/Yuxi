@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import re
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -12,6 +13,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from yuxi.infrastructure.crypto import get_encryption_cipher
 from yuxi.infrastructure.runtime_settings import get_public_url
 from yuxi.shared.errors import StateConflictError
+
+STATIC_AUTH_MODES = {"bearer", "api_key"}
+PERSONAL_AUTH_MODES = STATIC_AUTH_MODES | {"oauth"}
 
 
 class MCPOAuthConfig(BaseModel):
@@ -35,21 +39,49 @@ class MCPOAuthConfig(BaseModel):
         return self
 
 
-def configure_mcp_auth(server, auth_mode: str, oauth_config: dict | None) -> None:
-    """管理员配置只保存脱敏元数据，客户端 secret 单独加密。"""
+def configure_mcp_auth(server, auth_mode: str, oauth_config: dict | None, api_key_header: str | None = None) -> None:
+    """声明认证方式，个人秘密不进入共享请求头。"""
     if auth_mode == "delegation":
         raise ValueError("平台委托 MCP 由内置清单同步，不能通过管理接口配置")
-    if auth_mode not in {"headers", "oauth"}:
-        raise ValueError("MCP 认证方式必须为 headers 或 oauth")
+    if auth_mode not in {"none", "headers"} | PERSONAL_AUTH_MODES:
+        raise ValueError("MCP 认证方式无效")
+    if server.auth_mode == "headers" and auth_mode in PERSONAL_AUTH_MODES and server.headers:
+        raise ValueError("切换个人认证前请清空共享请求头")
+    if auth_mode == "api_key":
+        api_key_header = api_key_header if api_key_header is not None else server.api_key_header
+        if (
+            not api_key_header
+            or len(api_key_header) > 128
+            or not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", api_key_header)
+            or api_key_header.lower()
+            in {
+                "host",
+                "content-length",
+                "transfer-encoding",
+                "connection",
+                "content-type",
+                "accept",
+                "mcp-session-id",
+                "mcp-protocol-version",
+            }
+        ):
+            raise ValueError("API Key 请求头名称无效")
+    else:
+        api_key_header = None
     server.auth_mode = auth_mode
-    if auth_mode == "headers":
+    server.api_key_header = api_key_header
+    if auth_mode in PERSONAL_AUTH_MODES:
+        validate_url(server.url)
+    reserved_headers = {"authorization"}
+    if api_key_header:
+        reserved_headers.add(api_key_header.lower())
+    if auth_mode != "headers" and reserved_headers.intersection(key.lower() for key in (server.headers or {})):
+        raise ValueError("公共请求头不能包含所选方式的认证头")
+    if auth_mode != "oauth":
         server.oauth_config, server.oauth_secret, server.oauth_registration = None, None, None
         return
-    validate_url(server.url)
     if server.transport != "streamable_http":
         raise ValueError("个人 OAuth 仅支持 Streamable HTTP")
-    if any(key.lower() == "authorization" for key in (server.headers or {})):
-        raise ValueError("个人 OAuth 不允许共享 Authorization 请求头")
     config = MCPOAuthConfig.model_validate(oauth_config if oauth_config is not None else server.oauth_config)
     previous = server.oauth_config or {}
     if any(previous.get(field) != getattr(config, field) for field in ("issuer_url", "client_id", "registration")):
@@ -99,7 +131,7 @@ def cipher() -> Fernet:
     try:
         return get_encryption_cipher()
     except ValueError as exc:
-        raise StateConflictError("MCP 个人授权未配置加密密钥，请联系超级管理员", code="mcp_oauth_unconfigured") from exc
+        raise StateConflictError("MCP 个人凭证未配置加密密钥，请联系超级管理员", code="mcp_oauth_unconfigured") from exc
 
 
 def encrypt(value: dict) -> str:
@@ -117,5 +149,15 @@ def decrypt(value: str) -> dict:
 
 def config_revision(server) -> str:
     """服务地址、请求头或授权配置改变后不能继续使用旧凭据。"""
-    payload = [server.url, server.transport, server.headers, server.auth_mode, server.oauth_config, server.oauth_secret]
+    payload = [
+        server.url,
+        server.transport,
+        server.headers,
+        server.auth_mode,
+        server.oauth_config,
+        server.oauth_secret,
+    ]
+    # 空的新字段保持旧 OAuth 修订不变，升级不要求既有用户重新授权。
+    if server.api_key_header is not None:
+        payload.append(server.api_key_header)
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()

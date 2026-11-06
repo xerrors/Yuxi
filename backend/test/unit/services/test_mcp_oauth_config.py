@@ -97,7 +97,7 @@ def test_oauth_configuration_rejects_shared_authorization_and_does_not_reuse_oth
         oauth_registration=None,
     )
     config = {"issuer_url": "https://sso.example", "client_id": "first", "client_secret": "private-secret"}
-    with pytest.raises(ValueError, match="Authorization"):
+    with pytest.raises(ValueError, match="共享请求头"):
         configure_mcp_auth(server, "oauth", config)
     server.headers = {}
     configure_mcp_auth(server, "oauth", config)
@@ -134,3 +134,19 @@ def test_production_rejects_http_even_when_lab_origins_are_present(monkeypatch, 
     monkeypatch.setenv("MCP_OAUTH_LAB_HTTP_ORIGINS", "http://sso.example")
     with pytest.raises(ValueError):
         validate_url("http://sso.example/issuer")
+
+
+def test_nullable_api_key_header_preserves_existing_oauth_revision():
+    """新增空字段不能使业务库 v1 保存的 OAuth 修订失效。"""
+    from yuxi.modules.extensions.mcp.models import MCPServer
+    from yuxi.modules.extensions.mcp.oauth_config import config_revision
+
+    server = MCPServer(
+        url="https://example.com/mcp",
+        transport="streamable_http",
+        headers={},
+        auth_mode="oauth",
+        oauth_config={"issuer_url": "https://sso.example", "client_id": "fixture"},
+        oauth_secret=None,
+    )
+    assert config_revision(server) == "1d3730d3b3fe9ede84c0c02f29ea197489f1bb8c143fec1065f5cb2c445e28f7"

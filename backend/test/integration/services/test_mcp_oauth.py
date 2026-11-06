@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import hashlib
+import json
 import os
 import secrets
 import socket
@@ -18,7 +19,7 @@ import pytest_asyncio
 import uvicorn
 from cryptography.fernet import Fernet
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -135,7 +136,10 @@ async def scenario(monkeypatch):
     @app.post("/mcp")
     async def mcp_protocol(request: Request):
         """协议结果包含 token 对应员工，用于观察缓存隔离。"""
-        authorization = request.headers.get("authorization", "").removeprefix("Bearer ")
+        if current.get("error_status"):
+            return JSONResponse({}, status_code=current["error_status"])
+        authorization = request.headers.get(current.get("auth_header", "authorization"), "").removeprefix("Bearer ")
+        current.setdefault("received_credentials", []).append(authorization)
         if authorization == current.get("delayed_reject_token"):
             current["rejection_started"].set()
             await current["rejection_release"].wait()
@@ -144,8 +148,6 @@ async def scenario(monkeypatch):
             return JSONResponse({}, status_code=401)
         payload = await request.json()
         if "id" not in payload:
-            from fastapi.responses import Response
-
             return Response(status_code=202)
         method = payload["method"]
         previous_method = current.get("last_mcp_method")
@@ -174,6 +176,39 @@ async def scenario(monkeypatch):
         else:
             raise AssertionError(method)
         return {"jsonrpc": "2.0", "id": payload["id"], "result": result}
+
+    sse_sessions = {}
+
+    @app.get("/sse")
+    async def sse_connection(request: Request):
+        """SSE 使用独立队列回传协议消息，认证仍由每次请求提供。"""
+        if current.get("error_status"):
+            return JSONResponse({}, status_code=current["error_status"])
+        credential = request.headers.get(current.get("auth_header", "authorization"), "").removeprefix("Bearer ")
+        if credential not in identities:
+            return JSONResponse({}, status_code=401)
+        session = uuid4().hex
+        queue = sse_sessions[session] = asyncio.Queue()
+
+        async def events():
+            """只发布同来源 endpoint，并在断开时释放队列。"""
+            try:
+                yield f"event: endpoint\ndata: {root}/sse/messages?session_id={session}\n\n"
+                while True:
+                    yield "event: message\ndata: " + await queue.get() + "\n\n"
+            finally:
+                sse_sessions.pop(session, None)
+
+        return StreamingResponse(events(), media_type="text/event-stream")
+
+    @app.post("/sse/messages")
+    async def sse_message(request: Request, session_id: str):
+        """复用同一独立协议 oracle 验证 SSE POST 身份。"""
+        result = await mcp_protocol(request)
+        if isinstance(result, Response):
+            return result
+        await sse_sessions[session_id].put(json.dumps(result))
+        return Response(status_code=202)
 
     server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="critical", access_log=False))
     task = None
@@ -230,6 +265,7 @@ async def scenario(monkeypatch):
                 "schema": schema,
                 "headers": headers,
                 "codes": codes,
+                "identities": identities,
                 "current": current,
                 "root": root,
                 "users": users,
@@ -1188,3 +1224,169 @@ async def main():
 
 asyncio.run(main())
 """
+
+
+@pytest.mark.parametrize("mode,transport", [("bearer", "streamable_http"), ("api_key", "streamable_http"), ("api_key", "sse")])
+async def test_personal_static_credentials_use_own_identity_and_revoke_old_tools(scenario, mode, transport):
+    """真实接口、密文和工具返回共同证明个人静态凭证的隔离与撤销。"""
+    http, headers, current = scenario["http"], scenario["headers"], scenario["current"]
+    base = "/api/system/mcp-servers"
+    current["auth_header"] = "x-api-key" if mode == "api_key" else "authorization"
+    response = await http.put(
+        base + "/fixture",
+        headers=headers["admin"],
+        json={
+            "auth_mode": mode,
+            "api_key_header": "X-API-Key" if mode == "api_key" else None,
+            "headers": {},
+            "transport": transport,
+            "url": scenario["root"] + ("/sse" if transport == "sse" else "/mcp"),
+        },
+    )
+    assert response.status_code == 200, response.text
+    revision = response.json()["data"]["config_revision"]
+    scenario["identities"].update({"alice-key": "alice", "bob-key": "bob", "alice-new-key": "alice-new"})
+    for user in ("alice", "bob"):
+        response = await http.put(
+            base + "/fixture/connection",
+            headers=headers[user],
+            json={
+                "secret": user + "-key",
+                "config_revision": revision,
+            },
+        )
+        assert response.json() == {"success": True, "connection_status": "connected"}
+    async with scenario["db"]() as db:
+        connections = (await db.scalars(select(MCPConnection).order_by(MCPConnection.user_id))).all()
+        assert len(connections) == 2
+        assert {decrypt(row.credentials)["secret"] for row in connections} == {"alice-key", "bob-key"}
+        assert all("alice-key" not in row.credentials and "bob-key" not in row.credentials for row in connections)
+        alice_generation = next(row.generation for row in connections if row.user_id == scenario["users"][0].id)
+    listing = await http.get(base, headers=headers["alice"])
+    assert listing.json()["data"][0]["config_revision"] == revision
+    assert "alice-key" not in listing.text and "bob-key" not in listing.text
+    received = len(current.get("received_credentials", []))
+    assert (await http.post(base + "/fixture/test", headers=headers["admin"])).status_code == 502
+    assert len(current.get("received_credentials", [])) == received
+    assert (await http.post(base + "/fixture/test", headers=headers["alice"])).status_code == 200
+    alice_tools = await get_enabled_mcp_tools("fixture", uid="alice")
+    bob_tools = await get_enabled_mcp_tools("fixture", uid="bob")
+    assert "alice" in str(await alice_tools[0].ainvoke({}))
+    assert "bob" in str(await bob_tools[0].ainvoke({}))
+    response = await http.put(
+        base + "/fixture/connection",
+        headers=headers["alice"],
+        json={
+            "secret": "alice-new-key",
+            "config_revision": revision,
+        },
+    )
+    assert response.status_code == 200
+    async with scenario["db"]() as db:
+        await MCPOAuthService(db).reject_credentials("fixture", "alice", alice_generation)
+    assert "alice-new" in str(await alice_tools[0].ainvoke({}))
+    assert current["refresh_count"] == 0 and current["register_count"] == 0
+
+    # 权限不足与临时网络故障不能删除已保存的个人密文。
+    current["error_status"] = 403
+    failed = await http.post(base + "/fixture/test", headers=headers["alice"])
+    assert failed.status_code == 502
+    assert failed.json()["detail"] == {
+        "code": "mcp_connection_failed",
+        "message": "MCP 服务方权限不足，请检查个人账号权限",
+    }
+    current.pop("error_status")
+    async with scenario["db"]() as db:
+        own = await db.scalar(select(MCPConnection).where(MCPConnection.user_id == scenario["users"][0].id))
+        assert own.status == "connected" and decrypt(own.credentials)["secret"] == "alice-new-key"
+
+    await http.delete(base + "/fixture/connection", headers=headers["alice"])
+    received = len(current["received_credentials"])
+    with pytest.raises(Exception):
+        await alice_tools[0].ainvoke({})
+    assert len(current["received_credentials"]) == received
+    assert "bob" in str(await bob_tools[0].ainvoke({}))
+    await http.put(base + "/fixture/status", headers=headers["admin"], json={"enabled": False})
+    assert (await http.get(base, headers=headers["alice"])).json()["data"] == []
+    bob_listing = (await http.get(base, headers=headers["bob"])).json()["data"]
+    assert len(bob_listing) == 1 and bob_listing[0]["enabled"] is False
+    assert (await http.post(base + "/fixture/test", headers=headers["bob"])).status_code == 502
+    await http.delete(base + "/fixture/connection", headers=headers["bob"])
+    assert (await http.get(base, headers=headers["bob"])).json()["data"] == []
+    async with scenario["db"]() as db:
+        rows = (await db.scalars(select(MCPConnection))).all()
+        assert all(row.credentials is None and row.status == "disconnected" for row in rows)
+        generations = {row.user_id: row.generation for row in rows}
+    changed = await http.put(base + "/fixture", headers=headers["admin"], json={"headers": {"X-Changed": "yes"}})
+    assert changed.status_code == 200
+    for user in ("alice", "bob"):
+        assert (await http.get(base, headers=headers[user])).json()["data"] == []
+    async with scenario["db"]() as db:
+        rows = (await db.scalars(select(MCPConnection))).all()
+        assert all(row.status == "disconnected" and row.credentials is None for row in rows)
+        assert all(row.generation == generations[row.user_id] + 1 for row in rows)
+
+
+async def test_static_credential_input_and_stale_revision_cannot_publish_secrets(scenario):
+    """输入错误不回显秘密，旧表单和伪造身份不能写入当前连接。"""
+    http, headers = scenario["http"], scenario["headers"]
+    base = "/api/system/mcp-servers/fixture"
+    response = await http.put(base, headers=headers["admin"], json={"auth_mode": "bearer", "headers": {}})
+    revision = response.json()["data"]["config_revision"]
+    for body in (
+        {"secret": "private-key", "config_revision": revision, "user_id": scenario["users"][1].id},
+        {"secret": "private-key\n", "config_revision": revision},
+        {"secret": "private-key" * 4000, "config_revision": revision},
+        {"secret": "", "config_revision": revision},
+    ):
+        invalid = await http.put(base + "/connection", headers=headers["alice"], json=body)
+        assert invalid.status_code == 422 and "private-key" not in invalid.text
+    assert (await http.put(base, headers=headers["alice"], json={"url": "https://other.example/mcp"})).status_code == 403
+    for update in (
+        {"auth_mode": "api_key", "api_key_header": "Host"},
+        {"headers": {"aUtHoRiZaTiOn": "Bearer shared"}},
+    ):
+        invalid = await http.put(base, headers=headers["admin"], json=update)
+        assert invalid.status_code == 400
+    changed = await http.put(base, headers=headers["admin"], json={"url": scenario["root"] + "/mcp?changed=1"})
+    assert changed.status_code == 200
+    stale = await http.put(base + "/connection", headers=headers["alice"], json={"secret": "private-key", "config_revision": revision})
+    assert stale.status_code == 409 and "private-key" not in stale.text
+    async with scenario["db"]() as db:
+        assert (await db.scalars(select(MCPConnection))).all() == []
+
+
+async def test_static_401_revokes_only_current_connection_and_other_origins_are_rejected(scenario):
+    """远端 401 形成重连状态，跨来源请求在发送凭证前拒绝。"""
+    from yuxi.modules.extensions.mcp.oauth_runtime import PersonalMCPAuth
+
+    http, headers = scenario["http"], scenario["headers"]
+    base = "/api/system/mcp-servers/fixture"
+    response = await http.put(base, headers=headers["admin"], json={"auth_mode": "bearer", "headers": {}})
+    revision = response.json()["data"]["config_revision"]
+    saved = await http.put(
+        base + "/connection", headers=headers["alice"], json={"secret": "fixture-invalid-key", "config_revision": revision}
+    )
+    assert saved.status_code == 200
+    auth = PersonalMCPAuth("fixture", "alice", revision, auth_mode="bearer", url=scenario["root"] + "/mcp")
+    async with httpx.AsyncClient(auth=auth, trust_env=False) as client:
+        with pytest.raises(StateConflictError, match="来源"):
+            await client.post(scenario["root"].replace("127.0.0.1", "localhost") + "/mcp", json={})
+    assert scenario["current"].get("received_credentials", []) == []
+    failed = await http.post(base + "/test", headers=headers["alice"])
+    assert failed.status_code == 502
+    async with scenario["db"]() as db:
+        own = await db.scalar(select(MCPConnection).where(MCPConnection.user_id == scenario["users"][0].id))
+        assert own.status == "reconnect_required" and own.credentials is None
+
+
+async def test_explicit_anonymous_mode_does_not_require_a_personal_connection(scenario):
+    """无认证方式仍走当前服务策略，不发送共享或个人凭证。"""
+    http, headers = scenario["http"], scenario["headers"]
+    response = await http.put("/api/system/mcp-servers/fixture", headers=headers["admin"], json={"auth_mode": "none", "headers": {}})
+    assert response.status_code == 200
+    scenario["identities"][""] = "anonymous-result"
+    tools = await get_enabled_mcp_tools("fixture")
+    assert "anonymous-result" in str(await tools[0].ainvoke({}))
+    assert set(scenario["current"]["received_credentials"]) == {""}
+    assert (await http.post("/api/system/mcp-servers/fixture/test", headers=headers["alice"])).status_code == 403

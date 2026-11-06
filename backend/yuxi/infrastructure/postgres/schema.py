@@ -9,7 +9,7 @@ from sqlalchemy import text
 if TYPE_CHECKING:
     from yuxi.infrastructure.postgres.manager import PostgresManager
 
-BUSINESS_SCHEMA_VERSION = 1
+BUSINESS_SCHEMA_VERSION = 2
 KNOWLEDGE_SCHEMA_VERSION = 2
 SCHEMA_VERSION_TABLE = "yuxi_schema_migrations"
 

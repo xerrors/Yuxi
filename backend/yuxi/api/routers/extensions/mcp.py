@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.api.dependencies.auth import get_db, get_required_user, get_superadmin_user
 from yuxi.api.routers.extensions.mcp_oauth import router as oauth_router
 from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.extensions.mcp.oauth_config import PERSONAL_AUTH_MODES, STATIC_AUTH_MODES, config_revision
 from yuxi.modules.extensions.mcp.repository import get_all_mcp_servers, get_mcp_server
 from yuxi.modules.extensions.mcp.service import (
     MCPServerNotFoundError,
@@ -16,11 +17,13 @@ from yuxi.modules.extensions.mcp.service import (
     inspect_mcp_server_tools,
     is_builtin_mcp_server,
     personal_connection_states,
+    runtime_mcp_failure,
     set_server_enabled,
     toggle_tool_enabled,
     update_mcp_server,
 )
 from yuxi.modules.identity.models import User
+from yuxi.shared.errors import DomainError
 
 mcp = APIRouter(prefix="/system/mcp-servers", tags=["mcp"])
 mcp.include_router(oauth_router)
@@ -34,6 +37,7 @@ class CreateMcpServerRequest(BaseModel):
 
     auth_mode: str = "headers"
     oauth_config: dict | None = None
+    api_key_header: str | None = None
     slug: str = Field(..., description="稳定标识")
     name: str = Field(..., description="展示名称")
     transport: str = Field(..., description="传输类型：sse/streamable_http")
@@ -49,6 +53,7 @@ class UpdateMcpServerRequest(BaseModel):
 
     auth_mode: str | None = None
     oauth_config: dict | None = None
+    api_key_header: str | None = None
 
     name: str | None = Field(None, description="展示名称")
     transport: str | None = Field(None, description="传输类型")
@@ -83,12 +88,17 @@ async def get_mcp_servers(
 
         data = []
         for server in servers:
-            if not server.enabled:
+            if not server.enabled and states[server.slug] not in {"connected", "reconnect_required"}:
                 continue
             data.append(
                 {
                     "slug": server.slug,
                     "auth_mode": server.auth_mode,
+                    **(
+                        {"config_revision": config_revision(server), "api_key_header": server.api_key_header}
+                        if server.auth_mode in STATIC_AUTH_MODES
+                        else {}
+                    ),
                     "connection_status": states[server.slug],
                     "can_manage": False,
                     "name": getattr(server, "name", ""),
@@ -133,6 +143,7 @@ async def create_mcp_server_route(
             created_by=current_user.username,
             auth_mode=request.auth_mode,
             oauth_config=request.oauth_config,
+            api_key_header=request.api_key_header,
         )
         return {"success": True, "data": serialize_mcp_server(server)}
     except ValueError:
@@ -188,6 +199,7 @@ async def update_mcp_server_route(
             updated_by=current_user.username,
             auth_mode=request.auth_mode,
             oauth_config=request.oauth_config,
+            api_key_header=request.api_key_header,
         )
         return {"success": True, "data": serialize_mcp_server(server)}
     except HTTPException:
@@ -232,12 +244,14 @@ async def delete_mcp_server_route(
 @mcp.post("/{slug}/test")
 async def test_mcp_server(
     slug: str,
-    current_user: User = Depends(get_superadmin_user),
+    current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
     """测试 MCP 服务器连接"""
     try:
         server = await get_server_or_404(db, slug)
+        if server.auth_mode not in PERSONAL_AUTH_MODES and current_user.role != "superadmin":
+            raise HTTPException(status_code=403, detail="只有超级管理员可以测试共享或内置服务")
         try:
             tools = await inspect_mcp_server_tools(server, uid=current_user.uid)
             return {
@@ -247,9 +261,13 @@ async def test_mcp_server(
             }
         except HTTPException:
             raise
-        except Exception:
-            raise HTTPException(status_code=502, detail="MCP 连接失败，请检查服务地址、凭据和网络后重试") from None
-    except HTTPException:
+        except Exception as exc:
+            detail = "MCP 连接失败，请检查服务地址、凭据和网络后重试"
+            if server.auth_mode in PERSONAL_AUTH_MODES:
+                reason, _ = runtime_mcp_failure(exc)
+                detail = {"code": "mcp_connection_failed", "message": reason}
+            raise HTTPException(status_code=502, detail=detail) from None
+    except (HTTPException, DomainError):
         raise
     except Exception as e:
         logger.error(f"Failed to test MCP server: {e}")
@@ -375,6 +393,8 @@ async def get_server_or_404(db: AsyncSession, slug: str):
 def serialize_mcp_server(server) -> dict:
     """序列化 MCP，并补充代码内置标识。"""
     data = server.to_dict()
+    if data.get("auth_mode") in STATIC_AUTH_MODES:
+        data["config_revision"] = config_revision(server)
     data["can_manage"] = True
     data["is_builtin"] = is_builtin_mcp_server(server)
     return data

@@ -176,7 +176,7 @@ async def test_fresh_business_schema_contains_input_lifecycle_without_request_ta
             "thread_id",
         } <= input_columns
         assert "conversation_thread_id" not in input_columns
-        assert BUSINESS_SCHEMA_VERSION == 1
+        assert BUSINESS_SCHEMA_VERSION == 2
         assert KNOWLEDGE_SCHEMA_VERSION == 2
     finally:
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)
@@ -538,4 +538,41 @@ async def test_fresh_initializer_creates_complete_baseline_and_restarts_without_
             assert await conn.scalar(text("SELECT count(*) FROM knowledge_bases")) == 2
     finally:
         await pool.close()
+        await _drop_isolated_schema(schema, admin, engine)
+
+
+@pytest.mark.parametrize("version", [1, 99])
+async def test_mcp_credential_upgrade_is_explicit_and_preserves_existing_data(version):
+    """真实 PostgreSQL 证明重复升级保留旧值，未知版本在 DDL 前拒绝。"""
+    from yuxi.migrations.mcp_personal_credentials import upgrade_mcp_personal_credentials
+
+    schema, admin, engine, manager = await _create_isolated_manager("pytest_mcp_upgrade")
+    try:
+        await create_schema_version_table(manager)
+        await record_schema_version(manager, "business", version)
+        async with engine.begin() as conn:
+            await conn.execute(text("CREATE TABLE mcp_servers (slug TEXT PRIMARY KEY, headers JSONB)"))
+            await conn.execute(text("INSERT INTO mcp_servers VALUES ('existing', '{\"X-API-Key\":\"fixture-shared\"}')"))
+        if version == 99:
+            with pytest.raises(RuntimeError, match="business v1/v2"):
+                await upgrade_mcp_personal_credentials(manager)
+        else:
+            await upgrade_mcp_personal_credentials(manager)
+            await upgrade_mcp_personal_credentials(manager)
+        async with engine.connect() as conn:
+            assert await conn.scalar(text("SELECT headers FROM mcp_servers WHERE slug='existing'")) == {"X-API-Key": "fixture-shared"}
+            columns = (
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='mcp_servers'"
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert ("api_key_header" in columns) == (version == 1)
+        assert (await get_schema_versions(manager))["business"] == (2 if version == 1 else 99)
+    finally:
         await _drop_isolated_schema(schema, admin, engine)
