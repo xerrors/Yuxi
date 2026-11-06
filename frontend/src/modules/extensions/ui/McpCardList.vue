@@ -43,12 +43,12 @@
             variant="mini"
             :icon-color="getExtensionIconColor(server.slug, themeStore.isDark)"
             :title="formatExtensionCardTitle(server.name)"
-            :description="[server.description, server.auth_mode === 'oauth' ? mcpConnectionLabel(server.connection_status) : ''].filter(Boolean).join(' · ') || '暂无描述'"
+            :description="[server.description, isPersonalMcp(server.auth_mode) ? mcpConnectionLabel(server.connection_status, server.auth_mode) : ''].filter(Boolean).join(' · ') || '暂无描述'"
             @click="handleCardClick(server)"
           >
             <template #icon>
               <button type="button" class="mcp-card-open" :aria-label="`查看 ${server.name}`" @click.stop="handleCardClick(server)">
-                <Plug :size="16" aria-hidden="true" />
+                <component :is="getSkillIcon(`${server.slug} ${server.name}`, Plug)" :size="16" aria-hidden="true" />
               </button>
             </template>
             <template v-if="server.can_manage" #action>
@@ -86,7 +86,7 @@
         <div class="mcp-basic-info-header">
           <div class="mcp-basic-info-title-area">
             <div class="mcp-basic-info-icon" :style="{ color: getExtensionIconColor(previewServer.slug, themeStore.isDark) }">
-              <Plug :size="18" aria-hidden="true" />
+              <component :is="getSkillIcon(`${previewServer.slug} ${previewServer.name}`, Plug)" :size="18" aria-hidden="true" />
             </div>
             <div class="mcp-basic-info-title-text">
               <div class="mcp-basic-info-title">
@@ -115,17 +115,7 @@
             <label>描述</label>
             <span>{{ previewServer.description || '暂无描述' }}</span>
           </div>
-          <section
-            v-if="previewServer.auth_mode === 'oauth'"
-            class="mcp-authorization-section"
-            aria-label="授权状态"
-          >
-            <div class="mcp-authorization-copy">
-              <h3>个人授权</h3>
-              <p>智能体将使用你的个人账号访问此服务。</p>
-            </div>
-            <McpConnectionControls :server="previewServer" @changed="refreshPreview" />
-          </section>
+          <McpConnectionControls :key="userStore.uid" :server="previewServer" @changed="refreshPreview" />
         </div>
         <div v-if="previewServer.can_manage" class="mcp-basic-info-footer">
           <a-button @click="closeBasicInfo">关闭</a-button>
@@ -154,9 +144,10 @@ import InfoCard from '@/shared/ui/InfoCard.vue'
 import PageShoulder from '@/shared/ui/PageShoulder.vue'
 import McpFormModal from './McpFormModal.vue'
 import McpConnectionControls from './McpConnectionControls.vue'
-import { mcpAuthLabel, mcpConnectionLabel } from '@/modules/extensions/model/mcpOAuth'
+import { isPersonalMcp, mcpAuthLabel, mcpConnectionLabel } from '@/modules/extensions/model/mcpOAuth'
 import { formatExtensionCardTitle } from '@/modules/extensions/model/extensionDisplayName'
 import { getExtensionIconColor } from '@/shared/lib/extensionIconColor'
+import { getSkillIcon } from '@/shared/lib/skill_icon_utils'
 import { useThemeStore } from '@/shared/model/theme'
 
 const themeStore = useThemeStore()
@@ -210,6 +201,7 @@ async function refreshPreview() {
   const slug = previewServer.value?.slug
   await fetchServers()
   previewServer.value = servers.value.find((server) => server.slug === slug) || null
+  if (!previewServer.value) basicInfoVisible.value = false
 }
 
 const isActionLoading = (server) => actionLoadingSlug.value === server?.slug
@@ -356,7 +348,7 @@ defineExpose({ fetchServers, loading })
 .mcp-basic-info-panel {
   display: flex;
   flex-direction: column;
-  min-height: 0;
+  min-height: 300px;
 }
 
 .mcp-basic-info-header {
@@ -429,13 +421,12 @@ defineExpose({ fetchServers, loading })
 }
 
 .mcp-basic-info-body {
-  min-height: 260px;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 20px;
   max-height: min(56vh, 520px);
-  padding: 14px 16px;
   overflow-y: auto;
-  border: 1px solid var(--gray-150);
-  border-radius: 12px;
-  background: var(--gray-25);
 }
 
 .mcp-basic-info-row {
@@ -457,25 +448,11 @@ defineExpose({ fetchServers, loading })
   }
 }
 
-.mcp-authorization-section {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 16px;
-  margin-top: 24px;
-
-  h3 { margin: 0; color: var(--gray-900); font-size: 14px; font-weight: 600; }
-  p { margin: 4px 0 0; color: var(--gray-500); font-size: 12px; line-height: 20px; }
-}
-
-.mcp-authorization-copy { flex: 1 1 240px; min-width: 0; }
-
 .mcp-basic-info-footer {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  margin-top: 12px;
+  margin-top: 20px;
 }
 </style>

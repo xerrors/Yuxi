@@ -71,7 +71,7 @@ async def test_fresh_app_and_rerun_preserve_admin_values_and_shared_files(isolat
     """完整初始化可重复执行，代码拥有的文件收敛且管理员字段保留。"""
     manager, engine, root = isolated_app
     await app_init.main()
-    assert await get_schema_versions(manager) == {"business": 1, "knowledge": 2}
+    assert await get_schema_versions(manager) == {"business": 2, "knowledge": 2}
     before = await persisted_facts(engine, root)
     async with engine.begin() as conn:
         await conn.execute(text("UPDATE config_options SET value='{\"admin\":\"preserve-this-value\"}', updated_by='admin-sentinel'"))
@@ -114,7 +114,7 @@ async def test_failed_shared_stage_preserves_schema_and_retry_finishes(isolated_
     monkeypatch.setattr(app_init, "init_builtin_skills", AsyncMock(side_effect=OSError("fixture storage unavailable")))
     with pytest.raises(OSError, match="fixture storage unavailable"):
         await app_init.main()
-    assert await get_schema_versions(manager) == {"business": 1, "knowledge": 2}
+    assert await get_schema_versions(manager) == {"business": 2, "knowledge": 2}
     async with engine.begin() as conn:
         assert await conn.scalar(text("SELECT count(*) FROM agents")) > 0
         await conn.execute(text("INSERT INTO knowledge_bases (kb_id,name,kb_type) VALUES ('retained','Retained','milvus')"))
@@ -166,7 +166,7 @@ async def test_existing_schema_initializes_in_a_cold_process(isolated_app):
             assert "InvalidRequestError" in result.stderr and "Project" in result.stderr
         else:
             assert result.returncode == 0, result.stderr
-    assert await get_schema_versions(manager) == {"business": 1, "knowledge": 2}
+    assert await get_schema_versions(manager) == {"business": 2, "knowledge": 2}
     await persisted_facts(engine, root)
 
 
@@ -248,7 +248,7 @@ async def test_mineru_upgrade_persists_tier_without_overwriting_admin_fields(iso
         assert (
             await conn.execute(text("SELECT value, updated_by, updated_at FROM config_options WHERE key='mineru_ocr_host_opts'"))
         ).one() == row
-    assert await get_schema_versions(manager) == {"business": 1, "knowledge": 2}
+    assert await get_schema_versions(manager) == {"business": 2, "knowledge": 2}
 
 
 async def test_invalid_legacy_mineru_config_fails_without_replacing_value(isolated_app):

@@ -10,7 +10,7 @@ from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.extensions.mcp.builtin import BUILTIN_MCP_DEFAULTS, BUILTIN_MCP_MANIFEST, builtin_mcp_available
 from yuxi.modules.extensions.mcp.config import RemoteMCPConfig, normalize_mcp_manifest_entry
 from yuxi.modules.extensions.mcp.models import MCPServer
-from yuxi.modules.extensions.mcp.oauth_config import config_revision, configure_mcp_auth
+from yuxi.modules.extensions.mcp.oauth_config import PERSONAL_AUTH_MODES, config_revision, configure_mcp_auth
 from yuxi.modules.extensions.mcp.oauth_runtime import personal_mcp_tools
 from yuxi.modules.extensions.mcp.repository import (
     delete_mcp_server_row,
@@ -141,11 +141,11 @@ async def get_mcp_tools(
     else:
         servers = await get_enabled_mcp_servers(names=[server_slug])
         server = servers[0] if servers else None
-        if server is not None and getattr(server, "auth_mode", "headers") != "headers":
+        if server is not None and server.auth_mode not in {"headers", "none"}:
             raise ValueError("个人授权或平台委托的 MCP 必须经可信用户身份加载")
         config = _to_runtime_mcp_config(server) if server is not None else None
-    if config and config.get("auth_mode") == "oauth":
-        raise ValueError("个人 OAuth MCP 必须经可信用户身份加载")
+    if config and config.get("auth_mode") in PERSONAL_AUTH_MODES:
+        raise ValueError("个人 MCP 必须经可信用户身份加载")
     if config and config.get("auth_mode") == "delegation":
         raise ValueError("平台委托 MCP 由 Agent 运行时按当前用户装配，不支持共享连接加载")
     if config and "auth" in config:
@@ -171,6 +171,7 @@ async def create_mcp_server(
     created_by: str = None,
     auth_mode: str = "headers",
     oauth_config: dict | None = None,
+    api_key_header: str | None = None,
 ) -> MCPServer:
     """创建并独立发布远程 MCP 配置。"""
     if slug in BUILTIN_MCP_SERVERS:
@@ -198,7 +199,7 @@ async def create_mcp_server(
         created_by=created_by,
         updated_by=created_by,
     )
-    configure_mcp_auth(server, auth_mode, oauth_config)
+    configure_mcp_auth(server, auth_mode, oauth_config, api_key_header)
     await save_mcp_server(db, server, new=True)
     await db.commit()
     await db.refresh(server)
@@ -219,9 +220,10 @@ async def update_mcp_server(
     updated_by: str = None,
     auth_mode: str | None = None,
     oauth_config: dict | None = None,
+    api_key_header: str | None = None,
 ) -> MCPServer:
-    """Update server configuration."""
-    server = await get_mcp_server(db, slug)
+    """在服务锁内更新配置，并使旧修订的个人连接失效。"""
+    server = await get_mcp_server(db, slug, lock=True)
     if not server:
         raise MCPServerNotFoundError(f"Server '{slug}' does not exist")
     if is_builtin_mcp_server(server):
@@ -246,7 +248,7 @@ async def update_mcp_server(
     if updated_by is not None:
         server.updated_by = updated_by
 
-    configure_mcp_auth(server, auth_mode or server.auth_mode or "headers", oauth_config)
+    configure_mcp_auth(server, auth_mode or server.auth_mode or "headers", oauth_config, api_key_header)
     if config_revision(server) != previous_revision:
         await invalidate_mcp_connections(db, server.id)
     await db.commit()
@@ -368,7 +370,7 @@ async def resolve_runtime_mcp_tools(
     async def load(server):
         """隔离单服务发现故障，日志和提示只包含安全原因。"""
         try:
-            if server.auth_mode == "oauth":
+            if server.auth_mode in PERSONAL_AUTH_MODES:
                 return await personal_mcp_tools(server, uid, include_disabled=True)
             config = _to_runtime_mcp_config(server)
             if server.auth_mode == "delegation":
@@ -411,6 +413,8 @@ def runtime_mcp_failure(exc: Exception) -> tuple[str, bool]:
     if isinstance(exc, KnowledgeMCPRuntimeError):
         return "运行上下文缺少可信知识库范围，能力未装配", True
     if isinstance(exc, StateConflictError):
+        if exc.code == "mcp_remote_forbidden":
+            return "MCP 服务方权限不足，请检查个人账号权限", False
         if exc.code == "mcp_oauth_unconfigured":
             return "部署未配置有效的 MCP 凭据加密密钥，请联系管理员", True
         if exc.code == "mcp_reconnect_required":
@@ -448,12 +452,12 @@ async def personal_connection_states(db: AsyncSession, servers: list[MCPServer],
 
 
 async def get_enabled_mcp_tools(server_slug: str, *, uid: str | None = None) -> list:
-    """单服务执行入口仅装配共享 headers 与个人 OAuth；委托经运行装配。"""
+    """单服务按当前用户装配个人凭证，无认证与共享连接沿用现有路径。"""
     servers = await get_enabled_mcp_servers(names=[server_slug])
     if not servers:
         return []
     server = servers[0]
-    if server.auth_mode == "oauth":
+    if server.auth_mode in PERSONAL_AUTH_MODES:
         return await personal_mcp_tools(server, uid)
     if server.auth_mode == "delegation":
         raise ValueError("平台委托 MCP 由 Agent 运行时按当前用户装配，不支持单服务直接加载")
@@ -476,7 +480,7 @@ async def inspect_mcp_server_tools(server: MCPServer, *, uid: str | None = None)
     """管理端严格建连，包括停用服务；不吞异常、不修改运行状态。"""
     if not builtin_mcp_available(server.slug):
         raise ValueError("MCP 服务在当前部署不可用")
-    if getattr(server, "auth_mode", "headers") == "oauth":
+    if server.auth_mode in PERSONAL_AUTH_MODES:
         return await personal_mcp_tools(server, uid, include_disabled=True)
     config = _to_runtime_mcp_config(server)
     config["auth"] = None
@@ -504,8 +508,8 @@ def _to_runtime_mcp_config(server: MCPServer) -> dict[str, Any]:
     """生成运行时 MCP 配置，内置连接字段始终以代码定义为准。"""
     if not is_builtin_mcp_server(server):
         config = server.to_mcp_config()
-        if getattr(server, "auth_mode", "headers") == "oauth":
-            config["auth_mode"] = "oauth"
+        if server.auth_mode != "headers":
+            config["auth_mode"] = server.auth_mode
         return config
 
     builtin = normalize_mcp_manifest_entry(server.slug, BUILTIN_MCP_SERVERS[server.slug])

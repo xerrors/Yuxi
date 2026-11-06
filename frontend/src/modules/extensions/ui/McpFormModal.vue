@@ -54,11 +54,31 @@
           </a-select>
         </a-form-item>
       </div>
-      <a-form-item label="认证方式" html-for="mcp-oauth-auth-mode">
-        <a-select id="mcp-oauth-auth-mode" v-model:value="form.auth_mode">
-          <a-select-option value="headers">共享请求头 / API Key</a-select-option>
-          <a-select-option value="oauth">每名用户 OAuth 授权</a-select-option>
+      <a-form-item label="接入方式" html-for="mcp-oauth-auth-mode" required>
+        <a-select id="mcp-oauth-auth-mode" v-model:value="form.auth_mode" placeholder="请选择接入方式">
+          <a-select-option value="none">无需认证</a-select-option>
+          <a-select-opt-group label="用户各自提供凭证">
+            <a-select-option value="bearer">每名用户填写 Bearer Token</a-select-option>
+            <a-select-option value="api_key">每名用户填写 API Key</a-select-option>
+            <a-select-option value="oauth">每名用户 OAuth 授权</a-select-option>
+          </a-select-opt-group>
+          <a-select-opt-group label="管理员统一提供凭证">
+            <a-select-option value="headers">共享请求头（所有用户共用）</a-select-option>
+          </a-select-opt-group>
         </a-select>
+        <p v-if="authDescription" class="form-hint">{{ authDescription }}</p>
+        <p v-if="clearsSharedHeaders" class="form-hint">保存时清除原共享请求头，每名用户需要配置自己的凭证。</p>
+      </a-form-item>
+      <a-form-item v-if="form.auth_mode === 'headers'" label="共享请求头（JSON）" html-for="mcp-form-headers">
+        <a-textarea id="mcp-form-headers" v-model:value="form.headersText" placeholder='{"Authorization": "Bearer 你的共享 Token"}' :rows="3" aria-describedby="mcp-shared-headers-hint" />
+        <div id="mcp-shared-headers-hint" class="form-hint">
+          <p>Bearer Token 示例：<code>{"Authorization": "Bearer &lt;Token&gt;"}</code></p>
+          <p>API Key 示例：<code>{"X-API-Key": "&lt;Key&gt;"}</code>，请求头名称以服务文档为准。</p>
+        </div>
+      </a-form-item>
+      <a-form-item v-if="form.auth_mode === 'api_key'" label="认证请求头名称" html-for="mcp-api-key-header" required>
+        <a-input id="mcp-api-key-header" v-model:value="form.api_key_header" placeholder="X-API-Key" :maxlength="128" />
+        <p class="form-hint">按服务文档填写，例如 X-API-Key 或 X-Tencent-Meeting-Token。用户只需填写原始 Key 或 Token。</p>
       </a-form-item>
       <template v-if="form.auth_mode === 'oauth'">
         <div class="mcp-form-grid oauth-row">
@@ -89,15 +109,15 @@
         >
           <ChevronRight :size="14" aria-hidden="true" />
           <span>高级连接选项</span>
-          <span class="connection-options-hint">请求头与超时</span>
+          <span class="connection-options-hint">{{ form.auth_mode === 'headers' ? '超时设置' : '公共请求头与超时' }}</span>
         </button>
         <CollapseTransition>
           <div v-show="connectionOptionsOpen" id="mcp-connection-options-content" class="connection-options-content">
-            <a-form-item label="HTTP 请求头" html-for="mcp-form-headers" class="form-item">
+            <a-form-item v-if="form.auth_mode !== 'headers'" label="公共请求头（可选）" html-for="mcp-form-headers" class="form-item">
               <a-textarea
                 id="mcp-form-headers"
                 v-model:value="form.headersText"
-                placeholder='JSON 格式，如：{"Authorization": "Bearer <token>"}'
+                placeholder="JSON 格式，仅填写服务要求的版本号等非敏感协议字段"
                 :rows="3"
               />
             </a-form-item>
@@ -143,7 +163,7 @@ const visible = computed({
 /** 创建独立的空表单，供首次初始化与新增重置使用。 */
 function createEmptyForm() {
   return {
-    auth_mode: 'headers', issuer_url: '', registration: 'static', client_id: '', client_secret: '', clear_client_secret: false, scopes: '',
+    auth_mode: undefined, api_key_header: 'X-API-Key', issuer_url: '', registration: 'static', client_id: '', client_secret: '', clear_client_secret: false, scopes: '',
     slug: '',
     name: '',
     description: '',
@@ -156,6 +176,18 @@ function createEmptyForm() {
 }
 
 const form = reactive(createEmptyForm())
+const authDescription = computed(() => ({
+  none: '适用于公开服务，调用时不发送认证凭证。',
+  bearer: '每位用户在 MCP 卡片填写自己的 Token，系统通过 Authorization: Bearer 发送。',
+  api_key: '管理员指定认证请求头名称，每位用户在 MCP 卡片填写自己的 Key 或 Token。',
+  oauth: '管理员登记应用信息，每位用户在 MCP 卡片登录并授权自己的服务账号。',
+  headers: '管理员在下方填写凭证。所有人的请求都会使用这组请求头，访问同一个服务账号。',
+})[form.auth_mode])
+const clearsSharedHeaders = computed(() => props.editMode && (props.editData?.auth_mode || 'headers') === 'headers' && ['bearer', 'api_key', 'oauth'].includes(form.auth_mode))
+
+watch(() => form.auth_mode, (mode, previous) => {
+  if (previous === 'headers' && ['bearer', 'api_key', 'oauth'].includes(mode)) form.headersText = ''
+}, { flush: 'sync' })
 
 watch(
   () => props.open,
@@ -164,6 +196,7 @@ watch(
     if (val && props.editData) {
       Object.assign(form, {
         auth_mode: props.editData.auth_mode || 'headers',
+        api_key_header: props.editData.api_key_header || 'X-API-Key',
         issuer_url: props.editData.oauth_config?.issuer_url || '',
         registration: props.editData.oauth_config?.registration || 'static',
         client_id: props.editData.oauth_config?.client_id || '',
@@ -207,6 +240,14 @@ const handleFormSubmit = async () => {
       message.error('MCP 名称不能为空')
       return
     }
+    if (!form.auth_mode) {
+      message.error('请选择接入方式')
+      return
+    }
+    if (form.auth_mode === 'api_key' && !form.api_key_header?.trim()) {
+      message.error('API Key 请求头名称不能为空')
+      return
+    }
     const entry = {
       type: form.transport,
       url: form.url,
@@ -220,6 +261,7 @@ const handleFormSubmit = async () => {
     }
     const [data] = parseMcpManifest(JSON.stringify({ mcpServers: { [form.slug]: entry } }))
     data.auth_mode = form.auth_mode
+    if (form.auth_mode === 'api_key') data.api_key_header = form.api_key_header
     if (form.auth_mode === 'oauth') {
       data.oauth_config = {
         issuer_url: form.issuer_url, registration: form.registration, client_id: form.client_id,
@@ -297,6 +339,17 @@ const handleFormSubmit = async () => {
 
   :deep(.ant-input-number), :deep(.ant-select) { width: 100%; }
   :deep(.ant-form-item-label > label) { color: var(--gray-800); font-size: 13px; }
+}
+
+.form-hint {
+  margin: 6px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+
+  p { margin: 0; }
+  code { color: var(--gray-800); font-size: inherit; }
 }
 
 .mcp-secret-heading {

@@ -16,7 +16,7 @@ Yuxi 是一个面向 RAG、知识图谱和多智能体工作流的知识库平�
 - `api`：FastAPI API 服务，挂载 `backend/yuxi` 和测试目录；API 与 worker 的源码修改通过显式重启生效。
 - `worker`：ARQ worker，执行已经派发的 AgentRun 与注册的 后台作业，并周期触发用户自建 Agent 定时任务；三者分别使用 PostgreSQL 中的运行租约、任务租约和调度锁闭合并发与恢复。
 - `storage-init`：无网络的一次性进程，准备 API/worker/app-init 与 Milvus 挂载根的属主和模式，不递归修改已有文件；消费进程等待其成功退出。
-- `app-init`：普通用户运行的部署任务，在 PostgreSQL advisory lock 内先建立或校验当前 Schema，再同步系统配置定义、内置供应商、Agent、MCP 与 Skill 来源文件。API 与 worker 等待全部成功。空库基线为 business 1、knowledge 2，直接包含个人 MCP 授权表、128 位用户归属字段及当前约束。当前版本跳过结构初始化，其他版本明确拒绝；历史部署的结构调整由部署侧显式完成；知识域 v1 路径目录通过离线审计/转换入口升级 v2，运行进程不自动迁移。共享同步失败保留已提交内容，修正后幂等重跑。
+- `app-init`：普通用户运行的部署任务，在 PostgreSQL advisory lock 内先建立或校验当前 Schema，再同步系统配置定义、内置供应商、Agent、MCP 与 Skill 来源文件。API 与 worker 等待全部成功。空库基线为 business 2、knowledge 2，直接包含个人 MCP 授权表、128 位用户归属字段及当前约束。当前版本跳过结构初始化，其他版本明确拒绝；历史部署的结构调整由部署侧显式完成；知识域 v1 路径目录通过离线审计/转换入口升级 v2，运行进程不自动迁移。共享同步失败保留已提交内容，修正后幂等重跑。
 - Cube Linux/KVM 执行节点：每个用户拥有一个持久普通账号 VM，Workspace 与授权 Skills 共享宿主文件。
 - `sandbox-runner`：选择 container 后端时由该独立进程持有 Docker socket，为每个 Run 懒创建临时容器并执行命令；API/worker 只调用认证 HTTP。挂载、镜像和资源限制由 runner 拥有，Run 归属与清理责任仍由 PostgreSQL 拥有。
 - `postgres`：业务数据、知识库元数据、持久 Input 队列、Turn/Run 与 LangGraph checkpoint。
@@ -51,7 +51,7 @@ Yuxi 默认交付完整知识能力。部署开关 `YUXI_KNOWLEDGE_ENABLED` 由�
 - `modules/identity` 拥有用户、部门、权限、凭据与 OIDC 账号用例，以及 Public API 的 Key 校验与 App/end_user 身份解析；`modules/extensions` 拥有 Skills、MCP 与工具目录；`modules/models` 拥有模型适配和供应商配置。
 - `modules/schedules` 拥有用户定时 Agent 定义和 occurrence；`modules/background_jobs` 拥有任务登记、执行方上报的观察记录和取消意图；后台作业模块的 dispatch 与 registry 拥有提交和定义，`workers` 拥有领取、执行和失联维护；`modules/system` 拥有系统配置、Dashboard 与跨域共享资源所有权治理。
 
-`modules/extensions/mcp` 拥有远程服务器、个人 OAuth 连接和加密凭据。超管固定授权服务器信任根，浏览器事务绑定用户、浏览器和配置修订；回调结果由当前 JWT 用户确认后发布。PostgreSQL 连接行锁串行化刷新与断开，世代阻止旧回调恢复授权。MCP service 根据可信 runtime uid 统一解析本人的 MCP 可用性；Agent 与 Skill 只消费可用服务和工具，未连接时保持普通聊天可用，相关 Skill 依赖在执行边界关闭。工具目录归本次 Run 的 Context，服务按需发现一次后在运行内复用，新 Run 重新发现；每次出站复查当前用户、配置、工具和连接。 配置、协议、授权事务与个人 HTTP 适配分属对应模块，具体链路和适配边界见 [MCP 授权与运行身份](docs/mechanisms/mcp.md)。
+`modules/extensions/mcp` 拥有远程服务器、个人 OAuth/静态凭证连接和加密存储。超管固定授权服务器信任根，浏览器事务绑定用户、浏览器和配置修订；回调结果由当前 JWT 用户确认后发布。PostgreSQL 连接行锁串行化刷新与断开，世代阻止旧回调恢复授权。MCP service 根据可信 runtime uid 统一解析本人的 MCP 可用性；Agent 与 Skill 只消费可用服务和工具，未连接时保持普通聊天可用，相关 Skill 依赖在执行边界关闭。工具目录归本次 Run 的 Context，服务按需发现一次后在运行内复用，新 Run 重新发现；每次出站复查当前用户、配置、工具和连接。 配置、协议、授权事务与个人 HTTP 适配分属对应模块，具体链路和适配边界见 [MCP 授权与运行身份](docs/mechanisms/mcp.md)。
 
 `modules/extensions/web` 拥有网络搜索、网页抓取与供应商适配；工具和管理员测试复用同一服务，每次调用读取当前有效配置，未配置的能力不进入运行工具集合。凭据与默认供应商复用 system 的持久设置和脱敏边界。
 
@@ -84,7 +84,7 @@ Yuxi 默认交付完整知识能力。部署开关 `YUXI_KNOWLEDGE_ENABLED` 由�
 - `apis` 是集中 HTTP 边界，复用 `base.js` 的请求、鉴权和错误处理。模块不能依赖 app/pages，shared 不能依赖业务模块或 API；ESLint 检查别名、相对路径和动态导入。跨模块只使用 `modules/<domain>` 的模型/用例公开入口或 `modules/<domain>/ui/**/*.vue` 公开组件，不得直达 `model/` 或其他内部路径。
 - 新 TypeScript 逻辑经 strict 类型检查，build 先执行 typecheck；现有 JavaScript 逐步迁移。sessionRuntime 按 Thread 拥有一份 item 状态，历史分页、SSE 与恢复快照写入同一 reducer，展示按需派生。sessionInput 拥有冻结提交、幂等重试和接收交接；输入队列观察者确认 Input 消费并触发持久运行恢复，共享 runtime 根据当前 Turn 选择唯一运行订阅。SessionWorkspace 负责编辑器草稿、附件消费与面板展示。视图存活期间的草稿分别保留，首次进入 Thread 从持久草稿初始化。独立 Thread 阅读与后续类型迁移见[重构提案](docs/develop-guides/decisions/proposed/2026-09-30-agent-view-frontend-refactor.md)。
 
-`/` 是公开首页；登录后的核心工作区是 `/agent`。`/extensions` 对所有登录用户开放，其中 Skills 与 MCP 个人连接对普通用户可见，知识库和工具仅管理员可见，MCP 配置仅超级管理员可修改；Dashboard 仅超级管理员可访问。后端权限检查始终是最终边界，前端守卫只负责页面体验。
+`/` 是公开首页；登录后的核心工作区是 `/agent`。`/extensions` 对所有登录用户开放，其中 Skills 与 MCP 个人连接对普通用户可见，知识库和工具仅管理员可见，MCP 配置仅超级管理员可修改，Token/API Key/OAuth 凭证由用户分别配置；Dashboard 仅超级管理员可访问。后端权限检查始终是最终边界，前端守卫只负责页面体验。
 
 ## 智能体运行链路
 

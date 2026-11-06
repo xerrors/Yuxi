@@ -1,8 +1,14 @@
-export function mcpConnectionLabel(status) {
-  return ({ connected: '已连接', reconnect_required: '需要重新连接', disconnected: '未连接', not_required: '无需个人授权' })[status] || '未连接'
+export function mcpConnectionLabel(status, mode = 'oauth') {
+  const isStatic = ['bearer', 'api_key'].includes(mode)
+  return ({ connected: isStatic ? '已配置' : '已授权', reconnect_required: isStatic ? '需要更新凭证' : '需要重新授权', disconnected: isStatic ? '未配置' : '未授权', not_required: '无需个人凭证' })[status] || '未配置'
 }
 
 /** 展示连接实际使用的认证方式。 */
 export function mcpAuthLabel(mode) {
-  return ({ headers: '共享凭据', oauth: '个人账号授权', delegation: '内部服务认证' })[mode] || '共享凭据'
+  return ({ none: '无需认证', bearer: '个人 Bearer Token', api_key: '个人 API Key', headers: '共享凭证（所有用户共用）', oauth: '个人 OAuth 授权', delegation: '平台委托认证' })[mode] || '共享凭证（所有用户共用）'
+}
+
+/** 需要当前用户配置凭证的认证方式。 */
+export function isPersonalMcp(mode) {
+  return ['oauth', 'bearer', 'api_key'].includes(mode)
 }

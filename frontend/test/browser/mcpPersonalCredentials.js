@@ -1,0 +1,132 @@
+// 生产卡片与表单的真实 DOM 验证；固定 HTTP 结果不替代后端隔离测试。
+async page => {
+  const check = (value, reason) => { if (!value) throw new Error(reason) }
+  const origin = page.url().split('/').slice(0, 3).join('/')
+  const rows = [['bearer', 'Token 服务'], ['api_key', 'API Key 服务'], ['oauth', 'OAuth 服务'], ['none', '公开服务'], ['headers', '共享服务'], ['delegation', '平台服务']].map(([auth_mode, name]) => ({
+    slug: auth_mode, name, auth_mode, enabled: true, can_manage: false,
+    connection_status: ['bearer', 'api_key', 'oauth'].includes(auth_mode) ? 'disconnected' : 'not_required', config_revision: 'a'.repeat(64), api_key_header: auth_mode === 'api_key' ? 'X-API-Key' : null
+  }))
+  const writes = [], creates = []
+  let failSave = true, tests = 0, admin = false
+  await page.route('**/api/**', async route => {
+    const request = route.request(), path = '/' + request.url().split('/').slice(3).join('/').split('?')[0]
+    const respond = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
+    if (path === '/api/system/mcp-servers' && request.method() === 'GET') return respond({ success: true, data: rows.filter(row => admin || row.enabled || ['connected', 'reconnect_required'].includes(row.connection_status)).map(row => ({ ...row, can_manage: admin })) })
+    if (path === '/api/system/mcp-servers' && request.method() === 'POST') { creates.push(request.postDataJSON()); return respond({ success: true, data: { slug: creates.at(-1).slug } }) }
+    const row = rows.find(item => path.includes(`/${item.slug}/`))
+    if (row && path.endsWith('/connection') && request.method() === 'PUT') {
+      if (failSave) { failSave = false; return respond({ detail: '保存失败，请重试' }, 409) }
+      writes.push(request.postDataJSON()); row.connection_status = 'connected'
+      return respond({ success: true, connection_status: 'connected' })
+    }
+    if (row && path.endsWith('/connection') && request.method() === 'DELETE') { row.connection_status = 'disconnected'; return respond({ success: true }) }
+    if (path.endsWith('/test')) { tests++; return respond({ success: true, tool_count: 0 }) }
+    return respond({})
+  })
+  await page.goto(`${origin}/test/browser/fixtures/mcpPersonalCredentials.html`)
+  const open = async name => page.getByRole('button', { name: `查看 ${name}`, exact: true }).click()
+  const credentialAction = async name => {
+    await page.getByRole('button', { name: '更多凭证操作', exact: true }).click()
+    await page.getByRole('menuitem', { name, exact: true }).click()
+  }
+  const close = async () => {
+    await page.getByRole('button', { name: 'Close', exact: true }).click()
+    await page.locator('.mcp-basic-info-panel').waitFor({ state: 'detached' })
+  }
+  await open('Token 服务')
+  const input = page.locator('#mcp-personal-secret-bearer')
+  await input.fill('fixture-personal-token')
+  await page.getByRole('button', { name: '保存凭证' }).click()
+  await page.getByRole('alert').getByText('保存失败，请重试').waitFor()
+  check(await input.inputValue() === 'fixture-personal-token', '保存失败丢失草稿')
+  await page.screenshot({ path: '/tmp/yuxi-mcp-personal-error.png', animations: 'disabled' })
+  await page.getByRole('button', { name: '保存凭证' }).click()
+  await page.getByRole('button', { name: '测试连接', exact: true }).waitFor()
+  check(tests === 0 && writes.length === 1, '保存自动发起测试')
+  check(await page.getByRole('button', { name: '替换凭证', exact: true }).count() === 0, '替换凭证仍作为并列按钮')
+  check(await page.getByRole('button', { name: '清除凭证', exact: true }).count() === 0, '清除凭证仍作为并列按钮')
+  check(await page.locator('.mcp-connection-actions .ant-btn-group').count() === 1, '凭证操作未组合为按钮组')
+  await page.getByRole('button', { name: '更多凭证操作', exact: true }).click()
+  await page.getByRole('menuitem', { name: '替换凭证', exact: true }).waitFor()
+  await page.keyboard.press('Escape')
+  await page.getByRole('menuitem', { name: '替换凭证', exact: true }).waitFor({ state: 'hidden' })
+  check(await page.locator('.mcp-basic-info-panel').isVisible(), '关闭凭证菜单同时关闭了弹窗')
+  await credentialAction('替换凭证')
+  check(await input.inputValue() === '', '秘密被回填')
+  check(await page.getByRole('button', { name: '测试连接', exact: true }).count() === 0, '编辑草稿时仍可测试旧凭证')
+  check(await page.getByRole('button', { name: '清除凭证', exact: true }).count() === 0, '编辑草稿时显示清除操作')
+  await input.fill('cancelled-secret')
+  await page.getByRole('button', { name: /取\s*消/, exact: true }).click()
+  check(writes.length === 1, '取消修改了持久凭证')
+  await page.getByRole('button', { name: '测试连接' }).click()
+  await page.getByRole('button', { name: '连接正常', exact: true }).waitFor()
+  check(await page.locator('.mcp-connection-result').count() === 0, '测试成功仍显示独立文本')
+  check(tests === 1, '零工具发现未被接受')
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await page.screenshot({ path: '/tmp/yuxi-mcp-personal-light.png', animations: 'disabled' })
+  await page.evaluate(() => window.mcpFixture.theme.setTheme('dark'))
+  await page.screenshot({ path: '/tmp/yuxi-mcp-personal-dark.png', animations: 'disabled' })
+  for (const width of [1024, 768]) {
+    await page.setViewportSize({ width, height: 900 })
+    check(await page.locator('.mcp-basic-info-panel').evaluate(el => el.scrollWidth <= el.clientWidth + 1), '窄屏溢出')
+    check(await page.locator('.mcp-connection-actions').evaluate(el => el.scrollWidth <= el.clientWidth + 1), '凭证操作溢出')
+    const heading = await page.locator('.mcp-connection-heading').boundingBox()
+    const actions = await page.locator('.mcp-connection-actions').boundingBox()
+    check(actions.x > heading.x + heading.width && actions.y < heading.y + heading.height, '凭证操作未在右侧与标题区对齐')
+  }
+  await page.screenshot({ path: '/tmp/yuxi-mcp-personal-narrow.png', animations: 'disabled' })
+  await credentialAction('替换凭证')
+  check(await page.getByRole('button', { name: '连接正常', exact: true }).count() === 0, '旧测试结果被展示为草稿状态')
+  await page.getByRole('button', { name: /取\s*消/, exact: true }).click()
+  await close()
+  await open('API Key 服务')
+  await page.getByText('填写服务方提供的 API Key，发送到 X-API-Key').waitFor()
+  check(await page.locator('#mcp-personal-secret-api_key').getAttribute('type') === 'password', 'API Key 未使用密码输入框')
+  await close()
+  await open('OAuth 服务')
+  check(await page.locator('.mcp-personal-connection input').count() === 0, 'OAuth 显示静态凭证框')
+  await page.getByRole('button', { name: /授\s*权/, exact: true }).waitFor()
+  await close()
+  for (const name of ['公开服务', '共享服务', '平台服务']) {
+    await open(name)
+    check(await page.locator('.mcp-personal-connection').count() === 0, '非个人方式显示凭证框')
+    check((await page.locator('.mcp-basic-info-panel').boundingBox()).height >= 300, '预览弹窗内容较少时高度塌缩')
+    await close()
+  }
+  rows[0].enabled = false
+  await page.getByRole('button', { name: '刷新 MCP' }).click()
+  await open('Token 服务')
+  check(await page.locator('.mcp-personal-connection input').count() === 0, '停用后仍可填写')
+  check(await page.getByRole('button', { name: '测试连接' }).isDisabled(), '停用后仍可测试')
+  await credentialAction('清除凭证')
+  await page.getByRole('button', { name: '查看 Token 服务', exact: true }).waitFor({ state: 'hidden' })
+  await page.locator('.mcp-basic-info-panel').waitFor({ state: 'detached' })
+  admin = true
+  await page.evaluate(() => { window.mcpFixture.user.userRole = 'superadmin' })
+  await page.getByRole('button', { name: '新增服务' }).click()
+  await page.locator('#mcp-form-name').fill('个人文档')
+  await page.locator('#mcp-form-slug').fill('personal-docs')
+  await page.locator('#mcp-form-url').fill('https://example.com/mcp')
+  const selectMode = async label => { await page.locator('.ant-select-selector').filter({ has: page.locator('#mcp-oauth-auth-mode') }).click(); await page.getByText(label, { exact: true }).last().click() }
+  await selectMode('共享请求头（所有用户共用）')
+  const sharedHeaders = page.locator('#mcp-form-headers')
+  check(await sharedHeaders.isVisible(), '共享凭证仍藏在高级选项里')
+  check(await page.locator('#mcp-connection-options-content #mcp-form-headers').count() === 0, '共享凭证输入仍属于高级选项')
+  await sharedHeaders.fill(JSON.stringify({ Authorization: 'Bearer fixture-shared-token' }))
+  await page.evaluate(() => window.mcpFixture.theme.setTheme('light'))
+  await page.locator('.mcp-form-modal .ant-modal-content').screenshot({ path: '/tmp/yuxi-mcp-auth-shared-light.png', animations: 'disabled' })
+  await page.evaluate(() => window.mcpFixture.theme.setTheme('dark'))
+  await page.locator('.mcp-form-modal .ant-modal-content').screenshot({ path: '/tmp/yuxi-mcp-auth-shared-dark.png', animations: 'disabled' })
+  await selectMode('每名用户 OAuth 授权')
+  await page.locator('#mcp-oauth-issuer').waitFor()
+  check(await page.locator('#mcp-form-headers').inputValue() === '', '切换个人方式保留了共享秘密')
+  check(await page.locator('#mcp-api-key-header').count() === 0, 'OAuth 显示 Key 请求头')
+  await selectMode('每名用户填写 API Key')
+  await page.locator('#mcp-api-key-header').waitFor()
+  check(await page.locator('#mcp-oauth-issuer').count() === 0, 'API Key 显示 OAuth 配置')
+  await page.getByRole('button', { name: /^(确\s*定|OK)$/ }).click()
+  await page.locator('#mcp-form-slug').waitFor({ state: 'hidden' })
+  check(creates[0].api_key_header === 'X-API-Key' && !creates[0].oauth_config, '管理员提交错误字段')
+  await page.unroute('**/api/**')
+  return { saved: writes.length, connectionTests: tests, administratorCreates: creates.length, screenshots: 6 }
+}

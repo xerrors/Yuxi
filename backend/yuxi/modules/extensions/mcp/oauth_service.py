@@ -7,7 +7,17 @@ from datetime import timedelta
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from yuxi.modules.extensions.mcp.models import MCPOAuthAttempt
-from yuxi.modules.extensions.mcp.oauth_config import MCPOAuthConfig, cipher, config_revision, decrypt, encrypt, origin, redirect_uri
+from yuxi.modules.extensions.mcp.oauth_config import (
+    PERSONAL_AUTH_MODES,
+    STATIC_AUTH_MODES,
+    MCPOAuthConfig,
+    cipher,
+    config_revision,
+    decrypt,
+    encrypt,
+    origin,
+    redirect_uri,
+)
 from yuxi.modules.extensions.mcp.oauth_protocol import (
     OAuthTokenRejected,
     discover,
@@ -43,7 +53,7 @@ def fingerprint(value):
 
 def connection_status(server, connection):
     """状态投影只读取本人的授权事实，不暴露凭据。"""
-    if server.auth_mode != "oauth":
+    if server.auth_mode not in PERSONAL_AUTH_MODES:
         return "not_required"
     if not connection:
         return "disconnected"
@@ -53,10 +63,51 @@ def connection_status(server, connection):
 
 
 class MCPOAuthService:
-    """连接行的世代与行锁拥有发布、撤销和令牌轮换顺序。"""
+    """个人连接复用行锁与世代；OAuth 协议只在授权和刷新时执行。"""
 
     def __init__(self, db):
         self.db = db
+
+    async def save_credentials(self, slug, user_id, secret, revision):
+        """按表单修订发布本人的静态凭证，与配置变更串行提交。"""
+        server = await get_mcp_server(self.db, slug, lock=True)
+        if not server or not server.enabled:
+            raise ResourceNotFoundError("MCP 服务不存在或已停用")
+        if server.auth_mode not in STATIC_AUTH_MODES or config_revision(server) != revision:
+            raise StateConflictError("MCP 配置已改变，请重新打开凭证表单")
+        await active_mcp_user(self.db, user_id=user_id)
+        connection = await mcp_connection(self.db, server.id, user_id, lock=True, create=True)
+        connection.generation += 1
+        connection.credentials = encrypt({"secret": secret})
+        connection.config_revision = revision
+        connection.status, connection.expires_at = "connected", None
+        await self.db.commit()
+        return connection.status
+
+    async def static_credentials(self, slug, uid, *, tool_name=None, expected_revision=None):
+        """每次出站回读本人的静态认证头及其连接世代。"""
+        user, server = await self.require_runtime_policy(slug, uid, None, expected_revision)
+        connection = await mcp_connection(self.db, server.id, user.id, lock=True)
+        _, server = await self.require_runtime_policy(slug, uid, tool_name, expected_revision)
+        if server.auth_mode not in STATIC_AUTH_MODES or not connection or connection_status(server, connection) != "connected":
+            raise StateConflictError("请在扩展 → MCP 配置个人凭证", code="mcp_reconnect_required")
+        secret = decrypt(connection.credentials)["secret"]
+        header = "Authorization" if server.auth_mode == "bearer" else server.api_key_header
+        value = "Bearer " + secret if server.auth_mode == "bearer" else secret
+        generation = connection.generation
+        await self.db.commit()
+        return header, value, generation
+
+    async def reject_credentials(self, slug, uid, generation):
+        """迟到的旧请求不能撤销用户后来替换的静态凭证。"""
+        user = await active_mcp_user(self.db, uid=uid)
+        server = await get_mcp_server(self.db, slug)
+        if not server:
+            return
+        connection = await mcp_connection(self.db, server.id, user.id, lock=True)
+        if connection and connection.generation == generation and connection.status == "connected":
+            connection.status, connection.credentials, connection.expires_at = "reconnect_required", None, None
+            await self.db.commit()
 
     async def start(self, slug, user_id, browser):
         """在远端注册后创建限时事务，浏览器回调不依赖前端 JWT。"""
@@ -194,6 +245,8 @@ class MCPOAuthService:
     async def access_token(self, slug, uid, *, tool_name=None, expected_revision=None):
         """每次出站前读取有效用户与授权，锁内刷新并原子保存轮换令牌。"""
         user, server = await self.require_runtime_policy(slug, uid, None, expected_revision)
+        if server.auth_mode != "oauth":
+            raise StateConflictError("此 MCP 不使用 OAuth")
         connection = await mcp_connection(self.db, server.id, user.id, lock=True)
         # 等待另一个 worker 刷新时策略可能改变；获锁后重新回读。
         _, server = await self.require_runtime_policy(slug, uid, tool_name, expected_revision)
@@ -249,7 +302,7 @@ class MCPOAuthService:
         user, server = policy
         if not server or not server.enabled:
             raise ResourceNotFoundError("MCP 服务不存在或已停用")
-        if server.auth_mode != "oauth":
+        if server.auth_mode not in PERSONAL_AUTH_MODES:
             raise StateConflictError("此 MCP 不需要个人授权")
         if expected_revision is not None and config_revision(server) != expected_revision:
             raise StateConflictError("MCP 配置已改变，请重新运行", code="mcp_reconnect_required")

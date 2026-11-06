@@ -6,9 +6,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.modules.extensions.mcp.models import MCPServer
 
 
-async def get_mcp_server(db: AsyncSession, slug: str) -> MCPServer | None:
-    """Get single server configuration by slug."""
-    result = await db.execute(select(MCPServer).filter(MCPServer.slug == slug).execution_options(populate_existing=True))
+async def get_mcp_server(db: AsyncSession, slug: str, *, lock: bool = False) -> MCPServer | None:
+    """按稳定标识回读配置，凭证发布与配置变更可持有同一服务锁。"""
+    query = select(MCPServer).filter(MCPServer.slug == slug).execution_options(populate_existing=True)
+    if lock:
+        query = query.with_for_update()
+    result = await db.execute(query)
     return result.scalar_one_or_none()
 
 
@@ -175,13 +178,18 @@ async def runtime_mcp_policy(db, slug, uid):
 
 
 async def invalidate_mcp_connections(db, server_id):
-    """配置变更推进所有个人连接世代，旧配置恢复也不能复活授权。"""
-    from sqlalchemy import update
+    """配置变更推进连接世代并清空凭证，保留用户主动清除的状态。"""
+    from sqlalchemy import case, update
 
     from yuxi.modules.extensions.mcp.models import MCPConnection
 
     await db.execute(
         update(MCPConnection)
         .where(MCPConnection.server_id == server_id)
-        .values(generation=MCPConnection.generation + 1, status="reconnect_required", credentials=None, expires_at=None)
+        .values(
+            generation=MCPConnection.generation + 1,
+            status=case((MCPConnection.status == "disconnected", "disconnected"), else_="reconnect_required"),
+            credentials=None,
+            expires_at=None,
+        )
     )

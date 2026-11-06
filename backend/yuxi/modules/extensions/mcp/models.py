@@ -36,6 +36,7 @@ class MCPServer(Base):
     sse_read_timeout = Column(Integer, nullable=True, comment="SSE 读取超时（秒）")
 
     auth_mode = Column(String(20), nullable=False, default="headers", server_default="headers")
+    api_key_header = Column(String(128), nullable=True)
     oauth_config = Column(JSON, nullable=True)
     oauth_secret = Column(Text, nullable=True)
     oauth_registration = Column(Text, nullable=True)
@@ -64,6 +65,7 @@ class MCPServer(Base):
             "url": self.url,
             "headers": self.headers or {},
             "auth_mode": self.auth_mode or "headers",
+            "api_key_header": self.api_key_header,
             "oauth_config": self.oauth_config,
             "oauth_client_secret_set": bool(self.oauth_secret),
             "timeout": self.timeout,

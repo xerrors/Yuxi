@@ -66,13 +66,7 @@
     <template #panel-general>
       <div class="extension-detail-view mcp-general-view">
         <McpFormModal v-model:open="isEditing" :edit-mode="true" :edit-data="server" @submitted="fetchServer" />
-        <section v-if="server.auth_mode === 'oauth'" class="mcp-connection-panel" aria-label="个人授权">
-          <div>
-            <h2>个人授权</h2>
-            <p>智能体将使用你的个人账号访问此服务。</p>
-          </div>
-          <McpConnectionControls :server="server" @changed="fetchServer" />
-        </section>
+        <McpConnectionControls :server="server" @changed="fetchServer" />
 
         <section class="mcp-info-section" aria-label="连接信息">
           <h2>连接信息</h2>
@@ -438,20 +432,6 @@ onMounted(() => {
   dt { color: var(--gray-500); font-size: 12px; }
   dd { min-width: 0; margin: 0; color: var(--gray-800); font-size: 13px; line-height: 22px; overflow-wrap: anywhere; }
   code { font-size: 12px; }
-}
-
-.mcp-connection-panel {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 16px;
-  padding: 16px 20px;
-  border: 1px solid var(--gray-150);
-  border-radius: 10px;
-  background: var(--gray-25);
-
-  p { margin: 4px 0 0; color: var(--gray-500); font-size: 12px; line-height: 20px; }
 }
 
 .mcp-info-section h2 { margin-bottom: 14px; }
