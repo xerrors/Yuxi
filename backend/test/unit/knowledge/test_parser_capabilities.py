@@ -22,7 +22,7 @@ def test_capability_metadata_covers_upload_and_ocr_formats() -> None:
     assert ".webp" in SUPPORTED_FILE_EXTENSIONS
     assert ".doc" not in SUPPORTED_FILE_EXTENSIONS
     assert ".ppt" not in SUPPORTED_FILE_EXTENSIONS
-    assert get_ocr_engines_for_extension("webp") == ("deepseek_ocr",)
+    assert get_ocr_engines_for_extension("webp") == ("deepseek_ocr", "minicpm_ocr")
     assert get_ocr_engines_for_extension("docx") == ()
     assert get_ocr_engines_for_extension("ppt") == ()
     assert is_supported_file_extension("report.PPTX")
@@ -85,6 +85,7 @@ def test_capability_registry_declares_shipping_processors() -> None:
         "mineru_ocr",
         "mineru_official",
         "deepseek_ocr",
+        "minicpm_ocr",
         "paddleocr_vl_1_6",
         "paddleocr_pp_ocrv6",
         "paddleocr_pp_structure_v3",
