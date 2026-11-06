@@ -60,21 +60,28 @@ async function verifyEnterpriseLoginAndWorkspace(page) {
       await page.getByLabel('密码', { exact: true }).fill('example-password')
       await page.getByLabel('确认密码', { exact: true }).fill('different')
       await page.getByRole('button', { name: '创建管理员账户' }).click()
-      await page.locator('.ant-form-item-explain-error').first().waitFor()
+      await page.locator('.ant-message-error').getByText('UID长度必须在3-20个字符之间').waitFor()
     } else {
+      await page.locator('.ant-message-error').getByText(error, { exact: true }).waitFor()
       await page.getByRole('button', { name: '企业统一登录', exact: true }).waitFor()
-      await page.getByText(error, { exact: true }).waitFor()
     }
-    // 等待表单错误展开，按实际内容边界检查，避免只检查按钮是否挂载。
+    if (await page.locator('.error-message').count())
+      throw new Error('登录错误仍渲染在卡片内')
     await page.waitForFunction(() =>
       [...document.getAnimations()].every((animation) => animation.playState !== 'running')
     )
-    const clipped = await page.evaluate(() => {
+    const layout = await page.evaluate(() => {
       const card = document.querySelector('.login-card').getBoundingClientRect()
       const form = document.querySelector('.form-wrapper').getBoundingClientRect()
-      return form.top < card.top || form.bottom > card.bottom
+      return {
+        width: Math.round(card.width),
+        height: Math.round(card.height),
+        clipped: form.top < card.top - 1 || form.bottom > card.bottom + 1
+      }
     })
-    if (clipped) throw new Error('登录表单及错误信息被登录卡片裁切')
+    if (layout.width !== 900 || layout.height !== 560)
+      throw new Error(`登录卡片尺寸不是 900×560：${layout.width}×${layout.height}`)
+    if (layout.clipped) throw new Error('登录表单被固定尺寸的登录卡片裁切')
     await page.screenshot({
       path: initializing ? '/tmp/yuxi-initialize-validation.png' : '/tmp/yuxi-login-error.png',
       fullPage: true
@@ -84,8 +91,8 @@ async function verifyEnterpriseLoginAndWorkspace(page) {
     passed: [
       'OIDC and password entries',
       'optional SSO hidden',
-      'OIDC error remains inside card at 800×600',
-      'initialization validation remains inside card at 800×600'
+      'OIDC error uses message at fixed 900×560 card',
+      'initialization validation uses message at fixed 900×560 card'
     ]
   }
 }

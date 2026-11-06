@@ -10,26 +10,36 @@ const PAGE_SIZE = 100
 export const useChatThreadsStore = defineStore('chatThreads', () => {
   const threads = ref([])
   const currentThreadId = ref(null)
-  const userStore = useUserStore()
-  // 切换账号只清理内存选择，不改写任一账号已保存的导航目标。
-  watch(
-    () => userStore.userId,
-    () => { currentThreadId.value = null },
-    { flush: 'sync' }
-  )
+  const hasLoadedThreads = ref(false)
+  const threadsLoadError = ref('')
   const threadCreationInFlight = ref(false)
   const hasMoreThreads = ref(true)
+  const isLoadingMoreThreads = ref(false)
+  const userStore = useUserStore()
   let after = null
   let threadListOperation = Promise.resolve()
-
+  let threadListGeneration = 0
+  // 切换账号重置列表状态，避免旧请求覆盖新账号的导航。
+  watch(
+    () => userStore.userId,
+    () => {
+      threadListGeneration += 1
+      threads.value = []
+      currentThreadId.value = null
+      hasLoadedThreads.value = false
+      threadsLoadError.value = ''
+      hasMoreThreads.value = true
+      isLoadingMoreThreads.value = false
+      after = null
+    },
+    { flush: 'sync' }
+  )
   /** 列表读取与写操作串行，保持当前页和选中会话一致。 */
   const withThreadListUpdate = (operation) => {
     const next = threadListOperation.catch(() => {}).then(operation)
     threadListOperation = next
     return next
   }
-  const isLoadingMoreThreads = ref(false)
-
   const currentThread = computed(() => {
     if (!currentThreadId.value) return null
     return threads.value.find((thread) => thread.id === currentThreadId.value) || null
@@ -68,23 +78,29 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
 
   const markThreadViewed = async (threadId) => {
     if (!threadId) return
+    const currentGeneration = threadListGeneration
     try {
       const updatedThread = await threadApi.markThreadViewed(threadId)
+      if (currentGeneration !== threadListGeneration) return null
       upsertThread(updatedThread)
       return updatedThread
     } catch (error) {
+      if (currentGeneration !== threadListGeneration) return null
       console.warn(`Failed to mark thread viewed: ${threadId}`, error)
       return null
     }
   }
 
-  const syncThreadStatuses = async (agentId = null) =>
-    withThreadListUpdate(async () => {
+  const syncThreadStatuses = async (agentId = null) => {
+    const currentGeneration = threadListGeneration
+    return withThreadListUpdate(async () => {
+      if (currentGeneration !== threadListGeneration) return
       try {
         const [page, pinnedThreads] = await Promise.all([
           threadApi.getThreads(agentId, PAGE_SIZE),
           fetchPinnedThreads(agentId)
         ])
+        if (currentGeneration !== threadListGeneration) return
         const statusById = new Map(
           [...page.data, ...pinnedThreads].map((thread) => [thread.id, thread])
         )
@@ -98,17 +114,23 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
           }
         })
       } catch (error) {
+        if (currentGeneration !== threadListGeneration) return
         console.warn('Failed to sync thread statuses:', error)
       }
     })
+  }
 
-  const loadThreads = async (agentId = null) =>
-    withThreadListUpdate(async () => {
+  const loadThreads = async (agentId = null) => {
+    const currentGeneration = threadListGeneration
+    return withThreadListUpdate(async () => {
+      if (currentGeneration !== threadListGeneration) return
+      threadsLoadError.value = ''
       try {
         const [fetchedThreads, pinnedThreads] = await Promise.all([
           threadApi.getThreads(agentId, PAGE_SIZE),
           fetchPinnedThreads(agentId)
         ])
+        if (currentGeneration !== threadListGeneration) return
         const loaded = new Map(
           [...fetchedThreads.data, ...pinnedThreads].map((thread) => [thread.id, thread])
         )
@@ -120,30 +142,38 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
         threads.value = [...loaded.values(), ...cachedDetails]
         after = fetchedThreads.last_id
         hasMoreThreads.value = fetchedThreads.has_more
+        hasLoadedThreads.value = true
         return threads.value
       } catch (error) {
+        if (currentGeneration !== threadListGeneration) return
+        if (!hasLoadedThreads.value) threadsLoadError.value = '对话加载失败'
         console.error('Failed to fetch threads:', error)
         handleChatError(error, 'fetch')
         throw error
       }
     })
+  }
 
   const loadMoreThreads = async (agentId = null) => {
     if (isLoadingMoreThreads.value || !hasMoreThreads.value) return
 
+    const currentGeneration = threadListGeneration
     isLoadingMoreThreads.value = true
     return withThreadListUpdate(async () => {
       try {
+        if (currentGeneration !== threadListGeneration) return
         const page = await threadApi.getThreads(agentId, PAGE_SIZE, after)
+        if (currentGeneration !== threadListGeneration) return
         const existingIds = new Set(threads.value.map((thread) => thread.id))
         threads.value.push(...page.data.filter((thread) => !existingIds.has(thread.id)))
         after = page.last_id
         hasMoreThreads.value = page.has_more
       } catch (error) {
+        if (currentGeneration !== threadListGeneration) return
         console.error('Failed to load more chats:', error)
         handleChatError(error, 'fetch')
       } finally {
-        isLoadingMoreThreads.value = false
+        if (currentGeneration === threadListGeneration) isLoadingMoreThreads.value = false
       }
     })
   }
@@ -161,36 +191,41 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
     return pinned
   }
 
-  const createThread = async (agentId, title = null, metadata = {}, options = {}) =>
-    withThreadListUpdate(async () => {
-      if (!agentId) return null
+  const createThread = async (agentId, title = null, metadata = {}, options = {}) => {
+    const currentGeneration = threadListGeneration
+    return withThreadListUpdate(async () => {
+      if (!agentId || currentGeneration !== threadListGeneration) return null
 
       try {
         const thread = await threadApi.createThread(agentId, title, metadata, options)
+        if (currentGeneration !== threadListGeneration) return null
         if (thread) {
           threads.value = [thread, ...threads.value.filter((item) => item.id !== thread.id)]
         }
         return thread
       } catch (error) {
+        if (currentGeneration !== threadListGeneration) return null
         console.error('Failed to create thread:', error)
         handleChatError(error, 'create')
         throw error
       }
     })
+  }
 
   const archiveThread = (threadId) => {
-    const initiatingUserId = userStore.userId
+    const currentGeneration = threadListGeneration
     return withThreadListUpdate(async () => {
-      if (!threadId || userStore.userId !== initiatingUserId) return
+      if (!threadId || currentGeneration !== threadListGeneration) return
       try {
         await threadApi.archiveThread(threadId)
-        if (userStore.userId !== initiatingUserId) return
+        if (currentGeneration !== threadListGeneration) return
         threads.value = threads.value.filter((thread) => thread.id !== threadId)
         // 归档后清理当前线程的本地草稿。
         threadDraftStore.remove(threadId)
         if (currentThreadId.value === threadId) setCurrentThreadId(null)
         if (useChatUIStore().lastThreadId === threadId) useChatUIStore().lastThreadId = null
       } catch (error) {
+        if (currentGeneration !== threadListGeneration) return
         console.error('Failed to archive thread:', error)
         handleChatError(error, 'archive')
         throw error
@@ -218,9 +253,10 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
     return removedIds
   }
 
-  const updateThread = async (threadId, title, isPinned, toolApprovalMode, modelSpec) =>
-    withThreadListUpdate(async () => {
-      if (!threadId) return
+  const updateThread = async (threadId, title, isPinned, toolApprovalMode, modelSpec) => {
+    const currentGeneration = threadListGeneration
+    return withThreadListUpdate(async () => {
+      if (!threadId || currentGeneration !== threadListGeneration) return
 
       const normalizedTitle = title ? String(title).replace(/\s+/g, ' ').trim().slice(0, 255) : null
       if (title && !normalizedTitle) return
@@ -240,19 +276,24 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
           toolApprovalMode,
           modelSpec
         )
+        if (currentGeneration !== threadListGeneration) return
         upsertThread(updatedThread)
         return updatedThread
       } catch (error) {
+        if (currentGeneration !== threadListGeneration) return
         console.error('Failed to update thread:', error)
         handleChatError(error, 'update')
         throw error
       }
     })
+  }
 
   return {
     threads,
     currentThreadId,
     currentThread,
+    hasLoadedThreads,
+    threadsLoadError,
     threadCreationInFlight,
     hasMoreThreads,
     isLoadingMoreThreads,

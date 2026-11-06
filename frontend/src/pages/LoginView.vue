@@ -49,7 +49,13 @@
             <div class="login-content" :class="{ 'is-initializing': isFirstRun }">
               <!-- 初始化管理员表单 -->
               <div v-if="isFirstRun" class="login-form login-form--init">
-                <a-form :model="adminForm" @finish="handleInitialize" layout="vertical">
+                <a-form
+                  :model="adminForm"
+                  layout="vertical"
+                  validate-trigger="submit"
+                  @finish="handleInitialize"
+                  @finish-failed="handleFormInvalid"
+                >
                   <a-form-item
                     label="UID"
                     name="uid"
@@ -163,7 +169,13 @@
 
               <!-- 登录表单 -->
               <div v-else class="login-form">
-                <a-form :model="loginForm" @finish="handleLogin" layout="vertical">
+                <a-form
+                  :model="loginForm"
+                  layout="vertical"
+                  validate-trigger="submit"
+                  @finish="handleLogin"
+                  @finish-failed="handleFormInvalid"
+                >
                   <a-form-item
                     label="登录账号"
                     name="loginId"
@@ -254,11 +266,6 @@
                   </div>
                 </div>
               </div>
-
-              <!-- 错误提示 -->
-              <div v-if="errorMessage" class="error-message">
-                {{ errorMessage }}
-              </div>
             </div>
           </div>
         </div>
@@ -324,7 +331,6 @@ const showAgreementConsent = computed(() => {
 // 状态
 const isFirstRun = ref(false)
 const loading = ref(false)
-const errorMessage = ref('')
 const agreementAccepted = ref(false)
 const serverStatus = ref('loading')
 const serverError = ref('')
@@ -378,7 +384,6 @@ const startLockCountdown = (remainingSeconds) => {
     if (lockRemainingTime.value <= 0) {
       clearLockCountdown()
       isLocked.value = false
-      errorMessage.value = ''
     }
   }, 1000)
 }
@@ -412,13 +417,26 @@ const validateConfirmPassword = async (rule, value) => {
   }
 }
 
+const showLoginError = (content) => {
+  const text = typeof content === 'string' ? content.trim() : ''
+  if (text) {
+    message.error(text)
+  }
+}
+
+const handleFormInvalid = ({ errorFields } = {}) => {
+  const errors = [
+    ...new Set((errorFields || []).flatMap((field) => field.errors || []).filter(Boolean))
+  ]
+  showLoginError(errors.join('；') || '请检查输入内容')
+}
+
 const ensureAgreementAccepted = () => {
   if (!showAgreementConsent.value || agreementAccepted.value) {
     return true
   }
 
-  const warningMessage = '请先阅读并同意《用户协议》《隐私协议》'
-  message.warning(warningMessage)
+  message.warning('请先阅读并同意《用户协议》《隐私协议》')
   return false
 }
 
@@ -436,7 +454,6 @@ const handleLogin = async () => {
 
   try {
     loading.value = true
-    errorMessage.value = ''
     clearLockCountdown()
 
     await userStore.login({
@@ -488,12 +505,12 @@ const handleLogin = async () => {
 
       if (remainingTime > 0) {
         startLockCountdown(remainingTime)
-        errorMessage.value = `由于多次登录失败，账户已被锁定 ${formatTime(remainingTime)}`
+        showLoginError(`由于多次登录失败，账户已被锁定 ${formatTime(remainingTime)}`)
       } else {
-        errorMessage.value = error.message || '账户被锁定，请稍后再试'
+        showLoginError(error.message || '账户被锁定，请稍后再试')
       }
     } else {
-      errorMessage.value = error.message || '登录失败，请检查用户名和密码'
+      showLoginError(error.message || '登录失败，请检查用户名和密码')
     }
   } finally {
     loading.value = false
@@ -508,7 +525,6 @@ const handleOIDCLogin = async () => {
 
   try {
     oidcLoading.value = true
-    errorMessage.value = ''
 
     // 获取 OIDC 登录 URL
     const response = await authApi.getOIDCLoginUrl()
@@ -521,11 +537,11 @@ const handleOIDCLogin = async () => {
       // 跳转到 OIDC Provider
       window.location.href = response.login_url
     } else {
-      errorMessage.value = '获取 OIDC 登录地址失败'
+      showLoginError('获取 OIDC 登录地址失败')
     }
   } catch (error) {
     console.error('OIDC 登录失败:', error)
-    errorMessage.value = error.message || 'OIDC 登录失败，请重试'
+    showLoginError(error.message || 'OIDC 登录失败，请重试')
   } finally {
     oidcLoading.value = false
   }
@@ -558,10 +574,9 @@ const handleInitialize = async () => {
 
   try {
     loading.value = true
-    errorMessage.value = ''
 
     if (adminForm.password !== adminForm.confirmPassword) {
-      errorMessage.value = '两次输入的密码不一致'
+      showLoginError('两次输入的密码不一致')
       return
     }
 
@@ -575,7 +590,7 @@ const handleInitialize = async () => {
     router.push('/')
   } catch (error) {
     console.error('初始化失败:', error)
-    errorMessage.value = error.message || '初始化失败，请重试'
+    showLoginError(error.message || '初始化失败，请重试')
   } finally {
     loading.value = false
   }
@@ -589,7 +604,7 @@ const checkFirstRunStatus = async () => {
     isFirstRun.value = isFirst
   } catch (error) {
     console.error('检查首次运行状态失败:', error)
-    errorMessage.value = '系统出错，请稍后重试'
+    showLoginError('系统出错，请稍后重试')
   } finally {
     loading.value = false
   }
@@ -625,7 +640,7 @@ onMounted(async () => {
 
   // 显示 OIDC 认证失败的错误信息（由后端重定向携带）
   if (route.query.oidc_error) {
-    errorMessage.value = String(route.query.oidc_error)
+    showLoginError(String(route.query.oidc_error))
   }
 
   // 首先检查服务器健康状态
@@ -748,9 +763,8 @@ onUnmounted(() => {
 
 .login-card {
   width: 900px;
-  max-width: 95vw;
-  /* 表单与错误信息决定卡片高度，避免居中内容被圆角裁切。 */
-  min-height: 560px;
+  height: 560px;
+  flex: 0 0 auto;
   background: var(--gray-0);
   border-radius: 16px;
   border: 1px solid var(--border-surface);
@@ -825,6 +839,11 @@ onUnmounted(() => {
 }
 
 .login-form {
+  /* 校验文案由 Message 展示，避免表单项说明撑开固定高度的卡片。 */
+  :deep(.ant-form-item-explain) {
+    display: none !important;
+  }
+
   :deep(.ant-input-affix-wrapper) {
     padding: 10px 14px;
     border-radius: 8px;
@@ -951,17 +970,6 @@ onUnmounted(() => {
   }
 }
 
-.error-message {
-  margin-top: 16px;
-  padding: 10px 12px;
-  background-color: var(--color-error-50);
-  border: 1px solid color-mix(in srgb, var(--color-error-500) 25%, transparent);
-  border-radius: 8px;
-  color: var(--color-error-700);
-  font-size: 13px;
-  text-align: center;
-}
-
 /* Page Footer */
 .page-footer {
   padding: 24px;
@@ -1071,9 +1079,6 @@ onUnmounted(() => {
 
   .login-card {
     flex-direction: column;
-    /* 纵向单列时卡片随内容收缩，不沿用双栏的最小高度 */
-    min-height: unset;
-    width: 100%;
     margin-top: 20px;
   }
 

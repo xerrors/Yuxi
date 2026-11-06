@@ -20,8 +20,14 @@
             />
           </button>
           <CollapseTransition>
-            <div v-if="projectsExpanded" class="project-list">
-              <div v-if="projectsLoading" class="list-state">正在加载项目...</div>
+            <div v-if="projectsExpanded" class="project-list" :aria-busy="projectsLoading">
+              <div v-if="projectsLoading" class="sr-only" role="status">正在加载项目...</div>
+              <div v-if="projectsLoading" class="nav-skeleton" aria-hidden="true">
+                <div v-for="index in 4" :key="index" class="nav-skeleton-row project-skeleton-row">
+                  <span class="nav-skeleton-block nav-skeleton-icon"></span>
+                  <span class="nav-skeleton-block nav-skeleton-text"></span>
+                </div>
+              </div>
               <div v-else-if="projectsError" class="list-state list-error" role="alert">
                 <span>项目加载失败</span>
                 <button type="button" @click="$emit('retry-projects')">重试</button>
@@ -136,7 +142,12 @@
                       >
                         展开显示
                       </button>
-                      <div v-if="!group.sessions.length" class="project-empty">暂无对话</div>
+                      <div
+                        v-if="!group.sessions.length && !chatsLoading && !chatsError"
+                        class="project-empty"
+                      >
+                        暂无对话
+                      </div>
                     </div>
                   </CollapseTransition>
                 </section>
@@ -156,9 +167,18 @@
             <ChevronDown :size="14" class="collapse-icon" :class="{ collapsed: !recentExpanded }" />
           </button>
           <CollapseTransition>
-            <div v-if="recentExpanded" class="recent-list" :aria-busy="projectsLoading">
-              <div v-if="projectsLoading" class="list-state">正在加载对话...</div>
+            <div v-if="recentExpanded" class="recent-list" :aria-busy="recentLoading">
+              <div v-if="recentLoading" class="sr-only" role="status">正在加载对话...</div>
+              <div v-if="recentLoading" class="nav-skeleton" aria-hidden="true">
+                <div v-for="index in 6" :key="index" class="nav-skeleton-row">
+                  <span class="nav-skeleton-block nav-skeleton-text"></span>
+                </div>
+              </div>
               <div v-else-if="projectsError" class="list-state">项目加载失败，暂时无法分类对话</div>
+              <div v-else-if="chatsError" class="list-state list-error" role="alert">
+                <span>{{ chatsError }}</span>
+                <button type="button" @click="$emit('retry-chats')">重试</button>
+              </div>
               <template v-else>
                 <SessionNavItem
                   v-for="chat in otherSessions"
@@ -170,14 +190,25 @@
                   @rename-chat="$emit('rename-chat', $event)"
                   @toggle-pin="$emit('toggle-pin', $event)"
                 />
-                <div v-if="!otherSessions.length" class="list-state">暂无对话历史</div>
+                <div v-if="!otherSessions.length && !hasMoreChats" class="list-state">
+                  暂无对话历史
+                </div>
               </template>
             </div>
           </CollapseTransition>
         </section>
 
+        <div
+          v-if="!recentExpanded && !recentLoading && !projectsError && chatsError"
+          class="list-state list-error"
+          role="alert"
+        >
+          <span>{{ chatsError }}</span>
+          <button type="button" @click="$emit('retry-chats')">重试</button>
+        </div>
+
         <button
-          v-if="hasMoreChats"
+          v-if="hasMoreChats && !recentLoading && !projectsError && !chatsError"
           type="button"
           class="load-more-btn"
           :disabled="isLoadingMore"
@@ -213,6 +244,8 @@ const props = defineProps({
   visible: { type: Boolean, default: true },
   currentChatId: { type: String, default: null },
   chatsList: { type: Array, default: () => [] },
+  chatsLoading: { type: Boolean, default: false },
+  chatsError: { type: String, default: '' },
   projects: { type: Array, default: () => [] },
   projectsLoading: { type: Boolean, default: false },
   projectsError: { type: String, default: '' },
@@ -232,7 +265,8 @@ const emit = defineEmits([
   'rename-project',
   'delete-project',
   'create-project-chat',
-  'retry-projects'
+  'retry-projects',
+  'retry-chats'
 ])
 const { projectsExpanded, recentExpanded, expandedProjects, projectVisibleCounts, navigationScrollTop } =
   storeToRefs(useChatUIStore())
@@ -248,6 +282,7 @@ watch(() => props.visible, async (visible) => {
 }, { immediate: true })
 const INITIAL_PROJECT_SESSIONS = 5
 const PROJECT_SESSIONS_STEP = 10
+const recentLoading = computed(() => props.projectsLoading || props.chatsLoading)
 const groupedNavigation = computed(() =>
   buildProjectSessionGroups(props.projects, props.chatsList)
 )
@@ -283,8 +318,10 @@ const renameProject = (project) => {
   Modal.confirm({
     title: '重命名项目',
     icon: null,
+    maskClosable: true,
     centered: true,
     width: 400,
+    class: 'rename-session-modal',
     content: h('input', {
       value: name,
       class: 'rename-session-input',
@@ -523,6 +560,57 @@ const confirmDeleteProject = (project) => {
     outline-offset: -2px;
   }
 }
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.nav-skeleton-row {
+  display: flex;
+  height: 32px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 8px;
+}
+.nav-skeleton-block {
+  position: relative;
+  display: block;
+  flex-shrink: 0;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--gray-100);
+  &::after {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, var(--gray-200), transparent);
+    content: '';
+    transform: translateX(-100%);
+    animation: nav-skeleton-shimmer 2.4s ease-in-out infinite;
+  }
+}
+.nav-skeleton-icon {
+  width: 17px;
+  height: 17px;
+}
+.nav-skeleton-text {
+  width: 58%;
+  max-width: 160px;
+  height: 10px;
+}
+.nav-skeleton-row:nth-child(4n + 2) .nav-skeleton-text {
+  width: 45%;
+}
+.nav-skeleton-row:nth-child(4n + 3) .nav-skeleton-text {
+  width: 68%;
+}
+.nav-skeleton-row:nth-child(4n + 4) .nav-skeleton-text {
+  width: 50%;
+}
 .list-state {
   padding: 18px 8px;
   color: var(--gray-500);
@@ -566,6 +654,9 @@ const confirmDeleteProject = (project) => {
   .project-toggle {
     height: 40px;
   }
+  .project-skeleton-row {
+    height: 40px;
+  }
   .project-action {
     flex-basis: 40px;
     width: 40px;
@@ -580,6 +671,19 @@ const confirmDeleteProject = (project) => {
   .recent-list,
   .collapse-icon {
     transition-duration: 0.01ms !important;
+  }
+  .nav-skeleton-block::after {
+    animation: none;
+  }
+}
+@keyframes nav-skeleton-shimmer {
+  0%,
+  15% {
+    transform: translateX(-100%);
+  }
+  80%,
+  100% {
+    transform: translateX(100%);
   }
 }
 @keyframes project-status-spin {

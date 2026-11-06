@@ -1,5 +1,6 @@
 import {
   BookOpenText,
+  CalendarCheck,
   ChartNoAxesCombined,
   EthernetPort,
   FileText,
@@ -10,19 +11,24 @@ import {
   Microscope,
   PanelsTopLeft,
   Paintbrush,
+  Search,
   Sheet,
+  Video,
   WandSparkles,
   Workflow
 } from '@lucide/vue'
 
-const SKILL_ICON_RULES = [
+const EXTENSION_ICON_RULES = [
+  { keywords: ['tencent-meeting', '腾讯会议'], icon: Video },
+  { keywords: ['weknora'], icon: Search },
+  { keywords: ['attendance', '考勤'], icon: CalendarCheck },
   { keywords: ['mysql-reporter'], icon: ChartNoAxesCombined },
   { keywords: ['chat-widgets'], icon: LayoutDashboard },
   { keywords: ['browser', 'playwright'], icon: PanelsTopLeft },
   { keywords: ['skill-builder'], icon: Workflow },
   { keywords: ['design'], icon: Paintbrush },
   { keywords: ['document', 'pdf', 'docx', 'docs', 'wps'], icon: FileText },
-  { keywords: ['knowledge'], icon: BookOpenText },
+  { keywords: ['knowledge', 'deepwiki', '知识库'], icon: BookOpenText },
   { keywords: ['research'], icon: Microscope },
   { keywords: ['xlsx', 'excel', 'sheet'], icon: Sheet },
   { keywords: ['image'], icon: Image },
@@ -31,11 +37,11 @@ const SKILL_ICON_RULES = [
   { keywords: ['test'], icon: FlaskConical }
 ]
 
-/** 根据 slug 关键词返回 Skill 的 Lucide 图标。 */
+/** Skill 和 MCP 共用名称或 slug 的关键词图标映射。 */
 export const getSkillIcon = (slug, defaultIcon = WandSparkles) => {
   const normalizedSlug = String(slug || '').toLowerCase()
   return (
-    SKILL_ICON_RULES.find((rule) =>
+    EXTENSION_ICON_RULES.find((rule) =>
       rule.keywords.some((keyword) => normalizedSlug.includes(keyword))
     )?.icon || defaultIcon
   )

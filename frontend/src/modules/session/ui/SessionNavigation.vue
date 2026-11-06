@@ -26,8 +26,15 @@ const chatThreadsStore = useChatThreadsStore()
 const projectsStore = useProjectsStore()
 const infoStore = useInfoStore()
 const userStore = useUserStore()
-const { threads, currentThreadId, hasMoreThreads, isLoadingMoreThreads, threadCreationInFlight } =
-  storeToRefs(chatThreadsStore)
+const {
+  threads,
+  currentThreadId,
+  hasLoadedThreads,
+  threadsLoadError,
+  hasMoreThreads,
+  isLoadingMoreThreads,
+  threadCreationInFlight
+} = storeToRefs(chatThreadsStore)
 const { projects, isLoading: projectsLoading, error: projectsError } = storeToRefs(projectsStore)
 const { sessionsPinned, sessionPeekOpen, projectPendingId } = storeToRefs(useChatUIStore())
 const sessionPanel = ref(null)
@@ -41,8 +48,11 @@ const visible = computed(() =>
 )
 /** 侧栏与搜索只列顶层且未归档的会话；归档会话仍可经 URL 打开。 */
 const visibleThreads = computed(() =>
-  threads.value.filter((thread) => !thread.yuxi?.parent_session_id && !thread.yuxi?.archived)
+  hasLoadedThreads.value
+    ? threads.value.filter((thread) => !thread.yuxi?.parent_session_id && !thread.yuxi?.archived)
+    : []
 )
+const chatsLoading = computed(() => !hasLoadedThreads.value && !threadsLoadError.value)
 let sessionCloseTimer
 
 /** 打开临时面板，悬停不改变焦点与常驻偏好。 */
@@ -120,6 +130,11 @@ onClickOutside(
   { ignore: [sessionTrigger, '.ant-dropdown', '.ant-modal-root', '.global-search-overlay'] }
 )
 watch(
+  () => userStore.userId,
+  () => { sessionSearchOpen.value = false },
+  { flush: 'sync' }
+)
+watch(
   () => props.active,
   (active) => {
     if (!active && props.panel) {
@@ -145,6 +160,8 @@ defineExpose({ openSessionSearch, sessionSearchOpen })
 
 /** 项目加载失败保留原来的重试入口。 */
 const loadProjects = () => projectsStore.loadProjects()
+/** 首次对话列表加载失败时重新读取。 */
+const retryChats = () => chatThreadsStore.loadThreads().catch(() => {})
 const handleSelectChat = (threadId) => {
   if (!threadId) return
   if (!chatThreadsStore.setCurrentThreadId(threadId)) return
@@ -327,6 +344,8 @@ const handleDeleteProject = async (projectId) => {
           class="sidebar-sessions"
           :current-chat-id="activeSessionThreadId"
           :chats-list="visibleThreads"
+          :chats-loading="chatsLoading"
+          :chats-error="threadsLoadError"
           :projects="projects"
           :projects-loading="projectsLoading && !projectsStore.hasLoaded"
           :projects-error="projectsStore.hasLoaded ? '' : projectsError"
@@ -341,6 +360,7 @@ const handleDeleteProject = async (projectId) => {
           @delete-project="handleDeleteProject"
           @create-project-chat="handleCreateProjectChat"
           @retry-projects="loadProjects"
+          @retry-chats="retryChats"
           @load-more-chats="() => chatThreadsStore.loadMoreThreads()"
         />
       </div>

@@ -102,6 +102,7 @@ defineProps({
 .config-dropdown-text {
   min-width: 0;
   overflow: hidden;
+  line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

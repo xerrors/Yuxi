@@ -218,10 +218,7 @@ const toggleSidebar = () => {
 
 const initAgentNavigation = async () => {
   try {
-    if (!agentStore.isInitialized) {
-      await agentStore.initialize()
-    }
-    await Promise.all([chatThreadsStore.loadThreads(), loadProjects()])
+    await Promise.all([loadProjects(), chatThreadsStore.loadThreads(), agentStore.initialize()])
   } catch (error) {
     console.warn('加载对话导航失败:', error)
   }

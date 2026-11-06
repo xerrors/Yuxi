@@ -2,8 +2,6 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
-  PROJECT_NAME_MAX_LENGTH,
-  fillProjectNameFromFolder,
   filterProjects,
   formatRelativeTime,
   projectNameFromPath
@@ -15,14 +13,6 @@ test('Project 搜索按名称过滤且无匹配时返回空列表', () => {
   assert.deepEqual(filterProjects(projects, '  agent  '), [{ name: 'Agent Skills' }])
   assert.deepEqual(filterProjects(projects, '不存在'), [])
   assert.equal(filterProjects(projects, ''), projects)
-})
-
-test('新建文件夹后按互补规则补齐项目名称', () => {
-  assert.equal(fillProjectNameFromFolder('', '资料归档'), '资料归档')
-  assert.equal(fillProjectNameFromFolder('   ', '  资料归档  '), '资料归档')
-  assert.equal(fillProjectNameFromFolder('产品发布计划', '资料归档'), '产品发布计划')
-  assert.equal(fillProjectNameFromFolder('', ''), '')
-  assert.equal(fillProjectNameFromFolder('', 'x'.repeat(150)), 'x'.repeat(100))
 })
 
 test('历史项目时间按分钟到年份显示相对时间', () => {
@@ -37,15 +27,15 @@ test('历史项目时间按分钟到年份显示相对时间', () => {
   assert.equal(formatRelativeTime('invalid', now), '')
 })
 
-test('项目名称留空时从目录路径末段派生默认名称', () => {
+test('项目名称从目录路径末段派生', () => {
   assert.equal(projectNameFromPath('/Paper'), 'Paper')
   assert.equal(projectNameFromPath('/a/b/我的项目'), '我的项目')
   assert.equal(projectNameFromPath('/trailing/'), 'trailing')
 })
 
-test('目录名超长时按项目名称上限截断，无有效末段时返回空', () => {
-  const longName = 'x'.repeat(PROJECT_NAME_MAX_LENGTH + 10)
-  assert.equal(projectNameFromPath(`/${longName}`).length, PROJECT_NAME_MAX_LENGTH)
+test('保留完整目录名，无有效末段时返回空', () => {
+  const longName = 'x'.repeat(180)
+  assert.equal(projectNameFromPath(`/${longName}`), longName)
   assert.equal(projectNameFromPath('/'), '')
   assert.equal(projectNameFromPath(''), '')
 })

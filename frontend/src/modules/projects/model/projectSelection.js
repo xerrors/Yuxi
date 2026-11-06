@@ -1,21 +1,6 @@
 export const AUTO_PROJECT_ID = '__auto__'
-export const PROJECT_NAME_MAX_LENGTH = 100
 
-/**
- * 新建文件夹成功后补齐项目名称：项目名称为空时用文件夹名填充，
- * 已有输入保持用户原值不被覆盖，与“文件夹名预填项目名称”方向互补。
- */
-export const fillProjectNameFromFolder = (projectName, folderName) => {
-  const current = typeof projectName === 'string' ? projectName : ''
-  const folder = typeof folderName === 'string' ? folderName.trim() : ''
-  if (current.trim() || !folder) return current
-  return folder.slice(0, PROJECT_NAME_MAX_LENGTH)
-}
-
-/**
- * 项目名称留空时从所选项目目录路径派生默认名称（末段目录名），
- * 与 fillProjectNameFromFolder 同样受名称上限约束。
- */
+/** 从所选项目目录路径派生项目名称。 */
 export const projectNameFromPath = (path) => {
   const segment = String(path || '')
     .split('/')
@@ -23,7 +8,7 @@ export const projectNameFromPath = (path) => {
     .pop()
   const name = typeof segment === 'string' ? segment.trim() : ''
   if (!name) return ''
-  return name.slice(0, PROJECT_NAME_MAX_LENGTH)
+  return name
 }
 
 export const filterProjects = (projects, query = '') => {

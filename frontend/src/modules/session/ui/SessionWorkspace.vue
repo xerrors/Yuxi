@@ -2647,8 +2647,10 @@ const selectChat = async (chatId) => {
 
 const selectThreadFromRoute = async (threadId) => {
   if (threadCreationInFlight.value) return null
+  const initiatingUserId = userStore.userId
   if (!agentStore.isInitialized) {
     await initAll()
+    if (userStore.userId !== initiatingUserId) return null
   }
 
   if (!threadId) {
@@ -2662,8 +2664,11 @@ const selectThreadFromRoute = async (threadId) => {
   const loadedCurrentThread = currentThreadId.value === threadId && getThreadState(threadId).historyLoaded
   if (loadedCurrentThread || !threads.value.some((thread) => thread.id === threadId)) {
     try {
-      chatThreadsStore.upsertThread(await agentApi.getPublicThread(threadId))
+      const thread = await agentApi.getPublicThread(threadId)
+      if (userStore.userId !== initiatingUserId) return null
+      chatThreadsStore.upsertThread(thread)
     } catch (error) {
+      if (userStore.userId !== initiatingUserId) return null
       handleChatError(error, 'load')
       return [403, 404, 410].includes(error?.status) ? false : null
     }
@@ -3155,14 +3160,21 @@ const getMessageGroupSources = (group) => {
 
 // ==================== LIFECYCLE & WATCHERS ====================
 const loadChatsList = async () => {
+  const initiatingUserId = userStore.userId
   try {
     await fetchThreads()
+    if (userStore.userId !== initiatingUserId) return
 
     // 首页缺席不代表删除；当前会话可能位于后续分页。
     if (currentThreadId.value && !threads.value.find((t) => t.id === currentThreadId.value)) {
-      chatThreadsStore.upsertThread(await agentApi.getPublicThread(currentThreadId.value))
+      const threadId = currentThreadId.value
+      const thread = await agentApi.getPublicThread(threadId)
+      if (userStore.userId === initiatingUserId && currentThreadId.value === threadId) {
+        chatThreadsStore.upsertThread(thread)
+      }
     }
   } catch (error) {
+    if (userStore.userId !== initiatingUserId) return
     handleChatError(error, 'load')
   }
 }

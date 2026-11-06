@@ -136,43 +136,13 @@
     </ActionDropdown>
   </section>
 
-  <a-modal
+  <WorkspaceDirectoryDialog
     v-model:open="createModalOpen"
-    title="新建项目"
-    width="640px"
-    ok-text="创建并选择"
-    cancel-text="取消"
-    :confirm-loading="creatingProject"
-    :ok-button-props="{ disabled: !canCreateProject }"
-    @ok="handleCreateProject"
-  >
-    <div class="project-form">
-      <label class="project-form-field">
-        <span>项目名称</span>
-        <a-input
-          v-model:value="projectName"
-          :maxlength="PROJECT_NAME_MAX_LENGTH"
-          autofocus
-          placeholder="留空时使用项目目录名称"
-          @press-enter="canCreateProject && handleCreateProject()"
-        />
-      </label>
-
-      <div class="project-form-field">
-        <span>项目目录</span>
-        <WorkspacePathPicker
-          v-model="linkedPath"
-          :active="createModalOpen"
-          :disabled="creatingProject"
-          :suggested-folder-name="projectName"
-          include-unbound-project-dirs
-          @loading-change="pickerLoading = $event"
-          @folder-created="handleFolderCreated"
-        />
-        <small>所选目录即项目工作区，文件直接保存在该目录中，不会另建同名文件夹。</small>
-      </div>
-    </div>
-  </a-modal>
+    :initial-path="initialProjectPath"
+    :disabled="creatingProject"
+    include-unbound-project-dirs
+    @select="handleCreateProject"
+  />
 </template>
 
 <script setup>
@@ -193,13 +163,12 @@ import {
   Search
 } from '@lucide/vue'
 import { projectApi } from '@/apis/project_api'
-import WorkspacePathPicker from '@/modules/workspace/ui/WorkspacePathPicker.vue'
+import { resolveApiErrorMessage } from '@/apis/base'
+import WorkspaceDirectoryDialog from '@/modules/workspace/ui/WorkspaceDirectoryDialog.vue'
 import { useProjectsStore } from '@/modules/projects/model/projects'
 import {
   AUTO_PROJECT_ID,
-  PROJECT_NAME_MAX_LENGTH,
   filterProjects,
-  fillProjectNameFromFolder,
   formatRelativeTime,
   projectNameFromPath
 } from '@/modules/projects/model/projectSelection'
@@ -223,10 +192,8 @@ const historySearchInput = ref(null)
 const dropdownView = ref('projects')
 const createModalOpen = ref(false)
 const creatingProject = ref(false)
-const projectName = ref('')
-const projectCreationRequestId = ref('')
-const linkedPath = ref('')
-const pickerLoading = ref(false)
+const projectCreationRequestIds = new Map()
+const initialProjectPath = ref('')
 const historyQuery = ref('')
 const historyCandidates = ref([])
 const loadingHistory = ref(false)
@@ -240,18 +207,6 @@ const requestId = () =>
     ? crypto.randomUUID()
     : `req-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 
-const getErrorMessage = (error, fallback) =>
-  error?.response?.data?.detail || error?.message || fallback
-
-// 项目名称可以为空：创建时用所选目录名派生默认名称，因此只要求目录已选。
-const canCreateProject = computed(
-  () =>
-    Boolean(
-      linkedPath.value &&
-        !pickerLoading.value &&
-        (projectName.value.trim() || projectNameFromPath(linkedPath.value))
-    )
-)
 const isAutoOrEmpty = computed(() => !props.modelValue || props.modelValue === AUTO_PROJECT_ID)
 const currentProject = computed(() =>
   projects.value.find((project) => project.id === props.modelValue)
@@ -290,35 +245,31 @@ const loadProjects = async () => {
 
 const openCreateModal = (selectedPath = '') => {
   dropdownOpen.value = false
-  projectName.value = ''
-  projectCreationRequestId.value = requestId()
-  linkedPath.value = selectedPath
+  projectCreationRequestIds.clear()
+  initialProjectPath.value = selectedPath
   createModalOpen.value = true
 }
 
-const handleCreateProject = async () => {
-  if (!canCreateProject.value) return
+const handleCreateProject = async (path) => {
+  const name = projectNameFromPath(path)
+  if (!name || creatingProject.value) return
+  if (!projectCreationRequestIds.has(path)) projectCreationRequestIds.set(path, requestId())
   creatingProject.value = true
   try {
     const project = await projectApi.createProject({
-      requestId: projectCreationRequestId.value,
-      name: projectName.value.trim() || projectNameFromPath(linkedPath.value),
+      requestId: projectCreationRequestIds.get(path),
+      name,
       mode: 'linked',
-      path: linkedPath.value
+      path
     })
     addAndSelectProject(project)
     createModalOpen.value = false
     message.success('项目已创建')
   } catch (error) {
-    message.error(getErrorMessage(error, '项目创建失败'))
+    message.error(resolveApiErrorMessage(error, '项目创建失败'))
   } finally {
     creatingProject.value = false
   }
-}
-
-/** 文件夹创建成功后与项目名称互补：名称为空时用文件夹名补齐，已有输入保持不变。 */
-const handleFolderCreated = ({ name } = {}) => {
-  projectName.value = fillProjectNameFromFolder(projectName.value, name)
 }
 
 const openHistoryView = () => {
@@ -344,7 +295,7 @@ const loadHistoryCandidates = async () => {
   } catch (error) {
     if (requestVersion !== historyRequestVersion) return
     historyCandidates.value = []
-    historyError.value = getErrorMessage(error, '历史对话加载失败')
+    historyError.value = resolveApiErrorMessage(error, '历史对话加载失败')
   } finally {
     if (requestVersion === historyRequestVersion) loadingHistory.value = false
   }
@@ -611,21 +562,6 @@ onUnmounted(() => {
   color: inherit;
   cursor: pointer;
   font-weight: 600;
-}
-
-.project-form {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
-
-.project-form-field {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  color: var(--color-text);
-  font-size: 13px;
-  font-weight: 500;
 }
 
 .history-option-list {

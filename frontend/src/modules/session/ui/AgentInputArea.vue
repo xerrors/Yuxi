@@ -480,10 +480,6 @@ defineExpose({
     cursor: not-allowed;
     pointer-events: none;
   }
-
-  span {
-    line-height: 1;
-  }
 }
 
 // slot 内容的 hide-text 响应式样式
