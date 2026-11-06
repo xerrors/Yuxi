@@ -262,8 +262,11 @@ async def test_mcp_server(
         except HTTPException:
             raise
         except Exception as exc:
-            reason, _ = runtime_mcp_failure(exc)
-            raise HTTPException(status_code=502, detail={"code": "mcp_connection_failed", "message": reason}) from None
+            detail = "MCP 连接失败，请检查服务地址、凭据和网络后重试"
+            if server.auth_mode in PERSONAL_AUTH_MODES:
+                reason, _ = runtime_mcp_failure(exc)
+                detail = {"code": "mcp_connection_failed", "message": reason}
+            raise HTTPException(status_code=502, detail=detail) from None
     except (HTTPException, DomainError):
         raise
     except Exception as e:

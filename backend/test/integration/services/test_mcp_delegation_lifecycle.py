@@ -175,7 +175,15 @@ async def isolated_mcp(monkeypatch):
             await db.commit()
         runtime = SimpleNamespace(uid=reader.uid, knowledges="all", run_id="independent-run")
         yield SimpleNamespace(
-            sessions=sessions, engine=engine, reader=reader, owner=owner, runtime=runtime, row=row, requests=requests, base_url=base_url
+            app=app,
+            sessions=sessions,
+            engine=engine,
+            reader=reader,
+            owner=owner,
+            runtime=runtime,
+            row=row,
+            requests=requests,
+            base_url=base_url,
         )
     finally:
         if http_server:
@@ -379,10 +387,15 @@ async def test_mcp_document_pages_use_current_permission_and_bounded_wire_payloa
 
 @pytest.mark.parametrize("admin_enabled", [0, 1])
 async def test_management_http_lists_and_tests_delegated_server(isolated_mcp, admin_enabled):
-    """连接测试对停用服务仍严格建连；工具清单只列启用服务。"""
+    """普通用户不能测试委托服务，超管仍可检查停用服务的连接。"""
     context = isolated_mcp
     await update_server(context, enabled=admin_enabled, disabled_tools=["query_kb"])
     async with httpx.AsyncClient(base_url=context.base_url, trust_env=False) as client:
+        denied = await client.post("/api/system/mcp-servers/knowledge/test")
+        assert denied.status_code == 403, denied.text
+        assert not any(request["path"] == "/api/mcp" for request in context.requests)
+
+        context.app.dependency_overrides[get_required_user] = lambda: context.owner
         tested = await client.post("/api/system/mcp-servers/knowledge/test")
         listed = await client.get("/api/system/mcp-servers/knowledge/tools")
     assert tested.status_code == 200, tested.text

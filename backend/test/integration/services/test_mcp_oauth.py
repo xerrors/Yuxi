@@ -1289,7 +1289,12 @@ async def test_personal_static_credentials_use_own_identity_and_revoke_old_tools
 
     # 权限不足与临时网络故障不能删除已保存的个人密文。
     current["error_status"] = 403
-    assert (await http.post(base + "/fixture/test", headers=headers["alice"])).status_code == 502
+    failed = await http.post(base + "/fixture/test", headers=headers["alice"])
+    assert failed.status_code == 502
+    assert failed.json()["detail"] == {
+        "code": "mcp_connection_failed",
+        "message": "MCP 服务方权限不足，请检查个人账号权限",
+    }
     current.pop("error_status")
     async with scenario["db"]() as db:
         own = await db.scalar(select(MCPConnection).where(MCPConnection.user_id == scenario["users"][0].id))
