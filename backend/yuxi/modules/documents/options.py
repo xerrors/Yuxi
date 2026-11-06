@@ -87,9 +87,43 @@ paddleocr_api_opts = Option(
     },
 )
 
+minicpm_ocr_opts = Option(
+    key="minicpm_ocr_opts",
+    name="MiniCPM-OCR（自托管）",
+    description="配置自托管 vLLM 的 MiniCPM-OCR 服务，逐页识别 PDF 与图片。",
+    params={
+        "fields": [
+            {
+                "key": "api_url",
+                "label": "API 地址",
+                "type": "url",
+                "environment": "MINICPM_OCR_API_URL",
+                "placeholder": "http://127.0.0.1:18499/v1/chat/completions",
+                "help": "留空时读取 MINICPM_OCR_API_URL；需指向 OpenAI 兼容的 /v1/chat/completions。",
+            },
+            {
+                "key": "api_key",
+                "label": "API Key",
+                "type": "password",
+                "environment": "MINICPM_OCR_API_KEY",
+                "sensitive": True,
+                "help": "vLLM 未启用 --api-key 时可留空；留空时读取 MINICPM_OCR_API_KEY。",
+            },
+            {
+                "key": "model",
+                "label": "模型名称",
+                "type": "string",
+                "default": "minicpm-ocr",
+                "help": "与 vLLM 的 --served-model-name 保持一致。",
+            },
+        ]
+    },
+)
+
 OCR_ENGINE_OPTIONS = {
     "mineru_ocr": mineru_ocr_host_opts,
     "mineru_official": mineru_official_api_opts,
+    "minicpm_ocr": minicpm_ocr_opts,
     "paddleocr_vl_1_6": paddleocr_api_opts,
     "paddleocr_pp_ocrv6": paddleocr_api_opts,
     "paddleocr_pp_structure_v3": paddleocr_api_opts,

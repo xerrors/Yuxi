@@ -55,11 +55,12 @@ YUXI_URL_WHITELIST=github.com,docs.example.com,*.wikipedia.org
 | PP-OCRv6 | 百度 AI Studio 云服务 | 基础 OCR，输出纯文本 |
 | PP-StructureV3 | 百度 AI Studio 云服务 | 文档版面解析，输出 Markdown，与 PaddleOCR-VL、PP-OCRv6 共用配置 |
 | DeepSeek OCR | SiliconFlow API | 使用 SiliconFlow 的 DeepSeek OCR 模型 |
+| MiniCPM-OCR | 自托管 vLLM 服务 | 逐页识别中英文 PDF 与图片，输出纯文本，不依赖本地 GPU |
 | MinerU 自托管 | 可选 GPU 服务 | 社区 4.1 Tasks，文件保留在自行维护的服务内 |
 
 需要轻量部署时，配置云服务凭证即可，不必启用 `all` profile。云服务会接收待解析文件；需要离线或私有化处理时，选择 RapidOCR 或自托管 MinerU。
 
-系统内部引擎 ID 为 `rapid_ocr`、`mineru_ocr`、`mineru_official`、`deepseek_ocr`、`paddleocr_vl_1_6`、`paddleocr_pp_ocrv6` 和 `paddleocr_pp_structure_v3`。页面中的健康状态只表示配置或服务探测结果，真正解析时仍会验证凭证和接口。
+系统内部引擎 ID 为 `rapid_ocr`、`mineru_ocr`、`mineru_official`、`deepseek_ocr`、`minicpm_ocr`、`paddleocr_vl_1_6`、`paddleocr_pp_ocrv6` 和 `paddleocr_pp_structure_v3`。页面中的健康状态只表示配置或服务探测结果，真正解析时仍会验证凭证和接口。
 
 登录用户通过 `/api/system/ocr/health` 获取各引擎的状态和固定说明。`configured` 只表示凭据已配置，解析时仍会验证；响应中的 `details` 为空，不包含提供者原始消息、内部服务地址或凭据。配置检查或调用抛出异常时返回 `error`，具体异常记录在服务端日志。
 
@@ -121,6 +122,24 @@ API/worker 默认使用 `MINERU_API_URI=http://mineru-api:30001`。外接实例�
 ### DeepSeek OCR
 
 在“智能体 → 模型供应商”中启用 `siliconflow-cn` 并配置凭证。DeepSeek OCR 会复用该供应商的 API 地址和 API Key，不接受单独的 OCR 凭证配置。
+
+### MiniCPM-OCR（自托管）
+
+MiniCPM-OCR 通过 OpenAI 兼容的 vLLM 服务接入，Yuxi 逐页发送图片并请求 `Text Recognition:` 识别，输出纯文本。服务需要在本仓库之外自行部署，Yuxi 不加载模型，也不要求本机 GPU：
+
+```bash
+vllm serve openbmb/MiniCPM-OCR-1.0 \
+  --served-model-name minicpm-ocr \
+  --host 127.0.0.1 --port 18499 \
+  --max-model-len 40960 \
+  --limit-mm-per-prompt '{"image":36,"video":0}' \
+  --mm-processor-kwargs '{"downsample_mode":"4x"}' \
+  --trust-request-mm-kwargs
+```
+
+`--trust-request-mm-kwargs` 不可省略：Yuxi 每个请求都会携带 `mm_processor_kwargs`（`downsample_mode` 与 `max_slice_nums`，默认 9），缺少该参数时 vLLM 会拒绝请求。服务地址、可选 API Key 与模型名在「设置 → OCR 配置 → MiniCPM-OCR（自托管）」保存，也可以使用 `MINICPM_OCR_API_URL`、`MINICPM_OCR_API_KEY` 环境变量；API 地址需要指向 `/v1/chat/completions`。健康检查读取同服务的 `/v1/models`。
+
+识别按页独立进行，单页输出被截断（`finish_reason` 为 `length`）时整次解析明确失败，不会发布不完整产物。需要表格、公式等版面结构时，选择 MinerU 或 PaddleOCR 系列引擎。
 
 ### PaddleOCR API
 

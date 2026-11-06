@@ -78,6 +78,7 @@ async def test_mineru_official_resolves_model_default_with_environment_credentia
     [
         ("mineru_ocr", "MINERU_API_URI", "server_url", "http://mineru-fixture:30001"),
         ("mineru_official", "MINERU_API_KEY", "api_key", "fixture-key"),
+        ("minicpm_ocr", "MINICPM_OCR_API_URL", "api_url", "http://minicpm-fixture:18499/v1/chat/completions"),
         ("paddleocr_vl_1_6", "PADDLEOCR_API_TOKEN", "api_token", "fixture-token"),
         ("paddleocr_pp_ocrv6", "PADDLEOCR_API_TOKEN", "api_token", "fixture-token"),
         ("paddleocr_pp_structure_v3", "PADDLEOCR_API_TOKEN", "api_token", "fixture-token"),

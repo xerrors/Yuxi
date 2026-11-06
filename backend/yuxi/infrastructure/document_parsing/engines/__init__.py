@@ -38,6 +38,7 @@ class DocumentEngine(ABC):
 _STANDARD_OCR_EXTENSIONS = (".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif")
 _MINERU_OFFICIAL_EXTENSIONS = (".pdf", ".png", ".jpg", ".jpeg")
 _DEEPSEEK_OCR_EXTENSIONS = (".pdf", ".png", ".jpg", ".jpeg", ".bmp", ".webp")
+_MINICPM_OCR_EXTENSIONS = (".pdf", ".png", ".jpg", ".jpeg", ".bmp", ".webp")
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +80,13 @@ ENGINE_SPECS = {
         supported_extensions=_DEEPSEEK_OCR_EXTENSIONS,
         module_path="yuxi.infrastructure.document_parsing.engines.deepseek_ocr",
         class_name="DeepSeekOCRParser",
+    ),
+    "minicpm_ocr": EngineSpec(
+        service_name="minicpm_ocr",
+        display_name="MiniCPM-OCR（自托管）",
+        supported_extensions=_MINICPM_OCR_EXTENSIONS,
+        module_path="yuxi.infrastructure.document_parsing.engines.minicpm_ocr",
+        class_name="MiniCPMOCRParser",
     ),
     "paddleocr_vl_1_6": EngineSpec(
         service_name="paddleocr_vl_1_6",
