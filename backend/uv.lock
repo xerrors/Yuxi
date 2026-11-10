@@ -3531,7 +3531,7 @@ wheels = [
 
 [[package]]
 name = "yuxi"
-version = "0.8.0b8"
+version = "0.8.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },

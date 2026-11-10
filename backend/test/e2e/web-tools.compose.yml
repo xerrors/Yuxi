@@ -1,7 +1,7 @@
 # 仅叠加到独立测试槽位，不用于生产环境。
 services:
   web-provider-replay:
-    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.8.0.beta8}
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.8.0}
     user: '0:0'
     working_dir: /app
     command: uv run --no-sync --no-dev python -m test.support.web_provider_replay
