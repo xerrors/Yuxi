@@ -97,7 +97,7 @@ def test_oauth_configuration_rejects_shared_authorization_and_does_not_reuse_oth
         oauth_registration=None,
     )
     config = {"issuer_url": "https://sso.example", "client_id": "first", "client_secret": "private-secret"}
-    with pytest.raises(ValueError, match="共享请求头"):
+    with pytest.raises(ValueError, match="公共请求头不能包含所选方式的认证头"):
         configure_mcp_auth(server, "oauth", config)
     server.headers = {}
     configure_mcp_auth(server, "oauth", config)

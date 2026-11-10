@@ -23,12 +23,13 @@ after(async () => {
 })
 
 /** 在真实组件中注入接口并建立 Vue 上下文。 */
-async function setupForm(deps, props, context) {
+async function setupForm(deps, props, context, interact) {
   globalThis.__mcpFormApi = deps.mcpApi
   Object.assign(message, deps.message)
   let state
   await renderToString(createSSRApp({ setup() {
     state = component.setup(props, context)
+    interact?.(state)
     return () => h('div')
   } }))
   return state
@@ -77,6 +78,26 @@ test('编辑共享认证并清空请求头时，显式提交空 headers 以允�
   assert.equal(writes[0].oauth_config.client_id, 'client')
   assert.equal(Object.hasOwn(writes[0].oauth_config, 'require_same_identity'), false)
 })
+
+for (const publicHeaders of [null, { 'X-Version': '2' }]) {
+  test(`共享认证切换为无需认证${publicHeaders ? '后可填写公共协议头' : '时清除旧共享凭证'}`, async () => {
+    const writes = []
+    const form = await setupForm({
+      message: { error: assert.fail, success() {} },
+      mcpApi: { updateMcpServer: async (slug, data) => { writes.push(data); return { success: true, data } } }
+    }, { open: true, editMode: true, editData: {
+      slug: 'shared', name: 'Shared', url: 'https://example.com/mcp', auth_mode: 'headers',
+      headers: { 'X-API-Key': 'fixture-shared-key' }
+    } }, { expose() {}, emit() {} }, ({ form }) => {
+      form.auth_mode = 'none'
+      if (publicHeaders) form.headersText = JSON.stringify(publicHeaders)
+    })
+    await form.handleFormSubmit()
+    assert.equal(writes[0].auth_mode, 'none')
+    assert.deepEqual(writes[0].headers, publicHeaders || {})
+    assert.equal(JSON.stringify(writes[0]).includes('fixture-shared-key'), false)
+  })
+}
 
 
 for (const [label, clearSecret, clientSecret, expectedSecret] of [

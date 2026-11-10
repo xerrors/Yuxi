@@ -2,7 +2,7 @@
 
 MCP（Model Context Protocol）让智能体调用外部服务提供的工具。超级管理员在“扩展 → MCP”中维护服务目录；所有登录用户可以填写自己的 Token、API Key 或连接 OAuth 账号。Agent 可直接选择服务器，Skill 也可声明激活后加载的依赖。
 
-点击 MCP 卡片打开简介与个人凭证。用户按管理员选择的方式填写凭证或完成授权；超级管理员在弹窗底部点击“管理 MCP”维护服务配置。未配置个人凭证不影响普通聊天，运行时暂不提供相关工具；配置后重新发起请求即可使用。卡片统一使用默认图标，颜色按稳定标识映射。
+点击 MCP 卡片打开简介与个人凭证。用户按管理员选择的方式填写凭证或完成授权；超级管理员在弹窗底部点击“管理 MCP”维护服务配置。未配置个人凭证不影响普通聊天，运行时暂不提供相关工具；配置后重新发起请求即可使用。卡片图标按服务标识与名称匹配，颜色按稳定标识映射。
 
 ## 选择接入方式
 
@@ -75,7 +75,7 @@ Content-Type: application/json
 
 个人凭证加密保存在后端，缺失、断开或失效时不回退共享身份。管理员测试个人服务也使用本人的凭证。服务停用后，有本人连接的卡片保留清除入口，禁止替换与测试；清除后该停用卡片隐藏。修改地址、传输、认证方式或认证头要求所有用户重新配置；仅启停服务保留凭证。HTTP 401 要求更新凭证，403 不自动清除。
 
-已有共享服务可以由管理员显式切换。切换表单提示并清空原共享请求头，不把共享秘密复制到个人连接；需要的非敏感协议头可以重新填写。静态凭证不自动刷新，用户从服务方取得新值后替换。
+已有共享服务可以由管理员显式切换为个人凭证或无需认证。切换表单提示并清空原共享请求头，不把共享秘密复制到个人连接；需要的非敏感协议头可以重新填写。通过管理 API 切换时，必须显式提交完整的 `headers`，留空使用 `{}`，不能省略并沿用旧共享头。静态凭证不自动刷新，用户从服务方取得新值后替换。
 
 ## 个人账号授权
 
@@ -168,14 +168,20 @@ OAuth 元数据只能使用超管配置的 MCP 来源与授权服务器来源，
 
 ## 已有部署升级个人凭证字段
 
-业务 Schema v2 包含 `api_key_header`。已有 business v1 数据库在启动新版本 API/worker 前，显式执行幂等升级，再一并重启运行进程：
+业务 Schema v2 包含 `api_key_header`。此升级入口只适用于已包含个人 OAuth 表的 0.8 business v1 数据库，不提供从 0.7.x 升级的能力。升级前停止新任务提交，等待活动任务结束，并保管数据库备份与部署加密密钥。
+
+生产环境先构建或拉取目标版本镜像，确认 PostgreSQL 健康且 `storage-init` 已成功。停止 API/worker 后，使用目标镜像的一次性进程执行迁移，再运行应用初始化并启动服务；迁移不依赖能够启动的新版本 API：
 
 ```bash
-docker compose exec api uv run --no-sync python -m yuxi.migrations.mcp_personal_credentials
-docker compose restart api worker
+docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container stop api worker
+docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container run --rm --no-deps app-init uv run --no-sync --no-dev python -m yuxi.migrations.mcp_personal_credentials
+docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container up --no-deps --force-recreate --exit-code-from app-init app-init
+docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container up -d --no-build
 ```
 
-升级只增加可空字段并登记业务 Schema v2，保留已有服务、共享请求头和个人 OAuth 凭证。空的新字段不改变旧 OAuth 配置修订。新库由 app-init 直接建立 v2；运行进程只检查版本，不自动修改结构。升级前保管数据库备份与部署加密密钥，回退旧进程版本需显式处理 Schema 版本兼容。
+每条命令成功后再执行下一条。开发环境可将上述命令的 `docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container` 替换为 `docker compose`。升级后按[部署验证](../advanced/deployment.md#_4-验证部署)检查就绪状态，并确认已有 MCP 连接和个人凭证可用。
+
+升级只增加可空字段并登记业务 Schema v2，保留已有服务、共享请求头和个人 OAuth 凭证。空的新字段不改变旧 OAuth 配置修订。新库由 app-init 直接建立 v2；运行进程只检查版本，不自动修改结构。回退旧进程版本需显式处理 Schema 版本兼容。
 
 ## 内置远程 MCP
 
