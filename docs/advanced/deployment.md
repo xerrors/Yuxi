@@ -117,7 +117,7 @@ API、Web 与 MinIO 的项目文件在构建时明确权限：源码和配置归
 docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container --profile all up -d --build
 ```
 
-`app-init` 以 UID/GID 1000 运行，等待 PostgreSQL 健康与 `storage-init` 成功后，在数据库锁内完成 Schema 和共享内容初始化。它为确认空库建立 business 版本 1 与 knowledge 版本 2 基线，包含当前表、索引、约束和 LangGraph checkpoint 表；当前版本跳过建表，其他版本不匹配会明确失败。随后同步系统配置定义、内置模型供应商、Agent、MCP 和 Skill 来源文件，API 与 worker 等待全部步骤成功。应用启动不自动迁移历史数据。[版本 1 基线决定](../develop-guides/decisions/implemented/2026-10-19-schema-baseline-one.md)说明当前结构和历史升级路径的收敛；编号重置不代表旧库已完成结构变更，历史 `1/1` 标记也不能作为结构完整的证明。
+`app-init` 以 UID/GID 1000 运行，等待 PostgreSQL 健康与 `storage-init` 成功后，在数据库锁内完成 Schema 和共享内容初始化。它为确认空库建立 business 版本 2 与 knowledge 版本 2 基线，包含当前表、索引、约束和 LangGraph checkpoint 表；当前版本跳过建表，其他版本不匹配会明确失败。随后同步系统配置定义、内置模型供应商、Agent、MCP 和 Skill 来源文件，API 与 worker 等待全部步骤成功。应用启动不自动迁移历史数据。[版本 1 基线决定](../develop-guides/decisions/implemented/2026-10-19-schema-baseline-one.md)说明编号重置的背景；编号重置不代表旧库已完成结构变更，历史 `1/1` 标记也不能作为结构完整的证明。
 
 ### 可选关闭知识库
 
@@ -159,7 +159,7 @@ API 和 worker 在各自进程内继续校验密钥及 Schema，创建连接、�
 
 ## 3. 数据库与文件目录
 
-新部署使用空 PostgreSQL 数据库和独立的 Yuxi 文件目录。已有当前版本数据库可以直接重启同版本服务。其他版本和包含未版本化 Yuxi 表的数据库会被明确拒绝，初始化器不执行历史升级、回填或自动清库。除下述知识域 v1 显式转换入口外，其他历史结构由部署者独立备份和处理，不通过手改版本标记绕过结构校验。
+新部署使用空 PostgreSQL 数据库和独立的 Yuxi 文件目录。已有当前版本数据库可以直接重启同版本服务。其他版本和包含未版本化 Yuxi 表的数据库会被明确拒绝，初始化器不执行历史升级、回填或自动清库。0.8 business v1 的个人凭证字段按 [MCP 升级说明](../agents/mcp-integration.md#已有部署升级个人凭证字段)显式升级，下述知识域 v1 使用离线目录转换入口；其他历史结构由部署者独立备份和处理，不通过手改版本标记绕过结构校验。
 
 知识域 v1 的路径型目录需要在维护窗口显式转换。先备份 PostgreSQL 与对象存储，停止 API、worker 及其他知识库写入方，在同一部署环境运行 `uv run --no-sync python -m yuxi.migrations.knowledge_directories` 进行只读审计。活动摄取任务、重复真实目录、真实/虚拟同名目录、普通文件占用目录前缀及无效父关系会阻止转换，必须先明确处理，不能通过手改版本跳过。
 
