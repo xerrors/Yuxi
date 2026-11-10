@@ -39,7 +39,7 @@
         </div>
         <ul
           class="file-type-legend"
-          :class="{ 'legend-two-columns': fileTypeData.length >= 5 }"
+          :class="{ 'legend-many-types': fileTypeData.length >= 5 }"
           aria-label="文件类型数量与占比"
         >
           <li
@@ -150,6 +150,10 @@ defineExpose({ cleanup })
 </script>
 
 <style scoped lang="less">
+.file-distribution {
+  // 图例列数由卡片自身宽度决定，避免窄卡片里名称、数量与占比互相挤压。
+  container-type: inline-size;
+}
 .file-distribution h4,
 .legend-value {
   color: var(--color-text);
@@ -192,39 +196,17 @@ defineExpose({ cleanup })
     border-bottom: 1px solid var(--gray-100);
     font-size: 13px;
   }
-  // 类型较多时拆成两列；用 grid 而非多列分栏，避免分栏布局挤压内部名称列导致折行
-  &.legend-two-columns {
+  // 类型较多时默认单列；容器足够宽时再拆两列，每个类型保持在一条明细内。
+  &.legend-many-types {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+}
+@container (min-width: 400px) {
+  .file-type-legend.legend-many-types {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     column-gap: 20px;
-    align-items: start;
-
-    // 两列时单列宽度有限：名称独占一行，数值与占比另起一行，避免名称被截断
-    li {
-      grid-template-columns: 8px minmax(0, 1fr);
-      grid-template-areas:
-        'swatch name'
-        '.      stats';
-      row-gap: 2px;
-      column-gap: 8px;
-
-      .legend-swatch {
-        grid-area: swatch;
-      }
-
-      .legend-name {
-        grid-area: name;
-      }
-
-      .legend-value,
-      .legend-percent {
-        grid-area: stats;
-      }
-
-      .legend-value {
-        display: none;
-      }
-    }
   }
 }
 .legend-swatch {

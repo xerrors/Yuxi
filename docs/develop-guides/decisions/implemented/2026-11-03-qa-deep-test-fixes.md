@@ -36,6 +36,7 @@ Owner：frontend/src/modules/session/ui/SessionWorkspace.vue
 - 归档只读提示依赖 `public_resources.session_resource` 返回的 `yuxi.archived`；该字段若被移除，提示会静默消失（不会误拦截发送，因为后端仍拒绝）。
 - `upsertThread` 允许"当前打开线程"进入列表，意味着归档会话在被访问期间仍存在于 store，只是侧栏不渲染。列表刷新时 `cachedDetails` 已按 `currentThreadId` 保留同类行为。
 - Q-8(协作视图异步组件超时)与 Q-10(快照指纹提示)未改：前者缺少可稳定复现的对照实验，后者需要新契约。
+- 图例的"两列时名称独占一行"布局已由 [2026-11-10 单行响应式图例](./2026-11-10-dashboard-legend-single-line.md) 取代；本记录其他修复继续有效。
 
 ## 验证
 
