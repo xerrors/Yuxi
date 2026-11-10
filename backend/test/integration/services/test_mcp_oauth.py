@@ -1380,6 +1380,46 @@ async def test_static_401_revokes_only_current_connection_and_other_origins_are_
         assert own.status == "reconnect_required" and own.credentials is None
 
 
+@pytest.mark.parametrize("mode", ["none", "bearer", "api_key", "oauth"])
+async def test_switch_from_shared_auth_requires_explicit_headers(scenario, mode):
+    """切换认证方式不能隐式沿用共享凭证，拒绝时保留原配置。"""
+    http, headers = scenario["http"], scenario["headers"]["admin"]
+    base = "/api/system/mcp-servers/fixture"
+    shared_headers = {"X-API-Key": "fixture-shared-key"}
+    saved = await http.put(base, headers=headers, json={"auth_mode": "headers", "headers": shared_headers})
+    assert saved.status_code == 200
+    changes = {"auth_mode": mode, "api_key_header": "X-Personal-Key"}
+    if mode == "oauth":
+        changes["oauth_config"] = {"issuer_url": scenario["root"] + "/issuer", "registration": "dynamic"}
+    rejected = await http.put(base, headers=headers, json=changes)
+    assert rejected.status_code == 400
+    async with scenario["db"]() as db:
+        server = await db.scalar(select(MCPServer))
+        assert server.auth_mode == "headers" and server.headers == shared_headers
+
+
+@pytest.mark.parametrize("mode", ["none", "bearer", "api_key", "oauth"])
+@pytest.mark.parametrize(
+    "shared_headers",
+    [{"X-Version": "2"}, {"X-API-Key": "fixture-shared-key", "X-Version": "2"}],
+    ids=["protocol-only", "shared-key"],
+)
+async def test_switch_from_shared_auth_accepts_explicit_public_headers(scenario, mode, shared_headers):
+    """显式公共协议头可在切换时保存，包括重填与原值相同的协议头。"""
+    http, headers = scenario["http"], scenario["headers"]["admin"]
+    base = "/api/system/mcp-servers/fixture"
+    saved = await http.put(base, headers=headers, json={"auth_mode": "headers", "headers": shared_headers})
+    assert saved.status_code == 200
+    changes = {"auth_mode": mode, "headers": {"X-Version": "2"}, "api_key_header": "X-Personal-Key"}
+    if mode == "oauth":
+        changes["oauth_config"] = {"issuer_url": scenario["root"] + "/issuer", "registration": "dynamic"}
+    updated = await http.put(base, headers=headers, json=changes)
+    assert updated.status_code == 200, updated.text
+    async with scenario["db"]() as db:
+        server = await db.scalar(select(MCPServer))
+        assert server.auth_mode == mode and server.headers == {"X-Version": "2"}
+
+
 async def test_explicit_anonymous_mode_does_not_require_a_personal_connection(scenario):
     """无认证方式仍走当前服务策略，不发送共享或个人凭证。"""
     http, headers = scenario["http"], scenario["headers"]

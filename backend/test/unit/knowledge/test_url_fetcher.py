@@ -2,10 +2,13 @@
 
 import ipaddress
 import socket
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import httpcore
 import httpx
 import pytest
+
 from yuxi.modules.knowledge.utils import url_fetcher
 from yuxi.modules.knowledge.utils.url_fetcher import (
     SSRFGuardBackend,
@@ -13,6 +16,8 @@ from yuxi.modules.knowledge.utils.url_fetcher import (
     is_blocked_address,
     resolve_hostname_addresses,
 )
+from yuxi.modules.knowledge.utils.url_validator import validate_url
+from yuxi.shared.errors import InvalidOperationError
 
 
 class RecordingBackend(httpcore.AsyncNetworkBackend):
@@ -191,3 +196,52 @@ async def test_transport_wires_ssrf_backend_into_pool(monkeypatch):
 
     assert recording.calls, "SSRFGuardTransport 未接入 SSRFGuardBackend"
     assert recording.calls[0][0] == "93.184.216.34"
+
+
+@pytest.mark.parametrize(
+    ("status", "headers", "content", "message"),
+    [
+        (302, {"Location": "https://blocked.test/private"}, b"", "重定向 URL 校验失败：网址域名不在 URL 导入白名单中，请联系管理员配置"),
+        (302, {}, b"", "网页重定向缺少目标地址"),
+        (200, {"Content-Type": "application/json"}, b"{}", "仅支持导入 HTML 网页，请确认网址指向网页正文"),
+        (200, {"Content-Type": "text/html"}, b"12345", "网页内容超过 4 字节的导入上限"),
+    ],
+)
+async def test_fetch_rejections_keep_public_business_reason(monkeypatch, status, headers, content, message):
+    """重定向及内容限制保留公开原因，不被网络失败兜底覆盖。"""
+    monkeypatch.setattr(
+        url_fetcher, "knowledge_url_import_policy", SimpleNamespace(get=AsyncMock(return_value={"allowed_hosts": ["example.test"]}))
+    )
+    requests = []
+
+    def respond(request):
+        """固定远端协议结果，记录是否越过被拒绝的重定向。"""
+        requests.append(str(request.url))
+        return httpx.Response(status, headers=headers, content=content)
+
+    monkeypatch.setattr(url_fetcher, "SSRFGuardTransport", lambda: httpx.MockTransport(respond))
+    with pytest.raises(InvalidOperationError) as error:
+        await url_fetcher.fetch_url_content("https://example.test/page", max_size=4)
+    assert error.value.code == "url_fetch_rejected" and error.value.message == message
+    assert requests == ["https://example.test/page"]
+
+
+@pytest.mark.parametrize(
+    ("url", "hosts", "allowed"),
+    [
+        ("https://example.com/a", [" EXAMPLE.COM "], True),
+        ("https://docs.example.com/a", ["example.com"], True),
+        ("https://example.com/a", ["*.example.com"], True),
+        ("https://docs.example.com/a", ["*.example.com"], True),
+        ("https://example.com./a", ["example.com."], True),
+        ("https://docs.example.com./a", ["*.example.com."], True),
+        ("https://badexample.com/a", ["example.com"], False),
+        ("https://example.com.attacker.test/a", ["example.com"], False),
+        ("https://arbitrary.test./a", [" "], False),
+        ("file:///etc/passwd", ["example.com"], False),
+        ("https://example.com/a", [], False),
+    ],
+)
+def test_validate_uses_saved_domain_policy(url, hosts, allowed):
+    """列表策略允许域名与子域，同时拒绝相似域名及空白项绕过。"""
+    assert validate_url(url, hosts)[0] is allowed

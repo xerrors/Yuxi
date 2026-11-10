@@ -45,8 +45,6 @@ def configure_mcp_auth(server, auth_mode: str, oauth_config: dict | None, api_ke
         raise ValueError("平台委托 MCP 由内置清单同步，不能通过管理接口配置")
     if auth_mode not in {"none", "headers"} | PERSONAL_AUTH_MODES:
         raise ValueError("MCP 认证方式无效")
-    if server.auth_mode == "headers" and auth_mode in PERSONAL_AUTH_MODES and server.headers:
-        raise ValueError("切换个人认证前请清空共享请求头")
     if auth_mode == "api_key":
         api_key_header = api_key_header if api_key_header is not None else server.api_key_header
         if (

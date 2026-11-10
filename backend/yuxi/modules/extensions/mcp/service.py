@@ -229,6 +229,9 @@ async def update_mcp_server(
     if is_builtin_mcp_server(server):
         raise PermissionError("系统内置 MCP 的连接配置由代码管理，无法通过接口修改")
 
+    if server.auth_mode == "headers" and auth_mode in PERSONAL_AUTH_MODES | {"none"} and server.headers and headers is None:
+        raise ValueError("切换接入方式前请显式清空或替换共享请求头")
+
     previous_revision = config_revision(server)
     updates = dict(
         name=name,

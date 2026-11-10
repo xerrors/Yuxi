@@ -202,7 +202,7 @@
           <div class="url-actions">
             <span class="url-hint">
               支持批量粘贴，自动过滤空行。
-              <span class="warning-text">需配置白名单，详见文档说明</span>
+              <span class="warning-text">超级管理员可在安全设置中配置域名白名单</span>
             </span>
             <a-button
               type="primary"

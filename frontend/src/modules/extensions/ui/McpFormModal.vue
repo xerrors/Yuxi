@@ -67,7 +67,7 @@
           </a-select-opt-group>
         </a-select>
         <p v-if="authDescription" class="form-hint">{{ authDescription }}</p>
-        <p v-if="clearsSharedHeaders" class="form-hint">保存时清除原共享请求头，每名用户需要配置自己的凭证。</p>
+        <p v-if="clearsSharedHeaders" class="form-hint">{{ form.auth_mode === 'none' ? '保存时清除原共享请求头。' : '保存时清除原共享请求头，每名用户需要配置自己的凭证。' }}</p>
       </a-form-item>
       <a-form-item v-if="form.auth_mode === 'headers'" label="共享请求头（JSON）" html-for="mcp-form-headers">
         <a-textarea id="mcp-form-headers" v-model:value="form.headersText" placeholder='{"Authorization": "Bearer 你的共享 Token"}' :rows="3" aria-describedby="mcp-shared-headers-hint" />
@@ -183,10 +183,10 @@ const authDescription = computed(() => ({
   oauth: '管理员登记应用信息，每位用户在 MCP 卡片登录并授权自己的服务账号。',
   headers: '管理员在下方填写凭证。所有人的请求都会使用这组请求头，访问同一个服务账号。',
 })[form.auth_mode])
-const clearsSharedHeaders = computed(() => props.editMode && (props.editData?.auth_mode || 'headers') === 'headers' && ['bearer', 'api_key', 'oauth'].includes(form.auth_mode))
+const clearsSharedHeaders = computed(() => props.editMode && (props.editData?.auth_mode || 'headers') === 'headers' && ['none', 'bearer', 'api_key', 'oauth'].includes(form.auth_mode))
 
 watch(() => form.auth_mode, (mode, previous) => {
-  if (previous === 'headers' && ['bearer', 'api_key', 'oauth'].includes(mode)) form.headersText = ''
+  if (previous === 'headers' && ['none', 'bearer', 'api_key', 'oauth'].includes(mode)) form.headersText = ''
 }, { flush: 'sync' })
 
 watch(
