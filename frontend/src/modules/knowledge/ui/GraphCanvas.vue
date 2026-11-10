@@ -97,8 +97,9 @@ let resizeObserver = null
 let renderTimeout = null
 let retryCount = 0
 let resizeTimer = null
-let layoutTimeout = null
-let highlightTimeout = null
+let layoutGeneration = 0
+let pendingHighlightGeneration = 0
+let layoutCompletedGeneration = 0
 let isMounted = false
 const MAX_RETRIES = 5
 
@@ -386,44 +387,49 @@ function initGraph() {
     }
   })
 
+  const graph = graphInstance
+  // d3-force 在 simulation end 后才结束；G6 此时同步发出 afterlayout（data.type === 'post'）。
+  // render 自带的后布局也会发该事件，只记下紧随其后的显式 layout，避免在布局栈内重绘。
+  graph.on('afterlayout', (event) => {
+    if (event?.data?.type !== 'post' || graph !== graphInstance) return
+    if (!pendingHighlightGeneration || pendingHighlightGeneration !== layoutGeneration) return
+    layoutCompletedGeneration = pendingHighlightGeneration
+  })
+
   emit('ready', graphInstance)
 }
 
-function setGraphData() {
+async function setGraphData() {
   if (!graphInstance || !isMounted) initGraph()
   if (!graphInstance || !isMounted) return
   const data = formatData()
+  const generation = ++layoutGeneration
+  pendingHighlightGeneration = 0
+  const graph = graphInstance
 
-  console.log('开始设置图谱数据:', {
-    nodes: data.nodes.length,
-    edges: data.edges.length
-  })
-
-  graphInstance.setData(data)
-  graphInstance.render()
-
-  // 手动触发布局重新计算，确保节点分布
-  clearTimeout(layoutTimeout)
-  layoutTimeout = setTimeout(() => {
-    if (!isMounted || !graphInstance) return
-    try {
-      if (graphInstance && graphInstance.layout) {
-        graphInstance.layout()
-        console.log('触发布局重新计算')
-      }
-    } catch (error) {
-      console.warn('布局重新计算失败:', error)
-    }
-
-    // 等待力导向布局稳定后再应用高亮
-    clearTimeout(highlightTimeout)
-    highlightTimeout = setTimeout(() => {
-      if (!isMounted || !graphInstance) return
+  graph.setData(data)
+  try {
+    await graph.render()
+    if (generation !== layoutGeneration || !isMounted || graph !== graphInstance) return
+    if (typeof graph.layout !== 'function') {
       applyHighlightKeywords()
       emit('data-rendered')
-      console.log('图谱渲染完成，布局已稳定')
-    }, 1500)
-  }, 10) // 等待 10ms 确保布局完成
+      return
+    }
+    pendingHighlightGeneration = generation
+    layoutCompletedGeneration = 0
+    await graph.layout()
+    if (generation !== layoutGeneration || !isMounted || graph !== graphInstance) return
+    if (layoutCompletedGeneration !== generation) return
+    pendingHighlightGeneration = 0
+    layoutCompletedGeneration = 0
+    applyHighlightKeywords()
+    emit('data-rendered')
+  } catch (error) {
+    if (pendingHighlightGeneration === generation) pendingHighlightGeneration = 0
+    if (generation !== layoutGeneration || !isMounted || graph !== graphInstance) return
+    console.warn('布局重新计算失败:', error)
+  }
 }
 
 // 关键词高亮功能
@@ -613,13 +619,14 @@ onMounted(() => {
 
 onUnmounted(() => {
   isMounted = false
+  layoutGeneration += 1
+  pendingHighlightGeneration = 0
+  layoutCompletedGeneration = 0
   document.removeEventListener('click', handleStatsOutsideClick)
   window.removeEventListener('resize', refreshGraph)
   if (resizeObserver && container.value) resizeObserver.unobserve(container.value)
   clearTimeout(renderTimeout)
   clearTimeout(resizeTimer)
-  clearTimeout(layoutTimeout)
-  clearTimeout(highlightTimeout)
   try {
     graphInstance?.destroy()
   } catch {

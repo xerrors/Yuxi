@@ -126,6 +126,7 @@ jobs:
               test/integration/api/test_background_jobs_router.py::test_enqueue_document_creates_job \
               test/integration/api/test_knowledge_upload_staging.py \
               test/integration/api/test_knowledge_directory_imports.py \
+              test/integration/api/test_knowledge_document_list_sort.py \
               test/integration/api/test_knowledge_file_summary.py \
               test/integration/api/test_graph_build_status.py -q
       - name: Verify document rollback projections and recovery

@@ -68,7 +68,8 @@ class BaseReranker(ABC):
                 logger.debug(f"Reranking batch {batch_no}/{total_batches} completed")
             except Exception as exc:
                 logger.error(f"Reranking batch {batch_no} failed: {exc}")
-                all_scores.extend([0.5] * len(batch))
+                # 占位数量等于该批文档数。负无穷经同一 sigmoid 后仍低于任何有限真实分。
+                all_scores.extend([float("-inf")] * len(batch))
 
         if normalize:
             all_scores = [float(sigmoid(score)) for score in all_scores]
@@ -158,11 +159,11 @@ class BaseReranker(ABC):
 
 class OpenAIReranker(BaseReranker):
     def _build_payload(self, query: str, documents: list[str], max_length: int) -> dict[str, Any]:
+        # max_length 是文本长度上限，不是每文档分块数。没有独立块数配置时不发送该字段。
         return {
             "model": self.model,
             "query": query,
             "documents": documents,
-            "max_chunks_per_doc": max_length,
         }
 
     def _extract_results(self, result: dict[str, Any]) -> list[dict[str, Any]]:

@@ -54,6 +54,13 @@ test("uses Public v1 knowledge paths, bodies, and bearer authentication", async 
   assert.deepEqual(JSON.parse(seen[4].body), { kb_id: "kb 1", file_id: "file/1", patterns: ["needle"], use_regex: false, case_sensitive: false, max_windows: 5, window_size: 80 });
 });
 
+test("joins FastAPI validation messages when detail is an array", async () => {
+  await withServer((_request, response) => json(response, 422, { detail: [{ loc: ["body", "name"], msg: "field required", type: "missing" }, { msg: "value error" }] }), async url => {
+    const client = new Client({ name: "test", url, apiKey: "yxkey_test" });
+    await assert.rejects(() => client.request("/error"), error => error.status === 422 && error.message === "field required；value error");
+  });
+});
+
 test("maps structured HTTP errors without hiding the server status", async () => {
   await withServer((_request, response) => json(response, 422, { detail: { error: "invalid_input", message: "bad request" } }), async url => {
     const client = new Client({ name: "test", url, apiKey: "yxkey_test" });

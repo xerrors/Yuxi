@@ -31,7 +31,7 @@
         保存中…
       </span>
       <!-- 模型名称 -->
-      <span v-if="showKey('model') && displayModelName" class="item" @click="console.log(msg)">
+      <span v-if="showKey('model') && displayModelName" class="item">
         <Bot size="12" /> {{ displayModelName }}
       </span>
       <!-- 复制 -->

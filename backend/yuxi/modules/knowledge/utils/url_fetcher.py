@@ -21,8 +21,8 @@ MAX_DOWNLOAD_SIZE = 10 * 1024 * 1024
 ALLOWED_CONTENT_TYPES = ["text/html", "application/xhtml+xml"]
 
 # DNS rebinding 防护：解析、校验与连接必须使用同一次解析结果。
-# is_global 已排除 loopback/私网/链路本地等地址；云元数据服务所在的
-# 特殊网段在此显式补充，不依赖 ipaddress 版本行为。
+# is_global 已排除 loopback/私网/链路本地等地址，但当前解释器上组播仍可能
+# is_global。云元数据服务所在的特殊网段在此显式补充，不依赖 ipaddress 版本行为。
 EXTRA_BLOCKED_ADDRESSES = frozenset(
     ipaddress.ip_address(ip)
     for ip in (
@@ -129,8 +129,10 @@ async def resolve_hostname_addresses(hostname: str) -> ResolvedAddresses:
 
 
 def is_blocked_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    """非公网地址（含已知云元数据段）返回 True。"""
-    return not address.is_global or address in EXTRA_BLOCKED_ADDRESSES
+    """非公网单播（含组播与已知云元数据段）返回 True。"""
+    # 按实际建连的 IPv4 地址校验映射地址，避免不同 Python 版本对 IPv6 属性的判定差异。
+    effective_address = getattr(address, "ipv4_mapped", None) or address
+    return effective_address.is_multicast or not effective_address.is_global or effective_address in EXTRA_BLOCKED_ADDRESSES
 
 
 def assert_no_blocked_address(addresses: ResolvedAddresses) -> None:

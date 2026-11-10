@@ -177,6 +177,7 @@ test('零消息后续 Run 不隐藏上一条完成回答的操作栏，关联 re
   assert.equal(isRunGroupSettled([answer], answer, true), false)
   assert.equal(formatEmptyRunStatus(empty.run.status), '本次运行失败')
   assert.equal(formatEmptyRunStatus('cancelled'), '本次运行已取消')
+  assert.equal(formatEmptyRunStatus('cancel_requested'), '取消中')
 })
 
 test('审批前后的工具和思考跨关联 Run 连续展示，正文仍独立', () => {

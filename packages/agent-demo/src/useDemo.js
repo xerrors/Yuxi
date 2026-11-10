@@ -12,6 +12,7 @@ import {
   createItems,
   mergeSnapshot,
   orderedItems,
+  questionHasOptions,
   readEvents,
 } from "./protocol.js";
 
@@ -62,6 +63,8 @@ export function useDemo() {
     logs: [],
     downloading: "",
     answers: {},
+    otherSelected: {},
+    otherText: {},
     decisions: {},
     followScroll: true,
   });
@@ -144,6 +147,8 @@ export function useDemo() {
     state.draftImages = [];
     state.uploading = false;
     state.answers = {};
+    state.otherSelected = {};
+    state.otherText = {};
     state.decisions = {};
     state.followScroll = true;
   }
@@ -222,8 +227,13 @@ export function useDemo() {
     const point = waitpoint.value;
     if (point?.id === previousId) return;
     state.answers = Object.fromEntries(
-      (point?.questions || []).map((question) => [question.question_id, ""]),
+      (point?.questions || []).map((question) => [
+        question.question_id,
+        questionHasOptions(question) && question.multi_select === true ? [] : "",
+      ]),
     );
+    state.otherSelected = {};
+    state.otherText = {};
     state.decisions = Object.fromEntries(
       (point?.calls || []).map((call) => [call.call_id, ""]),
     );
@@ -255,6 +265,9 @@ export function useDemo() {
       if (!current(owner) || request !== historyRequest) return;
       mergeSnapshot(state.projection, target.yuxi.output);
       state.runError = target.error?.message || "";
+      if (session.yuxi?.current_turn?.id === target.id) {
+        session.yuxi.current_turn.cancellation_pending = Boolean(target.yuxi?.cancellation_pending);
+      }
       if (turnId || ["queued", "in_progress", "requires_action"].includes(target.status)) {
         let cursor;
         do {
@@ -309,7 +322,7 @@ export function useDemo() {
             activeApp.value.key,
           );
           if (event.type === "yuxi.session.resync") {
-            await refreshHistory(owner);
+            await refreshHistory(owner, { turnId: event.turn_id });
           } else {
             applyEvent(state.projection, event);
             if (
@@ -422,8 +435,7 @@ export function useDemo() {
       !state.agentId ||
       waitingForUser.value ||
       state.pending ||
-      state.sending ||
-      state.snapshot?.yuxi.queue_paused
+      state.sending
     )
       return;
     const images = [...state.draftImages];
@@ -496,11 +508,24 @@ export function useDemo() {
     if (!point) return;
     let response;
     if (point.kind === "answer") {
-      const answers = point.questions.map((question) => ({
-        question_id: question.question_id,
-        answer: state.answers[question.question_id],
-      }));
-      if (answers.some((answer) => !answer.answer?.trim())) return;
+      const answers = [];
+      for (const question of point.questions) {
+        const value = state.answers[question.question_id];
+        const hasOptions = questionHasOptions(question);
+        if (hasOptions && question.allow_other !== false && state.otherSelected[question.question_id]) {
+          const text = (state.otherText[question.question_id] || "").trim();
+          if (!text) return;
+          const selected = question.multi_select === true && Array.isArray(value) ? value : [];
+          answers.push({ question_id: question.question_id, answer: { type: "other", text, selected } });
+        } else if (hasOptions && question.multi_select === true) {
+          if (!Array.isArray(value) || !value.length) return;
+          answers.push({ question_id: question.question_id, answer: value });
+        } else if (typeof value !== "string" || !value.trim()) {
+          return;
+        } else {
+          answers.push({ question_id: question.question_id, answer: value });
+        }
+      }
       response = { type: "answer", answers };
     } else if (point.kind === "approval") {
       const decisions = point.calls.map((call) => ({

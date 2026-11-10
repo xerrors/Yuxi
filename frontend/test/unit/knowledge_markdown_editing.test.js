@@ -184,7 +184,7 @@ test('默认代次不是下游证据，uploaded 和 parsed 空稿直接保存，
     assert.equal(action.markdownSaveConfirmOpen.value, false, status)
     assert.equal(action.markdownEditor.value.saving, true, status)
   }
-  for (const status of ['indexed', 'done', 'error_indexing']) {
+  for (const status of ['indexed', 'done', 'error_indexing', 'failed']) {
     const action = await editorLogic({ file: ref({ status, active_generation: 1, chunk_count: 0 }) })
     await action.startMarkdownEdit()
     action.markdownEditor.value.draft = '新稿'

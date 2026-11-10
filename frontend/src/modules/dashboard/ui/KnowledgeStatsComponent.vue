@@ -5,14 +5,14 @@
       <div class="dashboard-card-metric-grid">
         <DashboardMetricCard
           :icon="Database"
-          :value="formatNumber(knowledgeStats?.total_knowledge_bases)"
+          :value="formatStatNumber(knowledgeStats, knowledgeStats?.total_knowledge_bases)"
           label="知识库总数"
           tone="info"
           compact
         />
         <DashboardMetricCard
           :icon="FileText"
-          :value="formatNumber(knowledgeStats?.total_files)"
+          :value="formatStatNumber(knowledgeStats, knowledgeStats?.total_files)"
           label="文件总数"
           tone="success"
           compact
@@ -20,7 +20,7 @@
         <DashboardMetricCard
           :icon="HardDrive"
           :value="formattedStorage.value"
-          :label="`存储容量 (${formattedStorage.unit})`"
+          :label="knowledgeStats ? `存储容量 (${formattedStorage.unit})` : '存储容量'"
           tone="warning"
           compact
         />
@@ -59,7 +59,10 @@
           </li>
         </ul>
       </template>
-      <a-empty v-else description="暂无文件类型数据" />
+      <a-empty
+        v-else
+        :description="knowledgeStats ? '暂无文件类型数据' : '知识库统计暂不可用'"
+      />
     </div>
   </DashboardChartCard>
 </template>
@@ -70,7 +73,7 @@ import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import * as echarts from '@/modules/dashboard/model/dashboardCharts'
 import { getColorByIndex, getColorPalette } from '@/shared/lib/chartColors'
 import { useThemeStore } from '@/shared/model/theme'
-import { formatNumber, formatStorageSize } from '@/modules/dashboard/model/dashboard'
+import { formatStatNumber, formatStorageSize } from '@/modules/dashboard/model/dashboard'
 import { Database, FileText, HardDrive } from '@lucide/vue'
 import DashboardMetricCard from './DashboardMetricCard.vue'
 
@@ -82,7 +85,11 @@ const themeStore = useThemeStore()
 const fileTypeChartRef = ref(null)
 let fileTypeChart = null
 let resizeObserver = null
-const formattedStorage = computed(() => formatStorageSize(props.knowledgeStats?.total_storage_size))
+const formattedStorage = computed(() =>
+  props.knowledgeStats
+    ? formatStorageSize(props.knowledgeStats.total_storage_size)
+    : { value: '—', unit: '—' }
+)
 const fileTypeData = computed(() =>
   Object.entries(props.knowledgeStats?.file_type_distribution || {})
     .map(([name, value]) => ({ name: name || '未知', value: Number(value) }))

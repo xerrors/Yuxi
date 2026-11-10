@@ -102,7 +102,13 @@ async (page) => {
   await page.getByText('有效接入凭据 · agents', { exact: true }).waitFor()
   await page.getByText('过期凭据 · knowledge · 无效', { exact: true }).waitFor()
   check(legacyListRequests === 0, '概览不应再请求截断的 Key 列表')
-  const endpoints = await page.evaluate(async () => (await import('/src/apis/apikey_api.js')).PUBLIC_API_ENDPOINTS)
+  const discovery = await page.request.get('http://localhost:5050/api/system/discovery')
+  const knowledgeEnabled = discovery.ok()
+    && (await discovery.json())?.capabilities?.features?.knowledge === true
+  const endpoints = await page.evaluate(async (enabled) => {
+    const { publicApiEndpoints } = await import('/src/apis/apikey_api.js')
+    return publicApiEndpoints(enabled)
+  }, knowledgeEnabled)
   check(new Set(endpoints.map(endpoint => `${endpoint.method} ${endpoint.path}`)).size === endpoints.length, '端点记录不唯一')
   // 以运行服务的 OpenAPI 为独立协议 oracle，错误方法或路径必须失败。
   const specification = await page.request.get('http://localhost:5050/openapi.json')
@@ -208,7 +214,7 @@ async (page) => {
       const bg = selector => getComputedStyle(document.querySelector(selector)).backgroundColor
       return { nav: bg('.settings-modal .settings-sider'), content: bg('.settings-modal .settings-content-wrapper') }
     })
-    check(dark ? settings.content === 'rgba(0, 0, 0, 0)' : settings.content === 'rgb(255, 255, 255)', '设置内容区主题背景不正确')
+    check(dark ? settings.content === 'rgb(34, 37, 41)' : settings.content === 'rgb(255, 255, 255)', '设置内容区主题背景不正确')
     if (!dark) check(settings.nav === 'rgb(245, 247, 247)', '浅色设置导航背景发生回归')
   }
   await page.screenshot({ path: '/tmp/yuxi-review-settings-dark.png', animations: 'disabled' })

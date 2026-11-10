@@ -199,7 +199,7 @@ const TASK_TYPE_LABELS = {
 }
 
 const isActiveStatus = (status) => Boolean(STATUS_CONFIG[status]) && !STATUS_CONFIG[status].terminal
-const isFailedStatus = (status) => status === 'failed' || status === 'cancelled'
+const isFailedStatus = (status) => status === 'failed'
 
 const filteredJobs = computed(() => {
   const list = jobs.value
@@ -224,7 +224,7 @@ const emptyHint = computed(() => {
     case 'success':
       return { title: '暂无已完成的作业', subtitle: '执行成功的后台作业会显示在这里。' }
     case 'failed':
-      return { title: '暂无失败的作业', subtitle: '失败或已取消的后台作业会显示在这里。' }
+      return { title: '暂无失败的作业', subtitle: '执行失败的后台作业会显示在这里。' }
     default:
       return {
         title: '暂无作业',

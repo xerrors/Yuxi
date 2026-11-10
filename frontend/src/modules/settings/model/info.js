@@ -86,7 +86,6 @@ export const useInfoStore = defineStore('info', () => {
 
       if (response.success && response.data) {
         setInfoConfig(response.data)
-        console.debug('信息配置加载成功:', response.data)
         return response.data
       } else {
         console.warn('信息配置加载失败，使用默认配置')

@@ -36,6 +36,10 @@ export class Client {
     try {
       const detail = (JSON.parse(text) as Json).detail;
       if (typeof detail === "string") return new YuxiError(detail, response.status);
+      if (Array.isArray(detail)) {
+        const messages = detail.flatMap((item) => (item && typeof item === "object" && typeof (item as Json).msg === "string" ? [(item as Json).msg as string] : []));
+        return new YuxiError(messages.join("；") || response.statusText, response.status);
+      }
       if (detail && typeof detail === "object") {
         const codeValue = (detail as Json).error;
         const messageValue = (detail as Json).message;

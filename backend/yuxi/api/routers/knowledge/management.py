@@ -151,11 +151,7 @@ async def create_knowledge_base(
     current_user: User = Depends(get_admin_user),
 ):
     """创建知识库"""
-    logger.debug(
-        f"Create knowledge_base {name} with kb_type {kb_type}, "
-        f"llm_model_spec {llm_model_spec}, "
-        f"embedding_model_spec {embedding_model_spec}, share_config {share_config}"
-    )
+    logger.debug("Create knowledge_base")
     try:
         knowledge_base_info = await knowledge_base_manager.create_knowledge_base(
             name,
@@ -233,11 +229,7 @@ async def update_knowledge_base_info(
     current_user: User = Depends(require_knowledge_base_manage),
 ):
     """更新知识库信息"""
-    logger.debug(
-        f"[update_knowledge_base_info] 接收到的参数: name={data.name}, "
-        f"llm_model_spec={data.llm_model_spec}, "
-        f"share_config={data.share_config}"
-    )
+    logger.debug("Update knowledge_base {}", kb_id)
     try:
         update_llm_model_spec = "llm_model_spec" in data.model_fields_set
 
@@ -265,7 +257,7 @@ async def update_knowledge_base_info(
 @knowledge.delete("/knowledge-bases/{kb_id}")
 async def delete_knowledge_base(kb_id: str, current_user: User = Depends(require_knowledge_base_manage)):
     """删除知识库"""
-    logger.debug(f"Delete knowledge_base {kb_id}")
+    logger.debug("Delete knowledge_base {}", kb_id)
     try:
         await knowledge_base_manager.delete_knowledge_base(kb_id)
 
@@ -443,9 +435,11 @@ async def list_documents(
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(100, ge=1, le=500, description="每页数量"),
     recursive: bool = Query(False, description="是否跨目录筛选"),
+    sort_by: str | None = Query(None, description="排序字段：filename、content_amount、status、created_at"),
+    sort_order: str | None = Query(None, description="排序方向：ascend 或 descend"),
     current_user: User = Depends(require_knowledge_base_read),
 ):
-    """分页获取知识库文件列表。"""
+    """分页获取知识库文件列表。排序可选，作用于筛选后的全部记录。"""
     await _ensure_knowledge_base_supports_documents(kb_id, "文档查看")
     try:
         return await knowledge_base_manager.list_document_files(
@@ -455,6 +449,8 @@ async def list_documents(
             page=page,
             page_size=page_size,
             recursive=recursive,
+            sort_by=sort_by,
+            sort_order=sort_order,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -514,7 +510,7 @@ async def add_documents(
     current_user: User = Depends(require_knowledge_base_manage),
 ):
     """添加文档到知识库（上传 -> 解析 -> 可选入库）"""
-    logger.debug(f"Add documents for kb_id {kb_id}: {items} {params=}")
+    logger.debug("Add documents for kb_id {}", kb_id)
     await _ensure_knowledge_base_supports_documents(kb_id, "文档添加/解析/入库")
 
     params = _ensure_document_params(params)
@@ -547,7 +543,7 @@ async def add_uploaded_documents(
     current_user: User = Depends(require_knowledge_base_manage),
 ):
     """将已上传的 MinIO 文件同步添加为知识库文档记录，不解析、不入库。"""
-    logger.debug(f"Add uploaded documents for kb_id {kb_id}: {payload.items} params={payload.params}")
+    logger.debug("Add uploaded documents for kb_id {}", kb_id)
     await _ensure_knowledge_base_supports_documents(kb_id, "文档添加")
 
     params = _ensure_document_params(payload.params)
@@ -586,7 +582,7 @@ async def parse_documents(
         file_ids = payload.file_ids
         params = payload.params
     file_ids = _validate_direct_document_action_file_ids(file_ids)
-    logger.debug(f"Parse documents for kb_id {kb_id}: {file_ids} {params=}")
+    logger.debug("Parse documents for kb_id {}", kb_id)
     kb_info = await _ensure_knowledge_base_supports_documents(kb_id, "文档解析")
     return await submit_document_action(
         kb_id=kb_id,
@@ -606,7 +602,7 @@ async def parse_pending_documents(
 ):
     """按状态手动触发全部待解析文档解析。"""
     params = (payload.params if payload else None) or {}
-    logger.debug(f"Parse pending documents for kb_id {kb_id}: {params=}")
+    logger.debug("Parse pending documents for kb_id {}", kb_id)
     kb_info = await _ensure_knowledge_base_supports_documents(kb_id, "文档解析")
     return await submit_pending_document_action(
         kb_id=kb_id,
@@ -627,7 +623,7 @@ async def index_documents(
     """手动触发文档入库（Indexing），支持更新参数"""
     file_ids = _validate_direct_document_action_file_ids(file_ids)
     params = params or {}
-    logger.debug(f"Index documents for kb_id {kb_id}: {file_ids} {params=}")
+    logger.debug("Index documents for kb_id {}", kb_id)
     kb_info = await _ensure_knowledge_base_supports_documents(kb_id, "文档入库")
     return await submit_document_action(
         kb_id=kb_id,
@@ -647,7 +643,7 @@ async def index_pending_documents(
 ):
     """按状态手动触发全部待入库文档入库。"""
     params = (payload.params if payload else None) or {}
-    logger.debug(f"Index pending documents for kb_id {kb_id}: {params=}")
+    logger.debug("Index pending documents for kb_id {}", kb_id)
     kb_info = await _ensure_knowledge_base_supports_documents(kb_id, "文档入库")
     return await submit_pending_document_action(
         kb_id=kb_id,
@@ -661,7 +657,7 @@ async def index_pending_documents(
 @knowledge.get("/knowledge-bases/{kb_id}/documents/{doc_id}")
 async def get_document_info(kb_id: str, doc_id: str, current_user: User = Depends(require_knowledge_base_read)):
     """获取文档详细信息（包含基本信息和内容信息）"""
-    logger.debug(f"GET document {doc_id} info in {kb_id}")
+    logger.debug("GET document {} info in {}", doc_id, kb_id)
     await _ensure_knowledge_base_supports_documents(kb_id, "文档查看")
 
     try:
@@ -679,7 +675,7 @@ async def get_document_info(kb_id: str, doc_id: str, current_user: User = Depend
 @knowledge.get("/knowledge-bases/{kb_id}/documents/{doc_id}/basic")
 async def get_document_basic_info(kb_id: str, doc_id: str, current_user: User = Depends(require_knowledge_base_read)):
     """获取文档基本信息（仅元数据）"""
-    logger.debug(f"GET document {doc_id} basic info in {kb_id}")
+    logger.debug("GET document {} basic info in {}", doc_id, kb_id)
     await _ensure_knowledge_base_supports_documents(kb_id, "文档查看")
 
     try:
@@ -735,7 +731,7 @@ async def save_document_markdown(
 @knowledge.get("/knowledge-bases/{kb_id}/documents/{doc_id}/content")
 async def get_document_content(kb_id: str, doc_id: str, current_user: User = Depends(require_knowledge_base_read)):
     """获取文档内容信息（chunks和lines）"""
-    logger.debug(f"GET document {doc_id} content in {kb_id}")
+    logger.debug("GET document {} content in {}", doc_id, kb_id)
     await _ensure_knowledge_base_supports_documents(kb_id, "文档查看")
 
     try:
@@ -824,7 +820,7 @@ async def query_knowledge_base(
     current_user: User = Depends(require_knowledge_base_read),
 ):
     """查询知识库"""
-    logger.debug(f"Query knowledge base {kb_id}: {query}")
+    logger.debug("Query knowledge base {}", kb_id)
     try:
         result = await knowledge_base_manager.aquery(query, kb_id=kb_id, **meta)
         return {"result": result, "status": "success"}
@@ -843,7 +839,7 @@ async def query_test(
     current_user: User = Depends(require_knowledge_base_read),
 ):
     """测试查询知识库"""
-    logger.debug(f"Query test in {kb_id}: {query}")
+    logger.debug("Query test in {}", kb_id)
     try:
         result = await knowledge_base_manager.aquery(query, kb_id=kb_id, **meta)
         return result
@@ -864,7 +860,7 @@ async def update_knowledge_base_query_params(
     try:
         await knowledge_base_manager.update_kb_query_params(kb_id, params)
 
-        logger.info(f"更新知识库 {kb_id} 查询参数: {params}")
+        logger.info("更新知识库 {} 查询参数", kb_id)
 
         return {"message": "success", "data": params}
 
@@ -972,7 +968,7 @@ async def move_document(
     current_user: User = Depends(require_knowledge_base_manage),
 ):
     """移动文件或文件夹"""
-    logger.debug(f"Move document {doc_id} to {request.new_parent_id} in {kb_id}")
+    logger.debug("Move document {} in {}", doc_id, kb_id)
     try:
         await _ensure_knowledge_base_supports_documents(kb_id, "文件移动")
         return await knowledge_base_manager.move_file(kb_id, doc_id, request.new_parent_id)
@@ -992,7 +988,7 @@ async def fetch_url(
     current_user: User = Depends(get_admin_user),
 ):
     """抓取 URL 内容并上传到 MinIO。"""
-    logger.debug(f"Fetching URL: {url} for kb_id: {kb_id}")
+    logger.debug("Fetching URL for kb_id {}", kb_id)
     try:
         await _require_manage_permission_if_kb_id(kb_id, current_user)
         # 1. 下载内容 (包含白名单校验、大小限制、类型检查)
@@ -1064,7 +1060,7 @@ async def upload_file(
         await _require_manage_permission_if_kb_id(kb_id, current_user)
         await _ensure_knowledge_base_supports_documents(kb_id, "文档上传")
 
-    logger.debug(f"Received upload file with filename: {file.filename}")
+    logger.debug("Received upload file")
 
     ext = os.path.splitext(file.filename)[1].lower()
 

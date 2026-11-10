@@ -18,9 +18,9 @@ Owner：backend/yuxi/modules/models/rerank.py
 
 ## 后果
 
-畸形响应整批抛出固定错误消息，不回显提供者原始字段。`acompute_score` 继续把失败批的每个文档填为 0.5，后续批次保留自己的位置。normalize=True 时继续执行 sigmoid，降级值约为 0.622459；它不是实际模型相关性。`test_connection` 直接调用批处理，畸形响应返回失败。
+畸形响应整批抛出固定错误消息，不回显提供者原始字段。失败批仍占住同样数量的槽位，后续批次保留自己的位置。占位分不再使用 0.5，当前规则见 [重排失败占位与块数上限](2026-11-10-rerank-fallback-and-chunk-limit.md)。`test_connection` 直接调用批处理，畸形响应返回失败。
 
-兼容端默认只返回 top_n 子集时，该批进入已有降级路径。Dashscope 请求显式要求全部文档，OpenAI-compatible 请求参数保持；本契约不把提供者部分结果定义为逐文档完整评分。改变部分结果、请求参数或降级状态的语义属于独立变更。
+兼容端默认只返回 top_n 子集时，该批进入已有降级路径。Dashscope 请求显式要求全部文档。OpenAI 兼容请求不再把长度上限写入 `max_chunks_per_doc`，见同一记录。本契约不把提供者部分结果定义为逐文档完整评分。
 
 ## 验证
 

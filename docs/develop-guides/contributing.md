@@ -213,7 +213,7 @@ npm test
 npm run pack:check
 ```
 
-需要发布 CLI 时先提交包版本和 `package-lock.json`，再对明确的提交手动运行 [Publish yuxi-cli](https://github.com/Yuchuan925/Yuxi/actions/workflows/publish-yuxi-cli.yml)。工作流使用 npm Trusted Publishing，应用 Release 不触发 npm 上传。CLI 版本未变时无需重复发布；上传失败须检查 npm 包版本和发布工作流身份。
+需要发布 CLI 时先提交包版本和 `package-lock.json`，再对明确的提交手动运行 [Publish yuxi-cli](https://github.com/xerrors/Yuxi/actions/workflows/publish-yuxi-cli.yml)。工作流使用 npm Trusted Publishing，应用 Release 不触发 npm 上传。CLI 版本未变时无需重复发布；上传失败须检查 npm 包版本和发布工作流身份。
 
 ## 7. 文档维护
 

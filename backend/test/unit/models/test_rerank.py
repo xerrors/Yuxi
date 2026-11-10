@@ -1,11 +1,10 @@
 """重排响应与输入文档的对应关系，以及既有批次降级契约。"""
 
-import math
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from yuxi.modules.models.rerank import DashscopeReranker, OpenAIReranker
+from yuxi.modules.models.rerank import DashscopeReranker, OpenAIReranker, sigmoid
 
 
 @pytest.fixture(params=[OpenAIReranker, DashscopeReranker])
@@ -51,6 +50,7 @@ async def test_complete_response_preserves_document_order_and_numeric_strings(re
         assert payload["parameters"]["top_n"] == 3
     else:
         assert payload["documents"] == ["A", "B", "C"]
+        assert "max_chunks_per_doc" not in payload
 
 
 @pytest.mark.parametrize(
@@ -98,18 +98,25 @@ async def test_invalid_score_is_rejected(reranker, score):
 async def test_bad_middle_batch_keeps_fallback_slots_and_later_document_scores(reranker, normalize):
     _respond_with(
         reranker,
-        [{"index": 1, "relevance_score": 0.2}, {"index": 0, "relevance_score": 0.1}],
+        [{"index": 1, "relevance_score": 0.2}, {"index": 0, "relevance_score": -4}],
         [{"index": 1, "relevance_score": 0.9}],
         [{"index": 0, "relevance_score": 0.7}],
     )
 
     scores = await reranker.acompute_score(["query", ["A", "B", "C", "D", "E"]], batch_size=2, normalize=normalize)
 
-    expected = [0.1, 0.2, 0.5, 0.5, 0.7]
+    raw = [-4.0, 0.2, float("-inf"), float("-inf"), 0.7]
     if normalize:
-        expected = [1 / (1 + math.exp(-score)) for score in expected]
+        assert scores[0] == pytest.approx(float(sigmoid(-4.0)))
+        assert scores[1] == pytest.approx(float(sigmoid(0.2)))
+        assert scores[4] == pytest.approx(float(sigmoid(0.7)))
+        assert scores[2] == pytest.approx(0.0)
+        assert scores[3] == pytest.approx(0.0)
+    else:
+        assert scores == raw
     assert len(scores) == 5
-    assert scores == pytest.approx(expected)
+    assert scores[2] < scores[0] and scores[2] < scores[1] and scores[2] < scores[4]
+    assert scores[3] < scores[0] and scores[3] < scores[1] and scores[3] < scores[4]
 
 
 async def test_connection_reports_invalid_response(reranker):
@@ -129,6 +136,18 @@ async def test_connection_reports_transport_failure_without_fallback(reranker):
 
     assert success is False
     assert "provider unavailable" in message
+
+
+async def test_default_request_does_not_send_length_as_chunk_limit(reranker):
+    """默认长度上限不是每文档块数，请求里不能出现 512。"""
+    _respond_with(reranker, [{"index": 0, "relevance_score": 0.2}])
+
+    await reranker.acompute_score(["query", ["doc"]])
+
+    payload = reranker.session.post.call_args.kwargs["json"]
+    assert "max_chunks_per_doc" not in payload
+    if isinstance(reranker, DashscopeReranker):
+        assert "max_chunks_per_doc" not in payload["parameters"]
 
 
 async def test_empty_input_does_not_request_provider(reranker):

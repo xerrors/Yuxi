@@ -622,16 +622,14 @@ const copySvgAsPng = async (svgEl, btn) => {
     ctx.drawImage(img, 0, 0, width, height)
 
     const pngBlob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'))
-    if (pngBlob) {
-      await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })])
-      showCopiedFeedback(btn)
-    }
+    if (!pngBlob) throw new Error('PNG 编码失败')
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })])
+    showCopiedFeedback(btn)
   } catch (err) {
     console.error('复制为 PNG 失败:', err)
-    // fallback: 尝试复制 SVG 源码
     try {
       await writeTextToClipboard(svgContent)
-      console.log('PNG 复制失败，已回退复制 SVG 源码')
+      showCopiedFeedback(btn, '已复制 SVG 源码')
     } catch (fallbackErr) {
       console.error('复制 SVG 源码失败:', fallbackErr)
     }
@@ -640,12 +638,12 @@ const copySvgAsPng = async (svgEl, btn) => {
   }
 }
 
-// 反馈：按钮文字短暂变为「已复制」
-const showCopiedFeedback = (btn) => {
+// 反馈：按钮文字短暂变为成功文案，默认表示 PNG 或纯文本已复制。
+const showCopiedFeedback = (btn, label = '已复制') => {
   const originalText = btn.dataset.originalText || btn.textContent
   btn.dataset.originalText = originalText
   btn.classList.add('is-copied')
-  btn.textContent = '已复制'
+  btn.textContent = label
   const existingTimer = copiedTimers.get(btn)
   if (existingTimer) window.clearTimeout(existingTimer)
 

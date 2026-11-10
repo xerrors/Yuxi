@@ -605,8 +605,10 @@ class KnowledgeBaseManager:
         recursive: bool = False,
         files_only: bool = False,
         include_stats: bool = True,
+        sort_by: str | None = None,
+        sort_order: str | None = None,
     ) -> dict:
-        """按目录和筛选条件分页获取轻量文件列表。"""
+        """按目录和筛选条件分页获取轻量文件列表；排序作用于筛选后的全部记录。"""
         from yuxi.modules.knowledge.repositories.bases import KnowledgeBaseRepository
         from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
 
@@ -634,6 +636,8 @@ class KnowledgeBaseManager:
             page_size=normalized_page_size,
             recursive=effective_recursive,
             files_only=files_only,
+            sort_by=sort_by,
+            sort_order=sort_order,
         )
         # 列表与统计互不依赖，并行执行（大知识库下统计全表聚合耗时显著）
         if include_stats:

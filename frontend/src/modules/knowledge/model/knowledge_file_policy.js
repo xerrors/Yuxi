@@ -21,7 +21,8 @@ const STATUS_ACTION = {
   uploaded: { type: FILE_ACTIONS.PARSE, label: '解析文件' },
   error_parsing: { type: FILE_ACTIONS.PARSE, label: '重试解析' },
   parsed: { type: FILE_ACTIONS.INDEX, label: '入库' },
-  error_indexing: { type: FILE_ACTIONS.INDEX, label: '重试入库' }
+  error_indexing: { type: FILE_ACTIONS.INDEX, label: '重试入库' },
+  failed: { type: FILE_ACTIONS.INDEX, label: '重试入库' }
 }
 
 const PARSED_PREVIEW_STATUSES = new Set(['done', 'parsed', 'indexed', 'error_indexing'])
@@ -29,9 +30,9 @@ const SOURCE_ONLY_PREVIEW_STATUSES = new Set(['uploaded', 'error_parsing'])
 const TABLE_SELECTION_BLOCKED_STATUSES = new Set(['processing', 'waiting'])
 const DELETE_BLOCKED_STATUSES = new Set(['processing', 'parsing', 'indexing'])
 const PROCESSING_STATUSES = new Set(['processing', 'waiting', 'parsing', 'indexing'])
-const INDEXABLE_STATUSES = new Set(['parsed', 'error_indexing', 'done', 'indexed'])
+const INDEXABLE_STATUSES = new Set(['parsed', 'error_indexing', 'failed', 'done', 'indexed'])
 const PARSEABLE_STATUSES = new Set(['uploaded', 'error_parsing'])
-const DOWNLOADABLE_STATUSES = new Set(['done', 'indexed', 'parsed', 'error_indexing'])
+const DOWNLOADABLE_STATUSES = new Set(['done', 'indexed', 'parsed', 'error_indexing', 'failed'])
 const CHUNK_PREVIEW_STATUSES = new Set(['done', 'indexed'])
 const STATUS_SORT_ORDER = {
   done: 1,
@@ -76,6 +77,15 @@ export const canIndexFile = (record) =>
 export const canReindexFile = (record) =>
   Boolean(record && !record.is_folder && (record.status === 'done' || record.status === 'indexed'))
 
+/** 选中项里只要有首次入库，批量按钮就保持“批量入库”。 */
+export const getBatchIndexButtonLabel = (records) => {
+  const indexable = (records || []).filter((record) => canIndexFile(record))
+  if (indexable.length > 0 && indexable.every((record) => canReindexFile(record))) {
+    return '批量重新入库'
+  }
+  return '批量入库'
+}
+
 export const canDownloadFile = (record) =>
   Boolean(
     record &&
@@ -115,6 +125,15 @@ export const canPreviewChunks = (record) =>
 export const canOpenFileDetail = (record) =>
   canPreviewParsed(record) ||
   Boolean(record && SOURCE_ONLY_PREVIEW_STATUSES.has(record.status) && canPreviewOriginal(record))
+
+const TERMINAL_FILE_FAILURE_STATUSES = new Set(['error_parsing', 'error_indexing', 'failed'])
+
+export const isTerminalFileFailure = (record) =>
+  Boolean(record && !record.is_folder && TERMINAL_FILE_FAILURE_STATUSES.has(record.status))
+
+/** 比较两条记录的创建时间，空值视为最早。文件表顺序由服务端排序决定。 */
+export const compareFileCreatedAt = (left, right) =>
+  new Date(left?.created_at || 0) - new Date(right?.created_at || 0)
 
 export const getDefaultDetailView = (record) => {
   if (!canPreviewParsed(record) && canPreviewOriginal(record)) return 'source'

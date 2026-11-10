@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import stat
 import threading
 import time
@@ -369,6 +370,33 @@ def test_cancel_is_not_acknowledged_before_exec_starts(manager):
     finally:
         with value._exec_lock:
             value._execs.pop(key, None)
+
+
+@pytest.mark.parametrize("label_kind", ["slash", "dotdot", "dot", "backslash", "nul", "overlong"])
+def test_cleanup_uid_label_cannot_open_outside_data_root(manager, tmp_path, label_kind):
+    """带斜杠或 .. 的 uid 标签不能打开数据根之外的路径。"""
+    value, _, _ = manager
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    secret_dir = outside / "workspace" / "projects" / "demo"
+    secret_dir.mkdir(parents=True)
+    secret = secret_dir / ".yuxi-stdin-run-a-cmd"
+    secret.write_bytes(b"secret")
+    label_uid = {
+        "slash": f"../../{outside.name}",
+        "dotdot": "..",
+        "dot": ".",
+        "backslash": "one\\two",
+        "nul": "bad\0uid",
+        "overlong": "a" * 129,
+    }[label_kind]
+    try:
+        value._cleanup_stdin_dir({"yuxi.uid": label_uid, "yuxi.workdir": "projects/demo"}, "run-a")
+        assert secret.is_file()
+        assert secret.read_bytes() == b"secret"
+        with pytest.raises(SandboxValidationError, match="uid 非法"):
+            value._validated_workdir(label_uid, "projects/demo")
+    finally:
+        shutil.rmtree(outside)
 
 
 def test_stdin_cleanup_only_removes_owner_run(manager):

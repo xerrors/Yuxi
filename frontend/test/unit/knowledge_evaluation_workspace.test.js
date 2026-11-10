@@ -92,6 +92,18 @@ test('评估基准三级页包含题目和评估结果 Tab 并按当前基准过
   )
 })
 
+test('评估运行状态只使用后端会写入的状态，未知状态两页文案一致', () => {
+  const detail = readSource('../../src/pages/EvaluationBenchmarkDetailView.vue')
+  const workspace = readSource('../../src/modules/knowledge/ui/KnowledgeEvaluationWorkspace.vue')
+  const statusText =
+    "({ running: '运行中', completed: '已完成', failed: '失败' })[status] || '未知状态'"
+
+  assert.match(detail, new RegExp(statusText.replace(/[()[\]{}.|+]/g, '\\$&')))
+  assert.match(workspace, new RegExp(statusText.replace(/[()[\]{}.|+]/g, '\\$&')))
+  assert.doesNotMatch(detail, /paused/)
+  assert.doesNotMatch(workspace, /paused/)
+})
+
 test('评估详情源码包含所选运行的串行轮询与迟到响应守卫', () => {
   const source = readSource('../../src/pages/EvaluationBenchmarkDetailView.vue')
 

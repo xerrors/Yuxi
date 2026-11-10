@@ -254,6 +254,48 @@ def test_bullet_category_prefers_markdown_heading(sections) -> None:
     assert bullets_category(sections) == 4
 
 
+def test_decimal_outline_starting_at_zero_is_numeric_scheme() -> None:
+    """行首 0. 与 0.1 是十进制标题，不能被孤立 0 的伪编号规则整行否决。"""
+    assert bullets_category(["0. 概述", "0.1 范围", "0.2 术语", "本规范适用于测试场景。"]) == 1
+
+
+def test_quantity_and_dot_leader_lines_are_not_a_numbering_scheme() -> None:
+    assert bullets_category(["0", "3 个样本", "12......34", "普通说明文字"]) == -1
+
+
+def test_book_chunking_keeps_at_sign_lines_and_drops_position_tags(monkeypatch) -> None:
+    """层级合并不能因行内 @ 丢弃正文；单独的 PDF 位置标签仍然不成段。"""
+    monkeypatch.setattr(nlp, "random", random.Random(0))
+    content = "\n".join(
+        [
+            "第一章 总则",
+            "第一节 适用范围",
+            "@所有人 今晚发布",
+            "a@example.com 请查收本周说明",
+            "2024@发布说明详见附件",
+            "@@1\t2.0##",
+            "请查收@@3\t4.0##",
+            "本规范适用于测试场景。",
+            "第二节 基本原则",
+            "应当遵循最小改动原则。",
+        ]
+    )
+
+    chunks = chunk_markdown(
+        markdown_content=content,
+        file_id="file_book_at",
+        filename="book.txt",
+        processing_params={"chunk_preset_id": "book", "chunk_parser_config": {"chunk_token_num": 256}},
+    )
+    joined = "\n".join(chunk["content"] for chunk in chunks)
+
+    assert "@所有人 今晚发布" in joined
+    assert "a@example.com 请查收本周说明" in joined
+    assert "2024@发布说明详见附件" in joined
+    assert "请查收@@3\t4.0##" in joined
+    assert "@@1\t2.0##" not in joined
+
+
 def test_chunk_preset_options_include_description() -> None:
     options = get_chunk_preset_options()
     assert [option["value"] for option in options] == list(CHUNK_PRESETS)

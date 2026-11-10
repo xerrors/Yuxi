@@ -535,6 +535,150 @@ test("等待回答阻止普通发送，恢复提交完整等待点身份", async
   });
 });
 
+test("暂停队列时发送仍提交 follow_up，继续按钮保留", async ({ page }) => {
+  backend.state.snapshot.yuxi.queue_paused = true;
+  backend.state.snapshot.yuxi.current_turn = {
+    id: "turn-1",
+    current_run_id: "run-1",
+    status: "cancelled",
+    waitpoint: null,
+  };
+  await page.goto("/");
+  await page.getByRole("button", { name: "打开对话列表" }).click();
+  await page.getByRole("button", { name: "历史对话" }).click();
+  await expect(page.getByRole("button", { name: "继续队列" })).toBeVisible();
+  await expect(page.getByLabel("消息输入")).toBeEnabled();
+  await page.getByLabel("消息输入").fill("只跑这一条");
+  await page.getByRole("button", { name: "发送消息" }).click();
+  await expect(page.getByLabel("对话消息")).toContainText("只跑这一条");
+  const post = backend.requests.find(
+    (request) =>
+      request.body?.events?.[0]?.type === "agent.session.input.message",
+  );
+  expect(post.body.events[0]).toEqual({
+    type: "agent.session.input.message",
+    input: [
+      {
+        role: "user",
+        content: [{ type: "input_text", text: "只跑这一条" }],
+      },
+    ],
+    yuxi: { mode: "follow_up", attachment_file_ids: [] },
+  });
+});
+
+test("选择题提交 option value，没有 options 时仍提交文本", async ({
+  page,
+}) => {
+  backend.state.snapshot.yuxi.current_turn = {
+    id: "turn-1",
+    current_run_id: "run-1",
+    status: "requires_action",
+    waitpoint: {
+      id: "wait-1",
+      kind: "answer",
+      questions: [
+        { question_id: "q-text", question: "你的目标是什么？" },
+        {
+          question_id: "q-choice",
+          question: "选择交付格式",
+          options: [
+            {
+              label: "Markdown",
+              value: "markdown",
+              description: "便于继续编辑",
+            },
+            { label: "PDF", value: "pdf" },
+          ],
+          multi_select: false,
+        },
+      ],
+    },
+  };
+  await page.goto("/");
+  await page.getByRole("button", { name: "打开对话列表" }).click();
+  await page.getByRole("button", { name: "历史对话" }).click();
+  await expect(page.getByLabel("消息输入")).toBeDisabled();
+  await expect(page.getByRole("radio", { name: "Markdown" })).toBeVisible();
+  await expect(page.getByRole("radio", { name: "PDF" })).toBeVisible();
+  await page.getByLabel("你的目标是什么？").fill("展示对话能力");
+  await page.getByRole("radio", { name: "Markdown" }).check();
+  await page.getByRole("button", { name: "提交并继续" }).click();
+  const resume = backend.requests.find(
+    (request) =>
+      request.body?.events?.[0]?.type === "yuxi.session.input.resume",
+  );
+  expect(resume.body.events[0].response).toEqual({
+    type: "answer",
+    answers: [
+      { question_id: "q-text", answer: "展示对话能力" },
+      { question_id: "q-choice", answer: "markdown" },
+    ],
+  });
+});
+
+test("选择题支持自行填写，多选保留选项且可禁用其他", async ({ page }) => {
+  backend.state.snapshot.yuxi.current_turn = {
+    id: "turn-1",
+    current_run_id: "run-1",
+    status: "requires_action",
+    waitpoint: {
+      id: "wait-other",
+      kind: "answer",
+      questions: [
+        { question_id: "single", question: "交付格式", options: [{ label: "PDF", value: "pdf" }] },
+        { question_id: "multi", question: "读者", multi_select: true, options: [{ label: "开发", value: "dev" }] },
+        { question_id: "restricted", question: "权限", allow_other: false, options: [{ label: "只读", value: "read" }] },
+      ],
+    },
+  };
+  await page.goto("/");
+  await page.getByRole("button", { name: "打开对话列表" }).click();
+  await page.getByRole("button", { name: "历史对话" }).click();
+  const single = page.getByRole("group", { name: "交付格式" });
+  const multi = page.getByRole("group", { name: "读者" });
+  const restricted = page.getByRole("group", { name: "权限" });
+  await single.getByRole("radio", { name: "其他" }).check();
+  await single.getByLabel("自行填写").fill("HTML");
+  await multi.getByRole("checkbox", { name: "开发" }).check();
+  await multi.getByRole("checkbox", { name: "其他" }).check();
+  await multi.getByLabel("自行填写").fill("设计师");
+  await expect(restricted.getByText("其他")).toHaveCount(0);
+  await restricted.getByRole("radio", { name: "只读" }).check();
+  await page.getByRole("button", { name: "提交并继续" }).click();
+  const resume = backend.requests.find(
+    (request) => request.body?.events?.[0]?.type === "yuxi.session.input.resume",
+  );
+  expect(resume.body.events[0].response).toEqual({
+    type: "answer",
+    answers: [
+      { question_id: "single", answer: { type: "other", text: "HTML", selected: [] } },
+      { question_id: "multi", answer: { type: "other", text: "设计师", selected: ["dev"] } },
+      { question_id: "restricted", answer: "read" },
+    ],
+  });
+});
+
+test("多模态消息按内容块顺序显示文字与图片", async ({ page }) => {
+  backend.state.items = [{
+    ...message("input-77", "user", "ignored"),
+    content: [
+      { type: "input_text", text: "图片之前" },
+      { type: "input_image", image_url: "data:image/png;base64,iVBORw0KGgo=" },
+      { type: "input_text", text: "图片之后" },
+    ],
+  }];
+  await page.goto("/");
+  await page.getByRole("button", { name: "打开对话列表" }).click();
+  await page.getByRole("button", { name: "历史对话" }).click();
+  const bubble = page.locator('[data-item-id="input-77"] .bubble');
+  await expect(bubble).toContainText("图片之后");
+  const sequence = await bubble.evaluate((node) =>
+    [...node.children].map((child) => child.tagName === "IMG" ? "图片" : child.textContent.trim()),
+  );
+  expect(sequence).toEqual(["图片之前", "图片", "图片之后"]);
+});
+
 test("取消固定 Turn / Run，暂停队列可显式继续", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByLabel("消息输入")).toBeEnabled();

@@ -313,16 +313,6 @@ class MinIOClient:
 
         return await asyncio.to_thread(list_metadata)
 
-    def file_exists(self, bucket_name: str, object_name: str) -> bool:
-        """检查对象是否存在。"""
-        try:
-            self.client.stat_object(bucket_name=bucket_name, object_name=object_name)
-            return True
-        except S3Error as e:
-            if e.code == "NoSuchKey":
-                return False
-            raise StorageError(f"检查文件存在性失败: {e}") from e
-
     def stat_file(self, bucket_name: str, object_name: str) -> int | None:
         """返回对象字节数，对象不存在时返回 None。"""
         try:

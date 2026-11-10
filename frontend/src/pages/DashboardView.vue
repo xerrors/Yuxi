@@ -142,7 +142,7 @@ const allStatsData = ref({
   knowledge: null
 })
 
-const loading = ref(false)
+const loading = ref(overviewActivated.value)
 const overviewLoaded = ref(false)
 
 // 子组件引用
@@ -173,28 +173,31 @@ const loadAllStats = async () => {
   basicStatsError.value = false
   try {
     const response = await dashboardApi.getAllStats()
-
-    basicStats.value = response.basic
     allStatsData.value = {
       users: response.users,
       tools: response.tools,
       knowledge: response.knowledge
     }
-    overviewLoaded.value = true
-  } catch (error) {
-    console.error('加载统计数据失败:', error)
-    try {
-      const basicResponse = await dashboardApi.getStats()
-      basicStats.value = basicResponse
-      overviewLoaded.value = true
-      message.warning('详细统计暂不可用，当前仅显示基础指标')
-    } catch (basicError) {
-      console.error('加载基础统计数据失败:', basicError)
-      // 基础指标同样失败：卡片保持错误态，不把失败投影为 0。
+    if (!response.basic) {
+      // 基础指标失败：卡片保持错误态，不把失败投影为 0。
       basicStats.value = {}
       basicStatsError.value = true
       message.error('无法加载统计数据')
+    } else {
+      basicStats.value = response.basic
+      overviewLoaded.value = true
+      const missingDetails = ['users', 'tools', 'knowledge'].filter((key) => !response[key])
+      if (missingDetails.length === 3) {
+        message.warning('详细统计暂不可用，当前仅显示基础指标')
+      } else if (missingDetails.length > 0) {
+        message.warning('部分详细统计暂不可用')
+      }
     }
+  } catch (error) {
+    console.error('加载统计数据失败:', error)
+    basicStats.value = {}
+    basicStatsError.value = true
+    message.error('无法加载统计数据')
   } finally {
     loading.value = false
   }

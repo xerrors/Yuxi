@@ -4,21 +4,21 @@
       <div class="dashboard-card-metric-grid">
         <DashboardMetricCard
           :icon="Users"
-          :value="formatNumber(userStats?.total_users)"
+          :value="formatStatNumber(userStats, userStats?.total_users)"
           label="总用户"
           tone="info"
           compact
         />
         <DashboardMetricCard
           :icon="Activity"
-          :value="formatNumber(userStats?.active_users_24h)"
+          :value="formatStatNumber(userStats, userStats?.active_users_24h)"
           label="24 小时活跃"
           tone="success"
           compact
         />
         <DashboardMetricCard
           :icon="CalendarDays"
-          :value="formatNumber(userStats?.active_users_30d)"
+          :value="formatStatNumber(userStats, userStats?.active_users_30d)"
           label="30 天活跃"
           tone="primary"
           compact
@@ -42,7 +42,7 @@
 <script setup>
 import DashboardChartCard from './DashboardChartCard.vue'
 import { Activity, CalendarDays, Users } from '@lucide/vue'
-import { formatNumber } from '@/modules/dashboard/model/dashboard'
+import { formatStatNumber } from '@/modules/dashboard/model/dashboard'
 import DashboardActivityHeatmap from './DashboardActivityHeatmap.vue'
 import DashboardMetricCard from './DashboardMetricCard.vue'
 

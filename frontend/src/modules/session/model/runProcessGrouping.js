@@ -115,7 +115,7 @@ export const isRunGroupSettled = (runGroups, group, isProcessing = false) => {
 export const formatEmptyRunStatus = (status) => ({
   pending: '等待运行',
   running: '正在处理',
-  cancel_requested: '正在取消',
+  cancel_requested: '取消中',
   cancelled: '本次运行已取消',
   failed: '本次运行失败',
   interrupted: '本次运行已中断',

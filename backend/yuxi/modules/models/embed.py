@@ -168,7 +168,8 @@ class OtherEmbedding(BaseEmbeddingModel):
                     time.sleep(delay)
                     continue
 
-                logger.error(f"Embedding request failed: {e}, {payload}")
+                status_code = getattr(getattr(e, "response", None), "status_code", None)
+                logger.error("Embedding request failed: {} status={}", type(e).__name__, status_code)
                 raise ValueError(f"Embedding request failed: {e}")
 
     async def aencode(self, message: list[str] | str) -> list[list[float]]:
@@ -204,7 +205,8 @@ class OtherEmbedding(BaseEmbeddingModel):
                         retry_index, delay = retry
                         await asyncio.sleep(delay)
                         continue
-                    raise ValueError(f"Embedding async request failed: {e}, {payload}, {self.base_url=}")
+                    status_code = getattr(getattr(e, "response", None), "status_code", None)
+                    raise ValueError(f"Embedding async request failed: {type(e).__name__} status={status_code}")
 
     @staticmethod
     def _retry_delay_seconds(retry_index: int, retry_after: str | None = None) -> float:

@@ -6,7 +6,8 @@ import { useUserStore } from '@/modules/identity'
 import { parseToShanghai } from '@/shared/lib/time'
 
 const ACTIVE_STATUSES = new Set(['pending', 'running'])
-const FAILED_STATUSES = new Set(['failed', 'cancelled'])
+// 失败计数只认 failed。cancelled 仍是终态，留在「全部」里显示为已取消。
+const FAILED_STATUSES = new Set(['failed'])
 const TERMINAL_STATUSES = new Set(['success', 'failed', 'cancelled'])
 
 const createDefaultSummary = () => ({

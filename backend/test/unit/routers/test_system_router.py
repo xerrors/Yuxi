@@ -81,7 +81,7 @@ async def test_brand_info_uses_packaged_template_outside_project_directory(monke
         "name": "语析",
         "logo": "/favicon.svg",
         "title": "让知识，成为行动。",
-        "login_bg": "/login-bg.jpg",
+        "login_bg": "",
     }
     assert config["footer"]["copyright"].endswith("v0.7.3")
 

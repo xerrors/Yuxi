@@ -144,7 +144,7 @@
       @open-row="handleOpenRow"
       @breadcrumb-click="handleBreadcrumbPayloadClick"
       @breadcrumb-drop="handleBreadcrumbDrop"
-      @page-change="handleTablePageChange"
+      @table-change="handleBrowserTableChange"
     >
       <template #breadcrumb-suffix>
         <span v-if="isFilteredView" class="file-breadcrumb-filter">
@@ -277,7 +277,7 @@
               :disabled="!canBatchIndex"
               :icon="h(Database, { size: 16 })"
             >
-              批量入库
+              {{ batchIndexButtonLabel }}
             </a-button>
             <a-button
               type="link"
@@ -601,13 +601,15 @@ import {
   canDownloadFile,
   canIndexFile,
   canOpenFileDetail,
+  isTerminalFileFailure,
   canParseFile,
   canReindexFile,
   canSelectFile,
+  getBatchIndexButtonLabel,
   getFilePrimaryAction,
-  getFileStatusSortWeight,
   getFileStatusView
 } from '@/modules/knowledge/model/knowledge_file_policy'
+import { normalizeDocumentSort } from '@/modules/knowledge/model/document_list_params'
 import {
   canDragKnowledgeFile,
   canDropKnowledgeFileIntoFolder,
@@ -653,6 +655,8 @@ const applyFilters = async (overrides = {}) => {
   const recursive = nextStatus !== 'all'
   const currentFolder = folderBreadcrumbs.value[folderBreadcrumbs.value.length - 1]
   const parentId = currentFolder?.file_id || null
+  // 选中项只对应当前页文件；换筛选后旧 id 已不在文件表里。
+  selectedRowKeys.value = []
   await store.loadDocumentFiles({
     page: 1,
     parentId: recursive ? null : parentId,
@@ -1153,30 +1157,43 @@ const tablePagination = computed(() => ({
   hideOnSinglePage: true
 }))
 
-// 处理页码和每页条数切换
-const handleTablePageChange = ({ page, pageSize }) => {
+// 选中项只对应当前页；翻页或改排序后旧 id 不再对应这批文件。
+const handleBrowserTableChange = ({ pagination, sorter, extra }) => {
+  if (extra?.action === 'sort') {
+    const nextSort = normalizeDocumentSort(sorter)
+    selectedRowKeys.value = []
+    store.loadDocumentFiles({
+      page: 1,
+      pageSize: pagination?.pageSize,
+      sortBy: nextSort.sortBy,
+      sortOrder: nextSort.sortOrder
+    })
+    return
+  }
+  if (extra?.action !== 'paginate') return
+  selectedRowKeys.value = []
   store.loadDocumentFiles({
-    page,
-    pageSize
+    page: pagination?.current,
+    pageSize: pagination?.pageSize
   })
 }
 
 const statusFilter = ref('all')
 const statusOptions = FILE_STATUS_FILTER_OPTIONS
 
-// 紧凑表格列定义
-const columnsCompact = [
+const sortOrderFor = (key) =>
+  store.fileBrowser.sortBy === key ? store.fileBrowser.sortOrder || null : null
+
+// 排序交给服务端。sorter 不能是比较函数，否则 ant-design-vue 只排当前页。
+const columnsCompact = computed(() => [
   {
     title: '文件名',
     dataIndex: 'filename',
     key: 'filename',
     ellipsis: true,
     width: 280,
-    sorter: (a, b) => {
-      if (a.is_folder && !b.is_folder) return -1
-      if (!a.is_folder && b.is_folder) return 1
-      return (a.filename || '').localeCompare(b.filename || '')
-    },
+    sorter: true,
+    sortOrder: sortOrderFor('filename'),
     sortDirections: ['ascend', 'descend']
   },
   {
@@ -1184,7 +1201,8 @@ const columnsCompact = [
     dataIndex: 'content_amount',
     key: 'content_amount',
     width: 110,
-    sorter: (a, b) => Number(a.token_count || 0) - Number(b.token_count || 0),
+    sorter: true,
+    sortOrder: sortOrderFor('content_amount'),
     sortDirections: ['ascend', 'descend']
   },
   {
@@ -1198,9 +1216,8 @@ const columnsCompact = [
     dataIndex: 'status',
     key: 'status',
     width: 104,
-    sorter: (a, b) => {
-      return getFileStatusSortWeight(a) - getFileStatusSortWeight(b)
-    },
+    sorter: true,
+    sortOrder: sortOrderFor('status'),
     sortDirections: ['ascend', 'descend']
   },
   {
@@ -1208,11 +1225,12 @@ const columnsCompact = [
     dataIndex: 'created_at',
     key: 'created_at',
     width: 180,
-    sorter: (a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0),
+    sorter: true,
+    sortOrder: sortOrderFor('created_at'),
     sortDirections: ['ascend', 'descend']
   },
   { title: '操作', key: 'action', dataIndex: 'file_id', width: 64, align: 'center' }
-]
+])
 
 // 空状态文本
 const emptyText = computed(() => {
@@ -1242,6 +1260,14 @@ const canBatchIndex = computed(() => {
     return !lock.value && canIndexFile(file)
   })
 })
+
+const batchIndexButtonLabel = computed(() =>
+  getBatchIndexButtonLabel(
+    selectedRowKeys.value
+      .map((key) => files.value.find((file) => file.file_id === key))
+      .filter(Boolean)
+  )
+)
 
 const handleRefresh = async () => {
   await Promise.all([
@@ -1403,7 +1429,11 @@ const startPendingIndex = (count = 0) => {
 
 const openFileDetail = (record) => {
   if (!canOpenFileDetail(record)) {
-    message.error('文件未处理完成，请稍后再试')
+    message.error(
+      isTerminalFileFailure(record)
+        ? '文件处理失败，请查看状态中的失败原因'
+        : '文件未处理完成，请稍后再试'
+    )
     return
   }
   store.openFileDetail(record.file_id)
@@ -1417,8 +1447,6 @@ const handleDownloadFile = async (record) => {
     message.error('无法获取知识库ID，请刷新页面后重试')
     return
   }
-
-  console.log('开始下载文件:', { kbId, fileId: record.file_id, record })
 
   try {
     const response = await documentApi.downloadDocument(kbId, record.file_id)

@@ -14,7 +14,6 @@ constraints = [
     { name = "certifi", specifier = ">=2026.10.19" },
     { name = "cryptography", specifier = ">=48.0.1" },
     { name = "langchain", specifier = ">=1.3.9" },
-    { name = "langchain-anthropic", specifier = ">=1.4.6" },
     { name = "langchain-anthropic", specifier = ">=1.6.0" },
     { name = "opentelemetry-api", specifier = ">=1.45.1" },
     { name = "pyasn1", specifier = ">=0.6.5" },

@@ -498,6 +498,12 @@ select {
   line-height: 1.7;
   overflow-wrap: anywhere;
 }
+.message-image {
+  display: block;
+  max-width: 100%;
+  margin-bottom: 8px;
+  border-radius: 8px;
+}
 .from-user {
   justify-content: flex-end;
 }
@@ -860,6 +866,25 @@ select {
   display: grid;
   gap: 6px;
   font-size: 12px;
+}
+.waitpoint-panel fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.waitpoint-panel legend {
+  padding: 0;
+}
+.waitpoint-panel label.option-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.waitpoint-panel .option-choice small {
+  display: block;
+  color: #667066;
 }
 .conversation-sidebar {
   width: 225px;

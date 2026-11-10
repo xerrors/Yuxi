@@ -46,7 +46,7 @@
           <div class="integration-section-title">对外端点</div>
           <div class="settings-table-wrapper">
             <a-table
-              :dataSource="PUBLIC_API_ENDPOINTS"
+              :dataSource="endpoints"
               :columns="endpointColumns"
               :rowKey="(record) => `${record.method} ${record.path}`"
               :pagination="false"
@@ -100,13 +100,16 @@
 <script setup>
 import { computed, inject, onMounted, ref } from 'vue'
 import { AppWindow, Plus, RefreshCw } from '@lucide/vue'
-import { PUBLIC_API_ENDPOINTS, apikeyApi } from '@/apis/apikey_api'
+import { apikeyApi, publicApiEndpoints } from '@/apis/apikey_api'
+import { healthApi } from '@/apis/system_api'
 
 const settingsModal = inject('settingsModal', null)
 
 const loading = ref(false)
 const error = ref('')
 const overview = ref(null)
+const knowledgeEnabled = ref(false)
+const endpoints = computed(() => publicApiEndpoints(knowledgeEnabled.value))
 
 const totals = computed(() => overview.value?.totals || {})
 const appRows = computed(() => overview.value?.apps || [])
@@ -141,7 +144,21 @@ async function load() {
 
 const openKeyManager = () => settingsModal?.openSettingsModal?.('apiKeys')
 
-onMounted(load)
+/** 能力发现失败或未开启时保持隐藏，不把知识库端点先画出来。 */
+async function loadKnowledgeCapability() {
+  try {
+    const data = await healthApi.getDiscovery()
+    knowledgeEnabled.value = data?.capabilities?.features?.knowledge === true
+  } catch (capabilityError) {
+    knowledgeEnabled.value = false
+    console.warn('加载系统能力失败，隐藏知识库公开端点:', capabilityError)
+  }
+}
+
+onMounted(() => {
+  void load()
+  void loadKnowledgeCapability()
+})
 
 defineExpose({ loading, stats: totals })
 </script>

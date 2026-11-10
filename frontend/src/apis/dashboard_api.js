@@ -28,18 +28,24 @@ export const dashboardApi = {
    * @returns {Promise<Object>} - 所有统计数据
    */
   getAllStats: async () => {
-    try {
-      const [basic, users, tools, knowledge] = await Promise.all([
-        apiAdminGet('/api/dashboard/stats'),
-        apiAdminGet('/api/dashboard/stats/users'),
-        apiAdminGet('/api/dashboard/stats/tools'),
-        apiAdminGet('/api/dashboard/stats/knowledge')
-      ])
-      return { basic, users, tools, knowledge }
-    } catch (error) {
-      console.error('批量获取统计数据失败:', error)
-      throw error
-    }
+    // 知识库关闭或单个统计失败时，其余已成功的结果仍然返回。
+    const requests = [
+      ['basic', apiAdminGet('/api/dashboard/stats')],
+      ['users', apiAdminGet('/api/dashboard/stats/users')],
+      ['tools', apiAdminGet('/api/dashboard/stats/tools')],
+      ['knowledge', apiAdminGet('/api/dashboard/stats/knowledge')]
+    ]
+    const entries = await Promise.all(
+      requests.map(async ([key, request]) => {
+        try {
+          return [key, await request]
+        } catch (error) {
+          console.error('获取统计失败:', key, error)
+          return [key, null]
+        }
+      })
+    )
+    return Object.fromEntries(entries)
   },
 
   /**

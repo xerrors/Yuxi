@@ -22,10 +22,23 @@ test('后台任务抽屉为文档产物撤销展示中文类型', async () => {
   }] })
   try {
     const { default: component } = await server.ssrLoadModule('/src/modules/background-jobs/ui/BackgroundJobsDrawer.vue')
+    const { useBackgroundJobsStore } = await server.ssrLoadModule('/src/modules/background-jobs/model/jobs.js')
     const app = createSSRApp({ setup() {
       const state = component.setup({}, { expose() {}, emit() {} })
       assert.equal(state.jobTypeLabel('knowledge_document_reset'), '文档产物撤销')
       assert.equal(state.jobTypeLabel('knowledge_graph_index'), '图谱构建')
+      assert.equal(state.isFailedStatus('failed'), true)
+      assert.equal(state.isFailedStatus('cancelled'), false)
+      const store = useBackgroundJobsStore()
+      store.jobs = [
+        { id: 'cancelled-job', status: 'cancelled', name: '已取消', created_at: '2026-01-01T00:00:00Z' },
+        { id: 'failed-job', status: 'failed', name: '失败', created_at: '2026-01-02T00:00:00Z' }
+      ]
+      state.statusFilter.value = 'failed'
+      assert.deepEqual(state.filteredJobs.value.map((job) => job.id), ['failed-job'])
+      assert.equal(state.emptyHint.value.subtitle, '执行失败的后台作业会显示在这里。')
+      state.statusFilter.value = 'all'
+      assert.equal(state.filteredJobs.value.length, 2)
       return () => h('div')
     } })
     app.use(createPinia())
@@ -293,6 +306,20 @@ test('任务请求时序与轮询生命周期', async (t) => {
       await loading
       assert.deepEqual(store.jobs, [])
       assert.equal(store.loading, false)
+      store.reset()
+    })
+    await t.test('失败计数只含 failed，cancelled 仍留在列表', async () => {
+      const { store } = makeStore()
+      backgroundJobsApi.fetchJobs = async () => ({
+        jobs: [
+          { id: 'failed-job', status: 'failed' },
+          { id: 'cancelled-job', status: 'cancelled' }
+        ],
+        summary: { total: 2, status_counts: { failed: 2, cancelled: 5, success: 1 } }
+      })
+      await store.loadJobs()
+      assert.equal(store.failedCount, 2)
+      assert.equal(store.jobs.some((job) => job.status === 'cancelled'), true)
       store.reset()
     })
     await t.test('慢请求期间不产生重叠轮询，完成后才安排下一轮', async (t) => {

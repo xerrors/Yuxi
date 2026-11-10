@@ -102,13 +102,22 @@ async def test_resolve_fails_closed_on_empty_result(monkeypatch):
         "::1",
         "fc00::1",
         "fd00:ec2::254",
+        "224.0.0.1",
+        "ff02::1",
+        "::ffff:224.0.0.1",
+        "::ffff:10.0.0.5",
+        "::ffff:100.100.200.200",
+        "::ffff:169.254.169.254",
     ],
 )
 def test_is_blocked_address_rejects_non_public(address):
     assert is_blocked_address(ipaddress.ip_address(address)) is True
 
 
-@pytest.mark.parametrize("address", ["93.184.216.34", "8.8.8.8", "2606:2800:220:1:248:1893:25c8:1946"])
+@pytest.mark.parametrize(
+    "address",
+    ["93.184.216.34", "8.8.8.8", "2606:2800:220:1:248:1893:25c8:1946", "::ffff:8.8.8.8"],
+)
 def test_is_blocked_address_allows_public(address):
     assert is_blocked_address(ipaddress.ip_address(address)) is False
 
@@ -118,6 +127,17 @@ def test_assert_no_blocked_address_reports_offender():
         assert_no_blocked_address([ipaddress.ip_address("93.184.216.34"), ipaddress.ip_address("10.0.0.5")])
 
 
+async def test_mapped_metadata_rejected_even_if_ipv6_address_claims_global(monkeypatch, recording_backend):
+    """模拟 Python 3.12 的映射地址判断，元数据地址仍不能建连。"""
+    monkeypatch.setattr(ipaddress.IPv6Address, "is_global", property(lambda self: True))
+    _patch_getaddrinfo(monkeypatch, _addr_infos("::ffff:100.100.200.200"))
+    guard = SSRFGuardBackend(recording_backend)
+
+    with pytest.raises(ValueError, match="private IP"):
+        await guard.connect_tcp("example.com", 443)
+    assert recording_backend.calls == []
+
+
 @pytest.mark.parametrize(
     ("resolution", "fail_hosts", "timeout", "expected_error", "expected_calls"),
     [
@@ -125,6 +145,9 @@ def test_assert_no_blocked_address_reports_offender():
         pytest.param(_addr_infos("10.0.0.5"), set(), None, (ValueError, "private IP"), [], id="private-address"),
         pytest.param(socket.gaierror("boom"), set(), None, (ValueError, "DNS resolution failed"), [], id="dns-error"),
         pytest.param(_addr_infos("169.254.169.254"), set(), None, (ValueError, "private IP"), [], id="metadata-address"),
+        pytest.param(_addr_infos("224.0.0.1"), set(), None, (ValueError, "private IP"), [], id="multicast-address"),
+        pytest.param(_addr_infos("ff02::1"), set(), None, (ValueError, "private IP"), [], id="ipv6-multicast-address"),
+        pytest.param(_addr_infos("::ffff:224.0.0.1"), set(), None, (ValueError, "private IP"), [], id="mapped-multicast-address"),
         pytest.param(
             _addr_infos("93.184.216.34", "8.8.8.8"),
             {"93.184.216.34"},

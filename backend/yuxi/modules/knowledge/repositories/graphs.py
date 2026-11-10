@@ -121,7 +121,8 @@ class KnowledgeGraphRepository:
         """文件图谱撤销只接受有稳定正文的非目录文件。"""
         if file.is_folder:
             raise InvalidOperationError("目录不能清除图谱")
-        if file.status not in {FileStatus.PARSED, FileStatus.INDEXED, FileStatus.ERROR_INDEXING, "done"}:
+        # failed 是历史入库失败值，与 error_indexing 一样可以清掉已有图谱。
+        if file.status not in {FileStatus.PARSED, FileStatus.INDEXED, FileStatus.ERROR_INDEXING, "done", "failed"}:
             raise StateConflictError("文件当前状态不能清除图谱，请等待处理完成")
 
     @staticmethod

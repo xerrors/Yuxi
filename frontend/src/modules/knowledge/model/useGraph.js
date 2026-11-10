@@ -15,14 +15,12 @@ export function useGraph(graphRef) {
     selectedItem.value = nodeData
     selectedItemType.value = 'node'
     showDetailDrawer.value = true
-    console.log('Node clicked:', nodeData)
   }
 
   const handleEdgeClick = (edgeData) => {
     selectedItem.value = edgeData
     selectedItemType.value = 'edge'
     showDetailDrawer.value = true
-    console.log('Edge clicked:', edgeData)
   }
 
   const handleCanvasClick = () => {

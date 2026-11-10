@@ -5,21 +5,21 @@
       <div class="dashboard-card-metric-grid">
         <DashboardMetricCard
           :icon="Activity"
-          :value="formatNumber(toolStats?.total_calls)"
+          :value="formatStatNumber(toolStats, toolStats?.total_calls)"
           label="总调用次数"
           tone="info"
           compact
         />
         <DashboardMetricCard
           :icon="CircleAlert"
-          :value="formatNumber(toolStats?.failed_calls)"
+          :value="formatStatNumber(toolStats, toolStats?.failed_calls)"
           label="失败调用"
           tone="warning"
           compact
         />
         <DashboardMetricCard
           :icon="BadgeCheck"
-          :value="`${toolStats?.success_rate || 0}%`"
+          :value="toolStats ? `${toolStats.success_rate || 0}%` : '—'"
           label="成功率"
           :tone="getSuccessTone()"
           compact
@@ -40,7 +40,7 @@ import DashboardChartCard from './DashboardChartCard.vue'
 import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import * as echarts from '@/modules/dashboard/model/dashboardCharts'
 import { getColorByIndex } from '@/shared/lib/chartColors'
-import { formatNumber } from '@/modules/dashboard/model/dashboard'
+import { formatStatNumber } from '@/modules/dashboard/model/dashboard'
 import { useThemeStore } from '@/shared/model/theme'
 import { Activity, BadgeCheck, CircleAlert } from '@lucide/vue'
 import DashboardMetricCard from './DashboardMetricCard.vue'

@@ -734,8 +734,11 @@ class MilvusKB(KnowledgeExecutor):
         processing_job_id: str | None = None,
         processing_owner: str | None = None,
     ) -> dict:
-        """索引已解析文件（状态 INDEXING → INDEXED/ERROR_INDEXING）。"""
-        await documents.load_file_meta(kb_id, file_id)
+        """索引文件：文件夹直接失败；可入库文件先声明为 INDEXING。"""
+        file_meta = await documents.load_file_meta(kb_id, file_id)
+        # done 同时是文件夹就绪值，必须在声明前拒绝，不能只靠状态集合区分。
+        if file_meta.get("is_folder"):
+            raise ValueError(f"Cannot index folder '{file_id}'")
         # 在投影锁内先检查 PG 可见事实，删除后不能重新创建外部集合。
         collection = await self._get_or_create_milvus_collection(kb_id, embedding_model_spec)
         if not collection:
@@ -743,10 +746,13 @@ class MilvusKB(KnowledgeExecutor):
 
         embedding_function = get_embedding_function(embedding_model_spec)
 
+        # done/failed 是历史文件值，分别与 indexed、error_indexing 一样可重新声明。
         allowed_statuses = {
             FileStatus.PARSED,
             FileStatus.ERROR_INDEXING,
             FileStatus.INDEXED,
+            "done",
+            "failed",
         }
         file_repo = KnowledgeFileRepository()
         owner_filter = (

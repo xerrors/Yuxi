@@ -12,7 +12,7 @@ import {
   Trash2,
   RefreshCw,
   Copy,
-} from "lucide-vue-next";
+} from "@lucide/vue";
 
 const props = defineProps({ demo: { type: Object, required: true } });
 const emit = defineEmits(["close"]);

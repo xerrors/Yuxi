@@ -55,7 +55,7 @@ async def get_subgraph(
 ):
     """查询 Milvus 知识库图谱子图"""
     try:
-        logger.info(f"Querying subgraph - kb_id: {kb_id}, label: {node_label}")
+        logger.info("Querying subgraph kb_id={}", kb_id)
         service = await _get_graph_service(kb_id)
         result_data = await service.query_nodes(
             keyword=node_label,

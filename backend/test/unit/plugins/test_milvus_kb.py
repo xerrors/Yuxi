@@ -362,6 +362,72 @@ async def test_index_file_persists_chunk_stats(monkeypatch):
     assert result["active_generation"] == 2
 
 
+async def test_index_file_rejects_folder_before_claim(monkeypatch):
+    """文件夹 done 与文件 done 同字面量，但不能进入入库声明。"""
+    kb = MilvusKB.__new__(MilvusKB)
+    record = make_file_record(file_id="folder-1", is_folder=True, status="done")
+    file_repo = FakeKnowledgeFileRepository({"folder-1": record})
+    patch_file_repository(monkeypatch, file_repo)
+
+    async def fail_collection(*_args, **_kwargs):
+        raise AssertionError("文件夹不能创建外部集合")
+
+    kb._get_or_create_milvus_collection = fail_collection
+
+    with pytest.raises(ValueError, match="Cannot index folder"):
+        await kb.index_file(
+            "db",
+            "folder-1",
+            operator_id="user-1",
+            params={},
+            embedding_model_spec=EMBEDDING_MODEL_SPEC,
+            additional_params={},
+        )
+
+    assert file_repo.conditional_update_calls == []
+    assert record.status == "done"
+
+
+@pytest.mark.parametrize("status", ["done", "failed"])
+async def test_legacy_file_status_enters_index_claim(monkeypatch, status):
+    """历史文件 done 可重新入库，failed 可重试；声明发生后才读取 Markdown。"""
+    kb = MilvusKB.__new__(MilvusKB)
+    record = make_file_record(status=status, markdown_file="minio://parsed/db/file-1.md")
+    file_repo = FakeKnowledgeFileRepository({"file-1": record})
+    patch_file_repository(monkeypatch, file_repo)
+
+    async def get_collection(*_args, **_kwargs):
+        return FakeCollection()
+
+    async def read_markdown(_path):
+        assert record.status == FileStatus.INDEXING
+        raise RuntimeError("stop after claim")
+
+    kb._get_or_create_milvus_collection = get_collection
+    monkeypatch.setattr(documents, "read_markdown_from_minio", read_markdown)
+    monkeypatch.setattr(milvus_module, "get_embedding_function", lambda _spec: lambda _texts: [])
+
+    async def get_system_options(_option, _db=None):
+        return {"embed_model": EMBEDDING_MODEL_SPEC}
+
+    monkeypatch.setattr(type(milvus_module.system_options), "get", get_system_options)
+
+    with pytest.raises(RuntimeError, match="stop after claim"):
+        await kb.index_file(
+            "db",
+            "file-1",
+            operator_id="user-1",
+            params={},
+            embedding_model_spec=EMBEDDING_MODEL_SPEC,
+            additional_params={},
+        )
+
+    allowed_statuses, claim = file_repo.conditional_update_calls[0][2:]
+    assert status in allowed_statuses
+    assert {"done", "failed"} <= allowed_statuses
+    assert claim["status"] == FileStatus.INDEXING
+
+
 @pytest.mark.parametrize(
     ("operation", "expected_status", "expected_message"),
     [

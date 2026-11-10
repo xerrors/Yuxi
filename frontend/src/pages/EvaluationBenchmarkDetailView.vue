@@ -399,7 +399,7 @@ const runOptions = computed(() =>
 
 const getRunName = (run) => run?.name || run?.run_name || '未命名测试'
 const getRunStatusText = (status) =>
-  ({ running: '运行中', completed: '已完成', failed: '失败', paused: '已暂停' })[status] || '未知状态'
+  ({ running: '运行中', completed: '已完成', failed: '失败' })[status] || '未知状态'
 const formatMetric = (value) => (Number.isFinite(value) ? Number(value).toFixed(2) : '-')
 const formatScore = (value) => (Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : '-')
 const formatTime = (value) => (value ? new Date(value).toLocaleString('zh-CN') : '-')

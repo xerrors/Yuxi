@@ -20,7 +20,7 @@ branding:
   name: "Example App"
   logo: "/logo.svg"
   title: "让团队知识更容易被使用"
-  login_bg: "/login-bg.jpg"
+  login_bg: ""
 
 footer:
   copyright: "© Example App"
@@ -28,7 +28,7 @@ footer:
   privacy_policy_url: "/protocols/privacy-policy.template.html"
 ```
 
-产品名称和 Logo 统一由 `branding.name`、`branding.logo` 拥有，首页、登录页和侧栏共用这两个字段。`title` 用于首页主标题，`login_bg` 用于登录背景。页面直接读取 `branding`，名称填写最终产品名称；`organization`、`avatar`、`subtitle` 和 `subtitles` 不属于当前品牌字段。
+产品名称和 Logo 统一由 `branding.name`、`branding.logo` 拥有，首页、登录页和侧栏共用这两个字段。`title` 用于首页主标题。`login_bg` 留空时，登录页使用内置山茶折枝 SVG，颜色随当前主题变化，枝条缓慢摆动，花瓣缓慢飘落。填写图片地址时，左侧使用该图片；历史默认地址 `/login-bg.jpg` 无法加载时使用内置图，路径下已有的自定义图片仍会显示。页面直接读取 `branding`，名称填写最终产品名称；`organization`、`avatar`、`subtitle` 和 `subtitles` 不属于当前品牌字段。
 
 图片和协议页面放在 `frontend/public` 下，路径从网站根目录开始写，例如 `/logo.svg`。Compose 中 API 的工作目录是 `/app`，因此默认配置路径可以写成：
 

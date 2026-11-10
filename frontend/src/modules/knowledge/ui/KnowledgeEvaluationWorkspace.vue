@@ -409,7 +409,7 @@ const getDatasetBuildMessage = (dataset) =>
 
 const getRunName = (run) => run?.name || run?.run_name || run?.run_id?.slice(0, 8) || '-'
 const getRunStatusText = (status) =>
-  ({ running: '运行中', completed: '已完成', failed: '失败', paused: '已暂停' })[status] || status
+  ({ running: '运行中', completed: '已完成', failed: '失败' })[status] || '未知状态'
 
 const getRunProgress = (run) => {
   if (Number.isFinite(run?.progress)) return Math.max(0, Math.min(Math.round(run.progress), 100))
@@ -834,8 +834,7 @@ defineExpose({ loadOverview })
     color: var(--color-error-700);
   }
 
-  &.status-pending,
-  &.status-paused {
+  &.status-pending {
     background: var(--color-warning-50);
     color: var(--color-warning-900);
   }

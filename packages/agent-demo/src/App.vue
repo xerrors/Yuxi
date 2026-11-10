@@ -19,7 +19,8 @@ import {
   X,
   ArrowRight,
   WifiOff,
-} from "lucide-vue-next";
+} from "@lucide/vue";
+import { questionHasOptions } from "./protocol.js";
 import { useDemo } from "./useDemo.js";
 import ChatMessage from "./ChatMessage.vue";
 import DebugWorkbench from "./DebugWorkbench.vue";
@@ -64,8 +65,7 @@ const blocked = computed(
     !state.agentId ||
     state.sending ||
     !!state.pending ||
-    waitingForUser.value ||
-    state.snapshot?.yuxi.queue_paused,
+    waitingForUser.value,
 );
 const statusText = computed(() => {
   if (state.connecting) return "连接中";
@@ -493,21 +493,81 @@ function onKeydown(event) {
                   : "工具调用需要确认"
               }}</strong>
               <form @submit.prevent="demo.resume()">
-                <template v-if="waitpoint.kind === 'answer'"
-                  ><label
+                <template v-if="waitpoint.kind === 'answer'">
+                  <template
                     v-for="question in waitpoint.questions"
                     :key="question.question_id"
-                    >{{
-                      question.question ||
-                      question.title ||
-                      question.question_id
-                    }}<textarea
-                      v-model="state.answers[question.question_id]"
-                      required
-                      rows="2"
-                      :placeholder="question.description || '请输入回答'"
-                    ></textarea></label></template
-                ><template v-else
+                  >
+                    <label v-if="!questionHasOptions(question)"
+                      >{{
+                        question.question ||
+                        question.title ||
+                        question.question_id
+                      }}<textarea
+                        v-model="state.answers[question.question_id]"
+                        required
+                        rows="2"
+                        :placeholder="question.description || '请输入回答'"
+                      ></textarea></label
+                    ><fieldset v-else class="question-options">
+                      <legend>
+                        {{
+                          question.question ||
+                          question.title ||
+                          question.question_id
+                        }}
+                      </legend>
+                      <label
+                        v-for="option in question.options"
+                        :key="option.value"
+                        class="option-choice"
+                      >
+                        <input
+                          v-if="question.multi_select === true"
+                          v-model="state.answers[question.question_id]"
+                          type="checkbox"
+                          :value="option.value"
+                        /><input
+                          v-else
+                          v-model="state.answers[question.question_id]"
+                          type="radio"
+                          :name="`answer-${question.question_id}`"
+                          :value="option.value"
+                          required
+                          @change="state.otherSelected[question.question_id] = false"
+                        /><span
+                          >{{ option.label
+                          }}<small v-if="option.description">{{
+                            option.description
+                          }}</small></span
+                        >
+                      </label>
+                      <label v-if="question.allow_other !== false" class="option-choice">
+                        <input
+                          v-if="question.multi_select === true"
+                          v-model="state.otherSelected[question.question_id]"
+                          type="checkbox"
+                        /><input
+                          v-else
+                          type="radio"
+                          :name="`answer-${question.question_id}`"
+                          :checked="state.otherSelected[question.question_id]"
+                          @change="state.answers[question.question_id] = ''; state.otherSelected[question.question_id] = true"
+                        /><span>其他</span>
+                      </label>
+                      <label v-if="state.otherSelected[question.question_id]">
+                        自行填写
+                        <textarea
+                          v-model="state.otherText[question.question_id]"
+                          required
+                          rows="2"
+                          placeholder="请输入其他答案"
+                        ></textarea>
+                      </label>
+                    </fieldset>
+                  </template>
+                </template>
+                <template v-else
                   ><label v-for="call in waitpoint.calls" :key="call.call_id"
                     >{{ call.name || call.tool_name || call.call_id }}
                     <pre>{{
@@ -540,7 +600,7 @@ function onKeydown(event) {
                 :disabled="
                   state.sending ||
                   !!state.pending ||
-                  turn?.status === 'cancelling'
+                  turn?.cancellation_pending
                 "
                 @click="demo.continueQueue()"
               >
@@ -552,8 +612,8 @@ function onKeydown(event) {
                 <span>{{
                   waitingForUser
                     ? "请先处理上方的回答或审批"
-                    : state.snapshot?.queued_input_count
-                      ? `${state.snapshot.queued_input_count} 条消息排队中`
+                    : state.snapshot?.yuxi?.queued_input_count
+                      ? `${state.snapshot.yuxi.queued_input_count} 条消息排队中`
                       : "文字对话"
                 }}</span>
                 <div>
@@ -569,7 +629,7 @@ function onKeydown(event) {
                     :disabled="
                       state.sending ||
                       !!state.pending ||
-                      turn?.status === 'cancelling'
+                      turn?.cancellation_pending
                     "
                     @click="demo.cancel()"
                   >

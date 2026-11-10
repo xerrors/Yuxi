@@ -615,6 +615,14 @@ class ContainerManager:
 
     def _validated_workdir(self, safe_uid: str, workdir: str) -> tuple[Path, Path]:
         """逐段 no-follow 打开 Workdir，返回 runner 本地路径与 Docker 宿主路径。"""
+        # 清理读到的标签必须已是创建时的目录名，不能把斜杠或 .. 再解释成路径。
+        try:
+            canonical_uid = workspace_uid_dirname(safe_uid)
+        except ValueError as exc:
+            raise SandboxValidationError("uid 非法") from exc
+        if canonical_uid != safe_uid:
+            raise SandboxValidationError("uid 非法")
+        safe_uid = self._validate_uid(safe_uid)
         relative = PurePosixPath(workdir)
         if relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
             raise SandboxValidationError("workdir 非法")

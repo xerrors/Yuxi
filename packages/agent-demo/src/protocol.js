@@ -1,3 +1,8 @@
+/** 公开问题以非空 options 表示选择题；省略或空列表仍是文本问题。 */
+export function questionHasOptions(question) {
+  return Array.isArray(question?.options) && question.options.length > 0;
+}
+
 /** 创建当前 Thread 的公开消息投影。 */
 export function createItems() {
   return { items: {}, seen: new Set(), closed: new Set() };

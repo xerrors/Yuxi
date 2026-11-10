@@ -17,6 +17,6 @@
   "devDependencies": { "@types/node": "^22.0.0", "typescript": "^5.9.0" },
   "publishConfig": { "access": "public" },
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/Yuchuan925/Yuxi.git", "directory": "packages/yuxi-cli" },
+  "repository": { "type": "git", "url": "https://github.com/xerrors/Yuxi.git", "directory": "packages/yuxi-cli" },
   "bugs": { "url": "https://github.com/xerrors/Yuxi/issues" }
 }

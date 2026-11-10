@@ -154,6 +154,7 @@ test('文件进入 processing 后宽限让位于真实处理信号并正常收�
 for (const [action, fileStatus] of [
   ['indexFiles', 'parsed'],
   ['indexFiles', 'error_indexing'],
+  ['indexFiles', 'failed'],
   ['parseFiles', 'error_parsing']
 ]) {
   test(`${action} 提交后 ${fileStatus} 等待领取期间保持轮询`, async (t) => {

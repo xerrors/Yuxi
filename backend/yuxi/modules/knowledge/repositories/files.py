@@ -11,6 +11,25 @@ from yuxi.modules.knowledge.file_status import FileStatus, status_filter_values
 from yuxi.modules.knowledge.models import KnowledgeBase, KnowledgeFile, KnowledgeProjectionOutbox
 from yuxi.shared.datetime import utc_now
 
+# 列表排序只接受这些字段和 ant-design-vue 的方向；未传时保持默认顺序。
+_DOCUMENT_SORT_FIELDS = frozenset({"filename", "content_amount", "status", "created_at"})
+_DOCUMENT_SORT_ORDERS = frozenset({"ascend", "descend"})
+# 与前端 knowledge_file_policy.js 的 STATUS_SORT_ORDER 一致；未知状态更靠后。
+_STATUS_SORT_WEIGHTS = (
+    ("done", 1),
+    ("indexed", 1),
+    ("processing", 2),
+    ("indexing", 2),
+    ("parsing", 2),
+    ("waiting", 3),
+    ("uploaded", 3),
+    ("parsed", 3),
+    ("failed", 4),
+    ("error_indexing", 4),
+    ("error_parsing", 4),
+)
+_UNKNOWN_STATUS_SORT_WEIGHT = 5
+
 
 class KnowledgeFileRepository:
     """知识库文件与目录节点事实的持久化查询、写入与删除登记。"""
@@ -38,10 +57,14 @@ class KnowledgeFileRepository:
         page_size: int = 100,
         recursive: bool = False,
         files_only: bool = False,
+        sort_by: str | None = None,
+        sort_order: str | None = None,
     ) -> tuple[list[KnowledgeFile], int]:
+        """按筛选结果整体排序后再分页；非法排序在查询前失败。"""
         page = max(int(page or 1), 1)
         page_size = min(max(int(page_size or 100), 1), 500)
         offset = (page - 1) * page_size
+        order_by = self._document_order_by(sort_by, sort_order)
         has_status_filter = self._status_condition(status) is not None
         effective_recursive = recursive and has_status_filter
         filters = self._document_filters(
@@ -56,19 +79,50 @@ class KnowledgeFileRepository:
             total_result = await session.execute(select(func.count()).select_from(KnowledgeFile).where(*filters))
             total = int(total_result.scalar_one() or 0)
 
-            result = await session.execute(
-                select(KnowledgeFile)
-                .where(*filters)
-                .order_by(
-                    KnowledgeFile.is_folder.desc(),
-                    func.lower(KnowledgeFile.filename).asc(),
-                    KnowledgeFile.created_at.desc(),
-                    KnowledgeFile.file_id.asc(),
-                )
-                .offset(offset)
-                .limit(page_size)
-            )
+            result = await session.execute(select(KnowledgeFile).where(*filters).order_by(*order_by).offset(offset).limit(page_size))
             return list(result.scalars().all()), total
+
+    @staticmethod
+    def _normalize_document_sort(sort_by: str | None, sort_order: str | None) -> tuple[str | None, str | None]:
+        """空排序表示默认顺序；只给字段或方向、或给出未支持的值都拒绝。"""
+        field = (sort_by or "").strip() or None
+        order = (sort_order or "").strip() or None
+        if field is None and order is None:
+            return None, None
+        if field not in _DOCUMENT_SORT_FIELDS or order not in _DOCUMENT_SORT_ORDERS:
+            raise ValueError("Unsupported document sort field or direction")
+        return field, order
+
+    def _document_order_by(self, sort_by: str | None, sort_order: str | None):
+        """生成全量排序。filename 两种方向都先排文件夹；其他列文件夹与文件一起排。"""
+        field, order = self._normalize_document_sort(sort_by, sort_order)
+        if field is None:
+            return (
+                KnowledgeFile.is_folder.desc(),
+                func.lower(KnowledgeFile.filename).asc(),
+                KnowledgeFile.created_at.desc(),
+                KnowledgeFile.file_id.asc(),
+            )
+
+        descending = order == "descend"
+        tie = KnowledgeFile.file_id.asc()
+        if field == "filename":
+            name = func.lower(KnowledgeFile.filename)
+            return (KnowledgeFile.is_folder.desc(), name.desc() if descending else name.asc(), tie)
+        if field == "content_amount":
+            amount = func.coalesce(KnowledgeFile.token_count, 0)
+            return (amount.desc() if descending else amount.asc(), tie)
+        if field == "created_at":
+            created = KnowledgeFile.created_at
+            # 缺失时间视为最早，与前端 compareFileCreatedAt 的空值等价。
+            created_order = created.desc().nulls_last() if descending else created.asc().nulls_first()
+            return (created_order, tie)
+
+        status_weight = case(
+            *((KnowledgeFile.status == status, rank) for status, rank in _STATUS_SORT_WEIGHTS),
+            else_=_UNKNOWN_STATUS_SORT_WEIGHT,
+        )
+        return (status_weight.desc() if descending else status_weight.asc(), tie)
 
     @staticmethod
     def _status_condition(status: str | None):

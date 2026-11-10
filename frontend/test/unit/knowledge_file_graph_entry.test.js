@@ -114,7 +114,7 @@ function clearGraphAction(overrides = {}) {
 test('清除图谱仅允许 Milvus 中有分块的稳定文件，其他状态不打开确认框', () => {
   const action = clearGraphAction()
   const file = { file_id: 'file-a', filename: '合同.pdf', status: 'indexed', chunk_count: 2 }
-  for (const status of ['done', 'indexed', 'parsed', 'error_indexing']) {
+  for (const status of ['done', 'indexed', 'parsed', 'error_indexing', 'failed']) {
     assert.equal(action.canClearFileGraph({ ...file, status }), true)
   }
   for (const status of ['uploaded', 'parsing', 'indexing', 'processing', 'waiting', 'unknown']) {

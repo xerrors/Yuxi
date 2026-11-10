@@ -3,16 +3,6 @@ import { formatRelative } from '@/shared/lib/time'
 
 export const formatRelativeTime = (value) => formatRelative(value)
 
-export const getStatusText = (status) => {
-  const statusMap = {
-    done: '处理完成',
-    failed: '处理失败',
-    processing: '处理中',
-    waiting: '等待处理'
-  }
-  return statusMap[status] || status
-}
-
 export const formatFileSize = (bytes) => {
   if (bytes === 0 || bytes === '0') return '0 B'
   if (!bytes) return '-'

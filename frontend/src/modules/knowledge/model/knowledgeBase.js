@@ -6,6 +6,7 @@ import { useBackgroundJobsStore } from '@/modules/background-jobs'
 import { useUserStore } from '@/modules/identity'
 import { parseToShanghai } from '@/shared/lib/time'
 import { canSelectFile, isProcessingFile } from '@/modules/knowledge/model/knowledge_file_policy'
+import { buildDocumentListParams } from '@/modules/knowledge/model/document_list_params'
 
 // 自动轮询参数：链式调度（等上一轮请求全部返回后再排下一轮），处理中文件长时间无进展时按 2 倍退避并最终自动停止；
 // 基础间隔与后端文件统计缓存节奏（10s）对齐，避免高频请求重复全表聚合
@@ -15,7 +16,7 @@ const AUTO_REFRESH_STALE_POLLS_LIMIT = 6
 // 提交解析/入库后、worker 领取前的宽限轮数：文件仍保持提交前状态，处理计数为 0，
 // 若立即停止轮询，列表会停在"等待领取"直到用户手动刷新。宽限有界，僵尸状态不会无限轮询。
 const AUTO_REFRESH_SUBMISSION_GRACE_POLLS = 12
-const SUBMISSION_WAITING_STATUSES = new Set(['uploaded', 'parsed', 'error_parsing', 'error_indexing'])
+const SUBMISSION_WAITING_STATUSES = new Set(['uploaded', 'parsed', 'error_parsing', 'error_indexing', 'failed'])
 
 /** 仅在存在等待领取的文件且宽限未耗尽时继续轮询。 */
 export function consumeSubmissionGrace({ hasWaitingFiles, gracePolls }) {
@@ -44,7 +45,9 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     total: 0,
     hasMore: false,
     status: 'all',
-    recursive: false
+    recursive: false,
+    sortBy: null,
+    sortOrder: null
   })
 
   const state = reactive({
@@ -99,7 +102,9 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
       total: 0,
       hasMore: false,
       status: 'all',
-      recursive: false
+      recursive: false,
+      sortBy: null,
+      sortOrder: null
     })
     setCurrentFileMap([])
   }
@@ -375,12 +380,17 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
         : (options.parentId ?? fileBrowser.parentId)
     const nextPage = Number(options.page ?? fileBrowser.page) || 1
     const nextPageSize = Number(options.pageSize ?? fileBrowser.pageSize) || 100
+    const nextSortBy = options.sortBy !== undefined ? options.sortBy || null : fileBrowser.sortBy || null
+    const nextSortOrder =
+      options.sortOrder !== undefined ? options.sortOrder || null : fileBrowser.sortOrder || null
     const contextChanged =
       fileBrowser.parentId !== nextParentId ||
       fileBrowser.page !== nextPage ||
       fileBrowser.pageSize !== nextPageSize ||
       fileBrowser.status !== nextStatus ||
-      fileBrowser.recursive !== nextRecursive
+      fileBrowser.recursive !== nextRecursive ||
+      (fileBrowser.sortBy || null) !== nextSortBy ||
+      (fileBrowser.sortOrder || null) !== nextSortOrder
     if (contextChanged) fileBrowserContextId += 1
     const contextId = fileBrowserContextId
 
@@ -389,7 +399,9 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
       page: nextPage,
       pageSize: nextPageSize,
       status: nextStatus,
-      recursive: nextRecursive
+      recursive: nextRecursive,
+      sortBy: nextSortBy,
+      sortOrder: nextSortOrder
     })
 
     if (!options.isBackground) {
@@ -397,15 +409,15 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     }
 
     try {
-      const params = {
+      const params = buildDocumentListParams({
         page: nextPage,
-        page_size: nextPageSize,
+        pageSize: nextPageSize,
         status: nextStatus,
-        recursive: nextRecursive
-      }
-      if (!nextRecursive && nextParentId) {
-        params.parent_id = nextParentId
-      }
+        recursive: nextRecursive,
+        parentId: nextParentId,
+        sortBy: nextSortBy,
+        sortOrder: nextSortOrder
+      })
 
       const data = await documentApi.listDocuments(kbIdValue, params)
       if (

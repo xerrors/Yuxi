@@ -85,6 +85,42 @@ test('dashboardApi.getAllStats 始终请求知识库统计', async () => {
   })
 })
 
+test('dashboardApi.getAllStats 在单个统计失败时保留其余结果', async () => {
+  await withServer(async (server) => {
+    storageValues.clear()
+    const responses = {
+      '/api/dashboard/stats': { total_sessions: 3 },
+      '/api/dashboard/stats/users': { total_users: 2 },
+      '/api/dashboard/stats/tools': { total_calls: 4 }
+    }
+    globalThis.fetch = async (input) => {
+      const url = String(input)
+      if (url.endsWith('/api/dashboard/stats/knowledge')) {
+        return new Response(JSON.stringify({ detail: 'missing' }), {
+          status: 404,
+          headers: { 'content-type': 'application/json' }
+        })
+      }
+      return jsonResponse(responses[url])
+    }
+
+    await prepareStores(server)
+    const { dashboardApi } = await server.ssrLoadModule('/src/apis/dashboard_api.js')
+    const result = await dashboardApi.getAllStats()
+
+    assert.deepEqual(result.basic, responses['/api/dashboard/stats'])
+    assert.deepEqual(result.users, responses['/api/dashboard/stats/users'])
+    assert.deepEqual(result.tools, responses['/api/dashboard/stats/tools'])
+    assert.equal(result.knowledge, null)
+  })
+})
+
+test('formatStatNumber 在统计缺失时不用 0 占位', async () => {
+  const { formatStatNumber } = await import('../../src/modules/dashboard/model/dashboard.js')
+  assert.equal(formatStatNumber(null, 3), '—')
+  assert.equal(formatStatNumber({ total: 0 }, 0), '0')
+})
+
 test('formatStorageSize 将容量限制为四位有效数字并分离单位', async () => {
   await withServer(async (server) => {
     const { formatStorageSize } = await server.ssrLoadModule(

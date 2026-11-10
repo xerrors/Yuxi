@@ -471,7 +471,7 @@ const acceptLatestMarkdown = async () => {
 /** 已入库文件在提交前明确说明需要重新入库和构图。 */
 const requestMarkdownSave = () => {
   if (!canSaveMarkdown.value) return
-  if (Number(file.value.chunk_count) > 0 || ['indexed', 'done', 'error_indexing'].includes(file.value.status)) {
+  if (Number(file.value.chunk_count) > 0 || ['indexed', 'done', 'error_indexing', 'failed'].includes(file.value.status)) {
     markdownSaveConfirmOpen.value = true
   } else {
     void submitMarkdownSave()

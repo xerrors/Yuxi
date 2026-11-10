@@ -1,6 +1,9 @@
 /** 格式化 Dashboard 指标数字。 */
 export const formatNumber = (value) => Number(value || 0).toLocaleString()
 
+/** 统计对象缺失时显示占位，避免把失败请求渲染成 0。 */
+export const formatStatNumber = (stats, value) => (stats ? formatNumber(value) : '—')
+
 /** 将字节数压缩为最多四位有效数字，并单独返回容量单位。 */
 export function formatStorageSize(bytes) {
   let value = Math.max(Number(bytes || 0), 0)

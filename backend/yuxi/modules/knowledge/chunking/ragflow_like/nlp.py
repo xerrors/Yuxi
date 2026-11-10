@@ -567,7 +567,8 @@ def _is_mid_sentence_bullet(line: str) -> bool:
 
 def _is_pseudo_numbering(line: str) -> bool:
     """识别伪装成层级编号的行首数字：孤立的 0、数量表达与目录点线页码。"""
-    patterns = (r"0", r"[0-9]+ +[0-9~个只-]", r"[0-9]+\.{2,}")
+    # 整行恰为 0 才是伪编号；0. 与 0.1 仍是十进制标题。
+    patterns = (r"0$", r"[0-9]+ +[0-9~个只-]", r"[0-9]+\.{2,}")
     return any(re.match(p, line) for p in patterns)
 
 
@@ -592,7 +593,8 @@ def _normalize_sections(sections: list[str] | list[tuple[str, str]]) -> list[tup
 
     normalized: list[tuple[str, str]] = []
     for text, layout in typed:
-        head = text.split("@")[0].strip()
+        # PDF 位置标签是 @@数字<TAB>坐标##。按单个 @ 截断会丢掉邮箱、提及和年份标记。
+        head = _remove_pdf_tags(text).strip()
         # 丢弃空白、单字符与纯数字行：既不是标题也不是可合并正文。
         if len(head) > 1 and not re.match(r"[0-9]+$", head):
             normalized.append((text, layout))
