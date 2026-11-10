@@ -55,8 +55,14 @@ class Option:
         resolved = {}
         for field in self.fields:
             field_key = field["key"]
-            if field_key in stored and field.get("type") == "list[str]":
-                resolved[field_key] = stored[field_key]
+            environment_value = os.getenv(field.get("environment", ""))
+            if field.get("type") == "list[str]":
+                if field_key in stored:
+                    resolved[field_key] = stored[field_key]
+                elif environment_value:
+                    resolved[field_key] = [item.strip() for item in environment_value.split(",") if item.strip()]
+                else:
+                    resolved[field_key] = field.get("default", [])
                 continue
 
             if field.get("type") == "integer":
@@ -64,7 +70,6 @@ class Option:
                 continue
 
             stored_value = stored.get(field_key)
-            environment_value = os.getenv(field.get("environment", ""))
             resolved[field_key] = stored_value or environment_value or field.get("default")
         return resolved
 
@@ -85,7 +90,7 @@ class Option:
 
 
 def serialize_option(record: ConfigOption) -> dict[str, Any]:
-    """返回表单定义和值；密钥只返回来源和脱敏预览。"""
+    """返回原始配置与非敏感有效值；密钥仅公开来源和脱敏预览。"""
 
     value = dict(record.value or {})
     sensitive_configured = {}
@@ -109,12 +114,15 @@ def serialize_option(record: ConfigOption) -> dict[str, Any]:
         sensitive_state[field_key] = state
         sensitive_configured[field_key] = state["configured"]
         value[field_key] = ""
+    public_fields = [field for field in _fields(record) if not field.get("sensitive")]
+    public_definition = Option(record.key, record.name, record.description, {"fields": public_fields})
     return {
         "key": record.key,
         "name": record.name,
         "description": record.description,
         "params": record.params or {},
         "value": value,
+        "effective_value": public_definition.resolve(value),
         "sensitive_configured": sensitive_configured,
         "sensitive_state": sensitive_state,
     }

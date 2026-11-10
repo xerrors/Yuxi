@@ -120,7 +120,7 @@ skill_dependencies: []
 
 ### 远程来源限制
 
-管理员在“设置 → 基本设置 → Skill 配置 → 远程来源白名单”中维护 `remote_skill_source_policy.allowed_hosts`。默认允许 `github.com` 和 `modelscope.cn`；主机名必须精确匹配，保存空列表会关闭管理页远程安装。此设置不约束用户在沙盒中自行执行 CLI 的网络访问。
+超级管理员在“设置 → 安全设置 → Skill 配置 → 远程来源白名单”中维护 `remote_skill_source_policy.allowed_hosts`。默认允许 `github.com` 和 `modelscope.cn`；主机名必须精确匹配，保存空列表会关闭管理页远程安装。此设置不约束用户在沙盒中自行执行 CLI 的网络访问。
 
 示例来源：
 

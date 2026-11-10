@@ -305,6 +305,29 @@ test('Skill 业务错误展示具体原因且丢弃额外响应字段', async ()
   })
 })
 
+test('知识库 URL 导入保留业务拒绝原因，额外响应字段不进入页面错误', async () => {
+  await withServer(async (server) => {
+    const { configureApiAuth } = await server.ssrLoadModule('/src/apis/auth_context.js')
+    configureApiAuth({ getToken: () => 'fixture-token', isAdmin: () => true })
+    const { fileApi } = await server.ssrLoadModule('/src/apis/knowledge_api.js')
+    const { resolveApiErrorMessage } = await server.ssrLoadModule('/src/apis/base.js')
+    const detail = {
+      code: 'url_fetch_rejected', message: 'URL 导入未启用，请联系管理员配置域名白名单',
+      context: { secret: 'private-url-diagnostic' }
+    }
+    globalThis.fetch = async () => new Response(JSON.stringify({ detail }), {
+      status: 400, headers: { 'content-type': 'application/json' }
+    })
+    await assert.rejects(fileApi.fetchUrl('https://example.test/page'), (error) => {
+      assert.equal(error.status, 400)
+      assert.equal(resolveApiErrorMessage(error), detail.message)
+      assert.deepEqual(error.response.data.detail, { code: detail.code, message: detail.message })
+      assert.equal(JSON.stringify(error).includes('private-url-diagnostic'), false)
+      return true
+    })
+  })
+})
+
 test('错误文案解析保留脱敏字符串、冲突提示和默认文案', async () => {
   await withServer(async (server) => {
     const { resolveApiErrorMessage } = await server.ssrLoadModule('/src/apis/base.js')

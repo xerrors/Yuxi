@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.modules.documents.options import DOCUMENT_OPTIONS
 from yuxi.modules.documents.service import migrate_mineru_configuration
 from yuxi.modules.extensions.options import WEB_PROVIDER_OPTIONS, remote_skill_source_policy
+from yuxi.modules.knowledge.options import knowledge_url_import_policy
 from yuxi.modules.system.options import system_options
 from yuxi.modules.system.repositories.options import get_option, sync_option_definitions
 from yuxi.modules.system.services.options import Option
@@ -13,7 +14,14 @@ from yuxi.modules.system.services.options import Option
 def get_option_definitions() -> dict[str, Option]:
     """显式汇总各模块配置定义，系统管理机制不拥有领域定义。"""
     return {
-        option.key: option for option in (*DOCUMENT_OPTIONS, *WEB_PROVIDER_OPTIONS.values(), remote_skill_source_policy, system_options)
+        option.key: option
+        for option in (
+            *DOCUMENT_OPTIONS,
+            *WEB_PROVIDER_OPTIONS.values(),
+            remote_skill_source_policy,
+            knowledge_url_import_policy,
+            system_options,
+        )
     }
 
 

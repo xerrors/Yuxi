@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>安全设置测试</title></head>
+<body>
+<div id="app"></div>
+<script type="module">
+import { createApp, h, nextTick, ref } from 'vue'
+import { createPinia } from 'pinia'
+import Antd, { ConfigProvider } from 'ant-design-vue'
+import { useThemeStore } from '../../../src/shared/model/theme.js'
+import { useUserStore } from '../../../src/modules/identity/model/user.js'
+import SettingsModal from '../../../src/modules/settings/ui/SettingsModal.vue'
+import '../../../src/assets/css/main.css'
+let theme
+const open = ref(false)
+const app = createApp({ render: () => h(ConfigProvider, { theme: theme.currentTheme }, {
+  default: () => h(SettingsModal, { visible: open.value, initialTab: 'security', onClose: () => { open.value = false } })
+}) })
+app.use(createPinia()).use(Antd)
+const user = useUserStore()
+Object.assign(user, { token: 'url-settings-browser-fixture', uid: 'fixture-admin', userRole: 'superadmin' })
+localStorage.setItem('yuxi-settings-star-card-dismissed', 'true')
+theme = useThemeStore()
+theme.setTheme('light')
+window.urlImportSettingsFixture = { theme, user }
+app.mount('#app')
+await nextTick()
+open.value = true
+</script>
+</body>
+</html>

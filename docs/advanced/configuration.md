@@ -22,7 +22,7 @@ Cube 连接参数供 API/worker 使用，节点挂载目录必须与 Yuxi 共享
 
 ## 管理员系统配置
 
-超级管理员在设置中维护系统级配置：基本设置选择默认模型和协作深度，OCR 配置选择解析引擎及服务，网络搜索选择 Search/Fetch 供应商及凭证。跨域配置定义由 [`bootstrap/options.py`](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/bootstrap/options.py) 汇总，各业务模块拥有自己的配置定义，system 只保留系统级默认配置；普通管理员不能调用系统配置写入接口。
+超级管理员在设置中维护系统级配置：基本设置选择默认模型和协作深度，安全设置维护 Skill 远程来源与[知识库网页导入白名单](./document-processing.md#从-url-导入网页)；OCR 配置选择解析引擎及服务，网络搜索选择 Search/Fetch 供应商及凭证。跨域配置定义由 [`bootstrap/options.py`](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/bootstrap/options.py) 汇总，各业务模块拥有自己的配置定义，system 只保留系统级默认配置；普通管理员不能调用系统配置写入接口。
 
 系统配置保存到 PostgreSQL 的 `config_options` 表。非敏感 Option 使用 Redis 短期缓存，提交后执行缓存失效；带敏感字段的 Option 每次回源 PostgreSQL，密钥不进入 Redis 配置缓存。读取缓存失败时回源数据库；提交后的缓存失效失败会记录日志，已有非敏感缓存最长保留到其 300 秒 TTL 到期。事务内读取直接使用数据库值。
 

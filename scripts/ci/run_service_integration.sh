@@ -46,6 +46,7 @@ if [[ -n "${CI_TEST_REPORT_DIR:-}" ]]; then
 fi
 uv run --locked --group test pytest \
     test/integration/api/test_error_information_boundary.py \
+    test/integration/api/test_knowledge_url_import_options.py \
     test/integration/api/test_dashboard_usage.py \
     test/integration/api/test_scheduled_agent_history.py \
     test/integration/api/test_sandbox_runner_health.py \

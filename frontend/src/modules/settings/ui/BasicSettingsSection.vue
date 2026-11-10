@@ -130,7 +130,6 @@
         </section>
       </section>
 
-      <SkillSettingsSection />
     </template>
   </a-spin>
 </template>
@@ -149,7 +148,6 @@ import { useUserStore } from '@/modules/identity'
 import ModelSelectorComponent from '@/modules/agents/ui/ModelSelectorComponent.vue'
 import EmbeddingModelSelector from '@/modules/settings/ui/EmbeddingModelSelector.vue'
 import RerankModelSelector from '@/modules/settings/ui/RerankModelSelector.vue'
-import SkillSettingsSection from '@/modules/agents/ui/SkillSettingsSection.vue'
 
 const configStore = useConfigStore()
 const userStore = useUserStore()

@@ -11,7 +11,9 @@ import httpx
 from httpcore._backends.base import SOCKET_OPTION, AsyncNetworkStream
 
 from yuxi.infrastructure.observability.logging import logger
-from yuxi.modules.knowledge.utils.url_validator import is_url_parsing_enabled, validate_url
+from yuxi.modules.knowledge.options import knowledge_url_import_policy
+from yuxi.modules.knowledge.utils.url_validator import validate_url
+from yuxi.shared.errors import InvalidOperationError
 
 # 最大允许下载大小 (例如 10MB)
 MAX_DOWNLOAD_SIZE = 10 * 1024 * 1024
@@ -33,18 +35,16 @@ EXTRA_BLOCKED_ADDRESSES = frozenset(
 ResolvedAddresses = list[ipaddress.IPv4Address | ipaddress.IPv6Address]
 
 
-class _URLFetchValidationError(ValueError):
-    """标识抓取边界自身定义、允许向调用方公开的校验拒绝。"""
-
-
 async def fetch_url_content(url: str, max_size: int = MAX_DOWNLOAD_SIZE) -> tuple[bytes, str]:
     """抓取 URL 内容，校验白名单、Content-Type 和大小上限，返回 (内容, 最终 URL)。"""
-    if not is_url_parsing_enabled():
-        raise _URLFetchValidationError("URL parsing feature is disabled")
+    policy = await knowledge_url_import_policy.get()
+    whitelist = policy["allowed_hosts"]
+    if not whitelist:
+        raise InvalidOperationError("URL 导入未启用，请联系管理员配置域名白名单", code="url_fetch_rejected")
 
-    is_valid, error_msg = validate_url(url)
+    is_valid, error_msg = validate_url(url, whitelist)
     if not is_valid:
-        raise _URLFetchValidationError(f"Invalid URL: {error_msg}")
+        raise InvalidOperationError(f"URL 校验失败：{error_msg}", code="url_fetch_rejected")
 
     headers = {
         "User-Agent": (
@@ -66,41 +66,41 @@ async def fetch_url_content(url: str, max_size: int = MAX_DOWNLOAD_SIZE) -> tupl
                 async with client.stream("GET", current_url, headers=headers) as response:
                     if response.status_code in (301, 302, 303, 307, 308):
                         if redirect_count >= max_redirects:
-                            raise _URLFetchValidationError("Too many redirects")
+                            raise InvalidOperationError("网页重定向次数过多，最多允许 5 次", code="url_fetch_rejected")
 
                         redirect_count += 1
                         location = response.headers.get("Location")
                         if not location:
-                            raise _URLFetchValidationError("Redirect response missing Location header")
+                            raise InvalidOperationError("网页重定向缺少目标地址", code="url_fetch_rejected")
 
                         current_url = urljoin(current_url, location)
-                        is_valid, error_msg = validate_url(current_url)
+                        is_valid, error_msg = validate_url(current_url, whitelist)
                         if not is_valid:
-                            raise _URLFetchValidationError(f"Redirected to invalid URL: {error_msg}")
+                            raise InvalidOperationError(f"重定向 URL 校验失败：{error_msg}", code="url_fetch_rejected")
                         continue
 
                     response.raise_for_status()
 
                     content_type = response.headers.get("Content-Type", "").lower()
                     if not any(allowed in content_type for allowed in ALLOWED_CONTENT_TYPES):
-                        raise _URLFetchValidationError("Unsupported Content-Type. Only HTML is supported.")
+                        raise InvalidOperationError("仅支持导入 HTML 网页，请确认网址指向网页正文", code="url_fetch_rejected")
 
                     content = bytearray()
                     async for chunk in response.aiter_bytes():
                         content.extend(chunk)
                         if len(content) > max_size:
-                            raise _URLFetchValidationError(f"Content size exceeds limit of {max_size} bytes")
+                            raise InvalidOperationError(f"网页内容超过 {max_size} 字节的导入上限", code="url_fetch_rejected")
 
                     return bytes(content), current_url
 
-    except _URLFetchValidationError:
+    except InvalidOperationError:
         raise
     except httpx.HTTPError as e:
         logger.error(f"HTTP error fetching {url}: {e}")
-        raise ValueError("Failed to fetch URL") from e
+        raise InvalidOperationError("网页抓取失败，请确认网址可访问后重试", code="url_fetch_failed") from e
     except Exception as e:
         logger.error(f"Error fetching {url}: {e}")
-        raise ValueError("Error fetching URL") from e
+        raise InvalidOperationError("网页抓取失败，请稍后重试", code="url_fetch_failed") from e
 
 
 # ==== 地址解析与私网拦截 ====

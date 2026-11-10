@@ -6,7 +6,7 @@ import { createRenderer, h, nextTick, ref } from 'vue'
 import { createPinia, disposePinia, setActivePinia } from 'pinia'
 import { createTestServer } from '../helpers/createTestServer.js'
 
-test('设置仅挂载访问页，切换保留表单，关闭重开只挂载当前页', async () => {
+test('设置惰性挂载并保留草稿，安全设置仅超管可见且拒绝越权初始页', async () => {
   globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} }
   const server = await createTestServer({
     server: { middlewareMode: true, hmr: false },
@@ -78,7 +78,8 @@ test('设置仅挂载访问页，切换保留表单，关闭重开只挂载当�
       predicate(node) ? node : node.children.map((child) => find(child, predicate)).find(Boolean)
     const host = makeNode('root')
     const visible = ref(true)
-    app = renderer.createApp(() => h(Settings, { visible: visible.value, initialTab: 'ocr' }))
+    const initialTab = ref('ocr')
+    app = renderer.createApp(() => h(Settings, { visible: visible.value, initialTab: initialTab.value }))
     app.use(pinia)
     app.component('a-modal', {
       inheritAttrs: false,
@@ -99,6 +100,7 @@ test('设置仅挂载访问页，切换保留表单，关闭重开只挂载当�
       find(host, (node) => node.props.panel === 'BasicSettingsSection'),
       undefined
     )
+    assert.equal(find(host, (node) => node.props.panel === 'SecuritySettingsSection'), undefined)
     assert.equal(
       find(host, (node) => node.props.panel === 'UserManagementComponent'),
       undefined
@@ -122,6 +124,14 @@ test('设置仅挂载访问页，切换保留表单，关闭重开只挂载当�
       ocr
     )
     assert.equal(ocr.props.value, 'draft')
+    await select('安全设置')
+    const security = find(host, (node) => node.props.panel === 'SecuritySettingsSection')
+    assert.ok(security)
+    security.props.onInput({ target: { value: 'security-draft' } })
+    await select('OCR 配置')
+    await select('安全设置')
+    assert.equal(find(host, (node) => node.props.panel === 'SecuritySettingsSection'), security)
+    assert.equal(security.props.value, 'security-draft')
     await select('API Keys')
     const apiKeys = find(host, (node) => node.props.panel === 'ApiKeyManagementComponent')
     apiKeys.props.onInput({ target: { value: 'api-draft' } })
@@ -153,6 +163,17 @@ test('设置仅挂载访问页，切换保留表单，关闭重开只挂载当�
       find(host, (node) => node.props.panel === 'AccountSettingsComponent'),
       undefined
     )
+    for (const role of ['admin', 'user']) {
+      visible.value = false
+      await nextTick()
+      useUserStore().userRole = role
+      initialTab.value = 'security'
+      visible.value = true
+      await nextTick()
+      assert.equal(find(host, (node) => node.props.panel === 'SecuritySettingsSection'), undefined)
+      assert.equal(find(host, (node) => node.props.onClick && node.children.some((child) => child.text === '安全设置')), undefined)
+      assert.ok(find(host, (node) => node.props.panel === 'AccountSettingsComponent'))
+    }
   } finally {
     app?.unmount()
     disposePinia(pinia)

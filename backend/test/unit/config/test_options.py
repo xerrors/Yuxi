@@ -7,12 +7,60 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from test.support.sqlite import create_utc_sqlite_engine
-from yuxi.bootstrap.options import ensure_options_in_db
+from yuxi.bootstrap.options import ensure_options_in_db, get_option_definitions
 from yuxi.infrastructure.postgres.base import Base
 from yuxi.modules.documents.options import mineru_official_api_opts
+from yuxi.modules.knowledge.options import knowledge_url_import_policy
 from yuxi.modules.models.providers.builtin import BUILTIN_PROVIDERS
+from yuxi.modules.system.models import ConfigOption
 from yuxi.modules.system.options import system_options
 from yuxi.modules.system.services import options
+
+
+def test_knowledge_url_import_option_is_registered_with_closed_default(monkeypatch):
+    """新部署默认关闭 URL 导入，定义通过现有初始化入口汇总。"""
+    monkeypatch.delenv("YUXI_URL_WHITELIST", raising=False)
+    assert get_option_definitions()[knowledge_url_import_policy.key] is knowledge_url_import_policy
+    assert knowledge_url_import_policy.resolve({}) == {"allowed_hosts": []}
+
+
+def test_list_option_environment_is_split_and_explicit_empty_wins(monkeypatch):
+    """部署域名按列表读取，管理员清空后不能退回环境白名单。"""
+    definition = options.Option(
+        key="fixture_policy",
+        name="测试来源",
+        description="测试列表环境变量。",
+        params={"fields": [{"key": "allowed_hosts", "type": "list[str]", "environment": "FIXTURE_ALLOWED_HOSTS", "default": []}]},
+    )
+    monkeypatch.setenv("FIXTURE_ALLOWED_HOSTS", " example.com, , docs.example.org ")
+    assert definition.resolve({}) == {"allowed_hosts": ["example.com", "docs.example.org"]}
+    assert definition.resolve({"allowed_hosts": []}) == {"allowed_hosts": []}
+    assert definition.resolve({"allowed_hosts": ["saved.test"]}) == {"allowed_hosts": ["saved.test"]}
+    monkeypatch.delenv("FIXTURE_ALLOWED_HOSTS")
+    assert definition.resolve({}) == {"allowed_hosts": []}
+
+
+def test_option_effective_value_displays_environment_without_secrets(monkeypatch):
+    """表单保留原始值，同时只公开非敏感字段的当前有效值。"""
+    monkeypatch.setenv("FIXTURE_ALLOWED_HOSTS", "example.com,docs.example.org")
+    monkeypatch.setenv("FIXTURE_SECRET", "private-environment-sentinel")
+    record = ConfigOption(
+        key="fixture_policy",
+        name="测试来源",
+        description="测试有效值。",
+        params={
+            "fields": [
+                {"key": "allowed_hosts", "type": "list[str]", "environment": "FIXTURE_ALLOWED_HOSTS", "default": []},
+                {"key": "api_key", "type": "password", "sensitive": True, "environment": "FIXTURE_SECRET"},
+            ]
+        },
+        value={"api_key": "private-database-sentinel"},
+    )
+    serialized = options.serialize_option(record)
+    assert serialized["effective_value"] == {"allowed_hosts": ["example.com", "docs.example.org"]}
+    assert serialized["value"] == {"api_key": ""}
+    assert "private-environment-sentinel" not in json.dumps(serialized)
+    assert "private-database-sentinel" not in json.dumps(serialized)
 
 
 @pytest.mark.parametrize("key", ["default_model", "fast_model"])

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>知识库 URL 导入测试</title></head>
+<body>
+<div id="app"></div>
+<script type="module">
+import { createApp, h, nextTick, ref } from 'vue'
+import { createPinia } from 'pinia'
+import Antd, { ConfigProvider } from 'ant-design-vue'
+import { useThemeStore } from '../../../src/shared/model/theme.js'
+import { useUserStore } from '../../../src/modules/identity/model/user.js'
+import FileUploadModal from '../../../src/modules/knowledge/ui/FileUploadModal.vue'
+import '../../../src/assets/css/main.css'
+const open = ref(false)
+let theme
+const app = createApp({ render: () => h(ConfigProvider, { theme: theme.currentTheme }, { default: () => h(FileUploadModal, { visible: open.value, mode: 'url', 'onUpdate:visible': value => { open.value = value } }) }) })
+app.use(createPinia()).use(Antd)
+Object.assign(useUserStore(), { token: 'url-browser-fixture', uid: 'fixture-admin', userRole: 'superadmin' })
+theme = useThemeStore()
+theme.setTheme('light')
+window.urlImportFixture = { theme }
+app.mount('#app')
+await nextTick()
+open.value = true
+</script>
+</body>
+</html>
