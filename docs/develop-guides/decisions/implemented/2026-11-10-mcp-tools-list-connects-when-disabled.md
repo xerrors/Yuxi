@@ -27,4 +27,4 @@ Owner：backend/yuxi/modules/extensions/mcp/service.py
 
 ## 验证
 
-`test_get_all_mcp_tools_connects_disabled_server` 证明停用服务进入严格发现，且运行目录查询仍排除它。恢复启用过滤会使该测试在发现前失败。`test_management_http_lists_and_tests_delegated_server` 用真实 HTTP 与隔离 PostgreSQL 核对停用服务的工具目录，并回读确认查看没有改启停。
+`test_get_all_mcp_tools_connects_disabled_server` 证明停用服务进入严格发现，且运行目录查询仍排除它。恢复启用过滤会使该测试在发现前失败。`test_management_http_lists_and_tests_delegated_server` 用真实 HTTP 与隔离 PostgreSQL 核对停用服务的工具目录，并回读确认查看没有改启停。`test_personal_static_credentials_use_own_identity_and_revoke_old_tools` 证明停用后的个人连接测试仍发现本人工具，回读启停未变，运行装配继续排除该服务；把这次读取重新接回运行启停门禁会得到 502。

@@ -1310,7 +1310,15 @@ async def test_personal_static_credentials_use_own_identity_and_revoke_old_tools
     assert (await http.get(base, headers=headers["alice"])).json()["data"] == []
     bob_listing = (await http.get(base, headers=headers["bob"])).json()["data"]
     assert len(bob_listing) == 1 and bob_listing[0]["enabled"] is False
-    assert (await http.post(base + "/fixture/test", headers=headers["bob"])).status_code == 502
+    # 停用后的连接测试仍用本人凭证发现工具，不把服务放回运行集合。
+    probed = await http.post(base + "/fixture/test", headers=headers["bob"])
+    assert probed.status_code == 200, probed.text
+    assert probed.json()["success"] is True and probed.json()["tool_count"] == 1
+    assert "bob-key" not in probed.text
+    assert await get_enabled_mcp_tools("fixture", uid="bob") == []
+    async with scenario["db"]() as db:
+        disabled = await db.scalar(select(MCPServer).where(MCPServer.slug == "fixture"))
+        assert disabled.enabled == 0
     await http.delete(base + "/fixture/connection", headers=headers["bob"])
     assert (await http.get(base, headers=headers["bob"])).json()["data"] == []
     async with scenario["db"]() as db:
