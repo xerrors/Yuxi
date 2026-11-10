@@ -395,8 +395,8 @@ async def test_get_enabled_mcp_tools_rejects_delegation_mode(monkeypatch):
         await mcp_service.get_enabled_mcp_tools("knowledge", uid="u")
 
 
-async def test_get_all_mcp_tools_skips_disabled_server(monkeypatch, mcp_session):
-    """管理页工具清单不发现停用服务，连接测试才严格建连。"""
+async def test_get_all_mcp_tools_connects_disabled_server(monkeypatch, mcp_session):
+    """管理页工具清单对停用服务仍建连，运行目录继续排除停用服务。"""
     mcp_session.add(
         MCPServer(
             slug="offline",
@@ -410,10 +410,142 @@ async def test_get_all_mcp_tools_skips_disabled_server(monkeypatch, mcp_session)
     )
     await mcp_session.commit()
     monkeypatch.setattr(postgres_manager.pg_manager, "get_async_session_context", lambda: _AsyncSessionContext(mcp_session))
-    forbidden = AsyncMock(side_effect=AssertionError("disabled server reached discovery"))
-    monkeypatch.setattr(mcp_service, "inspect_mcp_server_tools", forbidden)
 
-    assert await mcp_service.get_all_mcp_tools("offline") == []
+    async def enabled_filter_must_not_gate_catalog(**_kwargs):
+        raise AssertionError("enabled filter blocked management catalog")
+
+    discovered = [SimpleNamespace(name="ask")]
+    inspect = AsyncMock(return_value=discovered)
+    monkeypatch.setattr(mcp_service, "get_enabled_mcp_servers", enabled_filter_must_not_gate_catalog)
+    monkeypatch.setattr(mcp_service, "inspect_mcp_server_tools", inspect)
+
+    assert await mcp_service.get_all_mcp_tools("offline", uid="admin") == discovered
+    inspected = inspect.await_args.args[0]
+    assert inspected.slug == "offline" and inspected.enabled == 0
+    assert inspect.await_args.kwargs["uid"] == "admin"
+    from yuxi.modules.extensions.mcp.repository import list_enabled_mcp_servers
+
+    assert await list_enabled_mcp_servers(mcp_session, names=["offline"]) == []
+
+
+async def test_disabled_personal_catalog_reads_own_credentials(monkeypatch):
+    """停用的个人服务仍按本人凭证列目录，工具调用和运行策略继续拒绝。"""
+    import json
+
+    import httpx
+    from cryptography.fernet import Fernet
+
+    from yuxi.modules.extensions.mcp.oauth_config import config_revision, encrypt
+    from yuxi.modules.extensions.mcp.oauth_runtime import PersonalMCPAuth, personal_mcp_tools
+    from yuxi.modules.extensions.mcp.oauth_service import MCPOAuthService
+    from yuxi.shared.errors import ResourceNotFoundError, StateConflictError
+
+    monkeypatch.setenv("YUXI_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    server = MCPServer(
+        id=1,
+        slug="notes",
+        name="笔记",
+        transport="streamable_http",
+        url="https://notes.example/mcp",
+        auth_mode="bearer",
+        enabled=0,
+        disabled_tools=["hidden"],
+        created_by="admin",
+        updated_by="admin",
+    )
+    user = SimpleNamespace(id=4, uid="admin")
+    revision = config_revision(server)
+    connection = SimpleNamespace(
+        status="connected",
+        config_revision=revision,
+        credentials=encrypt({"secret": "token-value"}),
+        generation=2,
+        expires_at=None,
+    )
+    state = {"connection": connection}
+
+    async def policy(_db, slug, uid):
+        assert (slug, uid) == ("notes", "admin")
+        return user, server
+
+    async def lookup(_db, server_id, user_id, lock=False, create=False):
+        assert (server_id, user_id, create) == (server.id, user.id, False)
+        assert lock is True
+        return state["connection"]
+
+    monkeypatch.setattr("yuxi.modules.extensions.mcp.oauth_service.runtime_mcp_policy", policy)
+    monkeypatch.setattr("yuxi.modules.extensions.mcp.oauth_service.mcp_connection", lookup)
+    db = SimpleNamespace(commit=AsyncMock())
+    oauth = MCPOAuthService(db)
+    with pytest.raises(ResourceNotFoundError, match="已停用"):
+        await oauth.require_runtime_policy("notes", "admin", None, revision)
+    header, value, generation = await oauth.static_credentials("notes", "admin", expected_revision=revision, catalog=True)
+    assert (header, value, generation, server.enabled) == ("Authorization", "Bearer token-value", 2, 0)
+
+    state["connection"] = None
+    with pytest.raises(StateConflictError, match="个人凭证"):
+        await oauth.static_credentials("notes", "admin", expected_revision=revision, catalog=True)
+    assert server.enabled == 0
+
+    server.auth_mode = "oauth"
+    revision = config_revision(server)
+    state["connection"] = SimpleNamespace(
+        status="connected",
+        config_revision=revision,
+        credentials=encrypt({"access_token": "oauth-token"}),
+        generation=3,
+        expires_at=None,
+    )
+    assert await oauth.access_token("notes", "admin", expected_revision=revision, catalog=True) == "oauth-token"
+    with pytest.raises(ResourceNotFoundError, match="已停用"):
+        await oauth.access_token("notes", "admin", expected_revision=revision)
+
+    monkeypatch.setattr(postgres_manager.pg_manager, "get_async_session_context", lambda: _AsyncSessionContext(db))
+    server.auth_mode = "bearer"
+    revision = config_revision(server)
+    state["connection"] = connection
+    connection.config_revision = revision
+
+    def request(method_name):
+        body = {"jsonrpc": "2.0", "id": 1, "method": method_name}
+        if method_name == "tools/call":
+            body["params"] = {"name": "ask"}
+        return httpx.Request("POST", server.url, content=json.dumps(body).encode())
+
+    catalog_auth = PersonalMCPAuth("notes", "admin", revision, auth_mode="bearer", url=server.url, management=True)
+    listed = await anext(catalog_auth.async_auth_flow(request("tools/list")))
+    assert listed.headers["authorization"] == "Bearer token-value"
+    with pytest.raises(ResourceNotFoundError, match="已停用"):
+        await anext(catalog_auth.async_auth_flow(request("tools/call")))
+    runtime_auth = PersonalMCPAuth("notes", "admin", revision, auth_mode="bearer", url=server.url)
+    with pytest.raises(ResourceNotFoundError, match="已停用"):
+        await anext(runtime_auth.async_auth_flow(request("tools/list")))
+
+    class CatalogClient:
+        def __init__(self, configs):
+            self.auth = configs["notes"]["auth"]
+
+        async def get_tools(self):
+            assert self.auth.management is True
+            return [SimpleNamespace(name="ask", metadata=None)]
+
+    monkeypatch.setattr("yuxi.modules.extensions.mcp.oauth_runtime.MultiServerMCPClient", CatalogClient)
+    discovered = await personal_mcp_tools(server, "admin", include_disabled=True, management=True)
+    assert [tool.name for tool in discovered] == ["ask"] and server.enabled == 0
+    tools = await mcp_service.inspect_mcp_server_tools(server, uid="admin")
+    assert [tool.name for tool in tools] == ["ask"]
+
+    class DownClient:
+        def __init__(self, _configs):
+            return None
+
+        async def get_tools(self):
+            raise ConnectionError("remote down")
+
+    monkeypatch.setattr("yuxi.modules.extensions.mcp.oauth_runtime.MultiServerMCPClient", DownClient)
+    with pytest.raises(ConnectionError, match="remote down"):
+        await mcp_service.inspect_mcp_server_tools(server, uid="admin")
+    assert server.enabled == 0
 
 
 def test_model_cannot_serialize_stdio_for_execution():

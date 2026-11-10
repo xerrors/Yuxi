@@ -220,12 +220,12 @@ BUILTIN_MCP_MANIFEST = {
 | `PUT` | `/api/system/mcp-servers/{slug}/connection` | 用户保存或替换自己的 Token / API Key |
 | `DELETE` | `/api/system/mcp-servers/{slug}/connection` | 用户清除自己的个人凭证或断开 OAuth |
 | `POST` | `/api/system/mcp-servers/{slug}/test` | 使用本人凭证测试个人连接；其他方式仅超管可测试 |
-| `GET` | `/api/system/mcp-servers/{slug}/tools` | 查看工具 |
+| `GET` | `/api/system/mcp-servers/{slug}/tools` | 查看工具；停用服务也会建连，但不因此启用 |
 | `PUT` | `/api/system/mcp-servers/{slug}/tools/{tool_name}/toggle` | 启用或禁用单个工具 |
 
 接口字段和错误响应以实例 Swagger 为准。
 
-已启用 MCP 的建连或工具发现失败时，管理检查、Agent 配置工具装配与 Skill 依赖加载均明确失败，运行不会把故障当作成功的空工具列表继续执行。服务器正常返回零个工具仍是合法结果；未启用服务器不参与运行加载。运行日志包含组件、服务器标识、错误类型与不可用状态。
+管理端工具列表和连接测试都会按当前配置建连，停用服务也能看到目录，查看不会改启停或工具开关。建连或工具发现失败时，管理检查、Agent 配置工具装配与 Skill 依赖加载均明确失败，运行不会把故障当作成功的空工具列表继续执行。服务器正常返回零个工具仍是合法结果；未启用服务器不参与运行加载。运行日志包含组件、服务器标识、错误类型与不可用状态。
 
 ## 源码定位与验证
 

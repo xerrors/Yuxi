@@ -12,3 +12,16 @@ export function mcpAuthLabel(mode) {
 export function isPersonalMcp(mode) {
   return ['oauth', 'bearer', 'api_key'].includes(mode)
 }
+
+/** 返回 MCP 卡片标签：来源、认证方式，以及需要处理的个人连接状态。 */
+export function mcpCardTags(server) {
+  const tags = [
+    { name: server?.is_builtin ? '内置' : '添加', color: 'gray' },
+    { name: mcpAuthLabel(server?.auth_mode), color: 'gray' }
+  ]
+  const status = server?.connection_status
+  if (isPersonalMcp(server?.auth_mode) && status && status !== 'connected' && status !== 'not_required') {
+    tags.push({ name: mcpConnectionLabel(status, server.auth_mode), color: 'gold' })
+  }
+  return tags
+}

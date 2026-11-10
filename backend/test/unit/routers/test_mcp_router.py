@@ -97,10 +97,9 @@ def test_update_mcp_server_status_rejects_legacy_stdio(monkeypatch):
 
 def test_get_mcp_servers_normal_user_is_stripped(monkeypatch):
     class DummyServer:
-        def __init__(self):
-            self.slug = "test-mcp"
-            self.name = "test-mcp"
-            self.slug = "test-mcp"
+        def __init__(self, slug="test-mcp"):
+            self.slug = slug
+            self.name = slug
             self.description = "test mcp description"
             self.transport = "streamable_http"
             self.url = "http://localhost:8000"
@@ -125,7 +124,7 @@ def test_get_mcp_servers_normal_user_is_stripped(monkeypatch):
             }
 
     async def fake_get_all_mcp_servers(db):
-        return [DummyServer()]
+        return [DummyServer(), DummyServer("knowledge")]
 
     monkeypatch.setattr("yuxi.api.routers.extensions.mcp.get_all_mcp_servers", fake_get_all_mcp_servers)
 
@@ -142,12 +141,14 @@ def test_get_mcp_servers_normal_user_is_stripped(monkeypatch):
     assert data_admin["url"] == "http://localhost:8000"
     assert data_admin["command"] == "python"
     assert data_admin["env"] == {"API_KEY": "secret"}
+    assert resp_admin.json()["data"][1]["is_builtin"] is True
 
     # 2. 普通用户请求，敏感字段及一切非安全白名单字段应该被彻底脱敏
     client_user = TestClient(_build_app(allow_admin=False))
     resp_user = client_user.get("/api/system/mcp-servers")
     assert resp_user.status_code == 200
-    data_user = resp_user.json()["data"][0]
+    by_slug = {item["slug"]: item for item in resp_user.json()["data"]}
+    data_user = by_slug["test-mcp"]
     assert "url" not in data_user
     assert "command" not in data_user
     assert "env" not in data_user
@@ -156,6 +157,11 @@ def test_get_mcp_servers_normal_user_is_stripped(monkeypatch):
     assert data_user["name"] == "test-mcp"
     assert data_user["description"] == "test mcp description"
     assert data_user["enabled"] is True
+    assert data_user["is_builtin"] is False
+    assert data_user["auth_mode"] == "headers"
+    builtin = by_slug["knowledge"]
+    assert builtin["is_builtin"] is True
+    assert "url" not in builtin and "headers" not in builtin
 
 
 @pytest.mark.parametrize(

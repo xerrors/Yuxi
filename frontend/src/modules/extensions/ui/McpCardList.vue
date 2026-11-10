@@ -36,35 +36,32 @@
     <template v-else>
       <template v-for="group in visibleServerGroups" :key="group.key">
         <div class="extension-section-header">{{ group.title }}</div>
-        <ExtensionCardGrid :min-width="300">
+        <ExtensionCardGrid :min-width="280">
           <InfoCard
             v-for="server in group.servers"
             :key="server.slug"
-            variant="mini"
-            :icon-color="getExtensionIconColor(server.slug, themeStore.isDark)"
             :title="formatExtensionCardTitle(server.name)"
-            :description="[server.description, isPersonalMcp(server.auth_mode) ? mcpConnectionLabel(server.connection_status, server.auth_mode) : ''].filter(Boolean).join(' · ') || '暂无描述'"
+            :subtitle="server.slug"
+            :description="server.description || '暂无描述'"
+            :tags="mcpCardTags(server)"
+            :default-icon="getSkillIcon(`${server.slug} ${server.name}`, Plug)"
+            :icon-color="getExtensionIconColor(server.slug, themeStore.isDark)"
             @click="handleCardClick(server)"
           >
-            <template #icon>
-              <button type="button" class="mcp-card-open" :aria-label="`查看 ${server.name}`" @click.stop="handleCardClick(server)">
-                <component :is="getSkillIcon(`${server.slug} ${server.name}`, Plug)" :size="16" aria-hidden="true" />
-              </button>
-            </template>
-            <template v-if="server.can_manage" #action>
+            <template v-if="server.can_manage" #actions>
               <button
                 type="button"
-                class="mcp-card-action"
-                :class="{ 'mcp-card-action-danger': group.enabled }"
+                class="mcp-enabled-action"
+                :class="{ enabled: !!server.enabled }"
                 :disabled="isActionLoading(server)"
-                :aria-label="group.enabled ? '停用服务' : '启用服务'"
-                @click.stop="handleSetServerEnabled(server, !group.enabled)"
+                :aria-label="server.enabled ? '停用服务' : '启用服务'"
+                @click.stop="handleSetServerEnabled(server, !server.enabled)"
               >
-                <template v-if="group.enabled">
+                <Plus v-if="!server.enabled" :size="15" class="action-icon" />
+                <template v-else>
                   <Check :size="15" class="action-icon action-icon-check" />
-                  <Trash2 :size="15" class="action-icon action-icon-trash" />
+                  <Minus :size="15" class="action-icon action-icon-minus" />
                 </template>
-                <Plus v-else :size="15" class="action-icon" />
               </button>
             </template>
           </InfoCard>
@@ -136,7 +133,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { Check, Plus, RefreshCw, Trash2, Plug } from '@lucide/vue'
+import { Check, Minus, Plus, RefreshCw, Plug } from '@lucide/vue'
 import { useUserStore } from '@/modules/identity'
 import { mcpApi } from '@/apis/mcp_api'
 import ExtensionCardGrid from './ExtensionCardGrid.vue'
@@ -144,7 +141,7 @@ import InfoCard from '@/shared/ui/InfoCard.vue'
 import PageShoulder from '@/shared/ui/PageShoulder.vue'
 import McpFormModal from './McpFormModal.vue'
 import McpConnectionControls from './McpConnectionControls.vue'
-import { isPersonalMcp, mcpAuthLabel, mcpConnectionLabel } from '@/modules/extensions/model/mcpOAuth'
+import { mcpAuthLabel, mcpCardTags } from '@/modules/extensions/model/mcpOAuth'
 import { formatExtensionCardTitle } from '@/modules/extensions/model/extensionDisplayName'
 import { getExtensionIconColor } from '@/shared/lib/extensionIconColor'
 import { getSkillIcon } from '@/shared/lib/skill_icon_utils'
@@ -270,26 +267,12 @@ defineExpose({ fetchServers, loading })
 </script>
 
 <style lang="less" scoped>
-.mcp-card-open {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-
-  &:focus-visible {
-    outline: 2px solid var(--main-color);
-    outline-offset: 3px;
-    border-radius: 4px;
-  }
+.dark .mcp-cards-page :deep(.info-card) {
+  --border-surface: transparent;
+  --border-surface-hover: transparent;
 }
 
-.mcp-card-action {
+.mcp-enabled-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -298,7 +281,7 @@ defineExpose({ fetchServers, loading })
   border: 1px solid var(--gray-150);
   border-radius: 8px;
   background: var(--gray-0);
-  color: var(--main-color);
+  color: var(--gray-600);
   cursor: pointer;
   transition:
     border-color 0.18s ease,
@@ -308,7 +291,7 @@ defineExpose({ fetchServers, loading })
   &:hover,
   &:focus {
     outline: none;
-    border-color: var(--main-200);
+    border-color: var(--gray-300);
     background: var(--gray-50);
   }
 
@@ -317,10 +300,10 @@ defineExpose({ fetchServers, loading })
     opacity: 0.45;
   }
 
-  &.mcp-card-action-danger {
+  &.enabled {
     color: var(--color-success-700);
 
-    .action-icon-trash {
+    .action-icon-minus {
       display: none;
     }
 
@@ -334,7 +317,7 @@ defineExpose({ fetchServers, loading })
         display: none;
       }
 
-      .action-icon-trash {
+      .action-icon-minus {
         display: block;
       }
     }

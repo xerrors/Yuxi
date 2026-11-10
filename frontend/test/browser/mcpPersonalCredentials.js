@@ -2,8 +2,8 @@
 async page => {
   const check = (value, reason) => { if (!value) throw new Error(reason) }
   const origin = page.url().split('/').slice(0, 3).join('/')
-  const rows = [['bearer', 'Token 服务'], ['api_key', 'API Key 服务'], ['oauth', 'OAuth 服务'], ['none', '公开服务'], ['headers', '共享服务'], ['delegation', '平台服务']].map(([auth_mode, name]) => ({
-    slug: auth_mode, name, auth_mode, enabled: true, can_manage: false,
+  const rows = [['bearer', 'Token 服务', false], ['api_key', 'API Key 服务', false], ['oauth', 'OAuth 服务', false], ['none', '公开服务', false], ['headers', '共享服务', false], ['delegation', '平台服务', true]].map(([auth_mode, name, is_builtin]) => ({
+    slug: auth_mode, name, auth_mode, is_builtin, description: `${name}说明`, enabled: true, can_manage: false,
     connection_status: ['bearer', 'api_key', 'oauth'].includes(auth_mode) ? 'disconnected' : 'not_required', config_revision: 'a'.repeat(64), api_key_header: auth_mode === 'api_key' ? 'X-API-Key' : null
   }))
   const writes = [], creates = []
@@ -24,7 +24,23 @@ async page => {
     return respond({})
   })
   await page.goto(`${origin}/test/browser/fixtures/mcpPersonalCredentials.html`)
-  const open = async name => page.getByRole('button', { name: `查看 ${name}`, exact: true }).click()
+  const card = name => page.locator('.info-card', { hasText: name })
+  const open = async name => card(name).click()
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await card('平台服务').locator('.card-tag', { hasText: '内置' }).waitFor()
+  check(await page.locator('.info-card-mini').count() === 0, 'MCP 仍使用紧凑卡片')
+  check(await card('平台服务').locator('.card-tag', { hasText: '平台委托认证' }).count() === 1, '内置服务缺少认证标签')
+  check(await card('Token 服务').locator('.card-tag', { hasText: '添加' }).count() === 1, '添加服务被标成内置')
+  check(await card('Token 服务').locator('.card-tag', { hasText: '个人 Bearer Token' }).count() === 1, '缺少认证方式标签')
+  check(await card('Token 服务').locator('.card-tag', { hasText: '未配置' }).count() === 1, '待处理的个人连接状态不可见')
+  check(await card('共享服务').locator('.card-tag', { hasText: '未配置' }).count() === 0, '共享服务显示个人连接状态')
+  await page.screenshot({ path: '/tmp/yuxi-mcp-cards-light.png', animations: 'disabled' })
+  await page.evaluate(() => window.mcpFixture.theme.setTheme('dark'))
+  await page.screenshot({ path: '/tmp/yuxi-mcp-cards-dark.png', animations: 'disabled' })
+  await page.setViewportSize({ width: 768, height: 900 })
+  await page.screenshot({ path: '/tmp/yuxi-mcp-cards-768.png', animations: 'disabled' })
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await page.evaluate(() => window.mcpFixture.theme.setTheme('light'))
   const credentialAction = async name => {
     await page.getByRole('button', { name: '更多凭证操作', exact: true }).click()
     await page.getByRole('menuitem', { name, exact: true }).click()
@@ -99,7 +115,7 @@ async page => {
   check(await page.locator('.mcp-personal-connection input').count() === 0, '停用后仍可填写')
   check(await page.getByRole('button', { name: '测试连接' }).isDisabled(), '停用后仍可测试')
   await credentialAction('清除凭证')
-  await page.getByRole('button', { name: '查看 Token 服务', exact: true }).waitFor({ state: 'hidden' })
+  await card('Token 服务').waitFor({ state: 'hidden' })
   await page.locator('.mcp-basic-info-panel').waitFor({ state: 'detached' })
   admin = true
   await page.evaluate(() => { window.mcpFixture.user.userRole = 'superadmin' })
@@ -140,5 +156,5 @@ async page => {
   await page.locator('#mcp-form-slug').waitFor({ state: 'hidden' })
   check(creates[1].api_key_header === 'X-API-Key' && !creates[1].oauth_config, '管理员提交错误字段')
   await page.unroute('**/api/**')
-  return { saved: writes.length, connectionTests: tests, administratorCreates: creates.length, screenshots: 7 }
+  return { saved: writes.length, connectionTests: tests, administratorCreates: creates.length, screenshots: 10 }
 }

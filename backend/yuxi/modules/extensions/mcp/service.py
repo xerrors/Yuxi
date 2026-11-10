@@ -469,14 +469,14 @@ async def get_enabled_mcp_tools(server_slug: str, *, uid: str | None = None) -> 
 
 
 async def get_all_mcp_tools(server_slug: str, *, uid: str | None = None) -> list:
-    """管理页工具清单只读取已启用服务；停用或部署不可用时为空目录。"""
+    """管理页工具清单按当前配置建连；停用只影响运行装配，不隐藏目录。"""
     from yuxi.infrastructure.postgres.manager import pg_manager
 
     async with pg_manager.get_async_session_context() as db:
-        servers = await get_enabled_mcp_servers(names=[server_slug], db=db)
-    if not servers:
-        return []
-    return await inspect_mcp_server_tools(servers[0], uid=uid)
+        server = await get_mcp_server(db, server_slug)
+    if server is None:
+        raise MCPServerNotFoundError(f"服务器 '{server_slug}' 不存在")
+    return await inspect_mcp_server_tools(server, uid=uid)
 
 
 async def inspect_mcp_server_tools(server: MCPServer, *, uid: str | None = None) -> list:
@@ -484,7 +484,7 @@ async def inspect_mcp_server_tools(server: MCPServer, *, uid: str | None = None)
     if not builtin_mcp_available(server.slug):
         raise ValueError("MCP 服务在当前部署不可用")
     if server.auth_mode in PERSONAL_AUTH_MODES:
-        return await personal_mcp_tools(server, uid, include_disabled=True)
+        return await personal_mcp_tools(server, uid, include_disabled=True, management=True)
     config = _to_runtime_mcp_config(server)
     config["auth"] = None
     if getattr(server, "auth_mode", "headers") == "delegation":

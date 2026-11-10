@@ -17,10 +17,11 @@ class PersonalMCPAuth(httpx.Auth):
 
     requires_request_body = True
 
-    def __init__(self, slug, uid, revision, *, auth_mode="oauth", url=None):
+    def __init__(self, slug, uid, revision, *, auth_mode="oauth", url=None, management=False):
         """绑定服务来源与个人身份，每次请求重新取得凭证。"""
         self.slug, self.uid, self.revision = slug, uid, revision
         self.auth_mode = auth_mode
+        self.management = management
         endpoint = httpx.URL(url) if url else None
         self.origin = (endpoint.scheme, endpoint.host, endpoint.port) if endpoint else None
 
@@ -33,14 +34,18 @@ class PersonalMCPAuth(httpx.Auth):
             payload = json.loads(request.content)
             if payload.get("method") == "tools/call":
                 tool_name = payload.get("params", {}).get("name")
+        # 管理目录只放行 tools/list；tools/call 仍走运行启停，避免停用服务被目录客户端调用。
+        catalog = self.management and tool_name is None
         async with pg_manager.get_async_session_context() as db:
             service = MCPOAuthService(db)
             if self.auth_mode in STATIC_AUTH_MODES:
                 header, value, generation = await service.static_credentials(
-                    self.slug, self.uid, tool_name=tool_name, expected_revision=self.revision
+                    self.slug, self.uid, tool_name=tool_name, expected_revision=self.revision, catalog=catalog
                 )
             else:
-                token = await service.access_token(self.slug, self.uid, tool_name=tool_name, expected_revision=self.revision)
+                token = await service.access_token(
+                    self.slug, self.uid, tool_name=tool_name, expected_revision=self.revision, catalog=catalog
+                )
                 header, value = "Authorization", "Bearer " + token
         request.headers[header] = value
         response = yield request
@@ -55,13 +60,15 @@ class PersonalMCPAuth(httpx.Auth):
             raise StateConflictError("MCP 服务方权限不足，请检查个人账号权限", code="mcp_remote_forbidden")
 
 
-async def personal_mcp_tools(server, uid, *, include_disabled=False):
+async def personal_mcp_tools(server, uid, *, include_disabled=False, management=False):
     """个人工具绑定可信用户与配置修订，传给 adapter 的配置不含凭据。"""
     if not uid:
         raise StateConflictError("MCP 个人授权缺少运行用户身份")
     config = server.to_mcp_config()
     config.pop("disabled_tools", None)
-    config["auth"] = PersonalMCPAuth(server.slug, uid, config_revision(server), auth_mode=server.auth_mode, url=server.url)
+    config["auth"] = PersonalMCPAuth(
+        server.slug, uid, config_revision(server), auth_mode=server.auth_mode, url=server.url, management=management
+    )
     tools = await MultiServerMCPClient({server.slug: config}).get_tools()
     for tool in tools:
         if tool.metadata is None:

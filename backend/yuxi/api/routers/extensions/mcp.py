@@ -104,6 +104,7 @@ async def get_mcp_servers(
                     "name": getattr(server, "name", ""),
                     "description": getattr(server, "description", None),
                     "enabled": bool(getattr(server, "enabled", True)),
+                    "is_builtin": is_builtin_mcp_server(server),
                 }
             )
         return {"success": True, "data": data}

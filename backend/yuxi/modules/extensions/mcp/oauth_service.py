@@ -84,11 +84,18 @@ class MCPOAuthService:
         await self.db.commit()
         return connection.status
 
-    async def static_credentials(self, slug, uid, *, tool_name=None, expected_revision=None):
+    async def static_credentials(self, slug, uid, *, tool_name=None, expected_revision=None, catalog=False):
         """每次出站回读本人的静态认证头及其连接世代。"""
-        user, server = await self.require_runtime_policy(slug, uid, None, expected_revision)
+
+        async def policy(tool):
+            """目录读取允许停用服务；运行调用继续检查启停。"""
+            if catalog:
+                return await self.require_catalog_policy(slug, uid, expected_revision)
+            return await self.require_runtime_policy(slug, uid, tool, expected_revision)
+
+        user, server = await policy(None)
         connection = await mcp_connection(self.db, server.id, user.id, lock=True)
-        _, server = await self.require_runtime_policy(slug, uid, tool_name, expected_revision)
+        _, server = await policy(tool_name)
         if server.auth_mode not in STATIC_AUTH_MODES or not connection or connection_status(server, connection) != "connected":
             raise StateConflictError("请在扩展 → MCP 配置个人凭证", code="mcp_reconnect_required")
         secret = decrypt(connection.credentials)["secret"]
@@ -242,14 +249,21 @@ class MCPOAuthService:
         connection.status, connection.credentials, connection.expires_at = "disconnected", None, None
         await self.db.commit()
 
-    async def access_token(self, slug, uid, *, tool_name=None, expected_revision=None):
+    async def access_token(self, slug, uid, *, tool_name=None, expected_revision=None, catalog=False):
         """每次出站前读取有效用户与授权，锁内刷新并原子保存轮换令牌。"""
-        user, server = await self.require_runtime_policy(slug, uid, None, expected_revision)
+
+        async def policy(tool):
+            """目录读取允许停用服务；运行调用继续检查启停。"""
+            if catalog:
+                return await self.require_catalog_policy(slug, uid, expected_revision)
+            return await self.require_runtime_policy(slug, uid, tool, expected_revision)
+
+        user, server = await policy(None)
         if server.auth_mode != "oauth":
             raise StateConflictError("此 MCP 不使用 OAuth")
         connection = await mcp_connection(self.db, server.id, user.id, lock=True)
         # 等待另一个 worker 刷新时策略可能改变；获锁后重新回读。
-        _, server = await self.require_runtime_policy(slug, uid, tool_name, expected_revision)
+        _, server = await policy(tool_name)
         if not connection or connection_status(server, connection) != "connected":
             raise StateConflictError(f"请在扩展 → MCP 连接 {server.name}", code="mcp_reconnect_required")
         credentials = decrypt(connection.credentials)
@@ -274,7 +288,7 @@ class MCPOAuthService:
             self.store_tokens(connection, tokens, credentials["client"], credentials["metadata"])
             credentials = decrypt(connection.credentials)
             try:
-                await self.require_runtime_policy(slug, uid, tool_name, expected_revision)
+                await policy(tool_name)
             except DomainError:
                 # 已轮换的令牌必须落库，即使远端调用期间授权策略已改变。
                 await self.db.commit()
@@ -293,6 +307,20 @@ class MCPOAuthService:
         if connection and connection.credentials and decrypt(connection.credentials).get("access_token") == rejected_token:
             connection.status, connection.credentials = "reconnect_required", None
             await self.db.commit()
+
+    async def require_catalog_policy(self, slug, uid, expected_revision):
+        """管理目录允许停用服务，仍只绑定调用者本人的当前配置。"""
+        policy = await runtime_mcp_policy(self.db, slug, uid)
+        if policy is None:
+            raise PermissionDeniedError("MCP 用户不可用")
+        user, server = policy
+        if server is None:
+            raise ResourceNotFoundError("MCP 服务不存在")
+        if server.auth_mode not in PERSONAL_AUTH_MODES:
+            raise StateConflictError("此 MCP 不需要个人授权")
+        if expected_revision is not None and config_revision(server) != expected_revision:
+            raise StateConflictError("MCP 配置已改变，请重新运行", code="mcp_reconnect_required")
+        return user, server
 
     async def require_runtime_policy(self, slug, uid, tool_name, expected_revision):
         """连接锁等待及远端刷新结束后重新检查当前执行策略。"""
