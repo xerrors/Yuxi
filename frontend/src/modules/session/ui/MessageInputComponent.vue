@@ -148,9 +148,9 @@
           </div>
         </div>
 
-        <!-- MCP 列表 -->
+        <!-- 连接器列表 -->
         <div v-if="mentionItems.mcps.length > 0" class="mention-group">
-          <div class="mention-group-title">MCP</div>
+          <div class="mention-group-title">连接器</div>
           <div
             v-for="(item, index) in mentionItems.mcps"
             :key="'mcp-' + item.value"

@@ -97,7 +97,7 @@ async def test_builtin_mcp_delete_preserves_postgres_row(test_client, admin_head
         response = await test_client.delete(f"/api/system/mcp-servers/{slug}", headers=admin_headers)
         assert response.status_code == 403, response.text
         async with async_sessionmaker(engine)() as db:
-            with pytest.raises(PermissionError, match="内置 MCP"):
+            with pytest.raises(PermissionError, match="内置连接器"):
                 await delete_mcp_server(db, slug)
         assert await conn.fetchrow("SELECT * FROM mcp_servers WHERE slug = $1", slug) == before
     finally:

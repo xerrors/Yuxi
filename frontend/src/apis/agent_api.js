@@ -141,6 +141,7 @@ export const agentApi = {
             yuxi: {
               mode: data.mode,
               attachment_file_ids: data.attachment_file_ids || [],
+              ...(data.mcps?.length ? { mcps: data.mcps } : {}),
               ...(data.mode !== 'steer'
                 ? {
                     model: data.model_spec,

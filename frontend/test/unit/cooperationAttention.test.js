@@ -144,7 +144,8 @@ test('慢等待点恢复后才聚焦，隐藏或轮次变化撤销聚焦', async
   globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} }
   const pinia = createPinia()
   setActivePinia(pinia)
-  const { agentApi, knowledgeBaseApi, toolApi, threadApi } = await server.ssrLoadModule('/src/apis/index.js')
+  const { agentApi, knowledgeBaseApi, toolApi, threadApi, mcpApi } = await server.ssrLoadModule('/src/apis/index.js')
+  t.mock.method(mcpApi, 'getMcpServers', async () => ({ success: true, data: [] }))
   let ready, resumed = 0, focused = false
   t.mock.method(agentApi, 'getAgents', () => new Promise((resolve) => { ready = resolve }))
   t.mock.method(knowledgeBaseApi, 'getAccessibleKnowledgeBases', async () => ({ knowledge_bases: [] }))

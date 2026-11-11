@@ -46,6 +46,8 @@ export async function mountSessionWorkspace(t, fetchThreadMessages = async () =>
   for (const [name, replacement] of Object.entries(options.runtime || {})) t.mock.method(runtime, name, replacement)
   const { threadApi } = await server.ssrLoadModule('/src/apis/agent_api.js')
   const { agentApi } = await server.ssrLoadModule('/src/apis/agent_api.js')
+  const { mcpApi } = await server.ssrLoadModule('/src/apis/mcp_api.js')
+  t.mock.method(mcpApi, 'getMcpServers', async () => ({ success: true, data: [] }))
   t.mock.method(agentApi, 'getPublicThread', async (id) => ({ id, agent: { id: 'agent' }, yuxi: {} }))
   t.mock.method(threadApi, 'getThreads', async () => ({ data: [], has_more: false }))
   const { useAgentStore } = await server.ssrLoadModule('/src/modules/agents/model/agent.js')

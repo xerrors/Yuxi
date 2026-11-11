@@ -295,7 +295,7 @@ async def test_failed_mcp_filters_skill_dependencies_and_updates_warning_state(m
     middleware = authorization.RuntimeAuthorizationMiddleware()
     runtime = SimpleNamespace(context=context)
     update = await middleware.abefore_model(state, runtime)
-    assert update["warnings"] == [{"code": "mcp_unavailable", "source": "mcp:remote", "message": "MCP remote：授权凭据不可用，请重新连接"}]
+    assert update["warnings"] == [{"code": "mcp_unavailable", "source": "mcp:remote", "message": "连接器 remote：授权凭据不可用，请重新连接"}]
     assert await middleware.aafter_model(state, runtime) == update
     context.mcp_unavailable = {}
     assert await middleware.abefore_model(state, runtime) == {"warnings": []}

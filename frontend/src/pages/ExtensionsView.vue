@@ -53,9 +53,9 @@ const adminExtensionTabs = computed(() => [
   { key: 'knowledge', label: '知识库' },
   { key: 'skills', label: '技能' },
   { key: 'tools', label: '工具' },
-  { key: 'mcp', label: 'MCP' }
+  { key: 'mcp', label: '连接器' }
 ])
-const userExtensionTabs = [{ key: 'skills', label: '技能' }, { key: 'mcp', label: 'MCP' }]
+const userExtensionTabs = [{ key: 'skills', label: '技能' }, { key: 'mcp', label: '连接器' }]
 const extensionTabs = computed(() =>
   userStore.isAdmin ? adminExtensionTabs.value : userExtensionTabs
 )

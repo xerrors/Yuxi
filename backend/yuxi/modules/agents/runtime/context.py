@@ -253,9 +253,9 @@ class BaseContext:
     mcps: ResourceSelection = field(
         default_factory=list,
         metadata={
-            "name": "MCP服务器",
+            "name": "连接器",
             "options": [],
-            "description": "选择智能体直接使用的 MCP 服务，默认不直接加载；Skill 的依赖在激活时加载。",
+            "description": "选择智能体直接使用的连接器，默认不直接加载；Skill 的依赖在激活时加载。",
             "type": "list",
             "kind": "mcps",
         },
@@ -266,7 +266,7 @@ class BaseContext:
         metadata={
             "name": "Skills",
             "options": [],
-            "description": ("选择共享和内置 Skill；个人 Skill 始终可用。本地工具和 MCP 依赖在激活后开放，预加载从首轮开放。"),
+            "description": ("选择共享和内置 Skill；个人 Skill 始终可用。本地工具和连接器依赖在激活后开放，预加载从首轮开放。"),
             "type": "list",
             "kind": "skills",
         },

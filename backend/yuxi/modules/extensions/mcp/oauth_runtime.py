@@ -28,7 +28,7 @@ class PersonalMCPAuth(httpx.Auth):
     async def async_auth_flow(self, request):
         """实际工具调用再次检查开关，已断开的旧工具对象也无法使用。"""
         if self.origin is not None and (request.url.scheme, request.url.host, request.url.port) != self.origin:
-            raise StateConflictError("MCP 请求来源与配置不一致")
+            raise StateConflictError("连接器请求来源与配置不一致")
         tool_name = None
         if request.method == "POST" and request.content:
             payload = json.loads(request.content)
@@ -55,15 +55,15 @@ class PersonalMCPAuth(httpx.Auth):
                     await MCPOAuthService(db).reject_credentials(self.slug, self.uid, generation)
                 else:
                     await MCPOAuthService(db).reject_access_token(self.slug, self.uid, token)
-            raise StateConflictError("MCP 拒绝了个人授权，请重新连接", code="mcp_reconnect_required")
+            raise StateConflictError("连接器拒绝了个人授权，请重新连接", code="mcp_reconnect_required")
         if response.status_code == 403:
-            raise StateConflictError("MCP 服务方权限不足，请检查个人账号权限", code="mcp_remote_forbidden")
+            raise StateConflictError("连接器服务方权限不足，请检查个人账号权限", code="mcp_remote_forbidden")
 
 
 async def personal_mcp_tools(server, uid, *, include_disabled=False, management=False):
     """个人工具绑定可信用户与配置修订，传给 adapter 的配置不含凭据。"""
     if not uid:
-        raise StateConflictError("MCP 个人授权缺少运行用户身份")
+        raise StateConflictError("连接器个人授权缺少运行用户身份")
     config = server.to_mcp_config()
     config.pop("disabled_tools", None)
     config["auth"] = PersonalMCPAuth(

@@ -1,11 +1,11 @@
 <template>
   <div class="mcp-cards-page extension-page-root">
-    <PageShoulder search-placeholder="搜索 MCP..." v-model:search="searchQuery">
+    <PageShoulder search-placeholder="搜索连接器..." v-model:search="searchQuery">
       <template #actions>
-        <a-tooltip title="刷新 MCP" placement="bottom">
+        <a-tooltip title="刷新连接器" placement="bottom">
           <a-button
             class="yuxi-refresh-button lucide-icon-btn"
-            aria-label="刷新 MCP"
+            aria-label="刷新连接器"
             :disabled="loading"
             @click="fetchServers"
           >
@@ -18,7 +18,7 @@
         </a-tooltip>
         <a-button v-if="userStore.isSuperAdmin" type="primary" @click="handleMcpAdd" class="lucide-icon-btn">
           <Plus :size="14" />
-          <span>新增服务</span>
+          <span>新增连接器</span>
         </a-button>
       </template>
     </PageShoulder>
@@ -29,7 +29,7 @@
     >
       <a-empty
         :image="false"
-        :description="searchQuery ? '无匹配 MCP' : '暂无 MCP，点击上方按钮添加'"
+        :description="searchQuery ? '无匹配连接器' : '暂无连接器，点击上方按钮添加'"
       />
     </div>
 
@@ -54,7 +54,7 @@
                 class="mcp-enabled-action"
                 :class="{ enabled: !!server.enabled }"
                 :disabled="isActionLoading(server)"
-                :aria-label="server.enabled ? '停用服务' : '启用服务'"
+                :aria-label="server.enabled ? '停用连接器' : '启用连接器'"
                 @click.stop="handleSetServerEnabled(server, !server.enabled)"
               >
                 <Plus v-if="!server.enabled" :size="15" class="action-icon" />
@@ -116,7 +116,7 @@
         </div>
         <div v-if="previewServer.can_manage" class="mcp-basic-info-footer">
           <a-button @click="closeBasicInfo">关闭</a-button>
-          <a-button type="primary" @click="navigateToDetail(previewServer)">管理 MCP</a-button>
+          <a-button type="primary" @click="navigateToDetail(previewServer)">管理连接器</a-button>
         </div>
       </div>
     </a-modal>
@@ -237,7 +237,7 @@ const fetchServers = async () => {
       servers.value = result.data || []
     }
   } catch (err) {
-    message.error(err.message || '获取 MCP 列表失败')
+    message.error(err.message || '获取连接器列表失败')
   } finally {
     loading.value = false
   }
@@ -254,11 +254,11 @@ onMounted(async () => {
     if (result) {
       try {
         await mcpApi.complete(String(result))
-        message.success('MCP 账号已连接')
+        message.success('连接器账号已连接')
       } catch (err) {
         message.error(err.message || '授权结果已失效，请重新连接')
       }
-    } else message.error('MCP 授权未完成，请重新连接')
+    } else message.error('连接器授权未完成，请重新连接')
   }
   await fetchServers()
 })

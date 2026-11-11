@@ -93,6 +93,7 @@ async def create_public_thread(
         title=payload.title,
         messages=input_messages_to_domain(payload.input) if payload.input else None,
         attachment_file_ids=payload.yuxi.attachment_file_ids,
+        mcps=payload.yuxi.mcps,
         model_spec=payload.agent.model if payload.agent else None,
         tool_approval_mode=payload.tool_approval_mode,
         source="public_api",

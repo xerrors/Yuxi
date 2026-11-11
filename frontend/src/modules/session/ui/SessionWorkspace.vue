@@ -770,6 +770,7 @@ import { getMessageRunId } from '@/modules/session/model/messageDebug'
 import { MessageProcessor } from '@/modules/session/model/messageProcessor'
 import dayjs, { parseToShanghai } from '@/shared/lib/time'
 import { agentApi, threadApi } from '@/apis'
+import { mcpApi } from '@/apis/mcp_api'
 import HumanApprovalModal from '@/modules/session/ui/HumanApprovalModal.vue'
 import { useApproval } from '@/modules/session/model/useApproval'
 import { IDLE_QUEUE_SNAPSHOT } from '@/modules/session/model/useAgentThreadState'
@@ -1669,11 +1670,24 @@ const hasVisibleStateSections = computed(
     cooperationSessions.value.length > 1
 )
 
+const mentionMcpServers = ref([])
+watch(workspaceActive, async (active) => {
+  if (!active) return
+  try {
+    const result = await mcpApi.getMcpServers()
+    mentionMcpServers.value = result.data || []
+  } catch {
+    mentionMcpServers.value = []
+    message.error('连接器列表加载失败，请重新打开对话重试')
+  }
+}, { immediate: true })
+
 const { mentionConfig } = useAgentMentionConfig({
   agents,
   currentThreadAttachments,
   configurableItems,
-  agentConfig
+  agentConfig,
+  mcpServers: mentionMcpServers
 })
 
 const currentThreadMessages = computed(() => threadMessages.value[currentChatId.value] || [])

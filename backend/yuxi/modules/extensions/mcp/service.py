@@ -175,7 +175,7 @@ async def create_mcp_server(
 ) -> MCPServer:
     """创建并独立发布远程 MCP 配置。"""
     if slug in BUILTIN_MCP_SERVERS:
-        raise ValueError("系统内置 MCP 的 slug 由代码保留，无法通过接口创建")
+        raise ValueError("系统内置连接器的 slug 由代码保留，无法通过接口创建")
     config = RemoteMCPConfig.model_validate(
         dict(
             slug=slug,
@@ -227,7 +227,7 @@ async def update_mcp_server(
     if not server:
         raise MCPServerNotFoundError(f"Server '{slug}' does not exist")
     if is_builtin_mcp_server(server):
-        raise PermissionError("系统内置 MCP 的连接配置由代码管理，无法通过接口修改")
+        raise PermissionError("系统内置连接器的连接配置由代码管理，无法通过接口修改")
 
     if server.auth_mode == "headers" and auth_mode in PERSONAL_AUTH_MODES | {"none"} and server.headers and headers is None:
         raise ValueError("切换接入方式前请显式清空或替换共享请求头")
@@ -267,7 +267,7 @@ async def delete_mcp_server(db: AsyncSession, slug: str) -> bool:
     if not server:
         return False
     if is_builtin_mcp_server(server):
-        raise PermissionError("系统内置 MCP 的连接配置由代码管理，无法删除")
+        raise PermissionError("系统内置连接器的连接配置由代码管理，无法删除")
 
     await delete_mcp_server_row(db, server)
     await db.commit()
@@ -417,9 +417,9 @@ def runtime_mcp_failure(exc: Exception) -> tuple[str, bool]:
         return "运行上下文缺少可信知识库范围，能力未装配", True
     if isinstance(exc, StateConflictError):
         if exc.code == "mcp_remote_forbidden":
-            return "MCP 服务方权限不足，请检查个人账号权限", False
+            return "连接器服务方权限不足，请检查个人账号权限", False
         if exc.code == "mcp_oauth_unconfigured":
-            return "部署未配置有效的 MCP 凭据加密密钥，请联系管理员", True
+            return "部署未配置有效的连接器凭据加密密钥，请联系管理员", True
         if exc.code == "mcp_reconnect_required":
             return "授权凭据不可用或已失效，请在扩展页面重新连接", True
     if isinstance(exc, ExceptionGroup):
@@ -427,7 +427,7 @@ def runtime_mcp_failure(exc: Exception) -> tuple[str, bool]:
         return "；".join(dict.fromkeys(reason for reason, _ in failures)), any(permanent for _, permanent in failures)
     if isinstance(exc.__cause__, Exception):
         return runtime_mcp_failure(exc.__cause__)
-    return "服务连接或调用失败，请检查 MCP 服务后重试", False
+    return "服务连接或调用失败，请检查连接器后重试", False
 
 
 async def available_mcp_servers(db: AsyncSession, server_slugs, *, user_id: int) -> dict[str, MCPServer]:
@@ -482,7 +482,7 @@ async def get_all_mcp_tools(server_slug: str, *, uid: str | None = None) -> list
 async def inspect_mcp_server_tools(server: MCPServer, *, uid: str | None = None) -> list:
     """管理端严格建连，包括停用服务；不吞异常、不修改运行状态。"""
     if not builtin_mcp_available(server.slug):
-        raise ValueError("MCP 服务在当前部署不可用")
+        raise ValueError("连接器在当前部署不可用")
     if server.auth_mode in PERSONAL_AUTH_MODES:
         return await personal_mcp_tools(server, uid, include_disabled=True, management=True)
     config = _to_runtime_mcp_config(server)

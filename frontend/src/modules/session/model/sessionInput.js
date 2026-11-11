@@ -1,4 +1,5 @@
 import { agentApi } from '@/apis'
+import { parseMentionText } from './mention_utils.js'
 
 /** 生成提交身份，同一份失败请求的重试复用该身份。 */
 export function createInputRequestId() {
@@ -16,6 +17,9 @@ export function createSessionInput({ runtime, onPrepared, onAccepted, onRejected
       attachments: draft.attachments.map((item) => ({ ...item })),
       data: {
         query: draft.text,
+        mcps: [...new Set(parseMentionText(draft.text)
+          .filter((segment) => segment.kind === 'mention' && segment.type === 'mcp')
+          .map((segment) => segment.value))],
         idempotency_key: createInputRequestId(),
         attachment_file_ids: draft.attachments.map((item) => item.id),
         image_content: draft.images.length ? draft.images.map((item) => item.imageUrl) : null,

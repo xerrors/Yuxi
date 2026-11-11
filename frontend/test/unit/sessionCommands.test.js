@@ -126,6 +126,7 @@ test('接收后消费冻结草稿并交给唯一输入观察者，保留已知�
 for (const receiptExists of [true, false]) {
   test(`未知接收结果重试${receiptExists ? '恢复回执' : '同载荷重发'}，忽略后来编辑的草稿`, async (t) => {
     const h = harness(t)
+    h.draft.text = '@mcp:first @skill:ignored @mcp:second @mcp:first'
     let frozen
     t.mock.method(api, 'sendThreadMessage', async (_id, data) => {
       if (!frozen) { frozen = structuredClone(data); throw Object.assign(Error('offline'), { status: 503 }) }
@@ -133,6 +134,7 @@ for (const receiptExists of [true, false]) {
       return { input_id: 'accepted' }
     })
     assert.equal(await h.controller.send('thread', h.draft), false)
+    assert.deepEqual(frozen.mcps, ['first', 'second'])
     h.draft.attachments.push({ id: 'later-file' })
     h.draft.text = '新草稿'
     let preparations = 0
@@ -145,7 +147,8 @@ for (const receiptExists of [true, false]) {
     if (receiptExists) t.mock.method(api, 'sendThreadMessage', () => { throw Error('不能重复提交') })
     assert.equal(await originalController.send('thread', h.draft, { retry: true }), true)
     assert.equal(preparations, 0, '重试不能再次消费编辑器当前草稿')
-    assert.equal(h.accepted[0].text, '原始消息')
+    assert.equal(h.accepted[0].text, '@mcp:first @skill:ignored @mcp:second @mcp:first')
+    assert.deepEqual(h.accepted[0].data.mcps, ['first', 'second'])
     assert.deepEqual(h.accepted[0].attachments, [{ id: 'file' }])
   })
 }

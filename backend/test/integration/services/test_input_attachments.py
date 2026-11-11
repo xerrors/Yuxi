@@ -80,6 +80,47 @@ async def files_env(sessions, tmp_path, monkeypatch):  # noqa: F811
                 pass
 
 
+async def test_session_connectors_persist_without_inheriting_input_attachments_or_model_override(files_env):
+    """连接器追加到会话；附件与单次模型覆盖只属于接受它们的 Input。"""
+    factory, upload, _, _ = files_env
+    file = await upload("scope.txt")
+    async with factory() as db:
+        first = await inputs.accept_message(
+            db=db,
+            scope=SCOPE,
+            thread_id="input-thread",
+            idempotency_key="with-attachments-and-session-connectors",
+            source="test_queue",
+            mode="follow_up",
+            messages=[build_chat_input_message("读取本次附件")],
+            attachment_file_ids=[file["id"]],
+            mcps=["extra"],
+            model_spec="test:one-off",
+        )
+        following = await inputs.accept_message(
+            db=db,
+            scope=SCOPE,
+            thread_id="input-thread",
+            idempotency_key="following-with-session-defaults",
+            source="test_queue",
+            mode="follow_up",
+            messages=[build_chat_input_message("继续使用会话连接器")],
+        )
+    async with factory() as db:
+        session = await SessionRepository(db).get_session_by_thread_id("input-thread")
+        initial = await db.get(AgentInput, first["input_id"])
+        next_input = await db.get(AgentInput, following["input_id"])
+        assert session.config_snapshot["mcps"] == initial.input_payload["context_snapshot"]["mcps"] == ["extra"]
+        assert next_input.input_payload["context_snapshot"]["mcps"] == ["extra"]
+        assert initial.input_payload["context_snapshot"]["model"] == "test:one-off"
+        assert session.config_snapshot["model"] == next_input.input_payload["context_snapshot"]["model"] == "test:chat"
+        assert "attachment_file_ids" not in session.config_snapshot
+        assert initial.attachment_file_ids == [file["id"]]
+        assert next_input.attachment_file_ids == []
+        attachment = await db.get(AgentAttachment, file["id"])
+        assert attachment.input_id == initial.id and attachment.message_id is None
+
+
 async def test_multi_message_files_bind_last_projection_and_receipt_stays_unchanged(files_env):
     """提交级附件只挂末条消息，消费不修改接收回执。"""
     from sqlalchemy.exc import IntegrityError

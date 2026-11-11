@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import HTTPException
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr, StringConstraints, model_validator
 
 from yuxi.modules.agents.input_messages import (
     AgentRunInputMessage,
@@ -47,9 +47,18 @@ class InputImagePart(WireModel):
 
 
 class InputAttachmentOptions(WireModel):
-    """提交级附件引用，保持原始顺序。"""
+    """仅绑定到本次 Input、消费后归属用户 Message 的附件引用。"""
 
     attachment_file_ids: list[Annotated[str, Field(min_length=32, max_length=32)]] = Field(default_factory=list, max_length=20)
+
+
+class SessionConnectorOptions(WireModel):
+    """追加到会话配置、由后续输入继承的连接器选择。"""
+
+    mcps: list[Annotated[StrictStr, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]] = Field(
+        default_factory=list,
+        description="追加挂载到当前会话的连接器 slug；与 context MCP 取并集，后续输入沿用，执行时按当前权限解析。省略或空列表不移除选择。",
+    )
 
 
 class InputMessage(WireModel):
@@ -70,6 +79,10 @@ class SessionAgentOverride(WireModel):
     )
 
 
+class SessionCreateOptions(SessionConnectorOptions, InputAttachmentOptions):
+    """创建请求同时携带会话连接器选择与首批输入的附件引用。"""
+
+
 class SessionCreate(WireModel):
     """创建 Session 或原子接收首批消息。"""
 
@@ -88,7 +101,7 @@ class SessionCreate(WireModel):
     )
 
     agent_id: str = Field(min_length=1, max_length=64, description="可见的已保存 Agent slug，先从 Agent 目录查询。")
-    yuxi: InputAttachmentOptions = Field(default_factory=InputAttachmentOptions)
+    yuxi: SessionCreateOptions = Field(default_factory=SessionCreateOptions)
     agent: SessionAgentOverride | None = Field(default=None, description="仅支持 model 覆盖；其他官方 Agent 配置当前不支持。")
     input: (
         Annotated[str, Field(min_length=1, max_length=32768)] | Annotated[list[InputMessage], Field(min_length=1, max_length=20)] | None
@@ -124,8 +137,8 @@ class SessionUpdate(WireModel):
         return self
 
 
-class MessageOptions(InputAttachmentOptions):
-    """普通输入的优先级、执行配置与附件。"""
+class MessageOptions(SessionConnectorOptions, InputAttachmentOptions):
+    """输入请求组合会话连接器追加、本次执行覆盖和附件引用。"""
 
     mode: Literal["follow_up", "steer"] | None = Field(
         default=None,

@@ -122,7 +122,7 @@ async def test_management_connection_uses_real_protocol_and_preserves_state(test
         response = await test_client.post(f"{server_path}/test", headers=admin_headers)
         if mode in {"error", "refused"}:
             assert response.status_code == 502, response.text
-            assert response.json()["detail"] == "MCP 连接失败，请检查服务地址、凭据和网络后重试"
+            assert response.json()["detail"] == "连接器连接失败，请检查服务地址、凭据和网络后重试"
             assert "fixture-secret-response" not in response.text
             assert "fixture-header" not in response.text
         else:
@@ -182,7 +182,7 @@ async def test_remote_config_rejected_before_persistence(test_client, admin_head
     conn = await asyncpg.connect(os.environ["POSTGRES_URL"].replace("+asyncpg", ""))
     try:
         assert response.status_code in (400, 422), response.text
-        assert reason in response.text or (response.status_code == 400 and response.json()["detail"].startswith("MCP 配置无效"))
+        assert reason in response.text or (response.status_code == 400 and response.json()["detail"].startswith("连接器配置无效"))
         assert await conn.fetchrow("SELECT * FROM mcp_servers WHERE slug = $1", slug) is None
     finally:
         try:
@@ -230,7 +230,7 @@ async def test_manifest_metadata_persisted_and_invalid_update_preserves_connecti
         ]:
             response = await test_client.put(path, headers=admin_headers, json=payload)
             assert response.status_code in (400, 422), response.text
-            assert reason in response.text or (response.status_code == 400 and response.json()["detail"].startswith("MCP 配置无效"))
+            assert reason in response.text or (response.status_code == 400 and response.json()["detail"].startswith("连接器配置无效"))
             assert await conn.fetchrow("SELECT * FROM mcp_servers WHERE slug = $1", slug) == before
     finally:
         await test_client.delete(path, headers=admin_headers)

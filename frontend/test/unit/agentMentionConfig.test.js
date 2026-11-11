@@ -47,7 +47,7 @@ test('文件 mention 来自附件元数据并按路径去重', async () => {
   }
 })
 
-test('资源 mention 按智能体选择生成，不把预加载 Skills 当成可提及资源', async () => {
+test('连接器 mention 来自本人可用目录，Skills 仍按智能体选择生成', async () => {
   const server = await createTestServer({
     server: { middlewareMode: true, hmr: false },
     appType: 'custom'
@@ -68,16 +68,27 @@ test('资源 mention 按智能体选择生成，不把预加载 Skills 当成可
             ]
           }
         }),
-        agentConfig: ref(agentConfig)
+        agentConfig: ref(agentConfig),
+        mcpServers: ref([
+          { slug: 'mcp-a', name: '连接器 A', available: true },
+          { slug: 'mcp-b', name: '连接器 B', available: true },
+          { slug: 'disabled', available: false },
+          { slug: 'other-user', available: false },
+          { slug: 'revoked', available: false },
+          { slug: 'knowledge', enabled: true, connection_status: 'not_required', available: false }
+        ])
       })
       return mentionConfig.value.mcps
     }
 
-    assert.deepEqual(getMentionMcps({}), [])
-    assert.deepEqual(getMentionMcps({ mcps: null }), [])
-    assert.deepEqual(getMentionMcps({ mcps: ['mcp-b'] }), [
-      { slug: 'mcp-b', name: 'MCP B', description: '' }
-    ])
+    const expected = [
+      { slug: 'mcp-a', name: '连接器 A', description: '' },
+      { slug: 'mcp-b', name: '连接器 B', description: '' }
+    ]
+    assert.deepEqual(getMentionMcps({}), expected)
+    assert.deepEqual(getMentionMcps({ mcps: [] }), expected)
+    assert.deepEqual(getMentionMcps({ mcps: ['mcp-b'] }), expected)
+    assert.deepEqual(getMentionMcps({ mcps: 'all' }), expected)
 
     const getMentionSkills = (agentConfig) => {
       const options = [

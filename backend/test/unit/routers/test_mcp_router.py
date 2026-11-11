@@ -133,6 +133,12 @@ def test_get_mcp_servers_normal_user_is_stripped(monkeypatch):
 
     monkeypatch.setattr("yuxi.api.routers.extensions.mcp.personal_connection_states", fake_states)
 
+    async def fake_available(db, slugs, *, user_id):
+        """目录只投影执行层解析的可用性。"""
+        return {"test-mcp": object()}
+
+    monkeypatch.setattr("yuxi.api.routers.extensions.mcp.available_mcp_servers", fake_available)
+
     # 1. 管理员请求，应该返回全部字段
     client_admin = TestClient(_build_app(allow_admin=True))
     resp_admin = client_admin.get("/api/system/mcp-servers")
@@ -157,10 +163,12 @@ def test_get_mcp_servers_normal_user_is_stripped(monkeypatch):
     assert data_user["name"] == "test-mcp"
     assert data_user["description"] == "test mcp description"
     assert data_user["enabled"] is True
+    assert data_user["available"] is True
     assert data_user["is_builtin"] is False
     assert data_user["auth_mode"] == "headers"
     builtin = by_slug["knowledge"]
     assert builtin["is_builtin"] is True
+    assert builtin["available"] is False
     assert "url" not in builtin and "headers" not in builtin
 
 
@@ -210,7 +218,7 @@ def test_mcp_server_rejects_unsupported_configuration(method, path, payload):
 
 def test_update_builtin_mcp_server_rejects_connection_changes(monkeypatch):
     async def fake_update_mcp_server(db, slug, **kwargs):
-        raise PermissionError("系统内置 MCP 的连接配置由代码管理，无法通过接口修改")
+        raise PermissionError("系统内置连接器的连接配置由代码管理，无法通过接口修改")
 
     monkeypatch.setattr("yuxi.api.routers.extensions.mcp.update_mcp_server", fake_update_mcp_server)
 

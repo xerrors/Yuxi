@@ -2,6 +2,7 @@
 
 import json
 import uuid
+from copy import deepcopy
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +13,7 @@ from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository
+from yuxi.modules.agents.services.input_config import merge_mcp_selections
 
 
 async def create_turn_run(
@@ -22,9 +24,17 @@ async def create_turn_run(
     source: AgentInput | AgentRun,
     api_key_id: int | None,
     previous: AgentRun | None = None,
+    input_batch: list[AgentInput] | None = None,
 ) -> AgentRun:
     """在调用者的 Thread 锁和作用域内继承配置，固定当前 Run。"""
     snapshot = previous if previous is not None else source
+    payload = deepcopy(snapshot.input_payload or {})
+    # 连续 steer 共用执行段；只合并本批输入的连接器，不读取较晚接收的会话配置。
+    if input_batch:
+        selections = [item.input_payload["context_snapshot"].get("mcps", []) for item in input_batch]
+        if any(selections):
+            context = payload["context_snapshot"]
+            context["mcps"] = merge_mcp_selections(context.get("mcps", []), *selections)
     run = await AgentRunRepository(db).create_run(
         run_id=str(uuid.uuid4()),
         thread_id=agent_session.thread_id,
@@ -34,7 +44,7 @@ async def create_turn_run(
         turn_id=turn.id,
         app_id=agent_session.app_id,
         api_key_id=api_key_id,
-        input_payload=snapshot.input_payload or {},
+        input_payload=payload,
         source=source.source,
         channel=source.channel,
         external_id=source.external_id,

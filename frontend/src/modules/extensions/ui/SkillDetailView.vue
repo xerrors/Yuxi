@@ -285,7 +285,7 @@
           <div class="config-section-header extension-detail-section-header">
             <div class="text extension-detail-section-heading">
               <h3>运行依赖</h3>
-              <p>声明所需依赖；MCP 服务在此 Skill 激活后按需加载。</p>
+              <p>声明所需依赖；连接器在此 Skill 激活后按需加载。</p>
             </div>
             <a-button v-if="canEditSkill && hasContentChanges" type="primary"
               :loading="savingAny" :disabled="pendingFileLoad" @click="saveContent"
@@ -598,11 +598,11 @@ const dependencyGroups = computed(() => [
   {
     key: 'mcps',
     formKey: 'mcp_dependencies',
-    title: 'MCP 依赖',
-    shortTitle: 'MCP',
-    description: '声明此 Skill 依赖的 MCP 服务。',
-    dropdownHint: '选择此 Skill 运行时需要的 MCP 服务。',
-    emptyText: '未声明 MCP 依赖',
+    title: '连接器依赖',
+    shortTitle: '连接器',
+    description: '声明此 Skill 依赖的连接器。',
+    dropdownHint: '选择此 Skill 运行时需要的连接器。',
+    emptyText: '未声明连接器依赖',
     options: mcpDependencyOptions.value
   },
   {

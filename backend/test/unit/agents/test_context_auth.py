@@ -104,7 +104,7 @@ def test_get_configurable_items_filters_admin_fields_for_user():
     assert items["preload_skills"]["kind"] == "skills"
     assert items["mcps"]["default"] == []
     assert "默认不直接加载" in items["mcps"]["description"]
-    assert "MCP 依赖在激活后开放" in items["skills"]["description"]
+    assert "连接器依赖在激活后开放" in items["skills"]["description"]
     assert "summary_threshold" not in items
     assert "summary_keep_messages" not in items
     assert "summary_prompt" not in items

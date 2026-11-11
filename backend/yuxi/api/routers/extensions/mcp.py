@@ -11,6 +11,7 @@ from yuxi.modules.extensions.mcp.oauth_config import PERSONAL_AUTH_MODES, STATIC
 from yuxi.modules.extensions.mcp.repository import get_all_mcp_servers, get_mcp_server
 from yuxi.modules.extensions.mcp.service import (
     MCPServerNotFoundError,
+    available_mcp_servers,
     create_mcp_server,
     delete_mcp_server,
     get_all_mcp_tools,
@@ -80,10 +81,14 @@ async def get_mcp_servers(
     try:
         servers = await get_all_mcp_servers(db)
         states = await personal_connection_states(db, servers, current_user.id)
+        available = await available_mcp_servers(db, [server.slug for server in servers], user_id=current_user.id)
         if current_user.role == "superadmin":
             return {
                 "success": True,
-                "data": [{**serialize_mcp_server(server), "connection_status": states[server.slug]} for server in servers],
+                "data": [
+                    {**serialize_mcp_server(server), "connection_status": states[server.slug], "available": server.slug in available}
+                    for server in servers
+                ],
             }
 
         data = []
@@ -100,6 +105,7 @@ async def get_mcp_servers(
                         else {}
                     ),
                     "connection_status": states[server.slug],
+                    "available": server.slug in available,
                     "can_manage": False,
                     "name": getattr(server, "name", ""),
                     "description": getattr(server, "description", None),
@@ -148,7 +154,7 @@ async def create_mcp_server_route(
         )
         return {"success": True, "data": serialize_mcp_server(server)}
     except ValueError:
-        raise HTTPException(status_code=400, detail="MCP 配置无效，请检查地址、认证方式和必填字段")
+        raise HTTPException(status_code=400, detail="连接器配置无效，请检查地址、认证方式和必填字段")
     except HTTPException:
         raise
     except Exception as e:
@@ -210,7 +216,7 @@ async def update_mcp_server_route(
     except PermissionError as pe:
         raise HTTPException(status_code=403, detail=str(pe))
     except ValueError:
-        raise HTTPException(status_code=400, detail="MCP 配置无效，请检查地址、认证方式和必填字段")
+        raise HTTPException(status_code=400, detail="连接器配置无效，请检查地址、认证方式和必填字段")
     except Exception as e:
         logger.error(f"Failed to update MCP server: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -226,7 +232,7 @@ async def delete_mcp_server_route(
     try:
         server = await get_mcp_server(db, slug)
         if server and is_builtin_mcp_server(server):
-            raise HTTPException(status_code=403, detail="系统内置的 MCP 服务器无法删除")
+            raise HTTPException(status_code=403, detail="系统内置的连接器无法删除")
 
         deleted = await delete_mcp_server(db, slug)
         if not deleted:
@@ -263,7 +269,7 @@ async def test_mcp_server(
         except HTTPException:
             raise
         except Exception as exc:
-            detail = "MCP 连接失败，请检查服务地址、凭据和网络后重试"
+            detail = "连接器连接失败，请检查服务地址、凭据和网络后重试"
             if server.auth_mode in PERSONAL_AUTH_MODES:
                 reason, _ = runtime_mcp_failure(exc)
                 detail = {"code": "mcp_connection_failed", "message": reason}
@@ -289,12 +295,12 @@ async def update_mcp_server_status_route(
             "success": True,
             "enabled": is_enabled,
             "data": serialize_mcp_server(server),
-            "message": f"MCP '{slug}' 已{'添加' if is_enabled else '移除'}",
+            "message": f"连接器 '{slug}' 已{'添加' if is_enabled else '移除'}",
         }
     except MCPServerNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except ValueError:
-        raise HTTPException(status_code=400, detail="MCP 配置无效，请检查地址、认证方式和必填字段")
+        raise HTTPException(status_code=400, detail="连接器配置无效，请检查地址、认证方式和必填字段")
     except HTTPException:
         raise
     except Exception as e:
@@ -375,7 +381,7 @@ async def toggle_mcp_server_tool_route(
             "message": f"工具 '{tool_name}' 已{'启用' if enabled else '禁用'}",
         }
     except ValueError:
-        raise HTTPException(status_code=404, detail="MCP 配置无效，请检查地址、认证方式和必填字段")
+        raise HTTPException(status_code=404, detail="连接器配置无效，请检查地址、认证方式和必填字段")
     except HTTPException:
         raise
     except Exception as e:

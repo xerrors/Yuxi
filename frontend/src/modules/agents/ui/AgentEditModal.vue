@@ -395,7 +395,7 @@ const handleSharedSkillCreated = async ({ slugs = [] }) => {
 }
 const manageRuntimeResource = async (kind) => {
   if (!editingAgentId.value) {
-    message.warning('请先创建智能体；新增 MCP 或共享 Skill 可使用旁边的创建按钮')
+    message.warning('请先创建智能体；新增连接器或共享 Skill 可使用旁边的创建按钮')
     return
   }
   const tabs = { knowledges: 'knowledge', tools: 'tools', mcps: 'mcp', skills: 'skills' }
@@ -872,7 +872,7 @@ defineExpose({
               @manage-resource="manageRuntimeResource"
             >
               <template #resource-actions="{ field, kind }">
-                <a-button v-if="field === 'mcps' && userStore.isSuperAdmin" type="text" size="small" class="inline-action-btn lucide-icon-btn" :disabled="runtimeConfigReadonly" @click="openMcpCreate"><Plus :size="14" aria-hidden="true" />创建 MCP</a-button>
+                <a-button v-if="field === 'mcps' && userStore.isSuperAdmin" type="text" size="small" class="inline-action-btn lucide-icon-btn" :disabled="runtimeConfigReadonly" @click="openMcpCreate"><Plus :size="14" aria-hidden="true" />新增连接器</a-button>
                 <a-upload v-if="field === 'skills' && kind === 'skills' && userStore.isAdmin" class="resource-create-upload" :show-upload-list="false" :before-upload="beforeSharedSkillUpload" :disabled="runtimeConfigReadonly" accept=".zip">
                   <a-button type="text" size="small" class="inline-action-btn lucide-icon-btn" :loading="sharedSkillPreparing" :disabled="runtimeConfigReadonly"><Plus :size="14" aria-hidden="true" />创建共享 Skill</a-button>
                 </a-upload>

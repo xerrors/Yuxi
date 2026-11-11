@@ -26,6 +26,7 @@ from yuxi.modules.agents.scope import ActorScope
 from yuxi.modules.agents.services.attachments import serialize_attachment, stage_input_attachments
 from yuxi.modules.agents.services.cooperation_notifications import notify_user_intervention
 from yuxi.modules.agents.services.input_config import (
+    merge_mcp_selections,
     resolve_agent_context_snapshot,
     resolve_agent_run_model_spec,
     resolve_agent_run_tool_approval_mode,
@@ -59,6 +60,7 @@ async def create_thread(
     title: str | None = None,
     messages: list[AgentRunInputMessage] | None = None,
     attachment_file_ids: list[str] | None = None,
+    mcps: list[str] | None = None,
     model_spec: str | None = None,
     tool_approval_mode: str | None = None,
     source: str = "public_api",
@@ -70,6 +72,7 @@ async def create_thread(
     require_idempotency_key(idempotency_key)
     input_messages = list(messages or [])
     file_ids = list(attachment_file_ids or [])
+    mcps = list(dict.fromkeys(mcps or []))
     if file_ids and not input_messages:
         raise InvalidInputError("附件必须随非空输入提交")
     intent_hash = input_intent_hash(
@@ -83,6 +86,7 @@ async def create_thread(
         origin_metadata or {},
         [_message_intent(item) for item in input_messages],
         file_ids,
+        *([{"mcps": mcps}] if mcps else []),
     )
     receipt_repo = AgentInputReceiptRepository(db)
     existing = await receipt_repo.get_for_scope(uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key)
@@ -114,6 +118,8 @@ async def create_thread(
     except AgentBackendNotFoundError as exc:
         raise ResourceNotFoundError(str(exc)) from exc
     config_snapshot = await resolve_agent_context_snapshot(model_spec, tool_approval_mode, agent_item, backend, db)
+    if mcps:
+        config_snapshot["mcps"] = merge_mcp_selections(config_snapshot.get("mcps", []), mcps)
     thread_metadata = {"source": source, "channel": channel}
     try:
         async with db.begin_nested():
@@ -193,6 +199,7 @@ async def accept_message(
     mode: Literal["follow_up", "steer"] | None,
     messages: list[AgentRunInputMessage],
     attachment_file_ids: list[str] | None = None,
+    mcps: list[str] | None = None,
     model_spec: str | None = None,
     tool_approval_mode: str | None = None,
     source: str = "public_api",
@@ -206,6 +213,7 @@ async def accept_message(
         raise InvalidInputError("输入消息不能为空")
     if mode not in {None, "follow_up", "steer"}:
         raise InvalidInputError("不支持的输入模式")
+    mcps = list(dict.fromkeys(mcps or []))
     intent_hash = input_intent_hash(
         "agent.session.input.message",
         mode,
@@ -215,6 +223,7 @@ async def accept_message(
         origin_metadata or {},
         [_message_intent(item) for item in messages],
         list(attachment_file_ids or []),
+        *([{"mcps": mcps}] if mcps else []),
     )
     receipt_repo = AgentInputReceiptRepository(db)
     existing = await receipt_repo.get_for_scope(uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key)
@@ -245,6 +254,7 @@ async def accept_message(
         mode=mode,
         messages=messages,
         attachment_file_ids=attachment_file_ids,
+        mcps=mcps,
         model_spec=model_spec,
         tool_approval_mode=tool_approval_mode,
         source=source,
@@ -327,6 +337,7 @@ async def accept_locked(
     origin_metadata: dict | None,
     frozen_payload: dict | None = None,
     attachment_file_ids: list[str] | None = None,
+    mcps: list[str] | None = None,
 ) -> AgentInputReceipt:
     """在调用方事务与 Thread 锁内保存原始 Input、附件与接收回执。"""
     if agent_session.status != "active":
@@ -351,10 +362,17 @@ async def accept_locked(
         raise ResourceNotFoundError("智能体不存在")
     if agent_session.config_snapshot is None:
         raise ValueError("Session 缺少配置快照")
+    if mcps:
+        agent_session.config_snapshot = {
+            **agent_session.config_snapshot,
+            "mcps": merge_mcp_selections(agent_session.config_snapshot.get("mcps", []), mcps),
+        }
     snapshot = deepcopy(agent_session.config_snapshot)
     if mode == "steer" and active_turn is not None:
         current = await AgentRunRepository(db).get_run(active_turn.current_run_id)
         snapshot = deepcopy(current.input_payload["context_snapshot"])
+        if "mcps" in agent_session.config_snapshot:
+            snapshot["mcps"] = merge_mcp_selections(snapshot.get("mcps", []), agent_session.config_snapshot["mcps"])
     else:
         if model_spec is not None:
             snapshot["model"] = await resolve_agent_run_model_spec(model_spec, None, db)

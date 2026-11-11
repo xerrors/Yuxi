@@ -767,7 +767,7 @@ async def test_runtime_reports_unknown_loading_failure_without_exposing_tools(sc
     monkeypatch.setattr(service, "personal_mcp_tools", fail)
     unavailable, run_tools = {}, {}
     assert await service.resolve_runtime_mcp_tools(["fixture"], uid="alice", run_tools=run_tools, unavailable=unavailable) == {}
-    expected = "服务连接或调用失败，请检查 MCP 服务后重试"
+    expected = "服务连接或调用失败，请检查连接器后重试"
     if grouped:
         expected = "授权凭据不可用或已失效，请在扩展页面重新连接；" + expected
     assert unavailable == ({"fixture": expected} if grouped else {})
@@ -1293,7 +1293,7 @@ async def test_personal_static_credentials_use_own_identity_and_revoke_old_tools
     assert failed.status_code == 502
     assert failed.json()["detail"] == {
         "code": "mcp_connection_failed",
-        "message": "MCP 服务方权限不足，请检查个人账号权限",
+        "message": "连接器服务方权限不足，请检查个人账号权限",
     }
     current.pop("error_status")
     async with scenario["db"]() as db:

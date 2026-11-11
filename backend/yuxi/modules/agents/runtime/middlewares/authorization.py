@@ -67,7 +67,7 @@ class RuntimeAuthorizationMiddleware(AgentMiddleware):
             try:
                 reason, permanent = runtime_mcp_failure(exc)
             except (PermissionError, PermissionDeniedError) as denied:
-                raise AgentExecutionRevoked("MCP 工具调用权限被拒绝") from denied
+                raise AgentExecutionRevoked("连接器工具调用权限被拒绝") from denied
             if permanent:
                 context.mcp_unavailable[server] = reason
             logger.warning(
@@ -77,13 +77,13 @@ class RuntimeAuthorizationMiddleware(AgentMiddleware):
                 type(exc).__name__,
                 reason,
             )
-            return ToolMessage(content=f"MCP {server} 不可用：{reason}", tool_call_id=request.tool_call["id"], status="error")
+            return ToolMessage(content=f"连接器 {server} 不可用：{reason}", tool_call_id=request.tool_call["id"], status="error")
 
 
 def capability_warnings(context) -> list[RuntimeWarning]:
     """生成当前能力警告，整体替换图状态中的列表。"""
     warnings: list[RuntimeWarning] = [
-        {"code": "mcp_unavailable", "source": f"mcp:{slug}", "message": f"MCP {slug}：{reason}"}
+        {"code": "mcp_unavailable", "source": f"mcp:{slug}", "message": f"连接器 {slug}：{reason}"}
         for slug, reason in getattr(context, "mcp_unavailable", {}).items()
     ]
     if getattr(context, "_capability_limited", False):

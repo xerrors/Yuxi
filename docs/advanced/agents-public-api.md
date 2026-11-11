@@ -81,7 +81,13 @@ POST 更新使用 `{"agent":{"model":"<provider:model>"},"yuxi":{"title":"新标
 
 ## 创建与提交消息
 
-创建可传 `agent_id`、`title`、`project_id`、`agent.model`、`tool_approval_mode`、`input`、`yuxi.attachment_file_ids` 和 `stream`。`agent_id` 使用可见 Agent slug；`input` 是文本字符串或最多 20 条有序 `user` 消息，内容块支持 `input_text` 与内联 `data:image/...;base64,...` 的 `input_image`。每条消息最多 10 张图片，图片内容总量最多 80 MiB；内置 nginx 对 Thread 创建和消息事件放行 100 MiB 请求体，外层代理也需配置相应上限。附件及 `stream=true` 均要求同时提供非空输入。带输入创建先把 Thread、Input、提交级附件绑定和回执在同一数据库事务提交；有附件时再准备 Workdir 文件并提交就绪事实。只有文件就绪且队列允许领取时才在消费事务创建 Turn/Run 与正式 Message，提交后投递 worker。
+创建或提交消息时可传 `yuxi.mcps: ["<connector-slug>"]`，将连接器追加到当前会话。选择与创建时的 Agent Context MCP 取并集并去重，`all` 保留按当前目录解析的语义；省略或空列表不移除选择。空会话也支持该字段。连接器选择随接收事务持久化，后续输入无需重复传入，刷新页面后继续保留；不会修改保存的 Agent 或其他会话。
+
+`yuxi.mcps` 改变会话的后续资源选择；同一请求中的 `yuxi.attachment_file_ids` 只归本次 Input，消费后绑定对应 Message，消息事件的 `yuxi.model` 也只覆盖本次 follow-up。三者通过同一请求传递，各自按所属作用域生效。
+
+已经接收的 Input 保留原配置快照。运行中的 steer 在安全边界的新 Run 合入本批连接器选择，连续 steer 合批不丢失选择，模型和审批配置仍继承原 Run。取消 pending Input 不撤销已接收的会话选择，重试改变新增选择返回 `409`。持久选择不代表授权：工具装配与出站继续复查当前执行用户、服务开关和本人的连接；不可用连接器沿用现有过滤与警告行为。
+
+创建可传 `agent_id`、`title`、`project_id`、`agent.model`、`tool_approval_mode`、`input`、`yuxi.attachment_file_ids`、`yuxi.mcps` 和 `stream`。`agent_id` 使用可见 Agent slug；`input` 是文本字符串或最多 20 条有序 `user` 消息，内容块支持 `input_text` 与内联 `data:image/...;base64,...` 的 `input_image`。每条消息最多 10 张图片，图片内容总量最多 80 MiB；内置 nginx 对 Thread 创建和消息事件放行 100 MiB 请求体，外层代理也需配置相应上限。附件及 `stream=true` 均要求同时提供非空输入。带输入创建先把 Thread、Input、提交级附件绑定和回执在同一数据库事务提交；有附件时再准备 Workdir 文件并提交就绪事实。只有文件就绪且队列允许领取时才在消费事务创建 Turn/Run 与正式 Message，提交后投递 worker。
 
 ```bash
 curl --fail "$BASE_URL/api/v1/agents/sessions" \

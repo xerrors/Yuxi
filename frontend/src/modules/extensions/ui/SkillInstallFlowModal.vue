@@ -154,7 +154,7 @@
               </button>
             </div>
             <div v-if="installTarget === 'personal'" class="personal-install-note">
-              个人 Skill 不加载工具、MCP 或其他 Skill 依赖；与共享 Skill 同名时完整覆盖共享版本。
+              个人 Skill 不加载工具、连接器或其他 Skill 依赖；与共享 Skill 同名时完整覆盖共享版本。
             </div>
           </div>
           <div v-if="installTarget === 'shared'" class="share-config-section">

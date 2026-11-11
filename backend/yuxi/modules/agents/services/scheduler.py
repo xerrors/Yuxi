@@ -58,7 +58,7 @@ async def claim_next_input(*, db: AsyncSession, agent_session: Session, binding:
 
     turn_id = str(uuid.uuid4())
     turn = await turn_repo.create(turn_id=turn_id, thread_id=agent_session.thread_id, uid=agent_session.uid, app_id=agent_session.app_id)
-    run = await create_turn_run(db=db, agent_session=agent_session, turn=turn, source=head, api_key_id=head.api_key_id)
+    run = await create_turn_run(db=db, agent_session=agent_session, turn=turn, source=head, api_key_id=head.api_key_id, input_batch=batch)
     run_id = run.id
     messages = await input_repo.consume(inputs=batch, turn_id=turn_id, run_id=run_id)
     await AgentRunRepository(db).set_input_message(run_id, messages[0].id)

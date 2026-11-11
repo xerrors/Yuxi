@@ -16,7 +16,7 @@
       <div class="mcp-form-heading">
         <span class="mcp-form-icon"><Plug :size="18" aria-hidden="true" /></span>
         <div>
-          <span>{{ editMode ? '编辑 MCP' : '添加 MCP' }}</span>
+          <span>{{ editMode ? '编辑连接器' : '新增连接器' }}</span>
           <p>连接外部服务，供智能体调用工具</p>
         </div>
       </div>
@@ -178,9 +178,9 @@ function createEmptyForm() {
 const form = reactive(createEmptyForm())
 const authDescription = computed(() => ({
   none: '适用于公开服务，调用时不发送认证凭证。',
-  bearer: '每位用户在 MCP 卡片填写自己的 Token，系统通过 Authorization: Bearer 发送。',
-  api_key: '管理员指定认证请求头名称，每位用户在 MCP 卡片填写自己的 Key 或 Token。',
-  oauth: '管理员登记应用信息，每位用户在 MCP 卡片登录并授权自己的服务账号。',
+  bearer: '每位用户在连接器卡片填写自己的 Token，系统通过 Authorization: Bearer 发送。',
+  api_key: '管理员指定认证请求头名称，每位用户在连接器卡片填写自己的 Key 或 Token。',
+  oauth: '管理员登记应用信息，每位用户在连接器卡片登录并授权自己的服务账号。',
   headers: '管理员在下方填写凭证。所有人的请求都会使用这组请求头，访问同一个服务账号。',
 })[form.auth_mode])
 const clearsSharedHeaders = computed(() => props.editMode && (props.editData?.auth_mode || 'headers') === 'headers' && ['none', 'bearer', 'api_key', 'oauth'].includes(form.auth_mode))
@@ -233,11 +233,11 @@ const handleFormSubmit = async () => {
       headers = {}
     }
     if (!form.slug?.trim()) {
-      message.error('MCP 标识不能为空')
+      message.error('连接器标识不能为空')
       return
     }
     if (!form.name?.trim()) {
-      message.error('MCP 名称不能为空')
+      message.error('连接器名称不能为空')
       return
     }
     if (!form.auth_mode) {
@@ -279,7 +279,7 @@ const handleFormSubmit = async () => {
       const result = await mcpApi.updateMcpServer(props.editData?.slug || slug, updateData)
       if (result.success) {
         submitted = result.data
-        message.success('MCP 更新成功')
+        message.success('连接器更新成功')
       } else {
         message.error(result.message || '更新失败')
         return
@@ -288,7 +288,7 @@ const handleFormSubmit = async () => {
       const result = await mcpApi.createMcpServer(data)
       if (result.success) {
         submitted = result.data
-        message.success('MCP 创建成功')
+        message.success('连接器创建成功')
       } else {
         message.error(result.message || '创建失败')
         return

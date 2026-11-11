@@ -9,7 +9,6 @@ import {
 
 const MENTION_FIELDS = [
   ['knowledges', 'knowledgeBases'],
-  ['mcps', 'mcps'],
   ['skills', 'skills']
 ]
 
@@ -39,6 +38,7 @@ export function useAgentMentionConfig({
   currentThreadAttachments,
   configurableItems,
   agentConfig,
+  mcpServers,
   agents
 }) {
   const mentionConfig = computed(() => {
@@ -85,6 +85,9 @@ export function useAgentMentionConfig({
     return {
       files,
       ...resources,
+      mcps: (mcpServers?.value || [])
+        .filter((server) => server.available)
+        .map(({ slug, name, description }) => ({ slug, name, description: description || '' })),
       agents: (agents?.value || []).filter((agent) => agent.can_run && agent.agent_id)
     }
   })

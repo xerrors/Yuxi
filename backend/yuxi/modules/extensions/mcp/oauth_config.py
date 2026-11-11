@@ -129,7 +129,7 @@ def cipher() -> Fernet:
     try:
         return get_encryption_cipher()
     except ValueError as exc:
-        raise StateConflictError("MCP 个人凭证未配置加密密钥，请联系超级管理员", code="mcp_oauth_unconfigured") from exc
+        raise StateConflictError("连接器个人凭证未配置加密密钥，请联系超级管理员", code="mcp_oauth_unconfigured") from exc
 
 
 def encrypt(value: dict) -> str:
@@ -142,7 +142,7 @@ def decrypt(value: str) -> dict:
     try:
         return json.loads(cipher().decrypt(value.encode()))
     except (InvalidToken, ValueError) as exc:
-        raise StateConflictError("MCP 授权凭据无法读取，请重新连接", code="mcp_reconnect_required") from exc
+        raise StateConflictError("连接器授权凭据无法读取，请重新连接", code="mcp_reconnect_required") from exc
 
 
 def config_revision(server) -> str:

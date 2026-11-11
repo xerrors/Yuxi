@@ -79,6 +79,7 @@ async def submit_thread_event(*, db: AsyncSession, scope: ActorScope, thread_id:
             mode=event.yuxi.mode,
             messages=input_messages_to_domain(event.input),
             attachment_file_ids=event.yuxi.attachment_file_ids,
+            mcps=event.yuxi.mcps,
             model_spec=event.yuxi.model,
             tool_approval_mode=event.yuxi.tool_approval_mode,
         )
