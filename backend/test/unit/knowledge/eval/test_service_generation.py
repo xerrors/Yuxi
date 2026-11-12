@@ -218,9 +218,13 @@ async def test_run_evaluation_saves_custom_name(job_submission):
 
 
 @pytest.mark.asyncio
-async def test_run_evaluation_rejects_retrieval_override_outside_schema(job_submission):
+async def test_run_evaluation_rejects_retrieval_override_outside_schema(job_submission, monkeypatch):
     """评估启动不能把超限 top_k 写进后续会原样展开的检索配置。"""
 
+    monkeypatch.setattr(
+        "yuxi.modules.knowledge.implementations.milvus.model_cache.get_all_specs",
+        lambda _kind=None: [],
+    )
     repo = FakeEvaluationRepository()
     repo.dataset = SimpleNamespace(
         dataset_id="dataset_1",

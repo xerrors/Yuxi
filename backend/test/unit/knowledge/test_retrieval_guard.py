@@ -4,12 +4,20 @@ from types import SimpleNamespace
 
 import pytest
 
+from yuxi.modules.knowledge.implementations import milvus as milvus_module
 from yuxi.modules.knowledge.implementations.milvus import MilvusKB
 from yuxi.modules.knowledge.repositories.files import MAX_FILTER_FILE_IDS
 from yuxi.modules.knowledge.services.retrieval import normalize_query_overrides
 from yuxi.shared.errors import InvalidInputError
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def rerank_catalog_without_redis(monkeypatch):
+    """查询参数声明会读取重排序目录。单元环境没有 Redis。"""
+
+    monkeypatch.setattr(milvus_module.model_cache, "get_all_specs", lambda _kind=None: [])
 
 
 def test_query_override_rejects_unknown_keys_and_oversized_top_k():
