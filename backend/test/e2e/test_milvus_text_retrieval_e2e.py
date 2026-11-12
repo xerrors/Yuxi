@@ -333,7 +333,7 @@ async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client
             )
             assert raw_hits[0].entity.get("generation") >= 1000
             for mode in ("vector", "keyword", "hybrid"):
-                results = await query(mode, final_top_k=1, recall_top_k=1, bm25_top_k=1)
+                results = await query(mode, final_top_k=1, bm25_top_k=1)
                 assert len(results) == 1, "非 active 候选不能挤掉有效 top-k"
                 [visible] = results
                 assert not visible["metadata"]["chunk_id"].endswith("-building")
@@ -390,13 +390,17 @@ async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client
         for result in await query("hybrid", highlight_results=False):
             assert "highlights" not in result
             assert result["content"] in samples.values()
-        for options in ({"required_terms": ["bad"]}, {"search_mode": "unsupported"}):
+        for options, detail in (
+            ({"required_terms": ["bad"]}, "required_terms 必须是长度不超过 500 的字符串"),
+            ({"search_mode": "unsupported"}, "search_mode 不是允许的取值"),
+        ):
             invalid = await e2e_client.post(
                 f"/api/knowledge/knowledge-bases/{kb_id}/query-test",
                 headers=e2e_headers,
                 json={"query": "Milvus", "meta": options},
             )
-            assert invalid.status_code == 400, invalid.text
+            assert invalid.status_code == 422, invalid.text
+            assert detail in invalid.json()["detail"]
 
         graph_repo = KnowledgeGraphRepository()
         graph_service = KnowledgeGraphService(graph_vector_store=graph_store)
