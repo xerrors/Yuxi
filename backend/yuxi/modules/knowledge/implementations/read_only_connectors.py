@@ -29,8 +29,9 @@ class ReadOnlyConnectors(KnowledgeExecutor):
         additional_params: dict[str, Any],
         processing_job_id: str | None = None,
         processing_owner: str | None = None,
+        recover_missing_markdown: bool = False,
     ) -> dict:
-        del kb_id, file_id, operator_id, additional_params, processing_job_id, processing_owner, params
+        del kb_id, file_id, operator_id, additional_params, processing_job_id, processing_owner, params, recover_missing_markdown
         raise self._readonly_error()
 
     async def index_file(

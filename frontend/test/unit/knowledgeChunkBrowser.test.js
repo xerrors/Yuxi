@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test, { before, after } from 'node:test'
+import { message } from 'ant-design-vue'
 import { createRenderer, reactive, ssrContextKey } from 'vue'
 import { createTestServer } from '../helpers/createTestServer.js'
 
@@ -61,4 +62,61 @@ test('浏览原始分块，保留完全重叠块与完整末尾，按正文或 I
     ['chunk-B', 'chunk-A', 'chunk-C']
   )
   app.unmount()
+})
+
+test('复制当前分块正文', async () => {
+  const notices = []
+  const originalSuccess = message.success
+  const originalError = message.error
+  message.success = (text) => notices.push(text)
+  message.error = (text) => notices.push(text)
+  const props = reactive({
+    chunks: [{ id: 'chunk-A', content: '需要复制的正文', chunk_order_index: 1 }]
+  })
+  let state
+  const renderer = createRenderer({
+    createComment: () => ({}),
+    insert() {},
+    remove() {},
+    parentNode() {},
+    nextSibling() {}
+  })
+  const app = renderer.createApp({
+    setup() {
+      state = component.setup(props, { expose() {}, emit() {} })
+      return () => null
+    }
+  })
+  app.provide(ssrContextKey, {})
+  app.mount({})
+  const previousWindow = globalThis.window
+  const previousNavigator = globalThis.navigator
+  let copied = ''
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: { isSecureContext: true } })
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: {
+      clipboard: {
+        writeText: async (text) => {
+          copied = text
+        }
+      }
+    }
+  })
+  try {
+    await state.copySelectedChunk()
+    assert.equal(copied, '需要复制的正文')
+    assert.deepEqual(notices, ['分块内容已复制'])
+    props.chunks[0].content = ''
+    copied = ''
+    await state.copySelectedChunk()
+    assert.equal(copied, '')
+    assert.deepEqual(notices, ['分块内容已复制'])
+  } finally {
+    message.success = originalSuccess
+    message.error = originalError
+    Object.defineProperty(globalThis, 'window', { configurable: true, value: previousWindow })
+    Object.defineProperty(globalThis, 'navigator', { configurable: true, value: previousNavigator })
+    app.unmount()
+  }
 })

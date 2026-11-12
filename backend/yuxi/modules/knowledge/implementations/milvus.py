@@ -25,6 +25,7 @@ from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.knowledge.base import FileStatus, KBEmbeddingModelMissingError, KnowledgeExecutor
 from yuxi.modules.knowledge.chunking.dispatcher import IngestionChunk, chunk_markdown
 from yuxi.modules.knowledge.chunking.ragflow_like.nlp import count_tokens
+from yuxi.modules.knowledge.file_status import INDEX_CLAIM_STATUSES
 from yuxi.modules.knowledge.read_models import KnowledgeBaseConfig
 from yuxi.modules.knowledge.repositories.chunks import KnowledgeChunkRepository
 from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
@@ -358,8 +359,9 @@ class MilvusKB(KnowledgeExecutor):
 
             active_expr = await self._build_active_generation_expr(kb_id)
             file_expr = await self._build_file_name_expr(kb_id, merged_kwargs.get("file_name"))
+            file_ids_expr = self._build_explicit_file_ids_expr(merged_kwargs.get("file_ids"))
             text_expr, highlighter = self._build_text_search(merged_kwargs, search_mode, query_text)
-            filter_expr = " and ".join(f"({expr})" for expr in (active_expr, file_expr, text_expr) if expr)
+            filter_expr = " and ".join(f"({expr})" for expr in (active_expr, file_expr, file_ids_expr, text_expr) if expr)
 
             output_fields = ["content", "chunk_id", "file_id", "generation", "chunk_index"]
             retrieved_chunks: list[dict] = []
@@ -734,26 +736,22 @@ class MilvusKB(KnowledgeExecutor):
         processing_job_id: str | None = None,
         processing_owner: str | None = None,
     ) -> dict:
-        """索引文件：文件夹直接失败；可入库文件先声明为 INDEXING。"""
+        """索引文件：文件夹和没有正文的文件在领取前失败；可入库文件再声明为 INDEXING。"""
         file_meta = await documents.load_file_meta(kb_id, file_id)
         # done 同时是文件夹就绪值，必须在声明前拒绝，不能只靠状态集合区分。
         if file_meta.get("is_folder"):
             raise ValueError(f"Cannot index folder '{file_id}'")
-        # 在投影锁内先检查 PG 可见事实，删除后不能重新创建外部集合。
+        if not file_meta.get("markdown_file"):
+            raise ValueError("File has not been parsed yet (no markdown_file)")
+        # 删除、缺正文和文件夹都在创建外部集合与领取之前拒绝。
+        if await self._file_deleted(kb_id, file_id):
+            raise ValueError(f"File {file_id} was deleted before indexing")
         collection = await self._get_or_create_milvus_collection(kb_id, embedding_model_spec)
         if not collection:
             raise ValueError(f"Failed to get Milvus collection for {kb_id}")
 
         embedding_function = get_embedding_function(embedding_model_spec)
-
-        # done/failed 是历史文件值，分别与 indexed、error_indexing 一样可重新声明。
-        allowed_statuses = {
-            FileStatus.PARSED,
-            FileStatus.ERROR_INDEXING,
-            FileStatus.INDEXED,
-            "done",
-            "failed",
-        }
+        allowed_statuses = set(INDEX_CLAIM_STATUSES)
         file_repo = KnowledgeFileRepository()
         owner_filter = (
             {"processing_job_id": processing_job_id, "processing_owner": processing_owner}
@@ -788,28 +786,8 @@ class MilvusKB(KnowledgeExecutor):
 
         file_meta = documents.file_record_to_meta(claimed_record)
         params = dict(file_meta.get("processing_params") or {})
-        if not file_meta.get("markdown_file"):
-            reset_data = {
-                "status": FileStatus.UPLOADED,
-                "error_message": None,
-                "processing_job_id": None,
-                "processing_owner": None,
-            }
-            if operator_id:
-                reset_data["updated_by"] = operator_id
-            updated_record = await file_repo.update_fields_if_status(
-                kb_id=kb_id,
-                file_id=file_id,
-                allowed_statuses={FileStatus.INDEXING},
-                data=reset_data,
-                **owner_filter,
-            )
-            if updated_record is None and processing_owner is not None:
-                raise asyncio.CancelledError("File processing owner was lost")
-            raise ValueError("File has not been parsed yet (no markdown_file)")
-
+        generation = await file_repo.begin_index_generation(kb_id=kb_id, file_id=file_id, **owner_filter)
         try:
-            generation = await file_repo.begin_index_generation(kb_id=kb_id, file_id=file_id, **owner_filter)
             file_meta["generation"] = generation
             chunk_parser_config = dict(params.get("chunk_parser_config") or {})
             chunk_parser_config.setdefault("embed_model_id", (await system_options.get())["embed_model"])
@@ -842,6 +820,9 @@ class MilvusKB(KnowledgeExecutor):
             return documents.file_record_to_meta(updated_record)
 
         except (Exception, asyncio.CancelledError) as e:
+            if await self._file_deleted(kb_id, file_id):
+                await self._discard_deleted_file_generation(kb_id, file_id, generation)
+                raise
             if isinstance(e, asyncio.CancelledError):
                 current_task = asyncio.current_task()
                 if current_task is not None and current_task.cancelling():
@@ -1003,6 +984,34 @@ class MilvusKB(KnowledgeExecutor):
             " or ".join(f"(generation == {generation} and file_id in {json.dumps(file_ids)})" for generation, file_ids in grouped.items())
             or "file_id in []"
         )
+
+    async def _file_deleted(self, kb_id: str, file_id: str) -> bool:
+        """索引写入期间文件被删除时，本次代次不能留下 chunk。"""
+
+        record = await KnowledgeFileRepository().get_by_file_id(file_id, include_deleted=True)
+        return record is None or record.kb_id != kb_id or record.deleted_at is not None
+
+    async def _discard_deleted_file_generation(self, kb_id: str, file_id: str, generation: int) -> None:
+        """文件已经删除时撤销本次代次。清理失败只记录，原来的失败继续抛出。"""
+
+        try:
+            await self.delete_file_chunks_only(kb_id, file_id, generation=generation, update_file_stats=False)
+        except Exception as cleanup_error:
+            logger.error(
+                "Deleted file chunk cleanup failed: kb_id={}, file_id={}, generation={}, error_type={}",
+                kb_id,
+                file_id,
+                generation,
+                type(cleanup_error).__name__,
+            )
+
+    @staticmethod
+    def _build_explicit_file_ids_expr(file_ids: list[str] | None) -> str | None:
+        """调用方 file_ids 只再收窄活动代次过滤，空列表不命中任何文件。"""
+
+        if file_ids is None:
+            return None
+        return f"file_id in {json.dumps(list(file_ids))}"
 
     async def _build_file_name_expr(self, kb_id: str, file_name: str | None) -> str | None:
         """把文件名筛选转换为 file_id 过滤表达式；无匹配时返回恒假表达式。"""

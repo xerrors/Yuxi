@@ -184,3 +184,59 @@ async def test_import_intent_is_minimal_and_replays_after_staging_expires(databa
     from yuxi.infrastructure.minio.object_urls import parse_minio_url
 
     assert await client.adownload_file(*parse_minio_url(file.path)) == b"source"
+
+
+async def test_same_fingerprint_reuses_file_and_other_parser_stores_again(database, object_storage, monkeypatch):
+    """相同哈希、大小和解析器不再插入第二份；换解析器才是新的处理请求。未解析的重复上传会重新入队。"""
+
+    from sqlalchemy import func
+
+    from yuxi.modules.knowledge.models import KnowledgeFile
+    from yuxi.modules.knowledge.services import imports
+    from yuxi.modules.knowledge.services.uploads import stage_document
+
+    monkeypatch.setattr(imports, "get_minio_client", lambda: object_storage)
+
+    async def skip_dispatch(_job_id):
+        return None
+
+    monkeypatch.setattr(imports, "dispatch_job", skip_dispatch)
+    content = b"same-bytes"
+
+    async def register(import_id, *, filename, process, ocr_engine=None):
+        staged = await stage_document(kb_id="kb-test", filename=filename.rsplit("/", 1)[-1], content=content)
+        source = f"minio://{staged.upload.bucket_name}/{staged.upload.object_name}"
+        params = {
+            "content_hashes": {source: staged.content_hash},
+            "file_sizes": {source: len(content)},
+            "source_paths": {source: filename},
+        }
+        if ocr_engine:
+            params["ocr_engine"] = ocr_engine
+        return await imports.register_import(
+            kb_id="kb-test",
+            items=[source],
+            params=params,
+            operator_id="operator",
+            import_id=import_id,
+            process=process,
+        )
+
+    first = await register("fingerprint-first", filename="folder/a.txt", process=False)
+    second = await register("fingerprint-second", filename="folder/b.txt", process=True)
+    assert second["items"][0]["file_id"] == first["items"][0]["file_id"]
+    async with database() as session:
+        job = await session.get(BackgroundJobRecord, second["job_id"])
+        assert job.payload["file_ids"] == [first["items"][0]["file_id"]]
+        file_count = await session.scalar(
+            select(func.count()).select_from(KnowledgeFile).where(KnowledgeFile.is_folder.is_(False), KnowledgeFile.deleted_at.is_(None))
+        )
+        assert file_count == 1
+
+    third = await register("fingerprint-ocr", filename="folder/c.txt", process=False, ocr_engine="rapidocr")
+    assert third["items"][0]["file_id"] != first["items"][0]["file_id"]
+    async with database() as session:
+        file_count = await session.scalar(
+            select(func.count()).select_from(KnowledgeFile).where(KnowledgeFile.is_folder.is_(False), KnowledgeFile.deleted_at.is_(None))
+        )
+        assert file_count == 2

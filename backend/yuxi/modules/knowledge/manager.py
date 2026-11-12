@@ -27,7 +27,7 @@ from yuxi.modules.knowledge.cache import (
 )
 from yuxi.modules.knowledge.chunking.presets import ChunkConfigError, deep_merge
 from yuxi.modules.knowledge.factory import KnowledgeBaseFactory
-from yuxi.modules.knowledge.file_status import status_filter_values
+from yuxi.modules.knowledge.file_status import needs_parse_before_index, status_filter_values
 from yuxi.modules.knowledge.read_models import KnowledgeBaseConfig, KnowledgeBaseDetail, KnowledgeBaseSummary
 from yuxi.modules.knowledge.schemas import FindOutputSchema, OpenOutputSchema
 from yuxi.modules.knowledge.services import documents
@@ -513,6 +513,7 @@ class KnowledgeBaseManager:
         params: dict | None = None,
         processing_job_id: str | None = None,
         processing_owner: str | None = None,
+        recover_missing_markdown: bool = False,
     ) -> dict:
         """解析文件生成 Markdown。"""
         config = await self.get_kb_config(kb_id)
@@ -527,6 +528,7 @@ class KnowledgeBaseManager:
                 additional_params=config.additional_params,
                 processing_job_id=processing_job_id,
                 processing_owner=processing_owner,
+                recover_missing_markdown=recover_missing_markdown,
             ),
         )
 
@@ -540,9 +542,20 @@ class KnowledgeBaseManager:
         processing_job_id: str | None = None,
         processing_owner: str | None = None,
     ) -> dict:
-        """索引已解析文件。"""
+        """入库。未解析或没有正文的文件先解析，然后只交给执行器一次。"""
         config = await self.get_kb_config(kb_id)
         executor = await self._get_or_create_kb_instance(config.kb_type)
+        meta = await documents.load_file_meta(kb_id, file_id)
+        if needs_parse_before_index(meta):
+            await self.parse_file(
+                kb_id,
+                file_id,
+                operator_id,
+                params=params,
+                processing_job_id=processing_job_id,
+                processing_owner=processing_owner,
+                recover_missing_markdown=True,
+            )
         return await self._run_with_stats_refresh(
             kb_id,
             executor.index_file(

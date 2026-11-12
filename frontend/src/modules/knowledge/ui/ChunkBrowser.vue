@@ -32,10 +32,22 @@
     <section v-if="selectedChunk" class="chunk-preview" aria-label="分块完整内容">
       <header class="chunk-preview-header">
         <code class="chunk-id">{{ selectedChunk.id }}</code>
-        <a-button v-if="editable" class="chunk-edit-button" type="link" size="small" @click="$emit('edit', selectedChunk)">
-          <template #icon><Pencil :size="14" aria-hidden="true" /></template>
-          编辑文件
-        </a-button>
+        <div class="chunk-preview-actions">
+          <a-button
+            class="chunk-copy-button"
+            type="link"
+            size="small"
+            :disabled="!selectedChunk.content"
+            @click="copySelectedChunk"
+          >
+            <template #icon><Copy :size="14" aria-hidden="true" /></template>
+            复制
+          </a-button>
+          <a-button v-if="editable" class="chunk-edit-button" type="link" size="small" @click="$emit('edit', selectedChunk)">
+            <template #icon><Pencil :size="14" aria-hidden="true" /></template>
+            编辑文件
+          </a-button>
+        </div>
       </header>
       <div :key="selectedChunk.id" class="chunk-preview-body">
         <pre v-if="selectedChunk.content" class="chunk-content">{{ selectedChunk.content }}</pre>
@@ -48,7 +60,9 @@
 
 <script setup>
 import { computed, ref } from 'vue'
-import { Pencil, Search } from '@lucide/vue'
+import { message } from 'ant-design-vue'
+import { Copy, Pencil, Search } from '@lucide/vue'
+import { copyTextToClipboard } from '@/shared/lib/clipboard'
 
 const props = defineProps({
   chunks: { type: Array, default: () => [] },
@@ -72,6 +86,17 @@ const selectedChunk = computed(
   () =>
     filteredChunks.value.find((chunk) => chunk.id === selectedId.value) || filteredChunks.value[0]
 )
+
+const copySelectedChunk = async () => {
+  const content = selectedChunk.value?.content
+  if (!content) return
+  try {
+    await copyTextToClipboard(content)
+    message.success('分块内容已复制')
+  } catch {
+    message.error('复制失败')
+  }
+}
 </script>
 
 <style scoped lang="less">
@@ -166,8 +191,20 @@ const selectedChunk = computed(
   font-size: 13px;
   color: var(--color-text);
 }
+.chunk-preview-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+}
 .chunk-preview-header :deep(.ant-btn) {
   flex-shrink: 0;
+}
+.chunk-copy-button {
+  color: var(--gray-600);
+  &:hover {
+    color: var(--gray-900);
+    background: var(--gray-50);
+  }
 }
 .chunk-edit-button {
   color: var(--gray-600);

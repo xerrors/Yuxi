@@ -2,14 +2,28 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import case, func, or_, select, update
+from sqlalchemy import and_, case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.background_jobs.models import BackgroundJobRecord
 from yuxi.modules.knowledge.file_status import FileStatus, status_filter_values
 from yuxi.modules.knowledge.models import KnowledgeBase, KnowledgeFile, KnowledgeProjectionOutbox
+from yuxi.modules.knowledge.utils.kb_utils import content_parser_id
 from yuxi.shared.datetime import utc_now
+
+# 一次文件过滤最多接受的标识数量。文件名搜索和检索 file_ids 共用。
+MAX_FILTER_FILE_IDS = 10_000
+
+
+def first_matching_fingerprint(records, parser_id: str):
+    """候选已按创建时间排序，返回解析器一致的第一条。"""
+
+    for record in records:
+        if content_parser_id(getattr(record, "processing_params", None)) == parser_id:
+            return record
+    return None
+
 
 # 列表排序只接受这些字段和 ant-design-vue 的方向；未传时保持默认顺序。
 _DOCUMENT_SORT_FIELDS = frozenset({"filename", "content_amount", "status", "created_at"})
@@ -215,7 +229,7 @@ class KnowledgeFileRepository:
         *,
         kb_id: str,
         filename_pattern: str,
-        limit: int = 10_000,
+        limit: int = MAX_FILTER_FILE_IDS,
     ) -> list[str]:
         normalized_pattern = filename_pattern.replace("%", "").strip().lower()
         if not normalized_pattern:
@@ -233,9 +247,49 @@ class KnowledgeFileRepository:
                     func.lower(KnowledgeFile.filename).like(f"%{escaped_pattern}%", escape="\\"),
                 )
                 .order_by(KnowledgeFile.file_id.asc())
-                .limit(min(max(int(limit or 100), 1), 10_000))
+                .limit(min(max(int(limit or 100), 1), MAX_FILTER_FILE_IDS))
             )
             return [str(file_id) for file_id in result.scalars().all()]
+
+    async def list_live_file_ids(self, *, kb_id: str, file_ids: list[str]) -> list[str]:
+        """返回目标知识库中仍然存在的非目录文件。"""
+
+        if not file_ids:
+            return []
+        async with pg_manager.get_async_session_context() as session:
+            result = await session.scalars(
+                select(KnowledgeFile.file_id).where(
+                    KnowledgeFile.kb_id == kb_id,
+                    KnowledgeFile.file_id.in_(file_ids),
+                    KnowledgeFile.deleted_at.is_(None),
+                    KnowledgeFile.is_folder.is_(False),
+                )
+            )
+            return [str(file_id) for file_id in result.all()]
+
+    async def find_live_file_by_fingerprint(
+        self,
+        session: AsyncSession,
+        *,
+        kb_id: str,
+        content_hash: str,
+        file_size: int,
+        parser_id: str,
+    ) -> KnowledgeFile | None:
+        """在同一知识库内按内容哈希、大小和解析器查找未删除文件。"""
+
+        result = await session.scalars(
+            select(KnowledgeFile)
+            .where(
+                KnowledgeFile.kb_id == kb_id,
+                KnowledgeFile.deleted_at.is_(None),
+                KnowledgeFile.is_folder.is_(False),
+                KnowledgeFile.content_hash == content_hash,
+                KnowledgeFile.file_size == file_size,
+            )
+            .order_by(KnowledgeFile.created_at.asc(), KnowledgeFile.file_id.asc())
+        )
+        return first_matching_fingerprint(result.all(), parser_id)
 
     @staticmethod
     def _escape_like_pattern(value: str) -> str:
@@ -493,8 +547,12 @@ class KnowledgeFileRepository:
         processing_owner: str | None = None,
         processing_params: dict | None = None,
         kb_additional_params: dict | None = None,
+        missing_markdown_statuses: set[str] | None = None,
     ) -> KnowledgeFile | None:
-        """条件领取或完成文件处理；参数合并和执行权发布共享同一事务。"""
+        """条件领取或完成文件处理；参数合并和执行权发布共享同一事务。
+
+        missing_markdown_statuses 只在同一次行锁里额外放行没有正文的非目录文件。
+        """
         lease_job_id = processing_job_id or data.get("processing_job_id")
         lease_owner = processing_owner or data.get("processing_owner")
         if (lease_job_id is None) != (lease_owner is None):
@@ -503,11 +561,21 @@ class KnowledgeFileRepository:
         if not sanitized_data:
             return await self.get_by_file_id(file_id)
 
+        status_match = KnowledgeFile.status.in_(sorted(allowed_statuses))
+        if missing_markdown_statuses:
+            status_match = or_(
+                status_match,
+                and_(
+                    KnowledgeFile.status.in_(sorted(missing_markdown_statuses)),
+                    KnowledgeFile.is_folder.is_(False),
+                    or_(KnowledgeFile.markdown_file.is_(None), KnowledgeFile.markdown_file == ""),
+                ),
+            )
         filters = [
             KnowledgeFile.kb_id == kb_id,
             KnowledgeFile.file_id == file_id,
             KnowledgeFile.deleted_at.is_(None),
-            KnowledgeFile.status.in_(sorted(allowed_statuses)),
+            status_match,
         ]
         if processing_job_id is not None:
             filters.append(KnowledgeFile.processing_job_id == processing_job_id)

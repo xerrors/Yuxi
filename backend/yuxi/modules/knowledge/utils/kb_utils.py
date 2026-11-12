@@ -26,6 +26,12 @@ _DROPPED_PROCESSING_PARAM_KEYS = {
 }
 
 
+def content_parser_id(processing_params: dict | None) -> str:
+    """摄取指纹中的解析器身份。未指定时与空引擎视为同一种处理。"""
+
+    return str((processing_params or {}).get("ocr_engine") or "")
+
+
 def sanitize_processing_params(params: dict | None) -> dict | None:
     """移除不应写入单文件元数据的参数。"""
     if not params:

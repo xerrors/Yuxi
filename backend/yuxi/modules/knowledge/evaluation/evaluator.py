@@ -7,6 +7,9 @@ from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.knowledge.evaluation.metrics import EvaluationMetricsCalculator
 from yuxi.modules.knowledge.runtime import knowledge_base as kb_manager
 
+# 评估配置和检索参数存在同一个字典里。这两项只服务答案生成，不能传给 aquery。
+EVALUATION_MODEL_KEYS = frozenset({"answer_llm", "judge_llm"})
+
 
 async def evaluate_question(
     *,
@@ -20,7 +23,8 @@ async def evaluate_question(
 ) -> dict[str, Any]:
     """检索单题答案并计算检索/答案指标，返回明细与分组得分。"""
     query = question_data["query"]
-    query_result = await kb_manager.aquery(query, kb_id, **retrieval_config)
+    query_kwargs = {key: value for key, value in retrieval_config.items() if key not in EVALUATION_MODEL_KEYS}
+    query_result = await kb_manager.aquery(query, kb_id, **query_kwargs)
     generated_answer, retrieved_chunks = normalize_query_result(query_result)
     generated_answer = await generate_answer_if_needed(
         query=query,

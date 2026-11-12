@@ -23,7 +23,8 @@ from yuxi.modules.knowledge.evaluation.benchmark_generation import (
     normalize_generation_concurrency_count,
     normalize_graph_expand_top_k,
 )
-from yuxi.modules.knowledge.evaluation.evaluator import aggregate_metrics, evaluate_question
+from yuxi.modules.knowledge.evaluation.evaluator import EVALUATION_MODEL_KEYS, aggregate_metrics, evaluate_question
+from yuxi.modules.knowledge.factory import KnowledgeBaseFactory
 from yuxi.modules.knowledge.repositories.bases import KnowledgeBaseRepository
 from yuxi.modules.knowledge.repositories.chunks import KnowledgeChunkRepository
 from yuxi.modules.knowledge.repositories.evaluation import (
@@ -42,7 +43,9 @@ from yuxi.modules.knowledge.repositories.evaluation import (
     finish_rag_evaluation_job as finish_rag_evaluation_job,
 )
 from yuxi.modules.knowledge.runtime import knowledge_base as kb_manager
+from yuxi.modules.knowledge.services.retrieval import normalize_query_overrides, require_file_ids_in_kb
 from yuxi.modules.models import select_model
+from yuxi.shared.errors import InvalidInputError
 
 if TYPE_CHECKING:
     from yuxi.workers.background_job_context import BackgroundJobContext
@@ -483,6 +486,20 @@ class EvaluationService:
 
     # ---------- 评估运行：启动与执行 ----------
 
+    @staticmethod
+    def _evaluation_model_values(model_config: dict) -> dict[str, str]:
+        """取出评估自己的模型标识。检索键留给查询参数声明校验。"""
+
+        values = {}
+        for key in EVALUATION_MODEL_KEYS:
+            if key not in model_config:
+                continue
+            value = model_config[key]
+            if not isinstance(value, str) or not value.strip() or len(value) > 200:
+                raise InvalidInputError(f"{key} 必须是模型标识")
+            values[key] = value.strip()
+        return values
+
     async def run_evaluation(
         self,
         kb_id: str,
@@ -502,6 +519,7 @@ class EvaluationService:
 
             # 检索配置失败不阻断启动：回退为空配置，仅叠加显式传入的 model_config
             retrieval_config = {}
+            kb_row = None
             try:
                 kb_row = await self.kb_repo.get_by_kb_id(kb_id)
                 query_params = (kb_row.query_params if kb_row else None) or {}
@@ -513,7 +531,17 @@ class EvaluationService:
                 logger.error(f"获取知识库检索配置失败: {e}")
 
             if model_config:
-                retrieval_config.update(model_config)
+                if not isinstance(model_config, dict):
+                    raise InvalidInputError("检索参数必须是对象")
+                retrieval_config.update(self._evaluation_model_values(model_config))
+                retrieval_overrides = {key: value for key, value in model_config.items() if key not in EVALUATION_MODEL_KEYS}
+                if retrieval_overrides:
+                    kb_type = (getattr(kb_row, "kb_type", None) if kb_row else None) or "milvus"
+                    kb_class = KnowledgeBaseFactory.get_kb_class(kb_type)
+                    guarded = normalize_query_overrides(kb_class, retrieval_overrides)
+                    if "file_ids" in guarded:
+                        await require_file_ids_in_kb(kb_id, guarded["file_ids"])
+                    retrieval_config.update(guarded)
 
             job_payload = {
                 "run_id": run_id,

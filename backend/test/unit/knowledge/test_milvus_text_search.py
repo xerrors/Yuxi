@@ -32,6 +32,21 @@ async def test_text_constraints_reach_every_retrieval_channel(search_mode):
         assert 'PHRASE_MATCH(content, "知识 检索", 0)' in expression
 
 
+async def test_explicit_file_ids_only_narrow_the_active_generation_filter():
+    """调用方 file_ids 不能替换活动代次条件。空列表不返回任何文件。"""
+
+    collection = FakeCollection()
+    kb = make_kb(collection)
+    await kb.aquery("query", "db", config=make_query_config(), file_ids=["file-9"])
+    expression = collection.search_calls[0]["expr"]
+    assert 'generation == 1 and file_id in ["file-1"]' in expression
+    assert 'file_id in ["file-9"]' in expression
+
+    empty = FakeCollection()
+    await make_kb(empty).aquery("query", "db", config=make_query_config(), file_ids=[])
+    assert "file_id in []" in empty.search_calls[0]["expr"]
+
+
 def test_filter_literals_escape_expression_syntax():
     """用户文本保持一个字面值，不能变成另一条过滤条件。"""
     kb = object.__new__(MilvusKB)

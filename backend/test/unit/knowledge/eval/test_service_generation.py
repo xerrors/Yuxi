@@ -5,6 +5,7 @@ import pytest
 
 from yuxi.modules.knowledge.evaluation import service as eval_service_module
 from yuxi.modules.knowledge.evaluation.service import EvaluationService, build_evaluation_run_name
+from yuxi.shared.errors import InvalidInputError
 
 
 class FakeEvaluationRepository:
@@ -214,3 +215,31 @@ async def test_run_evaluation_saves_custom_name(job_submission):
     assert repo.created_run["name"] == "回归评估"
     assert repo.created_run["retrieval_config"]["top_k"] == 3
     assert repo.created_run["retrieval_config"]["answer_llm"] == "test:model"
+
+
+@pytest.mark.asyncio
+async def test_run_evaluation_rejects_retrieval_override_outside_schema(job_submission):
+    """评估启动不能把超限 top_k 写进后续会原样展开的检索配置。"""
+
+    repo = FakeEvaluationRepository()
+    repo.dataset = SimpleNamespace(
+        dataset_id="dataset_1",
+        kb_id="db_1",
+        name="dataset",
+        item_count=2,
+        build_metadata={"status": "completed"},
+    )
+    service = EvaluationService()
+    service.eval_repo = repo
+    service.kb_repo = FakeKnowledgeBaseRepository()
+
+    with pytest.raises(InvalidInputError, match="超出允许范围"):
+        await service.run_evaluation(
+            kb_id="db_1",
+            dataset_id="dataset_1",
+            model_config={"final_top_k": 1000, "answer_llm": "test:model"},
+            created_by="user_1",
+        )
+
+    assert "published" not in job_submission
+    assert repo.created_run is None

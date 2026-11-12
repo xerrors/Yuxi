@@ -33,6 +33,7 @@ from yuxi.modules.knowledge.services.document_actions import (
     submit_document_action,
     submit_pending_document_action,
 )
+from yuxi.modules.knowledge.services.retrieval import query_with_overrides
 from yuxi.modules.knowledge.services.uploads import stage_document
 from yuxi.modules.knowledge.utils import (
     is_minio_url,
@@ -822,7 +823,7 @@ async def query_knowledge_base(
     """查询知识库"""
     logger.debug("Query knowledge base {}", kb_id)
     try:
-        result = await knowledge_base_manager.aquery(query, kb_id=kb_id, **meta)
+        result = await query_with_overrides(kb_id, query, meta)
         return {"result": result, "status": "success"}
     except (HTTPException, DomainError):
         raise
@@ -841,7 +842,7 @@ async def query_test(
     """测试查询知识库"""
     logger.debug("Query test in {}", kb_id)
     try:
-        result = await knowledge_base_manager.aquery(query, kb_id=kb_id, **meta)
+        result = await query_with_overrides(kb_id, query, meta)
         return result
     except (HTTPException, DomainError):
         raise

@@ -132,6 +132,35 @@ async def test_dataset_manage_route_rejects_admin_without_manage_permission(monk
     assert exc_info.value.status_code == 403
 
 
+@pytest.mark.asyncio
+async def test_dataset_download_rejects_admin_outside_read_scope(monkeypatch):
+    """非超管且不在知识库读取范围内的管理员不能导出评估数据集。"""
+
+    async def fake_get_dataset(_service, _dataset_id):
+        return SimpleNamespace(kb_id="kb-1")
+
+    async def fake_get_knowledge_base_info(_kb_id):
+        return {
+            "created_by": "owner",
+            "share_config": {
+                "version": 2,
+                "read_scope": {"access_level": "user", "user_uids": ["owner"]},
+                "manage_scope": None,
+            },
+        }
+
+    monkeypatch.setattr(knowledge_eval_router.EvaluationService, "get_dataset", fake_get_dataset)
+    monkeypatch.setattr(knowledge_permissions.knowledge_base, "get_knowledge_base_info", fake_get_knowledge_base_info)
+    outsider = SimpleNamespace(uid="other-admin", role="admin", department_id=1)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await knowledge_eval_router.require_evaluation_dataset_read("dataset-1", outsider)
+
+    assert exc_info.value.status_code == 403
+    download = knowledge_eval_router.download_evaluation_dataset
+    assert download.__defaults__[0].dependency is knowledge_eval_router.require_evaluation_dataset_read
+
+
 def test_evaluation_routes_require_admin_role():
     app = FastAPI()
     app.include_router(knowledge_eval_router.evaluation)

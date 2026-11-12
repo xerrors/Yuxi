@@ -362,6 +362,58 @@ async def test_index_file_persists_chunk_stats(monkeypatch):
     assert result["active_generation"] == 2
 
 
+async def test_deleted_file_index_removes_chunks_written_before_finish(monkeypatch):
+    """删除发生在 chunk 写入之后、入库完成之前时，本次代次必须删掉，不能留给检索。"""
+
+    kb = MilvusKB.__new__(MilvusKB)
+    file_repo = FakeKnowledgeFileRepository({"file-1": make_file_record()})
+    patch_file_repository(monkeypatch, file_repo)
+    deleted = []
+
+    async def get_collection(kb_id, embedding_model_spec):
+        del kb_id, embedding_model_spec
+        return FakeCollection()
+
+    async def read_markdown(_path):
+        return "# demo"
+
+    async def embed_and_store_chunks(*_args, **_kwargs):
+        file_repo.records["file-1"].deleted_at = "deleted"
+
+    async def finish_index_generation(**kwargs):
+        if file_repo.records[kwargs["file_id"]].deleted_at is not None:
+            raise ValueError(f"File {kwargs['file_id']} not found or deleted")
+        raise AssertionError("deleted file must not finish indexing")
+
+    async def delete_file_chunks_only(kb_id, file_id, generation=None, *, update_file_stats=True):
+        deleted.append((kb_id, file_id, generation, update_file_stats))
+
+    file_repo.finish_index_generation = finish_index_generation
+    kb._get_or_create_milvus_collection = get_collection
+    kb._embed_and_store_chunks = embed_and_store_chunks
+    kb.delete_file_chunks_only = delete_file_chunks_only
+    kb._split_text_into_chunks = lambda text, file_id, filename, params: [make_chunk(0)]
+    monkeypatch.setattr(documents, "read_markdown_from_minio", read_markdown)
+    monkeypatch.setattr(milvus_module, "get_embedding_function", lambda embedding_model_spec: None)
+
+    async def get_system_options(_option, _db=None):
+        return {"embed_model": EMBEDDING_MODEL_SPEC}
+
+    monkeypatch.setattr(type(milvus_module.system_options), "get", get_system_options)
+
+    with pytest.raises(ValueError, match="deleted"):
+        await kb.index_file(
+            "db",
+            "file-1",
+            operator_id="user-1",
+            params={},
+            embedding_model_spec=EMBEDDING_MODEL_SPEC,
+            additional_params={},
+        )
+
+    assert deleted == [("db", "file-1", 2, False)]
+
+
 async def test_index_file_rejects_folder_before_claim(monkeypatch):
     """文件夹 done 与文件 done 同字面量，但不能进入入库声明。"""
     kb = MilvusKB.__new__(MilvusKB)
@@ -386,6 +438,33 @@ async def test_index_file_rejects_folder_before_claim(monkeypatch):
 
     assert file_repo.conditional_update_calls == []
     assert record.status == "done"
+
+
+async def test_index_without_markdown_does_not_claim(monkeypatch):
+    """没有正文时不领取、不创建集合，状态保持原样。"""
+
+    kb = MilvusKB.__new__(MilvusKB)
+    record = make_file_record(status=FileStatus.PARSED, markdown_file=None)
+    file_repo = FakeKnowledgeFileRepository({"file-1": record})
+    patch_file_repository(monkeypatch, file_repo)
+
+    async def fail_collection(*_args, **_kwargs):
+        raise AssertionError("没有正文不能创建外部集合")
+
+    kb._get_or_create_milvus_collection = fail_collection
+
+    with pytest.raises(ValueError, match="no markdown_file"):
+        await kb.index_file(
+            "db",
+            "file-1",
+            operator_id="user-1",
+            params={},
+            embedding_model_spec=EMBEDDING_MODEL_SPEC,
+            additional_params={},
+        )
+
+    assert file_repo.conditional_update_calls == []
+    assert record.status == FileStatus.PARSED
 
 
 @pytest.mark.parametrize("status", ["done", "failed"])

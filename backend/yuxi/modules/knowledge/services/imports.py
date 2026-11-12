@@ -9,14 +9,14 @@ from yuxi.infrastructure.minio.client import MinIOClient, get_minio_client
 from yuxi.infrastructure.minio.object_urls import parse_minio_url
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.background_jobs.dispatch import dispatch_job, register_job_in_session
-from yuxi.modules.knowledge.file_status import FileStatus
+from yuxi.modules.knowledge.file_status import PARSE_CLAIM_STATUSES, FileStatus
 from yuxi.modules.knowledge.models import KnowledgeFile, KnowledgeImport
 from yuxi.modules.knowledge.names import MAX_IMPORT_ITEMS, normalize_name, source_segments
 from yuxi.modules.knowledge.repositories.directories import DirectoryRepository
 from yuxi.modules.knowledge.repositories.document_resets import DocumentResetRepository
 from yuxi.modules.knowledge.services.documents import file_meta_to_record_data, file_record_to_meta
 from yuxi.modules.knowledge.utils import params_for_uploaded_document, prepare_item_metadata, resolve_processing_params
-from yuxi.modules.knowledge.utils.kb_utils import PREPROCESSED_UPLOADS_KEY
+from yuxi.modules.knowledge.utils.kb_utils import PREPROCESSED_UPLOADS_KEY, content_parser_id
 from yuxi.shared.errors import DomainError, InvalidInputError, StateConflictError
 
 
@@ -141,8 +141,15 @@ async def _register_prepared(*, kb_id, prepared, params, operator_id, identity, 
         if paths & directory_paths:
             raise InvalidInputError("来源清单中的文件同时被用作目录")
 
-        added, failed = [], []
+        added, failed, ingest_ids = [], [], []
         for index, (item, metadata, segments, _has_source) in enumerate(prepared):
+            existing = await _existing_fingerprint(session, kb_id, metadata)
+            if existing is not None:
+                meta = file_record_to_meta(existing)
+                added.append({"index": index, "item": item, "file_id": existing.file_id, "status": existing.status, "file_meta": meta})
+                if process and existing.status in PARSE_CLAIM_STATUSES:
+                    _queue_ingest(ingest_ids, existing.file_id)
+                continue
             try:
                 async with session.begin_nested():
                     target = parent_id
@@ -157,6 +164,8 @@ async def _register_prepared(*, kb_id, prepared, params, operator_id, identity, 
                     await repo.flush(session)
                     meta = file_record_to_meta(record)
                 added.append({"index": index, "item": item, "file_id": record.file_id, "status": record.status, "file_meta": meta})
+                if process:
+                    _queue_ingest(ingest_ids, record.file_id)
             except DomainError as exc:
                 failed.append({"index": index, "item": item, "status": "failed", "error": exc.message, "code": exc.code})
 
@@ -169,14 +178,14 @@ async def _register_prepared(*, kb_id, prepared, params, operator_id, identity, 
             "added": len(added),
             "failed": len(failed),
         }
-        if process and added:
+        if ingest_ids:
             job, _ = await register_job_in_session(
                 session,
                 name="知识库文档处理",
                 job_type="knowledge_ingest",
                 payload={
                     "kb_id": kb_id,
-                    "file_ids": [entry["file_id"] for entry in added],
+                    "file_ids": ingest_ids,
                     "params": {key: params[key] for key in ("auto_index", "chunk_preset_id", "chunk_parser_config") if key in params},
                     "operator_id": operator_id,
                 },
@@ -194,3 +203,26 @@ async def _register_prepared(*, kb_id, prepared, params, operator_id, identity, 
             )
         )
     return response
+
+
+async def _existing_fingerprint(session, kb_id: str, metadata: dict):
+    """相同知识库、内容哈希、大小和解析器的未删除文件直接复用。"""
+
+    from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
+
+    content_hash = metadata.get("content_hash")
+    file_size = metadata.get("size")
+    if not content_hash or file_size is None:
+        return None
+    return await KnowledgeFileRepository().find_live_file_by_fingerprint(
+        session,
+        kb_id=kb_id,
+        content_hash=str(content_hash),
+        file_size=int(file_size),
+        parser_id=content_parser_id(metadata.get("processing_params")),
+    )
+
+
+def _queue_ingest(file_ids: list[str], file_id: str) -> None:
+    if file_id not in file_ids:
+        file_ids.append(file_id)

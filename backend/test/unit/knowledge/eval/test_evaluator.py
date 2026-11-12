@@ -35,12 +35,13 @@ def test_build_answer_prompt_uses_first_five_non_empty_chunks():
 
 async def test_evaluate_question_uses_runtime_kb_manager(monkeypatch):
     aquery = AsyncMock(return_value=[{"content": "检索结果"}])
+
     monkeypatch.setattr(evaluator, "kb_manager", SimpleNamespace(aquery=aquery))
 
     result = await evaluate_question(
         kb_id="kb-1",
         question_data={"query": "问题"},
-        retrieval_config={"final_top_k": 3},
+        retrieval_config={"final_top_k": 3, "answer_llm": "test:model"},
         has_gold_chunks=False,
         has_gold_answers=False,
         judge_llm=None,

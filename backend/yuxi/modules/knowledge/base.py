@@ -11,7 +11,7 @@ from yuxi.infrastructure.minio import get_minio_client
 from yuxi.infrastructure.minio.object_urls import is_minio_url, parse_minio_url
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.knowledge.chunking.presets import ensure_chunk_defaults_in_additional_params
-from yuxi.modules.knowledge.file_status import FileStatus
+from yuxi.modules.knowledge.file_status import INDEX_CLAIM_STATUSES, PARSE_CLAIM_STATUSES, FileStatus
 from yuxi.modules.knowledge.read_models import KnowledgeBaseConfig
 from yuxi.modules.knowledge.schemas import SearchOutputSchema, SearchResultSchema
 from yuxi.modules.knowledge.services import documents
@@ -95,6 +95,7 @@ class KnowledgeExecutor(ABC):
         additional_params: dict[str, Any],
         processing_job_id: str | None = None,
         processing_owner: str | None = None,
+        recover_missing_markdown: bool = False,
     ) -> dict:
         """解析全过程持有共享投影锁，撤销必须等待全部产物写入结束。"""
         from yuxi.modules.knowledge.repositories.projections import knowledge_projection_lock
@@ -108,6 +109,7 @@ class KnowledgeExecutor(ABC):
                 params=params,
                 processing_job_id=processing_job_id,
                 processing_owner=processing_owner,
+                recover_missing_markdown=recover_missing_markdown,
             )
 
     async def _parse_file(
@@ -120,12 +122,13 @@ class KnowledgeExecutor(ABC):
         additional_params: dict[str, Any],
         processing_job_id: str | None = None,
         processing_owner: str | None = None,
+        recover_missing_markdown: bool = False,
     ) -> dict:
         """解析原件生成 Markdown 并写入 MinIO（状态 PARSING → PARSED/ERROR_PARSING）。"""
-        allowed_statuses = {
-            FileStatus.UPLOADED,
-            FileStatus.ERROR_PARSING,
-        }
+        allowed_statuses = set(PARSE_CLAIM_STATUSES)
+        claim_kwargs = {}
+        if recover_missing_markdown:
+            claim_kwargs["missing_markdown_statuses"] = set(INDEX_CLAIM_STATUSES)
 
         from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
 
@@ -172,6 +175,7 @@ class KnowledgeExecutor(ABC):
             data=claim_data,
             processing_params=params,
             kb_additional_params=additional_params,
+            **claim_kwargs,
         )
         if claimed_record is None:
             current_meta = await documents.load_file_meta(kb_id, file_id)
