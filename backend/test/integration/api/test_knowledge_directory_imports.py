@@ -67,7 +67,8 @@ def manifest(payloads, paths=None, **params):
 async def test_http_concurrent_import_materializes_and_suffixes(test_client, admin_headers, directory_kb, postgres_sessions):
     """并发导入同目录同名叶子，数据库只有一条目录链且原件字节完整。"""
     kb_id = directory_kb
-    payloads = [await staged(test_client, admin_headers, kb_id) for _ in range(2)]
+    contents = [b"original bytes\n", b"second bytes\n"]
+    payloads = [await staged(test_client, admin_headers, kb_id, content=content) for content in contents]
     responses = await asyncio.gather(
         *[
             test_client.post(
@@ -86,8 +87,8 @@ async def test_http_concurrent_import_materializes_and_suffixes(test_client, adm
         assert {r.filename for r in files} == {"Report.txt", "Report (1).txt"}
         assert {r.parent_id for r in files} == {folders[0].file_id}
         assert len({r.file_id for r in files}) == 2
-    for p in payloads:
-        assert await get_minio_client().adownload_file(p["bucket_name"], p["object_name"]) == b"original bytes\n"
+    for payload, content in zip(payloads, contents, strict=True):
+        assert await get_minio_client().adownload_file(payload["bucket_name"], payload["object_name"]) == content
 
 
 @pytest.mark.parametrize("identity", ["", "x" * 129])
@@ -167,7 +168,8 @@ async def test_pg_rejects_direct_duplicate_without_service(directory_kb, postgre
 
 async def test_manifest_rejection_and_per_file_rollback(test_client, admin_headers, directory_kb, postgres_sessions):
     """非法清单零写入；中间目录被文件占用时失败条目不留下半条目录链。"""
-    p, q = [await staged(test_client, admin_headers, directory_kb, name=n) for n in ["a.txt", "b.txt"]]
+    p = await staged(test_client, admin_headers, directory_kb, name="a.txt", content=b"file-a\n")
+    q = await staged(test_client, admin_headers, directory_kb, name="b.txt", content=b"file-b\n")
     root = f"/api/knowledge/knowledge-bases/{directory_kb}"
     bad = await test_client.post(root + "/documents/add", json=manifest([p, q], ["a/../x.txt", "ok/b.txt"]), headers=admin_headers)
     assert bad.status_code == 422
@@ -229,9 +231,7 @@ async def test_reserved_url_characters_keep_registered_original(test_client, adm
 
 
 async def test_concurrent_same_receipt_and_explicit_new_import(test_client, admin_headers, directory_kb, postgres_sessions):
-    """并发重放只登记一次；主动再导入独占原件，删除前一文件不影响后一文件。"""
-    from yuxi.infrastructure.minio.object_urls import parse_minio_url
-
+    """并发重放只登记一次；相同内容的新导入返回已有文件。"""
     p = await staged(test_client, admin_headers, directory_kb)
     body = {**manifest([p]), "import_id": uuid4().hex}
     root = f"/api/knowledge/knowledge-bases/{directory_kb}"
@@ -239,26 +239,29 @@ async def test_concurrent_same_receipt_and_explicit_new_import(test_client, admi
     assert responses[0].status_code == responses[1].status_code == 200
     assert responses[0].json() == responses[1].json()
     first = responses[0].json()["items"][0]
-    second_response = await test_client.post(root + "/documents/add", json={**body, "import_id": uuid4().hex}, headers=admin_headers)
+    new_import_id = uuid4().hex
+    second_response = await test_client.post(root + "/documents/add", json={**body, "import_id": new_import_id}, headers=admin_headers)
     assert second_response.status_code == 200 and second_response.json()["added"] == 1, second_response.text
-    second = second_response.json()["items"][0]
-    assert first["file_meta"]["path"] != second["file_meta"]["path"]
-    deleted = await test_client.delete(root + "/documents/" + first["file_id"], headers=admin_headers)
-    assert deleted.status_code == 200, deleted.text
-    bucket, key = parse_minio_url(second["file_meta"]["path"])
-    assert await get_minio_client().adownload_file(bucket, key) == b"original bytes\n"
+    second = second_response.json()
+    assert second["import_id"] == new_import_id
+    assert second["items"][0]["file_id"] == first["file_id"]
+    assert second["items"][0]["file_meta"]["path"] == first["file_meta"]["path"]
     async with postgres_sessions() as observer:
-        rows = (await observer.scalars(select(KnowledgeFile).where(KnowledgeFile.kb_id == directory_kb))).all()
-        assert len(rows) == 2 and sum(row.deleted_at is None for row in rows) == 1
+        receipts = (await observer.scalars(select(KnowledgeImport).where(KnowledgeImport.kb_id == directory_kb))).all()
+        files = (await observer.scalars(select(KnowledgeFile).where(KnowledgeFile.kb_id == directory_kb))).all()
+        assert {receipt.import_id for receipt in receipts} == {body["import_id"], new_import_id}
+        assert len(files) == 1 and files[0].deleted_at is None and files[0].file_id == first["file_id"]
 
 
 async def test_partial_import_worker_processes_successful_original_index(test_client, admin_headers, directory_kb, postgres_sessions):
     """第一项失败、第二项成功仍由真实 worker 正确解析成功文件。"""
-    p, q = [await staged(test_client, admin_headers, directory_kb, name=name) for name in ["blocked.txt", "good.txt"]]
+    blocker = await staged(test_client, admin_headers, directory_kb, name="blocked.txt", content=b"blocked\n")
+    conflict = await staged(test_client, admin_headers, directory_kb, name="child.txt", content=b"conflict\n")
+    good = await staged(test_client, admin_headers, directory_kb, name="good.txt", content=b"Hello good worker.\n")
     root = f"/api/knowledge/knowledge-bases/{directory_kb}"
-    initial = await test_client.post(root + "/documents/add", json=manifest([p]), headers=admin_headers)
+    initial = await test_client.post(root + "/documents/add", json=manifest([blocker]), headers=admin_headers)
     assert initial.status_code == 200 and initial.json()["added"] == 1
-    body = manifest([p, q], ["blocked.txt/child.txt", "docs/good.txt"])
+    body = manifest([conflict, good], ["blocked.txt/child.txt", "docs/good.txt"])
     response = await test_client.post(root + "/documents", json=body, headers=admin_headers)
     assert response.status_code == 200 and (response.json()["added"], response.json()["failed"]) == (1, 1), response.text
     result = response.json()

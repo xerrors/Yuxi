@@ -153,7 +153,16 @@ async def test_dify_http_failure_export_and_result_boundaries(test_client, admin
         assert response.status_code == 501, response.text
         assert response.json()["detail"] == "知识库导出暂不支持"
 
-        payload = {"query": "fixture query", "meta": {"final_top_k": 1000000}}
+        rejected = await test_client.post(
+            path + "/query-test",
+            headers=admin_headers,
+            json={"query": "fixture query", "meta": {"final_top_k": 1000000}},
+        )
+        assert rejected.status_code == 422, rejected.text
+        assert "超出允许范围" in rejected.json()["detail"]
+        assert requests == []
+
+        payload = {"query": "fixture query", "meta": {"final_top_k": 100}}
         response = await test_client.post(path + "/query-test", headers=admin_headers, json=payload)
         if remote_fails:
             assert response.status_code == 500, response.text
