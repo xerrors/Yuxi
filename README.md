@@ -25,6 +25,10 @@ Yuxi 是面向需要企业自部署的多用户 Agent 产品，且需要自己�
 - **管理团队使用范围**：按用户、部门和共享范围管理知识库、智能体、Skills 和模型。
 - **对比运行质量**：评估知识库的检索结果；完整智能体评估可通过公开 API 自行构建，见[智能体评估](docs/agents/agent-evaluation.md)。
 
+## 系统架构
+
+![Yuxi 系统架构图](https://oss-img.xerrors.cn/github/yuxi-architecture-20261112-f3046585a.png)
+
 ## 快速启动
 
 语析（Yuxi）默认使用 Docker Compose 和 Container 沙盒启动。每段智能体执行使用独立临时容器，工作目录文件持久保留，无需额外准备 KVM 节点。
