@@ -83,6 +83,15 @@ class UserProfileUpdate(BaseModel):
     phone_number: str | None = None
 
 
+class PasswordChange(BaseModel):
+    """本人修改密码的请求，不接受目标用户标识。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    current_password: str = Field(min_length=1)
+    new_password: str = Field(min_length=8)
+
+
 class UserResponse(BaseModel):
     id: int
     username: str
@@ -334,6 +343,17 @@ async def update_profile(
 ):
     """适配用户写入请求与领域结果。"""
     return await user_service.update_profile(db, current_user=current_user, **profile_data.model_dump())
+
+
+@auth.put("/password")
+async def change_password(
+    data: PasswordChange,
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """校验原密码后修改当前本地用户的密码。"""
+    await user_service.change_password(db, current_user=current_user, **data.model_dump())
+    return {"message": "密码修改成功"}
 
 
 # --- 用户管理 ---

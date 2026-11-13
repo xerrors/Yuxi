@@ -15,6 +15,28 @@
         >
           <template #icon><RefreshCw :size="16" :class="{ 'yuxi-rotate': refreshing }" /></template>
         </a-button>
+        <a-dropdown :trigger="['click']" placement="bottomRight">
+          <a-button aria-label="更多账户操作" title="更多账户操作">
+            <template #icon><Ellipsis :size="16" /></template>
+          </a-button>
+          <template #overlay>
+            <a-menu>
+              <a-menu-item
+                key="password"
+                :disabled="userStore.isEnterpriseAccount"
+                :title="userStore.isEnterpriseAccount ? '企业账号请在统一身份服务中修改密码' : undefined"
+                @click="passwordModalOpen = true"
+              >
+                <template #icon><KeyRound :size="14" /></template>
+                修改密码
+              </a-menu-item>
+              <a-menu-item key="copy" :disabled="!userStore.uid" @click="copyIdentifier">
+                <template #icon><Copy :size="14" /></template>
+                复制用户 ID
+              </a-menu-item>
+            </a-menu>
+          </template>
+        </a-dropdown>
       </div>
     </div>
 
@@ -115,15 +137,6 @@
                     /></template>
                     {{ identifierVisible ? '收起' : '查看 ID' }}
                   </a-button>
-                  <a-button
-                    type="text"
-                    size="small"
-                    :disabled="!userStore.uid"
-                    @click="copyIdentifier"
-                  >
-                    <template #icon><Copy :size="14" /></template>
-                    复制
-                  </a-button>
                 </div>
                 <code
                   v-if="userStore.isEnterpriseAccount && identifierVisible"
@@ -171,11 +184,13 @@
         empty-text="暂无消息记录"
       />
     </div>
+    <ChangePasswordModal v-model:open="passwordModalOpen" />
   </div>
 </template>
 
 <script setup>
 import UserConfigSettingsCard from '@/modules/settings/ui/UserConfigSettingsCard.vue'
+import ChangePasswordModal from '@/modules/settings/ui/ChangePasswordModal.vue'
 import DashboardActivityHeatmap from '@/modules/dashboard/ui/DashboardActivityHeatmap.vue'
 
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
@@ -185,6 +200,8 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
+  Ellipsis,
+  KeyRound,
   RefreshCw,
   ShieldCheck,
   Upload
@@ -200,6 +217,7 @@ const refreshing = ref(false)
 const savingField = ref('')
 const editingField = ref('')
 const identifierVisible = ref(false)
+const passwordModalOpen = ref(false)
 const usernameInput = ref(null)
 const phoneInput = ref(null)
 const userConfigRef = ref(null)

@@ -121,6 +121,11 @@ async function updateProfile(profileData) {
   return apiPut('/api/auth/profile', profileData)
 }
 
+/** 使用原密码修改当前本地账号的密码。 */
+async function changePassword(passwords) {
+  return apiPut('/api/auth/password', passwords)
+}
+
 async function checkUid(uid) {
   return apiSuperAdminGet(`/api/auth/check-uid/${encodeURIComponent(uid)}`)
 }
@@ -148,6 +153,7 @@ export const authApi = {
   uploadAvatar,
   getCurrentUser,
   updateProfile,
+  changePassword,
   checkUid,
   getOIDCConfig,
   getOIDCLoginUrl,

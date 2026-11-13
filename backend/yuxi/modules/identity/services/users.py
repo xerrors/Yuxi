@@ -52,6 +52,26 @@ async def update_profile(db: AsyncSession, *, current_user: User, username: str 
         raise
 
 
+async def change_password(db: AsyncSession, *, current_user: User, current_password: str, new_password: str) -> None:
+    """锁定当前本地账号，验证原密码后提交新密码。"""
+    try:
+        repository = UserRepository(db)
+        user = await repository.get_active_by_id(current_user.id, for_update=True)
+        if user is None or user.user_kind != "human":
+            raise PermissionDeniedError("仅有效本地账号可以修改密码", code="password_change_not_allowed")
+        if user.uid.startswith("oidc:"):
+            raise PermissionDeniedError("企业账号请在统一身份服务中修改密码", code="enterprise_password_managed")
+        if not AuthUtils.verify_password(user.password_hash, current_password):
+            raise InvalidInputError("原密码不正确", code="incorrect_current_password")
+
+        user.password_hash = AuthUtils.hash_password(new_password)
+        await repository.save(user)
+        await db.commit()
+    except BaseException:
+        await db.rollback()
+        raise
+
+
 async def create_user(
     db: AsyncSession,
     *,

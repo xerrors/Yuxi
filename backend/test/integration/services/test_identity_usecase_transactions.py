@@ -19,6 +19,7 @@ from yuxi.api.routers.identity.auth import auth
 from yuxi.api.routers.identity.departments import department
 from yuxi.api.routers.identity.users import user_router
 from yuxi.infrastructure.postgres.base import Base
+from yuxi.infrastructure.redis import close_async_redis_client
 from yuxi.migrations.schema import IDENTITY_PERMISSION_STATEMENTS
 from yuxi.modules.identity.models import APIKey, CLIAuthSession, Department, User, UserConfig
 from yuxi.modules.identity.preferences import UserConfigSchema
@@ -182,6 +183,125 @@ async def test_http_user_department_and_config_changes(scenario):
         assert key.revoked_at is not None and key.department_id is None
 
 
+@pytest.mark.parametrize("actor", ["member", "manager", "admin"])
+async def test_http_password_change_updates_only_self_and_new_password_can_login(scenario, actor):
+    """各角色均可自助改密，数据库与真实登录共同证明结果。"""
+    http = scenario["http"]
+    user_id = scenario["ids"][["admin", "member", "manager"].index(actor)]
+    async with scenario["db"]() as db:
+        user = await db.get(User, user_id)
+        user.password_hash = AuthUtils.hash_password("FixturePassword123!")
+        uid = user.uid
+        await db.commit()
+        before = dict((await db.execute(select(User.id, User.password_hash))).all())
+
+    response = await http.put(
+        "/api/auth/password",
+        headers=scenario[actor],
+        json={"current_password": "FixturePassword123!", "new_password": "NewFixturePassword456!"},
+    )
+    assert response.status_code == 200, response.text
+    async with scenario["db"]() as db:
+        after = dict((await db.execute(select(User.id, User.password_hash))).all())
+    password_hash = after.pop(user_id)
+    assert AuthUtils.verify_password(password_hash, "NewFixturePassword456!")
+    assert not AuthUtils.verify_password(password_hash, "FixturePassword123!")
+    before.pop(user_id)
+    assert before == after
+
+    await close_async_redis_client()
+    try:
+        old_login = await http.post("/api/auth/token", data={"username": uid, "password": "FixturePassword123!"})
+        assert old_login.status_code == 401
+        new_login = await http.post("/api/auth/token", data={"username": uid, "password": "NewFixturePassword456!"})
+        assert new_login.status_code == 200, new_login.text
+        assert new_login.json()["user_id"] == user_id
+    finally:
+        await close_async_redis_client()
+
+
+@pytest.mark.parametrize("invalid", ["wrong_current", "short_new", "target_id", "missing_current", "unauthenticated"])
+async def test_http_password_change_rejects_invalid_requests_without_writes(scenario, invalid):
+    """请求校验与原密码校验拒绝时，所有账号哈希保持原值。"""
+    async with scenario["db"]() as db:
+        before = dict((await db.execute(select(User.id, User.password_hash))).all())
+    payload = {"current_password": "FixturePassword123!", "new_password": "NewFixturePassword456!"}
+    headers = scenario["member"]
+    if invalid == "wrong_current":
+        payload["current_password"] = "wrong-password"
+    elif invalid == "short_new":
+        payload["new_password"] = "short"
+    elif invalid == "target_id":
+        payload["user_id"] = scenario["ids"][0]
+    elif invalid == "missing_current":
+        del payload["current_password"]
+    else:
+        headers = {}
+    response = await scenario["http"].put("/api/auth/password", headers=headers, json=payload)
+    assert response.status_code == (401 if invalid == "unauthenticated" else 422), response.text
+    if invalid == "wrong_current":
+        assert response.json()["detail"]["code"] == "incorrect_current_password"
+    async with scenario["db"]() as db:
+        assert dict((await db.execute(select(User.id, User.password_hash))).all()) == before
+
+
+@pytest.mark.parametrize("identity", ["enterprise", "deleted", "end_user"])
+async def test_password_change_rechecks_identity_in_service(scenario, identity):
+    """绕过前端或携带陈旧身份也不能为企业、已删除或终端用户改密。"""
+    factory = scenario["db"]
+    async with factory() as db:
+        actor = await db.get(User, scenario["ids"][1])
+        async with factory() as writer:
+            user = await writer.get(User, actor.id)
+            if identity == "enterprise":
+                user.uid = "oidc:fixture"
+            elif identity == "deleted":
+                user.is_deleted = 1
+            else:
+                user.user_kind = "end_user"
+                user.owner_user_id = scenario["ids"][0]
+                user.app_id = "fixture"
+                user.end_user_id = "fixture"
+            await writer.commit()
+        with pytest.raises(PermissionDeniedError):
+            await users.change_password(
+                db, current_user=actor, current_password="FixturePassword123!", new_password="NewFixturePassword456!"
+            )
+    assert AuthUtils.verify_password(await _read_password_hash(scenario, scenario["ids"][1]), "FixturePassword123!")
+    if identity == "enterprise":
+        response = await scenario["http"].put(
+            "/api/auth/password",
+            headers=scenario["member"],
+            json={"current_password": "FixturePassword123!", "new_password": "NewFixturePassword456!"},
+        )
+        assert response.status_code == 403
+        assert response.json()["detail"]["code"] == "enterprise_password_managed"
+
+
+async def test_concurrent_password_changes_recheck_current_hash(scenario):
+    """同一原密码的并发提交只成功一次，后到请求必须读取新哈希。"""
+    passwords = ["NewFixturePassword456!", "OtherFixturePassword789!"]
+    responses = await asyncio.gather(
+        *[
+            scenario["http"].put(
+                "/api/auth/password",
+                headers=scenario["member"],
+                json={"current_password": "FixturePassword123!", "new_password": password},
+            )
+            for password in passwords
+        ]
+    )
+    assert sorted(response.status_code for response in responses) == [200, 422]
+    winner = next(password for password, response in zip(passwords, responses, strict=True) if response.status_code == 200)
+    assert AuthUtils.verify_password(await _read_password_hash(scenario, scenario["ids"][1]), winner)
+
+
+async def _read_password_hash(scenario, user_id):
+    """通过独立会话读取已提交的密码事实。"""
+    async with scenario["db"]() as db:
+        return (await db.get(User, user_id)).password_hash
+
+
 @pytest.mark.parametrize("operation", ["key_update", "key_revoke", "config", "department"])
 async def test_repositories_do_not_commit_callers_transaction(scenario, operation):
     """恢复任一仓储内部 commit 都会让新连接看到本应回滚的事实。"""
@@ -207,7 +327,18 @@ async def test_repositories_do_not_commit_callers_transaction(scenario, operatio
 
 
 @pytest.mark.parametrize(
-    "operation", ["profile", "user_update", "user_create", "config", "department_update", "department_delete", "key_create", "cli_exchange"]
+    "operation",
+    [
+        "profile",
+        "password_change",
+        "user_update",
+        "user_create",
+        "config",
+        "department_update",
+        "department_delete",
+        "key_create",
+        "cli_exchange",
+    ],
 )
 async def test_usecase_commit_failure_rolls_back_pending_facts(scenario, monkeypatch, operation):
     """提交失败后故意再次提交原会话，证明用例已经清空待写事实。"""
@@ -231,6 +362,10 @@ async def test_usecase_commit_failure_rolls_back_pending_facts(scenario, monkeyp
         with pytest.raises(RuntimeError, match="fixture commit failure"):
             if operation == "profile":
                 await users.update_profile(db, current_user=member, username="Must_rollback")
+            elif operation == "password_change":
+                await users.change_password(
+                    db, current_user=member, current_password="FixturePassword123!", new_password="NewFixturePassword456!"
+                )
             elif operation == "user_update":
                 await users.update_user(db, current_user=actor, user_id=member.id, username="Must_rollback")
             elif operation == "user_create":
@@ -251,6 +386,7 @@ async def test_usecase_commit_failure_rolls_back_pending_facts(scenario, monkeyp
         assert await db.scalar(select(func.count()).select_from(UserConfig)) == 0
         assert await db.scalar(select(func.count()).select_from(User)) == 3
         assert (await db.get(User, scenario["ids"][1])).username == "Member"
+        assert AuthUtils.verify_password((await db.get(User, scenario["ids"][1])).password_hash, "FixturePassword123!")
         assert (await db.get(User, scenario["ids"][2])).department_id == scenario["ids"][3]
         assert (await db.get(Department, scenario["ids"][3])).name == "Other"
         if device_code:
