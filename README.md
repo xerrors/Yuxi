@@ -27,7 +27,7 @@ Yuxi 是面向需要企业自部署的多用户 Agent 产品，且需要自己�
 
 ## 系统架构
 
-![Yuxi 系统架构图](https://oss-img.xerrors.cn/github/yuxi-architecture-20261112-f3046585a.png)
+![Yuxi 系统架构图](https://oss-img.xerrors.cn/github/yuxi-architecture-20261112-f3046585a.svg)
 
 ## 快速启动
 
