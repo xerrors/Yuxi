@@ -817,7 +817,7 @@ async def get_kb_image(kb_id: str, object_path: str, current_user: User = Depend
 async def query_knowledge_base(
     kb_id: str,
     query: str = Body(...),
-    meta: dict = Body(...),
+    meta: dict = Body(default_factory=dict),
     current_user: User = Depends(require_knowledge_base_read),
 ):
     """查询知识库"""
@@ -836,7 +836,7 @@ async def query_knowledge_base(
 async def query_test(
     kb_id: str,
     query: str = Body(...),
-    meta: dict = Body(...),
+    meta: dict = Body(default_factory=dict),
     current_user: User = Depends(require_knowledge_base_read),
 ):
     """测试查询知识库"""

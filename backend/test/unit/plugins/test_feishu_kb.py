@@ -205,7 +205,7 @@ async def test_remote_domain_error_reaches_http_error_adapter(monkeypatch, route
         """模拟已脱敏的上游失败。"""
         raise UpstreamError("飞书用户 token 已过期", code="feishu_request_failed")
 
-    monkeypatch.setattr(management.knowledge_base_manager, "aquery", fail)
+    monkeypatch.setattr(management.knowledge_base_manager, "retrieve", fail)
     with pytest.raises(UpstreamError) as error:
         await getattr(management, route_name)("kb-feishu", query="test", meta={}, current_user=SimpleNamespace(uid="reader"))
     response = await domain_error_handler(None, error.value)

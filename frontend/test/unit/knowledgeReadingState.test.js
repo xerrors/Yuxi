@@ -170,6 +170,60 @@ test('飞书引用使用原文阅读能力，只有检索能力的来源保持�
   assert.equal(state.snippetOpen.value, true)
 })
 
+test('检索测试保留生产片段的分数、高亮和文件定位', async (t) => {
+  const { server, pinia, mount, queryApi } = await setup(t)
+  t.mock.method(queryApi, 'getSampleQuestions', async () => ({ questions: [] }))
+  t.mock.method(queryApi, 'queryTest', async () => [{
+    kb_id: 'kb', file_id: 'file', id: 'chunk', content: '命中正文',
+    metadata: { source: 'guide.md', score: 0, score_type: 'cosine', rerank_score: 0.9, highlights: [[{ text: '命中', matched: true }]], start_line: 7, end_line: 9 }
+  }])
+  const { useKnowledgeBaseStore } = await server.ssrLoadModule('/src/modules/knowledge/model/knowledgeBase.js')
+  useKnowledgeBaseStore(pinia).knowledgeBase = { kb_id: 'kb' }
+  const { state } = await mount('/src/modules/knowledge/ui/QuerySection.vue')
+  state.queryText.value = '命中'
+  await state.onQuery()
+  const chunk = state.queryResult.value[0]
+  assert.equal(chunk.score, 0)
+  assert.equal(chunk.score_type, 'cosine')
+  assert.equal(chunk.rerank_score, 0.9)
+  assert.deepEqual(chunk.highlights, [[{ text: '命中', matched: true }]])
+  state.selectChunk(chunk)
+  assert.deepEqual([state.selectedChunk.value.metadata.file_id, state.selectedChunk.value.metadata.chunk_id, state.selectedChunk.value.metadata.start_line], ['file', 'chunk', 7])
+})
+
+test('多库同名片段打开各自原文，能力不足或缺少身份时保留片段预览', async (t) => {
+  const { server, pinia, mount } = await setup(t)
+  const { useUserStore } = await server.ssrLoadModule('/src/modules/identity/model/user.js')
+  const user = useUserStore(pinia)
+  const { state } = await mount('/src/modules/knowledge/ui/KbResultGroupedList.vue', {
+    chunks: [
+      { kb_id: 'A', file_id: 'same', content: 'A正文', supports_documents: true, supports_document_read: true, metadata: { source: '同名.md', start_line: 7, end_line: 9 } },
+      { kb_id: 'B', file_id: 'same', content: 'B正文', supports_document_read: true, metadata: { source: '同名.md', start_line: 20, end_line: 22 } },
+      { kb_id: 'readonly', file_id: 'same', content: '仅检索', supports_document_read: false, metadata: { source: '外部.md' } },
+      { kb_id: 'missing', content: '无文件身份', supports_document_read: true }
+    ]
+  })
+  for (const [id, start] of [['A', 7], ['B', 20]]) {
+    const group = state.fileGroupList.value.find((item) => item.kb_id === id)
+    state.openFileChunksModal(group)
+    state.openDocument(group, group.chunks[0])
+    assert.equal(state.chunksModalVisible.value, false)
+    assert.equal(state.documentOpen.value, true)
+    assert.deepEqual([state.selectedDocument.value.kb_id, state.selectedDocument.value.file_id, state.selectedDocument.value.start_line], [id, 'same', start])
+    assert.equal(state.selectedDocument.value.supports_documents, id === 'A')
+    assert.equal(state.useFileDetail.value, false, '普通用户使用只读原文接口')
+    user.userRole = 'admin'
+    assert.equal(state.useFileDetail.value, id === 'A', '管理员仅在本地库保留完整文件详情')
+    user.userRole = 'user'
+    state.documentOpen.value = false
+  }
+  for (const id of ['readonly', 'missing']) {
+    const group = state.fileGroupList.value.find((item) => item.kb_id === id)
+    state.openDocument(group, group.chunks[0])
+    assert.equal(state.documentOpen.value, false)
+  }
+})
+
 test('正文阅读从引用行开始，窗口内容保留缩进', async (t) => {
   const { mount, queryApi } = await setup(t)
   const offsets = []

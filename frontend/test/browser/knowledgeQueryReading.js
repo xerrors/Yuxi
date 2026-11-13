@@ -7,7 +7,7 @@ async page => {
   const filename = 'Supplementary Information-' + 'very-long-document-name-'.repeat(5) + '.docx'
   const content = '# Supplementary Figures\n\n' + Array.from({ length: 24 }, (_, index) => `第 ${index + 1} 段：检索命中内容应能独立阅读，展开片段不打开文件预览。` + '文档说明。'.repeat(12)).join('\n\n')
   let results = [
-    { content, score_type: 'cosine', score: 0.428, metadata: { file_id: 'reading-file', chunk_id: 'long', source: filename, start_line: 1, end_line: 8, chunk_index: 0 } },
+    { content, kb_id: 'reading-kb', file_id: 'reading-file', id: 'long', metadata: { score_type: 'cosine', score: 0.428, source: filename, start_line: 1, end_line: 8, chunk_index: 0 } },
     { content: '短片段可以直接读完。', metadata: { file_id: 'reading-file', chunk_id: 'short', source: '简短说明.md' } },
     { content: '<script>unsafe()</script>完整正文\n' + content, highlights: [[{ text: '<img src=x onerror=unsafe()>', matched: false }, { text: '命中内容', matched: true }]], metadata: { file_id: 'reading-file', chunk_id: 'highlight', source: '命中内容.md' } }
   ]

@@ -51,16 +51,17 @@ async def test_query_route_rejects_override_and_foreign_file_ids(monkeypatch):
     async def get_kb_config(_kb_id):
         return SimpleNamespace(kb_type="milvus", query_options={})
 
-    async def aquery(_query, kb_id, **kwargs):
+    async def retrieve(kb_id, _query, **kwargs):
+        """提供生产入口的标准片段，旁路调用不能满足断言。"""
         calls.append((kb_id, kwargs))
-        return []
+        return {"kb_id": kb_id, "results": [{"id": "chunk-1", "kb_id": kb_id, "file_id": "file-1", "content": "正文", "metadata": {}}]}
 
     async def list_live_file_ids(self, *, kb_id, file_ids):
         del self, kb_id
         return [file_id for file_id in file_ids if file_id == "file-1"]
 
     monkeypatch.setattr(knowledge_base, "get_kb_config", get_kb_config)
-    monkeypatch.setattr(knowledge_base, "aquery", aquery)
+    monkeypatch.setattr(knowledge_base, "retrieve", retrieve)
     monkeypatch.setattr(KnowledgeFileRepository, "list_live_file_ids", list_live_file_ids)
     user = SimpleNamespace(uid="reader")
 
@@ -76,5 +77,5 @@ async def test_query_route_rejects_override_and_foreign_file_ids(monkeypatch):
 
     assert calls == []
     result = await management.query_test("kb-1", query="问题", meta={"file_ids": ["file-1"], "final_top_k": 4}, current_user=user)
-    assert result == []
+    assert result == [{"id": "chunk-1", "kb_id": "kb-1", "file_id": "file-1", "content": "正文", "metadata": {}}]
     assert calls == [("kb-1", {"file_ids": ["file-1"], "final_top_k": 4})]

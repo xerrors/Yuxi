@@ -11,7 +11,13 @@ def knowledge_sources_from_tool(metadata, payload, visible_kb_ids):
     """在知识域识别检索工具并复核资源范围。"""
     tool_name = metadata.get("tool_name")
     kb_id = (metadata.get("input") or {}).get("kb_id")
-    if tool_name not in KNOWLEDGE_REFERENCE_TOOLS or kb_id not in visible_kb_ids:
+    if tool_name not in KNOWLEDGE_REFERENCE_TOOLS:
+        return []
+    if isinstance(kb_id, list):
+        if tool_name != "query_kb":
+            return []
+        kb_id = [target.strip() for target in kb_id if isinstance(target, str) and target.strip() in visible_kb_ids]
+    elif kb_id not in visible_kb_ids:
         return []
     return knowledge_reference_sources(payload, tool_name, kb_id)
 
@@ -39,7 +45,7 @@ def enrich_knowledge_sources(sources, document_support):
             source.update(document_support[source["kb_id"]])
 
 
-def knowledge_reference_sources(payload: dict | list, tool_name: str, kb_id: str) -> list[dict]:
+def knowledge_reference_sources(payload: dict | list, tool_name: str, kb_id: str | list[str]) -> list[dict]:
     """保留 chunk 权威范围，编号原文窗口可进一步定位摘录。"""
     if tool_name == "query_kb":
         if isinstance(payload, list):
@@ -55,6 +61,11 @@ def knowledge_reference_sources(payload: dict | list, tool_name: str, kb_id: str
     for item in items:
         if not isinstance(item, dict):
             continue
+        source_kb_id = kb_id
+        if isinstance(kb_id, list):
+            source_kb_id = item.get("kb_id")
+            if source_kb_id not in kb_id:
+                continue
         content = item.get("content")
         if not isinstance(content, str) or not content.strip():
             continue
@@ -69,7 +80,7 @@ def knowledge_reference_sources(payload: dict | list, tool_name: str, kb_id: str
             {
                 "kind": "knowledge",
                 "title": metadata.get("source") or metadata.get("title") or file_id or "知识库片段",
-                "kb_id": kb_id,
+                "kb_id": source_kb_id,
                 "file_id": file_id or "",
                 "chunk_id": metadata.get("chunk_id") or item.get("id") or "",
                 "generation": metadata.get("generation"),

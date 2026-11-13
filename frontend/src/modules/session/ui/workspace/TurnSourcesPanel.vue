@@ -62,6 +62,8 @@ const knowledgeChunks = computed(() => {
       .map((item) => ({
         kb_id: item.kb_id,
         file_id: item.file_id,
+        supports_document_read: item.supports_document_read,
+        supports_documents: item.supports_documents,
         content: item.content,
         metadata: {
           source: item.title,

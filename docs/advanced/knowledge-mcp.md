@@ -47,13 +47,15 @@ opencode mcp add yuxi-knowledge --global \
 opencode mcp list
 ```
 
-`connected` 表示 MCP 握手和能力发现完成。选择已配置模型后，让 OpenCode “使用 yuxi-knowledge 的 list_kbs 选择知识库，再 query_kb 检索指定主题，并给出来源 file_id”。检查实际工具返回的 `results` 与 `content`，随后用 `open_kb_document` 读取来源原文。输入约束直接复用 [Knowledge Public API](./knowledge-base-api.md#外部查询接口) 的 Schema，五个工具直接调用相同的知识库服务。
+`connected` 表示 MCP 握手和能力发现完成。选择已配置模型后，让 OpenCode “使用 yuxi-knowledge 的 list_kbs 选择知识库，再 query_kb 检索指定主题，并给出来源 file_id”。检查实际工具返回的 `results` 与 `content`，随后用 `open_kb_document` 读取来源原文。五个工具与 [Knowledge Public API](./knowledge-base-api.md#外部查询接口) 调用相同的知识库服务；MCP 的 `query_kb` 额外接受多个知识库 ID。
 
 OpenCode 1.x 将服务直接放在 `mcp.yuxi-knowledge` 下，省略 `codemode`，并使用数字 `timeout`。配置格式以对应版本的 [OpenCode MCP 文档](https://dev.opencode.ai/v2/docs/mcp-servers/)为准。不要输出展开后的客户端配置，其中可能包含完整凭据。
 
 ## 调用结果
 
 MCP 初始化返回工具使用指引，每个工具的说明包含参数选择、结果串联和分页方式。`query_kb` 检索正文片段，`search_file` 搜索文件名；文件名没有命中时仍可尝试正文检索。用结果中的 `kb_id`、`file_id` 定位并打开原文，引用时保留文件 ID 和行号。读取长文时用 `next_offset` 继续，并省略优先级更高的 `line`；文件列表在 `has_more` 为真时将 `offset` 加上 `limit` 继续。正文窗口同时受字节上限约束，可能短于请求行数；单行超过上限时返回错误，不丢弃该行。
+
+`query_kb` 的 `kb_id` 可以是单个字符串或非空数组，例如 `{"kb_id": ["kb-product", "kb-troubleshooting"], "query_text": "连接超时"}`。字符串输入返回原有的 `kb_id`、`results`；数组输入返回去重后的 `kb_ids`、合并的 `results`。各目标库并行检索，片段按目标库顺序拼接，保留各库自己的检索参数与排名，不比较跨库分数；每条结果中的 `kb_id`、`file_id` 标识实际来源。`file_name` 过滤对所有目标库生效。服务先检查所有目标的当前可见性，任一库不可见时不启动检索；检索失败时等待其他检索收尾后整次返回失败，不返回部分结果。内部 Agent 还受会话选择范围约束。
 
 成功响应同时提供 JSON 文本 `content[0].text` 和标准 MCP `structuredContent`。`list_kbs` 的文本仍是数组，结构化字段为 `{"knowledge_bases": [...]}`；其他工具的结构化字段与解析后的 JSON 文本对象相同。程序客户端可以直接读取结构化字段，文本客户端继续使用原有格式。
 

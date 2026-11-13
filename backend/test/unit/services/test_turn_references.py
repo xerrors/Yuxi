@@ -88,6 +88,23 @@ def test_numbered_open_window_preserves_empty_lines_and_precise_quote_location()
     assert (citation["source_start_line"], citation["source_end_line"]) == (12, 12)
 
 
+@pytest.mark.parametrize("visible", [{"kb-a", "kb-b", "kb-unrequested"}, {"kb-a"}, set()])
+def test_multi_kb_sources_use_each_result_identity_and_current_visibility(visible):
+    """多库同名文件不串库，撤权与未请求库的结果不会进入引用。"""
+    payload = {
+        "kb_ids": ["kb-a", "kb-b"],
+        "results": [
+            {"kb_id": kb_id, "id": "same-chunk", "file_id": "same-file", "content": "同名证据"}
+            for kb_id in ("kb-a", "kb-b", "kb-unrequested")
+        ],
+    }
+    sources = collect_reference_sources([tool("query_kb", payload, kb_id=[" kb-a ", "kb-b", "kb-a"])], visible)
+    expected_ids = [kb_id for kb_id in ("kb-a", "kb-b") if kb_id in visible]
+    assert [(source["kb_id"], source["file_id"], source["chunk_id"], source["content"]) for source in sources] == [
+        (kb_id, "same-file", "same-chunk", "同名证据") for kb_id in expected_ids
+    ]
+
+
 def test_find_windows_include_parent_file_id():
     """find_kb_document 的窗口继承文件身份。"""
     sources = collect_reference_sources(
@@ -111,6 +128,7 @@ def test_revoked_knowledge_and_non_retrieval_tools_provide_no_sources():
     payload = {"results": [{"content": "证据", "file_id": "file-a"}]}
     assert collect_reference_sources([tool("query_kb", payload)], set()) == []
     assert collect_reference_sources([tool("list_kbs", payload)], {"kb-a"}) == []
+    assert collect_reference_sources([tool("open_kb_document", {"content": "证据", "file_id": "file-a"}, kb_id=["kb-a"])], {"kb-a"}) == []
 
 
 @pytest.mark.asyncio

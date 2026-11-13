@@ -103,7 +103,9 @@ Dify 和 Notion 只提供外部检索能力。它们不支持 Yuxi 的文档上�
 
 ## Milvus 文本检索参数
 
-`query_kb` 接收 `kb_id`、`query_text` 和可选的 `file_name`，使用知识库保存的默认检索配置。单次公共检索不接受 `options` 覆盖。具有管理权限的调用方可通过 `PUT /api/knowledge/knowledge-bases/{kb_id}/query-params` 保存默认值；检索测试页面通过管理侧 `query-test` 的 `meta` 传入本次参数。
+`query_kb` 接收 `kb_id`、`query_text` 和可选的 `file_name`，使用知识库保存的默认检索配置。单次公共检索不接受 `options` 覆盖。具有管理权限的调用方可通过 `PUT /api/knowledge/knowledge-bases/{kb_id}/query-params` 保存默认值。检索测试页面默认使用已保存配置，与 Agent 共用 `retrieve`；管理侧 `query-test` 省略 `meta` 或传入 `{}` 时也使用保存配置。显式传入非空 `meta` 表示单次测试覆盖，须通过参数声明和文件所属库校验，不修改保存配置。
+
+管理侧 `/query-test` 返回标准片段列表，`/query` 将同一列表包在 `result` 中。片段的 `kb_id`、`file_id`、`id`、`content` 与 MCP 对应结果一致；分数、高亮和原文行号保存在 `metadata` 中。来源侧栏可以展开文件的检索片段，具备全文读取能力的片段可打开所属库的原文并定位行号；缺少行号时从文档开头读取，仅支持检索的外部库保留片段预览。
 
 保存 Milvus 检索配置的请求体示例：
 

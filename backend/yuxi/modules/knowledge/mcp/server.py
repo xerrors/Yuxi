@@ -9,7 +9,7 @@ from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.server.transport_security import TransportSecuritySettings
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
@@ -35,6 +35,12 @@ from yuxi.modules.knowledge.services.access import visible_knowledge_bases
 _DEFAULT_ALLOWED_HOSTS = "localhost:*,127.0.0.1:*,api:*"
 
 
+class QueryKBInput(SearchInputSchema):
+    """MCP 检索接受单个 ID 或多个 ID，Public HTTP 保留单库输入。"""
+
+    kb_id: str | list[str] = Field(description="来自 list_kbs 的知识库 ID；可传单个字符串或非空 ID 数组，一次检索多个库")
+
+
 class KnowledgeMCP:
     """拥有 MCP 协议、请求身份与 API 生命周期接线。"""
 
@@ -45,7 +51,7 @@ class KnowledgeMCP:
             "Yuxi Knowledge",
             instructions=(
                 "只读知识库检索：先 list_kbs，根据名称与描述选择 kb_id；"
-                "查找内容用 query_kb，查找文件名或浏览文件用 search_file。"
+                "查找内容用 query_kb，kb_id 可传单个 ID 或多个 ID 的数组；查找文件名或浏览文件用 search_file。"
                 "用结果中的 kb_id、file_id 调用 find_kb_document 定位关键词，"
                 "再用 open_kb_document 读取原文核实；引用来源时保留文件 ID 和行号。"
                 "文件名搜索无结果不代表内容检索无结果；内容检索无结果时可改写关键词。"
@@ -59,9 +65,10 @@ class KnowledgeMCP:
                 "列出当前用户可见知识库的 kb_id、name、description。先按名称和描述选择检索范围，再调用 query_kb 或 search_file。",
             ),
             "query_kb": (
-                SearchInputSchema,
-                "按关键词或短语检索指定知识库中的内容片段，不是按文件名搜索。"
-                "kb_id 来自 list_kbs；file_name 仅在明确需要限定文件名时填写。"
+                QueryKBInput,
+                "按关键词或短语检索一个或多个知识库中的内容片段，不是按文件名搜索。"
+                "kb_id 来自 list_kbs，可传单个 ID 或非空 ID 数组；file_name 对每个目标库生效，仅在需要限定文件名时填写。"
+                "数组输入返回 kb_ids 和按库顺序合并的 results，保留库内排名；任一库不可见或失败则整次失败。"
                 "返回 results，包含 content、kb_id、file_id 和来源 metadata；"
                 "用 find_kb_document/open_kb_document 核对原文。无结果时改写关键词。",
             ),

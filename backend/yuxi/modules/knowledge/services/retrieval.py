@@ -44,7 +44,7 @@ def normalize_query_overrides(kb_class: type, overrides: dict) -> dict[str, Any]
 
 
 async def query_with_overrides(kb_id: str, query: str, overrides: dict) -> list:
-    """校验 HTTP 检索覆盖后调用 aquery。空覆盖不读取参数声明。"""
+    """校验单次覆盖并复用生产检索，保留管理接口的片段列表格式。"""
 
     if not isinstance(overrides, dict):
         raise InvalidInputError("检索参数必须是对象")
@@ -58,7 +58,8 @@ async def query_with_overrides(kb_id: str, query: str, overrides: dict) -> list:
         guarded = normalize_query_overrides(kb_class, overrides)
         if "file_ids" in guarded:
             await require_file_ids_in_kb(kb_id, guarded["file_ids"])
-    return await knowledge_base.aquery(query, kb_id, **guarded)
+    output = await knowledge_base.retrieve(kb_id, query, **guarded)
+    return output["results"]
 
 
 async def require_file_ids_in_kb(kb_id: str, file_ids: list[str]) -> None:

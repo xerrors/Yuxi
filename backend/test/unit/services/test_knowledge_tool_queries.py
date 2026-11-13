@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import MethodType, SimpleNamespace
 
 import pytest
@@ -100,6 +101,121 @@ def _patch_retrievers(monkeypatch, *, kb_type: str = "milvus", retriever=None):
         setattr(manager, name, MethodType(getattr(KnowledgeBaseManager, name), manager))
     monkeypatch.setattr(tools, "knowledge_base", manager)
     return manager
+
+
+@pytest.mark.asyncio
+async def test_query_kb_multiple_ids_preserves_sources_and_order(monkeypatch):
+    """两个库必须并行启动，完成顺序不改变来源和结果顺序。"""
+    requested = []
+    completed = []
+    second_finished = asyncio.Event()
+
+    async def retrieve(kb_id, query, **options):
+        """为两个库提供同名文件与不同分数的独立结果。"""
+        requested.append(kb_id)
+        assert query == "auth" and options == {"file_name": "guide"}
+        if kb_id == "db-1":
+            await second_finished.wait()
+        else:
+            second_finished.set()
+        completed.append(kb_id)
+        return KnowledgeExecutor.build_search_output(
+            kb_id,
+            [{"content": f"{kb_id} guide", "file_id": "same-file", "score": 0.1 if kb_id == "db-1" else 0.9}],
+        )
+
+    monkeypatch.setattr(tools.knowledge_base, "retrieve", retrieve)
+    result = await asyncio.wait_for(
+        tools.query_kb(
+            [" db-1 ", "db-2", "db-1"],
+            "auth",
+            [{"kb_id": "db-1"}, {"kb_id": "db-2"}],
+            file_name="guide",
+        ),
+        timeout=2,
+    )
+    assert requested == ["db-1", "db-2"]
+    assert completed == ["db-2", "db-1"]
+    assert result == {
+        "kb_ids": ["db-1", "db-2"],
+        "results": [
+            {"id": "same-file:1", "kb_id": "db-1", "file_id": "same-file", "content": "db-1 guide", "metadata": {"score": 0.1}},
+            {"id": "same-file:1", "kb_id": "db-2", "file_id": "same-file", "content": "db-2 guide", "metadata": {"score": 0.9}},
+        ],
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kb_ids", [[], ["db-1", ""], ["db-1", "   "], ["db-1", "private"]])
+async def test_query_kb_validates_all_ids_before_retrieval(monkeypatch, kb_ids):
+    """空目标和混入不可见库时整次拒绝，不先执行部分检索。"""
+
+    async def unexpected_retrieve(*args, **kwargs):
+        """权限或输入拒绝必须先于检索。"""
+        pytest.fail("invalid targets reached retrieval")
+
+    monkeypatch.setattr(tools.knowledge_base, "retrieve", unexpected_retrieve)
+    with pytest.raises(tools.KnowledgeToolError) as error:
+        await tools.query_kb(kb_ids, "auth", [{"kb_id": "db-1"}])
+    assert error.value.not_found is bool(kb_ids)
+
+
+@pytest.mark.asyncio
+async def test_query_kb_array_with_one_empty_kb_returns_empty_results(monkeypatch):
+    """数组形式的空命中仍保留查询范围。"""
+
+    async def retrieve(kb_id, query, **options):
+        """提供已成功执行但无命中的库。"""
+        return {"kb_id": kb_id, "results": []}
+
+    monkeypatch.setattr(tools.knowledge_base, "retrieve", retrieve)
+    assert await tools.query_kb(["db-1"], "auth", [{"kb_id": "db-1"}]) == {"kb_ids": ["db-1"], "results": []}
+
+
+@pytest.mark.asyncio
+async def test_cancelled_multi_kb_query_cleans_up_all_retrievals(monkeypatch):
+    """取消工具调用时，全部已启动的检索都执行收尾。"""
+    started = []
+    settled = []
+    all_started = asyncio.Event()
+    blocked = asyncio.Event()
+
+    async def retrieve(kb_id, query, **options):
+        """提供停在 IO 等待中的两个独立检索。"""
+        started.append(kb_id)
+        if len(started) == 2:
+            all_started.set()
+        try:
+            await blocked.wait()
+        finally:
+            settled.append(kb_id)
+
+    monkeypatch.setattr(tools.knowledge_base, "retrieve", retrieve)
+    task = asyncio.create_task(tools.query_kb(["db-1", "db-2"], "auth", [{"kb_id": "db-1"}, {"kb_id": "db-2"}]))
+    try:
+        await asyncio.wait_for(all_started.wait(), timeout=2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=2)
+        assert sorted(settled) == ["db-1", "db-2"]
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_query_kb_does_not_hide_failed_kb(monkeypatch):
+    """后续库失败时不能返回前面库的部分成功。"""
+
+    async def retrieve(kb_id, query, **options):
+        """恢复第二个目标不可用的失败场景。"""
+        if kb_id == "db-2":
+            raise RuntimeError("retrieval unavailable")
+        return {"kb_id": kb_id, "results": [{"content": "first result"}]}
+
+    monkeypatch.setattr(tools.knowledge_base, "retrieve", retrieve)
+    with pytest.raises(RuntimeError, match="retrieval unavailable"):
+        await tools.query_kb(["db-1", "db-2"], "auth", [{"kb_id": "db-1"}, {"kb_id": "db-2"}])
 
 
 @pytest.mark.asyncio
@@ -592,6 +708,7 @@ def test_mcp_capabilities_distinguish_document_management_from_reading(kb_type, 
 
 def test_document_window_bounds_json_bytes_without_losing_lines():
     import json
+
     from yuxi.modules.knowledge.services.documents import build_open_file_window
 
     lines = ['多字节"\\' * 500 for _ in range(4)]

@@ -448,6 +448,38 @@ async def test_web_references_cannot_read_app_owned_thread(test_client, admin_he
             await db.commit()
 
 
+async def test_multi_kb_tool_snapshot_returns_distinct_sources_over_http(
+    test_client, admin_headers, reference_turn, knowledge_base_resource
+):
+    """回读多库持久工具快照，同名文件的来源保持独立且排除库外结果。"""
+    target = reference_turn
+    kb_ids = [target.kb_id, knowledge_base_resource["kb_id"]]
+    async with target.sessions() as db:
+        messages = list(await db.scalars(select(Message).where(Message.turn_id == target.turn_id, Message.role == "tool")))
+        knowledge = next(message for message in messages if message.extra_metadata["tool_name"] == "query_kb")
+        knowledge.extra_metadata = {
+            **knowledge.extra_metadata,
+            "input": {"kb_id": kb_ids, "query_text": "证据"},
+            "output": json.dumps(
+                {
+                    "kb_ids": kb_ids,
+                    "results": [
+                        {"kb_id": kb_id, "id": "same-chunk", "file_id": "same-file", "content": "同名证据"}
+                        for kb_id in [*kb_ids, "unrequested-kb"]
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+        }
+        await db.commit()
+    response = await test_client.get(target.references_path, headers=admin_headers)
+    assert response.status_code == 200, response.text
+    sources = [source for source in response.json()["sources"] if source["kind"] == "knowledge"]
+    assert [(source["kb_id"], source["file_id"], source["chunk_id"], source["content"]) for source in sources] == [
+        (kb_id, "same-file", "same-chunk", "同名证据") for kb_id in kb_ids
+    ]
+
+
 async def test_readonly_connector_evidence_keeps_remote_file_id_without_document_preview(test_client, admin_headers, reference_turn):
     """Dify 的远端 file_id 不代表支持本地原文预览。"""
     target = reference_turn

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from yuxi.modules.knowledge.factory import KnowledgeBaseFactory
@@ -44,20 +45,35 @@ def require_visible_kb(kb_id: str, visible_kbs: list[dict[str, Any]]) -> str:
 
 
 async def query_kb(
-    kb_id: str,
+    kb_id: str | list[str],
     query_text: str,
     visible_kbs: list[dict[str, Any]],
     *,
     file_name: str | None = None,
 ) -> Any:
-    """在可见知识库中检索结构化片段。"""
+    """检索一个或多个可见知识库，按目标顺序保留片段来源。"""
     if not kb_id:
         raise KnowledgeToolError("请提供 kb_id")
     if not query_text:
         raise KnowledgeToolError("请提供查询内容")
-    target = require_visible_kb(kb_id, visible_kbs)
+    # 先校验全部目标，防止混合请求先查询合法库再发现越权。
+    requested = [kb_id] if isinstance(kb_id, str) else kb_id
+    targets = list(dict.fromkeys(require_visible_kb(target, visible_kbs) for target in requested))
     options = {"file_name": file_name} if file_name else {}
-    return await knowledge_base.retrieve(target, query_text, **options)
+    if isinstance(kb_id, str):
+        return await knowledge_base.retrieve(targets[0], query_text, **options)
+
+    # gather 保留输入顺序；等所有检索收尾后再传播错误，避免遗留后台请求。
+    outputs = await asyncio.gather(
+        *(knowledge_base.retrieve(target, query_text, **options) for target in targets),
+        return_exceptions=True,
+    )
+    results = []
+    for output in outputs:
+        if isinstance(output, BaseException):
+            raise output
+        results.extend(output["results"])
+    return {"kb_ids": targets, "results": results}
 
 
 async def open_kb_document(

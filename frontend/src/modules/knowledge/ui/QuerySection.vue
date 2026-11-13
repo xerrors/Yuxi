@@ -341,7 +341,22 @@ const onQuery = async () => {
   try {
     const data = await queryApi.queryTest(store.knowledgeBase.kb_id, queryText.value.trim())
     if (requestId !== queryRequest) return
-    queryResult.value = data
+    // 生产检索把评分与来源放在 metadata，投影到检索测试已有的展示字段。
+    queryResult.value = Array.isArray(data) ? data.map((chunk) => {
+      const metadata = chunk.metadata || {}
+      return {
+        ...chunk,
+        score: chunk.score ?? metadata.score,
+        score_type: chunk.score_type ?? metadata.score_type,
+        rerank_score: chunk.rerank_score ?? metadata.rerank_score,
+        highlights: chunk.highlights ?? metadata.highlights,
+        metadata: {
+          ...metadata,
+          file_id: chunk.file_id || metadata.file_id,
+          chunk_id: chunk.id || metadata.chunk_id
+        }
+      }
+    }) : data
   } catch (error) {
     if (requestId !== queryRequest) return
     console.error(error)

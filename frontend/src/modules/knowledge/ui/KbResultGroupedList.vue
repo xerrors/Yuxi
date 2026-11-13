@@ -17,9 +17,9 @@
         </button>
         <div class="file-actions">
           <button
-            v-if="fileGroup.kb_id && fileGroup.file_id"
+            v-if="canReadDocument(fileGroup)"
             class="view-file-btn"
-            @click.stop="openFileDetail(fileGroup)"
+            @click.stop="openDocument(fileGroup)"
             title="查看完整文件"
             aria-label="查看完整文件"
           >
@@ -33,13 +33,32 @@
       <p>{{ emptyText }}</p>
     </div>
 
-    <KbFileChunksModal v-model:open="chunksModalVisible" :file-group="selectedFileGroup" />
+    <KbFileChunksModal
+      v-model:open="chunksModalVisible"
+      :file-group="selectedFileGroup"
+      @open-document="openDocument(selectedFileGroup, $event)"
+    />
 
     <FileDetailModal
-      v-model:open="fileDetailOpen"
-      :kb-id="fileDetailKbId"
-      :file-id="fileDetailFileId"
+      v-if="useFileDetail"
+      v-model:open="documentOpen"
+      :kb-id="selectedDocument.kb_id"
+      :file-id="selectedDocument.file_id"
+      :chunk-id="selectedDocument.chunk_id"
+      :start-line="selectedDocument.start_line"
+      :end-line="selectedDocument.end_line"
     />
+    <a-modal v-else v-model:open="documentOpen" :title="selectedDocument?.title" :footer="null" :width="900" destroy-on-close>
+      <ExternalDocumentReader
+        v-if="documentOpen && selectedDocument"
+        :kb-id="selectedDocument.kb_id"
+        :file-id="selectedDocument.file_id"
+        :title="selectedDocument.title"
+        :start-line="selectedDocument.start_line"
+        :end-line="selectedDocument.end_line"
+        @close="documentOpen = false"
+      />
+    </a-modal>
   </div>
 </template>
 
@@ -47,8 +66,11 @@
 import { computed, ref } from 'vue'
 import { FileText, Eye } from '@lucide/vue'
 import KbFileChunksModal from './KbFileChunksModal.vue'
+import ExternalDocumentReader from '@/modules/knowledge/ui/ExternalDocumentReader.vue'
 import FileDetailModal from '@/modules/knowledge/ui/FileDetailModal.vue'
 import { groupKnowledgeChunks } from '@/modules/knowledge/model/kbResultGroups.js'
+import { useKnowledgeBaseStore } from '@/modules/knowledge/model/knowledgeBase'
+import { useUserStore } from '@/modules/identity'
 
 const props = defineProps({
   chunks: {
@@ -67,14 +89,18 @@ const props = defineProps({
 
 const chunksModalVisible = ref(false)
 const selectedFileGroup = ref(null)
-const fileDetailOpen = ref(false)
-const fileDetailKbId = ref('')
-const fileDetailFileId = ref('')
+const documentOpen = ref(false)
+const selectedDocument = ref(null)
+const knowledgeBaseStore = useKnowledgeBaseStore()
+const userStore = useUserStore()
+// 文件详情使用管理侧内容接口；普通用户沿用与回答引用相同的只读窗口。
+const useFileDetail = computed(() => Boolean(selectedDocument.value?.supports_documents && userStore.isAdmin))
 
 const resolveChunks = (input) => {
   if (Array.isArray(input)) return input
   if (!input || typeof input !== 'object') return []
 
+  if (Array.isArray(input.results)) return input.results
   if (Array.isArray(input.chunks)) return input.chunks
   if (Array.isArray(input.data?.chunks)) return input.data.chunks
 
@@ -86,6 +112,8 @@ const normalizedChunks = computed(() =>
     .filter((item) => item && typeof item === 'object' && item.content)
     .map((item) => {
       const metadata = item.metadata && typeof item.metadata === 'object' ? item.metadata : {}
+      const kb = knowledgeBaseStore.knowledgeBases.find((kb) => kb.kb_id === item.kb_id)
+        || (knowledgeBaseStore.knowledgeBase?.kb_id === item.kb_id ? knowledgeBaseStore.knowledgeBase : null)
       const source =
         metadata.source ||
         metadata.file_name ||
@@ -99,6 +127,9 @@ const normalizedChunks = computed(() =>
 
       return {
         ...item,
+        file_id: item.file_id || metadata.file_id || '',
+        supports_document_read: item.supports_document_read ?? kb?.supports_document_read ?? false,
+        supports_documents: item.supports_documents ?? kb?.supports_documents ?? false,
         score: typeof item.score === 'number' ? item.score : metadata.score,
         rerank_score:
           typeof item.rerank_score === 'number' ? item.rerank_score : metadata.rerank_score,
@@ -120,10 +151,25 @@ const openFileChunksModal = (fileGroup) => {
   chunksModalVisible.value = true
 }
 
-const openFileDetail = (fileGroup) => {
-  fileDetailKbId.value = fileGroup.kb_id || ''
-  fileDetailFileId.value = fileGroup.file_id || ''
-  fileDetailOpen.value = Boolean(fileDetailKbId.value && fileDetailFileId.value)
+/** 原文读取需要明确能力与文件身份；后端在每次请求继续执行权限校验。 */
+const canReadDocument = (fileGroup) => Boolean(
+  fileGroup?.kb_id && fileGroup.file_id && fileGroup.chunks.some((chunk) => chunk.supports_document_read)
+)
+
+/** 使用命中自身的库和行号打开既有阅读器，避免同名跨库来源串用。 */
+const openDocument = (fileGroup, chunk = null) => {
+  if (!canReadDocument(fileGroup)) return
+  selectedDocument.value = {
+    kb_id: fileGroup.kb_id,
+    file_id: fileGroup.file_id,
+    title: fileGroup.filename,
+    supports_documents: chunk?.supports_documents ?? fileGroup.chunks[0].supports_documents,
+    chunk_id: chunk?.metadata?.chunk_id || '',
+    start_line: chunk?.metadata?.start_line || null,
+    end_line: chunk?.metadata?.end_line || null
+  }
+  chunksModalVisible.value = false
+  documentOpen.value = true
 }
 </script>
 

@@ -47,15 +47,14 @@ def client(monkeypatch):
         assert selection == "all"
         return [{"kb_id": uid, "name": uid}]
 
-    async def retrieve(kb_id, query_text, visible_kbs, file_name=None):
-        """复用真实可见性 guard 后返回身份相关内容。"""
-        knowledge_mcp.knowledge_tools.require_visible_kb(kb_id, visible_kbs)
+    async def retrieve(kb_id, query_text, file_name=None):
+        """只替换检索存储边界，保留真实查询用例与权限校验。"""
         return {"kb_id": kb_id, "results": [{"content": f"document for {kb_id}", "file_id": "source"}]}
 
     monkeypatch.setattr(knowledge_mcp.pg_manager, "get_async_session_context", session)
     monkeypatch.setattr(auth, "verify_api_key", verify)
     monkeypatch.setattr(knowledge_mcp, "visible_knowledge_bases", visible)
-    monkeypatch.setattr(knowledge_mcp.knowledge_tools, "query_kb", retrieve)
+    monkeypatch.setattr(knowledge_mcp.knowledge_tools.knowledge_base, "retrieve", retrieve)
     adapter = create_knowledge_mcp()
 
     @asynccontextmanager
@@ -71,12 +70,12 @@ def client(monkeypatch):
         yield client
 
 
-def test_tools_publish_existing_public_schemas(client):
-    """五个只读工具直接复用 Public API 输入 Schema。"""
+def test_tools_publish_query_array_and_existing_document_schemas(client):
+    """MCP 公开多库参数，其余输入继续复用 Public API Schema。"""
     tools = {t["name"]: t for t in rpc(client, "tools/list").json()["result"]["tools"]}
     assert set(tools) == {"list_kbs", "query_kb", "search_file", "open_kb_document", "find_kb_document"}
     for name, model in {
-        "query_kb": knowledge_mcp.SearchInputSchema,
+        "query_kb": knowledge_mcp.QueryKBInput,
         "search_file": knowledge_mcp.SearchFileInput,
         "open_kb_document": knowledge_mcp.OpenInputSchema,
         "find_kb_document": knowledge_mcp.FindInputSchema,
@@ -85,6 +84,11 @@ def test_tools_publish_existing_public_schemas(client):
     assert all(t["annotations"]["readOnlyHint"] for t in tools.values())
     assert "文件名" in tools["search_file"]["description"] and "has_more" in tools["search_file"]["description"]
     assert "next_offset" in tools["open_kb_document"]["description"]
+    assert tools["query_kb"]["inputSchema"]["properties"]["kb_id"]["anyOf"] == [
+        {"type": "string"},
+        {"type": "array", "items": {"type": "string"}},
+    ]
+    assert knowledge_mcp.SearchInputSchema.model_json_schema()["properties"]["kb_id"]["type"] == "string"
 
 
 def test_initialize_explains_search_and_source_workflow(client):
@@ -96,6 +100,31 @@ def test_initialize_explains_search_and_source_workflow(client):
     for name in ("list_kbs", "query_kb", "search_file", "find_kb_document", "open_kb_document"):
         assert name in instructions
     assert "next_offset" in instructions and "行号" in instructions
+
+
+def test_query_array_returns_merged_protocol_result(client, monkeypatch):
+    """协议接收 ID 数组，文本与结构化结果包含各目标内容。"""
+    monkeypatch.setattr(knowledge_mcp, "visible_knowledge_bases", AsyncMock(return_value=[{"kb_id": "alice"}, {"kb_id": "shared"}]))
+    result = rpc(client, "tools/call", {"name": "query_kb", "arguments": {"kb_id": ["alice", "shared"], "query_text": "needle"}}).json()[
+        "result"
+    ]
+    expected = {
+        "kb_ids": ["alice", "shared"],
+        "results": [
+            {"content": "document for alice", "file_id": "source"},
+            {"content": "document for shared", "file_id": "source"},
+        ],
+    }
+    assert not result["isError"]
+    assert result["structuredContent"] == json.loads(result["content"][0]["text"]) == expected
+
+
+@pytest.mark.parametrize("kb_ids", [[], [1], [None], ["alice", "bob"]])
+def test_query_array_rejects_invalid_or_invisible_targets(client, kb_ids):
+    """数组参数保持类型约束，混合可见与不可见库返回失败。"""
+    result = rpc(client, "tools/call", {"name": "query_kb", "arguments": {"kb_id": kb_ids, "query_text": "needle"}}).json()["result"]
+    assert result["isError"]
+    assert result.get("structuredContent") is None
 
 
 @pytest.mark.parametrize(
@@ -266,7 +295,9 @@ def test_invalid_delegate_returns_bearer_challenge_before_mcp(client, monkeypatc
     monkeypatch.setattr(client.app.state.knowledge_mcp.manager, "handle_request", manager)
     response = rpc(client, "tools/list", headers={**HEADERS, "Authorization": authorization})
     assert response.status_code == 401
-    assert response.json() == {"detail": "未提供有效的知识库访问凭据：请使用 Access Token 或具备知识库权限的 API Key（Authorization: Bearer）"}
+    assert response.json() == {
+        "detail": "未提供有效的知识库访问凭据：请使用 Access Token 或具备知识库权限的 API Key（Authorization: Bearer）"
+    }
     assert response.headers["WWW-Authenticate"] == "Bearer"
     manager.assert_not_awaited()
 

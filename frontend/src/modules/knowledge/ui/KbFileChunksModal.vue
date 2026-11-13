@@ -52,10 +52,7 @@
               <span class="chunk-label">片段</span>
             </div>
 
-            <div
-              v-if="hasScore(chunk.score) || hasScore(chunk.rerank_score) || getLineRange(chunk)"
-              class="chunk-meta"
-            >
+            <div class="chunk-meta">
               <span v-if="hasScore(chunk.score)" class="metric">
                 <span class="metric-label">相似度</span>
                 <strong class="metric-value">{{ formatScore(chunk.score) }}</strong>
@@ -67,6 +64,14 @@
               <span v-if="getLineRange(chunk)" class="chunk-location">{{
                 getLineRange(chunk)
               }}</span>
+              <button
+                v-if="fileGroup?.kb_id && fileGroup?.file_id && chunk.supports_document_read"
+                type="button"
+                class="open-document-btn"
+                @click="$emit('open-document', chunk)"
+              >
+                <BookOpen :size="14" aria-hidden="true" />查看原文
+              </button>
             </div>
           </header>
 
@@ -92,7 +97,7 @@
 
 <script setup>
 import { computed, useId } from 'vue'
-import { FileText, X } from '@lucide/vue'
+import { BookOpen, FileText, X } from '@lucide/vue'
 import MarkdownPreview from '@/modules/workspace/ui/MarkdownPreview.vue'
 
 const props = defineProps({
@@ -106,7 +111,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['update:open'])
+const emit = defineEmits(['update:open', 'open-document'])
 const titleId = useId()
 
 const visible = computed({
@@ -342,6 +347,24 @@ const getLineRange = (chunk) => {
     font-size: 11px;
     line-height: 18px;
     white-space: nowrap;
+  }
+
+  .open-document-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 28px;
+    border: 0;
+    border-radius: 4px;
+    padding: 2px 6px;
+    background: transparent;
+    color: var(--main-700);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+
+    &:hover { background: var(--gray-100); }
+    &:focus-visible { outline: 2px solid var(--main-color); outline-offset: 2px; }
   }
 
   .chunk-body {
