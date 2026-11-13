@@ -1,4 +1,4 @@
-![Yuxi: a self-hosted, multi-tenant knowledge agent platform](https://oss-img.xerrors.cn/posts/2026/08/20260818-151118-mac-1787037059154-8c08f48c.png)
+![Yuxi: a self-hosted, multi-tenant knowledge agent platform](https://oss-img.xerrors.cn/github/yuxi-social-preview-a4f67514.svg)
 
 Yuxi is a self-hosted, multi-tenant knowledge agent platform. It brings knowledge base retrieval, knowledge graphs, LangGraph multi-agent orchestration, MCP/Skills, sandbox tools, and access control into one workspace.
 
@@ -340,4 +340,4 @@ Yuxi's implementation and documentation draw on the following excellent open-sou
 
 Yuxi itself is licensed under the MIT License. See [LICENSE](LICENSE) for details. Third-party components included through Docker Compose retain their own licenses. Before redistribution or commercial deployment, check the upstream licenses and source-code obligations for the actual image versions you use; see the [production deployment guide](docs/advanced/deployment.md) for the relevant boundaries.
 
-[![Give Yuxi a Star](https://oss-img.xerrors.cn/posts/2026/08/20260818-184409-image-da91658b.png)](https://github.com/xerrors/Yuxi)
+[![Give Yuxi a Star](https://oss-img.xerrors.cn/github/yuxi-star-cta-c3ec1417.svg)](https://github.com/xerrors/Yuxi)
