@@ -299,6 +299,42 @@ const projectGroups = computed(() =>
   })
 )
 const otherSessions = computed(() => groupedNavigation.value.otherSessions)
+const currentChatGroup = computed(() =>
+  groupedNavigation.value.groups.find((group) =>
+    group.sessions.some((chat) => chat.id === props.currentChatId)
+  )
+)
+const currentChatLocation = computed(() =>
+  currentChatGroup.value?.project.id ||
+  (otherSessions.value.some((chat) => chat.id === props.currentChatId) ? 'recent' : null)
+)
+
+// 等待路由和异步列表就绪后定位；手动折叠项目不触发重新展开。
+watch(
+  [() => props.currentChatId, currentChatLocation, () => props.visible,
+    () => props.showHistory, () => props.collapsed, recentLoading],
+  async () => {
+    if (!props.visible || !props.showHistory || props.collapsed || recentLoading.value ||
+      !currentChatLocation.value) return
+    const group = currentChatGroup.value
+    if (group) {
+      projectsExpanded.value = true
+      expandedProjects.value = new Set([...expandedProjects.value, group.project.id])
+      const currentIndex = group.sessions.findIndex((chat) => chat.id === props.currentChatId)
+      projectVisibleCounts.value[group.project.id] = Math.max(
+        projectVisibleCounts.value[group.project.id] ?? INITIAL_PROJECT_SESSIONS,
+        currentIndex + 1
+      )
+    } else {
+      recentExpanded.value = true
+    }
+    await nextTick()
+    listElement.value?.querySelector('[aria-current="page"]')?.scrollIntoView({
+      block: 'nearest', inline: 'nearest'
+    })
+  },
+  { immediate: true, flush: 'post' }
+)
 
 /** 展开当前项目的下一批对话。 */
 function showMoreProjectSessions(group) {
@@ -423,9 +459,11 @@ const confirmDeleteProject = (project) => {
   min-height: 30px;
   border-radius: 8px;
   color: var(--gray-800);
+  &:hover {
+    background: var(--gray-50);
+  }
   &:hover,
   &:focus-within {
-    background: var(--gray-50);
     .project-action {
       opacity: 1;
       pointer-events: auto;

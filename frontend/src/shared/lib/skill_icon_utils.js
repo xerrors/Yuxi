@@ -2,6 +2,7 @@ import {
   BookOpenText,
   CalendarCheck,
   ChartNoAxesCombined,
+  Computer,
   EthernetPort,
   FileText,
   FlaskConical,
@@ -19,6 +20,7 @@ import {
 } from '@lucide/vue'
 
 const EXTENSION_ICON_RULES = [
+  { keywords: ['abridge'], icon: Computer },
   { keywords: ['tencent-meeting', '腾讯会议'], icon: Video },
   { keywords: ['weknora'], icon: Search },
   { keywords: ['attendance', '考勤'], icon: CalendarCheck },

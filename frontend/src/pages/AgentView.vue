@@ -1,6 +1,5 @@
 <template>
   <div class="agent-view" :class="{ 'sessions-pinned': sidebarCollapsed && sessionsPinned }">
-    <SessionNavigation v-if="sidebarCollapsed" panel :active="ownsCurrentRoute" />
     <SessionWorkspace
       ref="workspaceRef"
       class="agent-session-workspace"
@@ -26,7 +25,6 @@ import { computed, onActivated, onBeforeUnmount, onDeactivated, ref, watch } fro
 import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useChatUIStore } from '@/modules/session'
-import SessionNavigation from '@/modules/session/ui/SessionNavigation.vue'
 import SessionWorkspace from '@/modules/session/ui/SessionWorkspace.vue'
 import SessionAgentPicker from '@/modules/agents/ui/SessionAgentPicker.vue'
 import { useAgentStore } from '@/modules/agents/model/agent'

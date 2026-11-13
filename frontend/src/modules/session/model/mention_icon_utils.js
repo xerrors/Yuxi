@@ -13,7 +13,9 @@ const MENTION_TYPE_ICON_COMPONENTS = {
   mcp: Plug
 }
 
-export const getMentionIconComponent = (type, value) =>
-  type === 'skill' ? getSkillIcon(value) : MENTION_TYPE_ICON_COMPONENTS[type] || Plug
-
-export const getMentionIconStyle = () => null
+export const getMentionIconComponent = (type, value, label = '') =>
+  type === 'mcp'
+    ? getSkillIcon(`${value} ${label}`, Plug)
+    : type === 'skill'
+      ? getSkillIcon(value)
+      : MENTION_TYPE_ICON_COMPONENTS[type] || Plug

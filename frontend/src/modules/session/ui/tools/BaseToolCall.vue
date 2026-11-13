@@ -14,22 +14,24 @@
       @keydown.enter.self="toggleExpand"
       @keydown.space.self.prevent="toggleExpand"
     >
-      <!-- Fixed Status Icon -->
-      <slot name="icon" :status="effectiveStatus">
-        <span v-if="effectiveStatus === 'completed'">
-          <component v-if="toolIcon" :is="toolIcon" size="15" class="tool-loader tool-success" />
-          <CheckCircle v-else size="15" class="tool-loader tool-success" />
-        </span>
-        <span v-else-if="effectiveStatus === 'waiting'">
-          <Clock size="15" class="tool-loader tool-loading" />
-        </span>
-        <span v-else-if="['error', 'incomplete'].includes(effectiveStatus)">
-          <XCircle size="15" class="tool-loader tool-error" />
-        </span>
-        <span v-else>
-          <Loader size="15" class="tool-loader rotate tool-loading" />
-        </span>
-      </slot>
+      <!-- 默认图标与工具插槽共用状态颜色，避免专用图标绕过交互反馈。 -->
+      <span class="tool-status-icon" :class="`tool-status-icon--${effectiveStatus}`">
+        <slot name="icon" :status="effectiveStatus">
+          <component
+            v-if="effectiveStatus === 'completed'"
+            :is="toolIcon || CheckCircle"
+            size="15"
+            class="tool-loader tool-success"
+          />
+          <Clock v-else-if="effectiveStatus === 'waiting'" size="15" class="tool-loader tool-loading" />
+          <XCircle
+            v-else-if="['error', 'incomplete'].includes(effectiveStatus)"
+            size="15"
+            class="tool-loader tool-error"
+          />
+          <Loader v-else size="15" class="tool-loader rotate tool-loading" />
+        </slot>
+      </span>
 
       <!-- Content Area with Slots -->
       <div class="tool-header-content">
@@ -37,7 +39,7 @@
         <template v-if="$slots.header">
           <slot name="header" :tool-call="toolCall" :tool-name="toolName"></slot>
           <span v-if="summaryOnly && effectiveStatus === 'error'" class="tool-incomplete-label">执行失败</span>
-          <span v-else-if="effectiveStatus === 'incomplete'" class="tool-incomplete-label">已中断</span>
+          <span v-else-if="effectiveStatus === 'incomplete'" class="tool-incomplete-label">{{ incompleteLabel }}</span>
           <span v-else-if="effectiveStatus === 'waiting'" class="tool-incomplete-label"
             >等待协作</span
           >
@@ -68,7 +70,7 @@
             工具&nbsp; <span class="tool-name">{{ toolName }}</span> &nbsp; 等待协作
           </span>
           <span v-else-if="effectiveStatus === 'incomplete'">
-            工具&nbsp; <span class="tool-name">{{ toolName }}</span> &nbsp; 已中断
+            工具&nbsp; <span class="tool-name">{{ toolName }}</span> &nbsp; {{ incompleteLabel }}
           </span>
 
           <slot name="header-running" v-else :tool-name="toolName">
@@ -101,9 +103,12 @@
         <!-- Result Slot -->
         <div class="tool-result" v-if="hasResult || forceShowResult || hasToolError">
           <div v-if="hasToolError" class="tool-error-result">
-            <ToolResultContent
-              :content="hasResult ? resultContent : toolCall.error_message || '工具执行失败'"
-            />
+            <!-- 插槽只覆盖错误正文，工具失败状态仍由基础卡片拥有。 -->
+            <slot name="error-result" :result-content="resultContent">
+              <ToolResultContent
+                :content="hasResult ? resultContent : toolCall.error_message || '工具执行失败'"
+              />
+            </slot>
           </div>
           <slot v-else name="result" :tool-call="toolCall" :result-content="resultContent">
             <div class="tool-result-content" :data-tool-call-id="toolCall.id">
@@ -148,6 +153,7 @@ import {
 import { getToolCallResultContent } from '@/modules/session/model/toolCallProjection'
 
 const props = defineProps({
+  incompleteLabel: { type: String, default: '已中断' },
   headerAction: { type: Function, default: null },
   // 仅展示动作摘要的工具没有展开入口，完整回执由消息调试面板承载。
   summaryOnly: { type: Boolean, default: false },
@@ -209,7 +215,7 @@ const toolId = computed(() => getToolCallId(props.toolCall))
 
 const toolName = computed(() => {
   const tool = findToolInList(toolId.value, toolMetadataList.value)
-  return tool ? tool.name : getToolName(toolId.value)
+  return tool?.name && tool.name !== toolId.value ? tool.name : getToolName(toolId.value)
 })
 
 const toolMetadataList = computed(() =>
@@ -301,24 +307,33 @@ const hasResult = computed(() => {
       color: var(--main-700);
     }
 
+    .tool-status-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      color: var(--main-600);
+    }
+
     .tool-loader {
       margin-top: 0;
-      color: var(--main-600);
     }
 
     .tool-loader.rotate {
       animation: rotate 2s linear infinite;
     }
 
-    .tool-loader.tool-success {
+    .tool-status-icon--completed {
       color: var(--color-success-500);
     }
 
-    .tool-loader.tool-error {
+    .tool-status-icon--error,
+    .tool-status-icon--incomplete {
       color: var(--color-error-500);
     }
 
-    .tool-loader.tool-loading {
+    .tool-status-icon--running,
+    .tool-status-icon--waiting {
       color: var(--color-info-500);
     }
 
@@ -456,10 +471,11 @@ const hasResult = computed(() => {
         color: var(--gray-600);
       }
 
-      .tool-loader {
+      .tool-status-icon {
         color: var(--gray-600);
 
-        &.tool-error {
+        &--error,
+        &--incomplete {
           color: var(--color-error-500);
         }
       }
@@ -472,6 +488,10 @@ const hasResult = computed(() => {
         font-size: 13px;
         color: var(--gray-500);
       }
+    }
+
+    &:not(.is-summary) .tool-header:is(:hover, :focus-visible) .tool-status-icon--completed {
+      color: var(--gray-700);
     }
 
     .tool-content {

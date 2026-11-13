@@ -19,8 +19,7 @@
       />
       <component
         v-else
-        :is="getMentionIconComponent(type, value)"
-        :style="getMentionIconStyle(type, value)"
+        :is="getMentionIconComponent(type, value, label)"
         :stroke-width="MENTION_ICON_STROKE_WIDTH"
         :size="MENTION_ICON_SIZE"
       />
@@ -34,7 +33,6 @@ import FileTypeIcon from '@/shared/ui/FileTypeIcon.vue'
 import FallbackAvatar from '@/shared/ui/FallbackAvatar.vue'
 import {
   getMentionIconComponent,
-  getMentionIconStyle,
   MENTION_ICON_SIZE,
   MENTION_ICON_STROKE_WIDTH
 } from '@/modules/session/model/mention_icon_utils'

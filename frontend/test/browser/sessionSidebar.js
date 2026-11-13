@@ -9,7 +9,7 @@ async page => {
   const project = { id: 'sidebar-project', name: '知识探索与长期研究项目', status: 'active', selection_status: 'selectable' }
   const sessions = Array.from({ length: 32 }, (_, index) => ({
     id: `sidebar-session-${index}`, object: 'agent.session', agent: { id: agent.agent_id, model: 'test:chat' }, metadata: {}, status: 'completed', created_at: 1792700000 - index, last_active_at: 1792700000 - index,
-    yuxi: { title: index === 0 ? '调研浏览器智能体强化学习与长名称展示' : `研究对话 ${index + 1}`, project_id: index < 3 ? project.id : null, is_pinned: false, unread: false, context: {}, config: {}, current_turn: null }
+    yuxi: { title: index === 0 ? '调研浏览器智能体强化学习与长名称展示' : `研究对话 ${index + 1}`, project_id: index < 3 || index >= 26 ? project.id : null, is_pinned: false, unread: false, context: {}, config: {}, current_turn: null }
   }))
   let userId = 1
   let unavailableStatus = null
@@ -60,7 +60,7 @@ async page => {
   })
   await page.setViewportSize({ width: 1440, height: 1000 })
   await page.goto(origin + '/agent')
-  const panel = page.locator('#sidebar-session-navigation:visible, .agent-view #sidebar-session-panel')
+  const panel = page.locator('#sidebar-session-navigation:visible, #sidebar-session-panel')
   /** 遮罩终色必须来自所在列表的实际背景，覆盖主侧栏与浮动/固定面板。 */
   const checkMaskSurface = async () => {
     const sample = await panel.locator('.session-item:not(.active):not(:hover) .actions-mask').first().evaluate(mask => {
@@ -272,6 +272,22 @@ async page => {
   await page.setViewportSize({ width: 1440, height: 1000 })
   await page.evaluate(async () => { const { useThemeStore } = await import('/src/shared/model/theme.js'); useThemeStore().setTheme('light') })
   const navigate = path => page.evaluate(path => document.querySelector('#app').__vue_app__.config.globalProperties.$router.push(path), path)
+  await navigate(`/agent/${sessions[28].id}`)
+  await showPanel()
+  const currentProjectItem = panel.locator('[aria-current="page"]')
+  await currentProjectItem.waitFor()
+  check((await currentProjectItem.innerText()).includes(sessions[28].yuxi.title), '项目第六条必须自动展开并选中')
+  check(await page.locator('#sidebar-session-panel').count() === 1, '切换线程只能保留一个独立面板实例')
+  await panel.locator('.project-toggle').click()
+  await page.waitForFunction(() => document.querySelector('#sidebar-session-panel .project-toggle').getAttribute('aria-expanded') === 'false')
+  const readsBeforeRefresh = sessionReads
+  await page.evaluate(async () => {
+    const { useChatThreadsStore } = await import('/src/modules/session/model/chatThreads.js')
+    await useChatThreadsStore().loadThreads()
+  })
+  check(sessionReads > readsBeforeRefresh, '折叠负例必须实际刷新会话列表')
+  check(await panel.locator('.project-toggle').getAttribute('aria-expanded') === 'false', '手动折叠后刷新不能强制展开')
+  await hidePanel()
   await page.evaluate(() => import('/src/pages/DashboardView.vue'))
   await navigate('/agent')
   await showPanel()
@@ -283,7 +299,7 @@ async page => {
     const sampling = new Promise(resolve => {
       function sample() {
         const dashboard = document.querySelector('.dashboard-container')
-        if (dashboard) frames.push({ x: dashboard.getBoundingClientRect().x, mainX: document.querySelector('#app-router-view').getBoundingClientRect().x, panelCount: document.querySelectorAll('.agent-view #sidebar-session-panel').length })
+        if (dashboard) frames.push({ x: dashboard.getBoundingClientRect().x, mainX: document.querySelector('#app-router-view').getBoundingClientRect().x, panelCount: [...document.querySelectorAll('#sidebar-session-panel')].filter(node => node.getClientRects().length).length })
         if (performance.now() - started < 450) requestAnimationFrame(sample)
         else resolve()
       }
@@ -305,13 +321,13 @@ async page => {
     await pin.click()
     await navigate(path)
     await page.waitForURL(origin + path)
-    check(await panel.count() === 0, '收起后的独立对话面板只能存在于AgentView：' + path)
+    check(await panel.isHidden(), '非对话页面必须隐藏独立对话面板：' + path)
     check(await trigger.count() === 0, '非对话页不应提供独立面板触发区域：' + path)
     check(await page.locator('.app-layout.sessions-pinned').count() === 0, 'AppLayout不得拥有对话面板占位样式')
     await page.waitForFunction(() => Math.abs(document.querySelector('#app-router-view').getBoundingClientRect().x - 52) < 1)
     await page.mouse.move(80, 20)
     await page.waitForTimeout(250)
-    check(await panel.count() === 0, '非对话页移过原触发区不能重新打开面板')
+    check(await panel.isHidden(), '非对话页移过原触发区不能重新打开面板')
     if (path === '/agent-manage') {
       const imagePath = '/tmp/yuxi-session-sidebar-agent-manage-collapsed.png'
       await page.screenshot({ path: imagePath })
@@ -330,7 +346,7 @@ async page => {
       screenshots.push(imagePath)
     }
     await page.getByRole('button', { name: '折叠侧边栏', exact: true }).click()
-    await panel.waitFor({ state: 'detached' })
+    await panel.waitFor({ state: 'hidden' })
     await navigate('/agent')
     await trigger.waitFor()
     check(await panel.isHidden(), '返回AgentView不应自动恢复已关闭的独立面板')
@@ -361,7 +377,7 @@ async page => {
   await navigate('/dashboard')
   await page.reload()
   await page.locator('.dashboard-container').waitFor()
-  check(await page.locator('#sidebar-session-panel').count() === 0 && (await main.boundingBox()).x === 52, '刷新Dashboard不能挂载或为对话面板占位')
+  check(await page.locator('#sidebar-session-panel').isHidden() && (await main.boundingBox()).x === 52, '刷新Dashboard不能显示对话面板或为其占位')
   const rememberedEntry = page.locator('.nav').getByRole('link', { name: '对话', exact: true })
   check(await rememberedEntry.getAttribute('href') === `/agent/${returnSession.id}`, '刷新其他页后仍须记住原线程')
   await rememberedEntry.click()
@@ -460,5 +476,5 @@ async page => {
     check(await target.evaluate(el => getComputedStyle(el).transitionDuration) === '0s', '减少动态效果时应关闭侧栏与正文过渡')
   }
   check(sessionReads >= 2, '协议 fixture 未经过真实布局加载')
-  return { hover: 'passed', keyboard: 'passed', pin: 'passed', unpinCloses: 'passed', panelSearch: 'passed', newChat: 'passed', agentViewScope: 'passed', originalSidebarHistory: 'passed', returnToThread: 'passed', draftPreserved: 'passed', branding: 'passed', portalMenu: 'passed', sharedListState: 'passed', refreshRecovery: 'passed', accountScope: 'passed', dashboardStableFrames: fixedDashboardFrames.length, visibleStatusSync: 'passed', widths: [1440, 1024, 768], themes: ['light', 'dark'], screenshots }
+  return { hover: 'passed', keyboard: 'passed', pin: 'passed', unpinCloses: 'passed', panelSearch: 'passed', newChat: 'passed', agentViewScope: 'passed', singlePanel: 'passed', currentProjectReveal: 'passed', collapsedRefresh: 'passed', originalSidebarHistory: 'passed', returnToThread: 'passed', draftPreserved: 'passed', branding: 'passed', portalMenu: 'passed', sharedListState: 'passed', refreshRecovery: 'passed', accountScope: 'passed', dashboardStableFrames: fixedDashboardFrames.length, visibleStatusSync: 'passed', widths: [1440, 1024, 768], themes: ['light', 'dark'], screenshots }
 }

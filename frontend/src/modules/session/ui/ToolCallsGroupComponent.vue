@@ -63,7 +63,7 @@
 </template>
 
 <script setup>
-import { computed, ref, watch, defineAsyncComponent } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ChevronDown, Atom } from '@lucide/vue'
 import { storeToRefs } from 'pinia'
 import { useAgentStore } from '@/modules/agents'
@@ -78,7 +78,7 @@ import {
   normalizeToolCalls
 } from '@/modules/session/ui/tools/toolRegistry'
 
-const CooperationTool = defineAsyncComponent(() => import('@/modules/session/ui/tools/renderers/CooperationTool.vue'))
+import { CooperationTool } from './tools/toolRenderers.js'
 
 const agentStore = useAgentStore()
 const { availableTools, toolMetadata } = storeToRefs(agentStore)
@@ -153,7 +153,7 @@ const getToolCallLabel = (toolCall) => {
       ? Object.values(availableTools.value)
       : []
   const tool = findToolInList(toolId, toolsList)
-  return tool ? tool.name : getToolName(toolId)
+  return tool?.name && tool.name !== toolId ? tool.name : getToolName(toolId)
 }
 
 const toolCallsSummaryTitle = computed(() => {
@@ -181,9 +181,11 @@ const statusSummary = computed(() => {
   )
   const runningCount = states.filter((state) => state === 'running').length
   const errorCount = states.filter((state) => state === 'error').length
+  const incompleteCount = states.filter((state) => state === 'incomplete').length
 
   const parts = []
   if (errorCount > 0) parts.push(`${errorCount} 失败`)
+  if (incompleteCount > 0) parts.push(`${incompleteCount} 未完成`)
   if (runningCount > 0) parts.push(`${runningCount} 进行中`)
 
   return parts.join(' · ')

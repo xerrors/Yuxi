@@ -455,7 +455,7 @@
                     block
                     @click="showRenameFolderModal(row)"
                   >
-                    <template #icon><component :is="h(Pencil)" size="14" /></template>
+                    <template #icon><Pencil size="14" /></template>
                     重命名
                   </a-button>
                   <a-button
@@ -464,7 +464,7 @@
                     block
                     @click="showCreateFolderModal(row.file_id)"
                   >
-                    <template #icon><component :is="h(FolderPlus)" size="14" /></template>
+                    <template #icon><FolderPlus size="14" /></template>
                     新建子文件夹
                   </a-button>
                   <a-button
@@ -474,13 +474,13 @@
                     danger
                     @click="handleDeleteFolder(row)"
                   >
-                    <template #icon><component :is="h(Trash2)" size="14" /></template>
+                    <template #icon><Trash2 size="14" /></template>
                     删除文件夹
                   </a-button>
                 </template>
                 <template v-else>
                   <a-button type="text" block @click="viewFileGraph(row)">
-                    <template #icon><component :is="h(Network)" size="14" /></template>
+                    <template #icon><Network size="14" /></template>
                     查看图谱
                   </a-button>
                   <a-button
@@ -492,7 +492,7 @@
                     :loading="clearingGraphFileId === row.file_id"
                     @click="handleClearFileGraph(row)"
                   >
-                    <template #icon><component :is="h(Eraser)" size="14" aria-hidden="true" /></template>
+                    <template #icon><Eraser size="14" aria-hidden="true" /></template>
                     清除图谱
                   </a-button>
                   <a-button
@@ -501,7 +501,7 @@
                     @click="handleDownloadFile(row)"
                     :disabled="lock || !canDownloadFile(row)"
                   >
-                    <template #icon><component :is="h(Download)" size="14" /></template>
+                    <template #icon><Download size="14" /></template>
                     下载文件
                   </a-button>
 
@@ -512,7 +512,7 @@
                     :disabled="!canEditFileMarkdown(row)"
                     @click="editFileMarkdown(row)"
                   >
-                    <template #icon><component :is="h(Pencil)" size="14" aria-hidden="true" /></template>
+                    <template #icon><Pencil size="14" aria-hidden="true" /></template>
                     编辑文件
                   </a-button>
 
@@ -524,7 +524,7 @@
                     @click="handleParseFile(row)"
                     :disabled="lock"
                   >
-                    <template #icon><component :is="h(FileText)" size="14" /></template>
+                    <template #icon><FileText size="14" /></template>
                     {{ getFilePrimaryAction(row)?.label || '解析文件' }}
                   </a-button>
 
@@ -536,7 +536,7 @@
                     @click="handleIndexFile(row)"
                     :disabled="lock"
                   >
-                    <template #icon><component :is="h(Database)" size="14" /></template>
+                    <template #icon><Database size="14" /></template>
                     {{ getFilePrimaryAction(row)?.label || '入库' }}
                   </a-button>
 
@@ -548,7 +548,7 @@
                     @click="handleReindexFile(row)"
                     :disabled="lock"
                   >
-                    <template #icon><component :is="h(RotateCw)" size="14" /></template>
+                    <template #icon><RotateCw size="14" /></template>
                     重新入库
                   </a-button>
 
@@ -559,7 +559,7 @@
                     :disabled="!canReparseDocument(row)"
                     @click="handleReparseDocument(row)"
                   >
-                    <template #icon><component :is="h(RotateCw)" size="14" aria-hidden="true" /></template>
+                    <template #icon><RotateCw size="14" aria-hidden="true" /></template>
                     重新解析
                   </a-button>
 
@@ -571,7 +571,7 @@
                     @click="handleDeleteFile(row.file_id)"
                     :disabled="!canDeleteFile(row, lock)"
                   >
-                    <template #icon><component :is="h(Trash2)" size="14" /></template>
+                    <template #icon><Trash2 size="14" /></template>
                     删除文件
                   </a-button>
                 </template>

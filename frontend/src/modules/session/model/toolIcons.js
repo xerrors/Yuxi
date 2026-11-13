@@ -13,6 +13,7 @@ import {
   Square,
   Brain,
   Calculator,
+  Computer,
   Database,
   FileEdit,
   FilePen,
@@ -23,10 +24,25 @@ import {
   Globe,
   HelpCircle,
   Image,
+  MousePointer2,
+  Monitor,
+  PanelsTopLeft,
+  Plug,
   SquareTerminal
 } from '@lucide/vue'
 
 export const TOOL_ICON_MAP = {
+  devices_list: Computer,
+  session_open: Plug,
+  command_execute: SquareTerminal,
+  computer_apps: PanelsTopLeft,
+  computer_windows: PanelsTopLeft,
+  computer_open: Computer,
+  computer_observe: Monitor,
+  computer_act: MousePointer2,
+  browser_open: Globe,
+  browser_observe: PanelsTopLeft,
+  browser_act: MousePointer2,
   ask_user_question: HelpCircle,
   create_session: CirclePlus,
   send_message: Send,

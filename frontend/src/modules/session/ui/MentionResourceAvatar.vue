@@ -30,7 +30,7 @@ const color = computed(() => getExtensionIconColor(props.item.resourceId || prop
 const icon = computed(() => {
   if (props.item.type === 'knowledge') return getKbTypeIcon(props.item.kbType || 'milvus')
   if (props.item.type === 'skill') return getSkillIcon(props.item.value)
-  return getMentionIconComponent(props.item.type, props.item.value)
+  return getMentionIconComponent(props.item.type, props.item.value, props.item.label)
 })
 </script>
 

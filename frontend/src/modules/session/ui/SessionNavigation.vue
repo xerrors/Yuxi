@@ -28,7 +28,6 @@ const infoStore = useInfoStore()
 const userStore = useUserStore()
 const {
   threads,
-  currentThreadId,
   hasLoadedThreads,
   threadsLoadError,
   hasMoreThreads,
@@ -41,7 +40,9 @@ const sessionPanel = ref(null)
 const sessionTrigger = ref(null)
 const sessionSearchOpen = ref(false)
 const isAgentView = computed(() => ['AgentComp', 'AgentCompWithThreadId'].includes(route.name))
-const activeSessionThreadId = computed(() => (isAgentView.value ? currentThreadId.value : null))
+const activeSessionThreadId = computed(() =>
+  isAgentView.value ? route.params.thread_id || null : null
+)
 const productName = computed(() => infoStore.branding.name || 'Yuxi')
 const visible = computed(() =>
   props.panel ? props.active && (sessionsPinned.value || sessionPeekOpen.value) : props.visible
@@ -272,7 +273,7 @@ const handleDeleteProject = async (projectId) => {
 }
 </script>
 <template>
-  <div class="session-navigation" :class="{ 'session-panel-shell': panel }">
+  <div v-show="!panel || active" class="session-navigation" :class="{ 'session-panel-shell': panel }">
     <div
       v-if="panel && active && !sessionsPinned"
       ref="sessionTrigger"

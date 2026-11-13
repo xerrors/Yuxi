@@ -386,6 +386,7 @@ provide('settingsModal', {
       </div>
     </div>
     <main id="app-router-view">
+      <SessionNavigation v-if="sidebarCollapsed" panel :active="isAgentView" />
       <router-view v-slot="{ Component, route }">
         <keep-alive>
           <component

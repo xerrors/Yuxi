@@ -830,8 +830,8 @@ defineExpose({ closeSelectionModal })
             }
 
             &.selected:hover {
-              border-color: var(--main-color);
-              background: var(--main-10);
+              border-color: var(--runtime-selection-border, var(--main-color));
+              background: var(--runtime-selection-bg, var(--main-10));
             }
           }
         }
@@ -1007,15 +1007,15 @@ defineExpose({ closeSelectionModal })
     }
 
     &.selected {
-      border-color: var(--main-color);
-      background: var(--main-10);
+      border-color: var(--runtime-selection-border, var(--main-color));
+      background: var(--runtime-selection-bg, var(--main-10));
 
       .option-indicator {
-        color: var(--main-color);
+        color: var(--runtime-selection-accent, var(--main-color));
       }
 
       .option-text {
-        color: var(--main-color);
+        color: var(--runtime-selection-text, var(--main-color));
         font-weight: 500;
       }
     }
@@ -1331,6 +1331,13 @@ defineExpose({ closeSelectionModal })
 
 .selection-search .inline-action-btn, .selection-search :deep(.inline-action-btn) {
   font-size: 13px;
+}
+
+:global(:root.dark) .agent-runtime-config-form {
+  --runtime-selection-bg: color-mix(in srgb, var(--main-color) 12%, var(--gray-25));
+  --runtime-selection-border: var(--main-600);
+  --runtime-selection-accent: var(--main-700);
+  --runtime-selection-text: var(--gray-900);
 }
 
 @media (max-width: 600px) {

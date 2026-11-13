@@ -1,4 +1,7 @@
+import { ABRIDGE_TOOL_NAMES, parseAbridgeResult } from './abridgeToolResult.js'
+
 export const TOOL_NAME_MAP = {
+  ...ABRIDGE_TOOL_NAMES,
   create_session: '创建会话',
   send_message: '投递协作消息',
   submit_input: '提交工作',
@@ -140,6 +143,13 @@ export const getToolCallStatus = (toolCall) => {
   const result = parseToolCallResult(toolCall)
   const statuses = [toolCall?.status, toolCall?.tool_call_result?.status, result?.status]
   if (statuses.some((status) => status === 'error' || status === 'failed')) return 'error'
+  if (Object.hasOwn(ABRIDGE_TOOL_NAMES, getToolCallId(toolCall))) {
+    const receipt = parseAbridgeResult(getToolCallResultContent(toolCall))
+    if (receipt?.status === 'outcome_unknown') return 'incomplete'
+    if (receipt?.error || ['failed', 'error', 'rejected'].includes(receipt?.status)) return 'error'
+    if (receipt?.result?.timed_out ||
+      (typeof receipt?.result?.exit_code === 'number' && receipt.result.exit_code !== 0)) return 'error'
+  }
   // 已保存的旧搜索失败只有 error 正文，没有错误状态。
   if (
     ['web_search', 'tavily_search', 'doubao_search'].includes(getToolCallId(toolCall)) &&

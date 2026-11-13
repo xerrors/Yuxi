@@ -520,3 +520,176 @@ test('技能安装的纯文本失败回执不被摘要隐藏，成功名称中�
   })
   assert.match(empty, /未发现技能/)
 })
+
+
+test('多个工具卡片与协作分组共享同一异步组件定义', async () => {
+  const { CooperationTool, TOOL_RENDERERS } = await server.ssrLoadModule(
+    '/src/modules/session/ui/tools/toolRenderers.js'
+  )
+  const selected = []
+  const grouped = []
+  const cooperation = { id: 'shared-cooperation', name: 'send_message', args: {}, result: {} }
+  const app = createSSRApp({ render: () => h('div', [
+    h(ToolCallRenderer, { toolCall: { name: 'calculator', args: {}, result: 2 } }),
+    h(ToolCallRenderer, { toolCall: { name: 'calculator', args: {}, result: 3 } }),
+    h(ToolCallRenderer, { toolCall: cooperation }),
+    h(ToolCallsGroup, { toolCalls: [cooperation], cooperationView: { sessions: [], tasks: new Map() } })
+  ]) })
+  app.use(createPinia())
+  app.use(createRouter({ history: createMemoryHistory(), routes: [] }))
+  app.mixin({
+    created() {
+      const instance = this.$
+      if (instance.type === ToolCallRenderer) selected.push(instance.setupState.currentRenderer)
+      if (instance.type === ToolCallsGroup) grouped.push(instance.setupState.CooperationTool)
+    }
+  })
+  await renderToString(app)
+  assert.equal(selected.length, 3)
+  assert.equal(selected[0], TOOL_RENDERERS.calculator)
+  assert.equal(selected[1], selected[0])
+  assert.equal(selected[2], CooperationTool)
+  assert.deepEqual(grouped, [CooperationTool])
+})
+
+test('未知工具回退基础卡片，隐藏工具不产生展示', async () => {
+  const unknown = await render(ToolCallRenderer, {
+    toolCall: { name: 'future_tool', args: {}, result: '完成' }, defaultExpanded: true
+  })
+  assert.match(unknown, /future_tool/)
+  assert.match(unknown, /tool-call-display/)
+  const hidden = await render(ToolCallRenderer, { toolCall: { name: 'present_artifacts' } })
+  assert.doesNotMatch(hidden, /tool-call-display|工具详情暂时不可用/)
+})
+
+test('Abridge 浏览器工具通过实际入口展示动作、网页摘要和截图，原始结果保留折叠入口', async () => {
+  for (const name of ['browser_open', 'browser_observe', 'browser_act']) {
+    for (const type of ['text', 'input_text']) {
+      const receipt = { status: 'executed', result: {
+        url: 'https://example.com/redirected', title: '旧标题',
+        observation: { title: '浏览器演示页', url: 'https://example.com/page', text: '原始页面观察正文' }
+      } }
+      const content = [
+        { type, text: JSON.stringify(receipt) },
+        { type: 'image', data: 'cGljdHVyZQ==', mimeType: 'image/png' }
+      ]
+      const html = await render(ToolCallRenderer, {
+        toolCall: { name, args: { url: 'https://example.com/requested', action: { type: 'click' } }, result: JSON.stringify(content) },
+        appearance: 'timeline', defaultExpanded: true
+      })
+      assert.match(html, /打开网页|查看网页|点击网页元素/)
+      assert.match(html, /浏览器演示页/)
+      assert.match(html, /alt="工具结果图片"/)
+      assert.match(html, /tool-status-icon--completed/)
+      assert.match(html, /参数:/)
+      assert.match(html, /<details[^>]*><summary[^>]*>原始结果/)
+      assert.match(html, /原始页面观察正文/)
+      assert.doesNotMatch(html, /<details[^>]* open|browser-page-title|browser-page-url|resource-list/)
+    }
+  }
+})
+
+test('Abridge 浏览器动作使用中文图案与目标，填写内容不进入折叠标题', async () => {
+  for (const [type, label, icon] of [
+    ['click', '点击网页元素', 'lucide-mouse-pointer-click'],
+    ['fill', '填写网页内容', 'lucide-keyboard']
+  ]) {
+    const html = await render(ToolCallRenderer, {
+      toolCall: { name: 'browser_act', args: { action: { type, element_ref: 'ref-42', text: '不应出现在标题的输入' } }, result: { status: 'executed', result: {} } }
+    })
+    assert.match(html, new RegExp(label))
+    assert.match(html, new RegExp(icon))
+    assert.match(html, /ref-42/)
+    assert.doesNotMatch(html, /不应出现在标题的输入/)
+  }
+})
+
+test('Abridge 浏览器观察支持直接页面结果，无观察字段保留请求目标和原始回执', async () => {
+  const html = await render(ToolCallRenderer, {
+    toolCall: { name: 'browser_observe', args: {}, result: { status: 'executed', result: { title: '当前页', url: 'https://example.com/current', text: '当前观察文本' } } },
+    defaultExpanded: true
+  })
+  assert.match(html, /查看网页/)
+  assert.match(html, /当前页/)
+  assert.match(html, /当前观察文本/)
+  assert.match(html, /<details[^>]*><summary[^>]*>原始结果/)
+  const empty = await render(ToolCallRenderer, {
+    toolCall: { name: 'browser_open', args: { url: 'https://example.com/pending' }, result: { status: 'executed', result: {} } },
+    defaultExpanded: true
+  })
+  assert.match(empty, /https:\/\/example.com\/pending/)
+  assert.doesNotMatch(empty, /alt="工具结果图片"|browser-page-title|browser-page-url/)
+})
+
+test('Abridge 浏览器复用拒绝、失败与执行结果未知状态，普通工具不扩大协议解释', async () => {
+  for (const name of ['browser_open', 'browser_observe', 'browser_act']) {
+    for (const receipt of [{ status: 'rejected' }, { error: '浏览器不可用' }, { status: 'outcome_unknown' }]) {
+      const html = await render(ToolCallRenderer, {
+        toolCall: { name, result: [{ type: 'text', text: JSON.stringify(receipt) }] }, appearance: 'timeline'
+      })
+      assert.match(html, receipt.status === 'outcome_unknown' ? /执行结果未知/ : /执行失败/)
+      assert.doesNotMatch(html, /tool-status-icon--completed/)
+    }
+  }
+  const unknown = await render(ToolCallRenderer, { toolCall: { name: 'browser_future', result: [{ type: 'text', text: '{"error":"业务字段"}' }] } })
+  assert.match(unknown, /browser_future/)
+  assert.match(unknown, /tool-status-icon--completed/)
+  assert.doesNotMatch(unknown, /原始结果/)
+})
+
+test('Abridge 连接按声明能力显示浏览器或设备，设备和桌面文字保留原始结果', async () => {
+  for (const [capabilities, label] of [[['browser'], '浏览器'], [['screen'], '设备']]) {
+    const html = await render(ToolCallRenderer, {
+      toolCall: { name: 'session_open', args: { capabilities }, result: { status: 'active', capabilities } }, defaultExpanded: true
+    })
+    assert.match(html, new RegExp(`连接${label}`))
+    assert.match(html, /<details[^>]*><summary[^>]*>原始结果/)
+  }
+  for (const [name, result] of [
+    ['devices_list', { devices: [{ id: 'device-fixture', name: '演示设备' }] }],
+    ['computer_observe', { status: 'executed', result: { app_name: '演示应用', window_title: '桌面窗口' } }]
+  ]) {
+    const html = await render(ToolCallRenderer, { toolCall: { name, args: {}, result }, defaultExpanded: true })
+    assert.match(html, /<details[^>]*><summary[^>]*>原始结果/)
+    assert.doesNotMatch(html, /resource-list|command-stderr|abridge-result|退出码：/)
+  }
+})
+
+
+test('Abridge 设备命令参考命令工具直接展示标准输出，参数和折叠回执同时保留', async () => {
+  const html = await render(ToolCallRenderer, {
+    toolCall: {
+      name: 'command_execute', args: { command: 'example-command' },
+      result: [{ type: 'input_text', text: JSON.stringify({ status: 'executed', result: { stdout: 'Finder, Chrome', stderr: '', exit_code: 0 } }) }]
+    }, defaultExpanded: true, appearance: 'timeline'
+  })
+  assert.match(html, /<pre[^>]*>Finder, Chrome<\/pre>/)
+  assert.match(html, /参数:/)
+  assert.match(html, /<details[^>]*><summary[^>]*>原始结果/)
+  assert.doesNotMatch(html, /标准错误：|输出已截断|命令执行超时/)
+})
+
+test('Abridge 设备命令失败仍展示输出与标准错误，超时和截断不被原始 JSON 掩盖', async () => {
+  const html = await render(ToolCallRenderer, {
+    toolCall: {
+      name: 'command_execute', args: {},
+      result: { status: 'executed', result: { stdout: '部分输出', stderr: '命令失败', exit_code: 1, timed_out: true }, output_truncated: true }
+    }, defaultExpanded: true
+  })
+  assert.match(html, /执行失败/)
+  assert.match(html, /<pre[^>]*>部分输出\n标准错误：\n命令失败\n输出已截断\n命令执行超时<\/pre>/)
+  assert.match(html, /<details[^>]*><summary[^>]*>原始结果/)
+})
+
+test('Abridge 命令没有执行回执时保留基础卡片的真实错误和默认兜底', async () => {
+  for (const fields of [
+    { status: 'error', error_message: '设备未连接' },
+    { status: 'error', result: null, error_message: '设备未连接' },
+    { tool_call_result: { status: 'error', content: '' }, error_message: '设备未连接' },
+    { status: 'error' }
+  ]) {
+    const html = await render(ToolCallRenderer, { toolCall: { name: 'command_execute', ...fields }, defaultExpanded: true })
+    assert.match(html, fields.error_message ? /<pre[^>]*>设备未连接<\/pre>/ : /<pre[^>]*>工具执行失败<\/pre>/)
+    assert.doesNotMatch(html, /原始结果|<pre[^>]*>undefined<\/pre>|<pre[^>]*>null<\/pre>/)
+  }
+})

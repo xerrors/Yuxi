@@ -461,8 +461,9 @@ const hasManageScopeViolation = computed(() =>
   Boolean(scopes.manage_scope && !isManageScopeWithinRead(scopes.manage_scope))
 )
 
+initConfig()
+
 onMounted(() => {
-  initConfig()
   loadDepartments()
   loadUsers()
 })
@@ -664,9 +665,17 @@ defineExpose({ scopes, validate })
   background: var(--gray-0);
 }
 
-:root.dark .share-mode-card.active,
-:root.dark .selection-item.selected {
-  background: color-mix(in srgb, var(--main-color) 12%, var(--gray-50));
+:global(:root.dark) .share-mode-card.active,
+:global(:root.dark) .selection-item.selected {
+  background: color-mix(in srgb, var(--main-color) 12%, var(--gray-25));
+}
+
+:global(:root.dark) .share-mode-card.active {
+  border-color: var(--main-600);
+
+  .card-icon-wrapper {
+    color: var(--main-700);
+  }
 }
 
 .selection-item-content {

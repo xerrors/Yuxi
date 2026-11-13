@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 const rendererSource = readFileSync(
-  new URL('../../src/modules/session/ui/tools/ToolCallRenderer.vue', import.meta.url),
+  new URL('../../src/modules/session/ui/tools/toolRenderers.js', import.meta.url),
   'utf8'
 )
 const indexSource = readFileSync(

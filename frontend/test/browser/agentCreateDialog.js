@@ -88,6 +88,11 @@ async (page) => {
     await modal.getByText('团队共享', { exact: true }).click()
     const scopes = modal.locator('.share-config-form')
     await scopes.waitFor()
+    await modal.evaluate(async el => {
+      await Promise.all(el.getAnimations({ subtree: true })
+        .filter(animation => animation.effect.getComputedTiming().iterations !== Infinity)
+        .map(animation => animation.finished.catch(() => {})))
+    })
     check(await scopes.getByRole('radiogroup', { name: '读取权限', exact: true }).isVisible(), '团队共享必须直接展示通用权限组件')
     check(await scopes.evaluate(el => el.getBoundingClientRect().top > document.querySelector('.agent-description-textarea').getBoundingClientRect().bottom), '权限组件必须放在描述下方')
     check(await scopes.getByRole('radio', { name: /全局共享/ }).getAttribute('aria-checked') === 'true', '新建切换团队共享必须默认全局共享')

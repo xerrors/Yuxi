@@ -756,15 +756,17 @@ defineExpose({
             </label>
           </div>
 
-          <div v-if="!editingAgentId && canEditAgentShareConfig && isAgentShared" ref="shareConfigHeadingRef" tabindex="-1" aria-label="共享权限" class="create-sharing-section">
-            <ShareConfigForm
-              ref="agentShareConfigFormRef"
-              v-model="agentShareConfig"
-              :disabled="saving || resourceCreationOpen || createOutcomeUnknown"
-              :auto-select-user-dept="true"
-              :allowed-access-levels="getAgentShareAllowedLevels()"
-            />
-          </div>
+          <CollapseTransition>
+            <div v-if="!editingAgentId && canEditAgentShareConfig && isAgentShared" ref="shareConfigHeadingRef" tabindex="-1" aria-label="共享权限" class="create-sharing-section">
+              <ShareConfigForm
+                ref="agentShareConfigFormRef"
+                v-model="agentShareConfig"
+                :disabled="saving || resourceCreationOpen || createOutcomeUnknown"
+                :auto-select-user-dept="true"
+                :allowed-access-levels="getAgentShareAllowedLevels()"
+              />
+            </div>
+          </CollapseTransition>
 
           <div v-if="editingAgentId && canEditAgentShareConfig" class="share-config-block">
             <div ref="shareConfigHeadingRef" tabindex="-1" class="section-heading">
@@ -885,7 +887,7 @@ defineExpose({
 .create-field-label { display: block; color: var(--gray-800); font-size: 12px; line-height: 18px; small { margin-left: 4px; color: var(--gray-600); font-weight: 400; } }
 .create-mode {
   .agent-modal-section { background: transparent; }
-  .agent-modal-main { padding: 16px 18px 8px 24px; }
+  .agent-modal-main { padding: 16px 18px 24px 24px; }
   .agent-profile-header { margin-bottom: 24px; }
   .agent-icon-upload { border: 0; background: transparent; }
   .agent-icon-preview { align-items: flex-start; }
@@ -898,6 +900,7 @@ defineExpose({
     &:focus { border-color: var(--main-color); box-shadow: 0 0 0 3px var(--main-50); }
   }
   .agent-description-textarea { background: transparent; }
+  .form-label > span:first-child { font-size: 14px; }
   .agent-backend-select { width: 100%; margin: 0; :deep(.ant-select-selector) { min-height: 36px; background: var(--gray-0) !important; } :deep(.ant-select-selection-item) { font-weight: 400; } }
 }
 .create-identity-form {
@@ -909,7 +912,7 @@ defineExpose({
 .create-profile-field { display: grid; gap: 8px; min-width: 0; }
 .agent-avatar-column { display: flex; flex-direction: column; align-items: center; gap: 10px; flex-shrink: 0; }
 .create-sharing-section {
-  margin-top: 24px;
+  padding-top: 24px;
   border-radius: 6px;
   &:focus-visible { outline: 2px solid var(--main-color); outline-offset: 4px; }
   :deep(.share-config-form) { border-top: 0; }
