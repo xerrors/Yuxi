@@ -99,7 +99,7 @@ async def create_department_with_admin(
         if await dept_repo.exists_by_name(name):
             raise InvalidOperationError("部门名称已存在")
 
-        if not re.match(r"^[a-zA-Z0-9_]+$", admin_uid):
+        if not re.fullmatch(r"[a-zA-Z0-9_]+", admin_uid):
             raise InvalidOperationError("用户ID只能包含字母、数字和下划线")
 
         if len(admin_uid) < 3 or len(admin_uid) > 20:

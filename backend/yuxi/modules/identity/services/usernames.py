@@ -15,7 +15,7 @@ def validate_username(username: str) -> tuple[bool, str]:
         return False, "用户名长度不能少于2个字符"
     if len(username) > 20:
         return False, "用户名长度不能超过20个字符"
-    if not re.match(r"^[一-龥a-zA-Z0-9_]+$", username):
+    if not re.fullmatch(r"[一-龥a-zA-Z0-9_]+", username):
         return False, "用户名只能包含中文、英文、数字和下划线"
     return True, ""
 

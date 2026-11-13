@@ -276,7 +276,7 @@ async def check_first_run():
 async def initialize_admin(admin_data: InitializeAdmin, db: AsyncSession = Depends(get_db)):
     """初始化系统管理员并直接返回登录令牌。"""
     # 验证用户ID格式（只支持字母数字和下划线）
-    if not re.match(r"^[a-zA-Z0-9_]+$", admin_data.uid):
+    if not re.fullmatch(r"[a-zA-Z0-9_]+", admin_data.uid):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="用户ID只能包含字母、数字和下划线",
