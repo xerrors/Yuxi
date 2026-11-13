@@ -130,7 +130,7 @@ test('普通用户的私有智能体不提交共享配置，也不提供共享�
   assert.equal('publishing' in form, false)
 })
 
-test('管理员创建 Agent 默认私有，共享勾选设置权限范围', async () => {
+test('管理员创建 Agent 默认个人使用，切换团队共享设置权限范围', async () => {
   const { form } = await setupForm({})
   form.openCreate()
   form.agentForm.name = '资料助手'
@@ -138,7 +138,7 @@ test('管理员创建 Agent 默认私有，共享勾选设置权限范围', asyn
   assert.equal(form.buildAgentPayload().visibility, 'private')
   assert.equal('share_config' in form.buildAgentPayload(), false)
   form.agentForm.visibility = 'shared'
-  form.agentShareConfig.value = { version: 2, read_scope: { access_level: 'global' }, manage_scope: null }
+  assert.deepEqual(form.buildAgentPayload().share_config.read_scope, { access_level: 'global', department_ids: [], user_uids: [] })
   assert.equal(form.buildAgentPayload().visibility, 'shared')
   assert.equal(form.buildAgentPayload().share_config.read_scope.access_level, 'global')
   await form.toggleCreateAdvanced()
@@ -160,6 +160,7 @@ test('管理员将已有私有 Agent 共享，脏状态与保存都使用原定�
     share_config: { version: 2, read_scope: null, manage_scope: null }
   })
   await form.openEdit('owned-private')
+  assert.equal(form.agentShareConfig.value.read_scope.access_level, 'user')
   assert.equal(form.hasProfileChanges.value, false)
   assert.equal('visibility' in form.buildAgentPayload(), false)
   assert.equal('share_config' in form.buildAgentPayload(), false)
@@ -292,6 +293,7 @@ test('基本信息与高级配置共用一份草稿，等待时不能切换，�
   form.agentForm.name = '资料助手'
   form.beforeCreateSkillUpload({ name: 'guide.zip', size: 100 })
   await form.toggleCreateAdvanced()
+  form.agentForm.slug = 'research-assistant'
   form.runtimeConfig.value = { system_prompt: '整理资料', mcps: [] }
   form.saving.value = true
   await form.toggleCreateAdvanced()
@@ -304,6 +306,7 @@ test('基本信息与高级配置共用一份草稿，等待时不能切换，�
   assert.deepEqual(form.createContext.value, { system_prompt: '整理资料', mcps: [] })
   await form.saveAgent()
   assert.equal(writes[0].file.name, 'guide.zip')
+  assert.equal(writes[0].payload.slug, 'research-assistant')
   assert.equal(writes[0].payload.config_json.context.system_prompt, '整理资料')
 })
 

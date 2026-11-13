@@ -183,7 +183,8 @@ const totalValue = computed(() => normalizedDays.value.reduce((sum, item) => sum
   display: grid;
   width: 22px;
   flex: 0 0 22px;
-  grid-template-rows: 16px repeat(7, 18px);
+  padding-top: 18px;
+  grid-template-rows: repeat(7, minmax(0, 1fr));
   align-items: center;
   gap: 3px;
   color: var(--gray-500);
@@ -191,15 +192,15 @@ const totalValue = computed(() => normalizedDays.value.reduce((sum, item) => sum
   line-height: 10px;
 
   span:nth-child(1) {
-    grid-row: 2;
+    grid-row: 1;
   }
 
   span:nth-child(2) {
-    grid-row: 4;
+    grid-row: 3;
   }
 
   span:nth-child(3) {
-    grid-row: 6;
+    grid-row: 5;
   }
 }
 
@@ -229,13 +230,14 @@ const totalValue = computed(() => normalizedDays.value.reduce((sum, item) => sum
 
 .heatmap-week {
   display: grid;
-  grid-template-rows: repeat(7, 18px);
+  grid-template-rows: repeat(7, auto);
   gap: 3px;
 }
 
 .heatmap-cell {
   width: 100%;
-  height: 18px;
+  aspect-ratio: 1;
+  max-height: 18px;
   transition: filter 0.2s ease;
 
   &:hover {

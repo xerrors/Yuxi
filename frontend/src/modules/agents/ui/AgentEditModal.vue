@@ -13,6 +13,8 @@ import {
   Settings2,
   SlidersHorizontal,
   Upload,
+  User,
+  Users,
   Wrench,
   X
 } from '@lucide/vue'
@@ -60,7 +62,6 @@ const createConfigLoading = ref(false)
 const createConfigError = ref('')
 const createAdvancedOpen = ref(false)
 const shareConfigHeadingRef = ref(null)
-const shareConfigOpen = ref(false)
 const createConfigSectionRef = ref(null)
 const createError = ref('')
 const createOutcomeUnknown = ref(false)
@@ -202,12 +203,12 @@ const isRuntimeAgentModalTab = (key) => runtimeAgentModalTabs.includes(key)
 const getDefaultBackendId = () =>
   props.backendOptions.length === 1 ? props.backendOptions[0].value : DEFAULT_AGENT_BACKEND_ID
 
-const getInitialShareConfig = () => ({
+const getInitialShareConfig = (accessLevel = 'user') => ({
   version: 2,
   read_scope: {
-    access_level: 'user',
+    access_level: accessLevel,
     department_ids: [],
-    user_uids: userStore.uid ? [userStore.uid] : []
+    user_uids: accessLevel === 'user' && userStore.uid ? [userStore.uid] : []
   },
   manage_scope: null
 })
@@ -229,10 +230,6 @@ const canEditAgentShareConfig = computed(() =>
   (!editingAgentId.value && userStore.isAdmin)
 )
 const isAgentShared = computed(() => agentForm.visibility === 'shared')
-const agentSharingLabel = computed(() => {
-  if (!isAgentShared.value) return '私有'
-  return agentShareConfig.value?.read_scope?.access_level === 'global' ? '全局共享' : '共享'
-})
 const canToggleAgentSharing = computed(
   () => !editingAgentId.value || editingCapabilities.value.visibility === 'private'
 )
@@ -253,7 +250,6 @@ const generateDefaultAgentProfile = () => {
 }
 
 const resetAgentForm = () => {
-  shareConfigOpen.value = false
   shareConfigNeedsRepair.value = false
   const defaults = editingAgentId.value ? {} : generateDefaultAgentProfile()
   Object.assign(agentForm, {
@@ -265,7 +261,7 @@ const resetAgentForm = () => {
     icon: '',
     ...defaults
   })
-  agentShareConfig.value = getInitialShareConfig()
+  agentShareConfig.value = getInitialShareConfig('global')
 }
 
 const focusAgentNameInput = async () => {
@@ -556,7 +552,6 @@ const saveAgent = async () => {
     if (!editingAgentId.value) {
       createAdvancedOpen.value = false
       createError.value = validation.message
-      shareConfigOpen.value = true
     }
     message.error(validation.message)
     await nextTick()
@@ -610,6 +605,7 @@ defineExpose({
   <a-modal
     :open="showAgentModal"
     class="agent-edit-modal"
+    :aria-label="agentModalTitle"
     :class="{ 'create-agent-modal': !editingAgentId }"
     :width="editingAgentId ? 820 : 740"
     :centered="!editingAgentId"
@@ -621,8 +617,21 @@ defineExpose({
     <template #title>
       <div class="agent-modal-titlebar">
         <div v-if="!editingAgentId" class="create-dialog-heading">
-          <span class="create-dialog-icon"><Bot :size="18" aria-hidden="true" /></span>
-          <span class="agent-modal-title">{{ agentModalTitle }}</span>
+          <a-segmented
+            v-if="canEditAgentShareConfig"
+            v-model:value="agentForm.visibility"
+            aria-label="使用方式"
+            :options="[{ title: '个人使用', value: 'private' }, { title: '团队共享', value: 'shared' }]"
+            :disabled="saving || agentIconUploading || resourceCreationOpen || createOutcomeUnknown"
+          >
+            <template #label="{ value, title }">
+              <span class="create-usage-option">
+                <component :is="value === 'private' ? User : Users" :size="16" aria-hidden="true" />
+                <span>{{ title }}</span>
+              </span>
+            </template>
+          </a-segmented>
+          <span v-else class="agent-modal-title">个人使用</span>
         </div>
         <span v-else class="agent-modal-title">{{ agentModalTitle }}</span>
         <div v-if="!editingAgentId" class="create-dialog-header-actions">
@@ -704,51 +713,8 @@ defineExpose({
                     </div>
                   </div>
                 </a-upload>
-                <a-popover
-                  v-if="!editingAgentId && canEditAgentShareConfig"
-                  v-model:open="shareConfigOpen"
-                  trigger="click"
-                  placement="bottom"
-                >
-                  <template #content>
-                    <div class="agent-share-popover" @keydown.esc.stop="shareConfigOpen = false">
-                      <div class="agent-share-dropdown">
-                        <!-- 嵌套浮层挂在滚动区外，避免撑大共享面板的滚动范围。 -->
-                        <a-config-provider :get-popup-container="(trigger) => trigger.closest('.agent-share-popover')">
-                          <div ref="shareConfigHeadingRef" tabindex="-1" class="share-dropdown-heading">
-                            <span>访问方式</span>
-                            <a-segmented
-                              v-model:value="agentForm.visibility"
-                              :options="[{ label: '私有', value: 'private' }, { label: '共享', value: 'shared' }]"
-                              :disabled="saving || agentIconUploading || resourceCreationOpen || createOutcomeUnknown"
-                            />
-                          </div>
-                          <ShareConfigForm
-                            v-if="isAgentShared"
-                            ref="agentShareConfigFormRef"
-                            v-model="agentShareConfig"
-                            :disabled="saving || resourceCreationOpen || createOutcomeUnknown"
-                            :auto-select-user-dept="true"
-                            :allowed-access-levels="getAgentShareAllowedLevels()"
-                          />
-                          <p v-else class="share-private-description">仅你可以访问和管理此智能体。</p>
-                        </a-config-provider>
-                      </div>
-                    </div>
-                  </template>
-                  <button
-                    type="button"
-                    class="agent-sharing-trigger"
-                    :aria-expanded="shareConfigOpen"
-                    :disabled="saving || agentIconUploading || resourceCreationOpen || createOutcomeUnknown"
-                  >
-                    <span>{{ agentSharingLabel }}</span>
-                    <Settings2 :size="13" aria-hidden="true" />
-                  </button>
-                </a-popover>
                 </div>
                 <div class="agent-icon-preview-text">
-                  <label v-if="!editingAgentId" for="agent-profile-name" class="create-field-label">名称 <span aria-hidden="true" class="required-mark">*</span></label>
                   <input
                     id="agent-profile-name"
                     ref="agentNameInputRef"
@@ -759,19 +725,8 @@ defineExpose({
                     placeholder="点击输入智能体名称"
                     aria-label="智能体名称"
                   />
-                  <div v-if="!editingAgentId" class="create-profile-details">
+                  <div v-if="!editingAgentId && backendOptions.length > 1" class="create-profile-details">
                     <div class="create-profile-field">
-                      <label for="agent-profile-slug" class="create-field-label">标识 <small>可选</small></label>
-                      <input
-                        id="agent-profile-slug"
-                        v-model="agentForm.slug"
-                        class="agent-inline-slug-input"
-                        type="text"
-                        placeholder="留空自动生成"
-                        aria-label="智能体标识"
-                      />
-                    </div>
-                    <div v-if="backendOptions.length > 1" class="create-profile-field">
                       <label for="agent-profile-backend" class="create-field-label">智能体后端</label>
                       <a-select
                         id="agent-profile-backend"
@@ -782,7 +737,7 @@ defineExpose({
                       />
                     </div>
                   </div>
-                  <span v-else class="agent-inline-slug">{{
+                  <span v-if="editingAgentId" class="agent-inline-slug">{{
                     agentForm.slug || editingAgentId
                   }}</span>
                 </div>
@@ -799,6 +754,16 @@ defineExpose({
                 placeholder="可选"
               />
             </label>
+          </div>
+
+          <div v-if="!editingAgentId && canEditAgentShareConfig && isAgentShared" ref="shareConfigHeadingRef" tabindex="-1" aria-label="共享权限" class="create-sharing-section">
+            <ShareConfigForm
+              ref="agentShareConfigFormRef"
+              v-model="agentShareConfig"
+              :disabled="saving || resourceCreationOpen || createOutcomeUnknown"
+              :auto-select-user-dept="true"
+              :allowed-access-levels="getAgentShareAllowedLevels()"
+            />
           </div>
 
           <div v-if="editingAgentId && canEditAgentShareConfig" class="share-config-block">
@@ -836,7 +801,7 @@ defineExpose({
               </div>
               <div class="create-skill-upload">
                 <a-upload :show-upload-list="false" :before-upload="beforeCreateSkillUpload" :disabled="saving" accept=".zip">
-                  <a-button class="lucide-icon-btn" :disabled="saving"><FileArchive :size="14" aria-hidden="true" />{{ createSkillFile ? '更换 ZIP' : '选择 ZIP' }}</a-button>
+                  <a-button type="text" class="lucide-icon-btn" :disabled="saving"><FileArchive :size="14" aria-hidden="true" />{{ createSkillFile ? '更换 ZIP' : '选择 ZIP' }}</a-button>
                 </a-upload>
               </div>
             </div>
@@ -855,6 +820,17 @@ defineExpose({
           :aria-label="editingAgentId ? null : '高级配置'"
           class="agent-modal-section runtime-section"
         >
+          <a-form v-if="!editingAgentId" :model="agentForm" layout="vertical" class="create-identity-form">
+            <a-form-item name="slug" html-for="agent-profile-slug">
+              <template #label>Agent 标识 <small>可选</small></template>
+              <a-input
+                id="agent-profile-slug"
+                v-model:value="agentForm.slug"
+                placeholder="留空自动生成"
+                aria-label="智能体标识"
+              />
+            </a-form-item>
+          </a-form>
           <div v-if="createConfigError" class="create-resource-error" role="alert">
             <span>{{ createConfigError }}</span><a-button size="small" type="link" @click="loadCreateConfig">重试</a-button>
           </div>
@@ -886,8 +862,8 @@ defineExpose({
       <a-button v-if="createAdvancedOpen" type="text" class="create-back-button" :disabled="saving || agentIconUploading || resourceCreationOpen || createOutcomeUnknown" @click="toggleCreateAdvanced"><ArrowLeft :size="14" aria-hidden="true" />基本信息</a-button>
       <span v-else class="create-footer-hint">模型与工具可稍后配置</span>
       <div class="agent-modal-actions">
-        <a-button :disabled="saving || agentIconUploading || resourceCreationOpen" @click="closeAgentModal">取消</a-button>
-        <a-button v-if="!createAdvancedOpen" class="create-next-button" :disabled="saving || agentIconUploading || resourceCreationOpen || createOutcomeUnknown" :aria-expanded="createAdvancedOpen" @click="toggleCreateAdvanced">高级配置<ArrowRight :size="14" aria-hidden="true" /></a-button>
+        <a-button type="text" :disabled="saving || agentIconUploading || resourceCreationOpen" @click="closeAgentModal">取消</a-button>
+        <a-button v-if="!createAdvancedOpen" type="text" class="create-next-button" :disabled="saving || agentIconUploading || resourceCreationOpen || createOutcomeUnknown" :aria-expanded="createAdvancedOpen" @click="toggleCreateAdvanced">高级配置<ArrowRight :size="14" aria-hidden="true" /></a-button>
         <a-button type="primary" :loading="saving" :disabled="boundSkillSaving || agentIconUploading || resourceCreationOpen || createOutcomeUnknown || createConfigLoading" @click="saveAgent">创建</a-button>
       </div>
     </footer>
@@ -897,43 +873,51 @@ defineExpose({
 </template>
 
 <style lang="less" scoped>
+.create-usage-option { display: inline-flex; align-items: center; gap: 6px; vertical-align: middle; }
 .create-dialog-heading { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.create-dialog-icon { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; flex-shrink: 0; border-radius: 8px; background: var(--gray-100); color: var(--gray-700); }
 .create-dialog-header-actions { display: flex; align-items: center; gap: 12px; }
-.create-dialog-location { padding: 4px 10px; border-radius: 999px; background: var(--gray-100); color: var(--gray-700); font-size: 12px; font-weight: 400; white-space: nowrap; }
+.create-dialog-location { color: var(--gray-700); font-size: 12px; font-weight: 400; white-space: nowrap; }
 .create-dialog-close { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; }
-.create-dialog-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 24px; border-top: 1px solid var(--gray-150); background: var(--gray-0); }
+.create-dialog-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 24px; }
 .create-footer-hint { color: var(--gray-600); font-size: 12px; }
 .create-back-button, .create-next-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .create-save-error { margin-bottom: 16px; }
 .create-field-label { display: block; color: var(--gray-800); font-size: 12px; line-height: 18px; small { margin-left: 4px; color: var(--gray-600); font-weight: 400; } }
-.required-mark { color: var(--color-error-500); }
 .create-mode {
-  .agent-modal-main { padding: 22px 18px 24px 24px; }
+  .agent-modal-section { background: transparent; }
+  .agent-modal-main { padding: 16px 18px 8px 24px; }
+  .agent-profile-header { margin-bottom: 24px; }
+  .agent-icon-upload { border: 0; background: transparent; }
   .agent-icon-preview { align-items: flex-start; }
-  .agent-profile-main { align-items: flex-start; flex: 1; gap: 16px; }
+  .agent-profile-main { align-items: center; flex: 1; gap: 16px; }
   .agent-icon-preview-text { flex: 1; gap: 8px; }
   .agent-icon-upload { margin-top: 0; }
-  .agent-inline-name-input, .agent-inline-slug-input { width: 100%; min-height: 36px; padding: 7px 10px; border-color: var(--gray-200); border-radius: 6px; background: var(--gray-0); font-size: 14px; }
-  .agent-inline-name-input { font-weight: 500; }
-  .agent-inline-slug-input { color: var(--gray-700); }
+  .agent-inline-name-input { width: 100%; min-height: 40px; padding: 8px 12px; border-color: var(--gray-200); border-radius: 6px; background: transparent; font-family: inherit; font-size: 14px; font-weight: 400; }
+  .agent-inline-name-input {
+    &:hover { border-color: var(--gray-200); }
+    &:focus { border-color: var(--main-color); box-shadow: 0 0 0 3px var(--main-50); }
+  }
+  .agent-description-textarea { background: transparent; }
   .agent-backend-select { width: 100%; margin: 0; :deep(.ant-select-selector) { min-height: 36px; background: var(--gray-0) !important; } :deep(.ant-select-selection-item) { font-weight: 400; } }
 }
-.create-profile-details { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 16px; margin-top: 8px; }
+.create-identity-form {
+  :deep(.ant-form-item-label > label) { font-weight: 600; }
+  small { margin-left: 4px; color: var(--gray-600); font-size: 12px; font-weight: 400; }
+}
+.create-profile-details { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 16px; margin-bottom: 24px; }
 .create-profile-details:has(> .create-profile-field:only-child) { grid-template-columns: minmax(0, 1fr); }
 .create-profile-field { display: grid; gap: 8px; min-width: 0; }
 .agent-avatar-column { display: flex; flex-direction: column; align-items: center; gap: 10px; flex-shrink: 0; }
-.agent-sharing-trigger { display: inline-flex; align-items: center; gap: 4px; padding: 3px 5px; border: 0; border-radius: 6px; background: var(--gray-100); color: var(--gray-700); font-size: 12px; white-space: nowrap; cursor: pointer; &:hover { background: var(--gray-200); } &:focus-visible { outline: 2px solid var(--main-color); outline-offset: 2px; } &:disabled { cursor: not-allowed; opacity: .5; } }
-.agent-share-popover { position: relative; }
-.agent-share-dropdown { position: relative; width: min(320px, calc(100vw - 48px)); max-height: 65vh; overflow-y: auto; }
-.share-dropdown-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; color: var(--gray-800); font-size: 13px; }
-.share-private-description { margin: 0; color: var(--gray-600); font-size: 12px; line-height: 1.6; }
+.create-sharing-section {
+  margin-top: 24px;
+  border-radius: 6px;
+  &:focus-visible { outline: 2px solid var(--main-color); outline-offset: 4px; }
+  :deep(.share-config-form) { border-top: 0; }
+}
 .create-resources {
   display: grid;
   gap: 16px;
   margin-top: 24px;
-  padding-top: 20px;
-  border-top: 1px solid var(--gray-200);
   .form-label { display: grid; gap: 8px; }
   small { margin-left: 6px; color: var(--gray-600); font-weight: 400; }
 }
@@ -988,9 +972,11 @@ defineExpose({
   }
 
   &.create-mode {
-    height: min(62vh, 540px);
+    background: transparent;
+    grid-template-rows: minmax(0, 1fr);
+    height: auto;
     min-height: 0;
-    max-height: calc(100dvh - 200px);
+    max-height: min(68vh, calc(100dvh - 200px));
 
     .runtime-section { min-height: 0; }
   }
@@ -1249,8 +1235,7 @@ defineExpose({
   }
 }
 
-.agent-inline-slug,
-.agent-inline-slug-input {
+.agent-inline-slug {
   padding: 1px 4px;
   width: 200px;
   max-width: 100%;
@@ -1259,23 +1244,6 @@ defineExpose({
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.agent-inline-slug-input {
-  border: 1px solid transparent;
-  border-radius: 2px;
-  background: transparent;
-
-  &::placeholder {
-    color: var(--gray-400);
-  }
-
-  &:hover,
-  &:focus {
-    border-color: var(--gray-300);
-    background: var(--gray-0);
-    outline: none;
-  }
 }
 
 .agent-backend-select {
@@ -1399,7 +1367,7 @@ defineExpose({
     }
 
     &.create-mode {
-      height: min(65vh, 540px);
+      height: auto;
       max-height: calc(100dvh - 210px);
       .agent-icon-upload { margin-top: 0; }
     }
@@ -1429,7 +1397,7 @@ defineExpose({
   .create-mode .agent-profile-main { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 8px 16px; }
   .create-mode .agent-avatar-column { grid-row: 1 / 3; align-self: start; }
   .create-mode .create-profile-details { grid-column: 1 / -1; margin-top: 8px; }
-  .create-mode .agent-inline-name-input, .create-mode .agent-inline-slug-input, .create-mode .agent-backend-select :deep(.ant-select-selector), .create-skill-upload :deep(.ant-btn) { min-height: 40px; }
+  .create-mode .agent-inline-name-input, .create-mode .agent-backend-select :deep(.ant-select-selector), .create-skill-upload :deep(.ant-btn) { min-height: 40px; }
 }
 
 :global(.agent-edit-modal .ant-modal-content) {
@@ -1460,7 +1428,7 @@ defineExpose({
 :global(.agent-edit-modal .ant-modal-body) {
   padding: 0;
 }
-:global(.create-agent-modal .ant-modal-header) { padding: 10px 24px; }
+:global(.create-agent-modal .ant-modal-header) { padding: 16px 24px 8px; border-bottom: 0; }
 @media (max-width: 768px) {
   :global(.create-agent-modal .ant-modal-header) { padding: 8px 16px; }
 }

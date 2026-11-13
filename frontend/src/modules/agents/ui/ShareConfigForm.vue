@@ -537,10 +537,19 @@ defineExpose({ scopes, validate })
   cursor: pointer;
 }
 
-.share-mode-card:hover,
+.share-mode-card:not(.active):hover {
+  border-color: var(--gray-300);
+  background: var(--gray-50);
+}
+
 .share-mode-card.active {
   border-color: var(--main-color);
-  background: var(--main-10);
+  background: var(--gray-0);
+}
+
+.share-mode-card:focus-visible {
+  outline: 2px solid var(--main-color);
+  outline-offset: 2px;
 }
 
 .card-header,
@@ -647,9 +656,17 @@ defineExpose({ scopes, validate })
   cursor: pointer;
 }
 
-.selection-item:hover,
+.selection-item:hover {
+  background: var(--gray-50);
+}
+
 .selection-item.selected {
-  background: var(--main-10);
+  background: var(--gray-0);
+}
+
+:root.dark .share-mode-card.active,
+:root.dark .selection-item.selected {
+  background: color-mix(in srgb, var(--main-color) 12%, var(--gray-50));
 }
 
 .selection-item-content {
@@ -682,11 +699,6 @@ defineExpose({ scopes, validate })
     position: relative;
     padding: 12px 6px 10px;
     border-radius: 8px;
-  }
-
-  .share-mode-card:focus-visible {
-    outline: 2px solid var(--main-color);
-    outline-offset: 2px;
   }
 
   .card-main,
