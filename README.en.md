@@ -32,6 +32,10 @@ Yuxi is built for teams that need control over their data, models, and permissio
 | Document processing | MinerU · PaddleOCR · RapidOCR |
 | Deployment | Docker Compose |
 
+## System Architecture
+
+![Yuxi system architecture, with labels in Chinese](https://oss-img.xerrors.cn/github/yuxi-architecture-20261112-f3046585a.svg)
+
 ## Quick Start
 
 Yuxi starts with Docker Compose and the Container sandbox by default. Each agent run uses a temporary container while workspace files persist. No separate KVM node is required.
