@@ -14,6 +14,7 @@ test('共享弹层默认自适应，输入区向上约束使用实际可见空�
       '/src/shared/ui/ActionDropdown.vue'
     )
     assert.equal(Dropdown.props.upward.default, false)
+    assert.equal(Dropdown.props.align.default, 'start')
     const props = reactive({ upward: false, open: false, width: 300 })
     let component
     await renderToString(
@@ -29,6 +30,15 @@ test('共享弹层默认自适应，输入区向上约束使用实际可见空�
     component.left.value = 320
     assert.equal(component.panelWidth.value, 300)
     assert.equal(component.horizontalOffset.value, -242, '右侧触发器的弹层仍在可视区内')
+    props.align = 'end'
+    component.right.value = 360
+    assert.equal(component.horizontalOffset.value, 0, '末端对齐不应再按触发器左侧偏移')
+    component.right.value = 40
+    assert.equal(component.horizontalOffset.value, 272, '末端对齐在左侧边缘仍留出安全间距')
+    component.viewportLeft.value = 40
+    assert.equal(component.horizontalOffset.value, 312, '钳制使用实际可视区起点')
+    props.align = 'start'
+    component.viewportLeft.value = 0
     component.viewportWidth.value = 280
     assert.equal(component.panelWidth.value, 256, '窄屏菜单缩到可视区宽度')
     component.top.value = 100

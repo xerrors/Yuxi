@@ -1,40 +1,24 @@
 <template>
   <section class="sandbox-settings settings-section-block" aria-label="运行环境">
-    <div class="settings-header">
-      <div class="settings-header-copy">
+    <div class="settings-header sandbox-header">
+      <div class="sandbox-heading">
         <h3 class="settings-section-title">运行环境</h3>
-        <p class="settings-section-description">{{ ephemeral ? '每个任务独立临时环境，任务结束后销毁' : '所有对话共享此环境' }}</p>
       </div>
-      <a-button
-        class="sandbox-icon-button"
-        type="text"
-        :loading="loading"
-        aria-label="刷新环境状态"
-        @click="refresh"
-      >
-        <template #icon><RefreshCw :size="16" /></template>
-      </a-button>
-    </div>
-
-    <div class="sandbox-overview">
-      <div class="sandbox-state-row">
-        <span class="sandbox-label">状态</span>
-        <div class="sandbox-state-content" :title="stateTitle">
-          <span
-            class="sandbox-state-value"
-            :class="`is-${statePresentation.tone}`"
-            aria-live="polite"
-          >
-            <component :is="statePresentation.icon" :size="14" aria-hidden="true" />
-            {{ statePresentation.label }}
-          </span>
-          <span v-if="timingText" class="sandbox-state-separator" aria-hidden="true">·</span>
-          <span v-if="timingText" class="sandbox-timing">{{ timingText }}</span>
-        </div>
-        <ActionDropdown v-if="!ephemeral" v-model:open="menuOpen" :width="144">
+      <div class="settings-header-actions">
+        <a-button
+          class="sandbox-icon-button lucide-icon-btn"
+          type="text"
+          :loading="loading"
+          title="刷新环境状态"
+          aria-label="刷新环境状态"
+          @click="refresh"
+        >
+          <template #icon><RefreshCw :size="16" /></template>
+        </a-button>
+        <ActionDropdown v-if="!ephemeral" v-model:open="menuOpen" :width="144" align="end">
           <template #trigger
             ><a-button
-              class="sandbox-icon-button"
+              class="sandbox-icon-button lucide-icon-btn"
               type="text"
               :loading="rebuilding"
               aria-label="环境操作"
@@ -58,25 +42,74 @@
           </div>
         </ActionDropdown>
       </div>
-      <div v-if="!ephemeral" class="sandbox-disk" title="系统和主目录所在磁盘，不含共享工作区">
-        <span class="sandbox-label">磁盘</span>
-        <div class="sandbox-disk-content">
-          <span v-if="diskUsage" title="上次手动查询的结果"
-            >已用 {{ formatFileSize(diskUsage.used_bytes) }} · 可用
-            {{ formatFileSize(diskUsage.available_bytes) }}</span
+    </div>
+
+    <div class="sandbox-overview">
+      <div
+        class="sandbox-state-row"
+        aria-label="环境状态"
+        :title="ephemeral ? '每个任务独立临时环境，任务结束后销毁' : '所有对话共享此环境'"
+      >
+        <div class="sandbox-state-icon">
+          <component :is="statePresentation.icon" :size="14" aria-hidden="true" />
+        </div>
+        <div class="sandbox-state-content" :title="stateTitle">
+          <span
+            class="sandbox-state-value"
+            :class="`is-${statePresentation.tone}`"
+            aria-live="polite"
+            >{{ statePresentation.label }}</span
           >
-          <span v-else class="sandbox-muted">尚未查询</span>
+          <div class="sandbox-state-meta">
+            <span v-if="timingText" class="sandbox-timing">{{ timingText }}</span>
+
+            <span
+              v-if="ephemeral"
+              class="sandbox-scope"
+              :title="ephemeral ? '每个任务独立临时环境，任务结束后销毁' : '所有对话共享此环境'"
+              >{{ ephemeral ? '任务独立' : '所有对话共享' }}</span
+            >
+          </div>
+        </div>
+      </div>
+      <div
+        v-if="!ephemeral"
+        class="sandbox-disk"
+        :class="{ 'is-unqueried': !diskUsage }"
+        title="系统和主目录所在磁盘，不含共享工作区"
+      >
+        <div class="sandbox-disk-heading">
+          <span class="sandbox-label">磁盘</span>
+          <div v-if="diskUsage" class="sandbox-disk-content">
+            <span v-if="diskUsage" title="上次手动查询的结果"
+              >已用 {{ formatFileSize(diskUsage.used_bytes) }} · 可用
+              {{ formatFileSize(diskUsage.available_bytes) }}</span
+            >
+          </div>
           <a-button
+            v-if="!diskUsage"
             class="sandbox-disk-action"
             type="link"
-            size="small"
             :loading="diskLoading"
             :disabled="!['running', 'paused'].includes(status?.state)"
-            :aria-label="diskUsage ? '刷新磁盘用量' : '查看磁盘用量'"
+            :aria-label="diskActionLabel"
+            :title="diskActionLabel"
             @click="readDiskUsage"
-            >{{ diskUsage ? '刷新' : '查看' }}</a-button
           >
-          <span v-if="status?.state === 'paused'" class="sandbox-muted">查询时会恢复环境</span>
+            查看用量
+          </a-button>
+        </div>
+        <div
+          v-if="diskPercent !== null"
+          class="sandbox-disk-meter"
+          role="meter"
+          aria-label="磁盘用量"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          :aria-valuenow="diskPercent"
+          :aria-valuetext="`已用 ${formatFileSize(diskUsage.used_bytes)}，可用 ${formatFileSize(diskUsage.available_bytes)}`"
+        >
+          <div class="sandbox-disk-fill" :style="{ width: `${diskPercent}%` }" />
         </div>
       </div>
     </div>
@@ -124,6 +157,12 @@ const loading = ref(false)
 const rebuilding = ref(false)
 const menuOpen = ref(false)
 const diskUsage = ref(null)
+const diskPercent = computed(() => {
+  if (!diskUsage.value) return null
+  const { used_bytes: used, available_bytes: available } = diskUsage.value
+  const capacity = used + available
+  return capacity > 0 ? (used / capacity) * 100 : null
+})
 const diskLoading = ref(false)
 const diskError = ref('')
 let diskVersion = 0
@@ -150,6 +189,9 @@ const statePresentation = computed(
       : { label: '状态未知', icon: CircleHelp, tone: 'muted' })
 )
 const ephemeral = computed(() => status.value?.backend === 'container')
+const diskActionLabel = computed(() => {
+  return status.value?.state === 'paused' ? '唤醒并查询磁盘用量' : '查看磁盘用量'
+})
 const stateTitle = computed(() => {
   const value = status.value
   if (ephemeral.value) return '任务首次执行命令时创建，任务结束后销毁'
@@ -267,41 +309,57 @@ defineExpose({ refresh })
 </script>
 
 <style scoped>
-.sandbox-state-row,
-.sandbox-disk,
-.sandbox-runs li {
-  display: flex;
+.sandbox-settings {
+  container: sandbox-overview / inline-size;
+  padding-bottom: 20px;
+  margin-bottom: 24px;
+  border-bottom: 1px solid var(--gray-150);
+  background: var(--gray-0);
+}
+.sandbox-settings .sandbox-header {
+  flex-direction: row;
   align-items: center;
   gap: 12px;
+  margin-bottom: 16px;
+}
+.sandbox-heading .settings-section-title {
+  margin: 0;
+  font-size: 20px;
+}
+.sandbox-header .settings-header-actions {
+  margin-left: auto;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
 }
 .sandbox-overview {
-  margin-bottom: 12px;
-  font-size: 14px;
-  line-height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 24px;
 }
-.sandbox-label {
-  width: 36px;
-  flex-shrink: 0;
+.sandbox-state-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.sandbox-state-icon {
+  display: inline-flex;
   color: var(--color-text-secondary);
+  flex-shrink: 0;
 }
 .sandbox-state-content {
   display: flex;
   align-items: center;
-  gap: 6px;
-  flex: 1;
+  flex-wrap: wrap;
+  gap: 0 12px;
   min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  color: var(--color-text-secondary);
-}
-.sandbox-disk-content {
-  color: var(--color-text);
+  line-height: 22px;
 }
 .sandbox-state-value {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  flex-shrink: 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 500;
 }
 .sandbox-state-value.is-success {
   color: var(--color-success-900);
@@ -309,34 +367,57 @@ defineExpose({ refresh })
 .sandbox-state-value.is-pending {
   color: var(--color-info-900);
 }
-.sandbox-state-separator {
-  flex-shrink: 0;
-}
-.sandbox-timing {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 .sandbox-state-value.is-error {
   color: var(--color-error-700);
 }
-.sandbox-disk {
-  min-height: 32px;
-}
-.sandbox-disk-content {
+.sandbox-state-meta {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  column-gap: 6px;
+  gap: 0 6px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 20px;
+}
+.sandbox-disk {
+  flex: 0 0 280px;
   min-width: 0;
 }
+.sandbox-disk.is-unqueried {
+  flex-basis: auto;
+}
+.sandbox-disk-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.sandbox-label,
 .sandbox-muted {
   color: var(--color-text-secondary);
+  font-size: 12px;
+}
+.sandbox-disk-meter {
+  height: 4px;
+  margin-top: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--gray-200);
+}
+.sandbox-disk-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--main-color);
+}
+.sandbox-disk-content {
+  color: var(--color-text);
+  font-size: 12px;
+  line-height: 20px;
 }
 .sandbox-disk-action {
-  height: 32px;
+  flex-shrink: 0;
+  height: 24px;
   padding: 0;
-  font: inherit;
+  font-size: 12px;
 }
 .sandbox-icon-button {
   width: 32px;
@@ -350,17 +431,30 @@ defineExpose({ refresh })
   color: var(--color-text-secondary);
   cursor: not-allowed;
 }
-.sandbox-settings > :deep(.ant-alert) {
-  margin-bottom: 12px;
+.sandbox-settings > :deep(.ant-alert),
+.sandbox-settings > .settings-section-description,
+.sandbox-runs {
+  margin: 12px 0 0;
 }
 .sandbox-runs {
-  margin: 0 0 12px;
   padding: 0;
   list-style: none;
   font-size: 12px;
 }
 .sandbox-runs li {
+  display: flex;
+  align-items: center;
   justify-content: space-between;
+  gap: 12px;
   padding: 6px 0;
+}
+@container sandbox-overview (max-width: 600px) {
+  .sandbox-overview {
+    flex-wrap: wrap;
+  }
+  .sandbox-disk {
+    flex: 0 1 280px;
+    margin-left: auto;
+  }
 }
 </style>
