@@ -54,7 +54,9 @@ async def test_query_route_rejects_override_and_foreign_file_ids(monkeypatch):
     async def retrieve(kb_id, _query, **kwargs):
         """提供生产入口的标准片段，旁路调用不能满足断言。"""
         calls.append((kb_id, kwargs))
-        return {"kb_id": kb_id, "results": [{"id": "chunk-1", "kb_id": kb_id, "file_id": "file-1", "content": "正文", "metadata": {}}]}
+        metadata = {"score": 0, "score_type": "cosine", "highlights": [[{"text": "正文", "matched": True}]]}
+        chunk = {"id": "chunk-1", "kb_id": kb_id, "file_id": "file-1", "content": "正文", "metadata": metadata}
+        return {"kb_id": kb_id, "results": [chunk]}
 
     async def list_live_file_ids(self, *, kb_id, file_ids):
         del self, kb_id
@@ -77,5 +79,17 @@ async def test_query_route_rejects_override_and_foreign_file_ids(monkeypatch):
 
     assert calls == []
     result = await management.query_test("kb-1", query="问题", meta={"file_ids": ["file-1"], "final_top_k": 4}, current_user=user)
-    assert result == [{"id": "chunk-1", "kb_id": "kb-1", "file_id": "file-1", "content": "正文", "metadata": {}}]
+    highlights = [[{"text": "正文", "matched": True}]]
+    assert result == [
+        {
+            "id": "chunk-1",
+            "kb_id": "kb-1",
+            "file_id": "file-1",
+            "content": "正文",
+            "metadata": {"score": 0, "score_type": "cosine", "highlights": highlights},
+            "score": 0,
+            "score_type": "cosine",
+            "highlights": highlights,
+        }
+    ]
     assert calls == [("kb-1", {"file_ids": ["file-1"], "final_top_k": 4})]

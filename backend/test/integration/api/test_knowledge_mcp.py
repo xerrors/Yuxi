@@ -175,6 +175,7 @@ async def test_mcp_queries_multiple_kbs_and_enforces_selection_and_current_permi
     assert external == result
     single = json.loads(await call_tool(test_client, headers, "query_kb", {"kb_id": kb_ids[0], "query_text": "needle"}))
     assert single == {"kb_id": kb_ids[0], "results": [result["results"][0]]}
+    management_results = [{**single["results"][0], "score": 0.8}]
     saved = await test_client.put(
         f"/api/knowledge/knowledge-bases/{kb_ids[0]}/query-params", headers=admin_headers, json={"final_top_k": 3}
     )
@@ -185,11 +186,11 @@ async def test_mcp_queries_multiple_kbs_and_enforces_selection_and_current_permi
             body["meta"] = overrides
         tested = await test_client.post(f"/api/knowledge/knowledge-bases/{kb_ids[0]}/query-test", headers=admin_headers, json=body)
         assert tested.status_code == 200, tested.text
-        assert tested.json() == single["results"]
+        assert tested.json() == management_results
         assert parameters[-1]["retrieval_model"]["top_k"] == top_k
     queried = await test_client.post(f"/api/knowledge/knowledge-bases/{kb_ids[0]}/query", headers=admin_headers, json={"query": "needle"})
     assert queried.status_code == 200, queried.text
-    assert queried.json() == {"status": "success", "result": single["results"]}
+    assert queried.json() == {"status": "success", "result": management_results}
     count = len(requests)
     rejected = await test_client.post(
         f"/api/knowledge/knowledge-bases/{kb_ids[0]}/query-test",

@@ -59,7 +59,13 @@ async def query_with_overrides(kb_id: str, query: str, overrides: dict) -> list:
         if "file_ids" in guarded:
             await require_file_ids_in_kb(kb_id, guarded["file_ids"])
     output = await knowledge_base.retrieve(kb_id, query, **guarded)
-    return output["results"]
+    results = output["results"]
+    for item in results:
+        metadata = item.get("metadata") or {}
+        for field in ("score", "score_type", "distance", "rerank_score", "highlights"):
+            if field in metadata:
+                item[field] = metadata[field]
+    return results
 
 
 async def require_file_ids_in_kb(kb_id: str, file_ids: list[str]) -> None:
