@@ -315,21 +315,32 @@
             </button>
           </nav>
           <div class="inspector-actions">
-            <button
-              type="button"
-              class="icon-button"
-              :aria-label="copiedTargetKey === selectedTargetKey ? '已复制详情' : '复制详情数据'"
-              :title="copiedTargetKey === selectedTargetKey ? '已复制详情' : '复制详情数据'"
-              @click="copySelectedTargetJson"
-            >
-              <Check
-                v-if="copiedTargetKey === selectedTargetKey"
-                :size="14"
-                class="success-icon"
-                aria-hidden="true"
-              />
-              <Copy v-else :size="14" aria-hidden="true" />
-            </button>
+            <a-dropdown v-model:open="isExportMenuOpen" :trigger="['click']" placement="bottomRight">
+              <button
+                type="button"
+                class="icon-button"
+                aria-label="Turn 导出选项"
+                title="Turn 导出选项"
+                aria-haspopup="menu"
+                :aria-expanded="isExportMenuOpen"
+                :disabled="isExporting"
+                :aria-busy="isExporting"
+              >
+                <LoaderCircle v-if="isExporting" :size="14" class="spinning" aria-hidden="true" />
+                <Ellipsis v-else :size="14" aria-hidden="true" />
+              </button>
+              <template #overlay>
+                <a-menu @click="exportSelectedTurn">
+                  <a-menu-item v-for="option in exportOptions" :key="`copy:${option.key}`">
+                    复制{{ option.label }}Turn
+                  </a-menu-item>
+                  <a-menu-divider />
+                  <a-menu-item v-for="option in exportOptions" :key="`download:${option.key}`">
+                    下载{{ option.label }}Turn
+                  </a-menu-item>
+                </a-menu>
+              </template>
+            </a-dropdown>
             <button
               type="button"
               class="icon-button"
@@ -401,6 +412,7 @@ import {
   ChevronRight,
   Clock,
   Copy,
+  Ellipsis,
   ExternalLink,
   LoaderCircle,
   RefreshCw,
@@ -414,6 +426,7 @@ import JsonTreeViewer from '@/shared/ui/JsonTreeViewer.vue'
 import { copyTextToClipboard } from '@/shared/lib/clipboard'
 import {
   buildMessageDebugEntries,
+  buildMessageDebugTurnData,
   buildMessageDebugTraceSpans,
   constrainMessageDebugInspectorHeight,
   constrainMessageDebugInspectorWidth,
@@ -422,7 +435,8 @@ import {
   isMessageDebugEntryInTimeRange,
   isMessageDebugTimelineMarkSelected,
   mergeMessageDebugRunGroups,
-  groupMessageDebugTurns
+  groupMessageDebugTurns,
+  serializeMessageDebugTurn
 } from '@/modules/session/model/messageDebug'
 import {
   buildRunTimingPhases,
@@ -446,7 +460,13 @@ const props = defineProps({
 const currentFilter = ref('all')
 const searchQuery = ref('')
 const isAllCopied = ref(false)
-const copiedTargetKey = ref('')
+const isExportMenuOpen = ref(false)
+const isExporting = ref(false)
+const exportOptions = [
+  { key: 'full', label: '完整' },
+  { key: 'compact', label: '精简' },
+  { key: 'minimal', label: '极简' }
+]
 const openingLangfuseTurnIds = ref(new Set())
 const messageAudits = ref([])
 const runTraces = ref([])
@@ -996,15 +1016,7 @@ const selectedTarget = computed(() => {
 const selectedTargetData = computed(() => {
   if (!selectedTarget.value) return null
   if (selectedTarget.value.kind === 'item') return selectedTarget.value.item.raw
-  const group = selectedTarget.value.group
-  return {
-    ...group.turnTrace,
-    turn_id: group.turnId,
-    input_id: group.inputId || null,
-    status: turnStatus(group) || null,
-    runs: group.runs.map((run) => run.runTrace),
-    records: group.items.map((item) => item.raw)
-  }
+  return buildMessageDebugTurnData(selectedTarget.value.group)
 })
 const inspectorOverviewRows = computed(() => {
   if (!selectedTarget.value) return []
@@ -1100,18 +1112,32 @@ const openTurnInLangfuse = async (turnId) => {
   }
 }
 
-const copySelectedTargetJson = async () => {
-  if (!selectedTarget.value) return
+const exportSelectedTurn = async ({ key }) => {
+  if (!selectedTarget.value || isExporting.value) return
+  const group = selectedTarget.value.group
+  const [action, detail] = key.split(':')
+  isExportMenuOpen.value = false
+  isExporting.value = true
   try {
-    await copyTextToClipboard(JSON.stringify(selectedTargetData.value, null, 2))
-    const copiedKey = selectedTargetKey.value
-    copiedTargetKey.value = copiedKey
-    message.success('已复制详情数据')
-    window.setTimeout(() => {
-      if (copiedTargetKey.value === copiedKey) copiedTargetKey.value = ''
-    }, 1500)
+    const json = await serializeMessageDebugTurn(group, detail)
+    if (action === 'copy') {
+      await copyTextToClipboard(json)
+      message.success('已复制 Turn')
+    } else {
+      const url = URL.createObjectURL(new Blob([json], { type: 'application/json;charset=utf-8' }))
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `turn-${group.index + 1}-${detail}.json`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+      message.success('已下载 Turn')
+    }
   } catch {
-    message.error('复制失败')
+    message.error(action === 'copy' ? '复制失败' : '下载失败')
+  } finally {
+    isExporting.value = false
   }
 }
 const copyAllTimelineJson = async () => {

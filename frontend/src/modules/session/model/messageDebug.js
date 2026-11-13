@@ -4,15 +4,110 @@ function summarizeContent(content, limit) {
   return content.replace(/\s+/g, ' ').trim().slice(0, limit)
 }
 
-/** 将消息正文转换为适合调试概览忠实展示的文本。 */
+/** 解开合法 JSON 和文本块的展示包装，保留普通文本中的反斜线。 */
 export function formatMessageDebugContent(content) {
-  if (typeof content === 'string') return content
   if (content === undefined || content === null) return ''
+  if (typeof content === 'string') {
+    if (!/^[{["]/.test(content.trimStart())) return content
+    try {
+      return formatMessageDebugContent(JSON.parse(content))
+    } catch {
+      return content
+    }
+  }
+  if (
+    Array.isArray(content) &&
+    content.some((block) => ['text', 'input_text', 'output_text'].includes(block?.type))
+  ) {
+    return content
+      .map((block) =>
+        ['text', 'input_text', 'output_text'].includes(block?.type) &&
+        typeof block.text === 'string'
+          ? formatMessageDebugContent(block.text)
+          : JSON.stringify(block, null, 2)
+      )
+      .join('\n\n')
+  }
   try {
     return JSON.stringify(content, null, 2)
   } catch {
     return String(content)
   }
+}
+
+/** 保留完整 Turn 的原始审计与运行字段，不使用筛选后的记录。 */
+export function buildMessageDebugTurnData(group) {
+  return {
+    ...group.turnTrace,
+    turn_id: group.turnId,
+    input_id: group.inputId || null,
+    status:
+      group.turnTrace?.status ||
+      (!group.turnId && group.inputId
+        ? group.items.find((item) => item.role === 'human')?.raw?.delivery_status
+        : null) ||
+      null,
+    runs: group.runs.map((run) => run.runTrace),
+    records: group.items.map((item) => item.raw)
+  }
+}
+
+/** 只提取消息正文，排除 reasoning、工具声明和非文本内容块。 */
+function messageBodyText(content) {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return content
+    .filter((block) => ['text', 'input_text', 'output_text'].includes(block?.type))
+    .map((block) => (typeof block.text === 'string' ? block.text : ''))
+    .join('')
+}
+
+/** 以同一投影生成复制和下载内容；仅精简档加载 tokenizer。 */
+export async function serializeMessageDebugTurn(group, detail = 'full') {
+  if (detail === 'full') return JSON.stringify(buildMessageDebugTurnData(group), null, 2)
+  const truncate =
+    detail === 'compact'
+      ? (await import('./messageDebugTokens.js')).truncateMessageDebugToolValue
+      : null
+  const toolRecords = group.items.filter((item) => item.role === 'tool')
+  const messages = []
+  for (const item of group.items) {
+    const raw = item.raw
+    if (item.role === 'tool' && truncate) {
+      messages.push({
+        role: 'tool',
+        name: item.toolName,
+        arguments: truncate(raw.tool_input ?? {}),
+        result: truncate(formatMessageDebugContent(raw.content ?? raw.tool_output)),
+        ...(raw.error_message ? { error: truncate(raw.error_message) } : {})
+      })
+      continue
+    }
+    if (!['human', 'ai', 'error'].includes(item.role)) continue
+    const content = messageBodyText(raw.content)
+    const entry = { role: item.role === 'human' ? 'user' : 'assistant', content }
+    if (truncate && item.role !== 'human') {
+      // 已有工具审计拥有参数与结果；仅补充尚无审计记录的调用声明。
+      const calls = (raw.tool_calls || []).filter(
+        (call) =>
+          !toolRecords.some(
+            (tool) =>
+              call.id &&
+              tool.runId === item.runId &&
+              call.id === (tool.raw.tool_call_id || tool.operationId)
+          )
+      )
+      if (calls.length) {
+        entry.tool_calls = calls.map((call) => ({
+          name: call.name || call.function?.name || call.tool_name,
+          arguments: truncate(call.args ?? call.function?.arguments ?? {})
+        }))
+      }
+      if (raw.error_message) entry.error = raw.error_message
+    }
+    if (content || entry.tool_calls || entry.error) messages.push(entry)
+  }
+  return JSON.stringify({ messages }, null, 2)
 }
 
 /** 判断时间概览中的阶段或记录是否属于当前选中的调试对象。 */

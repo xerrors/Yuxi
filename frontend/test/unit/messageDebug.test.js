@@ -6,6 +6,7 @@ import {
   bindMessageInputRun,
   buildMessageDebugTraceSpans,
   buildMessageDebugEntries,
+  buildMessageDebugTurnData,
   constrainMessageDebugInspectorHeight,
   constrainMessageDebugInspectorWidth,
   extractMessageToolNames,
@@ -18,6 +19,7 @@ import {
   isMessageDebugEntryInTimeRange,
   isMessageDebugTimelineMarkSelected,
   mergeMessageDebugRunGroups,
+  serializeMessageDebugTurn,
 } from '../../src/modules/session/model/messageDebug.js'
 import { resolveLangfuseTraceUrl } from '../../src/shared/lib/langfuse.js'
 
@@ -38,13 +40,80 @@ test('时间概览只高亮当前选中记录，选中 Turn 时高亮其全部�
   assert.equal(isMessageDebugTimelineMarkSelected('', 'run-a-0', 'model-a'), false)
 })
 
-test('调试概览忠实显示字符串和结构化消息正文', () => {
+test('调试概览解开 MCP 文本块，格式化 JSON 并保留普通文本和路径', () => {
   assert.equal(formatMessageDebugContent('第一行\n第二行'), '第一行\n第二行')
   assert.equal(
     formatMessageDebugContent([{ type: 'text', text: '内容' }]),
-    '[\n  {\n    "type": "text",\n    "text": "内容"\n  }\n]'
+    '内容'
+  )
+  assert.equal(
+    formatMessageDebugContent(JSON.stringify([{ type: 'text', text: '{"apps": ["编辑器"]}' }])),
+    '{\n  "apps": [\n    "编辑器"\n  ]\n}'
+  )
+  assert.equal(formatMessageDebugContent(JSON.stringify('第一行\n第二行')), '第一行\n第二行')
+  assert.equal(formatMessageDebugContent('C:\\new\\test.txt'), 'C:\\new\\test.txt')
+  assert.equal(formatMessageDebugContent('{无效 JSON}'), '{无效 JSON}')
+  assert.equal(formatMessageDebugContent('null'), 'null')
+  assert.equal(formatMessageDebugContent('[1,2]'), '[\n  1,\n  2\n]')
+  assert.equal(
+    formatMessageDebugContent([{ type: 'image', data: '保留非文本块' }]),
+    '[\n  {\n    "type": "image",\n    "data": "保留非文本块"\n  }\n]'
   )
   assert.equal(formatMessageDebugContent(null), '')
+})
+
+test('Turn 完整导出保留所有 Run、原始字段和未筛选记录', async () => {
+  const records = [
+    { type: 'human', content: '用户问题', input_id: 'input-a', run_id: 'run-a' },
+    { type: 'ai', content: '模型正文', reasoning_content: '完整保留推理', run_id: 'run-b' }
+  ]
+  const group = {
+    turnId: 'turn-a', inputId: 'input-a', turnTrace: { status: 'completed', created_at: 'time' },
+    runs: [{ runTrace: { run_id: 'run-a' } }, { runTrace: { run_id: 'run-b' } }],
+    items: buildMessageDebugEntries(records), visibleItems: []
+  }
+  const before = structuredClone(group)
+  const expected = {
+    status: 'completed', created_at: 'time', turn_id: 'turn-a', input_id: 'input-a',
+    runs: [{ run_id: 'run-a' }, { run_id: 'run-b' }], records
+  }
+  assert.deepEqual(buildMessageDebugTurnData(group), expected)
+  assert.deepEqual(JSON.parse(await serializeMessageDebugTurn(group)), expected)
+  assert.deepEqual(group, before)
+})
+
+test('精简导出去除推理、内部字段和重复调用，保留未执行工具与失败信息', async () => {
+  const records = [
+    { type: 'human', content: '用户问题', run_id: 'run-a' },
+    { type: 'ai', run_id: 'run-a', content: [
+      { type: 'reasoning', reasoning: '不能泄漏的推理' },
+      { type: 'text', text: '先查看文件' }, { type: 'tool_use', id: 'call-a', input: '重复参数' }
+    ], tool_calls: [{ id: 'call-a', name: 'read_file', args: { path: '/a' } }],
+    content_blocks: ['重复正文'], reasoning_content: '内部推理' },
+    { type: 'tool', run_id: 'run-a', operation_id: 'call-a', tool_name: 'read_file',
+      tool_input: { path: '/a' }, content: [{ type: 'text', text: '文件正文' }],
+      tool_output: { duplicate: '文件正文' }, error_message: '读取警告' },
+    { type: 'ai', run_id: 'run-b', content: '', tool_calls: [
+      { id: 'call-a', function: { name: 'read_file', arguments: '{"path":"/b"}' } }
+    ] },
+    { type: 'ai', run_id: 'run-b', content: '完成', error_message: '模型错误', error_type: 'provider' },
+    { type: 'system', content: '内部说明' }
+  ]
+  const group = { items: buildMessageDebugEntries(records) }
+  const before = structuredClone(group)
+  assert.deepEqual(JSON.parse(await serializeMessageDebugTurn(group, 'compact')), { messages: [
+    { role: 'user', content: '用户问题' },
+    { role: 'assistant', content: '先查看文件' },
+    { role: 'tool', name: 'read_file', arguments: { path: '/a' }, result: '文件正文', error: '读取警告' },
+    { role: 'assistant', content: '', tool_calls: [{ name: 'read_file', arguments: '{"path":"/b"}' }] },
+    { role: 'assistant', content: '完成', error: '模型错误' }
+  ] })
+  assert.deepEqual(JSON.parse(await serializeMessageDebugTurn(group, 'minimal')), { messages: [
+    { role: 'user', content: '用户问题' },
+    { role: 'assistant', content: '先查看文件' },
+    { role: 'assistant', content: '完成' }
+  ] })
+  assert.deepEqual(group, before)
 })
 
 test('详情面板拖动保留记录区并约束异常高度', () => {
