@@ -43,6 +43,12 @@ const router = createRouter({
       meta: { requiresAuth: false }
     },
     {
+      path: '/auth/provider',
+      name: 'OIDCProvider',
+      component: () => import('@/pages/OIDCProviderView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
       path: '/auth/cli/authorize',
       name: 'CLIAuthAuthorize',
       component: () => import('@/pages/CLIAuthAuthorizeView.vue'),

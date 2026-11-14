@@ -28,7 +28,9 @@ Yuxi 是一个面向 RAG、知识图谱和多智能体工作流的知识库平�
 
 API 在 `/api/mcp` 提供只读知识库 MCP，与 HTTP API 共用进程和端口。`modules/knowledge/mcp` 拥有服务端协议、内部认证、连接定义、产品读取和知识引用转换，API 只装配组件与生命周期。外部客户端使用 API Key，内部 Agent 使用 Knowledge 自己提供的 SDK Auth，按可信运行用户与会话选择签发五分钟凭据；Knowledge 每次调用复核当前用户权限交集。通用 MCP 复用现有工具发现、目录缓存与执行策略，不解释 Knowledge 的范围、Token 或结果结构。`knowledge-base` Skill 以 `mcp_dependencies` 门控；Agent 只调用 Knowledge 的产品函数。选择器与引用读取直接通过 SDK 调用 MCP，引用保留文件身份和行范围。关闭 Knowledge 时不装配路由与 manager，内置身份保留，能力发现和执行明确不可用。
 
-企业认证中心由部署方现有的 OIDC 服务提供；Yuxi 仅消费标准 OIDC/MCP 协议，不保存 Keycloak 部署模板或运行认证数据库。
+企业认证中心由部署方现有的 OIDC 服务提供；企业登录和外部工具接入分别消费标准 OIDC/MCP 协议，不保存 Keycloak 部署模板或运行认证数据库。
+
+`modules/identity` 另提供可选的 OIDC 身份签发端，限定显式登记的静态客户端，复用当前有效人类用户完成登录，使用独立持久 RSA 密钥。
 
 ## 后端代码地图
 
