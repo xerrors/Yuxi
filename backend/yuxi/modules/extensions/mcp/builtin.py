@@ -10,7 +10,7 @@ BUILTIN_MCP_MANIFEST = {
             "type": "http",
             # Knowledge 是本平台自有服务，容器内地址固定，不经环境变量改写。
             "url": "http://api:5050/api/mcp",
-            "extra_data": {"name": "知识库", "description": "知识库检索：按当前用户权限与会话选择提供五个只读工具。"},
+            "extra_data": {"name": "知识库", "description": "知识库检索：按当前用户权限与会话选择提供只读检索、原文阅读与原生媒体工具。"},
         },
         "deepwiki-official": {
             "type": "http",

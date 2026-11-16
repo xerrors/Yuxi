@@ -2,14 +2,14 @@ import asyncio
 import os
 import shutil
 from abc import ABC, abstractmethod
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from yuxi.infrastructure.filesystem import await_io
 from yuxi.infrastructure.minio import get_minio_client
-from yuxi.infrastructure.minio.object_urls import is_minio_url, parse_minio_url
+from yuxi.infrastructure.minio.object_urls import parse_minio_url
 from yuxi.infrastructure.observability.logging import logger
+from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.knowledge.chunking.presets import ensure_chunk_defaults_in_additional_params
 from yuxi.modules.knowledge.file_status import INDEX_CLAIM_STATUSES, PARSE_CLAIM_STATUSES, FileStatus
 from yuxi.modules.knowledge.read_models import KnowledgeBaseConfig
@@ -192,9 +192,9 @@ class KnowledgeExecutor(ABC):
             raise ValueError(message)
 
         attempt_id = uuid4().hex
-        previous_markdown = file_meta.get("markdown_file")
         try:
             from yuxi.modules.documents.service import parse_to_hosted_markdown
+            from yuxi.modules.knowledge.services.revisions import prepare_document_revision
 
             params = dict(file_meta.get("processing_params") or {})
 
@@ -207,6 +207,10 @@ class KnowledgeExecutor(ABC):
             )
 
             markdown_file_path = await self.save_markdown_artifact(kb_id, file_id, attempt_id, markdown_content)
+            revision = await prepare_document_revision(
+                {**file_meta, "markdown_file": markdown_file_path}, content=markdown_content.encode("utf-8")
+            )
+            revision["created_by"] = operator_id
 
             # 发布解析结果仍走 PARSING 条件更新；失败说明执行权被接管，按取消让位。
             file_meta["status"] = FileStatus.PARSED
@@ -224,15 +228,66 @@ class KnowledgeExecutor(ABC):
             }
             if operator_id:
                 update_data["updated_by"] = operator_id
-            updated_record = await file_repo.update_fields_if_status(
-                file_id=file_id,
-                kb_id=kb_id,
-                allowed_statuses={FileStatus.PARSING},
-                data=update_data,
-                **owner_filter,
-            )
-            if updated_record is None:
-                raise asyncio.CancelledError("File processing owner was lost")
+            document_image_index = None
+            media_job_id = None
+            async with pg_manager.get_async_session_context() as session:
+                updated_record = await file_repo.update_fields_if_status_in_session(
+                    session,
+                    file_id=file_id,
+                    kb_id=kb_id,
+                    allowed_statuses={FileStatus.PARSING},
+                    data=update_data,
+                    document_revision=revision,
+                    **owner_filter,
+                )
+                if updated_record is None:
+                    raise asyncio.CancelledError("File processing owner was lost")
+
+                try:
+                    async with session.begin_nested():
+                        from yuxi.modules.knowledge.services.document_media import register_document_image_index
+
+                        document_image_index = await register_document_image_index(
+                            session,
+                            kb_id=kb_id,
+                            file=updated_record,
+                            operator_id=operator_id,
+                            additional_params=additional_params,
+                            markdown_content=markdown_content,
+                            source_job_id=processing_job_id,
+                        )
+                except Exception as media_error:
+                    logger.error(
+                        "Automatic document image indexing could not be queued: kb_id={}, file_id={}, error_type={}",
+                        kb_id,
+                        file_id,
+                        type(media_error).__name__,
+                    )
+                    document_image_index = {
+                        "status": "failed",
+                        "message": "自动图片索引任务未能登记；正文解析已完成，可在文件的图片与音视频页面重试。",
+                    }
+                if document_image_index and document_image_index.get("created"):
+                    media_job_id = document_image_index["job_id"]
+
+            if media_job_id:
+                from yuxi.modules.background_jobs.dispatch import dispatch_job
+
+                try:
+                    await dispatch_job(media_job_id)
+                except Exception as dispatch_error:
+                    logger.error(
+                        "Automatic document image indexing dispatch failed: kb_id={}, file_id={}, error_type={}",
+                        kb_id,
+                        file_id,
+                        type(dispatch_error).__name__,
+                    )
+                    document_image_index = {
+                        **document_image_index,
+                        "message": "图片索引任务已登记，后台会重试投递。",
+                    }
+            if document_image_index is not None:
+                file_meta["document_image_index"] = document_image_index
 
         except (Exception, asyncio.CancelledError) as e:
             if isinstance(e, asyncio.CancelledError):
@@ -250,11 +305,8 @@ class KnowledgeExecutor(ABC):
             await mark_parse_failed(error_msg)
             raise
 
-        # 发布成功后回收上一次尝试的产物；此处的取消不回滚已发布结果。
-        if previous_markdown:
-            _, previous_object = parse_minio_url(previous_markdown)
-            previous_attempt = Path(previous_object).parent.name
-            await self._cleanup_parse_attempt(kb_id, file_id, previous_attempt)
+        # 新正文已提交；清理未被当前映射引用的旧解析产物。
+        await self._cleanup_file_derivatives(kb_id, file_id)
         return file_meta
 
     @abstractmethod
@@ -360,31 +412,20 @@ class KnowledgeExecutor(ABC):
 
     async def cleanup_file_resources(self, kb_id: str, file_id: str) -> None:
         """删除单个文档拥有的全部解析产物。"""
-        from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
+        from yuxi.modules.knowledge.services.revision_cleanup import cleanup_deleted_file_artifacts
 
+        await cleanup_deleted_file_artifacts(kb_id, file_id)
         client = get_minio_client()
-        record = await KnowledgeFileRepository().get_by_file_id(file_id, include_deleted=True)
-        if record is not None:
-            if record.kb_id != kb_id:
-                raise ValueError("File cleanup cannot cross knowledge bases")
-            source = record.minio_url or record.path
-            if source and is_minio_url(source):
-                bucket, key = parse_minio_url(source)
-                if bucket != client.KB_BUCKETS["documents"] or not key.startswith(f"{kb_id}/"):
-                    raise ValueError("File source is outside the owning knowledge base")
-                await client.adelete_file(bucket, key)
-        await asyncio.gather(
-            client.adelete_objects_by_prefix(client.KB_BUCKETS["images"], f"{kb_id}/kb-images/{file_id}/"),
-            client.adelete_objects_by_prefix(client.KB_BUCKETS["parsed"], f"{kb_id}/parsed/{file_id}/"),
-            client.adelete_file(client.KB_BUCKETS["parsed"], f"{kb_id}/preview/{file_id}.pdf"),
-        )
+        await client.adelete_file(client.KB_BUCKETS["parsed"], f"{kb_id}/preview/{file_id}.pdf")
 
     async def cleanup_knowledge_base_resources(self, kb_id: str) -> dict:
         """清理知识库关联的文件与存储资源。"""
+        from yuxi.modules.knowledge.media.vectors import cleanup_media_projection
         from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
 
         minio_client = get_minio_client()
         file_repo = KnowledgeFileRepository()
+        await cleanup_media_projection(kb_id)
 
         # 调用方已经提交 KB/File tombstone；失败必须阻止 PG 硬删除。
         prefix = f"{kb_id}/"
@@ -450,12 +491,18 @@ class KnowledgeExecutor(ABC):
 
     async def _cleanup_parse_attempt(self, kb_id: str, file_id: str, attempt_id: str) -> None:
         """尽力回收指定解析尝试，清理失败形成可观察日志。"""
-        client = get_minio_client()
-        results = await asyncio.gather(
-            client.adelete_objects_by_prefix(client.KB_BUCKETS["images"], f"{kb_id}/kb-images/{file_id}/{attempt_id}/"),
-            client.adelete_objects_by_prefix(client.KB_BUCKETS["parsed"], f"{kb_id}/parsed/{file_id}/{attempt_id}/"),
-            return_exceptions=True,
-        )
-        for result in results:
-            if isinstance(result, Exception):
-                logger.warning("解析产物清理失败: kb={} file={} attempt={} error={}", kb_id, file_id, attempt_id, result)
+        from yuxi.modules.knowledge.services.revision_cleanup import cleanup_attempt
+
+        try:
+            await cleanup_attempt(kb_id, file_id, attempt_id)
+        except Exception as error:
+            logger.warning("解析产物清理失败: kb={} file={} attempt={} error={}", kb_id, file_id, attempt_id, error)
+
+    async def _cleanup_file_derivatives(self, kb_id: str, file_id: str) -> None:
+        """发布新解析后回收没有当前映射引用的旧派生产物。"""
+        from yuxi.modules.knowledge.services.revision_cleanup import cleanup_file_derivatives
+
+        try:
+            await cleanup_file_derivatives(kb_id, file_id)
+        except Exception as error:
+            logger.warning("替代解析产物清理失败: kb={} file={} error={}", kb_id, file_id, error)

@@ -19,7 +19,9 @@ RESET_ACTION_LABELS = {
     "reparse": "重新解析",
     "save_markdown": "保存 Markdown",
 }
-KNOWLEDGE_JOB_TYPES = {"knowledge_parse", "knowledge_index", "knowledge_ingest", "knowledge_graph_index", RESET_JOB_TYPE}
+KNOWLEDGE_JOB_TYPES = {
+    "knowledge_parse", "knowledge_index", "knowledge_ingest", "knowledge_graph_index", "knowledge_media_index", RESET_JOB_TYPE
+}
 
 
 class DocumentResetRepository:

@@ -127,6 +127,57 @@ class KnowledgeFile(Base):
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
 
+class KnowledgeDocumentRevision(Base):
+    """不可变文档对象的档案映射，不复制一份可编辑正文。"""
+
+    __tablename__ = "knowledge_document_revisions"
+    __table_args__ = (
+        ForeignKeyConstraint(["file_id", "kb_id"], ["knowledge_files.file_id", "knowledge_files.kb_id"], ondelete="CASCADE"),
+        Index("ix_document_revision_file", "kb_id", "file_id", "created_at"),
+        CheckConstraint("length(content_hash) = 64", name="ck_document_revision_hash"),
+        CheckConstraint("content_size >= 0", name="ck_document_revision_size"),
+        CheckConstraint("kind IN ('document','original','media')", name="ck_document_revision_kind"),
+        CheckConstraint(
+            "NOT original_available OR (original_hash IS NOT NULL AND length(original_hash)=64 "
+            "AND original_size IS NOT NULL AND original_size >= 0)",
+            name="ck_document_revision_original_hash",
+        ),
+        CheckConstraint(
+            "kind='document' OR (original_available AND source_revision IS NOT NULL)",
+            name="ck_media_revision_source",
+        ),
+        CheckConstraint(
+            "(kind='document' AND coalesce(jsonb_typeof(markdown_object),'null')='object') OR "
+            "(kind='original' AND coalesce(jsonb_typeof(original_object),'null')='object') OR "
+            "(kind='media' AND coalesce(jsonb_typeof(original_object),'null')='object' "
+            "AND coalesce(jsonb_typeof(manifest_object),'null')='object')",
+            name="ck_document_revision_primary_object",
+        ).ddl_if(dialect="postgresql"),
+    )
+
+    revision = Column(String(80), primary_key=True)
+    kb_id = Column(String(80), nullable=False)
+    file_id = Column(String(64), nullable=False)
+    filename = Column(String(512), nullable=False)
+    kind = Column(String(16), nullable=False, default="document", server_default="document")
+    source_revision = Column(String(80))
+    basis_document_revision = Column(String(80))
+    markdown_object = Column(JSON_VALUE)
+    original_object = Column(JSON_VALUE)
+    original_hash = Column(String(64))
+    original_size = Column(BigInteger)
+    manifest_object = Column(JSON_VALUE)
+    assets = Column(JSON_VALUE, nullable=False, default=list)
+    missing_assets = Column(JSON_VALUE, nullable=False, default=list)
+    content_hash = Column(String(64), nullable=False)
+    content_size = Column(BigInteger, nullable=False)
+    original_available = Column(Boolean, nullable=False, default=False)
+    created_by = Column(String(128))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    deleted_at = Column(DateTime(timezone=True))
+    deleted_by = Column(String(128))
+
+
 class KnowledgeImport(Base):
     """持久导入回执；删除文件或知识库不能复活同一请求。"""
 

@@ -55,6 +55,13 @@ JOB_DEFINITIONS = {
     definition.job_type: definition
     for definition in (
         JobDefinition(
+            "knowledge_media_index",
+            "yuxi.modules.knowledge.media.jobs",
+            "run_media_index",
+            success_function="finish_media_index",
+            failure_function="fail_media_index",
+        ),
+        JobDefinition(
             "knowledge_ingest",
             "yuxi.modules.knowledge.services.background_jobs",
             "run_knowledge_ingest",
