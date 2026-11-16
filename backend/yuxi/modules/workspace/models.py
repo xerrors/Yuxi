@@ -3,11 +3,15 @@
 from typing import Any
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     Column,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
+    Index,
     String,
+    Text,
     UniqueConstraint,
     func,
 )
@@ -18,6 +22,37 @@ from yuxi.shared.datetime import format_utc_datetime, utc_now
 
 PROJECT_STATUS_CONSTRAINT_NAME = "ck_projects_status"
 PROJECT_STATUS_CONSTRAINT_SQL = "status IN ('active', 'deleted')"
+
+
+class Deliverable(Base):
+    """用户发布成果的文件副本及其明确执行来源。"""
+
+    __tablename__ = "workspace_deliverables"
+    __table_args__ = (
+        UniqueConstraint("run_id", "operation_id", "source_path", name="uq_workspace_deliverables_publication"),
+        ForeignKeyConstraint(
+            ["turn_id", "run_id"],
+            ["agent_runs.turn_id", "agent_runs.id"],
+            name="fk_workspace_deliverables_run_turn",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint("size >= 0", name="ck_workspace_deliverables_size"),
+        Index("ix_workspace_deliverables_user_created", "uid", "app_id", "created_at"),
+    )
+
+    id = Column(String(64), primary_key=True)
+    uid = Column(String(128), ForeignKey("users.uid", ondelete="CASCADE"), nullable=False)
+    thread_id = Column(String(64), ForeignKey("sessions.thread_id", ondelete="CASCADE"), nullable=False)
+    run_id = Column(String(64), nullable=False)
+    turn_id = Column(String(64), nullable=False)
+    app_id = Column(String(64), nullable=True)
+    operation_id = Column(String(128), nullable=False)
+    source_path = Column(Text, nullable=False)
+    saved_path = Column(String(1024), nullable=False)
+    name = Column(String(255), nullable=False)
+    size = Column(BigInteger, nullable=False)
+    mime_type = Column(String(255), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
 
 
 class Project(Base):

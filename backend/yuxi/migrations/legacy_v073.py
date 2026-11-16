@@ -23,7 +23,7 @@ from yuxi.modules.agents.runtime.agent_backends import get_agent_backend
 from yuxi.modules.agents.runtime.tool_approval import DEFAULT_TOOL_APPROVAL_MODE, normalize_tool_approval_mode
 
 SOURCE_VERSIONS = {"business": 9, "knowledge": 4}
-TARGET_VERSIONS = {"business": 3, "knowledge": 3}
+TARGET_VERSIONS = {"business": 4, "knowledge": 3}
 RENAMED_TABLES = {"sessions": "conversations", "background_jobs": "tasks"}
 LEGACY_ONLY_TABLES = {
     "conversations",
@@ -144,7 +144,7 @@ async def upgrade_legacy_schema(manager) -> dict:
             await _restore_session_configs(conn, archive, apply=True)
             await _finish_constraints(conn, current)
             # 所有目标约束通过后才写版本；保留归档中的旧版本事实。
-            await conn.execute(text("INSERT INTO yuxi_schema_migrations (domain, version) VALUES ('business', 3), ('knowledge', 3)"))
+            await conn.execute(text("INSERT INTO yuxi_schema_migrations (domain, version) VALUES ('business', 4), ('knowledge', 3)"))
             for name in owned:
                 target = next((new for new, old in RENAMED_TABLES.items() if old == name), name)
                 if target in current:
@@ -159,7 +159,7 @@ async def upgrade_legacy_schema(manager) -> dict:
 async def repair_legacy_session_configs(manager, *, apply: bool = False) -> dict:
     """显式修复已迁移旧会话的缺失快照，不覆盖新会话或已有配置。"""
     if await get_schema_versions(manager) != TARGET_VERSIONS:
-        raise RuntimeError("配置修复只支持已迁移的 business=3/knowledge=3")
+        raise RuntimeError("配置修复只支持已迁移的 business=4/knowledge=3")
     async with schema_migration_lock(manager):
         async with manager.async_engine.begin() as conn:
             schema = await conn.scalar(text("SELECT current_schema()"))
@@ -195,8 +195,8 @@ async def _restore_session_configs(conn, archive: str, *, apply: bool) -> dict:
     )
     # 只使用归档中的系统默认值，避免用升级后的配置冒充旧会话设置。
     option_row = (
-        await conn.execute(text(f"SELECT value, params FROM {source}.config_options WHERE key='system_options'"))
-    ).mappings().first()
+        (await conn.execute(text(f"SELECT value, params FROM {source}.config_options WHERE key='system_options'"))).mappings().first()
+    )
     options = (option_row or {}).get("value") or {}
     option_params = (option_row or {}).get("params") or {}
     default_model = options.get("default_model")

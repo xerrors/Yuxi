@@ -61,7 +61,7 @@ async page => {
     localStorage.setItem('user_token', 'model-provider-browser-fixture')
     localStorage.setItem('theme', 'light')
   })
-  await page.goto(`${origin}/agent-manage?tab=providers`)
+  await page.goto(`${origin}/api-services?tab=providers`)
   const panel = page.locator('.model-provider-manage-panel')
   const deepseek = panel.locator('.info-card').filter({ hasText: 'DeepSeek' })
   await deepseek.waitFor()

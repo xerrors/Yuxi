@@ -39,7 +39,9 @@ def example_tool(text: str) -> str:
 
 文件读写和命令执行由 Agent 的 Sandbox backend 提供。Agent 根据用户要求和项目结构选择合适的产物位置，通过 `present_artifacts` 展示结果文件；`large_tool_results` 和会话摘要等内部文件不会作为交付物展示。
 
-`present_artifacts` 接受绝对路径列表 `filepaths`，显示文件卡片，支持详情预览、下载和保存到个人空间。对话内的图片展示由内置 `chat-widgets` Skill 的 Image 或 ImageGroup 直接展示，可选短语叠放在图片左下角；path 使用当前用户可见的沙盒虚拟绝对路径；前端经当前会话鉴权读取图片，无需先登记交付物。
+`present_artifacts` 接受绝对路径列表 `filepaths`，显示文件卡片，并自动将生成时的文件副本保存到网盘“我的成果”。成果列表支持搜索、类型筛选、预览、下载和打开来源对话；同次工具调用的重复发布不会生成重复成果，同名文件分别保存，修改或删除源文件不影响已保存副本。归集从正式交付入口生效，不扫描临时文件、上传附件或补收历史对话。
+
+对话内的图片展示由内置 `chat-widgets` Skill 的 Image 或 ImageGroup 直接展示，可选短语叠放在图片左下角；path 使用当前用户可见的沙盒虚拟绝对路径；前端经当前会话鉴权读取图片。新生成图片作为结果交付时也调用 `present_artifacts`，将其保存到“我的成果”；单纯展示已有图片不触发保存。
 
 图片生成能力由内置 `image-gen` Skill 提供，不再作为独立的 Python 工具注册。具体依赖和文件位置由该 Skill 说明。
 

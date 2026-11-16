@@ -332,7 +332,7 @@ async def test_base_tools_are_registered_once_without_configuration_or_skill(run
         },
     )
     tools = await resolve_configured_runtime_tools(context)
-    assert [tool.name for tool in tools] == ["ask_user_question", "mark_for_improvement"]
+    assert [tool.name for tool in tools] == ["ask_user_question", "mark_for_improvement", "present_artifacts"]
     context.tools = ["mark_for_improvement", "ask_user_question", "present_artifacts"]
     tools = await resolve_configured_runtime_tools(context)
     assert [tool.name for tool in tools] == ["ask_user_question", "mark_for_improvement", "present_artifacts"]

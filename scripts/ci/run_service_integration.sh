@@ -52,6 +52,7 @@ uv run --locked --group test pytest \
     test/integration/api/test_sandbox_runner_health.py \
     test/integration/services/test_app_initialization.py \
     test/integration/services/test_schema_migration_version.py \
+    test/integration/services/test_workspace_deliverables_schema.py \
     test/integration/services/test_agent_input_concurrency.py \
     test/integration/services/test_thread_priority_inputs.py \
     test/integration/services/test_agent_dispatch_receipts.py \

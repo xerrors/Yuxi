@@ -27,7 +27,7 @@ async (page) => {
     return route.fulfill({ json: { jobs: [job] } })
   })
   await page.setViewportSize({ width: 1440, height: 1000 })
-  await page.goto('http://localhost:5173/agent-manage?tab=schedules')
+  await page.goto('http://localhost:5173/schedules')
   await page.locator('.task-row').waitFor()
   const expand = page.getByRole('button', { name: '展开侧边栏', exact: true })
   if (await expand.isVisible()) await expand.click()

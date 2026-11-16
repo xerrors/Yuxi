@@ -147,7 +147,7 @@
         <div class="model-metadata-source-content">
           <template v-if="userStore.isAdmin">
             没有合适的模型？
-            <RouterLink :to="{ path: '/agent-manage', query: { tab: 'providers' } }" @click.stop>
+            <RouterLink :to="{ path: '/api-services', query: { tab: 'providers' } }" @click.stop>
               配置模型
             </RouterLink>
           </template>

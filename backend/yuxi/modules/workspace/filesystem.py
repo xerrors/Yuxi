@@ -23,7 +23,7 @@ from yuxi.infrastructure.filesystem import (
     write_all_fd,
 )
 from yuxi.modules.workspace.errors import FileTransferLimitError
-from yuxi.modules.workspace.paths import normalize_workspace_scope, user_workspace_dir, validate_directory_name
+from yuxi.modules.workspace.paths import global_user_data_dir, normalize_workspace_scope, user_workspace_dir, validate_directory_name
 
 # 文件读写统一按 1MB 分块，控制单次读取的内存占用。
 _READ_CHUNK_SIZE = 1024 * 1024
@@ -32,9 +32,14 @@ _READ_CHUNK_SIZE = 1024 * 1024
 class Workspace:
     """以 uid 为边界访问持久化 UserWorkspace。"""
 
-    def __init__(self, uid: str):
+    def __init__(self, uid: str, *, root_path: Path | None = None):
         uid = str(uid)
-        self._workspace_root = user_workspace_dir(uid)
+        self._workspace_root = root_path or user_workspace_dir(uid)
+
+    @classmethod
+    def user_data(cls, uid: str) -> Workspace:
+        """构造当前用户数据根下的独立文件访问边界。"""
+        return cls(uid, root_path=global_user_data_dir(uid))
 
     def list_authorized_directory(self, path: str, *, root: str) -> list[dict]:
         """列出 Workdir 内的普通文件与真实目录。"""

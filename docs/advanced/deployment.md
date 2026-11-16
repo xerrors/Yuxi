@@ -117,17 +117,21 @@ API、Web 与 MinIO 的项目文件在构建时明确权限：源码和配置归
 docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container --profile all up -d --build
 ```
 
-`app-init` 以 UID/GID 1000 运行，等待 PostgreSQL 健康与 `storage-init` 成功后，在数据库锁内完成 Schema 和共享内容初始化。它为确认空库建立 business 版本 3 与 knowledge 版本 3 基线，包含 WPS 连接、父子分块版本表和当前表、索引、约束及 LangGraph checkpoint 表；当前版本跳过建表，其他版本不匹配会明确失败。随后同步系统配置定义、内置模型供应商、Agent、MCP 和 Skill 来源文件，API 与 worker 等待全部步骤成功。应用启动不自动迁移历史数据。[版本 1 基线决定](../develop-guides/decisions/implemented/2026-10-19-schema-baseline-one.md)说明编号重置的背景；编号重置不代表旧库已完成结构变更，历史 `1/1` 标记也不能作为结构完整的证明。
+`app-init` 以 UID/GID 1000 运行，等待 PostgreSQL 健康与 `storage-init` 成功后，在数据库锁内完成 Schema 和共享内容初始化。它为确认空库建立 business 版本 4 与 knowledge 版本 3 基线，包含个人成果、WPS 连接、父子分块版本表和当前表、索引、约束及 LangGraph checkpoint 表；当前版本跳过建表，其他版本不匹配会明确失败。随后同步系统配置定义、内置模型供应商、Agent、MCP 和 Skill 来源文件，API 与 worker 等待全部步骤成功。应用启动不自动迁移历史数据。[版本 1 基线决定](../develop-guides/decisions/implemented/2026-10-19-schema-baseline-one.md)说明编号重置的背景；编号重置不代表旧库已完成结构变更，历史 `1/1` 标记也不能作为结构完整的证明。
 
-已运行标准 v0.8 `2/2` 数据库的部署，应先备份数据库并停止 API 与 worker，再用本次代码构建的镜像显式执行 `docker compose run --rm --no-deps app-init python -m yuxi.migrations.custom_v080`。该入口在同一 PostgreSQL 事务内添加 WPS 与父子分块表、播种禁用的 WPS 配置并将两域提升为 `3/3`；重复执行 `3/3` 无副作用。随后执行正常 `app-init` 初始化共享配置。发现未版本化定制表或其他版本时拒绝，禁止手工只改版本号。旧 v0.7.3 本地架构的 `9/4` 使用单独的离线入口：先停止 API、worker 和其他写入者，完成 PostgreSQL、对象存储、Milvus、Neo4j 和工作目录的整套备份，再执行默认只读审计：
+已运行标准 v0.8 `2/2` 数据库的部署，应先备份数据库并停止 API 与 worker，再用本次代码构建的镜像显式执行 `docker compose run --rm --no-deps app-init python -m yuxi.migrations.custom_v080`。该入口在同一 PostgreSQL 事务内添加 WPS 与父子分块表、播种禁用的 WPS 配置并将两域提升为 `3/3`；重复执行 `3/3` 无副作用。再按下文升级成果目录，随后执行正常 `app-init` 初始化共享配置。发现未版本化定制表或其他版本时拒绝，禁止手工只改版本号。
+
+business `3` / knowledge `3` 部署在停止 API 与 worker 并完成数据库备份后，显式执行 `docker compose run --rm --no-deps app-init python -m yuxi.migrations.workspace_deliverables`。该入口在同一事务中添加个人成果表，将 business 提升为 `4`，保留 knowledge `3` 及已有数据；`4/3` 重跑无副作用，发现未知版本或未版本化成果表时拒绝。升级后按正常 Compose 启动 API 与 worker。
+
+旧 v0.7.3 本地架构的 `9/4` 使用单独的离线入口：先停止 API、worker 和其他写入者，完成 PostgreSQL、对象存储、Milvus、Neo4j 和工作目录的整套备份，再执行默认只读审计：
 
 ```bash
 docker compose run --rm --no-deps app-init python -m yuxi.migrations.legacy_v073
 ```
 
-确认审计无阻塞项后，才在同一维护窗口显式执行 `--apply`。迁移会在 PostgreSQL 事务内锁定并归档旧表到 `<schema>_v073_archive`，建立当前 `3/3` 表和约束，完成后才写入版本标记；重复执行无副作用，任何约束或转换失败都会回滚归档、表和版本。它不修改 checkpoint、向量库、对象存储、用户文件或 `.env`。旧 stdio MCP、已有 LangGraph checkpoint 和 Milvus 集合的兼容性仍需分别验证，不能以 `app-init` 成功代替这些检查。禁止手工只改版本号；入口只处理已收敛的终态 Run、请求和任务。
+确认审计无阻塞项后，才在同一维护窗口显式执行 `--apply`。迁移会在 PostgreSQL 事务内锁定并归档旧表到 `<schema>_v073_archive`，建立当前 `4/3` 表和约束，完成后才写入版本标记；重复执行无副作用，任何约束或转换失败都会回滚归档、表和版本。它不修改 checkpoint、向量库、对象存储、用户文件或 `.env`。旧 stdio MCP、已有 LangGraph checkpoint 和 Milvus 集合的兼容性仍需分别验证，不能以 `app-init` 成功代替这些检查。禁止手工只改版本号；入口只处理已收敛的终态 Run、请求和任务。
 
-若旧 `9/4` 数据已经迁移为 `3/3`，但历史会话接口报“Session 缺少配置快照”，先执行 `docker compose exec api python -m yuxi.migrations.legacy_v073 --repair-session-config` 审计。确认候选数量后，附加 `--apply` 补齐缺失配置；该修复锁定匹配旧归档的会话行，保留已有快照和消息，支持重复运行，不需要重新执行整个 Schema 迁移。
+若旧 `9/4` 数据已经迁移并升级为当前 `4/3`，但历史会话接口报“Session 缺少配置快照”，先执行 `docker compose exec api python -m yuxi.migrations.legacy_v073 --repair-session-config` 审计。确认候选数量后，附加 `--apply` 补齐缺失配置；该修复锁定匹配旧归档的会话行，保留已有快照和消息，支持重复运行，不需要重新执行整个 Schema 迁移。
 
 ### 可选关闭知识库
 

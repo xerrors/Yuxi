@@ -25,6 +25,7 @@ LIFECYCLE_CORE_E2E_TESTS=(
     test/e2e/test_agent_lifecycle_key_scope_e2e.py
     test/e2e/test_openai_events_e2e.py
     test/e2e/test_agent_feedback_e2e.py
+    test/e2e/test_workspace_deliverables_e2e.py
     test/e2e/test_mcp_personal_credentials.py
     test/e2e/test_session_mentions_e2e.py
     test/e2e/test_malformed_tool_recovery_e2e.py

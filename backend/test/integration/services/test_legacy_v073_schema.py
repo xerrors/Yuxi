@@ -134,7 +134,7 @@ async def test_upgrade_preserves_data_scope_and_can_write_again(legacy_database)
     await upgrade_legacy_schema(manager)
     await upgrade_legacy_schema(manager)
     await initialize_schema(manager)
-    assert await get_schema_versions(manager) == {"business": 3, "knowledge": 3}
+    assert await get_schema_versions(manager) == {"business": 4, "knowledge": 3}
 
     async with manager.async_engine.connect() as conn:
         # 每张当前模型都能按完整列读取，防止只写版本标记而遗漏结构。

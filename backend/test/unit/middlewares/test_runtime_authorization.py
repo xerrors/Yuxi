@@ -56,7 +56,7 @@ def test_direct_mcp_disconnect_rejects_registered_tool_before_outbound(context, 
     assert not tool_allowed(context, "remote_tool", {}, mcp_policy)
 
 
-@pytest.mark.parametrize("name", ["ask_user_question", "mark_for_improvement"])
+@pytest.mark.parametrize("name", ["ask_user_question", "mark_for_improvement", "present_artifacts"])
 def test_base_tool_is_allowed_without_configuration_skill_or_run(context, mcp_policy, name):
     """基础工具使用统一白名单，不依赖配置、Skill 或 Run 是否存在。"""
     context.registered_builtin_tool_names.add(name)

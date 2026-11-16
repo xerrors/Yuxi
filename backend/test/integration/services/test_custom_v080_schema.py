@@ -28,7 +28,7 @@ async def standard_v080():
     try:
         async with engine.begin() as conn:
             for metadata in load_models():
-                tables = [table for table in metadata.sorted_tables if table.name not in CUSTOM_TABLES]
+                tables = [table for table in metadata.sorted_tables if table.name not in CUSTOM_TABLES | {"workspace_deliverables"}]
                 await conn.run_sync(lambda sync_conn: metadata.create_all(sync_conn, tables=tables))
             await conn.execute(
                 text(

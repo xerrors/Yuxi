@@ -244,7 +244,7 @@ Chart.data 为 0–60 条记录，按数组元素数量计数，与 JSON 文本�
 
 绘制每日最高/最低温时优先使用逐日预报字段。小时预报采样的最大/最小值只标为“采样最高/最低温”，缺少全天时段时在图卡中注明；未来的预报值不能称为实测值。
 
-Image 使用 src 或 path 之一，alt 描述图片内容。src 接受无凭据的 HTTPS URL 或同源 `/...` 路径；不能用协议相对 URL、data/file/javascript URL。path 使用实际图片文件的沙盒绝对路径，例如 `{"type":"Image","path":"/home/user/workspace/projects/<project-dir>/generated-image.png","alt":"生成的图片"}`，沿用工具返回的真实路径。生成图片保存在当前 Project 工作目录；Home 或临时目录中的图片先保存到当前工作目录再展示。前端通过当前会话鉴权读取，无需调用 present_artifacts。直接填文件路径，不拼接 API URL 或 Token，不使用路径跳转或宿主机路径。只使用已知存在的图片地址，不猜测路径；图片来源和详细说明放围栏外，简短说明可用 caption。尚未实际读取图片时，alt 和说明沿用用户描述，保留已知内容。单张图片默认保留原始宽高比，展示范围不超过正文宽度和 400px 高度；只有用户需要特定比例时才显式设置 aspectRatio，并按需要选择 cover 或 contain（默认）。ImageGroup 的缩略图统一使用 5:4 和 cover；点击后以完整比例预览，支持前后切换、方向键和 Esc 关闭。
+Image 使用 src 或 path 之一，alt 描述图片内容。src 接受无凭据的 HTTPS URL 或同源 `/...` 路径；不能用协议相对 URL、data/file/javascript URL。path 使用实际图片文件的沙盒绝对路径，例如 `{"type":"Image","path":"/home/user/workspace/projects/<project-dir>/generated-image.png","alt":"生成的图片"}`，沿用工具返回的真实路径。生成图片保存在当前 Project 工作目录；Home 或临时目录中的图片先保存到当前工作目录再展示。前端通过当前会话鉴权读取。新生成图片作为最终结果时，同时调用 `present_artifacts` 自动保存到“我的成果”；展示已有图片或检索参考图时无需登记。直接填文件路径，不拼接 API URL 或 Token，不使用路径跳转或宿主机路径。只使用已知存在的图片地址，不猜测路径；图片来源和详细说明放围栏外，简短说明可用 caption。尚未实际读取图片时，alt 和说明沿用用户描述，保留已知内容。单张图片默认保留原始宽高比，展示范围不超过正文宽度和 400px 高度；只有用户需要特定比例时才显式设置 aspectRatio，并按需要选择 cover 或 contain（默认）。ImageGroup 的缩略图统一使用 5:4 和 cover；点击后以完整比例预览，支持前后切换、方向键和 Esc 关闭。
 
 ## 字段与交互边界
 

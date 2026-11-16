@@ -23,12 +23,12 @@ async page => {
     for (const item of layout.items) check(item.inside && item.reachable, `页头标签被裁切或遮挡：${item.label}`)
   }
   try {
-    await page.goto(`${origin}/agent-manage?tab=providers`)
+    await page.goto(`${origin}/api-services?tab=providers`)
     await page.locator('.model-provider-manage-panel').waitFor()
     await page.setViewportSize({ width: 1440, height: 1000 })
     await page.evaluate(async () => { const { useChatUIStore } = await import('/src/modules/session/model/chatUI.js'); useChatUIStore().sidebarCollapsed = false })
     await page.waitForFunction(() => document.querySelector('.header').getBoundingClientRect().width === 230)
-    check(await page.locator('.page-header .tab-item').count() >= 4, '需要超级管理员会话覆盖全部管理标签')
+    check(await page.locator('.page-header .tab-item').count() === 2, 'API服务应只显示模型供应商和API两个标签')
     const coverage = []
     for (const mode of ['light', 'dark']) {
       await page.evaluate(async mode => {
@@ -51,7 +51,7 @@ async page => {
     await checkHeader()
     // 点击最后一个标签证明布局修复后入口仍可用。
     await page.locator('.page-header .tab-item').last().click()
-    await page.waitForURL('**/agent-manage?tab=integration')
+    await page.waitForURL('**/api-services?tab=api')
     await checkHeader()
     return { coverage, oldLayoutRejected: rejected, lastTabReachable: true }
   } finally {

@@ -43,7 +43,7 @@
       :active="activeTab === 'workspace'"
     />
     <KeepAlive>
-      <SpacePlaceholder v-if="activeTab === 'deliverables'" view="deliverables" />
+      <DeliverablesBrowser v-if="activeTab === 'deliverables'" />
     </KeepAlive>
     <WPSCloudDrive v-if="activeTab === 'cloud'" />
   </div>
@@ -55,7 +55,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { CircleHelp, Search } from '@lucide/vue'
 import PageHeader from '@/shared/ui/PageHeader.vue'
 import WorkspaceBrowser from '@/modules/workspace/ui/WorkspaceBrowser.vue'
-import SpacePlaceholder from '@/modules/workspace/ui/SpacePlaceholder.vue'
+import DeliverablesBrowser from '@/modules/workspace/ui/DeliverablesBrowser.vue'
 import WPSCloudDrive from '@/modules/workspace/ui/WPSCloudDrive.vue'
 
 const route = useRoute()

@@ -154,7 +154,7 @@ const productName = computed(() => infoStore.branding.name || 'Yuxi')
 const mainList = computed(() => {
   const items = [
     {
-      name: '对话',
+      name: '新对话',
       path: lastThreadId.value
         ? router.resolve({ name: 'AgentCompWithThreadId', params: { thread_id: lastThreadId.value } }).path
         : '/agent',
@@ -164,18 +164,13 @@ const mainList = computed(() => {
     }
   ]
 
+  items.push({ name: '定时任务', path: '/schedules', icon: Clock3, activeIcon: Clock3 })
+
   items.push({
     name: '智能体',
     path: '/agent-manage',
     icon: Box,
     activeIcon: Box
-  })
-
-  items.push({
-    name: '网盘',
-    path: '/workspace',
-    icon: NetDiskIcon,
-    activeIcon: NetDiskIcon
   })
 
   items.push({
@@ -186,9 +181,15 @@ const mainList = computed(() => {
     activeIcon: LibraryBig
   })
 
-  items.push({ name: '定时任务', path: '/schedules', icon: Clock3, activeIcon: Clock3 })
-  if (userStore.isAdmin) items.push({ name: 'API服务', path: '/api-services', icon: Unplug, activeIcon: Unplug })
+  items.push({
+    name: '网盘',
+    path: '/workspace',
+    icon: NetDiskIcon,
+    activeIcon: NetDiskIcon
+  })
+
   items.push({ name: '技能・工具・MCP', path: '/capabilities', icon: Wrench, activeIcon: Wrench })
+  if (userStore.isAdmin) items.push({ name: 'API服务', path: '/api-services', icon: Unplug, activeIcon: Unplug })
 
   if (userStore.isSuperAdmin) {
     items.push({

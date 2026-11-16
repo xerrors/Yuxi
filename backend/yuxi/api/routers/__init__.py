@@ -26,6 +26,7 @@ from yuxi.api.routers.models import model_providers
 from yuxi.api.routers.public_v1 import public_agents_router, public_knowledge_router
 from yuxi.api.routers.schedules import scheduled_agents
 from yuxi.api.routers.system import system as system_routes
+from yuxi.api.routers.workspace.deliverables import deliverables
 from yuxi.api.routers.workspace.projects import projects
 from yuxi.api.routers.workspace.viewer import filesystem_router
 from yuxi.api.routers.workspace.workspace import workspace as workspace_routes
@@ -62,6 +63,7 @@ router.include_router(user_sandbox_router)
 router.include_router(user_router)  # /api/user/* 用户级配置与凭据
 router.include_router(filesystem_router)  # /api/viewer/filesystem/* 工作台文件系统视图
 router.include_router(workspace_routes)  # /api/workspace/* 用户个人工作区
+router.include_router(deliverables)
 router.include_router(mention_router)  # /api/mention/* 提及文件搜索接口
 
 if knowledge_enabled():

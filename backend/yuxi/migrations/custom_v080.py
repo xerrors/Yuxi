@@ -35,7 +35,7 @@ async def upgrade_v080_custom_schema(manager: PostgresManager) -> None:
     ]
     async with schema_migration_lock(manager):
         versions = await get_schema_versions(manager)
-        if versions == {"business": 3, "knowledge": 3}:
+        if versions in ({"business": 3, "knowledge": 3}, {"business": 4, "knowledge": 3}):
             return
         if versions != {"business": 2, "knowledge": 2}:
             raise RuntimeError(f"定制表升级只支持标准 v0.8 Schema 2/2，当前为 {versions}")

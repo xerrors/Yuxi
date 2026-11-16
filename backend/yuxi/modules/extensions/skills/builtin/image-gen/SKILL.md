@@ -30,7 +30,7 @@ skill_dependencies: ["chat-widgets"]
 3. 从生成接口响应中读取图片地址，默认路径为 `images[0].url`。
 4. 在同一个沙盒脚本中用 `Authorization: Bearer $SILICONFLOW_API_KEY` 下载该图片地址；如果接口直接返回 base64，则直接解码保存。
 5. 根据用户要求和项目结构，将最终图片保存到当前 Workdir 中合适的位置。
-6. 读取 `chat-widgets` Skill，在最终回复的完整 widget 围栏中输出独立 Image，多张图片使用 ImageGroup；path 使用保存后的绝对虚拟路径，alt 描述图片内容，需要短语时用 caption 放在左下角。用户需要下载或保存文件时，同时调用 `present_artifacts` 登记路径。
+6. 读取 `chat-widgets` Skill，在最终回复的完整 widget 围栏中输出独立 Image，多张图片使用 ImageGroup；path 使用保存后的绝对虚拟路径，alt 描述图片内容，需要短语时用 caption 放在左下角。图片生成并保存完成后，调用 `present_artifacts` 登记最终图片路径，自动保存到用户的“我的成果”。
 7. 最终回复简要说明图片已生成，不要把外部临时 URL 当作最终结果展示。
 
 ## 脚本示例
@@ -83,4 +83,4 @@ print(output_path.as_posix())
 - 不要把外部生成接口返回的临时 URL 当作最终结果直接展示给用户。
 - 不要调用后端 MinIO 上传工具；图片生成和下载都应在沙盒内完成。
 - 如果 `SILICONFLOW_API_KEY` 缺失，应明确提示用户需要在 Agent 沙盒环境变量中配置。
-- 保存图片后在最终回复中输出完整 Image widget；`present_artifacts` 只展示可下载、可保存的文件卡片。
+- 保存图片后在最终回复中输出完整 Image widget；同时调用 `present_artifacts` 保存生成结果到“我的成果”，保留可下载的文件卡片。

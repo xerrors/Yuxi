@@ -84,7 +84,7 @@ async page => {
     await chart.getByRole('button', { name: '刷新调用统计', exact: true }).click()
     await chart.getByText('上报完整', { exact: true }).waitFor()
     check((await chart.locator('.dashboard-metric-value').allTextContents()).join() === '0,0,0', '真实零被显示成未知')
-    await page.goto(`${origin}/agent-manage?tab=schedules`)
+    await page.goto(`${origin}/schedules`)
     await page.locator('.task-row').filter({ hasText: job.name }).click()
     const history = page.locator('.history-section')
     await history.getByText('25 条', { exact: true }).waitFor()
