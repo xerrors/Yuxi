@@ -16,6 +16,32 @@ def test_retrieval_metrics_use_metadata_chunk_id():
     assert metrics["f1@3"] == pytest.approx(0.4)
 
 
+def test_retrieval_metrics_ignore_generation_suffix_after_reindex():
+    # 文件重新入库后 chunk_id 的 -gN 后缀会变，基准里旧后缀的参考块仍应命中
+    retrieved_chunks = [{"metadata": {"chunk_id": "file_1_chunk_3-g3"}}]
+
+    metrics = EvaluationMetricsCalculator.calculate_retrieval_metrics(retrieved_chunks, ["file_1_chunk_3-g2"], k_values=[3])
+
+    assert metrics["recall@3"] == 1.0
+
+
+def test_retrieval_metrics_match_unsuffixed_gold_ids_from_before_generation_suffix():
+    # 代次后缀加入前建的基准没有 -gN，仍应与当前带后缀的检索结果对齐
+    retrieved_chunks = [{"metadata": {"chunk_id": "file_1_chunk_3-g2"}}]
+
+    metrics = EvaluationMetricsCalculator.calculate_retrieval_metrics(retrieved_chunks, ["file_1_chunk_3"], k_values=[3])
+
+    assert metrics["recall@3"] == 1.0
+
+
+def test_retrieval_metrics_generation_suffix_does_not_merge_different_chunks():
+    retrieved_chunks = [{"metadata": {"chunk_id": "file_1_chunk_2-g3"}}]
+
+    metrics = EvaluationMetricsCalculator.calculate_retrieval_metrics(retrieved_chunks, ["file_1_chunk_1-g3"], k_values=[3])
+
+    assert metrics["recall@3"] == 0.0
+
+
 def test_overall_score_uses_answer_accuracy_when_available():
     # 有答案准确率时，综合得分取各题 score 的平均，且与检索指标无关
     retrieval = [{"recall@10": 1.0, "f1@10": 0.2}, {"recall@10": 0.0, "f1@10": 0.0}]

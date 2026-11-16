@@ -3,12 +3,21 @@ RAG评估指标计算工具
 简化版：只保留Recall/F1（检索）和 LLM Judge（答案准确性）
 """
 
+import re
 import textwrap
 from typing import Any
 
 import json_repair
 
 from yuxi.infrastructure.observability.logging import logger
+
+# 与 implementations/milvus.py 入库时追加的 -g{generation} 代次后缀保持一致，重新入库后缀会变
+_GENERATION_SUFFIX_RE = re.compile(r"-g\d+$")
+
+
+def normalize_chunk_id(chunk_id: str) -> str:
+    """去掉 chunk_id 的代次后缀，使同一分块在重新入库前后可以对齐。"""
+    return _GENERATION_SUFFIX_RE.sub("", chunk_id)
 
 
 class RetrievalMetrics:
@@ -109,7 +118,8 @@ class EvaluationMetricsCalculator:
         retrieved_ids = []
         for chunk in retrieved_chunks:
             chunk_id = chunk.get("chunk_id") or chunk.get("metadata", {}).get("chunk_id")
-            retrieved_ids.append(str(chunk_id) if chunk_id else "")
+            retrieved_ids.append(normalize_chunk_id(str(chunk_id)) if chunk_id else "")
+        gold_chunk_ids = [normalize_chunk_id(str(chunk_id)) for chunk_id in gold_chunk_ids]
 
         metrics = {}
         for k in k_values:

@@ -24,6 +24,7 @@ from yuxi.modules.knowledge.evaluation.benchmark_generation import (
     normalize_graph_expand_top_k,
 )
 from yuxi.modules.knowledge.evaluation.evaluator import EVALUATION_MODEL_KEYS, aggregate_metrics, evaluate_question
+from yuxi.modules.knowledge.evaluation.metrics import normalize_chunk_id
 from yuxi.modules.knowledge.factory import KnowledgeBaseFactory
 from yuxi.modules.knowledge.repositories.bases import KnowledgeBaseRepository
 from yuxi.modules.knowledge.repositories.chunks import KnowledgeChunkRepository
@@ -53,6 +54,11 @@ from yuxi.modules.background_jobs.dispatch import dispatch_job, register_job_in_
 from yuxi.shared.datetime import format_utc_datetime, utc_now
 
 DATASET_PERSIST_BATCH_SIZE = max(1, int(os.getenv("YUXI_DATASET_PERSIST_BATCH_SIZE") or 1))
+
+
+def format_stale_gold_chunk_warning(count: int) -> str:
+    """生成参考块失效提示：对应 chunk 已不在当前知识库，相关题目不计入检索指标。"""
+    return f"{count} 个参考块已失效，对应文件可能重新入库过或分块参数已变化，相关题目未计入检索指标"
 
 
 class _DatasetAlreadyCompleted(RuntimeError):
@@ -610,6 +616,12 @@ class EvaluationService:
                     except Exception as e:
                         logger.error(f"Failed to load judge LLM: {e}")
 
+            # 参考块按去掉代次后缀后的 id 核对当前知识库，已失效的题不计入检索指标，避免以 0 分混入平均值
+            current_chunk_ids = set()
+            if dataset_row.has_gold_chunks:
+                current_chunk_ids = {normalize_chunk_id(chunk_id) for chunk_id in await self.chunk_repo.list_chunk_ids_by_kb_id(kb_id)}
+            stale_gold_chunk_count = 0
+
             all_retrieval_metrics = []
             all_answer_metrics = []
             total_items = len(dataset_items)
@@ -636,7 +648,20 @@ class EvaluationService:
                 )
 
                 if dataset_row.has_gold_chunks and question_data.get("gold_chunk_ids"):
-                    all_retrieval_metrics.append(question_result["retrieval_scores"])
+                    stale_ids = [
+                        chunk_id
+                        for chunk_id in question_data["gold_chunk_ids"]
+                        if normalize_chunk_id(str(chunk_id)) not in current_chunk_ids
+                    ]
+                    if stale_ids:
+                        stale_gold_chunk_count += len(stale_ids)
+                        detail_metrics = question_result["detail"]["metrics"]
+                        for key in question_result["retrieval_scores"]:
+                            detail_metrics.pop(key, None)
+                        detail_metrics["stale_gold_chunk_count"] = len(stale_ids)
+                        detail_metrics["warning"] = format_stale_gold_chunk_warning(len(stale_ids))
+                    else:
+                        all_retrieval_metrics.append(question_result["retrieval_scores"])
                 if dataset_row.has_gold_answers and question_data.get("gold_answer") and judge_llm:
                     all_answer_metrics.append(question_result["answer_scores"])
 
@@ -655,6 +680,11 @@ class EvaluationService:
 
             await context.set_progress(95, "计算最终指标")
             overall_metrics, overall_score = aggregate_metrics(all_retrieval_metrics, all_answer_metrics, include_overall_score=True)
+            if stale_gold_chunk_count:
+                warning = format_stale_gold_chunk_warning(stale_gold_chunk_count)
+                logger.warning(f"评估 {run_id}: {warning}")
+                overall_metrics["stale_gold_chunk_count"] = stale_gold_chunk_count
+                overall_metrics["warning"] = warning
             await context.raise_if_cancelled()
             await context.set_progress(100, "完成")
             return {

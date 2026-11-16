@@ -249,6 +249,9 @@
                   <span class="evaluation-row-description">
                     {{ datasetById[run.dataset_id]?.name || '关联基准已删除' }}
                   </span>
+                  <span v-if="run.metrics?.warning" class="evaluation-row-description" role="alert">
+                    {{ run.metrics.warning }}
+                  </span>
                   <span v-if="run.status === 'running'" class="evaluation-row-progress">
                     <a-progress
                       :percent="getRunProgress(run)"

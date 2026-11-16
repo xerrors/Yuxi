@@ -150,6 +150,7 @@
                 />
                 <div class="benchmark-run-meta">
                   <span>{{ formatTime(selectedRun?.started_at) }} · {{ formatRunDuration(selectedRun) }}</span>
+                  <span v-if="selectedRun?.metrics?.warning" role="alert">{{ selectedRun.metrics.warning }}</span>
                 </div>
                 <span class="benchmark-run-status" :class="`status-${selectedRun?.status || 'unknown'}`">
                   {{ getRunStatusText(selectedRun?.status) }}
@@ -220,7 +221,10 @@
                         <small>{{ metric.label }}</small>
                         <strong>{{ formatMetric(metric.value) }}</strong>
                       </span>
-                      <span v-if="getRetrievalMetrics(record.metrics).length === 0" class="benchmark-cell-empty">-</span>
+                      <span v-if="record.metrics?.warning" class="benchmark-cell-empty" role="alert">
+                        {{ record.metrics.warning }}
+                      </span>
+                      <span v-else-if="getRetrievalMetrics(record.metrics).length === 0" class="benchmark-cell-empty">-</span>
                     </div>
                   </template>
                   <template v-else-if="column.key === 'answer_score'">
