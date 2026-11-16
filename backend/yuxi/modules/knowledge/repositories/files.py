@@ -48,6 +48,24 @@ _UNKNOWN_STATUS_SORT_WEIGHT = 5
 class KnowledgeFileRepository:
     """知识库文件与目录节点事实的持久化查询、写入与删除登记。"""
 
+    async def lock_current(self, session, kb_id: str, file_id: str) -> KnowledgeFile | None:
+        """发布或来源映射核对在调用方事务中锁住仍有效的精确文件。"""
+        return await session.scalar(
+            select(KnowledgeFile)
+            .where(KnowledgeFile.kb_id == kb_id, KnowledgeFile.file_id == file_id, KnowledgeFile.deleted_at.is_(None))
+            .with_for_update()
+        )
+
+    async def current_object_pointers(self, session, kb_id: str):
+        """流式读取有效文件的正文和原件指针，供回收阶段核对共享引用。"""
+        rows = await session.stream(
+            select(KnowledgeFile.markdown_file, KnowledgeFile.minio_url, KnowledgeFile.path, KnowledgeFile.file_type)
+            .join(KnowledgeBase, KnowledgeBase.kb_id == KnowledgeFile.kb_id)
+            .where(KnowledgeFile.kb_id == kb_id, KnowledgeFile.deleted_at.is_(None), KnowledgeBase.deleted_at.is_(None))
+        )
+        async for row in rows:
+            yield tuple(row)
+
     async def get_by_file_id(self, file_id: str, *, include_deleted: bool = False) -> KnowledgeFile | None:
         filters = [KnowledgeFile.file_id == file_id]
         if not include_deleted:
@@ -547,12 +565,41 @@ class KnowledgeFileRepository:
         processing_owner: str | None = None,
         processing_params: dict | None = None,
         kb_additional_params: dict | None = None,
+        document_revision: dict | None = None,
         missing_markdown_statuses: set[str] | None = None,
     ) -> KnowledgeFile | None:
-        """条件领取或完成文件处理；参数合并和执行权发布共享同一事务。
+        """条件领取或完成文件处理；参数合并和执行权发布共享同一事务。"""
+        async with pg_manager.get_async_session_context() as session:
+            return await self.update_fields_if_status_in_session(
+                session,
+                kb_id=kb_id,
+                file_id=file_id,
+                allowed_statuses=allowed_statuses,
+                data=data,
+                processing_job_id=processing_job_id,
+                processing_owner=processing_owner,
+                processing_params=processing_params,
+                kb_additional_params=kb_additional_params,
+                document_revision=document_revision,
+                missing_markdown_statuses=missing_markdown_statuses,
+            )
 
-        missing_markdown_statuses 只在同一次行锁里额外放行没有正文的非目录文件。
-        """
+    async def update_fields_if_status_in_session(
+        self,
+        session: AsyncSession,
+        *,
+        kb_id: str,
+        file_id: str,
+        allowed_statuses: set[str],
+        data: dict[str, Any],
+        processing_job_id: str | None = None,
+        processing_owner: str | None = None,
+        processing_params: dict | None = None,
+        kb_additional_params: dict | None = None,
+        document_revision: dict | None = None,
+        missing_markdown_statuses: set[str] | None = None,
+    ) -> KnowledgeFile | None:
+        """在调用方事务内条件更新状态、执行权和当前正文映射。"""
         lease_job_id = processing_job_id or data.get("processing_job_id")
         lease_owner = processing_owner or data.get("processing_owner")
         if (lease_job_id is None) != (lease_owner is None):
@@ -581,45 +628,56 @@ class KnowledgeFileRepository:
             filters.append(KnowledgeFile.processing_job_id == processing_job_id)
         if processing_owner is not None:
             filters.append(KnowledgeFile.processing_owner == processing_owner)
-        async with pg_manager.get_async_session_context() as session:
-            if data.get("status") in {FileStatus.PARSING, FileStatus.INDEXING}:
-                from yuxi.modules.knowledge.repositories.document_resets import DocumentResetRepository
+        if data.get("status") in {FileStatus.PARSING, FileStatus.INDEXING}:
+            from yuxi.modules.knowledge.repositories.document_resets import DocumentResetRepository
 
-                await DocumentResetRepository.require_processing(
-                    session, kb_id, file_id, job_id=lease_job_id if lease_owner is not None else None
+            await DocumentResetRepository.require_processing(
+                session, kb_id, file_id, job_id=lease_job_id if lease_owner is not None else None
+            )
+        job_record = None
+        if lease_job_id is not None and lease_owner is not None:
+            # 带租约的更新先锁作业行并确认租约仍存活，过期 worker 的晚写在此被拒绝。
+            job_record = await session.scalar(
+                select(BackgroundJobRecord)
+                .where(
+                    BackgroundJobRecord.id == lease_job_id,
+                    BackgroundJobRecord.status == "running",
+                    BackgroundJobRecord.worker_id == lease_owner,
                 )
-            job_record = None
-            if lease_job_id is not None and lease_owner is not None:
-                # 带租约的更新先锁作业行并确认租约仍存活，过期 worker 的晚写在此被拒绝。
-                job_record = await session.scalar(
-                    select(BackgroundJobRecord)
-                    .where(
-                        BackgroundJobRecord.id == lease_job_id,
-                        BackgroundJobRecord.status == "running",
-                        BackgroundJobRecord.worker_id == lease_owner,
-                    )
-                    .with_for_update()
-                )
-                if job_record is None:
-                    return None
-            file_record = await session.scalar(select(KnowledgeFile).where(*filters).with_for_update())
-            if file_record is None:
+                .with_for_update()
+            )
+            if job_record is None:
                 return None
-            if lease_job_id is not None:
-                database_now = await session.scalar(select(func.clock_timestamp()))
-                if job_record.lease_expires_at is None or job_record.lease_expires_at <= database_now:
-                    return None
-            if kb_additional_params is not None:
-                from yuxi.modules.knowledge.utils.kb_utils import resolve_processing_params
+        file_record = await session.scalar(select(KnowledgeFile).where(*filters).with_for_update())
+        if file_record is None:
+            return None
+        if lease_job_id is not None:
+            database_now = await session.scalar(select(func.clock_timestamp()))
+            if job_record.lease_expires_at is None or job_record.lease_expires_at <= database_now:
+                return None
+        if kb_additional_params is not None:
+            from yuxi.modules.knowledge.utils.kb_utils import resolve_processing_params
 
-                # 参数与领取状态在同一行锁和事务内确定，落败请求不能预写参数。
-                sanitized_data["processing_params"] = resolve_processing_params(
-                    kb_additional_params, file_record.processing_params, processing_params
-                )
-            for key, value in sanitized_data.items():
-                setattr(file_record, key, value)
-            await session.flush()
-            return file_record
+            # 参数与领取状态在同一行锁和事务内确定，落败请求不能预写参数。
+            sanitized_data["processing_params"] = resolve_processing_params(
+                kb_additional_params, file_record.processing_params, processing_params
+            )
+        if (
+            sanitized_data.get("markdown_file")
+            and sanitized_data["markdown_file"] != file_record.markdown_file
+            and document_revision is None
+        ):
+            from yuxi.shared.errors import InvalidOperationError
+
+            raise InvalidOperationError("发布新正文必须同时登记当前修订映射")
+        for key, value in sanitized_data.items():
+            setattr(file_record, key, value)
+        if document_revision is not None:
+            from yuxi.modules.knowledge.repositories.revisions import DocumentRevisionRepository
+
+            await DocumentRevisionRepository().register(session, file_record, document_revision)
+        await session.flush()
+        return file_record
 
     async def begin_index_generation(
         self, *, kb_id: str, file_id: str, processing_job_id: str | None = None, processing_owner: str | None = None

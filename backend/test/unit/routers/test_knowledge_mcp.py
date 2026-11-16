@@ -73,7 +73,17 @@ def client(monkeypatch):
 def test_tools_publish_query_array_and_existing_document_schemas(client):
     """MCP 公开多库参数，其余输入继续复用 Public API Schema。"""
     tools = {t["name"]: t for t in rpc(client, "tools/list").json()["result"]["tools"]}
-    assert set(tools) == {"list_kbs", "query_kb", "search_file", "open_kb_document", "find_kb_document"}
+    assert set(tools) == {
+        "list_kbs",
+        "query_kb",
+        "search_file",
+        "open_kb_document",
+        "find_kb_document",
+        "list_kb_media",
+        "query_kb_media",
+        "read_kb_media",
+        "inspect_kb_media",
+    }
     for name, model in {
         "query_kb": knowledge_mcp.QueryKBInput,
         "search_file": knowledge_mcp.SearchFileInput,

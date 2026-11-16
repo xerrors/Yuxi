@@ -21,6 +21,8 @@ from yuxi.modules.identity.models import User
 from yuxi.modules.knowledge.base import KBNotFoundError
 from yuxi.modules.knowledge.mcp import KNOWLEDGE_MCP_PATH
 from yuxi.modules.knowledge.mcp.auth import authenticate_knowledge_delegate
+from yuxi.modules.knowledge.media import service as media_service
+from yuxi.modules.knowledge.media.mcp import MEDIA_TOOLS, media_read_result
 from yuxi.modules.knowledge.schemas import (
     FindInputSchema,
     ListInputSchema,
@@ -30,6 +32,7 @@ from yuxi.modules.knowledge.schemas import (
 )
 from yuxi.modules.knowledge.services import tools as knowledge_tools
 from yuxi.modules.knowledge.services.access import visible_knowledge_bases
+from yuxi.shared.errors import ContentTooLargeError, InvalidInputError, InvalidOperationError, ResourceNotFoundError, StateConflictError
 
 # 默认 Host 白名单，防 DNS rebinding；部署可用 YUXI_MCP_ALLOWED_HOSTS 覆盖。
 _DEFAULT_ALLOWED_HOSTS = "localhost:*,127.0.0.1:*,api:*"
@@ -94,6 +97,7 @@ class KnowledgeMCP:
                 "需要更多上下文时，将窗口 start_line 传给 open_kb_document 的 line。",
             ),
         }
+        self.tools.update(MEDIA_TOOLS)
         self.server.list_tools()(self.list_tools)
         self.server.call_tool()(self.call_tool)
         self.manager = StreamableHTTPSessionManager(
@@ -161,6 +165,10 @@ class KnowledgeMCP:
             # list_kbs 是同步用例；结构化输出按客户端约定包一层 knowledge_bases
             if name == "list_kbs":
                 result = knowledge_tools.list_kbs(visible, include_capabilities=payload.include_capabilities)
+            elif name in MEDIA_TOOLS:
+                result = await getattr(media_service, name)(visible_kbs=visible, uid=state.knowledge_mcp_uid, **payload.model_dump())
+                if name == "read_kb_media":
+                    return media_read_result(result)
             else:
                 result = await getattr(knowledge_tools, name)(visible_kbs=visible, **payload.model_dump())
             return types.CallToolResult(
@@ -169,6 +177,22 @@ class KnowledgeMCP:
             )
         except knowledge_tools.KnowledgeToolError as exc:
             status = 404 if exc.not_found else 400
+        except (ContentTooLargeError, InvalidInputError, InvalidOperationError, ResourceNotFoundError, StateConflictError) as exc:
+            if name in MEDIA_TOOLS:
+                message = exc.message
+                if isinstance(exc, ResourceNotFoundError | StateConflictError):
+                    message += "。请重新调用 list_kb_media 获取当前修订和片段。"
+                elif isinstance(exc, ContentTooLargeError):
+                    message += "。请使用 list_kb_media 提供的有界片段。"
+                return types.CallToolResult(
+                    isError=True,
+                    content=[
+                        types.TextContent(
+                            type="text", text=json.dumps({"code": exc.code or "media_error", "message": message}, ensure_ascii=False)
+                        )
+                    ],
+                )
+            status = 500
         except KBNotFoundError:
             status = 404
         except ValueError:

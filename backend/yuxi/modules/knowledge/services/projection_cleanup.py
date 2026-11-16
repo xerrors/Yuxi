@@ -37,6 +37,18 @@ async def process_knowledge_projections(_context: dict | None = None) -> list[st
                 async with knowledge_projection_lock(event.kb_id):
                     if event.operation == "knowledge_base_deleted":
                         await knowledge_base.cleanup_deleted_knowledge_base(event.kb_id)
+                    elif event.operation == "media_build_cleanup":
+                        from yuxi.modules.knowledge.media.jobs import cleanup_failed_media_build
+
+                        await cleanup_failed_media_build(session, event)
+                    elif event.operation == "document_revision_deleted":
+                        from yuxi.modules.knowledge.services.revision_cleanup import cleanup_retired_revision
+
+                        await cleanup_retired_revision(event.kb_id, event.aggregate_id)
+                    elif event.operation == "document_derivatives_cleanup":
+                        from yuxi.modules.knowledge.services.revision_cleanup import cleanup_file_derivatives
+
+                        await cleanup_file_derivatives(event.kb_id, event.aggregate_id)
                     elif event.operation in {"file_deleted", "generation_cleanup"}:
                         executor = await knowledge_base.get_cleanup_executor(event.kb_id)
                         if executor is not None:

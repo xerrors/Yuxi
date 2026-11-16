@@ -21,6 +21,7 @@ from yuxi.api.routers.knowledge.dashboard import knowledge_dashboard
 from yuxi.api.routers.knowledge.evaluation import evaluation
 from yuxi.api.routers.knowledge.graphs import graph
 from yuxi.api.routers.knowledge.management import knowledge as knowledge_routes
+from yuxi.api.routers.knowledge.media import router as knowledge_media_router
 from yuxi.api.routers.models import model_providers
 from yuxi.api.routers.public_v1 import public_agents_router, public_knowledge_router
 from yuxi.api.routers.schedules import scheduled_agents
@@ -65,7 +66,8 @@ router.include_router(mention_router)  # /api/mention/* 提及文件搜索接口
 if knowledge_enabled():
     router.include_router(public_knowledge_router)
     router.include_router(knowledge_dashboard)  # /api/dashboard/stats/knowledge 知识域仪表盘
-    router.include_router(knowledge_routes)  # /api/knowledge/* 知识库管理
+    router.include_router(knowledge_routes)
+    router.include_router(knowledge_media_router)  # /api/knowledge/* 知识库管理
     router.include_router(evaluation)  # /api/evaluation/* 知识库评估
     router.include_router(graph)  # /api/graph/* 图谱查询与管理
     router.include_router(workspace_knowledge)  # /api/workspace/knowledge/* 工作区知识文件只读视图

@@ -179,7 +179,8 @@
       <p>{{ detailError }}</p>
     </div>
     <div v-else-if="file && hasAvailableView" class="file-detail-content">
-      <div v-if="viewMode === 'source'" class="content-panel source-panel">
+      <KnowledgeMediaPanel v-if="viewMode === 'media'" :kb-id="String(kbId)" :file-id="String(fileId)" :filename="file.filename" :editable="editable" />
+      <div v-else-if="viewMode === 'source'" class="content-panel source-panel">
         <AgentFilePreview
           :file="sourcePreviewFile"
           :file-path="file?.filename || ''"
@@ -282,6 +283,7 @@
 </template>
 
 <script setup>
+import KnowledgeMediaPanel from './KnowledgeMediaPanel.vue'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
@@ -714,8 +716,10 @@ const sourcePreviewFile = computed(() => {
 const hasSourcePreview = computed(() => canPreviewOriginal(file.value))
 const hasMarkdownPreview = computed(() => canPreviewParsed(file.value) || hasContent.value)
 const hasChunkPreview = computed(() => canPreviewChunks(file.value))
+const hasNativeMedia = computed(() => /\.(png|jpe?g|webp|wav|mp3|flac|ogg|m4a|mp4|mov|mkv|webm)$/i.test(file.value?.filename || ''))
 const availableViewModes = computed(() => {
   const modes = []
+  if (hasNativeMedia.value || hasMarkdownPreview.value) modes.push('media')
   if (hasSourcePreview.value) modes.push('source')
   if (hasMarkdownPreview.value) modes.push('markdown', 'markdown-source')
   if (hasChunkPreview.value) modes.push('chunks')
@@ -725,6 +729,7 @@ const hasAvailableView = computed(() => availableViewModes.value.length > 0)
 
 const viewModeOptions = computed(() => {
   const optionMap = {
+    media: { title: '图片与音视频', value: 'media', icon: FileSearch },
     source: { title: '源文件', value: 'source', icon: FileSearch },
     markdown: { title: 'Markdown 预览', value: 'markdown', icon: FileText },
     'markdown-source': { title: 'Markdown 源码', value: 'markdown-source', icon: Code2 },

@@ -89,6 +89,11 @@ class FakeKnowledgeFileRepository:
             setattr(record, key, value)
         return record
 
+    async def update_fields_if_status_in_session(self, _session, **kwargs):
+        """在当前假 session 中复用文件状态更新行为。"""
+        kwargs.pop("document_revision", None)
+        return await self.update_fields_if_status(**kwargs)
+
     async def begin_index_generation(self, *, kb_id: str, file_id: str):
         record = self.records[file_id]
         record.generation += 1
@@ -1262,6 +1267,8 @@ async def test_query_filters_orphaned_chunks_from_search_results(monkeypatch):
 
 async def test_cancelled_old_attempt_cleanup_preserves_published_result(monkeypatch):
     """PG 发布成功后取消旧资源回收，不回滚当前解析产物。"""
+    from contextlib import asynccontextmanager
+
     kb = MilvusKB.__new__(MilvusKB)
     previous_url = "http://minio:9000/knowledgebases/db/parsed/file-1/old-attempt/document.md"
     current_url = "http://minio:9000/knowledgebases/db/parsed/file-1/new-attempt/document.md"
@@ -1269,13 +1276,27 @@ async def test_cancelled_old_attempt_cleanup_preserves_published_result(monkeypa
     patch_file_repository(monkeypatch, repository)
     monkeypatch.setattr("yuxi.modules.documents.service.parse_to_hosted_markdown", AsyncMock(return_value="text"))
     monkeypatch.setattr(kb, "save_markdown_artifact", AsyncMock(return_value=current_url))
+    monkeypatch.setattr("yuxi.modules.knowledge.services.revisions.prepare_document_revision", AsyncMock(return_value={}))
+
+    class FakeSession:
+        """为发布路径提供无需数据库连接的事务边界。"""
+
+        @asynccontextmanager
+        async def begin_nested(self):
+            yield
+
+    @asynccontextmanager
+    async def fake_session_context():
+        yield FakeSession()
+
+    monkeypatch.setattr("yuxi.modules.knowledge.base.pg_manager.get_async_session_context", fake_session_context)
     cleanup = AsyncMock(side_effect=asyncio.CancelledError())
-    monkeypatch.setattr(kb, "_cleanup_parse_attempt", cleanup)
+    monkeypatch.setattr(kb, "_cleanup_file_derivatives", cleanup)
     with pytest.raises(asyncio.CancelledError):
         await kb.parse_file("db", "file-1", additional_params={})
     assert repository.records["file-1"].status == FileStatus.PARSED
     assert repository.records["file-1"].markdown_file == current_url
-    assert [call.args[2] for call in cleanup.await_args_list] == ["old-attempt"]
+    cleanup.assert_awaited_once_with("db", "file-1")
 
 
 def test_rrf_fusion_merges_chunk_and_graph_rankings():

@@ -1,14 +1,15 @@
 <template>
-  <a-modal v-model:open="visible" title="添加文件" width="800px" @cancel="handleCancel">
+  <a-modal v-model:open="visible" title="添加文件" width="800px" :closable="!mediaBusy" :mask-closable="!mediaBusy" :keyboard="!mediaBusy" :body-style="uploadMode === 'media' ? { maxHeight: 'calc(100dvh - 230px)', overflowY: 'auto' } : undefined" @cancel="handleCancel">
     <template #footer>
       <div class="footer-container">
         <a-button type="link" class="help-link-btn" @click="openDocLink">
           <CircleHelp :size="14" /> 文档处理说明
         </a-button>
         <div class="footer-buttons">
-          <a-button key="back" @click="handleCancel">取消</a-button>
+          <a-button key="back" :disabled="mediaBusy" @click="handleCancel">{{ uploadMode === 'media' ? '关闭' : '取消' }}</a-button>
           <a-button
             key="submit"
+            v-if="uploadMode !== 'media'"
             type="primary"
             @click="chunkData"
             :loading="chunkLoading"
@@ -27,10 +28,11 @@
           <a-segmented
             v-model:value="uploadMode"
             :options="uploadModeOptions"
+            :disabled="mediaBusy"
             class="custom-segmented"
           />
         </div>
-        <div class="auto-index-toggle">
+        <div v-if="uploadMode !== 'media'" class="auto-index-toggle">
           <a-checkbox v-model:checked="autoIndex">上传后自动入库</a-checkbox>
         </div>
       </div>
@@ -38,13 +40,13 @@
       <!-- 2. 配置面板 -->
       <div
         class="settings-panel"
-        v-if="folderTreeData.length > 0 || uploadMode !== 'url' || autoIndex"
+        v-if="folderTreeData.length > 0 || !['url', 'media'].includes(uploadMode) || (autoIndex && uploadMode !== 'media')"
       >
         <!-- 第一行：存储位置 + OCR 引擎 -->
         <div
           class="setting-row"
-          v-if="folderTreeData.length > 0 || uploadMode !== 'url'"
-          :class="{ 'two-cols': uploadMode !== 'url' && folderTreeData.length > 0 }"
+          v-if="folderTreeData.length > 0 || !['url', 'media'].includes(uploadMode)"
+          :class="{ 'two-cols': !['url', 'media'].includes(uploadMode) && folderTreeData.length > 0 }"
         >
           <div class="col-item" v-if="folderTreeData.length > 0">
             <div class="setting-label">存储位置</div>
@@ -64,7 +66,7 @@
             </div>
             <p class="param-description">选择文件保存的目标文件夹</p>
           </div>
-          <div class="col-item" v-if="uploadMode !== 'url'">
+          <div class="col-item" v-if="!['url', 'media'].includes(uploadMode)">
             <div class="setting-label">OCR 引擎（仅应用于 PDF/图片文件）</div>
             <div class="setting-content">
               <OCRSelector
@@ -79,7 +81,7 @@
         </div>
 
         <!-- 第二行：自动入库配置 (仅在开启时显示) -->
-        <div class="setting-row" v-if="autoIndex">
+        <div class="setting-row" v-if="autoIndex && uploadMode !== 'media'">
           <div class="col-item">
             <div class="setting-label">入库参数配置</div>
             <div class="setting-content">
@@ -100,6 +102,8 @@
         <Info :size="16" />
         <span>检测到PDF或图片文件，建议启用 OCR 以提取文本内容</span>
       </div>
+
+      <KnowledgeMediaPanel v-if="visible && uploadMode === 'media'" :kb-id="kbId" :parent-id="selectedFolderId" @busy-change="mediaBusy = $event" @registered="handleMediaRegistered" />
 
       <!-- 文件上传区域 -->
       <div class="upload-area" v-if="uploadMode === 'file' || uploadMode === 'folder'">
@@ -246,6 +250,7 @@
 </template>
 
 <script setup>
+import KnowledgeMediaPanel from './KnowledgeMediaPanel.vue'
 import { ref, computed, onMounted, watch, h } from 'vue'
 import { message, Upload } from 'ant-design-vue'
 import { useUserStore } from '@/modules/identity'
@@ -420,6 +425,17 @@ const chunkLoading = computed(() => store.state.chunkLoading)
 
 // 上传模式
 const uploadMode = ref('file')
+const mediaBusy = ref(false)
+
+/** 原件登记后刷新当前文件列表。 */
+async function handleMediaRegistered() {
+  emit('success')
+  try {
+    await Promise.all([store.loadDocumentFiles({ isBackground: true }), store.getKnowledgeBaseInfo(undefined, true)])
+  } catch (error) {
+    message.warning(error.message || '原件已添加，文件列表刷新失败，请手动刷新。')
+  }
+}
 
 // 文件列表
 const fileList = ref([])
@@ -500,7 +516,10 @@ const uploadModeOptions = computed(() => [
       h(FolderOpen, { size: 16, class: 'option-icon' }),
       h('span', { class: 'option-text' }, '个人空间')
     ])
-  }
+  },
+  ...(store.knowledgeBase?.kb_type === 'milvus'
+    ? [{ value: 'media', label: '图片与音视频' }]
+    : [])
 ])
 
 watch(uploadMode, (val) => {
@@ -701,6 +720,7 @@ const validateOcrSelection = () => {
 }
 
 const handleCancel = () => {
+  if (mediaBusy.value) return
   emit('update:visible', false)
 }
 

@@ -2,6 +2,7 @@
 
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -146,6 +147,10 @@ class _ClaimRepository:
             setattr(record, key, value)
         return record
 
+    async def update_fields_if_status_in_session(self, _session, **kwargs):
+        """在替身事务中沿用同一状态判断。"""
+        return await self.update_fields_if_status(**kwargs)
+
 
 def _parse_executor(monkeypatch, record):
     @asynccontextmanager
@@ -155,7 +160,14 @@ def _parse_executor(monkeypatch, record):
     async def parse_to_hosted_markdown(**_kwargs):
         return "正文"
 
+    @asynccontextmanager
+    async def session_context():
+        yield SimpleNamespace(begin_nested=projection_lock)
+
     monkeypatch.setattr("yuxi.modules.knowledge.repositories.projections.knowledge_projection_lock", projection_lock)
+    monkeypatch.setattr("yuxi.modules.knowledge.base.pg_manager.get_async_session_context", session_context)
+    monkeypatch.setattr("yuxi.modules.knowledge.services.revisions.prepare_document_revision", AsyncMock(return_value={}))
+    monkeypatch.setattr("yuxi.modules.knowledge.services.document_media.register_document_image_index", AsyncMock(return_value=None))
     monkeypatch.setattr("yuxi.modules.knowledge.repositories.files.KnowledgeFileRepository", lambda: _ClaimRepository(record))
     monkeypatch.setattr(
         "yuxi.modules.knowledge.base.get_minio_client",

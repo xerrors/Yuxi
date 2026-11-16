@@ -402,7 +402,17 @@ async def test_management_http_lists_and_tests_delegated_server(isolated_mcp, ad
     assert tested.json()["tool_count"] == 5
     assert listed.status_code == 200, listed.text
     data = {tool["name"]: tool for tool in listed.json()["data"]}
-    assert set(data) == {"list_kbs", "query_kb", "search_file", "open_kb_document", "find_kb_document"}
+    assert set(data) == {
+        "list_kbs",
+        "query_kb",
+        "search_file",
+        "open_kb_document",
+        "find_kb_document",
+        "list_kb_media",
+        "query_kb_media",
+        "read_kb_media",
+        "inspect_kb_media",
+    }
     assert data["query_kb"]["enabled"] is False
     assert data["list_kbs"]["enabled"] is True
     async with context.sessions() as db:

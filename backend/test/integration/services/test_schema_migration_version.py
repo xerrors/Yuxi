@@ -177,7 +177,7 @@ async def test_fresh_business_schema_contains_input_lifecycle_without_request_ta
         } <= input_columns
         assert "conversation_thread_id" not in input_columns
         assert BUSINESS_SCHEMA_VERSION == 2
-        assert KNOWLEDGE_SCHEMA_VERSION == 2
+        assert KNOWLEDGE_SCHEMA_VERSION == 3
     finally:
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)
 
