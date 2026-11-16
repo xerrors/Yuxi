@@ -1,0 +1,171 @@
+/* 深色模式 */
+:root.dark {
+  --main-1000: #e1f6fb;
+  --main-900: #c4eaf5;
+  --main-800: #a3d8e8;
+  --main-700: #82c3d6;
+  --main-600: #5faec2;
+  --main-500: #4a9fb8;
+  --main-400: #3996ae;
+  --main-300: #24839a;
+  --main-200: #046a82;
+  --main-100: #035065;
+  --main-50: #023944;
+  --main-40: #01151f;
+  --main-30: #010d14;
+  --main-20: #010a0f;
+  --main-10: #00070a;
+  --main-5: #000405;
+  --main-1: #000102;
+  --main-0: #000000;
+
+  /* 保留原有的 main 变量 */
+  --main-color: #4a9fb8;
+  --main-bright: #5faec2;
+
+  /* 辅助色：暖金色系，深色模式反转刻度，与 --main-* 对齐 */
+  --second-1000: #faf3e2;
+  --second-900: #f4e8cc;
+  --second-800: #ead5a8;
+  --second-700: #dfc183;
+  --second-600: #d4ac5f;
+  --second-500: #d9ab52;
+  --second-400: #c9983c;
+  --second-300: #a97e2b;
+  --second-200: #8a641d;
+  --second-100: #6b4d14;
+  --second-50: #4a350d;
+  --second-40: #2e2108;
+  --second-30: #251a06;
+  --second-20: #1e1505;
+  --second-10: #150e03;
+  --second-5: #0e0902;
+  --second-1: #070401;
+  --second-0: #000000;
+
+  --second-color: var(--second-500);
+
+  --gray-10000: #fafafa;
+  --gray-2000: #f8fafa;
+  --gray-1000: #f5f7f7;
+  --gray-900: #eff2f2;
+  --gray-800: #eef0f0;
+  --gray-700: #e4e6e6;
+  --gray-600: #d7d9d9;
+  --gray-500: #bdbfbf;
+  --gray-400: #979999;
+  --gray-300: #697070;
+  --gray-200: #4c4d4d;
+  --gray-150: #323333;
+  --gray-100: #1e1f1f;
+  --gray-50: #151616;
+  --gray-25: #0c0d0d;
+  --gray-10: #080808;
+  --gray-0: #030303;
+
+  --color-success-10: #0f1810; /* 成功色-极深 */
+  --color-success-50: #162312; /* 成功色-最深 */
+  --color-success-100: #273921; /* 成功色-深 */
+  --color-success-500: #52c41a; /* 成功色-标准 */
+  --color-success-700: #73d13d; /* 成功色-浅 */
+  --color-success-900: #95de64; /* 成功色-最浅 */
+
+  --color-error-10: #1a0a0b; /* 错误色-极深 */
+  --color-error-50: #2a1215; /* 错误色-最深 */
+  --color-error-100: #58181c; /* 错误色-深 */
+  --color-error-500: #ff4d4f; /* 错误色-标准 */
+  --color-error-700: #ff7875; /* 错误色-浅 */
+  --color-error-900: #ffa39e; /* 错误色-最浅 */
+
+  --color-warning-10: #1a1408; /* 警告色-极深 */
+  --color-warning-50: #2b2111; /* 警告色-最深 */
+  --color-warning-100: #614700; /* 警告色-深 */
+  --color-warning-500: #faad14; /* 警告色-标准 */
+  --color-warning-700: #ffc53d; /* 警告色-浅 */
+  --color-warning-900: #ffd666; /* 警告色-最浅 */
+
+  --color-info-10: #0c0d0d; /* 信息色-极深 */
+  --color-info-50: #111b26; /* 信息色-最深 */
+  --color-info-100: #111d2c; /* 信息色-深 */
+  --color-info-500: #3d8fff; /* 信息色-标准 */
+  --color-info-700: #40a9ff; /* 信息色-浅 */
+  --color-info-900: #69c0ff; /* 信息色-最浅 */
+
+  --color-accent-10: #081919; /* 强调色-极深 */
+  --color-accent-50: #0f2e2e; /* 强调色-最深 */
+  --color-accent-100: #164e63; /* 强调色-深 */
+  --color-accent-500: #13c2c2; /* 强调色-标准 */
+  --color-accent-700: #36cfc9; /* 强调色-浅 */
+  --color-accent-900: #5cdbd3; /* 强调色-最浅 */
+
+  --chart-palette-1: var(--main-300);
+  --chart-palette-2: #3ea896;
+  --chart-palette-3: #d6ad37;
+  --chart-palette-4: #cf6666;
+  --chart-palette-5: #8672b4;
+  --chart-palette-6: #529ab8;
+  --chart-palette-7: #d48242;
+  --chart-palette-8: #82b354;
+  --chart-palette-9: #c46e9e;
+  --chart-palette-10: #7a7a7a;
+
+  --bg-sider: #141414;
+  --color-text: #ffffff;
+
+  --dark-98: rgba(255, 255, 255, 0.98);
+  --dark-95: rgba(255, 255, 255, 0.95);
+  --dark-90: rgba(255, 255, 255, 0.9);
+  --dark-85: rgba(255, 255, 255, 0.85);
+  --dark-80: rgba(255, 255, 255, 0.8);
+  --dark-75: rgba(255, 255, 255, 0.75);
+  --dark-70: rgba(255, 255, 255, 0.7);
+  --dark-50: rgba(255, 255, 255, 0.5);
+  --dark-25: rgba(255, 255, 255, 0.25);
+  --dark-10: rgba(255, 255, 255, 0.1);
+  --dark-5: rgba(255, 255, 255, 0.05);
+  --dark-0: rgba(255, 255, 255, 0);
+
+  --light-98: rgba(0, 0, 0, 0.98);
+  --light-95: rgba(0, 0, 0, 0.95);
+  --light-90: rgba(0, 0, 0, 0.9);
+  --light-85: rgba(0, 0, 0, 0.85);
+  --light-80: rgba(0, 0, 0, 0.8);
+  --light-75: rgba(0, 0, 0, 0.75);
+  --light-70: rgba(0, 0, 0, 0.7);
+  --light-50: rgba(0, 0, 0, 0.5);
+  --light-25: rgba(0, 0, 0, 0.25);
+  --light-10: rgba(0, 0, 0, 0.1);
+  --light-5: rgba(0, 0, 0, 0.05);
+  --light-0: rgba(0, 0, 0, 0);
+
+  /* Ant Design 兼容变量 - 深色模式 */
+  --color-bg-container: #1f1f1f;
+  --color-bg-elevated: #262626;
+  --color-text-secondary: rgba(255, 255, 255, 0.65);
+  --color-text-tertiary: rgba(255, 255, 255, 0.45);
+
+  /* Shadow System - 深色模式阴影系统 */
+  --shadow-0: rgba(255, 255, 255, 0.02);
+  --shadow-1: rgba(255, 255, 255, 0.05);
+  --shadow-2: rgba(255, 255, 255, 0.08);
+  --shadow-3: rgba(255, 255, 255, 0.12);
+  --shadow-4: rgba(255, 255, 255, 0.16);
+  --shadow-5: rgba(255, 255, 255, 0.2);
+
+  --color-trans-light: rgba(0, 0, 0, 0.85);
+  --color-trans-dark: rgba(255, 255, 255, 0.85);
+}
+
+:root.dark .markmap {
+  --markmap-max-width: 9999px;
+  --markmap-a-color: var(--main-500);
+  --markmap-a-hover-color: var(--main-600);
+  --markmap-code-bg: var(--gray-50);
+  --markmap-code-color: var(--gray-700);
+  --markmap-highlight-bg: var(--color-warning-50);
+  --markmap-table-border: 1px solid currentColor;
+  --markmap-font: 300 16px / 20px sans-serif;
+  --markmap-circle-open-bg: var(--main-0);
+  --markmap-text-color: var(--gray-700);
+  --markmap-highlight-node-bg: var(--color-error-50);
+}

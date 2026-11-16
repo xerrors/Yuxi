@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>用户协议</title>
+    <style>
+      :root {
+        --bg: #f5f7fb;
+        --card: #ffffff;
+        --text: #1f2937;
+        --subtle: #6b7280;
+        --line: #e5e7eb;
+        --brand: #2563eb;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.75;
+      }
+
+      .container {
+        max-width: 960px;
+        margin: 40px auto;
+        padding: 0 20px;
+      }
+
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 28px;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+      }
+
+      .meta {
+        color: var(--subtle);
+        font-size: 14px;
+        margin-bottom: 24px;
+      }
+
+      h2 {
+        margin: 24px 0 10px;
+        font-size: 20px;
+        color: #111827;
+      }
+
+      p {
+        margin: 0 0 12px;
+      }
+
+      ul {
+        margin: 0 0 12px;
+        padding-left: 20px;
+      }
+
+      .notice {
+        margin-top: 24px;
+        padding: 14px 16px;
+        border-left: 3px solid var(--brand);
+        background: #eff6ff;
+        color: #1e3a8a;
+      }
+
+      a {
+        color: var(--brand);
+        text-decoration: none;
+      }
+
+      a:hover {
+        text-decoration: underline;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="container">
+      <article class="card">
+        <h1>用户协议</h1>
+        <div class="meta">适用组织：{{ORG_NAME}} | 生效日期：{{EFFECTIVE_DATE}}</div>
+
+        <p>
+          欢迎使用 {{PRODUCT_NAME}}。在使用本平台提供的服务前，请仔细阅读并充分理解本协议。
+          您在登录、注册或继续使用本平台服务时，即视为已阅读并同意本协议全部内容。
+        </p>
+
+        <h2>一、服务说明</h2>
+        <p>
+          本平台提供与知识库管理、知识图谱、智能问答等相关的技术服务。平台有权在合理范围内调整服务内容、服务方式或功能入口。
+        </p>
+
+        <h2>二、账号与安全</h2>
+        <ul>
+          <li>您应提供真实、准确、完整的注册信息，并及时更新。</li>
+          <li>您应妥善保管账号与密码，并对账号下的全部行为承担责任。</li>
+          <li>若发现账号存在异常使用，请立即通知平台处理。</li>
+        </ul>
+
+        <h2>三、使用规范</h2>
+        <ul>
+          <li>不得利用平台从事违法违规活动，不得侵害他人合法权益。</li>
+          <li>不得上传、发布或传播含有恶意代码、侵权或其他非法内容的信息。</li>
+          <li>不得干扰平台正常运行或绕过平台安全机制。</li>
+        </ul>
+
+        <h2>四、知识产权</h2>
+        <p>
+          平台相关软件、技术、界面及文档的知识产权归平台或其权利人所有。未经许可，任何人不得擅自复制、修改、传播或用于其他商业用途。
+        </p>
+
+        <h2>五、责任限制</h2>
+        <p>
+          在法律允许范围内，平台对因不可抗力、网络故障、第三方原因等导致的服务中断或数据异常不承担责任。
+        </p>
+
+        <h2>六、协议变更</h2>
+        <p>
+          平台可根据业务发展和法律法规要求更新本协议。更新后的协议在发布后生效。若您继续使用服务，视为接受更新后的协议。
+        </p>
+
+        <h2>七、联系我们</h2>
+        <p>
+          如您对本协议有任何疑问，请通过平台公布的联系方式与我们联系。
+        </p>
+
+        <div class="notice">
+          提示：本文件为模板协议，请在上线前替换 {{ORG_NAME}}、{{PRODUCT_NAME}}、{{EFFECTIVE_DATE}} 等占位内容，并由法务审核。
+        </div>
+      </article>
+    </main>
+  </body>
+</html>

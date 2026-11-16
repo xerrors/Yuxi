@@ -1,0 +1,216 @@
+/* color palette from <https://github.com/vuejs/theme> */
+/* https://material-foundation.github.io/material-theme-builder/ */
+:root {
+  --main-1000: #01151f;
+  --main-900: #023944;
+  --main-800: #035065;
+  --main-700: #046a82;
+  --main-600: #24839a;
+  --main-500: #3996ae;
+  --main-400: #5faec2;
+  --main-300: #82c3d6;
+  --main-200: #a3d8e8;
+  --main-100: #c4eaf5;
+  --main-50: #e1f6fb;
+  --main-40: #eaf3f5;
+  --main-30: #f7fbfd;
+  --main-20: #f6f9fa;
+  --main-10: #fafcfd;
+  --main-5: #fcfefe;
+  --main-1: #fefefe;
+  --main-0: #ffffff;
+
+  /* 保留原有的 main 变量 */
+  --main-color: var(--main-700);
+  --main-bright: #0188a6;
+
+  /* 辅助色：暖金色系，基准 --second-500 #c9983c，刻度与 --main-* 对齐 */
+  --second-1000: #2e2108;
+  --second-900: #4a350d;
+  --second-800: #6b4d14;
+  --second-700: #8a641d;
+  --second-600: #a97e2b;
+  --second-500: #c9983c;
+  --second-400: #d4ac5f;
+  --second-300: #dfc183;
+  --second-200: #ead5a8;
+  --second-100: #f4e8cc;
+  --second-50: #faf3e2;
+  --second-40: #f6efe0;
+  --second-30: #fbf8f0;
+  --second-20: #faf7ee;
+  --second-10: #fcfbf6;
+  --second-5: #fefdfa;
+  --second-1: #fefefe;
+  --second-0: #ffffff;
+
+  --second-color: var(--second-600);
+
+  --gray-10000: #000000; /* 保持纯黑 */
+  --gray-2000: #0c0d0d; /* 更精致的暗灰，用于极深背景 */
+  --gray-1000: #151616; /* 深灰黑，适用于主文本 */
+  --gray-900: #1e1f1f;
+  --gray-800: #323333; /* 标准深灰，适合背景 */
+  --gray-700: #4c4d4d;
+  --gray-600: #697070; /* 调和中灰，适合次要文本 */
+  --gray-500: #979999; /* 更柔和的中灰色 */
+  --gray-400: #bdbfbf;
+  --gray-300: #d7d9d9; /* 修正了原300/200重复 */
+  --gray-200: #e4e6e6; /* 稍微加深一点，便于分层 */
+  --gray-150: #eef0f0;
+  --gray-100: #eff2f2;
+  --gray-50: #f5f7f7;
+  --gray-25: #f8fafa;
+  --gray-10: #fbfcfc;
+  --gray-0: #ffffff;
+
+  /* Standard Color System - 标准5档色阶系统 */
+  --color-primary-50: var(--main-50); /* 主色调-最浅 */
+  --color-primary-100: var(--main-200); /* 主色调-浅 */
+  --color-primary-500: var(--main-500); /* 主色调-标准 */
+  --color-primary-700: var(--main-700); /* 主色调-深 */
+  --color-primary-900: var(--main-900); /* 主色调-最深 */
+
+  --color-secondary-10: var(--gray-10); /* 次要色-最浅 */
+  --color-secondary-50: var(--gray-50); /* 次要色-最浅 */
+  --color-secondary-100: var(--gray-100); /* 次要色-浅 */
+  --color-secondary-500: var(--gray-700); /* 次要色-标准 */
+  --color-secondary-700: var(--gray-800); /* 次要色-深 */
+  --color-secondary-900: var(--gray-900); /* 次要色-最深 */
+
+  --color-success-10: #fafff2; /* 成功色-极浅 */
+  --color-success-50: #e6f7e6; /* 成功色-最浅 */
+  --color-success-100: #b7eb8f; /* 成功色-浅 */
+  --color-success-500: #52c41a; /* 成功色-标准 */
+  --color-success-700: #389e0d; /* 成功色-深 */
+  --color-success-900: #135200; /* 成功色-最深 */
+
+  --color-error-10: #fffaf9; /* 错误色-极浅 */
+  --color-error-50: #fff2f0; /* 错误色-最浅 */
+  --color-error-100: #ffccc7; /* 错误色-浅 */
+  --color-error-500: #ff4d4f; /* 错误色-标准 */
+  --color-error-700: #cf1322; /* 错误色-深 */
+  --color-error-900: #820014; /* 错误色-最深 */
+
+  --color-warning-10: #fffef5; /* 警告色-极浅 */
+  --color-warning-50: #fffbe6; /* 警告色-最浅 */
+  --color-warning-100: #ffe58f; /* 警告色-浅 */
+  --color-warning-500: #faad14; /* 警告色-标准 */
+  --color-warning-700: #d48806; /* 警告色-深 */
+  --color-warning-900: #ad6800; /* 警告色-最深 */
+
+  --color-info-10: #f5fbff; /* 信息色-极浅 */
+  --color-info-50: #e6f7ff; /* 信息色-最浅 */
+  --color-info-100: #bae7ff; /* 信息色-浅 */
+  --color-info-500: #1890ff; /* 信息色-标准 */
+  --color-info-700: #096dd9; /* 信息色-深 */
+  --color-info-900: #0050b3; /* 信息色-最深 */
+
+  --color-accent-10: #f5fffe; /* 强调色-极浅 */
+  --color-accent-50: #e6fffb; /* 强调色-最浅 */
+  --color-accent-100: #87e8de; /* 强调色-浅 */
+  --color-accent-500: #13c2c2; /* 强调色-标准 */
+  --color-accent-700: #08979c; /* 强调色-深 */
+  --color-accent-900: #006d75; /* 强调色-最深 */
+
+  /* Chart Palette - 图表调色板 */
+  --chart-palette-1: var(--main-500);
+  --chart-palette-2: #5ad8a6;
+  --chart-palette-3: #f6bd16;
+  --chart-palette-4: #f27c7c;
+  --chart-palette-5: #9581cc;
+  --chart-palette-6: #6dc8ec;
+  --chart-palette-7: #ff9d4d;
+  --chart-palette-8: #92d050;
+  --chart-palette-9: #e885ba;
+  --chart-palette-10: #8c8c8c;
+
+  --bg-sider: var(--main-5);
+
+  --light-98: rgba(255, 255, 255, 0.98);
+  --light-95: rgba(255, 255, 255, 0.95);
+  --light-90: rgba(255, 255, 255, 0.9);
+  --light-85: rgba(255, 255, 255, 0.85);
+  --light-80: rgba(255, 255, 255, 0.8);
+  --light-75: rgba(255, 255, 255, 0.75);
+  --light-70: rgba(255, 255, 255, 0.7);
+  --light-50: rgba(255, 255, 255, 0.5);
+  --light-25: rgba(255, 255, 255, 0.25);
+  --light-10: rgba(255, 255, 255, 0.1);
+  --light-5: rgba(255, 255, 255, 0.05);
+  --light-0: rgba(255, 255, 255, 0);
+
+  --dark-98: rgba(0, 0, 0, 0.98);
+  --dark-95: rgba(0, 0, 0, 0.95);
+  --dark-90: rgba(0, 0, 0, 0.9);
+  --dark-85: rgba(0, 0, 0, 0.85);
+  --dark-80: rgba(0, 0, 0, 0.8);
+  --dark-75: rgba(0, 0, 0, 0.75);
+  --dark-70: rgba(0, 0, 0, 0.7);
+  --dark-50: rgba(0, 0, 0, 0.5);
+  --dark-25: rgba(0, 0, 0, 0.25);
+  --dark-10: rgba(0, 0, 0, 0.1);
+  --dark-5: rgba(0, 0, 0, 0.05);
+  --dark-0: rgba(0, 0, 0, 0);
+
+  /* Shadow System - 阴影系统 */
+  --shadow-0: rgba(0, 0, 0, 0.02);
+  --shadow-1: rgba(0, 0, 0, 0.05);
+  --shadow-2: rgba(0, 0, 0, 0.08);
+  --shadow-3: rgba(0, 0, 0, 0.12);
+  --shadow-4: rgba(0, 0, 0, 0.16);
+  --shadow-5: rgba(0, 0, 0, 0.2);
+
+  --min-width: 400px;
+
+  /* Page Padding - 响应式页面内边距 */
+  --page-padding: 18px;
+
+  /* Ant Design 兼容变量 */
+  --color-bg-container: var(--main-0);
+  --color-bg-elevated: var(--gray-10);
+  --color-text: var(--gray-1000);
+  --color-text-secondary: var(--dark-70);
+  --color-text-tertiary: var(--dark-50);
+  --color-trans-light: var(--light-85);
+  --color-trans-dark: var(--dark-85);
+}
+
+:root {
+  --scrollbar-width: 4px;
+}
+
+/* 全局滚动条样式 */
+::-webkit-scrollbar {
+  width: var(--scrollbar-width);
+  height: var(--scrollbar-width);
+}
+
+::-webkit-scrollbar-track {
+  background: var(--gray-100);
+  border-radius: calc(var(--scrollbar-width) / 2);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--gray-200);
+  border-radius: calc(var(--scrollbar-width) / 2);
+  transition: background 0.2s ease;
+  cursor: pointer;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--gray-100);
+}
+
+/* Firefox 滚动条样式 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--gray-200) transparent;
+}
+
+/* Page Padding 响应式断点 */
+@media (max-width: 767px) {
+  :root {
+    --page-padding: 14px;
+  }
+}

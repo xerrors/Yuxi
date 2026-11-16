@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>隐私协议</title>
+    <style>
+      :root {
+        --bg: #f5f7fb;
+        --card: #ffffff;
+        --text: #1f2937;
+        --subtle: #6b7280;
+        --line: #e5e7eb;
+        --brand: #2563eb;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.75;
+      }
+
+      .container {
+        max-width: 960px;
+        margin: 40px auto;
+        padding: 0 20px;
+      }
+
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 28px;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+      }
+
+      .meta {
+        color: var(--subtle);
+        font-size: 14px;
+        margin-bottom: 24px;
+      }
+
+      h2 {
+        margin: 24px 0 10px;
+        font-size: 20px;
+        color: #111827;
+      }
+
+      p {
+        margin: 0 0 12px;
+      }
+
+      ul {
+        margin: 0 0 12px;
+        padding-left: 20px;
+      }
+
+      .notice {
+        margin-top: 24px;
+        padding: 14px 16px;
+        border-left: 3px solid var(--brand);
+        background: #eff6ff;
+        color: #1e3a8a;
+      }
+
+      a {
+        color: var(--brand);
+        text-decoration: none;
+      }
+
+      a:hover {
+        text-decoration: underline;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="container">
+      <article class="card">
+        <h1>隐私协议</h1>
+        <div class="meta">适用组织：{{ORG_NAME}} | 生效日期：{{EFFECTIVE_DATE}}</div>
+
+        <p>
+          {{PRODUCT_NAME}} 非常重视您的个人信息与隐私保护。我们将依据适用法律法规，采取合理措施保障您的个人信息安全。
+        </p>
+
+        <h2>一、我们收集的信息</h2>
+        <ul>
+          <li>账号信息：例如用户 ID、手机号等您主动提供的信息。</li>
+          <li>使用信息：例如访问时间、操作日志、设备信息等系统运行所需信息。</li>
+          <li>业务数据：您在使用平台过程中上传或生成的数据内容。</li>
+        </ul>
+
+        <h2>二、信息使用目的</h2>
+        <ul>
+          <li>用于提供、维护和优化平台服务。</li>
+          <li>用于账号安全管理、风险识别和问题排查。</li>
+          <li>用于履行法律法规规定的义务。</li>
+        </ul>
+
+        <h2>三、信息共享与披露</h2>
+        <p>
+          除法律法规另有规定，或获得您的明确授权外，我们不会向第三方出售您的个人信息。
+          在确有必要共享时，我们会要求接收方遵守相应的数据保护义务。
+        </p>
+
+        <h2>四、信息存储与保护</h2>
+        <p>
+          我们采取访问控制、加密存储、日志审计等安全措施保护您的信息。
+          但请理解，互联网环境并非绝对安全，我们将持续提升安全能力。
+        </p>
+
+        <h2>五、您的权利</h2>
+        <ul>
+          <li>您有权访问、更正、删除您的相关信息。</li>
+          <li>您有权撤回授权并申请注销账号（法律法规另有规定除外）。</li>
+          <li>您有权就隐私问题向我们提出咨询和投诉。</li>
+        </ul>
+
+        <h2>六、协议更新</h2>
+        <p>
+          本隐私协议可能根据法律法规及业务变化进行更新。更新后将通过平台公告或页面提示方式发布。
+        </p>
+
+        <h2>七、联系我们</h2>
+        <p>
+          如您对本隐私协议有疑问，可通过平台公开联系方式与我们联系。
+        </p>
+
+        <div class="notice">
+          提示：本文件为模板协议，请在上线前替换 {{ORG_NAME}}、{{PRODUCT_NAME}}、{{EFFECTIVE_DATE}} 等占位内容，并由法务审核。
+        </div>
+      </article>
+    </main>
+  </body>
+</html>

@@ -52,6 +52,13 @@ Windows 在 PowerShell 中运行 `.\scripts\init.ps1`。脚本提示填写 Silic
 ```bash
 docker compose --profile container config --quiet
 docker compose --profile container up --build -d
+
+构建完后启动
+docker compose --profile container up -d
+看日志：
+docker compose logs -f worker
+或
+docker logs -f yuxi-worker-1
 ```
 
 `container` profile 会构建沙盒镜像并启动 runner。默认禁止沙盒联网，适用范围与配置见[Container 沙盒](docs/advanced/container-sandbox.md)。

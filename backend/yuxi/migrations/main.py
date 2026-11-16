@@ -31,7 +31,13 @@ async def initialize_schema(manager: PostgresManager) -> None:
     if versions == current:
         return
     if versions:
-        raise RuntimeError(f"Unsupported Yuxi schema versions: {versions}; required {current}")
+        hint = ""
+        if versions == {"business": 9, "knowledge": 4}:
+            hint = (
+                "; 本地 v0.7.3 数据库须先停写并备份，再执行 "
+                "python -m yuxi.migrations.legacy_v073 审计；确认后加 --apply 显式迁移，禁止手工改版本号"
+            )
+        raise RuntimeError(f"Unsupported Yuxi schema versions: {versions}; required {current}{hint}")
 
     await _require_empty_database(manager)
     try:

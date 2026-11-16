@@ -1,0 +1,195 @@
+/* Dashboard 共享样式文件 */
+
+/* Chart Color System - 图表颜色系统 */
+/* 注意：CSS 变量不支持对象语法，这些渐变定义仅作为参考 */
+/* 如需在 ECharts 中使用渐变，请在 JavaScript 中配置 */
+
+/* Chart Color Palette - 图表调色板 */
+.chart-color-palette {
+  --palette-1: var(--chart-palette-1);
+  --palette-2: var(--chart-palette-2);
+  --palette-3: var(--chart-palette-3);
+  --palette-4: var(--chart-palette-4);
+  --palette-5: var(--chart-palette-5);
+  --palette-6: var(--chart-palette-6);
+  --palette-7: var(--chart-palette-7);
+  --palette-8: var(--chart-palette-8);
+  --palette-9: var(--chart-palette-9);
+  --palette-10: var(--chart-palette-10);
+}
+
+/* Chart Area Gradient - 图表区域渐变 */
+.chart-area-gradient-primary {
+  background: linear-gradient(180deg, rgba(57, 150, 174, 0.3) 0%, rgba(57, 150, 174, 0.05) 100%);
+}
+
+.chart-area-gradient-success {
+  background: linear-gradient(180deg, rgba(82, 196, 26, 0.3) 0%, rgba(82, 196, 26, 0.05) 100%);
+}
+
+.chart-area-gradient-warning {
+  background: linear-gradient(180deg, rgba(250, 173, 20, 0.3) 0%, rgba(250, 173, 20, 0.05) 100%);
+}
+
+.chart-area-gradient-error {
+  background: linear-gradient(180deg, rgba(245, 34, 45, 0.3) 0%, rgba(245, 34, 45, 0.05) 100%);
+}
+
+/* Chart Shadow Effects - 图表阴影效果 */
+.chart-shadow-primary {
+  box-shadow: 0 4px 12px rgba(57, 150, 174, 0.15);
+}
+
+.chart-shadow-success {
+  box-shadow: 0 4px 12px rgba(82, 196, 26, 0.15);
+}
+
+.chart-shadow-warning {
+  box-shadow: 0 4px 12px rgba(250, 173, 20, 0.15);
+}
+
+.chart-shadow-error {
+  box-shadow: 0 4px 12px rgba(245, 34, 45, 0.15);
+}
+
+/* 共享的卡片样式 */
+.dashboard-card {
+  background-color: var(--gray-0);
+  border: 1px solid var(--gray-100);
+  border-radius: 8px;
+  transition: all 0.2s ease;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+
+  &:hover {
+    border-color: var(--gray-100);
+  }
+}
+
+/* 使用更具体的选择器来覆盖 Ant Design 的默认样式 */
+.dashboard-card .ant-card-head {
+  /* border-bottom: 1px solid var(--gray-200) !important; */
+  min-height: 56px !important;
+  padding: 0 20px !important;
+  flex-shrink: 0;
+  background-color: var(--gray-0) !important;
+  /* border: 1px solo; */
+}
+
+.dashboard-card .ant-card-head-title {
+  font-size: 18px !important;
+  font-weight: 600 !important;
+  color: var(--gray-1000) !important;
+}
+
+.dashboard-card .ant-card-body {
+  padding: 20px !important;
+  padding-top: 0px !important;
+  flex: 1;
+  overflow: auto;
+  background-color: var(--gray-0) !important;
+}
+
+.dashboard-card .ant-card-extra {
+  padding-top: 0px !important;
+}
+
+.dashboard-card-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 560px) {
+  .dashboard-card-metric-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 图表容器样式 */
+.chart-container {
+  h4,
+  h5 {
+    margin-bottom: 16px;
+    font-weight: 600;
+    color: var(--gray-1000);
+  }
+
+  h4 {
+    font-size: 16px;
+  }
+
+  h5 {
+    font-size: 14px;
+    color: var(--gray-600);
+  }
+
+  .chart {
+    height: 250px;
+    width: 100%;
+    background-color: var(--gray-0);
+    border-radius: 8px;
+    padding: 10px;
+    border: 1px solid var(--gray-100);
+  }
+
+  .chart-medium {
+    height: 180px;
+    width: 100%;
+    background-color: var(--gray-0);
+    border-radius: 8px;
+    padding: 8px;
+    border: 1px solid var(--gray-100);
+  }
+
+  .chart-small {
+    height: 180px;
+    width: 100%;
+  }
+}
+
+.dashboard-card .ant-table {
+  background-color: var(--gray-0);
+  border-radius: 8px;
+  overflow: hidden;
+
+  .ant-table-thead > tr > th {
+    background-color: var(--gray-25);
+    border-bottom: 1px solid var(--gray-200);
+    font-weight: 600;
+    padding: 12px 16px;
+    font-size: 12px;
+    color: var(--gray-700);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .ant-table-tbody > tr {
+    transition: background-color 0.2s ease;
+
+    > td {
+      border-bottom: 1px solid var(--gray-100);
+      color: var(--gray-1000);
+      padding: 12px 16px;
+      font-weight: 400;
+    }
+
+    &:hover > td {
+      background-color: var(--gray-25);
+    }
+  }
+}
+
+.dashboard-card .ant-progress {
+  .ant-progress-bg {
+    background-color: var(--main-500) !important;
+    border-radius: 4px;
+  }
+
+  .ant-progress-text {
+    color: var(--gray-1000) !important;
+    font-weight: 500;
+    font-size: 12px;
+  }
+}

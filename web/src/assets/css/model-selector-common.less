@@ -1,0 +1,140 @@
+// 模型选择器公共样式 - 供 Chat/Embedding/Rerank 三个模型选择器共用
+@scrollbar-width: 6px;
+@border-radius: 8px;
+
+// 下拉触发器样式
+.model-select {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 4px 8px;
+  cursor: pointer;
+  border: 1px solid var(--gray-200);
+  border-radius: @border-radius;
+  background-color: var(--gray-0);
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+
+  &.borderless {
+    border: none;
+  }
+
+  &.max-width {
+    max-width: 380px;
+  }
+
+  &.model-select--middle {
+    font-size: 15px;
+  }
+
+  &.model-select--large {
+    font-size: 16px;
+  }
+}
+
+// 内容布局
+.model-select-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  width: 100%;
+}
+
+// 模型名称区域
+.model-info {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.model-text {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--gray-1000);
+  white-space: nowrap;
+}
+
+// 状态控制区域（检查按钮、刷新按钮等）
+.model-status-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0;
+  margin-left: auto;
+}
+
+// 状态指示器
+.model-status-indicator {
+  font-size: 11px;
+  font-weight: bold;
+  padding: 2px 4px;
+  border-radius: 3px;
+
+  &.available {
+    color: var(--color-success-500);
+  }
+
+  &.unavailable {
+    color: var(--color-error-500);
+  }
+
+  &.error {
+    color: var(--color-warning-500);
+  }
+}
+
+// Provider 标签样式
+.provider-tag {
+  padding: 2px 4px;
+  margin-left: 6px;
+  font-size: 10px;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+// 刷新图标旋转动画
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+// 滚动菜单样式
+.scrollable-menu {
+  max-height: 300px;
+  overflow-y: auto;
+
+  &::-webkit-scrollbar {
+    width: @scrollbar-width;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: transparent;
+    border-radius: 3px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: var(--gray-400);
+    border-radius: 3px;
+
+    &:hover {
+      background: var(--gray-500);
+    }
+  }
+}

@@ -29,7 +29,7 @@ class ContainerPermissionTests(unittest.TestCase):
 
     def test_api_image_files_are_readable_but_not_writable_by_runtime_user(self):
         """600/700 宿主输入必须成为 root 持有的可读项目文件。"""
-        source = (ROOT / "docker/api.Dockerfile").read_text()
+        source = (ROOT / "docker/api.Dockerfile").read_text(encoding="utf-8")
         recipe = source[source.index("# 复制项目配置文件") : source.index("RUN uv sync")]
         entrypoint = next(line for line in source.splitlines() if line.startswith("COPY ") and "docker/api-entrypoint.sh" in line)
         with tempfile.TemporaryDirectory(prefix="yuxi-image-permissions-") as directory:
@@ -156,26 +156,50 @@ class ContainerPermissionTests(unittest.TestCase):
                 self.assertEqual(built.returncode, 0, built.stderr)
                 seed = container_shell(
                     image,
-                    "mkdir -p /state/yuxi/threads/legacy; printf sentinel > /state/yuxi/threads/legacy/file; "
-                    "chown 1234:1235 /state/yuxi/threads/legacy /state/yuxi/threads/legacy/file; "
-                    "chmod 0711 /state/yuxi/threads/legacy; chmod 0600 /state/yuxi/threads/legacy/file",
+                    "mkdir -p /state/yuxi/threads/legacy /state/milvus/milvus/data/cache/87/growing_mmap; "
+                    "printf sentinel > /state/yuxi/threads/legacy/file; "
+                    "printf milvus-sentinel > /state/milvus/milvus/data/cache/87/growing_mmap/file; "
+                    "chown 1234:1235 /state/yuxi/threads/legacy /state/yuxi/threads/legacy/file "
+                    "/state/milvus/milvus/data/cache/87/growing_mmap /state/milvus/milvus/data/cache/87/growing_mmap/file; "
+                    "chmod 0711 /state/yuxi/threads/legacy /state/milvus/milvus/data/cache/87/growing_mmap; "
+                    "chmod 0600 /state/yuxi/threads/legacy/file /state/milvus/milvus/data/cache/87/growing_mmap/file",
                     state=state,
                 )
                 self.assertEqual(seed.returncode, 0, seed.stderr)
+                blocked = container_shell(
+                    image,
+                    "mkdir /state/milvus/milvus/data/cache/87/growing_mmap/segment",
+                    state=state,
+                    user="999:999",
+                )
+                self.assertNotEqual(blocked.returncode, 0)
+                self.assertIn("Permission denied", blocked.stderr)
                 for _ in range(2):
                     prepared = run(*compose, "run", "--rm", "--no-deps", "storage-init", env=compose_env)
                     self.assertEqual(prepared.returncode, 0, prepared.stderr)
+                writable = container_shell(
+                    image,
+                    "mkdir /state/milvus/milvus/data/cache/87/growing_mmap/segment; "
+                    "cat /state/milvus/milvus/data/cache/87/growing_mmap/file",
+                    state=state,
+                    user="999:999",
+                )
+                self.assertEqual(writable.returncode, 0, writable.stderr)
+                self.assertEqual(writable.stdout, "milvus-sentinel")
                 inspected = container_shell(
                     image,
                     'stat -c "%u:%g %a" /state/yuxi/threads /state/yuxi/skill-sources /state/yuxi/skill-projections '
-                    "/state/milvus/milvus /state/milvus/logs /state/yuxi/threads/legacy /state/yuxi/threads/legacy/file; "
-                    "cat /state/yuxi/threads/legacy/file",
+                    "/state/milvus/milvus /state/milvus/logs /state/yuxi/threads/legacy /state/yuxi/threads/legacy/file "
+                    "/state/milvus/milvus/data/cache/87/growing_mmap /state/milvus/milvus/data/cache/87/growing_mmap/file; "
+                    "cat /state/yuxi/threads/legacy/file /state/milvus/milvus/data/cache/87/growing_mmap/file",
                     state=state,
                 )
                 self.assertEqual(inspected.returncode, 0, inspected.stderr)
                 self.assertEqual(
                     inspected.stdout.splitlines(),
-                    ["1000:1000 700"] * 3 + ["999:999 755"] * 2 + ["1234:1235 711", "1234:1235 600", "sentinel"],
+                    ["1000:1000 700"] * 3
+                    + ["999:999 755"] * 2
+                    + ["1234:1235 711", "1234:1235 600", "999:999 711", "999:999 600", "sentinelmilvus-sentinel"],
                 )
                 readonly = Path(directory) / "readonly.json"
                 readonly.write_text(
@@ -207,9 +231,10 @@ class ContainerPermissionTests(unittest.TestCase):
                 self.assertIn("Read-only file system", denied.stderr)
             finally:
                 run("docker", "rm", "-f", readonly_container)
+                cleanup_owner = "0:0" if os.name == "nt" else f"{os.getuid()}:{os.getgid()}"
                 cleaned = container_shell(
                     image,
-                    f"chmod -R u+rwX /state; chown -R {os.getuid()}:{os.getgid()} /state",
+                    f"chmod -R u+rwX /state; chown -R {cleanup_owner} /state",
                     state=state,
                 )
                 self.assertEqual(cleaned.returncode, 0, cleaned.stderr)

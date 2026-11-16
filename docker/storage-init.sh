@@ -1,8 +1,9 @@
 #!/bin/sh
 set -eu
 
-# 只修改挂载根，已有用户文件与索引内部权限由原服务保留。
+# API 数据根只调整挂载根；Milvus 数据树需要恢复历史目录的运行用户。
 chown 1000:1000 /app/user-data /app/skill-sources /app/skill-projections
 chmod 0700 /app/user-data /app/skill-sources /app/skill-projections
-chown 999:999 /var/lib/milvus /var/lib/milvus/logs
+# 保留已有文件内容和模式，仅递归修复 Milvus 运行所需的属主。
+chown -R 999:999 /var/lib/milvus /var/lib/milvus/logs
 chmod 0755 /var/lib/milvus /var/lib/milvus/logs

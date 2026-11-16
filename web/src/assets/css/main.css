@@ -1,0 +1,246 @@
+@import './base.css';
+@import './base.dark.css';
+@import './shorts.css';
+@import './dashboard.css';
+@import './code-highlight.less';
+
+:root {
+  --header-height: 45px;
+  --min-width: 450px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  position: relative;
+  font-weight: normal;
+}
+
+body {
+  display: flow-root;
+  min-height: 100vh;
+  color: var(--gray-900);
+  background: var(--gray-0);
+  line-height: 1.6;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Noto Sans SC', 'Roboto', 'HarmonyOS Sans SC', 'Segoe UI',
+    'Helvetica Neue', Arial, sans-serif;
+  font-size: 15px;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* layout */
+
+.layout-container {
+  width: 100%;
+
+  h2 {
+    margin: 20px 0 10px 0;
+  }
+}
+
+.lucide-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.lucide-icon-btn svg {
+  flex-shrink: 0;
+}
+
+.lucide-menu-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 22px;
+  line-height: 1;
+}
+
+.lucide-menu-item svg {
+  flex-shrink: 0;
+}
+
+.lucide-menu-item > span {
+  line-height: 20px;
+}
+
+.ant-btn.lucide-icon-btn,
+.lucide-icon-btn.ant-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ant-btn .ant-btn-icon,
+.ant-btn .anticon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.card-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  background: var(--gray-100);
+  color: var(--gray-600);
+  border-radius: 4px;
+}
+
+.card-tag.tag-purple,
+.card-tag.tag-cyan {
+  background: var(--color-accent-50);
+  color: var(--color-accent-700);
+}
+
+.card-tag.tag-blue {
+  background: var(--color-info-50);
+  color: var(--color-info-700);
+}
+
+.card-tag.tag-red,
+.card-tag.tag-orange {
+  background: var(--color-error-50);
+  color: var(--color-error-700);
+}
+
+.card-tag.tag-green {
+  background: var(--color-success-50);
+  color: var(--color-success-700);
+}
+
+.card-tag.tag-gold {
+  background: var(--color-warning-50);
+  color: var(--color-warning-900);
+}
+
+.config-dropdown-overlay .config-dropdown-panel {
+  min-width: 188px;
+  max-width: min(260px, calc(100vw - 24px));
+  padding: 4px;
+  background: var(--gray-0);
+  border: 1px solid var(--gray-100);
+  border-radius: 8px;
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.08),
+    0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.config-dropdown-overlay .config-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  width: 100%;
+  padding: 6px 8px;
+  margin: 3px 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+
+  &:first-child {
+    margin-top: 0;
+  }
+
+  &:last-child {
+    margin-bottom: 0;
+  }
+}
+
+.config-dropdown-overlay .config-dropdown-item:hover,
+.config-dropdown-overlay .config-dropdown-item.selected {
+  background: var(--gray-50);
+}
+
+.config-dropdown-overlay .config-dropdown-item.disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.config-dropdown-overlay .config-dropdown-item.action-item {
+  color: var(--gray-800);
+}
+
+.config-dropdown-overlay .config-dropdown-actions {
+  display: flex;
+}
+
+.config-dropdown-overlay .config-dropdown-actions .config-dropdown-item {
+  flex: 1;
+  width: auto;
+  margin: 0;
+}
+
+.config-dropdown-overlay .config-dropdown-item-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--gray-800);
+}
+
+.config-dropdown-overlay .config-dropdown-item-icon,
+.config-dropdown-overlay .config-dropdown-item-icon-image,
+.config-dropdown-overlay .config-dropdown-item-icon-empty {
+  flex-shrink: 0;
+}
+
+.config-dropdown-overlay .config-dropdown-item-icon {
+  color: var(--gray-700);
+}
+
+.config-dropdown-overlay .config-dropdown-item-icon-image,
+.config-dropdown-overlay .config-dropdown-item-icon-empty {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+}
+
+.config-dropdown-overlay .config-dropdown-item-icon-image {
+  object-fit: cover;
+}
+
+.config-dropdown-overlay .config-dropdown-item-badge {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--gray-100);
+  color: var(--gray-600);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.config-dropdown-overlay .config-dropdown-item-check {
+  flex-shrink: 0;
+  color: var(--main-600);
+}
+
+.config-dropdown-overlay .config-dropdown-hint {
+  padding: 6px 8px;
+  color: var(--gray-500);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.config-dropdown-overlay .config-dropdown-divider {
+  height: 1px;
+  margin: 4px 4px;
+  background: var(--gray-100);
+}

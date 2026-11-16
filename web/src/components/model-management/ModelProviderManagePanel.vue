@@ -1,0 +1,1821 @@
+<script setup>
+import { computed, onMounted, reactive, ref } from 'vue'
+import { message, Modal } from 'ant-design-vue'
+import {
+  Globe,
+  Plus,
+  RefreshCw,
+  Search,
+  Settings2,
+  Trash2,
+  CheckCircle2,
+  TextInitial,
+  Image,
+  Video,
+  AudioLines,
+  FileText,
+  LayersPlus,
+  LoaderCircle,
+  Zap
+} from '@lucide/vue'
+
+import { modelProviderApi } from '@/apis/system_api'
+import { useConfigStore } from '@/stores/config'
+import { modelAvatars } from '@/utils/modelIcon'
+import {
+  formatModelPriceDisplay,
+  loadModelMetadataCatalog,
+  resolveModelDisplayMetadata,
+  USD_TO_CNY_RATE
+} from '@/utils/modelMetadata'
+import PageShoulder from '@/components/shared/PageShoulder.vue'
+import InfoCard from '@/components/shared/InfoCard.vue'
+import ExtensionCardGrid from '@/components/extensions/ExtensionCardGrid.vue'
+
+const configStore = useConfigStore()
+const loading = ref(false)
+const remoteLoading = ref(false)
+const saving = ref(false)
+const providers = ref([])
+const searchQuery = ref('')
+const modelTestLoadingBySpec = ref({})
+const modelTestResultBySpec = ref({})
+
+const PROVIDER_TYPE_OPTIONS = [
+  { value: 'openai', label: 'OpenAI Completions API' },
+  { value: 'anthropic', label: 'Anthropic Messages API' },
+  { value: 'local', label: '本地 BGE-M3 模型目录' }
+]
+
+const MODALITY_DISPLAY = {
+  text: { icon: TextInitial, label: '文本输入' },
+  image: { icon: Image, label: '图像输入' },
+  video: { icon: Video, label: '视频输入' },
+  audio: { icon: AudioLines, label: '音频输入' },
+  pdf: { icon: FileText, label: 'PDF 文档输入' }
+}
+const REQUEST_BODY_OVERRIDES_PLACEHOLDER = '{\n  "enable_thinking": false\n}'
+
+// Provider form state
+const showProviderModal = ref(false)
+const editingProviderId = ref(null) // null = creating, string = editing
+const providerForm = reactive({
+  provider_id: '',
+  display_name: '',
+  provider_type: 'openai',
+  default_protocol: 'openai_compatible',
+  base_url: '',
+  embedding_base_url: '',
+  rerank_base_url: '',
+  models_endpoint: '/models',
+  embedding_models_endpoint: '/embeddings/models',
+  rerank_models_endpoint: '',
+  api_key_env: '',
+  api_key: '',
+  capabilities: ['chat'],
+  is_enabled: true,
+  headers_text: '{}',
+  extra_text: '{}'
+})
+
+// Model form state
+const showModelModal = ref(false)
+const isCreating = ref(false) // true=手动添加新模型，false=编辑已有模型
+const editingModel = ref({
+  id: '',
+  display_name: '',
+  type: 'chat',
+  source: 'remote',
+  protocol_override: null,
+  base_url_override: null,
+  request_body_overrides: {},
+  request_body_overrides_text: '{}',
+  context_length: null,
+  dimension: null,
+  batch_size: null,
+  supported_parameters: [],
+  extra: {}
+})
+
+// Models modal state (per provider)
+const showModelsModal = ref(false)
+const currentProviderForModels = ref(null)
+
+// Remote models per provider
+const remoteModelsMap = ref({})
+
+// Remote model loading state per provider
+const remoteModelsLoaded = ref({})
+const modelCatalogProviders = ref({})
+
+// Remote model search state per provider
+const remoteModelSearch = ref({})
+const remoteModelTypeFilter = ref({})
+const priceCurrency = ref('USD')
+const filteredProviders = computed(() => {
+  const keyword = searchQuery.value.trim().toLowerCase()
+  const filtered = keyword
+    ? providers.value.filter(
+        (p) =>
+          p.provider_id.toLowerCase().includes(keyword) ||
+          p.display_name.toLowerCase().includes(keyword)
+      )
+    : providers.value
+  return [...filtered].sort((a, b) => {
+    if (a.is_enabled && b.is_enabled && a.credential_status !== b.credential_status) {
+      return a.credential_status === 'warning' ? 1 : -1
+    }
+    return a.provider_id.localeCompare(b.provider_id)
+  })
+})
+
+const enabledProviders = computed(() => filteredProviders.value.filter((p) => p.is_enabled))
+const disabledProviders = computed(() => filteredProviders.value.filter((p) => !p.is_enabled))
+
+const providerStats = computed(() => {
+  let enabled = 0,
+    warning = 0,
+    models = 0
+  for (const p of providers.value) {
+    if (p.is_enabled) {
+      enabled++
+      if (p.credential_status === 'warning') warning++
+    }
+    models += p.enabled_models?.length || 0
+  }
+  return { total: providers.value.length, enabled, warning, models }
+})
+
+// ============ Helpers ============
+const getProviderAvatar = (provider) => {
+  const providerId = provider?.provider_id?.toLowerCase()
+  const providerType = provider?.provider_type?.toLowerCase()
+  return modelAvatars[providerId] || modelAvatars[providerType] || modelAvatars.default
+}
+
+const getModelDisplayName = (model) => {
+  return model.name || model.display_name || model.id
+}
+
+const getModelId = (model) => {
+  return model.id
+}
+
+const buildModelSpec = (providerId, modelId) => `${providerId}:${modelId}`
+
+const defaultModelSpec = computed(() => configStore.config?.default_model || '')
+
+const getDefaultModelProviderId = () => {
+  const spec = defaultModelSpec.value
+  const separatorIndex = spec.indexOf(':')
+  return separatorIndex > 0 ? spec.slice(0, separatorIndex) : ''
+}
+
+const providerContainsDefaultModel = (providerId) => getDefaultModelProviderId() === providerId
+
+const isDefaultModel = (providerId, modelId) =>
+  defaultModelSpec.value === buildModelSpec(providerId, modelId)
+
+const warnDefaultModelProtected = () => {
+  message.warning('当前默认模型正在使用该供应商或模型，请先切换默认模型')
+}
+
+const isModelTesting = (providerId, modelId) =>
+  !!modelTestLoadingBySpec.value[buildModelSpec(providerId, modelId)]
+
+const getModelTestTitle = (providerId, model) => {
+  const spec = buildModelSpec(providerId, model.id)
+  const result = modelTestResultBySpec.value[spec]
+  if (!result) return '测试连接'
+
+  const statusText =
+    {
+      available: '可用',
+      unavailable: '不可用',
+      unsupported: '暂不支持',
+      error: '错误'
+    }[result.status] || '未知'
+  return `${statusText}: ${result.message || '无详细信息'}`
+}
+
+const getProviderModelInfo = (providerId, model) =>
+  resolveModelDisplayMetadata(modelCatalogProviders.value, providerId, model)
+
+const getRemoteModelPriceDisplay = (providerId, model) =>
+  formatModelPriceDisplay(getProviderModelInfo(providerId, model).price, priceCurrency.value)
+
+const togglePriceCurrency = () => {
+  priceCurrency.value = priceCurrency.value === 'CNY' ? 'USD' : 'CNY'
+}
+
+const getModalityDisplay = (modality) =>
+  MODALITY_DISPLAY[modality] || { icon: FileText, label: modality }
+
+const loadModelMetadata = async () => {
+  if (Object.keys(modelCatalogProviders.value).length) return
+  try {
+    const catalog = await loadModelMetadataCatalog()
+    modelCatalogProviders.value = catalog.providers
+  } catch (error) {
+    console.warn('Failed to load model metadata catalog:', error)
+  }
+}
+
+const remoteIdsMap = computed(() => {
+  const map = {}
+  for (const [providerId, models] of Object.entries(remoteModelsMap.value)) {
+    map[providerId] = new Set(models.map((m) => m.id))
+  }
+  return map
+})
+
+const isModelStale = (model, providerId) => {
+  if (model.source === 'manual') return false
+  if (!remoteModelsLoaded.value[providerId]) return false
+  return model.enabled && !remoteIdsMap.value[providerId]?.has(model.id)
+}
+
+// Remote models filtered by search query per provider
+const filteredRemoteModels = computed(() => {
+  if (!currentProviderForModels.value) return []
+  const providerId = currentProviderForModels.value.provider_id
+  const query = (remoteModelSearch.value[providerId] || '').trim().toLowerCase()
+  const typeFilter = remoteModelTypeFilter.value[providerId] || 'all'
+  const models = remoteModelsMap.value[providerId] || []
+  return models.filter((m) => {
+    const matchesType = typeFilter === 'all' || (m.type || 'chat') === typeFilter
+    const matchesQuery = !query || m.id.toLowerCase().includes(query)
+    return matchesType && matchesQuery
+  })
+})
+
+const remoteModelTypeOptions = computed(() => {
+  if (!currentProviderForModels.value) return [{ label: '全部', value: 'all' }]
+  const providerId = currentProviderForModels.value.provider_id
+  const models = remoteModelsMap.value[providerId] || []
+  const counts = models.reduce((acc, model) => {
+    const type = model.type || 'chat'
+    acc[type] = (acc[type] || 0) + 1
+    return acc
+  }, {})
+  return [
+    { label: `全部 ${models.length}`, value: 'all' },
+    { label: `对话 ${counts.chat || 0}`, value: 'chat' },
+    { label: `向量 ${counts.embedding || 0}`, value: 'embedding' },
+    { label: `重排 ${counts.rerank || 0}`, value: 'rerank' }
+  ]
+})
+
+// Model Config Modal 的 type 下拉选项：基于 provider.capabilities 限定
+// 旧数据 capabilities 为空时回退到全集，保持现状
+const editingModelTypeOptions = computed(() => {
+  const caps = currentProviderForModels.value?.capabilities
+  const types = Array.isArray(caps) && caps.length ? caps : ['chat', 'embedding', 'rerank']
+  return types.map((c) => ({ value: c, label: c }))
+})
+
+const parseJsonObject = (text, label) => {
+  let parsed
+  try {
+    const source = typeof text === 'string' && text.trim() ? text : '{}'
+    parsed = JSON.parse(source)
+  } catch (error) {
+    const reason = error?.message ? `：${error.message}` : ''
+    throw new Error(`${label} 格式不正确${reason}`, { cause: error })
+  }
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
+    throw new Error(`${label} 必须是 JSON 对象`)
+  }
+  return parsed
+}
+
+const formatJsonText = (value) => JSON.stringify(value || {}, null, 2)
+const loadProviders = async () => {
+  loading.value = true
+  try {
+    if (!configStore.config?.default_model) {
+      await configStore.refreshConfig()
+    }
+    const result = await modelProviderApi.getProviders()
+    providers.value = result.data || []
+  } catch (error) {
+    message.error(error.message || '加载模型供应商失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+function getProviderInfo(provider) {
+  return [
+    { label: 'Base URL', value: provider.base_url || '-' },
+    { label: '能力', value: provider.capabilities?.join(', ') || 'chat' }
+  ]
+}
+
+function getProviderStatus(provider) {
+  if (provider.credential_status === 'warning') return { label: '凭证缺失', level: 'warning' }
+  return { label: '', level: 'success' }
+}
+
+const openCreateProviderModal = () => {
+  editingProviderId.value = null
+  Object.assign(providerForm, {
+    provider_id: '',
+    display_name: '',
+    provider_type: 'openai',
+    default_protocol: '',
+    base_url: '',
+    embedding_base_url: '',
+    rerank_base_url: '',
+    models_endpoint: '/models',
+    embedding_models_endpoint: '/embeddings/models',
+    rerank_models_endpoint: '',
+    api_key_env: '',
+    api_key: '',
+    capabilities: ['chat'],
+    is_enabled: true,
+    headers_text: '{}',
+    extra_text: '{}'
+  })
+  showProviderModal.value = true
+}
+
+const openEditProviderModal = (provider) => {
+  editingProviderId.value = provider.provider_id
+  Object.assign(providerForm, {
+    provider_id: provider.provider_id,
+    display_name: provider.display_name,
+    provider_type: provider.provider_type || 'openai',
+    default_protocol: '',
+    base_url: provider.base_url || '',
+    embedding_base_url: provider.embedding_base_url || '',
+    rerank_base_url: provider.rerank_base_url || '',
+    models_endpoint: provider.models_endpoint ?? '',
+    embedding_models_endpoint: provider.embedding_models_endpoint ?? '',
+    rerank_models_endpoint: provider.rerank_models_endpoint ?? '',
+    api_key_env: provider.api_key_env || '',
+    api_key: provider.api_key || '',
+    capabilities: provider.capabilities?.length ? provider.capabilities : ['chat'],
+    is_enabled: provider.is_enabled !== false,
+    headers_text: formatJsonText(provider.headers_json),
+    extra_text: formatJsonText(provider.extra_json)
+  })
+  showProviderModal.value = true
+}
+
+const buildProviderPayload = () => ({
+  provider_id: providerForm.provider_id || undefined,
+  display_name: providerForm.display_name,
+  provider_type: providerForm.provider_type,
+  default_protocol: null,
+  base_url: providerForm.base_url,
+  embedding_base_url: providerForm.embedding_base_url || null,
+  rerank_base_url: providerForm.rerank_base_url || null,
+  models_endpoint: providerForm.models_endpoint || null,
+  embedding_models_endpoint: providerForm.embedding_models_endpoint || null,
+  rerank_models_endpoint: providerForm.rerank_models_endpoint || null,
+  api_key_env: providerForm.api_key_env || null,
+  api_key: providerForm.api_key || null,
+  capabilities: providerForm.capabilities,
+  is_enabled: providerForm.is_enabled,
+  headers_json: parseJsonObject(providerForm.headers_text, '请求头'),
+  extra_json: parseJsonObject(providerForm.extra_text, '扩展配置')
+})
+
+const createProvider = async () => {
+  saving.value = true
+  try {
+    await modelProviderApi.createProvider(buildProviderPayload())
+    message.success('供应商已创建')
+    showProviderModal.value = false
+    await loadProviders()
+  } catch (error) {
+    message.error(error.message || '创建失败')
+  } finally {
+    saving.value = false
+  }
+}
+
+const saveProvider = async () => {
+  if (
+    editingProviderId.value &&
+    providerContainsDefaultModel(providerForm.provider_id) &&
+    providerForm.is_enabled === false
+  ) {
+    warnDefaultModelProtected()
+    return
+  }
+
+  saving.value = true
+  try {
+    await modelProviderApi.updateProvider(providerForm.provider_id, buildProviderPayload())
+    message.success('供应商已保存')
+    showProviderModal.value = false
+    await loadProviders()
+  } catch (error) {
+    message.error(error.message || '保存失败')
+  } finally {
+    saving.value = false
+  }
+}
+
+const saveProviderAndEnable = async () => {
+  saving.value = true
+  try {
+    const payload = { ...buildProviderPayload(), is_enabled: true }
+    await modelProviderApi.updateProvider(providerForm.provider_id, payload)
+    message.success('供应商已保存并启用')
+    showProviderModal.value = false
+    await loadProviders()
+  } catch (error) {
+    message.error(error.message || '保存失败')
+  } finally {
+    saving.value = false
+  }
+}
+
+const deleteProvider = async (provider) => {
+  if (providerContainsDefaultModel(provider.provider_id)) {
+    warnDefaultModelProtected()
+    return
+  }
+
+  Modal.confirm({
+    title: `删除 ${provider.display_name}`,
+    content: '删除后不会影响当前系统正在使用的旧模型配置。',
+    okText: '删除',
+    okType: 'danger',
+    cancelText: '取消',
+    async onOk() {
+      try {
+        await modelProviderApi.deleteProvider(provider.provider_id)
+        message.success('已删除')
+        if (currentProviderForModels.value?.provider_id === provider.provider_id) {
+          showModelsModal.value = false
+          currentProviderForModels.value = null
+        }
+        if (editingProviderId.value === provider.provider_id) {
+          showProviderModal.value = false
+          editingProviderId.value = null
+        }
+        await loadProviders()
+      } catch (error) {
+        message.error(error.message || '删除失败')
+      }
+    }
+  })
+}
+
+const deleteProviderFromEdit = async () => {
+  const provider = providers.value.find((p) => p.provider_id === editingProviderId.value)
+  if (provider) {
+    deleteProvider(provider)
+  }
+}
+
+// ============ Models Modal Operations ============
+const openModelsModal = (provider) => {
+  currentProviderForModels.value = provider
+  if (!remoteModelsLoaded.value[provider.provider_id]) {
+    remoteModelsMap.value[provider.provider_id] = []
+  }
+  remoteModelSearch.value[provider.provider_id] =
+    remoteModelSearch.value[provider.provider_id] || ''
+  remoteModelTypeFilter.value[provider.provider_id] = 'all'
+  showModelsModal.value = true
+  loadModelMetadata()
+}
+
+// ============ Remote Models Operations ============
+const fetchRemoteModels = async (providerId) => {
+  remoteLoading.value = true
+  try {
+    const result = await modelProviderApi.fetchRemoteModels(providerId)
+    remoteModelsMap.value = {
+      ...remoteModelsMap.value,
+      [providerId]: result.data || []
+    }
+    remoteModelsLoaded.value[providerId] = true
+    message.success(`已获取 ${result.data?.length || 0} 个远端模型`)
+  } catch (error) {
+    message.error(error.message || '获取远端模型失败')
+  } finally {
+    remoteLoading.value = false
+  }
+}
+
+// ============ Model Operations ============
+const normalizeModel = (model = {}) => ({
+  id: model.id || '',
+  display_name: model.display_name || model.name || model.id || '',
+  type: model.type && model.type !== 'unknown' ? model.type : 'chat',
+  source: model.source || 'remote',
+  protocol_override: model.protocol_override || null,
+  base_url_override: model.base_url_override || null,
+  request_body_overrides:
+    model.request_body_overrides &&
+    typeof model.request_body_overrides === 'object' &&
+    !Array.isArray(model.request_body_overrides)
+      ? model.request_body_overrides
+      : {},
+  context_length: model.context_length || null,
+  dimension: model.dimension || null,
+  batch_size: model.batch_size || null,
+  supported_parameters: model.supported_parameters || [],
+  extra: model.extra || {}
+})
+
+const testModelConnection = async (providerId, model) => {
+  const spec = buildModelSpec(providerId, model.id)
+  if (modelTestLoadingBySpec.value[spec]) return
+
+  modelTestLoadingBySpec.value = { ...modelTestLoadingBySpec.value, [spec]: true }
+  try {
+    const result = await modelProviderApi.getModelStatusBySpec(spec)
+    const status = result.data || { spec, status: 'error', message: '检查失败' }
+    modelTestResultBySpec.value = { ...modelTestResultBySpec.value, [spec]: status }
+
+    if (status.status === 'available') {
+      message.success(`${getModelDisplayName(model)} 连接正常`)
+    } else if (status.status === 'unsupported') {
+      message.warning(status.message || '暂不支持测试该类型模型')
+    } else if (status.status === 'unavailable') {
+      message.warning(status.message || '模型连接不可用')
+    } else {
+      message.error(status.message || '模型连接测试失败')
+    }
+  } catch (error) {
+    modelTestResultBySpec.value = {
+      ...modelTestResultBySpec.value,
+      [spec]: { spec, status: 'error', message: error.message || '检查失败' }
+    }
+    message.error(error.message || '模型连接测试失败')
+  } finally {
+    modelTestLoadingBySpec.value = { ...modelTestLoadingBySpec.value, [spec]: false }
+  }
+}
+
+const addModelFromRemote = async (providerId, remoteModel) => {
+  const provider = providers.value.find((p) => p.provider_id === providerId)
+  if (!provider) return
+
+  const enabledModels = provider.enabled_models || []
+  if (enabledModels.some((m) => m.id === remoteModel.id)) {
+    message.info('模型已存在')
+    return
+  }
+
+  const newModel = normalizeModel(remoteModel)
+  newModel.source = 'remote' // 远端拉取的模型显式标注，避免后续被误判为旧数据
+  newModel.enabled = true
+  const newEnabledModels = [...enabledModels, newModel]
+
+  try {
+    await modelProviderApi.updateProvider(providerId, { enabled_models: newEnabledModels })
+    message.success(`已添加模型 ${remoteModel.id}`)
+    await loadProviders()
+    // Refresh current provider reference if modal is open
+    if (currentProviderForModels.value?.provider_id === providerId) {
+      currentProviderForModels.value = providers.value.find((p) => p.provider_id === providerId)
+    }
+  } catch (error) {
+    message.error(error.message || '添加模型失败')
+  }
+}
+
+const openModelConfigModal = (model) => {
+  const normalized = normalizeModel(model)
+  normalized.request_body_overrides_text = formatJsonText(normalized.request_body_overrides)
+  Object.assign(editingModel.value, normalized)
+  isCreating.value = false
+  showModelModal.value = true
+}
+
+// 手动添加模型：弹出与编辑共用的 Model Config Modal，但 id 字段可编辑、type 选项受 provider 能力约束
+const openCreateModal = (provider) => {
+  if (!provider) return
+  const types = provider.capabilities?.length ? provider.capabilities : ['chat']
+  const defaultType = types[0]
+  Object.assign(editingModel.value, {
+    id: '',
+    display_name: '',
+    type: defaultType,
+    source: 'manual',
+    protocol_override: null,
+    base_url_override: null,
+    request_body_overrides: {},
+    request_body_overrides_text: '{}',
+    context_length: null,
+    dimension: null,
+    batch_size: null,
+    supported_parameters: [],
+    extra: {}
+  })
+  isCreating.value = true
+  showModelModal.value = true
+}
+
+const buildModelConfigPayload = () => {
+  const requestBodyOverrides = parseJsonObject(
+    editingModel.value.request_body_overrides_text,
+    '模型请求参数'
+  )
+  const modelPayload = { ...editingModel.value }
+  delete modelPayload.request_body_overrides_text
+  return {
+    ...modelPayload,
+    request_body_overrides: requestBodyOverrides
+  }
+}
+
+const saveModelConfig = async () => {
+  if (!currentProviderForModels.value) return
+  saving.value = true
+  try {
+    const provider = providers.value.find(
+      (p) => p.provider_id === currentProviderForModels.value.provider_id
+    )
+    if (!provider) return
+
+    const modelPayload = buildModelConfigPayload()
+    let enabledModels
+    if (isCreating.value) {
+      const newId = (modelPayload.id || '').trim()
+      if (!newId) {
+        message.error('请填写模型 ID')
+        return
+      }
+      if ((provider.enabled_models || []).some((m) => m.id === newId)) {
+        message.error('模型 ID 已存在')
+        return
+      }
+      const newModel = { ...modelPayload, id: newId, source: 'manual', enabled: true }
+      enabledModels = [...(provider.enabled_models || []), newModel]
+    } else {
+      enabledModels = (provider.enabled_models || []).map((m) =>
+        m.id === modelPayload.id ? { ...modelPayload } : m
+      )
+    }
+
+    await modelProviderApi.updateProvider(currentProviderForModels.value.provider_id, {
+      enabled_models: enabledModels
+    })
+    message.success(isCreating.value ? '模型已添加' : '模型配置已保存')
+    showModelModal.value = false
+    isCreating.value = false
+    await loadProviders()
+    // Refresh current provider reference
+    currentProviderForModels.value = providers.value.find(
+      (p) => p.provider_id === currentProviderForModels.value.provider_id
+    )
+  } catch (error) {
+    message.error(error.message || '保存失败')
+  } finally {
+    saving.value = false
+  }
+}
+
+const removeModel = async (providerId, modelId) => {
+  const provider = providers.value.find((p) => p.provider_id === providerId)
+  if (!provider) return
+  if (isDefaultModel(providerId, modelId)) {
+    warnDefaultModelProtected()
+    return
+  }
+
+  Modal.confirm({
+    title: '移除模型',
+    content: `确定要移除模型 ${modelId} 吗？`,
+    okText: '移除',
+    okType: 'danger',
+    cancelText: '取消',
+    async onOk() {
+      try {
+        const enabledModels = (provider.enabled_models || []).filter((m) => m.id !== modelId)
+        await modelProviderApi.updateProvider(providerId, { enabled_models: enabledModels })
+        message.success('模型已移除')
+        await loadProviders()
+        // Refresh current provider reference if modal is open
+        if (currentProviderForModels.value?.provider_id === providerId) {
+          currentProviderForModels.value = providers.value.find((p) => p.provider_id === providerId)
+        }
+      } catch (error) {
+        message.error(error.message || '移除失败')
+      }
+    }
+  })
+}
+
+onMounted(loadProviders)
+
+defineExpose({
+  loading,
+  stats: providerStats,
+  refresh: loadProviders
+})
+</script>
+
+<template>
+  <div class="model-provider-manage-panel">
+    <PageShoulder v-model:search="searchQuery" search-placeholder="搜索供应商...">
+      <template #actions>
+        <a-button type="primary" class="lucide-icon-btn" @click="openCreateProviderModal">
+          <Plus :size="14" />
+          新增供应商
+        </a-button>
+        <a-button class="lucide-icon-btn" @click="loadProviders" :loading="loading">
+          <RefreshCw :size="14" :class="{ spinning: loading }" />
+        </a-button>
+      </template>
+    </PageShoulder>
+
+    <div
+      v-if="!loading && enabledProviders.length === 0 && disabledProviders.length === 0"
+      class="provider-empty-state"
+    >
+      <a-empty
+        :image="false"
+        :description="searchQuery ? '无匹配供应商' : '暂无供应商，点击上方按钮新增'"
+      />
+    </div>
+
+    <template v-else>
+      <div v-if="enabledProviders.length" class="provider-section-header">
+        已启用（{{ enabledProviders.length }}）
+      </div>
+      <ExtensionCardGrid v-if="enabledProviders.length" :min-width="320">
+        <InfoCard
+          v-for="provider in enabledProviders"
+          :key="provider.provider_id"
+          :title="provider.display_name"
+          :subtitle="provider.provider_id"
+          :default-icon="Globe"
+          :info="getProviderInfo(provider)"
+          :status="getProviderStatus(provider)"
+          @click="openEditProviderModal(provider)"
+        >
+          <template #icon>
+            <span
+              class="provider-avatar"
+              role="img"
+              :aria-label="`${provider.display_name} 图标`"
+              :style="{
+                background: getProviderAvatar(provider).background,
+                '--provider-avatar-scale': getProviderAvatar(provider).scale,
+                '--provider-avatar-filter': getProviderAvatar(provider).filter
+              }"
+            >
+              <img :src="getProviderAvatar(provider).icon" alt="" />
+            </span>
+          </template>
+          <template #footer>
+            <button class="view-models-btn" type="button" @click.stop="openModelsModal(provider)">
+              <Settings2 :size="14" />
+              管理模型
+              <span v-if="provider.enabled_models?.length" class="enabled-count"
+                >（已启用 {{ provider.enabled_models.length }} 个）</span
+              >
+            </button>
+          </template>
+        </InfoCard>
+      </ExtensionCardGrid>
+
+      <div v-if="disabledProviders.length" class="provider-section-header">
+        未启用（{{ disabledProviders.length }}）
+      </div>
+      <ExtensionCardGrid v-if="disabledProviders.length" :min-width="320">
+        <InfoCard
+          v-for="provider in disabledProviders"
+          :key="provider.provider_id"
+          variant="mini"
+          :title="provider.display_name"
+          :description="provider.provider_id"
+          @click="openEditProviderModal(provider)"
+        >
+          <template #icon>
+            <span
+              class="provider-avatar"
+              role="img"
+              :aria-label="`${provider.display_name} 图标`"
+              :style="{
+                background: getProviderAvatar(provider).background,
+                '--provider-avatar-scale': getProviderAvatar(provider).scale,
+                '--provider-avatar-filter': getProviderAvatar(provider).filter
+              }"
+            >
+              <img :src="getProviderAvatar(provider).icon" alt="" />
+            </span>
+          </template>
+        </InfoCard>
+      </ExtensionCardGrid>
+    </template>
+
+    <!-- Provider Edit Modal -->
+    <a-modal
+      v-model:open="showProviderModal"
+      :title="editingProviderId ? '编辑供应商' : '新增供应商'"
+      :width="560"
+      :confirm-loading="saving"
+    >
+      <template #footer>
+        <div class="provider-modal-footer">
+          <a-button
+            v-if="editingProviderId"
+            danger
+            class="lucide-icon-btn"
+            @click="deleteProviderFromEdit"
+          >
+            <Trash2 :size="14" />
+            删除供应商
+          </a-button>
+          <span v-else></span>
+          <div class="provider-modal-footer-actions">
+            <a-button @click="showProviderModal = false">取消</a-button>
+            <template v-if="editingProviderId && !providerForm.is_enabled">
+              <a-button :loading="saving" @click="saveProvider">仅保存</a-button>
+              <a-button type="primary" :loading="saving" @click="saveProviderAndEnable">
+                保存并启用
+              </a-button>
+            </template>
+            <a-button
+              v-else
+              type="primary"
+              :loading="saving"
+              @click="editingProviderId ? saveProvider() : createProvider()"
+            >
+              确认
+            </a-button>
+          </div>
+        </div>
+      </template>
+      <div class="modal-form" autocomplete="off">
+        <div class="form-row">
+          <label class="form-label">
+            <span>Provider ID</span>
+            <a-input
+              v-model:value="providerForm.provider_id"
+              :disabled="!!editingProviderId"
+              placeholder="my-provider"
+              autocomplete="off"
+            />
+          </label>
+          <label class="form-label">
+            <span>展示名称</span>
+            <a-input
+              v-model:value="providerForm.display_name"
+              placeholder="My Provider"
+              autocomplete="off"
+            />
+          </label>
+        </div>
+
+        <div class="form-row">
+          <label class="form-label">
+            <span>Base URL</span>
+            <a-input
+              v-model:value="providerForm.base_url"
+              placeholder="https://api.example.com/v1"
+              autocomplete="off"
+            />
+          </label>
+          <label class="form-label">
+            <span>Provider Type</span>
+            <a-select v-model:value="providerForm.provider_type">
+              <a-select-option
+                v-for="option in PROVIDER_TYPE_OPTIONS"
+                :key="option.value"
+                :value="option.value"
+              >
+                {{ option.label }}
+              </a-select-option>
+            </a-select>
+          </label>
+        </div>
+
+        <div class="form-row">
+          <label class="form-label">
+            <span>API Key Env</span>
+            <a-input
+              v-model:value="providerForm.api_key_env"
+              placeholder="环境变量名"
+              autocomplete="off"
+            />
+          </label>
+          <label class="form-label">
+            <span>API Key</span>
+            <a-input-password
+              v-model:value="providerForm.api_key"
+              autocomplete="new-password"
+              autocapitalize="none"
+              autocorrect="off"
+              spellcheck="false"
+            />
+          </label>
+        </div>
+
+        <div class="form-row">
+          <label class="form-label">
+            <span>Models Endpoint</span>
+            <a-input v-model:value="providerForm.models_endpoint" placeholder="/models" />
+          </label>
+        </div>
+
+        <template v-if="providerForm.capabilities.includes('embedding')">
+          <div class="form-row">
+            <label class="form-label">
+              <span>Embedding Base URL</span>
+              <a-input
+                v-model:value="providerForm.embedding_base_url"
+                placeholder="https://api.example.com/v1/embeddings"
+              />
+            </label>
+            <label class="form-label">
+              <span>Embedding Endpoint</span>
+              <a-input
+                v-model:value="providerForm.embedding_models_endpoint"
+                placeholder="/embeddings/models"
+              />
+            </label>
+          </div>
+        </template>
+
+        <template v-if="providerForm.capabilities.includes('rerank')">
+          <div class="form-row">
+            <label class="form-label">
+              <span>Rerank Base URL</span>
+              <a-input
+                v-model:value="providerForm.rerank_base_url"
+                placeholder="https://api.example.com/v1/rerank"
+              />
+            </label>
+            <label class="form-label">
+              <span>Rerank Endpoint</span>
+              <a-input
+                v-model:value="providerForm.rerank_models_endpoint"
+                placeholder="按供应商文档填写，留空则不自动加载"
+              />
+            </label>
+          </div>
+        </template>
+
+        <label class="form-label full-width">
+          <span>能力</span>
+          <a-select v-model:value="providerForm.capabilities" mode="multiple">
+            <a-select-option value="chat">chat</a-select-option>
+            <a-select-option value="embedding">embedding</a-select-option>
+            <a-select-option value="rerank">rerank</a-select-option>
+          </a-select>
+        </label>
+
+        <div class="form-switch">
+          <span>状态</span>
+          <a-switch
+            v-model:checked="providerForm.is_enabled"
+            checked-children="启用"
+            un-checked-children="停用"
+          />
+        </div>
+
+        <a-collapse expand-icon-position="end" :ghost="true" class="advanced-collapse">
+          <a-collapse-panel key="advanced" header="高级配置">
+            <label class="form-label full-width">
+              <span>请求头 JSON</span>
+              <a-textarea v-model:value="providerForm.headers_text" :rows="4" placeholder="{}" />
+            </label>
+
+            <label class="form-label full-width">
+              <span>扩展配置 JSON</span>
+              <a-textarea v-model:value="providerForm.extra_text" :rows="4" placeholder="{}" />
+            </label>
+          </a-collapse-panel>
+        </a-collapse>
+      </div>
+    </a-modal>
+    <!-- Models Management Modal -->
+    <a-modal
+      v-model:open="showModelsModal"
+      :title="
+        currentProviderForModels
+          ? `${currentProviderForModels.display_name} - 模型配置`
+          : '模型配置'
+      "
+      :width="800"
+      :footer="null"
+    >
+      <div v-if="currentProviderForModels" class="models-modal-content">
+        <!-- Enabled Models Section -->
+        <div class="models-section">
+          <div class="enabled-header">
+            <h4 class="models-section-title">
+              已启用模型 ({{ currentProviderForModels.enabled_models?.length || 0 }})
+            </h4>
+            <div class="actions">
+              <a-button
+                size="small"
+                type="primary"
+                class="lucide-icon-btn"
+                :loading="remoteLoading"
+                @click="fetchRemoteModels(currentProviderForModels.provider_id)"
+              >
+                获取远程模型
+              </a-button>
+              <a-button
+                size="small"
+                class="lucide-icon-btn"
+                @click="openCreateModal(currentProviderForModels)"
+              >
+                <Plus :size="14" />
+                <span>手动添加</span>
+              </a-button>
+            </div>
+          </div>
+          <div class="models-table" v-if="currentProviderForModels.enabled_models?.length">
+            <div class="table-head">
+              <span class="col-name">模型</span>
+              <span class="col-type">类型</span>
+              <span class="col-context">上下文</span>
+              <span class="col-dim">维度</span>
+              <span class="col-ops">操作</span>
+            </div>
+            <div
+              v-for="model in currentProviderForModels.enabled_models"
+              :key="model.id"
+              class="table-row"
+              :class="{ stale: isModelStale(model, currentProviderForModels.provider_id) }"
+            >
+              <div class="model-info">
+                <span class="model-name">{{ getModelDisplayName(model) }}</span>
+                <span class="model-id">{{ getModelId(model) }}</span>
+              </div>
+              <span class="col-type">
+                <span class="type-tag" :class="model.type">{{ model.type }}</span>
+                <span
+                  v-if="model.source === 'manual'"
+                  class="type-tag manual"
+                  title="管理员手动添加"
+                  aria-label="管理员手动添加"
+                >
+                  <LayersPlus :size="12" />
+                </span>
+              </span>
+              <span class="col-context">
+                {{
+                  getProviderModelInfo(currentProviderForModels.provider_id, model).contextLabel ||
+                  '-'
+                }}
+              </span>
+              <span class="col-dim">
+                <span
+                  v-if="model.type === 'embedding' && !model.dimension"
+                  class="dim-warning"
+                  title="缺少维度配置"
+                  >⚠</span
+                >
+                <span v-else>{{ model.dimension || '-' }}</span>
+              </span>
+              <span class="col-ops">
+                <a-button
+                  size="small"
+                  class="model-test-button"
+                  :class="{
+                    'is-testing': isModelTesting(currentProviderForModels.provider_id, model.id)
+                  }"
+                  aria-label="测试模型连接"
+                  :aria-busy="isModelTesting(currentProviderForModels.provider_id, model.id)"
+                  :title="getModelTestTitle(currentProviderForModels.provider_id, model)"
+                  @click="testModelConnection(currentProviderForModels.provider_id, model)"
+                >
+                  <LoaderCircle
+                    v-if="isModelTesting(currentProviderForModels.provider_id, model.id)"
+                    :size="13"
+                    class="spinning"
+                  />
+                  <Zap v-else :size="13" />
+                </a-button>
+                <a-button
+                  size="small"
+                  class="lucide-icon-btn"
+                  :title="`配置 ${getModelDisplayName(model)}`"
+                  :aria-label="`配置 ${getModelDisplayName(model)}`"
+                  @click="openModelConfigModal(model)"
+                >
+                  <Settings2 :size="13" />
+                </a-button>
+                <a-button
+                  size="small"
+                  danger
+                  class="lucide-icon-btn"
+                  :title="`移除 ${getModelDisplayName(model)}`"
+                  :aria-label="`移除 ${getModelDisplayName(model)}`"
+                  @click="removeModel(currentProviderForModels.provider_id, model.id)"
+                >
+                  <Trash2 :size="13" />
+                </a-button>
+              </span>
+            </div>
+          </div>
+          <a-empty v-else description="暂无已启用模型" />
+        </div>
+
+        <!-- Remote Models Section -->
+        <div class="models-section">
+          <div class="remote-header">
+            <h4 class="models-section-title">远端候选模型 ({{ filteredRemoteModels.length }})</h4>
+            <div
+              v-if="remoteModelsMap[currentProviderForModels.provider_id]?.length"
+              class="remote-controls"
+            >
+              <a-input
+                v-model:value="remoteModelSearch[currentProviderForModels.provider_id]"
+                class="remote-search-input"
+                placeholder="搜索模型..."
+                allow-clear
+                autocomplete="off"
+                autocapitalize="none"
+                autocorrect="off"
+                spellcheck="false"
+              >
+                <template #prefix><Search :size="12" /></template>
+              </a-input>
+              <button
+                type="button"
+                class="currency-toggle"
+                :title="
+                  priceCurrency === 'CNY'
+                    ? `当前按人民币展示，点击切换美元（1 USD ≈ ¥${USD_TO_CNY_RATE}）`
+                    : `当前按美元展示，点击切换人民币（1 USD ≈ ¥${USD_TO_CNY_RATE}）`
+                "
+                :aria-label="priceCurrency === 'CNY' ? '切换为美元计费' : '切换为人民币计费'"
+                @click="togglePriceCurrency"
+              >
+                {{ priceCurrency === 'CNY' ? '¥' : '$' }}
+              </button>
+              <a-segmented
+                v-model:value="remoteModelTypeFilter[currentProviderForModels.provider_id]"
+                :options="remoteModelTypeOptions"
+                class="remote-type-filter"
+              />
+            </div>
+          </div>
+          <div
+            class="remote-list"
+            v-if="remoteModelsMap[currentProviderForModels.provider_id]?.length"
+          >
+            <div
+              v-for="remoteModel in filteredRemoteModels"
+              :key="remoteModel.id"
+              class="remote-row"
+            >
+              <span class="remote-name">{{ getModelDisplayName(remoteModel) }}</span>
+              <div class="remote-tags">
+                <template
+                  v-for="mod in getProviderModelInfo(
+                    currentProviderForModels.provider_id,
+                    remoteModel
+                  ).inputModalities"
+                  :key="mod"
+                >
+                  <a-tooltip :title="getModalityDisplay(mod).label">
+                    <span
+                      class="modality-tag"
+                      role="img"
+                      :aria-label="getModalityDisplay(mod).label"
+                    >
+                      <component :is="getModalityDisplay(mod).icon" :size="13" />
+                    </span>
+                  </a-tooltip>
+                </template>
+                <span class="type-tag" :class="remoteModel.type || 'chat'">
+                  {{ remoteModel.type || 'chat' }}
+                </span>
+              </div>
+              <span class="remote-context">{{
+                getProviderModelInfo(currentProviderForModels.provider_id, remoteModel)
+                  .contextLabel || '-'
+              }}</span>
+              <span
+                v-if="getRemoteModelPriceDisplay(currentProviderForModels.provider_id, remoteModel)"
+                class="remote-price"
+              >
+                {{ getRemoteModelPriceDisplay(currentProviderForModels.provider_id, remoteModel) }}
+              </span>
+              <span v-else class="remote-price placeholder">N/A</span>
+              <a-button
+                size="small"
+                :type="
+                  currentProviderForModels.enabled_models?.some((m) => m.id === remoteModel.id)
+                    ? 'primary'
+                    : 'default'
+                "
+                class="lucide-icon-btn"
+                :title="
+                  currentProviderForModels.enabled_models?.some((m) => m.id === remoteModel.id)
+                    ? `${getModelDisplayName(remoteModel)} 已启用`
+                    : `启用 ${getModelDisplayName(remoteModel)}`
+                "
+                :aria-label="
+                  currentProviderForModels.enabled_models?.some((m) => m.id === remoteModel.id)
+                    ? `${getModelDisplayName(remoteModel)} 已启用`
+                    : `启用 ${getModelDisplayName(remoteModel)}`
+                "
+                :disabled="
+                  currentProviderForModels.enabled_models?.some((m) => m.id === remoteModel.id)
+                "
+                @click="addModelFromRemote(currentProviderForModels.provider_id, remoteModel)"
+              >
+                <CheckCircle2
+                  :size="13"
+                  v-if="
+                    currentProviderForModels.enabled_models?.some((m) => m.id === remoteModel.id)
+                  "
+                />
+                <Plus :size="13" v-else />
+              </a-button>
+            </div>
+          </div>
+          <div v-if="Object.keys(modelCatalogProviders).length" class="model-metadata-source">
+            部分信息（价格、能力等）来自
+            <a href="https://models.dev" target="_blank" rel="noreferrer">models.dev</a>
+            填补。人民币价格按固定汇率 1 USD = ¥{{ USD_TO_CNY_RATE }}
+            换算。以上信息仅供参考，可能和官网或实时汇率有偏差。
+          </div>
+          <div class="remote-fetch-actions"></div>
+        </div>
+      </div>
+    </a-modal>
+    <!-- Model Config Modal -->
+    <a-modal
+      v-model:open="showModelModal"
+      :title="isCreating ? '手动添加模型' : '模型配置'"
+      :width="520"
+      :confirm-loading="saving"
+      @ok="saveModelConfig"
+    >
+      <div class="modal-form">
+        <div v-if="isCreating" class="form-row">
+          <label class="form-label">
+            <span>模型 ID <span class="required-mark">*</span></span>
+            <a-input v-model:value="editingModel.id" placeholder="例如 BAAI/bge-m3" allow-clear />
+          </label>
+        </div>
+        <div v-else class="model-id-display">
+          <span class="info-label">模型 ID</span>
+          <code>{{ editingModel.id }}</code>
+        </div>
+
+        <div class="form-row">
+          <label class="form-label">
+            <span>展示名称</span>
+            <a-input v-model:value="editingModel.display_name" />
+          </label>
+          <label class="form-label">
+            <span>模型类型</span>
+            <a-select
+              v-model:value="editingModel.type"
+              :options="editingModelTypeOptions"
+              :disabled="editingModelTypeOptions.length === 1"
+            />
+          </label>
+        </div>
+
+        <div class="form-row">
+          <label class="form-label">
+            <span>协议覆盖</span>
+            <a-input v-model:value="editingModel.protocol_override" placeholder="可选" />
+          </label>
+          <label class="form-label">
+            <span>Base URL 覆盖</span>
+            <a-input v-model:value="editingModel.base_url_override" placeholder="可选" />
+          </label>
+        </div>
+
+        <label class="form-label full-width">
+          <span>模型请求参数 JSON</span>
+          <a-textarea
+            v-model:value="editingModel.request_body_overrides_text"
+            :rows="6"
+            :placeholder="REQUEST_BODY_OVERRIDES_PLACEHOLDER"
+          />
+          <small class="form-help">
+            仅 OpenAI 兼容供应商（含 OpenRouter）的 chat 模型会通过 extra_body 透传；支持
+            enable_thinking、thinking_budget、thinking、reasoning 和 reasoning_effort。
+          </small>
+        </label>
+
+        <div class="form-row">
+          <label class="form-label" v-if="editingModel.type === 'embedding'">
+            <span>维度</span>
+            <a-input-number v-model:value="editingModel.dimension" :min="1" />
+          </label>
+          <label
+            class="form-label"
+            v-if="editingModel.type === 'embedding' || editingModel.type === 'rerank'"
+          >
+            <span>Batch Size</span>
+            <a-input-number v-model:value="editingModel.batch_size" :min="1" />
+          </label>
+        </div>
+      </div>
+    </a-modal>
+  </div>
+</template>
+
+<style lang="less" scoped>
+.model-provider-manage-panel {
+  height: 100%;
+  min-height: 0;
+
+  :deep(.info-card-icon) {
+    border: none;
+    background: transparent;
+  }
+}
+
+.provider-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  overflow: hidden;
+  border: 1px solid rgb(0 0 0 / 6%);
+  border-radius: 8px;
+
+  img {
+    width: calc(100% * var(--provider-avatar-scale));
+    height: calc(100% * var(--provider-avatar-scale));
+    object-fit: contain;
+    filter: var(--provider-avatar-filter);
+  }
+}
+
+.view-models-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: none;
+  background: transparent;
+  color: var(--gray-700);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.15s;
+
+  &:hover {
+    background: var(--gray-50);
+    color: var(--gray-800);
+  }
+}
+
+.provider-section-header {
+  padding: 12px var(--page-padding) 0;
+  color: var(--gray-500);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+}
+
+.provider-empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 100px 20px;
+  text-align: center;
+}
+
+.enabled-count {
+  color: var(--gray-500);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.spinning {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.models-modal-content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.models-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.models-section-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gray-700);
+}
+
+.models-table {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--gray-150);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.table-head,
+.table-row {
+  display: grid;
+  grid-template-columns: 1fr 80px 70px 60px 150px;
+  gap: 8px;
+  align-items: center;
+}
+
+.table-head {
+  padding: 10px 12px;
+  background: var(--gray-50);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--gray-500);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.table-row {
+  padding: 10px 12px;
+  border-top: 1px solid var(--gray-100);
+  font-size: 13px;
+  transition: background 0.1s;
+
+  &:hover {
+    background: var(--gray-10);
+  }
+
+  &.stale {
+    background: var(--color-warning-50);
+  }
+}
+
+.model-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.model-name {
+  font-weight: 500;
+  color: var(--gray-900);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-id {
+  font-size: 11px;
+  color: var(--gray-500);
+  font-family: monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.col-type {
+  display: flex;
+  align-items: center;
+}
+
+.col-context,
+.col-dim {
+  color: var(--gray-600);
+  font-size: 12px;
+}
+
+.col-ops {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+.model-test-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  min-width: 28px;
+  padding: 0;
+  color: var(--main-700);
+
+  &.is-testing {
+    color: var(--main-600);
+    cursor: wait;
+  }
+}
+
+.type-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+
+  & + & {
+    margin-left: 4px;
+  }
+
+  &.chat {
+    background: var(--color-info-50);
+    color: var(--color-info-700);
+  }
+
+  &.embedding {
+    background: var(--color-success-50);
+    color: var(--color-success-700);
+  }
+
+  &.rerank {
+    background: var(--color-warning-50);
+    color: var(--color-warning-900);
+  }
+
+  &.manual {
+    background: var(--gray-200);
+    color: var(--gray-700);
+  }
+}
+
+.enabled-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+
+  .models-section-title {
+    margin: 0;
+  }
+
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+}
+
+.remote-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+
+  .models-section-title {
+    margin: 0;
+    flex-shrink: 0;
+  }
+}
+
+.remote-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.remote-search-input {
+  width: 180px;
+}
+
+.currency-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border: 1px solid var(--gray-150);
+  border-radius: 8px;
+  background: var(--gray-0);
+  color: var(--gray-700);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--gray-200);
+    background: var(--gray-25);
+    color: var(--gray-900);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--main-200);
+    outline-offset: 1px;
+  }
+}
+
+.remote-type-filter {
+  flex-shrink: 0;
+}
+
+.remote-list {
+  border-top: 1px solid var(--gray-100);
+}
+
+.remote-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--gray-100);
+  font-size: 13px;
+
+  &:first-child {
+    border-top: none;
+  }
+}
+
+.remote-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 500;
+  color: var(--gray-900);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-tags {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.modality-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 3px;
+  background: var(--color-accent-50);
+  color: var(--color-accent-700);
+}
+
+.dim-warning {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--color-warning-50);
+  color: var(--color-warning-700);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.remote-context {
+  width: 60px;
+  color: var(--gray-500);
+  font-size: 12px;
+}
+
+.remote-price {
+  width: 100px;
+  font-size: 11px;
+  color: var(--gray-600);
+  font-family: monospace;
+
+  &.placeholder {
+    color: var(--gray-400);
+  }
+}
+
+.model-metadata-source {
+  color: var(--gray-500);
+  font-size: 11px;
+  line-height: 1.5;
+
+  a {
+    color: var(--main-600);
+  }
+}
+
+.modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.form-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+
+  > span {
+    color: var(--gray-700);
+    font-size: 12px;
+    font-weight: 500;
+  }
+}
+
+.form-help {
+  color: var(--gray-500);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.full-width {
+  grid-column: 1 / -1;
+}
+
+.form-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+
+  > span {
+    color: var(--gray-700);
+    font-size: 12px;
+    font-weight: 500;
+  }
+}
+
+.advanced-collapse {
+  :deep(.ant-collapse-content-box) {
+    padding-inline: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  :deep(.ant-collapse-header) {
+    padding-inline: 0;
+  }
+}
+
+.provider-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.provider-modal-footer-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.model-id-display {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--gray-50);
+  border-radius: 6px;
+  margin-bottom: 4px;
+
+  .info-label {
+    color: var(--gray-500);
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+  }
+
+  code {
+    font-family: monospace;
+    font-size: 13px;
+    color: var(--gray-800);
+  }
+}
+
+@media (max-width: 768px) {
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+
+  .table-head,
+  .table-row {
+    grid-template-columns: 1fr 60px 60px;
+    font-size: 12px;
+  }
+
+  .col-context,
+  .col-dim {
+    display: none;
+  }
+}
+</style>

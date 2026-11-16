@@ -1,0 +1,253 @@
+import MarkdownIt from 'markdown-it'
+import markdownItKatex from '@vscode/markdown-it-katex'
+import taskLists from 'markdown-it-task-lists'
+import DOMPurify from 'dompurify'
+import { createHighlighter } from 'shiki'
+import { load as yamlLoad } from 'js-yaml'
+import { escapeHtml } from './html.js'
+import { normalizeCodeLanguage } from './file_preview.js'
+import { renderSvgBlocks } from './svgRenderer.js'
+import { renderHtmlPreviewBlocks } from './htmlPreviewRenderer.js'
+import { createMarkdownRenderCache } from './markdownRenderCache.js'
+
+const markdownKatexPlugin = markdownItKatex.default || markdownItKatex
+const FRONTMATTER_MARKER = '---'
+const LEGACY_MINIO_PUBLIC_URL_RE = /https?:\/\/[^/\s)]+:9000\/public\//gi
+
+let highlighterPromise
+const getHighlighter = () => {
+  if (!highlighterPromise) {
+    highlighterPromise = createHighlighter({
+      themes: ['github-light', 'github-dark'],
+      langs: ['plaintext']
+    }).catch((error) => {
+      highlighterPromise = undefined
+      throw error
+    })
+  }
+  return highlighterPromise
+}
+
+const normalizeHtmlTagQuotes = (content) => {
+  const source = String(content || '')
+  if (!/[“”]/.test(source)) return source
+  return source.replace(/<[^>]+>/g, (tag) => tag.replaceAll('“', '"').replaceAll('”', '"'))
+}
+
+export const normalizeLegacyMinioPublicUrls = (content) =>
+  String(content || '').replace(LEGACY_MINIO_PUBLIC_URL_RE, '/minio/public/')
+
+const renderFrontmatterValue = (value) => {
+  if (Array.isArray(value)) {
+    return value.map((item) => `<span class="fm-tag">${escapeHtml(item)}</span>`).join('')
+  }
+
+  if (value instanceof Date) {
+    return escapeHtml(value.toISOString().slice(0, 10))
+  }
+
+  if (typeof value === 'object' && value !== null) {
+    return `<pre class="fm-json">${escapeHtml(JSON.stringify(value, null, 2))}</pre>`
+  }
+
+  return escapeHtml(value)
+}
+
+const renderFrontmatterField = (key, value) => {
+  if (key === 'title') {
+    return `<strong class="fm-doc-title">${escapeHtml(value)}</strong>`
+  }
+
+  if (key === 'date') {
+    return `<time>${renderFrontmatterValue(value)}</time>`
+  }
+
+  if (key === 'tags' && Array.isArray(value)) {
+    return value.map((tag) => `<span class="fm-tag">#${escapeHtml(tag)}</span>`).join('')
+  }
+
+  return renderFrontmatterValue(value)
+}
+
+const getMarkdownLine = (state, line) => {
+  const start = state.bMarks[line] + state.tShift[line]
+  const end = state.eMarks[line]
+  return state.src.slice(start, end)
+}
+
+const renderFrontmatterCard = (data) => {
+  const rows = Object.entries(data)
+    .map(
+      ([key, value]) => `
+        <div class="fm-row">
+          <div class="fm-key">${escapeHtml(key)}</div>
+          <div class="fm-value">${renderFrontmatterField(key, value)}</div>
+        </div>`
+    )
+    .join('')
+
+  return `<section class="frontmatter-card">
+    <div class="fm-body">${rows || '<div class="fm-empty">无 frontmatter 信息</div>'}</div>
+  </section>`
+}
+
+const markdownItFrontmatterCard = (md) => {
+  md.block.ruler.before('table', 'frontmatter_card', (state, startLine, endLine, silent) => {
+    if (startLine !== 0 || getMarkdownLine(state, startLine).trim() !== FRONTMATTER_MARKER) {
+      return false
+    }
+
+    let nextLine = startLine + 1
+    while (nextLine < endLine && getMarkdownLine(state, nextLine).trim() !== FRONTMATTER_MARKER) {
+      nextLine += 1
+    }
+
+    if (nextLine >= endLine) return false
+
+    const rawYaml = Array.from({ length: nextLine - startLine - 1 }, (_, index) =>
+      getMarkdownLine(state, startLine + index + 1)
+    ).join('\n')
+    let data
+
+    try {
+      data = yamlLoad(rawYaml) || {}
+    } catch {
+      return false
+    }
+
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return false
+    if (silent) return true
+
+    const token = state.push('frontmatter_card', 'section', 0)
+    token.block = true
+    token.map = [startLine, nextLine + 1]
+    token.meta = { data }
+    state.line = nextLine + 1
+    return true
+  })
+
+  md.renderer.rules.frontmatter_card = (tokens, idx) => renderFrontmatterCard(tokens[idx].meta.data)
+}
+
+const rendererCache = new Map()
+const renderedHtmlCache = createMarkdownRenderCache()
+const CODE_FENCE_RE = /(^|\n) {0,3}(```|~~~)/
+const CODE_FENCE_LANGUAGE_RE = /(^|\n) {0,3}(```+|~~~+)[ \t]*([^\s:,`]*)/g
+
+const normalizeTheme = (theme) => (theme === 'github-dark' ? 'github-dark' : 'github-light')
+const hasCodeFence = (content) => CODE_FENCE_RE.test(content)
+
+const sanitizeHtmlPreviewSrcdoc = (html) =>
+  DOMPurify.sanitize(html, {
+    WHOLE_DOCUMENT: true,
+    ADD_TAGS: ['html', 'head', 'body', 'style', 'link'],
+    FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'input', 'textarea', 'select'],
+    FORBID_ATTR: ['srcdoc', 'sandbox']
+  })
+
+const collectCodeFenceLanguages = (content) => {
+  const languages = new Set()
+  for (const match of String(content || '').matchAll(CODE_FENCE_LANGUAGE_RE)) {
+    const language = normalizeCodeLanguage(match[3])
+    if (language) languages.add(language)
+  }
+  return [...languages]
+}
+
+const ensureLanguages = async (highlighter, languages) => {
+  const loaded = new Set(highlighter.getLoadedLanguages())
+  await Promise.all(
+    languages
+      .filter((language) => !loaded.has(language))
+      .map((language) => {
+        try {
+          return highlighter.loadLanguage(language).catch(() => null)
+        } catch {
+          return null
+        }
+      })
+  )
+}
+
+export const createMarkdownRenderer = ({ themeName, highlighter }) =>
+  new MarkdownIt({
+    html: true,
+    breaks: true,
+    linkify: true,
+    typographer: true,
+    highlight: highlighter
+      ? (code, lang) => {
+          const language = normalizeCodeLanguage(lang)
+          const loadedLanguages = highlighter.getLoadedLanguages()
+          const targetLanguage = loadedLanguages.includes(language) ? language : 'plaintext'
+          return highlighter.codeToHtml(code, { lang: targetLanguage, theme: themeName })
+        }
+      : undefined
+  })
+    .use(markdownKatexPlugin, { throwOnError: false, errorColor: '#cc0000', trust: false })
+    .use(taskLists, { enabled: false, label: false, labelAfter: false })
+    .use(markdownItFrontmatterCard)
+
+const getRenderer = async (theme, needsHighlight) => {
+  const themeName = normalizeTheme(theme)
+  const cacheKey = needsHighlight ? themeName : 'plain'
+  const cached = rendererCache.get(cacheKey)
+  if (cached) return cached
+
+  const rendererPromise = needsHighlight
+    ? getHighlighter()
+        .then((highlighter) => createMarkdownRenderer({ themeName, highlighter }))
+        .catch((error) => {
+          console.warn('Markdown code highlighting unavailable, rendering without Shiki:', error)
+          return createMarkdownRenderer({ themeName })
+        })
+    : Promise.resolve(createMarkdownRenderer({ themeName }))
+  rendererCache.set(cacheKey, rendererPromise)
+  return rendererPromise
+}
+
+export const renderMarkdown = async (content, { theme = 'github-light' } = {}) => {
+  try {
+    const normalizedContent = normalizeHtmlTagQuotes(normalizeLegacyMinioPublicUrls(content))
+    const htmlPreviewContent = renderHtmlPreviewBlocks(normalizedContent, {
+      sanitizeHtml: sanitizeHtmlPreviewSrcdoc
+    })
+    const svgContent = renderSvgBlocks(htmlPreviewContent)
+    const themeName = normalizeTheme(theme)
+    const needsHighlight = hasCodeFence(svgContent)
+    const cacheKey = `${needsHighlight ? themeName : 'plain'}\u0000${svgContent}`
+    const cachedHtml = renderedHtmlCache.get(cacheKey)
+    if (cachedHtml !== undefined) return cachedHtml
+
+    if (needsHighlight) {
+      try {
+        const highlighter = await getHighlighter()
+        await ensureLanguages(highlighter, collectCodeFenceLanguages(svgContent))
+      } catch (error) {
+        console.warn('Markdown languages unavailable, continuing without code highlighting:', error)
+      }
+    }
+
+    const md = await getRenderer(themeName, needsHighlight)
+    const html = DOMPurify.sanitize(md.render(svgContent), {
+      ADD_TAGS: ['input'],
+      ADD_ATTR: [
+        'class',
+        'style',
+        'target',
+        'rel',
+        'type',
+        'checked',
+        'disabled',
+        'source',
+        'colspan',
+        'rowspan'
+      ]
+    })
+    renderedHtmlCache.set(cacheKey, html)
+    return html
+  } catch (error) {
+    console.error('Failed to render markdown:', error)
+    return `<pre>${escapeHtml(content)}</pre>`
+  }
+}

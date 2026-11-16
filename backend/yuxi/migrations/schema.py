@@ -37,6 +37,30 @@ IDENTITY_PERMISSION_STATEMENTS = (
 )
 
 
+KNOWLEDGE_SCHEMA_STATEMENTS = (
+    "CREATE INDEX IF NOT EXISTS ix_knowledge_chunks_graph_extraction_status "
+    "ON knowledge_chunks(kb_id, ((graph_extraction_details->>'status')))",
+    "CREATE INDEX IF NOT EXISTS ix_knowledge_files_kb_status_file ON knowledge_files(kb_id, status, file_id)",
+    "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_entities_vector_pending "
+    "ON knowledge_graph_entities(kb_id, vector_status, vector_next_retry_at)",
+    "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_triples_vector_pending "
+    "ON knowledge_graph_triples(kb_id, vector_status, vector_next_retry_at)",
+)
+
+BUSINESS_SCHEMA_STATEMENTS = (
+    "CREATE SEQUENCE IF NOT EXISTS agent_runs_execution_seq",
+    "ALTER TABLE agent_runs ALTER COLUMN execution_seq SET DEFAULT nextval('agent_runs_execution_seq')",
+    "CREATE INDEX IF NOT EXISTS ix_agent_inputs_pending_queue ON agent_inputs(thread_id, received_seq) WHERE status = 'pending'",
+    "CREATE INDEX IF NOT EXISTS ix_messages_session_created_id ON messages(session_record_id, created_at, id)",
+    "CREATE INDEX IF NOT EXISTS ix_agent_runs_thread_execution_seq ON agent_runs(thread_id, execution_seq)",
+    "CREATE INDEX IF NOT EXISTS ix_agent_runs_status_lease_expires ON agent_runs(status, lease_expires_at)",
+    "CREATE INDEX IF NOT EXISTS ix_background_jobs_status_lease_expires ON background_jobs(status, lease_expires_at)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_runs_one_active_per_thread "
+    "ON agent_runs(uid, agent_slug, thread_id) "
+    f"WHERE status NOT IN ({AGENT_RUN_TERMINAL_STATUS_SQL})",
+)
+
+
 @asynccontextmanager
 async def schema_migration_lock(manager):
     """用独立 PostgreSQL session 串行化 Schema 初始化进程。"""
@@ -118,37 +142,18 @@ async def create_business_tables(manager):
 async def ensure_knowledge_schema(manager):
     """建立不适合由 ORM 表达的知识域访问路径索引。"""
     manager.require_initialized()
-    statements = (
-        "CREATE INDEX IF NOT EXISTS ix_knowledge_chunks_graph_extraction_status "
-        "ON knowledge_chunks(kb_id, ((graph_extraction_details->>'status')))",
-        "CREATE INDEX IF NOT EXISTS ix_knowledge_files_kb_status_file ON knowledge_files(kb_id, status, file_id)",
-        "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_entities_vector_pending "
-        "ON knowledge_graph_entities(kb_id, vector_status, vector_next_retry_at)",
-        "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_triples_vector_pending "
-        "ON knowledge_graph_triples(kb_id, vector_status, vector_next_retry_at)",
-    )
+
     async with manager.async_engine.begin() as conn:
-        for statement in statements:
+        for statement in KNOWLEDGE_SCHEMA_STATEMENTS:
             await conn.execute(text(statement))
 
 
 async def ensure_business_schema(manager):
     """建立不适合由 ORM 表达的业务热路径索引。"""
     manager.require_initialized()
-    statements = (
-        "CREATE SEQUENCE IF NOT EXISTS agent_runs_execution_seq",
-        "ALTER TABLE agent_runs ALTER COLUMN execution_seq SET DEFAULT nextval('agent_runs_execution_seq')",
-        "CREATE INDEX IF NOT EXISTS ix_agent_inputs_pending_queue ON agent_inputs(thread_id, received_seq) WHERE status = 'pending'",
-        "CREATE INDEX IF NOT EXISTS ix_messages_session_created_id ON messages(session_record_id, created_at, id)",
-        "CREATE INDEX IF NOT EXISTS ix_agent_runs_thread_execution_seq ON agent_runs(thread_id, execution_seq)",
-        "CREATE INDEX IF NOT EXISTS ix_agent_runs_status_lease_expires ON agent_runs(status, lease_expires_at)",
-        "CREATE INDEX IF NOT EXISTS ix_background_jobs_status_lease_expires ON background_jobs(status, lease_expires_at)",
-        "CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_runs_one_active_per_thread "
-        "ON agent_runs(uid, agent_slug, thread_id) "
-        f"WHERE status NOT IN ({AGENT_RUN_TERMINAL_STATUS_SQL})",
-    )
+
     async with manager.async_engine.begin() as conn:
-        for statement in statements:
+        for statement in BUSINESS_SCHEMA_STATEMENTS:
             await conn.execute(text(statement))
         for statement in IDENTITY_PERMISSION_STATEMENTS:
             await conn.execute(text(statement))
