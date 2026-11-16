@@ -6,19 +6,32 @@
           v-if="projectsLoading || projectsError || projectGroups.length"
           class="history-group project-history-group"
         >
-          <button
-            type="button"
-            class="history-label"
-            :aria-expanded="projectsExpanded"
-            @click="projectsExpanded = !projectsExpanded"
-          >
-            <span>项目</span>
-            <ChevronDown
-              :size="14"
-              class="collapse-icon"
-              :class="{ collapsed: !projectsExpanded }"
-            />
-          </button>
+          <div class="history-heading">
+            <button
+              type="button"
+              class="history-label"
+              :aria-expanded="projectsExpanded"
+              @click="projectsExpanded = !projectsExpanded"
+            >
+              <span>项目</span>
+              <ChevronDown
+                :size="14"
+                class="collapse-icon"
+                :class="{ collapsed: !projectsExpanded }"
+              />
+            </button>
+            <button
+              type="button"
+              class="lucide-icon-btn history-refresh"
+              aria-label="刷新项目"
+              title="刷新项目"
+              :disabled="projectsRefreshing || projectsLoading"
+              :aria-busy="projectsRefreshing || projectsLoading"
+              @click="$emit('retry-projects')"
+            >
+              <RefreshCw :size="14" :class="{ 'yuxi-rotate': projectsRefreshing || projectsLoading }" aria-hidden="true" />
+            </button>
+          </div>
           <CollapseTransition>
             <div v-if="projectsExpanded" class="project-list" :aria-busy="projectsLoading">
               <div v-if="projectsLoading" class="sr-only" role="status">正在加载项目...</div>
@@ -157,15 +170,28 @@
         </section>
 
         <section class="history-group recent-history-group">
-          <button
-            type="button"
-            class="history-label"
-            :aria-expanded="recentExpanded"
-            @click="recentExpanded = !recentExpanded"
-          >
-            <span>最近</span>
-            <ChevronDown :size="14" class="collapse-icon" :class="{ collapsed: !recentExpanded }" />
-          </button>
+          <div class="history-heading">
+            <button
+              type="button"
+              class="history-label"
+              :aria-expanded="recentExpanded"
+              @click="recentExpanded = !recentExpanded"
+            >
+              <span>最近</span>
+              <ChevronDown :size="14" class="collapse-icon" :class="{ collapsed: !recentExpanded }" />
+            </button>
+            <button
+              type="button"
+              class="lucide-icon-btn history-refresh"
+              aria-label="刷新最近对话"
+              title="刷新最近对话"
+              :disabled="chatsRefreshing || chatsLoading"
+              :aria-busy="chatsRefreshing || chatsLoading"
+              @click="$emit('retry-chats')"
+            >
+              <RefreshCw :size="14" :class="{ 'yuxi-rotate': chatsRefreshing || chatsLoading }" aria-hidden="true" />
+            </button>
+          </div>
           <CollapseTransition>
             <div v-if="recentExpanded" class="recent-list" :aria-busy="recentLoading">
               <div v-if="recentLoading" class="sr-only" role="status">正在加载对话...</div>
@@ -193,6 +219,15 @@
                 <div v-if="!otherSessions.length && !hasMoreChats" class="list-state">
                   暂无对话历史
                 </div>
+                <button
+                  v-if="hasMoreChats"
+                  type="button"
+                  class="load-more-btn"
+                  :disabled="isLoadingMore"
+                  @click="$emit('load-more-chats')"
+                >
+                  {{ isLoadingMore ? '加载中...' : '加载更多' }}
+                </button>
               </template>
             </div>
           </CollapseTransition>
@@ -207,15 +242,6 @@
           <button type="button" @click="$emit('retry-chats')">重试</button>
         </div>
 
-        <button
-          v-if="hasMoreChats && !recentLoading && !projectsError && !chatsError"
-          type="button"
-          class="load-more-btn"
-          :disabled="isLoadingMore"
-          @click="$emit('load-more-chats')"
-        >
-          {{ isLoadingMore ? '加载中...' : '加载更多' }}
-        </button>
       </div>
     </div>
   </section>
@@ -232,6 +258,7 @@ import {
   FolderOpen,
   MoreVertical,
   Plus,
+  RefreshCw,
   SquarePen,
   Trash2
 } from '@lucide/vue'
@@ -245,9 +272,11 @@ const props = defineProps({
   currentChatId: { type: String, default: null },
   chatsList: { type: Array, default: () => [] },
   chatsLoading: { type: Boolean, default: false },
+  chatsRefreshing: { type: Boolean, default: false },
   chatsError: { type: String, default: '' },
   projects: { type: Array, default: () => [] },
   projectsLoading: { type: Boolean, default: false },
+  projectsRefreshing: { type: Boolean, default: false },
   projectsError: { type: String, default: '' },
   projectPendingId: { type: String, default: null },
   hasMoreChats: { type: Boolean, default: false },
@@ -405,6 +434,42 @@ const confirmDeleteProject = (project) => {
   min-height: 0;
   flex: 1;
   flex-direction: column;
+}
+.history-heading {
+  display: flex;
+  align-items: center;
+  padding-right: 8px;
+}
+.history-refresh {
+  flex-shrink: 0;
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--gray-500);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+
+  &:hover,
+  &:active {
+    background: transparent;
+  }
+  &:hover:not(:disabled) {
+    color: var(--gray-800);
+  }
+  &:disabled {
+    cursor: default;
+  }
+  &:focus-visible {
+    outline: 2px solid var(--main-300);
+    outline-offset: 2px;
+  }
+}
+.history-heading:hover .history-refresh,
+.history-heading:focus-within .history-refresh {
+  opacity: 1;
+  pointer-events: auto;
 }
 .history-label {
   display: flex;
@@ -699,6 +764,10 @@ const confirmDeleteProject = (project) => {
     flex-basis: 40px;
     width: 40px;
     height: 40px;
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .history-refresh {
     opacity: 1;
     pointer-events: auto;
   }
