@@ -14,7 +14,7 @@ from langchain_core.messages import ToolMessage
 from langgraph.errors import GraphBubbleUp
 
 from yuxi.modules.agents.runtime.middlewares.authorization import AgentExecutionRevoked
-from yuxi.modules.agents.tool_results import unwrap_tool_result
+from yuxi.modules.agents.tool_results import SAVED_MEDIA_KEY, unwrap_tool_result
 
 logger = logging.getLogger(__name__)
 
@@ -70,9 +70,11 @@ class ToolErrorGuardMiddleware(AgentMiddleware):
         output = unwrap_tool_result(result, tool_call_id=call_id)
         # 失败优先使用最终错误，避免再次解析已被中间件处理的无效原始 Command。
         if isinstance(output, ToolMessage) and output.status == "success":
-            original = unwrap_tool_result(observation.output, tool_call_id=call_id)
-            if isinstance(original, ToolMessage) and original.status == "success":
-                output = original
+            # 图片落盘只追加保存注记。带路径的结果必须原样发布，不能换回压缩前正文。
+            if not output.additional_kwargs.get(SAVED_MEDIA_KEY):
+                original = unwrap_tool_result(observation.output, tool_call_id=call_id)
+                if isinstance(original, ToolMessage) and original.status == "success":
+                    output = original
         self._emit_tool_event(request, "tool-finished" if observation.started else "tool-result", output=output)
 
     @staticmethod

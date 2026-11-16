@@ -17,6 +17,7 @@ from yuxi.modules.agents.runtime.middlewares import (
     ToolErrorGuardMiddleware,
     create_memory_middleware,
     create_summary_middleware_from_context,
+    create_tool_media_middleware,
 )
 from yuxi.modules.agents.runtime.middlewares.authorization import RuntimeAuthorizationMiddleware
 from yuxi.modules.agents.runtime.middlewares.cooperation import create_cooperation_middleware
@@ -35,13 +36,21 @@ async def _build_middlewares(context, backend, *, cleanup_model=None):
     middlewares = [
         # 最外层隔离普通工具异常，保留取消与 interrupt 的传播。
         ToolErrorGuardMiddleware(),
-        SteerMiddleware(),
-        create_agent_filesystem_middleware(
-            getattr(context, "tool_token_limit", DEFAULT_TOOL_RESULT_EVICTION_K_TOKENS) * 1024,
-            backend=backend,
-        ),
-        SkillsMiddleware(),
     ]
+    # 图片落盘在 Guard 内层，发布的结果携带保存路径。没有 Workdir 时工厂返回 None。
+    tool_media_middleware = create_tool_media_middleware(context)
+    if tool_media_middleware:
+        middlewares.append(tool_media_middleware)
+    middlewares.extend(
+        [
+            SteerMiddleware(),
+            create_agent_filesystem_middleware(
+                getattr(context, "tool_token_limit", DEFAULT_TOOL_RESULT_EVICTION_K_TOKENS) * 1024,
+                backend=backend,
+            ),
+            SkillsMiddleware(),
+        ]
+    )
     memory_middleware = None if cleanup_model else await create_memory_middleware(context)
     if memory_middleware:
         middlewares.append(memory_middleware)
