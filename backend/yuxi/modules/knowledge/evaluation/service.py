@@ -615,10 +615,10 @@ class EvaluationService:
             total_items = len(dataset_items)
 
             for index, item in enumerate(dataset_items):
-                await context.raise_if_cancelled()
                 # 进度契约：逐题评估映射到 10~90 区间，聚合与收尾占用其后区间
                 progress = 10 + (index / total_items) * 80
                 await context.set_progress(progress, f"评估 {index + 1}/{total_items}")
+                await context.raise_if_cancelled()
 
                 question_data = {
                     "query": item.query_text,
@@ -633,7 +633,9 @@ class EvaluationService:
                     has_gold_answers=dataset_row.has_gold_answers,
                     judge_llm=judge_llm,
                     select_model_fn=select_model,
+                    cancel_cb=context.raise_if_cancelled,
                 )
+                await context.raise_if_cancelled()
 
                 if dataset_row.has_gold_chunks and question_data.get("gold_chunk_ids"):
                     all_retrieval_metrics.append(question_result["retrieval_scores"])
@@ -766,12 +768,21 @@ class EvaluationService:
         }
 
     async def delete_run(self, kb_id: str, run_id: str) -> None:
+        """原子删除评估及逐题结果，并登记关联活跃作业的取消意图。"""
         if not re.match(r"^run_[a-f0-9]{8}$", run_id):
             raise ValueError("Invalid run_id format")
-        row = await self.eval_repo.get_run(run_id)
-        if row is None or row.kb_id != kb_id:
-            raise ValueError("Run not found")
-        await self.eval_repo.delete_run(run_id)
+
+        job = await self.job_repo.find_latest_by_payload(
+            job_type="rag_evaluation",
+            payload_match={"run_id": run_id, "kb_id": kb_id},
+            statuses={"pending", "running"},
+        )
+        async with pg_manager.get_async_session_context() as session:
+            # 与 worker 写入和终态钩子保持相同的加锁顺序。
+            if job is not None:
+                await self.job_repo.request_cancel_in_session(session, job.id)
+            if not await self.eval_repo.delete_run_in_session(session, kb_id, run_id):
+                raise ValueError("Run not found")
         logger.info(f"成功删除评估运行: {run_id}")
 
     # ---------- 内部辅助：只读进度投影 ----------

@@ -255,14 +255,11 @@ class EvaluationRepository:
             if record is not None:
                 await session.delete(record)
 
-    async def delete_run(self, run_id: str) -> None:
-        """删除评估 Run 及其全部逐题结果。"""
-        async with pg_manager.get_async_session_context() as session:
-            await session.execute(delete(EvaluationRunItem).where(EvaluationRunItem.run_id == run_id))
-            result = await session.execute(select(EvaluationRun).where(EvaluationRun.run_id == run_id))
-            record = result.scalar_one_or_none()
-            if record is not None:
-                await session.delete(record)
+    @staticmethod
+    async def delete_run_in_session(session: AsyncSession, kb_id: str, run_id: str) -> bool:
+        """删除指定知识库的运行，逐题结果由外键级联清理。"""
+        statement = delete(EvaluationRun).where(EvaluationRun.kb_id == kb_id, EvaluationRun.run_id == run_id)
+        return await session.scalar(statement.returning(EvaluationRun.run_id)) is not None
 
 
 # ─── BackgroundJob 终态钩子 ────────────────────────────────────────

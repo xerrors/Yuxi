@@ -1,6 +1,6 @@
 """逐题评估与指标聚合：检索指标、答案判定与整体得分。"""
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from yuxi.infrastructure.observability.logging import logger
@@ -20,12 +20,15 @@ async def evaluate_question(
     has_gold_answers: bool,
     judge_llm: Any | None,
     select_model_fn: Callable[..., Any],
+    cancel_cb: Callable[[], Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
     """检索单题答案并计算检索/答案指标，返回明细与分组得分。"""
     query = question_data["query"]
     query_kwargs = {key: value for key, value in retrieval_config.items() if key not in EVALUATION_MODEL_KEYS}
     query_result = await kb_manager.aquery(query, kb_id, **query_kwargs)
     generated_answer, retrieved_chunks = normalize_query_result(query_result)
+    if cancel_cb is not None:
+        await cancel_cb()
     generated_answer = await generate_answer_if_needed(
         query=query,
         generated_answer=generated_answer,
@@ -44,6 +47,8 @@ async def evaluate_question(
 
     if has_gold_answers and question_data.get("gold_answer"):
         if judge_llm:
+            if cancel_cb is not None:
+                await cancel_cb()
             answer_scores = await EvaluationMetricsCalculator.calculate_answer_metrics(
                 query=query,
                 generated_answer=generated_answer,
