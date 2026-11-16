@@ -16,7 +16,7 @@ const renderer = createRenderer({
 let currentServer
 
 /** 在真实组件和 Store 中隔离接口及路由边界。 */
-async function setupForm(detail, isAdmin = true) {
+async function setupForm(detail, isAdmin = true, backendOptions = [{ value: 'ChatbotAgent', label: '通用对话' }]) {
   const writes = [], errors = [], navigations = []
   const previousStorage = globalThis.localStorage
   globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} }
@@ -29,10 +29,16 @@ async function setupForm(detail, isAdmin = true) {
     createAgent: agentApi.createAgent, updateAgent: agentApi.updateAgent,
     uploadAgentBoundSkill: agentApi.uploadAgentBoundSkill, getAgentBoundSkill: agentApi.getAgentBoundSkill }
   agentApi.getAgentDetail = async () => detail
-  agentApi.getAgentBackendDetail = async () => ({ configurable_items: {
+  agentApi.getAgentBackendDetail = async (backendId) => ({ configurable_items: {
     mcps: { name: 'MCP', kind: 'mcps', type: 'list', supports_all: true, default: 'all', options: [{ key: 'ready', name: '可用' }] },
     skills: { name: 'Skill', kind: 'skills', type: 'list', supports_all: true, default: 'all', options: [] },
-    system_prompt: { kind: 'prompt', type: 'str', default: '后端角色' }
+    system_prompt: { kind: 'prompt', type: 'str', default: '后端角色' },
+    ...(backendId === 'SwitchTestBackend' ? {
+      test_backend_setting: {
+        name: '测试设置', type: 'select', default: 'none',
+        options: [{ key: 'none', name: '关闭' }, { key: 'enabled', name: '测试选项' }]
+      }
+    } : {})
   } })
   agentApi.updateAgent = async (slug, payload) => {
     writes.push({ slug, payload: JSON.parse(JSON.stringify(payload)) })
@@ -59,7 +65,7 @@ async function setupForm(detail, isAdmin = true) {
   const { default: component } = await server.ssrLoadModule('/src/modules/agents/ui/AgentEditModal.vue')
   let form
   const app = renderer.createApp({ setup() {
-    form = component.setup({ backendOptions: [] }, { expose() {}, emit() {} })
+    form = component.setup({ backendOptions }, { expose() {}, emit() {} })
     return () => null
   } })
   app.use(pinia)
@@ -79,6 +85,80 @@ async function setupForm(detail, isAdmin = true) {
   })
   return { form, store, writes, errors, navigations, routeGuards: [...record.leaveGuards], deps: { agentApi, skillApi } }
 }
+
+test('编辑自建智能体时切换后端并只提交目标后端配置', async () => {
+  const detail = {
+    id: 92,
+    agent_id: 'switchable-agent',
+    slug: 'switchable-agent',
+    name: '可切换智能体',
+    backend_id: 'SwitchTestBackend',
+    visibility: 'private',
+    can_manage: true,
+    can_share: false,
+    share_config: { version: 2, read_scope: null, manage_scope: null },
+    config_json: { context: { system_prompt: '保留的提示词', test_backend_setting: 'enabled' } },
+    configurable_items: {
+      system_prompt: { kind: 'prompt', type: 'str', default: '后端角色' },
+      test_backend_setting: {
+        name: '测试设置', type: 'select', default: 'none',
+        options: [{ key: 'none', name: '关闭' }, { key: 'enabled', name: '测试选项' }]
+      }
+    }
+  }
+  const { form, writes } = await setupForm(detail, true, [
+    { value: 'ChatbotAgent', label: '智能助手' },
+    { value: 'SwitchTestBackend', label: '测试后端' }
+  ])
+  await form.openEdit({ agent_id: 'switchable-agent' })
+  form.agentForm.backend_id = 'ChatbotAgent'
+  await form.applyEditBackend('ChatbotAgent')
+  await nextTick()
+  assert.equal('test_backend_setting' in form.runtimeConfigItems.value, false)
+  assert.equal(form.runtimeConfig.value.system_prompt, '保留的提示词')
+  assert.equal('test_backend_setting' in form.runtimeConfig.value, false)
+
+  await form.saveAgent()
+  assert.equal(writes.length, 1)
+  assert.equal(writes[0].payload.backend_id, 'ChatbotAgent')
+  assert.deepEqual(writes[0].payload.config_json.context, {})
+})
+
+test('编辑时旧后端配置响应晚到不能覆盖当前后端草稿', async () => {
+  const detail = {
+    agent_id: 'switch-race-agent',
+    backend_id: 'SwitchTestBackend',
+    name: '切换竞态测试',
+    visibility: 'private',
+    can_manage: true,
+    config_json: { context: { system_prompt: '原始提示词' } },
+    configurable_items: { system_prompt: { type: 'str', default: '' } }
+  }
+  const { form, deps } = await setupForm(detail, true, [
+    { value: 'ChatbotAgent', label: '智能助手' },
+    { value: 'SwitchTestBackend', label: '测试后端' },
+    { value: 'AnotherTestBackend', label: '测试后端' }
+  ])
+  await form.openEdit(detail)
+
+  const reads = []
+  deps.agentApi.getAgentBackendDetail = (backend) => new Promise((resolve) => reads.push({ backend, resolve }))
+  form.agentForm.backend_id = 'ChatbotAgent'
+  await nextTick()
+  form.agentForm.backend_id = 'AnotherTestBackend'
+  await nextTick()
+
+  assert.deepEqual(reads.map(({ backend }) => backend), ['ChatbotAgent', 'AnotherTestBackend'])
+  reads[1].resolve({ configurable_items: { current: { type: 'str', default: '' } } })
+  await nextTick()
+  form.runtimeConfig.value = { current: '当前草稿' }
+  reads[0].resolve({ configurable_items: { stale: { type: 'str', default: '' } } })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  assert.equal(form.agentForm.backend_id, 'AnotherTestBackend')
+  assert.deepEqual(Object.keys(form.runtimeConfigItems.value), ['current'])
+  assert.deepEqual(form.runtimeConfig.value, { current: '当前草稿' })
+})
 
 async function setupBoundPanel(form) {
   const { default: component } = await currentServer.ssrLoadModule('/src/modules/agents/ui/AgentBoundSkillPanel.vue')

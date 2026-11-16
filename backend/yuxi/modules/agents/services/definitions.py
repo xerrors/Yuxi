@@ -2,6 +2,7 @@
 
 import asyncio
 import shutil
+from dataclasses import fields
 from typing import Any
 
 from yuxi.infrastructure.observability.logging import logger
@@ -9,8 +10,8 @@ from yuxi.infrastructure.runtime_settings import get_skill_data_dir
 from yuxi.modules.agents.models.definitions import Agent
 from yuxi.modules.agents.permissions import is_builtin_agent, user_can_manage_agent, user_can_run_agent
 from yuxi.modules.agents.repositories.definitions import DEFAULT_SHARE_CONFIG, AgentRepository
-from yuxi.modules.agents.runtime.agent_backends import get_agent_backend
-from yuxi.modules.agents.runtime.context import filter_declared_config
+from yuxi.modules.agents.runtime.agent_backends import AgentBackendNotFoundError, get_agent_backend
+from yuxi.modules.agents.runtime.context import BaseContext, filter_declared_config
 from yuxi.modules.agents.services.configuration import merge_agent_config_json, prepare_agent_config_write
 from yuxi.modules.extensions.skills.access import validate_skill_dependencies
 from yuxi.modules.extensions.skills.bound import publish_bound_skill
@@ -23,6 +24,7 @@ from yuxi.modules.identity.permissions import normalize_permission_config, resol
 from yuxi.modules.identity.permissions.resource_permission import ADMIN_ROLES
 from yuxi.modules.identity.repositories.resource_grants import validate_shared_grants
 from yuxi.modules.identity.repositories.users import UserRepository
+from yuxi.shared.errors import StateConflictError
 
 
 async def ensure_default_agent_definition(db, *, created_by: str | None = None) -> Agent:
@@ -104,11 +106,30 @@ async def commit_agent_definition(db, agent, user, *, refresh_binding: bool = Tr
 
 
 async def update_agent_definition(db, agent, **kwargs):
-    """锁内准备配置与共享补丁，绑定依赖与定义共同提交。"""
+    """锁内准备后端、配置与共享补丁，绑定依赖与定义共同提交。"""
     try:
         repo = AgentRepository(db)
         agent, operator = await repo.lock_for_management(agent_id=agent.id, user=kwargs.pop("updater", None))
-        backend = get_agent_backend(agent.backend_id)
+        backend_id = kwargs.pop("backend_id", None)
+        target_backend_id = backend_id if backend_id is not None else agent.backend_id
+        backend_changed = target_backend_id != agent.backend_id
+        backend = get_agent_backend(target_backend_id)
+        if backend_changed:
+            if is_builtin_agent(agent):
+                raise StateConflictError("内置智能体不能切换执行后端", code="agent_backend_immutable")
+            if await repo.agent_has_unfinished_work(agent):
+                raise StateConflictError("智能体仍有活跃执行或待处理输入", code="agent_backend_busy")
+            compatible, incompatible = _backend_config_fields(agent.backend_id, backend.context_schema)
+            if incompatible and await repo.has_thread_snapshot_fields(agent.slug, incompatible):
+                raise StateConflictError("已有会话包含目标后端不兼容的配置", code="agent_backend_thread_config_conflict")
+            current_config = filter_declared_config(agent.config_json or {}, context_schema=backend.context_schema)
+            current_config["context"] = {key: value for key, value in (current_config.get("context") or {}).items() if key in compatible}
+            patch = kwargs.get("config_json") or {"context": {}}
+            config, access = await prepare_agent_config_write(patch, context_schema=backend.context_schema, db=db, user=operator)
+            kwargs["config_json"] = merge_agent_config_json(
+                current_config, config, resource_access=access, context_schema=backend.context_schema
+            )
+            kwargs["backend_id"] = target_backend_id
         share_config = kwargs.get("share_config")
         sharing = agent.visibility == "private" and kwargs.get("visibility") == "shared"
         if sharing:
@@ -120,7 +141,7 @@ async def update_agent_definition(db, agent, **kwargs):
             raise ValueError("私有智能体不接受共享授权")
         if share_config is not None and is_builtin_agent(agent):
             raise ValueError("内置定义不接受共享配置写入")
-        if kwargs.get("config_json") is not None:
+        if not backend_changed and kwargs.get("config_json") is not None:
             config, access = await prepare_agent_config_write(
                 kwargs["config_json"], context_schema=backend.context_schema, db=db, user=operator
             )
@@ -136,6 +157,23 @@ async def update_agent_definition(db, agent, **kwargs):
     except Exception:
         await db.rollback()
         raise
+
+
+def _backend_config_fields(source_id: str, target_schema: type[BaseContext] | None) -> tuple[set[str], set[str]]:
+    """按类型、权限和资源声明划分目标后端的配置字段。"""
+    target_fields = {item.name: item for item in fields(target_schema or BaseContext) if item.metadata.get("configurable", True)}
+    try:
+        source_schema = get_agent_backend(source_id).context_schema
+    except AgentBackendNotFoundError:
+        return set(), set(target_fields)
+
+    source_fields = {item.name: item for item in fields(source_schema or BaseContext)}
+    compatible = {
+        name
+        for name, item in target_fields.items()
+        if (old := source_fields.get(name)) is not None and old.type == item.type and old.metadata == item.metadata
+    }
+    return compatible, target_fields.keys() - compatible
 
 
 async def delete_agent_definition(db, *, agent, user) -> None:

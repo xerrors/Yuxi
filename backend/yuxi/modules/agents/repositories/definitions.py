@@ -6,7 +6,8 @@ import uuid
 from types import SimpleNamespace
 from typing import Literal
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import cast, func, or_, select, update
+from sqlalchemy.dialects.postgresql import JSONB, array
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.modules.agents.models.definitions import Agent
@@ -265,6 +266,7 @@ class AgentRepository:
         agent: Agent,
         *,
         name: str | None = None,
+        backend_id: str | None = None,
         description: str | None = None,
         icon: str | None = None,
         pics: list[str] | None = None,
@@ -277,6 +279,8 @@ class AgentRepository:
         """写入用例已经校验、持锁的定义补丁，不提交事务。"""
         if name is not None:
             agent.name = name.strip() or "未命名智能体"
+        if backend_id is not None:
+            agent.backend_id = backend_id
         if description is not None or "description" in (fields_set or set()):
             agent.description = description
         if icon is not None or "icon" in (fields_set or set()):
@@ -295,6 +299,51 @@ class AgentRepository:
         await self.db.flush()
         return agent
 
+    async def has_thread_snapshot_fields(self, agent_slug: str, field_names: set[str]) -> bool:
+        """切换锁内检查既有 Thread 是否保存目标后端无法解释的字段。"""
+        return (
+            await self.db.scalar(
+                select(Session.thread_id)
+                .where(
+                    Session.agent_id == agent_slug,
+                    func.jsonb_exists_any(cast(Session.config_snapshot, JSONB), array(sorted(field_names))),
+                )
+                .limit(1)
+            )
+        ) is not None
+
+    async def agent_has_unfinished_work(self, agent: Agent) -> bool:
+        """按 Thread 锁序检查 Agent 的输入、执行和运行时清理责任。"""
+        session_query = (
+            select(Session.thread_id).where(Session.agent_id == agent.slug).order_by(Session.thread_id).with_for_update(key_share=True)
+        )
+        thread_ids = list((await self.db.scalars(session_query)).all())
+        active_turn = await self.db.scalar(
+            select(AgentTurn.id)
+            .where(AgentTurn.thread_id.in_(thread_ids), AgentTurn.status.in_(("running", "waiting", "cancelling")))
+            .limit(1)
+        )
+        pending_input = await self.db.scalar(
+            select(AgentInput.id)
+            .where(
+                or_(AgentInput.agent_slug == agent.slug, AgentInput.thread_id.in_(thread_ids)),
+                AgentInput.status == "pending",
+            )
+            .limit(1)
+        )
+        active_run = await self.db.scalar(
+            select(AgentRun.id)
+            .where(
+                or_(AgentRun.agent_slug == agent.slug, AgentRun.runtime_scope_id.in_(thread_ids)),
+                or_(
+                    AgentRun.status.notin_(AGENT_RUN_TERMINAL_STATUSES),
+                    AgentRun.runtime_cleanup_pending.is_(True),
+                ),
+            )
+            .limit(1)
+        )
+        return bool(active_turn or pending_input or active_run)
+
     async def delete(self, *, agent: Agent, user: User) -> None:
         """锁定 Agent 与已有 Thread，拒绝仍由该 Agent 拥有的工作。"""
         current = await self.db.scalar(
@@ -309,38 +358,7 @@ class AgentRepository:
             raise ValueError("内置智能体不能删除")
 
         # Thread 是接收与调度的先行锁；按共同顺序锁定，随后读取持久工作事实。
-        result = await self.db.execute(
-            select(Session.thread_id).where(Session.agent_id == current.slug).order_by(Session.thread_id).with_for_update(key_share=True)
-        )
-        thread_ids = list(result.scalars())
-        active_turn = await self.db.scalar(
-            select(AgentTurn.id)
-            .where(
-                AgentTurn.thread_id.in_(thread_ids),
-                AgentTurn.status.in_(("running", "waiting", "cancelling")),
-            )
-            .limit(1)
-        )
-        pending_input = await self.db.scalar(
-            select(AgentInput.id)
-            .where(
-                or_(AgentInput.agent_slug == current.slug, AgentInput.thread_id.in_(thread_ids)),
-                AgentInput.status == "pending",
-            )
-            .limit(1)
-        )
-        active_run = await self.db.scalar(
-            select(AgentRun.id)
-            .where(
-                or_(AgentRun.agent_slug == current.slug, AgentRun.runtime_scope_id.in_(thread_ids)),
-                or_(
-                    AgentRun.status.notin_(AGENT_RUN_TERMINAL_STATUSES),
-                    AgentRun.runtime_cleanup_pending.is_(True),
-                ),
-            )
-            .limit(1)
-        )
-        if active_turn or pending_input or active_run:
+        if await self.agent_has_unfinished_work(current):
             raise ValueError("智能体仍有活跃执行或待处理输入")
 
         await self.db.delete(current)

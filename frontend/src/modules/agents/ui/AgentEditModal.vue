@@ -58,6 +58,7 @@ const boundSkillSaving = ref(false)
 const createSkillFile = ref(null)
 const createContext = ref({})
 const createConfigItems = ref({})
+const editConfigItems = ref({})
 const createConfigLoading = ref(false)
 const createConfigError = ref('')
 const createAdvancedOpen = ref(false)
@@ -75,6 +76,11 @@ const openingBlocked = computed(() => saving.value || boundSkillSaving.value || 
   || (showAgentModal.value && createOutcomeUnknown.value))
 onBeforeRouteLeave(() => !(saving.value || boundSkillSaving.value || agentIconUploading.value || resourceCreationOpen.value))
 let createConfigRevision = 0
+const loadedEditBackendId = ref(null)
+let originalEditContext = {}
+let originalEditItems = {}
+const editConfigBaselines = new Map()
+const editConfigDrafts = new Map()
 // 新的打开或关闭操作使旧编辑响应失效，避免覆盖创建草稿。
 let modalOpenRevision = 0
 const agentShareConfigFormRef = ref(null)
@@ -94,8 +100,7 @@ const agentForm = reactive({
   icon: ''
 })
 
-// 基本配置基线用于判断是否有待保存的改动。slug / backend_id
-// 仅在创建模式可编辑，因此新建时不参与比对。
+// 基本配置基线用于判断是否有待保存的改动。slug 仅在创建模式可编辑。
 const runtimeConfig = computed({
   get: () => (editingAgentId.value ? agentStore.agentConfig : createContext.value),
   set: (value) => {
@@ -104,28 +109,33 @@ const runtimeConfig = computed({
   }
 })
 const runtimeConfigItems = computed(() => editingAgentId.value
-  ? agentStore.configurableItems : createConfigItems.value)
+  ? editConfigItems.value : createConfigItems.value)
+const backendConfigReady = computed(() =>
+  !editingAgentId.value || agentForm.backend_id === loadedEditBackendId.value
+)
 const runtimeConfigReadonly = computed(() => saving.value || boundSkillSaving.value || resourceCreationOpen.value
   || createOutcomeUnknown.value || createConfigLoading.value
+  || !backendConfigReady.value
   || Boolean(editingAgentId.value && !agentStore.selectedAgent?.can_manage))
 const creatableResourceKinds = computed(() => [
   ...(userStore.isSuperAdmin ? ['mcps'] : []),
   ...(userStore.isAdmin ? ['skills'] : [])
 ])
 
-const originalAgentForm = ref({ name: '', description: '', icon: '', visibility: 'private' })
+const originalAgentForm = ref({ name: '', description: '', icon: '', visibility: 'private', backend_id: '' })
 const originalShareConfig = ref(null)
 
 const snapshotAgentForm = () => ({
   name: (agentForm.name || '').trim(),
   description: (agentForm.description || '').trim(),
   icon: (agentForm.icon || '').trim(),
-  visibility: agentForm.visibility
+  visibility: agentForm.visibility,
+  backend_id: agentForm.backend_id
 })
 
 const snapshotShareConfig = () => {
   if (!editingAgentId.value || !isAgentShared.value) return null
-  if (isBuiltinAgent({ agent_id: editingAgentId.value })) {
+  if (isBuiltinAgent(editingCapabilities.value)) {
     return cloneShareConfig({
       version: 2,
       read_scope: { access_level: 'global', department_ids: [], user_uids: [] },
@@ -164,7 +174,8 @@ const hasProfileChanges = computed(() => {
     currentForm.name !== baselineForm.name ||
     currentForm.description !== baselineForm.description ||
     currentForm.icon !== baselineForm.icon ||
-    currentForm.visibility !== baselineForm.visibility
+    currentForm.visibility !== baselineForm.visibility ||
+    currentForm.backend_id !== baselineForm.backend_id
   ) {
     return true
   }
@@ -202,6 +213,9 @@ const runtimeConfigSegment = computed(() =>
 const isRuntimeAgentModalTab = (key) => runtimeAgentModalTabs.includes(key)
 const getDefaultBackendId = () =>
   props.backendOptions.length === 1 ? props.backendOptions[0].value : DEFAULT_AGENT_BACKEND_ID
+const selectedBackendAvailable = computed(() =>
+  props.backendOptions.some((option) => option.value === agentForm.backend_id)
+)
 
 const getInitialShareConfig = (accessLevel = 'user') => ({
   version: 2,
@@ -214,7 +228,7 @@ const getInitialShareConfig = (accessLevel = 'user') => ({
 })
 
 const normalizeShareConfigForPayload = () => {
-  if (isBuiltinAgent({ agent_id: editingAgentId.value })) {
+  if (isBuiltinAgent(editingCapabilities.value)) {
     return {
       version: 2,
       read_scope: { access_level: 'global', department_ids: [], user_uids: [] },
@@ -224,7 +238,7 @@ const normalizeShareConfigForPayload = () => {
   return agentShareConfig.value || getInitialShareConfig()
 }
 
-const isEditingBuiltinAgent = computed(() => isBuiltinAgent({ agent_id: editingAgentId.value }))
+const isEditingBuiltinAgent = computed(() => isBuiltinAgent(editingCapabilities.value))
 const canEditAgentShareConfig = computed(() =>
   editingCapabilities.value.can_share ||
   (!editingAgentId.value && userStore.isAdmin)
@@ -291,6 +305,12 @@ const openCreate = () => {
   createSkillFile.value = null
   createContext.value = {}
   createConfigItems.value = {}
+  editConfigItems.value = {}
+  editConfigDrafts.clear()
+  loadedEditBackendId.value = null
+  originalEditContext = {}
+  originalEditItems = {}
+  editConfigBaselines.clear()
   createConfigError.value = ''
   createConfigLoading.value = false
   createAdvancedOpen.value = false
@@ -328,8 +348,56 @@ const toggleCreateAdvanced = async () => {
   else focusAgentNameInput()
   if (createAdvancedOpen.value && Object.keys(createConfigItems.value).length === 0) await loadCreateConfig()
 }
-watch(() => agentForm.backend_id, () => {
-  if (editingAgentId.value || !showAgentModal.value) return
+/** 加载目标后端的 Schema，并丢弃失效响应。 */
+const applyEditBackend = async (backendId) => {
+  const revision = ++createConfigRevision
+  const modalRevision = modalOpenRevision
+  if (loadedEditBackendId.value && !createConfigLoading.value) {
+    editConfigDrafts.set(loadedEditBackendId.value, { ...agentStore.agentConfig })
+  }
+  createConfigLoading.value = true
+  createConfigError.value = ''
+  try {
+    const info = await agentApi.getAgentBackendDetail(backendId)
+    if (revision !== createConfigRevision || modalRevision !== modalOpenRevision) return
+    const items = normalizeAgentConfigurableItems(info.configurable_items)
+    const originalContext = Object.fromEntries(Object.entries(originalEditContext).filter(([key]) => {
+      const sourceItem = originalEditItems[key]
+      const targetItem = items[key]
+      return sourceItem && targetItem && sourceItem.type === targetItem.type && sourceItem.kind === targetItem.kind
+    }))
+    const source = editConfigDrafts.get(backendId) || originalContext
+    const context = Object.fromEntries(Object.entries(source).filter(([key]) => key in items))
+    editConfigItems.value = items
+    agentStore.replaceAgentConfigDraft(originalContext, items)
+    editConfigBaselines.set(backendId, { ...agentStore.agentConfig })
+    agentStore.replaceAgentConfigDraft(context, items)
+    loadedEditBackendId.value = backendId
+    return true
+  } catch (error) {
+    if (revision !== createConfigRevision || modalRevision !== modalOpenRevision) return
+    createConfigError.value = error.message || '配置项加载失败'
+  } finally {
+    if (revision === createConfigRevision && modalRevision === modalOpenRevision) createConfigLoading.value = false
+  }
+}
+/** 重试当前编辑对象的后端配置，创建时则沿用原加载流程。 */
+const retryBackendConfig = () => editingAgentId.value
+  ? applyEditBackend(agentForm.backend_id)
+  : loadCreateConfig()
+
+watch(() => agentForm.backend_id, (backendId) => {
+  if (!showAgentModal.value) return
+  if (editingAgentId.value) {
+    if (backendId === loadedEditBackendId.value) {
+      createConfigRevision += 1
+      createConfigLoading.value = false
+      createConfigError.value = ''
+      return
+    }
+    applyEditBackend(backendId)
+    return
+  }
   if (Object.keys(createContext.value).length) message.info('后端已切换，请重新选择高级配置')
   createContext.value = {}
   createConfigItems.value = {}
@@ -341,12 +409,7 @@ watch(() => agentForm.backend_id, () => {
 
 const refreshRuntimeOptions = async () => {
   if (!editingAgentId.value) return loadCreateConfig()
-  try {
-    await agentStore.fetchAgentDetail(editingAgentId.value, true)
-    message.success('配置选项已刷新')
-  } catch (error) {
-    message.error(error.message || '配置选项刷新失败')
-  }
+  if (await applyEditBackend(agentForm.backend_id)) message.success('配置选项已刷新')
 }
 /** 共享资源独立发布，只将成功标识加入 Context。 */
 const selectCreatedResources = (field, slugs) => {
@@ -426,6 +489,12 @@ const openEdit = async (agent) => {
   editingCapabilities.value = detail
   createOutcomeUnknown.value = false
   editingAgentId.value = detail.agent_id
+  editConfigItems.value = {}
+  editConfigDrafts.clear()
+  loadedEditBackendId.value = null
+  originalEditContext = {}
+  originalEditItems = {}
+  editConfigBaselines.clear()
   agentModalActiveTab.value = 'basic'
   Object.assign(agentForm, {
     slug: detail.agent_id || '',
@@ -448,6 +517,11 @@ const openEdit = async (agent) => {
         getInitialShareConfig()
   await agentStore.selectAgent(detail.agent_id)
   if (revision !== modalOpenRevision || openingBlocked.value) return
+  editConfigItems.value = normalizeAgentConfigurableItems(detail.configurable_items || agentStore.configurableItems)
+  loadedEditBackendId.value = detail.backend_id || DEFAULT_AGENT_BACKEND_ID
+  originalEditContext = { ...agentStore.agentConfig }
+  originalEditItems = editConfigItems.value
+  editConfigDrafts.set(loadedEditBackendId.value, originalEditContext)
   captureProfileBaseline()
   showAgentModal.value = true
 }
@@ -465,10 +539,14 @@ const selectAgentModalTab = (tab) => {
 
 const closeAgentModal = async () => {
   if (saving.value || boundSkillSaving.value || agentIconUploading.value || resourceCreationOpen.value) return
+  const activeAgentId = editingAgentId.value
   modalOpenRevision += 1
   showAgentModal.value = false
   createConfigRevision += 1
   createConfigLoading.value = false
+  if (activeAgentId && agentStore.selectedAgentId === activeAgentId) {
+    await agentStore.selectAgent(activeAgentId)
+  }
   await restoreChatAgentSelectionIfNeeded()
 }
 
@@ -524,8 +602,21 @@ const buildAgentPayload = () => {
     payload.backend_id = agentForm.backend_id
     payload.visibility = isAgentShared.value ? 'shared' : 'private'
     payload.config_json = { context: { ...createContext.value } }
-  } else if (canEditAgentShareConfig.value && canToggleAgentSharing.value && isAgentShared.value) {
-    payload.visibility = 'shared'
+  } else {
+    if (agentForm.backend_id !== originalAgentForm.value.backend_id) {
+      payload.backend_id = agentForm.backend_id
+      const baseline = editConfigBaselines.get(agentForm.backend_id) || {}
+      payload.config_json = {
+        context: Object.fromEntries(
+          Object.entries(agentStore.agentConfig).filter(([key, value]) =>
+            key in editConfigItems.value && JSON.stringify(value) !== JSON.stringify(baseline[key])
+          )
+        )
+      }
+    }
+    if (canEditAgentShareConfig.value && canToggleAgentSharing.value && isAgentShared.value) {
+      payload.visibility = 'shared'
+    }
   }
 
   return payload
@@ -533,6 +624,13 @@ const buildAgentPayload = () => {
 
 const saveAgent = async () => {
   if (saving.value || boundSkillSaving.value || agentIconUploading.value || resourceCreationOpen.value || createOutcomeUnknown.value || createConfigLoading.value) return
+  const backendChanged = editingAgentId.value && agentForm.backend_id !== originalAgentForm.value.backend_id
+  if (backendChanged && !selectedBackendAvailable.value) {
+    createError.value = props.backendOptions.length
+      ? '请选择智能体后端'
+      : '没有可用的智能体后端，请刷新后重试'
+    return
+  }
   if (!agentForm.name.trim()) {
     agentModalActiveTab.value = 'basic'
     if (!editingAgentId.value) {
@@ -541,6 +639,10 @@ const saveAgent = async () => {
     }
     message.error('请填写智能体名称')
     await focusAgentNameInput()
+    return
+  }
+  if (editingAgentId.value && !backendConfigReady.value) {
+    message.error('目标后端配置尚未加载完成')
     return
   }
 
@@ -565,7 +667,7 @@ const saveAgent = async () => {
   try {
     const payload = buildAgentPayload()
     if (editingAgentId.value) {
-      if (agentStore.hasConfigChanges) {
+      if (!backendChanged && agentStore.hasConfigChanges) {
         payload.config_json = { context: agentStore.changedAgentConfig }
       }
       const updated = await agentStore.updateAgentProfile(editingAgentId.value, payload)
@@ -640,7 +742,7 @@ defineExpose({
         </div>
         <div class="agent-modal-actions" v-else-if="hasAnyUnsavedChanges">
           <a-button :disabled="saving || boundSkillSaving" @click="closeAgentModal">取消</a-button>
-          <a-button type="primary" :loading="saving" :disabled="boundSkillSaving || agentIconUploading || resourceCreationOpen || createOutcomeUnknown || createConfigLoading" @click="saveAgent">
+          <a-button type="primary" :loading="saving" :disabled="boundSkillSaving || agentIconUploading || resourceCreationOpen || createOutcomeUnknown || createConfigLoading || !backendConfigReady" @click="saveAgent">
             保存
           </a-button>
         </div>
@@ -725,21 +827,23 @@ defineExpose({
                     placeholder="点击输入智能体名称"
                     aria-label="智能体名称"
                   />
-                  <div v-if="!editingAgentId && backendOptions.length > 1" class="create-profile-details">
-                    <div class="create-profile-field">
-                      <label for="agent-profile-backend" class="create-field-label">智能体后端</label>
-                      <a-select
-                        id="agent-profile-backend"
-                        v-model:value="agentForm.backend_id"
-                        class="agent-backend-select"
-                        :options="backendOptions"
-                        :disabled="saving || resourceCreationOpen"
-                      />
-                    </div>
-                  </div>
                   <span v-if="editingAgentId" class="agent-inline-slug">{{
                     agentForm.slug || editingAgentId
                   }}</span>
+                  <div v-if="!isEditingBuiltinAgent && (editingAgentId || backendOptions.length !== 1)" class="create-profile-field backend-profile-field">
+                    <label for="agent-profile-backend" class="create-field-label">智能体后端</label>
+                    <a-select
+                      id="agent-profile-backend"
+                      v-model:value="agentForm.backend_id"
+                      class="agent-backend-select"
+                      :options="backendOptions"
+                      :disabled="saving || resourceCreationOpen || !backendOptions.length || (!editingAgentId && backendOptions.length === 1)"
+                      placeholder="暂无可用后端"
+                    />
+                    <small v-if="!backendOptions.length" class="backend-options-hint">
+                      暂无可用后端，当前不能创建智能体。
+                    </small>
+                  </div>
                 </div>
               </div>
             </div>
@@ -834,11 +938,11 @@ defineExpose({
             </a-form-item>
           </a-form>
           <div v-if="createConfigError" class="create-resource-error" role="alert">
-            <span>{{ createConfigError }}</span><a-button size="small" type="link" @click="loadCreateConfig">重试</a-button>
+            <span>{{ createConfigError }}</span><a-button size="small" type="link" @click="retryBackendConfig">重试</a-button>
           </div>
           <a-spin :spinning="createConfigLoading">
             <AgentRuntimeConfigForm
-              v-if="editingAgentId || Object.keys(runtimeConfigItems).length || (!createConfigLoading && !createConfigError)"
+              v-if="backendConfigReady && (editingAgentId || Object.keys(runtimeConfigItems).length || (!createConfigLoading && !createConfigError))"
               ref="runtimeFormRef"
               v-model="runtimeConfig"
               :configurable-items="runtimeConfigItems"
@@ -877,6 +981,7 @@ defineExpose({
 <style lang="less" scoped>
 .create-usage-option { display: inline-flex; align-items: center; gap: 6px; vertical-align: middle; }
 .create-dialog-heading { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.backend-options-hint { color: var(--color-text-secondary); font-size: 12px; }
 .create-dialog-header-actions { display: flex; align-items: center; gap: 12px; }
 .create-dialog-location { color: var(--gray-700); font-size: 12px; font-weight: 400; white-space: nowrap; }
 .create-dialog-close { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; }
@@ -907,8 +1012,6 @@ defineExpose({
   :deep(.ant-form-item-label > label) { font-weight: 600; }
   small { margin-left: 4px; color: var(--gray-600); font-size: 12px; font-weight: 400; }
 }
-.create-profile-details { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 16px; margin-bottom: 24px; }
-.create-profile-details:has(> .create-profile-field:only-child) { grid-template-columns: minmax(0, 1fr); }
 .create-profile-field { display: grid; gap: 8px; min-width: 0; }
 .agent-avatar-column { display: flex; flex-direction: column; align-items: center; gap: 10px; flex-shrink: 0; }
 .create-sharing-section {
@@ -1395,11 +1498,9 @@ defineExpose({
 }
 
 @media (max-width: 600px) {
-  .create-profile-details { grid-template-columns: minmax(0, 1fr); }
   .create-mode .agent-icon-preview-text { display: contents; }
   .create-mode .agent-profile-main { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 8px 16px; }
   .create-mode .agent-avatar-column { grid-row: 1 / 3; align-self: start; }
-  .create-mode .create-profile-details { grid-column: 1 / -1; margin-top: 8px; }
   .create-mode .agent-inline-name-input, .create-mode .agent-backend-select :deep(.ant-select-selector), .create-skill-upload :deep(.ant-btn) { min-height: 40px; }
 }
 

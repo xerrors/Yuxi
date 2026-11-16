@@ -54,6 +54,7 @@ class AgentUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     visibility: Literal["shared"] | None = None
     name: str | None = None
+    backend_id: str | None = None
     description: str | None = None
     icon: str | None = None
     pics: list[str] | None = None
@@ -165,6 +166,7 @@ async def update_agent(
             db,
             item,
             name=payload.name,
+            backend_id=payload.backend_id,
             description=payload.description,
             icon=payload.icon,
             pics=payload.pics,

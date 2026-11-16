@@ -281,6 +281,11 @@ export const useAgentStore = defineStore(
       Object.assign(agentConfig.value, updates)
     }
 
+    /** 用目标后端配置项重建当前草稿及其默认值。 */
+    function replaceAgentConfigDraft(config, configItems) {
+      agentConfig.value = applyConfigDefaults({ ...config }, normalizeAgentConfigurableItems(configItems))
+    }
+
     function reset() {
       // 身份重置使旧账户的异步响应失效，后续入口开始新的初始化。
       generation += 1
@@ -328,6 +333,7 @@ export const useAgentStore = defineStore(
       deleteAgent,
       resetAgentConfig,
       updateAgentConfig,
+      replaceAgentConfigDraft,
       reset
     }
   },
