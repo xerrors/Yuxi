@@ -1,34 +1,51 @@
 <template>
   <div v-if="displayEntries.length > 0" class="tool-calls-container">
-    <button
-      v-if="shouldCollapseToolCalls"
-      type="button"
-      class="tool-calls-summary"
-      :class="{ 'is-expanded': areToolCallsExpanded }"
-      :aria-expanded="areToolCallsExpanded"
-      @click="toggleToolCallsExpanded"
-    >
-      <span class="summary-leading">
-        <Atom size="14" />
-      </span>
-      <span class="summary-content">
-        <span class="summary-title">{{ toolCallsSummaryTitle }}</span>
-        <span class="summary-separator" v-if="normalizedToolCalls.length > 1 && toolCallsNamesMeta"
-          >·</span
-        >
-        <span class="summary-meta" v-if="normalizedToolCalls.length > 1 && toolCallsNamesMeta">{{
-          toolCallsNamesMeta
-        }}</span>
-        <span class="summary-status-tag" v-if="statusSummary">{{ statusSummary }}</span>
-      </span>
-      <span class="summary-trailing">
-        <ChevronDown
-          :size="14"
-          class="summary-chevron"
-          :class="{ 'is-collapsed': !areToolCallsExpanded }"
+    <div v-if="shouldCollapseToolCalls" class="tool-calls-heading" :class="{ 'is-active': isActive }">
+      <!-- 复用最新条目的原始 header；交互由同级展开按钮统一承接。 -->
+      <div v-if="isActive" class="live-header" inert aria-hidden="true">
+        <ReasoningBlockComponent
+          v-if="latestEntry.type === 'reasoning'"
+          :content="latestEntry.content"
+          :is-active="false"
         />
-      </span>
-    </button>
+        <ToolCallRenderer
+          v-else
+          :key="latestEntry.key"
+          :tool-call="latestEntry.toolCall"
+          :cooperation-view="cooperationView"
+          appearance="timeline"
+        />
+      </div>
+      <button
+        type="button"
+        class="tool-calls-summary"
+        :class="{ 'is-expanded': areToolCallsExpanded }"
+        :aria-expanded="areToolCallsExpanded"
+        :aria-label="isActive ? latestEntryLabel : undefined"
+        @click="toggleToolCallsExpanded"
+      >
+        <span v-if="!isActive" class="summary-leading">
+          <Atom size="14" />
+        </span>
+        <span v-if="!isActive" class="summary-content">
+          <span class="summary-title">{{ toolCallsSummaryTitle }}</span>
+          <span class="summary-separator" v-if="normalizedToolCalls.length > 1 && toolCallsNamesMeta"
+            >·</span
+          >
+          <span class="summary-meta" v-if="normalizedToolCalls.length > 1 && toolCallsNamesMeta">{{
+            toolCallsNamesMeta
+          }}</span>
+          <span class="summary-status-tag" v-if="statusSummary">{{ statusSummary }}</span>
+        </span>
+        <span class="summary-trailing">
+          <ChevronDown
+            :size="14"
+            class="summary-chevron"
+            :class="{ 'is-collapsed': !areToolCallsExpanded }"
+          />
+        </span>
+      </button>
+    </div>
 
     <div
       class="tool-calls-collapse-panel"
@@ -115,30 +132,18 @@ const groupedEntries = computed(() => props.cooperationView ? groupCooperationEn
 const hasReasoning = computed(() =>
   displayEntries.value.some((entry) => entry.type === 'reasoning')
 )
-const shouldCollapseToolCalls = computed(() => displayEntries.value.length > 0)
+const shouldCollapseToolCalls = computed(() => displayEntries.value.length > 1 || hasReasoning.value)
 const areToolCallsExpanded = ref(false)
 
-watch(
-  [() => normalizedToolCalls.value.length, () => props.isActive],
-  ([, isActive], [, previousActive]) => {
-    // 如果是活跃状态，强制展开
-    if (isActive) {
-      areToolCallsExpanded.value = true
-      return
-    }
+watch(() => props.isActive, () => {
+  areToolCallsExpanded.value = false
+})
 
-    // 从活跃转为非活跃（例如：正文开始输出了），则收起
-    if (previousActive === true && isActive === false) {
-      areToolCallsExpanded.value = false
-      return
-    }
-
-    // 初始化或非活跃状态下，默认保持收起
-    if (!previousActive && !isActive) {
-      areToolCallsExpanded.value = false
-    }
-  },
-  { immediate: true }
+const latestEntry = computed(() => displayEntries.value.at(-1))
+const latestEntryLabel = computed(() =>
+  latestEntry.value?.type === 'reasoning'
+    ? '思考'
+    : getToolCallLabel(latestEntry.value?.toolCall)
 )
 
 // 工具名称展示优先级：display_label > 完整工具元数据中的 display name > 前端兜底名称映射 > 工具 id
@@ -192,7 +197,6 @@ const statusSummary = computed(() => {
 })
 
 const toggleToolCallsExpanded = () => {
-  if (!shouldCollapseToolCalls.value) return
   areToolCallsExpanded.value = !areToolCallsExpanded.value
 }
 </script>
@@ -207,9 +211,40 @@ const toggleToolCallsExpanded = () => {
   display: flex;
   flex-direction: column;
 
+  .tool-calls-heading {
+    position: relative;
+    min-width: 0;
+
+    &.is-active .tool-calls-summary {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      justify-content: flex-end;
+    }
+  }
+
+  .live-header {
+    min-width: 0;
+    padding-right: 22px;
+    pointer-events: none;
+    // 遮罩只改变明暗，保留专用 header 的错误颜色与文字布局。
+    mask-image: linear-gradient(110deg, #000 35%, #0005 50%, #000 65%);
+    mask-size: 250% 100%;
+    animation: live-header-shimmer 2s linear infinite;
+
+    :deep(.tool-expand-icon),
+    :deep(.tool-content) {
+      display: none;
+    }
+
+    :deep(.tool-loader.rotate) {
+      animation: none;
+    }
+  }
+
   .tool-calls-summary {
     appearance: none;
-    width: auto;
+    width: 100%;
     max-width: 100%;
     display: inline-flex;
     align-items: center;
@@ -322,8 +357,6 @@ const toggleToolCallsExpanded = () => {
   }
 
   .tool-calls-panel {
-    border-top: 1px solid var(--gray-100);
-    padding-top: 6px;
     margin-top: 6px;
     margin-bottom: 8px;
   }
@@ -337,8 +370,18 @@ const toggleToolCallsExpanded = () => {
   }
 }
 
+@keyframes live-header-shimmer {
+  from { mask-position: 150% 0; }
+  to { mask-position: -50% 0; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .tool-calls-container {
+    .live-header {
+      animation: none;
+      mask-image: none;
+    }
+
     .tool-calls-summary .summary-chevron,
     .tool-calls-collapse-panel,
     .tool-calls-collapse-inner {

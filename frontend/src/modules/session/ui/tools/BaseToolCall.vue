@@ -456,7 +456,7 @@ const hasResult = computed(() => {
     position: relative;
 
     .tool-header {
-      padding: 4px 0;
+      padding: 0;
       background-color: transparent;
       border-bottom: none;
       color: var(--gray-500);

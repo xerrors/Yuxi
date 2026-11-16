@@ -99,8 +99,8 @@ for (const [name, fields] of Object.entries({
     assert.match(html, /执行失败/)
     assert.match(html, /无法执行/)
     assert.doesNotMatch(html, /执行完成|tool-loading/)
-    const group = await render(ToolCallsGroup, { toolCalls: [toolCall], isActive: true })
-    assert.match(group, /1 失败/)
+    const group = await render(ToolCallsGroup, { toolCalls: [toolCall], isActive: false })
+    assert.match(group, /tool-error/)
     assert.doesNotMatch(group, /1 进行中/)
   })
 }
@@ -134,7 +134,7 @@ test('历史搜索额度失败的卡片与汇总均显示失败，真实零结�
     assert.match(html, /quota has been exhausted/)
     assert.doesNotMatch(html, /未找到相关搜索结果|tool-success/)
     const group = await render(ToolCallsGroup, { toolCalls: [toolCall], isActive: false })
-    assert.match(group, /1 失败/)
+    assert.match(group, /tool-error/)
   }
   const empty = await render(ToolCallRenderer, {
     toolCall: { name: 'web_search', result: { query: '官方资料', results: [], error: null } },

@@ -42,7 +42,6 @@ async originalPage => {
         Object.assign(app._context.components, root._context.components)
         app.mount(host)
       })
-      await page.locator('#group .tool-calls-summary').click()
       for (const id of ['single', 'group']) await page.locator(`#${id} .tool-call-display`).waitFor()
       if (await page.locator('.mention-ref-icon svg').count() !== 1) throw new Error('Mention 图标丢失')
       await page.locator('#renderer-sharing').getByText('future_tool', { exact: true }).waitFor()
