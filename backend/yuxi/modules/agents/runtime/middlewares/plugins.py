@@ -136,14 +136,11 @@ class PluginLoaderMiddleware(AgentMiddleware):
             raise RuntimeError(f"插件 MCP 装配失败：{exc}") from exc
         tools = list(request.tools)
         names = {tool.name for tool in tools}
-        for server, server_tools in loaded.items():
+        for server_tools in loaded.values():
             for tool in server_tools:
                 if tool.name in names:
-                    if context.mcp_tool_servers.get(tool.name) == server:
-                        continue
-                    raise RuntimeError(f"插件 MCP 工具名冲突：{tool.name}")
+                    continue
                 names.add(tool.name)
-                context.mcp_tool_servers[tool.name] = server
                 tools.append(tool)
         return await handler(request.override(tools=tools))
 

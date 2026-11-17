@@ -42,10 +42,10 @@ export function projectAbridgeResult({ toolId, content, status, parts }) {
   // command_status 共用查询协议，通过浏览器专属字段区分脚本与 Shell 回执。
   const browserScriptResult = ['browser_exec', 'command_status'].includes(toolId) &&
     Number.isInteger(result?.steps_completed) ? result : null
-  const commandResult = !browserScriptResult && ['command_execute', 'command_status'].includes(toolId)
-    ? result ?? receipt?.output : null
+  const isCommandResult = !browserScriptResult && ['command_execute', 'command_status'].includes(toolId)
+  const commandResult = isCommandResult ? result ?? receipt?.output : null
   const output = commandResult || {}
-  const commandOutput = !browserScriptResult && ['command_execute', 'command_status'].includes(toolId)
+  const commandOutput = isCommandResult
     ? [
         output.stdout,
         output.stderr && `标准错误：\n${output.stderr}`,

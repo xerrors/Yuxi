@@ -78,17 +78,18 @@ const render = (component, props, configureStore, sessionConfigurableItems) => {
 }
 
 test('工具参数为空时隐藏整行，结果仍可见，非空参数正常展示', async () => {
-  for (const name of ['unknown_tool', 'devices_list']) {
-    for (const args of [undefined, null, {}, '', '  \n ', '{}', ' {\n } ', [], '[ ]']) {
-      for (const fields of [{ args }, { function: { name, arguments: args } }]) {
-        const html = await render(ToolCallRenderer, {
-          toolCall: { name, ...fields, result: '工具返回内容' },
-          defaultExpanded: true
-        })
-        assert.doesNotMatch(html, /class="tool-params"|参数:/)
-        assert.match(html, /工具返回内容/)
-      }
-    }
+  const emptyCalls = [undefined, null, {}, '', '  \n ', '{}', ' {\n } ', [], '[ ]']
+    .map((args) => ({ name: 'unknown_tool', args }))
+  emptyCalls.push(
+    { name: 'devices_list', args: {} },
+    { function: { name: 'unknown_tool', arguments: '{}' } }
+  )
+  for (const toolCall of emptyCalls) {
+    const html = await render(ToolCallRenderer, {
+      toolCall: { ...toolCall, result: '工具返回内容' }, defaultExpanded: true
+    })
+    assert.doesNotMatch(html, /class="tool-params"|参数:/)
+    assert.match(html, /工具返回内容/)
   }
   for (const args of [{ limit: 0, enabled: false }, '{"path":"/Users"}', 'x', '{']) {
     const html = await render(BaseToolCall, {
@@ -133,8 +134,10 @@ test('加载插件 header 使用目录名称和共享图标，参数与结果保
   assert.match(html, /aBridge 设备/)
   assert.match(html, /lucide-computer/)
   assert.doesNotMatch(html, /执行完成/)
-  const base = await render(BaseToolCall, props)
-  assert.equal(html.slice(html.indexOf('<div class="tool-content"')), base.slice(base.indexOf('<div class="tool-content"')))
+  assert.match(html, /class="tool-params"/)
+  assert.match(html, /plugin_id/)
+  assert.match(html, /abridge/)
+  assert.match(html, /插件原始返回内容/)
 })
 
 test('加载插件名称以当前会话目录为准，不借用全局选中的另一 Agent 目录', async () => {

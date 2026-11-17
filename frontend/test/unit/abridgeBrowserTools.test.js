@@ -91,13 +91,18 @@ test('等待只有确认匹配才显示满足，超时沿用失败结果', async
   assert.doesNotMatch(timeout, /等待条件已满足/)
 })
 
-for (const value of [0, false, null, '', { count: 2 }]) {
+for (const [value, expected] of [
+  [0, '0'], [false, 'false'], [null, 'null'], ['', ''],
+  [{ count: 2 }, '{\n  &quot;count&quot;: 2\n}']
+]) {
   test(`脚本返回 ${JSON.stringify(value)} 不被真值过滤，代码不进入标题`, async () => {
     const html = await render('browser_exec', { status: 'executed', result: { ...scriptResult, value } }, { code: 'privateCode()' })
     assert.match(html, /执行浏览器脚本/)
     assert.match(html, /已完成 2 个步骤/)
     assert.match(html, /日志：/)
-    assert.match(html, /aria-label="浏览器脚本返回值"/)
+    const renderedValue = html.match(/<pre[^>]*aria-label="浏览器脚本返回值"[^>]*>([\s\S]*?)<\/pre>/)
+    assert.ok(renderedValue, '脚本返回值容器缺失')
+    assert.equal(renderedValue[1], expected)
     assert.doesNotMatch(html.split('tool-content')[0], /privateCode/)
   })
 }

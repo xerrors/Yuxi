@@ -113,7 +113,7 @@ async function render(api) {
     const find = (node, predicate) =>
       predicate(node) ? node : node.children.map((child) => find(child, predicate)).find(Boolean)
     const view = {
-      find: (predicate) => find(host, predicate),
+      find: (predicate, root = host) => find(root, predicate),
       settle,
       close: async () => {
         app.unmount()
@@ -154,20 +154,26 @@ test('设备图标依据平台和设备类型，未知平台不从名称猜测',
     ['computer', 'Linux', null, 'Linux · 电脑'],
     ['computer', null, null, '电脑']
   ]
-  for (const [kind, platform, icon, label] of cases) {
-    const view = await render({
-      user: { isSuperAdmin: false },
-      list: async () => ({
-        ...ready,
-        devices: [{ ...ready.devices[0], name: 'Chrome Windows Android macOS', kind, platform }]
-      })
+  const view = await render({
+    user: { isSuperAdmin: false },
+    list: async () => ({
+      ...ready,
+      devices: cases.map(([kind, platform], index) => ({
+        ...ready.devices[0], id: String(index), name: 'Chrome Windows Android macOS', kind, platform
+      }))
     })
-    try {
+  })
+  try {
+    const rows = view.find((node) => node.props['aria-label'] === '我的设备')
+      .children.filter((node) => node.type === 'li')
+    assert.equal(rows.length, cases.length)
+    for (const [index, [kind, platform, icon, label]] of cases.entries()) {
+      const row = rows[index]
       assert.ok(
-        view.find((node) => node.text === label),
+        view.find((node) => node.text === label, row),
         `${kind}/${platform}: 平台文字不正确`
       )
-      const image = view.find((node) => node.type === 'img')
+      const image = view.find((node) => node.type === 'img', row)
       if (icon) {
         assert.ok(image?.props.src.startsWith('data:image/svg+xml,'))
         const expected = readFileSync(
@@ -182,11 +188,11 @@ test('设备图标依据平台和设备类型，未知平台不从名称猜测',
         assert.equal(image.props.alt, '')
       } else {
         assert.equal(image, undefined)
-        assert.ok(view.find((node) => node.type === 'svg' && node.props['aria-hidden'] === 'true'))
+        assert.ok(view.find((node) => node.type === 'svg' && node.props['aria-hidden'] === 'true', row))
       }
-    } finally {
-      await view.close()
     }
+  } finally {
+    await view.close()
   }
 })
 

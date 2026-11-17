@@ -58,11 +58,11 @@ test('mention 的智能体与对话各显示前五个匹配项，对话排在智
       'agent', 'agent', 'agent', 'agent', 'agent',
       'session', 'session', 'session', 'session', 'session'
     ])
-    for (const [group, type] of [['knowledgeBases', 'knowledge'], ['mcps', 'mcp'], ['plugins', 'plugin'], ['skills', 'skill'], ['agents', 'agent'], ['sessions', 'session']]) {
+    for (const group of ['knowledgeBases', 'mcps', 'plugins', 'skills', 'agents', 'sessions']) {
       for (const [index, item] of state.mentionItems.value[group].entries()) {
         state.mentionSelectedIndex.value = state.mentionSelectableItems.value.indexOf(item)
-        assert.equal(state.isItemSelected(type, index), true)
-        assert.equal(state.isItemSelected(type, index + 1), false)
+        assert.equal(state.isItemSelected(item), true)
+        assert.equal(state.isItemSelected(state.mentionItems.value[group][index + 1]), false)
       }
     }
 
@@ -70,7 +70,7 @@ test('mention 的智能体与对话各显示前五个匹配项，对话排在智
     state.mentionSelectedIndex.value = 3
     state.handleMentionNavigation({ key: 'ArrowDown', preventDefault() {} })
     assert.equal(state.mentionSelectableItems.value[state.mentionSelectedIndex.value].type, 'plugin')
-    assert.equal(state.isItemSelected('plugin', 0), true)
+    assert.equal(state.isItemSelected(state.mentionItems.value.plugins[0]), true)
     state.handleMentionNavigation({ key: 'ArrowDown', preventDefault() {} })
     assert.equal(state.mentionSelectableItems.value[state.mentionSelectedIndex.value].type, 'skill')
     state.handleMentionNavigation({ key: 'ArrowUp', preventDefault() {} })

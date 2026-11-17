@@ -68,9 +68,9 @@
           </div>
           <template v-else>
             <div
-              v-for="(item, index) in mentionItems.files"
+              v-for="item in mentionItems.files"
               :key="'file-' + item.value"
-              :class="['mention-item', 'file-item', { active: isItemSelected('file', index) }]"
+              :class="['mention-item', 'file-item', { active: isItemSelected(item) }]"
               @click="insertMention(item)"
             >
               <div class="file-info-left">
@@ -112,12 +112,12 @@
         <div v-if="mentionItems.knowledgeBases.length > 0" class="mention-group">
           <div class="mention-group-title">知识库</div>
           <div
-            v-for="(item, index) in mentionItems.knowledgeBases"
+            v-for="item in mentionItems.knowledgeBases"
             :key="'kb-' + item.value"
             :class="[
               'mention-item',
               'resource-item',
-              { active: isItemSelected('knowledge', index) }
+              { active: isItemSelected(item) }
             ]"
             @click="insertMention(item)"
           >
@@ -148,85 +148,13 @@
           </div>
         </div>
 
-        <!-- 连接器列表 -->
-        <div v-if="mentionItems.mcps.length > 0" class="mention-group">
-          <div class="mention-group-title">连接器</div>
+        <!-- 连接器、插件与 Skills 共用候选行 -->
+        <div v-for="group in mentionResourceGroups" :key="group.type" class="mention-group">
+          <div class="mention-group-title">{{ group.title }}</div>
           <div
-            v-for="(item, index) in mentionItems.mcps"
-            :key="'mcp-' + item.value"
-            :class="['mention-item', 'resource-item', { active: isItemSelected('mcp', index) }]"
-            @click="insertMention(item)"
-          >
-            <MentionResourceAvatar :item="item" />
-            <div class="resource-name">
-              <span
-                v-for="(part, pIdx) in splitTextByQuery(item.label, mentionQuery)"
-                :key="pIdx"
-                :class="{ 'query-match': part.isMatch }"
-                >{{ part.text }}</span
-              >
-            </div>
-            <div
-              v-if="getMentionDescription(item.description)"
-              class="resource-description"
-              :title="getMentionDescription(item.description)"
-            >
-              <span
-                v-for="(part, pIdx) in splitTextByQuery(
-                  getMentionDescription(item.description),
-                  mentionQuery
-                )"
-                :key="pIdx"
-                :class="{ 'query-match': part.isMatch }"
-                >{{ part.text }}</span
-              >
-            </div>
-          </div>
-        </div>
-
-        <!-- 插件列表 -->
-        <div v-if="mentionItems.plugins.length > 0" class="mention-group">
-          <div class="mention-group-title">插件</div>
-          <div
-            v-for="(item, index) in mentionItems.plugins"
-            :key="'plugin-' + item.value"
-            :class="['mention-item', 'resource-item', { active: isItemSelected('plugin', index) }]"
-            @click="insertMention(item)"
-          >
-            <MentionResourceAvatar :item="item" />
-            <div class="resource-name">
-              <span
-                v-for="(part, pIdx) in splitTextByQuery(item.label, mentionQuery)"
-                :key="pIdx"
-                :class="{ 'query-match': part.isMatch }"
-                >{{ part.text }}</span
-              >
-            </div>
-            <div
-              v-if="getMentionDescription(item.description)"
-              class="resource-description"
-              :title="getMentionDescription(item.description)"
-            >
-              <span
-                v-for="(part, pIdx) in splitTextByQuery(
-                  getMentionDescription(item.description),
-                  mentionQuery
-                )"
-                :key="pIdx"
-                :class="{ 'query-match': part.isMatch }"
-                >{{ part.text }}</span
-              >
-            </div>
-          </div>
-        </div>
-
-        <!-- Skills 列表 -->
-        <div v-if="mentionItems.skills.length > 0" class="mention-group">
-          <div class="mention-group-title">Skills</div>
-          <div
-            v-for="(item, index) in mentionItems.skills"
-            :key="'skill-' + item.value"
-            :class="['mention-item', 'resource-item', { active: isItemSelected('skill', index) }]"
+            v-for="item in group.items"
+            :key="group.type + '-' + item.value"
+            :class="['mention-item', 'resource-item', { active: isItemSelected(item) }]"
             @click="insertMention(item)"
           >
             <MentionResourceAvatar :item="item" />
@@ -260,9 +188,9 @@
         <div v-if="mentionItems.agents.length > 0" class="mention-group">
           <div class="mention-group-title">智能体</div>
           <div
-            v-for="(item, index) in mentionItems.agents"
+            v-for="item in mentionItems.agents"
             :key="'agent-' + item.value"
-            :class="['mention-item', 'resource-item', { active: isItemSelected('agent', index) }]"
+            :class="['mention-item', 'resource-item', { active: isItemSelected(item) }]"
             @click="insertMention(item)"
           >
             <MentionResourceAvatar :item="item" />
@@ -306,10 +234,10 @@
             {{ mentionQuery ? '未找到标题匹配的对话，试试其他关键词' : '暂无可引用的对话' }}
           </div>
           <button
-            v-for="(item, index) in mentionItems.sessions"
+            v-for="item in mentionItems.sessions"
             :key="item.value"
             type="button"
-            :class="['mention-item', 'session-mention-item', { active: isItemSelected('session', index) }]"
+            :class="['mention-item', 'session-mention-item', { active: isItemSelected(item) }]"
             :title="item.label"
             @click="insertMention(item)"
           >
@@ -967,35 +895,14 @@ const updateMentionItems = (query = '') => {
   }, 250)
 }
 
-// 检查项是否被选中
-const isItemSelected = (type, index) => {
-  const selectedIndex = mentionSelectedIndex.value - addActions.value.length
-  if (selectedIndex < 0) return false
+const mentionResourceGroups = computed(() => [
+  { type: 'mcp', title: '连接器', items: mentionItems.value.mcps },
+  { type: 'plugin', title: '插件', items: mentionItems.value.plugins },
+  { type: 'skill', title: 'Skills', items: mentionItems.value.skills }
+].filter((group) => group.items.length))
 
-  const filesLen = mentionItems.value.files.length
-  const kbLen = mentionItems.value.knowledgeBases.length
-  const mcpLen = mentionItems.value.mcps.length
-  const pluginsLen = mentionItems.value.plugins.length
-  const skillsLen = mentionItems.value.skills.length
-  const agentsLen = mentionItems.value.agents.length
-
-  if (type === 'file') {
-    return selectedIndex === index
-  } else if (type === 'knowledge') {
-    return selectedIndex === filesLen + index
-  } else if (type === 'mcp') {
-    return selectedIndex === filesLen + kbLen + index
-  } else if (type === 'plugin') {
-    return selectedIndex === filesLen + kbLen + mcpLen + index
-  } else if (type === 'skill') {
-    return selectedIndex === filesLen + kbLen + mcpLen + pluginsLen + index
-  } else if (type === 'agent') {
-    return selectedIndex === filesLen + kbLen + mcpLen + pluginsLen + skillsLen + index
-  } else if (type === 'session') {
-    return selectedIndex === filesLen + kbLen + mcpLen + pluginsLen + skillsLen + agentsLen + index
-  }
-  return false
-}
+// 高亮和键盘提交使用同一候选顺序。
+const isItemSelected = (item) => mentionSelectableItems.value[mentionSelectedIndex.value] === item
 
 // 是否有任何候选项
 const showFileSearchPrompt = computed(() => {
