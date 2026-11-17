@@ -48,6 +48,9 @@ async def get_agent_state_view(
             raise ResourceNotFoundError("对话线程不存在")
 
         latest_run = await run_repo.get_latest_run_by_thread_for_user(thread_id, current_uid)
+        # checkpoint 全量读在应用进程内反序列化，大线程可达数十秒；先结束请求级只读事务，
+        # 否则该会话在反序列化期间停在 idle in transaction，占住池连接并钉住快照内的 autovacuum。
+        await db.commit()
         values, interrupts = await _read_checkpoint_state(uid=current_uid, thread_id=thread_id)
         response = {"agent_state": extract_agent_state(values)}
         if latest_run and latest_run.status == "interrupted" and interrupts:
