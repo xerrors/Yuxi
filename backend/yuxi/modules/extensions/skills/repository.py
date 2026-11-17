@@ -109,9 +109,6 @@ class SkillRepository:
         name: str,
         description: str,
         source_type: str,
-        tool_dependencies: list[str] | None,
-        mcp_dependencies: list[str] | None,
-        skill_dependencies: list[str] | None,
         dir_path: str,
         share_config: dict,
         bound_agent_id: int | None = None,
@@ -127,9 +124,6 @@ class SkillRepository:
             name=name,
             description=description,
             source_type=source_type,
-            tool_dependencies=tool_dependencies or [],
-            mcp_dependencies=mcp_dependencies or [],
-            skill_dependencies=skill_dependencies or [],
             dir_path=dir_path,
             version=version,
             content_hash=content_hash,
@@ -161,24 +155,6 @@ class SkillRepository:
             "read_scope": {"access_level": "global", "department_ids": [], "user_uids": []},
             "manage_scope": None,
         }
-        item.updated_by = updated_by
-        item.updated_at = utc_now()
-        await self.db.flush()
-        await self.db.refresh(item)
-        return item
-
-    async def update_dependencies(
-        self,
-        item: Skill,
-        *,
-        tool_dependencies: list[str],
-        mcp_dependencies: list[str],
-        skill_dependencies: list[str],
-        updated_by: str | None,
-    ) -> Skill:
-        item.tool_dependencies = tool_dependencies
-        item.mcp_dependencies = mcp_dependencies
-        item.skill_dependencies = skill_dependencies
         item.updated_by = updated_by
         item.updated_at = utc_now()
         await self.db.flush()

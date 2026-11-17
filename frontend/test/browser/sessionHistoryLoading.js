@@ -30,6 +30,7 @@ async (page) => {
     const url = { searchParams: { get: name => decodeURIComponent(raw.match(new RegExp(`[?&]${name}=([^&]*)`))?.[1] || '') || null } }
     let json
     if (path === '/api/auth/me') json = { id: 1, uid: 'history-verification', username: '历史验证', role: 'user' }
+    else if (path === '/api/mention/plugins') json = []
     else if (path === '/api/agent') json = { agents: [agent] }
     else if (path === `/api/agent/${agentId}`) {
       if (failAgent) return route.fulfill({ status: 503, json: { detail: '智能体暂不可用' } })

@@ -1,5 +1,8 @@
 import { apiGet } from './base'
 
+export const getSessionMentionPlugins = (threadId, signal) =>
+  apiGet(`/api/mention/plugins?${new URLSearchParams({ thread_id: threadId })}`, { signal })
+
 export const searchMentionSessions = (query, signal) =>
   apiGet(`/api/mention/sessions?${new URLSearchParams({ query })}`, { signal })
 

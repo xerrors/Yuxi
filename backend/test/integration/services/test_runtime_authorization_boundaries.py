@@ -505,18 +505,30 @@ class CapturingModel(BaseChatModel):
 
 
 @pytest.mark.parametrize("enabled", [False, True])
-async def test_shipping_graph_checks_nested_mcp_without_discovering_inactive_tools(authorized_context, enabled):
-    """生产装配只查嵌套连接，未激活 MCP 的不可达地址不能阻止普通聊天。"""
+async def test_shipping_graph_does_not_discover_unactivated_plugin_mcp(authorized_context, enabled, monkeypatch):
+    """生产装配不发现未激活插件的 MCP，不可达地址不能阻止普通聊天。"""
+    from yuxi.modules.agents.runtime.middlewares import authorization, plugins
     from yuxi.modules.extensions.mcp.models import MCPServer
+    from yuxi.modules.extensions.plugins import registry
+    from yuxi.modules.extensions.plugins.base import YuxiPlugin
 
+    class InactivePlugin(YuxiPlugin):
+        """部署声明替身，数据库与运行图仍走真实实现。"""
+
+        plugin_id = "inactive"
+        name = "InactivePlugin"
+        description = "Inactive integration fixture"
+        entry_skill = "live-skill"
+        skills = ("live-skill", "nested-skill")
+        mcps = ("nested-mcp",)
+
+    for module in (registry, plugins, authorization, chatbot_graph):
+        monkeypatch.setattr(module, "get_plugins", lambda: (InactivePlugin,))
     fixture = authorized_context
     child_source = fixture.source.parent / "nested-skill"
     child_source.mkdir()
     (child_source / "SKILL.md").write_text("# NESTED_INACTIVE_SKILL\n")
     async with fixture.sessions() as db:
-        parent = await db.scalar(select(Skill).where(Skill.slug == "live-skill"))
-        parent.skill_dependencies = ["nested-skill"]
-        parent.tool_dependencies = ["ocr_parse_file"]
         db.add_all(
             [
                 Skill(
@@ -527,7 +539,6 @@ async def test_shipping_graph_checks_nested_mcp_without_discovering_inactive_too
                     created_by="owner",
                     dir_path="shared/nested-skill",
                     share_config=SHARED,
-                    mcp_dependencies=["nested-mcp"],
                 ),
                 MCPServer(
                     slug="nested-mcp",
@@ -550,7 +561,8 @@ async def test_shipping_graph_checks_nested_mcp_without_discovering_inactive_too
         tools=[],
         mcps=[],
         knowledges=[],
-        skills=["live-skill"],
+        plugins=["inactive"],
+        skills=[],
         preload_skills=[],
     )
     await prepare_agent_runtime_context(context)
@@ -558,8 +570,8 @@ async def test_shipping_graph_checks_nested_mcp_without_discovering_inactive_too
     model = CapturingModel()
     middlewares = await chatbot_graph._build_middlewares(context, CompositeBackend(default=StateBackend, routes={}), cleanup_model=model)
     graph = create_agent(model=model, tools=tools, middleware=middlewares)
-    result = await graph.ainvoke({"messages": [HumanMessage(content="hello")], "activated_skills": ["live-skill"]}, context=context)
+    result = await graph.ainvoke({"messages": [HumanMessage(content="hello")]}, context=context)
     assert result["messages"][-1].content == "AUTHORIZATION_OK"
     assert len(model.requests) == 1
-    assert ("ocr_parse_file" in {tool.name for tool in model.bound_tools}) is enabled
+    assert "ocr_parse_file" not in {tool.name for tool in model.bound_tools}
     assert context.mcp_tool_servers == {}

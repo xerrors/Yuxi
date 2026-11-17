@@ -692,6 +692,7 @@ import { resumeSessionWaitpoint } from '@/modules/session/model/sessionCommands'
 import { useSessionCooperation } from '@/modules/session/model/useSessionCooperation'
 import CooperationTree from '@/modules/session/ui/CooperationTree.vue'
 import { useAgentMentionConfig } from '@/modules/session/model/useAgentMentionConfig'
+import { useSessionPluginMentions } from '@/modules/session/model/useSessionPluginMentions'
 import { getToolCallId, parseToolCallResult } from '@/modules/session/model/toolCallProjection'
 import { collectCooperationTasks } from '@/modules/session/model/cooperationToolView'
 import { normalizeArtifacts } from '@/modules/session/model/artifacts'
@@ -1517,11 +1518,13 @@ watch(workspaceActive, async (active) => {
   }
 }, { immediate: true })
 
+const sessionMentionPlugins = useSessionPluginMentions(currentChatId, workspaceActive)
 const { mentionConfig } = useAgentMentionConfig({
   agents,
   currentThreadAttachments,
   configurableItems,
   agentConfig,
+  sessionPlugins: sessionMentionPlugins,
   mcpServers: mentionMcpServers
 })
 
@@ -2115,6 +2118,7 @@ watch(visibleApprovalThreadId, (threadId) => {
 })
 
 provide('getAgentThreadState', getThreadState)
+provide('sessionAgentConfigurableItems', configurableItems)
 const runtimeView = {
   onInterruptDetected: ({ threadId }) => {
     if (workspaceActive.value) restorePendingInterruptForThread(threadId)

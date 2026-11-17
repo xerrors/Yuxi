@@ -9,19 +9,21 @@ from datetime import datetime
 import pytest
 from langchain_core.messages import ToolMessage
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
 from test.e2e.e2e_helpers import public_message as _message
 from test.e2e.e2e_helpers import register_replay_provider as _provider
 from test.e2e.e2e_helpers import wait_for_consumed_input
 from test.support.permission_convergence import SHARED, create_agent
 from yuxi.modules.workspace.paths import user_workspace_dir
-from yuxi.modules.workspace.runtime_paths import WORKSPACE_PATH
+from yuxi.modules.workspace.runtime_paths import SHARED_SKILLS_PATH, WORKSPACE_PATH
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow, pytest.mark.timeout(120)]
 
 
+@pytest.mark.self_managed_resources
 @pytest.mark.parametrize("revocation", ["agent", "account", "skill", "mcp"])
 async def test_tool_boundary_rechecks_current_caller_and_retains_history(actors, replay, remote_tool, revocation):
-    """撤销 Agent/账号终结执行，撤销 Skill 拒绝工具但继续可执行部分。"""
+    """撤销 Agent/账号终结执行，撤销 Skill 禁止后续读取，撤销 MCP 拒绝执行。"""
     client, db = actors["client"], actors["db"]
     admin, user = (actors["identities"][key] for key in ("admin0", "user0"))
     suffix = uuid.uuid4().hex[:8]
@@ -34,7 +36,7 @@ async def test_tool_boundary_rechecks_current_caller_and_retains_history(actors,
     file = user_workspace_dir(user["uid"]) / filename
     mcp_slug = None
     if revocation == "skill":
-        package = f"---\nname: {skill}\ndescription: permission test\ntool_dependencies: [present_artifacts]\n---\n# Permission test\n"
+        package = f"---\nname: {skill}\ndescription: permission test\n---\n# Permission test\n"
         prepared = await client.post(
             "/api/skills/import/prepare",
             headers=admin["headers"],
@@ -50,7 +52,7 @@ async def test_tool_boundary_rechecks_current_caller_and_retains_history(actors,
         assert confirmed.status_code == 200, confirmed.text
         assert confirmed.json()["data"][0]["success"], confirmed.text
         skill_installed = True
-        replay["action"].update(name="present_artifacts", arguments={"filepaths": []})
+        replay["action"].update(name="read_file", arguments={"file_path": f"{SHARED_SKILLS_PATH}/{skill}/SKILL.md"})
     elif revocation == "mcp":
         mcp_slug = f"permission-mcp-{suffix}"
         created = await client.post(
@@ -151,15 +153,19 @@ async def test_tool_boundary_rechecks_current_caller_and_retains_history(actors,
                 for message in checkpoint.checkpoint["channel_values"]["messages"]
                 if isinstance(message, ToolMessage) and message.tool_call_id == "call-permission"
             ]
-            assert len(outputs) == 1 and "能力受限" in outputs[0].content
-            if revocation in {"skill", "mcp"}:
-                assert outputs[0].status == "error" and skill not in outputs[0].content
-            assert any(
-                "能力受限" in str(message.get("content"))
-                for request in replay["requests"]
-                for message in request["messages"]
-                if message["role"] == "tool"
-            )
+            assert len(outputs) == 1
+            if revocation == "skill":
+                # Skill 已不控制工具授权；此处独立证明真实文件边界拒绝后续读取。
+                assert "# Permission test" not in str(outputs[0].content)
+                assert "Error" in str(outputs[0].content) or outputs[0].status == "error"
+            else:
+                assert "能力受限" in outputs[0].content and outputs[0].status == "error"
+                assert any(
+                    "能力受限" in str(message.get("content"))
+                    for request in replay["requests"]
+                    for message in request["messages"]
+                    if message["role"] == "tool"
+                )
         else:
             assert "权限已撤销" in run["error_message"] or "账号已失效" in run["error_message"]
     finally:
@@ -547,8 +553,9 @@ async def test_runless_forced_summary_uses_current_thread_agent_permission(actor
     """主动摘要没有 Run 时仍按真实 Thread 撤权，并且不发送模型请求。"""
     from langchain_core.messages import HumanMessage
     from langchain_openai import ChatOpenAI
-    from yuxi.infrastructure.postgres.models import load_models
+
     from yuxi.infrastructure.postgres.manager import pg_manager
+    from yuxi.infrastructure.postgres.models import load_models
     from yuxi.modules.agents.runtime.agent_backends.chatbot.context import ChatBotContext
     from yuxi.modules.agents.runtime.middlewares.authorization import AgentExecutionRevoked
     from yuxi.modules.agents.runtime.middlewares.summary import create_summary_middleware_from_context

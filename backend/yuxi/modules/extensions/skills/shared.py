@@ -9,7 +9,6 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.infrastructure.runtime_settings import get_skill_data_dir
-from yuxi.modules.extensions.mcp.service import get_enabled_mcp_server_slugs
 from yuxi.modules.extensions.skills.access import (
     get_allowed_skill_access_levels,
     get_manageable_skill_or_raise,
@@ -30,24 +29,6 @@ from yuxi.modules.extensions.skills.repository import SkillRepository
 from yuxi.modules.identity.models import User
 from yuxi.modules.identity.permissions.resource_permission import ADMIN_ROLES
 from yuxi.modules.identity.repositories.resource_grants import validate_shared_grants
-
-
-async def get_skill_dependency_options(db: AsyncSession, user: User, slug: str | None = None) -> dict[str, list[str] | list[dict]]:
-    """返回当前 Skill 可选择的依赖项。"""
-    from yuxi.modules.extensions.tools.catalog import get_tool_metadata
-
-    skill_items, tool_list, mcp_names = await asyncio.gather(
-        SkillRepository(db).list_enabled_readable(user),
-        asyncio.to_thread(get_tool_metadata),
-        get_enabled_mcp_server_slugs(db=db),
-    )
-    skill_slugs = [item.slug for item in skill_items if isinstance(item.slug, str) and item.slug != slug]
-
-    return {
-        "tools": [{"slug": tool["slug"], "name": tool.get("name", tool["slug"])} for tool in tool_list],
-        "mcps": mcp_names,
-        "skills": skill_slugs,
-    }
 
 
 async def confirm_skill_install_draft(

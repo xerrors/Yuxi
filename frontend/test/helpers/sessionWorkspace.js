@@ -40,6 +40,14 @@ export async function mountSessionWorkspace(t, fetchThreadMessages = async () =>
       }
     }] : []
   })
+  const { configureApiAuth } = await server.ssrLoadModule('/src/apis/auth_context.js')
+  const originalFetch = globalThis.fetch
+  t.mock.method(globalThis, 'fetch', (url, init) => {
+    if (String(url).startsWith('/api/mention/plugins?') && (init?.method || 'GET') === 'GET') {
+      return Promise.resolve(Response.json([]))
+    }
+    return originalFetch(url, init)
+  })
   pinia = createPinia()
   setActivePinia(pinia)
   const { useSessionRuntimeStore } = await server.ssrLoadModule('/src/modules/session/model/sessionRuntime.js')
@@ -56,6 +64,7 @@ export async function mountSessionWorkspace(t, fetchThreadMessages = async () =>
   const agentStore = useAgentStore()
   agentStore.isInitialized = true
   const { default: component } = await server.ssrLoadModule('/src/modules/session/ui/SessionWorkspace.vue')
+  configureApiAuth({ getToken: () => 'test-token' })
   globalThis.document = { addEventListener() {}, removeEventListener() {}, visibilityState: 'visible' }
   globalThis.window = { addEventListener() {}, removeEventListener() {}, innerWidth: 1200 }
   const renderer = createRenderer({

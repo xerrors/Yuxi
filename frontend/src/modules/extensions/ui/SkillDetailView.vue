@@ -158,7 +158,7 @@
                 type="primary"
                 :loading="savingAny"
                 :disabled="pendingFileLoad"
-                title="保存全部文件与依赖修改"
+                title="保存全部文件修改"
                 @click="saveContent"
               >保存修改</a-button>
             </div>
@@ -280,144 +280,6 @@
             </section>
           </div>
         </section>
-
-        <section class="config-section extension-detail-section">
-          <div class="config-section-header extension-detail-section-header">
-            <div class="text extension-detail-section-heading">
-              <h3>运行依赖</h3>
-              <p>声明所需依赖；连接器在此 Skill 激活后按需加载。</p>
-            </div>
-            <a-button v-if="canEditSkill && hasContentChanges" type="primary"
-              :loading="savingAny" :disabled="pendingFileLoad" @click="saveContent"
-              title="保存全部文件与依赖修改">保存修改</a-button>
-          </div>
-          <div class="dependency-groups extension-detail-divider-list config-section-body">
-            <section
-              v-for="group in dependencyGroups"
-              :key="group.key"
-              class="dependency-card extension-detail-divider-row"
-              :class="{ readonly: !canEditSkill }"
-            >
-              <div class="dependency-card-header">
-                <div class="dependency-title-block">
-                  <div class="dependency-title-row">
-                    <h4>{{ group.title }}</h4>
-                    <span v-if="getDependencyValues(group).length" class="dependency-count"
-                      >已选择 {{ getDependencyValues(group).length }} 项</span
-                    >
-                  </div>
-                  <p>{{ group.description }}</p>
-                </div>
-                <a-dropdown
-                  v-if="canEditSkill"
-                  :trigger="['click']"
-                  placement="bottomRight"
-                  overlay-class-name="dependency-selection-popover"
-                >
-                  <a-button
-                    size="small"
-                    class="dependency-action-btn dependency-select-btn"
-                    :disabled="savingAny || pendingFileLoad"
-                  >
-                    <Plus :size="13" />
-                    <span>选择依赖</span>
-                    <ChevronDown :size="12" class="dependency-select-chevron" />
-                  </a-button>
-                  <template #overlay>
-                    <div class="selection-dropdown" @mousedown.stop @click.stop>
-                      <div class="selection-dropdown-header">
-                        <div class="selection-dropdown-title">{{ group.title }}</div>
-                        <div class="selection-dropdown-subtitle">
-                          {{ group.dropdownHint }}
-                        </div>
-                      </div>
-                      <a-input
-                        v-model:value="dependencySearch[group.key]"
-                        size="small"
-                        allow-clear
-                        class="selection-search"
-                        :placeholder="`搜索${group.shortTitle}`"
-                        @mousedown.stop
-                        @click.stop
-                      />
-                      <div v-if="getFilteredDependencyOptions(group).length" class="selection-list">
-                        <div
-                          v-for="option in getFilteredDependencyOptions(group)"
-                          :key="option.value"
-                          role="checkbox"
-                          :aria-checked="isDependencySelected(group, option.value)"
-                          tabindex="0"
-                          class="selection-item"
-                          :class="{ selected: isDependencySelected(group, option.value) }"
-                          @mousedown.stop
-                          @click.stop="
-                            toggleDependency(
-                              group,
-                              option.value,
-                              !isDependencySelected(group, option.value)
-                            )
-                          "
-                          @keydown.enter.prevent="
-                            toggleDependency(
-                              group,
-                              option.value,
-                              !isDependencySelected(group, option.value)
-                            )
-                          "
-                          @keydown.space.prevent="
-                            toggleDependency(
-                              group,
-                              option.value,
-                              !isDependencySelected(group, option.value)
-                            )
-                          "
-                        >
-                          <span class="selection-item-content">
-                            <a-checkbox
-                              :checked="isDependencySelected(group, option.value)"
-                              :disabled="savingAny || pendingFileLoad"
-                              @click.stop
-                              @change="toggleDependency(group, option.value, $event.target.checked)"
-                            />
-                            <span class="selection-label">{{ option.label }}</span>
-                          </span>
-                        </div>
-                      </div>
-                      <div v-else class="selection-empty">
-                        {{ group.options.length ? '没有匹配的依赖' : '暂无可选依赖' }}
-                      </div>
-                    </div>
-                  </template>
-                </a-dropdown>
-                <a-button v-else size="small" disabled class="dependency-action-btn">
-                  {{ isBuiltinInstalledSkill ? '系统维护' : '只读' }}
-                </a-button>
-              </div>
-
-              <div v-if="getDependencyValues(group).length" class="dependency-chip-list">
-                <span
-                  v-for="value in getDependencyValues(group)"
-                  :key="value"
-                  class="dependency-chip"
-                  :title="getDependencyOptionLabel(group, value)"
-                >
-                  <span>{{ getDependencyOptionLabel(group, value) }}</span>
-                  <button
-                    v-if="canEditSkill"
-                    type="button"
-                    class="dependency-chip-remove"
-                    :disabled="savingAny || pendingFileLoad"
-                    :aria-label="`移除 ${getDependencyOptionLabel(group, value)}`"
-                    @click="removeDependency(group, value)"
-                  >
-                    <X :size="12" />
-                  </button>
-                </span>
-              </div>
-              <div v-else class="dependency-empty-hint">{{ group.emptyText }}</div>
-            </section>
-          </div>
-        </section>
       </div>
     </template>
 
@@ -456,18 +318,11 @@ import {
   FilePlus,
   FolderPlus,
   RotateCw,
-  X,
-  Plus,
-  ChevronDown,
   ChevronRight
 } from '@lucide/vue'
 import { resolveApiErrorMessage } from '@/apis/base'
 import { skillApi } from '@/apis/skill_api'
-import {
-  collectSkillChanges,
-  readDraftDependencies,
-  writeDraftDependencies
-} from '@/modules/extensions/model/skillDraft'
+import { collectSkillChanges } from '@/modules/extensions/model/skillDraft'
 import AgentFilePreview from '@/modules/session/ui/workspace/AgentFilePreview.vue'
 import ExtensionDetailLayout from '@/shared/ui/ExtensionDetailLayout.vue'
 import FileTreeComponent from '@/modules/session/ui/workspace/FileTreeComponent.vue'
@@ -528,13 +383,6 @@ const shareConfigForm = ref({
   read_scope: { access_level: 'user', department_ids: [], user_uids: [] },
   manage_scope: null
 })
-const dependencyOptions = reactive({ tools: [], mcps: [], skills: [] })
-const dependencyForm = reactive({
-  tool_dependencies: [],
-  mcp_dependencies: [],
-  skill_dependencies: []
-})
-const dependencySearch = reactive({ tools: '', mcps: '', skills: '' })
 
 const isInstalledSkill = computed(() => !!currentSkill.value?.dir_path)
 
@@ -567,92 +415,6 @@ const selectedFilePreview = computed(() => ({
   supported: true,
   status: pendingFileLoad.value ? 'loading' : 'ready'
 }))
-
-const toolDependencyOptions = computed(() =>
-  (dependencyOptions.tools || []).map((i) =>
-    typeof i === 'object'
-      ? { label: i.name || i.slug, value: i.slug || i.id }
-      : { label: i, value: i }
-  )
-)
-const mcpDependencyOptions = computed(() =>
-  (dependencyOptions.mcps || []).map((i) => ({ label: i, value: i }))
-)
-const skillDependencyOptions = computed(() =>
-  (dependencyOptions.skills || [])
-    .filter((s) => s !== currentSkill.value?.slug)
-    .map((i) => ({ label: i, value: i }))
-)
-
-const dependencyGroups = computed(() => [
-  {
-    key: 'tools',
-    formKey: 'tool_dependencies',
-    title: '工具依赖',
-    shortTitle: '工具',
-    description: '声明此 Skill 运行时需要调用的工具能力。',
-    dropdownHint: '选择后 Agent 运行时会同时加载这些工具。',
-    emptyText: '未声明工具依赖',
-    options: toolDependencyOptions.value
-  },
-  {
-    key: 'mcps',
-    formKey: 'mcp_dependencies',
-    title: '连接器依赖',
-    shortTitle: '连接器',
-    description: '声明此 Skill 依赖的连接器。',
-    dropdownHint: '选择此 Skill 运行时需要的连接器。',
-    emptyText: '未声明连接器依赖',
-    options: mcpDependencyOptions.value
-  },
-  {
-    key: 'skills',
-    formKey: 'skill_dependencies',
-    title: 'Skill 依赖',
-    shortTitle: 'Skill',
-    description: '声明需要一起加载的其他 Skill。',
-    dropdownHint: '依赖 Skill 会随当前 Skill 一起进入运行时可读范围。',
-    emptyText: '未声明 Skill 依赖',
-    options: skillDependencyOptions.value
-  }
-])
-
-const getDependencyValues = (group) => dependencyForm[group.formKey] || []
-
-const getDependencyOptionLabel = (group, value) => {
-  const option = group.options.find((item) => item.value === value)
-  return option?.label || value
-}
-
-const getFilteredDependencyOptions = (group) => {
-  const keyword = String(dependencySearch[group.key] || '')
-    .trim()
-    .toLowerCase()
-  if (!keyword) return group.options
-  return group.options.filter((option) => {
-    const label = String(option.label || '').toLowerCase()
-    const value = String(option.value || '').toLowerCase()
-    return label.includes(keyword) || value.includes(keyword)
-  })
-}
-
-const isDependencySelected = (group, value) => getDependencyValues(group).includes(value)
-
-const toggleDependency = (group, value, checked) => {
-  if (!canEditSkill.value || savingAny.value || pendingFileLoad.value) return
-  const values = getDependencyValues(group)
-  if (checked) {
-    if (!values.includes(value)) dependencyForm[group.formKey] = [...values, value]
-    syncDependencyDraft()
-    return
-  }
-  dependencyForm[group.formKey] = values.filter((item) => item !== value)
-  syncDependencyDraft()
-}
-
-const removeDependency = (group, value) => {
-  toggleDependency(group, value, false)
-}
 
 const goBack = () => {
   if (route.query.agent)
@@ -726,35 +488,15 @@ const fetchSkillDetail = async () => {
     const found = (await skillApi.getSkillDetail(slug.value))?.data
     if (found) {
       currentSkill.value = found
-      syncDependencyFormFromSkill(found)
       syncShareConfigFromSkill(found)
       await reloadContent()
       await loadSkillFile(found.slug)
     }
-    await fetchDependencyOptions(currentSkill.value?.slug)
   } catch {
     message.error('加载失败')
   } finally {
     loading.value = false
   }
-}
-
-const fetchDependencyOptions = async (currentSlug) => {
-  try {
-    const result = await skillApi.getSkillDependencyOptions(currentSlug)
-    const data = result?.data || {}
-    dependencyOptions.tools = data.tools || []
-    dependencyOptions.mcps = data.mcps || []
-    dependencyOptions.skills = data.skills || []
-  } catch {
-    // ignore
-  }
-}
-
-const syncDependencyFormFromSkill = (skillRecord) => {
-  dependencyForm.tool_dependencies = [...(skillRecord?.tool_dependencies || [])]
-  dependencyForm.mcp_dependencies = [...(skillRecord?.mcp_dependencies || [])]
-  dependencyForm.skill_dependencies = [...(skillRecord?.skill_dependencies || [])]
 }
 
 const normalizeTree = (nodes) =>
@@ -784,7 +526,6 @@ const reloadContent = async () => {
   contentRevision.value = data.revision
   treeData.value = normalizeTree(data.tree)
   nodeChanges.value = []
-  syncDependencyFormFromSkill(readDraftDependencies(data.files['SKILL.md']))
 }
 
 const reloadTree = async () => {
@@ -814,26 +555,6 @@ const loadSkillFile = async (_skillSlug, path = 'SKILL.md') => {
 const updateDraftFile = (content) => {
   if (savingAny.value || pendingFileLoad.value) return
   draftFiles.value[selectedPath.value] = content
-  if (selectedPath.value === 'SKILL.md') {
-    try {
-      syncDependencyFormFromSkill(readDraftDependencies(content))
-    } catch {
-      /* 保留无效草稿，保存时显示校验结果。 */
-    }
-  }
-}
-
-const syncDependencyDraft = () => {
-  try {
-    draftFiles.value['SKILL.md'] = writeDraftDependencies(
-      draftFiles.value['SKILL.md'],
-      dependencyForm
-    )
-    if (selectedPath.value === 'SKILL.md') fileContent.value = savedFiles.value['SKILL.md']
-  } catch (error) {
-    message.error(error.message)
-    syncDependencyFormFromSkill(currentSkill.value)
-  }
 }
 
 const handleTreeSelect = async (keys, info) => {
@@ -885,7 +606,6 @@ const saveContent = async () => {
     contentRevision.value = result.data.revision
     nodeChanges.value = []
     fileContent.value = draftFiles.value[selectedPath.value] || ''
-    syncDependencyFormFromSkill(result.data.skill)
     message.success('已保存全部修改')
   } catch (error) {
     message.error(resolveApiErrorMessage(error, '保存失败，全部修改仍保留'))
@@ -1268,8 +988,7 @@ onBeforeRouteLeave(async () => {
   box-shadow: none;
 }
 
-.settings-stack > .settings-card:last-child,
-.dependency-groups > .dependency-card:last-child {
+.settings-stack > .settings-card:last-child {
   border-bottom: 0;
 }
 
@@ -1326,142 +1045,6 @@ onBeforeRouteLeave(async () => {
   padding: 11px 12px;
   font-size: 13px;
   line-height: 1.55;
-}
-
-.dependency-card {
-  padding: 18px 0;
-
-  &.readonly {
-    background: transparent;
-  }
-}
-
-.dependency-card-header {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-}
-
-.dependency-title-block {
-  min-width: 0;
-  flex: 1;
-}
-
-.dependency-title-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-
-  h4 {
-    margin: 0;
-    color: var(--gray-900);
-    font-size: 14px;
-    font-weight: 700;
-  }
-}
-
-.dependency-title-block p {
-  margin: 4px 0 0;
-  color: var(--gray-500);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.dependency-count {
-  padding: 1px 7px;
-  border-radius: 999px;
-  background: var(--gray-50);
-  color: var(--gray-500);
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.dependency-action-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 28px;
-  flex-shrink: 0;
-  gap: 5px;
-  padding: 0 10px;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.dependency-select-btn {
-  border-color: var(--gray-100);
-  background: var(--gray-50);
-  box-shadow: none;
-
-  &:hover,
-  &:focus {
-    border-color: var(--main-color);
-    background: var(--main-20);
-    color: var(--main-color);
-  }
-}
-
-.dependency-select-chevron {
-  opacity: 0.72;
-}
-
-.dependency-chip-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 14px;
-}
-
-.dependency-chip {
-  display: inline-flex;
-  align-items: center;
-  max-width: 220px;
-  gap: 6px;
-  padding: 4px 8px;
-  border: 1px solid var(--gray-150);
-  border-radius: 6px;
-  background: var(--gray-50);
-  color: var(--gray-700);
-  font-size: 12px;
-  line-height: 18px;
-
-  span {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-}
-
-.dependency-chip-remove {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  flex-shrink: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--gray-500);
-  cursor: pointer;
-
-  &:hover {
-    background: var(--gray-150);
-    color: var(--gray-800);
-  }
-}
-
-.dependency-empty-hint {
-  margin-top: 14px;
-  padding: 10px 12px;
-  border: 1px dashed var(--gray-150);
-  border-radius: 6px;
-  background: var(--gray-25);
-  color: var(--gray-500);
-  font-size: 12px;
 }
 
 @media (max-width: 900px) {
@@ -1536,11 +1119,6 @@ onBeforeRouteLeave(async () => {
     align-items: stretch;
   }
 
-  .dependency-chip-list,
-  .dependency-empty-hint {
-    margin-left: 0;
-    padding-left: 0;
-  }
 }
 
 .mt-40 {
@@ -1548,125 +1126,5 @@ onBeforeRouteLeave(async () => {
 }
 .pt-12 {
   padding-top: 12px;
-}
-</style>
-
-<style lang="less">
-.dependency-selection-popover {
-  .selection-dropdown {
-    width: 300px;
-    max-height: 360px;
-    padding: 8px;
-    overflow: hidden auto;
-    border: 1px solid var(--gray-200);
-    border-radius: 14px;
-    background: var(--gray-0);
-    box-shadow: var(--shadow-popover);
-  }
-
-  .selection-dropdown-header {
-    padding: 8px 10px 10px;
-    margin-bottom: 4px;
-    border-bottom: 1px solid var(--gray-100);
-  }
-
-  .selection-dropdown-title {
-    color: var(--gray-900);
-    font-size: 13px;
-    font-weight: 700;
-    line-height: 1.4;
-  }
-
-  .selection-dropdown-subtitle {
-    margin-top: 2px;
-    color: var(--gray-500);
-    font-size: 12px;
-    line-height: 1.4;
-  }
-
-  .selection-search {
-    width: calc(100% - 16px);
-    height: 30px;
-    margin: 8px;
-  }
-
-  .selection-list {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  .selection-item {
-    display: flex;
-    align-items: center;
-    min-height: 38px;
-    gap: 8px;
-    padding: 8px 10px;
-    border-radius: 9px;
-    color: var(--gray-800);
-    cursor: pointer;
-    transition:
-      background-color 160ms ease,
-      color 160ms ease;
-
-    &:hover {
-      background: var(--gray-50);
-    }
-
-    &.selected {
-      background: var(--main-10);
-      color: var(--gray-900);
-    }
-  }
-
-  .selection-item-content {
-    display: flex;
-    align-items: center;
-    min-width: 0;
-    gap: 8px;
-  }
-
-  .selection-label {
-    min-width: 0;
-    overflow: hidden;
-    font-size: 13px;
-    line-height: 18px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .selection-empty {
-    display: block;
-    padding: 16px 0;
-    color: var(--gray-600);
-    font-size: 13px;
-    text-align: center;
-  }
-}
-@media (max-width: 768px) {
-  :deep(.extension-detail-tabs > .ant-tabs-nav) {
-    flex-wrap: wrap;
-    padding-top: 10px;
-    padding-bottom: 10px;
-  }
-
-  :deep(.extension-detail-tabs > .ant-tabs-nav .ant-tabs-extra-content) {
-    flex: 1 1 100%;
-  }
-
-  .extension-detail-breadcrumb {
-    width: 100%;
-    min-width: 0;
-  }
-
-  .extension-detail-current {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .detail-actions :deep(.ant-space) {
-    flex-wrap: wrap;
-  }
 }
 </style>

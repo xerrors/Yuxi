@@ -184,6 +184,42 @@
           </div>
         </div>
 
+        <!-- 插件列表 -->
+        <div v-if="mentionItems.plugins.length > 0" class="mention-group">
+          <div class="mention-group-title">插件</div>
+          <div
+            v-for="(item, index) in mentionItems.plugins"
+            :key="'plugin-' + item.value"
+            :class="['mention-item', 'resource-item', { active: isItemSelected('plugin', index) }]"
+            @click="insertMention(item)"
+          >
+            <MentionResourceAvatar :item="item" />
+            <div class="resource-name">
+              <span
+                v-for="(part, pIdx) in splitTextByQuery(item.label, mentionQuery)"
+                :key="pIdx"
+                :class="{ 'query-match': part.isMatch }"
+                >{{ part.text }}</span
+              >
+            </div>
+            <div
+              v-if="getMentionDescription(item.description)"
+              class="resource-description"
+              :title="getMentionDescription(item.description)"
+            >
+              <span
+                v-for="(part, pIdx) in splitTextByQuery(
+                  getMentionDescription(item.description),
+                  mentionQuery
+                )"
+                :key="pIdx"
+                :class="{ 'query-match': part.isMatch }"
+                >{{ part.text }}</span
+              >
+            </div>
+          </div>
+        </div>
+
         <!-- Skills 列表 -->
         <div v-if="mentionItems.skills.length > 0" class="mention-group">
           <div class="mention-group-title">Skills</div>
@@ -855,6 +891,7 @@ const updateMentionItems = (query = '') => {
   const {
     knowledgeBases: knowledgeItems,
     mcps: mcpItems,
+    plugins: pluginItems,
     skills: skillItems,
     agents: agentItems
   } = mentionResourceItems.value
@@ -865,6 +902,7 @@ const updateMentionItems = (query = '') => {
     files: filteredLocalFiles,
     knowledgeBases: filterItems(knowledgeItems),
     mcps: filterItems(mcpItems),
+    plugins: filterItems(pluginItems),
     skills: filterItems(skillItems),
     agents: filterItems(agentItems).slice(0, 5)
   }
@@ -937,6 +975,7 @@ const isItemSelected = (type, index) => {
   const filesLen = mentionItems.value.files.length
   const kbLen = mentionItems.value.knowledgeBases.length
   const mcpLen = mentionItems.value.mcps.length
+  const pluginsLen = mentionItems.value.plugins.length
   const skillsLen = mentionItems.value.skills.length
   const agentsLen = mentionItems.value.agents.length
 
@@ -946,12 +985,14 @@ const isItemSelected = (type, index) => {
     return selectedIndex === filesLen + index
   } else if (type === 'mcp') {
     return selectedIndex === filesLen + kbLen + index
-  } else if (type === 'skill') {
+  } else if (type === 'plugin') {
     return selectedIndex === filesLen + kbLen + mcpLen + index
+  } else if (type === 'skill') {
+    return selectedIndex === filesLen + kbLen + mcpLen + pluginsLen + index
   } else if (type === 'agent') {
-    return selectedIndex === filesLen + kbLen + mcpLen + skillsLen + index
+    return selectedIndex === filesLen + kbLen + mcpLen + pluginsLen + skillsLen + index
   } else if (type === 'session') {
-    return selectedIndex === filesLen + kbLen + mcpLen + skillsLen + agentsLen + index
+    return selectedIndex === filesLen + kbLen + mcpLen + pluginsLen + skillsLen + agentsLen + index
   }
   return false
 }
@@ -1023,6 +1064,7 @@ const mentionSelectableItems = computed(() => [
   ...mentionItems.value.files,
   ...mentionItems.value.knowledgeBases,
   ...mentionItems.value.mcps,
+  ...mentionItems.value.plugins,
   ...mentionItems.value.skills,
   ...mentionItems.value.agents,
   ...mentionItems.value.sessions
@@ -1307,7 +1349,7 @@ const handleSendOrStop = () => {
 // @ 提及功能状态
 const mentionPopupVisible = ref(false)
 const mentionQuery = ref('')
-const mentionItems = ref({ sessions: [], files: [], knowledgeBases: [], mcps: [], skills: [], agents: [] })
+const mentionItems = ref({ sessions: [], files: [], knowledgeBases: [], mcps: [], plugins: [], skills: [], agents: [] })
 const sessionSearchLoading = ref(false)
 const sessionSearchError = ref(false)
 const mentionSelectedIndex = ref(0)
@@ -1360,7 +1402,13 @@ const handleEditorClick = () => {
 
 watch(
   () => props.mention,
-  () => inputRef.value?.querySelectorAll('[data-vue-mention]').forEach(renderEditorMention),
+  () => {
+    inputRef.value?.querySelectorAll('[data-vue-mention]').forEach(renderEditorMention)
+    if (mentionPopupVisible.value) {
+      mentionSelectedIndex.value = 0
+      updateMentionItems(mentionQuery.value)
+    }
+  },
   { deep: true }
 )
 

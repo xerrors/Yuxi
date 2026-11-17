@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-import yaml
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from yuxi.infrastructure.filesystem import open_directory_fd
@@ -19,7 +18,6 @@ from yuxi.infrastructure.runtime_settings import get_skill_data_dir
 from yuxi.modules.extensions.skills.access import (
     get_manageable_skill_or_raise,
     is_builtin_skill,
-    validate_skill_dependencies,
 )
 from yuxi.modules.extensions.skills.models import Skill, SkillVersion
 from yuxi.modules.extensions.skills.package import (
@@ -28,8 +26,6 @@ from yuxi.modules.extensions.skills.package import (
     compute_skill_directory_hash,
     copy_skill_snapshot,
     parse_skill_dir_metadata,
-    parse_skill_markdown,
-    split_skill_frontmatter,
     validate_content_budget,
     validated_shared_skill_parts,
     validated_skill_file_parts,
@@ -131,16 +127,7 @@ async def commit_skill_content(
         parsed = await asyncio.to_thread(parse_skill_dir_metadata, target)
         if parsed["slug"] != item.slug:
             raise ValueError("SKILL.md frontmatter.slug 必须与 skill slug 一致")
-        dependencies = await validate_skill_dependencies(
-            db=db,
-            parent=item,
-            tool_dependencies=parsed["tool_dependencies"],
-            mcp_dependencies=parsed["mcp_dependencies"],
-            skill_dependencies=parsed["skill_dependencies"],
-            available_skills={row.slug: row for row in await SkillRepository(db).list_enabled_readable(operator)},
-        )
         item.name, item.description = parsed["name"], parsed["description"]
-        item.tool_dependencies, item.mcp_dependencies, item.skill_dependencies = dependencies
         item.dir_path = target.relative_to(get_skill_data_dir()).as_posix()
         item.content_hash = (await asyncio.to_thread(compute_skill_directory_hash, target)).hex()
         item.updated_by = operator.uid
@@ -220,18 +207,9 @@ def content_path(item: Skill) -> Path:
 
 
 def apply_content_changes(target: Path, changes: list[dict]) -> None:
-    """在独占的新内容目录内应用文件与依赖编辑。"""
+    """在独占的新内容目录内应用文件编辑。"""
     for change in changes:
         action = change["action"]
-        if action == "dependencies":
-            root = target / "SKILL.md"
-            previous = root.read_text(encoding="utf-8")
-            _, _, _, meta = parse_skill_markdown(previous)
-            for key in ("tool_dependencies", "mcp_dependencies", "skill_dependencies"):
-                meta[key] = change[key]
-            _, body = split_skill_frontmatter(previous)
-            root.write_text("---\n" + yaml.safe_dump(meta, allow_unicode=True, sort_keys=False) + "---\n" + body, encoding="utf-8")
-            continue
         parts = validated_skill_file_parts(change["path"])
         path = target.joinpath(*parts)
         if action in {"write", "create"}:

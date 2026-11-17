@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { setImmediate } from 'node:timers/promises'
-import { createRenderer, ssrContextKey } from 'vue'
+import { createRenderer, nextTick, reactive, ssrContextKey } from 'vue'
 import { createTestServer } from '../helpers/createTestServer.js'
 
 test('mention 的智能体与对话各显示前五个匹配项，对话排在智能体后且键盘顺序一致', async (t) => {
@@ -29,13 +29,15 @@ test('mention 的智能体与对话各显示前五个匹配项，对话排在智
       createComment: () => ({}), insert() {}, remove() {}, parentNode: () => null, nextSibling: () => null
     })
     let state
-    app = renderer.createApp({ setup() {
-      state = component.setup({ modelValue: '', enableUploads: true, threadId: 'current', mention: {
+    const props = reactive({ modelValue: '', enableUploads: true, threadId: 'current', mention: {
         agents: Array.from({ length: 8 }, (_, i) => ({ agent_id: `agent-${i}`, name: `智能体 ${i}` })),
         knowledgeBases: [{ kb_id: 'kb', name: '知识库' }],
         mcps: [{ slug: 'mcp', name: 'MCP' }],
+        plugins: [{ id: 'custom-image', name: '自定义图像', description: '绘制插图' }],
         skills: [{ slug: 'skill', name: 'Skill' }]
-      } }, { expose() {}, emit() {} })
+    } })
+    app = renderer.createApp({ setup() {
+      state = component.setup(props, { expose() {}, emit() {} })
       return () => null
     } })
     app.provide(ssrContextKey, {})
@@ -52,17 +54,33 @@ test('mention 的智能体与对话各显示前五个匹配项，对话排在智
     assert.deepEqual(state.mentionItems.value.sessions.map((item) => item.value),
       ['session-0', 'session-1', 'session-2', 'session-3', 'session-4'])
     assert.deepEqual(state.mentionSelectableItems.value.map((item) => item.type), [
-      'action', 'action', 'knowledge', 'mcp', 'skill',
+      'action', 'action', 'knowledge', 'mcp', 'plugin', 'skill',
       'agent', 'agent', 'agent', 'agent', 'agent',
       'session', 'session', 'session', 'session', 'session'
     ])
-    for (const [group, type] of [['knowledgeBases', 'knowledge'], ['mcps', 'mcp'], ['skills', 'skill'], ['agents', 'agent'], ['sessions', 'session']]) {
+    for (const [group, type] of [['knowledgeBases', 'knowledge'], ['mcps', 'mcp'], ['plugins', 'plugin'], ['skills', 'skill'], ['agents', 'agent'], ['sessions', 'session']]) {
       for (const [index, item] of state.mentionItems.value[group].entries()) {
         state.mentionSelectedIndex.value = state.mentionSelectableItems.value.indexOf(item)
         assert.equal(state.isItemSelected(type, index), true)
         assert.equal(state.isItemSelected(type, index + 1), false)
       }
     }
+
+    state.mentionPopupVisible.value = true
+    state.mentionSelectedIndex.value = 3
+    state.handleMentionNavigation({ key: 'ArrowDown', preventDefault() {} })
+    assert.equal(state.mentionSelectableItems.value[state.mentionSelectedIndex.value].type, 'plugin')
+    assert.equal(state.isItemSelected('plugin', 0), true)
+    state.handleMentionNavigation({ key: 'ArrowDown', preventDefault() {} })
+    assert.equal(state.mentionSelectableItems.value[state.mentionSelectedIndex.value].type, 'skill')
+    state.handleMentionNavigation({ key: 'ArrowUp', preventDefault() {} })
+    assert.equal(state.mentionSelectableItems.value[state.mentionSelectedIndex.value].type, 'plugin')
+    for (const query of ['图像', 'CUSTOM-IMAGE', '插图', 'plugin']) {
+      state.updateMentionItems(query)
+      assert.deepEqual(state.mentionItems.value.plugins.map((item) => item.value), ['custom-image'])
+    }
+    state.updateMentionItems('不可匹配')
+    assert.deepEqual(state.mentionItems.value.plugins, [])
 
     state.mentionQuery.value = '7'
     state.updateMentionItems('7')
@@ -71,6 +89,17 @@ test('mention 的智能体与对话各显示前五个匹配项，对话排在智
     await setImmediate()
     assert.equal(state.sessionSearchLoading.value, false)
     assert.deepEqual(state.mentionItems.value.sessions.map((item) => item.value), ['session-7'])
+
+    state.mentionQuery.value = ''
+    state.updateMentionItems('')
+    state.mentionSelectedIndex.value = 4
+    props.mention.plugins = []
+    await nextTick()
+    assert.deepEqual(state.mentionItems.value.plugins, [])
+    assert.equal(state.mentionSelectedIndex.value, 0)
+    props.mention.plugins = [{ id: 'abridge', name: '设备操作' }]
+    await nextTick()
+    assert.deepEqual(state.mentionItems.value.plugins.map((item) => item.value), ['abridge'])
   } finally {
     app?.unmount()
     await server.close()

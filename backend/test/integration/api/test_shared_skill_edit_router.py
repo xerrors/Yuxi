@@ -20,7 +20,7 @@ from yuxi.modules.extensions.skills.models import Skill
 from yuxi.infrastructure.runtime_settings import get_skill_data_dir
 from yuxi.modules.identity.models import User
 
-pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
+pytestmark = [pytest.mark.asyncio, pytest.mark.integration, pytest.mark.self_managed_resources]
 
 
 async def test_shared_skill_edit_updates_file_and_index_and_rejects_stale_or_unauthorized(test_client, admin_headers, standard_user):
@@ -90,31 +90,28 @@ async def test_shared_skill_edit_updates_file_and_index_and_rejects_stale_or_una
         )
         assert denied.status_code in {403, 404}, denied.text
 
-        options = await test_client.get("/api/system/skills/dependency-options", params={"slug": slug}, headers=admin_headers)
-        assert options.status_code == 200, options.text
-        tool_slug = options.json()["data"]["tools"][0]["slug"]
         dependencies = await test_client.put(
-            f"/api/system/skills/{slug}/dependencies",
+            f"/api/system/skills/{slug}/file",
             headers=admin_headers,
             json={
-                "tool_dependencies": [tool_slug],
-                "mcp_dependencies": [],
-                "skill_dependencies": [],
+                "path": "SKILL.md",
+                "content": updated_content.replace("---", "---\r\ntool_dependencies: [web_search]", 1),
                 "expected_revision": saved_revision,
             },
         )
-        assert dependencies.status_code == 200, dependencies.text
+        assert dependencies.status_code == 400, dependencies.text
+        assert "部署插件" in dependencies.text
 
         root_snapshot = await test_client.get(f"/api/system/skills/{slug}/file", params={"path": "SKILL.md"}, headers=admin_headers)
         assert root_snapshot.status_code == 200, root_snapshot.text
-        assert root_snapshot.json()["data"]["skill"]["tool_dependencies"] == [tool_slug]
-        assert root_snapshot.json()["data"]["revision"] == dependencies.json()["data"]["revision"]
+        assert "tool_dependencies" not in root_snapshot.json()["data"]["skill"]
+        assert root_snapshot.json()["data"]["revision"] == saved_revision
 
-        source = get_skill_data_dir() / dependencies.json()["data"]["skill"]["dir_path"] / "SKILL.md"
+        source = get_skill_data_dir() / saved.json()["data"]["skill"]["dir_path"] / "SKILL.md"
         persisted_content = source.read_text(encoding="utf-8")
         frontmatter = yaml.safe_load(persisted_content.split("---", 2)[1])
         assert frontmatter["description"] == "after"
-        assert frontmatter["tool_dependencies"] == [tool_slug]
+        assert "tool_dependencies" not in frontmatter
         assert "# After" in persisted_content
         engine = create_async_engine(os.environ["POSTGRES_URL"])
         try:
@@ -122,7 +119,7 @@ async def test_shared_skill_edit_updates_file_and_index_and_rejects_stale_or_una
             async with session_factory() as db:
                 row = (await db.execute(select(Skill).where(Skill.slug == slug))).scalar_one()
                 assert row.description == "after"
-                assert row.tool_dependencies == [tool_slug]
+                assert "tool_dependencies" not in row.to_dict()
 
             async with session_factory() as editor, session_factory() as runtime:
                 await editor.execute(select(Skill).where(Skill.slug == slug).with_for_update())
@@ -229,12 +226,11 @@ async def test_unquoted_multiline_description_can_be_saved_through_http(test_cli
         read = await test_client.get(f"/api/system/skills/{slug}/file", params={"path": "SKILL.md"}, headers=admin_headers)
         assert read.status_code == 200, read.text
         saved = await test_client.put(
-            f"/api/system/skills/{slug}/dependencies",
+            f"/api/system/skills/{slug}/file",
             headers=admin_headers,
             json={
-                "tool_dependencies": [],
-                "mcp_dependencies": [],
-                "skill_dependencies": [],
+                "path": "SKILL.md",
+                "content": read.json()["data"]["content"],
                 "expected_revision": read.json()["data"]["revision"],
             },
         )

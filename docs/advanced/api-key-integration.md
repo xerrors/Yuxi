@@ -1,6 +1,6 @@
 # 使用 API Key 调用 Yuxi
 
-API Key 适合服务之间调用 Yuxi。它绑定到一个具体的 Yuxi 用户，未绑定 APP 的个人请求使用该用户的角色、部门和资源权限。绑定 APP 的 Agents 请求使用独立终端用户身份。共享 Agent 可见性按该 Yuxi 用户当前读取授权匹配，知识库和 Skill 依赖按终端用户授权解析，资源边界见[资源权限](../mechanisms/resource-permissions.md)。
+API Key 适合服务之间调用 Yuxi。它绑定到一个具体的 Yuxi 用户，未绑定 APP 的个人请求使用该用户的角色、部门和资源权限。绑定 APP 的 Agents 请求使用独立终端用户身份。共享 Agent 可见性按该 Yuxi 用户当前读取授权匹配，知识库、Skill 内容与插件引用资源按终端用户授权解析，资源边界见[资源权限](../mechanisms/resource-permissions.md)。
 
 ## 创建 API Key
 

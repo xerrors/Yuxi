@@ -16,7 +16,7 @@ from yuxi.modules.extensions.skills.access import get_skills_root_dir
 from yuxi.modules.extensions.skills import projection as projection_service
 from yuxi.modules.extensions.skills.models import Skill
 
-pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
+pytestmark = [pytest.mark.asyncio, pytest.mark.integration, pytest.mark.self_managed_resources]
 
 
 async def test_skill_artifact_rechecks_authorization_after_share_revoke(
@@ -48,9 +48,6 @@ async def test_skill_artifact_rechecks_authorization_after_share_revoke(
                 name=slug,
                 description="Skill artifact authorization integration fixture",
                 source_type="upload",
-                tool_dependencies=[],
-                mcp_dependencies=[],
-                skill_dependencies=[],
                 dir_path=f"shared/{slug}",
                 share_config={
                     "version": 2,

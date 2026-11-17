@@ -8,14 +8,11 @@ from typing import Any, TypedDict
 
 
 class RuntimeSkill(TypedDict):
-    """模型可用的 Skill 提示与依赖信息。"""
+    """模型可用的 Skill 提示信息。"""
 
     name: str
     description: str
     path: str
-    tools: list[str]
-    mcps: list[str]
-    skills: list[str]
 
 
 class SkillRuntimeMetadata(TypedDict):
@@ -28,7 +25,7 @@ class SkillRuntimeMetadata(TypedDict):
 
 
 class SkillRuntimeSnapshot(TypedDict):
-    """当前权限派生的运行选择、依赖及预加载正文。"""
+    """当前权限派生的 Skill 选择及预加载正文。"""
 
     capability_limited: bool
     context_skills: list[str]
@@ -38,6 +35,7 @@ class SkillRuntimeSnapshot(TypedDict):
     skill_metadata: dict[str, SkillRuntimeMetadata]
     preloaded_skills: list[str]
     preloaded_skill_contents: dict[str, str]
+    plugin_entry_contents: dict[str, str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,9 +52,6 @@ class ResolvedSkill:
     enabled: bool
     created_by: str | None
     share_config: dict[str, Any] | None
-    tool_dependencies: list[str]
-    mcp_dependencies: list[str]
-    skill_dependencies: list[str]
     bound_agent_id: int | None = None
     bound_agent: Any = None
     version: str | None = None
@@ -76,9 +71,6 @@ class ResolvedSkill:
             "source_scope": self.source_scope,
             "enabled": self.enabled,
             "created_by": self.created_by,
-            "tool_dependencies": self.tool_dependencies,
-            "mcp_dependencies": self.mcp_dependencies,
-            "skill_dependencies": self.skill_dependencies,
             "overrides_shared": self.overrides_shared,
             "shadowed_by_personal": self.shadowed_by_personal,
         }

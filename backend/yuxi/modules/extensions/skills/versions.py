@@ -39,7 +39,7 @@ async def restore_skill_version(
     expected_revision: str,
     operator: User,
 ) -> dict:
-    """校验历史包与当前依赖权限后，提交当前内容引用。"""
+    """校验历史包与当前内容契约后，提交当前内容引用。"""
     item = await get_manageable_skill_or_raise(db, operator, slug, for_update=True)
     require_bound_skill(item)
     row = await SkillRepository(db).get_version(item.id, version)

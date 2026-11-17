@@ -50,7 +50,7 @@ async def test_prepare_agent_config_write_resolves_only_submitted_resource_field
         "skills": {"visible-skills", "also-visible-skills"},
         "preload_skills": {"visible-skills", "also-visible-skills"},
     }
-    resolver.assert_awaited_once_with(resource_fields, db=db, user=user)
+    resolver.assert_awaited_once_with(resource_fields, db=db, user=user, agent_id=None)
 
 
 @pytest.mark.asyncio
@@ -98,3 +98,80 @@ class ConfigContext(BaseContext):
     """覆盖保存资源字段的最小测试 Schema。"""
 
     title: str = ""
+
+
+@pytest.mark.parametrize("selection", ["all", ["missing-deployed-plugin"], 1])
+@pytest.mark.asyncio
+async def test_plugin_config_rejects_invalid_selection_at_write_boundary(selection):
+    """插件配置只能引用当前部署中明确选择的插件。"""
+    with pytest.raises(ValueError):
+        await agent_config_service.prepare_agent_config_write(
+            {"context": {"plugins": selection}},
+            context_schema=ConfigContext,
+            db=object(),
+            user=SimpleNamespace(role="user"),
+        )
+
+
+def test_plugin_config_default_and_schema_are_explicit():
+    """新增部署插件不会自动进入既有智能体。"""
+    context = ConfigContext()
+    assert context.plugins == []
+    item = ConfigContext.get_configurable_items()["plugins"]
+    assert item["supports_all"] is False
+    assert item["default"] == []
+    merged = agent_config_service.merge_agent_config_json(
+        {},
+        {"context": {"plugins": ["knowledge-base"]}},
+        resource_access={"plugins": {"knowledge-base"}},
+        context_schema=ConfigContext,
+    )
+    assert merged["context"]["plugins"] == ["knowledge-base"]
+
+
+@pytest.mark.parametrize("field", ["skills", "preload_skills"])
+def test_plugin_entry_cannot_be_selected_as_independent_skill(field):
+    """插件入口必须通过插件配置获得，普通 Skill 路径不能绕过。"""
+    with pytest.raises(ValueError, match="插件入口"):
+        agent_config_service.merge_agent_config_json(
+            {},
+            {"context": {field: ["knowledge-base"]}},
+            resource_access={field: {"knowledge-base"}},
+            context_schema=ConfigContext,
+        )
+
+
+@pytest.mark.asyncio
+async def test_skill_options_exclude_plugin_entries(monkeypatch):
+    """入口仍可管理，但不能由普通 Skill 选择器独立启用。"""
+    from yuxi.modules.agents.runtime.context import resolve_agent_resource_options
+    from yuxi.modules.extensions.skills.repository import SkillRepository
+
+    monkeypatch.setattr(
+        SkillRepository,
+        "list_enabled_readable",
+        AsyncMock(
+            return_value=[
+                SimpleNamespace(slug="knowledge-base", name="知识库", description="入口"),
+                SimpleNamespace(slug="ordinary-guide", name="普通指南", description="内容"),
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        SkillRepository,
+        "get_by_slug",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                enabled=True,
+                bound_agent_id=None,
+                source_type="builtin",
+                created_by=None,
+                share_config={"version": 2, "read_scope": {"access_level": "global"}, "manage_scope": None},
+            )
+        ),
+    )
+    options = await resolve_agent_resource_options(
+        {"skills", "plugins"}, db=object(), user=SimpleNamespace(uid="reader", role="user", department_id=None)
+    )
+    assert [item["key"] for item in options["skills"]] == ["ordinary-guide"]
+    assert "knowledge-base" in {item["key"] for item in options["plugins"]}

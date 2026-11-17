@@ -74,7 +74,7 @@ async def isolated_mcp(monkeypatch):
     sock = None
     try:
         async with engine.begin() as connection:
-            for model in [Department, User, MCPServer, MCPConnection, KnowledgeBase]:
+            for model in [Department, User, MCPServer, MCPConnection, KnowledgeBase, ConfigOption]:
                 await connection.run_sync(model.__table__.create)
         async with sessions() as db:
             department = Department(name="isolated-mcp-delegation")
@@ -254,13 +254,12 @@ async def test_configured_mcp_recovers_after_transient_discovery_and_stays_bound
     """直接配置的服务发现暂时失败后，后续模型请求恢复并持续绑定工具。"""
     from langchain.agents.middleware.types import ModelRequest
 
-    from yuxi.modules.agents.runtime.middlewares.skills import SkillsMiddleware
+    from yuxi.modules.agents.runtime.middlewares.plugins import PluginLoaderMiddleware
     from yuxi.modules.extensions.tools.runtime import resolve_configured_runtime_tools
 
     context = isolated_mcp
     runtime = context.runtime
-    runtime.tools, runtime.mcps, runtime.mcp_unavailable = [], ["knowledge"], {}
-    runtime.skill_runtime_snapshot = {"effective_skills": [], "preloaded_skills": [], "runtime_skills": {}, "skill_metadata": {}}
+    runtime.tools, runtime.mcps, runtime.plugins, runtime.mcp_unavailable = [], ["knowledge"], [], {}
     original_loader = service.load_mcp_tools
     attempts = 0
 
@@ -281,7 +280,7 @@ async def test_configured_mcp_recovers_after_transient_discovery_and_stays_bound
         """读取正式中间件实际交付给模型的工具。"""
         return {tool.name: tool for tool in current.tools}
 
-    middleware = SkillsMiddleware()
+    middleware = PluginLoaderMiddleware()
     first = await middleware.awrap_model_call(request, model)
     second = await middleware.awrap_model_call(request, model)
     assert "list_kbs" in first and "list_kbs" in second
@@ -637,15 +636,16 @@ async def test_deployment_toggle_preserves_builtin_identity_and_admin_policy(iso
         assert ("knowledge" in await service.get_enabled_mcp_server_slugs(db=db)) is bool(admin_enabled)
 
 
-async def test_dynamic_skill_restores_reenabled_tool_with_same_run_cache(isolated_mcp):
-    """动态 Skill 每轮读取当前策略，使用同一完整目录缓存恢复工具。"""
+async def test_dynamic_plugin_restores_reenabled_tool_with_same_run_cache(isolated_mcp):
+    """动态插件每轮读取当前策略，使用同一完整目录缓存恢复工具。"""
     from langchain.agents.middleware.types import ModelRequest
 
-    from yuxi.modules.agents.runtime.middlewares.skills import SkillsMiddleware
+    from yuxi.modules.agents.runtime.middlewares.plugins import PluginLoaderMiddleware
 
     context = isolated_mcp
     runtime = SimpleNamespace(
         uid=context.reader.uid,
+        plugins=["knowledge-base"],
         mcps=[],
         mcp_tools={},
         mcp_tool_servers={},
@@ -653,10 +653,11 @@ async def test_dynamic_skill_restores_reenabled_tool_with_same_run_cache(isolate
         knowledges=["delegation-kb"],
         run_id="independent-skill-run",
         skill_runtime_snapshot={
-            "effective_skills": ["dynamic-kb"],
+            "plugin_entry_contents": {"knowledge-base": "Knowledge instructions"},
+            "effective_skills": ["knowledge-base"],
             "preloaded_skills": [],
             "runtime_skills": {
-                "dynamic-kb": {
+                "knowledge-base": {
                     "name": "Dynamic knowledge",
                     "description": "Knowledge fixture",
                     "path": "/home/user/skills/dynamic-kb/SKILL.md",
@@ -668,14 +669,18 @@ async def test_dynamic_skill_restores_reenabled_tool_with_same_run_cache(isolate
         },
     )
     request = ModelRequest(
-        model=SimpleNamespace(), messages=[], runtime=SimpleNamespace(context=runtime), tools=[], state={"activated_skills": ["dynamic-kb"]}
+        model=SimpleNamespace(),
+        messages=[],
+        runtime=SimpleNamespace(context=runtime),
+        tools=[],
+        state={"activated_plugins": ["knowledge-base"]},
     )
 
     async def tools_for_model(current):
         """回读中间件真正交给模型的工具对象。"""
         return {tool.name: tool for tool in current.tools}
 
-    middleware = SkillsMiddleware()
+    middleware = PluginLoaderMiddleware()
     await update_server(context, disabled_tools=["list_kbs"])
     first = await middleware.awrap_model_call(request, tools_for_model)
     assert "list_kbs" not in first

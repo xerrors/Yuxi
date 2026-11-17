@@ -23,12 +23,13 @@ from test.e2e.e2e_helpers import (
 )
 from test.support.openai_replay_server import send_json_response, send_openai_sse_response, serve_replay_handler
 from test.support.public_api import delete_agent
+from yuxi.modules.extensions.plugins.registry import get_plugin
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow, pytest.mark.self_managed_resources]
 
 
 @pytest.mark.parametrize(
-    "employee,via_skill,expected,forbidden,entrypoint",
+    "employee,via_plugin,expected,forbidden,entrypoint",
     [
         ("superadmin_employee", False, "年假", ("加班", "外勤"), "direct"),
         ("admin_employee", False, "加班", ("年假", "外勤"), "direct"),
@@ -37,7 +38,7 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow, pytest.mar
         ("user_employee", False, "外勤", ("年假", "加班"), "scheduled"),
     ],
 )
-async def test_real_employee_mcp_through_worker(employee, via_skill, expected, forbidden, entrypoint):
+async def test_real_employee_mcp_through_worker(employee, via_plugin, expected, forbidden, entrypoint):
     """模型只能消费真实工具结果，最终 Turn 与 audit 属于同一 result Run。"""
     private_file = os.getenv("MCP_LAB_ACCOUNTS_FILE")
     if not private_file:
@@ -48,6 +49,18 @@ async def test_real_employee_mcp_through_worker(employee, via_skill, expected, f
     headers = {"Authorization": "Bearer " + accounts[employee]["access_token"]}
     suffix = uuid4().hex[:10]
     provider_id, slug, skill = "mcp-replay-" + suffix, "pytest-mcp-personal-" + suffix, "pytest-mcp-skill-" + suffix
+    plugin_id = "employee-attendance-fixture"
+    if via_plugin:
+        try:
+            deployed = get_plugin(plugin_id)
+        except ValueError:
+            pytest.fail("先部署 test/support/employee_attendance_plugin.json 到 plugins/deployed 并重启 API/worker")
+        skill = deployed.entry_skill
+        db = await asyncpg.connect(postgres_dsn())
+        try:
+            assert not await db.fetchval("SELECT count(*) FROM skills WHERE slug=$1", skill), "请使用独立实验部署，避免覆盖已有 Skill"
+        finally:
+            await db.close()
     observed = []
 
     class Handler(BaseHTTPRequestHandler):
@@ -87,7 +100,20 @@ async def test_real_employee_mcp_through_worker(employee, via_skill, expected, f
                         ],
                     }
                     finish = "tool_calls"
-            elif tools:
+            elif via_plugin and not tools:
+                delta = {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "activate-attendance",
+                            "type": "function",
+                            "function": {"name": "load_plugin", "arguments": json.dumps({"plugin_id": plugin_id})},
+                        }
+                    ],
+                }
+                finish = "tool_calls"
+            elif tools and tools[-1]["tool_call_id"] != "activate-attendance":
                 actual = tools[-1]["content"]
                 observed.append(actual)
                 if expected not in str(actual) or any(value in str(actual) for value in forbidden):
@@ -136,11 +162,8 @@ async def test_real_employee_mcp_through_worker(employee, via_skill, expected, f
         with serve_replay_handler(Handler) as replay_url:
             try:
                 await register_replay_provider(client, admin_headers, base_url=replay_url, provider_id=provider_id)
-                if via_skill:
-                    package = (
-                        f"---\nname: {skill}\ndescription: 查询本人考勤\n"
-                        "mcp_dependencies: [enterprise-attendance]\n---\n使用考勤工具查询本人记录。\n"
-                    )
+                if via_plugin:
+                    package = f"---\nname: {skill}\ndescription: 查询本人考勤\n---\n使用考勤工具查询本人记录。\n"
                     prepared = await client.post(
                         "/api/skills/import/prepare", headers=admin_headers, files={"file": ("SKILL.md", package.encode(), "text/markdown")}
                     )
@@ -173,9 +196,10 @@ async def test_real_employee_mcp_through_worker(employee, via_skill, expected, f
                                 "model": provider_id + ":deterministic-chat",
                                 "tools": [],
                                 "knowledges": [],
-                                "mcps": [] if via_skill else ["enterprise-attendance"],
-                                "skills": [skill] if via_skill else [],
-                                "preload_skills": [skill] if via_skill else [],
+                                "mcps": [] if via_plugin else ["enterprise-attendance"],
+                                "skills": [],
+                                "plugins": [plugin_id] if via_plugin else [],
+                                "preload_skills": [],
                                 "system_prompt": "调用考勤工具后返回本人记录。",
                             }
                         },
@@ -331,7 +355,7 @@ async def test_real_employee_mcp_through_worker(employee, via_skill, expected, f
                             await delete_agent(client, admin_headers, agent)
                         except Exception as error:
                             cleanup_errors.append(f"删除测试智能体：{type(error).__name__}")
-                    if via_skill:
+                    if via_plugin:
                         try:
                             deleted = await client.post("/api/system/skills/delete-batch", headers=admin_headers, json={"slugs": [skill]})
                             assert deleted.status_code == 200 and all(item["success"] for item in deleted.json()["data"])

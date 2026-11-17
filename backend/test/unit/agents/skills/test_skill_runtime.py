@@ -4,8 +4,6 @@ import pytest
 import yuxi.modules.extensions.skills.runtime as skill_runtime
 from sqlalchemy.dialects import postgresql
 from yuxi.modules.extensions.skills.runtime import (
-    build_dependency_bundle,
-    expand_skill_closure,
     resolve_runtime_skills_for_context,
 )
 from yuxi.modules.extensions.skills.repository import SkillRepository as RealSkillRepository
@@ -38,8 +36,8 @@ async def test_personal_skill_same_slug_replacement_changes_runtime_identity(tmp
 
 
 @pytest.mark.asyncio
-async def test_runtime_skill_closure_rechecks_each_row_without_listing_all(monkeypatch):
-    """逐行加锁后复核权限，并阻止依赖引入其他 Agent 的专属 Skill。"""
+async def test_runtime_skill_selection_rechecks_each_row_without_listing_all(monkeypatch):
+    """逐行加锁后复核权限，不展开旧依赖且不读取其他 Agent 的专属 Skill。"""
     from yuxi.modules.extensions.skills import access
 
     items = {
@@ -67,7 +65,7 @@ async def test_runtime_skill_closure_rechecks_each_row_without_listing_all(monke
     monkeypatch.setattr(access, "SkillRepository", Repository)
     monkeypatch.setattr(access, "user_can_access_skill", lambda _user, item: item.enabled)
     visible = await access.lock_accessible_shared_skills_for_runtime(None, object(), ["root"])
-    assert [item.slug for item in visible] == ["root", "dep"]
+    assert [item.slug for item in visible] == ["root"]
     bound = await access.lock_accessible_shared_skills_for_runtime(None, object(), ["other-bound"], bound_slug="other-bound")
     assert [item.slug for item in bound] == ["other-bound"]
 
@@ -81,7 +79,7 @@ def _mock_runtime_sources(monkeypatch, accessible):
             if not hasattr(item, "id"):
                 item.id = item.slug
         shadowed_slugs = shadowed_slugs or set()
-        return [item for item in items if item.source_scope != "personal" and item.slug not in shadowed_slugs]
+        return [item for item in items if item.source_scope != "personal" and item.slug not in shadowed_slugs and item.slug in _selected]
 
     async def personal(uid):
         items = await accessible(object(), SimpleNamespace(uid=uid))
@@ -118,9 +116,6 @@ async def test_personal_skills_are_available_independently_of_shared_selection(t
         enabled=True,
         created_by="user-a",
         share_config={"version": 2, "read_scope": {"access_level": "global"}, "manage_scope": None},
-        tool_dependencies=[],
-        mcp_dependencies=[],
-        skill_dependencies=[],
     )
     extra = Skill(
         id=2,
@@ -132,9 +127,6 @@ async def test_personal_skills_are_available_independently_of_shared_selection(t
         enabled=True,
         created_by="user-a",
         share_config=shared.share_config,
-        tool_dependencies=[],
-        mcp_dependencies=[],
-        skill_dependencies=[],
     )
 
     class FakeSkillRepository(RealSkillRepository):
@@ -203,8 +195,6 @@ def _skill(tmp_path, slug: str, *, dependencies: list[str] | None = None, conten
         version="v1",
         content_hash="hash-v1",
         source_dir=source_dir,
-        tool_dependencies=[],
-        mcp_dependencies=[],
         skill_dependencies=dependencies or [],
     )
 
@@ -247,8 +237,6 @@ async def test_resolve_runtime_skills_derives_authorized_scope(monkeypatch, tmp_
                 version="v1",
                 content_hash="hash-v1",
                 source_dir="/tmp/shared/alpha",
-                tool_dependencies=[],
-                mcp_dependencies=[],
                 skill_dependencies=["beta"],
             ),
             SimpleNamespace(
@@ -259,9 +247,6 @@ async def test_resolve_runtime_skills_derives_authorized_scope(monkeypatch, tmp_
                 version=None,
                 content_hash=None,
                 source_dir=personal_dir,
-                tool_dependencies=[],
-                mcp_dependencies=[],
-                skill_dependencies=[],
             ),
         ]
 
@@ -278,34 +263,11 @@ async def test_resolve_runtime_skills_derives_authorized_scope(monkeypatch, tmp_
     assert set(scope["runtime_skills"]) == {"alpha", "beta"}
     assert scope["runtime_skills"]["alpha"]["path"] == "/home/user/skills/alpha/SKILL.md"
     assert scope["runtime_skills"]["beta"]["path"] == "/home/user/workspace/agents/skills/beta/SKILL.md"
-    assert scope["runtime_skills"]["alpha"]["skills"] == ["beta"]
-
-
-def test_expand_skill_closure_handles_cycles_missing_and_duplicates():
-    """循环、缺失目标和重复依赖保持 fail-safe 且稳定去重。"""
-    runtime_skills = {
-        "alpha": {"tools": [], "mcps": [], "skills": ["beta", "missing", "beta"]},
-        "beta": {"tools": [], "mcps": [], "skills": ["alpha"]},
-    }
-
-    assert expand_skill_closure(["alpha", "alpha"], runtime_skills) == ["alpha", "beta"]
-
-
-def test_dependency_bundle_returns_only_consumed_dependencies():
-    """依赖包只暴露 Middleware 消费的工具和 MCP 字段。"""
-    runtime_skills = {
-        "alpha": {"tools": ["tool-a", "tool-a"], "mcps": ["mcp-a"], "skills": ["beta"]},
-        "beta": {"tools": ["tool-b"], "mcps": ["mcp-a", "mcp-b"], "skills": []},
-    }
-
-    bundle = build_dependency_bundle(["alpha", "beta"], runtime_skills)
-
-    assert bundle == {"tools": ["tool-a", "tool-b"], "mcps": ["mcp-a", "mcp-b"]}
-    assert "skills" not in bundle
+    assert "skills" not in scope["runtime_skills"]["alpha"]
 
 
 @pytest.mark.asyncio
-async def test_preload_reads_authorized_dependency_closure(tmp_path, monkeypatch):
+async def test_preload_reads_only_selected_content(tmp_path, monkeypatch):
     skills = [
         _skill(tmp_path, "alpha", dependencies=["beta"], content="# Alpha\nUSE_ALPHA"),
         _skill(tmp_path, "beta", content="# Beta\nUSE_BETA"),
@@ -322,10 +284,9 @@ async def test_preload_reads_authorized_dependency_closure(tmp_path, monkeypatch
     )
 
     assert scope["context_preload_skills"] == ["alpha"]
-    assert scope["preloaded_skills"] == ["alpha", "beta"]
+    assert scope["preloaded_skills"] == ["alpha"]
     assert scope["preloaded_skill_contents"] == {
         "alpha": "# Alpha\nUSE_ALPHA",
-        "beta": "# Beta\nUSE_BETA",
     }
     context = SimpleNamespace(skills=["alpha"], preload_skills=["alpha"], skill_runtime_snapshot=scope)
     (skills[0].source_dir / "SKILL.md").write_text("# Alpha\nUPDATED", encoding="utf-8")
@@ -383,10 +344,10 @@ async def test_manifest_retains_metadata_from_authorized_resolution(tmp_path, mo
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "selection, expected",
-    [([], []), (["missing"], []), (["alpha", "missing"], ["alpha", "beta"]), ("all", ["alpha", "beta", "gamma"])],
+    [([], []), (["missing"], []), (["alpha", "missing"], ["alpha"]), ("all", ["alpha", "beta", "gamma"])],
 )
-async def test_preload_all_reads_only_enabled_authorized_skill_closure(tmp_path, monkeypatch, selection, expected):
-    """全部预加载沿真实解析链读取已启用 Skill 及其授权依赖的文件。"""
+async def test_preload_all_reads_only_enabled_authorized_skills(tmp_path, monkeypatch, selection, expected):
+    """全部预加载沿真实解析链读取已启用的授权 Skill 文件。"""
     from yuxi.modules.agents.runtime.context import normalize_agent_context_config
     from yuxi.modules.extensions.skills import shared as service
 
@@ -442,3 +403,53 @@ async def test_skill_file_read_uses_shared_row_lock():
 
     assert "FOR SHARE" in str(statements[0].compile(dialect=postgresql.dialect()))
     assert "FOR UPDATE" not in str(statements[0].compile(dialect=postgresql.dialect()))
+
+
+@pytest.mark.asyncio
+async def test_plugin_entry_is_not_preloaded_or_directly_selected(tmp_path, monkeypatch):
+    """插件入口只作为加载结果准备，不能借普通选择或预加载进入模型。"""
+    entry = _skill(tmp_path, "abridge", content="# image instructions")
+    shared = _skill(tmp_path, "chat-widgets", content="# shared widget instructions")
+
+    async def accessible(_db, _user):
+        return [entry, shared]
+
+    _mock_runtime_sources(monkeypatch, accessible)
+    disabled = await resolve_runtime_skills_for_context(
+        SimpleNamespace(skills=["abridge"], preload_skills=["abridge"], plugins=[]),
+        db=object(),
+        user=SimpleNamespace(uid="test"),
+    )
+    assert disabled["effective_skills"] == []
+    assert disabled["plugin_entry_contents"] == {}
+    enabled = await resolve_runtime_skills_for_context(
+        SimpleNamespace(skills=[], preload_skills=[], plugins=["abridge"]),
+        db=object(),
+        user=SimpleNamespace(uid="test"),
+    )
+    assert enabled["context_skills"] == []
+    assert enabled["preloaded_skill_contents"] == {}
+    assert enabled["plugin_entry_contents"] == {"abridge": "# image instructions"}
+    assert set(enabled["effective_skills"]) == {"abridge", "chat-widgets"}
+
+
+@pytest.mark.asyncio
+async def test_plugin_entry_cannot_be_shadowed_by_personal_skill(tmp_path, monkeypatch):
+    """个人同名文件不能替换部署插件的使用说明。"""
+    entry = _skill(tmp_path, "abridge")
+    entry.source_scope = "personal"
+
+    async def accessible(_db, _user):
+        return [entry]
+
+    _mock_runtime_sources(monkeypatch, accessible)
+    for plugins in ([], ["abridge"]):
+        snapshot = await resolve_runtime_skills_for_context(
+            SimpleNamespace(skills=[], preload_skills=[], plugins=plugins),
+            db=object(),
+            user=SimpleNamespace(uid="test"),
+        )
+        assert snapshot["context_skills"] == ["abridge"]
+        assert snapshot["runtime_skills"]["abridge"]["path"].startswith("/home/user/workspace/")
+        assert snapshot["plugin_entry_contents"] == {}
+        assert snapshot["capability_limited"] == bool(plugins)

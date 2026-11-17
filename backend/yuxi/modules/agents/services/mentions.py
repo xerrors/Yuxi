@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import asyncio
 
+from yuxi.modules.agents.repositories.definitions import AgentRepository
 from yuxi.modules.agents.repositories.sessions import SessionRepository
+from yuxi.modules.agents.runtime.context import resolve_agent_resource_options
 from yuxi.modules.agents.scope import ActorScope
+from yuxi.modules.agents.services.thread_access import require_thread
 from yuxi.modules.workspace.filesystem import Workspace
 from yuxi.modules.workspace.paths import validate_thread_id
 from yuxi.modules.workspace.runtime_paths import runtime_path_for_workdir_scope, runtime_workspace_path
 from yuxi.modules.workspace.services.bindings import resolve_authorized_workdir
 from yuxi.shared.datetime import format_utc_datetime
+from yuxi.shared.errors import ResourceNotFoundError
 
 MENTION_EXCLUDE_DIRS = frozenset(
     {
@@ -29,6 +33,24 @@ MENTION_EXCLUDE_DIRS = frozenset(
 )
 MAX_MENTION_RESULTS = 50
 MAX_MENTION_CANDIDATES = 500
+
+
+async def list_plugin_mentions(*, db, scope: ActorScope, thread_id: str, user) -> list[dict]:
+    """按会话冻结选择与当前运行权限列出可引用插件。"""
+    agent_session = await require_thread(db=db, scope=scope, thread_id=thread_id)
+    agent = await AgentRepository(db).get_visible_by_slug(slug=agent_session.agent_id, user=user, for_run=True)
+    if agent is None:
+        raise ResourceNotFoundError("智能体不存在或无权限访问")
+    if agent_session.config_snapshot is None:
+        raise ValueError("Session 缺少配置快照")
+
+    selected = agent_session.config_snapshot.get("plugins", [])
+    options = await resolve_agent_resource_options({"plugins"}, db=db, user=user, agent_id=agent.id)
+    return [
+        {"id": option["key"], "name": option["name"], "description": option["description"]}
+        for option in options["plugins"]
+        if option["key"] in selected
+    ]
 
 
 async def search_session_mentions(*, db, scope: ActorScope, query: str) -> list[dict]:

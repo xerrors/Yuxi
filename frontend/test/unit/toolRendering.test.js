@@ -3,7 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { after, before, test } from 'node:test'
 import { createTestServer } from '../helpers/createTestServer.js'
-import { createSSRApp, h } from 'vue'
+import { createSSRApp, h, ref } from 'vue'
 import { renderToString } from 'vue/server-renderer'
 import { createPinia } from 'pinia'
 import { createRouter, createMemoryHistory } from 'vue-router'
@@ -17,6 +17,7 @@ let parseToolCallResult
 let ReadFileTool
 let ImageTool
 let QueryKbTool
+let useAgentStore
 
 before(async () => {
   globalThis.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} }
@@ -30,6 +31,7 @@ before(async () => {
     root: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..'),
     server: { middlewareMode: true }
   })
+  ;({ useAgentStore } = await server.ssrLoadModule('/src/modules/agents/index.js'))
   ;({ default: BaseToolCall } = await server.ssrLoadModule(
     '/src/modules/session/ui/tools/BaseToolCall.vue'
   ))
@@ -65,12 +67,15 @@ after(async () => {
 })
 
 /** 渲染真实组件并检查用户可见状态与结果。 */
-const render = (component, props) =>
-  renderToString(
-    createSSRApp({ render: () => h(component, props) })
-      .use(createPinia())
-      .use(createRouter({ history: createMemoryHistory(), routes: [] }))
-  )
+const render = (component, props, configureStore, sessionConfigurableItems) => {
+  const pinia = createPinia()
+  configureStore?.(useAgentStore(pinia))
+  const app = createSSRApp({ render: () => h(component, props) })
+    .use(pinia)
+    .use(createRouter({ history: createMemoryHistory(), routes: [] }))
+  if (sessionConfigurableItems) app.provide('sessionAgentConfigurableItems', sessionConfigurableItems)
+  return renderToString(app)
+}
 
 test('工具参数为空时隐藏整行，结果仍可见，非空参数正常展示', async () => {
   for (const name of ['unknown_tool', 'devices_list']) {
@@ -109,6 +114,70 @@ test('折叠的文件与命令工具在自定义标题中明确显示失败', as
       toolCall: { name, args, status: 'completed' }
     })
     assert.doesNotMatch(completed, /执行失败/)
+  }
+})
+
+test('加载插件 header 使用目录名称和共享图标，参数与结果保持基础渲染', async () => {
+  const toolCall = {
+    id: 'plugin-load', name: 'load_plugin', args: { plugin_id: 'abridge' },
+    result: '插件原始返回内容'
+  }
+  const props = { toolCall, defaultExpanded: true }
+  const html = await render(ToolCallRenderer, props, (store) => {
+    store.selectedAgentId = 'plugin-agent'
+    store.agents = [{ agent_id: 'plugin-agent', configurable_items: {
+      plugins: { options: [{ key: 'abridge', name: 'aBridge 设备' }] }
+    } }]
+  })
+  assert.match(html, /加载插件/)
+  assert.match(html, /aBridge 设备/)
+  assert.match(html, /lucide-computer/)
+  assert.doesNotMatch(html, /执行完成/)
+  const base = await render(BaseToolCall, props)
+  assert.equal(html.slice(html.indexOf('<div class="tool-content"')), base.slice(base.indexOf('<div class="tool-content"')))
+})
+
+test('加载插件名称以当前会话目录为准，不借用全局选中的另一 Agent 目录', async () => {
+  for (const options of [[{ key: 'abridge', name: '会话 B 的设备' }], []]) {
+    const html = await render(ToolCallRenderer, {
+      toolCall: { name: 'load_plugin', args: { plugin_id: 'abridge' }, result: '完成' }
+    }, (store) => {
+      store.selectedAgentId = 'agent-a'
+      store.agents = [{ agent_id: 'agent-a', configurable_items: {
+        plugins: { options: [{ key: 'abridge', name: '全局 A 的设备' }] }
+      } }]
+    }, ref({ plugins: { options } }))
+    assert.ok(html.includes(`title="${options.length ? '会话 B 的设备' : 'abridge'}"`))
+    assert.doesNotMatch(html, /全局 A 的设备/)
+  }
+})
+
+for (const [label, args, expectedName, expectedIcon] of [
+  ['未知插件', { plugin_id: 'custom-extension' }, 'custom-extension', 'puzzle'],
+  ['字符串参数', '{"plugin_id":"abridge"}', 'abridge', 'computer'],
+  ['无参数', undefined, '', 'puzzle'],
+  ['流式未完成参数', '{"plugin_id":"ab', '', 'puzzle'],
+  ['非字符串 ID', { plugin_id: {} }, '', 'puzzle']
+]) {
+  test(`加载插件 ${label} 安全显示参数身份，不从结果猜测插件`, async () => {
+    const html = await render(ToolCallRenderer, {
+      toolCall: { name: 'load_plugin', args, result: 'abridge aBridge 设备' }
+    })
+    assert.match(html, /加载插件/)
+    assert.match(html, new RegExp(`lucide-${expectedIcon}`))
+    if (expectedName) assert.ok(html.includes(`title="${expectedName}"`))
+    assert.doesNotMatch(html, /aBridge 设备|\[object Object\]/)
+  })
+}
+
+test('加载插件 header 保持运行、失败与中断状态', async () => {
+  for (const [status, expected] of [['running', 'tool-status-icon--running'], ['error', '执行失败'], ['incomplete', '已中断']]) {
+    const html = await render(ToolCallRenderer, {
+      toolCall: { name: 'load_plugin', args: { plugin_id: 'abridge' }, status }
+    })
+    assert.match(html, /加载插件/)
+    assert.ok(html.includes(expected))
+    assert.doesNotMatch(html, /执行完成/)
   }
 })
 

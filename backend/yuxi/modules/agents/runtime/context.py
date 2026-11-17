@@ -250,12 +250,22 @@ class BaseContext:
         },
     )
 
+    plugins: list[str] = field(
+        default_factory=list,
+        metadata={
+            "name": "插件",
+            "description": "选择智能体可以按需加载的完整能力；模型加载后才开放配套工具和连接器。",
+            "type": "list",
+            "kind": "plugins",
+        },
+    )
+
     mcps: ResourceSelection = field(
         default_factory=list,
         metadata={
             "name": "连接器",
             "options": [],
-            "description": "选择智能体直接使用的连接器，默认不直接加载；Skill 的依赖在激活时加载。",
+            "description": "选择智能体直接使用的连接器，默认不直接加载；插件的连接器在插件加载后开放。",
             "type": "list",
             "kind": "mcps",
         },
@@ -266,7 +276,7 @@ class BaseContext:
         metadata={
             "name": "Skills",
             "options": [],
-            "description": ("选择共享和内置 Skill；个人 Skill 始终可用。本地工具和连接器依赖在激活后开放，预加载从首轮开放。"),
+            "description": ("选择共享和内置 Skill；个人 Skill 始终可用。Skill 提供操作说明，不授予工具或连接器能力。"),
             "type": "list",
             "kind": "skills",
         },
@@ -277,8 +287,7 @@ class BaseContext:
         metadata={
             "name": "预加载 Skills",
             "options": [],
-            "description": "创建 Agent Graph 时加载完整 Skill 说明，并从首轮开放其依赖工具。"
-            "默认不预加载；选择全部时预加载当前已选的共享 Skill。",
+            "description": "创建 Agent Graph 时加载完整 Skill 说明。默认不预加载；选择全部时预加载当前已选的共享 Skill。",
             "type": "list",
             "kind": "skills",
         },
@@ -356,7 +365,7 @@ class BaseContext:
         return {
             item.name: item.metadata.get("kind", item.name)
             for item in fields(cls)
-            if types[item.name] is ResourceSelection and item.metadata.get("configurable", True)
+            if (types[item.name] is ResourceSelection or item.name == "plugins") and item.metadata.get("configurable", True)
         }
 
     @classmethod
@@ -386,7 +395,7 @@ class BaseContext:
                         else None,
                         "description": f.metadata.get("description", ""),
                         "kind": f.metadata.get("kind", ""),
-                        "supports_all": f.name in resource_fields,
+                        "supports_all": f.name in resource_fields and f.name != "plugins",
                     }
 
         return configurable_items
@@ -419,6 +428,7 @@ async def resolve_agent_resource_options(
     *,
     db,
     user,
+    agent_id: int | None = None,
 ) -> dict[str, list[dict[str, str]]]:
     fields_to_load = resource_fields
     if not fields_to_load:
@@ -439,15 +449,42 @@ async def resolve_agent_resource_options(
 
         options["knowledges"] = await knowledge_resource_options(user.uid)
     if "mcps" in fields_to_load:
+        from yuxi.modules.extensions.mcp.builtin import supports_direct_mcp_selection
         from yuxi.modules.extensions.mcp.service import get_enabled_mcp_servers
 
         servers = await get_enabled_mcp_servers(db=db)
-        options["mcps"] = [_resource_option(server.slug, server.name, server.description) for server in servers]
+        options["mcps"] = [
+            _resource_option(server.slug, server.name, server.description)
+            for server in servers
+            if supports_direct_mcp_selection(server.slug)
+        ]
+    if "plugins" in fields_to_load:
+        from yuxi.modules.extensions.plugins.registry import get_plugins
+        from yuxi.modules.extensions.skills.access import user_can_access_skill
+        from yuxi.modules.extensions.skills.repository import SkillRepository
+
+        options["plugins"] = []
+        repository = SkillRepository(db)
+        for plugin in get_plugins():
+            entry = await repository.get_by_slug(plugin.entry_skill)
+            if (
+                entry is None
+                or not user_can_access_skill(user, entry)
+                or (entry.bound_agent_id is not None and entry.bound_agent_id != agent_id)
+            ):
+                continue
+            options["plugins"].append(_resource_option(plugin.plugin_id, plugin.name, plugin.description))
     if "skills" in fields_to_load:
+        from yuxi.modules.extensions.plugins.registry import get_plugins
         from yuxi.modules.extensions.skills.repository import SkillRepository
 
         skills = await SkillRepository(db).list_enabled_readable(user)
-        options["skills"] = [_resource_option(skill.slug, skill.name, skill.description) for skill in skills if skill.slug]
+        plugin_entries = {plugin.entry_skill for plugin in get_plugins()}
+        options["skills"] = [
+            _resource_option(skill.slug, skill.name, skill.description)
+            for skill in skills
+            if skill.slug and skill.slug not in plugin_entries
+        ]
 
     return options
 
@@ -458,6 +495,7 @@ async def normalize_agent_context_config(
     db,
     user,
     context_schema: type[BaseContext] | None = None,
+    agent_id: int | None = None,
 ) -> dict:
     """按字段默认值展开资源选择，返回当前用户可用的运行列表。"""
     schema = context_schema or BaseContext
@@ -472,7 +510,7 @@ async def normalize_agent_context_config(
     excluded_fields = {"preload_skills", "knowledges"}
     fields_to_load = {kind for name, kind in resource_fields.items() if name not in excluded_fields and normalized[name]}
     if fields_to_load:
-        resource_options = await resolve_agent_resource_options(fields_to_load, db=db, user=user)
+        resource_options = await resolve_agent_resource_options(fields_to_load, db=db, user=user, agent_id=agent_id)
         for name, kind in resource_fields.items():
             if name not in excluded_fields and normalized[name]:
                 normalized[name] = _resolve_resource_selection(normalized[name], [option["key"] for option in resource_options[kind]])
@@ -521,7 +559,15 @@ async def refresh_agent_context_resources(context: BaseContext, *, db, user, age
     if selections is None:
         selections = {name: getattr(context, name) for name in resource_fields}
         context._resource_selections = selections
-    normalized = await normalize_agent_context_config(selections, db=db, user=user, context_schema=type(context))
+    if agent is None and getattr(context, "agent_slug", None):
+        from yuxi.modules.agents.repositories.definitions import AgentRepository
+
+        agent = await AgentRepository(db).get_visible_by_slug(slug=context.agent_slug, user=user)
+        if agent is None:
+            raise PermissionError("智能体不存在或无权限访问")
+    normalized = await normalize_agent_context_config(
+        selections, db=db, user=user, context_schema=type(context), agent_id=agent.id if agent else None
+    )
     for name in resource_fields:
         setattr(context, name, normalized[name])
 
@@ -537,11 +583,31 @@ async def refresh_agent_context_resources(context: BaseContext, *, db, user, age
 
 def validate_resource_selection(field_name: str, value: Any) -> ResourceSelection:
     """统一校验全部或显式列表的资源选择协议。"""
+    if field_name == "plugins":
+        if not isinstance(value, list):
+            raise ValueError("智能体插件必须是显式 ID 列表，不支持 all")
     if value == "all":
         return "all"
     if not isinstance(value, list) or any(not isinstance(item, str) or not item.strip() for item in value):
         raise ValueError(f'智能体资源字段 {field_name} 必须是"all" 或非空字符串组成的列表')
-    return list(dict.fromkeys(item.strip() for item in value))
+    selected = list(dict.fromkeys(item.strip() for item in value))
+    if field_name == "mcps":
+        from yuxi.modules.extensions.mcp.builtin import supports_direct_mcp_selection
+
+        if any(not supports_direct_mcp_selection(slug) for slug in selected):
+            raise ValueError("该连接器通过插件启用，请在智能体配置中选择对应插件")
+    if field_name == "plugins":
+        from yuxi.modules.extensions.plugins.registry import get_plugin
+
+        for plugin_id in selected:
+            get_plugin(plugin_id)
+    if field_name in {"skills", "preload_skills"} and selected:
+        from yuxi.modules.extensions.plugins.registry import get_plugins
+
+        plugin_entries = {plugin.entry_skill for plugin in get_plugins()}
+        if plugin_entries.intersection(selected):
+            raise ValueError("插件入口 Skill 不能独立选择，请启用对应插件")
+    return selected
 
 
 def _resolve_resource_selection(selection: ResourceSelection, available: list[str]) -> list[str]:

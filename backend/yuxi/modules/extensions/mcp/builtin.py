@@ -3,6 +3,7 @@
 from yuxi.bootstrap.capabilities import knowledge_enabled
 
 KNOWLEDGE_MCP_SLUG = "knowledge"
+ABRIDGE_MCP_SLUG = "abridge"
 
 BUILTIN_MCP_MANIFEST = {
     "mcpServers": {
@@ -28,3 +29,8 @@ BUILTIN_MCP_DEFAULTS = {KNOWLEDGE_MCP_SLUG: {"auth_mode": "delegation", "enabled
 def builtin_mcp_available(slug: str) -> bool:
     """部署关闭不改变内置服务身份与管理员开关。"""
     return slug != KNOWLEDGE_MCP_SLUG or knowledge_enabled()
+
+
+def supports_direct_mcp_selection(slug: str) -> bool:
+    """设备能力必须经插件加载操作约束，其他连接器可由智能体直接选择。"""
+    return slug != ABRIDGE_MCP_SLUG

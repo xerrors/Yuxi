@@ -1,6 +1,6 @@
 # 中间件
 
-中间件把文件、Skills、会话协作、上下文压缩、审批和用量统计接到 LangGraph Agent。它们在模型调用、工具调用或 state 更新的边界运行，让不同 Agent 复用同一套能力。
+中间件把文件、Skills、插件、会话协作、上下文压缩、审批和用量统计接到 LangGraph Agent。它们在模型调用、工具调用或 state 更新的边界运行，让不同 Agent 复用同一套能力。
 
 内置 `ChatbotAgent` 在 `get_graph()` 中组装中间件。Graph 创建前，系统完成用户资源和权限的归一化；运行中的最新授权由执行边界复查，具体规则见[Agent 运行机制](../mechanisms/agent-runtime.md#资源权限)。
 
@@ -8,8 +8,8 @@
 
 `prepare_agent_runtime_context` 会根据当前用户和 Agent 配置：
 
-- 过滤内置工具、知识库、MCP 和 Skills；
-- 展开 Skill 依赖，生成 `skill_runtime_snapshot`；
+- 解析内置工具、知识库、MCP、普通 Skills 和显式插件选择；
+- 合并当前可读的普通 Skill 与插件配套内容，生成 `skill_runtime_snapshot`；
 - 使用系统默认模型补齐空的模型配置。
 
 随后，工具解析器记录工具来源和可执行注册集合，`build_prompt_with_context` 生成系统提示词，Agent 再创建 Graph。工具执行时仍需检查具体目标，准备阶段的资源快照不是授权替代品。
@@ -23,16 +23,18 @@
 | 1 | `ToolErrorGuardMiddleware` | 最外层隔离普通工具异常，保留取消与 interrupt 的传播 |
 | 2 | `SteerMiddleware` | 在安全边界发现待接替请求 |
 | 3 | `create_agent_filesystem_middleware` | 提供 Workdir、User Data、Skills 文件后端，并卸载过大的工具结果 |
-| 4 | `SkillsMiddleware` | 注入 Skill 说明，按激活状态开放依赖 |
-| 5 | `YuxiMemoryMiddleware` | Memory 开关开启时，注入用户记忆并提供受限工具 |
-| 6 | `CooperationMiddleware` | 所有持久 Run 提供统一 Session 协作工具 |
-| 7 | `YuxiSummarizationMiddleware` | 先确定性压缩工具结果，仍达到同一阈值时生成摘要 |
-| 8 | `PatchToolCallsMiddleware` | 修正部分工具调用消息形态 |
-| 9 | `NetworkRetryMiddleware` | 网络错误按预算、其他可重试模型错误按次数重试，耗尽后抛出异常 |
-| 10 | 工具审批 middleware | 默认模式下审批 Project 外的文件写入和命令执行；当前 Project 内的写/编辑自动放行 |
-| 11 | `RuntimeAuthorizationMiddleware` | 准备模型输入时刷新资源，实际请求前同步投影；返回时先于审批复查身份 |
-| 12 | `ImageInputCompatibilityMiddleware` | 桥接工具读取图片与模型输入格式；必要时回退 OCR |
-| 13 | `TokenUsageMiddleware` | 记录授权和图片转换后的近似上下文及主模型实际用量 |
+| 4 | `SkillsMiddleware` | 注入普通 Skill 摘要和预加载正文，不改变工具权限 |
+| 5 | `PluginLoaderMiddleware` | 提供插件目录、统一加载工具和平台激活状态，按需装配 MCP |
+| 6 | 已选择插件的 `PluginMiddleware` 适配器 | 按部署注册顺序执行已激活插件的受限包装行为 |
+| 7 | `YuxiMemoryMiddleware` | Memory 开关开启时，注入用户记忆并提供受限工具 |
+| 8 | `CooperationMiddleware` | 所有持久 Run 提供统一 Session 协作工具 |
+| 9 | `YuxiSummarizationMiddleware` | 先确定性压缩工具结果，仍达到同一阈值时生成摘要 |
+| 10 | `PatchToolCallsMiddleware` | 修正部分工具调用消息形态 |
+| 11 | `NetworkRetryMiddleware` | 网络错误按预算、其他可重试模型错误按次数重试，耗尽后抛出异常 |
+| 12 | 工具审批 middleware | 默认模式下审批 Project 外的文件写入和命令执行；当前 Project 内的写/编辑自动放行 |
+| 13 | `RuntimeAuthorizationMiddleware` | 准备模型输入时刷新资源，实际请求前同步投影；返回时先于审批复查身份 |
+| 14 | `ImageInputCompatibilityMiddleware` | 桥接工具读取图片与模型输入格式；必要时回退 OCR |
+| 15 | `TokenUsageMiddleware` | 记录授权和图片转换后的近似上下文及主模型实际用量 |
 
 模型重试耗尽后，异常进入 Run 失败通道，持久化 `failed` 状态与错误原因；已有部分输出保留错误元数据。
 
@@ -40,9 +42,9 @@
 
 ## Skills 和知识库
 
-Skills middleware 将 Skill 说明按模型请求注入：预加载 Skill 从首轮开放工具和 MCP 依赖，普通 Skill 在模型读取对应 `SKILL.md` 后激活，再开放声明的依赖。Agent 显式选择的 MCP 服务器从运行开始提供工具。
+Skills middleware 按模型请求注入普通 Skill 摘要和预加载正文；读取正文不保存激活状态，也不开放工具。Plugins middleware 通过 `load_plugin` 返回入口正文并保存插件激活记录，从下一轮模型请求开放当前获授权的能力。Agent 直接选择的 MCP 服务器沿用独立加载路径。
 
-知识库能力由内置 `knowledge-base` Skill 提供。它的工具是否注册、模型是否可见、参数是否能访问目标知识库分别由工具组装、Skill 激活和知识库权限检查负责。完整链路见[工具系统](./tools-system.md)和[知识库机制详解](../mechanisms/knowledge-base.md)。
+知识库插件 `knowledge-base` 引用内置 `knowledge` MCP。它的工具装配、模型可见性和目标知识库访问分别由 MCP 目录发现、插件激活与运行授权、知识库执行权限检查负责。完整链路见[工具系统](./tools-system.md)和[知识库机制详解](../mechanisms/knowledge-base.md)。
 
 ## 文件和附件
 
@@ -69,6 +71,12 @@ Summary 在文件和 Skills 等中间件之后运行。请求达到唯一压力�
 `siliconflow-cn` 和 `siliconflow` 当前位于 Provider 用量黑名单：这两个供应商仍可提供近似上下文统计，但不会写入最近调用、Run 或线程的 Provider 实际用量聚合。其他能返回兼容 `usage_metadata` 的供应商才会进入这组实际用量统计；Summary 内部摘要模型调用不计入。
 
 Run 终态时，worker 把与当前 `run_id` 匹配的 state 快照写入 `AgentRun.token_usage`；父 Run 和子 Run 分开保存。
+
+## 开发部署插件
+
+每个部署插件继承普通业务类 `YuxiPlugin`，拥有独立目录和配套说明；平台通过 `PluginMiddleware` 实例装配其资源及两个调用钩子。`registry.py` 的 `REGISTERED_PLUGINS` 明确登记插件类及装配顺序。公共 `PluginLoaderMiddleware` 负责目录披露和激活，业务调用包装由各插件执行。
+
+完整的目录、专属工具、调用钩子、注册和发布示例见 [开发插件](./plugin-development.md)。
 
 ## 新增中间件时
 

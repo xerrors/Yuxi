@@ -92,13 +92,13 @@ worker 和主动压缩在执行入口显式调用 `prepare_agent_runtime_context
 
 ## 中间件和工具
 
-资源权限和默认资源选择在 Graph 创建前处理；模型提示注入、工具动态开放、文件结果处理、state 更新和观测才适合放入 middleware。内置 Agent 的工具可见性和执行注册分为两层：工具可以先进入 ToolNode，再由 Skill 激活状态决定是否让模型看到。
+资源权限和默认资源选择在 Graph 创建前处理；模型提示注入、工具动态开放、文件结果处理、state 更新和观测才适合放入 middleware。内置 Agent 的工具可见性和执行注册分为两层：工具可以先进入 ToolNode，再由插件激活与当前授权决定是否允许调用。
 
 优先复用：
 
 - [工具系统](./tools-system.md) 的注册和目标校验；
 - [中间件](./middleware.md) 的装配顺序；
-- [Skills 管理](./skills-management.md) 的依赖和激活规则；
+- [Skills 管理](./skills-management.md) 的说明读取规则和[插件激活机制](../mechanisms/agent-runtime.md#插件激活与恢复)；
 - [沙盒机制](../mechanisms/sandbox.md) 的文件和命令边界。
 
 新 middleware 不要绕过 `prepare_agent_runtime_context`，也不要用 Prompt、前端隐藏或 schema omission 代替后端授权。

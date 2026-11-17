@@ -67,6 +67,7 @@ export default defineConfig({
           { text: '开发智能体后端', link: '/agents/agent-backend-development' },
           { text: '工具系统', link: '/agents/tools-system' },
           { text: '中间件', link: '/agents/middleware' },
+          { text: '开发插件', link: '/agents/plugin-development' },
           { text: 'Skills 管理', link: '/agents/skills-management' },
           { text: 'MCP 集成', link: '/agents/mcp-integration' },
           { text: '会话协作', link: '/agents/session-cooperation' },

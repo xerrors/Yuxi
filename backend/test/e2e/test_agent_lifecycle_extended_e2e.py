@@ -162,7 +162,7 @@ async def test_public_run_persists_preloaded_tool_and_model_audit(e2e_client, e2
                 manifest = json.loads(manifest)
             assert manifest["agent"] == {"slug": slug, "backend_id": "ChatbotAgent"}
             assert manifest["model"] == {"spec": MODEL}
-            assert [skill["slug"] for skill in manifest["resources"]["skills"]] == ["image-gen", "chat-widgets"]
+            assert [skill["slug"] for skill in manifest["resources"]["skills"]] == ["chat-widgets"]
             assert (
                 binding["manifest_fingerprint"]
                 == hashlib.sha256(json.dumps(manifest, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode()).hexdigest()

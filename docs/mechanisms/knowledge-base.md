@@ -44,7 +44,7 @@ flowchart LR
 
     Context["可信用户与会话选择"] --> Integration["Knowledge 提供 SDK Auth"]
     Integration --> Loader["通用 MCP 装配"]
-    Skill["knowledge-base Skill（mcp_dependencies）"] --> Loader
+    Plugin["knowledge-base 插件（load_plugin）"] --> Loader
     Loader --> Tools["五个工具：名称与 Schema 来自 MCP 目录"]
     Tools -->|HTTP MCP 与短期委托| MCP["Knowledge MCP"]
     MCP --> Visible["当前用户权限 ∩ 会话选择"]
@@ -162,7 +162,7 @@ Agent 保留 `Context.knowledges` 的归一化选择：`"all"` 表示当前可�
 
 Knowledge MCP 每个 HTTP 请求验证签名、用途、有效期和账号当前状态；每次工具调用再由知识域按当前用户读取权限查询资源，与 Token 携带的会话选择求交集。工具目标必须属于该范围，文档归属由知识库查询实现校验。撤权后后续调用拒绝该资源。权限查询失败向调用边界传播，不返回空列表掩盖存储故障。授权查询与实际读取遵循各自事务边界。外部 API Key 请求按 Key 所属用户解析全部可读知识库，接入契约见[知识库 MCP](../advanced/knowledge-mcp.md)。
 
-知识库工具由内置 `knowledge-base` Skill 的 `mcp_dependencies: ["knowledge"]` 门控：预加载时首轮由运行装配从内置 server 加载工具；渐进加载时在模型读取 `SKILL.md` 后由 Skills middleware 动态加载。工具职责由[工具系统](../agents/tools-system.md#知识库工具)维护，选择和激活仍受当前资源权限约束。
+知识库插件 `knowledge-base` 引用内置 `knowledge` MCP。Agent 显式选择插件后，模型通过 `load_plugin` 获取入口 Skill 正文并激活能力，下一轮模型请求才开放 MCP 工具；直接读取或预加载普通 Skill 不授予知识能力。Agent 也可直接选择已启用的 `knowledge` 服务，两条来源复用同一连接和权限边界。Knowledge 关闭时插件加载返回不可用，不把缺失工具伪装为成功。工具职责由[工具系统](../agents/tools-system.md#知识库工具)维护，选择和激活仍受当前资源权限约束。
 
 引用消费 MCP 的结构化结果，保留知识库、文件和原文行范围。已保存引用按同一工具消息和内容身份重投影当前来源字段，保持引用 ID。普通用户的引用阅读调用已有授权正文窗口接口，不依赖管理员文件详情。工具的文本展示块不替代该结果。知识选择器和历史引用读取按当前用户权限执行，不受 Agent 工具启停开关限制，但部署关闭时不可用。
 

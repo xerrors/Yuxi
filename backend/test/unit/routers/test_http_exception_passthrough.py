@@ -9,7 +9,6 @@ from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.testclient import TestClient
 
 import yuxi.api.routers.extensions.mcp as mcp_router
-import yuxi.api.routers.extensions.skills as skill_router
 import yuxi.api.routers.identity.auth as auth_router
 import yuxi.api.routers.knowledge.dashboard as knowledge_dashboard_router
 import yuxi.api.routers.knowledge.evaluation as knowledge_eval_router
@@ -48,12 +47,6 @@ import yuxi.modules.knowledge.services.document_actions as document_actions
             {},
             knowledge_dashboard_router,
             "get_knowledge_stats",
-        ),
-        (
-            skill_router.get_skill_dependency_options_route,
-            {"slug": "private", "db": None},
-            skill_router,
-            "get_manageable_skill_or_raise",
         ),
         (mcp_router.get_mcp_servers, {"db": None}, mcp_router, "get_all_mcp_servers"),
         (system_router.reload_info_config, {}, system_router, "load_info_config"),

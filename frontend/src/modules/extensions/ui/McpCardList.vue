@@ -227,7 +227,7 @@ const handleSetServerEnabled = async (server, enabled) => {
     actionLoadingSlug.value = server.slug
     const result = await mcpApi.updateMcpServerStatus(server.slug, enabled)
     if (result.success) {
-      message.success(enabled ? '服务已启用，请在智能体工具配置中绑定或通过 Skill 依赖激活' : '服务已停用')
+      message.success(enabled ? '服务已启用，请在智能体工具配置中绑定或通过插件按需加载' : '服务已停用')
       await refreshPreview()
     } else {
       message.error(result.message || '操作失败')

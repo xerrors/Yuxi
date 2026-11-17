@@ -22,6 +22,7 @@ async page => {
     if (path.endsWith('/check-first-run')) json = { first_run: false }
     if (path === '/api/user/config') json = { enable_memory: true }
     if (path === '/api/agent') json = { agents: [agent] }
+    if (path === '/api/mention/plugins') json = []
     if (path === '/api/agent/reading-agent') json = agent
     if (path === '/api/projects') json = []
     if (path === '/api/v1/agents/sessions') json = { data: [thread], has_more: false }

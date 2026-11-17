@@ -144,6 +144,14 @@ test('慢等待点恢复后才聚焦，隐藏或轮次变化撤销聚焦', async
   globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} }
   const pinia = createPinia()
   setActivePinia(pinia)
+  const { configureApiAuth } = await server.ssrLoadModule('/src/apis/auth_context.js')
+  const originalFetch = globalThis.fetch
+  t.mock.method(globalThis, 'fetch', (url, init) => {
+    if (String(url).startsWith('/api/mention/plugins?') && (init?.method || 'GET') === 'GET') {
+      return Promise.resolve(Response.json([]))
+    }
+    return originalFetch(url, init)
+  })
   const { agentApi, knowledgeBaseApi, toolApi, threadApi, mcpApi } = await server.ssrLoadModule('/src/apis/index.js')
   t.mock.method(mcpApi, 'getMcpServers', async () => ({ success: true, data: [] }))
   let ready, resumed = 0, focused = false
@@ -155,6 +163,7 @@ test('慢等待点恢复后才聚焦，隐藏或轮次变化撤销聚焦', async
   t.mock.method(threadApi, 'markThreadViewed', async () => ({}))
   const { useSessionRuntimeStore } = await server.ssrLoadModule('/src/modules/session/model/sessionRuntime.js')
   const { default: Workspace } = await server.ssrLoadModule('/src/modules/session/ui/SessionWorkspace.vue')
+  configureApiAuth({ getToken: () => 'test-token' })
   globalThis.document = { addEventListener() {}, removeEventListener() {}, visibilityState: 'visible' }
   const renderer = createRenderer({
     createElement: () => ({ children: [] }), createText: () => ({}), createComment: () => ({}),

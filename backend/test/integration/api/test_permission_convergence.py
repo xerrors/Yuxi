@@ -499,8 +499,8 @@ async def test_agent_write_rechecks_actor_after_waiting_for_resource(actors, ope
 
         await db.execute(
             "INSERT INTO skills (slug,name,description,source_type,dir_path,share_config,enabled,created_by,"
-            "tool_dependencies,mcp_dependencies,skill_dependencies,updated_by,created_at,updated_at) "
-            "VALUES ($1,$1,'race','upload',$1,$2::jsonb,true,$3,'[]'::jsonb,'[]'::jsonb,'[]'::jsonb,$3,NOW(),NOW())",
+            "updated_by,created_at,updated_at) "
+            "VALUES ($1,$1,'race','upload',$1,$2::jsonb,true,$3,$3,NOW(),NOW())",
             skill,
             json.dumps(
                 {

@@ -2,7 +2,6 @@
 name: deep-research
 description: "深度研究编排方法论：澄清范围、拆解规划、并行调度子智能体调研、对抗式核验、综合成带引用的结构化报告。当任务需要多来源、可追溯、需事实核查的深度研究时使用此技能。"
 version: "2026.10.18"
-tool_dependencies: ["web_search", "present_artifacts"]
 ---
 
 # 深度研究技能

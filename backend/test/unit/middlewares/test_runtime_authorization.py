@@ -1,4 +1,4 @@
-"""已注册工具也必须符合最新授权与 Skill 激活状态。"""
+"""已注册工具也必须符合最新授权与插件激活状态。"""
 
 from types import SimpleNamespace
 
@@ -9,17 +9,37 @@ from yuxi.modules.agents.runtime.middlewares.authorization import tool_allowed
 
 
 @pytest.fixture
-def context():
+def context(monkeypatch):
     """构图时注册工具、执行时权限独立变化的 Context。"""
+    from yuxi.modules.extensions.plugins.base import YuxiPlugin
+    from yuxi.modules.agents.runtime.middlewares import authorization
+
+    from langchain_core.tools import tool
+
+    @tool
+    def skill_tool() -> str:
+        """返回插件专属工具结果。"""
+        return "plugin-result"
+
+    class TestPlugin(YuxiPlugin):
+        plugin_id = "skill"
+        entry_skill = "skill"
+        skills = ("skill",)
+        tools = [skill_tool]
+        mcps = ("remote",)
+
+    monkeypatch.setattr(authorization, "get_plugins", lambda: (TestPlugin,))
     return BaseContext(
+        plugins=["skill"],
         tools=[],
         mcps=[],
-        registered_builtin_tool_names={"skill_tool"},
+        registered_builtin_tool_names=set(),
         mcp_tool_servers={"remote_tool": "remote"},
         skill_runtime_snapshot={
+            "plugin_entry_contents": {"skill": "instructions"},
             "effective_skills": ["skill"],
             "preloaded_skills": [],
-            "runtime_skills": {"skill": {"tools": ["skill_tool"], "mcps": ["remote"]}},
+            "runtime_skills": {"skill": {"path": "/skills/skill/SKILL.md"}},
         },
     )
 
@@ -30,18 +50,29 @@ def mcp_policy():
     return {"remote": set()}
 
 
-def test_unactivated_skill_cannot_execute_registered_local_or_mcp_dependency(context, mcp_policy):
-    """直接调用隐藏工具不能代替读取或预加载 Skill。"""
+def test_unactivated_plugin_cannot_execute_owned_tool_or_mcp(context, mcp_policy):
+    """直接调用隐藏工具不能代替显式加载插件。"""
     assert not tool_allowed(context, "skill_tool", {}, mcp_policy)
     assert not tool_allowed(context, "remote_tool", {}, mcp_policy)
-    assert tool_allowed(context, "skill_tool", {"activated_skills": ["skill"]}, mcp_policy)
-    context.skill_runtime_snapshot["effective_skills"] = []
-    assert not tool_allowed(context, "skill_tool", {"activated_skills": ["skill"]}, mcp_policy)
+    assert tool_allowed(context, "skill_tool", {"activated_plugins": ["skill"]}, mcp_policy)
+    context.skill_runtime_snapshot["runtime_skills"] = {}
+    assert not tool_allowed(context, "skill_tool", {"activated_plugins": ["skill"]}, mcp_policy)
+
+
+def test_shared_tool_requires_direct_selection_and_survives_plugin_disable(context, mcp_policy):
+    """通用工具由智能体独立选择，插件激活和停用都不改变选择。"""
+    context.registered_builtin_tool_names.add("present_artifacts")
+    activated = {"activated_plugins": ["skill"]}
+    assert not tool_allowed(context, "present_artifacts", activated, mcp_policy)
+    context.tools = ["present_artifacts"]
+    assert tool_allowed(context, "present_artifacts", {}, mcp_policy)
+    context.plugins = []
+    assert tool_allowed(context, "present_artifacts", activated, mcp_policy)
 
 
 def test_mcp_single_tool_or_server_disable_rejects_old_registration(context, mcp_policy):
     """启停服务器和单工具都不能被既有对象绕过。"""
-    state = {"activated_skills": ["skill"]}
+    state = {"activated_plugins": ["skill"]}
     assert tool_allowed(context, "remote_tool", state, mcp_policy)
     mcp_policy["remote"] = {"remote_tool"}
     assert not tool_allowed(context, "remote_tool", state, mcp_policy)
@@ -54,6 +85,31 @@ def test_direct_mcp_disconnect_rejects_registered_tool_before_outbound(context, 
     context.mcps = ["remote"]
     mcp_policy = {}
     assert not tool_allowed(context, "remote_tool", {}, mcp_policy)
+
+
+def test_abridge_direct_selection_cannot_bypass_plugin_activation():
+    """即使旧配置和工具对象仍在，设备执行也要求当前插件选择与激活。"""
+    context = BaseContext(
+        mcps=["abridge"],
+        plugins=["abridge"],
+        mcp_tool_servers={"devices_list": "abridge"},
+        registered_builtin_tool_names=set(),
+        skill_runtime_snapshot={
+            "plugin_entry_contents": {"abridge": "device instructions"},
+            "runtime_skills": {
+                "abridge": {"path": "/skills/abridge/SKILL.md"},
+                "chat-widgets": {"path": "/skills/chat-widgets/SKILL.md"},
+            },
+        },
+    )
+    policy = {"abridge": set()}
+    active = {"activated_plugins": ["abridge"]}
+    assert not tool_allowed(context, "devices_list", {}, policy)
+    assert tool_allowed(context, "devices_list", active, policy)
+    assert not tool_allowed(context, "devices_list", active, {})
+    assert not tool_allowed(context, "devices_list", active, {"abridge": {"devices_list"}})
+    context.plugins = []
+    assert not tool_allowed(context, "devices_list", active, policy)
 
 
 @pytest.mark.parametrize("name", ["ask_user_question", "mark_for_improvement"])
@@ -269,7 +325,7 @@ async def test_failed_mcp_filters_skill_dependencies_and_updates_warning_state(m
     monkeypatch.setattr(authorization, "refresh_agent_context_resources", AsyncMock())
     monkeypatch.setattr(authorization, "sync_agent_context_skills", AsyncMock())
     monkeypatch.setattr(authorization, "available_mcp_servers", AsyncMock(return_value={"remote": SimpleNamespace(disabled_tools=[])}))
-    state = {"activated_skills": ["skill"]}
+    state = {"activated_plugins": ["skill"]}
     policy = await authorization.refresh_execution_authorization(context, state=state)
     assert policy == {}
     assert not tool_allowed(context, "remote_tool", state, policy)
@@ -295,7 +351,9 @@ async def test_failed_mcp_filters_skill_dependencies_and_updates_warning_state(m
     middleware = authorization.RuntimeAuthorizationMiddleware()
     runtime = SimpleNamespace(context=context)
     update = await middleware.abefore_model(state, runtime)
-    assert update["warnings"] == [{"code": "mcp_unavailable", "source": "mcp:remote", "message": "连接器 remote：授权凭据不可用，请重新连接"}]
+    assert update["warnings"] == [
+        {"code": "mcp_unavailable", "source": "mcp:remote", "message": "连接器 remote：授权凭据不可用，请重新连接"}
+    ]
     assert await middleware.aafter_model(state, runtime) == update
     context.mcp_unavailable = {}
     assert await middleware.abefore_model(state, runtime) == {"warnings": []}
@@ -464,7 +522,7 @@ async def test_tool_boundary_refreshes_resources_without_syncing_projection(monk
     monkeypatch.setattr(authorization, "available_mcp_servers", AsyncMock(return_value={"remote": SimpleNamespace(disabled_tools=[])}))
     request = SimpleNamespace(
         runtime=SimpleNamespace(context=context),
-        state={"activated_skills": ["skill"]},
+        state={"activated_plugins": ["skill"]},
         tool_call={"name": "remote_tool", "id": "call"},
     )
     result = await authorization.RuntimeAuthorizationMiddleware().awrap_tool_call(
@@ -506,6 +564,7 @@ async def test_skill_request_identity_survives_authorization_retry(monkeypatch, 
     def snapshot(slugs, scope="shared"):
         return {
             "effective_skills": slugs,
+            "context_skills": slugs,
             "preloaded_skills": ["a"],
             "preloaded_skill_contents": {"a": "A-INJECTED"},
             "skill_metadata": {slug: {"source_scope": scope, "version": "1", "content_hash": slug} for slug in slugs},

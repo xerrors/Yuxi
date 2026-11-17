@@ -260,11 +260,9 @@ async def test_delegated_manager_resource_patch_preserves_hidden_config_and_reje
         await conn.executemany(
             """
             INSERT INTO skills
-                (slug, name, description, source_type, tool_dependencies, mcp_dependencies,
-                 skill_dependencies, dir_path, share_config, enabled, created_by, updated_by)
+                (slug, name, description, source_type, dir_path, share_config, enabled, created_by, updated_by)
             VALUES
-                ($1, $1, 'pytest resource authorization', 'upload', '[]'::jsonb, '[]'::jsonb,
-                 '[]'::jsonb, $1, $2::jsonb, true, $3, $3)
+                ($1, $1, 'pytest resource authorization', 'upload', $1, $2::jsonb, true, $3, $3)
             """,
             rows,
         )
@@ -475,9 +473,9 @@ async def test_personal_skills_are_automatic_and_absent_from_agent_options(test_
 
         await conn.execute(
             """INSERT INTO skills (slug, name, description, source_type, dir_path, share_config,
-                enabled, created_by, updated_by, tool_dependencies, mcp_dependencies, skill_dependencies)
+                enabled, created_by, updated_by)
                 VALUES ($1, 'Shared title', 'Shared description', 'upload', $1, $2::jsonb,
-                true, $3, $3, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb)""",
+                true, $3, $3)""",
             shared_slug,
             _user_share_config(uid),
             uid,
@@ -573,4 +571,45 @@ async def test_resource_selection_protocol_persists_intent_and_rejects_invalid_v
         assert read.json()["agent"]["config_json"]["context"] == expected
     finally:
         await test_client.delete(path, headers=admin_headers)
+        await conn.close()
+
+
+@pytest.mark.self_managed_resources
+async def test_plugin_selection_is_explicit_and_persisted(test_client, admin_headers):
+    """真实 HTTP 与数据库证明插件选择拒绝全部、未知项和入口旁路。"""
+    agent_slug = f"pytest-plugin-selection-{uuid.uuid4().hex[:10]}"
+    agent_path = f"/api/agent/{agent_slug}"
+    conn = await asyncpg.connect(os.environ["POSTGRES_URL"].replace("+asyncpg", ""))
+    created = False
+    try:
+        response = await test_client.post(
+            "/api/agent",
+            headers=admin_headers,
+            json={"name": "插件选择验证", "slug": agent_slug, "backend_id": "ChatbotAgent", "config_json": {"context": {"plugins": []}}},
+        )
+        assert response.status_code == 200, response.text
+        created = True
+        for patch in (
+            {"plugins": "all"},
+            {"plugins": ["missing-deployed-plugin"]},
+            {"skills": ["knowledge-base"]},
+            {"preload_skills": ["knowledge-base"]},
+        ):
+            response = await test_client.put(agent_path, headers=admin_headers, json={"config_json": {"context": patch}})
+            assert response.status_code == 422, response.text
+            assert (await _read_agent_config(conn, agent_slug))["context"]["plugins"] == []
+        response = await test_client.put(
+            agent_path,
+            headers=admin_headers,
+            json={"config_json": {"context": {"plugins": ["knowledge-base"]}}},
+        )
+        assert response.status_code == 200, response.text
+        persisted = (await _read_agent_config(conn, agent_slug))["context"]
+        assert persisted["plugins"] == ["knowledge-base"]
+        assert not persisted.get("mcps")
+        assert not persisted.get("tools")
+    finally:
+        if created:
+            response = await test_client.delete(agent_path, headers=admin_headers)
+            assert response.status_code in {200, 404}, response.text
         await conn.close()

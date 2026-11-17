@@ -18,6 +18,7 @@ LIFECYCLE_COOPERATION_E2E_TESTS=(
     test/e2e/test_session_cooperation_e2e.py
 )
 LIFECYCLE_CORE_E2E_TESTS=(
+    test/e2e/test_image_skill_e2e.py
     test/e2e/test_agent_lifecycle_e2e.py
     test/e2e/test_input_projection_recovery_e2e.py
     test/e2e/test_draft_attachments_e2e.py

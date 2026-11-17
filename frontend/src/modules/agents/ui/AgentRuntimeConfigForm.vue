@@ -139,6 +139,7 @@
                         <a-button
                           type="text"
                           size="small"
+                          v-if="value.kind !== 'plugins'"
                           @click="navigateToConfigPage(value.kind)"
                           class="inline-action-btn lucide-icon-btn"
                         >
@@ -245,15 +246,14 @@
                   class="config-input"
                 />
                 <div
-                  v-if="shouldShowKnowledgeSkillWarning(key)"
+                  v-if="shouldShowKnowledgePluginWarning(key)"
                   class="knowledge-skill-warning"
                   role="status"
                   aria-live="polite"
                 >
                   <AlertTriangle :size="14" />
                   <span>
-                    已启用知识库，但未选择 knowledge-base Skill。Agent
-                    可能无法调用知识库检索、打开文档等工具。
+                    已选择知识库，请启用知识库插件或选择知识库连接器，以使用检索、打开文档等工具。
                   </span>
                 </div>
               </a-form-item>
@@ -297,6 +297,7 @@
             <a-button
               type="link"
               size="small"
+              v-if="currentConfigKind !== 'plugins'"
               @click="navigateToConfigPage(currentConfigKind)"
               class="inline-action-btn lucide-icon-btn"
               title="跳转配置"
@@ -454,10 +455,10 @@ const segmentOptions = [
   { label: '其他', value: 'other' }
 ]
 const activeSegment = computed(() => (props.showSegmented ? currentSegment.value : props.segment))
-const RESOURCE_CONFIG_KINDS = new Set(['tools', 'knowledges', 'mcps', 'skills'])
+const RESOURCE_CONFIG_KINDS = new Set(['tools', 'knowledges', 'mcps', 'skills', 'plugins'])
 /** 判断配置项是否属于可管理的资源分组。 */
 const isResourceConfigKind = (kind) => RESOURCE_CONFIG_KINDS.has(kind)
-const KNOWLEDGE_BASE_SKILL_SLUG = 'knowledge-base'
+const KNOWLEDGE_BASE_PLUGIN_ID = 'knowledge-base'
 
 /** 读取当前表单有效的资源候选项。 */
 const getSelectionOptions = (key, item) =>
@@ -523,15 +524,15 @@ const isResourceEnabled = (value) => {
   return isDefaultEnabledResourceValue(value)
 }
 
-const isKnowledgeBaseSkillEnabled = computed(() => {
-  const skills = agentConfig.value?.skills
-  if (Array.isArray(skills)) return skills.includes(KNOWLEDGE_BASE_SKILL_SLUG)
-  return isDefaultEnabledResourceValue(skills)
+const isKnowledgeBasePluginEnabled = computed(() => {
+  return agentConfig.value?.plugins?.includes(KNOWLEDGE_BASE_PLUGIN_ID) === true
 })
 
-const shouldShowKnowledgeSkillWarning = (key) => {
+const shouldShowKnowledgePluginWarning = (key) => {
   if (key !== 'knowledges') return false
-  return isResourceEnabled(agentConfig.value?.knowledges) && !isKnowledgeBaseSkillEnabled.value
+  const mcps = agentConfig.value?.mcps
+  const hasDirectKnowledge = mcps === 'all' || (Array.isArray(mcps) && mcps.includes('knowledge'))
+  return isResourceEnabled(agentConfig.value?.knowledges) && !isKnowledgeBasePluginEnabled.value && !hasDirectKnowledge
 }
 
 const currentConfigKind = computed(() => {
