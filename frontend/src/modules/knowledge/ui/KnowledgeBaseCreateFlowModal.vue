@@ -10,7 +10,7 @@
     destroy-on-close
     @cancel="handleCancel"
   >
-    <div class="create-flow-shell">
+    <div ref="createFlowRef" class="create-flow-shell" tabindex="-1">
       <header class="create-flow-header">
         <div class="header-left">
           <div class="create-flow-icon"><DatabaseZap :size="18" /></div>
@@ -215,7 +215,7 @@
 
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import { DatabaseZap, X } from '@lucide/vue'
 import AiTextarea from '@/modules/agents/ui/AiTextarea.vue'
 import EmbeddingModelSelector from '@/modules/settings/ui/EmbeddingModelSelector.vue'
@@ -247,7 +247,13 @@ const {
 } = useChunkPresetOptions()
 
 const stepLabels = ['类型', '配置', '权限']
+const createFlowRef = ref(null)
 const currentStep = ref(0)
+const initialDraft = ref('')
+const discardConfirmOpen = ref(false)
+
+/** 保存初始内容用于区分未修改表单与用户草稿。 */
+const snapshotDraft = () => JSON.stringify({ form, share: shareConfig.value })
 const form = reactive(createEmptyKnowledgeBaseForm(configStore.config?.embed_model))
 const shareConfig = ref(createDefaultShareConfig())
 const shareConfigFormRef = ref(null)
@@ -286,12 +292,28 @@ const reset = () => {
   Object.assign(form, selectKnowledgeBaseType(form, firstType, props.supportedKbTypes[firstType]))
   shareConfig.value = createDefaultShareConfig()
   currentStep.value = 0
+  initialDraft.value = snapshotDraft()
 }
 
 const selectType = (type) =>
   Object.assign(form, selectKnowledgeBaseType(form, type, props.supportedKbTypes[type]))
-const handleCancel = () => {
-  if (creating.value) return
+/** 所有关闭入口统一确认未保存输入。 */
+const handleCancel = async () => {
+  if (creating.value || discardConfirmOpen.value) return
+  if (snapshotDraft() !== initialDraft.value) {
+    discardConfirmOpen.value = true
+    const discard = await new Promise((resolve) => Modal.confirm({
+      title: '放弃创建知识库？',
+      content: '已填写的内容尚未保存。',
+      okText: '放弃创建',
+      cancelText: '继续编辑',
+      afterClose: () => { if (props.open) createFlowRef.value?.focus() },
+      onOk: () => resolve(true),
+      onCancel: () => resolve(false)
+    }))
+    discardConfirmOpen.value = false
+    if (!discard) return
+  }
   emit('update:open', false)
 }
 const goNext = () => {

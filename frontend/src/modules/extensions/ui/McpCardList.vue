@@ -23,8 +23,17 @@
       </template>
     </PageShoulder>
 
+    <div v-if="loading" class="extension-card-grid-empty-state mcp-load-state" role="status">
+      <a-spin />
+      <p>正在加载连接器…</p>
+    </div>
+    <div v-else-if="loadError" class="extension-card-grid-empty-state mcp-load-state" role="alert">
+      <strong>连接器加载失败</strong>
+      <p>{{ loadError }}</p>
+      <a-button @click="fetchServers">重试</a-button>
+    </div>
     <div
-      v-if="visibleServerGroups.length === 0"
+      v-else-if="visibleServerGroups.length === 0"
       class="extension-card-grid-empty-state"
     >
       <a-empty
@@ -153,6 +162,7 @@ const route = useRoute()
 const userStore = useUserStore()
 
 const loading = ref(false)
+const loadError = ref('')
 const servers = ref([])
 const searchQuery = ref('')
 const formModalVisible = ref(false)
@@ -232,12 +242,12 @@ const handleSetServerEnabled = async (server, enabled) => {
 const fetchServers = async () => {
   try {
     loading.value = true
+    loadError.value = ''
     const result = await mcpApi.getMcpServers()
-    if (result.success) {
-      servers.value = result.data || []
-    }
+    if (!result.success) throw new Error(result.message || '获取连接器列表失败')
+    servers.value = result.data || []
   } catch (err) {
-    message.error(err.message || '获取连接器列表失败')
+    loadError.value = err.message || '获取连接器列表失败'
   } finally {
     loading.value = false
   }
@@ -267,6 +277,13 @@ defineExpose({ fetchServers, loading })
 </script>
 
 <style lang="less" scoped>
+.mcp-load-state {
+  flex-direction: column;
+  gap: 12px;
+
+  p { margin: 0; }
+}
+
 .dark .mcp-cards-page :deep(.info-card) {
   --border-surface: transparent;
   --border-surface-hover: transparent;

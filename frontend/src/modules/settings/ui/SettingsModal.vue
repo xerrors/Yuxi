@@ -19,87 +19,105 @@
       <!-- 侧边栏 (Desktop) -->
       <div class="settings-sider">
         <div class="settings-sider-nav">
-          <div
+          <button
+            type="button"
             class="sider-item"
             :class="{ activesec: activeTab === 'account' }"
+            :aria-pressed="activeTab === 'account'"
             @click="activeTab = 'account'"
             v-if="userStore.isLoggedIn"
           >
             <CircleUser class="icon" :size="18" />
             <span>账户设置</span>
-          </div>
-          <div
+          </button>
+          <button
+            type="button"
             class="sider-item"
             :class="{ activesec: activeTab === 'apiKeys' }"
+            :aria-pressed="activeTab === 'apiKeys'"
             @click="activeTab = 'apiKeys'"
             v-if="userStore.isLoggedIn"
           >
             <Key class="icon" :size="18" />
             <span>API Keys</span>
-          </div>
-          <div
+          </button>
+          <button
+            type="button"
             class="sider-item"
             :class="{ activesec: activeTab === 'base' }"
+            :aria-pressed="activeTab === 'base'"
             @click="activeTab = 'base'"
             v-if="userStore.isSuperAdmin"
           >
             <Settings class="icon" :size="18" />
             <span>基本设置</span>
-          </div>
-          <div
+          </button>
+          <button
+            type="button"
             class="sider-item"
             :class="{ activesec: activeTab === 'security' }"
+            :aria-pressed="activeTab === 'security'"
             @click="activeTab = 'security'"
             v-if="userStore.isSuperAdmin"
           >
             <ShieldCheck class="icon" :size="18" />
             <span>安全设置</span>
-          </div>
-          <div
+          </button>
+          <button
+            type="button"
             class="sider-item"
             :class="{ activesec: activeTab === 'ocr' }"
+            :aria-pressed="activeTab === 'ocr'"
             @click="activeTab = 'ocr'"
             v-if="userStore.isSuperAdmin"
           >
             <ScanText class="icon" :size="18" />
             <span>OCR 配置</span>
-          </div>
-          <div
+          </button>
+          <button
+            type="button"
             v-if="userStore.isSuperAdmin"
             class="sider-item"
             :class="{ activesec: activeTab === 'webSearch' }"
+            :aria-pressed="activeTab === 'webSearch'"
             @click="activeTab = 'webSearch'"
           >
             <Globe class="icon" :size="18" />
             <span>网络搜索</span>
-          </div>
-          <div
+          </button>
+          <button
+            type="button"
             class="sider-item"
             :class="{ activesec: activeTab === 'user' }"
+            :aria-pressed="activeTab === 'user'"
             @click="activeTab = 'user'"
             v-if="userStore.isAdmin"
           >
             <User class="icon" :size="18" />
             <span>用户管理</span>
-          </div>
-          <div
+          </button>
+          <button
+            type="button"
             class="sider-item"
             :class="{ activesec: activeTab === 'department' }"
+            :aria-pressed="activeTab === 'department'"
             @click="activeTab = 'department'"
             v-if="userStore.isSuperAdmin"
           >
             <Users class="icon" :size="18" />
             <span>部门管理</span>
-          </div>
-          <div
+          </button>
+          <button
+            type="button"
             class="sider-item"
             :class="{ activesec: activeTab === 'agentEnv' }"
+            :aria-pressed="activeTab === 'agentEnv'"
             @click="activeTab = 'agentEnv'"
             v-if="userStore.isLoggedIn"
           >
             <SquareTerminal class="icon" :size="18" />
             <span>运行环境</span>
-          </div>
+          </button>
         </div>
 
         <div v-if="showStarCard" class="settings-star-card">
@@ -138,76 +156,94 @@
 
       <!-- 顶部导航 (Mobile) -->
       <div class="settings-mobile-nav">
-        <div
+        <button
+          type="button"
           class="nav-item"
           :class="{ active: activeTab === 'account' }"
+          :aria-pressed="activeTab === 'account'"
           @click="activeTab = 'account'"
           v-if="userStore.isLoggedIn"
         >
           账户设置
-        </div>
-        <div
+        </button>
+        <button
+          type="button"
           class="nav-item"
           :class="{ active: activeTab === 'apiKeys' }"
+          :aria-pressed="activeTab === 'apiKeys'"
           @click="activeTab = 'apiKeys'"
           v-if="userStore.isLoggedIn"
         >
           API Keys
-        </div>
-        <div
+        </button>
+        <button
+          type="button"
           class="nav-item"
           :class="{ active: activeTab === 'agentEnv' }"
+          :aria-pressed="activeTab === 'agentEnv'"
           @click="activeTab = 'agentEnv'"
           v-if="userStore.isLoggedIn"
         >
           运行环境
-        </div>
-        <div
+        </button>
+        <button
+          type="button"
           class="nav-item"
           :class="{ active: activeTab === 'base' }"
+          :aria-pressed="activeTab === 'base'"
           @click="activeTab = 'base'"
           v-if="userStore.isSuperAdmin"
         >
           基本设置
-        </div>
-        <div
+        </button>
+        <button
+          type="button"
           class="nav-item"
           :class="{ active: activeTab === 'security' }"
+          :aria-pressed="activeTab === 'security'"
           @click="activeTab = 'security'"
           v-if="userStore.isSuperAdmin"
         >
           安全设置
-        </div>
-        <div
+        </button>
+        <button
+          type="button"
           class="nav-item"
           :class="{ active: activeTab === 'ocr' }"
+          :aria-pressed="activeTab === 'ocr'"
           @click="activeTab = 'ocr'"
           v-if="userStore.isSuperAdmin"
         >
           OCR 配置
-        </div>
-        <div
+        </button>
+        <button
+          type="button"
           v-if="userStore.isSuperAdmin"
           class="nav-item"
           :class="{ active: activeTab === 'webSearch' }"
+          :aria-pressed="activeTab === 'webSearch'"
           @click="activeTab = 'webSearch'"
-        >网络搜索</div>
-        <div
+        >网络搜索</button>
+        <button
+          type="button"
           class="nav-item"
           :class="{ active: activeTab === 'user' }"
+          :aria-pressed="activeTab === 'user'"
           @click="activeTab = 'user'"
           v-if="userStore.isAdmin"
         >
           用户管理
-        </div>
-        <div
+        </button>
+        <button
+          type="button"
           class="nav-item"
           :class="{ active: activeTab === 'department' }"
+          :aria-pressed="activeTab === 'department'"
           @click="activeTab = 'department'"
           v-if="userStore.isSuperAdmin"
         >
           部门管理
-        </div>
+        </button>
       </div>
 
       <!-- 内容区域 -->
@@ -391,6 +427,18 @@ watch(
 
   .ant-modal-body {
     padding: 0;
+  }
+}
+
+.settings-sider-nav .sider-item,
+.settings-mobile-nav .nav-item {
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+
+  &:focus-visible {
+    outline: 2px solid var(--main-color);
+    outline-offset: -2px;
   }
 }
 

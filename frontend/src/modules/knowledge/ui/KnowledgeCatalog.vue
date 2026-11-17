@@ -12,7 +12,9 @@
 
     <PageShoulder v-model:search="searchQuery" search-placeholder="搜索知识库...">
       <template #filters>
+        <label for="knowledge-type-filter" class="filter-label">知识库类型</label>
         <a-select
+          id="knowledge-type-filter"
           v-model:value="typeFilter"
           style="width: 120px"
           placeholder="全部类型"
@@ -67,6 +69,17 @@
           </template>
           创建知识库
         </a-button>
+      </template>
+    </ResourceEmptyState>
+
+    <ResourceEmptyState
+      v-else-if="filteredKnowledgeBases.length === 0"
+      title="未找到匹配的知识库"
+      description="试试其他关键词，或清除筛选条件。"
+      :icon="getKbTypeIcon('milvus')"
+    >
+      <template #actions>
+        <a-button @click="clearFilters">清除筛选</a-button>
       </template>
     </ResourceEmptyState>
 
@@ -155,8 +168,19 @@ const knowledgeViewItems = [
 ]
 
 const kbTypes = computed(() => Object.keys(supportedKbTypes.value))
-const searchQuery = ref('')
-const typeFilter = ref(null)
+// 查询条件归当前列表 URL 所有，详情返回与刷新沿用同一组筛选。
+const searchQuery = computed({
+  get: () => typeof route.query.kb_search === 'string' ? route.query.kb_search : '',
+  set: (value) => router.replace({ query: { ...route.query, kb_search: value || undefined } })
+})
+const typeFilter = computed({
+  get: () => typeof route.query.kb_type === 'string' ? route.query.kb_type : null,
+  set: (value) => router.replace({ query: { ...route.query, kb_type: value || undefined } })
+})
+/** 一次清除当前列表筛选，保留其他路由参数。 */
+const clearFilters = () => router.replace({
+  query: { ...route.query, kb_search: undefined, kb_type: undefined }
+})
 
 const filteredKnowledgeBases = computed(() => {
   let list = knowledgeBases.value
@@ -331,6 +355,15 @@ defineExpose({
 </script>
 
 <style lang="less" scoped>
+.filter-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .knowledge-base-container {
   padding: 0;
 }

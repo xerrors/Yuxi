@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { Plus, RefreshCw, Trash2, SquarePen, Bot, ChevronRight } from '@lucide/vue'
+import { Plus, RefreshCw, Trash2, SquarePen, Bot, ChevronRight, Copy } from '@lucide/vue'
 import { useRouter } from 'vue-router'
 
 import { agentApi } from '@/apis/agent_api'
@@ -10,6 +10,7 @@ import { isBuiltinAgent, useAgentStore } from '@/modules/agents/model/agent'
 import PageShoulder from '@/shared/ui/PageShoulder.vue'
 import InfoCard from '@/shared/ui/InfoCard.vue'
 import FallbackAvatar from '@/shared/ui/FallbackAvatar.vue'
+import { copyTextToClipboard } from '@/shared/lib/clipboard'
 import ExtensionCardGrid from '@/modules/extensions/ui/ExtensionCardGrid.vue'
 import { normalizeAgentBackendOption } from '@/modules/agents/model/agentConfigUtils'
 import { filterAndSortAgents } from '@/modules/agents/model/agentOrder'
@@ -25,6 +26,16 @@ const visibilityFilter = ref('all')
 const agentBackendOptions = ref([])
 const managedAgents = ref([])
 const agentEditModalRef = ref(null)
+
+/** 按需复制对接标识，卡片优先展示名称和用途。 */
+const copyAgentId = async (agent) => {
+  try {
+    await copyTextToClipboard(agent.agent_id)
+    message.success('智能体 ID 已复制')
+  } catch {
+    message.error('复制失败，请检查浏览器剪贴板权限')
+  }
+}
 
 const filteredAgents = computed(() => filterAndSortAgents(managedAgents.value, searchQuery.value))
 
@@ -215,7 +226,7 @@ defineExpose({
             v-for="agent in visibleAgents"
             :key="agent.agent_id"
             :title="agent.name"
-            :subtitle="agent.agent_id"
+            :clickable="canManageAgent(agent)"
             :description="agent.description || '暂无描述'"
             :default-icon="Bot"
             :tags="[{ name: getAgentShareLabel(agent), color: 'gray' }]"
@@ -235,15 +246,19 @@ defineExpose({
               />
             </template>
 
-            <template v-if="canManageAgent(agent)" #card-more-action-corner>
+            <template #card-more-action-corner>
               <a-menu>
-                <a-menu-item key="edit" @click.stop="openEditAgentModal(agent)">
+                <a-menu-item key="copy" @click.stop="copyAgentId(agent)">
+                  <span class="lucide-menu-item"><Copy :size="14" /><span>复制 ID</span></span>
+                </a-menu-item>
+                <a-menu-item v-if="canManageAgent(agent)" key="edit" @click.stop="openEditAgentModal(agent)">
                   <span class="lucide-menu-item">
                     <SquarePen :size="14" />
                     <span>编辑智能体</span>
                   </span>
                 </a-menu-item>
                 <a-menu-item
+                  v-if="canManageAgent(agent)"
                   key="delete"
                   :disabled="isBuiltinAgent(agent)"
                   :danger="!isBuiltinAgent(agent)"

@@ -86,20 +86,15 @@ const emit = defineEmits(['update:activeKey'])
 
 .loading-bar {
   position: absolute;
-  width: 30%;
+  width: 100%;
   height: 100%;
   background: var(--main-color);
-  animation: extension-loading-bar 1.5s infinite linear;
+  animation: extension-loading-bar 2s ease-in-out infinite;
 }
 
 @keyframes extension-loading-bar {
-  from {
-    left: -30%;
-  }
-
-  to {
-    left: 100%;
-  }
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 0.7; }
 }
 
 .extension-detail-tabs {

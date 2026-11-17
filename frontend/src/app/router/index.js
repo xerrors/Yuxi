@@ -180,8 +180,8 @@ const router = createRouter({
   ]
 })
 
-// 全局前置守卫
-router.beforeEach(async (to) => {
+// 页面挂载前校验身份；导航跟踪先运行，失败沿用 App 的重试界面。
+router.beforeResolve(async (to) => {
   // 检查路由是否需要认证
   const requiresAuth = to.matched.some((record) => record.meta.requiresAuth === true)
   const requiresAdmin = to.matched.some((record) => record.meta.requiresAdmin)
@@ -194,8 +194,8 @@ router.beforeEach(async (to) => {
     try {
       await userStore.getCurrentUser()
     } catch (error) {
-      // 如果获取用户信息失败（如 token 过期），清除 token
-      console.error('获取用户信息失败:', error)
+      // 只有认证失效才清除凭据；服务异常拒绝导航并保留重试能力。
+      if (error.status !== 401) throw error
       userStore.logout()
     }
   }

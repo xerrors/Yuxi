@@ -37,3 +37,66 @@ test('测试仅在取得搜索结果或非空正文后通过', () => {
   assert.equal(testOutcome('search', { results: [] }).state, 'failed')
   assert.equal(testOutcome('fetch', { content: '  ' }).state, 'failed')
 })
+
+test('凭据表单空白保存保留原值，只有显式清除才发送空值，失败保留编辑内容', async (t) => {
+  const { createTestServer } = await import('../helpers/createTestServer.js')
+  const { createRenderer, h, ssrContextKey, toRaw } = await import('vue')
+  const server = await createTestServer({ server: { middlewareMode: true }, ssr: { noExternal: ['ant-design-vue'] }, plugins: [{
+    name: 'web-credential-feedback', enforce: 'pre',
+    resolveId(id) { if (id === 'ant-design-vue') return '\0web-credential-feedback' },
+    load(id) { if (id === '\0web-credential-feedback') return 'export const message = { info() {}, success() {}, error() {} }' }
+  }] })
+  const { configOptionsApi, configApi } = await server.ssrLoadModule('/src/apis/system_api.js')
+  t.mock.method(configOptionsApi, 'getOptions', async () => ({ options: optionRecords }))
+  t.mock.method(configApi, 'getConfig', async () => ({}))
+  const persisted = { api_key: 'fixture-existing' }
+  const payloads = []
+  t.mock.method(configOptionsApi, 'updateOption', async (key, value) => {
+    assert.equal(key, 'tavily_search_opts')
+    payloads.push(value)
+    Object.assign(persisted, value)
+    return { option: { sensitive_state: { api_key: { configured: Boolean(persisted.api_key) } } } }
+  })
+  const component = (await server.ssrLoadModule('/src/modules/settings/ui/WebSearchSettingsSection.vue')).default
+  const renderer = createRenderer({
+    createElement: () => ({}), createText: () => ({}), createComment: () => ({}),
+    insert() {}, remove() {}, setText() {}, setElementText() {}, patchProp() {},
+    parentNode: () => null, nextSibling: () => null
+  })
+  const app = renderer.createApp({ ...component, render: () => h('div') })
+  app.provide(ssrContextKey, { modules: new Set() })
+  app.mount({})
+  t.after(async () => { app.unmount(); await server.close() })
+  const s = toRaw(app._instance.setupState)
+  const provider = webProviders(optionRecords)[0]
+  s.startEditing(provider)
+  s.draftKey.value = '  '
+  await s.saveKey(provider)
+  assert.equal(persisted.api_key, 'fixture-existing')
+  assert.deepEqual(payloads, [])
+
+  s.startEditing(provider)
+  s.clearKey.value = true
+  assert.equal(s.testDisabled(provider), true)
+  await s.saveKey(provider)
+  assert.deepEqual(payloads, [{ api_key: '' }])
+  assert.equal(persisted.api_key, '')
+
+  s.startEditing(provider)
+  assert.equal(s.clearKey.value, false)
+  s.draftKey.value = ' fixture-new '
+  await s.saveKey(provider)
+  assert.equal(persisted.api_key, 'fixture-new')
+  s.startEditing(provider)
+  s.clearKey.value = true
+  s.cancelEditing()
+  assert.equal(persisted.api_key, 'fixture-new', '取消清除不能改变已保存配置')
+
+  t.mock.method(configOptionsApi, 'updateOption', async () => { throw new Error('服务暂不可用') })
+  s.startEditing(provider)
+  s.draftKey.value = 'fixture-retry'
+  await s.saveKey(provider)
+  assert.equal(persisted.api_key, 'fixture-new')
+  assert.equal(s.editingKey.value, provider.id)
+  assert.equal(s.draftKey.value, 'fixture-retry')
+})
