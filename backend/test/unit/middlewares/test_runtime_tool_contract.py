@@ -71,49 +71,45 @@ def test_runtime_fields_are_declared_and_excluded_from_user_configuration():
 
 @pytest.mark.asyncio
 async def test_dynamic_mcp_loading_requires_prior_tool_source_assembly():
-    """Skill 动态建连不能在缺失来源记录时开始。"""
+    """插件动态建连不能在缺失来源记录时开始。"""
     from unittest.mock import AsyncMock
     from langchain.agents.middleware.types import ModelRequest
-    from yuxi.modules.agents.runtime.middlewares.skills import SkillsMiddleware
+    from yuxi.modules.agents.runtime.middlewares.plugins import PluginLoaderMiddleware
 
-    context = BaseContext()
-    context.skill_runtime_snapshot = {
-        "effective_skills": ["report"],
-        "preloaded_skills": ["report"],
-        "preloaded_skill_contents": {"report": "# Report instructions"},
-        "runtime_skills": {"report": {"tools": [], "mcps": ["server"]}},
-    }
+    context = BaseContext(mcps=["server"])
     request = ModelRequest(model=SimpleNamespace(), messages=[], tools=[], runtime=SimpleNamespace(context=context), state={})
     with pytest.raises(RuntimeError, match="来源尚未装配"):
-        await SkillsMiddleware().awrap_model_call(request, AsyncMock())
+        await PluginLoaderMiddleware().awrap_model_call(request, AsyncMock())
 
 
-def test_missing_mcp_connection_blocks_skill_dependencies_but_preserves_explicit_tools(context, mcp_policy):
-    """模型之外直接调用也不能绕过不可用 Skill，显式工具仍独立可用。"""
+def test_missing_mcp_connection_blocks_plugin_but_preserves_explicit_tools(context, monkeypatch):
+    """插件引用连接不可用时关闭其能力，显式工具仍独立可用。"""
+    from yuxi.modules.extensions.plugins.base import YuxiPlugin
+    from yuxi.modules.agents.runtime.middlewares import authorization
+
+    from langchain_core.tools import tool
+
+    @tool
+    def gated() -> str:
+        """返回插件专属工具结果。"""
+        return "owned-result"
+
+    class ReportPlugin(YuxiPlugin):
+        plugin_id = "report"
+        entry_skill = "report"
+        skills = ("report", "shared-guide")
+        tools = [gated]
+        mcps = ("server",)
+
+    monkeypatch.setattr(authorization, "get_plugins", lambda: (ReportPlugin,))
+    context.plugins = ["report"]
     context.skill_runtime_snapshot = {
-        "effective_skills": ["report"],
-        "preloaded_skills": ["report"],
-        "runtime_skills": {"report": {"tools": ["gated"], "mcps": ["server"]}},
+        "plugin_entry_contents": {"report": "instructions"},
+        "runtime_skills": {"report": {}, "shared-guide": {}},
     }
-    mcp_policy = {}
-    assert not tool_allowed(context, "gated", {}, mcp_policy)
-    assert tool_allowed(context, "local", {}, mcp_policy)
-    mcp_policy = {"server": set()}
-    assert tool_allowed(context, "gated", {}, mcp_policy)
-
-
-def test_nested_skill_cannot_expose_local_tools_when_dependency_mcp_is_unconnected(context, mcp_policy):
-    """子 Skill 缺少授权时，父 Skill 的本地工具也不能执行。"""
-    context.skill_runtime_snapshot = {
-        "effective_skills": ["parent", "child"],
-        "preloaded_skills": ["parent", "child"],
-        "runtime_skills": {
-            "parent": {"tools": ["gated"], "mcps": [], "skills": ["child"]},
-            "child": {"tools": [], "mcps": ["server"], "skills": []},
-        },
-    }
-    mcp_policy = {}
-    assert not tool_allowed(context, "gated", {}, mcp_policy)
-    assert tool_allowed(context, "local", {}, mcp_policy)
-    mcp_policy = {"server": set()}
-    assert tool_allowed(context, "gated", {}, mcp_policy)
+    state = {"activated_plugins": ["report"]}
+    assert not tool_allowed(context, "gated", state, {})
+    assert tool_allowed(context, "local", state, {})
+    assert tool_allowed(context, "gated", state, {"server": set()})
+    del context.skill_runtime_snapshot["runtime_skills"]["shared-guide"]
+    assert not tool_allowed(context, "gated", state, {"server": set()})

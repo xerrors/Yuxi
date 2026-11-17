@@ -23,3 +23,21 @@ def test_chatbot_prompt_rejects_missing_workdir(workdir):
     """没有当前工作目录时拒绝拼装。"""
     with pytest.raises(ValueError, match="缺少当前 Workdir"):
         build_prompt_with_context(SimpleNamespace(workdir_path=workdir, system_prompt=""))
+
+
+@pytest.mark.parametrize(
+    "tool_servers",
+    [
+        {"computer_observe": "abridge", "query_kb": "knowledge"},
+        {"query_kb": "knowledge"},
+        {},
+        None,
+    ],
+)
+def test_chatbot_prompt_does_not_inject_device_instructions_from_mcp_catalog(tool_servers):
+    """通用 Chatbot 不根据工具目录注入插件专属设备纪律。"""
+    prompt = build_prompt_with_context(
+        SimpleNamespace(workdir_path="/home/user/workspace/projects/prompt-test", system_prompt="", mcp_tool_servers=tool_servers)
+    )
+    assert "设备控制（aBridge）" not in prompt
+    assert "operation_id" not in prompt

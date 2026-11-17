@@ -58,6 +58,7 @@ class BaseAgent(ABC):
         user_role: str | None = None,
         db=None,
         user=None,
+        agent_id: int | None = None,
     ):
         # metadata 固定在代码中，由各 Agent 的类属性提供
         metadata = self.load_metadata()
@@ -65,8 +66,12 @@ class BaseAgent(ABC):
         if include_configurable_items:
             configurable_items = self.context_schema.get_configurable_items(user_role=user_role)
             if db is not None and user is not None:
-                resource_fields = {item["kind"] for item in configurable_items.values() if item.get("supports_all")}
-                resource_options = await resolve_agent_resource_options(resource_fields, db=db, user=user)
+                resource_fields = {
+                    item["kind"]
+                    for item in configurable_items.values()
+                    if item.get("kind") in self.context_schema.get_resource_fields().values()
+                }
+                resource_options = await resolve_agent_resource_options(resource_fields, db=db, user=user, agent_id=agent_id)
                 for item in configurable_items.values():
                     if item.get("kind") in resource_options:
                         item["options"] = resource_options[item["kind"]]

@@ -9,7 +9,6 @@ from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.testclient import TestClient
 
 import yuxi.api.routers.extensions.mcp as mcp_router
-import yuxi.api.routers.extensions.skills as skill_router
 import yuxi.api.routers.identity.auth as auth_router
 import yuxi.api.routers.knowledge.dashboard as knowledge_dashboard_router
 import yuxi.api.routers.knowledge.evaluation as knowledge_eval_router
@@ -33,7 +32,7 @@ import yuxi.modules.knowledge.services.document_actions as document_actions
         (
             knowledge_router.get_knowledge_bases,
             {},
-            knowledge_router.knowledge_base_manager,
+            knowledge_router.knowledge_access,
             "get_knowledge_bases_by_uid",
         ),
         (
@@ -42,18 +41,12 @@ import yuxi.modules.knowledge.services.document_actions as document_actions
             knowledge_eval_router.EvaluationService,
             "list_datasets",
         ),
-        (graph_router.get_graphs, {}, graph_router.knowledge_base, "get_knowledge_bases_by_uid"),
+        (graph_router.get_graphs, {}, graph_router.knowledge_access, "get_knowledge_bases_by_uid"),
         (
             knowledge_dashboard_router.read_knowledge_stats,
             {},
             knowledge_dashboard_router,
             "get_knowledge_stats",
-        ),
-        (
-            skill_router.get_skill_dependency_options_route,
-            {"slug": "private", "db": None},
-            skill_router,
-            "get_manageable_skill_or_raise",
         ),
         (mcp_router.get_mcp_servers, {"db": None}, mcp_router, "get_all_mcp_servers"),
         (system_router.reload_info_config, {}, system_router, "load_info_config"),
@@ -169,7 +162,7 @@ def test_graph_configuration_error_response(monkeypatch, error, status_code, det
     [
         ("/knowledge/knowledge-bases", "get_knowledge_bases_by_uid", True),
         ("/knowledge/knowledge-bases/accessible", "get_knowledge_bases_by_uid", True),
-        ("/knowledge/types", "get_supported_kb_types", False),
+        ("/knowledge/types", "get_available_types", False),
         ("/knowledge/stats", "get_statistics", True),
     ],
 )
@@ -181,7 +174,8 @@ def test_knowledge_read_failure_is_not_empty_success(monkeypatch, path, method, 
     app.dependency_overrides[knowledge_router.get_admin_user] = lambda: user
     app.dependency_overrides[knowledge_router.get_required_user] = lambda: user
     mock_type = AsyncMock if asynchronous else Mock
-    monkeypatch.setattr(knowledge_router.knowledge_base_manager, method, mock_type(side_effect=RuntimeError("storage down")))
+    target = {"get_knowledge_bases_by_uid": knowledge_router.knowledge_access, "get_statistics": knowledge_router.knowledge_statistics, "get_available_types": knowledge_router.KnowledgeBaseFactory}.get(method, knowledge_router.knowledge_base_manager)
+    monkeypatch.setattr(target, method, mock_type(side_effect=RuntimeError("storage down")))
 
     response = TestClient(app).get(path)
 

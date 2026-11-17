@@ -8,6 +8,7 @@ from yuxi.modules.agents.runtime.middlewares.summary import (
 )
 from yuxi.modules.agents.runtime.middlewares.token_usage import TokenUsageMiddleware
 from yuxi.modules.agents.runtime.middlewares.tool_error_guard import ToolErrorGuardMiddleware
+from yuxi.modules.agents.runtime.middlewares.tool_media import create_tool_media_middleware
 
 __all__ = [
     "ImageInputCompatibilityMiddleware",
@@ -18,4 +19,5 @@ __all__ = [
     "create_memory_middleware",
     "create_summary_middleware",
     "create_summary_middleware_from_context",
+    "create_tool_media_middleware",
 ]

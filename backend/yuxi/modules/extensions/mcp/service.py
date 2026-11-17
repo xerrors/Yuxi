@@ -26,6 +26,7 @@ from yuxi.modules.extensions.mcp.runtime import (
 from yuxi.modules.extensions.mcp.runtime import (
     get_mcp_tools as load_mcp_tools,
 )
+from yuxi.shared.errors import StateConflictError
 
 BUILTIN_MCP_SERVERS = BUILTIN_MCP_MANIFEST["mcpServers"]
 
@@ -127,7 +128,7 @@ async def get_enabled_mcp_servers(*, names: list[str] | None = None, db: AsyncSe
         async with pg_manager.get_async_session_context() as session:
             return await get_enabled_mcp_servers(names=names, db=session)
 
-    return [server for server in await list_enabled_mcp_servers(db, names=names) if builtin_mcp_available(server.slug)]
+    return [server for server in await list_enabled_mcp_servers(db, names=names) if await _mcp_available(server.slug, db=db)]
 
 
 async def get_mcp_tools(
@@ -378,7 +379,7 @@ async def resolve_runtime_mcp_tools(
             config = _to_runtime_mcp_config(server)
             if server.auth_mode == "delegation":
                 config.pop("headers", None)
-                config.update(_delegation_connection(server, uid=uid, context=context))
+                config.update(await _delegation_connection(server, uid=uid, context=context))
                 return await load_mcp_tools(server.slug, config, disabled_tools=[])
             return await get_mcp_tools(server.slug, additional_servers={server.slug: config}, disabled_tools=[])
         except Exception as exc:
@@ -441,7 +442,9 @@ async def available_mcp_servers(db: AsyncSession, server_slugs, *, user_id: int)
     available = {
         server.slug: server
         for server, connection in rows
-        if builtin_mcp_available(server.slug) and server.enabled and connection_status(server, connection) in {"connected", "not_required"}
+        if await _mcp_available(server.slug, db=db)
+        and server.enabled
+        and connection_status(server, connection) in {"connected", "not_required"}
     }
     return {slug: available[slug] for slug in dict.fromkeys(server_slugs) if slug in available}
 
@@ -481,7 +484,7 @@ async def get_all_mcp_tools(server_slug: str, *, uid: str | None = None) -> list
 
 async def inspect_mcp_server_tools(server: MCPServer, *, uid: str | None = None) -> list:
     """管理端严格建连，包括停用服务；不吞异常、不修改运行状态。"""
-    if not builtin_mcp_available(server.slug):
+    if not await _mcp_available(server.slug):
         raise ValueError("连接器在当前部署不可用")
     if server.auth_mode in PERSONAL_AUTH_MODES:
         return await personal_mcp_tools(server, uid, include_disabled=True, management=True)
@@ -489,15 +492,36 @@ async def inspect_mcp_server_tools(server: MCPServer, *, uid: str | None = None)
     config["auth"] = None
     if getattr(server, "auth_mode", "headers") == "delegation":
         config.pop("headers", None)
-        config.update(_delegation_connection(server, uid=uid, management=True))
+        config.update(await _delegation_connection(server, uid=uid, management=True))
     return await load_mcp_tools(server.slug, config, disabled_tools=[])
 
 
-def _delegation_connection(server, *, uid, context=None, management=False):
+async def _mcp_available(slug: str, *, db=None) -> bool:
+    """设备连接器还需有效实例地址，通用身份提供端不代表设备集成已配置。"""
+    if not builtin_mcp_available(slug):
+        return False
+    if slug == "abridge":
+        from yuxi.modules.extensions.abridge.options import connection_settings
+
+        try:
+            return (await connection_settings(db)).configured
+        except StateConflictError as exc:
+            if exc.code != "abridge_invalid_configuration":
+                raise
+            logger.warning("component=abridge available=false reason=abridge_invalid_configuration")
+            return False
+    return True
+
+
+async def _delegation_connection(server, *, uid, context=None, management=False):
     """内部服务直接提供 SDK 认证，执行请求复用通用出站策略。"""
     from yuxi.modules.knowledge.mcp.client import knowledge_mcp_connection
 
     policy = None if management else SharedMCPAuth(server.slug, server.to_mcp_config(), uid=uid, auth_mode=server.auth_mode)
+    if server.slug == "abridge":
+        from yuxi.modules.extensions.abridge.client import abridge_mcp_connection
+
+        return await abridge_mcp_connection(uid=uid, before_request=policy.validate_request if policy is not None else None)
     return knowledge_mcp_connection(
         server.slug,
         uid=uid,

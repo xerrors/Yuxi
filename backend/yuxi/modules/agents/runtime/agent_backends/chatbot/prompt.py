@@ -13,7 +13,8 @@ PROMPT = """
 <| 网页与浏览器 |>
 - 网页事实或时效查询使用可用的 web_search，优先官方来源；需要阅读链接全文时使用可用的 web_fetch。\
 简单问题最多搜索一次，结果不足就说明未确认；复杂调研再比较多源。
-- 指定网址打开、交互、截图或核验时读取已安装的 agent-browser 或 playwright-cli Skill；未安装时提示从 Skills 推荐安装。
+- 指定网址打开、交互、截图或核验时，有适用插件则先加载并使用其浏览器能力；\
+否则读取已安装的 agent-browser 或 playwright-cli Skill，未安装时提示从 Skills 推荐安装。
 - 稳定常识、写作、计算和本地资料不浏览。
 - 展示图片时读取 chat-widgets 并用 Image/ImageGroup；下载或交付文件才用 present_artifacts。只报告实际核验结果。
 
@@ -39,5 +40,6 @@ def build_prompt_with_context(context):
 - 未经用户明确要求，不得在当前 Project Workdir 之外创建、修改、移动或删除文件
 - 同树协作会话共享同一个 Project Workdir；并发写同一路径遵循真实 POSIX 结果
 """
-    system_prompt = f"{current_date}\n\n{PROMPT.strip()}\n\n{filesystem_prompt.strip()}\n\n{context.system_prompt or ''}"
-    return system_prompt.strip()
+    sections = [current_date, PROMPT.strip(), filesystem_prompt.strip()]
+    sections.append(context.system_prompt or "")
+    return "\n\n".join(section for section in sections if section).strip()

@@ -7,12 +7,12 @@ import pytest
 
 from yuxi.modules.agents.services.transport import (
     RUN_EVENTS_STREAM_TTL_SECONDS,
-    append_run_stream_event,
+    append_run_stream_events,
     get_redis_client,
 )
 from yuxi.infrastructure.redis import close_async_redis_client
 
-pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
+pytestmark = [pytest.mark.asyncio, pytest.mark.integration, pytest.mark.self_managed_resources]
 
 
 @pytest.fixture(autouse=True)
@@ -28,18 +28,24 @@ async def test_stream_batch_preserves_payload_and_expiry():
     run_id = str(uuid.uuid4())
     key = f"run:events:v2:{run_id}"
     redis = await get_redis_client()
-    event = {
+    first = {
         "type": "yuxi.run.metadata",
         "yuxi": {"run_id": run_id, "thread_id": "test-thread"},
         "probe": "batch",
     }
+    second = {
+        "type": "yuxi.session.run.settled",
+        "yuxi": {"run_id": run_id, "thread_id": "test-thread"},
+        "status": "completed",
+    }
     try:
-        seq = await append_run_stream_event(run_id, event)
+        cursors = await append_run_stream_events(run_id, [first, second])
         rows = await redis.xrange(key)
-        assert len(rows) == 1
-        assert rows[0][0] == seq
-        assert rows[0][1]["version"] == "2"
-        assert json.loads(rows[0][1]["event"]) == event
+        assert len(rows) == 2
+        assert [row[0] for row in rows] == cursors
+        assert cursors[0] < cursors[1]
+        assert all(row[1]["version"] == "2" for row in rows)
+        assert [json.loads(row[1]["event"]) for row in rows] == [first, second]
         assert 0 < await redis.ttl(key) <= RUN_EVENTS_STREAM_TTL_SECONDS
     finally:
         await redis.delete(key)

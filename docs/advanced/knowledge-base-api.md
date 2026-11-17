@@ -1,14 +1,14 @@
 # 文档导入与查询 API
 
-本页说明如何通过 HTTP 导入文档，以及如何通过 HTTP 或 CLI 查询已经处理的内容。它面向管理员和集成开发者；知识库运行机制见[知识库机制](../mechanisms/knowledge-base.md)，图谱运维见[知识图谱](./knowledge-base-graph.md)。
+本页说明如何通过 HTTP 导入文档，以及如何通过 HTTP 或 CLI 查询已经处理的内容。它面向管理员和集成开发者。知识库运行机制见[知识库机制](../mechanisms/knowledge-base.md)，图谱运维见[知识图谱](./knowledge-base-graph.md)。
 
 ## 权限
 
 外部 MCP 客户端可通过[知识库 MCP 接入](./knowledge-mcp.md)调用本页的五个只读查询工具。
 
-文档管理接口要求知识库管理权限；原始文件上传接口还要求管理员身份。读取和外部查询接口要求知识库读取权限。
+文档管理接口要求知识库管理权限。原始文件上传接口还要求管理员身份。读取和外部查询接口要求知识库读取权限。
 
-知识库的 `share_config` 使用 version 2，分别保存 `read_scope` 和 `manage_scope`。范围的 `access_level` 可以是 `global`、`department` 或 `user`；范围关系遵循[资源权限的同类型子集规则](../mechanisms/resource-permissions.md#共享资源)。
+知识库的 `share_config` 使用 version 2，分别保存 `read_scope` 和 `manage_scope`。范围的 `access_level` 可以是 `global`、`department` 或 `user`。范围关系遵循[资源权限的同类型子集规则](../mechanisms/resource-permissions.md#共享资源)。
 
 | 用户 | 读取 | 管理 |
 | --- | --- | --- |
@@ -21,7 +21,7 @@
 
 ## 知识库管理
 
-管理资源使用 `/api/knowledge/knowledge-bases`。创建知识库的请求字段为 `name`、`description`、`kb_type` 与该类型需要的配置。更新请求要求 `name` 和 `description`，`llm_model_spec`、`additional_params`、`share_config` 可选；知识库身份使用 `kb_id`。
+管理资源使用 `/api/knowledge/knowledge-bases`。创建知识库的请求字段为 `name`、`description`、`kb_type` 与该类型需要的配置。更新请求要求 `name` 和 `description`，`llm_model_spec`、`additional_params`、`share_config` 可选。知识库身份使用 `kb_id`。
 
 更新请求体至少包含：
 
@@ -34,7 +34,7 @@
 
 管理员列表与 `/accessible` 可见列表的响应集合字段为 `knowledge_bases`。创建和详情返回知识库对象；更新返回 `message` 与 `knowledge_base`。文档、图谱构建及检索接口位于该资源下，评估资源位于 `/api/evaluation/knowledge-bases/{kb_id}`。完整字段和路由以部署实例的 OpenAPI 为准。
 
-知识库查询、查询参数、示例问题、文档处理提交，以及文件夹创建、重命名、移动和 URL 抓取的未知异常分支使用稳定错误说明。批量操作保留成功数量、失败文件身份与可公开的领域错误；排查内部故障时由管理员查看服务端日志。
+知识库查询、查询参数、示例问题、文档处理提交，以及文件夹创建、重命名、移动和 URL 抓取，有未知异常分支。这些分支使用稳定错误说明。批量操作保留成功数量、失败文件身份与可公开的领域错误。排查内部故障时由管理员查看服务端日志。
 
 ## 一体化导入
 
@@ -54,7 +54,7 @@ Content-Type: application/json
 }
 ```
 
-接口返回 `status=queued` 与 `job_id`，表示后台作业已经登记。管理员通过 `GET /api/background-jobs/{job_id}` 观察作业进度，完成后回读文件记录，确认状态为 `parsed` 或 `indexed`；`auto_index=true` 时还需验证目标文件可检索。
+接口返回 `status=queued` 与 `job_id`，表示后台作业已经登记。管理员通过 `GET /api/background-jobs/{job_id}` 观察作业进度，完成后回读文件记录，确认状态为 `parsed` 或 `indexed`。`auto_index=true` 时还需验证目标文件可检索。
 
 ## 分步导入
 
@@ -62,12 +62,12 @@ Content-Type: application/json
 
 1. `POST /api/knowledge/files/upload?kb_id=<kb-id>` 上传原文件，保存 `file_path`、`content_hash` 和 `size`。
 2. `POST /api/knowledge/knowledge-bases/{kb_id}/documents/add` 创建文件记录，请求体为 `{"items":["<file_path>"],"params":{"content_hashes":{"<file_path>":"<content_hash>"}}}`，其中 `file_path` 与 `content_hash` 来自上一步；这一步不解析、不索引。
-3. `POST /api/knowledge/knowledge-bases/{kb_id}/documents/parse`，请求体可以是文件 ID 数组，也可以是 `{"file_ids":[...],"params":{...}}`；回读状态确认 `parsed`。
-4. `POST /api/knowledge/knowledge-bases/{kb_id}/documents/index`，请求体包含 `file_ids` 和可选 `params`；回读状态确认 `indexed`。
+3. `POST /api/knowledge/knowledge-bases/{kb_id}/documents/parse`，请求体可以是文件 ID 数组，也可以是 `{"file_ids":[...],"params":{...}}`。回读状态确认 `parsed`。
+4. `POST /api/knowledge/knowledge-bases/{kb_id}/documents/index`，请求体包含 `file_ids` 和可选 `params`。回读状态确认 `indexed`。
 
 按状态处理整批文件时，使用 `/documents/parse-pending` 和 `/documents/index-pending`。直接提交的文件 ID 数量有限制，大批量导入应使用按状态入口。
 
-分块配置通过知识库 `additional_params` 或文档请求 `params` 提供。`chunk_preset_id` 接受 `/api/knowledge/chunk-presets` 返回的策略；未知值或非字符串返回 `400`，不会登记处理作业。缺省、`null` 和空字符串表示默认或继承上层策略；内部别名 `naive` 对应 `general`。有效配置按请求、文件、知识库的顺序覆盖；管理读取保留已持久化的非法配置原值；实际处理时明确失败。管理员通过知识库更新接口或文档参数更新提交有效值修复，文件更新中的空策略与 `null` 配置继续保留已有覆盖值。
+分块配置通过知识库 `additional_params` 或文档请求 `params` 提供。`chunk_preset_id` 接受 `/api/knowledge/chunk-presets` 返回的策略；未知值或非字符串返回 `400`，不会登记处理作业。缺省、`null` 和空字符串表示默认或继承上层策略。内部别名 `naive` 对应 `general`。有效配置按请求、文件、知识库的顺序覆盖。管理读取保留已持久化的非法配置原值；实际处理时明确失败。管理员通过知识库更新接口或文档参数更新提交有效值修复，文件更新中的空策略与 `null` 配置继续保留已有覆盖值。
 
 URL 导入需要管理员身份和目标知识库的管理权限。先调用 `POST /api/knowledge/files/fetch-url`，通过 URL 白名单校验并得到对象地址，再进入导入流程。白名单配置与抓取器的 SSRF 防护、重定向和大小限制由[文档处理与 OCR](./document-processing.md#从-url-导入网页)拥有。不要把 `content_type=url` 直接传给文档导入接口。
 
@@ -83,11 +83,11 @@ URL 导入需要管理员身份和目标知识库的管理权限。先调用 `PO
 
 搜索关键词长度为 1–50 个字符，查询配置 `final_top_k` 限制返回 1–50 篇文档。结果 `content` 是文档标题，`metadata.result_type` 为 `document`，不含伪造的向量分数。结果 `file_id` 是 Wiki 节点标识，可交给 `open_kb_document` 分页读取实时正文；读取按行返回纯文本，不包含图片和附件。用户可通过 Web 检索结果的文档标题打开正文。
 
-连接器使用飞书中国版固定 API 地址；跨空间、快捷方式和非 Docx 类型读取明确拒绝。搜索候选出现后资源被删除、撤权或 token 失效时，阅读会报错，已有搜索结果不构成访问授权。在线连接的能力与边界见[知识库机制](../mechanisms/knowledge-base.md#能力边界)。
+连接器使用飞书中国版固定 API 地址。跨空间、快捷方式和非 Docx 类型读取明确拒绝。搜索候选出现后资源被删除、撤权或 token 失效时，阅读会报错，已有搜索结果不构成访问授权。在线连接的能力与边界见[知识库机制](../mechanisms/knowledge-base.md#能力边界)。
 
 ## 外部查询接口
 
-普通登录用户 JWT、`full` Key 或 `knowledge` 级 API Key 通过 `/api/v1/knowledge/tools` 查询绑定用户有读取权限的知识库。Agent 工具、CLI 与这些 HTTP 入口共用 `yuxi.modules.knowledge.services.tools`；API 根据 JWT 或 Key 绑定的用户重新解析知识库读取权限，调用方不能指定别人的用户身份。管理、上传等接口使用 `/api/knowledge/*`。
+普通登录用户 JWT、`full` Key 或 `knowledge` 级 API Key 通过 `/api/v1/knowledge/tools` 查询绑定用户有读取权限的知识库。Agent 工具、CLI 与这些 HTTP 入口共用 `yuxi.modules.knowledge.services.tools`。API 根据 JWT 或 Key 绑定的用户重新解析知识库读取权限，调用方不能指定别人的用户身份。管理、上传等接口使用 `/api/knowledge/*`。
 
 | 方法 | 路径 | 请求体或结果 |
 | --- | --- | --- |
@@ -119,7 +119,7 @@ Dify 和 Notion 只提供外部检索能力。它们不支持 Yuxi 的文档上�
 }
 ```
 
-`search_mode` 支持 `vector`、`keyword`、`hybrid`，默认 `vector`。三个文本条件默认为空字符串；必含与排除条件以空白分隔，逐项使用分词匹配，短语使用分词后的连续词序匹配。它们与 `file_name` 一起约束向量、BM25 和图谱候选。中文使用同一中文 analyzer，词项过滤不等同于字面子串搜索。文本条件要求字符串，高亮开关要求布尔值。
+`search_mode` 支持 `vector`、`keyword`、`hybrid`，默认 `vector`。三个文本条件默认为空字符串。必含与排除条件以空白分隔，逐项使用分词匹配，短语使用分词后的连续词序匹配。它们与 `file_name` 一起约束向量、BM25 和图谱候选。中文使用同一中文 analyzer，词项过滤不等同于字面子串搜索。文本条件要求字符串，高亮开关要求布尔值。
 
 `highlight_results` 默认为 `true`。每个片段保留完整 `content`，外部结果在 `results[i].metadata.highlights` 返回文字段数组，段内为 `{"text":"命中词","matched":true}`。消费方按普通文字渲染；BM25 查询词和正向筛选词可以高亮，只有向量语义查询时显示完整正文。
 

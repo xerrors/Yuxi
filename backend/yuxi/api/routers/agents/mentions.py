@@ -1,4 +1,4 @@
-"""提及文件与对话标题搜索路由。"""
+"""插件提及目录、文件与对话标题搜索路由。"""
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
@@ -9,12 +9,34 @@ from yuxi.modules.agents.scope import ActorScope
 from yuxi.modules.agents.services.mentions import (
     InvalidMentionThreadError,
     MentionThreadNotFoundError,
+    list_plugin_mentions,
     search_mentions,
     search_session_mentions,
 )
 from yuxi.modules.identity.models import User
 
 mention_router = APIRouter(prefix="/mention", tags=["mention"])
+
+
+class MentionPluginItem(BaseModel):
+    """会话中可引用插件的稳定标识与显示信息。"""
+
+    id: str
+    name: str
+    description: str
+
+
+@mention_router.get("/plugins", response_model=list[MentionPluginItem])
+async def get_mention_plugins(
+    request: Request,
+    thread_id: str = Query(..., description="当前聊天会话 ID"),
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """返回已有 Web 会话启用且当前用户可读取的插件。"""
+    if getattr(request.state, "api_key", None) is not None:
+        raise HTTPException(status_code=403, detail="插件引用仅支持 Web 登录用户")
+    return await list_plugin_mentions(db=db, scope=ActorScope(uid=current_user.uid, app_id=None), thread_id=thread_id, user=current_user)
 
 
 class MentionSessionItem(BaseModel):

@@ -7,7 +7,7 @@ import pytest
 
 from test.unit.support.knowledge import FakeKnowledgeBase, make_knowledge_file_record
 from yuxi.modules.knowledge.manager import KnowledgeBaseManager
-from yuxi.modules.knowledge.services import documents
+from yuxi.modules.knowledge.services import documents, statistics
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 
@@ -38,7 +38,7 @@ def _manager(monkeypatch, meta, executor):
     monkeypatch.setattr(manager, "parse_file", parse_file)
     monkeypatch.setattr(manager, "get_kb_config", get_kb_config)
     monkeypatch.setattr(manager, "_get_or_create_kb_instance", get_executor)
-    monkeypatch.setattr(manager, "_run_with_stats_refresh", refresh)
+    monkeypatch.setattr(statistics, "run_with_stats_refresh", refresh)
     return manager, state
 
 

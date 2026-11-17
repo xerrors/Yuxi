@@ -60,24 +60,6 @@ class AgentRunRepository:
         result = await self.db.execute(select(AgentRun).where(and_(AgentRun.id == run_id, AgentRun.uid == str(uid))))
         return result.scalar_one_or_none()
 
-    async def list_top_level_runs_after_sequence(
-        self, *, thread_id: str, uid: str, app_id: str | None, after_sequence: int, limit: int = 100
-    ) -> list[AgentRun]:
-        """按持久执行序号读取线程后续的顶层 Run。"""
-        result = await self.db.execute(
-            select(AgentRun)
-            .where(
-                AgentRun.thread_id == thread_id,
-                AgentRun.uid == uid,
-                AgentRun.app_id == app_id,
-                AgentRun.run_type.in_(TOP_LEVEL_RUN_TYPES),
-                AgentRun.execution_seq > after_sequence,
-            )
-            .order_by(AgentRun.execution_seq)
-            .limit(limit)
-        )
-        return list(result.scalars())
-
     async def list_thread_runs_after_sequence(
         self, *, thread_id: str, uid: str, app_id: str | None, after_sequence: int, limit: int = 100
     ) -> list[AgentRun]:

@@ -22,6 +22,7 @@ async page => {
     if (path.endsWith('/check-first-run')) json = { first_run: false }
     if (path === '/api/user/config') json = { enable_memory: true }
     if (path === '/api/agent') json = { agents: [agent] }
+    if (path === '/api/mention/plugins') json = []
     if (path === '/api/agent/reading-agent') json = agent
     if (path === '/api/projects') json = []
     if (path === '/api/v1/agents/sessions') json = { data: [thread], has_more: false }
@@ -108,6 +109,16 @@ async page => {
   await page.waitForTimeout(400)
   check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), '768px 出现横向溢出')
   await page.screenshot({ path: '/tmp/yuxi-ordinary-reading-768.png' })
+  const released = await page.evaluate(async () => {
+    const { useUserStore } = await import('/src/modules/identity/model/user.js')
+    const { useSessionRuntimeStore } = await import('/src/modules/session/model/sessionRuntime.js')
+    const runtime = useSessionRuntimeStore()
+    const before = Object.keys(runtime.threadMessages).length
+    useUserStore().logout()
+    await new Promise(resolve => requestAnimationFrame(resolve))
+    return { before, after: Object.keys(runtime.threadMessages).length }
+  })
+  check(released.before > 0 && released.after === 0, '退出登录后阅读器保留旧 Thread 消费者')
   await page.unrouteAll({ behavior: 'wait' })
-  return { readingPosition: true, bottomFollow: true, manualScroll: true, navigationNames: true, widths: [1440, 1024, 768], themes: ['light', 'dark'] }
+  return { logoutRelease: true, readingPosition: true, bottomFollow: true, manualScroll: true, navigationNames: true, widths: [1440, 1024, 768], themes: ['light', 'dark'] }
 }

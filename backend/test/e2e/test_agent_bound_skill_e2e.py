@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import os
-
 import asyncio
 import hashlib
 import json
+import os
 import uuid
 from io import BytesIO
 from zipfile import ZipFile
@@ -20,8 +19,8 @@ from e2e_helpers import (
     delete_agent,
     iter_public_thread_events,
     postgres_dsn,
-    wait_for_consumed_input,
     wait_for_blocked_response,
+    wait_for_consumed_input,
     wait_model_provider_cache,
 )
 
@@ -106,7 +105,7 @@ async def test_preloaded_skill_edit_is_loaded_by_the_worker(
                 "context": {
                     "model": f"{provider_id}:deterministic-chat",
                     "system_prompt": "不要调用工具，只输出 DETERMINISTIC_AGENT_E2E_OK。",
-                    "tools": [],
+                    "tools": ["present_artifacts"],
                     "knowledges": [],
                     "mcps": [],
                     "skills": [slug] if skill_source == "shared" else [],
@@ -156,11 +155,9 @@ async def test_preloaded_skill_edit_is_loaded_by_the_worker(
         assert root.status_code == 200, root.text
         original = root.json()["data"]["content"]
         if skill_source == "bound":
-            updated = original.replace("---\n\n# 操作指南", "tool_dependencies:\n- present_artifacts\n---\n\n# 图片生成技能") + marker
+            updated = original.replace("---\n\n# 操作指南", "---\n\n# 对话组件") + marker
         else:
-            updated = original.replace("description: before", "description: after\ntool_dependencies:\n- present_artifacts").replace(
-                "# Before", f"# 图片生成技能\n{marker}"
-            )
+            updated = original.replace("description: before", "description: after").replace("# Before", f"# 对话组件\n{marker}")
         saved = await e2e_client.put(
             f"/api/system/skills/{slug}/file",
             headers=e2e_headers,

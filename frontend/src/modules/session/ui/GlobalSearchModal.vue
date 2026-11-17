@@ -3,13 +3,12 @@
     <Transition name="search-modal" appear>
       <div v-if="open" class="global-search-overlay" @mousedown.self="close">
         <section
+          ref="dialogRef"
           class="global-search-modal"
           role="dialog"
           aria-modal="true"
           :aria-label="activeMode === 'file' ? '搜索文件' : '搜索对话'"
-          @keydown.down.prevent="moveSelection(1)"
-          @keydown.up.prevent="moveSelection(-1)"
-          @keydown.enter.prevent="confirmSelection"
+          @keydown.tab="trapTab"
           @keydown.esc.prevent="close"
         >
           <div class="global-search-input-row">
@@ -20,6 +19,9 @@
               type="text"
               :placeholder="inputPlaceholder"
               autocomplete="off"
+              @keydown.down.prevent="moveSelection(1)"
+              @keydown.up.prevent="moveSelection(-1)"
+              @keydown.enter.prevent="!$event.isComposing && confirmSelection()"
               :aria-label="activeMode === 'file' ? '搜索文件' : '搜索对话'"
             />
             <button type="button" class="global-search-close" aria-label="关闭" @click="close">
@@ -229,6 +231,33 @@ const emit = defineEmits([
 ])
 
 const searchInputRef = ref(null)
+const dialogRef = ref(null)
+let opener = null
+let background = null
+let backgroundWasInert = false
+
+/** 原生输入与按钮保留默认键盘行为，只在边界循环焦点。 */
+const trapTab = (event) => {
+  const controls = [...dialogRef.value.querySelectorAll('input:not(:disabled), button:not(:disabled), a[href], [tabindex="0"]')]
+    .filter((element) => element.getClientRects().length)
+  const first = controls[0]
+  const last = controls[controls.length - 1]
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault()
+    last?.focus()
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first?.focus()
+  }
+}
+
+/** 解除背景隔离并把焦点交还仍存在的触发控件。 */
+const restoreFocus = () => {
+  if (background) background.inert = backgroundWasInert
+  background = null
+  if (opener?.isConnected) opener.focus()
+  opener = null
+}
 const resultListRef = ref(null)
 const searchText = ref('')
 const selectedIndex = ref(0)
@@ -528,13 +557,23 @@ const splitName = (item) => {
 watch(
   () => props.open,
   (nextOpen) => {
-    if (!nextOpen) return
+    if (!nextOpen) {
+      restoreFocus()
+      return
+    }
+    opener = document.activeElement
+    background = document.querySelector('#app')
+    if (background) {
+      backgroundWasInert = background.inert
+      background.inert = true
+    }
     activeMode.value = props.defaultMode
     resetState()
     nextTick(() => {
-      searchInputRef.value?.focus()
+      if (props.open) searchInputRef.value?.focus()
     })
-  }
+  },
+  { immediate: true }
 )
 
 watch([trimmedSearchText, activeMode], ([query]) => {
@@ -571,6 +610,7 @@ watch([trimmedSearchText, activeMode], ([query]) => {
 })
 
 onUnmounted(() => {
+  restoreFocus()
   clearTimeout(searchTimer)
   clearTimeout(fileSearchTimer)
   searchRequestId += 1

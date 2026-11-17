@@ -285,7 +285,7 @@ async def test_run_execution_sequence_orders_segments_across_a_turn() -> None:
             await db.commit()
 
         async with sessions() as db:
-            subsequent = await AgentRunRepository(db).list_top_level_runs_after_sequence(
+            subsequent = await AgentRunRepository(db).list_thread_runs_after_sequence(
                 thread_id="input-thread", uid="input-user", app_id=None, after_sequence=first_seq
             )
             assert [run.id for run in subsequent] == ["cursor-second"]

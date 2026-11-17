@@ -55,36 +55,6 @@ async def edit_shared_skill_file(
     return item, hashlib.sha256(content.encode()).hexdigest()
 
 
-async def edit_shared_skill_dependencies(
-    db: AsyncSession,
-    *,
-    slug: str,
-    tool_dependencies: list[str],
-    mcp_dependencies: list[str],
-    skill_dependencies: list[str],
-    expected_revision: str,
-    operator: User,
-) -> tuple[Skill, str]:
-    """依赖协议编辑根文件，内容交给统一提交入口。"""
-    item = await get_manageable_skill_or_raise(db, operator, slug, for_update=True)
-    result = await commit_skill_content(
-        db,
-        item=item,
-        operator=operator,
-        expected_revision=None,
-        expected_file=("SKILL.md", expected_revision),
-        changes=[
-            {
-                "action": "dependencies",
-                "tool_dependencies": tool_dependencies,
-                "mcp_dependencies": mcp_dependencies,
-                "skill_dependencies": skill_dependencies,
-            }
-        ],
-    )
-    return item, result.root_revision
-
-
 async def read_skill_content(db: AsyncSession, *, slug: str, operator: User) -> dict:
     """在同一内容锁内读取文件树、可编辑文本和整包修订。"""
     item = await _lock_readable_skill(db, operator, slug)
@@ -155,9 +125,6 @@ async def read_skill_file(
             {
                 "name": item.name,
                 "description": item.description,
-                "tool_dependencies": item.tool_dependencies or [],
-                "mcp_dependencies": item.mcp_dependencies or [],
-                "skill_dependencies": item.skill_dependencies or [],
             }
             if parts == ("SKILL.md",)
             else None

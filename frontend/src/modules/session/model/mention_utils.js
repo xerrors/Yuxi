@@ -82,6 +82,9 @@ export const buildMentionDisplayLabels = (mention = {}) => {
     setMentionLabel(labels, 'mcp', mcp?.value, label)
     setMentionLabel(labels, 'mcp', mcp?.name, label)
   })
+  ;(mention.plugins || []).forEach((plugin) => {
+    setMentionLabel(labels, 'plugin', plugin?.id, plugin?.name || plugin?.id)
+  })
   ;(mention.skills || []).forEach((skill) => {
     const label = skill?.name || ''
     setMentionLabel(labels, 'skill', skill?.slug, label)

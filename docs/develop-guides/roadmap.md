@@ -1,6 +1,6 @@
 # 开发路线图
 
-这里记录尚未完成的方向，不代表已经实现或一定会在某个版本发布。需求和优先级会根据 Issue、讨论和维护资源调整；欢迎在 [GitHub Issues](https://github.com/xerrors/Yuxi/issues) 提交建议。
+这里记录尚未完成的方向，不代表已经实现或一定会在某个版本发布。需求和优先级会根据 Issue、讨论和维护资源调整。欢迎在 [GitHub Issues](https://github.com/xerrors/Yuxi/issues) 提交建议。
 
 ## 计划中的不兼容方向
 

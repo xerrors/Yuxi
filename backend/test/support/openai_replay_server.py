@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, urlparse
 EXPECTED_OUTPUT = "DETERMINISTIC_AGENT_E2E_OK"
 EXPECTED_AUTHORIZATION = "Bearer ci-replay-key"
 EXPECTED_MODEL = "deterministic-chat"
-EXPECTED_PRELOADED_SKILL_MARKER = "# 图片生成技能"
+EXPECTED_PRELOADED_SKILL_MARKER = "# 对话组件"
 EXPECTED_PRELOADED_TOOL = "present_artifacts"
 EXPECTED_TOOL_CALL_ID = "call-preloaded-tool"
 EXPECTED_TOOL_RESULT_MARKER = "已将交付物展示给用户"

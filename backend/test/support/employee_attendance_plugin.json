@@ -1,0 +1,12 @@
+{
+  "plugin_id": "employee-attendance-fixture",
+  "name": "Employee attendance fixture",
+  "description": "仅用于真实企业个人授权验收的部署插件",
+  "entry_skill": "employee-attendance-guide",
+  "skills": [
+    "employee-attendance-guide"
+  ],
+  "mcps": [
+    "enterprise-attendance"
+  ]
+}

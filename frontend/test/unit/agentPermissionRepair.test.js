@@ -3,7 +3,7 @@ import test, { afterEach } from 'node:test'
 import { createRenderer, nextTick, ref, ssrContextKey } from 'vue'
 import { createPinia, disposePinia, setActivePinia } from 'pinia'
 import { matchedRouteKey, routerKey } from 'vue-router'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import { createTestServer } from '../helpers/createTestServer.js'
 
 const cleanups = []
@@ -390,7 +390,8 @@ for (const outcome of ['pending', 'unknown', 'invalid']) {
   })
 }
 
-test('独立 MCP 创建阻止父提交，成功选择后取消 Agent 不发送创建请求', async () => {
+test('独立 MCP 创建阻止父提交，成功选择后确认放弃 Agent 不发送创建请求', async (t) => {
+  t.mock.method(Modal, 'confirm', ({ onOk }) => onOk())
   const { form, writes } = await setupForm({})
   form.openCreate()
   await form.toggleCreateAdvanced()
@@ -438,7 +439,8 @@ test('普通用户没有资源创建快捷入口，管理跳转不会丢失创�
   assert.deepEqual(writes, [])
 })
 
-test('切换后端与重新打开后，旧 Schema 响应不能覆盖当前草稿', async () => {
+test('切换后端与确认放弃后重新打开，旧 Schema 响应不能覆盖当前草稿', async (t) => {
+  t.mock.method(Modal, 'confirm', ({ onOk }) => onOk())
   const { form, deps } = await setupForm({})
   const reads = []
   deps.agentApi.getAgentBackendDetail = (backend) => new Promise((resolve) => reads.push({ backend, resolve }))

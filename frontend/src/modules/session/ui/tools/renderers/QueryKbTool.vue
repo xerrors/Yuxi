@@ -119,7 +119,7 @@ const resourceLabel = computed(
 const queryText = computed(() => args.value.query_text || '')
 
 const resultSummary = computed(() => {
-  if (getToolCallStatus(props.toolCall) === 'error') return '执行失败'
+  if (getToolCallStatus(props.toolCall) === 'error') return ''
   const content = props.toolCall.tool_call_result?.content
   if (!content && props.toolCall.status !== 'success') return ''
   const result = parseResult(content)

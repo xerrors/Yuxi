@@ -876,21 +876,26 @@ onUnmounted(() => {
     overflow: hidden;
   }
 
-  &::-webkit-scrollbar {
-    width: 8px;
-  }
+  /* 标准滚动条着色，宽度沿用全局 thin；WebKit 前缀规则仅在标准属性不可用时兜底。 */
+  scrollbar-color: var(--gray-300) var(--gray-50);
 
-  &::-webkit-scrollbar-track {
-    background: var(--gray-50);
-    border-radius: 4px;
-  }
+  @supports not (scrollbar-color: auto) {
+    &::-webkit-scrollbar {
+      width: 8px;
+    }
 
-  &::-webkit-scrollbar-thumb {
-    background: var(--gray-300);
-    border-radius: 4px;
+    &::-webkit-scrollbar-track {
+      background: var(--gray-50);
+      border-radius: 4px;
+    }
 
-    &:hover {
-      background: var(--gray-400);
+    &::-webkit-scrollbar-thumb {
+      background: var(--gray-300);
+      border-radius: 4px;
+
+      &:hover {
+        background: var(--gray-400);
+      }
     }
   }
 

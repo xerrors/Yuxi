@@ -1,6 +1,6 @@
 # 集成 MCP
 
-MCP（Model Context Protocol）让智能体调用外部服务提供的工具。超级管理员在“扩展 → 连接器”中维护服务目录；所有登录用户可以填写自己的 Token、API Key 或连接 OAuth 账号。Agent 可直接选择连接器，Skill 也可声明激活后加载的依赖。聊天输入框通过 @ 选择本人可用的连接器，发送后挂载到当前会话，后续轮次无需重复选择；Public 参数见[会话 API](../advanced/agents-public-api.md#创建与提交消息)。
+MCP（Model Context Protocol）让智能体调用外部服务提供的工具。超级管理员在“扩展 → 连接器”中维护服务目录；所有登录用户可以填写自己的 Token、API Key 或连接 OAuth 账号。Agent 可直接选择连接器，部署插件也可声明激活后开放的 MCP。聊天输入框通过 @ 选择本人可用的连接器，发送后挂载到当前会话，后续轮次无需重复选择。Public 参数见[会话 API](../advanced/agents-public-api.md#创建与提交消息)。
 
 点击 连接器卡片打开简介与个人凭证。用户按管理员选择的方式填写凭证或完成授权；超级管理员在弹窗底部点击“管理连接器”维护服务配置。未配置个人凭证不影响普通聊天，运行时暂不提供相关工具；配置后重新发起请求即可使用。卡片图标按服务标识与名称匹配，颜色按稳定标识映射。
 
@@ -17,9 +17,9 @@ MCP（Model Context Protocol）让智能体调用外部服务提供的工具。�
 | 动态注册 OAuth | `auth_mode=oauth`、`registration=dynamic`，填写 Issuer 和 scope | 点击授权，客户端注册由后端完成 |
 | 共享请求头（所有用户共用） | `auth_mode=headers`，直接填写共享请求头 JSON | 无；所有使用者共用管理员配置的服务身份 |
 
-平台登录和 MCP 资源授权分别签发凭据；部署密钥、状态与调用隔离的实现见 [MCP 授权与运行身份](../mechanisms/mcp.md)。
+平台登录和 MCP 资源授权分别签发凭据。部署密钥、状态与调用隔离的实现见 [MCP 授权与运行身份](../mechanisms/mcp.md)。
 
-平台自带 Knowledge 是内置 `knowledge` MCP server（见下节），由内置 `knowledge-base` Skill 的 `mcp_dependencies` 门控装配，每次调用使用内部短期用户委托，无需按本页添加服务器或连接 OAuth，管理页也不能为其配置共享凭据。对外客户端仍使用 `knowledge` API Key，见[知识库 MCP 接入](../advanced/knowledge-mcp.md)；内部身份与会话范围见[知识库机制](../mechanisms/knowledge-base.md#agent-如何看到知识库)。
+平台自带 Knowledge 是内置 `knowledge` MCP server（见下节），由内置 `knowledge-base` 插件在 `load_plugin` 后按需装配，每次调用使用内部短期用户委托，无需按本页添加服务器或连接 OAuth，管理页也不能为其配置共享凭据。对外客户端仍使用 `knowledge` API Key，见[知识库 MCP 接入](../advanced/knowledge-mcp.md)；内部身份与会话范围见[知识库机制](../mechanisms/knowledge-base.md#agent-如何看到知识库)。
 
 选择个人 OAuth 前需确认服务支持发现协议、PKCE、回调地址和真实工具调用。个人 API Key 首期支持一个请求头，不支持查询参数、请求体或自定义前缀；Basic 用户名密码不在配置范围内。
 
@@ -71,7 +71,7 @@ Content-Type: application/json
 
 管理员选择“每名用户填写 Bearer Token”或“每名用户填写 API Key”。API Key 方式还需指定认证请求头名称；用户不填写服务地址或任意请求头。个人静态凭证支持 SSE 与 Streamable HTTP，生产环境要求 HTTPS。
 
-用户打开 连接器卡片，填写服务方提供的原始值并保存。页面显示“已配置”；点击“测试连接”才执行本人的工具发现，零个工具也是合法结果。保存不自动测试，测试不执行业务工具。已保存秘密不回填；右侧按钮组的下拉菜单提供替换和清除，替换时打开空输入框，取消保留原值。Token 不填写 `Bearer ` 前缀，API Key 不额外添加前缀。
+用户打开 连接器卡片，填写服务方提供的原始值并保存。页面显示“已配置”。点击“测试连接”才执行本人的工具发现，零个工具也是合法结果。保存不自动测试，测试不执行业务工具。已保存秘密不回填。右侧按钮组的下拉菜单提供替换和清除，替换时打开空输入框，取消保留原值。Token 不填写 `Bearer ` 前缀，API Key 不额外添加前缀。
 
 个人凭证加密保存在后端，缺失、断开或失效时不回退共享身份。管理员测试个人服务也使用本人的凭证。服务停用后，有本人连接的卡片保留清除入口，禁止替换与测试；清除后该停用卡片隐藏。修改地址、传输、认证方式或认证头要求所有用户重新配置；仅启停服务保留凭证。HTTP 401 要求更新凭证，403 不自动清除。
 
@@ -81,9 +81,9 @@ Content-Type: application/json
 
 超级管理员添加或编辑 MCP 时选择“每名用户 OAuth 授权”，填写授权服务器 Issuer、注册方式和授权范围。预注册方式填写 Client ID 和 Client Secret；修改时留空 Secret 保留同一客户端已有凭据。更换 Issuer 或 Client ID 会清除旧 Secret，必须重新配置。个人 OAuth 使用 Streamable HTTP，请求头不能同时包含共享 Authorization。
 
-通过管理 API 更新时，`oauth_config` 作为完整配置校验，而不是逐字段补丁；只改其他服务器字段时可省略它。同一客户端省略或传 `null` 的 `client_secret` 保留已有 secret，显式空字符串清除；更换 Issuer、Client ID 或注册方式会清除旧客户端凭据和注册结果。
+通过管理 API 更新时，`oauth_config` 作为完整配置校验。它不是逐字段补丁。只改其他服务器字段时可省略它。同一客户端省略或传 `null` 的 `client_secret` 保留已有 secret，显式空字符串清除；更换 Issuer、Client ID 或注册方式会清除旧客户端凭据和注册结果。
 
-普通用户打开“扩展 → 连接器”，点击服务卡片和“连接”，在授权服务器确认后回到连接器页。页面从 PostgreSQL 读取本人连接状态；“需要重新连接”表示配置改变、远端拒绝 token 或刷新失败。“断开”删除本人凭据，旧回调不能恢复它。普通退出 Yuxi 保留长期连接，账号停用后不能继续调用；断开只撤销本地使用能力，远端应用授权可在供应商账号设置中另外撤销。
+普通用户打开“扩展 → 连接器”，点击服务卡片和“连接”，在授权服务器确认后回到连接器页。页面从 PostgreSQL 读取本人连接状态。“需要重新连接”表示配置改变、远端拒绝 token 或刷新失败。“断开”删除本人凭据，旧回调不能恢复它。普通退出 Yuxi 保留长期连接，账号停用后不能继续调用。断开只撤销本地使用能力，远端应用授权可在供应商账号设置中另外撤销。
 
 Yuxi 登录与 MCP 资源授权各自独立，本地账号也可连接自己的资源账号，无需平台企业身份绑定。每个连接只属于发起授权的 Yuxi 用户；资源服务决定该资源账号可访问的数据。企业浏览器会话可以复用，MCP 使用独立签发的资源 token。
 
@@ -108,10 +108,10 @@ Yuxi 的所有个人 OAuth MCP 共用发现、客户端注册、授权码、PKCE
 
 符合当前发现与授权协议的服务通过配置接入，不需要新增后端供应商分支。管理员手动填写服务地址与 OAuth 配置，所有服务使用同一授权流程。
 
-1. 确认资源 URL。远端提供受保护资源 metadata，其 `resource` 与配置 URL 完全一致，`authorization_servers` 包含配置 Issuer；重定向或尾斜杠差异也需要核对。
+1. 确认资源 URL。远端提供受保护资源 metadata，其 `resource` 与配置 URL 完全一致，`authorization_servers` 包含配置 Issuer。重定向或尾斜杠差异也需要核对。
 2. 确认授权服务器 metadata。使用 OAuth 授权服务器发现，须声明 PKCE S256，客户端认证方式须与实际注册匹配。
 3. 选择客户端注册方式。预注册应用登记部署中的固定 MCP 回调并保管 Client Secret；动态注册服务需要接受 Authorization Code、refresh token 和 `token_endpoint_auth_method=none`，注册结果由平台持久保存。
-4. 在超管 MCP 表单配置 Issuer、注册方式和 scope。Issuer 是稳定的授权服务器标识，不是带 state、nonce 的临时浏览器登录 URL。个人 OAuth 不能再填写共享 `Authorization`。
+4. 在超管 MCP 表单配置 Issuer、注册方式和 scope。Issuer 是稳定的授权服务器标识。它不是带 state、nonce 的临时浏览器登录 URL。个人 OAuth 不能再填写共享 `Authorization`。
 5. 用户连接后发现工具、执行一次真实读取，再验证两个不同用户的结果、断开后旧工具拒绝及真实模型最终回答。配置成功或“已连接”不能代替这些结果。
 
 以下是自建企业服务的管理接口请求体示例；域名、客户端和 secret 均为占位值，secret 通过私有部署渠道填写：
@@ -136,7 +136,7 @@ Yuxi 的所有个人 OAuth MCP 共用发现、客户端注册、授权码、PKCE
 
 动态注册使用 `registration=dynamic`，不预填静态 Client ID/Secret。企业资源服务自行验证 access token 的签名或可信验证结果、目标资源和业务 scope，查询条件从已验证员工身份取得，不接受模型提交的员工参数。SSO 登录本身不会授予另一项业务的资源权限。
 
-资源和授权服务器可以位于不同来源。当前实现要求资源 metadata 与 MCP 同源，授权、token、注册端点与配置 Issuer 同源；OAuth 网络请求不跟随重定向。服务不满足这些条件时先核对实际协议与网络，不能用放宽来源、关闭 PKCE 或转发平台登录 token 代替适配。
+资源和授权服务器可以位于不同来源。当前实现要求资源 metadata 与 MCP 同源，授权、token、注册端点与配置 Issuer 同源。OAuth 网络请求不跟随重定向。服务不满足这些条件时先核对实际协议与网络，不能用放宽来源、关闭 PKCE 或转发平台登录 token 代替适配。
 
 协议支持的变更在 `oauth_protocol` 及其 HTTP 负向测试中闭合；业务授权状态在 `oauth_service`/repository 中闭合。完整职责和验证入口见 [源码定位与验证](../mechanisms/mcp.md#源码定位与验证)。企业示例的接入结果见 [实现决定](../develop-guides/decisions/implemented/2026-10-18-mcp-personal-oauth.md)。
 
@@ -149,9 +149,9 @@ Yuxi 的所有个人 OAuth MCP 共用发现、客户端注册、授权码、PKCE
 - MCP 工具仍会在执行处使用当前用户身份和服务器配置；
 - 管理员可以在 MCP 详情页单独禁用某个工具。
 
-共享 Skill 的 `mcp_dependencies` 声明所需服务器。Skill 激活后按需加载这些服务器的工具；预加载 Skill 从首轮加载，均无需在 Agent 的 MCP 字段重复选择。服务器必须由管理员启用，禁用的服务器不会提供工具。
+部署插件可引用所需服务器。Agent 启用插件后，模型调用 `load_plugin` 才按需开放这些服务器的工具，无需在 MCP 字段重复选择。服务器必须启用且当前用户连接可用；加载插件不会创建连接或扩大权限。普通 Skill 不声明 MCP 依赖，读取或预加载正文不会开放工具。
 
-MCP 配置从 PostgreSQL 读取。共享 headers 和个人凭证工具都在每次 Run 按需发现一次目录并在运行内复用，新 Run 重新发现。个人凭证每次出站重新读取当前用户的有效值。修改地址或授权配置后需要重新连接；停用服务、停用工具和断开个人连接都会阻止旧工具对象的后续调用。
+MCP 配置从 PostgreSQL 读取。共享 headers 和个人凭证工具都在每次 Run 按需发现一次目录并在运行内复用，新 Run 重新发现。个人凭证每次出站重新读取当前用户的有效值。修改地址或授权配置后需要重新连接。停用服务、停用工具和断开个人连接都会阻止旧工具对象的后续调用。
 
 ## 部署个人 OAuth
 
@@ -162,7 +162,7 @@ API 与 worker 从同一部署环境读取以下变量，配置后重新创建�
 | `YUXI_ENCRYPTION_KEY` | 通用 Fernet 凭据密钥，必须持久保留；缺失时个人授权明确不可用 |
 | `YUXI_PUBLIC_URL` | 浏览器可达的站点来源，如 `https://yuxi.example.com`；MCP 回调固定为 `/api/system/mcp-servers/oauth/callback` |
 
-可以在安全终端使用 `python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'` 生成密钥，写入私有部署环境，勿提交仓库或发送给模型。更换密钥后旧凭据无法解密，需要重新连接；备份和恢复数据库时同步保管密钥。Secret 只写入加密列，管理接口只返回是否已配置。
+可以在安全终端使用 `python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'` 生成密钥，写入私有部署环境，勿提交仓库或发送给模型。更换密钥后旧凭据无法解密，需要重新连接。备份和恢复数据库时同步保管密钥。Secret 只写入加密列，管理接口只返回是否已配置。
 
 OAuth 元数据只能使用超管配置的 MCP 来源与授权服务器来源，跨来源重定向会失败。企业内网服务需要浏览器与 API/worker 都能访问准确地址。地址、授权服务器或客户端配置变化后，用户需要重连。数据库结构与新库初始化边界见 [系统架构](https://github.com/xerrors/Yuxi/blob/main/ARCHITECTURE.md)。
 
@@ -187,7 +187,7 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml --profile contain
 
 内置 DeepWiki 使用 `deepwiki-official` 标识，通过 `https://mcp.deepwiki.com/mcp` 提供 Streamable HTTP 服务，无需认证即可查询公开 GitHub 仓库。详见 [DeepWiki 官方文档](https://docs.devin.ai/work-with-devin/deepwiki-mcp)。
 
-内置 `knowledge` 指向本平台 `/api/mcp`，默认启用，连接配置由代码管理。它使用平台委托鉴权（`auth_mode=delegation`，见[授权与运行身份](../mechanisms/mcp.md)）：工具调用按当前用户与会话选择签发短期委托，无需填写共享凭据。管理端工具发现和连接测试使用当前查看者身份。关闭 `YUXI_KNOWLEDGE_ENABLED` 后，内置身份和管理员开关保留，但服务不进入可用能力集合；重新开启仍按原开关提供工具。范围与权限见[知识库机制](../mechanisms/knowledge-base.md#agent-如何看到知识库)。
+内置 `knowledge` 指向本平台 `/api/mcp`，默认启用，连接配置由代码管理。它使用平台委托鉴权（`auth_mode=delegation`，见[授权与运行身份](../mechanisms/mcp.md)）。工具调用按当前用户与会话选择签发短期委托，无需填写共享凭据。管理端工具发现和连接测试使用当前查看者身份。关闭 `YUXI_KNOWLEDGE_ENABLED` 后，内置身份和管理员开关保留，但服务不进入可用能力集合；重新开启仍按原开关提供工具。范围与权限见[知识库机制](../mechanisms/knowledge-base.md#agent-如何看到知识库)。
 
 开发者在 [`builtin.py`](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/extensions/mcp/builtin.py) 的 `BUILTIN_MCP_MANIFEST` 中维护清单：
 
@@ -225,7 +225,7 @@ BUILTIN_MCP_MANIFEST = {
 
 接口字段和错误响应以实例 Swagger 为准。
 
-管理端工具列表和连接测试都会按当前配置建连，停用服务也能看到目录，查看不会改启停或工具开关。建连或工具发现失败时，管理检查、Agent 配置工具装配与 Skill 依赖加载均明确失败，运行不会把故障当作成功的空工具列表继续执行。服务器正常返回零个工具仍是合法结果；未启用服务器不参与运行加载。运行日志包含组件、服务器标识、错误类型与不可用状态。
+管理端工具列表和连接测试都会按当前配置建连，停用服务也能看到目录，查看不会改启停或工具开关。建连或工具发现失败时，管理检查、Agent 配置工具装配与 插件按需加载均明确失败，运行不会把故障当作成功的空工具列表继续执行。服务器正常返回零个工具仍是合法结果；未启用服务器不参与运行加载。运行日志包含组件、服务器标识、错误类型与不可用状态。
 
 ## 源码定位与验证
 

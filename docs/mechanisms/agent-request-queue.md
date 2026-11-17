@@ -12,9 +12,9 @@ Thread A：Turn U / Run U1 运行中；队列：[Input S1][Input S2][Input F1][I
 Thread B：独立领取自己的优先队头
 ```
 
-接收事务依次校验完整作用域、锁定 Thread、重读 Receipt、验证 Turn 状态，并保存 Receipt、Input 和提交级附件绑定。接收不创建 Message。队列按数据库接收序号排序，不使用浏览器时间。相同幂等键和意图返回原回执及 Input ID；同键改变事件类型、模式、内容或附件列表返回 `409`。提交、转引导和取消输入的回执只指向 Input，执行归属从 Input 查询；消费不修改 Receipt。HTTP request ID 不参与生命周期。
+接收事务依次校验完整作用域、锁定 Thread、重读 Receipt、验证 Turn 状态，并保存 Receipt、Input 和提交级附件绑定。接收不创建 Message。队列按数据库接收序号排序，不使用浏览器时间。相同幂等键和意图返回原 Receipt 及 Input ID；同键改变事件类型、模式、内容或附件列表返回 `409`。提交、转引导和取消输入的 Receipt 只指向 Input，执行归属从 Input 查询；消费不修改 Receipt。HTTP request ID 不参与生命周期。
 
-Message 是消费后的执行投影：`source_input_id + input_position` 唯一标识原始消息位置，`received_at` 保留接收时间，`created_at` 表示进入执行投影的时间。消费事务生成 Message，再把每个 Input 的全部附件绑定到该 Input 最后一条用户 Message；正文、逐消息元信息和提交级附件引用继续保留。附件复合外键保证消息来自同一 Input。取消的未消费输入没有 Message。正式历史、搜索和模型记忆只读取执行消息；队列预览读取 Input 原文。已消费证明输入进入执行记录，模型实际读取内容由调用审计证明。
+Message 是消费后的执行投影：`source_input_id + input_position` 唯一标识原始消息位置，`received_at` 保留接收时间，`created_at` 表示进入执行投影的时间。消费事务生成 Message，再把每个 Input 的全部附件绑定到该 Input 最后一条用户 Message；正文、逐消息元信息和提交级附件引用继续保留。附件复合外键保证 Message 来自同一 Input。取消的未消费输入没有 Message。正式历史、搜索和模型记忆只读取 Message；队列预览读取 Input 原文。已消费证明输入进入执行记录，模型实际读取内容由调用审计证明。
 
 ## follow-up 与 steer
 
@@ -22,9 +22,9 @@ Message 是消费后的执行投影：`source_input_id + input_position` 唯一�
 
 两类 pending Input 都不绑定 Turn。线程没有活跃 Turn 且队列未暂停时，调度器选择就绪优先队头，在同一 Session 锁和事务内创建 Turn 与首个 pending Run，按 Input 接收序号、消息位置创建 Message，并固定 Input 与附件的消费归属。任一步失败整体回滚；提交后才投递 ARQ。多个 Input 的 `consumed_run_id` 可指向同一 Run，Run 的有序 `input_ids` 由该关系派生。steer 在途期间旧 Turn 已结束时，仍以优先输入开启下一轮。
 
-普通消息的 `mode` 表达优先级和切入时机，发送方不指定目标 Turn，HTTP/SSE 接收回执不返回有效模式。未指定 mode 时，在 Thread 锁内按运行中 steer、空闲 follow-up 选择；幂等重试先读取原 Receipt，不重新入队。等待用户回答、审批或取消清理时拒绝普通消息；协作等待时默认为 follow-up，只进入 FIFO 队列。
+普通消息的 `mode` 表达优先级和切入时机，发送方不指定目标 Turn，HTTP/SSE 接收 Receipt 不返回有效 mode。未指定 mode 时，在 Thread 锁内按运行中 steer、空闲 follow-up 选择；幂等重试先读取原 Receipt，不重新入队。等待用户回答、审批或取消清理时拒绝普通消息；协作等待时默认为 follow-up，只进入 FIFO 队列。
 
-每个 Input 在接收时复制会话的完整可配置 Context，随消息原子应用单次模型与审批覆盖，领取时不重新读取 Agent 定义或系统默认值。会话更新只影响之后接收的输入，运行身份与授权在执行边界重新取得。空闲合批使用批次首个 Input 的冻结配置和执行来源，同 Turn 安全接管继承当前 Run 配置；批次其余 Input 的配置和来源保留审计，不在同一 Run 中切换。
+每个 Input 在接收时复制会话的完整可配置 Context，随消息原子应用单次模型与审批覆盖，领取时不重新读取 Agent 定义或系统默认值。会话更新只影响之后接收的 Input，运行身份与授权在执行边界重新取得。空闲合批使用批次首个 Input 的冻结配置和执行来源，同 Turn 安全接管继承当前 Run 配置；批次其余 Input 的配置和来源保留审计，不在同一 Run 中切换。
 
 当前模型调用和并行工具批次完成后，工具结果及 PostgreSQL checkpoint 先保存；`SteerMiddleware` 在下一次模型调用前，或无工具轮次的模型调用结束后，触发安全接管。旧 Run `yielded`，同一 Turn 创建下一 Run。首次模型调用前的让位允许 yielded Run 没有 AI 输出；真正 completed 的 Run 仍要求自身输出。没有 steer 的普通工具循环保持同一 Run。正在执行的外部工具不因 steer 被强制停止或撤销。
 
@@ -97,4 +97,4 @@ Public 身份在 HTTP 边界变为包含 `uid`、`app_id` 的作用域；接收�
 
 ## 独立委派
 
-协作会话复用持久 Input、Receipt、优先领取、提交后投递和 lease 链路，各自 Turn 拥有 current_run_id、result_run_id 和等待点。普通取消只影响指定 Turn，父轮次完成、失败或取消均保留后代独立工作。新工作通过 submit_input 按 FIFO 接收，队列暂停时只排队；用户显式“停止全部”才取消整树在途 Turn 并阻止各队列消费。“继续整树队列”重新调度保留输入，已取消的 Turn 保持终态。整树在途工作与清理全部结束后，用户发送新消息可解除整树停止门禁，但只恢复目标会话并优先处理该消息；其他成员的旧待办保持暂停。协作等待保存目标、游标和截止时间，在同一 Turn 建立下一 Run，等待中的普通 follow-up 只排队，steer 明确拒绝。具体约束见[会话协作](../agents/session-cooperation.md)。
+协作会话复用持久 Input、Receipt、优先领取、提交后投递和 lease 链路，各自 Turn 拥有 current_run_id、result_run_id 和等待点。普通取消只影响指定 Turn，父 Turn 完成、失败或取消均保留后代独立工作。新工作通过 submit_input 按 FIFO 接收，队列暂停时只排队；用户显式“停止全部”才取消整树在途 Turn 并阻止各队列消费。“继续整树队列”重新调度保留输入，已取消的 Turn 保持终态。整树在途工作与清理全部结束后，用户发送新消息可解除整树停止门禁，但只恢复目标会话并优先处理该消息；其他成员的旧待办保持暂停。协作等待保存目标、游标和截止时间，在同一 Turn 建立下一 Run，等待中的普通 follow-up 只排队，steer 明确拒绝。具体约束见[会话协作](../agents/session-cooperation.md)。

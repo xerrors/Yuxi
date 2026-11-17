@@ -19,6 +19,7 @@ export function useAgentStreamHandler({
     )
       return false
     const itemAlreadyKnown = event.item && state.itemState.items[event.item.id]
+    const eventAlreadyKnown = state.itemState.seenEvents.has(event.event_id)
     const applied = applyAgentEvent(state.itemState, event)
     const item = state.itemState.items[event.item_id || event.item?.id]
     if (applied && item?.yuxi?.run_id === state.activeRunId) {
@@ -56,6 +57,15 @@ export function useAgentStreamHandler({
       state.agentState = event.agent_state
     } else if (type === 'yuxi.session.turn.context_compression') {
       state.contextCompressing = event.compression?.status === 'started'
+    } else if (
+      type === 'yuxi.session.turn.model_retry' &&
+      !eventAlreadyKnown && state.activeRunId && event.yuxi?.run_id === state.activeRunId
+    ) {
+      message.warning({
+        key: `model-retry-${threadId}`,
+        content: `模型连接中断或响应超时，${event.retry.delay_seconds} 秒后进行第 ${event.retry.attempt} 次重试`,
+        duration: 8
+      })
     } else if (type === 'yuxi.session.turn.waiting') {
       state.currentTurnId = event.turn_id
       state.activeRunId = event.yuxi.run_id

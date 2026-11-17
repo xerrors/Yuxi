@@ -670,3 +670,57 @@ test('历史、流和完成后的显示由同一 item 集合派生，不依赖�
   detach()
   await stream
 })
+
+test('独立阅读装载共享历史与恢复；失败保持可重试而不是标成已就绪', async (t) => {
+  const { runtime, counts } = setup(t)
+  const left = runtime.observeThread('reading', {})
+  const right = runtime.observeThread('reading', {})
+  t.after(left)
+  t.after(right)
+  let reads = 0
+  api.getSessionItems = async () => {
+    reads++
+    if (reads === 1) throw new Error('历史读取失败')
+    return { data: [{ id: 'read', type: 'message', role: 'user', status: 'completed',
+      content: [{ type: 'input_text', text: '持久历史' }], yuxi: {} }], yuxi: { runs: [] }, has_more: false }
+  }
+  const failed = await Promise.allSettled([runtime.loadThread('reading'), runtime.loadThread('reading')])
+  assert.ok(failed.every((result) => result.status === 'rejected'))
+  assert.equal(runtime.getThreadState('reading').readingReady, false)
+  assert.equal(runtime.getThreadState('reading').readingError.message, '历史读取失败')
+  assert.equal(reads, 1)
+  assert.deepEqual(await Promise.all([runtime.loadThread('reading'), runtime.loadThread('reading')]), [true, true])
+  assert.equal(runtime.threadMessages.reading[0].content, '持久历史')
+  assert.equal(runtime.getThreadState('reading').readingError, null)
+  assert.equal(counts().subscriptions, 1)
+  assert.equal(reads, 2)
+  left()
+  assert.equal(counts().aborted, 0)
+  right()
+  assert.equal(counts().aborted, 1)
+  assert.equal(runtime.threadMessages.reading, undefined)
+})
+
+test('旧身份的在途历史与恢复不能写回同名 Thread 的新身份', async (t) => {
+  const { runtime } = setup(t)
+  const { useUserStore } = await server.ssrLoadModule('/src/modules/identity/index.js')
+  const user = useUserStore()
+  user.token = 'old-user'
+  const releaseOld = runtime.observeThread('same', {})
+  let resolveOld, started
+  const pending = new Promise((resolve) => { started = resolve })
+  const page = (text) => ({ data: [{ id: 'same-message', type: 'message', role: 'user', status: 'completed',
+    content: [{ type: 'input_text', text }], yuxi: {} }], yuxi: { runs: [] }, has_more: false })
+  api.getSessionItems = () => { started(); return new Promise((resolve) => { resolveOld = resolve }) }
+  const oldRead = runtime.loadThread('same')
+  await pending
+  user.token = 'new-user'
+  releaseOld()
+  const releaseNew = runtime.observeThread('same', {})
+  t.after(releaseNew)
+  api.getSessionItems = async () => page('新身份历史')
+  assert.equal(await runtime.loadThread('same'), true)
+  resolveOld(page('旧身份历史'))
+  assert.equal(await oldRead, false)
+  assert.deepEqual(runtime.threadMessages.same.map((message) => message.content), ['新身份历史'])
+})

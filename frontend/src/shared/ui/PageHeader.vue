@@ -156,19 +156,15 @@ function emitChange(item) {
   .page-header-loading-bar {
     height: 100%;
     background: var(--main-color);
-    width: 30%;
+    width: 100%;
     position: absolute;
-    animation: page-header-loading-bar-anim 1.5s infinite linear;
+    animation: page-header-loading-bar-anim 2s ease-in-out infinite;
   }
 }
 
 @keyframes page-header-loading-bar-anim {
-  0% {
-    left: -30%;
-  }
-  100% {
-    left: 100%;
-  }
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 0.7; }
 }
 @media (max-width: 767px) {
   .page-header {

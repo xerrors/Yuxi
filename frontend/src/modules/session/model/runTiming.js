@@ -120,14 +120,6 @@ export const buildRunTimingRows = (timing) => {
   })
 }
 
-export const formatRunTimingSummary = (timing) => {
-  const total = formatRunTimingDuration(getRunTotalLatencyMs(timing))
-  if (total) return `总耗时 ${total}`
-
-  const firstOutput = formatRunTimingDuration(timing?.first_output_latency_ms)
-  return firstOutput ? `首输出 ${firstOutput}` : ''
-}
-
 /** 从持久 Run 时间点建立单次 Trace 的绝对时间窗口。 */
 export const getRunTimingWindow = (timing) => {
   if (!timing || typeof timing !== 'object') return null

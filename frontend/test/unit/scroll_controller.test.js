@@ -156,3 +156,30 @@ test('贴底的隐藏容器保留滚动位置与阅读锚点，恢复尺寸后�
   assert.equal(controller.readingPosition, position)
   controller.cleanup()
 })
+
+
+for (const method of ['scrollToBottom', 'scrollToBottomStaticForce']) {
+  for (const cause of ['cleanup', 'manual-scroll']) {
+    test(`${method} 布局等待中 ${cause} 后不能晚到抢滚动或恢复自动跟随`, async () => {
+      const container = {
+        clientHeight: 400, scrollHeight: 3000, scrollTop: 160,
+        scrollTo({ top }) { this.scrollTop = top }
+      }
+      const controller = new ScrollController(() => container, { retryDelays: [1] })
+      let finishLayout
+      controller.waitForLayoutStable = () => new Promise(resolve => { finishLayout = resolve })
+      const pending = controller[method](true)
+      await Promise.resolve()
+      controller.disableAutoScroll()
+      if (cause === 'cleanup') controller.cleanup()
+      else controller.cancelPendingScrolls()
+      container.scrollTop = 240
+      finishLayout()
+      await pending
+      assert.equal(container.scrollTop, 240)
+      assert.equal(controller.shouldAutoScroll, false)
+      assert.equal(controller.scrollRetryTimers.length, 0)
+      controller.cleanup()
+    })
+  }
+}

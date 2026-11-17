@@ -52,13 +52,13 @@ def verify(secret: str, uid: str, ts: str, sig: str, *, now: int, window: int = 
     return hmac.compare_digest(expected, sig)
 ```
 
-窗口（示例为 ±300 秒）之外的请求会被拒绝。理解这个签名能证明什么、不能证明什么，是正确接入的前提：签名证明「产出方持有共享密钥且 uid 未被篡改」，不能阻止本就持有密钥的 Yuxi 管理员伪造；当前签名只覆盖 UID 和时间戳，没有每请求唯一 nonce，捕获到的签名头仍可在有效窗口内重复使用，因此这不是严格的一次性防重放机制。若业务要求阻止窗口内重放，网关协议还需加入每请求唯一 nonce/请求标识并原子去重。
+窗口（示例为 ±300 秒）之外的请求会被拒绝。理解这个签名能证明什么、不能证明什么，是正确接入的前提。签名证明「产出方持有共享密钥且 uid 未被篡改」，不能阻止本就持有密钥的 Yuxi 管理员伪造；当前签名只覆盖 UID 和时间戳，没有每请求唯一 nonce，捕获到的签名头仍可在有效窗口内重复使用，因此这不是严格的一次性防重放机制。若业务要求阻止窗口内重放，网关协议还需加入每请求唯一 nonce/请求标识并原子去重。
 
 签名密钥固定读取 `YUXI_UID_SIGNATURE_SECRET`，供应商配置只保存是否启用该头，不接受其他环境变量名。同一 Yuxi 实例的所有已签名供应商共用这把密钥。保存后若某个 API/worker 缺少该变量，模型发送边界会直接报错；所有实际发送请求的副本都需配置一致。
 
 ## Provider / 网关侧接入
 
-负责计量的 Provider 或网关需要在自有安全配置中保存与 Yuxi API、worker 相同的 `YUXI_UID_SIGNATURE_SECRET`，并在接收请求时读取 `x-yuxi-uid`、`x-yuxi-uid-ts` 和 `x-yuxi-uid-sig`。按接入该网关的 API Key 找到对应的 Yuxi 签名密钥，使用上面的 `verify()` 校验时间戳窗口和 HMAC；只有验证成功后，才把 UID 作为已验证身份写入用量记录。
+负责计量的 Provider 或网关需要在自有安全配置中保存与 Yuxi API、worker 相同的 `YUXI_UID_SIGNATURE_SECRET`，并在接收请求时读取 `x-yuxi-uid`、`x-yuxi-uid-ts` 和 `x-yuxi-uid-sig`。按接入该网关的 API Key 找到对应的 Yuxi 签名密钥，使用上面的 `verify()` 校验时间戳窗口和 HMAC。只有验证成功后，才把 UID 作为已验证身份写入用量记录。
 
 ```python
 import time
@@ -78,6 +78,6 @@ def verified_yuxi_uid(request: Request) -> str:
 record_usage(verified_uid=verified_yuxi_uid(request))
 ```
 
-示例中的 `secret_for_api_key()` 应由网关实现：先完成 API Key 认证，再把该 Key 映射到对应 Yuxi 实例的签名密钥；单实例部署可直接读取该实例的安全配置。Provider 前的反向代理必须在移除或重写自定义请求头前完成验签。若目标 Provider 不保留或不接受这些请求头，应在它前面部署能读取并验证请求头的网关，或关闭该 Provider 的「请求携带用户 ID」开关；不能把未验签的 `x-yuxi-uid` 用作配额或计费身份。
+示例中的 `secret_for_api_key()` 应由网关实现：先完成 API Key 认证，再把该 Key 映射到对应 Yuxi 实例的签名密钥；单实例部署可直接读取该实例的安全配置。Provider 前的反向代理必须在移除或重写自定义请求头前完成验签。若目标 Provider 不保留或不接受这些请求头，应在它前面部署能读取并验证请求头的网关，或关闭该 Provider 的「请求携带用户 ID」开关。不能把未验签的 `x-yuxi-uid` 用作配额或计费身份。
 
 供应商卡片会显示当前是否开启该开关，便于核对实例的计量范围。

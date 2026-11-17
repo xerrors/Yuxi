@@ -258,7 +258,7 @@ async def test_corrupt_skill_share_config_remains_repairable(test_client, admin_
 
 @pytest.mark.parametrize("null_kind", ["sql", "json"])
 async def test_null_knowledge_permission_does_not_become_global(test_client, admin_headers, standard_user, null_kind):
-    """创建默认共享合法，持久 NULL 不得在列表和工具读取中扩大成全局权限。"""
+    """创建默认共享合法，持久 NULL 不得在列表和详情读取中扩大成全局权限。"""
     response = await test_client.post(
         "/api/knowledge/knowledge-bases",
         headers=admin_headers,
@@ -297,14 +297,6 @@ async def test_null_knowledge_permission_does_not_become_global(test_client, adm
         assert kb_id not in {item["kb_id"] for item in response.json()["knowledge_bases"]}
         response = await test_client.get(f"/api/knowledge/knowledge-bases/{kb_id}", headers=standard_user["headers"])
         assert response.status_code == 403, response.text
-        from yuxi.infrastructure.postgres.manager import pg_manager
-        from yuxi.modules.knowledge.runtime import knowledge_base
-
-        try:
-            assert await knowledge_base.get_accessible_knowledge_base_info_by_uid(standard_user["user"]["uid"], kb_id) is None
-        finally:
-            # 参数化测试使用独立事件循环，不能把本次连接池传到下一项。
-            await pg_manager.async_engine.dispose()
     finally:
         try:
             response = await test_client.delete(f"/api/knowledge/knowledge-bases/{kb_id}", headers=admin_headers)

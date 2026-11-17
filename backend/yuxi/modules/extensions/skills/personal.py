@@ -177,9 +177,6 @@ def _resolved_personal_skill(uid: str, root: Path, metadata: dict[str, Any]) -> 
         enabled=True,
         created_by=uid,
         share_config=None,
-        tool_dependencies=[],
-        mcp_dependencies=[],
-        skill_dependencies=[],
     )
 
 

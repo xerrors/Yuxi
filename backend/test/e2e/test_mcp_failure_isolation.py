@@ -4,9 +4,9 @@ import json
 import os
 from http.server import BaseHTTPRequestHandler
 from io import BytesIO
-from zipfile import ZipFile
 from types import SimpleNamespace
 from uuid import uuid4
+from zipfile import ZipFile
 
 import asyncpg
 import pytest
@@ -31,9 +31,9 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow, pytest.mar
 
 
 @pytest.mark.parametrize("mode", ["unconnected", "wrong_key", "unreachable"])
-@pytest.mark.parametrize("via_skill", [False, True])
-async def test_unavailable_mcp_preserves_chat_and_reports_reason(e2e_client, e2e_headers, mode, via_skill):
-    """普通聊天不受发现故障影响；凭据失效给出提示，临时网络故障不永久撤销能力。"""
+@pytest.mark.parametrize("with_skill", [False, True])
+async def test_unavailable_mcp_preserves_chat_and_reports_reason(e2e_client, e2e_headers, mode, with_skill):
+    """直接选择 MCP 的故障不阻断聊天；普通 Skill 仅提供说明，不参与工具授权。"""
     client, headers = e2e_client, e2e_headers
     suffix = uuid4().hex[:10]
     slug, agent, provider = (prefix + suffix for prefix in ("pytest-mcp-failure-", "pytest-agent-", "mcp-failure-"))
@@ -50,8 +50,8 @@ async def test_unavailable_mcp_preserves_chat_and_reports_reason(e2e_client, e2e
             assert "secret-canary" not in system and "TaskGroup" not in system
             names = {item["function"]["name"] for item in body.get("tools", [])}
             assert "query_my_attendance" not in names
-            if via_skill:
-                assert ("ocr_parse_file" in names) == (mode == "unreachable")
+            if with_skill:
+                assert "ocr_parse_file" not in names
             observed.append(system)
             common = {"id": "mcp-failure", "object": "chat.completion.chunk", "created": 1, "model": "deterministic-chat"}
             send_openai_sse_response(
@@ -108,7 +108,7 @@ async def test_unavailable_mcp_preserves_chat_and_reports_reason(e2e_client, e2e
                 "config_json": {
                     "context": {
                         "model": provider + ":deterministic-chat",
-                        "mcps": [] if via_skill else [slug],
+                        "mcps": [slug],
                         "tools": [],
                         "knowledges": [],
                         "skills": [],
@@ -117,13 +117,12 @@ async def test_unavailable_mcp_preserves_chat_and_reports_reason(e2e_client, e2e
                     }
                 },
             }
-            if via_skill:
+            if with_skill:
                 package = BytesIO()
                 with ZipFile(package, "w") as archive:
                     archive.writestr(
                         "SKILL.md",
-                        "---\nslug: mcp-fixture\nname: MCP fixture\ndescription: MCP failure fixture\n"
-                        f"mcp_dependencies: [{slug}]\ntool_dependencies: [ocr_parse_file]\n---\n查询 MCP。\n",
+                        "---\nslug: mcp-fixture\nname: MCP fixture\ndescription: MCP failure fixture\n---\n查询 MCP。\n",
                     )
                 response = await client.post(
                     "/api/agent/with-skill",

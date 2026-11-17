@@ -15,8 +15,11 @@ from yuxi.modules.agents.repositories.definitions import AgentRepository
 from yuxi.modules.agents.runtime.context import BaseContext, refresh_agent_context_resources
 from yuxi.modules.agents.runtime.middlewares.skills import injected_skill_identity
 from yuxi.modules.agents.runtime.state import BaseState, RuntimeWarning
+from yuxi.modules.extensions.mcp.builtin import supports_direct_mcp_selection
 from yuxi.modules.extensions.mcp.service import available_mcp_servers, runtime_mcp_failure
-from yuxi.modules.extensions.skills.runtime import connected_skills, expand_skill_closure, sync_agent_context_skills
+from yuxi.modules.extensions.plugins.base import is_plugin_active
+from yuxi.modules.extensions.plugins.registry import get_plugins
+from yuxi.modules.extensions.skills.runtime import sync_agent_context_skills
 from yuxi.modules.extensions.tools.builtin import BASE_TOOL_NAMES
 from yuxi.modules.identity.models import User
 from yuxi.shared.errors import PermissionDeniedError
@@ -98,26 +101,27 @@ def capability_warnings(context) -> list[RuntimeWarning]:
 
 
 def tool_allowed(context, name: str, state: dict, mcp_policy: dict[str, set[str]]) -> bool:
-    """按当前资源和已授权 Skill 依赖检查已注册工具。"""
+    """按当前资源和已激活插件检查已注册工具。"""
     servers = getattr(context, "mcp_tool_servers", None)
     registered = getattr(context, "registered_builtin_tool_names", None)
     snapshot = getattr(context, "skill_runtime_snapshot", None)
     if servers is None or registered is None or snapshot is None:
         return False
-    allowed_mcps = set(context.mcps)
+    allowed_mcps = {slug for slug in context.mcps if supports_direct_mcp_selection(slug)}
     allowed_tools = set(context.tools) | set(BASE_TOOL_NAMES)
-    active = set(state.get("activated_skills", [])) | set(snapshot["preloaded_skills"])
-    for slug in connected_skills(
-        list(active & set(snapshot["effective_skills"])),
-        snapshot["runtime_skills"],
-        set(mcp_policy),
-    ):
-        allowed_tools.update(snapshot["runtime_skills"][slug]["tools"])
-        allowed_mcps.update(snapshot["runtime_skills"][slug]["mcps"])
+    plugin_tool_names = set()
+    for plugin in get_plugins():
+        if plugin.plugin_id not in getattr(context, "plugins", []):
+            continue
+        owned_names = {tool.name for tool in getattr(plugin, "tools", [])}
+        plugin_tool_names.update(owned_names)
+        if is_plugin_active(plugin, context, state) and set(plugin.mcps).issubset(mcp_policy):
+            allowed_tools.update(owned_names)
+            allowed_mcps.update(plugin.mcps)
     server = servers.get(name)
     if server:
         return server in allowed_mcps and server in mcp_policy and name not in mcp_policy[server]
-    if name in registered:
+    if name in registered or name in plugin_tool_names:
         return name in allowed_tools
     return name in getattr(context, "middleware_tool_names", set())
 
@@ -157,14 +161,11 @@ async def _execution_mcp_policy(context, *, state=None) -> dict[str, set[str]]:
 
 
 async def _resolve_mcp_policy(context, *, db, user, state=None) -> dict[str, set[str]]:
-    """按当前快照与激活 Skill 求候选 MCP，返回各服务的禁用工具集合。"""
-    snapshot = context.skill_runtime_snapshot
-    candidates = set(context.mcps)
-    if snapshot:
-        active = [*snapshot["preloaded_skills"], *(state or {}).get("activated_skills", [])]
-        for slug in expand_skill_closure(active, snapshot["runtime_skills"]):
-            if slug in snapshot["effective_skills"]:
-                candidates.update(snapshot["runtime_skills"][slug]["mcps"])
+    """按当前配置与激活插件求候选 MCP，返回各服务的禁用工具集合。"""
+    candidates = {slug for slug in context.mcps if supports_direct_mcp_selection(slug)}
+    for plugin in get_plugins():
+        if is_plugin_active(plugin, context, state):
+            candidates.update(plugin.mcps)
     servers = await available_mcp_servers(db, candidates, user_id=user.id)
     unavailable = getattr(context, "mcp_unavailable", {})
     servers = {slug: server for slug, server in servers.items() if slug not in unavailable}

@@ -9,7 +9,7 @@
 | `cube` | 每用户一个持久 Cube VM | 跨 Run 复用，空闲休眠，显式重建 | Linux/KVM，强隔离 |
 | `container`（默认） | 独立 `sandbox-runner`，每 Run 一个临时容器 | 首次 `execute` 创建，Run 终态/取消/失败时销毁 | 普通 Docker/Podman，单租户或可信代码 |
 
-两种后端复用 Agent 工具入口、Workspace 虚拟路径、审批、审计和 Run lease。每个 Run 终态（包括 yielded）都登记 `runtime_cleanup_pending`；统一的 `cleanup_run` 确认资源释放后才清除责任。Cube 清理所属命令并保留用户 VM，container 删除所属 Run 容器。清理失败由现有恢复循环重试。
+两种后端复用 Agent 工具入口、Workspace 虚拟路径、审批、审计和 Run lease。每个 Run 终态（包括 yielded）都登记 `runtime_cleanup_pending`。统一的 `cleanup_run` 确认资源释放后才清除责任。Cube 清理所属命令并保留用户 VM，container 删除所属 Run 容器。清理失败由现有恢复循环重试。
 
 Steer 在原事务中提交旧 Run 的 yielded 状态及新 pending Run，提交后先清理旧环境再投递接续。即使周期补投提前到达，Run 领取边界也拒绝同 Thread 尚有清理责任的首次执行；清理恢复后由 pending 补投接续，不丢失已消费输入。
 
@@ -36,11 +36,11 @@ Container 模式的部署、挂载、资源限制和能力差异见[Container �
 
 共享 Workspace 是用户工作文件，不是 Home 的备份。成果登记、预览和下载继续读取 Workspace 的最新文件；Home 中的成果需要先复制到 Workspace。个人 Skills 位于 Workspace 的 `agents/skills`，共享投影只包含用户获授权的来源。管理页远程 Skill CLI 在操作者 VM 的请求专属目录中运行，宿主安装边界校验发布文件，只清理该请求目录。
 
-收到当前线程的轮次终态通知时，文件面板使该线程的预览缓存失效，并重新读取正在展示的产物。面板关闭或切到其它标签期间也保留此失效结果，返回产物时读取最新内容；重复打开缺少修改时间和大小信息的交付卡片也重新读取。运行期间从文件树打开的 Workdir 文件继续按元数据变化刷新。预览读取失败时显示文件错误，重新打开或手动刷新可再次读取。当前预览读取实时文件，保留历史版本需要另存文件，缓存不提供历史快照。前端行为由[文件面板](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/session/ui/workspace/AgentPanel.vue)与[会话工作区](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/session/ui/SessionWorkspace.vue)拥有。
+收到当前线程的轮次终态通知时，文件面板使该线程的预览缓存失效，并重新读取正在展示的产物。面板关闭或切到其它标签期间也保留此失效结果，返回产物时读取最新内容。重复打开缺少修改时间和大小信息的交付卡片也重新读取。运行期间从文件树打开的 Workdir 文件继续按元数据变化刷新。预览读取失败时显示文件错误，重新打开或手动刷新可再次读取。当前预览读取实时文件，保留历史版本需要另存文件，缓存不提供历史快照。前端行为由[文件面板](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/session/ui/workspace/AgentPanel.vue)与[会话工作区](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/session/ui/SessionWorkspace.vue)拥有。
 
 ## 生命周期与并发
 
-超级管理员的系统概览显示执行节点当前活跃 VM 数量与 VM 总数。`GET /api/dashboard/stats/vms` 只读配置节点的全部实例列表，运行中的实例计为活跃，休眠等其他实例计入总数；不会连接或唤醒 VM。数量在进入概览或点击 VM 总数旁的刷新按钮时更新，控制面不可用时显示未知值并提供重试，其他业务统计继续展示。
+超级管理员的系统概览显示执行节点当前活跃 VM 数量与 VM 总数。`GET /api/dashboard/stats/vms` 只读配置节点的全部实例列表，运行中的实例计为活跃，休眠等其他实例计入总数。不会连接或唤醒 VM。数量在进入概览或点击 VM 总数旁的刷新按钮时更新，控制面不可用时显示未知值并提供重试，其他业务统计继续展示。
 
 PostgreSQL 的 `user_sandboxes` 保存实例引用、代次、控制凭据和操作状态，`sandbox_commands` 保存所属 Run/attempt、执行标识与进程组。用户 advisory lock 协调创建、唤醒、休眠、重建与执行领取；命令运行期间不持有用户锁，因此同用户命令可以并行。
 
@@ -52,10 +52,10 @@ Run 取消监听直接清理所属命令，超时与 lease 失效清理由持久
 
 单节点部署要求见[沙盒配置与运维](../advanced/sandbox-operations.md)。原生节点重启恢复和资源压力隔离需要按部署环境单独验证。后台进程在休眠恢复后的连续运行不是产品承诺。
 
-用户环境变量由 `services/environment.py` 保存和验证，runner 在开始执行流时使用已有数据库 session 读取一次快照，普通 shell 命令通过执行上下文复用。快照不进入运行清单或 checkpoint，退出后释放，重试 attempt 重新读取。无 Run 操作及手动验证读取最新配置，文件及清理进程使用独立干净环境。`POST /api/user/agent-env/verify` 通过同一持久命令执行器访问当前用户 VM，不改变当前 Run 或已有进程的环境变量；生效时机、结果边界与页面操作见[用户 Agent 环境变量](../advanced/configuration.md#用户-agent-环境变量)。
+用户环境变量由 `services/environment.py` 保存和验证，runner 在开始执行流时使用已有数据库 session 读取一次快照，普通 shell 命令通过执行上下文复用。快照不进入运行清单或 checkpoint，退出后释放，重试 attempt 重新读取。无 Run 操作及手动验证读取最新配置，文件及清理进程使用独立干净环境。`POST /api/user/agent-env/verify` 通过同一持久命令执行器访问当前用户 VM，不改变当前 Run 或已有进程的环境变量。生效时机、结果边界与页面操作见[用户 Agent 环境变量](../advanced/configuration.md#用户-agent-环境变量)。
 
 ## 源码定位与验证
 
 [Sandbox 公共入口](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/sandbox/__init__.py)提供 Backend、可信上下文、后端选择及就绪检查；业务 service 不选择具体实现。[Cube provider](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/sandbox/cube_provider.py)协调用户锁、环境代次、命令登记与清理，[Cube adapter](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/sandbox/cube.py)执行远端普通账号协议，[Sandbox repository](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/repositories/sandbox.py)保存环境与命令事实。[Workspace 路径契约](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/workspace/runtime_paths.py)和[文件边界](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/workspace/runtime_files.py)决定访问宿主共享文件还是 VM 文件。
 
-[用户环境集成测试](https://github.com/xerrors/Yuxi/blob/main/backend/test/integration/sandbox/test_cube_user_environment.py)覆盖环境复用与生命周期，[文件边界测试](https://github.com/xerrors/Yuxi/blob/main/backend/test/integration/sandbox/test_cube_shared_mount_fuzz.py)检查共享挂载的路径约束，[Agent E2E](https://github.com/xerrors/Yuxi/blob/main/backend/test/e2e/test_cube_agent_execution_e2e.py)核对执行、产物和取消。命令返回成功后仍需读取目标文件及持久命令状态；Cube 节点不可用时，明确记录未执行范围。
+[用户环境集成测试](https://github.com/xerrors/Yuxi/blob/main/backend/test/integration/sandbox/test_cube_user_environment.py)覆盖环境复用与生命周期，[文件边界测试](https://github.com/xerrors/Yuxi/blob/main/backend/test/integration/sandbox/test_cube_shared_mount_fuzz.py)检查共享挂载的路径约束，[Agent E2E](https://github.com/xerrors/Yuxi/blob/main/backend/test/e2e/test_cube_agent_execution_e2e.py)核对执行、产物和取消。命令返回成功后仍需读取目标文件及持久命令状态。Cube 节点不可用时，明确记录未执行范围。

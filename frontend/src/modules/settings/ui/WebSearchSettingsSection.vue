@@ -117,17 +117,20 @@
                 >
               </div>
             </header>
-            <label v-if="editingKey === provider.id" class="settings-service-field">
+            <div v-if="editingKey === provider.id" class="settings-service-field">
               <a-input-password
                 aria-label="API Key"
                 v-model:value="draftKey"
                 :placeholder="provider.environment"
-                :disabled="Boolean(savingKey) || testing[provider.id]"
+                :disabled="clearKey || Boolean(savingKey) || testing[provider.id]"
                 autocomplete="new-password"
                 @update:value="delete results[provider.id]"
               />
-              <small>留空并保存会清除数据库中的值。</small>
-            </label>
+              <small>留空保持现有凭据；勾选清除会移除数据库中的值，并沿用环境变量（如已配置）。</small>
+              <a-checkbox v-model:checked="clearKey" :disabled="Boolean(savingKey) || testing[provider.id]">
+                清除已保存的 API Key
+              </a-checkbox>
+            </div>
             <div v-else class="settings-service-field">
               <a-input
                 aria-label="API Key"
@@ -154,6 +157,7 @@ const providers = ref([])
 const config = ref({})
 const editingKey = ref('')
 const draftKey = ref('')
+const clearKey = ref(false)
 const savingKey = ref('')
 const testing = reactive({})
 const results = reactive({})
@@ -197,6 +201,7 @@ const credentialDescription = (provider) => {
 const startEditing = (provider) => {
   editingKey.value = provider.id
   draftKey.value = ''
+  clearKey.value = false
   delete results[provider.id]
 }
 
@@ -204,12 +209,18 @@ const cancelEditing = () => {
   delete results[editingKey.value]
   editingKey.value = ''
   draftKey.value = ''
+  clearKey.value = false
 }
 
 const saveKey = async (provider) => {
+  if (!clearKey.value && !draftKey.value.trim()) {
+    cancelEditing()
+    message.info('已保留现有凭据')
+    return
+  }
   savingKey.value = provider.id
   try {
-    const data = await configOptionsApi.updateOption(provider.optionKey, { api_key: draftKey.value.trim() })
+    const data = await configOptionsApi.updateOption(provider.optionKey, { api_key: clearKey.value ? '' : draftKey.value.trim() })
     options[provider.id] = data.option
     delete results[provider.id]
     cancelEditing()
@@ -235,7 +246,7 @@ const saveDefault = async (operation, provider) => {
 
 const testDisabled = (provider) => {
   const hasKey = editingKey.value === provider.id
-    ? Boolean(draftKey.value.trim())
+    ? !clearKey.value && Boolean(draftKey.value.trim())
     : keyState(options[provider.id]).configured
   return Boolean(loading.value || savingKey.value || testing[provider.id] || !hasKey)
 }

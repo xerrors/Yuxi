@@ -8,7 +8,7 @@ import pytest
 from yuxi.modules.agents.runtime import agent_backends
 from yuxi.modules.agents import presets
 from yuxi.modules.agents.runtime.agent_backends.chatbot.graph import ChatbotAgent
-from yuxi.modules.extensions.skills import shared as skill_service
+from yuxi.modules.extensions.skills.builtin import sync as skill_service
 
 
 @pytest.fixture(autouse=True)
@@ -22,7 +22,7 @@ def clean_discovery_test_modules():
 
 
 def test_preset_discovery_includes_shipping_roles():
-    """发布角色完整，知识库问答启用并预加载内置技能。"""
+    """发布角色完整，知识库使用插件，研究使用普通 Skill。"""
     found = {preset.slug: preset for preset in presets.discover_agent_presets()}
     assert list(found) == [
         "default-chatbot",
@@ -33,8 +33,12 @@ def test_preset_discovery_includes_shipping_roles():
     knowledge_qa = found["knowledge-base-qa"]
     assert knowledge_qa.name == "知识库问答"
     assert knowledge_qa.backend_id == "ChatbotAgent"
-    assert knowledge_qa.context["skills"] == ["knowledge-base"]
-    assert knowledge_qa.context["preload_skills"] == ["knowledge-base"]
+    assert knowledge_qa.context["skills"] == []
+    assert knowledge_qa.context["plugins"] == ["knowledge-base"]
+    research = found["deep-research"]
+    assert research.context["skills"] == ["deep-research"]
+    assert "plugins" not in research.context
+    assert "load_plugin" not in research.context["system_prompt"]
 
 
 def test_new_preset_file_is_discovered_without_registry(tmp_path, monkeypatch):
@@ -222,12 +226,74 @@ async def test_reused_prepared_context_refreshes_skills_before_each_graph(monkey
         await backend.get_graph(context=context)
 
 
-def test_shipping_skills_keep_required_dependencies():
-    """默认知识能力及研究依赖不能因发现重组缺失。"""
+def test_shipping_plugins_own_runtime_dependencies():
+    """内置能力由插件声明，Skill 只保留说明。"""
+    from yuxi.modules.extensions.plugins.registry import get_plugin, get_plugins
+
     found = {spec["slug"]: spec for spec in skill_service.list_builtin_skill_specs()}
-    assert set(found) == {"image-gen", "deep-research", "knowledge-base", "mysql-reporter", "chat-widgets"}
-    assert found["knowledge-base"]["tool_dependencies"] == []
-    assert found["knowledge-base"]["mcp_dependencies"] == ["knowledge"]
-    assert found["deep-research"]["skill_dependencies"] == []
-    assert found["mysql-reporter"]["mcp_dependencies"] == []
-    assert "html-preview" not in found
+    assert set(found) == {"image-gen", "deep-research", "knowledge-base", "mysql-reporter", "chat-widgets", "abridge"}
+    for spec in found.values():
+        assert not {"tool_dependencies", "mcp_dependencies", "skill_dependencies"}.intersection(spec)
+    assert get_plugin("knowledge-base").mcps == ("knowledge",)
+    assert "deep-research" not in {plugin.plugin_id for plugin in get_plugins()}
+    assert "image-gen" not in {plugin.plugin_id for plugin in get_plugins()}
+    assert get_plugin("abridge").skills == ("abridge", "chat-widgets")
+    assert get_plugin("abridge").mcps == ("abridge",)
+
+
+def test_plugin_skills_are_discovered_without_runtime_assembly(monkeypatch):
+    """源码资源来自插件目录，发现过程不装配运行时或迁移插件。"""
+    from pathlib import Path
+    from yuxi.modules.extensions.plugins import registry
+    from yuxi.modules.extensions.skills.builtin import BUILTIN_SKILLS_DIR
+
+    def reject_runtime_assembly(*args):
+        """资源发现不应依赖运行工具和中间件。"""
+        raise AssertionError("runtime assembly")
+
+    monkeypatch.setattr(registry, "get_plugins", reject_runtime_assembly)
+    monkeypatch.setattr(registry, "validate_plugin", reject_runtime_assembly)
+    found = {spec["slug"]: spec for spec in skill_service.list_builtin_skill_specs()}
+    root = Path(registry.__file__).parent / "builtin"
+    assert found["knowledge-base"]["source_dir"] == root / "knowledge/skills/knowledge-base"
+    assert found["image-gen"]["source_dir"] == BUILTIN_SKILLS_DIR / "image-gen"
+    assert found["abridge"]["source_dir"] == root / "abridge/skills/abridge"
+    assert found["chat-widgets"]["source_dir"] == BUILTIN_SKILLS_DIR / "chat-widgets"
+
+
+@pytest.mark.asyncio
+async def test_selected_plugins_assemble_independent_middlewares_in_registry_order(monkeypatch):
+    """用户选择顺序不改变部署顺序，每次构图创建各插件独立实例。"""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from yuxi.modules.agents.runtime.agent_backends.chatbot import graph
+    from yuxi.modules.agents.runtime.middlewares.plugins import PluginLoaderMiddleware, PluginMiddleware
+    from yuxi.modules.extensions.plugins.builtin.abridge.plugin import AbridgePlugin
+    from yuxi.modules.extensions.plugins.builtin.knowledge.plugin import KnowledgePlugin
+
+    monkeypatch.setattr(graph, "create_agent_filesystem_middleware", lambda *args, **kwargs: object())
+    monkeypatch.setattr(graph, "create_summary_middleware_from_context", lambda *args, **kwargs: object())
+    monkeypatch.setattr(graph, "create_memory_middleware", AsyncMock(return_value=None))
+    monkeypatch.setattr(graph, "create_cooperation_middleware", lambda context: None)
+    context = SimpleNamespace(plugins=["abridge", "knowledge-base"], workdir_relative_path="projects/test")
+    first = await graph._build_middlewares(context, object())
+    second = await graph._build_middlewares(context, object())
+    first_plugins = [item for item in first if isinstance(item, PluginMiddleware)]
+    second_plugins = [item for item in second if isinstance(item, PluginMiddleware)]
+    assert [type(item.plugin) for item in first_plugins] == [KnowledgePlugin, AbridgePlugin]
+    assert all(left is not right and left.plugin is not right.plugin for left, right in zip(first_plugins, second_plugins, strict=True))
+    assert sum(isinstance(item, PluginLoaderMiddleware) for item in first) == 1
+    context.plugins = ["abridge"]
+    selected = await graph._build_middlewares(context, object())
+    assert [type(item.plugin) for item in selected if isinstance(item, PluginMiddleware)] == [AbridgePlugin]
+
+
+def test_plugin_resource_discovery_rejects_undeclared_skill(tmp_path, monkeypatch):
+    """随插件交付的目录必须属于其显式声明，不能意外发布额外 Skill。"""
+    from yuxi.modules.extensions.plugins import registry
+
+    (tmp_path / "skills" / "undeclared").mkdir(parents=True)
+    monkeypatch.setattr(registry, "REGISTERED_PLUGINS", (registry.KnowledgePlugin,))
+    monkeypatch.setattr(registry.inspect, "getfile", lambda plugin: str(tmp_path / "plugin.py"))
+    with pytest.raises(ValueError, match="打包 Skill 未在 skills 声明: undeclared"):
+        registry.get_plugin_skill_directories()

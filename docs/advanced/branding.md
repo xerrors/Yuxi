@@ -6,7 +6,7 @@ Yuxi 的品牌配置分为两部分：后端读取的站点信息，以及前端
 
 ### 1. 创建本地配置
 
-复制模板。`info.local.yaml` 通常是本地未跟踪文件；如果目标文件已经存在，不要覆盖它，直接编辑或先备份：
+复制模板。`info.local.yaml` 通常是本地未跟踪文件。如果目标文件已经存在，不要覆盖它，直接编辑或先备份：
 
 ```bash
 cp -n backend/yuxi/modules/system/static/info.template.yaml \
@@ -40,7 +40,7 @@ YUXI_BRAND_FILE_PATH=yuxi/modules/system/static/info.local.yaml
 
 ### 2. 重新加载
 
-品牌接口每次请求读取 YAML。开发环境的 API 直接挂载 `backend/yuxi`，修改 YAML 后刷新浏览器页面即可读取新配置；前端在同一个页面会话内缓存已成功读取的品牌信息。
+品牌接口每次请求读取 YAML。开发环境的 API 直接挂载 `backend/yuxi`，修改 YAML 后刷新浏览器页面即可读取新配置。前端在同一个页面会话内缓存已成功读取的品牌信息。
 
 生产 Compose 不挂载仓库源码，品牌 YAML 会在构建 API 镜像时复制进去。修改 `backend/yuxi/modules/system/static/info.local.yaml` 后，需要重新构建并创建 API/worker 容器：
 
@@ -49,11 +49,11 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml \
   up -d --build --force-recreate api worker
 ```
 
-如果使用仓库之外的品牌文件，需要在 Compose 覆盖配置中把它只读挂载到 API 容器，并让 `YUXI_BRAND_FILE_PATH` 指向容器内路径；修改该环境变量后同样要重新创建容器。页面会通过公开的 `/api/system/info` 读取站点信息，版本占位符 `{{YUXI_VERSION}}` 由 API 替换为当前版本。
+如果使用仓库之外的品牌文件，需要在 Compose 覆盖配置中把它只读挂载到 API 容器，并让 `YUXI_BRAND_FILE_PATH` 指向容器内路径。修改该环境变量后同样要重新创建容器。页面会通过公开的 `/api/system/info` 读取站点信息，版本占位符 `{{YUXI_VERSION}}` 由 API 替换为当前版本。
 
 ## 登录协议
 
-当 `footer.user_agreement_url` 和 `footer.privacy_policy_url` 同时有值时，登录和初始化页面显示协议勾选项；任一链接为空时，不显示勾选项。用户未勾选时，登录或初始化会被页面拦截并提示先同意协议。
+`footer.user_agreement_url` 和 `footer.privacy_policy_url` 同时有值，登录和初始化页面显示协议勾选项；任一链接为空时，不显示勾选项。用户未勾选时，登录或初始化会被页面拦截并提示先同意协议。
 
 仓库提供了两个模板：
 
@@ -70,7 +70,7 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml \
 - `frontend/src/assets/css/base.dark.css`：暗色模式；
 - `frontend/src/shared/model/theme.js`：主题选择器的默认配置。
 
-优先修改已有 CSS 变量，不要在组件中散落新的硬编码颜色。当前主题的主要变量包括 `--main-1000`、`--main-900` 和 `--main-color`；`frontend/src/shared/model/theme.js` 的 `colorPrimary` 在运行时读取 `--main-color`，因此调整 `base.css` 与 `base.dark.css` 中的 `--main-color` 与 `--main-*` 色阶即可，不需要再修改 `theme.js`。`--main-color` 在浅色模式下引用 `--main-700`，暗色模式单独定义该值；hover、active、link 和 focus 等 token 还使用 `--main-600`、`--main-800`、`--main-900` 和 `--main-100`，需要一起保持一致。新增颜色时，同时检查浅色、暗色、hover、focus、禁用和错误状态的对比度。
+优先修改已有 CSS 变量，不要在组件中散落新的硬编码颜色。当前主题的主要变量包括 `--main-1000`、`--main-900` 和 `--main-color`。`frontend/src/shared/model/theme.js` 的 `colorPrimary` 在运行时读取 `--main-color`，因此调整 `base.css` 与 `base.dark.css` 中的 `--main-color` 与 `--main-*` 色阶即可，不需要再修改 `theme.js`。`--main-color` 在浅色模式下引用 `--main-700`，暗色模式单独定义该值。hover、active、link 和 focus 等 token 还使用 `--main-600`、`--main-800`、`--main-900` 和 `--main-100`，需要一起保持一致。新增颜色时，同时检查浅色、暗色、hover、focus、禁用和错误状态的对比度。
 
 开发环境会通过 Vite 热更新样式；生产环境需要重新构建 Web 镜像：
 
@@ -79,4 +79,4 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod \
   up -d --build frontend
 ```
 
-品牌 YAML、主题颜色和图标属于不同配置面：YAML 影响站点信息接口，CSS 和 `theme.js` 影响前端资源。修改其中一项不会自动改动另一项。
+品牌 YAML、主题颜色和图标属于不同配置面。YAML 影响站点信息接口，CSS 和 `theme.js` 影响前端资源。修改其中一项不会自动改动另一项。

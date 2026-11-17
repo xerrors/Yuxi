@@ -3,7 +3,6 @@
 from typing import Any
 
 from sqlalchemy import (
-    JSON,
     Boolean,
     Column,
     DateTime,
@@ -32,9 +31,6 @@ class Skill(Base):
     name = Column(String(128), nullable=False, comment="技能名称（来自 SKILL.md frontmatter.name）")
     description = Column(Text, nullable=False, comment="技能描述（来自 SKILL.md frontmatter.description）")
     source_type = Column(String(32), nullable=False, default="upload", index=True, comment="来源: builtin/upload/remote")
-    tool_dependencies = Column(JSON, nullable=False, default=list, comment="依赖的内置工具名列表")
-    mcp_dependencies = Column(JSON, nullable=False, default=list, comment="依赖的 MCP 服务名列表")
-    skill_dependencies = Column(JSON, nullable=False, default=list, comment="依赖的其他 skill slug 列表")
     dir_path = Column(String(512), nullable=False, comment="共享技能目录路径（相对 Skill 数据根目录）")
     version = Column(String(64), nullable=True, comment="技能版本（内置 skill 使用语义化版本）")
     content_hash = Column(String(128), nullable=True, comment="技能当前完整目录的统一 SHA256 内容摘要")
@@ -54,9 +50,6 @@ class Skill(Base):
             "name": self.name,
             "description": self.description,
             "source_type": self.source_type,
-            "tool_dependencies": self.tool_dependencies or [],
-            "mcp_dependencies": self.mcp_dependencies or [],
-            "skill_dependencies": self.skill_dependencies or [],
             "dir_path": self.dir_path,
             "version": self.version,
             "content_hash": self.content_hash,

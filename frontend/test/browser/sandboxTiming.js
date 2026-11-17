@@ -62,25 +62,23 @@ async page => {
   const timing = root.locator('.sandbox-timing')
   const checkAlignment = async () => {
     const layout = await root.evaluate(el => {
-      const select = selector => [...el.querySelectorAll(selector)]
-      const texts = select('.sandbox-label, .sandbox-state-value, .sandbox-timing, .sandbox-disk-content > span, .sandbox-disk-action, .sandbox-disk-action > span:last-child')
-      const fonts = texts.map(node => {
-        const style = getComputedStyle(node)
-        return [style.fontFamily, style.fontSize, style.fontWeight, style.lineHeight].join('|')
-      })
-      const center = node => { const box = node.getBoundingClientRect(); return box.y + box.height / 2 }
-      const spread = nodes => Math.max(...nodes.map(center)) - Math.min(...nodes.map(center))
-      return { fonts, stateSpread: spread(select('.sandbox-state-row > .sandbox-label, .sandbox-state-value, .sandbox-timing, .sandbox-state-value svg')),
-        diskSpread: spread(select('.sandbox-disk > .sandbox-label, .sandbox-disk-content > span, .sandbox-disk-action > span:last-child')),
-        columnOffset: Math.abs(el.querySelector('.sandbox-state-content').getBoundingClientRect().x - el.querySelector('.sandbox-disk-content').getBoundingClientRect().x) }
+      const panel = el.querySelector('.sandbox-settings').getBoundingClientRect()
+      const status = el.querySelector('.sandbox-state-row').getBoundingClientRect()
+      const disk = el.querySelector('.sandbox-disk').getBoundingClientRect()
+      const header = el.querySelector('.sandbox-header').getBoundingClientRect()
+      const actions = el.querySelector('.settings-header-actions').getBoundingClientRect()
+      return { panelWidth: panel.width, statusRight: status.right, diskLeft: disk.left,
+        sameRow: Math.abs(status.y + status.height / 2 - disk.y - disk.height / 2) < 1,
+        stacked: disk.y >= status.bottom, actionsOffset: Math.abs(header.right - actions.right) }
     })
-    check(new Set(layout.fonts).size === 1 && layout.stateSpread <= 1 && layout.diskSpread <= 1 && layout.columnOffset <= 1,
-      `两行文字应统一字体字号行高，并与图标、链接对齐：${JSON.stringify(layout)}`)
+    check(layout.actionsOffset <= 1 && (layout.sameRow ? layout.statusRight <= layout.diskLeft : layout.stacked),
+      `状态与磁盘分组清楚，操作靠右且没有相互覆盖：${JSON.stringify(layout)}`)
   }
   const checkStateAppearance = async (icon, tone) => {
     const state = root.locator('.sandbox-state-value')
-    await state.locator(`svg.lucide-${icon}[aria-hidden="true"]`).waitFor()
-    check(await state.locator(`svg.lucide-${icon}[aria-hidden="true"]`).count() === 1, `${tone}状态应有装饰性图标`)
+    const stateIcon = root.locator('.sandbox-state-icon')
+    await stateIcon.locator(`svg.lucide-${icon}[aria-hidden="true"]`).waitFor()
+    check(await stateIcon.locator(`svg.lucide-${icon}[aria-hidden="true"]`).count() === 1, `${tone}状态应有装饰性图标`)
     const appearance = await state.evaluate((el, tone) => {
       const style = getComputedStyle(el)
       const sample = document.createElement('span')
@@ -89,7 +87,7 @@ async page => {
       const expected = getComputedStyle(sample).color
       sample.remove()
       const rgb = color => color.match(/[\d.]+/g).map(Number)
-      const background = rgb(getComputedStyle(el.closest('#sandbox-timing-check')).backgroundColor)
+      const background = rgb(getComputedStyle(el.closest('.sandbox-settings')).backgroundColor)
       const foreground = rgb(style.color)
       const alpha = foreground[3] ?? 1
       const luminance = channels => channels.slice(0, 3).reduce((sum, channel, index) => {
@@ -133,6 +131,14 @@ async page => {
     await more.press('Enter')
     const item = page.getByRole('menuitem', { name: '重建环境' })
     await item.waitFor()
+    await page.waitForFunction(() => {
+      const panel = document.querySelector('.ant-dropdown:not(.ant-dropdown-hidden) .action-dropdown-panel')?.getBoundingClientRect()
+      const trigger = document.querySelector('#sandbox-timing-check [aria-label="环境操作"]')?.getBoundingClientRect()
+      return panel && trigger && Math.abs(panel.right - trigger.right) <= 1
+    })
+    const menuBox = await page.locator('.action-dropdown-panel:visible').boundingBox()
+    const triggerBox = await more.boundingBox()
+    check(Math.abs(menuBox.x + menuBox.width - triggerBox.x - triggerBox.width) <= 1, '环境菜单右边缘必须与触发按钮对齐')
     check(await more.getAttribute('aria-expanded') === 'true', '按钮应报告菜单展开')
     check(await page.getByRole('menuitem').count() === 1, '菜单只保留重建环境')
     await page.waitForFunction(() => document.activeElement?.getAttribute('role') === 'menuitem', null, { timeout: 5000 })
@@ -150,9 +156,10 @@ async page => {
     await confirmation.getByRole('button', { name: /^取\s*消$/ }).click()
     check(rebuildCalls === 0, '取消确认不能触发重建')
     check(diskReads === 0, '状态与时长刷新不能读取磁盘或唤醒环境')
-    await root.getByRole('button', { name: '查看磁盘用量' }).click()
+    await root.getByRole('button', { name: '唤醒并查询磁盘用量' }).click()
     await root.getByText('已用 2 GB · 可用 6 GB', { exact: true }).waitFor()
     check(diskReads === 1, '手动查询只读取一次磁盘')
+    check(await root.getByRole('button', { name: /磁盘用量/ }).count() === 0, '查询后不保留查询或刷新按钮')
     await root.locator('.sandbox-settings').screenshot({ path: 'tmp/sandbox-layout-light.png' })
     await more.click()
     await item.waitFor()
@@ -169,7 +176,7 @@ async page => {
     for (const width of [1024, 768]) {
       await page.setViewportSize({ width, height: 900 })
       check(await root.evaluate(el => el.scrollWidth <= el.clientWidth), `${width}px不能横向溢出`)
-      check(await root.locator('.sandbox-state-content').evaluate(el => el.getBoundingClientRect().height < 30), `${width}px状态保持一行`)
+      check(await root.locator('.sandbox-state-value').evaluate(el => el.getBoundingClientRect().height < 30), `${width}px状态标签保持一行`)
       await checkAlignment()
       await root.screenshot({ path: `tmp/sandbox-timing-${width}.png` })
     }
@@ -179,10 +186,10 @@ async page => {
     await root.locator('.sandbox-state-value').filter({ hasText: '恢复中' }).waitFor()
     await checkStateAppearance('loader-circle', '--color-info-900')
     await root.locator('.sandbox-settings').screenshot({ path: 'tmp/sandbox-status-resuming.png' })
-    status = { ...status, state: 'running' }
+    status = { ...status, state: 'running', generation: 2 }
     await refresh()
     diskFail = true
-    await root.getByRole('button', { name: '刷新磁盘用量' }).click()
+    await root.getByRole('button', { name: '查看磁盘用量' }).click()
     await root.getByText('磁盘用量读取失败', { exact: true }).waitFor()
     check(await root.getByText('已用 2 GB · 可用 6 GB', { exact: true }).count() === 0, '失败不能保留旧磁盘数值')
     status = { ...status, state: 'paused', paused_at: null }

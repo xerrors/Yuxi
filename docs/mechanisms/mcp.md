@@ -16,6 +16,8 @@ Yuxi 作为远程 MCP 客户端消费外部工具；知识库对外提供的只�
 
 平台超管负责全局配置，普通管理员和用户管理自己的连接；超管个人连接也仅属于本人。平台登录会话、OAuth 客户端注册和 MCP 个人 token 分别保存，平台登录 token 不转发给资源服务。
 
+可选 aBridge 内置连接同样采用平台委托：Extensions 的 aBridge 适配在每次出站前复核服务和当前用户，由 Identity 签发独立非对称密钥保护的短期凭据；aBridge 依据外部身份映射和本地设备策略决定访问范围。设备产品入口与 Agent 使用同一用户身份，产品读取不依赖模型工具开关；普通用户不能使用实例管理员凭据。个人 `mcp_connections` 不保存该平台委托，登录开户、明确授权与撤销恢复流程见 [aBridge 接入](../advanced/abridge.md)。
+
 `auth_mode` 与 `enabled` 是 Yuxi 的管理字段，分别表示认证方式和管理员启停，不是 MCP 协议字段。内部服务的 `delegation` 仅选择代码提供的认证模块，复用 SDK 原生 `httpx.Auth` 与现有工具 loader；默认认证方式和启停由内置代码装配，普通远程连接 parser 不接受这些内部默认值。内部自有凭据不等于完整的 OAuth 授权发现流程。
 
 ## 从连接到工具续答
@@ -31,9 +33,9 @@ OAuth 连接沿用以下流程：
 
 连接入口绑定当前用户、浏览器、服务器配置修订、连接世代和准确回调，使用 Authorization Code + PKCE S256。回调消费五分钟授权事务并兑换 token，但不会立即发布可用连接；浏览器回到 MCP 页面后，当前 JWT 用户必须在一分钟内确认一次性结果。错误浏览器、过期或重放事务、期间切换账号均不能完成绑定。
 
-Agent 直接选择 MCP，或 Skill 激活后加载依赖，最终都以可信运行 uid 调用 `resolve_runtime_mcp_tools`。协作与定时运行继续使用各自已确定的执行用户；不从模型参数、Agent 创建者或全局管理员推导身份。MCP service 统一读取本次服务和本人连接；服务不存在、停用、未连接、修订失效或装配期间刷新被拒时排除该服务工具。除无认证、共享 headers 与个人认证外，平台托管的内置 server 可使用通用委托鉴权（`auth_mode=delegation`）：业务模块根据可信运行上下文提供 SDK Auth，凭据由该模块在 HTTP 请求时生成，通用 MCP 不解释业务资源选择；无身份共享装配拒绝该模式，管理工具发现和连接测试使用当前查看者身份；内置 knowledge 是当前使用方，见[知识库机制](./knowledge-base.md#agent-如何看到知识库)。Agent 与 Skills 消费可用服务和工具；个人连接状态与操作入口由扩展页面展示。普通聊天继续执行，依赖该服务的 Skill 工具同时在模型与执行边界关闭。单服务发现或调用失败只关闭本 Run 中该 MCP 及相关 Skill 工具，普通聊天继续。Context 保留本 Run 的不可用服务供授权门控，图状态的 `warnings: list[RuntimeWarning]` 保存警告，每项包含 `code`、`source` 和安全提示 `message`；现有状态增量和 checkpoint 回读将警告送到状态面板，刷新后仍可见，每次检查整体替换列表，下一轮能力恢复时写入 `[]` 清空，不弹出通知。凭据密钥缺失和授权失效使用固定安全提示，网络或未知协议错误使用连接失败提示，服务日志记录异常类型和安全原因。管理页面连接测试仍明确返回失败，worker 不等待浏览器交互。
+Agent 直接选择 MCP，或插件激活后按需加载引用，最终都以可信运行 uid 调用 `resolve_runtime_mcp_tools`。协作与定时运行继续使用各自已确定的执行用户；不从模型参数、Agent 创建者或全局管理员推导身份。MCP service 统一读取本次服务和本人连接；服务不存在、停用、未连接、修订失效或装配期间刷新被拒时排除该服务工具。除无认证、共享 headers 与个人认证外，平台托管的内置 server 可使用通用委托鉴权（`auth_mode=delegation`）：业务模块根据可信运行上下文提供 SDK Auth，凭据由该模块在 HTTP 请求时生成，通用 MCP 不解释业务资源选择；无身份共享装配拒绝该模式，管理工具发现和连接测试使用当前查看者身份；内置 knowledge 是当前使用方，见[知识库机制](./knowledge-base.md#agent-如何看到知识库)。Agent 与插件消费可用服务和工具；个人连接状态与操作入口由扩展页面展示。普通聊天继续执行，仅通过引用该服务的插件开放的工具同时在模型与执行边界关闭，其他直接选择的合法工具保留。单服务发现或调用失败只关闭本 Run 中该 MCP 及仅靠相关插件开放的工具，普通聊天继续。Context 保留本 Run 的不可用服务供授权门控，图状态的 `warnings: list[RuntimeWarning]` 保存警告，每项包含 `code`、`source` 和安全提示 `message`；现有状态增量和 checkpoint 回读将警告送到状态面板，刷新后仍可见，每次检查整体替换列表，下一轮能力恢复时写入 `[]` 清空，不弹出通知。凭据密钥缺失和授权失效使用固定安全提示，网络或未知协议错误使用连接失败提示，服务日志记录异常类型和安全原因。管理页面连接测试仍明确返回失败，worker 不等待浏览器交互。
 
-个人工具对象保存服务器 slug、运行 uid 和配置修订。HTTP 授权适配器在每次出站时回读数据库，`tools/call` 还复查具体工具开关；token 仅用于实际请求。共享工具也在出站前核对加载时的地址、传输和 headers，以及当前认证方式和开关，运行中的旧共享对象不能绕过个人认证。Authorization 在执行前向 MCP service 批量读取本人可用服务与工具开关，嵌套 Skill 任意层的 MCP 不可用时关闭依赖工具；同一查询结果仅在当前调用内传递。Skills 只追加已激活 Skill 的 MCP 工具，本地工具从构图时的注册集合中筛选，嵌套连接依赖不触发未激活子 Skill 的工具发现。纯文本工具块在 Chat Completions 发送边界转换为字符串，原始结果和审计保持结构化；工具调用成功与真实模型最终续答成功需要分别验证，见 [工具文本协议决定](../develop-guides/decisions/implemented/2026-10-18-mcp-tool-text-wire.md)。
+个人工具对象保存服务器 slug、运行 uid 和配置修订。HTTP 授权适配器在每次出站时回读数据库，`tools/call` 还复查具体工具开关；token 仅用于实际请求。共享工具也在出站前核对加载时的地址、传输和 headers，以及当前认证方式和开关，运行中的旧共享对象不能绕过个人认证。Authorization 在执行前向 MCP service 批量读取本人可用服务与工具开关；插件所需 MCP 不可用时，该插件不再贡献工具授权，其他合法来源仍按并集开放。同一查询结果仅在当前调用内传递。PluginLoaderMiddleware 只追加直接选择及已激活插件的 MCP 工具，本地工具从构图时的注册集合中筛选；未激活插件不触发其 MCP 工具发现。纯文本工具块在 Chat Completions 发送边界转换为字符串，原始结果和审计保持结构化；工具调用成功与真实模型最终续答成功需要分别验证，见 [工具文本协议决定](../develop-guides/decisions/implemented/2026-10-18-mcp-tool-text-wire.md)。
 
 持久凭据使用基础设施提供的 `YUXI_ENCRYPTION_KEY`，MCP 只负责凭据载荷与领域错误；加密格式为 Fernet。`YUXI_PUBLIC_URL` 拥有部署公开来源，MCP 回调路径由代码固定，不从请求 Host 推导。
 
@@ -57,9 +59,9 @@ Agent 直接选择 MCP，或 Skill 激活后加载依赖，最终都以可信运
 
 ARQ worker 在启动时及每分钟清理过期授权事务与待确认结果，新授权请求也保留顺带清理。OAuth service 在独立数据库事务中复用 repository 的过期查询，通过 `SKIP LOCKED` 跳过完成请求持有的结果，避免连接锁与结果锁反向等待；释放锁后由后续周期回收。清理保留未过期记录和长期连接。worker 停机、执行槽占满、数据库故障或持续行锁会延后物理删除，授权有效期仍在消费时校验；数据库错误由现有事务回滚与 ARQ 失败记录处理，恢复后的周期继续清理。取舍与验证见[临时记录清理决定](../develop-guides/decisions/implemented/2026-10-19-mcp-oauth-attempt-cleanup.md)。
 
-模型前刷新按当前动态激活状态展开 Skill 闭包，向 MCP service 读取可用服务与工具开关；Authorization 统一判断配置选择与 Skill 依赖是否满足。Agent 与 Skills 不保存连接提示、工具开关投影或逐服务通知历史。运行中断开时，执行入口拒绝不可用 MCP 与依赖 Skill 工具，个人 HTTP 适配仍在实际出站前取得并复查凭据。
+模型前刷新按原始配置和有效插件激活记录确定候选服务，向 MCP service 读取可用服务与工具开关；Authorization 统一判断直接选择和插件贡献是否仍获授权。普通 Skill 不声明 MCP 依赖，读取正文不改变服务集合。Agent 与插件不保存连接提示、工具开关投影或逐服务通知历史。运行中断开时，执行入口拒绝不可用 MCP 与仅靠该插件开放的工具，个人 HTTP 适配仍在实际出站前取得并复查凭据。
 
-工具目录由本次 Run 的 Context 独占持有，直接配置的服务在构图时发现，Skill 服务在实际激活时发现；合法空目录同样复用，未激活依赖不触发发现。新 Run 创建独立 Context 并重新发现，服务配置、连接和工具开关仍在请求与出站边界复查。管理端读取工具列表时独立访问远端，包括已停用服务；工具开关来自当前禁用列表，读取不改变启停。已有 Run 的目录在下一 Run 更新。SDK 每次成功工具调用后的目录校验属于实际调用协议，不受运行目录复用影响。
+工具目录由本次 Run 的 Context 独占持有，直接配置的服务在构图时发现，插件引用的服务在调用 `load_plugin` 时发现；合法空目录同样复用，未加载插件不触发发现。新 Run 创建独立 Context 并重新发现，服务配置、连接和工具开关仍在请求与出站边界复查。管理端读取工具列表时独立访问远端，包括已停用服务；工具开关来自当前禁用列表，读取不改变启停。已有 Run 的目录在下一 Run 更新。SDK 每次成功工具调用后的目录校验属于实际调用协议，不受运行目录复用影响。
 
 ## 权限与账号隔离
 
@@ -87,7 +89,7 @@ HTTP 200、工具列表和固定模型结果各自只证明对应层级。真实
 
 | 修改的语义 | Owner 与入口 |
 | --- | --- |
-| 配置创建、启停、内置同步、共享/个人路径选择 | [service.py](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/extensions/mcp/service.py)，Agent/Skill 使用 `resolve_runtime_mcp_tools(..., uid=...)`，严格单服务发现入口仍保留 |
+| 配置创建、启停、内置同步、共享/个人路径选择 | [service.py](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/extensions/mcp/service.py)，Agent/插件使用 `resolve_runtime_mcp_tools(..., uid=...)`，严格单服务发现入口仍保留 |
 | OAuth 配置、secret 分离、密钥和修订规则 | [oauth_config.py](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/extensions/mcp/oauth_config.py)；共享远程连接字段由 [config.py](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/extensions/mcp/config.py) 校验 |
 | 发现、注册和 token 请求 | [oauth_protocol.py](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/extensions/mcp/oauth_protocol.py)；此处处理协议，不决定平台用户归属 |
 | 授权发布、刷新、断开和世代核对 | [oauth_service.py](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/extensions/mcp/oauth_service.py)，行锁及可见性查询由 [repository.py](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/extensions/mcp/repository.py) 拥有 |

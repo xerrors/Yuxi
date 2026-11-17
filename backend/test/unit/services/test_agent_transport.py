@@ -105,11 +105,18 @@ async def test_run_stream_event_roundtrip(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
-async def test_run_stream_event_decoder_drops_malformed_legacy_payload(monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.parametrize(
+    ("fields", "error"),
+    [
+        ({"event_type": "custom", "payload": "not-json", "ts": "1700000000000"}, "Redis 事件格式版本不兼容"),
+        ({"version": "2", "event": '{"yuxi":{"run_id":"another-run"}}'}, "Redis 事件 Run 归属不一致"),
+    ],
+)
+async def test_run_stream_event_decoder_rejects_incompatible_rows(monkeypatch: pytest.MonkeyPatch, fields, error):
     fake_redis = _FakeStreamRedis()
     key = transport._event_stream_key("run-legacy")
     fake_redis.streams[key] = [
-        ("1700000000000-0", {"event_type": "custom", "payload": "not-json", "ts": "1700000000000"}),
+        ("1700000000000-0", fields),
     ]
 
     async def fake_get_async_redis_client():
@@ -117,9 +124,9 @@ async def test_run_stream_event_decoder_drops_malformed_legacy_payload(monkeypat
 
     monkeypatch.setattr(transport, "get_async_redis_client", fake_get_async_redis_client)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=error):
         await transport.list_run_stream_events("run-legacy")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=error):
         await transport.list_recent_run_stream_events("run-legacy")
 
 

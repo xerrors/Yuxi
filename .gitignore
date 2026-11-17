@@ -50,6 +50,7 @@ cache
 .claude
 .cursor
 .codex
+.yuxi-identity/
 .pytest_cache
 .zcode
 

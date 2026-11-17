@@ -1,5 +1,6 @@
 """知识文档元数据、正文、窗口及原件读取用例，不装配检索执行器。"""
 
+import asyncio
 import json
 import re
 from typing import Any
@@ -8,11 +9,222 @@ from urllib.parse import unquote
 from yuxi.infrastructure.minio import get_minio_client
 from yuxi.infrastructure.minio.object_urls import is_minio_url, parse_minio_url
 from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.identity.models import User
+from yuxi.modules.knowledge.file_status import status_filter_values
+from yuxi.modules.knowledge.read_models import KnowledgeBaseDetail
 from yuxi.modules.knowledge.schemas import FindOutputSchema, FindWindowSchema
 from yuxi.modules.knowledge.utils.kb_utils import sanitize_processing_params
 from yuxi.shared.datetime import utc_isoformat
 from yuxi.shared.errors import ContentTooLargeError, InvalidOperationError
 from yuxi.shared.files import detect_media_type
+
+KB_FILE_SEARCH_SCAN_LIMIT = 5000
+
+
+class UnsupportedDocumentOperation(ValueError):
+    """知识库类型不支持文档操作，供 HTTP 保留能力拒绝响应。"""
+
+
+async def require_document_support(kb_id: str, operation: str) -> None:
+    """按持久类型拒绝不支持的文档操作，不装配执行器或运行配置。"""
+
+    from yuxi.modules.knowledge.base import KBNotFoundError
+    from yuxi.modules.knowledge.factory import KnowledgeBaseFactory
+    from yuxi.modules.knowledge.repositories.bases import KnowledgeBaseRepository
+
+    kb = await KnowledgeBaseRepository().get_by_kb_id(kb_id)
+    if kb is None:
+        raise KBNotFoundError(f"知识库资源 '{kb_id}' 不存在")
+    kb_type = (kb.kb_type or "milvus").lower()
+    if not KnowledgeBaseFactory.supports_documents(kb_type):
+        operation_label = {"open": "文档查看", "find": "文档查找", "download": "文件下载"}.get(operation, operation)
+        raise UnsupportedDocumentOperation(f"{kb.name or kb_type} 只支持检索，不支持{operation_label}")
+
+
+async def get_knowledge_base_document_support(kb_id: str) -> tuple[KnowledgeBaseDetail | None, bool]:
+    """返回知识库信息及其是否支持文档全文操作。"""
+
+    from yuxi.modules.knowledge.factory import KnowledgeBaseFactory
+    from yuxi.modules.knowledge.services import bases
+
+    kb_info = await bases.get_knowledge_base_info(kb_id)
+    if not kb_info:
+        return None, False
+    return kb_info, KnowledgeBaseFactory.supports_documents(kb_info.kb_type)
+
+
+async def list_document_files(
+    kb_id: str,
+    *,
+    parent_id: str | None = None,
+    status: str | None = None,
+    page: int = 1,
+    page_size: int = 100,
+    recursive: bool = False,
+    files_only: bool = False,
+    include_stats: bool = True,
+    sort_by: str | None = None,
+    sort_order: str | None = None,
+) -> dict:
+    """按目录和筛选条件分页获取轻量文件列表；排序作用于筛选后的全部记录。"""
+
+    from yuxi.modules.knowledge.base import KBNotFoundError
+    from yuxi.modules.knowledge.repositories.bases import KnowledgeBaseRepository
+    from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
+
+    kb = await KnowledgeBaseRepository().get_by_kb_id(kb_id)
+    if kb is None:
+        raise KBNotFoundError(f"Knowledge base {kb_id} not found")
+
+    repo = KnowledgeFileRepository()
+    if parent_id:
+        parent_record = await repo.get_by_file_id(parent_id)
+        if not parent_record or parent_record.kb_id != kb_id:
+            raise ValueError("Parent folder not found")
+        if not parent_record.is_folder:
+            raise ValueError("Parent is not a folder")
+
+    normalized_page = max(int(page or 1), 1)
+    normalized_page_size = min(max(int(page_size or 100), 1), 500)
+    effective_recursive = recursive and bool(status and status != "all")
+
+    list_documents = repo.list_documents(
+        kb_id=kb_id,
+        parent_id=parent_id,
+        status=status,
+        page=normalized_page,
+        page_size=normalized_page_size,
+        recursive=effective_recursive,
+        files_only=files_only,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    # 列表与统计互不依赖，并行执行（大知识库下统计全表聚合耗时显著）
+    if include_stats:
+        (records, total), stats = await asyncio.gather(list_documents, repo.get_kb_file_stats(kb_id))
+    else:
+        records, total = await list_documents
+        stats = None
+
+    folder_ids = [record.file_id for record in records if record.is_folder]
+    creator_uids = [record.created_by for record in records if getattr(record, "created_by", None)]
+    from yuxi.modules.identity.repositories.users import UserRepository
+
+    child_counts, creators = await asyncio.gather(
+        repo.count_children_by_parent_ids(kb_id=kb_id, parent_ids=folder_ids),
+        UserRepository().list_by_uids(creator_uids),
+    )
+    creators = {user.uid: user for user in creators}
+    items = [_file_record_list_item(record, child_counts, creators.get(getattr(record, "created_by", None))) for record in records]
+
+    result = {
+        "items": items,
+        "total": total,
+        "page": normalized_page,
+        "page_size": normalized_page_size,
+        "has_more": normalized_page * normalized_page_size < total,
+        "parent_id": parent_id,
+        "recursive": effective_recursive,
+    }
+    if stats is not None:
+        result["stats"] = stats
+    return result
+
+
+async def search_document_files(
+    knowledge_bases: list[dict],
+    *,
+    query: str | None = None,
+    offset: int = 0,
+    limit: int = 300,
+    status: str | None = None,
+    include_parent_id: bool = False,
+) -> dict:
+    """按文件名在一组知识库中搜索文件，并返回分页结果。"""
+    from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
+
+    normalized_offset = max(offset or 0, 0)
+    normalized_limit = min(max(limit or 300, 1), KB_FILE_SEARCH_SCAN_LIMIT)
+    normalized_query = (query or "").strip().lower()
+    accepted_statuses = status_filter_values(status)
+
+    repo = KnowledgeFileRepository()
+    all_files = []
+    use_sql_pagination = len(knowledge_bases) == 1
+    candidate_limit = normalized_limit if use_sql_pagination else normalized_offset + normalized_limit
+    query_offset = normalized_offset if use_sql_pagination else 0
+    search_results = await asyncio.gather(
+        *(
+            _search_kb_files(
+                repo,
+                kb,
+                query=normalized_query,
+                statuses=accepted_statuses,
+                offset=query_offset,
+                limit=candidate_limit,
+            )
+            for kb in knowledge_bases
+        )
+    )
+    total = 0
+    for kb, files, kb_total in search_results:
+        total += kb_total
+        kb_id = kb.get("kb_id")
+        for file in files:
+            item = {
+                "kb_id": kb_id,
+                "kb_name": kb.get("name"),
+                "file_id": file.file_id,
+                "filename": file.filename,
+                "file_type": file.file_type,
+                "status": file.status,
+                "created_at": str(file.created_at) if file.created_at else None,
+                "updated_at": str(file.updated_at) if file.updated_at else None,
+                "file_size": file.file_size,
+            }
+            if include_parent_id:
+                item["parent_id"] = file.parent_id
+            all_files.append(item)
+
+    if not use_sql_pagination:
+        # 多库才需要跨库按更新时间归并；单库结果已由 DB 按 updated_at desc, file_id asc 排好序。
+        all_files.sort(key=lambda item: item.get("updated_at") or "", reverse=True)
+    paginated_files = all_files if use_sql_pagination else all_files[normalized_offset : normalized_offset + normalized_limit]
+    return {
+        "files": paginated_files,
+        "total": total,
+        "offset": normalized_offset,
+        "limit": normalized_limit,
+        "has_more": normalized_offset + normalized_limit < total,
+    }
+
+
+async def document_file_exists(kb_id: str, filename: str) -> bool:
+    """检查指定知识库中是否存在给定展示文件名或相对路径的文件。"""
+    from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
+
+    normalized_filename = filename.strip()
+    if not normalized_filename:
+        raise ValueError("filename is required")
+    return await KnowledgeFileRepository().exists_by_filename(kb_id=kb_id, filename=normalized_filename)
+
+
+async def list_document_file_ids_by_statuses(
+    kb_id: str,
+    *,
+    statuses: list[str],
+    after_file_id: str | None = None,
+    limit: int = 500,
+) -> list[str]:
+    """按文件状态游标分页获取文件 ID，用于后台批量处理任务。"""
+    from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
+
+    return await KnowledgeFileRepository().list_file_ids_by_exact_statuses(
+        kb_id=kb_id,
+        statuses=statuses,
+        after_file_id=after_file_id,
+        limit=limit,
+    )
 
 
 async def get_file_basic_info(kb_id: str, file_id: str) -> dict:
@@ -96,7 +308,7 @@ async def open_file_content(kb_id: str, file_id: str, offset: int = 0, limit: in
     return build_open_file_window(content, offset=offset, limit=limit)
 
 
-async def find_file_content(
+async def find_in_document(
     kb_id: str,
     file_id: str,
     patterns: list[str],
@@ -106,7 +318,11 @@ async def find_file_content(
     max_windows: int = 5,
     window_size: int = 80,
 ) -> dict:
-    """在解析后的 Markdown 中按关键词或正则查找上下文窗口。"""
+    """在文件内做关键词或正则定位，返回 FindOutputSchema 字典。
+
+    不支持文档全文操作的知识库（如 dify 只读源）抛 ValueError。
+    """
+    await require_document_support(kb_id, "find")
     try:
         file_meta = await load_file_meta(kb_id, file_id)
     except ValueError as exc:
@@ -119,7 +335,7 @@ async def find_file_content(
         raise ValueError(f"文件 {file_id} 没有解析后的 Markdown 内容")
 
     content = await read_markdown_from_minio(markdown_file)
-    return build_find_file_windows(
+    result = build_find_file_windows(
         content,
         patterns=patterns,
         use_regex=use_regex,
@@ -127,6 +343,7 @@ async def find_file_content(
         max_windows=max_windows,
         window_size=window_size,
     )
+    return FindOutputSchema(kb_id=kb_id, file_id=file_id, **result).model_dump()
 
 
 def file_record_to_meta(record: Any) -> dict:
@@ -374,3 +591,63 @@ def build_find_file_windows(
         total_matches=len(matched_indexes),
         windows=windows,
     ).model_dump(exclude={"kb_id", "file_id"})
+
+
+async def _search_kb_files(
+    repo,
+    kb: dict,
+    *,
+    query: str | None,
+    statuses: set[str] | None,
+    offset: int,
+    limit: int,
+) -> tuple[dict, list, int]:
+    """搜索单个知识库文件，kb_id 缺失时返回空列表，供并行 gather 使用。"""
+    if not kb.get("kb_id"):
+        return kb, [], 0
+    files, total = await repo.search_files(
+        kb_id=kb["kb_id"],
+        filename_query=query,
+        statuses=statuses,
+        offset=offset,
+        limit=limit,
+        files_only=True,
+    )
+    return kb, files, total
+
+
+def _file_record_list_item(
+    record,
+    child_counts: dict[str, int] | None = None,
+    creator: User | None = None,
+) -> dict:
+    """将文件记录投影为列表条目，附带子项计数与创建者信息。"""
+    child_counts = child_counts or {}
+    file_id = getattr(record, "file_id")
+    child_count = int(child_counts.get(file_id, 0))
+    created_by = getattr(record, "created_by", None)
+    created_at_value = getattr(record, "created_at", None)
+    updated_at_value = getattr(record, "updated_at", None)
+    created_at = utc_isoformat(created_at_value) if created_at_value else None
+    updated_at = utc_isoformat(updated_at_value) if updated_at_value else None
+    return {
+        "file_id": file_id,
+        "filename": getattr(record, "filename"),
+        "file_type": getattr(record, "file_type", None),
+        "status": getattr(record, "status", None) or "uploaded",
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "file_size": int(getattr(record, "file_size", None) or 0),
+        "chunk_count": int(getattr(record, "chunk_count", 0) or 0),
+        "token_count": int(getattr(record, "token_count", 0) or 0),
+        "created_by": created_by,
+        "created_by_name": creator.username if creator else created_by,
+        "created_by_avatar": creator.to_dict().get("avatar") if creator else None,
+        "is_folder": bool(getattr(record, "is_folder", False)),
+        "parent_id": getattr(record, "parent_id", None),
+        "has_children": child_count > 0,
+        "children_count": child_count,
+        "has_original_file": bool(getattr(record, "minio_url", None) or getattr(record, "path", None)),
+        "has_parsed_markdown": bool(getattr(record, "markdown_file", None)),
+        "error_message": getattr(record, "error_message", None),
+    }

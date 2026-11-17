@@ -3,9 +3,10 @@
     class="info-card"
     :class="{
       'info-card-disabled': disabled,
+      'info-card-clickable': clickable,
       'info-card-mini': variant === 'mini'
     }"
-    @click="$emit('click')"
+    @click="clickable && !disabled && $emit('click')"
   >
     <template v-if="variant === 'mini'">
       <div class="info-card-mini-row">
@@ -22,7 +23,8 @@
           </slot>
         </div>
         <div class="info-card-info">
-          <span class="info-card-name" :title="title">{{ title }}</span>
+          <button v-if="clickable" type="button" class="info-card-name" :title="title" :disabled="disabled">{{ title }}</button>
+          <span v-else class="info-card-name" :title="title">{{ title }}</span>
           <span v-if="description" class="info-card-mini-desc" :title="description">
             {{ description }}
           </span>
@@ -40,12 +42,14 @@
           </slot>
         </div>
         <div v-if="$slots['card-more-action-corner']" class="card-more-action-corner" @click.stop>
-          <a-dropdown :trigger="['click']" placement="bottomRight">
-            <button type="button" class="card-more-action-trigger" aria-label="更多操作">
+          <a-dropdown :trigger="['click']" placement="bottomRight" :open="menuOpen" @openChange="menuOpen = $event">
+            <button ref="menuTrigger" type="button" class="card-more-action-trigger" aria-label="更多操作" aria-haspopup="menu" :aria-expanded="menuOpen" @keydown="openMenuFromKeyboard">
               <MoreHorizontal :size="18" />
             </button>
             <template #overlay>
-              <slot name="card-more-action-corner" />
+              <div ref="menuContent" @keydown.capture="navigateMenu" @click.capture="closeMenu">
+                <slot name="card-more-action-corner" />
+              </div>
             </template>
           </a-dropdown>
         </div>
@@ -67,7 +71,8 @@
           </slot>
         </div>
         <div class="info-card-info">
-          <span class="info-card-name" :title="title">{{ title }}</span>
+          <button v-if="clickable" type="button" class="info-card-name" :title="title" :disabled="disabled">{{ title }}</button>
+          <span v-else class="info-card-name" :title="title">{{ title }}</span>
           <span v-if="subtitle" class="info-card-subtitle" :title="subtitle">{{ subtitle }}</span>
         </div>
         <div
@@ -102,12 +107,14 @@
           </template>
         </div>
         <div v-if="$slots['card-more-action-corner']" class="card-more-action-corner" @click.stop>
-          <a-dropdown :trigger="['click']" placement="bottomRight">
-            <button type="button" class="card-more-action-trigger" aria-label="更多操作">
+          <a-dropdown :trigger="['click']" placement="bottomRight" :open="menuOpen" @openChange="menuOpen = $event">
+            <button ref="menuTrigger" type="button" class="card-more-action-trigger" aria-label="更多操作" aria-haspopup="menu" :aria-expanded="menuOpen" @keydown="openMenuFromKeyboard">
               <MoreHorizontal :size="18" />
             </button>
             <template #overlay>
-              <slot name="card-more-action-corner" />
+              <div ref="menuContent" @keydown.capture="navigateMenu" @click.capture="closeMenu">
+                <slot name="card-more-action-corner" />
+              </div>
             </template>
           </a-dropdown>
         </div>
@@ -153,7 +160,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, watchPostEffect } from 'vue'
 import { MoreHorizontal, Plug } from '@lucide/vue'
 
 const props = defineProps({
@@ -162,6 +169,7 @@ const props = defineProps({
   description: { type: String, default: '' },
   info: { type: Array, default: () => [] },
   disabled: { type: Boolean, default: false },
+  clickable: { type: Boolean, default: true },
   defaultIcon: { type: [Object, String, Function], default: () => Plug },
   iconColor: { type: String, default: '' },
   iconBorder: { type: Boolean, default: false },
@@ -171,6 +179,65 @@ const props = defineProps({
   actionVariant: { type: String, default: 'primary' },
   variant: { type: String, default: 'default' }
 })
+
+const menuOpen = ref(false)
+const menuTrigger = ref(null)
+const menuContent = ref(null)
+const keyboardEntry = ref('')
+
+/** 菜单项由 Ant 渲染，卡片负责将键盘焦点交给可用操作。 */
+const menuItems = () => Array.from(menuContent.value?.querySelectorAll('[role="menuitem"]:not([aria-disabled="true"])') || [])
+/** 从触发按钮进入菜单，向上键定位最后一个可用操作。 */
+const openMenuFromKeyboard = (event) => {
+  if (!['Enter', ' ', 'ArrowDown', 'ArrowUp'].includes(event.key)) return
+  event.preventDefault()
+  keyboardEntry.value = event.key === 'ArrowUp' ? 'last' : 'first'
+  menuOpen.value = true
+}
+watchPostEffect((onCleanup) => {
+  if (!menuOpen.value || !keyboardEntry.value || !menuContent.value) return
+  const entry = keyboardEntry.value
+  let frame
+  // Dropdown 在独立渲染周期显示浮层，隐藏时调用 focus 不生效。
+  const focusVisibleItem = () => {
+    const items = menuItems()
+    const item = entry === 'last' ? items.at(-1) : items[0]
+    if (item?.getClientRects().length) {
+      item.focus()
+      keyboardEntry.value = ''
+    } else {
+      frame = requestAnimationFrame(focusVisibleItem)
+    }
+  }
+  frame = requestAnimationFrame(focusVisibleItem)
+  onCleanup(() => cancelAnimationFrame(frame))
+})
+
+/** 先归还焦点再执行菜单操作，后续弹窗可以正常接管焦点。 */
+const closeMenu = () => {
+  menuOpen.value = false
+  keyboardEntry.value = ''
+  menuTrigger.value?.focus()
+}
+/** 在平级菜单项间移动，退出菜单时恢复自然的 Tab 顺序。 */
+const navigateMenu = (event) => {
+  const items = menuItems()
+  const index = items.indexOf(document.activeElement)
+  if (event.key === 'Escape' || event.key === 'Tab') {
+    if (event.key === 'Escape') event.preventDefault()
+    event.stopPropagation()
+    closeMenu()
+  } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+    event.preventDefault()
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
+      : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length
+    items[next]?.focus()
+  } else if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault()
+    event.stopPropagation()
+    items[index]?.click()
+  }
+}
 
 const statusDotColor = computed(() => {
   if (!props.status) return 'off'
@@ -200,7 +267,8 @@ const normalizedTags = computed(() => {
   border-radius: 8px;
   border: 1px solid var(--border-surface);
   background: var(--gray-0);
-  cursor: pointer;
+  cursor: default;
+  &-clickable { cursor: pointer; }
   transition:
     border-color 0.2s ease,
     background-color 0.2s ease;
@@ -260,6 +328,18 @@ const normalizedTags = computed(() => {
   }
 
   &-name {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    font-family: inherit;
+    text-align: left;
+    cursor: inherit;
+
+    &:focus-visible {
+      outline: 2px solid var(--main-color);
+      outline-offset: -2px;
+      border-radius: 3px;
+    }
     font-size: 14px;
     font-weight: 600;
     color: var(--gray-900);

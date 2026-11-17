@@ -8,7 +8,7 @@
         <span v-if="imageResult" class="note">查看图片</span>
         <!-- 特殊处理：SKILL.md 文件显示为 Skill | <父目录名> -->
         <template v-else-if="skillName">
-          <span class="note skill-note">Skill</span>
+          <span class="note">Skill</span>
           <span class="separator">|</span>
           <span class="description skill-name">{{ skillName }}</span>
         </template>
@@ -82,19 +82,8 @@ const skillName = computed(() => {
 
 <style lang="less" scoped>
 .sep-header {
-  .tag {
-    color: var(--gray-500);
-    background-color: transparent;
-  }
-
-  // SKILL.md 专用样式
-  .skill-note {
-    color: var(--main-700);
-  }
-
   .skill-name {
     font-weight: 600;
-    color: var(--main-600);
   }
 }
 </style>

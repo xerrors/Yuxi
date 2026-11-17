@@ -22,12 +22,13 @@ from yuxi.modules.agents.repositories.definitions import AgentRepository
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.runtime.agent_backends import get_agent_backend
 from yuxi.modules.agents.runtime.context import BaseContext, prepare_agent_runtime_context
+from yuxi.modules.extensions.plugins.registry import get_plugin
 from yuxi.modules.extensions.skills.personal import PERSONAL_SKILL_SOURCE_TYPE
 from yuxi.modules.identity.models import User
 from yuxi.modules.workspace.runtime_paths import runtime_workdir_path
 from yuxi.modules.workspace.services.bindings import AuthorizedWorkdir
 
-MANIFEST_SCHEMA_VERSION = 2
+MANIFEST_SCHEMA_VERSION = 3
 # 直接进入 manifest 的关键 limit 字段；未列出的 context 字段只以 config_digest 形式存在。
 MANIFEST_LIMIT_FIELDS = (
     "max_execution_steps",
@@ -127,6 +128,7 @@ def build_manifest_payload(
             "tools": _resource_keys(normalized_context.get("tools")),
             "mcps": _resource_keys(normalized_context.get("mcps")),
             "skills": skill_entries,
+            "plugins": build_plugin_manifest_entries(normalized_context),
         },
         "limits": limits,
         "config_digest": compute_config_digest(normalized_context),
@@ -134,9 +136,28 @@ def build_manifest_payload(
     }
 
 
+def build_plugin_manifest_entries(config: dict) -> list[dict]:
+    """记录实际部署声明，避免同一插件标识掩盖资源组成变化。"""
+    entries = []
+    for plugin_id in config.get("plugins", []):
+        plugin = get_plugin(plugin_id)
+        declaration = {
+            "id": plugin.plugin_id,
+            "description": plugin.description,
+            "entry_skill": plugin.entry_skill,
+            "skills": list(plugin.skills),
+            "owned_tools": [tool.name for tool in getattr(plugin, "tools", [])],
+            "mcps": list(plugin.mcps),
+        }
+        entries.append({"id": plugin.plugin_id, "declaration_hash": compute_config_digest(declaration)})
+    return entries
+
+
 def build_skill_manifest_entries(config: dict, skill_scope: dict) -> list[dict]:
     """只从首次授权解析结果投影 Skill 身份与实际预加载内容摘要。"""
-    slugs = list(dict.fromkeys([*_resource_keys(config.get("skills")), *skill_scope["preloaded_skills"]]))
+    slugs = list(
+        dict.fromkeys([*_resource_keys(config.get("skills")), *skill_scope["preloaded_skills"], *skill_scope.get("effective_skills", [])])
+    )
     entries = []
     for slug in slugs:
         metadata = skill_scope["skill_metadata"][slug]
@@ -149,6 +170,9 @@ def build_skill_manifest_entries(config: dict, skill_scope: dict) -> list[dict]:
         if slug in skill_scope["preloaded_skill_contents"]:
             content = skill_scope["preloaded_skill_contents"][slug]
             entry["preload_content_hash"] = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        for plugin_id, content in skill_scope.get("plugin_entry_contents", {}).items():
+            if get_plugin(plugin_id).entry_skill == slug:
+                entry["plugin_entry_content_hash"] = hashlib.sha256(content.encode("utf-8")).hexdigest()
         entries.append(entry)
     return entries
 

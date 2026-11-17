@@ -83,10 +83,12 @@ async def get_workspace_knowledge_tree(
     files_only: bool = Query(False, description="是否仅返回文件"),
     current_user: User = Depends(get_required_user),
 ):
+    from yuxi.modules.knowledge.services import documents as knowledge_documents
+
     await _ensure_knowledge_read_access(current_user, kb_id)
     await _ensure_knowledge_supports_documents(kb_id)
     try:
-        data = await _get_knowledge_base().list_document_files(
+        data = await knowledge_documents.list_document_files(
             kb_id=kb_id,
             parent_id=parent_id,
             page=page,
@@ -131,9 +133,12 @@ async def download_workspace_knowledge_file(
     variant: str = Query("original", description="下载模式：original 或 parsed"),
     current_user: User = Depends(get_required_user),
 ):
+    from yuxi.modules.knowledge.services import documents as knowledge_documents
+
     await _ensure_knowledge_read_access(current_user, kb_id)
     try:
-        data = await _get_knowledge_base().get_file_download(kb_id=kb_id, file_id=file_id, variant=variant)
+        await knowledge_documents.require_document_support(kb_id, "download")
+        data = await knowledge_documents.get_file_download(kb_id=kb_id, file_id=file_id, variant=variant)
     except ValueError as error:
         _raise_knowledge_read_error(error)
 
@@ -208,16 +213,10 @@ async def download_workspace(
     return render_file_result(await download_workspace_file(path=path, current_user=current_user))
 
 
-def _get_knowledge_base():
-    """仅在已注册的知识库工作区路由被调用时加载重运行时。"""
-
-    from yuxi.modules.knowledge.runtime import knowledge_base
-
-    return knowledge_base
-
-
 async def _ensure_knowledge_read_access(current_user: User, kb_id: str) -> None:
-    allowed = await _get_knowledge_base().check_accessible(
+    from yuxi.modules.knowledge.services import access as knowledge_access
+
+    allowed = await knowledge_access.check_accessible(
         {
             "uid": current_user.uid,
             "role": current_user.role,
@@ -230,7 +229,9 @@ async def _ensure_knowledge_read_access(current_user: User, kb_id: str) -> None:
 
 
 async def _ensure_knowledge_supports_documents(kb_id: str) -> None:
-    kb_info, supports_documents = await _get_knowledge_base().get_knowledge_base_document_support(kb_id)
+    from yuxi.modules.knowledge.services import documents as knowledge_documents
+
+    kb_info, supports_documents = await knowledge_documents.get_knowledge_base_document_support(kb_id)
     if not kb_info:
         raise HTTPException(status_code=404, detail=f"知识库 {kb_id} 不存在")
     if not supports_documents:

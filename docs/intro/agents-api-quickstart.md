@@ -1,6 +1,6 @@
 # 运行一次公开 Agent 对话
 
-本教程供外部应用开发者使用 cURL 完成创建、接收、读取结果和继续对话。先由管理员配置可用聊天模型与 Agent，并创建绑定 APP 的 `agents` API Key；身份和权限规则见[API Key 接入](../advanced/api-key-integration.md)。示例使用 `jq` 读取 JSON。
+本教程供外部应用开发者使用 cURL 完成创建、接收、读取结果和继续对话。先由管理员配置可用聊天模型与 Agent，并创建绑定 APP 的 `agents` API Key。身份和权限规则见[API Key 接入](../advanced/api-key-integration.md)。示例使用 `jq` 读取 JSON。
 
 ## 准备调用身份
 
@@ -31,7 +31,7 @@ INPUT_ID=$(printf '%s' "$CREATED" | jq -r '.yuxi.receipt.input_id')
 printf '%s\n' "$CREATED" | jq .
 ```
 
-观察 HTTP `201`、`object=agent.session` 和非空的 Input ID。接收成功后工作异步执行；普通消息创建回执的 `yuxi.receipt.turn_id/run_id` 始终为空。
+观察 HTTP `201`、`object=agent.session` 和非空的 Input ID。接收成功后工作异步执行。普通消息创建回执的 `yuxi.receipt.turn_id/run_id` 始终为空。
 
 ## 定位本轮并读取结果
 
@@ -74,7 +74,7 @@ curl --no-buffer --fail-with-body "$BASE_URL/api/v1/agents/sessions/$SESSION_ID/
   -H "Authorization: Bearer $API_KEY" -H "X-End-User-Id: $END_USER_ID"
 ```
 
-SSE 的 `data` 是事件 JSON，`id` 是恢复 cursor。连接覆盖多轮工作；观察目标 Turn 终态、回读结果后主动关闭。断线重连携带 `Last-Event-ID`；收到 `yuxi.session.resync` 时分页回读目标 Turn 的 Items 与详情，合并成功后再推进游标。完整限制与差异见[公开 API 参考](../advanced/agents-public-api.md)。
+SSE 的 `data` 是事件 JSON，`id` 是恢复 cursor。连接覆盖多轮工作。观察目标 Turn 终态、回读结果后主动关闭。断线重连携带 `Last-Event-ID`；收到 `yuxi.session.resync` 时分页回读目标 Turn 的 Items 与详情，合并成功后再推进游标。完整限制与差异见[公开 API 参考](../advanced/agents-public-api.md)。
 
 ## 恢复丢失的提交响应
 

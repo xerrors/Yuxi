@@ -14,7 +14,7 @@ Owner：path/to/current-owner
 
 ## 因果链
 
-从触发条件、系统行为、失效边界到用户影响解释必要因果；区分直接事实和推断。
+从触发条件、系统行为、失效边界到用户影响解释必要因果。区分直接事实和推断。
 
 ## 安全网为何漏过
 
@@ -26,8 +26,8 @@ Owner：path/to/current-owner
 
 ## 防复发措施
 
-记录已经落地的 generalized guard、gate、decision 或 standing order；每项必须有 Owner 和拒绝后果。
+记录已经落地的 generalized guard、gate、decision 或 standing order。每项必须有 Owner 和拒绝后果。
 
 ## 未解决风险
 
-列出仍未知、未执行或需要外部校准的范围；没有则写“无”。
+列出仍未知、未执行或需要外部校准的范围。没有则写“无”。

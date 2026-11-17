@@ -1,20 +1,20 @@
 # 产品体验与界面设计规范
 
-本文档定义 Yuxi 的产品体验与界面设计规范，适用于需求设计、交互方案、视觉设计、`frontend/src` 下的新页面、新组件和现有 UI 调整。它同时面向产品、设计、人类开发者和 AI coding agent：开始实现前先说明用户目标、信息层级和交互语义，再复用现有组件、CSS 变量和交互模式。
+本文档定义 Yuxi 的产品体验与界面设计规范，适用于需求设计、交互方案以及视觉设计，也适用于 `frontend/src` 下的新页面、新组件以及现有 UI 调整。它同时面向产品、设计以及人类开发者和 AI coding agent。开始实现前先说明用户目标、信息层级以及交互语义，再复用现有组件、CSS 变量以及交互模式。
 
 ## 0. 产品判断先于界面实现
 
 界面不是接口字段的可视化投影。设计前先明确：目标用户、主要任务、需要做出的判断、成功与异常状态，以及哪些信息只是实现细节。
 
-- 每个可见元素必须帮助用户识别、选择、判断状态、执行操作或恢复错误；否则删除。
+- 每个可见元素必须帮助用户识别、选择、判断状态、执行操作或恢复错误。否则删除。
 - 默认使用用户语言描述用途、差异和影响。内部 ID、枚举和环境变量只在复制、对接或排障时按需展示。
-- 不同概念不能因为数据结构相同就放进同一列表。“不使用服务”“自动选择”等通常是策略，不是资源项。
-- 一个页面或分区只解决一个主要问题；高级和低频配置使用渐进披露。
+- 不同概念不能因为数据结构相同就放进同一列表。“不使用服务”“自动选择”等通常是策略。它们不是资源项。
+- 一个页面或分区只解决一个主要问题。高级和低频配置使用渐进披露。
 - “接口返回了”“其他后台都有”“看起来更丰富”不能成为展示理由。
 
 ## 1. 视觉气质
 
-Yuxi 是知识库、知识图谱与 Agent 开发平台，界面应保持克制、清晰、工程化。设计服务于长时间阅读、配置、调试和数据管理，不做营销页式装饰。
+Yuxi 是知识库与知识图谱，也是 Agent 开发平台，界面应保持克制与清晰，同时保持工程化。设计服务于长时间阅读与配置，也服务于调试和数据管理，不做营销页式装饰。
 
 核心原则：
 
@@ -25,7 +25,7 @@ Yuxi 是知识库、知识图谱与 Agent 开发平台，界面应保持克制�
 
 ## 2. 颜色与 Token
 
-颜色必须优先使用 `frontend/src/assets/css/base.css` 和 `frontend/src/assets/css/base.dark.css` 中定义的 CSS 变量。不要在组件中随意新增硬编码色值；确需新增全局色值时，先补充 token 并说明用途。
+颜色必须优先使用 `frontend/src/assets/css/base.css` 和 `frontend/src/assets/css/base.dark.css` 中定义的 CSS 变量。不要在组件中随意新增硬编码色值。确需新增全局色值时，先补充 token 并说明用途。
 
 ### 主色
 
@@ -55,7 +55,7 @@ Yuxi 是知识库、知识图谱与 Agent 开发平台，界面应保持克制�
 | `--gray-900` / `--gray-1000` | 标题和主要正文 |
 | `--gray-600` / `--gray-500` / `--gray-400` | 辅助说明、占位文本、禁用文本 |
 
-文本也可以使用 Ant Design 兼容语义变量：`--color-text`、`--color-text-secondary`、`--color-text-tertiary`。组件内优先选语义变量；需要更细层级时再使用 `--gray-*`。
+文本也可以使用 Ant Design 兼容语义变量：`--color-text`、`--color-text-secondary`、`--color-text-tertiary`。组件内优先选语义变量。需要更细层级时再使用 `--gray-*`。
 
 ### 语义色
 
@@ -79,7 +79,7 @@ Yuxi 是知识库、知识图谱与 Agent 开发平台，界面应保持克制�
 
 Yuxi 通过 `:root.dark` 覆盖同名 token。新增 UI 必须使用 CSS 变量，禁止固定浅色值，并检查浅色、暗色两套表现。
 
-暗色优先使用页面底与低阶灰表面区分区域，普通卡片、输入区不使用装饰阴影；背景已能区分时不增加描边。`--gray-10` 到 `--gray-50` 提供较细的背景与交互过渡，普通卡片使用 `--border-surface` 和 `--border-surface-hover` 适配描边。暗色边框使用与相邻表面有区分度的深灰色，键盘焦点、错误和拖拽提示保留明确反馈。聊天输入框通过背景变化表达悬停与聚焦，发送按钮使用白底深色图标，禁用时降低不透明度。
+暗色优先使用页面底与低阶灰表面区分区域，普通卡片、输入区不使用装饰阴影。背景已能区分时不增加描边。`--gray-10` 到 `--gray-50` 提供较细的背景与交互过渡，普通卡片使用 `--border-surface` 和 `--border-surface-hover` 适配描边。暗色边框使用与相邻表面有区分度的深灰色，键盘焦点、错误和拖拽提示保留明确反馈。聊天输入框通过背景变化表达悬停与聚焦，发送按钮使用白底深色图标，禁用时降低不透明度。
 
 新增组件时至少检查：
 
@@ -123,21 +123,21 @@ Yuxi 通过 `:root.dark` 覆盖同名 token。新增 UI 必须使用 CSS 变量�
 
 ### 共享基础外观
 
-CSS 色板拥有颜色、字体和浮层阴影，`shared/model/theme.js` 读取当前主题的实际 CSS 色值并装配 Ant Design token。主题切换先更新根节点的 `dark` 类，再重新装配控件主题；需要参与颜色派生的 token 使用实际色值。按钮、表单、选择器、标签和普通弹窗的通用外观由主题与 `assets/css/antd.less` 统一维护。
+CSS 色板拥有颜色、字体和浮层阴影，`shared/model/theme.js` 读取当前主题的实际 CSS 色值并装配 Ant Design token。主题切换先更新根节点的 `dark` 类，再重新装配控件主题。需要参与颜色派生的 token 使用实际色值。按钮、表单、选择器、标签和普通弹窗的通用外观由主题与 `assets/css/antd.less` 统一维护。
 
-主题选择为 light、dark、auto，默认浅色，以 localStorage 的 `theme` 保存选择。auto 实时跟随浏览器 `prefers-color-scheme`，`isDark` 提供实际明暗状态。用户菜单与 Dashboard 按浅色 → 深色 → 自动 → 浅色轮换并显示当前模式；用户菜单点击主题保持展开，其他操作与点击外部关闭。
+主题选择为 light、dark、auto，默认浅色，以 localStorage 的 `theme` 保存选择。auto 实时跟随浏览器 `prefers-color-scheme`，`isDark` 提供实际明暗状态。用户菜单与 Dashboard 按浅色 → 深色 → 自动 → 浅色轮换并显示当前模式。用户菜单点击主题保持展开，其他操作与点击外部关闭。
 
-当前 Ant Design Vue 4.2.6 将根 Provider 的设计 token 提供给静态 `message`、`notification` 和 `Modal.confirm`，这些反馈沿用同一主题入口。静态调用的其他上下文与组件树分离，不能据此假设它们获取业务注入。调用方保留反馈内容、时长、操作回调和显式定制；基础外观不逐页重复定义，升级组件库时验证静态反馈的主题切换。
+当前 Ant Design Vue 4.2.6 将根 Provider 的设计 token 提供给静态 `message`、`notification` 和 `Modal.confirm`，这些反馈沿用同一主题入口。静态调用的其他上下文与组件树分离，不能据此假设它们获取业务注入。调用方保留反馈内容、时长、操作回调和显式定制。基础外观不逐页重复定义，升级组件库时验证静态反馈的主题切换。
 
-`a-select` 的下拉选项通过 `components.Select` 统一使用中性背景：`controlItemBgActive` 映射 `--gray-100`，`controlItemBgHover` 映射 `--gray-50`。选中与悬停保持不同明度，深浅主题沿用同名 CSS 色板；不在业务页覆盖下拉选项背景。
+`a-select` 的下拉选项通过 `components.Select` 统一使用中性背景：`controlItemBgActive` 映射 `--gray-100`，`controlItemBgHover` 映射 `--gray-50`。选中与悬停保持不同明度，深浅主题沿用同名 CSS 色板。不在业务页覆盖下拉选项背景。
 
-`a-alert` 的四种状态共用当前主题的浅中性背景与柔和边框，以语义色图标区分成功、信息、警告和错误。背景、边框、图标颜色和圆角由 Alert 组件 token 维护，说明文字由共享样式维护；保留 banner、关闭按钮、操作与内容 slot 的原有行为。
+`a-alert` 的四种状态共用当前主题的浅中性背景与柔和边框，以语义色图标区分成功、信息、警告和错误。背景、边框、图标颜色和圆角由 Alert 组件 token 维护，说明文字由共享样式维护。保留 banner、关闭按钮、操作与内容 slot 的原有行为。
 
 现有 `a-empty` 标签与 ConfigProvider 的 `renderEmpty` 复用 `shared/ui/AntEmpty.js`，只替换默认图像，保留原有说明、自定义图像、显式隐藏配置及操作 slot。菜单空状态采用紧凑间距；需要标题、解释和下一步操作的业务引导使用 `ResourceEmptyState`。
 
 管理页的行内操作、刷新按钮和旋转状态复用 `assets/css/management-controls.less` 的明确样式类。局部样式继续拥有尺寸、业务布局、自绘标题、定高面板及透明标题选择器等真实差异。共享规则接管外观时同步删除对应局部定义，不以追加全局覆盖保留两个可编辑事实源。
 
-设置面板的分区标题、说明、页头操作、表单行、服务卡片和管理表格复用 `assets/css/settings.less`，由全局样式入口一次加载。组件使用明确的 `settings-*` 类，设置弹窗只拥有导航与内容区布局，不通过后代通用类覆盖面板外观。分区使用 `settings-section-block` 表达间距，不根据标题在 DOM 中是否为首个子节点推断层级；账户资料、沙盒状态与表格业务列保留局部布局。
+设置面板的分区标题、说明、页头操作、表单行、服务卡片和管理表格复用 `assets/css/settings.less`，由全局样式入口一次加载。组件使用明确的 `settings-*` 类，设置弹窗只拥有导航与内容区布局，不通过后代通用类覆盖面板外观。分区使用 `settings-section-block` 表达间距，不根据标题在 DOM 中是否为首个子节点推断层级。账户资料、沙盒状态与表格业务列保留局部布局。
 
 ### 按钮
 
@@ -151,7 +151,7 @@ CSS 色板拥有颜色、字体和浮层阴影，`shared/model/theme.js` 读取�
 | 危险按钮 | 删除、撤销、清空等不可逆操作 | 使用 error 语义色，并配合确认弹窗或明确文案 |
 | 图标按钮 | 工具栏、折叠、刷新、复制 | Ant 按钮使用 `#icon` 插槽；原生按钮使用 `lucide-icon-btn` |
 
-Ant 按钮的图标与文字由 `assets/css/antd.less` 统一居中排列，默认间距 8px；Lucide、Ant 原生图标和 loading 图标共用此布局，不在业务组件重复添加对齐、gap 或图标 margin。图标默认沿用文字字号，显式 `size` 保持生效。纯图标按钮提供 `aria-label`，与可见文字相邻的装饰图标使用 `aria-hidden="true"`。
+Ant 按钮的图标与文字由 `assets/css/antd.less` 统一居中排列，默认间距 8px。Lucide、Ant 原生图标和 loading 图标共用此布局，不在业务组件重复添加对齐、gap 或图标 margin。图标默认沿用文字字号，显式 `size` 保持生效。纯图标按钮提供 `aria-label`，与可见文字相邻的装饰图标使用 `aria-hidden="true"`。
 
 交互状态：
 
@@ -169,7 +169,7 @@ Ant 按钮的图标与文字由 `assets/css/antd.less` 统一居中排列，默�
 - label 必须稳定显示，helper text 放在输入框下方。
 - 错误信息使用 `--color-error-*`，并写清楚修复方式。
 - 多字段表单按逻辑分组，避免把无关设置塞进同一行。
-- 参数名称应说明业务含义和单位；非显然参数补充调整影响、推荐范围或示例。
+- 参数名称应说明业务含义和单位。非显然参数补充调整影响、推荐范围或示例。
 - 只允许用户修改真正属于业务配置的值。官方端点、内部枚举和部署参数由系统管理，不伪装成普通输入项。
 
 ### 卡片、列表与表格
@@ -182,18 +182,18 @@ Yuxi 的信息界面以配置卡片、列表和表格为主，默认使用轻量
 - 表格行内操作保持紧凑，避免每行出现多个高权重按钮。
 - 空状态要说明“当前没有什么”和“下一步可以做什么”，不要只显示图标。
 
-阴影只用于真实浮层，如弹窗、抽屉、下拉菜单、tooltip。普通卡片和列表不要用阴影制造装饰性层级。
+阴影只用于真实浮层，如弹窗、抽屉，以及下拉菜单与 tooltip。普通卡片和列表不要用阴影制造装饰性层级。
 
 #### 列表、状态与操作
 
 - 摘要层按“名称 → 用途或关键差异 → 需关注状态 → 操作”组织，不机械展示名称、ID、类型和全部状态。
-- 内部 ID 默认隐藏；确需展示时放入详情，使用 monospace 和明确标签或复制入口。
+- 内部 ID 默认隐藏。确需展示时放入详情，使用 monospace 和明确标签或复制入口。
 - 一个状态只保留一种主要表达。开关已经表达启用状态时，不再增加绿色点和“已启用”文字。
-- 正常状态保持安静，只突出异常和需要行动的状态；颜色不能作为唯一信息载体。
+- 正常状态保持安静，只突出异常和需要行动的状态。颜色不能作为唯一信息载体。
 - “不启用”“自动”“沿用默认”等策略放在选择器或策略区，不伪装成普通资源项。
 - 开关默认表示立即生效。需要统一保存时，应明确显示未保存状态，不能混用两种提交模型。
 - 同类行共享稳定的展开、文本、状态和操作列。图标使用固定盒、统一 `gap` 和 `line-height`，右侧操作保持同一边界。
-- 配置列表优先使用一个列表容器和轻分割线，避免每行形成厚重卡片；展开内容与触发行保持连续。
+- 配置列表优先使用一个列表容器和轻分割线，避免每行形成厚重卡片。展开内容与触发行保持连续。
 - 至少在真实页面的目标宽度、1024px 和 768px 检查对齐、长文本和溢出。
 
 ### 状态标签
@@ -213,9 +213,9 @@ Yuxi 的信息界面以配置卡片、列表和表格为主，默认使用轻量
 ### 图标
 
 - 常规图标尺寸使用 16px、18px 或 20px。
-- 图标颜色默认继承文本色；需要强调时使用语义 token。
+- 图标颜色默认继承文本色。需要强调时使用语义 token。
 - 图标按钮添加 `lucide-icon-btn`，避免图标与文本或按钮中心线错位。
-- 不为同一概念混用多个图标；相同操作在不同页面保持一致。
+- 不为同一概念混用多个图标。相同操作在不同页面保持一致。
 
 ## 5. 布局与间距
 
@@ -250,7 +250,7 @@ Yuxi 默认采用“背景 + 边框”的轻量层级：
 | 浮层 | 框架默认阴影或轻量 `--shadow-*` | 弹窗、抽屉、dropdown、tooltip |
 | 焦点 | 主色 outline / Ant Design focus ring | 键盘可达控件 |
 
-不要在普通内容卡片上使用重阴影。只有当元素真实覆盖其他内容、需要表达浮层关系时，才允许使用阴影。
+不要在普通内容卡片上使用重阴影。只有元素真实覆盖其他内容、需要表达浮层关系，才允许使用阴影。
 
 ## 7. Do / Don't
 
@@ -294,7 +294,7 @@ UI/UX 质量不能只由构建通过和没有溢出证明。交付前按三层�
 2. **交互层**：操作是否可发现，生效时机是否明确，失败能否恢复，状态是否一致。
 3. **视觉层**：层级、对齐、间距、文字、图标、颜色和响应式是否精确一致。
 
-UI 修改必须提供真实运行页面截图，覆盖核心状态和至少一个边界状态。使用真实数据检查长名称、加载、错误、空状态、浅色/暗色和关键响应式宽度；未验证内容在交付说明中列出。
+UI 修改必须提供真实运行页面截图，覆盖核心状态和至少一个边界状态。使用真实数据检查长名称、加载、错误、空状态、浅色/暗色和关键响应式宽度。未验证内容在交付说明中列出。
 
 ## 10. Agent Prompt Guide
 
@@ -361,10 +361,10 @@ AI agent 修改或生成 Yuxi UI 时，优先按这一节执行。
 
 智能体、会话与用户使用共享 [FallbackAvatar](https://github.com/xerrors/Yuxi/blob/main/frontend/src/shared/ui/FallbackAvatar.vue)。调用方传入 kind、稳定实体 seed、自定义图片 src 与展示尺寸；自定义图片优先。agent 默认 Lorelei 配合 soft 背景预设，user 默认 Notionists；会话树、协作工具结果和会话面板标签使用 session 类型及 Gaze 风格，以会话 ID 作为 seed。输入框、正文与候选列表中的会话引用使用描边的对话气泡加标题，沿用普通引用图标尺寸；会话树、协作结果与面板标签保持 18px。生成器随前端本地交付，不请求外部头像 API，Gaze 保持透明背景。
 
-组件支持 style 为 lorelei、notionists、gaze、glyphs、clay、shape-grid；preset 缺省时，智能体使用 soft，用户与会话使用 default；调用方可显式选择 default、studio、heritage、soft，每套色卡都有日间与夜间版本。Notionists 从预设背景色组中稳定选色，人物底纸、墨色与背景在深浅主题下保持一致；Lorelei 只应用预设背景色组，脸色、头发与线条保留上游黑白原色，深浅主题使用相同颜色。其他风格明暗共用主体色，底纸与墨色可独立调整；default 保留各风格上游主体与对比色，夜间仅调整 Glyphs 与 Clay 的底纸，Shape Grid 保留彩色背景。dark 为 on、off、auto，auto 跟随 Yuxi 的主题 Store；circle、square、rounded 分别提供圆形、直角方形和圆角方形。颜色配置由 [共享色卡](https://github.com/xerrors/Yuxi/blob/main/frontend/src/shared/lib/avatar/presets.js) 拥有，几何与表情随稳定 seed 固定。
+组件支持 style 为 lorelei、notionists、gaze、glyphs、clay、shape-grid。preset 缺省时，智能体使用 soft，用户与会话使用 default。调用方可显式选择 default、studio、heritage、soft，每套色卡都有日间与夜间版本。Notionists 从预设背景色组中稳定选色，人物底纸、墨色与背景在深浅主题下保持一致；Lorelei 只应用预设背景色组，脸色、头发与线条保留上游黑白原色，深浅主题使用相同颜色。其他风格明暗共用主体色，底纸与墨色可独立调整；default 保留各风格上游主体与对比色，夜间仅调整 Glyphs 与 Clay 的底纸，Shape Grid 保留彩色背景。dark 为 on、off、auto，auto 跟随 Yuxi 的主题 Store。circle、square、rounded 分别提供圆形、直角方形和圆角方形。颜色配置由 [共享色卡](https://github.com/xerrors/Yuxi/blob/main/frontend/src/shared/lib/avatar/presets.js) 拥有，几何与表情随稳定 seed 固定。
 
 图片加载或本地生成失败时，智能体使用 Lucide Bot、用户使用 Lucide User、会话使用 Lucide Workflow，浅色背景 token 在深浅主题下保持相同。组件通过 fallback 事件提供 image 或 generation 原因。图片地址改变后重新加载；网络恢复只重试失败图片。装饰头像传 decorative，独立头像使用 alt 或 name 提供可访问名称。
 
-Glyphs 使用 Matt Houser 原作的 CC BY 4.0 授权，组件保留 SVG 署名与许可元数据，应用配色、夜间底纸及画布裁切适配；发布包含 [头像第三方声明](https://github.com/xerrors/Yuxi/blob/main/frontend/public/avatar-licenses.txt)。Lorelei、Notionists、Clay、Shape Grid、Gaze 美术为 CC0 1.0，DiceBear 核心为 MIT。固定依赖与色卡更新需要核验输出和许可。
+Glyphs 使用 Matt Houser 原作的 CC BY 4.0 授权，组件保留 SVG 署名与许可元数据，应用配色、夜间底纸及画布裁切适配。发布包含 [头像第三方声明](https://github.com/xerrors/Yuxi/blob/main/frontend/public/avatar-licenses.txt)。Lorelei、Notionists、Clay、Shape Grid、Gaze 美术为 CC0 1.0，DiceBear 核心为 MIT。固定依赖与色卡更新需要核验输出和许可。
 
-知识库、Skill 和工具的图标色由 `shared/lib/extensionIconColor.js` 按稳定资源身份从预设色卡中选择；浅色底使用当前主题背景混色。知识库使用 `kb_id`，Skill 使用 `slug`，图标与颜色在目录卡片和 @ 候选中保持一致。飞书使用本地品牌图标。
+知识库、Skill 和工具的图标色由 `shared/lib/extensionIconColor.js` 按稳定资源身份从预设色卡中选择。浅色底使用当前主题背景混色。知识库使用 `kb_id`，Skill 使用 `slug`，图标与颜色在目录卡片和 @ 候选中保持一致。飞书使用本地品牌图标。

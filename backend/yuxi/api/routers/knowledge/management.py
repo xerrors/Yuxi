@@ -28,7 +28,11 @@ from yuxi.modules.knowledge.chunking.presets import get_chunk_preset_options, no
 from yuxi.modules.knowledge.factory import KnowledgeBaseFactory
 from yuxi.modules.knowledge.graphs.service import KnowledgeGraphService
 from yuxi.modules.knowledge.runtime import knowledge_base as knowledge_base_manager
+from yuxi.modules.knowledge.services import access as knowledge_access
 from yuxi.modules.knowledge.services import administration, documents, graph_build
+from yuxi.modules.knowledge.services import bases as knowledge_bases
+from yuxi.modules.knowledge.services import directories as knowledge_directories
+from yuxi.modules.knowledge.services import statistics as knowledge_statistics
 from yuxi.modules.knowledge.services.document_actions import (
     submit_document_action,
     submit_pending_document_action,
@@ -132,7 +136,7 @@ media_types = {
 async def get_knowledge_bases(current_user: User = Depends(get_admin_user)):
     """获取所有知识库（根据用户权限过滤）"""
     try:
-        return serialize_knowledge_base_list(await knowledge_base_manager.get_knowledge_bases_by_uid(current_user.uid))
+        return serialize_knowledge_base_list(await knowledge_access.get_knowledge_bases_by_uid(current_user.uid))
     except HTTPException:
         raise
     except Exception as e:
@@ -154,7 +158,7 @@ async def create_knowledge_base(
     """创建知识库"""
     logger.debug("Create knowledge_base")
     try:
-        knowledge_base_info = await knowledge_base_manager.create_knowledge_base(
+        knowledge_base_info = await knowledge_bases.create_knowledge_base(
             name,
             description,
             kb_type=kb_type,
@@ -182,7 +186,7 @@ async def create_knowledge_base(
 async def get_accessible_knowledge_bases(current_user: User = Depends(get_required_user)):
     """获取当前用户有权访问的知识库列表（用于智能体配置）"""
     try:
-        knowledge_bases = await knowledge_base_manager.get_knowledge_bases_by_uid(current_user.uid)
+        knowledge_bases = await knowledge_access.get_knowledge_bases_by_uid(current_user.uid)
 
         accessible = [
             {
@@ -191,7 +195,7 @@ async def get_accessible_knowledge_bases(current_user: User = Depends(get_requir
                 "description": kb.description or "",
                 "created_by": kb.created_by,
                 "kb_type": kb.kb_type,
-                "supports_documents": knowledge_base_manager.knowledge_base_type_supports_documents(kb.kb_type),
+                "supports_documents": KnowledgeBaseFactory.supports_documents(kb.kb_type),
                 "supports_document_read": KnowledgeBaseFactory.get_kb_class(kb.kb_type).supports_document_read,
             }
             for kb in knowledge_bases
@@ -212,7 +216,7 @@ async def get_knowledge_base_info(
     current_user: User = Depends(require_knowledge_base_read),
 ):
     """获取知识库详细信息"""
-    knowledge_base = await knowledge_base_manager.get_knowledge_base_info(kb_id, include_files=include_files)
+    knowledge_base = await knowledge_bases.get_knowledge_base_info(kb_id, include_files=include_files)
     if knowledge_base is None:
         raise HTTPException(status_code=404, detail="Knowledge base not found")
     permission = resolve_knowledge_base_permission(current_user, knowledge_base)
@@ -234,7 +238,7 @@ async def update_knowledge_base_info(
     try:
         update_llm_model_spec = "llm_model_spec" in data.model_fields_set
 
-        knowledge_base = await knowledge_base_manager.update_knowledge_base(
+        knowledge_base = await knowledge_bases.update_knowledge_base(
             kb_id,
             data.name,
             data.description,
@@ -260,7 +264,7 @@ async def delete_knowledge_base(kb_id: str, current_user: User = Depends(require
     """删除知识库"""
     logger.debug("Delete knowledge_base {}", kb_id)
     try:
-        await knowledge_base_manager.delete_knowledge_base(kb_id)
+        await knowledge_bases.delete_knowledge_base(kb_id)
 
         return {"message": "删除成功"}
     except HTTPException:
@@ -443,7 +447,7 @@ async def list_documents(
     """分页获取知识库文件列表。排序可选，作用于筛选后的全部记录。"""
     await _ensure_knowledge_base_supports_documents(kb_id, "文档查看")
     try:
-        return await knowledge_base_manager.list_document_files(
+        return await documents.list_document_files(
             kb_id,
             parent_id=parent_id,
             status=status,
@@ -466,16 +470,16 @@ async def search_documents(
     current_user: User = Depends(require_knowledge_base_read),
 ):
     """按文件名搜索知识库文件（仅匹配文件名，不搜索文件内容）。"""
-    knowledge_base = await knowledge_base_manager.get_knowledge_base_info(kb_id)
+    knowledge_base = await knowledge_bases.get_knowledge_base_info(kb_id)
     if not knowledge_base:
         raise HTTPException(status_code=404, detail=f"知识库 {kb_id} 不存在或无权访问")
-    if not knowledge_base_manager.knowledge_base_type_supports_documents(knowledge_base.kb_type):
+    if not KnowledgeBaseFactory.supports_documents(knowledge_base.kb_type):
         kb_type = knowledge_base.kb_type.lower()
         raise HTTPException(status_code=400, detail=f"{knowledge_base.name or kb_type} 只支持检索，不支持文档搜索")
     normalized_query = (query or "").strip()
     if not normalized_query:
         return {"files": [], "total": 0, "offset": 0, "limit": limit, "has_more": False}
-    return await knowledge_base_manager.search_document_files(
+    return await documents.search_document_files(
         [{"kb_id": knowledge_base.kb_id, "name": knowledge_base.name}],
         query=normalized_query,
         offset=offset,
@@ -496,7 +500,7 @@ async def document_file_exists(
     if not normalized_filename:
         raise HTTPException(status_code=400, detail="filename is required")
     try:
-        exists = await knowledge_base_manager.document_file_exists(kb_id, normalized_filename)
+        exists = await documents.document_file_exists(kb_id, normalized_filename)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"kb_id": kb_id, "filename": normalized_filename, "exists": exists}
@@ -662,7 +666,7 @@ async def get_document_info(kb_id: str, doc_id: str, current_user: User = Depend
     await _ensure_knowledge_base_supports_documents(kb_id, "文档查看")
 
     try:
-        info = await knowledge_base_manager.get_file_info(kb_id, doc_id)
+        info = await documents.get_file_info(kb_id, doc_id)
         return info
     except (HTTPException, DomainError):
         raise
@@ -680,7 +684,7 @@ async def get_document_basic_info(kb_id: str, doc_id: str, current_user: User = 
     await _ensure_knowledge_base_supports_documents(kb_id, "文档查看")
 
     try:
-        info = await knowledge_base_manager.get_file_basic_info(kb_id, doc_id)
+        info = await documents.get_file_basic_info(kb_id, doc_id)
         return info
     except (HTTPException, DomainError):
         raise
@@ -736,7 +740,7 @@ async def get_document_content(kb_id: str, doc_id: str, current_user: User = Dep
     await _ensure_knowledge_base_supports_documents(kb_id, "文档查看")
 
     try:
-        info = await knowledge_base_manager.get_file_content(kb_id, doc_id)
+        info = await documents.get_file_content(kb_id, doc_id)
         info["lines"] = _strip_internal_graph_fields(info.get("lines", []))
         return info
     except (HTTPException, DomainError):
@@ -751,16 +755,19 @@ async def get_document_content(kb_id: str, doc_id: str, current_user: User = Dep
 @knowledge.delete("/knowledge-bases/{kb_id}/documents/batch")
 async def batch_delete_documents(kb_id: str, file_ids: list[str] = Body(...), current_user: User = Depends(require_knowledge_base_manage)):
     """批量删除文档或文件夹"""
-    await _ensure_knowledge_base_supports_documents(kb_id, "批量文档删除")
-    return await administration.batch_delete_documents(kb_id, file_ids)
+    try:
+        return await administration.batch_delete_documents(kb_id, file_ids)
+    except documents.UnsupportedDocumentOperation as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 @knowledge.delete("/knowledge-bases/{kb_id}/documents/{doc_id}")
 async def delete_document(kb_id: str, doc_id: str, current_user: User = Depends(require_knowledge_base_manage)):
     """删除文档或文件夹"""
-    await _ensure_knowledge_base_supports_documents(kb_id, "文档删除")
     try:
         return await administration.delete_document(kb_id, doc_id)
+    except documents.UnsupportedDocumentOperation as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     except ValueError as error:
         raise HTTPException(status_code=400, detail=f"删除文档失败: {error}") from error
 
@@ -859,7 +866,7 @@ async def update_knowledge_base_query_params(
 ):
     """更新知识库查询参数配置"""
     try:
-        await knowledge_base_manager.update_kb_query_params(kb_id, params)
+        await knowledge_bases.update_kb_query_params(kb_id, params)
 
         logger.info("更新知识库 {} 查询参数", kb_id)
 
@@ -932,8 +939,9 @@ async def create_folder(
 ):
     """创建文件夹"""
     try:
-        await _ensure_knowledge_base_supports_documents(kb_id, "文件夹创建")
-        return await knowledge_base_manager.create_folder(kb_id, folder_name, parent_id, current_user.uid)
+        return await knowledge_directories.create_folder(kb_id, folder_name, parent_id, current_user.uid)
+    except documents.UnsupportedDocumentOperation as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     except (HTTPException, DomainError):
         raise
     except Exception as e:
@@ -950,8 +958,7 @@ async def rename_folder(
 ):
     """重命名真实文件夹。"""
     try:
-        await _ensure_knowledge_base_supports_documents(kb_id, "文件夹重命名")
-        return await knowledge_base_manager.rename_folder(kb_id, folder_id, folder_name)
+        return await knowledge_directories.rename_folder(kb_id, folder_id, folder_name)
     except (HTTPException, DomainError):
         raise
     except ValueError as e:
@@ -971,8 +978,7 @@ async def move_document(
     """移动文件或文件夹"""
     logger.debug("Move document {} in {}", doc_id, kb_id)
     try:
-        await _ensure_knowledge_base_supports_documents(kb_id, "文件移动")
-        return await knowledge_base_manager.move_file(kb_id, doc_id, request.new_parent_id)
+        return await knowledge_directories.move_file(kb_id, doc_id, request.new_parent_id)
     except (HTTPException, DomainError):
         raise
     except ValueError as e:
@@ -1097,7 +1103,7 @@ async def get_supported_file_types(current_user: User = Depends(get_admin_user))
 async def get_knowledge_base_types(current_user: User = Depends(get_admin_user)):
     """获取支持的知识库类型"""
     try:
-        kb_types = knowledge_base_manager.get_supported_kb_types()
+        kb_types = KnowledgeBaseFactory.get_available_types()
         return {"kb_types": kb_types, "message": "success"}
     except HTTPException:
         raise
@@ -1116,7 +1122,7 @@ async def get_knowledge_chunk_presets(current_user: User = Depends(get_admin_use
 async def get_knowledge_base_statistics(current_user: User = Depends(get_admin_user)):
     """获取知识库统计信息"""
     try:
-        stats = await knowledge_base_manager.get_statistics()
+        stats = await knowledge_statistics.get_statistics()
         return {"stats": stats, "message": "success"}
     except HTTPException:
         raise
@@ -1179,7 +1185,7 @@ async def _require_manage_permission_if_kb_id(kb_id: str | None, current_user: U
 
 
 async def _ensure_knowledge_base_supports_documents(kb_id: str, operation: str) -> dict:
-    kb_info, supports_documents = await knowledge_base_manager.get_knowledge_base_document_support(kb_id)
+    kb_info, supports_documents = await documents.get_knowledge_base_document_support(kb_id)
     if not kb_info:
         raise HTTPException(status_code=404, detail=f"知识库 {kb_id} 不存在")
     kb_type = kb_info.kb_type.lower()

@@ -1,6 +1,6 @@
 # 文档约定
 
-本目录包含用户教程、配置参考、机制详解、开发规范、决策记录、事故复盘和版本材料。仓库根 `AGENTS.md` 的系统不变量仍然适用；完整信息架构、写作标准与检查清单由[文档编写与维护规范](develop-guides/documentation-guidelines.md)拥有，本文件只保留进入 `docs/` 工作时必须执行的指令。
+本目录包含用户教程、配置参考、机制详解、开发规范、决策记录、事故复盘和版本材料。仓库根 `AGENTS.md` 的系统不变量仍然适用。完整信息架构、写作标准与检查清单由[文档编写与维护规范](develop-guides/documentation-guidelines.md)拥有，本文件只保留进入 `docs/` 工作时必须执行的指令。
 
 ## 层级与事实 Owner
 
@@ -14,7 +14,7 @@
 
 局部文案、链接或机械清理只读取适用指令与直接相关内容；下列完整流程适用于新增、重写或机制说明变更。所有文档改动均须执行提交前验证与独立 Review。
 
-1. 读取根与当前子树指令、owning 文档和相关源码；架构与开发指南按根文件的任务范围加载；非平凡信息架构或长期约束变化先创建 tracked proposed decision。
+1. 读取根与当前子树指令、owning 文档和相关源码。架构与开发指南按根文件的任务范围加载。非平凡信息架构或长期约束变化先创建 tracked proposed decision。
 2. 写明预定读者、问题、前置知识、目标、非目标和页面类型。教程必须有顺序结果；参考必须有明确查找范围；实质性混合内容先拆分。
 3. 用符号搜索沿入口 → service/executor → repository/持久化或发布点 → 用户/模型结果重建真实链路，同时核对权限、失败路径、可选能力和相关测试。
 4. 先列 Section 及每节唯一问题，按“概念 → 组件关系 → 状态/Owner → 权限/失败 → 源码定位”渐进；教程按完成任务所需的前置依赖排序。
@@ -30,13 +30,13 @@
 - 不写“以前/现在/这次修改”、PR 过程、Review 对话、实现步骤或推理流水账；原因写入 decision，事故时间线写入 postmortem。
 - 不手写易漂移的完整文件、API、测试或配置清单；保留稳定分类并链接源码、schema、Compose 或生成 Owner。
 - 站内页面使用相对 Markdown 链接；站点外公开源码使用 GitHub `blob/main` 链接。示例只使用占位凭据、保留域名或假 ID，禁止写入 `.env`、Token、真实账号、用户数据或本地绝对路径。
-- 决策记录遵循[生命周期与格式](develop-guides/decisions/README.md)；implemented 记录使用现在时，不保留提案 checklist。
+- 决策记录遵循[生命周期与格式](develop-guides/decisions/README.md)。implemented 记录使用现在时，不保留提案 checklist。
 
 ## 导航、预算与验证
 
 - 新增正式页面时更新 `.vitepress/config.mts` 的正确父级和阅读顺序；内部 `AGENTS.md`、decision 与 postmortem 不因位于 `docs/` 就自动成为用户导航入口。
 - `scripts/ci/verify_engineering_contracts.py` 的 AGENTS 字符预算是 standing-order guardrail。超限时先下沉示例、背景和专题解释，再压缩重复；确需提高预算时同步更新 decision 和 gate，不能静默删掉必要约束或关闭检查。
-- 修改配置、API、状态、权限或机制说明时检查相关测试；文档构建只证明 Markdown、导航和链接有效，不证明语义正确。Reviewer 必须逐页对照当前源码、配置和风险相称的 oracle。
+- 修改配置、API、状态、权限或机制说明时检查相关测试。文档构建只证明 Markdown、导航和链接有效，不证明语义正确。Reviewer 必须逐页对照当前源码、配置和风险相称的 oracle。
 - 构建失败要修正文档、锚点或导航，不扩大 `ignoreDeadLinks` 掩盖问题。报告只写实际执行的命令、结果和未验证范围。
 
 ```bash

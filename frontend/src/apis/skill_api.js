@@ -52,11 +52,6 @@ export const discardSkillInstallDraft = async (draftId) => {
   return apiDelete(`${USER_BASE_URL}/install-drafts/${encodeURIComponent(draftId)}`)
 }
 
-export const getSkillDependencyOptions = async (slug) => {
-  const query = slug ? `?slug=${encodeURIComponent(slug)}` : ''
-  return apiGet(`${BASE_URL}/dependency-options${query}`)
-}
-
 export const getSkillFile = async (slug, path) => {
   return apiGet(`${BASE_URL}/${encodeURIComponent(slug)}/file?path=${encodeURIComponent(path)}`)
 }
@@ -125,7 +120,6 @@ export const skillApi = {
   confirmSkillInstallDraft,
   confirmPersonalSkillInstallDraft,
   discardSkillInstallDraft,
-  getSkillDependencyOptions,
   getSkillFile,
   getPersonalSkillFile,
   updateSkillShareConfig,

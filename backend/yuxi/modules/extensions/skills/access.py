@@ -1,4 +1,4 @@
-"""共享与专属 Skill 的权限、依赖及带锁读取契约。"""
+"""共享与专属 Skill 的权限及带锁读取契约。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.infrastructure.runtime_settings import get_skill_data_dir
 from yuxi.modules.extensions.skills.models import Skill
-from yuxi.modules.extensions.skills.package import is_valid_skill_slug, normalize_string_list, validated_shared_skill_parts
+from yuxi.modules.extensions.skills.package import is_valid_skill_slug, validated_shared_skill_parts
 from yuxi.modules.extensions.skills.repository import SkillRepository
 from yuxi.modules.extensions.skills.resolved import ResolvedSkill
 from yuxi.modules.identity.models import User
@@ -34,13 +34,11 @@ async def lock_accessible_shared_skills_for_runtime(
     shadowed_slugs: set[str] | None = None,
     bound_slug: str | None = None,
 ) -> list[Skill]:
-    """只锁定已选共享 Skill 及其依赖，锁后重新检查权限。"""
+    """只锁定已选共享 Skill，锁后重新检查权限。"""
     repo = SkillRepository(db)
     shadowed = shadowed_slugs or set()
-    pending = list(selected)
     locked: dict[str, Skill] = {}
-    while pending:
-        slug = pending.pop(0)
+    for slug in selected:
         if slug in shadowed or slug in locked:
             continue
         candidate = await repo.get_by_slug(slug)
@@ -50,50 +48,7 @@ async def lock_accessible_shared_skills_for_runtime(
         if item is None or (item.bound_agent_id is not None and slug != bound_slug) or not user_can_access_skill(user, item):
             continue
         locked[slug] = item
-        pending.extend(item.skill_dependencies or [])
     return list(locked.values())
-
-
-async def validate_skill_dependencies(
-    *,
-    db: AsyncSession,
-    parent: Skill,
-    tool_dependencies: list[str],
-    mcp_dependencies: list[str],
-    skill_dependencies: list[str],
-    available_skills: dict[str, Skill],
-) -> tuple[list[str], list[str], list[str]]:
-    """校验工具、MCP 和共享 Skill 依赖。"""
-    tools = normalize_string_list(tool_dependencies)
-    mcps = normalize_string_list(mcp_dependencies)
-    skills = normalize_string_list(skill_dependencies)
-
-    # 验证所有工具（不仅仅是 builtin）
-    from yuxi.modules.extensions.mcp.service import get_enabled_mcp_server_slugs
-    from yuxi.modules.extensions.tools.catalog import get_tool_metadata
-
-    available_tools = {tool["slug"] for tool in get_tool_metadata()}
-    invalid_tools = [name for name in tools if name not in available_tools]
-    if invalid_tools:
-        raise ValueError(f"存在无效工具依赖: {', '.join(invalid_tools)}")
-
-    available_mcps = set(await get_enabled_mcp_server_slugs(db=db))
-    invalid_mcps = [name for name in mcps if name not in available_mcps]
-    if invalid_mcps:
-        raise ValueError(f"存在无效 MCP 依赖: {', '.join(invalid_mcps)}")
-
-    invalid_skills = [name for name in skills if name not in available_skills]
-    if invalid_skills:
-        raise ValueError(f"存在无效 skill 依赖: {', '.join(invalid_skills)}")
-
-    if parent.slug in skills:
-        raise ValueError("skill_dependencies 不允许包含自身")
-
-    forbidden_skills = [name for name in skills if not can_skill_depend_on(parent, available_skills[name])]
-    if forbidden_skills:
-        raise ValueError(f"存在权限范围不匹配的 skill 依赖: {', '.join(forbidden_skills)}")
-
-    return tools, mcps, skills
 
 
 async def get_skill_or_raise(db: AsyncSession, slug: str, *, for_update: bool = False) -> Skill:
@@ -158,48 +113,8 @@ def resolved_shared_skill(item: Skill) -> ResolvedSkill:
         enabled=bool(item.enabled),
         created_by=item.created_by,
         share_config=share_config,
-        tool_dependencies=normalize_string_list(item.tool_dependencies),
-        mcp_dependencies=normalize_string_list(item.mcp_dependencies),
-        skill_dependencies=normalize_string_list(item.skill_dependencies),
         version=item.version,
         content_hash=item.content_hash,
-    )
-
-
-def can_skill_depend_on(parent: Skill, dependency: Skill) -> bool:
-    """检查两个共享 Skill 的依赖授权是否兼容。"""
-    if not dependency.enabled or dependency.bound_agent_id is not None:
-        return False
-    if is_builtin_skill(dependency):
-        return True
-
-    dep_config = normalize_permission_config(dependency.share_config)
-    if parent.bound_agent_id is not None:
-        agent = parent.bound_agent
-        if agent is None:
-            return False
-        parent_config = normalize_permission_config(
-            {
-                "version": 2,
-                "read_scope": {"access_level": "user", "user_uids": [agent.created_by]},
-                "manage_scope": None,
-            }
-            if agent.visibility == "private"
-            else agent.share_config
-        )
-    else:
-        parent_config = normalize_permission_config(parent.share_config)
-    dependency_scopes = [scope for scope in (dep_config["read_scope"], dep_config["manage_scope"]) if scope]
-    parent_scopes = [scope for scope in (parent_config["read_scope"], parent_config["manage_scope"]) if scope]
-    if parent.bound_agent_id is not None and parent.bound_agent.visibility != "private":
-        parent_scopes.append({"access_level": "user", "department_ids": [], "user_uids": [parent.bound_agent.created_by]})
-    owner_scope = {"access_level": "user", "department_ids": [], "user_uids": []}
-    if not dependency_scopes:
-        dependency_scopes = [{**owner_scope, "user_uids": [str(dependency.created_by or "")]}]
-    if not parent_scopes:
-        parent_scopes = [{**owner_scope, "user_uids": [str(parent.created_by or "")]}]
-    return all(
-        any(_scope_contains(dependency_scope, parent_scope) for dependency_scope in dependency_scopes) for parent_scope in parent_scopes
     )
 
 
@@ -262,26 +177,6 @@ def get_skills_root_dir() -> Path:
     root = get_skill_data_dir() / "shared"
     root.mkdir(parents=True, exist_ok=True)
     return root
-
-
-def _scope_contains(container: dict, target: dict) -> bool:
-    """判断一个共享范围是否完整覆盖另一个范围。"""
-
-    container_level = container.get("access_level")
-    target_level = target.get("access_level")
-    if container_level == "global":
-        return True
-    if target_level == "global" or container_level != target_level:
-        return False
-    if target_level == "department":
-        container_ids = {int(value) for value in container.get("department_ids") or []}
-        target_ids = {int(value) for value in target.get("department_ids") or []}
-        return target_ids.issubset(container_ids)
-    if target_level == "user":
-        container_uids = {str(value) for value in container.get("user_uids") or []}
-        target_uids = {str(value) for value in target.get("user_uids") or []}
-        return target_uids.issubset(container_uids)
-    return False
 
 
 def _resolve_skill_dir(item: Skill) -> Path:

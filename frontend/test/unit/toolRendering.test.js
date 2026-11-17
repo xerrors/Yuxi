@@ -3,7 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { after, before, test } from 'node:test'
 import { createTestServer } from '../helpers/createTestServer.js'
-import { createSSRApp, h } from 'vue'
+import { createSSRApp, h, ref } from 'vue'
 import { renderToString } from 'vue/server-renderer'
 import { createPinia } from 'pinia'
 import { createRouter, createMemoryHistory } from 'vue-router'
@@ -17,6 +17,7 @@ let parseToolCallResult
 let ReadFileTool
 let ImageTool
 let QueryKbTool
+let useAgentStore
 
 before(async () => {
   globalThis.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} }
@@ -30,6 +31,7 @@ before(async () => {
     root: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..'),
     server: { middlewareMode: true }
   })
+  ;({ useAgentStore } = await server.ssrLoadModule('/src/modules/agents/index.js'))
   ;({ default: BaseToolCall } = await server.ssrLoadModule(
     '/src/modules/session/ui/tools/BaseToolCall.vue'
   ))
@@ -65,12 +67,122 @@ after(async () => {
 })
 
 /** 渲染真实组件并检查用户可见状态与结果。 */
-const render = (component, props) =>
-  renderToString(
-    createSSRApp({ render: () => h(component, props) })
-      .use(createPinia())
-      .use(createRouter({ history: createMemoryHistory(), routes: [] }))
+const render = (component, props, configureStore, sessionConfigurableItems) => {
+  const pinia = createPinia()
+  configureStore?.(useAgentStore(pinia))
+  const app = createSSRApp({ render: () => h(component, props) })
+    .use(pinia)
+    .use(createRouter({ history: createMemoryHistory(), routes: [] }))
+  if (sessionConfigurableItems) app.provide('sessionAgentConfigurableItems', sessionConfigurableItems)
+  return renderToString(app)
+}
+
+test('工具参数为空时隐藏整行，结果仍可见，非空参数正常展示', async () => {
+  const emptyCalls = [undefined, null, {}, '', '  \n ', '{}', ' {\n } ', [], '[ ]']
+    .map((args) => ({ name: 'unknown_tool', args }))
+  emptyCalls.push(
+    { name: 'devices_list', args: {} },
+    { function: { name: 'unknown_tool', arguments: '{}' } }
   )
+  for (const toolCall of emptyCalls) {
+    const html = await render(ToolCallRenderer, {
+      toolCall: { ...toolCall, result: '工具返回内容' }, defaultExpanded: true
+    })
+    assert.doesNotMatch(html, /class="tool-params"|参数:/)
+    assert.match(html, /工具返回内容/)
+  }
+  for (const args of [{ limit: 0, enabled: false }, '{"path":"/Users"}', 'x', '{']) {
+    const html = await render(BaseToolCall, {
+      toolCall: { name: 'unknown_tool', args }, defaultExpanded: true
+    })
+    assert.match(html, /class="tool-params"/)
+    assert.match(html, /参数:/)
+  }
+})
+
+test('折叠的文件与命令工具在自定义标题中明确显示失败', async () => {
+  for (const [name, args] of [
+    ['read_file', { file_path: '/tmp/test.txt' }],
+    ['write_file', { file_path: '/tmp/test.txt', content: '一行内容' }],
+    ['bash', { command: 'false' }]
+  ]) {
+    const failed = await render(ToolCallRenderer, {
+      toolCall: { name, args, status: 'error', error_message: '操作未完成' }
+    })
+    assert.match(failed, /执行失败/)
+    assert.doesNotMatch(failed, /class="tool-content"/)
+    const completed = await render(ToolCallRenderer, {
+      toolCall: { name, args, status: 'completed' }
+    })
+    assert.doesNotMatch(completed, /执行失败/)
+  }
+})
+
+test('加载插件 header 使用目录名称和共享图标，参数与结果保持基础渲染', async () => {
+  const toolCall = {
+    id: 'plugin-load', name: 'load_plugin', args: { plugin_id: 'abridge' },
+    result: '插件原始返回内容'
+  }
+  const props = { toolCall, defaultExpanded: true }
+  const html = await render(ToolCallRenderer, props, (store) => {
+    store.selectedAgentId = 'plugin-agent'
+    store.agents = [{ agent_id: 'plugin-agent', configurable_items: {
+      plugins: { options: [{ key: 'abridge', name: 'aBridge 设备' }] }
+    } }]
+  })
+  assert.match(html, /加载插件/)
+  assert.match(html, /aBridge 设备/)
+  assert.match(html, /lucide-computer/)
+  assert.doesNotMatch(html, /执行完成/)
+  assert.match(html, /class="tool-params"/)
+  assert.match(html, /plugin_id/)
+  assert.match(html, /abridge/)
+  assert.match(html, /插件原始返回内容/)
+})
+
+test('加载插件名称以当前会话目录为准，不借用全局选中的另一 Agent 目录', async () => {
+  for (const options of [[{ key: 'abridge', name: '会话 B 的设备' }], []]) {
+    const html = await render(ToolCallRenderer, {
+      toolCall: { name: 'load_plugin', args: { plugin_id: 'abridge' }, result: '完成' }
+    }, (store) => {
+      store.selectedAgentId = 'agent-a'
+      store.agents = [{ agent_id: 'agent-a', configurable_items: {
+        plugins: { options: [{ key: 'abridge', name: '全局 A 的设备' }] }
+      } }]
+    }, ref({ plugins: { options } }))
+    assert.ok(html.includes(`title="${options.length ? '会话 B 的设备' : 'abridge'}"`))
+    assert.doesNotMatch(html, /全局 A 的设备/)
+  }
+})
+
+for (const [label, args, expectedName, expectedIcon] of [
+  ['未知插件', { plugin_id: 'custom-extension' }, 'custom-extension', 'puzzle'],
+  ['字符串参数', '{"plugin_id":"abridge"}', 'abridge', 'computer'],
+  ['无参数', undefined, '', 'puzzle'],
+  ['流式未完成参数', '{"plugin_id":"ab', '', 'puzzle'],
+  ['非字符串 ID', { plugin_id: {} }, '', 'puzzle']
+]) {
+  test(`加载插件 ${label} 安全显示参数身份，不从结果猜测插件`, async () => {
+    const html = await render(ToolCallRenderer, {
+      toolCall: { name: 'load_plugin', args, result: 'abridge aBridge 设备' }
+    })
+    assert.match(html, /加载插件/)
+    assert.match(html, new RegExp(`lucide-${expectedIcon}`))
+    if (expectedName) assert.ok(html.includes(`title="${expectedName}"`))
+    assert.doesNotMatch(html, /aBridge 设备|\[object Object\]/)
+  })
+}
+
+test('加载插件 header 保持运行、失败与中断状态', async () => {
+  for (const [status, expected] of [['running', 'tool-status-icon--running'], ['error', '执行失败'], ['incomplete', '已中断']]) {
+    const html = await render(ToolCallRenderer, {
+      toolCall: { name: 'load_plugin', args: { plugin_id: 'abridge' }, status }
+    })
+    assert.match(html, /加载插件/)
+    assert.ok(html.includes(expected))
+    assert.doesNotMatch(html, /执行完成/)
+  }
+})
 
 for (const [name, fields] of Object.entries({
   调用错误且没有结果: { status: 'error', error_message: '无法执行' },
@@ -95,12 +207,12 @@ for (const [name, fields] of Object.entries({
       defaultExpanded: true,
       appearance: 'timeline'
     })
-    assert.match(html, /tool-error/)
+    assert.match(html, /tool-status-icon--error/)
     assert.match(html, /执行失败/)
     assert.match(html, /无法执行/)
-    assert.doesNotMatch(html, /执行完成|tool-loading/)
-    const group = await render(ToolCallsGroup, { toolCalls: [toolCall], isActive: true })
-    assert.match(group, /1 失败/)
+    assert.doesNotMatch(html, /执行完成|tool-status-icon--(?:running|waiting)/)
+    const group = await render(ToolCallsGroup, { toolCalls: [toolCall], isActive: false })
+    assert.match(group, /tool-status-icon--error/)
     assert.doesNotMatch(group, /1 进行中/)
   })
 }
@@ -115,7 +227,7 @@ test('知识库专用模板保留错误详情，不把错误渲染成空检索�
     },
     defaultExpanded: true
   })
-  assert.match(html, /tool-error/)
+  assert.match(html, /tool-status-icon--error/)
   assert.match(html, /知识库不可用/)
   assert.doesNotMatch(html, /未找到相关内容|未找到结果/)
 })
@@ -130,24 +242,24 @@ test('历史搜索额度失败的卡片与汇总均显示失败，真实零结�
       }
     }
     const html = await render(ToolCallRenderer, { toolCall, defaultExpanded: true })
-    assert.match(html, /tool-error/)
+    assert.match(html, /tool-status-icon--error/)
     assert.match(html, /quota has been exhausted/)
-    assert.doesNotMatch(html, /未找到相关搜索结果|tool-success/)
+    assert.doesNotMatch(html, /未找到相关搜索结果|tool-status-icon--completed/)
     const group = await render(ToolCallsGroup, { toolCalls: [toolCall], isActive: false })
-    assert.match(group, /1 失败/)
+    assert.match(group, /tool-status-icon--error/)
   }
   const empty = await render(ToolCallRenderer, {
     toolCall: { name: 'web_search', result: { query: '官方资料', results: [], error: null } },
     defaultExpanded: true
   })
   assert.match(empty, /未找到相关搜索结果/)
-  assert.match(empty, /tool-success/)
-  assert.doesNotMatch(empty, /tool-error/)
+  assert.match(empty, /tool-status-icon--completed/)
+  assert.doesNotMatch(empty, /tool-status-icon--error/)
   const ordinary = await render(BaseToolCall, {
     toolCall: { name: 'unknown_tool', result: { error: '业务数据中的字段' } },
     defaultExpanded: true
   })
-  assert.match(ordinary, /tool-success/)
+  assert.match(ordinary, /tool-status-icon--completed/)
 })
 
 test('有效的 0 和 false 结果可见，普通结果文本中的 error 不冒充状态', async () => {
@@ -156,9 +268,9 @@ test('有效的 0 和 false 结果可见，普通结果文本中的 error 不冒
       toolCall: { name: 'unknown_tool', tool_call_result: { content } },
       defaultExpanded: true
     })
-    assert.match(html, /tool-success/)
+    assert.match(html, /tool-status-icon--completed/)
     assert.match(html, /tool-result-renderer/)
-    assert.doesNotMatch(html, /tool-error/)
+    assert.doesNotMatch(html, /tool-status-icon--error/)
   }
 })
 
@@ -281,7 +393,7 @@ test('明确的 ToolMessage 错误不会被专用工具覆盖为完成', async (
       },
       defaultExpanded: true
     })
-    assert.match(html, /has-error|tool-error/)
+    assert.match(html, /操作失败|tool-status-icon--error/)
     if (name === 'subagent_start') assert.match(html, /启动失败/)
     assert.doesNotMatch(html, /已完成|已启动/)
     assert.match(html, /失败/)
@@ -290,7 +402,7 @@ test('明确的 ToolMessage 错误不会被专用工具覆盖为完成', async (
     toolCall: { status: 'error', error_message: '调用失败' },
     status: 'completed'
   })
-  assert.match(html, /tool-error/)
+  assert.match(html, /tool-status-icon--error/)
   assert.doesNotMatch(html, /执行完成/)
 })
 
@@ -326,7 +438,7 @@ test('派发成功显示创建摘要，后续会话状态不冒充调用状态',
   }
   const row = await render(ToolCallRenderer, { toolCall })
   assert.match(row, /创建/)
-  assert.doesNotMatch(row, /has-error|进行中|操作失败/)
+  assert.doesNotMatch(row, /进行中|操作失败/)
 })
 
 test('知识库列表错误不显示暂无知识库', async () => {
@@ -350,7 +462,7 @@ test('incomplete 工具显示中断终态而非加载图标', async () => {
     appearance: 'timeline'
   })
   assert.match(html, /已中断/)
-  assert.doesNotMatch(html, /tool-loading|正在调用工具/)
+  assert.doesNotMatch(html, /tool-status-icon--(?:running|waiting)|正在调用工具/)
   const question = await render(ToolCallRenderer, {
     toolCall: {
       id: 'question',
@@ -360,7 +472,7 @@ test('incomplete 工具显示中断终态而非加载图标', async () => {
     }
   })
   assert.match(question, /已中断/)
-  assert.doesNotMatch(question, /tool-loading/)
+  assert.doesNotMatch(question, /tool-status-icon--(?:running|waiting)/)
 })
 
 
@@ -369,7 +481,7 @@ test('知识库检索失败显示错误结果，正常空检索仍显示空状�
     toolCall: { name: 'query_kb', tool_call_result: { status: 'error', content: '工具 query_kb 执行失败：RuntimeError' } },
     defaultExpanded: true
   })
-  assert.match(failure, /tool-error/)
+  assert.match(failure, /tool-status-icon--error/)
   assert.match(failure, /query_kb 执行失败/)
   assert.doesNotMatch(failure, /未找到相关知识库内容/)
   const empty = await render(QueryKbTool, {
@@ -377,7 +489,7 @@ test('知识库检索失败显示错误结果，正常空检索仍显示空状�
     defaultExpanded: true
   })
   assert.match(empty, /未找到相关知识库内容/)
-  assert.doesNotMatch(empty, /tool-error/)
+  assert.doesNotMatch(empty, /tool-status-icon--error/)
 })
 
 test('新增工具只显示有用摘要，即使默认展开也不重复展示正文与原始结果', async () => {
@@ -386,7 +498,7 @@ test('新增工具只显示有用摘要，即使默认展开也不重复展示�
     ['search_thread_messages', { query: '部署' }, { items: [{ title: '部署记录', role: 'user', content: '完整历史消息' }] }, /搜索历史消息/, /部署/],
     ['read_thread_messages', {}, { title: '部署记录', messages: [{ role: 'assistant', content: '完整历史消息' }], tool_calls: [] }, /读取历史消息/, /部署记录/],
     ['install_skill', { source: 'example/research', skill_names: ['research'] }, '已安装 Skill: research\nSkill 路径: /workspace/skills/research/SKILL.md', /安装技能/, /research/],
-    ['mark_for_improvement', { reason: '完整改进原因' }, { id: 'feedback-1', saved: true }, /记录改进线索/, /tool-success/],
+    ['mark_for_improvement', { reason: '完整改进原因' }, { id: 'feedback-1', saved: true }, /记录改进线索/, /tool-status-icon--completed/],
     ['web_fetch', { url: 'https://example.com' }, { title: '部署指南', content: '完整网页正文', provider: 'tavily' }, /网页抓取/, /部署指南/]
   ]
   for (const [name, args, result, action, target] of cases) {
@@ -443,7 +555,7 @@ test('会话查询只展示真实范围和本页计数，历史回执不冒充�
   for (const [args, label] of [[{}, '本项目'], [{ scope: 'all' }, '历史']]) {
     const html = await render(ToolCallRenderer, { toolCall: { name: 'list_sessions', args } })
     assert.match(html, new RegExp(`查看${label}会话`))
-    assert.match(html, /tool-loading/)
+    assert.match(html, /tool-status-icon--(?:running|waiting)/)
     assert.doesNotMatch(html, /查看了|0 个|进行中|event-state/)
   }
 })
@@ -470,7 +582,7 @@ test('摘要保留失败、等待、中断和空计数，不显示回执详情',
       [{ tool_call_result: { status: 'error', content: '完整错误堆栈' } }, /失败/],
       [{ status: 'waiting' }, /等待/],
       [{ status: 'incomplete' }, /已中断/],
-      [{}, /tool-loading|进行中/]
+      [{}, /tool-status-icon--(?:running|waiting)|进行中/]
     ]) {
       const html = await render(ToolCallRenderer, { toolCall: { name, args: {}, ...fields }, defaultExpanded: true })
       assert.match(html, label, name)
@@ -506,14 +618,14 @@ test('技能安装的纯文本失败回执不被摘要隐藏，成功名称中�
       toolCall: { name: 'install_skill', args: { source: 'example/research' }, tool_call_result: { status: 'success', content } },
       defaultExpanded: true
     })
-    assert.match(html, /tool-error/)
+    assert.match(html, /tool-status-icon--error/)
     assert.match(html, /执行失败/)
-    assert.doesNotMatch(html, /tool-success|tool-content|Skill 路径/)
+    assert.doesNotMatch(html, /tool-status-icon--completed|tool-content|Skill 路径/)
   }
   const success = await render(ToolCallRenderer, {
     toolCall: { name: 'install_skill', result: '已安装 Skill: error-helper\nSkill 路径: /workspace/skills/error-helper/SKILL.md' }
   })
-  assert.match(success, /tool-success/)
+  assert.match(success, /tool-status-icon--completed/)
   assert.doesNotMatch(success, /执行失败/)
   const empty = await render(ToolCallRenderer, {
     toolCall: { name: 'install_skill', result: '未发现需要安装的 Skill' }
@@ -637,6 +749,137 @@ test('Abridge 浏览器复用拒绝、失败与执行结果未知状态，普通
   assert.doesNotMatch(unknown, /原始结果/)
 })
 
+test('补齐的设备工具 device_get 与 command_cancel 使用专用标题而非通用兜底', async () => {
+  for (const [name, label, icon] of [
+    ['device_get', '查看设备详情', 'monitor'],
+    ['command_cancel', '取消设备命令', 'square']
+  ]) {
+    const html = await render(ToolCallRenderer, {
+      toolCall: { name, args: { device_id: 'device-fixture' }, result: { status: 'executed', result: {} } },
+      appearance: 'timeline'
+    })
+    assert.ok(html.includes(`>${label}</span>`), name)
+    assert.match(html, new RegExp(`lucide-${icon}`), name)
+    assert.doesNotMatch(html, new RegExp(`工具 ${name}`), name)
+  }
+})
+
+test('设备详情读取顶层设备回执，展示名称、状态与能力并折叠诊断数据', async () => {
+  const device = {
+    id: 'detail-fixture', name: '演示工作站', kind: 'computer', platform: 'darwin',
+    status: 'online', paused: false, capabilities: ['files', 'screen'],
+    available: { files: true, screen: false }, sessions: []
+  }
+  for (const result of [device, [{ type: 'text', text: JSON.stringify(device) }]]) {
+    const html = await render(ToolCallRenderer, {
+      toolCall: { name: 'device_get', args: { device_id: device.id }, result },
+      appearance: 'timeline', defaultExpanded: true
+    })
+    assert.match(html, /lucide-monitor/)
+    assert.match(html, /alt="macOS · 电脑"/)
+    assert.match(html, />演示工作站<\/span>/)
+    assert.match(html, /<dd[^>]*>在线<\/dd>/)
+    assert.match(html, /文件访问、屏幕查看（暂不可用）/)
+    assert.doesNotMatch(html, /参数:/)
+    assert.match(html, /<details[^>]*><summary[^>]*>原始结果/)
+    assert.doesNotMatch(html, /<details[^>]*\bopen/)
+    assert.match(html, /detail-fixture/)
+  }
+  for (const [status, paused, expected] of [
+    ['online', true, '已暂停'], ['offline', false, '离线'], ['revoked', true, '已撤销']
+  ]) {
+    const html = await render(ToolCallRenderer, {
+      toolCall: { name: 'device_get', result: { ...device, status, paused } }, defaultExpanded: true
+    })
+    assert.ok(html.includes(`>${expected}</dd>`))
+  }
+})
+
+test('设备详情的失败、未完成及缺失设备回执不生成设备摘要，保留参数诊断', async () => {
+  for (const toolCall of [
+    { result: { error: '设备不可访问', id: 'detail-fixture', name: '不可采信设备' } },
+    { status: 'waiting', result: { id: 'detail-fixture', name: '不可采信设备' } },
+    { result: { status: 'executed', result: {} } },
+    {}
+  ]) {
+    const html = await render(ToolCallRenderer, {
+      toolCall: { name: 'device_get', args: { device_id: 'detail-fixture' }, ...toolCall },
+      defaultExpanded: true
+    })
+    assert.doesNotMatch(html, /class="device-name"|<dl/)
+    assert.match(html, /参数:/)
+    if (toolCall.result?.error) assert.match(html, /执行失败/)
+  }
+})
+
+test('查看设备的 header 使用平台图标和名称，空列表不生成设备描述', async () => {
+  const devices = [
+    { id: 'browser-fixture', kind: 'browser', name: 'Chrome' },
+    { id: 'computer-fixture', kind: 'computer', platform: 'darwin', name: 'air' },
+    { id: 'future-fixture', kind: 'future', name: '测试终端' }
+  ]
+  const expected = '3 台设备 · Chrome、air、测试终端'
+  for (const result of [{ devices }, [{ type: 'text', text: JSON.stringify({ devices }) }]]) {
+    const html = await render(ToolCallRenderer, { toolCall: { name: 'devices_list', result } })
+    assert.ok(html.includes(`title="${expected}"`))
+    for (const name of ['Chrome', 'air', '测试终端']) assert.ok(html.includes(`>${name}</span>`))
+    assert.match(html, /alt="Chrome · 浏览器"/)
+    assert.match(html, /alt="macOS · 电脑"/)
+    assert.match(html, /lucide-monitor/)
+    assert.doesNotMatch(html, /浏览器 Chrome|电脑 air/)
+    assert.doesNotMatch(html, /browser-fixture|computer-fixture|future-fixture/)
+  }
+  const empty = await render(ToolCallRenderer, { toolCall: { name: 'devices_list', result: { devices: [] } } })
+  assert.match(empty, /title="0 台设备"/)
+  assert.doesNotMatch(empty, /undefined|未命名设备/)
+})
+
+test('Abridge 关闭设备连接使用专用标题和图标，保留折叠回执且不误报成功', async () => {
+  for (const content of [
+    { session_id: 'session-close-fixture', status: 'stopped' },
+    [{ type: 'text', text: '{"session_id":"session-close-fixture","status":"stopped"}' }]
+  ]) {
+    const html = await render(ToolCallRenderer, {
+      toolCall: { name: 'session_close', args: { session_id: 'session-close-fixture' }, result: content },
+      defaultExpanded: true, appearance: 'timeline'
+    })
+    assert.match(html, /断开设备连接/)
+    assert.match(html, /连接已关闭/)
+    assert.match(html, /lucide-unplug/)
+    assert.match(html, /<details[^>]*><summary[^>]*>原始结果/)
+    assert.doesNotMatch(html, /<details[^>]*\bopen/)
+    assert.match(html, /session-close-fixture/)
+  }
+  for (const result of [undefined, { status: 'failed', error: '无法关闭连接' }, { status: 'outcome_unknown' }]) {
+    const html = await render(ToolCallRenderer, {
+      toolCall: { name: 'session_close', args: { session_id: 'session-close-fixture' }, result }
+    })
+    assert.match(html, /断开设备连接/)
+    assert.doesNotMatch(html, /连接已关闭/)
+    if (result) assert.match(html, result.status === 'failed' ? /执行失败/ : /执行结果未知/)
+  }
+})
+
+test('连接设备 header 展示回执设备与本次能力，不把设备全部能力当作会话能力', async () => {
+  const receipt = {
+    status: 'active', capabilities: ['shell'],
+    device: { id: 'device-fixture', name: 'air', kind: 'computer', platform: 'darwin', capabilities: ['files', 'input', 'screen', 'shell'] }
+  }
+  for (const result of [receipt, [{ type: 'text', text: JSON.stringify(receipt) }]]) {
+    const html = await render(ToolCallRenderer, {
+      toolCall: { name: 'session_open', args: { device_id: 'device-fixture', capabilities: ['browser'] }, result }
+    })
+    assert.match(html, /alt="macOS · 电脑"/)
+    assert.match(html, />air<\/span>/)
+    assert.match(html, /命令执行/)
+    assert.doesNotMatch(html, /device-fixture|连接浏览器|网页操作|文件访问|键鼠操作|屏幕查看/)
+  }
+  const empty = await render(ToolCallRenderer, {
+    toolCall: { name: 'session_open', args: { capabilities: ['browser'] }, result: { ...receipt, capabilities: [] } }
+  })
+  assert.doesNotMatch(empty, /连接浏览器|网页操作|命令执行/)
+})
+
 test('Abridge 连接按声明能力显示浏览器或设备，设备和桌面文字保留原始结果', async () => {
   for (const [capabilities, label] of [[['browser'], '浏览器'], [['screen'], '设备']]) {
     const html = await render(ToolCallRenderer, {
@@ -692,4 +935,149 @@ test('Abridge 命令没有执行回执时保留基础卡片的真实错误和默
     assert.match(html, fields.error_message ? /<pre[^>]*>设备未连接<\/pre>/ : /<pre[^>]*>工具执行失败<\/pre>/)
     assert.doesNotMatch(html, /原始结果|<pre[^>]*>undefined<\/pre>|<pre[^>]*>null<\/pre>/)
   }
+})
+
+test('桌面点击 header 在坐标前展示操作标识，缺少标识时保留坐标', async () => {
+  for (const [operationId, x, y, expected] of [
+    ['op_click_moments_icon', 88, 513, '(88, 513)'],
+    [undefined, 88, 513, '(88, 513)'],
+    ['op_click_origin', 0, 0, '(0, 0)']
+  ]) {
+    const html = await render(ToolCallRenderer, {
+      toolCall: {
+        id: 'desktop-click', name: 'computer_act',
+        args: { operation_id: operationId, action: { type: 'click', x, y } }
+      },
+      appearance: 'timeline'
+    })
+    assert.match(html, /class="note"[^>]*>点击<\/span>/)
+    assert.ok(html.includes(`title="${expected}"`))
+    assert.ok(html.includes(`>${expected}</span>`))
+    assert.doesNotMatch(html, /undefined/)
+  }
+})
+
+
+test('设备与浏览器工具 header 只展示目标，隐藏操作标识', async () => {
+  for (const [name, args, result, description] of [
+    ['computer_act', { action: { type: 'key', key: 'Enter' } }, undefined, 'Enter'],
+    ['computer_act', { action: { type: 'key', key: 'g', modifiers: ['cmd', 'shift'] } }, undefined, 'cmd+shift+g'],
+    ['computer_act', { action: { type: 'key', key: 'a', modifiers: [] } }, undefined, 'a'],
+    ['computer_act', { action: { type: 'scroll' } }, undefined, ''],
+    ['browser_act', { action: { type: 'click', element_ref: 'ref-42' } }, undefined, 'ref-42'],
+    ['browser_open', { url: 'https://example.com' }, undefined, 'https://example.com'],
+    ['browser_observe', {}, { status: 'executed', result: { title: '当前页面' } }, '当前页面'],
+    ['computer_observe', {}, { status: 'executed', result: { observation: { app_name: '微信' } } }, '微信'],
+    ['session_open', { device_id: 'device-1' }, undefined, 'device-1'],
+    ['files_list', { path: '/tmp/example' }, undefined, '/tmp/example'],
+    ['file_write', { path: '/tmp/example/note.txt' }, undefined, '/tmp/example/note.txt'],
+    ['file_read', { path: '/tmp/example/note.txt' }, undefined, '/tmp/example/note.txt'],
+    ['devices_list', {}, undefined, '']
+  ]) {
+    const operationId = `op_${name}`
+    const html = await render(ToolCallRenderer, {
+      toolCall: { id: name, name, args: { ...args, operation_id: operationId }, result },
+      appearance: 'timeline'
+    })
+    if (description) {
+      assert.ok(html.includes(`title="${description}"`), name)
+      assert.ok(html.includes(`>${description}</span>`), name)
+    } else {
+      assert.doesNotMatch(html, /class="description"/)
+    }
+    assert.ok(!html.includes(`title="${operationId}`), name)
+  }
+})
+
+
+test('失败工具保留工具图标与明确的失败文字，未知工具使用扳手而非叉号', async () => {
+  for (const [name, icon] of [['web_search', 'globe'], ['unknown_tool', 'wrench']]) {
+    const html = await render(BaseToolCall, { toolCall: { name, status: 'error', error_message: '执行失败' } })
+    assert.match(html, /tool-status-icon--error/)
+    assert.ok(html.includes(`lucide-${icon}`))
+    assert.doesNotMatch(html, /lucide-circle-x/)
+  }
+})
+
+test('设备命令状态展示已结束和运行中输出，并保留超时与截断提示', async () => {
+  for (const [receipt, expected, label] of [
+    [{ status: 'executed', result: { stdout: 'done-output', stderr: '', exit_code: 0 }, output_truncated: true }, ['done-output', '输出已截断'], '命令已结束'],
+    [{ status: 'dispatched', output: { stdout: 'partial-output', stderr: 'partial-error' } }, ['partial-output', '标准错误：', 'partial-error'], '命令处理中'],
+    [{ status: 'accepted' }, [], '命令处理中'],
+    [{ status: 'executed', result: { stdout: 'failure-output', stderr: 'failure-error', exit_code: 1, timed_out: true } }, ['failure-output', 'failure-error', '命令执行超时', '执行失败'], '命令已结束'],
+    [{ status: 'executed', result_available: false }, ['命令输出已过期'], '输出已过期']
+  ]) {
+    const html = await render(ToolCallRenderer, {
+      toolCall: { name: 'command_status', args: { operation_id: 'operation-status-fixture', stdout_offset: 20 }, result: [{ type: 'text', text: JSON.stringify(receipt) }] },
+      defaultExpanded: true
+    })
+    assert.match(html, /查看命令输出/)
+    assert.ok(html.includes(`title="${label}"`))
+    for (const text of expected) assert.ok(html.includes(text), text)
+    assert.match(html, /<details[^>]*><summary[^>]*>原始结果/)
+    assert.doesNotMatch(html, /<details[^>]*\bopen/)
+  }
+})
+
+test('设备文件工具展示目录、写入回执和纯文本内容，保留折叠原始结果', async () => {
+  const path = '/tmp/example/note.txt'
+  const cases = [
+    ['files_list', { path: '/tmp/example', entries: [{ name: 'note.txt', is_directory: false, size: 13 }, { name: 'folder', is_directory: true }, { name: 'shortcut', is_directory: false, is_symlink: true }], truncated: true }, ['列出设备目录', 'note.txt', 'folder', 'shortcut*', '目录列表已截断']],
+    ['file_write', { path, size: 13, overwritten: true }, ['写入设备文件', '写入成功', '13 B', '已覆盖']],
+    ['file_read', { path, content: '<script>hello</script>\n', size: 23, truncated: true }, ['读取设备文件', '&lt;script&gt;hello&lt;/script&gt;', '内容已截断']]
+  ]
+  for (const [name, output, expected] of cases) {
+    const receipt = { status: 'executed', result: output }
+    for (const result of [JSON.stringify(receipt), [{ type: 'text', text: JSON.stringify(receipt) }]]) {
+      const html = await render(ToolCallRenderer, {
+        toolCall: { name, args: { path: '/requested/path' }, result }, defaultExpanded: true
+      })
+      for (const text of expected) assert.ok(html.includes(text), `${name}: ${text}`)
+      assert.ok(html.includes(`title="${output.path}"`))
+      if (name === 'files_list') {
+        const list = html.match(/<ul[^>]*class="device-file-list"[^>]*>([\s\S]*?)<\/ul>/)?.[1]
+        assert.ok(list)
+        assert.doesNotMatch(list, /13 B|<img|<svg|class="device-file-meta"/)
+      }
+      assert.match(html, /<details[^>]*><summary[^>]*>原始结果/)
+      assert.doesNotMatch(html, /<details[^>]*\bopen|<script\b|href="\/tmp/i)
+    }
+  }
+  for (const [name, output, expected] of [
+    ['files_list', { entries: [] }, '目录为空'],
+    ['file_read', { content: '', size: 0 }, '文件为空'],
+    ['file_write', { size: 0, overwritten: false }, '0 B']
+  ]) {
+    const html = await render(ToolCallRenderer, { toolCall: { name, result: { status: 'executed', result: output } }, defaultExpanded: true })
+    assert.ok(html.includes(expected))
+    assert.doesNotMatch(html, /已覆盖/)
+  }
+})
+
+test('设备文件失败和结果未知不展示成功输出，未知工具保持通用渲染', async () => {
+  for (const name of ['files_list', 'file_read', 'file_write']) {
+    for (const status of ['failed', 'rejected', 'outcome_unknown']) {
+      const html = await render(ToolCallRenderer, {
+        toolCall: { name, result: [{ type: 'text', text: JSON.stringify({ status, error: status === 'outcome_unknown' ? undefined : '拒绝文件访问', result: { content: '不应展示正文', entries: [], size: 13 } }) }] }, defaultExpanded: true
+      })
+      assert.match(html, status === 'outcome_unknown' ? /执行结果未知/ : /执行失败/)
+      assert.doesNotMatch(html, /写入成功|目录为空|class="device-file-content"/)
+    }
+  }
+  const html = await render(ToolCallRenderer, { toolCall: { name: 'files_future', result: { error: '业务字段' } } })
+  assert.match(html, /files_future/)
+  assert.doesNotMatch(html, /执行失败|原始结果/)
+})
+
+test('执行设备命令的 header 仅显示命令，不拼接操作标识', async () => {
+  const html = await render(ToolCallRenderer, {
+    toolCall: {
+      name: 'command_execute',
+      args: { operation_id: 'op_check_path', command: 'pwd' }
+    },
+    appearance: 'timeline'
+  })
+  assert.ok(html.includes('title="pwd"'))
+  assert.ok(html.includes('>pwd</span>'))
+  assert.doesNotMatch(html, /op_check_path/)
 })

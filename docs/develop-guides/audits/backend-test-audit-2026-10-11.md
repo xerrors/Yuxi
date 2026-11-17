@@ -1,12 +1,12 @@
 # 后端测试资产审计报告（backend/test/）
 
-面向 Yuxi 维护者，回答一个问题：`backend/test/` 下的测试资产里，哪些是开发期遗留的重复与低质量测试、哪些可以合并、按什么类型分类处置。本记录是审计调研，不是执行决定。全部结论来自逐文件精读，且经过了完整的复核轮（第十一节）与两轮启发式发现（第十二节）；关键结论均经人工抽查源码复核。执行任何合并/删除前应按 [测试规范](../testing-guidelines.md) 补齐对应证据。
+面向 Yuxi 维护者，回答一个问题：`backend/test/` 下的测试资产里，哪些是开发期遗留的重复与低质量测试、哪些可以合并、按什么类型分类处置。本记录是审计调研。它不是执行决定。全部结论来自逐文件精读，且经过了完整的复核轮（第十一节）与两轮启发式发现（第十二节）。关键结论均经人工抽查源码复核。执行任何合并/删除前应按 [测试规范](../testing-guidelines.md) 补齐对应证据。
 
 调研日期：2026-10-11（v2 修订同日）。范围：`backend/test/` 全部测试文件——主审快照约 336 个 `test_*.py`，复核时点实测 339 个（审计期间工作树并行演进：staged 新增 `test_agent_feedback` 三件套与 `test_debug_message_projection.py`，四个文件均已补审，见 11.3 快照漂移说明），总量约 8.9 万行、约 2400 个测试函数，外加根目录 `conftest.py`、`live_api_cleanup.py` 与 `support/` 共享模块。
 
 ## 一、总体结论
 
-**先纠正一个预期**：这批测试不是"开发期一次性堆积、大量互相重复"的典型形态。逐文件核查后，真正指向已删除代码或已完成使命的"开发期遗留"只有约 10 处；绝大多数断言字段级精确、负向案例齐全、清理路径完整，unit/integration/e2e 三层在多数主题上是刻意分层而非重复。与 [工程信任系统](../engineering-trust.md) 的证据规则对照，这套资产的整体质量高于常见历史积累。
+**先纠正一个预期**：这批测试不是"开发期一次性堆积、大量互相重复"的典型形态。逐文件核查后，真正指向已删除代码或已完成使命的"开发期遗留"只有约 10 处；绝大多数断言字段级精确、负向案例齐全、清理路径完整，unit/integration/e2e 三层在多数主题上是刻意分层。三层不是重复。与 [工程信任系统](../engineering-trust.md) 的证据规则对照，这套资产的整体质量高于常见历史积累。
 
 **真实的债务在组织形态，不在测试质量**。主要表现为七类：
 
@@ -16,9 +16,9 @@
 4. **命名与归位失焦**：约 15 个文件名与内容脱节（如 `test_file_listing_scaling.py` 全文没有规模断言、`test_parser_facade.py` 并非 facade、两个 `RunMessageRecorder` 测试文件仍用旧模块别名命名），另有 8 个测试散落在 `unit/` 根目录。
 5. **少量死代码与脆弱 oracle**：恒真的 `assert not hasattr(...)`、永不触发的 skip、写死依赖版本号、mock 掉被测函数后断言 fake 自身返回值（`test_mention_router.py`、`test_skill_router.py` 是最差两例）。
 6. **覆盖与接线缺口**（复核轮新增）：CI 对全部环境变量门控测试零引用，BUILTIN_PROVIDERS 目录事实与沙箱 grep 镜像契约处于"默认不跑 + CI 不跑"的双零覆盖；4 个 integration 文件不在 CI 白名单、2 个文件缺 `integration` 筛选标记（`test_provider_reasoning_live.py` 零标记、`test_sandbox_native_grep.py` 仅 asyncio，已实测；另有 5 个文件缺文件级 pytestmark，靠逐测试标记等效覆盖）；e2e 层 9 个文件缺 timeout 标记且同文件混用 `api:` 与 `localhost:` 两种 replay 地址。
-7. **patch 依赖 re-export 别名链**（复核轮新增）：`ModelCache` 单例经 5 条 re-export 别名被 20+ 处 patch，skills 域大量 patch 打在 `__init__` 别名而非定义模块——一次无害的 import 整理会同时打断多个测试文件。
+7. **patch 依赖 re-export 别名链**（复核轮新增）：`ModelCache` 单例经 5 条 re-export 别名被 20+ 处 patch，skills 域大量 patch 打在 `__init__` 别名。这些 patch 不是打在定义模块——一次无害的 import 整理会同时打断多个测试文件。
 
-处置主线是"合并、归位、参数化、收敛 fixture、补齐接线"，而不是大面积删测试；可直接删除的只有第五类中的死代码与个别纯墓碑测试。
+处置主线是"合并、归位、参数化、收敛 fixture、补齐接线"。它不是大面积删测试。可直接删除的只有第五类中的死代码与个别纯墓碑测试。
 
 ## 二、测试债务类型分类
 
@@ -33,7 +33,7 @@
 典型（完整清单见第四节）：
 
 - `integration/api/test_public_knowledge_key_boundary.py::test_knowledge_key_is_limited_to_public_knowledge_api` 与 `test_public_knowledge_tools.py::test_knowledge_key_tool_route_boundary_without_kb`：都是"创建 knowledge key → `list_kbs` 200 → `/api/v1/agents` 403 → 清理"。**全库最强的一处真重复**。复核确认合并时不可丢失两侧独有断言：boundary 侧 5 条管理路径 403 清单与 external 墓碑，tools 侧 `download_kb_file` 404 断言。
-- `integration/services/test_agent_run_lease.py` 与 `test_agent_run_manifest_and_attempts.py`：lease owner fencing 与 `lease_expired` attempt 事实在两文件各断言一次——复核实测重复程度比初稿更重：`match="lease owner"` 共 7 处断言（lease 侧 91/236/323/435/462，manifest 侧 294/306/355），全部收敛到同一生产 guard `yuxi/modules/agents/repositories/runs.py:965-967 _require_lease_owner`。
+- `integration/services/test_agent_run_lease.py` 与 `test_agent_run_manifest_and_attempts.py`：lease owner fencing 与 `lease_expired` attempt 事实在两文件各断言一次——复核实测重复程度比初稿更重。`match="lease owner"` 共 7 处断言（lease 侧 91/236/323/435/462，manifest 侧 294/306/355），全部收敛到同一生产 guard `yuxi/modules/agents/repositories/runs.py:965-967 _require_lease_owner`。
 - `unit/services/test_chat_service_sync.py` 的 3 个 `get_agent_state_view` 测试（实际 def 行 1077/1104/1180）与 `test_checkpoint_state_reader.py` 的 2 个：同被测函数、同 mock 手法，跨文件拆裂。
 
 ### B. 开发期遗留型（死代码、过期守卫、脆弱 oracle）
@@ -64,7 +64,7 @@
 
 判据：单文件 800-2100 行；同一模板的测试反复手写；或一个文件混杂 3-4 个互不相关的被测对象。
 
-处理原则：先提共享 fixture 工厂，再把同模板场景参数化；混杂主题按被测对象拆分。注意"参数化合并"目标是减少样板而非减少断言。
+处理原则：先提共享 fixture 工厂，再把同模板场景参数化；混杂主题按被测对象拆分。注意"参数化合并"目标是减少样板。目标不是减少断言。
 
 典型（数量均经复核 grep 精确验证）：`unit/services/skills/test_skill_service.py`（2103 行/63 测，21 处内联 FakeRepo、17 次 `setattr(svc, "SkillRepository", ...)`、zip 导入族 5 测 + md 变体共 6 测同模板、仅 7 处 parametrize）、`unit/sandbox/test_sandbox_backends.py`（1829 行/77 测，同一 stub 49 处、错误串 5+2 处）、`unit/sandbox/test_sandbox_provisioner_config.py`（1824 行/61 测，`_load_module()` 56 处、`PROVISIONER_BACKEND` setenv 38 处、k8s stub 块 4 份）、`integration/services/test_session_cooperation.py`（1500 行/39 测）、`unit/services/test_chat_service_sync.py`（1313 行、四主题杂烩、save_messages 族 10 测各手写 52-89 行样板）、`unit/graphs/test_milvus_graph_build.py`（1375 行，kb 配置 SimpleNamespace 7 处同模板、ChunkRepo 假类 5 份）。
 
@@ -80,7 +80,7 @@
 
 判据：文件名指向的模块/主题与实际被测对象不符。
 
-处理原则：更名；名称是测试导航的主要索引，失焦的代价是重复建测试和找错文件。
+处理原则：更名。名称是测试导航的主要索引，失焦的代价是重复建测试和找错文件。
 
 典型：`test_model_message_audit_service.py`/`test_tool_message_audit_service.py`（旧模块别名，测的都是 `message_recorder`）、`test_file_listing_scaling.py`（10 测无任何 scaling 断言，grep 零命中，已复核）、`test_knowledge_manager_ownership.py`（ownership/effective_permission 零命中）、`test_parser_facade.py`（解析域杂烩）、`test_run_worker.py`（1749 行/54 测覆盖 4 个被测对象，且 `import ... as run_worker` 把旧模块名硬编码进别名——源码无 run_worker 模块）、`test_chat_service_sync.py`（四主题杂烩）、`test_openai_events_e2e.py`（测默认模式合批与取消，非事件协议）、`test_mcp_stdio_security.py`（e2e 目录唯一无 `_e2e` 后缀，且仅有裸 `pytest.mark.e2e` 标记）、`unit/utils/test_paths.py`（测 `infrastructure/filesystem`，与 `unit/workspace/test_filesystem.py` 撞名）。
 
@@ -100,7 +100,7 @@
 
 判据：unit/integration/e2e 三层覆盖同一能力链。
 
-处理原则：**默认保留**。本库的分层纪律良好（`test/support/sqlite.py` docstring 明示"SQLite 证逻辑、Postgres 证并发与约束"）。只有当两层断言完全同构、且上层增量只是把 mock 换成真实现时，才裁剪较弱一层；其余以文件头注释互相引用即可。
+处理原则：**默认保留**。本库的分层纪律良好（`test/support/sqlite.py` docstring 明示"SQLite 证逻辑、Postgres 证并发与约束"）。只有两层断言完全同构、且上层增量只是把 mock 换成真实现，才裁剪较弱一层；其余以文件头注释互相引用即可。
 
 需要裁剪的少数几处：worker health 租约矩阵（unit 7 参数已锁死判定逻辑，integration 4 状态可裁为抽查）；builtin discovery 的 slug 列表 oracle（两层各断言一次，保留 unit、integration 改断言落库事实）；knowledge 工具"私有库 404"三处同型（`test_knowledge_access_resolution.py`/`test_knowledge_tool_consumers.py`/`test_public_knowledge_tools.py`，已核实三处构造与断言同型，可参数化为边界矩阵）；`test_summary_middleware_real_model.py` 的压缩契约与 unit 版逐条对应，独有价值仅"真实 provider 接受压缩消息"，建议瘦身。
 
@@ -743,7 +743,7 @@ test/
 
 ### 11.3 快照漂移说明
 
-审计期间工作树在并行演进：staged 新增 `backend/test/{e2e/integration/api/integration/services}` 下 3 个 `test_agent_feedback*.py` 与 `backend/yuxi/.../feedback.py` 路由，另有 `test_schema_migration_version.py`、`run_tests.sh`、`system-tests.yml`、`support/openai_replay_server.py` 的未提交修改，且主干落入两个 fix 提交。主审快照约 336 个测试文件，复核时点实测 339（含 staged）。所有行号以复核时点磁盘状态为准；执行清理前应重新校对涉及文件的行号。另有两类已知漂移：staged 未提交修改（如 `support/openai_replay_server.py` 299→351 行）与 ±1 行级漂移（若干文件在审计日凌晨提交，10.x 表中个别行数为快照值）；测试函数计数按 `def` 统计，与 `pytest --collect-only` 收集数可有 ±1 出入。
+审计期间工作树在并行演进：staged 新增 `backend/test/{e2e/integration/api/integration/services}` 下 3 个 `test_agent_feedback*.py` 与 `backend/yuxi/.../feedback.py` 路由，另有 `test_schema_migration_version.py`、`run_tests.sh`、`system-tests.yml`、`support/openai_replay_server.py` 的未提交修改，且主干落入两个 fix 提交。主审快照约 336 个测试文件，复核时点实测 339（含 staged）。所有行号以复核时点磁盘状态为准。执行清理前应重新校对涉及文件的行号。另有两类已知漂移：staged 未提交修改（如 `support/openai_replay_server.py` 299→351 行）与 ±1 行级漂移（若干文件在审计日凌晨提交，10.x 表中个别行数为快照值）。测试函数计数按 `def` 统计，与 `pytest --collect-only` 收集数可有 ±1 出入。
 
 ## 十二、复核轮新发现
 
@@ -787,7 +787,7 @@ test/
 
 ### N5. 常量硬编码（三方平行定义）
 
-- `"siliconflow-cn:Pro/BAAI/bge-m3"`：5 个文件硬编码（含 `integration/conftest.py:272` 公共 fixture 与 4 个 integration/api 测试文件），与源码默认 `options.py:109`、内置目录 `providers/builtin.py:208` 互不引用；`manager.py:515-522` 创建 KB 强校验该 spec 在 model_cache 中——内置目录改名即 30+ 用例连锁失败。测试应 import 源码共享常量。
+- `"siliconflow-cn:Pro/BAAI/bge-m3"`：5 个文件硬编码（含 `integration/conftest.py:272` 公共 fixture 与 4 个 integration/api 测试文件），与源码默认 `options.py:109`、内置目录 `providers/builtin.py:208` 互不引用。`manager.py:515-522` 创建 KB 强校验该 spec 在 model_cache 中——内置目录改名即 30+ 用例连锁失败。测试应 import 源码共享常量。
 - magic UID `"11111111-1111-4111-8111-111111111111"`：28 个测试文件 + 1 个共享 fixture 模块（`unit/agent_context_fixtures.py`）逐字复制，应入 `test/support/`。
 - MinIO 逻辑桶名 `"knowledgebases"` 在 `test_office_pdf_preview.py:47`、`test_file_size_fallback.py:21` 与 `infrastructure/minio/client.py:67-69` 平行；JWT issuer 前缀 `"yuxi-know:"` 在 `test_auth_utils.py` 四处。
 
@@ -807,7 +807,7 @@ test/
 
 ### N8. 长测试函数（AST 实测 23 个 >150 行）
 
-最影响失败归因的：`integration/api/test_chat_router.py:60`（**287 行**，串 6+ 独立契约）、`e2e/test_agent_bound_skill_e2e.py:35`（238）、`e2e/test_session_cooperation_e2e.py:34`（218）、`e2e/test_agent_lifecycle_e2e.py:306`（234，FIFO）、`integration/api/test_agent_config_resource_authorization.py:168`（199）、`integration/services/test_user_skill_projection.py:48`（221）。完整清单见批次记录；处置为共享 fixture 后按契约段拆分。
+最影响失败归因的：`integration/api/test_chat_router.py:60`（**287 行**，串 6+ 独立契约）、`e2e/test_agent_bound_skill_e2e.py:35`（238）、`e2e/test_session_cooperation_e2e.py:34`（218）、`e2e/test_agent_lifecycle_e2e.py:306`（234，FIFO）、`integration/api/test_agent_config_resource_authorization.py:168`（199）、`integration/services/test_user_skill_projection.py:48`（221）。完整清单见批次记录。处置为共享 fixture 后按契约段拆分。
 
 ### N9. 死 helper 补充（5 处，均不在初稿清单）
 
@@ -815,7 +815,7 @@ test/
 
 ### N10. 覆盖不对称风险（"消费侧 stub 即契约"）
 
-`unit/sandbox/test_sandbox_download.py`（10 测）是 `download_sandbox_directory` 防护逻辑（越界/1000 文件/64 层/100MB/部分失败清理）的**唯一覆盖层**：消费方 `skills/remote.py:210`、`personal.py:282` 在 unit 层被整体 mock，且 FakeBackend 自造的 `ls` 条目形状 `{"path","is_dir","size"}` 与真实构造 `backend.py:611` 的 `FileInfo = {"path", "is_dir"}` **无任何层交叉验证**。建议给 backend `ls` 条目形状补一条真实/准真实断言。同类：audits 投影散落三个文件（见第五节 #31）。
+`unit/sandbox/test_sandbox_download.py`（10 测）是 `download_sandbox_directory` 防护逻辑（越界/1000 文件/64 层/100MB/部分失败清理）的**唯一覆盖层**。消费方 `skills/remote.py:210`、`personal.py:282` 在 unit 层被整体 mock，且 FakeBackend 自造的 `ls` 条目形状 `{"path","is_dir","size"}` 与真实构造 `backend.py:611` 的 `FileInfo = {"path", "is_dir"}` **无任何层交叉验证**。建议给 backend `ls` 条目形状补一条真实/准真实断言。同类：audits 投影散落三个文件（见第五节 #31）。
 
 ### N11. 参数化遗漏补充（第六节清单之外）
 
@@ -834,5 +834,5 @@ test/
 - 主审：13 个独立批次逐文件精读，要求测试函数名/断言/import 级证据，过期引用在 `backend/yuxi/` 下 grep 验证。
 - 复核轮：5 个独立子智能体逐条复核 91 项主张（62 确认 / 29 细节修正 / 0 推翻，其中 1 项方向性改判），修正台账见 11.2。
 - 发现轮：结构面（重复 helper、import 期副作用、跨测试 import 网、中文测试名、文案复制族、硬编码、marker 一致性、弱断言、参数化遗漏）与语义面（路径字面量对路由表全量比对、monkeypatch 目标静态解析、门控清单与 CI 接线核查、长测试函数 AST 统计、命名映射抽查）两轮启发式，误报项（conftest 死 fixture、`assert True`、conftest print、日期硬编码）已核为误报并排除。
-- 补审：3 个子目录（integration/graphs/identity/sandbox）4 个漏审文件 + 审计期间 staged 的 4 个新文件，共 8 个文件补齐精读；终审校对另发现 4 个文件未入索引（`e2e/test_input_projection_recovery_e2e.py`、`unit/services/test_seed_initial_users.py` 为主审期间并行提交，`unit/routers/test_knowledge_workspace_import.py`、`unit/routers/test_mcp_router.py` 为主审已读但索引遗漏），前两者补读后连同后两者均已补入第十节。
+- 补审：3 个子目录（integration/graphs/identity/sandbox）4 个漏审文件 + 审计期间 staged 的 4 个新文件，共 8 个文件补齐精读。终审校对另发现 4 个文件未入索引（`e2e/test_input_projection_recovery_e2e.py`、`unit/services/test_seed_initial_users.py` 为主审期间并行提交，`unit/routers/test_knowledge_workspace_import.py`、`unit/routers/test_mcp_router.py` 为主审已读但索引遗漏），前两者补读后连同后两者均已补入第十节。
 - 未执行任何测试运行；行号以复核时点磁盘状态为准（快照漂移见 11.3）。执行清理前按改动面选择最低证据（见根 [AGENTS.md](https://github.com/xerrors/Yuxi/blob/main/AGENTS.md) 证据规则表）：纯移动与合并补相关 unit + 受影响 integration；涉及 fixture 上提的批次补真实 HTTP integration。

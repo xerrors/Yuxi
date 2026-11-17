@@ -1,4 +1,12 @@
-"""AgentRun 执行与终态编排。"""
+"""AgentRun 执行与终态编排。
+
+阅读入口：inputs 保存 Input/Receipt；scheduler 与 run_creation 消费输入并创建
+Turn/Run，事务提交后 transport 投递。worker 进入本模块后先通过 leases 取得执行权，
+再由 preparation 记录运行清单、execution 执行图，run_lifecycle 收敛终态。
+leases 负责续租及失联恢复；各用例继续拥有自己的事务，本模块不接收或重排输入。
+接收与恢复约束见 docs/mechanisms/agent-request-queue.md，
+运行装配与事实归属见 docs/mechanisms/agent-runtime.md。
+"""
 
 from __future__ import annotations
 

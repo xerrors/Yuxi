@@ -1,6 +1,6 @@
 # 认识 Yuxi
 
-Yuxi（语析）是一个可私有部署的知识智能体平台。它把知识库检索、知识图谱、智能体编排、工具调用和文件产物放在同一个工作区里，适合需要自己管理数据、模型和团队权限的组织。
+Yuxi（语析）是一个可私有部署的知识智能体平台。它把知识库检索、知识图谱和智能体编排放在同一个工作区里，工具调用和文件产物也在其中，适合需要自己管理数据、模型和团队权限的组织。
 
 ## Yuxi 适合什么场景
 
@@ -25,11 +25,11 @@ Yuxi 适合下面几类工作：
 
 Yuxi 使用 LangGraph 组织智能体运行。用户可以创建私有智能体，在授权范围内选择模型、工具、MCP 和 Skills；管理员还可发布共享定义。请求由独立 worker 执行，事件通过服务端事件流（SSE）发送到前端，结果和运行状态保存到 PostgreSQL。
 
-工具可以读取和修改 Workdir 中的文件、执行沙盒命令、搜索网页、请求用户审批或创建协作会话。协作成员使用独立上下文、共享项目文件，用户可进入成员会话回答问题、审批或调整方向，见[会话协作](../agents/session-cooperation.md)。完成的文件可以在界面中预览和下载。
+工具可以读取和修改 Workdir 中的文件，执行沙盒命令，搜索网页，请求用户审批或创建协作会话。协作成员使用独立上下文、共享项目文件，用户可进入成员会话回答问题、审批或调整方向，见[会话协作](../agents/session-cooperation.md)。完成的文件可以在界面中预览和下载。
 
 ### 知识库与 RAG
 
-Milvus 知识库支持文档上传、解析、分块和索引，提供向量、BM25 与混合检索；用户可从命中片段和回答引用继续核对来源正文。外部知识源通过只读连接器查询，支持的操作由连接器决定，不在 Yuxi 中上传或同步源文档。
+Milvus 知识库支持文档上传、解析、分块和索引，提供向量、BM25 与混合检索。用户可从命中片段和回答引用继续核对来源正文。外部知识源通过只读连接器查询，支持的操作由连接器决定，不在 Yuxi 中上传或同步源文档。
 
 外部应用通过[知识库 API](../advanced/knowledge-base-api.md)或[知识库 MCP](../advanced/knowledge-mcp.md)查询和阅读授权范围内的资料。
 
@@ -63,7 +63,7 @@ PostgreSQL 保存状态，前端通过 SSE 获取过程
 
 ## 部署与沙盒
 
-开发环境和单机部署使用 Docker Compose，默认启动知识库、图谱和评估所需的完整拓扑。应用默认通过 Container runner 为每个 Run 提供临时执行容器；需要持久用户 VM 和强隔离时显式选择 Cube，执行节点要求 Linux/KVM。部署边界见[生产部署](../advanced/deployment.md)与[Container 沙盒](../advanced/container-sandbox.md)。
+开发环境和单机部署使用 Docker Compose，默认启动知识库、图谱和评估所需的完整拓扑。应用默认通过 Container runner 为每个 Run 提供临时执行容器。需要持久用户 VM 和强隔离时显式选择 Cube，执行节点要求 Linux/KVM。部署边界见[生产部署](../advanced/deployment.md)与[Container 沙盒](../advanced/container-sandbox.md)。
 
 开发环境和默认服务拓扑以仓库根目录的 [ARCHITECTURE.md](https://github.com/xerrors/Yuxi/blob/main/ARCHITECTURE.md) 与 [docker-compose.yml](https://github.com/xerrors/Yuxi/blob/main/docker-compose.yml) 为准。
 

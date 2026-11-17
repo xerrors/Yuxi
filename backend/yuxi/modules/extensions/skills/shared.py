@@ -9,57 +9,14 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.infrastructure.runtime_settings import get_skill_data_dir
-from yuxi.modules.extensions.mcp.service import get_enabled_mcp_server_slugs
 from yuxi.modules.extensions.skills.access import (
-    can_skill_depend_on as can_skill_depend_on,
-)
-from yuxi.modules.extensions.skills.access import (
-    get_allowed_skill_access_levels as get_allowed_skill_access_levels,
-)
-from yuxi.modules.extensions.skills.access import (
-    get_manageable_skill_or_raise as get_manageable_skill_or_raise,
-)
-from yuxi.modules.extensions.skills.access import (
-    get_management_readable_skill_or_raise as get_management_readable_skill_or_raise,
-)
-from yuxi.modules.extensions.skills.access import (
-    get_skill_or_raise as get_skill_or_raise,
-)
-from yuxi.modules.extensions.skills.access import (
-    get_skills_root_dir as get_skills_root_dir,
-)
-from yuxi.modules.extensions.skills.access import (
-    is_builtin_skill as is_builtin_skill,
-)
-from yuxi.modules.extensions.skills.access import (
-    lock_accessible_shared_skill_for_file as lock_accessible_shared_skill_for_file,
-)
-from yuxi.modules.extensions.skills.access import (
-    lock_accessible_shared_skills_for_runtime as lock_accessible_shared_skills_for_runtime,
-)
-from yuxi.modules.extensions.skills.access import (
-    normalize_skill_share_config as normalize_skill_share_config,
-)
-from yuxi.modules.extensions.skills.access import (
-    reject_bound_skill_policy_change as reject_bound_skill_policy_change,
-)
-from yuxi.modules.extensions.skills.access import (
-    resolved_shared_skill as resolved_shared_skill,
-)
-from yuxi.modules.extensions.skills.access import (
-    user_can_access_skill as user_can_access_skill,
-)
-from yuxi.modules.extensions.skills.access import (
-    user_can_manage_skill as user_can_manage_skill,
-)
-from yuxi.modules.extensions.skills.access import (
-    validate_skill_dependencies as validate_skill_dependencies,
-)
-from yuxi.modules.extensions.skills.builtin.sync import (
-    init_builtin_skills as init_builtin_skills,
-)
-from yuxi.modules.extensions.skills.builtin.sync import (
-    list_builtin_skill_specs as list_builtin_skill_specs,
+    get_allowed_skill_access_levels,
+    get_manageable_skill_or_raise,
+    get_skills_root_dir,
+    is_builtin_skill,
+    normalize_skill_share_config,
+    reject_bound_skill_policy_change,
+    user_can_manage_skill,
 )
 from yuxi.modules.extensions.skills.content import commit_skill_content
 from yuxi.modules.extensions.skills.install_draft import consume_installed_draft_items, load_and_select_draft_items
@@ -72,24 +29,6 @@ from yuxi.modules.extensions.skills.repository import SkillRepository
 from yuxi.modules.identity.models import User
 from yuxi.modules.identity.permissions.resource_permission import ADMIN_ROLES
 from yuxi.modules.identity.repositories.resource_grants import validate_shared_grants
-
-
-async def get_skill_dependency_options(db: AsyncSession, user: User, slug: str | None = None) -> dict[str, list[str] | list[dict]]:
-    """返回当前 Skill 可选择的依赖项。"""
-    from yuxi.modules.extensions.tools.catalog import get_tool_metadata
-
-    skill_items, tool_list, mcp_names = await asyncio.gather(
-        SkillRepository(db).list_enabled_readable(user),
-        asyncio.to_thread(get_tool_metadata),
-        get_enabled_mcp_server_slugs(db=db),
-    )
-    skill_slugs = [item.slug for item in skill_items if isinstance(item.slug, str) and item.slug != slug]
-
-    return {
-        "tools": [{"slug": tool["slug"], "name": tool.get("name", tool["slug"])} for tool in tool_list],
-        "mcps": mcp_names,
-        "skills": skill_slugs,
-    }
 
 
 async def confirm_skill_install_draft(

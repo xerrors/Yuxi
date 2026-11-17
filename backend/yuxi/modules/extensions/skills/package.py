@@ -63,26 +63,19 @@ def parse_skill_dir_metadata(source_skill_dir: Path) -> dict[str, Any]:
 
     content = skill_md_path.read_text(encoding="utf-8")
     parsed_slug, parsed_name, parsed_desc, meta = parse_skill_markdown(content)
-    for key in ("tool_dependencies", "mcp_dependencies", "skill_dependencies"):
-        value = meta.get(key, [])
-        if not isinstance(value, list) or any(not isinstance(entry, str) for entry in value):
-            raise ValueError(f"{key} 必须是字符串列表")
-        if normalize_string_list(value) != value:
-            raise ValueError(f"{key} 含重复或空值")
     return {
         "slug": parsed_slug,
         "name": parsed_name,
         "description": parsed_desc,
-        "tool_dependencies": normalize_string_list(meta.get("tool_dependencies")),
-        "mcp_dependencies": normalize_string_list(meta.get("mcp_dependencies")),
-        "skill_dependencies": normalize_string_list(meta.get("skill_dependencies")),
     }
 
 
 def parse_skill_markdown(content: str) -> tuple[str, str, str, dict[str, Any]]:
     """解析并校验 Skill 根文件的前置元数据。"""
     frontmatter_raw, _body = split_skill_frontmatter(content)
-    data = _load_skill_frontmatter(frontmatter_raw)
+    data = load_skill_frontmatter(frontmatter_raw)
+    if any(key in data for key in ("tool_dependencies", "mcp_dependencies", "skill_dependencies")):
+        raise ValueError("普通 Skill 不再支持运行依赖，请将能力声明迁移到部署插件")
 
     name = _validate_skill_display_name(str(data.get("name", "")))
     raw_slug = str(data.get("slug", "")).strip()
@@ -151,7 +144,7 @@ def copy_skill_tree_no_symlinks(source_dir: Path, target_dir: Path) -> None:
 def rewrite_frontmatter_slug(content: str, new_slug: str) -> str:
     """在安装快照中写入最终 Skill slug。"""
     frontmatter_raw, body = split_skill_frontmatter(content)
-    data = _load_skill_frontmatter(frontmatter_raw)
+    data = load_skill_frontmatter(frontmatter_raw)
     had_explicit_slug = bool(str(data.get("slug", "")).strip())
     name = str(data.get("name", "")).strip()
     data["slug"] = new_slug
@@ -224,7 +217,7 @@ def skill_tree_contains_symlink(path: Path) -> bool:
     return any(child.is_symlink() for child in path.rglob("*"))
 
 
-def _load_skill_frontmatter(raw: str) -> dict[str, Any]:
+def load_skill_frontmatter(raw: str) -> dict[str, Any]:
     """兼容未引用且含冒号的多行 description。"""
     try:
         data = yaml.safe_load(raw)

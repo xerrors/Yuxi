@@ -1,0 +1,13 @@
+{
+  "plugin_id": "mcp-availability-fixture",
+  "name": "MCP availability fixture",
+  "description": "仅用于独立实验部署的连接器授权验收",
+  "entry_skill": "mcp-availability-guide",
+  "skills": [
+    "mcp-availability-guide",
+    "mcp-availability-reference"
+  ],
+  "mcps": [
+    "mcp-availability-fixture-server"
+  ]
+}

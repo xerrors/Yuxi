@@ -1,7 +1,7 @@
 <script setup>
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import {
   ArrowLeft,
   ArrowRight,
@@ -57,6 +57,8 @@ const saving = ref(false)
 const boundSkillSaving = ref(false)
 const createSkillFile = ref(null)
 const createContext = ref({})
+const initialCreateDraft = ref('')
+const discardConfirmOpen = ref(false)
 const createConfigItems = ref({})
 const createConfigLoading = ref(false)
 const createConfigError = ref('')
@@ -80,6 +82,7 @@ let modalOpenRevision = 0
 const agentShareConfigFormRef = ref(null)
 const shareConfigNeedsRepair = ref(false)
 const agentNameInputRef = ref(null)
+const agentModalContentRef = ref(null)
 const agentShareConfig = ref({
   version: 2,
   read_scope: { access_level: 'user', department_ids: [], user_uids: [] },
@@ -281,6 +284,14 @@ const handleAgentModalAfterOpenChange = (open) => {
   if (open && !editingAgentId.value) focusAgentNameInput()
 }
 
+/** 只比较用户可编辑的创建内容，加载 Schema 不构成草稿变更。 */
+const snapshotCreateDraft = () => JSON.stringify({
+  form: agentForm,
+  share: agentShareConfig.value,
+  context: createContext.value,
+  skill: createSkillFile.value ? [createSkillFile.value.name, createSkillFile.value.size] : null
+})
+
 const openCreate = () => {
   if (openingBlocked.value) return
   modalOpenRevision += 1
@@ -298,6 +309,7 @@ const openCreate = () => {
   createConfigRevision += 1
   createOutcomeUnknown.value = false
   agentStore.resetAgentConfig()
+  initialCreateDraft.value = snapshotCreateDraft()
   showAgentModal.value = true
   focusAgentNameInput()
 }
@@ -463,8 +475,23 @@ const selectAgentModalTab = (tab) => {
   agentModalActiveTab.value = tab
 }
 
+/** 关闭新建前确认放弃输入，编辑和提交中的限制沿用原流程。 */
 const closeAgentModal = async () => {
-  if (saving.value || boundSkillSaving.value || agentIconUploading.value || resourceCreationOpen.value) return
+  if (saving.value || boundSkillSaving.value || agentIconUploading.value || resourceCreationOpen.value || discardConfirmOpen.value) return
+  if (!editingAgentId.value && snapshotCreateDraft() !== initialCreateDraft.value) {
+    discardConfirmOpen.value = true
+    const discard = await new Promise((resolve) => Modal.confirm({
+      title: '放弃创建智能体？',
+      content: '已填写的内容尚未保存。',
+      okText: '放弃创建',
+      cancelText: '继续编辑',
+      afterClose: () => { if (showAgentModal.value) agentModalContentRef.value?.focus() },
+      onOk: () => resolve(true),
+      onCancel: () => resolve(false)
+    }))
+    discardConfirmOpen.value = false
+    if (!discard) return
+  }
   modalOpenRevision += 1
   showAgentModal.value = false
   createConfigRevision += 1
@@ -647,6 +674,8 @@ defineExpose({
       </div>
     </template>
     <div
+      ref="agentModalContentRef"
+      tabindex="-1"
       class="agent-modal-content"
       :class="{
         'without-sidebar': !showAgentModalSidebar,

@@ -22,7 +22,7 @@ async function renderSettings(component, api) {
           if (id === '../model/sandboxTiming')
             return new URL('../../src/modules/settings/model/sandboxTiming.js', import.meta.url)
               .pathname
-          if (id.endsWith('/McpEnvEditor.vue')) return '\0virtual:env-editor'
+          if (id.endsWith('/AgentEnvEditor.vue')) return '\0virtual:env-editor'
           if (id.endsWith('UserSandboxSettingsCard.vue')) return '\0virtual:sandbox-child'
           if (
             [
@@ -46,7 +46,7 @@ async function renderSettings(component, api) {
           if (id === '\0@/apis/agent_env_api' || id.endsWith('/src/apis/agent_env_api.js'))
             return 'export const agentEnvApi = globalThis.__sandboxSettingsTest'
           if (id === '\0virtual:env-editor')
-            return `import { h } from 'vue'; export default { setup: (_, { attrs }) => () => h('env-editor', attrs) }`
+            return `import { h } from 'vue'; export default { setup: (_, { attrs, slots }) => () => h('env-editor', attrs, slots.actions?.()) }`
           if (id === '\0virtual:sandbox-child')
             return 'export default { setup: (_, { expose }) => { expose({ refresh: async () => {} }); return () => null } }'
           if (id === '\0virtual:action-dropdown')
@@ -102,12 +102,16 @@ async function renderSettings(component, api) {
   try {
     const { default: Settings } = await server.ssrLoadModule('virtual:sandbox-settings')
     app = renderer.createApp(Settings)
-    for (const name of ['a-button', 'a-tag', 'a-alert', 'a-spin', 'RouterLink']) {
+    for (const name of ['a-button', 'a-tag', 'a-alert', 'a-spin', 'a-tooltip', 'RouterLink']) {
       app.component(name, {
         setup:
           (_, { attrs, slots }) =>
           () =>
-            h(name === 'RouterLink' ? 'a' : 'button', attrs, slots.default?.())
+            h(
+              name === 'RouterLink' ? 'a' : name === 'a-tooltip' ? 'span' : 'button',
+              attrs,
+              slots.default?.()
+            )
       })
     }
     const host = node('root')
@@ -229,11 +233,8 @@ test('环境变量验证显示匹配结果，编辑或其他页面更新后不�
     await view.settle()
     assert.equal(editor().props['key-verification'].size, 0)
     assert.equal(button('验证配置').props.disabled, true)
-    assert.equal(
-      view.find((node) => node.text?.includes('验证时间')),
-      undefined
-    )
-    await button('保存配置').props.onClick()
+    assert.equal(editor().props['key-verification'].size, 0)
+    await button('保存更改').props.onClick()
     await view.settle()
     let complete
     verify = () =>
@@ -249,12 +250,9 @@ test('环境变量验证显示匹配结果，编辑或其他页面更新后不�
     })
     await pending
     await view.settle()
-    assert.equal(
-      view.find((node) => node.text?.includes('验证时间')),
-      undefined
-    )
+    assert.equal(editor().props['key-verification'].size, 0)
     assert.equal(button('验证配置').props.disabled, true)
-    await button('保存配置').props.onClick()
+    await button('保存更改').props.onClick()
     verify = async () => ({ updated_at: 'other-page-version', variables: [] })
     await button('验证配置').props.onClick()
     await view.settle()
@@ -275,7 +273,9 @@ test('环境变量验证显示匹配结果，编辑或其他页面更新后不�
         finishRefresh = resolve
       })
     const verifying = button('验证配置').props.onClick()
-    const refreshing = view.find((node) => node.props.title === '刷新').props.onClick()
+    const refreshing = view
+      .find((node) => node.props['aria-label'] === '刷新环境变量')
+      .props.onClick()
     finishVerify({
       updated_at: 'version-2',
       verified_at: '2026-10-14T14:00:00Z',
@@ -285,10 +285,7 @@ test('环境变量验证显示匹配结果，编辑或其他页面更新后不�
     finishRefresh({ env: { LAB_ENV: 'another-page-value' }, updated_at: 'version-3' })
     await refreshing
     await view.settle()
-    assert.equal(
-      view.find((node) => node.text?.includes('验证时间')),
-      undefined
-    )
+    assert.equal(editor().props['key-verification'].size, 0)
     assert.equal(editor().props.modelValue.LAB_ENV, 'another-page-value')
   } finally {
     await view.close()
@@ -354,11 +351,29 @@ test('container 模式显示任务级临时环境并隐藏重建和磁盘操作'
   }
   const view = await renderSettings('UserSandboxSettingsCard', { get: async () => current })
   try {
-    assert.ok(view.find((node) => node.text?.includes('每个任务独立临时环境')))
-    assert.equal(view.find((node) => node.props.role === 'menuitem'), undefined)
-    assert.equal(view.find((node) => node.props['aria-label'] === '环境操作'), undefined)
-    assert.equal(view.find((node) => node.props['aria-label']?.includes('磁盘用量')), undefined)
-    assert.equal(view.find((node) => node.props.class === 'sandbox-timing'), undefined)
+    assert.ok(
+      view.find(
+        (node) =>
+          node.text?.trim() === '任务独立' &&
+          node.props.title === '每个任务独立临时环境，任务结束后销毁'
+      )
+    )
+    assert.equal(
+      view.find((node) => node.props.role === 'menuitem'),
+      undefined
+    )
+    assert.equal(
+      view.find((node) => node.props['aria-label'] === '环境操作'),
+      undefined
+    )
+    assert.equal(
+      view.find((node) => node.props['aria-label']?.includes('磁盘用量')),
+      undefined
+    )
+    assert.equal(
+      view.find((node) => node.props.class === 'sandbox-timing'),
+      undefined
+    )
     assert.ok(view.find((node) => node.text?.trim() === '未创建'))
   } finally {
     await view.close()
@@ -456,35 +471,70 @@ test('磁盘只在手动查询时读取，保留零值并清除失败或新代�
   const button = () =>
     view.find(
       (node) =>
-        node.type === 'button' && /^(查看|刷新)磁盘用量$/.test(node.props['aria-label'] || '')
+        node.type === 'button' &&
+        /^(查看|刷新|唤醒并查询|唤醒并刷新)磁盘用量$/.test(node.props['aria-label'] || '')
     )
   const refresh = async () => {
     await view.find((node) => node.props['aria-label'] === '刷新环境状态').props.onClick()
     await view.settle()
   }
+  /** 新环境清除旧缓存后，才重新提供查询入口。 */
+  const queryNewEnvironment = async () => {
+    current = { ...current, generation: current.generation + 1 }
+    await refresh()
+    await button().props.onClick()
+    await view.settle()
+  }
   try {
     assert.equal(reads, 0)
-    assert.ok(view.find((node) => node.text === '查询时会恢复环境'))
+    assert.equal(
+      view.find((node) => node.props.role === 'meter'),
+      undefined
+    )
+    assert.ok(view.find((node) => node.props['aria-label'] === '唤醒并查询磁盘用量'))
     await refresh()
     assert.equal(reads, 0)
     await button().props.onClick()
     await view.settle()
     assert.ok(view.find((node) => node.text?.includes('已用 0 B · 可用 2 GB')))
+    assert.equal(view.find((node) => node.props.role === 'meter').props['aria-valuenow'], 0)
+    read = async () => ({ used_bytes: 1073741824, available_bytes: 3221225472 })
+    await queryNewEnvironment()
+    assert.equal(view.find((node) => node.props.role === 'meter').props['aria-valuenow'], 25)
+    assert.equal(button(), undefined, '查询成功后不显示额外刷新入口')
+    const fill = view.find((node) => node.props.class === 'sandbox-disk-fill')
+    assert.equal(fill.props.style.width, '25%')
+    read = async () => ({ used_bytes: 1073741824, available_bytes: 0 })
+    await queryNewEnvironment()
+    assert.equal(view.find((node) => node.props.role === 'meter').props['aria-valuenow'], 100)
+    read = async () => ({ used_bytes: 0, available_bytes: 0 })
+    await queryNewEnvironment()
+    assert.equal(
+      view.find((node) => node.props.role === 'meter'),
+      undefined
+    )
+
     read = async () => {
       throw new Error('磁盘用量读取失败')
     }
-    await button().props.onClick()
-    await view.settle()
+    await queryNewEnvironment()
     assert.ok(view.find((node) => node.props.role === 'alert' && node.text === '磁盘用量读取失败'))
+    assert.equal(
+      view.find((node) => node.props.role === 'meter'),
+      undefined
+    )
     assert.equal(
       view.find((node) => node.text?.includes('已用 0 B')),
       undefined
     )
     read = async () => ({ used_bytes: 1073741824, available_bytes: 2147483648 })
-    await button().props.onClick()
-    await view.settle()
-    current = { ...current, generation: 2 }
+    await queryNewEnvironment()
+    current = { ...current, generation: current.generation + 1 }
     await refresh()
+    assert.equal(
+      view.find((node) => node.props.role === 'meter'),
+      undefined
+    )
     assert.equal(
       view.find((node) => node.text?.includes('已用 1 GB')),
       undefined
@@ -495,7 +545,7 @@ test('磁盘只在手动查询时读取，保留零值并清除失败或新代�
         finish = resolve
       })
     const pending = button().props.onClick()
-    current = { ...current, generation: 3 }
+    current = { ...current, generation: current.generation + 1 }
     await refresh()
     finish({ used_bytes: 1073741824, available_bytes: 2147483648 })
     await pending
@@ -521,7 +571,8 @@ test('状态断线作废磁盘结果，恢复到新代次后不接收旧请求',
   const button = () =>
     view.find(
       (node) =>
-        node.type === 'button' && /^(查看|刷新)磁盘用量$/.test(node.props['aria-label'] || '')
+        node.type === 'button' &&
+        /^(查看|刷新|唤醒并查询|唤醒并刷新)磁盘用量$/.test(node.props['aria-label'] || '')
     )
   const refresh = async () => {
     await view.find((node) => node.props['aria-label'] === '刷新环境状态').props.onClick()

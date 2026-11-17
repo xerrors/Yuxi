@@ -213,7 +213,7 @@ async def test_sessions_use_public_state_and_shared_sandbox(e2e_client, e2e_head
         if select_agent:
             assert "COOP_TARGET_CONFIG" in snapshot["system_prompt"]
             assert "COOP_PARENT_CONFIG" not in snapshot["system_prompt"]
-            assert snapshot["tools"] == ["ask_user_question"]
+            assert snapshot["tools"] == ["present_artifacts", "ask_user_question"]
         else:
             assert "COOP_PARENT_CONFIG" in snapshot["system_prompt"]
         state = await e2e_client.get(f"/api/v1/agents/sessions/{thread_id}/state", headers=e2e_headers)

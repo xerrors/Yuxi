@@ -72,6 +72,7 @@ test('连接器 mention 来自本人可用目录，Skills 仍按智能体选择�
         mcpServers: ref([
           { slug: 'mcp-a', name: '连接器 A', available: true },
           { slug: 'mcp-b', name: '连接器 B', available: true },
+          { slug: 'abridge', name: 'aBridge 设备', available: true },
           { slug: 'disabled', available: false },
           { slug: 'other-user', available: false },
           { slug: 'revoked', available: false },
@@ -146,6 +147,74 @@ test('智能体 mention 只包含可运行目录并响应目录更新', async ()
     assert.deepEqual(mentionConfig.value.agents, [agents.value[0]])
     agents.value = []
     assert.deepEqual(mentionConfig.value.agents, [])
+  } finally {
+    await server.close()
+  }
+})
+
+test('插件 mention 只包含已启用且当前可见的插件，并响应配置变化', async () => {
+  const server = await createTestServer({
+    server: { middlewareMode: true, hmr: false },
+    appType: 'custom'
+  })
+  try {
+    const { useAgentMentionConfig } = await server.ssrLoadModule(
+      '/src/modules/session/model/useAgentMentionConfig.js'
+    )
+    const configurableItems = ref({
+      plugins: { kind: 'plugins', default: [], options: [
+        { key: 'abridge', name: '设备操作', description: '操作已连接设备' },
+        { key: 'custom-image', name: '自定义图像' }
+      ] }
+    })
+    const agentConfig = ref({ plugins: ['abridge', 'hidden', 'unknown', 'abridge'] })
+    const { mentionConfig } = useAgentMentionConfig({
+      currentThreadAttachments: ref([]), configurableItems, agentConfig
+    })
+    assert.deepEqual(mentionConfig.value.plugins, [
+      { id: 'abridge', name: '设备操作', description: '操作已连接设备' }
+    ])
+    agentConfig.value = { plugins: [] }
+    assert.deepEqual(mentionConfig.value.plugins, [])
+    agentConfig.value = {}
+    assert.deepEqual(mentionConfig.value.plugins, [])
+    agentConfig.value = { plugins: ['custom-image'] }
+    assert.deepEqual(mentionConfig.value.plugins, [
+      { id: 'custom-image', name: '自定义图像', description: '' }
+    ])
+    configurableItems.value.plugins.options = []
+    assert.deepEqual(mentionConfig.value.plugins, [])
+  } finally {
+    await server.close()
+  }
+})
+
+test('已有会话插件目录遵循快照，空目录不回退当前 Agent，新会话才沿用 Agent', async () => {
+  const server = await createTestServer({
+    server: { middlewareMode: true, hmr: false }, appType: 'custom'
+  })
+  try {
+    const { useAgentMentionConfig } = await server.ssrLoadModule(
+      '/src/modules/session/model/useAgentMentionConfig.js'
+    )
+    const sessionPlugins = ref([{ id: 'abridge', name: '设备操作', description: '' }])
+    const { mentionConfig } = useAgentMentionConfig({
+      currentThreadAttachments: ref([]),
+      configurableItems: ref({ plugins: { default: [], options: [
+        { key: 'custom-image', name: '自定义图像' }
+      ] } }),
+      agentConfig: ref({ plugins: ['custom-image'] }),
+      sessionPlugins
+    })
+    assert.deepEqual(mentionConfig.value.plugins, [
+      { id: 'abridge', name: '设备操作', description: '' }
+    ])
+    sessionPlugins.value = []
+    assert.deepEqual(mentionConfig.value.plugins, [])
+    sessionPlugins.value = null
+    assert.deepEqual(mentionConfig.value.plugins, [
+      { id: 'custom-image', name: '自定义图像', description: '' }
+    ])
   } finally {
     await server.close()
   }

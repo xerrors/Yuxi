@@ -39,7 +39,7 @@ const EXTENSION_ICON_RULES = [
   { keywords: ['test'], icon: FlaskConical }
 ]
 
-/** Skill 和 MCP 共用名称或 slug 的关键词图标映射。 */
+/** Skill、MCP 和插件共用名称或稳定标识的关键词图标映射。 */
 export const getSkillIcon = (slug, defaultIcon = WandSparkles) => {
   const normalizedSlug = String(slug || '').toLowerCase()
   return (

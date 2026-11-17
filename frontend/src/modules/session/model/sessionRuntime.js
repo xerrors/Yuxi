@@ -1,6 +1,7 @@
-import { reactive, ref, computed, onScopeDispose } from 'vue'
+import { reactive, ref, computed, watch, onScopeDispose } from 'vue'
 import { defineStore } from 'pinia'
 import { agentApi } from '@/apis'
+import { useUserStore } from '@/modules/identity'
 import { handleChatError } from '@/shared/lib/errorHandler'
 import { useChatThreadsStore } from './chatThreads'
 import { useAgentThreadState } from './useAgentThreadState'
@@ -14,6 +15,7 @@ import { useSessionFeedbackStore } from './sessionFeedback'
 
 /** 每个 Thread 共享运行数据和订阅，视图仅注册展示回调。 */
 export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
+  const user = useUserStore()
   const chatThreads = useChatThreadsStore()
   const feedback = useSessionFeedbackStore()
   const chatState = reactive({ threadStates: {} })
@@ -250,6 +252,32 @@ export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
     return once(key, () => stream.resumeActiveRunForThread(threadId, { refreshHistory: fresh }))
   }
 
+  /** 阅读者只指定 Thread；首读、持久运行恢复和队列观察共享一次装载。 */
+  const loadThread = (threadId, { fresh = false } = {}) => {
+    if (!threadId || !observers.has(threadId)) return Promise.resolve(false)
+    const state = getThreadState(threadId)
+    if (state.readingReady && !fresh) return Promise.resolve(true)
+    return once(`reading:${threadId}`, async () => {
+      state.readingLoading = true
+      state.readingError = null
+      try {
+        if (!state.historyLoaded) await fetchThreadMessages({ threadId })
+        if (!isCurrentThreadState(threadId, state)) return false
+        await resumeActiveRunForThread(threadId, { fresh: fresh && state.readingReady })
+        if (!isCurrentThreadState(threadId, state)) return false
+        await resumeQueuedInputs(threadId)
+        if (!isCurrentThreadState(threadId, state)) return false
+        state.readingReady = true
+        return true
+      } catch (error) {
+        if (isCurrentThreadState(threadId, state)) state.readingError = error
+        throw error
+      } finally {
+        if (isCurrentThreadState(threadId, state)) state.readingLoading = false
+      }
+    })
+  }
+
   /** 摘要只触发已打开成员回读详情，不覆盖共享运行事实。 */
   const reconcileCooperationSessions = async (sessions) => {
     await Promise.all(sessions.map(async (session) => {
@@ -276,7 +304,7 @@ export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
     }))
   }
 
-  /** 最后一个视图释放时才终止观察；隐藏视图仍保有运行状态。 */
+  /** 最后一个消费者释放时终止观察；读取视图和在途提交共享同一状态。 */
   const observeThread = (threadId, observer) => {
     if (!threadId) return () => {}
     if (!observers.has(threadId)) observers.set(threadId, new Set())
@@ -296,12 +324,18 @@ export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
       }
     }
   }
-  onScopeDispose(() => {
+  /** 身份切换使旧状态对象失效，迟到的历史、恢复和事件不能写入新身份。 */
+  const clearRuntime = () => {
     for (const id of Object.keys(chatState.threadStates)) cleanupThreadState(id)
+    threadRuns.value = {}
+    for (const id of Object.keys(historyPages)) delete historyPages[id]
+    for (const id of Object.keys(pendingSends)) delete pendingSends[id]
     observers.clear()
     cooperationSnapshots.clear()
     requests.clear()
-  })
+  }
+  watch(() => user.token, clearRuntime, { flush: 'sync' })
+  onScopeDispose(clearRuntime)
   return {
     threadMessages,
     threadRuns,
@@ -312,6 +346,7 @@ export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
     resetThreadExecution,
     fetchThreadMessages,
     fetchAgentState,
+    loadThread,
     observeThread,
     startRunStream: stream.startRunStream,
     requestTurnCancellation: stream.requestTurnCancellation,

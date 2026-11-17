@@ -6,7 +6,6 @@ import { renderToString } from 'vue/server-renderer'
 import { createPinia, disposePinia, getActivePinia, setActivePinia } from 'pinia'
 import { message, Modal } from 'ant-design-vue'
 import { createTestServer } from '../helpers/createTestServer.js'
-import { readDraftDependencies } from '../../src/modules/extensions/model/skillDraft.js'
 
 /** 加载完整组件，在真实 Vue 上下文中运行，替身只控制 API 与导航。 */
 async function loadComponent(t, path, deps) {
@@ -151,7 +150,7 @@ test('版本恢复与删除均需确认，恢复传整包修订，冲突保留�
   assert.deepEqual(calls[2], ['latest', '20261004-12345678'])
 })
 
-test('完整保存包含跨文件草稿与依赖，409保留全部修改', async (t) => {
+test('完整保存保留跨文件草稿，409保留全部修改', async (t) => {
   const errors = []
   let payload
   let shouldFail = false
@@ -201,7 +200,7 @@ test('完整保存包含跨文件草稿与依赖，409保留全部修改', async
         )
         return {
           data: {
-            skill: { ...skill, ...readDraftDependencies(files['SKILL.md']) },
+            skill: { ...skill },
             revision: 'after',
             published_version: { version: '20261005-12345678' }
           }
@@ -234,12 +233,10 @@ test('完整保存包含跨文件草稿与依赖，409保留全部修改', async
   assert.deepEqual(errors.splice(0), ['路径已存在', '父路径是文件，不能新建子节点'])
   page.selectedPath.value = 'SKILL.md'
   page.updateDraftFile(root + ' edited')
-  page.toggleDependency({ formKey: 'tool_dependencies' }, 'calculator', true)
   await page.loadSkillFile('latest', 'notes.md')
   assert.equal(page.draftFiles.value['notes.md'], 'edited notes')
-  assert.deepEqual(readDraftDependencies(page.draftFiles.value['SKILL.md']).tool_dependencies, [
-    'calculator'
-  ])
+  assert.equal(page.draftFiles.value['SKILL.md'], root + ' edited')
+  assert.equal(page.toggleDependency, undefined)
   pendingSave = new Promise((resolve) => {
     resumeSave = resolve
   })
@@ -273,7 +270,6 @@ test('完整保存包含跨文件草稿与依赖，409保留全部修改', async
   page.createForm.path = 'during-refresh.md'
   await page.handleCreateNode()
   page.updateDraftFile('during refresh')
-  page.toggleDependency({ formKey: 'tool_dependencies' }, 'during-refresh', true)
   assert.deepEqual(page.draftFiles.value, draftBeforeRefresh)
   assert.equal(page.nodeChanges.value.length, 0)
   resumeRefresh()

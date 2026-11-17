@@ -346,7 +346,11 @@ const resetForm = () => {
   activeToolIndex.value = 0
 }
 
+// 支持 field-sizing: content 时，textarea 自适应与限高由 CSS 承担，以下 JS 仅服务旧浏览器。
+const supportsFieldSizing = typeof CSS !== 'undefined' && CSS.supports('field-sizing', 'content')
+
 const adjustOtherTextareaHeight = () => {
+  if (supportsFieldSizing) return
   const textarea =
     activeQuestion.value?.answerMode === 'text' ? answerTextareaRef.value : otherTextareaRef.value
   if (!textarea) return
@@ -1101,6 +1105,8 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
   resize: none;
   overflow-y: hidden;
   box-sizing: border-box;
+  /* 输入内容自适应撑高；空态与限高由 min/max-height 与 overflow 控制。 */
+  field-sizing: content;
 }
 
 .question-response-bar textarea::placeholder {
@@ -1124,6 +1130,9 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
 
   textarea {
     padding-inline: 0;
+    /* 4 行内容上限（1lh 为当前行高），超限滚动；与原 JS 逐帧计算保持一致。 */
+    max-height: calc(4lh + 10px);
+    overflow-y: auto;
   }
 
   &.selected {
@@ -1147,7 +1156,8 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
 
   textarea {
     min-height: 54px;
-    max-height: 112px;
+    /* 4 行内容上限（1lh 为当前行高），与原 JS 计算保持一致。 */
+    max-height: calc(4lh + 10px);
     font-size: 14px;
     overflow-y: auto;
   }

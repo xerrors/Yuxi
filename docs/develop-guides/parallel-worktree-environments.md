@@ -8,7 +8,7 @@
 | 其他需要同时运行的 worktree | 每个 worktree 使用独立槽位 | `../.yuxi/slots/<槽位名>` |
 | `Yuxi-prod` | 独立生产环境，不参与开发 | 生产专用目录 |
 
-不运行服务的 worktree 不需要槽位；兼容分支也可以在旧服务停止后复用已有槽位。只有并行运行或 Schema 不兼容时才创建新槽位。
+不运行服务的 worktree 不需要槽位。兼容分支也可以在旧服务停止后复用已有槽位。只有并行运行或 Schema 不兼容时才创建新槽位。
 
 只运行 `Yuxi` 时无需增加配置，继续使用：
 
@@ -74,7 +74,7 @@ docker compose down  # 停止并保留数据
 - 一个运行中的槽位只允许一套 API、worker 和 `app-init` 写入。
 - 同一槽位可以在执行 `docker compose down` 后交给兼容分支使用。
 - Schema 不兼容时创建新槽位，不修改 `yuxi_schema_migrations` 伪装兼容。
-- 知识库同时依赖 PostgreSQL、MinIO、Milvus 和 Neo4j；复制时必须在停机后备份整套状态。
+- 知识库同时依赖 PostgreSQL、MinIO、Milvus 和 Neo4j。复制时必须在停机后备份整套状态。
 - 不提交 `.env` 或状态目录，不对需要保留的槽位执行 `docker compose down -v`。
 - 未经明确授权，Agent 不得删除 volume、状态目录、`.env` 或生产数据。
 

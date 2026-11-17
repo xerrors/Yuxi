@@ -19,7 +19,7 @@ def chunk_markdown(markdown_content: str, parser_config: dict[str, Any] | None =
     sections = _iter_sections(markdown_content, delimiter)
     chunks: list[str] = []
 
-    for section, _ in sections:
+    for section in sections:
         text = (section or "").strip()
         if not text:
             continue

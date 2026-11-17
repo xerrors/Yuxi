@@ -4,7 +4,7 @@
 
 ## 一、总体判断
 
-前端在 `06ebcb19` 刚完成一次大规模迁移：旧的 `components/views/stores/router` 结构被整体搬入新 `app / pages / modules / shared / apis` 五层骨架，**骨架方向是对的，且边界有真实约束力**（ESLint 自定义规则 + 回归测试守护，见 `eslint-boundaries.js`、`test/unit/frontendBoundaries.test.js`）。问题不在骨架，而在三件事：
+前端在 `06ebcb19` 刚完成一次大规模迁移：旧的 `components/views/stores/router` 结构被整体搬入新 `app / pages / modules / shared / apis` 五层骨架，**骨架方向是对的，且边界有真实约束力**（ESLint 自定义规则 + 回归测试守护，见 `eslint-boundaries.js`、`test/unit/frontendBoundaries.test.js`）。问题在三件事，不在骨架：
 
 1. **迁移只做了“搬家”没做“收敛”**——143 个旧组件原样搬进新结构，巨型文件一个没拆，旧的坏习惯（双错误体系、样式复制、localStorage 各写各的）全部带进了新家；
 2. **依赖方向存在真实破坏**——`apis ↔ identity` 形成两条 import 环，`model → ui` 有一处层级倒挂，这是边界规则管不到的盲区；
@@ -31,7 +31,7 @@
 
 ### 3. 客户端 superadmin 守卫空转（中，真实缺陷，本次新发现）
 
-`apis/base.js` 中 `apiSuperAdminGet/Post/Put/Delete` 调 `checkSuperAdminPermission()` 做前置守卫，但该函数（`identity/model/user.js:261-264`）**只返回布尔值、从不 throw**，而 `checkAdminPermission` 是 throw 风格——base.js 裸调用不接返回值，所以 4 个 superAdmin 变体的客户端守卫是**空操作**。`DebugComponent.vue:1123` 的 `if (!checkSuperAdminPermission()) return` 说明调用方已经意识到两个函数契约不一致。最终安全由后端兜底（符合架构声明），但客户端防线名存实亡，且两个同名模式的函数行为相异是认知陷阱。
+`apis/base.js` 中 `apiSuperAdminGet/Post/Put/Delete` 调 `checkSuperAdminPermission()` 做前置守卫，但该函数（`identity/model/user.js:261-264`）**只返回布尔值、从不 throw**，而 `checkAdminPermission` 是 throw 风格——base.js 裸调用不接返回值，所以 4 个 superAdmin 变体的客户端守卫是**空操作**。`DebugComponent.vue:1123` 的 `if (!checkSuperAdminPermission()) return` 说明调用方已经意识到两个函数契约不一致。最终安全由后端兜底（符合架构声明），但客户端守卫名存实亡，且两个同名模式的函数契约不一致是认知陷阱。
 
 ### 4. 跨域耦合枢纽 + 模块无公开入口（中）
 
@@ -83,7 +83,7 @@ AgentView 已瘦身，但其余页面未跟上：`DataBaseInfoView.vue` 1424 行
 既有提案（`docs/develop-guides/decisions/proposed/2026-09-30-agent-view-frontend-refactor.md`）对结构性问题覆盖完整且与代码现状吻合（巨石组件、深链接依赖侧栏分页、草稿三处分裂、steer 携带 model 配置的契约不一致、主/子两套阅读投影、随 Turn 停止观察等，均已逐一实锤）。但以下机制级问题提案未点名：
 
 1. **审批弹窗是全局单例**：`useApproval.js` 的 `approvalState` 是单个 reactive，跨线程靠 `getVisibleThread()` 门控互斥——多线程同时 waiting 时只能显示一个。
-2. **输入领取靠每条 1 秒轮询**：`useAgentInputQueue.js:80` 每个 input 一个独立定时器，N 条排队 = N 个轮询器，无退避；提案说“前端只投影服务端 FIFO”却没给出替代轮询的领取通知机制。
+2. **输入领取靠每条 1 秒轮询**：`useAgentInputQueue.js:80` 每个 input 一个独立定时器，N 条排队 = N 个轮询器，无退避。提案说“前端只投影服务端 FIFO”却没给出替代轮询的领取通知机制。
 3. **重连无退避**：主流固定 1s `setTimeout`（`useAgentRunStream.js:211-217`），子流固定 2s（`useSubagentRuns.js:97`），服务端故障时是固定频率重压。
 4. **JSON 深拷贝热点**：`agentItems.js:4` 每个事件 delta/快照都用 `JSON.parse(JSON.stringify)` 克隆，长流式 run 下的 CPU 成本未被列入提案性能清单。
 5. **草稿 store 双实例**：`chatThreads.js:8` 模块级与 `SessionWorkspace.vue:960` 组件级各持一个 `createThreadDraftStore()` 实例操作同一批 localStorage 键，两个 Owner 写同一存储。
@@ -97,7 +97,7 @@ AgentView 已瘦身，但其余页面未跟上：`DataBaseInfoView.vue` 1424 行
 - **router meta 双轨**：`public: true`（仅 OIDC 回调用，守卫根本不读它）与 `requiresAuth: false` 并存，`public` 是死元数据；路由 import 相对路径（`../../pages/`）与别名（`@/pages/`）混用。
 - **硬编码环境地址**：`BasicSettingsSection.vue:68-113` 四处 `http://localhost:7474/5050/9001/9091` 外链（非本机部署全失效）；`AppLayout.vue:89` 硬编码 GitHub API；`pixelAvatar.js:1` 硬编码 dicebear.com 外联。
 - **无 i18n 框架**，单语硬编码中文（这算已知取舍，不算缺陷，但 104 个含中文的 vue 文件将来是要还的账）。
-- 测试体系本身是亮点：89 个 unit 测试文件用 `node --test` + Vite `ssrLoadModule` 直接加载真源码（含 .vue），另有 Playwright browser 测试；但全部测试只覆盖 JS/model 层与少量组件行为，5647 行的编排组件只能靠 browser 测试兜底。
+- 测试体系本身是亮点：89 个 unit 测试文件用 `node --test` + Vite `ssrLoadModule` 直接加载真源码（含 .vue），另有 Playwright browser 测试。但全部测试只覆盖 JS/model 层与少量组件行为，5647 行的编排组件只能靠 browser 测试兜底。
 
 ## 六、健康面（这些是对的，重构时别误伤）
 

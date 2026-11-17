@@ -1,6 +1,6 @@
 # Frontend 约定
 
-本目录是 Vue 3 / Vite 前端。先阅读根 [AGENTS.md](../AGENTS.md)；架构与开发指南按根文件的任务范围加载。涉及界面设计、交互或响应式方案时读取[设计规范](../docs/develop-guides/design.md)。
+本目录是 Vue 3 / Vite 前端。先阅读根 [AGENTS.md](../AGENTS.md)。架构与开发指南按根文件的任务范围加载。涉及界面设计、交互或响应式方案时读取[设计规范](../docs/develop-guides/design.md)。
 
 - API 调用统一放在 `src/apis`；组件不直接拼接普通 HTTP 请求。
 - 跨模块导入只使用 `@/modules/<domain>`（模型/用例）或 `@/modules/<domain>/ui/**.vue`（组件）；不得直达 `model/` 或其他内部路径。

@@ -4,8 +4,8 @@
 
 ## 当前运行模型
 
-- 普通输入先把原始消息保存在 PostgreSQL Input，并提交 Receipt。调度器消费就绪输入时创建正式 Message、Turn/Run 并绑定附件，事务提交后才通过 ARQ 投递 worker；输入优先级与合批规则见[输入队列机制](../mechanisms/agent-request-queue.md)。
-- `ARQ_MAX_JOBS` 是单个 worker 中 AgentRun、后台作业与已登记控制工作共用的执行上限。后台作业还受 PostgreSQL 全局最多 4 个 `running` claim 的约束。每棵协作树的 Run 上限由管理员系统配置 `max_cooperation_concurrency` 控制，默认 4、最小 1，在领取下一次执行时读取当前值；降低上限不取消已领取的 Run，增加上限也不能突破 worker 或模型供应商容量。取消收尾同样占位，协作等待释放执行名额。协作树限额不会限制其他树的总并发，也不等于用户 VM 的命令或资源配额。
+- 普通输入先把原始消息保存在 PostgreSQL Input，并提交 Receipt。调度器消费就绪输入时创建正式 Message、Turn/Run 并绑定附件，事务提交后才通过 ARQ 投递 worker。输入优先级与合批规则见[输入队列机制](../mechanisms/agent-request-queue.md)。
+- `ARQ_MAX_JOBS` 是单个 worker 的执行上限。AgentRun、后台作业与已登记控制工作共用这个执行上限。后台作业还受 PostgreSQL 全局最多 4 个 `running` claim 的约束。每棵协作树的 Run 上限由管理员系统配置 `max_cooperation_concurrency` 控制，默认 4、最小 1，在领取下一次执行时读取当前值；降低上限不取消已领取的 Run，增加上限也不能突破 worker 或模型供应商容量。取消收尾同样占位，协作等待释放执行名额。协作树限额不会限制其他树的总并发，也不等于用户 VM 的命令或资源配额。
 - Run 事件写入 Redis Stream，SSE 使用自适应 `XRANGE` 轮询；PostgreSQL 低频补偿权威终态。
 - 取消请求先提交 PostgreSQL durable 状态，再写入带 TTL 的 Redis key。每个运行中的 Run 约每 200ms 读取该 key，另有约 1 秒的 PostgreSQL durable watcher；模型事件循环只检查进程内 Event。
 - 取消链路不使用 Redis Pub/Sub，也不为每个 Run 长期占用一个 Redis 连接。100 个活跃 Run 的取消 key 读取上界约为 500 次/秒。
@@ -28,7 +28,7 @@ PostgreSQL 是 Input、Turn、Run 和终态的事实来源。Redis Stream、取�
 | `WORKER_LANGGRAPH_POSTGRES_POOL_SIZE` | 120 | worker LangGraph checkpoint 池 |
 | `POSTGRES_MAX_CONNECTIONS` | 600 | 上述 API/worker 池上限合计 450，剩余 150 还需覆盖初始化、健康检查、其他连接及运维 |
 
-单 API、单 worker 的 PostgreSQL 池预算为 `(120 + 40) + 10 + (120 + 40) + 120 = 450`。增加副本时，API 每份增加最多 170，worker 每份增加最多 280；例如一 API、两 worker 已达到 730，超过数据库默认 600，需要先调整池或数据库容量。这是配置上限的求和，不是已建立连接数或实际峰值。
+单 API、单 worker 的 PostgreSQL 池预算为 `(120 + 40) + 10 + (120 + 40) + 120 = 450`。增加副本时，API 每份增加最多 170，worker 每份增加最多 280。例如一 API、两 worker 已达到 730，超过数据库默认 600，需要先调整池或数据库容量。这是配置上限的求和。它不是已建立连接数或实际峰值。
 
 Redis 256 是单个客户端池的上限，进程可拥有多个客户端池，不能据此推导进程连接总数。当前部署应同时观察 SSE、事件发布、缓存、ARQ 和取消轮询的实际连接与等待。
 
@@ -48,13 +48,13 @@ AgentRun 另行持久保存服务端权威时间点，用于历史诊断；它�
 | `first_output_latency_ms` | `created_at` → `first_output_at` | 服务端从 Run 创建到首次语义输出 |
 | `total_latency_ms` | `created_at` → `finished_at` | 服务端 Run 总时延 |
 
-`prepared_at` 与 `first_output_at` 只由当前 lease owner 写入一次。观测失败不阻断 Run，缺少阶段的值保持 `null`，API 不用负数或 0 掩盖缺失。`GET /api/v1/agents/sessions/{thread_id}/runs/{run_id}` 和管理员按需读取的 Thread 审计返回 Run 的 `timing` 投影；普通 History 只返回 Run 归属，不附带完整时延。前端调试面板按需读取审计，按 Turn 汇总记录，详情保留各 Run 阶段明细；消息通过持久 `run_id`、`turn_id` 关联。完整响应边界见[线程阅读数据](../mechanisms/agent-runtime.md#线程阅读数据)。
+`prepared_at` 与 `first_output_at` 只由当前 lease owner 写入一次。观测失败不阻断 Run，缺少阶段的值保持 `null`，API 不用负数或 0 掩盖缺失。`GET /api/v1/agents/sessions/{thread_id}/runs/{run_id}` 和管理员按需读取的 Thread 审计返回 Run 的 `timing` 投影；普通 History 只返回 Run 归属，不附带完整时延。前端调试面板按需读取审计，按 Turn 汇总记录，详情保留各 Run 阶段明细。消息通过持久 `run_id`、`turn_id` 关联。完整响应边界见[线程阅读数据](../mechanisms/agent-runtime.md#线程阅读数据)。
 
 上述服务端时间点在事务内产生：`created_at` 是 Run 行创建时间，`finished_at` 是终态转换时间，二者分别在 owning transaction 提交后可见并成为权威事实。因此 `total_latency_ms` 不包含终态写入后的 runtime cleanup、SSE 读取或浏览器渲染等待。
 
 ## 调整容量
 
-1. 分别确定 worker 作业并发、活跃用户 VM 数、每棵协作树的 Run 数和模型请求速率。`ARQ_MAX_JOBS` 由所有作业共用，调低上限也会影响恢复与控制工作的执行机会；协作树的独立上限通过系统设置 `max_cooperation_concurrency` 调整。
+1. 分别确定 worker 作业并发、活跃用户 VM 数、每棵协作树的 Run 数和模型请求速率。`ARQ_MAX_JOBS` 由所有作业共用，调低上限也会影响恢复与控制工作的执行机会。协作树的独立上限通过系统设置 `max_cooperation_concurrency` 调整。
 2. 核算 PostgreSQL 最坏预算：所有 API/worker 的 SQLAlchemy 与 LangGraph 池之和，必须低于 `POSTGRES_MAX_CONNECTIONS`，并给 migrator、健康检查、连接抖动和人工运维留余量。增加 API 或 worker 副本会按副本数放大对应的两类池。
 3. Redis 池服务短操作，不再按“每 Run 一个订阅连接”计算。仍要覆盖同时进行的 SSE 读取、事件写入、取消 key 读取、缓存和 ARQ 操作；观察 `connected_clients`、连接池错误和 SSE 事件完整性后再收缩。
 4. 按实际 Cube 模板和活跃用户 VM 测量执行节点的 CPU、内存、磁盘与网络，并为宿主、Cube 控制服务和共享文件系统留余量。仓库的模板构建脚本传入 `--cpu 1000 --memory 1024`；已有实例沿用创建时的模板，模板参数不能替代节点实测。
@@ -66,7 +66,7 @@ AgentRun 另行持久保存服务端权威时间点，用于历史诊断；它�
 
 ## 应用和验证
 
-压测会产生真实模型费用、创建会话并使用用户 VM；先在独立测试环境准备凭据、目标 Agent、Cube 节点和共享目录，确认无生产任务。修改实际使用的环境文件（开发 `.env`、生产 `.env.prod`）后，重新创建读取该变量的容器；数据库重建连接前需安排停机窗口。生产命令显式使用 `.env.prod` 与 `docker-compose.prod.yml`：
+压测会产生真实模型费用、创建会话并使用用户 VM。先在独立测试环境准备凭据、目标 Agent、Cube 节点和共享目录，确认无生产任务。修改实际使用的环境文件（开发 `.env`、生产 `.env.prod`）后，重新创建读取该变量的容器；数据库重建连接前需安排停机窗口。生产命令显式使用 `.env.prod` 与 `docker-compose.prod.yml`：
 
 ```bash
 docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --force-recreate postgres api
@@ -89,4 +89,4 @@ python -m backend.test.performance load \
 
 通过条件包括 Input/Turn/Run 因果标识一致、SSE 工具生命周期完整、PostgreSQL 权威终态正确、readiness 最终恢复，以及 Run 租约和命令句柄完成清理。Cube 用户 VM 按空闲策略保留并休眠，不要求容器或网络归零。`--collect-local-resources` 只采样当前 Compose 与本机资源，远端 Cube 节点需要单独采样。脚本退出码或 HTTP 200 只作为辅助信号，协议、凭据和输出边界见[性能与容量测试](../develop-guides/testing-guidelines.md#性能评测)。
 
-配置由[开发 Compose](https://github.com/xerrors/Yuxi/blob/main/docker-compose.yml)与[生产 Compose](https://github.com/xerrors/Yuxi/blob/main/docker-compose.prod.yml)拥有；连接池实现见 [PostgresManager](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/infrastructure/postgres/manager.py)，协作限额见 [CooperationRepository](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/repositories/cooperation.py)，节点模板规格见[模板构建脚本](https://github.com/xerrors/Yuxi/blob/main/docker/cube/build-template.sh)。
+配置由[开发 Compose](https://github.com/xerrors/Yuxi/blob/main/docker-compose.yml)与[生产 Compose](https://github.com/xerrors/Yuxi/blob/main/docker-compose.prod.yml)拥有。连接池实现见 [PostgresManager](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/infrastructure/postgres/manager.py)，协作限额见 [CooperationRepository](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/repositories/cooperation.py)，节点模板规格见[模板构建脚本](https://github.com/xerrors/Yuxi/blob/main/docker/cube/build-template.sh)。

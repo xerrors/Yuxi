@@ -7,7 +7,7 @@ const sandbox = ref('container')
 
 # 快速开始
 
-准备好 Git、Docker 和 Docker Compose v2，按下面三步启动 Yuxi：下载代码、选择沙盒、启动服务并验证。本文使用仓库根目录的开发 Compose；正式上线请参考[生产部署](../advanced/deployment.md)。
+准备好 Git、Docker 和 Docker Compose v2，按下面三步启动 Yuxi：下载代码、选择沙盒、启动服务并验证。本文使用仓库根目录的开发 Compose。正式上线请参考[生产部署](../advanced/deployment.md)。
 
 ## 1. 下载代码
 
@@ -21,7 +21,7 @@ cd Yuxi
 后续命令都在这个目录执行。
 
 ::: warning 使用全新数据目录
-0.8 不会自动升级旧数据库与索引。首次部署请使用独立数据目录，保留旧环境；版本差异见[0.8.0 更新说明](../develop-guides/releases/0.8.0.md)。
+0.8 不会自动升级旧数据库与索引。首次部署请使用独立数据目录，保留旧环境。版本差异见[0.8.0 更新说明](../develop-guides/releases/0.8.0.md)。
 :::
 
 ## 2. 选择沙盒并初始化
@@ -160,7 +160,7 @@ docker compose --profile container config --quiet
 docker compose --profile container up --build -d
 ```
 
-Container 的启动命令会构建沙盒镜像并启动 runner；`SANDBOX_BACKEND=container` 和 `--profile container` 缺一不可。
+Container 的启动命令会构建沙盒镜像并启动 runner。`SANDBOX_BACKEND=container` 和 `--profile container` 缺一不可。
 
 </div>
 <div v-show="sandbox === 'cube'">
@@ -172,7 +172,7 @@ docker compose config --quiet
 docker compose up --build -d
 ```
 
-此命令启动 Yuxi 应用服务；Cube 节点需要先完成步骤 2 的启动和配置。
+此命令启动 Yuxi 应用服务。Cube 节点需要先完成步骤 2 的启动和配置。
 
 </div>
 

@@ -1,14 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { releaseFilePreviewCacheEntry, reloadPreviewAfterOrderedCacheEntryInvalidation, replacePreviewCacheEntryIfCurrent, settlePreviewCacheLoad } from '../../src/modules/workspace/model/filePreviewCache.js'
 
 import {
   createFilesystemRefreshGate,
   expandedKeysAfterFilesystemRefresh,
-  invalidatePreviewCacheEntryBeforeReload,
-  reloadPreviewAfterOrderedCacheEntryInvalidation,
-  replacePreviewCacheEntryIfCurrent,
   refreshExpandedTree,
-  settlePreviewCacheLoad,
   shouldRefreshActivePreview,
   startAgentPanelFilesystemPolling
 } from '../../src/modules/session/model/agentPanelFilesystemPolling.js'
@@ -183,7 +180,7 @@ test('invalidated in-flight preview cannot delete or overwrite its replacement e
   const replacementEntry = { status: 'loading', promise: Promise.resolve() }
   const previewCache = new Map([[cacheKey, oldLoadingEntry]])
 
-  invalidatePreviewCacheEntryBeforeReload(previewCache, cacheKey, () => {})
+  releaseFilePreviewCacheEntry(previewCache, cacheKey, () => {})
   previewCache.set(cacheKey, replacementEntry)
 
   assert.equal(

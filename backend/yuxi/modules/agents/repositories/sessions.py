@@ -152,10 +152,6 @@ class SessionRepository:
         )
         return bool(await self.db.scalar(select(or_(pending_input, active_turn, active_run))))
 
-    async def get_session_by_id(self, session_record_id: int) -> Session | None:
-        result = await self.db.execute(select(Session).where(Session.id == session_record_id))
-        return result.scalar_one_or_none()
-
     async def mark_thread_viewed(self, thread_id: str, run_id: str) -> bool:
         """更新查看目标并报告是否有持久变化，由用例提交。"""
         agent_session = await self.get_session_by_thread_id(thread_id)

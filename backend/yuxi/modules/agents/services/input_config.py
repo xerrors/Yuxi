@@ -7,7 +7,7 @@ from dataclasses import fields
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.modules.agents.runtime.context import ResourceSelection
+from yuxi.modules.agents.runtime.context import ResourceSelection, validate_resource_selection
 from yuxi.modules.agents.runtime.tool_approval import DEFAULT_TOOL_APPROVAL_MODE, normalize_tool_approval_mode
 from yuxi.modules.models.providers.cache import model_cache
 from yuxi.modules.system.options import system_options
@@ -57,6 +57,10 @@ def resolve_agent_run_tool_approval_mode(requested_mode: str | None) -> str:
 
 def merge_mcp_selections(*selections: ResourceSelection) -> ResourceSelection:
     """合并会话连接器选择，保序去重并保留 all 的动态语义。"""
+    try:
+        selections = [validate_resource_selection("mcps", selection) for selection in selections]
+    except ValueError as exc:
+        raise InvalidInputError(str(exc)) from exc
     merged = []
     for selection in selections:
         if selection == "all":

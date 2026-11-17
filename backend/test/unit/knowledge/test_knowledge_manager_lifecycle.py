@@ -7,6 +7,8 @@ import pytest
 
 from yuxi.modules.knowledge.manager import KnowledgeBaseManager
 from yuxi.modules.knowledge.read_models import KnowledgeBaseConfig
+from yuxi.modules.knowledge.services import bases as knowledge_bases
+from yuxi.modules.knowledge.services import statistics
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 
@@ -50,15 +52,14 @@ async def test_concurrent_executor_construction_is_deduplicated(tmp_path, monkey
 
 async def test_delete_knowledge_base_commits_tombstone_before_any_external_cleanup(tmp_path, monkeypatch):
     """删除请求只提交事实；外部清理通过 outbox，不阻塞不可见提交。"""
-    manager = KnowledgeBaseManager(str(tmp_path))
     repository = SimpleNamespace(mark_deleted=AsyncMock(return_value=["knowledge_base:kb_1:deleted"]))
     monkeypatch.setattr(
         "yuxi.modules.knowledge.repositories.bases.KnowledgeBaseRepository",
         lambda: repository,
     )
     executor = AsyncMock(side_effect=RuntimeError("Milvus offline"))
-    monkeypatch.setattr(manager, "_get_or_create_kb_instance", executor)
-    result = await manager.delete_knowledge_base("kb_1")
+    monkeypatch.setattr(KnowledgeBaseManager, "_get_or_create_kb_instance", executor)
+    result = await knowledge_bases.delete_knowledge_base("kb_1")
     assert result == {"message": "删除成功"}
     repository.mark_deleted.assert_awaited_once_with("kb_1")
     executor.assert_not_awaited()
@@ -88,7 +89,7 @@ async def test_parse_file_refreshes_stats_and_keeps_original_error_after_executo
 
     monkeypatch.setattr(manager, "get_kb_config", get_kb_config)
     monkeypatch.setattr(manager, "_get_or_create_kb_instance", AsyncMock(return_value=FakeExecutor()))
-    monkeypatch.setattr(manager, "_refresh_knowledge_base_stats", refresh_database_stats)
+    monkeypatch.setattr(statistics, "refresh_stats", refresh_database_stats)
 
     with pytest.raises(ValueError, match="parse failed"):
         await manager.parse_file("kb_1", "file_1")
@@ -97,8 +98,7 @@ async def test_parse_file_refreshes_stats_and_keeps_original_error_after_executo
         assert refreshed == ["kb_1"]
 
 
-async def test_update_query_params_delegates_persistence_to_manager(tmp_path, monkeypatch):
-    manager = KnowledgeBaseManager(str(tmp_path))
+async def test_update_query_params_merges_options_in_repository(monkeypatch):
     calls = []
 
     class FakeRepository:
@@ -111,7 +111,7 @@ async def test_update_query_params_delegates_persistence_to_manager(tmp_path, mo
         FakeRepository,
     )
 
-    await manager.update_kb_query_params("kb_1", {"top_k": 5})
+    await knowledge_bases.update_kb_query_params("kb_1", {"top_k": 5})
 
     assert calls == [("kb_1", {"top_k": 5})]
 

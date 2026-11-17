@@ -1,64 +1,63 @@
 <template>
   <div class="agent-env-settings settings-page">
     <UserSandboxSettingsCard ref="sandboxSettings" />
-    <div class="settings-header">
-      <div class="settings-header-copy">
-        <div class="settings-section-title">环境变量</div>
-        <p class="settings-section-description">管理账户级环境变量，保存后对新启动的运行生效。</p>
-      </div>
-      <div class="settings-header-actions">
-        <a-button
-          class="yuxi-refresh-button"
-          :loading="loading"
-          title="刷新"
-          aria-label="刷新环境变量"
-          @click="loadAgentEnv"
-        >
-          <template #icon><RefreshCw :size="16" :class="{ 'yuxi-rotate': loading }" /></template>
-        </a-button>
-        <a-button
-          :loading="verifying"
-          :disabled="loading || saving || hasUnsavedChanges || !savedEnvKeys.length"
-          @click="verifyAgentEnv"
-        >
-          验证配置
-        </a-button>
-        <a-button type="primary" :loading="saving" :disabled="loading" @click="saveAgentEnv">
-          保存配置
-        </a-button>
-      </div>
-    </div>
-
-    <div class="env-tip">
-      <Info :size="14" class="tip-icon" />
-      <span>当前运行保持启动时的配置。验证读取最新保存值，并自动创建或恢复环境。</span>
-    </div>
-
-    <div class="env-verification" aria-live="polite">
-      <p v-if="hasUnsavedChanges">配置尚未保存，保存后可执行生效验证。</p>
-      <p v-else-if="savedEnvKeys.length && !verification && !verificationError">
-        配置已保存，尚未完成生效验证。
-      </p>
-      <a-alert v-if="verificationError" type="error" :message="verificationError" show-icon />
-      <template v-if="verification">
-        <p>
-          验证时间：{{
-            new Date(verification.verified_at).toLocaleString('zh-CN', { hour12: false })
-          }}。结果仅适用于本次命令进程。
-        </p>
-      </template>
-    </div>
-
     <a-spin :spinning="loading">
-      <McpEnvEditor
+      <AgentEnvEditor
         :key="editorRevision"
         :modelValue="draftEnv"
         :locked-keys="savedEnvKeys"
         :key-verification="verificationByKey"
         conceal-locked-values
         @update:modelValue="updateDraftEnv"
-      />
+      >
+        <template #actions>
+          <a-button
+            class="lucide-icon-btn"
+            type="text"
+            :loading="loading"
+            title="刷新环境变量"
+            aria-label="刷新环境变量"
+            @click="loadAgentEnv"
+          >
+            <template #icon><RefreshCw :size="16" /></template>
+          </a-button>
+        </template>
+      </AgentEnvEditor>
     </a-spin>
+    <div class="env-footer">
+      <a-tooltip
+        :trigger="['hover', 'focus']"
+        title="账户级配置，保存后用于新运行；当前运行保持原配置。验证读取最新保存值，并自动创建或恢复环境，结果仅适用于本次命令进程。"
+      >
+        <a-button type="text" class="env-help lucide-icon-btn" aria-label="环境变量使用说明">
+          <Info :size="14" aria-hidden="true" />
+          生效说明
+        </a-button>
+      </a-tooltip>
+      <div class="env-footer-actions">
+        <a-button
+          title="验证已保存的配置，将自动创建或恢复环境"
+          :loading="verifying"
+          :disabled="loading || saving || hasUnsavedChanges || !savedEnvKeys.length"
+          @click="verifyAgentEnv"
+          >验证配置</a-button
+        >
+        <a-button
+          type="primary"
+          :loading="saving"
+          :disabled="loading || !hasUnsavedChanges"
+          @click="saveAgentEnv"
+          >保存更改</a-button
+        >
+      </div>
+    </div>
+    <a-alert
+      v-if="verificationError"
+      class="env-verification-error"
+      type="error"
+      :message="verificationError"
+      show-icon
+    />
   </div>
 </template>
 
@@ -67,7 +66,7 @@ import { computed, onMounted, ref } from 'vue'
 import { message } from 'ant-design-vue'
 import { Info, RefreshCw } from '@lucide/vue'
 import { agentEnvApi } from '@/apis/agent_env_api'
-import McpEnvEditor from '@/modules/agents/ui/McpEnvEditor.vue'
+import AgentEnvEditor from './AgentEnvEditor.vue'
 import UserSandboxSettingsCard from './UserSandboxSettingsCard.vue'
 
 const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
@@ -215,30 +214,32 @@ onMounted(loadAgentEnv)
 </script>
 
 <style lang="less" scoped>
-.agent-env-settings {
-  .env-tip {
-    margin-bottom: 14px;
-    padding: 8px 12px;
-    border-radius: 6px;
-    background: var(--gray-50);
-    border: 1px solid var(--gray-150);
-    color: var(--gray-600);
-    font-size: 12px;
-    line-height: 18px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-
-    .tip-icon {
-      color: var(--gray-400);
-      flex-shrink: 0;
-    }
-  }
-
-  .env-verification {
-    color: var(--gray-600);
-    font-size: 12px;
-    margin-bottom: 14px;
-  }
+.env-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--gray-150);
+}
+.env-footer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
+}
+.env-help {
+  padding: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+.env-footer .env-help:hover,
+.env-footer .env-help:active {
+  background: transparent;
+}
+.env-verification-error {
+  margin-top: 12px;
 }
 </style>
