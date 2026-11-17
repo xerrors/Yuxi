@@ -28,6 +28,7 @@ from yuxi.modules.extensions.mcp import service
 from yuxi.modules.extensions.mcp.models import MCPConnection, MCPServer
 from yuxi.modules.identity.models import Department, User
 from yuxi.modules.knowledge.models import KnowledgeBase
+from yuxi.modules.system.models import ConfigOption
 from yuxi.shared.errors import DomainError, PermissionDeniedError, StateConflictError
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration, pytest.mark.self_managed_resources]
@@ -101,6 +102,8 @@ async def isolated_mcp(monkeypatch):
                     share_config=read_scope(reader.uid),
                 )
             )
+            # 内置 MCP 同步也会登记 aBridge，其可用性从同一数据库读取部署配置。
+            db.add(ConfigOption(key="abridge_options", name="设备管理", value={}))
             await db.commit()
 
         @asynccontextmanager

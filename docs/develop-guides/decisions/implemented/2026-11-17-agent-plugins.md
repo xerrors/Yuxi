@@ -34,7 +34,7 @@ PostgreSQL checkpoint 保存激活状态，消息保存读取的正文；压缩�
 
 `knowledge-base` 组合知识库说明和 `knowledge` MCP；`abridge` 组合设备说明、共享 `chat-widgets` 和设备 MCP。`image-gen`、`deep-research` 保持普通 Skill，通用搜索、沙盒和产物展示能力由智能体工具配置提供。
 
-aBridge 只通过插件进入智能体。MCP 模块集中维护直接选择规则，候选、配置写入及执行授权共同使用；管理目录和内部发现仍保留连接器，其他 MCP 仍可直接选择。设备提示由插件钩子提供，通用 Chatbot 不再拼接设备协议。用户设备管理、登录、委托和每次出站授权属于设备服务集成，不能归入某个智能体的插件开关。
+aBridge 只通过插件进入智能体。MCP 模块集中维护直接选择规则，候选、配置写入及执行授权共同使用；管理目录和内部发现仍保留连接器，其他 MCP 仍可直接选择。设备提示由插件钩子提供，通用 Chatbot 不再拼接设备协议。用户设备管理、登录、委托和每次出站授权仍由 [aBridge 集成](./2026-11-14-abridge-identity.md)承担，不能归入某个智能体的插件开关。
 
 配置页提供插件选择，Skill 编辑页不再编辑运行依赖。输入框保存普通文本 `@plugin:id`，提示模型使用已有 `load_plugin`，不自动激活、不改配置、不混入 MCP 选择。新会话使用 Agent 候选；已有会话使用 Session 冻结选择与当前可访问目录的交集，复用 Thread、Agent 和 APP 授权。旧快照缺少 `plugins` 按空选择处理，不向 Public 协议增加字段。
 

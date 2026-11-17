@@ -41,6 +41,9 @@
             <Key class="icon" :size="18" />
             <span>API Keys</span>
           </button>
+          <button v-if="userStore.isLoggedIn" class="sider-item device-nav" :class="{ activesec: activeTab === 'devices' }" :aria-pressed="activeTab === 'devices'" @click="activeTab = 'devices'">
+            <Monitor class="icon" :size="18" aria-hidden="true" /><span>设备管理</span>
+          </button>
           <button
             type="button"
             class="sider-item"
@@ -186,6 +189,7 @@
         >
           运行环境
         </button>
+        <button v-if="userStore.isLoggedIn" class="nav-item device-nav" :class="{ active: activeTab === 'devices' }" :aria-pressed="activeTab === 'devices'" @click="activeTab = 'devices'">设备管理</button>
         <button
           type="button"
           class="nav-item"
@@ -270,6 +274,14 @@
             <AgentEnvSettingsCard />
           </div>
 
+          <div
+            v-show="activeTab === 'devices'"
+            v-if="userStore.isLoggedIn && loadedTabs.has('devices')"
+            class="settings-devices-panel"
+          >
+            <DeviceSettingsSection />
+          </div>
+
           <div v-show="activeTab === 'base'" v-if="userStore.isSuperAdmin && loadedTabs.has('base')">
             <BasicSettingsSection />
           </div>
@@ -305,6 +317,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useUserStore } from '@/modules/identity'
 import {
   CircleUser,
+  Monitor,
   ExternalLink,
   Globe,
   Settings,
@@ -323,6 +336,7 @@ const AccountSettingsComponent = createAsyncPanel(
   () => import('@/modules/settings/ui/AccountSettingsComponent.vue')
 )
 const AgentEnvSettingsCard = createAsyncPanel(() => import('@/modules/settings/ui/AgentEnvSettingsCard.vue'))
+const DeviceSettingsSection = createAsyncPanel(() => import('@/modules/settings/ui/DeviceSettingsSection.vue'))
 const BasicSettingsSection = createAsyncPanel(() => import('@/modules/settings/ui/BasicSettingsSection.vue'))
 const SecuritySettingsSection = createAsyncPanel(() => import('@/modules/settings/ui/SecuritySettingsSection.vue'))
 const OCRSettingsSection = createAsyncPanel(() => import('@/modules/settings/ui/OCRSettingsSection.vue'))
@@ -365,7 +379,7 @@ const visible = computed({
 
 const availableTabs = computed(() => {
   const tabs = []
-  if (userStore.isLoggedIn) tabs.push('account', 'apiKeys', 'agentEnv')
+  if (userStore.isLoggedIn) tabs.push('account', 'apiKeys', 'agentEnv', 'devices')
   if (userStore.isAdmin) tabs.push('user')
   if (userStore.isSuperAdmin) tabs.push('base', 'security', 'ocr', 'webSearch')
   if (userStore.isSuperAdmin) tabs.push('department')
@@ -617,6 +631,10 @@ watch(
 
 :root.dark .settings-modal .settings-content-wrapper {
   background: var(--gray-10);
+}
+
+.settings-devices-panel {
+  height: 100%;
 }
 
 .settings-content-wrapper {

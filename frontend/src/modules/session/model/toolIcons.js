@@ -28,13 +28,21 @@ import {
   Monitor,
   PanelsTopLeft,
   Plug,
+  Unplug,
   SquareTerminal
 } from '@lucide/vue'
 
 export const TOOL_ICON_MAP = {
   devices_list: Computer,
+  device_get: Monitor,
   session_open: Plug,
+  session_close: Unplug,
   command_execute: SquareTerminal,
+  command_status: SquareTerminal,
+  command_cancel: Square,
+  files_list: Folder,
+  file_write: FilePen,
+  file_read: FileText,
   computer_apps: PanelsTopLeft,
   computer_windows: PanelsTopLeft,
   computer_open: Computer,
@@ -42,6 +50,9 @@ export const TOOL_ICON_MAP = {
   computer_act: MousePointer2,
   browser_open: Globe,
   browser_observe: PanelsTopLeft,
+  browser_read: FileText,
+  browser_wait: Clock,
+  browser_exec: SquareTerminal,
   browser_act: MousePointer2,
   ask_user_question: HelpCircle,
   create_session: CirclePlus,

@@ -7,11 +7,13 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
-from test.support.sqlite import create_utc_sqlite_engine
-from yuxi.modules.extensions.mcp import service as mcp_service
-from yuxi.modules.extensions.mcp import runtime as mcp_runtime
+
 import yuxi.infrastructure.postgres.manager as postgres_manager
+from test.support.sqlite import create_utc_sqlite_engine
+from yuxi.modules.extensions.mcp import runtime as mcp_runtime
+from yuxi.modules.extensions.mcp import service as mcp_service
 from yuxi.modules.extensions.mcp.models import MCPServer
+from yuxi.modules.system.models import ConfigOption
 
 
 class _AsyncSessionContext:
@@ -38,9 +40,12 @@ async def mcp_session():
     engine = create_utc_sqlite_engine()
     async with engine.begin() as conn:
         await conn.run_sync(MCPServer.__table__.create)
+        await conn.run_sync(ConfigOption.__table__.create)
 
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as session:
+        session.add(ConfigOption(key="abridge_options", name="设备管理", value={}))
+        await session.commit()
         yield session
 
     await engine.dispose()

@@ -200,8 +200,19 @@ def normalize_option_value(field: dict[str, Any], value: Any) -> Any:
     normalized = str(value or "").strip()
     if "choices" in field and normalized not in field["choices"]:
         raise ValueError(f"不支持的 {field['key']}: {normalized}")
-    if field.get("type") == "url" and normalized:
-        return str(_URL_ADAPTER.validate_python(normalized))
+    if field.get("type") in {"url", "origin"} and normalized:
+        url = _URL_ADAPTER.validate_python(normalized)
+        if field["type"] == "origin":
+            if (
+                url.username is not None
+                or url.password is not None
+                or url.path not in {None, "/"}
+                or url.query is not None
+                or url.fragment is not None
+            ):
+                raise ValueError(f"{field['key']} 必须是不带账号、路径、查询和片段的 HTTP(S) 服务根地址")
+            return str(url).rstrip("/")
+        return str(url)
     if field.get("type") == "ocr_engine" and normalized:
         from yuxi.infrastructure.document_parsing.engines import get_ocr_engine_ids
 

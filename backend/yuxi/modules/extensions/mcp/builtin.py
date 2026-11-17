@@ -7,6 +7,11 @@ ABRIDGE_MCP_SLUG = "abridge"
 
 BUILTIN_MCP_MANIFEST = {
     "mcpServers": {
+        ABRIDGE_MCP_SLUG: {
+            "type": "http",
+            "url": "http://abridge:8765/mcp",
+            "extra_data": {"name": "aBridge", "description": "使用当前用户授权的电脑和浏览器设备。"},
+        },
         KNOWLEDGE_MCP_SLUG: {
             "type": "http",
             # Knowledge 是本平台自有服务，容器内地址固定，不经环境变量改写。
@@ -23,7 +28,10 @@ BUILTIN_MCP_MANIFEST = {
         },
     }
 }
-BUILTIN_MCP_DEFAULTS = {KNOWLEDGE_MCP_SLUG: {"auth_mode": "delegation", "enabled": True}}
+BUILTIN_MCP_DEFAULTS = {
+    KNOWLEDGE_MCP_SLUG: {"auth_mode": "delegation", "enabled": True},
+    ABRIDGE_MCP_SLUG: {"auth_mode": "delegation", "enabled": True},
+}
 
 
 def builtin_mcp_available(slug: str) -> bool:

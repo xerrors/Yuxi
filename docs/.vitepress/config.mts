@@ -110,6 +110,7 @@ export default defineConfig({
           { text: 'Agents Public API', link: '/advanced/agents-public-api' },
           { text: 'Web 反馈接口', link: '/advanced/agent-feedback' },
           { text: 'OIDC 认证', link: '/advanced/third-party-auth' },
+          { text: 'aBridge 设备接入', link: '/advanced/abridge' },
           { text: '按用户统计模型用量', link: '/advanced/model-usage-tracking' },
           { text: '品牌自定义', link: '/advanced/branding' }
         ]

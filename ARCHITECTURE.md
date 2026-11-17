@@ -32,6 +32,8 @@ API 在 `/api/mcp` 提供只读知识库 MCP，与 HTTP API 共用进程和端�
 
 `modules/identity` 另提供可选的 OIDC 身份签发端，限定显式登记的静态客户端，复用当前有效人类用户完成登录，使用独立持久 RSA 密钥。
 
+可选 aBridge 集成通过 OIDC 接收 Yuxi 身份。`modules/extensions/abridge` 拥有设备配置、产品读取和 MCP 平台委托适配；aBridge 拥有外部身份映射及设备授权。智能体通过 `abridge` 插件选择设备能力，加载后由专属中间件注入设备提示并开放 MCP 工具；关闭插件不影响个人设备管理。每次 MCP 出站按当前用户签发最长一分钟的专用委托，不保存个人 refresh token。部署装配和失效边界见 [aBridge 接入](docs/advanced/abridge.md)。
+
 ## 后端代码地图
 
 后端只有一个 `backend/yuxi` Python 包，项目配置与构建元数据由 `backend/pyproject.toml` 拥有。`api` 和 `workers` 是进程适配层；`modules` 按业务域组织用例与持久化；`infrastructure` 提供技术连接与解析引擎；`bootstrap` 负责启动资源装配；`migrations` 独占 Schema 修改。HTTP 路由只处理协议、认证上下文和响应装配。上传的 `UploadFile` 在 `api/uploads.py` 转为小文件字节或借用的二进制文件流；业务服务消费中立输入，workspace 文件边界负责限量、原子落盘。输入流由 HTTP 请求拥有，服务在请求结束前完成消费，不保存上传对象。
