@@ -23,6 +23,7 @@ from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.agents.runtime.sandbox import get_sandbox_provider
 from yuxi.modules.agents.scope import ActorScope
+from yuxi.modules.agents.services.checkpoint_retention import purge_thread_checkpoint_history
 from yuxi.modules.agents.services.cooperation_notifications import notify_turn_state
 from yuxi.modules.agents.services.queue_control import pause_pending_queue
 from yuxi.modules.agents.services.run_creation import create_turn_run
@@ -216,6 +217,8 @@ async def finish_run_lifecycle(run: AgentRun) -> None:
         await dispatch_next_input(uid=run.uid, agent_slug=run.agent_slug, thread_id=run.thread_id)
     if run.status in TERMINAL_RUN_STATUSES:
         await finish_turn_observation_if_terminal(run.turn_id)
+        # 终态后裁剪线程历史；失败只告警——checkpoint 不是业务事实，残留由每日清扫与脚本兜底。
+        await purge_thread_checkpoint_history(run.thread_id)
 
 
 async def complete_run_runtime_cleanup(run: AgentRun) -> bool:

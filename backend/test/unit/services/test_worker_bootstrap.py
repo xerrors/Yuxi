@@ -66,6 +66,9 @@ async def test_worker_startup_prepares_runtime_and_recovers_jobs(monkeypatch: py
     async def fake_claim_and_dispatch_due_jobs():
         calls.append("claim_and_dispatch_due_jobs")
 
+    async def fake_checkpoint_sweep_loop():
+        calls.append("checkpoint_sweep_loop")
+
     monkeypatch.setattr(worker_bootstrap.pg_manager, "initialize", fake_initialize)
     monkeypatch.setattr(worker_bootstrap, "require_current_schema", fake_require_current_schema)
     monkeypatch.setattr(option_values, "invalidate_option_cache", fake_invalidate_option_cache)
@@ -84,6 +87,7 @@ async def test_worker_startup_prepares_runtime_and_recovers_jobs(monkeypatch: py
     monkeypatch.setattr(worker_bootstrap, "reconcile_and_publish_jobs", fake_reconcile_and_publish_jobs)
     monkeypatch.setattr(worker_bootstrap, "_reconcile_background_jobs_forever", fake_job_reconciliation_loop)
     monkeypatch.setattr(worker_bootstrap, "_reconcile_sandboxes_forever", AsyncMock())
+    monkeypatch.setattr(worker_bootstrap, "_sweep_checkpoint_garbage_forever", fake_checkpoint_sweep_loop)
     monkeypatch.setattr(worker_bootstrap, "recover_scheduled_dispatches", fake_recover_scheduled_dispatches)
     monkeypatch.setattr(worker_bootstrap, "claim_and_dispatch_due_jobs", fake_claim_and_dispatch_due_jobs)
 
@@ -91,6 +95,7 @@ async def test_worker_startup_prepares_runtime_and_recovers_jobs(monkeypatch: py
     await worker_bootstrap.startup(ctx)
     await ctx[worker_bootstrap._RECONCILIATION_TASK_KEY]
     await ctx[worker_bootstrap._JOB_RECONCILIATION_TASK_KEY]
+    await ctx[worker_bootstrap._CHECKPOINT_SWEEP_TASK_KEY]
 
     assert calls == [
         "initialize",
@@ -106,6 +111,7 @@ async def test_worker_startup_prepares_runtime_and_recovers_jobs(monkeypatch: py
         "publish_job_reconciliation_health",
         "reconciliation_loop",
         "job_reconciliation_loop",
+        "checkpoint_sweep_loop",
     ]
     assert ctx["worker_id"] == worker_bootstrap.WORKER_ID
 
