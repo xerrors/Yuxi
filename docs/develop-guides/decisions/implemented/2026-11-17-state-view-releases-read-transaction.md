@@ -48,9 +48,9 @@ Owner：backend/yuxi/modules/agents/services/checkpoint_state.py
 | checkpoint 读取期间请求级会话不再持有事务 | 反序列化期间连接停在 idle in transaction | checkpoint_state.get_agent_state_view | `pytest test/integration/services/test_state_view_read_transaction.py`（真实 PG 会话 + 真实 saver 写入的 checkpoint，`include_relations` 两态） | 移除该 `await db.commit()` 后两用例以「checkpoint 读取期间请求级会话仍持有事务」失败 | Passed |
 | 提交点位于两次授权读取之后、checkpoint 读取之前 | 把 commit 挪到 SELECT 之前，事务被自然重开、缺陷复活 | 同上 | `pytest test/unit/services/test_checkpoint_state_reader.py::test_state_view_releases_read_transaction_before_checkpoint`（事件序列 `session-read → run-read → commit → checkpoint`） | 摘除 commit 后该用例红；把 commit 移到 SELECT 之前同样红 | Passed |
 | 响应语义不变（面板字段、中断门、关系快照、提前提交后同一会话仍可继续查询） | 提前提交改变载荷、可见性或让后续查询失败 | 同上 | `test_state_view_reads_persisted_fields_without_agent_runtime`、`test_get_agent_state_view_returns_interrupt_only_for_waiting_owner`、真实 PG 集成同上 | — | Passed |
-| 其余读路径回归 | 替身签名变化引入连带失败 | — | `pytest test/unit/services -m "not slow"` = 1196 passed | — | Passed |
+| 其余读路径回归 | 替身签名变化引入连带失败 | — | `pytest test/unit -m "not slow"` = 3882 passed / 128 skipped / 0 failed；`pytest test/unit/services` = 1255 passed / 1 skipped | — | Passed |
+| 真实 HTTP 的 `/state` 端到端结果不变（跨用户 404、无凭据 401、归档后仍可读） | 提前提交破坏依赖装配或响应结构 | `api/routers/public_v1/agents/capabilities.retrieve_thread_state` | CI `service / PostgreSQL and Redis without Cube`（真实 HTTP 集成，含 `test/integration/api/test_checkpoint_state_view.py`） | 不适用：该面在本地栈无法复跑（凭据未播种），由 CI 全量集成覆盖 | Passed |
 | 门禁 | — | — | `python3 scripts/ci/verify_engineering_contracts.py`、`python3 -m unittest scripts.ci.test_verify_engineering_contracts`、backend 三项 ruff、`git diff --check` | — | Passed |
 
-未执行：真实 HTTP 的 `test/integration/api/test_checkpoint_state_view.py` 与其余需要 api 活体的集成用例，在本地
-开发槽位因测试管理员凭据未播种（`/api/auth/token` 401）全部阻塞，与本次改动无关；该面由上述真实 PG 服务层集成
-覆盖同一提交点，端到端表现留给 CI 证明。
+本地开发栈未执行：需要 api 活体的集成用例在本地因测试管理员凭据未播种（`/api/auth/token` 401）无法运行，
+同一面已由 PR 的 CI 真实 HTTP 集成通过。浏览器与真实 provider 端到端：不适用（本批不改界面，也不触模型调用）。
