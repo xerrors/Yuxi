@@ -7,3 +7,8 @@ export {
   traverseDirectoryEntry,
   validateFolderUploadEntries
 } from './model/workspaceFolderUpload'
+export { useFilePreviewSession } from './model/filePreviewSession'
+export {
+  filePreviewCacheKey, releaseFilePreviewCacheEntry, releaseFilePreviewCache, pruneFilePreviewCache,
+  reloadPreviewAfterOrderedCacheEntryInvalidation, replacePreviewCacheEntryIfCurrent, settlePreviewCacheLoad
+} from './model/filePreviewCache'

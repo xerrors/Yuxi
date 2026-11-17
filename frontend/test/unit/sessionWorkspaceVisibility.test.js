@@ -15,36 +15,29 @@ test('人工等待取消期间显示停止反馈，即使没有流和排队消�
   assert.equal(state.replyLoadingText.value, '正在停止，等待任务清理完成...')
 })
 
-test('隐藏成员标签继续接收终态，但不标已读或滚动；显示后恢复可见副作用', async (t) => {
+test('隐藏成员标签继续接收终态但不标已读；显示后恢复可见副作用', async (t) => {
   const resumed = []
   const { state, props } = await mountSessionWorkspace(t, undefined, {
     threadId: 'child', props: { visible: false }, runtime: { resumeQueuedInputs: (id) => resumed.push(id) }
   })
   const viewed = []
-  let scrolls = 0
   t.mock.method(state.chatThreadsStore, 'markThreadViewed', (id) => { viewed.push(id) })
-  t.mock.method(state.scrollController, 'scrollToBottom', () => { scrolls++ })
   const complete = () => {
     state.runtimeView.onTerminalDetected({ threadId: 'child', runId: 'run' })
-    state.runtimeView.onScrollToBottom()
   }
   complete()
   assert.deepEqual(resumed, [], '恢复由共享运行内核负责')
   assert.deepEqual(viewed, [])
-  assert.equal(scrolls, 0)
   props.visible = true
   complete()
   assert.deepEqual(viewed, ['child'])
-  assert.equal(scrolls, 1)
   state.pageVisible.value = false
   complete()
   assert.deepEqual(viewed, ['child'])
-  assert.equal(scrolls, 1)
   state.pageVisible.value = true
   state.workspaceActivated.value = false
   complete()
   assert.deepEqual(viewed, ['child'])
-  assert.equal(scrolls, 1)
   assert.equal(state.agentPanelFilesystemRefreshVersion.value, 4)
   state.runtimeView.onTerminalDetected({ threadId: 'other-thread', runId: 'other-run' })
   assert.equal(state.agentPanelFilesystemRefreshVersion.value, 4)
@@ -110,7 +103,7 @@ test('新建路由且没有线程才显示欢迎布局，加载和空消息不�
       props.isNewSession = isNewSession
       state.currentThreadId.value = threadId
       for (const isLoadingMessages of [false, true]) {
-        state.isLoadingMessages.value = isLoadingMessages
+        if (threadId) runtime.getThreadState(threadId).readingLoading = isLoadingMessages
         for (const runs of [[], [{ id: 'history' }]]) {
           runtime.threadRuns['created-thread'] = runs
           const html = await renderWorkspace(component, state)
@@ -140,7 +133,7 @@ test('智能体、历史和创建加载共用一个 Spin，加载不占据编辑
     for (const agent of ['ready', 'loading']) {
       for (const creating of [false, true]) {
         for (const historyLoaded of [false, true]) {
-          state.isLoadingMessages.value = messages
+          thread.readingLoading = messages
           agentStatus = agent
           const refresh = state.refreshSessionAgent('thread', 'agent')
           if (agent === 'ready') await refresh

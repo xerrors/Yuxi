@@ -33,7 +33,7 @@ import yuxi.modules.knowledge.services.document_actions as document_actions
         (
             knowledge_router.get_knowledge_bases,
             {},
-            knowledge_router.knowledge_base_manager,
+            knowledge_router.knowledge_access,
             "get_knowledge_bases_by_uid",
         ),
         (
@@ -42,7 +42,7 @@ import yuxi.modules.knowledge.services.document_actions as document_actions
             knowledge_eval_router.EvaluationService,
             "list_datasets",
         ),
-        (graph_router.get_graphs, {}, graph_router.knowledge_base, "get_knowledge_bases_by_uid"),
+        (graph_router.get_graphs, {}, graph_router.knowledge_access, "get_knowledge_bases_by_uid"),
         (
             knowledge_dashboard_router.read_knowledge_stats,
             {},
@@ -169,7 +169,7 @@ def test_graph_configuration_error_response(monkeypatch, error, status_code, det
     [
         ("/knowledge/knowledge-bases", "get_knowledge_bases_by_uid", True),
         ("/knowledge/knowledge-bases/accessible", "get_knowledge_bases_by_uid", True),
-        ("/knowledge/types", "get_supported_kb_types", False),
+        ("/knowledge/types", "get_available_types", False),
         ("/knowledge/stats", "get_statistics", True),
     ],
 )
@@ -181,7 +181,8 @@ def test_knowledge_read_failure_is_not_empty_success(monkeypatch, path, method, 
     app.dependency_overrides[knowledge_router.get_admin_user] = lambda: user
     app.dependency_overrides[knowledge_router.get_required_user] = lambda: user
     mock_type = AsyncMock if asynchronous else Mock
-    monkeypatch.setattr(knowledge_router.knowledge_base_manager, method, mock_type(side_effect=RuntimeError("storage down")))
+    target = {"get_knowledge_bases_by_uid": knowledge_router.knowledge_access, "get_statistics": knowledge_router.knowledge_statistics, "get_available_types": knowledge_router.KnowledgeBaseFactory}.get(method, knowledge_router.knowledge_base_manager)
+    monkeypatch.setattr(target, method, mock_type(side_effect=RuntimeError("storage down")))
 
     response = TestClient(app).get(path)
 

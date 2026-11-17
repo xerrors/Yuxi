@@ -111,12 +111,7 @@ async def append_run_stream_events(run_id: str, events: list[dict]) -> list[str]
     return [str(cursor) for cursor in result[:-1]]
 
 
-async def append_run_stream_event(run_id: str, event: dict) -> str:
-    """写入已经适配的单条公开事件。"""
-    return (await append_run_stream_events(run_id, [event]))[0]
-
-
-def _decode_run_stream_row(run_id: str, cursor: str, fields: dict) -> dict | None:
+def _decode_run_stream_row(run_id: str, cursor: str, fields: dict) -> dict:
     """仅接受当前公开格式，不读取旧封套。"""
     if fields.get("version") != "2":
         raise ValueError("Redis 事件格式版本不兼容")
@@ -137,13 +132,7 @@ async def list_run_stream_events(
     key = _event_stream_key(run_id)
     start = "-" if after_seq in {"0-0", ""} else f"({after_seq}"
     rows = await redis.xrange(key, min=start, max="+", count=limit)
-    events = []
-
-    for event_id, fields in rows:
-        event = _decode_run_stream_row(run_id, event_id, fields)
-        if event is not None:
-            events.append(event)
-    return events
+    return [_decode_run_stream_row(run_id, event_id, fields) for event_id, fields in rows]
 
 
 async def list_recent_run_stream_events(run_id: str, *, limit: int = 100) -> list[dict]:
@@ -151,10 +140,4 @@ async def list_recent_run_stream_events(run_id: str, *, limit: int = 100) -> lis
     redis = await get_redis_client()
     key = _event_stream_key(run_id)
     rows = await redis.xrevrange(key, max="+", min="-", count=limit)
-    events = []
-
-    for event_id, fields in rows:
-        event = _decode_run_stream_row(run_id, event_id, fields)
-        if event is not None:
-            events.append(event)
-    return events
+    return [_decode_run_stream_row(run_id, event_id, fields) for event_id, fields in rows]

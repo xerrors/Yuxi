@@ -150,7 +150,7 @@ test('慢等待点恢复后才聚焦，隐藏或轮次变化撤销聚焦', async
   t.mock.method(agentApi, 'getAgents', () => new Promise((resolve) => { ready = resolve }))
   t.mock.method(knowledgeBaseApi, 'getAccessibleKnowledgeBases', async () => ({ knowledge_bases: [] }))
   t.mock.method(toolApi, 'getTools', async () => ({ data: [] }))
-  t.mock.method(agentApi, 'getAgentDetail', async () => { resumed++; return { agent: { agent_id: 'focus-agent', can_run: true } } })
+  t.mock.method(agentApi, 'getAgentDetail', async () => ({ agent: { agent_id: 'focus-agent', can_run: true } }))
   t.mock.method(threadApi, 'getThreads', async () => ({ data: [], has_more: false }))
   t.mock.method(threadApi, 'markThreadViewed', async () => ({}))
   const { useSessionRuntimeStore } = await server.ssrLoadModule('/src/modules/session/model/sessionRuntime.js')
@@ -179,6 +179,8 @@ test('慢等待点恢复后才聚焦，隐藏或轮次变化撤销聚焦', async
   })
   await new Promise((resolve) => setImmediate(resolve))
   state.currentThreadId.value = 'thread-focus'
+  // setup-only 挂载不渲染阅读器；真实工作区须等待初始化后才请求恢复阅读。
+  state.timelineRef.value = { refresh: async () => { resumed++; return true } }
   state.messageInputStageRef.value = { querySelector: () => ({ focus() { focused = true } }) }
   const thread = useSessionRuntimeStore(pinia).getThreadState('thread-focus')
   thread.turnStatus = 'requires_action'

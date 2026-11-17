@@ -164,15 +164,11 @@ export function extractMessageToolNames(message) {
   ]
 }
 
-export function getMessageInputId(message, { allowMessageIdFallback = false } = {}) {
+export function getMessageInputId(message) {
   const metadataId = message?.extra_metadata?.input_id
   if (typeof metadataId === 'string' && metadataId.trim()) return metadataId.trim()
   if (typeof message?.input_id === 'string' && message.input_id.trim()) {
     return message.input_id.trim()
-  }
-  if (allowMessageIdFallback && message?.type === 'human' && typeof message.id === 'string') {
-    const messageId = message.id.trim()
-    if (messageId) return messageId
   }
   return null
 }
@@ -182,17 +178,6 @@ export function getMessageRunId(message) {
   if (typeof metadataId === 'string' && metadataId.trim()) return metadataId.trim()
   if (typeof message?.run_id === 'string' && message.run_id.trim()) return message.run_id.trim()
   return null
-}
-
-/** 只用接入响应或派发事件中的明确关联补齐对应用户消息。 */
-export function bindMessageInputRun(messages, inputId, runId) {
-  if (!inputId || !runId) return
-  for (const message of messages || []) {
-    if (!['human', 'user'].includes(message.type || message.role)) continue
-    if (getMessageInputId(message) !== inputId || getMessageRunId(message)) continue
-    message.run_id = runId
-    message.extra_metadata = { ...message.extra_metadata, run_id: runId }
-  }
 }
 
 function auditRole(message) {

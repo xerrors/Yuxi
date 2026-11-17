@@ -9,6 +9,8 @@ import yuxi.api.routers.knowledge.management as knowledge_router
 import yuxi.modules.knowledge.services.background_jobs as knowledge_job_service
 import yuxi.modules.knowledge.services.document_actions as document_actions
 from yuxi.modules.knowledge.read_models import KnowledgeBaseDetail
+from yuxi.modules.knowledge.services import bases as knowledge_bases
+from yuxi.modules.knowledge.services import documents as knowledge_documents
 from yuxi.modules.knowledge.services import graph_build, uploads
 
 pytestmark = pytest.mark.asyncio
@@ -71,7 +73,7 @@ async def test_document_file_exists_returns_boolean_for_relative_path(monkeypatc
         "_ensure_knowledge_base_supports_documents",
         fake_ensure_knowledge_base_supports_documents,
     )
-    monkeypatch.setattr(knowledge_router.knowledge_base_manager, "document_file_exists", fake_document_file_exists)
+    monkeypatch.setattr(knowledge_documents, "document_file_exists", fake_document_file_exists)
 
     result = await knowledge_router.document_file_exists(
         "kb_1",
@@ -209,7 +211,7 @@ async def test_index_documents_uses_uid_for_operator(monkeypatch):
         "_ensure_knowledge_base_supports_documents",
         fake_ensure_knowledge_base_supports_documents,
     )
-    monkeypatch.setattr(knowledge_router.knowledge_base_manager, "get_knowledge_base_info", fake_get_knowledge_base_info)
+    monkeypatch.setattr(knowledge_bases, "get_knowledge_base_info", fake_get_knowledge_base_info)
     monkeypatch.setattr(knowledge_router.knowledge_base_manager, "index_file", fake_index_file)
     _patch_submit_job(monkeypatch, fake_enqueue)
 
@@ -267,9 +269,9 @@ async def test_parse_pending_documents_enqueues_status_scoped_job(monkeypatch):
         "_ensure_knowledge_base_supports_documents",
         fake_ensure_knowledge_base_supports_documents,
     )
-    monkeypatch.setattr(knowledge_router.knowledge_base_manager, "get_knowledge_base_info", fake_get_knowledge_base_info)
+    monkeypatch.setattr(knowledge_bases, "get_knowledge_base_info", fake_get_knowledge_base_info)
     monkeypatch.setattr(
-        knowledge_router.knowledge_base_manager,
+        knowledge_router.documents,
         "list_document_file_ids_by_statuses",
         fake_list_document_file_ids_by_statuses,
     )
@@ -330,7 +332,7 @@ async def test_reconcile_graph_build_mutates_state_only_after_unique_job_is_crea
         return SimpleNamespace(id="job_1"), True
 
     monkeypatch.setattr(graph_build, "_has_active_job", fake_has_running_graph_build_job)
-    monkeypatch.setattr(graph_build.knowledge_base, "get_knowledge_base_info", fake_get_knowledge_base_info)
+    monkeypatch.setattr(graph_build.knowledge_bases, "get_knowledge_base_info", fake_get_knowledge_base_info)
     monkeypatch.setattr(knowledge_job_service, "KnowledgeGraphService", FakeGraphService)
     monkeypatch.setattr(graph_build, "submit_knowledge_job", fake_enqueue_unique_by_payload)
 
@@ -386,9 +388,9 @@ async def test_index_pending_documents_uses_pending_statuses_and_params(monkeypa
         "_ensure_knowledge_base_supports_documents",
         fake_ensure_knowledge_base_supports_documents,
     )
-    monkeypatch.setattr(knowledge_router.knowledge_base_manager, "get_knowledge_base_info", fake_get_knowledge_base_info)
+    monkeypatch.setattr(knowledge_bases, "get_knowledge_base_info", fake_get_knowledge_base_info)
     monkeypatch.setattr(
-        knowledge_router.knowledge_base_manager,
+        knowledge_router.documents,
         "list_document_file_ids_by_statuses",
         fake_list_document_file_ids_by_statuses,
     )
@@ -479,7 +481,7 @@ async def test_parse_documents_accepts_payload_with_params(monkeypatch):
         "_ensure_knowledge_base_supports_documents",
         fake_ensure_knowledge_base_supports_documents,
     )
-    monkeypatch.setattr(knowledge_router.knowledge_base_manager, "get_knowledge_base_info", fake_get_knowledge_base_info)
+    monkeypatch.setattr(knowledge_bases, "get_knowledge_base_info", fake_get_knowledge_base_info)
     monkeypatch.setattr(knowledge_router.knowledge_base_manager, "parse_file", fake_parse_file)
     _patch_submit_job(monkeypatch, fake_enqueue)
 
@@ -522,9 +524,9 @@ async def test_parse_pending_documents_uses_params(monkeypatch):
         "_ensure_knowledge_base_supports_documents",
         fake_ensure_knowledge_base_supports_documents,
     )
-    monkeypatch.setattr(knowledge_router.knowledge_base_manager, "get_knowledge_base_info", fake_get_knowledge_base_info)
+    monkeypatch.setattr(knowledge_bases, "get_knowledge_base_info", fake_get_knowledge_base_info)
     monkeypatch.setattr(
-        knowledge_router.knowledge_base_manager,
+        knowledge_router.documents,
         "list_document_file_ids_by_statuses",
         fake_list_document_file_ids_by_statuses,
     )

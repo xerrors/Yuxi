@@ -4,6 +4,9 @@ import pytest
 
 from yuxi.modules.identity.permissions import ResourcePermission
 from yuxi.modules.knowledge.manager import KnowledgeBaseManager
+from yuxi.modules.knowledge.services import access as knowledge_access
+from yuxi.modules.knowledge.services import bases as knowledge_bases
+from yuxi.modules.knowledge.services import documents as knowledge_documents
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 
@@ -151,19 +154,18 @@ def patch_repositories(monkeypatch):
         FakeUserRepository,
     )
     monkeypatch.setattr(
-        "yuxi.modules.knowledge.manager.KnowledgeBaseFactory.is_type_supported",
+        "yuxi.modules.knowledge.factory.KnowledgeBaseFactory.is_type_supported",
         staticmethod(lambda _kb_type: True),
     )
     monkeypatch.setattr(
-        "yuxi.modules.knowledge.manager.KnowledgeBaseFactory.get_kb_class",
+        "yuxi.modules.knowledge.factory.KnowledgeBaseFactory.get_kb_class",
         staticmethod(lambda _kb_type: FakeKnowledgeBaseClass),
     )
 
 
 async def test_get_knowledge_base_info_omits_files_by_default():
-    manager = KnowledgeBaseManager("/tmp/yuxi-test")
 
-    result = await manager.get_knowledge_base_info("kb_1")
+    result = await knowledge_bases.get_knowledge_base_info("kb_1")
 
     assert result.kb_id == "kb_1"
     assert result.files is None
@@ -172,14 +174,13 @@ async def test_get_knowledge_base_info_omits_files_by_default():
 
 
 async def test_get_knowledge_bases_does_not_initialize_knowledge_backend(monkeypatch):
-    manager = KnowledgeBaseManager("/tmp/yuxi-test")
 
     def fail_if_initialized(_kb_type):
         pytest.fail("知识库列表不应初始化 Milvus 等后端实例")
 
-    monkeypatch.setattr(manager, "_get_or_create_kb_instance", fail_if_initialized)
+    monkeypatch.setattr(KnowledgeBaseManager, "_get_or_create_kb_instance", fail_if_initialized)
 
-    result = await manager.get_knowledge_bases()
+    result = await knowledge_bases.get_knowledge_bases()
 
     knowledge_base = result[0]
     assert knowledge_base.kb_id == "kb_1"
@@ -229,7 +230,7 @@ async def test_get_knowledge_bases_skips_rows_with_invalid_metadata(monkeypatch)
             ]
 
     monkeypatch.setattr(
-        "yuxi.modules.knowledge.manager.KnowledgeBaseFactory.get_kb_class",
+        "yuxi.modules.knowledge.factory.KnowledgeBaseFactory.get_kb_class",
         staticmethod(lambda kb_type: BrokenKnowledgeBaseClass if kb_type == "notion" else FakeKnowledgeBaseClass),
     )
     monkeypatch.setattr(
@@ -237,8 +238,7 @@ async def test_get_knowledge_bases_skips_rows_with_invalid_metadata(monkeypatch)
         MultiKnowledgeBaseRepository,
     )
 
-    manager = KnowledgeBaseManager("/tmp/yuxi-test")
-    result = await manager.get_knowledge_bases()
+    result = await knowledge_bases.get_knowledge_bases()
 
     assert [db.kb_id for db in result] == ["kb_good"]
 
@@ -256,10 +256,9 @@ async def test_get_knowledge_bases_by_user_sets_permission_and_redacts_readonly_
         "yuxi.modules.knowledge.repositories.bases.KnowledgeBaseRepository",
         SecretKnowledgeBaseRepository,
     )
-    manager = KnowledgeBaseManager("/tmp/yuxi-test")
 
-    readonly = await manager.get_knowledge_bases_by_user({"uid": "user_2", "role": "admin", "department_id": None})
-    owner = await manager.get_knowledge_bases_by_user({"uid": "user_1", "role": "admin", "department_id": None})
+    readonly = await knowledge_access.get_knowledge_bases_by_user({"uid": "user_2", "role": "admin", "department_id": None})
+    owner = await knowledge_access.get_knowledge_bases_by_user({"uid": "user_1", "role": "admin", "department_id": None})
 
     assert readonly[0].effective_permission == ResourcePermission.READ
     assert readonly[0].can_manage is False
@@ -335,9 +334,8 @@ async def test_get_knowledge_bases_by_user_sets_permission_and_redacts_readonly_
     ],
 )
 async def test_list_document_files_passes_expected_parameters(scenario, kwargs, expected_call):
-    manager = KnowledgeBaseManager("/tmp/yuxi-test")
 
-    result = await manager.list_document_files("kb_1", **kwargs)
+    result = await knowledge_documents.list_document_files("kb_1", **kwargs)
 
     assert FakeKnowledgeFileRepository.list_calls == [expected_call]
     if scenario == "paginated":
@@ -365,10 +363,9 @@ async def test_list_document_files_passes_expected_parameters(scenario, kwargs, 
 
 
 async def test_document_file_exists_delegates_exact_filename_to_repository():
-    manager = KnowledgeBaseManager("/tmp/yuxi-test")
 
-    assert await manager.document_file_exists("kb_1", " docs/Guide.md ") is True
-    assert await manager.document_file_exists("kb_1", "docs/guide.md") is False
+    assert await knowledge_documents.document_file_exists("kb_1", " docs/Guide.md ") is True
+    assert await knowledge_documents.document_file_exists("kb_1", "docs/guide.md") is False
     assert FakeKnowledgeFileRepository.exists_calls == [
         {"kb_id": "kb_1", "filename": "docs/Guide.md"},
         {"kb_id": "kb_1", "filename": "docs/guide.md"},
@@ -376,9 +373,8 @@ async def test_document_file_exists_delegates_exact_filename_to_repository():
 
 
 async def test_list_document_file_ids_by_statuses_delegates_to_repository():
-    manager = KnowledgeBaseManager("/tmp/yuxi-test")
 
-    result = await manager.list_document_file_ids_by_statuses(
+    result = await knowledge_documents.list_document_file_ids_by_statuses(
         "kb_1",
         statuses=["parsed", "error_indexing"],
         after_file_id="file_1",

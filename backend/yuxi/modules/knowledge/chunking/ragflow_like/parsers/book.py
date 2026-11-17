@@ -23,13 +23,13 @@ def chunk_markdown(markdown_content: str, parser_config: dict[str, Any] | None =
     if not sections:
         return []
 
-    section_texts = [text for text, _ in sections]
-    nlp.remove_contents_table(sections, eng=nlp.is_english(nlp.random_choices(section_texts, k=200)))
+    nlp.remove_contents_table(sections, eng=nlp.is_english(nlp.random_choices(sections, k=200)))
 
-    bull = nlp.bullets_category([t for t in nlp.random_choices([t for t, _ in sections], k=100)])
+    bull = nlp.bullets_category(nlp.random_choices(sections, k=100))
 
     if bull >= 0:
-        chunks = [join_source_text(ck, "\n") for ck in nlp.hierarchical_merge(bull, sections, depth=5)]
+        # 从正文向上取三层编号，标题路径继续保留全部祖先。
+        chunks = [join_source_text(ck, "\n") for ck in nlp.hierarchical_merge(bull, sections, depth=4)]
     else:
         chunks = nlp.naive_merge(
             sections,
@@ -52,18 +52,18 @@ def chunk_markdown(markdown_content: str, parser_config: dict[str, Any] | None =
     )
 
 
-def _iter_sections(markdown_content: str) -> list[tuple[str, str]]:
+def _iter_sections(markdown_content: str) -> list[str]:
     """逐行切段并保留字符来源，空文档返回空列表。"""
-    sections: list[tuple[str, str]] = []
+    sections: list[str] = []
     markdown_content = SourceText(markdown_content or "")
     for line in (markdown_content or "").splitlines():
         text = line.strip()
         if not text:
             continue
-        sections.append((text, ""))
+        sections.append(text)
 
     if not sections and markdown_content and markdown_content.strip():
-        sections.append((markdown_content.strip(), ""))
+        sections.append(markdown_content.strip())
 
     return sections
 

@@ -18,14 +18,13 @@ from test.unit.support.milvus import (
 )
 from test.unit.support.milvus import fake_milvus_embedding as fake_milvus_embedding
 from yuxi.modules.knowledge.base import FileStatus, KnowledgeExecutor
-from yuxi.modules.knowledge.chunking.ragflow_like.nlp import count_tokens
+from yuxi.modules.knowledge.chunking.dispatcher import calculate_chunk_stats
 from yuxi.modules.knowledge.implementations.milvus import (
     CONTENT_SPARSE_FIELD,
     VECTOR_METRIC_TYPE,
     MilvusKB,
     _retrieval_config_options,
 )
-from yuxi.modules.knowledge.manager import KnowledgeBaseManager
 from yuxi.modules.knowledge.services import documents
 from yuxi.modules.knowledge.storage.milvus import CONTENT_ANALYZER_PARAMS
 
@@ -293,16 +292,18 @@ async def test_embed_and_store_chunks_batches_embedding_and_insert():
     assert all(call["kwargs"] == {} for call in store_calls)
 
 
-def test_calculate_chunk_stats_counts_chunks_and_tokens():
-    kb = MilvusKB.__new__(MilvusKB)
-    chunks = [make_chunk(0, content="alpha beta"), make_chunk(1, content="中文")]
-
-    stats = kb._calculate_chunk_stats(chunks)
-
-    assert stats == {
-        "chunk_count": 2,
-        "token_count": count_tokens("alpha beta") + count_tokens("中文"),
-    }
+@pytest.mark.parametrize(
+    "contents, expected",
+    [
+        ([], {"chunk_count": 0, "token_count": 0}),
+        (["", " \n"], {"chunk_count": 2, "token_count": 0}),
+        (["..."], {"chunk_count": 1, "token_count": 1}),
+        (["alpha beta", "中文"], {"chunk_count": 2, "token_count": 4}),
+    ],
+)
+def test_calculate_chunk_stats_counts_chunks_and_tokens(contents, expected):
+    chunks = [make_chunk(index, content=content) for index, content in enumerate(contents)]
+    assert calculate_chunk_stats(chunks) == expected
 
 
 async def test_index_file_persists_chunk_stats(monkeypatch):
@@ -356,7 +357,7 @@ async def test_index_file_persists_chunk_stats(monkeypatch):
     assert [chunk["chunk_id"] for chunk in store_calls[0][3]] == ["chunk-0-g2", "chunk-1-g2"]
     assert result["status"] == FileStatus.INDEXED
     assert result["chunk_count"] == 2
-    assert result["token_count"] == count_tokens("alpha beta") + count_tokens("中文")
+    assert result["token_count"] == 4
     assert file_repo.records["file-1"].chunk_count == result["chunk_count"]
     assert file_repo.conditional_update_calls[0][3]["status"] == FileStatus.INDEXING
     assert result["active_generation"] == 2
@@ -631,10 +632,12 @@ async def test_delete_file_commits_invisibility_without_external_cleanup(monkeyp
     kb._get_existing_milvus_collection = AsyncMock(return_value=FakeCollection())
     kb._delete_file_chunks_from_milvus = AsyncMock(side_effect=error)
 
-    manager = object.__new__(KnowledgeBaseManager)
-    monkeypatch.setattr(manager, "_require_kb_supports_documents", AsyncMock())
-    monkeypatch.setattr(manager, "_refresh_knowledge_base_stats", AsyncMock())
-    await manager.delete_file("db", "file-1")
+    from yuxi.modules.knowledge.services import administration, documents, statistics
+
+    monkeypatch.setattr(administration, "KnowledgeFileRepository", lambda: file_repo)
+    monkeypatch.setattr(documents, "require_document_support", AsyncMock())
+    monkeypatch.setattr(statistics, "refresh_stats", AsyncMock())
+    await administration.delete_document("db", "file-1")
 
     assert file_repo.records["file-1"].status == "deleted"
     assert file_repo.records["file-1"].deleted_at is not None

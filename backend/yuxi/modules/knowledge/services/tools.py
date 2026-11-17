@@ -7,6 +7,7 @@ from typing import Any
 
 from yuxi.modules.knowledge.factory import KnowledgeBaseFactory
 from yuxi.modules.knowledge.runtime import knowledge_base
+from yuxi.modules.knowledge.services import documents as knowledge_documents
 
 
 class KnowledgeToolError(ValueError):
@@ -119,7 +120,7 @@ async def find_kb_document(
     if not patterns:
         raise KnowledgeToolError("请提供 patterns")
     target = require_visible_kb(kb_id, visible_kbs)
-    return await knowledge_base.find_in_document(
+    return await knowledge_documents.find_in_document(
         target,
         str(file_id).strip(),
         patterns,
@@ -152,7 +153,7 @@ async def search_file(
         target_kbs = [kb for kb in target_kbs if kb.get("name") == kb_name]
         if not target_kbs:
             raise KnowledgeToolError(f"知识库 '{kb_name}' 不存在或当前会话未启用", not_found=True)
-    searchable = [kb for kb in target_kbs if knowledge_base.knowledge_base_type_supports_documents(kb.get("kb_type"))]
+    searchable = [kb for kb in target_kbs if KnowledgeBaseFactory.supports_documents(kb.get("kb_type"))]
     if not searchable:
         raise KnowledgeToolError("当前匹配的知识库只支持检索，不支持文件搜索")
-    return await knowledge_base.search_document_files(searchable, query=query, offset=offset, limit=limit)
+    return await knowledge_documents.search_document_files(searchable, query=query, offset=offset, limit=limit)

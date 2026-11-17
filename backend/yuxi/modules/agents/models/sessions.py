@@ -21,7 +21,7 @@ UNVIEWED_RUN_MARKER = "__unviewed__"
 
 
 class Session(Base):
-    """保存与 Thread 一对一的长期交互会话。"""
+    """Thread 的持久映射；id 是内部行主键，thread_id 是业务身份。"""
 
     __tablename__ = "sessions"
 

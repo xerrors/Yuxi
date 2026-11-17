@@ -43,7 +43,7 @@ test('普通引导和发送按钮共同遵守忙碌条件，解除阻塞后才�
   Object.assign(thread, { isStreaming: true, activeRunId: 'run', activeRunSteerable: true })
   const blockedCases = [
     ['发送被调用者禁用', () => { props.sendDisabled = true }, () => { props.sendDisabled = false }],
-    ['读取历史中', () => { state.isLoadingMessages.value = true }, () => { state.isLoadingMessages.value = false }],
+    ['读取历史中', () => { state.getThreadState(state.currentThreadId.value).readingLoading = true }, () => { state.getThreadState(state.currentThreadId.value).readingLoading = false }],
     ['提交待确认', () => { state.pendingSends.value.thread = { submitting: true } }, () => { delete state.pendingSends.value.thread }],
     ['取消清理中', () => { thread.cancellationPending = true }, () => { thread.cancellationPending = false }],
     ['等待人工操作', () => { thread.turnStatus = 'requires_action' }, () => { thread.turnStatus = 'running' }],

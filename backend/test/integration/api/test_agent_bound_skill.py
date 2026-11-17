@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.modules.extensions.skills.models import Skill, SkillVersion
 from yuxi.modules.extensions.skills.projection import get_user_skills_root_dir, refresh_user_skill_projection_async
-from yuxi.modules.extensions.skills.shared import get_skills_root_dir
+from yuxi.modules.extensions.skills.access import get_skills_root_dir
 from yuxi.infrastructure.runtime_settings import get_skill_data_dir
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]

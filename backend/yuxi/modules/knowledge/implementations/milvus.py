@@ -23,8 +23,7 @@ from pymilvus import (
 from yuxi.infrastructure.filesystem import await_io
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.knowledge.base import FileStatus, KBEmbeddingModelMissingError, KnowledgeExecutor
-from yuxi.modules.knowledge.chunking.dispatcher import IngestionChunk, chunk_markdown
-from yuxi.modules.knowledge.chunking.ragflow_like.nlp import count_tokens
+from yuxi.modules.knowledge.chunking.dispatcher import IngestionChunk, calculate_chunk_stats, chunk_markdown
 from yuxi.modules.knowledge.file_status import INDEX_CLAIM_STATUSES
 from yuxi.modules.knowledge.read_models import KnowledgeBaseConfig
 from yuxi.modules.knowledge.repositories.chunks import KnowledgeChunkRepository
@@ -805,7 +804,7 @@ class MilvusKB(KnowledgeExecutor):
                 f"chunk_parser_config={params.get('chunk_parser_config')}"
             )
 
-            chunk_stats = self._calculate_chunk_stats(chunks)
+            chunk_stats = calculate_chunk_stats(chunks)
             await self._embed_and_store_chunks(kb_id, file_id, collection, chunks, embedding_function)
 
             logger.info(f"Indexed file {file_id} generation {generation} into Milvus")
@@ -853,13 +852,6 @@ class MilvusKB(KnowledgeExecutor):
     def _split_text_into_chunks(self, text: str, file_id: str, filename: str, params: dict) -> list[IngestionChunk]:
         """将文本分割成块"""
         return chunk_markdown(text, file_id, filename, params)
-
-    def _calculate_chunk_stats(self, chunks: list[IngestionChunk]) -> dict[str, int]:
-        """统计 chunk 数量与 token 总数。"""
-        return {
-            "chunk_count": len(chunks),
-            "token_count": sum(count_tokens(chunk["content"]) for chunk in chunks),
-        }
 
     async def _embed_and_store_chunks(
         self,

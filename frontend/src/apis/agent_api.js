@@ -248,15 +248,7 @@ export const agentApi = {
       `/api/v1/agents/sessions/${threadId}/events`,
       { events: [{ type: 'yuxi.session.input.cancel_input', input_id: inputId }] },
       { headers: { 'Idempotency-Key': idempotencyKey } }
-    ),
-
-  /**
-   * 获取 Run 状态
-   * @param {string} runId - run ID
-   * @returns {Promise<Object>}
-   */
-  getAgentRun: (threadId, runId, options = {}) =>
-    apiGet(`/api/v1/agents/sessions/${threadId}/runs/${runId}`, options)
+    )
 }
 
 // =============================================================================
@@ -449,14 +441,5 @@ export const threadApi = {
   parseDraftFile: (fileId, parseMethod) =>
     apiPost(`/api/agent/files/${fileId}/parse`, { parse_method: parseMethod }),
 
-  deleteDraftFile: (fileId) => apiDelete(`/api/v1/agents/files/${fileId}`),
-
-  /**
-   * 删除附件
-   * @param {string} threadId
-   * @param {string} fileId
-   * @returns {Promise}
-   */
-  deleteThreadAttachment: (threadId, fileId) =>
-    apiDelete(`/api/v1/agents/sessions/${threadId}/attachments/${fileId}`)
+  deleteDraftFile: (fileId) => apiDelete(`/api/v1/agents/files/${fileId}`)
 }

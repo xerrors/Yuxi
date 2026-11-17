@@ -48,7 +48,7 @@ Yuxi 默认交付完整知识能力。部署开关 `YUXI_KNOWLEDGE_ENABLED` 由�
 ### 业务模块
 
 - `modules/agents` 拥有 Input 接收、优先队列调度、Turn/Run、消息、事件、运行租约与 LangGraph Agent runtime。`services/run_lifecycle.py` 拥有终态的 Thread→Turn→Input→Run 锁序、steer 裁决、Run/Turn 投影及提交后清理；checkpoint、runner 与 lease 恢复用例继续拥有各自事务提交。`services` 编排用例，`repositories` 查询持久状态，`models` 定义 ORM；`runtime/agent_backends` 拥有执行图实现与显式注册，`runtime/sandbox` 拥有沙盒执行与生命周期；`runtime/middlewares` 拥有模型与工具策略，Context 装配留在 runtime，知识库可见范围解析由 knowledge service 拥有。
-- `modules/knowledge` 拥有知识库、分块、检索、图谱与评估的业务状态；`services/uploads.py` 共用上传、URL 与工作区原件的哈希及独立 MinIO 暂存，路由校验权限并适配响应，管理用例调用来源安全读取入口；本地文件读取和目录操作直接访问知识域 service/repository，只有解析、索引、检索和外部阅读装配执行器。目录与导入 service 在同一 PostgreSQL 事务中发布真实目录、唯一名称、文件、幂等回执及作业，提交后投递；worker 处理已登记文件。`services/graph_build.py` 拥有图谱提交准入与 Job 登记，worker 独立消费 action，图谱执行器拥有配置及投影锁。`modules/documents` 解析配置与 MinIO 输入，并按调用方指定的位置发布资源；`infrastructure/document_parsing` 只生成完整本地 Markdown 目录，`parser.py` 拥有格式转换，`artifacts.py` 拥有产物路径与引用，`engines/` 集中 OCR 契约、注册与实现。
+- `modules/knowledge` 拥有知识库、分块、检索、图谱与评估的业务状态；`services/uploads.py` 共用上传、URL 与工作区原件的哈希及独立 MinIO 暂存，路由校验权限并适配响应，`services/bases.py` 拥有库元数据生命周期，`access.py` 拥有可见性与权限筛选，`documents.py` 拥有本地文件读取/列表/搜索，`directories.py` 拥有目录用例；这些入口直接访问知识域 repository。manager 只负责执行器配置与装配、解析、索引、检索、外部阅读和外部资源清理。删除用例由 `services/administration.py` 直接编排能力校验与文件/目录删除，repository 和目录 service 在原事务内登记 tombstone 与清理 outbox。目录与导入 service 在同一 PostgreSQL 事务中发布真实目录、唯一名称、文件、幂等回执及作业，提交后投递；worker 处理已登记文件。`services/graph_build.py` 拥有图谱提交准入与 Job 登记，worker 独立消费 action，图谱执行器拥有配置及投影锁。`modules/documents` 解析配置与 MinIO 输入，并按调用方指定的位置发布资源；`infrastructure/document_parsing` 只生成完整本地 Markdown 目录，`parser.py` 拥有格式转换，`artifacts.py` 拥有产物路径与引用，`engines/` 集中 OCR 契约、注册与实现。
 - `modules/workspace` 拥有 UserWorkspace 的路径映射、no-follow 文件操作、Workdir 和预览；Agent 沙盒与 Viewer 共用的 runtime 虚拟路径映射由 `modules/workspace/runtime_paths.py` 拥有。
 - `modules/identity` 拥有用户、部门、权限、凭据与 OIDC 账号用例，以及 Public API 的 Key 校验与 App/end_user 身份解析；`modules/extensions` 拥有 Skills、MCP 与工具目录；`modules/models` 拥有模型适配和供应商配置。
 - `modules/schedules` 拥有用户定时 Agent 定义和 occurrence；`modules/background_jobs` 拥有任务登记、执行方上报的观察记录和取消意图；后台作业模块的 dispatch 与 registry 拥有提交和定义，`workers` 拥有领取、执行和失联维护；`modules/system` 拥有系统配置、Dashboard 与跨域共享资源所有权治理。
@@ -82,9 +82,10 @@ Yuxi 默认交付完整知识能力。部署开关 `YUXI_KNOWLEDGE_ENABLED` 由�
 - `app/main.js` 挂载应用，`app/App.vue` 提供主题与根 RouterView，`app/router` 与 `app/layouts` 拥有路由、访问守卫和应用导航。
 - `pages` 是路由适配与页面装配入口。`AgentView` 把路由选择交给串行协调器，并装配会话工作区与智能体选择器。
 - `modules` 按 session、agents、projects、workspace、knowledge、extensions、identity、settings、background-jobs、dashboard 组织业务；`ui` 拥有界面，`model` 拥有状态与领域逻辑。会话编排、Input 排队、Thread SSE、审批和提及属于 session；智能体目录、选择与编辑属于 agents。
+- 文件预览的标签、缓存和对象 URL 由 `workspace/model/filePreviewSession` 拥有，随 Thread、登录身份和视图作用域释放；预览加载器只向仍属于当前请求的缓存项发布结果，失效请求回收自己的 URL。
 - `shared/ui` 与 `shared/lib` 保存通用界面和工具，`shared/model` 保存主题状态；全局样式集中在 `assets/css`，颜色和基础规范复用 `base.css`。
 - `apis` 是集中 HTTP 边界，复用 `base.js` 的请求、鉴权和错误处理。模块不能依赖 app/pages，shared 不能依赖业务模块或 API；ESLint 检查别名、相对路径和动态导入。跨模块只使用 `modules/<domain>` 的模型/用例公开入口或 `modules/<domain>/ui/**/*.vue` 公开组件，不得直达 `model/` 或其他内部路径。
-- 新 TypeScript 逻辑经 strict 类型检查，build 先执行 typecheck；现有 JavaScript 逐步迁移。sessionRuntime 按 Thread 拥有一份 item 状态，历史分页、SSE 与恢复快照写入同一 reducer，展示按需派生。sessionInput 拥有冻结提交、幂等重试和接收交接；输入队列观察者确认 Input 消费并触发持久运行恢复，共享 runtime 根据当前 Turn 选择唯一运行订阅。SessionWorkspace 负责编辑器草稿、附件消费与面板展示。视图存活期间的草稿分别保留，首次进入 Thread 从持久草稿初始化。独立 Thread 阅读与后续类型迁移见[重构提案](docs/develop-guides/decisions/proposed/2026-09-30-agent-view-frontend-refactor.md)。
+- 新 TypeScript 逻辑经 strict 类型检查，build 先执行 typecheck；现有 JavaScript 逐步迁移。sessionRuntime 按 Thread 拥有一份 item 状态，历史分页、SSE 与恢复快照写入同一 reducer，展示按需派生。sessionInput 拥有冻结提交、幂等重试和接收交接；输入队列观察者确认 Input 消费并触发持久运行恢复，共享 runtime 根据当前 Turn 选择唯一运行订阅。ThreadTimeline 按 threadId 激活共享首次装载与运行恢复，并拥有消息展示、历史分页和滚动视口；SessionWorkspace 装配读取、输入与面板，编辑器草稿和附件消费仍由输入路径处理。视图存活期间的草稿分别保留，首次进入 Thread 从持久草稿初始化。完整输入职责和后续类型迁移见[重构提案](docs/develop-guides/decisions/proposed/2026-09-30-agent-view-frontend-refactor.md)。
 
 `/` 是公开首页；登录后的核心工作区是 `/agent`。`/extensions` 对所有登录用户开放，其中 Skills 与 MCP 个人连接对普通用户可见，知识库和工具仅管理员可见，MCP 配置仅超级管理员可修改，Token/API Key/OAuth 凭证由用户分别配置；Dashboard 仅超级管理员可访问。后端权限检查始终是最终边界，前端守卫只负责页面体验。
 

@@ -50,9 +50,11 @@ export function createSessionInput({ runtime, onPrepared, onAccepted, onRejected
     }
     frozen.submitting = true
     runtime.pendingSends[threadId] = frozen
-    if (!original) onPrepared?.(threadId, frozen)
+    // 提交本身也是运行事实消费者；隐藏最后一个阅读视图不能中断回执收敛。
+    const releaseSubmission = runtime.observeThread(threadId, {})
     let accepted = false
     try {
+      if (!original) onPrepared?.(threadId, frozen)
       let receipt
       if (retry) {
         try {
@@ -64,6 +66,8 @@ export function createSessionInput({ runtime, onPrepared, onAccepted, onRejected
       receipt ||= await agentApi.sendThreadMessage(threadId, data)
       if (!receipt.input_id) throw new Error('Public API 未返回 input_id')
       accepted = true
+      // 旧身份的服务端接收仍然成立，但不能消费新身份的草稿或重开观察。
+      if (!runtime.isCurrentThreadState(threadId, state)) return false
       delete runtime.pendingSends[threadId]
       const inputId = receipt.input_id
       const acceptedMessage = {
@@ -84,6 +88,7 @@ export function createSessionInput({ runtime, onPrepared, onAccepted, onRejected
       await onAccepted?.(threadId, frozen)
       return true
     } catch (error) {
+      if (!runtime.isCurrentThreadState(threadId, state)) return false
       const rejected = !accepted && error.status >= 400 && error.status < 500 && error.status !== 429
       if (rejected) delete runtime.pendingSends[threadId]
       if (!accepted && runtime.isCurrentThreadState(threadId, state)) {
@@ -100,6 +105,7 @@ export function createSessionInput({ runtime, onPrepared, onAccepted, onRejected
     } finally {
       const pending = runtime.pendingSends[threadId]
       if (pending?.data.idempotency_key === clientKey) pending.submitting = false
+      releaseSubmission()
     }
   }
   return { send }

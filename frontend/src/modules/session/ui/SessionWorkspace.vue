@@ -86,109 +86,32 @@
           :to="`#${embedded ? workspacePanelId : mainChatPanelId}`"
           :disabled="!isAgentPanelMaximized"
         >
-          <div
-            class="chat-main"
-            ref="chatMainRef"
-            :class="{
-              'is-loading-history': earlierMessagesLoading,
-              'has-embedded-state': statePanelOpen && statePanelPlacement.mode === 'embedded'
-            }"
+          <ThreadTimeline
+            ref="timelineRef"
+            :thread-id="currentChatId"
+            :active="workspaceActive && userStore.isLoggedIn"
+            :page-visible="pageVisible"
+            :loading="isSessionLoading"
+            :processing="isProcessing"
+            :reply-loading="isReplyLoading"
+            :suppress-refs="shouldSuppressRefsForApproval()"
+            :config-notice="currentThreadConfigNotice"
+            :config-notice-scroll-version="configNoticeScrollVersion"
+            :mention-config="mentionConfig"
+            :cooperation-view="cooperationToolView"
+            :knowledge-bases="availableKnowledgeBases"
+            :widget-action="handleWidgetAction"
+            :widget-actions-disabled="widgetActionsDisabled"
+            :class="{ 'has-embedded-state': statePanelOpen && statePanelPlacement.mode === 'embedded' }"
+            @interrupt="runtimeView.onInterruptDetected"
+            @terminal="runtimeView.onTerminalDetected"
+            :on-loaded="initializeThreadInput"
+            @open-refs="openTurnSourcesPanel"
+            @open-session="navigateToSession"
+            @artifact-saved="handleArtifactSaved"
+            @open-preview="openPanelPreview"
           >
-            <div v-if="isSessionLoading" class="session-loading" role="status">
-              <a-spin />
-              <span>正在加载对话...</span>
-            </div>
-            <div class="chat-box">
-              <button
-                v-if="historyPages[currentChatId]?.hasMore"
-                type="button"
-                class="agent-nav-btn history-load-btn"
-                :disabled="historyPages[currentChatId]?.loading || earlierMessagesLoading"
-                :aria-busy="historyPages[currentChatId]?.loading || earlierMessagesLoading"
-                @click="loadEarlierMessages"
-              >
-                {{ earlierMessagesLabel }}
-              </button>
-              <template v-for="row in messageGroupRows" :key="row.key">
-                <div v-if="row.type === 'message-group'" class="group-box">
-                  <div v-if="row.timeLabel" class="message-group-time">
-                    {{ row.timeLabel }}
-                  </div>
-                  <div
-                    v-for="(displayItem, itemIndex) in row.displayItems"
-                    :key="displayItem.key"
-                    class="history-display-item"
-                    :data-history-key="displayItem.key"
-                  >
-                    <AgentMessageComponent
-                      v-if="displayItem.type === 'message'"
-                      :message="displayItem.message"
-                      :thread-id="currentChatId"
-                      :is-processing="isDisplayMessageProcessing(row.group, displayItem)"
-                      :show-refs="showMsgRefs(displayItem.message, row.group)"
-                      :hide-tool-calls="true"
-                      :mention="mentionConfig"
-                      :widget-action="handleWidgetAction"
-                      :widgets-disabled="row.group.status === 'streaming' || widgetActionsDisabled"
-                      @retry="retryMessage(displayItem.message)"
-                      @open-refs="openTurnSourcesPanel"
-                      @open-session="navigateToSession"
-                    >
-                    </AgentMessageComponent>
-                    <ToolCallsGroupComponent
-                      v-else-if="displayItem.type === 'tool-group'"
-                      :tool-calls="displayItem.toolCalls"
-                      :entries="displayItem.entries"
-                      :cooperation-view="cooperationToolView"
-                      :is-active="isToolGroupActive(row.group, itemIndex, row.displayItems)"
-                    />
-                    <RunProcessGroupComponent
-                      v-else
-                      :items="displayItem.items"
-                      :cooperation-view="cooperationToolView"
-                      :message-count="displayItem.messageCount"
-                      :tool-call-count="displayItem.toolCallCount"
-                      :duration-ms="displayItem.durationMs"
-                      :widgets-disabled="row.group.status === 'streaming' || widgetActionsDisabled"
-                      :mention="mentionConfig"
-                      :widget-action="handleWidgetAction"
-                    />
-                  </div>
-                  <RunFailureNotice
-                    v-if="row.group.run?.status === 'failed'"
-                    :error-message="row.group.run.error_message"
-                  />
-                  <div
-                    v-else-if="shouldShowRunStatusNotice(row)"
-                    class="chat-inline-notice"
-                    :class="{ 'is-terminal': isUserStoppedRun(row.group.run) }"
-                  >
-                    {{ formatEmptyRunStatus(row.group.run.status) }}
-                  </div>
-                  <AgentArtifactsCard
-                    v-if="row.artifacts.length && shouldShowRefs(row.group)"
-                    :artifacts="row.artifacts"
-                    :thread-id="currentChatId"
-                    @saved="handleArtifactSaved"
-                    @open-preview="openPanelPreview"
-                  />
-                  <!-- 显示对话最后一个消息使用的模型 -->
-                  <RefsComponent
-                    v-if="shouldShowRefs(row.group)"
-                    :thread-id="currentChatId"
-                    :message="getLastMessage(row.group)"
-                    :run="getMessageRun(getLastMessage(row.group))"
-                    :show-refs="['model', 'copy', 'sources']"
-                    :is-latest-message="false"
-                    :sources="getMessageGroupSources(row.group)"
-                    @open-refs="openTurnSourcesPanel"
-                  />
-                </div>
-                <div v-else class="chat-inline-notice">
-                  <span>{{ row.notice.message }}</span>
-                </div>
-              </template>
-
+            <template #status>
               <div class="generating-status" v-if="isReplyLoading && !isSessionLoading" role="status">
                 <div class="generating-indicator">
                   <span class="loading-spark" aria-hidden="true"></span>
@@ -206,7 +129,7 @@
                   </button>
                 </div>
               </div>
-            </div>
+            </template>
             <div
               ref="messageInputDockRef"
               class="bottom"
@@ -428,7 +351,7 @@
                 </div>
               </div>
             </div>
-          </div>
+          </ThreadTimeline>
         </Teleport>
       </div>
 
@@ -699,6 +622,9 @@
 </template>
 
 <script setup>
+import ThreadTimeline from './ThreadTimeline.vue'
+import { useFilePreviewSession } from '@/modules/workspace'
+import { useThreadMessageProjection } from '../model/threadMessageProjection'
 import { useSessionAgentAvailability } from '@/modules/session/model/sessionAgentAvailability'
 import {
   ref,
@@ -739,16 +665,6 @@ import {
 import ContextUsageRing from '@/modules/session/ui/ContextUsageRing.vue'
 import ToolApprovalModeSelector from '@/modules/session/ui/ToolApprovalModeSelector.vue'
 import ModelSelectorComponent from '@/modules/agents/ui/ModelSelectorComponent.vue'
-import AgentMessageComponent from '@/modules/session/ui/AgentMessageComponent.vue'
-import RunFailureNotice from '@/modules/session/ui/RunFailureNotice.vue'
-import {
-  formatEmptyRunStatus,
-  groupRunContinuations,
-  isRunGroupSettled as isRunGroupExecutionSettled
-} from '@/modules/session/model/runProcessGrouping'
-import RefsComponent from '@/modules/session/ui/RefsComponent.vue'
-import ToolCallsGroupComponent from '@/modules/session/ui/ToolCallsGroupComponent.vue'
-import RunProcessGroupComponent from '@/modules/session/ui/RunProcessGroupComponent.vue'
 import { handleChatError, handleValidationError } from '@/shared/lib/errorHandler'
 import {
   DRAFT_THREAD_ID,
@@ -756,7 +672,6 @@ import {
   createThreadDraftSession,
   entryDraftHandoff
 } from '@/modules/session/model/thread_draft'
-import { ScrollController } from '@/modules/session/model/scrollController'
 import { resolveContextUsageSummary } from '@/modules/session/model/contextUsage'
 import { AgentValidator } from '@/modules/agents'
 import { useAgentStore } from '@/modules/agents'
@@ -766,9 +681,6 @@ import { useConfigStore } from '@/modules/settings'
 import { useInfoStore } from '@/modules/settings'
 import { useUserStore } from '@/modules/identity'
 import { storeToRefs } from 'pinia'
-import { getMessageRunId } from '@/modules/session/model/messageDebug'
-import { MessageProcessor } from '@/modules/session/model/messageProcessor'
-import dayjs, { parseToShanghai } from '@/shared/lib/time'
 import { agentApi, threadApi } from '@/apis'
 import { mcpApi } from '@/apis/mcp_api'
 import HumanApprovalModal from '@/modules/session/ui/HumanApprovalModal.vue'
@@ -782,13 +694,10 @@ import CooperationTree from '@/modules/session/ui/CooperationTree.vue'
 import { useAgentMentionConfig } from '@/modules/session/model/useAgentMentionConfig'
 import { getToolCallId, parseToolCallResult } from '@/modules/session/model/toolCallProjection'
 import { collectCooperationTasks } from '@/modules/session/model/cooperationToolView'
-import AgentArtifactsCard from '@/modules/session/ui/AgentArtifactsCard.vue'
 import { normalizeArtifacts } from '@/modules/session/model/artifacts'
 import AgentPanel from '@/modules/session/ui/workspace/AgentPanel.vue'
 import AttachmentTmpUploadModal from '@/modules/session/ui/AttachmentTmpUploadModal.vue'
 import ProjectSelectionSection from '@/modules/projects/ui/ProjectSelectionSection.vue'
-import { normalizeToolCalls } from '@/modules/session/ui/tools/toolRegistry'
-import { getMessageGroupDisplayItems } from '@/modules/session/model/messageGrouping'
 import { getStatePanelPlacement } from '@/modules/session/model/statePanelLayout'
 import { useOutsidePointerdown } from '@/shared/lib/useOutsidePointerdown'
 import { AUTO_PROJECT_ID } from '@/modules/projects'
@@ -849,7 +758,7 @@ watch(
 )
 const workspacePanelId = `session-workspace-${getCurrentInstance().uid}`
 const mainChatPanelId = `main-chat-panel-${getCurrentInstance().uid}`
-const isLoadingMessages = ref(false)
+const isLoadingMessages = computed(() => Boolean(currentThreadState.value?.readingLoading))
 const workspaceActivated = ref(true)
 const workspaceActive = computed(() => workspaceActivated.value && props.visible)
 
@@ -915,13 +824,12 @@ const {
   fetchAgentState,
   startRunStream,
   requestTurnCancellation,
-  resumeActiveRunForThread,
   resumeQueuedInputs,
   cancelInput,
   promoteInput,
   continueQueue
 } = sessionRuntime
-const { threadMessages, threadRuns, historyPages, pendingSends } = storeToRefs(sessionRuntime)
+const { threadMessages, pendingSends } = storeToRefs(sessionRuntime)
 const setCurrentThreadId = (threadId, options) => {
   currentThreadId.value = threadId || null
   if (!props.embedded && workspaceActive.value) {
@@ -1023,8 +931,8 @@ const filePanelGapWidth = 0
 const mobilePanelBreakpoint = 768
 const panelRatio = ref(defaultPanelRatio) // 面板宽度比例 (0-1)
 const filePanelDragWidth = ref(null)
-const agentPanelPreviewTabs = ref([])
-const agentPanelPreviewCache = reactive(new Map())
+const filePreviews = useFilePreviewSession(currentThreadId)
+const { tabs: agentPanelPreviewTabs, cache: agentPanelPreviewCache } = filePreviews
 const agentPanelActivePreviewPath = ref('')
 const agentPanelViewMode = ref('tree')
 const agentPanelSections = ref([FILE_TREE_SECTION])
@@ -1120,53 +1028,19 @@ const showFileTreePanel = () => {
   setPanelRatioForViewMode()
 }
 
-const getPanelFileName = (file) => {
-  if (file?.name) return file.name
-  if (file?.path) return String(file.path).split('/').pop() || String(file.path)
-  return '未知文件'
-}
-
-const normalizePanelPath = (path) => String(path || '').replace(/\/+$/, '')
-
-const isSameOrChildPanelPath = (path, targetPath) => {
-  const normalizedPath = normalizePanelPath(path)
-  const normalizedTargetPath = normalizePanelPath(targetPath)
-  if (!normalizedPath || !normalizedTargetPath) return false
-  return (
-    normalizedPath === normalizedTargetPath || normalizedPath.startsWith(`${normalizedTargetPath}/`)
-  )
-}
+/** 文件展示名允许协议只提供路径。 */
+const getPanelFileName = (file) => file?.name || String(file?.path || '').split('/').pop() || '未知文件'
 
 const resetAgentPanelState = () => {
   isFilePanelOpen.value = false
   statePanelOpen.value = false
   panelRatio.value = defaultPanelRatio
   isAgentPanelMaximized.value = false
-  agentPanelPreviewTabs.value = []
+  filePreviews.reset()
   agentPanelActivePreviewPath.value = ''
   agentPanelViewMode.value = 'tree'
   agentPanelSections.value = [FILE_TREE_SECTION]
   agentPanelActiveSectionKey.value = FILE_TREE_SECTION.key
-}
-
-const previewCacheKey = (path, threadId = currentChatId.value) => `${threadId}:${path}`
-
-// 用户目录文件使用独立 cache 前缀；释放时两个 scope 的 key 一并清理。
-const releasePreviewCacheEntry = (path, threadId = currentChatId.value) => {
-  for (const key of [previewCacheKey(path, threadId), `workspace:${path}`]) {
-    const entry = agentPanelPreviewCache.get(key)
-    if (entry?.file?.previewUrl) window.URL.revokeObjectURL(entry.file.previewUrl)
-    agentPanelPreviewCache.delete(key)
-  }
-}
-
-const invalidatePreviewCachePath = (targetPath, threadId = currentChatId.value) => {
-  for (const key of agentPanelPreviewCache.keys()) {
-    const separatorIndex = key.indexOf(':')
-    if (separatorIndex < 0 || key.slice(0, separatorIndex) !== String(threadId)) continue
-    const path = key.slice(separatorIndex + 1)
-    if (isSameOrChildPanelPath(path, targetPath)) releasePreviewCacheEntry(path, threadId)
-  }
 }
 
 const setAgentPanelViewMode = (mode) => {
@@ -1183,35 +1057,8 @@ const activatePanelPreview = (path) => {
 }
 
 const openPanelPreview = (file, keepTreeOpen = false) => {
-  if (!file?.path) return
-
-  const workspace = file.workspace === true
-  const tab = {
-    ...file,
-    workspace,
-    workdir: !workspace && file.workdir === true,
-    path: String(file.path),
-    name: getPanelFileName(file)
-  }
-  const existingIndex = agentPanelPreviewTabs.value.findIndex((item) => item.path === tab.path)
-
-  if (existingIndex >= 0) {
-    const existingTab = agentPanelPreviewTabs.value[existingIndex]
-    if (
-      (!tab.workdir && !tab.workspace && tab.modified_at == null && tab.size == null) ||
-      existingTab.modified_at !== tab.modified_at ||
-      existingTab.size !== tab.size ||
-      Boolean(existingTab.workdir) !== Boolean(tab.workdir) ||
-      Boolean(existingTab.workspace) !== Boolean(tab.workspace)
-    ) {
-      releasePreviewCacheEntry(tab.path)
-    }
-    agentPanelPreviewTabs.value = agentPanelPreviewTabs.value.map((item, index) =>
-      index === existingIndex ? { ...item, ...tab } : item
-    )
-  } else {
-    agentPanelPreviewTabs.value = [...agentPanelPreviewTabs.value, tab]
-  }
+  const tab = filePreviews.open(file)
+  if (!tab) return
 
   agentPanelActivePreviewPath.value = tab.path
   agentPanelSections.value = upsertAgentPanelSection(agentPanelSections.value, {
@@ -1227,10 +1074,7 @@ const openPanelPreview = (file, keepTreeOpen = false) => {
 const closePanelPreviewTab = (path) => {
   if (!path) return
 
-  releasePreviewCacheEntry(path)
-
-  const nextTabs = agentPanelPreviewTabs.value.filter((item) => item.path !== path)
-  agentPanelPreviewTabs.value = nextTabs
+  filePreviews.close(path)
   const nextSectionState = closePanelSectionState(
     agentPanelSections.value,
     agentPanelActiveSectionKey.value,
@@ -1252,18 +1096,9 @@ const closePanelPreviewTab = (path) => {
 const closePanelPreviewPath = (targetPath) => {
   if (!targetPath) return
 
-  invalidatePreviewCachePath(targetPath)
-
-  const nextTabs = agentPanelPreviewTabs.value.filter(
-    (item) => !isSameOrChildPanelPath(item.path, targetPath)
-  )
-  const shouldCloseActive = isSameOrChildPanelPath(agentPanelActivePreviewPath.value, targetPath)
-  agentPanelPreviewTabs.value = nextTabs
-  const removedPaths = agentPanelSections.value
-    .filter(
-      (section) => section.type === 'file' && isSameOrChildPanelPath(section.path, targetPath)
-    )
-    .map((section) => section.key)
+  const removed = filePreviews.closePath(targetPath)
+  const shouldCloseActive = removed.includes(agentPanelActivePreviewPath.value)
+  const removedPaths = removed.map((path) => `file:${path}`)
   agentPanelSections.value = agentPanelSections.value.filter(
     (section) => !removedPaths.includes(section.key)
   )
@@ -1691,9 +1526,7 @@ const { mentionConfig } = useAgentMentionConfig({
 })
 
 const currentThreadMessages = computed(() => threadMessages.value[currentChatId.value] || [])
-const currentThreadRuns = computed(() => threadRuns.value[currentChatId.value] || [])
-const currentRunById = computed(() => new Map(currentThreadRuns.value.map((run) => [run.id, run])))
-const getMessageRun = (message) => currentRunById.value.get(getMessageRunId(message)) || null
+const { runGroups, ongoingRunMessages } = useThreadMessageProjection(currentChatId)
 const currentThreadHasHistory = computed(() => currentThreadMessages.value.length > 0)
 const currentThreadConfigNotice = computed(() => {
   if (!currentChatId.value) return null
@@ -1725,44 +1558,10 @@ const shouldSuppressRefsForApproval = () =>
     approvalState.threadId && currentChatId.value === approvalState.threadId && isProcessing.value
   )
 
-const isRunGroupSettled = (group) =>
-  isRunGroupExecutionSettled(runGroups.value, group, isProcessing.value || isReplyLoading.value)
-
-// Run 终态投影落定后才展示 Refs 操作栏与交付物卡片
-const shouldShowRefs = computed(() => {
-  return (group) => {
-    if (!getLastMessage(group) || group.status === 'streaming' || shouldSuppressRefsForApproval()) {
-      return false
-    }
-    return isRunGroupSettled(group)
-  }
-})
-
 // 当前线程状态的computed属性
 const currentThreadState = computed(() => {
   return getThreadState(currentChatId.value)
 })
-
-const getThreadOngoingMessages = (threadId) => {
-  const threadState = getThreadState(threadId)
-  if (!threadState || !threadState.itemState) return []
-
-  const visible = (threadMessages.value[threadId] || []).filter(
-    (item) => item.run_id === threadState.activeRunId
-  ).map((item) => ({
-    ...item,
-    content: threadState.displayText[item.id] ?? item.content
-  }))
-  const inputIds = new Set(
-    visible.filter((item) => item.type === 'human').map((item) => item.input_id)
-  )
-  const optimistic = Object.values(threadState.optimisticInputs)
-    .flat()
-    .filter((item) => !inputIds.has(item.extra_metadata?.input_id))
-  return [...optimistic, ...visible]
-}
-
-const ongoingRunMessages = computed(() => getThreadOngoingMessages(currentChatId.value))
 
 const cooperationToolView = computed(() => {
   const sessions = [
@@ -1779,87 +1578,6 @@ const cooperationToolView = computed(() => {
     openSession: navigateToSession,
     openTree: openCooperationTree
   }
-})
-
-const runGroups = computed(() => {
-  const state = currentThreadState.value
-  const messages = currentThreadMessages.value.map((item) => ({
-    ...item,
-    content: state?.displayText[item.id] ?? item.content
-  }))
-  const inputIds = new Set(
-    messages.filter((item) => item.type === 'human').map((item) => item.input_id)
-  )
-  const optimistic = Object.values(state?.optimisticInputs || {})
-    .flat()
-    .filter((item) => !inputIds.has(item.extra_metadata?.input_id))
-  const groups = MessageProcessor.convertServerHistoryToMessages(
-    [...messages, ...optimistic],
-    currentThreadRuns.value
-  )
-  for (const group of groups) {
-    if (
-      state?.isStreaming &&
-      (group.run?.id === state.activeRunId ||
-        group.messages.some(
-          (item) => getMessageRunId(item) === state.activeRunId || item.id === state.pendingInputId
-        ))
-    ) {
-      group.status = 'streaming'
-    }
-  }
-  return groupRunContinuations(groups)
-})
-
-/** 间隔超过一小时时，在新用户消息上方显示发送时间。 */
-const getMessageGroupTimeLabel = (group, previousGroup) => {
-  const sentAt = group.messages.find((message) => message.type === 'human')?.created_at
-  const finishedAt = getMessageRun(
-    previousGroup?.messages.findLast((message) => message.type === 'ai')
-  )?.timing?.finished_at
-  if (!sentAt || !finishedAt) return ''
-
-  // 历史消息的无时区时间来自 PostgreSQL UTC，不能按浏览器本地时间解析。
-  const sentTime = dayjs.utc(sentAt)
-  const finishedTime = dayjs.utc(finishedAt)
-  if (!sentTime.isValid() || !finishedTime.isValid()) return ''
-  if (sentTime.valueOf() - finishedTime.valueOf() <= 60 * 60 * 1000) return ''
-
-  const displayTime = parseToShanghai(sentTime.toISOString())
-  const today = parseToShanghai(Date.now())
-  if (displayTime.isSame(today, 'day')) return displayTime.format('今天 HH:mm')
-  if (displayTime.isSame(today.subtract(1, 'day'), 'day')) {
-    return displayTime.format('昨天 HH:mm')
-  }
-  return displayTime.format(displayTime.isSame(today, 'year') ? 'MM-DD HH:mm' : 'YYYY-MM-DD HH:mm')
-}
-
-const messageGroupRows = computed(() => {
-  const rows = runGroups.value.map((group, index) => ({
-    type: 'message-group',
-    key:
-      group.displayKey ||
-      group.run?.id ||
-      (group.status === 'streaming' ? 'ongoing-message-group' : `history-${index}`),
-    group,
-    timeLabel: getMessageGroupTimeLabel(group, runGroups.value[index - 1]),
-    displayItems: getDisplayItems(group),
-    artifacts: MessageProcessor.extractArtifactsFromMessageGroup(group)
-  }))
-
-  if (currentThreadConfigNotice.value) {
-    const insertAfterCount = Math.max(
-      0,
-      Math.min(Number(currentThreadConfigNotice.value.insertAfterGroupCount) || 0, rows.length)
-    )
-    rows.splice(insertAfterCount, 0, {
-      type: 'notice',
-      key: currentThreadConfigNotice.value.id,
-      notice: currentThreadConfigNotice.value
-    })
-  }
-
-  return rows
 })
 
 const isStreaming = computed(() => {
@@ -1995,20 +1713,6 @@ const startSendCooldown = () => {
 const CONFIG_CHANGE_NOTICE_MESSAGE =
   '本会话沿用创建时的智能体配置；之后的修改只对新会话生效，建议新建对话以使用最新配置。'
 
-/** 用户主动停止的 Run 终态：即使已有工具摘要也要显式告知结果。 */
-const USER_STOPPED_RUN_STATUSES = new Set(['cancelled', 'interrupted', 'cancel_requested'])
-
-const isUserStoppedRun = (run) =>
-  Boolean(run) && USER_STOPPED_RUN_STATUSES.has(run.status)
-
-const shouldShowRunStatusNotice = (row) => {
-  const run = row?.group?.run
-  if (!run) return false
-  if (isUserStoppedRun(run)) return true
-  return !row.displayItems.length
-}
-
-
 const withConfigNoticeSync = async (task) => {
   configNoticeSyncDepth.value += 1
   try {
@@ -2129,90 +1833,9 @@ const maybeInsertThreadConfigNotice = () => {
   }
 }
 
-// ==================== SCROLL & RESIZE HANDLING ====================
-const chatMainRef = ref(null)
-const scrollController = new ScrollController(() =>
-  workspaceActive.value ? chatMainRef.value : null
-)
-let retainedScrollTop = 0
-const earlierMessagesLoading = ref(false)
-const earlierMessagesError = ref(false)
-const earlierMessagesLabel = computed(() => {
-  if (historyPages.value[currentChatId.value]?.loading || earlierMessagesLoading.value) {
-    return '正在加载更早消息…'
-  }
-  return earlierMessagesError.value ? '加载失败，点击重试' : '加载更早消息'
-})
-
-/** 追加历史后按可见消息恢复位置，保留请求期间用户的滚动。 */
-const loadEarlierMessages = async () => {
-  const threadId = currentChatId.value
-  const container = chatMainRef.value
-  const paging = historyPages.value[threadId]
-  if (
-    !container ||
-    !workspaceActive.value ||
-    !pageVisible.value ||
-    isLoadingMessages.value ||
-    !paging?.hasMore ||
-    paging.loading ||
-    earlierMessagesLoading.value
-  ) {
-    return
-  }
-  earlierMessagesLoading.value = true
-  earlierMessagesError.value = false
-  scrollController.disableAutoScroll()
-  scrollController.cancelPendingScrolls()
-  const anchor = [...container.querySelectorAll('.history-display-item')].find(
-    (element) => element.getBoundingClientRect().bottom > container.getBoundingClientRect().top
-  )
-  const anchorKey = anchor?.dataset.historyKey
-  const anchorTop = anchor?.getBoundingClientRect().top
-  const previousHeight = container.scrollHeight
-  const previousScrollTop = container.scrollTop
-  try {
-    await fetchThreadMessages({ threadId, more: true })
-    await nextTick()
-    if (
-      currentChatId.value !== threadId ||
-      chatMainRef.value !== container ||
-      !workspaceActive.value
-    ) {
-      return
-    }
-    const currentAnchor = anchor?.isConnected
-      ? anchor
-      : [...container.querySelectorAll('.history-display-item')].find(
-          (element) => element.dataset.historyKey === anchorKey
-        )
-    const offset = currentAnchor
-      ? currentAnchor.getBoundingClientRect().top -
-        anchorTop +
-        container.scrollTop -
-        previousScrollTop
-      : container.scrollHeight - previousHeight
-    container.scrollTop += offset
-    retainedScrollTop = container.scrollTop
-  } catch {
-    // Runtime 已提供错误提示；停止自动重试，交由用户点击恢复。
-    if (currentChatId.value === threadId) earlierMessagesError.value = true
-  } finally {
-    earlierMessagesLoading.value = false
-  }
-}
-
-const handleWorkspaceScroll = () => {
-  if (!workspaceActive.value) return
-  if (scrollController.hasLayoutChanged()) return
-  const scrollTop = chatMainRef.value?.scrollTop || 0
-  const scrollingUp = scrollTop < retainedScrollTop
-  retainedScrollTop = scrollTop
-  scrollController.handleScroll()
-  if (scrollingUp && scrollTop <= 600 && !earlierMessagesError.value) {
-    void loadEarlierMessages()
-  }
-}
+// 布局只读取视口几何；阅读锚点、滚动与分页由 ThreadTimeline 拥有。
+const timelineRef = ref(null)
+const chatMainRef = computed(() => timelineRef.value?.element || null)
 const messageInputDockRef = ref(null)
 let chatMainResizeObserver = null
 // 初始化延迟标志，避免首次挂载时 ResizeObserver 立即触发导致侧边栏意外关闭
@@ -2282,16 +1905,10 @@ const startChatMainResizeObserver = () => {
     if (!isResizeObserverReady) return
 
     if (!entries.length) return
-    if (!earlierMessagesLoading.value) {
-      scrollController.handleResize()
-      retainedScrollTop = chatMainRef.value?.scrollTop || 0
-    }
     syncLayoutMetrics()
   })
   if (panelWrapperRef.value) chatMainResizeObserver.observe(panelWrapperRef.value)
   chatMainResizeObserver.observe(chatMainRef.value)
-  const chatBox = chatMainRef.value.querySelector('.chat-box')
-  if (chatBox) chatMainResizeObserver.observe(chatBox)
   if (chatContentContainerRef.value) {
     chatMainResizeObserver.observe(chatContentContainerRef.value)
   }
@@ -2299,7 +1916,6 @@ const startChatMainResizeObserver = () => {
     chatMainResizeObserver.observe(messageInputDockRef.value)
   }
   armResizeObserver(() => {
-    scrollController.rememberReadingPosition()
     syncLayoutMetrics()
   })
 }
@@ -2310,11 +1926,6 @@ onMounted(() => {
   }
 
   nextTick(() => {
-    const chatMainContainer = chatMainRef.value
-    if (chatMainContainer) {
-      chatMainContainer.addEventListener('scroll', handleWorkspaceScroll, { passive: true })
-    }
-
     startChatMainResizeObserver()
   })
 })
@@ -2323,7 +1934,6 @@ onActivated(() => {
   workspaceActivated.value = true
   nextTick(() => {
     startChatMainResizeObserver()
-    if (chatMainRef.value) chatMainRef.value.scrollTop = retainedScrollTop
   })
 })
 
@@ -2331,7 +1941,6 @@ onDeactivated(() => {
   workspaceActivated.value = false
   stopChatMainResizeObserver()
   stopStreamingStateRefresh()
-  scrollController.cleanup()
   if (props.isNewSession && currentChatId.value) {
     // 正式路由接管线程草稿；缓存的新建页不能在再次打开时覆写它。
     userInput.value = threadDraftSession.switchThread('', userInput.value)
@@ -2342,17 +1951,13 @@ onUnmounted(() => {
   if (typeof document !== 'undefined') {
     document.removeEventListener('visibilitychange', handlePageVisibilityChange)
   }
-  scrollController.cleanup()
   stopChatMainResizeObserver()
   stopStreamingStateRefresh()
   if (sendCooldownTimer) {
     clearTimeout(sendCooldownTimer)
     sendCooldownTimer = null
   }
-  for (const entry of agentPanelPreviewCache.values()) {
-    if (entry.file?.previewUrl) window.URL.revokeObjectURL(entry.file.previewUrl)
-  }
-  agentPanelPreviewCache.clear()
+
 })
 
 // ==================== 线程管理方法 ====================
@@ -2511,9 +2116,6 @@ watch(visibleApprovalThreadId, (threadId) => {
 
 provide('getAgentThreadState', getThreadState)
 const runtimeView = {
-  onScrollToBottom: () => {
-    if (workspaceActive.value && pageVisible.value) scrollController.scrollToBottom()
-  },
   onInterruptDetected: ({ threadId }) => {
     if (workspaceActive.value) restorePendingInterruptForThread(threadId)
   },
@@ -2527,19 +2129,24 @@ const runtimeView = {
     }
   }
 }
-let releaseRuntimeView = () => {}
-watch(
-  () =>
-    userStore.isLoggedIn && !(props.isNewSession && !workspaceActive.value)
-      ? currentThreadId.value
-      : null,
-  (threadId) => {
-    releaseRuntimeView()
-    releaseRuntimeView = sessionRuntime.observeThread(threadId, runtimeView)
-  },
-  { immediate: true, flush: 'sync' }
-)
-onUnmounted(() => releaseRuntimeView())
+/** 阅读完成后准备当前会话输入；由阅读组件串行等待，路由不再二次触发。 */
+const initializeThreadInput = async ({ threadId }) => {
+  if (threadId !== currentThreadId.value) return false
+  const state = getThreadState(threadId)
+  const current = () => currentThreadId.value === threadId && sessionRuntime.isCurrentThreadState(threadId, state)
+  restorePendingInterruptForThread(threadId)
+  if (workspaceActive.value && pageVisible.value) void chatThreadsStore.markThreadViewed(threadId)
+  await refreshSessionAgent(threadId, currentThread.value?.agent.id)
+  if (!current()) return false
+  if (!agentExecutionAvailable.value) return true
+  await withConfigNoticeSync(async () => syncThreadConfigSnapshot(threadId))
+  if (!current()) return false
+  await handleAgentStateRefresh(threadId)
+  if (!current()) return false
+  syncThreadConfigSnapshot(threadId, { overwrite: false })
+  restorePendingInterruptForThread(threadId)
+  return true
+}
 
 const handlePromoteQueuedInput = async (inputId) => {
   const threadId = currentChatId.value
@@ -2581,11 +2188,8 @@ const resumeCurrentRunForVisiblePage = async () => {
   const threadId = currentChatId.value
   if (!threadId) return
 
-  await refreshSessionAgent(threadId, currentAgentId.value)
-  if (!agentExecutionAvailable.value) return
   try {
-    await resumeActiveRunForThread(threadId)
-    await resumeQueuedInputs(threadId)
+    await timelineRef.value?.refresh()
     restorePendingInterruptForThread(threadId)
   } catch (error) {
     console.warn('Failed to resume current run after page became visible:', error)
@@ -2594,7 +2198,6 @@ const resumeCurrentRunForVisiblePage = async () => {
 
 watch(workspaceActive, (active) => {
   if (!active) return
-  void resumeCurrentRunForVisiblePage()
   if (pageVisible.value && currentChatId.value) {
     void chatThreadsStore.markThreadViewed(currentChatId.value)
   }
@@ -2602,8 +2205,6 @@ watch(workspaceActive, (active) => {
 
 const handlePageVisibilityChange = () => {
   pageVisible.value = typeof document === 'undefined' || document.visibilityState === 'visible'
-  if (!pageVisible.value) return
-  void resumeCurrentRunForVisiblePage()
 }
 
 // ==================== CHAT ACTIONS ====================
@@ -2612,90 +2213,27 @@ const selectChat = async (chatId) => {
     message.info('正在创建新对话，请稍候')
     return false
   }
-  const targetChat = threads.value.find((chat) => chat.id === chatId) || null
-  const targetAgentId = targetChat?.agent.id || currentAgentId.value
   const previousThreadId = currentThreadId.value
-
-  if (!targetAgentId) {
-    handleValidationError('选择对话失败：缺少智能体信息')
-    return
-  }
-
-  if (!AgentValidator.validateAgentIdWithError(targetAgentId, '选择对话', handleValidationError))
-    return
-
-  if (previousThreadId !== chatId) {
-    resetAgentPanelState()
-  }
-
+  if (previousThreadId !== chatId) resetAgentPanelState()
   setCurrentThreadId(chatId)
-  const availability = refreshSessionAgent(chatId, targetAgentId)
-
-  isLoadingMessages.value = true
-  try {
-    await fetchThreadMessages({ threadId: chatId })
-    if (workspaceActive.value && pageVisible.value && currentThreadId.value === chatId) {
-      void chatThreadsStore.markThreadViewed(chatId)
-    }
-  } catch (error) {
-    handleChatError(error, 'load')
-    return [403, 404, 410].includes(error?.status) ? false : null
-  } finally {
-    isLoadingMessages.value = false
-  }
-
-  await availability
-  if (currentChatId.value !== chatId) return false
   await nextTick()
-  await scrollController.scrollToBottomStaticForce()
-  if (!agentExecutionAvailable.value) return true
-  await withConfigNoticeSync(async () => syncThreadConfigSnapshot(chatId))
-  await handleAgentStateRefresh(chatId)
-  syncThreadConfigSnapshot(chatId, { overwrite: false })
-  await resumeActiveRunForThread(chatId)
-  await resumeQueuedInputs(chatId)
-  restorePendingInterruptForThread(chatId)
-  await scrollController.scrollToBottomStaticForce()
+  try {
+    if (!(await timelineRef.value?.refresh())) return false
+  } catch (error) {
+    return [403, 404, 410].includes(error?.status) ? false : null
+  }
+  if (currentChatId.value !== chatId) return false
   return true
 }
 
 const selectThreadFromRoute = async (threadId) => {
   if (threadCreationInFlight.value) return null
-  const initiatingUserId = userStore.userId
-  if (!agentStore.isInitialized) {
-    await initAll()
-    if (userStore.userId !== initiatingUserId) return null
-  }
 
   if (!threadId) {
     const previousThreadId = currentThreadId.value
     resetAgentPanelState()
     setCurrentThreadId(null)
     if (previousThreadId) emit('thread-change', '')
-    return true
-  }
-
-  const loadedCurrentThread = currentThreadId.value === threadId && getThreadState(threadId).historyLoaded
-  if (loadedCurrentThread || !threads.value.some((thread) => thread.id === threadId)) {
-    try {
-      const thread = await agentApi.getPublicThread(threadId)
-      if (userStore.userId !== initiatingUserId) return null
-      chatThreadsStore.upsertThread(thread)
-    } catch (error) {
-      if (userStore.userId !== initiatingUserId) return null
-      handleChatError(error, 'load')
-      return [403, 404, 410].includes(error?.status) ? false : null
-    }
-  }
-
-  const targetThread = threads.value.find((thread) => thread.id === threadId)
-  if (!targetThread) {
-    return false
-  }
-
-  if (loadedCurrentThread) {
-    if (!props.embedded && workspaceActive.value) chatThreadsStore.setCurrentThreadId(threadId)
-    await resumeCurrentRunForVisiblePage()
     return true
   }
 
@@ -2707,7 +2245,7 @@ const sessionInput = createSessionInput({
   onPrepared: (_threadId, draft) => {
     if (!draft.fromWidget && userInput.value.trim() === draft.text) userInput.value = ''
     if (approvalState.threadId === _threadId) hideApprovalState()
-    void nextTick(() => scrollController.scrollToBottom(true))
+    void nextTick(() => timelineRef.value?.scrollToBottom(true))
   },
   onAccepted: async (threadId, draft) => {
     draft.onWidgetAccepted?.()
@@ -3119,59 +2657,6 @@ const handleResizingChange = (isResizingState, clientX = 0) => {
 }
 
 // ==================== HELPER FUNCTIONS ====================
-const getMessageToolCalls = (message) => normalizeToolCalls(message?.tool_calls)
-
-const getDisplayItems = (group) =>
-  getMessageGroupDisplayItems(group, {
-    enrichToolCalls: getMessageToolCalls,
-    runTiming: group.processTiming || getMessageRun(getLastMessage(group))?.timing,
-    collapseIntermediate: group?.status !== 'streaming' && isRunGroupSettled(group)
-  })
-
-const isDisplayMessageProcessing = (group, displayItem) => {
-  return (
-    displayItem?.type === 'message' &&
-    isReplyLoading.value &&
-    group?.status === 'streaming' &&
-    displayItem.sourceIndex === group.messages.length - 1
-  )
-}
-
-const isToolGroupActive = (group, itemIndex, displayItems) => {
-  return (
-    isReplyLoading.value && group?.status === 'streaming' && itemIndex === displayItems.length - 1
-  )
-}
-
-const getLastMessage = (group) => {
-  if (!group?.messages?.length) return null
-  for (let i = group.messages.length - 1; i >= 0; i--) {
-    if (group.messages[i].type === 'ai') return group.messages[i]
-  }
-  return null
-}
-
-const showMsgRefs = (msg, group) => {
-  if (shouldSuppressRefsForApproval()) {
-    return false
-  }
-
-  // 该消息所在对话未收尾（后面跟的是没有 human message 的 AI 续写，或仍在生成）时不展示
-  if (!isRunGroupSettled(group)) {
-    return false
-  }
-
-  // 只有真正完成的消息才显示 refs
-  if (msg.isLast && msg.status === 'finished') {
-    return ['copy', 'sources']
-  }
-  return false
-}
-
-const getMessageGroupSources = (group) => {
-  return MessageProcessor.extractSourcesFromMessageGroup(group, availableKnowledgeBases.value)
-}
-
 // ==================== LIFECYCLE & WATCHERS ====================
 const loadChatsList = async () => {
   const initiatingUserId = userStore.userId
@@ -3210,7 +2695,6 @@ async function initializeWorkspace() {
     await selectThreadFromRoute(props.embeddedThreadId)
     closeFilePanel()
   }
-  scrollController.enableAutoScroll()
 }
 
 onMounted(() => {
@@ -3276,28 +2760,8 @@ watch(
   }
 )
 
-watch(
-  runGroups,
-  () => {
-    if (workspaceActive.value && isProcessing.value) {
-      scrollController.scrollToBottom()
-    }
-  },
-  { flush: 'post' }
-)
-
-watch(
-  configNoticeScrollVersion,
-  () => {
-    if (!workspaceActive.value || !currentChatId.value) return
-    scrollController.scrollToBottom(true)
-  },
-  { flush: 'post' }
-)
-
 watch(currentChatId, (threadId, oldThreadId) => {
   if (threadId === oldThreadId) return
-  earlierMessagesError.value = false
   // 旧线程已被删除时丢弃输入草稿，避免写入无法再次访问的孤儿缓存
   const keepInput = !oldThreadId || threads.value.some((thread) => thread.id === oldThreadId)
   // 切换线程：保存旧线程的输入草稿，并还原新线程（或新建对话）的草稿
@@ -3422,23 +2886,6 @@ watch(currentChatId, (threadId, oldThreadId) => {
   position: relative;
   width: 100%;
   contain: layout;
-}
-
-.chat-main {
-  flex: 1 1 0;
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto; /* Scroll is here now */
-  overflow-anchor: none; /* 阅读位置由会话滚动控制器补偿。 */
-  position: relative;
-  transition:
-    flex-basis 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-    margin-right 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-    padding-right 0.24s cubic-bezier(0.16, 1, 0.3, 1),
-    width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  min-width: 0; /* Prevent flex item from overflowing */
-
-  scrollbar-width: none;
 }
 
 .chat-content-container.has-file-panel .chat-main {
@@ -3663,74 +3110,6 @@ watch(currentChatId, (threadId, oldThreadId) => {
   background: var(--main-30);
   color: var(--main-700);
   font-size: 12px;
-}
-
-.session-loading {
-  position: absolute;
-  top: 30%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  color: var(--gray-600);
-  font-size: 14px;
-  line-height: 20px;
-  pointer-events: none;
-
-  :deep(.ant-spin) {
-    display: flex;
-    line-height: 1;
-  }
-}
-
-.chat-box {
-  width: 100%;
-  max-width: 800px;
-  margin: 0 auto;
-  flex-grow: 1;
-  padding: 1rem 2rem;
-  display: flex;
-  flex-direction: column;
-}
-
-.group-box,
-.history-display-item {
-  display: flex;
-  flex-direction: column;
-}
-
-// 悬浮整个 Run 分组时显示 refs 行中的时间
-.group-box:hover {
-  :deep(.refs .time-entry) {
-    opacity: 1;
-    visibility: visible;
-  }
-}
-
-.message-group-time {
-  margin: 24px 0 16px;
-  color: var(--color-text-secondary);
-  font-size: 13px;
-  line-height: 1.6;
-  text-align: center;
-}
-
-.chat-inline-notice {
-  display: flex;
-  justify-content: center;
-  padding: 6px 16px 12px;
-  color: var(--gray-500);
-  font-size: 12px;
-  line-height: 1.6;
-  text-align: center;
-
-  &.is-terminal {
-    color: var(--color-text-secondary);
-    font-weight: 500;
-  }
 }
 
 .archived-thread-notice {
@@ -4262,21 +3641,6 @@ watch(currentChatId, (threadId, oldThreadId) => {
 
   .loading-icon {
     animation: spin 1s linear infinite;
-  }
-}
-
-.history-load-btn {
-  min-height: 40px;
-  flex-shrink: 0;
-  color: var(--color-text-secondary);
-
-  &:disabled {
-    cursor: wait;
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--main-color);
-    outline-offset: 2px;
   }
 }
 

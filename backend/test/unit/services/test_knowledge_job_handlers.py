@@ -75,7 +75,7 @@ async def test_document_action_preserves_arguments_owner_and_input_order(monkeyp
         return ["a", "b"] if after_file_id is None else []
 
     monkeypatch.setattr(jobs.knowledge_base, f"{action}_file", process)
-    monkeypatch.setattr(jobs.knowledge_base, "list_document_file_ids_by_statuses", pending)
+    monkeypatch.setattr(jobs.knowledge_documents, "list_document_file_ids_by_statuses", pending)
     result = await getattr(jobs, f"run_knowledge_{action}")(context)
     assert trace == [(action, "a"), (action, "b")]
     assert result == context.result and result["succeeded"] == 2
@@ -103,7 +103,7 @@ async def test_pending_pages_advance_after_failures_and_count_beyond_result_samp
             raise RuntimeError("private failure")
         return {"file_id": file_id, "status": "failed" if file_id == ids[500] else "parsed"}
 
-    monkeypatch.setattr(jobs.knowledge_base, "list_document_file_ids_by_statuses", pending)
+    monkeypatch.setattr(jobs.knowledge_documents, "list_document_file_ids_by_statuses", pending)
     monkeypatch.setattr(jobs.knowledge_base, f"{action}_file", process)
     with pytest.raises(RuntimeError, match="失败 2 个"):
         await getattr(jobs, f"run_knowledge_{action}")(context)
@@ -145,7 +145,7 @@ async def test_document_action_propagates_cancellation_without_finishing(monkeyp
         return ["a", "b"]
 
     monkeypatch.setattr(jobs.knowledge_base, f"{action}_file", process)
-    monkeypatch.setattr(jobs.knowledge_base, "list_document_file_ids_by_statuses", pending)
+    monkeypatch.setattr(jobs.knowledge_documents, "list_document_file_ids_by_statuses", pending)
     with pytest.raises(asyncio.CancelledError) as error:
         await getattr(jobs, f"run_knowledge_{action}")(context)
     assert error.value is cancellation
@@ -304,7 +304,8 @@ async def test_failure_logs_interpolate_identifiers_without_paths_or_exception_s
         ("index_file", index),
         ("list_document_file_ids_by_statuses", pending),
     ):
-        monkeypatch.setattr(jobs.knowledge_base, name, fn)
+        owner = jobs.knowledge_documents if name == "list_document_file_ids_by_statuses" else jobs.knowledge_base
+        monkeypatch.setattr(owner, name, fn)
     sink = logger.add(lambda message: messages.append(message.record["message"]), level="ERROR")
     try:
         handler = jobs.run_knowledge_ingest if path.startswith("ingest") else getattr(jobs, f"run_knowledge_{broken}")
@@ -392,7 +393,8 @@ async def test_parameter_claim_failure_continues_with_later_files(monkeypatch, a
         ("index_file", index),
         ("list_document_file_ids_by_statuses", pending),
     ):
-        monkeypatch.setattr(jobs.knowledge_base, name, fn)
+        owner = jobs.knowledge_documents if name == "list_document_file_ids_by_statuses" else jobs.knowledge_base
+        monkeypatch.setattr(owner, name, fn)
     handler = jobs.run_knowledge_ingest if scope == "ingest" else getattr(jobs, f"run_knowledge_{action}")
     with pytest.raises(RuntimeError, match="失败 1 个"):
         await handler(context)

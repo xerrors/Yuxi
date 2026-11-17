@@ -77,7 +77,7 @@ function setup(t) {
     session_id: 'child', turn_id: current.turnId, current_run_id: current.runId,
     turn_status: current.status, run_status: current.status
   }]
-  return { runtime, current, subscriptions, summary }
+  return { runtime, current, subscriptions, summary, detach }
 }
 
 test('旧 Input 的迟到消费事实不切回旧 Turn，也不终止新 SSE；相同摘要保持正确执行', async (t) => {
@@ -213,3 +213,55 @@ test('消费后持久恢复暂时失败时保留观察，重试后仍能启动�
   assert.equal(state.inputQueueMonitor, null)
   assert.equal(h.subscriptions.length, 1)
 })
+
+test('提交期间最后阅读视图隐藏仍收敛回执，结束后释放运行状态', async (t) => {
+  const h = setup(t)
+  const { createSessionInput } = await server.ssrLoadModule('/src/modules/session/model/sessionInput.js')
+  const pending = deferred()
+  api.sendThreadMessage = () => pending.promise
+  api.getThreadInput = async () => ({ status: 'cancelled' })
+  const accepted = []
+  const input = createSessionInput({ runtime: h.runtime, onAccepted: (id) => accepted.push(id) })
+  const state = h.runtime.getThreadState('child')
+  const result = input.send('child', { text: '待接收内容', images: [], attachments: [], mode: 'follow_up' })
+  h.detach()
+  assert.equal(h.runtime.isCurrentThreadState('child', state), true, '在途提交独立持有状态')
+  pending.resolve({ input_id: 'persisted-input' })
+  assert.equal(await result, true)
+  assert.deepEqual(accepted, ['child'])
+  assert.equal(h.runtime.pendingSends.child, undefined)
+  assert.equal(h.runtime.isCurrentThreadState('child', state), false, '回执收敛后不保留后台观察')
+})
+
+for (const outcome of ['accepted', 'rejected']) {
+  test(`身份切换后的迟到${outcome}不消费新身份草稿、覆盖pending或重复提交`, async (t) => {
+    const h = setup(t)
+    const { createSessionInput } = await server.ssrLoadModule('/src/modules/session/model/sessionInput.js')
+    const { useUserStore } = await server.ssrLoadModule('/src/modules/identity/index.js')
+    let settleResponse
+    const durableInputs = []
+    api.sendThreadMessage = () => new Promise((resolve, reject) => {
+      settleResponse = () => {
+        if (outcome === 'accepted') { durableInputs.push('old-input'); resolve({ input_id: 'old-input' }) }
+        else reject(Object.assign(new Error('rejected'), { status: 403 }))
+      }
+    })
+    const callbacks = []
+    const input = createSessionInput({ runtime: h.runtime,
+      onAccepted: () => callbacks.push('accepted'), onRejected: () => callbacks.push('rejected') })
+    const result = input.send('child', { text: '旧身份输入', images: [], attachments: [], mode: 'follow_up' })
+    useUserStore().token = 'new-identity'
+    const release = h.runtime.observeThread('child', {})
+    t.after(release)
+    const current = h.runtime.getThreadState('child')
+    current.pendingInputId = 'new-input'
+    h.runtime.pendingSends.child = { text: '新身份草稿', data: { idempotency_key: 'new-key' }, submitting: true }
+    settleResponse()
+    assert.equal(await result, false)
+    assert.deepEqual(durableInputs, outcome === 'accepted' ? ['old-input'] : [])
+    assert.equal(h.runtime.pendingSends.child.text, '新身份草稿')
+    assert.equal(h.runtime.pendingSends.child.submitting, true)
+    assert.equal(current.pendingInputId, 'new-input')
+    assert.deepEqual(callbacks, [])
+  })
+}

@@ -10,7 +10,7 @@ from yuxi.modules.identity.permissions import (
     require_knowledge_base_permission,
 )
 from yuxi.modules.knowledge.read_models import KnowledgeBaseDetail
-from yuxi.modules.knowledge.runtime import knowledge_base
+from yuxi.modules.knowledge.services import bases as knowledge_bases
 
 
 async def ensure_knowledge_base_permission(
@@ -20,7 +20,7 @@ async def ensure_knowledge_base_permission(
 ) -> KnowledgeBaseDetail:
     """加载知识库并校验当前用户的有效资源权限。"""
 
-    kb_info = await knowledge_base.get_knowledge_base_info(kb_id)
+    kb_info = await knowledge_bases.get_knowledge_base_info(kb_id)
     if not kb_info:
         raise HTTPException(status_code=404, detail=f"知识库 {kb_id} 不存在")
 

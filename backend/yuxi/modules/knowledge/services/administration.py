@@ -5,6 +5,8 @@ import textwrap
 
 from yuxi.infrastructure.document_parsing import is_supported_file_extension
 from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
+from yuxi.modules.knowledge.services import directories, documents, statistics
 from yuxi.modules.knowledge.services.uploads import stage_document
 from yuxi.modules.system.options import system_options
 from yuxi.modules.workspace.services.files import read_workspace_file_bytes
@@ -13,23 +15,28 @@ from yuxi.shared.errors import DomainError, InvalidOperationError
 
 async def delete_document(kb_id: str, doc_id: str) -> dict:
     """按目录事实删除文件或文件夹。"""
-    from yuxi.modules.knowledge.runtime import knowledge_base
+    await documents.require_document_support(kb_id, "文档删除")
+    return await _delete_document(kb_id, doc_id)
 
-    info = await knowledge_base.get_file_basic_info(kb_id, doc_id)
+
+async def _delete_document(kb_id: str, doc_id: str) -> dict:
+    """按已校验类型的当前文件事实写入删除意图。"""
+    info = await documents.get_file_basic_info(kb_id, doc_id)
     if info["meta"].get("is_folder"):
-        await knowledge_base.delete_folder(kb_id, doc_id)
+        await statistics.run_with_stats_refresh(kb_id, directories.delete_folder(kb_id, doc_id))
         return {"message": "文件夹删除成功"}
-    await knowledge_base.delete_file(kb_id, doc_id)
+    await statistics.run_with_stats_refresh(kb_id, KnowledgeFileRepository().mark_deleted(kb_id=kb_id, file_id=doc_id))
     return {"message": "删除成功"}
 
 
 async def batch_delete_documents(kb_id: str, file_ids: list[str]) -> dict:
     """逐项删除并保留部分成功结果。"""
+    await documents.require_document_support(kb_id, "批量文档删除")
     deleted_count = 0
     failed_items = []
     for doc_id in file_ids:
         try:
-            await delete_document(kb_id, doc_id)
+            await _delete_document(kb_id, doc_id)
             deleted_count += 1
         except DomainError as error:
             failed_items.append({"doc_id": doc_id, "error": error.message})

@@ -3,7 +3,6 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import {
-  bindMessageInputRun,
   buildMessageDebugTraceSpans,
   buildMessageDebugEntries,
   buildMessageDebugTurnData,
@@ -133,7 +132,7 @@ test('宽屏详情面板拖动保留记录区并约束异常宽度', () => {
   assert.equal(constrainMessageDebugInspectorWidth(0, 100), null)
 })
 
-test('消息身份按 metadata 优先，并显式控制 human id fallback', () => {
+test('消息身份按 metadata 优先，不把 human 消息 ID 当作 Input ID', () => {
   const message = {
     id: 'human-1',
     type: 'human',
@@ -148,10 +147,6 @@ test('消息身份按 metadata 优先，并显式控制 human id fallback', () =
   assert.equal(getMessageInputId(message), 'input-meta')
   assert.equal(getMessageRunId(message), 'run-meta')
   assert.equal(getMessageInputId({ id: 'human-2', type: 'human' }), null)
-  assert.equal(
-    getMessageInputId({ id: 'human-2', type: 'human' }, { allowMessageIdFallback: true }),
-    'human-2'
-  )
 })
 
 test('消息调试条目保持后端数组顺序并保留独立工具消息', () => {
@@ -489,23 +484,6 @@ test('待运行请求独立分组，Run 到达后保持分组和用户记录标�
   assert.equal(after[0].items.length, 2)
   assert.equal(after[1].runId, null)
   assert.equal(after[1].key, before[1].key)
-})
-
-test('明确接入关联只更新对应用户消息，保留已有运行事实', () => {
-  const messages = [
-    { type: 'human', input_id: 'req-a', created_at: '2026-09-05T06:32:00Z' },
-    { type: 'human', input_id: 'req-b' },
-    { type: 'ai', input_id: 'req-a' },
-    { type: 'human', input_id: 'req-a', run_id: 'existing-run' }
-  ]
-  bindMessageInputRun(messages, 'req-a', 'run-a')
-  assert.equal(getMessageRunId(messages[0]), 'run-a')
-  assert.equal(messages[0].created_at, '2026-09-05T06:32:00Z')
-  assert.equal(getMessageRunId(messages[1]), null)
-  assert.equal(getMessageRunId(messages[2]), null)
-  assert.equal(getMessageRunId(messages[3]), 'existing-run')
-  bindMessageInputRun(messages, 'req-b', null)
-  assert.equal(getMessageRunId(messages[1]), null)
 })
 
 test('非连续同请求分段具有独立 key，不抢占其他分段的选择', () => {

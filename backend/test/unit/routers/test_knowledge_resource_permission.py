@@ -9,8 +9,9 @@ import yuxi.api.routers.knowledge.evaluation as knowledge_eval_router
 import yuxi.api.routers.knowledge.management as knowledge_router
 from yuxi.api.dependencies.auth import get_required_user
 from yuxi.api.responses.knowledge import serialize_knowledge_base
-from yuxi.modules.knowledge.read_models import KnowledgeBaseSummary
 from yuxi.modules.identity.permissions import ResourcePermission
+from yuxi.modules.knowledge.read_models import KnowledgeBaseSummary
+from yuxi.modules.knowledge.services import bases as knowledge_bases
 
 
 def test_serialize_knowledge_base_redacts_credentials_from_compatibility_fields():
@@ -51,7 +52,7 @@ async def test_non_manager_cannot_manage_global_read_knowledge_base(monkeypatch,
     async def fake_get_knowledge_base_info(_kb_id):
         return knowledge_base
 
-    monkeypatch.setattr(knowledge_router.knowledge_base_manager, "get_knowledge_base_info", fake_get_knowledge_base_info)
+    monkeypatch.setattr(knowledge_bases, "get_knowledge_base_info", fake_get_knowledge_base_info)
     user = SimpleNamespace(uid=uid, role=role, department_id=2)
 
     if can_read:
@@ -76,7 +77,7 @@ async def test_query_parameter_routes_apply_knowledge_base_acl(monkeypatch):
     async def fake_get_knowledge_base_info(_kb_id):
         return knowledge_base
 
-    monkeypatch.setattr(knowledge_router.knowledge_base_manager, "get_knowledge_base_info", fake_get_knowledge_base_info)
+    monkeypatch.setattr(knowledge_bases, "get_knowledge_base_info", fake_get_knowledge_base_info)
     readonly_admin = SimpleNamespace(uid="admin-1", role="admin", department_id=2)
 
     assert await knowledge_router.require_knowledge_base_read("kb-1", readonly_admin) is readonly_admin
@@ -123,7 +124,7 @@ async def test_dataset_manage_route_rejects_admin_without_manage_permission(monk
         }
 
     monkeypatch.setattr(knowledge_eval_router.EvaluationService, "get_dataset", fake_get_dataset)
-    monkeypatch.setattr(knowledge_permissions.knowledge_base, "get_knowledge_base_info", fake_get_knowledge_base_info)
+    monkeypatch.setattr(knowledge_permissions.knowledge_bases, "get_knowledge_base_info", fake_get_knowledge_base_info)
     admin = SimpleNamespace(uid="other-admin", role="admin", department_id=1)
 
     with pytest.raises(HTTPException) as exc_info:
@@ -150,7 +151,7 @@ async def test_dataset_download_rejects_admin_outside_read_scope(monkeypatch):
         }
 
     monkeypatch.setattr(knowledge_eval_router.EvaluationService, "get_dataset", fake_get_dataset)
-    monkeypatch.setattr(knowledge_permissions.knowledge_base, "get_knowledge_base_info", fake_get_knowledge_base_info)
+    monkeypatch.setattr(knowledge_permissions.knowledge_bases, "get_knowledge_base_info", fake_get_knowledge_base_info)
     outsider = SimpleNamespace(uid="other-admin", role="admin", department_id=1)
 
     with pytest.raises(HTTPException) as exc_info:

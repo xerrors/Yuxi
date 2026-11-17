@@ -258,6 +258,10 @@
 
 <script setup>
 import {
+  filePreviewCacheKey, releaseFilePreviewCacheEntry, releaseFilePreviewCache, pruneFilePreviewCache,
+  reloadPreviewAfterOrderedCacheEntryInvalidation, replacePreviewCacheEntryIfCurrent, settlePreviewCacheLoad
+} from '@/modules/workspace'
+import {
   computed,
   nextTick,
   onActivated,
@@ -293,10 +297,7 @@ import TurnSourcesPanel from '@/modules/session/ui/workspace/TurnSourcesPanel.vu
 import {
   createFilesystemRefreshGate,
   expandedKeysAfterFilesystemRefresh,
-  reloadPreviewAfterOrderedCacheEntryInvalidation,
-  replacePreviewCacheEntryIfCurrent,
   refreshExpandedTree,
-  settlePreviewCacheLoad,
   shouldRefreshActivePreview,
   startAgentPanelFilesystemPolling
 } from '@/modules/session/model/agentPanelFilesystemPolling'
@@ -734,9 +735,7 @@ const refreshWorkspaceTree = async ({ force = false, refreshPreview = false } = 
 
         if (shouldRefreshPreview && props.activePreviewPath && activePreviewTab.value?.workspace) {
           const cacheKey = workspacePreviewCacheKey(props.activePreviewPath)
-          const entry = props.previewCache.get(cacheKey)
-          if (entry?.file?.previewUrl) window.URL.revokeObjectURL(entry.file.previewUrl)
-          props.previewCache.delete(cacheKey)
+          releaseFilePreviewCacheEntry(props.previewCache, cacheKey)
           await loadActivePreview()
         }
       } catch (error) {
@@ -805,28 +804,8 @@ const syncFilesystemRefreshPolling = () => {
   })
 }
 
-const revokeCurrentPreviewUrl = () => {
-  const previewUrl = currentFile.value?.previewUrl
-  if (previewUrl) {
-    window.URL.revokeObjectURL(previewUrl)
-  }
-}
-
-const previewCacheKey = (filePath, threadId = props.threadId) => `${threadId}:${filePath}`
-const workspacePreviewCacheKey = (filePath) => `workspace:${filePath}`
-
-const prunePreviewCache = (activeKey) => {
-  const readyEntries = [...props.previewCache.entries()]
-    .filter(([, entry]) => entry.status === 'ready')
-    .sort(([, left], [, right]) => (left.lastAccessed || 0) - (right.lastAccessed || 0))
-
-  while (readyEntries.length > 12) {
-    const [key, entry] = readyEntries.shift()
-    if (key === activeKey) continue
-    if (entry.file?.previewUrl) window.URL.revokeObjectURL(entry.file.previewUrl)
-    props.previewCache.delete(key)
-  }
-}
+const previewCacheKey = (filePath, threadId = props.threadId) => filePreviewCacheKey(filePath, threadId)
+const workspacePreviewCacheKey = (filePath) => filePreviewCacheKey(filePath, 'workspace')
 
 const loadActivePreview = async ({ baseFileOverride = null } = {}) => {
   const requestedThreadId = props.threadId
@@ -841,7 +820,6 @@ const loadActivePreview = async ({ baseFileOverride = null } = {}) => {
 
   // 用户目录文件不依赖当前对话；对话文件必须先有线程。
   if (!filePath || (!requestedThreadId && !isWorkspaceFile)) {
-    revokeCurrentPreviewUrl()
     currentFile.value = null
     currentFilePath.value = ''
     return
@@ -940,7 +918,7 @@ const loadActivePreview = async ({ baseFileOverride = null } = {}) => {
       revokeObjectURL: window.URL.revokeObjectURL.bind(window.URL)
     })
     if (!published) return
-    prunePreviewCache(cacheKey)
+    pruneFilePreviewCache(props.previewCache, cacheKey)
     if (requestIsCurrent()) {
       currentFile.value = { ...nextFile, loading: false }
     }
@@ -1089,30 +1067,14 @@ const downloadFile = async (fileItem) => {
   }
 }
 
-const releaseWorkspacePreviewCache = () => {
-  for (const [key, entry] of props.previewCache) {
-    if (!key.startsWith('workspace:')) continue
-    if (entry.file?.previewUrl) window.URL.revokeObjectURL(entry.file.previewUrl)
-    props.previewCache.delete(key)
-  }
-}
-
-const releaseThreadPreviewCache = () => {
-  for (const [key, entry] of props.previewCache) {
-    if (!key.startsWith(`${props.threadId}:`)) continue
-    if (entry.file?.previewUrl) window.URL.revokeObjectURL(entry.file.previewUrl)
-    props.previewCache.delete(key)
-  }
-}
-
 const emitRefresh = async () => {
   const previewActive = activeSection.value?.type === 'file'
   if (previewActive ? activePreviewTab.value?.workspace : activeTreeScope.value === 'workspace') {
-    releaseWorkspacePreviewCache()
+    releaseFilePreviewCache(props.previewCache, 'workspace')
     await refreshWorkspaceTree({ force: true, refreshPreview: true })
     return
   }
-  releaseThreadPreviewCache()
+  releaseFilePreviewCache(props.previewCache, props.threadId)
   if (!previewActive) await refreshFileSystem()
   if (props.activePreviewPath) await loadActivePreview()
   emit('refresh', props.threadId)
@@ -1223,11 +1185,6 @@ watch(
   (threadId) => {
     filesystemRefreshGeneration += 1
     previewRequestSeq += 1
-    for (const [key, entry] of props.previewCache) {
-      if (!key.startsWith(`${threadId}:`)) continue
-      if (entry.file?.previewUrl) window.URL.revokeObjectURL(entry.file.previewUrl)
-      props.previewCache.delete(key)
-    }
     loadingFiles.value = false
     dynamicTreeData.value = []
     expandedKeys.value = []
@@ -1273,10 +1230,10 @@ watch([() => props.filesystemPollingActive, componentActive], syncFilesystemRefr
 watch(
   () => props.filesystemRefreshVersion,
   () => {
-    releaseThreadPreviewCache()
+    releaseFilePreviewCache(props.previewCache, props.threadId)
     if (!props.visible || !componentActive.value) return
     if (activeSection.value?.type === 'file') {
-      if (activePreviewTab.value?.workspace) releaseWorkspacePreviewCache()
+      if (activePreviewTab.value?.workspace) releaseFilePreviewCache(props.previewCache, 'workspace')
       void loadActivePreview()
     } else if (!props.filesystemVisible) {
       return
@@ -1301,9 +1258,7 @@ watch(
     void ensureActiveSectionVisible()
     if (activeSection.value?.type === 'file' && activePreviewTab.value?.workspace) {
       const cacheKey = workspacePreviewCacheKey(activePreviewTab.value.path)
-      const entry = props.previewCache.get(cacheKey)
-      if (entry?.file?.previewUrl) window.URL.revokeObjectURL(entry.file.previewUrl)
-      props.previewCache.delete(cacheKey)
+      releaseFilePreviewCacheEntry(props.previewCache, cacheKey)
       void loadActivePreview()
     } else if (activeSection.value?.type === 'file' && props.visible && componentActive.value) {
       void loadActivePreview()

@@ -19,7 +19,7 @@ def graph_boundary(monkeypatch):
     execution = SimpleNamespace(get_status=AsyncMock(return_value={"locked": True}), reset=AsyncMock(return_value={"status": "success"}))
     submit = AsyncMock(return_value=(SimpleNamespace(id="job"), True))
     monkeypatch.setattr(graph_build, "job_tracker", jobs)
-    monkeypatch.setattr(graph_build, "knowledge_base", kb)
+    monkeypatch.setattr(graph_build, "knowledge_bases", kb)
     monkeypatch.setattr(graph_build, "KnowledgeGraphService", lambda: execution)
     monkeypatch.setattr(graph_build, "submit_knowledge_job", submit)
     return jobs, kb, execution, submit

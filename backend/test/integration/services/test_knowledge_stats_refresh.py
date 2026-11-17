@@ -7,21 +7,24 @@ import uuid
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
-import pytest
 import httpx
+import pytest
 import uvicorn
 from fastapi import FastAPI
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from yuxi.modules.knowledge.manager import KnowledgeBaseManager
+import yuxi.api.routers.knowledge.management as knowledge_router
 import yuxi.modules.knowledge.repositories.bases as knowledge_base_repository
 import yuxi.modules.knowledge.repositories.files as knowledge_file_repository
+from yuxi.infrastructure.redis import close_async_redis_client, get_async_redis_client
+from yuxi.modules.knowledge.models import KnowledgeBase, KnowledgeChunk, KnowledgeFile
 from yuxi.modules.knowledge.repositories.bases import KnowledgeBaseRepository
 from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
-from yuxi.modules.knowledge.models import KnowledgeBase, KnowledgeChunk, KnowledgeFile
-from yuxi.infrastructure.redis import close_async_redis_client, get_async_redis_client
-import yuxi.api.routers.knowledge.management as knowledge_router
+from yuxi.modules.knowledge.services import access as knowledge_access
+from yuxi.modules.knowledge.services import bases as knowledge_bases
+from yuxi.modules.knowledge.services import documents as knowledge_documents
+from yuxi.modules.knowledge.services import statistics
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration, pytest.mark.self_managed_resources]
 
@@ -81,7 +84,6 @@ async def test_operation_refresh_ignores_cached_stats(stats_store, tmp_path, fai
     assert cached["pending_index_count"] == 1
     # 延长本测试缓存存活期，消除慢 CI 下自然过期导致的假通过。
     await redis.expire(f"yuxi:kb_file_stats:{kb_id}", 300)
-    manager = KnowledgeBaseManager(str(tmp_path))
 
     async def operation():
         """模拟已提交的文件索引结果。"""
@@ -96,16 +98,16 @@ async def test_operation_refresh_ignores_cached_stats(stats_store, tmp_path, fai
 
     if fails:
         with pytest.raises(ValueError, match="operation failed"):
-            await manager._run_with_stats_refresh(kb_id, operation())
+            await statistics.run_with_stats_refresh(kb_id, operation())
     else:
-        assert await manager._run_with_stats_refresh(kb_id, operation()) == "indexed"
+        assert await statistics.run_with_stats_refresh(kb_id, operation()) == "indexed"
     async with sessions() as session:
         row = (await session.execute(select(KnowledgeBase))).scalar_one()
         assert row.additional_params["keep"] is True
         assert row.additional_params["stats"]["chunk_count"] == 158
         assert row.additional_params["stats"]["token_count"] == 900
         assert row.additional_params["stats"]["pending_index_count"] == 0
-    summaries = await manager.get_knowledge_bases()
+    summaries = await knowledge_bases.get_knowledge_bases()
     assert len(summaries) == 1
     assert summaries[0].chunk_count == 158
     assert summaries[0].pending_index_count == 0
@@ -114,14 +116,13 @@ async def test_operation_refresh_ignores_cached_stats(stats_store, tmp_path, fai
     assert fresh["pending_index_count"] == 0
 
 
-async def test_refresh_queries_after_acquiring_row_lock(stats_store, tmp_path):
+async def test_refresh_queries_after_acquiring_row_lock(stats_store):
     """等待行锁期间的文件提交必须进入最终聚合。"""
     kb_id, sessions, _ = stats_store
-    manager = KnowledgeBaseManager(str(tmp_path))
     async with sessions.begin() as blocker:
         await blocker.execute(select(KnowledgeBase).with_for_update())
         blocker_pid = await blocker.scalar(text("SELECT pg_backend_pid()"))
-        task = asyncio.create_task(manager._refresh_knowledge_base_stats(kb_id))
+        task = asyncio.create_task(statistics.refresh_stats(kb_id))
         try:
             async with asyncio.timeout(10):
                 while True:
@@ -157,7 +158,6 @@ async def test_knowledge_base_list_returns_fresh_persisted_stats(stats_store, tm
     cached = await KnowledgeFileRepository().get_kb_file_stats(kb_id)
     assert cached["pending_index_count"] == 1
     await redis.expire(f"yuxi:kb_file_stats:{kb_id}", 300)
-    manager = KnowledgeBaseManager(str(tmp_path))
 
     async def operation():
         """提交文件状态与统计，供实际聚合读取。"""
@@ -167,10 +167,9 @@ async def test_knowledge_base_list_returns_fresh_persisted_stats(stats_store, tm
             data={"status": "indexed", "chunk_count": 7, "token_count": 42},
         )
 
-    await manager._run_with_stats_refresh(kb_id, operation())
+    await statistics.run_with_stats_refresh(kb_id, operation())
     # 本用例验证统计的 HTTP 投影；身份与可见性由知识库权限 integration 验证。
-    monkeypatch.setattr(manager, "get_knowledge_bases_by_uid", lambda _uid: manager.get_knowledge_bases())
-    monkeypatch.setattr(knowledge_router, "knowledge_base_manager", manager)
+    monkeypatch.setattr(knowledge_access, "get_knowledge_bases_by_uid", lambda _uid: knowledge_bases.get_knowledge_bases())
     app = FastAPI()
     app.include_router(knowledge_router.knowledge, prefix="/api")
     app.dependency_overrides[knowledge_router.get_admin_user] = lambda: SimpleNamespace(uid="stats-viewer")
@@ -187,12 +186,12 @@ async def test_knowledge_base_list_returns_fresh_persisted_stats(stats_store, tm
             async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{listener.getsockname()[1]}") as client:
                 response = await client.get("/api/knowledge/knowledge-bases")
             assert response.status_code == 200, response.text
-            knowledge_bases = response.json()["knowledge_bases"]
+            payload_bases = response.json()["knowledge_bases"]
         finally:
             server.should_exit = True
             await asyncio.wait_for(serving, timeout=10)
-    assert len(knowledge_bases) == 1
-    result = knowledge_bases[0]
+    assert len(payload_bases) == 1
+    result = payload_bases[0]
     assert result["kb_id"] == kb_id
     assert result["stats"]["chunk_count"] == 7
     assert result["stats"]["token_count"] == 42
@@ -212,16 +211,15 @@ async def test_second_file_immediately_refreshes_detail_and_file_list_stats(stat
     kb_id, sessions, redis = stats_store
     assert (await KnowledgeFileRepository().get_kb_file_stats(kb_id))["file_count"] == 1
     await redis.set(f"yuxi:kb_file_stats:{kb_id}", '{"file_count":1,"row_count":1}', ex=300)
-    manager = KnowledgeBaseManager(str(tmp_path))
 
     async def upload():
         """提交第二个文件的真实元数据，外部文件接收留在上传 E2E 验证。"""
         async with sessions.begin() as db:
             db.add(KnowledgeFile(file_id=kb_id + "-second", kb_id=kb_id, filename="second.md", file_size=6, status="uploaded"))
 
-    await manager._run_with_stats_refresh(kb_id, upload())
-    detail = await manager.get_knowledge_base_info(kb_id)
-    listing = await manager.list_document_files(kb_id)
+    await statistics.run_with_stats_refresh(kb_id, upload())
+    detail = await knowledge_bases.get_knowledge_base_info(kb_id)
+    listing = await knowledge_documents.list_document_files(kb_id)
     assert detail.file_count == 2
     assert detail.total_size == 6
     assert listing["total"] == 2

@@ -33,24 +33,24 @@ def unescape_delimiter(delimiter: str) -> str:
     return delimiter.replace("\\n", "\n").replace("\\r", "\r").replace("\\t", "\t").replace("\\\\", "\\")
 
 
-def _iter_sections(markdown_content: str, delimiter: str) -> list[tuple[str, str]]:
+def _iter_sections(markdown_content: str, delimiter: str) -> list[str]:
     """按自定义分隔符或逐行切段，空段丢弃并保留字符来源。"""
-    sections: list[tuple[str, str]] = []
+    sections: list[str] = []
     text = markdown_content if isinstance(markdown_content, SourceText) else SourceText(markdown_content or "")
     if delimiter and delimiter not in {"\n", "\r\n"} and "`" not in delimiter:
         for part in text.split(delimiter):
             block = part.strip()
             if block:
-                sections.append((block, ""))
+                sections.append(block)
     else:
         for line in text.splitlines():
             block = line.strip()
             if not block:
                 continue
-            sections.append((block, ""))
+            sections.append(block)
 
     if not sections and text.strip():
-        sections.append((text.strip(), ""))
+        sections.append(text.strip())
 
     return sections
 

@@ -7,7 +7,6 @@ import {
   buildTimelineRangeAtPoint,
   constrainTimelineRange,
   formatRunTimingDuration,
-  formatRunTimingSummary,
   getRunTimingWindow,
   getRunTotalLatencyMs,
   getTimelineMinimumRangeUnits
@@ -40,18 +39,6 @@ test('运行时延只展示 PostgreSQL 已持久化的可用阶段', () => {
       { key: 'first_output_latency_ms', label: '首次输出', formattedValue: '7.5s' }
     ]
   )
-})
-
-test('摘要优先展示 Run 总耗时并兼容尚未终态的 Run', () => {
-  assert.equal(
-    formatRunTimingSummary({ first_output_latency_ms: 7533, total_latency_ms: 43670 }),
-    '总耗时 44s'
-  )
-  assert.equal(
-    formatRunTimingSummary({ first_output_latency_ms: 7533, total_latency_ms: null }),
-    '首输出 7.5s'
-  )
-  assert.equal(formatRunTimingSummary(null), '')
 })
 
 test('总耗时只接受后端 timing 投影中的非负有限数字', () => {
