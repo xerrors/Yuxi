@@ -33,7 +33,7 @@
 
 **主链路的骨架是可信的。** 逐跳核查后确认：HTTP → `inputs.py`（接收/幂等/冻结）→ `scheduler.py`（锁内建 Turn/Run/Message）→ ARQ → `runner.py`（租约+心跳）→ `execution.py`（LangGraph 流）→ `runs.py`/`messages.py`（终态收敛），每一跳都有真实职责，删掉任何一跳链路不成立；事件投影链（recorder → openai_events → event_writer → transport → SSE 相位机）同理；knowledge 摄取链（parse → chunk → embed → PG 先行/Milvus 重试）边界清晰；skills 的"授权 → 投影 → 沙盒 → 激活"链与 ARCHITECTURE.md 第 107、108、111 行不变量逐跳吻合。
 
-问题不在链路的骨架，而在骨架周围的四类系统性模式。按对新人认知的破坏程度排序：
+问题在骨架周围的四类系统性模式。问题不在链路的骨架。按对新人认知的破坏程度排序：
 
 ---
 
@@ -41,7 +41,7 @@
 
 ### 【已修复】模式 1：HTTPException 渗透全部域层（复核新增，横切最重）
 
-原始发现（修复前）：`grep -rn "raise HTTPException" backend/yuxi/modules` 命中 **244 处、24 个文件**，遍布领域服务等模块。ARCHITECTURE.md:29/95 要求"路由只处理协议、用例归 services、路由保持薄"，但用例层直接构造 HTTP 状态码语义，路由只能透传——这也是下文幂等回执、Session 授权等模式无法沉淀为域内共享机制的结构性原因之一（五份幂等拷贝各自绑定 409+中文 detail 的 HTTP 表达）。同域内已有正确示范（`agents/services/password_login.py` 的领域异常模式、`identity/services/administration.py` 的 service 事务 Owner），但两种哲学并存，新人无从判断该学哪一种。
+原始发现（修复前）：`grep -rn "raise HTTPException" backend/yuxi/modules` 命中 **244 处、24 个文件**，遍布领域服务等模块。ARCHITECTURE.md:29/95 要求"路由只处理协议、用例归 services、路由保持薄"，但用例层直接构造 HTTP 状态码语义，路由只能透传。这种透传是结构性原因之一。下文幂等回执、Session 授权等模式无法沉淀为域内共享机制（五份幂等拷贝各自绑定 409+中文 detail 的 HTTP 表达）。同域内已有正确示范（`agents/services/password_login.py` 的领域异常模式、`identity/services/administration.py` 的 service 事务 Owner），但两种哲学并存，新人无从判断该学哪一种。
 
 修复结果：全部 244 个抛出点及相应捕获已迁移为领域异常；API 适配器保留原状态码、消息与业务 code，定时、预览、工具和 worker 按领域契约消费。领域异常不携带 HTTP 属性。
 
@@ -49,7 +49,7 @@
 
 - **【已收敛并复核保留】** **幂等回执四件套**（校验键 → sha256 意图指纹 → 拒绝异意图重放 → accepted）：agents 域内三份（`inputs.py:397` / `turns.py:498` / `threads.py:355`，细节已漂移：`threads.py:363` 的 `json.dumps` 缺 `default=str`、`_accepted` 返回形状三处不同），并泄漏到 `schedules/service.py:229` 与 `workspace/services/projects.py:38`，共五份。核心语义五份一致（复核确认无有害漂移），唯一分歧：schedules 对已软删任务允许同 request_id 重放、workspace 对已删 Project 返回 409。 **结果：三处 Agent 接口共用键、指纹和领域冲突，JSON 指纹字节由 shared/hashing 拥有；各域 accepted 形状、严格/字符串适配及删除重放按真实消费者保留。**
 - **【已收敛】** **"建 Run + 绑输入消息 + set_current" 事务模式**在 4 处复制（`scheduler.py:59`、`runs.py:206`、`turns.py:107`、`cooperation.py:530`），每处重复拼装 create_run 的 15-17 个同名参数；resume Message 的同形状构造另有两份（`turns.py:87` / `cooperation.py:518`，复核新增）。 **结果：run_creation 共用创建与当前归属，交互/协作共用恢复 Message；steer 传递 Dispatch，事务提交后统一 deliver。**
-- **【已收敛协议并复核保留】** **"幂等预检 → 锁 → 锁后复查" 调用点级样板**在 agents 全部入口重复约 13 处（复核新增）——这不是抽 helper 能解决的，是入口协议没有抽象表达。 **结果：共同比较由 receipts 叶子拥有，作用域、锁与锁后复查由各用例拥有；不引入隐藏提交点的回调框架。**
+- **【已收敛协议并复核保留】** **"幂等预检 → 锁 → 锁后复查" 调用点级样板**在 agents 全部入口重复约 13 处（复核新增）——入口协议没有抽象表达。抽 helper 解决不了。 **结果：共同比较由 receipts 叶子拥有，作用域、锁与锁后复查由各用例拥有；不引入隐藏提交点的回调框架。**
 - **【已收敛】** **终态收敛序列三份**：`_finish_run`（runner.py:428）与 `_finish_user_cancel`（:466）之外，`process_agent_run` 的 committed 路径（:815-838）还有第三份内联副本，且内联版独有终态一致性断言（复核新增）。 **结果：共用持久结算和提交后的释放/发布序列，checkpoint 交付核对 PG 终态，取消保留 writer flush 与 owner 裁决。**
 
 ### 【已收敛并复核保留】模式 3：分层方向倒置与跨域循环
@@ -122,7 +122,7 @@
 
 ### 【已修复】H2. 准备与刷新是两份几乎同构的平行实现（复核新增）
 
-`prepare_agent_runtime_context`（runtime/context.py:485-536）与 `refresh_execution_authorization`（authorization.py:79-143）各自实现"读用户 → normalize 配置 → resolve_runtime_skills → 写回 `_skill_runtime_snapshot`/`_capability_limited`"全流程，互不调用、过滤规则各自维护（如准备路径不校验 Run/Thread 归属而刷新路径校验）。授权刷新每次执行的正是与准备流程漂移风险最高的复制逻辑——这是 H1 的结构根因。
+`prepare_agent_runtime_context`（runtime/context.py:485-536）与 `refresh_execution_authorization`（authorization.py:79-143）各自实现"读用户 → normalize 配置 → resolve_runtime_skills → 写回 `_skill_runtime_snapshot`/`_capability_limited`"全流程，互不调用、过滤规则各自维护（如准备路径不校验 Run/Thread 归属而刷新路径校验）。刷新路径每次执行的正是与准备路径漂移风险最高的复制逻辑——这是 H1 的结构根因。
 
 完成依据：准备与刷新均调用 `refresh_agent_context_resources`，统一原始选择、资源规范化、Skill 快照、专属根正文保留与能力受限判断。刷新将同一事务已授权的 Agent 传入 Skill 解析，消除重复可见性查询。首次准备与 Run/Thread 执行刷新保留各自身份入口；资源撤权及重新授权恢复、专属根正文冻结与共享正文更新均通过真实 PG/文件回读验证。
 
@@ -142,7 +142,7 @@ API Key 创建整个用例在 `api/routers/identity/users.py:150-200` 路由内�
 
 ### 【已修复】H6. tools/runtime 与 skills 中间件的私有属性契约含 fail-open 缺口【复核确认高并加重】
 
-见模式 4。`authorization.py:73,76` 的 `getattr(context, "_mcp_tool_servers", {})` 默认值意味着任何绕过 `resolve_configured_runtime_tools` 构造 context 的路径，工具检查会**静默放行**而非拒绝。生产路径因初始化无条件执行而当前安全，但契约没有结构保证。
+见模式 4。`authorization.py:73,76` 的 `getattr(context, "_mcp_tool_servers", {})` 默认值意味着任何绕过 `resolve_configured_runtime_tools` 构造 context 的路径，工具检查会**静默放行**。这条路径不拒绝。生产路径因初始化无条件执行而当前安全，但契约没有结构保证。
 
 **修复结果：工具检查要求来源与 Skill 快照完成装配；替代 Context 缺失字段或值为 None 均拒绝，已注册框架工具继续可用。**
 

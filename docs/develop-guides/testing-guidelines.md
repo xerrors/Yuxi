@@ -1,6 +1,6 @@
 # 测试规范
 
-测试的目标是证明用户可观察的结果和工程边界，而不是堆积测试数量。先选最接近风险的最小测试集，再按改动范围扩大；单元测试不能代替真实 HTTP、数据库、worker、文件或浏览器验证。
+测试的目标是证明用户可观察的结果和工程边界。目标不是堆积测试数量。先选最接近风险的最小测试集，再按改动范围扩大。单元测试不能代替真实 HTTP、数据库、worker、文件或浏览器验证。
 
 ## 测试分层
 
@@ -23,11 +23,11 @@
 - 要从入口一路验证到最终 Run、文件或对象：放 `e2e`。
 - 前端和 CLI 测试留在各自项目的测试根，不放到 backend。
 
-不要因为测试文件少或执行快就把 integration 降成 unit；测试层级反映它依赖的真实边界。
+不要因为测试文件少或执行快就把 integration 降成 unit。测试层级反映它依赖的真实边界。
 
 新增测试时说明它能独立发现什么失败，优先扩展已有参数化用例；既有证据已覆盖目标时可以不新增测试。不同层只补充各自独立的边界，不为相同断言重复堆叠用例。删除测试时说明替代证据或已退役的契约；长期全绿本身不足以证明测试可以删除。覆盖率用于定位未观察区域，测试数量和覆盖率不作为增长目标。
 
-前端行为测试通过现有 `frontend/test/helpers/createTestServer.js` 加载完整模块或 Vue 组件，替身放在 API、浏览器和其他外部依赖边界；需要客户端模板时正常编译完整 SFC。不要截取源码函数、删除 import 或改写编译结果再执行。静态资源、样式和架构规则仍检查对应静态事实；SSR 和自定义 renderer 的断言不冒充真实浏览器验证。多个测试需要相同业务装配时复用领域 fixture，避免建立第二套通用测试框架。
+前端行为测试通过现有 `frontend/test/helpers/createTestServer.js` 加载完整模块或 Vue 组件，替身放在 API、浏览器和其他外部依赖边界。需要客户端模板时正常编译完整 SFC。不要截取源码函数、删除 import 或改写编译结果再执行。静态资源、样式和架构规则仍检查对应静态事实。SSR 和自定义 renderer 的断言不冒充真实浏览器验证。多个测试需要相同业务装配时复用领域 fixture，避免建立第二套通用测试框架。
 
 ## 命名和结构
 
@@ -47,7 +47,7 @@ test_agent_bubble_sort_run_creates_expected_artifacts
 
 不要只断言 `status_code == 200`。根据风险回读数据库行、文件、对象、DOM、SSE 游标或协议 payload。失败信息应指出目标和实际值。
 
-每个新 guard 都要有负向案例：恢复目标缺陷或制造非法状态后，测试必须因正确原因失败。Fixture、snapshot 和 expected output 只能显式更新并进入 diff，CI 不得一边生成 oracle 一边验证它。
+每个新 guard 都要有负向案例。恢复目标缺陷或制造非法状态后，测试必须因正确原因失败。Fixture、snapshot 和 expected output 只能显式更新并进入 diff，CI 不得一边生成 oracle 一边验证它。
 
 关键 guard 应定向注入目标故障并确认正确原因导致失败。偶发失败要定位责任并修复，保留可重放输入或状态；不能用重试掩盖失败，也不能隔离掉核心契约的唯一证据。
 
@@ -56,7 +56,7 @@ test_agent_bubble_sort_run_creates_expected_artifacts
 涉及[接口语义边界](./spec-loop.md#接口复用与语义边界)时，先按真实消费者与受影响承诺选择场景，再选择测试层级；以下场景按风险适用，不要求对所有入口做全组合测试。
 
 - **不同入口**：同一事实经不同页面、工具或直接服务调用读取时，断言共享字段、身份和失败语义一致；展示差异在各自投影中显式断言。完整读取与预览可以有不同内容，但预览策略不能截断完整读取。
-- **跨执行恢复**：涉及持久身份或生命周期时，从持久事实经新的 Run、worker 或页面重载恢复，断言仍关联同一业务对象并保留契约承诺；同时放入同名或相邻执行的其他对象，证明恢复不串用身份、结果或产物。
+- **跨执行恢复**：涉及持久身份或生命周期时，从持久事实经新的 Run、worker 或页面重载恢复，断言仍关联同一业务对象并保留契约承诺。同时放入同名或相邻执行的其他对象，证明恢复不串用身份、结果或产物。
 - **局部规则负控**：为新增条件加入相似但不适用的真实输入，例如其他工具的合法 `error` 业务字段，证明规则只改变约定范围内的行为。
 
 断言从领域契约和独立准备的输入推导，回读协议、持久状态、文件或 DOM；不以被测投影函数的返回值生成 expected output。跨 worker 恢复与关键页面交互仍按测试分层执行 E2E 或真实浏览器验证。
@@ -67,16 +67,16 @@ test_agent_bubble_sort_run_creates_expected_artifacts
 - 通用 marker 由 `backend/pyproject.toml` 注册；`backend/test/conftest.py` 只装配测试路径和插件，不绑定真实服务。
 - integration fixture 负责创建 `test_client`、测试用户和测试资源；不要依赖数据库里碰巧存在的 Agent、模型或知识库。
 - integration 默认执行共享 schema 检查和 API/沙盒清理。仅当用例不需要这些共享 session fixture，且自行创建并回收资源时，才可显式声明 `self_managed_resources` 豁免这些依赖；它不承诺独立数据库 schema。混合批次只要包含未标记用例，仍执行共享检查和清理。
-- E2E fixture 负责真实入口、账号和资源清理；测试结束后删除自己创建的对话、文件、Run 和外部对象。
+- E2E fixture 负责真实入口、账号和资源清理。测试结束后删除自己创建的对话、文件、Run 和外部对象。
 - 不在测试或文档中写真实账号、密码、Token、用户数据和本地绝对路径。
 
 ### 核心输入链路的前提与等待
 
 输入队列、附件、Skill 授权、取消和恢复用例在准备代码旁明确初始状态、建立入口、回读事实和清理 Owner。公开输入通过 HTTP 建立真实消费前提；需要停在消费前故障窗口的服务测试使用自己的隔离 Schema。普通用户和 Key 使用本例明确授权的 Agent 与 bound Skill；内置发布内容测试以正式 app-init 产物为对象。
 
-复用 `e2e_helpers.py` 的 Input 消费、Turn 终态与 replay 阻塞点等待。Turn 的 `completed`、`failed`、`cancelled` 都是等待结果，由调用方断言本场景预期；删除资源前另用 `live_api_cleanup.py` 的 `validate_test_runs_terminal` 检查历史 Run 的运行时清理。等待总预算覆盖 HTTP 和数据库请求，超时只报告目标 ID 与最后状态。
+复用 `e2e_helpers.py` 的 Input 消费、Turn 终态与 replay 阻塞点等待。Turn 的 `completed`、`failed`、`cancelled` 都是等待结果，由调用方断言本场景预期。删除资源前另用 `live_api_cleanup.py` 的 `validate_test_runs_terminal` 检查历史 Run 的运行时清理。等待总预算覆盖 HTTP 和数据库请求，超时只报告目标 ID 与最后状态。
 
-跨进程文件先写同目录临时文件，完成后原子改名；存在性信号只证明标记已经发布。模型阻塞点使用 replay 的 started/release 协议，解除本例阻塞放在 `finally`。固定 sleep 仅用于轮询间隔或明确验证的缓存 TTL、空闲暂停、取消后持续无写入等时间性质。业务结果继续从 HTTP 投影、数据库、文件或对象字节独立断言。
+跨进程文件先写同目录临时文件，完成后原子改名；存在性信号只证明标记已经发布。模型阻塞点使用 replay 的 started/release 协议，解除本例阻塞放在 `finally`。固定 sleep 仅用于轮询间隔，或仅用于明确验证的时间性质。这些时间性质包括缓存 TTL、空闲暂停，以及取消后持续无写入等。业务结果继续从 HTTP 投影、数据库、文件或对象字节独立断言。
 
 ## skip 规则
 
@@ -110,9 +110,9 @@ docker compose --profile container logs --tail=100 api
 
 默认 Container 需启用 `container` profile；显式选择 Cube 时去掉该参数并先准备执行节点。`make up` 同样默认启用 Container，Cube 可用 `make COMPOSE="docker compose" up`。
 
-后端按 unit、integration/api、其余 integration 子树、E2E 分批运行。各套件的模块和 helper 按当前目录加载；脚本的 `integration` 与 `all` 同样分批执行。确定性 E2E 的用例集合由 `backend/test/run_tests.sh` 唯一维护，CI 复用此入口，避免重复执行相同文件；`e2e-cooperation` 与 `e2e-core` 把同一集合拆成两个并行拓扑的子集，`e2e` 仍等于二者之和。涉及不兼容 Schema 时，先使用[独立槽位](./parallel-worktree-environments.md)装配完整环境，再运行测试；脚本只负责选择和执行套件。
+后端按 unit、integration/api、其余 integration 子树、E2E 分批运行。各套件的模块和 helper 按当前目录加载。脚本的 `integration` 与 `all` 同样分批执行。确定性 E2E 的用例集合由 `backend/test/run_tests.sh` 唯一维护，CI 复用此入口，避免重复执行相同文件。`e2e-cooperation` 与 `e2e-core` 把同一集合拆成两个并行拓扑的子集，`e2e` 仍等于二者之和。涉及不兼容 Schema 时，先使用[独立槽位](./parallel-worktree-environments.md)装配完整环境，再运行测试；脚本只负责选择和执行套件。
 
-后台作业启动恢复由 `system-tests.yml` 的现有拓扑步骤单独验证：先停止 worker，保存未发布 intent，再启动 worker 并回读领域结果。`test_background_job_worker_path.py` 的这组跨进程阶段不进入普通 integration 批次；通用脚本不会重启正在使用的服务。完整系统验证须同时完成该拓扑步骤。
+后台作业启动恢复由 `system-tests.yml` 的现有拓扑步骤单独验证。先停止 worker，保存未发布 intent，再启动 worker 并回读领域结果。`test_background_job_worker_path.py` 的这组跨进程阶段不进入普通 integration 批次。通用脚本不会重启正在使用的服务。完整系统验证须同时完成该拓扑步骤。
 
 ```bash
 docker compose exec api uv run --no-sync --group test pytest test/unit -m "not slow"
@@ -130,15 +130,15 @@ Compose API 容器只挂载后端目录时，部署配置测试会因缺少仓�
 uv run --project backend --no-sync --group test pytest backend/test/unit/config -q
 ```
 
-应用共享初始化使用真实 PostgreSQL 隔离 Schema 和临时 Skill 目录验证首次部署、当前版本重跑、管理员值保留、阶段失败重试与并发锁。独立子进程覆盖已有 Schema 的冷启动，并用缺少 ORM 注册的负控复现失败；这些用例接入 `service-integration.yml`：
+应用共享初始化使用真实 PostgreSQL 隔离 Schema 和临时 Skill 目录验证首次部署、当前版本重跑、管理员值保留、阶段失败重试与并发锁。独立子进程覆盖已有 Schema 的冷启动，并用缺少 ORM 注册的负控复现失败。这些用例接入 `service-integration.yml`：
 
 ```bash
 docker compose exec api uv run --no-sync --group test pytest test/integration/services/test_app_initialization.py test/integration/services/test_schema_migration_version.py -q
 ```
 
-模型重放服务由测试环境启动；依赖共享重放的场景显式读取 `OPENAI_REPLAY_URL` 与 `COOPERATION_REPLAY_URL`。需要独占状态的场景复用 `e2e/conftest.py` 已有的重放 fixture，避免在测试文件内重复启动和回收服务器。
+模型重放服务由测试环境启动。依赖共享重放的场景显式读取 `OPENAI_REPLAY_URL` 与 `COOPERATION_REPLAY_URL`。需要独占状态的场景复用 `e2e/conftest.py` 已有的重放 fixture，避免在测试文件内重复启动和回收服务器。
 
-默认 Compose 测试环境分别启动 `test/support/openai_replay_server.py` 与 `test.support.cooperation_replay_server` 后，在宿主导出 worker 可访问的地址；测试脚本把它们和测试账号转发给容器。CI 在现有环境生成步骤写入同样的值：
+默认 Compose 测试环境分别启动 `test/support/openai_replay_server.py` 与 `test.support.cooperation_replay_server` 后，在宿主导出 worker 可访问的地址。测试脚本把它们和测试账号转发给容器。CI 在现有环境生成步骤写入同样的值：
 
 ```bash
 export OPENAI_REPLAY_URL=http://api:8765/v1
@@ -189,7 +189,7 @@ make audit-dependencies
 make audit-licenses
 ```
 
-Docker 镜像与挂载权限回归在仓库宿主执行，需要可用的 Docker Engine。测试使用临时合成文件与独立 Compose project，不挂载生产数据；受限构建输入、历史文件保留、只读存储失败与负向镜像均由真实容器结果验证。API 容器无需访问 Docker daemon。
+Docker 镜像与挂载权限回归在仓库宿主执行，需要可用的 Docker Engine。测试使用临时合成文件与独立 Compose project，不挂载生产数据。受限构建输入、历史文件保留、只读存储失败与负向镜像均由真实容器结果验证。API 容器无需访问 Docker daemon。
 
 ```bash
 python3 -m unittest scripts.ci.test_docker_build_context scripts.ci.test_container_permissions
@@ -205,11 +205,11 @@ pwsh -NoProfile -File scripts/ci/test_init_security.ps1
 
 ## CI 环境与依赖
 
-常规质量检查和独立服务集成测试使用 GitHub 托管执行器，无需维护公网服务器。CI 准备、检查、探针与测试集中在 `scripts/ci/`；用户初始化、拉镜像和版本入口留在 `scripts/`，评估脚本位于 `scripts/eval/`。测试选择器由对应 workflow 和脚本拥有：
+常规质量检查和独立服务集成测试使用 GitHub 托管执行器，无需维护公网服务器。CI 准备、检查、探针与测试集中在 `scripts/ci/`；用户初始化、拉镜像和版本入口留在 `scripts/`，评估脚本位于 `scripts/eval/`。测试选择器由对应 workflow 和脚本拥有。
 
-PR 由无路径过滤的 `.github/workflows/ci.yml` 调用可复用质量工作流，粗粒度选择由 `scripts/ci/gate.py` 拥有；共享或无法分类的变更保守扩大检查。各工作流通过 `workflow_call` 复用既有测试主体，保留原有 push、tag 和手动入口。汇总检查名为 `CI required`，选择失败、必需结果缺失、失败、取消或意外跳过均不能通过。仓库接线本身不启用 GitHub required 规则：须先部署 workflow 并产生真实检查，再配置规则并验证远端行为。
+PR 由无路径过滤的 `.github/workflows/ci.yml` 调用可复用质量工作流，粗粒度选择由 `scripts/ci/gate.py` 拥有。共享或无法分类的变更保守扩大检查。各工作流通过 `workflow_call` 复用既有测试主体，保留原有 push、tag 和手动入口。汇总检查名为 `CI required`，选择失败、必需结果缺失、失败、取消或意外跳过均不能通过。仓库接线本身不启用 GitHub required 规则。须先部署 workflow 并产生真实检查，再配置规则并验证远端行为。
 
-顶层选择系统测试时，五个系统 job 执行完整测试，并由 `check-jobs` 汇总；缺失、失败、取消或意外跳过均不能通过。四个拓扑 job（后台作业与检索、会话协作 E2E、生命周期与 worker E2E、运行时契约）各自构建镜像并持有独立 Compose 拓扑，共享镜像层缓存；沙盒容器隔离 job 在宿主机只复用 sandbox 镜像，不启动拓扑。push、tag 和手动入口沿用各自触发条件。
+顶层选择系统测试时，五个系统 job 执行完整测试，并由 `check-jobs` 汇总。缺失、失败、取消或意外跳过均不能通过。四个拓扑 job（后台作业与检索、会话协作 E2E、生命周期与 worker E2E、运行时契约）各自构建镜像并持有独立 Compose 拓扑，共享镜像层缓存；沙盒容器隔离 job 在宿主机只复用 sandbox 镜像，不启动拓扑。push、tag 和手动入口沿用各自触发条件。
 
 测试运行脚本在显式设置 `CI_TEST_REPORT_DIR` 时输出独立 JUnit 报告和慢测试信息；目录相对于 pytest 进程的工作目录，不设置时原有命令行为不变。workflow 直接调用 pytest 时显式传入独立报告路径。CI 测试报告 artifact 保留 7 天，失败与 skip 仍须分别审查。
 
@@ -222,15 +222,15 @@ PR 由无路径过滤的 `.github/workflows/ci.yml` 调用可复用质量工作�
 | 真实供应商 Agent SSE 与持久结果 | 临时托管执行器、完整 Compose 拓扑和 `SILICONFLOW_API_KEY` 仓库 Secret | `real-provider-probe.yml`，仅手动运行 |
 | GitHub 托管机器的 KVM/Cube 兼容性探针 | KVM、临时 XFS、Cube 安装、正式模板和共享挂载 | `cube-hosted-probe.yml`，仅手动运行 |
 
-真实供应商探针在明确的外部配额或限流错误时会跳过用例；必须核对 pytest 结果，不能把跳过当作真实模型通过。
+真实供应商探针在明确的外部配额或限流错误时会跳过用例。必须核对 pytest 结果，不能把跳过当作真实模型通过。
 
-独立服务 job 使用一次性数据库，运行应用初始化并创建基线测试管理员后执行已有集成测试；显式选择 container 配置，共享 API、container runner 与 Cube 地址固定为不可达，用真实数据库结果证明独立性。该入口会写入数据库及 Skill 目录，本地复用时必须提供独立的 `POSTGRES_URL`、`REDIS_URL` 与 `YUXI_SKILL_DATA_DIR`，并使用没有 `backend/.env` 的干净 checkout，禁止指向运行中的业务环境。基线管理员保留在临时库中，测试账号的创建、修改和清理继续受数据库的最后管理员约束保护。
+独立服务 job 使用一次性数据库，运行应用初始化并创建基线测试管理员后执行已有集成测试。显式选择 container 配置，共享 API、container runner 与 Cube 地址固定为不可达，用真实数据库结果证明独立性。该入口会写入数据库及 Skill 目录，本地复用时必须提供独立的 `POSTGRES_URL`、`REDIS_URL` 与 `YUXI_SKILL_DATA_DIR`，并使用没有 `backend/.env` 的干净 checkout，禁止指向运行中的业务环境。基线管理员保留在一次性数据库中，测试账号的创建、修改和清理继续受数据库的最后管理员约束保护。
 
-公开附件 HTTP 用例中的待消费快照、取消与删除边界使用真实 worker 和阻塞模型重放，随完整 container 拓扑执行；模型重放服务在这些用例之前启动。它们与仅验证持久化和对象读写的附件服务测试具有不同依赖。
+公开附件 HTTP 用例中的待消费快照、取消与删除边界使用真实 worker 和阻塞模型重放，随完整 container 拓扑执行。模型重放服务在这些用例之前启动。它们与仅验证持久化和对象读写的附件服务测试具有不同依赖。
 
-`self_managed_resources` 只描述 fixture 清理责任，不绕过 API/worker 的沙盒启动检查。常规系统 job 通过环境准备脚本显式选择 container 后端、启用对应 Compose profile 并生成临时 runner 令牌；API、worker 和 runner 使用同一物理 Workspace 与 Skill projection，只有 runner 持有 Docker socket。正式 sandbox 镜像参与独立层缓存，状态位于执行器临时目录。生产默认后端仍由 Compose 配置决定。
+`self_managed_resources` 只描述 fixture 清理责任，不绕过 API/worker 的沙盒启动检查。常规系统 job 通过环境准备脚本显式选择 container 后端、启用对应 Compose profile 并生成临时 runner 令牌。API、worker 和 runner 使用同一物理 Workspace 与 Skill projection，只有 runner 持有 Docker socket。正式 sandbox 镜像参与独立层缓存，状态位于执行器临时目录。生产默认后端仍由 Compose 配置决定。
 
-container 专项包括 API/worker 的真实 execute 与 steer 后容器清理，以及宿主进程通过真实 Docker 验证文件、进程、资源和认证隔离。宿主专项显式启用 `SANDBOX_CONTAINER_TEST=1`，使用本次 Compose 配置选择的镜像；它的临时文件根与业务 runner 分离，不给 API 容器挂载 Docker socket。协作 E2E 对 container 使用共享 Project 文件作跨 Run 探针，对 Cube 保留共享 VM 临时文件与执行身份断言；全部协作、取消、压缩和持久结果检查仍执行。
+container 专项包括 API/worker 的真实 execute 与 steer 后容器清理，以及宿主进程通过真实 Docker 验证文件、进程、资源和认证隔离。宿主专项显式启用 `SANDBOX_CONTAINER_TEST=1`，使用本次 Compose 配置选择的镜像。它的临时文件根与业务 runner 分离，不给 API 容器挂载 Docker socket。协作 E2E 对 container 使用共享 Project 文件作跨 Run 探针，对 Cube 保留共享 VM 临时文件与执行身份断言；全部协作、取消、压缩和持久结果检查仍执行。
 
 Cube 实现的 unit 继续运行；真实 KVM、Cube 安装、正式模板与共享挂载由手动 hosted probe 和 Cube 专属测试验证。常规 container CI 的成功不能解释为 Cube VM 兼容性通过。托管探针仅允许在 GitHub 临时托管执行器运行，其成功只证明该次执行器的兼容性。CI 取舍见[container 运行链路决定](decisions/implemented/2026-10-23-container-runtime-ci.md)。
 
@@ -245,7 +245,7 @@ docker compose -f docker-compose.yml -f backend/test/e2e/web-tools.compose.yml u
 docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD api uv run --no-sync --no-dev pytest test/e2e/test_web_tools_e2e.py -q
 ```
 
-该拓扑仅用于没有已保存搜索 Key 的隔离测试环境。它生成短期测试 CA，API 与 worker 的 HTTPS 请求由重放服务提供三家 Search 和两家 Fetch 固定结果；测试通过真实 Session SSE、worker 与持久消息确认配置切换，结束后清除自己保存的 Key。`system-tests.yml` 显式运行此测试，生产拓扑不使用该 CA 或代理。
+该拓扑仅用于没有已保存搜索 Key 的隔离测试环境。它生成短期测试 CA，API 与 worker 的 HTTPS 请求由重放服务提供三家 Search 和两家 Fetch 固定结果。测试通过真实 Session SSE、worker 与持久消息确认配置切换，结束后清除自己保存的 Key。`system-tests.yml` 显式运行此测试，生产拓扑不使用该 CA 或代理。
 
 ## 性能评测
 
@@ -280,10 +280,10 @@ docker compose exec api uv run --no-sync --group test pytest test/unit/performan
 ## 提交前检查
 
 - 测试位于正确层级，且名称表达行为。
-- 断言了业务结果和关键副作用，而不是只断言 HTTP 状态码。
+- 断言了业务结果和关键副作用。不要只断言 HTTP 状态码。
 - 新增 guard 有能恢复目标缺陷的负向案例。
 - fixture 不依赖共享默认数据，测试数据会清理。
-- skip 有明确的可选外部依赖或缺失环境变量原因。
+- skip 有明确原因。原因是可选外部依赖，或是缺失的环境变量。
 - 真实 API、数据库、worker、文件、对象或浏览器语义已经按风险验证。
 - expected output、fixture 和 snapshot 的更新经过人工审阅。
 - PR 如实记录命令、结果和未验证范围。

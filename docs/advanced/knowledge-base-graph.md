@@ -1,6 +1,6 @@
 # 知识图谱
 
-本页说明 Milvus 知识库示例问题和图谱运维。它面向管理员和需要查看结果的用户；文档导入和 API 见[文档导入与查询 API](./knowledge-base-api.md)，状态和存储边界见[知识库机制](../mechanisms/knowledge-base.md)。
+本页说明 Milvus 知识库示例问题和图谱运维。它面向管理员和需要查看结果的用户。文档导入和 API 见[文档导入与查询 API](./knowledge-base-api.md)，状态和存储边界见[知识库机制](../mechanisms/knowledge-base.md)。
 
 ## 示例问题
 
@@ -29,7 +29,7 @@
 
 ## 失败和修复
 
-图谱后台作业把可序列化 payload 保存在 PostgreSQL 的 `BackgroundJobRecord`（`background_jobs` 表），提交后交给 ARQ worker。`BackgroundJobRepository` 使用 attempt owner 与 lease 拒绝重复执行和迟到写入；worker 中断或租约过期时，作业收敛为 `failed`，保留错误供管理员检查外部副作用。任务失败或取消后：
+图谱后台作业把可序列化 payload 保存在 PostgreSQL 的 `BackgroundJobRecord`（`background_jobs` 表），提交后交给 ARQ worker。`BackgroundJobRepository` 使用 attempt owner 与 lease 拒绝重复执行和迟到写入。worker 中断或租约过期时，作业收敛为 `failed`，保留错误供管理员检查外部副作用。任务失败或取消后：
 
 1. 先保留任务错误和失败 chunk；
 2. 检查 PostgreSQL 的 chunk 与处理状态；
@@ -37,7 +37,7 @@
 4. 检查 Milvus 的图向量索引；
 5. 再决定重试、修复向量索引或重置图谱。
 
-后台作业的 `success` 表示 worker 已完成编排，三类存储的一致性需分别回读。图谱状态接口把最近成功作业投影为 `build_job_status=completed`，失败或取消作业投影为 `failed`；同时检查抽取、结构和向量计数以及失败 chunk，不能只根据该概览判断所有 chunk 已成功。
+后台作业的 `success` 表示 worker 已完成编排，三类存储的一致性需分别回读。图谱状态接口把最近成功作业投影为 `build_job_status=completed`，失败或取消作业投影为 `failed`。同时检查抽取、结构和向量计数以及失败 chunk，不能只根据该概览判断所有 chunk 已成功。
 
 ## API 入口
 

@@ -7,7 +7,7 @@
       </div>
     </template>
   </BaseToolCall>
-  <div v-else class="cooperation-event" :class="{ 'has-error': status === 'error' }">
+  <div v-else class="cooperation-event">
     <div class="cooperation-event-row">
       <component :is="eventIcon" :size="15" class="event-icon" aria-hidden="true" />
       <span class="event-action">{{ action }}</span>
@@ -25,7 +25,7 @@
           </component>
         </template>
       </span>
-      <span v-if="status === 'error'" class="event-state event-error">操作失败</span>
+      <span v-if="status === 'error'" class="event-state">操作失败</span>
       <span v-else-if="status === 'waiting'" class="event-state">等待中</span>
       <span v-else-if="status === 'running'" class="event-state">进行中</span>
       <span v-else-if="status === 'incomplete'" class="event-state">已中断</span>
@@ -82,11 +82,14 @@ const targets = computed(() => {
 </script>
 
 <style scoped lang="less">
-.cooperation-event { padding: 4px 0; min-width: 0; color: var(--color-text-secondary); font-size: 13px; }
+.cooperation-event {
+  padding: 4px 0; min-width: 0; color: var(--gray-600); font-size: 13px;
+  &:hover { color: var(--gray-800); }
+}
 .cooperation-event-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; min-width: 0; min-height: 26px; line-height: 26px; }
 .event-icon { flex-shrink: 0; margin-top: 5px; }
 .event-action, .event-state { flex-shrink: 0; }
-.event-state { font-size: 12px; color: var(--gray-500); }
+.event-state { font-size: 12px; }
 .event-targets { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; min-width: 0; }
 .event-target { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: min(240px, 100%); vertical-align: middle; }
 .event-target > span:last-of-type { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -94,8 +97,6 @@ const targets = computed(() => {
 .event-target svg { flex-shrink: 0; }
 button.event-target {
   font: inherit; color: inherit; line-height: inherit; border: 0; padding: 0; background: transparent; cursor: pointer; text-align: left;
-  &:hover { color: var(--color-text); }
   &:focus-visible { outline: 2px solid var(--main-300); outline-offset: 2px; border-radius: 3px; }
 }
-.event-error { color: var(--color-error-600); }
 </style>

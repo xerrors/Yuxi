@@ -227,7 +227,7 @@ const toggleToolCallsExpanded = () => {
     min-width: 0;
     padding-right: 22px;
     pointer-events: none;
-    // 遮罩只改变明暗，保留专用 header 的错误颜色与文字布局。
+    // 遮罩只改变明暗，保留专用 header 的继承色与文字布局。
     mask-image: linear-gradient(110deg, #000 35%, #0005 50%, #000 65%);
     mask-size: 250% 100%;
     animation: live-header-shimmer 2s linear infinite;

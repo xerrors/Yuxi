@@ -566,9 +566,15 @@ defineExpose({
   align-items: center;
   justify-content: center;
   gap: 12px;
+  padding: 12px 16px;
+  background: var(--gray-0);
+  border: 1px solid var(--gray-150);
+  border-radius: 8px;
+  box-shadow: var(--shadow-popover);
   color: var(--gray-600);
   font-size: 14px;
   line-height: 20px;
+  white-space: nowrap;
   pointer-events: none;
 
   :deep(.ant-spin) {

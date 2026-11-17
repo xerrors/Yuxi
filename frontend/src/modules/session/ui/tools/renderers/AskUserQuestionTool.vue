@@ -182,8 +182,6 @@ const displayAnswer = computed(() => {
 .sep-header {
   .tag-answered {
     margin-left: 8px;
-    color: var(--color-success-700);
-    background: var(--color-success-50);
     padding: 2px 8px;
     border-radius: 4px;
     font-size: 12px;

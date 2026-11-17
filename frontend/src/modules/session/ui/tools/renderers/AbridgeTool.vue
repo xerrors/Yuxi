@@ -3,6 +3,7 @@
     :tool-call="toolCall"
     :appearance="appearance"
     :default-expanded="defaultExpanded"
+    :error-label="receipt?.status === 'outcome_unknown' ? '执行结果未知' : '执行失败'"
     :incomplete-label="receipt?.status === 'outcome_unknown' ? '执行结果未知' : '已中断'"
   >
     <template v-if="status !== 'running' && status !== 'waiting'" #icon>
@@ -15,7 +16,6 @@
         <span class="note">{{ actionLabel }}</span>
         <span v-if="target" class="separator">|</span>
         <span v-if="target" class="description" :title="target">{{ target }}</span>
-        <span v-if="status === 'error'" class="tag error">执行失败</span>
       </div>
     </template>
     <template #result>

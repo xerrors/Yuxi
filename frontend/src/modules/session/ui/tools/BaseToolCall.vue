@@ -14,23 +14,23 @@
       @keydown.enter.self="toggleExpand"
       @keydown.space.self.prevent="toggleExpand"
     >
-      <!-- 默认图标与工具插槽共用状态颜色，避免专用图标绕过交互反馈。 -->
+      <!-- 图标与标题共用父级颜色，调用状态只改变图形与文字。 -->
       <span class="tool-status-icon" :class="`tool-status-icon--${effectiveStatus}`">
         <slot name="icon" :status="effectiveStatus">
           <component
             v-if="effectiveStatus === 'completed'"
             :is="toolIcon || CheckCircle"
             size="15"
-            class="tool-loader tool-success"
+            class="tool-loader"
           />
-          <Clock v-else-if="effectiveStatus === 'waiting'" size="15" class="tool-loader tool-loading" />
+          <Clock v-else-if="effectiveStatus === 'waiting'" size="15" class="tool-loader" />
           <component
             v-else-if="['error', 'incomplete'].includes(effectiveStatus)"
             :is="toolIcon || Wrench"
             size="15"
-            class="tool-loader tool-error"
+            class="tool-loader"
           />
-          <Loader v-else size="15" class="tool-loader rotate tool-loading" />
+          <Loader v-else size="15" class="tool-loader rotate" />
         </slot>
       </span>
 
@@ -39,7 +39,7 @@
         <!-- Generic Header Slot (Overrides specific slots if provided) -->
         <template v-if="$slots.header">
           <slot name="header" :tool-call="toolCall" :tool-name="toolName"></slot>
-          <span v-if="summaryOnly && effectiveStatus === 'error'" class="tool-incomplete-label">执行失败</span>
+          <span v-if="effectiveStatus === 'error'" class="tool-incomplete-label">{{ errorLabel }}</span>
           <span v-else-if="effectiveStatus === 'incomplete'" class="tool-incomplete-label">{{ incompleteLabel }}</span>
           <span v-else-if="effectiveStatus === 'waiting'" class="tool-incomplete-label"
             >等待协作</span
@@ -155,6 +155,7 @@ import { getToolCallResultContent } from '@/modules/session/model/toolCallProjec
 
 const props = defineProps({
   incompleteLabel: { type: String, default: '已中断' },
+  errorLabel: { type: String, default: '执行失败' },
   headerAction: { type: Function, default: null },
   // 仅展示动作摘要的工具没有展开入口，完整回执由消息调试面板承载。
   summaryOnly: { type: Boolean, default: false },
@@ -249,8 +250,19 @@ const formattedArgs = computed(() => {
 })
 
 const hasParams = computed(() => {
-  const argsStr = String(props.toolCall.args || props.toolCall.function?.arguments || '')
-  return argsStr.length > 2
+  let args = formattedArgs.value
+  if (typeof args === 'string') {
+    args = args.trim()
+    if (!args) return false
+    try {
+      args = JSON.parse(args)
+    } catch {
+      // 流式未完成或非 JSON 参数仍需展示已有内容。
+      return true
+    }
+  }
+  if (args == null || args === '') return false
+  return typeof args !== 'object' || Object.keys(args).length > 0
 })
 
 // Result Logic
@@ -279,7 +291,7 @@ const hasResult = computed(() => {
     padding: 6px 10px;
     font-size: 13px;
     font-weight: 500;
-    color: var(--gray-800);
+    color: var(--gray-600);
     border-bottom: 1px solid var(--gray-50);
     display: flex;
     align-items: center;
@@ -296,16 +308,11 @@ const hasResult = computed(() => {
 
     &:hover {
       background-color: var(--gray-25);
-    }
-
-    & > span {
-      display: flex;
-      align-items: center;
+      color: var(--gray-800);
     }
 
     .tool-name {
       font-weight: 600;
-      color: var(--main-700);
     }
 
     .tool-status-icon {
@@ -313,35 +320,15 @@ const hasResult = computed(() => {
       align-items: center;
       justify-content: center;
       flex-shrink: 0;
-      color: var(--main-600);
-    }
-
-    .tool-loader {
-      margin-top: 0;
     }
 
     .tool-loader.rotate {
       animation: rotate 2s linear infinite;
     }
 
-    .tool-status-icon--completed {
-      color: var(--color-success-500);
-    }
-
-    .tool-status-icon--error,
-    .tool-status-icon--incomplete {
-      color: var(--color-error-500);
-    }
-
-    .tool-status-icon--running,
-    .tool-status-icon--waiting {
-      color: var(--color-info-500);
-    }
-
     .tool-expand-icon {
       flex-shrink: 0;
       margin-left: auto;
-      color: var(--gray-300);
       display: flex;
       align-items: center;
     }
@@ -354,7 +341,6 @@ const hasResult = computed(() => {
       overflow: hidden;
       white-space: nowrap;
       text-overflow: ellipsis;
-      color: var(--gray-600);
 
       .tool-incomplete-label {
         flex-shrink: 0;
@@ -365,23 +351,19 @@ const hasResult = computed(() => {
         display: flex;
         align-items: center;
         gap: 8px;
-        font-size: 13px;
         width: 100%;
         overflow: hidden;
 
         .note {
           font-weight: 500;
-          color: var(--gray-600);
           flex-shrink: 0;
         }
 
         .separator {
-          color: var(--gray-300);
           flex-shrink: 0;
         }
 
         .description {
-          color: var(--gray-600);
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
@@ -390,27 +372,15 @@ const hasResult = computed(() => {
       }
 
       :deep(.keywords) {
-        color: var(--main-700);
         font-weight: 600;
       }
 
       :deep(.tag) {
         font-size: 11px;
-        color: var(--gray-500);
-        // background-color: var(--gray-50);
         padding: 0px 4px;
         border-radius: 4px;
         margin-left: 8px;
         white-space: nowrap;
-
-        &.success {
-          color: var(--color-success-500);
-          // background-color: var(--color-success-50);
-        }
-        &.error {
-          color: var(--color-error-500);
-          // background-color: var(--color-error-50);
-        }
       }
     }
   }
@@ -442,6 +412,10 @@ const hasResult = computed(() => {
     .tool-header-content :deep(.sep-header) { width: auto; }
   }
 
+  &:not(.is-collapsed) .tool-header {
+    color: var(--gray-800);
+  }
+
   &.is-collapsed {
     .tool-header {
       border-bottom: none;
@@ -460,39 +434,12 @@ const hasResult = computed(() => {
       padding: 0;
       background-color: transparent;
       border-bottom: none;
-      color: var(--gray-500);
       gap: 10px;
 
       &:hover {
         background-color: transparent;
-        color: var(--gray-700);
       }
 
-      .tool-name {
-        color: var(--gray-600);
-      }
-
-      .tool-status-icon {
-        color: var(--gray-600);
-
-        &--error,
-        &--incomplete {
-          color: var(--color-error-500);
-        }
-      }
-
-      .tool-expand-icon {
-        opacity: 0.5;
-      }
-
-      .tool-header-content {
-        font-size: 13px;
-        color: var(--gray-500);
-      }
-    }
-
-    &:not(.is-summary) .tool-header:is(:hover, :focus-visible) .tool-status-icon--completed {
-      color: var(--gray-700);
     }
 
     .tool-content {

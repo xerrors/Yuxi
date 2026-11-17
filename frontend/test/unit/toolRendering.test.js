@@ -72,6 +72,46 @@ const render = (component, props) =>
       .use(createRouter({ history: createMemoryHistory(), routes: [] }))
   )
 
+test('工具参数为空时隐藏整行，结果仍可见，非空参数正常展示', async () => {
+  for (const name of ['unknown_tool', 'devices_list']) {
+    for (const args of [undefined, null, {}, '', '  \n ', '{}', ' {\n } ', [], '[ ]']) {
+      for (const fields of [{ args }, { function: { name, arguments: args } }]) {
+        const html = await render(ToolCallRenderer, {
+          toolCall: { name, ...fields, result: '工具返回内容' },
+          defaultExpanded: true
+        })
+        assert.doesNotMatch(html, /class="tool-params"|参数:/)
+        assert.match(html, /工具返回内容/)
+      }
+    }
+  }
+  for (const args of [{ limit: 0, enabled: false }, '{"path":"/Users"}', 'x', '{']) {
+    const html = await render(BaseToolCall, {
+      toolCall: { name: 'unknown_tool', args }, defaultExpanded: true
+    })
+    assert.match(html, /class="tool-params"/)
+    assert.match(html, /参数:/)
+  }
+})
+
+test('折叠的文件与命令工具在自定义标题中明确显示失败', async () => {
+  for (const [name, args] of [
+    ['read_file', { file_path: '/tmp/test.txt' }],
+    ['write_file', { file_path: '/tmp/test.txt', content: '一行内容' }],
+    ['bash', { command: 'false' }]
+  ]) {
+    const failed = await render(ToolCallRenderer, {
+      toolCall: { name, args, status: 'error', error_message: '操作未完成' }
+    })
+    assert.match(failed, /执行失败/)
+    assert.doesNotMatch(failed, /class="tool-content"/)
+    const completed = await render(ToolCallRenderer, {
+      toolCall: { name, args, status: 'completed' }
+    })
+    assert.doesNotMatch(completed, /执行失败/)
+  }
+})
+
 for (const [name, fields] of Object.entries({
   调用错误且没有结果: { status: 'error', error_message: '无法执行' },
   调用错误且结果为空: {
@@ -95,12 +135,12 @@ for (const [name, fields] of Object.entries({
       defaultExpanded: true,
       appearance: 'timeline'
     })
-    assert.match(html, /tool-error/)
+    assert.match(html, /tool-status-icon--error/)
     assert.match(html, /执行失败/)
     assert.match(html, /无法执行/)
-    assert.doesNotMatch(html, /执行完成|tool-loading/)
+    assert.doesNotMatch(html, /执行完成|tool-status-icon--(?:running|waiting)/)
     const group = await render(ToolCallsGroup, { toolCalls: [toolCall], isActive: false })
-    assert.match(group, /tool-error/)
+    assert.match(group, /tool-status-icon--error/)
     assert.doesNotMatch(group, /1 进行中/)
   })
 }
@@ -115,7 +155,7 @@ test('知识库专用模板保留错误详情，不把错误渲染成空检索�
     },
     defaultExpanded: true
   })
-  assert.match(html, /tool-error/)
+  assert.match(html, /tool-status-icon--error/)
   assert.match(html, /知识库不可用/)
   assert.doesNotMatch(html, /未找到相关内容|未找到结果/)
 })
@@ -130,24 +170,24 @@ test('历史搜索额度失败的卡片与汇总均显示失败，真实零结�
       }
     }
     const html = await render(ToolCallRenderer, { toolCall, defaultExpanded: true })
-    assert.match(html, /tool-error/)
+    assert.match(html, /tool-status-icon--error/)
     assert.match(html, /quota has been exhausted/)
-    assert.doesNotMatch(html, /未找到相关搜索结果|tool-success/)
+    assert.doesNotMatch(html, /未找到相关搜索结果|tool-status-icon--completed/)
     const group = await render(ToolCallsGroup, { toolCalls: [toolCall], isActive: false })
-    assert.match(group, /tool-error/)
+    assert.match(group, /tool-status-icon--error/)
   }
   const empty = await render(ToolCallRenderer, {
     toolCall: { name: 'web_search', result: { query: '官方资料', results: [], error: null } },
     defaultExpanded: true
   })
   assert.match(empty, /未找到相关搜索结果/)
-  assert.match(empty, /tool-success/)
-  assert.doesNotMatch(empty, /tool-error/)
+  assert.match(empty, /tool-status-icon--completed/)
+  assert.doesNotMatch(empty, /tool-status-icon--error/)
   const ordinary = await render(BaseToolCall, {
     toolCall: { name: 'unknown_tool', result: { error: '业务数据中的字段' } },
     defaultExpanded: true
   })
-  assert.match(ordinary, /tool-success/)
+  assert.match(ordinary, /tool-status-icon--completed/)
 })
 
 test('有效的 0 和 false 结果可见，普通结果文本中的 error 不冒充状态', async () => {
@@ -156,9 +196,9 @@ test('有效的 0 和 false 结果可见，普通结果文本中的 error 不冒
       toolCall: { name: 'unknown_tool', tool_call_result: { content } },
       defaultExpanded: true
     })
-    assert.match(html, /tool-success/)
+    assert.match(html, /tool-status-icon--completed/)
     assert.match(html, /tool-result-renderer/)
-    assert.doesNotMatch(html, /tool-error/)
+    assert.doesNotMatch(html, /tool-status-icon--error/)
   }
 })
 
@@ -281,7 +321,7 @@ test('明确的 ToolMessage 错误不会被专用工具覆盖为完成', async (
       },
       defaultExpanded: true
     })
-    assert.match(html, /has-error|tool-error/)
+    assert.match(html, /操作失败|tool-status-icon--error/)
     if (name === 'subagent_start') assert.match(html, /启动失败/)
     assert.doesNotMatch(html, /已完成|已启动/)
     assert.match(html, /失败/)
@@ -290,7 +330,7 @@ test('明确的 ToolMessage 错误不会被专用工具覆盖为完成', async (
     toolCall: { status: 'error', error_message: '调用失败' },
     status: 'completed'
   })
-  assert.match(html, /tool-error/)
+  assert.match(html, /tool-status-icon--error/)
   assert.doesNotMatch(html, /执行完成/)
 })
 
@@ -350,7 +390,7 @@ test('incomplete 工具显示中断终态而非加载图标', async () => {
     appearance: 'timeline'
   })
   assert.match(html, /已中断/)
-  assert.doesNotMatch(html, /tool-loading|正在调用工具/)
+  assert.doesNotMatch(html, /tool-status-icon--(?:running|waiting)|正在调用工具/)
   const question = await render(ToolCallRenderer, {
     toolCall: {
       id: 'question',
@@ -360,7 +400,7 @@ test('incomplete 工具显示中断终态而非加载图标', async () => {
     }
   })
   assert.match(question, /已中断/)
-  assert.doesNotMatch(question, /tool-loading/)
+  assert.doesNotMatch(question, /tool-status-icon--(?:running|waiting)/)
 })
 
 
@@ -369,7 +409,7 @@ test('知识库检索失败显示错误结果，正常空检索仍显示空状�
     toolCall: { name: 'query_kb', tool_call_result: { status: 'error', content: '工具 query_kb 执行失败：RuntimeError' } },
     defaultExpanded: true
   })
-  assert.match(failure, /tool-error/)
+  assert.match(failure, /tool-status-icon--error/)
   assert.match(failure, /query_kb 执行失败/)
   assert.doesNotMatch(failure, /未找到相关知识库内容/)
   const empty = await render(QueryKbTool, {
@@ -377,7 +417,7 @@ test('知识库检索失败显示错误结果，正常空检索仍显示空状�
     defaultExpanded: true
   })
   assert.match(empty, /未找到相关知识库内容/)
-  assert.doesNotMatch(empty, /tool-error/)
+  assert.doesNotMatch(empty, /tool-status-icon--error/)
 })
 
 test('新增工具只显示有用摘要，即使默认展开也不重复展示正文与原始结果', async () => {
@@ -386,7 +426,7 @@ test('新增工具只显示有用摘要，即使默认展开也不重复展示�
     ['search_thread_messages', { query: '部署' }, { items: [{ title: '部署记录', role: 'user', content: '完整历史消息' }] }, /搜索历史消息/, /部署/],
     ['read_thread_messages', {}, { title: '部署记录', messages: [{ role: 'assistant', content: '完整历史消息' }], tool_calls: [] }, /读取历史消息/, /部署记录/],
     ['install_skill', { source: 'example/research', skill_names: ['research'] }, '已安装 Skill: research\nSkill 路径: /workspace/skills/research/SKILL.md', /安装技能/, /research/],
-    ['mark_for_improvement', { reason: '完整改进原因' }, { id: 'feedback-1', saved: true }, /记录改进线索/, /tool-success/],
+    ['mark_for_improvement', { reason: '完整改进原因' }, { id: 'feedback-1', saved: true }, /记录改进线索/, /tool-status-icon--completed/],
     ['web_fetch', { url: 'https://example.com' }, { title: '部署指南', content: '完整网页正文', provider: 'tavily' }, /网页抓取/, /部署指南/]
   ]
   for (const [name, args, result, action, target] of cases) {
@@ -443,7 +483,7 @@ test('会话查询只展示真实范围和本页计数，历史回执不冒充�
   for (const [args, label] of [[{}, '本项目'], [{ scope: 'all' }, '历史']]) {
     const html = await render(ToolCallRenderer, { toolCall: { name: 'list_sessions', args } })
     assert.match(html, new RegExp(`查看${label}会话`))
-    assert.match(html, /tool-loading/)
+    assert.match(html, /tool-status-icon--(?:running|waiting)/)
     assert.doesNotMatch(html, /查看了|0 个|进行中|event-state/)
   }
 })
@@ -470,7 +510,7 @@ test('摘要保留失败、等待、中断和空计数，不显示回执详情',
       [{ tool_call_result: { status: 'error', content: '完整错误堆栈' } }, /失败/],
       [{ status: 'waiting' }, /等待/],
       [{ status: 'incomplete' }, /已中断/],
-      [{}, /tool-loading|进行中/]
+      [{}, /tool-status-icon--(?:running|waiting)|进行中/]
     ]) {
       const html = await render(ToolCallRenderer, { toolCall: { name, args: {}, ...fields }, defaultExpanded: true })
       assert.match(html, label, name)
@@ -506,14 +546,14 @@ test('技能安装的纯文本失败回执不被摘要隐藏，成功名称中�
       toolCall: { name: 'install_skill', args: { source: 'example/research' }, tool_call_result: { status: 'success', content } },
       defaultExpanded: true
     })
-    assert.match(html, /tool-error/)
+    assert.match(html, /tool-status-icon--error/)
     assert.match(html, /执行失败/)
-    assert.doesNotMatch(html, /tool-success|tool-content|Skill 路径/)
+    assert.doesNotMatch(html, /tool-status-icon--completed|tool-content|Skill 路径/)
   }
   const success = await render(ToolCallRenderer, {
     toolCall: { name: 'install_skill', result: '已安装 Skill: error-helper\nSkill 路径: /workspace/skills/error-helper/SKILL.md' }
   })
-  assert.match(success, /tool-success/)
+  assert.match(success, /tool-status-icon--completed/)
   assert.doesNotMatch(success, /执行失败/)
   const empty = await render(ToolCallRenderer, {
     toolCall: { name: 'install_skill', result: '未发现需要安装的 Skill' }
@@ -694,7 +734,7 @@ test('Abridge 命令没有执行回执时保留基础卡片的真实错误和默
   }
 })
 
-test('失败工具沿用红色工具图标，未知工具使用扳手而非叉号', async () => {
+test('失败工具保留工具图标与明确的失败文字，未知工具使用扳手而非叉号', async () => {
   for (const [name, icon] of [['web_search', 'globe'], ['unknown_tool', 'wrench']]) {
     const html = await render(BaseToolCall, { toolCall: { name, status: 'error', error_message: '执行失败' } })
     assert.match(html, /tool-status-icon--error/)

@@ -1,6 +1,6 @@
 # 机制详解
 
-本组页面面向已经了解基本部署和使用方式的开发者、运维人员，解释运行状态、事实归属、权限及失败恢复。首次完成产品任务从[快速开始](../intro/quick-start.md)进入；部署和参数查找使用[部署参考](../advanced/deployment.md)与[配置参考](../advanced/configuration.md)。
+本组页面面向已经了解基本部署和使用方式的开发者、运维人员，解释运行状态、事实归属、权限及失败恢复。首次完成产品任务从[快速开始](../intro/quick-start.md)进入。部署和参数查找使用[部署参考](../advanced/deployment.md)与[配置参考](../advanced/configuration.md)。
 
 ## 从一个任务开始
 
@@ -46,4 +46,4 @@
 | [上下文压缩](./context-compression.md) | 单一阈值怎样控制工具结果压缩、摘要和主动压缩？ | [中间件](../agents/middleware.md)、[智能体配置](../agents/agents-config.md) |
 | [知识库](./knowledge-base.md) | 文件状态、存储、权限和 Agent 检索怎样连接？ | [知识库教程](../intro/knowledge-base.md)、[文档处理](../advanced/document-processing.md) |
 
-只有当主题有稳定的 Owner、真实 consumer 和可验证链路时，才新增机制页。未来设计放入 roadmap 或 proposed decision，不画进当前运行图。
+只有主题有稳定的 Owner、真实 consumer 和可验证链路，才新增机制页。未来设计放入 roadmap 或 proposed decision，不画进当前运行图。
