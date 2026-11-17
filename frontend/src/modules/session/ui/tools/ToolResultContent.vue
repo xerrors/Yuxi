@@ -1,7 +1,15 @@
 <template>
   <div class="tool-result-blocks">
     <template v-for="(part, index) in parts" :key="index">
-      <p v-if="part.loading" role="status">图片加载中…</p>
+      <div
+        v-if="part.loading"
+        class="tool-result-image-skeleton"
+        role="status"
+        aria-label="图片加载中"
+        aria-busy="true"
+      >
+        <ImageIcon :size="28" aria-hidden="true" />
+      </div>
       <p v-else-if="part.image && (!part.src || part.failed)" role="alert">图片无法加载</p>
       <button
         v-else-if="part.image"
@@ -25,6 +33,7 @@
 
 <script setup>
 import { computed, ref, watch } from 'vue'
+import { Image as ImageIcon } from '@lucide/vue'
 import { apiGet } from '@/apis/base'
 import { resolveMarkdownImageUrl } from '@/shared/lib/markdown_preview'
 import ChatImageViewer from '@/shared/ui/ChatImageViewer.vue'
@@ -33,8 +42,9 @@ import { getToolResultParts } from '@/modules/session/model/toolCallProjection'
 const props = defineProps({ content: { default: null }, imageUrls: Boolean })
 const preview = ref('')
 const parts = ref([])
+// 流式投影会重建内容对象；按展示值监听，避免相同结果反复下载并撤销图片。
 const resultParts = computed(() =>
-  getToolResultParts(props.content, { imageUrls: props.imageUrls })
+  JSON.stringify(getToolResultParts(props.content, { imageUrls: props.imageUrls }))
 )
 
 watch(
@@ -47,7 +57,7 @@ watch(
       objectUrls.forEach((url) => URL.revokeObjectURL(url))
     })
     preview.value = ''
-    parts.value = value
+    parts.value = JSON.parse(value)
     await Promise.all(
       parts.value.map(async (part) => {
         if (!part.image || !part.src) return
@@ -96,6 +106,38 @@ watch(
     overflow-wrap: anywhere;
     max-height: 300px;
     overflow: auto;
+  }
+}
+
+.tool-result-image-skeleton {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: min(400px, 100%);
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--gray-100);
+  color: var(--gray-300);
+
+  &::after {
+    position: absolute;
+    inset: 0;
+    content: '';
+    background: linear-gradient(90deg, transparent, var(--gray-200), transparent);
+    animation: image-skeleton-shimmer 1.5s ease-in-out infinite;
+  }
+}
+
+@keyframes image-skeleton-shimmer {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-result-image-skeleton::after {
+    animation: none;
+    background: none;
   }
 }
 

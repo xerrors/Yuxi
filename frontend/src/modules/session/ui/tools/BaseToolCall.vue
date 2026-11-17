@@ -24,8 +24,9 @@
             class="tool-loader tool-success"
           />
           <Clock v-else-if="effectiveStatus === 'waiting'" size="15" class="tool-loader tool-loading" />
-          <XCircle
+          <component
             v-else-if="['error', 'incomplete'].includes(effectiveStatus)"
+            :is="toolIcon || Wrench"
             size="15"
             class="tool-loader tool-error"
           />
@@ -136,7 +137,7 @@ import {
   Loader,
   ChevronsUpDown,
   ChevronsDownUp,
-  XCircle,
+  Wrench,
   CheckCircle
 } from '@lucide/vue'
 import { useAgentStore } from '@/modules/agents'

@@ -693,3 +693,12 @@ test('Abridge 命令没有执行回执时保留基础卡片的真实错误和默
     assert.doesNotMatch(html, /原始结果|<pre[^>]*>undefined<\/pre>|<pre[^>]*>null<\/pre>/)
   }
 })
+
+test('失败工具沿用红色工具图标，未知工具使用扳手而非叉号', async () => {
+  for (const [name, icon] of [['web_search', 'globe'], ['unknown_tool', 'wrench']]) {
+    const html = await render(BaseToolCall, { toolCall: { name, status: 'error', error_message: '执行失败' } })
+    assert.match(html, /tool-status-icon--error/)
+    assert.ok(html.includes(`lucide-${icon}`))
+    assert.doesNotMatch(html, /lucide-circle-x/)
+  }
+})
