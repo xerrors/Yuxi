@@ -54,7 +54,7 @@ test('网页读取支持实际文本信封、转义正文，并区分分页与�
     assert.match(html, /还有后续内容/)
     assert.match(html, /快照已截断/)
     assert.match(html, /&lt;script&gt;remote\(\)&lt;\/script&gt;/)
-    assert.doesNotMatch(html, /<script>|workspace\/|<details[^>]* open/)
+    assert.doesNotMatch(html, /<script\b|workspace\/|<details[^>]* open/i)
   }
 })
 

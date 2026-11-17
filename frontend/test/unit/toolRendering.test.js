@@ -1040,7 +1040,7 @@ test('设备文件工具展示目录、写入回执和纯文本内容，保留�
         assert.doesNotMatch(list, /13 B|<img|<svg|class="device-file-meta"/)
       }
       assert.match(html, /<details[^>]*><summary[^>]*>原始结果/)
-      assert.doesNotMatch(html, /<details[^>]*\bopen|<script>|href="\/tmp/)
+      assert.doesNotMatch(html, /<details[^>]*\bopen|<script\b|href="\/tmp/i)
     }
   }
   for (const [name, output, expected] of [
