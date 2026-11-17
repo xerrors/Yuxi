@@ -79,13 +79,14 @@ checkpoint_ns)` 的最新版本：审批与 resume 走 `aget_tuple` 的 latest�
 
 | 终态钩子接线 | 增量继续无界增长 | run_lifecycle | `test_finish_run_lifecycle_hook_trims_terminal_thread` | 钩子改为空操作后该用例红，还原绿 | Passed |
 | worker 启动/关闭装配新循环 | 循环未创建或退出时泄漏 | bootstrap/worker | `pytest test/unit/services/test_worker_bootstrap.py test/unit/services/test_knowledge_delegation_startup.py` = 21 passed | 未在 startup/shutdown 登记时 bootstrap 的调用序列断言红 | Passed |
-| 其余链路无回归 | 钩子与循环引入连带失败 | — | `pytest test/unit -m "not slow"` = 3771 passed / 127 skipped / 0 failed；`pytest test/unit/services/test_checkpoint_retention_guards.py test/unit/services/test_worker_bootstrap.py test/unit/services/test_knowledge_delegation_startup.py test/integration/services/test_checkpoint_retention.py` = 33 passed | — | Passed |
+| 其余链路无回归 | 钩子与循环引入连带失败 | — | `pytest test/unit -m "not slow"` = 3886 passed / 128 skipped / 0 failed；`pytest test/unit/services/test_checkpoint_retention_guards.py test/unit/services/test_worker_bootstrap.py test/unit/services/test_knowledge_delegation_startup.py test/integration/services/test_checkpoint_retention.py` = 33 passed | — | Passed |
 | 门禁 | — | — | `python3 scripts/ci/verify_engineering_contracts.py` 与其单测、backend 三项 ruff、`git diff --check` | — | Passed |
+| worker 循环与 Run 生命周期在真实编排下无回归 | 新常驻循环干扰终态恢复、协作或后台作业 | bootstrap/worker + run_lifecycle | CI `system / 生命周期与 worker E2E`、`system / 会话协作 E2E`、`system / 后台作业与检索`、`system / 运行时契约与知识开关`、`service / PostgreSQL and Redis without Cube` | 不适用（由 CI 全量集成与 E2E 覆盖） | Passed |
 
-未执行：`scripts/checkpoint-cleanup.sh` 的 retain/purge-deleted 在真实大库上的演练与 VACUUM FULL 归还磁盘
-（需要停机窗口；本次只在开发栈上验证了 report 只读路径与 `bash -n`）；需要真实 HTTP 的
-`test/integration/services` 其余用例在本栈因测试管理员凭据未播种（`/api/auth/token` 401）无法执行，
-本批不触 HTTP 面，相关行为由上述 DB 层集成与 unit 覆盖。
+本地开发栈未执行：需要 api 活体的集成用例在本地因测试管理员凭据未播种（`/api/auth/token` 401）无法运行，
+同一面由上述 CI 作业覆盖。仍未执行的是 `scripts/checkpoint-cleanup.sh` 的 retain/purge-deleted 在真实大库上的
+演练与 VACUUM FULL 归还磁盘（需要停机窗口）；本批验证了 `report` 只读路径、`bash -n`，以及
+`PG_CONTAINER` 指定不存在容器与多栈无显式指定时的退避行为。
 
 时钟偏移的后果：槽位号按 UTC 日取整，多副本时钟跨日可能让同一天扫两次（幂等，无副作用）；抢到槽位的
 副本中途崩溃会丢失当日一次清扫，由下一日的槽位自愈。
