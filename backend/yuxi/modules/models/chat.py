@@ -5,8 +5,10 @@ import hashlib
 import hmac
 import os
 import time
+from functools import cached_property
 from uuid import uuid4
 
+import httpx
 from langchain.chat_models import BaseChatModel
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, AIMessageChunk, convert_to_messages
@@ -22,6 +24,7 @@ from yuxi.modules.models.utils import get_docker_safe_url
 USER_UID_HEADER = "x-yuxi-uid"
 USER_UID_TIMESTAMP_HEADER = "x-yuxi-uid-ts"
 USER_UID_SIGNATURE_HEADER = "x-yuxi-uid-sig"
+CHAT_HTTP_TIMEOUT = httpx.Timeout(connect=10.0, write=30.0, read=120.0, pool=10.0)
 
 
 def load_chat_model(
@@ -59,6 +62,11 @@ def load_chat_model(
     }
 
     logger.debug(f"Loading model {fully_specified_name} with provider_type={info.provider_type}")
+
+    if info.provider_type not in {"gemini", "anthropic"}:
+        # 按网络阶段限制停顿，不为持续输出的长回答设置总时限。
+        if "timeout" not in kwargs and "request_timeout" not in kwargs:
+            kwargs["timeout"] = CHAT_HTTP_TIMEOUT
 
     if info.provider_type == "anthropic":
         return ChatAnthropicAdapter(
@@ -112,6 +120,22 @@ class ChatAnthropicAdapter(ChatAnthropic):
     """anthropic 家族在每次发送边界重签用户 UID 头，其余行为由上游负责。"""
 
     user_uid: str | None = Field(default=None, exclude=True)
+
+    @cached_property
+    def _client(self):
+        """SDK 请求选项支持阶段超时，LangChain 的客户端缓存只接受标量。"""
+        client = super()._client
+        if "default_request_timeout" not in self.model_fields_set:
+            client.timeout = CHAT_HTTP_TIMEOUT
+        return client
+
+    @cached_property
+    def _async_client(self):
+        """异步请求使用相同的阶段超时。"""
+        client = super()._async_client
+        if "default_request_timeout" not in self.model_fields_set:
+            client.timeout = CHAT_HTTP_TIMEOUT
+        return client
 
     def _get_request_payload(self, input_, *, stop=None, **kwargs):
         """流式与非流式载荷都附带当次现算的签名。"""

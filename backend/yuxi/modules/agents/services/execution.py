@@ -582,6 +582,8 @@ async def _project_graph_event(event, *, recorder, adapter, state_signature: str
         payload = params["data"]
         if isinstance(payload, dict) and payload.get("type") == "yuxi.context_compression":
             return [adapter.extension("turn.context_compression", f"compression:{event['seq']}", compression=payload)], state_signature
+        if isinstance(payload, dict) and payload.get("type") == "yuxi.model_retry":
+            return [adapter.extension("turn.model_retry", f"retry:{event['seq']}", retry=payload)], state_signature
         return [], state_signature
     event = await recorder.consume(event)
     return await adapter.consume(event), state_signature

@@ -184,6 +184,59 @@ def test_select_model_maps_anthropic_max_completion_tokens(monkeypatch):
     assert captured == {"spec": "anthropic:mimo-v2.5", "kwargs": {"max_tokens": 123}}
 
 
+@pytest.mark.parametrize("provider_type", ["openai", "anthropic"])
+def test_chat_transport_phase_timeouts_and_explicit_override(monkeypatch, provider_type):
+    """断言 SDK 真正使用阶段超时，显式配置仍可覆盖默认值。"""
+    monkeypatch.setattr(model_cache, "get_model_info", lambda _: _chat_model_info("test", "test", provider_type))
+    model = load_chat_model("test:test", max_retries=0)
+    client = model._async_client if provider_type == "anthropic" else model.root_async_client
+    assert client.timeout == httpx.Timeout(connect=10, write=30, read=120, pool=10)
+    assert client.max_retries == 0
+
+
+@pytest.mark.parametrize(
+    "provider_type,parameter",
+    [("openai", "timeout"), ("openai", "request_timeout"), ("anthropic", "timeout"), ("anthropic", "default_request_timeout")],
+)
+@pytest.mark.parametrize("timeout", [42, None])
+@pytest.mark.parametrize("sync", [False, True])
+def test_chat_explicit_timeout_preserved(monkeypatch, provider_type, parameter, timeout, sync):
+    """显式超时及关闭超时的配置不会被默认值覆盖。"""
+    monkeypatch.setattr(model_cache, "get_model_info", lambda _: _chat_model_info("test", "test", provider_type))
+    model = load_chat_model("test:test", **{parameter: timeout})
+    if provider_type == "anthropic":
+        client = model._client if sync else model._async_client
+    else:
+        client = model.root_client if sync else model.root_async_client
+    assert httpx.Timeout(client.timeout) == httpx.Timeout(timeout)
+
+
+@pytest.mark.parametrize("sync", [False, True])
+@pytest.mark.asyncio
+async def test_anthropic_requests_carry_phase_timeouts(monkeypatch, httpx_mock, sync):
+    """验证 SDK 请求实际携带阶段超时，而非仅设置未使用的客户端字段。"""
+    monkeypatch.setattr(model_cache, "get_model_info", lambda _: _chat_model_info("test", "test", "anthropic"))
+    httpx_mock.add_response(
+        json={
+            "id": "test",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "ok"}],
+            "model": "test",
+            "stop_reason": "end_turn",
+            "stop_sequence": None,
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        }
+    )
+    model = load_chat_model("test:test", max_retries=0)
+    if sync:
+        result = model.invoke("test")
+    else:
+        result = await model.ainvoke("test")
+    assert result.text == "ok"
+    assert httpx_mock.get_request().extensions["timeout"] == {"connect": 10, "write": 30, "read": 120, "pool": 10}
+
+
 def test_load_chat_model_uses_toolcall_chunk_fix_for_openai_compatible(monkeypatch):
     from yuxi.modules.models.chat import ChatCompletionsAdapter
 

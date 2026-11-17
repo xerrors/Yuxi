@@ -22,6 +22,7 @@ import httpx
 from langchain.agents.middleware.model_retry import ModelRetryMiddleware
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_core.exceptions import ModelAPIError, ModelConnectionError, ModelError, ModelTimeoutError
+from langgraph.config import get_stream_writer
 from langgraph.errors import GraphBubbleUp
 
 from yuxi.infrastructure.observability.logging import logger
@@ -91,10 +92,13 @@ class NetworkRetryMiddleware(ModelRetryMiddleware):
         started = time.monotonic()
         delay = self._network_initial_delay
         attempt = 0
+        last_network_error = None
 
         def wrapped(request):
-            nonlocal delay, attempt
+            nonlocal delay, attempt, last_network_error
             while True:
+                if last_network_error is not None and time.monotonic() - started >= self._network_budget:
+                    raise last_network_error
                 try:
                     return handler(request)
                 except GraphBubbleUp:
@@ -104,6 +108,7 @@ class NetworkRetryMiddleware(ModelRetryMiddleware):
                         raise
                     if self._network_retry_exhausted(exc, elapsed=time.monotonic() - started, delay=delay, attempt=attempt + 1):
                         raise
+                    last_network_error = exc
                     attempt += 1
                     time.sleep(delay)
                     delay = min(delay * 2, self._network_max_delay)
@@ -114,10 +119,13 @@ class NetworkRetryMiddleware(ModelRetryMiddleware):
         started = time.monotonic()
         delay = self._network_initial_delay
         attempt = 0
+        last_network_error = None
 
         async def wrapped(request):
-            nonlocal delay, attempt
+            nonlocal delay, attempt, last_network_error
             while True:
+                if last_network_error is not None and time.monotonic() - started >= self._network_budget:
+                    raise last_network_error
                 try:
                     return await handler(request)
                 except GraphBubbleUp:
@@ -127,6 +135,7 @@ class NetworkRetryMiddleware(ModelRetryMiddleware):
                         raise
                     if self._network_retry_exhausted(exc, elapsed=time.monotonic() - started, delay=delay, attempt=attempt + 1):
                         raise
+                    last_network_error = exc
                     attempt += 1
                     await asyncio.sleep(delay)
                     delay = min(delay * 2, self._network_max_delay)
@@ -135,10 +144,15 @@ class NetworkRetryMiddleware(ModelRetryMiddleware):
 
     def _network_retry_exhausted(self, exc: BaseException, *, elapsed: float, delay: float, attempt: int) -> bool:
         """预算耗尽返回 True（调用方抛出），否则记日志并返回 False 继续重试。"""
-        if self._network_budget <= 0 or elapsed + delay > self._network_budget:
+        if self._network_budget <= 0 or elapsed + delay >= self._network_budget:
             logger.warning(f"[network-retry] 预算耗尽({self._network_budget:.0f}s)，抛出网络错误: {type(exc).__name__}: {exc}")
             return True
         logger.warning(f"[network-retry] 网络错误(第{attempt}次，已等待{elapsed:.0f}s，{delay:.0f}s后重试): {type(exc).__name__}: {exc}")
+        try:
+            writer = get_stream_writer()
+        except RuntimeError:
+            return False
+        writer({"type": "yuxi.model_retry", "attempt": attempt, "delay_seconds": delay})
         return False
 
 

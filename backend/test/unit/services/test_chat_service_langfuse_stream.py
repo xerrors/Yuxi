@@ -590,6 +590,7 @@ async def test_values_and_custom_events_use_explicit_extensions(monkeypatch):
     events = [
         native(1, {"artifacts": ["result.txt"], "todos": [{"task": "legacy"}], "messages": ["private prompt"]}, "values"),
         native(2, {"type": "yuxi.context_compression", "status": "started"}, "custom"),
+        native(3, {"type": "yuxi.model_retry", "attempt": 1, "delay_seconds": 2}, "custom"),
     ]
     events[0]["params"]["namespace"] = []
     agent = FakeAgent(events)
@@ -598,10 +599,13 @@ async def test_values_and_custom_events_use_explicit_extensions(monkeypatch):
     assert [event["type"] for event in output[:-1]] == [
         "yuxi.session.turn.state",
         "yuxi.session.turn.context_compression",
+        "yuxi.session.turn.model_retry",
     ]
     assert output[0]["agent_state"]["artifacts"] == ["result.txt"]
     assert "todos" not in output[0]["agent_state"]
     assert "private prompt" not in str(output[:-1])
+    assert output[2]["retry"] == {"type": "yuxi.model_retry", "attempt": 1, "delay_seconds": 2}
+    assert output[2]["yuxi"]["run_id"] == output[0]["yuxi"]["run_id"]
 
 
 async def test_foreign_explicit_thread_is_not_routed_to_parent(monkeypatch):
