@@ -6,9 +6,6 @@ export const useChatUIStore = defineStore(
   'chatUI',
   () => {
     // ==================== 聊天界面 UI 状态 ====================
-    // 加载状态
-    const isLoadingMessages = ref(false)
-
     // 应用侧边栏折叠态
     const sidebarCollapsed = ref(false)
     const navigationByUser = ref({})
@@ -59,16 +56,8 @@ export const useChatUIStore = defineStore(
       }
     }
 
-    /**
-     * 重置所有 UI 状态（不包括持久化状态）
-     */
-    function reset() {
-      isLoadingMessages.value = false
-    }
-
     return {
       // 状态
-      isLoadingMessages,
       sidebarCollapsed,
       navigationByUser,
       lastThreadId,
@@ -79,10 +68,7 @@ export const useChatUIStore = defineStore(
       expandedProjects,
       projectVisibleCounts,
       navigationScrollTop,
-      projectPendingId,
-
-      // 方法
-      reset
+      projectPendingId
     }
   },
   {

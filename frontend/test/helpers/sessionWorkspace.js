@@ -29,6 +29,8 @@ export async function mountSessionWorkspace(t, fetchThreadMessages = async () =>
     plugins: options.stubChildren ? [{
       name: 'session-workspace-children', enforce: 'pre',
       resolveId(id, importer) {
+        if (id.endsWith('/ThreadTimeline.vue')) return
+        if (importer?.includes('/session/ui/ThreadTimeline.vue') && id.endsWith('.vue')) return '\0session-workspace-child'
         if (importer?.includes('/session/ui/SessionWorkspace.vue') && id.endsWith('/AgentInputArea.vue')) return '\0session-workspace-input'
         if (importer?.includes('/session/ui/SessionWorkspace.vue') && id.endsWith('.vue')) return '\0session-workspace-child'
       },

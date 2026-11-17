@@ -8,13 +8,13 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
-import httpx
 import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from test.integration.support.module_audit import serve_http
 from test.integration.support.postgres_schema import create_isolated_manager as _create_isolated_manager
 from test.integration.support.postgres_schema import drop_isolated_schema as _drop_isolated_schema
 from yuxi.api.routers.knowledge import management as knowledge_router
@@ -441,23 +441,17 @@ async def test_http_delete_does_not_remove_original_before_tombstone_commit(data
         """模拟真实存储副作用，以文件内容作为独立 oracle。"""
         original.unlink(missing_ok=True)
 
-    async def get_meta(*args):
-        """提供原始 MinIO URL，旧路由会据此提前删对象。"""
-        return {"meta": {"is_folder": False, "path": "http://minio:9000/documents/kb-test/raw.md"}}
+    await repo.update_fields(file_id="file-test", kb_id="kb-test", data={"path": "http://minio:9000/documents/kb-test/raw.md"})
 
-    async def fail_commit(*args):
-        """真实执行删除 SQL，但在 owning transaction 退出前模拟提交失败。"""
-
-        @asynccontextmanager
-        async def context():
-            """异常让真实 PG transaction 回滚。"""
-            async with database() as session, session.begin():
-                yield session
+    @asynccontextmanager
+    async def failing_commit():
+        """真实执行所有删除 SQL，仅在发布 tombstone 的事务提交前注入故障。"""
+        async with database() as session, session.begin():
+            yield session
+            if await session.scalar(select(func.count()).select_from(KnowledgeFile).where(KnowledgeFile.deleted_at.is_not(None))):
                 raise RuntimeError("simulated owning transaction failure")
 
-        with monkeypatch.context() as scoped:
-            scoped.setattr(files.pg_manager, "get_async_session_context", context)
-            await repo.mark_deleted(kb_id="kb-test", file_id="file-test")
+    monkeypatch.setattr(files.pg_manager, "get_async_session_context", failing_commit)
 
     monkeypatch.setattr(
         knowledge_router,
@@ -468,23 +462,14 @@ async def test_http_delete_does_not_remove_original_before_tombstone_commit(data
         ),
     )
     from yuxi.api.errors import domain_error_handler
-    from yuxi.modules.knowledge import runtime
     from yuxi.shared.errors import DomainError
 
-    monkeypatch.setattr(
-        runtime,
-        "knowledge_base",
-        SimpleNamespace(
-            get_file_basic_info=get_meta,
-            delete_file=fail_commit,
-        ),
-    )
     monkeypatch.setattr(knowledge_router, "_ensure_knowledge_base_supports_documents", AsyncMock())
     app = FastAPI()
     app.include_router(knowledge_router.knowledge, prefix="/api")
     app.add_exception_handler(DomainError, domain_error_handler)
     app.dependency_overrides[knowledge_router.require_knowledge_base_manage] = lambda: SimpleNamespace(role="superadmin")
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test") as client:
+    async with serve_http(app) as client:
         response = await client.request(
             "DELETE",
             "/api/knowledge/knowledge-bases/kb-test/documents/" + ("batch" if batch else "file-test"),
@@ -866,3 +851,181 @@ async def test_chunk_extraction_details_return_recent_failure_samples(database):
             kb = await session.scalar(select(KnowledgeBase).where(KnowledgeBase.kb_id == kb_id))
             if kb is not None:
                 await session.delete(kb)
+
+
+@pytest.fixture
+async def deletion_http(database, monkeypatch):
+    """真实删除路由保留权限依赖，仅注入可信身份和隔离持久库。"""
+    from yuxi.api.dependencies.auth import get_admin_user
+    from yuxi.api.errors import domain_error_handler
+    from yuxi.shared.errors import DomainError
+
+    user = SimpleNamespace(uid="deletion-owner", role="admin")
+    async with database.begin() as session:
+        kb = await session.scalar(select(KnowledgeBase).where(KnowledgeBase.kb_id == "kb-test"))
+        kb.created_by = user.uid
+        kb.share_config = {"version": 2, "read_scope": None, "manage_scope": None}
+    app = FastAPI()
+    app.include_router(knowledge_router.knowledge, prefix="/api")
+    app.add_exception_handler(DomainError, domain_error_handler)
+    app.dependency_overrides[get_admin_user] = lambda: user
+    async with serve_http(app) as client:
+        yield client, user
+
+
+async def test_http_document_deletion_persists_subtree_partial_results_and_stats(database, deletion_http):
+    """成功项各自提交，跨库项保持可见，目录后代全部登记清理意图。"""
+    client, _user = deletion_http
+    repo = KnowledgeFileRepository()
+    async with database.begin() as session:
+        session.add(KnowledgeBase(kb_id="kb-other", name="other", kb_type="milvus"))
+    for file_id, kb_id, parent, folder in [
+        ("one", "kb-test", None, False),
+        ("folder", "kb-test", None, True),
+        ("child", "kb-test", "folder", False),
+        ("foreign", "kb-other", None, False),
+    ]:
+        await repo.upsert(file_id, {"kb_id": kb_id, "filename": file_id, "parent_id": parent, "is_folder": folder, "file_size": 10})
+    response = await client.request(
+        "DELETE", "/api/knowledge/knowledge-bases/kb-test/documents/batch", json=["one", "foreign", "folder"]
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["deleted_count"] == 2
+    assert response.json()["failed_items"] == [{"doc_id": "foreign", "error": "删除失败，请稍后重试"}]
+    async with database() as session:
+        rows = {row.file_id: row for row in (await session.scalars(select(KnowledgeFile))).all()}
+        assert all(rows[name].deleted_at is not None and rows[name].status == "deleted" for name in ("one", "folder", "child"))
+        assert rows["foreign"].deleted_at is None
+        events = (await session.scalars(select(KnowledgeProjectionOutbox))).all()
+        assert {(row.aggregate_id, row.operation, row.status) for row in events} == {
+            (name, "file_deleted", "pending") for name in ("one", "folder", "child")
+        }
+        kb = await session.scalar(select(KnowledgeBase).where(KnowledgeBase.kb_id == "kb-test"))
+        assert kb.additional_params["stats"]["file_count"] == 0
+        assert kb.additional_params["stats"]["folder_count"] == 0
+        assert kb.additional_params["stats"]["total_size"] == 0
+    assert await repo.get_by_file_id("foreign") is not None
+    assert await repo.get_by_file_id("child") is None
+
+
+@pytest.mark.parametrize("rejection", ["permission", "read_only", "cross_library"])
+async def test_http_document_deletion_rejects_without_tombstone_or_outbox(database, deletion_http, rejection):
+    """管理权限、类型准入和文件归属拒绝后，持久事实不改变。"""
+    client, user = deletion_http
+    await _file()
+    async with database.begin() as session:
+        kb = await session.scalar(select(KnowledgeBase).where(KnowledgeBase.kb_id == "kb-test"))
+        if rejection == "permission":
+            user.uid = "not-the-owner"
+        elif rejection == "read_only":
+            kb.kb_type = "dify"
+            kb.additional_params = {"dify_api_url": "https://example.test/v1", "dify_token": "fixture", "dify_dataset_id": "fixture"}
+        else:
+            session.add(KnowledgeBase(kb_id="kb-other", name="other", kb_type="milvus"))
+            await session.flush()
+            row = await session.scalar(select(KnowledgeFile).where(KnowledgeFile.file_id == "file-test"))
+            row.kb_id = "kb-other"
+    response = await client.delete("/api/knowledge/knowledge-bases/kb-test/documents/file-test")
+    assert response.status_code == (403 if rejection == "permission" else 400), response.text
+    expected = {"permission": "无权操作", "read_only": "只支持检索", "cross_library": "not found"}
+    assert expected[rejection] in response.json()["detail"]
+    async with database() as session:
+        row = await session.scalar(select(KnowledgeFile).where(KnowledgeFile.file_id == "file-test"))
+        assert row.deleted_at is None and row.status == "indexing"
+        assert await session.scalar(select(func.count()).select_from(KnowledgeProjectionOutbox)) == 0
+
+
+async def test_delete_service_rejects_read_only_source_without_http(database):
+    """直接用例调用也受持久类型准入约束。"""
+    from yuxi.modules.knowledge.services.administration import delete_document
+
+    await _file()
+    async with database.begin() as session:
+        kb = await session.scalar(select(KnowledgeBase).where(KnowledgeBase.kb_id == "kb-test"))
+        kb.kb_type = "dify"
+    with pytest.raises(ValueError, match="只支持检索，不支持文档删除"):
+        await delete_document("kb-test", "file-test")
+    async with database() as session:
+        assert await session.scalar(select(KnowledgeFile.deleted_at)) is None
+        assert await session.scalar(select(func.count()).select_from(KnowledgeProjectionOutbox)) == 0
+
+
+@pytest.mark.parametrize("file_ids", [[], ["file-test"]])
+async def test_http_batch_delete_rejects_read_only_before_any_item(database, deletion_http, file_ids):
+    """批量能力拒绝覆盖空列表，不能被逐项循环或聚合错误掩盖。"""
+    client, _user = deletion_http
+    await _file()
+    async with database.begin() as session:
+        kb = await session.scalar(select(KnowledgeBase).where(KnowledgeBase.kb_id == "kb-test"))
+        kb.kb_type = "dify"
+        kb.additional_params = {"dify_api_url": "https://example.test/v1", "dify_token": "fixture", "dify_dataset_id": "fixture"}
+    response = await client.request("DELETE", "/api/knowledge/knowledge-bases/kb-test/documents/batch", json=file_ids)
+    assert response.status_code == 400
+    assert response.json()["detail"] == "test 只支持检索，不支持批量文档删除"
+    async with database() as session:
+        assert await session.scalar(select(KnowledgeFile.deleted_at)) is None
+        assert await session.scalar(select(func.count()).select_from(KnowledgeProjectionOutbox)) == 0
+
+
+@pytest.mark.parametrize("batch", [False, True])
+async def test_http_stats_failure_does_not_undo_committed_deletion(database, deletion_http, monkeypatch, batch):
+    """删除已提交而统计失败时仍报告失败，持久清理意图保持待消费。"""
+    from yuxi.modules.knowledge.services import statistics
+
+    client, _user = deletion_http
+    await _file()
+    monkeypatch.setattr(statistics, "refresh_stats", AsyncMock(side_effect=RuntimeError("stats unavailable")))
+    response = await client.request(
+        "DELETE",
+        "/api/knowledge/knowledge-bases/kb-test/documents/" + ("batch" if batch else "file-test"),
+        **({"json": ["file-test"]} if batch else {}),
+    )
+    assert response.status_code == (400 if batch else 500), response.text
+    async with database() as session:
+        row = await session.scalar(select(KnowledgeFile))
+        assert row.deleted_at is not None and row.status == "deleted"
+        event = await session.scalar(select(KnowledgeProjectionOutbox))
+        assert event.aggregate_id == row.file_id and event.status == "pending"
+
+
+async def test_http_delete_and_new_child_share_tree_lock(database, deletion_http):
+    """删除和新建真实 HTTP 请求都等待树锁，最终没有活跃节点指向已删父目录。"""
+    client, _user = deletion_http
+    root = "/api/knowledge/knowledge-bases/kb-test"
+    response = await client.post(root + "/folders", json={"folder_name": "parent"})
+    assert response.status_code == 200, response.text
+    parent = response.json()["file_id"]
+    requests = []
+    try:
+        async with database.begin() as guard:
+            await guard.execute(text("SELECT pg_advisory_xact_lock(hashtext(:kb))"), {"kb": "kb-test"})
+            guard_pid = await guard.scalar(text("SELECT pg_backend_pid()"))
+            requests = [
+                asyncio.create_task(client.delete(root + "/documents/" + parent)),
+                asyncio.create_task(client.post(root + "/folders", json={"folder_name": "child", "parent_id": parent})),
+            ]
+            async with asyncio.timeout(10):
+                while True:
+                    assert not any(request.done() for request in requests)
+                    async with database() as observer:
+                        waiting = await observer.scalar(
+                            text("SELECT count(*) FROM pg_stat_activity WHERE :guard = ANY(pg_blocking_pids(pid))"),
+                            {"guard": guard_pid},
+                        )
+                    if waiting == 2:
+                        break
+                    await asyncio.sleep(0.01)
+        deleted, created = await asyncio.wait_for(asyncio.gather(*requests), timeout=10)
+        assert deleted.status_code == 200, deleted.text
+        assert created.status_code in {200, 404}, created.text
+        async with database() as observer:
+            nodes = (await observer.scalars(select(KnowledgeFile))).all()
+            assert nodes and all(node.deleted_at is not None for node in nodes)
+            events = (await observer.scalars(select(KnowledgeProjectionOutbox))).all()
+            assert {event.aggregate_id for event in events} == {node.file_id for node in nodes}
+            assert all(event.status == "pending" for event in events)
+    finally:
+        for request in requests:
+            if not request.done():
+                request.cancel()
+        await asyncio.gather(*requests, return_exceptions=True)

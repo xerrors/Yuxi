@@ -124,7 +124,7 @@ async def test_lock_session_refreshes_cached_lifecycle_state(tmp_path):
             await reader.commit()
 
             repository = SessionRepository(reader)
-            cached = await repository.get_session_by_id(agent_session.id)
+            cached = await reader.get(Session, agent_session.id)
             assert cached is agent_session
             assert cached.status == "active"
 

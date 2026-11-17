@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, NotRequired, TypedDict
 
 from yuxi.modules.knowledge.chunking.presets import map_to_internal_parser_id, normalize_chunk_preset_id
+from yuxi.modules.knowledge.chunking.ragflow_like.nlp import count_tokens
 from yuxi.modules.knowledge.chunking.ragflow_like.parsers import book, general, laws, qa, semantic, separator
 from yuxi.modules.knowledge.chunking.source_spans import SourceSpanLocator
 
@@ -34,6 +35,14 @@ def chunk_markdown(markdown_content: str, file_id: str, filename: str, processin
 
     text_chunks = _dispatch_markdown_parser(preset_id, filename, markdown_content, parser_config)
     return _build_chunk_records(text_chunks, file_id, markdown_content)
+
+
+def calculate_chunk_stats(chunks: list[IngestionChunk]) -> dict[str, int]:
+    """汇总分块数量及近似 token 数，与分块预算使用同一计数规则。"""
+    return {
+        "chunk_count": len(chunks),
+        "token_count": sum(count_tokens(chunk["content"]) for chunk in chunks),
+    }
 
 
 def _build_chunk_records(text_chunks: list[str], file_id: str, source_text: str | None = None) -> list[IngestionChunk]:

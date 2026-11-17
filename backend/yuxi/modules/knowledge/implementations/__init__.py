@@ -1,7 +1,7 @@
 """知识库具体实现包。
 
 初始化只做 re-export：`__all__` 是外部导入契约，导入本包仅触发子模块
-加载，不注册执行器；KnowledgeBaseFactory 的注册由 runtime.py 导入
+加载，不注册执行器；KnowledgeBaseFactory 的注册由 factory.py 导入
 具体子模块时完成。
 
 - MilvusKB: 基于 Milvus 的向量知识库

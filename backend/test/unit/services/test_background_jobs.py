@@ -597,7 +597,7 @@ async def test_missing_embedding_reason_survives_job_result_projection(monkeypat
 
     monkeypatch.setattr(knowledge_job_service.knowledge_base, "index_file", index)
     monkeypatch.setattr(knowledge_job_service.knowledge_base, "parse_file", parse)
-    monkeypatch.setattr(knowledge_job_service.knowledge_base, "list_document_file_ids_by_statuses", pending)
+    monkeypatch.setattr(knowledge_job_service.knowledge_documents, "list_document_file_ids_by_statuses", pending)
     record = make_record(
         type="knowledge_index",
         payload={
@@ -687,7 +687,7 @@ async def test_document_job_failure_keeps_details_and_rejects_success(monkeypatc
         return [] if after_file_id else ["ok", "bad"]
 
     monkeypatch.setattr(knowledge_job_service.knowledge_base, f"{action}_file", process)
-    monkeypatch.setattr(knowledge_job_service.knowledge_base, "list_document_file_ids_by_statuses", pending)
+    monkeypatch.setattr(knowledge_job_service.knowledge_documents, "list_document_file_ids_by_statuses", pending)
     handler = knowledge_job_service.run_knowledge_parse if action == "parse" else knowledge_job_service.run_knowledge_index
     record = make_record(type=f"knowledge_{action}", payload=payload)
     repository = FakeRepo(record)

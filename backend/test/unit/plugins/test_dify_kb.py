@@ -6,6 +6,7 @@ import pytest
 
 from yuxi.modules.knowledge.implementations.dify import DifyKB
 from yuxi.modules.knowledge.read_models import KnowledgeBaseConfig
+from yuxi.modules.knowledge.services import directories as knowledge_directories
 
 
 class _FakeResponse:
@@ -48,14 +49,12 @@ class _FakeAsyncClient:
 async def test_dify_rejects_folder_rename(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
-    from yuxi.modules.knowledge.manager import KnowledgeBaseManager
-
-    manager = KnowledgeBaseManager(str(tmp_path))
     monkeypatch.setattr(
-        manager, "get_knowledge_base_document_support", AsyncMock(return_value=(SimpleNamespace(kb_type="dify", name="Dify"), False))
+        "yuxi.modules.knowledge.repositories.bases.KnowledgeBaseRepository.get_by_kb_id",
+        AsyncMock(return_value=SimpleNamespace(kb_type="dify", name="Dify"))
     )
     with pytest.raises(ValueError, match="只支持检索"):
-        await manager.rename_folder("kb-1", "folder-1", "renamed")
+        await knowledge_directories.rename_folder("kb-1", "folder-1", "renamed")
 
 
 def test_dify_create_params_config_and_validation():

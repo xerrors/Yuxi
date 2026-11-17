@@ -182,9 +182,9 @@ def _isolated_skill_storage(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 
 
 def test_allowed_skill_access_levels_by_role():
-    assert svc.get_allowed_skill_access_levels(_user(role="user")) == ["user"]
-    assert svc.get_allowed_skill_access_levels(_user(role="admin")) == ["global", "department", "user"]
-    assert svc.get_allowed_skill_access_levels(_user(role="superadmin")) == ["global", "department", "user"]
+    assert skill_access.get_allowed_skill_access_levels(_user(role="user")) == ["user"]
+    assert skill_access.get_allowed_skill_access_levels(_user(role="admin")) == ["global", "department", "user"]
+    assert skill_access.get_allowed_skill_access_levels(_user(role="superadmin")) == ["global", "department", "user"]
 
 
 @pytest.mark.asyncio
@@ -399,7 +399,7 @@ async def test_management_readable_skill_allows_manageable_disabled_and_enabled_
         methods={"get_by_slug": get_by_slug},
     )
 
-    result = await svc.get_management_readable_skill_or_raise(None, operator, skill.slug)
+    result = await skill_access.get_management_readable_skill_or_raise(None, operator, skill.slug)
 
     assert result is skill
 
@@ -430,7 +430,7 @@ async def test_management_readable_skill_denies_disabled_ordinary_user(monkeypat
     )
 
     with pytest.raises(ValueError, match="无权访问"):
-        await svc.get_management_readable_skill_or_raise(None, _user("root", role="user"), skill.slug)
+        await skill_access.get_management_readable_skill_or_raise(None, _user("root", role="user"), skill.slug)
 
 
 @pytest.mark.asyncio
@@ -459,7 +459,7 @@ async def test_runtime_access_still_excludes_disabled_shared_skill(monkeypatch: 
 
     monkeypatch.setattr(catalog, "list_personal_skills", no_personal_skills)
 
-    assert svc.user_can_access_skill(_user("root", role="user"), skill) is False
+    assert skill_access.user_can_access_skill(_user("root", role="user"), skill) is False
     assert await catalog.list_accessible_skills(None, _user("root", role="user")) == []
 
 
@@ -1378,7 +1378,7 @@ def test_skill_dependency_scope_covers_read_and_manage_audiences():
         enabled=True,
     )
 
-    assert svc.can_skill_depend_on(parent, dependency) is True
+    assert skill_access.can_skill_depend_on(parent, dependency) is True
 
 
 def test_owner_only_skill_can_depend_on_visible_skill():
@@ -1403,7 +1403,7 @@ def test_owner_only_skill_can_depend_on_visible_skill():
         enabled=True,
     )
 
-    assert svc.can_skill_depend_on(parent, dependency) is True
+    assert skill_access.can_skill_depend_on(parent, dependency) is True
 
 
 def test_list_builtin_skill_specs_rejects_missing_skill_file(tmp_path, monkeypatch):
@@ -2041,7 +2041,7 @@ def test_resolved_shared_skill_captures_original_version_and_hash(monkeypatch, t
         content_hash="hash-v1",
     )
     monkeypatch.setattr(skill_access, "_resolve_skill_dir", lambda item: tmp_path)
-    resolved = svc.resolved_shared_skill(row)
+    resolved = skill_access.resolved_shared_skill(row)
     row.version, row.content_hash = "v2", "hash-v2"
     assert resolved.version == "v1"
     assert resolved.content_hash == "hash-v1"

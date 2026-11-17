@@ -106,7 +106,7 @@
 - **【已清理】模型适配层 `resolve_model_spec`、`is_full`、`embed_state`、同步 `compute_score` 及未消费的包级导出分支**；**【已复核：保留】模型包的 `select_model`**。
 - **【已清理】transport 的 `normalize_after_seq`、`get_last_run_stream_seq`、专用序号校验及死导出**；**【已复核：保留】单事件 Redis 写入包装**。
 - **【已清理】workspace `__init__.py` 无消费者导出**。
-- **【已复核：保留】`fallback=`、`list_top_level_runs_after_sequence` 等仅测试引用入口**：实际测试仍依赖这些契约，未按“仅测试引用”批量删除。
+- **【已复核：保留】`fallback=`、`list_top_level_runs_after_sequence` 等仅测试引用入口**：此处记录当时保留理由，不是当前入口契约。`list_top_level_runs_after_sequence` 的测试可改用生产订阅查询并保留序号断言；其退役依据见[局部可理解性决定](../decisions/implemented/2026-11-17-local-understanding-rules.md)。其他入口仍须逐项核对。
 
 完成依据：`7e97aef4` 与 `docs/develop-guides/decisions/implemented/2026-10-12-dead-code-cleanup.md`。
 

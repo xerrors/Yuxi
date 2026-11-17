@@ -6,6 +6,7 @@ import pytest
 
 from yuxi.modules.knowledge.manager import KnowledgeBaseManager
 from yuxi.modules.knowledge.models import KnowledgeFile
+from yuxi.modules.knowledge.services import documents as knowledge_documents
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
@@ -17,13 +18,12 @@ async def test_file_metadata_read_does_not_load_execution_configuration(monkeypa
         "yuxi.modules.knowledge.repositories.files.KnowledgeFileRepository.get_by_file_id",
         AsyncMock(return_value=record),
     )
-    manager = KnowledgeBaseManager(str(tmp_path))
-    monkeypatch.setattr(manager, "get_kb_config", AsyncMock(side_effect=ValueError("invalid execution configuration")))
-    result = await manager.get_file_basic_info("kb-a", "file-a")
+    monkeypatch.setattr(KnowledgeBaseManager, "get_kb_config", AsyncMock(side_effect=ValueError("invalid execution configuration")))
+    result = await knowledge_documents.get_file_basic_info("kb-a", "file-a")
     assert result["meta"]["filename"] == "report.md"
     assert result["meta"]["status"] == "uploaded"
     with pytest.raises(ValueError, match="not found"):
-        await manager.get_file_basic_info("kb-other", "file-a")
+        await knowledge_documents.get_file_basic_info("kb-other", "file-a")
 
 
 @pytest.mark.parametrize("kb_type", ["milvus", "dify", "notion", "feishu"])
@@ -54,10 +54,29 @@ async def test_local_document_window_does_not_load_execution_configuration(monke
     manager = KnowledgeBaseManager(str(tmp_path))
     monkeypatch.setattr(manager, "get_kb_config", AsyncMock(side_effect=ValueError("invalid parser configuration")))
     monkeypatch.setattr(manager, "_get_or_create_kb_instance", AsyncMock(side_effect=RuntimeError("Milvus unavailable")))
-    monkeypatch.setattr(manager, "get_knowledge_base_document_support", AsyncMock(return_value=(SimpleNamespace(kb_type="milvus"), True)))
+    monkeypatch.setattr(knowledge_documents, "get_knowledge_base_document_support", AsyncMock(return_value=(SimpleNamespace(kb_type="milvus"), True)))
     record = KnowledgeFile(file_id="file", kb_id="kb", filename="source.md", status="parsed", markdown_file="minio://parsed/source.md")
     monkeypatch.setattr("yuxi.modules.knowledge.repositories.files.KnowledgeFileRepository.get_by_file_id", AsyncMock(return_value=record))
     monkeypatch.setattr(documents, "read_minio_bytes", AsyncMock(return_value=b"first\nsecond\nthird"))
     result = await manager.open_document("kb", "file", offset=1, limit=1)
     assert result["content"] == "     2\tsecond"
     assert result["kb_id"] == "kb" and result["file_id"] == "file"
+
+
+async def test_management_services_load_types_without_runtime_or_parser():
+    """冷导入服务拥有完整类型信息，不依赖其他测试先装配单例。"""
+    import subprocess
+    import sys
+
+    script = """
+import sys
+from yuxi.modules.knowledge.services import bases, documents
+from yuxi.modules.knowledge.factory import KnowledgeBaseFactory
+assert list(KnowledgeBaseFactory.get_available_types()) == ["milvus", "feishu", "dify", "notion"]
+assert KnowledgeBaseFactory.supports_documents("milvus")
+assert not KnowledgeBaseFactory.supports_documents("dify")
+assert "yuxi.modules.knowledge.runtime" not in sys.modules
+assert not any(name.startswith("yuxi.infrastructure.document_parsing") for name in sys.modules)
+"""
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr

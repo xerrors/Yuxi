@@ -13,6 +13,7 @@ export class ScrollController {
       ...options
     }
 
+    this.scrollGeneration = 0
     this.scrollTimer = null
     this.scrollRetryTimers = []
     this.programmaticScrollTimer = null
@@ -58,6 +59,7 @@ export class ScrollController {
   }
 
   cancelPendingScrolls() {
+    this.scrollGeneration += 1
     this.scrollRetryTimers.forEach((timer) => clearTimeout(timer))
     this.scrollRetryTimers = []
   }
@@ -229,9 +231,13 @@ export class ScrollController {
    * @param {boolean} force - 是否强制滚动
    */
   async scrollToBottom(force = false) {
+    const generation = this.scrollGeneration
     await nextTick()
     // 等待 DOM 布局稳定
     await this.waitForLayoutStable()
+
+    // 清理或手动滚动可发生在两帧布局等待期间，此时尚没有 timer 可取消。
+    if (generation !== this.scrollGeneration) return
 
     // 只有在应该自动滚动时才执行（除非强制）
     if (!force && !this.shouldAutoScroll) return
@@ -242,10 +248,12 @@ export class ScrollController {
     this.cancelPendingScrolls()
 
     this.scrollContainerToBottom(container, 'auto')
+    const retryGeneration = this.scrollGeneration
 
     // 动态内容仍可能在下一帧补齐高度，保留少量重试，但用户手动滚动会立即取消。
     this.options.retryDelays.forEach((delay) => {
       const timer = setTimeout(() => {
+        if (retryGeneration !== this.scrollGeneration || this.getContainer() !== container) return
         if (force || this.shouldAutoScroll) {
           this.scrollContainerToBottom(container, 'auto')
         }
@@ -259,8 +267,10 @@ export class ScrollController {
     if (!container) return
 
     this.cancelPendingScrolls()
+    const generation = this.scrollGeneration
     await nextTick()
     await this.waitForLayoutStable()
+    if (generation !== this.scrollGeneration || this.getContainer() !== container) return
     this.scrollContainerToBottom(container, 'auto')
     this.shouldAutoScroll = true
   }

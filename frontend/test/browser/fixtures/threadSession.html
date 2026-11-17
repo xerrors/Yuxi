@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Thread 独立阅读验证</title></head>
+<body>
+<div id="app"></div>
+<script type="module">
+import { createApp, h, nextTick, reactive } from 'vue'
+import { createPinia } from 'pinia'
+import { createRouter, createMemoryHistory } from 'vue-router'
+import Antd from 'ant-design-vue'
+import ThreadTimeline from '../../../src/modules/session/ui/ThreadTimeline.vue'
+import { useUserStore } from '../../../src/modules/identity/index.js'
+import '../../../src/assets/css/main.css'
+const views = reactive([{ thread: 'a', active: true }, { thread: 'a', active: true }])
+const pinia = createPinia()
+const app = createApp({
+  setup() {
+    return () => h('main', { style: 'display:flex;gap:24px;height:85vh;padding:20px' }, views.map((view, index) =>
+      h(ThreadTimeline, { key: index, 'data-view': index, threadId: view.thread, active: view.active, style: view.active ? '' : 'visibility:hidden' })
+    ))
+  }
+})
+app.use(pinia).use(Antd).use(createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { render: () => null } }] }))
+app.mount('#app')
+window.readingFixture = { views, app, nextTick, user: useUserStore(pinia) }
+</script>
+</body>
+</html>

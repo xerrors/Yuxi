@@ -11,6 +11,7 @@ from yuxi.modules.knowledge.base import KnowledgeExecutor
 from yuxi.modules.knowledge.manager import KnowledgeBaseManager
 from yuxi.modules.knowledge.read_models import KnowledgeBaseDetail
 from yuxi.modules.knowledge.services import documents, tools
+from yuxi.modules.knowledge.services import documents as knowledge_documents
 
 
 async def _call_tool(tool, *, visible_kbs=None, **kwargs):
@@ -64,11 +65,8 @@ def _patch_retrievers(monkeypatch, *, kb_type: str = "milvus", retriever=None):
             kb_type != "dify",
         )
 
-    manager = SimpleNamespace(
-        find_file_content=_not_configured,
-        open_file_content=_not_configured,
-        get_knowledge_base_document_support=_fake_get_database_document_support,
-    )
+    manager = SimpleNamespace()
+    monkeypatch.setattr(documents, "get_knowledge_base_document_support", _fake_get_database_document_support)
 
     async def _retrieve(kb_id: str, query: str, **options):
         if kb_id != "db-1":
@@ -84,21 +82,21 @@ def _patch_retrievers(monkeypatch, *, kb_type: str = "milvus", retriever=None):
 
         async def _open(kb_id, file_id, *, config, offset, limit):
             """复用当前测试装配的窗口读取。"""
-            return await manager.open_file_content(kb_id, file_id, offset=offset, limit=limit)
+            return await knowledge_documents.open_file_content(kb_id, file_id, offset=offset, limit=limit)
 
         return SimpleNamespace(supports_document_read=kb_type != "dify", open_document=_open)
 
+    async def get_kb_record(_repo, kb_id):
+        """为真实文档能力边界提供持久类型。"""
+        info, _supported = await _fake_get_database_document_support(kb_id)
+        return info
+
+    monkeypatch.setattr("yuxi.modules.knowledge.repositories.bases.KnowledgeBaseRepository.get_by_kb_id", get_kb_record)
     manager.get_kb_config = _get_config
     manager._get_or_create_kb_instance = _get_executor
     manager.retrieve = _retrieve
     # 复用真实 manager 的文档操作方法，使其内部走上面的 mock。
-    for name in (
-        "open_document",
-        "find_in_document",
-        "_require_kb_supports_documents",
-        "knowledge_base_type_supports_documents",
-    ):
-        setattr(manager, name, MethodType(getattr(KnowledgeBaseManager, name), manager))
+    manager.open_document = MethodType(KnowledgeBaseManager.open_document, manager)
     monkeypatch.setattr(tools, "knowledge_base", manager)
     return manager
 
@@ -335,38 +333,18 @@ async def test_query_kb_maps_full_doc_id_and_chunk_metadata(monkeypatch) -> None
 async def test_find_kb_document_returns_context_windows(monkeypatch) -> None:
     _patch_retrievers(monkeypatch)
 
-    async def _fake_find_file_content(
-        kb_id: str,
-        file_id: str,
-        patterns: list[str],
-        *,
-        use_regex: bool = False,
-        case_sensitive: bool = False,
-        max_windows: int = 5,
-        window_size: int = 80,
-    ):
-        assert kb_id == "db-1"
-        assert file_id == "file-1"
-        assert patterns == ["token"]
-        assert use_regex is False
-        assert case_sensitive is False
-        assert max_windows == 5
-        assert window_size == 80
-        return {
-            "semantic": False,
-            "match_mode": "keyword",
-            "total_matches": 2,
-            "windows": [
-                {
-                    "start_line": 1,
-                    "end_line": 3,
-                    "matched_lines": [2],
-                    "content": "     1\tintro\n     2\ttoken value\n     3\toutro",
-                }
-            ],
-        }
+    async def load_file_meta(kb_id, file_id):
+        """提供原始文件事实，查找与窗口组装由真实用例执行。"""
+        assert (kb_id, file_id) == ("db-1", "file-1")
+        return {"markdown_file": "fixture.md"}
 
-    monkeypatch.setattr(tools.knowledge_base, "find_file_content", _fake_find_file_content)
+    async def read_markdown(path):
+        """在存储读取边界提供固定原文。"""
+        assert path == "fixture.md"
+        return "intro\ntoken value\noutro"
+
+    monkeypatch.setattr(documents, "load_file_meta", load_file_meta)
+    monkeypatch.setattr(documents, "read_markdown_from_minio", read_markdown)
 
     result = await _call_tool(
         tools.find_kb_document,
@@ -380,7 +358,7 @@ async def test_find_kb_document_returns_context_windows(monkeypatch) -> None:
         "file_id": "file-1",
         "semantic": False,
         "match_mode": "keyword",
-        "total_matches": 2,
+        "total_matches": 1,
         "windows": [
             {
                 "start_line": 1,

@@ -1,6 +1,6 @@
 """RAGFlow 思路移植的文本处理核心：token 计数、编号层级识别与三种合并策略。
 
-general/book/laws 等分块器共享本模块，公开函数的签名与返回值是对外契约。
+general/book/laws 等分块器共享本模块，只接收 Markdown 文本片段，不消费 PDF 布局。
 文本拼接一律经 join_source_text 保留字符来源，供入库时定位原文行号。
 """
 
@@ -73,15 +73,14 @@ def count_tokens(text: str) -> int:
 
 
 def naive_merge(
-    sections: str | list[str] | list[tuple[str, str]],
+    sections: str | list[str],
     chunk_token_num: int = 128,
     delimiter: str | None = None,
     overlapped_percent: int = 0,
 ) -> list[str]:
     """按 token 预算贪心合并相邻段落；general 的主路径，也是其余分块器的兜底。
 
-    sections 允许整篇文本、纯段落列表或 (文本, 布局) 列表；位置标记 pos 仅在
-    片段达 8 token 时随块附带（RAGFlow 遗留的 PDF 定位协议）。
+    sections 接收整篇文本或段落列表，来源位置由 SourceText 保留。
 
     delimiter 是片段之间的连接符，不是切分符——切分已由调用方完成。传 None 表示
     片段边界来自文档结构（book/laws 按行取段），此时保留换行，避免把原文的行间
@@ -91,24 +90,20 @@ def naive_merge(
         return []
 
     if isinstance(sections, str):
-        typed_sections: list[tuple[str, str]] = [(sections, "")]
-    elif isinstance(sections[0], str):
-        typed_sections = [(s, "") for s in sections]  # type: ignore[index]
-    else:
-        typed_sections = sections  # type: ignore[assignment]
+        sections = [sections]
 
     chunk_token_num = max(int(chunk_token_num or 0), 0)
     overlap = max(0, min(int(overlapped_percent or 0), 99))
 
     custom_delimiters = _extract_custom_delimiters(delimiter or "")
     if custom_delimiters:
-        return _split_by_custom_delimiters(typed_sections, custom_delimiters)
+        return _split_by_custom_delimiters(sections, custom_delimiters)
 
     # 连接符默认换行：未传 delimiter 时片段边界来自文档结构，行间换行必须保留。
     separator = delimiter or "\n"
 
     if chunk_token_num <= 0:
-        merged = join_source_text((sec for sec, _ in typed_sections if sec and sec.strip()), separator)
+        merged = join_source_text((sec for sec in sections if sec and sec.strip()), separator)
         return [merged] if merged.strip() else []
 
     # 当前块 token 超过该阈值就开启新块；overlap 越大，上一块可继续追加的预算越小。
@@ -116,18 +111,15 @@ def naive_merge(
     chunks: list[str] = [""]  # 首个空串是哨兵，返回前统一过滤
     token_nums = [0]
 
-    def add_chunk(sec: str, pos: str, sep: str) -> None:
+    def add_chunk(sec: str, sep: str) -> None:
         """把片段并入当前块；预算耗尽时按 overlap 截取上一块尾部作为新块前缀。
 
         连接符只在并入已有块时加；片段自己开启新块时不带前导分隔符。overlap 留下
         的尾部非空时它仍与当前块相邻，需要连接符隔开，否则尾部会和片段粘成一个词。
         """
         tnum = count_tokens(sec)
-        local_pos = pos if tnum >= 8 and pos else ""
         if chunks[-1] and token_nums[-1] <= threshold:
             text = chunks[-1] + sep + sec if sep else chunks[-1] + sec
-            if local_pos and local_pos not in text:
-                text += local_pos
             chunks[-1] = text
             token_nums[-1] += tnum + count_tokens(sep)
             return
@@ -136,16 +128,14 @@ def naive_merge(
         start = int(len(prev) * (100 - overlap) / 100.0)
         tail = prev[start:]
         text = tail + sep + sec if tail and sep else tail + sec
-        if local_pos and local_pos not in text:
-            text += local_pos
         chunks.append(text)
         token_nums.append(tnum)
 
     is_first = True
-    for sec, pos in typed_sections:
+    for sec in sections:
         if not sec:
             continue
-        add_chunk(sec, pos, "" if is_first else separator)
+        add_chunk(sec, "" if is_first else separator)
         is_first = False
 
     return [chunk for chunk in chunks if chunk.strip()]
@@ -206,16 +196,15 @@ class Node:
             self._dfs(child, tree_list, path_titles)
 
 
-def tree_merge(bull: int, sections: list[str] | list[tuple[str, str]], depth: int) -> list[str]:
+def tree_merge(bull: int, sections: list[str], depth: int) -> list[str]:
     """按标题层级树合并段落（laws 主路径）：以目标层级为块边界，子层内容并入。"""
     if not sections or bull < 0:
-        return [s if isinstance(s, str) else s[0] for s in sections]
+        return list(sections)
 
-    typed_sections = _normalize_sections(sections)
+    sections = _normalize_sections(sections)
 
-    def get_level(section: tuple[str, str]) -> tuple[int, str]:
-        """编号命中的模式序号 +1 为标题层，布局 title/head 为次深层，其余为正文层。"""
-        text, layout = section
+    def get_level(text: str) -> tuple[int, str]:
+        """编号命中的模式序号 +1 为标题层，其余为正文层。"""
         # 全角空格归一为半角空格后再匹配层级模式（RAGFlow 做法），并保留字符来源。
         text = join_source_text(text.split("\u3000"), " ").strip()
 
@@ -223,14 +212,11 @@ def tree_merge(bull: int, sections: list[str] | list[tuple[str, str]], depth: in
             if re.match(patt, text) and _is_probable_heading_line(text):
                 return i + 1, text
 
-        if re.search(r"(title|head)", layout) and _is_title_like(text):
-            return len(BULLET_PATTERN[bull]) + 1, text
-
-        return len(BULLET_PATTERN[bull]) + 2, text
+        return len(BULLET_PATTERN[bull]) + 1, text
 
     lines: list[tuple[int, str]] = []
     level_set: set[int] = set()
-    for section in typed_sections:
+    for section in sections:
         level, text = get_level(section)
         if not text.strip("\n"):
             continue
@@ -244,7 +230,7 @@ def tree_merge(bull: int, sections: list[str] | list[tuple[str, str]], depth: in
     # 正文层不能当边界，退而取次细的标题层。
     sorted_levels = sorted(level_set)
     target_level = sorted_levels[depth - 1] if depth <= len(sorted_levels) else sorted_levels[-1]
-    body_level = len(BULLET_PATTERN[bull]) + 2
+    body_level = len(BULLET_PATTERN[bull]) + 1
     if target_level == body_level:
         target_level = sorted_levels[-2] if len(sorted_levels) > 1 else sorted_levels[0]
 
@@ -253,29 +239,24 @@ def tree_merge(bull: int, sections: list[str] | list[tuple[str, str]], depth: in
     return [item for item in root.get_tree() if item]
 
 
-def hierarchical_merge(bull: int, sections: list[str] | list[tuple[str, str]], depth: int) -> list[list[str]]:
+def hierarchical_merge(bull: int, sections: list[str], depth: int) -> list[list[str]]:
     """按标题层级聚合段落（book 主路径），返回每个 chunk 的段落列表。"""
     if not sections or bull < 0:
         return []
 
-    typed_sections = _normalize_sections(sections)
+    sections = _normalize_sections(sections)
 
     bullets_size = len(BULLET_PATTERN[bull])
     # levels[k] 收集第 k 层的段落下标：0..bullets_size-1 为编号层级（粗到细），
-    # bullets_size 为布局 title/head，bullets_size+1 为普通正文。
-    levels: list[list[int]] = [[] for _ in range(bullets_size + 2)]
-    for i, (text, layout) in enumerate(typed_sections):
+    # bullets_size 为普通正文。
+    levels: list[list[int]] = [[] for _ in range(bullets_size + 1)]
+    for i, text in enumerate(sections):
         for j, patt in enumerate(BULLET_PATTERN[bull]):
             if re.match(patt, text.strip()) and _is_probable_heading_line(text):
                 levels[j].append(i)
                 break
         else:
-            if re.search(r"(title|head)", layout) and _is_title_like(text):
-                levels[bullets_size].append(i)
-            else:
-                levels[bullets_size + 1].append(i)
-
-    pure_sections = [t for t, _ in typed_sections]
+            levels[bullets_size].append(i)
 
     def binary_search(arr: list[int], target: int) -> int:
         """返回 arr 中不超过 target 的最大元素下标；target 小于全部元素时为 -1。"""
@@ -297,10 +278,10 @@ def hierarchical_merge(bull: int, sections: list[str] | list[tuple[str, str]], d
                 return mid
         return low
 
-    # 层级序列反转后按“正文 → title → 最细编号 → … → 最粗编号”展开，取前 depth 层：
+    # 层级序列反转后按“正文 → 最细编号 → … → 最粗编号”展开，取前 depth 层：
     # 每个标题先自成一组，再向上把之前最近的粗层标题并入同组。
     index_groups: list[list[int]] = []
-    consumed = [False] * len(pure_sections)
+    consumed = [False] * len(sections)
     levels = list(reversed(levels))
     for i, arr in enumerate(levels[:depth]):
         for j in arr:
@@ -329,7 +310,7 @@ def hierarchical_merge(bull: int, sections: list[str] | list[tuple[str, str]], d
     # 组内下标反转为“粗标题在前、细内容在后”的文本序列。
     cks: list[list[str]] = []
     for group in index_groups:
-        cks.append([pure_sections[j] for j in reversed(group)])
+        cks.append([sections[j] for j in reversed(group)])
 
     # 单标题短块并入当前 chunk；多元素块视为已饱和（token 记为阈值本身），后续短块不再并入。
     # 阈值 218 为 RAGFlow 经验值。
@@ -472,18 +453,18 @@ def is_english(texts: str | list[str]) -> bool:
     return hits / len(samples) > 0.8
 
 
-def remove_contents_table(sections: list[str] | list[tuple[str, str]], eng: bool = False) -> None:
+def remove_contents_table(sections: list[str], eng: bool = False) -> None:
     """原地删除目录块：以“目录/Contents/致谢”标题行为界，清掉目录条目。"""
 
     def entry_prefix(index: int) -> str:
         # 目录首条目的识别前缀：中文取前 3 字，英文取前两个单词。
-        text = _get_text(sections[index])
+        text = sections[index].strip()
         return text[:3] if not eng else " ".join(text.split()[:2])
 
     i = 0
     while i < len(sections):
         # 去掉空格后整行恰为目录标题词，才认作目录块起点。
-        line = re.sub(r"[ \u3000]+", "", _get_text(sections[i]).split("@@")[0])
+        line = re.sub(r"[ \u3000]+", "", sections[i].strip().split("@@")[0])
         if not re.match(r"(contents|目录|目次|tableofcontents|致谢|acknowledge)$", line, flags=re.IGNORECASE):
             i += 1
             continue
@@ -511,7 +492,7 @@ def remove_contents_table(sections: list[str] | list[tuple[str, str]], eng: bool
         # 向后找首个仍以该前缀开头的段落（通常是正文里真正的同名章节标题），
         # 其前的段落视为目录条目删除；最多向前看 128 段。
         for j in range(i, min(i + 128, len(sections))):
-            if not _get_text(sections[j]).startswith(prefix):
+            if not sections[j].strip().startswith(prefix):
                 continue
             for _ in range(i, j):
                 sections.pop(i)
@@ -572,48 +553,26 @@ def _is_pseudo_numbering(line: str) -> bool:
     return any(re.match(p, line) for p in patterns)
 
 
-def _is_title_like(text: str) -> bool:
-    """判断文本是否像标题：法条编号视作标题；词数过多、过长或含句读的是正文。"""
-    if re.match(r"第[零一二三四五六七八九十百0-9]+条", text):
-        return True
-    if len(text.split()) > 12 or (" " not in text and len(text) >= 32):
-        return False
-    return not re.search(r"[,;，。；！!]", text)
-
-
 # ── 内部辅助：段落归一化与片段处理 ──────────────────────────────────
 
 
-def _normalize_sections(sections: list[str] | list[tuple[str, str]]) -> list[tuple[str, str]]:
-    """补全 (文本, 布局) 形态并过滤不成段的碎片；调用方需保证 sections 非空。"""
-    if isinstance(sections[0], str):
-        typed: list[tuple[str, str]] = [(s, "") for s in sections]  # type: ignore[index]
-    else:
-        typed = list(sections)  # type: ignore[assignment]
-
-    normalized: list[tuple[str, str]] = []
-    for text, layout in typed:
+def _normalize_sections(sections: list[str]) -> list[str]:
+    """过滤空白、单字符与纯数字片段，保留文本和来源。"""
+    normalized: list[str] = []
+    for text in sections:
         # PDF 位置标签是 @@数字<TAB>坐标##。按单个 @ 截断会丢掉邮箱、提及和年份标记。
         head = _remove_pdf_tags(text).strip()
-        # 丢弃空白、单字符与纯数字行：既不是标题也不是可合并正文。
         if len(head) > 1 and not re.match(r"[0-9]+$", head):
-            normalized.append((text, layout))
+            normalized.append(text)
     return normalized
 
 
-def _get_text(section: str | tuple[str, str]) -> str:
-    """统一取段落实文：兼容纯字符串与 (文本, 布局) 元组两种形态。"""
-    if isinstance(section, str):
-        return section.strip()
-    return (section[0] or "").strip()
-
-
-def _split_by_custom_delimiters(typed_sections: list[tuple[str, str]], custom_delimiters: list[str]) -> list[str]:
+def _split_by_custom_delimiters(sections: list[str], custom_delimiters: list[str]) -> list[str]:
     """按反引号声明的自定义分隔符切段：分隔符独立成片后丢弃，其余片段直接输出。"""
     # 长分隔符优先匹配，避免短分隔符截断长分隔符。
     pattern = "|".join(re.escape(t) for t in sorted(set(custom_delimiters), key=len, reverse=True))
     chunks: list[str] = []
-    for sec, pos in typed_sections:
+    for sec in sections:
         boundaries = [(match.start(), match.end()) for match in re.finditer(pattern, sec, flags=re.DOTALL)]
         starts = [0, *(end for _, end in boundaries)]
         ends = [*(start for start, _ in boundaries), len(sec)]
@@ -622,9 +581,6 @@ def _split_by_custom_delimiters(typed_sections: list[tuple[str, str]], custom_de
             if re.fullmatch(pattern, sub):
                 continue
             text = "\n" + sub
-            local_pos = pos if count_tokens(text) >= 8 else ""
-            if local_pos and local_pos not in text:
-                text += local_pos
             if text.strip():
                 chunks.append(text)
     return chunks

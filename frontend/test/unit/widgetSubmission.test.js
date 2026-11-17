@@ -70,7 +70,7 @@ test('等待回答、接收失败和发送禁用不允许表单重复创建输�
   const threadState = view.getThreadState('thread')
   for (const setBlocked of [
     (blocked) => { threadState.turnStatus = blocked ? 'requires_action' : null },
-    (blocked) => { view.isLoadingMessages.value = blocked },
+    (blocked) => { view.getThreadState(view.currentThreadId.value).readingLoading = blocked },
     (blocked) => { view.sendCooldownActive.value = blocked }
   ]) {
     setBlocked(true)

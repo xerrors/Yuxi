@@ -7,25 +7,24 @@ import pytest
 from fastapi import FastAPI
 from sqlalchemy import select
 
-from test.integration.support.module_audit import isolated_audit_store, serve_http
 import yuxi.api.routers.extensions.skills as skill_router
 import yuxi.api.routers.knowledge.management as knowledge_router
+from test.integration.support.module_audit import isolated_audit_store, serve_http
 from yuxi.modules.extensions.skills.models import Skill
-from yuxi.modules.knowledge.manager import KnowledgeBaseManager
-from yuxi.modules.knowledge.models import KnowledgeBase
 from yuxi.modules.identity.models import User
+from yuxi.modules.knowledge.models import KnowledgeBase
+from yuxi.modules.knowledge.repositories.bases import KnowledgeBaseRepository
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration, pytest.mark.self_managed_resources]
 
 
-async def test_concurrent_knowledge_names_return_one_conflict_and_preserve_winner(monkeypatch, tmp_path):
+async def test_concurrent_knowledge_names_return_one_conflict_and_preserve_winner(monkeypatch):
     """即使两个预检都通过，数据库仍只保存一个大小写无关的有效名称。"""
     async with isolated_audit_store(monkeypatch) as (_, sessions):
-        manager = KnowledgeBaseManager(str(tmp_path))
         arrivals = 0
         ready = asyncio.Event()
 
-        async def raced_check(_name):
+        async def raced_check(self, _name):
             """让两个创建请求同时通过名称预检。"""
             nonlocal arrivals
             arrivals += 1
@@ -34,8 +33,7 @@ async def test_concurrent_knowledge_names_return_one_conflict_and_preserve_winne
             await asyncio.wait_for(ready.wait(), 5)
             return False
 
-        monkeypatch.setattr(manager, "knowledge_base_name_exists", raced_check)
-        monkeypatch.setattr(knowledge_router, "knowledge_base_manager", manager)
+        monkeypatch.setattr(KnowledgeBaseRepository, "name_exists", raced_check)
         app = FastAPI()
         app.include_router(knowledge_router.knowledge, prefix="/api")
         app.dependency_overrides[knowledge_router.get_admin_user] = lambda: SimpleNamespace(uid="operator", department_id=None)
@@ -115,7 +113,7 @@ async def test_builtin_skill_visibility_permission_and_toggle_agree(monkeypatch)
                 assert await db.scalar(select(Skill.enabled).where(Skill.slug == "builtin-disabled")) is True
 
 
-async def test_knowledge_rename_conflict_returns_409_without_changing_record(monkeypatch, tmp_path):
+async def test_knowledge_rename_conflict_returns_409_without_changing_record(monkeypatch):
     """新增名称约束同样覆盖重命名，冲突回滚后原名称保留。"""
     async with isolated_audit_store(monkeypatch) as (_, sessions):
         async with sessions.begin() as db:
@@ -125,7 +123,6 @@ async def test_knowledge_rename_conflict_returns_409_without_changing_record(mon
                     KnowledgeBase(kb_id="rename-b", name="Occupied", kb_type="dify"),
                 ]
             )
-        monkeypatch.setattr(knowledge_router, "knowledge_base_manager", KnowledgeBaseManager(str(tmp_path)))
         app = FastAPI()
         app.include_router(knowledge_router.knowledge, prefix="/api")
         app.dependency_overrides[knowledge_router.require_knowledge_base_manage] = lambda: SimpleNamespace(

@@ -91,7 +91,7 @@ function harness(t, active = false) {
     queuedInputs: [], optimisticInputs: {}, itemState: createItemState() }
   const runtime = { pendingSends: {}, getThreadState: () => state, isCurrentThreadState: (_id, candidate) => candidate === state,
     resetThreadExecution: () => { state.optimisticInputs = {} },
-    startInputMonitor() {} }
+    startInputMonitor() {}, observeThread: () => () => {} }
   const accepted = [], rejected = []
   const controller = createSessionInput({ runtime,
     onPrepared() {}, onAccepted: (_id, draft) => accepted.push(draft),

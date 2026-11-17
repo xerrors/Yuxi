@@ -78,7 +78,11 @@ def _build_client(monkeypatch, fake_kb: FakeKnowledgeBase) -> TestClient:
         return User(username="user", uid="user", password_hash="x", role="user", department_id=1)
 
     app.dependency_overrides[get_required_user] = fake_required_user
-    monkeypatch.setattr(workspace_router, "_get_knowledge_base", lambda: fake_kb)
+    from yuxi.modules.knowledge.services import access, documents
+
+    monkeypatch.setattr(access, "check_accessible", fake_kb.check_accessible)
+    monkeypatch.setattr(documents, "get_knowledge_base_document_support", fake_kb.get_knowledge_base_document_support)
+    monkeypatch.setattr(documents, "list_document_files", fake_kb.list_document_files)
     return TestClient(app)
 
 

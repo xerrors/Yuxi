@@ -108,6 +108,16 @@ async page => {
   await page.waitForTimeout(400)
   check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), '768px 出现横向溢出')
   await page.screenshot({ path: '/tmp/yuxi-ordinary-reading-768.png' })
+  const released = await page.evaluate(async () => {
+    const { useUserStore } = await import('/src/modules/identity/model/user.js')
+    const { useSessionRuntimeStore } = await import('/src/modules/session/model/sessionRuntime.js')
+    const runtime = useSessionRuntimeStore()
+    const before = Object.keys(runtime.threadMessages).length
+    useUserStore().logout()
+    await new Promise(resolve => requestAnimationFrame(resolve))
+    return { before, after: Object.keys(runtime.threadMessages).length }
+  })
+  check(released.before > 0 && released.after === 0, '退出登录后阅读器保留旧 Thread 消费者')
   await page.unrouteAll({ behavior: 'wait' })
-  return { readingPosition: true, bottomFollow: true, manualScroll: true, navigationNames: true, widths: [1440, 1024, 768], themes: ['light', 'dark'] }
+  return { logoutRelease: true, readingPosition: true, bottomFollow: true, manualScroll: true, navigationNames: true, widths: [1440, 1024, 768], themes: ['light', 'dark'] }
 }

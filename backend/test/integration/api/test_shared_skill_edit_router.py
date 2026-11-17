@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from yuxi.modules.extensions.skills.repository import SkillRepository
 from yuxi.modules.extensions.skills.projection import get_user_skills_root_dir, sync_user_accessible_skills
-from yuxi.modules.extensions.skills.shared import (
+from yuxi.modules.extensions.skills.access import (
     lock_accessible_shared_skills_for_runtime,
 )
 from yuxi.modules.extensions.skills.models import Skill
