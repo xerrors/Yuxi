@@ -17,13 +17,16 @@ from yuxi.modules.agents.runtime.middlewares import (
     ToolErrorGuardMiddleware,
     create_memory_middleware,
     create_summary_middleware_from_context,
+    create_tool_media_middleware,
 )
 from yuxi.modules.agents.runtime.middlewares.authorization import RuntimeAuthorizationMiddleware
 from yuxi.modules.agents.runtime.middlewares.cooperation import create_cooperation_middleware
 from yuxi.modules.agents.runtime.middlewares.filesystem import create_agent_filesystem_middleware
+from yuxi.modules.agents.runtime.middlewares.plugins import PluginLoaderMiddleware, PluginMiddleware
 from yuxi.modules.agents.runtime.middlewares.skills import SkillsMiddleware
 from yuxi.modules.agents.runtime.sandbox.backend import create_agent_composite_backend
 from yuxi.modules.agents.runtime.tool_approval import create_tool_approval_middleware, normalize_tool_approval_mode
+from yuxi.modules.extensions.plugins.registry import get_plugins
 from yuxi.modules.extensions.skills.runtime import sync_agent_context_skills
 from yuxi.modules.extensions.tools.runtime import resolve_configured_runtime_tools
 from yuxi.modules.models.chat import load_chat_model, resolve_chat_model_spec
@@ -35,13 +38,24 @@ async def _build_middlewares(context, backend, *, cleanup_model=None):
     middlewares = [
         # 最外层隔离普通工具异常，保留取消与 interrupt 的传播。
         ToolErrorGuardMiddleware(),
-        SteerMiddleware(),
-        create_agent_filesystem_middleware(
-            getattr(context, "tool_token_limit", DEFAULT_TOOL_RESULT_EVICTION_K_TOKENS) * 1024,
-            backend=backend,
-        ),
-        SkillsMiddleware(),
     ]
+    # 图片落盘在 Guard 内层，发布的结果携带保存路径。没有 Workdir 时工厂返回 None。
+    tool_media_middleware = create_tool_media_middleware(context)
+    if tool_media_middleware:
+        middlewares.append(tool_media_middleware)
+    middlewares.extend(
+        [
+            SteerMiddleware(),
+            create_agent_filesystem_middleware(
+                getattr(context, "tool_token_limit", DEFAULT_TOOL_RESULT_EVICTION_K_TOKENS) * 1024,
+                backend=backend,
+            ),
+            SkillsMiddleware(),
+            PluginLoaderMiddleware(),
+        ]
+    )
+    selected_plugins = set(getattr(context, "plugins", []))
+    middlewares.extend(PluginMiddleware(plugin) for plugin in get_plugins() if plugin.plugin_id in selected_plugins)
     memory_middleware = None if cleanup_model else await create_memory_middleware(context)
     if memory_middleware:
         middlewares.append(memory_middleware)
@@ -75,7 +89,12 @@ async def _build_middlewares(context, backend, *, cleanup_model=None):
     middlewares.append(ImageInputCompatibilityMiddleware())
     # 统计经过授权和图片转换后实际交给 provider 的请求。
     middlewares.append(TokenUsageMiddleware())
-    context.middleware_tool_names = {tool.name for middleware in middlewares for tool in getattr(middleware, "tools", [])}
+    names = [tool.name for middleware in middlewares for tool in getattr(middleware, "tools", [])]
+    if len(names) != len(set(names)):
+        raise RuntimeError("插件与平台中间件工具名冲突")
+    context.middleware_tool_names = {
+        tool.name for middleware in middlewares if not isinstance(middleware, PluginMiddleware) for tool in getattr(middleware, "tools", [])
+    }
     return middlewares
 
 
@@ -106,9 +125,9 @@ class ChatbotAgent(BaseAgent):
             prompt = build_prompt_with_context(context)
             middlewares = await _build_middlewares(context, backend)
         for tool in tools:
-            if tool.name in context.middleware_tool_names and tool.name in context.mcp_tool_servers:
-                server = context.mcp_tool_servers[tool.name]
-                raise RuntimeError(f"工具名冲突：MCP '{server}' 的 '{tool.name}' 与 Backend 工具同名")
+            if any(tool.name == owned.name for middleware in middlewares for owned in getattr(middleware, "tools", [])):
+                source = context.mcp_tool_servers.get(tool.name, "local")
+                raise RuntimeError(f"工具名冲突：{source} 的 {tool.name} 与中间件工具同名")
         return create_agent(
             model=model,
             tools=tools,

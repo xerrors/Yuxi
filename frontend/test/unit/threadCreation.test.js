@@ -147,13 +147,13 @@ test('模型选择按当前选择、Session、智能体默认值响应式回退�
   assert.equal(h.state.currentModelSpec.value, 'draft:model')
 })
 
-test('预写 Thread 身份也须加载历史，已有历史的视图只恢复订阅', async (t) => {
+test('预写 Thread 身份与已有历史都委派阅读器就绪，页面不重建读取流程', async (t) => {
   for (const historyLoaded of [false, true]) {
     await t.test(historyLoaded ? '历史已加载' : '历史未加载', async (subtest) => {
-      const actions = []
-      const h = await mountSessionWorkspace(subtest, async ({ threadId }) => { actions.push(threadId) }, {
+      const reads = []
+      const h = await mountSessionWorkspace(subtest, () => assert.fail('页面不能直接读取历史'), {
         threadId: 'thread', runtime: {
-          resumeActiveRunForThread: async () => actions.push('resume'),
+          resumeActiveRunForThread: () => assert.fail('页面不能直接恢复读取订阅'),
           resumeQueuedInputs: async () => {}
         }
       })
@@ -161,9 +161,9 @@ test('预写 Thread 身份也须加载历史，已有历史的视图只恢复订
       h.runtime.getThreadState('thread').historyLoaded = historyLoaded
       subtest.mock.method(h.agentStore, 'fetchAgentDetail', async () => ({ can_run: historyLoaded }))
       subtest.mock.method(h.state.chatThreadsStore, 'markThreadViewed', () => {})
-      subtest.mock.method(h.state.scrollController, 'scrollToBottomStaticForce', async () => {})
+      h.state.timelineRef.value = { refresh: async () => { reads.push(h.state.currentThreadId.value); return true } }
       assert.equal(await h.state.selectThreadFromRoute('thread'), true)
-      assert.deepEqual(actions, [historyLoaded ? 'resume' : 'thread'])
+      assert.deepEqual(reads, ['thread'])
     })
   }
 })
@@ -197,7 +197,10 @@ for (const status of [403, 404, 503]) {
     const toast = t.mock.method(message, 'error', () => {})
     t.mock.method(h.agentStore, 'fetchAgentDetail', async () => { throw { status } })
     t.mock.method(h.state.chatThreadsStore, 'markThreadViewed', () => {})
-    t.mock.method(h.state.scrollController, 'scrollToBottomStaticForce', async () => {})
+    h.state.timelineRef.value = { refresh: async () => {
+      history.push(h.state.currentThreadId.value)
+      return h.state.initializeThreadInput({ threadId: h.state.currentThreadId.value })
+    } }
     assert.equal(await h.state.selectChat('history'), true)
     assert.deepEqual(history, ['history'])
     assert.equal(h.state.currentThreadId.value, 'history')
@@ -209,20 +212,21 @@ for (const status of [403, 404, 503]) {
 
 for (const status of [403, 404, 410, 503, undefined]) {
   test(`恢复未缓存线程遇到 ${status ?? '网络错误'}，只有确定失效才拒绝路由`, async (t) => {
-    let errors = 0
+    const reads = []
     const h = await mountSessionWorkspace(t)
-    t.mock.method(message, 'error', () => { errors++ })
+    t.mock.method(message, 'error', () => {})
     t.mock.method(h.agentApi, 'getPublicThread', async () => { throw { status } })
+    h.state.timelineRef.value = { refresh: async () => { reads.push(h.state.currentThreadId.value); throw { status } } }
     t.mock.method(h.state.chatThreadsStore, 'upsertThread', () => assert.fail('失败详情不能写入列表'))
     assert.equal(await h.state.selectThreadFromRoute('remembered-thread'), [403, 404, 410].includes(status) ? false : null)
-    assert.equal(errors, 1)
+    assert.deepEqual(reads, ['remembered-thread'])
   })
 }
 
 for (const historyLoaded of [false, true]) {
   for (const status of [403, 404, 410, 503, undefined]) {
     test(`缓存线程（历史${historyLoaded ? '已加载' : '未加载'}）遇到 ${status ?? '网络错误'}，失效结果传回路由协调器`, async (t) => {
-      const errors = []
+      const reads = []
       const h = await mountSessionWorkspace(t, async () => { throw { status } }, {
         threadId: historyLoaded ? 'cached' : 'previous',
         runtime: { resumeActiveRunForThread: () => assert.fail('失效或读取失败时不能恢复执行') }
@@ -230,12 +234,11 @@ for (const historyLoaded of [false, true]) {
       h.state.chatThreadsStore.threads = [{ id: 'cached', agent: { id: 'agent' }, yuxi: {} }]
       h.runtime.getThreadState('cached').historyLoaded = historyLoaded
       t.mock.method(h.agentStore, 'fetchAgentDetail', async () => ({ can_run: false }))
-      t.mock.method(h.agentApi, 'getPublicThread', async () => { throw { status } })
+      h.state.timelineRef.value = { refresh: async () => { reads.push(h.state.currentThreadId.value); throw { status } } }
       t.mock.method(h.state.chatThreadsStore, 'upsertThread', () => assert.fail('错误响应不能写入导航列表'))
       t.mock.method(message, 'error', () => {})
-      t.mock.method(console, 'error', (...args) => errors.push(args.at(-1)?.status))
       assert.equal(await h.state.selectThreadFromRoute('cached'), [403, 404, 410].includes(status) ? false : null)
-      assert.deepEqual(errors, [status])
+      assert.deepEqual(reads, ['cached'])
       assert.equal(h.state.isLoadingMessages.value, false)
     })
   }

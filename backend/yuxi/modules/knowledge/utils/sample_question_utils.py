@@ -7,7 +7,7 @@ from typing import Any
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.knowledge.factory import KnowledgeBaseFactory
 from yuxi.modules.knowledge.repositories.bases import KnowledgeBaseRepository
-from yuxi.modules.knowledge.runtime import knowledge_base
+from yuxi.modules.knowledge.services import bases as knowledge_bases
 from yuxi.modules.models import select_model
 from yuxi.modules.system.options import system_options
 from yuxi.shared.errors import InvalidOperationError, OperationFailedError, ResourceNotFoundError
@@ -39,7 +39,7 @@ SAMPLE_QUESTIONS_SYSTEM_PROMPT = """你是一个专业的知识库问答测试�
 
 async def generate_knowledge_base_sample_questions(kb_id: str, count: int = 10) -> dict[str, Any]:
     """按知识库文件清单生成示例问题并保存。"""
-    kb_info = await knowledge_base.get_knowledge_base_info(kb_id, include_files=True)
+    kb_info = await knowledge_bases.get_knowledge_base_info(kb_id, include_files=True)
     if not kb_info:
         raise ResourceNotFoundError(f"知识库 {kb_id} 不存在")
 

@@ -5,8 +5,10 @@ import { createTestServer } from '../helpers/createTestServer.js'
 import { isPasswordLongEnough, MIN_PASSWORD_LENGTH } from '../../src/modules/identity/model/passwordValidation.js'
 
 let server
+const originalDocument = globalThis.document
 const components = {}
 before(async () => {
+  globalThis.document = { activeElement: null, querySelector: () => null }
   globalThis.__guiFeedback = { isPasswordLongEnough, MIN_PASSWORD_LENGTH }
   server = await createTestServer({ server: { middlewareMode: true, hmr: false }, ssr: { noExternal: ['ant-design-vue'] }, plugins: [{
     name: 'gui-feedback-boundaries', enforce: 'pre',
@@ -21,7 +23,12 @@ before(async () => {
     components[path] = (await server.ssrLoadModule(path)).default
   }
 })
-after(async () => { await server.close(); delete globalThis.__guiFeedback })
+after(async () => {
+  await server.close()
+  delete globalThis.__guiFeedback
+  if (originalDocument === undefined) delete globalThis.document
+  else globalThis.document = originalDocument
+})
 
 const node = () => ({ children: [], parent: null })
 const renderer = createRenderer({

@@ -1,6 +1,6 @@
 # 开发智能体后端
 
-本页面向需要在 Yuxi 中新增或维护 Agent 后端的贡献者。它只讲代码装配；配置字段、权限和运行时上下文分别见[配置智能体](./agents-config.md)和[Agent 运行时上下文](../mechanisms/agent-runtime.md)。
+本页面向需要在 Yuxi 中新增或维护 Agent 后端的贡献者。它只讲代码装配。配置字段、权限和运行时上下文分别见[配置智能体](./agents-config.md)和[Agent 运行时上下文](../mechanisms/agent-runtime.md)。
 
 ## 新增预置角色
 
@@ -23,11 +23,11 @@ PRESET = AgentPreset(
 )
 ```
 
-`context` 复用[智能体配置](./agents-config.md)字段；长提示词可以直接使用 Python 多行字符串。角色模块只声明配置，不执行外部操作。协作成员默认继承派发方配置，显式选择 Agent 时使用目标配置，详见[会话协作](./session-cooperation.md#身份与创建)。
+`context` 复用[智能体配置](./agents-config.md)字段。长提示词可以直接使用 Python 多行字符串。角色模块只声明配置，不执行外部操作。协作成员默认继承派发方配置，显式选择 Agent 时使用目标配置，详见[会话协作](./session-cooperation.md#身份与创建)。
 
 `app-init` 部署任务按文件名发现所有非下划线开头的 Python 模块，校验定义类型、重复 slug 和后端存在性，再初始化数据库记录。新增角色无需修改注册清单、repository 或启动调用。模块导入失败、缺少 `PRESET`、重复 slug 或不存在的后端会使部署初始化失败，API 与 worker 等待初始化成功后启动。
 
-预置角色仅在 slug 不存在时创建，已有名称、提示词和能力配置保留；修改源码不会覆盖管理员定制。默认智能助手另行维护默认与共享约束。发布代码并成功执行 `app-init` 后，在智能体管理页核对新增角色的名称、后端和能力配置；部署步骤见[部署参考](../advanced/deployment.md)。
+预置角色仅在 slug 不存在时创建，已有名称、提示词和能力配置保留；修改源码不会覆盖管理员定制。默认智能助手另行维护默认与共享约束。发布代码并成功执行 `app-init` 后，在智能体管理页核对新增角色的名称、后端和能力配置。部署步骤见[部署参考](../advanced/deployment.md)。
 
 ## 后端放在哪里
 
@@ -82,7 +82,7 @@ class MyAgent(BaseAgent):
 
 这个示例展示最小的 Context、模型、提示词和 PostgreSQL checkpoint 装配。真实后端还要根据需要接入文件 backend、工具、Skills、审批、Summary、用量和会话协作 middleware。
 
-worker 和主动压缩在执行入口显式调用 `prepare_agent_runtime_context`，为 Context 追加工作区提示词、按当前用户过滤资源，并在模型为空时补齐系统默认模型。`get_graph(context=...)` 只消费准备后的对象。独立调用同样先创建 `context_schema()`，用 `update_config` 装载持久配置、用 `update` 注入已授权身份和运行覆盖，再 await 准备函数；流和 invoke 接口只接受 `context`，不接收配置字典。
+worker 和主动压缩在执行入口显式调用 `prepare_agent_runtime_context`，为 Context 追加工作区提示词、按当前用户过滤资源，并在模型为空时补齐系统默认模型。`get_graph(context=...)` 只消费准备后的 Context。独立调用同样先创建 `context_schema()`，用 `update_config` 装载持久配置、用 `update` 注入已授权身份和运行覆盖，再 await 准备函数。流和 invoke 接口只接受 `context`，不接收配置字典。
 
 ## Context 和配置表单
 
@@ -92,13 +92,13 @@ worker 和主动压缩在执行入口显式调用 `prepare_agent_runtime_context
 
 ## 中间件和工具
 
-资源权限和默认资源选择在 Graph 创建前处理；模型提示注入、工具动态开放、文件结果处理、state 更新和观测才适合放入 middleware。内置 Agent 的工具可见性和执行注册分为两层：工具可以先进入 ToolNode，再由 Skill 激活状态决定是否让模型看到。
+资源权限和默认资源选择在 Graph 创建前处理；模型提示注入、工具动态开放、文件结果处理、state 更新和观测才适合放入 middleware。内置 Agent 的工具可见性和执行注册分为两层：工具可以先进入 ToolNode，再由插件激活与当前授权决定是否允许调用。
 
 优先复用：
 
 - [工具系统](./tools-system.md) 的注册和目标校验；
 - [中间件](./middleware.md) 的装配顺序；
-- [Skills 管理](./skills-management.md) 的依赖和激活规则；
+- [Skills 管理](./skills-management.md) 的说明读取规则和[插件激活机制](../mechanisms/agent-runtime.md#插件激活与恢复)；
 - [沙盒机制](../mechanisms/sandbox.md) 的文件和命令边界。
 
 新 middleware 不要绕过 `prepare_agent_runtime_context`，也不要用 Prompt、前端隐藏或 schema omission 代替后端授权。

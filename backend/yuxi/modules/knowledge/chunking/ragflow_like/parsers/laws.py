@@ -38,17 +38,16 @@ def chunk_markdown(filename: str, markdown_content: str, parser_config: dict[str
         return []
 
     nlp.remove_contents_table(sections, eng=nlp.is_english(sections))
-    typed_sections = [(s, "") for s in sections]
 
-    bull = nlp.bullets_category([s for s, _ in typed_sections])
+    bull = nlp.bullets_category(sections)
     if bull == nlp.MARKDOWN_BULLET_GROUP_INDEX:
         # 归一化后仍命中 markdown 组时，回退到中文法规层级组，避免退化成“按章大块”。
         bull = 0
 
-    merged = nlp.tree_merge(bull, typed_sections, depth=3)
+    merged = nlp.tree_merge(bull, sections, depth=3)
     if not merged:
         merged = nlp.naive_merge(
-            typed_sections,
+            sections,
             chunk_token_num=chunk_token_num,
             delimiter=delimiter,
             overlapped_percent=overlapped_percent,
@@ -161,7 +160,7 @@ def _ensure_chunk_token_limit(chunks: list[str], chunk_token_num: int, delimiter
             continue
 
         refined = nlp.naive_merge(
-            [(_line, "") for _line in _iter_lines(chunk)],
+            _iter_lines(chunk),
             chunk_token_num=max_tokens,
             delimiter=delimiter,
             overlapped_percent=overlapped_percent,
@@ -179,7 +178,7 @@ def _ensure_chunk_token_limit(chunks: list[str], chunk_token_num: int, delimiter
                 ends = [match.end() for match in re.finditer(r"(?<=[。！？；;!?])", cleaned)] + [len(cleaned)]
                 sentences = [cleaned[start:end] for start, end in zip([0, *ends], ends)]
                 sentence_refined = nlp.naive_merge(
-                    [(sentence, "") for sentence in sentences if sentence.strip()],
+                    [sentence for sentence in sentences if sentence.strip()],
                     chunk_token_num=max_tokens,
                     delimiter=delimiter,
                     overlapped_percent=overlapped_percent,

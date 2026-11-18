@@ -13,7 +13,6 @@ from yuxi.modules.extensions.skills import content as content_service
 from yuxi.modules.extensions.skills import projection as projection_service
 from yuxi.modules.extensions.skills import shared as skill_service
 from yuxi.modules.extensions.skills import access as skill_access
-from yuxi.modules.extensions.skills.package import parse_skill_markdown
 from yuxi.modules.extensions.skills.models import Skill
 from yuxi.modules.identity.models import User
 from yuxi.modules.workspace.paths import user_workspace_dir
@@ -56,9 +55,6 @@ def _setup_shared_skill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             "read_scope": {"access_level": "user", "user_uids": ["owner"], "department_ids": []},
             "manage_scope": {"access_level": "user", "user_uids": ["owner"], "department_ids": []},
         },
-        tool_dependencies=[],
-        mcp_dependencies=[],
-        skill_dependencies=[],
     )
 
     class FakeRepo:
@@ -72,13 +68,6 @@ def _setup_shared_skill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         async def update_metadata(self, target, *, name, description, updated_by):
             target.name = name
             target.description = description
-            target.updated_by = updated_by
-            return target
-
-        async def update_dependencies(self, target, *, tool_dependencies, mcp_dependencies, skill_dependencies, updated_by):
-            target.tool_dependencies = tool_dependencies
-            target.mcp_dependencies = mcp_dependencies
-            target.skill_dependencies = skill_dependencies
             target.updated_by = updated_by
             return target
 
@@ -101,7 +90,6 @@ def _setup_shared_skill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(skill_access, "SkillRepository", FakeRepo)
     monkeypatch.setattr(FakeRepo, "list_enabled_readable", accessible, raising=False)
     monkeypatch.setattr(tool_service, "get_tool_metadata", lambda: [])
-    monkeypatch.setattr(skill_service, "get_enabled_mcp_server_slugs", mcps)
     monkeypatch.setattr("yuxi.modules.extensions.mcp.service.get_enabled_mcp_server_slugs", mcps)
     return skill_dir, item, content
 
@@ -202,7 +190,6 @@ async def test_edit_root_file_updates_bytes_and_database_dependencies(tmp_path, 
 
     assert result is item
     assert item.description == "updated"
-    assert item.tool_dependencies == []
     assert content_service.content_path(item).joinpath("SKILL.md").read_text(encoding="utf-8") == new
     assert revision == hashlib.sha256(new.encode()).hexdigest()
 
@@ -317,60 +304,11 @@ async def test_projection_reads_old_content_until_database_commit(tmp_path, monk
 
 
 @pytest.mark.asyncio
-async def test_dependency_form_updates_root_file_and_index(tmp_path, monkeypatch):
-    skill_dir, item, old = _setup_shared_skill(tmp_path, monkeypatch)
-    monkeypatch.setattr(tool_service, "get_tool_metadata", lambda: [{"slug": "calculator"}])
-
-    result, revision = await edit_service.edit_shared_skill_dependencies(
-        _Session(),
-        slug="demo",
-        tool_dependencies=["calculator"],
-        mcp_dependencies=[],
-        skill_dependencies=[],
-        expected_revision=hashlib.sha256(old.encode()).hexdigest(),
-        operator=_user("owner"),
-    )
-
-    saved = content_service.content_path(item).joinpath("SKILL.md").read_text(encoding="utf-8")
-    assert result is item
-    assert item.tool_dependencies == ["calculator"]
-    assert "tool_dependencies:\n- calculator" in saved
-    assert revision == hashlib.sha256(saved.encode()).hexdigest()
-
-
-@pytest.mark.asyncio
-async def test_dependency_edit_accepts_unquoted_multiline_description(tmp_path, monkeypatch):
-    """预览可识别的多行描述也必须能保存依赖。"""
-    skill_dir, item, _old = _setup_shared_skill(tmp_path, monkeypatch)
-    original = (
-        "---\nname: demo\nslug: demo\ndescription:\n  Use this skill for PDFs."
-        '\n  CREATE (from scratch): "make a PDF".\nlicense: MIT\n---\n# Body\n'
-    )
-    (skill_dir / "SKILL.md").write_text(original, encoding="utf-8")
-
-    result, revision = await edit_service.edit_shared_skill_dependencies(
-        _Session(),
-        slug="demo",
-        tool_dependencies=[],
-        mcp_dependencies=[],
-        skill_dependencies=[],
-        expected_revision=hashlib.sha256(original.encode()).hexdigest(),
-        operator=_user("owner"),
-    )
-
-    saved = content_service.content_path(item).joinpath("SKILL.md").read_text(encoding="utf-8")
-    assert result is item
-    assert item.description == 'Use this skill for PDFs. CREATE (from scratch): "make a PDF".'
-    assert parse_skill_markdown(saved)[2] == item.description
-    assert revision == hashlib.sha256(saved.encode()).hexdigest()
-
-
-@pytest.mark.asyncio
 async def test_edit_rejects_invalid_dependency_without_publishing_file(tmp_path, monkeypatch):
     skill_dir, item, old = _setup_shared_skill(tmp_path, monkeypatch)
     invalid = old.replace("description: old", "description: changed\ntool_dependencies:\n- missing-tool")
 
-    with pytest.raises(ValueError, match="无效工具依赖"):
+    with pytest.raises(ValueError, match="部署插件"):
         await edit_service.edit_shared_skill_file(
             _Session(),
             slug="demo",
@@ -382,7 +320,6 @@ async def test_edit_rejects_invalid_dependency_without_publishing_file(tmp_path,
 
     assert (skill_dir / "SKILL.md").read_text(encoding="utf-8") == old
     assert item.description == "old"
-    assert item.tool_dependencies == []
 
 
 @pytest.mark.asyncio

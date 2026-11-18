@@ -10,6 +10,7 @@ from yuxi.modules.knowledge.base import KBEmbeddingModelMissingError
 from yuxi.modules.knowledge.graphs.service import KnowledgeGraphService
 from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
 from yuxi.modules.knowledge.runtime import knowledge_base
+from yuxi.modules.knowledge.services import documents as knowledge_documents
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -243,7 +244,7 @@ async def _run_pending_files(context: BackgroundJobContext, *, action: str) -> d
     result_items: list[dict] = []
     after_file_id = None
     while True:
-        file_ids = await knowledge_base.list_document_file_ids_by_statuses(
+        file_ids = await knowledge_documents.list_document_file_ids_by_statuses(
             kb_id,
             statuses=statuses,
             after_file_id=after_file_id,

@@ -15,7 +15,7 @@ from yuxi.modules.extensions.mcp.models import MCPServer
 from yuxi.modules.extensions.skills.models import Skill
 from yuxi.modules.identity.models import User
 
-pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
+pytestmark = [pytest.mark.asyncio, pytest.mark.integration, pytest.mark.self_managed_resources]
 
 
 def bundle(*, mcp=None, invalid=False, slug="guide"):
@@ -81,7 +81,7 @@ async def test_create_with_skill_and_existing_mcp(test_client, admin_headers, st
                     }
                 )
             },
-            files={"file": ("guide.zip", bundle(mcp=mcp_slug), "application/zip")},
+            files={"file": ("guide.zip", bundle(), "application/zip")},
         )
         assert response.status_code == 200, response.text
         assert response.json()["agent"]["agent_id"] == slug
@@ -96,7 +96,7 @@ async def test_create_with_skill_and_existing_mcp(test_client, admin_headers, st
             server = await db.scalar(select(MCPServer).where(MCPServer.slug == mcp_slug))
             assert server.enabled == 1 and server.headers == {"X-Test": "fixture-only"}
             assert server.created_by == server.updated_by == me.json()["username"]
-            assert skill.mcp_dependencies == [mcp_slug]
+            assert "mcp_dependencies" not in skill.to_dict()
             assert (get_skill_data_dir() / skill.dir_path / "references/note.txt").read_text() == "CREATION_REFERENCE"
             assert f"slug: {skill.slug}" in (get_skill_data_dir() / skill.dir_path / "SKILL.md").read_text()
         public = await test_client.get("/api/system/mcp-servers", headers=standard_user["headers"])
@@ -251,7 +251,7 @@ async def test_final_commit_failure_rolls_back_all_creation(test_client, admin_h
                 slug=slug,
                 name=slug,
                 config_json={"context": {"mcps": [mcp_slug]}},
-                skill_upload=("guide.zip", bundle(mcp=mcp_slug)) if with_skill else None,
+                skill_upload=("guide.zip", bundle()) if with_skill else None,
             )
     try:
         async with postgres_sessions() as db:
@@ -265,7 +265,11 @@ async def test_final_commit_failure_rolls_back_all_creation(test_client, admin_h
 
 @pytest.mark.parametrize("role", ["user", "admin"])
 async def test_shared_skill_creation_has_its_own_permission_and_lifetime(
-    test_client, admin_headers, standard_user, postgres_sessions, role,
+    test_client,
+    admin_headers,
+    standard_user,
+    postgres_sessions,
+    role,
 ):
     """共享 Skill 仅管理员发布，Agent 失败不会回滚已发布的 Skill。"""
     headers = standard_user["headers"]

@@ -24,25 +24,24 @@ from test.e2e.e2e_helpers import (
 from test.support.openai_replay_server import send_json_response, send_openai_sse_response, serve_replay_handler
 from test.support.public_api import delete_agent
 from yuxi.modules.extensions.mcp.oauth_config import config_revision, decrypt, encrypt
+from yuxi.modules.extensions.plugins.registry import get_plugin
 from yuxi.shared.datetime import utc_now
-from yuxi.modules.workspace.runtime_paths import SHARED_SKILLS_PATH
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow, pytest.mark.self_managed_resources]
 
 
 @pytest.mark.parametrize(
-    "mode,via_skill",
+    "mode,via_plugin",
     [
         ("unconnected", False),
         ("unconnected", True),
-        ("dynamic_nested", True),
         ("disconnect", False),
-        ("disconnect_local", True),
+        ("disconnect", True),
         ("invalid_refresh", True),
         ("refresh", False),
     ],
 )
-async def test_personal_mcp_availability_through_worker(mode, via_skill):
+async def test_personal_mcp_availability_through_worker(mode, via_plugin):
     """缺少连接仍有最终答复，旧工具拒绝断开，真实刷新原子落库。"""
     private_file = os.getenv("MCP_LAB_ACCOUNTS_FILE")
     if not private_file:
@@ -51,15 +50,31 @@ async def test_personal_mcp_availability_through_worker(mode, via_skill):
     root = os.getenv("TEST_BASE_URL", "http://localhost:5050")
     headers = {"Authorization": "Bearer " + account["access_token"]}
     suffix = uuid4().hex[:10]
-    server_slug, agent_slug, provider_id, skill = (
-        prefix + suffix for prefix in ("pytest-mcp-", "pytest-mcp-agent-", "mcp-availability-", "pytest-mcp-skill-")
-    )
-    skill_slugs = [skill, skill + "-child"] if mode == "dynamic_nested" else [skill]
+    server_slug, agent_slug, provider_id = (prefix + suffix for prefix in ("pytest-mcp-", "pytest-mcp-agent-", "mcp-availability-"))
+    plugin_id = "mcp-availability-fixture"
+    if via_plugin:
+        try:
+            deployed = get_plugin(plugin_id)
+        except ValueError:
+            pytest.fail("先将 test/support/mcp_availability_plugin.json 部署到 plugins/deployed 并重启 API/worker")
+        server_slug = deployed.mcps[0]
+        skill_slugs = list(deployed.skills)
+    else:
+        skill_slugs = []
     observed, threads = [], []
     revoked = False
     previous_credentials = None
     source_id = None
     db = await asyncpg.connect(postgres_dsn())
+    if via_plugin:
+        existing = await db.fetchval(
+            "SELECT EXISTS(SELECT 1 FROM mcp_servers WHERE slug=$1) OR EXISTS(SELECT 1 FROM skills WHERE slug=ANY($2::text[]))",
+            server_slug,
+            skill_slugs,
+        )
+        if existing:
+            await db.close()
+            pytest.fail("插件验收固定资源已存在，请使用独立实验部署且串行执行，避免覆盖已有资源")
 
     class Handler(BaseHTTPRequestHandler):
         """模型协议 oracle 检查实际工具，缺少能力仍完成普通聊天。"""
@@ -70,38 +85,32 @@ async def test_personal_mcp_availability_through_worker(mode, via_skill):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             tools = [message for message in body["messages"] if message["role"] == "tool"]
             names = {item["function"]["name"] for item in body.get("tools", [])}
-            if mode == "dynamic_nested":
-                if not tools:
-                    delta = {
-                        "role": "assistant",
-                        "tool_calls": [
-                            {
-                                "index": 0,
-                                "id": "activate-parent",
-                                "type": "function",
-                                "function": {
-                                    "name": "read_file",
-                                    "arguments": json.dumps({"file_path": f"{SHARED_SKILLS_PATH}/{skill}/SKILL.md"}),
-                                },
-                            }
-                        ],
-                    }
-                    finish = "tool_calls"
-                else:
-                    assert tools[-1]["tool_call_id"] == "activate-parent" and "查询本人考勤" in str(tools[-1]["content"])
-                    if "list_kbs" in names or "query_my_attendance" in names:
-                        send_json_response(self, 400, {"error": {"message": "动态嵌套 Skill 仍开放不可用依赖工具"}})
-                        return
-                    observed.append("ordinary-chat")
-                    delta, finish = {"role": "assistant", "content": "普通聊天正常。"}, "stop"
-            elif tools:
+            if via_plugin and not tools:
+                delta = {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "activate-plugin",
+                            "type": "function",
+                            "function": {"name": "load_plugin", "arguments": json.dumps({"plugin_id": plugin_id})},
+                        }
+                    ],
+                }
+                finish = "tool_calls"
+            elif via_plugin and tools[-1]["tool_call_id"] == "activate-plugin" and not mode.startswith("disconnect"):
+                assert "query_my_attendance" not in names
+                assert "未激活" in str(tools[-1]["content"])
+                observed.append("ordinary-chat")
+                delta, finish = {"role": "assistant", "content": "普通聊天正常。"}, "stop"
+            elif tools and tools[-1]["tool_call_id"] != "activate-plugin":
                 result = str(tools[-1]["content"])
                 if mode == "refresh" and "年假" not in result:
                     send_json_response(self, 400, {"error": {"message": "未取得真实本人考勤"}})
                     return
                 observed.append("tool-result")
                 delta, finish = {"role": "assistant", "content": "REAL_ATTENDANCE:" + result}, "stop"
-            elif (mode == "disconnect_local" and "list_kbs" in names) or "query_my_attendance" in names:
+            elif "query_my_attendance" in names:
                 if mode.startswith("disconnect") and not revoked:
                     response = httpx.delete(root + f"/api/system/mcp-servers/{server_slug}/connection", headers=headers)
                     assert response.status_code == 200
@@ -115,10 +124,8 @@ async def test_personal_mcp_availability_through_worker(mode, via_skill):
                             "id": "availability-call",
                             "type": "function",
                             "function": {
-                                "name": "list_kbs" if mode == "disconnect_local" else "query_my_attendance",
-                                "arguments": "{}"
-                                if mode == "disconnect_local"
-                                else json.dumps({"start_date": "2026-10-12", "end_date": "2026-10-13"}),
+                                "name": "query_my_attendance",
+                                "arguments": json.dumps({"start_date": "2026-10-12", "end_date": "2026-10-13"}),
                             },
                         }
                     ],
@@ -126,8 +133,6 @@ async def test_personal_mcp_availability_through_worker(mode, via_skill):
                 finish = "tool_calls"
             else:
                 assert "query_my_attendance" not in names
-                if via_skill:
-                    assert "list_kbs" not in names
                 observed.append("ordinary-chat")
                 delta, finish = {"role": "assistant", "content": "普通聊天正常。"}, "stop"
             common = {"id": "availability", "object": "chat.completion.chunk", "created": 1, "model": "deterministic-chat"}
@@ -182,7 +187,7 @@ async def test_personal_mcp_availability_through_worker(mode, via_skill):
                         },
                     )
                     assert created.status_code == 200, created.text
-                    if mode not in {"unconnected", "dynamic_nested"}:
+                    if mode != "unconnected":
                         if mode.startswith("disconnect"):
                             # 先由真实连接刷新并落库，副本保留实际有效期。
                             discovered = await client.get("/api/system/mcp-servers/enterprise-attendance/tools", headers=headers)
@@ -228,31 +233,19 @@ async def test_personal_mcp_availability_through_worker(mode, via_skill):
                             record["expires_at"] if mode.startswith("disconnect") else utc_now() - timedelta(seconds=1),
                             utc_now(),
                         )
-                if via_skill:
-                    packages = [
-                        (
-                            skill,
-                            f"mcp_dependencies: [{server_slug}]\n"
-                            + ("tool_dependencies: [list_kbs]\n" if mode == "disconnect_local" else ""),
-                        )
-                    ]
-                    if mode == "dynamic_nested":
-                        packages = [
-                            (skill_slugs[1], f"mcp_dependencies: [{server_slug}]\n"),
-                            (skill, f"skill_dependencies: [{skill_slugs[1]}]\ntool_dependencies: [list_kbs]\n"),
-                        ]
-                    for installed_slug, dependencies in packages:
-                        package = f"---\nname: {installed_slug}\ndescription: 查询考勤\n{dependencies}---\n查询本人考勤。\n"
+                if via_plugin:
+                    for installed_slug in skill_slugs:
+                        package = f"---\nname: {installed_slug}\ndescription: 查询考勤\n---\n查询本人考勤。\n"
                         prepared = await client.post(
                             "/api/skills/import/prepare", headers=headers, files={"file": ("SKILL.md", package.encode(), "text/markdown")}
                         )
-                        assert prepared.status_code == 200
+                        assert prepared.status_code == 200, prepared.text
                         confirmed = await client.post(
                             f"/api/skills/install-drafts/{prepared.json()['data']['draft_id']}/confirm",
                             headers=headers,
                             json={"slugs": [installed_slug]},
                         )
-                        assert confirmed.status_code == 200 and confirmed.json()["data"][0]["success"]
+                        assert confirmed.status_code == 200 and confirmed.json()["data"][0]["success"], confirmed.text
                 created = await client.post(
                     "/api/agent",
                     headers=headers,
@@ -265,9 +258,10 @@ async def test_personal_mcp_availability_through_worker(mode, via_skill):
                                 "model": provider_id + ":deterministic-chat",
                                 "tools": [],
                                 "knowledges": [],
-                                "mcps": [] if via_skill else [server_slug],
-                                "skills": skill_slugs if via_skill else [],
-                                "preload_skills": [skill] if via_skill and mode != "dynamic_nested" else [],
+                                "mcps": [] if via_plugin else [server_slug],
+                                "skills": [],
+                                "plugins": [plugin_id] if via_plugin else [],
+                                "preload_skills": [],
                                 "system_prompt": "正常聊天；若可用则查询本人考勤。",
                             }
                         },
@@ -294,7 +288,8 @@ async def test_personal_mcp_availability_through_worker(mode, via_skill):
                     if mode.startswith("disconnect") and index == 0:
                         assert revoked
                         successful_calls = await db.fetchval(
-                            "SELECT count(*) FROM messages WHERE run_id=$1 AND message_type='tool_audit' AND execution_status='completed'",
+                            "SELECT count(*) FROM messages WHERE run_id=$1 AND message_type='tool_audit' AND execution_status='completed' "
+                            "AND operation_id<>'activate-plugin'",
                             run,
                         )
                         assert successful_calls == 0
@@ -320,18 +315,18 @@ async def test_personal_mcp_availability_through_worker(mode, via_skill):
                         assert audit and audit["turn_id"] == turn_id and "年假" in str(audit["extra_metadata"])
                     else:
                         assert "普通聊天正常" in final and "ordinary-chat" in observed
-                        if mode == "dynamic_nested":
+                        if via_plugin:
                             assert (
                                 await db.fetchval(
                                     "SELECT count(*) FROM messages WHERE run_id=$1 AND message_type='tool_audit' "
-                                    "AND operation_id='activate-parent' AND execution_status='completed'",
+                                    "AND operation_id='activate-plugin'",
                                     run,
                                 )
                                 == 1
                             )
                             assert not await db.fetchval(
                                 "SELECT count(*) FROM messages WHERE run_id=$1 AND message_type='tool_audit' "
-                                "AND operation_id<>'activate-parent' AND execution_status='completed'",
+                                "AND operation_id<>'activate-plugin' AND execution_status='completed'",
                                 run,
                             )
                         else:
@@ -356,7 +351,7 @@ async def test_personal_mcp_availability_through_worker(mode, via_skill):
                         await delete_agent(client, headers, agent_slug)
                     except Exception as error:
                         cleanup_errors.append(f"删除测试 Agent：{type(error).__name__}")
-                    if via_skill:
+                    if via_plugin:
                         try:
                             response = await client.post("/api/system/skills/delete-batch", headers=headers, json={"slugs": skill_slugs})
                             assert response.status_code == 200

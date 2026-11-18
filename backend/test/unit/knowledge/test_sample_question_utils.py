@@ -46,7 +46,7 @@ def test_parse_sample_questions_content_rejects_invalid_payload():
 
 @pytest.mark.asyncio
 async def test_generate_knowledge_base_sample_questions_rejects_empty_files(monkeypatch):
-    monkeypatch.setattr(sq, "knowledge_base", FakeKnowledgeBase(_database_detail({}, name="空知识库")))
+    monkeypatch.setattr(sq, "knowledge_bases", FakeKnowledgeBase(_database_detail({}, name="空知识库")))
     monkeypatch.setattr(
         sq.KnowledgeBaseFactory,
         "get_kb_class",
@@ -81,7 +81,7 @@ async def test_generate_knowledge_base_sample_questions_saves_and_returns_questi
 
     monkeypatch.setattr(
         sq,
-        "knowledge_base",
+        "knowledge_bases",
         FakeKnowledgeBase(_database_detail({"file_1": {"filename": "demo.md", "file_type": "md"}})),
     )
     monkeypatch.setattr(
@@ -113,7 +113,7 @@ async def test_generate_knowledge_base_sample_questions_maps_invalid_json(monkey
 
     monkeypatch.setattr(
         sq,
-        "knowledge_base",
+        "knowledge_bases",
         FakeKnowledgeBase(_database_detail({"file_1": {"filename": "demo.md", "file_type": "md"}})),
     )
     monkeypatch.setattr(
@@ -139,7 +139,7 @@ async def test_generate_knowledge_base_sample_questions_maps_invalid_json(monkey
 @pytest.mark.asyncio
 async def test_generated_questions_require_successful_save(monkeypatch, missing):
     """保存失败或目标消失时不能声称问题已生成并保存。"""
-    monkeypatch.setattr(sq, "knowledge_base", FakeKnowledgeBase(_database_detail({"file_1": {"filename": "demo.md"}})))
+    monkeypatch.setattr(sq, "knowledge_bases", FakeKnowledgeBase(_database_detail({"file_1": {"filename": "demo.md"}})))
     monkeypatch.setattr(sq.KnowledgeBaseFactory, "get_kb_class", lambda _: SimpleNamespace(supports_documents=True))
     monkeypatch.setattr(sq, "system_options", SimpleNamespace(get=AsyncMock(return_value={"default_model": "test:model"})))
     model = SimpleNamespace(call=AsyncMock(return_value=SimpleNamespace(content='{"questions":["测试？"]}')))

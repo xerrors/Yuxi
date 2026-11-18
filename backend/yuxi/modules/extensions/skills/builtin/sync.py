@@ -10,19 +10,20 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yuxi.modules.extensions.plugins.registry import get_plugin_skill_directories
 from yuxi.modules.extensions.skills.access import (
     BUILTIN_SKILL_SHARE_CONFIG as BUILTIN_SKILL_SHARE_CONFIG,
 )
 from yuxi.modules.extensions.skills.access import (
     get_skills_root_dir,
     is_builtin_skill,
+    normalize_skill_share_config,
 )
 from yuxi.modules.extensions.skills.builtin import BUILTIN_SKILLS_DIR
 from yuxi.modules.extensions.skills.models import Skill
 from yuxi.modules.extensions.skills.package import (
     compute_skill_directory_hash,
     copy_skill_tree_no_symlinks,
-    normalize_string_list,
     parse_skill_markdown,
 )
 from yuxi.modules.extensions.skills.repository import SkillRepository
@@ -57,18 +58,6 @@ async def init_builtin_skills(db: AsyncSession, *, created_by: str = "system") -
                     description=spec["description"],
                     updated_by=created_by,
                 )
-            if (
-                normalize_string_list(existing.tool_dependencies or []) != spec["tool_dependencies"]
-                or normalize_string_list(existing.mcp_dependencies or []) != spec["mcp_dependencies"]
-                or normalize_string_list(existing.skill_dependencies or []) != spec["skill_dependencies"]
-            ):
-                await repo.update_dependencies(
-                    existing,
-                    tool_dependencies=spec["tool_dependencies"],
-                    mcp_dependencies=spec["mcp_dependencies"],
-                    skill_dependencies=spec["skill_dependencies"],
-                    updated_by=created_by,
-                )
             synced_items.append(
                 await repo.update_builtin_install(
                     existing,
@@ -85,11 +74,8 @@ async def init_builtin_skills(db: AsyncSession, *, created_by: str = "system") -
                 name=spec["name"],
                 description=spec["description"],
                 source_type="builtin",
-                tool_dependencies=spec["tool_dependencies"],
-                mcp_dependencies=spec["mcp_dependencies"],
-                skill_dependencies=spec["skill_dependencies"],
                 dir_path=(Path("shared") / slug).as_posix(),
-                share_config=BUILTIN_SKILL_SHARE_CONFIG.copy(),
+                share_config=normalize_skill_share_config(None, operator_uid=created_by, source_type="builtin"),
                 enabled=True,
                 version=spec["version"],
                 content_hash=spec["content_hash"],
@@ -105,10 +91,16 @@ async def init_builtin_skills(db: AsyncSession, *, created_by: str = "system") -
 def list_builtin_skill_specs() -> list[dict[str, Any]]:
     """发现源码目录中的 Skill，并以 frontmatter 作为唯一元数据。"""
     specs: list[dict[str, Any]] = []
-    for source_dir in sorted(BUILTIN_SKILLS_DIR.iterdir()):
+    sources = [BUILTIN_SKILLS_DIR, *get_plugin_skill_directories()]
+    source_dirs = [source_dir for directory in sources for source_dir in sorted(directory.iterdir())]
+    seen_slugs: set[str] = set()
+    for source_dir in source_dirs:
         if not source_dir.is_dir() or source_dir.name.startswith(("_", ".")):
             continue
         slug = source_dir.name
+        if slug in seen_slugs:
+            raise ValueError(f"内置 skill slug 重复: {slug}")
+        seen_slugs.add(slug)
         skill_md = source_dir / "SKILL.md"
         if not skill_md.exists():
             raise ValueError(f"内置 skill 缺少 SKILL.md: {source_dir}")
@@ -124,9 +116,6 @@ def list_builtin_skill_specs() -> list[dict[str, Any]]:
                 "name": parsed_name,
                 "description": parsed_desc,
                 "version": str(meta.get("version", "1.0.0")),
-                "tool_dependencies": normalize_string_list(meta.get("tool_dependencies")),
-                "mcp_dependencies": normalize_string_list(meta.get("mcp_dependencies")),
-                "skill_dependencies": normalize_string_list(meta.get("skill_dependencies")),
                 "content_hash": compute_skill_directory_hash(source_dir).hex(),
                 "source_dir": source_dir,
             }

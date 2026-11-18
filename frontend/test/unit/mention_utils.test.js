@@ -100,3 +100,26 @@ test('智能体引用保存稳定 ID，同名智能体仍保持独立且可以�
   assert.deepEqual(expandMentionDeletionRange(text, text.length), { start: 0, end: text.length })
   assert.equal(mentionUtils.findActiveMentionQuery(text, text.length), null)
 })
+
+test('插件引用保存稳定 ID、显示中文名称并沿用整体删除与解析', async () => {
+  const { buildMentionResourceItems } = await server.ssrLoadModule(
+    '/src/modules/session/model/mention_resource_items.js'
+  )
+  const mention = { plugins: [
+    { id: 'custom-image', name: '自定义图像', description: '按描述生成图片' },
+    { id: 'image-alt', name: '自定义图像' }
+  ] }
+  const items = buildMentionResourceItems(mention).plugins
+  assert.deepEqual(items.map((item) => item.value), ['custom-image', 'image-alt'])
+  const text = mentionUtils.formatMentionToken(items[0].type, items[0].value)
+  assert.equal(text, '@plugin:custom-image')
+  const [segment] = mentionUtils.parseMentionText(text)
+  assert.equal(segment.type, 'plugin')
+  assert.equal(segment.value, 'custom-image')
+  assert.equal(mentionUtils.getMentionDisplayLabel('plugin', 'custom-image',
+    mentionUtils.buildMentionDisplayLabels(mention)), '自定义图像')
+  assert.equal(mentionUtils.getMentionDisplayLabel('plugin', 'unknown'), 'unknown')
+  assert.deepEqual(mentionUtils.expandMentionDeletionRange(text, text.length),
+    { start: 0, end: text.length })
+  assert.equal(mentionUtils.findActiveMentionQuery(text, text.length), null)
+})

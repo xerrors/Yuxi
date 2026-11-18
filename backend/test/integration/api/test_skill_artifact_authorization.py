@@ -12,11 +12,11 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from test.integration.api.helpers import create_default_agent_thread
-from yuxi.modules.extensions.skills import shared as skill_service
+from yuxi.modules.extensions.skills.access import get_skills_root_dir
 from yuxi.modules.extensions.skills import projection as projection_service
 from yuxi.modules.extensions.skills.models import Skill
 
-pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
+pytestmark = [pytest.mark.asyncio, pytest.mark.integration, pytest.mark.self_managed_resources]
 
 
 async def test_skill_artifact_rechecks_authorization_after_share_revoke(
@@ -33,7 +33,7 @@ async def test_skill_artifact_rechecks_authorization_after_share_revoke(
 
     suffix = uuid.uuid4().hex
     slug = f"pytest-artifact-{suffix}"
-    source_dir = skill_service.get_skills_root_dir() / slug
+    source_dir = get_skills_root_dir() / slug
     source_dir.mkdir(parents=True)
     (source_dir / "SKILL.md").write_text("# authorized artifact\n", encoding="utf-8")
 
@@ -48,9 +48,6 @@ async def test_skill_artifact_rechecks_authorization_after_share_revoke(
                 name=slug,
                 description="Skill artifact authorization integration fixture",
                 source_type="upload",
-                tool_dependencies=[],
-                mcp_dependencies=[],
-                skill_dependencies=[],
                 dir_path=f"shared/{slug}",
                 share_config={
                     "version": 2,

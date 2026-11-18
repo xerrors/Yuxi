@@ -88,6 +88,70 @@ async def test_cancellation_not_swallowed():
 
 
 @pytest.mark.parametrize("sync", [False, True])
+@pytest.mark.asyncio
+async def test_no_retry_after_sleep_crosses_budget(monkeypatch, sync):
+    """调度延迟越过预算后不再调用模型，保留原网络错误。"""
+    import yuxi.modules.agents.runtime.middlewares.network_retry as module
+
+    clock = {"now": 0}
+
+    def sleep(_seconds):
+        """模拟事件循环或线程调度停顿。"""
+        clock["now"] = 10
+
+    async def asleep(seconds):
+        """异步等待使用相同的时钟推进。"""
+        sleep(seconds)
+
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: clock["now"], sleep=sleep))
+    monkeypatch.setattr(module.asyncio, "sleep", asleep)
+    error = TimeoutError("read stalled")
+    calls = []
+
+    def handler(request):
+        """只有首次失败应当到达模型边界。"""
+        calls.append(request)
+        if len(calls) > 1:
+            pytest.fail("预算耗尽后仍发起了请求")
+        raise error
+
+    async def ahandler(request):
+        """复用同步故障。"""
+        return handler(request)
+
+    mw = NetworkRetryMiddleware(network_budget_seconds=5, network_initial_delay=1)
+    with pytest.raises(TimeoutError) as raised:
+        if sync:
+            mw.wrap_model_call(object(), handler)
+        else:
+            await mw.awrap_model_call(object(), ahandler)
+    assert raised.value is error
+
+
+@pytest.mark.asyncio
+async def test_timeout_retry_emits_only_safe_progress(monkeypatch):
+    """重试事件包含次数和等待时间，不包含供应商错误中的敏感内容。"""
+    import httpx
+    import yuxi.modules.agents.runtime.middlewares.network_retry as module
+
+    events = []
+    monkeypatch.setattr(module, "get_stream_writer", lambda: events.append)
+    attempts = 0
+
+    async def handler(_request):
+        """第一次读取停顿，第二次成功。"""
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise httpx.ReadTimeout("private-provider-detail")
+        return "answer"
+
+    mw = NetworkRetryMiddleware(network_initial_delay=0)
+    assert await mw.awrap_model_call(object(), handler) == "answer"
+    assert events == [{"type": "yuxi.model_retry", "attempt": 1, "delay_seconds": 0}]
+
+
+@pytest.mark.parametrize("sync", [False, True])
 @pytest.mark.parametrize("max_retries", [0, 2])
 @pytest.mark.asyncio
 async def test_rate_limit_exhaustion_preserves_original_error(sync, max_retries):

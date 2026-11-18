@@ -161,9 +161,10 @@ async def test_discovered_content_persists_and_preserves_customization(tmp_path,
     skill_dir.mkdir(parents=True)
     skill_md = skill_dir / "SKILL.md"
     skill_md.write_text(
-        f'---\nname: 测试技能\nslug: {skill_slug}\ndescription: 初始描述\nversion: "1.0"\ntool_dependencies: [web_search]\n---\n技能正文\n'
+        f'---\nname: 测试技能\nslug: {skill_slug}\ndescription: 初始描述\nversion: "1.0"\n---\n技能正文\n'
     )
     monkeypatch.setattr(skill_service, "BUILTIN_SKILLS_DIR", skill_dir.parent)
+    monkeypatch.setattr(skill_service, "get_plugin_skill_directories", lambda: ())
     monkeypatch.setattr(skill_service, "get_skills_root_dir", lambda: tmp_path / "skill-sources/shared")
     engine = create_async_engine(os.environ["POSTGRES_URL"])
     sessions = async_sessionmaker(engine, expire_on_commit=False)
@@ -179,7 +180,8 @@ async def test_discovered_content_persists_and_preserves_customization(tmp_path,
             assert role.backend_id == "ChatbotAgent"
             assert role.config_json == {"context": {"system_prompt": "原始提示词"}}
             assert skill.description == "初始描述"
-            assert skill.tool_dependencies == ["web_search"]
+            assert "tool_dependencies" not in skill.to_dict()
+            assert (tmp_path / "skill-sources/shared" / skill_slug / "SKILL.md").read_text() == skill_md.read_text()
             assert skill.version == "1.0" and skill.source_type == "builtin"
             role_id, skill_id = role.id, skill.id
             role.name = "管理员定制"

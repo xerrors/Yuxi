@@ -8,7 +8,8 @@ from yuxi.api.responses.knowledge import serialize_knowledge_base
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.identity.models import User
 from yuxi.modules.knowledge.graphs.service import KnowledgeGraphService
-from yuxi.modules.knowledge.runtime import knowledge_base
+from yuxi.modules.knowledge.services import access as knowledge_access
+from yuxi.modules.knowledge.services import bases as knowledge_bases
 from yuxi.shared.errors import DomainError
 
 graph = APIRouter(prefix="/graph", tags=["graph"])
@@ -18,7 +19,7 @@ graph = APIRouter(prefix="/graph", tags=["graph"])
 async def get_graphs(current_user: User = Depends(get_admin_user)):
     """获取支持图谱能力的 Milvus 知识库列表"""
     try:
-        knowledge_bases = await knowledge_base.get_knowledge_bases_by_uid(current_user.uid)
+        knowledge_bases = await knowledge_access.get_knowledge_bases_by_uid(current_user.uid)
         graphs = []
         for kb in knowledge_bases:
             if kb.kb_type.lower() != "milvus":
@@ -108,7 +109,7 @@ async def get_graph_stats(
 
 async def _get_graph_service(kb_id: str) -> KnowledgeGraphService:
     """加载 Milvus 知识库的图谱服务；类型不符按不存在处理。"""
-    kb_info = await knowledge_base.get_knowledge_base_info(kb_id)
+    kb_info = await knowledge_bases.get_knowledge_base_info(kb_id)
     if not kb_info:
         raise HTTPException(status_code=404, detail="Knowledge base not found")
 

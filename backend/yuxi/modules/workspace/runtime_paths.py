@@ -11,6 +11,7 @@ SHARED_SKILLS_PATH = "/home/user/skills"
 PERSONAL_SKILLS_PATH = f"{WORKSPACE_PATH.rstrip('/')}/agents/skills"
 LARGE_TOOL_RESULTS_DIR_NAME = "large_tool_results"
 CONVERSATION_HISTORY_DIR_NAME = "conversation_history"
+TOOL_MEDIA_DIR_NAME = "tool_media"
 
 
 def normalize_runtime_path(path: str) -> str:
@@ -57,6 +58,14 @@ def workdir_runtime_paths(workdir_path: str) -> tuple[str, str]:
         f"{outputs}/{LARGE_TOOL_RESULTS_DIR_NAME}",
         f"{outputs}/{CONVERSATION_HISTORY_DIR_NAME}",
     )
+
+
+def workdir_tool_media_dir(workdir_path: str) -> str:
+    """返回当前 Workdir runtime 的工具图片媒体目录。"""
+    normalized = normalize_runtime_path(workdir_path).rstrip("/")
+    if not normalized.startswith(f"{WORKSPACE_PATH.rstrip('/')}/"):
+        raise ValueError("workdir_path must be a Backend runtime path")
+    return f"{normalized}/outputs/{TOOL_MEDIA_DIR_NAME}"
 
 
 def runtime_workspace_path(workspace_path: str) -> str:
@@ -110,6 +119,7 @@ def is_runtime_path(path: str) -> bool:
 __all__ = [
     "CONVERSATION_HISTORY_DIR_NAME",
     "LARGE_TOOL_RESULTS_DIR_NAME",
+    "TOOL_MEDIA_DIR_NAME",
     "WORKSPACE_PATH",
     "PERSONAL_SKILLS_PATH",
     "SHARED_SKILLS_PATH",
@@ -122,4 +132,5 @@ __all__ = [
     "workdir_scope_from_runtime_path",
     "workspace_scope_from_runtime_path",
     "workdir_runtime_paths",
+    "workdir_tool_media_dir",
 ]

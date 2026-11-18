@@ -24,6 +24,7 @@ from yuxi.modules.agents.services.leases import (
     reconcile_pending_runtime_cleanups,
 )
 from yuxi.modules.agents.services.scheduler import recover_pending_dispatches
+from yuxi.modules.identity.provider import require_provider_config
 from yuxi.modules.identity.security import AuthUtils
 from yuxi.modules.knowledge.mcp.auth import require_knowledge_delegation_config
 from yuxi.modules.schedules.service import claim_and_dispatch_due_jobs, recover_scheduled_dispatches
@@ -44,6 +45,7 @@ async def startup(ctx: dict) -> None:
     if knowledge:
         require_knowledge_delegation_config()
     AuthUtils.require_security_secrets()
+    require_provider_config()
     from yuxi.modules.agents.runtime.sandbox import check_sandbox_provider
 
     await check_sandbox_provider()

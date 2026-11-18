@@ -11,7 +11,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.infrastructure.filesystem import open_regular_file_fd
-from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.extensions.plugins.registry import get_plugin, get_plugins
 from yuxi.modules.extensions.skills.access import lock_accessible_shared_skills_for_runtime, resolved_shared_skill
 from yuxi.modules.extensions.skills.package import normalize_string_list
 from yuxi.modules.extensions.skills.personal import list_personal_skills
@@ -39,8 +39,11 @@ async def resolve_runtime_skills_for_context(
     user: User,
     agent=None,
 ) -> SkillRuntimeSnapshot:
-    """合并已选共享与全部个人 Skill，派生运行范围和预加载快照。"""
-    selected = normalize_string_list(getattr(context, "skills", None))
+    """合并授权内容和插件配套来源；正文读取不授予运行能力。"""
+    plugins = [get_plugin(plugin_id) for plugin_id in getattr(context, "plugins", [])]
+    owned_entries = {plugin.entry_skill for plugin in get_plugins() if plugin.entry_skill}
+    plugin_skills = normalize_string_list([slug for plugin in plugins for slug in (plugin.entry_skill, *plugin.skills) if slug])
+    selected = [slug for slug in normalize_string_list(getattr(context, "skills", None)) if slug not in owned_entries]
     personal_items = await list_personal_skills(str(user.uid))
     personal_slugs = {item.slug for item in personal_items}
     bound_slug = None
@@ -61,14 +64,15 @@ async def resolve_runtime_skills_for_context(
             if bound.slug not in prepared_bound:
                 bound = None
         if bound is not None:
-            if bound.slug in personal_slugs:
+            if bound.slug in personal_slugs and bound.slug not in owned_entries:
                 raise ValueError("个人 Skill 与智能体专属 Skill 标识冲突，请重命名个人 Skill")
             bound_slug = bound.slug
-            selected = [*selected, bound_slug]
+            if bound_slug not in owned_entries:
+                selected = [*selected, bound_slug]
     shared_rows = await lock_accessible_shared_skills_for_runtime(
         db,
         user,
-        selected,
+        normalize_string_list([*selected, *plugin_skills]),
         shadowed_slugs=personal_slugs,
         **({"bound_slug": bound_slug} if bound_slug else {}),
     )
@@ -77,15 +81,15 @@ async def resolve_runtime_skills_for_context(
     runtime_skills = build_runtime_skills(list(skill_items_by_slug.values()))
     selected_skills = [slug for slug in selected if slug in skill_items_by_slug]
     context_skills = normalize_string_list([*selected_skills, *(item.slug for item in personal_items)])
-    effective_skills = expand_skill_closure(context_skills, runtime_skills)
-    limited = any(dependency not in runtime_skills for slug in effective_skills for dependency in runtime_skills[slug]["skills"])
+    effective_skills = normalize_string_list([*context_skills, *(slug for slug in plugin_skills if slug in runtime_skills)])
+    limited = any(slug not in runtime_skills or slug in personal_slugs for slug in plugin_skills)
     configured_preloads = normalize_string_list(getattr(context, "preload_skills", None))
     context_preload_skills = [slug for slug in configured_preloads if slug in selected_skills]
-    if bound_slug:
+    if bound_slug and bound_slug not in owned_entries:
         if bound_slug not in runtime_skills:
             raise PermissionError("智能体专属 Skill 不可用")
         context_preload_skills = normalize_string_list([*context_preload_skills, bound_slug])
-    preloaded_skills = expand_skill_closure(context_preload_skills, runtime_skills)
+    preloaded_skills = context_preload_skills
     metadata = {
         slug: {
             "source_scope": skill_items_by_slug[slug].source_scope,
@@ -120,7 +124,19 @@ async def resolve_runtime_skills_for_context(
             if metadata[slug]["source_scope"] != "personal":
                 digest = hashlib.sha256(preloaded_contents[slug].encode("utf-8")).hexdigest()
                 metadata[slug]["source_identity"] += f":{digest}"
+    entry_slugs = [
+        plugin.entry_skill for plugin in plugins if plugin.entry_skill in runtime_skills and plugin.entry_skill not in personal_slugs
+    ]
+    entry_contents = await asyncio.to_thread(_read_preloaded_skill_contents, entry_slugs, skill_items_by_slug) if entry_slugs else {}
+    for slug, content in entry_contents.items():
+        if _skill_source_identity(skill_items_by_slug[slug]) != metadata[slug]["source_identity"]:
+            raise RuntimeError("读取插件入口期间来源发生变化")
+        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        metadata[slug]["source_identity"] += f":{digest}"
     return {
+        "plugin_entry_contents": {
+            plugin.plugin_id: entry_contents[plugin.entry_skill] for plugin in plugins if plugin.entry_skill in entry_contents
+        },
         "capability_limited": limited,
         "context_skills": context_skills,
         "context_preload_skills": context_preload_skills,
@@ -152,85 +168,8 @@ def build_runtime_skills(skills: list) -> dict[str, RuntimeSkill]:
             "name": item.name,
             "description": item.description,
             "path": f"{root}/{item.slug}/SKILL.md",
-            "tools": normalize_string_list(item.tool_dependencies or []),
-            "mcps": normalize_string_list(item.mcp_dependencies or []),
-            "skills": normalize_string_list(item.skill_dependencies or []),
         }
     return result
-
-
-def expand_skill_closure(
-    slugs: list[str] | None,
-    runtime_skills: dict[str, RuntimeSkill],
-) -> list[str]:
-    """展开 Skill 依赖闭包并保持根与依赖的声明顺序。"""
-    ordered_roots = normalize_string_list(slugs)
-    if not ordered_roots:
-        return []
-
-    result: list[str] = []
-    seen: set[str] = set()
-
-    def dfs(slug: str, stack: set[str]) -> None:
-        if slug in stack:
-            logger.warning(f"Cycle detected in skill dependencies, skip: {' -> '.join([*stack, slug])}")
-            return
-        if slug in seen:
-            return
-
-        node = runtime_skills.get(slug)
-        if not node:
-            logger.warning(f"Skill dependency target not found in DB, skip: {slug}")
-            return
-
-        seen.add(slug)
-        result.append(slug)
-        next_stack = set(stack)
-        next_stack.add(slug)
-        for dep in node.get("skills", []):
-            dfs(dep, next_stack)
-
-    for root in ordered_roots:
-        dfs(root, set())
-    return result
-
-
-def connected_skills(slugs: list[str], runtime_skills: dict[str, RuntimeSkill], available_mcps: set[str]) -> list[str]:
-    """Skill 任意层依赖的 MCP 不可用时，不开放该 Skill 的工具。"""
-    return [
-        slug
-        for slug in slugs
-        if all(
-            set(runtime_skills[dependency].get("mcps", [])).issubset(available_mcps)
-            for dependency in expand_skill_closure([slug], runtime_skills)
-        )
-    ]
-
-
-def build_dependency_bundle(
-    activated_skills: list[str],
-    runtime_skills: dict[str, RuntimeSkill],
-) -> dict[str, list[str]]:
-    """汇总直接激活 Skill 的本地工具和 MCP 依赖。"""
-    tools: list[str] = []
-    mcps: list[str] = []
-    seen_tools: set[str] = set()
-    seen_mcps: set[str] = set()
-
-    for slug in activated_skills:
-        dependency = runtime_skills.get(slug, {})
-        for tool_name in dependency.get("tools", []):
-            if tool_name in seen_tools:
-                continue
-            seen_tools.add(tool_name)
-            tools.append(tool_name)
-        for mcp_name in dependency.get("mcps", []):
-            if mcp_name in seen_mcps:
-                continue
-            seen_mcps.add(mcp_name)
-            mcps.append(mcp_name)
-
-    return {"tools": tools, "mcps": mcps}
 
 
 def _read_preloaded_skill_contents(slugs: list[str], skill_items: dict[str, Any]) -> dict[str, str]:

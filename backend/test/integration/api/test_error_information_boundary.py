@@ -81,7 +81,14 @@ async def test_unknown_knowledge_failure_hides_internal_detail(error_http, monke
         "submit_pending_document_action",
         "fetch_url_content",
     }
-    owner = knowledge_routes if target in local_targets else knowledge_routes.knowledge_base_manager
+    if target in local_targets:
+        owner = knowledge_routes
+    elif target in {"create_folder", "rename_folder", "move_file"}:
+        owner = knowledge_routes.knowledge_directories
+    elif target == "update_kb_query_params":
+        owner = knowledge_routes.knowledge_bases
+    else:
+        owner = knowledge_routes.knowledge_base_manager
     failure = AsyncMock(side_effect=RuntimeError(PRIVATE_DETAIL))
     monkeypatch.setattr(owner, target, failure)
     path = suffix if suffix.startswith("/api/") else BASE + suffix
@@ -127,15 +134,24 @@ async def test_query_preserves_top_level_scoring_and_highlights(error_http, monk
 )
 async def test_partial_delete_keeps_item_results_without_internal_error(error_http, monkeypatch, error, public_message):
     """部分失败保留成功数量与文件身份，未知原因不直接发送。"""
-    monkeypatch.setattr(knowledge_routes.knowledge_base_manager, "get_file_basic_info", AsyncMock(return_value={"meta": {}}))
-    monkeypatch.setattr(
-        knowledge_routes.knowledge_base_manager,
-        "delete_file",
-        AsyncMock(side_effect=[None, error]),
-    )
+    from yuxi.modules.knowledge.services import documents, statistics
+
+    deleted = []
+
+    async def mark_deleted(*, kb_id, file_id):
+        """在持久化边界注入逐项失败，成功项保留独立结果。"""
+        if file_id == "file_failed":
+            raise error
+        deleted.append(file_id)
+
+    monkeypatch.setattr(documents, "require_document_support", AsyncMock())
+    monkeypatch.setattr(documents, "get_file_basic_info", AsyncMock(return_value={"meta": {"is_folder": False}}))
+    monkeypatch.setattr(statistics, "refresh_stats", AsyncMock())
+    monkeypatch.setattr(knowledge_routes.administration.KnowledgeFileRepository, "mark_deleted", staticmethod(mark_deleted))
     response = await error_http.request("DELETE", BASE + "/documents/batch", json=["file_ok", "file_failed"])
     assert response.status_code == 200, response.text
     body = response.json()
+    assert deleted == ["file_ok"]
     assert body["deleted_count"] == 1
     assert body["failed_items"] == [{"doc_id": "file_failed", "error": public_message}]
     assert PRIVATE_DETAIL not in response.text

@@ -5,6 +5,14 @@ from pydantic import ValidationError
 
 from yuxi.api.routers.public_v1.agents.schemas import InputAttachmentOptions, MessageEvent, SessionConnectorOptions, SessionCreate
 from yuxi.modules.agents.services.input_config import merge_mcp_selections
+from yuxi.shared.errors import InvalidInputError
+
+
+@pytest.mark.parametrize("selections", [(["abridge"],), ("all", ["abridge"]), (["abridge"], "all")])
+def test_abridge_cannot_be_added_as_a_direct_connector(selections):
+    """显式设备连接器不能通过追加或 all 提前返回绕过插件选择。"""
+    with pytest.raises(InvalidInputError, match="连接器通过插件启用"):
+        merge_mcp_selections(*selections)
 
 
 @pytest.mark.parametrize(

@@ -16,10 +16,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.modules.extensions.skills.models import Skill, SkillVersion
 from yuxi.modules.extensions.skills.projection import get_user_skills_root_dir, refresh_user_skill_projection_async
-from yuxi.modules.extensions.skills.shared import get_skills_root_dir
 from yuxi.infrastructure.runtime_settings import get_skill_data_dir
 
-pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
+pytestmark = [pytest.mark.asyncio, pytest.mark.integration, pytest.mark.self_managed_resources]
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -78,8 +77,6 @@ async def test_bound_skill_creation_upload_revision_visibility_and_delete(test_c
             listed = await test_client.get(route, headers=admin_headers)
             assert listed.status_code == 200, listed.text
             assert skill_slug not in str(listed.json())
-        options = await test_client.get("/api/system/skills/dependency-options", headers=admin_headers)
-        assert skill_slug not in options.json()["data"]["skills"]
         detail = await test_client.get(f"/api/system/skills/{skill_slug}", headers=admin_headers)
         assert detail.status_code == 200 and detail.json()["data"]["source_scope"] == "agent_bound"
         for method, suffix, payload in (
@@ -145,27 +142,15 @@ async def test_bound_skill_creation_upload_revision_visibility_and_delete(test_c
             data={"expected_revision": binding.json()["revision"]},
             files={"file": ("skill.zip", skill_zip(dependency=skill_slug), "application/zip")},
         )
-        assert rejected.status_code == 409, rejected.text
+        assert rejected.status_code == 422, rejected.text
         assert source.joinpath("references/note.md").read_text() == "reference-after"
         prepared = await test_client.post(
             "/api/skills/import/prepare",
             headers=admin_headers,
             files={"file": ("ordinary.zip", skill_zip(dependency=skill_slug), "application/zip")},
         )
-        assert prepared.status_code == 200, prepared.text
-        installed = await test_client.post(
-            f"/api/skills/install-drafts/{prepared.json()['data']['draft_id']}/confirm",
-            headers=admin_headers,
-            json={"share_config": None},
-        )
-        assert installed.status_code == 200, installed.text
-        assert installed.json()["data"][0]["success"] is False
-        assert "skill 依赖" in installed.json()["data"][0]["error"]
-        discarded = await test_client.delete(
-            f"/api/skills/install-drafts/{prepared.json()['data']['draft_id']}",
-            headers=admin_headers,
-        )
-        assert discarded.status_code == 200, discarded.text
+        assert prepared.status_code == 400, prepared.text
+        assert "部署插件" in prepared.text
         exported = await test_client.get(f"/api/system/skills/{skill_slug}/export", headers=admin_headers)
         assert exported.status_code == 200, exported.text
         with ZipFile(BytesIO(exported.content)) as archive:
@@ -254,74 +239,24 @@ async def test_bound_permission_follows_agent_and_removes_revoked_projection(tes
         assert deleted.status_code in {200, 404}, deleted.text
 
 
-async def test_private_agent_sharing_rolls_back_when_bound_dependency_is_restricted(test_client, admin_headers):
-    """扩大共享范围不能绕过专属依赖授权，失败保留定义和绑定内容。"""
-    from yuxi.modules.agents.models.definitions import Agent
-
-    suffix = uuid.uuid4().hex[:8]
-    agent_slug, dependency_slug = f"pytest-promote-{suffix}", f"pytest-restricted-{suffix}"
-    uid = (await test_client.get("/api/auth/me", headers=admin_headers)).json()["uid"]
-    limited = {"version": 2, "read_scope": {"access_level": "user", "user_uids": [uid]}, "manage_scope": None}
-    source = f"---\nslug: {dependency_slug}\nname: Restricted\ndescription: limited\n---\n# Private guide\n"
-    prepared = await test_client.post(
-        "/api/skills/import/prepare",
-        headers=admin_headers,
-        files={"file": ("SKILL.md", source.encode(), "text/markdown")},
-    )
-    assert prepared.status_code == 200, prepared.text
-    confirmed = await test_client.post(
-        f"/api/skills/install-drafts/{prepared.json()['data']['draft_id']}/confirm",
-        headers=admin_headers,
-        json={"slugs": [dependency_slug], "share_config": limited},
-    )
-    assert confirmed.status_code == 200 and confirmed.json()["data"][0]["success"], confirmed.text
-    engine = create_async_engine(os.environ["POSTGRES_URL"])
+async def test_bound_skill_upload_rejects_runtime_dependencies_without_creating_binding(test_client, admin_headers):
+    """专属 Skill 上传不能重新建立运行依赖，拒绝后仍无绑定。"""
+    slug = f"pytest-dependency-{uuid.uuid4().hex[:8]}"
+    created = await test_client.post("/api/agent", headers=admin_headers, json={"name": slug, "slug": slug})
+    assert created.status_code == 200, created.text
     try:
-        created = await test_client.post("/api/agent", headers=admin_headers, json={"name": agent_slug, "slug": agent_slug})
-        assert created.status_code == 200, created.text
         uploaded = await test_client.post(
-            f"/api/agent/{agent_slug}/self-skill/upload",
+            f"/api/agent/{slug}/self-skill/upload",
             headers=admin_headers,
-            files={"file": ("skill.zip", skill_zip(dependency=dependency_slug), "application/zip")},
+            files={"file": ("skill.zip", skill_zip(dependency="chat-widgets"), "application/zip")},
         )
-        assert uploaded.status_code == 200, uploaded.text
-        skill_slug = uploaded.json()["skill"]["slug"]
-        before = await current_content(skill_slug)
-        original_content = before.joinpath("SKILL.md").read_bytes()
-        shared = await test_client.put(
-            f"/api/agent/{agent_slug}",
-            headers=admin_headers,
-            json={
-                "visibility": "shared",
-                "name": "must roll back",
-                "share_config": {
-                    "version": 2,
-                    "read_scope": {"access_level": "global"},
-                    "manage_scope": None,
-                },
-            },
-        )
-        assert shared.status_code == 422 and "权限范围不匹配" in shared.text, shared.text
-        async with async_sessionmaker(engine)() as db:
-            agent = await db.scalar(select(Agent).where(Agent.slug == agent_slug))
-            skill = await db.scalar(select(Skill).where(Skill.slug == skill_slug))
-            assert (agent.id, agent.name, agent.created_by, agent.visibility) == (
-                created.json()["agent"]["id"],
-                agent_slug,
-                uid,
-                "private",
-            )
-            assert agent.share_config == {"version": 2, "read_scope": None, "manage_scope": None}
-            assert skill.bound_agent_id == agent.id and skill.skill_dependencies == [dependency_slug]
-            assert get_skill_data_dir() / skill.dir_path == before
-            assert skill.content_hash == uploaded.json()["revision"]
-        assert before.joinpath("SKILL.md").read_bytes() == original_content
+        assert uploaded.status_code == 422, uploaded.text
+        assert "部署插件" in uploaded.text
+        binding = await test_client.get(f"/api/agent/{slug}/self-skill", headers=admin_headers)
+        assert binding.json()["skill"] is None
     finally:
-        deleted = await test_client.delete(f"/api/agent/{agent_slug}", headers=admin_headers)
+        deleted = await test_client.delete(f"/api/agent/{slug}", headers=admin_headers)
         assert deleted.status_code in {200, 404}, deleted.text
-        deleted = await test_client.delete(f"/api/system/skills/{dependency_slug}", headers=admin_headers)
-        assert deleted.status_code in {200, 404}, deleted.text
-        await engine.dispose()
 
 
 async def test_bound_runtime_uses_app_agent_visibility_without_management(test_client, admin_headers, standard_user):
@@ -786,84 +721,45 @@ async def test_content_save_does_not_refresh_all_users(test_client, admin_header
         await engine.dispose()
 
 
-async def test_restore_revalidates_dependencies_against_current_agent_scope(test_client, admin_headers, standard_user, bound_version_skill):
-    """latest 移除依赖后扩大 Agent 授权，旧快照不得恢复不覆盖新范围的依赖。"""
-    agent_slug, slug = bound_version_skill
+async def test_restore_rejects_legacy_runtime_dependencies(test_client, admin_headers, bound_version_skill):
+    """构造升级前的真实历史版本，恢复不得重新引入运行依赖。"""
+    from yuxi.modules.extensions.skills.package import compute_skill_directory_hash
+
+    _agent_slug, slug = bound_version_skill
     base = f"/api/system/skills/{slug}"
-    me = await test_client.get("/api/auth/me", headers=admin_headers)
-    dep_slug = f"pytest-version-dep-{uuid.uuid4().hex[:8]}"
+    latest = await test_client.get(f"{base}/content", headers=admin_headers)
+    published = await test_client.post(
+        f"{base}/versions",
+        headers=admin_headers,
+        json={"expected_revision": latest.json()["data"]["revision"]},
+    )
+    assert published.status_code == 200, published.text
     engine = create_async_engine(os.environ["POSTGRES_URL"])
-    factory = async_sessionmaker(engine, expire_on_commit=False)
-    dep_source = get_skills_root_dir() / dep_slug
-    dep_source.mkdir()
-    dep_source.joinpath("SKILL.md").write_text(f"---\nslug: {dep_slug}\nname: dependency\ndescription: test\n---\n")
     try:
-        async with factory() as db:
-            db.add(
-                Skill(
-                    slug=dep_slug,
-                    name=dep_slug,
-                    description="dependency",
-                    source_type="upload",
-                    dir_path=f"shared/{dep_slug}",
-                    share_config={
-                        "version": 2,
-                        "read_scope": {"access_level": "user", "user_uids": [me.json()["uid"]], "department_ids": []},
-                        "manage_scope": None,
-                    },
-                    created_by=me.json()["uid"],
-                    enabled=True,
-                )
-            )
+        async with async_sessionmaker(engine)() as db:
+            item = await db.scalar(select(Skill).where(Skill.slug == slug))
+            historical = await db.scalar(select(SkillVersion).where(SkillVersion.skill_id == item.id))
+            label = historical.version
+            source = get_skill_data_dir() / "packages" / slug / uuid.uuid4().hex
+            shutil.copytree(get_skill_data_dir() / historical.dir_path, source)
+            historical.dir_path = source.relative_to(get_skill_data_dir()).as_posix()
+            root = source / "SKILL.md"
+            original = root.read_text()
+            root.write_text(original.replace("---\n", "---\nmcp_dependencies: [knowledge]\n", 1))
+            historical.content_hash = compute_skill_directory_hash(source).hex()
             await db.commit()
-        saved = await test_client.put(
-            f"{base}/content",
-            headers=admin_headers,
-            json={
-                "changes": [{"action": "dependencies", "skill_dependencies": [dep_slug]}],
-                "expected_revision": (await test_client.get(f"{base}/content", headers=admin_headers)).json()["data"]["revision"],
-                "release": True,
-            },
-        )
-        assert saved.status_code == 200, saved.text
-        label = saved.json()["data"]["published_version"]["version"]
-        removed = await test_client.put(
-            f"{base}/dependencies",
-            headers=admin_headers,
-            json={
-                "skill_dependencies": [],
-                "expected_revision": (await test_client.get(f"{base}/file?path=SKILL.md", headers=admin_headers)).json()["data"][
-                    "revision"
-                ],
-            },
-        )
-        assert removed.status_code == 200, removed.text
-        grants = {
-            "version": 2,
-            "read_scope": {"access_level": "user", "user_uids": [standard_user["user"]["uid"]], "department_ids": []},
-            "manage_scope": None,
-        }
-        published = await test_client.put(f"/api/agent/{agent_slug}", headers=admin_headers, json={"share_config": grants})
-        assert published.status_code == 200, published.text
+        current = await current_content(slug)
+        before = current.joinpath("SKILL.md").read_bytes()
         listed = await test_client.get(f"{base}/versions", headers=admin_headers)
-        source = (await current_content(slug)) / "SKILL.md"
-        before = source.read_bytes()
         rejected = await test_client.post(
             f"{base}/versions/{label}/restore",
             headers=admin_headers,
             json={"expected_revision": listed.json()["data"]["revision"]},
         )
         assert rejected.status_code == 400, rejected.text
-        assert dep_slug in rejected.text
-        assert source.read_bytes() == before
-        detail = await test_client.get(base, headers=admin_headers)
-        assert detail.json()["data"]["skill_dependencies"] == []
+        assert "部署插件" in rejected.text
+        assert (await current_content(slug)).joinpath("SKILL.md").read_bytes() == before
     finally:
-        async with factory() as db:
-            dep = await db.scalar(select(Skill).where(Skill.slug == dep_slug))
-            await db.delete(dep)
-            await db.commit()
-        shutil.rmtree(dep_source)
         await engine.dispose()
 
 

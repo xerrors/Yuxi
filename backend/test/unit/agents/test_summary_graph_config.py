@@ -209,7 +209,7 @@ async def test_checkpoint_cleanup_preserves_original_tasks_and_state(monkeypatch
         config,
         {
             "messages": [AIMessage(id="pending", content="", tool_calls=[{"id": "one", "name": "write_file", "args": {}}])],
-            "activated_skills": ["retained"],
+            "activated_plugins": ["retained"],
         },
         as_node="model",
     )
@@ -238,7 +238,7 @@ async def test_checkpoint_cleanup_preserves_original_tasks_and_state(monkeypatch
     assert saved.next == () and saved.interrupts == ()
     assert saved.values["messages"][-1].content == "[已取消]"
     assert saved.values["messages"][-1].tool_call_id == "one"
-    assert saved.values["activated_skills"] == ["retained"]
+    assert saved.values["activated_plugins"] == ["retained"]
 
 
 @pytest.mark.parametrize("enabled", [False, True])

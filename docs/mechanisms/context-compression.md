@@ -1,16 +1,16 @@
 # 上下文压缩机制
 
-长对话和大段工具结果会占用模型上下文。Yuxi 使用一个压力阈值控制自动压缩：请求达到阈值后先确定性压缩大工具结果，重新计量后仍达到同一阈值才调用摘要模型。配置入口见[智能体配置](../agents/agents-config.md)，中间件顺序见[中间件](../agents/middleware.md)。
+长对话和大段工具结果会占用模型上下文。Yuxi 使用一个压力阈值控制自动压缩。请求达到阈值后先确定性压缩大工具结果，重新计量后仍达到同一阈值才调用摘要模型。配置入口见[智能体配置](../agents/agents-config.md)，中间件顺序见[中间件](../agents/middleware.md)。
 
 ## 先记住三件事
 
 1. PostgreSQL 中的聊天消息不会因为压缩被删除。
 2. 确定性压缩只修改模型请求视图；完整工具结果先写入当前 Workdir。
-3. 摘要更新 LangGraph checkpoint 的 `_summarization_event`；后续请求继续注入当前 Agent 的 system prompt、tools、摘要和未压缩的最近消息。
+3. 摘要更新 LangGraph checkpoint 的 `_summarization_event`。后续请求继续注入当前 Agent 的 system prompt、tools、摘要和未压缩的最近消息。
 
 ## 自动压缩流程
 
-正式 graph 使用 `awrap_model_call`，主动维护使用 `aforce_summarize`；两者在实际摘要请求前执行异步授权刷新。同步 `wrap_model_call` 明确失败，避免在临时事件循环中复用 PostgreSQL 连接池。工具原文写入通过异步 backend 完成；token 计量使用近似值。
+正式 graph 使用 `awrap_model_call`，主动维护使用 `aforce_summarize`。两者在实际摘要请求前执行异步授权刷新。同步 `wrap_model_call` 明确失败，避免在临时事件循环中复用 PostgreSQL 连接池。工具原文写入通过异步 backend 完成。token 计量使用近似值。
 
 ```mermaid
 flowchart TD
@@ -53,9 +53,9 @@ checkpoint 只拥有模型继续运行所需的压缩视图；PostgreSQL Message
 
 主智能体聊天状态面板提供“压缩上下文”按钮。按钮发起一次同步维护请求，不创建 AgentRun、排队请求或新的 Run 类型。
 
-服务从检查空闲到 checkpoint 更新期间持有 Session 行锁。线程存在运行中 Run、等待交互的 Run 或排队 Input 时返回 `409 thread_busy`；普通输入接入使用同一把锁，因此不会与主动压缩并发修改同一线程。
+服务从检查空闲到 checkpoint 更新期间持有 Session 行锁。线程存在运行中 Run、等待交互的 Run 或排队 Input 时返回 `409 thread_busy`。普通输入接入使用同一把锁，因此不会与主动压缩并发修改同一线程。
 
-服务通过会话冻结配置准备 Context，使用当前后端的 canonical compiled graph 读取和更新 state。历史文件写入授权的 Project Workdir，该操作不创建或销毁用户 Cube VM。成功后前端重新读取 Agent state；由于维护请求没有完整主模型请求形状，上一次 system/tool 压力估算会失效，下一次主模型调用重新生成完整压力数据。
+服务通过会话冻结配置准备 Context，使用当前后端的 canonical compiled graph 读取和更新 state。历史文件写入授权的 Project Workdir，该操作不创建或销毁用户 Cube VM。成功后前端重新读取 Agent state。由于维护请求没有完整主模型请求形状，上一次 system/tool 压力估算会失效，下一次主模型调用重新生成完整压力数据。
 
 ## 事件和状态提示
 
@@ -78,13 +78,13 @@ checkpoint 只拥有模型继续运行所需的压缩视图；PostgreSQL Message
 | `summary_prompt` | 内置中文模板 | 摘要提示词，必须包含 `{messages}` |
 | `summary_tool_result_token_limit` | `300` | 工具结果的近似 token 阈值和预览上限 |
 
-降低 `summary_threshold` 会更早进入压缩流程；增加保留消息数会增加摘要后的请求体。摘要请求另按模型已知上下文窗口预留输出，并以 UTF-8 字节保守估算模板与历史；模板本身超预算时调用前失败。模型窗口未知时使用独立的小输入与输出上限并记录警告，不能保证适配所有未知窗口。估算不是供应商的精确 token 计数，仍需用目标模型验证。
+降低 `summary_threshold` 会更早进入压缩流程；增加保留消息数会增加摘要后的请求体。摘要请求另按模型已知上下文窗口预留输出，并以 UTF-8 字节保守估算模板与历史。模板本身超预算时调用前失败。模型窗口未知时使用独立的小输入与输出上限并记录警告，不能保证适配所有未知窗口。估算不是供应商的精确 token 计数，仍需用目标模型验证。
 
 ## 文件、权限和用量
 
 摘要历史和长工具结果写入当前 Session 的 Project Workdir。主 Agent 和子 Agent 共享根执行树的文件作用域，因此子 Agent 也可能看到这些文件。文件内容可能包含完整工具返回和用户对话，应按用户数据保护。
 
-路径由 Workspace/Sandbox backend 校验；公共 Skill 目录不可写，宿主机路径不会暴露给模型。文件写入过程不做脱敏或加密。
+路径由 Workspace/Sandbox backend 校验。公共 Skill 目录不可写，宿主机路径不会暴露给模型。文件写入过程不做脱敏或加密。
 
 Summary 触发使用近似 token 统计；主模型返回的 `usage_metadata` 用于实际用量记录，但 `siliconflow-cn` 和 `siliconflow` 当前被排除在 Provider 用量聚合之外。内部摘要模型调用不进入这组统计，因此不能把状态面板数据直接当作完整账单。
 
@@ -94,7 +94,7 @@ Summary 触发使用近似 token 统计；主模型返回的 `usage_metadata` �
 
 历史已无法在缩减预算内形成有效输入，或第五次重试仍超长时，系统保留服务端上下文超长错误并失败。权限、网络、取消和其他模型错误不会触发这条缩减重试；相关错误由各自的执行边界处理。
 
-自动摘要无法保存历史文件、摘要模型报错或返回空内容时，当前模型调用失败并发送 `failed` 事件。系统不会把错误文本写入摘要视图，也不会创建或更新 `_summarization_event`。主动压缩保持相同的失败边界：历史文件和摘要都成功后才发布新的摘要 event。
+自动摘要无法保存历史文件、摘要模型报错或返回空内容时，当前模型调用失败并发送 `failed` 事件。系统不会把错误文本写入摘要视图，也不会创建或更新 `_summarization_event`。主动压缩保持相同的失败边界。历史文件和摘要都成功后才发布新的摘要 event。
 
 | 现象 | 先检查 |
 | --- | --- |

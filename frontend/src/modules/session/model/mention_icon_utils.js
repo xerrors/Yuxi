@@ -1,4 +1,4 @@
-import { BookOpen, Bot, MessageCircle, Plug, WandSparkles } from '@lucide/vue'
+import { BookOpen, Bot, MessageCircle, Plug, Puzzle, WandSparkles } from '@lucide/vue'
 import { getSkillIcon } from '../../../shared/lib/skill_icon_utils.js'
 
 export const MENTION_ICON_SIZE = 15
@@ -13,9 +13,10 @@ const MENTION_TYPE_ICON_COMPONENTS = {
   mcp: Plug
 }
 
-export const getMentionIconComponent = (type, value, label = '') =>
-  type === 'mcp'
-    ? getSkillIcon(`${value} ${label}`, Plug)
-    : type === 'skill'
-      ? getSkillIcon(value)
-      : MENTION_TYPE_ICON_COMPONENTS[type] || Plug
+/** 目录候选与正文引用共用资源用途图标。 */
+export const getMentionIconComponent = (type, value, label = '') => {
+  if (type === 'mcp') return getSkillIcon(`${value} ${label}`, Plug)
+  if (type === 'plugin') return getSkillIcon(`${value} ${label}`, Puzzle)
+  if (type === 'skill') return getSkillIcon(value)
+  return MENTION_TYPE_ICON_COMPONENTS[type] || Plug
+}

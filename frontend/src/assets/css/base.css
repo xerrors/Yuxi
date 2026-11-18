@@ -158,6 +158,9 @@
   /* 页面底色与表面色分离；浅色保持现状，深色由 base.dark.css 覆盖为更暗的底色。 */
   --bg-page: var(--gray-0);
 
+  /* 原生控件、表单与滚动条的 UA 渲染跟随主题；深色由 base.dark.css 覆盖为 dark。 */
+  color-scheme: light;
+
   --light-98: rgba(255, 255, 255, 0.98);
   --light-95: rgba(255, 255, 255, 0.95);
   --light-90: rgba(255, 255, 255, 0.9);
@@ -211,32 +214,33 @@
   --scrollbar-width: 4px;
 }
 
-/* 全局滚动条样式 */
-::-webkit-scrollbar {
-  width: var(--scrollbar-width);
-  height: var(--scrollbar-width);
-}
-
-::-webkit-scrollbar-track {
-  background: var(--gray-100);
-  border-radius: calc(var(--scrollbar-width) / 2);
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--gray-200);
-  border-radius: calc(var(--scrollbar-width) / 2);
-  transition: background 0.2s ease;
-  cursor: pointer;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--gray-100);
-}
-
-/* Firefox 滚动条样式 */
+/* 全局滚动条样式：标准属性为主；WebKit 前缀规则仅在标准属性不可用的浏览器兜底，避免两套机制冲突。 */
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--gray-200) transparent;
+}
+
+@supports not (scrollbar-color: auto) {
+  ::-webkit-scrollbar {
+    width: var(--scrollbar-width);
+    height: var(--scrollbar-width);
+  }
+
+  ::-webkit-scrollbar-track {
+    background: var(--gray-100);
+    border-radius: calc(var(--scrollbar-width) / 2);
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--gray-200);
+    border-radius: calc(var(--scrollbar-width) / 2);
+    transition: background 0.2s ease;
+    cursor: pointer;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--gray-100);
+  }
 }
 
 /* Page Padding 响应式断点 */

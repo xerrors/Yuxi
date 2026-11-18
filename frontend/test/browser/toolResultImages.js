@@ -123,6 +123,17 @@ async function toolResultImages(page) {
       (await page.locator('.chat-image-viewer-image').getAttribute('src')) === thumbnail,
       '放大预览未复用已授权字节'
     )
+    const requestCount = requests.length
+    for (let index = 0; index < 12; index++) {
+      await page.evaluate(() => {
+        const probe = window.toolResultProbe
+        probe.state.content = JSON.parse(JSON.stringify(probe.state.content))
+      })
+    }
+    check(requests.length === requestCount, '相同工具结果重建时重复请求图片')
+    check((await page.locator('#protected-image img').getAttribute('src')) === thumbnail,
+      '流式更新替换了已加载图片')
+    check(await page.locator('.chat-image-viewer').isVisible(), '流式更新关闭了图片预览')
     await page.keyboard.press('Escape')
     await page.locator('.chat-image-viewer').waitFor({ state: 'hidden' })
 
@@ -167,6 +178,22 @@ async function toolResultImages(page) {
     }, `${protectedPath}?mode=late`)
     await page.locator('#protected-image [role=status]').waitFor()
     await lateRequest
+    const pendingCount = requests.length
+    for (let index = 0; index < 12; index++) {
+      await page.evaluate(() => {
+        const probe = window.toolResultProbe
+        probe.state.content = JSON.parse(JSON.stringify(probe.state.content))
+      })
+    }
+    check(requests.length === pendingCount, '图片加载中相同结果更新堆积请求')
+    const skeleton = page.locator('#protected-image .tool-result-image-skeleton')
+    check(await skeleton.getAttribute('aria-label') === '图片加载中', '图片骨架缺少加载说明')
+    const bounds = await skeleton.boundingBox()
+    check(bounds.width > 0 && bounds.height > 0 && bounds.width <= 400, '骨架没有预留有界图片区域')
+    await skeleton.screenshot({ path: '/tmp/yuxi-tool-image-skeleton.png' })
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    check(await skeleton.evaluate(node => getComputedStyle(node, '::after').animationName) === 'none', '减少动态效果时骨架仍播放动画')
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
     await page.evaluate((url) => {
       window.toolResultProbe.state.content = [{ type: 'image', url }]
     }, externalUrl)
@@ -189,7 +216,7 @@ async function toolResultImages(page) {
     )
     for (const dark of [false, true]) {
       await page.evaluate((dark) => document.documentElement.classList.toggle('dark', dark), dark)
-      for (const width of [1440, 375]) {
+      for (const width of [1440, 1024, 768]) {
         await page.setViewportSize({ width, height: 900 })
         const fits = await page
           .locator('#long-text pre')
@@ -206,7 +233,7 @@ async function toolResultImages(page) {
     await page.waitForFunction(() =>
       window.toolResultProbe.urls.every((url) => window.toolResultProbe.revoked.includes(url))
     )
-    return { authenticated, layout, blobUrlsReleased: true, themes: 2, widths: [1440, 375] }
+    return { authenticated, layout, blobUrlsReleased: true, themes: 2, widths: [1440, 1024, 768] }
   } finally {
     releaseLate()
     await page.evaluate(() => {

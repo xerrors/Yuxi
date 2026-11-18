@@ -1,15 +1,15 @@
 # 参与贡献
 
-欢迎提交 Bug 修复、功能改进、测试和文档。本文是 Fork → 开发 → 验证 → PR 的完整流程；只想了解仓库入口时，可以先看根目录的 [CONTRIBUTING.md](https://github.com/xerrors/Yuxi/blob/main/CONTRIBUTING.md)。
+欢迎提交 Bug 修复、功能改进，也欢迎测试和文档。本文是 Fork → 开发 → 验证 → PR 的完整流程。只想了解仓库入口时，可以先看根目录的 [CONTRIBUTING.md](https://github.com/xerrors/Yuxi/blob/main/CONTRIBUTING.md)。
 
 ## 开始前
 
 - 先搜索 [Issues](https://github.com/xerrors/Yuxi/issues)，确认问题没有重复。
 - 如果任务来自 GitHub Project，读完任务描述、关联 Issue、验收标准和讨论，并确认任务已经分配给你。
 - 判断需求是否非平凡、何时需要 decision，按[工程决策记录](./decisions/README.md#何时需要)和 [Yuxi Spec Loop](./spec-loop.md)执行；需要时先在 Issue 或 [Discussions](https://github.com/xerrors/Yuxi/discussions) 对齐方案。
-- 一个 PR 解决一个清楚的问题。无关的格式化、重构和“顺手优化”请另开 PR。
+- 一个 PR 解决一个清楚的问题。无关的格式化、重构请另开 PR，“顺手优化”也请另开 PR。
 
-修改不熟悉的模块前，先读 [ARCHITECTURE.md](https://github.com/xerrors/Yuxi/blob/main/ARCHITECTURE.md)，再从真实的路由、service、repository、Schema、Compose 和测试中定位实现。源码和可执行测试比旧文档、历史 PR 或自动生成 Wiki 更可靠。
+修改不熟悉的模块前，先读 [ARCHITECTURE.md](https://github.com/xerrors/Yuxi/blob/main/ARCHITECTURE.md)，再从真实的路由、service、repository、Schema、Compose 和测试中定位实现。源码和可执行测试比旧文档、历史 PR 更可靠，也比自动生成 Wiki 更可靠。
 
 ## 1. Fork、同步和建分支
 
@@ -51,13 +51,13 @@ docker compose --profile container logs --tail=100 api
 
 默认 Container 需启用 `container` profile；显式选择 Cube 时去掉该参数并先准备执行节点。`make up` 同样默认启用 Container，Cube 可用 `make COMPOSE="docker compose" up`。
 
-`frontend` 使用 Vite 热更新。`api` 与 `worker` 保留源码挂载，源码修改通过显式重启生效。重启前检查活动任务，避免中断正在执行的 Run；按改动范围选择服务，例如后端公共代码修改后运行：
+`frontend` 使用 Vite 热更新。`api` 与 `worker` 保留源码挂载，源码修改通过显式重启生效。重启前检查活动任务，避免中断正在执行的 Run。按改动范围选择服务，例如后端公共代码修改后运行：
 
 ```bash
 docker compose restart api worker
 ```
 
-修改 Compose 启动命令后，运行 `docker compose up -d --no-deps api worker` 重新创建受影响的容器；`restart` 沿用已有容器的命令。容器名由 Compose project 生成；使用 `docker compose logs api worker frontend` 查看当前槽位日志。
+修改 Compose 启动命令后，运行 `docker compose up -d --no-deps api worker` 重新创建受影响的容器；`restart` 沿用已有容器的命令。容器名由 Compose project 生成。使用 `docker compose logs api worker frontend` 查看当前槽位日志。
 
 ## 3. 实现原则
 
@@ -76,7 +76,7 @@ docker compose restart api worker
 
 后端代码位于 `backend/`。新增测试放在 `backend/test/unit`、`backend/test/integration` 或 `backend/test/e2e`，按测试实际依赖选择层级。测试分层、fixture 和 skip 规则见[测试规范](./testing-guidelines.md)。
 
-以下排版规则只适用于 `backend/` 的 Python。Ruff 行宽上限为 140，配置由 `backend/pyproject.toml` 拥有；行宽是上限，不是填满目标。
+以下排版规则只适用于 `backend/` 的 Python。Ruff 行宽上限为 140，配置由 `backend/pyproject.toml` 拥有；行宽是上限。行宽不是填满目标。
 
 能清楚写在一行的调用保持一行：
 
@@ -87,7 +87,7 @@ if not await repo.try_lock(turn_id):
 
 需要折行的调用按参数分行，关键字参数各占一行；参数内的集合或表达式继续按自身结构展开。只折开括号、多个参数仍挤在同一行的布局，改成清楚的单行调用或按参数分行。多行数据、有说明性注释的参数和复杂调用保留有意义的分组，不为压缩行数强行合并。
 
-不同语义阶段之间留空行，例如授权与读取、事实写入与提交、提交与投递；紧密相关的短语句放在一起。必要注释靠近约束或副作用，说明非显然的事务时序、Owner、路径边界或调用义务；较长的处理段可在段首用一句话概括该段职责与阶段。显然的赋值、条件和函数名不逐行复述。保持完整配置、SQL、prompt 与其他字符串内容不变，用等价排版改善阅读。
+不同语义阶段之间留空行，例如授权与读取之间，也包括事实写入与提交、提交与投递；紧密相关的短语句放在一起。必要注释靠近约束或副作用，说明非显然的事务时序、Owner、路径边界或调用义务；较长的处理段可在段首用一句话概括该段职责与阶段。显然的赋值、条件和函数名不逐行复述。保持完整配置、SQL、prompt 与其他字符串内容不变，用等价排版改善阅读。
 
 ### 前端
 
@@ -147,7 +147,7 @@ docker compose exec api uv run --no-sync --group test pytest test/unit -m "not s
 git diff --check
 ```
 
-如果环境、凭证或外部服务导致某项检查无法执行，在 PR 中写明命令、原因、未验证范围和剩余风险。没有默认数据不是跳过测试的理由，应由 fixture 创建资源。测试“通过”也不能替代对数据库、文件、对象、DOM 或协议结果的回读。
+如果环境、凭证或外部服务导致某项检查无法执行，在 PR 中写明命令、原因、未验证范围和剩余风险。应由 fixture 创建资源。没有默认数据不是跳过测试的理由。测试“通过”也不能替代对数据库、文件、对象、DOM 或协议结果的回读。
 
 ## 5. 提交前 Review
 
@@ -192,7 +192,7 @@ PR 正文按创建方式选择模板：
 - Agent 创建的 PR 使用默认的 [Agent PR 模板](https://github.com/xerrors/Yuxi/blob/main/.github/PULL_REQUEST_TEMPLATE.md)；
 - 人工或其他非 Agent 方式创建的 PR 可使用[简化模板](https://github.com/xerrors/Yuxi/blob/main/.github/PULL_REQUEST_TEMPLATE/non-agent.md)。使用 GitHub compare 页面时增加 `template=non-agent.md` 查询参数，使用 GitHub CLI 时传入 `--template .github/PULL_REQUEST_TEMPLATE/non-agent.md`。
 
-模板复杂度不同，不改变非平凡或高风险变更的工程证据要求。来自 Fork 的 PR 默认无法读取主仓库 Secrets；不要通过修改工作流、打印环境变量或扩大权限绕过这一限制。如果验证必须依赖受保护凭证，应在 PR 中说明并由维护者执行对应检查。
+模板复杂度不同，不改变非平凡或高风险变更的工程证据要求。来自 Fork 的 PR 默认无法读取主仓库 Secrets。不要通过修改工作流、打印环境变量或扩大权限绕过这一限制。如果验证必须依赖受保护凭证，应在 PR 中说明并由维护者执行对应检查。
 
 ### 候选版本与正式发布
 
@@ -213,7 +213,7 @@ npm test
 npm run pack:check
 ```
 
-需要发布 CLI 时先提交包版本和 `package-lock.json`，再对明确的提交手动运行 [Publish yuxi-cli](https://github.com/xerrors/Yuxi/actions/workflows/publish-yuxi-cli.yml)。工作流使用 npm Trusted Publishing，应用 Release 不触发 npm 上传。CLI 版本未变时无需重复发布；上传失败须检查 npm 包版本和发布工作流身份。
+需要发布 CLI 时先提交包版本和 `package-lock.json`，再对明确的提交手动运行 [Publish yuxi-cli](https://github.com/xerrors/Yuxi/actions/workflows/publish-yuxi-cli.yml)。工作流使用 npm Trusted Publishing，应用 Release 不触发 npm 上传。包版本未变时无需重复发布。上传失败须检查包版本和发布工作流身份。
 
 ## 7. 文档维护
 
@@ -239,7 +239,7 @@ git diff --check
 
 ## AI 辅助开发
 
-AI 可以帮助搜索、实现、测试和整理文档，但贡献者仍对最终代码、文档、安全性和验证结果负责。不要向不受信任的服务提供 `.env`、仓库 Secret、Token、用户数据或内部地址；AI 辅助贡献和人工贡献使用相同的 Review、测试和 PR 要求。
+AI 可以帮助搜索、实现，也可以帮助测试和整理文档，但贡献者仍对最终代码、文档、安全性和验证结果负责。不要向不受信任的服务提供 `.env`、仓库 Secret、Token、用户数据或内部地址。AI 辅助贡献和人工贡献使用相同的 Review、测试和 PR 要求。
 
 ## 获取帮助
 

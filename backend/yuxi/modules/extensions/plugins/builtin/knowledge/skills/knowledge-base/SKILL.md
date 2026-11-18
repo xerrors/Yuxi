@@ -3,7 +3,6 @@ name: knowledge-base
 slug: knowledge-base
 description: "使用 Yuxi 知识库进行检索、打开文档、文档内定位。当用户需要基于已配置知识库回答问题、核验资料或引用文档内容时使用此技能。"
 version: "2026.06.24"
-mcp_dependencies: ["knowledge"]
 ---
 
 # 知识库技能

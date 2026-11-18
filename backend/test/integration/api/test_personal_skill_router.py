@@ -5,6 +5,7 @@ import uuid
 import pytest
 
 
+@pytest.mark.self_managed_resources
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_personal_skill_install_list_preview_and_delete_without_database_record(
@@ -46,7 +47,7 @@ async def test_personal_skill_install_list_preview_and_delete_without_database_r
         personal = [item for item in cards_response.json()["data"] if item["slug"] == slug and item["source_scope"] == "personal"]
         assert len(personal) == 1
         assert "share_config" not in personal[0]
-        assert personal[0]["tool_dependencies"] == []
+        assert "tool_dependencies" not in personal[0]
 
         accessible_response = await test_client.get("/api/skills/accessible", headers=headers)
         assert accessible_response.status_code == 200, accessible_response.text

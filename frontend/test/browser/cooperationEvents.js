@@ -158,7 +158,7 @@ async (page) => {
   await expand()
   await create.getByRole('button', { name: 'quicksort', exact: true }).waitFor()
   check(!await page.locator('.cooperation-event').getByText('普通文件中的同名字段', { exact: true }).count(), '普通工具结果覆盖了协作身份')
-  await page.locator('.event-error').getByText('操作失败', { exact: true }).waitFor()
+  await page.locator('.cooperation-event').getByText('操作失败', { exact: true }).waitFor()
   check(!await page.getByText('会话已归档，请选择其他目标。', { exact: true }).count(), '失败摘要泄露了原始错误正文')
   check(await page.locator('.cooperation-event-row:visible').evaluateAll(rows => rows.every(row => row.getBoundingClientRect().right <= innerWidth + 1)), '长标题或错误详情使事件行溢出')
   await page.locator('.agent-view').screenshot({ path: '/tmp/yuxi-cooperation-events-error.png', animations: 'disabled' })

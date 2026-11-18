@@ -2,7 +2,9 @@
   <div class="tools-cards-page extension-page-root">
     <PageShoulder search-placeholder="搜索工具..." v-model:search="searchQuery">
       <template #filters>
+        <label for="tool-category-filter" class="filter-label">工具分类</label>
         <a-select
+          id="tool-category-filter"
           v-model:value="selectedCategory"
           style="width: 120px"
           placeholder="全部分类"
@@ -208,6 +210,15 @@ defineExpose({ fetchTools, loading })
 </script>
 
 <style lang="less" scoped>
+.filter-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 
 .tool-detail-content {
   max-height: 70vh;

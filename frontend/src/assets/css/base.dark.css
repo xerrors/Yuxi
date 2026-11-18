@@ -1,5 +1,7 @@
 /* 深色模式 */
 :root.dark {
+  color-scheme: dark;
+
   --shadow-popover: none;
   --color-on-primary: var(--gray-0);
 

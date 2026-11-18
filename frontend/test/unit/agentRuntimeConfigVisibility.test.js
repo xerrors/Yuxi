@@ -74,3 +74,32 @@ test('管理员没有 MCP 候选时仍能看到创建入口对应的资源分组
   props.creatableResourceKinds = ['mcps']
   assert.ok(form.filteredConfigurableItems.value.mcps)
 })
+
+test('插件在工具分组独立选择，知识库警告取决于插件而非同名 Skill', async () => {
+  const { form, props } = await createForm(['kb-a'])
+  props.configurableItems = {
+    plugins: { name: '插件', type: 'list', kind: 'plugins', default: [], supports_all: false,
+      options: [{ key: 'knowledge-base', name: '知识库' }] },
+    knowledges: { type: 'list', kind: 'knowledges', default: 'all', options: [] }
+  }
+  props.modelValue = { knowledges: ['kb-a'], skills: ['knowledge-base'] }
+  assert.ok(form.filteredConfigurableItems.value.plugins)
+  assert.equal(form.shouldShowKnowledgePluginWarning('knowledges'), true)
+  form.updateConfigValue('plugins', ['knowledge-base'])
+  assert.deepEqual(props.modelValue.plugins, ['knowledge-base'])
+  assert.equal(form.shouldShowKnowledgePluginWarning('knowledges'), false)
+  form.updateConfigValue('plugins', [])
+  assert.equal(form.shouldShowKnowledgePluginWarning('knowledges'), true)
+})
+
+test('直接选择知识库 MCP 时无需知识库插件，其他 MCP 不会消除警告', async () => {
+  const { form, props } = await createForm(['kb-a'])
+  props.modelValue = { knowledges: ['kb-a'], plugins: [], mcps: ['knowledge'] }
+  assert.equal(form.shouldShowKnowledgePluginWarning('knowledges'), false)
+  props.modelValue = { knowledges: ['kb-a'], plugins: [], mcps: 'all' }
+  assert.equal(form.shouldShowKnowledgePluginWarning('knowledges'), false)
+  props.modelValue = { knowledges: ['kb-a'], plugins: [], mcps: ['other'] }
+  assert.equal(form.shouldShowKnowledgePluginWarning('knowledges'), true)
+  props.modelValue = { knowledges: ['kb-a'], plugins: [], mcps: [] }
+  assert.equal(form.shouldShowKnowledgePluginWarning('knowledges'), true)
+})

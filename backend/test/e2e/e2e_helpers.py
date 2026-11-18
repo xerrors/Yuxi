@@ -9,15 +9,16 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import uuid
 from io import BytesIO
 from zipfile import ZipFile
-import uuid
 
 import httpx
 import pytest
+
+from test.live_api_cleanup import make_test_session_title
 from test.support.postgres import postgres_dsn as postgres_dsn
 from test.support.public_api import delete_agent as delete_agent
-from test.live_api_cleanup import make_test_session_title
 
 RUN_TIMEOUT_SECONDS = int(os.getenv("E2E_RUN_TIMEOUT_SECONDS", "240"))
 QUOTA_EXHAUSTED_MARKERS = ("Error code: 429", "Token Plan 用量上限")
@@ -91,11 +92,11 @@ async def create_lifecycle_agent(
             "context": {
                 "model": model_spec,
                 "system_prompt": f"不要调用工具，只输出 {DETERMINISTIC_OUTPUT}。{system_prompt_suffix}",
-                "tools": tools or [],
+                "tools": list(dict.fromkeys(["present_artifacts", *(tools or [])])),
                 "knowledges": [],
                 "mcps": [],
-                "skills": [] if bound_skill else ["image-gen"],
-                "preload_skills": [] if bound_skill else ["image-gen"],
+                "skills": [] if bound_skill else ["chat-widgets"],
+                "preload_skills": [] if bound_skill else ["chat-widgets"],
                 **({"summary_prompt": summary_prompt} if summary_prompt else {}),
                 **(
                     {"summary_tool_result_token_limit": summary_tool_result_token_limit}
@@ -117,11 +118,12 @@ async def create_lifecycle_agent(
         with ZipFile(package, "w") as archive:
             archive.writestr(
                 "SKILL.md",
-                "---\nslug: lifecycle-fixture\nname: Lifecycle fixture\ndescription: CI fixture\n"
-                "tool_dependencies:\n- present_artifacts\n---\n\n# 图片生成技能\n",
+                "---\nslug: lifecycle-fixture\nname: Lifecycle fixture\ndescription: CI fixture\n---\n\n# 对话组件\n",
             )
         response = await client.post(
-            "/api/agent/with-skill", headers=headers, data={"agent": json.dumps(payload)},
+            "/api/agent/with-skill",
+            headers=headers,
+            data={"agent": json.dumps(payload)},
             files={"file": ("lifecycle-fixture.zip", package.getvalue(), "application/zip")},
         )
     else:

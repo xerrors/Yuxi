@@ -38,6 +38,30 @@ from yuxi.shared.errors import DomainError, StateConflictError
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration, pytest.mark.self_managed_resources]
 
 
+@pytest.fixture
+def report_plugin(monkeypatch):
+    """通过正式注册目录提供依赖 MCP 的测试插件，不替换运行授权。"""
+    from yuxi.modules.extensions.plugins import registry
+    from yuxi.modules.extensions.plugins.base import YuxiPlugin
+
+    class ReportPlugin(YuxiPlugin):
+        """报告能力依赖当前用户的连接器授权。"""
+
+        plugin_id = "report"
+        name = "ReportPlugin"
+        description = "生成报告"
+        entry_skill = "report"
+        skills = ("report",)
+        mcps = ("fixture",)
+
+    monkeypatch.setattr(registry, "REGISTERED_PLUGINS", (ReportPlugin,))
+    registry.get_plugins.cache_clear()
+    try:
+        yield ReportPlugin
+    finally:
+        registry.get_plugins.cache_clear()
+
+
 @pytest_asyncio.fixture
 async def scenario(monkeypatch):
     """固定协议 oracle 校验 PKCE、resource 和刷新轮换，独立 schema 回读事实。"""
@@ -861,29 +885,42 @@ async def test_authorization_endpoint_preserves_existing_query(scenario):
     assert (await finish(scenario, params)).status_code == 200
 
 
-async def test_disconnect_blocks_skill_local_side_effect_at_execution_boundary(scenario, monkeypatch, tmp_path):
+async def test_disconnect_blocks_plugin_local_side_effect_at_execution_boundary(scenario, monkeypatch, tmp_path, report_plugin):
     """模型已选中本地工具后撤销 MCP，真正执行处仍不允许产生文件副作用。"""
     from types import SimpleNamespace
+
+    from langchain_core.tools import tool
+
     from yuxi.modules.agents.runtime.agent_backends.chatbot.context import ChatBotContext
     from yuxi.modules.agents.runtime.middlewares import authorization
 
     state = await begin(scenario, "alice")
     assert (await finish(scenario, state, "alice")).status_code == 200
+    output = tmp_path / "report.txt"
+
+    @tool
+    def write_report() -> str:
+        """只有真正到达工具处理器才写入产物。"""
+        output.write_text("must not be written")
+        return "written"
+
+    report_plugin.tools = (write_report,)
+    activated = {"activated_plugins": ["report"]}
     context = ChatBotContext(
         uid="alice",
         run_id=None,
         thread_id="fixture",
         mcps=[],
+        plugins=["report"],
         tools=[],
         registered_builtin_tool_names={"write_report"},
         middleware_tool_names=set(),
         mcp_tool_servers={},
         _capability_limited=False,
         skill_runtime_snapshot={
-            "skill_metadata": {},
-            "effective_skills": ["report"],
-            "preloaded_skills": ["report"],
-            "runtime_skills": {"report": {"tools": ["write_report"], "mcps": ["fixture"], "skills": []}},
+            "skill_metadata": {"report": {"source_scope": "shared"}},
+            "plugin_entry_contents": {"report": "# Report"},
+            "runtime_skills": {"report": {"path": "/skills/report/SKILL.md"}},
         },
     )
 
@@ -898,21 +935,20 @@ async def test_disconnect_blocks_skill_local_side_effect_at_execution_boundary(s
     monkeypatch.setattr(authorization, "_require_execution_actor", actor)
     monkeypatch.setattr(authorization, "refresh_agent_context_resources", retain_snapshot)
     monkeypatch.setattr(authorization, "sync_agent_context_skills", retain_snapshot)
-    mcp_policy = await authorization.refresh_execution_authorization(context)
-    assert authorization.tool_allowed(context, "write_report", {}, mcp_policy)
+    mcp_policy = await authorization.refresh_execution_authorization(context, state=activated)
+    assert authorization.tool_allowed(context, "write_report", activated, mcp_policy)
     response = await scenario["http"].delete("/api/system/mcp-servers/fixture/connection", headers=scenario["headers"]["alice"])
     assert response.status_code == 200
-    output = tmp_path / "report.txt"
 
     async def execute(_request):
         """只有真正到达工具处理器才写入产物。"""
-        output.write_text("must not be written")
+        return await write_report.ainvoke({})
 
-    request = SimpleNamespace(runtime=SimpleNamespace(context=context), state={}, tool_call={"name": "write_report", "id": "call"})
+    request = SimpleNamespace(runtime=SimpleNamespace(context=context), state=activated, tool_call={"name": "write_report", "id": "call"})
     result = await authorization.RuntimeAuthorizationMiddleware().awrap_tool_call(request, execute)
     assert result.status == "error"
     assert not output.exists()
-    assert "fixture" not in await authorization.refresh_execution_authorization(context)
+    assert "fixture" not in await authorization.refresh_execution_authorization(context, state=activated)
 
 
 async def test_shared_tool_cannot_survive_switch_to_personal_oauth(scenario):
@@ -1052,8 +1088,8 @@ async def test_personal_discovery_reads_server_configuration_once(scenario, all_
 
 
 @pytest.mark.parametrize("auth_mode", ["headers", "oauth"])
-@pytest.mark.parametrize("via_skill", [False, True])
-async def test_each_run_discovers_once_across_model_rounds(scenario, monkeypatch, auth_mode, via_skill):
+@pytest.mark.parametrize("via_plugin", [False, True])
+async def test_each_run_discovers_once_across_model_rounds(scenario, monkeypatch, auth_mode, via_plugin, report_plugin):
     """两次真实图运行各三轮模型，每 Run 一次目录发现，工具调用仍各自检查授权。"""
     from deepagents.backends import CompositeBackend, StateBackend
     from langchain.agents import create_agent
@@ -1061,6 +1097,7 @@ async def test_each_run_discovers_once_across_model_rounds(scenario, monkeypatch
     from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
     from langchain_core.outputs import ChatGeneration, ChatResult
     from pydantic import Field
+
     from yuxi.modules.agents.runtime.agent_backends.chatbot import graph as chatbot_graph
     from yuxi.modules.agents.runtime.agent_backends.chatbot.context import ChatBotContext
     from yuxi.modules.agents.runtime.middlewares import authorization
@@ -1122,14 +1159,22 @@ async def test_each_run_discovers_once_across_model_rounds(scenario, monkeypatch
     for run_index, tool_name in enumerate(["my_attendance", "updated_attendance"], start=1):
         scenario["current"]["tool_names"] = [tool_name]
         context = ChatBotContext(
-            uid="alice", thread_id="fixture", workdir_relative_path="projects/fixture", tools=[], mcps=[] if via_skill else ["fixture"]
+            uid="alice",
+            thread_id="fixture",
+            workdir_relative_path="projects/fixture",
+            tools=[],
+            mcps=[] if via_plugin else ["fixture"],
+            plugins=["report"] if via_plugin else [],
         )
         context.skill_runtime_snapshot = {
-            "skill_metadata": {},
-            "effective_skills": ["report"] if via_skill else [],
-            "preloaded_skills": ["report"] if via_skill else [],
-            "preloaded_skill_contents": {"report": "# Report"},
-            "runtime_skills": {"report": {"tools": [], "mcps": ["fixture"], "skills": []}},
+            "skill_metadata": {"report": {"source_scope": "shared"}} if via_plugin else {},
+            "context_skills": [],
+            "context_preload_skills": [],
+            "effective_skills": ["report"] if via_plugin else [],
+            "preloaded_skills": [],
+            "preloaded_skill_contents": {},
+            "plugin_entry_contents": {"report": "# Report"} if via_plugin else {},
+            "runtime_skills": {"report": {"path": "/skills/report/SKILL.md"}} if via_plugin else {},
         }
         tools = await resolve_configured_runtime_tools(context)
         model = ToolLoopModel(expected_name=tool_name)
@@ -1137,7 +1182,10 @@ async def test_each_run_discovers_once_across_model_rounds(scenario, monkeypatch
             context, CompositeBackend(default=StateBackend, routes={}), cleanup_model=model
         )
         graph = create_agent(model=model, tools=tools, middleware=middlewares)
-        result = await graph.ainvoke({"messages": [HumanMessage(content="query")]}, context=context)
+        result = await graph.ainvoke(
+            {"messages": [HumanMessage(content="query")], "activated_plugins": ["report"] if via_plugin else []},
+            context=context,
+        )
         assert result["messages"][-1].content == "CHAT_OK" and model.rounds == 3
         tool_results = [message for message in result["messages"] if isinstance(message, ToolMessage)]
         assert len(tool_results) == 2 and all("alice" in str(message.content) and message.status == "success" for message in tool_results)

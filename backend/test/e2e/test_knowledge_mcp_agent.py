@@ -50,8 +50,7 @@ async def test_worker_uses_mcp_for_five_tools_and_preserves_sources(e2e_client, 
     shared_skill_created = False
     marker = f"CURRENT_KNOWLEDGE_SKILL_{suffix}"
     skill_content = (
-        f"---\nname: {skill_slug}\nslug: {skill_slug}\ndescription: Current knowledge MCP dependency\n"
-        f"mcp_dependencies: [knowledge]\n---\n# Knowledge MCP\n{marker}\n"
+        f"---\nname: {skill_slug}\nslug: {skill_slug}\ndescription: Current knowledge MCP dependency\n---\n# Knowledge MCP\n{marker}\n"
     )
     calls = []
     buckets = []
@@ -190,6 +189,7 @@ async def test_worker_uses_mcp_for_five_tools_and_preserves_sources(e2e_client, 
                 assert record.status == "indexed" and record.chunk_count > 0
             calls.extend(
                 [
+                    ("load_plugin", {"plugin_id": "knowledge-base"}),
                     ("list_kbs", {}),
                     ("query_kb", {"kb_id": kb_id, "query_text": "persistent needle"}),
                     ("search_file", {"kb_id": kb_id, "query": "mcp-agent-proof"}),
@@ -226,8 +226,9 @@ async def test_worker_uses_mcp_for_five_tools_and_preserves_sources(e2e_client, 
                             "tools": [],
                             "knowledges": [kb_id],
                             "mcps": [],
-                            "skills": [] if skill_source == "agent_bound" else [skill_slug],
-                            "preload_skills": [] if skill_source == "agent_bound" else [skill_slug],
+                            "skills": [skill_slug] if skill_source == "shared" else [],
+                            "plugins": ["knowledge-base"],
+                            "preload_skills": [skill_slug] if skill_source == "shared" else [],
                         }
                     },
                 },
@@ -246,8 +247,8 @@ async def test_worker_uses_mcp_for_five_tools_and_preserves_sources(e2e_client, 
                 skill_slug = bound.json()["skill"]["slug"]
             current_skill = await e2e_client.get(f"/api/system/skills/{skill_slug}", headers=e2e_headers)
             assert current_skill.status_code == 200, current_skill.text
-            assert current_skill.json()["data"]["mcp_dependencies"] == ["knowledge"]
-            assert current_skill.json()["data"]["tool_dependencies"] == []
+            assert "mcp_dependencies" not in current_skill.json()["data"]
+            assert "tool_dependencies" not in current_skill.json()["data"]
             response = await e2e_client.post(
                 "/api/v1/agents/sessions",
                 headers={**e2e_headers, "Idempotency-Key": suffix},
@@ -260,15 +261,16 @@ async def test_worker_uses_mcp_for_five_tools_and_preserves_sources(e2e_client, 
             turn = await wait_for_terminal_turn(e2e_client, e2e_headers, thread_id, turn_id, timeout=120)
             assert turn["status"] == "completed", turn
             assert "MCP_AGENT_OK" in output_text(turn["yuxi"]["output"])
-            assert set(observed) == {f"call-mcp-{index}" for index in range(5)}
-            assert {name for name, _ in calls}.issubset(advertised[0]), advertised[0]
+            assert set(observed) == {f"call-mcp-{index}" for index in range(6)}
+            assert "load_plugin" in advertised[0] and "list_kbs" not in advertised[0]
+            assert {name for name, _ in calls}.issubset(advertised[1]), advertised[1]
             if skill_source != "builtin":
                 assert marker in prompts[0]
-            assert [item["kb_id"] for item in json.loads(observed["call-mcp-0"])] == [kb_id]
-            assert "persistent needle" in observed["call-mcp-1"]
-            assert file_id in observed["call-mcp-2"]
-            assert "persistent needle" in observed["call-mcp-3"]
-            assert json.loads(observed["call-mcp-4"])["total_matches"] == 1
+            assert [item["kb_id"] for item in json.loads(observed["call-mcp-1"])] == [kb_id]
+            assert "persistent needle" in observed["call-mcp-2"]
+            assert file_id in observed["call-mcp-3"]
+            assert "persistent needle" in observed["call-mcp-4"]
+            assert json.loads(observed["call-mcp-5"])["total_matches"] == 1
             sources = await e2e_client.get(f"/api/agent/threads/{thread_id}/turns/{turn_id}/references", headers=e2e_headers)
             assert sources.status_code == 200, sources.text
             assert sources.json()["available"] is True
@@ -277,14 +279,16 @@ async def test_worker_uses_mcp_for_five_tools_and_preserves_sources(e2e_client, 
             try:
                 manifest = json.loads(await conn.fetchval("SELECT manifest FROM agent_runs WHERE id=$1", accepted["run_id"]))
                 rows = await conn.fetch(
-                    "SELECT execution_status, extra_metadata FROM messages WHERE run_id=$1 AND message_type='tool_audit'",
+                    "SELECT execution_status, extra_metadata, operation_id FROM messages WHERE run_id=$1 AND message_type='tool_audit'",
                     accepted["run_id"],
                 )
             finally:
                 await conn.close()
             assert skill_slug in {item["slug"] for item in manifest["resources"]["skills"]}
-            assert len(rows) == 5 and all(row["execution_status"] == "completed" for row in rows), rows
-            assert all(json.loads(row["extra_metadata"])["output"]["status"] == "success" for row in rows)
+            assert len(rows) == 6 and all(row["execution_status"] == "completed" for row in rows), rows
+            assert all(
+                json.loads(row["extra_metadata"])["output"]["status"] == "success" for row in rows if row["operation_id"] != "call-mcp-0"
+            )
         finally:
             if thread_id:
                 await archive_public_thread(e2e_client, e2e_headers, thread_id, turn_id=turn_id)
@@ -316,24 +320,29 @@ async def test_worker_preserves_selection_and_completes_after_knowledge_error(e2
     knowledge_deployed = knowledge_enabled()
 
     class Handler(BaseHTTPRequestHandler):
-        """发起一个知识工具，再根据真实错误继续生成最终回答。"""
+        """先加载知识插件，再根据知识工具的真实错误完成回答。"""
 
         def do_POST(self):
             """重放模型协议并记录模型实际接收的工具结果。"""
             request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             advertised.append({item["function"]["name"] for item in request.get("tools", [])})
             observed[:] = [message["content"] for message in request["messages"] if message.get("role") == "tool"]
-            if observed:
+            if len(observed) == 2:
                 delta, finish = {"role": "assistant", "content": "KNOWLEDGE_FAILURE_HANDLED"}, "stop"
             else:
+                name, arguments, call_id = (
+                    ("load_plugin", {"plugin_id": "knowledge-base"}, "call-load-knowledge")
+                    if not observed
+                    else ("query_kb", {"kb_id": unavailable_kb_id, "query_text": "needle"}, "call-knowledge-unavailable")
+                )
                 delta = {
                     "role": "assistant",
                     "tool_calls": [
                         {
                             "index": 0,
-                            "id": "call-knowledge-unavailable",
+                            "id": call_id,
                             "type": "function",
-                            "function": {"name": "query_kb", "arguments": json.dumps({"kb_id": unavailable_kb_id, "query_text": "needle"})},
+                            "function": {"name": name, "arguments": json.dumps(arguments)},
                         }
                     ],
                 }
@@ -367,8 +376,9 @@ async def test_worker_preserves_selection_and_completes_after_knowledge_error(e2
                             "tools": [],
                             "knowledges": selection,
                             "mcps": [],
-                            "skills": ["knowledge-base"],
-                            "preload_skills": ["knowledge-base"],
+                            "skills": [],
+                            "plugins": ["knowledge-base"],
+                            "preload_skills": [],
                         }
                     },
                 },
@@ -387,10 +397,14 @@ async def test_worker_preserves_selection_and_completes_after_knowledge_error(e2
             assert turn["status"] == "completed", turn
             assert "KNOWLEDGE_FAILURE_HANDLED" in output_text(turn["yuxi"]["output"])
             assert turn["yuxi"]["result_run_id"] == accepted["run_id"]
-            assert advertised and all(("query_kb" in names) is knowledge_deployed for names in advertised), advertised
-            assert len(observed) == 1, observed
+            assert len(advertised) == 3, advertised
+            assert "load_plugin" in advertised[0] and "query_kb" not in advertised[0], advertised
+            assert all(("query_kb" in names) is knowledge_deployed for names in advertised[1:]), advertised
+            assert len(observed) == 2, observed
+            if not knowledge_deployed:
+                assert "插件未激活" in observed[0], observed
             expected_error = "Knowledge tool failed (404)" if knowledge_deployed else "能力受限：当前调用者无权使用该工具。"
-            assert expected_error in observed[0], observed
+            assert expected_error in observed[1], observed
             conn = await asyncpg.connect(postgres_dsn())
             try:
                 snapshot = await conn.fetchval("SELECT config_snapshot FROM sessions WHERE thread_id=$1", thread_id)
@@ -413,6 +427,12 @@ async def test_worker_preserves_selection_and_completes_after_knowledge_error(e2
             assert json.loads(snapshot)["knowledges"] == selection
             assert (run["status"], run["turn_id"], run["output_run_id"]) == ("completed", turn_id, accepted["run_id"])
             assert "KNOWLEDGE_FAILURE_HANDLED" in run["output_content"]
+            loads = [audit for audit in audits if audit["operation_id"] == "call-load-knowledge"]
+            assert len(loads) == 1, audits
+            assert (loads[0]["run_id"], loads[0]["turn_id"]) == (accepted["run_id"], turn_id)
+            assert loads[0]["execution_status"] == ("completed" if knowledge_deployed else "failed")
+            assert json.loads(loads[0]["extra_metadata"])["tool_name"] == "load_plugin"
+            audits = [audit for audit in audits if audit["operation_id"] != "call-load-knowledge"]
             if knowledge_deployed:
                 assert len(audits) == 1, audits
                 audit = audits[0]

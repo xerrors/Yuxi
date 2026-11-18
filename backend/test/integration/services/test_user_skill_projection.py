@@ -87,9 +87,6 @@ async def test_projection_refresh_waits_for_lock_then_reloads_revoked_authorizat
                 name=slug,
                 description="PostgreSQL advisory lock integration fixture",
                 source_type="upload",
-                tool_dependencies=[],
-                mcp_dependencies=[],
-                skill_dependencies=[],
                 dir_path=f"shared/{slug}",
                 share_config={
                     "version": 2,

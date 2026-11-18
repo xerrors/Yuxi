@@ -12,7 +12,6 @@ from yuxi.modules.agents.repositories.definitions import DEFAULT_SHARE_CONFIG, A
 from yuxi.modules.agents.runtime.agent_backends import get_agent_backend
 from yuxi.modules.agents.runtime.context import filter_declared_config
 from yuxi.modules.agents.services.configuration import merge_agent_config_json, prepare_agent_config_write
-from yuxi.modules.extensions.skills.access import validate_skill_dependencies
 from yuxi.modules.extensions.skills.bound import publish_bound_skill
 from yuxi.modules.extensions.skills.install_draft import prepared_uploaded_skill
 from yuxi.modules.extensions.skills.package import parse_skill_dir_metadata
@@ -85,26 +84,18 @@ async def create_agent_definition(db, *, operator, skill_upload=None, **fields):
 
 
 async def commit_agent_definition(db, agent, user, *, refresh_binding: bool = True) -> None:
-    """定义授权变化时校验绑定依赖并撤下旧投影，再共同提交。"""
+    """定义授权变化时校验绑定内容并撤下旧投影，再共同提交。"""
     item = await SkillRepository(db).get_by_bound_agent_id(agent.id, for_update=True) if refresh_binding else None
     uids = []
     if item is not None:
         item.bound_agent = agent
-        await validate_skill_dependencies(
-            db=db,
-            parent=item,
-            tool_dependencies=item.tool_dependencies,
-            mcp_dependencies=item.mcp_dependencies,
-            skill_dependencies=item.skill_dependencies,
-            available_skills={row.slug: row for row in await SkillRepository(db).list_enabled_readable(user)},
-        )
         uids = await invalidate_skill_projections(db, item.slug)
     await db.commit()
     await refresh_committed_skill_projections(uids)
 
 
 async def update_agent_definition(db, agent, **kwargs):
-    """锁内准备配置与共享补丁，绑定依赖与定义共同提交。"""
+    """锁内准备配置与共享补丁，绑定内容与定义共同提交。"""
     try:
         repo = AgentRepository(db)
         agent, operator = await repo.lock_for_management(agent_id=agent.id, user=kwargs.pop("updater", None))
@@ -122,7 +113,7 @@ async def update_agent_definition(db, agent, **kwargs):
             raise ValueError("内置定义不接受共享配置写入")
         if kwargs.get("config_json") is not None:
             config, access = await prepare_agent_config_write(
-                kwargs["config_json"], context_schema=backend.context_schema, db=db, user=operator
+                kwargs["config_json"], context_schema=backend.context_schema, db=db, user=operator, agent_id=agent.id
             )
             kwargs["config_json"] = merge_agent_config_json(
                 agent.config_json, config, resource_access=access, context_schema=backend.context_schema
@@ -168,7 +159,7 @@ async def serialize_agent_definition(
     *,
     user: User,
     include_configurable_items: bool = False,
-    backend_info_cache: dict[tuple[str, bool, str], dict] | None = None,
+    backend_info_cache: dict[tuple, dict] | None = None,
 ) -> dict[str, Any]:
     """装配治理权限、后端元数据与配置项。"""
     data = agent.to_dict()
@@ -196,7 +187,7 @@ async def serialize_agent_definition(
 
     backend = get_agent_backend(agent.backend_id)
     data["config_json"] = filter_declared_config(data.get("config_json") or {}, context_schema=backend.context_schema)
-    cache_key = (agent.backend_id, include_configurable_items, user.role)
+    cache_key = (agent.backend_id, include_configurable_items, str(user.uid), agent.id if include_configurable_items else None)
     backend_info = backend_info_cache.get(cache_key) if backend_info_cache is not None else None
     if backend_info is None:
         backend_info = await backend.get_info(
@@ -204,6 +195,7 @@ async def serialize_agent_definition(
             user_role=user.role,
             db=db if include_configurable_items else None,
             user=user if include_configurable_items else None,
+            agent_id=agent.id,
         )
         if backend_info_cache is not None:
             backend_info_cache[cache_key] = backend_info

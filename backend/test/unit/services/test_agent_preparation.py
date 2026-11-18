@@ -163,14 +163,14 @@ def test_manifest_excludes_prompts_and_secret_shaped_values():
     assert "tok-live-abcdef" not in serialized
     # 未列入直接字段的 context 值只能以 config_digest 摘要存在。
     assert manifest["config_digest"] == compute_config_digest(context)
-    assert manifest["resources"] == {"tools": ["fs"], "mcps": [], "skills": []}
+    assert manifest["resources"] == {"tools": ["fs"], "mcps": [], "skills": [], "plugins": []}
 
 
 def test_missing_code_revision_is_explicitly_unresolved():
     manifest = _manifest()
 
     assert manifest["code_revision"] == "unresolved"
-    assert manifest["manifest_version"] == 2
+    assert manifest["manifest_version"] == 3
 
 
 def test_non_string_model_spec_normalizes_to_none():
@@ -357,3 +357,13 @@ def test_retry_requires_new_manifest_fingerprint_to_match_write_once_fact():
     service._require_persisted_manifest_match(persisted, recorded=False, fingerprint="a" * 64)
     with pytest.raises(RuntimeError, match="运行资产已在重试前变化"):
         service._require_persisted_manifest_match(persisted, recorded=False, fingerprint="b" * 64)
+
+
+def test_plugin_manifest_supports_resource_only_plugins():
+    """纯资源声明不要求专属 tools 属性，也必须产生稳定执行身份。"""
+    from yuxi.modules.agents.services.preparation import build_plugin_manifest_entries
+
+    entries = build_plugin_manifest_entries({"plugins": ["abridge", "knowledge-base"]})
+    assert [entry["id"] for entry in entries] == ["abridge", "knowledge-base"]
+    assert all(len(entry["declaration_hash"]) == 64 for entry in entries)
+    assert entries[0]["declaration_hash"] != entries[1]["declaration_hash"]

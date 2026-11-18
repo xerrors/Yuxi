@@ -3,6 +3,7 @@
 // prettier-ignore
 async (page) => {
   await page.unrouteAll({ behavior: 'wait' })
+  const origin = page.url().split('/').slice(0, 3).join('/')
   const threadId = '00000000-0000-4000-8000-000000000001'
   const agentId = '00000000-0000-4000-8000-000000000002'
   const thread = {
@@ -19,7 +20,8 @@ async (page) => {
     yuxi: { message_id: String(id), run_id: longRun ? 'run-long' : `run-${Math.ceil(id / 2)}`, created_at: new Date(1791580000000 + id * 1000).toISOString() }
   })
   const requests = [], unknown = new Set()
-  let failNext = false, delayed = false, release
+  let failNext = true, delayed = false, release
+  let failAgent = false
   const check = (condition, message) => { if (!condition) throw new Error(message) }
   await page.addInitScript(() => localStorage.setItem('user_token', 'history-replay-token'))
   await page.route('**/api/**', async route => {
@@ -28,8 +30,12 @@ async (page) => {
     const url = { searchParams: { get: name => decodeURIComponent(raw.match(new RegExp(`[?&]${name}=([^&]*)`))?.[1] || '') || null } }
     let json
     if (path === '/api/auth/me') json = { id: 1, uid: 'history-verification', username: '历史验证', role: 'user' }
+    else if (path === '/api/mention/plugins') json = []
     else if (path === '/api/agent') json = { agents: [agent] }
-    else if (path === `/api/agent/${agentId}`) json = agent
+    else if (path === `/api/agent/${agentId}`) {
+      if (failAgent) return route.fulfill({ status: 503, json: { detail: '智能体暂不可用' } })
+      json = agent
+    }
     else if (path.endsWith('/items')) {
       const after = url.searchParams.get('after'), limit = Number(url.searchParams.get('limit'))
       requests.push({ after, limit })
@@ -52,8 +58,21 @@ async (page) => {
     await route.fulfill({ json })
   })
   await page.setViewportSize({ width: 1440, height: 900 })
-  await page.goto(`http://localhost:5173/agent/${threadId}`)
+  await page.goto(`${origin}/agent/${threadId}`)
   const chat = page.locator('.agent-view .chat-main')
+  await page.getByRole('button', { name: '重新读取对话', exact: true }).waitFor()
+  failAgent = true
+  requests.length = 0 // 首读失败没有产生历史；后续窗口 oracle 从真实重试开始计数。
+  await page.getByRole('button', { name: '重新读取对话', exact: true }).click()
+  await page.getByText('智能体加载失败，请重试', { exact: true }).waitFor()
+  check(requests.length === 3, `历史重试首次窗口请求数 ${requests.length}`)
+  requests.length = 0 // 显式重新选择会话复核权限；后续分页以本次刷新为基线。
+  failAgent = false
+  await page.locator('.agent-availability-notice').getByRole('button', { name: '重试', exact: true }).click()
+  await page.locator('.agent-view [contenteditable="true"]').waitFor()
+  await page.locator('.agent-view [contenteditable="true"]').fill('历史重试后可以编辑')
+  check(await page.getByRole('button', { name: '发送消息', exact: true }).isEnabled(), '首次历史重试后输入初始化没有恢复')
+  await page.locator('.agent-view [contenteditable="true"]').fill('')
   await page.getByText('历史消息 0950：', { exact: false }).waitFor()
   await page.waitForFunction(() => document.querySelector('.agent-view .chat-main')?.scrollTop > 600)
   await page.waitForTimeout(300)
@@ -95,19 +114,20 @@ async (page) => {
   await page.getByText('历史消息 0051：', { exact: false }).waitFor()
   await page.getByRole('button', { name: '加载更早消息', exact: true }).waitFor({ state: 'attached' })
   await page.evaluate(() => document.documentElement.classList.add('dark'))
-  await page.setViewportSize({ width: 375, height: 812 })
+  await page.setViewportSize({ width: 768, height: 960 })
+  await page.waitForTimeout(400) // 等宽度重排完成，再模拟用户上滚。
   await chat.evaluate(el => { el.scrollTop = 300 })
   await page.getByText('历史消息 0001：', { exact: false }).waitFor()
   await page.waitForFunction(() => !document.querySelector('.history-load-btn'))
   check(requests.length === 11, `末页没有停止读取: ${requests.length}`)
   await page.locator('.ant-message-notice').waitFor({ state: 'hidden' })
-  await page.screenshot({ path: '/tmp/yuxi-history-dark-mobile.png' })
+  await page.screenshot({ path: '/tmp/yuxi-history-dark-768.png' })
   const completedRequests = [...requests]
   longRun = true
   requests.length = 0
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.evaluate(() => document.documentElement.classList.remove('dark'))
-  await page.goto(`http://localhost:5173/agent/${threadId}`)
+  await page.goto(`${origin}/agent/${threadId}`)
   await page.getByText('历史消息 0950：', { exact: false }).waitFor()
   await page.waitForFunction(() => document.querySelector('.agent-view .chat-main')?.scrollTop > 600)
   await page.waitForTimeout(300)
@@ -163,12 +183,16 @@ async (page) => {
       return route.fulfill({ contentType: 'text/event-stream', body: events.map(event => `data: ${JSON.stringify(event)}\n\n`).join('') })
     } else if (path.endsWith('/items') && completed) {
       json = { data: [answer, human, history], has_more: false, last_id: history.id, yuxi: { runs: [] } }
+    } else if (path.endsWith(`/${threadId}`) || path.endsWith('/viewed')) {
+      json = { ...thread, yuxi: { ...thread.yuxi, current_turn: sends >= 2 ? { id: turnId, status: completed ? 'completed' : 'in_progress' } : null } }
     } else if (path.endsWith(`/turns/${turnId}`)) {
-      json = { id: turnId, status: 'completed', yuxi: { current_run_id: runId, result_run_id: runId } }
+      json = { id: turnId, status: completed ? 'completed' : 'in_progress', yuxi: { current_run_id: runId, result_run_id: runId, output: [human, answer], runs: [{ id: runId, turn_id: turnId, status: 'completed', artifacts: [] }] } }
     } else if (path.endsWith(`/runs/${runId}`)) {
       json = { id: runId, turn_id: turnId, status: 'completed', output: [answer] }
     } else if (path.endsWith('/references')) {
       json = { turn_id: turnId, available: false, sources: [], references: null }
+    } else if (path.endsWith('/input-origins')) {
+      json = { origins: {} }
     } else if (path.endsWith('/feedback')) {
       json = { items: [] }
     } else return route.fallback()
@@ -187,6 +211,13 @@ async (page) => {
   await page.getByRole('button', { name: '重试发送', exact: true }).click()
   await page.getByText('唯一流的最终回答', { exact: true }).waitFor()
   check(sends === 2 && receipts === 1 && streams === 1, `流程重复：${JSON.stringify({ sends, receipts, streams })}`)
+  await page.waitForFunction(async id => {
+    const { useSessionRuntimeStore } = await import('/src/modules/session/model/sessionRuntime.js')
+    const runtime = useSessionRuntimeStore()
+    const state = runtime.getThreadState(id)
+    return !state.isStreaming && !state.activeRunId && !runtime.historyPages[id]?.loading
+  }, threadId)
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
   check(await editor.innerText() === '用户继续编辑的新草稿', '接收旧提交清掉了新草稿')
   check(await page.getByText('历史消息 0950：', { exact: false }).count() === 1, '发送或终态重读丢失/复制历史')
   check(await page.getByText('冻结输入内容', { exact: true }).count() === 1, '乐观消息与正式输入重复展示')
@@ -194,9 +225,26 @@ async (page) => {
   await page.waitForTimeout(3500)
   await page.screenshot({ path: '/tmp/yuxi-session-input-lifecycle.png' })
   await page.evaluate(() => document.documentElement.classList.add('dark'))
-  await page.setViewportSize({ width: 390, height: 844 })
+  await page.setViewportSize({ width: 768, height: 960 })
   await page.getByText('唯一流的最终回答', { exact: true }).scrollIntoViewIfNeeded()
   await page.waitForTimeout(300)
   await page.screenshot({ path: '/tmp/yuxi-session-input-lifecycle-dark.png' })
-  return { initialItems: 300, appendedItems: 300, anchorShift: restoredTop - movedTop, sameRunAnchorShift: longTop - longAnchor.top, totalItems: 950, requests: completedRequests, loading: true, retry: true, darkMobile: true, input: { sends, receipts, streams, compositionGuard: true, nextDraftRetained: true }, unknown: [...unknown] }
+  // 真实页面公开路由入口必须重新核对已缓存 Thread 的可见性。
+  let publicFailure = 403, rechecks = 0
+  await page.route(`**/api/v1/agents/sessions/${threadId}`, route => {
+    rechecks++
+    return publicFailure === 'network' ? route.abort('failed') : route.fulfill({ status: publicFailure, json: { detail: '路由复核失败' } })
+  })
+  for (const status of [403, 404, 410, 503, 'network']) {
+    publicFailure = status
+    const result = await page.locator('.agent-session-workspace').first().evaluate(async (el, id) => {
+      let owner = el.__vueParentComponent
+      while (owner && !owner.exposed?.selectThreadFromRoute) owner = owner.parent
+      if (!owner) throw new Error('缺少真实 Workspace 路由入口')
+      return owner.exposed.selectThreadFromRoute(id)
+    }, threadId)
+    check(result === ([403, 404, 410].includes(status) ? false : null), `缓存Thread复核${status}错误分类失效：${result}`)
+  }
+  check(rechecks >= 5, '已缓存Thread跳过服务端可见性复核')
+  return { initialItems: 300, appendedItems: 300, anchorShift: restoredTop - movedTop, sameRunAnchorShift: longTop - longAnchor.top, totalItems: 950, requests: completedRequests, loading: true, retry: true, firstHistoryRetryRestoresInput: true, agentFailureRetryRestoresInput: true, cachedRouteRevalidation: true, dark768: true, input: { sends, receipts, streams, compositionGuard: true, nextDraftRetained: true }, unknown: [...unknown] }
 }

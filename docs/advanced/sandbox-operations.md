@@ -1,6 +1,6 @@
 # 沙盒配置与运维
 
-本页供部署管理员准备和维护显式选择的 Cube 用户 VM（`SANDBOX_BACKEND=cube`）。默认部署使用 [Container 沙盒](container-sandbox.md)；它提供单租户轻量执行环境，不替代 Cube 的强隔离。Yuxi 固定使用 CubeSandbox v0.7.3，应用服务使用 Compose，执行节点需要专用 Linux/KVM；Yuxi 与 Cube 的 Workspace/Skills 挂载必须指向同一份文件。运行时只装配当前 `SANDBOX_BACKEND`，节点或实例故障会明确失败。
+本页供部署管理员准备和维护显式选择的 Cube 用户 VM（`SANDBOX_BACKEND=cube`）。默认部署使用 [Container 沙盒](container-sandbox.md)；它提供单租户轻量执行环境，不替代 Cube 的强隔离。Yuxi 固定使用 CubeSandbox v0.7.3，应用服务使用 Compose，执行节点需要专用 Linux/KVM。Yuxi 与 Cube 的 Workspace/Skills 挂载必须指向同一份文件。运行时只装配当前 `SANDBOX_BACKEND`，节点或实例故障会明确失败。
 
 ## 个人 Skill 标准目录
 
@@ -17,7 +17,7 @@ ln -sT /home/user/workspace/agents/skills /home/user/.agents/skills
 
 ## 原生执行节点
 
-在专用执行节点以管理员运行 `docker/cube/setup-node.sh` 安装 Cube，上传 `Dockerfile.user` 和 `build-template.sh` 到 `/opt/yuxi-cube` 后运行后者。安装脚本会将该节点的 SELinux 设为 permissive；脚本只用于专用执行节点，不能运行在 Yuxi 应用容器或用户 VM。普通账号 UID/GID 固定 1000，与 API/worker 文件身份一致，禁用 sudo。模板更新只影响新建实例；现有实例采用下文的显式重建流程，并先确认 Home 文件的保留需求。
+在专用执行节点以管理员运行 `docker/cube/setup-node.sh` 安装 Cube，上传 `Dockerfile.user` 和 `build-template.sh` 到 `/opt/yuxi-cube` 后运行后者。安装脚本会将该节点的 SELinux 设为 permissive。脚本只用于专用执行节点，不能运行在 Yuxi 应用容器或用户 VM。普通账号 UID/GID 固定 1000，与 API/worker 文件身份一致，禁用 sudo。模板更新只影响新建实例；现有实例采用下文的显式重建流程，并先确认 Home 文件的保留需求。
 
 默认开发工具链为 Node 24、npm/npx、Python 3.13.15、pip、venv、uv/uvx 0.12.6 和 Git。`python`、`python3`、`pip`、`pip3` 指向模板提供的 Python 3.13；Ubuntu 的 `/usr/bin/python3` 保留供系统和内部文件操作使用。项目优先通过 `uv venv` 和 `uv pip install --python .venv/bin/python <package>` 安装依赖，其他 Python 版本由 uv 在用户 Home 中按需管理。
 
@@ -65,11 +65,11 @@ docker compose --env-file .yuxi/cube-node/node.env -f docker/cube/compose.yml up
 
 ## 运维与验证
 
-设置中查看环境状态、占用 Run 和待清理操作。状态和时间在一行展示；休眠时显示已休眠时长，悬停查看平台确认休眠的准确时间。旧记录或外部暂停没有可确认的时间时，显示“时间未记录”。运行空闲时显示预计休眠倒计时，使用实际配置的空闲阈值；有活动任务、操作或待清理命令时暂不休眠。倒计时到达只表示达到空闲时限，实际休眠由维护循环确认；页面每 15 秒重新查询状态，每秒更新时长，查询不会唤醒环境。
+设置中查看环境状态、占用 Run 和待清理操作。状态和时间在一行展示；休眠时显示已休眠时长，悬停查看平台确认休眠的准确时间。旧记录或外部暂停没有可确认的时间时，显示“时间未记录”。运行空闲时显示预计休眠倒计时，使用实际配置的空闲阈值；有活动任务、操作或待清理命令时暂不休眠。倒计时到达只表示达到空闲时限，实际休眠由维护循环确认。页面每 15 秒重新查询状态，每秒更新时长，查询不会唤醒环境。
 
-磁盘用量通过磁盘行的“查看”或“刷新”手动读取，显示上次查询的已用和可用空间。休眠时查询会恢复环境并重新开始空闲计时；自动状态刷新不执行磁盘查询。统计系统和主目录所在文件系统，不含共享工作区，也不表示宿主机镜像的物理分摊或独占配额。
+磁盘未查询时显示“查看用量”；手动读取成功后，只保留上次查询的容量数字与用量条，不再显示刷新入口。休眠时查询会恢复环境并重新开始空闲计时；自动状态刷新不执行磁盘查询。统计系统和主目录所在文件系统，不含共享工作区，也不表示宿主机镜像的物理分摊或独占配额。
 
-重建入口位于状态行右侧的“···”菜单，只有“重建环境”一个选项，点击后确认清除范围。忙碌时先使用已有 Run 取消入口，等清理确认后重建。实例失联不要手工修改数据库为成功；核对 Cube 状态、实例标识与操作标识，恢复执行节点或确认重建。重建只清除 VM，宿主 Workspace 和 Skills 必须保留。不提供保留软件的冷重启接口，服务进程重启只重连原环境。
+重建入口位于设置页右上角的“···”菜单，只有“重建环境”一个选项，点击后确认清除范围。忙碌时先使用已有 Run 取消入口，等清理确认后重建。实例失联不要手工修改数据库为成功；核对 Cube 状态、实例标识与操作标识，恢复执行节点或确认重建。重建只清除 VM，宿主 Workspace 和 Skills 必须保留。不提供保留软件的冷重启接口，服务进程重启只重连原环境。
 
 ```bash
 docker compose logs --tail=100 api worker

@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from time import monotonic
 from typing import Any
+from urllib.parse import quote
 
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.agents.repositories.model_audit import ModelMessageAuditRepository
@@ -48,11 +49,18 @@ class RunMessageRecorder:
             data = dict(event["params"]["data"])
             if data.get("event") in {"tool-finished", "tool-result"}:
                 data["output"] = tool_event_output(data)
-                data["result"] = normalize_tool_result(data["output"], message=data.get("message"))
+                data["result"] = normalize_tool_result(
+                    data["output"], message=data.get("message"), artifact_url_factory=self._artifact_preview_url
+                )
                 event = {**event, "params": {**event["params"], "data": data}}
             if isinstance(data.get("event"), str):
                 await self._consume_tool(event, data)
         return event
+
+    def _artifact_preview_url(self, path: str) -> str:
+        """把已落盘工具图片映射为当前线程的 artifact 预览地址。"""
+        quoted = "/".join(quote(segment) for segment in path.split("/") if segment)
+        return f"/api/v1/agents/sessions/{self.thread_id}/artifacts/{quoted}?preview=true"
 
     async def _consume_model(self, event: dict[str, Any], message: dict[str, Any], metadata: dict[str, Any]) -> None:
         """按模型来源聚合内容，仅在生命周期边界落库。"""

@@ -44,7 +44,7 @@ const kbList = computed(() => {
 })
 
 const headerSummary = computed(() => {
-  if (getToolCallStatus(props.toolCall) === 'error') return '执行失败'
+  if (getToolCallStatus(props.toolCall) === 'error') return ''
   const names = kbList.value.map((kb) => kb?.name).filter(Boolean)
   if (!names.length) return '暂无知识库'
 

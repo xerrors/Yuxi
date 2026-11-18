@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>设备管理组件验证</title></head>
+<body>
+<div id="app"></div>
+<script type="module">
+import { createApp, h } from 'vue'
+import { createPinia } from 'pinia'
+import Antd, { ConfigProvider } from 'ant-design-vue'
+import { useThemeStore } from '../../src/shared/model/theme.js'
+import SettingsModal from '../../src/modules/settings/ui/SettingsModal.vue'
+import { useUserStore } from '../../src/modules/identity/model/user.js'
+import '../../src/assets/css/main.css'
+const pinia = createPinia()
+let theme
+const app = createApp({ render: () => h(ConfigProvider, { theme: theme.currentTheme }, { default: () => h(SettingsModal, { visible: true, initialTab: 'devices' }) }) })
+app.use(pinia)
+app.use(Antd)
+const user = useUserStore()
+user.token = 'device-browser-fixture'
+user.userRole = new URLSearchParams(location.search).get('role') || 'user'
+theme = useThemeStore()
+theme.setTheme('light')
+window.deviceSettingsTheme = theme
+app.mount('#app')
+</script>
+</body>
+</html>

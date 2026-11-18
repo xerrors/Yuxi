@@ -9,12 +9,14 @@ from yuxi.api.routers.agents.session_links import router as session_links_router
 from yuxi.api.routers.agents.tracing import trace_router
 from yuxi.api.routers.background_jobs import background_jobs
 from yuxi.api.routers.dashboard import dashboard as dashboard_routes
+from yuxi.api.routers.extensions.devices import devices
 from yuxi.api.routers.extensions.mcp import mcp
 from yuxi.api.routers.extensions.skills import skills, user_skills
 from yuxi.api.routers.extensions.tools import tools
 from yuxi.api.routers.extensions.web import web_tools
 from yuxi.api.routers.identity.auth import auth
 from yuxi.api.routers.identity.departments import department
+from yuxi.api.routers.identity.provider import router as identity_provider_router
 from yuxi.api.routers.identity.sandbox import router as user_sandbox_router
 from yuxi.api.routers.identity.users import user_router
 from yuxi.api.routers.knowledge.dashboard import knowledge_dashboard
@@ -36,6 +38,7 @@ router.include_router(public_agents_router)
 
 # 基础系统接口：健康检查、配置、认证与聊天主链路。
 router.include_router(system_routes)  # /api/system/* 系统状态与全局配置
+router.include_router(identity_provider_router)
 router.include_router(auth)  # /api/auth/* 登录、用户信息与 CLI 浏览器登录授权
 router.include_router(agent_files_router)  # /api/agent/files* 与 /api/agent/images 产品预处理
 router.include_router(agent_router)  # /api/agent/* 智能体管理与运行态
@@ -51,6 +54,7 @@ router.include_router(dashboard_routes)  # /api/dashboard/* 仪表盘聚合数�
 router.include_router(department)  # /api/departments/* 部门与权限相关数据
 router.include_router(background_jobs)  # /api/background-jobs/* 后台作业查询与管理
 router.include_router(mcp)  # /api/system/mcp-servers/* MCP 服务管理
+router.include_router(devices)
 router.include_router(model_providers)  # /api/system/model-providers/* 独立模型配置
 router.include_router(skills)  # /api/system/skills/* Skills 管理
 router.include_router(user_skills)  # /api/skills/* 用户可用 Skills

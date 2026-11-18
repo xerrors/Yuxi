@@ -29,6 +29,8 @@ export async function mountSessionWorkspace(t, fetchThreadMessages = async () =>
     plugins: options.stubChildren ? [{
       name: 'session-workspace-children', enforce: 'pre',
       resolveId(id, importer) {
+        if (id.endsWith('/ThreadTimeline.vue')) return
+        if (importer?.includes('/session/ui/ThreadTimeline.vue') && id.endsWith('.vue')) return '\0session-workspace-child'
         if (importer?.includes('/session/ui/SessionWorkspace.vue') && id.endsWith('/AgentInputArea.vue')) return '\0session-workspace-input'
         if (importer?.includes('/session/ui/SessionWorkspace.vue') && id.endsWith('.vue')) return '\0session-workspace-child'
       },
@@ -37,6 +39,14 @@ export async function mountSessionWorkspace(t, fetchThreadMessages = async () =>
         if (id === '\0session-workspace-child') return 'export default { render: () => null }'
       }
     }] : []
+  })
+  const { configureApiAuth } = await server.ssrLoadModule('/src/apis/auth_context.js')
+  const originalFetch = globalThis.fetch
+  t.mock.method(globalThis, 'fetch', (url, init) => {
+    if (String(url).startsWith('/api/mention/plugins?') && (init?.method || 'GET') === 'GET') {
+      return Promise.resolve(Response.json([]))
+    }
+    return originalFetch(url, init)
   })
   pinia = createPinia()
   setActivePinia(pinia)
@@ -54,6 +64,7 @@ export async function mountSessionWorkspace(t, fetchThreadMessages = async () =>
   const agentStore = useAgentStore()
   agentStore.isInitialized = true
   const { default: component } = await server.ssrLoadModule('/src/modules/session/ui/SessionWorkspace.vue')
+  configureApiAuth({ getToken: () => 'test-token' })
   globalThis.document = { addEventListener() {}, removeEventListener() {}, visibilityState: 'visible' }
   globalThis.window = { addEventListener() {}, removeEventListener() {}, innerWidth: 1200 }
   const renderer = createRenderer({

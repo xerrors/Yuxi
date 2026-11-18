@@ -6,7 +6,7 @@ from yuxi.modules.knowledge.chunking.ragflow_like import nlp
 def test_merge_uses_configured_delimiter_when_budget_is_unlimited():
     """chunk_token_num <= 0 时同样要按 delimiter 拼接，不能硬编码换行。"""
     merged = nlp.naive_merge(
-        [("alpha", ""), ("beta", ""), ("gamma", "")],
+        ["alpha", "beta", "gamma"],
         chunk_token_num=0,
         delimiter=" ",
     )
@@ -17,7 +17,7 @@ def test_merge_uses_configured_delimiter_when_budget_is_unlimited():
 def test_merge_uses_configured_delimiter_in_budget_path():
     """预算充足时片段仍应以配置的分隔符连接，且不引入前导分隔符。"""
     merged = nlp.naive_merge(
-        [("alpha", ""), ("beta", "")],
+        ["alpha", "beta"],
         chunk_token_num=512,
         delimiter=" ",
     )
@@ -28,7 +28,7 @@ def test_merge_uses_configured_delimiter_in_budget_path():
 def test_merge_keeps_newline_separator_by_default():
     """未指定分隔符时保持既有换行语义。"""
     merged = nlp.naive_merge(
-        [("alpha", ""), ("beta", "")],
+        ["alpha", "beta"],
         chunk_token_num=512,
         delimiter="\n",
     )
@@ -50,7 +50,7 @@ def test_new_chunk_does_not_start_with_the_separator():
 def test_line_sections_keep_their_newlines_without_a_connector():
     """book/laws 按行取段，行间换行属于原文结构，不能被分隔符配置改写。"""
     merged = nlp.naive_merge(
-        [("alpha", ""), ("beta", ""), ("gamma", ""), ("delta", "")],
+        ["alpha", "beta", "gamma", "delta"],
         chunk_token_num=1000,
     )
 
@@ -79,7 +79,7 @@ def test_custom_delimiter_config_still_reaches_line_based_chunkers():
 def test_merge_does_not_rewrite_spaces_in_source():
     """分隔符不是空白时，原文中的空格必须保留。"""
     merged = nlp.naive_merge(
-        [("alpha beta", ""), ("gamma delta", "")],
+        ["alpha beta", "gamma delta"],
         chunk_token_num=512,
         delimiter="|",
     )

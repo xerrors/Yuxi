@@ -7,7 +7,7 @@ from yuxi.modules.knowledge.read_models import KnowledgeBaseDetail
 from yuxi.modules.knowledge.repositories.chunks import KnowledgeChunkRepository
 from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
 from yuxi.modules.knowledge.repositories.graphs import KnowledgeGraphRepository
-from yuxi.modules.knowledge.runtime import knowledge_base
+from yuxi.modules.knowledge.services import bases as knowledge_bases
 from yuxi.modules.knowledge.services.document_actions import submit_knowledge_job
 from yuxi.shared.errors import InvalidOperationError, ResourceNotFoundError, StateConflictError
 
@@ -81,7 +81,7 @@ async def _require_available_knowledge_base(kb_id: str) -> KnowledgeBaseDetail:
     """按活动任务、知识库存在的既有次序裁决提交准入。"""
     if await _has_active_job(kb_id):
         raise StateConflictError("该知识库已有正在运行的图谱构建任务")
-    kb = await knowledge_base.get_knowledge_base_info(kb_id)
+    kb = await knowledge_bases.get_knowledge_base_info(kb_id)
     if kb is None:
         raise ResourceNotFoundError(f"知识库 {kb_id} 不存在")
     return kb

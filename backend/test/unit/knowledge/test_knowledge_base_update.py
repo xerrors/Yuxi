@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock
 from test.unit.support.knowledge import FakeKnowledgeBase, make_knowledge_file_record
 from yuxi.modules.knowledge.manager import KnowledgeBaseManager
 from yuxi.modules.knowledge.read_models import KnowledgeBaseDetail
+from yuxi.modules.knowledge.services import bases as knowledge_bases
+from yuxi.modules.knowledge.services import statistics
 
 
 class FakeKnowledgeBaseRepository:
@@ -109,7 +111,6 @@ async def test_create_knowledge_base_persists_allowed_record_fields(tmp_path, mo
         FakeKnowledgeBaseRepository,
     )
 
-    manager = KnowledgeBaseManager(str(tmp_path))
     kb = FakeKnowledgeBase(str(tmp_path))
     share_config = {
         "version": 2,
@@ -120,13 +121,13 @@ async def test_create_knowledge_base_persists_allowed_record_fields(tmp_path, mo
     async def knowledge_base_name_available(_name: str) -> bool:
         return False
 
-    monkeypatch.setattr(manager, "knowledge_base_name_exists", knowledge_base_name_available)
+    monkeypatch.setattr(FakeKnowledgeBaseRepository, "name_exists", staticmethod(knowledge_base_name_available), raising=False)
     monkeypatch.setattr(
-        manager, "_get_or_create_kb_instance", AsyncMock(side_effect=AssertionError("metadata must not construct executor"))
+        KnowledgeBaseManager, "_get_or_create_kb_instance", AsyncMock(side_effect=AssertionError("metadata must not construct executor"))
     )
-    monkeypatch.setattr("yuxi.modules.knowledge.manager.KnowledgeBaseFactory.get_kb_class", lambda _: type(kb))
+    monkeypatch.setattr("yuxi.modules.knowledge.factory.KnowledgeBaseFactory.get_kb_class", lambda _: type(kb))
     monkeypatch.setattr(
-        "yuxi.modules.knowledge.manager.KnowledgeBaseFactory.is_type_supported",
+        "yuxi.modules.knowledge.factory.KnowledgeBaseFactory.is_type_supported",
         classmethod(lambda cls, _kb_type: True),
     )
     monkeypatch.setattr(
@@ -149,9 +150,9 @@ async def test_create_knowledge_base_persists_allowed_record_fields(tmp_path, mo
             created_at=None,
         )
 
-    monkeypatch.setattr(manager, "get_knowledge_base_info", get_knowledge_base_info)
+    monkeypatch.setattr(knowledge_bases, "get_knowledge_base_info", get_knowledge_base_info)
 
-    result = await manager.create_knowledge_base(
+    result = await knowledge_bases.create_knowledge_base(
         "New knowledge_base",
         "New description",
         kb_type="fake",
@@ -170,8 +171,7 @@ async def test_create_knowledge_base_persists_allowed_record_fields(tmp_path, mo
     assert result.kb_id.startswith("kb_")
 
 
-async def test_manager_refresh_knowledge_base_stats_persists_metadata(tmp_path, monkeypatch):
-    manager = KnowledgeBaseManager(str(tmp_path))
+async def test_refresh_knowledge_base_stats_persists_metadata(monkeypatch):
     records = make_file_records(
         {
             "file-1": {"kb_id": "db", "filename": "alpha.md", "chunk_count": 2, "token_count": 10},
@@ -196,7 +196,7 @@ async def test_manager_refresh_knowledge_base_stats_persists_metadata(tmp_path, 
         lambda: kb_repo,
     )
 
-    stats = await manager._refresh_knowledge_base_stats("db")
+    stats = await statistics.refresh_stats("db")
 
     assert stats["file_count"] == 1
     assert stats["chunk_count"] == 2

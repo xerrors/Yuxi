@@ -17,6 +17,7 @@ export const CooperationTool = createRenderer(() => import('./renderers/Cooperat
 const ListAgentsTool = createRenderer(() => import('./renderers/ListAgentsTool.vue'))
 const ThreadMessagesTool = createRenderer(() => import('./renderers/ThreadMessagesTool.vue'))
 const InstallSkillTool = createRenderer(() => import('./renderers/InstallSkillTool.vue'))
+const LoadPluginTool = createRenderer(() => import('./renderers/LoadPluginTool.vue'))
 const ImprovementTool = createRenderer(() => import('./renderers/ImprovementTool.vue'))
 const WebSearchTool = createRenderer(() => import('./renderers/WebSearchTool.vue'))
 const WebFetchTool = createRenderer(() => import('./renderers/WebFetchTool.vue'))
@@ -49,6 +50,7 @@ export const TOOL_RENDERERS = {
   search_thread_messages: ThreadMessagesTool,
   read_thread_messages: ThreadMessagesTool,
   install_skill: InstallSkillTool,
+  load_plugin: LoadPluginTool,
   mark_for_improvement: ImprovementTool,
   ask_user_question: AskUserQuestionTool,
   bash: ExecuteTool,

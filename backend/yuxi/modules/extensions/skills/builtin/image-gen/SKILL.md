@@ -2,8 +2,6 @@
 name: image-gen
 description: "在 Agent 沙盒中生成并保存图片。当用户要求生成图片、海报、插画、文生图，或指定 Qwen-Image、其它兼容图片生成接口时使用此技能。"
 version: "2026.06.02"
-tool_dependencies: ["present_artifacts"]
-skill_dependencies: ["chat-widgets"]
 ---
 
 # 图片生成技能
@@ -30,7 +28,7 @@ skill_dependencies: ["chat-widgets"]
 3. 从生成接口响应中读取图片地址，默认路径为 `images[0].url`。
 4. 在同一个沙盒脚本中用 `Authorization: Bearer $SILICONFLOW_API_KEY` 下载该图片地址；如果接口直接返回 base64，则直接解码保存。
 5. 根据用户要求和项目结构，将最终图片保存到当前 Workdir 中合适的位置。
-6. 读取 `chat-widgets` Skill，在最终回复的完整 widget 围栏中输出独立 Image，多张图片使用 ImageGroup；path 使用保存后的绝对虚拟路径，alt 描述图片内容，需要短语时用 caption 放在左下角。用户需要下载或保存文件时，同时调用 `present_artifacts` 登记路径。
+6. 读取共享说明 `/home/user/skills/chat-widgets/SKILL.md`，在最终回复的完整 widget 围栏中输出独立 Image，多张图片使用 ImageGroup；path 使用保存后的绝对虚拟路径，alt 描述图片内容，需要短语时用 caption 放在左下角。用户需要下载或保存文件时，同时调用 `present_artifacts` 登记路径。
 7. 最终回复简要说明图片已生成，不要把外部临时 URL 当作最终结果展示。
 
 ## 脚本示例

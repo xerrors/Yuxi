@@ -70,9 +70,9 @@ async page => {
     for (const [index, text] of [[0, '1 个可用'], [1, '部署与协作指南'], [2, '查看结果'], [3, '搜索历史消息'], [4, '部署验证记录'], [5, 'research'], [6, '记录改进线索'], [7, '0 个可用'], [8, '执行失败'], [10, '等待中'], [11, '已中断'], [12, '查看了本项目会话'], [14, '操作失败'], [15, '执行失败'], [16, '查看了历史会话'], [17, '查看了历史会话'], [18, '查看了本项目会话'], [19, '执行失败'], [20, '查看本项目会话']]) {
       await host.locator(`[data-case="${index}"]`).getByText(text, { exact: true }).waitFor()
     }
-    if (await host.locator('[data-case="9"] .tool-loading').count() !== 1) throw new Error('加载状态缺失')
-    if (await host.locator('[data-case="20"] .tool-loading').count() !== 1) throw new Error('会话查询未复用通用加载图标')
-    if (await host.locator('[data-case="19"] .tool-error').count() !== 1) throw new Error('会话查询未复用通用失败图标')
+    if (await host.locator('[data-case="9"] :is(.tool-status-icon--running, .tool-status-icon--waiting) svg').count() !== 1) throw new Error('加载状态缺失')
+    if (await host.locator('[data-case="20"] :is(.tool-status-icon--running, .tool-status-icon--waiting) svg').count() !== 1) throw new Error('会话查询未复用通用加载图标')
+    if (await host.locator('[data-case="19"] .tool-status-icon--error svg').count() !== 1) throw new Error('会话查询未复用通用失败图标')
     if (await host.locator('[data-case="13"] button').count()) throw new Error('无导航上下文却显示会话按钮')
     const target = host.locator('[data-case="2"] .event-target')
     await target.focus()
@@ -117,7 +117,7 @@ async page => {
             const header = root.querySelector('.tool-header').getBoundingClientRect()
             const note = root.querySelector('.note').getBoundingClientRect()
             const description = root.querySelector('.description').getBoundingClientRect()
-            result.spacing = { iconToLabel: Math.round((note.left - header.left) * 100) / 100, labelToCount: Math.round((description.left - note.right) * 100) / 100, rowHeight: header.height }
+            result.spacing = { iconToLabel: Math.round((note.left - header.left) * 100) / 100, labelToCount: Math.round((description.left - note.right) * 100) / 100, rowHeight: Math.round(header.height * 100) / 100 }
             return result
           }
           const baseline = sample(node.querySelector('[data-case="0"]'))

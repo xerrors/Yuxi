@@ -13,6 +13,7 @@ from yuxi.infrastructure.postgres.schema import require_current_schema
 from yuxi.modules.agents.runtime.sandbox import check_sandbox_provider
 from yuxi.modules.agents.services.transport import get_redis_client
 from yuxi.modules.identity.oidc import get_oidc_config
+from yuxi.modules.identity.provider import require_provider_config
 from yuxi.modules.identity.security import AuthUtils
 from yuxi.modules.knowledge.mcp.auth import require_knowledge_delegation_config
 
@@ -42,6 +43,7 @@ async def startup(app: FastAPI) -> None:
         )
     await _initialize_startup_component(app, name="security_secrets", required=True, operation=AuthUtils.require_security_secrets)
     await _initialize_startup_component(app, name="oidc_config", required=True, operation=get_oidc_config)
+    await _initialize_startup_component(app, name="oidc_provider_config", required=True, operation=require_provider_config)
 
     # 共享持久定义只由 Compose 中的 app-init 初始化；运行进程仅校验兼容版本。
     pg_manager.initialize()

@@ -23,6 +23,7 @@ async def prepare_agent_config_write(
     context_schema: type[BaseContext] | None,
     db: AsyncSession,
     user: User,
+    agent_id: int | None = None,
 ) -> tuple[dict[str, Any], dict[str, set[str]]]:
     """过滤可写配置，并解析本次资源补丁对应的可访问键。"""
     filtered = filter_config_by_role(config_json, user.role, context_schema)
@@ -33,6 +34,8 @@ async def prepare_agent_config_write(
         return filtered, {}
 
     resource_fields = (context_schema or BaseContext).get_resource_fields()
+    for field_name in resource_fields.keys() & context.keys():
+        context[field_name] = validate_resource_selection(field_name, context[field_name])
     submitted_fields = {
         field_name
         for field_name in resource_fields.keys() & context.keys()
@@ -42,7 +45,7 @@ async def prepare_agent_config_write(
         return filtered, {}
 
     option_fields = {resource_fields[name] for name in submitted_fields}
-    options = await resolve_agent_resource_options(option_fields, db=db, user=user)
+    options = await resolve_agent_resource_options(option_fields, db=db, user=user, agent_id=agent_id)
 
     resource_access: dict[str, set[str]] = {}
     for field_name in submitted_fields:

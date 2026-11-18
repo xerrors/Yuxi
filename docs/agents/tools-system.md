@@ -1,6 +1,6 @@
 # 工具系统
 
-Yuxi 的工具分成两层：本地注册的内置工具，以及由 MCP server 提供的工具（含内置 `knowledge` MCP 提供的知识库工具）。Graph 创建时准备可执行工具，运行时再根据用户权限、Agent 配置和 Skill 激活状态决定模型能看到什么。
+Yuxi 的工具分成两层：本地工具（平台内置和插件专用），以及由 MCP server 提供的工具（含内置 `knowledge` MCP 提供的知识库工具）。Graph 创建时准备可执行工具，运行时再根据用户权限、Agent 配置和插件激活状态决定模型能看到什么。
 
 ## 注册一个内置工具
 
@@ -39,9 +39,9 @@ def example_tool(text: str) -> str:
 
 文件读写和命令执行由 Agent 的 Sandbox backend 提供。Agent 根据用户要求和项目结构选择合适的产物位置，通过 `present_artifacts` 展示结果文件；`large_tool_results` 和会话摘要等内部文件不会作为交付物展示。
 
-`present_artifacts` 接受绝对路径列表 `filepaths`，显示文件卡片，支持详情预览、下载和保存到个人空间。对话内的图片展示由内置 `chat-widgets` Skill 的 Image 或 ImageGroup 直接展示，可选短语叠放在图片左下角；path 使用当前用户可见的沙盒虚拟绝对路径；前端经当前会话鉴权读取图片，无需先登记交付物。
+`present_artifacts` 接受绝对路径列表 `filepaths`，显示文件卡片，支持详情预览、下载和保存到个人空间。对话内的图片展示由内置 `chat-widgets` Skill 的 Image 或 ImageGroup 直接展示，可选短语叠放在图片左下角；path 使用当前用户可见的沙盒虚拟绝对路径。前端经当前会话鉴权读取图片，无需先登记交付物。
 
-图片生成能力由内置 `image-gen` Skill 提供，不再作为独立的 Python 工具注册。具体依赖和文件位置由该 Skill 说明。
+图片生成方法由普通内置 `image-gen` Skill 提供，正文说明沙盒执行、文件位置及 `chat-widgets` 展示方式；交付物工具由智能体直接选择，不需要插件激活。
 
 ## 内置工具：向用户提问
 
@@ -69,7 +69,7 @@ LangGraph checkpoint 保存标准问题结构，执行服务将其投影为持�
 
 ## 内置工具：记录改进线索
 
-`mark_for_improvement(reason)` 与 `ask_user_question` 同属基础内置工具，所有正常 Agent 图自动注册，不受工具选择、模型、专属 Skill 或 Skill 激活状态限制。基础工具集合由[内置工具模块](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/extensions/tools/builtin/__init__.py)统一维护，注册、授权和门控使用同一集合。工具描述要求 Agent 在用户纠正、反复不满意、工具失败或完成任务所需能力缺失时主动记录，无需等待用户要求或问题解决；找到有实际依据的可复用方法、脚本时也记录。
+`mark_for_improvement(reason)` 与 `ask_user_question` 同属基础内置工具，所有正常 Agent 图自动注册，不受工具选择、模型、专属 Skill 或插件激活状态限制。基础工具集合由[内置工具模块](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/extensions/tools/builtin/__init__.py)统一维护，注册、授权和门控使用同一集合。工具描述要求 Agent 在用户纠正、反复不满意、工具失败或完成任务所需能力缺失时主动记录，无需等待用户要求或问题解决；找到有实际依据的可复用方法、脚本时也记录。
 
 reason 去除首尾空白后为 1–4000 字符，写明实际问题或经验、相关步骤或错误、已尝试的处理和当前结果，并区分事实与推测；不要包含凭据和无关原始用户内容。同一问题或经验不重复记录，有新增事实或不同问题时再记录；普通完成任务不要求标记。记录后继续处理原任务，记录工具自身失败时不循环调用或声称已保存。
 
@@ -79,7 +79,7 @@ reason 去除首尾空白后为 1–4000 字符，写明实际问题或经验、
 
 ## 知识库工具
 
-知识库工具不再以 `@tool` 本地注册。它们由内置 `knowledge` MCP server（`extensions/mcp/builtin.py`，默认启用）提供，Agent 激活或预加载内置 `knowledge-base` Skill（`mcp_dependencies: ["knowledge"]`）后，运行装配从该 server 的真实目录加载：
+知识库工具不再以 `@tool` 本地注册。它们由内置 `knowledge` MCP server（`extensions/mcp/builtin.py`，默认启用）提供，Agent 启用 `knowledge-base` 插件并通过 `load_plugin` 激活后，运行装配从该 server 的真实目录加载：
 
 | 工具 | 作用 |
 | --- | --- |
@@ -91,7 +91,7 @@ reason 去除首尾空白后为 1–4000 字符，写明实际问题或经验、
 
 工具名称、参数 Schema 与结构化结果直接来自 Knowledge MCP 的目录与响应，与其他托管 MCP 的装配路径一致。每次出站调用自动附带代表当前用户及会话选择的短期委托，无需在 Agent 的 MCP 字段添加本平台 Knowledge，也无需个人 OAuth 连接；管理页不能为该 server 配置共享凭据。
 
-Knowledge 在每次工具调用处重新检查 `kb_id`、`file_id`、文件名与当前读取权限；模型提示词和 Agent 配置不能授予权限。关闭 Knowledge 时保留内置 server 身份，能力发现与执行按不可用处理。共享和 Agent 专属 Skill 通过 `mcp_dependencies: ["knowledge"]` 声明知识能力；这五个名称不能作为本地 `tool_dependencies`。鉴权、范围和存储边界见[知识库机制详解](../mechanisms/knowledge-base.md#agent-如何看到知识库)。
+Knowledge 在每次工具调用处重新检查 `kb_id`、`file_id`、文件名与当前读取权限；模型提示词和 Agent 配置不能授予权限。关闭 Knowledge 时保留内置 server 身份，能力发现与执行按不可用处理。部署插件通过 `mcps: ("knowledge",)` 引用知识能力，也可由 Agent 直接选择该 MCP。普通共享或 Agent 专属 Skill 不声明运行依赖；这五个名称属于 MCP，不是本地工具引用。鉴权、范围和存储边界见[知识库机制详解](../mechanisms/knowledge-base.md#agent-如何看到知识库)。
 
 ## 内置工具：网页搜索
 
@@ -99,7 +99,7 @@ Knowledge 在每次工具调用处重新检查 `kb_id`、`file_id`、文件名�
 
 超级管理员在“设置 → 网络搜索”分别选择搜索和网页抓取服务，编辑各供应商的 API Key。测试可以使用未保存的 Key 草稿，只影响该次测试；实际保存与环境变量的优先级、生效时机见[网络搜索配置](../advanced/configuration.md#网络搜索与网页正文)。凭据由服务端配置持有，不放进 Agent Context、Skill 或沙盒用户环境。
 
-两个工具的注册名随代码稳定存在。每次构图时，运行时工具装配器读取有效供应商和凭据，只把已配置能力加入本轮 ToolNode；Skill 依赖也遵循这一规则。缺少配置的能力记录 `component=web_search` 或 `component=web_fetch`、原因和 `available=false`，本轮不绑定该工具。目录中出现工具名称只证明已注册，实际对话中的工具 schema 和结果才能证明本轮可用。
+两个工具的注册名随代码稳定存在。每次构图时，运行时工具装配器读取有效供应商和凭据，只把已配置能力加入本轮 ToolNode。缺少配置的能力记录 `component=web_search` 或 `component=web_fetch`、原因和 `available=false`，本轮不绑定该工具。目录中出现工具名称只证明已注册，实际对话中的工具 schema 和结果才能证明本轮可用。
 
 每次实际调用重新读取有效配置，页面保存可影响已绑定工具的后续调用；本轮尚未绑定的能力在后续 Run 构图时加入。显式选择的供应商缺少凭据或调用失败时返回工具错误，不跨供应商重试。正常搜索无命中返回成功的空列表；抓取没有可用正文时明确失败。
 
@@ -111,31 +111,34 @@ Knowledge 在每次工具调用处重新检查 `kb_id`、`file_id`、文件名�
 
 内置 Agent 创建 Graph 时执行：
 
-1. `prepare_agent_runtime_context` 按当前用户权限过滤工具、知识库、MCP、Skills。
-2. `resolve_configured_runtime_tools(context)` 注册 Agent 配置和可见 Skill 依赖的可执行本地工具，统一加入基础工具集合，并加载配置的 MCP 工具。
-3. `SkillsMiddleware` 根据当前已预加载或已激活的 Skill，向模型请求开放相应工具 schema。
-4. 工具执行器再次检查具体文件、知识库、MCP 和用户身份。
+1. `prepare_agent_runtime_context` 按当前用户权限解析工具、知识库、MCP、普通 Skill 与插件配套内容，保留原始资源选择。
+2. `resolve_configured_runtime_tools(context)` 注册直接选择的通用工具，加入基础工具集合，并加载直接选择的 MCP 工具。
+3. `PluginLoaderMiddleware` 提供插件摘要和 `load_plugin`；加载成功返回入口正文并保存 `activated_plugins`，从下一轮模型请求开放插件能力。
+4. `AuthorizationMiddleware` 依据直接选择、基础工具和当前仍获授权的已激活插件过滤模型工具，并在实际执行前再次拒绝未获授权的调用。
+5. 工具执行器复核具体文件、知识库、MCP 和用户身份。
 
 ```text
-Agent 配置 + 用户权限
+Agent 原始选择 + 用户权限
         ↓
 运行时资源快照
         ↓
-可执行工具注册 ──→ Skill 激活门控 ──→ 模型可见工具
+可执行工具注册 ──→ 插件激活与授权门控 ──→ 模型可见工具
         ↓
 执行处的目标授权
 ```
 
-“可执行”与“模型可见”是两件事：工具可以先注册到 ToolNode，等 Skill 激活后才对模型开放；模型看见某个工具也不代表它可以访问任意资源。
+“可执行注册”与“允许调用”是两件事。插件工具可以先注册到 ToolNode，未激活时仍不能调用。模型看见某个工具也不代表它可以访问任意资源。只要基础工具或用户直接选择提供了合法来源，停用其他插件不会撤销该来源。
 
-## MCP 和 Skills
+## MCP、插件和 Skills
 
-MCP 工具可由 Agent 直接选择的已启用服务器提供，也可由已激活 Skill 的 `mcp_dependencies` 按需加载；预加载 Skill 从首轮开放本地工具和 MCP 依赖，普通 Skill 在读取 `SKILL.md` 激活后开放这些依赖。这一节只回答“工具从哪里来、谁决定模型可见”；服务器配置和启停归 [MCP 集成](./mcp-integration.md)，Skill 的创建、依赖与激活时机归 [Skills 管理](./skills-management.md)，资源选择的字段语义归[智能体配置](./agents-config.md)。
+MCP 工具来自平台已登记的服务器，既可由 Agent 直接选择，也可由插件引用后按需加载。插件启用不创建连接或授予账号权限；MCP 不可用时 `load_plugin` 返回明确错误，不记录成功激活。运行期间授权变化仍由 MCP 与工具执行边界复核。
+
+Skill 只提供操作知识，读取或预加载 `SKILL.md` 不改变工具集合，也不保存 Skill 激活状态。插件入口说明通过 `load_plugin` 返回，其他配套内容保留按需读取。服务器配置和启停归 [MCP 集成](./mcp-integration.md)，Skill 的创建与读取归 [Skills 管理](./skills-management.md)，资源选择字段归[智能体配置](./agents-config.md)。
 
 ## 新增工具时检查
 
-- 工具是否属于内置工具、知识库工具、MCP 还是 Skill；
-- 是否需要在 `ToolNode` 注册，是否需要 Skill 激活后才让模型看见；
+- 工具是否属于平台通用工具、MCP 服务还是插件专用工具；
+- 是否需要在 `ToolNode` 注册，是否需要插件激活后才允许调用；
 - 产生副作用时，执行处是否有用户、路径和资源权限校验；
 - 错误是否以结构化结果返回，并保留可排查信息；
 - 前端展示名称是否来自稳定元数据；

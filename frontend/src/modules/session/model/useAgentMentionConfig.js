@@ -9,6 +9,7 @@ import {
 
 const MENTION_FIELDS = [
   ['knowledges', 'knowledgeBases'],
+  ['plugins', 'plugins'],
   ['skills', 'skills']
 ]
 
@@ -27,6 +28,10 @@ const normalizeMentionResource = (option, kind) => {
     }
   }
 
+  if (kind === 'plugins') {
+    return { id: value, name, description }
+  }
+
   return {
     slug: value,
     name,
@@ -38,6 +43,7 @@ export function useAgentMentionConfig({
   currentThreadAttachments,
   configurableItems,
   agentConfig,
+  sessionPlugins,
   mcpServers,
   agents
 }) {
@@ -70,6 +76,9 @@ export function useAgentMentionConfig({
 
     const configItems = configurableItems.value || {}
     const currentConfig = agentConfig.value || {}
+    const directMcpSlugs = new Set(
+      getAgentConfigOptions(configItems.mcps).map(getAgentConfigOptionValue)
+    )
     const resources = {}
     MENTION_FIELDS.forEach(([field, output]) => {
       const options = getAgentConfigOptions(configItems[field])
@@ -81,12 +90,14 @@ export function useAgentMentionConfig({
         .map((value) => normalizeMentionResource(byValue.get(value), field))
         .filter(Boolean)
     })
+    // 已有会话使用后端按冻结配置和当前权限过滤的目录，空列表不回退到 Agent。
+    resources.plugins = sessionPlugins?.value ?? resources.plugins
 
     return {
       files,
       ...resources,
       mcps: (mcpServers?.value || [])
-        .filter((server) => server.available)
+        .filter((server) => server.available && directMcpSlugs.has(server.slug))
         .map(({ slug, name, description }) => ({ slug, name, description: description || '' })),
       agents: (agents?.value || []).filter((agent) => agent.can_run && agent.agent_id)
     }

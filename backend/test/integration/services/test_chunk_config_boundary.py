@@ -26,6 +26,7 @@ from yuxi.modules.knowledge.implementations.milvus import MilvusKB
 from yuxi.modules.knowledge.models import KnowledgeBase, KnowledgeFile
 from yuxi.modules.knowledge.repositories import bases as bases_repository
 from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
+from yuxi.modules.knowledge.services import bases as knowledge_bases
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration, pytest.mark.self_managed_resources]
 
@@ -158,7 +159,7 @@ async def test_bad_persisted_knowledge_config_can_be_read_and_repaired(boundary)
     response = await client.get("/api/knowledge/knowledge-bases/fixture-kb")
     assert response.status_code == 200, response.text
     assert response.json()["additional_params"]["chunk_preset_id"] == "typo"
-    assert any(row.kb_id == "fixture-kb" for row in await router.knowledge_base_manager.get_knowledge_bases())
+    assert any(row.kb_id == "fixture-kb" for row in await knowledge_bases.get_knowledge_bases())
     response = await client.put(
         "/api/knowledge/knowledge-bases/fixture-kb",
         json={"name": "Repaired", "description": "", "additional_params": {"chunk_preset_id": "qa"}},

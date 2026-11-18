@@ -159,10 +159,25 @@ onUnmounted(() => {
 })
 defineExpose({ openSessionSearch, sessionSearchOpen })
 
-/** 项目加载失败保留原来的重试入口。 */
-const loadProjects = () => projectsStore.loadProjects()
-/** 首次对话列表加载失败时重新读取。 */
-const retryChats = () => chatThreadsStore.loadThreads().catch(() => {})
+/** 已有列表时刷新失败才提示；首次失败仍只用行内错误。 */
+const loadProjects = () => {
+  const refresh = projectsStore.hasLoaded
+  return projectsStore.loadProjects().catch(() => {
+    if (refresh) message.error('项目刷新失败')
+  })
+}
+const chatsRefreshing = ref(false)
+/** 手动重新读取对话，刷新期间保留已有列表。 */
+const retryChats = async () => {
+  chatsRefreshing.value = true
+  try {
+    await chatThreadsStore.loadThreads()
+  } catch {
+    // 请求错误由对话 store 统一提示。
+  } finally {
+    chatsRefreshing.value = false
+  }
+}
 const handleSelectChat = (threadId) => {
   if (!threadId) return
   if (!chatThreadsStore.setCurrentThreadId(threadId)) return
@@ -346,9 +361,11 @@ const handleDeleteProject = async (projectId) => {
           :current-chat-id="activeSessionThreadId"
           :chats-list="visibleThreads"
           :chats-loading="chatsLoading"
+          :chats-refreshing="chatsRefreshing"
           :chats-error="threadsLoadError"
           :projects="projects"
           :projects-loading="projectsLoading && !projectsStore.hasLoaded"
+          :projects-refreshing="projectsLoading"
           :projects-error="projectsStore.hasLoaded ? '' : projectsError"
           :project-pending-id="projectPendingId"
           :has-more-chats="hasMoreThreads"

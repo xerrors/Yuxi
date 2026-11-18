@@ -29,7 +29,7 @@ def test_replay_requires_whole_ordered_multimodal_batch(mutation):
     body = {
         "model": "deterministic-chat",
         "stream": True,
-        "messages": [{"role": "system", "content": "# 图片生成技能"}, *users],
+        "messages": [{"role": "system", "content": "# 对话组件"}, *users],
         "tools": [{"type": "function", "function": {"name": "present_artifacts"}}],
     }
     expected = {
@@ -56,7 +56,7 @@ def test_replay_checks_each_input_attachment_anchor(marker, context, error):
         "model": "deterministic-chat",
         "stream": True,
         "messages": [
-            {"role": "system", "content": "# 图片生成技能"},
+            {"role": "system", "content": "# 对话组件"},
             {"role": "user", "content": f"DETERMINISTIC_AGENT_E2E_OK DETERMINISTIC_ATTACHMENT_ANCHOR:{marker} {context}"},
         ],
         "tools": [{"type": "function", "function": {"name": "present_artifacts"}}],
@@ -73,7 +73,7 @@ def test_replay_handles_many_unterminated_attachment_tags_with_bounded_work(kind
         "model": "deterministic-chat",
         "stream": True,
         "messages": [
-            {"role": "system", "content": "# 图片生成技能"},
+            {"role": "system", "content": "# 对话组件"},
             {"role": "user", "content": f"DETERMINISTIC_AGENT_E2E_OK {marker} " + "<attachment_context>" * 25_000},
         ],
         "tools": [{"type": "function", "function": {"name": "present_artifacts"}}],
@@ -121,7 +121,7 @@ def test_replay_rejects_invalid_model_contract(authorization, change, expected_e
         "model": "deterministic-chat",
         "stream": True,
         "messages": [
-            {"role": "system", "content": "# 图片生成技能"},
+            {"role": "system", "content": "# 对话组件"},
             {"role": "user", "content": "DETERMINISTIC_AGENT_E2E_OK"},
         ],
         "tools": [{"type": "function", "function": {"name": "present_artifacts"}}],
@@ -135,7 +135,7 @@ def test_replay_rejects_unexpected_tool_result():
         "model": "deterministic-chat",
         "stream": True,
         "messages": [
-            {"role": "system", "content": "# 图片生成技能"},
+            {"role": "system", "content": "# 对话组件"},
             {"role": "user", "content": "DETERMINISTIC_AGENT_E2E_OK"},
             {"role": "tool", "tool_call_id": "call-preloaded-tool", "content": "unexpected result"},
         ],
@@ -150,13 +150,13 @@ def test_replay_rejects_changed_bound_root_for_prepared_run():
         "model": "deterministic-chat",
         "stream": True,
         "messages": [
-            {"role": "system", "content": "# 图片生成技能\nBOUND_SKILL_bbbb"},
+            {"role": "system", "content": "# 对话组件\nBOUND_SKILL_bbbb"},
             {"role": "user", "content": "DETERMINISTIC_AGENT_E2E_OK DETERMINISTIC_BOUND_ROOT:aaaa"},
         ],
         "tools": [{"type": "function", "function": {"name": "present_artifacts"}}],
     }
     assert validate_request("Bearer ci-replay-key", body) == "bound_root_snapshot_mismatch"
-    body["messages"][0]["content"] = "# 图片生成技能\nBOUND_SKILL_aaaa"
+    body["messages"][0]["content"] = "# 对话组件\nBOUND_SKILL_aaaa"
     assert validate_request("Bearer ci-replay-key", body) is None
 
 
@@ -166,7 +166,7 @@ def test_replay_requires_imported_mcp_tool_in_creation_flow():
         "model": "deterministic-chat",
         "stream": True,
         "messages": [
-            {"role": "system", "content": "# 图片生成技能"},
+            {"role": "system", "content": "# 对话组件"},
             {"role": "user", "content": "DETERMINISTIC_AGENT_E2E_OK DETERMINISTIC_CREATE_MCP"},
         ],
         "tools": [{"type": "function", "function": {"name": "present_artifacts"}}],
@@ -195,7 +195,7 @@ def test_replay_allows_empty_attachment_context_but_rejects_forbidden_files(cont
         "model": "deterministic-chat",
         "stream": True,
         "messages": [
-            {"role": "system", "content": "# 图片生成技能"},
+            {"role": "system", "content": "# 对话组件"},
             {"role": "user", "content": f"DETERMINISTIC_AGENT_E2E_OK DETERMINISTIC_ATTACHMENT_ABSENT:batch-1.txt {context}"},
         ],
         "tools": [{"type": "function", "function": {"name": "present_artifacts"}}],

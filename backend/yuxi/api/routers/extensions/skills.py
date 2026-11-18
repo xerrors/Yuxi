@@ -12,7 +12,6 @@ from yuxi.api.dependencies.auth import get_admin_user, get_db, get_required_user
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.extensions.skills.access import (
     get_allowed_skill_access_levels,
-    get_manageable_skill_or_raise,
     get_management_readable_skill_or_raise,
     is_builtin_skill,
     normalize_skill_share_config,
@@ -29,7 +28,6 @@ from yuxi.modules.extensions.skills.content import save_skill_content
 from yuxi.modules.extensions.skills.edit import (
     create_skill_node,
     delete_skill_node,
-    edit_shared_skill_dependencies,
     edit_shared_skill_file,
     export_skill_zip,
     get_skill_tree,
@@ -52,7 +50,6 @@ from yuxi.modules.extensions.skills.shared import (
     confirm_skill_install_draft,
     delete_skill,
     delete_skills_batch,
-    get_skill_dependency_options,
     update_skill_enabled,
     update_skill_share_config,
 )
@@ -89,26 +86,16 @@ class SkillFileUpdateRequest(BaseModel):
     expected_revision: str = Field(..., description="读取文件时取得的 SHA-256 修订值")
 
 
-class SkillDependenciesUpdateRequest(BaseModel):
-    tool_dependencies: list[str] = Field(default_factory=list, description="依赖的内置工具列表")
-    mcp_dependencies: list[str] = Field(default_factory=list, description="依赖的 MCP 服务列表")
-    skill_dependencies: list[str] = Field(default_factory=list, description="依赖的其他 skill slug 列表")
-    expected_revision: str = Field(..., description="读取根级 SKILL.md 时取得的修订值")
-
-
 class SkillVersionRequest(BaseModel):
     expected_revision: str = Field(..., min_length=1, description="当前整包修订")
 
 
 class SkillContentChange(BaseModel):
-    """完整编辑提交中的文件或依赖变更。"""
+    """完整编辑提交中的文件变更。"""
 
-    action: Literal["write", "create", "mkdir", "delete", "dependencies"]
+    action: Literal["write", "create", "mkdir", "delete"]
     path: str = ""
     content: str = ""
-    tool_dependencies: list[str] = Field(default_factory=list)
-    mcp_dependencies: list[str] = Field(default_factory=list)
-    skill_dependencies: list[str] = Field(default_factory=list)
 
 
 class SkillContentRequest(BaseModel):
@@ -375,25 +362,6 @@ async def list_skills_route(
         raise HTTPException(status_code=500, detail="获取技能列表失败")
 
 
-@skills.get("/dependency-options")
-async def get_skill_dependency_options_route(
-    slug: str | None = Query(None, description="当前 Skill slug"),
-    current_user: User = Depends(get_required_user),
-    db: AsyncSession = Depends(get_db),
-):
-    try:
-        if slug:
-            await get_manageable_skill_or_raise(db, current_user, slug)
-        return {"success": True, "data": await get_skill_dependency_options(db, current_user, slug)}
-    except ValueError as e:
-        _raise_from_value_error(e)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to get skill dependency options: {e}")
-        raise HTTPException(status_code=500, detail="获取 skill 依赖选项失败")
-
-
 @skills.get("/builtin")
 async def list_builtin_skills_route(
     _current_user: User = Depends(get_admin_user),
@@ -638,41 +606,6 @@ async def update_skill_file_route(
     except Exception as e:
         logger.error(f"Failed to update skill file '{slug}/{payload.path}': {e}")
         raise HTTPException(status_code=500, detail="更新技能文件失败")
-
-
-@skills.put("/{slug}/dependencies")
-async def update_skill_dependencies_route(
-    slug: str,
-    payload: SkillDependenciesUpdateRequest,
-    current_user: User = Depends(get_required_user),
-    db: AsyncSession = Depends(get_db),
-):
-    try:
-        item, revision = await edit_shared_skill_dependencies(
-            db,
-            slug=slug,
-            tool_dependencies=payload.tool_dependencies,
-            mcp_dependencies=payload.mcp_dependencies,
-            skill_dependencies=payload.skill_dependencies,
-            expected_revision=payload.expected_revision,
-            operator=current_user,
-        )
-        return {
-            "success": True,
-            "data": {
-                "skill": _serialize_skill_for_user(item, current_user),
-                "revision": revision,
-            },
-        }
-    except SkillEditConflict as e:
-        raise HTTPException(status_code=409, detail=str(e)) from e
-    except ValueError as e:
-        _raise_from_value_error(e)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to update skill dependencies '{slug}': {e}")
-        raise HTTPException(status_code=500, detail="更新 skill 依赖失败")
 
 
 @skills.get("/{slug}/versions")

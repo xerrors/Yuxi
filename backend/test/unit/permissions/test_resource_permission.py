@@ -258,7 +258,7 @@ def test_empty_read_scope_rejects_nonempty_management():
 )
 def test_builtin_skill_permission_respects_role_ceiling_and_deleted_identity(role, deleted, expected):
     """内置管理权限遵循统一角色上限，已删除超级管理员不能绕过身份边界。"""
-    from yuxi.modules.extensions.skills.shared import user_can_manage_skill
+    from yuxi.modules.extensions.skills.access import user_can_manage_skill
 
     user = _user(role=role)
     user.is_deleted = deleted

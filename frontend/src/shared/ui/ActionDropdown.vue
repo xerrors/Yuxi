@@ -3,7 +3,15 @@
     :open="open"
     :disabled="disabled"
     :trigger="['click']"
-    :placement="upward ? 'topLeft' : 'bottomLeft'"
+    :placement="
+      upward
+        ? align === 'end'
+          ? 'topRight'
+          : 'topLeft'
+        : align === 'end'
+          ? 'bottomRight'
+          : 'bottomLeft'
+    "
     :align="{
       offset: [horizontalOffset, upward ? -4 : 4],
       overflow: { adjustX: 0, adjustY: upward ? 0 : 1 }
@@ -71,20 +79,22 @@ const props = defineProps({
   search: { type: String, default: '' },
   searchPlaceholder: { type: String, default: '' },
   width: { type: Number, default: 260 },
+  align: { type: String, default: 'start' },
   block: { type: Boolean, default: false }
 })
 const emit = defineEmits(['update:open', 'update:search'])
 const triggerRef = ref(null)
 const panelRef = ref(null)
-const { top, bottom, left, update } = useElementBounding(triggerRef)
+const { top, bottom, left, right, update } = useElementBounding(triggerRef)
 const viewportTop = ref(0)
 const viewportHeight = ref(0)
 const viewportLeft = ref(0)
 const viewportWidth = ref(0)
 const panelWidth = computed(() => Math.max(0, Math.min(props.width, viewportWidth.value - 24)))
 const horizontalOffset = computed(() => {
+  const anchorLeft = props.align === 'end' ? right.value - panelWidth.value : left.value
   const rightLimit = viewportLeft.value + viewportWidth.value - panelWidth.value - 12
-  return Math.max(viewportLeft.value + 12, Math.min(left.value, rightLimit)) - left.value
+  return Math.max(viewportLeft.value + 12, Math.min(anchorLeft, rightLimit)) - anchorLeft
 })
 const panelHeight = computed(() => {
   const above = top.value - viewportTop.value - 12

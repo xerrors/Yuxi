@@ -165,4 +165,33 @@ async def test_disabled_knowledge_does_not_initialize_existing_backends(monkeypa
 
     assert app.state.startup_complete is True
     assert app.state.startup_components["knowledge_base"] == {"status": "disabled", "required": False}
-    assert initialized == ["security_secrets", "oidc_config", "model_cache", "sandbox_provider"]
+    assert initialized == ["security_secrets", "oidc_config", "oidc_provider_config", "model_cache", "sandbox_provider"]
+
+
+@pytest.mark.parametrize("process", ["api", "worker"])
+async def test_invalid_oidc_provider_blocks_startup_before_database(monkeypatch, process):
+    """已启用的提供端缺少强客户端凭证时，API 与 worker 都不能接流量。"""
+    import yuxi.bootstrap.worker as worker_bootstrap
+
+    monkeypatch.setenv("YUXI_KNOWLEDGE_ENABLED", "false")
+    monkeypatch.setenv("OIDC_ENABLED", "false")
+    monkeypatch.setenv("API_KEY_DERIVATION_SECRET", "fixture-api-key-secret-at-least-thirty-two-characters")
+    monkeypatch.setenv("JWT_SECRET_KEY", "fixture-jwt-secret-at-least-thirty-two-characters")
+    monkeypatch.setenv("YUXI_PUBLIC_URL", "https://yuxi.example")
+    monkeypatch.setenv("YUXI_OIDC_PROVIDER_ENABLED", "true")
+    monkeypatch.setenv("YUXI_OIDC_PROVIDER_CLIENT_SECRET", "short")
+
+    def forbidden_initialize():
+        """未通过身份信任配置校验前，不得取得数据库资源。"""
+        raise AssertionError("database startup must not begin")
+
+    monkeypatch.setattr(api_bootstrap.pg_manager, "initialize", forbidden_initialize)
+    if process == "api":
+        app = FastAPI()
+        with pytest.raises(api_bootstrap.RequiredStartupComponentError, match="component=oidc_provider_config, type=ValueError"):
+            await api_bootstrap.startup(app)
+        assert app.state.startup_complete is False
+        assert app.state.startup_components["oidc_provider_config"] == {"status": "error", "required": True, "code": "ValueError"}
+    else:
+        with pytest.raises(ValueError, match="客户端"):
+            await worker_bootstrap.startup({})
