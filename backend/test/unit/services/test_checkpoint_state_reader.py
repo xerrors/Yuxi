@@ -160,7 +160,7 @@ async def test_state_view_reads_persisted_fields_without_agent_runtime(checkpoin
     response = await svc.get_agent_state_view(
         thread_id="thread",
         current_user=SimpleNamespace(uid="user"),
-        db=None,
+        db=SimpleNamespace(commit=AsyncMock()),
         include_relations=include_relations,
     )
     assert response["agent_state"] == {key: payload[key] for key in ("artifacts", "cooperation", "token_usage", "warnings")}
@@ -192,6 +192,42 @@ async def test_state_view_rejects_missing_or_invisible_thread_before_checkpoint(
     with pytest.raises(DomainError) as exc:
         await svc.get_agent_state_view(thread_id="thread", current_user=SimpleNamespace(uid="user"), db=None)
     assert isinstance(exc.value, ResourceNotFoundError)
+
+
+async def test_state_view_releases_read_transaction_before_checkpoint(monkeypatch):
+    """负向守卫：授权与 Run 读完成后、进入 checkpoint 全量读前，请求级读事务必须已结束。"""
+    events: list[str] = []
+
+    async def commit():
+        events.append("commit")
+
+    async def read(*, uid, thread_id):
+        events.append("checkpoint")
+        return {}, None
+
+    session = SimpleNamespace(id=1, uid="user", app_id=None, status="active", parent_thread_id=None, project_id="p1")
+
+    async def get_session(_thread_id):
+        events.append("session-read")
+        return session
+
+    async def get_latest_run(_thread_id, _uid):
+        events.append("run-read")
+        return None
+
+    monkeypatch.setattr(svc, "SessionRepository", lambda _db: SimpleNamespace(get_session_by_thread_id=get_session))
+    monkeypatch.setattr(svc, "AgentRunRepository", lambda _db: SimpleNamespace(get_latest_run_by_thread_for_user=get_latest_run))
+    monkeypatch.setattr(svc, "_read_checkpoint_state", read)
+
+    await svc.get_agent_state_view(
+        thread_id="thread",
+        current_user=SimpleNamespace(uid="user"),
+        db=SimpleNamespace(commit=commit),
+        include_relations=False,
+    )
+
+    # 提交既不能缺席，也不能早于两次 SELECT（否则授权读取又开新事务，缺陷原样复活）。
+    assert events == ["session-read", "run-read", "commit", "checkpoint"], "读事务未在 checkpoint 读取前正确结束"
 
 
 @pytest.mark.parametrize("turn_status", ["waiting", "cancelled"])
@@ -233,7 +269,7 @@ async def test_get_agent_state_view_returns_interrupt_only_for_waiting_owner(mon
     result = await svc.get_agent_state_view(
         thread_id=thread_id,
         current_user=SimpleNamespace(uid="user-1"),
-        db=object(),
+        db=SimpleNamespace(commit=AsyncMock()),
     )
 
     if turn_status == "cancelled":
