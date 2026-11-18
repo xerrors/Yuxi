@@ -59,6 +59,7 @@ uv run --locked --group test pytest \
     test/integration/services/test_session_title_generation.py \
     test/integration/services/test_session_mentions.py \
     test/integration/services/test_agent_run_lease.py \
+    test/integration/services/test_checkpoint_retention.py \
     test/integration/services/test_agent_run_manifest_and_attempts.py \
     test/integration/services/test_run_admission.py \
     test/integration/services/test_agent_feedback.py \

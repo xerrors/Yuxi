@@ -33,10 +33,13 @@ async def test_purge_swallows_session_failure_and_reports_failed(monkeypatch):
 async def test_purge_rejects_non_positive_keep(monkeypatch):
     """保留数量必须是正整数：0 或负数会清空非活跃线程的全部历史，必须在触库前拒绝。"""
 
+    entered = False
+
     @asynccontextmanager
     async def fake_context():
+        nonlocal entered
+        entered = True
         yield _FailingDb()
-        raise AssertionError("keep 非法时不得访问数据库")
 
     class _Manager:
         get_async_session_context = staticmethod(fake_context)
@@ -45,6 +48,7 @@ async def test_purge_rejects_non_positive_keep(monkeypatch):
     for bad in (0, -1):
         with pytest.raises(ValueError, match="大于 0 的整数"):
             await retention.purge_thread_checkpoint_history("thread-x", keep=bad)
+    assert not entered, "keep 非法时不得访问数据库"
 
 
 class _RecordingDb:

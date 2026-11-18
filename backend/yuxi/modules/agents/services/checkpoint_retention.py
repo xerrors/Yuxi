@@ -79,7 +79,10 @@ _DROP_CHECKPOINTS = (
 # writes → blobs → checkpoints，后算的 keep 只会比先算的小，保留集永不被提前删；代价是新版本
 # 恰在语句之间提交时，被挤出版本的历史 writes 会多留一轮——无人读取，下一次裁剪按
 # "checkpoint_id 不在 keep 内"即回收，不为此加锁或补第四条语句。
-_ACTIVE_RUN_SQL = text("SELECT 1 FROM agent_runs WHERE thread_id = :t AND status IN ('pending','running','cancel_requested') LIMIT 1")
+# 未终态 Run 集合与 models/runs.py 的 AGENT_RUN_TERMINAL_STATUSES 互补：跳过判断、清扫筛选与运维
+# 脚本的写入静止预检必须同口径，漂移会让在途执行被裁剪或让残留被计成已处理。
+_NON_TERMINAL_RUN_STATUSES = "('pending','running','cancel_requested')"
+_ACTIVE_RUN_SQL = text(f"SELECT 1 FROM agent_runs WHERE thread_id = :t AND status IN {_NON_TERMINAL_RUN_STATUSES} LIMIT 1")
 
 
 async def purge_thread_checkpoint_history(thread_id: str, *, keep: int = THREAD_CHECKPOINT_KEEP_LATEST) -> str:
@@ -136,7 +139,7 @@ async def sweep_checkpoint_garbage() -> dict:
                         "  group by thread_id, checkpoint_ns having count(*) > :keep"
                         ") t join sessions s on s.thread_id = t.thread_id"
                         " where not exists (select 1 from agent_runs r where r.thread_id = t.thread_id"
-                        "   and r.status in ('pending','running','cancel_requested')) limit :n"
+                        f"   and r.status in {_NON_TERMINAL_RUN_STATUSES}) limit :n"
                     ),
                     {"keep": THREAD_CHECKPOINT_KEEP_LATEST, "n": _SWEEP_BATCH_LIMIT},
                 )

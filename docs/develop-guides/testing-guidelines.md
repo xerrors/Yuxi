@@ -216,7 +216,7 @@ PR 由无路径过滤的 `.github/workflows/ci.yml` 调用可复用质量工作�
 | 检查范围 | 实际依赖 | 执行入口 |
 |---|---|---|
 | 工程契约、Ruff、后端 unit、前端、文档、依赖审计 | 执行器上的语言工具链 | `.github/workflows` 中对应质量工作流 |
-| 初始化、Schema/关系约束、Input/FIFO、Run lease、反馈、协作持久化、OAuth 和局部 HTTP | 临时 PostgreSQL、Redis、文件与测试自建 HTTP 服务 | `service-integration.yml` → `scripts/ci/run_service_integration.sh` |
+| 初始化、Schema/关系约束、Input/FIFO、Run lease、checkpoint 保留、反馈、协作持久化、OAuth 和局部 HTTP | 临时 PostgreSQL、Redis、文件与测试自建 HTTP 服务 | `service-integration.yml` → `scripts/ci/run_service_integration.sh` |
 | 附件服务持久化与对象读写 | PostgreSQL、MinIO 与文件系统；测试主体无需 VM | `system-tests.yml` 中附件服务步骤，随完整拓扑执行 |
 | API readiness、正式 worker 启动恢复、Agent E2E 和沙盒隔离 | 完整 Compose 拓扑、container runner 与 sandbox 镜像 | `system-tests.yml` 的四个拓扑 ubuntu-24.04 job 与沙盒隔离 job，使用 `container` profile，执行完整测试 |
 | 真实供应商 Agent SSE 与持久结果 | 临时托管执行器、完整 Compose 拓扑和 `SILICONFLOW_API_KEY` 仓库 Secret | `real-provider-probe.yml`，仅手动运行 |
