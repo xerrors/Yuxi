@@ -151,14 +151,23 @@ class BackgroundJobRepository:
     ) -> BackgroundJobRecord | None:
         """只记录取消请求，由执行方确认最终状态。"""
         async with pg_manager.get_async_session_context() as session:
-            record = await self._lock_job(session, job_id)
-            current_time = await self._current_time(session, now)
-            if record is None or record.status in TERMINAL_JOB_STATUSES:
-                return None
-            record.cancel_requested = 1
-            record.updated_at = current_time
-            await session.flush()
-            return record
+            return await self.request_cancel_in_session(session, job_id, now=now)
+
+    async def request_cancel_in_session(
+        self,
+        session,
+        job_id: str,
+        *,
+        now: datetime | None = None,
+    ) -> BackgroundJobRecord | None:
+        """锁定活跃作业，在调用方事务中登记取消意图。"""
+        record = await self._lock_job(session, job_id)
+        if record is None or record.status in TERMINAL_JOB_STATUSES:
+            return None
+        record.cancel_requested = 1
+        record.updated_at = await self._current_time(session, now)
+        await session.flush()
+        return record
 
     async def confirm_pending_cancel(
         self,

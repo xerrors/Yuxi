@@ -74,6 +74,8 @@ Milvus 执行器持有 `KnowledgeGraphService`，首次图检索在线程内初�
 
 知识库软删除由 `KnowledgeBaseRepository.mark_deleted` 在一个事务中写入 KB、文件 tombstone 和批量 outbox，清理任务完成外部删除后调用 `purge`。评估成功/失败钩子在后台任务的 owning transaction 中调用 repository 持久化，GET 只读取业务状态并装配进度，不回写终态。筛选和分页由 PostgreSQL 执行。有标准片段的题目在检索零命中时产生零值指标，仍参与平均值和低召回筛选。历史错误得分不自动重算。
 
+删除评估运行时，API 在同一个 PostgreSQL 事务中登记关联活跃作业的取消请求，并删除运行及逐题结果。待执行作业直接确认取消。运行中的 worker 在逐题检索、生成和判分的阶段边界检查取消请求，并在保存逐题结果或已完成题数的事务内持有作业行锁复查。已发出的外部调用仍可返回，worker 到达下一处检查后停止。
+
 ## 文档状态机
 
 上传、解析和索引是三个可以分别观察的动作：
