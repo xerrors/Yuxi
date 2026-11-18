@@ -84,8 +84,8 @@ checkpoint_ns)` 的最新版本：审批与 resume 走 `aget_tuple` 的 latest�
 
 | 验收主张 | 失败面 | 语义 Owner | 直接证据 / 命令 | 负向案例 | 当前结果 |
 |---|---|---|---|---|---|
-| 终态裁剪保留每个 `(thread_id, checkpoint_ns)` 最近 K 版，独占 blob/writes 同批删除 | 最新版本或其在用 channel 数据被删 | checkpoint_retention.purge_thread_checkpoint_history | `pytest test/integration/services/test_checkpoint_retention.py`（真实 PG，8 用例形态）= 8 passed：8 版裁到 5、真实 saver 写 7 版后面板读仍拿到最新值 | ① `_DROP_BLOBS` 的 `channel_versions` 引用条件改为恒真 → 独占 blob 用例红；② 默认保留量置 0 → 钩子与清扫用例红 | Passed |
-| 被保留版本 `channel_versions` 仍引用的共享 channel blob 版本不被删除 | 在用 channel 数据被删空，恢复与面板读空 | retention `_DROP_BLOBS` 引用条件 | `test_purge_keeps_shared_blob_version_still_referenced` | 把引用条件改为恒真 → 该用例红（本地未复跑，该文件已登记进 service integration 作业，结果见本轮 head 的 CI） | Not run（本地） |
+| 终态裁剪保留每个 `(thread_id, checkpoint_ns)` 最近 K 版，独占 blob/writes 同批删除 | 最新版本或其在用 channel 数据被删 | checkpoint_retention.purge_thread_checkpoint_history | `pytest test/integration/services/test_checkpoint_retention.py`（真实 PG）= 9 passed：8 版裁到 5、真实 saver 写 7 版后面板读仍拿到最新值 | ① `_DROP_BLOBS` 的 `channel_versions` 引用条件改为恒真 → 独占 blob 用例红；② 默认保留量置 0 → 钩子与清扫用例红 | Passed |
+| 被保留版本 `channel_versions` 仍引用的共享 channel blob 版本不被删除 | 在用 channel 数据被删空，恢复与面板读空 | retention `_DROP_BLOBS` 引用条件 | `test_purge_keeps_shared_blob_version_still_referenced`（CI service integration 作业通过） | 把引用条件改为恒真 → 该用例红 | Passed |
 | 清理期间新写入的 checkpoint 不会被过期快照删掉（在线与脚本同形：每条 DELETE 现场重算保留集） | 按 T0 快照删掉 T0.5 写入的版本，正在执行的线程失去可恢复状态 | 同上 + `scripts/checkpoint-cleanup.sh` retain | `test_trim_keeps_checkpoint_written_after_thread_selection`；并在活库克隆 `yuxi_rehearse` 上实跑 `retain`：超 K 组 1→0、checkpoints 133→130（恰为 report 预告的 3 行超出） | 把 keep 集的 `ORDER BY checkpoint_id DESC` 改为 `ASC`（等价于"保留最旧"）后，时序用例与独占 blob 用例同时红，还原绿 | Passed |
 | 命名空间维度独立：一个线程的多个 `checkpoint_ns` 各自保留 K 版，重名标识互不顶替 | 子命名空间历史被整页删除或整体保留 | 同上 | `test_purge_trims_each_namespace_independently`（根 8 版留 5、子 3 版全留，逐命名空间核三表计数） | 去掉 keep 集合的 `PARTITION BY checkpoint_ns` 后该用例红（`命名空间 sub:agent-1 的保留集不符：[]`） | Passed |
 | 有未终态 Run 的线程整体跳过；跳过与真删在观测上分开 | 删掉在途执行尚未收敛的 writes；"什么都没删"被报成治理生效 | retention + sweep | `test_purge_skips_thread_with_unfinished_run`（含阳性对照）、`test_sweep_counts_trimmed_and_skipped_separately` | 删除活跃 Run 存在性探测后跳过用例红；把 skipped 并入 trimmed 计数后计数用例红 | Passed |
@@ -97,12 +97,13 @@ checkpoint_ns)` 的最新版本：审批与 resume 走 `aget_tuple` 的 latest�
 | 每日清扫单实例执行 | 多副本重复清扫，或抢到锁却从不清扫 | retention + bootstrap/worker | `test_sweeper_leader_slot_dedupes`、`test_sweeper_runs_once_when_slot_acquired` | 去掉 `if not acquired: return` 后 dedupe 例红；抢锁成功却不执行时正向例红 | Passed |
 | 终态钩子接线 | 增量继续无界增长 | run_lifecycle | `test_finish_run_lifecycle_hook_trims_terminal_thread` | 钩子改为空操作后该用例红 | Passed |
 | worker 循环装配 | 循环未创建或退出时泄漏 | bootstrap/worker | `pytest test/unit/services/test_worker_bootstrap.py test/unit/services/test_knowledge_delegation_startup.py` = 21 passed | 未在 startup/shutdown 登记时 bootstrap 调用序列断言红 | Passed |
-| 其余链路无回归 | 钩子与循环引入连带失败 | — | `pytest test/unit -m "not slow"`；`pytest test/unit/services/test_checkpoint_retention_guards.py test/unit/services/test_worker_bootstrap.py test/unit/services/test_knowledge_delegation_startup.py` = 28 passed；`pytest test/integration/services/test_checkpoint_retention.py`（克隆库，8 用例形态）= 8 passed | — | Passed |
+| 其余链路无回归 | 钩子与循环引入连带失败 | — | `pytest test/unit -m "not slow"`；`pytest test/unit/services/test_checkpoint_retention_guards.py test/unit/services/test_worker_bootstrap.py test/unit/services/test_knowledge_delegation_startup.py` = 28 passed；`pytest test/integration/services/test_checkpoint_retention.py`（克隆库）= 8 passed；同一文件 9 用例形态在 CI service integration 作业 = 9 passed（该作业合计 585 passed、1 skipped） | — | Passed |
 | 脚本 retain 前置写入静止预检 | 清理与在途写 checkpoint 的 Run 竞争 | scripts/checkpoint-cleanup.sh preflight | 在 `yuxi_rehearse` 把一条 Run 置回 `running` 后执行 `retain`：打印"仍有 1 个 pending/running/cancel_requested Run…请先停掉 api 与 worker"并 exit 1，恢复状态后正常完成 | 去掉预检的计数分支后 retain 会在有在途 Run 时继续删除 | Inspected |
 | 门禁 | — | — | `python3 scripts/ci/verify_engineering_contracts.py` 与其单测、backend 三项 ruff、`git diff --check`、`bash -n scripts/checkpoint-cleanup.sh` | — | Passed |
 
 本地未执行：`test_checkpoint_retention.py` 需要活的 PostgreSQL，本地开发栈未接该分支，因此整文件由
-`scripts/ci/run_service_integration.sh` 的 service integration 作业执行（本批已把该文件登记进作业清单）；
+`scripts/ci/run_service_integration.sh` 的 service integration 作业执行（本批已把该文件登记进作业清单，
+CI 结果 9 passed）；
 需要 api 活体的集成用例在本地因测试管理员凭据未播种（`/api/auth/token` 401）无法运行，同一面由 CI 作业覆盖。
 仍未执行的是 `scripts/checkpoint-cleanup.sh` 在**生产体量库**上的 retain 演练与 VACUUM FULL 归还磁盘
 （需要停机窗口）——活库克隆（百行级）已验证 retain 的正确性与预检中止，全表窗口排序的锁占用时长只有
