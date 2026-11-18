@@ -75,12 +75,15 @@ async def evaluation_environment(monkeypatch):
         await drop_isolated_schema(schema, admin, engine)
 
 
-@pytest.mark.parametrize("stage", ["pending", "retrieval", "generation", "judging"])
+@pytest.mark.parametrize("stage", ["pending", "retrieval", "generation", "judging", "item_write", "progress_write"])
 async def test_delete_evaluation_stops_active_worker_and_preserves_other_run(evaluation_environment, monkeypatch, stage):
     """删除后持久取消且不影响同数据集的另一轮评估。"""
     manager, client = evaluation_environment
     entered, release = asyncio.Event(), asyncio.Event()
+    at_persistence = stage in {"item_write", "progress_write"}
+
     async def hold_stage(name):
+        """将 worker 停在本用例指定的边界。"""
         if stage == name:
             entered.set()
             await release.wait()
@@ -103,6 +106,18 @@ async def test_delete_evaluation_stops_active_worker_and_preserves_other_run(eva
     monkeypatch.setattr(evaluator.kb_manager, "aquery", retrieve)
     monkeypatch.setattr(service, "select_model", lambda **_kwargs: SimpleNamespace(call=answer))
     monkeypatch.setattr(evaluator.EvaluationMetricsCalculator, "calculate_answer_metrics", judge)
+
+    if at_persistence:
+        method = "_persist_run_item" if stage == "item_write" else "_persist_completed_items"
+        persist = getattr(service.EvaluationService, method)
+
+        async def hold_before_persist(self, *args):
+            """在作业已通过取消检查、持久化事务尚未加锁时暂停。"""
+            await hold_stage(stage)
+            return await persist(self, *args)
+
+        monkeypatch.setattr(service.EvaluationService, method, hold_before_persist)
+
     runs_path = "/api/evaluation/knowledge-bases/kb/runs"
     response = await client.post(
         "/api/evaluation/knowledge-bases/kb/datasets/upload",
@@ -125,6 +140,9 @@ async def test_delete_evaluation_stops_active_worker_and_preserves_other_run(eva
         if stage != "pending":
             execution = asyncio.create_task(background_jobs.process_background_job({}, job.id))
             await asyncio.wait_for(entered.wait(), timeout=5)
+        if stage == "progress_write":
+            async with manager.get_async_session_context() as session:
+                assert await session.scalar(select(func.count(EvaluationRunItem.id)).where(EvaluationRunItem.run_id == run_id)) == 1
         response = await client.delete(f"{runs_path}/{run_id}")
         assert response.status_code == 200, response.text
         assert (await jobs.get_by_id(job.id)).cancel_requested == 1
@@ -141,9 +159,14 @@ async def test_delete_evaluation_stops_active_worker_and_preserves_other_run(eva
         assert cancelled.error == "任务已取消"
     unaffected = await jobs.get_by_id(other_job.id)
     assert (unaffected.status, unaffected.cancel_requested) == ("pending", 0)
-    assert answer.await_count == int(stage in {"generation", "judging"})
-    assert judge.await_count == int(stage == "judging")
+    assert answer.await_count == int(at_persistence or stage in {"generation", "judging"})
+    assert judge.await_count == int(at_persistence or stage == "judging")
+    if at_persistence:
+        await background_jobs.process_background_job({}, other_job.id)
+        assert (await jobs.get_by_id(other_job.id)).status == "success"
     async with manager.get_async_session_context() as session:
         assert await session.scalar(select(EvaluationRun.id).where(EvaluationRun.run_id == run_id)) is None
         assert await session.scalar(select(func.count(EvaluationRunItem.id)).where(EvaluationRunItem.run_id == run_id)) == 0
         assert await session.scalar(select(EvaluationRun.id).where(EvaluationRun.run_id == other_run_id)) is not None
+        if at_persistence:
+            assert await session.scalar(select(func.count(EvaluationRunItem.id)).where(EvaluationRunItem.run_id == other_run_id)) == 1

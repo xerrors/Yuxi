@@ -14,11 +14,11 @@ Owner：backend/yuxi/modules/knowledge/evaluation/service.py
 
 评估服务按知识库和运行 ID 查找关联活跃作业，在删除事务中先登记取消意图，再删除运行。PostgreSQL 外键级联删除逐题结果。后台作业仓储拥有取消状态，worker 负责确认终态。事务按作业、运行的顺序加锁，与 worker 持久化一致。
 
-待执行作业在领取前检查取消意图。执行中的评估在逐题检索、生成、判分及结果写入的边界检查取消。
+待执行作业在领取前检查取消意图。执行中的评估在逐题检索、生成和判分之间检查取消。写入逐题结果或已完成题数时，worker 在持有作业行锁的事务中检查取消意图，通过后再访问评估记录。数据集生成仍可在取消时保存已生成的题目。
 
 ## 替代方案
 
-在删除后单独请求取消会留下只完成删除的故障窗口。仅在评估开始时检查运行是否存在，无法处理执行中删除。
+在删除后单独请求取消会留下只完成删除的故障窗口。仅在写入事务外检查取消，删除可能在检查之后提交，导致 worker 再次访问已删除的评估。
 
 ## 后果
 
@@ -26,4 +26,4 @@ Owner：backend/yuxi/modules/knowledge/evaluation/service.py
 
 ## 验证
 
-`test/integration/services/test_knowledge_evaluation_cancel.py` 通过 HTTP 删除待执行、检索中、生成中或判分中的运行。用例走正式 worker 入口，回读 PostgreSQL 中的作业终态、运行和逐题结果，并通过固定的外部响应验证后续调用没有开始。该文件由 service integration 检查执行。
+`test/integration/services/test_knowledge_evaluation_cancel.py` 通过 HTTP 在待执行、检索、生成、判分和写入逐题结果或完成题数前删除运行。用例走正式 worker 入口，回读 PostgreSQL 中的作业终态、取消原因、运行和逐题结果。写入边界用例还让同数据集的另一轮评估完成，确认结果可保存。移除事务内检查时，两处写入边界的取消原因断言会因评估已删除而失败。该文件由 service integration 检查执行。

@@ -50,12 +50,19 @@ class BackgroundJobContext:
     def is_cancel_requested(self) -> bool:
         return self._cancel_requested
 
-    async def run_owned_transaction(self, operation) -> None:
-        """在 attempt lease 行锁内提交领域 checkpoint。"""
+    async def run_owned_transaction(self, operation, *, check_cancelled: bool = False) -> None:
+        """在 attempt lease 行锁内提交领域 checkpoint，可在写入前响应取消。"""
+
+        async def write_checkpoint(session, record) -> None:
+            """使用当前行锁下的取消状态决定是否进入领域写入。"""
+            if check_cancelled:
+                self._raise_if_cancel_requested(bool(record.cancel_requested))
+            await operation(session, record)
+
         if not await self._repo.run_owned_transaction(
             self.job_id,
             worker_id=self.worker_id,
-            operation=operation,
+            operation=write_checkpoint,
         ):
             self.cancellation_reason = "lease_lost"
             raise asyncio.CancelledError("BackgroundJob lease was lost")
@@ -68,6 +75,10 @@ class BackgroundJobContext:
         if not owns_lease:
             self.cancellation_reason = "lease_lost"
             raise asyncio.CancelledError("BackgroundJob lease was lost")
+        self._raise_if_cancel_requested(cancel_requested)
+
+    def _raise_if_cancel_requested(self, cancel_requested: bool) -> None:
+        """记录正常取消原因，交由 worker 收敛终态。"""
         if cancel_requested:
             self._request_cancel("cancelled")
             raise asyncio.CancelledError("BackgroundJob was cancelled")

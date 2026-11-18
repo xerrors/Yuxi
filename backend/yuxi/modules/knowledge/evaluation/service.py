@@ -811,7 +811,7 @@ class EvaluationService:
                 data=data,
             )
 
-        await context.run_owned_transaction(operation)
+        await context.run_owned_transaction(operation, check_cancelled=True)
 
     async def _persist_completed_items(self, context: BackgroundJobContext, run_id: str, completed_items: int) -> None:
         """在 lease 保护事务内更新已完成题数。"""
@@ -825,7 +825,7 @@ class EvaluationService:
             if record is None:
                 raise ValueError("EvaluationRun not found")
 
-        await context.run_owned_transaction(operation)
+        await context.run_owned_transaction(operation, check_cancelled=True)
 
     # ---------- 内部辅助：字段投影与默认命名 ----------
 
