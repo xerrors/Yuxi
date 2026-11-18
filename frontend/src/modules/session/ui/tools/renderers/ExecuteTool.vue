@@ -1,12 +1,9 @@
 <template>
-  <BaseToolCall :tool-call="toolCall">
+  <BaseToolCall :tool-call="toolCall" :command="command">
     <template #header>
       <div class="sep-header">
-        <span class="note">执行命令</span>
-        <span class="separator" v-if="command">|</span>
-        <span class="description" v-if="command">
-          <span class="code">{{ command }}</span>
-        </span>
+        <span v-if="command" class="description">{{ command }}</span>
+        <span v-else class="note">执行命令</span>
       </div>
     </template>
   </BaseToolCall>
@@ -26,9 +23,5 @@ const props = defineProps({
 
 const parsedArgs = computed(() => parseToolCallArgs(props.toolCall))
 
-const command = computed(() => {
-  return parsedArgs.value.command || ''
-})
+const command = computed(() => typeof parsedArgs.value?.command === 'string' ? parsedArgs.value.command : '')
 </script>
-
-<style lang="less" scoped></style>

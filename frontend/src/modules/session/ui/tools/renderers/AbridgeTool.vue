@@ -3,6 +3,7 @@
     :tool-call="toolCall"
     :appearance="appearance"
     :default-expanded="defaultExpanded"
+    :command="command"
     :hide-params="Boolean(deviceDetail)"
     :error-label="receipt?.status === 'outcome_unknown' ? '执行结果未知' : '执行失败'"
     :incomplete-label="receipt?.status === 'outcome_unknown' ? '执行结果未知' : '已中断'"
@@ -118,6 +119,7 @@ const props = defineProps({
 })
 const toolId = computed(() => getToolCallId(props.toolCall))
 const args = computed(() => parseToolCallArgs(props.toolCall))
+const command = computed(() => toolId.value === 'command_execute' && typeof args.value?.command === 'string' ? args.value.command : '')
 const status = computed(() => getToolCallStatus(props.toolCall))
 const display = computed(() => {
   const content = getToolCallResultContent(props.toolCall)
@@ -189,7 +191,7 @@ const target = computed(() => {
   if (toolId.value === 'browser_read') return result.value?.source_url || input.selector || ''
   if (toolId.value === 'browser_wait') return input.selector || input.text || ''
   if (toolId.value === 'browser_exec') return ['accepted', 'dispatched'].includes(receipt.value?.status) ? '脚本处理中' : ''
-  if (toolId.value === 'command_execute') return input.command || ''
+  if (toolId.value === 'command_execute') return command.value
   if (toolId.value === 'command_status') {
     if (receipt.value?.result_available === false) return '输出已过期'
     if (['accepted', 'dispatched'].includes(receipt.value?.status)) return '命令处理中'

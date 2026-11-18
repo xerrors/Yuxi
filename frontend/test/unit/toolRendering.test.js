@@ -899,15 +899,15 @@ test('Abridge 连接按声明能力显示浏览器或设备，设备和桌面文
 })
 
 
-test('Abridge 设备命令参考命令工具直接展示标准输出，参数和折叠回执同时保留', async () => {
+test('Abridge 设备命令显示命令预览和标准输出，无参数区并保留折叠回执', async () => {
   const html = await render(ToolCallRenderer, {
     toolCall: {
-      name: 'command_execute', args: { command: 'example-command' },
+      name: 'command_execute', args: { command: 'example-command', timeout: 20 },
       result: [{ type: 'input_text', text: JSON.stringify({ status: 'executed', result: { stdout: 'Finder, Chrome', stderr: '', exit_code: 0 } }) }]
     }, defaultExpanded: true, appearance: 'timeline'
   })
-  assert.match(html, /<pre[^>]*>Finder, Chrome<\/pre>/)
-  assert.match(html, /参数:/)
+  assert.match(html, /<code[^>]*>example-command<\/code>[\s\S]+<pre[^>]*>Finder, Chrome<\/pre>/)
+  assert.doesNotMatch(html, /class="tool-params"|&quot;timeout&quot;/)
   assert.match(html, /<details[^>]*><summary[^>]*>原始结果/)
   assert.doesNotMatch(html, /标准错误：|输出已截断|命令执行超时/)
 })

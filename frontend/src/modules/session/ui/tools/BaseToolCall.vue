@@ -82,17 +82,26 @@
 
       <!-- Fixed Expand Icon -->
       <span v-if="!summaryOnly" class="tool-expand-icon">
-        <ChevronRight v-if="headerAction" size="14" />
-        <ChevronsDownUp v-else-if="isExpanded" size="14" />
-        <ChevronsUpDown v-else size="14" />
+        <ChevronRight v-if="headerAction" size="14" aria-hidden="true" />
+        <ChevronsDownUp v-else-if="isExpanded" size="14" aria-hidden="true" />
+        <ChevronsUpDown v-else size="14" aria-hidden="true" />
       </span>
     </div>
 
     <!-- Content Area -->
     <CollapseTransition>
-      <div v-if="!summaryOnly && !headerAction && isExpanded" class="tool-content">
+      <div v-if="!summaryOnly && !headerAction && isExpanded" class="tool-content" :class="{ 'has-command': command }">
+        <div v-if="command" class="shell-panel">
+          <span class="shell-label">Shell</span>
+          <details class="shell-command">
+            <summary>
+              <code>{{ command }}</code>
+              <ChevronDown :size="14" aria-hidden="true" />
+            </summary>
+          </details>
+        </div>
         <!-- Params Slot -->
-        <div class="tool-params" v-if="hasParams && !hideParams">
+        <div v-if="!command && hasParams && !hideParams" class="tool-params">
           <slot name="params" :tool-call="toolCall" :args="formattedArgs">
             <div class="tool-params-content">
               <strong>参数: </strong>
@@ -102,7 +111,13 @@
         </div>
 
         <!-- Result Slot -->
-        <div class="tool-result" v-if="hasResult || forceShowResult || hasToolError">
+        <div
+          v-if="hasResult || forceShowResult || hasToolError"
+          class="tool-result"
+          :tabindex="command ? 0 : undefined"
+          :role="command ? 'region' : undefined"
+          :aria-label="command ? '命令结果' : undefined"
+        >
           <div v-if="hasToolError" class="tool-error-result">
             <!-- 插槽只覆盖错误正文，工具失败状态仍由基础卡片拥有。 -->
             <slot name="error-result" :result-content="resultContent">
@@ -133,6 +148,7 @@
 import { ref, computed } from 'vue'
 import {
   ChevronRight,
+  ChevronDown,
   Clock,
   Loader,
   ChevronsUpDown,
@@ -154,6 +170,7 @@ import {
 import { getToolCallResultContent } from '@/modules/session/model/toolCallProjection'
 
 const props = defineProps({
+  command: { type: String, default: '' },
   incompleteLabel: { type: String, default: '已中断' },
   errorLabel: { type: String, default: '执行失败' },
   headerAction: { type: Function, default: null },
@@ -432,14 +449,28 @@ const hasResult = computed(() => {
 
     .tool-header {
       padding: 0;
+      min-height: 28px;
       background-color: transparent;
       border-bottom: none;
-      gap: 10px;
+      border-radius: 4px;
+      gap: 8px;
 
-      &:hover {
-        background-color: transparent;
+      &:is(:hover, :focus-visible) {
+        color: var(--gray-800);
       }
 
+      .tool-header-content {
+        flex: 0 1 auto;
+      }
+
+      .tool-expand-icon {
+        margin-left: 0;
+        opacity: 0;
+      }
+
+      &:is(:hover, :focus-visible, [aria-expanded='true']) .tool-expand-icon {
+        opacity: 1;
+      }
     }
 
     .tool-content {
@@ -447,8 +478,26 @@ const hasResult = computed(() => {
       padding-left: 8px;
       border-left: 1px solid var(--gray-100);
 
-      &:hover {
+      &:hover:not(.has-command) {
         border-left-color: var(--gray-400);
+      }
+
+      &.has-command {
+        position: relative;
+
+        &::before {
+          position: absolute;
+          inset-block: -1px;
+          // 竖线与 15px 工具图标的中心对齐。
+          left: -17px;
+          width: 1px;
+          background: var(--gray-100);
+          content: '';
+        }
+
+        &:is(:hover, :focus-within)::before {
+          background: var(--gray-400);
+        }
       }
 
       .tool-params {
@@ -456,6 +505,86 @@ const hasResult = computed(() => {
         background-color: transparent;
         border-bottom: none;
       }
+    }
+  }
+
+  .tool-content.has-command {
+    margin: 4px 0 8px 23px;
+    padding: 0;
+    border: 1px solid var(--gray-150);
+    border-radius: 8px;
+    background: var(--gray-25);
+
+    .shell-panel {
+      padding: 8px 12px;
+    }
+
+    .shell-label {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--gray-600);
+      font-size: 12px;
+    }
+
+    .shell-command > summary {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      color: var(--gray-700);
+      cursor: pointer;
+
+      svg {
+        flex-shrink: 0;
+        margin-top: 2px;
+        opacity: 0;
+      }
+
+      code {
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+        overflow: hidden;
+        overflow-wrap: anywhere;
+        white-space: pre-wrap;
+        font-size: 12px;
+        line-height: 18px;
+        user-select: text;
+      }
+    }
+
+    .shell-command > summary:is(:hover, :focus-visible) svg,
+    .shell-command[open] > summary svg {
+      opacity: 1;
+    }
+
+    .shell-command[open] > summary {
+      code { display: block; }
+      svg { transform: rotate(180deg); }
+    }
+
+    .tool-result {
+      max-height: 240px;
+      overflow: auto;
+      padding: 8px 12px;
+      border-top: 1px solid var(--gray-150);
+
+      .default-result,
+      .default-content {
+        padding: 0;
+        background: transparent;
+      }
+
+      :deep(.tool-result-blocks > pre) {
+        padding: 0;
+        max-height: none;
+        overflow: visible;
+        background: transparent;
+      }
+    }
+
+    :is(summary, .tool-result):focus-visible {
+      outline: 2px solid var(--main-300);
+      outline-offset: -2px;
     }
   }
 }

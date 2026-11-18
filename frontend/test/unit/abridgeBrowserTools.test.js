@@ -181,10 +181,8 @@ test('输入文本 header 显示文本，不显示坐标或元素编号', async 
 })
 
 
-test('普通模式仍可查看工具参数，设备与普通工具共享折叠入口', async () => {
-  for (const name of ['command_execute', 'calculator']) {
-    const html = await render(name, { status: 'executed', result: { stdout: 'ok', exit_code: 0 } }, { command: 'echo hello' })
-    assert.match(html, /class="tool-params"/)
-    assert.match(html, /参数:/)
-  }
+test('普通工具保留参数区', async () => {
+  const html = await render('calculator', { result: 2 }, { expression: '1 + 1' })
+  assert.match(html, /class="tool-params"/)
+  assert.match(html, /参数:/)
 })

@@ -33,6 +33,8 @@ async page => {
   const host = page.locator('#streaming-header-check')
   const heading = host.locator('.tool-calls-heading')
   const button = host.locator('.tool-calls-summary')
+  const arrow = button.locator('.summary-trailing')
+  const arrowOpacity = () => arrow.evaluate(node => getComputedStyle(node).opacity)
   const panel = host.locator('.tool-calls-collapse-panel')
   const evidence = []
   try {
@@ -41,9 +43,20 @@ async page => {
     check(!/已调用|读取文件/.test(await heading.innerText()), '流式 header 仍显示汇总或旧工具')
     check(await panel.evaluate(node => getComputedStyle(node).visibility) === 'hidden', '收起面板仍然可见')
     check(await heading.locator('.live-header').evaluate(node => node.inert), '预览保留了独立工具交互')
+    await host.locator('p').first().hover()
+    check(await arrowOpacity() === '0', '收起且未悬浮时仍显示箭头')
+    await button.hover()
+    check(await arrowOpacity() === '1', '悬浮未显示箭头')
+    const position = await heading.evaluate(node => ({
+      gap: node.querySelector('.summary-trailing').getBoundingClientRect().left - node.querySelector('.live-header').getBoundingClientRect().right,
+      room: node.parentElement.clientWidth - node.clientWidth
+    }))
+    check(position.gap === 8 && position.room > 0, '箭头未紧跟短标题')
     await host.locator('main').screenshot({ path: '/tmp/yuxi-streaming-header-tool.png' })
     await button.click()
     check(await button.getAttribute('aria-expanded') === 'true', '点击 header 未展开过程')
+    await host.locator('p').first().hover()
+    check(await arrowOpacity() === '1', '展开后移开鼠标时隐藏了箭头')
     await host.locator('.tool-calls-panel').getByText('读取文件', { exact: true }).waitFor()
     await page.evaluate(() => window.__streamingHeader.state.entries.push({ type: 'reasoning', key: 'thinking', content: '先前思考\n核对页面并整理接下来的操作' }))
     await heading.getByText('核对页面并整理接下来的操作', { exact: true }).waitFor()

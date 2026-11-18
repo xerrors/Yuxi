@@ -25,7 +25,7 @@
         @click="toggleToolCallsExpanded"
       >
         <span v-if="!isActive" class="summary-leading">
-          <Atom size="14" />
+          <Atom size="15" aria-hidden="true" />
         </span>
         <span v-if="!isActive" class="summary-content">
           <span class="summary-title">{{ toolCallsSummaryTitle }}</span>
@@ -42,6 +42,7 @@
             :size="14"
             class="summary-chevron"
             :class="{ 'is-collapsed': !areToolCallsExpanded }"
+            aria-hidden="true"
           />
         </span>
       </button>
@@ -52,7 +53,7 @@
       :class="{ 'is-expanded': !shouldCollapseToolCalls || areToolCallsExpanded }"
     >
       <div class="tool-calls-collapse-inner">
-        <div class="tool-calls-panel">
+        <div class="tool-calls-panel" :class="{ 'is-grouped': shouldCollapseToolCalls }">
           <div v-for="entry in groupedEntries" :key="entry.key" class="tool-call-container">
             <ReasoningBlockComponent
               v-if="entry.type === 'reasoning'"
@@ -215,17 +216,21 @@ const toggleToolCallsExpanded = () => {
     position: relative;
     min-width: 0;
 
-    &.is-active .tool-calls-summary {
-      position: absolute;
-      inset: 0;
-      width: 100%;
-      justify-content: flex-end;
+    &.is-active {
+      width: fit-content;
+      max-width: 100%;
+      padding-right: 22px;
+
+      .tool-calls-summary {
+        position: absolute;
+        inset: 0;
+        justify-content: flex-end;
+      }
     }
   }
 
   .live-header {
     min-width: 0;
-    padding-right: 22px;
     pointer-events: none;
     // 遮罩只改变明暗，保留专用 header 的继承色与文字布局。
     mask-image: linear-gradient(110deg, #000 35%, #0005 50%, #000 65%);
@@ -249,6 +254,7 @@ const toggleToolCallsExpanded = () => {
     display: inline-flex;
     align-items: center;
     gap: 8px;
+    min-height: 28px;
     color: var(--gray-600);
     text-align: left;
     cursor: pointer;
@@ -269,6 +275,10 @@ const toggleToolCallsExpanded = () => {
       color: var(--gray-800);
     }
 
+    &:is(:hover, :focus-visible, .is-expanded) .summary-trailing {
+      opacity: 1;
+    }
+
     .summary-leading {
       display: inline-flex;
       align-items: center;
@@ -281,7 +291,6 @@ const toggleToolCallsExpanded = () => {
       flex-wrap: wrap;
       align-items: center;
       gap: 6px;
-      flex: 1;
       font-size: 13px;
     }
 
@@ -313,6 +322,7 @@ const toggleToolCallsExpanded = () => {
       display: inline-flex;
       align-items: center;
       flex-shrink: 0;
+      opacity: 0;
     }
 
     .summary-chevron {
@@ -359,6 +369,12 @@ const toggleToolCallsExpanded = () => {
   .tool-calls-panel {
     margin-top: 6px;
     margin-bottom: 8px;
+
+    &.is-grouped {
+      margin-left: 7px;
+      padding-left: 16px;
+      border-left: 1px solid var(--gray-150);
+    }
   }
 
   .tool-call-container {

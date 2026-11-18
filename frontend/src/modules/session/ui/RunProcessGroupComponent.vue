@@ -7,6 +7,7 @@
       @click="expanded = !expanded"
     >
       <span>{{ summary }}</span>
+      <ChevronDown :size="14" class="process-chevron" aria-hidden="true" />
     </button>
     <div class="process-collapse-panel" :class="{ 'is-expanded': expanded }">
       <div class="process-collapse-inner">
@@ -30,6 +31,7 @@
 
 <script setup>
 import { computed, ref } from 'vue'
+import { ChevronDown } from '@lucide/vue'
 import AgentMessageComponent from '@/modules/session/ui/AgentMessageComponent.vue'
 import ToolCallsGroupComponent from '@/modules/session/ui/ToolCallsGroupComponent.vue'
 import { formatProcessDuration } from '@/modules/session/model/runProcessGrouping.js'
@@ -57,15 +59,15 @@ const summary = computed(() => formatProcessDuration(props.durationMs))
 }
 
 .process-summary {
-  display: flex;
+  display: inline-flex;
+  align-self: flex-start;
   align-items: center;
-  width: 100%;
+  gap: 6px;
   min-height: 30px;
   padding: 4px 0;
   border: 0;
-  border-bottom: 1px solid var(--gray-150);
   background: transparent;
-  color: var(--gray-500);
+  color: var(--gray-600);
   cursor: pointer;
   font: inherit;
   font-size: 12px;
@@ -80,6 +82,19 @@ const summary = computed(() => formatProcessDuration(props.durationMs))
   &:focus-visible {
     outline: 2px solid var(--main-300);
     outline-offset: 2px;
+  }
+}
+
+.process-chevron {
+  flex-shrink: 0;
+  opacity: 0;
+
+  .process-summary[aria-expanded='false'] & {
+    transform: rotate(-90deg);
+  }
+
+  .process-summary:is(:hover, :focus-visible, [aria-expanded='true']) & {
+    opacity: 1;
   }
 }
 
