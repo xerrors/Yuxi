@@ -1,7 +1,6 @@
 """业务 PostgreSQL 映射。"""
 
 from sqlalchemy import (
-    JSON,
     BigInteger,
     CheckConstraint,
     Column,
@@ -17,7 +16,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 
-from yuxi.infrastructure.postgres.base import JSON_VALUE
+from yuxi.infrastructure.postgres.base import JSON_VALUE, NormalizedJSON
 from yuxi.infrastructure.postgres.base import BusinessBase as Base
 from yuxi.shared.datetime import utc_now
 
@@ -96,7 +95,9 @@ class Message(Base):
     source_input_id = Column(String(64), nullable=True, index=True)
     input_position = Column(Integer, nullable=True)
     received_at = Column(DateTime(timezone=True), nullable=True)
-    extra_metadata = Column(JSON, nullable=True, comment="Additional metadata (complete message dump)")
+    # 承载模型/工具 JSON 全文：必须经 NormalizedJSON 归一化 NUL，否则 \u0000 转义入库会让
+    # items 分页等 json_each 读取路径对该消息永久失败。
+    extra_metadata = Column(NormalizedJSON, nullable=True, comment="Additional metadata (complete message dump)")
     image_content = Column(Text, nullable=True, comment="Base64 encoded image content for multimodal messages")
     run_id = Column(String(64), nullable=True, index=True, comment="Agent run ID")
     turn_id = Column(String(64), nullable=True, index=True)

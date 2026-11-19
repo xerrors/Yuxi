@@ -97,6 +97,136 @@ async def test_session_items_pagination_uses_only_authorized_public_content(test
         await delete_created_threads(*session_ids)
 
 
+async def test_items_page_survives_nul_in_model_output(test_client, admin_headers):
+    """模型/工具 JSON 里的 NUL 在持久化前归一化，items 分页不被不可读转义拖垮。"""
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from yuxi.modules.agents.models.messages import Message
+    from yuxi.modules.agents.repositories.public_items import PublicItemRepository
+
+    created = await test_client.post(
+        "/api/v1/agents/sessions",
+        headers={**admin_headers, "Idempotency-Key": str(uuid.uuid4())},
+        json={"agent_id": "default-chatbot", "title": make_test_session_title("nul-items")},
+    )
+    assert created.status_code == 201, created.text
+    session_id = created.json()["id"]
+    conn = await asyncpg.connect(os.environ["POSTGRES_URL"].replace("+asyncpg", ""))
+    engine = create_async_engine(os.environ["POSTGRES_URL"])
+    try:
+        record = await conn.fetchrow("SELECT id,uid,app_id FROM sessions WHERE thread_id=$1", session_id)
+        poison = {
+            "public_items": {
+                "message": {
+                    "type": "message",
+                    "id": f"nul-{session_id}",
+                    "turn_id": None,
+                    "role": "assistant",
+                    "phase": "commentary",
+                    "status": "completed",
+                    "content": [{"type": "output_text", "text": "binary\x00tail"}],
+                    "yuxi": {"output_index": 0},
+                }
+            }
+        }
+        async with async_sessionmaker(engine)() as db:
+            db.add(
+                Message(
+                    session_record_id=record["id"],
+                    role="assistant",
+                    content="",
+                    message_type="text",
+                    extra_metadata=poison,
+                    delivery_status="complete",
+                )
+            )
+            await db.commit()
+        raw = await conn.fetchval(
+            "SELECT extra_metadata::text FROM messages WHERE session_record_id=$1 ORDER BY id DESC LIMIT 1", record["id"]
+        )
+        assert "\\u0000" not in raw
+        response = await test_client.get(f"/api/v1/agents/sessions/{session_id}/items", headers=admin_headers)
+        assert response.status_code == 200, response.text
+        item = next(entry for entry in response.json()["data"] if entry["id"] == f"nul-{session_id}")
+        assert item["content"][0]["text"] == "binary\ufffdtail"
+        async with async_sessionmaker(engine)() as db:
+            rows = await PublicItemRepository(db).list_page(
+                thread_id=session_id,
+                uid=record["uid"],
+                app_id=record["app_id"],
+                turn_id=None,
+                after=None,
+                limit=10,
+                order="asc",
+            )
+        assert len(rows) == 1
+    finally:
+        await engine.dispose()
+        await conn.close()
+        await delete_created_threads(session_id)
+
+
+async def test_nul_repair_script_restores_poisoned_extra_metadata(test_client, admin_headers):
+    """存量污染行经显式修复脚本归一化后，items 端点恢复可读。"""
+    from yuxi.infrastructure.postgres.manager import pg_manager
+    from yuxi.migrations.json_nul_repair import repair_messages_nul_escapes
+
+    created = await test_client.post(
+        "/api/v1/agents/sessions",
+        headers={**admin_headers, "Idempotency-Key": str(uuid.uuid4())},
+        json={"agent_id": "default-chatbot", "title": make_test_session_title("nul-repair")},
+    )
+    assert created.status_code == 201, created.text
+    session_id = created.json()["id"]
+    conn = await asyncpg.connect(os.environ["POSTGRES_URL"].replace("+asyncpg", ""))
+    try:
+        record = await conn.fetchrow("SELECT id,uid,app_id FROM sessions WHERE thread_id=$1", session_id)
+        poison = json.dumps(
+            {
+                "public_items": {
+                    "message": {
+                        "type": "message",
+                        "id": f"poison-{session_id}",
+                        "turn_id": None,
+                        "role": "assistant",
+                        "phase": "commentary",
+                        "status": "completed",
+                        "content": [{"type": "output_text", "text": "a\x00b"}],
+                        "yuxi": {"output_index": 0},
+                    }
+                }
+            }
+        )
+        assert "\\u0000" in poison
+        await conn.execute(
+            "INSERT INTO messages (session_record_id, role, content, message_type, extra_metadata, delivery_status, created_at) "
+            "VALUES ($1, 'assistant', 'PRIVATE_AUDIT', 'text', $2::json, 'complete', now())",
+            record["id"],
+            poison,
+        )
+        broken = await test_client.get(f"/api/v1/agents/sessions/{session_id}/items", headers=admin_headers)
+        assert broken.status_code == 500
+        with pytest.raises(asyncpg.exceptions.UntranslatableCharacterError):
+            await conn.fetch(
+                "SELECT anon.key FROM messages m, json_each(m.extra_metadata -> 'public_items') anon WHERE m.session_record_id=$1",
+                record["id"],
+            )
+        pg_manager.initialize()
+        try:
+            await repair_messages_nul_escapes(pg_manager)
+        finally:
+            await pg_manager.close()
+        raw = await conn.fetchval("SELECT extra_metadata::text FROM messages WHERE session_record_id=$1", record["id"])
+        assert "\\u0000" not in raw
+        fixed = await test_client.get(f"/api/v1/agents/sessions/{session_id}/items", headers=admin_headers)
+        assert fixed.status_code == 200, fixed.text
+        item = next(entry for entry in fixed.json()["data"] if entry["id"] == f"poison-{session_id}")
+        assert item["content"][0]["text"] == "a\ufffdb"
+    finally:
+        await conn.close()
+        await delete_created_threads(session_id)
+
+
 async def test_items_page_bounds_database_rows_and_splits_one_message(test_client, admin_headers):
     """隐藏审计不计入页，同一消息的公开调用按索引跨页且数据库只返回有限行。"""
     from sqlalchemy import event
