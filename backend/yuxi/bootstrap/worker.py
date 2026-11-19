@@ -2,11 +2,13 @@
 
 import asyncio
 import inspect
+import time
 
 from yuxi.bootstrap.capabilities import knowledge_enabled
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.infrastructure.postgres.schema import require_current_schema
+from yuxi.infrastructure.redis import get_async_redis_client
 from yuxi.infrastructure.worker_health import (
     JOB_RECONCILIATION_HEALTH_KEY,
     JOB_RECONCILIATION_HEALTH_TTL_SECONDS,
@@ -33,6 +35,10 @@ from yuxi.workers.background_jobs import reconcile_and_publish_jobs
 _RECONCILIATION_TASK_KEY = "agent_run_reconciliation_task"
 _JOB_RECONCILIATION_TASK_KEY = "background_job_reconciliation_task"
 _SANDBOX_CLEANUP_TASK_KEY = "sandbox_cleanup_task"
+_CHECKPOINT_SWEEP_TASK_KEY = "checkpoint_sweep_task"
+
+CHECKPOINT_SWEEP_INTERVAL_SECONDS = 24 * 3600
+CHECKPOINT_SWEEP_SLOT_KEY = "yuxi:checkpoint-sweep:slot"
 
 
 async def startup(ctx: dict) -> None:
@@ -69,6 +75,7 @@ async def startup(ctx: dict) -> None:
     ctx[_RECONCILIATION_TASK_KEY] = asyncio.create_task(_reconcile_agent_run_leases_forever())
     ctx[_JOB_RECONCILIATION_TASK_KEY] = asyncio.create_task(_reconcile_background_jobs_forever())
     ctx[_SANDBOX_CLEANUP_TASK_KEY] = asyncio.create_task(_reconcile_sandboxes_forever())
+    ctx[_CHECKPOINT_SWEEP_TASK_KEY] = asyncio.create_task(_sweep_checkpoint_garbage_forever())
 
 
 async def shutdown(ctx: dict) -> None:
@@ -79,6 +86,7 @@ async def shutdown(ctx: dict) -> None:
             ctx.pop(_RECONCILIATION_TASK_KEY, None),
             ctx.pop(_JOB_RECONCILIATION_TASK_KEY, None),
             ctx.pop(_SANDBOX_CLEANUP_TASK_KEY, None),
+            ctx.pop(_CHECKPOINT_SWEEP_TASK_KEY, None),
         ]
         reconciliation_tasks = [task for task in reconciliation_tasks if task is not None]
         for task in reconciliation_tasks:
@@ -175,3 +183,32 @@ async def _reconcile_sandboxes_forever() -> None:
         except Exception:
             logger.exception("Sandbox cleanup reconciliation failed")
         await asyncio.sleep(RUN_RECONCILIATION_SECONDS)
+
+
+async def _sweep_checkpoint_garbage_if_leader() -> None:
+    """每日一个 Redis 槽位锁：多副本只有一个实例执行兜底清扫。"""
+    redis = await get_async_redis_client()
+    slot = int(time.time() // CHECKPOINT_SWEEP_INTERVAL_SECONDS)
+    acquired = await redis.set(
+        f"{CHECKPOINT_SWEEP_SLOT_KEY}:{slot}",
+        WORKER_ID,
+        nx=True,
+        ex=CHECKPOINT_SWEEP_INTERVAL_SECONDS * 2,
+    )
+    if not acquired:
+        return
+    from yuxi.modules.agents.services.checkpoint_retention import sweep_checkpoint_garbage
+
+    await sweep_checkpoint_garbage()
+
+
+async def _sweep_checkpoint_garbage_forever() -> None:
+    """checkpoint 兜底清扫循环：启动即追一次（补停机欠账），之后每日一次。"""
+    while True:
+        try:
+            await _sweep_checkpoint_garbage_if_leader()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Checkpoint garbage sweep failed")
+        await asyncio.sleep(CHECKPOINT_SWEEP_INTERVAL_SECONDS)
