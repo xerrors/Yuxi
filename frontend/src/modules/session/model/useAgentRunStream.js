@@ -313,12 +313,12 @@ export function useAgentRunStream({
   }
 
   /** 恢复持久运行事实；终态等历史收尾，运行态只启动订阅。 */
-  const resumeActiveRunForThread = async (threadId, { refreshHistory = false } = {}) => {
+  const resumeActiveRunForThread = async (threadId, { refreshHistory = false, session = null, onRestored } = {}) => {
     if (!threadId || !isThreadActive(threadId)) return false
     const ts = getThreadState(threadId)
     if (!ts) return false
     const version = ts.runStateVersion
-    const thread = await agentApi.getPublicThread(threadId)
+    const thread = session || await agentApi.getPublicThread(threadId)
     if (
       !isThreadActive(threadId) ||
       getThreadState(threadId) !== ts ||
@@ -339,6 +339,7 @@ export function useAgentRunStream({
       if (refreshHistory) await fetchThreadMessages({ threadId, fresh: true })
       if (!isThreadActive(threadId) || getThreadState(threadId) !== ts || ts.runStateVersion !== version)
         return false
+      onRestored?.(null)
       return true
     }
     const turn = await agentApi.getThreadTurn(threadId, turnId)
@@ -367,10 +368,14 @@ export function useAgentRunStream({
       }
       const restoredVersion = ts.runStateVersion
       if (refreshHistory) await fetchThreadMessages({ threadId, fresh: true })
-      return isThreadActive(threadId) && getThreadState(threadId) === ts &&
-        ts.runStateVersion === restoredVersion
+      if (!isThreadActive(threadId) || getThreadState(threadId) !== ts || ts.runStateVersion !== restoredVersion)
+        return false
+      onRestored?.(turn)
+      return true
     }
-    return settleTurn(threadId, turnId, turn.status, turn.yuxi.current_run_id, new Set([threadId]), turn)
+    const restored = await settleTurn(threadId, turnId, turn.status, turn.yuxi.current_run_id, new Set([threadId]), turn)
+    if (restored) onRestored?.(turn)
+    return restored
   }
 
   const requestTurnCancellation = async (threadId) => {

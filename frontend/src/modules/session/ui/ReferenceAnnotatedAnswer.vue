@@ -1,15 +1,19 @@
 <template>
-  <MarkdownPreview
-    :content="content"
-    :references="citations"
-    widgets
-    :widgets-disabled="widgetsDisabled"
-    :widget-action="widgetAction"
-    :widget-image-loader="widgetImageLoader"
-    code-copy
-    class="message-md"
-    @open-reference="openReference"
-  />
+  <div class="answer-content" :class="{ 'is-formatting': awaitingFormat }">
+    <div v-if="awaitingFormat" class="answer-text-fallback">{{ content }}</div>
+    <MarkdownPreview
+      :content="content"
+      :references="citations"
+      widgets
+      :widgets-disabled="widgetsDisabled"
+      :widget-action="widgetAction"
+      :widget-image-loader="widgetImageLoader"
+      code-copy
+      class="message-md"
+      @rendered="formattedContent = $event"
+      @open-reference="openReference"
+    />
+  </div>
   <a-modal v-model:open="snippetOpen" :title="selected?.source.title" :footer="null">
     <p class="reference-quote">{{ selected?.quote }}</p>
     <p class="reference-location-notice">此来源暂不支持原文行定位。</p>
@@ -28,11 +32,23 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, defineAsyncComponent, h, ref } from 'vue'
 import { threadApi } from '@/apis/agent_api'
-import MarkdownPreview from '@/modules/workspace/ui/MarkdownPreview.vue'
-import ExternalDocumentReader from '@/modules/knowledge/ui/ExternalDocumentReader.vue'
+import { createAsyncPanel } from '@/shared/lib/asyncPanel'
 import { useTurnReferencesStore } from '@/modules/session/model/turnReferences'
+
+defineOptions({
+  components: {
+    MarkdownPreview: defineAsyncComponent({
+      loader: () => import('@/modules/workspace/ui/MarkdownPreview.vue'),
+      timeout: 30000,
+      errorComponent: { render: () => h('p', { class: 'answer-format-error', role: 'status' }, '排版加载失败，已显示原文') }
+    }),
+    ExternalDocumentReader: createAsyncPanel(
+      () => import('@/modules/knowledge/ui/ExternalDocumentReader.vue')
+    )
+  }
+})
 
 const props = defineProps({
   widgetsDisabled: Boolean,
@@ -46,6 +62,8 @@ const widgetImageLoader = computed(() => {
   return threadId ? (path) => threadApi.previewThreadArtifact(threadId, path) : null
 })
 const store = useTurnReferencesStore()
+const formattedContent = ref('')
+const awaitingFormat = computed(() => formattedContent.value !== props.content)
 const selected = ref(null)
 const snippetOpen = ref(false)
 const fileOpen = ref(false)
@@ -75,6 +93,14 @@ function openReference(citation) {
 </script>
 
 <style scoped lang="less">
+.answer-text-fallback {
+  margin: 8px 0;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.answer-content.is-formatting :deep(.yk-markdown-preview) { display: none; }
+.answer-format-error { color: var(--color-text-secondary); font-size: 12px; }
 .reference-quote { white-space: pre-wrap; }
 .reference-location-notice { color: var(--gray-600); font-size: 12px; }
 </style>

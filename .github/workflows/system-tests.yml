@@ -510,6 +510,7 @@ jobs:
             test/integration/api/test_chat_router.py::test_public_input_rejects_unbound_attachment_without_persisting_receipt \
             test/integration/api/test_removed_api_endpoints.py::test_removed_agent_session_entrypoints_are_unreachable \
             test/integration/api/test_public_agents_key_boundary.py \
+            test/integration/api/test_public_session_etag.py \
             test/integration/services/test_agent_input_schema.py \
             test/integration/services/test_project_thread_archive.py \
             test/integration/services/test_run_stream_redis.py -q

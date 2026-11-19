@@ -650,6 +650,227 @@ test('首次和追加各读取最多三页，短历史停止且并发追加共�
   detach()
 })
 
+test('首次打开已结束的长轮次只补未读尾页，交错的其他轮次仍能向上翻到', async (t) => {
+  const { runtime } = setup(t)
+  const { useSessionFeedbackStore } = await server.ssrLoadModule('/src/modules/session/model/sessionFeedback.js')
+  const feedback = useSessionFeedbackStore()
+  let rating = 'like'
+  api.getSessionFeedback = async () => ({ items: [{ run_id: 'run', rating }] })
+  let completions = 0
+  const firstView = runtime.observeThread('thread', { onTerminalDetected: () => completions++ })
+  t.after(firstView)
+  const current = { id: 'turn', status: 'completed', current_run_id: 'run', result_run_id: 'run' }
+  api.getPublicThread = async () => ({ id: 'thread', yuxi: { current_turn: current } })
+  const item = (n) => ({
+    id: String(n), turn_id: n % 11 === 1 || n < 30 ? 'other' : 'turn',
+    type: 'message', role: 'user', status: 'completed',
+    content: [{ type: 'input_text', text: String(n) }], yuxi: { message_id: n }
+  })
+  const items = Array.from({ length: 410 }, (_, i) => item(410 - i))
+  const final = { ...item(411), id: 'final', role: 'assistant', phase: 'final_answer',
+    content: [{ type: 'output_text', text: '正式结果' }], yuxi: { message_id: 411, run_id: 'run' } }
+  api.getThreadTurn = async () => ({ id: 'turn', status: 'completed',
+    yuxi: { current_run_id: 'run', result_run_id: 'run', runs: [{ id: 'run', turn_id: 'turn', status: 'completed' }], output: [final] } })
+  const calls = [], transferred = []
+  let failTail = false
+  api.getSessionItems = async (_threadId, { after, turnId, limit }) => {
+    if (turnId && after && failTail) {
+      failTail = false
+      throw new Error('轮次尾页暂时不可用')
+    }
+    const source = turnId ? items.filter(item => item.turn_id === turnId) : items
+    const offset = after ? source.findIndex(item => item.id === after) + 1 : 0
+    assert.ok(!after || offset > 0, '游标必须属于被请求的范围')
+    const data = source.slice(offset, offset + limit)
+    calls.push([turnId ?? null, after ?? null])
+    transferred.push(...data.map(item => item.id))
+    return { data, has_more: offset + limit < source.length, last_id: data.at(-1)?.id, yuxi: { runs: [] } }
+  }
+  assert.equal(await runtime.loadThread('thread'), true)
+  const firstWindow = items.slice(0, 300)
+  const needed = items.filter((item, i) => i < 300 || item.turn_id === 'turn')
+  const projected = () => Object.keys(runtime.getThreadState('thread').itemState.items).sort()
+  assert.deepEqual(projected(), [...needed.map(i => i.id), 'final'].sort())
+  assert.equal(runtime.threadMessages.thread.at(-1).content, '正式结果')
+  assert.equal(feedback.getEntry('thread', 'run').record.rating, 'like')
+  assert.deepEqual(transferred.slice().sort(), needed.map(i => i.id).sort(), '同一公开 item 首读只传一次')
+  assert.deepEqual(calls, [[null, null], [null, '311'], [null, '211'], ['turn', '112']])
+  assert.equal(runtime.historyPages.thread.after, firstWindow.at(-1).id)
+  assert.equal(completions, 0, '打开历史不产生新的完成事件')
+  await runtime.fetchThreadMessages({ threadId: 'thread', more: true })
+  assert.deepEqual(projected(), [...items.map(i => i.id), 'final'].sort())
+  assert.equal(runtime.historyPages.thread.hasMore, false)
+  firstView()
+  t.after(runtime.observeThread('thread', {}))
+  rating = 'dislike'
+  failTail = true
+  await assert.rejects(runtime.loadThread('thread'), /轮次尾页暂时不可用/)
+  await runtime.reconcileCooperationSessions([{ session_id: 'thread', turn_id: 'turn', turn_status: 'completed',
+    current_run_id: 'run', result_run_id: 'run', run_status: 'completed' }])
+  assert.equal(runtime.getThreadState('thread').historyLoaded, false, '单轮恢复不能替代会话分页')
+  await runtime.loadThread('thread', { fresh: true })
+  assert.equal(feedback.getEntry('thread', 'run').record.rating, 'dislike')
+  assert.equal(runtime.historyPages.thread.after, '111')
+  await runtime.fetchThreadMessages({ threadId: 'thread', more: true })
+  assert.deepEqual(projected(), [...items.map(i => i.id), 'final'].sort())
+})
+
+test('首读历史期间有新输入且旧恢复在途，仍恢复唯一订阅', async (t) => {
+  const { runtime, counts } = setup(t)
+  t.after(runtime.observeThread('thread', {}))
+  const done = { id: 'done', status: 'completed', current_run_id: 'old', result_run_id: 'old' }
+  const next = { id: 'next', status: 'in_progress', current_run_id: 'new', result_run_id: null }
+  let current = done
+  const earlier = Promise.withResolvers()
+  let hold = true
+  api.getPublicThread = async () => {
+    if (hold) {
+      hold = false
+      return earlier.promise
+    }
+    return { id: 'thread', yuxi: { current_turn: current } }
+  }
+  api.getThreadTurn = async (_threadId, id) => {
+    const turn = id === done.id ? done : next
+    return { id, status: turn.status, yuxi: { ...turn, output: [], runs: [] } }
+  }
+  const input = { id: 'new-input', turn_id: 'next', type: 'message', role: 'user', status: 'completed',
+    content: [{ type: 'input_text', text: '外部提交的新输入' }], yuxi: { run_id: 'new', message_id: 2 } }
+  api.getSessionItems = async () => {
+    const data = current === next ? [input] : []
+    current = next
+    return { data, has_more: false, last_id: data.at(-1)?.id, yuxi: { runs: [] } }
+  }
+  const old = runtime.resumeActiveRunForThread('thread')
+  await tick()
+  const opening = runtime.loadThread('thread')
+  await tick()
+  earlier.resolve({ id: 'thread', yuxi: { current_turn: null } })
+  await Promise.all([old, opening])
+  assert.equal(counts().subscriptions, 1)
+  assert.equal(runtime.getThreadState('thread').activeRunId, 'new')
+  assert.deepEqual(runtime.threadMessages.thread.map(message => message.content), ['外部提交的新输入'])
+})
+
+for (const scenario of ['继续运行', '历史已经结束', '恢复期间结束']) {
+  test(`首读收到运行摘要时，${scenario}只应用当前 Run 的结果`, async (t) => {
+    const { runtime, counts } = setup(t)
+    let completions = 0
+    t.after(runtime.observeThread('thread', { onTerminalDetected: () => completions++ }))
+    const settlesDuringRestore = scenario === '恢复期间结束'
+    const running = scenario === '继续运行'
+    const current = () => ({
+      id: 'turn', status: completed ? 'completed' : 'in_progress', current_run_id: 'run',
+      result_run_id: completed ? 'run' : null
+    })
+    const run = () => ({ id: 'run', turn_id: 'turn', status: completed ? 'completed' : 'running' })
+    let completed = scenario === '历史已经结束'
+    let turnReads = 0
+    api.getPublicThread = async () => ({ id: 'thread', yuxi: { current_turn: current() } })
+    api.getThreadTurn = async () => {
+      if (++turnReads === 2 && settlesDuringRestore) completed = true
+      return { id: 'turn', status: current().status, yuxi: { ...current(), output: [], runs: [run()] } }
+    }
+    let reads = 0
+    const started = Promise.withResolvers(), gate = Promise.withResolvers()
+    api.getSessionItems = async () => {
+      reads++
+      started.resolve()
+      await gate.promise
+      const data = [{ id: 'input', turn_id: 'turn', type: 'message', role: 'user', status: 'completed',
+        content: [{ type: 'input_text', text: '持久输入' }], yuxi: { run_id: 'run', message_id: 1 } }]
+      return { data, has_more: false, last_id: data.at(-1)?.id, yuxi: { runs: [run()] } }
+    }
+    const opening = runtime.loadThread('thread')
+    await started.promise
+    const summary = [{ session_id: 'thread', turn_id: 'turn', turn_status: 'running',
+      current_run_id: scenario === '历史已经结束' ? 'old-run' : 'run', result_run_id: null, run_status: 'running' }]
+    const syncing = runtime.reconcileCooperationSessions(summary)
+    gate.resolve()
+    await Promise.all([opening, syncing])
+    assert.equal(counts().subscriptions, running ? 1 : 0)
+    assert.deepEqual(runtime.threadMessages.thread.map(m => m.content), ['持久输入'])
+    await runtime.reconcileCooperationSessions([{ ...summary[0], turn_status: running ? 'running' : 'completed',
+      current_run_id: 'run', result_run_id: current().result_run_id, run_status: run().status }])
+    assert.equal(reads, settlesDuringRestore ? 2 : 1)
+    assert.equal(completions, settlesDuringRestore ? 1 : 0)
+  })
+}
+
+for (const retry of ['手动重读', '在途协作摘要']) {
+  test(`初读详情失败后由${retry}恢复新输入和运行`, async (t) => {
+    const { runtime, counts } = setup(t)
+    t.after(runtime.observeThread('thread', {}))
+    const run = { id: 'run', turn_id: 'turn', status: 'running' }
+    const current = { id: 'turn', status: 'in_progress', current_run_id: 'run' }
+    const verifying = Promise.withResolvers()
+    const verification = Promise.withResolvers()
+    let detailReads = 0
+    let submitted = false
+    api.getPublicThread = async () => {
+      if (++detailReads === 2) {
+        verifying.resolve()
+        await verification.promise
+        throw new Error('连接中断')
+      }
+      return { id: 'thread', yuxi: { current_turn: submitted ? current : null } }
+    }
+    api.getThreadTurn = async () => ({ id: 'turn', status: current.status, yuxi: {
+      ...current, output: [], runs: [run] } })
+    const added = retry === '手动重读' ? 350 : 1
+    api.getSessionItems = async (_threadId, { after, limit }) => {
+      const first = after ? Number(after) - 1 : submitted ? added + 1 : 1
+      const data = Array.from({ length: Math.min(first, limit) }, (_, index) => {
+        const n = first - index
+        return { id: String(n), turn_id: n === 1 ? 'old' : 'turn', type: 'message', role: 'user', status: 'completed',
+          content: [{ type: 'input_text', text: `输入 ${n}` }], yuxi: { message_id: n, run_id: n === 1 ? 'old-run' : 'run' } }
+      })
+      return { data, last_id: data.at(-1)?.id, has_more: first > limit, yuxi: { runs: submitted ? [run] : [] } }
+    }
+    const opening = runtime.loadThread('thread')
+    const failed = assert.rejects(opening, /连接中断/)
+    await verifying.promise
+    submitted = true
+    const sync = retry === '在途协作摘要' && runtime.reconcileCooperationSessions([{
+      session_id: 'thread', turn_id: 'turn', turn_status: 'running', current_run_id: 'run', run_status: 'running'
+    }])
+    verification.resolve()
+    await failed
+    await (sync || runtime.loadThread('thread', { fresh: true }))
+    assert.equal(runtime.getThreadState('thread').activeRunId, 'run')
+    assert.equal(counts().subscriptions, 1)
+    assert.deepEqual(runtime.threadMessages.thread.map(message => message.content),
+      Array.from({ length: added + 1 }, (_, index) => `输入 ${index + 1}`))
+  })
+}
+
+test('首次会话页等待在途轮次页，保留会话范围的分页游标', async (t) => {
+  const { runtime } = setup(t)
+  t.after(runtime.observeThread('thread', {}))
+  const current = { id: 'turn', status: 'completed', current_run_id: 'run', result_run_id: 'run' }
+  api.getPublicThread = async () => ({ id: 'thread', yuxi: { current_turn: current } })
+  api.getThreadTurn = async () => ({ id: 'turn', status: 'completed', yuxi: { ...current, output: [], runs: [] } })
+  const started = Promise.withResolvers(), gate = Promise.withResolvers()
+  api.getSessionItems = async (_id, { turnId }) => {
+    started.resolve()
+    await gate.promise
+    const ids = turnId ? ['turn'] : ['turn', 'other']
+    return { data: ids.map((id, index) => ({ id, turn_id: id, type: 'message', role: 'user', status: 'completed',
+      content: [{ type: 'input_text', text: id }], yuxi: { message_id: 2 - index } })),
+    last_id: ids.at(-1), has_more: false, yuxi: { runs: [] } }
+  }
+  const prior = runtime.fetchThreadMessages({ threadId: 'thread', turnId: 'turn' })
+  await started.promise
+  const terminal = runtime.fetchThreadMessages({ threadId: 'thread', turnId: 'turn', fresh: true })
+  await tick()
+  const opening = runtime.loadThread('thread')
+  await tick()
+  gate.resolve()
+  await Promise.all([prior, terminal, opening])
+  assert.equal(runtime.getThreadState('thread').historyLoaded, true)
+  assert.equal(runtime.historyPages.thread.after, 'other')
+})
+
 test('历史、流和完成后的显示由同一 item 集合派生，不依赖历史再同步', async (t) => {
   const h = setup(t)
   const detach = h.runtime.observeThread('thread', {})

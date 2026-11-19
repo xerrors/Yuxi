@@ -236,3 +236,69 @@ test('后台状态读取与改名串行，迟到资源不会覆盖已保存的�
     await server.close()
   }
 })
+
+test('条件刷新逐页复用置顶游标，变化页更新侧栏且换账号后不发旧 ETag', async (t) => {
+  const server = await createTestServer({ server: { middlewareMode: true } })
+  t.after(() => server.close())
+  setActivePinia(createPinia())
+  const { useChatThreadsStore } = await server.ssrLoadModule('/src/modules/session/model/chatThreads.js')
+  const { useUserStore } = await server.ssrLoadModule('/src/modules/identity/index.js')
+  const user = useUserStore()
+  const store = useChatThreadsStore()
+  const calls = []
+  let refreshed = false
+  let heldNormal
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    const params = new URL(url, 'http://local.test').searchParams
+    const after = params.get('after')
+    const pinned = params.get('is_pinned') === 'true'
+    const id = pinned ? after ? 'old-pin' : 'pin-boundary' : 'normal'
+    const status = refreshed && id === 'old-pin' ? 'completed' : 'idle'
+    const etag = `W/"${id}-${status}"`
+    const sent = options.headers['If-None-Match']
+    calls.push([options.headers.Authorization, id, sent])
+    if (heldNormal && id === 'normal' && options.headers.Authorization === 'Bearer user-a') {
+      heldNormal.started.resolve()
+      await heldNormal.finish.promise
+    }
+    if (sent === etag) return new Response(null, { status: 304, headers: { ETag: etag } })
+    return Response.json({
+      data: [{
+        id, status, yuxi: { is_pinned: pinned, title: status === 'completed' ? '完成' : '初始', tool_approval_mode: 'ask' }
+      }],
+      has_more: pinned && !after,
+      last_id: id
+    }, { headers: { ETag: etag } })
+  })
+
+  user.token = 'user-a'
+  await store.loadThreads()
+  assert.deepEqual(store.threads.map(thread => thread.id), ['normal', 'pin-boundary', 'old-pin'])
+  assert.ok(calls.every(call => call[2] === undefined))
+  // 模拟编辑器对审批模式的乐观更新，分页快照仍须代表 ETag 对应的服务端正文。
+  store.threads.find(thread => thread.id === 'normal').yuxi.tool_approval_mode = 'always_trust'
+
+  calls.length = 0
+  refreshed = true
+  await store.syncThreadStatuses()
+  assert.deepEqual(calls.map(call => call.slice(1)), [
+    ['normal', 'W/"normal-idle"'],
+    ['pin-boundary', 'W/"pin-boundary-idle"'],
+    ['old-pin', 'W/"old-pin-idle"']
+  ])
+  assert.equal(store.threads.find(thread => thread.id === 'old-pin').yuxi.title, '完成')
+  assert.equal(store.threads.find(thread => thread.id === 'normal').yuxi.tool_approval_mode, 'ask')
+
+  calls.length = 0
+  heldNormal = { started: Promise.withResolvers(), finish: Promise.withResolvers() }
+  const oldRefresh = store.syncThreadStatuses()
+  await heldNormal.started.promise
+  user.token = 'user-b'
+  const newLoad = store.loadThreads()
+  heldNormal.finish.resolve()
+  await Promise.all([oldRefresh, newLoad])
+  assert.deepEqual(calls.filter(([auth]) => auth === 'Bearer user-a').map(call => call[1]), ['normal', 'pin-boundary'])
+  const newCalls = calls.filter(([auth]) => auth === 'Bearer user-b')
+  assert.equal(newCalls.length, 3)
+  assert.ok(newCalls.every(([, , etag]) => etag === undefined))
+})

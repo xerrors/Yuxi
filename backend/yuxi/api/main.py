@@ -44,6 +44,7 @@ EXPLICIT_CORS_HEADERS = (
     "Authorization",
     "Content-Type",
     "Idempotency-Key",
+    "If-None-Match",
     "Last-Event-ID",
     "X-End-User-Id",
     "X-Requested-With",
@@ -77,6 +78,7 @@ def build_cors_options(origins: list[str] | None = None) -> dict[str, object]:
             "allow_credentials": False,
             "allow_methods": ["*"],
             "allow_headers": ["*"],
+            "expose_headers": ["ETag"],
         }
 
     return {
@@ -84,7 +86,7 @@ def build_cors_options(origins: list[str] | None = None) -> dict[str, object]:
         "allow_credentials": True,
         "allow_methods": list(EXPLICIT_CORS_METHODS),
         "allow_headers": list(EXPLICIT_CORS_HEADERS),
-        "expose_headers": ["Content-Disposition", "X-Lock-Remaining", "X-App-Id"],
+        "expose_headers": ["Content-Disposition", "ETag", "X-Lock-Remaining", "X-App-Id"],
     }
 
 

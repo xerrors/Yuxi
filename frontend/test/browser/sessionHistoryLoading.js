@@ -12,15 +12,18 @@ async (page) => {
     yuxi: { title: '历史消息加载验证', current_turn: null, context: {}, project_id: 'history-project', config: {}, is_pinned: false }
   }
   const agent = { agent_id: agentId, name: '历史验证助手', description: '用于历史阅读验证', config_json: { context: {} }, configurable_items: {}, metadata: {} }
-  let longRun = false
+  const completedTurn = { id: 'turn-long', status: 'completed', current_run_id: 'run-long', result_run_id: 'run-long' }
+  const coldSummary = { session_id: threadId, turn_id: completedTurn.id, turn_status: 'completed',
+    current_run_id: 'run-long', result_run_id: 'run-long', run_status: 'completed', waiting_for: null }
+  let coldHistory = true, longRun = false
   const item = id => ({
     id: String(id), object: 'agent.session.item', type: 'message',
-    role: longRun ? 'user' : id % 2 ? 'user' : 'assistant', status: 'completed', turn_id: longRun ? 'turn-long' : `turn-${Math.ceil(id / 2)}`,
+    role: longRun ? 'user' : id % 2 ? 'user' : 'assistant', status: 'completed', turn_id: longRun || (coldHistory && id > 600) ? 'turn-long' : `turn-${Math.ceil(id / 2)}`,
     content: [{ type: longRun || id % 2 ? 'input_text' : 'output_text', text: `历史消息 ${String(id).padStart(4, '0')}：这是一条用于验证阅读位置的消息。` }],
-    yuxi: { message_id: String(id), run_id: longRun ? 'run-long' : `run-${Math.ceil(id / 2)}`, created_at: new Date(1791580000000 + id * 1000).toISOString() }
+    yuxi: { message_id: String(id), run_id: longRun || (coldHistory && id > 600) ? 'run-long' : `run-${Math.ceil(id / 2)}`, created_at: new Date(1791580000000 + id * 1000).toISOString() }
   })
   const requests = [], unknown = new Set()
-  let failNext = true, delayed = false, release
+  let failNext = false, delayed = false, release
   let failAgent = false
   const check = (condition, message) => { if (!condition) throw new Error(message) }
   await page.addInitScript(() => localStorage.setItem('user_token', 'history-replay-token'))
@@ -38,18 +41,27 @@ async (page) => {
     }
     else if (path.endsWith('/items')) {
       const after = url.searchParams.get('after'), limit = Number(url.searchParams.get('limit'))
-      requests.push({ after, limit })
+      const scoped = path.endsWith('/turns/turn-long/items')
+      requests.push({ after, limit, scoped })
       if (delayed) { delayed = false; await new Promise(resolve => { release = resolve }) }
       if (failNext) { failNext = false; return route.fulfill({ status: 503, json: { detail: '历史读取暂不可用' } }) }
       const newest = after ? Number(after) - 1 : 950
-      const data = Array.from({ length: Math.min(limit, newest) }, (_, index) => item(newest - index))
-      json = { data, last_id: data.at(-1)?.id || null, has_more: newest > limit,
+      const remaining = scoped && coldHistory ? newest - 600 : newest
+      const data = Array.from({ length: Math.min(limit, remaining) }, (_, index) => item(newest - index))
+      json = { data, last_id: data.at(-1)?.id || null, has_more: remaining > limit,
         yuxi: { runs: [...new Set(data.map(item => item.yuxi.run_id))].map(id => ({ id, turn_id: id.replace('run-', 'turn-'), status: 'completed', artifacts: [] })) } }
-    } else if (path === '/api/v1/agents/sessions') json = { data: url.searchParams.get('is_pinned') === 'true' ? [] : [thread], has_more: false }
+    } else if (path.endsWith('/turns/turn-long')) json = { id: completedTurn.id, status: completedTurn.status, yuxi: {
+      current_run_id: completedTurn.current_run_id, result_run_id: completedTurn.result_run_id, output: [],
+      runs: [{ id: 'run-long', turn_id: 'turn-long', status: 'completed', artifacts: [] }] } }
+    else if (path === '/api/v1/agents/sessions') {
+      const pinned = url.searchParams.get('is_pinned') === 'true'
+      // 深链接会话可位于侧栏首页以外。
+      json = { data: pinned || coldHistory ? [] : [thread], has_more: coldHistory && !pinned }
+    }
     else if (path.endsWith(`/${threadId}`) || path.endsWith('/viewed')) json = thread
     else if (path.endsWith('/state')) json = { agent_state: {}, interrupt: null }
     else if (path.endsWith('/queue')) json = { inputs: [], status: 'ready' }
-    else if (path.endsWith('/cooperation')) json = { sessions: [], members: [], edges: [] }
+    else if (path.endsWith('/cooperation')) json = { sessions: coldHistory ? [coldSummary] : [], members: [], edges: [] }
     else if (path.endsWith('/attachments')) json = { files: [], attachments: [] }
     else if (path === '/api/projects') json = []
     else if (path.includes('/databases')) json = { databases: [] }
@@ -58,6 +70,16 @@ async (page) => {
     await route.fulfill({ json })
   })
   await page.setViewportSize({ width: 1440, height: 900 })
+  thread.yuxi.current_turn = completedTurn
+  await page.goto(`${origin}/agent/${threadId}`)
+  await page.locator('.agent-view [contenteditable="true"]').waitFor()
+  await page.getByText('历史消息 0601：', { exact: false }).waitFor()
+  await page.getByText('历史消息 0950：', { exact: false }).waitFor()
+  check(await page.locator('.agent-view .history-display-item').count() === 350, '首读长轮次应展示全部 350 条')
+  coldHistory = false
+  thread.yuxi.current_turn = null
+  failNext = true
+  requests.length = 0
   await page.goto(`${origin}/agent/${threadId}`)
   const chat = page.locator('.agent-view .chat-main')
   await page.getByRole('button', { name: '重新读取对话', exact: true }).waitFor()
@@ -221,14 +243,7 @@ async (page) => {
   check(await editor.innerText() === '用户继续编辑的新草稿', '接收旧提交清掉了新草稿')
   check(await page.getByText('历史消息 0950：', { exact: false }).count() === 1, '发送或终态重读丢失/复制历史')
   check(await page.getByText('冻结输入内容', { exact: true }).count() === 1, '乐观消息与正式输入重复展示')
-  await page.getByText('唯一流的最终回答', { exact: true }).scrollIntoViewIfNeeded()
-  await page.waitForTimeout(3500)
-  await page.screenshot({ path: '/tmp/yuxi-session-input-lifecycle.png' })
-  await page.evaluate(() => document.documentElement.classList.add('dark'))
-  await page.setViewportSize({ width: 768, height: 960 })
-  await page.getByText('唯一流的最终回答', { exact: true }).scrollIntoViewIfNeeded()
-  await page.waitForTimeout(300)
-  await page.screenshot({ path: '/tmp/yuxi-session-input-lifecycle-dark.png' })
+  await chat.getByText('唯一流的最终回答', { exact: true }).filter({ visible: true }).waitFor()
   // 真实页面公开路由入口必须重新核对已缓存 Thread 的可见性。
   let publicFailure = 403, rechecks = 0
   await page.route(`**/api/v1/agents/sessions/${threadId}`, route => {

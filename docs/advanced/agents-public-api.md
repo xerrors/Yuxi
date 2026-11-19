@@ -77,6 +77,8 @@ Thread 的创建、事件提交都必须提供长度为 1–128 的 `Idempotency
 
 Session 列表返回 `{object:"list", data, first_id, last_id, has_more}`，默认 `order=desc`、`limit=50`，limit 为 1–100。以创建时间和 ID 稳定排序，将上一页 `last_id` 作为 `after`；改名、置顶、已读和归档不会移动下一页边界。`agent_id`、`archived` 与 `is_pinned` 筛选授权范围内的资源。`after` 必须属于当前用户和 APP，否则返回 `400`。Web 单独读取全部置顶页并合并展示，普通列表游标保持独立。
 
+列表的 `200` 响应带有 `ETag`。客户端可为相同用户、APP、筛选条件和游标发送上一次的 `If-None-Match`。服务端校验身份和当前分页后，相同内容返回带 `ETag` 的 `304` 空响应，内容变化返回 `200` 与新分页。分页可在客户端私有缓存中保留，每次复用前需要重新验证。
+
 POST 更新使用 `{"agent":{"model":"<provider:model>"},"yuxi":{"title":"新标题","is_pinned":true,"tool_approval_mode":"always_trust"}}`，每个字段均可省略。模型使用 `agent.model`，消息级覆盖使用事件的 `yuxi.model`；显式 `null` 没有重置语义，返回 `422`。更新响应为同一 Session 资源。会话配置来自创建时的 Agent Context 与默认值，修改保存的 Agent 或系统默认值不会改变该会话；更新模型与审批模式影响更新后接收的新输入，已接收的队列输入、当前 Turn 和恢复执行保留原配置。
 
 ## 创建与提交消息

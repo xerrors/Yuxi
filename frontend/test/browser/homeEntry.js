@@ -81,6 +81,7 @@ async page => {
       await page.locator('#home-prompt').fill(empty)
       await page.locator('#home-prompt').press('Enter')
       await page.waitForURL('**/login')
+      check(!resources.some(url => url.includes('/pages/AgentView.vue')), '访客在登录跳转前下载了对话工作区')
       check(await page.evaluate(() => sessionStorage.getItem('redirect')) === '/agent' && await page.evaluate(() => sessionStorage.getItem('yuxi:session-entry-draft')) === null, '空白输入没有直接进入对话或写入了空草稿')
       await navigateHome()
     }
@@ -166,7 +167,7 @@ async page => {
           })
           check(placeholderContrast >= 4.5, `输入提示对比不足 ${theme}: ${placeholderContrast}`)
           brandStyles[theme] = await page.locator('.brand span').evaluate(readBrandStyle)
-          const expected = theme === 'light' ? { background: 'rgb(0, 0, 0)', color: 'rgb(255, 255, 255)' } : { background: 'rgb(250, 250, 250)', color: 'rgb(3, 3, 3)' }
+          const expected = theme === 'light' ? { background: 'rgb(0, 0, 0)', color: 'rgb(255, 255, 255)' } : { background: 'rgb(250, 250, 250)', color: 'rgb(29, 32, 36)' }
           await page.locator('#home-prompt').fill('发送按钮状态验证')
           for (const selector of ['.primary-button', '.header-chat']) {
             const button = page.locator(selector)
@@ -273,7 +274,7 @@ async page => {
     check(await page.evaluate(() => sessionStorage.getItem('yuxi:session-entry-draft')) === submittedText, '登录期间入口文本丢失')
     for (const theme of ['light', 'dark']) {
       await page.evaluate(async value => { const { useThemeStore } = await import('/src/shared/model/theme.js'); useThemeStore().setTheme(value) }, theme)
-      await page.waitForTimeout(200)
+      await page.waitForFunction(color => getComputedStyle(document.querySelector('.brand-main')).color === color, brandStyles[theme].color)
       check(JSON.stringify(await page.locator('.brand-main').evaluate(readBrandStyle)) === JSON.stringify(brandStyles[theme]), `首页品牌字体与登录页不同 ${theme}`)
     }
     check(await page.locator('.brand-org, .brand-separator').count() === 0, '登录页仍拼接组织名称')
@@ -291,6 +292,7 @@ async page => {
     await page.waitForURL('**/agent')
     const editor = page.locator('.agent-view [contenteditable="true"]').first()
     await editor.waitFor()
+    check(!resources.some(url => /\/WidgetChart\.vue|\/AgentFilePreview\.vue|\/MessageDebugPanel\.vue|\/markdown_preview\.js|\/echarts_|virtual:model-display-metadata/.test(url)), '空白对话提前下载了排版、预览或模型展示资源')
     await page.waitForFunction(() => document.querySelector('.agent-view [contenteditable="true"]')?.innerText.includes('形成行动'))
     check((await editor.innerText()).trim() === `已有草稿\n\n${submittedText}`, '首页文本未追加到新会话已有草稿')
     check(await page.evaluate(() => sessionStorage.getItem('yuxi:session-entry-draft')) === null, '草稿交接后没有清除待接收文本')

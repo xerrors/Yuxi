@@ -33,7 +33,8 @@
 import { h, render, computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { useThemeStore } from '@/shared/model/theme'
 import { apiGet } from '@/apis/base'
-import { renderMarkdown, resolveMarkdownImageUrl } from '@/shared/lib/markdown_preview'
+import { renderMarkdown } from '@/shared/lib/markdown_preview'
+import { resolveMarkdownImageUrl } from '@/shared/lib/file_preview'
 import { decorateMarkdownReferences } from '@/shared/lib/markdownReferences'
 import ReferenceSourcePopover from '@/modules/workspace/ui/ReferenceSourcePopover.vue'
 import WidgetRenderer from '@/shared/ui/WidgetRenderer.vue'
@@ -74,7 +75,7 @@ const props = defineProps({
     default: false
   }
 })
-const emit = defineEmits(['open-reference'])
+const emit = defineEmits(['open-reference', 'rendered'])
 
 const themeStore = useThemeStore()
 /** 为组件与预览提供同源受保护图片读取，外源不携带凭据。 */
@@ -234,7 +235,7 @@ watch([() => props.startLine, () => props.endLine], highlightSourceLines)
 const copiedTimers = new WeakMap()
 const widgetMounts = new Set()
 const imageBlobUrls = new Map()
-let pendingMarkdownHtml = null
+let pendingMarkdown = null
 
 const getWidgetPreviewKey = (preview) => {
   return `${preview.querySelector('.widget-mount')?.dataset.widgetClosed || ''}:${preview.querySelector('.widget-source')?.textContent || ''}`
@@ -281,14 +282,14 @@ const replaceRangeBefore = (root, startNode, endNode, nextNodes) => {
   root.removeChild(marker)
 }
 
-const replaceHtmlPreservingWidgets = (html) => {
+const replaceHtmlPreservingWidgets = (html, content = '') => {
   const root = previewRef.value
   if (!root) {
-    pendingMarkdownHtml = html
+    pendingMarkdown = { html, content }
     return false
   }
 
-  pendingMarkdownHtml = null
+  pendingMarkdown = null
   if (!html) {
     root.replaceChildren()
     return true
@@ -439,9 +440,11 @@ const enhanceDocumentImages = () => {
 }
 
 onMounted(async () => {
-  if (pendingMarkdownHtml === null) return
+  if (!pendingMarkdown || pendingMarkdown.content !== props.content) return
 
-  replaceHtmlPreservingWidgets(pendingMarkdownHtml)
+  const { html, content } = pendingMarkdown
+  replaceHtmlPreservingWidgets(html)
+  emit('rendered', content)
   await nextTick()
   enhanceWidgets()
   enhanceDocumentImages()
@@ -485,8 +488,8 @@ watch(
       widgets,
       sourceLines: props.sourceLines || props.references.length > 0
     })
-    if (!expired) {
-      replaceHtmlPreservingWidgets(html)
+    if (!expired && replaceHtmlPreservingWidgets(html, content)) {
+      emit('rendered', content)
       revokeImageBlobUrls(true)
       await highlightSourceLines()
 

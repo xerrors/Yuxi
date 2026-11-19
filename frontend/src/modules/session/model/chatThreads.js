@@ -19,11 +19,13 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
   let after = null
   let threadListOperation = Promise.resolve()
   let threadListGeneration = 0
+  let sidebarPages = new Map()
   // 切换账号重置列表状态，避免旧请求覆盖新账号的导航。
   watch(
-    () => userStore.userId,
+    [() => userStore.token, () => userStore.userId],
     () => {
       threadListGeneration += 1
+      sidebarPages = new Map()
       threads.value = []
       currentThreadId.value = null
       hasLoadedThreads.value = false
@@ -96,10 +98,7 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
     return withThreadListUpdate(async () => {
       if (currentGeneration !== threadListGeneration) return
       try {
-        const [page, pinnedThreads] = await Promise.all([
-          threadApi.getThreads(agentId, PAGE_SIZE),
-          fetchPinnedThreads(agentId)
-        ])
+        const [page, pinnedThreads] = await fetchSidebarPages(agentId)
         if (currentGeneration !== threadListGeneration) return
         const statusById = new Map(
           [...page.data, ...pinnedThreads].map((thread) => [thread.id, thread])
@@ -126,10 +125,7 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
       if (currentGeneration !== threadListGeneration) return
       threadsLoadError.value = ''
       try {
-        const [fetchedThreads, pinnedThreads] = await Promise.all([
-          threadApi.getThreads(agentId, PAGE_SIZE),
-          fetchPinnedThreads(agentId)
-        ])
+        const [fetchedThreads, pinnedThreads] = await fetchSidebarPages(agentId)
         if (currentGeneration !== threadListGeneration) return
         const loaded = new Map(
           [...fetchedThreads.data, ...pinnedThreads].map((thread) => [thread.id, thread])
@@ -178,17 +174,24 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
     })
   }
 
-  /** 置顶独立分页读取，较老的置顶会话也始终出现在侧边栏。 */
-  const fetchPinnedThreads = async (agentId) => {
-    const pinned = []
-    let cursor = null
-    let page
-    do {
-      page = await threadApi.getThreads(agentId, PAGE_SIZE, cursor, { isPinned: true })
-      pinned.push(...page.data)
-      cursor = page.last_id
-    } while (page.has_more)
-    return pinned
+  /** 每次成功刷新只保留当前普通首页及遍历过的置顶分页。 */
+  const fetchSidebarPages = async (agentId) => {
+    const pageCache = { previous: sidebarPages, next: new Map() }
+    const [page, firstPinned] = await Promise.all([
+      threadApi.getThreads(agentId, PAGE_SIZE, undefined, { pageCache }),
+      threadApi.getThreads(agentId, PAGE_SIZE, null, { isPinned: true, pageCache })
+    ])
+    const pinned = [...firstPinned.data]
+    let pinnedPage = firstPinned
+    while (pinnedPage.has_more && sidebarPages === pageCache.previous) {
+      pinnedPage = await threadApi.getThreads(agentId, PAGE_SIZE, pinnedPage.last_id, {
+        isPinned: true,
+        pageCache
+      })
+      pinned.push(...pinnedPage.data)
+    }
+    if (sidebarPages === pageCache.previous) sidebarPages = pageCache.next
+    return [page, pinned]
   }
 
   const createThread = async (agentId, title = null, metadata = {}, options = {}) => {

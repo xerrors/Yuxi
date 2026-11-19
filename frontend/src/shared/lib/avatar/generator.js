@@ -10,16 +10,26 @@ import { presets, paletteOptions } from './presets.js'
 export const defaultStyles = { user: 'notionists', agent: 'lorelei', session: 'gaze' }
 
 const definitions = new Map(
-  Object.entries({ glyphs, clay, 'shape-grid': shapeGrid, gaze, lorelei, notionists }).map(
-    ([name, definition]) => [name, new Style(definition)]
-  )
+  Object.entries({ glyphs, clay, 'shape-grid': shapeGrid, gaze, lorelei, notionists })
 )
+const styles = new Map()
 
-// 只开放 Glyphs 的底纸颜色；蒙版与所有几何保持上游定义。
-const nightGlyphs = structuredClone(glyphs)
-nightGlyphs.colors.paper = { values: ['#ffffff'] }
-nightGlyphs.canvas.elements[1].children[0].attributes.fill = { type: 'color', name: 'paper' }
-const nightGlyphStyle = new Style(nightGlyphs)
+/** DiceBear 会校验并深拷贝定义；首次使用某个风格时才构造并复用它。 */
+function getStyle(name, dark) {
+  const nightGlyphs = name === 'glyphs' && dark
+  const key = nightGlyphs ? 'glyphs-night' : name
+  if (!styles.has(key)) {
+    let definition = definitions.get(name)
+    if (nightGlyphs) {
+      // 只开放 Glyphs 的底纸颜色；蒙版与所有几何保持上游定义。
+      definition = structuredClone(definition)
+      definition.colors.paper = { values: ['#ffffff'] }
+      definition.canvas.elements[1].children[0].attributes.fill = { type: 'color', name: 'paper' }
+    }
+    styles.set(key, new Style(definition))
+  }
+  return styles.get(key)
+}
 
 /** 解析独立的明暗策略，纯生成器由调用方传入系统偏好。 */
 export function resolveDark(dark = 'auto', systemDark = false) {
@@ -44,7 +54,7 @@ export function generate(
   if (!['circle', 'square', 'rounded'].includes(shape))
     throw new RangeError(`不支持的头像 shape：${shape}`)
   if (typeof seed !== 'string' || !seed.trim()) throw new TypeError('头像 seed 必须是非空字符串')
-  return new Avatar(style === 'glyphs' && isDark ? nightGlyphStyle : definitions.get(style), {
+  return new Avatar(getStyle(style, isDark), {
     ...options,
     seed,
     size: 256,

@@ -1964,11 +1964,6 @@ onUnmounted(() => {
 })
 
 // ==================== 线程管理方法 ====================
-// 获取当前智能体的线程列表
-const fetchThreads = async (agentId = null) => {
-  await chatThreadsStore.loadThreads(agentId)
-}
-
 // 把草稿线程的选择迁移到真实线程：真实线程未设值时才覆盖，迁移后删除草稿。
 const promoteDraftSelection = (selectionByThread, threadId) => {
   const draft = selectionByThread[DRAFT_MODEL_KEY]
@@ -2142,7 +2137,11 @@ const initializeThreadInput = async ({ threadId }) => {
   if (workspaceActive.value && pageVisible.value) void chatThreadsStore.markThreadViewed(threadId)
   await refreshSessionAgent(threadId, currentThread.value?.agent.id)
   if (!current()) return false
-  if (!agentExecutionAvailable.value) return true
+  if (!agentExecutionAvailable.value) {
+    // 归档或智能体不可用时，已结束轮次的状态面板仍可阅读。
+    if (['completed', 'failed', 'cancelled'].includes(state.turnStatus)) void fetchAgentState(threadId)
+    return true
+  }
   await withConfigNoticeSync(async () => syncThreadConfigSnapshot(threadId))
   if (!current()) return false
   await handleAgentStateRefresh(threadId)
@@ -2662,26 +2661,6 @@ const handleResizingChange = (isResizingState, clientX = 0) => {
 
 // ==================== HELPER FUNCTIONS ====================
 // ==================== LIFECYCLE & WATCHERS ====================
-const loadChatsList = async () => {
-  const initiatingUserId = userStore.userId
-  try {
-    await fetchThreads()
-    if (userStore.userId !== initiatingUserId) return
-
-    // 首页缺席不代表删除；当前会话可能位于后续分页。
-    if (currentThreadId.value && !threads.value.find((t) => t.id === currentThreadId.value)) {
-      const threadId = currentThreadId.value
-      const thread = await agentApi.getPublicThread(threadId)
-      if (userStore.userId === initiatingUserId && currentThreadId.value === threadId) {
-        chatThreadsStore.upsertThread(thread)
-      }
-    }
-  } catch (error) {
-    if (userStore.userId !== initiatingUserId) return
-    handleChatError(error, 'load')
-  }
-}
-
 const initAll = async () => {
   try {
     if (!agentStore.isInitialized) {
@@ -2725,16 +2704,6 @@ watch(
       startStreamingStateRefresh()
     } else {
       stopStreamingStateRefresh()
-    }
-  },
-  { immediate: true }
-)
-
-watch(
-  currentAgentId,
-  async (_newAgentId, oldAgentId) => {
-    if (!props.embedded && oldAgentId === undefined) {
-      await loadChatsList()
     }
   },
   { immediate: true }

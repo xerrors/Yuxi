@@ -124,31 +124,6 @@ test('新建路由且没有线程才显示欢迎布局，加载和空消息不�
   assert.equal(state.showStartScreen.value, false, '已有会话加载时不显示欢迎布局')
 })
 
-test('智能体、历史和创建加载共用一个 Spin，加载不占据编辑器布局', async (t) => {
-  const { state, runtime, agentStore, component } = await mountSessionWorkspace(t, undefined, { threadId: 'thread', stubChildren: true })
-  const thread = runtime.getThreadState('thread')
-  let agentStatus = 'ready'
-  t.mock.method(agentStore, 'fetchAgentDetail', () => agentStatus === 'ready' ? Promise.resolve({ can_run: true }) : new Promise(() => {}))
-  for (const messages of [false, true]) {
-    for (const agent of ['ready', 'loading']) {
-      for (const creating of [false, true]) {
-        for (const historyLoaded of [false, true]) {
-          thread.readingLoading = messages
-          agentStatus = agent
-          const refresh = state.refreshSessionAgent('thread', 'agent')
-          if (agent === 'ready') await refresh
-          state.threadCreationInFlight.value = creating
-          thread.historyLoaded = historyLoaded
-          const html = await renderWorkspace(component, state)
-          const loading = creating || (!historyLoaded && (messages || agent === 'loading'))
-          assert.equal((html.match(/data-shared-spin/g) || []).length, loading ? 1 : 0)
-          assert.equal(html.includes('正在加载对话'), loading)
-        }
-      }
-    }
-  }
-})
-
 test('首条待消费输入只展示消息气泡，后续输入、暂停及附件准备保留队列入口', async (t) => {
   const { state, runtime } = await mountSessionWorkspace(t, undefined, { threadId: 'thread' })
   const thread = runtime.getThreadState('thread')

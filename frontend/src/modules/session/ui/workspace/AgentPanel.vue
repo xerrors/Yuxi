@@ -288,12 +288,10 @@ import {
 } from '@lucide/vue'
 import { Modal, message } from 'ant-design-vue'
 import FileTreeComponent from '@/modules/session/ui/workspace/FileTreeComponent.vue'
-import AgentFilePreview from '@/modules/session/ui/workspace/AgentFilePreview.vue'
+import { createAsyncPanel } from '@/shared/lib/asyncPanel'
 import GlobalSearchModal from '@/modules/session/ui/GlobalSearchModal.vue'
 import FileTypeIcon from '@/shared/ui/FileTypeIcon.vue'
 import FallbackAvatar from '@/shared/ui/FallbackAvatar.vue'
-import MessageDebugPanel from '@/modules/session/ui/MessageDebugPanel.vue'
-import TurnSourcesPanel from '@/modules/session/ui/workspace/TurnSourcesPanel.vue'
 import {
   createFilesystemRefreshGate,
   expandedKeysAfterFilesystemRefresh,
@@ -317,6 +315,14 @@ import {
 import { normalizePreviewResponse } from '@/shared/lib/file_preview'
 import { parseDownloadFilename } from '@/shared/lib/file_utils'
 import { threadApi } from '@/apis/agent_api'
+
+defineOptions({
+  components: {
+    AgentFilePreview: createAsyncPanel(() => import('./AgentFilePreview.vue')),
+    MessageDebugPanel: createAsyncPanel(() => import('../MessageDebugPanel.vue')),
+    TurnSourcesPanel: createAsyncPanel(() => import('./TurnSourcesPanel.vue'))
+  }
+})
 
 const props = defineProps({
   agentState: {
