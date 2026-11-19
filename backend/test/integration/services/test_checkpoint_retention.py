@@ -29,36 +29,48 @@ async def _isolate_global_pg_manager():
     await pg_manager.close()
 
 
-async def _seed_history(sessions, thread_id: str, *, n: int, ts: datetime | None = None):
-    """直插 n 个 checkpoint 版本及独占 blob/writes；checkpoint_id 字典序即新旧序。"""
+async def _seed_history(sessions, thread_id: str, *, n: int, ns: str = "", ts: datetime | None = None, shared_blob: bool = False):
+    """为指定命名空间写入 n 个 checkpoint 及独占 blob/writes；ID 字典序即新旧序。"""
     stamp = (ts or datetime.now(UTC)).isoformat()
     async with sessions() as db:
         for i in range(1, n + 1):
             ck_id = f"{i:04d}"
+            channel_versions = {"messages": f"v{i}"}
+            if shared_blob:
+                channel_versions["shared"] = "shared-v"
             await db.execute(
                 text(
                     "insert into checkpoints (thread_id, checkpoint_ns, checkpoint_id, parent_checkpoint_id, type, checkpoint, metadata)"
-                    " values (:t, '', :id, null, 'json', cast(:ck as jsonb), '{}'::jsonb) on conflict do nothing"
+                    " values (:t, :ns, :id, null, 'json', cast(:ck as jsonb), '{}'::jsonb) on conflict do nothing"
                 ),
                 {
                     "t": thread_id,
+                    "ns": ns,
                     "id": ck_id,
-                    "ck": json.dumps({"ts": stamp, "id": ck_id, "channel_versions": {"messages": f"v{i}"}}),
+                    "ck": json.dumps({"ts": stamp, "id": ck_id, "channel_versions": channel_versions}),
                 },
             )
             await db.execute(
                 text(
                     "insert into checkpoint_blobs (thread_id, checkpoint_ns, channel, version, type, blob)"
-                    " values (:t, '', 'messages', :v, 'json', 'x') on conflict do nothing"
+                    " values (:t, :ns, 'messages', :v, 'json', 'x') on conflict do nothing"
                 ),
-                {"t": thread_id, "v": f"v{i}"},
+                {"t": thread_id, "ns": ns, "v": f"v{i}"},
             )
             await db.execute(
                 text(
                     "insert into checkpoint_writes (thread_id, checkpoint_ns, checkpoint_id, task_id, idx, channel, type, blob)"
-                    " values (:t, '', :id, 'task', 0, 'messages', 'json', 'x') on conflict do nothing"
+                    " values (:t, :ns, :id, 'task', 0, 'messages', 'json', 'x') on conflict do nothing"
                 ),
-                {"t": thread_id, "id": ck_id},
+                {"t": thread_id, "ns": ns, "id": ck_id},
+            )
+        if shared_blob:
+            await db.execute(
+                text(
+                    "insert into checkpoint_blobs (thread_id, checkpoint_ns, channel, version, type, blob)"
+                    " values (:t, :ns, 'shared', 'shared-v', 'json', 'y') on conflict do nothing"
+                ),
+                {"t": thread_id, "ns": ns},
             )
         await db.commit()
 
@@ -113,47 +125,8 @@ async def test_purge_keeps_shared_blob_version_still_referenced(postgres_session
     _run_id, thread_id, _ = await create_agent_run(
         postgres_sessions, prefix="ck-shared", message_content="x", input_payload={}, status="completed"
     )
-    stamp = datetime.now(UTC).isoformat()
     try:
-        async with postgres_sessions() as db:
-            for i in range(1, 11):
-                ck_id = f"{i:04d}"
-                await db.execute(
-                    text(
-                        "insert into checkpoints (thread_id, checkpoint_ns, checkpoint_id, parent_checkpoint_id,"
-                        " type, checkpoint, metadata)"
-                        " values (:t, '', :id, null, 'json', cast(:ck as jsonb), '{}'::jsonb) on conflict do nothing"
-                    ),
-                    {
-                        "t": thread_id,
-                        "id": ck_id,
-                        "ck": json.dumps({"ts": stamp, "id": ck_id, "channel_versions": {"messages": f"v{i}", "shared": "shared-v"}}),
-                    },
-                )
-                await db.execute(
-                    text(
-                        "insert into checkpoint_blobs (thread_id, checkpoint_ns, channel, version, type, blob)"
-                        " values (:t, '', 'messages', :v, 'json', 'x') on conflict do nothing"
-                    ),
-                    {"t": thread_id, "v": f"v{i}"},
-                )
-                await db.execute(
-                    text(
-                        "insert into checkpoint_blobs (thread_id, checkpoint_ns, channel, version, type, blob)"
-                        " values (:t, '', 'shared', 'shared-v', 'json', 'y') on conflict do nothing"
-                    ),
-                    {"t": thread_id},
-                )
-                await db.execute(
-                    text(
-                        "insert into checkpoint_writes (thread_id, checkpoint_ns, checkpoint_id, task_id, idx,"
-                        " channel, type, blob) values (:t, '', :id, 'task', 0, 'messages', 'json', 'x')"
-                        " on conflict do nothing"
-                    ),
-                    {"t": thread_id, "id": ck_id},
-                )
-            await db.commit()
-
+        await _seed_history(postgres_sessions, thread_id, n=10, shared_blob=True)
         assert await retention.purge_thread_checkpoint_history(thread_id, keep=5) == retention.PURGE_TRIMMED
         async with postgres_sessions() as db:
             checkpoints = await db.scalar(text("select count(*) from checkpoints where thread_id = :t"), {"t": thread_id})
@@ -304,47 +277,6 @@ async def test_trim_keeps_latest_checkpoint_readable_by_state_view(postgres_sess
         await cleanup_agent_run_threads(postgres_sessions, [thread_id])
 
 
-async def _seed_ns_history(sessions, thread_id: str, *, ns_pages: dict[str, int]) -> None:
-    """同一线程的多个 checkpoint_ns 各插若干版本，blob 版本字符串跨命名空间重复。
-
-    命名空间必须逐独立处理：按线程总数选目标、却按 (thread_id, checkpoint_ns) 各保留 K 版，
-    任何把两维混算的实现都会把一个命名空间的版本当成另一个的多余历史删掉。
-    """
-    stamp = datetime.now(UTC).isoformat()
-    async with sessions() as db:
-        for ns, count in ns_pages.items():
-            for i in range(1, count + 1):
-                ck_id = f"{i:04d}"
-                await db.execute(
-                    text(
-                        "insert into checkpoints (thread_id, checkpoint_ns, checkpoint_id,"
-                        " parent_checkpoint_id, type, checkpoint, metadata)"
-                        " values (:t, :ns, :id, null, 'json', cast(:ck as jsonb), '{}'::jsonb) on conflict do nothing"
-                    ),
-                    {
-                        "t": thread_id,
-                        "ns": ns,
-                        "id": ck_id,
-                        "ck": json.dumps({"ts": stamp, "id": ck_id, "channel_versions": {"messages": f"v{i}"}}),
-                    },
-                )
-                await db.execute(
-                    text(
-                        "insert into checkpoint_blobs (thread_id, checkpoint_ns, channel, version, type, blob)"
-                        " values (:t, :ns, 'messages', :v, 'json', 'x') on conflict do nothing"
-                    ),
-                    {"t": thread_id, "ns": ns, "v": f"v{i}"},
-                )
-                await db.execute(
-                    text(
-                        "insert into checkpoint_writes (thread_id, checkpoint_ns, checkpoint_id, task_id, idx, channel, type, blob)"
-                        " values (:t, :ns, :id, 'task', 0, 'messages', 'json', 'x') on conflict do nothing"
-                    ),
-                    {"t": thread_id, "ns": ns, "id": ck_id},
-                )
-        await db.commit()
-
-
 async def _ns_kept(sessions, thread_id: str, ns: str) -> list[str]:
     async with sessions() as db:
         return sorted(
@@ -362,7 +294,6 @@ async def test_sweep_skips_thread_whose_namespaces_are_all_within_k(postgres_ses
     _run_id, thread_id, _ = await create_agent_run(
         postgres_sessions, prefix="ck-ck", message_content="x", input_payload={}, status="completed"
     )
-    await _seed_ns_history(postgres_sessions, thread_id, ns_pages={"": 3, "sub:agent-1": 3})
     selected: list[str] = []
 
     async def spy(thread_id_arg: str, *, keep: int = retention.THREAD_CHECKPOINT_KEEP_LATEST) -> str:
@@ -372,6 +303,8 @@ async def test_sweep_skips_thread_whose_namespaces_are_all_within_k(postgres_ses
 
     monkeypatch.setattr(retention, "purge_thread_checkpoint_history", spy)
     try:
+        await _seed_history(postgres_sessions, thread_id, n=3)
+        await _seed_history(postgres_sessions, thread_id, n=3, ns="sub:agent-1")
         await retention.sweep_checkpoint_garbage()
         assert thread_id not in selected, f"各命名空间都未超 K 的线程被误选为裁剪目标：{selected}"
         kept = await _ns_kept(postgres_sessions, thread_id, "")
@@ -387,9 +320,10 @@ async def test_purge_trims_each_namespace_independently(postgres_sessions):
         postgres_sessions, prefix="ck-ns", message_content="x", input_payload={}, status="completed"
     )
     root_ns, sub_ns = "", "sub:agent-1"
-    await _seed_ns_history(postgres_sessions, thread_id, ns_pages={root_ns: 8, sub_ns: 3})
     expected = {root_ns: ["0004", "0005", "0006", "0007", "0008"], sub_ns: ["0001", "0002", "0003"]}
     try:
+        await _seed_history(postgres_sessions, thread_id, n=8, ns=root_ns)
+        await _seed_history(postgres_sessions, thread_id, n=3, ns=sub_ns)
         assert await retention.purge_thread_checkpoint_history(thread_id) == retention.PURGE_TRIMMED
 
         for ns, kept_ids in expected.items():

@@ -5,9 +5,8 @@
 #   存在 pending/running/cancel_requested Run 的线程整体跳过。
 # 仅碰 LangGraph 执行内部状态：PG 业务事实（messages/agent_runs）不受影响。
 #
-# 清理期间必须停止 checkpoint 写入：先停 api 与 worker，再执行 retain。脚本每次删除都现场
-# 重算保留集（与 Run 终态在线裁剪同一形态），因此不会按旧快照删掉清理期间新写入的版本；
-# 但保留集与业务 Run 的收敛仍需静止状态才能核对，开始前也会硬检查非终态 Run 并直接中止。
+# retain 仅用于停机维护：等在途 Run 收敛后停掉 API 与 worker，直到脚本退出都保持停写。
+# 启动前会检查未终态 Run 数；这是预检，不会阻止新写入。
 #
 # 用法（宿主机 root；postgres 容器按 compose 标签自动识别）:
 #   bash checkpoint-cleanup.sh report            # 只读：体量、可删行数与非终态 Run 数
@@ -73,7 +72,7 @@ preflight() {
   active=$(nonterminal_runs)
   if [ "$active" != "0" ]; then
     echo "仍有 $active 个 pending/running/cancel_requested Run，checkpoint 还在被写入。" >&2
-    echo "请先停掉 api 与 worker（或等它们全部收敛）再执行 retain。" >&2
+    echo "请先等在途 Run 收敛，再停掉 api 与 worker，并在 retain 结束前保持停写。" >&2
     echo "若 api/worker 已停而计数仍不为 0，这些是崩溃/被杀 worker 留下的在途行：等 lease reconcile" >&2
     echo "（worker 启动或周期收敛）把它们结算成终态后重跑，不要手工改 status。" >&2
     exit 1
@@ -104,8 +103,7 @@ case "$CMD" in
   retain)
     preflight
     # 分批 200 线程/事务，可中断重跑；每条 DELETE 现场重算本批线程的保留集，
-    # 与 Run 终态在线裁剪（modules/agents/services/checkpoint_retention.py）同形：
-    # 清理期间新写入的 checkpoint 只会落入"最新版必然入选"的保留集，不存在按旧快照误删。
+    # 只复用 SQL 文本，不缓存保留集；预检不是写入锁，执行期间必须保持停写。
     threads=$(sql "SELECT DISTINCT t.thread_id FROM (SELECT thread_id, checkpoint_ns FROM checkpoints GROUP BY 1,2 HAVING count(*) > $K) t
       WHERE NOT EXISTS (SELECT 1 FROM agent_runs r WHERE r.thread_id = t.thread_id
                         AND r.status IN ('pending','running','cancel_requested')) ORDER BY 1")
@@ -116,22 +114,19 @@ case "$CMD" in
     done_n=0
     for f in "$WORK_DIR"/retain_*; do
       list=$(sed "s/^/'/; s/$/'/" "$f" | paste -sd,)
-      run_batch "
-        WITH per_ns AS (
+      keep_cte="WITH per_ns AS (
           SELECT thread_id, checkpoint_ns, checkpoint_id,
                  row_number() OVER (PARTITION BY thread_id, checkpoint_ns ORDER BY checkpoint_id DESC) rn
           FROM checkpoints WHERE thread_id IN ($list)),
-        keep AS (SELECT thread_id, checkpoint_ns, checkpoint_id FROM per_ns WHERE rn <= $K)
+        keep AS (SELECT thread_id, checkpoint_ns, checkpoint_id FROM per_ns WHERE rn <= $K)"
+      run_batch "
+        $keep_cte
         DELETE FROM checkpoint_writes w
         WHERE w.thread_id IN ($list)
           AND NOT EXISTS (SELECT 1 FROM keep k
                           WHERE k.thread_id = w.thread_id AND k.checkpoint_ns = w.checkpoint_ns
                             AND k.checkpoint_id = w.checkpoint_id);
-        WITH per_ns AS (
-          SELECT thread_id, checkpoint_ns, checkpoint_id,
-                 row_number() OVER (PARTITION BY thread_id, checkpoint_ns ORDER BY checkpoint_id DESC) rn
-          FROM checkpoints WHERE thread_id IN ($list)),
-        keep AS (SELECT thread_id, checkpoint_ns, checkpoint_id FROM per_ns WHERE rn <= $K)
+        $keep_cte
         DELETE FROM checkpoint_blobs b
         WHERE b.thread_id IN ($list)
           AND NOT EXISTS (SELECT 1 FROM keep k
@@ -140,11 +135,7 @@ case "$CMD" in
                            AND c.checkpoint_id = k.checkpoint_id
                           WHERE k.thread_id = b.thread_id AND k.checkpoint_ns = b.checkpoint_ns
                             AND (c.checkpoint -> 'channel_versions' ->> b.channel) = b.version);
-        WITH per_ns AS (
-          SELECT thread_id, checkpoint_ns, checkpoint_id,
-                 row_number() OVER (PARTITION BY thread_id, checkpoint_ns ORDER BY checkpoint_id DESC) rn
-          FROM checkpoints WHERE thread_id IN ($list)),
-        keep AS (SELECT thread_id, checkpoint_ns, checkpoint_id FROM per_ns WHERE rn <= $K)
+        $keep_cte
         DELETE FROM checkpoints c
         WHERE c.thread_id IN ($list)
           AND NOT EXISTS (SELECT 1 FROM keep k

@@ -29,20 +29,17 @@ checkpoint_ns)` 的最新版本：审批与 resume 走 `aget_tuple` 的 latest�
   同一裁剪、无会话且最后写入超过 7 天宽限的孤儿线程整删。目标线程的"超 K"筛选与裁剪同维
   （逐 `thread_id, checkpoint_ns`），否则各命名空间都未超 K 而总和超 K 的线程会被计入处理量却零删除；
   运维脚本的目标线程枚举使用同一口径。
-- 增量裁剪与在途执行的竞争：活跃 Run 探测与三条 DELETE 不在同一原子事务内。检查之后新提交的 Run 其
-  checkpoint 只会进入每条语句各自重算的 keep（最新版本必然入选），因此不需要额外加锁；反过来，
-  `finish_run_lifecycle` 先派发下一个输入再裁剪，steer/follow-up 已把新 pending Run 提交的线程本轮跳过，
-  其历史由次日清扫兜底。删除顺序是 writes → blobs → checkpoints，后算的 keep 只会比先算的小，因此保留集
-  永不被提前删；代价是一个版本恰好在语句之间被挤出保留集时，它的 writes 多留一轮，由下一次裁剪按
-  `checkpoint_id` 不在 keep 内回收，不为此加锁或补第四条语句。同一"每次删除现场重算保留集"的规则也是运维脚本 `retain` 的形态：脚本不预先
-  物化全局 keep 清单（旧形态在生成清单后又有新写入时会按过期快照删除），而是每批 200 线程各自重算，
-  与在线裁剪同形，并由 `test_trim_keeps_checkpoint_written_after_thread_selection` 钉住该时序。
+- 在线裁剪按 writes → blobs → checkpoints 的顺序删除，每条 DELETE 都重新计算保留集。新版本可能把旧版本
+  挤出保留窗口，先前为它留下的 writes 可以在下一轮回收。活跃 Run 探测不阻止新 Run 启动；
+  若 `finish_run_lifecycle` 先派发的 steer/follow-up 已提交 pending Run，本轮跳过，由每日清扫兜底。
+- 停机脚本同样不缓存保留集，但这不替代停写：预检只能看到当时是否有未终态 Run，
+  执行 `retain` 的整个窗口内必须保持 API 和 worker 停止。
 - 在线裁剪必须有界：`purge_thread_checkpoint_history` 在同一事务内先 `SET LOCAL lock_timeout=2s` 与
   `statement_timeout=10s` 再删除。终态后处理不能变成无界等待；超时只回滚记日志，残留由每日清扫与
   脚本兜底。
 - 结果三态而非布尔：`PURGE_TRIMMED` / `PURGE_SKIPPED_ACTIVE` / `PURGE_FAILED`。清扫据此分别计入
-  `trimmed_threads` 与 `skipped_active_threads`，"因在途执行什么都没删"不再与"真删成功"混成同一个数
-  `failed` 两者都不计入。
+  `trimmed_threads`（按保留策略处理完成，不保证实际删行）与 `skipped_active_threads`（因在途执行跳过），
+  失败不计入两者。
 - 停机维护：`scripts/checkpoint-cleanup.sh` 提供 `report` / `retain` / `vacuum-full`，分批事务、
   阻塞预检、锁超时重试与批次心跳。`retain` 先做**写入静止预检**：非终态 Run 不为 0 就直接中止并提示
   先停 api/worker；`report` 同步输出该计数，让操作者在动手前看到同一事实。清理后
@@ -73,7 +70,7 @@ checkpoint_ns)` 的最新版本：审批与 resume 走 `aget_tuple` 的 latest�
 - worker 常驻循环 +1，与其他收敛循环同一取消与失败处理模式；停机超过一天的欠账由启动追补。
 - 保留窗口之外的历史版本不可回读：面板与恢复都不依赖它，需要历史取证时应在此之前用
   `scripts/checkpoint-cleanup.sh report` 或数据库备份。
-- `checkpoint-cleanup.sh` 的 retain 需要全表窗口排序，必须在低峰执行（脚本自带预检与心跳提示）。
+- `checkpoint-cleanup.sh` 的 `retain` 需要全表窗口排序，锁占用时长需在停机窗口中评估。
 - 清理语义有两份手写 SQL 形态（模块的按线程裁剪、脚本的按批裁剪）加一条 `saver.adelete_thread` 整删路径。
   脚本的 retain 形态与模块一致（每条语句现场重算保留集），因此两者共用同一时序不变量：saver 若改
   `channel_versions` 结构，两份 SQL 都要跟，集成用例是共同 oracle。
@@ -86,7 +83,7 @@ checkpoint_ns)` 的最新版本：审批与 resume 走 `aget_tuple` 的 latest�
 |---|---|---|---|---|---|
 | 终态裁剪保留每个 `(thread_id, checkpoint_ns)` 最近 K 版，独占 blob/writes 同批删除 | 最新版本或其在用 channel 数据被删 | checkpoint_retention.purge_thread_checkpoint_history | `pytest test/integration/services/test_checkpoint_retention.py`（真实 PG）= 9 passed：8 版裁到 5、真实 saver 写 7 版后面板读仍拿到最新值 | ① `_DROP_BLOBS` 的 `channel_versions` 引用条件改为恒真 → 独占 blob 用例红；② 默认保留量置 0 → 钩子与清扫用例红 | Passed |
 | 被保留版本 `channel_versions` 仍引用的共享 channel blob 版本不被删除 | 在用 channel 数据被删空，恢复与面板读空 | retention `_DROP_BLOBS` 引用条件 | `test_purge_keeps_shared_blob_version_still_referenced`（CI service integration 作业通过） | 把引用条件改为恒真 → 该用例红 | Passed |
-| 清理期间新写入的 checkpoint 不会被过期快照删掉（在线与脚本同形：每条 DELETE 现场重算保留集） | 按 T0 快照删掉 T0.5 写入的版本，正在执行的线程失去可恢复状态 | 同上 + `scripts/checkpoint-cleanup.sh` retain | `test_trim_keeps_checkpoint_written_after_thread_selection`；并在活库克隆 `yuxi_rehearse` 上实跑 `retain`：超 K 组 1→0、checkpoints 133→130（恰为 report 预告的 3 行超出） | 把 keep 集的 `ORDER BY checkpoint_id DESC` 改为 `ASC`（等价于"保留最旧"）后，时序用例与独占 blob 用例同时红，还原绿 | Passed |
+| 选出待裁剪线程后、在线裁剪开始前新写入的最新 checkpoint 会被保留 | 保留集在选择线程时就被固定，导致之后写入的版本被删 | retention 的 DELETE 按执行时的版本重新计算保留集 | `test_trim_keeps_checkpoint_written_after_thread_selection`；停机脚本另在百行级克隆库验证 `retain` 删除量符合 `report` 预告（133→130） | 把 `ORDER BY checkpoint_id DESC` 改为 `ASC`，时序用例与独占 blob 用例同时失败 | Passed |
 | 命名空间维度独立：一个线程的多个 `checkpoint_ns` 各自保留 K 版，重名标识互不顶替 | 子命名空间历史被整页删除或整体保留 | 同上 | `test_purge_trims_each_namespace_independently`（根 8 版留 5、子 3 版全留，逐命名空间核三表计数） | 去掉 keep 集合的 `PARTITION BY checkpoint_ns` 后该用例红（`命名空间 sub:agent-1 的保留集不符：[]`） | Passed |
 | 有未终态 Run 的线程整体跳过；跳过与真删在观测上分开 | 删掉在途执行尚未收敛的 writes；"什么都没删"被报成治理生效 | retention + sweep | `test_purge_skips_thread_with_unfinished_run`（含阳性对照）、`test_sweep_counts_trimmed_and_skipped_separately` | 删除活跃 Run 存在性探测后跳过用例红；把 skipped 并入 trimmed 计数后计数用例红 | Passed |
 | 在线裁剪有界（锁等待 2s、语句 10s），超时回滚记日志 | 终态后处理变成无界等待，拖住 worker | retention.purge_thread_checkpoint_history | `test_purge_bounds_wait_before_deleting`（断言两处 SET LOCAL 早于第一条 DELETE） | 删除两处 `SET LOCAL` 后该用例红，还原绿 | Passed |
