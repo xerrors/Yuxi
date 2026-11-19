@@ -637,11 +637,19 @@ class EvaluationService:
                     "gold_chunk_ids": item.gold_chunk_ids or [],
                     "gold_answer": item.gold_answer,
                 }
+                # 有失效参考块时整题跳过检索评分，答案评估和检索明细仍正常生成。
+                item_stale_chunk_count = 0
+                if dataset_row.has_gold_chunks:
+                    for chunk_id in question_data["gold_chunk_ids"]:
+                        if normalize_chunk_id(str(chunk_id)) not in current_chunk_ids:
+                            item_stale_chunk_count += 1
+                score_retrieval = dataset_row.has_gold_chunks and bool(question_data["gold_chunk_ids"]) and item_stale_chunk_count == 0
+
                 question_result = await evaluate_question(
                     kb_id=kb_id,
                     question_data=question_data,
                     retrieval_config=retrieval_config,
-                    has_gold_chunks=dataset_row.has_gold_chunks,
+                    has_gold_chunks=score_retrieval,
                     has_gold_answers=dataset_row.has_gold_answers,
                     judge_llm=judge_llm,
                     select_model_fn=select_model,
@@ -649,21 +657,13 @@ class EvaluationService:
                 )
                 await context.raise_if_cancelled()
 
-                if dataset_row.has_gold_chunks and question_data.get("gold_chunk_ids"):
-                    stale_ids = [
-                        chunk_id
-                        for chunk_id in question_data["gold_chunk_ids"]
-                        if normalize_chunk_id(str(chunk_id)) not in current_chunk_ids
-                    ]
-                    if stale_ids:
-                        stale_gold_chunk_count += len(stale_ids)
-                        detail_metrics = question_result["detail"]["metrics"]
-                        for key in question_result["retrieval_scores"]:
-                            detail_metrics.pop(key, None)
-                        detail_metrics["stale_gold_chunk_count"] = len(stale_ids)
-                        detail_metrics["warning"] = format_stale_gold_chunk_warning(len(stale_ids))
-                    else:
-                        all_retrieval_metrics.append(question_result["retrieval_scores"])
+                if item_stale_chunk_count:
+                    stale_gold_chunk_count += item_stale_chunk_count
+                    detail_metrics = question_result["detail"]["metrics"]
+                    detail_metrics["stale_gold_chunk_count"] = item_stale_chunk_count
+                    detail_metrics["warning"] = format_stale_gold_chunk_warning(item_stale_chunk_count)
+                elif score_retrieval:
+                    all_retrieval_metrics.append(question_result["retrieval_scores"])
                 if dataset_row.has_gold_answers and question_data.get("gold_answer") and judge_llm:
                     all_answer_metrics.append(question_result["answer_scores"])
 

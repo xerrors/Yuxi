@@ -1,6 +1,11 @@
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
+
+import pytest
 
 from yuxi.modules.knowledge.evaluation import evaluator as evaluator_module
+from yuxi.modules.knowledge.evaluation import service as service_module
+from yuxi.modules.knowledge.evaluation.metrics import EvaluationMetricsCalculator
 from yuxi.modules.knowledge.evaluation.service import EvaluationService
 
 
@@ -17,17 +22,20 @@ class FakeContext:
     async def raise_if_cancelled(self) -> None:
         return None
 
-    async def run_owned_transaction(self, operation) -> None:
+    async def run_owned_transaction(self, operation, *, check_cancelled=False) -> None:
+        if check_cancelled:
+            await self.raise_if_cancelled()
         await operation(None, None)
 
 
 class FakeEvaluationRepository:
-    def __init__(self, items):
+    def __init__(self, items, *, has_gold_answers=False):
         self.items = items
+        self.has_gold_answers = has_gold_answers
         self.run_items: dict[int, dict] = {}
 
     async def get_dataset(self, dataset_id: str):
-        return SimpleNamespace(kb_id="kb-1", has_gold_chunks=True, has_gold_answers=False)
+        return SimpleNamespace(kb_id="kb-1", has_gold_chunks=True, has_gold_answers=self.has_gold_answers)
 
     async def list_all_dataset_items(self, dataset_id: str):
         return self.items
@@ -51,11 +59,20 @@ def make_item(item_id: str, query: str, gold_chunk_ids: list[str]):
     return SimpleNamespace(item_id=item_id, query_text=query, gold_chunk_ids=gold_chunk_ids, gold_answer=None)
 
 
-async def test_evaluation_excludes_stale_gold_chunks_and_reports_warning(monkeypatch):
+@pytest.mark.parametrize(
+    "stale_gold_ids",
+    [
+        ["file_b_chunk_5-g1", "file_b_chunk_6-g1"],
+        ["file_a_chunk_0-g1", "file_b_chunk_5-g1", "file_b_chunk_6-g1"],
+        ["file_b_chunk_5-g1", "file_b_chunk_5-g1"],
+    ],
+    ids=["all-stale", "partially-stale", "duplicate-stale"],
+)
+async def test_evaluation_excludes_stale_gold_chunks_and_reports_warning(monkeypatch, stale_gold_ids):
     # 文件同参数重新入库：gold 的旧代次后缀仍能对上；换了分块参数的参考块已不在知识库，需标出而非计 0 分
     items = [
         make_item("item-1", "q1", ["file_a_chunk_0-g1"]),
-        make_item("item-2", "q2", ["file_b_chunk_5-g1", "file_b_chunk_6-g1"]),
+        make_item("item-2", "q2", stale_gold_ids),
     ]
     repo = FakeEvaluationRepository(items)
     service = EvaluationService.__new__(EvaluationService)
@@ -66,6 +83,8 @@ async def test_evaluation_excludes_stale_gold_chunks_and_reports_warning(monkeyp
         return [{"chunk_id": "file_a_chunk_0-g2"}, {"chunk_id": "file_b_chunk_0-g3"}]
 
     monkeypatch.setattr(evaluator_module.kb_manager, "aquery", fake_aquery)
+    retrieval_metrics = Mock(wraps=EvaluationMetricsCalculator.calculate_retrieval_metrics)
+    monkeypatch.setattr(EvaluationMetricsCalculator, "calculate_retrieval_metrics", retrieval_metrics)
 
     result = await service._run_evaluation_job(
         FakeContext({"run_id": "run-1", "kb_id": "kb-1", "dataset_id": "dataset-1", "retrieval_config": {}})
@@ -83,6 +102,10 @@ async def test_evaluation_excludes_stale_gold_chunks_and_reports_warning(monkeyp
     assert stale_metrics["stale_gold_chunk_count"] == 2
     assert stale_metrics["warning"] == warning
     assert "recall@10" not in stale_metrics
+    assert repo.run_items[1]["gold_chunk_ids"] == stale_gold_ids
+    assert repo.run_items[1]["retrieved_chunks"] == [{"chunk_id": "file_a_chunk_0-g2"}, {"chunk_id": "file_b_chunk_0-g3"}]
+    retrieval_metrics.assert_called_once()
+    assert retrieval_metrics.call_args.args[1] == ["file_a_chunk_0-g1"]
 
 
 async def test_evaluation_without_stale_gold_chunks_has_no_warning(monkeypatch):
@@ -104,3 +127,33 @@ async def test_evaluation_without_stale_gold_chunks_has_no_warning(monkeypatch):
     assert "warning" not in result["metrics"]
     assert result["metrics"]["recall@10"] == 0.0
     assert repo.run_items[0]["metrics"]["recall@10"] == 0.0
+
+
+async def test_stale_gold_chunks_preserve_answer_evaluation(monkeypatch):
+    """失效参考块只排除检索评分，仍保留原题、答案评分和生成答案。"""
+    item = make_item("item-1", "q1", ["missing_chunk_0-g1"])
+    item.gold_answer = "expected answer"
+    repo = FakeEvaluationRepository([item], has_gold_answers=True)
+    service = EvaluationService.__new__(EvaluationService)
+    service.eval_repo = repo
+    service.chunk_repo = FakeChunkRepository([])
+    judge = object()
+    monkeypatch.setattr(service_module, "select_model", lambda **_: judge)
+    aquery = AsyncMock(return_value={"answer": "generated answer", "retrieved_chunks": [{"chunk_id": "other_chunk_0-g2"}]})
+    answer_metrics = AsyncMock(return_value={"score": 0.75})
+    monkeypatch.setattr(evaluator_module.kb_manager, "aquery", aquery)
+    monkeypatch.setattr(EvaluationMetricsCalculator, "calculate_answer_metrics", answer_metrics)
+
+    result = await service._run_evaluation_job(
+        FakeContext({"run_id": "run-1", "kb_id": "kb-1", "dataset_id": "dataset-1", "retrieval_config": {"judge_llm": "test:judge"}})
+    )
+
+    answer_metrics.assert_awaited_once_with(query="q1", generated_answer="generated answer", gold_answer="expected answer", judge_llm=judge)
+    assert result["metrics"]["answer_correctness"] == 0.75
+    assert result["overall_score"] == 0.75
+    detail = repo.run_items[0]
+    assert detail["gold_answer"] == "expected answer"
+    assert detail["generated_answer"] == "generated answer"
+    assert detail["metrics"]["score"] == 0.75
+    assert detail["metrics"]["stale_gold_chunk_count"] == 1
+    assert "recall@10" not in detail["metrics"]
