@@ -58,9 +58,13 @@ async (page) => {
   await panel.locator('.message-row').nth(2).click()
   await panel.getByText('数据库中的工具输出', { exact: true }).waitFor()
   await page.screenshot({ path: '/tmp/yuxi-debug-projection-light.png' })
-  await panel.getByRole('combobox', { name: '记录类型筛选' }).selectOption('tool')
+  const selectFilter = async (label) => {
+    await panel.locator('.filter-select-field').click()
+    await page.locator('.ant-select-dropdown:visible').getByText(label, { exact: true }).click()
+  }
+  await selectFilter('工具 1')
   check(await panel.locator('.message-row').count() === 1, '工具筛选不正确')
-  await panel.getByRole('combobox', { name: '记录类型筛选' }).selectOption('all')
+  await selectFilter('全部 5')
   await panel.getByRole('searchbox').fill('最终模型')
   check(await panel.locator('.message-row').count() === 1, '文本搜索不正确')
   await panel.getByRole('searchbox').fill('')
@@ -83,7 +87,7 @@ async (page) => {
   mode = 'failure'
   await panel.getByRole('button', { name: '刷新审计', exact: true }).click()
   await panel.locator('.kind-error').waitFor()
-  await panel.getByRole('combobox', { name: '记录类型筛选' }).selectOption('error')
+  await selectFilter('错误 1')
   check(await panel.locator('.message-row').count() === 1, '普通失败消息未进入错误筛选')
   await panel.locator('.message-row').click()
   await panel.getByRole('complementary', { name: '记录详情' }).getByText('模型服务不可用', { exact: true }).waitFor()

@@ -1,9 +1,25 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
+import { constants } from 'node:zlib'
+import compression from 'compression'
 import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
-import { providers } from '@opencode-ai/models/snapshot'
+
+// 只压缩开发模块及其内联 source map，API 代理和 SSE 直接流式交付。
+const devModuleCompression = {
+  name: 'dev-module-compression',
+  configureServer(server) {
+    const compress = compression({
+      level: constants.Z_BEST_SPEED,
+      brotli: { params: { [constants.BROTLI_PARAM_QUALITY]: 1 } }
+    })
+    server.middlewares.use('/src', compress)
+    server.middlewares.use('/node_modules', compress)
+    server.middlewares.use('/@vite', compress)
+    server.middlewares.use('/@id', compress)
+  }
+}
 
 // 快照只在构建进程读取，浏览器只接收展示字段；模型覆盖随锁定依赖更新。
 const modelMetadataPlugin = {
@@ -11,8 +27,9 @@ const modelMetadataPlugin = {
   resolveId(id) {
     if (id === 'virtual:model-display-metadata') return '\0' + id
   },
-  load(id) {
+  async load(id) {
     if (id !== '\0virtual:model-display-metadata') return
+    const { providers } = await import('@opencode-ai/models/snapshot')
     const catalog = Object.fromEntries(
       Object.entries(providers).map(([providerId, provider]) => [
         providerId,
@@ -30,7 +47,8 @@ const modelMetadataPlugin = {
         }
       ])
     )
-    return `export const providers = ${JSON.stringify(catalog)}`
+    // 这是从快照生成的纯数据，逐字段源码映射会重复传输整份目录。
+    return { code: `export const providers = ${JSON.stringify(catalog)}`, map: { mappings: '' } }
   }
 }
 
@@ -82,7 +100,7 @@ export default defineConfig(({ mode }) => {
   // eslint-disable-next-line no-undef
   const env = loadEnv(mode, process.cwd(), '')
   return {
-    plugins: [vue(), modelMetadataPlugin, pdfjsCmapsPlugin],
+    plugins: [vue(), modelMetadataPlugin, pdfjsCmapsPlugin, devModuleCompression],
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url))

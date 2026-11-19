@@ -53,7 +53,15 @@
             <Moon v-else-if="themeStore.themeMode === 'dark'" :size="17" aria-hidden="true" />
             <Monitor v-else :size="17" aria-hidden="true" />
           </button>
-          <button type="button" class="header-chat" @click="router.push('/agent')">去对话</button>
+          <button
+            type="button"
+            class="header-chat"
+            :disabled="openingChat"
+            :aria-busy="openingChat"
+            @click="openChat"
+          >
+            {{ openingChat ? '打开中' : '去对话' }}
+          </button>
         </nav>
       </header>
       <main class="home-main page-width" aria-labelledby="home-title">
@@ -116,6 +124,7 @@ const docsUrl = 'https://xerrors.github.io/Yuxi/'
 const isLoading = ref(true)
 const error = ref(null)
 const prompt = ref('')
+const openingChat = ref(false)
 const inputFocused = ref(false)
 const titleLines = computed(() => {
   const title = infoStore.branding.title || ''
@@ -134,6 +143,16 @@ async function loadData() {
     error.value = { title: '服务连接失败', message: '后端服务无法响应，请检查服务是否正常运行' }
   } finally {
     isLoading.value = false
+  }
+}
+
+/** 顶部入口在路由加载期间显示反馈，输入框继续拥有草稿。 */
+async function openChat() {
+  openingChat.value = true
+  try {
+    await router.push('/agent')
+  } finally {
+    openingChat.value = false
   }
 }
 

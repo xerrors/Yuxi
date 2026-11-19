@@ -288,7 +288,7 @@ export const threadApi = {
    * @param {string | null} after - 上一页的 last_id
    * @returns {Promise} - Session 资源分页
    */
-  getThreads: (agentId = null, limit = 100, after = null, { isPinned = null } = {}) => {
+  getThreads: async (agentId = null, limit = 100, after = null, { isPinned = null, pageCache } = {}) => {
     const params = new URLSearchParams({
       limit: String(limit)
     })
@@ -298,7 +298,19 @@ export const threadApi = {
       params.set('agent_id', agentId)
     }
     const url = `/api/v1/agents/sessions?${params.toString()}`
-    return apiGet(url)
+    if (!pageCache) return apiGet(url)
+
+    const saved = pageCache.previous.get(url)
+    const headers = saved ? { 'If-None-Match': saved.etag } : undefined
+    // 侧栏持有本次应用会话的分页正文，浏览器禁用磁盘缓存时也能显式重新验证。
+    const response = await apiGet(url, { headers, cache: 'no-store' }, true, 'response')
+    const entry = response.status === 304
+      ? saved
+      : { etag: response.headers.get('ETag'), page: await response.json() }
+    if (!entry.etag) return entry.page
+    pageCache.next.set(url, entry)
+    // 页面存在乐观编辑，缓存正文始终对应服务端的 ETag。
+    return structuredClone(entry.page)
   },
 
   /**

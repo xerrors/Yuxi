@@ -5,9 +5,8 @@
     :class="{ 'is-loading-history': earlierMessagesLoading }"
     @scroll.passive="handleWorkspaceScroll"
   >
-    <div v-if="isLoadingMessages" class="session-loading" role="status">
-      <a-spin />
-      <span>正在加载对话...</span>
+    <div v-if="isLoadingMessages" class="session-loading" role="status" aria-label="正在加载对话">
+      <a-spin aria-hidden="true" />
     </div>
     <div class="chat-box">
       <button
@@ -558,23 +557,18 @@ defineExpose({
 
 .session-loading {
   position: absolute;
-  top: 30%;
+  top: 8px;
   left: 50%;
-  transform: translate(-50%, -50%);
+  transform: translateX(-50%);
   z-index: 2;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 12px;
-  padding: 12px 16px;
+  padding: 6px 10px;
   background: var(--gray-0);
   border: 1px solid var(--gray-150);
   border-radius: 8px;
-  box-shadow: var(--shadow-popover);
-  color: var(--gray-600);
-  font-size: 14px;
-  line-height: 20px;
-  white-space: nowrap;
+  box-shadow: 0 1px 4px var(--shadow-2);
   pointer-events: none;
 
   :deep(.ant-spin) {

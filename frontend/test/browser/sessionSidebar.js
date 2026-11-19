@@ -26,6 +26,7 @@ async page => {
     if (path.endsWith('/system/health')) json = { status: 'ok' }
     if (path.endsWith('/check-first-run')) json = { first_run: false }
     if (path.endsWith('/auth/me')) json = { id: userId, uid: `sidebar-fixture-${userId}`, username: `侧栏验收${userId}`, role: 'superadmin' }
+    if (path === '/api/mention/plugins') json = []
     if (path === '/api/agent') json = { agents: [agent] }
     if (path === '/api/agent/sidebar-agent') json = agent
     if (path === '/api/projects') json = [project]

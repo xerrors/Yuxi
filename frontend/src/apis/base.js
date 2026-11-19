@@ -134,7 +134,7 @@ function publicErrorMessage(url, status, headers, requiresAuth) {
  * @param {string} url - API端点
  * @param {Object} options - 请求选项
  * @param {boolean} requiresAuth - 是否需要认证头
- * @param {string} responseType - 响应类型: 'json' | 'text' | 'blob'
+ * @param {string} responseType - 响应类型: 'json' | 'text' | 'blob' | 'response'
  * @returns {Promise} - 请求结果
  */
 export async function apiRequest(url, options = {}, requiresAuth = true, responseType = 'json') {
@@ -160,6 +160,10 @@ export async function apiRequest(url, options = {}, requiresAuth = true, respons
 
     // 发送请求
     const response = await fetch(url, requestOptions)
+    if (responseType === 'response' && response.status === 304 &&
+      requestOptions.method === 'GET' && requestOptions.headers['If-None-Match']) {
+      return response
+    }
 
     // 处理API返回的错误
     if (!response.ok) {
@@ -248,7 +252,7 @@ export async function apiRequest(url, options = {}, requiresAuth = true, respons
  * @param {string} url - API端点
  * @param {Object} options - 请求选项
  * @param {boolean} requiresAuth - 是否需要认证
- * @param {string} responseType - 响应类型: 'json' | 'text' | 'blob'
+ * @param {string} responseType - 响应类型: 'json' | 'text' | 'blob' | 'response'
  * @returns {Promise} - 请求结果
  */
 export function apiGet(url, options = {}, requiresAuth = true, responseType = 'json') {

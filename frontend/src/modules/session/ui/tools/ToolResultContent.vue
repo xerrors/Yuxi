@@ -35,7 +35,7 @@
 import { computed, ref, watch } from 'vue'
 import { Image as ImageIcon } from '@lucide/vue'
 import { apiGet } from '@/apis/base'
-import { resolveMarkdownImageUrl } from '@/shared/lib/markdown_preview'
+import { resolveMarkdownImageUrl } from '@/shared/lib/file_preview'
 import ChatImageViewer from '@/shared/ui/ChatImageViewer.vue'
 import { getToolResultParts } from '@/modules/session/model/toolCallProjection'
 

@@ -55,7 +55,7 @@ async (page) => {
       phase = 'old'
       await page.goto(`${origin}/agent/approval-thread`)
       const dialog = page.locator('[role="dialog"]:visible')
-      await dialog.getByText('问答题：是否继续旧任务？', { exact: true }).waitFor()
+      await dialog.getByText('是否继续旧任务？', { exact: true }).waitFor()
       await dialog.locator('textarea').fill('继续')
       const held = new Promise(resolve => { onRequestHeld = resolve })
       failNextTurn = true
@@ -68,7 +68,7 @@ async (page) => {
           await useSessionRuntimeStore().resumeActiveRunForThread('approval-thread')
         })
         if (next === 'running') await dialog.waitFor({ state: 'hidden' })
-        else await dialog.getByText('问答题：请确认新的任务？', { exact: true }).waitFor()
+        else await dialog.getByText('请确认新的任务？', { exact: true }).waitFor()
       }
       releaseFailure()
       await page.waitForFunction(() => {
@@ -87,7 +87,7 @@ async (page) => {
         check(await dialog.count() === 0, '旧审批框重新出现')
         await page.locator('.generating-status').waitFor()
       } else {
-        await dialog.getByText(next === 'old' ? '问答题：是否继续旧任务？' : '问答题：请确认新的任务？', { exact: true }).waitFor()
+        await dialog.getByText(next === 'old' ? '是否继续旧任务？' : '请确认新的任务？', { exact: true }).waitFor()
         check(await dialog.getByRole('button', { name: '提交', exact: true }).isEnabled(), '失败后无法重试当前审批')
       }
       await page.screenshot({ path: `/tmp/yuxi-approval-failure-${next}.png`, fullPage: true, animations: 'disabled' })

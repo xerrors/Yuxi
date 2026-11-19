@@ -6,6 +6,11 @@ import { message } from 'ant-design-vue'
 
 const AppLayout = () => import('@/app/layouts/AppLayout.vue')
 
+/** 在全局导航跟踪之后、下载受保护页面之前检查访客身份。 */
+function requireAuth(meta = {}) {
+  return { beforeEnter: redirectGuest, meta: { ...meta, requiresAuth: true } }
+}
+
 /** 将会话身份绑定到路由实例，保活页面不读取其他会话的路由参数。 */
 const sessionRouteProps = (route) => ({
   memberSessionId: typeof route.query.member_session_id === 'string' ? route.query.member_session_id : '',
@@ -46,13 +51,13 @@ const router = createRouter({
       path: '/auth/provider',
       name: 'OIDCProvider',
       component: () => import('@/pages/OIDCProviderView.vue'),
-      meta: { requiresAuth: true }
+      ...requireAuth()
     },
     {
       path: '/auth/cli/authorize',
       name: 'CLIAuthAuthorize',
       component: () => import('@/pages/CLIAuthAuthorizeView.vue'),
-      meta: { requiresAuth: true }
+      ...requireAuth()
     },
     {
       path: '/agent',
@@ -64,14 +69,14 @@ const router = createRouter({
           name: 'AgentComp',
           component: () => import('../../pages/AgentView.vue'),
           props: sessionRouteProps,
-          meta: { keepAlive: true, requiresAuth: true }
+          ...requireAuth({ keepAlive: true })
         },
         {
           path: ':thread_id',
           name: 'AgentCompWithThreadId',
           component: () => import('../../pages/AgentView.vue'),
           props: sessionRouteProps,
-          meta: { keepAlive: true, requiresAuth: true }
+          ...requireAuth({ keepAlive: true })
         }
       ]
     },
@@ -84,7 +89,7 @@ const router = createRouter({
           path: '',
           name: 'WorkspaceComp',
           component: () => import('../../pages/WorkspaceView.vue'),
-          meta: { keepAlive: true, requiresAuth: true }
+          ...requireAuth({ keepAlive: true })
         }
       ]
     },
@@ -97,7 +102,7 @@ const router = createRouter({
           path: '',
           name: 'DashboardComp',
           component: () => import('../../pages/DashboardView.vue'),
-          meta: { keepAlive: false, requiresAuth: true, requiresSuperAdmin: true }
+          ...requireAuth({ keepAlive: false, requiresSuperAdmin: true })
         }
       ]
     },
@@ -110,7 +115,7 @@ const router = createRouter({
           path: '',
           name: 'AgentManageComp',
           component: () => import('../../pages/AgentManageView.vue'),
-          meta: { keepAlive: false, requiresAuth: true }
+          ...requireAuth({ keepAlive: false })
         }
       ]
     },
@@ -123,49 +128,31 @@ const router = createRouter({
           path: '',
           name: 'ExtensionsComp',
           component: () => import('../../pages/ExtensionsView.vue'),
-          meta: {
-            keepAlive: false,
-            requiresAuth: true
-          },
+          ...requireAuth({ keepAlive: false }),
           children: [
             {
               path: 'knowledge-bases/:kbId',
               name: 'ExtensionKnowledgeBaseDetail',
               component: () => import('../../pages/KnowledgeBaseInfoView.vue'),
-              meta: {
-                keepAlive: false,
-                requiresAuth: true,
-                requiresAdmin: true
-              }
+              ...requireAuth({ keepAlive: false, requiresAdmin: true })
             },
             {
               path: 'knowledge-bases/:kbId/evaluation/:datasetId',
               name: 'ExtensionEvaluationBenchmarkDetail',
               component: () => import('../../pages/EvaluationBenchmarkDetailView.vue'),
-              meta: {
-                keepAlive: false,
-                requiresAuth: true,
-                requiresAdmin: true
-              }
+              ...requireAuth({ keepAlive: false, requiresAdmin: true })
             },
             {
               path: 'mcp/:slug',
               name: 'ExtensionMcpDetail',
               component: () => import('../../modules/extensions/ui/McpDetailView.vue'),
-              meta: {
-                keepAlive: false,
-                requiresAuth: true,
-                requiresSuperAdmin: true
-              }
+              ...requireAuth({ keepAlive: false, requiresSuperAdmin: true })
             },
             {
               path: 'skill/:slug',
               name: 'ExtensionSkillDetail',
               component: () => import('../../modules/extensions/ui/SkillDetailView.vue'),
-              meta: {
-                keepAlive: false,
-                requiresAuth: true
-              }
+              ...requireAuth({ keepAlive: false })
             }
           ]
         }
@@ -180,10 +167,16 @@ const router = createRouter({
   ]
 })
 
-// 页面挂载前校验身份；导航跟踪先运行，失败沿用 App 的重试界面。
+/** 保存访客的登录返回目标；异步页面解析和身份恢复都可能遇到未登录状态。 */
+function redirectGuest(to) {
+  if (to.matched.some((record) => record.meta.requiresAuth) && !useUserStore().isLoggedIn) {
+    sessionStorage.setItem('redirect', to.fullPath)
+    return '/login'
+  }
+}
+
+// 已有凭据的身份恢复仍在导航跟踪之后，服务异常沿用 App 的重试界面。
 router.beforeResolve(async (to) => {
-  // 检查路由是否需要认证
-  const requiresAuth = to.matched.some((record) => record.meta.requiresAuth === true)
   const requiresAdmin = to.matched.some((record) => record.meta.requiresAdmin)
   const requiresSuperAdmin = to.matched.some((record) => record.meta.requiresSuperAdmin)
 
@@ -200,16 +193,10 @@ router.beforeResolve(async (to) => {
     }
   }
 
-  const isLoggedIn = userStore.isLoggedIn
+  const login = redirectGuest(to)
+  if (login) return login
   const isAdmin = userStore.isAdmin
   const isSuperAdmin = userStore.isSuperAdmin
-
-  // 如果路由需要认证但用户未登录
-  if (requiresAuth && !isLoggedIn) {
-    // 保存尝试访问的路径，登录后跳转
-    sessionStorage.setItem('redirect', to.fullPath)
-    return '/login'
-  }
 
   if ((requiresAdmin && !isAdmin) || (requiresSuperAdmin && !isSuperAdmin)) {
     message.warning(to.path === '/dashboard' ? '无权访问数据总览' : '无权访问此页面')
@@ -217,7 +204,7 @@ router.beforeResolve(async (to) => {
   }
 
   // 如果用户已登录但访问登录页，按 redirect 参数跳转
-  if (to.path === '/login' && isLoggedIn) {
+  if (to.path === '/login' && userStore.isLoggedIn) {
     return sanitizeRedirect(to.query.redirect)
   }
 

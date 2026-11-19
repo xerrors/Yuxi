@@ -163,9 +163,12 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { BookOpen, FileText, Lightbulb, Info, Check, Plus, Search, ChevronRight } from '@lucide/vue'
-import WidgetChart from '@/shared/ui/WidgetChart.vue'
+import { createAsyncPanel } from '@/shared/lib/asyncPanel'
 import WidgetImage from '@/shared/ui/WidgetImage.vue'
 import { widgetFormMessage } from '@/shared/lib/chatWidgets'
+defineOptions({
+  components: { WidgetChart: createAsyncPanel(() => import('./WidgetChart.vue')) }
+})
 const props = defineProps({
   node: { type: Object, required: true },
   disabled: Boolean,

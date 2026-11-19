@@ -612,6 +612,26 @@ test('服务端 5xx 文案不泄露部署命令且保留错误状态', async () 
   })
 })
 
+test('只有带验证标识的原始 GET 可以直接读取 304', async () => {
+  await withServer(async (server) => {
+    const { apiRequest } = await server.ssrLoadModule('/src/apis/base.js')
+    const conditional = { 'If-None-Match': '"page"' }
+    globalThis.fetch = async () => new Response(null, { status: 304 })
+    for (const [method, headers, responseType] of [
+      ['GET', {}, 'response'],
+      ['POST', conditional, 'response'],
+      ['GET', conditional, 'json']
+    ]) {
+      await assert.rejects(
+        apiRequest('/api/v1/agents/sessions', { method, headers }, false, responseType),
+        error => error.status === 304
+      )
+    }
+    const validated = await apiRequest('/api/v1/agents/sessions', { method: 'GET', headers: conditional }, false, 'response')
+    assert.equal(validated.status, 304)
+  })
+})
+
 test('Skill 详情通过实际 skillApi 对象读取隐藏的单个绑定资源', async () => {
   await withServer(async (server) => {
     globalThis.__apiBoundaryMessages = []

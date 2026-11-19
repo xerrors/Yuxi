@@ -13,6 +13,17 @@ import { getStreamingReasoning, itemsToMessages, mergeItemSnapshot } from './age
 import { extractPendingInterrupt, pendingInterruptFromWaitpoint } from './useApproval'
 import { useSessionFeedbackStore } from './sessionFeedback'
 
+/** 协作摘要与首读使用相同的轮次、执行段和等待状态进行核对。 */
+const executionSnapshot = (turnId, status, currentRunId, resultRunId, runStatus, waitingFor) =>
+  JSON.stringify([turnId, status, currentRunId, resultRunId, runStatus, waitingFor])
+
+/** 两次会话详情必须指向同一状态、执行段和正式结果。 */
+const sameExecution = (a, b) =>
+  a?.id === b?.id && a?.status === b?.status &&
+  a?.current_run_id === b?.current_run_id && a?.result_run_id === b?.result_run_id
+
+const isSettled = (status) => ['completed', 'failed', 'cancelled'].includes(status)
+
 /** 每个 Thread 共享运行数据和订阅，视图仅注册展示回调。 */
 export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
   const user = useUserStore()
@@ -59,19 +70,20 @@ export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
   }
   const isCurrentThreadState = (threadId, state) => chatState.threadStates[threadId] === state
 
-  const fetchThreadMessages = async ({ threadId, fresh = false, more = false, turnId = null }) => {
+  const fetchThreadMessages = async ({ threadId, fresh = false, more = false, turnId = null, initialRead = false }) => {
     if (!threadId || !observers.has(threadId)) return
     const state = getThreadState(threadId)
-    if (fresh && requests.has(`history:${threadId}`)) {
-      // 终态必须读取发生在完成事件之后的快照，不能共用更早的在途历史。
+    const key = `history:${threadId}`
+    while ((fresh || initialRead) && requests.has(key)) {
+      // 完成事件要读更新的快照；首次会话窗口也不能借用在途的单轮历史。
       try {
-        await requests.get(`history:${threadId}`)
+        await requests.get(key)
       } catch {
         /* 新请求负责重试。 */
       }
       if (!observers.has(threadId) || !isCurrentThreadState(threadId, state)) return
     }
-    return once(`history:${threadId}`, async () => {
+    return once(key, async () => {
       if (!observers.has(threadId)) return
       const state = getThreadState(threadId)
       try {
@@ -81,28 +93,49 @@ export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
         paging.loading = true
         let after = more ? paging.after : undefined
         let pagesRead = 0
+        const readPage = (scope, cursor) => agentApi.getSessionItems(threadId, { after: cursor, turnId: scope, limit: 100 })
+        // 首读先确认轮次已结束，再读取可复用的历史；真正的完成事件仍需单独回读。
         const [session, initialPage] = await Promise.all([
           agentApi.getPublicThread(threadId),
-          agentApi.getSessionItems(threadId, { after, turnId, limit: 100 })
+          initialRead ? null : readPage(turnId, after)
         ])
         if (!isCurrentThreadState(threadId, state)) return
-        let page = initialPage
+        const current = session.yuxi.current_turn
+        const settled = initialRead && isSettled(current?.status) ? current : null
+        let page = initialPage || await readPage(turnId, after)
+        let oldestTurnItem
         const runs = new Map((threadRuns.value[threadId] || []).map((run) => [run.id, run]))
-        while (true) {
-          if (!isCurrentThreadState(threadId, state)) return
+        /** 公开历史页同时携带消息和所属 Run。 */
+        const mergePage = (page) => {
           mergeItemSnapshot(projection, page.data)
           for (const run of page.yuxi.runs) runs.set(run.id, run)
+        }
+        while (true) {
+          if (!isCurrentThreadState(threadId, state)) return
+          mergePage(page)
+          if (settled) oldestTurnItem = page.data.findLast((item) => item.turn_id === settled.id)?.id ?? oldestTurnItem
           after = page.last_id
           pagesRead++
           // 恢复目标轮次读取完整页；Session 刷新读到已加载区域即可。
-          const recoverGap =
-            !more && previousIds.size && !page.data.some((item) => previousIds.has(item.id))
+          const recoverGap = !more && (!initialRead || paging.after) &&
+            previousIds.size && !page.data.some((item) => previousIds.has(item.id))
           if (!page.has_more || (!turnId && !recoverGap && pagesRead >= 3)) break
-          page = await agentApi.getSessionItems(threadId, { after, turnId, limit: 100 })
+          page = await readPage(turnId, after)
+        }
+        if (settled && page.has_more) {
+          // 两种范围使用相同排序，但 Turn 游标必须属于本轮；Session 游标保留在普通窗口末尾。
+          let tail
+          do {
+            tail = await readPage(settled.id, oldestTurnItem)
+            if (!isCurrentThreadState(threadId, state)) return
+            mergePage(tail)
+            oldestTurnItem = tail.last_id
+          } while (tail.has_more)
         }
         const target = turnId || session.yuxi.current_turn?.id
+        let turn
         if (target && !more) {
-          const turn = await agentApi.getThreadTurn(threadId, target)
+          turn = await agentApi.getThreadTurn(threadId, target)
           if (!isCurrentThreadState(threadId, state)) return
           mergeItemSnapshot(projection, turn.yuxi.output)
           for (const run of turn.yuxi.runs || []) runs.set(run.id, run)
@@ -111,21 +144,22 @@ export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
           paging.after = page.last_id
           paging.hasMore = page.has_more
         }
-        state.historyLoaded = true
+        if (!turnId) state.historyLoaded = true
         streamSmoother.flushThread(threadId)
         void feedback.load(
           threadId,
-          threadMessages.value[threadId]
+          (threadMessages.value[threadId] || [])
             .filter(
               (message) =>
                 message.phase === 'final_answer' && message.execution_status === 'completed'
             )
             .map((message) => message.run_id),
-          fresh
+          fresh || Boolean(settled)
         )
         threadRuns.value[threadId] = [...runs.values()]
         if (!state.isStreaming) state.turnStatus = session.yuxi.current_turn?.status || null
         chatThreads.upsertThread(session)
+        if (initialRead) return { current, settled: settled ? turn : null }
       } catch (error) {
         handleChatError(error, 'load')
         throw error
@@ -237,11 +271,11 @@ export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
   const resumeQueuedInputs = (threadId) =>
     once(`queue:${threadId}`, () => queue.resumeQueuedInputs(threadId))
   /** 摘要更新后等待旧恢复结束，再通过同一入口读取新的持久快照。 */
-  const resumeActiveRunForThread = async (threadId, { fresh = false } = {}) => {
+  const resumeActiveRunForThread = async (threadId, { fresh = false, initialHistory = null, cooperation = false } = {}) => {
     if (!threadId || !observers.has(threadId)) return false
     const state = getThreadState(threadId)
     const key = `resume:${threadId}`
-    if (fresh && requests.has(key)) {
+    while ((initialHistory || fresh) && requests.has(key)) {
       try {
         await requests.get(key)
       } catch {
@@ -249,7 +283,42 @@ export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
       }
       if (!observers.has(threadId) || !isCurrentThreadState(threadId, state)) return false
     }
-    return once(key, () => stream.resumeActiveRunForThread(threadId, { refreshHistory: fresh }))
+    return once(key, async () => {
+      const lastSettled = cooperation ? cooperationSnapshots.get(threadId)?.settled : null
+      if (!initialHistory && !lastSettled) return stream.resumeActiveRunForThread(threadId, { refreshHistory: fresh })
+      // 摘要只复用实际恢复的状态；读取历史后轮次可能已推进。
+      const onRestored = (turn) => {
+        if (!isCurrentThreadState(threadId, state)) return
+        const execution = turn?.yuxi
+        if (execution?.waitpoint || execution?.cancellation_pending) return
+        const running = ['in_progress', 'queued'].includes(turn?.status)
+        const { current_run_id: runId, result_run_id: resultId } = execution || {}
+        const run = execution?.runs?.find((run) => run.id === runId)
+        const snapshot = executionSnapshot(turn?.id, running ? 'running' : turn?.status, runId, resultId, run?.status, null)
+        const settled = isSettled(turn?.status) ? { id: turn.id, status: turn.status, current_run_id: runId, result_run_id: resultId } : null
+        cooperationSnapshots.set(threadId, { snapshot, settled })
+      }
+      const version = state.runStateVersion
+      const session = await agentApi.getPublicThread(threadId)
+      if (!isCurrentThreadState(threadId, state) || state.runStateVersion !== version) return false
+      if (!initialHistory) {
+        // 摘要可能来自旧执行，已经读取的终态以当前持久详情为准。
+        if (!state.currentTurnId && !state.isStreaming && sameExecution(lastSettled, session.yuxi.current_turn)) return false
+        return stream.resumeActiveRunForThread(threadId, { refreshHistory: fresh, session, onRestored })
+      }
+      if (!sameExecution(initialHistory.current, session.yuxi.current_turn)) {
+        // 新轮次的用户输入只在历史页提供正文，再按最新详情恢复订阅。
+        await fetchThreadMessages({ threadId, fresh: true })
+        if (!isCurrentThreadState(threadId, state) || state.runStateVersion !== version) return false
+        return stream.resumeActiveRunForThread(threadId, { onRestored })
+      }
+      // 打开已完整读取的旧终态不会产生新的流式完成事件。
+      if (initialHistory.settled && !state.currentTurnId && !state.isStreaming) {
+        onRestored(initialHistory.settled)
+        return true
+      }
+      return stream.resumeActiveRunForThread(threadId, { session, onRestored })
+    })
   }
 
   /** 阅读者只指定 Thread；首读、持久运行恢复和队列观察共享一次装载。 */
@@ -258,12 +327,18 @@ export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
     const state = getThreadState(threadId)
     if (state.readingReady && !fresh) return Promise.resolve(true)
     return once(`reading:${threadId}`, async () => {
+      const readHistory = !state.historyLoaded || (!state.readingReady && state.readingError)
       state.readingLoading = true
       state.readingError = null
       try {
-        if (!state.historyLoaded) await fetchThreadMessages({ threadId })
+        const version = state.runStateVersion
+        // 初始化失败后重读会话窗口，补上期间提交的新输入。
+        const initialHistory = readHistory ? await fetchThreadMessages({ threadId, initialRead: true }) : null
         if (!isCurrentThreadState(threadId, state)) return false
-        await resumeActiveRunForThread(threadId, { fresh: fresh && state.readingReady })
+        await resumeActiveRunForThread(threadId, {
+          fresh: fresh && state.readingReady,
+          initialHistory: state.runStateVersion === version ? initialHistory : null
+        })
         if (!isCurrentThreadState(threadId, state)) return false
         await resumeQueuedInputs(threadId)
         if (!isCurrentThreadState(threadId, state)) return false
@@ -284,18 +359,21 @@ export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
       const threadId = session.session_id
       if (!observers.has(threadId)) return
       const state = getThreadState(threadId)
-      const snapshot = JSON.stringify([
+      const snapshot = executionSnapshot(
         session.turn_id, session.turn_status, session.current_run_id, session.result_run_id,
         session.run_status, session.waiting_for
-      ])
+      )
       await once(`cooperation:${threadId}`, async () => {
         try {
-          // 摘要只有待处理布尔值，队列仍须发现同一轮内新增的独立 Input。
-          await resumeQueuedInputs(threadId)
-          if (!isCurrentThreadState(threadId, state) || cooperationSnapshots.get(threadId) === snapshot) return
-          if (!(await resumeActiveRunForThread(threadId, { fresh: true }))) return
-          if (isCurrentThreadState(threadId, state)) {
-            cooperationSnapshots.set(threadId, snapshot)
+          const opening = !state.readingReady && requests.get(`reading:${threadId}`)
+          // 首次历史后还会读队列。其余摘要即使执行没变，也要发现新排队的 Input。
+          if (!opening || !(await opening.catch(() => false))) await resumeQueuedInputs(threadId)
+          if (!isCurrentThreadState(threadId, state)) return
+          const applied = cooperationSnapshots.get(threadId)
+          if (applied?.snapshot === snapshot) return
+          if (!(await resumeActiveRunForThread(threadId, { fresh: true, cooperation: true }))) return
+          if (isCurrentThreadState(threadId, state) && cooperationSnapshots.get(threadId) === applied) {
+            cooperationSnapshots.set(threadId, { snapshot })
           }
         } catch (error) {
           console.warn('Failed to reconcile cooperation member:', error)

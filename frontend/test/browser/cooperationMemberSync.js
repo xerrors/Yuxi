@@ -41,6 +41,7 @@ async (page) => {
     const request = route.request(), path = request.url().replace(/^https?:\/\/[^/]+/, '').split('?')[0]
     const reply = json => route.fulfill({ json })
     if (path.endsWith('/cooperation')) { summaries++; return reply(summary()) }
+    if (path.endsWith('/input-origins')) return reply({ origins: {} })
     const match = path.match(/\/sessions\/(sync-[^/]+)/)
     if (match) {
       const id = match[1]
@@ -73,6 +74,7 @@ async (page) => {
       return reply(session(id))
     }
     if (path === '/api/v1/agents/sessions') return reply({ data: request.url().includes('is_pinned=true') ? [] : [session(rootId)], has_more: false })
+    if (path === '/api/mention/plugins') return reply([])
     if (path === '/api/agent') return reply({ agents: [agent] })
     if (path === `/api/agent/${agentId}`) return reply(agent)
     if (path === '/api/auth/me' || path.endsWith('/users/me')) return reply({ id: 1, username: '协作验证用户', uid: 'sync-fixture-user', role: 'user' })
@@ -91,7 +93,7 @@ async (page) => {
   await page.locator('.attention-pill').click()
   const member = page.locator('.panel-session-chat:visible')
   await member.getByRole('dialog').waitFor()
-  await member.getByRole('heading', { name: '问答题：协作任务需要你的回答', exact: true }).waitFor()
+  await member.getByRole('heading', { name: '协作任务需要你的回答', exact: true }).waitFor()
   // 初始等待态没有 SSE；先结束前台恢复，避免将它的迟到结果误算为后台新读。
   await page.waitForLoadState('networkidle')
   await page.evaluate(() => {

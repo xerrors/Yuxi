@@ -20,6 +20,7 @@ async (page) => {
       const list = { type: 'ListView', children: [{ type: 'ListViewItem', children: [text('任务说明'), { type: 'Badge', label: '完成', color: 'success' }] }] }
       const form = { type: 'Form', onSubmitAction: { type: 'send_message', payload: { text: '继续' } }, children: [{ type: 'Input', name: 'city', label: '城市' }, { type: 'Button', label: '提交', submit: true }] }
       const cases = {
+        chart: card([{ type: 'Chart', label: '每周订单', xAxis: 'week', series: [{ type: 'bar', dataKey: 'orders', label: '订单' }], data: [{ week: '周一', orders: 12 }, { week: '周二', orders: 20 }] }]),
         nested: card([card([text('默认子卡片')]), card([text('小卡片')], 'sm'), card([text('大卡片')], 'lg'), list], 'full'),
         rootList: list,
         rootCard: card([text('独立卡片')]),
@@ -125,7 +126,18 @@ async (page) => {
       }
     }
     if (failures.length) throw new Error(failures.join('\n'))
-    return { passed: measurements.length, measurements }
+    await page.evaluate(() => { window.widgetCompositionProbe.state.key = 'chart' })
+    const chart = page.locator('#widget-composition-probe figure[aria-label="每周订单"]')
+    await chart.locator('.widget-chart-canvas svg path').first().waitFor({ state: 'attached' })
+    const legend = chart.getByRole('button', { name: '订单', exact: true })
+    await legend.click()
+    if (await legend.getAttribute('aria-pressed') !== 'false') throw new Error('首次加载的图例无法隐藏系列')
+    await legend.click()
+    if (await legend.getAttribute('aria-pressed') !== 'true') throw new Error('图例无法恢复系列')
+    await chart.locator('summary').click()
+    await chart.getByRole('cell', { name: '20', exact: true }).waitFor()
+    await chart.screenshot({ path: '/tmp/yuxi-chat-entry-chart.png' })
+    return { passed: measurements.length, measurements, chart: true }
   } finally {
     await page.evaluate(theme => {
       const probe = window.widgetCompositionProbe

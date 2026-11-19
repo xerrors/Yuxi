@@ -1,28 +1,29 @@
 // 文件 / 文件夹类型图标（彩色 SVG），用于在文件路径前渲染。
 // 注意：仅用于「渲染文件/文件夹名称前的类型图标」，按钮图标请勿使用此处的资源。
-import archiveIcon from '@/assets/icons/files/archive.svg?url'
-import audioIcon from '@/assets/icons/files/audio.svg?url'
-import cadIcon from '@/assets/icons/files/cad.svg?url'
-import codeIcon from '@/assets/icons/files/code.svg?url'
-import fileIcon from '@/assets/icons/files/file.svg?url'
-import imageIcon from '@/assets/icons/files/image.svg?url'
-import markdownIcon from '@/assets/icons/files/markdown.svg?url'
-import pdfIcon from '@/assets/icons/files/pdf.svg?url'
-import pptIcon from '@/assets/icons/files/ppt.svg?url'
-import psdIcon from '@/assets/icons/files/psd.svg?url'
-import pythonIcon from '@/assets/icons/files/python.svg?url'
-import spreadsheetIcon from '@/assets/icons/files/spreadsheet.svg?url'
-import textIcon from '@/assets/icons/files/text.svg?url'
-import videoIcon from '@/assets/icons/files/video.svg?url'
-import webIcon from '@/assets/icons/files/web.svg?url'
-import wordIcon from '@/assets/icons/files/word.svg?url'
-import folderIcon from '@/assets/icons/files/folder.svg?url'
-import folderAgentIcon from '@/assets/icons/files/folder-agent.svg?url'
-import folderEnterpriseIcon from '@/assets/icons/files/folder-enterprise.svg?url'
-import folderFavoriteIcon from '@/assets/icons/files/folder-favorite.svg?url'
-import folderKnowledgeIcon from '@/assets/icons/files/folder-knowledge.svg?url'
-import folderPersonalIcon from '@/assets/icons/files/folder-personal.svg?url'
-import folderTrashIcon from '@/assets/icons/files/folder-trash.svg?url'
+// Vite 直接解析静态 URL，开发浏览器无需为每个图标加载独立的 JS 模块。
+const archiveIcon = new URL('../../assets/icons/files/archive.svg', import.meta.url).href
+const audioIcon = new URL('../../assets/icons/files/audio.svg', import.meta.url).href
+const cadIcon = new URL('../../assets/icons/files/cad.svg', import.meta.url).href
+const codeIcon = new URL('../../assets/icons/files/code.svg', import.meta.url).href
+const fileIcon = new URL('../../assets/icons/files/file.svg', import.meta.url).href
+const imageIcon = new URL('../../assets/icons/files/image.svg', import.meta.url).href
+const markdownIcon = new URL('../../assets/icons/files/markdown.svg', import.meta.url).href
+const pdfIcon = new URL('../../assets/icons/files/pdf.svg', import.meta.url).href
+const pptIcon = new URL('../../assets/icons/files/ppt.svg', import.meta.url).href
+const psdIcon = new URL('../../assets/icons/files/psd.svg', import.meta.url).href
+const pythonIcon = new URL('../../assets/icons/files/python.svg', import.meta.url).href
+const spreadsheetIcon = new URL('../../assets/icons/files/spreadsheet.svg', import.meta.url).href
+const textIcon = new URL('../../assets/icons/files/text.svg', import.meta.url).href
+const videoIcon = new URL('../../assets/icons/files/video.svg', import.meta.url).href
+const webIcon = new URL('../../assets/icons/files/web.svg', import.meta.url).href
+const wordIcon = new URL('../../assets/icons/files/word.svg', import.meta.url).href
+const folderIcon = new URL('../../assets/icons/files/folder.svg', import.meta.url).href
+const folderAgentIcon = new URL('../../assets/icons/files/folder-agent.svg', import.meta.url).href
+const folderEnterpriseIcon = new URL('../../assets/icons/files/folder-enterprise.svg', import.meta.url).href
+const folderFavoriteIcon = new URL('../../assets/icons/files/folder-favorite.svg', import.meta.url).href
+const folderKnowledgeIcon = new URL('../../assets/icons/files/folder-knowledge.svg', import.meta.url).href
+const folderPersonalIcon = new URL('../../assets/icons/files/folder-personal.svg', import.meta.url).href
+const folderTrashIcon = new URL('../../assets/icons/files/folder-trash.svg', import.meta.url).href
 
 export const FOLDER_ICONS = {
   default: folderIcon,

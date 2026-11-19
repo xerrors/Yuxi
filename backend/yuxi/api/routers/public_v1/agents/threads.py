@@ -1,8 +1,10 @@
 """Public Session 创建、读取与归档入口。"""
 
+import re
+from hashlib import sha256
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.api.dependencies.auth import get_db
@@ -27,9 +29,17 @@ from yuxi.modules.agents.services.threads import (
 )
 
 router = APIRouter(dependencies=[Depends(require_public_context)], responses=PUBLIC_ERRORS)
+SESSION_LIST_HEADERS = {"ETag": {"description": "当前会话分页的表示标识。", "schema": {"type": "string"}}}
 
 
-@router.get("/sessions", response_model=SessionList)
+@router.get(
+    "/sessions",
+    response_model=SessionList,
+    responses={
+        200: {"headers": SESSION_LIST_HEADERS},
+        304: {"description": "会话分页未变化", "headers": SESSION_LIST_HEADERS},
+    },
+)
 async def list_public_threads(
     agent_id: str | None = Query(default=None),
     after: str | None = Query(default=None),
@@ -37,11 +47,12 @@ async def list_public_threads(
     archived: bool = Query(default=False),
     is_pinned: bool | None = Query(default=None, description="按 Yuxi 置顶状态筛选，不改变游标排序。"),
     limit: int = Query(default=50, ge=1, le=100),
+    if_none_match: list[str] | None = Header(default=None),
     context: PublicAgentContext = Depends(require_public_context),
     db: AsyncSession = Depends(get_db),
 ):
     """按用户、APP 与稳定创建顺序分页读取会话资源。"""
-    snapshots, has_more = await list_session_page(
+    data, has_more = await list_session_page(
         db=db,
         scope=context.scope,
         agent_slug=agent_id,
@@ -51,14 +62,24 @@ async def list_public_threads(
         archived=archived,
         is_pinned=is_pinned,
     )
-    data = snapshots
-    return {
-        "object": "list",
-        "data": data,
-        "first_id": data[0]["id"] if data else None,
-        "last_id": data[-1]["id"] if data else None,
-        "has_more": has_more,
+    page = SessionList(
+        data=data,
+        first_id=data[0]["id"] if data else None,
+        last_id=data[-1]["id"] if data else None,
+        has_more=has_more,
+    )
+    body = page.model_dump_json().encode()
+    tag = '"' + sha256(body).hexdigest() + '"'
+    headers = {
+        "ETag": f"W/{tag}",
+        "Cache-Control": "private, no-cache",
+        "Vary": "Authorization, X-End-User-Id",
     }
+    # 条件 GET 使用弱比较。完整匹配引号内的标签，以保留标签中可能出现的逗号。
+    validators = ",".join(if_none_match or []).strip()
+    if validators == "*" or tag in re.findall(r'(?:^|,)\s*(?:W/)?("[^"]*")\s*(?=,|$)', validators):
+        return Response(status_code=304, headers=headers)
+    return Response(body, media_type="application/json", headers=headers)
 
 
 @router.post(

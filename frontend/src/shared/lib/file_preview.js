@@ -218,3 +218,21 @@ export const normalizePreviewResponse = async (response, baseFile = {}) => {
     previewUrl
   }
 }
+
+/** 将本地相对图片解析为同源鉴权接口，外部地址不携带用户凭证。 */
+export const resolveMarkdownImageUrl = (src, resourceBaseUrl, origin) => {
+  if (!src) return null
+  const isRelative = !/^(?:[a-z][a-z0-9+.-]*:|\/)/i.test(src)
+  if (isRelative && !resourceBaseUrl) return null
+  try {
+    const base = new URL(resourceBaseUrl || origin, origin)
+    const url = new URL(src, base)
+    if (url.origin !== origin) return null
+    const allowed =
+      /^\/api\/knowledge\/knowledge-bases\/[^/]+\/images\//.test(url.pathname) ||
+      /^\/api\/v1\/agents\/sessions\/[^/]+\/artifacts\//.test(url.pathname)
+    return allowed ? url.pathname + url.search : null
+  } catch {
+    return null
+  }
+}

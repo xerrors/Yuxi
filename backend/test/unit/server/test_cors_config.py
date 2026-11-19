@@ -1,3 +1,4 @@
+import pytest
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.testclient import TestClient
@@ -58,6 +59,24 @@ def test_cors_rejects_unconfigured_origin():
 
     assert response.status_code == 400
     assert "access-control-allow-origin" not in response.headers
+
+
+@pytest.mark.parametrize("origins", [["http://localhost:5173"], ["*"]])
+def test_cors_allows_conditional_get_headers(origins):
+    """配置允许的浏览器来源可读取 ETag 并发送条件请求。"""
+    origin = "http://localhost:5173"
+    client = _client_for_origins(origins)
+    response = client.options(
+        "/ping",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "authorization,if-none-match",
+        },
+    )
+    assert response.status_code == 200
+    headers = client.get("/ping", headers={"Origin": origin}).headers
+    assert "etag" in {name.strip().lower() for name in headers["access-control-expose-headers"].split(",")}
 
 
 def test_wildcard_cors_disables_credentials():
