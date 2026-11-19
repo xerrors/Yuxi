@@ -117,6 +117,12 @@ class KnowledgeChunkRepository:
             result = await session.execute(self._visible_chunks().where(KnowledgeChunk.kb_id == kb_id).order_by(KnowledgeChunk.id.asc()))
             return list(result.scalars().all())
 
+    async def list_chunk_ids_by_kb_id(self, kb_id: str) -> list[str]:
+        """只列出知识库当前可见代次的 chunk_id，供评估核对参考块是否仍存在。"""
+        async with pg_manager.get_async_session_context() as session:
+            result = await session.scalars(select(KnowledgeChunk.chunk_id).where(KnowledgeChunk.kb_id == kb_id, self.visible_scope()))
+            return list(result)
+
     async def list_by_chunk_ids(self, chunk_ids: list[str]) -> list[KnowledgeChunk]:
         """按 chunk_id 批量查询可见 chunk；IN 参数按 SQL_IN_BATCH_SIZE 分批，结果按入参顺序返回并跳过未命中的 id。"""
         if not chunk_ids:
