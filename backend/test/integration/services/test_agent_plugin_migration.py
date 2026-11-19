@@ -52,7 +52,7 @@ async def test_first_upgrade_converts_device_selection_once(tmp_path, monkeypatc
                 "system_prompt": "kept",
                 "context": expected,
             }
-            assert await conn.scalar(text("SELECT version FROM yuxi_schema_migrations WHERE domain='business'")) == 4
+            assert await conn.scalar(text("SELECT version FROM yuxi_schema_migrations WHERE domain='business'")) == 5
             await conn.execute(
                 text("UPDATE agents SET config_json=CAST(:config AS JSON) WHERE slug='device'"),
                 {"config": json.dumps({"context": {"mcps": [], "plugins": []}})},
@@ -119,7 +119,7 @@ async def test_plugin_migration_cli_registers_models_in_a_cold_process(tmp_path)
                 assert json.loads((review / "plan.json").read_text()) == {"version": 1, "skills": [], "configs": []}
             async with engine.connect() as conn:
                 assert await conn.scalar(text("SELECT version FROM yuxi_schema_migrations WHERE domain='business'")) == (
-                    4 if action == "apply" else 2
+                    5 if action == "apply" else 2
                 )
         async with engine.connect() as conn:
             assert (
@@ -221,7 +221,7 @@ async def test_plugin_upgrade_requires_reviewed_deployment_and_preserves_content
         await apply_plugin_migration(manager, review)
         await apply_plugin_migration(manager, review)
         async with engine.connect() as conn:
-            assert await conn.scalar(text("SELECT version FROM yuxi_schema_migrations WHERE domain='business'")) == 4
+            assert await conn.scalar(text("SELECT version FROM yuxi_schema_migrations WHERE domain='business'")) == 5
             config = await conn.scalar(text("SELECT config_json FROM agents WHERE slug='demo'"))
             assert await conn.scalar(text("SELECT config_json FROM agents WHERE slug='shared-template'")) == {
                 **template_config,
@@ -458,7 +458,7 @@ async def test_content_builtin_preserves_skill_and_tool_selection(tmp_path, monk
                 assert referenced == f"shared/{slug}"
                 assert list((root / "packages" / slug).iterdir()) == []
             else:
-                assert version == 4
+                assert version == 5
                 assert referenced != f"shared/{slug}"
                 assert (root / referenced / "SKILL.md").read_text().endswith("Research body\n")
                 assert "tool_dependencies" not in (root / referenced / "SKILL.md").read_text()

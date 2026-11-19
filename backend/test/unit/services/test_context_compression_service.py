@@ -14,10 +14,11 @@ _Context = BaseContext
 
 @pytest.fixture(autouse=True)
 def prepared_context(monkeypatch):
-    """隔离资源准备，压缩测试只验证事务与checkpoint更新。"""
+    """隔离资源准备与投影刷新，压缩测试只验证事务与 checkpoint 更新。"""
     from unittest.mock import AsyncMock
 
     monkeypatch.setattr(service, "prepare_agent_runtime_context", AsyncMock())
+    monkeypatch.setattr(service, "refresh_state_projection_after_compression", AsyncMock())
 
 
 class _Graph:
@@ -113,6 +114,11 @@ async def test_compress_thread_context_uses_locked_idle_thread(
     monkeypatch.setattr(service, "_compress_agent_checkpoint", compress)
     monkeypatch.setattr(service, "get_agent_backend", lambda _backend_id: agent)
 
+    async def refresh_projection(*, uid, thread_id):
+        events.append("refresh")
+
+    monkeypatch.setattr(service, "refresh_state_projection_after_compression", refresh_projection)
+
     if config_snapshot is None:
         with pytest.raises(ValueError, match="Session 缺少配置快照"):
             await service.compress_thread_context(thread_id=thread_id, current_user=SimpleNamespace(uid="user-1", role="user"), db=Db())
@@ -142,6 +148,7 @@ async def test_compress_thread_context_uses_locked_idle_thread(
         "prepare",
         ("compress", "provider:model"),
         "commit",
+        "refresh",
     ]
 
 

@@ -635,6 +635,49 @@ async def test_interrupt_settlement_binds_waitpoint_to_own_run(monkeypatch, mode
     assert saved.await_args.kwargs["waitpoint"]["kind"] == "answer"
 
 
+@pytest.mark.parametrize("outcome", ["completed", "interrupted", "failed"])
+async def test_terminal_paths_trigger_state_projection_once(monkeypatch, outcome):
+    """completed/interrupted 终态结算后各触发一次投影写主并复用内存 state；失败收尾不投影。"""
+    import yuxi.modules.agents.services.checkpoint_state as checkpoint_state
+
+    if outcome == "interrupted":
+        state = SimpleNamespace(
+            values={"artifacts": []},
+            tasks=[
+                SimpleNamespace(
+                    interrupts=[SimpleNamespace(value={"questions": [{"question_id": "q", "question": "Where?"}]})], result=None
+                )
+            ],
+        )
+        agent = FakeAgent(checkpoint=state)
+    else:
+        agent = FakeAgent(
+            events=text_events("done") if outcome == "completed" else [],
+            checkpoint=SimpleNamespace(values={"artifacts": []}, tasks=()),
+            error=RuntimeError("model boom") if outcome == "failed" else None,
+        )
+    _patch_stream_scaffolding(monkeypatch, agent=agent)
+    if outcome == "interrupted":
+        monkeypatch.setattr(svc, "save_messages_from_langgraph_state", AsyncMock(return_value="interrupted"))
+    project = AsyncMock()
+    monkeypatch.setattr(checkpoint_state, "project_agent_state_after_terminal", project)
+
+    events = [event async for event in execute("chat")]
+
+    if outcome == "failed":
+        assert events[-1].status == "failed"
+        project.assert_not_awaited()
+        return
+    kwargs = project.await_args.kwargs
+    assert project.await_count == 1
+    assert kwargs["uid"] == "user-1" and kwargs["thread_id"] == "thread-1" and kwargs["run_id"] == "run-1"
+    assert kwargs["values"] == {"artifacts": []}
+    if outcome == "completed":
+        assert kwargs["interrupt_payload"] is None
+    else:
+        assert kwargs["interrupt_payload"] is not None
+
+
 async def test_slow_langfuse_flush_does_not_hold_run_completion(monkeypatch):
     """可选观测网络阻塞时，Run 收尾须在短时限内返回。"""
     release = threading.Event()
