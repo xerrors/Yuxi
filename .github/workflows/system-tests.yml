@@ -536,6 +536,7 @@ jobs:
           docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest --junitxml=test/ci-reports/system-30.xml --durations=20 \
             test/integration/services/test_project_workdir.py::test_sessions_share_workdir_only_through_project \
             test/integration/services/test_user_skill_projection.py \
+            test/integration/api/test_personal_skill_router.py \
             test/integration/api/test_skill_artifact_authorization.py -q
       - name: Verify web tool configuration and official HTTPS protocols
         run: |

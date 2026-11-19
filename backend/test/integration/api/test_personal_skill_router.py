@@ -39,6 +39,26 @@ async def test_personal_skill_install_list_preview_and_delete_without_database_r
         assert confirm_response.json()["data"][0]["slug"] == slug
         assert "share_config" not in confirm_response.json()["data"][0]["skill"]
 
+        replacement = await test_client.post(
+            "/api/skills/import/prepare",
+            headers=headers,
+            files={"file": ("SKILL.md", skill_md.replace("# Personal", "# Replacement").encode(), "text/markdown")},
+        )
+        assert replacement.status_code == 200, replacement.text
+        replacement_id = replacement.json()["data"]["draft_id"]
+        try:
+            repeated = await test_client.post(
+                f"/api/skills/personal/install-drafts/{replacement_id}/confirm",
+                headers=headers,
+                json={"slugs": [slug]},
+            )
+            assert repeated.status_code == 200, repeated.text
+            result = repeated.json()["data"][0]
+            assert result["success"] is False and "已存在同名 Skill" in result["error"], result
+        finally:
+            discarded = await test_client.delete(f"/api/skills/install-drafts/{replacement_id}", headers=headers)
+            assert discarded.status_code in {200, 404}, discarded.text
+
         cards_response = await test_client.get(
             "/api/skills",
             headers=headers,
