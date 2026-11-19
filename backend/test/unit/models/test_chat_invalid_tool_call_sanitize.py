@@ -149,6 +149,32 @@ def _stream_response() -> str:
     return 'data: {"choices":[{"delta":{"content":"ok"},"index":0}]}\n\ndata: [DONE]\n\n'
 
 
+async def test_streamed_invalid_tool_chunk_is_absent_from_followup_body(httpx_mock, monkeypatch):
+    """流式调用的截断工具片保留在内部消息，续答请求只发送错误说明。"""
+    model = _adapter(monkeypatch)
+    delta = {
+        "role": "assistant",
+        "tool_calls": [{"index": 0, "id": "call-bad", "type": "function", "function": {"name": "kbs_search", "arguments": "not-json"}}],
+    }
+    event = {"choices": [{"index": 0, "delta": delta, "finish_reason": "tool_calls"}]}
+    httpx_mock.add_response(text=f"data: {json.dumps(event)}\n\ndata: [DONE]\n\n", headers={"content-type": "text/event-stream"})
+    httpx_mock.add_response(json=_ok_response())
+
+    user = HumanMessage("hi")
+    chunks = [part async for part in model.astream([user])]
+    result = chunks[0]
+    for part in chunks[1:]:
+        result += part
+    assert result.invalid_tool_calls[0]["id"] == "call-bad"
+    assert (await model.ainvoke([user, result, ToolMessage("patched error", tool_call_id="call-bad")])).text == "ok"
+
+    wire = json.loads(httpx_mock.get_requests()[-1].content)["messages"]
+    assert len(wire) == 2
+    assert "tool_calls" not in wire[1]
+    assert [part["type"] for part in wire[1]["content"]] == ["text"]
+    assert "[工具调用失败] kbs_search" in wire[1]["content"][0]["text"]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("entrypoint", ["invoke", "ainvoke", "stream", "astream"])
 async def test_adapter_entrypoints_sanitize_request_body(httpx_mock, monkeypatch, entrypoint):
@@ -177,7 +203,7 @@ def test_patched_invalid_result_is_removed_without_losing_valid_pairs(monkeypatc
     from copy import deepcopy
 
     adapter = _adapter(monkeypatch)
-    adapter.preserve_reasoning = reasoning
+    adapter.replay_reasoning = reasoning
     original = AIMessage(
         content="",
         tool_calls=[{"id": "good", "name": "read", "args": {}}],

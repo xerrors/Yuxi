@@ -5,6 +5,9 @@ import hashlib
 import hmac
 import os
 import time
+from contextlib import aclosing, closing, contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
 from functools import cached_property
 from uuid import uuid4
 
@@ -25,6 +28,9 @@ USER_UID_HEADER = "x-yuxi-uid"
 USER_UID_TIMESTAMP_HEADER = "x-yuxi-uid-ts"
 USER_UID_SIGNATURE_HEADER = "x-yuxi-uid-sig"
 CHAT_HTTP_TIMEOUT = httpx.Timeout(connect=10.0, write=30.0, read=120.0, pool=10.0)
+CHAT_COMPLETIONS_TEXT_INDEX = "lc_text"
+CHAT_COMPLETIONS_DIRECT_TEXT_INDEX = "lc_direct_text"
+CHAT_COMPLETIONS_REASONING_INDEX = "lc_reasoning"
 
 
 def load_chat_model(
@@ -89,8 +95,11 @@ def load_chat_model(
         base_url=base_url,
         stream_usage=True,
         user_uid=signing_uid,
-        preserve_reasoning=info.provider_id
+        replay_reasoning=info.provider_id
         in {
+            "alibaba",
+            "alibaba-cn",
+            "deepseek",
             "siliconflow",
             "siliconflow-cn",
             "opencode",
@@ -147,9 +156,31 @@ class ChatAnthropicAdapter(ChatAnthropic):
 class ChatCompletionsAdapter(ChatOpenAI):
     """在解析边界保留扩展字段，HTTP、重试和工具绑定由上游负责。"""
 
-    preserve_reasoning: bool = Field(default=False, exclude=True)
+    replay_reasoning: bool = Field(default=False, exclude=True)
     # 开启 UID 头时的用户 uid；签名在每次发送边界现算，不缓存时间戳。
     user_uid: str | None = Field(default=None, exclude=True)
+
+    def _stream(self, *args, **kwargs):
+        """按单次流式请求归并 Chat Completions 的思考来源。"""
+        state = _ChatCompletionsStream()
+        with closing(super()._stream(*args, **kwargs)) as chunks:
+            while True:
+                with _stream_content_scope(state):
+                    chunk = next(chunks, None)
+                if chunk is None:
+                    return
+                yield chunk
+
+    async def _astream(self, *args, **kwargs):
+        """并发调用各自持有思考与文本的合并状态。"""
+        state = _ChatCompletionsStream()
+        async with aclosing(super()._astream(*args, **kwargs)) as chunks:
+            while True:
+                with _stream_content_scope(state):
+                    chunk = await anext(chunks, None)
+                if chunk is None:
+                    return
+                yield chunk
 
     def _convert_chunk_to_generation_chunk(self, chunk, default_chunk_class, base_generation_info):
         """在上游丢弃扩展字段前读取推理，并归一化工具续片。"""
@@ -158,41 +189,69 @@ class ChatCompletionsAdapter(ChatOpenAI):
             return generation
         message = generation.message
         normalize_tool_call_chunks(message)
-        choices = chunk.get("choices") or []
-        if self.preserve_reasoning:
-            self._standardize_content(message, choices[0].get("delta") or {} if choices else {})
+        choices = chunk.get("choices") or chunk.get("chunk", {}).get("choices") or []
+        delta = choices[0]["delta"] if choices else {}
+        self._standardize_content(message, _reasoning_content(delta), stream=_stream_content.get())
         return generation
 
     def _create_chat_result(self, response, generation_info=None):
         """非流式响应也保留同一供应商字段。"""
         result = super()._create_chat_result(response, generation_info)
-        if self.preserve_reasoning:
-            data = response if isinstance(response, dict) else response.model_dump()
-            for generation, choice in zip(result.generations, data.get("choices", []), strict=True):
-                self._standardize_content(generation.message, choice.get("message") or {})
+        choices = response["choices"] if isinstance(response, dict) else response.choices
+        for generation, choice in zip(result.generations, choices, strict=True):
+            raw = choice["message"] if isinstance(choice, dict) else choice.message.model_dump(include={"reasoning_content", "reasoning"})
+            reasoning = _reasoning_content(raw)
+            if reasoning or self.replay_reasoning:
+                self._standardize_content(generation.message, reasoning)
         return result
 
-    def _standardize_content(self, message: AIMessage, raw: dict) -> None:
+    def _standardize_content(self, message: AIMessage, reasoning: str, *, stream: "_ChatCompletionsStream | None" = None) -> None:
         """在模型边界生成标准块，文本不经过裁剪以便原样续答。"""
         blocks = message.content_blocks
-        for block in blocks:
-            if block["type"] == "text":
-                block["index"] = "lc_text"
-        if reasoning := _reasoning_content(raw):
-            # lc_ 索引支持 v1 多片合并，并与整数工具索引隔离。
-            blocks.insert(0, {"type": "reasoning", "reasoning": reasoning, "index": "lc_reasoning"})
-        message.content = blocks
+        # 流式正文和思考可分帧到达，所有续片使用可合并的标准块。
+        if isinstance(message.content, str) and message.content:
+            blocks[0]["index"] = CHAT_COMPLETIONS_TEXT_INDEX if isinstance(message, AIMessageChunk) else CHAT_COMPLETIONS_DIRECT_TEXT_INDEX
+        elif isinstance(message, AIMessageChunk) and isinstance(message.content, list):
+            blocks = _structured_stream_blocks(blocks, message.tool_call_chunks)
+        blocks = [
+            block for block in blocks if not _is_reasoning_block(block) or isinstance(block.get("reasoning"), str) and block["reasoning"]
+        ]
+
+        if stream is not None and stream.uses_fallback is not None:
+            uses_fallback = stream.uses_fallback
+        else:
+            has_standard = any(_is_reasoning_block(block) for block in blocks)
+            uses_fallback = bool(reasoning) and not has_standard
+            if stream is not None and (has_standard or reasoning):
+                stream.uses_fallback = uses_fallback
+
+        if uses_fallback:
+            blocks = [block for block in blocks if not _is_reasoning_block(block)]
+            if reasoning:
+                blocks.insert(0, {"type": "reasoning", "reasoning": reasoning, "index": CHAT_COMPLETIONS_REASONING_INDEX})
+        elif reasoning and self.replay_reasoning:
+            # 供应商的回传字段可以与显示用的标准块不同。
+            message.additional_kwargs["reasoning_content"] = reasoning
+
+        message.content = stream.order_text(blocks) if stream is not None else blocks
         message.response_metadata["output_version"] = "v1"
 
     def _get_request_payload(self, input_, *, stop=None, **kwargs):
         """在发送边界还原推理，并将纯文本工具结果序列化为字符串。"""
-        payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+        originals = self._convert_input(input_).to_messages()
+        messages = originals
+        if self._use_responses_api({**self._default_params, **kwargs}):
+            messages = [_responses_history_message(message) for message in originals]
+        payload = super()._get_request_payload(messages, stop=stop, **kwargs)
         _attach_user_uid_headers(payload, self.user_uid)
         if "messages" not in payload:
+            if isinstance(items := payload.get("input"), list):
+                # SDK 可把其它协议的思考转为缺少原生 ID 的 Responses item。
+                payload["input"] = [
+                    item for item in items if not isinstance(item, dict) or item.get("type") != "reasoning" or item.get("id")
+                ]
             return payload
-        originals = self._convert_input(input_).to_messages()
-        if self.preserve_reasoning:
-            self._restore_wire_reasoning(originals, payload["messages"])
+        self._restore_wire_assistant_messages(originals, payload["messages"])
         _sanitize_wire_invalid_tool_calls(payload["messages"], originals)
         # MCP 等工具返回文本块；部分 Chat Completions 网关只接受字符串工具消息。
         for message in payload["messages"]:
@@ -202,19 +261,179 @@ class ChatCompletionsAdapter(ChatOpenAI):
                     message["content"] = "\n".join(block["text"] for block in content)
         return payload
 
-    def _restore_wire_reasoning(self, originals: list, wire_messages: list[dict]) -> None:
-        """工具续答时把推理文本回填到 wire 消息，并还原被压平成块列表的文本。"""
+    def _restore_wire_assistant_messages(self, originals: list, wire_messages: list[dict]) -> None:
+        """还原 Chat Completions 字符串正文，按供应商协议回填推理。"""
         for original, wire in zip(originals, wire_messages, strict=True):
             if not isinstance(original, AIMessage):
                 continue
             content = wire.get("content")
-            if isinstance(content, list) and all(block.get("type") == "text" for block in content):
-                wire["content"] = "".join(block["text"] for block in content) or None
-            reasoning = "".join(
-                block.get("reasoning", "") for block in original.content_blocks if block["type"] == "reasoning"
-            ) or _reasoning_content(original.additional_kwargs)
+            if isinstance(content, list):
+                wire["content"] = self._restore_wire_assistant_content(original, content, has_tool_calls=bool(wire.get("tool_calls")))
+            if not self.replay_reasoning:
+                continue
+            reasoning = _reasoning_content(original.additional_kwargs) or "".join(
+                block["reasoning"]
+                for block in original.content_blocks
+                if _is_reasoning_block(block) and isinstance(block.get("reasoning"), str)
+            )
             if reasoning:
                 wire["reasoning_content"] = reasoning
+
+    def _restore_wire_assistant_content(self, original: AIMessage, content: list, *, has_tool_calls: bool) -> str | list | None:
+        """恢复正文的 wire 表示，工具片段由单独的 tool_calls 交付。"""
+        text_parts = []
+        for block in content:
+            if isinstance(block, dict):
+                if block.get("type") == "tool_call_chunk":
+                    continue
+                if block.get("type") == "non_standard":
+                    value = block.get("value")
+                    if isinstance(value, dict) and value.get("type") == "refusal":
+                        block = value
+            text_parts.append(block)
+        if self.replay_reasoning and all(isinstance(block, dict) and block.get("type") == "text" for block in text_parts):
+            return "".join(block["text"] for block in text_parts) or None
+        # v3 生成的 AIMessage 原本以文本块序列化，直接 SDK 调用的标量才恢复为字符串。
+        scalar_index = CHAT_COMPLETIONS_TEXT_INDEX if isinstance(original, AIMessageChunk) else CHAT_COMPLETIONS_DIRECT_TEXT_INDEX
+        if (
+            len(text_parts) == 1
+            and isinstance(text_parts[0], dict)
+            and text_parts[0].keys() == {"type", "text"}
+            and text_parts[0]["type"] == "text"
+            and any(isinstance(block, dict) and block.get("index") == scalar_index for block in original.content)
+        ):
+            return text_parts[0]["text"]
+        if not text_parts:
+            if content and has_tool_calls:
+                return None
+            if (
+                content
+                or isinstance(original, AIMessageChunk)
+                and not original.content
+                or original.content
+                and all(_is_reasoning_block(block) and block.get("index") == CHAT_COMPLETIONS_REASONING_INDEX for block in original.content)
+            ):
+                return ""
+        return text_parts
+
+
+@dataclass
+class _ChatCompletionsStream:
+    """按模型响应选择可实时输出的思考来源，并保留混合正文的顺序。"""
+
+    uses_fallback: bool | None = None
+    text_span: int = 0
+    text_source: str | None = None
+
+    def order_text(self, blocks: list[dict]) -> list[dict]:
+        """正文切换表示时开启新片段，连续帧仍可按索引合并。"""
+        unindexed_text_count = sum(
+            1 for block in blocks if isinstance(block, dict) and block.get("type") == "text" and block.get("index") is None
+        )
+        for position, block in enumerate(blocks):
+            if not isinstance(block, dict) or block.get("type") != "text":
+                continue
+            index = block.get("index")
+            if index is None:
+                source = "unindexed"
+                index = "lc_unindexed_text"
+            elif index == CHAT_COMPLETIONS_TEXT_INDEX:
+                source = "scalar"
+            else:
+                source = "indexed"
+            if (self.text_source is not None and self.text_source != source) or (source == "unindexed" and unindexed_text_count > 1):
+                self.text_span += 1
+            self.text_source = source
+            index = f"{index}_{self.text_span}" if self.text_span else index
+            if index != block.get("index"):
+                blocks[position] = {**block, "index": index}
+        return blocks
+
+
+def _structured_stream_blocks(blocks: list[dict], tool_chunks: list[dict]) -> list[dict]:
+    """为内容块分配独立索引，并补齐 SDK 在结构化帧中省略的工具片段。"""
+    content = []
+    tool_ids = set()
+    tool_indices = set()
+    for block in blocks:
+        if isinstance(block, dict):
+            kind = block.get("type")
+            index = block.get("index")
+            if kind in {"tool_call", "tool_call_chunk"}:
+                if block.get("id"):
+                    tool_ids.add(block["id"])
+                if index is not None:
+                    tool_indices.add(index)
+            elif index is not None:
+                block = {**block, "index": f"lc_block_{kind}_{index}"}
+        content.append(block)
+    content.extend(tool for tool in tool_chunks if tool.get("index") not in tool_indices and tool.get("id") not in tool_ids)
+    return content
+
+
+def _is_reasoning_block(block: object) -> bool:
+    """识别标准思考块。"""
+    return isinstance(block, dict) and block.get("type") == "reasoning"
+
+
+def _responses_history_message(message):
+    """保留原生 Responses 项目，移除其它协议历史中的思考与正文 ID。"""
+    if not isinstance(message, AIMessage):
+        return message
+    metadata = message.response_metadata
+    response_id = metadata.get("id")
+    has_response_id = isinstance(response_id, str) and response_id.startswith("resp_")
+    # 旧版 Responses 使用配对的 message/response ID；Chat Completions SDK 会记录 finish_reason。
+    legacy_response = has_response_id and isinstance(message.id, str) and message.id.startswith("msg_") and "finish_reason" not in metadata
+    if metadata.get("object") == "response" or metadata.get("output_version") == "responses/v1" or legacy_response:
+        return message
+
+    updates = {}
+    if has_response_id:
+        updates["response_metadata"] = {key: value for key, value in metadata.items() if key != "id"}
+    if isinstance(message.content, list):
+        blocks = _responses_foreign_blocks(message.content)
+        if blocks != message.content:
+            updates["content"] = blocks
+
+    # 旧 LangChain 会从这些字段重建 Responses 项。
+    extras = dict(message.additional_kwargs)
+    extras.pop("reasoning", None)
+    if isinstance(extras.get("tool_outputs"), list):
+        extras["tool_outputs"] = _responses_foreign_blocks(extras["tool_outputs"])
+    if extras != message.additional_kwargs:
+        updates["additional_kwargs"] = extras
+    if isinstance(message.id, str) and message.id.startswith("msg_"):
+        updates["id"] = None
+    return message.model_copy(update=updates) if updates else message
+
+
+def _responses_foreign_blocks(blocks: list) -> list:
+    """检查 SDK 会展开的内容，保留普通文本和工具关联。"""
+    parts = []
+    for block in blocks:
+        wrapper = isinstance(block, dict) and block.get("type") == "non_standard"
+        part = block.get("value") if wrapper else block
+        if _is_reasoning_block(part):
+            continue
+        if isinstance(part, dict) and part.get("type") in {"text", "output_text", "refusal"} and "id" in part:
+            part = {key: value for key, value in part.items() if key != "id"}
+            block = {**block, "value": part} if wrapper else part
+        parts.append(block)
+    return parts
+
+
+_stream_content = ContextVar[_ChatCompletionsStream | None]("chat_completions_stream_content", default=None)
+
+
+@contextmanager
+def _stream_content_scope(state: _ChatCompletionsStream):
+    """仅在 SDK 解析当前帧时设置状态，在向调用者产出前还原。"""
+    token = _stream_content.set(state)
+    try:
+        yield
+    finally:
+        _stream_content.reset(token)
 
 
 def normalize_tool_call_chunks(message: AIMessageChunk) -> None:

@@ -37,7 +37,7 @@ async page => {
     else if (path.endsWith('/queue')) json = { inputs: [], status: 'ready' }
     else if (path.endsWith('/cooperation')) json = { sessions: [], members: [], edges: [] }
     else if (path.endsWith('/attachments')) json = { files: [], attachments: [] }
-    else if (path === '/api/projects') json = []
+    else if (path === '/api/projects' || path === '/api/mention/plugins') json = []
     else if (path.includes('/databases')) json = { databases: [] }
     else if (path.includes('/models')) json = { providers: [], models: [], data: [] }
     else if (path.endsWith('/feedback')) json = { items: [] }
@@ -70,6 +70,7 @@ async page => {
     await page.waitForFunction(() => !document.querySelector('.chat-box .reasoning-block'))
     check(!/历史思考原文|检查输入边界|检查工具结果|恢复前思考/.test(await page.locator('.chat-box').innerText()), '旧思考仍在 DOM 中')
   }
+  const liveThinking = page.locator('.chat-box .live-header .reasoning-block')
   try {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto(`${origin}/agent/${threadId}`)
@@ -79,15 +80,17 @@ async page => {
     const first = item('first', 3), second = item('second', 4), final = item('final', 6)
     await send({ type: 'agent.session.turn.item.added', item: first })
     await send({ type: 'yuxi.session.turn.reasoning.delta', item_id: first.id, content_index: 0, delta: '检查输入边界' })
-    await page.locator('.reasoning-block').getByText('检查输入边界', { exact: true }).waitFor()
-    await page.locator('.reasoning-block .tool-header').click()
-    await page.locator('.reasoning-content').getByText('检查输入边界', { exact: true }).waitFor()
+    await liveThinking.getByText('检查输入边界', { exact: true }).waitFor()
+    await page.getByRole('button', { name: '思考', exact: true }).click()
+    const thinkingDetails = page.locator('.tool-calls-collapse-panel.is-expanded .reasoning-block')
+    await thinkingDetails.locator('.tool-header').click()
+    await thinkingDetails.locator('.reasoning-content').getByText('检查输入边界', { exact: true }).waitFor()
     for (const theme of ['light', 'dark']) {
       await page.evaluate(async value => { const {useThemeStore}=await import('/src/shared/model/theme.js'); useThemeStore().setTheme(value) }, theme)
       for (const width of [1440, 1024, 768]) {
         await page.setViewportSize({width, height:900})
         await page.waitForTimeout(350)
-        check(await page.locator('.chat-box .reasoning-block').count() === 1, '当前思考应只有一段')
+        check(await liveThinking.count() === 1, '当前思考预览应只有一段')
         await page.screenshot({path:`/tmp/yuxi-live-reasoning-${theme}-${width}.png`})
       }
     }
@@ -97,7 +100,7 @@ async page => {
     await page.getByText('阶段说明保留', {exact:true}).waitFor()
     await send({ type: 'agent.session.turn.item.added', item: second })
     await send({ type: 'yuxi.session.turn.reasoning.delta', item_id: second.id, content_index: 0, delta: '检查工具结果' })
-    await page.locator('.reasoning-block').getByText('检查工具结果', {exact:true}).waitFor()
+    await liveThinking.getByText('检查工具结果', {exact:true}).waitFor()
     const call = { id:'call', type:'function_call', name:'web_search', call_id:'search', arguments:{query:'示例'}, status:'in_progress', turn_id:turnId, yuxi:{run_id:runId,message_id:5} }
     await send({type:'agent.session.turn.item.added',item:call})
     await hidden()
@@ -106,15 +109,15 @@ async page => {
     check(await page.locator('.chat-box .tool-calls-container').count() === 1, '隐藏思考同时误删了工具调用')
     await send({type:'agent.session.turn.item.added',item:final})
     await send({type:'yuxi.session.turn.reasoning.delta',item_id:final.id,content_index:0,delta:'恢复前思考'})
-    await page.locator('.reasoning-block').getByText('恢复前思考',{exact:true}).waitFor()
+    await liveThinking.getByText('恢复前思考',{exact:true}).waitFor()
     const savedFinal = {...final,yuxi:{...final.yuxi,reasoning:{0:'恢复后完整思考'},completed_reasoning_indices:[0]}}
     snapshot = [history,human,{...first,content:[{type:'output_text',text:'阶段说明保留'}],yuxi:{...first.yuxi,reasoning:{0:'检查输入边界'},completed_reasoning_indices:[0]}},second,call,savedFinal]
     await send({type:'yuxi.session.resync'})
     await hidden()
     await send({type:'yuxi.session.turn.reasoning.delta',item_id:final.id,content_index:0,delta:'不应恢复的迟到增量'})
     await send({type:'yuxi.session.turn.reasoning.delta',item_id:final.id,content_index:2,delta:'最终核验'})
-    await page.locator('.reasoning-block').getByText('最终核验',{exact:true}).waitFor()
-    check(await page.locator('.reasoning-block').count() === 1, '恢复后拼接了旧思考')
+    await liveThinking.getByText('最终核验',{exact:true}).waitFor()
+    check(await liveThinking.count() === 1, '恢复后拼接了旧思考')
     await send({type:'agent.session.turn.output_text.delta',item_id:final.id,content_index:0,delta:'最终回答保留'})
     await hidden()
     await send({type:'yuxi.session.turn.reasoning.delta',item_id:final.id,content_index:2,delta:'正文后的迟到增量'})
@@ -139,7 +142,7 @@ async page => {
     await hidden()
     await page.locator('.process-summary').click()
     await page.getByText('阶段说明保留',{exact:true}).waitFor()
-    await page.locator('.chat-box .tool-calls-summary').click()
+    await page.locator('.chat-box .tool-call-container').first().waitFor()
     await hidden()
     const preserved = await page.evaluate(async id => {
       const {useSessionRuntimeStore}=await import('/src/modules/session/model/sessionRuntime.js')

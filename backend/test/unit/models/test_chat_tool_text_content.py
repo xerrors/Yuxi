@@ -15,7 +15,7 @@ from yuxi.modules.models.chat import ChatCompletionsAdapter
 @pytest.mark.parametrize("reasoning", [False, True])
 async def test_text_tool_blocks_work_with_string_only_provider(httpx_mock, entrypoint, reasoning):
     """真实 adapter 的四条发送路径都满足供应商工具字符串约束，并保留 checkpoint。"""
-    model = ChatCompletionsAdapter(model="test-model", api_key="test-key", base_url="http://test.local/v1", preserve_reasoning=reasoning)
+    model = ChatCompletionsAdapter(model="test-model", api_key="test-key", base_url="http://test.local/v1", replay_reasoning=reasoning)
     messages = [
         HumanMessage(content="查询本人考勤"),
         AIMessage(content="", tool_calls=[{"id": "attendance", "name": "query_my_attendance", "args": {}}]),
