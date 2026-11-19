@@ -362,7 +362,7 @@ async def stream_agent_execution(
     accumulated_content = []
     trace_info = {}
     try:
-        agent_item, agent, context, _ = await _resolve_agent_runtime(
+        agent_item, agent, context, agent_session = await _resolve_agent_runtime(
             db=db,
             user=current_user,
             requested_agent_slug=None if is_resume else agent_slug,
@@ -471,6 +471,17 @@ async def stream_agent_execution(
             graph_input, is_resume = [], False
             kwargs["on_prepared"] = None
             sequence_offset = last_sequence + 1
+        if terminal_status:
+            # 懒导入断开模块环：投影读写归 checkpoint_state，execution 只在终态提交后触发一次持久化。
+            from yuxi.modules.agents.services.checkpoint_state import project_agent_state_after_terminal
+
+            await project_agent_state_after_terminal(
+                uid=str(agent_session.uid),
+                thread_id=thread_id,
+                run_id=meta["run_id"],
+                values=final_state.values,
+                interrupt_payload=interrupt if terminal_status == "interrupted" else None,
+            )
         langfuse_run.terminal_status = terminal_status
         for event in await adapter.finish():
             yield event

@@ -96,7 +96,7 @@ async def test_first_upgrade_converts_device_selection_once(tmp_path, monkeypatc
                 "system_prompt": "kept",
                 "context": expected,
             }
-            assert await conn.scalar(text("SELECT version FROM yuxi_schema_migrations WHERE domain='business'")) == 5
+            assert await conn.scalar(text("SELECT version FROM yuxi_schema_migrations WHERE domain='business'")) == 6
         if mcps != "all" or legacy_servers != ["knowledge"]:
             return
         async with engine.begin() as conn:
@@ -248,7 +248,7 @@ async def test_v4_upgrade_converts_session_selection_and_preserves_disabled_devi
                 "custom": False,
             }
             assert await conn.scalar(text("SELECT enabled FROM mcp_servers WHERE slug='knowledge'")) == 0
-            assert await conn.scalar(text("SELECT version FROM yuxi_schema_migrations WHERE domain='business'")) == 5
+            assert await conn.scalar(text("SELECT version FROM yuxi_schema_migrations WHERE domain='business'")) == 6
             await conn.execute(text("""UPDATE agents SET config_json='{"context":{"mcps":"all","plugins":[]}}'"""))
         await apply_plugin_migration(manager, review)
         async with engine.connect() as conn:
@@ -404,7 +404,7 @@ async def test_v4_upgrade_validates_plugin_skill_layout_before_writes(tmp_path, 
         await apply_plugin_migration(manager, review)
         async with manager.AsyncSession() as db:
             await sync.init_builtin_skills(db)
-            assert await db.scalar(text("SELECT version FROM yuxi_schema_migrations WHERE domain='business'")) == 5
+            assert await db.scalar(text("SELECT version FROM yuxi_schema_migrations WHERE domain='business'")) == 6
             assert await db.scalar(text("SELECT enabled FROM skills WHERE slug='helper'")) is (not private_helper)
         for reader in (uid, helper_only_uid):
             await projection.refresh_user_skill_projection_async(reader)
@@ -783,7 +783,7 @@ async def test_plugin_upgrade_requires_reviewed_deployment_and_preserves_content
         await apply_plugin_migration(manager, review)
         await apply_plugin_migration(manager, review)
         async with engine.connect() as conn:
-            assert await conn.scalar(text("SELECT version FROM yuxi_schema_migrations WHERE domain='business'")) == 5
+            assert await conn.scalar(text("SELECT version FROM yuxi_schema_migrations WHERE domain='business'")) == 6
             config = await conn.scalar(text("SELECT config_json FROM agents WHERE slug='demo'"))
             assert await conn.scalar(text("SELECT config_json FROM agents WHERE slug='shared-template'")) == {
                 **template_config,
@@ -991,7 +991,7 @@ async def test_content_builtin_preserves_skill_and_tool_selection(tmp_path, monk
                 assert referenced == f"shared/{slug}"
                 assert list((root / "packages" / slug).iterdir()) == []
             else:
-                assert version == 5
+                assert version == 6
                 assert referenced != f"shared/{slug}"
                 assert (root / referenced / "SKILL.md").read_text().endswith("Research body\n")
                 assert "tool_dependencies" not in (root / referenced / "SKILL.md").read_text()
