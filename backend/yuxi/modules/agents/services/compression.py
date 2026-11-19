@@ -17,6 +17,7 @@ from yuxi.modules.agents.runtime.middlewares import create_summary_middleware_fr
 from yuxi.modules.agents.runtime.middlewares.token_usage import TOKEN_USAGE_CONTEXT_FIELDS
 from yuxi.modules.agents.runtime.sandbox.backend import create_agent_composite_backend
 from yuxi.modules.agents.scope import ActorScope
+from yuxi.modules.agents.services.checkpoint_state import refresh_state_projection_after_compression
 from yuxi.modules.agents.services.thread_access import require_thread
 from yuxi.modules.identity.models import User
 from yuxi.modules.workspace.runtime_paths import runtime_workdir_path
@@ -75,6 +76,8 @@ async def compress_thread_context(
     await prepare_agent_runtime_context(context)
     result = await _compress_agent_checkpoint(agent=agent, context=context)
     await db.commit()
+    # 压缩只改写 checkpoint；投影刷新与新鲜度标签由 checkpoint_state 拥有，best-effort。
+    await refresh_state_projection_after_compression(uid=uid, thread_id=thread_id)
     return result
 
 

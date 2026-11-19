@@ -34,7 +34,7 @@ from test.integration.support.postgres_schema import (
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration, pytest.mark.self_managed_resources]
 
 
-@pytest.mark.parametrize("business,knowledge", [(2, 1), (3, 1), (3, 2), (4, 1), (5, 1), (6, 1), (7, 1), (8, 2), (1, 1), (1, 3)])
+@pytest.mark.parametrize("business,knowledge", [(2, 1), (3, 1), (3, 2), (4, 1), (4, 2), (5, 1), (6, 1), (7, 1), (8, 2), (1, 1), (1, 3)])
 async def test_incompatible_schema_is_rejected_without_modifying_data(monkeypatch, business, knowledge):
     """历史及未来版本不再隐式升级，数据与两个版本均保持原值。"""
     schema, admin, engine, manager = await _create_isolated_manager("pytest_old_business")
@@ -135,6 +135,14 @@ async def test_fresh_business_schema_contains_input_lifecycle_without_request_ta
                     )
                 ).scalars()
             )
+            session_columns = set(
+                (
+                    await connection.execute(
+                        text("SELECT column_name FROM information_schema.columns WHERE table_schema = :schema AND table_name = 'sessions'"),
+                        {"schema": schema},
+                    )
+                ).scalars()
+            )
             execution_seq_nullable = await connection.scalar(
                 text(
                     "SELECT is_nullable FROM information_schema.columns WHERE table_schema = :schema AND table_name = 'agent_runs' AND column_name = 'execution_seq'"
@@ -176,7 +184,8 @@ async def test_fresh_business_schema_contains_input_lifecycle_without_request_ta
             "thread_id",
         } <= input_columns
         assert "conversation_thread_id" not in input_columns
-        assert BUSINESS_SCHEMA_VERSION == 4
+        assert "agent_state_view" in session_columns
+        assert BUSINESS_SCHEMA_VERSION == 5
         assert KNOWLEDGE_SCHEMA_VERSION == 2
     finally:
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)

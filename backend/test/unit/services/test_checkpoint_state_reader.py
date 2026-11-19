@@ -154,6 +154,7 @@ async def test_state_view_reads_persisted_fields_without_agent_runtime(checkpoin
         status="active",
         parent_thread_id=None,
         project_id="missing-project",
+        agent_state_view=None,
     )
     _patch_state_view_repositories(monkeypatch, session=session)
     monkeypatch.setattr(svc, "tree_snapshot", AsyncMock(return_value={"sessions": []}))
@@ -205,7 +206,7 @@ async def test_state_view_releases_read_transaction_before_checkpoint(monkeypatc
         events.append("checkpoint")
         return {}, None
 
-    session = SimpleNamespace(id=1, uid="user", app_id=None, status="active", parent_thread_id=None, project_id="p1")
+    session = SimpleNamespace(id=1, uid="user", app_id=None, status="active", parent_thread_id=None, project_id="p1", agent_state_view=None)
 
     async def get_session(_thread_id):
         events.append("session-read")
@@ -255,6 +256,7 @@ async def test_get_agent_state_view_returns_interrupt_only_for_waiting_owner(mon
         parent_thread_id=None,
         project_id="11111111-1111-4111-8111-111111111111",
         extra_metadata={"model_spec": "provider:agent_session-model"},
+        agent_state_view=None,
     )
     latest_run = SimpleNamespace(
         id="run-1",
