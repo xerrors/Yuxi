@@ -150,11 +150,6 @@ class SkillRepository:
         item.version = version
         item.content_hash = content_hash
         item.source_type = "builtin"
-        item.share_config = {
-            "version": 2,
-            "read_scope": {"access_level": "global", "department_ids": [], "user_uids": []},
-            "manage_scope": None,
-        }
         item.updated_by = updated_by
         item.updated_at = utc_now()
         await self.db.flush()

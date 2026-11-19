@@ -51,6 +51,13 @@ async def init_builtin_skills(db: AsyncSession, *, created_by: str = "system") -
 
         if existing:
             existing.dir_path = (Path("shared") / slug).as_posix()
+            # 仅修复可识别的旧系统默认值，不覆盖管理员分享或未知历史配置。
+            if existing.share_config == BUILTIN_SKILL_SHARE_CONFIG:
+                await repo.update_share_config(
+                    existing,
+                    share_config=normalize_skill_share_config(None, operator_uid=created_by, source_type="builtin"),
+                    updated_by=created_by,
+                )
             if existing.name != spec["name"] or existing.description != spec["description"]:
                 await repo.update_metadata(
                     existing,
