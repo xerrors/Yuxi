@@ -21,6 +21,18 @@ def test_normalize_json_nul_replaces_nul_in_nested_strings_and_keys():
     assert normalized["count"] == 3
 
 
+def test_normalize_json_nul_keeps_both_values_on_key_collision():
+    """替换键与既有键重名时不覆盖：无 NUL 原键保留原名原值，替换键追加唯一后缀。"""
+    normalized = normalize_json_nul({"a\x00b": 1, "a\ufffdb": 2})
+
+    assert normalized == {"a\ufffdb": 2, "a\ufffdb\ufffd": 1}
+
+    three = normalize_json_nul({"x\x00": 1, "x\x00\x00": 2, "x\ufffd": 3})
+    assert three["x\ufffd"] == 3
+    assert len(three) == 3
+    assert sorted(three.values()) == [1, 2, 3]
+
+
 def test_normalized_json_bind_param_serializes_without_unreadable_escape():
     """绑定参数经归一化后序列化不再产生 PostgreSQL 无法回读的 \\u0000 转义。"""
     column_type = NormalizedJSON()

@@ -12,9 +12,9 @@ Owner：backend/yuxi/infrastructure/postgres/base.py
 
 在持久化这一事实信任边界闭合，不逐调用者修补：
 
-- `backend/yuxi/infrastructure/postgres/base.py` 新增 `normalize_json_nul` 与 `NormalizedJSON`（TypeDecorator，impl 仍为裸 `JSON`）：`process_bind_param` 在序列化前递归把字符串值和键中的 U+0000 替换为 U+FFFD。PG 的文本域本就不可表示 NUL，替换字符是唯一能保留内容可读性的归一化选择。
+- `backend/yuxi/infrastructure/postgres/base.py` 新增 `normalize_json_nul` 与 `NormalizedJSON`（TypeDecorator，impl 仍为裸 `JSON`）：`process_bind_param` 在序列化前递归把字符串值和键中的 U+0000 替换为 U+FFFD。PG 的文本域本就不可表示 NUL，替换字符是唯一能保留内容可读性的归一化选择。替换不得静默丢条目：本来不含 NUL 的键保留原名先落位，替换后与既有键重名的键追加 U+FFFD 后缀直到唯一，任意输入键值在输出中都有归属。
 - `backend/yuxi/modules/agents/models/messages.py` 将 `Message.extra_metadata`（承载模型完整 dump、工具审计 output 与 public_items 快照的列）挂到 `NormalizedJSON`。该列的写入分散在 tool_audit、checkpoint_messages、public_items 等约十处 `extra_metadata = {...}` 赋值，列级绑定是唯一能同时覆盖 INSERT 与 flush 时整字典替换的单点。
-- `backend/yuxi/migrations/json_nul_repair.py` 新增显式一次性修复脚本（与 `mcp_personal_credentials.py` 同通道：独立模块、`python -m` 执行、`schema_migration_lock` 串行化）：用 Python `json.loads` 读取历史污染行（PG 侧已无法解析），归一化后写回；只重写真实含 NUL 的行并带文本相等乐观条件，幂等可重放。升级后运维执行一次即可恢复已损坏的 Session，否则写边界归一化只防新增。
+- `backend/yuxi/migrations/json_nul_repair.py` 新增显式一次性修复脚本（与 `mcp_personal_credentials.py` 同通道：独立模块、`python -m` 执行、`schema_migration_lock` 串行化）：用 Python `json.loads` 读取历史污染行（PG 侧已无法解析），归一化后写回；只重写真实含 NUL 的行并带文本相等乐观条件，幂等可重放。逐行隔离：解析失败、结果无法编码 UTF-8（如未配对代理项）或单行数据库错误只汇报该行 id（UPDATE 走独立 SAVEPOINT，不中止整体事务），其余可修复行照常完成；返回 `scanned/repaired/failed_ids` 供运维核对。升级后运维执行一次即可恢复已损坏的 Session，否则写边界归一化只防新增。
 
 ### 实现方案
 
@@ -34,9 +34,10 @@ Owner：backend/yuxi/infrastructure/postgres/base.py
 
 ## 验证
 
-- `backend/test/unit/storage/test_normalized_json_column.py`：嵌套字符串/键归一化、绑定参数序列化后无 `\u0000` 转义、`Message.extra_metadata` 列类型断言。
+- `backend/test/unit/storage/test_normalized_json_column.py`：嵌套字符串/键归一化、键冲突时两个值都保留（含与既有键重名和多替换键互撞）、绑定参数序列化后无 `\u0000` 转义、`Message.extra_metadata` 列类型断言。
 - `backend/test/integration/api/test_public_session_items.py::test_items_page_survives_nul_in_model_output`：真实 ORM 写入含 NUL 的 public_items → 库内原文不含 `\u0000` → 真实 HTTP items 分页 200 且文本为 U+FFFD → `list_page` 可正常展开。
 - `backend/test/integration/api/test_public_session_items.py::test_nul_repair_script_restores_poisoned_extra_metadata`：真实 asyncpg 直插污染行 → PG 侧 `json_each` 当场报错且 items 分页 500（缺陷在场证据）→ 执行 `repair_messages_nul_escapes` → 分页 200、内容保留 U+FFFD。
+- `backend/test/integration/api/test_public_session_items.py::test_nul_repair_isolates_unfixable_row_and_keeps_others`：同会话插入可修复行与模拟编码失败行 → 修复返回 `repaired>=1` 且 `failed_ids` 恰含失败行 id，可修复行库内转义消失、失败行保持原状。
 - 负向案例：临时把列回退为裸 `JSON` 后，`test_items_page_survives_nul_in_model_output` 确定性失败（已复跑确认）；修复恢复后转绿。
 - 门禁：`verify_engineering_contracts`、其 unittest、ruff check/format/imports（本次文件）、`git diff --check` 均通过。
 - 未验证范围：事发线上实例的存量修复需在该环境部署升级后执行一次修复脚本，本地以真实 PostgreSQL 上的注入-修复用例代替。

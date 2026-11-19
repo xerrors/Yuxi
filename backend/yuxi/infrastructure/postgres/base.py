@@ -13,16 +13,31 @@ JSON_VALUE = JSON().with_variant(JSONB, "postgresql")
 
 
 def normalize_json_nul(value: Any) -> Any:
-    """递归把 JSON 字符串与键中的 U+0000 替换为 U+FFFD。
+    """递归把 JSON 字符串与键中的 U+0000 替换为 U+FFFD，键冲突时两个值都保留。
 
     PostgreSQL 无法把 `json` 文本值里的 `\\u0000` 转义转换回 text：裸 json 列按原文
     存储不校验，但 json_each/`->` 等读取会当场报错，导致该行所有按 JSON 展开的查询
     永久失败。PG 的文本域本就无法表示 NUL，落库前替换是唯一可恢复语义。
+    替换不得静默丢条目：本来不含 NUL 的键保留原名并先落位；替换后与既有键重名的
+    键追加 `\\ufffd` 后缀直到唯一，保证任意输入键值都在输出中有归属。
     """
     if isinstance(value, str):
         return value.replace("\x00", "\ufffd")
     if isinstance(value, dict):
-        return {normalize_json_nul(key): normalize_json_nul(item) for key, item in value.items()}
+        normalized: dict[Any, Any] = {}
+        replaced: list[tuple[Any, Any]] = []
+        for key, item in value.items():
+            new_key = normalize_json_nul(key)
+            if isinstance(key, str) and "\x00" in key:
+                replaced.append((new_key, item))
+                continue
+            normalized[new_key] = normalize_json_nul(item)
+        for new_key, item in replaced:
+            candidate = new_key
+            while candidate in normalized:
+                candidate = f"{candidate}\ufffd"
+            normalized[candidate] = normalize_json_nul(item)
+        return normalized
     if isinstance(value, (list, tuple)):
         return [normalize_json_nul(item) for item in value]
     return value

@@ -227,6 +227,74 @@ async def test_nul_repair_script_restores_poisoned_extra_metadata(test_client, a
         await delete_created_threads(session_id)
 
 
+async def test_nul_repair_isolates_unfixable_row_and_keeps_others(test_client, admin_headers, monkeypatch):
+    """存量修复逐行隔离：不可编码行只汇报 id，其余污染行照常修复，事务不整体回滚。"""
+    from yuxi.infrastructure.postgres.base import normalize_json_nul as real_normalize
+    from yuxi.infrastructure.postgres.manager import pg_manager
+    from yuxi.migrations import json_nul_repair
+
+    created = await test_client.post(
+        "/api/v1/agents/sessions",
+        headers={**admin_headers, "Idempotency-Key": str(uuid.uuid4())},
+        json={"agent_id": "default-chatbot", "title": make_test_session_title("nul-isolate")},
+    )
+    assert created.status_code == 201, created.text
+    session_id = created.json()["id"]
+    conn = await asyncpg.connect(os.environ["POSTGRES_URL"].replace("+asyncpg", ""))
+    try:
+        record = await conn.fetchrow("SELECT id FROM sessions WHERE thread_id=$1", session_id)
+
+        def poison(item_id: str, text: str) -> str:
+            return json.dumps(
+                {
+                    "public_items": {
+                        "message": {
+                            "type": "message",
+                            "id": item_id,
+                            "turn_id": None,
+                            "role": "assistant",
+                            "phase": "commentary",
+                            "status": "completed",
+                            "content": [{"type": "output_text", "text": text}],
+                            "yuxi": {"output_index": 0},
+                        }
+                    }
+                }
+            )
+
+        row_ids = {}
+        for tag, text in (("good", "a\x00b"), ("bad", "boom\x00c")):
+            row_ids[tag] = await conn.fetchval(
+                "INSERT INTO messages (session_record_id, role, content, message_type, extra_metadata, delivery_status, created_at) "
+                "VALUES ($1, 'assistant', 'PRIVATE_AUDIT', 'text', $2::json, 'complete', now()) RETURNING id",
+                record["id"],
+                poison(f"iso-{tag}-{session_id}", text),
+            )
+
+        def flaky_normalize(value):
+            if isinstance(value, (dict, list)) and "boom" in json.dumps(value, ensure_ascii=False):
+                raise UnicodeEncodeError("utf-8", "\ud800", 0, 1, "unpaired surrogate")
+            return real_normalize(value)
+
+        monkeypatch.setattr(json_nul_repair, "normalize_json_nul", flaky_normalize)
+        pg_manager.initialize()
+        try:
+            summary = await json_nul_repair.repair_messages_nul_escapes(pg_manager)
+        finally:
+            await pg_manager.close()
+
+        assert summary["repaired"] >= 1
+        assert row_ids["bad"] in summary["failed_ids"]
+        assert row_ids["good"] not in summary["failed_ids"]
+        good_raw = await conn.fetchval("SELECT extra_metadata::text FROM messages WHERE id=$1", row_ids["good"])
+        bad_raw = await conn.fetchval("SELECT extra_metadata::text FROM messages WHERE id=$1", row_ids["bad"])
+        assert "\\u0000" not in good_raw and "\ufffd" in good_raw
+        assert "\\u0000" in bad_raw
+    finally:
+        await conn.close()
+        await delete_created_threads(session_id)
+
+
 async def test_items_page_bounds_database_rows_and_splits_one_message(test_client, admin_headers):
     """隐藏审计不计入页，同一消息的公开调用按索引跨页且数据库只返回有限行。"""
     from sqlalchemy import event
