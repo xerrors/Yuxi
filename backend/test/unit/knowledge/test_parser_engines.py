@@ -10,7 +10,7 @@ from pathlib import Path
 
 from yuxi.infrastructure.document_parsing import DocumentParserException
 from yuxi.infrastructure.document_parsing.engines.mineru_official import MinerUOfficialParser
-from yuxi.infrastructure.document_parsing.engines.rapid_ocr import RapidOCRParser
+from yuxi.infrastructure.document_parsing.engines.rapid_ocr import OCR_INTRA_OP_NUM_THREADS, RapidOCRParser
 
 
 def test_mineru_official_health_check_does_not_create_task(monkeypatch: pytest.MonkeyPatch):
@@ -158,3 +158,14 @@ def test_rapid_ocr_resolves_model_dir_from_env(tmp_path: Path, monkeypatch: pyte
 
     assert params["Global.model_root_dir"] == str(target_dir)
     assert target_dir.exists()
+
+
+def test_rapid_ocr_caps_onnxruntime_cpu_threads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """负向：删除线程上限会让 onnxruntime 按核数全开、占满共享主机 CPU。"""
+    monkeypatch.setenv("RAPIDOCR_MODEL_DIR", str(tmp_path))
+
+    params = RapidOCRParser()._get_model_params()
+
+    assert params["EngineConfig.onnxruntime.intra_op_num_threads"] == OCR_INTRA_OP_NUM_THREADS
+    assert 1 <= OCR_INTRA_OP_NUM_THREADS <= 8
+    assert params["EngineConfig.onnxruntime.inter_op_num_threads"] == 1

@@ -15,6 +15,10 @@ from yuxi.infrastructure.document_parsing.engines import DocumentEngine
 from yuxi.infrastructure.document_parsing.pdf_utils import PDFIUM_LOCK, render_pdf_page_image
 from yuxi.infrastructure.observability.logging import logger
 
+#: onnxruntime CPU 推理线程上限：库默认 -1 会按核数全开，高核共享主机上一篇扫描 PDF 就能占满全部 CPU。
+#: rapidocr 在该值超过实际核数时自动忽略，小规格宿主自然退回默认行为。
+OCR_INTRA_OP_NUM_THREADS = 4
+
 
 class RapidOCRParser(DocumentEngine):
     """RapidOCR 解析器，使用本地 ONNX 模型进行文字识别。"""
@@ -138,6 +142,8 @@ class RapidOCRParser(DocumentEngine):
             "Rec.lang_type": LangRec.CH,
             "Rec.model_type": ModelType.SMALL,
             "Rec.ocr_version": OCRVersion.PPOCRV6,
+            "EngineConfig.onnxruntime.intra_op_num_threads": OCR_INTRA_OP_NUM_THREADS,
+            "EngineConfig.onnxruntime.inter_op_num_threads": 1,
         }
 
     def _load_model(self) -> None:
