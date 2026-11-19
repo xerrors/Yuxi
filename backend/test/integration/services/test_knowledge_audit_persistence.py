@@ -7,15 +7,15 @@ from sqlalchemy import select
 
 from test.integration.support.module_audit import isolated_audit_store
 from test.unit.support.milvus import FakeCollection, make_kb
-from yuxi.modules.knowledge.mcp.references import knowledge_reference_sources
+from yuxi.modules.background_jobs.models import BackgroundJobRecord
 from yuxi.modules.identity.models import User
 from yuxi.modules.identity.repositories.users import UserRepository
 from yuxi.modules.knowledge.implementations.milvus import MilvusKB
+from yuxi.modules.knowledge.mcp.references import knowledge_reference_sources
 from yuxi.modules.knowledge.models import KnowledgeBase, KnowledgeChunk, KnowledgeFile
 from yuxi.modules.knowledge.read_models import KnowledgeBaseConfig
 from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
 from yuxi.modules.knowledge.services.background_jobs import fail_knowledge_file_job
-from yuxi.modules.background_jobs.models import BackgroundJobRecord
 from yuxi.workers.background_jobs import process_background_job
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration, pytest.mark.self_managed_resources]
@@ -37,7 +37,7 @@ async def test_retrieval_to_agent_reference_uses_postgres_filename(monkeypatch, 
         )
         kb = make_kb(FakeCollection())
         kb._hydrate_chunk_sources = MilvusKB._hydrate_chunk_sources.__get__(kb)
-        kb._build_active_generation_expr = MilvusKB._build_active_generation_expr.__get__(kb)
+        kb._build_retrieval_scope = MilvusKB._build_retrieval_scope.__get__(kb)
         if mode == "graph":
             from unittest.mock import AsyncMock
 

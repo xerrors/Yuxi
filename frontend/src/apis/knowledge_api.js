@@ -9,6 +9,19 @@ import {
   buildQuery
 } from './base'
 
+const patchMetadata = (url, data) => apiRequest(url, {
+  method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
+}, true, 'json')
+
+/** 知识库字段定义和文件属性管理。 */
+export const metadataApi = {
+  getFields: (kbId) => apiAdminGet(`/api/knowledge/knowledge-bases/${kbId}/metadata-fields`),
+  createField: (kbId, data) => apiAdminPost(`/api/knowledge/knowledge-bases/${kbId}/metadata-fields`, data),
+  updateField: (kbId, key, data) => patchMetadata(`/api/knowledge/knowledge-bases/${kbId}/metadata-fields/${encodeURIComponent(key)}`, data),
+  deleteField: (kbId, key) => apiAdminDelete(`/api/knowledge/knowledge-bases/${kbId}/metadata-fields/${encodeURIComponent(key)}`),
+  patchFiles: (kbId, data) => patchMetadata(`/api/knowledge/knowledge-bases/${kbId}/documents/attributes`, data)
+}
+
 /**
  * 知识库管理API模块
  * 包含知识库管理、文档管理、查询接口等功能

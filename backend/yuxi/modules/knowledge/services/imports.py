@@ -10,6 +10,7 @@ from yuxi.infrastructure.minio.object_urls import parse_minio_url
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.background_jobs.dispatch import dispatch_job, register_job_in_session
 from yuxi.modules.knowledge.file_status import PARSE_CLAIM_STATUSES, FileStatus
+from yuxi.modules.knowledge.metadata import MetadataField, validate_attributes
 from yuxi.modules.knowledge.models import KnowledgeFile, KnowledgeImport
 from yuxi.modules.knowledge.names import MAX_IMPORT_ITEMS, normalize_name, source_segments
 from yuxi.modules.knowledge.repositories.directories import DirectoryRepository
@@ -124,6 +125,13 @@ async def _register_prepared(*, kb_id, prepared, params, operator_id, identity, 
                 raise StateConflictError("导入标识已用于不同请求", code="import_conflict")
             return receipt.response
         kb = await repo.lock(session, kb_id)
+        raw_attributes = params.get("attributes", {})
+        if not isinstance(raw_attributes, dict):
+            raise InvalidInputError("文件属性必须是对象")
+        try:
+            attributes = validate_attributes(raw_attributes, [MetadataField.model_validate(field) for field in kb.metadata_fields])
+        except ValueError as error:
+            raise InvalidInputError(str(error)) from error
         if process:
             await DocumentResetRepository.require_submission(session, kb_id)
         parent_id = params.get("parent_id")
@@ -145,6 +153,17 @@ async def _register_prepared(*, kb_id, prepared, params, operator_id, identity, 
         for index, (item, metadata, segments, _has_source) in enumerate(prepared):
             existing = await _existing_fingerprint(session, kb_id, metadata)
             if existing is not None:
+                if any((existing.attributes or {}).get(key) != value for key, value in attributes.items()):
+                    failed.append(
+                        {
+                            "index": index,
+                            "item": item,
+                            "status": "failed",
+                            "error": "已有相同文件，属性与本次导入不一致，请在文件详情中编辑属性",
+                            "code": "import_attribute_conflict",
+                        }
+                    )
+                    continue
                 meta = file_record_to_meta(existing)
                 added.append({"index": index, "item": item, "file_id": existing.file_id, "status": existing.status, "file_meta": meta})
                 if process and existing.status in PARSE_CLAIM_STATUSES:
@@ -158,6 +177,7 @@ async def _register_prepared(*, kb_id, prepared, params, operator_id, identity, 
                         target = folder.file_id
                     name = await repo.available_name(session, kb_id, target, segments[-1])
                     data = file_meta_to_record_data(metadata)
+                    data["attributes"] = dict(attributes)
                     data.update(filename=name, parent_id=target, status=FileStatus.UPLOADED, created_by=operator_id)
                     record = KnowledgeFile(file_id=metadata["file_id"], **data)
                     session.add(record)

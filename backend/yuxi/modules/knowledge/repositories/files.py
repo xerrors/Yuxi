@@ -342,22 +342,22 @@ class KnowledgeFileRepository:
                 parent_id = node.file_id
         return False
 
-    async def list_active_generations(self, kb_id: str) -> list[tuple[str, int]]:
-        """只读取可见文件的 active 代次，供向量库在截取 top-k 前过滤。"""
+    async def list_retrieval_file_generations(
+        self, kb_id: str, metadata_filter=None, file_name: str | None = None, *, file_ids: list[str] | None = None
+    ) -> list[tuple[str, int]]:
+        """在同一查询中筛选文件属性和有效代次，不截断候选文件集合。"""
         async with pg_manager.get_async_session_context() as session:
             rows = await session.execute(
                 select(KnowledgeFile.file_id, KnowledgeFile.active_generation)
                 .join(KnowledgeBase, KnowledgeBase.kb_id == KnowledgeFile.kb_id)
-                .where(
-                    KnowledgeFile.kb_id == kb_id,
-                    KnowledgeFile.deleted_at.is_(None),
-                    KnowledgeBase.deleted_at.is_(None),
-                    KnowledgeFile.is_folder.is_(False),
-                )
+                .where(*self._retrieval_conditions(kb_id, metadata_filter, file_name))
+                .where(KnowledgeFile.file_id.in_(file_ids) if file_ids is not None else True)
             )
             return [(row.file_id, int(row.active_generation)) for row in rows]
 
-    async def get_chunk_sources_by_file_ids(self, *, kb_id: str, file_ids: list[str]) -> dict[str, dict]:
+    async def get_chunk_sources_by_file_ids(
+        self, *, kb_id: str, file_ids: list[str], metadata_filter=None, file_name=None
+    ) -> dict[str, dict]:
         """批量读取检索分片的文件来源与总分片数。"""
         normalized_ids = [file_id for file_id in file_ids if file_id]
         if not normalized_ids:
@@ -370,9 +370,11 @@ class KnowledgeFileRepository:
                     KnowledgeFile.filename,
                     KnowledgeFile.chunk_count,
                     KnowledgeFile.active_generation,
-                ).where(
-                    KnowledgeFile.kb_id == kb_id,
-                    KnowledgeFile.deleted_at.is_(None),
+                    KnowledgeFile.attributes,
+                )
+                .join(KnowledgeBase, KnowledgeBase.kb_id == KnowledgeFile.kb_id)
+                .where(
+                    *self._retrieval_conditions(kb_id, metadata_filter, file_name),
                     KnowledgeFile.file_id.in_(normalized_ids),
                 )
             )
@@ -381,9 +383,34 @@ class KnowledgeFileRepository:
                     "source": str(filename or ""),
                     "chunk_count": int(chunk_count or 0),
                     "active_generation": int(active_generation or 1),
+                    "attributes": dict(attributes or {}),
                 }
-                for file_id, filename, chunk_count, active_generation in result.all()
+                for file_id, filename, chunk_count, active_generation, attributes in result.all()
             }
+
+    def _retrieval_conditions(self, kb_id: str, metadata_filter, file_name) -> list:
+        """候选读取与返回前回读复用范围，避免查询期间修改属性造成串入。"""
+        from yuxi.modules.knowledge.repositories.metadata import metadata_predicate
+
+        conditions = [
+            KnowledgeFile.kb_id == kb_id,
+            KnowledgeFile.deleted_at.is_(None),
+            KnowledgeBase.deleted_at.is_(None),
+            KnowledgeFile.is_folder.is_(False),
+        ]
+        if metadata_filter is not None:
+            conditions.append(metadata_predicate(metadata_filter))
+        if file_name is not None:
+            if not isinstance(file_name, str):
+                raise ValueError("文件名筛选必须是字符串")
+            if file_name:
+                normalized = file_name.replace("%", "").strip().lower()
+                conditions.append(
+                    func.lower(KnowledgeFile.filename).like(f"%{self._escape_like_pattern(normalized)}%", escape="\\")
+                    if normalized
+                    else False
+                )
+        return conditions
 
     async def count_all(self) -> int:
         async with pg_manager.get_async_session_context() as session:

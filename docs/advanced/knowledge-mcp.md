@@ -47,7 +47,7 @@ opencode mcp add yuxi-knowledge --global \
 opencode mcp list
 ```
 
-`connected` 表示 MCP 握手和能力发现完成。选择已配置模型后，让 OpenCode “使用 yuxi-knowledge 的 list_kbs 选择知识库，再 query_kb 检索指定主题，并给出来源 file_id”。检查实际工具返回的 `results` 与 `content`，随后用 `open_kb_document` 读取来源原文。五个工具与 [Knowledge Public API](./knowledge-base-api.md#外部查询接口) 调用相同的知识库服务。MCP 的 `query_kb` 额外接受多个知识库 ID。
+`connected` 表示 MCP 握手和能力发现完成。选择已配置模型后，让 OpenCode “使用 yuxi-knowledge 的 list_kbs 选择知识库，再 query_kb 检索指定主题，并给出来源 file_id”。检查实际工具返回的 `results` 与 `content`，随后用 `open_kb_document` 读取来源原文。工具调用相同的知识域服务；原有文档查询约束见 [Knowledge Public API](./knowledge-base-api.md#外部查询接口)。MCP 的 `query_kb` 保留多库查询，并另外提供 `get_kb_metadata` 和 `query_kb.filters`，其[文件属性契约](./knowledge-base-api.md#文件属性与筛选)不扩展 Public HTTP 的输入。有属性条件时，每个知识库使用自己的字段 key，分别提交单库查询。
 
 OpenCode 1.x 将服务直接放在 `mcp.yuxi-knowledge` 下，省略 `codemode`，并使用数字 `timeout`。配置格式以对应版本的 [OpenCode MCP 文档](https://dev.opencode.ai/v2/docs/mcp-servers/)为准。不要输出展开后的客户端配置，其中可能包含完整凭据。
 
@@ -63,7 +63,7 @@ MCP 初始化返回工具使用指引，每个工具的说明包含参数选择�
 
 每次 MCP HTTP 请求复用 API 的 Key 认证依赖，检查绑定用户与权限；每次工具调用按该身份查询可见知识库。服务不缓存跨请求身份，撤销或禁用后下一次请求被拒绝。推荐 `knowledge` Key；`full` Key 仍受用户可见性约束，`agents` Key 返回 `403`。普通登录 JWT 不属于外部接入协议，Key 所属用户仍须绑定部门。平台内部 Agent 通过同一 MCP 地址使用专属短期委托，自动绑定当前用户和会话选择。它不需要客户端 OAuth 流程，机制见[Agent 如何看到知识库](../mechanisms/knowledge-base.md#agent-如何看到知识库)。
 
-缺失、无效或撤销的 Key 返回 `401`，权限不足返回 `403`，用户未绑定部门返回 `400`。工具失败返回 MCP `isError`：输入或业务条件错误为 `400`，不可见或不存在的知识库为 `404`，未知服务故障为 `500`，错误正文不包含底层异常诊断。`421` 表示 Host 不在白名单，带 Origin 的请求返回 `403`。外部 API Key 与内部 Agent 委托使用相同的五个只读工具，不提供原件下载工具。
+缺失、无效或撤销的 Key 返回 `401`，权限不足返回 `403`，用户未绑定部门返回 `400`。工具失败返回 MCP `isError`：输入或业务条件错误为 `400`，不可见或不存在的知识库为 `404`，未知服务故障为 `500`，错误正文不包含底层异常诊断。`421` 表示 Host 不在白名单，带 Origin 的请求返回 `403`。外部 API Key 与内部 Agent 委托使用相同的只读工具，不提供原件下载工具。
 
 输入 Schema 校验失败提供参数级错误。业务错误提供固定的恢复指引：`400` 时检查参数及知识库是否支持文件操作；`404` 时重新发现可见知识库与文件；`500` 时稍后重试，持续失败时联系服务管理员。错误结果不提供成功的结构化数据。
 

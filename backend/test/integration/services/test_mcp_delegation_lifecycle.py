@@ -401,12 +401,18 @@ async def test_management_http_lists_and_tests_delegated_server(isolated_mcp, ad
         tested = await client.post("/api/system/mcp-servers/knowledge/test")
         listed = await client.get("/api/system/mcp-servers/knowledge/tools")
     assert tested.status_code == 200, tested.text
-    assert tested.json()["tool_count"] == 5
     assert listed.status_code == 200, listed.text
-    data = {tool["name"]: tool for tool in listed.json()["data"]}
-    assert set(data) == {"list_kbs", "query_kb", "search_file", "open_kb_document", "find_kb_document"}
-    assert data["query_kb"]["enabled"] is False
-    assert data["list_kbs"]["enabled"] is True
+    expected_tools = {
+        "list_kbs": True,
+        "query_kb": False,
+        "search_file": True,
+        "open_kb_document": True,
+        "find_kb_document": True,
+        "get_kb_metadata": True,
+    }
+    tools = listed.json()["data"]
+    assert tested.json()["tool_count"] == len(tools) == len(expected_tools)
+    assert {tool["name"]: tool["enabled"] for tool in tools} == expected_tools
     async with context.sessions() as db:
         row = await db.scalar(select(MCPServer).where(MCPServer.slug == "knowledge"))
         assert row.enabled == admin_enabled

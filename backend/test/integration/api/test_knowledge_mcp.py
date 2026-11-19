@@ -240,6 +240,8 @@ async def test_mcp_reads_persisted_documents_and_hides_other_users_resources(
     owner = await api_key_factory({"request_id": str(uuid.uuid4()), "name": "MCP document test", "access_level": "knowledge"})
     listed = json.loads(await call_tool(test_client, owner.headers, "list_kbs", {}))
     assert any(kb["kb_id"] == kb_id for kb in listed)
+    schema = json.loads(await call_tool(test_client, owner.headers, "get_kb_metadata", {"kb_id": kb_id}))
+    assert schema == {"kb_id": kb_id, "supported": True, "fields": []}
     files = json.loads(await call_tool(test_client, owner.headers, "search_file", {"kb_id": kb_id, "query": "mcp-proof"}))
     assert [f["file_id"] for f in files["files"]] == [file_id]
     opened = json.loads(await call_tool(test_client, owner.headers, "open_kb_document", {"kb_id": kb_id, "file_id": file_id}))
@@ -263,7 +265,11 @@ async def test_mcp_reads_persisted_documents_and_hides_other_users_resources(
     )
     listed = json.loads(await call_tool(test_client, other.headers, "list_kbs", {}))
     assert all(kb["kb_id"] != kb_id for kb in listed)
-    for name, args in [("query_kb", {"kb_id": kb_id, "query_text": "needle"}), ("open_kb_document", {"kb_id": kb_id, "file_id": file_id})]:
+    for name, args in [
+        ("query_kb", {"kb_id": kb_id, "query_text": "needle"}),
+        ("get_kb_metadata", {"kb_id": kb_id}),
+        ("open_kb_document", {"kb_id": kb_id, "file_id": file_id}),
+    ]:
         failure = await call_tool(test_client, other.headers, name, args, error=True)
         assert "404" in failure and "list_kbs" in failure and "MCP fixture needle" not in failure
 

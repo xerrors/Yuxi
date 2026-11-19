@@ -26,7 +26,7 @@ def normalize_query_overrides(kb_class: type, overrides: dict) -> dict[str, Any]
         for option in kb_class.get_query_params_config().get("options", [])
         if isinstance(option, dict) and isinstance(option.get("key"), str)
     }
-    allowed = set(options) | {"file_name", "file_ids"}
+    allowed = set(options) | {"file_name", "file_ids", "filters"}
     guarded: dict[str, Any] = {}
     for key, value in overrides.items():
         if not isinstance(key, str) or key not in allowed:
@@ -39,11 +39,11 @@ def normalize_query_overrides(kb_class: type, overrides: dict) -> dict[str, Any]
         if key == "file_ids":
             guarded["file_ids"] = _file_ids(value)
             continue
-        guarded[key] = _option_value(options[key], value)
+        guarded[key] = value if key == "filters" else _option_value(options[key], value)
     return guarded
 
 
-async def query_with_overrides(kb_id: str, query: str, overrides: dict) -> list:
+async def query_with_overrides(kb_id: str, query: str, overrides: dict, *, report_filters: bool = False) -> list | dict:
     """校验单次覆盖并复用生产检索，保留管理接口的片段列表格式。"""
 
     if not isinstance(overrides, dict):
@@ -65,6 +65,8 @@ async def query_with_overrides(kb_id: str, query: str, overrides: dict) -> list:
         for field in ("score", "score_type", "distance", "rerank_score", "highlights"):
             if field in metadata:
                 item[field] = metadata[field]
+    if report_filters and output.get("applied_filters") is not None:
+        return {"results": results, "applied_filters": output["applied_filters"]}
     return results
 
 

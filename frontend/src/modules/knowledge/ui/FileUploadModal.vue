@@ -21,6 +21,16 @@
     </template>
 
     <div class="add-files-content">
+      <a-collapse v-if="store.knowledgeBase?.kb_type === 'milvus'" class="upload-attributes">
+        <a-collapse-panel key="attributes" header="文件属性（可选）">
+          <a-spin v-if="attributesLoading" tip="正在读取属性字段…" />
+          <a-alert v-else-if="attributesError" type="error" :message="attributesError" show-icon>
+            <template #action><a-button size="small" @click="attributeRetry += 1">重试</a-button></template>
+          </a-alert>
+          <FileAttributesForm v-else-if="uploadFields.length" :fields="uploadFields" v-model:values="uploadAttributeValues" v-model:operations="uploadAttributeOperations" new-files />
+          <p v-else>尚未定义属性，可在知识库配置中添加字段，或在上传后补充。</p>
+        </a-collapse-panel>
+      </a-collapse>
       <!-- 1. 顶部操作栏 -->
       <div class="top-action-bar">
         <div class="mode-switch">
@@ -246,6 +256,9 @@
 </template>
 
 <script setup>
+import FileAttributesForm from './FileAttributesForm.vue'
+import { metadataApi } from '@/apis/knowledge_api'
+import { buildAttributePatch } from '../model/metadata'
 import { ref, computed, onMounted, watch, h } from 'vue'
 import { message, Upload } from 'ant-design-vue'
 import { useUserStore } from '@/modules/identity'
@@ -749,6 +762,10 @@ const openDocLink = () => {
 }
 
 const chunkData = async () => {
+  let attributes
+  try {
+    attributes = buildAttributePatch(uploadFields.value, uploadAttributeOperations.value, uploadAttributeValues.value).set
+  } catch (error) { message.error(error.message); return }
   if (!kbId.value) {
     message.error('请先选择知识库')
     return
@@ -796,6 +813,7 @@ const chunkData = async () => {
       }
 
       const params = { ...processingParams.value, content_hashes, file_sizes }
+      if (Object.keys(attributes).length) params.attributes = attributes
       if (autoIndex.value) {
         params.auto_index = true
         Object.assign(params, buildAutoIndexParams())
@@ -833,6 +851,7 @@ const chunkData = async () => {
     try {
       store.state.chunkLoading = true
       const params = { ...processingParams.value }
+      if (Object.keys(attributes).length) params.attributes = attributes
       if (autoIndex.value) {
         params.auto_index = true
         Object.assign(params, buildAutoIndexParams())
@@ -907,6 +926,7 @@ const chunkData = async () => {
   try {
     store.state.chunkLoading = true
     const params = buildUploadParams(processingParams.value, metadata)
+    if (Object.keys(attributes).length) params.attributes = attributes
     if (autoIndex.value) {
       params.auto_index = true
       Object.assign(params, buildAutoIndexParams())
@@ -930,6 +950,27 @@ const chunkData = async () => {
     store.state.chunkLoading = false
   }
 }
+const uploadFields = ref([])
+const uploadAttributeValues = ref({})
+const uploadAttributeOperations = ref({})
+const attributesLoading = ref(false)
+const attributesError = ref('')
+const attributeRetry = ref(0)
+let attributeRequest = 0
+watch(() => [visible.value, store.knowledgeBase?.kb_id, attributeRetry.value], async ([open, kbId]) => {
+  const current = ++attributeRequest
+  if (!open || !kbId || store.knowledgeBase?.kb_type !== 'milvus') return
+  uploadFields.value = []
+  uploadAttributeValues.value = {}
+  uploadAttributeOperations.value = {}
+  attributesLoading.value = true
+  attributesError.value = ''
+  try {
+    const schema = await metadataApi.getFields(kbId)
+    if (current === attributeRequest) uploadFields.value = schema.fields
+  } catch (error) { if (current === attributeRequest) attributesError.value = error.message || '读取属性失败' }
+  finally { if (current === attributeRequest) attributesLoading.value = false }
+}, { immediate: true })
 </script>
 
 <style lang="less" scoped>

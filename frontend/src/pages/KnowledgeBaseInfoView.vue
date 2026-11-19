@@ -149,7 +149,7 @@
           v-show="activeTab === 'query'"
           class="tab-panel query-config-panel"
         >
-          <QuerySection ref="querySectionRef" :visible="true" @toggle-visible="() => {}" />
+          <QuerySection ref="querySectionRef" :visible="true" :metadata-refresh-key="metadataRefreshKey" @toggle-visible="() => {}" />
         </div>
       </template>
 
@@ -224,7 +224,7 @@
     >
       <template #footer>
         <a-button key="close" @click="editModalVisible = false">关闭</a-button>
-        <a-button key="submit" type="primary" :loading="editSaving" @click="handleEditSubmit">
+        <a-button v-if="editModalTab !== 'metadata'" key="submit" type="primary" :loading="editSaving" @click="handleEditSubmit">
           保存
         </a-button>
       </template>
@@ -346,6 +346,11 @@
               <SearchConfigPanel v-if="editModalVisible" :key="kbId" ref="searchConfigPanelRef" :kb-id="kbId" />
             </div>
           </a-tab-pane>
+          <a-tab-pane v-if="!isConnector && knowledgeBase.can_manage" key="metadata" tab="文件属性">
+            <div class="knowledge-base-edit-tab-content">
+              <MetadataFieldsPanel v-if="editModalVisible" :kb-id="kbId" @changed="metadataRefreshKey += 1" />
+            </div>
+          </a-tab-pane>
         </a-tabs>
       </a-form>
     </a-modal>
@@ -383,6 +388,7 @@ import FileSearchModal from '@/modules/knowledge/ui/FileSearchModal.vue'
 import KnowledgeMcpModal from '@/modules/knowledge/ui/KnowledgeMcpModal.vue'
 import QuerySection from '@/modules/knowledge/ui/QuerySection.vue'
 import SearchConfigPanel from '@/modules/knowledge/ui/SearchConfigPanel.vue'
+import MetadataFieldsPanel from '@/modules/knowledge/ui/MetadataFieldsPanel.vue'
 import AiTextarea from '@/modules/agents/ui/AiTextarea.vue'
 import ShareConfigForm from '@/modules/agents/ui/ShareConfigForm.vue'
 import { departmentApi } from '@/apis/department_api'
@@ -736,6 +742,7 @@ const departments = ref([])
 const users = ref([])
 const editModalVisible = ref(false)
 const editModalTab = ref('basic')
+const metadataRefreshKey = ref(0)
 const editSaving = ref(false)
 const editFormRef = ref(null)
 const shareConfigFormRef = ref(null)

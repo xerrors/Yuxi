@@ -121,6 +121,8 @@ async def ensure_knowledge_schema(manager):
         "CREATE INDEX IF NOT EXISTS ix_knowledge_chunks_graph_extraction_status "
         "ON knowledge_chunks(kb_id, ((graph_extraction_details->>'status')))",
         "CREATE INDEX IF NOT EXISTS ix_knowledge_files_kb_status_file ON knowledge_files(kb_id, status, file_id)",
+        "CREATE INDEX IF NOT EXISTS ix_knowledge_files_attributes ON knowledge_files USING gin (attributes jsonb_path_ops) "
+        "WHERE deleted_at IS NULL AND NOT is_folder",
         "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_entities_vector_pending "
         "ON knowledge_graph_entities(kb_id, vector_status, vector_next_retry_at)",
         "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_triples_vector_pending "

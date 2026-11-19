@@ -117,7 +117,7 @@ API、Web 与 MinIO 的项目文件在构建时明确权限：源码和配置归
 docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container --profile all up -d --build
 ```
 
-`app-init` 以 UID/GID 1000 运行，等待 PostgreSQL 健康与 `storage-init` 成功后，在数据库锁内完成 Schema 和共享内容初始化。它为确认空库建立 business 版本 2 与 knowledge 版本 2 基线，包含当前表、索引、约束和 LangGraph checkpoint 表；当前版本跳过建表，其他版本不匹配会明确失败。随后同步系统配置定义、内置模型供应商、Agent、MCP 和 Skill 来源文件，API 与 worker 等待全部步骤成功。应用启动不自动迁移历史数据。[版本 1 基线决定](../develop-guides/decisions/implemented/2026-10-19-schema-baseline-one.md)说明编号重置的背景；编号重置不代表旧库已完成结构变更，历史 `1/1` 标记也不能作为结构完整的证明。
+`app-init` 以 UID/GID 1000 运行，等待 PostgreSQL 健康与 `storage-init` 成功后，在数据库锁内完成 Schema 和共享内容初始化。它为确认空库建立 business 版本 4 与 knowledge 版本 3 基线，包含当前表、索引、约束和 LangGraph checkpoint 表；当前版本跳过建表，其他版本不匹配会明确失败。随后同步系统配置定义、内置模型供应商、Agent、MCP 和 Skill 来源文件，API 与 worker 等待全部步骤成功。应用启动不自动迁移历史数据。[版本 1 基线决定](../develop-guides/decisions/implemented/2026-10-19-schema-baseline-one.md)说明编号重置的背景；编号重置不代表旧库已完成结构变更，历史 `1/1` 标记也不能作为结构完整的证明。
 
 ### 可选关闭知识库
 
@@ -159,11 +159,23 @@ API 和 worker 在各自进程内继续校验密钥及 Schema，创建连接、�
 
 ## 3. 数据库与文件目录
 
-新部署使用空 PostgreSQL 数据库和独立的 Yuxi 文件目录。已有当前版本数据库可以直接重启同版本服务。其他版本和包含未版本化 Yuxi 表的数据库会被明确拒绝，初始化器不执行历史升级、回填或自动清库。0.8 business v1 的个人凭证字段按 [MCP 升级说明](../agents/mcp-integration.md#已有部署升级个人凭证字段)显式升级，下述知识域 v1 使用离线目录转换入口；其他历史结构由部署者独立备份和处理，不通过手改版本标记绕过结构校验。
+新部署使用空 PostgreSQL 数据库和独立的 Yuxi 文件目录。已有当前版本数据库可以直接重启同版本服务。其他版本和包含未版本化 Yuxi 表的数据库会被明确拒绝，初始化器不执行历史升级、回填或自动清库。0.8 business v1 的个人凭证字段按 [MCP 升级说明](../agents/mcp-integration.md#已有部署升级个人凭证字段)显式升级，下述知识域 v1 和 v2 使用对应的离线迁移入口；其他历史结构由部署者独立备份和处理，不通过手改版本标记绕过结构校验。
 
 知识域 v1 的路径型目录需要在维护窗口显式转换。先备份 PostgreSQL 与对象存储，停止 API、worker 及其他知识库写入方，在同一部署环境运行 `uv run --no-sync python -m yuxi.migrations.knowledge_directories` 进行只读审计。活动摄取任务、重复真实目录、真实/虚拟同名目录、普通文件占用目录前缀及无效父关系会阻止转换，必须先明确处理，不能通过手改版本跳过。
 
-审计无阻断后运行 `uv run --no-sync python -m yuxi.migrations.knowledge_directories --apply`。转换逐条提交，可在中断后重跑；文件 ID、原件地址、Markdown 和索引身份保留，叶子重名按稳定顺序加后缀。只有全部数据收敛且约束建立成功，才发布 knowledge 版本 2。转换后重新执行审计、回读文件和对象，再运行 app-init 并启动 API/worker。跨版本回退需要恢复维护前整套备份，不能只回退代码。只读连接器不执行目录转换。设计与验证见[目录与导入决策](../develop-guides/decisions/implemented/2026-08-24-knowledge-folder-materialization.md)。
+审计无阻断后运行 `uv run --no-sync python -m yuxi.migrations.knowledge_directories --apply`。转换逐条提交，可在中断后重跑；文件 ID、原件地址、Markdown 和索引身份保留，叶子重名按稳定顺序加后缀。只有全部数据收敛且约束建立成功，才发布 knowledge 版本 2。转换后重新执行审计、回读文件和对象，再执行下述 v2→v3 升级。跨版本回退需要恢复维护前整套备份，不能只回退代码。只读连接器不执行目录内容转换。设计与验证见[目录与导入决策](../develop-guides/decisions/implemented/2026-08-24-knowledge-folder-materialization.md)。
+
+knowledge v2 的文件属性升级同样要求维护窗口、已完成备份且 API、worker 和其他写入方已停止。使用包含当前代码的镜像，在相同部署配置下执行：
+
+```bash
+docker compose --profile container stop api worker
+docker compose --profile container run --rm --no-deps api uv run --no-sync python -m yuxi.migrations.knowledge_metadata
+docker compose --profile container run --rm --no-deps api uv run --no-sync python -m yuxi.migrations.knowledge_metadata --apply
+docker compose --profile container up --no-deps --force-recreate --exit-code-from app-init app-init
+docker compose --profile container up -d api worker frontend
+```
+
+生产部署沿用自己的 `--env-file`、Compose 文件和 profile 参数。默认命令只读取版本及字段结构。`--apply` 在单个 PostgreSQL 事务中增加字段定义、文件属性列及索引，最后发布知识库版本 3。已有文件属性默认为空，重复执行保留已有属性。版本、列类型或非空约束不符时明确失败。升级后回读版本 `business=4 / knowledge=3` 并检查就绪状态，再按[文件属性使用说明](../intro/knowledge-base.md#_6-按文件属性限定检索范围)验收新旧文件。
 
 应用不写入身份操作日志，初始 Schema 不创建 `operation_logs` 表。
 

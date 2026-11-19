@@ -37,14 +37,18 @@ async def test_explicit_file_ids_only_narrow_the_active_generation_filter():
 
     collection = FakeCollection()
     kb = make_kb(collection)
-    await kb.aquery("query", "db", config=make_query_config(), file_ids=["file-9"])
+    await kb.aquery("query", "db", config=make_query_config(), file_ids=["file-1", "file-9"])
     expression = collection.search_calls[0]["expr"]
     assert 'generation == 1 and file_id in ["file-1"]' in expression
-    assert 'file_id in ["file-9"]' in expression
+    assert "file-9" not in expression
 
     empty = FakeCollection()
     await make_kb(empty).aquery("query", "db", config=make_query_config(), file_ids=[])
-    assert "file_id in []" in empty.search_calls[0]["expr"]
+    assert not empty.search_calls
+
+    excluded = FakeCollection()
+    assert await make_kb(excluded).aquery("query", "db", config=make_query_config(), file_ids=["file-9"]) == []
+    assert not excluded.search_calls
 
 
 def test_filter_literals_escape_expression_syntax():

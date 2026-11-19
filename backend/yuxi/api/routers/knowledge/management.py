@@ -16,6 +16,7 @@ from yuxi.api.dependencies.knowledge import (
     require_knowledge_base_read,
 )
 from yuxi.api.responses.knowledge import serialize_knowledge_base, serialize_knowledge_base_list, serialize_staged_file
+from yuxi.api.routers.knowledge.metadata import router as metadata_router
 from yuxi.api.uploads import read_upload_with_limit
 from yuxi.infrastructure.document_parsing import SUPPORTED_FILE_EXTENSIONS, is_supported_file_extension
 from yuxi.infrastructure.minio.client import MinIOClient, StorageError, get_minio_client
@@ -51,6 +52,7 @@ from yuxi.modules.knowledge.utils.url_fetcher import fetch_url_content
 from yuxi.shared.errors import DomainError
 
 knowledge = APIRouter(prefix="/knowledge", tags=["knowledge"])
+knowledge.include_router(metadata_router)
 
 MAX_DIRECT_DOCUMENT_ACTION_FILE_IDS = 1000
 MAX_UPLOAD_SIZE_BYTES = 100 * 1024 * 1024
@@ -834,6 +836,8 @@ async def query_knowledge_base(
         return {"result": result, "status": "success"}
     except (HTTPException, DomainError):
         raise
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception as e:
         logger.error(f"知识库查询失败 {e}, {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail="知识库查询失败，请稍后重试") from e
@@ -849,7 +853,7 @@ async def query_test(
     """测试查询知识库"""
     logger.debug("Query test in {}", kb_id)
     try:
-        result = await query_with_overrides(kb_id, query, meta)
+        result = await query_with_overrides(kb_id, query, meta, report_filters=True)
         return result
     except (HTTPException, DomainError):
         raise

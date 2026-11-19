@@ -49,6 +49,7 @@ def params_for_uploaded_document(item: str, params: dict) -> dict:
     """将批量上传参数收敛为单个文档的处理参数。"""
     source_paths = params.get("source_paths")
     item_params = dict(params)
+    item_params.pop("attributes", None)
     item_params.pop("source_paths", None)
     if isinstance(source_paths, dict) and source_paths.get(item):
         item_params["source_path"] = source_paths[item]

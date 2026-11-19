@@ -5,9 +5,11 @@
 业务性约束（patterns 非空、kb_id/kb_name/query 三选一等）由服务层校验，这里只定义结构与取值范围。
 """
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+from yuxi.modules.knowledge.metadata import MetadataFilter
 
 
 class ListInputSchema(BaseModel):
@@ -21,6 +23,28 @@ class SearchInputSchema(BaseModel):
     kb_id: str = Field(description="知识库资源 ID，也就是 kb_id")
     query_text: str = Field(description="检索关键词，应提炼为有助于召回答案的关键词或短语")
     file_name: str | None = Field(default=None, description="可选文件名关键词过滤，非必要不要使用")
+
+
+class MetadataInputSchema(BaseModel):
+    """读取当前知识库的属性定义，不获取其他知识库字段。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kb_id: str = Field(description="来自 list_kbs 的知识库 ID")
+
+
+class MetadataSearchInputSchema(SearchInputSchema):
+    """MCP 的属性过滤契约，Public HTTP 继续使用原输入模型。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    filters: MetadataFilter | Annotated[list[Any], Field(max_length=0)] | None = Field(
+        default=None,
+        description=(
+            "可选结构化属性条件；field 使用 get_kb_metadata 返回的 key，and/or 分组通过 conditions 组合。"
+            "省略、null 或空数组表示无属性筛选；缺失值不匹配普通比较，零候选不放宽范围。"
+        ),
+    )
 
 
 class SearchResultSchema(BaseModel):

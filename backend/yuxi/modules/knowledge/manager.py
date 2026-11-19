@@ -229,26 +229,28 @@ class KnowledgeBaseManager:
 
     async def aquery(self, query_text: str, kb_id: str, **kwargs) -> list[dict[str, Any]]:
         """异步查询知识库"""
-        config = await self.get_kb_config(kb_id)
-        executor = await self._get_or_create_kb_instance(config.kb_type)
-        return await executor.aquery(
-            query_text,
-            kb_id,
-            config=config,
-            **kwargs,
-        )
+        _executor, results, _filters = await self._execute_query(kb_id, query_text, kwargs)
+        return results
 
     async def retrieve(self, kb_id: str, query: str, **options) -> dict:
         """按 kb_id 加载最新运行时元数据并执行检索。"""
+        executor, results, filters = await self._execute_query(kb_id, query, options)
+        output = executor.build_search_output(kb_id, results)
+        if filters is not None:
+            output["applied_filters"] = filters.model_dump(exclude_none=True)
+        return output
+
+    async def _execute_query(self, kb_id: str, query: str, options: dict):
+        """统一解析当前字段和条件，再执行查询，供原始结果与协议结果共用。"""
+        from yuxi.modules.knowledge.services.metadata import prepare_metadata_filter
+
         config = await self.get_kb_config(kb_id)
+        filters = await prepare_metadata_filter(kb_id, options.pop("filters", None))
+        if filters is not None:
+            options["filters"] = filters
         executor = await self._get_or_create_kb_instance(config.kb_type)
-        results = await executor.aquery(
-            query,
-            kb_id,
-            config=config,
-            **options,
-        )
-        return executor.build_search_output(kb_id, results)
+        results = await executor.aquery(query, kb_id, config=config, **options)
+        return executor, results, filters
 
     async def get_kb_query_params_config(self, kb_id: str) -> dict:
         """获取知识库查询参数定义，并合并当前保存值。"""

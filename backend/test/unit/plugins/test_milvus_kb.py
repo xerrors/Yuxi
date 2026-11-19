@@ -122,11 +122,11 @@ class FakeKnowledgeFileRepository:
         self.update_calls.append((file_id, kb_id, dict(data)))
         return record
 
-    async def list_active_generations(self, kb_id):
+    async def list_retrieval_file_generations(self, kb_id, metadata_filter=None, file_name=None, *, file_ids=None):
         """提供实际 Repository 的可见代次接口。"""
         return [(file_id, row.active_generation) for file_id, row in self.records.items() if row.kb_id == kb_id and row.deleted_at is None]
 
-    async def get_chunk_sources_by_file_ids(self, *, kb_id: str, file_ids: list[str]):
+    async def get_chunk_sources_by_file_ids(self, *, kb_id: str, file_ids: list[str], metadata_filter=None, file_name=None):
         return {
             file_id: {
                 "source": record.filename,
@@ -136,13 +136,6 @@ class FakeKnowledgeFileRepository:
             for file_id in file_ids
             if (record := self.records.get(file_id)) is not None and record.kb_id == kb_id
         }
-
-    async def list_file_ids_by_filename_contains(self, *, kb_id: str, filename_pattern: str, limit: int = 10_000):
-        return [
-            file_id
-            for file_id, record in self.records.items()
-            if record.kb_id == kb_id and filename_pattern.lower() in record.filename.lower()
-        ][:limit]
 
     async def delete(self, file_id: str) -> None:
         self.deleted.append(file_id)

@@ -25,10 +25,12 @@ from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.knowledge.base import FileStatus, KBEmbeddingModelMissingError, KnowledgeExecutor
 from yuxi.modules.knowledge.chunking.dispatcher import IngestionChunk, calculate_chunk_stats, chunk_markdown
 from yuxi.modules.knowledge.file_status import INDEX_CLAIM_STATUSES
+from yuxi.modules.knowledge.metadata import MetadataCondition, MetadataGroup
 from yuxi.modules.knowledge.read_models import KnowledgeBaseConfig
 from yuxi.modules.knowledge.repositories.chunks import KnowledgeChunkRepository
 from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
 from yuxi.modules.knowledge.services import documents
+from yuxi.modules.knowledge.services.metadata import prepare_metadata_filter
 from yuxi.modules.knowledge.storage.milvus import (
     CONTENT_SPARSE_FIELD,
     VECTOR_METRIC_TYPE,
@@ -43,6 +45,7 @@ from yuxi.modules.system.options import system_options
 from yuxi.shared.hashing import hashstr
 
 MILVUS_CHUNK_EMBED_BATCH_SIZE = 200
+MAX_RETRIEVAL_FILTER_BYTES = 2 * 1024 * 1024
 # Milvus 为派生索引：PG 先行落库（权威源），Milvus upsert 失败有限次重试，
 # 重试耗尽则抛错由上层标记文件状态；不回滚 PG（避免单边数据）。
 # 重新索引时 PG batch_upsert 与 Milvus upsert 均按主键幂等，重跑即可收敛。
@@ -328,6 +331,14 @@ class MilvusKB(KnowledgeExecutor):
     ) -> list[dict]:
         """异步查询知识库"""
         embedding_model_spec = config.embedding_model_spec
+        metadata_filter = kwargs.get("filters")
+        # Manager 传入已校验条件；直接调用执行器的入口仍须校验原始 JSON。
+        if not isinstance(metadata_filter, (MetadataCondition, MetadataGroup)):
+            metadata_filter = await prepare_metadata_filter(kb_id, metadata_filter)
+        file_name = kwargs.get("file_name", config.query_options.get("file_name"))
+        active_expr, retrieval_files = await self._build_retrieval_scope(kb_id, metadata_filter, file_name, file_ids=kwargs.get("file_ids"))
+        if not retrieval_files:
+            return []
         collection = await self._get_existing_milvus_collection(kb_id)
         if not collection:
             if await KnowledgeChunkRepository().count_by_kb_id(kb_id):
@@ -338,7 +349,7 @@ class MilvusKB(KnowledgeExecutor):
         merged_kwargs = {**asdict(MilvusRetrievalConfig()), **config.query_options, **kwargs}
 
         try:
-            logger.debug(f"Query params: {merged_kwargs}")
+            logger.debug("Knowledge query: kb_id={}, metadata_filter={}", kb_id, metadata_filter is not None)
             final_top_k = min(max(int(merged_kwargs["final_top_k"]), 1), self.MAX_FINAL_TOP_K)
             similarity_threshold = float(merged_kwargs["similarity_threshold"])
             include_distances = bool(merged_kwargs["include_distances"])
@@ -356,11 +367,8 @@ class MilvusKB(KnowledgeExecutor):
             else:
                 recall_top_k = final_top_k
 
-            active_expr = await self._build_active_generation_expr(kb_id)
-            file_expr = await self._build_file_name_expr(kb_id, merged_kwargs.get("file_name"))
-            file_ids_expr = self._build_explicit_file_ids_expr(merged_kwargs.get("file_ids"))
             text_expr, highlighter = self._build_text_search(merged_kwargs, search_mode, query_text)
-            filter_expr = " and ".join(f"({expr})" for expr in (active_expr, file_expr, file_ids_expr, text_expr) if expr)
+            filter_expr = " and ".join(f"({expr})" for expr in (active_expr, text_expr) if expr)
 
             output_fields = ["content", "chunk_id", "file_id", "generation", "chunk_index"]
             retrieved_chunks: list[dict] = []
@@ -483,6 +491,7 @@ class MilvusKB(KnowledgeExecutor):
                     retrieved_chunks,
                     merged_kwargs,
                     embedding_model_spec,
+                    allowed_file_ids={file_id for file_id, _generation in retrieval_files} if metadata_filter is not None else None,
                 )
                 if graph_chunks and filter_expr:
                     chunk_ids = [chunk["metadata"]["chunk_id"] for chunk in graph_chunks]
@@ -500,7 +509,15 @@ class MilvusKB(KnowledgeExecutor):
             if not retrieved_chunks:
                 return []
 
-            retrieved_chunks = await self._hydrate_chunk_sources(kb_id, retrieved_chunks)
+            if metadata_filter is not None or file_name:
+                retrieved_chunks = await self._hydrate_chunk_sources(
+                    kb_id,
+                    retrieved_chunks,
+                    metadata_filter=metadata_filter,
+                    file_name=file_name,
+                )
+            else:
+                retrieved_chunks = await self._hydrate_chunk_sources(kb_id, retrieved_chunks)
 
             if not use_reranker:
                 return retrieved_chunks[:final_top_k]
@@ -967,15 +984,21 @@ class MilvusKB(KnowledgeExecutor):
 
     # ==== 内部辅助：检索过滤与结果装配 ====
 
-    async def _build_active_generation_expr(self, kb_id: str) -> str:
-        """先过滤非服务代次，避免不可见候选占满 Milvus top-k。"""
+    async def _build_retrieval_scope(
+        self, kb_id: str, metadata_filter=None, file_name=None, *, file_ids: list[str] | None = None
+    ) -> tuple[str, list[tuple[str, int]]]:
+        """把属性与活跃代次共同选出的文件转换为有限大小的检索范围。"""
         grouped: dict[int, list[str]] = {}
-        for file_id, generation in await KnowledgeFileRepository().list_active_generations(kb_id):
+        rows = await KnowledgeFileRepository().list_retrieval_file_generations(kb_id, metadata_filter, file_name, file_ids=file_ids)
+        for file_id, generation in rows:
             grouped.setdefault(generation, []).append(file_id)
-        return (
+        expression = (
             " or ".join(f"(generation == {generation} and file_id in {json.dumps(file_ids)})" for generation, file_ids in grouped.items())
             or "file_id in []"
         )
+        if len(expression.encode("utf-8")) > MAX_RETRIEVAL_FILTER_BYTES:
+            raise ValueError("知识库检索范围超过 2 MiB，请缩小属性筛选范围")
+        return expression, rows
 
     async def _file_deleted(self, kb_id: str, file_id: str) -> bool:
         """索引写入期间文件被删除时，本次代次不能留下 chunk。"""
@@ -996,31 +1019,6 @@ class MilvusKB(KnowledgeExecutor):
                 generation,
                 type(cleanup_error).__name__,
             )
-
-    @staticmethod
-    def _build_explicit_file_ids_expr(file_ids: list[str] | None) -> str | None:
-        """调用方 file_ids 只再收窄活动代次过滤，空列表不命中任何文件。"""
-
-        if file_ids is None:
-            return None
-        return f"file_id in {json.dumps(list(file_ids))}"
-
-    async def _build_file_name_expr(self, kb_id: str, file_name: str | None) -> str | None:
-        """把文件名筛选转换为 file_id 过滤表达式；无匹配时返回恒假表达式。"""
-        if not file_name:
-            return None
-
-        matched_file_ids = await KnowledgeFileRepository().list_file_ids_by_filename_contains(
-            kb_id=kb_id,
-            filename_pattern=file_name,
-        )
-        if not matched_file_ids:
-            return 'file_id == "__no_matching_file__"'
-        escaped_ids = [file_id.replace('"', '\\"') for file_id in matched_file_ids]
-        if len(escaped_ids) == 1:
-            return f'file_id == "{escaped_ids[0]}"'
-        joined_ids = '", "'.join(escaped_ids)
-        return f'file_id in ["{joined_ids}"]'
 
     def _build_text_search(
         self, options: dict[str, Any], search_mode: str, query_text: str = ""
@@ -1099,7 +1097,7 @@ class MilvusKB(KnowledgeExecutor):
             chunk["distance"] = hit.distance
         return chunk
 
-    async def _hydrate_chunk_sources(self, kb_id: str, chunks: list[dict]) -> list[dict]:
+    async def _hydrate_chunk_sources(self, kb_id: str, chunks: list[dict], *, metadata_filter=None, file_name=None) -> list[dict]:
         """补充 chunk 来源文件名和总分片数，并过滤已从 PG 删除的孤儿 chunk。
 
         Milvus 中可能残留已删除文件的向量（如删除流程中途失败），
@@ -1109,7 +1107,9 @@ class MilvusKB(KnowledgeExecutor):
         if not file_ids:
             return []
 
-        sources = await KnowledgeFileRepository().get_chunk_sources_by_file_ids(kb_id=kb_id, file_ids=file_ids)
+        sources = await KnowledgeFileRepository().get_chunk_sources_by_file_ids(
+            kb_id=kb_id, file_ids=file_ids, metadata_filter=metadata_filter, file_name=file_name
+        )
         chunk_ids = [str((chunk.get("metadata") or {}).get("chunk_id") or "") for chunk in chunks]
         records = await KnowledgeChunkRepository().list_by_chunk_ids(chunk_ids)
         records_by_id = {record.chunk_id: record for record in records if record.kb_id == kb_id}
@@ -1143,6 +1143,8 @@ class MilvusKB(KnowledgeExecutor):
         base_chunks: list[dict],
         query_params: dict[str, Any],
         embedding_model_spec: str | None,
+        *,
+        allowed_file_ids: set[str] | None = None,
     ) -> list[dict]:
         """图扩散召回候选 chunk；失败降级为空结果，不阻断主检索。"""
         try:
@@ -1185,6 +1187,7 @@ class MilvusKB(KnowledgeExecutor):
                 max_nodes=graph_max_nodes,
                 top_k=graph_top_k,
                 damping=float(query_params.get("ppr_damping", 0.85)),
+                allowed_file_ids=allowed_file_ids,
             )
             if not graph_scores:
                 return []

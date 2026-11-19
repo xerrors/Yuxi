@@ -85,13 +85,14 @@ reason 去除首尾空白后为 1–4000 字符，写明实际问题或经验、
 | --- | --- |
 | `list_kbs` | 列出当前运行可见的知识库 |
 | `query_kb` | 按 `kb_id` 检索片段，返回 `kb_id`、`file_id` 和内容 |
+| `get_kb_metadata` | 按 `kb_id` 获取当前文件属性定义，供结构化条件筛选使用 |
 | `find_kb_document` | 在指定文件中按关键词或正则定位内容 |
 | `open_kb_document` | 按 `file_id` 分段读取解析后的文档 |
 | `search_file` | 按文件名搜索可见知识库中的文件 |
 
 工具名称、参数 Schema 与结构化结果直接来自 Knowledge MCP 的目录与响应，与其他托管 MCP 的装配路径一致。每次出站调用自动附带代表当前用户及会话选择的短期委托，无需在 Agent 的 MCP 字段添加本平台 Knowledge，也无需个人 OAuth 连接；管理页不能为该 server 配置共享凭据。
 
-Knowledge 在每次工具调用处重新检查 `kb_id`、`file_id`、文件名与当前读取权限；模型提示词和 Agent 配置不能授予权限。关闭 Knowledge 时保留内置 server 身份，能力发现与执行按不可用处理。部署插件通过 `mcps: ("knowledge",)` 引用知识能力，也可由 Agent 直接选择该 MCP。普通共享或 Agent 专属 Skill 不声明运行依赖；这五个名称属于 MCP，不是本地工具引用。鉴权、范围和存储边界见[知识库机制详解](../mechanisms/knowledge-base.md#agent-如何看到知识库)。
+Knowledge 在每次工具调用处重新检查 `kb_id`、`file_id`、文件名与当前读取权限；模型提示词和 Agent 配置不能授予权限。关闭 Knowledge 时保留内置 server 身份，能力发现与执行按不可用处理。部署插件通过 `mcps: ("knowledge",)` 引用知识能力，也可由 Agent 直接选择该 MCP。普通共享或 Agent 专属 Skill 不声明运行依赖。字段条件契约见[文件属性与筛选](../advanced/knowledge-base-api.md#文件属性与筛选)，鉴权、范围和存储边界见[知识库机制详解](../mechanisms/knowledge-base.md#agent-如何看到知识库)。
 
 ## 内置工具：网页搜索
 

@@ -4,15 +4,84 @@ import argparse
 import asyncio
 import json
 from urllib.parse import unquote, urlsplit
+from uuid import uuid4
 
-from sqlalchemy import func, select, text
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, func, select, text
+from sqlalchemy.orm import DeclarativeBase
 
+from yuxi.infrastructure.postgres.base import JSON_VALUE
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.background_jobs.models import BackgroundJobRecord
-from yuxi.modules.knowledge.models import KnowledgeFile, KnowledgeImport
+from yuxi.modules.knowledge.models import KnowledgeFile as CurrentKnowledgeFile
+from yuxi.modules.knowledge.models import KnowledgeImport
 from yuxi.modules.knowledge.names import normalize_name, source_segments
 from yuxi.modules.knowledge.repositories.directories import DirectoryRepository
+from yuxi.shared.datetime import utc_now
 from yuxi.shared.errors import DomainError, StateConflictError
+
+
+class DirectoryMigrationBase(DeclarativeBase):
+    """旧目录迁移使用独立历史映射，不消费后续运行模型的新列。"""
+
+
+class KnowledgeFile(DirectoryMigrationBase):
+    """冻结 v1/v2 目录转换实际读写的列，保证旧数据库可直接审计和转换。"""
+
+    __tablename__ = "knowledge_files"
+
+    id = Column(Integer, primary_key=True)
+    file_id = Column(String(64))
+    kb_id = Column(String(80))
+    parent_id = Column(String(64))
+    filename = Column(String(512))
+    original_filename = Column(String(512))
+    path = Column(String(1024))
+    file_type = Column(String(64))
+    is_folder = Column(Boolean)
+    status = Column(String(32))
+    processing_params = Column(JSON_VALUE)
+    created_by = Column(String(128))
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    deleted_at = Column(DateTime(timezone=True))
+
+
+class DirectoryMigrationRepository(DirectoryRepository):
+    """冻结旧文件的查询和创建；纯目录名称分配继续复用既有实现。"""
+
+    async def named(self, session, kb_id, parent_id, name, exclude_id=None):
+        """读取旧表已有同名节点，不请求新版本列。"""
+        return await session.scalar(
+            select(KnowledgeFile).where(
+                KnowledgeFile.kb_id == kb_id,
+                KnowledgeFile.parent_id.is_not_distinct_from(parent_id),
+                KnowledgeFile.deleted_at.is_(None),
+                KnowledgeFile.file_id != exclude_id if exclude_id else True,
+                func.normalize(func.lower(func.normalize(func.btrim(KnowledgeFile.filename), text("NFC"))), text("NFC"))
+                == func.normalize(func.lower(func.normalize(func.btrim(name), text("NFC"))), text("NFC")),
+            )
+        )
+
+    async def folder(self, session, kb_id, parent_id, name, operator_id, *, reuse):
+        """创建旧版本目录行，避免当前 ORM 默认值向旧表写入新列。"""
+        existing = await self.named(session, kb_id, parent_id, name)
+        if existing is not None:
+            if reuse and existing.is_folder:
+                return existing
+            raise StateConflictError("目录名称已被占用", code="name_conflict")
+        node = KnowledgeFile(
+            file_id=f"folder-{uuid4()}",
+            kb_id=kb_id,
+            parent_id=parent_id,
+            filename=name,
+            path=name,
+            file_type="folder",
+            is_folder=True,
+            status="done",
+            created_by=operator_id,
+        )
+        session.add(node)
+        await self.flush(session)
+        return node
 
 
 async def audit(manager=pg_manager) -> dict:
@@ -33,7 +102,7 @@ async def audit(manager=pg_manager) -> dict:
         by_id = {record.file_id: record for record in records}
         folders = {}
         path_files, required_paths = {}, []
-        repo = DirectoryRepository()
+        repo = DirectoryMigrationRepository()
         for node in sorted(records, key=lambda row: not row.is_folder):
             report["files"] += not node.is_folder
             report["path_files"] += bool(not node.is_folder and ("/" in node.filename or "\\" in node.filename))
@@ -101,7 +170,7 @@ async def convert(manager=pg_manager, *, stop_after: int | None = None) -> dict:
     report = await audit(manager)
     if report["blocking_ids"] or report["old_jobs"]:
         raise StateConflictError("目录歧义、无效父关系或活动摄取任务阻止离线转换")
-    repo = DirectoryRepository()
+    repo = DirectoryMigrationRepository()
     converted = 0
     async with manager.get_async_session_context() as session:
         ids = list(
@@ -145,7 +214,7 @@ async def convert(manager=pg_manager, *, stop_after: int | None = None) -> dict:
 
     async with manager.async_engine.begin() as connection:
         await connection.run_sync(lambda conn: KnowledgeImport.__table__.create(conn, checkfirst=True))
-        index = next(index for index in KnowledgeFile.__table__.indexes if index.name == "uq_knowledge_files_active_name")
+        index = next(index for index in CurrentKnowledgeFile.__table__.indexes if index.name == "uq_knowledge_files_active_name")
         await connection.run_sync(lambda conn: index.create(conn, checkfirst=True))
         exists = await connection.scalar(
             text(

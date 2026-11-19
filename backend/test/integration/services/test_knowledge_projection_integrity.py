@@ -504,7 +504,7 @@ async def test_tombstones_are_absent_from_tree_names_hashes_and_counts(database)
 
     async with database() as observer:
         assert await DirectoryRepository().named(observer, "kb-test", "folder", "child.md") is None
-    assert await repo.list_file_ids_by_filename_contains(kb_id="kb-test", filename_pattern="child") == []
+    assert await repo.list_retrieval_file_generations("kb-test", file_name="child") == []
     assert not await repo.exists_by_filename(kb_id="kb-test", filename="folder/child.md")
     await repo.mark_deleted(kb_id="kb-test", file_id="folder")
     assert await repo.list_documents(kb_id="kb-test", parent_id=None) == ([], 0)

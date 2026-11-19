@@ -8,6 +8,7 @@ from typing import Any
 from yuxi.modules.knowledge.factory import KnowledgeBaseFactory
 from yuxi.modules.knowledge.runtime import knowledge_base
 from yuxi.modules.knowledge.services import documents as knowledge_documents
+from yuxi.modules.knowledge.services.metadata import get_metadata_schema
 
 
 class KnowledgeToolError(ValueError):
@@ -51,6 +52,7 @@ async def query_kb(
     visible_kbs: list[dict[str, Any]],
     *,
     file_name: str | None = None,
+    filters=None,
 ) -> Any:
     """检索一个或多个可见知识库，按目标顺序保留片段来源。"""
     if not kb_id:
@@ -61,6 +63,10 @@ async def query_kb(
     requested = [kb_id] if isinstance(kb_id, str) else kb_id
     targets = list(dict.fromkeys(require_visible_kb(target, visible_kbs) for target in requested))
     options = {"file_name": file_name} if file_name else {}
+    if filters is not None:
+        if filters != [] and len(targets) > 1:
+            raise KnowledgeToolError("文件属性条件仅支持单库查询；请按知识库字段分别检索")
+        options["filters"] = filters
     if isinstance(kb_id, str):
         return await knowledge_base.retrieve(targets[0], query_text, **options)
 
@@ -74,7 +80,16 @@ async def query_kb(
         if isinstance(output, BaseException):
             raise output
         results.extend(output["results"])
-    return {"kb_ids": targets, "results": results}
+    result = {"kb_ids": targets, "results": results}
+    if len(outputs) == 1 and "applied_filters" in outputs[0]:
+        result["applied_filters"] = outputs[0]["applied_filters"]
+    return result
+
+
+async def get_kb_metadata(kb_id: str, visible_kbs: list[dict[str, Any]]) -> dict:
+    """为当前可见知识库动态发现属性字段、值类型和操作符。"""
+    target = require_visible_kb(kb_id, visible_kbs)
+    return await get_metadata_schema(target)
 
 
 async def open_kb_document(

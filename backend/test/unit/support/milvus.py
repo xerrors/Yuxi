@@ -1,6 +1,7 @@
-import pytest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+
+import pytest
 
 from yuxi.modules.knowledge.implementations.milvus import MilvusKB
 from yuxi.modules.knowledge.read_models import KnowledgeBaseConfig
@@ -79,14 +80,16 @@ def make_kb(collection: FakeCollection) -> MilvusKB:
             chunk["metadata"]["source"] = "demo.md"
         return chunks
 
-    async def active_generation_expr(kb_id):
+    async def retrieval_scope(kb_id, metadata_filter=None, file_name=None, *, file_ids=None):
         """检索通道单测使用固定 PG 可见范围；真实范围由 integration 验证。"""
-        return 'generation == 1 and file_id in ["file-1"]'
+        if file_ids is not None and "file-1" not in file_ids:
+            return "file_id in []", []
+        return 'generation == 1 and file_id in ["file-1"]', [("file-1", 1)]
 
     kb._get_or_create_milvus_collection = get_collection
     kb._get_existing_milvus_collection = AsyncMock(return_value=collection)
     kb._hydrate_chunk_sources = hydrate_chunk_sources
-    kb._build_active_generation_expr = active_generation_expr
+    kb._build_retrieval_scope = retrieval_scope
     return kb
 
 

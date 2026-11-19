@@ -45,7 +45,7 @@ flowchart LR
     Context["可信用户与会话选择"] --> Integration["Knowledge 提供 SDK Auth"]
     Integration --> Loader["通用 MCP 装配"]
     Plugin["knowledge-base 插件（load_plugin）"] --> Loader
-    Loader --> Tools["五个工具：名称与 Schema 来自 MCP 目录"]
+    Loader --> Tools["只读工具：名称与 Schema 来自 MCP 目录"]
     Tools -->|HTTP MCP 与短期委托| MCP["Knowledge MCP"]
     MCP --> Visible["当前用户权限 ∩ 会话选择"]
     Visible --> Service["知识库工具 service"]
@@ -158,7 +158,7 @@ JobTracker 保存任务登记、执行方上报的进度与结果摘要，并提
 
 Knowledge MCP 服务端把工具级失败返回为错误结果，MCP adapter 转为绑定当前调用的错误 ToolMessage，审计与公开结果保留失败状态。正常检索没有命中时返回成功的空结果。服务端提供安全的错误指导语，工具失败后模型可以继续处理本轮任务。
 
-Agent 保留 `Context.knowledges` 的归一化选择：`"all"` 表示当前可读范围，数组表示固定的会话选择。知识库工具是内置 `knowledge` MCP server 提供的 MCP 工具。运行装配从该 server 的真实目录（initialize + tools/list）取得五个工具的名称、参数 Schema 与说明，每次调用经 HTTP MCP 读取数据。资源选择器和回答引用过滤也通过同一 MCP 边界读取知识库，不直接调用知识库 Manager、repository 或访问 service。选择器和引用过滤通过 `list_kbs(include_capabilities=true)` 取得 `supports_documents` 和 `supports_document_read` 能力摘要；普通工具列表默认不返回这些附加字段。
+Agent 保留 `Context.knowledges` 的归一化选择：`"all"` 表示当前可读范围，数组表示固定的会话选择。知识库工具是内置 `knowledge` MCP server 提供的 MCP 工具。运行装配从该 server 的真实目录（initialize + tools/list）取得工具名称、参数 Schema 与说明，每次调用经 HTTP MCP 读取数据。资源选择器和回答引用过滤也通过同一 MCP 边界读取知识库，不直接调用知识库 Manager、repository 或访问 service。选择器和引用过滤通过 `list_kbs(include_capabilities=true)` 取得 `supports_documents` 和 `supports_document_read` 能力摘要；普通工具列表默认不返回这些附加字段。
 
 `knowledge/mcp` 拥有内部凭据与 SDK Auth，直接从可信 Context 读取用户、会话选择和 Run 身份。通用 MCP 装配该认证对象并复用现有 loader，运行工具在每次 HTTP 出站前复查管理员策略。Knowledge Auth 签发五分钟委托 Token。Token 使用部署共享的 `JWT_SECRET_KEY` 与 `YUXI_INSTANCE_ID`，限定 `aud=yuxi-knowledge-mcp`、`purpose=agent-knowledge-read`；普通登录 JWT 不能代替委托。Token 不持久化，不放入模型参数、prompt 或工具结果，用户无需创建内部 API Key 或进行 OAuth 登录。配置和地址见[部署参考](../advanced/deployment.md#可选关闭知识库)。
 
@@ -168,11 +168,19 @@ Knowledge MCP 每个 HTTP 请求验证签名、用途、有效期和账号当前
 
 引用消费 MCP 的结构化结果，保留知识库、文件和原文行范围。已保存引用按同一工具消息和内容身份重投影当前来源字段，保持引用 ID。普通用户的引用阅读调用已有授权正文窗口接口，不依赖管理员文件详情。工具的文本展示块不替代该结果。知识选择器和历史引用读取按当前用户权限执行，不受 Agent 工具启停开关限制，但部署关闭时不可用。
 
-推荐顺序是：列出可见知识库 → 检索候选片段 → 用 `file_id` 打开或定位原文。五个工具的名称、参数 Schema 与结构化结果直接来自 Knowledge MCP 的目录与响应。工具级拒绝按单次调用返回服务端指导语，连接层故障由授权中间件把 `knowledge` server 标记为不可用并在本轮隐藏其工具。
+推荐顺序是：列出可见知识库 → 有属性条件时读取当前字段定义 → 检索候选片段 → 用 `file_id` 打开或定位原文。工具名称、参数 Schema 与结构化结果直接来自 Knowledge MCP 的目录与响应；工具级拒绝按单次调用返回服务端指导语，连接层故障由授权中间件把 `knowledge` server 标记为不可用并在本轮隐藏其工具。
 
-Agent 通过五个只读工具检索和阅读正文，原件下载由知识库管理接口提供。知识库不会挂载为 Agent 可直接遍历的目录。
+知识库不会挂载为 Agent 可直接遍历的目录；Agent 通过只读工具发现属性、检索和阅读正文，原件下载由知识库管理接口提供。
 
 Knowledge 默认启用。显式关闭后，知识库管理路由和 MCP 均未注册，返回 HTTP 404。Agent 不装配知识库工具，普通聊天继续运行，会话知识选择保留。模型强行调用未声明的工具时，通用授权边界返回拒绝结果，不发生工具执行。待执行任务与清理意图保留，关闭期间不派发或执行知识库任务，已失联任务仍按租约规则收敛。容器停启与数据保留方式由[部署参考](../advanced/deployment.md#可选关闭知识库)维护。
+
+## 文件属性的事实与过滤
+
+知识库的 `metadata_fields` 保存字段定义，文件的 `attributes` 保存可选属性，PostgreSQL 拥有这两项事实。字段与值的校验由 `modules/knowledge/metadata.py` 拥有，管理事务由 `services/metadata.py` 编排，写锁、当前管理权限复核及 JSONB 条件由 `repositories/metadata.py` 执行。属性不会写入解析参数，也不复制到 Milvus 的每个 Chunk。
+
+检索用例先读取当前字段定义并规范化条件；文件 repository 将属性、文件名与有效代次约束放入同一查询。Milvus 只召回对应文件代次的片段，图谱补充也在候选截断前限制文件来源。来源回读时复核相同条件，按该次 PostgreSQL 读取快照丢弃不再匹配的文件；之后的属性修改由新请求读取，不承诺覆盖重排到响应发送之间的全部并发变化。结果使用独立 `attributes` 命名空间，并附实际执行条件；原文窗口仍保持完整阅读语义。
+
+文件属性与索引代次分开，单纯编辑属性不产生解析或入库作业；重新解析和索引保留文件属性。字段发现通过知识 MCP 读取当前定义，不固化到长期 Agent 配置或提示词。字段表示什么、哪些条件不足需要追问属于具体业务说明，既有 `ask_user_question` 负责等待和恢复。接口、类型和资源预算见[文件属性与筛选](../advanced/knowledge-base-api.md#文件属性与筛选)。
 
 ## 权限
 

@@ -259,6 +259,7 @@
               style="margin-right: 8px"
             />
             <span>{{ selectedRowKeys.length }} 项</span>
+            <a-button v-if="!readonly && store.knowledgeBase.kb_type === 'milvus'" type="link" :disabled="!selectedRowKeys.length" @click="editAttributes(selectedRowKeys)">批量属性</a-button>
           </div>
           <div style="display: flex; gap: 2px">
             <a-button
@@ -479,6 +480,7 @@
                   </a-button>
                 </template>
                 <template v-else>
+                  <a-button v-if="!readonly && store.knowledgeBase.kb_type === 'milvus'" type="text" block @click="editAttributes([row.file_id])">文件属性</a-button>
                   <a-button type="text" block @click="viewFileGraph(row)">
                     <template #icon><Network size="14" /></template>
                     查看图谱
@@ -582,10 +584,12 @@
         </div>
       </template>
     </FileBrowserTable>
+    <FileAttributesModal v-if="attributesOpen" v-model:open="attributesOpen" :kb-id="store.knowledgeBase.kb_id" :file-ids="attributeFileIds" @saved="store.loadDocumentFiles()" />
   </div>
 </template>
 
 <script setup>
+import FileAttributesModal from './FileAttributesModal.vue'
 import { ref, computed, h, watch } from 'vue'
 import { useKnowledgeBaseStore } from '@/modules/knowledge/model/knowledgeBase'
 import { useBackgroundJobsStore } from '@/modules/background-jobs'
@@ -649,6 +653,9 @@ const props = defineProps({
 })
 
 const readonly = computed(() => props.readonly)
+const attributesOpen = ref(false)
+const attributeFileIds = ref([])
+const editAttributes = (ids) => { attributeFileIds.value = [...ids]; attributesOpen.value = true }
 
 const applyFilters = async (overrides = {}) => {
   const nextStatus = overrides.status ?? statusFilter.value

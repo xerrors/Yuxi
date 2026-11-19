@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import threading
 import uuid
 from http.server import BaseHTTPRequestHandler
 from io import BytesIO
@@ -36,14 +37,16 @@ CONTENT = b"MCP transport proof.\nThe persistent needle belongs to this document
 
 
 @pytest.mark.parametrize("skill_source", ["builtin", "shared", "agent_bound"])
-async def test_worker_uses_mcp_for_five_tools_and_preserves_sources(e2e_client, e2e_headers, skill_source):
+async def test_worker_discovers_file_fields_filters_six_tools_and_preserves_sources(e2e_client, e2e_headers, skill_source):
     """固定模型只发调用；索引、消息、正文和引用由真实系统独立证明。"""
     suffix = uuid.uuid4().hex[:12]
     provider = f"mcp-e2e-{suffix}"
     slug = f"mcp-tools-{suffix}"
     file_id = f"pytest_mcp_{suffix}"
+    other_file_id = file_id + "_other"
     kb_id = thread_id = turn_id = None
     observed = {}
+    race_started, race_release = threading.Event(), threading.Event()
     prompts = []
     advertised = []
     skill_slug = "knowledge-base" if skill_source == "builtin" else f"mcp-skill-{suffix}"
@@ -66,6 +69,9 @@ async def test_worker_uses_mcp_for_five_tools_and_preserves_sources(e2e_client, 
                 inputs = request["input"]
                 if isinstance(inputs, str):
                     inputs = [inputs]
+                if inputs == ["METADATA_SCOPE_RACE"]:
+                    race_started.set()
+                    assert race_release.wait(20), "测试未释放查询"
                 body = json.dumps(
                     {
                         "object": "list",
@@ -88,6 +94,11 @@ async def test_worker_uses_mcp_for_five_tools_and_preserves_sources(e2e_client, 
             step = len(observed)
             if step < len(calls):
                 name, args = calls[step]
+                if name == "query_kb":
+                    # 模型只从上一条真实工具结果发现动态字段 key，不预知创建响应。
+                    schema = json.loads(observed["call-mcp-2"])
+                    discovered = next(field for field in schema["fields"] if field["name"] == "设备型号")
+                    args = {**args, "filters": {"field": discovered["key"], "operator": "eq", "value": "A"}}
                 delta = {
                     "role": "assistant",
                     "tool_calls": [
@@ -150,11 +161,22 @@ async def test_worker_uses_mcp_for_five_tools_and_preserves_sources(e2e_client, 
             )
             assert created.status_code == 200, created.text
             kb_id = created.json()["kb_id"]
+            field_response = await e2e_client.post(
+                f"/api/knowledge/knowledge-bases/{kb_id}/metadata-fields",
+                headers=e2e_headers,
+                json={"name": "设备型号", "type": "select", "options": ["A", "B"]},
+            )
+            assert field_response.status_code == 200, field_response.text
+            field_key = field_response.json()["key"]
             buckets = [
                 (MinIOClient.KB_BUCKETS["parsed"], f"{kb_id}/parsed/{file_id}.md"),
                 (MinIOClient.KB_BUCKETS["documents"], f"{kb_id}/{file_id}.md"),
+                (MinIOClient.KB_BUCKETS["parsed"], f"{kb_id}/parsed/{other_file_id}.md"),
+                (MinIOClient.KB_BUCKETS["documents"], f"{kb_id}/{other_file_id}.md"),
             ]
-            parsed, original = [await minio.aupload_file(bucket, key, CONTENT, content_type="text/markdown") for bucket, key in buckets]
+            parsed, original, other_parsed, other_original = [
+                await minio.aupload_file(bucket, key, CONTENT, content_type="text/markdown") for bucket, key in buckets
+            ]
             async with pg_manager.get_async_session_context() as db:
                 db.add(
                     KnowledgeFile(
@@ -168,12 +190,29 @@ async def test_worker_uses_mcp_for_five_tools_and_preserves_sources(e2e_client, 
                         path=original.url,
                         status="parsed",
                         is_folder=False,
+                        attributes={field_key: "A"},
+                    )
+                )
+                # 相同正文和向量但属性不同；错误放宽过滤一定会召回另一文件。
+                db.add(
+                    KnowledgeFile(
+                        file_id=other_file_id,
+                        kb_id=kb_id,
+                        filename="mcp-other-model.md",
+                        file_type="md",
+                        content_type="text/markdown",
+                        markdown_file=other_parsed.url,
+                        minio_url=other_original.url,
+                        path=other_original.url,
+                        status="parsed",
+                        is_folder=False,
+                        attributes={field_key: "B"},
                     )
                 )
             indexed = await e2e_client.post(
                 f"/api/knowledge/knowledge-bases/{kb_id}/documents/index",
                 headers=e2e_headers,
-                json={"file_ids": [file_id], "params": {}},
+                json={"file_ids": [file_id, other_file_id], "params": {}},
             )
             assert indexed.status_code == 200, indexed.text
             async with asyncio.timeout(120):
@@ -187,10 +226,28 @@ async def test_worker_uses_mcp_for_five_tools_and_preserves_sources(e2e_client, 
             async with pg_manager.get_async_session_context() as db:
                 record = await db.scalar(select(KnowledgeFile).where(KnowledgeFile.file_id == file_id))
                 assert record.status == "indexed" and record.chunk_count > 0
+                generation_before = record.active_generation
+            for mode in ("vector", "keyword", "hybrid"):
+                scoped = await e2e_client.post(
+                    f"/api/knowledge/knowledge-bases/{kb_id}/query-test",
+                    headers=e2e_headers,
+                    json={
+                        "query": "persistent needle",
+                        "meta": {
+                            "search_mode": mode,
+                            "use_reranker": False,
+                            "use_graph_retrieval": False,
+                            "filters": {"operator": "and", "conditions": [{"field": field_key, "operator": "eq", "value": "A"}]},
+                        },
+                    },
+                )
+                assert scoped.status_code == 200, scoped.text
+                assert {row["metadata"]["file_id"] for row in scoped.json()["results"]} == {file_id}
             calls.extend(
                 [
                     ("load_plugin", {"plugin_id": "knowledge-base"}),
                     ("list_kbs", {}),
+                    ("get_kb_metadata", {"kb_id": kb_id}),
                     ("query_kb", {"kb_id": kb_id, "query_text": "persistent needle"}),
                     ("search_file", {"kb_id": kb_id, "query": "mcp-agent-proof"}),
                     ("open_kb_document", {"kb_id": kb_id, "file_id": file_id}),
@@ -261,16 +318,21 @@ async def test_worker_uses_mcp_for_five_tools_and_preserves_sources(e2e_client, 
             turn = await wait_for_terminal_turn(e2e_client, e2e_headers, thread_id, turn_id, timeout=120)
             assert turn["status"] == "completed", turn
             assert "MCP_AGENT_OK" in output_text(turn["yuxi"]["output"])
-            assert set(observed) == {f"call-mcp-{index}" for index in range(6)}
-            assert "load_plugin" in advertised[0] and "list_kbs" not in advertised[0]
-            assert {name for name, _ in calls}.issubset(advertised[1]), advertised[1]
+            assert set(observed) == {f"call-mcp-{index}" for index in range(len(calls))}
+            assert "load_plugin" in advertised[0] and not advertised[0].intersection(name for name, _ in calls[1:])
+            assert {name for name, _ in calls[1:]}.issubset(advertised[1]), advertised[1]
             if skill_source != "builtin":
                 assert marker in prompts[0]
             assert [item["kb_id"] for item in json.loads(observed["call-mcp-1"])] == [kb_id]
-            assert "persistent needle" in observed["call-mcp-2"]
-            assert file_id in observed["call-mcp-3"]
-            assert "persistent needle" in observed["call-mcp-4"]
-            assert json.loads(observed["call-mcp-5"])["total_matches"] == 1
+            assert json.loads(observed["call-mcp-2"])["fields"][0]["key"] == field_key
+            query_result = json.loads(observed["call-mcp-3"])
+            assert query_result["results"]
+            assert {row["file_id"] for row in query_result["results"]} == {file_id}
+            assert all(row["metadata"]["attributes"] == {field_key: "A"} for row in query_result["results"])
+            assert query_result["applied_filters"] == {"field": field_key, "operator": "eq", "value": "A"}
+            assert file_id in observed["call-mcp-4"]
+            assert "persistent needle" in observed["call-mcp-5"]
+            assert json.loads(observed["call-mcp-6"])["total_matches"] == 1
             sources = await e2e_client.get(f"/api/agent/threads/{thread_id}/turns/{turn_id}/references", headers=e2e_headers)
             assert sources.status_code == 200, sources.text
             assert sources.json()["available"] is True
@@ -285,10 +347,51 @@ async def test_worker_uses_mcp_for_five_tools_and_preserves_sources(e2e_client, 
             finally:
                 await conn.close()
             assert skill_slug in {item["slug"] for item in manifest["resources"]["skills"]}
-            assert len(rows) == 6 and all(row["execution_status"] == "completed" for row in rows), rows
+            assert {row["operation_id"] for row in rows} == set(observed), rows
+            assert len(rows) == len(calls) and all(row["execution_status"] == "completed" for row in rows), rows
             assert all(
                 json.loads(row["extra_metadata"])["output"]["status"] == "success" for row in rows if row["operation_id"] != "call-mcp-0"
             )
+            racing_query = asyncio.create_task(
+                e2e_client.post(
+                    f"/api/knowledge/knowledge-bases/{kb_id}/query-test",
+                    headers=e2e_headers,
+                    json={
+                        "query": "METADATA_SCOPE_RACE",
+                        "meta": {
+                            "search_mode": "vector",
+                            "use_reranker": False,
+                            "use_graph_retrieval": False,
+                            "filters": {"field": field_key, "operator": "eq", "value": "A"},
+                        },
+                    },
+                )
+            )
+            try:
+                assert await asyncio.to_thread(race_started.wait, 10), "查询没有进入真实模型边界"
+                changed = await e2e_client.patch(
+                    f"/api/knowledge/knowledge-bases/{kb_id}/documents/{file_id}/attributes",
+                    headers=e2e_headers,
+                    json={"set": {field_key: "B"}},
+                )
+                assert changed.status_code == 200, changed.text
+            finally:
+                race_release.set()
+                race_result = await racing_query
+            assert race_result.status_code == 200 and race_result.json()["results"] == [], race_result.text
+            empty = await e2e_client.post(
+                f"/api/knowledge/knowledge-bases/{kb_id}/query-test",
+                headers=e2e_headers,
+                json={"query": "persistent needle", "meta": {"filters": {"field": field_key, "operator": "eq", "value": "A"}}},
+            )
+            assert empty.status_code == 200 and empty.json()["results"] == [], empty.text
+            async with pg_manager.get_async_session_context() as db:
+                changed_file = await db.scalar(select(KnowledgeFile).where(KnowledgeFile.file_id == file_id))
+                assert changed_file.active_generation == generation_before
+                assert changed_file.generation == generation_before and changed_file.status == "indexed"
+                assert changed_file.attributes == {field_key: "B"}
+            original_bytes = await minio.adownload_file(*buckets[1])
+            assert original_bytes == CONTENT
         finally:
             if thread_id:
                 await archive_public_thread(e2e_client, e2e_headers, thread_id, turn_id=turn_id)

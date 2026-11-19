@@ -82,7 +82,7 @@ function fixture(overrides = {}) {
 
 test('文件菜单提供查看图谱，点击关闭菜单并传递当前文件', () => {
   const source = readFileSync(new URL(tablePath, import.meta.url), 'utf8')
-  assert.match(source, /<template v-else>\s*<a-button[^>]*@click="viewFileGraph\(row\)"[^>]*>[\s\S]*?查看图谱/)
+  assert.match(source, /<a-button[^>]*@click="viewFileGraph\(row\)"[^>]*>[\s\S]*?查看图谱\s*<\/a-button>/)
   const action = fixture()
   action.popoverVisibleMap.value['file-a'] = true
   const file = { file_id: 'file-a', file_name: '合同.pdf' }

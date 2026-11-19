@@ -4,7 +4,7 @@
 
 ## 权限
 
-外部 MCP 客户端可通过[知识库 MCP 接入](./knowledge-mcp.md)调用本页的五个只读查询工具。
+外部 MCP 客户端可通过[知识库 MCP 接入](./knowledge-mcp.md)调用只读知识库工具。
 
 文档管理接口要求知识库管理权限。原始文件上传接口还要求管理员身份。读取和外部查询接口要求知识库读取权限。
 
@@ -126,6 +126,29 @@ Dify 和 Notion 只提供外部检索能力。它们不支持 Yuxi 的文档上�
 外部结果的 `metadata.score_type` 标识 `cosine`、`bm25`、`hybrid` 或图谱融合的 `fusion`，`metadata.score` 保存该类型的原始分数；`metadata.rerank_score` 是可选重排分数。纯向量检索使用 `similarity_threshold`，BM25 与融合分数不按余弦阈值过滤。检索测试页面传入的 `meta` 使用相同参数，其原始片段响应在顶层返回这些字段；非法参数返回 `400`，执行失败返回 `500`，不会投影为空结果。
 
 Milvus 片段的 `metadata` 包含 `chunk_index`、`start_line` 和 `end_line`。Agent、Public `query_kb` 与检索测试读取同一份入库行号，可结合 `file_id` 定位完整解析文本。行号从 1 开始且包含首尾行；历史未重新索引的片段为 `null`。行号来源与重写内容的范围规则见[知识库存储机制](../mechanisms/knowledge-base.md#各存储负责什么)。Dify、Notion 的定位字段由提供方返回。
+
+## 文件属性与筛选
+
+文件属性管理适用于内置 Milvus 知识库。读取字段需要该知识库读取权限及 Web 管理入口的管理员角色；创建、修改和删除继续要求管理权限，并在写事务中复核。属性使用独立 `attributes` 对象，不混入解析参数，也不覆盖结果的 `file_id`、`source`、代次或行号。
+
+| Web 管理入口 | 行为 |
+| --- | --- |
+| `GET /api/knowledge/knowledge-bases/{kb_id}/metadata-fields` | 返回 supported、当前字段及操作符 |
+| `POST /api/knowledge/knowledge-bases/{kb_id}/metadata-fields` | 创建字段，返回稳定 key；请求含 name、type、description 和 options |
+| `PATCH /api/knowledge/knowledge-bases/{kb_id}/metadata-fields/{key}` | 修改名称、说明或选项；类型固定，使用中的选项不能移除 |
+| `DELETE /api/knowledge/knowledge-bases/{kb_id}/metadata-fields/{key}` | 只删除没有有效文件属性值的字段 |
+| `PATCH /api/knowledge/knowledge-bases/{kb_id}/documents/{file_id}/attributes` | 通过 set 对象和 unset 数组部分更新一个文件 |
+| `PATCH /api/knowledge/knowledge-bases/{kb_id}/documents/attributes` | 另传 file_ids，同库整批原子更新；任一文件越界或值错误均回滚 |
+
+每库最多 64 个字段。类型为 `text`、`number`、`boolean`、`date`、`select`、`multi_select`；数字不接受字符串数字或非有限数，布尔值不接受 0/1，日期使用 `YYYY-MM-DD`。单选与多选只接受定义中的选项。空值使用 unset 删除键；省略的字段保持原值。文本值最多 4000 字符，每文件属性合计最多 64 KiB。上传／导入的 `params.attributes` 应用于新建文件，并参与导入请求指纹。复用相同内容的文件时保留已有属性；若本次指定的属性不一致，该文件返回冲突，可在详情中修改。
+
+Knowledge MCP 新增 `get_kb_metadata(kb_id)`，供获授权用户动态读取字段 key、名称、说明、类型、选项和操作符。`query_kb` 接受可选 filters；原 Public HTTP 查询输入维持既有契约。Web 检索测试通过 `meta.filters` 传入同一结构，有过滤时返回 `results` 和 `applied_filters`，无过滤时保留既有列表响应；MCP 的查询结果也返回规范化的实际执行条件。
+
+叶子条件为 `{"field":"<字段 key>","operator":"eq","value":"<值>"}`。分组使用 `{"operator":"and","conditions":[...]}` 或 or，可表达 `A AND (B OR C)`。操作符以字段发现结果为准：等于／不等于、数值和日期比较、多选任一／全部包含以及 exists／not_exists。是否设置条件不提供 value。条件含分组最多 5 层、50 个节点，多选操作数不能为空。
+
+省略 filters、传 null 或顶层空数组均表示不使用属性条件；空对象、空分组及非法结构明确拒绝。缺失属性不匹配普通比较，包括不等于；显式 not_exists 才查询缺失属性。条件合法但匹配零文件时返回空结果，不能视为不限制范围。未知字段、类型错误、操作符不适用或不支持过滤的外部连接器均明确失败。属性筛选只缩小已有读取权限，不代替授权。
+
+属性、文件名和有效索引代次在 PostgreSQL 中共同选择文件，再限定 Milvus 的 Chunk 召回。来源回读时按同一条件复核，以该次数据库读取快照装配结果；此后修改的属性由新请求读取。候选表达式超过 2 MiB 时明确要求缩小范围，不静默截断文件集合。字段定义、条件与资源上限由 `yuxi/modules/knowledge/metadata.py`、持久查询由 knowledge repositories 拥有。
 
 ## CLI
 

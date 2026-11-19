@@ -363,6 +363,7 @@ def file_record_to_meta(record: Any) -> dict:
         "token_count": int(getattr(record, "token_count", 0) or 0),
         "content_type": record.content_type,
         "processing_params": sanitize_processing_params(record.processing_params),
+        "attributes": dict(getattr(record, "attributes", None) or {}),
         "is_folder": record.is_folder,
         "error": record.error_message,
         "created_by": record.created_by,
@@ -395,6 +396,7 @@ def file_meta_to_record_data(meta: dict) -> dict[str, Any]:
         "token_count": int(meta.get("token_count") or 0),
         "content_type": meta.get("content_type"),
         "processing_params": sanitize_processing_params(meta.get("processing_params")),
+        "attributes": dict(meta.get("attributes") or {}),
         "is_folder": meta.get("is_folder", False),
         "error_message": meta.get("error"),
         "created_by": str(meta.get("created_by")) if meta.get("created_by") else None,
@@ -633,6 +635,7 @@ def _file_record_list_item(
     return {
         "file_id": file_id,
         "filename": getattr(record, "filename"),
+        "attributes": dict(getattr(record, "attributes", None) or {}),
         "file_type": getattr(record, "file_type", None),
         "status": getattr(record, "status", None) or "uploaded",
         "created_at": created_at,

@@ -13,6 +13,7 @@
       </div>
 
       <div class="header-controls">
+        <a-button v-if="editable && file && !file.is_folder && !markdownEditor.active" size="small" @click="attributesOpen = true">文件属性</a-button>
         <!-- 字符数/片段数显示在视图选择器左边 -->
         <span v-if="viewInfoText && !markdownEditor.active" class="view-info expanded-controls">{{ viewInfoText }}</span>
 
@@ -244,6 +245,7 @@
     <div v-else-if="file" class="empty-content">
       <p>暂无文件内容</p>
     </div>
+    <FileAttributesModal v-if="attributesOpen" v-model:open="attributesOpen" :kb-id="String(kbId)" :file-ids="[String(fileId)]" @saved="emit('saved')" />
   </component>
   <a-modal
     v-model:open="markdownSaveConfirmOpen"
@@ -282,6 +284,7 @@
 </template>
 
 <script setup>
+import FileAttributesModal from './FileAttributesModal.vue'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
@@ -327,6 +330,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['update:open', 'update:editRequested', 'closed', 'saved'])
+const attributesOpen = ref(false)
 
 const visible = computed({
   get: () => props.open,

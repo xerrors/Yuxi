@@ -41,6 +41,9 @@
           </div>
         </div>
 
+        <MetadataFilterPanel v-if="store.knowledgeBase?.kb_type === 'milvus'" :kb-id="store.knowledgeBase.kb_id" :refresh-key="metadataRefreshKey" v-model="metadataFilter" @fields="metadataFields = $event" />
+        <p v-if="appliedFilterText" class="metadata-applied" role="status">本次属性筛选：{{ appliedFilterText }}</p>
+
         <div v-if="queryError" class="query-error" role="alert">
           <div class="query-error-body">
             <span class="query-error-title">检索失败</span>
@@ -171,11 +174,14 @@ import { Braces, RefreshCw, Search as SearchOutlined } from '@lucide/vue'
 import QueryResultChunk from '@/modules/knowledge/ui/QueryResultChunk.vue'
 import FileDetailModal from '@/modules/knowledge/ui/FileDetailModal.vue'
 import ExternalDocumentReader from '@/modules/knowledge/ui/ExternalDocumentReader.vue'
+import MetadataFilterPanel from './MetadataFilterPanel.vue'
+import { describeMetadataFilter, validateMetadataFilter } from '../model/metadata'
 
 const store = useKnowledgeBaseStore()
 const MAX_VISIBLE_EXAMPLES = 10
 
 defineProps({
+  metadataRefreshKey: { type: Number, default: 0 },
   visible: {
     type: Boolean,
     default: true
@@ -209,6 +215,9 @@ const canGenerateQuestions = computed(
 
 // 查询测试
 const queryText = ref('')
+const metadataFilter = ref(null)
+const metadataFields = ref([])
+const appliedFilterText = ref('')
 
 // 示例问题相关
 const queryExamples = ref([])
@@ -305,6 +314,7 @@ const useQueryExample = (example) => {
 }
 
 const clearQueryResult = () => {
+  appliedFilterText.value = ''
   queryRequest += 1
   store.state.searchLoading = false
   selectedChunk.value = null
@@ -339,10 +349,13 @@ const onQuery = async () => {
   store.state.searchLoading = true
 
   try {
-    const data = await queryApi.queryTest(store.knowledgeBase.kb_id, queryText.value.trim())
+    const filters = validateMetadataFilter(metadataFilter.value, metadataFields.value)
+    const data = await queryApi.queryTest(store.knowledgeBase.kb_id, queryText.value.trim(), filters ? { filters } : {})
     if (requestId !== queryRequest) return
     // 生产检索把评分与来源放在 metadata，投影到检索测试已有的展示字段。
-    queryResult.value = Array.isArray(data) ? data.map((chunk) => {
+    appliedFilterText.value = data?.applied_filters ? describeMetadataFilter(data.applied_filters, metadataFields.value) : ''
+    const chunks = data?.applied_filters ? data.results : data
+    queryResult.value = Array.isArray(chunks) ? chunks.map((chunk) => {
       const metadata = chunk.metadata || {}
       return {
         ...chunk,
@@ -356,7 +369,7 @@ const onQuery = async () => {
           chunk_id: chunk.id || metadata.chunk_id
         }
       }
-    }) : data
+    }) : chunks
   } catch (error) {
     if (requestId !== queryRequest) return
     console.error(error)
@@ -696,6 +709,14 @@ defineExpose({
   font-size: 12px;
   color: var(--gray-500);
   line-height: 24px;
+}
+
+.metadata-applied {
+  margin: 12px 0;
+  color: var(--gray-800);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 .query-suggestions {

@@ -787,6 +787,13 @@ async def test_worker_reparse_preserves_original_and_rebuilds_artifacts(e2e_clie
         )
         assert created.status_code == 200, created.text
         kb_id = created.json()["kb_id"]
+        field_response = await e2e_client.post(
+            f"/api/knowledge/knowledge-bases/{kb_id}/metadata-fields",
+            headers=e2e_headers,
+            json={"name": "设备代次", "type": "number"},
+        )
+        assert field_response.status_code == 200, field_response.text
+        file_attributes = {field_response.json()["key"]: 0}
         uploaded = await e2e_client.post(
             f"/api/knowledge/files/upload?kb_id={kb_id}",
             headers=e2e_headers,
@@ -802,6 +809,7 @@ async def test_worker_reparse_preserves_original_and_rebuilds_artifacts(e2e_clie
                 "params": {
                     "content_hashes": {upload["file_path"]: upload["content_hash"]},
                     "file_sizes": {upload["file_path"]: upload["size"]},
+                    "attributes": file_attributes,
                 },
             },
         )
@@ -823,6 +831,7 @@ async def test_worker_reparse_preserves_original_and_rebuilds_artifacts(e2e_clie
         async def assert_original():
             """同时回读原件对象与授权下载，不能以文件行存在替代内容保留。"""
             record = await files.get_by_file_id(file_id)
+            assert record.attributes == file_attributes
             bucket, name = parse_minio_url(record.minio_url or record.path)
             assert await client.adownload_file(bucket, name) == original
             downloaded = await e2e_client.get(f"/api/knowledge/knowledge-bases/{kb_id}/documents/{file_id}/download", headers=e2e_headers)
@@ -885,6 +894,7 @@ async def test_worker_reparse_preserves_original_and_rebuilds_artifacts(e2e_clie
             await _wait_projection_cleanup(kb_id)
             record = await files.get_by_file_id(file_id)
             assert record.status == "indexed"
+            assert record.attributes == file_attributes
             [chunk] = await chunks.list_by_file_id(file_id)
             assert chunk.generation == record.active_generation
             collection = Collection(kb_id, using=alias)

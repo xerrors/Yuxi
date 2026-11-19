@@ -825,8 +825,9 @@ class KnowledgeGraphService:
         *,
         entity_ids: list[str],
         max_nodes: int,
+        allowed_file_ids: set[str] | None = None,
     ) -> dict[str, Any]:
-        if not entity_ids:
+        if not entity_ids or allowed_file_ids == set():
             return {"nodes": [], "edges": []}
         seed_entity_ids = list(dict.fromkeys(entity_ids))
         label = safe_neo4j_label(kb_id)
@@ -834,6 +835,7 @@ class KnowledgeGraphService:
         MATCH (seed:Entity:MilvusKB:`{label}`)
         WHERE seed.entity_id IN $entity_ids
         MATCH p = (seed)-[*1..2]-(n:MilvusKB:`{label}`)
+        WHERE $file_ids IS NULL OR all(node IN nodes(p) WHERE NOT node:Chunk OR node.file_id IN $file_ids)
         WITH p LIMIT $path_limit
         WITH collect(p) AS paths
         UNWIND paths AS node_path
@@ -849,6 +851,7 @@ class KnowledgeGraphService:
             cypher,
             seed_entity_ids,
             max_nodes,
+            sorted(allowed_file_ids) if allowed_file_ids is not None else None,
         )
         return await self._filter_visible_subgraph(kb_id, result)
 
@@ -858,12 +861,14 @@ class KnowledgeGraphService:
         cypher: str,
         entity_ids: list[str],
         max_nodes: int,
+        file_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         with self.driver.session() as session:
             record = session.run(
                 cypher,
                 entity_ids=entity_ids,
                 path_limit=max(max_nodes, 1) * 4,
+                file_ids=file_ids,
             ).single()
             if not record:
                 return {"nodes": [], "edges": []}
@@ -877,6 +882,7 @@ class KnowledgeGraphService:
         max_nodes: int,
         top_k: int,
         damping: float,
+        allowed_file_ids: set[str] | None = None,
     ) -> list[tuple[str, float]]:
         if not seed_weights:
             return []
@@ -884,8 +890,9 @@ class KnowledgeGraphService:
             kb_id,
             entity_ids=list(seed_weights.keys()),
             max_nodes=max_nodes,
+            allowed_file_ids=allowed_file_ids,
         )
-        return self.rank_chunks_by_ppr(subgraph, seed_weights, top_k=top_k, damping=damping)
+        return self.rank_chunks_by_ppr(subgraph, seed_weights, top_k=top_k, damping=damping, allowed_file_ids=allowed_file_ids)
 
     @staticmethod
     def rank_chunks_by_ppr(
@@ -894,6 +901,7 @@ class KnowledgeGraphService:
         *,
         top_k: int,
         damping: float,
+        allowed_file_ids: set[str] | None = None,
     ) -> list[tuple[str, float]]:
         nodes = subgraph.get("nodes") or []
         edges = subgraph.get("edges") or []
@@ -921,7 +929,8 @@ class KnowledgeGraphService:
         for index, node in enumerate(nodes):
             properties = node.get("properties") or {}
             if node.get("type") == "Chunk" and properties.get("chunk_id"):
-                chunk_node_indexes.append((index, properties["chunk_id"]))
+                if allowed_file_ids is None or properties.get("file_id") in allowed_file_ids:
+                    chunk_node_indexes.append((index, properties["chunk_id"]))
                 continue
             entity_id = properties.get("entity_id")
             if entity_id in seed_weights:

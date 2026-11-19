@@ -93,6 +93,8 @@ async def test_delegation_reads_persisted_content_and_limits_selection(test_clie
     assert [item["kb_id"] for item in listed["structuredContent"]["knowledge_bases"]] == [fixture["kb_id"]]
     assert listed["structuredContent"]["knowledge_bases"][0]["supports_documents"] is True
     assert listed["structuredContent"]["knowledge_bases"][0]["supports_document_read"] is True
+    metadata = await _call(test_client, token, "get_kb_metadata", {"kb_id": fixture["kb_id"]})
+    assert metadata["structuredContent"] == {"kb_id": fixture["kb_id"], "supported": True, "fields": []}
     opened = await _call(test_client, token, "open_kb_document", {"kb_id": fixture["kb_id"], "file_id": fixture["file_id"]})
     assert opened["isError"] is False, opened
     assert "Delegated MCP needle" in opened["structuredContent"]["content"]
@@ -110,6 +112,8 @@ async def test_delegation_reads_persisted_content_and_limits_selection(test_clie
     denied = await _call(test_client, empty, "open_kb_document", {"kb_id": fixture["kb_id"], "file_id": fixture["file_id"]})
     assert denied["isError"] is True and "404" in denied["content"][0]["text"]
     assert "Delegated MCP needle" not in json.dumps(denied)
+    denied_metadata = await _call(test_client, empty, "get_kb_metadata", {"kb_id": fixture["kb_id"]})
+    assert denied_metadata["isError"] is True and "404" in denied_metadata["content"][0]["text"]
 
 
 async def test_same_delegation_token_cannot_survive_resource_revocation(test_client, admin_headers, delegated_document):
@@ -118,6 +122,7 @@ async def test_same_delegation_token_cannot_survive_resource_revocation(test_cli
     token = create_knowledge_token(uid=fixture["uid"], selection="all")
     args = {"kb_id": fixture["kb_id"], "file_id": fixture["file_id"]}
     assert (await _call(test_client, token, "open_kb_document", args))["isError"] is False
+    assert (await _call(test_client, token, "get_kb_metadata", {"kb_id": fixture["kb_id"]}))["isError"] is False
     me = await test_client.get("/api/auth/me", headers=admin_headers)
     changed = await test_client.put(
         f"/api/knowledge/knowledge-bases/{fixture['kb_id']}",
@@ -128,6 +133,8 @@ async def test_same_delegation_token_cannot_survive_resource_revocation(test_cli
     denied = await _call(test_client, token, "open_kb_document", args)
     assert denied["isError"] is True and "404" in denied["content"][0]["text"]
     assert "Delegated MCP needle" not in json.dumps(denied)
+    denied_metadata = await _call(test_client, token, "get_kb_metadata", {"kb_id": fixture["kb_id"]})
+    assert denied_metadata["isError"] is True and "404" in denied_metadata["content"][0]["text"]
 
 
 @pytest.mark.parametrize("mutation", ["expired", "audience", "purpose", "issuer", "signature", "duration"])
@@ -245,6 +252,7 @@ async def test_removed_download_tool_is_unknown(test_client, api_key_factory, de
     assert listed.status_code == 200, listed.text
     assert {item["name"] for item in listed.json()["result"]["tools"]} == {
         "list_kbs",
+        "get_kb_metadata",
         "query_kb",
         "search_file",
         "open_kb_document",

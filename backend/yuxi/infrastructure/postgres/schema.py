@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from yuxi.infrastructure.postgres.manager import PostgresManager
 
 BUSINESS_SCHEMA_VERSION = 4
-KNOWLEDGE_SCHEMA_VERSION = 2
+KNOWLEDGE_SCHEMA_VERSION = 3
 SCHEMA_VERSION_TABLE = "yuxi_schema_migrations"
 
 

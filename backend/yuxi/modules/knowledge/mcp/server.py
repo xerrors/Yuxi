@@ -24,18 +24,20 @@ from yuxi.modules.knowledge.mcp.auth import authenticate_knowledge_delegate
 from yuxi.modules.knowledge.schemas import (
     FindInputSchema,
     ListInputSchema,
+    MetadataInputSchema,
+    MetadataSearchInputSchema,
     OpenInputSchema,
     SearchFileInput,
-    SearchInputSchema,
 )
 from yuxi.modules.knowledge.services import tools as knowledge_tools
 from yuxi.modules.knowledge.services.access import visible_knowledge_bases
+from yuxi.shared.errors import InvalidInputError, InvalidOperationError, ResourceNotFoundError
 
 # 默认 Host 白名单，防 DNS rebinding；部署可用 YUXI_MCP_ALLOWED_HOSTS 覆盖。
 _DEFAULT_ALLOWED_HOSTS = "localhost:*,127.0.0.1:*,api:*"
 
 
-class QueryKBInput(SearchInputSchema):
+class QueryKBInput(MetadataSearchInputSchema):
     """MCP 检索接受单个 ID 或多个 ID，Public HTTP 保留单库输入。"""
 
     kb_id: str | list[str] = Field(description="来自 list_kbs 的知识库 ID；可传单个字符串或非空 ID 数组，一次检索多个库")
@@ -70,7 +72,13 @@ class KnowledgeMCP:
                 "kb_id 来自 list_kbs，可传单个 ID 或非空 ID 数组；file_name 对每个目标库生效，仅在需要限定文件名时填写。"
                 "数组输入返回 kb_ids 和按库顺序合并的 results，保留库内排名；任一库不可见或失败则整次失败。"
                 "返回 results，包含 content、kb_id、file_id 和来源 metadata；"
-                "用 find_kb_document/open_kb_document 核对原文。无结果时改写关键词。",
+                "filters 的 field 来自 get_kb_metadata，支持 and/or 分组，每次属性筛选限一个知识库；零候选返回空结果。"
+                "用 find_kb_document/open_kb_document 核对原文。无结果时可改写关键词，保留用户明确的属性条件。",
+            ),
+            "get_kb_metadata": (
+                MetadataInputSchema,
+                "读取当前可见知识库的自定义文件属性定义，返回 supported、fields（key、name、type、options、operators）。"
+                "字段随管理员配置变化，使用返回的 key 构造 query_kb.filters。只描述可用字段，不要求用户填写所有字段。",
             ),
             "search_file": (
                 SearchFileInput,
@@ -171,6 +179,10 @@ class KnowledgeMCP:
             status = 404 if exc.not_found else 400
         except KBNotFoundError:
             status = 404
+        except ResourceNotFoundError:
+            status = 404
+        except (InvalidInputError, InvalidOperationError):
+            status = 400
         except ValueError:
             status = 400
         except Exception as exc:
@@ -180,7 +192,10 @@ class KnowledgeMCP:
             # SDK 默认将异常正文返回客户端；此边界只公开稳定状态，防止底层诊断泄露。
             status = 500
         guidance = {
-            400: "请核对工具参数与取值范围；search_file 需要知识库或文件名关键词，find 需要非空 patterns。部分知识库仅支持 query_kb。",
+            400: (
+                "请核对参数；属性筛选先 get_kb_metadata 检查字段、类型和操作符，保留用户明确范围。"
+                "search_file 需要知识库或文件名关键词，find 需要非空 patterns。部分知识库不支持属性筛选或全文读取。"
+            ),
             404: "资源不存在或不可见；请重新 list_kbs，再用 search_file/query_kb 获取有效的 kb_id 和 file_id。",
             500: "知识库服务暂时失败，请稍后重试；持续失败时联系服务管理员。",
         }

@@ -47,7 +47,7 @@ def client(monkeypatch):
         assert selection == "all"
         return [{"kb_id": uid, "name": uid}]
 
-    async def retrieve(kb_id, query_text, file_name=None):
+    async def retrieve(kb_id, query_text, file_name=None, filters=None):
         """只替换检索存储边界，保留真实查询用例与权限校验。"""
         return {"kb_id": kb_id, "results": [{"content": f"document for {kb_id}", "file_id": "source"}]}
 
@@ -73,9 +73,13 @@ def client(monkeypatch):
 def test_tools_publish_query_array_and_existing_document_schemas(client):
     """MCP 公开多库参数，其余输入继续复用 Public API Schema。"""
     tools = {t["name"]: t for t in rpc(client, "tools/list").json()["result"]["tools"]}
-    assert set(tools) == {"list_kbs", "query_kb", "search_file", "open_kb_document", "find_kb_document"}
+    assert set(tools) == {"list_kbs", "query_kb", "search_file", "open_kb_document", "find_kb_document", "get_kb_metadata"}
+    from yuxi.modules.knowledge.schemas import SearchInputSchema
+
+    assert "filters" not in SearchInputSchema.model_json_schema()["properties"]
     for name, model in {
         "query_kb": knowledge_mcp.QueryKBInput,
+        "get_kb_metadata": knowledge_mcp.MetadataInputSchema,
         "search_file": knowledge_mcp.SearchFileInput,
         "open_kb_document": knowledge_mcp.OpenInputSchema,
         "find_kb_document": knowledge_mcp.FindInputSchema,
@@ -88,7 +92,7 @@ def test_tools_publish_query_array_and_existing_document_schemas(client):
         {"type": "string"},
         {"type": "array", "items": {"type": "string"}},
     ]
-    assert knowledge_mcp.SearchInputSchema.model_json_schema()["properties"]["kb_id"]["type"] == "string"
+    assert SearchInputSchema.model_json_schema()["properties"]["kb_id"]["type"] == "string"
 
 
 def test_initialize_explains_search_and_source_workflow(client):
