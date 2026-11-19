@@ -13,6 +13,7 @@ import stat
 import threading
 import time
 from pathlib import Path, PurePosixPath
+from urllib.parse import urlparse
 from weakref import WeakValueDictionary
 
 from yuxi.infrastructure.filesystem import open_directory_fd
@@ -236,6 +237,67 @@ class ContainerManager:
             if info is None or not self._container_running(info):
                 raise SandboxError("容器启动后未运行")
             return self._summary(info)
+
+    def fetch_skills(self, *, uid: str, request_id: str, args: list[str]) -> dict:
+        """只运行固定获取 CLI，独占请求挂载，结束和异常均销毁容器。"""
+        self._validate_uid(uid)
+        if re.fullmatch(r"remote-skill-[0-9a-f]{32}", request_id) is None:
+            raise SandboxValidationError("Skill 获取请求标识非法")
+        self._validate_skill_cli_args(args)
+        workdir = f".remote-skills/{request_id}"
+        local, host = self._validated_workdir(workspace_uid_dirname(uid), workdir)
+        directory_fd = open_directory_fd(local, ("workspace",))
+        os.close(directory_fd)
+
+        home = f"/home/user/workspace/{workdir}"
+        mounts = [{"Type": "bind", "Source": str(host), "Target": home, "ReadOnly": False}]
+        # 只有固定下载 CLI 可联网，聊天容器继续使用部署网络策略。
+        config = self._runtime_config(mounts, network="bridge")
+        config["Labels"] = {
+            "yuxi.managed": "true",
+            "yuxi.scope": self.scope,
+            "yuxi.uid": workspace_uid_dirname(uid),
+            "yuxi.purpose": "skill-fetch",
+            "yuxi.request_id": request_id,
+        }
+        with self._capacity_lock:
+            if self._running_count() >= self.settings.max_containers:
+                raise SandboxCapacityError("容器并发已达到部署上限")
+            config["Labels"]["yuxi.expires_at"] = str(time.time() + 360)
+            created = self.engine.create_container(name=self._container_name(request_id), config=config)
+            container_id = created["Id"]
+            try:
+                self.engine.start_container(container_id)
+            except Exception:
+                self.engine.remove_container(container_id)
+                raise
+
+        try:
+            exec_id = self.engine.create_exec(
+                container_id,
+                cmd=["python3", "-c", _EXEC_WRAPPER, "", "300", "/usr/local/bin/skills", *args[3:]],
+                env=[
+                    f"HOME={home}",
+                    "CI=1",
+                    "DISABLE_TELEMETRY=1",
+                    "GIT_TERMINAL_PROMPT=0",
+                    "GIT_CONFIG_NOSYSTEM=1",
+                    "GIT_CONFIG_GLOBAL=/dev/null",
+                    "GIT_ALLOW_PROTOCOL=https",
+                ],
+                workdir=f"{home}/workspace",
+                user=f"{self.settings.run_uid}:{self.settings.run_gid}",
+            )
+            output, truncated = self.engine.start_exec(
+                exec_id,
+                read_timeout=315,
+                output_budget=1024 * 1024,
+                deadline=time.monotonic() + 315,
+            )
+            exit_code = self.engine.inspect_exec(exec_id)
+            return {"output": output.decode("utf-8", errors="replace"), "exit_code": exit_code, "truncated": truncated}
+        finally:
+            self.engine.remove_container(container_id)
 
     def execute(
         self,
@@ -469,12 +531,42 @@ class ContainerManager:
                 created_at = float(labels.get("yuxi.created_at") or 0)
             except ValueError:
                 created_at = 0
-            if created_at <= 0 or now - created_at <= self.settings.max_lifetime_seconds:
+            expired = created_at > 0 and now - created_at > self.settings.max_lifetime_seconds
+            if labels.get("yuxi.purpose") == "skill-fetch":
+                try:
+                    expired = float(labels.get("yuxi.expires_at") or 0) <= now
+                except ValueError:
+                    expired = True
+            if not expired:
                 continue
             self._cleanup_stdin_dir(labels, str(labels.get("yuxi.run_id") or ""))
             self.engine.remove_container(info["Id"])
             removed += 1
         return removed
+
+    @staticmethod
+    def _validate_skill_cli_args(args: list[str]) -> None:
+        """wire 边界仅接受发现、搜索及指定 Skill 下载，禁止扩展为任意命令。"""
+        if not 5 <= len(args) <= 205 or args[:3] != ["npx", "-y", "skills"] or any("\0" in arg or len(arg) > 4096 for arg in args):
+            raise SandboxValidationError("Skills CLI 参数非法")
+        if args[3] == "find" and len(args) == 5 and args[4].strip() and not args[4].startswith("-"):
+            return
+        if args[3] != "add":
+            raise SandboxValidationError("Skills CLI 只允许发现、搜索和下载")
+        try:
+            source = urlparse(args[4])
+        except ValueError as exc:
+            raise SandboxValidationError("Skills CLI 来源必须是 HTTPS 地址") from exc
+        if source.scheme != "https" or not source.hostname or source.username or source.password or source.query or source.fragment:
+            raise SandboxValidationError("Skills CLI 来源必须是 HTTPS 地址")
+        if args[5:] == ["--list"]:
+            return
+        selections = args[5:-3]
+        if args[-3:] != ["-g", "-y", "--copy"] or not selections or len(selections) % 2:
+            raise SandboxValidationError("Skills CLI 下载参数非法")
+        for index in range(0, len(selections), 2):
+            if selections[index] != "--skill" or re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", selections[index + 1]) is None:
+                raise SandboxValidationError("Skills CLI 技能选择非法")
 
     def _container_config(self, *, uid: str, run_id: str, owner: str, workdir: str | None) -> dict:
         """装配固定镜像、固定用户、资源限制和最小挂载。"""
@@ -521,13 +613,18 @@ class ContainerManager:
             "yuxi.workdir": workdir or "",
             "yuxi.created_at": str(int(time.time())),
         }
+        config = self._runtime_config(mounts, network=self.settings.network)
+        config["Labels"] = labels
+        return config
+
+    def _runtime_config(self, mounts: list[dict], *, network: str) -> dict:
+        """复用沙盒资源限制和固定用户，挂载由调用者选择。"""
         return {
             "Image": self.image_id,
             "Cmd": ["/bin/sh", "-c", "trap 'exit 0' TERM INT; while true; do sleep 3600; done"],
             "Env": ["HOME=/home/user", "TMPDIR=/tmp", "LANG=C.UTF-8"],
             "WorkingDir": "/home/user",
             "User": f"{self.settings.run_uid}:{self.settings.run_gid}",
-            "Labels": labels,
             "HostConfig": {
                 "Mounts": mounts,
                 "Tmpfs": {
@@ -536,7 +633,7 @@ class ContainerManager:
                     ),
                     "/tmp": f"rw,noexec,nosuid,nodev,size={self.settings.tmp_bytes}",
                 },
-                "NetworkMode": self.settings.network,
+                "NetworkMode": network,
                 "ReadonlyRootfs": True,
                 "CapDrop": ["ALL"],
                 "SecurityOpt": ["no-new-privileges"],
