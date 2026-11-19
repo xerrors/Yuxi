@@ -85,7 +85,7 @@ OpenAI Completions API 兼容供应商的 `chat` 模型可以配置「模型请�
 
 白名单只限制顶层字段，字段内部结构和可用取值由供应商校验。参数是否生效取决于模型和供应商接口，Yuxi 不会把不支持的字段转换成另一种格式。Anthropic、Gemini 等非 OpenAI 兼容供应商不能使用这组 `extra_body` 覆盖。
 
-OpenAI Chat Completions 兼容接口返回标准思考块或非空文本字段 `reasoning_content`、`reasoning` 时，智能体会在生成期间展示思考。自定义供应商也适用，思考是否开启由模型默认值和请求参数决定。工具续答的思考回传由供应商协议单独决定。
+智能体可以展示 OpenAI Chat Completions SDK 解析出的标准思考块。兼容接口发送纯文本响应时，Yuxi 也会读取非空字符串 `reasoning_content` 或 `reasoning`。自定义供应商同样适用，结构化内容由 SDK 解析。思考是否开启由模型默认值和请求参数决定，工具续答的思考回传由供应商协议单独决定。
 
 ## 按用户统计模型用量
 
