@@ -133,6 +133,8 @@ docker compose run --rm --no-deps app-init python -m yuxi.migrations.legacy_v073
 
 若旧 `9/4` 数据已经迁移并升级为当前 `4/3`，但历史会话接口报“Session 缺少配置快照”，先执行 `docker compose exec api python -m yuxi.migrations.legacy_v073 --repair-session-config` 审计。确认候选数量后，附加 `--apply` 补齐缺失配置；该修复锁定匹配旧归档的会话行，保留已有快照和消息，支持重复运行，不需要重新执行整个 Schema 迁移。
 
+若创建对话时日志报“智能体资源字段 mcps 必须是 all 或非空字符串组成的列表”等资源选择错误，且当前 `4/3` 数据来自旧库迁移，先备份数据库，再执行 `docker compose exec api python -m yuxi.migrations.legacy_v073 --repair-agent-config` 审计。确认候选数量后附加 `--apply`，将匹配旧归档的智能体中遗留的资源 `null` 按旧语义转换为 `"all"`，预加载 Skill 的 `null` 转为空列表。该入口保留有效选择、其他配置、历史会话和归档，支持重复执行；缺少旧归档时拒绝修复，不能用空列表代替 `"all"` 来消除报错。修复后重新创建对话即可读取更新配置，不需要重新迁移整个数据库。
+
 ### 可选关闭知识库
 
 知识库默认开启。需要停用知识库时，在同一项目叠加关闭配置；PostgreSQL、Redis、MinIO、代码和数据保持原位：

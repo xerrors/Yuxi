@@ -509,3 +509,35 @@ test('创建请求与独立资源忙碌时路由不能离开，结束后恢复',
     assert.equal(routeGuards[0](), true, state)
   }
 })
+
+test('记忆草稿阻止弹窗关闭、切换和配置保存，保存期间阻止新开编辑', async () => {
+  const { form, writes, routeGuards } = await setupForm({
+    agent_id: 'memory-owner', name: '记忆入口', backend_id: 'ChatbotAgent',
+    visibility: 'private', can_manage: true, can_share: false
+  })
+  await form.openEdit('memory-owner')
+  assert.ok(form.agentModalMenuItems.value.some((item) => item.key === 'memory' && item.label === '记忆'))
+  form.saving.value = true
+  await form.selectAgentModalTab('memory')
+  assert.equal(form.agentModalActiveTab.value, 'basic', '配置保存期间不能切到记忆并产生新草稿')
+  form.saving.value = false
+  await form.selectAgentModalTab('memory')
+  form.memoryPanelRef.value = { confirmLeave: async () => false }
+  await form.selectAgentModalTab('basic')
+  await form.closeAgentModal()
+  await form.saveAgent()
+  await form.openCreate()
+  await form.openEdit('another-agent')
+  assert.equal(await routeGuards[0](), false)
+  assert.equal(form.showAgentModal.value, true)
+  assert.equal(form.agentModalActiveTab.value, 'memory')
+  assert.equal(form.editingAgentId.value, 'memory-owner')
+  assert.deepEqual(writes, [])
+  form.memorySaving.value = true
+  assert.equal(routeGuards[0](), false)
+  assert.equal(form.openingBlocked.value, true)
+  form.memorySaving.value = false
+  form.memoryPanelRef.value = { confirmLeave: async () => true }
+  await form.closeAgentModal()
+  assert.equal(form.showAgentModal.value, false)
+})

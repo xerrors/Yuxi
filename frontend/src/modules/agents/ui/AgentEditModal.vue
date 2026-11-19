@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   ArrowRight,
   Bot,
+  Brain,
   FileArchive,
   Microscope,
   Plus,
@@ -24,6 +25,7 @@ import { isAllAgentResourceSelection, normalizeAgentConfigurableItems } from '@/
 import McpFormModal from '@/modules/extensions/ui/McpFormModal.vue'
 import SkillInstallFlowModal from '@/modules/extensions/ui/SkillInstallFlowModal.vue'
 import AgentBoundSkillPanel from '@/modules/agents/ui/AgentBoundSkillPanel.vue'
+import AgentMemoryPanel from '@/modules/agents/ui/AgentMemoryPanel.vue'
 import AgentRuntimeConfigForm from '@/modules/agents/ui/AgentRuntimeConfigForm.vue'
 import ShareConfigForm from '@/modules/agents/ui/ShareConfigForm.vue'
 import { cloneShareConfig } from '@/modules/agents/model/shareConfig'
@@ -53,6 +55,8 @@ const agentModalActiveTab = ref('basic')
 const agentIconUploading = ref(false)
 const saving = ref(false)
 const boundSkillSaving = ref(false)
+const memorySaving = ref(false)
+const memoryPanelRef = ref(null)
 const createSkillFile = ref(null)
 const createContext = ref({})
 const createConfigItems = ref({})
@@ -70,9 +74,11 @@ const sharedSkillPreparing = ref(false)
 const sharedSkillOpen = ref(false)
 const sharedSkillFlow = ref(null)
 const resourceCreationOpen = computed(() => mcpCreateOpen.value || sharedSkillPreparing.value || sharedSkillOpen.value)
-const openingBlocked = computed(() => saving.value || boundSkillSaving.value || agentIconUploading.value || resourceCreationOpen.value
+const openingBlocked = computed(() => saving.value || boundSkillSaving.value || memorySaving.value || agentIconUploading.value || resourceCreationOpen.value
   || (showAgentModal.value && createOutcomeUnknown.value))
-onBeforeRouteLeave(() => !(saving.value || boundSkillSaving.value || agentIconUploading.value || resourceCreationOpen.value))
+onBeforeRouteLeave(() => !(saving.value || boundSkillSaving.value || memorySaving.value || agentIconUploading.value || resourceCreationOpen.value) && confirmMemoryLeave())
+/** 离开记忆面板前保留用户对未保存草稿的选择。 */
+const confirmMemoryLeave = () => memoryPanelRef.value?.confirmLeave() ?? true
 let createConfigRevision = 0
 // 新的打开或关闭操作使旧编辑响应失效，避免覆盖创建草稿。
 let modalOpenRevision = 0
@@ -188,6 +194,7 @@ const agentModalMenuItems = computed(() => {
       { key: 'model', label: '模型配置', icon: SlidersHorizontal },
       { key: 'tools', label: '工具配置', icon: Wrench },
       { key: 'skill', label: '专属 Skill', icon: Microscope },
+      { key: 'memory', label: '记忆', icon: Brain },
       { key: 'other', label: '其他配置', icon: Settings2 }
     )
   }
@@ -285,8 +292,8 @@ const handleAgentModalAfterOpenChange = (open) => {
   if (open && !editingAgentId.value) focusAgentNameInput()
 }
 
-const openCreate = () => {
-  if (openingBlocked.value) return
+const openCreate = async () => {
+  if (openingBlocked.value || (memoryPanelRef.value && !(await confirmMemoryLeave()))) return
   modalOpenRevision += 1
   editingAgentId.value = null
   editingCapabilities.value = {}
@@ -415,7 +422,7 @@ const beforeCreateSkillUpload = (file) => {
 }
 
 const openEdit = async (agent) => {
-  if (openingBlocked.value) return
+  if (openingBlocked.value || (memoryPanelRef.value && !(await confirmMemoryLeave()))) return
   const agentId = typeof agent === 'string' ? agent : agent?.agent_id
   if (!agentId) return
   const revision = ++modalOpenRevision
@@ -462,13 +469,14 @@ const restoreChatAgentSelectionIfNeeded = async () => {
   if (fallbackAgentId) await agentStore.selectAgent(fallbackAgentId)
 }
 
-const selectAgentModalTab = (tab) => {
-  if (boundSkillSaving.value) return
+const selectAgentModalTab = async (tab) => {
+  if (saving.value || boundSkillSaving.value || tab === agentModalActiveTab.value || (memoryPanelRef.value && !(await confirmMemoryLeave()))) return
   agentModalActiveTab.value = tab
 }
 
 const closeAgentModal = async () => {
   if (saving.value || boundSkillSaving.value || agentIconUploading.value || resourceCreationOpen.value) return
+  if (memoryPanelRef.value && !(await confirmMemoryLeave())) return
   modalOpenRevision += 1
   showAgentModal.value = false
   createConfigRevision += 1
@@ -537,6 +545,7 @@ const buildAgentPayload = () => {
 
 const saveAgent = async () => {
   if (saving.value || boundSkillSaving.value || agentIconUploading.value || resourceCreationOpen.value || createOutcomeUnknown.value || createConfigLoading.value) return
+  if (memoryPanelRef.value && !(await confirmMemoryLeave())) return
   if (!agentForm.name.trim()) {
     agentModalActiveTab.value = 'basic'
     if (!editingAgentId.value) {
@@ -635,6 +644,7 @@ defineExpose({
             保存
           </a-button>
         </div>
+        <a-button v-else type="text" class="lucide-icon-btn" aria-label="关闭智能体编辑" :disabled="memorySaving" @click="closeAgentModal"><X :size="18" /></a-button>
       </div>
     </template>
     <div
@@ -651,7 +661,7 @@ defineExpose({
           type="button"
           class="agent-modal-nav-item"
           :class="{ active: agentModalActiveTab === item.key }"
-          :disabled="boundSkillSaving"
+          :disabled="saving || boundSkillSaving || memorySaving"
           @click="selectAgentModalTab(item.key)"
         >
           <span class="nav-item-main">
@@ -846,6 +856,8 @@ defineExpose({
         <section v-if="editingAgentId && agentModalActiveTab === 'skill'" class="agent-modal-section">
           <AgentBoundSkillPanel :key="editingAgentId" :agent-slug="editingAgentId" @navigate="navigateToSkill" @busy="boundSkillSaving = $event" />
         </section>
+
+        <AgentMemoryPanel v-if="showAgentModal && editingAgentId && agentModalActiveTab === 'memory'" ref="memoryPanelRef" :disabled="saving" @busy="memorySaving = $event" />
 
         <section
           v-if="editingAgentId || createAdvancedOpen || Object.keys(createConfigItems).length"

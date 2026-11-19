@@ -11,7 +11,7 @@ import pytest
 from fastapi import FastAPI
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from test.integration.support.postgres_schema import create_isolated_manager, drop_isolated_schema
 from yuxi.api.dependencies.auth import get_db
@@ -197,6 +197,16 @@ async def test_upgrade_preserves_data_scope_and_can_write_again(legacy_database)
         reader = await db.scalar(select(User).where(User.uid == "reader"))
         outsider = await db.scalar(select(User).where(User.uid == "outsider"))
         assert shared.backend_id == "ChatbotAgent" and shared.config_json["custom"] == "sentinel"
+        assert shared.config_json["context"] == {
+            "model": "agent-model",
+            "system_prompt": "retained prompt",
+            "skills": ["retained-skill"],
+            "tools": "all",
+            "mcps": "all",
+            "knowledges": [],
+            "preload_skills": [],
+        }
+        assert private.config_json == {}
         assert shared.visibility == "shared" and user_can_run_agent(reader, shared)
         assert not user_can_run_agent(outsider, shared) and not user_can_run_agent(reader, private)
     async with manager.async_engine.begin() as conn:
@@ -223,20 +233,30 @@ async def test_upgrade_preserves_data_scope_and_can_write_again(legacy_database)
 
 
 # legacy_database 为隔离旧库；无返回，经真实 HTTP 协议读取迁移后的会话。
-async def test_migrated_sessions_support_http_history(legacy_database):
-    """列表与详情读取有效配置，不能仅凭行数和版本号声明迁移成功。"""
+async def test_migrated_sessions_support_http_history(legacy_database, monkeypatch, tmp_path):
+    """历史读取和新建会话均使用迁移后的配置，并回读持久快照。"""
+    from yuxi.modules.agents.services import scheduler
+    from yuxi.modules.models.providers.cache import model_cache
+
     manager = legacy_database
     await upgrade_legacy_schema(manager)
+    async with manager.async_engine.begin() as conn:
+        await conn.execute(text("UPDATE projects SET workdir_path='projects/20260102/abcdef' WHERE id='project'"))
+    manager.AsyncSession = async_sessionmaker(manager.async_engine, expire_on_commit=False)
+    monkeypatch.setattr(scheduler, "pg_manager", manager)
+    monkeypatch.setattr(model_cache, "get_model_info", lambda spec: SimpleNamespace(model_type="chat") if spec == "agent-model" else None)
+    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path))
     app = FastAPI()
     app.include_router(threads_router, prefix="/api/v1/agents")
 
     async def database():
         """提供隔离 Schema 的请求级真实数据库会话。"""
-        async with AsyncSession(manager.async_engine) as db:
+        async with AsyncSession(manager.async_engine, expire_on_commit=False) as db:
             yield db
+            await db.commit()
 
     app.dependency_overrides[get_db] = database
-    app.dependency_overrides[require_public_context] = lambda: SimpleNamespace(scope=ActorScope(uid="owner", app_id=None))
+    app.dependency_overrides[require_public_context] = lambda: SimpleNamespace(scope=ActorScope(uid="owner", app_id=None), api_key=None)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/api/v1/agents/sessions")
         assert response.status_code == 200, response.text
@@ -246,6 +266,14 @@ async def test_migrated_sessions_support_http_history(legacy_database):
         response = await client.get("/api/v1/agents/sessions/root")
         assert response.status_code == 200, response.text
         assert response.json()["yuxi"]["title"] == "root title"
+        created = await client.post(
+            "/api/v1/agents/sessions",
+            headers={"Idempotency-Key": "migrated-agent-create"},
+            json={"agent_id": "retained", "project_id": "project", "agent": {"model": "agent-model"}},
+        )
+        assert created.status_code == 201, created.text
+        created_id = created.json()["id"]
+        assert created.json()["agent"]["model"] == "agent-model"
     async with manager.async_engine.connect() as conn:
         snapshot = await conn.scalar(text("SELECT config_snapshot FROM sessions WHERE thread_id='child'"))
         assert snapshot["model"] == "agent-model"
@@ -253,6 +281,89 @@ async def test_migrated_sessions_support_http_history(legacy_database):
         assert snapshot["skills"] == ["retained-skill"]
         assert snapshot["tools"] == snapshot["mcps"] == "all"
         assert snapshot["knowledges"] == snapshot["preload_skills"] == []
+        created_snapshot = await conn.scalar(text("SELECT config_snapshot FROM sessions WHERE thread_id=:id"), {"id": created_id})
+        assert created_snapshot["tools"] == created_snapshot["mcps"] == "all"
+        assert created_snapshot["knowledges"] == created_snapshot["preload_skills"] == []
+        assert created_snapshot["skills"] == ["retained-skill"]
+        assert await conn.scalar(text("SELECT count(*) FROM agent_input_receipts WHERE thread_id=:id"), {"id": created_id}) == 1
+
+
+# legacy_database 为隔离旧库；无返回，验证旧定义修复的审计、来源与幂等边界。
+async def test_agent_config_repair_preserves_current_choices_and_requires_archive(legacy_database):
+    """只修复归档可证明的旧空值，保留当前选择、非归档定义和历史原文。"""
+    from yuxi.migrations.legacy_v073 import repair_legacy_agent_configs
+
+    manager = legacy_database
+    with pytest.raises(RuntimeError, match="只支持已迁移"):
+        await repair_legacy_agent_configs(manager, apply=True)
+    await upgrade_legacy_schema(manager)
+    retained = {
+        "custom": "updated sentinel",
+        "context": {
+            "model": "selected-model",
+            "system_prompt": "updated prompt",
+            "tools": "all",
+            "mcps": None,
+            "skills": None,
+            "knowledges": None,
+            "preload_skills": None,
+        },
+    }
+    private = {"context": {"tools": [], "mcps": None, "skills": None, "knowledges": None, "preload_skills": []}}
+    new_config = {"context": {"mcps": None, "skills": None}}
+    async with manager.async_engine.begin() as conn:
+        await conn.execute(
+            text("UPDATE agents SET config_json=CAST(:config AS json) WHERE slug=:slug"),
+            [{"slug": "retained", "config": json.dumps(retained)}, {"slug": "private", "config": json.dumps(private)}],
+        )
+        await conn.execute(
+            text("""INSERT INTO agents (id,slug,backend_id,name,pics,config_json,share_config,visibility,is_builtin,is_default,created_by)
+                VALUES (90,'post-upgrade','ChatbotAgent','new','[]',CAST(:config AS json),'{}','private',false,false,'owner')"""),
+            {"config": json.dumps(new_config)},
+        )
+        schema = await conn.scalar(text("SELECT current_schema()"))
+        archived = await conn.scalar(text(f'SELECT config_json FROM "{schema}_v073_archive".agents WHERE id=50'))
+    assert await repair_legacy_agent_configs(manager) == {"candidates": 2, "repaired": 0}
+    async with manager.async_engine.connect() as conn:
+        assert await conn.scalar(text("SELECT config_json FROM agents WHERE slug='retained'")) == retained
+        assert await conn.scalar(text("SELECT config_json FROM agents WHERE slug='private'")) == private
+    assert await repair_legacy_agent_configs(manager, apply=True) == {"candidates": 2, "repaired": 2}
+    assert await repair_legacy_agent_configs(manager, apply=True) == {"candidates": 0, "repaired": 0}
+    expected_retained = {
+        "custom": "updated sentinel",
+        "context": {
+            "model": "selected-model",
+            "system_prompt": "updated prompt",
+            "tools": "all",
+            "mcps": "all",
+            "skills": None,
+            "knowledges": None,
+            "preload_skills": [],
+        },
+    }
+    expected_private = {"context": {"tools": [], "mcps": "all", "skills": "all", "knowledges": "all", "preload_skills": []}}
+    async with manager.async_engine.begin() as conn:
+        assert await conn.scalar(text("SELECT config_json FROM agents WHERE slug='retained'")) == expected_retained
+        assert await conn.scalar(text("SELECT config_json FROM agents WHERE slug='private'")) == expected_private
+        assert await conn.scalar(text("SELECT config_json FROM agents WHERE slug='post-upgrade'")) == new_config
+        assert await conn.scalar(text(f'SELECT config_json FROM "{schema}_v073_archive".agents WHERE id=50')) == archived
+        assert await conn.scalar(text("SELECT count(*) FROM messages")) == 5
+        # 相同 ID 但不同 slug 不证明当前定义来自归档中的同一个智能体。
+        await conn.execute(
+            text("UPDATE agents SET slug='renamed',config_json=CAST(:config AS json) WHERE id=51"),
+            {"config": json.dumps(new_config)},
+        )
+        # 相同 slug 但不同 ID 同样不能被当作历史定义修复。
+        await conn.execute(text("UPDATE agents SET slug='private' WHERE id=90"))
+    assert await repair_legacy_agent_configs(manager, apply=True) == {"candidates": 0, "repaired": 0}
+    async with manager.async_engine.begin() as conn:
+        assert await conn.scalar(text("SELECT config_json FROM agents WHERE id=51")) == new_config
+        assert await conn.scalar(text("SELECT config_json FROM agents WHERE id=90")) == new_config
+        await conn.execute(text(f'DROP SCHEMA "{schema}_v073_archive" CASCADE'))
+    with pytest.raises(RuntimeError, match="缺少 v0.7.3 归档"):
+        await repair_legacy_agent_configs(manager, apply=True)
+    async with manager.async_engine.connect() as conn:
+        assert await conn.scalar(text("SELECT config_json FROM agents WHERE slug='retained'")) == expected_retained
 
 
 # legacy_database 为已迁移隔离库；无返回，验证修复仅填空且可重复运行。
@@ -287,7 +398,10 @@ async def test_snapshot_restores_archived_system_model_default(legacy_database, 
     async with manager.async_engine.begin() as conn:
         await conn.execute(text("UPDATE agents SET config_json='{}'"))
         await conn.execute(
-            text("INSERT INTO config_options (key,name,description,value,params) VALUES ('system_options','system','test',CAST(:value AS json),CAST(:params AS json))"),
+            text(
+                "INSERT INTO config_options (key,name,description,value,params) "
+                "VALUES ('system_options','system','test',CAST(:value AS json),CAST(:params AS json))"
+            ),
             {"value": json.dumps(values), "params": json.dumps({"fields": [{"key": "default_model", "default": "declared-default"}]})},
         )
     await upgrade_legacy_schema(manager)
@@ -397,8 +511,18 @@ async def test_work_committed_while_waiting_for_table_lock_is_rechecked(legacy_d
         await writer.execute(text("LOCK TABLE agent_runs IN ACCESS SHARE MODE"))
         migration = asyncio.create_task(upgrade_legacy_schema(manager))
         try:
-            # 读锁确保迁移的排他锁尚未取得，再提交新的在途状态。
-            await asyncio.sleep(0.1)
+            # 先从 PostgreSQL 证明迁移已通过初次审计并等待表锁，避免定时等待与慢环境竞争。
+            async with asyncio.timeout(30):
+                while not await writer.scalar(
+                    text(
+                        "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE relation='agent_runs'::regclass "
+                        "AND mode='AccessExclusiveLock' AND NOT granted)"
+                    )
+                ):
+                    if migration.done():
+                        await migration
+                        pytest.fail("迁移没有等待 agent_runs 表锁")
+                    await asyncio.sleep(0.05)
             await writer.execute(text("UPDATE agent_runs SET runtime_cleanup_pending=true WHERE id='first'"))
             await writer.commit()
             with pytest.raises(RuntimeError, match="锁定后"):

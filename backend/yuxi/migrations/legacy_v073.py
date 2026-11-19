@@ -140,6 +140,7 @@ async def upgrade_legacy_schema(manager) -> dict:
                 source = RENAMED_TABLES.get(name, name)
                 if source in legacy.tables:
                     await _copy_table(conn, table, legacy.tables[source], archive)
+            await _restore_agent_configs(conn, archive, apply=True)
             await _copy_turns_and_inputs(conn, archive)
             await _restore_session_configs(conn, archive, apply=True)
             await _finish_constraints(conn, current)
@@ -167,6 +168,56 @@ async def repair_legacy_session_configs(manager, *, apply: bool = False) -> dict
             if not await conn.scalar(text("SELECT 1 FROM pg_namespace WHERE nspname=:name"), {"name": archive}):
                 raise RuntimeError("缺少 v0.7.3 归档，无法恢复历史配置来源")
             return await _restore_session_configs(conn, archive, apply=apply)
+
+
+# manager 为当前数据库管理器，apply 控制是否写入；返回候选与修复行数。
+async def repair_legacy_agent_configs(manager, *, apply: bool = False) -> dict:
+    """显式转换有旧归档来源的资源空值，保留升级后的有效配置。"""
+    async with schema_migration_lock(manager):
+        if await get_schema_versions(manager) != TARGET_VERSIONS:
+            raise RuntimeError("配置修复只支持已迁移的 business=4/knowledge=3")
+        async with manager.async_engine.begin() as conn:
+            schema = await conn.scalar(text("SELECT current_schema()"))
+            archive = f"{schema}_v073_archive"
+            if not await conn.scalar(text("SELECT 1 FROM pg_namespace WHERE nspname=:name"), {"name": archive}):
+                raise RuntimeError("缺少 v0.7.3 归档，无法恢复历史配置来源")
+            return await _restore_agent_configs(conn, archive, apply=apply)
+
+
+# conn 为迁移事务，archive 为旧智能体来源；返回候选与更新行数，不输出配置正文。
+async def _restore_agent_configs(conn, archive: str, *, apply: bool) -> dict:
+    """只转换仍与归档语义一致的显式资源空值，不覆盖其他配置。"""
+    source = conn.dialect.identifier_preparer.quote_identifier(archive)
+    rows = (
+        (
+            await conn.execute(
+                text(f"""
+                SELECT a.id, a.config_json, o.config_json AS legacy_config
+                FROM agents a JOIN {source}.agents o ON a.id=o.id AND a.slug=o.slug
+                ORDER BY a.id FOR UPDATE OF a
+                """)
+            )
+        )
+        .mappings()
+        .all()
+    )
+    resource_defaults = {"tools": "all", "knowledges": "all", "mcps": "all", "skills": "all", "preload_skills": []}
+    configs = []
+    for row in rows:
+        config = deepcopy(row["config_json"] or {})
+        context = config.get("context") or {}
+        legacy_context = (row["legacy_config"] or {}).get("context") or {}
+        changed = False
+        for name, default in resource_defaults.items():
+            # 显式列表（包括空列表）已有确定语义；只有旧版空值能证明“全部”的来源。
+            if name in context and context[name] is None and legacy_context.get(name) is None:
+                context[name] = default
+                changed = True
+        if changed:
+            configs.append({"id": row["id"], "config": json.dumps(config)})
+    if apply and configs:
+        await conn.execute(text("UPDATE agents SET config_json=CAST(:config AS json) WHERE id=:id"), configs)
+    return {"candidates": len(configs), "repaired": len(configs) if apply else 0}
 
 
 # conn 为迁移事务，archive 为旧配置来源；返回候选与更新行数，不输出配置正文。
@@ -477,11 +528,15 @@ async def main() -> None:
     """从部署配置连接旧库；不启动 API/worker，也不读取用户文件或外部对象。"""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="已停写并备份整套数据后执行事务迁移")
-    parser.add_argument("--repair-session-config", action="store_true", help="从旧归档修复已迁移会话缺失的配置快照")
+    repair = parser.add_mutually_exclusive_group()
+    repair.add_argument("--repair-session-config", action="store_true", help="从旧归档修复已迁移会话缺失的配置快照")
+    repair.add_argument("--repair-agent-config", action="store_true", help="按旧归档转换已迁移智能体遗留的资源空值")
     args = parser.parse_args()
     pg_manager.initialize()
     try:
-        if args.repair_session_config:
+        if args.repair_agent_config:
+            report = await repair_legacy_agent_configs(pg_manager, apply=args.apply)
+        elif args.repair_session_config:
             report = await repair_legacy_session_configs(pg_manager, apply=args.apply)
         else:
             report = await upgrade_legacy_schema(pg_manager) if args.apply else await audit_legacy_schema(pg_manager)
