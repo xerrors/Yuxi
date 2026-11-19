@@ -7,33 +7,39 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, MessagesState, StateGraph
-from yuxi.modules.models.chat import load_chat_model
-from yuxi.modules.models.utils import parse_assistant_message_body
-from yuxi.modules.models.providers.cache import ModelInfo
 from yuxi.modules.agents.services.openai_events import OpenAIEventAdapter
+from yuxi.modules.models.chat import ChatCompletionsAdapter, load_chat_model
+from yuxi.modules.models.providers.cache import ModelInfo
+from yuxi.modules.models.utils import parse_assistant_message_body
 
 REASONING = " First\nthen check. "
 TOOL = {"type": "function", "function": {"name": "inspect_code", "parameters": {"type": "object", "properties": {}}}}
 
 
-def make_model(monkeypatch, provider, field="reasoning_content", *, enabled=True):
+def make_model(monkeypatch, provider, field="reasoning_content", *, enabled=True, replay=True, answer=""):
     """以 SDK 的真实 JSON/SSE 解析覆盖模型工厂。"""
     requests = []
 
     def respond(request):
-        """工具结果后的请求必须携带原始推理，而非格式化后的展示文本。"""
+        """核对工具续答在 HTTP 边界上的正文与思考字段。"""
         body = json.loads(request.content)
         requests.append(body)
         resumed = body["messages"][-1]["role"] == "tool"
         if resumed:
-            if enabled:
-                assert body["messages"][-2]["reasoning_content"] == REASONING
+            assistant = body["messages"][-2]
+            expected_content = answer or None
+            if answer and not replay:
+                expected_content = [{"type": "text", "text": answer}]
+            assert assistant["content"] == expected_content
+            if enabled and replay:
+                assert assistant["reasoning_content"] == REASONING
             else:
-                assert "reasoning_content" not in body["messages"][-2]
+                assert "reasoning_content" not in assistant
+                assert "reasoning" not in assistant
         base = {"id": "chat-test", "object": "chat.completion", "created": 1, "model": "test"}
         reasoning = {field: REASONING} if enabled and not resumed else {}
         tool = {"id": "call-test", "type": "function", "function": {"name": "inspect_code", "arguments": "{}"}}
-        message = {"role": "assistant", "content": "OK" if resumed else "", **reasoning}
+        message = {"role": "assistant", "content": "OK" if resumed else answer, **reasoning}
         if not resumed:
             message["tool_calls"] = [tool]
         finish = "stop" if resumed else "tool_calls"
@@ -84,6 +90,12 @@ def make_model(monkeypatch, provider, field="reasoning_content", *, enabled=True
                         ],
                     },
                 )
+                if answer:
+                    delta["content"] = answer[:8]
+                    events.insert(
+                        -2,
+                        {**base, "choices": [{"index": 0, "delta": {"content": answer[8:]}, "finish_reason": None}]},
+                    )
             return httpx.Response(
                 200,
                 text="".join(f"data: {json.dumps(e)}\n\n" for e in events) + "data: [DONE]\n\n",
@@ -91,7 +103,8 @@ def make_model(monkeypatch, provider, field="reasoning_content", *, enabled=True
             )
         return httpx.Response(200, json={**base, "choices": [{"index": 0, "message": message, "finish_reason": finish}]})
 
-    info = ModelInfo(provider, "test", "chat", "Test", "test-key", "https://example.com/v1", "openai")
+    model_id = "qwen3.8-flash" if provider in {"alibaba-cn", "alibaba"} else "test"
+    info = ModelInfo(provider, model_id, "chat", "Test", "test-key", "https://example.com/v1", "openai")
     monkeypatch.setattr("yuxi.modules.models.chat.model_cache.get_model_info", lambda _: info)
     transport = httpx.MockTransport(respond)
     model = load_chat_model(
@@ -103,12 +116,12 @@ def make_model(monkeypatch, provider, field="reasoning_content", *, enabled=True
     return model, requests
 
 
-@pytest.mark.parametrize("provider", ["siliconflow-cn", "opencode-go", "zhipuai-coding-plan"])
+@pytest.mark.parametrize("provider", ["siliconflow-cn", "opencode-go", "zhipuai-coding-plan", "deepseek", "alibaba-cn", "alibaba"])
 @pytest.mark.parametrize("field", ["reasoning_content", "reasoning"])
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("output_version", ["v0", "v1"])
 async def test_provider_reasoning_and_tool_roundtrip(monkeypatch, provider, field, stream, output_version):
-    """三家均保留推理、工具 ID 与续答原文，异步和同步路径一致。"""
+    """各供应商保留推理、工具 ID 与续答原文，异步和同步路径一致。"""
     model, requests = make_model(monkeypatch, provider, field)
     model.output_version = output_version
     bound = model.bind_tools([TOOL])
@@ -134,9 +147,20 @@ async def test_provider_reasoning_and_tool_roundtrip(monkeypatch, provider, fiel
     assert len(requests) == 4
 
 
-async def test_real_v3_reasoning_projection_and_checkpoint(monkeypatch):
-    """真实 v3 事件经服务层投影后与 checkpoint 的历史推理一致。"""
-    model, _ = make_model(monkeypatch, "opencode-go")
+@pytest.mark.parametrize(
+    ("provider", "field"),
+    [
+        ("opencode-go", "reasoning_content"),
+        ("deepseek", "reasoning_content"),
+        ("alibaba-cn", "reasoning_content"),
+        ("my-gateway", "reasoning_content"),
+        ("my-gateway", "reasoning"),
+    ],
+)
+async def test_real_v3_reasoning_projection_and_checkpoint(monkeypatch, provider, field):
+    """真实 v3 事件保留正文、工具和思考，并以原有格式续答。"""
+    text = "Inspect the code."
+    model, _ = make_model(monkeypatch, provider, field, replay=provider != "my-gateway", answer=text)
 
     async def node(state):
         """执行真实模型流桥接。"""
@@ -171,8 +195,10 @@ async def test_real_v3_reasoning_projection_and_checkpoint(monkeypatch):
         for e in emitted
     )
     state = await compiled.aget_state(config)
-    persisted = state.values["messages"][-1].model_dump()
-    assert parse_assistant_message_body(persisted["content"])["reasoning_content"] == REASONING
+    assistant = state.values["messages"][-1]
+    assert parse_assistant_message_body(assistant.content) == {"content": text, "reasoning_content": REASONING}
+    turn = [*state.values["messages"], ToolMessage("valid", tool_call_id="call-test")]
+    assert (await model.bind_tools([TOOL]).ainvoke(turn)).text == "OK"
 
 
 def test_non_reasoning_provider_is_unchanged(monkeypatch):
@@ -182,17 +208,67 @@ def test_non_reasoning_provider_is_unchanged(monkeypatch):
     assert "reasoning_content" not in payload["messages"][0]
 
 
-async def test_disabling_adapter_reproduces_upstream_reasoning_loss(monkeypatch):
-    """负向对照：同一真实 SDK 响应在关闭适配后只保留工具，丢失推理。"""
-    model, _ = make_model(monkeypatch, "opencode-go")
-    model.preserve_reasoning = False
-    result = await model.ainvoke("Inspect code")
-    assert result.tool_calls[0]["id"] == "call-test"
-    assert "reasoning_content" not in result.additional_kwargs
-    assert not any(block["type"] == "reasoning" for block in result.content_blocks)
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize(
+    "payload,expected",
+    [
+        ({"reasoning_content": "preferred", "reasoning": "other"}, "preferred"),
+        ({"reasoning_content": {"text": "invalid"}, "reasoning": "fallback"}, "fallback"),
+        ({"reasoning": ["unsupported"], "reasoning_details": [{"text": "ignored"}]}, ""),
+        ({"content": [{"type": "text", "text": "Answer"}], "reasoning_content": "ignored"}, ""),
+        (
+            {
+                "content": [{"type": "reasoning", "reasoning": "native"}, {"type": "text", "text": "Answer"}],
+                "reasoning_content": "ignored",
+            },
+            "native",
+        ),
+    ],
+)
+async def test_only_plain_string_reasoning_is_used_as_fallback(httpx_mock, stream, payload, expected):
+    """复杂字段与结构化内容沿用 SDK，普通字符串仍可兜底。"""
+    model = ChatCompletionsAdapter(model="test", api_key="test-key", base_url="https://example.com/v1")
+    message = {"role": "assistant", "content": "Answer", **payload}
+    if stream:
+        frame = {"choices": [{"index": 0, "delta": message}]}
+        httpx_mock.add_response(text=f"data: {json.dumps(frame)}\n\ndata: [DONE]\n\n", headers={"content-type": "text/event-stream"})
+        async with await model.astream_events("Test", version="v3") as run:
+            result = await run.output
+    else:
+        httpx_mock.add_response(json={"choices": [{"message": message}]})
+        result = await model.ainvoke("Test")
+    assert result.text == "Answer"
+    assert "".join(block["reasoning"] for block in result.content_blocks if block["type"] == "reasoning") == expected
 
 
-@pytest.mark.parametrize("provider", ["siliconflow-cn", "opencode-go", "zhipuai-coding-plan"])
+async def test_plain_stream_keeps_sdk_content(httpx_mock):
+    """无思考字段的自定义供应商直接流式返回文本。"""
+    model = ChatCompletionsAdapter(model="test", api_key="test-key", base_url="https://example.com/v1")
+    frame = {"choices": [{"index": 0, "delta": {"role": "assistant", "content": "Answer"}}]}
+    httpx_mock.add_response(text=f"data: {json.dumps(frame)}\n\ndata: [DONE]\n\n", headers={"content-type": "text/event-stream"})
+    chunks = [chunk async for chunk in model.astream("Test")]
+    assert chunks[0].content == "Answer"
+
+
+async def test_synthetic_thought_is_not_sent_to_responses(httpx_mock):
+    """简单兜底不产生可回传的 Responses 原生思考项。"""
+    model = ChatCompletionsAdapter(model="test", api_key="test-key", base_url="https://example.com/v1")
+    httpx_mock.add_response(
+        json={"choices": [{"message": {"role": "assistant", "content": "answer", "reasoning_content": "private thought"}}]}
+    )
+    reply = await model.ainvoke("First")
+    assert any(block["type"] == "reasoning" for block in reply.content_blocks)
+    native = AIMessage(
+        content_blocks=[{"type": "reasoning", "reasoning": "native summary", "id": "rs_native"}],
+        response_metadata={"output_version": "v1", "model_provider": "openai", "object": "response"},
+    )
+    responses = ChatCompletionsAdapter(model="gpt-5-pro", api_key="test-key")
+    items = responses._get_request_payload([HumanMessage("First"), reply, native, HumanMessage("Next")])["input"]
+    assert [item["id"] for item in items if item["type"] == "reasoning"] == ["rs_native"]
+    assert [item["content"][0]["text"] for item in items if item.get("role") == "assistant"] == ["answer"]
+
+
+@pytest.mark.parametrize("provider", ["siliconflow-cn", "opencode-go", "zhipuai-coding-plan", "deepseek", "alibaba-cn", "alibaba"])
 async def test_missing_reasoning_still_completes_tool_roundtrip(monkeypatch, provider):
     """供应商没有输出推理时，不伪造字段、不妨碍工具及续答。"""
     model, _ = make_model(monkeypatch, provider, enabled=False)

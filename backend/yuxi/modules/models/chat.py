@@ -89,8 +89,11 @@ def load_chat_model(
         base_url=base_url,
         stream_usage=True,
         user_uid=signing_uid,
-        preserve_reasoning=info.provider_id
+        replay_reasoning=info.provider_id
         in {
+            "alibaba",
+            "alibaba-cn",
+            "deepseek",
             "siliconflow",
             "siliconflow-cn",
             "opencode",
@@ -147,7 +150,7 @@ class ChatAnthropicAdapter(ChatAnthropic):
 class ChatCompletionsAdapter(ChatOpenAI):
     """在解析边界保留扩展字段，HTTP、重试和工具绑定由上游负责。"""
 
-    preserve_reasoning: bool = Field(default=False, exclude=True)
+    replay_reasoning: bool = Field(default=False, exclude=True)
     # 开启 UID 头时的用户 uid；签名在每次发送边界现算，不缓存时间戳。
     user_uid: str | None = Field(default=None, exclude=True)
 
@@ -159,28 +162,36 @@ class ChatCompletionsAdapter(ChatOpenAI):
         message = generation.message
         normalize_tool_call_chunks(message)
         choices = chunk.get("choices") or []
-        if self.preserve_reasoning:
-            self._standardize_content(message, choices[0].get("delta") or {} if choices else {})
+        raw = choices[0].get("delta") if choices else None
+        self._add_reasoning(message, _reasoning_content(raw or {}))
         return generation
 
     def _create_chat_result(self, response, generation_info=None):
-        """非流式响应也保留同一供应商字段。"""
+        """非流式响应使用同样的字符串兜底。"""
         result = super()._create_chat_result(response, generation_info)
-        if self.preserve_reasoning:
-            data = response if isinstance(response, dict) else response.model_dump()
-            for generation, choice in zip(result.generations, data.get("choices", []), strict=True):
-                self._standardize_content(generation.message, choice.get("message") or {})
+        choices = response["choices"] if isinstance(response, dict) else response.choices
+        for generation, choice in zip(result.generations, choices, strict=True):
+            raw = choice["message"] if isinstance(choice, dict) else choice.message.model_dump(include={"reasoning_content", "reasoning"})
+            self._add_reasoning(generation.message, _reasoning_content(raw))
         return result
 
-    def _standardize_content(self, message: AIMessage, raw: dict) -> None:
-        """在模型边界生成标准块，文本不经过裁剪以便原样续答。"""
+    def _add_reasoning(self, message: AIMessage, reasoning: str) -> None:
+        """补充简单文本帧的思考，结构化内容交给 SDK。"""
+        if not isinstance(message.content, str):
+            return
+        if not reasoning and not self.replay_reasoning:
+            return
+
         blocks = message.content_blocks
-        for block in blocks:
-            if block["type"] == "text":
-                block["index"] = "lc_text"
-        if reasoning := _reasoning_content(raw):
-            # lc_ 索引支持 v1 多片合并，并与整数工具索引隔离。
-            blocks.insert(0, {"type": "reasoning", "reasoning": reasoning, "index": "lc_reasoning"})
+        if self.replay_reasoning:
+            # 名单内的供应商沿用原有的文本续片合并格式。
+            for block in blocks:
+                if block["type"] == "text":
+                    block["index"] = "lc_text"
+        if reasoning:
+            # 通用兜底保留 SDK 的正文位置，供 v3 合并相邻文本帧。
+            position = 0 if self.replay_reasoning else len(blocks)
+            blocks.insert(position, {"type": "reasoning", "reasoning": reasoning, "index": "lc_reasoning"})
         message.content = blocks
         message.response_metadata["output_version"] = "v1"
 
@@ -189,9 +200,14 @@ class ChatCompletionsAdapter(ChatOpenAI):
         payload = super()._get_request_payload(input_, stop=stop, **kwargs)
         _attach_user_uid_headers(payload, self.user_uid)
         if "messages" not in payload:
+            if isinstance(items := payload.get("input"), list):
+                # 字符串兜底没有 Responses 的原生思考 ID。
+                payload["input"] = [
+                    item for item in items if not isinstance(item, dict) or item.get("type") != "reasoning" or item.get("id")
+                ]
             return payload
         originals = self._convert_input(input_).to_messages()
-        if self.preserve_reasoning:
+        if self.replay_reasoning:
             self._restore_wire_reasoning(originals, payload["messages"])
         _sanitize_wire_invalid_tool_calls(payload["messages"], originals)
         # MCP 等工具返回文本块；部分 Chat Completions 网关只接受字符串工具消息。
