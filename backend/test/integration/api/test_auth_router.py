@@ -496,3 +496,57 @@ async def test_locked_user_token_is_rejected(test_client, standard_user):
     profile_response = await test_client.get("/api/auth/me", headers=standard_user["headers"])
     assert profile_response.status_code == 423
     assert "X-Lock-Remaining" in profile_response.headers
+
+
+async def test_user_access_options_search_and_selected_backfill(test_client, admin_headers):
+    """access-options 支持服务端搜索，并用 include_uids 回填已选用户（修大表上限搜不到）。"""
+    token = uuid.uuid4().hex[:8]
+    created = []
+    try:
+        for label in ("alpha", "beta"):
+            response = await test_client.post(
+                "/api/auth/users",
+                json={"username": f"opt_{token}_{label}", "password": "routerTest123!", "role": "user"},
+                headers=admin_headers,
+            )
+            assert response.status_code == 200, response.text
+            created.append(response.json())
+        alpha, beta = created
+
+        # 命中 token 的用户都返回
+        both = await test_client.get("/api/auth/users/access-options", params={"search": token}, headers=admin_headers)
+        assert both.status_code == 200, both.text
+        both_uids = {user["uid"] for user in both.json()}
+        assert {alpha["uid"], beta["uid"]} <= both_uids
+
+        # 搜索收窄到单个用户
+        narrowed = await test_client.get("/api/auth/users/access-options", params={"search": f"opt_{token}_alpha"}, headers=admin_headers)
+        narrowed_uids = {user["uid"] for user in narrowed.json()}
+        assert alpha["uid"] in narrowed_uids
+        assert beta["uid"] not in narrowed_uids
+
+        # 不匹配搜索词但被 include_uids 指定 → 仍随结果返回，避免翻页后选中项丢失
+        backfill = await test_client.get(
+            "/api/auth/users/access-options",
+            params={"search": "opt_nonexistent_zzz", "include_uids": f" {beta['uid']} , ,opt_ghost_zzz "},
+            headers=admin_headers,
+        )
+        assert backfill.status_code == 200, backfill.text
+        backfill_uids = {user["uid"] for user in backfill.json()}
+        assert beta["uid"] in backfill_uids
+        assert alpha["uid"] not in backfill_uids
+
+        # 无搜索词首屏：已选用户落在前 limit 条之外也要被补回（limit=1 模拟万级用户首页）
+        first_page = await test_client.get(
+            "/api/auth/users/access-options",
+            params={"limit": 1, "include_uids": beta["uid"]},
+            headers=admin_headers,
+        )
+        assert first_page.status_code == 200, first_page.text
+        first_page_uids = {user["uid"] for user in first_page.json()}
+        assert beta["uid"] in first_page_uids
+        # 首屏基础分页仍只有 1 条 + 回填至多 1 条，不放大成全量
+        assert len(first_page_uids) <= 2
+    finally:
+        for user in created:
+            await test_client.delete(f"/api/auth/users/{user['id']}", headers=admin_headers)

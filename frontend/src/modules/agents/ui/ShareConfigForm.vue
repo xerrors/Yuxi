@@ -58,6 +58,7 @@
                     :trigger="['click']"
                     placement="bottomRight"
                     overlay-class-name="share-selection-popover"
+                    @open-change="(open) => handleSelectionOpen(open, scope.key, option.value)"
                   >
                     <a-button
                       size="small"
@@ -169,7 +170,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onScopeDispose, reactive, ref, watch } from 'vue'
 import { Building2, Globe, Users, UserPlus } from '@lucide/vue'
 import { useUserStore } from '@/modules/identity'
 import { authApi } from '@/apis/auth_api'
@@ -178,6 +179,8 @@ import { departmentApi } from '@/apis/department_api'
 const userStore = useUserStore()
 const departments = ref([])
 const users = ref([])
+const usersLoaded = ref(false)
+const departmentsLoaded = ref(false)
 const syncingFromProps = ref(false)
 
 const props = defineProps({
@@ -377,6 +380,9 @@ const getSelectionOptions = (scopeKey, accessLevel) => {
   if (scopeKey === 'manage_scope' && accessLevel === 'user') {
     options = options.filter((item) => ['admin', 'superadmin'].includes(item.role))
   }
+  // 用户候选已由服务端按用户名/UID/手机号收窄；本地再按 label 过滤会把
+  // 手机号/UID 命中项隐藏成空列表，因此 user 候选不再本地二次过滤。
+  if (accessLevel === 'user') return options
   const query = selectionSearch[scopeKey][accessLevel].trim().toLowerCase()
   return query ? options.filter((item) => item.label.toLowerCase().includes(query)) : options
 }
@@ -413,17 +419,65 @@ const loadDepartments = async () => {
   try {
     const result = await departmentApi.getDepartments()
     departments.value = result || []
+    departmentsLoaded.value = true
   } catch (error) {
     console.error('加载部门列表失败:', error)
   }
 }
-const loadUsers = async () => {
+
+// 用户可能远超单页上限（万级账号），搜索下推到后端；includeUids 让已选用户即使在
+// 当前搜索结果之外也随结果返回，避免选中项在弹层里消失、无法核对或取消。
+const USER_SEARCH_DEBOUNCE_MS = 300
+let userSearchTimer = null
+let lastSentUserQuery = null
+const collectSelectedUserUids = () => {
+  const uids = new Set()
+  for (const scope of [scopes.read_scope, scopes.manage_scope]) {
+    if (scope?.access_level === 'user') (scope.user_uids || []).forEach((uid) => uids.add(String(uid)))
+  }
+  return Array.from(uids)
+}
+const searchUsers = async (search) => {
+  const sentQuery = (search || '').trim()
   try {
-    users.value = await authApi.getUserAccessOptions()
+    users.value = await authApi.getUserAccessOptions({
+      search: sentQuery,
+      includeUids: collectSelectedUserUids(),
+      limit: 50
+    })
+    // 记录本次结果对应的搜索词：候选集已不再本地过滤，跨半区打开时必须与当前输入一致才复用。
+    lastSentUserQuery = sentQuery
+    usersLoaded.value = true
   } catch (error) {
     console.error('加载用户列表失败:', error)
   }
 }
+
+// 目录请求只在展开选择器时发起：编辑弹窗打开不再全量预取用户/部门。
+// 非管理员没有 access-options/部门目录权限，保持不发请求的既有口径。
+const handleSelectionOpen = async (open, scopeKey, accessLevel) => {
+  if (!open || !userStore.isAdmin) return
+  if (accessLevel === 'department') {
+    if (!departmentsLoaded.value) await loadDepartments()
+    return
+  }
+  if (accessLevel === 'user') {
+    const currentQuery = (selectionSearch[scopeKey][accessLevel] || '').trim()
+    if (!usersLoaded.value || currentQuery !== lastSentUserQuery) await searchUsers(currentQuery)
+  }
+}
+
+// 两个半区的用户搜索框都要能把输入下推：read 有词时 manage 的输入也必须生效
+// （若取"read 优先"的合并值会吞掉 manage 侧输入，这里按变更来源选词）。
+watch([() => selectionSearch.read_scope.user, () => selectionSearch.manage_scope.user], ([readVal, manageVal], [oldRead]) => {
+  const query = readVal !== oldRead ? readVal.trim() : manageVal.trim()
+  clearTimeout(userSearchTimer)
+  userSearchTimer = setTimeout(() => {
+    // 非管理员没有 access-options 权限，与展开加载同口径不发请求。
+    if (userStore.isAdmin && (query || usersLoaded.value)) searchUsers(query)
+  }, USER_SEARCH_DEBOUNCE_MS)
+})
+onScopeDispose(() => clearTimeout(userSearchTimer))
 
 watch(() => props.modelValue, initConfig, { deep: true })
 watch(normalizedAllowedAccessLevels, initConfig)
@@ -462,11 +516,6 @@ const hasManageScopeViolation = computed(() =>
 )
 
 initConfig()
-
-onMounted(() => {
-  loadDepartments()
-  loadUsers()
-})
 
 defineExpose({ scopes, validate })
 </script>

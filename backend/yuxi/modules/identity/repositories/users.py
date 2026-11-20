@@ -205,6 +205,46 @@ class UserRepository:
             )
             return list(page_result.all()), total_result.scalar() or 0
 
+    async def search_access_options(
+        self,
+        *,
+        search: str | None = None,
+        include_uids: list[str] | None = None,
+        limit: int = 1000,
+    ) -> Annotated[list[tuple[User, str | None]], "可见用户选项，含部门名"]:
+        """授权选择器搜索：``search`` 命中项 ∪ 已选 ``include_uids``，沿用有效真人用户过滤。
+
+        无 search 且无 include_uids 时退回“返回前 limit 条”，与既有 access-options 行为一致。
+        """
+        async with self._session() as session:
+            from yuxi.modules.identity.models import Department
+
+            filters = [User.is_deleted == 0, User.user_kind == "human"]
+            scope = []
+            keyword = (search or "").strip()
+            if keyword:
+                scope.append(
+                    or_(
+                        User.username.icontains(keyword, autoescape=True),
+                        User.uid.icontains(keyword, autoescape=True),
+                        User.phone_number.icontains(keyword, autoescape=True),
+                    )
+                )
+            uids = [str(uid).strip() for uid in (include_uids or []) if str(uid).strip()]
+            if uids:
+                scope.append(User.uid.in_(uids))
+            if scope:
+                filters.append(or_(*scope))
+
+            result = await session.execute(
+                select(User, Department.name.label("department_name"))
+                .outerjoin(Department, User.department_id == Department.id)
+                .where(*filters)
+                .order_by(User.id.asc())
+                .limit(limit)
+            )
+            return list(result.all())
+
     async def create(self, data: dict[str, Any]) -> User:
         """创建用户"""
         async with self._session(write=True) as session:

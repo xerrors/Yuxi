@@ -292,9 +292,31 @@ async def list_users(db: AsyncSession, *, current_user: User, skip: int, limit: 
     return result
 
 
-async def list_access_options(db: AsyncSession, *, skip: int, limit: int) -> list[dict]:
-    """返回授权选择器使用的精简用户列表。"""
-    users_with_department = await UserRepository(db).list_with_department(skip=skip, limit=limit)
+async def list_access_options(
+    db: AsyncSession,
+    *,
+    skip: int,
+    limit: int,
+    search: str | None = None,
+    include_uids: list[str] | None = None,
+) -> list[dict]:
+    """返回授权选择器使用的精简用户列表；支持服务端搜索与已选用户回填。
+
+    目录通道保持全量语义（不按调用者部门收缩）。``search`` 命中项 ∪ 已选 ``include_uids``；
+    无搜索词时把落在前 ``limit`` 条之外的已选用户补回，避免大表（万级用户）下选择器拉不到人。
+    """
+    repository = UserRepository(db)
+    keyword = (search or "").strip()
+    selected = [str(uid).strip() for uid in (include_uids or []) if str(uid).strip()]
+    if keyword:
+        users_with_department = await repository.search_access_options(search=keyword, limit=limit)
+    else:
+        users_with_department = await repository.list_with_department(skip=skip, limit=limit)
+    present = {user.uid for user, _ in users_with_department}
+    missing = [uid for uid in selected if uid not in present]
+    if missing:
+        extra = await repository.search_access_options(include_uids=missing, limit=len(missing))
+        users_with_department = users_with_department + extra
     return [
         {
             "uid": user.uid,
