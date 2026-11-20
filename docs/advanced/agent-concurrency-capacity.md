@@ -34,6 +34,8 @@ Redis 256 是单个客户端池的上限，进程可拥有多个客户端池，�
 
 资源受限部署可以压低该上限，但必须重新跑目标并发并确认没有连接池耗尽或事件缺失。
 
+连接池耗尽报 `QueuePool limit ... reached` 时先用只读诊断脚本归因，再决定扩池还是修事务：`./scripts/pg-idle-in-transaction-diagnose.sh -p <compose项目名> [--top 20] [-w 5]` 输出 idle in transaction 的按龄分桶、明细与 backend/client_addr 归属（`--whois <IP>` 映射回容器名）；明细集中在 api 且事务龄数十秒以上指向长请求/流式钉住鉴权事务，集中在 worker 指向清理或外部调用跨事务持有，idle 很少而总量高才按数据库容量处理。
+
 取消 key 的 200ms 轮询和 PostgreSQL 的约 1 秒补偿检查是 worker 内部协议参数，没有对应的部署开关。容量调整使用已有执行槽和连接池配置，并通过取消终态、事件完整性与连接等待验证。
 
 ## Run 内持久时延口径
