@@ -39,6 +39,10 @@ class SandboxRunnerClient:
             raise UpstreamError("容器执行服务健康检查返回无效结果")
         return payload
 
+    def fetch_skills(self, *, uid: str, request_id: str, args: list[str]) -> dict:
+        """专用 CLI 获取请求不创建业务 Run，也不接受任意 shell 命令。"""
+        return self._json("POST", f"/v1/skill-fetches/{request_id}", timeout=390, payload={"uid": uid, "args": args})
+
     def execute(
         self,
         *,
@@ -385,6 +389,14 @@ class ContainerSandboxProvider:
 
     def _orphan_reason(self, container: dict, labels: dict, now: datetime) -> str | None:
         """返回孤儿原因；None 表示仍由活动 Run 拥有。"""
+        if labels.get("yuxi.purpose") == "skill-fetch":
+            # 获取容器由同步 HTTP 请求的 finally 和 runner TTL 拥有，不关联虚构的 Run。
+            try:
+                expires_at = float(labels.get("yuxi.expires_at") or 0)
+            except ValueError:
+                expires_at = 0
+            return "skill_fetch_expired" if expires_at <= now.timestamp() else None
+
         run_id = str(labels.get("yuxi.run_id") or "")
         safe_uid = str(labels.get("yuxi.uid") or "")
         owner = str(labels.get("yuxi.owner") or "")

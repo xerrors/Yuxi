@@ -276,6 +276,30 @@ def test_maintain_removes_terminal_owner_changed_and_expired_containers():
     assert removed == ["terminal", "owner", "lease", "uid", "stuck"]
 
 
+def test_maintain_keeps_active_skill_fetch_and_removes_expired_requests():
+    """获取请求不查询 Run；活动请求保留，过期或非法期限的请求回收。"""
+
+    class Repository(FakeRepository):
+        """获取容器没有业务 Run 记录。"""
+
+        def run_owner(self, run_id):
+            """任何 Run 查询都说明请求被错误归类。"""
+            pytest.fail("Skill 获取不应查询 Agent Run")
+
+    class Client(FakeClient):
+        """维护实际剩余容器集合，验证清理后的状态。"""
+
+        def remove_container(self, container_id):
+            """仅删除本次对账选择的具体容器。"""
+            self.containers = [item for item in self.containers if item["id"] != container_id]
+
+    client = Client()
+    for name, deadline in [("active", str(time.time() + 60)), ("expired", str(time.time() - 1)), ("invalid", "bad"), ("missing", None)]:
+        client.containers.append({"id": name, "state": "running", "labels": {"yuxi.purpose": "skill-fetch", "yuxi.expires_at": deadline}})
+    ContainerSandboxProvider(client=client, repository=Repository()).maintain()
+    assert [item["id"] for item in client.containers] == ["active"]
+
+
 def test_maintain_stale_snapshot_does_not_delete_replacement():
     """对账读完旧快照后同 Run 重建，清理仍只能删除旧容器 ID。"""
     old = {
