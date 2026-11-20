@@ -186,7 +186,7 @@ async def stage_input_attachments(*, db, scope: ActorScope, input_item, file_ids
 
 
 async def prepare_input_attachments(*, db, agent_session, input_item, binding) -> bool:
-    """唯一准备函数从绑定行写入正式目录，准备失败保留来源。"""
+    """唯一准备函数从绑定行写入正式目录；瞬时失败保留来源待重试，Workdir 永久缺失则终止收敛。"""
     attachments = await AttachmentRepository(db).list_for_input(input_item.id, lock=True)
     preparing = [attachment for attachment in attachments if attachment.status == "preparing"]
     if not preparing:
@@ -195,8 +195,28 @@ async def prepare_input_attachments(*, db, agent_session, input_item, binding) -
 
     try:
         async with db.begin_nested():
-            await ensure_session_workdir_available(agent_session=agent_session, uid=agent_session.uid, db=db, workdir_binding=binding)
-            workdir = Workdir.open_existing(agent_session.uid, binding.workdir_path)
+            try:
+                await ensure_session_workdir_available(agent_session=agent_session, uid=agent_session.uid, db=db, workdir_binding=binding)
+                workdir = Workdir.open_existing(agent_session.uid, binding.workdir_path)
+            except (FileNotFoundError, PermissionError, NotADirectoryError, ValueError) as exc:
+                if binding.materialize_managed:
+                    # managed 目录由系统创建，其权限/路径异常多来自宿主卷瞬态故障（remount、
+                    # EACCES），属可恢复形态：回落泛化瞬时分支保留来源重试，不走终止。
+                    raise
+                # linked Workdir 缺失属永久失败：附件退回待回收草稿、pending Input 一律取消
+                # （含 steer 与 resume，比超时收割更严：不存在会成功的后续轮次），恢复扫描
+                # 不再领取该线程，避免对同一缺失目录无限重试刷屏。异常消息可能含宿主路径，只记类型。
+                # preparing 的 Input 必未 consume（consume 前置 has_unready 拒绝），message_id 恒空，回退 draft 满足状态 CHECK。
+                for attachment in preparing:
+                    await db.refresh(attachment)
+                    attachment.status = "draft"
+                    attachment.input_id = None
+                    attachment.error = "项目目录不存在，附件已退回草稿待回收"
+                if input_item.status == "pending":
+                    await AgentInputRepository(db).cancel(input_item)
+                await db.flush()
+                logger.warning("附件 Workdir 永久缺失，终止收敛: input={} error_type={}", input_item.id, type(exc).__name__)
+                return False
             client = get_minio_client()
             for attachment in preparing:
                 directory = f"/uploads/attachments/{attachment.id}"
