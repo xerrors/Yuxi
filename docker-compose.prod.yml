@@ -382,7 +382,10 @@ services:
     ports:
       - "127.0.0.1:${YUXI_POSTGRES_PORT:-6432}:5432"
     image: postgres:16
-    command: ["postgres", "-c", "max_connections=${POSTGRES_MAX_CONNECTIONS:-600}"]
+    # 后端时间戳按 UTC 存储并对外暴露；把 server 与日志时区钉死在 UTC，避免依赖会话
+    # 时区的 SQL、日志与导出工具把本地时间静默混入。已有数据卷需一次性执行
+    # ALTER DATABASE yuxi SET timezone = 'UTC'（新库继承此处默认）。
+    command: ["postgres", "-c", "timezone=UTC", "-c", "log_timezone=UTC", "-c", "max_connections=${POSTGRES_MAX_CONNECTIONS:-600}"]
     # Docker 默认 /dev/shm 仅 64MiB，并行查询/hash 聚合会报
     # could not resize shared memory segment ... No space left on device
     shm_size: 1g
@@ -390,7 +393,7 @@ services:
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.prod}
       - POSTGRES_DB=${POSTGRES_DB:-yuxi}
-      - TZ=${TZ:-Asia/Shanghai}
+      - TZ=${TZ:-UTC}
     volumes:
       - ${YUXI_STATE_DIR:-./docker/volumes}/postgresql:/var/lib/postgresql/data
     healthcheck:
