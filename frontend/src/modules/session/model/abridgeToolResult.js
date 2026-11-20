@@ -5,6 +5,7 @@ export const ABRIDGE_TOOL_NAMES = {
   session_close: '断开设备连接',
   command_execute: '执行设备命令',
   command_status: '查看命令输出',
+  operation_status: '查看操作状态',
   command_cancel: '取消设备命令',
   files_list: '列出设备目录',
   file_write: '写入设备文件',
@@ -39,11 +40,14 @@ export function projectAbridgeResult({ toolId, content, status, parts }) {
   const receipt = parseAbridgeResult(content)
   const result = receipt?.result
   const succeeded = status === 'completed' && receipt?.status === 'executed'
-  // command_status 共用查询协议，通过浏览器专属字段区分脚本与 Shell 回执。
-  const browserScriptResult = ['browser_exec', 'command_status'].includes(toolId) &&
+  const operationStatus = toolId === 'operation_status'
+  // 操作查询可返回浏览器脚本或命令输出，按回执字段选择展示。
+  const browserScriptResult = ['browser_exec', 'command_status', 'operation_status'].includes(toolId) &&
     Number.isInteger(result?.steps_completed) ? result : null
-  const isCommandResult = !browserScriptResult && ['command_execute', 'command_status'].includes(toolId)
-  const commandResult = isCommandResult ? result ?? receipt?.output : null
+  const streams = result ?? receipt?.output
+  const isCommandResult = !browserScriptResult && (['command_execute', 'command_status'].includes(toolId) ||
+    (operationStatus && (typeof streams?.stdout === 'string' || typeof streams?.stderr === 'string')))
+  const commandResult = isCommandResult ? streams : null
   const output = commandResult || {}
   const commandOutput = isCommandResult
     ? [
@@ -51,7 +55,7 @@ export function projectAbridgeResult({ toolId, content, status, parts }) {
         output.stderr && `标准错误：\n${output.stderr}`,
         (output.truncated || receipt?.output_truncated || receipt?.capture_truncated) && '输出已截断',
         output.timed_out && '命令执行超时',
-        receipt?.result_available === false && '命令输出已过期'
+        !operationStatus && receipt?.result_available === false && '命令输出已过期'
       ].filter(Boolean).join('\n') : ''
   const fileResult = succeeded && ['files_list', 'file_write', 'file_read'].includes(toolId) ? result : null
   const browserReadResult = succeeded && toolId === 'browser_read' && (
@@ -76,14 +80,19 @@ export function projectAbridgeResult({ toolId, content, status, parts }) {
   if (browserScriptResult) {
     const value = browserScriptResult
     const logs = Array.isArray(value.output) ? value.output.join('\n') : ''
-    browserScriptSummary = [`已完成 ${value.steps_completed} 个步骤`, receipt?.error?.message, logs && `日志：\n${logs}`].filter(Boolean).join('\n')
+    browserScriptSummary = [`已完成 ${value.steps_completed} 个步骤`, !operationStatus && receipt?.error?.message, logs && `日志：\n${logs}`].filter(Boolean).join('\n')
     if (succeeded) {
       if (value.value_truncated) browserScriptValue = value.value_preview
       else if (Object.hasOwn(value, 'value')) browserScriptValue = typeof value.value === 'string' ? value.value : JSON.stringify(value.value, null, 2)
     }
   }
+  const error = receipt?.error
+  const operationError = operationStatus
+    ? [typeof error === 'string' ? error : error?.message, error?.cause?.message]
+        .filter((message) => typeof message === 'string' && message).join('\n')
+    : ''
   return {
-    receipt, commandResult, commandOutput, fileResult,
+    operationError, receipt, commandResult, commandOutput, fileResult,
     browserReadResult, browserReadSummary, browserTables, browserWaitMatched,
     browserScriptResult, browserScriptSummary, browserScriptValue,
     rawResult: parts.filter((part) => !part.image).map((part) => part.text).join('\n'),

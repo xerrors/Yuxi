@@ -3366,7 +3366,7 @@ watch(currentChatId, (threadId, oldThreadId) => {
     align-items: center;
     justify-content: center;
     min-width: 0;
-    max-width: min(168px, calc(100vw - 160px));
+    max-width: min(224px, 50cqi);
   }
 
   &.start-screen {

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test, { before, after } from 'node:test'
 import { createSSRApp, h, reactive } from 'vue'
 import { renderToString } from 'vue/server-renderer'
+import { parseWidget } from '../../src/shared/lib/chatWidgets.js'
 import { createTestServer } from '../helpers/createTestServer.js'
 
 let server
@@ -23,12 +24,18 @@ async function setupStyle(node) {
   return { props, style: state.nodeStyle, isFormCard: state.isFormCard }
 }
 
-test('等分列保留容器的换行基准，不把 basis 覆盖成零', async () => {
-  const { style } = await setupStyle({ type: 'Col', flex: 1 })
-  assert.equal(style.value.flexGrow, 1)
-  assert.equal(style.value.flexShrink, 1)
-  assert.equal(style.value.flexBasis, undefined)
-  assert.equal(style.value.flex, undefined)
+test('正整数权重分配剩余空间并保留列的换行基准', async () => {
+  const card = flex => JSON.stringify({ type: 'Card', children: [{ type: 'Col', flex, children: [] }] })
+  for (const weight of [1, 2]) {
+    const { style } = await setupStyle(parseWidget(card(weight)).children[0])
+    assert.equal(style.value.flexGrow, weight)
+    assert.equal(style.value.flexShrink, 1)
+    assert.equal(style.value.flexBasis, undefined)
+    assert.equal(style.value.flex, undefined)
+  }
+  for (const invalid of [-1, 1.5, '2', Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(() => parseWidget(card(invalid)), /flex 必须是非负整数或 auto/)
+  }
 })
 
 test('非扩展列按内容占宽，auto 列允许扩展', async () => {

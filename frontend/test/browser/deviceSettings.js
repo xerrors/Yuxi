@@ -10,7 +10,7 @@ async page => {
     { id: 'fixture-browser', name: '办公浏览器', kind: 'browser', status: 'offline', paused: false },
     { id: 'fixture-paused', name: '临时工作站', kind: 'computer', platform: 'Windows 11', status: 'online', paused: true },
     { id: 'fixture-android', name: 'Android 测试设备', kind: 'computer', platform: 'Android 15', status: 'online', paused: false },
-    { id: 'fixture-unknown', name: 'macOS Windows Chrome · 未知平台设备', kind: 'computer', platform: 'Linux', status: 'offline', paused: false }
+    { id: 'fixture-linux', name: 'Linux 工作站', kind: 'computer', platform: 'linux', status: 'offline', paused: false }
   ]
   const option = { key: 'abridge_options', name: '设备管理', description: 'aBridge 实例连接；个人设备权限仍由 aBridge 管理。', value: {}, params: { fields: [{ key: 'url', label: '服务 URL', environment: 'ABRIDGE_URL', help: '留空读取 ABRIDGE_URL。请填写不带账号、路径、查询和片段的 HTTP(S) 服务根地址。全局管理请进入 aBridge。' }] } }
   let mode = 'loading', overviewReads = 0, configReads = 0, releaseLoading
@@ -49,7 +49,9 @@ async page => {
   await panel.getByText(devices[0].name, { exact: true }).waitFor()
   for (const label of ['macOS · 电脑', 'Chrome · 浏览器', 'Windows · 电脑', 'Android · 设备', 'Linux · 电脑']) await panel.getByText(label, { exact: true }).waitFor()
   check(await panel.locator('.device-icon').count() === 5, '设备行缺少平台或通用图标')
-  check(await panel.locator('img.device-icon').evaluateAll(images => images.length === 4 && images.every(image => image.complete && image.naturalWidth > 0)), '平台 SVG 未加载')
+  const platformIcons = panel.locator('img.device-icon')
+  check(await platformIcons.count() === 5, '设备行缺少平台 SVG')
+  await platformIcons.evaluateAll(images => Promise.all(images.map(image => image.decode())))
   check(configReads === 0 && overviewReads === 0, '普通用户读取了管理员数据')
   check(await panel.getByRole('heading', { name: '实例配置' }).count() === 0, '普通用户看到了实例配置')
   check(await panel.getByRole('link', { name: '进入 aBridge' }).getAttribute('rel') === 'noopener noreferrer', '外部管理链接缺少隔离')

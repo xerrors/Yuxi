@@ -147,7 +147,8 @@ test('新增网页动作有中文名称，内部步骤和普通工具不进入�
   }
   for (const name of ['browser_evaluate', 'browser_locate_act', 'future_browser_tool']) {
     const html = await render(name, { status: 'executed', result: scriptResult })
-    assert.doesNotMatch(html, /abridge-tool-icon|浏览器脚本返回值/)
+    assert.match(html, new RegExp(`class="tool-name"[^>]*>${name}</span>`))
+    assert.doesNotMatch(html, /浏览器脚本返回值/)
   }
   const shell = await render('command_status', { status: 'executed', result: { stdout: 'shell输出', exit_code: 0 } })
   assert.match(shell, /shell输出/)

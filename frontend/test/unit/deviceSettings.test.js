@@ -151,7 +151,8 @@ test('设备图标依据平台和设备类型，未知平台不从名称猜测',
     ['computer', 'Android 15', 'android.svg', 'Android · 设备'],
     ['browser', 'Windows', 'chrome.svg', 'Chrome · 浏览器'],
     ['browser', 'Browser', 'chrome.svg', 'Chrome · 浏览器'],
-    ['computer', 'Linux', null, 'Linux · 电脑'],
+    ['computer', 'linux', 'linux.svg', 'Linux · 电脑'],
+    ['computer', 'FreeBSD', null, 'FreeBSD · 电脑'],
     ['computer', null, null, '电脑']
   ]
   const view = await render({
@@ -175,16 +176,14 @@ test('设备图标依据平台和设备类型，未知平台不从名称猜测',
       )
       const image = view.find((node) => node.type === 'img', row)
       if (icon) {
-        assert.ok(image?.props.src.startsWith('data:image/svg+xml,'))
-        const expected = readFileSync(
-          new URL(`../../src/assets/icons/devices/${icon}`, import.meta.url),
-          'utf8'
-        )
-        const normalize = (svg) => svg.replace(/\s/g, '').replaceAll('"', "'")
-        assert.equal(
-          normalize(decodeURIComponent(image.props.src.split(',')[1])),
-          normalize(expected)
-        )
+        const src = image?.props.src
+        if (src?.startsWith('data:image/svg+xml,')) {
+          const expected = readFileSync(new URL(`../../src/assets/icons/devices/${icon}`, import.meta.url), 'utf8')
+          const normalize = (svg) => svg.replace(/\s/g, '').replaceAll('"', "'")
+          assert.equal(normalize(decodeURIComponent(src.slice(src.indexOf(',') + 1))), normalize(expected))
+        } else {
+          assert.equal(src, `/src/assets/icons/devices/${icon}`)
+        }
         assert.equal(image.props.alt, '')
       } else {
         assert.equal(image, undefined)

@@ -17,20 +17,19 @@
       <!-- 图标与标题共用父级颜色，调用状态只改变图形与文字。 -->
       <span class="tool-status-icon" :class="`tool-status-icon--${effectiveStatus}`">
         <slot name="icon" :status="effectiveStatus">
-          <component
-            v-if="effectiveStatus === 'completed'"
-            :is="toolIcon || CheckCircle"
+          <Loader
+            v-if="effectiveStatus === 'running' && appearance !== 'timeline-preview'"
             size="15"
-            class="tool-loader"
+            class="tool-loader rotate"
           />
           <Clock v-else-if="effectiveStatus === 'waiting'" size="15" class="tool-loader" />
           <component
-            v-else-if="['error', 'incomplete'].includes(effectiveStatus)"
-            :is="toolIcon || Wrench"
+            v-else
+            :is="toolIcon || (effectiveStatus === 'completed' ? CheckCircle : Wrench)"
             size="15"
             class="tool-loader"
+            aria-hidden="true"
           />
-          <Loader v-else size="15" class="tool-loader rotate" />
         </slot>
       </span>
 
@@ -170,6 +169,7 @@ import {
 import { getToolCallResultContent } from '@/modules/session/model/toolCallProjection'
 
 const props = defineProps({
+  icon: { type: [Object, Function], default: null },
   command: { type: String, default: '' },
   incompleteLabel: { type: String, default: '已中断' },
   errorLabel: { type: String, default: '执行失败' },
@@ -208,7 +208,7 @@ const agentStore = useAgentStore()
 const { availableTools, toolMetadata } = storeToRefs(agentStore)
 
 const isExpanded = ref(props.defaultExpanded)
-const isTimeline = computed(() => props.appearance === 'timeline')
+const isTimeline = computed(() => ['timeline', 'timeline-preview'].includes(props.appearance))
 
 const toggleExpand = () => {
   if (props.summaryOnly) return
@@ -246,7 +246,7 @@ const toolMetadataList = computed(() =>
 )
 
 // Tool Icon Mapping
-const toolIcon = computed(() => getToolIcon(toolId.value))
+const toolIcon = computed(() => props.icon || getToolIcon(toolId.value))
 
 // Args Logic
 const formattedArgs = computed(() => {

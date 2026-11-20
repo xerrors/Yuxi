@@ -58,6 +58,17 @@ async page => {
     await host.locator('p').first().hover()
     check(await arrowOpacity() === '1', '展开后移开鼠标时隐藏了箭头')
     await host.locator('.tool-calls-panel').getByText('读取文件', { exact: true }).waitFor()
+    await page.evaluate(() => window.__streamingHeader.state.entries.push({
+      type: 'tool', key: 'script', toolCall: { id: 'script', name: 'browser_exec', args: {} }
+    }))
+    await heading.getByText('执行浏览器脚本', { exact: true }).waitFor()
+    await heading.locator('.tool-status-icon--running .lucide-square-terminal').waitFor()
+    await panel.locator('.tool-status-icon--running .lucide-loader').waitFor()
+    await button.click()
+    check(await button.getAttribute('aria-expanded') === 'false', '未收起执行中的工具')
+    await heading.locator('.lucide-square-terminal').waitFor()
+    await button.click()
+    await page.evaluate(() => window.__streamingHeader.state.entries.pop())
     await page.evaluate(() => window.__streamingHeader.state.entries.push({ type: 'reasoning', key: 'thinking', content: '先前思考\n核对页面并整理接下来的操作' }))
     await heading.getByText('核对页面并整理接下来的操作', { exact: true }).waitFor()
     check(await button.getAttribute('aria-expanded') === 'true', '新条目重置了手动展开状态')

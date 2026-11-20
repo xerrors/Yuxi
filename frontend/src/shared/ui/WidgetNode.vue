@@ -225,10 +225,10 @@ const nodeStyle = computed(() => {
         evenly: 'space-evenly'
       }[node.justify] || node.justify
   if (node.flex !== undefined) {
-    style.flexGrow = node.flex === 0 ? 0 : 1
+    style.flexGrow = node.flex === 'auto' ? 1 : node.flex
     style.flexShrink = 1
-    // 等分列保留 Row 的换行基准，非扩展列按内容计算宽度。
-    if (node.flex !== 1) style.flexBasis = 'auto'
+    // 有权重的列保留 Row 的换行基准，0 和 auto 按内容计算基准。
+    if (node.flex === 0 || node.flex === 'auto') style.flexBasis = 'auto'
   }
   if (textTags[node.type]) {
     const sizes = {

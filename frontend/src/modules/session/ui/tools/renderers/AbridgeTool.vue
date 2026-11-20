@@ -1,18 +1,14 @@
 <template>
   <BaseToolCall
     :tool-call="toolCall"
+    :icon="actionIcon"
     :appearance="appearance"
     :default-expanded="defaultExpanded"
     :command="command"
     :hide-params="Boolean(deviceDetail)"
-    :error-label="receipt?.status === 'outcome_unknown' ? '执行结果未知' : '执行失败'"
+    :error-label="receipt?.status === 'outcome_unknown' ? '执行结果未知' : operationStopLabel || '执行失败'"
     :incomplete-label="receipt?.status === 'outcome_unknown' ? '执行结果未知' : '已中断'"
   >
-    <template v-if="status !== 'running' && status !== 'waiting'" #icon>
-      <span class="abridge-tool-icon">
-        <component :is="actionIcon" :size="15" class="tool-loader" aria-hidden="true" />
-      </span>
-    </template>
     <template #header>
       <div class="sep-header">
         <span class="note">{{ actionLabel }}</span>
@@ -30,6 +26,7 @@
       </div>
     </template>
     <template #result>
+      <ToolResultContent v-if="display.operationError" :content="display.operationError" />
       <dl v-if="deviceDetail" class="device-detail">
         <dt>设备状态</dt><dd>{{ deviceStatusText }}</dd>
         <dt>平台</dt><dd>{{ deviceDetail.platformLabel }}</dd>
@@ -87,7 +84,8 @@
         <ToolResultContent :content="display.rawResult" />
       </details>
     </template>
-    <template v-if="display.commandResult || display.browserScriptResult" #error-result>
+    <template v-if="(toolId === 'operation_status' && receipt) || display.commandResult || display.browserScriptResult" #error-result>
+      <ToolResultContent v-if="display.operationError" :content="display.operationError" />
       <ToolResultContent v-if="display.browserScriptSummary" :content="display.browserScriptSummary" />
       <ToolResultContent v-if="display.commandOutput" :content="display.commandOutput" />
       <details v-if="display.rawResult">
@@ -110,7 +108,6 @@ import {
   parseToolCallArgs
 } from '../../../model/toolCallProjection.js'
 import { ABRIDGE_TOOL_NAMES, projectAbridgeResult } from '../../../model/abridgeToolResult.js'
-import { getToolIcon } from '../../../model/toolIcons.js'
 
 const props = defineProps({
   toolCall: { type: Object, required: true },
@@ -161,7 +158,7 @@ const actionIcon = computed(() => {
     if (['type', 'key', 'fill', 'press'].includes(type)) return Keyboard
     if (['click', 'double_click'].includes(type)) return MousePointerClick
   }
-  return getToolIcon(toolId.value)
+  return null
 })
 const observation = computed(() => result.value?.observation ||
   (['computer_observe', 'browser_observe'].includes(toolId.value) ? result.value : null))
@@ -177,6 +174,8 @@ const actionLabel = computed(() => {
     ? actionNames[args.value.action?.type] || ABRIDGE_TOOL_NAMES.computer_act
     : ABRIDGE_TOOL_NAMES[toolId.value]
 })
+const operationStopLabel = computed(() => toolId.value === 'operation_status'
+  ? { refused: '操作被拒绝', cancelled: '操作已取消' }[receipt.value?.status] : '')
 const target = computed(() => {
   const input = args.value
   if (deviceDetail.value) return deviceDetail.value.name || '未命名设备'
@@ -192,6 +191,11 @@ const target = computed(() => {
   if (toolId.value === 'browser_wait') return input.selector || input.text || ''
   if (toolId.value === 'browser_exec') return ['accepted', 'dispatched'].includes(receipt.value?.status) ? '脚本处理中' : ''
   if (toolId.value === 'command_execute') return command.value
+  if (toolId.value === 'operation_status') {
+    if (status.value !== 'completed') return ''
+    if (receipt.value?.result_available === false) return '操作结果已过期'
+    return operationStopLabel.value || { accepted: '操作已受理', dispatched: '操作处理中', executed: '操作已执行' }[receipt.value?.status]
+  }
   if (toolId.value === 'command_status') {
     if (receipt.value?.result_available === false) return '输出已过期'
     if (['accepted', 'dispatched'].includes(receipt.value?.status)) return '命令处理中'
@@ -214,13 +218,6 @@ const target = computed(() => {
 </script>
 
 <style lang="less" scoped>
-.abridge-tool-icon {
-  display: inline-flex;
-  flex: 0 0 15px;
-  align-items: center;
-  justify-content: center;
-  line-height: 0;
-}
 .device-summary,
 .device-item {
   display: inline-flex;

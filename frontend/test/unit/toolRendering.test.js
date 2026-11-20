@@ -560,6 +560,26 @@ test('会话查询只展示真实范围和本页计数，历史回执不冒充�
   }
 })
 
+test('流式分组标题显示正在执行的工具图标，明细保留加载状态', async () => {
+  for (const [name, args, icon] of [
+    ['browser_exec', {}, 'square-terminal'],
+    ['load_plugin', { plugin_id: 'abridge' }, 'computer'],
+    ['browser_act', { action: { type: 'click' } }, 'mouse-pointer-click'],
+    ['web_fetch', {}, 'globe'],
+    ['unknown_tool', {}, 'wrench']
+  ]) {
+    const html = await render(ToolCallsGroup, { isActive: true, toolCalls: [
+      { id: 'first', name: 'read_file', args: {}, result: '内容' },
+      { id: 'latest', name, args }
+    ] })
+    const [heading, panel] = html.split('class="tool-calls-collapse-panel')
+    assert.match(heading, /tool-status-icon--running/)
+    assert.ok(heading.includes(`lucide-${icon}`), name)
+    assert.doesNotMatch(heading, /lucide-loader/)
+    assert.match(panel, /lucide-loader/)
+  }
+})
+
 test('真实工具分组中的会话查询与智能体列表共用摘要结构和状态', async () => {
   const html = await render(ToolCallsGroup, {
     toolCalls: [
@@ -996,6 +1016,56 @@ test('失败工具保留工具图标与明确的失败文字，未知工具使�
     assert.match(html, /tool-status-icon--error/)
     assert.ok(html.includes(`lucide-${icon}`))
     assert.doesNotMatch(html, /lucide-circle-x/)
+  }
+})
+
+test('操作状态查询从实时和历史回执展示结果未知及设备原因', async () => {
+  const receipt = {
+    operation_id: 'op-fixture', status: 'outcome_unknown', result: {},
+    error: { code: 'outcome_unknown', message: 'The operation will not be replayed',
+      cause: { code: 'execution_unconfirmed', message: 'The device could not confirm execution' } }
+  }
+  for (const fields of [
+    { status: 'error', error_message: JSON.stringify(receipt), tool_call_result: { content: JSON.stringify(receipt) } },
+    { result: [{ type: 'text', text: JSON.stringify(receipt) }] }
+  ]) {
+    const html = await render(ToolCallRenderer, {
+      toolCall: { name: 'operation_status', args: { operation_id: 'op-fixture', wait_seconds: 10 }, ...fields },
+      defaultExpanded: true
+    })
+    const [visible, raw] = html.split('<details')
+    assert.match(visible, /查看操作状态/)
+    assert.match(visible, /执行结果未知/)
+    assert.doesNotMatch(visible, /执行失败|outcome_unknown/)
+    assert.match(visible, /The operation will not be replayed/)
+    assert.match(visible, /The device could not confirm execution/)
+    assert.match(raw, /原始结果/)
+    assert.doesNotMatch(raw, /^[^>]*\bopen/)
+  }
+})
+
+test('操作状态仅保留终态回执时仍折叠原始结果', async () => {
+  const html = await render(ToolCallRenderer, {
+    toolCall: { name: 'operation_status', status: 'error', result: { status: 'outcome_unknown' } },
+    defaultExpanded: true
+  })
+  assert.match(html.split('<details')[0], /执行结果未知/)
+  assert.match(html, /<details[^>]*><summary[^>]*>原始结果/)
+})
+
+test('操作状态查询展示进行中与终态的结果', async () => {
+  for (const [receipt, expected] of [
+    [{ status: 'dispatched', output: { stdout: 'partial output' } }, ['操作处理中', 'partial output']],
+    [{ status: 'executed', result: { steps_completed: 2, value: 'script output' } }, ['操作已执行', '已完成 2 个步骤', 'script output']],
+    [{ status: 'executed', result_available: false }, ['操作结果已过期']],
+    [{ status: 'refused', error: { message: 'Access denied' } }, ['操作被拒绝', 'Access denied']],
+    [{ status: 'cancelled' }, ['操作已取消']]
+  ]) {
+    const html = await render(ToolCallRenderer, {
+      toolCall: { name: 'operation_status', result: receipt }, defaultExpanded: true
+    })
+    const visible = html.split('<details')[0]
+    for (const text of expected) assert.ok(visible.includes(text), text)
   }
 })
 

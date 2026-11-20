@@ -1,7 +1,7 @@
 ---
 name: chat-widgets
 description: "在普通聊天中直接展示图片、图文卡片和数值图表，或用简短表单收集用户回答。展示图片或截图时优先 Image/ImageGroup；图片需要配合说明、参数或比较时组合 Card、Row、Col；分类比较用柱状图，时间趋势用折线图；需要填写多个条件时用 Form、文本输入、单选和日期。按用途主动读取本 Skill，无需用户指定组件或 JSON；普通文字回答保持 Markdown。"
-version: "2026.10.25.1"
+version: "2026.11.19.1"
 ---
 
 # 对话组件
@@ -214,7 +214,7 @@ version: "2026.10.25.1"
 | Icon | `name`：book-open、document、lightbulb、info、check、plus、search、chevron-right；可选 `size`：xs、sm、md、lg、xl；`color` |
 | Divider、Spacer | 只有 `type`；分割线、弹性空白 |
 
-`gap`、`padding` 为 0–8 整数，每单位 4px。`align` 为 start、center、end、baseline、stretch；`justify` 为 start、center、end、between、around、evenly；`flex` 为 0、1、"auto"：0 按内容占宽且不扩展，1 分配剩余空间并保留列的换行基准，"auto" 按内容参与伸缩。不要使用像素字符串、任意颜色或 CSS 对象。
+`gap`、`padding` 为 0–8 整数，每单位 4px。`align` 为 start、center、end、baseline、stretch；`justify` 为 start、center、end、between、around、evenly。`flex: 0` 按内容占宽且不扩展，`flex: "auto"` 按内容参与伸缩，正整数按权重分配剩余空间并保留列的换行基准。图文并列可给图片列 `flex: 1`、说明列 `flex: 2`。不要使用像素字符串、任意颜色或 CSS 对象。
 
 需要让标题占满一行剩余空间时，把 Title 放在 `{"type":"Col","flex":1,"children":[...]}` 中；文字组件保留文本属性，布局属性由外层 Row/Col 承载。
 

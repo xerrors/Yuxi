@@ -13,7 +13,7 @@
           :key="latestEntry.key"
           :tool-call="latestEntry.toolCall"
           :cooperation-view="cooperationView"
-          appearance="timeline"
+          appearance="timeline-preview"
         />
       </div>
       <button
@@ -240,10 +240,6 @@ const toggleToolCallsExpanded = () => {
     :deep(.tool-expand-icon),
     :deep(.tool-content) {
       display: none;
-    }
-
-    :deep(.tool-loader.rotate) {
-      animation: none;
     }
   }
 

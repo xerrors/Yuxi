@@ -64,6 +64,20 @@ test('Image 协议接受含空格的沙盒路径，路径跳转和反斜杠拒�
   assert.throws(() => parseWidget(widget('//outside/image.png')), /绝对路径/)
 })
 
+test('Image 解包单个 Markdown 链接后仍校验目标地址', () => {
+  const image = src => JSON.stringify({ type: 'Image', src, alt: '商品图片' })
+  for (const url of ['https://example.com/a.png?width=120', '/files/product.png']) {
+    assert.equal(parseWidget(image(`[商品 图片](${url})`)).src, url)
+  }
+  for (const url of ['javascript:alert', 'http://example.com/a.png', '//example.com/a.png',
+    'https://user:pass@example.com/a.png', '/\\example.com/a.png']) {
+    assert.throws(() => parseWidget(image(`[商品](${url})`)), /HTTPS/)
+  }
+  for (const invalid of ['[图](/a.png) [图](/b.png)', '[图[片](/a.png)']) {
+    assert.throws(() => parseWidget(image(invalid)), /HTTPS/)
+  }
+})
+
 test('沙盒图片只经读取能力取字节，卸载释放 Blob URL', async t => {
   const requests = []
   const { view, urls, revoked, stop } = setupImage(t, path, async src => { requests.push(src); return imageResponse() })

@@ -181,7 +181,6 @@ export function parseWidget(source) {
     const enums = {
       align: ['start', 'center', 'end', 'baseline', 'stretch'],
       justify: ['start', 'center', 'end', 'between', 'around', 'evenly'],
-      flex: [0, 1, 'auto'],
       weight: ['normal', 'medium', 'semibold', 'bold'],
       textAlign: ['start', 'center', 'end'],
       variant:
@@ -200,6 +199,12 @@ export function parseWidget(source) {
       if (node[key] !== undefined && !values.includes(node[key]))
         throw new Error(`${key} 属性不受支持`)
     }
+    if (
+      node.flex !== undefined &&
+      node.flex !== 'auto' &&
+      (!Number.isSafeInteger(node.flex) || node.flex < 0)
+    )
+      throw new Error('flex 必须是非负整数或 auto')
     for (const key of ['gap', 'padding']) {
       if (
         node[key] !== undefined &&
@@ -297,22 +302,26 @@ export function parseWidget(source) {
         )
           throw new Error('Image path 必须是无跳转的沙盒虚拟绝对路径')
       } else {
-        if (!isTextValue(node.src) || !node.src || /[\s\\]/.test(node.src))
+        if (!isTextValue(node.src))
+          throw new Error('Image src 必须是 HTTPS URL 或同源绝对路径')
+        const link = /^\[[^[\]\r\n]*\]\(([^()\s]+)\)$/.exec(node.src)
+        const src = link?.[1] ?? node.src
+        if (!src || /[\s\\]/.test(src))
           throw new Error('Image src 必须是 HTTPS URL 或同源绝对路径')
         let url
         try {
-          url = new URL(node.src, 'https://widget.invalid')
+          url = new URL(src, 'https://widget.invalid')
         } catch {
           throw new Error('Image src 必须是 HTTPS URL 或同源绝对路径')
         }
         if (
-          (!node.src.startsWith('https://') &&
-            (!node.src.startsWith('/') || node.src.startsWith('//'))) ||
+          (!src.startsWith('https://') && (!src.startsWith('/') || src.startsWith('//'))) ||
           url.protocol !== 'https:' ||
           url.username ||
           url.password
         )
           throw new Error('Image src 必须是无凭据的 HTTPS URL 或同源绝对路径')
+        node.src = src
       }
       if (!isTextValue(node.alt) || !node.alt.trim()) throw new Error('Image 需要非空 alt')
       if (node.caption !== undefined && (!isTextValue(node.caption) || !node.caption.trim()))
