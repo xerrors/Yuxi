@@ -37,7 +37,7 @@ from yuxi.modules.agents.services.thread_access import require_thread
 from yuxi.modules.identity.models import User
 from yuxi.modules.workspace.paths import ensure_bound_user_workdir
 from yuxi.modules.workspace.repositories.projects import ProjectRepository
-from yuxi.modules.workspace.services.bindings import resolve_session_workdir_binding
+from yuxi.modules.workspace.services.bindings import ensure_session_workdir_acceptable, resolve_session_workdir_binding
 from yuxi.modules.workspace.services.projects import create_implicit_project
 from yuxi.shared.errors import InvalidInputError, ResourceNotFoundError, StateConflictError
 from yuxi.shared.hashing import hash_id
@@ -379,6 +379,11 @@ async def accept_locked(
         if tool_approval_mode is not None:
             snapshot["tool_approval_mode"] = resolve_agent_run_tool_approval_mode(tool_approval_mode)
     input_payload = {**(frozen_payload or {}), "context_snapshot": snapshot}
+
+    # 附件依赖 Session Workdir 真实可用；linked 目录缺失在接收边界 fail-closed，
+    # 不生成 Input/Receipt，也不进入恢复循环的无限重试。
+    if attachment_file_ids:
+        await ensure_session_workdir_acceptable(agent_session=agent_session, uid=str(scope.uid), db=db)
 
     input_item = await input_repo.create(
         input_id=str(uuid.uuid4()),

@@ -10,7 +10,7 @@ from yuxi.modules.workspace.models import Project
 from yuxi.modules.workspace.paths import ensure_bound_user_workdir
 from yuxi.modules.workspace.repositories.projects import ProjectRepository
 from yuxi.modules.workspace.workdir import Workdir
-from yuxi.shared.errors import ResourceNotFoundError
+from yuxi.shared.errors import ResourceNotFoundError, StateConflictError
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,6 +153,21 @@ async def ensure_session_workdir_available(
     else:
         Workdir.open_existing(binding.uid, binding.workdir_path)
     return binding.workdir_path
+
+
+async def ensure_session_workdir_acceptable(*, agent_session: Session, uid: str, db) -> None:
+    """附件 Input 的接收门禁：linked Workdir 是用户拥有的目录，缺失属永久失败。
+
+    在接收边界直接拒绝，让提交方当场得到可行动的提示，而不是生成 Input 后
+    进入恢复循环对同一缺失目录无限重试；managed 目录在提交后会物化，不受影响。
+    """
+    binding = await resolve_session_workdir_binding(agent_session=agent_session, uid=uid, db=db)
+    if binding.materialize_managed:
+        return
+    try:
+        Workdir.open_existing(binding.uid, binding.workdir_path)
+    except (FileNotFoundError, PermissionError, NotADirectoryError, ValueError) as exc:
+        raise StateConflictError("项目目录不存在，无法接收附件；请在个人空间恢复该目录后重试") from exc
 
 
 async def resolve_session_workdir_binding(*, agent_session: Session, uid: str, db, project: Project | None = None) -> WorkdirBinding:
