@@ -89,6 +89,18 @@ class ProjectRepository:
         )
         return list(result.scalars().all())
 
+    async def list_implicit_workdir_paths_for_user(self, uid: str) -> list[str]:
+        """列出会话自动创建（implicit）Project 的 Workdir 路径，含软删除行（数据不再属于用户浏览面）。"""
+        result = await self.db.execute(
+            select(Project.workdir_path)
+            .where(
+                Project.uid == str(uid),
+                Project.selection_status == "implicit",
+            )
+            .distinct()
+        )
+        return list(result.scalars().all())
+
     async def list_history_candidates(self, uid: str) -> list[tuple[Session, str]]:
         """列出可解析实际 Workdir 的普通历史对话。"""
         result = await self.db.execute(
