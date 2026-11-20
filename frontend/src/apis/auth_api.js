@@ -2,7 +2,7 @@
  * 认证相关 API
  */
 
-import { apiAdminGet, apiDelete, apiGet, apiPost, apiPut, apiSuperAdminGet } from './base'
+import { apiAdminGet, apiDelete, apiGet, apiPost, apiPut, apiSuperAdminGet, buildQuery } from './base'
 
 /**
  * 获取 OIDC 配置
@@ -38,8 +38,13 @@ async function getOIDCLoginUrl(redirectPath = '/') {
  *   department_name: string | null
  * }>}
  */
-async function getUserAccessOptions() {
-  return apiAdminGet('/api/auth/users/access-options')
+async function getUserAccessOptions({ search, includeUids, limit } = {}) {
+  const query = buildQuery({
+    search: (search || '').trim() || undefined,
+    include_uids: includeUids?.length ? includeUids.join(',') : undefined,
+    limit
+  })
+  return apiAdminGet(`/api/auth/users/access-options${query ? `?${query}` : ''}`)
 }
 
 /** 只撤销当前 Yuxi 凭据，保留认证中心的共享登录状态。 */
