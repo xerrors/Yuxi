@@ -1,0 +1,33 @@
+# Docker Desktop 的 Windows bind mount 不提供 renameat2(RENAME_NOREPLACE)。
+# 用户文件使用同一 Linux volume，保持个人 Skill 与 Workspace 的原子发布约束。
+services:
+  api:
+    volumes:
+      - type: volume
+        source: user-data
+        target: /app/user-data
+        volume:
+          nocopy: true
+  worker:
+    volumes:
+      - type: volume
+        source: user-data
+        target: /app/user-data
+        volume:
+          nocopy: true
+  sandbox-runner:
+    volumes:
+      - type: volume
+        source: user-data
+        target: /sandbox-data
+        volume:
+          nocopy: true
+  storage-init:
+    volumes:
+      - type: volume
+        source: user-data
+        target: /app/user-data
+        volume:
+          nocopy: true
+volumes:
+  user-data:
