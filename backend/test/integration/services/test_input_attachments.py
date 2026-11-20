@@ -1,17 +1,19 @@
 """真实 PG、MinIO 和文件验证附件接收与准备恢复。"""
 
 import asyncio
+import shutil
 import uuid
 from datetime import timedelta
 from io import BytesIO
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from test.integration.services.agent_input_fixtures import SCOPE
 from test.integration.services.agent_input_fixtures import send_input as _send
 from test.integration.services.agent_input_fixtures import start_input_run as _start
 from yuxi.infrastructure.minio import get_minio_client
+from yuxi.modules.agents.input_messages import build_chat_input_message
 from yuxi.modules.agents.models.attachments import AgentAttachment
 from yuxi.modules.agents.models.inputs import AgentInput, AgentInputReceipt
 from yuxi.modules.agents.models.runs import AgentRun
@@ -19,10 +21,9 @@ from yuxi.modules.agents.repositories.attachments import AttachmentRepository
 from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.agents.services import attachments, inputs, runs, scheduler, threads
-from yuxi.modules.agents.input_messages import build_chat_input_message
 from yuxi.modules.workspace.filesystem import Workspace
 from yuxi.modules.workspace.models import Project
-from yuxi.modules.workspace.paths import ensure_user_workspace
+from yuxi.modules.workspace.paths import ensure_user_workspace, user_workspace_dir
 from yuxi.modules.workspace.repositories.projects import ProjectRepository
 from yuxi.modules.workspace.services.bindings import resolve_session_workdir_binding
 from yuxi.modules.workspace.workdir import Workdir
@@ -349,6 +350,119 @@ async def test_failed_preparation_blocks_dispatch_and_cancel_keeps_submission(fi
         session = await SessionRepository(db).get_session_by_thread_id("input-thread")
         assert session.status == ("archived" if archive_via else "active")
     assert workdir.read_file(f"/uploads/{file['id']}_source.txt", 1024) == b"original"
+
+
+async def test_accept_rejects_attachments_when_linked_workdir_missing(files_env):
+    """linked 项目目录不存在时接收即拒绝：不生成 Input/Receipt，附件保持原草稿。"""
+    factory, upload, submit, _ = files_env
+    file = await upload()
+    async with factory() as db:
+        project = await db.get(Project, "input-project")
+        project.directory_mode = "linked"
+        await db.commit()
+    with pytest.raises(DomainError) as error:
+        await submit(file, "linked-missing")
+    assert isinstance(error.value, StateConflictError)
+    async with factory() as db:
+        assert await db.scalar(select(func.count()).select_from(AgentInput)) == 0
+        assert await db.scalar(select(func.count()).select_from(AgentInputReceipt)) == 0
+        attachment = await db.get(AgentAttachment, file["id"])
+        assert attachment.status == "draft" and attachment.input_id is None
+    # 门禁只拦截携带附件的输入，纯文本提交不受影响。
+    assert (await _send(factory, "linked-missing-text", "follow_up"))["input_id"] is not None
+
+
+async def test_managed_transient_workdir_failure_keeps_source_for_retry(files_env, monkeypatch):
+    """managed 物化的权限类异常属宿主卷瞬态故障：保留 preparing 来源重试，不走终止分支。"""
+    factory, upload, submit, _ = files_env
+    file = await upload()
+
+    async def boom(*_args, **_kwargs):
+        raise PermissionError("host volume remount transient failure")
+
+    monkeypatch.setattr("yuxi.modules.workspace.services.bindings.ensure_session_workdir_available", boom)
+    receipt = await submit(file, "managed-transient")
+    assert await scheduler.dispatch_next_input(uid=SCOPE.uid, agent_slug="main", thread_id="input-thread") is True
+    async with factory() as db:
+        item = await db.get(AgentInput, receipt["input_id"])
+        assert item.status == "pending"
+        attachment = await db.get(AgentAttachment, file["id"])
+        assert attachment.status == "preparing"
+        assert "附件准备失败" in str(attachment.error)
+
+
+async def test_missing_linked_workdir_terminates_stuck_preparation(files_env, monkeypatch):
+    """接收后目录才消失的竞态：附件退回待回收草稿、Input 取消，恢复循环就此收敛。"""
+    factory, upload, submit, workdir = files_env
+    file = await upload()
+    write = attachments._write_workdir_file
+
+    async def fail(*args, **kwargs):
+        raise OSError("transient write failure keeps preparing")
+
+    monkeypatch.setattr(attachments, "_write_workdir_file", fail)
+    receipt = await submit(file, "linked-lost")
+    monkeypatch.setattr(attachments, "_write_workdir_file", write)
+    async with factory() as db:
+        project = await db.get(Project, "input-project")
+        project.directory_mode = "linked"
+        assert (await db.get(AgentInput, receipt["input_id"])).status == "pending"
+        await db.commit()
+    shutil.rmtree(user_workspace_dir(SCOPE.uid) / workdir.relative_path)
+    assert await scheduler.dispatch_next_input(uid=SCOPE.uid, agent_slug="main", thread_id="input-thread") is True
+    async with factory() as db:
+        item = await db.get(AgentInput, receipt["input_id"])
+        assert item.status == "cancelled"
+        attachment = await db.get(AgentAttachment, file["id"])
+        assert attachment.status == "draft" and attachment.input_id is None
+        assert attachment.object_name is not None and "项目目录不存在" in str(attachment.error)
+        assert await AttachmentRepository(db).list_preparing_inputs("input-thread", SCOPE.uid, None) == []
+        assert await db.scalar(select(func.count()).select_from(AgentRun)) == 0
+        # 终止原因随 Input 快照返回给调用方，不止留在日志。
+        snapshot = await inputs.get_input_snapshot(db=db, scope=SCOPE, thread_id="input-thread", input_id=receipt["input_id"])
+        assert snapshot["error"] == "项目目录不存在，附件已退回草稿待回收"
+
+
+async def test_permission_denial_retries_within_budget_then_terminates(files_env, monkeypatch):
+    """linked 目录不可访问：预算内保留来源重试；超预算终止并把原因写进 Input 快照。"""
+    factory, upload, submit, workdir = files_env
+    file = await upload()
+    # linked 且目录已存在：接收门禁通过，准备阶段被权限故障拦住（submit 内联派发同样命中）。
+    (user_workspace_dir(SCOPE.uid) / workdir.relative_path).mkdir(parents=True, exist_ok=True)
+    async with factory() as db:
+        project = await db.get(Project, "input-project")
+        project.directory_mode = "linked"
+        await db.commit()
+
+    from yuxi.modules.workspace.services import bindings as bindings_module
+
+    async def deny(*_args, **_kwargs):
+        raise PermissionError("host volume remount transient failure")
+
+    monkeypatch.setattr(bindings_module, "ensure_session_workdir_available", deny)
+    receipt = await submit(file, "perm-denied")
+    assert await scheduler.dispatch_next_input(uid=SCOPE.uid, agent_slug="main", thread_id="input-thread") is True
+    async with factory() as db:
+        item = await db.get(AgentInput, receipt["input_id"])
+        assert item.status == "pending"  # 预算内：保留来源等待下一轮
+        assert (await db.get(AgentAttachment, file["id"])).status == "preparing"
+
+    async with factory() as db:
+        await db.execute(
+            text("UPDATE agent_inputs SET created_at = now() - interval '2 hours' WHERE id = :id"),
+            {"id": receipt["input_id"]},
+        )
+        await db.commit()
+    assert await scheduler.dispatch_next_input(uid=SCOPE.uid, agent_slug="main", thread_id="input-thread") is True
+    async with factory() as db:
+        item = await db.get(AgentInput, receipt["input_id"])
+        assert item.status == "cancelled"
+        assert (await db.get(AgentAttachment, file["id"])).status == "draft"
+        snapshot = await inputs.get_input_snapshot(db=db, scope=SCOPE, thread_id="input-thread", input_id=receipt["input_id"])
+        assert "长时间不可访问" in snapshot["error"]
+    await scheduler.recover_pending_dispatches()
+    async with factory() as db:
+        assert (await db.get(AgentAttachment, file["id"])).status == "draft"
 
 
 async def test_crash_after_file_write_replays_the_same_input_and_path(files_env, monkeypatch):

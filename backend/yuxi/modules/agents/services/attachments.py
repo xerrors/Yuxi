@@ -185,8 +185,32 @@ async def stage_input_attachments(*, db, scope: ActorScope, input_item, file_ids
     await db.flush()
 
 
+WORKDIR_ACCESS_RETRY_BUDGET_SECONDS = 3600
+
+
+async def _terminate_workdir_loss(db, preparing, input_item, exc: Exception, *, reason: str) -> None:
+    """linked Workdir 终止性失败的统一收尾：附件退草稿、Input 取消、原因进快照。
+
+    preparing 的 Input 必未 consume（consume 前置 has_unready 拒绝），message_id 恒空，
+    回退 draft 满足状态 CHECK；`terminal_error` 让调用方经 Input 查询看到取消原因，
+    而非只留在日志。异常消息可能含宿主路径，日志只记异常类型。
+    """
+    for attachment in preparing:
+        await db.refresh(attachment)
+        attachment.status = "draft"
+        attachment.input_id = None
+        attachment.error = reason
+    if input_item.status == "pending":
+        await AgentInputRepository(db).cancel(input_item)
+    metadata = dict(input_item.origin_metadata or {})
+    metadata["terminal_error"] = reason
+    input_item.origin_metadata = metadata
+    await db.flush()
+    logger.warning("附件 Workdir 失败终止: input={} error_type={}", input_item.id, type(exc).__name__)
+
+
 async def prepare_input_attachments(*, db, agent_session, input_item, binding) -> bool:
-    """唯一准备函数从绑定行写入正式目录，准备失败保留来源。"""
+    """唯一准备函数从绑定行写入正式目录；瞬时失败保留来源待重试，Workdir 永久缺失则终止收敛。"""
     attachments = await AttachmentRepository(db).list_for_input(input_item.id, lock=True)
     preparing = [attachment for attachment in attachments if attachment.status == "preparing"]
     if not preparing:
@@ -195,8 +219,30 @@ async def prepare_input_attachments(*, db, agent_session, input_item, binding) -
 
     try:
         async with db.begin_nested():
-            await ensure_session_workdir_available(agent_session=agent_session, uid=agent_session.uid, db=db, workdir_binding=binding)
-            workdir = Workdir.open_existing(agent_session.uid, binding.workdir_path)
+            try:
+                await ensure_session_workdir_available(agent_session=agent_session, uid=agent_session.uid, db=db, workdir_binding=binding)
+                workdir = Workdir.open_existing(agent_session.uid, binding.workdir_path)
+            except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
+                if binding.materialize_managed:
+                    # managed 目录由系统创建，其路径/类型异常回落泛化瞬时分支保留重试。
+                    raise
+                # linked Workdir 缺失/损坏属永久失败：不存在会成功的后续轮次。
+                await _terminate_workdir_loss(db, preparing, input_item, exc, reason="项目目录不存在，附件已退回草稿待回收")
+                return False
+            except PermissionError as exc:
+                # 目录存在但不可访问可能是宿主卷瞬态故障（remount、权限修复中）：保留来源
+                # 有界重试；超预算仍失败按终止处理，并把原因写进 Input 快照供调用方查询。
+                if binding.materialize_managed:
+                    raise
+                created = input_item.created_at
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=UTC)
+                if (datetime.now(UTC) - created).total_seconds() < WORKDIR_ACCESS_RETRY_BUDGET_SECONDS:
+                    raise
+                await _terminate_workdir_loss(
+                    db, preparing, input_item, exc, reason="项目目录长时间不可访问，已超出重试预算，附件退回草稿待回收"
+                )
+                return False
             client = get_minio_client()
             for attachment in preparing:
                 directory = f"/uploads/attachments/{attachment.id}"
