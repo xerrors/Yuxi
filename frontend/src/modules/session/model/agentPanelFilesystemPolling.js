@@ -1,4 +1,7 @@
-const FILESYSTEM_REFRESH_INTERVAL_MS = 1000
+// 流式期间每个开面板的页签按此间隔扫描线程目录；1s 在 40+ 并发页签下是最大的单一
+// 请求扇出源（内网压测实测约 39rps 目录扫描）。5s 是感知与循环开销的折中；
+// 新产物的即时列出由 Run 终态通知触发的面板刷新与在途去重门承接。
+const FILESYSTEM_REFRESH_INTERVAL_MS = 5000
 
 export const createFilesystemRefreshGate = () => {
   const inFlightThreads = new Set()
