@@ -24,6 +24,16 @@ def _user() -> SimpleNamespace:
     return SimpleNamespace(id="db-id-1", uid="user-1")
 
 
+class _Referenced:
+    """按注入路径列表响应删除保护查询的 ProjectRepository 替身。"""
+
+    def __init__(self, paths: list[str]) -> None:
+        self._paths = paths
+
+    async def list_referenced_workdir_paths_for_user(self, uid: str) -> list[str]:
+        return list(self._paths)
+
+
 def _workspace_root(user: SimpleNamespace) -> Path:
     svc._workspace_backend(user)
     return workspace_paths.user_workspace_dir(str(user.uid))
@@ -576,7 +586,8 @@ async def test_upload_workspace_files_enforces_full_path_depth_boundary(tmp_path
     assert "目标目录层级过深" in parent_error.value.message
     assert not (root / deeper / "x.txt").exists()
 
-    await svc.delete_workspace_path(path="/p", current_user=user)
+    monkeypatch.setattr(svc, "ProjectRepository", lambda _db: _Referenced([]))
+    await svc.delete_workspace_path(path="/p", current_user=user, db=SimpleNamespace())
     assert not (root / "p").exists()
 
 

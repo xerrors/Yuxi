@@ -217,6 +217,11 @@ async def test_linked_project_and_thread_selection_keep_directory_bytes(
         )
         assert invalid.status_code in {400, 404}, (path, invalid.text)
 
+    # 两个 linked Project 仍被活跃 Session 绑定，删除目录前先删 Project，否则整目录删除保护会拒绝 fixture 清理。
+    for bound_project_id in (project["id"], duplicate.json()["id"]):
+        cleanup = await test_client.delete(f"/api/projects/{bound_project_id}", headers=admin_headers)
+        assert cleanup.status_code == 200, cleanup.text
+
 
 async def test_project_rename_and_delete_soft_delete_sessions_but_keep_workdir(
     test_client,

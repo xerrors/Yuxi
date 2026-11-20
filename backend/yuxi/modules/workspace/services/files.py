@@ -71,11 +71,13 @@ async def list_workspace_tree(
     path: str,
     recursive: bool = False,
     files_only: bool = False,
-    include_unbound_project_dirs: bool = False,
     current_user: User,
-    db,
 ) -> dict:
-    """列出个人工作区目录树，默认隐藏未归属可选 Project 的 projects 子树。"""
+    """列出个人工作区目录树；projects 下展示全部实际文件（含会话自动创建的 Workdir）。
+
+    项目是否可选、是否绑定由项目选择器接口负责，展示不再按绑定状态过滤，
+    上传/新建/保存产物成功后必然可见（issue #1184）。
+    """
     backend = _workspace_backend(current_user)
     workspace_path = _workspace_path(path)
     try:
@@ -101,8 +103,6 @@ async def list_workspace_tree(
         raise InvalidOperationError("当前路径不是目录") from exc
     except PermissionError as exc:
         raise PermissionDeniedError("Access denied") from exc
-    if not include_unbound_project_dirs:
-        entries = await _filter_project_tree_entries(entries, uid=str(current_user.uid), db=db)
     return {"entries": entries}
 
 
@@ -200,12 +200,27 @@ async def write_workspace_file_content(*, path: str, content: str, current_user:
     }
 
 
-async def delete_workspace_path(*, path: str, current_user: User) -> dict:
-    """删除工作区内的文件或目录，根目录不可删除。"""
+async def delete_workspace_path(*, path: str, current_user: User, db) -> dict:
+    """删除工作区内的文件或目录，根目录不可删除。
+
+    目标是仍被会话引用的 Project Workdir（或其祖先目录）时拒绝整次删除：
+    递归删除会清空会话文件而 Project 绑定与 Session 引用仍然存活，会话
+    随即指向不存在的目录；已删除会话（status=deleted）或已软删 Project
+    的残留目录不再阻塞。判断只依据引用路径的祖先关系，删除 Workdir
+    内部单个文件的正常清理不受影响。
+    """
     backend = _workspace_backend(current_user)
     workspace_path = _workspace_path(path)
     if workspace_path == WORKSPACE_SCOPE_ROOT:
         raise InvalidOperationError("工作区根目录不允许删除")
+
+    target = PurePosixPath(str(workspace_path).strip("/"))
+    referenced = await ProjectRepository(db).list_referenced_workdir_paths_for_user(str(current_user.uid))
+    if any(target == PurePosixPath(item) or target in PurePosixPath(item).parents for item in referenced):
+        raise InvalidOperationError(
+            "该目录包含会话正在使用的工作目录，整体删除会清空会话文件；请先删除相关会话或项目",
+            code="workspace_session_workdir_protected",
+        )
 
     try:
         await asyncio.to_thread(
@@ -429,26 +444,6 @@ def _list_workspace_directory(
         if not files_only or not child["is_dir"]:
             entries.append(_entry_from_metadata(child_path, child))
     return sort_file_entries(entries)
-
-
-async def _filter_project_tree_entries(entries: list[dict], *, uid: str, db) -> list[dict]:
-    """隐藏未归属 selectable Project 的 projects 子树。"""
-    entries_with_paths = [(entry, PurePosixPath(str(entry.get("path") or "/").strip("/"))) for entry in entries]
-    if not any(path.parts[:1] == ("projects",) and path.as_posix() != "projects" for _, path in entries_with_paths):
-        return entries
-
-    visible_paths = await ProjectRepository(db).list_selectable_workdir_paths_for_user(uid)
-    selected_project_paths = [PurePosixPath(path) for path in visible_paths if PurePosixPath(path).parts[:1] == ("projects",)]
-
-    def is_visible(candidate: PurePosixPath) -> bool:
-        if candidate.parts[:1] != ("projects",) or candidate.as_posix() == "projects":
-            return True
-        return any(
-            candidate == selected or candidate.is_relative_to(selected) or selected.is_relative_to(candidate)
-            for selected in selected_project_paths
-        )
-
-    return [entry for entry, path in entries_with_paths if is_visible(path)]
 
 
 def _plan_upload_targets(

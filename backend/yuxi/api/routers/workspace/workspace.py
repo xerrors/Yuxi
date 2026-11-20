@@ -43,17 +43,13 @@ async def get_workspace_tree(
     path: str = Query("/", description="工作区目录路径"),
     recursive: bool = Query(False, description="是否递归返回子目录文件"),
     files_only: bool = Query(False, description="是否仅返回文件"),
-    include_unbound_project_dirs: bool = Query(False, description="Project 选目录时展示未绑定目录"),
     current_user: User = Depends(get_required_user),
-    db: AsyncSession = Depends(get_db),
 ):
     return await list_workspace_tree(
         path=path,
         recursive=recursive,
         files_only=files_only,
-        include_unbound_project_dirs=include_unbound_project_dirs,
         current_user=current_user,
-        db=db,
     )
 
 
@@ -166,8 +162,9 @@ async def update_workspace_file(
 async def delete_workspace_file_route(
     path: str = Query(..., description="工作区文件或目录路径"),
     current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    return await delete_workspace_path(path=path, current_user=current_user)
+    return await delete_workspace_path(path=path, current_user=current_user, db=db)
 
 
 @workspace.post("/directory", response_model=dict)
