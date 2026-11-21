@@ -409,6 +409,35 @@ async def test_save_artifact_rejects_unsafe_destination(live_files, destination)
 
 
 @pytest.mark.asyncio
+async def test_save_artifact_rejects_hidden_projects_destination(live_files, monkeypatch):
+    """artifact 保存到 projects 未绑定子树：与上传同一拒写口径，防止保存成功却不可见。"""
+    import yuxi.modules.workspace.services.files as files_svc
+
+    from pathlib import PurePosixPath
+
+    async def _implicit_roots(**_kwargs):
+        return [PurePosixPath("projects/anonymous")]
+
+    async def _no_selected(**_kwargs):
+        return []
+
+    monkeypatch.setattr(files_svc, "_implicit_project_root_paths", _implicit_roots)
+    monkeypatch.setattr(files_svc, "_selectable_project_root_paths", _no_selected)
+    # 目的地真实存在于盘上（implicit 项目目录）：拒绝来自可见性守卫而非 404。
+    live_files.directories.add("/projects/anonymous")
+    with pytest.raises(InvalidOperationError) as exc:
+        await svc.save_thread_artifact_to_workspace_view(
+            thread_id="thread-1",
+            current_uid="user-1",
+            db=object(),
+            path="/home/user/workspace/projects/11111111-1111-4111-8111-111111111111/report.md",
+            destination_path="/projects/anonymous",
+        )
+    assert exc.value.code == "workspace_hidden_target"
+    assert not any(key.startswith("/projects/anonymous/") for key in live_files.files)
+
+
+@pytest.mark.asyncio
 async def test_save_artifact_accepts_explicit_default_destination(live_files):
     result = await svc.save_thread_artifact_to_workspace_view(
         thread_id="thread-1",

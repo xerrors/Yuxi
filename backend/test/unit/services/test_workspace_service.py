@@ -342,7 +342,7 @@ async def test_upload_workspace_files_writes_files(tmp_path: Path, monkeypatch) 
 
     previous_umask = os.umask(0o077)
     try:
-        result = await svc.upload_workspace_files(parent_path="/", files=uploads, current_user=user)
+        result = await svc.upload_workspace_files(parent_path="/", files=uploads, current_user=user, db=None)
     finally:
         os.umask(previous_umask)
 
@@ -389,7 +389,7 @@ async def test_upload_workspace_files_rejects_oversized_file_and_cleans_partial_
     ]
 
     with pytest.raises(DomainError) as exc_info:
-        await svc.upload_workspace_files(parent_path="/", files=uploads, current_user=user)
+        await svc.upload_workspace_files(parent_path="/", files=uploads, current_user=user, db=None)
 
     assert isinstance(exc_info.value, InvalidOperationError)
     assert "100 MB" in exc_info.value.message
@@ -404,7 +404,7 @@ async def test_upload_workspace_files_rejects_more_than_limit(tmp_path: Path, mo
     uploads = [FileInput(filename=f"demo-{index}.txt", source=BytesIO(b"hello")) for index in range(svc.MAX_WORKSPACE_UPLOAD_FILES + 1)]
 
     with pytest.raises(DomainError) as exc_info:
-        await svc.upload_workspace_files(parent_path="/", files=uploads, current_user=user)
+        await svc.upload_workspace_files(parent_path="/", files=uploads, current_user=user, db=None)
 
     assert isinstance(exc_info.value, InvalidOperationError)
     assert f"一次最多上传 {svc.MAX_WORKSPACE_UPLOAD_FILES} 个文件" in exc_info.value.message
@@ -427,6 +427,7 @@ async def test_upload_workspace_files_preserves_relative_paths(tmp_path: Path, m
         files=uploads,
         relative_paths=["root/a.txt", "root/sub/b.txt", "root/sub/c.txt"],
         current_user=user,
+        db=None,
     )
 
     assert [entry["path"] for entry in result["entries"]] == ["/root/a.txt", "/root/sub/b.txt", "/root/sub/c.txt"]
@@ -447,6 +448,7 @@ async def test_folder_upload_preserves_leading_space_in_root_name(tmp_path: Path
         files=[FileInput(filename="a.txt", source=BytesIO(b"a"))],
         relative_paths=[" root/sub/a.txt"],
         current_user=user,
+        db=None,
     )
 
     assert result["entries"][0]["path"] == "/ root/sub/a.txt"
@@ -468,7 +470,8 @@ async def test_folder_upload_rejects_trailing_whitespace_before_writing(tmp_path
             files=[FileInput(filename="a.txt", source=BytesIO(b"a"))],
             relative_paths=[relative_path],
             current_user=user,
-        )
+        db=None,
+    )
 
     assert not (root / "root").exists()
     assert not (root / "root ").exists()
@@ -502,7 +505,8 @@ async def test_upload_workspace_files_rejects_invalid_relative_paths(tmp_path: P
             files=[FileInput(filename="x.txt", source=BytesIO(b"x"))],
             relative_paths=[relative_path],
             current_user=user,
-        )
+        db=None,
+    )
 
     assert isinstance(exc_info.value, InvalidInputError)
     assert not (root / "x.txt").exists()
@@ -530,7 +534,8 @@ async def test_upload_workspace_files_rejects_overlong_or_too_deep_paths(tmp_pat
             files=[FileInput(filename="f.txt", source=BytesIO(b"x"))],
             relative_paths=[relative_path],
             current_user=user,
-        )
+        db=None,
+    )
 
     assert not (root / "a").exists()
     assert not (root / ("b" * 64)).exists()
@@ -550,6 +555,7 @@ async def test_upload_workspace_files_enforces_full_path_depth_boundary(tmp_path
         files=[FileInput(filename="ok.txt", source=BytesIO(b"ok"))],
         relative_paths=["ok.txt"],
         current_user=user,
+        db=None,
     )
     assert accepted["entries"][0]["path"] == f"/{parent}/ok.txt"
     assert (root / parent / "ok.txt").read_bytes() == b"ok"
@@ -560,7 +566,8 @@ async def test_upload_workspace_files_enforces_full_path_depth_boundary(tmp_path
             files=[FileInput(filename="bad.txt", source=BytesIO(b"bad"))],
             relative_paths=["sub/bad.txt"],
             current_user=user,
-        )
+        db=None,
+    )
     assert "层级过深" in relative_error.value.message
     assert not (root / parent / "sub/bad.txt").exists()
 
@@ -572,7 +579,8 @@ async def test_upload_workspace_files_enforces_full_path_depth_boundary(tmp_path
             files=[FileInput(filename="x.txt", source=BytesIO(b"x"))],
             relative_paths=["x.txt"],
             current_user=user,
-        )
+        db=None,
+    )
     assert "目标目录层级过深" in parent_error.value.message
     assert not (root / deeper / "x.txt").exists()
 
@@ -594,12 +602,14 @@ async def test_upload_workspace_files_accepts_component_and_path_boundaries(tmp_
         files=[FileInput(filename="f.txt", source=BytesIO(b"x"))],
         relative_paths=[f"{long_name}/f.txt"],
         current_user=user,
+        db=None,
     )
     await svc.upload_workspace_files(
         parent_path="/",
         files=[FileInput(filename="f.txt", source=BytesIO(b"x"))],
         relative_paths=[long_path],
         current_user=user,
+        db=None,
     )
 
     assert (root / long_name / "f.txt").read_bytes() == b"x"
@@ -638,7 +648,8 @@ async def test_upload_workspace_files_rejects_overlong_flat_filename(tmp_path: P
             parent_path="/",
             files=[FileInput(filename="a" * 300 + ".txt", source=BytesIO(b"x"))],
             current_user=user,
-        )
+        db=None,
+    )
 
     assert "文件路径过长" in exc_info.value.message
     assert not any(path.name.startswith("a" * 300) for path in root.iterdir())
@@ -660,7 +671,8 @@ async def test_upload_workspace_files_rejects_duplicate_targets(tmp_path: Path, 
             ],
             relative_paths=["root/a.txt", "root/a.txt"],
             current_user=user,
-        )
+        db=None,
+    )
 
     assert "上传目标重复" in exc_info.value.message
     assert not (root / "root/a.txt").exists()
@@ -677,7 +689,8 @@ async def test_upload_workspace_files_rejects_relative_path_count_mismatch(tmp_p
             files=[FileInput(filename="a.txt", source=BytesIO(b"a")), FileInput(filename="b.txt", source=BytesIO(b"b"))],
             relative_paths=["root/a.txt"],
             current_user=_user(),
-        )
+        db=None,
+    )
 
     assert "相对路径数量" in exc_info.value.message
 
@@ -696,6 +709,7 @@ async def test_upload_workspace_files_merges_existing_directory_and_rejects_exis
         files=[FileInput(filename="a.txt", source=BytesIO(b"merged"))],
         relative_paths=["root/sub/a.txt"],
         current_user=user,
+        db=None,
     )
     assert merged["entries"][0]["path"] == "/root/sub/a.txt"
     assert (root / "root/sub/a.txt").read_bytes() == b"merged"
@@ -709,7 +723,8 @@ async def test_upload_workspace_files_merges_existing_directory_and_rejects_exis
             ],
             relative_paths=["root/new.txt", "root/a.txt"],
             current_user=user,
-        )
+        db=None,
+    )
 
     assert "已存在" in exc_info.value.message
     assert not (root / "root/new.txt").exists()
@@ -731,7 +746,8 @@ async def test_upload_workspace_files_rejects_file_directory_conflict(tmp_path: 
             files=[FileInput(filename="child.txt", source=BytesIO(b"child"))],
             relative_paths=["root/sub/child.txt"],
             current_user=user,
-        )
+        db=None,
+    )
 
     assert "目标路径不可用" in exc_info.value.message
     assert (root / "root/sub").is_file()
@@ -752,7 +768,8 @@ async def test_folder_upload_rejects_ancestor_targets_before_writing(tmp_path: P
             files=[FileInput(filename="file.txt", source=BytesIO(b"x")) for _path in paths],
             relative_paths=paths,
             current_user=user,
-        )
+        db=None,
+    )
 
     assert not (root / "root").exists()
 

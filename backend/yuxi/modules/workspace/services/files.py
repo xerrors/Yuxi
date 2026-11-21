@@ -75,7 +75,7 @@ async def list_workspace_tree(
     current_user: User,
     db,
 ) -> dict:
-    """列出个人工作区目录树，默认隐藏未归属可选 Project 的 projects 子树。"""
+    """列出个人工作区目录树，默认隐藏会话 implicit 项目区域。"""
     backend = _workspace_backend(current_user)
     workspace_path = _workspace_path(path)
     try:
@@ -249,8 +249,9 @@ async def upload_workspace_files(
     *,
     parent_path: str,
     files: list[FileInput],
-    relative_paths: list[str] | None = None,
     current_user: User,
+    db,
+    relative_paths: list[str] | None = None,
 ) -> dict:
     """把借用的文件流写入用户工作区，失败时撤销本批次已写入文件。"""
     if not files:
@@ -280,6 +281,11 @@ async def upload_workspace_files(
         files=files,
         relative_paths=relative_paths,
         parent_depth=parent_depth,
+    )
+    await assert_projects_write_targets_visible(
+        [target for _file, target in upload_targets],
+        uid=str(current_user.uid),
+        db=db,
     )
     await _ensure_upload_targets_available(backend, upload_targets)
 
@@ -432,23 +438,80 @@ def _list_workspace_directory(
 
 
 async def _filter_project_tree_entries(entries: list[dict], *, uid: str, db) -> list[dict]:
-    """隐藏未归属 selectable Project 的 projects 子树。"""
+    """projects 树内只精确隐藏会话 implicit Project；用户目录、文件与 selectable 项目均可见。
+
+    selectable 绑定不再决定可见性（其子树本就属于默认可见），历史"非 selectable 一律隐藏"
+    的口径会把用户自建文件夹也吞成黑洞；implicit 祖先日期层仅在不含 selectable 项目时隐藏，
+    避免纯会话日期目录呈现为空壳（issue #1184）。
+    """
     entries_with_paths = [(entry, PurePosixPath(str(entry.get("path") or "/").strip("/"))) for entry in entries]
     if not any(path.parts[:1] == ("projects",) and path.as_posix() != "projects" for _, path in entries_with_paths):
         return entries
 
-    visible_paths = await ProjectRepository(db).list_selectable_workdir_paths_for_user(uid)
-    selected_project_paths = [PurePosixPath(path) for path in visible_paths if PurePosixPath(path).parts[:1] == ("projects",)]
+    selected_project_paths = await _selectable_project_root_paths(uid=uid, db=db)
+    implicit_project_paths = await _implicit_project_root_paths(uid=uid, db=db)
 
     def is_visible(candidate: PurePosixPath) -> bool:
-        if candidate.parts[:1] != ("projects",) or candidate.as_posix() == "projects":
-            return True
-        return any(
-            candidate == selected or candidate.is_relative_to(selected) or selected.is_relative_to(candidate)
-            for selected in selected_project_paths
-        )
+        return _projects_candidate_visible(candidate, selected_project_paths, implicit_project_paths)
 
     return [entry for entry, path in entries_with_paths if is_visible(path)]
+
+
+def _projects_candidate_visible(
+    candidate: PurePosixPath,
+    selected_project_paths: list[PurePosixPath],
+    implicit_project_paths: list[PurePosixPath],
+) -> bool:
+    """projects 树内单一条目的展示可见性；展示过滤与写守卫共用，保证口径一一对应。"""
+    if candidate.parts[:1] != ("projects",) or candidate.as_posix() == "projects":
+        return True
+    if any(
+        candidate == selected or candidate.is_relative_to(selected) or selected.is_relative_to(candidate)
+        for selected in selected_project_paths
+    ):
+        return True
+    if any(
+        candidate == implicit or candidate.is_relative_to(implicit) or implicit.is_relative_to(candidate)
+        for implicit in implicit_project_paths
+    ):
+        return False
+    return True
+
+
+async def _selectable_project_root_paths(*, uid: str, db) -> list[PurePosixPath]:
+    """projects 树内的 selectable Project workdir 根，用于保留其祖先日期层可见。"""
+    visible_paths = await ProjectRepository(db).list_selectable_workdir_paths_for_user(uid)
+    return [PurePosixPath(path) for path in visible_paths if PurePosixPath(path).parts[:1] == ("projects",)]
+
+
+async def _implicit_project_root_paths(*, uid: str, db) -> list[PurePosixPath]:
+    """projects 树内的会话 implicit Project workdir 根，是个人空间唯一继续隐藏的区域。"""
+    hidden_paths = await ProjectRepository(db).list_implicit_workdir_paths_for_user(uid)
+    return [PurePosixPath(path) for path in hidden_paths if PurePosixPath(path).parts[:1] == ("projects",)]
+
+
+async def assert_projects_write_targets_visible(targets: list[str], *, uid: str, db) -> None:
+    """拒绝把文件写入列表不可见的位置，与展示共用同一可见性判定函数；守卫对父链逐级判定，比展示按条目自身路径判定更严（不对称角例见决策记录已知限制）。
+
+    目标自身或任一父目录落入 implicit Project 子树、或不含 selectable 项目的纯 implicit
+    祖先日期层时，写入内容必然不出现在个人空间，形成"上传成功但永不显示"的黑洞，因此在
+    任何磁盘副作用前 fail-closed 拒绝。projects 顶层散文件、用户自建目录与 selectable 子树
+    可见并放行；linked Project 绑定进 implicit 子树后按展示优先级转为可见，同样放行。
+    守卫只约束新产生内容的写入，既有隐藏文件的覆盖编辑（write_workspace_file_content）不在范围内。
+    """
+    project_targets = {PurePosixPath(str(target or "").strip("/")) for target in targets if target}
+    project_targets = {path for path in project_targets if path.parts[:1] == ("projects",)}
+    if not project_targets:
+        return
+    selected_project_paths = await _selectable_project_root_paths(uid=uid, db=db)
+    implicit_project_paths = await _implicit_project_root_paths(uid=uid, db=db)
+    for path in project_targets:
+        if not all(_projects_candidate_visible(level, selected_project_paths, implicit_project_paths) for level in (path, *path.parents)):
+            raise InvalidOperationError(
+                "该位置或其上层目录属于会话自动创建的项目区域，文件不会显示在个人空间；"
+                "请上传或保存到 projects 之外的目录、自建文件夹或已绑定项目内部",
+                code="workspace_hidden_target",
+            )
 
 
 def _plan_upload_targets(

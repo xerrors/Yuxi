@@ -188,6 +188,7 @@ async def upload_workspace_files_route(
     relative_paths: list[str] | None = Form(None, description="与 files 顺序对齐的相对路径"),
     files: list[UploadFile] = File(..., description="上传文件列表"),
     current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
 ):
     try:
         inputs = await prepare_upload_files(
@@ -202,6 +203,7 @@ async def upload_workspace_files_route(
         files=inputs,
         relative_paths=relative_paths,
         current_user=current_user,
+        db=db,
     )
 
 

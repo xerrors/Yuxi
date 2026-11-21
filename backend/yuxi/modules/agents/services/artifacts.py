@@ -26,6 +26,7 @@ from yuxi.modules.workspace.runtime_paths import (
     runtime_workspace_path,
 )
 from yuxi.modules.workspace.services.bindings import resolve_authorized_workdir
+from yuxi.modules.workspace.services.files import assert_projects_write_targets_visible
 from yuxi.shared.errors import (
     ContentTooLargeError,
     DomainError,
@@ -143,6 +144,10 @@ async def save_thread_artifact_to_workspace_view(
             raise PermissionDeniedError("artifact destination access denied") from exc
         if not destination_item["is_dir"]:
             raise InvalidOperationError("artifact destination is not a directory")
+    # 与上传同一写入口径：先完成归属与存在性校验（越权保持 403/404），再拒本租户内
+    # "保存成功却看不见"的不可见目录；默认目的地恒可见。
+    if destination_must_exist:
+        await assert_projects_write_targets_visible([destination_scope], uid=current_uid, db=db)
     await _require_skill_artifact_access(normalized_path=normalized, current_uid=current_uid, db=db)
     descriptor, temp_path = tempfile.mkstemp(prefix="yuxi-save-artifact-")
     os.close(descriptor)
