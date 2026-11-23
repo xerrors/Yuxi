@@ -437,11 +437,32 @@ async def read_users(
 async def read_user_access_options(
     skip: int = 0,
     limit: int = 1000,
+    search: str | None = None,
+    include_uids: str | None = None,
+    roles: str | None = None,
     current_user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """获取用户访问选项（管理员权限）。"""
-    return await user_service.list_access_options(db, skip=skip, limit=limit)
+    """获取用户访问选项（管理员权限）。
+
+    ``search`` 服务端按用户名/UID/手机号模糊匹配；``include_uids`` 逗号分隔，
+    用于把已选用户回填进结果，避免大表下首屏截断导致选中项丢失；``roles`` 逗号
+    分隔白名单（user/admin/superadmin），先按角色收窄再取前 limit 条。
+    """
+    parsed_roles = [token.strip() for token in (roles or "").split(",") if token.strip()]
+    if invalid := [role for role in parsed_roles if role not in {"user", "admin", "superadmin"}]:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"不支持的角色筛选: {'、'.join(invalid)}",
+        )
+    return await user_service.list_access_options(
+        db,
+        skip=skip,
+        limit=limit,
+        search=search,
+        include_uids=[token.strip() for token in (include_uids or "").split(",") if token.strip()],
+        roles=parsed_roles or None,
+    )
 
 
 @auth.get("/users/{user_id}", response_model=UserResponse)

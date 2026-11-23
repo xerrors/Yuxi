@@ -58,6 +58,7 @@
                     :trigger="['click']"
                     placement="bottomRight"
                     overlay-class-name="share-selection-popover"
+                    @open-change="(open) => handleSelectionOpen(open, scope.key, option.value)"
                   >
                     <a-button
                       size="small"
@@ -169,7 +170,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onScopeDispose, reactive, ref, watch } from 'vue'
 import { Building2, Globe, Users, UserPlus } from '@lucide/vue'
 import { useUserStore } from '@/modules/identity'
 import { authApi } from '@/apis/auth_api'
@@ -178,6 +179,8 @@ import { departmentApi } from '@/apis/department_api'
 const userStore = useUserStore()
 const departments = ref([])
 const users = ref([])
+const adminUsers = ref([])
+const departmentsLoaded = ref(false)
 const syncingFromProps = ref(false)
 
 const props = defineProps({
@@ -350,14 +353,15 @@ const departmentOptions = computed(() =>
     value: Number(dept.id)
   }))
 )
-const userOptions = computed(() =>
-  users.value.map((user) => ({
+const mapUserOptions = (list) =>
+  list.map((user) => ({
     label: user.department_name ? `${user.username}（${user.department_name}）` : user.username,
     value: user.uid,
     role: user.role,
     department_id: user.department_id
   }))
-)
+const userOptions = computed(() => mapUserOptions(users.value))
+const adminUserOptions = computed(() => mapUserOptions(adminUsers.value))
 
 const getAccessCount = (scopeKey, accessLevel) => {
   const scope = scopes[scopeKey]
@@ -372,11 +376,11 @@ const getAccessSummary = (scopeKey, accessLevel) => {
   return `${scope?.user_uids.length || 0} 个用户可访问`
 }
 const getSelectionOptions = (scopeKey, accessLevel) => {
-  let options = accessLevel === 'department' ? departmentOptions.value : userOptions.value
+  // manage 半区候选由服务端按 roles 白名单收窄（全体前 50 里筛会漏掉 51 名之后的管理员）；
+  // user 候选不再本地按 label 二次过滤，手机号/UID 命中项不会被隐藏成空列表。
+  let options = accessLevel === 'department' ? departmentOptions.value : scopeKey === 'manage_scope' ? adminUserOptions.value : userOptions.value
 
-  if (scopeKey === 'manage_scope' && accessLevel === 'user') {
-    options = options.filter((item) => ['admin', 'superadmin'].includes(item.role))
-  }
+  if (accessLevel === 'user') return options
   const query = selectionSearch[scopeKey][accessLevel].trim().toLowerCase()
   return query ? options.filter((item) => item.label.toLowerCase().includes(query)) : options
 }
@@ -413,17 +417,80 @@ const loadDepartments = async () => {
   try {
     const result = await departmentApi.getDepartments()
     departments.value = result || []
+    departmentsLoaded.value = true
   } catch (error) {
     console.error('加载部门列表失败:', error)
   }
 }
-const loadUsers = async () => {
+
+// 用户可能远超单页上限（万级账号），搜索下推到后端；includeUids 让已选用户即使在
+// 当前搜索结果之外也随结果返回，避免选中项在弹层里消失、无法核对或取消。
+const USER_SEARCH_DEBOUNCE_MS = 300
+const MANAGE_USER_ROLES = ['admin', 'superadmin']
+const userSearchTimer = { read: null, manage: null }
+// 两个半区各自一份候选、加载标记、已发词与请求序号：候选集不本地过滤，
+// 跨半区复用会串词；晚到的旧响应必须丢弃，否则会覆盖新搜索结果。
+const halfState = {
+  read: { loaded: false, lastQuery: null, seq: 0 },
+  manage: { loaded: false, lastQuery: null, seq: 0 }
+}
+const collectSelectedUserUids = (half) => {
+  const scope = half === 'manage' ? scopes.manage_scope : scopes.read_scope
+  if (scope?.access_level !== 'user') return []
+  return Array.from(new Set((scope.user_uids || []).map((uid) => String(uid))))
+}
+const searchUsers = async (half, search) => {
+  const sentQuery = (search || '').trim()
+  const state = halfState[half]
+  const seq = ++state.seq
   try {
-    users.value = await authApi.getUserAccessOptions()
+    const options = {
+      search: sentQuery,
+      includeUids: collectSelectedUserUids(half),
+      limit: 50
+    }
+    if (half === 'manage') options.roles = MANAGE_USER_ROLES
+    const result = await authApi.getUserAccessOptions(options)
+    if (seq !== state.seq) return
+    if (half === 'manage') adminUsers.value = result
+    else users.value = result
+    state.lastQuery = sentQuery
+    state.loaded = true
   } catch (error) {
     console.error('加载用户列表失败:', error)
   }
 }
+
+// 目录请求只在展开选择器时发起：编辑弹窗打开不再全量预取用户/部门。
+// 非管理员没有 access-options/部门目录权限，保持不发请求的既有口径。
+const handleSelectionOpen = async (open, scopeKey, accessLevel) => {
+  if (!open || !userStore.isAdmin) return
+  if (accessLevel === 'department') {
+    if (!departmentsLoaded.value) await loadDepartments()
+    return
+  }
+  if (accessLevel === 'user') {
+    const half = scopeKey === 'manage_scope' ? 'manage' : 'read'
+    const currentQuery = (selectionSearch[scopeKey][accessLevel] || '').trim()
+    const state = halfState[half]
+    if (!state.loaded || currentQuery !== state.lastQuery) await searchUsers(half, currentQuery)
+  }
+}
+
+// 两个半区各自防抖下推：manage 输入带 roles 白名单，read 输入不带；互不吞词。
+const scheduleUserSearch = (half, query) => {
+  clearTimeout(userSearchTimer[half])
+  userSearchTimer[half] = setTimeout(() => {
+    // 非管理员没有 access-options 权限，与展开加载同口径不发请求。
+    if (userStore.isAdmin && (query.trim() || halfState[half].loaded)) searchUsers(half, query)
+  }, USER_SEARCH_DEBOUNCE_MS)
+}
+watch(() => selectionSearch.read_scope.user, (value) => scheduleUserSearch('read', value))
+watch(() => selectionSearch.manage_scope.user, (value) => scheduleUserSearch('manage', value))
+onScopeDispose(() => {
+  clearTimeout(userSearchTimer.read)
+  clearTimeout(userSearchTimer.manage)
+})
 
 watch(() => props.modelValue, initConfig, { deep: true })
 watch(normalizedAllowedAccessLevels, initConfig)
@@ -462,11 +529,6 @@ const hasManageScopeViolation = computed(() =>
 )
 
 initConfig()
-
-onMounted(() => {
-  loadDepartments()
-  loadUsers()
-})
 
 defineExpose({ scopes, validate })
 </script>

@@ -652,3 +652,25 @@ test('Skill 详情通过实际 skillApi 对象读取隐藏的单个绑定资源'
     assert.equal(detail.data.bound_agent_id, 1)
   })
 })
+
+test('共享权限候选查询把 search/roles/include_uids 下推为查询串，空参数不带', async () => {
+  await withServer(async (server) => {
+    storageValues.set('user_token', 'fixture-token')
+    const { configureApiAuth } = await server.ssrLoadModule('/src/apis/auth_context.js')
+    configureApiAuth({ getToken: () => 'fixture-token', isAdmin: () => true })
+    const requests = []
+    globalThis.fetch = async (url) => {
+      requests.push(String(url))
+      return new Response(JSON.stringify([]), { headers: { 'content-type': 'application/json' } })
+    }
+    const { authApi } = await server.ssrLoadModule('/src/apis/auth_api.js')
+    await authApi.getUserAccessOptions({ search: ' zhang ', includeUids: ['u1', 'u2'], roles: ['admin', 'superadmin'], limit: 50 })
+    const pushed = decodeURIComponent(requests[0])
+    assert.match(pushed, /search=zhang/)
+    assert.match(pushed, /include_uids=u1,u2/)
+    assert.match(pushed, /roles=admin,superadmin/)
+    await authApi.getUserAccessOptions({})
+    assert.ok(!requests[1].includes('roles='))
+    assert.ok(!requests[1].includes('search='))
+  })
+})
