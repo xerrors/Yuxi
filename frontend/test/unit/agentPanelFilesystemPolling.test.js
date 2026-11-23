@@ -10,7 +10,7 @@ import {
   startAgentPanelFilesystemPolling
 } from '../../src/modules/session/model/agentPanelFilesystemPolling.js'
 
-test('agent panel polls live files every second and stops on cleanup', async () => {
+test('agent panel polls live files every 5 seconds and stops on cleanup', async () => {
   let callback
   let interval
   let cleared
@@ -30,7 +30,7 @@ test('agent panel polls live files every second and stops on cleanup', async () 
     }
   })
 
-  assert.equal(interval, 1000)
+  assert.equal(interval, 5000)
   callback()
   await Promise.resolve()
   assert.equal(refreshes, 1)
