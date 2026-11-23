@@ -56,6 +56,7 @@
                 >
                   <a-dropdown
                     :trigger="['click']"
+                    :open="option.value === 'user' ? userPickers[scope.key].open.value : undefined"
                     placement="bottomRight"
                     overlay-class-name="share-selection-popover"
                     @open-change="(open) => handleSelectionOpen(open, scope.key, option.value)"
@@ -83,70 +84,45 @@
                           </div>
                         </div>
                         <a-input
-                          v-model:value="selectionSearch[scope.key][option.value]"
+                          :value="option.value === 'user' ? userPickers[scope.key].query.value : departmentSearch[scope.key]"
                           size="small"
                           allow-clear
                           class="selection-search"
                           :placeholder="option.value === 'department' ? '搜索部门' : '搜索用户'"
                           @mousedown.stop
                           @click.stop
+                          @update:value="(value) => setSelectionSearch(scope.key, option.value, value)"
                         />
-                        <div
-                          v-if="getSelectionOptions(scope.key, option.value).length"
-                          class="selection-list"
-                        >
-                          <div
-                            v-for="item in getSelectionOptions(scope.key, option.value)"
-                            :key="item.value"
-                            role="checkbox"
-                            :aria-checked="isSelected(scope.key, option.value, item.value)"
-                            tabindex="0"
-                            class="selection-item"
-                            :class="{ selected: isSelected(scope.key, option.value, item.value) }"
-                            @mousedown.stop
-                            @click.stop="
-                              toggleSelection(
-                                scope.key,
-                                option.value,
-                                item.value,
-                                !isSelected(scope.key, option.value, item.value)
-                              )
-                            "
-                            @keydown.enter.prevent="
-                              toggleSelection(
-                                scope.key,
-                                option.value,
-                                item.value,
-                                !isSelected(scope.key, option.value, item.value)
-                              )
-                            "
-                            @keydown.space.prevent="
-                              toggleSelection(
-                                scope.key,
-                                option.value,
-                                item.value,
-                                !isSelected(scope.key, option.value, item.value)
-                              )
-                            "
-                          >
-                            <span class="selection-item-content">
-                              <a-checkbox
-                                :checked="isSelected(scope.key, option.value, item.value)"
-                                @click.stop
-                                @change="
-                                  toggleSelection(
-                                    scope.key,
-                                    option.value,
-                                    item.value,
-                                    $event.target.checked
-                                  )
-                                "
-                              />
-                              <span class="selection-label">{{ item.label }}</span>
-                            </span>
-                          </div>
+                        <div class="selection-list">
+                          <template v-for="group in getSelectionGroups(scope.key, option.value)" :key="group.title">
+                            <div v-if="group.title" class="selection-group-title">{{ group.title }}</div>
+                            <div v-if="group.message" class="selection-empty" role="status">
+                              {{ group.message }}
+                            </div>
+                            <div
+                              v-for="item in group.options"
+                              :key="item.value"
+                              role="checkbox"
+                              :aria-checked="isSelected(scope.key, option.value, item.value)"
+                              tabindex="0"
+                              class="selection-item"
+                              :class="{ selected: isSelected(scope.key, option.value, item.value) }"
+                              @mousedown.stop
+                              @click.stop="toggleSelection(scope.key, option.value, item.value)"
+                              @keydown.enter.prevent="toggleSelection(scope.key, option.value, item.value)"
+                              @keydown.space.prevent="toggleSelection(scope.key, option.value, item.value)"
+                            >
+                              <span class="selection-item-content">
+                                <a-checkbox
+                                  :checked="isSelected(scope.key, option.value, item.value)"
+                                  @click.stop
+                                  @change="toggleSelection(scope.key, option.value, item.value, $event.target.checked)"
+                                />
+                                <span class="selection-label">{{ item.label }}</span>
+                              </span>
+                            </div>
+                          </template>
                         </div>
-                        <div v-else class="selection-empty">暂无可选项</div>
                       </div>
                     </template>
                   </a-dropdown>
@@ -170,18 +146,18 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onScopeDispose, reactive, ref, watch } from 'vue'
+import { computed, nextTick, reactive, ref, toRaw, watch } from 'vue'
 import { Building2, Globe, Users, UserPlus } from '@lucide/vue'
 import { useUserStore } from '@/modules/identity'
 import { authApi } from '@/apis/auth_api'
 import { departmentApi } from '@/apis/department_api'
+import { useShareUserPicker } from '../model/shareUserPicker'
 
 const userStore = useUserStore()
 const departments = ref([])
-const users = ref([])
-const adminUsers = ref([])
 const departmentsLoaded = ref(false)
 const syncingFromProps = ref(false)
+let emittedConfig
 
 const props = defineProps({
   modelValue: {
@@ -222,10 +198,25 @@ const baseShareModeOptions = [
 ]
 
 const scopes = reactive({ read_scope: null, manage_scope: null })
-const selectionSearch = reactive({
-  read_scope: { department: '', user: '' },
-  manage_scope: { department: '', user: '' }
-})
+const departmentSearch = reactive({ read_scope: '', manage_scope: '' })
+const userPickers = Object.fromEntries(
+  scopeOptions.map(({ key }) => [
+    key,
+    useShareUserPicker({
+      getOptions: authApi.getUserAccessOptions,
+      selectedUids: () => scopes[key]?.user_uids || [],
+      canSearch: () => userStore.isAdmin && !props.disabled,
+      manage: key === 'manage_scope'
+    })
+  ])
+)
+for (const { key } of scopeOptions) {
+  watch(
+    () => scopes[key]?.access_level,
+    (level) => { if (level !== 'user') userPickers[key].setOpen(false) },
+    { flush: 'sync' }
+  )
+}
 
 const currentDepartmentId = computed(() =>
   userStore.departmentId ? Number(userStore.departmentId) : null
@@ -319,11 +310,12 @@ const initConfig = () => {
 }
 
 const emitConfig = () => {
-  emit('update:modelValue', {
+  emittedConfig = {
     version: 2,
     read_scope: normalizeScope(scopes.read_scope),
     manage_scope: normalizeScope(scopes.manage_scope)
-  })
+  }
+  emit('update:modelValue', emittedConfig)
 }
 
 const toggleScope = (scopeKey, enabled) => {
@@ -353,16 +345,6 @@ const departmentOptions = computed(() =>
     value: Number(dept.id)
   }))
 )
-const mapUserOptions = (list) =>
-  list.map((user) => ({
-    label: user.department_name ? `${user.username}（${user.department_name}）` : user.username,
-    value: user.uid,
-    role: user.role,
-    department_id: user.department_id
-  }))
-const userOptions = computed(() => mapUserOptions(users.value))
-const adminUserOptions = computed(() => mapUserOptions(adminUsers.value))
-
 const getAccessCount = (scopeKey, accessLevel) => {
   const scope = scopes[scopeKey]
   if (accessLevel === 'department') return scope?.department_ids.length || 0
@@ -375,14 +357,33 @@ const getAccessSummary = (scopeKey, accessLevel) => {
   if (accessLevel === 'department') return `${scope?.department_ids.length || 0} 个部门可访问`
   return `${scope?.user_uids.length || 0} 个用户可访问`
 }
-const getSelectionOptions = (scopeKey, accessLevel) => {
-  // manage 半区候选由服务端按 roles 白名单收窄（全体前 50 里筛会漏掉 51 名之后的管理员）；
-  // user 候选不再本地按 label 二次过滤，手机号/UID 命中项不会被隐藏成空列表。
-  let options = accessLevel === 'department' ? departmentOptions.value : scopeKey === 'manage_scope' ? adminUserOptions.value : userOptions.value
+const getSelectionGroups = (scopeKey, accessLevel) => {
+  if (accessLevel === 'department') {
+    const query = departmentSearch[scopeKey].trim().toLowerCase()
+    const options = departmentOptions.value.filter((item) => item.label.toLowerCase().includes(query))
+    return [{ title: '', options, message: options.length ? '' : '暂无可选项' }]
+  }
 
-  if (accessLevel === 'user') return options
-  const query = selectionSearch[scopeKey][accessLevel].trim().toLowerCase()
-  return query ? options.filter((item) => item.label.toLowerCase().includes(query)) : options
+  const { selected, candidates, status } = userPickers[scopeKey]
+  const messages = {
+    loading: '正在加载候选用户…',
+    error: '候选用户加载失败，请重新搜索或打开列表。',
+    ready: '暂无匹配的可添加用户',
+    idle: '暂无可添加用户'
+  }
+  const groups = []
+  if (selected.value.length) groups.push({ title: '已选用户', options: selected.value })
+  groups.push({
+    title: '可添加用户',
+    options: candidates.value,
+    message: candidates.value.length ? '' : messages[status.value]
+  })
+  return groups
+}
+
+const setSelectionSearch = (scopeKey, accessLevel, value) => {
+  if (accessLevel === 'user') userPickers[scopeKey].query.value = value
+  else departmentSearch[scopeKey] = value
 }
 const isSelected = (scopeKey, accessLevel, value) => {
   const scope = scopes[scopeKey]
@@ -391,9 +392,14 @@ const isSelected = (scopeKey, accessLevel, value) => {
     ? scope.department_ids.includes(Number(value))
     : scope.user_uids.includes(String(value))
 }
-const toggleSelection = (scopeKey, accessLevel, value, checked) => {
-  if (props.disabled || !scopes[scopeKey]) return
+const toggleSelection = (
+  scopeKey,
+  accessLevel,
+  value,
+  checked = !isSelected(scopeKey, accessLevel, value)
+) => {
   const scope = scopes[scopeKey]
+  if (props.disabled || scope?.access_level !== accessLevel) return
   if (accessLevel === 'department') {
     scope.department_ids = Array.from(
       new Set(
@@ -403,6 +409,7 @@ const toggleSelection = (scopeKey, accessLevel, value, checked) => {
       )
     )
   } else {
+    if (checked && !userPickers[scopeKey].candidates.value.some((option) => option.value === value)) return
     scope.user_uids = Array.from(
       new Set(
         checked
@@ -423,76 +430,26 @@ const loadDepartments = async () => {
   }
 }
 
-// 用户可能远超单页上限（万级账号），搜索下推到后端；includeUids 让已选用户即使在
-// 当前搜索结果之外也随结果返回，避免选中项在弹层里消失、无法核对或取消。
-const USER_SEARCH_DEBOUNCE_MS = 300
-const MANAGE_USER_ROLES = ['admin', 'superadmin']
-const userSearchTimer = { read: null, manage: null }
-// 两个半区各自一份候选、加载标记、已发词与请求序号：候选集不本地过滤，
-// 跨半区复用会串词；晚到的旧响应必须丢弃，否则会覆盖新搜索结果。
-const halfState = {
-  read: { loaded: false, lastQuery: null, seq: 0 },
-  manage: { loaded: false, lastQuery: null, seq: 0 }
-}
-const collectSelectedUserUids = (half) => {
-  const scope = half === 'manage' ? scopes.manage_scope : scopes.read_scope
-  if (scope?.access_level !== 'user') return []
-  return Array.from(new Set((scope.user_uids || []).map((uid) => String(uid))))
-}
-const searchUsers = async (half, search) => {
-  const sentQuery = (search || '').trim()
-  const state = halfState[half]
-  const seq = ++state.seq
-  try {
-    const options = {
-      search: sentQuery,
-      includeUids: collectSelectedUserUids(half),
-      limit: 50
-    }
-    if (half === 'manage') options.roles = MANAGE_USER_ROLES
-    const result = await authApi.getUserAccessOptions(options)
-    if (seq !== state.seq) return
-    if (half === 'manage') adminUsers.value = result
-    else users.value = result
-    state.lastQuery = sentQuery
-    state.loaded = true
-  } catch (error) {
-    console.error('加载用户列表失败:', error)
-  }
-}
-
-// 目录请求只在展开选择器时发起：编辑弹窗打开不再全量预取用户/部门。
-// 非管理员没有 access-options/部门目录权限，保持不发请求的既有口径。
 const handleSelectionOpen = async (open, scopeKey, accessLevel) => {
-  if (!open || !userStore.isAdmin) return
-  if (accessLevel === 'department') {
-    if (!departmentsLoaded.value) await loadDepartments()
-    return
-  }
   if (accessLevel === 'user') {
-    const half = scopeKey === 'manage_scope' ? 'manage' : 'read'
-    const currentQuery = (selectionSearch[scopeKey][accessLevel] || '').trim()
-    const state = halfState[half]
-    if (!state.loaded || currentQuery !== state.lastQuery) await searchUsers(half, currentQuery)
+    userPickers[scopeKey].setOpen(open)
+  } else if (open && userStore.isAdmin && !departmentsLoaded.value) {
+    await loadDepartments()
   }
 }
 
-// 两个半区各自防抖下推：manage 输入带 roles 白名单，read 输入不带；互不吞词。
-const scheduleUserSearch = (half, query) => {
-  clearTimeout(userSearchTimer[half])
-  userSearchTimer[half] = setTimeout(() => {
-    // 非管理员没有 access-options 权限，与展开加载同口径不发请求。
-    if (userStore.isAdmin && (query.trim() || halfState[half].loaded)) searchUsers(half, query)
-  }, USER_SEARCH_DEBOUNCE_MS)
-}
-watch(() => selectionSearch.read_scope.user, (value) => scheduleUserSearch('read', value))
-watch(() => selectionSearch.manage_scope.user, (value) => scheduleUserSearch('manage', value))
-onScopeDispose(() => {
-  clearTimeout(userSearchTimer.read)
-  clearTimeout(userSearchTimer.manage)
-})
-
-watch(() => props.modelValue, initConfig, { deep: true })
+watch(
+  () => props.modelValue,
+  (model, previous) => {
+    // 表单外切换对象时关闭旧弹层，自身 v-model 回传不打断当前编辑。
+    if (model !== previous && toRaw(model) !== emittedConfig) {
+      for (const picker of Object.values(userPickers)) picker.setOpen(false)
+    }
+    emittedConfig = undefined
+    initConfig()
+  },
+  { deep: true }
+)
 watch(normalizedAllowedAccessLevels, initConfig)
 watch(
   scopes,
@@ -707,6 +664,14 @@ defineExpose({ scopes, validate })
 .selection-list {
   max-height: 240px;
   overflow-y: auto;
+}
+
+.selection-group-title {
+  margin: 4px 0;
+  padding-inline: 4px;
+  color: var(--gray-700);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .selection-item {

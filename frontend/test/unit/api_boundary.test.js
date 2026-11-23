@@ -669,8 +669,10 @@ test('共享权限候选查询把 search/roles/include_uids 下推为查询串�
     assert.match(pushed, /search=zhang/)
     assert.match(pushed, /include_uids=u1,u2/)
     assert.match(pushed, /roles=admin,superadmin/)
-    await authApi.getUserAccessOptions({})
-    assert.ok(!requests[1].includes('roles='))
-    assert.ok(!requests[1].includes('search='))
+    await authApi.getUserAccessOptions({ includeUids: ['u2'], limit: 0 })
+    const selectedQuery = new URL(requests[1], 'https://example.test').searchParams
+    assert.deepEqual(Array.from(selectedQuery), [['include_uids', 'u2'], ['limit', '0']])
+    await authApi.getUserAccessOptions()
+    assert.equal(requests[2], '/api/auth/users/access-options')
   })
 })

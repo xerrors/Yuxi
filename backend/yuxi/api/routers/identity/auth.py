@@ -446,7 +446,7 @@ async def read_user_access_options(
     """获取用户访问选项（管理员权限）。
 
     ``search`` 服务端按用户名/UID/手机号模糊匹配；``include_uids`` 逗号分隔，
-    用于把已选用户回填进结果，避免大表下首屏截断导致选中项丢失；``roles`` 逗号
+    用于把已选用户回填进结果（``limit=0`` 只返回已选用户）；``roles`` 逗号
     分隔白名单（user/admin/superadmin），先按角色收窄再取前 limit 条。
     """
     parsed_roles = [token.strip() for token in (roles or "").split(",") if token.strip()]

@@ -304,12 +304,14 @@ async def list_access_options(
     """返回授权选择器使用的精简用户列表；支持服务端搜索、角色收窄与已选用户回填。
 
     目录通道保持全量语义（不按调用者部门收缩）。``search`` 命中项 ∪ 已选 ``include_uids``；
-    无搜索词时把落在前 ``limit`` 条之外的已选用户补回，避免大表（万级用户）下选择器拉不到人。
+    已选用户不受候选角色限制；``limit=0`` 只回填已选，不读取候选页。
     """
     repository = UserRepository(db)
     keyword = (search or "").strip()
     selected = [str(uid).strip() for uid in (include_uids or []) if str(uid).strip()]
-    if keyword or roles:
+    if limit == 0:
+        users_with_department = []
+    elif keyword or roles:
         users_with_department = await repository.search_access_options(search=keyword or None, roles=roles, limit=limit)
     else:
         users_with_department = await repository.list_with_department(skip=skip, limit=limit)

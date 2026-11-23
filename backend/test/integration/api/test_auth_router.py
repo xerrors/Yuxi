@@ -548,6 +548,15 @@ async def test_user_access_options_search_and_selected_backfill(test_client, adm
         # 首屏基础分页仍只有 1 条 + 回填至多 1 条，不放大成全量
         assert len(first_page_uids) <= 2
 
+        # 只解析历史授权，不填候选页；角色只过滤新候选，不隐藏已降级的授权对象。
+        selected_only = await test_client.get(
+            "/api/auth/users/access-options",
+            params={"limit": 0, "include_uids": f"{beta['uid']},opt_ghost_zzz", "roles": "admin,superadmin"},
+            headers=admin_headers,
+        )
+        assert selected_only.status_code == 200, selected_only.text
+        assert [(user["uid"], user["role"]) for user in selected_only.json()] == [(beta["uid"], "user")]
+
         # roles 白名单在服务端先筛选：无搜索词首屏也只返回管理员，非管理员绝不出现
         admin_user = await test_client.post(
             "/api/auth/users",
@@ -556,9 +565,7 @@ async def test_user_access_options_search_and_selected_backfill(test_client, adm
         )
         assert admin_user.status_code == 200, admin_user.text
         created.append(admin_user.json())
-        admins_only = await test_client.get(
-            "/api/auth/users/access-options", params={"roles": "admin,superadmin"}, headers=admin_headers
-        )
+        admins_only = await test_client.get("/api/auth/users/access-options", params={"roles": "admin,superadmin"}, headers=admin_headers)
         assert admins_only.status_code == 200, admins_only.text
         admin_uids = {user["uid"] for user in admins_only.json()}
         assert admin_user.json()["uid"] in admin_uids

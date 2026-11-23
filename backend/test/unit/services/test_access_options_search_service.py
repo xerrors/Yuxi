@@ -12,9 +12,10 @@ def _row(uid: str):
 
 
 class _Repo:
-    def __init__(self, hits):
+    def __init__(self, hits, selected=()):
         self.calls = []
         self.hits = hits
+        self.selected = list(selected)
 
     async def list_with_department(self, *, skip, limit):
         self.calls.append(("page", limit))
@@ -22,7 +23,7 @@ class _Repo:
 
     async def search_access_options(self, *, search=None, include_uids=None, roles=None, limit=1000):
         self.calls.append(("search", search, tuple(include_uids or ()), tuple(roles or ()), limit))
-        return self.hits if search or roles else []
+        return self.hits if search or roles else self.selected
 
 
 @pytest.mark.parametrize("keyword", [None, "zhang"])
@@ -55,3 +56,13 @@ async def test_roles_narrows_before_limit_on_first_screen(monkeypatch):
     await svc.list_access_options(None, skip=0, limit=50, roles=["admin", "superadmin"])
 
     assert repo.calls == [("search", None, (), ("admin", "superadmin"), 50)]
+
+
+async def test_zero_limit_only_resolves_selected_without_candidate_page(monkeypatch):
+    repo = _Repo([_row("unrelated")], selected=[_row("former-admin")])
+    monkeypatch.setattr(svc, "UserRepository", lambda _db: repo)
+
+    result = await svc.list_access_options(None, skip=0, limit=0, include_uids=["former-admin"], roles=["admin"])
+
+    assert repo.calls == [("search", None, ("former-admin",), (), 1)]
+    assert [(item["uid"], item["role"]) for item in result] == [("former-admin", "user")]
