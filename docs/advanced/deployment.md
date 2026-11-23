@@ -169,6 +169,47 @@ API 和 worker 在各自进程内继续校验密钥及 Schema，创建连接、�
 
 默认执行环境由 Container runner 提供，Run 结束后清理容器并保留工作文件。选择 Cube 时，节点准备与 Workspace、Skills 共享目录要求见[沙盒配置与运维](./sandbox-operations.md)。
 
+### 检查 PostgreSQL 会话时区
+
+Compose 自带的 PostgreSQL 默认使用 UTC，包括数据库日志。用新 Compose 配置启动 PostgreSQL 容器后，即使保留原数据卷，没有显式时区覆盖的新连接也会继承 UTC。不需要对每个旧库执行 `ALTER DATABASE`，也不需要迁移已存的时间戳。若 `POSTGRES_URL` 指向外部 PostgreSQL，Compose 不会改变外部实例的默认设置。
+
+使用应用实际连接的角色、数据库和连接参数检查会话时区。下面的命令在生产 Compose 的 API 容器中使用现有 `POSTGRES_URL`，不打印连接串，也不修改数据库。若某个使用方在连接后另设时区，也要在其实际会话中执行 `SHOW TimeZone`。
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container \
+  exec -T api uv run --no-sync --no-dev python - <<'PYTHON'
+import asyncio
+import os
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
+
+
+async def main():
+    engine = create_async_engine(os.environ["POSTGRES_URL"])
+    try:
+        async with engine.connect() as connection:
+            role, database, source = (await connection.execute(text(
+                "SELECT session_user, current_database(), source "
+                "FROM pg_settings WHERE name = 'TimeZone'"
+            ))).one()
+            timezone = (await connection.execute(text("SHOW TimeZone"))).scalar_one()
+            print(f"role={role}, database={database}, timezone={timezone}, source={source}")
+    finally:
+        await engine.dispose()
+
+
+asyncio.run(main())
+PYTHON
+```
+
+若时区是 `UTC`，无需操作。否则按 `source` 查原因：
+
+- `database`、`user` 或 `database user`：在 [`pg_db_role_setting`](https://www.postgresql.org/docs/16/catalog-pg-db-role-setting.html) 中核对数据库、角色或两者组合。确认影响范围后，只移除对应的设置（`ALTER DATABASE … RESET TimeZone`、`ALTER ROLE … RESET TimeZone` 或 `ALTER ROLE … IN DATABASE … RESET TimeZone`）。不要批量修改其他数据库或角色。
+- `client` 或 `session`：检查对应连接参数或连接后的 `SET TimeZone`，不要改数据库默认值。若未发现覆盖，检查 PostgreSQL 实例默认时区。
+
+修正后让相关连接池重新建连，再验证 `SHOW TimeZone`。这些步骤不修复过去写错的时间；如有此类数据，需单独核查。
+
 ## 4. 验证部署
 
 先看容器状态：

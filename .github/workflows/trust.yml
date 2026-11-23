@@ -24,6 +24,8 @@ jobs:
         run: python3 scripts/ci/verify_engineering_contracts.py
       - name: Exercise verifier negative controls
         run: python3 -m unittest scripts.ci.test_verify_engineering_contracts
+      - name: Verify Compose PostgreSQL diagnostics
+        run: python3 -m unittest scripts.ci.test_pg_idle_diagnose
       - name: Verify dependency update policy
         run: python3 -m unittest scripts.ci.test_dependency_update_policy
       - name: Verify release version synchronization
