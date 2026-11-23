@@ -238,14 +238,15 @@ async def test_dashboard_service_basic_stats(dashboard_db):
     service = DashboardService(dashboard_db)
     stats = await service.get_basic_stats()
 
-    assert stats["total_sessions"] == 4
-    assert stats["active_sessions"] == 3
-    assert stats["total_messages"] == 4
+    # 指向已删除智能体的会话同样计入：会话是否存在与 agent 行无关
+    assert stats["total_sessions"] == 5
+    assert stats["active_sessions"] == 4
+    assert stats["total_messages"] == 5
     assert stats["total_users"] == 3
     assert "feedback_stats" not in stats
 
     tool_stats = await service.get_tool_call_stats()
-    assert tool_stats["total_calls"] == 1
+    assert tool_stats["total_calls"] == 2  # 含未登记智能体会话的工具调用
 
     user_stats = await service.get_user_activity_stats()
     assert len(user_stats["daily_active_users"]) == 120
@@ -262,10 +263,12 @@ async def test_agent_analytics_omits_removed_top_performers_contract(dashboard_d
         "agent_tool_usage",
         "agent_names",
     }
+    # total_agents 只数登记智能体；未登记 slug 仅进分组结果与 agent_names（两口径分别断言）。
     assert analytics["total_agents"] == 2
     assert analytics["agent_names"] == {
         "agent-helper": "Helper Agent",
         "agent-coder": "Coder Agent",
+        "removed-agent": "未登记智能体（removed-agent）",
     }
 
 
@@ -295,12 +298,12 @@ async def test_tool_statistics_count_started_execution_statuses(dashboard_db):
     await dashboard_db.commit()
 
     stats = await DashboardService(dashboard_db).get_tool_call_stats()
-    assert stats["total_calls"] == 4
-    assert stats["successful_calls"] == 1
+    assert stats["total_calls"] == 5  # 未登记智能体的会话调用同样计入
+    assert stats["successful_calls"] == 2
     assert stats["failed_calls"] == 1
-    assert stats["success_rate"] == 25
+    assert stats["success_rate"] == 40.0
     assert stats["tool_error_distribution"] == {"failed": 1}
-    assert {tool["tool_name"] for tool in stats["most_used_tools"]} == {"bash", "running", "failed", "interrupted"}
+    assert {tool["tool_name"] for tool in stats["most_used_tools"]} == {"bash", "running", "failed", "interrupted", "legacy_tool"}
 
 
 async def test_dashboard_service_thread_analytics(dashboard_db):
@@ -308,10 +311,10 @@ async def test_dashboard_service_thread_analytics(dashboard_db):
     analytics = await service.get_thread_analytics(time_range="7days")
 
     summary = analytics["summary"]
-    assert summary["total_threads"] == 4
+    assert summary["total_threads"] == 5  # 未登记智能体的会话不再被过滤掉
     assert summary["active_threads"] >= 1
     assert summary["pinned_threads"] == 1
-    assert summary["total_messages"] == 4
+    assert summary["total_messages"] == 5
     assert summary["total_tokens"] is None  # 无 Run 用量事实时保留未知
     assert summary["token_usage_complete"] is False
     assert summary["avg_messages_per_thread"] > 0
@@ -321,12 +324,12 @@ async def test_dashboard_service_thread_analytics(dashboard_db):
 
     depth = analytics["depth_distribution"]
     assert depth["0 条"] == 2  # conv3 无消息
-    assert depth["1-2 条"] == 2  # conv1/conv2 各 2 条
+    assert depth["1-2 条"] == 3  # conv1/conv2 各 2 条，外加未登记智能体的会话
     assert depth["3-5 条"] == 0
     assert depth["6-10 条"] == 0
 
     agents = analytics["agent_distribution"]
-    assert len(agents) == 2
+    assert len(agents) == 3  # 含"未登记智能体（removed-agent）"系列
     coder_stat = next(a for a in agents if a["agent_id"] == "agent-coder")
     assert coder_stat["thread_count"] == 2
     assert coder_stat["agent_name"] == "Coder Agent"
@@ -335,9 +338,9 @@ async def test_dashboard_service_thread_analytics(dashboard_db):
     assert len(top_users) >= 2
     alice_stat = next(u for u in top_users if u["uid"] == "uid-alice")
     assert alice_stat["username"] == "Alice"
-    assert alice_stat["thread_count"] == 3
+    assert alice_stat["thread_count"] == 4  # 含她那条指向已删除智能体的会话
 
-    assert analytics["status_distribution"]["active"] == 3
+    assert analytics["status_distribution"]["active"] == 4  # 含未登记智能体的活跃会话
     assert analytics["status_distribution"]["archived"] == 1
 
     coder_only = await service.get_thread_analytics(time_range="7days", agent_id="agent-coder")
