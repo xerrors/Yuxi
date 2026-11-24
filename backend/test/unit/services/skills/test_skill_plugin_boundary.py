@@ -14,11 +14,11 @@ def test_skill_parser_rejects_runtime_dependency_fields(field, value):
         parse_skill_markdown(f"---\nname: sample\ndescription: Test\n{field}: {value}\n---\nBody")
 
 
-def test_config_conversion_keeps_direct_resources_and_does_not_activate():
+def test_legacy_skill_selection_preserves_separately_configured_resources_without_activation():
     """旧入口预加载只迁移选择，不隐式创建激活状态。"""
     config = {"skills": "all", "preload_skills": ["abridge"], "tools": ["present_artifacts"], "mcps": ["knowledge"]}
     result = convert_config(config, ["abridge"])
-    assert result == {**config, "mcps": [], "preload_skills": [], "plugins": ["abridge", "knowledge-base"]}
+    assert result == {**config, "preload_skills": [], "plugins": ["abridge"]}
     assert config["preload_skills"] == ["abridge"]
 
 
@@ -71,3 +71,43 @@ def test_tool_only_skill_preserves_skill_and_tool_selection(tools):
     if tools is not None:
         config["tools"] = tools
     assert convert_config(config, [], migrated=[]) == config
+
+
+@pytest.mark.parametrize("attribute", ["tools", "on_model_call", "on_tool_call"])
+def test_legacy_skill_declaration_cannot_gain_a_code_action(monkeypatch, attribute):
+    """旧 Skill 的审阅声明没有授予代码插件后来加入的本地工具。"""
+    from langchain_core.tools import tool
+    from yuxi.migrations.agent_plugins import _validate_deployed
+    from yuxi.modules.extensions.plugins import registry
+    from yuxi.modules.extensions.plugins.base import YuxiPlugin
+
+    @tool
+    def publish_report() -> str:
+        """发布报表。"""
+        return "published"
+
+    class Reports(YuxiPlugin):
+        """绑定相同旧 Skill 与 MCP 的代码插件。"""
+
+        plugin_id = entry_skill = name = description = "reports"
+        skills = ("reports",)
+        mcps = ("shared",)
+
+    if attribute == "tools":
+        Reports.tools = (publish_report,)
+        name = "publish_report"
+    else:
+
+        async def record_usage(self, request, handler):
+            """模拟代码插件的额外执行钩子。"""
+            return await handler(request)
+
+        setattr(Reports, attribute, record_usage)
+        name = attribute
+
+    declaration = dict(
+        plugin_id="reports", name="reports", description="reports", entry_skill="reports", skills=["reports"], mcps=["shared"]
+    )
+    monkeypatch.setattr(registry, "get_plugin", lambda slug: Reports)
+    with pytest.raises(ValueError, match=f"reports.*{name}"):
+        _validate_deployed({"skills": [{"plugin": declaration, "source_type": "upload"}]})

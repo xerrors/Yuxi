@@ -334,6 +334,17 @@ async def test_owned_mcp_discovers_only_after_activation_and_recovers_after_tran
     assert "list_kbs" not in await middleware.awrap_model_call(request, model)
     assert context.requests == [] and attempts == 0
     request = request.override(state={"activated_plugins": ["knowledge-base"]})
+
+    async def temporary_failure(_db):
+        """模拟本轮服务探测遇到瞬态网络错误。"""
+        raise OSError("temporary network failure")
+
+    with monkeypatch.context() as fault:
+        fault.setitem(
+            service.BUILTIN_MCP_SERVERS, "knowledge", replace(service.BUILTIN_MCP_SERVERS["knowledge"], available=temporary_failure)
+        )
+        assert "list_kbs" not in await middleware.awrap_model_call(request, model)
+        assert context.requests == [] and attempts == 0
     assert "list_kbs" not in await middleware.awrap_model_call(request, model)
     first = await middleware.awrap_model_call(request, model)
     second = await middleware.awrap_model_call(request, model)
@@ -690,16 +701,23 @@ async def test_deployment_toggle_preserves_builtin_identity_and_admin_policy(iso
         assert ("knowledge" in await service.get_enabled_mcp_server_slugs(db=db)) is bool(admin_enabled)
 
 
-async def test_dynamic_plugin_restores_reenabled_tool_with_same_run_cache(isolated_mcp):
-    """动态插件每轮读取当前策略，使用同一完整目录缓存恢复工具。"""
+async def test_dynamic_plugin_restores_reenabled_tool_with_same_run_cache(isolated_mcp, monkeypatch):
+    """已激活的其他插件超时时，健康插件仍按当前策略恢复可调用工具。"""
     from langchain.agents.middleware.types import ModelRequest
 
     from yuxi.modules.agents.runtime.middlewares.plugins import PluginLoaderMiddleware
 
     context = isolated_mcp
+    await service.ensure_builtin_mcp_servers_in_db()
+
+    async def timed_out(_db):
+        """模拟另一已激活插件的业务探测超时。"""
+        raise TimeoutError("temporary network failure")
+
+    monkeypatch.setitem(service.BUILTIN_MCP_SERVERS, "abridge", replace(service.BUILTIN_MCP_SERVERS["abridge"], available=timed_out))
     runtime = SimpleNamespace(
         uid=context.reader.uid,
-        plugins=["knowledge-base"],
+        plugins=["knowledge-base", "abridge"],
         mcps=[],
         mcp_tools={},
         mcp_tool_servers={},
@@ -707,10 +725,12 @@ async def test_dynamic_plugin_restores_reenabled_tool_with_same_run_cache(isolat
         knowledges=["delegation-kb"],
         run_id="independent-skill-run",
         skill_runtime_snapshot={
-            "plugin_entry_contents": {"knowledge-base": "Knowledge instructions"},
+            "plugin_entry_contents": {"knowledge-base": "Knowledge instructions", "abridge": "Device instructions"},
             "effective_skills": ["knowledge-base"],
             "preloaded_skills": [],
             "runtime_skills": {
+                "abridge": {},
+                "chat-widgets": {},
                 "knowledge-base": {
                     "name": "Dynamic knowledge",
                     "description": "Knowledge fixture",
@@ -718,7 +738,7 @@ async def test_dynamic_plugin_restores_reenabled_tool_with_same_run_cache(isolat
                     "tools": [],
                     "mcps": ["knowledge"],
                     "skills": [],
-                }
+                },
             },
         },
     )
@@ -727,7 +747,7 @@ async def test_dynamic_plugin_restores_reenabled_tool_with_same_run_cache(isolat
         messages=[],
         runtime=SimpleNamespace(context=runtime),
         tools=[],
-        state={"activated_plugins": ["knowledge-base"]},
+        state={"activated_plugins": ["knowledge-base", "abridge"]},
     )
 
     async def tools_for_model(current):
@@ -738,6 +758,7 @@ async def test_dynamic_plugin_restores_reenabled_tool_with_same_run_cache(isolat
     await update_server(context, disabled_tools=["list_kbs"])
     first = await middleware.awrap_model_call(request, tools_for_model)
     assert "list_kbs" not in first
+    assert set(runtime.mcp_unavailable) == {"abridge"}
     await update_server(context, disabled_tools=[])
     second = await middleware.awrap_model_call(request, tools_for_model)
     assert "list_kbs" in second

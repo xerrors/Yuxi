@@ -111,7 +111,12 @@ async def test_management_rejects_delegation_for_mcp_without_a_factory(slug):
     from yuxi.modules.extensions.mcp.service import inspect_mcp_server_tools
 
     server = MCPServer(
-        slug=slug, name=slug, transport="streamable_http", url="https://example.com/mcp", auth_mode="delegation", code_owned=slug == "deepwiki-official"
+        slug=slug,
+        name=slug,
+        transport="streamable_http",
+        url="https://example.com/mcp",
+        auth_mode="delegation",
+        code_owned=slug == "deepwiki-official",
     )
     with pytest.raises(ValueError, match="未提供此内部 MCP 服务的认证模块"):
         await inspect_mcp_server_tools(server, uid="reader")

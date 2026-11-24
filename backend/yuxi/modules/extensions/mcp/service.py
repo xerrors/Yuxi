@@ -3,6 +3,7 @@
 from collections.abc import Callable
 from typing import Any
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,6 +38,7 @@ _SYNCED_MCP_FIELDS = (
     "sse_read_timeout",
     "auth_mode",
 )
+_UNAVAILABLE_CONNECTION = "未连接或不可用，请在扩展页面检查连接"
 
 
 class MCPServerNotFoundError(ValueError):
@@ -116,15 +118,18 @@ async def get_enabled_mcp_server_slugs(*, db: AsyncSession | None = None) -> lis
     return [server.slug for server in await get_enabled_mcp_servers(db=db)]
 
 
-async def get_enabled_mcp_servers(*, names: list[str] | None = None, db: AsyncSession | None = None) -> list[MCPServer]:
+async def get_enabled_mcp_servers(
+    *, names: list[str] | None = None, db: AsyncSession | None = None, direct_only: bool = False
+) -> list[MCPServer]:
     """统一读取可配置的启用服务；个人连接状态只在运行时解析。"""
     if db is None:
         from yuxi.infrastructure.postgres.manager import pg_manager
 
         async with pg_manager.get_async_session_context() as session:
-            return await get_enabled_mcp_servers(names=names, db=session)
+            return await get_enabled_mcp_servers(names=names, db=session, direct_only=direct_only)
 
-    return [server for server in await list_enabled_mcp_servers(db, names=names) if await _mcp_available(server, db=db)]
+    servers = await list_enabled_mcp_servers(db, names=names, direct_only=direct_only)
+    return [server for server in servers if await _mcp_available(server, db=db)]
 
 
 async def get_mcp_tools(
@@ -365,7 +370,10 @@ async def resolve_runtime_mcp_tools(
         unavailable = {}
     for slug in server_slugs:
         if slug not in servers:
-            unavailable[slug] = "未连接或不可用，请在扩展页面检查连接"
+            unavailable.setdefault(slug, _UNAVAILABLE_CONNECTION)
+        elif unavailable.get(slug) == _UNAVAILABLE_CONNECTION:
+            # 本次复核已恢复连接，发现或执行阶段记录的凭据错误仍由本 Run 保留。
+            del unavailable[slug]
 
     async def load(server):
         """隔离单服务发现故障，日志和提示只包含安全原因。"""
@@ -437,7 +445,7 @@ async def available_mcp_servers(db: AsyncSession, server_slugs, *, user_id: int)
     available = {
         server.slug: server
         for server, connection in rows
-        if await _mcp_available(server, db=db) and server.enabled and connection_status(server, connection) in {"connected", "not_required"}
+        if server.enabled and await _mcp_available(server, db=db) and connection_status(server, connection) in {"connected", "not_required"}
     }
     return {slug: available[slug] for slug in dict.fromkeys(server_slugs) if slug in available}
 
@@ -494,7 +502,15 @@ async def _mcp_available(server: MCPServer, *, db=None) -> bool:
     definition = BUILTIN_MCP_SERVERS.get(server.slug)
     if bool(server.code_owned) != (definition is not None):
         return False
-    return definition is None or definition.available is None or await definition.available(db)
+    if definition is None or definition.available is None:
+        return True
+    try:
+        return await definition.available(db)
+    except PermissionError:
+        raise
+    except (OSError, httpx.TimeoutException, httpx.NetworkError) as exc:
+        logger.warning("MCP availability probe failed: server={}, error_type={}", server.slug, type(exc).__name__)
+        return False
 
 
 async def _delegation_connection(server, *, uid, context=None, management=False):

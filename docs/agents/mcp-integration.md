@@ -195,7 +195,7 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml --profile contain
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
-| `GET` | `/api/system/mcp-servers` | 查看服务器；普通用户只得到脱敏基础信息 |
+| `GET` | `/api/system/mcp-servers` | 查看连接目录。聊天提及时使用 `?direct_only=true` 获取可直接选择的连接。普通用户只得到脱敏信息 |
 | `POST` / `PUT` | `/api/system/mcp-servers`、`/{slug}` | 添加或修改远程 MCP |
 | `PUT` | `/api/system/mcp-servers/{slug}/status` | 启用或停用服务器（对应页面上的添加/移除状态） |
 | `PUT` | `/api/system/mcp-servers/{slug}/connection` | 用户保存或替换自己的 Token / API Key |
@@ -205,6 +205,8 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml --profile contain
 | `PUT` | `/api/system/mcp-servers/{slug}/tools/{tool_name}/toggle` | 启用或禁用单个工具 |
 
 接口字段和错误响应以实例 Swagger 为准。
+
+会话只探测当前选择的连接。专属连接的可用性检查遇到暂时的网络故障时，连接目录会将它显示为不可用，已加载插件的会话仍可使用其他连接继续工作。可用性恢复后，下一轮会重新检查该连接。
 
 管理端工具列表和连接测试都会按当前配置建连，停用服务也能看到目录，查看不会改启停或工具开关。建连或工具发现失败时，管理检查、Agent 配置工具装配与 插件按需加载均明确失败，运行不会把故障当作成功的空工具列表继续执行。服务器正常返回零个工具仍是合法结果；未启用服务器不参与运行加载。运行日志包含组件、服务器标识、错误类型与不可用状态。
 

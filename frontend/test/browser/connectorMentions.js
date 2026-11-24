@@ -52,7 +52,16 @@ async page => {
     thread = await request('/api/v1/agents/sessions', { method: 'POST', headers: { ...userHeaders, 'Idempotency-Key': slug + '-thread' },
       data: { agent_id: agent, title: '连接器提及验收' } })
     await page.evaluate(token => localStorage.setItem('user_token', token), login.access_token)
+    const directoryUrl = origin + '/api/system/mcp-servers'
+    const directDirectory = page.waitForResponse(response =>
+      response.url().split('?')[0] === directoryUrl && response.request().method() === 'GET'
+    )
     await page.goto(origin + '/agent/' + thread.id)
+    const directory = await directDirectory
+    check(directory.url() === directoryUrl + '?direct_only=true', '聊天读取了完整管理目录')
+    const { data: connectors } = await directory.json()
+    check(connectors.some(row => row.slug === slug && row.available), '普通连接未出现在直接目录')
+    check(!connectors.some(row => ['knowledge', 'abridge'].includes(row.slug)), '直接目录包含插件专属连接')
     const editor = page.locator('.mention-editor[contenteditable="true"]:visible')
     await editor.waitFor()
     for (const dark of [false, true]) {

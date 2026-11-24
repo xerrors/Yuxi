@@ -3,7 +3,7 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.modules.extensions.mcp.builtin import BUILTIN_MCP_SERVERS
+from yuxi.modules.extensions.mcp.builtin import BUILTIN_MCP_SERVERS, supports_direct_mcp_selection
 from yuxi.modules.extensions.mcp.models import MCPServer
 
 
@@ -18,17 +18,19 @@ async def get_mcp_server(db: AsyncSession, slug: str, *, lock: bool = False, pub
     return result.scalar_one_or_none()
 
 
-async def get_all_mcp_servers(db: AsyncSession) -> list[MCPServer]:
-    """Get all server configurations."""
-    result = await db.execute(select(MCPServer).where(_published()))
+async def get_all_mcp_servers(db: AsyncSession, *, direct_only: bool = False) -> list[MCPServer]:
+    """读取已发布的服务配置，可限定为允许直接选择的连接器。"""
+    result = await db.execute(select(MCPServer).where(_published(direct_only=direct_only)))
     return list(result.scalars().all())
 
 
-async def list_enabled_mcp_servers(db: AsyncSession, *, names: list[str] | None = None) -> list[MCPServer]:
+async def list_enabled_mcp_servers(db: AsyncSession, *, names: list[str] | None = None, direct_only: bool = False) -> list[MCPServer]:
     """按服务开关和受支持传输读取配置目录。"""
     from yuxi.modules.extensions.mcp.runtime import SUPPORTED_TRANSPORTS
 
-    stmt = select(MCPServer).where(_published(), MCPServer.enabled == 1, MCPServer.transport.in_(SUPPORTED_TRANSPORTS))
+    stmt = select(MCPServer).where(
+        _published(direct_only=direct_only), MCPServer.enabled == 1, MCPServer.transport.in_(SUPPORTED_TRANSPORTS)
+    )
     if names is not None:
         stmt = stmt.where(MCPServer.slug.in_(names))
     return list((await db.scalars(stmt)).all())
@@ -198,6 +200,10 @@ async def invalidate_mcp_connections(db, server_id):
     )
 
 
-def _published():
-    """只返回来源与本版部署一致的行，保留已撤下连接的管理员设置。"""
-    return MCPServer.code_owned == MCPServer.slug.in_(BUILTIN_MCP_SERVERS)
+def _published(*, direct_only: bool = False):
+    """只读取本版发布的行，直接选择目录在检查部署可用性前排除专属连接。"""
+    published = MCPServer.code_owned == MCPServer.slug.in_(BUILTIN_MCP_SERVERS)
+    if direct_only:
+        private_slugs = [slug for slug in BUILTIN_MCP_SERVERS if not supports_direct_mcp_selection(slug)]
+        return published & MCPServer.slug.not_in(private_slugs)
+    return published

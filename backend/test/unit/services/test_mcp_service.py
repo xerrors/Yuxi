@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 import pytest_asyncio
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 import yuxi.infrastructure.postgres.manager as postgres_manager
@@ -733,6 +736,15 @@ async def test_runtime_isolates_failed_mcp_and_retains_healthy_tools(monkeypatch
     assert "扩展页面" in unavailable["unconnected"]
     if failure_kind == "missing_key":
         assert "加密密钥" in unavailable["broken"]
+        broken = servers.pop("broken")
+        await mcp_service.resolve_runtime_mcp_tools(["broken", "healthy"], uid="user", run_tools=run_tools, unavailable=unavailable)
+        servers["broken"] = broken
+        run_tools["broken"] = [tool]
+        recovered = await mcp_service.resolve_runtime_mcp_tools(
+            ["broken", "healthy"], uid="user", run_tools=run_tools, unavailable=unavailable
+        )
+        assert recovered == {"healthy": [tool]}
+        assert "加密密钥" in unavailable["broken"]
     elif failure_kind in {"wrong_key", "nested", "mixed"}:
         assert "重新连接" in unavailable["broken"]
     else:
@@ -744,6 +756,40 @@ async def test_runtime_does_not_swallow_identity_or_database_failure(monkeypatch
     monkeypatch.setattr(postgres_manager.pg_manager, "get_async_session_context", _FailingSessionContext)
     with pytest.raises(RuntimeError, match="database-secret"):
         await mcp_service.resolve_runtime_mcp_tools(["demo"], uid="user", unavailable={})
+
+
+@pytest.mark.parametrize("error_type", [TimeoutError, httpx.ReadTimeout, httpx.ConnectError])
+async def test_transient_plugin_probe_logs_only_connector_and_error_type(monkeypatch, error_type):
+    """网络探测失败记录可定位的标识，日志不包含请求地址或凭据。"""
+    definition = mcp_service.BUILTIN_MCP_SERVERS["abridge"]
+    probe = AsyncMock(side_effect=error_type("secret-probe-canary"))
+    monkeypatch.setitem(mcp_service.BUILTIN_MCP_SERVERS, "abridge", replace(definition, available=probe))
+    messages = []
+    sink = mcp_service.logger.add(lambda message: messages.append(str(message)))
+    try:
+        assert not await mcp_service._mcp_available(MCPServer(slug="abridge", code_owned=True))
+    finally:
+        mcp_service.logger.remove(sink)
+    log = "".join(messages)
+    assert "abridge" in log and error_type.__name__ in log and "secret-probe-canary" not in log
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        OperationalError("SELECT", {}, Exception()),
+        ValueError("bad hook"),
+        PermissionError("denied"),
+        httpx.HTTPStatusError("forbidden", request=httpx.Request("GET", "https://fixture.test"), response=httpx.Response(403)),
+    ],
+)
+async def test_plugin_probe_preserves_database_contract_and_authorization_failures(monkeypatch, error):
+    """共享数据库、实现错误和权限异常须保留原异常。"""
+    definition = mcp_service.BUILTIN_MCP_SERVERS["abridge"]
+    monkeypatch.setitem(mcp_service.BUILTIN_MCP_SERVERS, "abridge", replace(definition, available=AsyncMock(side_effect=error)))
+    with pytest.raises(type(error)) as caught:
+        await mcp_service._mcp_available(MCPServer(slug="abridge", code_owned=True))
+    assert caught.value is error
 
 
 @pytest.mark.parametrize("username", ["admin", "system"])

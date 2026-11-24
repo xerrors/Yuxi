@@ -76,10 +76,11 @@ class UpdateMcpServerStatusRequest(BaseModel):
 async def get_mcp_servers(
     current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
+    direct_only: bool = False,
 ):
-    """获取所有 MCP 服务器配置（普通用户仅获取脱敏的基础信息）"""
+    """列出连接与当前用户的状态，会话提及只查询允许直接选择的连接。"""
     try:
-        servers = await get_all_mcp_servers(db)
+        servers = await get_all_mcp_servers(db, direct_only=direct_only)
         states = await personal_connection_states(db, servers, current_user.id)
         available = await available_mcp_servers(db, [server.slug for server in servers], user_id=current_user.id)
         if current_user.role == "superadmin":

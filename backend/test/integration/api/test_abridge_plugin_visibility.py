@@ -1,6 +1,7 @@
 """真实 HTTP 与 PostgreSQL 验证插件专属 MCP 的选择与管理。"""
 
 from copy import deepcopy
+from dataclasses import replace
 
 from fastapi import FastAPI
 import pytest
@@ -12,6 +13,7 @@ from yuxi.api.routers.agents.management import agent_router
 from yuxi.api.routers.extensions.mcp import mcp
 from yuxi.modules.agents.models.definitions import Agent
 from yuxi.modules.agents.runtime.context import normalize_agent_context_config
+from yuxi.modules.extensions.mcp.builtin import BUILTIN_MCP_SERVERS
 from yuxi.modules.extensions.mcp.models import MCPServer
 from yuxi.modules.extensions.mcp.service import available_mcp_servers, get_enabled_mcp_server_slugs
 from yuxi.modules.extensions.skills.models import Skill
@@ -133,6 +135,25 @@ async def test_owned_mcp_is_selected_only_as_plugin_and_remains_manageable(monke
                     "ordinary-mcp",
                 }
 
+                async def unexpected_probe(_db):
+                    """直接选择或服务停用时不允许触发插件探测。"""
+                    pytest.fail("查询触发了无关插件的部署探测")
+
+                with monkeypatch.context() as patch:
+                    patch.setitem(BUILTIN_MCP_SERVERS, slug, replace(BUILTIN_MCP_SERVERS[slug], available=unexpected_probe))
+                    for selection in ["all", ["ordinary-mcp"]]:
+                        context = await normalize_agent_context_config({"mcps": selection, "plugins": []}, db=db, user=owner)
+                        assert context["mcps"] == ["ordinary-mcp"]
+                    mentions = await client.get("/api/system/mcp-servers", params={"direct_only": "true"})
+                    assert mentions.status_code == 200, mentions.text
+                    assert [(s["slug"], s["available"], s["connection_status"]) for s in mentions.json()["data"]] == [
+                        ("ordinary-mcp", True, "not_required")
+                    ]
+                    disabled = await db.scalar(select(MCPServer).where(MCPServer.slug == slug))
+                    disabled.enabled = 0
+                    await db.flush()
+                    assert list(await available_mcp_servers(db, [slug, "ordinary-mcp"], user_id=owner.id)) == ["ordinary-mcp"]
+
             directories = [await client.get("/api/system/mcp-servers")]
             app.dependency_overrides[get_required_user] = lambda: administrator
             directories.append(await client.get("/api/system/mcp-servers"))
@@ -142,6 +163,16 @@ async def test_owned_mcp_is_selected_only_as_plugin_and_remains_manageable(monke
                 assert set(servers) == {slug, "ordinary-mcp"}
                 assert servers[slug]["available"] is True
                 assert servers[slug]["auth_mode"] == "delegation"
+
+            async def timed_out(_db):
+                """模拟专属插件的临时网络故障。"""
+                raise TimeoutError("private-probe-canary")
+
+            monkeypatch.setitem(BUILTIN_MCP_SERVERS, slug, replace(BUILTIN_MCP_SERVERS[slug], available=timed_out))
+            directory = await client.get("/api/system/mcp-servers")
+            assert directory.status_code == 200, directory.text
+            assert {s["slug"]: s["available"] for s in directory.json()["data"]} == {slug: False, "ordinary-mcp": True}
+            assert "private-probe-canary" not in directory.text
 
 
 async def _empty_knowledge_options(uid):

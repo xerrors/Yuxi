@@ -125,7 +125,8 @@ def test_get_mcp_servers_normal_user_is_stripped(monkeypatch):
                 "enabled": bool(self.enabled),
             }
 
-    async def fake_get_all_mcp_servers(db):
+    async def fake_get_all_mcp_servers(db, *, direct_only):
+        assert not direct_only
         return [DummyServer(), DummyServer("knowledge")]
 
     monkeypatch.setattr("yuxi.api.routers.extensions.mcp.get_all_mcp_servers", fake_get_all_mcp_servers)

@@ -75,23 +75,39 @@ Skill 不接受 `tool_dependencies`、`mcp_dependencies`、`skill_dependencies` 
 
 ## 从运行依赖升级
 
-业务 Schema v5 由插件提供专属的知识库和设备连接。已有 v2 或 v4 库需要维护窗口，先排空待消费 Input、全部非终态 Run 和可恢复 Turn，再停止 API 与 worker 接流量。`app-init` 不自动转换旧库。备份数据库与 Skill 文件后，在使用新代码且挂载原数据的离线容器中执行：
+业务 Schema v5 由插件提供专属的知识库和设备连接。已有 v2 或 v4 库需要维护窗口，先排空待消费 Input、全部非终态 Run 和可恢复 Turn，再停止 API 与 worker 接流量。`app-init` 不自动转换旧库。备份数据库与 Skill 文件后，使用新代码并挂载原数据。标准部署已从发行版清单同步 DeepWiki 时，先从旧部署源码确认 `deepwiki-official` 的来源，再导出：
 
 ```bash
-uv run --no-sync python -m yuxi.migrations.agent_plugins export /migration/agent-plugins
+mkdir -p ./migration
+docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container run --rm --no-deps \
+  -v "$PWD/migration:/migration" api uv run --no-sync --no-dev python -m yuxi.migrations.agent_plugins \
+  export /migration/agent-plugins --legacy-builtin deepwiki-official
 ```
 
-如果旧部署扩展过 `BUILTIN_MCP_MANIFEST`，请从旧版部署源码核实自定义内置连接。在导出命令后为每项追加 `--legacy-builtin <slug>`，包括新版已撤下的连接。
+一次性 `api` 容器复用用户工作区和共享 Skill 文件挂载。导出前确认容器用户（生产默认 UID 1000）可写宿主机的 `./migration`，并限制该目录的访问权限。开发环境使用相同的卷参数，将 Compose 命令前缀替换为 `docker compose`。
 
-审阅 `plan.json` 中的内置标识和数据库行 ID。v4 转换未来使用的 Agent 和会话配置，并为历史内置 MCP 记录代码管理来源。显式选择 `knowledge` 的配置改为启用 `knowledge-base`，`mcps: "all"` 保留普通连接的动态范围，并补上知识库插件。v4 的 `"all"` 已排除设备连接，因此保留设备插件原有选择。迁移保留已认领连接的行、管理员开关和工具策略。已改为插件专属的旧内置连接也会转换为所属插件选择，撤下的连接由系统保留归属并停止提供。旧连接行已删除且标识被新插件使用时，迁移只移除过期的直接选择。普通连接占用新声明的标识时，先解决同名冲突再应用。部署包须包含数据库中所有已选插件的声明，包含无需转换的会话和 Agent。移除旧插件时先清理这些配置的引用。迁移发现遗漏时报告配置所在表、记录 ID 和插件 ID，恢复声明或清理引用后重新导出审阅。
+标准 DeepWiki 的 headers 认证和创建者用户名也可出现在普通连接上，因此需要显式确认。旧库没有该行时省略这个参数。v2 的知识库、v4 的知识库与 aBridge 若具有系统同步身份和内置专用的 `delegation` 认证，迁移会自动识别。其余旧内置连接须逐项核对旧部署的 `BUILTIN_MCP_MANIFEST`，每项追加 `--legacy-builtin <slug>`，包括新版已撤下的连接。遇到同名普通连接，先解决标识冲突。
 
-v2 还需转换旧 Skill 依赖。检查每个 Skill 的资源和 Agent、Session 配置映射。旧通用工具依赖直接丢弃，智能体和会话已有的工具选择保持原样。只有这类依赖的 Skill 保留为普通 Skill。将 `deployed/*.json` 纳入部署源码的 `yuxi/modules/extensions/plugins/deployed/` 目录，再使用包含这些声明的同一版本执行：
+审阅 `plan.json` 中的人工确认标识、识别出的内置标识、数据库行 ID，以及受影响的 Agent 和会话。迁移保留连接行、管理员开关和工具策略。
+
+- 标准 v4 中，显式选择 `knowledge` 会启用 `knowledge-base`。`mcps: "all"` 继续动态选择普通连接，并补上知识库插件。v4 的全选原本已排除设备连接，设备插件保留原有选择。
+- 原先只选择一个 MCP 时，若插件只有这个连接、一个入口 Skill 和默认调用行为，可以自动转换。若此前未启用的插件还带有其他连接、Skill、专属工具或自定义调用钩子，迁移会报告受影响的记录。在旧配置中移除该项直接选择。原先使用全选时，改为其余连接的显式列表。升级后再按业务需要启用整包。
+- 已撤下的内置连接会保留归属并停止提供。旧行已删除时，只清除对应的过期直接选择。普通连接占用新声明的标识时，先解决同名冲突。
+- 部署代码须包含全部已选插件的声明。若准备移除旧插件，先清理 Agent 和会话配置里的引用。旧 `skills` 或 `preload_skills` 单独选中了新版的插件入口时，先移除这项选择，升级后再按需启用插件。迁移报告配置冲突所在的表、记录 ID 和字段，修复后重新导出。
+
+自定义部署若曾在插件入口旁并列发布配套 Skill，先按[插件资源组织](./plugin-development.md#资源如何组织)处理旧包。保留独立共享的包沿用原标识和 ACL；私有化的包要先核对入口的读者范围，再在旧版停用独立条目，确认其用户投影已撤下。应用迁移会检查新部署的目录布局。
+
+v2 还需转换旧 Skill 依赖。检查每个 Skill 的资源和 Agent、Session 配置映射。旧通用工具依赖直接丢弃，智能体和会话已有的工具选择保持原样。只有这类依赖的 Skill 保留为普通 Skill。部署声明须匹配审阅过的依赖；额外专属工具或自定义模型、工具调用钩子需要另行启用。将 `deployed/*.json` 纳入部署源码的 `yuxi/modules/extensions/plugins/deployed/` 目录。
+
+v2 和 v4 均在审阅计划后使用最终部署代码应用迁移：
 
 ```bash
-uv run --no-sync python -m yuxi.migrations.agent_plugins apply /migration/agent-plugins
+docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container run --rm --no-deps \
+  -v "$PWD/migration:/migration" api uv run --no-sync --no-dev python -m yuxi.migrations.agent_plugins \
+  apply /migration/agent-plugins
 ```
 
-源配置或文件发生变化时，apply 拒绝旧计划。重新导出审阅。个人 Skill 的旧依赖从未生效，预检要求显式删除旧字段，不会转换为插件权限。v2 的直接选择和 `mcps: "all"` 也转换原有的 aBridge 能力。第三方部署插件或 v2 自定义 Skill 引用专属连接时，先在对应部署声明或旧版 Skill 中移除冲突依赖，再按业务需要选择所属插件并重新审阅。内置 `image-gen` 和 `deep-research` 保留为普通 Skill。随后运行初始化和 readiness 检查并恢复服务，新空库直接初始化为 v5。
+应用时会在数据库锁内重新核对计划。待转换的配置或 Skill 内容、内置连接的行 ID、认领依据发生变化并影响审阅结果时，需重新导出审阅。个人 Skill 的旧依赖从未生效，预检要求显式删除旧字段，不会转换为插件权限。官方 v2 只内置知识库和 DeepWiki。若旧部署自行内置了 aBridge，核实原清单后在导出时追加 `--legacy-builtin abridge` 以确认连接来源。设备插件包含额外操作说明与模型调用钩子，旧配置中只选了设备 MCP 时，需要按上面的整包规则处理。第三方部署插件或 v2 自定义 Skill 引用专属连接时，先在对应部署声明或旧版 Skill 中移除冲突依赖，再按业务需要选择所属插件并重新审阅。内置 `image-gen` 和 `deep-research` 保留为普通 Skill。随后运行初始化和 readiness 检查并恢复服务，新空库直接初始化为 v5。
 
 迁移保留历史 Input、Run manifest 和 Skill 历史版本，不将旧 Skill 激活推断成插件激活。v2 的依赖列被删除，当前内容改为新的包引用。需要回退时恢复配套的旧代码、数据库与文件备份，不能只降级应用镜像。
 

@@ -449,15 +449,10 @@ async def resolve_agent_resource_options(
 
         options["knowledges"] = await knowledge_resource_options(user.uid)
     if "mcps" in fields_to_load:
-        from yuxi.modules.extensions.mcp.builtin import supports_direct_mcp_selection
         from yuxi.modules.extensions.mcp.service import get_enabled_mcp_servers
 
-        servers = await get_enabled_mcp_servers(db=db)
-        options["mcps"] = [
-            _resource_option(server.slug, server.name, server.description)
-            for server in servers
-            if supports_direct_mcp_selection(server.slug)
-        ]
+        servers = await get_enabled_mcp_servers(db=db, direct_only=True)
+        options["mcps"] = [_resource_option(server.slug, server.name, server.description) for server in servers]
     if "plugins" in fields_to_load:
         from yuxi.modules.extensions.plugins.registry import get_plugins
         from yuxi.modules.extensions.skills.access import user_can_access_skill
@@ -581,8 +576,8 @@ async def refresh_agent_context_resources(context: BaseContext, *, db, user, age
     )
 
 
-def validate_resource_selection(field_name: str, value: Any) -> ResourceSelection:
-    """统一校验全部或显式列表的资源选择协议。"""
+def parse_resource_selection(field_name: str, value: Any) -> ResourceSelection:
+    """解析资源选择的持久格式和顺序，不查询当前部署目录。"""
     if field_name == "plugins":
         if not isinstance(value, list):
             raise ValueError("智能体插件必须是显式 ID 列表，不支持 all")
@@ -590,7 +585,14 @@ def validate_resource_selection(field_name: str, value: Any) -> ResourceSelectio
         return "all"
     if not isinstance(value, list) or any(not isinstance(item, str) or not item.strip() for item in value):
         raise ValueError(f'智能体资源字段 {field_name} 必须是"all" 或非空字符串组成的列表')
-    selected = list(dict.fromkeys(item.strip() for item in value))
+    return list(dict.fromkeys(item.strip() for item in value))
+
+
+def validate_resource_selection(field_name: str, value: Any) -> ResourceSelection:
+    """按当前部署进一步校验显式资源选择。"""
+    selected = parse_resource_selection(field_name, value)
+    if selected == "all":
+        return "all"
     if field_name == "mcps":
         from yuxi.modules.extensions.mcp.builtin import supports_direct_mcp_selection
 

@@ -19,6 +19,7 @@ from yuxi.infrastructure.postgres.schema import BUSINESS_SCHEMA_VERSION, get_sch
 from yuxi.infrastructure.runtime_settings import get_skill_data_dir
 from yuxi.migrations.schema import schema_migration_lock
 from yuxi.modules.agents.models.runs import AGENT_RUN_TERMINAL_STATUSES
+from yuxi.modules.extensions.plugins.base import YuxiPlugin
 from yuxi.modules.extensions.skills.access import user_can_access_skill
 from yuxi.modules.extensions.skills.models import Skill
 from yuxi.modules.extensions.skills.package import (
@@ -36,7 +37,8 @@ from yuxi.modules.identity.models import User
 from yuxi.modules.workspace.paths import user_workspace_dir
 
 DEPENDENCY_FIELDS = ("tool_dependencies", "mcp_dependencies", "skill_dependencies")
-LEGACY_BUILTIN_MCPS = {"knowledge", "abridge", "deepwiki-official"}
+# 这些版本中，只有代码同步能写 delegation；普通连接可以使用相同 slug 和创建者用户名。
+LEGACY_DELEGATED_MCPS = {2: {"knowledge"}, 4: {"knowledge", "abridge"}}
 BUILTIN_DEPENDENT_SKILLS = {"image-gen", "deep-research", "knowledge-base"}
 
 
@@ -58,7 +60,7 @@ async def export_plugin_migration(manager: PostgresManager, destination: Path, *
 
 async def apply_plugin_migration(manager: PostgresManager, source: Path) -> None:
     """排空执行并核对已部署声明后，事务更新未来配置与 Schema。"""
-    from yuxi.modules.extensions.plugins.registry import get_plugins
+    from yuxi.modules.extensions.plugins.registry import get_plugin_skill_directories, get_plugins
 
     staged = []
     commit_started = False
@@ -74,8 +76,11 @@ async def apply_plugin_migration(manager: PostgresManager, source: Path) -> None
                     text("LOCK TABLE agent_turns, agent_runs, agent_inputs, agents, sessions, skills, mcp_servers IN ACCESS EXCLUSIVE MODE")
                 )
                 get_plugins.cache_clear()
-                deployed_ids = {plugin.plugin_id for plugin in get_plugins()}
-                current = await _build_plan(conn, legacy_builtins=tuple(reviewed.get("legacy_builtin_mcps", ())), deployed_ids=deployed_ids)
+                get_plugins()
+                get_plugin_skill_directories()
+                current = await _build_plan(
+                    conn, legacy_builtins=tuple(reviewed.get("confirmed_legacy_builtins", ())), validate_deployment=True
+                )
                 if current != reviewed:
                     raise ValueError("源数据或内容已变化，请重新导出并审阅迁移")
                 _validate_deployed(current)
@@ -110,7 +115,7 @@ async def apply_plugin_migration(manager: PostgresManager, source: Path) -> None
                 if current["source_version"] == 2:
                     for column in DEPENDENCY_FIELDS:
                         await conn.execute(text(f"ALTER TABLE skills DROP COLUMN {column}"))
-                await conn.execute(text("ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS code_owned BOOLEAN NOT NULL DEFAULT FALSE"))
+                await conn.execute(text("ALTER TABLE mcp_servers ADD COLUMN code_owned BOOLEAN NOT NULL DEFAULT FALSE"))
                 await conn.execute(
                     text("UPDATE mcp_servers SET code_owned=TRUE WHERE id = ANY(:ids)"),
                     {"ids": list(current["legacy_builtin_mcps"].values())},
@@ -127,8 +132,9 @@ async def apply_plugin_migration(manager: PostgresManager, source: Path) -> None
                     shutil.rmtree(path, ignore_errors=True)
 
 
-async def _build_plan(conn, *, legacy_builtins: tuple[str, ...], deployed_ids: set[str] | None = None) -> dict:
+async def _build_plan(conn, *, legacy_builtins: tuple[str, ...], validate_deployment: bool = False) -> dict:
     """读取旧域事实、文件摘要和按当前可见性计算的配置变更。"""
+    from yuxi.modules.agents.runtime.context import parse_resource_selection, validate_resource_selection
     from yuxi.modules.extensions.mcp.config import BuiltinMCP
     from yuxi.modules.extensions.plugins.registry import REGISTERED_PLUGINS
 
@@ -142,14 +148,17 @@ async def _build_plan(conn, *, legacy_builtins: tuple[str, ...], deployed_ids: s
     resumable = await conn.scalar(text("SELECT count(*) FROM agent_turns WHERE status IN ('running', 'waiting', 'cancelling')"))
     if active or pending or resumable:
         raise ValueError("请先排空非终态 Run、待消费 Input 和可恢复 Turn，再执行插件迁移")
-    builtin_rows = await _legacy_builtin_rows(conn, legacy_builtins)
-    # 新专属连接会从直接选择中移除；只有旧部署已有的来源可以转换为插件选择。
-    custom_owners = {}
+    builtin_rows = await _legacy_builtin_rows(conn, version, legacy_builtins)
+    # v4 的 aBridge 已由插件独占。旧库没有的连接也不能通过直接选择或 all 授予新能力。
+    mcp_owners = {}
     for plugin in REGISTERED_PLUGINS:
         for mcp in plugin.mcps:
-            if isinstance(mcp, BuiltinMCP) and mcp.slug not in {"abridge", "knowledge"}:
-                custom_owners[mcp.slug] = plugin.plugin_id if mcp.slug in builtin_rows else None
-    items = await _legacy_skill_changes(conn, private_mcps={"knowledge", "abridge", *custom_owners}) if version == 2 else []
+            if isinstance(mcp, BuiltinMCP):
+                was_direct = mcp.slug in builtin_rows and (version == 2 or mcp.slug != "abridge")
+                mcp_owners[mcp.slug] = plugin if was_direct else None
+    items = await _legacy_skill_changes(conn, private_mcps=set(mcp_owners)) if version == 2 else []
+    migrated_slugs = [item["slug"] for item in items if item["plugin"]]
+    selection_fields = ("plugins", "mcps", "skills", "preload_skills") if version == 2 else ("plugins", "mcps")
     configs = []
     async with AsyncSession(bind=conn) as session:
         users, skills = {}, {}
@@ -168,6 +177,16 @@ async def _build_plan(conn, *, legacy_builtins: tuple[str, ...], deployed_ids: s
                     continue
                 original = row["config"]
                 context = (original.get("context") or {}) if kind == "agent" else original
+                source = f"{table} id={row['id']}"
+                converted = dict(context)
+                for field in selection_fields:
+                    if field in context:
+                        try:
+                            converted[field] = parse_resource_selection(field, context[field])
+                        except ValueError as exc:
+                            raise ValueError(f"{source} 的 {field} 无法解析：{exc}。请修复旧配置后重新导出") from exc
+                if "mcps" in converted:
+                    _convert_mcp_selection(converted, mcp_owners, source=source)
                 if version == 2:
                     user = users.get(row["owner"])
                     allowed = [
@@ -179,33 +198,35 @@ async def _build_plan(conn, *, legacy_builtins: tuple[str, ...], deployed_ids: s
                         and (skills[item["slug"]].bound_agent_id is None or skills[item["slug"]].bound_agent.slug == row["agent_slug"])
                     ]
                     bound = [slug for slug in allowed if skills[slug].bound_agent_id is not None]
-                    converted = convert_config(
-                        context,
-                        allowed,
-                        bound=bound,
-                        migrated=[item["slug"] for item in items if item["plugin"]],
-                        custom_owners=custom_owners,
-                    )
-                else:
-                    converted = _convert_mcp_selection(context, source_version=4, custom_owners=custom_owners)
-                if deployed_ids is not None:
-                    missing = set(converted.get("plugins", [])) - deployed_ids
-                    if missing:
-                        raise ValueError(f"{table} id={row['id']} 配置引用未知插件：{', '.join(sorted(missing))}，请恢复声明或清理引用")
+                    converted = convert_config(converted, allowed, bound=bound, migrated=migrated_slugs)
+                if validate_deployment:
+                    for field in ("plugins", "mcps", "skills", "preload_skills"):
+                        if field not in converted:
+                            continue
+                        try:
+                            validate_resource_selection(field, converted[field])
+                        except ValueError as exc:
+                            raise ValueError(f"{source} 的 {field} 无法加载：{exc}。请修复后重新导出") from exc
                 after = {**original, "context": converted} if kind == "agent" else converted
                 if converted != context:
                     configs.append({"kind": kind, "id": row["id"], "before": row["config"], "after": after})
-    return {"source_version": version, "legacy_builtin_mcps": builtin_rows, "skills": items, "configs": configs}
+    return {
+        "source_version": version,
+        "confirmed_legacy_builtins": sorted(set(legacy_builtins)),
+        "legacy_builtin_mcps": builtin_rows,
+        "skills": items,
+        "configs": configs,
+    }
 
 
-async def _legacy_builtin_rows(conn, confirmed: tuple[str, ...]) -> dict[str, int]:
+async def _legacy_builtin_rows(conn, version: int, confirmed: tuple[str, ...]) -> dict[str, int]:
     """把已知内置和部署者从旧清单确认的自定义内置绑定到审阅过的行。"""
     from yuxi.modules.extensions.mcp.builtin import BUILTIN_MCP_SERVERS
 
     rows = {}
-    declared = LEGACY_BUILTIN_MCPS.union(confirmed)
-    for row in await conn.execute(text("SELECT id, slug, created_by FROM mcp_servers ORDER BY slug")):
-        if row.slug in declared and row.created_by == "system":
+    for row in await conn.execute(text("SELECT id, slug, created_by, auth_mode FROM mcp_servers ORDER BY slug")):
+        delegated_builtin = row.slug in LEGACY_DELEGATED_MCPS[version] and row.auth_mode == "delegation"
+        if row.created_by == "system" and (delegated_builtin or row.slug in confirmed):
             rows[row.slug] = row.id
         elif row.slug in BUILTIN_MCP_SERVERS:
             raise ValueError(
@@ -330,7 +351,6 @@ def convert_config(
     *,
     bound: list[str] | None = None,
     migrated: list[str] | None = None,
-    custom_owners: dict[str, str | None] | None = None,
 ) -> dict:
     """保留独立资源选择，将既有入口选择转换为显式插件列表。"""
     result = dict(config)
@@ -345,23 +365,25 @@ def convert_config(
         values = result.get(field)
         if isinstance(values, list):
             result[field] = [slug for slug in values if slug not in plugin_slugs]
-    return _convert_mcp_selection(result, source_version=2, custom_owners=custom_owners or {})
-
-
-def _convert_mcp_selection(config: dict, *, source_version: int, custom_owners: dict[str, str | None]) -> dict:
-    """按源版本真实开放的连接转换选择，保留普通 MCP 的 all 语义。"""
-    if "mcps" not in config:
-        return config
-    mcps = config["mcps"]
-    result = dict(config)
-    owners = {"knowledge": "knowledge-base", "abridge": "abridge" if source_version == 2 else None, **custom_owners}
-    selected = owners if mcps == "all" else mcps
-    plugins = [owners[slug] for slug in selected if owners.get(slug)]
-    if mcps != "all":
-        result["mcps"] = [slug for slug in mcps if slug not in owners]
-    if plugins:
-        result["plugins"] = list(dict.fromkeys([*config.get("plugins", []), *plugins]))
     return result
+
+
+def _convert_mcp_selection(config: dict, owners: dict[str, type[YuxiPlugin] | None], *, source: str) -> None:
+    """在已解析的配置副本中，将已核实的单项 MCP 选择映射为等价插件。"""
+    mcps = config["mcps"]
+    selected = owners if mcps == "all" else mcps
+    for slug in selected:
+        owner = owners.get(slug)
+        if owner is None or owner.plugin_id in config.get("plugins", ()):
+            continue
+        if len(owner.mcps) != 1 or owner.skills != (owner.entry_skill,) or _plugin_code_actions(owner):
+            raise ValueError(
+                f"{source} 的直接连接 {slug} 无法等价转换为插件 {owner.plugin_id}，整包包含额外的连接、Skill、专属工具或执行钩子。"
+                "请在旧配置中移除该连接（all 改为其余连接的显式列表），升级后再显式启用所需插件。"
+            )
+        config.setdefault("plugins", []).append(owner.plugin_id)
+    if mcps != "all":
+        config["mcps"] = [slug for slug in mcps if slug not in owners]
 
 
 def _validate_deployed(plan: dict) -> None:
@@ -373,6 +395,12 @@ def _validate_deployed(plan: dict) -> None:
         if expected is None:
             continue
         plugin = get_plugin(expected["plugin_id"])
+        actions = _plugin_code_actions(plugin)
+        if actions:
+            raise ValueError(
+                f"已部署插件 {plugin.plugin_id} 含旧 Skill 未授予的专属工具或执行钩子：{', '.join(actions)}。"
+                "请移除额外能力，或先在旧版清理该 Skill 的依赖并重新导出"
+            )
         for field in ("entry_skill", "skills", "mcps"):
             actual = plugin.mcp_slugs() if field == "mcps" else getattr(plugin, field)
             if isinstance(actual, tuple):
@@ -381,6 +409,15 @@ def _validate_deployed(plan: dict) -> None:
                 raise ValueError(f"已部署插件与审阅声明不匹配：{expected['plugin_id']}.{field}")
         if item["source_type"] != "builtin" and (plugin.name != expected["name"] or plugin.description != expected["description"]):
             raise ValueError("已部署插件名称或说明与审阅声明不匹配")
+
+
+def _plugin_code_actions(plugin: type[YuxiPlugin]) -> list[str]:
+    """列出随插件启用获得的本地工具与业务执行钩子，包括继承实现。"""
+    actions = [tool.name for tool in plugin.tools]
+    for hook in ("on_model_call", "on_tool_call"):
+        if getattr(plugin, hook) is not getattr(YuxiPlugin, hook):
+            actions.append(hook)
+    return actions
 
 
 def _json(value: dict) -> str:
@@ -393,9 +430,7 @@ async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("export", "apply"))
     parser.add_argument("directory", type=Path)
-    parser.add_argument(
-        "--legacy-builtin", action="append", default=[], metavar="SLUG", help="导出时确认旧部署清单中的自定义内置 MCP，可重复"
-    )
+    parser.add_argument("--legacy-builtin", action="append", default=[], metavar="SLUG", help="导出时按旧部署清单确认内置 MCP，可重复")
     args = parser.parse_args()
     if args.action == "apply" and args.legacy_builtin:
         parser.error("--legacy-builtin 仅用于 export；apply 使用审阅计划")

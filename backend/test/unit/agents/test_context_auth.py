@@ -199,7 +199,8 @@ async def test_normalize_agent_context_config_defaults_mcps_off_and_filters_expl
             types.SimpleNamespace(slug="mcp-b", name="MCP B", description="", enabled=True),
         ]
 
-    async def fake_get_enabled_mcp_servers(*, db=None):
+    async def fake_get_enabled_mcp_servers(*, db, direct_only):
+        assert direct_only
         return [server for server in await fake_get_all_mcp_servers(db) if server.slug == "mcp-a"]
 
     async def fake_list_skills(_db, _user):
@@ -330,7 +331,8 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
     async def fake_get_all_mcp_servers(_db):
         return [types.SimpleNamespace(slug="mcp-a", name="MCP A", description="", enabled=True)]
 
-    async def fake_get_enabled_mcp_servers(*, db=None):
+    async def fake_get_enabled_mcp_servers(*, db, direct_only):
+        assert direct_only
         return [server for server in await fake_get_all_mcp_servers(db) if server.slug == "mcp-a"]
 
     async def fake_list_skills(_db, _user):
