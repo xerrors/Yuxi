@@ -95,6 +95,50 @@ def test_text_only_and_input_protocol_lists_unchanged():
     assert normalize_tool_result({"content": input_list}).public_content is input_list
 
 
+def test_saved_media_audit_drops_base64_and_leaves_model_output_intact():
+    """审计文本去掉已落盘图片的 base64，公开回退和无工厂渲染仍保留 data URL。"""
+    output = _image_output()
+    result = normalize_tool_result(output)
+    assert _PNG_B64 not in result.audit_content
+    assert result.public_content[1]["image_url"].startswith("data:image/png;base64,")
+    assert output["content"][1]["base64"] == _PNG_B64
+
+
+def test_unsaved_image_audit_keeps_base64():
+    """没有落盘记录时，审计仍保留原图，避免把未保存的图片变成空块。"""
+    output = _image_output()
+    output["additional_kwargs"] = {}
+    assert _PNG_B64 in normalize_tool_result(output).audit_content
+
+
+def test_debug_projection_hides_saved_image_base64():
+    """调试投影的正文和 tool_output 都不回放已落盘图片的 base64。"""
+    from types import SimpleNamespace
+
+    from yuxi.modules.agents.services.message_audits import serialize_tool_audit
+
+    output = _image_output()
+    message = SimpleNamespace(
+        id=1,
+        content="",
+        created_at=None,
+        run_id="run",
+        turn_id="turn",
+        message_type="tool",
+        operation_id="call",
+        started_at=None,
+        finished_at=None,
+        duration_ms=1,
+        sequence=1,
+        execution_status="completed",
+        extra_metadata={"output": output, "input": {}, "tool_name": "browser", "source": "middleware"},
+    )
+    audit = serialize_tool_audit(message)
+    assert _PNG_B64 not in audit["content"]
+    assert _PNG_B64 not in str(audit["tool_output"])
+    assert output["content"][1]["base64"] == _PNG_B64
+
+
 def test_recorder_builds_thread_scoped_preview_url():
     """预览地址绑定当前线程并逐段编码，与前端 getThreadArtifactUrl 同构。"""
     recorder = RunMessageRecorder(run_id="r1", thread_id="sess-1", worker_id="w1")

@@ -12,6 +12,7 @@ from yuxi.modules.agents.models.messages import MODEL_AUDIT_MESSAGE_TYPE, TOOL_A
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.repositories.sessions import SessionRepository
+from yuxi.modules.agents.tool_results import durable_tool_output
 
 
 class ToolMessageAuditRepository:
@@ -336,10 +337,11 @@ class ToolMessageAuditRepository:
         self._require_same_owner(message, session_record_id=run.session_record_id, turn_id=run.turn_id)
 
         metadata = dict(message.extra_metadata or {})
+        incoming = durable_tool_output(output)
         if message.execution_status == execution_status:
-            if metadata.get("error_message") != error_message or _canonical_tool_output(metadata.get("output")) != _canonical_tool_output(
-                output
-            ):
+            if metadata.get("error_message") != error_message or _canonical_tool_output(
+                durable_tool_output(metadata.get("output"))
+            ) != _canonical_tool_output(incoming):
                 raise ValueError("已关闭 Tool 审计事实不能被不同结果覆盖")
             return message
         if message.execution_status != "running":
@@ -349,7 +351,7 @@ class ToolMessageAuditRepository:
         if duration_ms is not None:
             message.duration_ms = duration_ms
         message.execution_status = execution_status
-        metadata["output"] = output
+        metadata["output"] = incoming
         metadata["error_message"] = error_message
         if finished_sequence is not None:
             metadata["finished_sequence"] = finished_sequence

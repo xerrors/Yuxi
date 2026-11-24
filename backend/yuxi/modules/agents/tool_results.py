@@ -46,12 +46,53 @@ def _image_public_block(block: dict, saved: dict | None, artifact_url_factory: C
     return None
 
 
+def durable_tool_output(output: Any) -> Any:
+    """已落盘图片的审计副本去掉 base64。调用方持有的模型消息保持原样。"""
+    if not isinstance(output, dict):
+        return output
+    kwargs = output.get("additional_kwargs")
+    if not isinstance(kwargs, dict):
+        return output
+    records = kwargs.get(SAVED_MEDIA_KEY)
+    if not isinstance(records, list) or not records:
+        return output
+    # bool 是 int 的子类，不能当成内容块下标。
+    saved_indexes = {
+        record.get("index")
+        for record in records
+        if isinstance(record, dict) and type(record.get("index")) is int
+    }
+    content = output.get("content")
+    if not isinstance(content, list) or not saved_indexes:
+        return output
+    replaced = False
+    cleaned_content = []
+    for index, block in enumerate(content):
+        source = block.get("source") if isinstance(block, dict) else None
+        has_inline_image = isinstance(block, dict) and block.get("type") == "image" and (
+            "base64" in block or (isinstance(source, dict) and "data" in source)
+        )
+        if index not in saved_indexes or not has_inline_image:
+            cleaned_content.append(block)
+            continue
+        cleaned = {key: value for key, value in block.items() if key != "base64"}
+        if isinstance(source, dict) and "data" in source:
+            cleaned = {**cleaned, "source": {key: value for key, value in source.items() if key != "data"}}
+        cleaned_content.append(cleaned)
+        replaced = True
+    if not replaced:
+        return output
+    return {**output, "content": cleaned_content}
+
+
 def normalize_tool_result(
     output: Any, *, message: str | None = None, artifact_url_factory: Callable[[str], str] | None = None
 ) -> ToolResult:
     """保留合法结构化内容，只在这里确定文本和失败原因。"""
     value = output.get("content") if isinstance(output, dict) else output
-    text = tool_result_text(value)
+    audit_output = durable_tool_output(output)
+    audit_value = audit_output.get("content") if isinstance(audit_output, dict) else audit_output
+    text = tool_result_text(audit_value)
     public = value
     if isinstance(value, list):
         if all(isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str) for part in value):

@@ -12,7 +12,7 @@ from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.agents.scope import ActorScope
 from yuxi.modules.agents.services.thread_access import require_thread
-from yuxi.modules.agents.tool_results import normalize_tool_result
+from yuxi.modules.agents.tool_results import durable_tool_output, normalize_tool_result
 from yuxi.modules.models.utils import parse_assistant_message_body
 from yuxi.shared.datetime import format_utc_datetime
 from yuxi.shared.errors import PermissionDeniedError
@@ -102,15 +102,16 @@ def _serialize_model_audit(message: Any) -> dict[str, Any]:
 def serialize_tool_audit(message: Any) -> dict[str, Any]:
     """将 ToolMessage 审计事实收敛为前端调试 DTO。"""
     metadata = message.extra_metadata if isinstance(message.extra_metadata, dict) else {}
+    durable_output = durable_tool_output(metadata.get("output"))
     return {
         **_serialize_audit_base(message, metadata),
         "type": "tool",
-        "content": normalize_tool_result(metadata.get("output")).audit_content,
+        "content": normalize_tool_result(durable_output).audit_content,
         "tool_call_id": message.operation_id,
         "source": metadata.get("source"),
         "tool_name": metadata.get("tool_name"),
         "tool_input": dict(metadata["input"]) if isinstance(metadata.get("input"), dict) else {},
-        "tool_output": metadata.get("output"),
+        "tool_output": durable_output,
         "error_message": metadata.get("error_message"),
         "source_model_operation_id": metadata.get("source_model_operation_id"),
         "usage": None,
