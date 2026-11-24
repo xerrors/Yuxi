@@ -9,6 +9,33 @@ from yuxi.modules.extensions.plugins.builtin.abridge.prompt import DEVICE_TOOLS_
 from yuxi.shared.errors import StateConflictError
 
 
+class AbridgePlugin(YuxiPlugin):
+    """按当前用户设备授权提供设备操作与画面展示说明。"""
+
+    plugin_id = "abridge"
+    name = "aBridge 设备"
+    description = "操作已授权设备的浏览器、桌面和文件，并展示设备画面。"
+    entry_skill = "abridge"
+    skills = ("abridge", "chat-widgets")
+    mcps = (
+        BuiltinMCP(
+            slug="abridge",
+            manifest={
+                "type": "http",
+                "url": "http://abridge:8765/mcp",
+                "extra_data": {"name": "aBridge", "description": "使用当前用户授权的电脑和浏览器设备。"},
+            },
+            delegation=lambda **kwargs: _delegation(**kwargs),
+            available=lambda db: _available(db),
+        ),
+    )
+
+    async def on_model_call(self, request, handler):
+        """为已激活的设备能力补充沙盒边界与操作恢复约束。"""
+        request = request.override(system_message=append_to_system_message(request.system_message, DEVICE_TOOLS_PROMPT.strip()))
+        return await handler(request)
+
+
 async def _available(db) -> bool:
     """当前实例须启用设备委托并拥有有效服务地址。"""
     from yuxi.modules.extensions.abridge.options import connection_settings
@@ -27,30 +54,3 @@ async def _delegation(*, uid, context, management, before_request) -> dict:
     from yuxi.modules.extensions.abridge.client import abridge_mcp_connection
 
     return await abridge_mcp_connection(uid=uid, before_request=before_request)
-
-
-class AbridgePlugin(YuxiPlugin):
-    """按当前用户设备授权提供设备操作与画面展示说明。"""
-
-    plugin_id = "abridge"
-    name = "aBridge 设备"
-    description = "操作已授权设备的浏览器、桌面和文件，并展示设备画面。"
-    entry_skill = "abridge"
-    skills = ("abridge", "chat-widgets")
-    mcps = (
-        BuiltinMCP(
-            slug="abridge",
-            manifest={
-                "type": "http",
-                "url": "http://abridge:8765/mcp",
-                "extra_data": {"name": "aBridge", "description": "使用当前用户授权的电脑和浏览器设备。"},
-            },
-            delegation=_delegation,
-            available=_available,
-        ),
-    )
-
-    async def on_model_call(self, request, handler):
-        """为已激活的设备能力补充沙盒边界与操作恢复约束。"""
-        request = request.override(system_message=append_to_system_message(request.system_message, DEVICE_TOOLS_PROMPT.strip()))
-        return await handler(request)
