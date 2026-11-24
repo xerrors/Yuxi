@@ -6,7 +6,7 @@ import httpx
 
 from yuxi.infrastructure.filesystem import await_io
 from yuxi.modules.agents.runtime.sandbox import get_sandbox_provider
-from yuxi.shared.errors import UpstreamError
+from yuxi.shared.errors import StateConflictError, UpstreamError
 
 
 async def get_vm_stats() -> dict[str, int]:
@@ -22,9 +22,14 @@ async def get_user_sandbox(uid: str) -> dict:
     return await asyncio.to_thread(get_sandbox_provider().status, uid)
 
 
-async def rebuild_user_sandbox(uid: str) -> dict:
+async def rebuild_user_sandbox(uid: str, *, failed_generation: int | None = None) -> dict:
     """取消请求时也等待持有生命周期锁的外部操作完成。"""
-    return await await_io(asyncio.to_thread(get_sandbox_provider().rebuild, uid))
+    provider = get_sandbox_provider()
+    if failed_generation is None:
+        return await await_io(asyncio.to_thread(provider.rebuild, uid))
+    if provider.backend != "cube":
+        raise StateConflictError("当前运行环境不是 Cube", code="sandbox_changed")
+    return await await_io(asyncio.to_thread(provider.rebuild, uid, failed_generation=failed_generation))
 
 
 async def get_user_sandbox_disk_usage(uid: str) -> dict:

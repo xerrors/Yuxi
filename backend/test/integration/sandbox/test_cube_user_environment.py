@@ -1,5 +1,6 @@
 """真实 PostgreSQL、Cube 和 HTTP 的用户环境接入验收。"""
 
+import hashlib
 import os
 import threading
 import time
@@ -209,17 +210,24 @@ def test_http_sleep_timestamps_follow_confirmed_pause_and_original_resume(resour
         assert provider.adapter.state(reference).lower() == "paused"
         assert run(backend, "printf before-idle") == "before-idle"
         with provider.repository.connect() as conn:
-            conn.execute("UPDATE user_sandboxes SET last_active_at=now()-interval '10 minutes' WHERE uid=%s", (uid,))
+            conn.execute(
+                "UPDATE user_sandboxes SET last_active_at=now()-interval '10 minutes', error=%s WHERE uid=%s",
+                ("上次休眠失败", uid),
+            )
             candidate = provider.repository.environment(conn, uid)
-        before = datetime.fromisoformat(status()["server_time"])
+        before_pause = status()
+        assert before_pause["error"] == "上次休眠失败"
+        before = datetime.fromisoformat(before_pause["server_time"])
         provider.maintain()
         paused = status()
         after = datetime.fromisoformat(paused["server_time"])
         assert paused["state"] == "paused" and paused["idle_deadline_at"] is None
+        assert paused["error"] is None
         assert before <= datetime.fromisoformat(paused["paused_at"]) <= after
         with provider.repository.connect() as conn:
             row = provider.repository.environment(conn, uid)
             assert row["paused_at"] == datetime.fromisoformat(paused["paused_at"])
+            assert row["error"] is None
         assert status()["paused_at"] == paused["paused_at"]
         assert provider.adapter.state(reference).lower() == "paused"
         assert run(backend, "printf resumed-original") == "resumed-original"
@@ -479,28 +487,117 @@ def test_timeout_and_crashed_executor_cleanup_preserve_other_commands(resources)
 
 
 def test_abandoned_lifecycle_can_be_rebuilt_and_stale_generation_handle_converges(resources):
-    """进程丢锁后的生命周期不永久禁用 UI，旧代次句柄清理时收敛移除且不触碰新 VM。"""
-    uid, _, provider, backend = resources
-    provider.get(uid)
+    """用户可确认原故障代次重建，旧代次的确认和执行均不影响新 VM。"""
+    uid, password, provider, backend = resources
+    base = os.environ.get("TEST_BASE_URL", "http://127.0.0.1:5050")
+    path = "/api/user/sandbox"
+    workspace_file = f"{WORKSPACE_PATH}/rebuild-persisted.txt"
+    home_file = "/home/user/replacement.txt"
+    original = provider.get(uid)
+    assert backend.write(workspace_file, "workspace-persisted").error is None
     with provider.repository.user_lock(uid) as conn:
         row = provider.repository.environment(conn, uid)
+        generation = row["generation"]
         row["state"] = "creating"
         provider.repository.save_environment(conn, row)
-    status = provider.status(uid)
-    assert status["state"] == "failed" and not status["busy"]
-    provider.rebuild(uid)
+
+    with httpx.Client(base_url=base, timeout=120, trust_env=False) as client:
+        login = client.post("/api/auth/token", data={"username": uid, "password": password})
+        assert login.status_code == 200
+        headers = {"Authorization": "Bearer " + login.json()["access_token"]}
+        response = client.get(path, headers=headers)
+        assert response.status_code == 200
+        failed = response.json()
+        assert failed["state"] == "failed" and failed["rebuild_required"] and not failed["busy"]
+        assert failed["generation"] == generation
+
+        wrong_generation = client.post(f"{path}/rebuild", headers=headers, params={"failed_generation": generation + 1})
+        assert wrong_generation.status_code == 409
+        assert wrong_generation.json()["detail"]["code"] == "sandbox_changed"
+        rebuilt = client.post(f"{path}/rebuild", headers=headers, params={"failed_generation": generation})
+        assert rebuilt.status_code == 200, rebuilt.text
+        assert rebuilt.json()["generation"] == generation + 1
+        assert not rebuilt.json()["rebuild_required"]
+        replacement = provider.get(uid)
+        assert replacement.sandbox_id != original.sandbox_id
+        assert backend.write(home_file, "replacement-persisted").error is None
+        provider.adapter.pause(replacement)
+
+        for rejected_generation in (generation, generation + 1):
+            rejected = client.post(f"{path}/rebuild", headers=headers, params={"failed_generation": rejected_generation})
+            assert rejected.status_code == 409
+            assert rejected.json()["detail"]["code"] == "sandbox_changed"
+
+    with pytest.raises(StateConflictError) as stale:
+        provider.prepare_instance(uid, expected=(generation, original.sandbox_id))
+    assert stale.value.code == "sandbox_changed"
+    assert provider.adapter.state(replacement).lower() == "paused"
+
+    with pytest.raises(StateConflictError) as asleep:
+        provider.run_guest_program(uid, generation + 1, user="user", command="/usr/bin/true", arguments=[], timeout=5)
+    assert asleep.value.code == "sandbox_changed"
+    assert provider.adapter.state(replacement).lower() == "paused"
+
     command_id = uuid.uuid4().hex
     with provider.repository.connect() as conn:
         row = provider.repository.environment(conn, uid)
+        assert (row["generation"], row["sandbox_id"]) == (generation + 1, replacement.sandbox_id)
         conn.execute(
             "INSERT INTO sandbox_commands(id,uid,generation,kind,phase,deadline) VALUES (%s,%s,%s,'process','cleanup',now())",
-            (command_id, uid, row["generation"] - 1),
+            (command_id, uid, generation),
         )
         command = provider.repository.commands(conn, uid)[0]
     provider._cleanup_command(command)
     with provider.repository.connect() as conn:
         assert not provider.repository.commands(conn, uid)
-    assert run(backend, "printf new-environment") == "new-environment"
+    assert provider.adapter.state(replacement).lower() == "paused"
+    expected = generation + 1, replacement.sandbox_id
+    assert provider.prepare_instance(uid, expected=expected) == expected
+    code, output = provider.run_guest_program(
+        uid,
+        generation + 1,
+        user="user",
+        command="/usr/bin/python3",
+        arguments=["-c", "import sys; sys.stdout.buffer.write(sys.stdin.buffer.readline()); sys.exit(3)"],
+        timeout=5,
+        stdin_data=b"private-input-example\n",
+    )
+    assert (code, output) == (3, b"private-input-example\n")
+    assert run(backend, f"cat {workspace_file}") == "workspace-persisted"
+    assert backend.read(home_file).file_data["content"] == "replacement-persisted"
+
+
+def test_guest_program_receives_stdin_eof(resources):
+    """在同一真实 VM 核对流末尾、完整数据和提前退出的退出码。"""
+    uid, _, provider, _ = resources
+    generation, _ = provider.prepare_instance(uid)
+    multi_chunk_input = bytes(range(256)) * 520
+    for stdin_data in (None, b"", b"binary\0input", multi_chunk_input):
+        code, output = provider.run_guest_program(
+            uid,
+            generation,
+            user="user",
+            command="/usr/bin/python3",
+            arguments=["-I", "-c", "import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest()); sys.exit(3)"],
+            timeout=5,
+            stdin_data=stdin_data,
+        )
+        assert (code, output) == (3, hashlib.sha256(stdin_data or b"").hexdigest().encode() + b"\n")
+
+    code, output = provider.run_guest_program(
+        uid,
+        generation,
+        user="user",
+        command="/usr/bin/python3",
+        arguments=["-I", "-c", "import sys; print(sys.stdin.buffer.read(3).hex()); sys.exit(24)"],
+        timeout=5,
+        stdin_data=multi_chunk_input,
+    )
+    assert (code, output) == (24, b"000102\n")
+
+    fixed_length_reader = f"import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read({len(multi_chunk_input)})).hexdigest())"
+    output, code, truncated = provider.execute(uid, fixed_length_reader, WORKSPACE_PATH, 5, stdin_data=multi_chunk_input, python=True)
+    assert (output, code, truncated) == (hashlib.sha256(multi_chunk_input).hexdigest() + "\n", 0, False)
 
 
 def test_vm_cannot_read_other_user_or_control_credentials(resources):

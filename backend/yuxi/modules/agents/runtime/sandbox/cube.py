@@ -1,4 +1,4 @@
-"""固定普通用户的 Cube 文件与可取消命令适配。"""
+"""Cube 生命周期、普通用户命令和受信来宾程序适配。"""
 
 import base64
 import json
@@ -8,12 +8,14 @@ import secrets
 import struct
 import time
 from collections.abc import Callable, Iterator
+from contextlib import closing
 from dataclasses import dataclass, field
 
 import httpx
 from cubesandbox import Config, Sandbox
 
 from yuxi.modules.workspace.runtime_paths import WORKSPACE_PATH
+from yuxi.shared.errors import StateConflictError
 
 USER = "user"
 MAX_FRAME_BYTES = 1024 * 1024
@@ -127,7 +129,7 @@ def _exit_code(event: dict) -> int:
 
 
 class CubeAdapter:
-    """只实现 Agent 使用的 Cube 生命周期和普通用户执行能力。"""
+    """连接 Cube 控制面及沙盒内 envd。"""
 
     def __init__(self, config: Config | None = None):
         """装配固定版本 SDK，固定控制面和代理地址。"""
@@ -249,12 +251,6 @@ class CubeAdapter:
             time.sleep(0.5)
         raise TimeoutError("Cube 未在 60 秒内完成休眠")
 
-    def resume(self, environment: Environment) -> None:
-        """恢复原实例并仅关闭本地客户端。"""
-        if self.state(environment).lower() == "running":
-            return
-        self.connect(environment).close()
-
     def destroy(self, environment: Environment) -> None:
         """删除旧 VM，Workspace 由独立目录拥有。"""
         with httpx.Client(timeout=60, trust_env=False) as client:
@@ -282,8 +278,6 @@ class CubeAdapter:
         python: bool = False,
     ) -> Iterator[dict]:
         """直接读取 envd 流，为每条命令创建独立进程组。"""
-        sandbox = self.connect(environment)
-        client = sandbox._build_data_client()
         wrapper = """import os,sys,subprocess,signal,time
 from pathlib import Path
 os.setsid()
@@ -319,44 +313,48 @@ sys.exit(code if code>=0 else 128-code)
             },
             "stdin": stdin_data is not None,
         }
-        body = json.dumps(payload).encode()
-        headers = {
-            "Content-Type": "application/connect+json",
-            "Connect-Protocol-Version": "1",
-            "Connect-Content-Encoding": "identity",
-            "Authorization": "Basic " + base64.b64encode(f"{USER}:".encode()).decode(),
-            "X-Access-Token": environment.envd_token,
-        }
-        ended = False
-        try:
-            with client.stream(
-                "POST",
-                f"http://{sandbox.get_host(49983)}/process.Process/Start",
-                content=b"\x00" + struct.pack(">I", len(body)) + body,
-                headers=headers,
-                timeout=httpx.Timeout(connect=15, read=timeout + 10, write=30, pool=15),
-            ) as response:
-                response.raise_for_status()
-                for event in connect_events(response.iter_raw()):
-                    if "end" in event:
-                        ended = True
-                    yield event
-                    if "start" in event and stdin_data:
-                        headers_input = {**headers, "Content-Type": "application/json"}
-                        for offset in range(0, len(stdin_data), 65536):
-                            data = base64.b64encode(stdin_data[offset : offset + 65536]).decode()
-                            sent = client.post(
-                                f"http://{sandbox.get_host(49983)}/process.Process/SendInput",
-                                json={"process": {"pid": int(event["start"]["pid"])}, "input": {"stdin": data}},
-                                headers=headers_input,
-                                timeout=30,
-                            )
-                            sent.raise_for_status()
-            if not ended:
-                raise RuntimeError("执行流中断，未取得终态")
-        finally:
-            client.close()
-            sandbox.close()
+        with closing(self.connect(environment)) as sandbox:
+            yield from self._stream_process(sandbox, environment, USER, payload, timeout, stdin_data)
+
+    def run_guest_program(
+        self,
+        environment: Environment,
+        *,
+        user: str,
+        command: str,
+        arguments: list[str],
+        timeout: float,
+        stdin_data: bytes | None = None,
+        before_start: Callable[[], None] | None = None,
+    ) -> tuple[int, bytes]:
+        """通过 envd 执行平台指定的程序，私有输入发送完毕后关闭 stdin。"""
+        payload = {"process": {"cmd": command, "args": arguments, "cwd": "/"}, "stdin": stdin_data is not None}
+        exit_code = None
+        stdout = bytearray()
+        with (
+            closing(self._running_sandbox(environment)) as sandbox,
+            closing(
+                self._stream_process(
+                    sandbox, environment, user, payload, timeout, stdin_data, hard_deadline=True, before_start=before_start
+                )
+            ) as events,
+        ):
+            for event in events:
+                if (chunk := event.get("data", {}).get("stdout")) is not None:
+                    try:
+                        stdout.extend(base64.b64decode(chunk, validate=True))
+                    except (ValueError, TypeError):
+                        raise RuntimeError("Cube 来宾程序输出编码无效") from None
+                    if len(stdout) > 4096:
+                        raise RuntimeError("Cube 来宾程序输出超出限制")
+                if "end" in event:
+                    code = event["end"]["exitCode"]
+                    if type(code) is not int or not 0 <= code <= 255:
+                        raise RuntimeError("Cube 来宾程序退出码无效")
+                    exit_code = code
+        if exit_code is None:
+            raise RuntimeError("Cube 进程退出未确认")
+        return exit_code, bytes(stdout)
 
     def cancel(self, environment: Environment, pgid: int | None, execution_id: str, *, terminal_confirmed: bool = False) -> None:
         """仅终止带本次标识的命令组，保留同用户其他任务。"""
@@ -388,6 +386,96 @@ sys.exit(code if code>=0 else 128-code)
             response = client.get(f"{self.config.api_url}/v2/sandboxes", headers=self._api_headers())
             response.raise_for_status()
             return [row for row in response.json() if row.get("metadata", {}).get("yuxi-operation") == operation_id]
+
+    def _running_sandbox(self, environment: Environment) -> Sandbox:
+        """从只读详情构造 envd 连接，避免隐式恢复 VM。"""
+        data = self._control("GET", f"/sandboxes/{environment.sandbox_id}", timeout=10)
+        if not isinstance(data, dict) or data.get("sandboxID") != environment.sandbox_id:
+            raise RuntimeError("Cube 实例身份未确认")
+        if data.get("state") != "running":
+            raise StateConflictError("当前 Cube 未运行", code="sandbox_changed")
+        sandbox = Sandbox(data, config=self.config)
+        self._install_tokens(sandbox, environment)
+        return sandbox
+
+    def _stream_process(
+        self,
+        sandbox: Sandbox,
+        environment: Environment,
+        user: str,
+        payload: dict,
+        timeout: float,
+        stdin_data: bytes | None,
+        *,
+        hard_deadline: bool = False,
+        before_start: Callable[[], None] | None = None,
+    ) -> Iterator[dict]:
+        """使用固定的 envd 传输读取进程终态和发送限定的 stdin。"""
+        body = json.dumps(payload).encode()
+        headers = {
+            "Content-Type": "application/connect+json",
+            "Connect-Protocol-Version": "1",
+            "Connect-Content-Encoding": "identity",
+            "Authorization": "Basic " + base64.b64encode(f"{user}:".encode()).decode(),
+            "X-Access-Token": environment.envd_token,
+        }
+        stream_headers = {**headers, "Connect-Timeout-Ms": str(int(timeout * 1000))} if hard_deadline else headers
+        ended = False
+        address = f"http://{sandbox.get_host(49983)}/process.Process"
+        with sandbox._build_data_client() as client:
+            # 控制面查询与启动间可能已取消 Run，在发送进程请求前重验。
+            if before_start is not None:
+                before_start()
+            with client.stream(
+                "POST",
+                f"{address}/Start",
+                content=b"\x00" + struct.pack(">I", len(body)) + body,
+                headers=stream_headers,
+                timeout=httpx.Timeout(connect=15, read=timeout + 10, write=30, pool=15),
+            ) as response:
+                response.raise_for_status()
+                for event in connect_events(response.iter_raw()):
+                    if "end" in event:
+                        ended = True
+                    yield event
+                    if "start" in event and stdin_data is not None:
+                        self._send_process_stdin(client, address, headers, int(event["start"]["pid"]), stdin_data)
+            if not ended:
+                raise RuntimeError("执行流中断，未取得终态")
+
+    def _send_process_stdin(self, client: httpx.Client, address: str, headers: dict[str, str], pid: int, stdin_data: bytes) -> None:
+        """向同一 envd 进程按序发送全部字节及 EOF。"""
+        headers = {**headers, "Content-Type": "application/json"}
+        process = {"pid": pid}
+        for offset in range(0, len(stdin_data), 65536):
+            data = base64.b64encode(stdin_data[offset : offset + 65536]).decode()
+            response = client.post(f"{address}/SendInput", json={"process": process, "input": {"stdin": data}}, headers=headers, timeout=30)
+            if not self._stdin_request_succeeded(response, pid):
+                return
+        response = client.post(f"{address}/CloseStdin", json={"process": process}, headers=headers, timeout=30)
+        self._stdin_request_succeeded(response, pid)
+
+    @staticmethod
+    def _stdin_request_succeeded(response: httpx.Response, pid: int) -> bool:
+        """识别固定 envd 版本的输入关闭竞态，实际退出由 Start 流确认。"""
+        if response.status_code in (404, 500):
+            try:
+                error = response.json()
+            except ValueError:
+                error = None
+            if isinstance(error, dict):
+                code, message = error.get("code"), error.get("message")
+                if response.status_code == 404 and code == "not_found" and message == f"process with pid {pid} not found":
+                    return False
+                if response.status_code == 500:
+                    if code == "unknown" and message == "error closing stdin: close |1: file already closed":
+                        return False
+                    if code == "internal":
+                        prefix = f"error writing to stdin: error writing to stdin of process '{pid}': write |1: "
+                        if message in (prefix + "file already closed", prefix + "broken pipe"):
+                            return False
+        response.raise_for_status()
+        return True
 
     def _api_headers(self) -> dict[str, str]:
         """只向控制面附加部署凭据。"""

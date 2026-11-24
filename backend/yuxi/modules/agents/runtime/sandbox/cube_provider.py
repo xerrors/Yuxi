@@ -9,7 +9,10 @@ import threading
 import time
 import uuid
 from datetime import timedelta
+from functools import partial
 from pathlib import Path
+
+import httpx
 
 from yuxi.infrastructure.runtime_settings import get_int_env
 from yuxi.modules.agents.repositories.environment import AgentEnvRepository
@@ -21,6 +24,8 @@ from yuxi.modules.workspace.paths import ensure_user_workspace, workspace_uid_di
 from yuxi.modules.workspace.runtime_paths import SHARED_SKILLS_PATH, WORKSPACE_PATH
 from yuxi.shared.datetime import format_utc_datetime, utc_now
 from yuxi.shared.errors import StateConflictError, UpstreamError
+
+_TRANSITIONAL_STATES = {"creating", "rebuilding", "resuming", "pausing"}
 
 
 def validate_cube_configuration() -> None:
@@ -58,6 +63,57 @@ class CubeSandboxProvider:
         with self.repository.user_lock(uid) as connection:
             return self._ensure(connection, uid)
 
+    def prepare_instance(self, uid: str, *, expected: tuple[int, str] | None = None) -> tuple[int, str]:
+        """核对预期实例和执行租约后创建或唤醒 VM，只返回代次与实例 ID。"""
+        with self.repository.user_lock(uid, wait=False) as connection:
+            if connection is None:
+                raise StateConflictError("环境正在操作，请重试", code="sandbox_busy")
+            if expected is not None:
+                row = self.repository.environment(connection, uid)
+                if row is None or (row["generation"], row["sandbox_id"]) != expected:
+                    raise StateConflictError("环境状态已改变，请重试", code="sandbox_changed")
+            self._require_run_owner(connection, uid)
+            environment = self._ensure(connection, uid)
+            return self.repository.environment(connection, uid)["generation"], environment.sandbox_id
+
+    def run_guest_program(
+        self,
+        uid: str,
+        generation: int,
+        *,
+        user: str,
+        command: str,
+        arguments: list[str],
+        timeout: float,
+        stdin_data: bytes | None = None,
+        touch_idle: bool = False,
+    ) -> tuple[int, bytes]:
+        """在当前运行的目标 VM 执行受信内部入口；只有显式成功操作延长空闲计时。"""
+        with self.repository.user_lock(uid, wait=False) as connection:
+            if connection is None:
+                raise StateConflictError("环境正在操作，请重试", code="sandbox_busy")
+            row = self.repository.environment(connection, uid)
+            if row is None or row["generation"] != generation or row["state"] != "running" or not row["sandbox_id"]:
+                raise StateConflictError("环境状态已改变，请重试", code="sandbox_changed")
+            require_owner = partial(self._require_run_owner, connection, uid)
+            require_owner()
+            try:
+                exit_code, output = self.adapter.run_guest_program(
+                    self._reference(row),
+                    user=user,
+                    command=command,
+                    arguments=arguments,
+                    timeout=timeout,
+                    stdin_data=stdin_data,
+                    before_start=require_owner,
+                )
+            except (OSError, RuntimeError, ValueError, httpx.HTTPError):
+                raise UpstreamError("Cube 来宾程序执行未确认", code="sandbox_service_unavailable") from None
+            if touch_idle and exit_code == 0:
+                row["last_active_at"] = utc_now()
+                self.repository.save_environment(connection, row)
+            return exit_code, output
+
     def status(self, uid: str) -> dict:
         """查询状态不触碰 connect，因此不唤醒 VM。"""
         with self.repository.connect() as connection:
@@ -66,30 +122,33 @@ class CubeSandboxProvider:
             commands = self.repository.commands(connection, uid)
         state = row["state"] if row else "not_created"
         error = row["error"] if row else None
-        if row and state in {"creating", "rebuilding", "resuming", "pausing"}:
+        if row and state in _TRANSITIONAL_STATES:
             # 拿不到锁说明过渡操作仍在其他进程进行，保持原状态；拿到锁仍是过渡态说明
             # 操作进程已中断。这里只改响应不落库，持久失败由 _ensure 的显式拒绝和 rebuild 承担。
             with self.repository.user_lock(uid, wait=False) as connection:
                 if connection is not None:
-                    current = self.repository.environment(connection, uid)
-                    if current["state"] in {"creating", "rebuilding", "resuming", "pausing"}:
+                    row = self.repository.environment(connection, uid)
+                    if row and row["state"] in _TRANSITIONAL_STATES:
                         state, error = "failed", "上次环境操作已中断，请核对执行节点后重建"
                     else:
-                        state, error = current["state"], current["error"]
+                        state, error = (row["state"], row["error"]) if row else ("not_created", None)
+        rebuild_required = state == "failed"
         if row and row["sandbox_id"] and state in {"running", "paused"}:
             try:
                 state = self.adapter.state(self._reference(row)).lower()
             except Exception:
-                state, error = "failed", "Cube 实例无法查询，请检查执行节点；不会自动重建环境"
-        busy = bool(runs or commands) or state in {"creating", "rebuilding", "resuming", "pausing"}
+                state, error = "failed", "暂时无法读取 Cube 实例状态，请检查执行节点后刷新"
+        busy = bool(runs or commands) or state in _TRANSITIONAL_STATES
         idle_seconds = get_int_env("SANDBOX_IDLE_SECONDS", 300)
         deadline = (
             row["last_active_at"] + timedelta(seconds=idle_seconds) if row and state == "running" and not busy and not error else None
         )
         return {
+            "backend": self.backend,
             "state": state,
             "generation": row["generation"] if row else 0,
             "error": error,
+            "rebuild_required": rebuild_required,
             "active_runs": [{key: run[key] for key in ("id", "thread_id", "turn_id", "status")} for run in runs],
             "active_operations": len(commands),
             "busy": busy,
@@ -100,12 +159,16 @@ class CubeSandboxProvider:
             "server_time": format_utc_datetime(utc_now()),
         }
 
-    def rebuild(self, uid: str) -> dict:
+    def rebuild(self, uid: str, *, failed_generation: int | None = None) -> dict:
         """空闲时替换 VM，宿主 Workspace 与 Skills 不参与删除。"""
         with self.repository.user_lock(uid) as connection:
             if self.repository.active_runs(connection, uid) or self.repository.commands(connection, uid):
                 raise StateConflictError("仍有 Run 或操作正在使用环境，请先停止并等待清理完成", code="sandbox_busy")
             row = self.repository.environment(connection, uid)
+            if failed_generation is not None and (
+                not row or row["generation"] != failed_generation or row["state"] not in _TRANSITIONAL_STATES | {"failed"}
+            ):
+                raise StateConflictError("原故障环境已改变，请刷新状态", code="sandbox_changed")
             if row:
                 row["state"] = "rebuilding"
                 self.repository.save_environment(connection, row)
@@ -261,8 +324,7 @@ class CubeSandboxProvider:
                 self.repository.save_environment(connection, row)
                 try:
                     paused = self.adapter.pause(self._reference(row))
-                    row["state"] = "paused"
-                    row["paused_at"] = utc_now() if paused else None
+                    row.update(state="paused", paused_at=utc_now() if paused else None, error=None)
                     self.repository.save_environment(connection, row)
                 except Exception as exc:
                     self._failed(connection, row, exc)
@@ -280,15 +342,18 @@ class CubeSandboxProvider:
         environment = self._reference(row)
         try:
             state = self.adapter.state(environment).lower()
+            self._require_run_owner(connection, uid)
             if state == "paused":
                 row["state"] = "resuming"
                 self.repository.save_environment(connection, row)
-                self.adapter.resume(environment)
+                self.adapter.connect(environment).close()
             elif state != "running":
                 raise RuntimeError("Cube 实例未就绪")
             row.update(state="running", last_active_at=utc_now(), paused_at=None, error=None)
             self.repository.save_environment(connection, row)
             return environment
+        except StateConflictError:
+            raise
         except Exception as exc:
             self._failed(connection, row, exc)
             raise UpstreamError("原用户环境无法恢复；不会自动创建空环境") from exc
@@ -317,6 +382,7 @@ class CubeSandboxProvider:
             paused_at=None,
             error=None,
         )
+        self._require_run_owner(connection, uid)
         self.repository.save_environment(connection, row)
 
         def created(reference):
@@ -336,7 +402,12 @@ class CubeSandboxProvider:
             return environment
         except Exception as exc:
             self._failed(connection, row, exc)
-            raise UpstreamError("Cube 创建或初始化失败，请检查执行节点后显式重建") from exc
+            raise UpstreamError("运行环境创建失败，请联系管理员检查 Cube 节点后重建环境", code="sandbox_create_failed") from exc
+
+    def _require_run_owner(self, connection, uid: str) -> None:
+        """调用来自 Worker 时复核可信 Run 上下文，独立用户操作沿用其授权入口。"""
+        if owner := sandbox_run_owner.get():
+            self.repository.require_run_owner(connection, uid, *owner)
 
     def _add_command(self, connection, uid, generation, command_id, kind, timeout):
         """可信上下文决定 Run/attempt，独立 Skill 操作仍登记占用。"""

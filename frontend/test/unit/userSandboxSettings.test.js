@@ -416,6 +416,38 @@ test('较旧的环境查询晚返回不能覆盖最新休眠时间，错误后�
   }
 })
 
+test('磁盘回读取代重建预检时，较旧的空闲状态不能打开确认框', async () => {
+  const idle = { backend: 'cube', state: 'running', generation: 1, busy: false }
+  const preflight = Promise.withResolvers()
+  const afterDisk = Promise.withResolvers()
+  const diskUsage = Promise.withResolvers()
+  const reads = [Promise.resolve(idle), preflight.promise, afterDisk.promise]
+  let confirmation
+  const view = await renderSettings('UserSandboxSettingsCard', {
+    get: () => reads.shift(),
+    diskUsage: () => diskUsage.promise,
+    confirm: (options) => { confirmation = options }
+  })
+  const menuItem = () => view.find((node) => node.props.role === 'menuitem')
+  try {
+    const disk = view.find((node) => node.props['aria-label'] === '查看磁盘用量').props.onClick()
+    const checking = menuItem().props.onClick()
+    diskUsage.resolve({ used_bytes: 1, available_bytes: 1 })
+    await view.settle()
+    preflight.resolve(idle)
+    await checking
+    assert.equal(confirmation, undefined)
+
+    afterDisk.resolve({ ...idle, busy: true })
+    await disk
+    await view.settle()
+    assert.equal(menuItem().props.disabled, true)
+    assert.equal(confirmation, undefined)
+  } finally {
+    await view.close()
+  }
+})
+
 test('重建成功后迟到刷新不能留下 loading 或覆盖新环境', async () => {
   const idle = { state: 'paused', busy: false, idle_timeout_seconds: 300 }
   let get = async () => idle
@@ -612,6 +644,51 @@ test('状态断线作废磁盘结果，恢复到新代次后不接收旧请求',
       undefined
     )
     assert.equal(button().props.loading, false)
+  } finally {
+    await view.close()
+  }
+})
+
+test('故障重建只确认点选的代次，刷新发现替换或恢复时不重建', async () => {
+  let current = { backend: 'cube', state: 'failed', generation: 1, rebuild_required: true, busy: false }
+  let confirmation
+  const rebuiltGenerations = []
+  const view = await renderSettings('UserSandboxSettingsCard', {
+    get: async () => current,
+    confirm: (options) => { confirmation = options },
+    rebuild: async (generation) => {
+      rebuiltGenerations.push(generation)
+      return { ...current, state: 'running', generation: 3, rebuild_required: false }
+    },
+    success: () => {}
+  })
+  const rebuild = () => view.find((element) => element.props.role === 'menuitem').props.onClick()
+  try {
+    assert.ok(view.find((element) => element.props.description?.includes('「环境操作」')))
+    current = { ...current, generation: 2 }
+    await rebuild()
+    await view.settle()
+    assert.equal(confirmation, undefined)
+
+    current = { ...current, rebuild_required: false, error: '暂时无法读取 Cube 实例状态' }
+    await rebuild()
+    await view.settle()
+    assert.equal(confirmation, undefined)
+    const alert = view.find((element) => element.props.message === current.error)
+    assert.equal(alert.props.description, undefined)
+    await rebuild()
+    await confirmation.onOk()
+    assert.deepEqual(rebuiltGenerations, [undefined])
+
+    // 点击前显示运行中，确认框打开前的刷新首次发现故障。
+    current = { ...current, rebuild_required: true, error: null }
+    await rebuild()
+    current = { ...current, generation: 3 }
+    await confirmation.onOk()
+    await view.settle()
+    assert.deepEqual(rebuiltGenerations, [undefined, 2])
+    assert.ok(view.find((element) => element.text === '运行中'))
+    assert.equal(view.find((element) => element.props.description?.includes('「环境操作」')), undefined)
   } finally {
     await view.close()
   }

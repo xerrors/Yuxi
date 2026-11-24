@@ -78,18 +78,23 @@ class SandboxRepository:
     def add_command(self, connection, row: dict) -> None:
         """外部启动前先保存 owner 与代次。"""
         if row["run_id"]:
-            run = connection.execute(
-                "SELECT uid,status,worker_id,lease_expires_at,runtime_cleanup_pending FROM agent_runs WHERE id=%s", (row["run_id"],)
-            ).fetchone()
-            if not run or run["uid"] != row["uid"] or run["status"] != "running" or run["worker_id"] != row["owner"]:
-                raise StateConflictError("Run 已取消或执行 owner 已改变")
-            if run["lease_expires_at"] is None or run["lease_expires_at"] <= connection.execute("SELECT now() AS now").fetchone()["now"]:
-                raise StateConflictError("Run 执行租约已过期")
+            self.require_run_owner(connection, row["uid"], row["run_id"], row["owner"])
         connection.execute(
             "INSERT INTO sandbox_commands(id,uid,generation,run_id,owner,kind,phase,deadline) "
             "VALUES (%(id)s,%(uid)s,%(generation)s,%(run_id)s,%(owner)s,%(kind)s,'starting',%(deadline)s)",
             row,
         )
+
+    def require_run_owner(self, connection, uid: str, run_id: str, worker_id: str) -> None:
+        """在有副作用的来宾操作前校验当前 Run、执行者和租约。"""
+        run = connection.execute(
+            "SELECT uid,status,worker_id,lease_expires_at > now() AS lease_valid FROM agent_runs WHERE id=%s",
+            (run_id,),
+        ).fetchone()
+        if not run or run["uid"] != uid or run["status"] != "running" or run["worker_id"] != worker_id:
+            raise StateConflictError("Run 已取消或执行 owner 已改变", code="lease_lost")
+        if not run["lease_valid"]:
+            raise StateConflictError("Run 执行租约已过期", code="lease_lost")
 
     def command_started(self, command_id: str, pgid: int) -> None:
         """保存真实启动事件的进程组。"""

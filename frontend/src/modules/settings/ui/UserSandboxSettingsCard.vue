@@ -114,7 +114,13 @@
       </div>
     </div>
     <p v-if="diskError" class="settings-section-description" role="alert">{{ diskError }}</p>
-    <a-alert v-if="error" type="error" :message="error" show-icon />
+    <a-alert
+      v-if="error || failedGeneration"
+      type="error"
+      :message="error || '运行环境异常'"
+      :description="failedGeneration ? '可在「环境操作」菜单中重建环境。' : undefined"
+      show-icon
+    />
     <ul v-if="status?.active_runs?.length" class="sandbox-runs">
       <li v-for="run in status.active_runs" :key="run.id">
         <span>{{ run.status === 'cancel_requested' ? '取消处理中' : '任务处理中' }}</span>
@@ -189,6 +195,9 @@ const statePresentation = computed(
       : { label: '状态未知', icon: CircleHelp, tone: 'muted' })
 )
 const ephemeral = computed(() => status.value?.backend === 'container')
+const failedGeneration = computed(() =>
+  status.value?.rebuild_required ? status.value.generation : undefined
+)
 const diskActionLabel = computed(() => {
   return status.value?.state === 'paused' ? '唤醒并查询磁盘用量' : '查看磁盘用量'
 })
@@ -263,9 +272,12 @@ async function readDiskUsage() {
 }
 
 async function confirmRebuild() {
+  const displayedFailure = failedGeneration.value
   menuOpen.value = false
   await refresh()
-  if (!status.value || status.value.busy) return
+  if (loading.value || !status.value || status.value.busy) return
+  const generation = failedGeneration.value
+  if (displayedFailure !== undefined && displayedFailure !== generation) return
   Modal.confirm({
     title: '确认重建运行环境',
     content: '重建将清除已安装软件及用户主目录中的文件与配置。工作区文件与技能将保留。',
@@ -275,7 +287,7 @@ async function confirmRebuild() {
     async onOk() {
       rebuilding.value = true
       try {
-        const value = await sandboxApi.rebuild()
+        const value = await sandboxApi.rebuild(generation)
         refreshVersion++
         loading.value = false
         updateStatus(value)

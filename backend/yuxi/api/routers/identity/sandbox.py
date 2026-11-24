@@ -1,6 +1,6 @@
 """用户环境 Web 设置入口，不能由请求提供另一个 uid。"""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from yuxi.api.dependencies.auth import get_required_user
 from yuxi.modules.agents.services.sandbox import get_user_sandbox, get_user_sandbox_disk_usage, rebuild_user_sandbox
@@ -16,9 +16,9 @@ async def get_sandbox(current_user: User = Depends(get_required_user)):
 
 
 @router.post("/rebuild")
-async def rebuild_sandbox(current_user: User = Depends(get_required_user)):
+async def rebuild_sandbox(current_user: User = Depends(get_required_user), failed_generation: int | None = Query(default=None, ge=1)):
     """忙碌判断由持久 executor 在用户锁内执行。"""
-    return await rebuild_user_sandbox(str(current_user.uid))
+    return await rebuild_user_sandbox(str(current_user.uid), failed_generation=failed_generation)
 
 
 @router.post("/disk-usage")
