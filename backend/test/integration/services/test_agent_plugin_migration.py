@@ -22,7 +22,7 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.integration, pytest.mark.self_man
     "mcps,expected",
     [
         (["abridge", "reports"], {"mcps": ["reports"], "plugins": ["abridge"]}),
-        ("all", {"mcps": "all", "plugins": ["abridge"]}),
+        ("all", {"mcps": "all", "plugins": ["knowledge-base", "abridge"]}),
         ([], {"mcps": []}),
     ],
 )
@@ -52,7 +52,7 @@ async def test_first_upgrade_converts_device_selection_once(tmp_path, monkeypatc
                 "system_prompt": "kept",
                 "context": expected,
             }
-            assert await conn.scalar(text("SELECT version FROM yuxi_schema_migrations WHERE domain='business'")) == 4
+            assert await conn.scalar(text("SELECT version FROM yuxi_schema_migrations WHERE domain='business'")) == 5
             await conn.execute(
                 text("UPDATE agents SET config_json=CAST(:config AS JSON) WHERE slug='device'"),
                 {"config": json.dumps({"context": {"mcps": [], "plugins": []}})},
@@ -61,6 +61,226 @@ async def test_first_upgrade_converts_device_selection_once(tmp_path, monkeypatc
         async with engine.connect() as conn:
             assert await conn.scalar(text("SELECT config_json FROM agents WHERE slug='device'")) == {"context": {"mcps": [], "plugins": []}}
     finally:
+        await drop_isolated_schema(schema, admin, engine)
+
+
+async def test_v4_upgrade_converts_session_selection_and_preserves_disabled_device_plugin(tmp_path, monkeypatch):
+    """回读 Agent 的动态 all 和会话单选，复跑不会重新启用已关闭插件。"""
+    from yuxi.modules.extensions.plugins import registry
+
+    schema, admin, engine, manager = await create_isolated_manager("pytest_plugin_bundle_upgrade")
+    deployment = tmp_path / "deployed"
+    deployment.mkdir()
+    monkeypatch.setattr(registry, "MIGRATED_PLUGIN_DIRECTORY", deployment)
+    try:
+        await create_business_tables(manager)
+        await create_schema_version_table(manager)
+        await record_schema_version(manager, "business", 4)
+        async with engine.begin() as conn:
+            await conn.execute(text("ALTER TABLE mcp_servers DROP COLUMN IF EXISTS code_owned"))
+            await conn.execute(
+                text("""INSERT INTO mcp_servers(slug,name,transport,enabled,created_by,updated_by) VALUES
+                ('knowledge','KB','streamable_http',0,'system','admin'),
+                ('abridge','Device','streamable_http',1,'system','system'),
+                ('deepwiki-official','Wiki','streamable_http',1,'system','admin'),
+                ('custom','Other','streamable_http',1,'system','system')""")
+            )
+            await conn.execute(
+                text("""INSERT INTO agents(slug,backend_id,name,pics,config_json,share_config,visibility,is_builtin,is_default)
+                VALUES ('demo','chatbot','Agent','[]','{"system_prompt":"kept","context":{"mcps":"all","plugins":[]}}',
+                '{}','shared',false,false)""")
+            )
+            await conn.execute(
+                text("""INSERT INTO users(username,uid,password_hash,role,login_failed_count,is_deleted)
+                VALUES ('owner','owner','unused','user',0,0)""")
+            )
+            await conn.execute(
+                text("""INSERT INTO projects(id,uid,selection_status,workdir_path,directory_mode)
+                VALUES ('project','owner','implicit','work','managed')""")
+            )
+            await conn.execute(
+                text("""INSERT INTO sessions(thread_id,tree_root_thread_id,uid,agent_id,project_id,is_pinned,config_snapshot)
+                VALUES ('thread','thread','owner','demo','project',false,
+                '{"mcps":["reports","knowledge"],"plugins":["knowledge-base"],"knowledges":["kb"]}')""")
+            )
+        review = tmp_path / "review"
+        plan = await export_plugin_migration(manager, review)
+        assert plan["source_version"] == 4 and plan["skills"] == []
+        declaration = deployment / "reports.json"
+        declaration.write_text(
+            json.dumps(
+                {
+                    "plugin_id": "old-report",
+                    "name": "报表",
+                    "description": "报表",
+                    "entry_skill": "reports",
+                    "skills": ["reports"],
+                    "mcps": ["knowledge"],
+                }
+            )
+        )
+        with pytest.raises(ValueError, match="knowledge"):
+            await apply_plugin_migration(manager, review)
+        async with engine.connect() as conn:
+            assert await conn.scalar(text("SELECT version FROM yuxi_schema_migrations WHERE domain='business'")) == 4
+            assert (await conn.scalar(text("SELECT config_snapshot FROM sessions")))["mcps"] == ["reports", "knowledge"]
+        declaration.unlink()
+        # 无需迁移 MCP 的会话同样会在将来加载已选插件。
+        async with engine.begin() as conn:
+            await conn.execute(
+                text("""INSERT INTO sessions(thread_id,tree_root_thread_id,uid,agent_id,project_id,is_pinned,config_snapshot)
+                VALUES ('old','old','owner','demo','project',false,'{"plugins":["old-report"]}')""")
+            )
+        with pytest.raises(ValueError, match=r"sessions id=\d+ 配置引用未知插件：old-report"):
+            await apply_plugin_migration(manager, review)
+        async with engine.connect() as conn:
+            assert await conn.scalar(text("SELECT version FROM yuxi_schema_migrations WHERE domain='business'")) == 4
+            assert (await conn.scalar(text("SELECT config_json FROM agents")))["context"]["plugins"] == []
+        declaration.write_text(
+            json.dumps(
+                {
+                    "plugin_id": "old-report",
+                    "name": "报表",
+                    "description": "报表",
+                    "entry_skill": "reports",
+                    "skills": ["reports"],
+                    "mcps": ["reports"],
+                }
+            )
+        )
+        await apply_plugin_migration(manager, review)
+        async with engine.begin() as conn:
+            assert await conn.scalar(text("SELECT config_json FROM agents")) == {
+                "system_prompt": "kept",
+                "context": {"mcps": "all", "plugins": ["knowledge-base"]},
+            }
+            assert await conn.scalar(text("SELECT config_snapshot FROM sessions WHERE thread_id='thread'")) == {
+                "mcps": ["reports"],
+                "plugins": ["knowledge-base"],
+                "knowledges": ["kb"],
+            }
+            assert await conn.scalar(text("SELECT config_snapshot FROM sessions WHERE thread_id='old'")) == {"plugins": ["old-report"]}
+            assert dict((await conn.execute(text("SELECT slug, code_owned FROM mcp_servers"))).all()) == {
+                "knowledge": True,
+                "abridge": True,
+                "deepwiki-official": True,
+                "custom": False,
+            }
+            assert await conn.scalar(text("SELECT enabled FROM mcp_servers WHERE slug='knowledge'")) == 0
+            assert await conn.scalar(text("SELECT version FROM yuxi_schema_migrations WHERE domain='business'")) == 5
+            await conn.execute(text("""UPDATE agents SET config_json='{"context":{"mcps":"all","plugins":[]}}'"""))
+        await apply_plugin_migration(manager, review)
+        async with engine.connect() as conn:
+            assert await conn.scalar(text("SELECT config_json FROM agents")) == {"context": {"mcps": "all", "plugins": []}}
+    finally:
+        registry.get_plugins.cache_clear()
+        await drop_isolated_schema(schema, admin, engine)
+
+
+async def test_upgrade_claims_reviewed_custom_builtin_rows_and_rejects_collisions(tmp_path, monkeypatch):
+    """回读旧清单认领的行，覆盖保留、撤下、同名普通连接与审阅后行被替换。"""
+    from yuxi.modules.agents.runtime.context import BaseContext
+    from yuxi.modules.extensions.mcp import builtin
+    from yuxi.modules.extensions.mcp.config import BuiltinMCP
+    from yuxi.modules.extensions.plugins import registry
+    from yuxi.modules.extensions.plugins.base import YuxiPlugin
+
+    class Reports(YuxiPlugin):
+        """发布既有报表连接的业务插件。"""
+
+        plugin_id = entry_skill = "report-plugin"
+        name = description = "报表"
+        skills = ("report-plugin",)
+        mcps = (BuiltinMCP(slug="reports", manifest={"type": "http", "url": "https://reports.example/mcp"}),)
+
+    class NewPlugin(YuxiPlugin):
+        """接管已被旧管理员删除的连接标识。"""
+
+        plugin_id = entry_skill = "new-report"
+        name = description = "新报表"
+        skills = ("new-report",)
+        mcps = (BuiltinMCP(slug="removed", manifest={"type": "http", "url": "https://removed.example/mcp"}),)
+
+    monkeypatch.setattr(registry, "REGISTERED_PLUGINS", (*registry.REGISTERED_PLUGINS, Reports, NewPlugin))
+    monkeypatch.setattr(builtin, "BUILTIN_MCP_SERVERS", builtin.builtin_mcp_servers())
+    schema, admin, engine, manager = await create_isolated_manager("pytest_legacy_mcp_owners")
+    try:
+        await create_business_tables(manager)
+        await create_schema_version_table(manager)
+        await record_schema_version(manager, "business", 4)
+        async with engine.begin() as conn:
+            await conn.execute(text("ALTER TABLE mcp_servers DROP COLUMN code_owned"))
+            await conn.execute(
+                text("""INSERT INTO mcp_servers(slug,name,transport,enabled,disabled_tools,created_by,updated_by) VALUES
+                ('reports','Reports','streamable_http',0,'["restricted"]','system','admin'),
+                ('retired','Retired','sse',1,'[]','system','system'),
+                ('custom','Custom','sse',1,'[]','system','system')""")
+            )
+            await conn.execute(
+                text("""INSERT INTO agents(slug,backend_id,name,pics,config_json,share_config,visibility,is_builtin,is_default)
+                VALUES ('demo','chatbot','Demo','[]','{"context":{"mcps":["reports","removed","custom"]}}','{}','shared',false,false)""")
+            )
+            await conn.execute(
+                text("""INSERT INTO users(username,uid,password_hash,role,login_failed_count,is_deleted)
+                VALUES ('owner','owner','unused','user',0,0)""")
+            )
+            await conn.execute(
+                text("""INSERT INTO projects(id,uid,selection_status,workdir_path,directory_mode)
+                VALUES ('project','owner','implicit','work','managed')""")
+            )
+            await conn.execute(
+                text("""INSERT INTO sessions(thread_id,tree_root_thread_id,uid,agent_id,project_id,is_pinned,config_snapshot)
+                VALUES ('thread','thread','owner','demo','project',false,'{"mcps":["removed","custom"]}')""")
+            )
+        with pytest.raises(ValueError, match="reports.*来源冲突"):
+            await export_plugin_migration(manager, tmp_path / "unconfirmed")
+        confirmed = ("reports", "retired")
+        with pytest.raises(ValueError, match="缺少系统同步行：missing"):
+            await export_plugin_migration(manager, tmp_path / "missing", legacy_builtins=(*confirmed, "missing"))
+        review = tmp_path / "review"
+        plan = await export_plugin_migration(manager, review, legacy_builtins=confirmed)
+        async with engine.begin() as conn:
+            await conn.execute(
+                text("""INSERT INTO mcp_servers(slug,name,transport,enabled,created_by,updated_by)
+                VALUES ('abridge','Other','sse',1,'admin','admin')""")
+            )
+        with pytest.raises(ValueError, match="abridge.*来源冲突"):
+            await apply_plugin_migration(manager, review)
+        with pytest.raises(ValueError, match="abridge.*来源冲突"):
+            await export_plugin_migration(manager, tmp_path / "ordinary", legacy_builtins=(*confirmed, "abridge"))
+        async with engine.begin() as conn:
+            assert await conn.scalar(text("SELECT version FROM yuxi_schema_migrations WHERE domain='business'")) == 4
+            assert (await conn.scalar(text("SELECT config_json FROM agents")))["context"]["mcps"] == ["reports", "removed", "custom"]
+            await conn.execute(text("DELETE FROM mcp_servers WHERE slug='abridge'"))
+            await conn.execute(text("UPDATE mcp_servers SET id=id+100 WHERE slug='reports'"))
+        with pytest.raises(ValueError, match="源数据或内容已变化"):
+            await apply_plugin_migration(manager, review)
+        latest = tmp_path / "latest"
+        updated = await export_plugin_migration(manager, latest, legacy_builtins=confirmed)
+        assert updated["legacy_builtin_mcps"]["reports"] != plan["legacy_builtin_mcps"]["reports"]
+        await apply_plugin_migration(manager, latest)
+        async with engine.connect() as conn:
+            assert (await conn.execute(text("SELECT slug, code_owned FROM mcp_servers ORDER BY slug"))).all() == [
+                ("custom", False),
+                ("reports", True),
+                ("retired", True),
+            ]
+            assert (await conn.execute(text("SELECT id, enabled, disabled_tools FROM mcp_servers WHERE slug='reports'"))).one() == (
+                updated["legacy_builtin_mcps"]["reports"],
+                0,
+                ["restricted"],
+            )
+            assert await conn.scalar(text("SELECT config_json FROM agents")) == {
+                "context": {"mcps": ["custom"], "plugins": ["report-plugin"]}
+            }
+            agent_context = BaseContext()
+            agent_context.update_config((await conn.scalar(text("SELECT config_json FROM agents")))["context"])
+            session_context = BaseContext()
+            session_context.update_config(await conn.scalar(text("SELECT config_snapshot FROM sessions")))
+            assert (agent_context.mcps, agent_context.plugins) == (["custom"], ["report-plugin"])
+            assert (session_context.mcps, session_context.plugins) == (["custom"], [])
+    finally:
+        registry.get_plugins.cache_clear()
         await drop_isolated_schema(schema, admin, engine)
 
 
@@ -116,10 +336,15 @@ async def test_plugin_migration_cli_registers_models_in_a_cold_process(tmp_path)
                 assert not review.exists()
             else:
                 assert result.returncode == 0, result.stderr
-                assert json.loads((review / "plan.json").read_text()) == {"version": 1, "skills": [], "configs": []}
+                assert json.loads((review / "plan.json").read_text()) == {
+                    "source_version": 2,
+                    "legacy_builtin_mcps": {},
+                    "skills": [],
+                    "configs": [],
+                }
             async with engine.connect() as conn:
                 assert await conn.scalar(text("SELECT version FROM yuxi_schema_migrations WHERE domain='business'")) == (
-                    4 if action == "apply" else 2
+                    5 if action == "apply" else 2
                 )
         async with engine.connect() as conn:
             assert (
@@ -188,6 +413,15 @@ async def test_plugin_upgrade_requires_reviewed_deployment_and_preserves_content
                 {"config": json.dumps(template_config)},
             )
         review = tmp_path / "review"
+        async with engine.begin() as conn:
+            await conn.execute(text("""UPDATE skills SET mcp_dependencies='["knowledge"]' WHERE slug='custom-research'"""))
+        (source / "SKILL.md").write_text(original.replace("[reports]", "[knowledge]"))
+        with pytest.raises(ValueError, match="custom-research.*专属 MCP.*knowledge"):
+            await export_plugin_migration(manager, review)
+        assert not review.exists()
+        async with engine.begin() as conn:
+            await conn.execute(text("""UPDATE skills SET mcp_dependencies='["reports"]' WHERE slug='custom-research'"""))
+        (source / "SKILL.md").write_text(original)
         personal = tmp_path / "personal-workspace" / "agents" / "skills" / "old-personal" / "SKILL.md"
         personal.parent.mkdir(parents=True)
         personal.write_text("---\nname: old-personal\ndescription: old\nmcp_dependencies: []\n---\n")
@@ -221,7 +455,7 @@ async def test_plugin_upgrade_requires_reviewed_deployment_and_preserves_content
         await apply_plugin_migration(manager, review)
         await apply_plugin_migration(manager, review)
         async with engine.connect() as conn:
-            assert await conn.scalar(text("SELECT version FROM yuxi_schema_migrations WHERE domain='business'")) == 4
+            assert await conn.scalar(text("SELECT version FROM yuxi_schema_migrations WHERE domain='business'")) == 5
             config = await conn.scalar(text("SELECT config_json FROM agents WHERE slug='demo'"))
             assert await conn.scalar(text("SELECT config_json FROM agents WHERE slug='shared-template'")) == {
                 **template_config,
@@ -253,16 +487,18 @@ async def test_plugin_upgrade_requires_reviewed_deployment_and_preserves_content
 
 
 @pytest.mark.parametrize("table,status", [("agent_runs", "running"), ("agent_inputs", "pending"), ("agent_turns", "waiting")])
-async def test_plugin_upgrade_rejects_resumable_work_before_any_mutation(tmp_path, table, status):
+@pytest.mark.parametrize("version", [2, 4])
+async def test_plugin_upgrade_rejects_resumable_work_before_any_mutation(tmp_path, table, status, version):
     """待消费输入或可恢复 Turn 即使没有活动执行也不能升级。"""
     schema, admin, engine, manager = await create_isolated_manager("pytest_plugin_pending")
     try:
         await create_business_tables(manager)
         await create_schema_version_table(manager)
-        await record_schema_version(manager, "business", 2)
+        await record_schema_version(manager, "business", version)
         async with engine.begin() as conn:
-            for field in ("tool_dependencies", "mcp_dependencies", "skill_dependencies"):
-                await conn.execute(text(f"ALTER TABLE skills ADD COLUMN {field} JSON NOT NULL DEFAULT '[]'"))
+            if version == 2:
+                for field in ("tool_dependencies", "mcp_dependencies", "skill_dependencies"):
+                    await conn.execute(text(f"ALTER TABLE skills ADD COLUMN {field} JSON NOT NULL DEFAULT '[]'"))
             await conn.execute(
                 text("""INSERT INTO users(username,uid,password_hash,role,login_failed_count,is_deleted)
                 VALUES ('owner','owner','unused','user',0,0)""")
@@ -458,7 +694,7 @@ async def test_content_builtin_preserves_skill_and_tool_selection(tmp_path, monk
                 assert referenced == f"shared/{slug}"
                 assert list((root / "packages" / slug).iterdir()) == []
             else:
-                assert version == 4
+                assert version == 5
                 assert referenced != f"shared/{slug}"
                 assert (root / referenced / "SKILL.md").read_text().endswith("Research body\n")
                 assert "tool_dependencies" not in (root / referenced / "SKILL.md").read_text()

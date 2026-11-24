@@ -92,14 +92,10 @@ test('插件在工具分组独立选择，知识库警告取决于插件而非�
   assert.equal(form.shouldShowKnowledgePluginWarning('knowledges'), true)
 })
 
-test('直接选择知识库 MCP 时无需知识库插件，其他 MCP 不会消除警告', async () => {
+test('选择全部或历史知识库连接器时仍需启用知识库插件', async () => {
   const { form, props } = await createForm(['kb-a'])
-  props.modelValue = { knowledges: ['kb-a'], plugins: [], mcps: ['knowledge'] }
-  assert.equal(form.shouldShowKnowledgePluginWarning('knowledges'), false)
-  props.modelValue = { knowledges: ['kb-a'], plugins: [], mcps: 'all' }
-  assert.equal(form.shouldShowKnowledgePluginWarning('knowledges'), false)
-  props.modelValue = { knowledges: ['kb-a'], plugins: [], mcps: ['other'] }
-  assert.equal(form.shouldShowKnowledgePluginWarning('knowledges'), true)
-  props.modelValue = { knowledges: ['kb-a'], plugins: [], mcps: [] }
-  assert.equal(form.shouldShowKnowledgePluginWarning('knowledges'), true)
+  for (const mcps of [['knowledge'], 'all', ['other'], []]) {
+    props.modelValue = { knowledges: ['kb-a'], plugins: [], mcps }
+    assert.equal(form.shouldShowKnowledgePluginWarning('knowledges'), true)
+  }
 })

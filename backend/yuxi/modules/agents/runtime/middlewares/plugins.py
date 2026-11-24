@@ -10,6 +10,7 @@ from langchain_core.tools import StructuredTool
 from langgraph.prebuilt.tool_node import ToolRuntime
 from langgraph.types import Command
 
+from yuxi.modules.extensions.mcp.builtin import supports_direct_mcp_selection
 from yuxi.modules.extensions.mcp.service import resolve_runtime_mcp_tools
 from yuxi.modules.extensions.plugins.base import YuxiPlugin, is_plugin_active
 from yuxi.modules.extensions.plugins.registry import get_plugin, get_plugins
@@ -83,8 +84,8 @@ class PluginLoaderMiddleware(AgentMiddleware):
                     tool_call_id=runtime.tool_call_id,
                     status="error",
                 )
-            loaded = await self._load_mcps(context, plugin.mcps)
-            missing = [server for server in plugin.mcps if server not in loaded]
+            loaded = await self._load_mcps(context, plugin.mcp_slugs())
+            missing = [server for server in plugin.mcp_slugs() if server not in loaded]
             if missing:
                 details = [
                     f"连接器 {server} 不可用：{context.mcp_unavailable.get(server, '服务连接或发现失败，请检查连接器后重试')}"
@@ -95,6 +96,8 @@ class PluginLoaderMiddleware(AgentMiddleware):
                 self._register_mcp_sources(context, loaded)
             except ValueError as exc:
                 return ToolMessage(content=f"插件未激活：{exc}", tool_call_id=runtime.tool_call_id, status="error")
+            entry_path = snapshot["runtime_skills"][plugin.entry_skill]["path"]
+            content = f"入口文件：{entry_path}（文内相对路径以此文件为基准）\n\n{content}"
             references = [
                 f"- {slug}: {snapshot['runtime_skills'][slug]['path']}"
                 for slug in plugin.skills
@@ -125,10 +128,10 @@ class PluginLoaderMiddleware(AgentMiddleware):
             ]
             lines.extend(f"- {plugin.plugin_id}: {plugin.description}" for plugin in plugins)
             request = request.override(system_message=append_to_system_message(request.system_message, "\n".join(lines)))
-        servers = list(getattr(context, "mcps", []))
+        servers = [slug for slug in getattr(context, "mcps", []) if supports_direct_mcp_selection(slug)]
         for plugin in plugins:
             if is_plugin_active(plugin, context, request.state):
-                servers.extend(plugin.mcps)
+                servers.extend(plugin.mcp_slugs())
         loaded = await self._load_mcps(context, tuple(dict.fromkeys(servers)))
         try:
             self._register_mcp_sources(context, loaded)

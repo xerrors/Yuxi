@@ -18,7 +18,7 @@ def test_config_conversion_keeps_direct_resources_and_does_not_activate():
     """旧入口预加载只迁移选择，不隐式创建激活状态。"""
     config = {"skills": "all", "preload_skills": ["abridge"], "tools": ["present_artifacts"], "mcps": ["knowledge"]}
     result = convert_config(config, ["abridge"])
-    assert result == {**config, "preload_skills": [], "plugins": ["abridge"]}
+    assert result == {**config, "mcps": [], "preload_skills": [], "plugins": ["abridge", "knowledge-base"]}
     assert config["preload_skills"] == ["abridge"]
 
 

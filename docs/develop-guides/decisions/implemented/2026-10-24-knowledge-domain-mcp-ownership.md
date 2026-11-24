@@ -12,6 +12,8 @@ Knowledge 已通过 MCP 提供工具，但通用 MCP 模块仍拥有 Knowledge �
 
 ### 实现方案
 
+Agent 专属连接声明和插件私有内容的授权由[业务插件一次启用与专属 MCP](./2026-11-24-plugin-bundles.md)更新。
+
 Knowledge 拥有 MCP 服务端、短期凭据签验、标准 SDK Auth、内部连接、选择器读取和知识引用适配。API 仅挂载其协议组件与生命周期。内置连接清单（slug、固定容器内地址 `http://api:5050/api/mcp`、默认启停与部署可用性）由通用内置目录 `extensions/mcp/builtin.py` 拥有：Knowledge 是平台自有服务，地址写死在代码中，不提供 `YUXI_KNOWLEDGE_MCP_URL` 环境变量覆盖，`knowledge/mcp` 不再保留独立的连接定义文件。通用 identity 保留用户与通用密钥能力，不拥有 Knowledge 专属凭据契约。
 
 现有 MCP loader 继续负责标准工具发现、metadata、Run 内目录缓存与当前管理员策略。`delegation` 只选择代码提供的认证模块，接收 SDK 原生认证对象；复用既有出站策略，不再维护第二套 loader、issuer registry、专用配置哈希或注册生命周期。`auth_mode` 与 `enabled` 是平台管理元数据，默认值由内置代码装配拥有，普通连接配置 parser 不因此扩展。

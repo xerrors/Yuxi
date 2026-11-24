@@ -3,6 +3,7 @@
 from typing import Any
 
 from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.extensions.mcp.builtin import supports_direct_mcp_selection
 from yuxi.modules.extensions.tools.builtin import BASE_TOOL_NAMES
 from yuxi.modules.extensions.tools.catalog import get_tool_instances_by_category
 
@@ -39,7 +40,7 @@ async def resolve_configured_runtime_tools(context) -> list[Any]:
         context.registered_builtin_tool_names.add(tool_name)
 
     loaded = await resolve_runtime_mcp_tools(
-        getattr(context, "mcps", None) or [],
+        [slug for slug in (getattr(context, "mcps", None) or []) if supports_direct_mcp_selection(slug)],
         uid=getattr(context, "uid", None),
         run_tools=context.mcp_tools,
         unavailable=getattr(context, "mcp_unavailable", None),

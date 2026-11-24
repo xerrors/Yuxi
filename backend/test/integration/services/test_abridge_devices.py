@@ -69,6 +69,7 @@ async def bridge(provider_scenario, monkeypatch, tmp_path):  # noqa: F811
             await db.run_sync(lambda session, model=model: model.__table__.create(session.connection()))
         db.add(
             MCPServer(
+                code_owned=True,
                 slug="abridge",
                 name="aBridge",
                 transport="streamable_http",

@@ -48,6 +48,17 @@ async def test_public_creation_merges_mcp_selection_without_changing_agent_or_ot
     assert created.status_code == 200, created.text
     session_ids = []
     try:
+        for private_mcp in ("knowledge", "abridge"):
+            rejected = await test_client.post(
+                "/api/v1/agents/sessions",
+                headers={**key.headers, "Idempotency-Key": str(uuid4())},
+                json={"agent_id": slug, "yuxi": {"mcps": [private_mcp]}},
+            )
+            assert rejected.status_code == 422, rejected.text
+            assert "通过插件启用" in rejected.text
+        async with postgres_sessions() as db:
+            assert await db.scalar(select(Session.id).where(Session.agent_id == slug)) is None
+
         request_id = str(uuid4())
         body = {"agent_id": slug, "yuxi": {"mcps": ["extra", base_slug, "extra"]}}
         create_headers = {**key.headers, "Idempotency-Key": request_id}

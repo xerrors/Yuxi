@@ -5,6 +5,7 @@ import json
 from functools import lru_cache
 from pathlib import Path
 
+from yuxi.modules.extensions.mcp.config import BuiltinMCP
 from yuxi.modules.extensions.plugins.base import YuxiPlugin
 from yuxi.modules.extensions.plugins.builtin.abridge.plugin import AbridgePlugin
 from yuxi.modules.extensions.plugins.builtin.knowledge.plugin import KnowledgePlugin
@@ -16,16 +17,28 @@ REGISTERED_PLUGINS = (KnowledgePlugin, AbridgePlugin)
 
 
 def get_plugin_skill_directories() -> tuple[Path, ...]:
-    """按注册顺序发现插件自带 Skill，初始化时不装配运行中间件。"""
+    """仅发布插件入口包，其内部文件随入口统一授权。"""
     directories = []
     for plugin in REGISTERED_PLUGINS:
         directory = Path(inspect.getfile(plugin)).parent / "skills"
         if directory.is_dir():
             for source in sorted(directory.iterdir()):
-                if source.is_dir() and not source.name.startswith(("_", ".")) and source.name not in plugin.skills:
-                    raise ValueError(f"插件 {plugin.plugin_id} 的打包 Skill 未在 skills 声明: {source.name}")
+                if source.is_dir() and not source.name.startswith(("_", ".")) and source.name != plugin.entry_skill:
+                    raise ValueError(f"插件 {plugin.plugin_id} 的私有 Skill {source.name} 须放在入口包 {plugin.entry_skill} 内")
             directories.append(directory)
     return tuple(directories)
+
+
+def plugin_mcp_definitions() -> dict[str, BuiltinMCP]:
+    """从注册的代码声明收集专属连接，拒绝同名所有者。"""
+    definitions = {}
+    for plugin in REGISTERED_PLUGINS:
+        for mcp in plugin.mcps:
+            if isinstance(mcp, BuiltinMCP):
+                if mcp.slug in definitions:
+                    raise ValueError(f"插件专属 MCP 标识重复：{mcp.slug}")
+                definitions[mcp.slug] = mcp
+    return definitions
 
 
 def validate_plugin(plugin: type[YuxiPlugin]) -> None:
@@ -44,10 +57,13 @@ def validate_plugin(plugin: type[YuxiPlugin]) -> None:
         if not isinstance(getattr(plugin, attribute), str) or not getattr(plugin, attribute).strip():
             raise ValueError(f"插件缺少 {attribute}")
     for attribute in ("skills", "mcps"):
-        values = getattr(plugin, attribute)
-        if not isinstance(values, tuple) or any(not isinstance(value, str) or not value.strip() for value in values):
-            raise ValueError(f"插件 {plugin.plugin_id} 的 {attribute} 必须是字符串元组")
-        if len(set(values)) != len(values):
+        entries = getattr(plugin, attribute)
+        if not isinstance(entries, tuple):
+            raise ValueError(f"插件 {plugin.plugin_id} 的 {attribute} 必须是元组")
+        slugs = plugin.mcp_slugs() if attribute == "mcps" else entries
+        if any(not isinstance(slug, str) or not slug.strip() for slug in slugs):
+            raise ValueError(f"插件 {plugin.plugin_id} 的 {attribute} 包含无效标识")
+        if len(set(slugs)) != len(slugs):
             raise ValueError(f"插件 {plugin.plugin_id} 的 {attribute} 包含重复项")
     if plugin.entry_skill not in plugin.skills:
         raise ValueError(f"插件 {plugin.plugin_id} 的入口必须包含在 skills 中")
@@ -67,9 +83,17 @@ def get_plugins() -> tuple[type[YuxiPlugin], ...]:
                 raise ValueError(f"插件声明 {field} 必须是数组")
             data[field] = tuple(data[field])
         plugins.append(type(f"MigratedPlugin{len(plugins)}", (YuxiPlugin,), data))
+    private_mcps = plugin_mcp_definitions()
+    private_entries = {plugin.entry_skill for plugin in REGISTERED_PLUGINS}
     seen_ids, seen_entries, seen_names, seen_tools = set(), set(), set(), set()
     for plugin in plugins:
         validate_plugin(plugin)
+        for slug in plugin.skills:
+            if slug != plugin.entry_skill and slug in private_entries:
+                raise ValueError(f"插件 {plugin.plugin_id} 不能引用其他代码插件的入口 Skill：{slug}")
+        for mcp in plugin.mcps:
+            if isinstance(mcp, str) and mcp in private_mcps:
+                raise ValueError(f"插件 {plugin.plugin_id} 不能引用专属 MCP：{mcp}")
         if plugin.plugin_id in seen_ids or plugin.entry_skill in seen_entries or plugin.name in seen_names:
             raise ValueError(f"重复的插件标识或入口：{plugin.plugin_id}")
         owned_names = {tool.name for tool in getattr(plugin, "tools", ())}

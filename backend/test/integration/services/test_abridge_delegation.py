@@ -94,6 +94,7 @@ async def test_oidc_alone_does_not_enable_abridge_and_option_override_is_effecti
         for model in (ConfigOption, MCPServer, MCPConnection):
             await db.run_sync(lambda session, model=model: model.__table__.create(session.connection()))
         server = MCPServer(
+            code_owned=True,
             slug="abridge",
             name="aBridge",
             transport="streamable_http",

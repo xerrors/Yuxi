@@ -76,7 +76,7 @@ test('连接器 mention 来自本人可用目录，Skills 仍按智能体选择�
           { slug: 'disabled', available: false },
           { slug: 'other-user', available: false },
           { slug: 'revoked', available: false },
-          { slug: 'knowledge', enabled: true, connection_status: 'not_required', available: false }
+          { slug: 'knowledge', name: '知识库', available: true }
         ])
       })
       return mentionConfig.value.mcps

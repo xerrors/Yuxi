@@ -253,7 +253,7 @@
                 >
                   <AlertTriangle :size="14" />
                   <span>
-                    已选择知识库，请启用知识库插件或选择知识库连接器，以使用检索、打开文档等工具。
+                    已选择知识库，请启用知识库插件，以使用检索、打开文档等工具。
                   </span>
                 </div>
               </a-form-item>
@@ -530,9 +530,7 @@ const isKnowledgeBasePluginEnabled = computed(() => {
 
 const shouldShowKnowledgePluginWarning = (key) => {
   if (key !== 'knowledges') return false
-  const mcps = agentConfig.value?.mcps
-  const hasDirectKnowledge = mcps === 'all' || (Array.isArray(mcps) && mcps.includes('knowledge'))
-  return isResourceEnabled(agentConfig.value?.knowledges) && !isKnowledgeBasePluginEnabled.value && !hasDirectKnowledge
+  return isResourceEnabled(agentConfig.value?.knowledges) && !isKnowledgeBasePluginEnabled.value
 }
 
 const currentConfigKind = computed(() => {

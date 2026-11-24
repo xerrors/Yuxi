@@ -116,7 +116,8 @@ async def test_load_opens_tools_only_next_model_request_and_survives_rebuild(con
     result = await graph.ainvoke({"messages": [{"role": "user", "content": "run"}]}, config, context=context)
     assert "private_tool" not in model.requests[0]
     assert "private_tool" in model.requests[1]
-    assert any(message.content == "Exact entry instructions" for message in result["messages"])
+    entry = next(message for message in result["messages"] if getattr(message, "tool_call_id", None) == "load")
+    assert entry.content.splitlines() == ["入口文件：/guide/SKILL.md（文内相对路径以此文件为基准）", "", "Exact entry instructions"]
     assert any(message.content == "private-result" for message in result["messages"])
     saved = await build().aget_state(config)
     assert saved.values["activated_plugins"] == ["example"]

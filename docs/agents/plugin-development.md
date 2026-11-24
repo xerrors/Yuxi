@@ -32,7 +32,7 @@ description: 统计用户提供文本的字符数。
 向用户说明统计口径，并展示工具返回的数值。
 ```
 
-目录名与 Skill 标识保持一致。Skill 的运行依赖由插件类声明。
+目录名与入口 Skill 标识保持一致。插件自带的说明、脚本和参考文件都放进这个入口包。例如，把配套说明写在 `skills/text-metrics/skills/word-count/SKILL.md`，在入口正文用相对链接 `[分词规则](skills/word-count/SKILL.md)` 引用。用户取得入口读取权后可按需读取整个目录，撤销入口权限会撤下整包投影。配套说明不需要登记独立 Skill 或再授权。
 
 ## 2. 实现插件
 
@@ -70,7 +70,7 @@ class TextMetricsPlugin(YuxiPlugin):
         return await handler(request)
 ```
 
-入口 Skill 在 `load_plugin` 成功后作为正文返回。`on_model_call` 可为激活后的请求补充动态提示，适用于需要每轮生效的规则；固定操作说明放在 Skill 中即可。
+`load_plugin` 成功后返回入口 Skill 的路径和正文，模型按入口文件的位置解析文内相对路径。`on_model_call` 可为激活后的请求补充动态提示，适用于需要每轮生效的规则；固定操作说明放在 Skill 中即可。
 
 需要包装工具调用时实现 `on_tool_call(self, request, handler)`。它接收当前工具请求，可以在 `await handler(request)` 前后处理。该钩子会看到经过本插件包装的所有工具调用；只处理某个工具时，先检查 `request.tool_call["name"]`。
 
@@ -109,13 +109,27 @@ REGISTERED_PLUGINS = (KnowledgePlugin, AbridgePlugin, TextMetricsPlugin)
 
 | 资源 | 开发方式 |
 | --- | --- |
-| 入口与配套 Skill | 放在插件的 `skills/<slug>/` 下，并在类的 `skills` 中声明 |
+| 入口与私有配套内容 | 入口位于 `skills/<entry_skill>/SKILL.md`；私有文件放在同一个包内，在入口正文按需引用 |
 | 共享辅助 Skill | 直接在 `skills` 中引用已存在的共享标识，例如 `chat-widgets` |
 | 专属工具 | 在插件目录中实现，通过类属性 `tools` 声明；名称须避开其他插件及平台工具 |
-| MCP | 在 `mcps` 中引用平台已经登记的服务标识，沿用当前用户连接与权限 |
+| 专属 MCP | 在插件类的 `mcps` 中提供 `BuiltinMCP`，平台从该插件收集连接定义。Agent 激活插件后才获得对应工具 |
+| 共享 MCP | 在 `mcps` 中填写可直接选择的服务标识，沿用当前用户连接与权限 |
 | 通用工具 | 由智能体的工具配置选择 |
 
-源码放进插件目录后，Skill 仍通过现有共享索引、访问权限和用户投影提供。MCP 地址和凭据继续由 MCP 管理功能维护。
+插件目录只发布一个顶层入口包。已有自定义部署若在插件旁并列放置多个包，升级前将私有包移入入口目录，更新入口引用并从类的 `skills` 中移除其独立标识。曾经独立发布的旧条目沿用原权限，管理员应停用旧条目并核对已有投影。仍要独立共享的 Skill 应移至普通内置 Skill 目录，保留标识和独立权限。其他插件可以引用这些共享 Skill。
+
+插件拥有专属 MCP 的地址和认证装配，MCP 管理页维护可用状态和单工具开关。
+
+例如，业务插件可以在自己的 `plugin.py` 中声明一个无需凭据的只读连接：
+
+```python
+from yuxi.modules.extensions.mcp.config import BuiltinMCP
+
+# 放入插件类的 mcps 属性
+mcps = (BuiltinMCP(slug="reports", manifest={"type": "http", "url": "https://reports.example/mcp"}),)
+```
+
+需要按用户委托时，参考内置知识库插件的 `delegation` 实现。平台在当前用户和会话范围内发现工具；用户启用插件一次即可使用获准的能力。
 
 ## 中间件与接口边界
 

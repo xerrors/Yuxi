@@ -221,6 +221,7 @@ async def test_create_mcp_server_rejects_builtin_slug(mcp_session):
 async def test_delete_builtin_mcp_server_rejects_service_call(mcp_session):
     server = MCPServer(
         slug="deepwiki-official",
+        code_owned=True,
         name="内置 MCP",
         transport="streamable_http",
         url="https://trusted.example/mcp",
@@ -240,6 +241,7 @@ async def test_delete_builtin_mcp_server_rejects_service_call(mcp_session):
 async def test_update_builtin_mcp_server_rejects_connection_changes(mcp_session):
     server = MCPServer(
         slug="deepwiki-official",
+        code_owned=True,
         name="DeepWiki",
         transport="streamable_http",
         url="https://trusted.example/mcp",
@@ -341,6 +343,7 @@ async def test_get_mcp_tools_sets_handle_tool_error(monkeypatch):
         slug="demo",
         auth_mode="headers",
         disabled_tools=[],
+        code_owned=False,
         to_mcp_config=lambda: config,
     )
 
@@ -575,6 +578,7 @@ async def test_sync_deepwiki_idempotently_preserves_other_servers(monkeypatch, m
             ),
             MCPServer(
                 slug="deepwiki-official",
+                code_owned=True,
                 name="DeepWiki",
                 transport="streamable_http",
                 url="https://tampered.example/mcp",
@@ -742,7 +746,8 @@ async def test_runtime_does_not_swallow_identity_or_database_failure(monkeypatch
         await mcp_service.resolve_runtime_mcp_tools(["demo"], uid="user", unavailable={})
 
 
-async def test_builtin_sync_rejects_user_slug_without_overwriting_configuration(monkeypatch, mcp_session):
+@pytest.mark.parametrize("username", ["admin", "system"])
+async def test_builtin_sync_rejects_user_slug_without_overwriting_configuration(monkeypatch, mcp_session, username):
     """新内置 slug 碰撞必须明确拒绝，不能接管用户连接或认证模式。"""
     server = MCPServer(
         slug="knowledge",
@@ -753,8 +758,8 @@ async def test_builtin_sync_rejects_user_slug_without_overwriting_configuration(
         headers={"X-Custom": "user"},
         enabled=1,
         disabled_tools=["user_tool"],
-        created_by="admin",
-        updated_by="admin",
+        created_by=username,
+        updated_by=username,
     )
     mcp_session.add(server)
     await mcp_session.commit()
@@ -762,14 +767,12 @@ async def test_builtin_sync_rejects_user_slug_without_overwriting_configuration(
     with pytest.raises(ValueError, match="slug 冲突.*knowledge"):
         await mcp_service.ensure_builtin_mcp_servers_in_db()
     await mcp_session.refresh(server)
-    assert (server.created_by, server.url, server.auth_mode) == ("admin", "https://user.example/mcp", "headers")
+    assert (server.created_by, server.url, server.auth_mode) == (username, "https://user.example/mcp", "headers")
     assert server.headers == {"X-Custom": "user"} and server.disabled_tools == ["user_tool"]
 
 
 async def test_deployment_switch_keeps_builtin_identity_and_admin_intent(monkeypatch, mcp_session):
     """部署关闭过滤候选但不覆盖原行，恢复后继续使用管理员工具开关。"""
-    from yuxi.modules.extensions.mcp.builtin import builtin_mcp_available
-
     monkeypatch.setattr(postgres_manager.pg_manager, "get_async_session_context", lambda: _AsyncSessionContext(mcp_session))
     await mcp_service.ensure_builtin_mcp_servers_in_db()
     server = await mcp_session.scalar(select(MCPServer).where(MCPServer.slug == "knowledge"))
@@ -779,7 +782,7 @@ async def test_deployment_switch_keeps_builtin_identity_and_admin_intent(monkeyp
     await mcp_service.ensure_builtin_mcp_servers_in_db()
     await mcp_session.refresh(server)
     assert server.enabled == 1 and server.disabled_tools == ["query_kb"]
-    assert mcp_service.is_builtin_mcp_server(server) and not builtin_mcp_available(server.slug)
+    assert mcp_service.is_builtin_mcp_server(server)
     assert "knowledge" not in await mcp_service.get_enabled_mcp_server_slugs(db=mcp_session)
     with pytest.raises(ValueError, match="当前部署不可用"):
         await mcp_service.inspect_mcp_server_tools(server, uid="viewer")

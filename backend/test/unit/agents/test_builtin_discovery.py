@@ -234,11 +234,11 @@ def test_shipping_plugins_own_runtime_dependencies():
     assert set(found) == {"image-gen", "deep-research", "knowledge-base", "mysql-reporter", "chat-widgets", "abridge"}
     for spec in found.values():
         assert not {"tool_dependencies", "mcp_dependencies", "skill_dependencies"}.intersection(spec)
-    assert get_plugin("knowledge-base").mcps == ("knowledge",)
+    assert get_plugin("knowledge-base").mcp_slugs() == ("knowledge",)
     assert "deep-research" not in {plugin.plugin_id for plugin in get_plugins()}
     assert "image-gen" not in {plugin.plugin_id for plugin in get_plugins()}
     assert get_plugin("abridge").skills == ("abridge", "chat-widgets")
-    assert get_plugin("abridge").mcps == ("abridge",)
+    assert get_plugin("abridge").mcp_slugs() == ("abridge",)
 
 
 def test_plugin_skills_are_discovered_without_runtime_assembly(monkeypatch):
@@ -288,12 +288,27 @@ async def test_selected_plugins_assemble_independent_middlewares_in_registry_ord
     assert [type(item.plugin) for item in selected if isinstance(item, PluginMiddleware)] == [AbridgePlugin]
 
 
-def test_plugin_resource_discovery_rejects_undeclared_skill(tmp_path, monkeypatch):
-    """随插件交付的目录必须属于其显式声明，不能意外发布额外 Skill。"""
+def test_plugin_resource_discovery_rejects_sibling_skill(tmp_path, monkeypatch):
+    """即使插件声明了第二个顶层 Skill 也不能独立发布。"""
     from yuxi.modules.extensions.plugins import registry
 
-    (tmp_path / "skills" / "undeclared").mkdir(parents=True)
+    (tmp_path / "skills" / "private-helper").mkdir(parents=True)
+    monkeypatch.setattr(registry.KnowledgePlugin, "skills", ("knowledge-base", "private-helper"))
     monkeypatch.setattr(registry, "REGISTERED_PLUGINS", (registry.KnowledgePlugin,))
     monkeypatch.setattr(registry.inspect, "getfile", lambda plugin: str(tmp_path / "plugin.py"))
-    with pytest.raises(ValueError, match="打包 Skill 未在 skills 声明: undeclared"):
+    with pytest.raises(ValueError, match="私有 Skill private-helper 须放在入口包 knowledge-base 内"):
         registry.get_plugin_skill_directories()
+
+
+def test_plugin_cannot_use_another_entry_as_shared_skill(monkeypatch, tmp_path):
+    """共享引用不能披露另一个业务插件的私有入口。"""
+    from yuxi.modules.extensions.plugins import registry
+
+    monkeypatch.setattr(registry, "MIGRATED_PLUGIN_DIRECTORY", tmp_path)
+    monkeypatch.setattr(registry.KnowledgePlugin, "skills", ("knowledge-base", "abridge"))
+    registry.get_plugins.cache_clear()
+    try:
+        with pytest.raises(ValueError, match="knowledge-base 不能引用其他代码插件的入口 Skill：abridge"):
+            registry.get_plugins()
+    finally:
+        registry.get_plugins.cache_clear()

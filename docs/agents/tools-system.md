@@ -79,7 +79,7 @@ reason 去除首尾空白后为 1–4000 字符，写明实际问题或经验、
 
 ## 知识库工具
 
-知识库工具不再以 `@tool` 本地注册。它们由内置 `knowledge` MCP server（`extensions/mcp/builtin.py`，默认启用）提供，Agent 启用 `knowledge-base` 插件并通过 `load_plugin` 激活后，运行装配从该 server 的真实目录加载：
+知识库工具不再以 `@tool` 本地注册。它们由`knowledge-base` 插件声明的 `knowledge` MCP server（默认启用）提供，Agent 启用 `knowledge-base` 插件并通过 `load_plugin` 激活后，运行装配从该 server 的真实目录加载：
 
 | 工具 | 作用 |
 | --- | --- |
@@ -91,7 +91,7 @@ reason 去除首尾空白后为 1–4000 字符，写明实际问题或经验、
 
 工具名称、参数 Schema 与结构化结果直接来自 Knowledge MCP 的目录与响应，与其他托管 MCP 的装配路径一致。每次出站调用自动附带代表当前用户及会话选择的短期委托，无需在 Agent 的 MCP 字段添加本平台 Knowledge，也无需个人 OAuth 连接；管理页不能为该 server 配置共享凭据。
 
-Knowledge 在每次工具调用处重新检查 `kb_id`、`file_id`、文件名与当前读取权限；模型提示词和 Agent 配置不能授予权限。关闭 Knowledge 时保留内置 server 身份，能力发现与执行按不可用处理。部署插件通过 `mcps: ("knowledge",)` 引用知识能力，也可由 Agent 直接选择该 MCP。普通共享或 Agent 专属 Skill 不声明运行依赖；这五个名称属于 MCP，不是本地工具引用。鉴权、范围和存储边界见[知识库机制详解](../mechanisms/knowledge-base.md#agent-如何看到知识库)。
+Knowledge 在每次工具调用处重新检查 `kb_id`、`file_id`、文件名与当前读取权限；模型提示词和 Agent 配置不能授予权限。关闭 Knowledge 时保留内置 server 身份，能力发现与执行按不可用处理。Agent 仅通过知识库插件取得这组工具。普通共享或 Agent 专属 Skill 不声明运行依赖；这五个名称属于 MCP，不是本地工具引用。鉴权、范围和存储边界见[知识库机制详解](../mechanisms/knowledge-base.md#agent-如何看到知识库)。
 
 ## 内置工具：网页搜索
 
@@ -131,7 +131,7 @@ Agent 原始选择 + 用户权限
 
 ## MCP、插件和 Skills
 
-MCP 工具来自平台已登记的服务器，既可由 Agent 直接选择，也可由插件引用后按需加载。插件启用不创建连接或授予账号权限；MCP 不可用时 `load_plugin` 返回明确错误，不记录成功激活。运行期间授权变化仍由 MCP 与工具执行边界复核。
+MCP 工具来自平台已登记的服务器，普通 MCP 可以直接选择，插件声明的专属连接只随该插件加载。插件启用不创建连接或授予账号权限；MCP 不可用时 `load_plugin` 返回明确错误，不记录成功激活。运行期间授权变化仍由 MCP 与工具执行边界复核。
 
 Skill 只提供操作知识，读取或预加载 `SKILL.md` 不改变工具集合，也不保存 Skill 激活状态。插件入口说明通过 `load_plugin` 返回，其他配套内容保留按需读取。服务器配置和启停归 [MCP 集成](./mcp-integration.md)，Skill 的创建与读取归 [Skills 管理](./skills-management.md)，资源选择字段归[智能体配置](./agents-config.md)。
 

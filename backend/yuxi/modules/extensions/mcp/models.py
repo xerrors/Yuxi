@@ -4,6 +4,7 @@ from typing import Any
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     CheckConstraint,
     Column,
     DateTime,
@@ -12,6 +13,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
 )
 
 from yuxi.infrastructure.postgres.base import BusinessBase as Base
@@ -41,7 +43,7 @@ class MCPServer(Base):
     oauth_secret = Column(Text, nullable=True)
     oauth_registration = Column(Text, nullable=True)
 
-    # UI 增强字段
+    code_owned = Column(Boolean, nullable=False, default=False, server_default=false(), comment="由代码发布的内置连接")
 
     # 状态字段
     enabled = Column(Integer, nullable=False, default=1, comment="是否启用：1=是，0=否")

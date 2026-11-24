@@ -44,7 +44,7 @@
 
 Skills middleware 按模型请求注入普通 Skill 摘要和预加载正文；读取正文不保存激活状态，也不开放工具。Plugins middleware 通过 `load_plugin` 返回入口正文并保存插件激活记录，从下一轮模型请求开放当前获授权的能力。Agent 直接选择的 MCP 服务器沿用独立加载路径。
 
-知识库插件 `knowledge-base` 引用内置 `knowledge` MCP。它的工具装配、模型可见性和目标知识库访问分别由 MCP 目录发现、插件激活与运行授权、知识库执行权限检查负责。完整链路见[工具系统](./tools-system.md)和[知识库机制详解](../mechanisms/knowledge-base.md)。
+知识库插件 `knowledge-base` 声明专属 `knowledge` MCP。它的工具装配、模型可见性和目标知识库访问分别由 MCP 目录发现、插件激活与运行授权、知识库执行权限检查负责。完整链路见[工具系统](./tools-system.md)和[知识库机制详解](../mechanisms/knowledge-base.md)。
 
 ## 文件和附件
 

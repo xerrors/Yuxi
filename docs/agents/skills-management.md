@@ -75,21 +75,25 @@ Skill 不接受 `tool_dependencies`、`mcp_dependencies`、`skill_dependencies` 
 
 ## 从运行依赖升级
 
-业务 Schema v4 使用部署插件承载运行能力。已有 v2 数据需要维护窗口，先排空待消费 Input、全部非终态 Run 和可恢复 Turn，再停止 API 与 worker 接流量。`app-init` 不自动转换旧库。备份数据库与 Skill 文件后，在使用新代码且挂载原数据的离线容器中执行：
+业务 Schema v5 由插件提供专属的知识库和设备连接。已有 v2 或 v4 库需要维护窗口，先排空待消费 Input、全部非终态 Run 和可恢复 Turn，再停止 API 与 worker 接流量。`app-init` 不自动转换旧库。备份数据库与 Skill 文件后，在使用新代码且挂载原数据的离线容器中执行：
 
 ```bash
 uv run --no-sync python -m yuxi.migrations.agent_plugins export /migration/agent-plugins
 ```
 
-审阅输出的 `plan.json`。检查每个 Skill 的资源和 Agent、Session 配置映射。旧通用工具依赖直接丢弃，智能体和会话已有的工具选择保持原样。只有这类依赖的 Skill 保留为普通 Skill。将 `deployed/*.json` 纳入部署源码的 `yuxi/modules/extensions/plugins/deployed/` 目录，再使用包含这些声明的同一版本执行：
+如果旧部署扩展过 `BUILTIN_MCP_MANIFEST`，请从旧版部署源码核实自定义内置连接。在导出命令后为每项追加 `--legacy-builtin <slug>`，包括新版已撤下的连接。
+
+审阅 `plan.json` 中的内置标识和数据库行 ID。v4 转换未来使用的 Agent 和会话配置，并为历史内置 MCP 记录代码管理来源。显式选择 `knowledge` 的配置改为启用 `knowledge-base`，`mcps: "all"` 保留普通连接的动态范围，并补上知识库插件。v4 的 `"all"` 已排除设备连接，因此保留设备插件原有选择。迁移保留已认领连接的行、管理员开关和工具策略。已改为插件专属的旧内置连接也会转换为所属插件选择，撤下的连接由系统保留归属并停止提供。旧连接行已删除且标识被新插件使用时，迁移只移除过期的直接选择。普通连接占用新声明的标识时，先解决同名冲突再应用。部署包须包含数据库中所有已选插件的声明，包含无需转换的会话和 Agent。移除旧插件时先清理这些配置的引用。迁移发现遗漏时报告配置所在表、记录 ID 和插件 ID，恢复声明或清理引用后重新导出审阅。
+
+v2 还需转换旧 Skill 依赖。检查每个 Skill 的资源和 Agent、Session 配置映射。旧通用工具依赖直接丢弃，智能体和会话已有的工具选择保持原样。只有这类依赖的 Skill 保留为普通 Skill。将 `deployed/*.json` 纳入部署源码的 `yuxi/modules/extensions/plugins/deployed/` 目录，再使用包含这些声明的同一版本执行：
 
 ```bash
 uv run --no-sync python -m yuxi.migrations.agent_plugins apply /migration/agent-plugins
 ```
 
-源配置或文件发生变化时，apply 拒绝旧计划。重新导出审阅。个人 Skill 的旧依赖从未生效，预检要求显式删除旧字段，不会转换为插件权限。一次应用直接将 business v2 升至当前 v4，同时转换旧的 aBridge 直接选择；没有独立的插件中间版本升级。内置 `image-gen` 和 `deep-research` 保留为普通 Skill。随后运行初始化和 readiness 检查并恢复服务，新空库直接初始化为 v4。
+源配置或文件发生变化时，apply 拒绝旧计划。重新导出审阅。个人 Skill 的旧依赖从未生效，预检要求显式删除旧字段，不会转换为插件权限。v2 的直接选择和 `mcps: "all"` 也转换原有的 aBridge 能力。第三方部署插件或 v2 自定义 Skill 引用专属连接时，先在对应部署声明或旧版 Skill 中移除冲突依赖，再按业务需要选择所属插件并重新审阅。内置 `image-gen` 和 `deep-research` 保留为普通 Skill。随后运行初始化和 readiness 检查并恢复服务，新空库直接初始化为 v5。
 
-迁移保留历史 Input、Run manifest 和 Skill 历史版本，不将旧 Skill 激活推断成插件激活。依赖列被删除，当前内容改为新的包引用。需要回退时恢复配套的旧代码、数据库与文件备份，不能只降级应用镜像。
+迁移保留历史 Input、Run manifest 和 Skill 历史版本，不将旧 Skill 激活推断成插件激活。v2 的依赖列被删除，当前内容改为新的包引用。需要回退时恢复配套的旧代码、数据库与文件备份，不能只降级应用镜像。
 
 ## 安装方式
 

@@ -1,6 +1,6 @@
 # 知识库 MCP 接入
 
-外部项目和 OpenCode 通过 Yuxi API 内置的 Streamable HTTP MCP 访问只读知识库工具。MCP 与 API 使用同一进程、域名和端口，入口是 `/api/mcp`。接入需要该实例签发的 `knowledge` API Key，创建方法见 [API Key 接入](./api-key-integration.md)。每个客户端传入自己的 Key，可见知识库由 Key 所属用户的资源权限决定。
+外部项目和 OpenCode 通过 Yuxi API 内置的 Streamable HTTP MCP 访问只读知识库工具。MCP 与 API 使用同一进程、域名和端口，入口是 `/api/mcp`。接入需要该实例签发的 `knowledge` API Key，创建方法见 [API Key 接入](./api-key-integration.md)。每个客户端传入自己的 Key，可见知识库由 Key 所属用户的资源权限决定。 外部客户端可直接连接此端点，无需启用 Agent 插件。
 
 ## 服务地址
 
