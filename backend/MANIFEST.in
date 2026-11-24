@@ -1,4 +1,5 @@
 recursive-include yuxi/modules/system/static *.txt *.yaml
 recursive-include yuxi/modules/extensions/skills *.md
 graft yuxi/modules/extensions/skills/builtin
+graft yuxi/modules/extensions/plugins/*/skills
 global-exclude *.py[cod]

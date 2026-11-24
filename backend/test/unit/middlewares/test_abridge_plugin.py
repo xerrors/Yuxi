@@ -13,14 +13,17 @@ from langchain_core.tools import tool
 from pydantic import Field
 
 from yuxi.modules.agents.runtime.middlewares import plugins
-from yuxi.modules.extensions.plugins.builtin.abridge.plugin import AbridgePlugin
+from yuxi.modules.agents.runtime.middlewares.authorization import AgentExecutionRevoked
+from yuxi.modules.agents.runtime.middlewares.tool_error_guard import ToolErrorGuardMiddleware
+from yuxi.modules.extensions.plugins.abridge.plugin import AbridgePlugin
 from yuxi.modules.extensions.plugins.registry import get_plugin, get_plugin_skill_directories
+from yuxi.shared.errors import PermissionDeniedError
 
 
 @pytest.fixture
 def context():
     """提供已授权插件入口与配套说明的运行快照。"""
-    entry = Path(__file__).parents[3] / "yuxi/modules/extensions/plugins/builtin/abridge/skills/abridge/SKILL.md"
+    entry = Path(__file__).parents[3] / "yuxi/modules/extensions/plugins/abridge/skills/abridge/SKILL.md"
     return SimpleNamespace(
         uid="caller",
         plugins=["abridge"],
@@ -117,6 +120,27 @@ async def test_load_abridge_discloses_entry_then_injects_device_prompt(context, 
     assert entry_message.status == "success"
     assert "操作后重新读取" in entry_message.content
     assert "/home/user/skills/chat-widgets/SKILL.md" in entry_message.content
+
+
+@pytest.mark.asyncio
+async def test_revoked_execution_during_first_plugin_load_stops_graph(monkeypatch, context):
+    """首次发现设备时失权必须穿过工具异常处理，中止图并阻止下一次模型调用。"""
+
+    async def revoked(servers, **kwargs):
+        assert servers == ["abridge"]
+        raise PermissionDeniedError("当前 APP 执行凭据已撤销")
+
+    monkeypatch.setattr(plugins, "resolve_runtime_mcp_tools", revoked)
+    model = DeviceModel(
+        responses=[
+            AIMessage(content="", tool_calls=[{"name": "load_plugin", "args": {"plugin_id": "abridge"}, "id": "load"}]),
+            AIMessage(content="继续处理"),
+        ]
+    )
+    graph = create_agent(model=model, tools=[], middleware=[ToolErrorGuardMiddleware(), plugins.PluginLoaderMiddleware()])
+    with pytest.raises(AgentExecutionRevoked):
+        await graph.ainvoke({"messages": [("user", "读取设备")]}, context=context)
+    assert len(model.prompts) == 1
 
 
 @pytest.mark.asyncio

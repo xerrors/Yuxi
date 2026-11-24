@@ -254,7 +254,7 @@ def test_plugin_skills_are_discovered_without_runtime_assembly(monkeypatch):
     monkeypatch.setattr(registry, "get_plugins", reject_runtime_assembly)
     monkeypatch.setattr(registry, "validate_plugin", reject_runtime_assembly)
     found = {spec["slug"]: spec for spec in skill_service.list_builtin_skill_specs()}
-    root = Path(registry.__file__).parent / "builtin"
+    root = Path(registry.__file__).parent
     assert found["knowledge-base"]["source_dir"] == root / "knowledge/skills/knowledge-base"
     assert found["image-gen"]["source_dir"] == BUILTIN_SKILLS_DIR / "image-gen"
     assert found["abridge"]["source_dir"] == root / "abridge/skills/abridge"
@@ -268,8 +268,8 @@ async def test_selected_plugins_assemble_independent_middlewares_in_registry_ord
     from unittest.mock import AsyncMock
     from yuxi.modules.agents.runtime.agent_backends.chatbot import graph
     from yuxi.modules.agents.runtime.middlewares.plugins import PluginLoaderMiddleware, PluginMiddleware
-    from yuxi.modules.extensions.plugins.builtin.abridge.plugin import AbridgePlugin
-    from yuxi.modules.extensions.plugins.builtin.knowledge.plugin import KnowledgePlugin
+    from yuxi.modules.extensions.plugins.abridge.plugin import AbridgePlugin
+    from yuxi.modules.extensions.plugins.knowledge.plugin import KnowledgePlugin
 
     monkeypatch.setattr(graph, "create_agent_filesystem_middleware", lambda *args, **kwargs: object())
     monkeypatch.setattr(graph, "create_summary_middleware_from_context", lambda *args, **kwargs: object())

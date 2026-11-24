@@ -6,9 +6,9 @@ from functools import lru_cache
 from pathlib import Path
 
 from yuxi.modules.extensions.mcp.config import BuiltinMCP
+from yuxi.modules.extensions.plugins.abridge.plugin import AbridgePlugin
 from yuxi.modules.extensions.plugins.base import YuxiPlugin
-from yuxi.modules.extensions.plugins.builtin.abridge.plugin import AbridgePlugin
-from yuxi.modules.extensions.plugins.builtin.knowledge.plugin import KnowledgePlugin
+from yuxi.modules.extensions.plugins.knowledge.plugin import KnowledgePlugin
 
 # 历史 Skill 依赖离线迁移产生的声明；新插件在 REGISTERED_PLUGINS 登记。
 MIGRATED_PLUGIN_DIRECTORY = Path(__file__).parent / "deployed"

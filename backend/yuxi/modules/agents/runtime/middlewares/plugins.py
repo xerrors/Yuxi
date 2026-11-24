@@ -10,10 +10,12 @@ from langchain_core.tools import StructuredTool
 from langgraph.prebuilt.tool_node import ToolRuntime
 from langgraph.types import Command
 
+from yuxi.modules.agents.runtime.middlewares.authorization import AgentExecutionRevoked
 from yuxi.modules.extensions.mcp.builtin import supports_direct_mcp_selection
 from yuxi.modules.extensions.mcp.service import resolve_runtime_mcp_tools
 from yuxi.modules.extensions.plugins.base import YuxiPlugin, is_plugin_active
 from yuxi.modules.extensions.plugins.registry import get_plugin, get_plugins
+from yuxi.shared.errors import PermissionDeniedError
 
 
 def merge_activated_plugins(left: list[str] | None, right: list[str] | None) -> list[str]:
@@ -172,13 +174,16 @@ class PluginLoaderMiddleware(AgentMiddleware):
             return {}
         if getattr(context, "mcp_tool_servers", None) is None:
             raise RuntimeError("MCP 工具来源尚未装配")
-        return await resolve_runtime_mcp_tools(
-            list(servers),
-            uid=context.uid,
-            run_tools=context.mcp_tools,
-            unavailable=context.mcp_unavailable,
-            context=context,
-        )
+        try:
+            return await resolve_runtime_mcp_tools(
+                list(servers),
+                uid=context.uid,
+                run_tools=context.mcp_tools,
+                unavailable=context.mcp_unavailable,
+                context=context,
+            )
+        except (PermissionError, PermissionDeniedError) as exc:
+            raise AgentExecutionRevoked("连接器发现时执行权限已撤销") from exc
 
     async def awrap_tool_call(self, request, handler):
         """为动态 MCP 工具绑定本 Run 中已发现的执行对象。"""

@@ -19,6 +19,13 @@ from yuxi.modules.extensions.mcp.models import MCPServer
 from yuxi.modules.system.models import ConfigOption
 
 
+@pytest.mark.parametrize(("retryable", "disable_for_run"), [(True, False), (False, True)])
+def test_connector_failure_controls_run_availability(retryable, disable_for_run):
+    """按连接器的重试声明决定当前 Run 是否禁用该服务，并保留公开提示。"""
+    error = mcp_runtime.MCPUnavailableError("连接暂不可用", retryable=retryable)
+    assert mcp_service.runtime_mcp_failure(error) == ("连接暂不可用", disable_for_run)
+
+
 class _AsyncSessionContext:
     def __init__(self, db):
         self.db = db

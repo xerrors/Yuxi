@@ -26,7 +26,8 @@ def test_builtin_knowledge_server_uses_generic_delegation_auth():
     assert server.enabled and server.delegation is not None
     assert server.manifest["url"] == "http://api:5050/api/mcp"
 
-    frontmatter = (project_root() / "backend/yuxi/modules/extensions/plugins/builtin/knowledge/skills/knowledge-base/SKILL.md").read_text(encoding="utf-8")
+    entry = project_root() / "backend/yuxi/modules/extensions/plugins/knowledge/skills/knowledge-base/SKILL.md"
+    frontmatter = entry.read_text(encoding="utf-8")
     from yuxi.modules.extensions.plugins.registry import get_plugin
 
     assert "mcp_dependencies" not in frontmatter

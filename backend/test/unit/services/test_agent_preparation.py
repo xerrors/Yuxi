@@ -8,6 +8,7 @@ import pytest
 
 import yuxi.modules.agents.services.preparation as service
 
+from yuxi.modules.agents.scope import ActorScope
 from yuxi.modules.agents.services.preparation import (
     build_skill_manifest_entries,
     build_manifest_payload,
@@ -253,6 +254,9 @@ async def test_manifest_uses_prepared_context_and_persisted_overrides(monkeypatc
     monkeypatch.setattr(service, "prepare_agent_runtime_context", prepare)
     run = SimpleNamespace(
         id="run",
+        uid="user",
+        app_id="app",
+        api_key_id=123,
         turn_id="turn",
         agent_slug="agent",
         run_type=run_type,
@@ -264,7 +268,9 @@ async def test_manifest_uses_prepared_context_and_persisted_overrides(monkeypatc
         },
     )
     if context_snapshot is not None:
-        run.input_payload["context_snapshot"] = context_snapshot
+        run.input_payload["context_snapshot"] = dict(context_snapshot)
+        if context_snapshot:
+            run.input_payload["context_snapshot"]["actor_scope"] = {"uid": "forged", "app_id": "other-app", "api_key_id": 456}
     binding = SimpleNamespace(workdir_path="projects/project")
     if context_snapshot is None or not context_snapshot:
         with pytest.raises(ValueError, match="Run 缺少完整配置快照"):
@@ -291,6 +297,8 @@ async def test_manifest_uses_prepared_context_and_persisted_overrides(monkeypatc
     assert not hasattr(result.context, "is_subagent_runtime")
     assert not hasattr(result.context, "parent_thread_id")
     assert result.context.uid == "user"
+    assert result.context.actor_scope == ActorScope(uid="user", app_id="app", api_key_id=123)
+    assert "actor_scope" not in result.context._cooperation_config_snapshot
     assert (result.context.run_id, result.context.worker_id) == ("run", "owner")
 
     first_digest = result.manifest["config_digest"]

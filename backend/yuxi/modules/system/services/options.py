@@ -65,7 +65,7 @@ class Option:
                     resolved[field_key] = field.get("default", [])
                 continue
 
-            if field.get("type") == "integer":
+            if field.get("type") in {"integer", "boolean"}:
                 resolved[field_key] = normalize_option_value(field, stored.get(field_key, field.get("default")))
                 continue
 
@@ -183,6 +183,11 @@ async def invalidate_option_cache(key: str) -> None:
 
 def normalize_option_value(field: dict[str, Any], value: Any) -> Any:
     """在配置持久化边界解析字段类型与有效范围。"""
+    if field.get("type") == "boolean":
+        if type(value) is not bool:
+            raise ValueError(f"{field['key']} 必须是布尔值")
+        return value
+
     if field.get("type") == "integer":
         minimum = field.get("min", 0)
         if type(value) is not int or value < minimum:

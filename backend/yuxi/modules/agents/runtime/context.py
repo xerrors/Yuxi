@@ -7,6 +7,7 @@ from typing import Any, Literal, get_origin, get_type_hints
 
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.agents.runtime.tool_approval import DEFAULT_TOOL_APPROVAL_MODE
+from yuxi.modules.agents.scope import ActorScope
 from yuxi.modules.extensions.skills.resolved import SkillRuntimeSnapshot
 from yuxi.modules.system.options import system_options
 from yuxi.modules.workspace.filesystem import Workspace
@@ -164,6 +165,8 @@ class BaseContext:
         default_factory=lambda: str(uuid.uuid4()),
         metadata={"name": "UID", "configurable": False, "description": "用来唯一标识一个用户"},
     )
+
+    actor_scope: ActorScope | None = field(default=None, repr=False, metadata={"configurable": False, "hide": True})
 
     run_id: str | None = field(
         default=None,

@@ -4,8 +4,8 @@ from deepagents.middleware._utils import append_to_system_message
 
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.extensions.mcp.config import BuiltinMCP
+from yuxi.modules.extensions.plugins.abridge.prompt import DEVICE_TOOLS_PROMPT
 from yuxi.modules.extensions.plugins.base import YuxiPlugin
-from yuxi.modules.extensions.plugins.builtin.abridge.prompt import DEVICE_TOOLS_PROMPT
 from yuxi.shared.errors import StateConflictError
 
 

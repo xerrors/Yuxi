@@ -22,6 +22,7 @@ from yuxi.modules.agents.repositories.definitions import AgentRepository
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.runtime.agent_backends import get_agent_backend
 from yuxi.modules.agents.runtime.context import BaseContext, prepare_agent_runtime_context
+from yuxi.modules.agents.scope import ActorScope
 from yuxi.modules.extensions.plugins.registry import get_plugin
 from yuxi.modules.extensions.skills.personal import PERSONAL_SKILL_SOURCE_TYPE
 from yuxi.modules.identity.models import User
@@ -214,6 +215,7 @@ async def prepare_run_execution(
             "agent_slug": run.agent_slug,
             "thread_id": run.thread_id,
             "uid": str(user.uid),
+            "actor_scope": ActorScope(uid=run.uid, app_id=run.app_id, api_key_id=run.api_key_id),
             "run_id": run.id,
             "worker_id": worker_id,
             "runtime_scope_id": run.runtime_scope_id or run.thread_id,

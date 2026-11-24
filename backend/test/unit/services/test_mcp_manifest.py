@@ -125,7 +125,7 @@ async def test_management_rejects_delegation_for_mcp_without_a_factory(slug):
 @pytest.mark.parametrize("mcps, reason", [(["remote"], "必须是元组"), ((" ",), "无效标识")])
 def test_plugin_registry_rejects_invalid_mcp_references(mcps, reason):
     """部署时拒绝错误声明，避免把字符串或空白值当作服务列表。"""
-    from yuxi.modules.extensions.plugins.builtin.knowledge.plugin import KnowledgePlugin
+    from yuxi.modules.extensions.plugins.knowledge.plugin import KnowledgePlugin
     from yuxi.modules.extensions.plugins.registry import validate_plugin
 
     candidate = type("InvalidPlugin", (KnowledgePlugin,), {"mcps": mcps})

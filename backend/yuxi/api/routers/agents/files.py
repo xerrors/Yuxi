@@ -1,23 +1,15 @@
 """产品内部的附件预解析与图片处理入口。"""
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.api.dependencies.auth import get_db, get_required_user
+from yuxi.api.dependencies.auth import get_db, require_product_user
 from yuxi.api.uploads import read_upload_with_limit
 from yuxi.infrastructure.images import process_uploaded_image
 from yuxi.modules.agents.scope import ActorScope
 from yuxi.modules.agents.services.attachments import get_draft_file, parse_draft_file
 from yuxi.modules.identity.models import User
-
-
-async def require_product_user(request: Request, user: User = Depends(get_required_user)) -> User:
-    """产品预处理只接受登录身份，不接受任何 Public Key。"""
-    if getattr(request.state, "api_key", None) is not None:
-        raise HTTPException(status_code=403, detail="附件预处理只向产品登录用户开放")
-    return user
-
 
 router = APIRouter(prefix="/agent", tags=["agent"], dependencies=[Depends(require_product_user)])
 

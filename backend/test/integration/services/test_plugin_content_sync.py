@@ -26,7 +26,7 @@ async def test_plugin_bundled_skills_sync_preserves_shared_identity_and_disabled
     shared_root.mkdir(parents=True)
     monkeypatch.setattr(sync, "get_skills_root_dir", lambda: shared_root)
     specs = {spec["slug"]: spec for spec in sync.list_builtin_skill_specs()}
-    plugin_root = Path(registry.__file__).parent / "builtin"
+    plugin_root = Path(registry.__file__).parent
     expected_sources = {
         "knowledge-base": plugin_root / "knowledge" / "skills" / "knowledge-base",
         "image-gen": sync.BUILTIN_SKILLS_DIR / "image-gen",

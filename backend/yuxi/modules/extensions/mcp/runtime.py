@@ -13,6 +13,15 @@ from yuxi.infrastructure.observability.logging import logger
 SUPPORTED_TRANSPORTS = ("sse", "streamable_http")
 
 
+class MCPUnavailableError(RuntimeError):
+    """连接器适配器提供的脱敏失败，可按重试语义影响本次运行的工具目录。"""
+
+    def __init__(self, message: str, *, retryable: bool) -> None:
+        """记录可公开的提示和是否允许同一 Run 重试。"""
+        super().__init__(message)
+        self.retryable = retryable
+
+
 def validate_remote_transport(config: dict[str, Any]) -> None:
     """在客户端入口拒绝非远程连接。"""
     if config.get("transport") not in SUPPORTED_TRANSPORTS:

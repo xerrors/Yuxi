@@ -22,6 +22,7 @@ from yuxi.modules.extensions.mcp.repository import (
     save_mcp_server,
 )
 from yuxi.modules.extensions.mcp.runtime import (
+    MCPUnavailableError,
     SharedMCPAuth,
 )
 from yuxi.modules.extensions.mcp.runtime import (
@@ -410,13 +411,15 @@ async def resolve_runtime_mcp_tools(
 
 
 def runtime_mcp_failure(exc: Exception) -> tuple[str, bool]:
-    """统一解释 MCP 错误；只有确定的凭据配置问题在本次运行禁用服务。"""
+    """保留执行撤权，由连接器的失败语义决定本次 Run 是否禁用服务。"""
     from langgraph.errors import GraphBubbleUp
 
     from yuxi.shared.errors import PermissionDeniedError, StateConflictError
 
     if isinstance(exc, (PermissionError, PermissionDeniedError, GraphBubbleUp)):
         raise exc
+    if isinstance(exc, MCPUnavailableError):
+        return str(exc), not exc.retryable
     if isinstance(exc, MCPDelegationContextError):
         return "运行上下文缺少连接所需的可信身份或资源范围，能力未装配", True
     if isinstance(exc, StateConflictError):

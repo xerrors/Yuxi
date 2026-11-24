@@ -16,7 +16,7 @@ Owner：backend/yuxi/modules/extensions/plugins/registry.py
 
 Agent 专属连接声明和插件私有内容的授权由[业务插件一次启用与专属 MCP](./2026-11-24-plugin-bundles.md)更新。
 
-插件随部署发布，以明确 ID 列表配置；新增部署插件不会自动扩大已有智能体的能力。每个插件目录包含 `plugin.py` 和配套 `skills/`，`REGISTERED_PLUGINS` 显式登记类及装配顺序。新增业务插件使用 Python 类；历史 Skill 依赖转换出的 JSON 部署声明保留已有读取入口。
+插件随部署发布，以明确 ID 列表配置；新增部署插件不会自动扩大已有智能体的能力。各代码插件直接放在 `backend/yuxi/modules/extensions/plugins/` 下，各自包含 `plugin.py` 和配套 `skills/`，`REGISTERED_PLUGINS` 显式登记类及装配顺序。新增业务插件使用 Python 类；历史 Skill 依赖转换出的 JSON 部署声明保留已有读取入口。
 
 `YuxiPlugin` 是普通业务对象，以类属性声明入口、辅助 Skill、MCP 和专属工具，只提供 `on_model_call`、`on_tool_call` 两个调用钩子。平台 `PluginMiddleware` 按注册顺序创建实例，注册声明工具并执行统一激活检查；插件的框架同名方法不能新增图节点或 checkpoint 字段，构造函数修改实例工具列表也不改变平台登记的声明集合。平台拥有框架接入与恢复结构，插件拥有业务调用逻辑。
 

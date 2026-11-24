@@ -2,13 +2,36 @@
 
 import os
 from contextlib import contextmanager
+from typing import NamedTuple
 
 import psycopg
 from psycopg.rows import dict_row
+from sqlalchemy import select
 
 from yuxi.infrastructure.postgres.connection import postgres_conninfo
+from yuxi.modules.agents.models.sandbox import UserSandbox
 from yuxi.modules.agents.runtime_locks import user_environment_lock_key
 from yuxi.shared.errors import StateConflictError
+
+
+class RegisteredSandbox(NamedTuple):
+    """已登记 VM 的身份和持久状态。"""
+
+    generation: int
+    sandbox_id: str
+    state: str
+
+    @property
+    def identity(self) -> tuple[int, str]:
+        """休眠和恢复沿用同一实例身份。"""
+        return self.generation, self.sandbox_id
+
+
+async def registered_sandbox(db, uid: str) -> RegisteredSandbox | None:
+    """读取已登记 VM，不创建、唤醒或暴露执行凭据。"""
+    query = select(UserSandbox.generation, UserSandbox.sandbox_id, UserSandbox.state).where(UserSandbox.uid == uid)
+    row = (await db.execute(query)).one_or_none()
+    return RegisteredSandbox(*row) if row and row.sandbox_id else None
 
 
 class SandboxRepository:

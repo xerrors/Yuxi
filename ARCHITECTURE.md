@@ -59,7 +59,7 @@ Yuxi 默认交付完整知识能力。部署开关 `YUXI_KNOWLEDGE_ENABLED` 由�
 
 `modules/extensions/web` 拥有网络搜索、网页抓取与供应商适配；工具和管理员测试复用同一服务，每次调用读取当前有效配置，未配置的能力不进入运行工具集合。凭据与默认供应商复用 system 的持久设置和脱敏边界。
 
-`modules/extensions/plugins` 拥有显式部署注册和受限 `YuxiPlugin` 接口。每个代码插件由独立目录的 `plugin.py` 与 `skills/` 交付，`registry.py` 的显式元组拥有部署集合和顺序。插件用入口 Skill 包交付私有内容，声明专属工具和 MCP 连接，也可引用已有共享 Skill 和普通 MCP。MCP 目录从注册插件收集专属连接，Agent 仅通过所属插件激活这些连接；通用工具由智能体直接选择；一个启用插件对应一个普通业务对象及平台 `PluginMiddleware` 适配器。适配器只调用模型和工具包装钩子；平台拥有激活判定、图节点及 checkpoint 字段，构图固定顺序。只有说明的图像功能使用普通 Skill。历史 Skill 依赖通过排空执行后的离线升级迁移，运行进程不自动转换用户配置。
+`modules/extensions/plugins` 拥有显式部署注册和受限 `YuxiPlugin` 接口。每个代码插件在该目录的直接子目录中交付 `plugin.py` 与 `skills/`，`registry.py` 的显式元组拥有部署集合和顺序。插件用入口 Skill 包交付私有内容，声明专属工具和 MCP 连接，也可引用已有共享 Skill 和普通 MCP。MCP 目录从注册插件收集专属连接，Agent 仅通过所属插件激活这些连接；通用工具由智能体直接选择；一个启用插件对应一个普通业务对象及平台 `PluginMiddleware` 适配器。适配器只调用模型和工具包装钩子；平台拥有激活判定、图节点及 checkpoint 字段，构图固定顺序。只有说明的图像功能使用普通 Skill。历史 Skill 依赖通过排空执行后的离线升级迁移，运行进程不自动转换用户配置。
 
 `modules/extensions/skills` 按共享索引、个人来源、草稿、文件编辑和投影组织用例。共享编辑通过文件修订值拒绝过期保存，读取、运行快照与投影复制持有共享行锁；授权变更按共享行锁、用户投影锁的顺序提交并刷新投影。个人 Skill 文件由 `personal.py` 在 UserWorkspace 边界访问。
 

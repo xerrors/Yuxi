@@ -130,6 +130,13 @@ async def get_required_user(user: User | None = Depends(get_current_user)):
     return user
 
 
+async def require_product_user(request: Request, user: User = Depends(get_required_user)) -> User:
+    """只接受产品登录凭据。"""
+    if getattr(request.state, "api_key", None) is not None:
+        raise HTTPException(status_code=403, detail="此操作仅向产品登录用户开放")
+    return user
+
+
 async def get_admin_user(current_user: User = Depends(get_required_user)):
     """要求管理员及以上角色。"""
     if current_user.role not in {"admin", "superadmin"}:

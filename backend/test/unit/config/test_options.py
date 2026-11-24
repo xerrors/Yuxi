@@ -224,6 +224,18 @@ async def _async_value(value):
     return value
 
 
+def test_boolean_option_preserves_false_and_rejects_non_boolean_values():
+    """布尔配置保留显式关闭值，并拒绝字符串与数字。"""
+    option = options.Option(
+        key="fixture", name="测试", description="", params={"fields": [{"key": "enabled", "type": "boolean", "default": True}]}
+    )
+    assert option.resolve({})["enabled"] is True
+    assert option.resolve({"enabled": False})["enabled"] is False
+    for value in ("false", 0):
+        with pytest.raises(ValueError, match="enabled 必须是布尔值"):
+            option.resolve({"enabled": value})
+
+
 def test_cooperation_depth_defaults_to_two_and_preserves_zero():
     """整数配置的零值用于禁止新增子会话，不可被默认值覆盖。"""
     assert system_options.resolve({})["max_cooperation_depth"] == 2

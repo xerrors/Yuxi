@@ -6,7 +6,7 @@
 
 ## 1. 创建插件目录
 
-在 `backend/yuxi/modules/extensions/plugins/builtin/` 下创建：
+在 `backend/yuxi/modules/extensions/plugins/` 下为代码插件创建一个直接子目录。
 
 ```text
 text_metrics/
@@ -16,7 +16,7 @@ text_metrics/
       SKILL.md
 ```
 
-`plugin.py` 拥有功能实现，`skills/` 保存随功能发布的说明、脚本和参考文件。已有的 `knowledge/` 和 `abridge/` 是可直接参考的内置插件。
+`plugin.py` 拥有功能实现，`skills/` 保存随功能发布的说明、脚本和参考文件。可参考同级的 `knowledge/` 和 `abridge/` 插件。
 
 在 `skills/text-metrics/SKILL.md` 写入：
 
@@ -81,7 +81,7 @@ class TextMetricsPlugin(YuxiPlugin):
 编辑 `backend/yuxi/modules/extensions/plugins/registry.py`，导入类并加入 `REGISTERED_PLUGINS`：
 
 ```python
-from yuxi.modules.extensions.plugins.builtin.text_metrics.plugin import TextMetricsPlugin
+from yuxi.modules.extensions.plugins.text_metrics.plugin import TextMetricsPlugin
 
 REGISTERED_PLUGINS = (KnowledgePlugin, AbridgePlugin, TextMetricsPlugin)
 ```
