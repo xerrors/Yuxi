@@ -19,9 +19,9 @@
 
 ## 1. 准备生产配置
 
-先按[下载代码](../intro/quick-start.md#_1-下载代码)获取 `v0.8.0` 源码，后续命令均在仓库根目录执行。该版本面向全新部署。
+稳定版首次部署按[下载代码](../intro/quick-start.md#_1-下载代码)获取 `v0.8.0`。试用 0.8.1 候选时使用相应候选源码和同版本镜像。已有正式版部署先阅读[数据库与文件目录](#_3-数据库与文件目录)。后续命令在仓库根目录执行。
 
-Linux/macOS 可以使用初始化脚本准备 `.env.prod`。默认使用 Container；先构建固定的沙盒镜像，再通过安全环境注入模型 Key。首次部署使用空状态目录和独立项目名：
+Linux/macOS 可以使用初始化脚本准备 `.env.prod`。默认使用 Container；先构建固定的沙盒镜像，再通过安全环境注入模型 Key。首次部署使用空状态目录和独立项目名。示例使用稳定版镜像标签，试用候选时将沙盒镜像标签设为对应版本。
 
 ```bash
 export YUXI_ENV_FILE=.env.prod
@@ -117,7 +117,7 @@ API、Web 与 MinIO 的项目文件在构建时明确权限：源码和配置归
 docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container --profile all up -d --build
 ```
 
-`app-init` 以 UID/GID 1000 运行，等待 PostgreSQL 健康与 `storage-init` 成功后，在数据库锁内完成 Schema 和共享内容初始化。它为确认空库建立 business 版本 5 与 knowledge 版本 2 基线，包含当前表、索引、约束和 LangGraph checkpoint 表；当前版本跳过建表，其他版本不匹配会明确失败。随后同步系统配置定义、内置模型供应商、Agent、MCP 和 Skill 来源文件，API 与 worker 等待全部步骤成功。应用启动不自动迁移历史数据。[版本 1 基线决定](../develop-guides/decisions/implemented/2026-10-19-schema-baseline-one.md)说明编号重置的背景；编号重置不代表旧库已完成结构变更，历史 `1/1` 标记也不能作为结构完整的证明。
+`app-init` 以 UID/GID 1000 运行，等待 PostgreSQL 健康与 `storage-init` 成功后，在数据库锁内初始化空库。正式 `v0.8.0` 建立 business 2 / knowledge 2，0.8.1 候选建立 business 5 / knowledge 2，均包含该发行版的表、索引、约束和 LangGraph checkpoint 表。已有库与镜像版本匹配时跳过建表，版本不匹配时初始化失败。随后同步系统配置定义、内置模型供应商、Agent、MCP 和 Skill 来源文件，API 与 worker 等待全部步骤成功。已有数据按[数据库与文件目录](#_3-数据库与文件目录)的规程离线升级。历史编号重置的背景见[版本 1 基线决定](../develop-guides/decisions/implemented/2026-10-19-schema-baseline-one.md)。
 
 ### 可选关闭知识库
 
@@ -159,11 +159,21 @@ API 和 worker 在各自进程内继续校验密钥及 Schema，创建连接、�
 
 ## 3. 数据库与文件目录
 
-新部署使用空 PostgreSQL 数据库和独立的 Yuxi 文件目录。已有当前版本数据库可以直接重启同版本服务。其他版本和包含未版本化 Yuxi 表的数据库会被明确拒绝，初始化器不执行历史升级、回填或自动清库。0.8 business v1 的个人凭证字段按 [MCP 升级说明](../agents/mcp-integration.md#已有部署升级个人凭证字段)显式升级；business v2 和 v4 按 [插件升级说明](../agents/skills-management.md#从运行依赖升级)转换配置。下述知识域 v1 使用离线目录转换入口；其他历史结构由部署者独立备份和处理，不通过手改版本标记绕过结构校验。
+0.8.1 支持从正式 `v0.8.0` 原地升级。维护前在旧部署的 PostgreSQL 执行：
 
-知识域 v1 的路径型目录需要在维护窗口显式转换。先备份 PostgreSQL 与对象存储，停止 API、worker 及其他知识库写入方，在同一部署环境运行 `uv run --no-sync python -m yuxi.migrations.knowledge_directories` 进行只读审计。活动摄取任务、重复真实目录、真实/虚拟同名目录、普通文件占用目录前缀及无效父关系会阻止转换，必须先明确处理，不能通过手改版本跳过。
+```sql
+SELECT domain, version FROM yuxi_schema_migrations ORDER BY domain;
+```
 
-审计无阻断后运行 `uv run --no-sync python -m yuxi.migrations.knowledge_directories --apply`。转换逐条提交，可在中断后重跑；文件 ID、原件地址、Markdown 和索引身份保留，叶子重名按稳定顺序加后缀。只有全部数据收敛且约束建立成功，才发布 knowledge 版本 2。转换后重新执行审计、回读文件和对象，再运行 app-init 并启动 API/worker。跨版本回退需要恢复维护前整套备份，不能只回退代码。只读连接器不执行目录转换。设计与验证见[目录与导入决策](../develop-guides/decisions/implemented/2026-08-24-knowledge-folder-materialization.md)。
+只有 `business = 2` 和 `knowledge = 2` 两行时，才适用这条路径。先排空任务、停止写入，执行[冷备规程](#停机备份与恢复演练)的第 1 至 3 步。备份完成后保持 Web、API 和 worker 停机，单独启动原 PostgreSQL 并等待健康。使用 Compose 内置数据库的示例如下，命令均沿用该实例的环境文件、项目名、profile 和叠加配置。
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container up -d --wait postgres
+```
+
+使用目标版本的 API 镜像、原工作区和 Skill 挂载，按[插件与配置迁移](../agents/skills-management.md#从运行依赖升级)导出、审阅、应用。重新查询应得到 business 5 / knowledge 2。Container 部署在恢复服务前按[远程 Skill 获取](./container-sandbox.md#远程-skill-获取)更新沙盒镜像，将其名称和 digest 写入原环境文件。再执行[共享内容更新](#共享内容更新与失败重试)，检查 readiness、已有会话和知识访问。
+
+空库直接运行目标版本的 `app-init`。过渡版本或其他历史库应从匹配的代码和成套备份单独处理。回退需恢复旧代码、数据库和同一停写时点的文件。
 
 应用不写入身份操作日志，初始 Schema 不创建 `operation_logs` 表。
 

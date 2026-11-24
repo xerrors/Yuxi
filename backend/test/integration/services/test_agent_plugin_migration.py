@@ -13,30 +13,88 @@ from sqlalchemy import text
 
 from test.integration.support.postgres_schema import create_isolated_manager, drop_isolated_schema
 from yuxi.migrations.agent_plugins import apply_plugin_migration, export_plugin_migration
-from yuxi.migrations.schema import create_business_tables, create_schema_version_table, record_schema_version
+from yuxi.migrations.schema import create_business_tables, create_knowledge_tables, create_schema_version_table, record_schema_version
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration, pytest.mark.self_managed_resources]
 
 
-async def create_legacy_schema(manager, version):
-    """建立 v2 或 v4 的旧表结构，连接归属列仅由迁移创建。"""
+async def create_legacy_schema(manager):
+    """用当前表构造迁移路径涉及的 v0.8.0 结构和版本。"""
     await create_business_tables(manager)
+    await create_knowledge_tables(manager)
     await create_schema_version_table(manager)
     async with manager.async_engine.begin() as conn:
         await conn.execute(text("ALTER TABLE mcp_servers DROP COLUMN code_owned"))
-        if version == 2:
-            for field in ("tool_dependencies", "mcp_dependencies", "skill_dependencies"):
-                await conn.execute(text(f"ALTER TABLE skills ADD COLUMN {field} JSON NOT NULL DEFAULT '[]'"))
-    await record_schema_version(manager, "business", version)
+        for field in ("tool_dependencies", "mcp_dependencies", "skill_dependencies"):
+            await conn.execute(text(f"ALTER TABLE skills ADD COLUMN {field} JSON NOT NULL DEFAULT '[]'"))
+    await record_schema_version(manager, "business", 2)
+    await record_schema_version(manager, "knowledge", 2)
 
 
-async def assert_legacy_schema(conn, version):
+async def assert_legacy_schema(conn):
     """拒绝迁移后回读源版本及旧连接表结构。"""
-    assert await conn.scalar(text("SELECT version FROM yuxi_schema_migrations WHERE domain='business'")) == version
+    assert dict((await conn.execute(text("SELECT domain,version FROM yuxi_schema_migrations"))).all()) == {"business": 2, "knowledge": 2}
     assert not await conn.scalar(
         text("""SELECT EXISTS (SELECT 1 FROM information_schema.columns
                 WHERE table_schema=current_schema() AND table_name='mcp_servers' AND column_name='code_owned')""")
     )
+
+
+@pytest.mark.parametrize(
+    "versions",
+    [
+        pytest.param({}, id="empty"),
+        pytest.param({"business": 1, "knowledge": 2}, id="older-business"),
+        pytest.param({"business": 4, "knowledge": 2}, id="unreleased-business"),
+        pytest.param({"business": 2}, id="source-missing-knowledge"),
+        pytest.param({"business": 2, "knowledge": 1}, id="source-older-knowledge"),
+        pytest.param({"business": 2, "knowledge": 2, "initializing": 1}, id="initializing-source"),
+        pytest.param({"business": 5}, id="target-missing-knowledge"),
+        pytest.param({"business": 5, "knowledge": 1}, id="target-older-knowledge"),
+        pytest.param({"business": 5, "knowledge": 2, "extra": 1}, id="target-extra-domain"),
+    ],
+)
+async def test_plugin_migration_rejects_unsupported_schema_versions(tmp_path, versions):
+    """混合或未发布版本在读取计划和写入前失败，源配置与表结构保持原样。"""
+    schema, admin, engine, manager = await create_isolated_manager("pytest_plugin_version_guard")
+    try:
+        await create_legacy_schema(manager)
+        async with engine.begin() as conn:
+            await conn.execute(
+                text("""INSERT INTO mcp_servers(slug,name,transport,enabled,auth_mode,created_by,updated_by)
+                VALUES ('knowledge','Knowledge','streamable_http',1,'delegation','system','system')""")
+            )
+            await conn.execute(
+                text("""INSERT INTO agents(slug,backend_id,name,pics,config_json,share_config,visibility,is_builtin,is_default)
+                VALUES ('demo','chatbot','Demo','[]','{"context":{"mcps":["knowledge"]}}','{}','shared',false,false)""")
+            )
+            await conn.execute(text("DELETE FROM yuxi_schema_migrations"))
+            for domain, version in versions.items():
+                await conn.execute(
+                    text("INSERT INTO yuxi_schema_migrations(domain,version) VALUES (:domain,:version)"),
+                    {"domain": domain, "version": version},
+                )
+        review = tmp_path / "review"
+        error = r"插件迁移仅支持 v0\.8\.0"
+        with pytest.raises(ValueError, match=error):
+            await export_plugin_migration(manager, review)
+        assert not review.exists()
+        with pytest.raises(ValueError, match=error):
+            await apply_plugin_migration(manager, review)
+        async with engine.connect() as conn:
+            assert dict((await conn.execute(text("SELECT domain,version FROM yuxi_schema_migrations"))).all()) == versions
+            assert await conn.scalar(text("SELECT config_json FROM agents")) == {"context": {"mcps": ["knowledge"]}}
+            rows = await conn.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() "
+                    "AND table_name IN ('skills','mcp_servers')"
+                )
+            )
+            columns = set(rows.scalars())
+            assert {"tool_dependencies", "mcp_dependencies", "skill_dependencies"} <= columns
+            assert "code_owned" not in columns
+    finally:
+        await drop_isolated_schema(schema, admin, engine)
 
 
 @pytest.mark.parametrize(
@@ -51,14 +109,14 @@ async def assert_legacy_schema(conn, version):
         (["abridge"], [], {"mcps": []}),
     ],
 )
-async def test_first_upgrade_converts_device_selection_once(tmp_path, monkeypatch, legacy_servers, mcps, expected):
+async def test_plugin_migration_converts_confirmed_old_mcp_selections(tmp_path, monkeypatch, legacy_servers, mcps, expected):
     """v2 只转换旧库已有的能力，非标准设备连接须从旧清单确认。"""
     from yuxi.migrations import agent_plugins
 
     schema, admin, engine, manager = await create_isolated_manager("pytest_plugin_first_upgrade")
     monkeypatch.setattr(agent_plugins, "user_workspace_dir", lambda uid: tmp_path / uid)
     try:
-        await create_legacy_schema(manager, 2)
+        await create_legacy_schema(manager)
         async with engine.begin() as conn:
             for slug in legacy_servers:
                 await conn.execute(
@@ -81,12 +139,12 @@ async def test_first_upgrade_converts_device_selection_once(tmp_path, monkeypatc
                     "https://abridge.example/mcp",
                     0,
                 )
-                await assert_legacy_schema(conn, 2)
+                await assert_legacy_schema(conn)
         if expected is None:
             with pytest.raises(ValueError, match="agents id=.*abridge.*升级后"):
                 await export_plugin_migration(manager, review, legacy_builtins=("abridge",))
             async with engine.connect() as conn:
-                await assert_legacy_schema(conn, 2)
+                await assert_legacy_schema(conn)
                 assert (await conn.scalar(text("SELECT config_json FROM agents")))["context"] == {"mcps": mcps}
             return
         await export_plugin_migration(manager, review, legacy_builtins=("abridge",) if "abridge" in legacy_servers else ())
@@ -96,7 +154,10 @@ async def test_first_upgrade_converts_device_selection_once(tmp_path, monkeypatc
                 "system_prompt": "kept",
                 "context": expected,
             }
-            assert await conn.scalar(text("SELECT version FROM yuxi_schema_migrations WHERE domain='business'")) == 5
+            assert dict((await conn.execute(text("SELECT domain,version FROM yuxi_schema_migrations"))).all()) == {
+                "business": 5,
+                "knowledge": 2,
+            }
         if mcps != "all" or legacy_servers != ["knowledge"]:
             return
         async with engine.begin() as conn:
@@ -104,19 +165,22 @@ async def test_first_upgrade_converts_device_selection_once(tmp_path, monkeypatc
                 text("UPDATE agents SET config_json=CAST(:config AS JSON) WHERE slug='device'"),
                 {"config": json.dumps({"context": {"mcps": [], "plugins": []}})},
             )
-        await apply_plugin_migration(manager, review)
+        await apply_plugin_migration(manager, tmp_path / "missing-review")
+        with pytest.raises(ValueError, match=r"插件迁移仅支持 v0\.8\.0"):
+            await export_plugin_migration(manager, tmp_path / "target")
+        assert not (tmp_path / "target").exists()
         async with engine.connect() as conn:
             assert await conn.scalar(text("SELECT config_json FROM agents WHERE slug='device'")) == {"context": {"mcps": [], "plugins": []}}
     finally:
         await drop_isolated_schema(schema, admin, engine)
 
 
-@pytest.mark.parametrize("version,slug", [(2, "knowledge"), (4, "abridge"), (4, "deepwiki-official")])
-async def test_legacy_builtin_headers_require_explicit_provenance(tmp_path, version, slug):
+@pytest.mark.parametrize("slug", ["knowledge", "abridge", "deepwiki-official"])
+async def test_legacy_builtin_headers_require_explicit_provenance(tmp_path, slug):
     """旧普通连接与清单同名时，只有旧清单的显式确认能改变其持久归属。"""
     schema, admin, engine, manager = await create_isolated_manager("pytest_legacy_builtin_auth")
     try:
-        await create_legacy_schema(manager, version)
+        await create_legacy_schema(manager)
         async with engine.begin() as conn:
             await conn.execute(
                 text("""INSERT INTO mcp_servers(slug,name,transport,auth_mode,enabled,disabled_tools,created_by,updated_by)
@@ -126,7 +190,7 @@ async def test_legacy_builtin_headers_require_explicit_provenance(tmp_path, vers
         with pytest.raises(ValueError, match=rf"{slug}.*来源冲突"):
             await export_plugin_migration(manager, tmp_path / "unconfirmed")
         async with engine.connect() as conn:
-            await assert_legacy_schema(conn, version)
+            await assert_legacy_schema(conn)
             state = await conn.execute(text("SELECT auth_mode, enabled, disabled_tools FROM mcp_servers"))
             assert state.one() == ("headers", 0, ["read"])
         review = tmp_path / "confirmed"
@@ -145,121 +209,92 @@ async def test_legacy_builtin_headers_require_explicit_provenance(tmp_path, vers
         await drop_isolated_schema(schema, admin, engine)
 
 
-async def test_v4_upgrade_converts_session_selection_and_preserves_disabled_device_plugin(tmp_path, monkeypatch):
-    """回读 Agent 的动态 all 和会话单选，复跑不会重新启用已关闭插件。"""
-    from yuxi.modules.extensions.plugins import registry
-
-    schema, admin, engine, manager = await create_isolated_manager("pytest_plugin_bundle_upgrade")
-    deployment = tmp_path / "deployed"
-    deployment.mkdir()
-    monkeypatch.setattr(registry, "MIGRATED_PLUGIN_DIRECTORY", deployment)
+async def test_plugin_migration_converts_session_knowledge_without_claiming_other_connections(tmp_path):
+    """会话保留普通连接和知识库选择，只有可确认的旧知识连接转为插件。"""
+    schema, admin, engine, manager = await create_isolated_manager("pytest_plugin_session_upgrade")
     try:
-        await create_legacy_schema(manager, 4)
+        await create_legacy_schema(manager)
         async with engine.begin() as conn:
             await conn.execute(
                 text("""INSERT INTO mcp_servers(slug,name,transport,enabled,created_by,updated_by,auth_mode) VALUES
                 ('knowledge','KB','streamable_http',0,'system','admin','delegation'),
-                ('abridge','Device','streamable_http',1,'system','system','delegation'),
                 ('deepwiki-official','Wiki','streamable_http',1,'system','admin','headers'),
                 ('custom','Other','streamable_http',1,'system','system','headers')""")
-            )
-            await conn.execute(
-                text("""INSERT INTO agents(slug,backend_id,name,pics,config_json,share_config,visibility,is_builtin,is_default)
-                VALUES ('demo','chatbot','Agent','[]','{"system_prompt":"kept","context":{"mcps":"all","plugins":[]}}',
-                '{}','shared',false,false)""")
             )
             await create_legacy_project(conn, "owner")
             await conn.execute(
                 text("""INSERT INTO sessions(thread_id,tree_root_thread_id,uid,agent_id,project_id,is_pinned,config_snapshot)
                 VALUES ('thread','thread','owner','demo','project',false,
-                '{"mcps":["reports","knowledge"],"plugins":["knowledge-base"],"knowledges":["kb"]}')""")
+                '{"mcps":["custom","deepwiki-official","knowledge"],"knowledges":["kb"]}')""")
             )
         review = tmp_path / "review"
-        plan = await export_plugin_migration(manager, review, legacy_builtins=("deepwiki-official",))
-        assert plan["confirmed_legacy_builtins"] == ["deepwiki-official"]
-        # 先前能自动识别的行在应用时失去委托标记，不能把自动识别结果当成人工认领。
+        await export_plugin_migration(manager, review, legacy_builtins=("deepwiki-official",))
         async with engine.begin() as conn:
-            await conn.execute(text("UPDATE mcp_servers SET auth_mode='headers' WHERE slug='abridge'"))
-        with pytest.raises(ValueError, match="abridge.*来源冲突"):
+            await conn.execute(text("UPDATE mcp_servers SET auth_mode='headers' WHERE slug='knowledge'"))
+        with pytest.raises(ValueError, match="knowledge.*来源冲突"):
             await apply_plugin_migration(manager, review)
         async with engine.begin() as conn:
-            await assert_legacy_schema(conn, 4)
-            assert await conn.scalar(text("SELECT auth_mode FROM mcp_servers WHERE slug='abridge'")) == "headers"
-            await conn.execute(text("UPDATE mcp_servers SET auth_mode='delegation' WHERE slug='abridge'"))
-        assert plan["source_version"] == 4 and plan["skills"] == []
-        declaration = deployment / "reports.json"
-        declaration.write_text(
-            json.dumps(
-                {
-                    "plugin_id": "old-report",
-                    "name": "报表",
-                    "description": "报表",
-                    "entry_skill": "reports",
-                    "skills": ["reports"],
-                    "mcps": ["knowledge"],
-                }
-            )
-        )
-        with pytest.raises(ValueError, match="knowledge"):
-            await apply_plugin_migration(manager, review)
-        async with engine.connect() as conn:
-            await assert_legacy_schema(conn, 4)
-            assert (await conn.scalar(text("SELECT config_snapshot FROM sessions")))["mcps"] == ["reports", "knowledge"]
-        declaration.unlink()
-        # 无需迁移 MCP 的会话同样会在将来加载已选插件。
-        async with engine.begin() as conn:
-            await conn.execute(
-                text("""INSERT INTO sessions(thread_id,tree_root_thread_id,uid,agent_id,project_id,is_pinned,config_snapshot)
-                VALUES ('old','old','owner','demo','project',false,'{"plugins":["old-report"]}')""")
-            )
-        with pytest.raises(ValueError, match=r"sessions id=\d+ 的 plugins 无法加载：未知插件：old-report"):
-            await apply_plugin_migration(manager, review)
-        async with engine.connect() as conn:
-            await assert_legacy_schema(conn, 4)
-            assert (await conn.scalar(text("SELECT config_json FROM agents")))["context"]["plugins"] == []
-        declaration.write_text(
-            json.dumps(
-                {
-                    "plugin_id": "old-report",
-                    "name": "报表",
-                    "description": "报表",
-                    "entry_skill": "reports",
-                    "skills": ["reports"],
-                    "mcps": ["reports"],
-                }
-            )
-        )
-        await apply_plugin_migration(manager, review)
-        async with engine.begin() as conn:
-            assert await conn.scalar(text("SELECT config_json FROM agents")) == {
-                "system_prompt": "kept",
-                "context": {"mcps": "all", "plugins": ["knowledge-base"]},
+            await assert_legacy_schema(conn)
+            assert await conn.scalar(text("SELECT config_snapshot FROM sessions")) == {
+                "mcps": ["custom", "deepwiki-official", "knowledge"],
+                "knowledges": ["kb"],
             }
-            assert await conn.scalar(text("SELECT config_snapshot FROM sessions WHERE thread_id='thread'")) == {
-                "mcps": ["reports"],
+            await conn.execute(text("UPDATE mcp_servers SET auth_mode='delegation' WHERE slug='knowledge'"))
+        await apply_plugin_migration(manager, review)
+        async with engine.connect() as conn:
+            assert await conn.scalar(text("SELECT config_snapshot FROM sessions")) == {
+                "mcps": ["custom", "deepwiki-official"],
                 "plugins": ["knowledge-base"],
                 "knowledges": ["kb"],
             }
-            assert await conn.scalar(text("SELECT config_snapshot FROM sessions WHERE thread_id='old'")) == {"plugins": ["old-report"]}
-            assert dict((await conn.execute(text("SELECT slug, code_owned FROM mcp_servers"))).all()) == {
-                "knowledge": True,
-                "abridge": True,
-                "deepwiki-official": True,
-                "custom": False,
-            }
-            assert await conn.scalar(text("SELECT enabled FROM mcp_servers WHERE slug='knowledge'")) == 0
-            assert await conn.scalar(text("SELECT version FROM yuxi_schema_migrations WHERE domain='business'")) == 5
-            await conn.execute(text("""UPDATE agents SET config_json='{"context":{"mcps":"all","plugins":[]}}'"""))
-        await apply_plugin_migration(manager, review)
-        async with engine.connect() as conn:
-            assert await conn.scalar(text("SELECT config_json FROM agents")) == {"context": {"mcps": "all", "plugins": []}}
+            assert (await conn.execute(text("SELECT slug, code_owned, enabled FROM mcp_servers ORDER BY slug"))).all() == [
+                ("custom", False, 1),
+                ("deepwiki-official", True, 1),
+                ("knowledge", True, 0),
+            ]
     finally:
-        registry.get_plugins.cache_clear()
         await drop_isolated_schema(schema, admin, engine)
 
 
-async def test_v4_upgrade_rejects_direct_selection_of_new_plugin_entry(tmp_path, monkeypatch):
+async def test_new_builtin_cannot_take_over_existing_uploaded_skill(tmp_path, monkeypatch):
+    """即使配置未引用同名上传包，导出和已审阅的应用也须在旧库上拒绝。"""
+    from yuxi.migrations import agent_plugins
+
+    monkeypatch.setattr(agent_plugins, "get_skill_data_dir", lambda: tmp_path)
+    schema, admin, engine, manager = await create_isolated_manager("pytest_builtin_collision")
+    try:
+        await create_legacy_schema(manager)
+        review = tmp_path / "review"
+        await export_plugin_migration(manager, review)
+
+        relative_dir = f"packages/abridge/{'a' * 32}"
+        source = tmp_path / relative_dir / "SKILL.md"
+        source.parent.mkdir(parents=True)
+        content = b"---\nname: abridge\ndescription: Old uploaded Skill\n---\nKeep this content.\n"
+        source.write_bytes(content)
+        async with engine.begin() as conn:
+            await conn.execute(
+                text("""INSERT INTO skills(slug,name,description,source_type,dir_path,share_config,enabled)
+                VALUES ('abridge','abridge','Old uploaded Skill','upload',:dir_path,'{}',true)"""),
+                {"dir_path": relative_dir},
+            )
+
+        with pytest.raises(ValueError, match="abridge.*冲突"):
+            await export_plugin_migration(manager, tmp_path / "conflict")
+        with pytest.raises(ValueError, match="abridge.*冲突"):
+            await apply_plugin_migration(manager, review)
+        async with engine.connect() as conn:
+            await assert_legacy_schema(conn)
+            assert (await conn.execute(text("SELECT source_type, dir_path FROM skills"))).one() == ("upload", relative_dir)
+        assert source.read_bytes() == content
+        assert not (tmp_path / "conflict").exists()
+    finally:
+        await drop_isolated_schema(schema, admin, engine)
+
+
+async def test_plugin_migration_rejects_direct_selection_of_new_plugin_entry(tmp_path, monkeypatch):
     """新插件采用既有 Skill 标识时，Agent 与已冻结会话都须先清理普通入口选择。"""
+    from yuxi.migrations import agent_plugins
     from yuxi.modules.agents.runtime.context import BaseContext
     from yuxi.modules.extensions.plugins import registry
     from yuxi.modules.extensions.plugins.base import YuxiPlugin
@@ -273,10 +308,19 @@ async def test_v4_upgrade_rejects_direct_selection_of_new_plugin_entry(tmp_path,
         skills = ("plain-reports",)
 
     monkeypatch.setattr(registry, "REGISTERED_PLUGINS", (*registry.REGISTERED_PLUGINS, ReportPlugin))
-    schema, admin, engine, manager = await create_isolated_manager("pytest_v4_skill_entry")
+    source = tmp_path / "shared" / "plain-reports"
+    source.mkdir(parents=True)
+    (source / "SKILL.md").write_text("---\nname: plain-reports\ndescription: 报表\n---\n报表说明\n")
+    monkeypatch.setattr(agent_plugins, "get_skill_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(agent_plugins, "user_workspace_dir", lambda uid: tmp_path / uid)
+    schema, admin, engine, manager = await create_isolated_manager("pytest_plugin_skill_entry")
     try:
-        await create_legacy_schema(manager, 4)
+        await create_legacy_schema(manager)
         async with engine.begin() as conn:
+            await conn.execute(
+                text("""INSERT INTO skills(slug,name,description,source_type,dir_path,share_config,enabled)
+                VALUES ('plain-reports','plain-reports','报表','upload','shared/plain-reports','{}',true)""")
+            )
             await conn.execute(
                 text("""INSERT INTO agents(slug,backend_id,name,pics,config_json,share_config,visibility,is_builtin,is_default)
                 VALUES ('demo','chatbot','Demo','[]','{"context":{"skills":["plain-reports"]}}','{}','shared',false,false)""")
@@ -291,13 +335,13 @@ async def test_v4_upgrade_rejects_direct_selection_of_new_plugin_entry(tmp_path,
         with pytest.raises(ValueError, match=r"agents id=\d+.*skills.*插件入口"):
             await apply_plugin_migration(manager, review)
         async with engine.begin() as conn:
-            await assert_legacy_schema(conn, 4)
+            await assert_legacy_schema(conn)
             assert await conn.scalar(text("SELECT config_json FROM agents")) == {"context": {"skills": ["plain-reports"]}}
             await conn.execute(text("""UPDATE agents SET config_json='{"context":{"skills":"all"}}'"""))
         with pytest.raises(ValueError, match=r"sessions id=\d+.*preload_skills.*插件入口"):
             await apply_plugin_migration(manager, review)
         async with engine.begin() as conn:
-            await assert_legacy_schema(conn, 4)
+            await assert_legacy_schema(conn)
             assert (await conn.scalar(text("SELECT config_snapshot FROM sessions")))["preload_skills"] == ["plain-reports"]
             await conn.execute(text("""UPDATE sessions SET config_snapshot='{"skills":"all","preload_skills":[]}'"""))
         review = tmp_path / "corrected"
@@ -308,114 +352,6 @@ async def test_v4_upgrade_rejects_direct_selection_of_new_plugin_entry(tmp_path,
             runtime.update_config((await conn.scalar(text("SELECT config_json FROM agents")))["context"])
             runtime.update_config(await conn.scalar(text("SELECT config_snapshot FROM sessions")))
             assert runtime.skills == "all" and runtime.preload_skills == [] and runtime.plugins == []
-    finally:
-        registry.get_plugins.cache_clear()
-        await drop_isolated_schema(schema, admin, engine)
-
-
-@pytest.mark.parametrize("private_helper", [True, False], ids=["private", "shared"])
-async def test_v4_upgrade_validates_plugin_skill_layout_before_writes(tmp_path, monkeypatch, private_helper):
-    """旧版并列包需先修正布局，迁移后回读独立条目和用户投影。"""
-    from types import SimpleNamespace
-
-    from sqlalchemy.ext.asyncio import async_sessionmaker
-    from yuxi.infrastructure.postgres.manager import pg_manager
-    from yuxi.modules.extensions.plugins import registry
-    from yuxi.modules.extensions.plugins.base import YuxiPlugin
-    from yuxi.modules.extensions.skills import projection
-    from yuxi.modules.extensions.skills.access import get_skill_or_raise
-    from yuxi.modules.extensions.skills.builtin import sync
-    from yuxi.modules.extensions.skills.shared import update_skill_enabled
-    from yuxi.modules.identity.models import User
-
-    class Reports(YuxiPlugin):
-        """v4 代码插件随入口交付第二个顶层 Skill。"""
-
-        plugin_id = entry_skill = name = description = "reports"
-        skills = ("reports", "helper")
-
-    packaged = tmp_path / "plugin/skills"
-    shared = tmp_path / "builtin"
-    shared.mkdir()
-    for slug in Reports.skills:
-        (packaged / slug).mkdir(parents=True)
-        (packaged / slug / "SKILL.md").write_text(f"---\nname: {slug}\ndescription: {slug}\n---\n{slug} body")
-    state = tmp_path / "state"
-    (state / "shared").mkdir(parents=True)
-    monkeypatch.setattr(registry, "REGISTERED_PLUGINS", (Reports,))
-    monkeypatch.setattr(registry, "inspect", SimpleNamespace(getfile=lambda plugin: str(tmp_path / "plugin/plugin.py")))
-    monkeypatch.setattr(sync, "BUILTIN_SKILLS_DIR", shared)
-    monkeypatch.setattr(sync, "get_skills_root_dir", lambda: state / "shared")
-    monkeypatch.setattr(projection, "get_skill_data_dir", lambda: state)
-    monkeypatch.setattr(projection, "get_skill_projection_dir", lambda: tmp_path / "projections")
-
-    schema, admin, engine, manager = await create_isolated_manager("pytest_v4_plugin_layout")
-    manager.AsyncSession = async_sessionmaker(engine, expire_on_commit=False)
-    monkeypatch.setattr(pg_manager, "get_async_session_context", manager.get_async_session_context)
-    uid = "reader"
-    helper_only_uid = "helper-reader"
-    try:
-        await create_legacy_schema(manager, 4)
-        async with manager.AsyncSession() as db:
-            operator = User(uid="admin", username="admin", password_hash="unused", role="superadmin")
-            db.add(operator)
-            db.add_all(User(uid=reader, username=reader, password_hash="unused", role="user") for reader in (uid, helper_only_uid))
-            # v4 把两个目录各自作为一个内置 Skill 发布。
-            with monkeypatch.context() as old:
-                old.setattr(sync, "get_plugin_skill_directories", lambda: (packaged,))
-                await sync.init_builtin_skills(db)
-            # 复原旧部署持久化的入口授权，独立 helper 保持全局可读。
-            entry = await get_skill_or_raise(db, "reports")
-            entry.share_config = {
-                "version": 2,
-                "read_scope": {"access_level": "user", "department_ids": [], "user_uids": [uid]},
-                "manage_scope": None,
-            }
-            await db.commit()
-        for reader in (uid, helper_only_uid):
-            await projection.refresh_user_skill_projection_async(reader)
-        projected = projection.get_user_skills_root_dir(uid)
-        helper_only_root = projection.get_user_skills_root_dir(helper_only_uid)
-        public_helper = helper_only_root / "helper/SKILL.md"
-        helper = projected / "helper/SKILL.md"
-        old_content = helper.read_bytes()
-        assert old_content.endswith(b"helper body")
-        assert public_helper.read_bytes() == old_content
-        assert not (helper_only_root / "reports").exists()
-
-        review = tmp_path / "review"
-        await export_plugin_migration(manager, review)
-        with pytest.raises(ValueError, match="reports.*helper.*入口包"):
-            await apply_plugin_migration(manager, review)
-        async with engine.connect() as conn:
-            await assert_legacy_schema(conn, 4)
-            assert await conn.scalar(text("SELECT enabled FROM skills WHERE slug='helper'")) is True
-        assert helper.read_bytes() == old_content
-
-        if private_helper:
-            async with manager.AsyncSession() as db:
-                await update_skill_enabled(db, slug="helper", enabled=False, operator=operator)
-            assert not helper.exists()
-            (packaged / "reports/skills").mkdir()
-            (packaged / "helper").rename(packaged / "reports/skills/helper")
-            Reports.skills = ("reports",)
-        else:
-            (packaged / "helper").rename(shared / "helper")
-        await apply_plugin_migration(manager, review)
-        async with manager.AsyncSession() as db:
-            await sync.init_builtin_skills(db)
-            assert await db.scalar(text("SELECT version FROM yuxi_schema_migrations WHERE domain='business'")) == 5
-            assert await db.scalar(text("SELECT enabled FROM skills WHERE slug='helper'")) is (not private_helper)
-        for reader in (uid, helper_only_uid):
-            await projection.refresh_user_skill_projection_async(reader)
-        assert helper.is_file() is (not private_helper)
-        current = projected / "reports/skills/helper/SKILL.md" if private_helper else helper
-        assert current.read_bytes() == old_content
-        assert not (helper_only_root / "reports").exists()
-        if private_helper:
-            assert not public_helper.exists()
-        else:
-            assert public_helper.read_bytes() == old_content
     finally:
         registry.get_plugins.cache_clear()
         await drop_isolated_schema(schema, admin, engine)
@@ -462,7 +398,7 @@ async def test_upgrade_claims_reviewed_custom_builtin_rows_and_rejects_collision
 
     schema, admin, engine, manager = await create_isolated_manager("pytest_legacy_mcp_owners")
     try:
-        await create_legacy_schema(manager, 4)
+        await create_legacy_schema(manager)
         async with engine.begin() as conn:
             await conn.execute(
                 text("""INSERT INTO mcp_servers(slug,name,transport,enabled,disabled_tools,created_by,updated_by) VALUES
@@ -496,7 +432,7 @@ async def test_upgrade_claims_reviewed_custom_builtin_rows_and_rejects_collision
         with pytest.raises(ValueError, match="abridge.*来源冲突"):
             await export_plugin_migration(manager, tmp_path / "ordinary", legacy_builtins=(*confirmed, "abridge"))
         async with engine.begin() as conn:
-            await assert_legacy_schema(conn, 4)
+            await assert_legacy_schema(conn)
             assert (await conn.scalar(text("SELECT config_json FROM agents")))["context"]["mcps"] == ["reports", "removed", "custom"]
             await conn.execute(text("DELETE FROM mcp_servers WHERE slug='abridge'"))
             await conn.execute(text("UPDATE mcp_servers SET id=id+100 WHERE slug='reports'"))
@@ -551,7 +487,7 @@ async def test_direct_selection_does_not_authorize_a_larger_plugin(tmp_path, rep
 
     schema, admin, engine, manager = await create_isolated_manager("pytest_plugin_scope")
     try:
-        await create_legacy_schema(manager, 4)
+        await create_legacy_schema(manager)
         async with engine.begin() as conn:
             await conn.execute(
                 text("""INSERT INTO mcp_servers(slug,name,transport,enabled,created_by,updated_by)
@@ -591,7 +527,7 @@ async def test_direct_selection_does_not_authorize_a_larger_plugin(tmp_path, rep
         with pytest.raises(ValueError, match=error):
             await export_plugin_migration(manager, tmp_path / "expanded", legacy_builtins=confirmed)
         async with engine.begin() as conn:
-            await assert_legacy_schema(conn, 4)
+            await assert_legacy_schema(conn)
             read_config = text(f"SELECT {column} FROM {table} WHERE id=:id")
             write_config = text(f"UPDATE {table} SET {column}=CAST(:config AS JSON) WHERE id=:id")
             assert await conn.scalar(read_config, {"id": row_id}) == original
@@ -642,7 +578,7 @@ async def test_plugin_migration_cli_registers_models_in_a_cold_process(tmp_path)
     ''')
     review = tmp_path / "review"
     try:
-        await create_legacy_schema(manager, 2)
+        await create_legacy_schema(manager)
 
         for action, omit_models in (("export", "1"), ("export", "0"), ("apply", "0")):
             result = await asyncio.to_thread(
@@ -672,9 +608,10 @@ async def test_plugin_migration_cli_registers_models_in_a_cold_process(tmp_path)
                     "configs": [],
                 }
             async with engine.connect() as conn:
-                assert await conn.scalar(text("SELECT version FROM yuxi_schema_migrations WHERE domain='business'")) == (
-                    5 if action == "apply" else 2
-                )
+                assert dict((await conn.execute(text("SELECT domain,version FROM yuxi_schema_migrations"))).all()) == {
+                    "business": 5 if action == "apply" else 2,
+                    "knowledge": 2,
+                }
         async with engine.connect() as conn:
             assert (
                 await conn.scalar(
@@ -685,6 +622,13 @@ async def test_plugin_migration_cli_registers_models_in_a_cold_process(tmp_path)
                 )
                 == 0
             )
+            column = await conn.execute(
+                text("""SELECT data_type, is_nullable, column_default,
+                       col_description('mcp_servers'::regclass, ordinal_position::int)
+                       FROM information_schema.columns
+                       WHERE table_schema=current_schema() AND table_name='mcp_servers' AND column_name='code_owned'""")
+            )
+            assert column.one() == ("boolean", "NO", "false", "由代码发布的内置连接")
     finally:
         await drop_isolated_schema(schema, admin, engine)
 
@@ -701,8 +645,8 @@ async def test_plugin_upgrade_requires_reviewed_deployment_and_preserves_content
     source.mkdir(parents=True)
     original = (
         "---\nname: custom-research\ndescription:\n  Research.\n"
-        '  CREATE (from scratch): "report".\ntool_dependencies: [web_search]\nmcp_dependencies: [reports]\n---\nResearch body\n'
-    )
+        '  CREATE (from scratch): "report".\ntool_dependencies: [web_search]\nmcp_dependencies: [reports]\n---\n'
+    ).replace("\n", "\r") + "Research body\r\n"
     (source / "SKILL.md").write_text(original)
     monkeypatch.setattr(agent_plugins, "get_skill_data_dir", lambda: root)
     monkeypatch.setattr(agent_plugins, "user_workspace_dir", lambda uid: tmp_path / "personal-workspace")
@@ -711,7 +655,7 @@ async def test_plugin_upgrade_requires_reviewed_deployment_and_preserves_content
     monkeypatch.setattr(registry, "MIGRATED_PLUGIN_DIRECTORY", deployment)
     registry.get_plugins.cache_clear()
     try:
-        await create_legacy_schema(manager, 2)
+        await create_legacy_schema(manager)
         async with engine.begin() as conn:
             await conn.execute(
                 text(
@@ -768,7 +712,7 @@ async def test_plugin_upgrade_requires_reviewed_deployment_and_preserves_content
         with pytest.raises(ValueError, match="未知插件"):
             await apply_plugin_migration(manager, review)
         async with engine.connect() as conn:
-            await assert_legacy_schema(conn, 2)
+            await assert_legacy_schema(conn)
         declaration = (review / "deployed" / "custom-research.json").read_text()
         incompatible = json.loads(declaration)
         incompatible["mcps"] = []
@@ -793,7 +737,7 @@ async def test_plugin_upgrade_requires_reviewed_deployment_and_preserves_content
             assert config == expected_context
             current = await conn.scalar(text("SELECT dir_path FROM skills WHERE slug='custom-research'"))
             assert "tool_dependencies" not in (root / current / "SKILL.md").read_text()
-            assert "Research body" in (root / current / "SKILL.md").read_text()
+            assert (root / current / "SKILL.md").read_bytes().endswith(b"Research body\r\n")
             from yuxi.modules.extensions.skills.package import parse_skill_markdown
 
             assert parse_skill_markdown((root / current / "SKILL.md").read_text())[2] == 'Research. CREATE (from scratch): "report".'
@@ -806,7 +750,7 @@ async def test_plugin_upgrade_requires_reviewed_deployment_and_preserves_content
                 )
                 == 0
             )
-        assert (source / "SKILL.md").read_text() == original
+        assert (source / "SKILL.md").read_bytes() == original.encode("utf-8")
         assert "tool_names" not in json.loads(declaration)
         assert plan["skills"][0]["tool_dependencies"] == ["web_search"]
     finally:
@@ -815,12 +759,11 @@ async def test_plugin_upgrade_requires_reviewed_deployment_and_preserves_content
 
 
 @pytest.mark.parametrize("table,status", [("agent_runs", "running"), ("agent_inputs", "pending"), ("agent_turns", "waiting")])
-@pytest.mark.parametrize("version", [2, 4])
-async def test_plugin_upgrade_rejects_resumable_work_before_any_mutation(tmp_path, table, status, version):
+async def test_plugin_upgrade_rejects_resumable_work_before_any_mutation(tmp_path, table, status):
     """待消费输入或可恢复 Turn 即使没有活动执行也不能升级。"""
     schema, admin, engine, manager = await create_isolated_manager("pytest_plugin_pending")
     try:
-        await create_legacy_schema(manager, version)
+        await create_legacy_schema(manager)
         async with engine.begin() as conn:
             await create_legacy_project(conn, "owner")
             await conn.execute(
@@ -875,7 +818,7 @@ async def test_migration_removes_disabled_or_revoked_entries_from_session(tmp_pa
     monkeypatch.setattr(agent_plugins, "get_skill_data_dir", lambda: root)
     monkeypatch.setattr(agent_plugins, "user_workspace_dir", lambda uid: tmp_path / uid)
     try:
-        await create_legacy_schema(manager, 2)
+        await create_legacy_schema(manager)
         async with engine.begin() as conn:
             await create_legacy_project(conn, "reader")
             await conn.execute(
@@ -932,7 +875,7 @@ async def test_content_builtin_preserves_skill_and_tool_selection(tmp_path, monk
         context["tools"] = tools
     expected = dict(context)
     try:
-        await create_legacy_schema(manager, 2)
+        await create_legacy_schema(manager)
         async with engine.begin() as conn:
             await conn.execute(
                 text("""INSERT INTO agents(slug,backend_id,name,pics,config_json,share_config,visibility,is_builtin,is_default)

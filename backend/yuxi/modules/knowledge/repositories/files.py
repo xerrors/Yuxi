@@ -28,7 +28,7 @@ def first_matching_fingerprint(records, parser_id: str):
 # 列表排序只接受这些字段和 ant-design-vue 的方向；未传时保持默认顺序。
 _DOCUMENT_SORT_FIELDS = frozenset({"filename", "content_amount", "status", "created_at"})
 _DOCUMENT_SORT_ORDERS = frozenset({"ascend", "descend"})
-# 与前端 knowledge_file_policy.js 的 STATUS_SORT_ORDER 一致；未知状态更靠后。
+# 文件列表按状态阶段分组排序。未知状态使用最高权重。
 _STATUS_SORT_WEIGHTS = (
     ("done", 1),
     ("indexed", 1),

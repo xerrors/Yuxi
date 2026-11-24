@@ -166,21 +166,6 @@ API 与 worker 从同一部署环境读取以下变量，配置后重新创建�
 
 OAuth 元数据只能使用超管配置的 MCP 来源与授权服务器来源，跨来源重定向会失败。企业内网服务需要浏览器与 API/worker 都能访问准确地址。地址、授权服务器或客户端配置变化后，用户需要重连。数据库结构与新库初始化边界见 [系统架构](https://github.com/xerrors/Yuxi/blob/main/ARCHITECTURE.md)。
 
-## 已有部署升级个人凭证字段
-
-业务 Schema v2 包含 `api_key_header`。此升级入口只适用于已包含个人 OAuth 表的 0.8 business v1 数据库，不提供从 0.7.x 升级的能力。升级前停止新任务提交，等待活动任务结束，并保管数据库备份与部署加密密钥。
-
-生产环境先构建或拉取目标版本镜像，确认 PostgreSQL 健康且 `storage-init` 已成功。停止 API 和 worker 后，使用目标镜像的一次性进程将业务库升级至 v2：
-
-```bash
-docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container stop api worker
-docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container run --rm --no-deps app-init uv run --no-sync --no-dev python -m yuxi.migrations.mcp_personal_credentials
-```
-
-保持 API 和 worker 停止，继续完成[插件升级与部署初始化](./skills-management.md#从运行依赖升级)。开发环境可将上述命令的 `docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container` 替换为 `docker compose`。升级后按[部署验证](../advanced/deployment.md#_4-验证部署)检查就绪状态，并确认已有 MCP 连接和个人凭证可用。
-
-升级只增加可空字段并登记业务 Schema v2，保留已有服务、共享请求头和个人 OAuth 凭证。空的新字段不改变旧 OAuth 配置修订。新库由 app-init 直接建立当前版本；运行进程只检查版本，不自动修改结构。回退旧进程版本需显式处理 Schema 版本兼容。
-
 ## 内置远程 MCP
 
 内置 DeepWiki 使用 `deepwiki-official` 标识，通过 `https://mcp.deepwiki.com/mcp` 提供 Streamable HTTP 服务，无需认证即可查询公开 GitHub 仓库。详见 [DeepWiki 官方文档](https://docs.devin.ai/work-with-devin/deepwiki-mcp)。

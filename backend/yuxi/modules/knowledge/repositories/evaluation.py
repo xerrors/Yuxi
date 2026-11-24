@@ -152,11 +152,6 @@ class EvaluationRepository:
         await session.flush()
         return record
 
-    async def update_run(self, run_id: str, data: dict[str, Any]) -> EvaluationRun | None:
-        """独立事务内更新评估 Run 字段。"""
-        async with pg_manager.get_async_session_context() as session:
-            return await self.update_run_in_session(session, run_id, data)
-
     # ─── 评估运行查询 ─────────────────────────────────────────────
 
     async def get_run(self, run_id: str) -> EvaluationRun | None:

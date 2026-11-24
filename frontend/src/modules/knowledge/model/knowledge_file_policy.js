@@ -34,19 +34,6 @@ const INDEXABLE_STATUSES = new Set(['parsed', 'error_indexing', 'failed', 'done'
 const PARSEABLE_STATUSES = new Set(['uploaded', 'error_parsing'])
 const DOWNLOADABLE_STATUSES = new Set(['done', 'indexed', 'parsed', 'error_indexing', 'failed'])
 const CHUNK_PREVIEW_STATUSES = new Set(['done', 'indexed'])
-const STATUS_SORT_ORDER = {
-  done: 1,
-  indexed: 1,
-  processing: 2,
-  indexing: 2,
-  parsing: 2,
-  waiting: 3,
-  uploaded: 3,
-  parsed: 3,
-  failed: 4,
-  error_indexing: 4,
-  error_parsing: 4
-}
 
 export const FILE_STATUS_FILTER_OPTIONS = [
   { label: '待解析', value: 'uploaded' },
@@ -104,8 +91,6 @@ export const canDeleteFile = (record, locked = false) =>
 
 export const isProcessingFile = (record) =>
   Boolean(record && PROCESSING_STATUSES.has(record.status))
-
-export const getFileStatusSortWeight = (record) => STATUS_SORT_ORDER[record?.status] || 5
 
 export const canPreviewParsed = (record) => {
   if (!record || record.is_folder) return false

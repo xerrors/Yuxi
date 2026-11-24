@@ -32,7 +32,7 @@ MCP 模块复用连接表、Fernet 加密、配置修订、世代和行锁；静
 
 保留明确标注的管理员共享模式，迁移由管理员逐服务决定，不自动复制共享秘密。第一阶段支持一个原样发送的 API Key 请求头与固定 Bearer，不增加 Basic、查询参数、多字段凭证或前缀模板。
 
-新增可空 `api_key_header` 字段，业务 Schema 为 v2。显式幂等升级保留已有数据；空字段保持旧 OAuth 修订不变。API/worker 仍只读校验 Schema，部署操作见 [已有部署升级](../../../agents/mcp-integration.md#已有部署升级个人凭证字段)。
+新增可空 `api_key_header` 字段，业务 Schema 为 v2。显式幂等升级保留已有数据；空字段保持旧 OAuth 修订不变。API/worker 仍只读校验 Schema，v1 升至正式 0.8.0 的操作见 [0.8.0 标签说明](https://github.com/xerrors/Yuxi/blob/v0.8.0/docs/agents/mcp-integration.md#已有部署升级个人凭证字段)。
 
 修改服务配置要求重新连接，启停保留凭证。停用服务保留本人未清除连接的脱敏卡片，清除后隐藏；管理员也不能通过个人测试使用别人的凭证。清除约束后续出站检查，已经发出的请求不回滚。
 

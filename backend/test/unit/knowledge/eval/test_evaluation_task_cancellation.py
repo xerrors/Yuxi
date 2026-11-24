@@ -24,7 +24,7 @@ class FakeContext:
     def is_cancel_requested(self) -> bool:
         return self.cancel_requested
 
-    async def run_owned_transaction(self, operation) -> None:
+    async def run_owned_transaction(self, operation, *, check_cancelled=False) -> None:
         await operation(None, None)
 
 
@@ -47,9 +47,10 @@ class FakeEvaluationRepository:
     async def get_dataset(self, dataset_id: str):
         raise asyncio.CancelledError
 
-    async def update_run(self, run_id: str, data: dict) -> None:
-        await asyncio.sleep(0)
+    async def update_run_in_session(self, session, run_id: str, data: dict):
+        """记录在执行权事务内发生的 Run 写入。"""
         self.run_updates.append((run_id, deepcopy(data)))
+        return object()
 
 
 async def test_dataset_cancellation_defers_terminal_status_to_job_hook(monkeypatch):
