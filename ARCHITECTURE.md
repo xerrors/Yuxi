@@ -18,7 +18,7 @@ Yuxi 是一个面向 RAG、知识图谱和多智能体工作流的知识库平�
 - `storage-init`：无网络的一次性进程，准备 API/worker/app-init 与 Milvus 挂载根的属主和模式，不递归修改已有文件；消费进程等待其成功退出。
 - `app-init`：普通用户运行的部署任务，在 PostgreSQL advisory lock 内先建立或校验当前 Schema，再同步系统配置定义、内置供应商、Agent、MCP 与 Skill 来源文件。API 与 worker 等待全部成功。空库基线为 business 5、knowledge 2，直接包含个人 MCP 授权表、128 位用户归属字段及当前约束。当前版本跳过结构初始化，其他版本明确拒绝；历史部署的结构调整由部署侧显式完成；知识域 v1 路径目录通过离线审计/转换入口升级 v2，运行进程不自动迁移。共享同步失败保留已提交内容，修正后幂等重跑。
 - Cube Linux/KVM 执行节点：每个用户拥有一个持久普通账号 VM，Workspace 与授权 Skills 共享宿主文件。
-- `sandbox-runner`：选择 container 后端时由该独立进程持有 Docker socket，为每个 Run 懒创建临时容器并执行命令；API/worker 只调用认证 HTTP。挂载、镜像和资源限制由 runner 拥有，Run 归属与清理责任仍由 PostgreSQL 拥有。
+- `sandbox-runner`：选择 container 后端时由该独立进程持有 Docker socket，为每个 Run 懒创建临时容器并执行命令；API/worker 只调用认证 HTTP。远程 Skill 的固定获取 CLI 使用只挂载本请求目录的一次性容器，由请求 finally 与独立 TTL 回收，不创建业务 Run。挂载、镜像和资源限制由 runner 拥有，Agent Run 归属与清理责任仍由 PostgreSQL 拥有。
 - `postgres`：业务数据、知识库元数据、持久 Input 队列、Turn/Run 与 LangGraph checkpoint。
 - `redis`：ARQ 投递、运行事件、取消信号以及跨进程配置和模型缓存。
 - `minio`：附件草稿内容、知识库原始文件和其他对象数据；正式 Agent 附件归 Workdir，附件事实归 PostgreSQL。

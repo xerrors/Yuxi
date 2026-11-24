@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
 from yuxi.modules.extensions.skills import remote as svc
 
 
@@ -173,6 +176,82 @@ async def test_remote_skill_sandbox_executes_cli_through_user_backend():
 
 
 @pytest.mark.asyncio
+async def test_remote_skill_uses_request_runner_without_agent_execution():
+    """Container 通过专用获取协议，不能调用缺少 Run 的通用执行器。"""
+
+    class Runner:
+        """返回可信 runner 的进程结果。"""
+
+        def fetch_skills(self, *, uid, request_id, args):
+            """核对用户身份与固定请求参数。"""
+            assert uid == "user-1"
+            assert request_id == "remote-skill-test"
+            assert args == ["npx", "-y", "skills", "find", "demo"]
+            return {"exit_code": 0, "output": "found", "truncated": False}
+
+    request = svc._RemoteSkillRequest(
+        home="/home/user/workspace/.remote-skills/remote-skill-test", backend=SimpleNamespace(id="user-1"), runner=Runner()
+    )
+    assert await request.run(["npx", "-y", "skills", "find", "demo"]) == "found"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "result", [{"exit_code": 1, "output": "PRIVATE", "truncated": False}, {"exit_code": 0, "output": "PRIVATE", "truncated": True}]
+)
+async def test_remote_skill_rejects_failed_or_truncated_fetch(result):
+    """截断的发现结果和失败输出都不能冒充可安装包。"""
+    runner = SimpleNamespace(fetch_skills=lambda **_kwargs: result)
+    request = svc._RemoteSkillRequest(
+        home="/home/user/workspace/.remote-skills/remote-skill-test", backend=SimpleNamespace(id="user-1"), runner=runner
+    )
+    with pytest.raises(ValueError, match="skills CLI 执行失败") as failure:
+        await request.run(["npx", "-y", "skills", "find", "demo"])
+    assert "PRIVATE" not in str(failure.value)
+
+
+@pytest.mark.asyncio
+async def test_remote_skill_cancellation_waits_for_runner_cleanup(monkeypatch, tmp_path):
+    """取消不能让调用方先删除仍由获取容器写入的临时目录。"""
+    from yuxi.modules.workspace.paths import user_workspace_dir
+
+    started, release, finished = threading.Event(), threading.Event(), threading.Event()
+
+    def fetch_skills(**_kwargs):
+        """模拟 runner 返回前完成容器清理。"""
+        started.set()
+        assert release.wait(3)
+        finished.set()
+        return {"exit_code": 0, "output": "found", "truncated": False}
+
+    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr("yuxi.modules.agents.runtime.sandbox.backend.get_sandbox_provider", lambda: SimpleNamespace())
+    request = svc._RemoteSkillRequest.create("user-1")
+    request.runner = SimpleNamespace(fetch_skills=fetch_skills)
+    monkeypatch.setattr(svc._RemoteSkillRequest, "create", lambda uid: request)
+    root = user_workspace_dir("user-1")
+    home = root / ".remote-skills" / Path(request.home).name
+    (home / "live.txt").write_text("runner owns this directory")
+    (root / "keep.txt").write_text("keep")
+    task = asyncio.create_task(svc.list_remote_skills("owner/repo", uid="user-1"))
+    try:
+        assert await asyncio.to_thread(started.wait, 1)
+        task.cancel()
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(asyncio.shield(task), timeout=0.05)
+        assert not task.done()
+        assert not finished.is_set()
+        assert (home / "live.txt").read_text() == "runner owns this directory"
+    finally:
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert finished.is_set()
+    assert not home.exists()
+    assert (root / "keep.txt").read_text() == "keep"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("exit_code", [1, None])
 async def test_remote_skill_sandbox_rejects_failed_command_without_echoing_output(exit_code) -> None:
     """失败和未完成的命令均不把原始输出作为业务提示。"""
@@ -190,6 +269,20 @@ async def test_remote_skill_sandbox_rejects_failed_command_without_echoing_outpu
     with pytest.raises(ValueError, match="skills CLI 执行失败，请检查来源或稍后重试") as failure:
         await sandbox.run(["npx", "-y", "skills", "add", "https://github.com/owner/repo", "--list"])
     assert "PRIVATE_CLI_MARKER" not in str(failure.value)
+
+
+@pytest.mark.parametrize(("backend", "has_runner"), [(None, True), ("container", True), ("cube", False)])
+def test_remote_skill_request_follows_default_container_backend(monkeypatch, tmp_path, backend, has_runner):
+    """省略后端时仍使用专用获取 runner，显式 Cube 保持原执行路径。"""
+    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr("yuxi.modules.agents.runtime.sandbox.backend.get_sandbox_provider", lambda: SimpleNamespace())
+    if backend is None:
+        monkeypatch.delenv("SANDBOX_BACKEND", raising=False)
+    else:
+        monkeypatch.setenv("SANDBOX_BACKEND", backend)
+
+    request = svc._RemoteSkillRequest.create("user-1")
+    assert (request.runner is not None) is has_runner
 
 
 def test_remote_skill_sandbox_uses_operator_workspace(monkeypatch, tmp_path):
@@ -403,3 +496,21 @@ async def test_search_remote_skills(monkeypatch: pytest.MonkeyPatch) -> None:
     ]
     assert sandbox.calls == [["npx", "-y", "skills", "find", "web"]]
     assert sandbox.cleaned is True
+
+
+@pytest.mark.asyncio
+async def test_large_download_keeps_order_across_runner_batches(monkeypatch):
+    """大批量下载拆成可接受的请求，所有条目按原顺序返回。"""
+    names = [f"sample-{index}" for index in range(99)]
+    sandbox = _FakeRemoteSkillSandbox(available=set(names))
+    _use_fake_sandbox(monkeypatch, sandbox)
+    downloads = await svc.download_remote_skills(uid="user-1", source="test/repo", skills=names)
+    try:
+        assert [len(call) for call in sandbox.calls] == [204, 10]
+        assert sandbox.download_calls == names
+        assert [entry.slug for entry in downloads.results if isinstance(entry, svc.DownloadedSkill)] == names
+    finally:
+        if downloads.temp_home:
+            import shutil
+
+            shutil.rmtree(downloads.temp_home)

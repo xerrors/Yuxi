@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import shlex
 import shutil
 import tempfile
 import uuid
 from dataclasses import dataclass
+from itertools import batched
 from pathlib import Path
 from urllib.parse import urlparse
 
 from yuxi.infrastructure.filesystem import await_io
 from yuxi.modules.agents.runtime.sandbox import UserSandboxBackend
+from yuxi.modules.agents.runtime.sandbox.container import SandboxRunnerClient
 from yuxi.modules.agents.runtime.sandbox.download import download_sandbox_directory
 from yuxi.modules.extensions.options import remote_skill_source_policy
 from yuxi.modules.extensions.skills.package import is_valid_skill_slug
@@ -99,28 +102,15 @@ async def download_remote_skills(
     try:
         try:
             temp_home = tempfile.mkdtemp(prefix=".remote-skills-")
-            skill_args: list[str] = []
-            for _index, name in requests:
-                skill_args.extend(["--skill", name])
-
             cli_failed = False
-            try:
-                await sandbox.run(
-                    [
-                        "npx",
-                        "-y",
-                        "skills",
-                        "add",
-                        normalized_source,
-                        *skill_args,
-                        "-g",
-                        "-y",
-                        "--copy",
-                    ]
-                )
-            except ValueError:
-                # CLI 对不匹配的 skill 会退出码非零，但已安装的目录仍在
-                cli_failed = True
+            # 每个 runner 请求最多接受 205 个参数，固定参数占用 8 个位置。
+            for batch in batched(requests, 98):
+                skill_args = [argument for _index, name in batch for argument in ("--skill", name)]
+                try:
+                    await sandbox.run(["npx", "-y", "skills", "add", normalized_source, *skill_args, "-g", "-y", "--copy"])
+                except ValueError:
+                    # 某个包未匹配时 CLI 会失败，其他已经获取的目录仍可使用。
+                    cli_failed = True
 
             downloaded_dirs: dict[str, Path | None] = {}
             for original_index, name in requests:
@@ -171,13 +161,15 @@ class _RemoteSkillRequest:
 
     home: str
     backend: UserSandboxBackend
+    runner: SandboxRunnerClient | None = None
 
     @classmethod
     def create(cls, uid: str) -> _RemoteSkillRequest:
-        """每个请求只创建自己的共享临时目录，VM 始终属于操作者。"""
+        """为操作者创建独占目录，并使用部署所选的获取执行器。"""
         from yuxi.modules.workspace.filesystem import Workspace
         from yuxi.modules.workspace.paths import ensure_user_workspace
 
+        backend = UserSandboxBackend(uid=uid)
         request_id = f"remote-skill-{uuid.uuid4().hex}"
         home = f"{WORKSPACE_PATH}/.remote-skills/{request_id}"
         ensure_user_workspace(uid)
@@ -187,10 +179,21 @@ class _RemoteSkillRequest:
         except FileExistsError:
             pass
         workspace.create_authorized_directory("/.remote-skills", request_id, root="/")
-        return cls(home=home, backend=UserSandboxBackend(uid=uid))
+        workspace.create_authorized_directory(f"/.remote-skills/{request_id}", "workspace", root="/")
+        runner = SandboxRunnerClient() if os.environ.get("SANDBOX_BACKEND", "container").strip().lower() == "container" else None
+        return cls(home=home, backend=backend, runner=runner)
 
     async def run(self, args: list[str]) -> str:
         """执行 Skills CLI，并返回原始命令输出。"""
+        if self.runner is not None:
+            # HTTP 请求没有 Agent Run；专用获取容器只挂载本请求目录，不借用聊天环境。
+            result = await await_io(
+                asyncio.to_thread(self.runner.fetch_skills, uid=self.backend.id, request_id=Path(self.home).name, args=args)
+            )
+            if result.get("exit_code") != 0 or result.get("truncated") is not False or not isinstance(result.get("output"), str):
+                raise ValueError("skills CLI 执行失败，请检查来源或稍后重试")
+            return result["output"]
+
         workspace = f"{self.home}/workspace"
         command = " && ".join(
             [

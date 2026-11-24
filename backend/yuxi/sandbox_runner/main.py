@@ -51,6 +51,13 @@ class CancelRequest(BaseModel):
     owner: str
 
 
+class SkillFetchRequest(BaseModel):
+    """可信应用发起的固定 Skills CLI 参数，不接收用户环境和命令文本。"""
+
+    uid: str
+    args: list[str] = Field(..., min_length=5, max_length=205)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """启动兜底 TTL 清理；runner 不持久化任何 Run 状态。"""
@@ -155,6 +162,18 @@ async def execute(run_id: str, body: ExecRequest) -> dict:
 
     def operation() -> dict:
         return get_manager().execute(run_id=run_id, **body.model_dump())
+
+    return await loop.run_in_executor(get_executor(), operation)
+
+
+@router.post("/v1/skill-fetches/{request_id}")
+async def fetch_skills(request_id: str, body: SkillFetchRequest) -> dict:
+    """在独立一次性容器获取包，结束后确认容器清理再返回。"""
+    loop = asyncio.get_running_loop()
+
+    def operation() -> dict:
+        """专用线程持有完整获取与清理生命周期。"""
+        return get_manager().fetch_skills(uid=body.uid, request_id=request_id, args=body.args)
 
     return await loop.run_in_executor(get_executor(), operation)
 

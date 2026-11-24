@@ -51,7 +51,15 @@ runner 直接运行在宿主机（不在 Compose 内）时，需要把 `SANDBOX_
 
 枚举、并发计数、直接删除、TTL 与关闭清理都限定到当前数据根的 scope。不同数据槽位可共享 Docker daemon；同一数据根仍只允许一个 runner。worker 对账只删除列表快照中的具体容器 ID，避免迟到的清理影响同 Run 的新容器。采用 scope 标签前，先等待该部署已有 Run 收尾并确认旧容器已清理；没有 scope 标签的容器不会被自动接管。
 
-没有活动 Run 的 `execute`（例如设置页的环境变量验证、独立远程 Skill CLI 安装）会显式失败，不会创建无主容器。
+没有活动 Run 的 `execute`（例如设置页的环境变量验证）会显式失败。远程 Skill 获取使用下面的独立请求协议，不调用通用 `execute`。
+
+## 远程 Skill 获取
+
+扩展页的远程发现、搜索和安装没有聊天 Run。API/worker 经认证 runner 请求启动一次性获取容器，只运行镜像内固定版本的 Skills CLI。参数仅允许发现、搜索和下载指定 Skill；来源白名单仍由 Skill service 执行。容器只挂载本次请求的临时目录，不挂载应用文件、其他 Workspace 或共享 Skill，不注入应用凭据和用户环境变量。来源包中的脚本不会在获取时执行。
+
+获取容器使用独立 bridge 网络，最长执行 300 秒，沿用非 root、只读根文件系统和资源上限。runner 在正常返回前销毁容器。调用方取消时等待当前 HTTP 调用结束；传输失败或 runner 崩溃时，遗留容器由六分钟期限回收。获取容器没有业务 Run，worker 按请求期限识别它，不按“Run 不存在”提前删除。常规聊天容器继续使用部署的网络配置。
+
+升级已有部署时，重新构建或更新包含 `skills@1.7.4` 的沙盒镜像。生产部署同时更新 `SANDBOX_CONTAINER_IMAGE_DIGEST`，使 runner 的镜像校验指向新版本。
 
 ## 挂载与镜像
 
@@ -66,7 +74,7 @@ runner 直接运行在宿主机（不在 Compose 内）时，需要把 `SANDBOX_
 
 runner 从自身容器的 `/sandbox-data`、`/sandbox-skill-projections` 挂载反查 Docker daemon 视角的宿主路径；API/worker 不传宿主路径，模型也不能选择挂载。Workdir 与个人 Skill 目录逐段以 `O_NOFOLLOW` 打开，拒绝 `..`、符号链接、非目录和越界。Skill 投影不存在时跳过该挂载，不创建空宿主目录。
 
-容器固定以 `SANDBOX_CONTAINER_UID:GID`（默认 1000:1000）运行；宿主 Workspace 和 Skill 投影必须允许该身份读写/读取。镜像由 [docker/sandbox.Dockerfile](https://github.com/xerrors/Yuxi/blob/main/docker/sandbox.Dockerfile) 构建，包含 Node 24、npm/npx、bash、python3、pip、uv、git、curl、jq、ripgrep、unzip 和常用 Python 库。镜像不包含 sudo，且 root 文件系统只读。
+容器固定以 `SANDBOX_CONTAINER_UID:GID`（默认 1000:1000）运行；宿主 Workspace 和 Skill 投影必须允许该身份读写/读取。镜像由 [docker/sandbox.Dockerfile](https://github.com/xerrors/Yuxi/blob/main/docker/sandbox.Dockerfile) 构建，包含 Node 24、npm/npx、固定版本 Skills CLI、bash、python3、pip、uv、git、curl、jq、ripgrep、unzip 和常用 Python 库。镜像不包含 sudo，且 root 文件系统只读。
 
 ## 资源与网络
 
@@ -83,7 +91,7 @@ runner 从自身容器的 `/sandbox-data`、`/sandbox-skill-projections` 挂载�
 | `SANDBOX_CONTAINER_MAX_EXECS` | 8 |
 | `SANDBOX_CONTAINER_MAX_LIFETIME_SECONDS` | 7200 |
 
-容器使用 `--network none`、非 root、`cap-drop ALL`、`no-new-privileges`、只读根、独立 PID/IPC/network namespace，不挂载宿主 PID 或 Docker socket。超过预算的输出被截断；内存、pids 超限由 cgroup 显式失败，CPU 超限由 cgroup throttling 限制。设置 `SANDBOX_CONTAINER_NETWORK=bridge` 才能联网，但这会扩大 SSRF 与数据外传面，只应在受控部署中启用。
+聊天 Run 容器默认使用 `--network none`，并以非 root、`cap-drop ALL`、`no-new-privileges`、只读根和独立 PID/IPC/network namespace 运行。超过预算的输出被截断；内存、pids 超限由 cgroup 显式失败，CPU 超限由 cgroup throttling 限制。设置 `SANDBOX_CONTAINER_NETWORK=bridge` 可给聊天 Run 容器联网，仅在受控部署中启用。
 
 每条命令的包装父进程保留执行身份与独立进程组，直接负责请求期限。正常结束或超时时，包装进程在退出前停止同组后台进程并确认收尾，保留原退出码或返回 124；Docker 取消请求不可用也不延长普通命令期限。子命令使用 `exec env -i` 清空环境后，收尾仍按进程组执行。主动取消先固定目标进程组，发送 TERM，必要时发送 KILL，并确认没有活进程；同 Run 的其他命令使用独立进程组。
 
@@ -101,7 +109,7 @@ Shell 命名空间包含当前 Run 的 Workdir、当前用户个人 Skill 目录
 - `--network none` 下，需要联网的 Skill（如图片生成、在线安装依赖）会失败。
 - 设置页的“重建环境”和磁盘用量不适用；状态卡显示任务级临时环境。
 - 环境变量仍会在 Run 内注入，但设置页的“验证配置”没有活动 Run，会显式失败。
-- 对话中的个人安装可执行 `npx -y skills add <source> -g -y`，联网安装需要 `bridge`；管理页远程安装（个人或共享）没有活动 Run，仍不可用。网页上传不依赖沙盒。
+- 对话中的个人安装可执行 `npx -y skills add <source> -g -y`，联网安装需要 `bridge`。管理页远程安装使用[独立获取容器](#远程-skill-获取)。网页上传直接进入草稿与确认流程。
 - 不提供多镜像、模型自建沙盒、持久 Home 或多租户强隔离。
 
 ## 运维与验证

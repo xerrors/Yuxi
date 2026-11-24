@@ -38,6 +38,8 @@ RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
     && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
     && node --version && npm --version
 
+RUN npm install --global skills@1.7.4 && npm cache clean --force
+
 RUN pip install --no-cache-dir \
         beautifulsoup4 \
         httpx \
