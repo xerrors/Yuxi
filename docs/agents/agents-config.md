@@ -97,7 +97,7 @@ metadata 可以定义展示名称、说明、控件类型、选项和角色权�
 
 插件由开发者随部署发布，配置页没有安装或创建入口。启用插件不创建 MCP 连接，不授予数据访问权限；连接仍在 MCP 页面管理。能力缺失时加载结果说明原因。设计与迁移取舍见[部署插件决定](../develop-guides/decisions/implemented/2026-11-17-agent-plugins.md)。
 
-只选择知识库时，表单会提示启用知识库插件。启用后提示消失。[浅色界面](./assets/knowledge-plugin-selection.png) · [深色界面](./assets/knowledge-plugin-selection-dark.png)
+只选择知识库时，表单会提示启用知识库插件。启用后提示消失。
 
 ## 定时运行
 

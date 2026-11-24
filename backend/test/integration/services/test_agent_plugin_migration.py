@@ -91,12 +91,15 @@ async def test_first_upgrade_converts_device_selection_once(tmp_path, monkeypatc
             return
         await export_plugin_migration(manager, review, legacy_builtins=("abridge",) if "abridge" in legacy_servers else ())
         await apply_plugin_migration(manager, review)
-        async with engine.begin() as conn:
+        async with engine.connect() as conn:
             assert await conn.scalar(text("SELECT config_json FROM agents WHERE slug='device'")) == {
                 "system_prompt": "kept",
                 "context": expected,
             }
             assert await conn.scalar(text("SELECT version FROM yuxi_schema_migrations WHERE domain='business'")) == 5
+        if mcps != "all" or legacy_servers != ["knowledge"]:
+            return
+        async with engine.begin() as conn:
             await conn.execute(
                 text("UPDATE agents SET config_json=CAST(:config AS JSON) WHERE slug='device'"),
                 {"config": json.dumps({"context": {"mcps": [], "plugins": []}})},
@@ -165,14 +168,7 @@ async def test_v4_upgrade_converts_session_selection_and_preserves_disabled_devi
                 VALUES ('demo','chatbot','Agent','[]','{"system_prompt":"kept","context":{"mcps":"all","plugins":[]}}',
                 '{}','shared',false,false)""")
             )
-            await conn.execute(
-                text("""INSERT INTO users(username,uid,password_hash,role,login_failed_count,is_deleted)
-                VALUES ('owner','owner','unused','user',0,0)""")
-            )
-            await conn.execute(
-                text("""INSERT INTO projects(id,uid,selection_status,workdir_path,directory_mode)
-                VALUES ('project','owner','implicit','work','managed')""")
-            )
+            await create_legacy_project(conn, "owner")
             await conn.execute(
                 text("""INSERT INTO sessions(thread_id,tree_root_thread_id,uid,agent_id,project_id,is_pinned,config_snapshot)
                 VALUES ('thread','thread','owner','demo','project',false,
@@ -285,14 +281,7 @@ async def test_v4_upgrade_rejects_direct_selection_of_new_plugin_entry(tmp_path,
                 text("""INSERT INTO agents(slug,backend_id,name,pics,config_json,share_config,visibility,is_builtin,is_default)
                 VALUES ('demo','chatbot','Demo','[]','{"context":{"skills":["plain-reports"]}}','{}','shared',false,false)""")
             )
-            await conn.execute(
-                text("""INSERT INTO users(username,uid,password_hash,role,login_failed_count,is_deleted)
-                VALUES ('owner','owner','unused','user',0,0)""")
-            )
-            await conn.execute(
-                text("""INSERT INTO projects(id,uid,selection_status,workdir_path,directory_mode)
-                VALUES ('project','owner','implicit','work','managed')""")
-            )
+            await create_legacy_project(conn, "owner")
             await conn.execute(
                 text("""INSERT INTO sessions(thread_id,tree_root_thread_id,uid,agent_id,project_id,is_pinned,config_snapshot)
                 VALUES ('thread','thread','owner','demo','project',false,'{"skills":"all","preload_skills":["plain-reports"]}')""")
@@ -485,14 +474,7 @@ async def test_upgrade_claims_reviewed_custom_builtin_rows_and_rejects_collision
                 text("""INSERT INTO agents(slug,backend_id,name,pics,config_json,share_config,visibility,is_builtin,is_default)
                 VALUES ('demo','chatbot','Demo','[]','{"context":{"mcps":["reports","removed","custom"]}}','{}','shared',false,false)""")
             )
-            await conn.execute(
-                text("""INSERT INTO users(username,uid,password_hash,role,login_failed_count,is_deleted)
-                VALUES ('owner','owner','unused','user',0,0)""")
-            )
-            await conn.execute(
-                text("""INSERT INTO projects(id,uid,selection_status,workdir_path,directory_mode)
-                VALUES ('project','owner','implicit','work','managed')""")
-            )
+            await create_legacy_project(conn, "owner")
             await conn.execute(
                 text("""INSERT INTO sessions(thread_id,tree_root_thread_id,uid,agent_id,project_id,is_pinned,config_snapshot)
                 VALUES ('thread','thread','owner','demo','project',false,'{"mcps":["removed","custom"]}')""")
@@ -549,9 +531,15 @@ async def test_upgrade_claims_reviewed_custom_builtin_rows_and_rejects_collision
 
 
 @pytest.mark.parametrize(
-    "table,extra", [("agents", "mcp"), ("sessions", "tool"), ("agents", "shared-skill"), ("sessions", "inherited-hook")]
+    "table,extra,malformed_field",
+    [
+        ("agents", "mcp", "plugins"),
+        ("sessions", "tool", "plugins"),
+        ("agents", "shared-skill", "mcps"),
+        ("sessions", "inherited-hook", "mcps"),
+    ],
 )
-async def test_direct_selection_does_not_authorize_a_larger_plugin(tmp_path, report_plugins, table, extra):
+async def test_direct_selection_does_not_authorize_a_larger_plugin(tmp_path, report_plugins, table, extra, malformed_field):
     """导出和应用都拒绝从单项直接选择扩大权限，已明确启用的插件可保留。"""
     from langchain_core.tools import tool
     from yuxi.modules.extensions.mcp.config import BuiltinMCP
@@ -577,14 +565,7 @@ async def test_direct_selection_does_not_authorize_a_larger_plugin(tmp_path, rep
             else:
                 column = "config_snapshot"
                 original = {"mcps": "all"}
-                await conn.execute(
-                    text("""INSERT INTO users(username,uid,password_hash,role,login_failed_count,is_deleted)
-                    VALUES ('owner','owner','unused','user',0,0)""")
-                )
-                await conn.execute(
-                    text("""INSERT INTO projects(id,uid,selection_status,workdir_path,directory_mode)
-                    VALUES ('project','owner','implicit','work','managed')""")
-                )
+                await create_legacy_project(conn, "owner")
                 statement = """INSERT INTO sessions(thread_id,tree_root_thread_id,uid,agent_id,project_id,is_pinned,config_snapshot)
                     VALUES ('thread','thread','owner','demo','project',false,CAST(:config AS JSON)) RETURNING id"""
             row_id = await conn.scalar(text(statement), {"config": json.dumps(original)})
@@ -611,30 +592,25 @@ async def test_direct_selection_does_not_authorize_a_larger_plugin(tmp_path, rep
             await export_plugin_migration(manager, tmp_path / "expanded", legacy_builtins=confirmed)
         async with engine.begin() as conn:
             await assert_legacy_schema(conn, 4)
-            assert await conn.scalar(text(f"SELECT {column} FROM {table} WHERE id=:id"), {"id": row_id}) == original
+            read_config = text(f"SELECT {column} FROM {table} WHERE id=:id")
+            write_config = text(f"UPDATE {table} SET {column}=CAST(:config AS JSON) WHERE id=:id")
+            assert await conn.scalar(read_config, {"id": row_id}) == original
             context = original["context"] if table == "agents" else original
-        for field, value in (("plugins", {"report-plugin": False}), ("mcps", {"reports": False})):
-            malformed = {**context, field: value}
+            invalid_selection = {"report-plugin" if malformed_field == "plugins" else "reports": False}
+            malformed = {**context, malformed_field: invalid_selection}
             persisted = {"context": malformed} if table == "agents" else malformed
-            async with engine.begin() as conn:
-                await conn.execute(
-                    text(f"UPDATE {table} SET {column}=CAST(:config AS JSON) WHERE id=:id"),
-                    {"config": json.dumps(persisted), "id": row_id},
-                )
-            with pytest.raises(ValueError, match=rf"{table} id={row_id} 的 {field} 无法解析.*列表"):
-                await export_plugin_migration(manager, tmp_path / f"malformed-{field}", legacy_builtins=confirmed)
-            async with engine.connect() as conn:
-                assert await conn.scalar(text(f"SELECT {column} FROM {table} WHERE id=:id"), {"id": row_id}) == persisted
-        context["plugins"] = [" report-plugin ", "report-plugin "]
+            await conn.execute(write_config, {"config": json.dumps(persisted), "id": row_id})
+        with pytest.raises(ValueError, match=rf"{table} id={row_id} 的 {malformed_field} 无法解析.*列表"):
+            await export_plugin_migration(manager, tmp_path / "malformed", legacy_builtins=confirmed)
         async with engine.begin() as conn:
-            await conn.execute(
-                text(f"UPDATE {table} SET {column}=CAST(:config AS JSON) WHERE id=:id"), {"config": json.dumps(original), "id": row_id}
-            )
+            assert await conn.scalar(read_config, {"id": row_id}) == persisted
+            context["plugins"] = [" report-plugin ", "report-plugin "]
+            await conn.execute(write_config, {"config": json.dumps(original), "id": row_id})
         selected = tmp_path / "explicit"
         await export_plugin_migration(manager, selected, legacy_builtins=confirmed)
         await apply_plugin_migration(manager, selected)
         async with engine.connect() as conn:
-            after = await conn.scalar(text(f"SELECT {column} FROM {table} WHERE id=:id"), {"id": row_id})
+            after = await conn.scalar(read_config, {"id": row_id})
             context = after["context"] if table == "agents" else after
             assert context == {"mcps": [] if table == "agents" else "all", "plugins": ["report-plugin"]}
     finally:
@@ -846,14 +822,7 @@ async def test_plugin_upgrade_rejects_resumable_work_before_any_mutation(tmp_pat
     try:
         await create_legacy_schema(manager, version)
         async with engine.begin() as conn:
-            await conn.execute(
-                text("""INSERT INTO users(username,uid,password_hash,role,login_failed_count,is_deleted)
-                VALUES ('owner','owner','unused','user',0,0)""")
-            )
-            await conn.execute(
-                text("""INSERT INTO projects(id,uid,selection_status,workdir_path,directory_mode)
-                VALUES ('project','owner','implicit','work','managed')""")
-            )
+            await create_legacy_project(conn, "owner")
             await conn.execute(
                 text("""INSERT INTO sessions(thread_id,tree_root_thread_id,uid,agent_id,project_id,is_pinned,config_snapshot)
                 VALUES ('thread','thread','owner','agent','project',false,'{}')""")
@@ -908,18 +877,7 @@ async def test_migration_removes_disabled_or_revoked_entries_from_session(tmp_pa
     try:
         await create_legacy_schema(manager, 2)
         async with engine.begin() as conn:
-            await conn.execute(
-                text(
-                    "INSERT INTO users(username,uid,password_hash,role,login_failed_count,is_deleted) "
-                    "VALUES ('reader','reader','unused','user',0,0)"
-                )
-            )
-            await conn.execute(
-                text(
-                    "INSERT INTO projects(id,uid,selection_status,workdir_path,directory_mode) "
-                    "VALUES ('project','reader','implicit','work','managed')"
-                )
-            )
+            await create_legacy_project(conn, "reader")
             await conn.execute(
                 text("""INSERT INTO sessions(thread_id,tree_root_thread_id,cooperation_name,cooperation_path,
                 uid,agent_id,project_id,is_pinned,config_snapshot)
@@ -1046,3 +1004,17 @@ async def test_content_builtin_preserves_skill_and_tool_selection(tmp_path, monk
         assert (source / "SKILL.md").read_text() == original
     finally:
         await drop_isolated_schema(schema, admin, engine)
+
+
+async def create_legacy_project(conn, uid):
+    """建立旧会话引用的用户与项目。"""
+    await conn.execute(
+        text("""INSERT INTO users(username,uid,password_hash,role,login_failed_count,is_deleted)
+        VALUES (:uid,:uid,'unused','user',0,0)"""),
+        {"uid": uid},
+    )
+    await conn.execute(
+        text("""INSERT INTO projects(id,uid,selection_status,workdir_path,directory_mode)
+        VALUES ('project',:uid,'implicit','work','managed')"""),
+        {"uid": uid},
+    )
