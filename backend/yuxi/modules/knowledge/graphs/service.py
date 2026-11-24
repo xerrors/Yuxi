@@ -37,7 +37,7 @@ from yuxi.modules.knowledge.repositories.chunks import KnowledgeChunkRepository
 from yuxi.modules.knowledge.repositories.document_resets import DocumentResetRepository
 from yuxi.modules.knowledge.repositories.graphs import KnowledgeGraphRepository
 from yuxi.modules.knowledge.repositories.projections import knowledge_projection_lock
-from yuxi.modules.knowledge.storage.offload import run_milvus_query_io, run_neo4j_query_io
+from yuxi.modules.knowledge.storage.offload import run_graph_rank_io, run_milvus_query_io, run_neo4j_query_io
 from yuxi.shared.datetime import utc_isoformat
 from yuxi.shared.errors import ResourceNotFoundError
 
@@ -830,18 +830,24 @@ class KnowledgeGraphService:
             return {"nodes": [], "edges": []}
         seed_entity_ids = list(dict.fromkeys(entity_ids))
         label = safe_neo4j_label(kb_id)
+        # 先按路径预算取样，再在库内只保留 max_nodes 个节点，种子优先；边只取保留节点之间的关系。
         cypher = f"""
         MATCH (seed:Entity:MilvusKB:`{label}`)
         WHERE seed.entity_id IN $entity_ids
         MATCH p = (seed)-[*1..2]-(n:MilvusKB:`{label}`)
         WITH p LIMIT $path_limit
-        WITH collect(p) AS paths
-        UNWIND paths AS node_path
-        UNWIND nodes(node_path) AS node
-        WITH paths, collect(DISTINCT node) AS graph_nodes
-        UNWIND paths AS rel_path
-        UNWIND relationships(rel_path) AS rel
-        RETURN graph_nodes AS nodes, collect(DISTINCT rel) AS edges
+        UNWIND nodes(p) AS node
+        WITH DISTINCT node
+        WITH node, CASE WHEN node.entity_id IN $entity_ids THEN 0 ELSE 1 END AS seed_rank
+        ORDER BY seed_rank
+        LIMIT $max_nodes
+        WITH collect(node) AS graph_nodes
+        UNWIND graph_nodes AS node
+        OPTIONAL MATCH (node)-[rel]-(other)
+        WHERE other IN graph_nodes
+        WITH graph_nodes, collect(DISTINCT rel) AS rels
+        WITH graph_nodes, [item IN rels WHERE item IS NOT NULL] AS edges
+        RETURN graph_nodes AS nodes, edges
         """
         result = await run_neo4j_query_io(
             self._query_seed_subgraph_sync,
@@ -860,10 +866,12 @@ class KnowledgeGraphService:
         max_nodes: int,
     ) -> dict[str, Any]:
         with self.driver.session() as session:
+            node_limit = max(max_nodes, 1)
             record = session.run(
                 cypher,
                 entity_ids=entity_ids,
-                path_limit=max(max_nodes, 1) * 4,
+                path_limit=node_limit * 4,
+                max_nodes=node_limit,
             ).single()
             if not record:
                 return {"nodes": [], "edges": []}
@@ -885,7 +893,7 @@ class KnowledgeGraphService:
             entity_ids=list(seed_weights.keys()),
             max_nodes=max_nodes,
         )
-        return self.rank_chunks_by_ppr(subgraph, seed_weights, top_k=top_k, damping=damping)
+        return await run_graph_rank_io(self.rank_chunks_by_ppr, subgraph, seed_weights, top_k=top_k, damping=damping)
 
     @staticmethod
     def rank_chunks_by_ppr(

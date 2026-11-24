@@ -225,6 +225,79 @@ def test_drop_graph_collections_propagates_storage_failure(monkeypatch, operatio
     assert caught.value is error
 
 
+@pytest.mark.asyncio
+async def test_seed_subgraph_limits_nodes_in_cypher_before_returning(monkeypatch):
+    """种子子图在 Neo4j 内截断节点，查询参数带上节点上限。"""
+    captured = {}
+
+    async def fake_io(func, kb_id, cypher, entity_ids, max_nodes):
+        del func, kb_id
+        captured["cypher"] = cypher
+        captured["entity_ids"] = entity_ids
+        captured["max_nodes"] = max_nodes
+        return {"nodes": [], "edges": []}
+
+    monkeypatch.setattr("yuxi.modules.knowledge.graphs.service.run_neo4j_query_io", fake_io)
+    service = KnowledgeGraphService()
+
+    async def passthrough(kb_id, result):
+        del kb_id
+        return result
+
+    service._filter_visible_subgraph = passthrough
+    await service.query_seed_subgraph("kb_test", entity_ids=["seed", "seed"], max_nodes=10)
+
+    assert "LIMIT $max_nodes" in captured["cypher"]
+    assert "collect(p)" not in captured["cypher"]
+    assert "AND rel IS NOT NULL" not in captured["cypher"]
+    assert "item IS NOT NULL" in captured["cypher"]
+    assert "ORDER BY seed_rank" in captured["cypher"]
+    assert captured["entity_ids"] == ["seed"]
+    assert captured["max_nodes"] == 10
+
+    query_result = MagicMock()
+    query_result.single.return_value = {"nodes": [], "edges": []}
+    session = MagicMock()
+    session.__enter__.return_value = session
+    session.run.return_value = query_result
+    driver = MagicMock()
+    driver.session.return_value = session
+    sync_service = KnowledgeGraphService(neo4j_connection=SimpleNamespace(driver=driver))
+    sync_service._query_seed_subgraph_sync("kb_test", captured["cypher"], ["seed"], 10)
+    _, query_params = session.run.call_args
+    assert query_params["max_nodes"] == 10
+    assert query_params["path_limit"] == 40
+
+
+@pytest.mark.asyncio
+async def test_ppr_ranking_runs_outside_event_loop(monkeypatch):
+    """PageRank 在线程池执行，不占用正在处理请求的事件循环。"""
+    import threading
+
+    loop_thread = threading.get_ident()
+    seen = []
+
+    def rank(subgraph, seed_weights, *, top_k, damping):
+        del subgraph, seed_weights, top_k, damping
+        seen.append(threading.get_ident())
+        return [("chunk", 1.0)]
+
+    monkeypatch.setattr(KnowledgeGraphService, "rank_chunks_by_ppr", staticmethod(rank))
+    service = KnowledgeGraphService()
+    service.query_seed_subgraph = MagicMock()
+
+    async def subgraph(*args, **kwargs):
+        del args, kwargs
+        return {"nodes": [], "edges": []}
+
+    service.query_seed_subgraph = subgraph
+    result = await service.query_and_rank_chunks_by_ppr("kb", {"seed": 1.0}, max_nodes=10, top_k=1, damping=0.85)
+
+    assert result == [("chunk", 1.0)]
+    assert seen == [seen[0]]
+    assert seen[0] != loop_thread
+
+
 def test_graph_ppr_ranks_chunk_nodes_from_seed_entities():
     """查询图中的实体种子能够按 PPR 找到关联 chunk。"""
     subgraph = {

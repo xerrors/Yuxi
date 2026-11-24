@@ -33,3 +33,5 @@ class BoundedOffload:
 
 run_milvus_query_io = BoundedOffload(8)
 run_neo4j_query_io = BoundedOffload(8)
+# PageRank 是 CPU 计算，不占用 Neo4j 查询槽，避免一次大图排序堵住图读取。
+run_graph_rank_io = BoundedOffload(2)
