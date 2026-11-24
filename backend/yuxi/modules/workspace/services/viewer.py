@@ -12,7 +12,7 @@ from yuxi.infrastructure.filesystem import await_io
 from yuxi.infrastructure.office_conversion import OfficeConversionError
 from yuxi.modules.workspace.errors import FileTransferLimitError
 from yuxi.modules.workspace.preview import preview_workspace_file
-from yuxi.modules.workspace.runtime_paths import is_runtime_path, runtime_path_for_workdir_scope
+from yuxi.modules.workspace.runtime_paths import is_conversation_archive_path, is_runtime_path, runtime_path_for_workdir_scope
 from yuxi.modules.workspace.services.bindings import AuthorizedWorkdir, resolve_authorized_workdir
 from yuxi.modules.workspace.services.file_entries import file_entry, sort_file_entries
 from yuxi.modules.workspace.workdir import Workdir
@@ -102,12 +102,17 @@ async def download_viewer_file(*, thread_id: str, path: str, current_user, db) -
 
 
 async def delete_viewer_file(*, thread_id: str, path: str, current_user, db) -> dict:
-    """实时删除 Workdir 内文件或目录。"""
+    """实时删除 Workdir 内文件或目录。会话压缩留档目录及其内容不可删除。"""
     access = await resolve_authorized_workdir(thread_id=thread_id, uid=str(current_user.uid), db=db)
     normalized = PurePosixPath(path).as_posix()
     _validate_viewer_path(access, normalized)
     if normalized == "/":
         raise InvalidOperationError("Project Workdir 根目录不允许删除")
+    if is_conversation_archive_path(normalized):
+        raise InvalidOperationError(
+            "该路径是会话压缩留档，删除后无法恢复本会话的历史摘要",
+            code="conversation_archive_protected",
+        )
     try:
         await asyncio.to_thread(access.workdir.delete, normalized)
     except FileNotFoundError as exc:
