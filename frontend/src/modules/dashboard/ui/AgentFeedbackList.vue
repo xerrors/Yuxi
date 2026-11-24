@@ -164,7 +164,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onDeactivated, onMounted, reactive, ref, watch } from 'vue'
 import { AlertCircle, ArrowUpRight, ChevronRight, Lightbulb, MessageSquare, RefreshCw, ThumbsDown, ThumbsUp } from '@lucide/vue'
-import { agentApi } from '@/apis'
 import { feedbackApi } from '@/apis/feedback_api'
 import { formatDateTime } from '@/shared/lib/time'
 import { resolveLangfuseTraceUrl } from '@/shared/lib/langfuse'
@@ -241,7 +240,7 @@ async function loadAgents() {
   agentsLoading.value = true
   agentsError.value = false
   try {
-    agents.value = (await agentApi.getAgents()).agents
+    agents.value = (await feedbackApi.listAgents()).agents
   } catch {
     agentsError.value = true
   } finally {

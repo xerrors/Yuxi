@@ -163,6 +163,18 @@ test('两个入口均打开后端的 Turn Trace，缺失 Trace 时关闭空窗�
   }
 })
 
+test('反馈筛选使用记录中的智能体，已删除名称仍可选择', async () => {
+  const panel = setupComponent('feedback', {
+    list: async () => ({ items: [], has_more: false, last_id: null }),
+    listAgents: async () => ({ agents: [{ agent_id: 'gone', name: '未登记智能体（gone）' }] }),
+  })
+  try {
+    await panel.form.loadAgents()
+    assert.deepEqual(panel.form.agentOptions.value.map((option) => option.value), ['', 'gone'])
+    assert.equal(panel.form.agentOptions.value[1].label, '未登记智能体（gone）')
+  } finally { panel.stop() }
+})
+
 test('反馈详情关闭后迟到的观测查询不继续跳转', async () => {
   let finish
   const panel = setupComponent('feedback', { getTurnLangfuse: () => new Promise((resolve) => { finish = resolve }) })

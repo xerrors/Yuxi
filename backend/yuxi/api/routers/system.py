@@ -14,11 +14,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi import get_version
 from yuxi.api.dependencies.auth import get_db, get_required_user, get_superadmin_user
-from yuxi.api.routers.agents.feedback import FeedbackPage
+from yuxi.api.routers.agents.feedback import FeedbackAgentOptions, FeedbackPage
 from yuxi.bootstrap.capabilities import knowledge_enabled
 from yuxi.infrastructure.observability.logging import LOG_FILE, logger
 from yuxi.modules.agents.scope import ActorScope
-from yuxi.modules.agents.services.feedback import list_feedback
+from yuxi.modules.agents.services.feedback import list_feedback, list_feedback_agent_options
 from yuxi.modules.identity.models import User
 from yuxi.modules.system.options import system_options
 from yuxi.modules.system.readiness import get_readiness
@@ -107,6 +107,22 @@ async def get_agent_feedback(
         rating=rating,
         after=after,
         limit=limit,
+    )
+
+
+@system.get("/agent-feedback/agents", response_model=FeedbackAgentOptions)
+async def get_agent_feedback_agents(
+    request: Request,
+    user: User = Depends(get_superadmin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """筛选选项只包含反馈记录里出现过的智能体，含已删除智能体。"""
+    if getattr(request.state, "api_key", None) is not None:
+        raise HTTPException(status_code=403, detail="API Key 无权查询集中反馈")
+    return await list_feedback_agent_options(
+        db=db,
+        scope=ActorScope(uid=user.uid, app_id=None, is_superadmin=True),
+        platform=True,
     )
 
 

@@ -75,6 +75,13 @@ async def mark_run_for_improvement(
     return result
 
 
+async def list_feedback_agent_options(*, db: AsyncSession, scope: ActorScope, platform: bool = False) -> dict:
+    """筛选选项来自反馈记录里的智能体，不来自当前仍登记的智能体目录。"""
+    if platform and (not scope.is_superadmin or scope.api_key_id is not None or scope.app_id is not None):
+        raise PermissionDeniedError("仅平台管理员可查询集中反馈")
+    return {"agents": await AgentFeedbackRepository(db).list_agent_options(scope=scope, platform=platform)}
+
+
 async def list_feedback(*, db: AsyncSession, scope: ActorScope, thread_id: str | None = None, platform: bool = False, **filters) -> dict:
     """读取自身会话或 JWT 平台管理员的有界记录。"""
     if platform:
