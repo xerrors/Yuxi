@@ -12,11 +12,11 @@ const BASE_URL = '/api/system/mcp-servers'
 // =============================================================================
 
 /**
- * 获取所有 MCP 服务器配置
+ * 获取 MCP 服务器配置，可限定为允许直接选择的连接器。
  * @returns {Promise} - 服务器列表
  */
-export const getMcpServers = async () => {
-  return apiGet(BASE_URL)
+export const getMcpServers = async ({ directOnly = false } = {}) => {
+  return apiGet(directOnly ? `${BASE_URL}?direct_only=true` : BASE_URL)
 }
 
 /**

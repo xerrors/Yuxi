@@ -69,7 +69,7 @@ def test_abridge_registered_with_packaged_entry_and_shared_widgets():
     assert get_plugin("abridge") is AbridgePlugin
     assert AbridgePlugin.entry_skill == "abridge"
     assert AbridgePlugin.skills == ("abridge", "chat-widgets")
-    assert AbridgePlugin.mcps == ("abridge",)
+    assert AbridgePlugin.mcp_slugs() == ("abridge",)
     assert any((directory / "abridge/SKILL.md").is_file() for directory in get_plugin_skill_directories())
 
 

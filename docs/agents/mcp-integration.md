@@ -170,18 +170,16 @@ OAuth 元数据只能使用超管配置的 MCP 来源与授权服务器来源，
 
 业务 Schema v2 包含 `api_key_header`。此升级入口只适用于已包含个人 OAuth 表的 0.8 business v1 数据库，不提供从 0.7.x 升级的能力。升级前停止新任务提交，等待活动任务结束，并保管数据库备份与部署加密密钥。
 
-生产环境先构建或拉取目标版本镜像，确认 PostgreSQL 健康且 `storage-init` 已成功。停止 API/worker 后，使用目标镜像的一次性进程执行迁移，再运行应用初始化并启动服务；迁移不依赖能够启动的新版本 API：
+生产环境先构建或拉取目标版本镜像，确认 PostgreSQL 健康且 `storage-init` 已成功。停止 API 和 worker 后，使用目标镜像的一次性进程将业务库升级至 v2：
 
 ```bash
 docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container stop api worker
 docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container run --rm --no-deps app-init uv run --no-sync --no-dev python -m yuxi.migrations.mcp_personal_credentials
-docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container up --no-deps --force-recreate --exit-code-from app-init app-init
-docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container up -d --no-build
 ```
 
-每条命令成功后再执行下一条。开发环境可将上述命令的 `docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container` 替换为 `docker compose`。升级后按[部署验证](../advanced/deployment.md#_4-验证部署)检查就绪状态，并确认已有 MCP 连接和个人凭证可用。
+保持 API 和 worker 停止，继续完成[插件升级与部署初始化](./skills-management.md#从运行依赖升级)。开发环境可将上述命令的 `docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container` 替换为 `docker compose`。升级后按[部署验证](../advanced/deployment.md#_4-验证部署)检查就绪状态，并确认已有 MCP 连接和个人凭证可用。
 
-升级只增加可空字段并登记业务 Schema v2，保留已有服务、共享请求头和个人 OAuth 凭证。空的新字段不改变旧 OAuth 配置修订。新库由 app-init 直接建立 v2；运行进程只检查版本，不自动修改结构。回退旧进程版本需显式处理 Schema 版本兼容。
+升级只增加可空字段并登记业务 Schema v2，保留已有服务、共享请求头和个人 OAuth 凭证。空的新字段不改变旧 OAuth 配置修订。新库由 app-init 直接建立当前版本；运行进程只检查版本，不自动修改结构。回退旧进程版本需显式处理 Schema 版本兼容。
 
 ## 内置远程 MCP
 
@@ -189,32 +187,15 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml --profile contain
 
 内置 `knowledge` 指向本平台 `/api/mcp`，默认启用，连接配置由代码管理。它使用平台委托鉴权（`auth_mode=delegation`，见[授权与运行身份](../mechanisms/mcp.md)）。工具调用按当前用户与会话选择签发短期委托，无需填写共享凭据。管理端工具发现和连接测试使用当前查看者身份。关闭 `YUXI_KNOWLEDGE_ENABLED` 后，内置身份和管理员开关保留，但服务不进入可用能力集合；重新开启仍按原开关提供工具。范围与权限见[知识库机制](../mechanisms/knowledge-base.md#agent-如何看到知识库)。
 
-开发者在 [`builtin.py`](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/extensions/mcp/builtin.py) 的 `BUILTIN_MCP_MANIFEST` 中维护清单：
+新业务场景的专属连接随插件声明，开发方式见[开发插件](./plugin-development.md)。通用内置连接由 MCP 模块维护，DeepWiki 是一个实例。
 
-```python
-BUILTIN_MCP_MANIFEST = {
-    "mcpServers": {
-        "deepwiki-official": {
-            "type": "http",
-            "url": "https://mcp.deepwiki.com/mcp",
-            "extra_data": {
-                "name": "DeepWiki",
-                "description": "查询公开 GitHub 仓库的文档、架构与代码",
-            },
-        },
-    },
-}
-```
-
-清单连接字段支持 `type`（`http`、`sse`）或 `transport`（`streamable_http`、`sse`）、HTTP URL、headers、timeout 和 sse_read_timeout。同时声明 type 与 transport 时必须一致。展示字段 name、description 放在 `extra_data`，名称缺省时使用清单键。管理表单使用相同清单结构解析，再转换为上面的平铺管理接口字段；`extra_data` 不发送给远端 MCP 客户端。
-
-`app-init` 部署任务把代码拥有的内置连接定义同步到 PostgreSQL，该阶段只处理本地定义；远端建连和工具发现由测试或运行时加载触发。运行时按对应鉴权方式装配连接，从数据库读取启停与禁用工具状态。内置 `knowledge` 默认启用且同时受部署开关限制，其他新内置 MCP 默认停用，管理员启用后才参与运行；页面不能修改其连接配置。同步保留管理员的启停与禁用工具列表，失败会阻止部署初始化完成。
+`app-init` 部署任务把代码拥有的内置连接定义同步到 PostgreSQL，该阶段只处理本地定义；远端建连和工具发现由测试或运行时加载触发。运行时按对应鉴权方式装配连接，从数据库读取启停与禁用工具状态。专属 `knowledge` 和 `abridge` 连接默认启用，可用性由对应的部署配置决定。独立连接 DeepWiki 默认停用，管理员启用后才参与运行；页面不能修改其连接配置。同步保留管理员的启停与禁用工具列表，失败会阻止部署初始化完成。
 
 ## 常用管理接口
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
-| `GET` | `/api/system/mcp-servers` | 查看服务器；普通用户只得到脱敏基础信息 |
+| `GET` | `/api/system/mcp-servers` | 查看连接目录。聊天提及时使用 `?direct_only=true` 获取可直接选择的连接。普通用户只得到脱敏信息 |
 | `POST` / `PUT` | `/api/system/mcp-servers`、`/{slug}` | 添加或修改远程 MCP |
 | `PUT` | `/api/system/mcp-servers/{slug}/status` | 启用或停用服务器（对应页面上的添加/移除状态） |
 | `PUT` | `/api/system/mcp-servers/{slug}/connection` | 用户保存或替换自己的 Token / API Key |
@@ -224,6 +205,8 @@ BUILTIN_MCP_MANIFEST = {
 | `PUT` | `/api/system/mcp-servers/{slug}/tools/{tool_name}/toggle` | 启用或禁用单个工具 |
 
 接口字段和错误响应以实例 Swagger 为准。
+
+会话只探测当前选择的连接。专属连接的可用性检查遇到暂时的网络故障时，连接目录会将它显示为不可用，已加载插件的会话仍可使用其他连接继续工作。可用性恢复后，下一轮会重新检查该连接。
 
 管理端工具列表和连接测试都会按当前配置建连，停用服务也能看到目录，查看不会改启停或工具开关。建连或工具发现失败时，管理检查、Agent 配置工具装配与 插件按需加载均明确失败，运行不会把故障当作成功的空工具列表继续执行。服务器正常返回零个工具仍是合法结果；未启用服务器不参与运行加载。运行日志包含组件、服务器标识、错误类型与不可用状态。
 

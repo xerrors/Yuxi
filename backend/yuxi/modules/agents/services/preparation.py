@@ -147,7 +147,7 @@ def build_plugin_manifest_entries(config: dict) -> list[dict]:
             "entry_skill": plugin.entry_skill,
             "skills": list(plugin.skills),
             "owned_tools": [tool.name for tool in getattr(plugin, "tools", [])],
-            "mcps": list(plugin.mcps),
+            "mcps": list(plugin.mcp_slugs()),
         }
         entries.append({"id": plugin.plugin_id, "declaration_hash": compute_config_digest(declaration)})
     return entries

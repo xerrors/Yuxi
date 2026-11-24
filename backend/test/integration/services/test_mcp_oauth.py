@@ -776,7 +776,14 @@ async def test_runtime_omits_missing_and_disabled_services(scenario):
 @pytest.mark.parametrize("grouped", [False, True])
 async def test_runtime_reports_unknown_loading_failure_without_exposing_tools(scenario, monkeypatch, grouped):
     """发现故障不暴露工具，临时故障可重试，明确失效的凭据保留安全提示。"""
+    from types import SimpleNamespace
+
+    from langchain.agents.middleware.types import ModelRequest
+
+    from yuxi.modules.agents.runtime.context import BaseContext
+    from yuxi.modules.agents.runtime.middlewares.plugins import PluginLoaderMiddleware
     from yuxi.modules.extensions.mcp import service
+    from yuxi.modules.extensions.tools.runtime import resolve_configured_runtime_tools
 
     assert (await finish(scenario, await begin(scenario))).status_code == 200
     failure = RuntimeError("PRIVATE_PROTOCOL_FAILURE")
@@ -789,19 +796,28 @@ async def test_runtime_reports_unknown_loading_failure_without_exposing_tools(sc
 
     original = service.personal_mcp_tools
     monkeypatch.setattr(service, "personal_mcp_tools", fail)
-    unavailable, run_tools = {}, {}
-    assert await service.resolve_runtime_mcp_tools(["fixture"], uid="alice", run_tools=run_tools, unavailable=unavailable) == {}
+    runtime = BaseContext(uid="alice", tools=[], mcps=["fixture"])
+    registered = await resolve_configured_runtime_tools(runtime)
+    assert "my_attendance" not in {tool.name for tool in registered}
     expected = "服务连接或调用失败，请检查连接器后重试"
     if grouped:
         expected = "授权凭据不可用或已失效，请在扩展页面重新连接；" + expected
-    assert unavailable == ({"fixture": expected} if grouped else {})
-    assert run_tools == {}
+    assert runtime.mcp_unavailable == ({"fixture": expected} if grouped else {})
+    assert runtime.mcp_tools == {}
     assert scenario["current"].get("tool_call_count", 0) == 0
     if not grouped:
         monkeypatch.setattr(service, "personal_mcp_tools", original)
-        recovered = await service.resolve_runtime_mcp_tools(["fixture"], uid="alice", run_tools=run_tools, unavailable=unavailable)
-        assert [tool.name for tool in recovered["fixture"]] == ["my_attendance"]
-        assert unavailable == {}
+        request = ModelRequest(model=SimpleNamespace(), messages=[], tools=registered, state={}, runtime=SimpleNamespace(context=runtime))
+
+        async def model(current):
+            """从每轮实际传给模型的工具目录中取得已恢复连接。"""
+            return {tool.name: tool for tool in current.tools}
+
+        middleware = PluginLoaderMiddleware()
+        for _ in range(2):
+            restored = await middleware.awrap_model_call(request, model)
+            assert "alice" in str(await restored["my_attendance"].ainvoke({}))
+        assert runtime.mcp_unavailable == {}
 
 
 async def test_runtime_invalid_refresh_excludes_service_and_preserves_reconnect_state(scenario):

@@ -8,13 +8,13 @@ import httpx
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
+from yuxi.bootstrap.capabilities import knowledge_enabled
 from yuxi.infrastructure.observability.logging import logger
-from yuxi.modules.extensions.mcp.builtin import KNOWLEDGE_MCP_SLUG, builtin_mcp_available
+from yuxi.modules.extensions.mcp.config import MCPDelegationContextError
+from yuxi.modules.knowledge.mcp import KNOWLEDGE_MCP_URL
 from yuxi.modules.knowledge.mcp.auth import create_knowledge_token
 
 KNOWLEDGE_MCP_TIMEOUT_SECONDS = 120
-# Knowledge 是本平台自有服务，容器内地址固定，不经环境变量改写。
-KNOWLEDGE_MCP_URL = "http://api:5050/api/mcp"
 
 
 class KnowledgeMCPError(RuntimeError):
@@ -23,10 +23,6 @@ class KnowledgeMCPError(RuntimeError):
 
 class KnowledgeMCPUnavailable(RuntimeError):
     """连接、认证或服务故障使本次运行的知识能力不可用。"""
-
-
-class KnowledgeMCPRuntimeError(ValueError):
-    """运行上下文缺少可信身份或知识库范围。"""
 
 
 async def call_knowledge_mcp(
@@ -38,7 +34,7 @@ async def call_knowledge_mcp(
 ) -> Any:
     """握手并执行真实 MCP 工具，保持原有结构化结果形状。"""
     try:
-        if not builtin_mcp_available(KNOWLEDGE_MCP_SLUG):
+        if not knowledge_enabled():
             raise RuntimeError("知识库服务在当前部署不可用")
         async with (
             asyncio.timeout(KNOWLEDGE_MCP_TIMEOUT_SECONDS),
@@ -69,7 +65,7 @@ async def call_knowledge_mcp(
     except KnowledgeMCPError:
         raise
     except Exception as exc:
-        logger.bind(component="knowledge_mcp", server_slug=KNOWLEDGE_MCP_SLUG, error_type=type(exc).__name__, available=False).warning(
+        logger.bind(component="knowledge_mcp", server_slug="knowledge", error_type=type(exc).__name__, available=False).warning(
             "Knowledge MCP unavailable: error_type={}", type(exc).__name__
         )
         raise KnowledgeMCPUnavailable("知识库 MCP 不可用，请稍后重试") from exc
@@ -92,7 +88,7 @@ class KnowledgeMCPAuth(httpx.Auth):
 
     async def async_auth_flow(self, request):
         """委托凭据不进入模型参数、持久化工具结果或全局缓存。"""
-        if not builtin_mcp_available(KNOWLEDGE_MCP_SLUG):
+        if not knowledge_enabled():
             raise RuntimeError("知识库服务在当前部署不可用")
         if self.before_request is not None:
             await self.before_request(request)
@@ -100,20 +96,18 @@ class KnowledgeMCPAuth(httpx.Auth):
         yield request
 
 
-def knowledge_mcp_connection(server_slug: str, *, uid: str, context=None, management: bool = False, before_request=None) -> dict:
+def knowledge_mcp_connection(*, uid: str, context=None, management: bool = False, before_request=None) -> dict:
     """从可信上下文装配 SDK 认证；管理发现显式使用本人全部范围。"""
-    if server_slug != KNOWLEDGE_MCP_SLUG:
-        raise ValueError("未提供此内部 MCP 服务的认证模块")
-    if not uid or not builtin_mcp_available(server_slug):
+    if not uid or not knowledge_enabled():
         raise ValueError("知识库 MCP 用户或部署不可用")
     if management:
         selection = "all"
     else:
         if context is None or getattr(context, "uid", None) != uid:
-            raise KnowledgeMCPRuntimeError("知识库 MCP 缺少匹配的可信运行上下文")
+            raise MCPDelegationContextError("知识库 MCP 缺少匹配的可信运行上下文")
         selection = getattr(context, "knowledges", None)
         if selection is None:
-            raise KnowledgeMCPRuntimeError("知识库 MCP 缺少可信的运行选择范围")
+            raise MCPDelegationContextError("知识库 MCP 缺少可信的运行选择范围")
     return {"auth": KnowledgeMCPAuth(uid, selection, before_request), "httpx_client_factory": knowledge_http_client}
 
 

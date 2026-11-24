@@ -3,29 +3,34 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yuxi.modules.extensions.mcp.builtin import BUILTIN_MCP_SERVERS, supports_direct_mcp_selection
 from yuxi.modules.extensions.mcp.models import MCPServer
 
 
-async def get_mcp_server(db: AsyncSession, slug: str, *, lock: bool = False) -> MCPServer | None:
+async def get_mcp_server(db: AsyncSession, slug: str, *, lock: bool = False, published_only: bool = True) -> MCPServer | None:
     """按稳定标识回读配置，凭证发布与配置变更可持有同一服务锁。"""
     query = select(MCPServer).filter(MCPServer.slug == slug).execution_options(populate_existing=True)
+    if published_only:
+        query = query.where(_published())
     if lock:
         query = query.with_for_update()
     result = await db.execute(query)
     return result.scalar_one_or_none()
 
 
-async def get_all_mcp_servers(db: AsyncSession) -> list[MCPServer]:
-    """Get all server configurations."""
-    result = await db.execute(select(MCPServer))
+async def get_all_mcp_servers(db: AsyncSession, *, direct_only: bool = False) -> list[MCPServer]:
+    """读取已发布的服务配置，可限定为允许直接选择的连接器。"""
+    result = await db.execute(select(MCPServer).where(_published(direct_only=direct_only)))
     return list(result.scalars().all())
 
 
-async def list_enabled_mcp_servers(db: AsyncSession, *, names: list[str] | None = None) -> list[MCPServer]:
+async def list_enabled_mcp_servers(db: AsyncSession, *, names: list[str] | None = None, direct_only: bool = False) -> list[MCPServer]:
     """按服务开关和受支持传输读取配置目录。"""
     from yuxi.modules.extensions.mcp.runtime import SUPPORTED_TRANSPORTS
 
-    stmt = select(MCPServer).where(MCPServer.enabled == 1, MCPServer.transport.in_(SUPPORTED_TRANSPORTS))
+    stmt = select(MCPServer).where(
+        _published(direct_only=direct_only), MCPServer.enabled == 1, MCPServer.transport.in_(SUPPORTED_TRANSPORTS)
+    )
     if names is not None:
         stmt = stmt.where(MCPServer.slug.in_(names))
     return list((await db.scalars(stmt)).all())
@@ -119,7 +124,7 @@ async def personal_mcp_connections(db, server_ids, user_id):
 
 async def get_mcp_server_by_id(db, server_id, *, lock=False):
     """配置发布与动态注册共用服务器行，回读不采用旧 identity map。"""
-    query = select(MCPServer).where(MCPServer.id == server_id)
+    query = select(MCPServer).where(_published(), MCPServer.id == server_id)
     if lock:
         query = query.with_for_update()
     return await db.scalar(query.execution_options(populate_existing=True))
@@ -156,7 +161,7 @@ async def runtime_mcp_servers(db, slugs, user_id):
         await db.execute(
             select(MCPServer, MCPConnection)
             .outerjoin(MCPConnection, and_(MCPConnection.server_id == MCPServer.id, MCPConnection.user_id == user_id))
-            .where(MCPServer.slug.in_(slugs))
+            .where(_published(), MCPServer.slug.in_(slugs))
             .execution_options(populate_existing=True)
         )
     ).all()
@@ -170,7 +175,7 @@ async def runtime_mcp_policy(db, slug, uid):
         await db.execute(
             select(User, MCPServer)
             .select_from(User)
-            .outerjoin(MCPServer, MCPServer.slug == slug)
+            .outerjoin(MCPServer, (MCPServer.slug == slug) & _published())
             .where(User.uid == uid, User.is_deleted == 0)
             .execution_options(populate_existing=True)
         )
@@ -193,3 +198,12 @@ async def invalidate_mcp_connections(db, server_id):
             expires_at=None,
         )
     )
+
+
+def _published(*, direct_only: bool = False):
+    """只读取本版发布的行，直接选择目录在检查部署可用性前排除专属连接。"""
+    published = MCPServer.code_owned == MCPServer.slug.in_(BUILTIN_MCP_SERVERS)
+    if direct_only:
+        private_slugs = [slug for slug in BUILTIN_MCP_SERVERS if not supports_direct_mcp_selection(slug)]
+        return published & MCPServer.slug.not_in(private_slugs)
+    return published

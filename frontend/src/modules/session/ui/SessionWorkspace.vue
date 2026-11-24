@@ -1510,7 +1510,7 @@ const mentionMcpServers = ref([])
 watch(workspaceActive, async (active) => {
   if (!active) return
   try {
-    const result = await mcpApi.getMcpServers()
+    const result = await mcpApi.getMcpServers({ directOnly: true })
     mentionMcpServers.value = result.data || []
   } catch {
     mentionMcpServers.value = []

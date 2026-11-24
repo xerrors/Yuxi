@@ -48,6 +48,7 @@ def test_update_mcp_server_status(monkeypatch):
 
     class DummyServer:
         def __init__(self, enabled):
+            self.code_owned = False
             self.slug = "demo-mcp"
             self.transport = "streamable_http"
             self.enabled = enabled
@@ -98,6 +99,7 @@ def test_update_mcp_server_status_rejects_legacy_stdio(monkeypatch):
 def test_get_mcp_servers_normal_user_is_stripped(monkeypatch):
     class DummyServer:
         def __init__(self, slug="test-mcp"):
+            self.code_owned = slug == "knowledge"
             self.slug = slug
             self.name = slug
             self.description = "test mcp description"
@@ -123,7 +125,8 @@ def test_get_mcp_servers_normal_user_is_stripped(monkeypatch):
                 "enabled": bool(self.enabled),
             }
 
-    async def fake_get_all_mcp_servers(db):
+    async def fake_get_all_mcp_servers(db, *, direct_only):
+        assert not direct_only
         return [DummyServer(), DummyServer("knowledge")]
 
     monkeypatch.setattr("yuxi.api.routers.extensions.mcp.get_all_mcp_servers", fake_get_all_mcp_servers)

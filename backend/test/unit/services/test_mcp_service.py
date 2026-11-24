@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 import pytest_asyncio
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 import yuxi.infrastructure.postgres.manager as postgres_manager
@@ -221,6 +224,7 @@ async def test_create_mcp_server_rejects_builtin_slug(mcp_session):
 async def test_delete_builtin_mcp_server_rejects_service_call(mcp_session):
     server = MCPServer(
         slug="deepwiki-official",
+        code_owned=True,
         name="内置 MCP",
         transport="streamable_http",
         url="https://trusted.example/mcp",
@@ -240,6 +244,7 @@ async def test_delete_builtin_mcp_server_rejects_service_call(mcp_session):
 async def test_update_builtin_mcp_server_rejects_connection_changes(mcp_session):
     server = MCPServer(
         slug="deepwiki-official",
+        code_owned=True,
         name="DeepWiki",
         transport="streamable_http",
         url="https://trusted.example/mcp",
@@ -341,6 +346,7 @@ async def test_get_mcp_tools_sets_handle_tool_error(monkeypatch):
         slug="demo",
         auth_mode="headers",
         disabled_tools=[],
+        code_owned=False,
         to_mcp_config=lambda: config,
     )
 
@@ -575,6 +581,7 @@ async def test_sync_deepwiki_idempotently_preserves_other_servers(monkeypatch, m
             ),
             MCPServer(
                 slug="deepwiki-official",
+                code_owned=True,
                 name="DeepWiki",
                 transport="streamable_http",
                 url="https://tampered.example/mcp",
@@ -729,6 +736,15 @@ async def test_runtime_isolates_failed_mcp_and_retains_healthy_tools(monkeypatch
     assert "扩展页面" in unavailable["unconnected"]
     if failure_kind == "missing_key":
         assert "加密密钥" in unavailable["broken"]
+        broken = servers.pop("broken")
+        await mcp_service.resolve_runtime_mcp_tools(["broken", "healthy"], uid="user", run_tools=run_tools, unavailable=unavailable)
+        servers["broken"] = broken
+        run_tools["broken"] = [tool]
+        recovered = await mcp_service.resolve_runtime_mcp_tools(
+            ["broken", "healthy"], uid="user", run_tools=run_tools, unavailable=unavailable
+        )
+        assert recovered == {"healthy": [tool]}
+        assert "加密密钥" in unavailable["broken"]
     elif failure_kind in {"wrong_key", "nested", "mixed"}:
         assert "重新连接" in unavailable["broken"]
     else:
@@ -742,7 +758,42 @@ async def test_runtime_does_not_swallow_identity_or_database_failure(monkeypatch
         await mcp_service.resolve_runtime_mcp_tools(["demo"], uid="user", unavailable={})
 
 
-async def test_builtin_sync_rejects_user_slug_without_overwriting_configuration(monkeypatch, mcp_session):
+@pytest.mark.parametrize("error_type", [TimeoutError, httpx.ReadTimeout, httpx.ConnectError])
+async def test_transient_plugin_probe_logs_only_connector_and_error_type(monkeypatch, error_type):
+    """网络探测失败记录可定位的标识，日志不包含请求地址或凭据。"""
+    definition = mcp_service.BUILTIN_MCP_SERVERS["abridge"]
+    probe = AsyncMock(side_effect=error_type("secret-probe-canary"))
+    monkeypatch.setitem(mcp_service.BUILTIN_MCP_SERVERS, "abridge", replace(definition, available=probe))
+    messages = []
+    sink = mcp_service.logger.add(lambda message: messages.append(str(message)))
+    try:
+        assert not await mcp_service._mcp_available(MCPServer(slug="abridge", code_owned=True))
+    finally:
+        mcp_service.logger.remove(sink)
+    log = "".join(messages)
+    assert "abridge" in log and error_type.__name__ in log and "secret-probe-canary" not in log
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        OperationalError("SELECT", {}, Exception()),
+        ValueError("bad hook"),
+        PermissionError("denied"),
+        httpx.HTTPStatusError("forbidden", request=httpx.Request("GET", "https://fixture.test"), response=httpx.Response(403)),
+    ],
+)
+async def test_plugin_probe_preserves_database_contract_and_authorization_failures(monkeypatch, error):
+    """共享数据库、实现错误和权限异常须保留原异常。"""
+    definition = mcp_service.BUILTIN_MCP_SERVERS["abridge"]
+    monkeypatch.setitem(mcp_service.BUILTIN_MCP_SERVERS, "abridge", replace(definition, available=AsyncMock(side_effect=error)))
+    with pytest.raises(type(error)) as caught:
+        await mcp_service._mcp_available(MCPServer(slug="abridge", code_owned=True))
+    assert caught.value is error
+
+
+@pytest.mark.parametrize("username", ["admin", "system"])
+async def test_builtin_sync_rejects_user_slug_without_overwriting_configuration(monkeypatch, mcp_session, username):
     """新内置 slug 碰撞必须明确拒绝，不能接管用户连接或认证模式。"""
     server = MCPServer(
         slug="knowledge",
@@ -753,8 +804,8 @@ async def test_builtin_sync_rejects_user_slug_without_overwriting_configuration(
         headers={"X-Custom": "user"},
         enabled=1,
         disabled_tools=["user_tool"],
-        created_by="admin",
-        updated_by="admin",
+        created_by=username,
+        updated_by=username,
     )
     mcp_session.add(server)
     await mcp_session.commit()
@@ -762,14 +813,12 @@ async def test_builtin_sync_rejects_user_slug_without_overwriting_configuration(
     with pytest.raises(ValueError, match="slug 冲突.*knowledge"):
         await mcp_service.ensure_builtin_mcp_servers_in_db()
     await mcp_session.refresh(server)
-    assert (server.created_by, server.url, server.auth_mode) == ("admin", "https://user.example/mcp", "headers")
+    assert (server.created_by, server.url, server.auth_mode) == (username, "https://user.example/mcp", "headers")
     assert server.headers == {"X-Custom": "user"} and server.disabled_tools == ["user_tool"]
 
 
 async def test_deployment_switch_keeps_builtin_identity_and_admin_intent(monkeypatch, mcp_session):
     """部署关闭过滤候选但不覆盖原行，恢复后继续使用管理员工具开关。"""
-    from yuxi.modules.extensions.mcp.builtin import builtin_mcp_available
-
     monkeypatch.setattr(postgres_manager.pg_manager, "get_async_session_context", lambda: _AsyncSessionContext(mcp_session))
     await mcp_service.ensure_builtin_mcp_servers_in_db()
     server = await mcp_session.scalar(select(MCPServer).where(MCPServer.slug == "knowledge"))
@@ -779,7 +828,7 @@ async def test_deployment_switch_keeps_builtin_identity_and_admin_intent(monkeyp
     await mcp_service.ensure_builtin_mcp_servers_in_db()
     await mcp_session.refresh(server)
     assert server.enabled == 1 and server.disabled_tools == ["query_kb"]
-    assert mcp_service.is_builtin_mcp_server(server) and not builtin_mcp_available(server.slug)
+    assert mcp_service.is_builtin_mcp_server(server)
     assert "knowledge" not in await mcp_service.get_enabled_mcp_server_slugs(db=mcp_session)
     with pytest.raises(ValueError, match="当前部署不可用"):
         await mcp_service.inspect_mcp_server_tools(server, uid="viewer")

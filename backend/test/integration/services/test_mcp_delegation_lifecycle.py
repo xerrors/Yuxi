@@ -7,6 +7,7 @@ import json
 import os
 import socket
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from types import SimpleNamespace
 
 import httpx
@@ -149,13 +150,10 @@ async def isolated_mcp(monkeypatch):
         base_url = f"http://127.0.0.1:{sock.getsockname()[1]}"
         url = base_url + "/api/mcp"
         monkeypatch.setattr("yuxi.modules.knowledge.mcp.client.KNOWLEDGE_MCP_URL", url)
-        manifest = {**service.BUILTIN_MCP_SERVERS}
-        manifest["knowledge"] = {
-            "type": "http",
-            "url": url,
-            "extra_data": {"name": "知识库"},
-        }
-        monkeypatch.setattr(service, "BUILTIN_MCP_SERVERS", manifest)
+        knowledge_server = service.BUILTIN_MCP_SERVERS["knowledge"]
+        monkeypatch.setitem(
+            service.BUILTIN_MCP_SERVERS, "knowledge", replace(knowledge_server, manifest={**knowledge_server.manifest, "url": url})
+        )
         http_server = uvicorn.Server(uvicorn.Config(app, log_level="error", lifespan="on"))
         task = asyncio.create_task(http_server.serve(sockets=[sock]))
         async with asyncio.timeout(10):
@@ -165,6 +163,7 @@ async def isolated_mcp(monkeypatch):
                 await asyncio.sleep(0.01)
         async with sessions() as db:
             row = MCPServer(
+                code_owned=True,
                 slug="knowledge",
                 name="Knowledge",
                 transport="streamable_http",
@@ -214,6 +213,50 @@ async def update_server(context, **values):
         await db.commit()
 
 
+async def test_withdrawn_plugin_mcp_hides_persisted_row_and_revokes_cached_tool(isolated_mcp, monkeypatch):
+    """撤下连接定义后拒绝目录、管理写入及旧工具出站；重装恢复同一行策略。"""
+    from yuxi.modules.extensions.mcp.config import BuiltinMCP
+    from yuxi.modules.knowledge.mcp.auth import create_knowledge_token
+
+    context = isolated_mcp
+    slug = "reports-plugin"
+    token = create_knowledge_token(uid=context.reader.uid, selection="all")
+    definition = BuiltinMCP(slug, {"type": "http", "url": context.base_url + "/api/mcp", "headers": {"Authorization": f"Bearer {token}"}})
+    monkeypatch.setitem(service.BUILTIN_MCP_SERVERS, slug, definition)
+    await service.ensure_builtin_mcp_servers_in_db()
+    async with context.sessions() as db:
+        await service.toggle_tool_enabled(db, slug, "search_file")
+    loaded = await service.resolve_runtime_mcp_tools([slug], uid=context.reader.uid)
+    tool = next(tool for tool in loaded[slug] if tool.name == "list_kbs")
+    assert list_ids(await tool.ainvoke({})) == ["delegation-kb"]
+
+    monkeypatch.delitem(service.BUILTIN_MCP_SERVERS, slug)
+    await service.ensure_builtin_mcp_servers_in_db()
+    async with context.sessions() as db:
+        assert slug not in await service.get_enabled_mcp_server_slugs(db=db)
+        assert not await service.available_mcp_servers(db, [slug], user_id=context.reader.id)
+        with pytest.raises(service.MCPServerNotFoundError):
+            await service.set_server_enabled(db, slug, True)
+        with pytest.raises(ValueError, match="already exists"):
+            await service.create_mcp_server(
+                db, slug, "replacement", "streamable_http", url=context.base_url + "/api/mcp", created_by="system"
+            )
+        retained = await db.scalar(select(MCPServer).where(MCPServer.slug == slug))
+        assert retained.code_owned and retained.enabled == 1 and retained.disabled_tools == ["search_file"]
+
+    before = len(context.requests)
+    with pytest.raises(Exception) as rejected:
+        await tool.ainvoke({})
+    assert any(isinstance(error, StateConflictError) for error in nested_errors(rejected.value))
+    assert len(context.requests) == before
+
+    monkeypatch.setitem(service.BUILTIN_MCP_SERVERS, slug, definition)
+    await service.ensure_builtin_mcp_servers_in_db()
+    async with context.sessions() as db:
+        restored = (await service.available_mcp_servers(db, [slug], user_id=context.reader.id))[slug]
+        assert (restored.id, restored.disabled_tools) == (retained.id, ["search_file"])
+
+
 async def test_existing_tool_honors_server_disabled_without_outbound(isolated_mcp):
     """旧对象直接调用也不能绕过管理员停用。"""
     context = isolated_mcp
@@ -253,8 +296,8 @@ async def test_cached_catalog_recovers_tool_enabled_in_same_run(isolated_mcp):
     assert list_ids(await restored.ainvoke({})) == ["delegation-kb"]
 
 
-async def test_configured_mcp_recovers_after_transient_discovery_and_stays_bound(isolated_mcp, monkeypatch):
-    """直接配置的服务发现暂时失败后，后续模型请求恢复并持续绑定工具。"""
+async def test_owned_mcp_discovers_only_after_activation_and_recovers_after_transient_failure(isolated_mcp, monkeypatch):
+    """历史直接选择不提前探测；激活连接临时失败后恢复并持续绑定工具。"""
     from langchain.agents.middleware.types import ModelRequest
 
     from yuxi.modules.agents.runtime.middlewares.plugins import PluginLoaderMiddleware
@@ -262,7 +305,11 @@ async def test_configured_mcp_recovers_after_transient_discovery_and_stays_bound
 
     context = isolated_mcp
     runtime = context.runtime
-    runtime.tools, runtime.mcps, runtime.plugins, runtime.mcp_unavailable = [], ["knowledge"], [], {}
+    runtime.tools, runtime.mcps, runtime.plugins, runtime.mcp_unavailable = [], ["knowledge"], ["knowledge-base"], {}
+    runtime.skill_runtime_snapshot = {
+        "plugin_entry_contents": {"knowledge-base": "Knowledge instructions"},
+        "runtime_skills": {"knowledge-base": {"path": "/home/user/skills/knowledge-base/SKILL.md"}},
+    }
     original_loader = service.load_mcp_tools
     attempts = 0
 
@@ -284,6 +331,21 @@ async def test_configured_mcp_recovers_after_transient_discovery_and_stays_bound
         return {tool.name: tool for tool in current.tools}
 
     middleware = PluginLoaderMiddleware()
+    assert "list_kbs" not in await middleware.awrap_model_call(request, model)
+    assert context.requests == [] and attempts == 0
+    request = request.override(state={"activated_plugins": ["knowledge-base"]})
+
+    async def temporary_failure(_db):
+        """模拟本轮服务探测遇到瞬态网络错误。"""
+        raise OSError("temporary network failure")
+
+    with monkeypatch.context() as fault:
+        fault.setitem(
+            service.BUILTIN_MCP_SERVERS, "knowledge", replace(service.BUILTIN_MCP_SERVERS["knowledge"], available=temporary_failure)
+        )
+        assert "list_kbs" not in await middleware.awrap_model_call(request, model)
+        assert context.requests == [] and attempts == 0
+    assert "list_kbs" not in await middleware.awrap_model_call(request, model)
     first = await middleware.awrap_model_call(request, model)
     second = await middleware.awrap_model_call(request, model)
     assert "list_kbs" in first and "list_kbs" in second
@@ -639,16 +701,23 @@ async def test_deployment_toggle_preserves_builtin_identity_and_admin_policy(iso
         assert ("knowledge" in await service.get_enabled_mcp_server_slugs(db=db)) is bool(admin_enabled)
 
 
-async def test_dynamic_plugin_restores_reenabled_tool_with_same_run_cache(isolated_mcp):
-    """动态插件每轮读取当前策略，使用同一完整目录缓存恢复工具。"""
+async def test_dynamic_plugin_restores_reenabled_tool_with_same_run_cache(isolated_mcp, monkeypatch):
+    """已激活的其他插件超时时，健康插件仍按当前策略恢复可调用工具。"""
     from langchain.agents.middleware.types import ModelRequest
 
     from yuxi.modules.agents.runtime.middlewares.plugins import PluginLoaderMiddleware
 
     context = isolated_mcp
+    await service.ensure_builtin_mcp_servers_in_db()
+
+    async def timed_out(_db):
+        """模拟另一已激活插件的业务探测超时。"""
+        raise TimeoutError("temporary network failure")
+
+    monkeypatch.setitem(service.BUILTIN_MCP_SERVERS, "abridge", replace(service.BUILTIN_MCP_SERVERS["abridge"], available=timed_out))
     runtime = SimpleNamespace(
         uid=context.reader.uid,
-        plugins=["knowledge-base"],
+        plugins=["knowledge-base", "abridge"],
         mcps=[],
         mcp_tools={},
         mcp_tool_servers={},
@@ -656,10 +725,12 @@ async def test_dynamic_plugin_restores_reenabled_tool_with_same_run_cache(isolat
         knowledges=["delegation-kb"],
         run_id="independent-skill-run",
         skill_runtime_snapshot={
-            "plugin_entry_contents": {"knowledge-base": "Knowledge instructions"},
+            "plugin_entry_contents": {"knowledge-base": "Knowledge instructions", "abridge": "Device instructions"},
             "effective_skills": ["knowledge-base"],
             "preloaded_skills": [],
             "runtime_skills": {
+                "abridge": {},
+                "chat-widgets": {},
                 "knowledge-base": {
                     "name": "Dynamic knowledge",
                     "description": "Knowledge fixture",
@@ -667,7 +738,7 @@ async def test_dynamic_plugin_restores_reenabled_tool_with_same_run_cache(isolat
                     "tools": [],
                     "mcps": ["knowledge"],
                     "skills": [],
-                }
+                },
             },
         },
     )
@@ -676,7 +747,7 @@ async def test_dynamic_plugin_restores_reenabled_tool_with_same_run_cache(isolat
         messages=[],
         runtime=SimpleNamespace(context=runtime),
         tools=[],
-        state={"activated_plugins": ["knowledge-base"]},
+        state={"activated_plugins": ["knowledge-base", "abridge"]},
     )
 
     async def tools_for_model(current):
@@ -687,6 +758,7 @@ async def test_dynamic_plugin_restores_reenabled_tool_with_same_run_cache(isolat
     await update_server(context, disabled_tools=["list_kbs"])
     first = await middleware.awrap_model_call(request, tools_for_model)
     assert "list_kbs" not in first
+    assert set(runtime.mcp_unavailable) == {"abridge"}
     await update_server(context, disabled_tools=[])
     second = await middleware.awrap_model_call(request, tools_for_model)
     assert "list_kbs" in second

@@ -16,7 +16,7 @@ Yuxi 是一个面向 RAG、知识图谱和多智能体工作流的知识库平�
 - `api`：FastAPI API 服务，挂载 `backend/yuxi` 和测试目录；API 与 worker 的源码修改通过显式重启生效。
 - `worker`：ARQ worker，执行已经派发的 AgentRun 与注册的 后台作业，并周期触发用户自建 Agent 定时任务；三者分别使用 PostgreSQL 中的运行租约、任务租约和调度锁闭合并发与恢复。
 - `storage-init`：无网络的一次性进程，准备 API/worker/app-init 与 Milvus 挂载根的属主和模式，不递归修改已有文件；消费进程等待其成功退出。
-- `app-init`：普通用户运行的部署任务，在 PostgreSQL advisory lock 内先建立或校验当前 Schema，再同步系统配置定义、内置供应商、Agent、MCP 与 Skill 来源文件。API 与 worker 等待全部成功。空库基线为 business 4、knowledge 2，直接包含个人 MCP 授权表、128 位用户归属字段及当前约束。当前版本跳过结构初始化，其他版本明确拒绝；历史部署的结构调整由部署侧显式完成；知识域 v1 路径目录通过离线审计/转换入口升级 v2，运行进程不自动迁移。共享同步失败保留已提交内容，修正后幂等重跑。
+- `app-init`：普通用户运行的部署任务，在 PostgreSQL advisory lock 内先建立或校验当前 Schema，再同步系统配置定义、内置供应商、Agent、MCP 与 Skill 来源文件。API 与 worker 等待全部成功。空库基线为 business 5、knowledge 2，直接包含个人 MCP 授权表、128 位用户归属字段及当前约束。当前版本跳过结构初始化，其他版本明确拒绝；历史部署的结构调整由部署侧显式完成；知识域 v1 路径目录通过离线审计/转换入口升级 v2，运行进程不自动迁移。共享同步失败保留已提交内容，修正后幂等重跑。
 - Cube Linux/KVM 执行节点：每个用户拥有一个持久普通账号 VM，Workspace 与授权 Skills 共享宿主文件。
 - `sandbox-runner`：选择 container 后端时由该独立进程持有 Docker socket，为每个 Run 懒创建临时容器并执行命令；API/worker 只调用认证 HTTP。挂载、镜像和资源限制由 runner 拥有，Run 归属与清理责任仍由 PostgreSQL 拥有。
 - `postgres`：业务数据、知识库元数据、持久 Input 队列、Turn/Run 与 LangGraph checkpoint。
@@ -26,7 +26,7 @@ Yuxi 是一个面向 RAG、知识图谱和多智能体工作流的知识库平�
 - `graph`：Neo4j 知识图谱。
 - `mineru-api`：通过 `all` profile 可选启动的 MinerU 自托管解析服务；PaddleOCR-VL、PP-OCRv6 和 PP-StructureV3 共用官网云服务适配器。
 
-API 在 `/api/mcp` 提供只读知识库 MCP，与 HTTP API 共用进程和端口。`modules/knowledge/mcp` 拥有服务端协议、内部认证、连接定义、产品读取和知识引用转换，API 只装配组件与生命周期。外部客户端使用 API Key，内部 Agent 使用 Knowledge 自己提供的 SDK Auth，按可信运行用户与会话选择签发五分钟凭据；Knowledge 每次调用复核当前用户权限交集。通用 MCP 复用现有工具发现、目录缓存与执行策略，不解释 Knowledge 的范围、Token 或结果结构。`knowledge-base` 插件引用内置 `knowledge` MCP，模型调用 `load_plugin` 后按需开放工具；Agent 只调用 Knowledge 的产品函数。选择器与引用读取直接通过 SDK 调用 MCP，引用保留文件身份和行范围。关闭 Knowledge 时不装配路由与 manager，内置身份保留，能力发现和执行明确不可用。
+API 在 `/api/mcp` 提供只读知识库 MCP，与 HTTP API 共用进程和端口。`modules/knowledge/mcp` 拥有服务端协议、内部认证、产品读取和知识引用转换，API 只装配组件与生命周期。外部客户端使用 API Key，内部 Agent 使用 Knowledge 自己提供的 SDK Auth，按可信运行用户与会话选择签发五分钟凭据；Knowledge 每次调用复核当前用户权限交集。通用 MCP 复用现有工具发现、目录缓存与执行策略，不解释 Knowledge 的范围、Token 或结果结构。`knowledge-base` 插件声明 Agent 的专属 `knowledge` MCP 连接，模型调用 `load_plugin` 后按需开放工具；Agent 只调用 Knowledge 的产品函数。选择器与引用读取直接通过 SDK 调用 MCP，引用保留文件身份和行范围。关闭 Knowledge 时不装配路由与 manager，内置身份保留，能力发现和执行明确不可用。
 
 企业认证中心由部署方现有的 OIDC 服务提供；企业登录和外部工具接入分别消费标准 OIDC/MCP 协议，不保存 Keycloak 部署模板或运行认证数据库。
 
@@ -59,7 +59,7 @@ Yuxi 默认交付完整知识能力。部署开关 `YUXI_KNOWLEDGE_ENABLED` 由�
 
 `modules/extensions/web` 拥有网络搜索、网页抓取与供应商适配；工具和管理员测试复用同一服务，每次调用读取当前有效配置，未配置的能力不进入运行工具集合。凭据与默认供应商复用 system 的持久设置和脱敏边界。
 
-`modules/extensions/plugins` 拥有显式部署注册和受限 `YuxiPlugin` 接口。每个代码插件由独立目录的 `plugin.py` 与 `skills/` 交付，`registry.py` 的显式元组拥有部署集合和顺序。配套 Skill 经现有内置同步进入共享索引；插件也可引用既有共享 Skill 和 MCP，通过类声明提供专属工具；通用工具由智能体直接选择；一个启用插件对应一个普通业务对象及平台 `PluginMiddleware` 适配器。适配器只调用模型和工具包装钩子；平台拥有激活判定、图节点及 checkpoint 字段，构图固定顺序。只有说明的图像功能使用普通 Skill。历史 Skill 依赖通过排空执行后的离线升级迁移，运行进程不自动转换用户配置。
+`modules/extensions/plugins` 拥有显式部署注册和受限 `YuxiPlugin` 接口。每个代码插件由独立目录的 `plugin.py` 与 `skills/` 交付，`registry.py` 的显式元组拥有部署集合和顺序。插件用入口 Skill 包交付私有内容，声明专属工具和 MCP 连接，也可引用已有共享 Skill 和普通 MCP。MCP 目录从注册插件收集专属连接，Agent 仅通过所属插件激活这些连接；通用工具由智能体直接选择；一个启用插件对应一个普通业务对象及平台 `PluginMiddleware` 适配器。适配器只调用模型和工具包装钩子；平台拥有激活判定、图节点及 checkpoint 字段，构图固定顺序。只有说明的图像功能使用普通 Skill。历史 Skill 依赖通过排空执行后的离线升级迁移，运行进程不自动转换用户配置。
 
 `modules/extensions/skills` 按共享索引、个人来源、草稿、文件编辑和投影组织用例。共享编辑通过文件修订值拒绝过期保存，读取、运行快照与投影复制持有共享行锁；授权变更按共享行锁、用户投影锁的顺序提交并刷新投影。个人 Skill 文件由 `personal.py` 在 UserWorkspace 边界访问。
 

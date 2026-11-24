@@ -115,9 +115,9 @@ def tool_allowed(context, name: str, state: dict, mcp_policy: dict[str, set[str]
             continue
         owned_names = {tool.name for tool in getattr(plugin, "tools", [])}
         plugin_tool_names.update(owned_names)
-        if is_plugin_active(plugin, context, state) and set(plugin.mcps).issubset(mcp_policy):
+        if is_plugin_active(plugin, context, state) and set(plugin.mcp_slugs()).issubset(mcp_policy):
             allowed_tools.update(owned_names)
-            allowed_mcps.update(plugin.mcps)
+            allowed_mcps.update(plugin.mcp_slugs())
     server = servers.get(name)
     if server:
         return server in allowed_mcps and server in mcp_policy and name not in mcp_policy[server]
@@ -165,7 +165,7 @@ async def _resolve_mcp_policy(context, *, db, user, state=None) -> dict[str, set
     candidates = {slug for slug in context.mcps if supports_direct_mcp_selection(slug)}
     for plugin in get_plugins():
         if is_plugin_active(plugin, context, state):
-            candidates.update(plugin.mcps)
+            candidates.update(plugin.mcp_slugs())
     servers = await available_mcp_servers(db, candidates, user_id=user.id)
     unavailable = getattr(context, "mcp_unavailable", {})
     servers = {slug: server for slug, server in servers.items() if slug not in unavailable}

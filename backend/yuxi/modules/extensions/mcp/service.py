@@ -3,12 +3,13 @@
 from collections.abc import Callable
 from typing import Any
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.infrastructure.observability.logging import logger
-from yuxi.modules.extensions.mcp.builtin import BUILTIN_MCP_DEFAULTS, BUILTIN_MCP_MANIFEST, builtin_mcp_available
-from yuxi.modules.extensions.mcp.config import RemoteMCPConfig, normalize_mcp_manifest_entry
+from yuxi.modules.extensions.mcp.builtin import BUILTIN_MCP_SERVERS
+from yuxi.modules.extensions.mcp.config import MCPDelegationContextError, RemoteMCPConfig, normalize_mcp_manifest_entry
 from yuxi.modules.extensions.mcp.models import MCPServer
 from yuxi.modules.extensions.mcp.oauth_config import PERSONAL_AUTH_MODES, config_revision, configure_mcp_auth
 from yuxi.modules.extensions.mcp.oauth_runtime import personal_mcp_tools
@@ -26,9 +27,6 @@ from yuxi.modules.extensions.mcp.runtime import (
 from yuxi.modules.extensions.mcp.runtime import (
     get_mcp_tools as load_mcp_tools,
 )
-from yuxi.shared.errors import StateConflictError
-
-BUILTIN_MCP_SERVERS = BUILTIN_MCP_MANIFEST["mcpServers"]
 
 _SYNCED_MCP_FIELDS = (
     "name",
@@ -40,6 +38,7 @@ _SYNCED_MCP_FIELDS = (
     "sse_read_timeout",
     "auth_mode",
 )
+_UNAVAILABLE_CONNECTION = "未连接或不可用，请在扩展页面检查连接"
 
 
 class MCPServerNotFoundError(ValueError):
@@ -48,7 +47,7 @@ class MCPServerNotFoundError(ValueError):
 
 def is_builtin_mcp_server(server: MCPServer) -> bool:
     """判断 MCP 是否由代码中的内置定义管理。"""
-    return server.slug in BUILTIN_MCP_SERVERS
+    return bool(server.code_owned)
 
 
 # =============================================================================
@@ -63,11 +62,9 @@ async def ensure_builtin_mcp_servers_in_db() -> None:
     async with pg_manager.get_async_session_context() as session:
         any_changed = False
 
-        for slug, entry in BUILTIN_MCP_SERVERS.items():
-            config = {
-                **normalize_mcp_manifest_entry(slug, entry),
-                **BUILTIN_MCP_DEFAULTS.get(slug, {"auth_mode": "headers", "enabled": False}),
-            }
+        for slug, definition in BUILTIN_MCP_SERVERS.items():
+            config = normalize_mcp_manifest_entry(slug, definition.manifest)
+            config["auth_mode"] = "delegation" if definition.delegation else "headers"
             result = await session.execute(select(MCPServer).filter(MCPServer.slug == slug))
             existing = result.scalar_one_or_none()
             if not existing:
@@ -83,7 +80,8 @@ async def ensure_builtin_mcp_servers_in_db() -> None:
                         sse_read_timeout=config.get("sse_read_timeout"),
                         # delegation 表示凭据由 Agent 运行时按当前用户签发；enabled 表达清单声明的默认启停。
                         auth_mode=config.get("auth_mode", "headers"),
-                        enabled=1 if config.get("enabled") else 0,
+                        enabled=int(definition.enabled),
+                        code_owned=True,
                         created_by="system",
                         updated_by="system",
                     )
@@ -92,7 +90,7 @@ async def ensure_builtin_mcp_servers_in_db() -> None:
                 logger.info(f"Added built-in MCP server '{slug}' to database")
                 continue
 
-            if existing.created_by != "system":
+            if not existing.code_owned:
                 raise ValueError(f"内置 MCP slug 冲突：{slug} 已由用户服务占用，请先显式处理")
 
             server_changed = False
@@ -120,15 +118,18 @@ async def get_enabled_mcp_server_slugs(*, db: AsyncSession | None = None) -> lis
     return [server.slug for server in await get_enabled_mcp_servers(db=db)]
 
 
-async def get_enabled_mcp_servers(*, names: list[str] | None = None, db: AsyncSession | None = None) -> list[MCPServer]:
+async def get_enabled_mcp_servers(
+    *, names: list[str] | None = None, db: AsyncSession | None = None, direct_only: bool = False
+) -> list[MCPServer]:
     """统一读取可配置的启用服务；个人连接状态只在运行时解析。"""
     if db is None:
         from yuxi.infrastructure.postgres.manager import pg_manager
 
         async with pg_manager.get_async_session_context() as session:
-            return await get_enabled_mcp_servers(names=names, db=session)
+            return await get_enabled_mcp_servers(names=names, db=session, direct_only=direct_only)
 
-    return [server for server in await list_enabled_mcp_servers(db, names=names) if await _mcp_available(server.slug, db=db)]
+    servers = await list_enabled_mcp_servers(db, names=names, direct_only=direct_only)
+    return [server for server in servers if await _mcp_available(server, db=db)]
 
 
 async def get_mcp_tools(
@@ -190,7 +191,7 @@ async def create_mcp_server(
         )
     ).model_dump()
 
-    existing = await get_mcp_server(db, slug)
+    existing = await get_mcp_server(db, slug, published_only=False)
     if existing:
         raise ValueError(f"Server slug '{slug}' already exists")
 
@@ -369,7 +370,10 @@ async def resolve_runtime_mcp_tools(
         unavailable = {}
     for slug in server_slugs:
         if slug not in servers:
-            unavailable[slug] = "未连接或不可用，请在扩展页面检查连接"
+            unavailable.setdefault(slug, _UNAVAILABLE_CONNECTION)
+        elif unavailable.get(slug) == _UNAVAILABLE_CONNECTION:
+            # 本次复核已恢复连接，发现或执行阶段记录的凭据错误仍由本 Run 保留。
+            del unavailable[slug]
 
     async def load(server):
         """隔离单服务发现故障，日志和提示只包含安全原因。"""
@@ -409,13 +413,12 @@ def runtime_mcp_failure(exc: Exception) -> tuple[str, bool]:
     """统一解释 MCP 错误；只有确定的凭据配置问题在本次运行禁用服务。"""
     from langgraph.errors import GraphBubbleUp
 
-    from yuxi.modules.knowledge.mcp.client import KnowledgeMCPRuntimeError
     from yuxi.shared.errors import PermissionDeniedError, StateConflictError
 
     if isinstance(exc, (PermissionError, PermissionDeniedError, GraphBubbleUp)):
         raise exc
-    if isinstance(exc, KnowledgeMCPRuntimeError):
-        return "运行上下文缺少可信知识库范围，能力未装配", True
+    if isinstance(exc, MCPDelegationContextError):
+        return "运行上下文缺少连接所需的可信身份或资源范围，能力未装配", True
     if isinstance(exc, StateConflictError):
         if exc.code == "mcp_remote_forbidden":
             return "连接器服务方权限不足，请检查个人账号权限", False
@@ -442,9 +445,7 @@ async def available_mcp_servers(db: AsyncSession, server_slugs, *, user_id: int)
     available = {
         server.slug: server
         for server, connection in rows
-        if await _mcp_available(server.slug, db=db)
-        and server.enabled
-        and connection_status(server, connection) in {"connected", "not_required"}
+        if server.enabled and await _mcp_available(server, db=db) and connection_status(server, connection) in {"connected", "not_required"}
     }
     return {slug: available[slug] for slug in dict.fromkeys(server_slugs) if slug in available}
 
@@ -484,7 +485,7 @@ async def get_all_mcp_tools(server_slug: str, *, uid: str | None = None) -> list
 
 async def inspect_mcp_server_tools(server: MCPServer, *, uid: str | None = None) -> list:
     """管理端严格建连，包括停用服务；不吞异常、不修改运行状态。"""
-    if not await _mcp_available(server.slug):
+    if not await _mcp_available(server):
         raise ValueError("连接器在当前部署不可用")
     if server.auth_mode in PERSONAL_AUTH_MODES:
         return await personal_mcp_tools(server, uid, include_disabled=True, management=True)
@@ -496,34 +497,29 @@ async def inspect_mcp_server_tools(server: MCPServer, *, uid: str | None = None)
     return await load_mcp_tools(server.slug, config, disabled_tools=[])
 
 
-async def _mcp_available(slug: str, *, db=None) -> bool:
-    """设备连接器还需有效实例地址，通用身份提供端不代表设备集成已配置。"""
-    if not builtin_mcp_available(slug):
+async def _mcp_available(server: MCPServer, *, db=None) -> bool:
+    """按连接所属业务检查当前部署可用性。"""
+    definition = BUILTIN_MCP_SERVERS.get(server.slug)
+    if bool(server.code_owned) != (definition is not None):
         return False
-    if slug == "abridge":
-        from yuxi.modules.extensions.abridge.options import connection_settings
-
-        try:
-            return (await connection_settings(db)).configured
-        except StateConflictError as exc:
-            if exc.code != "abridge_invalid_configuration":
-                raise
-            logger.warning("component=abridge available=false reason=abridge_invalid_configuration")
-            return False
-    return True
+    if definition is None or definition.available is None:
+        return True
+    try:
+        return await definition.available(db)
+    except PermissionError:
+        raise
+    except (OSError, httpx.TimeoutException, httpx.NetworkError) as exc:
+        logger.warning("MCP availability probe failed: server={}, error_type={}", server.slug, type(exc).__name__)
+        return False
 
 
 async def _delegation_connection(server, *, uid, context=None, management=False):
-    """内部服务直接提供 SDK 认证，执行请求复用通用出站策略。"""
-    from yuxi.modules.knowledge.mcp.client import knowledge_mcp_connection
-
+    """通过代码拥有的连接装配可信身份和出站策略。"""
+    definition = BUILTIN_MCP_SERVERS.get(server.slug)
+    if not server.code_owned or definition is None or definition.delegation is None:
+        raise ValueError("未提供此内部 MCP 服务的认证模块")
     policy = None if management else SharedMCPAuth(server.slug, server.to_mcp_config(), uid=uid, auth_mode=server.auth_mode)
-    if server.slug == "abridge":
-        from yuxi.modules.extensions.abridge.client import abridge_mcp_connection
-
-        return await abridge_mcp_connection(uid=uid, before_request=policy.validate_request if policy is not None else None)
-    return knowledge_mcp_connection(
-        server.slug,
+    return await definition.delegation(
         uid=uid,
         context=context,
         management=management,
@@ -539,7 +535,7 @@ def _to_runtime_mcp_config(server: MCPServer) -> dict[str, Any]:
             config["auth_mode"] = server.auth_mode
         return config
 
-    builtin = normalize_mcp_manifest_entry(server.slug, BUILTIN_MCP_SERVERS[server.slug])
+    builtin = normalize_mcp_manifest_entry(server.slug, BUILTIN_MCP_SERVERS[server.slug].manifest)
     config = {key: builtin[key] for key in ("transport", "url", "headers", "timeout", "sse_read_timeout") if builtin.get(key) is not None}
     if server.disabled_tools:
         config["disabled_tools"] = server.disabled_tools

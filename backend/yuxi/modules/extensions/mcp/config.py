@@ -1,9 +1,26 @@
 """远程 MCP 清单与持久化配置的输入契约。"""
 
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
 from httpx import URL, InvalidURL
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator
+
+
+class MCPDelegationContextError(ValueError):
+    """当前运行缺少此连接委托所需的可信上下文。"""
+
+
+@dataclass(frozen=True)
+class BuiltinMCP:
+    """随代码发布的连接清单及其可选业务委托。"""
+
+    slug: str
+    manifest: dict[str, Any]
+    enabled: bool = True
+    delegation: Callable[..., Awaitable[dict]] | None = None
+    available: Callable[..., Awaitable[bool]] | None = None
 
 
 class RemoteMCPConfig(BaseModel):

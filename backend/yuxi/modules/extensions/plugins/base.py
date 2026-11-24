@@ -2,6 +2,8 @@
 
 from langchain_core.tools import BaseTool
 
+from yuxi.modules.extensions.mcp.config import BuiltinMCP
+
 
 class YuxiPlugin:
     """声明配套资源和调用钩子，由平台适配到运行图。"""
@@ -11,8 +13,13 @@ class YuxiPlugin:
     description: str = ""
     entry_skill: str = ""
     skills: tuple[str, ...] = ()
-    mcps: tuple[str, ...] = ()
+    mcps: tuple[BuiltinMCP | str, ...] = ()
     tools: tuple[BaseTool, ...] = ()
+
+    @classmethod
+    def mcp_slugs(cls) -> tuple[str, ...]:
+        """按声明顺序返回专属连接和共享引用的标识。"""
+        return tuple(mcp.slug if isinstance(mcp, BuiltinMCP) else mcp for mcp in cls.mcps)
 
     async def on_model_call(self, request, handler):
         """处理已激活插件的模型请求，可由部署插件覆盖。"""

@@ -20,17 +20,17 @@ def test_knowledge_is_enabled_by_default(monkeypatch):
 
 def test_builtin_knowledge_server_uses_generic_delegation_auth():
     """内置 knowledge server 走通用平台委托模式，slug 与签发器、插件声明一致。"""
-    from yuxi.modules.extensions.mcp.builtin import BUILTIN_MCP_DEFAULTS, BUILTIN_MCP_MANIFEST, KNOWLEDGE_MCP_SLUG
+    from yuxi.modules.extensions.mcp.builtin import builtin_mcp_servers
 
-    entry = BUILTIN_MCP_MANIFEST["mcpServers"][KNOWLEDGE_MCP_SLUG]
-    assert "auth_mode" not in entry and "enabled" not in entry
-    assert BUILTIN_MCP_DEFAULTS[KNOWLEDGE_MCP_SLUG] == {"auth_mode": "delegation", "enabled": True}
+    server = builtin_mcp_servers()["knowledge"]
+    assert server.enabled and server.delegation is not None
+    assert server.manifest["url"] == "http://api:5050/api/mcp"
 
     frontmatter = (project_root() / "backend/yuxi/modules/extensions/plugins/builtin/knowledge/skills/knowledge-base/SKILL.md").read_text(encoding="utf-8")
     from yuxi.modules.extensions.plugins.registry import get_plugin
 
     assert "mcp_dependencies" not in frontmatter
-    assert get_plugin("knowledge-base").mcps == (KNOWLEDGE_MCP_SLUG,)
+    assert get_plugin("knowledge-base").mcps == (server,)
 
 
 def test_builtin_manifest_preserves_identity_when_deployment_disabled(tmp_path):
@@ -40,8 +40,10 @@ def test_builtin_manifest_preserves_identity_when_deployment_disabled(tmp_path):
         "PYTHONPATH": str(project_root() / "backend"),
     }
     script = """
-from yuxi.modules.extensions.mcp.builtin import BUILTIN_MCP_MANIFEST, KNOWLEDGE_MCP_SLUG, builtin_mcp_available
-print(KNOWLEDGE_MCP_SLUG in BUILTIN_MCP_MANIFEST["mcpServers"], builtin_mcp_available(KNOWLEDGE_MCP_SLUG))
+import asyncio
+from yuxi.modules.extensions.mcp.builtin import builtin_mcp_servers
+server = builtin_mcp_servers()["knowledge"]
+print(server.enabled, asyncio.run(server.available(None)))
 """
     result = subprocess.run([sys.executable, "-c", script], cwd=tmp_path, env=env, capture_output=True, text=True, check=True)
     assert result.stdout.splitlines()[-1] == "True False"

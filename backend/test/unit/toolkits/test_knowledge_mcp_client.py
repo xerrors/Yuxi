@@ -74,16 +74,16 @@ async def test_connection_failure_is_unavailable_not_tool_level_error(result_tra
 async def test_runtime_scope_keeps_session_selection(selection):
     """认证直接读取可信运行上下文，不建立第二份会话范围状态。"""
     context = SimpleNamespace(uid="u", knowledges=selection)
-    options = client.knowledge_mcp_connection("knowledge", uid="u", context=context)
+    options = client.knowledge_mcp_connection(uid="u", context=context)
     assert options["auth"].selection == selection
 
 
 async def test_runtime_requires_matching_context():
     """缺失上下文不得静默扩大到全部知识库。"""
     with pytest.raises(ValueError, match="可信运行上下文"):
-        client.knowledge_mcp_connection("knowledge", uid="u")
+        client.knowledge_mcp_connection(uid="u")
     with pytest.raises(ValueError, match="可信运行上下文"):
-        client.knowledge_mcp_connection("knowledge", uid="u", context=SimpleNamespace(uid="other"))
-    with pytest.raises(client.KnowledgeMCPRuntimeError, match="选择范围"):
-        client.knowledge_mcp_connection("knowledge", uid="u", context=SimpleNamespace(uid="u"))
-    assert client.knowledge_mcp_connection("knowledge", uid="u", management=True)["auth"].selection == "all"
+        client.knowledge_mcp_connection(uid="u", context=SimpleNamespace(uid="other"))
+    with pytest.raises(client.MCPDelegationContextError, match="选择范围"):
+        client.knowledge_mcp_connection(uid="u", context=SimpleNamespace(uid="u"))
+    assert client.knowledge_mcp_connection(uid="u", management=True)["auth"].selection == "all"
