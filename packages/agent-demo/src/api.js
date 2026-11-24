@@ -81,6 +81,8 @@ export function createApi(
         payload.detail || payload.message || `请求失败（${response.status}）`;
       if (Array.isArray(detail))
         detail = detail.map((item) => item.msg).join("；");
+      else if (typeof detail?.message === "string")
+        detail = detail.message;
       throw new ApiError(
         typeof detail === "string" ? detail : JSON.stringify(detail),
         response.status,
@@ -107,6 +109,15 @@ export function createApi(
     },
     deleteFile: (id) => request(`/files/${encodeURIComponent(id)}`, { method: "DELETE" }),
     listAgents: () => request("/"),
+    async provisionManagedBrowser() {
+      const response = await request("/managed-browser", { method: "POST", raw: true });
+      const payload = await response.json().catch(() => null);
+      const status = response.status === 200 ? "ready" : response.status === 202 ? "connecting" : null;
+      if (!status || payload?.status !== status || typeof payload.device_id !== "string" || !payload.device_id) {
+        throw new ApiError("托管浏览器接口返回了无效的状态或设备 ID", response.status);
+      }
+      return { status, deviceId: payload.device_id, httpStatus: response.status };
+    },
     listThreads: (agentId, after) =>
       request(
         `/sessions?agent_id=${encodeURIComponent(agentId)}&limit=50${after ? `&after=${encodeURIComponent(after)}` : ""}`,

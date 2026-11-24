@@ -2,7 +2,7 @@
 
 状态：implemented
 类型：simplification
-Owner：backend/yuxi/modules/extensions/abridge/options.py
+Owner：backend/yuxi/modules/extensions/plugins/abridge/options.py
 
 ## 问题
 
@@ -11,6 +11,8 @@ Owner：backend/yuxi/modules/extensions/abridge/options.py
 ## 决策
 
 ### 实现方案
+
+Python 接入代码与内置 `abridge` 插件放在同一个包内。Web 设备路由直接导入设备查询和浏览器服务，Public API 直接导入托管浏览器服务，启动时从 `options.py` 收集配置。包初始化不加载插件，只有 Agent 工具的装配和提示注入经过 `plugin.py`。
 
 设备页与 MCP 从 aBridge 配置读取同一个就绪结果：身份签发开启、内部服务来源和公开来源齐全。公开来源不回退到内部地址。每次出站直接重读数据库并复核当前用户，配置缓存不能延长旧地址有效期。Yuxi 删除管理员 Token 字段及表单状态，启动同步在同一事务清除历史保存值，避免移除敏感字段定义后泄漏旧值；aBridge 部署凭据保留，Compose 对 API/worker 的同名环境值显式置空。
 
@@ -21,6 +23,8 @@ Compose 使用官方 0.4.13 镜像及固定摘要，初始化器只生成配置�
 采用 aBridge 0.4.13 原生授权：首次统一登录及显式重新授权默认全部本人设备和能力，设置页明确告知，用户可在 aBridge 收窄。普通重复登录不恢复撤销，不覆盖已保存策略。Yuxi 不建立另一套权限状态；身份、短期委托与设备授权的边界见 [统一登录决定](2026-11-14-abridge-identity.md)。
 
 ## 替代方案
+
+将设备服务与插件分置在两个目录，修改 aBridge 接入协议时必须跨目录核对配置、委托和工具声明。让 Web 和 Public API 统一通过插件对象访问，又会让独立使用的设备管理依赖 Agent 插件接口。
 
 保留各处判断会继续漂移；新增插件注册和表单框架扩大维护面；完全删除设备适配会破坏图像与异步结果展示。选择收窄已有实现。继续支持任意源码构建不能保证协议版本，固定发布镜像减少维护面。默认空授权需要修改外部服务；采用已发布的默认全部授权并向用户明确说明，不在 Yuxi 复制授权逻辑。
 

@@ -51,6 +51,8 @@ uv run --locked --group test pytest \
     test/integration/services/test_plugin_content_sync.py \
     test/integration/api/test_error_information_boundary.py \
     test/integration/api/test_knowledge_url_import_options.py \
+    test/integration/api/test_managed_abridge_browser.py \
+    test/integration/api/test_personal_abridge_browser.py \
     test/integration/api/test_dashboard_usage.py \
     test/integration/api/test_scheduled_agent_history.py \
     test/integration/api/test_sandbox_runner_health.py \

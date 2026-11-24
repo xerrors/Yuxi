@@ -271,7 +271,7 @@
             v-show="activeTab === 'agentEnv'"
             v-if="userStore.isLoggedIn && loadedTabs.has('agentEnv')"
           >
-            <AgentEnvSettingsCard />
+            <AgentEnvSettingsCard :active="activeTab === 'agentEnv'" />
           </div>
 
           <div

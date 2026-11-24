@@ -5,6 +5,7 @@ export const mentionTypePrefixMap = {
   plugin: 'plugin',
   skill: 'skill',
   agent: 'agent',
+  device: 'device',
   session: 'session'
 }
 

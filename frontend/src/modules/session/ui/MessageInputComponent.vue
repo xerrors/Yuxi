@@ -148,9 +148,10 @@
           </div>
         </div>
 
-        <!-- 连接器、插件与 Skills 共用候选行 -->
+        <!-- 各类资源共用候选行 -->
         <div v-for="group in mentionResourceGroups" :key="group.type" class="mention-group">
           <div class="mention-group-title">{{ group.title }}</div>
+          <div v-if="group.hint" class="mention-search-placeholder" role="status">{{ group.hint }}</div>
           <div
             v-for="item in group.items"
             :key="group.type + '-' + item.value"
@@ -301,6 +302,7 @@ import {
   Send as SendOutlined
 } from '@lucide/vue'
 import { searchMentionFiles, searchMentionSessions } from '@/apis/mention_api'
+import { devicesApi } from '@/apis/devices_api'
 import FileTypeIcon from '@/shared/ui/FileTypeIcon.vue'
 import ActionTrigger from '@/shared/ui/ActionTrigger.vue'
 import MentionToken from '@/modules/session/ui/MentionToken.vue'
@@ -770,7 +772,11 @@ const checkMentionTrigger = () => {
   return false
 }
 
-// 更新提及候选项
+/** 按展示名、稳定标识或说明筛选候选。 */
+const matchesMentionQuery = (item, lowerQuery) =>
+  [item.label, item.value, item.description, item.resourceId, item.tokenLabel, item.type]
+    .some((text) => String(text || '').toLowerCase().includes(lowerQuery))
+
 const updateMentionItems = (query = '') => {
   const normalizedQuery = String(query || '')
   clearTimeout(mentionSearchTimer)
@@ -783,22 +789,7 @@ const updateMentionItems = (query = '') => {
   const lowerQuery = normalizedQuery.toLowerCase()
   const { files = [] } = props.mention || {}
 
-  const filterItems = (list) =>
-    list.filter((item) => {
-      const searchTexts = [
-        item.label,
-        item.value,
-        item.description,
-        item.resourceId,
-        item.tokenLabel,
-        item.type
-      ]
-      return searchTexts.some((text) =>
-        String(text || '')
-          .toLowerCase()
-          .includes(lowerQuery)
-      )
-    })
+  const filterItems = (list) => list.filter((item) => matchesMentionQuery(item, lowerQuery))
 
   // 本地临时文件/附件候选项过滤
   const localFileItems = files.map((f) => {
@@ -898,8 +889,9 @@ const updateMentionItems = (query = '') => {
 const mentionResourceGroups = computed(() => [
   { type: 'mcp', title: '连接器', items: mentionItems.value.mcps },
   { type: 'plugin', title: '插件', items: mentionItems.value.plugins },
-  { type: 'skill', title: 'Skills', items: mentionItems.value.skills }
-].filter((group) => group.items.length))
+  { type: 'skill', title: 'Skills', items: mentionItems.value.skills },
+  { type: 'device', title: '设备', items: matchingDevices.value, hint: deviceListHint.value }
+].filter((group) => group.items.length || group.hint))
 
 // 高亮和键盘提交使用同一候选顺序。
 const isItemSelected = (item) => mentionSelectableItems.value[mentionSelectedIndex.value] === item
@@ -970,9 +962,7 @@ const mentionSelectableItems = computed(() => [
   ...addActions.value,
   ...mentionItems.value.files,
   ...mentionItems.value.knowledgeBases,
-  ...mentionItems.value.mcps,
-  ...mentionItems.value.plugins,
-  ...mentionItems.value.skills,
+  ...mentionResourceGroups.value.flatMap((group) => group.items),
   ...mentionItems.value.agents,
   ...mentionItems.value.sessions
 ])
@@ -1256,6 +1246,12 @@ const handleSendOrStop = () => {
 // @ 提及功能状态
 const mentionPopupVisible = ref(false)
 const mentionQuery = ref('')
+const devices = ref([])
+const deviceListHint = ref('')
+const matchingDevices = computed(() => {
+  const query = mentionQuery.value.toLowerCase()
+  return devices.value.filter((item) => matchesMentionQuery(item, query))
+})
 const mentionItems = ref({ sessions: [], files: [], knowledgeBases: [], mcps: [], plugins: [], skills: [], agents: [] })
 const sessionSearchLoading = ref(false)
 const sessionSearchError = ref(false)
@@ -1264,6 +1260,32 @@ const searchRequestId = ref(0)
 const isComposing = ref(false)
 let activeAbortController = null
 let mentionSearchTimer = null
+
+// 设备接口返回完整授权列表。每次打开时读取，输入关键词只筛选本次结果。
+watch(mentionPopupVisible, async (open, _previous, onCleanup) => {
+  devices.value = []
+  deviceListHint.value = open ? '正在加载设备…' : ''
+  if (!open) return
+  const controller = new AbortController()
+  onCleanup(() => controller.abort())
+  try {
+    const result = await devicesApi.list({ signal: controller.signal })
+    if (controller.signal.aborted) return
+    const selected = mentionSelectableItems.value[mentionSelectedIndex.value]
+    devices.value = result.devices.map(({ id, name }) => ({
+      type: 'device',
+      value: id,
+      label: name || id,
+      description: id,
+      insertValue: name ? `${id} ${name}` : id
+    }))
+    deviceListHint.value = result.state === 'login_required' ? '请从设备管理进入 aBridge 并完成授权' : ''
+    const index = mentionSelectableItems.value.indexOf(selected)
+    if (index >= 0) mentionSelectedIndex.value = index
+  } catch {
+    if (!controller.signal.aborted) deviceListHint.value = '设备加载失败，重新打开可重试'
+  }
+}, { flush: 'sync' })
 
 const adjustTextareaHeight = () => {
   if (!inputRef.value) {

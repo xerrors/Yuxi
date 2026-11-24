@@ -2200,7 +2200,10 @@ const resumeCurrentRunForVisiblePage = async () => {
 }
 
 watch(workspaceActive, (active) => {
-  if (!active) return
+  if (!active) {
+    agentInputAreaRef.value?.closeOptions()
+    return
+  }
   if (pageVisible.value && currentChatId.value) {
     void chatThreadsStore.markThreadViewed(currentChatId.value)
   }

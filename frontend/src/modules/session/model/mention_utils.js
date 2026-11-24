@@ -102,8 +102,9 @@ export const getMentionDisplayLabel = (type, value, displayLabels = {}) => {
   const mappedLabel = displayLabels[`${type}:${value}`]
   if (mappedLabel) return mappedLabel
 
-  if (type === 'session') {
-    return String(value ?? '').split(' ').slice(1).join(' ').trim() || '未命名对话'
+  if (type === 'session' || type === 'device') {
+    const [id, ...name] = String(value ?? '').split(' ')
+    return name.join(' ').trim() || (type === 'session' ? '未命名对话' : id)
   }
 
   if (type === 'file') {

@@ -11,8 +11,8 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.exceptions import McpError
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from yuxi.modules.extensions.abridge.client import AbridgeAuth, abridge_http_client
-from yuxi.modules.extensions.abridge.options import connection_settings
+from yuxi.modules.extensions.plugins.abridge.client import AbridgeAuth, abridge_http_client
+from yuxi.modules.extensions.plugins.abridge.options import connection_settings
 from yuxi.shared.errors import UpstreamError
 
 

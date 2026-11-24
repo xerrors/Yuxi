@@ -1287,6 +1287,26 @@ select {
   overflow-wrap: anywhere;
   color: #688b77;
 }
+.browser-endpoint {
+  display: block;
+  margin: 8px 0 12px;
+  color: #607a6b;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.browser-panel .runtime-facts {
+  margin-bottom: 12px;
+  font-size: 11px;
+}
+.browser-help {
+  margin: 0 0 12px;
+  color: #607a6b;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.browser-panel > .secondary-button {
+  width: 100%;
+}
 .event-toolbar > div {
   display: flex;
   gap: 3px;

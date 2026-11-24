@@ -2,7 +2,7 @@
 
 状态：implemented
 类型：feature
-Owner：backend/yuxi/modules/extensions/abridge/service.py
+Owner：backend/yuxi/modules/extensions/plugins/abridge/service.py
 
 ## 问题
 
@@ -26,6 +26,10 @@ session 的 [回执解析](https://github.com/xerrors/Yuxi/blob/main/frontend/sr
 
 配置、协议展示与提示的职责收敛见 [aBridge 简化决定](2026-11-17-abridge-simplification.md)。
 
+个人 Cube 安装浏览器时使用同一稳定账户标识登记普通设备。设备列表与智能体继续使用该账户已有的平台授权，设备和能力的选择由 aBridge 管理。[个人 Cube 浏览器登记](./2026-11-20-personal-cube-browser.md)
+
+聊天输入框打开 `@` 时，通过设备管理使用的 `GET /api/devices` 读取本人授权设备。选中后将设备 ID 和当时的显示名写入普通消息正文。同名设备由 ID 区分，历史消息可直接显示原名称。运行时沿用当前会话的插件配置和 aBridge 授权。
+
 ## 替代方案
 
 - 个人静态 Agent Key 或 Device Flow 不能同时解决账户来源与统一登录；直接复用 Yuxi 登录 JWT 会扩大凭据用途。
@@ -37,6 +41,8 @@ session 的 [回执解析](https://github.com/xerrors/Yuxi/blob/main/frontend/sr
 Yuxi 成为身份信任根，签发能力失陷可冒充用户；设备授权、暂停与撤销仍由 aBridge 拥有。已签发委托最多继续有效一分钟，退出浏览器不等于取消设备任务。issuer/sub 变化会产生不同身份，既有本地账户与设备不自动迁移。图标与结果展示不新增设备操作或权限，原始回执保留核对入口。
 
 ## 验证
+
+前端浏览器用例在真实聊天页面选择两个同名设备中的一个，核对发送请求中的设备 ID 和刷新后历史消息显示的名称。[设备引用用例](https://github.com/xerrors/Yuxi/blob/main/frontend/test/browser/deviceMentions.js)
 
 [委托 integration](https://github.com/xerrors/Yuxi/blob/main/backend/test/integration/services/test_abridge_delegation.py) 与 [跨项目协议测试](https://github.com/xerrors/Yuxi/blob/main/backend/test/integration/services/test_abridge_devices.py) 覆盖真实登录、用户设备隔离、授权撤销与恢复、委托用途和 HTTP 权限；后者需要显式提供已构建的 aBridge 源码，默认跳过不代表联调通过。
 

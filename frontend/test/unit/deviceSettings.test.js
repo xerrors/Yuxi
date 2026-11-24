@@ -97,8 +97,7 @@ async function render(api) {
       'a-skeleton',
       'a-alert',
       'a-input',
-      'a-input-password',
-      'a-checkbox'
+      'a-select'
     ]) {
       app.component(name, {
         setup:

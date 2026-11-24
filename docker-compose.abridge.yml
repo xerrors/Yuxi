@@ -9,6 +9,7 @@ x-identity-env: &identity-env
   YUXI_OIDC_PROVIDER_PRIVATE_KEY_FILE: /run/yuxi-identity/provider.pem
   ABRIDGE_URL: ${ABRIDGE_URL:-http://abridge:8765}
   ABRIDGE_PUBLIC_ORIGIN: ${ABRIDGE_PUBLIC_ORIGIN:?Set browser-accessible aBridge origin}
+  ABRIDGE_ALLOW_INSECURE_HTTP: ${ABRIDGE_ALLOW_INSECURE_HTTP:-false}
   # 基础拓扑读取同一 env_file；显式清空，避免把远端管理凭据注入 API/worker。
   ABRIDGE_ADMIN_TOKEN: ""
 
@@ -28,7 +29,7 @@ services:
     volumes:
       - ${YUXI_OIDC_PROVIDER_PRIVATE_KEY_FILE:?Run scripts/init_abridge.py first}:/run/yuxi-identity/provider.pem:ro
   abridge:
-    image: ghcr.io/xerrors/abridge:0.4.13@sha256:ac60d95888adfa8fa4ef4a78153f5e6f54ace8d287e7aa4c7bacc204873c2859
+    image: ${ABRIDGE_IMAGE:-ghcr.io/xerrors/abridge:0.4.13@sha256:ac60d95888adfa8fa4ef4a78153f5e6f54ace8d287e7aa4c7bacc204873c2859}
     restart: unless-stopped
     environment:
       ABRIDGE_DB: /data/server.db
@@ -41,6 +42,8 @@ services:
       # 浏览器仍使用公开 issuer；容器内发现、兑换与 JWKS 请求走私有 API 网络。
       ABRIDGE_OIDC_BACKCHANNEL_ORIGIN: http://api:5050
       ABRIDGE_DELEGATION_ENABLED: "true"
+      ABRIDGE_MANAGED_BROWSER_ENABLED: ${ABRIDGE_MANAGED_BROWSER_ENABLED:-false}
+      ABRIDGE_ALLOW_INSECURE_HTTP: ${ABRIDGE_ALLOW_INSECURE_HTTP:-false}
     ports:
       - "127.0.0.1:${YUXI_ABRIDGE_PORT:-18765}:8765"
     volumes:

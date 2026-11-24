@@ -47,6 +47,28 @@ test("API、订阅和下载都使用固定 APP Key / end_user，幂等键与 cur
   );
 });
 
+test("托管浏览器的 HTTP 状态与设备回执不一致时拒绝展示", async () => {
+  const config = { baseUrl: "http://localhost:5173", key: "test-key", userId: "", appId: "" };
+  for (const [status, result] of [
+    [202, { status: "ready", device_id: "device-1" }],
+    [200, { status: "ready", device_id: "" }],
+  ]) {
+    const api = createApi(config, {
+      fetcher: async () => new Response(JSON.stringify(result), { status }),
+    });
+    await assert.rejects(() => api.provisionManagedBrowser(), /无效的状态或设备 ID/);
+  }
+});
+
+test("托管浏览器显示结构化错误的消息并保留 HTTP 状态", async () => {
+  const api = createApi({ baseUrl: "http://localhost:5173", key: "test-key", userId: "", appId: "" }, {
+    fetcher: async () => new Response(JSON.stringify({
+      detail: { code: "abridge_managed_browser_paused", message: "aBridge 托管浏览器已暂停" },
+    }), { status: 409 }),
+  });
+  await assert.rejects(() => api.provisionManagedBrowser(), { status: 409, message: "aBridge 托管浏览器已暂停" });
+});
+
 test("默认用户省略 X-End-User-Id，不发送客户端 X-App-Id", async () => {
   let headers;
   const api = createApi(

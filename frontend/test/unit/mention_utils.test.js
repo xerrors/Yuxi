@@ -32,6 +32,19 @@ test('对话引用持久保存 ID 和带引号的标题，同名对话仍可区�
   assert.deepEqual(expandMentionDeletionRange(`${raw} 后文`, raw.length, raw.length), { start: 0, end: raw.length })
 })
 
+test('同名设备以 ID 区分，历史消息可独立还原含引号的设备名', () => {
+  const { formatMentionToken, parseMentionText, getMentionDisplayLabel } = mentionUtils
+  const name = '会议室 "A" \\ @mcp:示例'
+  const raw = formatMentionToken('device', 'dev-b ' + name)
+  assert.notEqual(raw, formatMentionToken('device', 'dev-a ' + name))
+  const segments = parseMentionText(raw)
+  assert.equal(segments.length, 1)
+  assert.equal(segments[0].type, 'device')
+  assert.equal(segments[0].value, 'dev-b ' + name)
+  assert.equal(getMentionDisplayLabel('device', segments[0].value), name)
+  assert.equal(getMentionDisplayLabel('device', 'dev-b'), 'dev-b')
+})
+
 test('删除无空格相邻正文前的 mention 时使用 chip 边界', () => {
   const { expandMentionDeletionRange, parseMentionText } = mentionUtils
   const text = '@knowledge:示例知识库这个知识库有什么作用'

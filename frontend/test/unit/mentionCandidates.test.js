@@ -14,8 +14,12 @@ test('mention 的智能体与对话各显示前五个匹配项，对话排在智
       { thread_id: 'current', title: '当前对话' },
       ...Array.from({ length: 8 }, (_, i) => ({ thread_id: `session-${i}`, title: `对话 ${i}` }))
     ]
-    t.mock.method(globalThis, 'fetch', async (url) => {
+    const deviceRequests = []
+    t.mock.method(globalThis, 'fetch', async (url, options) => {
       const request = new URL(url, 'http://localhost')
+      if (request.pathname === '/api/devices') {
+        return new Promise((resolve) => deviceRequests.push({ resolve, signal: options.signal }))
+      }
       assert.ok(['/api/mention/sessions', '/api/mention/search'].includes(request.pathname))
       const query = request.searchParams.get('query') || ''
       return Response.json(request.pathname === '/api/mention/sessions'
@@ -100,6 +104,30 @@ test('mention 的智能体与对话各显示前五个匹配项，对话排在智
     props.mention.plugins = [{ id: 'abridge', name: '设备操作' }]
     await nextTick()
     assert.deepEqual(state.mentionItems.value.plugins.map((item) => item.value), ['abridge'])
+
+    assert.equal(deviceRequests.length, 1)
+    state.mentionPopupVisible.value = false
+    state.mentionPopupVisible.value = true
+    assert.equal(deviceRequests[0].signal.aborted, true)
+    const selectedAgent = state.mentionItems.value.agents[0]
+    state.mentionSelectedIndex.value = state.mentionSelectableItems.value.indexOf(selectedAgent)
+    deviceRequests[1].resolve(Response.json({ state: 'ready', devices: [{ id: 'dev-a', name: '会议室' }] }))
+    await setImmediate()
+    deviceRequests[0].resolve(Response.json({ state: 'ready', devices: [{ id: 'old', name: '过期设备' }] }))
+    await setImmediate()
+    assert.equal(state.isItemSelected(selectedAgent), true)
+    assert.deepEqual(state.matchingDevices.value.map((item) => item.value), ['dev-a'])
+    state.mentionQuery.value = 'DEV-A'
+    assert.deepEqual(state.matchingDevices.value.map((item) => item.insertValue), ['dev-a 会议室'])
+    state.mentionQuery.value = '过期'
+    assert.deepEqual(state.matchingDevices.value, [])
+    assert.equal(deviceRequests.length, 2)
+    state.mentionPopupVisible.value = false
+    state.mentionPopupVisible.value = true
+    deviceRequests[2].resolve(Response.json({ state: 'login_required', devices: [] }))
+    await setImmediate()
+    assert.deepEqual(state.matchingDevices.value, [])
+    assert.match(state.deviceListHint.value, /设备管理.*授权/)
   } finally {
     app?.unmount()
     await server.close()

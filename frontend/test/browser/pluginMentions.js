@@ -7,6 +7,7 @@ async originalPage => {
   try {
     const page = await context.newPage()
     await page.route('**/api/mention/sessions*', route => route.fulfill({ json: [] }))
+    await page.route('**/api/devices', route => route.fulfill({ json: { state: 'not_configured', configured: false, management_url: null, devices: [] } }))
     await page.goto(originalPage.url().split('/').slice(0, 3).join('/') + '/login')
     await page.waitForFunction(() => Boolean(document.querySelector('#app').__vue_app__))
     await page.evaluate(async () => {

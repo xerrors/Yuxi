@@ -51,6 +51,20 @@ Yuxi 要求创建与提交携带幂等键，每次仅接收一个事件，图片
 
 系统的用户列表和共享候选默认只显示系统用户。管理员在用户管理中通过“用户类型”筛选显式查看 APP 终端用户或全部类型，“所属部门/实例”列显示终端用户的 `app_id`。长用户名和 ID 在列表中缩略，点击用户信息可查看完整值。
 
+## 启动托管浏览器
+
+部署启用 [aBridge Cube 托管浏览器](abridge.md#cube-托管浏览器)后，使用 APP Key 调用 `POST /api/v1/agents/managed-browser`。有指定终端身份时携带 `X-End-User-Id`，省略时使用该 APP 的默认身份。后续 Agent 调用使用同一 APP 和终端用户。排队或等待审批期间休眠时，Worker 可恢复当前 VM 的既有绑定。首次连接、VM 重建或绑定丢失后需要调用此接口。请求无需 body。
+
+`200` 返回 `{"device_id":"<设备 ID>","status":"ready"}`，表示 aBridge 报告浏览器在线可用，且当前 Cube 确认同一设备和绑定版本正在运行。两侧状态尚未收敛时返回 `202`，响应包含 `device_id` 和状态 `connecting`，可用同一请求重试。首次创建或恢复 Cube 的耗时另计。
+
+- `403` 表示 APP 凭据、终端用户、Yuxi 开关或 aBridge 授权拒绝登记。
+- `409` 按错误代码区分上游未启用、当前模板缺少协议、设备暂停和代次冲突。
+- `502` 表示上游连接或响应失败，`504` 表示上游请求超时。
+
+`sandbox_create_failed` 和 `sandbox_unavailable` 需要部署管理员处理当前终端环境。按[终端环境恢复步骤](abridge.md#恢复-app-终端运行环境)修复后，再用同一 APP Key 和终端标识连接。
+
+在目标 Agent 启用并加载 aBridge 插件，使用既有浏览器工具操作该身份获准访问的设备。
+
 ## Session、Thread、Turn、Run 与 Input
 
 Thread 是长期对话，Turn 是一轮工作，Run 是其中一段有执行 owner 的运行。每次普通消息提交保存为独立 Input，`follow_up` 逐条 FIFO，`steer` 在消费时按接收序号合批为连续就绪前缀。线程空闲且队列未暂停时领取优先队头并创建 Turn/Run；运行中在安全边界消费 steer，在同一 Turn 创建下一 Run。回答或审批消费明确等待点，也在同一 Turn 创建下一 Run。接收响应中的 `event_id`、`input_id` 和状态只证明持久接收；工作结果通过 Turn 查询。

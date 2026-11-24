@@ -32,7 +32,7 @@ API 在 `/api/mcp` 提供只读知识库 MCP，与 HTTP API 共用进程和端�
 
 `modules/identity` 另提供可选的 OIDC 身份签发端，限定显式登记的静态客户端，复用当前有效人类用户完成登录，使用独立持久 RSA 密钥。
 
-可选 aBridge 集成通过 OIDC 接收 Yuxi 身份。`modules/extensions/abridge` 拥有设备配置、产品读取和 MCP 平台委托适配；aBridge 拥有外部身份映射及设备授权。智能体通过 `abridge` 插件选择设备能力，加载后由专属中间件注入设备提示并开放 MCP 工具；关闭插件不影响个人设备管理。每次 MCP 出站按当前用户签发最长一分钟的专用委托，不保存个人 refresh token。部署装配和失效边界见 [aBridge 接入](docs/advanced/abridge.md)。
+可选 aBridge 集成通过 OIDC 接收 Yuxi 身份。Yuxi 的 aBridge 接入位于 `modules/extensions/plugins/abridge`。Web 设备管理、Public API 托管浏览器和系统配置装配直接使用包内对应模块。智能体加载 `abridge` 插件后获得设备提示和 MCP 工具。aBridge 拥有外部身份映射及设备授权。每次 MCP 出站按当前用户签发最长一分钟的专用委托，不保存个人 refresh token。部署装配和失效边界见 [aBridge 接入](docs/advanced/abridge.md)。
 
 ## 后端代码地图
 

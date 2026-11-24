@@ -135,7 +135,7 @@ const inputRef = ref(null)
 const currentImages = ref([])
 let localIdSeed = 0
 const nextLocalId = () => `image-${(localIdSeed += 1)}`
-const placeholder = '问点什么？使用 @ 可以引用对话、文件、知识库、技能或智能体。'
+const placeholder = '问点什么？使用 @ 可以引用设备、对话、文件等。'
 
 const previewAttachments = computed(() => normalizeAttachmentPreviews(props.attachments))
 const updateValue = (val) => {

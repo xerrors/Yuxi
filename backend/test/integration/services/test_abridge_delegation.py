@@ -6,11 +6,11 @@ from sqlalchemy import select, update
 
 from test.integration.services.test_oidc_provider import scenario  # noqa: F401
 from yuxi.infrastructure.postgres.manager import pg_manager
-from yuxi.modules.extensions.abridge.client import AbridgeAuth, issue_abridge_delegation
-from yuxi.modules.extensions.abridge.options import connection_settings
-from yuxi.modules.extensions.abridge.service import personal_devices
 from yuxi.modules.extensions.mcp.models import MCPConnection, MCPServer
 from yuxi.modules.extensions.mcp.service import available_mcp_servers, get_enabled_mcp_server_slugs
+from yuxi.modules.extensions.plugins.abridge.client import AbridgeAuth, issue_abridge_delegation
+from yuxi.modules.extensions.plugins.abridge.options import connection_settings
+from yuxi.modules.extensions.plugins.abridge.service import personal_devices
 from yuxi.modules.identity.models import User
 from yuxi.modules.identity.provider import ProviderError
 from yuxi.modules.system.models import ConfigOption
@@ -21,7 +21,7 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.integration, pytest.mark.self_man
 async def test_origin_configuration_rejects_invalid_http_input_and_normalizes_root(scenario, monkeypatch):  # noqa: F811
     """实际 HTTP 写入拒绝非根地址，数据库回读确认失败不覆盖有效值。"""
     from yuxi.api.routers.system import system
-    from yuxi.modules.extensions.abridge.options import abridge_options
+    from yuxi.modules.extensions.plugins.abridge.options import abridge_options
 
     scenario["app"].include_router(system, prefix="/api")
     monkeypatch.setattr(pg_manager, "get_async_session_context", scenario["db"])

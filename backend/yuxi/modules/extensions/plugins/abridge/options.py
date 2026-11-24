@@ -1,7 +1,7 @@
 """aBridge 地址配置与部署就绪判据。"""
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.system.services.options import Option, normalize_option_value
@@ -21,6 +21,13 @@ abridge_options = Option(
                 "default": "",
                 "help": "留空读取 ABRIDGE_URL。请填写不带账号、路径、查询和片段的 HTTP(S) 服务根地址。全局管理请进入 aBridge。",
             },
+            {
+                "key": "allow_shadow_managed_browser",
+                "label": "允许 APP 终端用户使用托管浏览器",
+                "type": "boolean",
+                "default": False,
+                "help": "允许 APP 终端用户通过 Agents Public API 启动 Cube 浏览器并通过 aBridge 插件使用它。",
+            },
         ],
     },
 )
@@ -33,6 +40,8 @@ class AbridgeConnection:
     service_origin: str
     public_origin: str
     provider_enabled: bool
+    # 开关只影响托管委托；人类用户的地址快照不因此失效。
+    allow_shadow_managed_browser: bool = field(default=False, compare=False)
 
     @property
     def configured(self) -> bool:
@@ -57,4 +66,5 @@ async def connection_settings(db=None) -> AbridgeConnection:
         service_origin=url,
         public_origin=public_origin,
         provider_enabled=os.getenv("YUXI_OIDC_PROVIDER_ENABLED", "false").lower() == "true",
+        allow_shadow_managed_browser=options["allow_shadow_managed_browser"],
     )

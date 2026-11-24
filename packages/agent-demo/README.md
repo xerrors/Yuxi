@@ -16,6 +16,10 @@ node server.mjs
 
 `PORT=5181 node server.mjs` 可以修改网页端口。Node 运行 Vite 静态开发服务，浏览器直接请求 Yuxi；此启动器不配置 API 转发。`npm run build` 生成可独立托管的 `dist/` 静态文件。
 
+## 测试托管浏览器
+
+保存 APP Key 并在「用户」选择终端用户，然后打开调试台的「浏览器」，点击「连接沙盒浏览器」。这里会显示 `POST /api/v1/agents/managed-browser` 的 HTTP 状态和设备 ID。`202` 表示正在启动，可点击「检查连接」重试同一个身份。`200` 表示设备已就绪，可以在对话中让已接入 aBridge 的 Agent 使用该设备。切换 APP 或终端用户后，状态和请求记录会随身份重置。
+
 ## 跨域与手机访问
 
 Yuxi 需要允许 Demo 网页的 Origin。服务端默认开发白名单只包含 5173；默认 Demo 使用 5180，需要按[部署文档的 CORS 配置](../../docs/advanced/deployment.md#跨域cors)设置允许来源并重启 API。例如保留产品前端来源，同时允许本机 Demo：

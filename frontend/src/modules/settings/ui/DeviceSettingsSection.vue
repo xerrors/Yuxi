@@ -51,7 +51,7 @@
           <a-alert
             v-else-if="data.state === 'login_required'"
             type="info"
-            message="请先进入 aBridge，使用 Yuxi 账户登录并绑定设备，再刷新列表。"
+            message="请进入 aBridge，使用 Yuxi 账户登录并确认对 Yuxi 的连接授权，再刷新列表。"
             show-icon
           />
           <template v-else>
@@ -124,8 +124,20 @@
                   :for="`abridge-${field.key}`"
                   class="settings-form-label"
                 >{{ field.label }}</label>
+                <a-select
+                  v-if="field.type === 'boolean'"
+                  :id="`abridge-${field.key}`"
+                  :aria-label="field.label"
+                  :value="String(editing ? draftValue[field.key] : option.effective_value?.[field.key] ?? field.default)"
+                  :options="[
+                    { value: 'true', label: '允许' },
+                    { value: 'false', label: '不允许' }
+                  ]"
+                  :disabled="!editing || saving"
+                  @update:value="draftValue[field.key] = $event === 'true'"
+                />
                 <a-input
-                  v-if="editing"
+                  v-else-if="editing"
                   :id="`abridge-${field.key}`"
                   v-model:value="draftValue[field.key]"
                   :aria-label="field.label"
@@ -245,7 +257,10 @@ async function saveConfig() {
   saving.value = true
   try {
     const fields = Object.fromEntries(
-      option.value.params.fields.map((field) => [field.key, draftValue.value[field.key]?.trim() || ''])
+      option.value.params.fields.map((field) => [
+        field.key,
+        field.type === 'boolean' ? draftValue.value[field.key] : draftValue.value[field.key]?.trim() || ''
+      ])
     )
     const result = await configOptionsApi.updateOption('abridge_options', fields)
     option.value = result.option

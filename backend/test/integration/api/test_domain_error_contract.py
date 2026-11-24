@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from test.integration.support.module_audit import serve_http
 from yuxi.api.dependencies.auth import get_required_user
@@ -94,7 +94,7 @@ async def test_broad_route_catch_preserves_domain_rejection(domain_http, monkeyp
 
 
 async def test_http_idempotency_conflict_preserves_one_input_and_receipt(domain_http, sessions):
-    """异意图重放保持 409，数据库只有原始接收事实。"""
+    """异意图重放保持 409，普通入口只接收和消费一次。"""
     url = "/api/v1/agents/sessions/input-thread/events"
     headers = {"Idempotency-Key": "domain-contract-input"}
     body = {
@@ -115,14 +115,15 @@ async def test_http_idempotency_conflict_preserves_one_input_and_receipt(domain_
     assert rejected.status_code == 409
     assert rejected.json() == {"detail": "Idempotency-Key 已用于其他输入"}
     async with sessions() as db:
-        item = await db.scalar(select(AgentInput))
-        receipt = await db.scalar(select(AgentInputReceipt))
+        [item] = (await db.scalars(select(AgentInput))).all()
+        [receipt] = (await db.scalars(select(AgentInputReceipt))).all()
+        [turn] = (await db.scalars(select(AgentTurn))).all()
+        [run] = (await db.scalars(select(AgentRun))).all()
         assert item.messages[0]["content"] == [{"type": "text", "text": "original"}]
-        assert receipt.input_id == item.id
-        assert await db.scalar(select(func.count()).select_from(AgentInput)) == 1
-        assert await db.scalar(select(func.count()).select_from(AgentInputReceipt)) == 1
-        assert await db.scalar(select(func.count()).select_from(AgentTurn)) == 0
-        assert await db.scalar(select(func.count()).select_from(AgentRun)) == 0
+        assert receipt.input_id == item.id == accepted.json()["input_id"]
+        assert item.status == "consumed"
+        assert (item.turn_id, item.consumed_run_id) == (turn.id, run.id)
+        assert run.turn_id == turn.id and turn.current_run_id == run.id
 
 
 async def test_http_missing_scope_and_invalid_sse_cursor_are_rejected_before_response(domain_http):

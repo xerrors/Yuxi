@@ -9,6 +9,7 @@ import {
   Users,
   Activity,
   Settings2,
+  Globe,
   Trash2,
   RefreshCw,
   Copy,
@@ -43,6 +44,20 @@ watch(
   { immediate: true },
 );
 const active = computed(() => activeApp.value);
+const browserAction = computed(() => {
+  const { loading, result, error } = state.managedBrowser;
+  if (loading) return "正在请求";
+  if (error) return "重试连接";
+  return result ? "检查连接" : "连接沙盒浏览器";
+});
+const browserStatus = computed(() => {
+  const { loading, result, error } = state.managedBrowser;
+  if (loading) return "正在请求";
+  if (error) return "连接失败";
+  if (result?.status === "ready") return "浏览器已就绪";
+  if (result?.status === "connecting") return "浏览器正在启动";
+  return "尚未请求";
+});
 
 /** 新增本地身份后清空表单。 */
 function addUser() {
@@ -97,6 +112,14 @@ async function copyLogs() {
         @click="tab = 'users'"
       >
         <Users :size="14" />用户
+      </button>
+      <button
+        role="tab"
+        :aria-selected="tab === 'browser'"
+        :class="{ active: tab === 'browser' }"
+        @click="tab = 'browser'"
+      >
+        <Globe :size="14" />浏览器
       </button>
       <button
         role="tab"
@@ -242,6 +265,41 @@ async function copyLogs() {
           区分身份，首次请求由服务端创建对应用户。
         </p>
       </div>
+      <section v-else-if="tab === 'browser'" class="browser-panel" aria-label="托管浏览器测试">
+        <div class="section-label">托管浏览器</div>
+        <code class="browser-endpoint">POST /api/v1/agents/managed-browser</code>
+        <dl class="runtime-facts">
+          <dt>APP</dt>
+          <dd>{{ active.appId || active.name }}</dd>
+          <dt>终端用户</dt>
+          <dd>{{ active.userId || "默认身份" }}</dd>
+          <dt>状态</dt>
+          <dd role="status">{{ browserStatus }}</dd>
+          <dt v-if="state.managedBrowser.httpStatus">HTTP</dt>
+          <dd v-if="state.managedBrowser.httpStatus">{{ state.managedBrowser.httpStatus }}</dd>
+          <dt v-if="state.managedBrowser.result">设备 ID</dt>
+          <dd v-if="state.managedBrowser.result">{{ state.managedBrowser.result.deviceId }}</dd>
+        </dl>
+        <p v-if="state.managedBrowser.error" class="error-notice" role="alert">
+          {{ state.managedBrowser.error }}
+        </p>
+        <p v-else-if="!state.connected" class="browser-help">请先在「连接」保存并连接 API Key。</p>
+        <p v-else-if="state.managedBrowser.result?.status === 'connecting'" class="browser-help">
+          启动需要一点时间。再次检查会复用当前用户的浏览器。
+        </p>
+        <p v-else-if="state.managedBrowser.result?.status === 'ready'" class="browser-help">
+          可以回到对话，让已接入 aBridge 的 Agent 使用此设备。
+        </p>
+        <button
+          type="button"
+          class="secondary-button"
+          :disabled="!state.connected || state.managedBrowser.loading"
+          @click="demo.provisionManagedBrowser()"
+        >
+          <RefreshCw v-if="state.managedBrowser.loading" :size="14" class="spin" />
+          {{ browserAction }}
+        </button>
+      </section>
       <div v-else class="events-panel">
         <div class="section-label">
           <span>当前会话</span

@@ -40,6 +40,7 @@ export function useDemo() {
   const state = reactive({
     connected: false,
     connecting: false,
+    managedBrowser: { loading: false, result: null, error: "", httpStatus: null },
     agents: [],
     agentId: "",
     threads: [],
@@ -166,6 +167,7 @@ export function useDemo() {
     const owner = token();
     state.connected = false;
     state.connecting = false;
+    state.managedBrowser = { loading: false, result: null, error: "", httpStatus: null };
     state.agents = [];
     state.agentId = "";
     state.threads = [];
@@ -187,6 +189,26 @@ export function useDemo() {
       showError(error, owner);
     } finally {
       if (owner.scope === scope) state.connecting = false;
+    }
+  }
+
+  /** 以已保存的 APP 和终端用户连接浏览器，忽略切换身份后的旧响应。 */
+  async function provisionManagedBrowser() {
+    if (!state.connected || state.managedBrowser.loading) return;
+    const owner = scope;
+    const browser = state.managedBrowser;
+    Object.assign(browser, { loading: true, result: null, error: "", httpStatus: null });
+    try {
+      const result = await api.provisionManagedBrowser();
+      if (owner !== scope) return;
+      browser.result = result;
+      browser.httpStatus = result.httpStatus;
+    } catch (error) {
+      if (owner !== scope || identityController.signal.aborted) return;
+      browser.error = error.message;
+      browser.httpStatus = error.status || null;
+    } finally {
+      if (owner === scope) browser.loading = false;
     }
   }
 
@@ -632,6 +654,7 @@ export function useDemo() {
     waitingForUser,
     connect,
     saveConnection,
+    provisionManagedBrowser,
     addApp,
     addUser,
     loadThreads,

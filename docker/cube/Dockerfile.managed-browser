@@ -1,0 +1,17 @@
+# 可选模板。abridge-browser-client 是解包后的 aBridge 独立浏览器发行物。
+ARG CUBE_USER_IMAGE
+FROM ${CUBE_USER_IMAGE}
+
+COPY --from=abridge-browser-client / /opt/yuxi-managed-browser/
+
+RUN test -f /opt/yuxi-managed-browser/extension/manifest.json \
+    && test -f /opt/yuxi-managed-browser/extension/connection.html \
+    && test -x /opt/yuxi-managed-browser/abridge-client-browser \
+    && test "$(python3 -c 'import importlib.metadata; print("playwright==" + importlib.metadata.version("playwright"))')" = "$(cat /opt/yuxi-managed-browser/requirements.txt)" \
+    && touch /opt/yuxi-managed-browser/service-v2 \
+    && useradd --system --create-home --home-dir /var/lib/yuxi-managed-browser --shell /usr/sbin/nologin managed-browser \
+    && chmod 0700 /var/lib/yuxi-managed-browser \
+    && mv /home/user/.cache/ms-playwright /opt/yuxi-managed-browser/chromium \
+    && ln -s /opt/yuxi-managed-browser/chromium /home/user/.cache/ms-playwright \
+    && chown -R root:root /opt/yuxi-managed-browser \
+    && chmod -R a+rX,go-w /opt/yuxi-managed-browser

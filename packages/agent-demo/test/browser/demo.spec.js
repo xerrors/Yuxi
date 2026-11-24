@@ -62,6 +62,8 @@ async function fixture() {
     failNext: false,
     failNextEvent: false,
     delayAlpha: false,
+    managedBrowserCalls: 0,
+    managedBrowserGate: null,
     oldHistoryDelay: false,
     eventSeq: 0,
     subscriptionCount: 0,
@@ -108,6 +110,18 @@ async function fixture() {
     };
     if (url.pathname === "/api/v1/agents/files" && req.method === "POST") {
       json({ id: "1234567890abcdef1234567890abcdef", object: "file", filename: "draft.txt", bytes: 11, mime_type: "text/plain", status: "draft", created_at: 1791446400, expires_at: 1791532800 }, 201);
+    } else if (url.pathname === "/api/v1/agents/managed-browser" && req.method === "POST") {
+      if (app !== "alpha" || user !== "customer-2") {
+        json({ detail: "当前身份无权连接托管浏览器" }, 403);
+        return;
+      }
+      state.managedBrowserCalls += 1;
+      await state.managedBrowserGate;
+      if (state.managedBrowserCalls === 1) {
+        json({ status: "connecting", device_id: "managed-device-1" }, 202);
+      } else {
+        json({ status: "ready", device_id: "managed-device-1" });
+      }
     } else if (url.pathname === "/api/v1/agents/") {
       if (state.delayAlpha && app === "alpha")
         await new Promise((resolve) => setTimeout(resolve, 450));
@@ -378,6 +392,51 @@ test("APP 与用户切换清空旧消息，所有调用使用新的身份", asyn
     .at(-1);
   expect(last.headers.authorization).toBe("Bearer test-beta-key");
   expect(last.headers["x-end-user-id"]).toBeUndefined();
+});
+
+test("托管浏览器使用选中的 APP 和用户，检查用同一请求，切换后不显示旧设备", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("tab", { name: "用户", exact: true }).click();
+  await page.getByRole("button", { name: "小 小林 customer-2" }).click();
+  await page.getByRole("tab", { name: "浏览器", exact: true }).click();
+  const panel = page.getByRole("region", { name: "托管浏览器测试" });
+  await expect(panel).toContainText("customer-2");
+  await panel.getByRole("button", { name: "连接沙盒浏览器" }).click();
+  await expect(panel.getByRole("status")).toHaveText("浏览器正在启动");
+  await expect(panel).toContainText("202");
+  await expect(panel).toContainText("managed-device-1");
+  await panel.getByRole("button", { name: "检查连接" }).click();
+  await expect(panel.getByRole("status")).toHaveText("浏览器已就绪");
+  await expect(panel).toContainText("200");
+  await expect(panel).toContainText("managed-device-1");
+  const requests = backend.requests.filter(({ path }) => path === "/api/v1/agents/managed-browser");
+  expect(requests).toHaveLength(2);
+  for (const request of requests) {
+    expect(request.method).toBe("POST");
+    expect(request.headers.authorization).toBe("Bearer test-alpha-key");
+    expect(request.headers["x-end-user-id"]).toBe("customer-2");
+    expect(request.headers["x-app-id"]).toBeUndefined();
+    expect(request.raw).toBe("");
+  }
+  let releaseResponse;
+  backend.state.managedBrowserGate = new Promise((resolve) => { releaseResponse = resolve; });
+  try {
+    await panel.getByRole("button", { name: "检查连接" }).click();
+    await expect.poll(() => backend.state.managedBrowserCalls).toBe(3);
+    await page.getByRole("tab", { name: "连接", exact: true }).click();
+    await page.getByRole("button", { name: "B Beta APP beta" }).click();
+    await page.getByRole("tab", { name: "浏览器", exact: true }).click();
+  } finally {
+    releaseResponse();
+  }
+  await expect(panel.getByRole("status")).toHaveText("尚未请求");
+  await expect(panel).not.toContainText("managed-device-1");
+  await panel.getByRole("button", { name: "连接沙盒浏览器" }).click();
+  await expect(panel.getByRole("alert")).toHaveText("当前身份无权连接托管浏览器");
+  await expect(panel).toContainText("403");
+  const denied = backend.requests.filter(({ path }) => path === "/api/v1/agents/managed-browser").at(-1);
+  expect(denied.headers.authorization).toBe("Bearer test-beta-key");
+  expect(denied.headers["x-end-user-id"]).toBeUndefined();
 });
 
 test("局域网 HTTP 手机可以启动、发送、取消和新增 APP", async ({ page }) => {

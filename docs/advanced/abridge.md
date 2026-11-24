@@ -21,13 +21,13 @@ docker compose -f docker-compose.yml -f docker-compose.abridge.yml up -d
 
 Container 沙盒按原部署方式附加 `--profile container`；生产环境将基础文件改为 `docker-compose.prod.yml`，并使用对应 `--env-file`。可选 aBridge 文件不替代基础拓扑。它使用 [Compose 固定的官方 0.4.13 镜像摘要](https://github.com/xerrors/Yuxi/blob/main/docker-compose.abridge.yml)，将状态存入独立命名卷，并默认只在回环地址发布端口 `18765`。反向代理需要将 aBridge 的公开来源转发到该端口，并支持设备 WebSocket。调整宿主端口使用 `YUXI_ABRIDGE_PORT`。
 
-公开来源是浏览器和设备使用的地址，远程访问必须使用 HTTPS。回环 HTTP 仅用于本机开发。aBridge 的 OIDC backchannel 在 Compose 中映射到 `http://api:5050`，只改变服务器请求的传输地址，issuer、浏览器跳转和令牌受众仍使用公开来源。浏览器必须能访问 Yuxi 和 aBridge，不能使用 Compose 服务名代替公开来源。
+公开来源是浏览器和设备使用的地址。生产 Yuxi 的 OIDC 回调使用 HTTPS。初始化器只接受回环地址上的 HTTP 来源。隔离部署已配置 HTTP 来源时，需在 Yuxi 与 aBridge 显式设置 `ABRIDGE_ALLOW_INSECURE_HTTP=true`。aBridge 的 OIDC backchannel 在 Compose 中映射到 `http://api:5050`，只改变服务器请求的传输地址，issuer、浏览器跳转和令牌受众仍使用公开来源。使用浏览器可以访问的公开地址。
 
 登录 Yuxi 后，在设置 → 设备管理中进入 aBridge。首次统一登录自动建立普通 aBridge 用户，再按 aBridge 原有流程绑定电脑或浏览器。aBridge 0.4.13 首次统一登录创建的平台连接默认允许访问本人全部设备及全部能力（屏幕、输入、命令、文件、浏览器）。需要限制范围时，在 aBridge 的连接设置中选择指定设备和能力；Yuxi 不另设授权副本。返回 Yuxi 刷新后，设备页只显示该平台连接获准访问的设备；Agent 使用相同用户的权限。离线和本机暂停不代表权限被解除。
 
 超级管理员可在同一设置页编辑后端通信的服务 URL；全局用户和设备概况请进入 aBridge 查看。公开来源由部署配置 `ABRIDGE_PUBLIC_ORIGIN` 固定，缺失时设备入口与 MCP 均不可用，不回退到内部地址。管理员 Token 仅供 aBridge 部署使用，Compose 显式清空 API/worker 中的同名环境值，不向它们提供有效管理员凭据，也不通过 Yuxi 页面编辑。应用初始化同步配置定义时清理历史保存的管理员 Token 覆盖值，不修改部署凭据。
 
-Compose 固定发布镜像，不接受本地源码构建；初始化器不接受 `--source-dir`，`ABRIDGE_SOURCE_DIR` 不再参与部署。既有部署升级前仍需自行备份和核对 aBridge 数据版本，初始化器不会启动服务或迁移运行数据。
+Compose 默认使用固定的发布镜像摘要。使用自建镜像时，先构建镜像，再通过 `ABRIDGE_IMAGE` 指定镜像引用。既有部署升级前，由管理员备份和核对 aBridge 数据版本，服务启动和数据迁移按下文执行。
 
 ## 智能体使用设备
 
@@ -41,18 +41,127 @@ aBridge 从智能体的直接 MCP 选择和会话连接器提及列表中排除�
 
 外部身份按 issuer 与稳定用户标识映射，用户名和邮箱不参与自动合并。更换 issuer 或用户标识会产生不同身份，既有本地用户及设备不会自动迁移。aBridge 的持久数据格式由外部服务拥有；旧运行数据不能仅凭 Yuxi 配置更新就认定兼容。需要保留历史设备时，应先做在线备份并在停机维护窗口显式转换、验证，不能把开发副本的调整当作生产升级。本接入不操作现有部署的数据。
 
+## Cube 托管浏览器
+
+在「设置 → 运行环境」点击「连接沙盒浏览器」。首次连接会准备本人的 Cube，并把其中的浏览器登记到本人的 aBridge 账号。回到「设置 → 设备管理」，点击「刷新设备」即可在当前授权范围内看到它。启用了 aBridge 插件的智能体通过同一个设备列表使用浏览器。Cube 休眠时，列表里的设备会显示离线。在运行环境点击「重新连接」可唤醒它。在 aBridge 重新生成设备凭据后，也从这里连接原来的浏览器。
+
+如果你在 aBridge 只授权了指定设备，请在那里把新设备加入授权范围。撤销过平台授权的账号，需要在 aBridge 显式重新授权。
+
+如果创建环境失败，请管理员核对 Cube 节点空间和模板。故障排除后，在运行环境的“环境操作”菜单中选择“重建环境”，核对清除范围后确认。
+
+外部 APP 通过 [Agents Public API](agents-public-api.md#启动托管浏览器)启动所属终端用户的浏览器。部署需要以下条件。
+
+1. 使用同一版 aBridge 源码构建 Server 镜像和浏览器发行物。Server 需要支持 APP 的托管登记和本人的浏览器登记（`GET /api/managed-browsers/status`、`GET /api/personal-browsers/status`），数据库沿用 aBridge 主线的 SQLite schema 6。设置 `ABRIDGE_IMAGE` 与 `ABRIDGE_MANAGED_BROWSER_ENABLED=true`。验证镜像使用独立数据卷。
+2. 在 aBridge 根目录执行 `npm run package:browser-client`。在 Cube 节点用解包后的 `abridge-client-browser` 作为镜像构建上下文。模板基础镜像需带与发行物相同版本的 Playwright 和 Chromium。
+
+   ```bash
+   docker build -f docker/cube/Dockerfile.managed-browser \
+     --build-arg CUBE_USER_IMAGE=127.0.0.1:5000/yuxi-user:0.1 \
+     --build-context abridge-browser-client=/path/to/abridge-client-browser \
+     -t yuxi-user-managed-browser:local docker/cube
+   ```
+
+   用 [Cube 节点](sandbox-operations.md#原生执行节点)的本地镜像仓库登记新版模板。
+
+   ```bash
+   docker tag yuxi-user-managed-browser:local 127.0.0.1:5000/yuxi-user-managed-browser:local
+   docker push 127.0.0.1:5000/yuxi-user-managed-browser:local
+   cubemastercli template create-from-image \
+     --image http://127.0.0.1:5000/yuxi-user-managed-browser:local \
+     --alias yuxi-user-managed-browser --cpu 1000 --memory 2048 \
+     --writable-layer-size 2G --expose-port 49983 --probe 49983 --probe-path /health
+   ```
+
+   按[沙盒配置与运维](sandbox-operations.md#原生执行节点)为 API 和 Worker 配置同一 Cube 节点，设置 `SANDBOX_BACKEND=cube`，并将 `CUBE_TEMPLATE_ID` 设为新模板别名。新模板只用于新建 VM。Yuxi 读取实际 VM 的 `service-v2` 标记。已有 VM 缺少客户端时按下节原地升级。浏览器 Profile 属于当前 VM 的专用账户，暂停恢复或重启会沿用它。
+3. 从 Cube 验证 `ABRIDGE_PUBLIC_ORIGIN` 的 HTTPS 和 WebSocket 可达。aBridge 客户端使用该地址兑换票据和建立浏览器连接。Cube 默认拒绝访问私网地址。API 和 Worker 从已配置的内部服务 URL 调用登记和 MCP。隔离测试环境如需使用 HTTP，Yuxi 和 aBridge 都需设置 `ABRIDGE_ALLOW_INSECURE_HTTP=true`。
+4. APP 接入由超级管理员在「设置 → 设备管理 → 实例配置」启用 `allow_shadow_managed_browser`。个人浏览器登记使用登录用户的稳定身份，由 aBridge 同一账号下的普通平台连接决定可见设备和可用能力。Yuxi 准备 VM 前检查 aBridge 只读协议和来源，准备后通过私有 stdin 将一次性票据交给来宾客户端。就绪要求扩展已经连通，且 aBridge 确认同一设备和登记版本在线。
+
+关闭开关后，Yuxi 拒绝新的 APP 登记和委托。已经签发的委托最长一分钟到期，设备仍按 aBridge 的登记与授权运行。要立即作废该设备的密钥、一次性票据及受限连接，请在 aBridge 撤权。
+
+### 升级已有登记和 Cube
+
+在维护窗口暂停接收新任务，排空正在执行的任务后停止 API、Worker 和 aBridge，再切换 aBridge 数据卷。
+
+本地部署允许丢弃 aBridge 数据时，可在原 Compose 项目中用覆盖文件将 `volumes.abridge-data.name` 指向新的空卷，保留原卷和原配置以便回退。Yuxi 继续使用原 PostgreSQL 和 Cube VM。普通设备需要重新绑定，APP 与 Web 沙盒浏览器也需重新登记，空库会签发新的设备 ID 和密钥。已保存旧 v2 绑定的 VM 需先按下文处理本地绑定。
+
+需要保留历史设备、密钥或操作记录的部署，应先在备份副本上验证目标 aBridge 版本支持的升级路径，再切换服务。aBridge 的数据库格式和迁移由 aBridge 维护。
+
+旧 VM 保持原工作区和虚拟机身份。客户端升级工具位于仓库的 `scripts/abridge/upgrade-managed-browser.py`。管理员通过已有的可信来宾管理通道，用 root 在空闲 VM 中运行它，传入受信发行物的 SHA-256 和原浏览器使用的规范公开根地址，省略默认端口和末尾斜杠。先停止浏览器专用账号的进程。普通模板需要能下载固定 Playwright 版本对应的 Chromium。
+
+```bash
+/usr/local/bin/python3 -I upgrade-managed-browser.py "/path/to/abridge-client-browser-${BROWSER_VERSION}-linux.tar.gz" \
+  --sha256 "$BROWSER_RELEASE_SHA256" --public-origin "$ABRIDGE_PUBLIC_ORIGIN"
+```
+
+工具将已有浏览器资料复制到同一专用账号的新目录。原先安装过客户端的 VM 会保留 `/opt/yuxi-managed-browser.before-upgrade`。旧试用快照带有运行中的 Chromium 时，先唤醒 VM 并停止旧客户端，再切换。保留 aBridge 登记的试用版 APP 首次按新协议连接时，在原设备 ID 上重新兑换托管浏览器凭据。
+
+若明确使用空库，已安装 v2 的 VM 可在可信来宾管理通道运行以下停止命令。确认退出码为零、状态为 `bound` 或 `unbound`，待专用账号的浏览器进程退出后，按原属主和权限备份完整状态目录。
+
+```bash
+runuser -u managed-browser -- /usr/local/bin/python3 -I /opt/yuxi-managed-browser/abridge-client-browser stop
+```
+
+默认状态目录为 `/var/lib/yuxi-managed-browser/.local/state/abridge-client-browser`。已确认的旧 v2 绑定保存在 `binding.json`。确认新服务的公开地址正确且原登记已弃用后，在来宾管理通道移走这个文件，保留 Chromium 的 `profile/`。随后用原 Web 账号或 APP 终端身份重新连接。新服务签发新凭据，客户端在同一 Profile 中绑定新设备。遇到未经计划的绑定冲突时，应先核对所连服务和数据库。
+
+放流前，用待发布的 API、Worker、前端和 aBridge 在隔离环境验证两条路径。在新模板创建的 VM 中，从 Web 连接沙盒浏览器，在 aBridge 本人的设备与 Yuxi 刷新后的设备列表核对同一设备 ID，再用普通对话读回网页内容。在原地升级的试用 VM 中，从原 APP 对话读回网页内容。若保留了 aBridge 数据，还要核对设备 ID 与升级前一致，并用普通授权访问一台既有设备。
+
+回退时先停止客户端，在同一维护窗口恢复原应用版本、模板配置和 aBridge 数据目录。重新绑定会覆盖扩展中的设备密钥，回退到原 v2 登记时要一并恢复备份中的完整状态目录，包括 `binding.json` 和 `profile/`。对升级过的 VM 恢复旧客户端安装，首次安装的则移走新安装，然后再启动服务。
+
+### 恢复 APP 终端运行环境
+
+`sandbox_create_failed` 表示 Cube 未能完成创建。`sandbox_unavailable` 表示已有失败记录，需要部署管理员检查。先恢复节点资源，再在 Yuxi 的用户管理筛选 APP 终端用户，核对 APP、终端标识和完整 UID。重建会清理来宾主目录中的文件与软件，工作区和技能保留。确认目标、清除范围和无在途任务后，在 Yuxi 部署目录运行以下命令。成功推进到新代次后，针对旧代次的恢复请求会被拒绝。
+
+```bash
+docker compose exec -T api uv run --no-sync python - '<终端 UID>' <<'PY'
+import asyncio
+import sys
+
+from yuxi.infrastructure.postgres.manager import pg_manager
+from yuxi.infrastructure.postgres.models import load_models
+from yuxi.modules.agents.services.sandbox import get_user_sandbox, rebuild_user_sandbox
+from yuxi.modules.identity.repositories.users import UserRepository
+
+async def recover(uid):
+    load_models()
+    pg_manager.initialize()
+    try:
+        user = await UserRepository().get_by_uid(uid)
+        if user is None or user.is_deleted or user.user_kind != "end_user":
+            raise SystemExit("请核对当前部署的 APP 终端 UID")
+        status = await get_user_sandbox(uid)
+        if not status.get("rebuild_required") or status["busy"]:
+            raise SystemExit("当前环境未处于可重建的故障状态")
+        result = await rebuild_user_sandbox(uid, failed_generation=status["generation"])
+        print(result["state"], result["generation"])
+    finally:
+        await pg_manager.close()
+
+asyncio.run(recover(sys.argv[1]))
+PY
+```
+
+环境恢复后，APP 使用原 APP Key 和终端标识重新调用托管浏览器接口。
+
 ## 插件配置升级
 
 生产旧库按 [Skills 升级说明](../agents/skills-management.md#从运行依赖升级)一次升级至当前结构。旧的显式 aBridge MCP 选择或全部 MCP 选择在同一次升级中转为启用设备插件，其他配置和历史执行事实保留。新部署直接使用插件入口，不需要独立升级步骤。
 
 ## 协议验证
 
-两边的协议验证由各自测试承担。发布验证使用官方 `v0.4.13` 对应的源码 revision `f43b7712e04ae6ad19805e842afefb5400699916`，与部署镜像版本一致；在独立目录构建后运行真实跨项目探针：
+默认部署使用官方 `v0.4.13`，对应源码 revision `f43b7712e04ae6ad19805e842afefb5400699916`。在独立目录构建该版本后，验证普通设备授权和既有配置升级。
 
 ```bash
 ABRIDGE_TEST_SOURCE=../aBridge \
   uv run --project backend --group test pytest \
-  backend/test/integration/services/test_abridge_devices.py
+  backend/test/integration/services/test_abridge_devices.py::test_real_login_personal_device_isolation_and_revocation \
+  backend/test/integration/services/test_abridge_devices.py::test_startup_removes_retired_admin_secret_before_options_are_served
+```
+
+部署浏览器登记 v2 时，使用与候选镜像一致的构建运行完整探针，其中包括个人 Cube 浏览器的真实登记、普通设备列表、权限收窄和撤销。
+
+```bash
+ABRIDGE_TEST_SOURCE=../aBridge-v2 \
+  uv run --project backend --group test pytest backend/test/integration/services/test_abridge_devices.py
 ```
 
 探针还需要指向隔离 PostgreSQL 与 Redis 的 `POSTGRES_URL`、`REDIS_URL`。它创建自己的用户、Schema、aBridge 数据库和回环端口，不连接现有设备。未提供源码时该可选探针会跳过；显式指定的目录缺少构建产物则失败。发布此集成时须执行探针并检查没有跳过，跳过不能证明跨项目链路可用。

@@ -38,7 +38,7 @@ class AbridgePlugin(YuxiPlugin):
 
 async def _available(db) -> bool:
     """当前实例须启用设备委托并拥有有效服务地址。"""
-    from yuxi.modules.extensions.abridge.options import connection_settings
+    from yuxi.modules.extensions.plugins.abridge.options import connection_settings
 
     try:
         return (await connection_settings(db)).configured
@@ -51,6 +51,6 @@ async def _available(db) -> bool:
 
 async def _delegation(*, uid, context, management, before_request) -> dict:
     """按当前用户与设备配置装配出站委托。"""
-    from yuxi.modules.extensions.abridge.client import abridge_mcp_connection
+    from yuxi.modules.extensions.plugins.abridge.client import abridge_mcp_connection
 
-    return await abridge_mcp_connection(uid=uid, before_request=before_request)
+    return await abridge_mcp_connection(uid=uid, before_request=before_request, context=context)

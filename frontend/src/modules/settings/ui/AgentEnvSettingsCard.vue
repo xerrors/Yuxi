@@ -1,6 +1,6 @@
 <template>
   <div class="agent-env-settings settings-page">
-    <UserSandboxSettingsCard ref="sandboxSettings" />
+    <UserSandboxSettingsCard ref="sandboxSettings" :active="active" />
     <a-spin :spinning="loading">
       <AgentEnvEditor
         :key="editorRevision"
@@ -68,6 +68,8 @@ import { Info, RefreshCw } from '@lucide/vue'
 import { agentEnvApi } from '@/apis/agent_env_api'
 import AgentEnvEditor from './AgentEnvEditor.vue'
 import UserSandboxSettingsCard from './UserSandboxSettingsCard.vue'
+
+defineProps({ active: { type: Boolean, default: true } })
 
 const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
 const MAX_ENV_COUNT = 200

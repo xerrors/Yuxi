@@ -121,6 +121,13 @@
       :description="failedGeneration ? '可在「环境操作」菜单中重建环境。' : undefined"
       show-icon
     />
+    <!-- 首次连接本身会创建第 1 代，保留这次连接的结果。显式重建后刷新组件。 -->
+    <SandboxBrowserSettings
+      v-if="status?.backend === 'cube'"
+      :key="status.generation || 1"
+      :environment="status"
+      @environment-changed="refresh"
+    />
     <ul v-if="status?.active_runs?.length" class="sandbox-runs">
       <li v-for="run in status.active_runs" :key="run.id">
         <span>{{ run.status === 'cancel_requested' ? '取消处理中' : '任务处理中' }}</span>
@@ -139,7 +146,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { Modal, message } from 'ant-design-vue'
 import {
   CircleAlert,
@@ -156,7 +163,9 @@ import { formatSandboxDuration, sandboxTimingText } from '../model/sandboxTiming
 import { formatFileSize } from '@/shared/lib/file_utils'
 import { formatFullDateTime } from '@/shared/lib/time'
 import ActionDropdown from '@/shared/ui/ActionDropdown.vue'
+import SandboxBrowserSettings from './SandboxBrowserSettings.vue'
 
+const props = defineProps({ active: { type: Boolean, default: true } })
 const status = ref(null)
 const error = ref('')
 const loading = ref(false)
@@ -174,8 +183,6 @@ const diskError = ref('')
 let diskVersion = 0
 const clock = ref(Date.now())
 const receivedAt = ref(clock.value)
-let clockTimer
-let refreshTimer
 let refreshVersion = 0
 const states = {
   not_created: { label: '未创建', icon: CircleDashed, tone: 'muted' },
@@ -234,6 +241,7 @@ function clearDiskUsage() {
 }
 
 async function refresh() {
+  if (!props.active) return
   const version = ++refreshVersion
   loading.value = true
   error.value = ''
@@ -275,7 +283,7 @@ async function confirmRebuild() {
   const displayedFailure = failedGeneration.value
   menuOpen.value = false
   await refresh()
-  if (loading.value || !status.value || status.value.busy) return
+  if (!props.active || loading.value || !status.value || status.value.busy) return
   const generation = failedGeneration.value
   if (displayedFailure !== undefined && displayedFailure !== generation) return
   Modal.confirm({
@@ -302,20 +310,27 @@ async function confirmRebuild() {
   })
 }
 
-onMounted(() => {
-  refresh()
-  clockTimer = setInterval(() => {
-    clock.value = Date.now()
-  }, 1000)
-  refreshTimer = setInterval(() => {
-    if (!loading.value && !rebuilding.value) refresh()
-  }, 15000)
-})
+watch(
+  () => props.active,
+  (active, _, onCleanup) => {
+    if (!active) return
+    refresh()
+    const clockTimer = setInterval(() => { clock.value = Date.now() }, 1000)
+    const refreshTimer = setInterval(() => {
+      if (!loading.value && !rebuilding.value) refresh()
+    }, 15000)
+    onCleanup(() => {
+      clearInterval(clockTimer)
+      clearInterval(refreshTimer)
+      // 切走后丢弃在途状态，避免其触发隐藏页的浏览器查询。
+      refreshVersion++
+      loading.value = false
+    })
+  },
+  { immediate: true }
+)
 onUnmounted(() => {
-  refreshVersion++
   diskVersion++
-  clearInterval(clockTimer)
-  clearInterval(refreshTimer)
 })
 defineExpose({ refresh })
 </script>
