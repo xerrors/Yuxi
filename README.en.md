@@ -1,323 +1,231 @@
-![Yuxi: a self-hosted, multi-tenant knowledge agent platform](https://oss-img.xerrors.cn/github/yuxi-social-preview-a4f67514.svg)
+![Yuxi enterprise agent platform](.github/media/hero.svg)
 
-Yuxi is a self-hosted, multi-tenant knowledge agent platform. It brings knowledge base retrieval, knowledge graphs, LangGraph multi-agent orchestration, MCP/Skills, sandbox tools, and access control into one workspace.
+**Yuxi is a self-hosted platform for building and running enterprise agents.** Teams can give an agent their internal documents, tools, and working instructions, then have an administrator share it with selected people or departments. Colleagues can use the same agent to look up sources they have permission to read or to produce reports, charts, and files in a project workspace.
 
-[![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat&logo=docker&logoColor=ffffff)](https://github.com/xerrors/Yuxi/blob/main/docker-compose.yml)
-[![Release](https://img.shields.io/github/v/release/xerrors/Yuxi?color=046A82)](https://github.com/xerrors/Yuxi/releases/latest)
-[![License](https://img.shields.io/github/license/xerrors/Yuxi.svg?logo=github)](https://github.com/xerrors/Yuxi/blob/main/LICENSE)
-[![DeepWiki](https://img.shields.io/badge/DeepWiki-blue.svg)](https://deepwiki.com/xerrors/Yuxi)
-[![Bilibili](https://img.shields.io/badge/Knowledge_Base_Demo-00A1D6?logo=bilibili&logoColor=fff)](https://www.bilibili.com/video/BV1erE26iEgv/)
+<a href=".github/media/community-qr.png"><img align="left" width="104" src=".github/media/community-qr.png" alt="Scan to join the Yuxi WeChat community" /></a>
 
-<a href="https://trendshift.io/repositories/24335" target="_blank"><img src="https://trendshift.io/api/badge/repositories/24335" alt="xerrors%2FYuxi | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+**[Watch the demo (Chinese)](https://www.bilibili.com/video/BV1erE26iEgv/) · [Run locally](#quick-start)** · [Documentation](https://xerrors.github.io/Yuxi/) · [中文](README.md)
 
-[Project home](https://xerrors.github.io/Yuxi/) · [Quick start](https://xerrors.github.io/Yuxi/intro/quick-start) · [Demo video](https://www.bilibili.com/video/BV1erE26iEgv/) · [Releases](https://github.com/xerrors/Yuxi/releases) · [中文](README.md)
+<a href="https://trendshift.io/repositories/24335"><img src="https://trendshift.io/api/badge/repositories/24335" alt="Yuxi on Trendshift" width="170" /></a>
+
+<br clear="left" />
+
+![Food safety compliance analysis with findings in the conversation and two files in the output panel](https://oss-img.xerrors.cn/github/image-20260825145022410.png)
+
+*In this food safety compliance review, the team can read the findings in the conversation and open the Markdown report or HTML compliance matrix in the panel on the right.* [Explore the screenshot gallery](#feature-showcase)
 
 ## What Yuxi Can Do
 
-Yuxi is built for teams that need control over their data, models, and permissions:
-
-- **Build knowledge-based Q&A**: Upload documents, parse and chunk them, build vector indexes, and let agents answer questions using retrieved content.
-- **Execute multi-step tasks**: Combine tools, MCP, Skills, sub-agents, and sandboxes to produce previewable, downloadable files.
-- **Connect knowledge graphs**: Extract entities and relationships from document chunks in Milvus knowledge bases, store them in Neo4j, and use them in retrieval.
-- **Manage team access**: Control access to knowledge bases, agents, Skills, and models by user, department, and sharing scope.
-- **Compare execution quality**: Evaluate knowledge base retrieval results. Complete agent evaluation can be built through the Public API; see [agent evaluation](docs/agents/agent-evaluation.md).
-
-## Tech Stack
-
-| Layer | Technologies |
-| --- | --- |
-| Frontend | Vue 3 · Vite · Ant Design · G6 |
-| Backend | FastAPI · LangGraph · ARQ worker |
-| Storage | PostgreSQL · Redis · MinIO · Milvus · Neo4j |
-| Document processing | MinerU · PaddleOCR · RapidOCR |
-| Deployment | Docker Compose |
+- **Answer questions using company knowledge.** Index policies, product manuals, or project documents. Readers can follow a citation back to the source to check an answer. External assistants can also query authorized sources through the read-only knowledge MCP service.
+- **Deliver files from multi-step tasks.** Agents can delegate to sub-agents, call tools, and run commands in an isolated sandbox. Team members can review approval requests and preview, download, or reuse the resulting files in the project workspace.
+- **Share agents across a team.** Capture a procedure as a Skill, select the agent’s model, sources, and tools, and set who can use it. Employees can work in the web app, while business applications can create sessions, submit tasks, and retrieve results through the Agents API.
 
 ## System Architecture
 
-![Yuxi system architecture, with labels in Chinese](https://oss-img.xerrors.cn/github/yuxi-architecture-20261112-f3046585a.svg)
+[![Yuxi system architecture, with labels in Chinese](.github/media/architecture.svg)](.github/media/architecture.svg)
+
+<details>
+<summary>Show the business and platform capability overview</summary>
+
+![Yuxi enterprise agent platform: business applications, agent configuration and execution, knowledge services, governance, and enterprise resources (Chinese labels)](.github/media/business-architecture.svg)
+
+</details>
 
 ## Quick Start
 
-Yuxi starts with Docker Compose and the Container sandbox by default. Each agent run uses a temporary container while workspace files persist. No separate KVM node is required.
-
-### Prerequisites
-
-Install Git, [Docker Engine](https://docs.docker.com/get-docker/), and Docker Compose v2, and prepare a working LLM API. On macOS or Windows, use Docker Desktop in Linux container mode and allow access to the project directory.
-
-This guide uses `v0.8.0`. Version 0.8 requires a fresh deployment with separate data directories and provides no automatic upgrade of older databases, indexes, or file layouts. See the [0.8.0 release notes](docs/develop-guides/releases/0.8.0.md).
-
-Container shares the host kernel and suits local evaluation and trusted single-tenant workloads. For VM isolation or persistent user environments, select Cube in the [quick start](docs/intro/quick-start.md) and prepare a Linux/KVM execution node.
-
-### 1. Get the Code and Initialize
+Install Docker with Compose v2 and get a [SiliconFlow API key](https://cloud.siliconflow.cn/i/Eo5yTHGJ) for initialization.
 
 ```bash
 git clone --branch v0.8.0 --depth 1 https://github.com/xerrors/Yuxi.git
 cd Yuxi
 ./scripts/init.sh
-```
-
-On Windows, run `.\scripts\init.ps1` in PowerShell. The script prompts for a SiliconFlow API Key, generates independent application secrets, a runner authentication token, and an instance identifier, then prepares base images. Configure other model providers after signing in. Keep existing secrets when reusing `.env`; to switch to Container, set `SANDBOX_BACKEND=container` and rerun initialization.
-
-### 2. Start Services
-
-```bash
-docker compose --profile container config --quiet
 docker compose --profile container up --build -d
 ```
 
-The `container` profile builds the sandbox image and starts its runner. Sandbox networking is disabled by default; see [Container sandbox](docs/advanced/container-sandbox.md) for configuration and limitations.
+In Windows PowerShell, use `.\scripts\init.ps1` in place of `./scripts/init.sh`.
 
-### 3. Verify the Deployment
-
-```bash
-docker compose --profile container ps
-curl --fail http://localhost:5050/api/system/ready
-```
-
-Once `status` is `ready`, open [http://localhost:5173](http://localhost:5173), initialize the superadmin account, and sign in. Ask an agent to create `hello.txt`, then verify its contents in the workspace; see the [quick start](docs/intro/quick-start.md) for the full check. API documentation is available at [http://localhost:5050/docs](http://localhost:5050/docs).
-
-## Documentation
-
-- [Project overview](https://xerrors.github.io/Yuxi/intro/project-overview): Capabilities, concepts, and system boundaries.
-- [Quick start](https://xerrors.github.io/Yuxi/intro/quick-start): Choose a sandbox and start a development environment.
-- [Command-line client](docs/intro/cli.md): Sign in, chat, send attachments, and query knowledge bases.
-- [Public Agent API quick start](docs/intro/agents-api-quickstart.md): Create sessions, submit messages, and read results from external applications.
-- [Model configuration](https://xerrors.github.io/Yuxi/intro/model-config): Connect chat, embedding, and rerank models.
-- [Knowledge base tutorial](https://xerrors.github.io/Yuxi/intro/knowledge-base): Create knowledge bases and verify retrieval.
-- [Agent development](https://xerrors.github.io/Yuxi/agents/agents-config): Configure agents, tools, and extensions.
-- [Production deployment](https://xerrors.github.io/Yuxi/advanced/deployment): Deployment, upgrades, backups, and troubleshooting.
-- [Changelog](https://xerrors.github.io/Yuxi/develop-guides/changelog): Published changes.
+To try the [v0.8.1.beta1 prerelease](https://github.com/xerrors/Yuxi/releases/tag/v0.8.1.beta1), use `v0.8.1.beta1` as the clone tag. [Full installation guide](https://xerrors.github.io/Yuxi/intro/quick-start) · [Production deployment and isolation](docs/advanced/deployment.md)
 
 ## Feature Showcase
 
-Yuxi connects knowledge ingestion, agent execution, and team governance into one workflow. The following six modules introduce its core capabilities:
-
-| Module | What It Solves | Key Capabilities |
-| --- | --- | --- |
-| Unified agent workspace | Ask questions, execute tasks, and receive deliverables in one interface | Multi-turn conversations, knowledge retrieval, task status, human approval |
-| Knowledge bases and RAG | Provide retrieved context for answers | Multi-format ingestion, Embedding/Rerank, retrieval testing, RAG evaluation |
-| Knowledge graphs and mind maps | Discover entity relationships and browse knowledge base file structures | Graph construction, subgraph exploration, node details, file metadata maps |
-| Multi-agent execution and extensions | Delegate complex tasks to specialized roles and tools | SubAgents, Skills, MCP, Tools, agent configuration |
-| Sandbox workspace and artifacts | Turn conversations into reusable files | Isolated file systems, file generation, online preview, downloads |
-| Team governance and operations | Manage capabilities, permissions, and execution in multi-user environments | Multi-tenancy, user and department permissions, model configuration, API Keys, Dashboard |
-
-### 01 · Unified Agent Workspace
-
-Reference knowledge base documents, personal files, or extension Skills in the same chat interface. View task execution status and receive answers or generated files directly in the conversation.
-
-- Use `@` to quickly reference knowledge bases, files, and specific Skills.
-- View task breakdowns, tool execution status, and context token usage.
-- Preview and download generated artifacts.
-
-![Yuxi unified agent workspace](https://oss-img.xerrors.cn/github/image-20260825145022410.png)
-
 <details>
-<summary><strong>More screenshots: conversations, execution status, and human approval</strong></summary>
+<summary>Conversations, task status, and approvals</summary>
 
-**Long-running task status and execution tracking**
+Follow a running task and see the command an agent asks you to approve.
 
-While complex tasks run asynchronously in the background, the interface shows the agent's reasoning progress, plans, subtask status, and tool logs in real time, making long-running work visible rather than leaving users waiting without feedback.
+**Long-running task tracking**
 
 ![Long-running task tracking](https://oss-img.xerrors.cn/github/image-20260826195730155.png)
 
-**Human approval and delivery cards**
-
-The default approval mode requires confirmation for command execution and file writes outside the current Project; writes inside the Project proceed without approval. Fully trusted mode disables these approvals. Delivery cards let users preview or save files when a task finishes.
+**Human approval and file delivery**
 
 ![Human approval and file delivery](https://oss-img.xerrors.cn/github/image-20260825163940350.png)
 
 </details>
 
-### 02 · Knowledge Bases and RAG
+<details>
+<summary>Knowledge bases, retrieval testing, and RAG evaluation</summary>
 
-Manage team materials centrally and parse them into structured knowledge bases. Agents can retrieve relevant document chunks as context for answering questions.
+A self-hosted Milvus knowledge base supports parsing, chunking, and hybrid keyword and vector retrieval. Administrators can build a Neo4j knowledge graph from indexed chunks or compare retrieval results against a question set. Read-only connectors can also query existing Feishu, Dify, and Notion sources, subject to each connector’s capabilities.
 
-- Manage files and directories centrally, with live parsing progress, chunk details, and token statistics.
-- Configure Embedding and Rerank algorithms, and test and tune multiple retrieval paths directly in the management interface.
-- Use built-in RAG evaluation tools and real Q&A datasets to measure retrieval and answer quality.
+**Knowledge base management**
 
 ![Knowledge base management](https://oss-img.xerrors.cn/github/image-20260830144756161.png)
 
-<details>
-<summary><strong>More screenshots: ingestion, retrieval, and evaluation</strong></summary>
-
-**Document parsing and chunk management**
-
-Support common formats including PDF, Word, PowerPoint, Excel, and Markdown. MinerU and PaddleOCR cloud services, optional self-hosted MinerU, and lightweight RapidOCR extract text, images, and tables for chunking and vector retrieval.
+**Document ingestion and parsing status**
 
 ![Document ingestion and parsing status](https://oss-img.xerrors.cn/github/image-20260825155256725.png)
 
-**Knowledge base types and external sources**
-
-Alongside the built-in local vector knowledge base, Yuxi connects to external knowledge services such as Dify and Notion. A unified retriever makes them available to agents.
+**Knowledge base types**
 
 ![Knowledge base types](https://oss-img.xerrors.cn/github/image-20260825155356171.png)
 
 **Retrieval testing and reranking**
 
-An interactive retrieval testing workspace lets you enter a query and inspect initial embedding similarity scores, hybrid retrieval results, and score changes after reranking, making recall quality easier to verify.
-
-![Retrieval testing and reranking](https://oss-img.xerrors.cn/github/image-20260830144827319.png)
+![Retrieval test showing matched passages and reranking results](https://oss-img.xerrors.cn/github/image-20260830144827319.png)
 
 **RAG evaluation**
 
-Build benchmark Q&A datasets and run batch retrieval recall evaluations. With reference answers and a judge model, evaluate answer correctness to identify knowledge gaps and configuration weaknesses.
-
 ![RAG evaluation](https://oss-img.xerrors.cn/github/image-20260830144852289.png)
 
-Automatically generate single-hop and multi-hop Q&A pairs.
+**Q&A generation**
 
 ![Q&A generation](https://oss-img.xerrors.cn/github/image-20260826200055381.png)
 
+**Multi-hop Q&A generation**
+
 ![Multi-hop Q&A generation](https://oss-img.xerrors.cn/github/image-20260830144919806.png)
+
+**Evaluation results**
 
 ![Evaluation results](https://oss-img.xerrors.cn/github/image-20260830144950126.png)
 
+[Document processing and OCR](docs/advanced/document-processing.md) · [Knowledge graphs](docs/advanced/knowledge-base-graph.md) · [Retrieval evaluation](docs/intro/evaluation.md)
+
 </details>
 
-### 03 · Knowledge Graphs and Mind Maps
+<details>
+<summary>Knowledge graphs and knowledge maps</summary>
 
-Turn unstructured documents into entity–relationship networks. Explore relationships in interactive graphs, or generate knowledge maps from file hierarchies and topic metadata.
+Explore entities and their relationships in a knowledge graph, or use the knowledge map to browse files by topic.
 
-- Automatically extract entities and relationships from knowledge bases and build graph indexes using Milvus/Neo4j.
-- Search entities by keyword, click nodes to inspect properties, and highlight related subgraphs.
-- Generate multi-level knowledge maps from knowledge base file metadata to browse a business domain at a glance.
+**Knowledge graph exploration**
 
 ![Knowledge graph exploration](https://oss-img.xerrors.cn/github/image-20260830145027082.png)
 
-<details>
-<summary><strong>More screenshots: graph construction, node relationships, and mind maps</strong></summary>
-
 **Graph construction and index status**
-
-After an administrator submits a build job for indexed Milvus document chunks, the system extracts entities and relationships and writes them to Neo4j. Document parsing does not automatically start graph construction. View entity and relationship counts and background job progress.
 
 ![Graph construction and index status](https://oss-img.xerrors.cn/github/image-20260826200519930.png)
 
-**Knowledge maps**
-
-Generate structured topic mind maps from directory structures, category labels, and file metadata, making large knowledge collections easier to browse as a tree.
+**Knowledge map**
 
 ![Knowledge map](https://oss-img.xerrors.cn/github/image-20260830145125067.png)
 
 </details>
 
-### 04 · Multi-Agent Execution and Extensions
+<details>
+<summary>Agent collaboration, Skills, and MCP tools</summary>
 
-Combine models, prompts, knowledge bases, external tools, and specialized sub-agents in a single agent. For complex tasks, the main agent plans and delegates work while multiple SubAgents execute asynchronously in parallel. Skills and MCP provide additional capabilities.
+Sub-agents maintain separate conversation histories and exchange files through a shared project directory within a collaboration tree. Team members can inspect tool calls, answer questions, and review approval requests during a run. They can open generated files, such as an HTML brief, in the browser.
 
-- Configure the agent's base model, connected knowledge bases, tool access, and system prompt.
-- Run multiple SubAgents asynchronously in parallel for deep research, data analysis, or content generation.
-- Use native support for Skills extensions and MCP (Model Context Protocol).
+**Yuxi multi-agent orchestration**
 
 ![Yuxi multi-agent orchestration](https://oss-img.xerrors.cn/github/image-20260825152252874.png)
 
-<details>
-<summary><strong>More screenshots: agent configuration, sub-agents, and extensions</strong></summary>
-
-**Agent configuration and behavior customization**
-
-Modular configuration lets you combine models, knowledge bases, custom Tools, MCP services, initial prompts, and sub-agents. Configure sharing visibility within departments or teams as needed.
+**Agent configuration**
 
 ![Agent configuration](https://oss-img.xerrors.cn/github/image-20260825151729055.png)
 
 **Parallel sub-agent execution**
 
-The main agent can break a complex, multi-step task into independent assignments and dispatch specialized SubAgents in parallel—for example, researching regulations in different domains or writing separate report chapters. Their results are collected and summarized when they finish.
-
 ![Parallel sub-agent execution](https://oss-img.xerrors.cn/github/image-20260825151559976.png)
 
-**Skills, MCP, and ecosystem extensions**
-
-Connect and manage Skills and external MCP servers in one place, with role-specific permissions and access scopes. Progressive disclosure dynamically resolves and loads tools when they are needed. Online Skill installation supports skills.sh and the ModelScope community.
+**Skills and MCP extensions**
 
 ![Skills and MCP extensions](https://oss-img.xerrors.cn/github/image-20260830145227399.png)
 
-View and edit Skills online.
+**Online Skill editing**
 
 ![Online Skill editing](https://oss-img.xerrors.cn/github/image-20260830145217595.png)
 
-Configure Skill permissions and dependencies.
+**Skill permissions and dependencies**
 
 ![Skill permissions and dependencies](https://oss-img.xerrors.cn/github/image-20260830145359700.png)
 
-Built-in tool list.
+**Built-in tools**
 
 ![Built-in tools](https://oss-img.xerrors.cn/github/image-20260826201207239.png)
 
+[Session collaboration](docs/agents/session-cooperation.md) · [Managing Skills](docs/agents/skills-management.md) · [Connecting MCP tools](docs/agents/mcp-integration.md)
+
 </details>
 
-### 05 · Sandbox Workspace and File Artifacts
-
-Agents can read and write files through sandbox tools. Beyond answering questions in chat, agents can turn research and analysis into Markdown documents, spreadsheets, HTML pages, or executable code that users can view and download from the workspace.
-
-- Limit the files tools can access through the sandbox.
-- Generate illustrated reports, data analysis charts, web pages, and other artifacts.
-- Preview supported file formats in the browser and download files as an archive.
-
-![Yuxi sandbox workspace and artifacts](https://oss-img.xerrors.cn/github/image-20260825152123583.png)
-
 <details>
-<summary><strong>More screenshots: file management, online preview, and task delivery</strong></summary>
+<summary>Sandbox workspace, file previews, and delivery</summary>
+
+Open a generated brief, inspect its contents, and save the delivered file from the conversation.
+
+**Yuxi sandbox workspace and artifacts**
+
+![Workspace preview of a generated DeepAgents release brief](https://oss-img.xerrors.cn/github/image-20260825152123583.png)
 
 **Workspace file management**
 
-Visually manage files read and produced in the workspace during task execution. Directory hierarchies, file types, and sizes are displayed clearly, making intermediate artifacts easier to reuse across conversations.
-
 ![Workspace file management](https://oss-img.xerrors.cn/github/image-20260826201931458.png)
 
-**Online preview for HTML, PDF, charts, and code**
-
-Render and interact with generated reports, HTML visualizations, images, charts, and scripts in the browser's built-in previewer without downloading them first. Markdown files can also be edited and saved online.
+**Online file preview**
 
 ![Online file preview](https://oss-img.xerrors.cn/github/image-20260826202142495.png)
 
-**File delivery in conversations**
-
-When a task finishes, structured delivery cards appear in the conversation with file summaries, formats, and action buttons. Open a preview or save files locally.
+**File delivery cards**
 
 ![File delivery cards](https://oss-img.xerrors.cn/github/image-20260826202412695.png)
 
 </details>
 
-### 06 · Team Governance and Operations
+<details>
+<summary>Team access, model configuration, and usage</summary>
 
-Built for collaboration across teams and enterprises. Administrators centrally manage members and departments, configure model credentials and API Keys, and monitor platform operations and usage metrics through dashboards.
+Administrators can grant access and management rights by user or department, configure model providers and credentials, and review model, tool, and token usage. When teammates use a shared agent, retrieval is still scoped to each user’s permissions and the knowledge bases selected for the session.
 
-- Configure access and management permissions for resources such as knowledge bases and agents by user, department, and sharing scope.
-- Centrally configure models from multiple providers and manage API Key credentials.
-- Track usage, request trends, and resource load to support stable operations.
+**Team governance and operations**
 
 ![Team governance and operations](https://oss-img.xerrors.cn/github/image-20260826201755760.png)
 
-<details>
-<summary><strong>More screenshots: permissions, models, and operational data</strong></summary>
+**User and department permissions**
 
-**Users, departments, and fine-grained permissions**
+![Department and user directories in the administration panel](https://oss-img.xerrors.cn/github/image-20260826201638124.png)
 
-User, department, and resource sharing scopes control access to and management of knowledge bases and agents. Sandbox workspaces are isolated by user.
-
-![User and department permissions](https://oss-img.xerrors.cn/github/image-20260826201638124.png)
-
-**Model providers and centralized credentials**
-
-Connect providers including OpenAI, Anthropic, DeepSeek, Qwen, and OpenAI-compatible self-hosted endpoints such as vLLM. Maintain API Key credentials centrally and assign model capabilities while keeping secrets hidden from ordinary members.
+**Model providers and capabilities**
 
 ![Model providers and capabilities](https://oss-img.xerrors.cn/github/image-20260825152458034.png)
 
-**Dashboard and system monitoring**
-
-Operational dashboards show session, model and tool calls, token usage, and VM statistics to support capacity planning and cost tracking.
+**System dashboard**
 
 ![System dashboard](https://oss-img.xerrors.cn/github/image-20260826201346254.png)
 
+**Usage and operational metrics**
+
 ![Usage and operational metrics](https://oss-img.xerrors.cn/github/image-20260826201430096.png)
+
+[Resource permissions](docs/mechanisms/resource-permissions.md) · [Model configuration](docs/intro/model-config.md) · [Usage tracking](docs/advanced/model-usage-tracking.md)
 
 </details>
 
+## Documentation
+
+| Task | Where to start |
+| --- | --- |
+| Build an agent for a team | [Configure and share agents](docs/agents/agents-config.md) · [Develop an agent backend](docs/agents/agent-backend-development.md) |
+| Embed an agent in an application | [Agents API quick start](docs/intro/agents-api-quickstart.md) · [CLI](docs/intro/cli.md) · [Local API reference](http://localhost:5050/docs) |
+| Query company knowledge from an external assistant | [Knowledge MCP service](docs/advanced/knowledge-mcp.md) · [API keys](docs/advanced/api-key-integration.md) |
+| Plan a production rollout | [Deployment](docs/advanced/deployment.md) · [Sandbox isolation](docs/mechanisms/sandbox.md) · [Concurrency and capacity](docs/advanced/agent-concurrency-capacity.md) |
+
+[Project overview](docs/intro/project-overview.md) · [Changelog](docs/develop-guides/changelog.md) · [DeepWiki](https://deepwiki.com/xerrors/Yuxi)
+
 ## Contributing
 
-Issues, documentation improvements, bug fixes, and new features are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow and the [contribution guide](docs/develop-guides/contributing.md) for the full guidelines.
+Issues, documentation improvements, bug fixes, and new features are welcome. See [CONTRIBUTING.md](.github/CONTRIBUTING.md) for the development workflow and the [contribution guide](docs/develop-guides/contributing.md) for the full guidelines.
 
 Thanks to all contributors for supporting this project!
 
