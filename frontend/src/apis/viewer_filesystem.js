@@ -12,8 +12,12 @@ export const getViewerFileSystemTree = (threadId, path = '/') => {
   return apiGet(`/api/viewer/filesystem/tree?${query}`)
 }
 
-export const getViewerFileContent = (threadId, path) => {
-  const query = buildViewerQuery(threadId, path)
+export const getViewerFileContent = (threadId, path, { officeRender } = {}) => {
+  const query = buildQuery({
+    thread_id: threadId,
+    path,
+    ...(officeRender === 'pdf' ? { office_render: 'pdf' } : {})
+  })
   return apiGet(`/api/viewer/filesystem/file?${query}`, {}, true, 'blob')
 }
 

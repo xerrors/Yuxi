@@ -5,6 +5,7 @@ import { constants } from 'node:zlib'
 import compression from 'compression'
 import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import { fileViewerRenderers } from '@file-viewer/vite-plugin'
 
 // 只压缩开发模块及其内联 source map，API 代理和 SSE 直接流式交付。
 const devModuleCompression = {
@@ -100,7 +101,40 @@ export default defineConfig(({ mode }) => {
   // eslint-disable-next-line no-undef
   const env = loadEnv(mode, process.cwd(), '')
   return {
-    plugins: [vue(), modelMetadataPlugin, pdfjsCmapsPlugin, devModuleCompression],
+    plugins: [
+      vue(),
+      modelMetadataPlugin,
+      pdfjsCmapsPlugin,
+      // 只装配 Word / 表格 / PPTX，并把 Worker、WASM、字体复制到同源产物。
+      // inject 关闭后，入口不会静态引入渲染器，预览组件首次打开时再加载虚拟模块。
+      fileViewerRenderers({
+        formats: ['docx', 'xlsx', 'xls', 'pptx'],
+        inject: false,
+        copyAssets: true,
+        // 按渲染器命名分包会把 Vite preload helper 放进演示文稿 chunk，入口随之静态加载该 chunk。
+        // 保持默认拆包，预览组件的动态 import 仍把渲染器留在异步图里。
+        chunkStrategy: 'none',
+        missingRenderer: 'error'
+      }),
+      // 插件会把 docx/jszip 放进 optimizeDeps.include，SSR 测试服务器因此启动客户端预构建。
+      // 这些依赖只在 Office 预览动态导入时才需要，开发态由 Vite 按需优化。
+      {
+        name: 'yuxi-office-deps-on-demand',
+        enforce: 'post',
+        configResolved(config) {
+          const include = config.optimizeDeps?.include
+          if (!Array.isArray(include)) return
+          config.optimizeDeps.include = include.filter(
+            (id) =>
+              !id.startsWith('@file-viewer/') &&
+              !id.startsWith('@xmldom/') &&
+              id !== 'jszip' &&
+              id !== 'pdf-lib'
+          )
+        }
+      },
+      devModuleCompression
+    ],
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url))

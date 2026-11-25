@@ -4,6 +4,8 @@
 - /viewer/filesystem/* - Viewer UI 使用
 """
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -51,6 +53,10 @@ async def get_viewer_tree(
 async def get_viewer_file(
     thread_id: str = Query(..., description="线程 ID"),
     path: str = Query(..., description="文件路径"),
+    office_render: Literal["source", "pdf"] = Query(
+        "source",
+        description="Office 预览：source 返回原文件，pdf 仅对 docx/pptx 使用 LibreOffice 回退",
+    ),
     current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -60,6 +66,7 @@ async def get_viewer_file(
             path=path,
             current_user=current_user,
             db=db,
+            office_render=office_render,
         )
     )
 

@@ -1,6 +1,7 @@
 """用户个人工作区与工作区知识文件只读视图路由。"""
 
 import io
+from typing import Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
@@ -64,9 +65,13 @@ async def search_workspace_files_route(
 @workspace.get("/file")
 async def get_workspace_file(
     path: str = Query(..., description="工作区文件路径"),
+    office_render: Literal["source", "pdf"] = Query(
+        "source",
+        description="Office 预览：source 返回原文件，pdf 仅对 docx/pptx 使用 LibreOffice 回退",
+    ),
     current_user: User = Depends(get_required_user),
 ):
-    return render_file_result(await read_workspace_file_content(path=path, current_user=current_user))
+    return render_file_result(await read_workspace_file_content(path=path, current_user=current_user, office_render=office_render))
 
 
 @workspace_knowledge.get("/knowledge/tree", response_model=dict)
@@ -110,6 +115,10 @@ async def get_workspace_knowledge_tree(
 async def get_workspace_knowledge_file(
     kb_id: str = Query(..., description="知识库 ID"),
     file_id: str = Query(..., description="知识库文件 ID"),
+    office_render: Literal["source", "pdf"] = Query(
+        "source",
+        description="Office 预览：source 返回原文件，pdf 仅对 docx/pptx 使用 LibreOffice 回退",
+    ),
     current_user: User = Depends(get_required_user),
 ):
     await _ensure_knowledge_read_access(current_user, kb_id)
@@ -117,7 +126,7 @@ async def get_workspace_knowledge_file(
     try:
         from yuxi.modules.knowledge.preview import read_knowledge_file_preview
 
-        return _preview_response(await read_knowledge_file_preview(kb_id=kb_id, file_id=file_id))
+        return _preview_response(await read_knowledge_file_preview(kb_id=kb_id, file_id=file_id, office_render=office_render))
     except ValueError as error:
         _raise_knowledge_read_error(error)
 

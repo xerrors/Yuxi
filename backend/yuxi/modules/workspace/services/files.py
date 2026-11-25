@@ -127,7 +127,12 @@ async def read_workspace_file_bytes(*, path: str, current_user: User) -> tuple[s
     return PurePosixPath(workspace_path).name, content
 
 
-async def read_workspace_file_content(*, path: str, current_user: User) -> dict | PreviewResult:
+async def read_workspace_file_content(
+    *,
+    path: str,
+    current_user: User,
+    office_render: str = "source",
+) -> dict | PreviewResult:
     """读取工作区文件并渲染预览；超出预览预算时返回不支持结果而不是抛错。"""
     backend = _workspace_backend(current_user)
     workspace_path = _workspace_path(path)
@@ -151,6 +156,7 @@ async def read_workspace_file_content(*, path: str, current_user: User) -> dict 
             path,
             raw_content,
             office_cache_key=f"workspace:{current_user.uid}:{workspace_path}",
+            office_render=office_render,
         )
     except OfficeConversionError as exc:
         raise InvalidOperationError(str(exc)) from exc

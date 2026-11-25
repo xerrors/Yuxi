@@ -51,6 +51,7 @@ _TEXT_EXTENSIONS = frozenset(
     }
 )
 _IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg"})
+_OFFICE_SOURCE_EXTENSIONS = frozenset({".docx", ".pptx", ".xlsx", ".xls"})
 _BINARY_SIGNATURES = (
     b"\x7fELF",
     b"MZ",
@@ -64,6 +65,23 @@ _BINARY_SIGNATURES = (
     b"GIF89a",
     b"RIFF",
 )
+
+
+def is_office_source_preview(path: str) -> bool:
+    """判断浏览器端 Office 预览是否应直接读取原始字节。"""
+    return PurePosixPath(path).suffix.lower() in _OFFICE_SOURCE_EXTENSIONS
+
+
+def prepare_office_source_preview(path: str, raw_content: bytes) -> PreviewResult:
+    """返回保留真实扩展名的 Office 原文件，供浏览器渲染。"""
+    filename = PurePosixPath(path).name or "preview"
+    return PreviewResult(
+        content=raw_content,
+        preview_type="office",
+        supported=True,
+        media_type=detect_media_type(filename, raw_content),
+        filename=filename,
+    )
 
 
 def prepare_file_preview(path: str, raw_content: bytes) -> PreviewResult:
