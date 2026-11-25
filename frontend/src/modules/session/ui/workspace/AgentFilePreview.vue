@@ -71,9 +71,9 @@
           </button>
         </div>
         <button
-          v-if="showDownload && file"
+          v-if="file && (showDownload || officePreviewActive)"
           class="modal-action-btn"
-          @click="$emit('download', file)"
+          @click="downloadPreviewFile"
           title="下载"
         >
           <Download :size="16" />
@@ -185,7 +185,7 @@
         {
           'is-editing': canEdit && editMode === 'edit',
           'is-iframe-preview': isHtmlFile && htmlPreviewMode === 'render',
-          'is-office-preview': officePreviewActive && !officePdfUrl && !fullscreenPreviewVisible
+          'is-office-preview': officePreviewActive && !fullscreenPreviewVisible
         }
       ]"
     >
@@ -232,21 +232,7 @@
           <div v-if="!officePreviewActive" class="unsupported-preview">
             当前文件暂不支持预览，请下载后查看
           </div>
-          <div v-else-if="officeFallbackLoading" class="unsupported-preview loading-preview" role="status">
-            <LoaderCircle class="preview-spinner" :size="20" />
-            <span>浏览器预览失败，正在使用服务端转换...</span>
-          </div>
-          <PdfPreview
-            v-else-if="officePdfUrl"
-            :url="officePdfUrl"
-            class="pdf-preview"
-            :class="{ 'fullscreen-embed-preview': fullscreenPreviewVisible }"
-          />
-          <div v-else-if="officeFallbackError" class="unsupported-preview error-preview" role="alert">
-            <CircleAlert :size="22" class="preview-error-icon" />
-            <span class="preview-error-text">{{ officeFallbackError }}</span>
-          </div>
-          <OfficePreview v-else :file="file.previewFile" class="office-preview" @error="startOfficePdfFallback" />
+          <OfficePreview v-else :file="file.previewFile" class="office-preview" @download="downloadPreviewFile" />
         </Teleport>
       </template>
       <template v-else-if="isHtmlFile && htmlPreviewMode === 'render'">
@@ -325,9 +311,9 @@
             </template>
           </div>
           <button
-            v-if="showDownload && file"
+            v-if="file && (showDownload || officePreviewActive)"
             class="modal-action-btn fullscreen-action-btn"
-            @click="$emit('download', file)"
+            @click="downloadPreviewFile"
             title="下载"
           >
             <Download :size="16" />
@@ -343,7 +329,7 @@
         <div class="fullscreen-preview-content">
           <div
             class="file-content fullscreen-file-content"
-            :class="{ 'is-office-preview': officePreviewActive && !officePdfUrl }"
+            :class="{ 'is-office-preview': officePreviewActive }"
           >
             <template v-if="currentStatus === 'loading'">
               <div class="unsupported-preview loading-preview fullscreen-unsupported-preview">
@@ -434,9 +420,7 @@ import {
   getCodeLanguageByPath,
   getPreviewFileExtension,
   isHtmlPreview,
-  isMarkdownPreview,
-  isOfficePdfFallback,
-  normalizePreviewResponse
+  isMarkdownPreview
 } from '@/shared/lib/file_preview'
 
 const EDITABLE_EXTENSIONS = new Set(['.md', '.markdown', '.mdx', '.txt'])
@@ -572,57 +556,24 @@ const displayFilePath = computed(() =>
   String(props.filePath || '').replace(/^\/home\/user\/workspace(?=\/|$)/, '~')
 )
 
-const officePdfUrl = ref('')
-const officeFallbackLoading = ref(false)
-const officeFallbackError = ref('')
 // 全屏移动当前渲染器，避免重开文件或丢失文档阅读位置。
 const fullscreenOfficeHost = ref(null)
-let officeFallbackSeq = 0
-
 const officePreviewActive = computed(
   () => props.file?.previewType === 'office' && props.file?.previewFile instanceof File
 )
 
-const revokeOfficePdfUrl = () => {
-  if (!officePdfUrl.value || typeof window === 'undefined') return
-  window.URL.revokeObjectURL(officePdfUrl.value)
-  officePdfUrl.value = ''
-}
-
-const resetOfficeFallback = () => {
-  officeFallbackSeq += 1
-  officeFallbackLoading.value = false
-  officeFallbackError.value = ''
-  revokeOfficePdfUrl()
-}
-
-const startOfficePdfFallback = async (reason) => {
-  const { previewFile, loadOfficePdf } = props.file
-  if (!isOfficePdfFallback(previewFile.name) || !loadOfficePdf) {
-    officeFallbackError.value = reason || '当前文件无法在浏览器中预览'
+const downloadPreviewFile = () => {
+  if (!officePreviewActive.value) {
+    emit('download', props.file)
     return
   }
-  const seq = ++officeFallbackSeq
-  officeFallbackLoading.value = true
-  officeFallbackError.value = ''
-  try {
-    const response = await loadOfficePdf()
-    const preview = await normalizePreviewResponse(response, props.file || {})
-    if (seq !== officeFallbackSeq || preview.previewType !== 'pdf') {
-      if (preview.previewUrl) window.URL.revokeObjectURL(preview.previewUrl)
-    }
-    if (seq !== officeFallbackSeq) return
-    if (preview.previewType !== 'pdf' || !preview.previewUrl) {
-      throw new Error(preview.message || '服务端预览失败')
-    }
-    revokeOfficePdfUrl()
-    officePdfUrl.value = preview.previewUrl
-  } catch (error) {
-    if (seq !== officeFallbackSeq) return
-    officeFallbackError.value = error?.message || reason || '服务端预览失败'
-  } finally {
-    if (seq === officeFallbackSeq) officeFallbackLoading.value = false
-  }
+  const original = props.file.previewFile
+  const url = URL.createObjectURL(original)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = original.name
+  link.click()
+  setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
 const isMarkdown = computed(() => isMarkdownPreview(props.filePath, props.file?.previewType))
@@ -784,8 +735,6 @@ watch([() => props.filePath, () => props.file?.previewType, () => props.file?.co
   }
 })
 
-watch(() => props.file?.previewFile, resetOfficeFallback, { flush: 'sync' })
-
 watch(fullscreenPreviewVisible, (visible) => {
   document.body.style.overflow = visible ? 'hidden' : ''
 })
@@ -793,8 +742,6 @@ watch(fullscreenPreviewVisible, (visible) => {
 onDeactivated(closeFullscreenPreview)
 
 onUnmounted(() => {
-  officeFallbackSeq += 1
-  revokeOfficePdfUrl()
   document.body.style.overflow = ''
 })
 </script>

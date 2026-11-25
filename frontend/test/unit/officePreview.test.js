@@ -25,8 +25,6 @@ test('Office 原文件变成带扩展名的 File，不创建对象 URL', async (
   assert.equal(preview.getPreviewTypeByPath('notes.csv'), 'text')
   assert.equal(preview.getPreviewTypeByPath('report.pdf'), 'pdf')
   assert.equal(preview.getPreviewTypeByPath('readme.md'), 'markdown')
-  assert.equal(preview.isOfficePdfFallback('报告.docx'), true)
-  assert.equal(preview.isOfficePdfFallback('预算.xlsx'), false)
 
   const office = await preview.normalizePreviewResponse(
     officeResponse(new Uint8Array([1, 2, 3, 4]), {
@@ -46,7 +44,7 @@ test('Office 原文件变成带扩展名的 File，不创建对象 URL', async (
     officeResponse(new Uint8Array([37, 80, 68, 70]), {
       'content-type': 'application/pdf'
     }),
-    { path: '/files/report.docx' }
+    { path: '/files/report.pdf' }
   )
   assert.equal(pdf.previewType, 'pdf')
   assert.equal(pdf.previewUrl, 'blob:office')

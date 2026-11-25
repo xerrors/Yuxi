@@ -14,7 +14,7 @@ Owner：backend/yuxi/modules/knowledge/repositories/files.py
 
 文件 repository 在领取执行权的事务内合并处理参数，持有作业租约的处理沿 Job→File 锁序验证未过期执行权。文件仍拥有状态、代次与可见产物；作业租约决定当前执行方能否发布。解析与索引共用这一边界，过期执行方不能切换 active_generation。
 
-上传 service 在现有对象桶维护固定七天、仅匹配 `yuxi-knowledge-staging=true` 标签的 MinIO 原生过期规则，保留其他生命周期规则；正式原件不携带暂存标签。上传 service 拥有暂存对象的有界生命周期，导入仍以持久回执实现重放；文件清理包含 Office 预览。预览转换与发布参与现有投影锁，并复核文件有效性，禁止删除后晚写。分块仓储的失败样本使用现有当前代次可见性条件。
+上传 service 在现有对象桶维护固定七天、仅匹配 `yuxi-knowledge-staging=true` 标签的 MinIO 原生过期规则，保留其他生命周期规则；正式原件不携带暂存标签。上传 service 拥有暂存对象的有界生命周期，导入仍以持久回执实现重放；文件清理包含旧版生成的 Office 预览 PDF。当前的原件读取见[浏览器 Office 预览](./2026-11-25-browser-office-preview.md)。分块仓储的失败样本使用现有当前代次可见性条件。
 
 导入新作业只保存有序文件身份和实际执行选项，处理器继续读取历史 pending payload。删除无 shipping consumer 的旧仓储及提交入口，不增加新的调度、锁或配置系统。
 
@@ -31,7 +31,7 @@ Owner：backend/yuxi/modules/knowledge/repositories/files.py
 |---|---|---|---|---|---|
 | 领取失败不改变处理参数 | 并发作业 | 文件 repository | PostgreSQL integration | 另一 owner 在处理时提交不同参数 | 通过 |
 | 过期执行方不能发布索引代次 | 租约与发布 | 文件 repository | PostgreSQL integration | 不运行恢复扫描，直接过期后完成 | 通过 |
-| 删除不会残留或复活预览 | MinIO、并发转换 | 预览与清理 | MinIO integration | 转换暂停期间删除文件 | 通过 |
+| 删除时回收历史预览 | MinIO 清理遗漏 | 知识库文件清理 | MinIO integration | 写入旧版预览键后删除文件并回读对象列表 | 通过 |
 | 暂存有明确回收边界且回执可重放 | 对象生命周期 | 上传 service | MinIO integration、unit | 暂存过期后重放成功回执 | 通过 |
 | 失败样本只显示有效当前代次 | PG 查询 | chunk repository | PostgreSQL integration | 删除文件与旧代次的失败分块 | 通过 |
 | 新旧登记作业均可执行 | 持久 payload | 导入及 handler | handler unit、真实 PG 导入 integration | 历史 files payload | 通过 |

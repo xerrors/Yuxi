@@ -10,7 +10,6 @@ from types import SimpleNamespace
 
 import pytest
 
-import yuxi.modules.workspace.preview as file_preview
 import yuxi.modules.workspace.services.files as svc
 from yuxi.modules.workspace import filesystem
 from yuxi.modules.workspace import paths as workspace_paths
@@ -126,7 +125,7 @@ async def test_read_workspace_file_content_returns_unsupported_for_unreadable_fi
 
 
 @pytest.mark.asyncio
-async def test_read_workspace_file_content_returns_office_source_by_default(
+async def test_read_workspace_file_content_returns_office_source(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -136,27 +135,11 @@ async def test_read_workspace_file_content_returns_office_source_by_default(
     target = root / "demo.docx"
     target.write_bytes(b"office")
 
-    async def fake_convert(filename: str, content: bytes) -> bytes:
-        assert filename == "demo.docx"
-        assert content == b"office"
-        return b"%PDF-1.4\npreview"
-
-    monkeypatch.setenv("YUXI_RUNTIME_DIR", str(tmp_path / "runtime"))
-    monkeypatch.setattr(file_preview, "convert_office_to_pdf", fake_convert)
-
     result = await svc.read_workspace_file_content(path="/demo.docx", current_user=user)
-    fallback = await svc.read_workspace_file_content(
-        path="/demo.docx",
-        current_user=user,
-        office_render="pdf",
-    )
 
     assert result.preview_type == "office"
     assert result.filename == "demo.docx"
     assert result.content == b"office"
-    assert fallback.preview_type == "pdf"
-    assert fallback.media_type == "application/pdf"
-    assert fallback.content == b"%PDF-1.4\npreview"
 
 
 @pytest.mark.asyncio
@@ -178,60 +161,6 @@ async def test_read_workspace_file_content_returns_xlsx_source(
     assert result.filename == "sheet.xlsx"
 
 
-@pytest.mark.parametrize(
-    ("filename", "content"),
-    [
-        ("demo.docx", b"office"),
-        ("slides.pptx", b"presentation"),
-    ],
-)
-@pytest.mark.asyncio
-async def test_preview_workspace_file_caches_office_pdf_conversion(
-    tmp_path: Path,
-    monkeypatch,
-    filename: str,
-    content: bytes,
-) -> None:
-    save_dir = tmp_path / "saves"
-    runtime_dir = tmp_path / "runtime"
-    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(save_dir / "threads"))
-    monkeypatch.setenv("YUXI_RUNTIME_DIR", str(runtime_dir))
-    user = _user()
-    root = _workspace_root(user)
-    target = root / filename
-    target.write_bytes(content)
-
-    convert_calls = 0
-
-    async def fake_convert(name: str, _raw: bytes) -> bytes:
-        nonlocal convert_calls
-        assert name == filename
-        convert_calls += 1
-        return b"%PDF-1.4\npreview"
-
-    monkeypatch.setattr(file_preview, "convert_office_to_pdf", fake_convert)
-
-    async def read_pdf() -> bytes:
-        response = await svc.read_workspace_file_content(
-            path=f"/{filename}",
-            current_user=user,
-            office_render="pdf",
-        )
-        assert response.media_type == "application/pdf"
-        assert response.preview_type == "pdf"
-        return response.content
-
-    assert await read_pdf() == b"%PDF-1.4\npreview"
-    assert await read_pdf() == b"%PDF-1.4\npreview"
-    assert convert_calls == 1
-    assert list((runtime_dir / "cache" / "office-previews").rglob("*.pdf"))
-    assert not list(save_dir.rglob(".office_preview_cache"))
-
-    target.write_bytes(content + b"-v2")
-    assert await read_pdf() == b"%PDF-1.4\npreview"
-    assert convert_calls == 2
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("filename", ["large.txt", "large.docx"])
 async def test_workspace_preview_rejects_large_source_before_content_preparation(tmp_path, monkeypatch, filename):
@@ -241,10 +170,10 @@ async def test_workspace_preview_rejects_large_source_before_content_preparation
     target.write_bytes(b"123456789")
     monkeypatch.setattr(svc, "MAX_FILE_PREVIEW_BYTES", 8)
 
-    async def fail_preparation(*_args, **_kwargs):
+    def fail_preparation(*_args, **_kwargs):
         raise AssertionError("over-budget source must not reach content preparation")
 
-    monkeypatch.setattr(svc, "preview_workspace_file", fail_preparation)
+    monkeypatch.setattr(svc, "prepare_file_preview", fail_preparation)
 
     result = await svc.read_workspace_file_content(path=f"/{filename}", current_user=user)
 

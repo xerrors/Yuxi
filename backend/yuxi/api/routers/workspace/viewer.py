@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.api.dependencies.auth import get_db, get_required_user
 from yuxi.api.responses.files import render_file_result
 from yuxi.api.uploads import prepare_upload_files
-from yuxi.infrastructure.file_preview import OfficeRender
 from yuxi.modules.identity.models import User
 from yuxi.modules.workspace.services.viewer import (
     MAX_VIEWER_UPLOAD_BYTES,
@@ -52,10 +51,6 @@ async def get_viewer_tree(
 async def get_viewer_file(
     thread_id: str = Query(..., description="线程 ID"),
     path: str = Query(..., description="文件路径"),
-    office_render: OfficeRender = Query(
-        "source",
-        description="Office 预览：source 返回原文件，pdf 仅对 docx/pptx 使用 LibreOffice 回退",
-    ),
     current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -65,7 +60,6 @@ async def get_viewer_file(
             path=path,
             current_user=current_user,
             db=db,
-            office_render=office_render,
         )
     )
 

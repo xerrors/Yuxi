@@ -1,6 +1,13 @@
 <template>
   <div ref="hostRef" class="office-preview-host">
-    <div v-if="!active || !viewer" class="office-preview-status" role="status">
+    <div v-if="failed" class="office-preview-status">
+      <p class="office-preview-error" role="alert">
+        <CircleAlert :size="18" />
+        <span>当前文件无法预览</span>
+      </p>
+      <a-button type="primary" @click="$emit('download')">下载原件</a-button>
+    </div>
+    <div v-else-if="!active || !viewer" class="office-preview-status" role="status">
       <LoaderCircle class="office-preview-spinner" :size="20" />
       <span>正在加载 Office 预览...</span>
     </div>
@@ -10,7 +17,7 @@
       class="office-preview-frame"
       :file="file"
       :options="viewerOptions"
-      @error="emit('error', $event)"
+      @error="failed = true"
     />
   </div>
 </template>
@@ -18,19 +25,20 @@
 <script setup>
 import { computed, onActivated, onDeactivated, ref, shallowRef, watch } from 'vue'
 import { useResizeObserver } from '@vueuse/core'
-import { LoaderCircle } from '@lucide/vue'
+import { CircleAlert, LoaderCircle } from '@lucide/vue'
 import { useThemeStore } from '@/shared/model/theme'
 
-defineProps({
+const props = defineProps({
   file: { type: File, required: true }
 })
+defineEmits(['download'])
 
-const emit = defineEmits(['error'])
 const themeStore = useThemeStore()
 const hostRef = ref(null)
 const viewer = shallowRef(null)
 const visible = ref(false)
 const deactivated = ref(false)
+const failed = ref(false)
 const active = computed(() => visible.value && !deactivated.value)
 
 const viewerOptions = computed(() => ({
@@ -50,8 +58,9 @@ useResizeObserver(hostRef, ([entry]) => {
 onActivated(() => { deactivated.value = false })
 onDeactivated(() => { deactivated.value = true })
 
-watch(active, async (isActive) => {
-  if (!isActive || viewer.value) return
+watch([active, () => props.file], async ([isActive, file], [, previousFile]) => {
+  if (file !== previousFile) failed.value = false
+  if (!isActive || viewer.value || failed.value) return
   try {
     const [{ FileViewer }, , { configuredFileViewerRenderers }] = await Promise.all([
       import('@file-viewer/vue3'),
@@ -59,10 +68,11 @@ watch(active, async (isActive) => {
       import('virtual:file-viewer-renderers')
     ])
     viewer.value = { component: FileViewer, renderers: configuredFileViewerRenderers }
-  } catch (error) {
-    if (active.value) emit('error', error.message || 'Office 预览组件加载失败')
+  } catch {
+    if (props.file === file) failed.value = true
   }
 })
+
 </script>
 
 <style scoped>
@@ -96,6 +106,14 @@ watch(active, async (isActive) => {
 .office-preview-spinner {
   animation: office-preview-spin 1s linear infinite;
   color: var(--color-primary-500);
+}
+
+.office-preview-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--color-text-secondary);
 }
 
 @keyframes office-preview-spin {

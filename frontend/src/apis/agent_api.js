@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiDelete, apiPut, apiRequest, buildQuery } from './base'
+import { apiGet, apiPost, apiDelete, apiPut, apiRequest } from './base'
 import { getApiAuthHeaders } from './auth_context'
 
 /**
@@ -419,11 +419,9 @@ export const threadApi = {
   downloadThreadArtifact: (threadId, path) =>
     apiGet(threadApi.getThreadArtifactUrl(threadId, path, true), {}, true, 'blob'),
 
-  /** 读取产品产物预览，支持 Office 原件和同一产物的 PDF 回退。 */
-  previewThreadArtifact: (threadId, path, { officeRender } = {}) => {
-    const query = buildQuery({ path, office_render: officeRender })
-    return apiGet(`/api/agent/threads/${encodeURIComponent(threadId)}/artifacts/preview?${query}`, {}, true, 'blob')
-  },
+  /** 读取线程产物预览。 */
+  previewThreadArtifact: (threadId, path) =>
+    apiGet(`${threadApi.getThreadArtifactUrl(threadId, path)}?preview=true`, {}, true, 'blob'),
 
   /**
    * 保存交付物到指定 workspace 目录

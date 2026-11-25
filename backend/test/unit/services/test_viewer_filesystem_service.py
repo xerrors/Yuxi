@@ -142,10 +142,10 @@ async def test_viewer_preview_rejects_large_source_before_content_preparation(re
     realtime_viewer.files[path] = b"123456789"
     monkeypatch.setattr(svc, "MAX_FILE_PREVIEW_BYTES", 8)
 
-    async def fail_preparation(*_args, **_kwargs):
+    def fail_preparation(*_args, **_kwargs):
         raise AssertionError("over-budget source must not reach content preparation")
 
-    monkeypatch.setattr(svc, "preview_workspace_file", fail_preparation)
+    monkeypatch.setattr(svc, "prepare_file_preview", fail_preparation)
 
     result = await svc.read_viewer_file_content(
         thread_id="thread-1", path=f"/{filename}", current_user=SimpleNamespace(uid="user-1"), db=object()

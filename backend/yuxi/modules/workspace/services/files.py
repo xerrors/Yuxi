@@ -9,14 +9,12 @@ import os
 import tempfile
 from pathlib import Path, PurePosixPath
 
-from yuxi.infrastructure.file_preview import OfficeRender, detect_preview_type, preview_too_large
+from yuxi.infrastructure.file_preview import detect_preview_type, prepare_file_preview, preview_too_large
 from yuxi.infrastructure.filesystem import await_io
-from yuxi.infrastructure.office_conversion import OfficeConversionError
 from yuxi.modules.identity.models import User
 from yuxi.modules.workspace.errors import FileTransferLimitError
 from yuxi.modules.workspace.filesystem import Workspace
 from yuxi.modules.workspace.paths import ensure_user_workspace, normalize_workspace_scope, validate_directory_name
-from yuxi.modules.workspace.preview import preview_workspace_file
 from yuxi.modules.workspace.repositories.projects import ProjectRepository
 from yuxi.modules.workspace.runtime_paths import is_conversation_archive_path, runtime_workspace_path
 from yuxi.modules.workspace.services.file_entries import file_entry, sort_file_entries
@@ -131,7 +129,6 @@ async def read_workspace_file_content(
     *,
     path: str,
     current_user: User,
-    office_render: OfficeRender = "source",
 ) -> dict | PreviewResult:
     """读取工作区文件并渲染预览；超出预览预算时返回不支持结果而不是抛错。"""
     backend = _workspace_backend(current_user)
@@ -151,15 +148,7 @@ async def read_workspace_file_content(
     except (PermissionError, NotADirectoryError, ValueError) as exc:
         raise PermissionDeniedError("Access denied") from exc
 
-    try:
-        return await preview_workspace_file(
-            path,
-            raw_content,
-            office_cache_key=f"workspace:{current_user.uid}:{workspace_path}",
-            office_render=office_render,
-        )
-    except OfficeConversionError as exc:
-        raise InvalidOperationError(str(exc)) from exc
+    return prepare_file_preview(path, raw_content)
 
 
 async def write_workspace_file_content(*, path: str, content: str, current_user: User) -> dict:

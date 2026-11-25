@@ -252,43 +252,6 @@ async def test_save_artifact_copies_skill_projection_bytes(live_files):
 
 
 @pytest.mark.asyncio
-async def test_artifact_preview_returns_office_source_and_pdf_fallback(live_files, monkeypatch):
-    path = "/home/user/workspace/projects/11111111-1111-4111-8111-111111111111/report.docx"
-    live_files.add_runtime_file(path, b"docx bytes")
-    captured = {}
-
-    async def convert_office_to_pdf(filename, raw_content):
-        captured.update(filename=filename, raw_content=raw_content)
-        return b"%PDF-1.4 preview"
-
-    monkeypatch.setattr(svc, "convert_office_to_pdf", convert_office_to_pdf)
-
-    source = await svc.resolve_thread_artifact_view(
-        thread_id="thread-1",
-        current_uid="user-1",
-        db=object(),
-        path=path,
-        preview=True,
-        office_render="source",
-    )
-    assert source.preview_type == "office"
-    assert source.filename == "report.docx"
-    assert source.content == b"docx bytes"
-    assert captured == {}
-
-    response = await svc.resolve_thread_artifact_view(
-        thread_id="thread-1",
-        current_uid="user-1",
-        db=object(),
-        path=path,
-        preview=True,
-    )
-    assert response.preview_type == "pdf"
-    assert response.content == b"%PDF-1.4 preview"
-    assert captured == {"filename": "report.docx", "raw_content": b"docx bytes"}
-
-
-@pytest.mark.asyncio
 async def test_artifact_preview_reports_oversized_file_without_rendering(live_files, monkeypatch):
     path = "/home/user/workspace/projects/11111111-1111-4111-8111-111111111111/report.docx"
 

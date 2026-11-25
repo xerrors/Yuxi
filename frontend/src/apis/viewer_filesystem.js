@@ -1,10 +1,9 @@
 import { apiDelete, apiGet, buildQuery } from './base'
 
-const buildViewerQuery = (threadId, path, officeRender) => {
+const buildViewerQuery = (threadId, path) => {
   return buildQuery({
     thread_id: threadId,
-    path,
-    office_render: officeRender
+    path
   })
 }
 
@@ -13,8 +12,8 @@ export const getViewerFileSystemTree = (threadId, path = '/') => {
   return apiGet(`/api/viewer/filesystem/tree?${query}`)
 }
 
-export const getViewerFileContent = (threadId, path, { officeRender } = {}) => {
-  const query = buildViewerQuery(threadId, path, officeRender)
+export const getViewerFileContent = (threadId, path) => {
+  const query = buildViewerQuery(threadId, path)
   return apiGet(`/api/viewer/filesystem/file?${query}`, {}, true, 'blob')
 }
 
