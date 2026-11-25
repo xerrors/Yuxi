@@ -29,6 +29,7 @@ jobs:
         run: pnpm run build
         working-directory: docs
       - name: Upload artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@v5
         with:
           path: docs/.vitepress/dist

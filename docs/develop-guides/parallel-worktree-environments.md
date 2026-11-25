@@ -77,5 +77,3 @@ docker compose down  # 停止并保留数据
 - 知识库同时依赖 PostgreSQL、MinIO、Milvus 和 Neo4j。复制时必须在停机后备份整套状态。
 - 不提交 `.env` 或状态目录，不对需要保留的槽位执行 `docker compose down -v`。
 - 未经明确授权，Agent 不得删除 volume、状态目录、`.env` 或生产数据。
-
-`make reset` 只处理 `Yuxi` 的默认 `./docker/volumes`，不会删除外部槽位。

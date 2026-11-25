@@ -90,6 +90,30 @@ class ReleaseWorkflowTests(unittest.TestCase):
         """当前配置覆盖候选与正式 tag，CLI 仅手动触发。"""
         self.assert_release_events({path.stem: path.read_text() for path in WORKFLOWS.glob("*.yml")})
 
+    def assert_pages_artifact_upload_matches_deploy(self, build_workflow: str, deploy_workflow: str) -> None:
+        """共享构建仅为 Deploy job 打包上传 Pages 产物。"""
+        deploy_guard = re.search(r"(?m)^  deploy:\n    (if: .+)$", deploy_workflow)
+        self.assertIsNotNone(deploy_guard, "Pages 发布缺少事件和分支条件")
+        self.assertRegex(
+            build_workflow,
+            r"(?m)^        " + re.escape(deploy_guard[1]) + r"\n        uses: actions/upload-pages-artifact@",
+            "Pages 产物上传必须沿用部署条件",
+        )
+
+    def test_pages_artifact_upload_matches_deploy(self) -> None:
+        """实际使用的构建和发布工作流选择同一上传范围。"""
+        self.assert_pages_artifact_upload_matches_deploy(
+            (WORKFLOWS / "docs-check.yml").read_text(), (WORKFLOWS / "deploy.yml").read_text()
+        )
+
+    def test_pages_artifact_rejects_unguarded_upload(self) -> None:
+        """恢复每次文档构建都上传的行为时拒绝通过。"""
+        workflow = (WORKFLOWS / "docs-check.yml").read_text()
+        unguarded = re.sub(r"(?m)(^      - name: Upload artifact\n)        if: .+\n", r"\1", workflow)
+        self.assertNotEqual(workflow, unguarded)
+        with self.assertRaisesRegex(AssertionError, "Pages 产物上传必须沿用部署条件"):
+            self.assert_pages_artifact_upload_matches_deploy(unguarded, (WORKFLOWS / "deploy.yml").read_text())
+
     def test_runtime_system_tests_have_cold_build_budget(self) -> None:
         """冷缓存构建不能因过短 job 超时而跳过运行链路。"""
         workflow = (WORKFLOWS / "system-tests.yml").read_text()

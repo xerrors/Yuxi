@@ -1,9 +1,6 @@
-
-.PHONY: up down logs lint format seed reset test verify-trust audit-dependencies audit-licenses
+.PHONY: up down logs format lint test audit-dependencies audit-licenses
 
 COMPOSE ?= docker compose --profile container
-
-PYTEST_ARGS ?=
 BACKEND_PYTHON ?= $(shell cat backend/.python-version)
 
 up:
@@ -16,34 +13,11 @@ up:
 down:
 	$(COMPOSE) down
 
-reset:
-	@if [ ! -f .env ]; then \
-		echo "Error: .env file not found. Please create it from .env.template"; \
-		exit 1; \
-	fi
-	@if [ -n "$$YUXI_STATE_DIR" ] || grep -Eq '^[[:space:]]*YUXI_STATE_DIR[[:space:]]*=[[:space:]]*[^[:space:]#]' .env; then \
-		echo "Refusing to delete an external YUXI_STATE_DIR; stop the slot and remove its exact state directory explicitly." >&2; \
-		exit 1; \
-	fi
-	$(COMPOSE) down
-	rm -rf docker/volumes
-	$(COMPOSE) up -d
-	@echo "Waiting for api to be ready..."
-	@until $(COMPOSE) exec -T api true >/dev/null 2>&1; do sleep 2; done
-	$(MAKE) seed
-
 logs:
 	@$(COMPOSE) logs --tail=50 api
 	@echo "\n\nBranch: $$(git branch --show-current)"
 	@echo "Commit ID: $$(git rev-parse HEAD)"
 	@echo "System: $$(uname -a)"
-
-seed:
-	$(COMPOSE) exec api uv run python scripts/seed_initial_users.py
-
-######################
-# LINTING AND FORMATTING
-######################
 
 format:
 	cd backend && UV_PYTHON=$(BACKEND_PYTHON) uv run ruff format yuxi
@@ -62,10 +36,6 @@ lint:
 # 后端单元测试（不依赖 docker 服务）；integration/e2e 需在容器环境运行
 test:
 	cd backend && UV_PYTHON=$(BACKEND_PYTHON) uv run pytest test/unit -m "not slow" $(PYTEST_ARGS)
-
-verify-trust:
-	python3 scripts/ci/verify_engineering_contracts.py
-	python3 -m unittest scripts.ci.test_verify_engineering_contracts scripts.ci.test_bump_version
 
 audit-dependencies:
 	cd backend && uv audit --locked --no-dev

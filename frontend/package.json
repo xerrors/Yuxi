@@ -5,8 +5,6 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "server": "vite serve --host",
-    "server:prod": "vite serve --host --port 8080",
     "build": "pnpm run typecheck && vite build",
     "test:unit": "node --test --test-concurrency=2 \"test/**/*.test.js\" \"test/**/*.spec.js\"",
     "preview": "vite preview",
