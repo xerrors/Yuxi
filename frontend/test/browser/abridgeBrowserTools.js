@@ -26,7 +26,10 @@ async originalPage => {
         { name: 'command_status', args: { operation_id: 'fixture' }, result: { status: 'executed', result: { ...script, value: null, value_truncated: true, value_preview: '返回值预览' } } },
         { name: 'browser_read', args: {}, result: { status: 'executed', result: { ...read, text: '', total: 0, next_offset: null, truncated: false } } },
         { name: 'browser_read', args: {}, result: { status: 'rejected', error: { message: '未授权读取网页' }, result: read } },
-        ...['press', 'select', 'hover', 'scroll'].map(type => ({ name: 'browser_act', args: { action: { type, element_ref: 'ref-42', text: '不进入标题的内容' } }, result: { status: 'executed', result: {} } }))
+        ...['press', 'select', 'hover', 'scroll'].map(type => ({ name: 'browser_act', args: { action: { type, element_ref: 'ref-42', text: '不进入标题的内容' } }, result: { status: 'executed', result: {} } })),
+        { name: 'operation_cancel', result: { status: 'cancel_requested' } },
+        { name: 'operation_cancel', result: { status: 'cancelled', error: { code: 'operation_cancelled', message: '脚本已停止' } } },
+        { name: 'operation_cancel', result: { status: 'outcome_unknown', error: { message: '请核对设备后再继续' } } }
       ]
       const root = document.querySelector('#app').__vue_app__
       const host = document.createElement('main')
@@ -61,13 +64,20 @@ async originalPage => {
     await entry(7).getByText('返回值已截断', { exact: true }).waitFor()
     await entry(8).getByText('未读取到网页文本', { exact: true }).waitFor()
     if (await entry(9).locator('.device-file-content').count()) throw new Error('拒绝回执显示了读取正文')
+    await entry(14).getByText('已请求取消', { exact: true }).waitFor()
+    if (await entry(14).getByText('操作已取消', { exact: true }).count()) throw new Error('取消请求被展示为已取消')
+    await entry(15).getByText('操作已取消', { exact: true }).waitFor()
+    await entry(15).getByText('脚本已停止', { exact: true }).waitFor()
+    await entry(15).locator('.tool-status-icon--completed').waitFor()
+    await entry(16).getByText('执行结果未知', { exact: true }).waitFor()
+    await entry(16).getByText('请核对设备后再继续', { exact: true }).waitFor()
     if (await host.locator('script,img').count() || await page.evaluate(() => Boolean(window.__browserInjected))) throw new Error('设备内容被解释为HTML')
     if (await host.locator('details[open]').count()) throw new Error('原始回执不应默认展开')
     for (const width of [1440, 1024, 768]) {
       for (const theme of ['light', 'dark']) {
         await page.setViewportSize({ width, height: 1080 })
         await page.evaluate(theme => window.__browserToolsTheme.setTheme(theme), theme)
-        for (const index of [0, 1, 5]) {
+        for (const index of [0, 1, 5, 14, 16]) {
           const card = entry(index)
           await card.scrollIntoViewIfNeeded()
           if (await card.evaluate(node => node.scrollWidth > node.clientWidth)) throw new Error(`工具卡片横向溢出：${index}/${theme}/${width}`)
@@ -77,7 +87,7 @@ async originalPage => {
         }
       }
     }
-    return { passed: true, cases: 14, screenshots }
+    return { passed: true, cases: 17, screenshots }
   } finally {
     await context.close()
   }

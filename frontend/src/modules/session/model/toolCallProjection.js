@@ -1,4 +1,4 @@
-import { ABRIDGE_TOOL_NAMES, parseAbridgeResult } from './abridgeToolResult.js'
+import { ABRIDGE_OPERATION_RECEIPT_TOOLS, ABRIDGE_TOOL_NAMES, parseAbridgeResult } from './abridgeToolResult.js'
 
 export const TOOL_NAME_MAP = {
   ...ABRIDGE_TOOL_NAMES,
@@ -143,9 +143,15 @@ export const getToolCallStatus = (toolCall) => {
   const result = parseToolCallResult(toolCall)
   const statuses = [toolCall?.status, toolCall?.tool_call_result?.status, result?.status]
   if (statuses.some((status) => status === 'error' || status === 'failed')) return 'error'
-  if (Object.hasOwn(ABRIDGE_TOOL_NAMES, getToolCallId(toolCall))) {
+  const toolId = getToolCallId(toolCall)
+  if (Object.hasOwn(ABRIDGE_TOOL_NAMES, toolId)) {
     const receipt = parseAbridgeResult(getToolCallResultContent(toolCall))
     if (receipt?.status === 'outcome_unknown') return 'incomplete'
+    // 取消回执可以携带操作终止的原因，查询或取消调用本身已完成。
+    if (ABRIDGE_OPERATION_RECEIPT_TOOLS.includes(toolId)) {
+      if (receipt?.status === 'cancelled') return 'completed'
+      if (receipt?.status === 'refused') return 'error'
+    }
     if (receipt?.error || ['failed', 'error', 'rejected'].includes(receipt?.status)) return 'error'
     if (receipt?.result?.timed_out ||
       (typeof receipt?.result?.exit_code === 'number' && receipt.result.exit_code !== 0)) return 'error'

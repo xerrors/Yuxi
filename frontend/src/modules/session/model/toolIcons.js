@@ -40,6 +40,7 @@ export const TOOL_ICON_MAP = {
   command_execute: SquareTerminal,
   command_status: SquareTerminal,
   operation_status: Clock,
+  operation_cancel: Square,
   command_cancel: Square,
   files_list: Folder,
   file_write: FilePen,

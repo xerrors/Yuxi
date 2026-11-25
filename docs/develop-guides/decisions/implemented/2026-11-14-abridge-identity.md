@@ -12,7 +12,7 @@ Owner：backend/yuxi/modules/extensions/plugins/abridge/service.py
 
 ### 实现方案
 
-aBridge 使用 [Yuxi OIDC Provider](2026-11-14-oidc-provider.md) 登录，按 issuer 与稳定 sub 建立身份，不按同名账户合并。采用 aBridge 0.4.13 的原生授权契约：首次统一登录创建默认访问本人全部设备及全部能力的平台连接，用户可在连接设置中收窄；重复登录不恢复撤销或重置已保存策略，显式重新授权创建新的默认全部授权连接。设置页和部署文档说明该默认值。
+aBridge 使用 [Yuxi OIDC Provider](2026-11-14-oidc-provider.md) 登录，按 issuer 与稳定 sub 建立身份，不按同名账户合并。首次统一登录创建默认访问本人全部设备及全部能力的平台连接，用户可在连接设置中收窄。重复登录不恢复撤销或重置已保存策略。显式重新授权创建新的默认全部授权连接。设置页和部署文档说明该默认值。
 
 aBridge 能力发现同时要求 OIDC 已启用、有效实例地址和公开来源；地址沿用 Options 的数据库覆盖与环境回退，仅开启通用 OIDC 不会启用设备连接器。Extensions 适配器拥有设备读取与 MCP 认证装配：每次出站确认运行用户，在设备适配模块中复用 Identity 的有效用户校验与签名，签发最多一分钟的平台委托；aBridge 校验用途、签名、issuer、audience 和有效期，再与本地设备策略取交集。登录 ID Token 不用于设备执行，个人连接表不保存长期凭据，通用 MCP 不解释设备协议。
 
@@ -22,7 +22,7 @@ Compose 拥有服务、持久目录和只读签名密钥装配，区分内部通
 
 session 的 [回执解析](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/session/model/abridgeToolResult.js)与 [AbridgeTool](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/session/ui/tools/renderers/AbridgeTool.vue) 复用现有工具卡片、图片查看器和状态投影，展示设备、连接能力、桌面/浏览器动作、命令输出与设备文件。连接能力取当前会话回执，缺失时才用请求参数；不从相邻工具猜测设备或结果。文件正文仅在完成且回执为 executed 时按纯文本展示，远端路径不链接到 Yuxi 工作区。失败、拒绝和结果未知不投影为成功；命令查询区分处理中、结束与输出过期。参数和完整回执保留折叠入口，无执行回执的错误保留默认原因。基础卡片失败时保留工具图标，并通过明确的状态文字区分成功、失败和结果未知。
 
-浏览器工具以 aBridge 0.4.13（`f43b7712e04ae6ad19805e842afefb5400699916`）的 [MCP 注册](https://github.com/xerrors/aBridge/blob/main/apps/server/src/mcp.ts)与回执为依据：读取文本/表格时保留范围、分页及截断提示，等待工具只对确认匹配显示满足，脚本显示返回值、日志与完成步骤；`command_status` 通过脚本回执字段复用展示。未知结局可展示已完成步骤和诊断，不显示成功返回值。内部 `evaluate`/`locate_act` 不注册为独立 MCP 工具，代码只进入参数详情，不进入标题。
+浏览器工具按 aBridge 的 MCP 回执展示。读取文本或表格时保留范围、分页及截断提示，等待条件经确认后显示满足，脚本显示返回值、日志与完成步骤。操作查询与取消按同一回执区分结果未知、已请求取消和已取消。旧会话中的 `command_status` 和 `command_cancel` 仍使用原有展示。脚本代码只进入参数详情。部署版本见 [aBridge 0.5.2 发布镜像与启动](2026-11-25-abridge-0-5-2.md)。
 
 配置、协议展示与提示的职责收敛见 [aBridge 简化决定](2026-11-17-abridge-simplification.md)。
 

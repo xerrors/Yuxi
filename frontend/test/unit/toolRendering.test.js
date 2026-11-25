@@ -1069,6 +1069,34 @@ test('操作状态查询展示进行中与终态的结果', async () => {
   }
 })
 
+test('取消设备操作区分已请求、已取消与结果未知', async () => {
+  for (const [receipt, expected] of [
+    [{ status: 'cancel_requested' }, '已请求取消'],
+    [{ status: 'cancelled', error: { code: 'operation_cancelled', message: '脚本已停止' } }, '操作已取消'],
+    [{ status: 'refused' }, '操作被拒绝'],
+    [{ status: 'outcome_unknown', error: { message: '请核对设备' } }, '执行结果未知']
+  ]) {
+    const html = await render(ToolCallRenderer, {
+      toolCall: { name: 'operation_cancel', result: [{ type: 'text', text: JSON.stringify(receipt) }] },
+      appearance: 'timeline', defaultExpanded: true
+    })
+    const visible = html.split('<details')[0]
+    assert.match(visible, /取消设备操作/)
+    assert.match(visible, /lucide-square/)
+    assert.ok(visible.includes(expected), expected)
+    if (receipt.status !== 'cancelled') assert.doesNotMatch(visible, /操作已取消/)
+    if (receipt.status === 'cancelled') {
+      assert.match(visible, /脚本已停止/)
+      assert.match(visible, /tool-status-icon--completed/)
+    }
+    if (receipt.status === 'refused') assert.match(visible, /tool-status-icon--error/)
+    if (receipt.status === 'outcome_unknown') {
+      assert.match(visible, /请核对设备/)
+      assert.doesNotMatch(visible, /tool-status-icon--completed/)
+    }
+  }
+})
+
 test('设备命令状态展示已结束和运行中输出，并保留超时与截断提示', async () => {
   for (const [receipt, expected, label] of [
     [{ status: 'executed', result: { stdout: 'done-output', stderr: '', exit_code: 0 }, output_truncated: true }, ['done-output', '输出已截断'], '命令已结束'],

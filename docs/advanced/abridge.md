@@ -4,7 +4,7 @@
 
 ## 配置、启动与访问
 
-先按[部署指南](deployment.md)准备 Yuxi 环境文件。生成集成配置：
+先按[部署指南](deployment.md)准备 Yuxi 环境文件。生产部署将下面的 `.env` 换成 `.env.prod` 或实际使用的环境文件。生成集成配置：
 
 ```bash
 uv run --project backend python scripts/init_abridge.py \
@@ -15,19 +15,21 @@ uv run --project backend python scripts/init_abridge.py \
 
 初始化器生成独立 RSA 签名密钥、OIDC 客户端凭据和 aBridge 管理员 Token，保存到环境文件和旁边的私有 `.yuxi-identity/` 目录。重复运行保留已有凭据。目录为私有访问，密钥以 `0640` 供文件所属组只读；Compose 将该组补充给固定 UID 的 API/worker，避免宿主用户 UID 不同时无法读取。环境文件及密钥需要备份，不能提交到仓库；aBridge 仅取得公开密钥，不取得 Yuxi 登录签名密钥或 Provider 私钥。
 
+升级既有部署时，先备份 aBridge 数据卷并核对实际镜像和数据库。0.5.2 可初始化空库或启动兼容的 SQLite schema 6 数据库。0.4.13 的 schema 3 和使用旧试用登记表的数据库需要先在副本上完成并验证离线转换。允许重新绑定设备时，可按[升级已有登记和 Cube](#升级已有登记和-cube)使用新卷，保留旧卷用于回退。检查环境变量和 Compose 覆盖文件是否仍固定旧镜像。
+
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.abridge.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.abridge.yml up -d --wait
 ```
 
-Container 沙盒按原部署方式附加 `--profile container`；生产环境将基础文件改为 `docker-compose.prod.yml`，并使用对应 `--env-file`。可选 aBridge 文件不替代基础拓扑。它使用 [Compose 固定的官方 0.4.13 镜像摘要](https://github.com/xerrors/Yuxi/blob/main/docker-compose.abridge.yml)，将状态存入独立命名卷，并默认只在回环地址发布端口 `18765`。反向代理需要将 aBridge 的公开来源转发到该端口，并支持设备 WebSocket。调整宿主端口使用 `YUXI_ABRIDGE_PORT`。
+Container 沙盒按原部署方式附加 `--profile container`；生产环境将基础文件改为 `docker-compose.prod.yml`，并使用对应 `--env-file`。可选 aBridge 文件不替代基础拓扑。[Compose](https://github.com/xerrors/Yuxi/blob/main/docker-compose.abridge.yml) 固定官方 aBridge 0.5.2 多架构镜像摘要，沿用镜像的 Server 启动入口，将状态存入独立命名卷，并默认只在回环地址发布端口 `18765`。反向代理需要将 aBridge 的公开来源转发到该端口，并支持设备 WebSocket。调整宿主端口使用 `YUXI_ABRIDGE_PORT`。默认端口可用 `curl -fsS http://127.0.0.1:18765/health` 核对运行版本。
 
 公开来源是浏览器和设备使用的地址。生产 Yuxi 的 OIDC 回调使用 HTTPS。初始化器只接受回环地址上的 HTTP 来源。隔离部署已配置 HTTP 来源时，需在 Yuxi 与 aBridge 显式设置 `ABRIDGE_ALLOW_INSECURE_HTTP=true`。aBridge 的 OIDC backchannel 在 Compose 中映射到 `http://api:5050`，只改变服务器请求的传输地址，issuer、浏览器跳转和令牌受众仍使用公开来源。使用浏览器可以访问的公开地址。
 
-登录 Yuxi 后，在设置 → 设备管理中进入 aBridge。首次统一登录自动建立普通 aBridge 用户，再按 aBridge 原有流程绑定电脑或浏览器。aBridge 0.4.13 首次统一登录创建的平台连接默认允许访问本人全部设备及全部能力（屏幕、输入、命令、文件、浏览器）。需要限制范围时，在 aBridge 的连接设置中选择指定设备和能力；Yuxi 不另设授权副本。返回 Yuxi 刷新后，设备页只显示该平台连接获准访问的设备；Agent 使用相同用户的权限。离线和本机暂停不代表权限被解除。
+登录 Yuxi 后，在设置 → 设备管理中进入 aBridge。首次统一登录自动建立普通 aBridge 用户，再按 aBridge 原有流程绑定电脑或浏览器。首次统一登录创建的平台连接默认允许访问本人全部设备及全部能力（屏幕、输入、命令、文件、浏览器）。需要限制范围时，在 aBridge 的连接设置中选择指定设备和能力；Yuxi 不另设授权副本。返回 Yuxi 刷新后，设备页只显示该平台连接获准访问的设备；Agent 使用相同用户的权限。离线和本机暂停不代表权限被解除。
 
 超级管理员可在同一设置页编辑后端通信的服务 URL；全局用户和设备概况请进入 aBridge 查看。公开来源由部署配置 `ABRIDGE_PUBLIC_ORIGIN` 固定，缺失时设备入口与 MCP 均不可用，不回退到内部地址。管理员 Token 仅供 aBridge 部署使用，Compose 显式清空 API/worker 中的同名环境值，不向它们提供有效管理员凭据，也不通过 Yuxi 页面编辑。应用初始化同步配置定义时清理历史保存的管理员 Token 覆盖值，不修改部署凭据。
 
-Compose 默认使用固定的发布镜像摘要。使用自建镜像时，先构建镜像，再通过 `ABRIDGE_IMAGE` 指定镜像引用。既有部署升级前，由管理员备份和核对 aBridge 数据版本，服务启动和数据迁移按下文执行。
+使用自建镜像时，先构建镜像，再通过 `ABRIDGE_IMAGE` 指定镜像引用。
 
 ## 智能体使用设备
 
@@ -51,8 +53,8 @@ aBridge 从智能体的直接 MCP 选择和会话连接器提及列表中排除�
 
 外部 APP 通过 [Agents Public API](agents-public-api.md#启动托管浏览器)启动所属终端用户的浏览器。部署需要以下条件。
 
-1. 使用同一版 aBridge 源码构建 Server 镜像和浏览器发行物。Server 需要支持 APP 的托管登记和本人的浏览器登记（`GET /api/managed-browsers/status`、`GET /api/personal-browsers/status`），数据库沿用 aBridge 主线的 SQLite schema 6。设置 `ABRIDGE_IMAGE` 与 `ABRIDGE_MANAGED_BROWSER_ENABLED=true`。验证镜像使用独立数据卷。
-2. 在 aBridge 根目录执行 `npm run package:browser-client`。在 Cube 节点用解包后的 `abridge-client-browser` 作为镜像构建上下文。模板基础镜像需带与发行物相同版本的 Playwright 和 Chromium。
+1. 使用 Compose 默认的 aBridge 0.5.2 镜像，设置 `ABRIDGE_MANAGED_BROWSER_ENABLED=true`，通过上文的 Compose 命令启动。Server 提供 APP 和个人浏览器登记，数据库使用 SQLite schema 6。
+2. 从 [aBridge v0.5.2 Release](https://github.com/xerrors/aBridge/releases/tag/v0.5.2) 下载 `abridge-client-browser-0.5.2-linux.tar.gz`，按 Release 的 `SHA256SUMS` 校验后解包。在 Cube 节点用解包后的 `abridge-client-browser` 作为镜像构建上下文。模板基础镜像需带与发行物相同版本的 Playwright 和 Chromium。
 
    ```bash
    docker build -f docker/cube/Dockerfile.managed-browser \
@@ -148,19 +150,10 @@ PY
 
 ## 协议验证
 
-默认部署使用官方 `v0.4.13`，对应源码 revision `f43b7712e04ae6ad19805e842afefb5400699916`。在独立目录构建该版本后，验证普通设备授权和既有配置升级。
+默认部署使用官方 `v0.5.2`，对应源码 revision `6dcaf1e69a6dd85a8e21e4ca4db271fa1ae33a48`。在独立目录构建该版本后，验证普通设备授权、既有配置升级和个人 Cube 浏览器登记。
 
 ```bash
 ABRIDGE_TEST_SOURCE=../aBridge \
-  uv run --project backend --group test pytest \
-  backend/test/integration/services/test_abridge_devices.py::test_real_login_personal_device_isolation_and_revocation \
-  backend/test/integration/services/test_abridge_devices.py::test_startup_removes_retired_admin_secret_before_options_are_served
-```
-
-部署浏览器登记 v2 时，使用与候选镜像一致的构建运行完整探针，其中包括个人 Cube 浏览器的真实登记、普通设备列表、权限收窄和撤销。
-
-```bash
-ABRIDGE_TEST_SOURCE=../aBridge-v2 \
   uv run --project backend --group test pytest backend/test/integration/services/test_abridge_devices.py
 ```
 
