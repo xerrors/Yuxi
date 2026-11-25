@@ -1,4 +1,4 @@
-![Yuxi enterprise agent platform](https://oss-img.xerrors.cn/github/yuxi-social-preview-a4f67514.svg)
+![Yuxi enterprise agent platform](.github/media/hero.svg)
 
 **Yuxi is a self-hosted platform for building and running enterprise agents.** Teams can give an agent their internal documents, tools, and working instructions, then have an administrator share it with selected people or departments. Colleagues can use the same agent to look up sources they have permission to read or to produce reports, charts, and files in a project workspace.
 
@@ -32,7 +32,7 @@
 
 ## Quick Start
 
-Install Git and Docker with Compose v2, and have a SiliconFlow API key ready for initialization. From an existing checkout, run the last two commands in the repository root.
+Install Docker with Compose v2 and get a [SiliconFlow API key](https://cloud.siliconflow.cn/i/Eo5yTHGJ) for initialization.
 
 ```bash
 git clone --branch v0.8.0 --depth 1 https://github.com/xerrors/Yuxi.git
@@ -41,7 +41,7 @@ cd Yuxi
 docker compose --profile container up --build -d
 ```
 
-In Windows PowerShell, use `.\scripts\init.ps1` in place of `./scripts/init.sh`. Once the services are ready, open the [local workspace](http://localhost:5173), create the administrator account, and sign in. The default Container sandbox suits trusted single-tenant workloads.
+In Windows PowerShell, use `.\scripts\init.ps1` in place of `./scripts/init.sh`.
 
 To try the [v0.8.1.beta1 prerelease](https://github.com/xerrors/Yuxi/releases/tag/v0.8.1.beta1), use `v0.8.1.beta1` as the clone tag. [Full installation guide](https://xerrors.github.io/Yuxi/intro/quick-start) · [Production deployment and isolation](docs/advanced/deployment.md)
 

@@ -1,19 +1,20 @@
-![语析 Yuxi 企业智能体平台](https://oss-img.xerrors.cn/github/yuxi-social-preview-a4f67514.svg)
+![语析 Yuxi 企业智能体平台](.github/media/hero.svg)
 
 **Yuxi 是可私有部署的企业智能体基座。** 团队可以把内部资料、常用工具和工作方法配置成专用智能体，由管理员共享给相应的成员或部门。成员使用同一个智能体，各自按权限查资料、核对出处，也可以把调研或分析任务交给它，在项目工作区取回报告、图表和文件。
 
-<a href="https://trendshift.io/repositories/24335"><img src="https://trendshift.io/api/badge/repositories/24335" alt="xerrors%2FYuxi | Trendshift" width="250" height="55"/>
+<table>
+<tr>
+<td valign="middle">
+<p><strong><a href="https://www.bilibili.com/video/BV1erE26iEgv/">看演示视频</a> · <a href="#快速启动">本地快速启动</a></strong></p>
+<p><a href="https://xerrors.github.io/Yuxi/">项目文档</a> · <a href="https://github.com/xerrors/Yuxi/releases">版本记录</a> · <a href="README.en.md">English</a></p>
+<a href="docker-compose.yml"><img alt="Docker" src="https://img.shields.io/badge/Docker-2496ED?style=flat&amp;logo=docker&amp;logoColor=ffffff" /></a>
+<a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-green" /></a>
+</td>
+<td align="center" valign="middle"><a href=".github/media/community-qr.png"><img width="126" src=".github/media/community-qr.png" alt="扫码加入微信交流" /></a><br>微信交流</td>
+</tr>
+</table>
 
-<a href=".github/media/community-qr.png"><img align="right" width="136" src=".github/media/community-qr.png" alt="微信扫码加入 Yuxi 交流" /></a>
-
-**[看演示视频](https://www.bilibili.com/video/BV1erE26iEgv/) · [本地快速启动](#快速启动)**
-
-[项目文档](https://xerrors.github.io/Yuxi/) · [版本记录](https://github.com/xerrors/Yuxi/releases) · [微信交流](.github/media/community-qr.png) · [English](README.en.md)
-
-[![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat&logo=docker&logoColor=ffffff)](docker-compose.yml)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-
-<br clear="right" />
+<a href="https://trendshift.io/repositories/24335"><img src="https://trendshift.io/api/badge/repositories/24335" alt="Yuxi on Trendshift" width="250" height="55" /></a>
 
 ![食品安全合规分析会话，左侧显示分析结果，右侧列出 Markdown 报告与 HTML 矩阵](https://oss-img.xerrors.cn/github/image-20260825145022410.png)
 
@@ -38,7 +39,7 @@
 
 ## 快速启动
 
-准备 Git、Docker（含 Compose v2）和初始化用的 SiliconFlow API Key。从已有的 Yuxi 仓库根目录开始时，直接执行最后两行。
+请先安装 Docker（含 Compose v2），并获取初始化用的 [SiliconFlow API Key](https://cloud.siliconflow.cn/i/Eo5yTHGJ)。
 
 ```bash
 git clone --branch v0.8.0 --depth 1 https://github.com/xerrors/Yuxi.git
@@ -47,7 +48,7 @@ cd Yuxi
 docker compose --profile container up --build -d
 ```
 
-Windows PowerShell 用户将 `./scripts/init.sh` 换成 `.\scripts\init.ps1`。服务就绪后打开[本地工作台](http://localhost:5173)，创建管理员账号并登录。默认 Container 沙盒适合单租户可信任务。
+Windows PowerShell 用户将 `./scripts/init.sh` 换成 `.\scripts\init.ps1`。
 
 试用 [v0.8.1.beta1](https://github.com/xerrors/Yuxi/releases/tag/v0.8.1.beta1) 时，将克隆命令中的标签改为 `v0.8.1.beta1`。[完整安装指南](https://xerrors.github.io/Yuxi/intro/quick-start) · [生产部署与隔离](docs/advanced/deployment.md)
 
