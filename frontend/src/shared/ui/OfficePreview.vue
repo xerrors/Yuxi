@@ -1,141 +1,75 @@
 <template>
   <div ref="hostRef" class="office-preview-host">
-    <div v-if="loadError" class="office-preview-status office-preview-error">
-      <CircleAlert :size="22" />
-      <span>{{ loadError }}</span>
-    </div>
-    <div v-else-if="!canRender" class="office-preview-status">
+    <div v-if="!active || !viewer" class="office-preview-status" role="status">
       <LoaderCircle class="office-preview-spinner" :size="20" />
       <span>正在加载 Office 预览...</span>
     </div>
     <component
-      :is="viewerComponent"
+      :is="viewer.component"
       v-else
-      :key="fileKey"
-      ref="viewerRef"
       class="office-preview-frame"
       :file="file"
       :options="viewerOptions"
-      @error="onViewerError"
+      @error="emit('error', $event)"
     />
   </div>
 </template>
 
 <script setup>
-import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, shallowRef, watch } from 'vue'
-import { CircleAlert, LoaderCircle } from '@lucide/vue'
+import { computed, onActivated, onDeactivated, ref, shallowRef, watch } from 'vue'
+import { useResizeObserver } from '@vueuse/core'
+import { LoaderCircle } from '@lucide/vue'
 import { useThemeStore } from '@/shared/model/theme'
 
-const props = defineProps({
-  file: {
-    type: Object,
-    required: true
-  }
+defineProps({
+  file: { type: File, required: true }
 })
 
 const emit = defineEmits(['error'])
-
 const themeStore = useThemeStore()
 const hostRef = ref(null)
-const viewerRef = ref(null)
-const viewerComponent = shallowRef(null)
-const configuredRenderers = shallowRef(null)
-const loadError = ref('')
+const viewer = shallowRef(null)
+const visible = ref(false)
 const deactivated = ref(false)
-// 先视为不可见，只有布局给出实际尺寸后才挂载渲染器，避免隐藏面板留下 Worker。
-const collapsed = ref(true)
-let resizeObserver = null
+const active = computed(() => visible.value && !deactivated.value)
 
-const fileKey = computed(
-  () => `${props.file?.name || ''}:${props.file?.size || 0}:${props.file?.lastModified || 0}`
-)
-const active = computed(() => !deactivated.value && !collapsed.value)
-const canRender = computed(
-  () => active.value && viewerComponent.value && configuredRenderers.value && props.file
-)
 const viewerOptions = computed(() => ({
   rendererMode: 'replace',
-  renderers: configuredRenderers.value,
+  renderers: viewer.value?.renderers,
   theme: themeStore.isDark ? 'dark' : 'light',
+  locale: 'zh-CN',
+  messages: { 'spreadsheet.state.rowsAndColumns': '共 {rows} 行，{cols} 列' },
   styleIsolation: 'shadow',
-  toolbar: { position: 'bottom-right' }
+  toolbar: false
 }))
 
-const destroyViewer = () => {
-  const viewer = viewerRef.value
-  viewerRef.value = null
-  try {
-    viewer?.destroy?.()
-  } catch {
-    // 组件卸载会再次销毁会话，重复调用保持幂等。
-  }
-}
+// 隐藏面板和 KeepAlive 停用时卸载 FileViewer，由组件释放自己的 Worker 和渲染资源。
+useResizeObserver(hostRef, ([entry]) => {
+  visible.value = entry.contentRect.width > 0 && entry.contentRect.height > 0
+})
+onActivated(() => { deactivated.value = false })
+onDeactivated(() => { deactivated.value = true })
 
-const ensureViewer = async () => {
-  if (viewerComponent.value && configuredRenderers.value) return
+watch(active, async (isActive) => {
+  if (!isActive || viewer.value) return
   try {
-    // 渲染器与 Worker/WASM/字体由 Vite 插件打进同源产物，这里只在首次打开时加载。
-    const [vueModule, , rendererModule] = await Promise.all([
+    const [{ FileViewer }, , { configuredFileViewerRenderers }] = await Promise.all([
       import('@file-viewer/vue3'),
       import('@file-viewer/vue3/dist/file-viewer3.css'),
       import('virtual:file-viewer-renderers')
     ])
-    viewerComponent.value = vueModule.FileViewer || vueModule.default
-    configuredRenderers.value = rendererModule.configuredFileViewerRenderers
-    if (!viewerComponent.value || !configuredRenderers.value) {
-      throw new Error('Office 预览组件未就绪')
-    }
+    viewer.value = { component: FileViewer, renderers: configuredFileViewerRenderers }
   } catch (error) {
-    loadError.value = error?.message || 'Office 预览组件加载失败'
-    emit('error', loadError.value)
+    if (active.value) emit('error', error.message || 'Office 预览组件加载失败')
   }
-}
-
-const onViewerError = (message) => {
-  const text = String(message || '浏览器无法预览该 Office 文件')
-  loadError.value = text
-  emit('error', text)
-}
-
-watch(active, (value) => {
-  if (value) ensureViewer()
-})
-
-watch(fileKey, () => {
-  loadError.value = ''
-})
-
-onMounted(() => {
-  const node = hostRef.value
-  if (!node || typeof ResizeObserver === 'undefined') {
-    collapsed.value = false
-    ensureViewer()
-    return
-  }
-  resizeObserver = new ResizeObserver((entries) => {
-    const box = entries[0]?.contentRect
-    collapsed.value = !box || (box.width < 1 && box.height < 1)
-  })
-  resizeObserver.observe(node)
-})
-
-onActivated(() => {
-  deactivated.value = false
-})
-
-onDeactivated(() => {
-  deactivated.value = true
-  destroyViewer()
-})
-
-onBeforeUnmount(() => {
-  resizeObserver?.disconnect()
-  resizeObserver = null
-  destroyViewer()
 })
 </script>
 
 <style scoped>
+.office-preview-host {
+  isolation: isolate;
+}
+
 .office-preview-host,
 .office-preview-frame {
   display: block;
@@ -157,10 +91,6 @@ onBeforeUnmount(() => {
   color: var(--gray-500);
   font-size: 14px;
   line-height: 1.6;
-}
-
-.office-preview-error {
-  color: var(--color-error-700);
 }
 
 .office-preview-spinner {

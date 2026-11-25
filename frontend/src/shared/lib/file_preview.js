@@ -149,27 +149,12 @@ export const isOfficePdfFallback = (path) =>
   OFFICE_PDF_FALLBACK_EXTENSIONS.has(getPreviewFileExtension(path))
 
 /** 还原预览响应里百分号编码的文件名，保留真实扩展名。 */
-export const decodePreviewFilename = (value) => {
-  const raw = String(value || '').trim()
-  if (!raw) return ''
+const decodePreviewFilename = (value) => {
   try {
-    return decodeURIComponent(raw)
+    return decodeURIComponent(value)
   } catch {
-    return raw
+    return value
   }
-}
-
-export const officePreviewFilename = (response, baseFile = {}) => {
-  const headerName = decodePreviewFilename(response?.headers?.get?.('x-yuxi-preview-filename'))
-  const pathName = String(baseFile.filename || baseFile.name || baseFile.path || '')
-    .split('/')
-    .pop()
-  const name = (headerName || pathName || 'preview').split('/').pop() || 'preview'
-  const extension = getPreviewFileExtension(baseFile.path || baseFile.filename || baseFile.name || name)
-  if (extension && OFFICE_EXTENSIONS.has(extension) && !name.toLowerCase().endsWith(extension)) {
-    return `${name}${extension}`
-  }
-  return name
 }
 
 export const getPreviewTypeByContentType = (contentType) => {
@@ -226,32 +211,25 @@ export const normalizePreviewResponse = async (response, baseFile = {}) => {
     }
   }
 
-  const headerPreviewType = response?.headers?.get?.('x-yuxi-preview-type') || ''
-  const previewType =
-    headerPreviewType ||
-    (pathPreviewType === 'office' ? 'office' : getPreviewTypeByContentType(contentType))
+  const previewType = response.headers.get('x-yuxi-preview-type') || responsePreviewType
   const blob = await response.blob()
 
   // Office 原文件只交给带扩展名的 File，不生成可脱离鉴权上下文的对象 URL。
   if (previewType === 'office') {
-    const filename = officePreviewFilename(response, baseFile)
-    const mediaType =
-      blob.type && blob.type !== 'application/octet-stream'
-        ? blob.type
-        : String(contentType || '')
-            .split(';')[0]
-            .trim() || 'application/octet-stream'
-    const previewFile = typeof File === 'undefined' ? null : new File([blob], filename, { type: mediaType })
+    const headerName = response.headers.get('x-yuxi-preview-filename')
+    const filename = headerName
+      ? decodePreviewFilename(headerName)
+      : (baseFile.filename || baseFile.name || baseFile.path || 'preview').split('/').pop()
     return {
       ...baseFile,
       content: null,
       loading: false,
-      status: previewFile ? 'ready' : 'unsupported',
+      status: 'ready',
       previewType: 'office',
-      supported: Boolean(previewFile),
-      message: previewFile ? '' : '当前文件暂不支持预览，请下载后查看',
+      supported: true,
+      message: '',
       previewUrl: '',
-      previewFile,
+      previewFile: new File([blob], filename, { type: blob.type }),
       filename
     }
   }

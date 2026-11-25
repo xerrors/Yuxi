@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiDelete, apiPut, apiRequest } from './base'
+import { apiGet, apiPost, apiDelete, apiPut, apiRequest, buildQuery } from './base'
 import { getApiAuthHeaders } from './auth_context'
 
 /**
@@ -419,15 +419,10 @@ export const threadApi = {
   downloadThreadArtifact: (threadId, path) =>
     apiGet(threadApi.getThreadArtifactUrl(threadId, path, true), {}, true, 'blob'),
 
-  /** 读取允许跨 Project/User Data/Skills 的 artifact 预览字节。 */
+  /** 读取产品产物预览，支持 Office 原件和同一产物的 PDF 回退。 */
   previewThreadArtifact: (threadId, path, { officeRender } = {}) => {
-    const fallback = officeRender === 'pdf' ? '&office_render=pdf' : ''
-    return apiGet(
-      `${threadApi.getThreadArtifactUrl(threadId, path, false)}?preview=true${fallback}`,
-      {},
-      true,
-      'blob'
-    )
+    const query = buildQuery({ path, office_render: officeRender })
+    return apiGet(`/api/agent/threads/${encodeURIComponent(threadId)}/artifacts/preview?${query}`, {}, true, 'blob')
   },
 
   /**

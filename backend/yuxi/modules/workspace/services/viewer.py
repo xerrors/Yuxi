@@ -7,7 +7,7 @@ import os
 import tempfile
 from pathlib import PurePosixPath
 
-from yuxi.infrastructure.file_preview import preview_too_large
+from yuxi.infrastructure.file_preview import OfficeRender, preview_too_large
 from yuxi.infrastructure.filesystem import await_io
 from yuxi.infrastructure.office_conversion import OfficeConversionError
 from yuxi.modules.workspace.errors import FileTransferLimitError
@@ -60,7 +60,7 @@ async def read_viewer_file_content(
     path: str,
     current_user,
     db,
-    office_render: str = "source",
+    office_render: OfficeRender = "source",
 ) -> dict | PreviewResult:
     """从实时 Workdir 读取预览，不经过 MinIO revision。"""
     access = await resolve_authorized_workdir(thread_id=thread_id, uid=str(current_user.uid), db=db)

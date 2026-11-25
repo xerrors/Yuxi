@@ -6,11 +6,7 @@ import asyncio
 import hashlib
 from pathlib import Path, PurePosixPath
 
-from yuxi.infrastructure.file_preview import (
-    is_office_source_preview,
-    prepare_file_preview,
-    prepare_office_source_preview,
-)
+from yuxi.infrastructure.file_preview import OfficeRender, prepare_file_preview
 from yuxi.infrastructure.office_conversion import convert_office_to_pdf, is_office_pdf_convertible
 from yuxi.infrastructure.runtime_settings import get_runtime_dir
 from yuxi.shared.files import PreviewResult
@@ -21,7 +17,7 @@ async def preview_workspace_file(
     raw_content: bytes,
     *,
     office_cache_key: str,
-    office_render: str = "source",
+    office_render: OfficeRender = "source",
 ) -> PreviewResult:
     """把 UserWorkspace 文件字节渲染为预览结果。"""
     if office_render == "pdf" and is_office_pdf_convertible(path):
@@ -33,10 +29,7 @@ async def preview_workspace_file(
             media_type="application/pdf",
             filename=f"{PurePosixPath(path).stem or 'preview'}.pdf",
         )
-    if is_office_source_preview(path):
-        return prepare_office_source_preview(path, raw_content)
-
-    return prepare_file_preview(path, raw_content)
+    return prepare_file_preview(path, raw_content, office_source=True)
 
 
 async def _convert_office_to_pdf_cached(path: str, content: bytes, cache_key: str) -> bytes:

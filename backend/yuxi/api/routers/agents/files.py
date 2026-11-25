@@ -1,14 +1,18 @@
-"""产品内部的附件预解析与图片处理入口。"""
+"""产品内部的文件预览、附件预解析与图片处理入口。"""
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.api.dependencies.auth import get_db, require_product_user
+from yuxi.api.responses.files import render_file_result
 from yuxi.api.uploads import read_upload_with_limit
+from yuxi.infrastructure.file_preview import OfficeRender
 from yuxi.infrastructure.images import process_uploaded_image
 from yuxi.modules.agents.scope import ActorScope
+from yuxi.modules.agents.services.artifacts import resolve_thread_artifact_view
 from yuxi.modules.agents.services.attachments import get_draft_file, parse_draft_file
+from yuxi.modules.agents.services.thread_access import require_thread
 from yuxi.modules.identity.models import User
 
 router = APIRouter(prefix="/agent", tags=["agent"], dependencies=[Depends(require_product_user)])
@@ -19,6 +23,24 @@ class DraftParse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     parse_method: str | None = None
+
+
+@router.get("/threads/{thread_id}/artifacts/preview")
+async def preview_thread_artifact(
+    thread_id: str,
+    path: str = Query(..., description="产物路径"),
+    office_render: OfficeRender = Query("source", description="Office 原文件或 PDF 回退"),
+    user: User = Depends(require_product_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """产品浏览器预览沿用 Thread 与产物的授权边界。"""
+    scope = ActorScope(uid=str(user.uid), app_id=None)
+    await require_thread(db=db, scope=scope, thread_id=thread_id)
+    return render_file_result(
+        await resolve_thread_artifact_view(
+            thread_id=thread_id, current_uid=scope.uid, db=db, path=path, preview=True, office_render=office_render
+        )
+    )
 
 
 @router.get("/files/{file_id}")

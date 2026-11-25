@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import mimetypes
 from pathlib import PurePosixPath
+from typing import Literal
 
 from yuxi.shared.files import MAX_FILE_PREVIEW_BYTES, PreviewResult, detect_media_type
 
 MAX_TEXT_PREVIEW_CHARS = 250_000
+OfficeRender = Literal["source", "pdf"]
 
 _PREVIEW_HEAD_BYTES = 1024
 
@@ -67,25 +69,19 @@ _BINARY_SIGNATURES = (
 )
 
 
-def is_office_source_preview(path: str) -> bool:
-    """判断浏览器端 Office 预览是否应直接读取原始字节。"""
-    return PurePosixPath(path).suffix.lower() in _OFFICE_SOURCE_EXTENSIONS
-
-
-def prepare_office_source_preview(path: str, raw_content: bytes) -> PreviewResult:
-    """返回保留真实扩展名的 Office 原文件，供浏览器渲染。"""
-    filename = PurePosixPath(path).name or "preview"
-    return PreviewResult(
-        content=raw_content,
-        preview_type="office",
-        supported=True,
-        media_type=detect_media_type(filename, raw_content),
-        filename=filename,
-    )
-
-
-def prepare_file_preview(path: str, raw_content: bytes) -> PreviewResult:
+def prepare_file_preview(path: str, raw_content: bytes, *, office_source: bool = False) -> PreviewResult:
     """把文件字节准备为文本或二进制预览结果。"""
+    filename = PurePosixPath(path).name or "preview"
+    if office_source and PurePosixPath(filename).suffix.lower() in _OFFICE_SOURCE_EXTENSIONS:
+        # Office 原件只交给文档解析器，响应类型由允许的扩展名决定。
+        return PreviewResult(
+            content=raw_content,
+            preview_type="office",
+            supported=True,
+            media_type=detect_media_type(filename),
+            filename=filename,
+        )
+
     preview_type, supported, message = detect_preview_type(path, raw_content)
     if preview_type in {"image", "pdf"}:
         return PreviewResult(
@@ -93,7 +89,7 @@ def prepare_file_preview(path: str, raw_content: bytes) -> PreviewResult:
             preview_type=preview_type,
             supported=True,
             media_type=detect_media_type(path, raw_content),
-            filename=PurePosixPath(path).name or "preview",
+            filename=filename,
         )
     if not supported:
         return _unsupported_preview(message)

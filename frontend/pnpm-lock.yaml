@@ -19,6 +19,9 @@ overrides:
   undici: 6.28.0
   yaml: 2.8.3
 
+patchedDependencies:
+  '@file-viewer/renderer-pptx@3.3.6': 3a7cc95fb6d221209758e69bf2ea69faedd42bee6e2cd1ead9a04caaf0c08fa7
+
 importers:
 
   .:
@@ -34,7 +37,7 @@ importers:
         version: 10.6.0
       '@file-viewer/renderer-pptx':
         specifier: ^3.3.6
-        version: 3.3.6
+        version: 3.3.6(patch_hash=3a7cc95fb6d221209758e69bf2ea69faedd42bee6e2cd1ead9a04caaf0c08fa7)
       '@file-viewer/renderer-spreadsheet':
         specifier: ^3.3.6
         version: 3.3.6
@@ -2675,7 +2678,7 @@ snapshots:
       tinycolor2: 1.6.0
       utif: 3.1.0
 
-  '@file-viewer/renderer-pptx@3.3.6':
+  '@file-viewer/renderer-pptx@3.3.6(patch_hash=3a7cc95fb6d221209758e69bf2ea69faedd42bee6e2cd1ead9a04caaf0c08fa7)':
     dependencies:
       '@file-viewer/core': 3.3.6
       '@file-viewer/pptx': 3.3.6

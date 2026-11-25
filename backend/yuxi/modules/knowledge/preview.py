@@ -2,12 +2,7 @@
 
 from __future__ import annotations
 
-from yuxi.infrastructure.file_preview import (
-    is_office_source_preview,
-    prepare_file_preview,
-    prepare_office_source_preview,
-    preview_too_large,
-)
+from yuxi.infrastructure.file_preview import OfficeRender, prepare_file_preview, preview_too_large
 from yuxi.infrastructure.filesystem import await_io
 from yuxi.infrastructure.minio import ObjectSizeLimitError, get_minio_client
 from yuxi.infrastructure.minio.object_urls import is_minio_url, parse_minio_url
@@ -18,10 +13,10 @@ from yuxi.infrastructure.office_conversion import (
 )
 from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
 from yuxi.modules.knowledge.repositories.projections import knowledge_projection_lock
-from yuxi.shared.files import MAX_FILE_PREVIEW_BYTES
+from yuxi.shared.files import MAX_FILE_PREVIEW_BYTES, PreviewResult
 
 
-async def read_knowledge_file_preview(kb_id: str, file_id: str, *, office_render: str = "source") -> dict:
+async def read_knowledge_file_preview(kb_id: str, file_id: str, *, office_render: OfficeRender = "source") -> dict:
     """从 Knowledge metadata 与 MinIO 对象生成只读文件预览。"""
     file_record = await KnowledgeFileRepository().get_by_file_id(file_id)
     # kb_id 不匹配与不存在同样按“文件不存在”处理，避免泄露其他知识库的文件存在性。
@@ -61,38 +56,18 @@ async def read_knowledge_file_preview(kb_id: str, file_id: str, *, office_render
         if office_render == "pdf" and is_office_pdf_convertible(filename):
             pdf_content = await _read_office_pdf_preview(kb_id, file_id, filename, original_path)
             # 隐藏文件名（如 “.docx”）去掉扩展名后 stem 为空，此时退回 file_id 命名。
-            pdf_filename = f"{filename.rsplit('.', 1)[0] or file_id}.pdf"
-            return {
-                **response,
-                "content": pdf_content,
-                "filename": pdf_filename,
-                "media_type": "application/pdf",
-                "preview_type": "pdf",
-                "supported": True,
-                "message": None,
-                "binary": True,
-            }
-
-        raw_content = await _read_minio_bytes(original_path)
+            response["filename"] = f"{filename.rsplit('.', 1)[0] or file_id}.pdf"
+            result = PreviewResult(pdf_content, "pdf", True, media_type="application/pdf")
+        else:
+            raw_content = await _read_minio_bytes(original_path)
+            result = prepare_file_preview(filename, raw_content, office_source=True)
     except ObjectSizeLimitError:
         return {**response, **preview_too_large().payload()}
 
-    if is_office_source_preview(filename):
-        result = prepare_office_source_preview(filename, raw_content)
-        return {
-            **response,
-            "content": result.content,
-            "filename": result.filename,
-            "media_type": result.media_type,
-            "preview_type": result.preview_type,
-            "supported": result.supported,
-            "message": result.message,
-            "binary": True,
-        }
-
-    result = prepare_file_preview(filename, raw_content)
-    # payload() 只承载文本内容，字节结果（图像/PDF）需单独展开并标记 binary 供路由流式输出。
+    # 字节结果经路由流式输出，payload() 只承载文本。
     if isinstance(result.content, bytes):
+        if result.preview_type == "office":
+            response["filename"] = result.filename
         return {
             **response,
             "content": result.content,

@@ -54,6 +54,8 @@ async def test_office_preview_cache_is_written_only_to_api_runtime(test_client, 
         assert second.status_code == 200, second.text
         assert first.headers["content-type"].startswith("application/vnd.openxmlformats-officedocument.wordprocessingml.document")
         assert first.headers["x-yuxi-preview-type"] == "office"
+        assert first.headers["content-disposition"].startswith("attachment;")
+        assert first.headers["x-content-type-options"] == "nosniff"
         assert first.content == original
         assert second.content == original
         assert _file_snapshot([runtime_cache]) == runtime_before
@@ -75,3 +77,23 @@ async def test_office_preview_cache_is_written_only_to_api_runtime(test_client, 
         await test_client.delete("/api/workspace/file", params={"path": workspace_path}, headers=admin_headers)
         for cache_path in set(_file_snapshot([runtime_cache])) - set(runtime_before):
             cache_path.unlink(missing_ok=True)
+
+
+async def test_office_source_uses_document_media_type(test_client, admin_headers):
+    """Office 响应的媒体类型不能被上传内容改成浏览器可内联的类型。"""
+    filename = f"pytest-office-media-{uuid4().hex}.xlsx"
+    params = {"path": f"/{filename}"}
+    content = b'<svg xmlns="http://www.w3.org/2000/svg"/>'
+    uploaded = await test_client.post(
+        "/api/workspace/upload", data={"parent_path": "/"}, files={"files": (filename, content)}, headers=admin_headers
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    try:
+        response = await test_client.get("/api/workspace/file", params=params, headers=admin_headers)
+        assert response.status_code == 200, response.text
+        assert response.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        assert response.headers["content-disposition"].startswith("attachment;")
+        assert response.headers["x-content-type-options"] == "nosniff"
+        assert response.content == content
+    finally:
+        await test_client.delete("/api/workspace/file", params=params, headers=admin_headers)

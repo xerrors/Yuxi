@@ -1,0 +1,155 @@
+diff --git a/dist/index.js b/dist/index.js
+index 396c59fbf75472a3642b65471e1d652c84f79cb1..78aa4a2b1d45dd8a3b26d4b0213b852582866760 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -8,14 +8,6 @@ const pptxStyle = `
+ .pptx-loading[hidden],.pptx-error[hidden]{display:none!important}
+ .pptx-loading-dot{width:9px;height:9px;border-radius:999px;background:#1f9d67;box-shadow:0 0 0 6px rgba(31,157,103,.13)}
+ .pptx-error{box-sizing:border-box;width:min(680px,calc(100% - 32px));margin:48px auto;padding:24px;border:1px solid rgba(28,43,58,.12);border-radius:14px;background:#fff;color:#1f2d3b;box-shadow:0 16px 42px rgba(25,42,54,.08)}
+-.pptx-slideshow-button{position:sticky;top:12px;z-index:4;float:right;display:inline-flex;align-items:center;gap:8px;margin:0 0 12px;padding:8px 14px;border:1px solid rgba(42,94,144,.16);border-radius:999px;background:rgba(255,255,255,.94);color:#2a5e90;font:13px/1.2 inherit;cursor:pointer;box-shadow:0 10px 26px rgba(24,44,64,.12)}
+-.pptx-slideshow-button:hover{border-color:rgba(42,94,144,.34);color:#1d4a75}
+-.pptx-slideshow-button:focus-visible{outline:2px solid #2a5e90;outline-offset:2px}
+-.pptx-slideshow-button[hidden]{display:none!important}
+-.pptx-slideshow-button-glyph{font-size:11px;line-height:1}
+-.pptx-slideshow-button-key{padding:1px 6px;border-radius:6px;background:rgba(42,94,144,.1);font-size:11px;letter-spacing:.04em}
+-[data-viewer-theme='dark'] .pptx-slideshow-button{border-color:rgba(148,163,184,.2);background:rgba(15,23,42,.92);color:#cbd5e1}
+-[data-viewer-theme='dark'] .pptx-slideshow-button-key{background:rgba(148,163,184,.16)}
+ .pptx-error strong{display:block;margin-bottom:10px;font-size:18px}
+ .pptx-error p{margin:0;color:#607282;line-height:1.7}
+ [data-viewer-theme='dark'] .pptx-viewer-shell{background:var(--file-viewer-render-surface-background,#101820);color:#e5eef8}
+@@ -33,8 +25,6 @@ const pptxPrintStyle = `@media print {
+   }
+ }
+ `;
+-const SLIDESHOW_HOTKEY_LABEL = 'F5 / P';
+-const activePptxShells = new WeakMap();
+ const createStyle = (documentRef) => {
+     const style = documentRef.createElement('style');
+     style.textContent = pptxStyle;
+@@ -252,71 +242,9 @@ export default async function renderPptx(buffer, target, _type, context) {
+     const errorTitle = t.text(createElement(documentRef, 'strong', undefined), 'presentation.error.title');
+     const errorText = createElement(documentRef, 'p');
+     error.append(errorTitle, errorText);
+-    const slideshowButton = createElement(documentRef, 'button', 'pptx-slideshow-button');
+-    slideshowButton.type = 'button';
+-    slideshowButton.hidden = true;
+-    const slideshowGlyph = createElement(documentRef, 'span', 'pptx-slideshow-button-glyph', '▶');
+-    const slideshowText = t.text(createElement(documentRef, 'span', undefined), 'presentation.slideshow.start');
+-    const slideshowKey = createElement(documentRef, 'span', 'pptx-slideshow-button-key', SLIDESHOW_HOTKEY_LABEL);
+-    slideshowButton.append(slideshowGlyph, slideshowText, slideshowKey);
+-    slideshowButton.addEventListener('click', () => {
+-        void (viewer === null || viewer === void 0 ? void 0 : viewer.togglePresentation());
+-    });
+     const surface = createElement(documentRef, 'div', 'pptx-render-surface');
+-    shell.append(loading, error, slideshowButton, surface);
++    shell.append(loading, error, surface);
+     target.replaceChildren(style, shell);
+-    const activateShell = () => {
+-        activePptxShells.set(documentRef, shell);
+-    };
+-    const deactivateShell = (event) => {
+-        if ((viewer === null || viewer === void 0 ? void 0 : viewer.presenting) || activePptxShells.get(documentRef) !== shell) {
+-            return;
+-        }
+-        if (event.composedPath().includes(shell)) {
+-            return;
+-        }
+-        const targetElement = event.target;
+-        if (event.type === 'focusin' &&
+-            !(targetElement === null || targetElement === void 0 ? void 0 : targetElement.matches('button, a, input, textarea, select, [contenteditable], [tabindex]'))) {
+-            return;
+-        }
+-        activePptxShells.delete(documentRef);
+-    };
+-    shell.addEventListener('pointerdown', activateShell);
+-    shell.addEventListener('focusin', activateShell);
+-    documentRef.addEventListener('pointerdown', deactivateShell);
+-    documentRef.addEventListener('focusin', deactivateShell);
+-    const isEditableTarget = (node) => {
+-        const element = node;
+-        if (!element || typeof element.closest !== 'function') {
+-            return false;
+-        }
+-        return Boolean(element.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]'));
+-    };
+-    const handleShortcut = (event) => {
+-        if (disposed || !viewer || event.altKey || event.ctrlKey || event.metaKey) {
+-            return;
+-        }
+-        if (event.key !== 'F5' && event.key !== 'p' && event.key !== 'P') {
+-            return;
+-        }
+-        if (!shell.isConnected || isEditableTarget(event.target)) {
+-            return;
+-        }
+-        if (activePptxShells.get(documentRef) !== shell) {
+-            return;
+-        }
+-        const targetElement = event.target;
+-        if (targetElement && typeof targetElement.closest === 'function') {
+-            const targetShell = targetElement.closest('.pptx-viewer-shell');
+-            if (targetShell && targetShell !== shell) {
+-                return;
+-            }
+-        }
+-        event.preventDefault();
+-        void viewer.togglePresentation();
+-    };
+-    documentRef.addEventListener('keydown', handleShortcut);
+     (_a = context === null || context === void 0 ? void 0 : context.registerThumbnailAdapter) === null || _a === void 0 ? void 0 : _a.call(context, {
+         captureSource: 'embedded',
+         beforeCapture: async ({ signal }) => {
+@@ -373,19 +301,10 @@ export default async function renderPptx(buffer, target, _type, context) {
+         (_b = context === null || context === void 0 ? void 0 : context.onProgressiveRender) === null || _b === void 0 ? void 0 : _b.call(context);
+     };
+     const syncUi = () => {
+-        var _a;
+         loading.hidden = !(state === 'loading' && !errorMessage);
+         error.hidden = state !== 'error';
+         t.bind(errorText, node => { node.textContent = (errorCopy === null || errorCopy === void 0 ? void 0 : errorCopy(context === null || context === void 0 ? void 0 : context.options)) || errorMessage; });
+         surface.classList.toggle('is-loading', state === 'loading');
+-        const presenting = Boolean(viewer === null || viewer === void 0 ? void 0 : viewer.presenting);
+-        slideshowButton.hidden = state !== 'ready' || ((_a = viewer === null || viewer === void 0 ? void 0 : viewer.slideCount) !== null && _a !== void 0 ? _a : 0) === 0;
+-        t.bind(slideshowText, localizedNode => {
+-            localizedNode.textContent = presenting
+-                ? t('presentation.slideshow.exit')
+-                : t('presentation.slideshow.start');
+-        }, 'textContent');
+-        slideshowButton.setAttribute('aria-pressed', presenting ? 'true' : 'false');
+     };
+     const registerExportAdapter = () => {
+         var _a;
+@@ -463,18 +382,6 @@ export default async function renderPptx(buffer, target, _type, context) {
+                     batchSize: 4,
+                     overscanViewport: 1.5,
+                 },
+-                presentationLabels: {
+-                    exit: t('presentation.slideshow.exit'),
+-                    hint: t('presentation.slideshow.hint'),
+-                },
+-                onPresentationChange: state => {
+-                    if (!disposed) {
+-                        if (state.active) {
+-                            activePptxShells.set(documentRef, shell);
+-                        }
+-                        syncUi();
+-                    }
+-                },
+                 onSlideRendered: () => notifyProgressiveReady(),
+                 onRenderComplete: () => {
+                     var _a;
+@@ -531,14 +438,6 @@ export default async function renderPptx(buffer, target, _type, context) {
+             return;
+         }
+         disposed = true;
+-        documentRef.removeEventListener('keydown', handleShortcut);
+-        documentRef.removeEventListener('pointerdown', deactivateShell);
+-        documentRef.removeEventListener('focusin', deactivateShell);
+-        shell.removeEventListener('pointerdown', activateShell);
+-        shell.removeEventListener('focusin', activateShell);
+-        if (activePptxShells.get(documentRef) === shell) {
+-            activePptxShells.delete(documentRef);
+-        }
+         (_a = context === null || context === void 0 ? void 0 : context.registerExportAdapter) === null || _a === void 0 ? void 0 : _a.call(context, null);
+         (_b = context === null || context === void 0 ? void 0 : context.registerThumbnailAdapter) === null || _b === void 0 ? void 0 : _b.call(context, null);
+         unregisterFileViewerZoomProvider(shell);

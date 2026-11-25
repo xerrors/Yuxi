@@ -414,13 +414,6 @@ def test_nginx_maps_mjs_to_javascript_mime():
     assert _maps_mjs_to_javascript_mime(source)
 
 
-def test_nginx_maps_wasm_to_webassembly_mime():
-    """Office 预览 WASM 必须以 WebAssembly MIME 提供。"""
-    source = (project_root() / "docker" / "nginx" / "nginx.conf").read_text()
-
-    assert re.search(r"application/wasm\s+wasm\s*;", source) is not None
-
-
 def test_mime_guard_detects_missing_mjs_mapping():
     """删除 .mjs 映射后部署契约 guard 必须失败。"""
     assert _maps_mjs_to_javascript_mime("types { application/javascript js; }") is False

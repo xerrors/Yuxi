@@ -1,17 +1,16 @@
 """把中立 Workspace preview 结果装配为 HTTP 响应。"""
 
-import io
 import os
 from contextlib import suppress
 from urllib.parse import quote
 
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response
 from starlette.types import Receive, Scope, Send
 
 from yuxi.shared.files import PreparedFile, PreviewResult
 
 
-def render_file_result(result: PreparedFile | PreviewResult | dict) -> FileResponse | StreamingResponse | dict:
+def render_file_result(result: PreparedFile | PreviewResult | dict) -> Response | dict:
     """把已准备好的业务文件结果装配为 HTTP 响应。"""
     if isinstance(result, PreparedFile):
         headers = None
@@ -45,16 +44,16 @@ class _TemporaryFileResponse(FileResponse):
                 os.unlink(self.path)
 
 
-def _preview_response(result: PreviewResult) -> dict | StreamingResponse:
+def _preview_response(result: PreviewResult) -> dict | Response:
     if not isinstance(result.content, bytes):
         return result.payload()
-    filename = result.filename or "preview"
-    return StreamingResponse(
-        io.BytesIO(result.content),
-        media_type=result.media_type or "application/octet-stream",
-        headers={
-            "Content-Disposition": f"inline; filename*=UTF-8''{quote(filename)}",
-            "X-Yuxi-Preview-Type": result.preview_type,
-            "X-Yuxi-Preview-Filename": quote(filename),
-        },
-    )
+    filename = quote(result.filename or "preview")
+    disposition = "attachment" if result.preview_type == "office" else "inline"
+    headers = {
+        "Content-Disposition": f"{disposition}; filename*=UTF-8''{filename}",
+        "X-Yuxi-Preview-Type": result.preview_type,
+        "X-Yuxi-Preview-Filename": filename,
+    }
+    if result.preview_type == "office":
+        headers["X-Content-Type-Options"] = "nosniff"
+    return Response(result.content, media_type=result.media_type or "application/octet-stream", headers=headers)
