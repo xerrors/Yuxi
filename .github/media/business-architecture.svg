@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">Yuxi 企业智能体基座能力框架</title>
+  <desc id="desc">企业文档、模型和工具接入 Yuxi。团队配置并共享业务智能体，运行时按使用者权限检索知识、协作执行任务，在项目工作区交付成果。知识问答、研究分析和任务执行智能体共用运行时、知识服务和治理能力。</desc>
+  <rect width="1280" height="720" rx="16" fill="#fafbf7"/>
+  <g font-family="Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif" fill="#213e33">
+    <g aria-label="可构建的业务智能体示例">
+      <text x="35" y="82" font-size="23" font-weight="650">业务应用</text>
+      <text x="35" y="113" font-size="18" fill="#576c60">智能体示例</text>
+      <g fill="#fff" stroke="#c3d2c7" stroke-width="1.6">
+        <rect x="172" y="34" width="337" height="104" rx="9"/>
+        <rect x="534" y="34" width="337" height="104" rx="9"/>
+        <rect x="896" y="34" width="348" height="104" rx="9"/>
+      </g>
+      <g font-size="26" font-weight="650">
+        <text x="194" y="77">企业知识助手</text>
+        <text x="556" y="77">项目研究助手</text>
+        <text x="918" y="77">任务执行助手</text>
+      </g>
+      <g font-size="20" fill="#415c4d">
+        <text x="194" y="113">解答业务问题，附上原文出处</text>
+        <text x="556" y="113">综合项目资料，撰写调研报告</text>
+        <text x="918" y="113">执行多步任务，交付图表和文件</text>
+      </g>
+    </g>
+    <g fill="none" stroke="#758d7d" stroke-width="2" stroke-linejoin="round">
+      <path d="M340 143v20h730v-20 M702 163v-20 M640 187v-24"/>
+      <path d="m334 150 6-7 6 7m350 0 6-7 6 7m356 0 6-7 6 7"/>
+    </g>
+    <g aria-label="企业智能体基座">
+      <rect x="34" y="188" width="1212" height="368" rx="13" fill="#fff" stroke="#a9beaf" stroke-width="2"/>
+      <path d="M57 219v36" stroke="#e9b634" stroke-width="6"/>
+      <text x="74" y="251" font-size="36" font-weight="700">Yuxi 企业智能体基座</text>
+      <text x="1216" y="246" text-anchor="end" font-size="20" fill="#4c6355">Web 工作台　·　Agents API　·　定时任务</text>
+
+      <rect x="56" y="283" width="306" height="159" rx="8" fill="#f6eedb"/>
+      <rect x="443" y="283" width="338" height="159" rx="8" fill="#e7eff3"/>
+      <rect x="897" y="283" width="325" height="159" rx="8" fill="#e4efe6"/>
+      <g font-size="28" font-weight="680">
+        <text x="77" y="330" fill="#745323">智能体构建</text>
+        <text x="464" y="330" fill="#28546b">任务运行时</text>
+        <text x="918" y="330" fill="#225b41">企业知识服务</text>
+      </g>
+      <g font-size="21">
+        <text x="77" y="374">配置角色、模型与工具</text>
+        <text x="77" y="411">按团队范围共享，跨会话复用</text>
+        <text x="464" y="374">多智能体协作、工具调用与审批</text>
+        <text x="464" y="411">沙盒执行，工作区保存交付物</text>
+        <text x="918" y="374">解析文档，建立索引与图谱</text>
+        <text x="918" y="411">按权限检索，定位原文出处</text>
+      </g>
+      <g fill="none" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M364 370h75m-7-6 7 6-7 6" stroke="#8e805d"/>
+        <path d="M784 346h109m-7-6 7 6-7 6 M894 389H784m7-6-7 6 7 6" stroke="#54826a"/>
+      </g>
+      <g font-size="18" font-weight="550" text-anchor="middle">
+        <text x="403" y="354" fill="#705d36">配置</text>
+        <text x="839" y="330" fill="#38674d">MCP 检索</text>
+        <text x="839" y="417" fill="#38674d">证据与引用</text>
+      </g>
+      <path d="M57 469h1165" stroke="#c8d5cb" stroke-width="1.5"/>
+      <text x="60" y="516" font-size="22" font-weight="650">平台治理</text>
+      <g font-size="20" fill="#41594b">
+        <text x="243" y="516">私有部署</text>
+        <text x="440" y="516">用户与部门授权</text>
+        <text x="713" y="516">模型与凭据管理</text>
+        <text x="994" y="516">运行记录与用量</text>
+      </g>
+    </g>
+    <path d="M640 607v-46m-6 8 6-8 6 8" fill="none" stroke="#758d7d" stroke-width="2"/>
+    <g aria-label="可接入的企业资源">
+      <rect x="34" y="608" width="1212" height="79" rx="8" fill="#edf1eb"/>
+      <text x="56" y="656" font-size="23" font-weight="650">企业资源</text>
+      <path d="M192 628v39" stroke="#c4d0c4"/>
+      <g font-size="22">
+        <text x="234" y="656">业务文档与知识库</text>
+        <text x="539" y="656">模型服务</text>
+        <text x="743" y="656">团队 Skills</text>
+        <text x="996" y="656">MCP 工具与服务</text>
+      </g>
+    </g>
+  </g>
+</svg>
