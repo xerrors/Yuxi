@@ -2,7 +2,7 @@
 
 **Yuxi is a self-hosted platform for building and running enterprise agents.** Teams can give an agent their internal documents, tools, and working instructions, then have an administrator share it with selected people or departments. Colleagues can use the same agent to look up sources they have permission to read or to produce reports, charts, and files in a project workspace.
 
-**[Watch the demo (Chinese)](https://www.bilibili.com/video/BV1erE26iEgv/) · [Run Yuxi locally](https://xerrors.github.io/Yuxi/intro/quick-start)**
+**[Watch the demo (Chinese)](https://www.bilibili.com/video/BV1erE26iEgv/) · [Run Yuxi locally](#quick-start)**
 
 [Documentation](https://xerrors.github.io/Yuxi/) · [Releases](https://github.com/xerrors/Yuxi/releases) · [中文](README.md)
 
@@ -32,11 +32,18 @@
 
 ## Quick Start
 
-For a local trial of `v0.8.0`, prepare Git, Docker with Compose v2, and a SiliconFlow API key for initialization. The default Container sandbox suits trusted single-tenant workloads. [Install and start Yuxi](https://xerrors.github.io/Yuxi/intro/quick-start) · [Production deployment and isolation](docs/advanced/deployment.md)
+Install Git and Docker with Compose v2, and have a SiliconFlow API key ready for initialization. From an existing checkout, run the last two commands in the repository root.
 
-To try the prerelease, check out [v0.8.1.beta1](https://github.com/xerrors/Yuxi/releases/tag/v0.8.1.beta1) before following the initialization steps.
+```bash
+git clone --branch v0.8.0 --depth 1 https://github.com/xerrors/Yuxi.git
+cd Yuxi
+./scripts/init.sh
+docker compose --profile container up --build -d
+```
 
-**Try it with a document you know.** Add it to a knowledge base and ask an agent a question whose answer you can verify. Open the cited passage, compare it with the original, then ask the agent to turn the findings into a Markdown brief you can download. [Knowledge base walkthrough](https://github.com/xerrors/Yuxi/blob/v0.8.0/docs/intro/knowledge-base.md)
+In Windows PowerShell, use `.\scripts\init.ps1` in place of `./scripts/init.sh`. Once the services are ready, open the [local workspace](http://localhost:5173), create the administrator account, and sign in. The default Container sandbox suits trusted single-tenant workloads.
+
+To try the [v0.8.1.beta1 prerelease](https://github.com/xerrors/Yuxi/releases/tag/v0.8.1.beta1), use `v0.8.1.beta1` as the clone tag. [Full installation guide](https://xerrors.github.io/Yuxi/intro/quick-start) · [Production deployment and isolation](docs/advanced/deployment.md)
 
 ## Feature Showcase
 
@@ -217,7 +224,7 @@ Administrators can grant access and management rights by user or department, con
 
 ## Contributing
 
-Issues, documentation improvements, bug fixes, and new features are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow and the [contribution guide](docs/develop-guides/contributing.md) for the full guidelines.
+Issues, documentation improvements, bug fixes, and new features are welcome. See [CONTRIBUTING.md](.github/CONTRIBUTING.md) for the development workflow and the [contribution guide](docs/develop-guides/contributing.md) for the full guidelines.
 
 Thanks to all contributors for supporting this project!
 

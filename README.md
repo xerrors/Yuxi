@@ -6,7 +6,7 @@
 
 <a href=".github/media/community-qr.png"><img align="right" width="136" src=".github/media/community-qr.png" alt="微信扫码加入 Yuxi 交流" /></a>
 
-**[看演示视频](https://www.bilibili.com/video/BV1erE26iEgv/) · [本地快速启动](https://xerrors.github.io/Yuxi/intro/quick-start)**
+**[看演示视频](https://www.bilibili.com/video/BV1erE26iEgv/) · [本地快速启动](#快速启动)**
 
 [项目文档](https://xerrors.github.io/Yuxi/) · [版本记录](https://github.com/xerrors/Yuxi/releases) · [微信交流](.github/media/community-qr.png) · [English](README.en.md)
 
@@ -38,11 +38,18 @@
 
 ## 快速启动
 
-本地试用 `v0.8.0` 需要 Git、Docker（含 Compose v2）和初始化用的 SiliconFlow API Key。默认 Container 沙盒适合单租户可信任务。[安装并启动 Yuxi](https://xerrors.github.io/Yuxi/intro/quick-start) · [生产部署与隔离](docs/advanced/deployment.md)
+准备 Git、Docker（含 Compose v2）和初始化用的 SiliconFlow API Key。从已有的 Yuxi 仓库根目录开始时，直接执行最后两行。
 
-试用预发布功能时，请在获取代码时选择 [v0.8.1.beta1](https://github.com/xerrors/Yuxi/releases/tag/v0.8.1.beta1)，再按安装文档初始化。
+```bash
+git clone --branch v0.8.0 --depth 1 https://github.com/xerrors/Yuxi.git
+cd Yuxi
+./scripts/init.sh
+docker compose --profile container up --build -d
+```
 
-**用一份熟悉的文档试试。** 把它加入知识库，问智能体一个你知道答案的问题。打开引用核对原文，再请它把要点整理成一份可下载的 Markdown 简报。[知识库入门教程](https://github.com/xerrors/Yuxi/blob/v0.8.0/docs/intro/knowledge-base.md)
+Windows PowerShell 用户将 `./scripts/init.sh` 换成 `.\scripts\init.ps1`。服务就绪后打开[本地工作台](http://localhost:5173)，创建管理员账号并登录。默认 Container 沙盒适合单租户可信任务。
+
+试用 [v0.8.1.beta1](https://github.com/xerrors/Yuxi/releases/tag/v0.8.1.beta1) 时，将克隆命令中的标签改为 `v0.8.1.beta1`。[完整安装指南](https://xerrors.github.io/Yuxi/intro/quick-start) · [生产部署与隔离](docs/advanced/deployment.md)
 
 ## 能力展示
 
@@ -223,7 +230,7 @@
 
 ## 参与贡献
 
-欢迎提交 Issue、改进文档、修复 Bug 和贡献功能。开发流程见 [CONTRIBUTING.md](CONTRIBUTING.md)，完整规范见 [文档参与指南](docs/develop-guides/contributing.md)。
+欢迎提交 Issue、改进文档、修复 Bug 和贡献功能。开发流程见 [CONTRIBUTING.md](.github/CONTRIBUTING.md)，完整规范见 [文档参与指南](docs/develop-guides/contributing.md)。
 
 感谢所有贡献者的支持！
 

@@ -53,6 +53,8 @@ cache
 .yuxi-identity/
 .pytest_cache
 .zcode
+/.zcodeignore
+/CLAUDE.md
 
 *.secret*
 *.nogit*

@@ -1,184 +1,184 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="2560" height="1440" viewBox="0 0 2560 1440" role="img" aria-labelledby="title desc">
   <title id="title">Yuxi 知识库与多智能体平台架构</title>
   <desc id="desc">五栏从入口、调度、Agent 构建与运行，延伸至知识检索和模型扩展。平台治理与观测、数据与基础设施横向支撑各栏。</desc>
-  <rect width="2560" height="1440" fill="white" />
+  <rect width="2560" height="1440" fill="#EAF8FC" />
   <g transform="translate(0,-120)" font-family="Arial, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif">
-    <rect x="60" y="200" width="280" height="790" rx="18" fill="#F5F7F6" stroke="#CFD9D4" stroke-width="1.6" />
-    <path d="M74 231v25" stroke="#849B95" stroke-width="4" stroke-linecap="round" />
-    <text x="84" y="255" text-anchor="start" font-size="32" font-weight="700" fill="#243A31">用户与系统入口</text>
-    <text x="84" y="289" text-anchor="start" font-size="19" font-weight="400" fill="#4B5D55">Web / API / MCP</text>
-    <rect x="80" y="326" width="240" height="130" rx="10" fill="#FFFFFF" stroke="#CFD9D4" stroke-width="1.5" />
-    <text x="200.0" y="372.5" text-anchor="middle" font-size="25" font-weight="600" fill="#243A31">Web 工作台</text>
-    <text x="200.0" y="401.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">Vue 3 · Vite</text>
-    <text x="200.0" y="430.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">对话 / 项目 / 工作区</text>
-    <rect x="80" y="482" width="240" height="130" rx="10" fill="#FFFFFF" stroke="#CFD9D4" stroke-width="1.5" />
-    <text x="200.0" y="528.5" text-anchor="middle" font-size="25" font-weight="600" fill="#243A31">管理控制台</text>
-    <text x="200.0" y="557.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">智能体 / 知识库</text>
-    <text x="200.0" y="586.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">模型 / Skills / MCP</text>
-    <rect x="80" y="638" width="240" height="130" rx="10" fill="#FFFFFF" stroke="#CFD9D4" stroke-width="1.5" />
-    <text x="200.0" y="684.5" text-anchor="middle" font-size="25" font-weight="600" fill="#243A31">外部应用</text>
-    <text x="200.0" y="713.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">Public API</text>
-    <text x="200.0" y="742.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">API Key · App 身份</text>
-    <rect x="80" y="794" width="240" height="130" rx="10" fill="#FFFFFF" stroke="#CFD9D4" stroke-width="1.5" />
-    <text x="200.0" y="840.5" text-anchor="middle" font-size="25" font-weight="600" fill="#243A31">MCP 客户端</text>
-    <text x="200.0" y="869.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">直连知识服务 · 只读</text>
-    <text x="200.0" y="898.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">/api/mcp</text>
+    <rect x="60" y="200" width="280" height="790" rx="18" fill="#F2FAFC" stroke="#C7D9E0" stroke-width="1.6" />
+    <path d="M74 231v25" stroke="#7895A2" stroke-width="4" stroke-linecap="round" />
+    <text x="84" y="255" text-anchor="start" font-size="32" font-weight="700" fill="#233943">用户与系统入口</text>
+    <text x="84" y="289" text-anchor="start" font-size="19" font-weight="400" fill="#465C66">Web / API / MCP</text>
+    <rect x="80" y="326" width="240" height="130" rx="10" fill="#FFFFFF" stroke="#C7D9E0" stroke-width="1.5" />
+    <text x="200.0" y="372.5" text-anchor="middle" font-size="25" font-weight="600" fill="#233943">Web 工作台</text>
+    <text x="200.0" y="401.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">Vue 3 · Vite</text>
+    <text x="200.0" y="430.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">对话 / 项目 / 工作区</text>
+    <rect x="80" y="482" width="240" height="130" rx="10" fill="#FFFFFF" stroke="#C7D9E0" stroke-width="1.5" />
+    <text x="200.0" y="528.5" text-anchor="middle" font-size="25" font-weight="600" fill="#233943">管理控制台</text>
+    <text x="200.0" y="557.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">智能体 / 知识库</text>
+    <text x="200.0" y="586.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">模型 / Skills / MCP</text>
+    <rect x="80" y="638" width="240" height="130" rx="10" fill="#FFFFFF" stroke="#C7D9E0" stroke-width="1.5" />
+    <text x="200.0" y="684.5" text-anchor="middle" font-size="25" font-weight="600" fill="#233943">外部应用</text>
+    <text x="200.0" y="713.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">Public API</text>
+    <text x="200.0" y="742.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">API Key · App 身份</text>
+    <rect x="80" y="794" width="240" height="130" rx="10" fill="#FFFFFF" stroke="#C7D9E0" stroke-width="1.5" />
+    <text x="200.0" y="840.5" text-anchor="middle" font-size="25" font-weight="600" fill="#233943">MCP 客户端</text>
+    <text x="200.0" y="869.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">直连知识服务 · 只读</text>
+    <text x="200.0" y="898.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">/api/mcp</text>
     <rect x="380" y="200" width="350" height="790" rx="18" fill="#F2F6FA" stroke="#C2D2DC" stroke-width="1.6" />
-    <path d="M394 231v25" stroke="#849B95" stroke-width="4" stroke-linecap="round" />
-    <text x="404" y="255" text-anchor="start" font-size="32" font-weight="700" fill="#243A31">接入与业务调度</text>
-    <text x="404" y="289" text-anchor="start" font-size="19" font-weight="400" fill="#4B5D55">FastAPI · services · repositories</text>
+    <path d="M394 231v25" stroke="#7895A2" stroke-width="4" stroke-linecap="round" />
+    <text x="404" y="255" text-anchor="start" font-size="32" font-weight="700" fill="#233943">接入与业务调度</text>
+    <text x="404" y="289" text-anchor="start" font-size="19" font-weight="400" fill="#465C66">FastAPI · services · repositories</text>
     <rect x="402" y="326" width="306" height="130" rx="10" fill="#FFFFFF" stroke="#C4D2DF" stroke-width="1.5" />
-    <text x="555.0" y="372.5" text-anchor="middle" font-size="25" font-weight="600" fill="#243A31">认证与 API</text>
-    <text x="555.0" y="401.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">JWT / API Key / OIDC</text>
-    <text x="555.0" y="430.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">身份解析 · 后端权限校验</text>
+    <text x="555.0" y="372.5" text-anchor="middle" font-size="25" font-weight="600" fill="#233943">认证与 API</text>
+    <text x="555.0" y="401.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">JWT / API Key / OIDC</text>
+    <text x="555.0" y="430.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">身份解析 · 后端权限校验</text>
     <rect x="402" y="482" width="306" height="130" rx="10" fill="#FFFFFF" stroke="#C4D2DF" stroke-width="1.5" />
-    <text x="555.0" y="528.5" text-anchor="middle" font-size="25" font-weight="600" fill="#243A31">持久输入接收</text>
-    <text x="555.0" y="557.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">Input 原文 + Receipt</text>
-    <text x="555.0" y="586.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">幂等接收 · 提交配置冻结</text>
+    <text x="555.0" y="528.5" text-anchor="middle" font-size="25" font-weight="600" fill="#233943">持久输入接收</text>
+    <text x="555.0" y="557.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">Input 原文 + Receipt</text>
+    <text x="555.0" y="586.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">幂等接收 · 提交配置冻结</text>
     <rect x="402" y="638" width="306" height="130" rx="10" fill="#FFFFFF" stroke="#C4D2DF" stroke-width="1.5" />
-    <text x="555.0" y="684.0" text-anchor="middle" font-size="24" font-weight="600" fill="#243A31">会话调度</text>
-    <text x="555.0" y="713.0" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">follow-up FIFO · steer 优先</text>
-    <text x="555.0" y="742.0" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">事务内创建 Message / Turn / Run</text>
+    <text x="555.0" y="684.0" text-anchor="middle" font-size="24" font-weight="600" fill="#233943">会话调度</text>
+    <text x="555.0" y="713.0" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">follow-up FIFO · steer 优先</text>
+    <text x="555.0" y="742.0" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">事务内创建 Message / Turn / Run</text>
     <rect x="402" y="794" width="306" height="130" rx="10" fill="#FFFFFF" stroke="#C4D2DF" stroke-width="1.5" />
-    <text x="555.0" y="840.5" text-anchor="middle" font-size="25" font-weight="600" fill="#243A31">会话读取与事件</text>
-    <text x="555.0" y="869.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">SSE 增量推送</text>
-    <text x="555.0" y="898.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">PostgreSQL 快照恢复</text>
-    <path d="M347 580h22m-8 -8 8 8 -8 8" fill="none" stroke="#668675" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
-    <path d="M737 580h22m-8 -8 8 8 -8 8" fill="none" stroke="#668675" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
-    <rect x="770" y="200" width="850" height="790" rx="18" fill="#EDF6F0" stroke="#B9D2C3" stroke-width="1.6" />
-    <path d="M784 231v25" stroke="#40805D" stroke-width="4" stroke-linecap="round" />
-    <text x="794" y="255" text-anchor="start" font-size="32" font-weight="700" fill="#243A31">Agent 构建与运行</text>
-    <text x="794" y="289" text-anchor="start" font-size="19" font-weight="400" fill="#4B5D55">LangChain / LangGraph · 独立 ARQ worker</text>
-    <rect x="792" y="326" width="498" height="296" rx="18" fill="white" stroke="#B9D2C3" stroke-width="1.6" />
-    <text x="1041" y="369" text-anchor="middle" font-size="28" font-weight="600" fill="#318A67">统一 Agent 运行时</text>
-    <rect x="810" y="393" width="222" height="96" rx="10" fill="#FFFFFF" stroke="#B6CDC0" stroke-width="1.5" />
-    <text x="921.0" y="436.5" text-anchor="middle" font-size="24" font-weight="600" fill="#243A31">智能体配置</text>
-    <text x="921.0" y="465.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">模型 / 提示词 / 工具</text>
-    <rect x="1050" y="393" width="222" height="96" rx="10" fill="#FFFFFF" stroke="#B6CDC0" stroke-width="1.5" />
-    <text x="1161.0" y="436.5" text-anchor="middle" font-size="24" font-weight="600" fill="#243A31">多智能体协作</text>
-    <text x="1161.0" y="465.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">独立上下文 · 共享项目</text>
-    <rect x="810" y="507" width="222" height="96" rx="10" fill="#FFFFFF" stroke="#B6CDC0" stroke-width="1.5" />
-    <text x="921.0" y="550.5" text-anchor="middle" font-size="24" font-weight="600" fill="#243A31">上下文管理</text>
-    <text x="921.0" y="579.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">记忆 / 摘要 / Skills</text>
-    <rect x="1050" y="507" width="222" height="96" rx="10" fill="#FFFFFF" stroke="#B6CDC0" stroke-width="1.5" />
-    <text x="1161.0" y="550.5" text-anchor="middle" font-size="24" font-weight="600" fill="#243A31">人工介入</text>
-    <text x="1161.0" y="579.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">问答 / 审批 / steer</text>
-    <rect x="792" y="644" width="498" height="171" rx="18" fill="white" stroke="#B9D2C3" stroke-width="1.6" />
-    <text x="1041" y="684" text-anchor="middle" font-size="28" font-weight="600" fill="#318A67">ARQ worker · 后台执行</text>
-    <rect x="810" y="705" width="222" height="89" rx="10" fill="#FFFFFF" stroke="#B6CDC0" stroke-width="1.5" />
-    <text x="921.0" y="745.0" text-anchor="middle" font-size="24" font-weight="600" fill="#243A31">Agent 任务</text>
-    <text x="921.0" y="774.0" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">Run 执行 · 定时触发</text>
-    <rect x="1050" y="705" width="222" height="89" rx="10" fill="#FFFFFF" stroke="#B6CDC0" stroke-width="1.5" />
-    <text x="1161.0" y="745.0" text-anchor="middle" font-size="24" font-weight="600" fill="#243A31">后台作业</text>
-    <text x="1161.0" y="774.0" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">解析 / 图谱 / 评估</text>
-    <rect x="1308" y="326" width="290" height="489" rx="18" fill="white" stroke="#B9D2C3" stroke-width="1.6" />
-    <text x="1453" y="369" text-anchor="middle" font-size="28" font-weight="600" fill="#318A67">隔离执行环境</text>
-    <rect x="1326" y="393" width="254" height="128" rx="10" fill="#FFFFFF" stroke="#B6CDC0" stroke-width="1.5" />
-    <text x="1453.0" y="438.0" text-anchor="middle" font-size="24" font-weight="600" fill="#243A31">Container 沙盒</text>
-    <text x="1453.0" y="467.0" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">独立 sandbox-runner</text>
-    <text x="1453.0" y="496.0" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">按 Run 创建临时容器</text>
-    <rect x="1326" y="539" width="254" height="128" rx="10" fill="#FFFFFF" stroke="#B6CDC0" stroke-width="1.5" stroke-dasharray="7 5" />
-    <text x="1453.0" y="584.0" text-anchor="middle" font-size="24" font-weight="600" fill="#243A31">Cube 沙盒</text>
-    <text x="1453.0" y="613.0" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">Linux / KVM 执行节点</text>
-    <text x="1453.0" y="642.0" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">按用户持久 VM · 按需部署</text>
-    <text x="1453" y="715" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">后端按部署配置二选一</text>
-    <text x="1453" y="751" text-anchor="middle" font-size="20" font-weight="400" fill="#243A31">Workspace / Skills 挂载</text>
-    <text x="1453" y="782" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">命令清理 · 路径边界校验</text>
-    <rect x="792" y="837" width="806" height="111" rx="10" fill="#DDECE1" stroke="#B9D2C3" stroke-width="1.6" />
-    <text x="1195" y="879" text-anchor="middle" font-size="24" font-weight="600" fill="#318A67">输入持久化 → 消费事务提交 → ARQ 投递 → worker 执行</text>
-    <text x="1195" y="918" text-anchor="middle" font-size="21" font-weight="400" fill="#4B5D55">Run lease / heartbeat · 安全边界接管 · PostgreSQL 结算终态</text>
-    <rect x="1660" y="200" width="400" height="790" rx="18" fill="#EDF6F0" stroke="#B9D2C3" stroke-width="1.6" />
-    <path d="M1674 231v25" stroke="#40805D" stroke-width="4" stroke-linecap="round" />
-    <text x="1684" y="255" text-anchor="start" font-size="32" font-weight="700" fill="#243A31">知识与检索</text>
-    <text x="1684" y="289" text-anchor="start" font-size="19" font-weight="400" fill="#4B5D55">默认启用 · 可显式关闭</text>
-    <rect x="1682" y="326" width="356" height="130" rx="10" fill="#FFFFFF" stroke="#B6CDC0" stroke-width="1.5" />
-    <text x="1860.0" y="372.5" text-anchor="middle" font-size="25" font-weight="600" fill="#243A31">知识库 MCP</text>
-    <text x="1860.0" y="401.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">Agent 与外部客户端只读接入</text>
-    <text x="1860.0" y="430.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">Agent：用户权限 ∩ 会话选择</text>
-    <rect x="1682" y="482" width="356" height="130" rx="10" fill="#FFFFFF" stroke="#B6CDC0" stroke-width="1.5" />
-    <text x="1860.0" y="528.5" text-anchor="middle" font-size="25" font-weight="600" fill="#243A31">文档处理</text>
-    <text x="1860.0" y="557.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">文件 / URL / 工作区导入</text>
-    <text x="1860.0" y="586.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">解析 · OCR · 分块 · 索引</text>
-    <rect x="1682" y="638" width="356" height="130" rx="10" fill="#FFFFFF" stroke="#B6CDC0" stroke-width="1.5" />
-    <text x="1860.0" y="684.5" text-anchor="middle" font-size="25" font-weight="600" fill="#243A31">检索与引用</text>
-    <text x="1860.0" y="713.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">向量检索 · 重排序</text>
-    <text x="1860.0" y="742.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">文件身份 · 行范围引用</text>
-    <rect x="1682" y="794" width="356" height="130" rx="10" fill="#FFFFFF" stroke="#B6CDC0" stroke-width="1.5" />
-    <text x="1860.0" y="840.5" text-anchor="middle" font-size="25" font-weight="600" fill="#243A31">知识图谱与评估</text>
-    <text x="1860.0" y="869.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">实体关系抽取 · 图谱查询</text>
-    <text x="1860.0" y="898.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">RAG 评估 · 评估数据集</text>
-    <path d="M1627 580h22m-8 -8 8 8 -8 8" fill="none" stroke="#668675" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
-    <rect x="2100" y="200" width="400" height="790" rx="18" fill="#F5F7F6" stroke="#CFD9D4" stroke-width="1.6" />
-    <path d="M2114 231v25" stroke="#849B95" stroke-width="4" stroke-linecap="round" />
-    <text x="2124" y="255" text-anchor="start" font-size="32" font-weight="700" fill="#243A31">模型与扩展</text>
-    <text x="2124" y="289" text-anchor="start" font-size="19" font-weight="400" fill="#4B5D55">按运行上下文装配</text>
-    <rect x="2122" y="326" width="356" height="130" rx="10" fill="#FFFFFF" stroke="#CFD9D4" stroke-width="1.5" />
-    <text x="2300.0" y="372.5" text-anchor="middle" font-size="25" font-weight="600" fill="#243A31">模型供应商</text>
-    <text x="2300.0" y="401.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">Chat / Embedding / Rerank</text>
-    <text x="2300.0" y="430.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">统一适配 · 用户配置</text>
-    <rect x="2122" y="482" width="356" height="130" rx="10" fill="#FFFFFF" stroke="#CFD9D4" stroke-width="1.5" />
-    <text x="2300.0" y="528.5" text-anchor="middle" font-size="25" font-weight="600" fill="#243A31">Skills</text>
-    <text x="2300.0" y="557.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">内置 / 共享 / 个人</text>
-    <text x="2300.0" y="586.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">依赖门控 · 运行时激活</text>
-    <rect x="2122" y="638" width="356" height="130" rx="10" fill="#FFFFFF" stroke="#CFD9D4" stroke-width="1.5" />
-    <text x="2300.0" y="684.5" text-anchor="middle" font-size="25" font-weight="600" fill="#243A31">MCP 与工具</text>
-    <text x="2300.0" y="713.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">远程服务 · 个人 OAuth / 凭据</text>
-    <text x="2300.0" y="742.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">工具发现 · 每次调用复核授权</text>
-    <rect x="2122" y="794" width="356" height="130" rx="10" fill="#FFFFFF" stroke="#CFD9D4" stroke-width="1.5" />
-    <text x="2300.0" y="840.5" text-anchor="middle" font-size="25" font-weight="600" fill="#243A31">Web 与文件能力</text>
-    <text x="2300.0" y="869.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">网络搜索 / 网页抓取</text>
-    <text x="2300.0" y="898.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">附件 / 文件操作 / 产物预览</text>
-    <path d="M 1510 200 V 177 H 2300 V 200" fill="none" stroke="#859D90" stroke-width="1.5" />
-    <rect x="1723" y="160" width="355" height="33" rx="0" fill="white" stroke="none" stroke-width="1.6" />
-    <text x="1900" y="183" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">模型与扩展接入 Agent 运行时</text>
+    <text x="555.0" y="840.5" text-anchor="middle" font-size="25" font-weight="600" fill="#233943">会话读取与事件</text>
+    <text x="555.0" y="869.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">SSE 增量推送</text>
+    <text x="555.0" y="898.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">PostgreSQL 快照恢复</text>
+    <path d="M347 580h22m-8 -8 8 8 -8 8" fill="none" stroke="#547E90" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+    <path d="M737 580h22m-8 -8 8 8 -8 8" fill="none" stroke="#547E90" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+    <rect x="770" y="200" width="850" height="790" rx="18" fill="#E2F5FA" stroke="#B6D7E0" stroke-width="1.6" />
+    <path d="M784 231v25" stroke="#36788E" stroke-width="4" stroke-linecap="round" />
+    <text x="794" y="255" text-anchor="start" font-size="32" font-weight="700" fill="#233943">Agent 构建与运行</text>
+    <text x="794" y="289" text-anchor="start" font-size="19" font-weight="400" fill="#465C66">LangChain / LangGraph · 独立 ARQ worker</text>
+    <rect x="792" y="326" width="498" height="296" rx="18" fill="white" stroke="#B6D7E0" stroke-width="1.6" />
+    <text x="1041" y="369" text-anchor="middle" font-size="28" font-weight="600" fill="#25708B">统一 Agent 运行时</text>
+    <rect x="810" y="393" width="222" height="96" rx="10" fill="#FFFFFF" stroke="#B0CED8" stroke-width="1.5" />
+    <text x="921.0" y="436.5" text-anchor="middle" font-size="24" font-weight="600" fill="#233943">智能体配置</text>
+    <text x="921.0" y="465.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">模型 / 提示词 / 工具</text>
+    <rect x="1050" y="393" width="222" height="96" rx="10" fill="#FFFFFF" stroke="#B0CED8" stroke-width="1.5" />
+    <text x="1161.0" y="436.5" text-anchor="middle" font-size="24" font-weight="600" fill="#233943">多智能体协作</text>
+    <text x="1161.0" y="465.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">独立上下文 · 共享项目</text>
+    <rect x="810" y="507" width="222" height="96" rx="10" fill="#FFFFFF" stroke="#B0CED8" stroke-width="1.5" />
+    <text x="921.0" y="550.5" text-anchor="middle" font-size="24" font-weight="600" fill="#233943">上下文管理</text>
+    <text x="921.0" y="579.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">记忆 / 摘要 / Skills</text>
+    <rect x="1050" y="507" width="222" height="96" rx="10" fill="#FFFFFF" stroke="#B0CED8" stroke-width="1.5" />
+    <text x="1161.0" y="550.5" text-anchor="middle" font-size="24" font-weight="600" fill="#233943">人工介入</text>
+    <text x="1161.0" y="579.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">问答 / 审批 / steer</text>
+    <rect x="792" y="644" width="498" height="171" rx="18" fill="white" stroke="#B6D7E0" stroke-width="1.6" />
+    <text x="1041" y="684" text-anchor="middle" font-size="28" font-weight="600" fill="#25708B">ARQ worker · 后台执行</text>
+    <rect x="810" y="705" width="222" height="89" rx="10" fill="#FFFFFF" stroke="#B0CED8" stroke-width="1.5" />
+    <text x="921.0" y="745.0" text-anchor="middle" font-size="24" font-weight="600" fill="#233943">Agent 任务</text>
+    <text x="921.0" y="774.0" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">Run 执行 · 定时触发</text>
+    <rect x="1050" y="705" width="222" height="89" rx="10" fill="#FFFFFF" stroke="#B0CED8" stroke-width="1.5" />
+    <text x="1161.0" y="745.0" text-anchor="middle" font-size="24" font-weight="600" fill="#233943">后台作业</text>
+    <text x="1161.0" y="774.0" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">解析 / 图谱 / 评估</text>
+    <rect x="1308" y="326" width="290" height="489" rx="18" fill="white" stroke="#B6D7E0" stroke-width="1.6" />
+    <text x="1453" y="369" text-anchor="middle" font-size="28" font-weight="600" fill="#25708B">隔离执行环境</text>
+    <rect x="1326" y="393" width="254" height="128" rx="10" fill="#FFFFFF" stroke="#B0CED8" stroke-width="1.5" />
+    <text x="1453.0" y="438.0" text-anchor="middle" font-size="24" font-weight="600" fill="#233943">Container 沙盒</text>
+    <text x="1453.0" y="467.0" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">独立 sandbox-runner</text>
+    <text x="1453.0" y="496.0" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">按 Run 创建临时容器</text>
+    <rect x="1326" y="539" width="254" height="128" rx="10" fill="#FFFFFF" stroke="#B0CED8" stroke-width="1.5" stroke-dasharray="7 5" />
+    <text x="1453.0" y="584.0" text-anchor="middle" font-size="24" font-weight="600" fill="#233943">Cube 沙盒</text>
+    <text x="1453.0" y="613.0" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">Linux / KVM 执行节点</text>
+    <text x="1453.0" y="642.0" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">按用户持久 VM · 按需部署</text>
+    <text x="1453" y="715" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">后端按部署配置二选一</text>
+    <text x="1453" y="751" text-anchor="middle" font-size="20" font-weight="400" fill="#233943">Workspace / Skills 挂载</text>
+    <text x="1453" y="782" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">命令清理 · 路径边界校验</text>
+    <rect x="792" y="837" width="806" height="111" rx="10" fill="#D1EDF4" stroke="#B6D7E0" stroke-width="1.6" />
+    <text x="1195" y="879" text-anchor="middle" font-size="24" font-weight="600" fill="#25708B">输入持久化 → 消费事务提交 → ARQ 投递 → worker 执行</text>
+    <text x="1195" y="918" text-anchor="middle" font-size="21" font-weight="400" fill="#465C66">Run lease / heartbeat · 安全边界接管 · PostgreSQL 结算终态</text>
+    <rect x="1660" y="200" width="400" height="790" rx="18" fill="#E2F5FA" stroke="#B6D7E0" stroke-width="1.6" />
+    <path d="M1674 231v25" stroke="#36788E" stroke-width="4" stroke-linecap="round" />
+    <text x="1684" y="255" text-anchor="start" font-size="32" font-weight="700" fill="#233943">知识与检索</text>
+    <text x="1684" y="289" text-anchor="start" font-size="19" font-weight="400" fill="#465C66">默认启用 · 可显式关闭</text>
+    <rect x="1682" y="326" width="356" height="130" rx="10" fill="#FFFFFF" stroke="#B0CED8" stroke-width="1.5" />
+    <text x="1860.0" y="372.5" text-anchor="middle" font-size="25" font-weight="600" fill="#233943">知识库 MCP</text>
+    <text x="1860.0" y="401.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">Agent 与外部客户端只读接入</text>
+    <text x="1860.0" y="430.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">Agent：用户权限 ∩ 会话选择</text>
+    <rect x="1682" y="482" width="356" height="130" rx="10" fill="#FFFFFF" stroke="#B0CED8" stroke-width="1.5" />
+    <text x="1860.0" y="528.5" text-anchor="middle" font-size="25" font-weight="600" fill="#233943">文档处理</text>
+    <text x="1860.0" y="557.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">文件 / URL / 工作区导入</text>
+    <text x="1860.0" y="586.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">解析 · OCR · 分块 · 索引</text>
+    <rect x="1682" y="638" width="356" height="130" rx="10" fill="#FFFFFF" stroke="#B0CED8" stroke-width="1.5" />
+    <text x="1860.0" y="684.5" text-anchor="middle" font-size="25" font-weight="600" fill="#233943">检索与引用</text>
+    <text x="1860.0" y="713.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">向量检索 · 重排序</text>
+    <text x="1860.0" y="742.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">文件身份 · 行范围引用</text>
+    <rect x="1682" y="794" width="356" height="130" rx="10" fill="#FFFFFF" stroke="#B0CED8" stroke-width="1.5" />
+    <text x="1860.0" y="840.5" text-anchor="middle" font-size="25" font-weight="600" fill="#233943">知识图谱与评估</text>
+    <text x="1860.0" y="869.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">实体关系抽取 · 图谱查询</text>
+    <text x="1860.0" y="898.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">RAG 评估 · 评估数据集</text>
+    <path d="M1627 580h22m-8 -8 8 8 -8 8" fill="none" stroke="#547E90" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+    <rect x="2100" y="200" width="400" height="790" rx="18" fill="#F2FAFC" stroke="#C7D9E0" stroke-width="1.6" />
+    <path d="M2114 231v25" stroke="#7895A2" stroke-width="4" stroke-linecap="round" />
+    <text x="2124" y="255" text-anchor="start" font-size="32" font-weight="700" fill="#233943">模型与扩展</text>
+    <text x="2124" y="289" text-anchor="start" font-size="19" font-weight="400" fill="#465C66">按运行上下文装配</text>
+    <rect x="2122" y="326" width="356" height="130" rx="10" fill="#FFFFFF" stroke="#C7D9E0" stroke-width="1.5" />
+    <text x="2300.0" y="372.5" text-anchor="middle" font-size="25" font-weight="600" fill="#233943">模型供应商</text>
+    <text x="2300.0" y="401.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">Chat / Embedding / Rerank</text>
+    <text x="2300.0" y="430.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">统一适配 · 用户配置</text>
+    <rect x="2122" y="482" width="356" height="130" rx="10" fill="#FFFFFF" stroke="#C7D9E0" stroke-width="1.5" />
+    <text x="2300.0" y="528.5" text-anchor="middle" font-size="25" font-weight="600" fill="#233943">Skills</text>
+    <text x="2300.0" y="557.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">内置 / 共享 / 个人</text>
+    <text x="2300.0" y="586.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">依赖门控 · 运行时激活</text>
+    <rect x="2122" y="638" width="356" height="130" rx="10" fill="#FFFFFF" stroke="#C7D9E0" stroke-width="1.5" />
+    <text x="2300.0" y="684.5" text-anchor="middle" font-size="25" font-weight="600" fill="#233943">MCP 与工具</text>
+    <text x="2300.0" y="713.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">远程服务 · 个人 OAuth / 凭据</text>
+    <text x="2300.0" y="742.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">工具发现 · 每次调用复核授权</text>
+    <rect x="2122" y="794" width="356" height="130" rx="10" fill="#FFFFFF" stroke="#C7D9E0" stroke-width="1.5" />
+    <text x="2300.0" y="840.5" text-anchor="middle" font-size="25" font-weight="600" fill="#233943">Web 与文件能力</text>
+    <text x="2300.0" y="869.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">网络搜索 / 网页抓取</text>
+    <text x="2300.0" y="898.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">附件 / 文件操作 / 产物预览</text>
+    <path d="M 1510 200 V 177 H 2300 V 200" fill="none" stroke="#7495A1" stroke-width="1.5" />
+    <rect x="1723" y="160" width="355" height="33" rx="0" fill="#EAF8FC" stroke="none" stroke-width="1.6" />
+    <text x="1900" y="183" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">模型与扩展接入 Agent 运行时</text>
     <rect x="60" y="1030" width="2440" height="210" rx="18" fill="#F2F6FA" stroke="#C2D2DC" stroke-width="1.6" />
-    <path d="M74 1054v25" stroke="#849B95" stroke-width="4" stroke-linecap="round" />
-    <text x="84" y="1078" text-anchor="start" font-size="32" font-weight="700" fill="#243A31">平台治理与观测</text>
+    <path d="M74 1054v25" stroke="#7895A2" stroke-width="4" stroke-linecap="round" />
+    <text x="84" y="1078" text-anchor="start" font-size="32" font-weight="700" fill="#233943">平台治理与观测</text>
     <rect x="82" y="1102" width="381" height="107" rx="10" fill="#FFFFFF" stroke="#C4D2DF" stroke-width="1.5" />
-    <text x="272.5" y="1151.5" text-anchor="middle" font-size="25" font-weight="600" fill="#243A31">身份与组织</text>
-    <text x="272.5" y="1180.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">用户 / 部门 / OIDC</text>
+    <text x="272.5" y="1151.5" text-anchor="middle" font-size="25" font-weight="600" fill="#233943">身份与组织</text>
+    <text x="272.5" y="1180.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">用户 / 部门 / OIDC</text>
     <rect x="485" y="1102" width="381" height="107" rx="10" fill="#FFFFFF" stroke="#C4D2DF" stroke-width="1.5" />
-    <text x="675.5" y="1151.5" text-anchor="middle" font-size="25" font-weight="600" fill="#243A31">资源访问控制</text>
-    <text x="675.5" y="1180.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">后端依赖 + repository</text>
+    <text x="675.5" y="1151.5" text-anchor="middle" font-size="25" font-weight="600" fill="#233943">资源访问控制</text>
+    <text x="675.5" y="1180.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">后端依赖 + repository</text>
     <rect x="888" y="1102" width="381" height="107" rx="10" fill="#FFFFFF" stroke="#C4D2DF" stroke-width="1.5" />
-    <text x="1078.5" y="1151.5" text-anchor="middle" font-size="25" font-weight="600" fill="#243A31">授权与凭据</text>
-    <text x="1078.5" y="1180.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">个人 MCP / Skill 授权</text>
+    <text x="1078.5" y="1151.5" text-anchor="middle" font-size="25" font-weight="600" fill="#233943">授权与凭据</text>
+    <text x="1078.5" y="1180.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">个人 MCP / Skill 授权</text>
     <rect x="1291" y="1102" width="381" height="107" rx="10" fill="#FFFFFF" stroke="#C4D2DF" stroke-width="1.5" />
-    <text x="1481.5" y="1151.5" text-anchor="middle" font-size="25" font-weight="600" fill="#243A31">部署与初始化</text>
-    <text x="1481.5" y="1180.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">storage-init / app-init</text>
+    <text x="1481.5" y="1151.5" text-anchor="middle" font-size="25" font-weight="600" fill="#233943">部署与初始化</text>
+    <text x="1481.5" y="1180.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">storage-init / app-init</text>
     <rect x="1694" y="1102" width="381" height="107" rx="10" fill="#FFFFFF" stroke="#C4D2DF" stroke-width="1.5" />
-    <text x="1884.5" y="1137.0" text-anchor="middle" font-size="25" font-weight="600" fill="#243A31">运行观测</text>
-    <text x="1884.5" y="1166.0" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">日志 / Token 用量</text>
-    <text x="1884.5" y="1195.0" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">Langfuse（可选接入）</text>
+    <text x="1884.5" y="1137.0" text-anchor="middle" font-size="25" font-weight="600" fill="#233943">运行观测</text>
+    <text x="1884.5" y="1166.0" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">日志 / Token 用量</text>
+    <text x="1884.5" y="1195.0" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">Langfuse（可选接入）</text>
     <rect x="2097" y="1102" width="381" height="107" rx="10" fill="#FFFFFF" stroke="#C4D2DF" stroke-width="1.5" />
-    <text x="2287.5" y="1151.5" text-anchor="middle" font-size="25" font-weight="600" fill="#243A31">服务健康</text>
-    <text x="2287.5" y="1180.5" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">liveness / readiness</text>
-    <rect x="60" y="1280" width="2440" height="230" rx="18" fill="#F5F7F6" stroke="#CFD9D4" stroke-width="1.6" />
-    <path d="M74 1304v25" stroke="#849B95" stroke-width="4" stroke-linecap="round" />
-    <text x="84" y="1328" text-anchor="start" font-size="32" font-weight="700" fill="#243A31">数据与基础设施</text>
-    <rect x="82" y="1352" width="520" height="132" rx="10" fill="#FFFFFF" stroke="#CFD9D4" stroke-width="1.5" />
-    <text x="342.0" y="1400.0" text-anchor="middle" font-size="26" font-weight="600" fill="#243A31">PostgreSQL</text>
-    <text x="342.0" y="1429.0" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">业务事实 · Input / Turn / Run / Message</text>
-    <text x="342.0" y="1458.0" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">知识元数据 · LangGraph checkpoint</text>
-    <rect x="622" y="1352" width="338" height="132" rx="10" fill="#FFFFFF" stroke="#CFD9D4" stroke-width="1.5" />
-    <text x="791.0" y="1400.0" text-anchor="middle" font-size="26" font-weight="600" fill="#243A31">Redis</text>
-    <text x="791.0" y="1429.0" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">ARQ / Streams</text>
-    <text x="791.0" y="1458.0" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">取消信号 · 短期缓存</text>
-    <rect x="980" y="1352" width="412" height="132" rx="10" fill="#FFFFFF" stroke="#CFD9D4" stroke-width="1.5" />
-    <text x="1186.0" y="1400.0" text-anchor="middle" font-size="26" font-weight="600" fill="#243A31">UserWorkspace</text>
-    <text x="1186.0" y="1429.0" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">Project Workdir · 正式附件</text>
-    <text x="1186.0" y="1458.0" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">产物 · 个人 Skills</text>
-    <rect x="1412" y="1352" width="338" height="132" rx="10" fill="#FFFFFF" stroke="#CFD9D4" stroke-width="1.5" />
-    <text x="1581.0" y="1400.0" text-anchor="middle" font-size="26" font-weight="600" fill="#243A31">MinIO</text>
-    <text x="1581.0" y="1429.0" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">知识库原始文件</text>
-    <text x="1581.0" y="1458.0" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">附件草稿 · 对象数据</text>
-    <rect x="1770" y="1352" width="338" height="132" rx="10" fill="#FFFFFF" stroke="#CFD9D4" stroke-width="1.5" />
-    <text x="1939.0" y="1400.0" text-anchor="middle" font-size="26" font-weight="600" fill="#243A31">Milvus + etcd</text>
-    <text x="1939.0" y="1429.0" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">向量索引与检索</text>
-    <text x="1939.0" y="1458.0" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">元数据协调</text>
-    <rect x="2128" y="1352" width="350" height="132" rx="10" fill="#FFFFFF" stroke="#CFD9D4" stroke-width="1.5" />
-    <text x="2303.0" y="1400.0" text-anchor="middle" font-size="26" font-weight="600" fill="#243A31">Neo4j</text>
-    <text x="2303.0" y="1429.0" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">知识图谱</text>
-    <text x="2303.0" y="1458.0" text-anchor="middle" font-size="19" font-weight="400" fill="#4B5D55">实体与关系存储</text>
+    <text x="2287.5" y="1151.5" text-anchor="middle" font-size="25" font-weight="600" fill="#233943">服务健康</text>
+    <text x="2287.5" y="1180.5" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">liveness / readiness</text>
+    <rect x="60" y="1280" width="2440" height="230" rx="18" fill="#F2FAFC" stroke="#C7D9E0" stroke-width="1.6" />
+    <path d="M74 1304v25" stroke="#7895A2" stroke-width="4" stroke-linecap="round" />
+    <text x="84" y="1328" text-anchor="start" font-size="32" font-weight="700" fill="#233943">数据与基础设施</text>
+    <rect x="82" y="1352" width="520" height="132" rx="10" fill="#FFFFFF" stroke="#C7D9E0" stroke-width="1.5" />
+    <text x="342.0" y="1400.0" text-anchor="middle" font-size="26" font-weight="600" fill="#233943">PostgreSQL</text>
+    <text x="342.0" y="1429.0" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">业务事实 · Input / Turn / Run / Message</text>
+    <text x="342.0" y="1458.0" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">知识元数据 · LangGraph checkpoint</text>
+    <rect x="622" y="1352" width="338" height="132" rx="10" fill="#FFFFFF" stroke="#C7D9E0" stroke-width="1.5" />
+    <text x="791.0" y="1400.0" text-anchor="middle" font-size="26" font-weight="600" fill="#233943">Redis</text>
+    <text x="791.0" y="1429.0" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">ARQ / Streams</text>
+    <text x="791.0" y="1458.0" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">取消信号 · 短期缓存</text>
+    <rect x="980" y="1352" width="412" height="132" rx="10" fill="#FFFFFF" stroke="#C7D9E0" stroke-width="1.5" />
+    <text x="1186.0" y="1400.0" text-anchor="middle" font-size="26" font-weight="600" fill="#233943">UserWorkspace</text>
+    <text x="1186.0" y="1429.0" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">Project Workdir · 正式附件</text>
+    <text x="1186.0" y="1458.0" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">产物 · 个人 Skills</text>
+    <rect x="1412" y="1352" width="338" height="132" rx="10" fill="#FFFFFF" stroke="#C7D9E0" stroke-width="1.5" />
+    <text x="1581.0" y="1400.0" text-anchor="middle" font-size="26" font-weight="600" fill="#233943">MinIO</text>
+    <text x="1581.0" y="1429.0" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">知识库原始文件</text>
+    <text x="1581.0" y="1458.0" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">附件草稿 · 对象数据</text>
+    <rect x="1770" y="1352" width="338" height="132" rx="10" fill="#FFFFFF" stroke="#C7D9E0" stroke-width="1.5" />
+    <text x="1939.0" y="1400.0" text-anchor="middle" font-size="26" font-weight="600" fill="#233943">Milvus + etcd</text>
+    <text x="1939.0" y="1429.0" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">向量索引与检索</text>
+    <text x="1939.0" y="1458.0" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">元数据协调</text>
+    <rect x="2128" y="1352" width="350" height="132" rx="10" fill="#FFFFFF" stroke="#C7D9E0" stroke-width="1.5" />
+    <text x="2303.0" y="1400.0" text-anchor="middle" font-size="26" font-weight="600" fill="#233943">Neo4j</text>
+    <text x="2303.0" y="1429.0" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">知识图谱</text>
+    <text x="2303.0" y="1458.0" text-anchor="middle" font-size="19" font-weight="400" fill="#465C66">实体与关系存储</text>
   </g>
 </svg>

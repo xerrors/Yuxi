@@ -1,6 +1,6 @@
 # 参与贡献
 
-欢迎提交 Bug 修复、功能改进，也欢迎测试和文档。本文是 Fork → 开发 → 验证 → PR 的完整流程。只想了解仓库入口时，可以先看根目录的 [CONTRIBUTING.md](https://github.com/xerrors/Yuxi/blob/main/CONTRIBUTING.md)。
+欢迎提交 Bug 修复、功能改进，也欢迎测试和文档。本文是 Fork → 开发 → 验证 → PR 的完整流程。只想了解仓库入口时，可以先看 [CONTRIBUTING.md](https://github.com/xerrors/Yuxi/blob/main/.github/CONTRIBUTING.md)。
 
 ## 开始前
 
@@ -247,4 +247,4 @@ AI 可以帮助搜索、实现，也可以帮助测试和整理文档，但贡�
 
 - Bug 和功能讨论：[GitHub Issues](https://github.com/xerrors/Yuxi/issues)
 - 方案讨论：[GitHub Discussions](https://github.com/xerrors/Yuxi/discussions)
-- 贡献入口：[根目录 CONTRIBUTING.md](https://github.com/xerrors/Yuxi/blob/main/CONTRIBUTING.md)
+- 贡献入口：[CONTRIBUTING.md](https://github.com/xerrors/Yuxi/blob/main/.github/CONTRIBUTING.md)
