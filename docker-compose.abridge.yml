@@ -29,7 +29,7 @@ services:
     volumes:
       - ${YUXI_OIDC_PROVIDER_PRIVATE_KEY_FILE:?Run scripts/init_abridge.py first}:/run/yuxi-identity/provider.pem:ro
   abridge:
-    image: ${ABRIDGE_IMAGE:-ghcr.io/xerrors/abridge:0.4.13@sha256:ac60d95888adfa8fa4ef4a78153f5e6f54ace8d287e7aa4c7bacc204873c2859}
+    image: ${ABRIDGE_IMAGE:-ghcr.io/xerrors/abridge:0.5.2@sha256:b242d65625922680e4b94284e67d1a192565aa4d38d54da10fe3f0a6f861a938}
     restart: unless-stopped
     environment:
       ABRIDGE_DB: /data/server.db
@@ -54,6 +54,7 @@ services:
       - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8765/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      start_period: 10s
       interval: 30s
       timeout: 5s
       retries: 3

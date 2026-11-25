@@ -84,7 +84,7 @@
         <ToolResultContent :content="display.rawResult" />
       </details>
     </template>
-    <template v-if="(toolId === 'operation_status' && receipt) || display.commandResult || display.browserScriptResult" #error-result>
+    <template v-if="(display.operationReceipt && receipt) || display.commandResult || display.browserScriptResult" #error-result>
       <ToolResultContent v-if="display.operationError" :content="display.operationError" />
       <ToolResultContent v-if="display.browserScriptSummary" :content="display.browserScriptSummary" />
       <ToolResultContent v-if="display.commandOutput" :content="display.commandOutput" />
@@ -174,7 +174,7 @@ const actionLabel = computed(() => {
     ? actionNames[args.value.action?.type] || ABRIDGE_TOOL_NAMES.computer_act
     : ABRIDGE_TOOL_NAMES[toolId.value]
 })
-const operationStopLabel = computed(() => toolId.value === 'operation_status'
+const operationStopLabel = computed(() => display.value.operationReceipt
   ? { refused: '操作被拒绝', cancelled: '操作已取消' }[receipt.value?.status] : '')
 const target = computed(() => {
   const input = args.value
@@ -191,10 +191,12 @@ const target = computed(() => {
   if (toolId.value === 'browser_wait') return input.selector || input.text || ''
   if (toolId.value === 'browser_exec') return ['accepted', 'dispatched'].includes(receipt.value?.status) ? '脚本处理中' : ''
   if (toolId.value === 'command_execute') return command.value
-  if (toolId.value === 'operation_status') {
+  if (display.value.operationReceipt) {
     if (status.value !== 'completed') return ''
     if (receipt.value?.result_available === false) return '操作结果已过期'
-    return operationStopLabel.value || { accepted: '操作已受理', dispatched: '操作处理中', executed: '操作已执行' }[receipt.value?.status]
+    return operationStopLabel.value || {
+      accepted: '操作已受理', dispatched: '操作处理中', executed: '操作已执行', cancel_requested: '已请求取消'
+    }[receipt.value?.status]
   }
   if (toolId.value === 'command_status') {
     if (receipt.value?.result_available === false) return '输出已过期'
