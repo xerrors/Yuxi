@@ -75,7 +75,7 @@ async def test_state_view_holds_no_transaction_during_checkpoint_read(postgres_s
     try:
         async with postgres_sessions() as db:
 
-            async def probe(*, uid: str, thread_id: str) -> tuple[dict, list | None]:
+            async def probe(*, uid: str, thread_id: str) -> tuple[str | None, dict, list | None]:
                 """记录 checkpoint 读取瞬间请求级会话是否仍持有事务。"""
                 held.append(db.in_transaction())
                 return await original(uid=uid, thread_id=thread_id)

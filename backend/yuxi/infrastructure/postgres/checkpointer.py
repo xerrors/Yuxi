@@ -5,14 +5,27 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from sqlalchemy import text
 
 from yuxi.infrastructure.observability.logging import logger
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
     from yuxi.infrastructure.postgres.manager import PostgresManager
 
 # Session 锁值与已部署进程保持兼容；必须在同一物理连接释放。
 CHECKPOINTER_SETUP_LOCK_KEY = 94721802
+
+
+async def get_latest_root_checkpoint_id(db: AsyncSession, *, thread_id: str) -> str | None:
+    """按 saver 的版本顺序查最新根 checkpoint，只读取主键。"""
+    return await db.scalar(
+        text(
+            "SELECT checkpoint_id FROM checkpoints WHERE thread_id = :thread_id AND checkpoint_ns = '' ORDER BY checkpoint_id DESC LIMIT 1"
+        ),
+        {"thread_id": thread_id},
+    )
 
 
 def get_langgraph_checkpointer(manager: PostgresManager) -> AsyncPostgresSaver:

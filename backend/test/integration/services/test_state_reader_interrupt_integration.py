@@ -69,7 +69,7 @@ async def test_pending_interrupt_recovered_from_real_postgres_checkpoint(monkeyp
         async for _ in compiled.astream({"messages": []}, config, stream_mode="values"):
             pass
 
-        _values, interrupt_info = await svc._read_checkpoint_state(uid=uid, thread_id=thread_id)
+        _checkpoint_id, _values, interrupt_info = await svc._read_checkpoint_state(uid=uid, thread_id=thread_id)
 
         assert interrupt_info is not None
         assert [item.value for item in interrupt_info] == [{"question": "是否允许执行该命令？", "tool": "execute"}]
@@ -99,7 +99,7 @@ async def test_completed_checkpoint_returns_no_interrupt(monkeypatch):
         async for _ in compiled.astream({"messages": []}, config, stream_mode="values"):
             pass
 
-        _values, interrupt_info = await svc._read_checkpoint_state(uid=uid, thread_id=thread_id)
+        _checkpoint_id, _values, interrupt_info = await svc._read_checkpoint_state(uid=uid, thread_id=thread_id)
 
         assert interrupt_info is None
 
@@ -137,18 +137,18 @@ async def test_explicit_waitpoint_cleanup_keeps_context_without_executing_approv
 
         try:
             await compiled.ainvoke({"messages": ["prior-context"]}, config)
-            _values, pending = await svc._read_checkpoint_state(uid=uid, thread_id=thread_id)
+            _checkpoint_id, _values, pending = await svc._read_checkpoint_state(uid=uid, thread_id=thread_id)
             assert pending is not None
 
             await compiled.aupdate_state(config, {}, as_node="approval")
-            values, pending = await svc._read_checkpoint_state(uid=uid, thread_id=thread_id)
+            _checkpoint_id, values, pending = await svc._read_checkpoint_state(uid=uid, thread_id=thread_id)
             assert values["messages"] == ["prior-context"]
             assert pending is None
             assert (await compiled.aget_state(config)).next == ()
 
             await compiled.ainvoke(Command(resume="approve"), config)
             assert effects == []
-            values, pending = await svc._read_checkpoint_state(uid=uid, thread_id=thread_id)
+            _checkpoint_id, values, pending = await svc._read_checkpoint_state(uid=uid, thread_id=thread_id)
             assert values["messages"] == ["prior-context"]
             assert pending is None
         finally:
@@ -196,7 +196,7 @@ async def test_parallel_waits_recover_by_checkpoint_interrupt_id(monkeypatch, pa
         config = {"configurable": {"uid": uid, "thread_id": thread_id}}
         try:
             await graph.ainvoke({"results": []}, config)
-            _values, pending = await svc._read_checkpoint_state(uid=uid, thread_id=thread_id)
+            _checkpoint_id, _values, pending = await svc._read_checkpoint_state(uid=uid, thread_id=thread_id)
             assert pending is not None and len(pending) == 2
             snapshot = await graph.aget_state(config)
             expected_interrupts = {item.id: item.value for item in snapshot.interrupts}
@@ -218,7 +218,7 @@ async def test_parallel_waits_recover_by_checkpoint_interrupt_id(monkeypatch, pa
 
             if partial_resume:
                 await graph.ainvoke(Command(resume={input_id: input_result}), config)
-                _values, pending = await svc._read_checkpoint_state(uid=uid, thread_id=thread_id)
+                _checkpoint_id, _values, pending = await svc._read_checkpoint_state(uid=uid, thread_id=thread_id)
                 assert [item.id for item in pending] == [session_id]
                 assert build_pending_interrupt_payload(pending, thread_id)["waits"] == [
                     next(entry for entry in entries if entry["interrupt_id"] == session_id)
@@ -229,7 +229,7 @@ async def test_parallel_waits_recover_by_checkpoint_interrupt_id(monkeypatch, pa
                 # 与原提取顺序相反地构造映射，结果不得依赖等待的列表顺序。
                 await graph.ainvoke(Command(resume={session_id: session_result, input_id: input_result}), config)
 
-            values, pending = await svc._read_checkpoint_state(uid=uid, thread_id=thread_id)
+            _checkpoint_id, values, pending = await svc._read_checkpoint_state(uid=uid, thread_id=thread_id)
             assert pending is None
             assert {item["node"]: item["value"] for item in values["results"]} == {"input": input_result, "session": session_result}
             assert (await graph.aget_state(config)).next == ()

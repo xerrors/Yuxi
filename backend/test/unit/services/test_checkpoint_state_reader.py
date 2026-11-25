@@ -69,7 +69,7 @@ async def test_checkpoint_reader_keeps_complete_snapshot_and_recovers_interrupt(
     config = {"configurable": {"thread_id": "thread"}}
     await graph.ainvoke({"messages": [HumanMessage(content="start")], "artifacts": ["saved.txt"]}, config)
 
-    values, pending = await svc._read_checkpoint_state(uid="user", thread_id="thread")
+    _checkpoint_id, values, pending = await svc._read_checkpoint_state(uid="user", thread_id="thread")
     snapshot = await graph.aget_state(config)
     assert values["artifacts"] == ["saved.txt"]
     assert snapshot.values["artifacts"] == ["saved.txt", "pending.txt"]
@@ -77,7 +77,7 @@ async def test_checkpoint_reader_keeps_complete_snapshot_and_recovers_interrupt(
     assert values["messages"][0].content == "start"
 
     await graph.ainvoke(Command(resume="approved"), config)
-    values, pending = await svc._read_checkpoint_state(uid="user", thread_id="thread")
+    _checkpoint_id, values, pending = await svc._read_checkpoint_state(uid="user", thread_id="thread")
     assert pending is None
     assert values["messages"][-1].content == "approved"
     assert values["artifacts"] == ["saved.txt", "pending.txt"]
@@ -85,7 +85,7 @@ async def test_checkpoint_reader_keeps_complete_snapshot_and_recovers_interrupt(
 
 async def test_checkpoint_reader_missing_thread_is_empty(checkpoint_reader):
     """尚无 checkpoint 的线程返回空视图。"""
-    assert await svc._read_checkpoint_state(uid="user", thread_id="missing") == ({}, None)
+    assert await svc._read_checkpoint_state(uid="user", thread_id="missing") == (None, {}, None)
 
 
 async def test_checkpoint_reader_keeps_next_human_interrupt_after_resume(checkpoint_reader):
@@ -106,12 +106,12 @@ async def test_checkpoint_reader_keeps_next_human_interrupt_after_resume(checkpo
     config = {"configurable": {"thread_id": "questions"}}
     await graph.ainvoke({"messages": [HumanMessage(content="start")]}, config)
     await graph.ainvoke(Command(resume="first answer"), config)
-    _values, pending = await svc._read_checkpoint_state(uid="user", thread_id="questions")
+    _checkpoint_id, _values, pending = await svc._read_checkpoint_state(uid="user", thread_id="questions")
     assert len(pending) == 1
     assert pending[0].value == {"questions": [{"question_id": "second", "question": "第二题？"}]}
     assert _extract_interrupts(await graph.aget_state(config)) == pending
     await graph.ainvoke(Command(resume="second answer"), config)
-    values, pending = await svc._read_checkpoint_state(uid="user", thread_id="questions")
+    _checkpoint_id, values, pending = await svc._read_checkpoint_state(uid="user", thread_id="questions")
     assert pending is None and values["messages"][-1].content == "second answer"
 
 
@@ -204,7 +204,7 @@ async def test_state_view_releases_read_transaction_before_checkpoint(monkeypatc
 
     async def read(*, uid, thread_id):
         events.append("checkpoint")
-        return {}, None
+        return None, {}, None
 
     session = SimpleNamespace(id=1, uid="user", app_id=None, status="active", parent_thread_id=None, project_id="p1", agent_state_view=None)
 
@@ -238,7 +238,7 @@ async def test_get_agent_state_view_returns_interrupt_only_for_waiting_owner(mon
     async def _read_checkpoint_state(*, uid, thread_id):
         assert uid == "user-1"
         assert thread_id == "thread-1"
-        return {}, [
+        return None, {}, [
             SimpleNamespace(
                 value={
                     "action_requests": [{"name": "execute", "args": {"command": "pytest -q"}}],

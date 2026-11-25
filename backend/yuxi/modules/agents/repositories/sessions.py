@@ -162,10 +162,16 @@ class SessionRepository:
         return True
 
     async def save_agent_state_view(self, *, uid: str, thread_id: str, payload: dict) -> None:
-        """持久化未删除会话的面板投影，保留会话更新时间。由调用方提交。"""
+        """按 checkpoint 版本顺序更新未删除会话的投影，保留会话更新时间。"""
+        stored_checkpoint_id = Session.agent_state_view["checkpoint_id"].as_string()
         await self.db.execute(
             update(Session)
-            .where(Session.uid == str(uid), Session.thread_id == thread_id, Session.status != "deleted")
+            .where(
+                Session.uid == str(uid),
+                Session.thread_id == thread_id,
+                Session.status != "deleted",
+                or_(stored_checkpoint_id.is_(None), stored_checkpoint_id <= payload["checkpoint_id"]),
+            )
             .values(agent_state_view=payload, updated_at=Session.updated_at)
         )
 

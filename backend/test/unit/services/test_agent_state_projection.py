@@ -14,6 +14,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 PROJECTION = {
     "values": {"warnings": [{"code": "w"}], "artifacts": ["saved.txt"], "token_usage": {"total": 9}},
+    "checkpoint_id": "checkpoint-9",
     "run_id": "run-9",
 }
 
@@ -49,6 +50,7 @@ def _patch_repos(monkeypatch, *, session, latest_run=None, save=None):
 
 
 def _forbid_checkpoint(monkeypatch):
+    monkeypatch.setattr(svc, "get_latest_root_checkpoint_id", AsyncMock(return_value="checkpoint-9"))
     monkeypatch.setattr(svc, "get_langgraph_checkpointer", lambda _manager: pytest.fail("快路径不得读取 checkpoint"))
 
 
@@ -63,10 +65,12 @@ async def test_projection_keeps_only_consumed_channels_and_json_safe():
             "token_usage": {"total": 3},
         },
         {"kind": "approval", "waits": [{"id": 1}]},
+        checkpoint_id="checkpoint-9",
         run_id=7,
     )
 
     assert payload["run_id"] == "7"
+    assert payload["checkpoint_id"] == "checkpoint-9"
     assert payload["values"] == {
         "warnings": [{"code": "mcp_unavailable"}],
         "artifacts": ["a.txt"],
@@ -76,8 +80,8 @@ async def test_projection_keeps_only_consumed_channels_and_json_safe():
 
 
 async def test_missing_channels_are_normalized_before_storage():
-    """无 checkpoint 线程的空值也按 extract_agent_state 的默认形态落库，快慢路径逐键一致。"""
-    payload = svc.build_agent_state_projection({}, None, run_id="r")
+    """空 checkpoint 的通道按 extract_agent_state 的默认形态落库。"""
+    payload = svc.build_agent_state_projection({}, None, checkpoint_id="checkpoint-r", run_id="r")
 
     assert payload["values"] == {"warnings": [], "artifacts": [], "token_usage": None}
 
@@ -132,7 +136,9 @@ async def test_stale_projection_falls_back_and_backfills_latest_run(monkeypatch)
     session = _session(agent_state_view={**PROJECTION, "run_id": "run-old"})
     save = AsyncMock(return_value=True)
     _patch_repos(monkeypatch, session=session, latest_run=latest_run, save=save)
-    read = AsyncMock(return_value=({"warnings": [], "artifacts": ["fresh.txt"], "token_usage": None, "messages": ["x"]}, None))
+    read = AsyncMock(
+        return_value=("checkpoint-9", {"warnings": [], "artifacts": ["fresh.txt"], "token_usage": None, "messages": ["x"]}, None)
+    )
     monkeypatch.setattr(svc, "_read_checkpoint_state", read)
     db = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock())
 
@@ -157,7 +163,7 @@ async def test_running_run_falls_back_without_freezing_projection(monkeypatch):
     session = _session()
     save = AsyncMock()
     _patch_repos(monkeypatch, session=session, latest_run=latest_run, save=save)
-    monkeypatch.setattr(svc, "_read_checkpoint_state", AsyncMock(return_value=({}, None)))
+    monkeypatch.setattr(svc, "_read_checkpoint_state", AsyncMock(return_value=(None, {}, None)))
     db = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock())
 
     await svc.get_agent_state_view(thread_id="thread-1", current_user=SimpleNamespace(uid="user-1"), db=db, include_relations=False)
@@ -184,6 +190,7 @@ async def test_terminal_hook_writes_projection_in_own_session(monkeypatch):
         uid="user-1",
         thread_id="thread-1",
         run_id="run-9",
+        checkpoint_id="checkpoint-9",
         values={"warnings": [], "artifacts": ["a"], "token_usage": None},
     )
 

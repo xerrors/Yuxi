@@ -480,6 +480,7 @@ async def stream_agent_execution(
                 thread_id=thread_id,
                 run_id=meta["run_id"],
                 values=final_state.values,
+                checkpoint_id=final_state.config["configurable"].get("checkpoint_id"),
                 interrupt_payload=interrupt if terminal_status == "interrupted" else None,
             )
         langfuse_run.terminal_status = terminal_status

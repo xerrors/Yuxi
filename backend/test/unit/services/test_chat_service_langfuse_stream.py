@@ -104,6 +104,7 @@ class FakeAgent:
     def __init__(self, events=(), checkpoint=None, error=None, missing=False):
         self.events = events
         self.checkpoint = checkpoint or SimpleNamespace(values={}, tasks=())
+        self.checkpoint.config = {"configurable": {"checkpoint_id": "checkpoint-1"}}
         self.error = error
         self.missing = missing
         self.input = None
@@ -339,7 +340,8 @@ async def test_cancelled_steer_continuation_keeps_extension_event_ids_unique(mon
                     "data": {"type": "yuxi.context_compression", "summary": f"segment-{self.calls}"},
                 },
             }
-            yield GraphExecutionResult(checkpoint=SimpleNamespace(values=state, tasks=()), steer_before_model=self.calls == 1)
+            checkpoint = SimpleNamespace(values=state, tasks=(), config={"configurable": {"checkpoint_id": "checkpoint-1"}})
+            yield GraphExecutionResult(checkpoint=checkpoint, steer_before_model=self.calls == 1)
 
     _patch_stream_scaffolding(monkeypatch, agent=Agent())
     monkeypatch.setattr(svc, "save_messages_from_langgraph_state", AsyncMock(side_effect=["running", "completed"]))
@@ -672,6 +674,7 @@ async def test_terminal_paths_trigger_state_projection_once(monkeypatch, outcome
     assert project.await_count == 1
     assert kwargs["uid"] == "user-1" and kwargs["thread_id"] == "thread-1" and kwargs["run_id"] == "run-1"
     assert kwargs["values"] == {"artifacts": []}
+    assert kwargs["checkpoint_id"] == "checkpoint-1"
     if outcome == "completed":
         assert kwargs["interrupt_payload"] is None
     else:
