@@ -159,19 +159,19 @@ API 和 worker 在各自进程内继续校验密钥及 Schema，创建连接、�
 
 ## 3. 数据库与文件目录
 
-当前版本支持从正式 `v0.8.0` 和 `v0.8.1.beta1` 原地升级。维护前在旧部署的 PostgreSQL 执行：
+原地升级以完成应用初始化的正式 `v0.8.0` 为起点。维护前核对旧部署的发行标签，并在其 PostgreSQL 执行：
 
 ```sql
 SELECT domain, version FROM yuxi_schema_migrations ORDER BY domain;
 ```
 
-数据库须为 `v0.8.0` 的 business 2 / knowledge 2，或已完成插件迁移的 business 5 / knowledge 2。先排空任务、停止写入，执行[冷备规程](#停机备份与恢复演练)的第 1 至 3 步。备份完成后保持 Web、API 和 worker 停机，单独启动原 PostgreSQL 并等待健康。使用 Compose 内置数据库的示例如下，命令均沿用该实例的环境文件、项目名、profile 和叠加配置。
+正式 `v0.8.0` 的数据库版本为 business 2 / knowledge 2。先排空任务、停止写入，执行[冷备规程](#停机备份与恢复演练)的第 1 至 3 步。备份完成后保持 Web、API 和 worker 停机，单独启动原 PostgreSQL 并等待健康。使用 Compose 内置数据库的示例如下，命令均沿用该实例的环境文件、项目名、profile 和叠加配置。
 
 ```bash
 docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container up -d --wait postgres
 ```
 
-从 business 2 升级时，使用目标版本的 API 镜像、原工作区和 Skill 挂载，按[插件与配置迁移](../agents/skills-management.md#从运行依赖升级)导出、审阅、应用。回读应得到 business 5 / knowledge 2。该步骤完成后，或从已有的 business 5 库升级时，继续执行[会话状态迁移](#会话状态迁移)。
+从 business 2 升级时，使用目标版本的 API 镜像、原工作区和 Skill 挂载，按[插件与配置迁移](../agents/skills-management.md#从运行依赖升级)导出、审阅、应用。回读应得到 business 5 / knowledge 2。从已完成插件迁移的同一次升级继续执行[会话状态迁移](#会话状态迁移)。
 
 空库直接运行目标版本的 `app-init`。过渡版本或其他历史库应从匹配的代码和成套备份单独处理。回退需恢复旧代码、数据库和同一停写时点的文件。
 

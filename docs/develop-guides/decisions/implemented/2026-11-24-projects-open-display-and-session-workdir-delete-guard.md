@@ -15,8 +15,7 @@ Owner：backend/yuxi/modules/workspace/services/files.py
 ## 决策
 
 1. 展示：删除 `_filter_project_tree_entries` 及其 selectable/implicit 双列表查询，projects 树直接返回目录
-   实际内容；随隐藏规则一同移除为其服务的 `include_unbound_project_dirs` 参数（前端多带的 query 被后端
-   忽略，选择器行为不变）与上一稿的写守卫 `assert_projects_write_targets_visible`（黑洞不再成立，守卫
+   实际内容；随隐藏规则一同移除服务端参数及前端透传与上一稿的写守卫 `assert_projects_write_targets_visible`（黑洞不再成立，守卫
    失去存在理由）。上传、新建目录、保存产物成功后必然可见。
 2. 删除保护（[P1]）：`delete_workspace_path` 在任何磁盘副作用前查询"仍被未删除会话绑定的 active Project"
    的 workdir 路径集合；目标等于其中某路径、或为其祖先时拒绝整次删除并说明原因（400
@@ -26,8 +25,7 @@ Owner：backend/yuxi/modules/workspace/services/files.py
 
 ### 实现方案
 
-- `files.list_workspace_tree`：删除隐藏投影与其双列表查询，目录条目原样返回；路由同步移除
-  `include_unbound_project_dirs`。
+- `files.list_workspace_tree` 直接返回实际目录条目。项目选择器使用普通工作区目录请求。
 - `ProjectRepository.list_referenced_workdir_paths_for_user`：projects JOIN sessions，谓词
   `Project.status='active' AND (Session.status IS NULL OR Session.status != 'deleted')`，
   `distinct()` 收敛多会话共用同一 linked workdir。
@@ -51,7 +49,6 @@ Owner：backend/yuxi/modules/workspace/services/files.py
 - 删除保护要求 `delete_workspace_path` 触库；非 projects 路径同样先查一次引用集合（单查询，uid 索引）。
 - 检查与 rmtree 之间未持咨询锁：并发新建 implicit Workdir 落在正在删除的日期层内是窄竞态窗口，
   与既有删除链路同等暴露，后续批随会话删除能力一并收敛。
-- 前端选择弹窗仍带 `include_unbound_project_dirs=true` query，后端已不解析；随后续前端批清理。
 
 ## 验证
 

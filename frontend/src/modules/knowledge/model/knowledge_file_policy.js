@@ -116,10 +116,6 @@ const TERMINAL_FILE_FAILURE_STATUSES = new Set(['error_parsing', 'error_indexing
 export const isTerminalFileFailure = (record) =>
   Boolean(record && !record.is_folder && TERMINAL_FILE_FAILURE_STATUSES.has(record.status))
 
-/** 比较两条记录的创建时间，空值视为最早。文件表顺序由服务端排序决定。 */
-export const compareFileCreatedAt = (left, right) =>
-  new Date(left?.created_at || 0) - new Date(right?.created_at || 0)
-
 export const getDefaultDetailView = (record) => {
   if (!canPreviewParsed(record) && canPreviewOriginal(record)) return 'source'
   return 'markdown'

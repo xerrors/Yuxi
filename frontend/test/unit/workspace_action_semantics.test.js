@@ -19,14 +19,6 @@ test('工作区上传菜单暴露展开状态和菜单语义', () => {
   assert.match(menu, /onUploadFolderAction/)
 })
 
-test('项目创建目录选择器包含尚未绑定的项目目录', () => {
-  const source = readSource('../../src/modules/projects/ui/ProjectSelectionSection.vue')
-  const pickerStart = source.indexOf('<WorkspaceDirectoryDialog')
-  const picker = source.slice(pickerStart, source.indexOf('/>', pickerStart) + 2)
-
-  assert.match(picker, /include-unbound-project-dirs/)
-})
-
 test('交付物保存使用工作区路径选择器并传递目标目录', () => {
   const component = readSource('../../src/modules/session/ui/AgentArtifactsCard.vue')
   const api = readSource('../../src/apis/agent_api.js')

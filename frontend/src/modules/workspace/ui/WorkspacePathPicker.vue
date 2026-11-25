@@ -121,7 +121,6 @@ const props = defineProps({
   active: { type: Boolean, default: true },
   disabled: { type: Boolean, default: false },
   suggestedFolderName: { type: String, default: '' },
-  includeUnboundProjectDirs: { type: Boolean, default: false },
   unselectableDirectories: { type: Array, default: () => ['/'] },
   isFileSelectable: { type: Function, default: () => true }
 })
@@ -190,12 +189,7 @@ const loadEntries = async (path = currentPath.value) => {
   emit('loading-change', true)
   error.value = ''
   try {
-    const response = await getWorkspaceTree(
-      targetPath,
-      false,
-      false,
-      props.includeUnboundProjectDirs
-    )
+    const response = await getWorkspaceTree(targetPath)
     if (version !== requestVersion) return
     currentPath.value = targetPath
     entries.value = Array.isArray(response?.entries) ? response.entries : []

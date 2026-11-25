@@ -171,12 +171,8 @@ def _isolated_skill_storage(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     async def no_prune(db, slug):
         pass
 
-    async def no_mcps(db=None):
-        return []
-
     monkeypatch.setattr(content_service, "SkillRepository", ContentRepo)
     monkeypatch.setattr(content_service, "prune_skill_content", no_prune)
-    monkeypatch.setattr("yuxi.modules.extensions.mcp.service.get_enabled_mcp_server_slugs", no_mcps)
 
 
 def test_allowed_skill_access_levels_by_role():
@@ -1866,12 +1862,8 @@ async def test_confirm_personal_skill_draft_uses_package_slug_without_database(
     async def no_prune(db, slug):
         pass
 
-    async def no_mcps(db=None):
-        return []
-
     monkeypatch.setattr(content_service, "SkillRepository", ContentRepo)
     monkeypatch.setattr(content_service, "prune_skill_content", no_prune)
-    monkeypatch.setattr("yuxi.modules.extensions.mcp.service.get_enabled_mcp_server_slugs", no_mcps)
 
     results = await personal_service.confirm_personal_skill_install_draft(
         draft_id=draft_id,

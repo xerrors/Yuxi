@@ -128,7 +128,7 @@ class KnowledgeFileRepository:
             return (amount.desc() if descending else amount.asc(), tie)
         if field == "created_at":
             created = KnowledgeFile.created_at
-            # 缺失时间视为最早，与前端 compareFileCreatedAt 的空值等价。
+            # 缺失时间视为最早。
             created_order = created.desc().nulls_last() if descending else created.asc().nulls_first()
             return (created_order, tie)
 

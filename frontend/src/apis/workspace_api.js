@@ -1,16 +1,10 @@
 import { apiDelete, apiGet, apiPost, apiPut, buildQuery } from './base'
 
-export const getWorkspaceTree = (
-  path = '/',
-  recursive = false,
-  filesOnly = false,
-  includeUnboundProjectDirs = false
-) => {
+export const getWorkspaceTree = (path = '/', recursive = false, filesOnly = false) => {
   const query = buildQuery({
     path,
     recursive,
-    files_only: filesOnly,
-    include_unbound_project_dirs: includeUnboundProjectDirs || undefined
+    files_only: filesOnly
   })
   return apiGet(`/api/workspace/tree?${query}`)
 }

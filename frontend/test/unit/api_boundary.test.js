@@ -532,7 +532,7 @@ test('Project 与 Workspace API 按 xhome 契约构造请求', async () => {
     })
     await projectApi.getHistoryCandidates({ query: '交付', limit: 10, offset: 20 })
     await getWorkspaceTree('/projects')
-    await getWorkspaceTree('/projects', false, false, true)
+    await getWorkspaceTree('/projects', true, true)
     await createWorkspaceDirectory('/projects', '客户交付')
 
     assert.equal(requests[0].url, '/api/projects')
@@ -551,7 +551,7 @@ test('Project 与 Workspace API 按 xhome 契约构造请求', async () => {
     )
     assert.equal(
       requests[4].url,
-      '/api/workspace/tree?path=%2Fprojects&recursive=false&files_only=false&include_unbound_project_dirs=true'
+      '/api/workspace/tree?path=%2Fprojects&recursive=true&files_only=true'
     )
     assert.deepEqual(JSON.parse(requests[5].options.body), {
       parent_path: '/projects',
