@@ -15,7 +15,7 @@ from yuxi.modules.agents.models.definitions import Agent
 from yuxi.modules.agents.runtime.context import normalize_agent_context_config
 from yuxi.modules.extensions.mcp.builtin import BUILTIN_MCP_SERVERS
 from yuxi.modules.extensions.mcp.models import MCPServer
-from yuxi.modules.extensions.mcp.service import available_mcp_servers, get_enabled_mcp_server_slugs
+from yuxi.modules.extensions.mcp.service import available_mcp_servers, get_enabled_mcp_servers
 from yuxi.modules.extensions.skills.models import Skill
 from yuxi.modules.identity.models import User
 from yuxi.modules.system.models import ConfigOption
@@ -129,7 +129,7 @@ async def test_owned_mcp_is_selected_only_as_plugin_and_remains_manageable(monke
                 normalized = await normalize_agent_context_config(saved.config_json["context"], db=db, user=owner, agent_id=agent_id)
                 assert normalized["mcps"] == ["ordinary-mcp"]
                 assert normalized["plugins"] == [plugin_id]
-                assert set(await get_enabled_mcp_server_slugs(db=db)) == {slug, "ordinary-mcp"}
+                assert {server.slug for server in await get_enabled_mcp_servers(db=db)} == {slug, "ordinary-mcp"}
                 assert set(await available_mcp_servers(db, [slug, "ordinary-mcp"], user_id=owner.id)) == {
                     slug,
                     "ordinary-mcp",

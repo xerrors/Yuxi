@@ -302,7 +302,7 @@ async def test_project_rename_and_delete_soft_delete_sessions_but_keep_workdir(
     marker_read = await test_client.get(
         "/api/workspace/tree",
         headers=admin_headers,
-        params={"path": f"/{linked_directory}", "include_unbound_project_dirs": True},
+        params={"path": f"/{linked_directory}"},
     )
     assert marker_read.status_code == 200, marker_read.text
     assert "keep" in {entry["name"] for entry in marker_read.json()["entries"]}

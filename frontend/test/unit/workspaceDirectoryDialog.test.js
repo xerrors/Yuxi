@@ -85,7 +85,7 @@ test('目录选择只接受实际目录，过期路径结果不能覆盖新输�
     const { default: DirectoryDialog } = await server.ssrLoadModule('virtual:directory-dialog')
     const open = ref(false)
     const host = node('root')
-    app = renderer.createApp(() => h(DirectoryDialog, { open: open.value, includeUnboundProjectDirs: true }))
+    app = renderer.createApp(() => h(DirectoryDialog, { open: open.value }))
     app.component('a-modal', { setup: (_, { attrs, slots }) => () => attrs.open ? h('modal', attrs, slots.default?.()) : null })
     app.component('a-button', { setup: (_, { attrs, slots }) => () => h('button', attrs, slots.default?.()) })
     app.component('a-input', {

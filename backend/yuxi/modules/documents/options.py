@@ -28,7 +28,7 @@ mineru_ocr_host_opts = Option(
                     "standard": "标准（Standard）",
                     "advanced": "高精度（Advanced）",
                 },
-                "help": "服务必须开放所选档位。旧 Hybrid 高强度迁移为 Advanced，其余组合为 Standard；新旧质量不保证等价。",
+                "help": "服务必须开放所选档位。",
             },
         ]
     },

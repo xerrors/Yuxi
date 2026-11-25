@@ -108,11 +108,6 @@ async def ensure_builtin_mcp_servers_in_db() -> None:
             await session.commit()
 
 
-async def get_enabled_mcp_server_slugs(*, db: AsyncSession | None = None) -> list[str]:
-    """读取受支持且已启用的服务标识，供配置选择与 Skill 依赖校验。"""
-    return [server.slug for server in await get_enabled_mcp_servers(db=db)]
-
-
 async def get_enabled_mcp_servers(
     *, names: list[str] | None = None, db: AsyncSession | None = None, direct_only: bool = False
 ) -> list[MCPServer]:

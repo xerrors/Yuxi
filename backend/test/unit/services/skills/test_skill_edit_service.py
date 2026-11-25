@@ -74,9 +74,6 @@ def _setup_shared_skill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     async def accessible(_db, _user):
         return [item]
 
-    async def mcps(db=None):
-        return []
-
     monkeypatch.setattr(edit_service, "get_skill_data_dir", lambda: tmp_path)
     monkeypatch.setattr(content_service, "get_skill_data_dir", lambda: tmp_path)
     monkeypatch.setattr(content_service, "SkillRepository", FakeRepo)
@@ -90,7 +87,6 @@ def _setup_shared_skill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(skill_access, "SkillRepository", FakeRepo)
     monkeypatch.setattr(FakeRepo, "list_enabled_readable", accessible, raising=False)
     monkeypatch.setattr(tool_service, "get_tool_metadata", lambda: [])
-    monkeypatch.setattr("yuxi.modules.extensions.mcp.service.get_enabled_mcp_server_slugs", mcps)
     return skill_dir, item, content
 
 

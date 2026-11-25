@@ -140,7 +140,6 @@
     v-model:open="createModalOpen"
     :initial-path="initialProjectPath"
     :disabled="creatingProject"
-    include-unbound-project-dirs
     @select="handleCreateProject"
   />
 </template>

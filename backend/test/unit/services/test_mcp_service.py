@@ -126,7 +126,7 @@ async def test_ensure_builtin_mcp_servers_preserves_user_slug(monkeypatch, mcp_s
     assert server.url == "https://example.com/mcp"
     assert server.enabled == 1
     assert not mcp_service.is_builtin_mcp_server(server)
-    assert slug in await mcp_service.get_enabled_mcp_server_slugs(db=mcp_session)
+    assert await mcp_service.get_enabled_mcp_servers(names=[slug], db=mcp_session) == [server]
 
 
 async def test_ensure_builtin_mcp_servers_does_not_migrate_unsupported_transport(monkeypatch, mcp_session):
@@ -205,12 +205,10 @@ async def test_enabled_catalog_excludes_unsupported_transports(mcp_session):
     await mcp_session.commit()
 
     servers = await mcp_service.get_enabled_mcp_servers(db=mcp_session)
-    slugs = await mcp_service.get_enabled_mcp_server_slugs(db=mcp_session)
 
     assert {server.slug: server.to_mcp_config() for server in servers} == {
         "remote-http": {"transport": "streamable_http", "url": "https://example.com/mcp"}
     }
-    assert set(slugs) == {"remote-http"}
 
 
 async def test_create_mcp_server_rejects_builtin_slug(mcp_session):
@@ -799,14 +797,14 @@ async def test_deployment_switch_keeps_builtin_identity_and_admin_intent(monkeyp
     await mcp_session.refresh(server)
     assert server.enabled == 1 and server.disabled_tools == ["query_kb"]
     assert mcp_service.is_builtin_mcp_server(server)
-    assert "knowledge" not in await mcp_service.get_enabled_mcp_server_slugs(db=mcp_session)
+    assert not await mcp_service.get_enabled_mcp_servers(names=["knowledge"], db=mcp_session)
     with pytest.raises(ValueError, match="当前部署不可用"):
         await mcp_service.inspect_mcp_server_tools(server, uid="viewer")
     with pytest.raises(PermissionError, match="系统内置"):
         await mcp_service.delete_mcp_server(mcp_session, server.slug)
     monkeypatch.setenv("YUXI_KNOWLEDGE_ENABLED", "true")
     await mcp_service.ensure_builtin_mcp_servers_in_db()
-    assert "knowledge" in await mcp_service.get_enabled_mcp_server_slugs(db=mcp_session)
+    assert await mcp_service.get_enabled_mcp_servers(names=["knowledge"], db=mcp_session) == [server]
     server.enabled = 0
     await mcp_session.commit()
     await mcp_service.ensure_builtin_mcp_servers_in_db()

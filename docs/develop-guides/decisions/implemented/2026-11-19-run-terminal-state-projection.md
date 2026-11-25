@@ -14,9 +14,9 @@ Owner：backend/yuxi/modules/agents/services/checkpoint_state.py
 
 ### 实现方案
 
-- `sessions.agent_state_view`（JSONB）进入 ORM metadata，空库直接建立 business 6 / knowledge 2。正式 v0.8.0 的插件迁移固定到 business 5 / knowledge 2；随后执行[会话状态迁移](../../../advanced/deployment.md#会话状态迁移)，同一事务补列并登记 business 6。已有 business 5 / knowledge 2 的库直接执行第二步。
+- `sessions.agent_state_view`（JSONB）进入 ORM metadata，空库直接建立 business 6 / knowledge 2。正式 v0.8.0 的插件迁移固定到 business 5 / knowledge 2；随后执行[会话状态迁移](../../../advanced/deployment.md#会话状态迁移)，同一事务补列并登记 business 6。两步在同一次正式版升级中完成。
 - 载荷包含 `values`、来源 `checkpoint_id`、Run 归属及可选的中断载荷。通道集固定为 `AGENT_STATE_PROJECTION_CHANNELS`，写入前按 `extract_agent_state` 的默认形态归一。
-- Thread 作用域和终态 Run 条件通过后，快路径只查询最新根 checkpoint 的 ID，查询可利用现有主键索引。版本一致时复用投影。其余情况先结束请求级读事务，再读取完整 checkpoint。最新 Run 已终态且存在 checkpoint 时允许惰性回填。缺少 `checkpoint_id` 的存量 JSONB 按同一路径刷新。
+- Thread 作用域和终态 Run 条件通过后，快路径只查询最新根 checkpoint 的 ID，查询可利用现有主键索引。版本一致时复用投影。其余情况先结束请求级读事务，再读取完整 checkpoint。最新 Run 已终态且存在 checkpoint 时允许惰性回填。升级时新增的空投影也通过该路径构建。
 - Run 终态钩子复用内存快照的值和版本，在结算提交后写入。主动压缩刷新和 `/state` 懒回填各自在一次 checkpoint 读取中取得值与版本。三条写入路径失败时告警，后续读取仍按 checkpoint 版本判断。
 - `SessionRepository.save_agent_state_view` 以 checkpoint 的排序拒绝迟到旧值，只更新未删除会话的投影并保留 `updated_at`，以免回填改变排序和活跃统计。`/state` 先完成响应组装，再写入投影，因此写入失败后可以返回已读到的状态和协作关系。中断响应仍按既有 Turn、waitpoint 和 Run 的绑定关系校验。
 

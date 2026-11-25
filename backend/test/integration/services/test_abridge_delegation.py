@@ -7,7 +7,7 @@ from sqlalchemy import select, update
 from test.integration.services.test_oidc_provider import scenario  # noqa: F401
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.extensions.mcp.models import MCPConnection, MCPServer
-from yuxi.modules.extensions.mcp.service import available_mcp_servers, get_enabled_mcp_server_slugs
+from yuxi.modules.extensions.mcp.service import available_mcp_servers, get_enabled_mcp_servers
 from yuxi.modules.extensions.plugins.abridge.client import AbridgeAuth, issue_abridge_delegation
 from yuxi.modules.extensions.plugins.abridge.options import connection_settings
 from yuxi.modules.extensions.plugins.abridge.service import personal_devices
@@ -107,28 +107,28 @@ async def test_oidc_alone_does_not_enable_abridge_and_option_override_is_effecti
         option = ConfigOption(key="abridge_options", name="设备管理", value={})
         db.add_all([server, option])
         await db.commit()
-        assert "abridge" not in await get_enabled_mcp_server_slugs(db=db)
+        assert not await get_enabled_mcp_servers(names=["abridge"], db=db)
         assert await available_mcp_servers(db, ["abridge"], user_id=scenario["id"]) == {}
 
         option.value = {"url": "https://bridge.example"}
         await db.commit()
-        assert "abridge" not in await get_enabled_mcp_server_slugs(db=db)
+        assert not await get_enabled_mcp_servers(names=["abridge"], db=db)
         monkeypatch.setattr(pg_manager, "get_async_session_context", scenario["db"])
         incomplete = await connection_settings()
         assert incomplete.public_origin == "" and not incomplete.configured
         assert (await personal_devices("stable-person"))["state"] == "not_configured"
         monkeypatch.setenv("ABRIDGE_PUBLIC_ORIGIN", "https://bridge.example")
-        assert "abridge" in await get_enabled_mcp_server_slugs(db=db)
+        assert await get_enabled_mcp_servers(names=["abridge"], db=db) == [server]
         assert list(await available_mcp_servers(db, ["abridge"], user_id=scenario["id"])) == ["abridge"]
 
         option.value = {"url": ""}
         await db.commit()
-        assert "abridge" not in await get_enabled_mcp_server_slugs(db=db)
+        assert not await get_enabled_mcp_servers(names=["abridge"], db=db)
         monkeypatch.setenv("ABRIDGE_URL", "https://environment.example")
-        assert "abridge" in await get_enabled_mcp_server_slugs(db=db)
+        assert await get_enabled_mcp_servers(names=["abridge"], db=db) == [server]
         with monkeypatch.context() as disabled:
             disabled.setenv("YUXI_OIDC_PROVIDER_ENABLED", "false")
-            assert "abridge" not in await get_enabled_mcp_server_slugs(db=db)
+            assert not await get_enabled_mcp_servers(names=["abridge"], db=db)
 
         db.add(
             MCPServer(
@@ -144,7 +144,7 @@ async def test_oidc_alone_does_not_enable_abridge_and_option_override_is_effecti
         )
         option.value = {"url": "https://bridge.example/not-an-origin"}
         await db.commit()
-        assert await get_enabled_mcp_server_slugs(db=db) == ["ordinary"]
+        assert [entry.slug for entry in await get_enabled_mcp_servers(db=db)] == ["ordinary"]
         assert list(await available_mcp_servers(db, ["abridge", "ordinary"], user_id=scenario["id"])) == ["ordinary"]
 
 

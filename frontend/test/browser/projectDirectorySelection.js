@@ -16,7 +16,7 @@ async page => {
   }
   const projects = []
   const projectRequests = []
-  let projectTreeRequests = 0
+  const treeRequests = []
   let projectFailuresRemaining = 3
   let delayDirectory = false
   let delayedStarted = false
@@ -60,7 +60,7 @@ async page => {
         delayedDone = true
       }
       json = { entries: (tree[dir] || []).map(name => ({ name, is_dir: true, path: `${dir === '/' ? '' : dir}/${name}/` })) }
-      if (params.include_unbound_project_dirs === 'true') projectTreeRequests++
+      treeRequests.push(params)
     }
     if (path === '/api/workspace/directory' && method === 'POST') {
       const body = route.request().postDataJSON()
@@ -85,7 +85,6 @@ async page => {
   const row = name => dialog.getByRole('button', { name, exact: true })
   const idle = () => dialog.locator('.directory-content[aria-busy="false"]').waitFor()
   await row('projects').waitFor()
-  check(projectTreeRequests > 0, '项目目录树必须包含未绑定目录')
   check(await open.isDisabled(), '未选目录时打开必须禁用')
   check(await row('.hidden').count() === 0, '默认隐藏以点开头的目录')
   await row('显示隐藏文件').click()
@@ -93,8 +92,10 @@ async page => {
   await row('隐藏隐藏文件').click()
   await row('projects').click()
   await row('existing').waitFor()
+  check(projects.length === 0 && await open.isEnabled(), '尚未绑定项目的现有目录应可选')
+  check(treeRequests.some(params => params.path === '/projects'), '应按所选目录读取文件树')
+  check(treeRequests.every(params => Object.keys(params).sort().join(',') === 'files_only,path,recursive'), '文件树请求只传目录与遍历选项')
   check(await dialog.locator('.directory-column').count() === 2, '选择目录后应显示两列')
-  check(await open.isEnabled(), '选中已有目录后可以打开')
   await page.screenshot({ path: '/tmp/yuxi-project-directory-light.png' })
   for (const width of [1024, 768]) {
     await page.setViewportSize({ width, height: 800 })

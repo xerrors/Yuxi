@@ -233,7 +233,7 @@ async def test_withdrawn_plugin_mcp_hides_persisted_row_and_revokes_cached_tool(
     monkeypatch.delitem(service.BUILTIN_MCP_SERVERS, slug)
     await service.ensure_builtin_mcp_servers_in_db()
     async with context.sessions() as db:
-        assert slug not in await service.get_enabled_mcp_server_slugs(db=db)
+        assert not await service.get_enabled_mcp_servers(names=[slug], db=db)
         assert not await service.available_mcp_servers(db, [slug], user_id=context.reader.id)
         with pytest.raises(service.MCPServerNotFoundError):
             await service.set_server_enabled(db, slug, True)
@@ -690,7 +690,7 @@ async def test_deployment_toggle_preserves_builtin_identity_and_admin_policy(iso
         assert row.auth_mode == "delegation"
         assert row.enabled == admin_enabled
         assert row.disabled_tools == ["query_kb"]
-        assert "knowledge" not in await service.get_enabled_mcp_server_slugs(db=db)
+        assert not await service.get_enabled_mcp_servers(names=["knowledge"], db=db)
         assert "knowledge" not in await service.available_mcp_servers(db, ["knowledge"], user_id=context.reader.id)
     monkeypatch.setenv("YUXI_KNOWLEDGE_ENABLED", "true")
     await service.ensure_builtin_mcp_servers_in_db()
@@ -698,7 +698,8 @@ async def test_deployment_toggle_preserves_builtin_identity_and_admin_policy(iso
         row = await db.scalar(select(MCPServer).where(MCPServer.slug == "knowledge"))
         assert row.enabled == admin_enabled
         assert row.disabled_tools == ["query_kb"]
-        assert ("knowledge" in await service.get_enabled_mcp_server_slugs(db=db)) is bool(admin_enabled)
+        servers = await service.get_enabled_mcp_servers(names=["knowledge"], db=db)
+        assert servers == ([row] if admin_enabled else [])
 
 
 async def test_dynamic_plugin_restores_reenabled_tool_with_same_run_cache(isolated_mcp, monkeypatch):

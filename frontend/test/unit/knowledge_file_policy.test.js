@@ -5,19 +5,10 @@ import {
   canDownloadFile,
   canIndexFile,
   canReindexFile,
-  compareFileCreatedAt,
   getBatchIndexButtonLabel,
   getFilePrimaryAction,
   isTerminalFileFailure
 } from '../../src/modules/knowledge/model/knowledge_file_policy.js'
-
-test('compareFileCreatedAt 按时间升序，较早的记录排在前面', () => {
-  const older = { created_at: '2026-01-01T00:00:00Z' }
-  const newer = { created_at: '2026-06-01T00:00:00Z' }
-  assert.ok(compareFileCreatedAt(older, newer) < 0)
-  assert.ok(compareFileCreatedAt(newer, older) > 0)
-  assert.equal(compareFileCreatedAt(older, { created_at: older.created_at }), 0)
-})
 
 test('failed 与 error_indexing 一样可以重试入库，文件夹 done 不可入库', () => {
   const failed = { status: 'failed', is_folder: false }

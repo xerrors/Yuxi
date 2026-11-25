@@ -146,8 +146,7 @@ import { createWorkspaceDirectory, getWorkspaceTree } from '@/apis/workspace_api
 const props = defineProps({
   open: { type: Boolean, default: false },
   initialPath: { type: String, default: '' },
-  disabled: { type: Boolean, default: false },
-  includeUnboundProjectDirs: { type: Boolean, default: false }
+  disabled: { type: Boolean, default: false }
 })
 const emit = defineEmits(['update:open', 'select'])
 
@@ -203,7 +202,7 @@ const visibleEntries = (entries) =>
 
 /** 获取工作区中可选择的直接子目录。 */
 const listDirectories = async (path) => {
-  const response = await getWorkspaceTree(path, false, false, props.includeUnboundProjectDirs)
+  const response = await getWorkspaceTree(path)
   return (Array.isArray(response?.entries) ? response.entries : []).filter((entry) => entry.is_dir)
 }
 
