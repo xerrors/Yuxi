@@ -10,5 +10,6 @@ export const feedbackApi = {
     return apiSuperAdminGet(`/api/system/agent-feedback?${params}`)
   },
   getTurnLangfuse: (feedbackId) =>
-    apiSuperAdminGet(`/api/system/agent-feedback/${encodeURIComponent(feedbackId)}/langfuse`)
+    apiSuperAdminGet(`/api/system/agent-feedback/${encodeURIComponent(feedbackId)}/langfuse`),
+  listAgents: () => apiSuperAdminGet('/api/system/agent-feedback/agents'),
 }

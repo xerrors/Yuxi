@@ -20,7 +20,13 @@ from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.modules.agents.runtime.middlewares.authorization import AgentExecutionRevoked
-from yuxi.modules.agents.services.feedback import list_feedback, mark_run_for_improvement, remove_user_feedback, save_user_feedback
+from yuxi.modules.agents.services.feedback import (
+    list_feedback,
+    list_feedback_agent_options,
+    mark_run_for_improvement,
+    remove_user_feedback,
+    save_user_feedback,
+)
 from yuxi.modules.agents.scope import ActorScope
 from yuxi.modules.identity.models import User
 from yuxi.modules.workspace.models import Project
@@ -336,3 +342,20 @@ async def test_platform_query_guards_cursor_and_deleted_session(feedback_db):
         await db.commit()
     async with feedback_db() as db:
         assert await db.scalar(select(func.count()).select_from(AgentFeedbackRecord)) == 0
+
+
+async def test_deleted_agent_stays_named_in_feedback_list_and_filter(feedback_db):
+    """删除智能体行后，反馈仍可按同一展示名筛选，记录条数不变。"""
+    record = await save_rating(feedback_db)
+    platform = ActorScope(uid="platform", app_id=None, is_superadmin=True)
+    async with feedback_db() as db:
+        page = await list_feedback(db=db, scope=platform, platform=True)
+        assert page["items"][0]["agent_name"] == "Agent"
+        await db.execute(delete(Agent))
+        await db.commit()
+    async with feedback_db() as db:
+        page = await list_feedback(db=db, scope=platform, platform=True)
+        assert [item["id"] for item in page["items"]] == [record["id"]]
+        assert page["items"][0]["agent_name"] == "未登记智能体（agent）"
+        options = await list_feedback_agent_options(db=db, scope=platform, platform=True)
+        assert options["agents"] == [{"agent_id": "agent", "name": "未登记智能体（agent）"}]

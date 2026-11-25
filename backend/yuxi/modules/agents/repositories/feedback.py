@@ -10,6 +10,7 @@ from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.modules.agents.repositories.pagination import order_page
 from yuxi.modules.agents.scope import ActorScope
+from yuxi.modules.system.repositories.dashboard import unregistered_agent_name
 from yuxi.shared.datetime import utc_now
 from yuxi.shared.errors import PermissionDeniedError
 
@@ -81,22 +82,14 @@ class AgentFeedbackRepository:
         limit: int = 50,
     ) -> dict:
         """以受限关联查询分页，游标必须属于完全相同的查询作用域。"""
-        if platform and (not scope.is_superadmin or scope.api_key_id is not None or scope.app_id is not None):
-            raise PermissionError("仅平台管理员可查询集中反馈")
-        statement = (
+        statement = self._visible_feedback(
             select(AgentFeedbackRecord, AgentRun.agent_slug, Agent.name, AgentRun.thread_id, AgentRun.turn_id, AgentRun.status)
             .join(AgentRun, AgentRun.id == AgentFeedbackRecord.run_id)
             .join(Session, Session.id == AgentRun.session_record_id)
-            .outerjoin(Agent, Agent.slug == AgentRun.agent_slug)
-            .where(Session.status.in_(("active", "archived")))
+            .outerjoin(Agent, Agent.slug == AgentRun.agent_slug),
+            scope=scope,
+            platform=platform,
         )
-        if not platform:
-            statement = statement.where(
-                Session.uid == scope.uid,
-                Session.app_id == scope.app_id,
-                AgentRun.uid == scope.uid,
-                AgentRun.app_id == scope.app_id,
-            )
         for column, value in (
             (Session.thread_id, thread_id),
             (AgentRun.agent_slug, agent_id),
@@ -116,7 +109,50 @@ class AgentFeedbackRepository:
         statement = order_page(statement, columns=(AgentFeedbackRecord.created_at, AgentFeedbackRecord.id), anchor=anchor)
         rows = (await self.db.execute(statement.limit(limit + 1))).all()
         items = [
-            {**record.to_dict(), "agent_id": slug, "agent_name": name, "session_id": thread, "turn_id": turn, "run_status": status}
+            {
+                **record.to_dict(),
+                "agent_id": slug,
+                "agent_name": name or unregistered_agent_name(slug),
+                "session_id": thread,
+                "turn_id": turn,
+                "run_status": status,
+            }
             for record, slug, name, thread, turn, status in rows[:limit]
         ]
         return {"items": items, "has_more": len(rows) > limit, "last_id": items[-1]["id"] if items else None}
+
+    async def list_agent_options(self, *, scope: ActorScope, platform: bool = False) -> list[dict]:
+        """返回当前反馈范围内出现过的智能体，包含已经删除、列表目录里不再存在的 slug。"""
+        statement = self._visible_feedback(
+            select(AgentRun.agent_slug, Agent.name)
+            .select_from(AgentFeedbackRecord)
+            .join(AgentRun, AgentRun.id == AgentFeedbackRecord.run_id)
+            .join(Session, Session.id == AgentRun.session_record_id)
+            .outerjoin(Agent, Agent.slug == AgentRun.agent_slug),
+            scope=scope,
+            platform=platform,
+        )
+        rows = (await self.db.execute(statement.distinct())).all()
+        options = []
+        seen = set()
+        for slug, name in rows:
+            if not isinstance(slug, str) or not slug or slug in seen:
+                continue
+            seen.add(slug)
+            options.append({"agent_id": slug, "name": name or unregistered_agent_name(slug)})
+        options.sort(key=lambda item: (item["name"], item["agent_id"]))
+        return options
+
+    def _visible_feedback(self, statement, *, scope: ActorScope, platform: bool):
+        """反馈读取的会话可见范围。平台查询与普通会话查询共用这一处。"""
+        if platform and (not scope.is_superadmin or scope.api_key_id is not None or scope.app_id is not None):
+            raise PermissionError("仅平台管理员可查询集中反馈")
+        statement = statement.where(Session.status.in_(("active", "archived")))
+        if not platform:
+            statement = statement.where(
+                Session.uid == scope.uid,
+                Session.app_id == scope.app_id,
+                AgentRun.uid == scope.uid,
+                AgentRun.app_id == scope.app_id,
+            )
+        return statement

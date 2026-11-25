@@ -44,6 +44,19 @@ class FeedbackPage(BaseModel):
     last_id: str | None
 
 
+class FeedbackAgentOption(BaseModel):
+    """反馈范围内出现过的智能体，名称在智能体行缺失时仍可展示。"""
+
+    agent_id: str
+    name: str
+
+
+class FeedbackAgentOptions(BaseModel):
+    """集中反馈筛选使用的智能体选项。"""
+
+    agents: list[FeedbackAgentOption]
+
+
 async def require_web_feedback_scope(request: Request, user: User = Depends(get_required_user)) -> ActorScope:
     """反馈只接受产品登录用户，不扩展 Public 或 API Key 能力。"""
     if getattr(request.state, "api_key", None) is not None:
