@@ -162,11 +162,11 @@ class SessionRepository:
         return True
 
     async def save_agent_state_view(self, *, uid: str, thread_id: str, payload: dict) -> None:
-        """幂等持久化面板读模型投影；已删除线程不写。由调用方提交。"""
+        """持久化未删除会话的面板投影，保留会话更新时间。由调用方提交。"""
         await self.db.execute(
             update(Session)
             .where(Session.uid == str(uid), Session.thread_id == thread_id, Session.status != "deleted")
-            .values(agent_state_view=payload)
+            .values(agent_state_view=payload, updated_at=Session.updated_at)
         )
 
     async def list_public_sessions(

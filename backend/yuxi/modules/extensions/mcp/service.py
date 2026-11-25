@@ -108,12 +108,6 @@ async def ensure_builtin_mcp_servers_in_db() -> None:
             await session.commit()
 
 
-async def get_enabled_mcp_server_config(server_slug: str, *, db: AsyncSession | None = None) -> dict[str, Any] | None:
-    """Get the latest enabled MCP server config from the database."""
-    servers = await get_enabled_mcp_servers(names=[server_slug], db=db)
-    return _to_runtime_mcp_config(servers[0]) if servers else None
-
-
 async def get_enabled_mcp_server_slugs(*, db: AsyncSession | None = None) -> list[str]:
     """读取受支持且已启用的服务标识，供配置选择与 Skill 依赖校验。"""
     return [server.slug for server in await get_enabled_mcp_servers(db=db)]
@@ -138,7 +132,7 @@ async def get_mcp_tools(
     additional_servers: dict[str, dict[str, Any]] | None = None,
     disabled_tools: list[str] | None = None,
 ) -> list[Callable[..., Any]]:
-    """共享 headers 的底层入口；个人授权必须经 get_enabled_mcp_tools 传入可信 uid。"""
+    """发现共享与匿名远程工具，个人授权与平台委托由运行时按可信身份装配。"""
     if additional_servers and server_slug in additional_servers:
         config = additional_servers[server_slug]
     else:
@@ -459,20 +453,6 @@ async def personal_connection_states(db: AsyncSession, servers: list[MCPServer],
 
     own = await personal_mcp_connections(db, [server.id for server in servers], user_id)
     return {server.slug: connection_status(server, own.get(server.id)) for server in servers}
-
-
-async def get_enabled_mcp_tools(server_slug: str, *, uid: str | None = None) -> list:
-    """单服务按当前用户装配个人凭证，无认证与共享连接沿用现有路径。"""
-    servers = await get_enabled_mcp_servers(names=[server_slug])
-    if not servers:
-        return []
-    server = servers[0]
-    if server.auth_mode in PERSONAL_AUTH_MODES:
-        return await personal_mcp_tools(server, uid)
-    if server.auth_mode == "delegation":
-        raise ValueError("平台委托 MCP 由 Agent 运行时按当前用户装配，不支持单服务直接加载")
-    config = _to_runtime_mcp_config(server)
-    return await get_mcp_tools(server_slug, additional_servers={server_slug: config}, disabled_tools=server.disabled_tools or [])
 
 
 async def get_all_mcp_tools(server_slug: str, *, uid: str | None = None) -> list:

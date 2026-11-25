@@ -13,8 +13,10 @@ async def upgrade_agent_state_view(manager: PostgresManager) -> None:
     """在初始化锁内幂等升级 business v5→v6，保留既有行；其余版本在 DDL 前拒绝。"""
     async with schema_migration_lock(manager):
         versions = await get_schema_versions(manager)
-        if versions.get("business") not in {5, 6} or "initializing" in versions:
-            raise RuntimeError("Run 状态投影升级需要已完成插件迁移的 business v5/v6")
+        if versions == {"business": 6, "knowledge": 2}:
+            return
+        if versions != {"business": 5, "knowledge": 2}:
+            raise RuntimeError(f"会话状态迁移需要 business 5 或 6，且 knowledge 为 2，当前为 {versions}")
         async with manager.async_engine.begin() as conn:
             await conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS agent_state_view JSONB"))
             await conn.execute(

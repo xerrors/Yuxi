@@ -20,7 +20,7 @@ import uvicorn
 from cryptography.fernet import Fernet
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
-from sqlalchemy import select, text
+from sqlalchemy import event, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.api.dependencies.auth import get_db
@@ -29,7 +29,7 @@ from yuxi.api.routers.extensions.mcp import mcp
 from yuxi.modules.extensions.mcp.models import MCPConnection, MCPOAuthAttempt, MCPServer
 from yuxi.modules.extensions.mcp.oauth_config import decrypt, encrypt
 from yuxi.modules.extensions.mcp.oauth_service import MCPOAuthService
-from yuxi.modules.extensions.mcp.service import get_enabled_mcp_tools
+from yuxi.modules.extensions.mcp.service import get_all_mcp_tools, resolve_runtime_mcp_tools
 from yuxi.modules.identity.models import Department, RevokedAccessToken, User
 from yuxi.modules.identity.security import AuthUtils
 from yuxi.shared.datetime import utc_now
@@ -332,7 +332,6 @@ async def finish(scenario, params, user="alice"):
 async def test_personal_tools_use_own_identity_and_old_tool_stops_after_disconnect(scenario):
     """两个真实 token 返回不同员工，缓存不能串用且旧工具不能绕过断开。"""
     from yuxi.modules.agents.runtime.context import BaseContext
-    from yuxi.modules.extensions.mcp.service import resolve_runtime_mcp_tools
 
     alice_context, bob_context = BaseContext(uid="alice"), BaseContext(uid="bob")
     assert alice_context.mcp_tools is not bob_context.mcp_tools
@@ -457,7 +456,7 @@ async def test_invalid_refresh_and_changed_config_require_reconnect(scenario):
 async def test_platform_accounts_can_authorize_an_independent_resource_identity(scenario, user):
     """无企业绑定的本地用户可授权不同资源账号，连接仍仅属于当前平台用户。"""
     assert (await finish(scenario, await begin(scenario, user, subject="resource-employee"), user)).status_code == 200
-    tool = (await get_enabled_mcp_tools("fixture", uid=user))[0]
+    tool = (await resolve_runtime_mcp_tools(["fixture"], uid=user))["fixture"][0]
     assert "resource-employee" in str(await tool.ainvoke({}))
     async with scenario["db"]() as db:
         rows = (await db.scalars(select(MCPConnection))).all()
@@ -473,7 +472,7 @@ async def test_platform_accounts_can_authorize_an_independent_resource_identity(
 async def test_existing_tool_rechecks_current_authorization_at_executor(scenario, mutation):
     """保留已装配工具后改变事实，旧对象不能绕过调用边界。"""
     assert (await finish(scenario, await begin(scenario))).status_code == 200
-    tool = (await get_enabled_mcp_tools("fixture", uid="alice"))[0]
+    tool = (await resolve_runtime_mcp_tools(["fixture"], uid="alice"))["fixture"][0]
     async with scenario["db"]() as db:
         server = await db.scalar(select(MCPServer))
         if mutation == "user_deleted":
@@ -582,7 +581,7 @@ async def test_waiting_worker_rechecks_tool_revocation_after_refresh_lock(scenar
 async def test_remote_revocation_marks_reconnect_without_restoring_shared_credentials(scenario):
     """远端拒绝 access token 后，页面状态持久变成需要重连。"""
     assert (await finish(scenario, await begin(scenario))).status_code == 200
-    tool = (await get_enabled_mcp_tools("fixture", uid="alice"))[0]
+    tool = (await resolve_runtime_mcp_tools(["fixture"], uid="alice"))["fixture"][0]
     scenario["current"]["reject_access"] = True
     with pytest.raises(Exception):
         await tool.ainvoke({})
@@ -609,7 +608,7 @@ async def test_disconnect_cancels_connect_already_waiting_for_discovery(scenario
 async def test_old_401_cannot_clear_a_newly_connected_token(scenario):
     """旧 HTTP 请求晚到的 401 不得撤销已完成的新授权。"""
     assert (await finish(scenario, await begin(scenario))).status_code == 200
-    tool = (await get_enabled_mcp_tools("fixture", uid="alice"))[0]
+    tool = (await resolve_runtime_mcp_tools(["fixture"], uid="alice"))["fixture"][0]
     async with scenario["db"]() as db:
         old = decrypt((await db.scalar(select(MCPConnection))).credentials)["access_token"]
     scenario["current"]["delayed_reject_token"] = old
@@ -745,8 +744,6 @@ async def test_worker_cleans_expired_oauth_attempts_without_new_authorization(sc
 
 async def test_runtime_availability_is_personal_and_disconnected_does_not_load_tools(scenario):
     """他人的授权不使本人可用；断开不再阻止普通工具装配。"""
-    from yuxi.modules.extensions.mcp.service import resolve_runtime_mcp_tools
-
     loaded = await resolve_runtime_mcp_tools(["fixture", "fixture"], uid="bob")
     assert loaded == {}
     assert (await finish(scenario, await begin(scenario))).status_code == 200
@@ -762,8 +759,6 @@ async def test_runtime_availability_is_personal_and_disconnected_does_not_load_t
 
 async def test_runtime_omits_missing_and_disabled_services(scenario):
     """已连接也不能绕过服务停用，不存在的服务同样不进入运行工具。"""
-    from yuxi.modules.extensions.mcp.service import resolve_runtime_mcp_tools
-
     assert (await finish(scenario, await begin(scenario))).status_code == 200
     async with scenario["db"]() as db:
         server = await db.scalar(select(MCPServer).where(MCPServer.slug == "fixture"))
@@ -822,8 +817,6 @@ async def test_runtime_reports_unknown_loading_failure_without_exposing_tools(sc
 
 async def test_runtime_invalid_refresh_excludes_service_and_preserves_reconnect_state(scenario):
     """装配中远端拒绝刷新时保留重连状态，不把异常组变成普通聊天失败。"""
-    from yuxi.modules.extensions.mcp.service import resolve_runtime_mcp_tools
-
     assert (await finish(scenario, await begin(scenario))).status_code == 200
     async with scenario["db"]() as db:
         row = await db.scalar(select(MCPConnection))
@@ -839,8 +832,6 @@ async def test_runtime_invalid_refresh_excludes_service_and_preserves_reconnect_
 
 async def test_normal_access_uses_three_reads_without_remote_refresh(scenario):
     """真实 SQL 证明普通路径只有策略、连接锁和锁后策略三次读取。"""
-    from sqlalchemy import event
-
     assert (await finish(scenario, await begin(scenario))).status_code == 200
     async with scenario["db"]() as db:
         selects = []
@@ -983,7 +974,7 @@ async def test_shared_tool_cannot_survive_switch_to_personal_oauth(scenario):
         },
     )
     assert response.status_code == 200
-    old = (await get_enabled_mcp_tools("fixture", uid="alice"))[0]
+    old = (await resolve_runtime_mcp_tools(["fixture"], uid="alice"))["fixture"][0]
     assert "alice" in str(await old.ainvoke({}))
     response = await http.put(
         "/api/system/mcp-servers/fixture",
@@ -1002,7 +993,7 @@ async def test_shared_tool_cannot_survive_switch_to_personal_oauth(scenario):
         with pytest.raises((StateConflictError, ExceptionGroup)):
             await old.ainvoke({})
         assert scenario["current"]["tool_call_count"] == calls
-    personal = (await get_enabled_mcp_tools("fixture", uid="alice"))[0]
+    personal = (await resolve_runtime_mcp_tools(["fixture"], uid="alice"))["fixture"][0]
     assert "alice" in str(await personal.ainvoke({}))
 
 
@@ -1034,8 +1025,6 @@ async def test_management_reads_current_tools_without_refresh(scenario, auth_mod
     async with scenario["db"]() as db:
         server = await db.scalar(select(MCPServer).where(MCPServer.slug == "fixture"))
         assert server.disabled_tools == ["removed_tool"]
-
-    from yuxi.modules.extensions.mcp.service import resolve_runtime_mcp_tools
 
     scenario["current"]["tool_names"] = ["old_attendance"]
     loaded = await resolve_runtime_mcp_tools(["fixture"], uid="admin")
@@ -1077,12 +1066,9 @@ async def test_availability_rereads_current_policy_when_session_already_loaded_r
             assert available == {}
 
 
-@pytest.mark.parametrize("all_tools", [False, True])
-async def test_personal_discovery_reads_server_configuration_once(scenario, all_tools):
-    """单服务入口把服务配置直接交给个人适配器，实际出站仍独立查授权。"""
-    from sqlalchemy import event
-    from yuxi.modules.extensions.mcp.service import get_all_mcp_tools, get_enabled_mcp_tools
-
+@pytest.mark.parametrize("entry", ["runtime", "management"])
+async def test_personal_discovery_reads_server_configuration_once(scenario, entry):
+    """运行装配和管理目录各读取一次服务配置，出站独立查个人授权。"""
     assert (await finish(scenario, await begin(scenario))).status_code == 200
     async with scenario["db"]() as db:
         engine = db.bind.sync_engine
@@ -1095,8 +1081,10 @@ async def test_personal_discovery_reads_server_configuration_once(scenario, all_
 
     event.listen(engine, "before_cursor_execute", observe)
     try:
-        loader = get_all_mcp_tools if all_tools else get_enabled_mcp_tools
-        tools = await loader("fixture", uid="alice")
+        if entry == "runtime":
+            tools = (await resolve_runtime_mcp_tools(["fixture"], uid="alice"))["fixture"]
+        else:
+            tools = await get_all_mcp_tools("fixture", uid="alice")
     finally:
         event.remove(engine, "before_cursor_execute", observe)
     assert [tool.name for tool in tools] == ["my_attendance"]
@@ -1212,8 +1200,6 @@ async def test_each_run_discovers_once_across_model_rounds(scenario, monkeypatch
 
 async def test_run_directory_reuses_empty_results_and_rechecks_current_tool_policy(scenario):
     """空目录仅发现一次，新运行重新发现；工具开关变化只过滤目录，不重做发现。"""
-    from yuxi.modules.extensions.mcp.service import resolve_runtime_mcp_tools
-
     assert (await finish(scenario, await begin(scenario))).status_code == 200
     scenario["current"]["tool_names"] = []
     run_tools = {}
@@ -1333,8 +1319,8 @@ async def test_personal_static_credentials_use_own_identity_and_revoke_old_tools
     assert (await http.post(base + "/fixture/test", headers=headers["admin"])).status_code == 502
     assert len(current.get("received_credentials", [])) == received
     assert (await http.post(base + "/fixture/test", headers=headers["alice"])).status_code == 200
-    alice_tools = await get_enabled_mcp_tools("fixture", uid="alice")
-    bob_tools = await get_enabled_mcp_tools("fixture", uid="bob")
+    alice_tools = (await resolve_runtime_mcp_tools(["fixture"], uid="alice"))["fixture"]
+    bob_tools = (await resolve_runtime_mcp_tools(["fixture"], uid="bob"))["fixture"]
     assert "alice" in str(await alice_tools[0].ainvoke({}))
     assert "bob" in str(await bob_tools[0].ainvoke({}))
     response = await http.put(
@@ -1379,7 +1365,7 @@ async def test_personal_static_credentials_use_own_identity_and_revoke_old_tools
     assert probed.status_code == 200, probed.text
     assert probed.json()["success"] is True and probed.json()["tool_count"] == 1
     assert "bob-key" not in probed.text
-    assert await get_enabled_mcp_tools("fixture", uid="bob") == []
+    assert await resolve_runtime_mcp_tools(["fixture"], uid="bob") == {}
     async with scenario["db"]() as db:
         disabled = await db.scalar(select(MCPServer).where(MCPServer.slug == "fixture"))
         assert disabled.enabled == 0
@@ -1498,7 +1484,9 @@ async def test_explicit_anonymous_mode_does_not_require_a_personal_connection(sc
     response = await http.put("/api/system/mcp-servers/fixture", headers=headers["admin"], json={"auth_mode": "none", "headers": {}})
     assert response.status_code == 200
     scenario["identities"][""] = "anonymous-result"
-    tools = await get_enabled_mcp_tools("fixture")
+    tools = (await resolve_runtime_mcp_tools(["fixture"], uid="alice"))["fixture"]
     assert "anonymous-result" in str(await tools[0].ainvoke({}))
     assert set(scenario["current"]["received_credentials"]) == {""}
+    async with scenario["db"]() as db:
+        assert await db.scalar(select(MCPConnection.id)) is None
     assert (await http.post("/api/system/mcp-servers/fixture/test", headers=headers["alice"])).status_code == 403

@@ -153,8 +153,9 @@ async def test_list_runs_preserves_persisted_business_state_without_read_side_re
         async def list_runs(self, kb_id):
             return [run]
 
-        async def update_run(self, run_id, data):
-            self.updated_run = (run_id, data)
+        async def update_run_in_session(self, session, run_id, data):
+            """在读取路径尝试写入时失败。"""
+            raise AssertionError("读取评估运行历史时不应写入持久状态")
 
     class FailedBackgroundJobRepository:
         async def list_by_payload_values(self, **kwargs):
@@ -177,7 +178,7 @@ async def test_list_runs_preserves_persisted_business_state_without_read_side_re
 
     assert result[0]["status"] == "running"
     assert result[0]["metrics"] == {}
-    assert not hasattr(service.eval_repo, "updated_run")
+    assert run.status == "running"
 
 
 def test_build_evaluation_run_name_uses_eval_date_hash_format():

@@ -126,9 +126,7 @@ async def test_ensure_builtin_mcp_servers_preserves_user_slug(monkeypatch, mcp_s
     assert server.url == "https://example.com/mcp"
     assert server.enabled == 1
     assert not mcp_service.is_builtin_mcp_server(server)
-    servers = await mcp_service.get_enabled_mcp_servers(db=mcp_session)
-    configs = {server.slug: await mcp_service.get_enabled_mcp_server_config(server.slug, db=mcp_session) for server in servers}
-    assert configs[slug]["url"] == "https://example.com/mcp"
+    assert slug in await mcp_service.get_enabled_mcp_server_slugs(db=mcp_session)
 
 
 async def test_ensure_builtin_mcp_servers_does_not_migrate_unsupported_transport(monkeypatch, mcp_session):
@@ -166,7 +164,7 @@ async def test_builtin_mcp_initialization_propagates_failure_to_entrypoint(monke
         await mcp_service.ensure_builtin_mcp_servers_in_db()
 
 
-async def test_runtime_configs_exclude_unsupported_transports(mcp_session):
+async def test_enabled_catalog_excludes_unsupported_transports(mcp_session):
     mcp_session.add_all(
         [
             MCPServer(
@@ -207,13 +205,12 @@ async def test_runtime_configs_exclude_unsupported_transports(mcp_session):
     await mcp_session.commit()
 
     servers = await mcp_service.get_enabled_mcp_servers(db=mcp_session)
-    configs = {server.slug: await mcp_service.get_enabled_mcp_server_config(server.slug, db=mcp_session) for server in servers}
     slugs = await mcp_service.get_enabled_mcp_server_slugs(db=mcp_session)
 
-    assert set(configs) == {"remote-http"}
+    assert {server.slug: server.to_mcp_config() for server in servers} == {
+        "remote-http": {"transport": "streamable_http", "url": "https://example.com/mcp"}
+    }
     assert set(slugs) == {"remote-http"}
-    assert "command" not in configs["remote-http"]
-    assert "args" not in configs["remote-http"]
 
 
 async def test_create_mcp_server_rejects_builtin_slug(mcp_session):
@@ -300,40 +297,6 @@ async def test_update_unsupported_transport_requires_remote_url(mcp_session):
     assert legacy_server.transport == "websocket"
 
 
-async def test_get_enabled_mcp_tools_loads_latest_config_from_db(monkeypatch):
-    captured: list[dict] = []
-
-    async def fake_get_enabled_mcp_servers(*, names, db=None):
-        """服务配置只读一次，底层直接消费该结果。"""
-        assert names == ["demo"]
-        return [MCPServer(slug="demo", transport="streamable_http", url="demo", auth_mode="headers", disabled_tools=["tool_b"])]
-
-    async def fake_get_mcp_tools(server_name: str, additional_servers=None, disabled_tools=None, **kwargs):
-        del kwargs
-        captured.append(
-            {
-                "server_name": server_name,
-                "additional_servers": additional_servers,
-                "disabled_tools": list(disabled_tools or []),
-            }
-        )
-        return ["tool-a"]
-
-    monkeypatch.setattr(mcp_service, "get_enabled_mcp_servers", fake_get_enabled_mcp_servers)
-    monkeypatch.setattr(mcp_service, "get_mcp_tools", fake_get_mcp_tools)
-
-    tools = await mcp_service.get_enabled_mcp_tools("demo")
-
-    assert tools == ["tool-a"]
-    assert captured == [
-        {
-            "server_name": "demo",
-            "additional_servers": {"demo": {"transport": "streamable_http", "url": "demo", "disabled_tools": ["tool_b"]}},
-            "disabled_tools": ["tool_b"],
-        }
-    ]
-
-
 async def test_each_independent_discovery_reads_current_remote_tools(monkeypatch):
     """相同配置的新发现也读取远端目录，不依赖进程缓存失效。"""
     tools = [SimpleNamespace(name="first", metadata={})]
@@ -402,15 +365,15 @@ async def test_shared_get_mcp_tools_rejects_carried_auth(monkeypatch):
         await mcp_service.get_mcp_tools("demo", additional_servers={"demo": carried})
 
 
-async def test_get_enabled_mcp_tools_rejects_delegation_mode(monkeypatch):
-    """委托 MCP 只能经运行装配持有可信上下文，单服务入口不得直接加载。"""
+async def test_shared_get_mcp_tools_rejects_delegation_mode(monkeypatch):
+    """共享工具发现拒绝需要可信运行上下文的平台委托。"""
 
     async def fake_get_enabled_mcp_servers(*, names, db=None):
         return [MCPServer(slug="knowledge", transport="streamable_http", url="k", auth_mode="delegation", enabled=1)]
 
     monkeypatch.setattr(mcp_service, "get_enabled_mcp_servers", fake_get_enabled_mcp_servers)
     with pytest.raises(ValueError, match="平台委托"):
-        await mcp_service.get_enabled_mcp_tools("knowledge", uid="u")
+        await mcp_service.get_mcp_tools("knowledge")
 
 
 async def test_get_all_mcp_tools_connects_disabled_server(monkeypatch, mcp_session):

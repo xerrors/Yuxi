@@ -87,6 +87,10 @@ async def get_agent_state_view(
                 and turn.waitpoint["run_id"] == latest_run.id
             ):
                 response["interrupt"] = {**interrupt_payload, "run_id": latest_run.id}
+        if include_relations:
+            response["agent_state"]["cooperation"] = await tree_snapshot(db, agent_session)
+            response["parent_thread_id"] = agent_session.parent_thread_id
+
         if not projection_fresh and latest_run is not None and latest_run.status in AGENT_RUN_TERMINAL_STATUSES:
             # 懒回填：兜底读为属主本人行幂等回写，冷线程打开一次即转快路径；非终态不写，避免把演进中的状态定格成新鲜投影。
             await _save_state_projection_best_effort(
@@ -95,9 +99,6 @@ async def get_agent_state_view(
                 thread_id=thread_id,
                 payload=build_agent_state_projection(values, interrupt_payload, run_id=latest_run.id),
             )
-        if include_relations:
-            response["agent_state"]["cooperation"] = await tree_snapshot(db, agent_session)
-            response["parent_thread_id"] = agent_session.parent_thread_id
         return response
 
     raise ResourceNotFoundError("对话线程不存在")

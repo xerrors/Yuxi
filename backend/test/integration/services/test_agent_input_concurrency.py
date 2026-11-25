@@ -10,7 +10,6 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-import yuxi.modules.agents.services.run_lifecycle as lifecycle
 import yuxi.modules.agents.services.scheduler as scheduler
 import yuxi.modules.agents.services.threads as threads
 import yuxi.modules.agents.services.turns as turns
@@ -226,7 +225,7 @@ async def test_same_key_concurrent_cancel_replays_receipt_after_thread_lock(monk
             async def ignore_external(*args, **kwargs):
                 """本用例仅验证真实事务并发，隔离事务提交后的 tracing/Redis 通知。"""
 
-            monkeypatch.setattr(lifecycle, "finish_turn_observation_if_terminal", ignore_external)
+            monkeypatch.setattr(turns, "finish_turn_observation_if_terminal", ignore_external)
             monkeypatch.setattr(turns, "publish_cancel_signals", ignore_external)
         original = AgentInputReceiptRepository.get_for_scope
         seen_sessions, start = set(), asyncio.Event()

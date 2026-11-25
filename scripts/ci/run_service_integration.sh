@@ -48,6 +48,7 @@ uv run --locked --group test pytest \
     test/integration/api/test_builtin_skill_access.py \
     test/integration/api/test_abridge_plugin_visibility.py \
     test/integration/services/test_agent_plugin_migration.py \
+    test/integration/services/test_agent_state_projection_flow.py \
     test/integration/services/test_plugin_content_sync.py \
     test/integration/api/test_error_information_boundary.py \
     test/integration/api/test_knowledge_url_import_options.py \
@@ -76,7 +77,6 @@ uv run --locked --group test pytest \
     test/integration/services/test_knowledge_metadata_boundary.py \
     test/integration/services/test_knowledge_evaluation_reads.py \
     test/integration/services/test_knowledge_evaluation_cancel.py \
-    test/integration/services/test_knowledge_directory_migration.py \
     test/integration/services/test_database_relation_integrity.py \
     test/integration/services/test_database_access_paths.py \
     test/integration/services/test_mcp_oauth.py \

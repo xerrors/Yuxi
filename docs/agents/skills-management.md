@@ -75,31 +75,31 @@ Skill 不接受 `tool_dependencies`、`mcp_dependencies`、`skill_dependencies` 
 
 ## 从运行依赖升级
 
-业务 Schema v5 由插件提供专属的知识库和设备连接。已有 v2 或 v4 库需要维护窗口，先排空待消费 Input、全部非终态 Run 和可恢复 Turn，再停止 API 与 worker 接流量。`app-init` 不自动转换旧库。备份数据库与 Skill 文件后，使用新代码并挂载原数据。标准部署已从发行版清单同步 DeepWiki 时，先从旧部署源码确认 `deepwiki-official` 的来源，再导出：
+0.8.1 的离线迁移仅支持正式 `v0.8.0`。先按[部署指南](../advanced/deployment.md#_3-数据库与文件目录)确认 business 2 / knowledge 2，暂停新提交，排空待消费 Input、非终态 Run 和可恢复 Turn，停止 API 和 worker 并成套备份。准备目标版本的 API 镜像，保留原有数据库、用户工作区、共享 Skill 和实例配置。迁移期间保持消费者停机，提供 PostgreSQL 连接。
+
+### 导出与审阅
+
+标准 0.8.0 随发行清单同步了知识库与 DeepWiki。知识库专用的 `delegation` 和系统同步身份可从旧行确认。DeepWiki 的 headers 也可用于普通连接，因此先从旧部署清单核实 `deepwiki-official` 的来源，再运行：
 
 ```bash
-mkdir -p ./migration
+install -d -m 700 ./migration
 docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container run --rm --no-deps \
   -v "$PWD/migration:/migration" api uv run --no-sync --no-dev python -m yuxi.migrations.agent_plugins \
   export /migration/agent-plugins --legacy-builtin deepwiki-official
 ```
 
-一次性 `api` 容器复用用户工作区和共享 Skill 文件挂载。导出前确认容器用户（生产默认 UID 1000）可写宿主机的 `./migration`，并限制该目录的访问权限。开发环境使用相同的卷参数，将 Compose 命令前缀替换为 `docker compose`。
+`./migration` 须允许容器用户写入（生产默认 UID 1000）。`plan.json` 包含旧配置、行 ID 和受影响的会话，请限制目录读取权限。旧库没有 DeepWiki 时省略该参数。自定义清单中的其他内置连接，包括新版撤下的连接，逐项核实后追加 `--legacy-builtin <slug>`。同名普通连接须先解决标识冲突。
 
-标准 DeepWiki 的 headers 认证和创建者用户名也可出现在普通连接上，因此需要显式确认。旧库没有该行时省略这个参数。v2 的知识库、v4 的知识库与 aBridge 若具有系统同步身份和内置专用的 `delegation` 认证，迁移会自动识别。其余旧内置连接须逐项核对旧部署的 `BUILTIN_MCP_MANIFEST`，每项追加 `--legacy-builtin <slug>`，包括新版已撤下的连接。遇到同名普通连接，先解决标识冲突。
+核对计划中的 Agent、会话及 Skill，重点检查能力范围：
 
-审阅 `plan.json` 中的人工确认标识、识别出的内置标识、数据库行 ID，以及受影响的 Agent 和会话。迁移保留连接行、管理员开关和工具策略。
+- 选择了旧知识库连接或有权使用并已选择旧知识库 Skill 时，转换后的配置可启用 `knowledge-base`。`mcps: "all"` 保留对普通连接的动态选择。连接行、管理员启停状态和工具策略保留。
+- 自定义 Skill 的运行依赖随部署插件交付。核对导出的 `deployed/*.json`，将声明放入目标仓库的 `backend/yuxi/modules/extensions/plugins/deployed/`（目录缺失时创建），重建目标 API 镜像供迁移和服务共同使用。只有通用工具依赖的 Skill，以及内置 `image-gen`、`deep-research`，保留为普通 Skill。
+- 在 0.8.0 中，激活或预加载共享 Skill 可以额外授予它声明的通用工具。0.8.1 丢弃这项隐式授权，保留 Agent 和会话原有的 `tools` 选择。审阅计划中的 `tool_dependencies`，特别是原来使用 `tools: []` 或显式列表的配置；仍需使用的工具由维护者在 Agent 配置中显式选择，并新建会话验证。已有会话继续使用其冻结的工具选择。
+- 转换一个原先单独选中的连接时，若新插件含额外连接、配套 Skill、工具或调用钩子，迁移会报告冲突。例：旧部署自定义了 aBridge。先在旧配置中移除该连接（全选改为其余连接的显式列表），升级后再按需启用整包。自定义 Skill 引用了插件专属连接时，同样需要先处理旧声明。可见性、依赖缺失或配置冲突修正后，重新导出到新目录并审阅。
+- 目标版本随代码分发的 Skill 与旧库中的上传包或远程包同名时（例如 `abridge`），导出和应用均会报告冲突。先在旧版备份已安装包和授权，使用另一标识重新安装、更新引用并核对内容和访问权限，再移除冲突标识并重新导出。
+- 个人 Skill 的旧依赖字段从未授予权限，预检会指出需要审阅并删除这些字段的文件。当前版本使用的插件目录结构见[插件资源组织](./plugin-development.md#资源如何组织)。
 
-- 标准 v4 中，显式选择 `knowledge` 会启用 `knowledge-base`。`mcps: "all"` 继续动态选择普通连接，并补上知识库插件。v4 的全选原本已排除设备连接，设备插件保留原有选择。
-- 原先只选择一个 MCP 时，若插件只有这个连接、一个入口 Skill 和默认调用行为，可以自动转换。若此前未启用的插件还带有其他连接、Skill、专属工具或自定义调用钩子，迁移会报告受影响的记录。在旧配置中移除该项直接选择。原先使用全选时，改为其余连接的显式列表。升级后再按业务需要启用整包。
-- 已撤下的内置连接会保留归属并停止提供。旧行已删除时，只清除对应的过期直接选择。普通连接占用新声明的标识时，先解决同名冲突。
-- 部署代码须包含全部已选插件的声明。若准备移除旧插件，先清理 Agent 和会话配置里的引用。旧 `skills` 或 `preload_skills` 单独选中了新版的插件入口时，先移除这项选择，升级后再按需启用插件。迁移报告配置冲突所在的表、记录 ID 和字段，修复后重新导出。
-
-自定义部署若曾在插件入口旁并列发布配套 Skill，先按[插件资源组织](./plugin-development.md#资源如何组织)处理旧包。保留独立共享的包沿用原标识和 ACL；私有化的包要先核对入口的读者范围，再在旧版停用独立条目，确认其用户投影已撤下。应用迁移会检查新部署的目录布局。
-
-v2 还需转换旧 Skill 依赖。检查每个 Skill 的资源和 Agent、Session 配置映射。旧通用工具依赖直接丢弃，智能体和会话已有的工具选择保持原样。只有这类依赖的 Skill 保留为普通 Skill。部署声明须匹配审阅过的依赖；额外专属工具或自定义模型、工具调用钩子需要另行启用。将 `deployed/*.json` 纳入部署源码的 `yuxi/modules/extensions/plugins/deployed/` 目录。
-
-v2 和 v4 均在审阅计划后使用最终部署代码应用迁移：
+### 应用与回读
 
 ```bash
 docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container run --rm --no-deps \
@@ -107,9 +107,9 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml --profile contain
   apply /migration/agent-plugins
 ```
 
-应用时会在数据库锁内重新核对计划。待转换的配置或 Skill 内容、内置连接的行 ID、认领依据发生变化并影响审阅结果时，需重新导出审阅。个人 Skill 的旧依赖从未生效，预检要求显式删除旧字段，不会转换为插件权限。官方 v2 只内置知识库和 DeepWiki。若旧部署自行内置了 aBridge，核实原清单后在导出时追加 `--legacy-builtin abridge` 以确认连接来源。设备插件包含额外操作说明与模型调用钩子，旧配置中只选了设备 MCP 时，需要按上面的整包规则处理。第三方部署插件或 v2 自定义 Skill 引用专属连接时，先在对应部署声明或旧版 Skill 中移除冲突依赖，再按业务需要选择所属插件并重新审阅。内置 `image-gen` 和 `deep-research` 保留为普通 Skill。随后运行初始化和 readiness 检查并恢复服务，新空库直接初始化为 v5。
+应用命令在锁内复核源数据、Skill 内容、部署声明与审阅计划。它将受影响的当前 Skill 写到新包引用，转换 Agent 配置和会话快照，删除 `skills` 的三个依赖列，给 `mcp_servers` 增加 `code_owned` 并记录核实过的归属。历史 Input、Run manifest、Skill 历史版本及个人 MCP 凭证保留。
 
-迁移保留历史 Input、Run manifest 和 Skill 历史版本，不将旧 Skill 激活推断成插件激活。v2 的依赖列被删除，当前内容改为新的包引用。需要回退时恢复配套的旧代码、数据库与文件备份，不能只降级应用镜像。
+回读域版本应为 business 5 / knowledge 2。在该版本上可重复执行 apply。应用当前镜像的 [会话状态迁移](../advanced/deployment.md#会话状态迁移)后再重跑 app-init、启动 API 和 worker，并用原账号核对会话、知识访问、所选插件和 MCP 开关。若需回退，恢复维护前成套备份及旧代码。
 
 ## 安装方式
 

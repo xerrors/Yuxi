@@ -14,7 +14,7 @@ Owner：backend/yuxi/modules/knowledge/repositories/files.py
 
 文件列表查询增加可选 `sort_by` 与 `sort_order`。只接受 `filename`、`content_amount`、`status`、`created_at`，以及 `ascend`、`descend`。两个参数都缺省时保持原默认顺序；只传其中一个或传入其他值，在打开数据库会话前失败，路由返回 400。
 
-排序作用在筛选之后、分页之前。`filename` 两种方向都先排文件夹，再按小写文件名，最后用 `file_id` 升序稳定次序。`content_amount` 按 `token_count`，空值当 0。`created_at` 按时间，空值视为最早。`status` 使用与前端 `STATUS_SORT_ORDER` 相同的权重，升序时未知状态排在已知状态之后，降序时在前。这三列不额外把文件夹固定在前面。
+排序作用在筛选之后、分页之前。`filename` 两种方向都先排文件夹，再按小写文件名，最后用 `file_id` 升序稳定次序。`content_amount` 按 `token_count`，空值当 0。`created_at` 按时间，空值视为最早。`status` 使用 repository 的 `_STATUS_SORT_WEIGHTS`，升序时未知状态排在已知状态之后，降序时在前。这三列不额外把文件夹固定在前面。
 
 前端列使用受控 `sortOrder` 和 `sorter: true`，不再提供只比较当前页的函数。表头排序清空选中并回到第 1 页；翻页保留当前排序。默认不传排序参数。
 
@@ -26,7 +26,7 @@ Owner：backend/yuxi/modules/knowledge/repositories/files.py
 
 ## 后果
 
-工作区目录树和其他不传排序参数的调用保持默认顺序。相同排序键的记录始终按 `file_id` 升序打破平局，降序不会倒转这个次序。前端取消排序后回到默认顺序。状态权重若与 `knowledge_file_policy.js` 的 `STATUS_SORT_ORDER` 分叉，列表顺序会和原来的表头语义不一致。
+工作区目录树和其他不传排序参数的调用保持默认顺序。相同排序键的记录始终按 `file_id` 升序打破平局，降序不会倒转这个次序。前端取消排序后回到默认顺序。
 
 ## 验证
 

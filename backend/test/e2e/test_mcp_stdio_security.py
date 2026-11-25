@@ -7,9 +7,9 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import delete, select
 
-from yuxi.modules.extensions.mcp.service import ensure_builtin_mcp_servers_in_db, get_mcp_tools
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.extensions.mcp.models import MCPServer
+from yuxi.modules.extensions.mcp.service import ensure_builtin_mcp_servers_in_db, get_mcp_tools, is_builtin_mcp_server
 
 pytestmark = pytest.mark.e2e
 
@@ -88,8 +88,6 @@ async def test_deepwiki_registered_from_remote_manifest(current_loop_pg_manager)
 
 async def test_official_builtin_preserves_user_deepwiki(current_loop_pg_manager):
     """官方内置标识不占用已有用户 deepwiki 配置。"""
-    from yuxi.modules.extensions.mcp.service import get_enabled_mcp_server_config, is_builtin_mcp_server
-
     async with current_loop_pg_manager.get_async_session_context() as db:
         assert await db.scalar(select(MCPServer.id).where(MCPServer.slug == "deepwiki")) is None, (
             "测试要求未占用的 deepwiki 标识，不能覆盖共享环境的已有配置"
@@ -112,12 +110,12 @@ async def test_official_builtin_preserves_user_deepwiki(current_loop_pg_manager)
         await ensure_builtin_mcp_servers_in_db()
         async with current_loop_pg_manager.get_async_session_context() as db:
             server = await db.get(MCPServer, server_id)
+            assert server is not None and server.slug == "deepwiki"
             assert server.created_by == "admin"
             assert server.enabled == 1
             assert not is_builtin_mcp_server(server)
-            config = await get_enabled_mcp_server_config("deepwiki", db=db)
-            assert config["url"] == "https://private.example/mcp"
-            assert config["headers"] == {"X-Test": "preserve"}
+            assert server.url == "https://private.example/mcp"
+            assert server.headers == {"X-Test": "preserve"}
     finally:
         async with current_loop_pg_manager.get_async_session_context() as db:
             await db.execute(delete(MCPServer).where(MCPServer.id == server_id))

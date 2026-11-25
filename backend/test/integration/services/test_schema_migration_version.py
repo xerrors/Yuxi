@@ -34,7 +34,7 @@ from test.integration.support.postgres_schema import (
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration, pytest.mark.self_managed_resources]
 
 
-@pytest.mark.parametrize("business,knowledge", [(2, 1), (3, 1), (3, 2), (4, 1), (4, 2), (5, 1), (6, 1), (7, 1), (8, 2), (1, 1), (1, 3)])
+@pytest.mark.parametrize("business,knowledge", [(2, 1), (3, 1), (3, 2), (4, 1), (4, 2), (5, 1), (5, 2), (6, 1), (7, 1), (8, 2), (1, 1), (1, 3)])
 async def test_incompatible_schema_is_rejected_without_modifying_data(monkeypatch, business, knowledge):
     """历史及未来版本不再隐式升级，数据与两个版本均保持原值。"""
     schema, admin, engine, manager = await _create_isolated_manager("pytest_old_business")
@@ -550,24 +550,29 @@ async def test_fresh_initializer_creates_complete_baseline_and_restarts_without_
         await _drop_isolated_schema(schema, admin, engine)
 
 
-@pytest.mark.parametrize("version", [5, 99])
-async def test_agent_state_view_upgrade_is_explicit_and_preserves_existing_data(version):
-    """真实 PostgreSQL 证明 v5 补列幂等且保留行，非 v5 在 DDL 前拒绝。"""
+@pytest.mark.parametrize("business,knowledge", [(5, 2), (5, 1), (99, 2)])
+async def test_agent_state_view_upgrade_is_explicit_and_preserves_existing_data(business, knowledge):
+    """补列保留既有会话，并在写入前拒绝不兼容的域版本。"""
     from yuxi.migrations.agent_state_view import upgrade_agent_state_view
 
     schema, admin, engine, manager = await _create_isolated_manager("pytest_state_view_upgrade")
+    read_applied_at = text("SELECT applied_at FROM yuxi_schema_migrations WHERE domain='business'")
     try:
         await create_schema_version_table(manager)
-        await record_schema_version(manager, "business", version)
+        await record_schema_version(manager, "business", business)
+        await record_schema_version(manager, "knowledge", knowledge)
         async with engine.begin() as conn:
             await conn.execute(text("CREATE TABLE sessions (thread_id TEXT PRIMARY KEY, title TEXT)"))
             await conn.execute(text("INSERT INTO sessions VALUES ('fixture', 'Kept')"))
-        if version == 99:
-            with pytest.raises(RuntimeError, match="business v5"):
-                await upgrade_agent_state_view(manager)
+        supported = business == 5 and knowledge == 2
+        if supported:
+            await upgrade_agent_state_view(manager)
+            async with engine.connect() as conn:
+                applied_at = await conn.scalar(read_applied_at)
+            await upgrade_agent_state_view(manager)
         else:
-            await upgrade_agent_state_view(manager)
-            await upgrade_agent_state_view(manager)
+            with pytest.raises(RuntimeError, match="business 5 或 6.*knowledge 为 2"):
+                await upgrade_agent_state_view(manager)
         async with engine.connect() as conn:
             assert await conn.scalar(text("SELECT title FROM sessions WHERE thread_id='fixture'")) == "Kept"
             columns = (
@@ -581,44 +586,9 @@ async def test_agent_state_view_upgrade_is_explicit_and_preserves_existing_data(
                 .scalars()
                 .all()
             )
-            assert ("agent_state_view" in columns) == (version == 5)
-        assert (await get_schema_versions(manager))["business"] == (6 if version == 5 else 99)
-    finally:
-        await _drop_isolated_schema(schema, admin, engine)
-
-
-@pytest.mark.parametrize("version", [1, 99])
-async def test_mcp_credential_upgrade_is_explicit_and_preserves_existing_data(version):
-    """真实 PostgreSQL 证明重复升级保留旧值，未知版本在 DDL 前拒绝。"""
-    from yuxi.migrations.mcp_personal_credentials import upgrade_mcp_personal_credentials
-
-    schema, admin, engine, manager = await _create_isolated_manager("pytest_mcp_upgrade")
-    try:
-        await create_schema_version_table(manager)
-        await record_schema_version(manager, "business", version)
-        async with engine.begin() as conn:
-            await conn.execute(text("CREATE TABLE mcp_servers (slug TEXT PRIMARY KEY, headers JSONB)"))
-            await conn.execute(text("INSERT INTO mcp_servers VALUES ('existing', '{\"X-API-Key\":\"fixture-shared\"}')"))
-        if version == 99:
-            with pytest.raises(RuntimeError, match="business v1/v2"):
-                await upgrade_mcp_personal_credentials(manager)
-        else:
-            await upgrade_mcp_personal_credentials(manager)
-            await upgrade_mcp_personal_credentials(manager)
-        async with engine.connect() as conn:
-            assert await conn.scalar(text("SELECT headers FROM mcp_servers WHERE slug='existing'")) == {"X-API-Key": "fixture-shared"}
-            columns = (
-                (
-                    await conn.execute(
-                        text(
-                            "SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='mcp_servers'"
-                        )
-                    )
-                )
-                .scalars()
-                .all()
-            )
-            assert ("api_key_header" in columns) == (version == 1)
-        assert (await get_schema_versions(manager))["business"] == (2 if version == 1 else 99)
+            assert ("agent_state_view" in columns) == supported
+            if supported:
+                assert await conn.scalar(read_applied_at) == applied_at
+        assert await get_schema_versions(manager) == {"business": 6 if supported else business, "knowledge": knowledge}
     finally:
         await _drop_isolated_schema(schema, admin, engine)

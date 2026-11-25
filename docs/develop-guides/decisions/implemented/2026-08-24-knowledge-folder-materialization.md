@@ -22,7 +22,7 @@ Owner：backend/yuxi/modules/knowledge/services/imports.py
 
 持久导入回执以操作者和导入标识唯一，绑定知识库、目标、条目和处理参数指纹，保存逐项结果及作业引用。显式 import_id 支持主动重新导入；已有调用方未提供时以稳定暂存对象清单导出标识，同一暂存清单视为同一意图。重放原登记结果，标识对应不同请求返回 409；文件或知识库删除不删除回执，旧请求不能复活文件。相同内容允许形成独立条目。
 
-知识域 Schema 版本为 2，业务域保持版本 1；该决定部分取代[版本 1 基线决定](./2026-10-19-schema-baseline-one.md)的知识域编号，初始化器仍不自动升级历史库。旧进程停止写入后执行显式离线转换。转换先只读审计，歧义目录、普通文件占用目录前缀、跨库父关系或目录环阻止转换并报告；不猜测合并意图。转换按有限事务恢复真实父关系，重复叶子文件按稳定顺序加后缀，保留文件 ID、原件、解析与索引身份。转换创建的目录带有来源标记，只用于识别中断重入，不将既有真实目录和虚拟路径猜测合并。失败或中断可重入；约束和版本只有在全部数据收敛后生效。转换期间 API/worker 不接流量，不增加常驻迁移任务或 UI。
+知识域 Schema 版本为 2，取代[版本 1 基线决定](./2026-10-19-schema-baseline-one.md)的知识域编号。早期路径型目录的审计、歧义处理和按文件身份转换由 [0.8.0 标签的离线工具](https://github.com/xerrors/Yuxi/blob/v0.8.0/backend/yuxi/migrations/knowledge_directories.py)保存。正式 0.8.0 已具有真实目录与同级约束，后续升级边界见[发行版数据库升级决定](./2026-11-25-release-database-upgrade.md)。
 
 可写知识库列表只查询真实 parent_id，移除虚拟目录投影、前端路径前缀及旧同名提示。Web、CLI、URL、工作区导入沿实际消费者收敛，既有任务 payload 在切换前审计，未完成旧任务阻止切换。外部只读连接器保持既有检索契约。
 
@@ -49,9 +49,9 @@ Owner：backend/yuxi/modules/knowledge/services/imports.py
 | 证据 | 结果与边界 |
 | --- | --- |
 | `backend/test/integration/api/test_knowledge_directory_imports.py` 与相关 HTTP/worker 路由回归 | 91 passed：并发后缀、根目录/NFC/大小写、移动回滚、非法清单、逐项失败、原件独占、幂等与删除重放、真实解析产物、发布失败恢复、权限与跨库隔离 |
-| `backend/test/integration/services/test_knowledge_directory_migration.py` 与 Schema/投影/关系回归 | 49 passed：中断重入、稳定文件身份与来源映射、真实/虚拟目录歧义、文件占用目录前缀、旧活动任务阻断、约束和版本发布 |
+| [0.8.0 标签中的目录迁移测试](https://github.com/xerrors/Yuxi/blob/v0.8.0/backend/test/integration/services/test_knowledge_directory_migration.py)与当时的 Schema/投影/关系回归 | 49 passed：中断重入、稳定文件身份与来源映射、真实/虚拟目录歧义、文件占用目录前缀、旧活动任务阻断、约束和版本发布 |
 | 后端完整 unit | 3100 passed、107 skipped；skip 不计入完成证据，核心目录语义由上述真实服务测试证明 |
 | 前端检查与页面 | lint、804 项 unit（0 skipped）与 build 通过；页面验证同名文件后缀、真实多级目录上传与浏览、重名目录拒绝；页面结果与上传原件通过真实服务核对 |
 | 名称分配规模边界 | PostgreSQL 单事务 500 个同名叶子登记测量 1.526 秒，仅含数据库登记，不包含对象 I/O 或性能 SLO |
 
-工程契约、其单元测试、Ruff、文档链接与构建及差异空白检查作为交付 gate 执行。实际目标环境的存量审计、备份及离线转换未执行；部署者按[部署参考](../../../advanced/deployment.md#_3-数据库与文件目录)完成。
+工程契约、其单元测试、Ruff、文档链接与构建及差异空白检查作为交付 gate 执行。实际目标环境的存量审计、备份及离线转换未执行；适用旧部署的操作见 [0.8.0 部署参考](https://github.com/xerrors/Yuxi/blob/v0.8.0/docs/advanced/deployment.md)。
