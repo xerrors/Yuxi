@@ -4,13 +4,9 @@
 
 <a href=".github/media/community-qr.png"><img align="left" width="104" src=".github/media/community-qr.png" alt="扫码加入微信交流" /></a>
 
-**[看演示视频](https://www.bilibili.com/video/BV1erE26iEgv/) · [本地快速启动](#快速启动)**
+**[看演示视频](https://www.bilibili.com/video/BV1erE26iEgv/) · [本地快速启动](#快速启动)** · [项目文档](https://xerrors.github.io/Yuxi/) · [English](README.en.md)
 
-[微信交流](.github/media/community-qr.png) · [项目文档](https://xerrors.github.io/Yuxi/) · [版本记录](https://github.com/xerrors/Yuxi/releases) · [English](README.en.md)
-
-<a href="https://trendshift.io/repositories/24335"><img align="middle" src="https://trendshift.io/api/badge/repositories/24335" alt="Yuxi on Trendshift" width="170" /></a>
-<a href="docker-compose.yml"><img align="middle" alt="Docker" src="https://img.shields.io/badge/Docker-2496ED?style=flat&amp;logo=docker&amp;logoColor=ffffff" /></a>
-<a href="LICENSE"><img align="middle" alt="MIT License" src="https://img.shields.io/badge/license-MIT-green" /></a>
+<a href="https://trendshift.io/repositories/24335"><img src="https://trendshift.io/api/badge/repositories/24335" alt="Yuxi on Trendshift" width="170" /></a>
 
 <br clear="left" />
 
