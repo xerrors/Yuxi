@@ -2,19 +2,17 @@
 
 **Yuxi 是可私有部署的企业智能体基座。** 团队可以把内部资料、常用工具和工作方法配置成专用智能体，由管理员共享给相应的成员或部门。成员使用同一个智能体，各自按权限查资料、核对出处，也可以把调研或分析任务交给它，在项目工作区取回报告、图表和文件。
 
-<table>
-<tr>
-<td valign="middle">
-<p><strong><a href="https://www.bilibili.com/video/BV1erE26iEgv/">看演示视频</a> · <a href="#快速启动">本地快速启动</a></strong></p>
-<p><a href="https://xerrors.github.io/Yuxi/">项目文档</a> · <a href="https://github.com/xerrors/Yuxi/releases">版本记录</a> · <a href="README.en.md">English</a></p>
-<a href="docker-compose.yml"><img alt="Docker" src="https://img.shields.io/badge/Docker-2496ED?style=flat&amp;logo=docker&amp;logoColor=ffffff" /></a>
-<a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-green" /></a>
-</td>
-<td align="center" valign="middle"><a href=".github/media/community-qr.png"><img width="126" src=".github/media/community-qr.png" alt="扫码加入微信交流" /></a><br>微信交流</td>
-</tr>
-</table>
+<a href=".github/media/community-qr.png"><img align="left" width="104" src=".github/media/community-qr.png" alt="扫码加入微信交流" /></a>
 
-<a href="https://trendshift.io/repositories/24335"><img src="https://trendshift.io/api/badge/repositories/24335" alt="Yuxi on Trendshift" width="250" height="55" /></a>
+**[看演示视频](https://www.bilibili.com/video/BV1erE26iEgv/) · [本地快速启动](#快速启动)**
+
+[微信交流](.github/media/community-qr.png) · [项目文档](https://xerrors.github.io/Yuxi/) · [版本记录](https://github.com/xerrors/Yuxi/releases) · [English](README.en.md)
+
+<a href="https://trendshift.io/repositories/24335"><img align="middle" src="https://trendshift.io/api/badge/repositories/24335" alt="Yuxi on Trendshift" width="170" /></a>
+<a href="docker-compose.yml"><img align="middle" alt="Docker" src="https://img.shields.io/badge/Docker-2496ED?style=flat&amp;logo=docker&amp;logoColor=ffffff" /></a>
+<a href="LICENSE"><img align="middle" alt="MIT License" src="https://img.shields.io/badge/license-MIT-green" /></a>
+
+<br clear="left" />
 
 ![食品安全合规分析会话，左侧显示分析结果，右侧列出 Markdown 报告与 HTML 矩阵](https://oss-img.xerrors.cn/github/image-20260825145022410.png)
 
