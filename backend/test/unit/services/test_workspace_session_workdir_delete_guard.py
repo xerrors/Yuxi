@@ -69,3 +69,32 @@ async def test_delete_file_inside_workdir_is_not_blocked(monkeypatch) -> None:
     user = SimpleNamespace(id="db-id-1", uid="user-1")
     result = await svc.delete_workspace_path(path="/projects/20261124/sess-a/out.txt", current_user=user, db=SimpleNamespace())
     assert result["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_personal_workspace_refuses_conversation_archive_but_deletes_tool_media(monkeypatch) -> None:
+    """压缩留档目录及其内容拒绝删除；同级 tool_media 仍可删除。"""
+    calls = []
+
+    def delete_authorized_path(path, *, root):
+        del root
+        calls.append(path)
+
+    _patch_repo(monkeypatch, ["projects/20261124/sess-a"])
+    monkeypatch.setattr(svc, "_workspace_backend", lambda _user: SimpleNamespace(delete_authorized_path=delete_authorized_path))
+    user = SimpleNamespace(id="db-id-1", uid="user-1")
+    with pytest.raises(InvalidOperationError) as error:
+        await svc.delete_workspace_path(
+            path="/projects/20261124/sess-a/outputs/conversation_history/summary.md",
+            current_user=user,
+            db=SimpleNamespace(),
+        )
+    assert error.value.code == "conversation_archive_protected"
+    assert calls == []
+    result = await svc.delete_workspace_path(
+        path="/projects/20261124/sess-a/outputs/tool_media/shot.png",
+        current_user=user,
+        db=SimpleNamespace(),
+    )
+    assert result["success"] is True
+    assert calls == ["/projects/20261124/sess-a/outputs/tool_media/shot.png"]

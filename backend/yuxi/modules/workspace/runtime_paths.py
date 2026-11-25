@@ -106,6 +106,13 @@ def workdir_scope_from_runtime_path(workdir_path: str, runtime_path: str) -> str
     return f"/{normalized[len(root) + 1 :]}"
 
 
+def is_conversation_archive_path(path: str) -> bool:
+    """会话压缩留档目录及其内容。tool_media 与其他 outputs 文件不在此列。"""
+    parts = [part for part in PurePosixPath(str(path or "")).parts if part not in {"", "/"}]
+    archives = {LARGE_TOOL_RESULTS_DIR_NAME, CONVERSATION_HISTORY_DIR_NAME}
+    return any(part == "outputs" and index + 1 < len(parts) and parts[index + 1] in archives for index, part in enumerate(parts))
+
+
 def is_runtime_path(path: str) -> bool:
     """判断绝对路径是否属于 Agent Backend 的 runtime 命名空间。"""
     try:
@@ -123,6 +130,7 @@ __all__ = [
     "WORKSPACE_PATH",
     "PERSONAL_SKILLS_PATH",
     "SHARED_SKILLS_PATH",
+    "is_conversation_archive_path",
     "is_runtime_path",
     "normalize_runtime_path",
     "normalize_artifact_path",

@@ -18,7 +18,7 @@ from yuxi.modules.workspace.filesystem import Workspace
 from yuxi.modules.workspace.paths import ensure_user_workspace, normalize_workspace_scope, validate_directory_name
 from yuxi.modules.workspace.preview import preview_workspace_file
 from yuxi.modules.workspace.repositories.projects import ProjectRepository
-from yuxi.modules.workspace.runtime_paths import runtime_workspace_path
+from yuxi.modules.workspace.runtime_paths import is_conversation_archive_path, runtime_workspace_path
 from yuxi.modules.workspace.services.file_entries import file_entry, sort_file_entries
 from yuxi.shared.errors import (
     ContentTooLargeError,
@@ -206,13 +206,18 @@ async def delete_workspace_path(*, path: str, current_user: User, db) -> dict:
     目标是仍被会话引用的 Project Workdir（或其祖先目录）时拒绝整次删除：
     递归删除会清空会话文件而 Project 绑定与 Session 引用仍然存活，会话
     随即指向不存在的目录；已删除会话（status=deleted）或已软删 Project
-    的残留目录不再阻塞。判断只依据引用路径的祖先关系，删除 Workdir
-    内部单个文件的正常清理不受影响。
+    的    残留目录不再阻塞。判断只依据引用路径的祖先关系。Workdir 内普通文件仍可删除。
+    outputs/conversation_history 与 outputs/large_tool_results 及其内容是会话压缩留档，拒绝删除。
     """
     backend = _workspace_backend(current_user)
     workspace_path = _workspace_path(path)
     if workspace_path == WORKSPACE_SCOPE_ROOT:
         raise InvalidOperationError("工作区根目录不允许删除")
+    if is_conversation_archive_path(workspace_path):
+        raise InvalidOperationError(
+            "该路径是会话压缩留档，删除后无法恢复本会话的历史摘要",
+            code="conversation_archive_protected",
+        )
 
     target = PurePosixPath(str(workspace_path).strip("/"))
     referenced = await ProjectRepository(db).list_referenced_workdir_paths_for_user(str(current_user.uid))

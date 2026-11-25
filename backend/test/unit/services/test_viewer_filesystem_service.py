@@ -10,7 +10,7 @@ import yuxi.modules.workspace.services.viewer as svc
 from yuxi.modules.workspace.errors import FileTransferLimitError
 from yuxi.modules.workspace.services.bindings import AuthorizedWorkdir
 from yuxi.modules.workspace.workdir import Workdir
-from yuxi.shared.errors import DomainError, PermissionDeniedError, ResourceNotFoundError, StateConflictError
+from yuxi.shared.errors import DomainError, InvalidOperationError, PermissionDeniedError, ResourceNotFoundError, StateConflictError
 from yuxi.shared.files import FileInput
 
 
@@ -214,6 +214,32 @@ async def test_viewer_create_and_delete_use_same_live_backend(realtime_viewer):
     )
     assert deleted["success"] is True
     assert realtime_viewer.files == {}
+
+
+@pytest.mark.asyncio
+async def test_viewer_refuses_conversation_archive_and_keeps_the_file(realtime_viewer):
+    """Viewer 删除压缩留档失败且文件仍在；tool_media 可以删除。"""
+    archive = "/projects/11111111-1111-4111-8111-111111111111/outputs/conversation_history/summary.md"
+    media = "/projects/11111111-1111-4111-8111-111111111111/outputs/tool_media/shot.png"
+    realtime_viewer.files[archive] = b"summary"
+    realtime_viewer.files[media] = b"png"
+    user = SimpleNamespace(uid="user-1")
+    with pytest.raises(InvalidOperationError) as error:
+        await svc.delete_viewer_file(
+            thread_id="thread-1",
+            path="/outputs/conversation_history/summary.md",
+            current_user=user,
+            db=object(),
+        )
+    assert error.value.code == "conversation_archive_protected"
+    assert realtime_viewer.files[archive] == b"summary"
+    with pytest.raises(InvalidOperationError) as error:
+        await svc.delete_viewer_file(thread_id="thread-1", path="/outputs/large_tool_results", current_user=user, db=object())
+    assert error.value.code == "conversation_archive_protected"
+    deleted = await svc.delete_viewer_file(thread_id="thread-1", path="/outputs/tool_media/shot.png", current_user=user, db=object())
+    assert deleted["success"] is True
+    assert media not in realtime_viewer.files
+    assert archive in realtime_viewer.files
 
 
 @pytest.mark.asyncio
