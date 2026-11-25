@@ -220,6 +220,7 @@ Windows PowerShell 用户将 `./scripts/init.sh` 换成 `.\scripts\init.ps1`。
 | 把智能体嵌入现有应用 | [Agents API 入门](docs/intro/agents-api-quickstart.md) · [命令行工具](docs/intro/cli.md) · [本地 API 文档](http://localhost:5050/docs) |
 | 让外部助手检索企业知识 | [知识库 MCP 接入](docs/advanced/knowledge-mcp.md) · [API Key 配置](docs/advanced/api-key-integration.md) |
 | 准备上线或评估容量 | [生产部署](docs/advanced/deployment.md) · [沙盒与隔离](docs/mechanisms/sandbox.md) · [并发容量](docs/advanced/agent-concurrency-capacity.md) |
+| 接手代码或排查一个具体问题 | [按任务阅读机制](docs/mechanisms/index.md#从一个任务开始) · [架构与主链路](ARCHITECTURE.md) |
 
 [项目介绍](docs/intro/project-overview.md) · [变更记录](docs/develop-guides/changelog.md) · [DeepWiki](https://deepwiki.com/xerrors/Yuxi)
 

@@ -123,7 +123,7 @@ async def test_create_knowledge_base_persists_allowed_record_fields(tmp_path, mo
 
     monkeypatch.setattr(FakeKnowledgeBaseRepository, "name_exists", staticmethod(knowledge_base_name_available), raising=False)
     monkeypatch.setattr(
-        KnowledgeBaseManager, "_get_or_create_kb_instance", AsyncMock(side_effect=AssertionError("metadata must not construct executor"))
+        KnowledgeBaseManager, "get_executor_for_type", AsyncMock(side_effect=AssertionError("metadata must not construct executor"))
     )
     monkeypatch.setattr("yuxi.modules.knowledge.factory.KnowledgeBaseFactory.get_kb_class", lambda _: type(kb))
     monkeypatch.setattr(

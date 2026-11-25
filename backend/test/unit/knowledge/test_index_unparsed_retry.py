@@ -1,107 +1,123 @@
-"""入库请求遇到未解析或没有正文的文件时先解析，然后只入库一次。"""
+"""单文件解析收尾及入库补解析。"""
 
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from test.unit.support.knowledge import FakeKnowledgeBase, make_knowledge_file_record
-from yuxi.modules.knowledge.manager import KnowledgeBaseManager
-from yuxi.modules.knowledge.services import documents, statistics
+from yuxi.modules.knowledge.read_models import KnowledgeBaseConfig
+from yuxi.modules.knowledge.runtime import knowledge_base
+from yuxi.modules.knowledge.services import document_actions, documents, statistics
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 
 
-def _manager(monkeypatch, meta, executor):
-    manager = KnowledgeBaseManager("/tmp/yuxi-index-unparsed")
-    state = {"meta": dict(meta), "parsed": 0}
+@pytest.mark.parametrize(
+    ("status", "markdown_file", "needs_parse", "parse_fails"),
+    [
+        ("uploaded", None, True, False),
+        ("parsed", None, True, False),
+        ("parsed", "existing.md", False, False),
+        ("parsed", None, True, True),
+    ],
+)
+async def test_index_parses_only_when_needed_and_preserves_processing_owner(monkeypatch, status, markdown_file, needs_parse, parse_fails):
+    """补解析完成及刷新后才入库，同一文件、作业执行权和参数贯穿两阶段。"""
+    steps = []
+    params = {"chunk_preset_id": "general"}
+    metadata = {"status": status, "is_folder": False, "markdown_file": markdown_file}
+    execution_kwargs = {
+        "params": params,
+        "additional_params": {"type_option": "value"},
+        "processing_job_id": "job",
+        "processing_owner": "attempt",
+    }
 
-    async def load_file_meta(_kb_id, _file_id):
-        return dict(state["meta"])
+    async def load_file_meta(kb_id, file_id):
+        assert (kb_id, file_id) == ("kb", "file-1")
+        return dict(metadata)
 
-    async def parse_file(*_args, **kwargs):
-        state["parsed"] += 1
-        state["recover"] = kwargs.get("recover_missing_markdown")
-        state["meta"] = {"status": "parsed", "is_folder": False, "markdown_file": "parsed.md"}
+    async def get_kb_config(kb_id):
+        assert kb_id == "kb"
+        return SimpleNamespace(kb_type="milvus", embedding_model_spec="embed", additional_params={"type_option": "value"})
+
+    async def parse_file(kb_id, file_id, operator_id, **kwargs):
+        assert (kb_id, file_id, operator_id) == ("kb", "file-1", "user")
+        assert kwargs == {**execution_kwargs, "recover_missing_markdown": True}
+        steps.append("parse")
+        if parse_fails:
+            metadata["status"] = "error_parsing"
+            raise ValueError("cannot read document")
+        metadata.update(status="parsed", markdown_file="recovered.md")
         return {"status": "parsed"}
 
-    async def get_kb_config(_kb_id):
-        return SimpleNamespace(kb_type="milvus", embedding_model_spec="embed", additional_params={})
+    async def index_file(kb_id, file_id, operator_id, **kwargs):
+        assert (kb_id, file_id, operator_id) == ("kb", "file-1", "user")
+        assert kwargs == {**execution_kwargs, "embedding_model_spec": "embed"}
+        assert metadata["markdown_file"] == ("recovered.md" if needs_parse else "existing.md")
+        metadata["status"] = "indexed"
+        steps.append("index")
+        return {"status": "indexed"}
 
-    async def get_executor(_kb_type):
-        return executor
+    async def get_executor(kb_type):
+        assert kb_type == "milvus"
+        return SimpleNamespace(parse_file=parse_file, index_file=index_file)
 
-    async def refresh(_kb_id, operation):
-        return await operation
+    async def refresh_stats(kb_id):
+        assert kb_id == "kb"
+        steps.append(f"refresh:{metadata['status']}")
 
     monkeypatch.setattr(documents, "load_file_meta", load_file_meta)
-    monkeypatch.setattr(manager, "parse_file", parse_file)
-    monkeypatch.setattr(manager, "get_kb_config", get_kb_config)
-    monkeypatch.setattr(manager, "_get_or_create_kb_instance", get_executor)
-    monkeypatch.setattr(statistics, "run_with_stats_refresh", refresh)
-    return manager, state
+    monkeypatch.setattr(knowledge_base, "get_kb_config", get_kb_config)
+    monkeypatch.setattr(knowledge_base, "get_executor_for_type", get_executor)
+    monkeypatch.setattr(statistics, "refresh_stats", refresh_stats)
 
-
-async def test_index_parses_uploaded_file_before_indexing(monkeypatch):
-    class Executor:
-        def __init__(self):
-            self.calls = 0
-
-        async def index_file(self, *_args, **_kwargs):
-            self.calls += 1
-            return {"status": "indexed"}
-
-    executor = Executor()
-    manager, state = _manager(monkeypatch, {"status": "uploaded", "is_folder": False}, executor)
-
-    result = await manager.index_file("kb", "file-1", operator_id="user")
-
-    assert result == {"status": "indexed"}
-    assert state["parsed"] == 1
-    assert state["recover"] is True
-    assert executor.calls == 1
-
-
-async def test_index_of_parsed_file_does_not_parse_again(monkeypatch):
-    class Executor:
-        async def index_file(self, *_args, **_kwargs):
-            return {"status": "indexed"}
-
-    manager, state = _manager(
-        monkeypatch,
-        {"status": "parsed", "is_folder": False, "markdown_file": "parsed.md"},
-        Executor(),
+    indexing = document_actions.index_file(
+        "kb", "file-1", operator_id="user", params=params, processing_job_id="job", processing_owner="attempt"
     )
+    if parse_fails:
+        with pytest.raises(ValueError, match="cannot read document"):
+            await indexing
+        assert steps == ["parse", "refresh:error_parsing"]
+        return
 
-    await manager.index_file("kb", "file-1")
-
-    assert state["parsed"] == 0
-
-
-async def test_index_parses_once_when_markdown_is_missing(monkeypatch):
-    """可入库状态却没有正文时先解析，执行器只被调用一次。"""
-
-    class Executor:
-        def __init__(self):
-            self.calls = 0
-
-        async def index_file(self, *_args, **_kwargs):
-            self.calls += 1
-            return {"status": "indexed"}
-
-    executor = Executor()
-    manager, state = _manager(
-        monkeypatch,
-        {"status": "parsed", "is_folder": False, "markdown_file": None},
-        executor,
-    )
-
-    result = await manager.index_file("kb", "file-1")
-
+    result = await indexing
     assert result == {"status": "indexed"}
-    assert state["parsed"] == 1
-    assert state["recover"] is True
-    assert executor.calls == 1
+    assert steps == (["parse", "refresh:parsed"] if needs_parse else []) + ["index", "refresh:indexed"]
+
+
+@pytest.mark.parametrize("refresh_stats_fails", [False, True])
+async def test_parse_file_refreshes_stats_and_keeps_original_error_after_executor_failure(monkeypatch, refresh_stats_fails):
+    refreshed = []
+
+    class FakeExecutor:
+        async def parse_file(self, *args, **kwargs):
+            raise ValueError("parse failed")
+
+    async def get_kb_config(_kb_id: str):
+        return KnowledgeBaseConfig(kb_id="kb_1", kb_type="fake")
+
+    if refresh_stats_fails:
+
+        async def refresh_database_stats(_kb_id: str):
+            raise RuntimeError("stats failed")
+    else:
+
+        async def refresh_database_stats(kb_id: str):
+            refreshed.append(kb_id)
+            return {}
+
+    monkeypatch.setattr(knowledge_base, "get_kb_config", get_kb_config)
+    monkeypatch.setattr(knowledge_base, "get_executor_for_type", AsyncMock(return_value=FakeExecutor()))
+    monkeypatch.setattr(statistics, "refresh_stats", refresh_database_stats)
+
+    with pytest.raises(ValueError, match="parse failed"):
+        await document_actions.parse_file("kb_1", "file_1")
+
+    if not refresh_stats_fails:
+        assert refreshed == ["kb_1"]
 
 
 class _ClaimRepository:

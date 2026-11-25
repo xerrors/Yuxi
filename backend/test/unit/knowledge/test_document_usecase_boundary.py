@@ -53,7 +53,7 @@ async def test_local_document_window_does_not_load_execution_configuration(monke
 
     manager = KnowledgeBaseManager(str(tmp_path))
     monkeypatch.setattr(manager, "get_kb_config", AsyncMock(side_effect=ValueError("invalid parser configuration")))
-    monkeypatch.setattr(manager, "_get_or_create_kb_instance", AsyncMock(side_effect=RuntimeError("Milvus unavailable")))
+    monkeypatch.setattr(manager, "get_executor_for_type", AsyncMock(side_effect=RuntimeError("Milvus unavailable")))
     monkeypatch.setattr(knowledge_documents, "get_knowledge_base_document_support", AsyncMock(return_value=(SimpleNamespace(kb_type="milvus"), True)))
     record = KnowledgeFile(file_id="file", kb_id="kb", filename="source.md", status="parsed", markdown_file="minio://parsed/source.md")
     monkeypatch.setattr("yuxi.modules.knowledge.repositories.files.KnowledgeFileRepository.get_by_file_id", AsyncMock(return_value=record))

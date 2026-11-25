@@ -111,7 +111,6 @@ export function useAgentRunStream({
     ts.isStreaming = false
     ts.turnStatus = status
     ts.activeRunSteerable = false
-    ts.replyLoadingVisible = false
     ts.pendingInputId = null
     ts.runReconnectAttempts = 0
     if (status === 'requires_action') {

@@ -15,10 +15,9 @@ from yuxi.modules.knowledge.cache import (
     serialize_kb_config,
 )
 from yuxi.modules.knowledge.factory import KnowledgeBaseFactory
-from yuxi.modules.knowledge.file_status import needs_parse_before_index
 from yuxi.modules.knowledge.read_models import KnowledgeBaseConfig
 from yuxi.modules.knowledge.schemas import OpenOutputSchema
-from yuxi.modules.knowledge.services import documents, statistics
+from yuxi.modules.knowledge.services import documents
 
 
 class KnowledgeBaseManager:
@@ -67,7 +66,7 @@ class KnowledgeBaseManager:
         failures = [f"{kb_type}:unsupported" for kb_type in unsupported_types]
         for kb_type in kb_types_in_use:
             try:
-                await self._get_or_create_kb_instance(kb_type)
+                await self.get_executor_for_type(kb_type)
                 logger.info(f"[InitializeKB] {kb_type} 实例已初始化")
             except Exception as e:
                 logger.error(f"Failed to initialize {kb_type} knowledge base: {e}")
@@ -76,7 +75,7 @@ class KnowledgeBaseManager:
         if failures:
             raise RuntimeError(f"Used knowledge backends failed to initialize: {', '.join(sorted(failures))}")
 
-    async def _get_or_create_kb_instance(self, kb_type: str) -> KnowledgeExecutor:
+    async def get_executor_for_type(self, kb_type: str) -> KnowledgeExecutor:
         """获取或创建类型共享知识库实例，双检锁避免并发重复创建。"""
         if kb_type in self.kb_instances:
             return self.kb_instances[kb_type]
@@ -144,7 +143,7 @@ class KnowledgeBaseManager:
             return
         if record.deleted_at is None:
             raise ValueError("Cannot clean a visible knowledge base")
-        executor = await self._get_or_create_kb_instance(record.kb_type)
+        executor = await self.get_executor_for_type(record.kb_type)
         await executor.cleanup_knowledge_base_resources(kb_id)
         await repository.purge(kb_id)
 
@@ -155,82 +154,14 @@ class KnowledgeBaseManager:
         record = await KnowledgeBaseRepository().get_by_kb_id(kb_id, include_deleted=True)
         if record is None:
             return None
-        return await self._get_or_create_kb_instance(record.kb_type)
-
-    # ==== 解析与索引执行 ====
-
-    async def parse_file(
-        self,
-        kb_id: str,
-        file_id: str,
-        operator_id: str | None = None,
-        *,
-        params: dict | None = None,
-        processing_job_id: str | None = None,
-        processing_owner: str | None = None,
-        recover_missing_markdown: bool = False,
-    ) -> dict:
-        """解析文件生成 Markdown。"""
-        config = await self.get_kb_config(kb_id)
-        executor = await self._get_or_create_kb_instance(config.kb_type)
-        return await statistics.run_with_stats_refresh(
-            kb_id,
-            executor.parse_file(
-                kb_id,
-                file_id,
-                operator_id,
-                params=params,
-                additional_params=config.additional_params,
-                processing_job_id=processing_job_id,
-                processing_owner=processing_owner,
-                recover_missing_markdown=recover_missing_markdown,
-            ),
-        )
-
-    async def index_file(
-        self,
-        kb_id: str,
-        file_id: str,
-        operator_id: str | None = None,
-        params: dict | None = None,
-        *,
-        processing_job_id: str | None = None,
-        processing_owner: str | None = None,
-    ) -> dict:
-        """入库。未解析或没有正文的文件先解析，然后只交给执行器一次。"""
-        config = await self.get_kb_config(kb_id)
-        executor = await self._get_or_create_kb_instance(config.kb_type)
-        meta = await documents.load_file_meta(kb_id, file_id)
-        if needs_parse_before_index(meta):
-            await self.parse_file(
-                kb_id,
-                file_id,
-                operator_id,
-                params=params,
-                processing_job_id=processing_job_id,
-                processing_owner=processing_owner,
-                recover_missing_markdown=True,
-            )
-        return await statistics.run_with_stats_refresh(
-            kb_id,
-            executor.index_file(
-                kb_id,
-                file_id,
-                operator_id,
-                params=params,
-                embedding_model_spec=config.embedding_model_spec,
-                additional_params=config.additional_params,
-                processing_job_id=processing_job_id,
-                processing_owner=processing_owner,
-            ),
-        )
+        return await self.get_executor_for_type(record.kb_type)
 
     # ==== 检索与文档工具入口 ====
 
     async def aquery(self, query_text: str, kb_id: str, **kwargs) -> list[dict[str, Any]]:
         """异步查询知识库"""
         config = await self.get_kb_config(kb_id)
-        executor = await self._get_or_create_kb_instance(config.kb_type)
+        executor = await self.get_executor_for_type(config.kb_type)
         return await executor.aquery(
             query_text,
             kb_id,
@@ -241,7 +172,7 @@ class KnowledgeBaseManager:
     async def retrieve(self, kb_id: str, query: str, **options) -> dict:
         """按 kb_id 加载最新运行时元数据并执行检索。"""
         config = await self.get_kb_config(kb_id)
-        executor = await self._get_or_create_kb_instance(config.kb_type)
+        executor = await self.get_executor_for_type(config.kb_type)
         results = await executor.aquery(
             query,
             kb_id,
@@ -283,6 +214,6 @@ class KnowledgeBaseManager:
             if not kb_class.supports_document_read:
                 raise ValueError("该知识库只支持检索，不支持文档查看")
             config = await self.get_kb_config(kb_id)
-            executor = await self._get_or_create_kb_instance(config.kb_type)
+            executor = await self.get_executor_for_type(config.kb_type)
             window = await executor.open_document(kb_id, file_id, config=config, offset=offset, limit=limit)
         return OpenOutputSchema(kb_id=kb_id, file_id=file_id, **window).model_dump()

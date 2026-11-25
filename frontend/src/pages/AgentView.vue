@@ -3,7 +3,6 @@
     <SessionWorkspace
       ref="workspaceRef"
       class="agent-session-workspace"
-      :single-mode="false"
       :initial-project-id="draftProjectId"
       :is-new-session="!threadId"
       @thread-change="handleThreadChange"

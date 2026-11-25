@@ -76,6 +76,37 @@ async (page) => {
   await page.getByText('历史消息 0601：', { exact: false }).waitFor()
   await page.getByText('历史消息 0950：', { exact: false }).waitFor()
   check(await page.locator('.agent-view .history-display-item').count() === 350, '首读长轮次应展示全部 350 条')
+  let releaseAgent, agentRequests = 0
+  const agentResponse = new Promise(resolve => { releaseAgent = resolve })
+  const agentUrl = `**/api/agent/${agentId}`
+  await page.route(agentUrl, async route => {
+    agentRequests++
+    await agentResponse
+    await route.fulfill({ json: agent })
+  })
+  const selectThread = () => page.locator('.agent-session-workspace').first().evaluate(async (el, id) => {
+    let owner = el.__vueParentComponent
+    while (owner && !owner.exposed?.selectThreadFromRoute) owner = owner.parent
+    if (!owner) throw new Error('缺少真实 Workspace 路由入口')
+    return owner.exposed.selectThreadFromRoute(id)
+  }, threadId)
+  const agentRequested = page.waitForRequest(agentUrl, { timeout: 10000 })
+  const selection = selectThread()
+  try {
+    await agentRequested
+    const selected = await Promise.race([selection, page.waitForTimeout(3000).then(() => false)])
+    check(selected === true, 'Agent 详情在途阻塞了会话读取')
+    check(await selectThread() === true, '重复刷新等待了输入准备')
+    check(await page.getByText('历史消息 0950：', { exact: false }).isVisible(), 'Agent 详情在途遮住了历史')
+    check(await page.locator('.agent-view [contenteditable="true"]').count() === 0, 'Agent 详情就绪前开放了输入')
+    await page.screenshot({ path: '/tmp/yuxi-history-agent-pending.png' })
+  } finally {
+    releaseAgent()
+    await selection
+  }
+  await page.locator('.agent-view [contenteditable="true"]').waitFor()
+  await page.unroute(agentUrl)
+  check(agentRequests === 1, `在途输入准备产生 ${agentRequests} 次 Agent 详情请求`)
   coldHistory = false
   thread.yuxi.current_turn = null
   failNext = true
@@ -252,14 +283,9 @@ async (page) => {
   })
   for (const status of [403, 404, 410, 503, 'network']) {
     publicFailure = status
-    const result = await page.locator('.agent-session-workspace').first().evaluate(async (el, id) => {
-      let owner = el.__vueParentComponent
-      while (owner && !owner.exposed?.selectThreadFromRoute) owner = owner.parent
-      if (!owner) throw new Error('缺少真实 Workspace 路由入口')
-      return owner.exposed.selectThreadFromRoute(id)
-    }, threadId)
+    const result = await selectThread()
     check(result === ([403, 404, 410].includes(status) ? false : null), `缓存Thread复核${status}错误分类失效：${result}`)
   }
   check(rechecks >= 5, '已缓存Thread跳过服务端可见性复核')
-  return { initialItems: 300, appendedItems: 300, anchorShift: restoredTop - movedTop, sameRunAnchorShift: longTop - longAnchor.top, totalItems: 950, requests: completedRequests, loading: true, retry: true, firstHistoryRetryRestoresInput: true, agentFailureRetryRestoresInput: true, cachedRouteRevalidation: true, dark768: true, input: { sends, receipts, streams, compositionGuard: true, nextDraftRetained: true }, unknown: [...unknown] }
+  return { initialItems: 300, appendedItems: 300, anchorShift: restoredTop - movedTop, sameRunAnchorShift: longTop - longAnchor.top, totalItems: 950, requests: completedRequests, loading: true, retry: true, firstHistoryRetryRestoresInput: true, agentFailureRetryRestoresInput: true, independentReadingAndSingleInputPreparation: true, cachedRouteRevalidation: true, dark768: true, input: { sends, receipts, streams, compositionGuard: true, nextDraftRetained: true }, unknown: [...unknown] }
 }

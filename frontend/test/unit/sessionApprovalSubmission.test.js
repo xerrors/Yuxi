@@ -28,7 +28,7 @@ async function setupSubmission(t, { accepted = false } = {}) {
   Object.assign(state, {
     currentTurnId: 'turn', activeRunId: 'run-A', runStateVersion: 1,
     turnStatus: 'requires_action', pendingInterrupt: original, approvalSubmitting: false,
-    isStreaming: false, replyLoadingVisible: false
+    isStreaming: false
   })
   panel.restorePendingInterruptForThread('thread')
   return {
@@ -66,8 +66,7 @@ for (const status of ['in_progress', 'completed', 'requires_action']) {
         threadId: 'thread', interruptedRunId: 'run-B', waitpointId: 'wait-B',
         kind: 'question', questions: [{ question_id: 'q-B', question: '新问题' }]
       } : null,
-      isStreaming: status === 'in_progress',
-      replyLoadingVisible: status === 'in_progress'
+      isStreaming: status === 'in_progress'
     })
     h.approval.hideApprovalState()
     if (status === 'requires_action') h.approval.restoreInterruptFromThreadState('thread')

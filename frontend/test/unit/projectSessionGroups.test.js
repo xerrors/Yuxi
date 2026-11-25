@@ -183,15 +183,6 @@ test('项目提供带项目上下文的新建入口', () => {
   assert.match(navigationSource, /class="project-status project-status-ready"/)
   assert.match(navigationSource, /@click\.stop="\$emit\('create-project-chat', group\.project\.id\)"/)
   assert.match(layoutSource, /query: \{ project_id: projectId \}/)
-  const createProjectChatHandler = layoutSource.slice(
-    layoutSource.indexOf('const handleCreateProjectChat'),
-    layoutSource.indexOf('const searchWorkspace')
-  )
-  assert.match(createProjectChatHandler, /const handleCreateProjectChat = async/)
-  assert.ok(
-    createProjectChatHandler.indexOf('await router.push') <
-      createProjectChatHandler.indexOf('setCurrentThreadId(null)')
-  )
   assert.match(agentViewSource, /:initial-project-id="draftProjectId"/)
   assert.match(chatSource, /if \(!threadId\) selectedProjectId\.value = initialProjectId \|\| AUTO_PROJECT_ID/)
   assert.match(

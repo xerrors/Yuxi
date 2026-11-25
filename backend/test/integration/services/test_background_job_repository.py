@@ -738,7 +738,7 @@ async def test_document_partial_failure_persists_failed_job_and_details(backgrou
     async def pending(_kb_id, *, after_file_id, **_kwargs):
         return [] if after_file_id else ["ok", "bad"]
 
-    monkeypatch.setattr(knowledge_jobs.knowledge_base, f"{action}_file", process)
+    monkeypatch.setattr(knowledge_jobs.document_actions, f"{action}_file", process)
     monkeypatch.setattr(knowledge_jobs.knowledge_documents, "list_document_file_ids_by_statuses", pending)
     job_id = uuid.uuid4().hex
     repo = BackgroundJobRepository()

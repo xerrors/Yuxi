@@ -220,6 +220,7 @@ Administrators can grant access and management rights by user or department, con
 | Embed an agent in an application | [Agents API quick start](docs/intro/agents-api-quickstart.md) · [CLI](docs/intro/cli.md) · [Local API reference](http://localhost:5050/docs) |
 | Query company knowledge from an external assistant | [Knowledge MCP service](docs/advanced/knowledge-mcp.md) · [API keys](docs/advanced/api-key-integration.md) |
 | Plan a production rollout | [Deployment](docs/advanced/deployment.md) · [Sandbox isolation](docs/mechanisms/sandbox.md) · [Concurrency and capacity](docs/advanced/agent-concurrency-capacity.md) |
+| Get oriented in the codebase or investigate an issue | [Find code by task](docs/mechanisms/index.md#从一个任务开始) · [Architecture and execution flow](ARCHITECTURE.md) |
 
 [Project overview](docs/intro/project-overview.md) · [Changelog](docs/develop-guides/changelog.md) · [DeepWiki](https://deepwiki.com/xerrors/Yuxi)
 

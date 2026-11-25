@@ -147,7 +147,6 @@ import dayjs, { parseToShanghai } from '@/shared/lib/time'
 // 阅读消费共享事实；命令和输入业务由父层的事件与插槽承接。
 const props = defineProps({
   threadId: { type: String, default: null },
-  onLoaded: { type: Function, default: null },
   active: { type: Boolean, default: true },
   pageVisible: { type: Boolean, default: true },
   loading: { type: Boolean, default: false },
@@ -162,7 +161,7 @@ const props = defineProps({
   widgetAction: { type: Function, default: null },
   widgetActionsDisabled: { type: Boolean, default: true }
 })
-const emit = defineEmits(['interrupt', 'terminal', 'open-refs', 'open-session', 'artifact-saved', 'open-preview'])
+const emit = defineEmits(['loaded', 'interrupt', 'terminal', 'open-refs', 'open-session', 'artifact-saved', 'open-preview'])
 const user = useUserStore()
 const runtime = useSessionRuntimeStore()
 const currentChatId = computed(() => user.isLoggedIn ? props.threadId : null)
@@ -173,7 +172,6 @@ const workspaceActive = computed(() => props.active && activated.value && user.i
 const pageVisible = computed(() => props.pageVisible && documentVisible.value)
 const isLoadingMessages = computed(() => props.loading || Boolean(state.value?.readingLoading && !state.value?.historyLoaded))
 const isProcessing = computed(() => props.processing || Boolean(state.value?.isStreaming))
-const isReplyLoading = computed(() => props.replyLoading || Boolean(state.value?.replyLoadingVisible))
 const currentThreadConfigNotice = toRef(props, 'configNotice')
 const availableKnowledgeBases = toRef(props, 'knowledgeBases')
 provide('getAgentThreadState', runtime.getThreadState)
@@ -184,7 +182,7 @@ const currentRunById = computed(() => new Map(currentThreadRuns.value.map((run) 
 const getMessageRun = (message) => currentRunById.value.get(getMessageRunId(message)) || null
 const shouldSuppressRefsForApproval = () => props.suppressRefs || Boolean(state.value?.pendingInterrupt)
 const isRunGroupSettled = (group) =>
-  isRunGroupExecutionSettled(runGroups.value, group, isProcessing.value || isReplyLoading.value)
+  isRunGroupExecutionSettled(runGroups.value, group, isProcessing.value || props.replyLoading)
 
 // Run 终态投影落定后才展示 Refs 操作栏与交付物卡片
 const shouldShowRefs = computed(() => {
@@ -271,7 +269,7 @@ const getDisplayItems = (group) =>
 const isDisplayMessageProcessing = (group, displayItem) => {
   return (
     displayItem?.type === 'message' &&
-    isReplyLoading.value &&
+    props.replyLoading &&
     group?.status === 'streaming' &&
     displayItem.sourceIndex === group.messages.length - 1
   )
@@ -279,7 +277,7 @@ const isDisplayMessageProcessing = (group, displayItem) => {
 
 const isToolGroupActive = (group, itemIndex, displayItems) => {
   return (
-    isReplyLoading.value && group?.status === 'streaming' && itemIndex === displayItems.length - 1
+    props.replyLoading && group?.status === 'streaming' && itemIndex === displayItems.length - 1
   )
 }
 
@@ -436,7 +434,7 @@ function observeLayout() {
   }, 50)
 }
 
-/** 同一视图的读取、输入准备与首次定位只执行一次；路由直接等待这个流程。 */
+/** 合并同一视图的在途读取，完成首次定位后通知宿主。 */
 const load = (fresh = false) => {
   const threadId = currentChatId.value
   if (!workspaceActive.value || !threadId) return Promise.resolve(false)
@@ -445,8 +443,6 @@ const load = (fresh = false) => {
   const promise = (async () => {
     const loaded = await runtime.loadThread(threadId, { fresh })
     if (!loaded || generation !== threadGeneration) return false
-    if (await props.onLoaded?.({ threadId }) === false) return false
-    if (generation !== threadGeneration) return false
     if (!positioned && workspaceActive.value) {
       positioned = true
       await nextTick()
@@ -454,6 +450,8 @@ const load = (fresh = false) => {
         await scrollController.scrollToBottomStaticForce()
       }
     }
+    if (generation !== threadGeneration) return false
+    emit('loaded', { threadId })
     return true
   })()
   loadingPromise = promise

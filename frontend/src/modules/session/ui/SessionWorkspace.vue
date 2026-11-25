@@ -105,7 +105,7 @@
             :class="{ 'has-embedded-state': statePanelOpen && statePanelPlacement.mode === 'embedded' }"
             @interrupt="runtimeView.onInterruptDetected"
             @terminal="runtimeView.onTerminalDetected"
-            :on-loaded="initializeThreadInput"
+            @loaded="initializeThreadInput"
             @open-refs="openTurnSourcesPanel"
             @open-session="navigateToSession"
             @artifact-saved="handleArtifactSaved"
@@ -831,12 +831,6 @@ const {
   continueQueue
 } = sessionRuntime
 const { threadMessages, pendingSends } = storeToRefs(sessionRuntime)
-const setCurrentThreadId = (threadId, options) => {
-  currentThreadId.value = threadId || null
-  if (!props.embedded && workspaceActive.value) {
-    chatThreadsStore.setCurrentThreadId(threadId || null, options)
-  }
-}
 const threadAttachmentsMap = ref({})
 const draftFilesByThread = ref({})
 const attachmentUploadModalOpen = ref(false)
@@ -1136,10 +1130,7 @@ const agentExecutionAvailable = computed(() =>
 )
 const isSessionLoading = computed(() =>
   (props.isNewSession && threadCreationInFlight.value) ||
-  (!currentThreadState.value?.historyLoaded && (
-    isLoadingMessages.value ||
-    (Boolean(currentChatId.value) && sessionAgentStatus.value === 'loading')
-  ))
+  (!currentThreadState.value?.historyLoaded && isLoadingMessages.value)
 )
 
 /** 重用对话加载入口重试，临时错误不改变对话身份。 */
@@ -2044,7 +2035,7 @@ const createActiveThread = async () => {
     if (attachmentUploadThreadKey.value === DRAFT_MODEL_KEY) {
       attachmentUploadThreadKey.value = thread.id
     }
-    setCurrentThreadId(thread.id, { force: true })
+    currentThreadId.value = thread.id
     await refreshSessionAgent(thread.id, selectedAgent)
     return thread.id
   } catch (error) {
@@ -2098,11 +2089,7 @@ const handleAttachmentRemove = async (file) => {
 }
 
 // ==================== 审批功能管理 ====================
-const { approvalState, restoreInterruptFromThreadState, hideApprovalState } = useApproval({
-  getThreadState,
-  fetchThreadMessages,
-  getVisibleThread: () => visibleApprovalThreadId.value
-})
+const { approvalState, restoreInterruptFromThreadState, hideApprovalState } = useApproval({ getThreadState })
 
 const restorePendingInterruptForThread = (threadId) => {
   if (!threadId) return false
@@ -2128,27 +2115,34 @@ const runtimeView = {
     }
   }
 }
-/** 阅读完成后准备当前会话输入；由阅读组件串行等待，路由不再二次触发。 */
+const preparingThreadInputs = new WeakSet()
+
+/** 在授权读取完成后准备该 Thread 的输入，异步结果只用于当前工作区。 */
 const initializeThreadInput = async ({ threadId }) => {
-  if (threadId !== currentThreadId.value) return false
+  if (threadId !== currentThreadId.value) return
   const state = getThreadState(threadId)
-  const current = () => currentThreadId.value === threadId && sessionRuntime.isCurrentThreadState(threadId, state)
-  restorePendingInterruptForThread(threadId)
-  if (workspaceActive.value && pageVisible.value) void chatThreadsStore.markThreadViewed(threadId)
-  await refreshSessionAgent(threadId, currentThread.value?.agent.id)
-  if (!current()) return false
-  if (!agentExecutionAvailable.value) {
-    // 归档或智能体不可用时，已结束轮次的状态面板仍可阅读。
-    if (['completed', 'failed', 'cancelled'].includes(state.turnStatus)) void fetchAgentState(threadId)
-    return true
+  if (preparingThreadInputs.has(state)) return
+  preparingThreadInputs.add(state)
+  try {
+    const current = () => currentThreadId.value === threadId && sessionRuntime.isCurrentThreadState(threadId, state)
+    restorePendingInterruptForThread(threadId)
+    if (workspaceActive.value && pageVisible.value) void chatThreadsStore.markThreadViewed(threadId)
+    await refreshSessionAgent(threadId, currentThread.value?.agent.id)
+    if (!current()) return
+    if (!agentExecutionAvailable.value) {
+      // 归档或智能体不可用时，已结束轮次的状态面板仍可阅读。
+      if (['completed', 'failed', 'cancelled'].includes(state.turnStatus)) void fetchAgentState(threadId)
+      return
+    }
+    await withConfigNoticeSync(async () => syncThreadConfigSnapshot(threadId))
+    if (!current()) return
+    await handleAgentStateRefresh(threadId)
+    if (!current()) return
+    syncThreadConfigSnapshot(threadId, { overwrite: false })
+    restorePendingInterruptForThread(threadId)
+  } finally {
+    preparingThreadInputs.delete(state)
   }
-  await withConfigNoticeSync(async () => syncThreadConfigSnapshot(threadId))
-  if (!current()) return false
-  await handleAgentStateRefresh(threadId)
-  if (!current()) return false
-  syncThreadConfigSnapshot(threadId, { overwrite: false })
-  restorePendingInterruptForThread(threadId)
-  return true
 }
 
 const handlePromoteQueuedInput = async (inputId) => {
@@ -2215,13 +2209,9 @@ const handlePageVisibilityChange = () => {
 
 // ==================== CHAT ACTIONS ====================
 const selectChat = async (chatId) => {
-  if (threadCreationInFlight.value) {
-    message.info('正在创建新对话，请稍候')
-    return false
-  }
   const previousThreadId = currentThreadId.value
   if (previousThreadId !== chatId) resetAgentPanelState()
-  setCurrentThreadId(chatId)
+  currentThreadId.value = chatId
   await nextTick()
   try {
     if (!(await timelineRef.value?.refresh())) return false
@@ -2233,12 +2223,12 @@ const selectChat = async (chatId) => {
 }
 
 const selectThreadFromRoute = async (threadId) => {
-  if (threadCreationInFlight.value) return null
-
   if (!threadId) {
+    // 草稿视图可能正在接收首条输入；已确认的具体 Thread 独立读取。
+    if (threadCreationInFlight.value) return null
     const previousThreadId = currentThreadId.value
     resetAgentPanelState()
-    setCurrentThreadId(null)
+    currentThreadId.value = null
     if (previousThreadId) emit('thread-change', '')
     return true
   }

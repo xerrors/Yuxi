@@ -60,7 +60,7 @@ async def boundary(monkeypatch):
         monkeypatch.setattr(pg_manager, "get_async_session_context", session_context)
         monkeypatch.setattr(dispatch, "publish_job", AsyncMock())
         executor = SimpleNamespace(normalize_additional_params=MilvusKB.normalize_additional_params)
-        monkeypatch.setattr(router.knowledge_base_manager, "_get_or_create_kb_instance", AsyncMock(return_value=executor))
+        monkeypatch.setattr(router.knowledge_base_manager, "get_executor_for_type", AsyncMock(return_value=executor))
         detail = SimpleNamespace(name="Fixture", pending_parse_count=1, pending_index_count=1)
         monkeypatch.setattr(router, "_ensure_knowledge_base_supports_documents", AsyncMock(return_value=detail))
 

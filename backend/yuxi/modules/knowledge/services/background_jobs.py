@@ -9,7 +9,7 @@ from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.knowledge.base import KBEmbeddingModelMissingError
 from yuxi.modules.knowledge.graphs.service import KnowledgeGraphService
 from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
-from yuxi.modules.knowledge.runtime import knowledge_base
+from yuxi.modules.knowledge.services import document_actions
 from yuxi.modules.knowledge.services import documents as knowledge_documents
 
 if TYPE_CHECKING:
@@ -55,7 +55,7 @@ async def run_knowledge_ingest(context: BackgroundJobContext) -> dict:
                 f"[2/3] 解析文件 {index}/{total}",
             )
             try:
-                file_meta = await knowledge_base.parse_file(
+                file_meta = await document_actions.parse_file(
                     kb_id,
                     file_id,
                     operator_id=operator_id,
@@ -85,7 +85,7 @@ async def run_knowledge_ingest(context: BackgroundJobContext) -> dict:
                 f"[3/3] 入库文件 {index}/{len(parsed_files)}",
             )
             try:
-                processed_items[result_index] = await knowledge_base.index_file(
+                processed_items[result_index] = await document_actions.index_file(
                     kb_id,
                     file_id,
                     operator_id=operator_id,
@@ -302,8 +302,8 @@ async def _process_document_file(
     }
     try:
         if action == "parse":
-            return await knowledge_base.parse_file(kb_id, file_id, operator_id=operator_id, params=params, **processing_owner)
-        return await knowledge_base.index_file(kb_id, file_id, operator_id=operator_id, params=params, **processing_owner)
+            return await document_actions.parse_file(kb_id, file_id, operator_id=operator_id, params=params, **processing_owner)
+        return await document_actions.index_file(kb_id, file_id, operator_id=operator_id, params=params, **processing_owner)
     except Exception as exc:
         _log_document_failure(context, kb_id=kb_id, action=action, exc=exc, file_id=file_id)
         result = {"file_id": file_id, "status": "failed", "error": str(exc)}

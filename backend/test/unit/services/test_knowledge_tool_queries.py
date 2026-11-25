@@ -93,7 +93,7 @@ def _patch_retrievers(monkeypatch, *, kb_type: str = "milvus", retriever=None):
 
     monkeypatch.setattr("yuxi.modules.knowledge.repositories.bases.KnowledgeBaseRepository.get_by_kb_id", get_kb_record)
     manager.get_kb_config = _get_config
-    manager._get_or_create_kb_instance = _get_executor
+    manager.get_executor_for_type = _get_executor
     manager.retrieve = _retrieve
     # 复用真实 manager 的文档操作方法，使其内部走上面的 mock。
     manager.open_document = MethodType(KnowledgeBaseManager.open_document, manager)
