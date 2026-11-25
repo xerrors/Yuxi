@@ -477,6 +477,7 @@ class InputResponse(BaseModel):
     received_at: datetime
     items: list[MessageItem]
     attachment_status: Literal["preparing", "ready"] = Field(description="ready 表示本次附件已写入 Workdir；preparing 时禁止消费。")
+    error: str | None = Field(default=None, description="Input 被恢复扫描终止取消时的原因（如 Workdir 永久缺失）；正常态为空。")
     attachment_error: str | None = Field(description="最近一次准备失败，恢复会重试同一 Input。")
 
 
