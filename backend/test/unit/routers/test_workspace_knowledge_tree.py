@@ -135,8 +135,8 @@ def test_workspace_knowledge_file_calls_knowledge_preview_directly(monkeypatch):
     client = _build_client(monkeypatch, FakeKnowledgeBase())
     calls = []
 
-    async def read_preview(*, kb_id: str, file_id: str) -> dict:
-        calls.append((kb_id, file_id))
+    async def read_preview(*, kb_id: str, file_id: str, office_render: str) -> dict:
+        calls.append((kb_id, file_id, office_render))
         return {
             "source": "knowledge",
             "kb_id": kb_id,
@@ -155,4 +155,4 @@ def test_workspace_knowledge_file_calls_knowledge_preview_directly(monkeypatch):
 
     assert response.status_code == 200, response.text
     assert response.json()["content"] == "preview"
-    assert calls == [("kb_1", "file_1")]
+    assert calls == [("kb_1", "file_1", "source")]

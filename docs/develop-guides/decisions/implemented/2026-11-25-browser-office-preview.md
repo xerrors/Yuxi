@@ -34,4 +34,6 @@ Knowledge、Workspace、Viewer 和 Agent artifact 的预览用例各自保持读
 
 `frontend/test/unit/officePreview.test.js` 确认四种扩展名走 Office 原文件、PDF 与 Markdown 响应不变、回退请求带鉴权且不生成给预览器的对象 URL，并拒绝完整包、PDF 渲染器和外部 CDN 地址。`frontend/test/unit/officePreviewAssets.test.js` 确认构建产物中的 Office 资源来自同源文件。后端单测覆盖默认原文件、docx/pptx 的 PDF 回退缓存，以及 xlsx 不进入转换。删除 `.wasm` MIME 映射的负向断言在 Nginx 配置测试中。
 
+`frontend/test/browser/officePreview.js` 在 Vite 页面挂载 Agent 文件预览、工作区预览面板和知识库文件详情，用 `backend/test/data` 的 docx、xlsx、pptx 断言可见正文，并覆盖浅色、深色、768px、加载、空预览，以及无效 docx 进入“正在使用服务端转换”后交给现有 PDF 预览。它不代替已登录的知识库、工作区、Agent 路由；那些页面仍要 Compose 和登录。
+
 真实浏览器里的首屏内存和 CPU 采样未作为本决定的门禁；构建体积由同一变更的生产构建测量，并写在对应 PR 中。
