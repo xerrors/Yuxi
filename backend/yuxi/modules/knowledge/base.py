@@ -376,6 +376,7 @@ class KnowledgeExecutor(ABC):
         await asyncio.gather(
             client.adelete_objects_by_prefix(client.KB_BUCKETS["images"], f"{kb_id}/kb-images/{file_id}/"),
             client.adelete_objects_by_prefix(client.KB_BUCKETS["parsed"], f"{kb_id}/parsed/{file_id}/"),
+            # 旧版预览生成的 PDF 仍随其所属文件清理。
             client.adelete_file(client.KB_BUCKETS["parsed"], f"{kb_id}/preview/{file_id}.pdf"),
         )
 

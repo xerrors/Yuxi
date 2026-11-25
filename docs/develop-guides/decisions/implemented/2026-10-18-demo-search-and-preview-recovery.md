@@ -18,7 +18,7 @@ Owner：frontend/src/modules/session/ui/workspace/AgentPanel.vue
 
 SessionWorkspace 在当前线程终态通知时递增预览刷新版本，不受页面前后台影响；AgentPanel 释放当前线程缓存。可见活动文件重新读取，隐藏面板和其它标签中的文件在重开时读取。显式重复打开缺少元数据的产物也重新读取。现有 Workdir 元数据轮询继续负责运行期刷新；迟到请求不能覆盖新缓存。reactive Map 中共享请求按 toRaw 后的文件对象确认归属，避免等待方将响应误判为失效而保留加载态。
 
-文件授权、runtime 路径、预览转换与后端缓存边界保持原有 Owner；前端按既有终态通知刷新，不提供历史产物快照。
+文件授权与 runtime 路径由现有后端入口处理。前端按终态通知刷新当前产物；Office 原件预览见[浏览器 Office 预览](./2026-11-25-browser-office-preview.md)。
 
 ## 替代方案
 

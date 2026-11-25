@@ -26,18 +26,6 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[3] / "yuxi"
                 "starlette",
                 "subprocess",
                 "tempfile",
-                "yuxi.infrastructure.office_conversion",
-            ),
-        ),
-        (
-            "infrastructure/office_conversion.py",
-            (
-                "yuxi.modules",
-                "yuxi.storage",
-                "fastapi",
-                "starlette",
-                "yuxi.infrastructure.file_preview",
-                "yuxi.infrastructure.minio",
             ),
         ),
     ],
@@ -49,15 +37,6 @@ def test_file_boundaries_reject_forbidden_imports(relative_path, forbidden) -> N
     for module in forbidden:
         with pytest.raises(AssertionError, match=module):
             _assert_no_forbidden_imports(imports | {module}, forbidden)
-
-
-def test_knowledge_and_artifact_do_not_import_workspace_preview() -> None:
-    for relative_path in (
-        "modules/knowledge/base.py",
-        "modules/knowledge/preview.py",
-        "modules/agents/services/artifacts.py",
-    ):
-        assert "yuxi.modules.workspace.preview" not in _imports(relative_path)
 
 
 def _imports(relative_path: str) -> set[str]:

@@ -8,13 +8,8 @@ import os
 import tempfile
 from pathlib import PurePosixPath
 
-from yuxi.infrastructure.file_preview import OfficeRender, prepare_file_preview, preview_too_large
+from yuxi.infrastructure.file_preview import prepare_file_preview, preview_too_large
 from yuxi.infrastructure.filesystem import await_io
-from yuxi.infrastructure.office_conversion import (
-    OfficeConversionError,
-    convert_office_to_pdf,
-    is_office_pdf_convertible,
-)
 from yuxi.modules.extensions.skills.access import lock_accessible_shared_skill_for_file
 from yuxi.modules.identity.repositories.users import UserRepository
 from yuxi.modules.workspace.errors import FileTransferLimitError
@@ -50,7 +45,6 @@ async def resolve_thread_artifact_view(
     app_id: str | None = None,
     download: bool = False,
     preview: bool = False,
-    office_render: OfficeRender | None = None,
 ) -> PreparedFile | PreviewResult | dict:
     """把实时授权文件导出为自动清理的 HTTP 文件响应。"""
     access = await resolve_authorized_workdir(thread_id=thread_id, uid=current_uid, db=db, app_id=app_id)
@@ -81,18 +75,7 @@ async def resolve_thread_artifact_view(
         try:
             with open(temp_path, "rb") as artifact_file:
                 raw_content = artifact_file.read()
-            # 未选择产品预览模式时，维持 Public API 的 PDF 转换契约。
-            if office_render != "source" and is_office_pdf_convertible(normalized):
-                return PreviewResult(
-                    content=await convert_office_to_pdf(PurePosixPath(normalized).name, raw_content),
-                    preview_type="pdf",
-                    supported=True,
-                    media_type="application/pdf",
-                    filename=f"{PurePosixPath(normalized).stem or 'preview'}.pdf",
-                )
-            return prepare_file_preview(normalized, raw_content, office_source=office_render is not None)
-        except OfficeConversionError as exc:
-            raise InvalidOperationError(str(exc)) from exc
+            return prepare_file_preview(normalized, raw_content)
         finally:
             with contextlib.suppress(FileNotFoundError):
                 os.unlink(temp_path)

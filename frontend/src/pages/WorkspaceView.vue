@@ -474,13 +474,9 @@ const finishPreviewRequest = (requestId) => {
 const loadWorkspacePreview = async (entry) => {
   const requestId = startPreviewRequest(entry)
   try {
-    const readPreview = (options) => getWorkspaceFileContent(entry.path, options)
-    const response = await readPreview()
+    const response = await getWorkspaceFileContent(entry.path)
     if (!isCurrentPreviewEntry(requestId, entry)) return
-    const file = await normalizePreviewResponse(response, {
-      ...entry,
-      loadOfficePdf: () => readPreview({ officeRender: 'pdf' })
-    })
+    const file = await normalizePreviewResponse(response, entry)
     applyPreviewFile(requestId, entry, file)
   } catch (error) {
     showPreviewError(requestId, entry, error, '加载文件预览失败:', '加载文件预览失败')
@@ -496,13 +492,9 @@ const loadKnowledgePreview = async (
 ) => {
   const requestId = startPreviewRequest(entry, baseFile)
   try {
-    const readPreview = (options) => getWorkspaceKnowledgeFileContent(entry.kb_id, entry.file_id, options)
-    const response = await readPreview()
+    const response = await getWorkspaceKnowledgeFileContent(entry.kb_id, entry.file_id)
     if (!isCurrentPreviewEntry(requestId, entry)) return
-    const file = await normalizePreviewResponse(response, {
-      ...entry,
-      loadOfficePdf: () => readPreview({ officeRender: 'pdf' })
-    })
+    const file = await normalizePreviewResponse(response, entry)
     applyPreviewFile(requestId, entry, file)
   } catch (error) {
     showPreviewError(requestId, entry, error, messages.log, messages.resolveUserMessage(error))

@@ -23,7 +23,9 @@ async (page) => {
       body = JSON.stringify(data)
     }
     if (path === '/api/v1/agents/sessions') headers['Idempotency-Key'] = crypto.randomUUID()
-    const response = await fetch(path, { headers, method, body })
+    const response = await fetch(path, { headers, method, body }).catch((error) => {
+      throw new Error(method + ' ' + path + ': ' + error.message)
+    })
     if (!response.ok) throw new Error(method + ' ' + path + ': ' + response.status)
     return response.json()
   }, { path, method: 'GET', ...options })
@@ -41,26 +43,38 @@ async (page) => {
   const query = (params) => Object.entries(params)
     .map(([key, value]) => key + '=' + encodeURIComponent(value)).join('&')
   const previewText = (text) => page.locator('.office-preview').getByText(text, { exact: false }).first()
-  const scrollPdf = async (selector) => {
-    await page.locator(selector).hover()
-    await page.mouse.wheel(0, 1000)
-    await page.waitForFunction((selector) => {
-      const pane = document.querySelector(selector)
-      const nextPage = pane?.querySelectorAll('.pdf-page-card')[1]
-      return pane?.scrollTop > 0 && nextPage?.getBoundingClientRect().top < pane.getBoundingClientRect().bottom
-    }, selector)
-  }
   const localFiles = []
   const previews = []
+  const previewRequests = []
   let kbId
   let threadId
   let projectFilePath
 
+  const pdfResponses = []
   const onResponse = (response) => {
+    if (response.headers()['x-yuxi-preview-type'] === 'pdf') pdfResponses.push(response)
     if (response.headers()['x-yuxi-preview-type'] === 'office') previews.push(response)
   }
+  const onRequest = (request) => {
+    if (request.method() === 'GET' && request.url().startsWith(origin + '/api/workspace/file?')) {
+      previewRequests.push(request.url())
+    }
+  }
   page.on('response', onResponse)
+  page.on('request', onRequest)
   const viewerModule = /file-viewer-renderers/
+  const spreadsheetParser = /\/(?:assets\/parser-[\w-]+\.js|sheetjs\/parser\.js)(?:\?|$)/
+  const readDownload = async (button, filename) => {
+    const event = page.waitForEvent('download')
+    await button.click()
+    const download = await event
+    check(download.suggestedFilename() === filename, '下载文件名与上传原件不一致')
+    const bytes = []
+    for await (const chunk of await download.createReadStream()) {
+      for (const byte of chunk) bytes.push(byte)
+    }
+    return bytes
+  }
 
   try {
     const fixtures = ['测试文档.docx', 'xls-cell-preservation.xls', '测试表格.xlsx', '测试演示.pptx']
@@ -72,9 +86,14 @@ async (page) => {
       input.hidden = true
       document.body.append(input)
     })
-    await page.locator('#office-fixtures').setInputFiles(fixtures.map((name) => 'backend/test/data/' + name))
-    for (const index of [0, 1]) {
-      const name = suffix + '-' + fixtures[index]
+    await page.locator('#office-fixtures').setInputFiles([
+      ...fixtures.map((name) => 'backend/test/data/' + name),
+      'frontend/test/browser/fixtures/office-preview-native.pdf'
+    ])
+    const [wordBytes, sheetBytes] = await page.locator('#office-fixtures').evaluate(async (input) =>
+      Promise.all([0, 1].map(async (index) => Array.from(new Uint8Array(await input.files[index].arrayBuffer())))))
+    for (const index of [0, 1, 4]) {
+      const name = suffix + '-' + (fixtures[index] || 'office-preview-native.pdf')
       await api('/api/workspace/upload', { method: 'POST', file: { field: 'files', index, name }, fields: { parent_path: '/' } })
       localFiles.push(name)
     }
@@ -174,25 +193,63 @@ async (page) => {
     await page.locator('.fullscreen-preview-overlay').getByText('工作内容回顾', { exact: true }).first().waitFor()
     await page.locator('.fullscreen-preview-overlay').getByTitle('关闭', { exact: true }).click()
 
-    // 只阻断渲染器模块，保留真实鉴权请求和 LibreOffice 转换。
+    // 阻断 Office 模块后只读一次原件，直接下载的浏览器字节与上传夹具一致。
     await page.route(viewerModule, (route) => route.abort())
     await open('/workspace')
-    const pdfResponse = page.waitForResponse((response) =>
-      response.url().endsWith('office_render=pdf'))
+    const wordPath = '/' + localFiles[0]
+    const countWordReads = () => previewRequests.filter((url) => url.includes('path=' + encodeURIComponent(wordPath))).length
+    const readsBeforeError = countWordReads()
     await page.getByText(localFiles[0], { exact: true }).click()
-    const pdf = await pdfResponse
-    check(pdf.ok(), `PDF 回退失败: ${pdf.status()}`)
-    check(pdf.headers()['content-type'] === 'application/pdf', '回退未返回 PDF')
-    await page.waitForFunction(() => {
-      const canvas = document.querySelector('.pdf-canvas')
-      if (!canvas?.width || !canvas?.height) return false
-      const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data
-      return pixels.some((value, index) => index % 4 === 0 && value < 240 && pixels[index + 3] > 0)
-    })
-    await screenshot('workspace-pdf-fallback-dark', page.locator('.agent-file-preview:visible').filter({ has: page.locator('.pdf-canvas') }))
-    await scrollPdf('.workspace-file-preview-modal .file-content:has(.pdf-canvas)')
+    await page.locator('.office-preview').getByRole('alert').waitFor()
+    const downloadedWord = await readDownload(page.getByRole('button', { name: '下载原件', exact: true }), localFiles[0])
+    check(downloadedWord.length === wordBytes.length && downloadedWord.every((byte, index) => byte === wordBytes[index]),
+      'Office 下载字节与上传原件不一致')
+    check(countWordReads() === readsBeforeError + 1,
+      'Office 渲染失败后再次请求了预览')
+    await screenshot('workspace-office-render-error', page.locator('.workspace-file-preview-modal .agent-file-preview'))
+    await page.unroute(viewerModule)
+
+    // Excel 解析器的加载失败由渲染器自行处理，全屏标题栏仍提供下载。
+    await page.route(spreadsheetParser, (route) => route.abort())
+    await open('/workspace')
+    const parserFailed = page.waitForEvent('requestfailed', (request) => spreadsheetParser.test(request.url()))
+    await page.getByText(localFiles[1], { exact: true }).click()
+    await parserFailed
+    await page.locator('.office-preview-frame .excel-wrapper .error').waitFor({ state: 'visible' })
     await page.getByTitle('全屏预览', { exact: true }).click()
-    await scrollPdf('.fullscreen-preview-overlay .file-content:has(.pdf-canvas)')
+    const downloadedSheet = await readDownload(
+      page.locator('.fullscreen-preview-overlay').getByTitle('下载', { exact: true }), localFiles[1])
+    check(downloadedSheet.length === sheetBytes.length && downloadedSheet.every((byte, index) => byte === sheetBytes[index]),
+      'Excel 全屏下载字节与上传原件不一致')
+    await page.unroute(spreadsheetParser)
+
+    await open('/workspace')
+    await page.getByText(localFiles[2], { exact: true }).click()
+    const checkPdf = async (selector) => {
+      await page.locator(selector).hover()
+      await page.waitForFunction((selector) => {
+        const cards = document.querySelector(selector)?.querySelectorAll('.pdf-page-card')
+        if (cards?.length !== 2) return false
+        const centerColor = (card) => {
+          const canvas = card.querySelector('canvas')
+          return canvas.getContext('2d').getImageData(canvas.width / 2, canvas.height / 2, 1, 1).data
+        }
+        const [black, red] = Array.from(cards, centerColor)
+        return black[0] < 16 && black[3] === 255 && red[0] > 235 && red[1] < 16 && red[3] === 255
+      }, selector)
+      await page.mouse.wheel(0, 1000)
+      await page.waitForFunction((selector) => {
+        const pane = document.querySelector(selector)
+        const nextPage = pane?.querySelector('[data-page-number="2"]')
+        return pane?.scrollTop > 0 && nextPage?.getBoundingClientRect().top < pane.getBoundingClientRect().bottom
+      }, selector)
+    }
+    await checkPdf('.workspace-file-preview-modal .file-content:has(.pdf-canvas)')
+    await page.getByTitle('全屏预览', { exact: true }).click()
+    await checkPdf('.fullscreen-preview-overlay .file-content:has(.pdf-canvas)')
+    check(pdfResponses.length === 1, '原生 PDF 未从普通预览读取')
+    await screenshot('workspace-pdf-direct', page.locator('.fullscreen-preview-overlay'))
+
 
     check(previews.length >= 5, 'Office 原件请求缺失')
     for (const response of previews) {
@@ -205,7 +262,9 @@ async (page) => {
   } finally {
     await page.locator('#office-fixtures').evaluateAll((inputs) => inputs.forEach((input) => input.remove()))
     page.off('response', onResponse)
+    page.off('request', onRequest)
     await page.unroute(viewerModule)
+    await page.unroute(spreadsheetParser)
     if (projectFilePath) {
       await api(`/api/viewer/filesystem/file?${query({ thread_id: threadId, path: projectFilePath })}`, { method: 'DELETE' })
     }

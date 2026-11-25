@@ -13,7 +13,6 @@ const IMAGE_EXTENSIONS = new Set([
 const PDF_EXTENSIONS = new Set(['.pdf'])
 const HTML_EXTENSIONS = new Set(['.html', '.htm'])
 const OFFICE_EXTENSIONS = new Set(['.docx', '.pptx', '.xlsx', '.xls'])
-const OFFICE_PDF_FALLBACK_EXTENSIONS = new Set(['.docx', '.pptx'])
 const TEXT_EXTENSIONS = new Set([
   '.txt',
   '.text',
@@ -144,9 +143,6 @@ export const getCodeLanguageByPath = (path) =>
   normalizeCodeLanguage(CODE_LANGUAGE_MAP[getPreviewFileExtension(path)] || '')
 
 export const isHtmlPreview = (path) => HTML_EXTENSIONS.has(getPreviewFileExtension(path))
-
-export const isOfficePdfFallback = (path) =>
-  OFFICE_PDF_FALLBACK_EXTENSIONS.has(getPreviewFileExtension(path))
 
 /** 还原预览响应里百分号编码的文件名，保留真实扩展名。 */
 const decodePreviewFilename = (value) => {

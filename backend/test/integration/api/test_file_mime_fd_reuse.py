@@ -4,9 +4,11 @@ from hashlib import sha256
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import update
 from test.live_api_cleanup import make_test_session_title
 
 from yuxi.infrastructure.minio import ObjectSizeLimitError, get_minio_client
+from yuxi.modules.knowledge.models import KnowledgeFile
 from yuxi.shared.files import MAX_FILE_PREVIEW_BYTES
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
@@ -129,7 +131,7 @@ async def test_minio_download_enforces_actual_bytes_without_changing_object():
 
 @pytest.mark.parametrize("suffix", [".pdf", ".docx", ".pptx"])
 async def test_knowledge_preview_rejects_large_object_despite_understated_metadata(
-    test_client, admin_headers, knowledge_base_resource, suffix
+    test_client, admin_headers, knowledge_base_resource, postgres_sessions, suffix
 ):
     """持久元数据低估大小时，HTTP 仍拒绝实际超限源文件且不生成缓存。"""
     storage = get_minio_client()
@@ -145,7 +147,7 @@ async def test_knowledge_preview_rejects_large_object_despite_understated_metada
             f"/api/knowledge/knowledge-bases/{kb_id}/documents/add",
             json={
                 "items": [source],
-                "params": {"content_hashes": {source: sha256(content).hexdigest()}, "file_sizes": {source: 0}},
+                "params": {"content_hashes": {source: sha256(content).hexdigest()}},
             },
             headers=admin_headers,
         )
@@ -154,6 +156,12 @@ async def test_knowledge_preview_rejects_large_object_despite_understated_metada
         assert added_payload["status"] == "success", added_payload
         file_id = added_payload["items"][0]["file_id"]
 
+        # 正常导入会读取实际大小，在数据库中构造旧版记录的低估值。
+        async with postgres_sessions() as session:
+            await session.execute(
+                update(KnowledgeFile).where(KnowledgeFile.kb_id == kb_id, KnowledgeFile.file_id == file_id).values(file_size=0)
+            )
+            await session.commit()
         basic = await test_client.get(f"/api/knowledge/knowledge-bases/{kb_id}/documents/{file_id}/basic", headers=admin_headers)
         assert basic.status_code == 200, basic.text
         assert basic.json()["meta"]["size"] == 0

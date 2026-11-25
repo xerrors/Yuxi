@@ -482,33 +482,25 @@ async def test_thread_artifact_preview_http_preserves_raw_download(test_client, 
     assert raw_response.headers["content-type"].startswith("text/markdown")
 
 
-async def test_office_artifact_keeps_public_pdf_and_product_source(test_client, standard_user, admin_headers):
-    """公开预览保留 PDF，产品预览面向所属用户返回 Office 字节。"""
+async def test_public_office_artifact_preview_returns_original_file(test_client, standard_user, admin_headers):
+    """公开 preview=true 返回原件，并检查产物和 Thread 的访问边界。"""
     headers = standard_user["headers"]
     thread_id = await _create_thread_for_user(test_client, headers)
-    fixture = Path(__file__).resolve().parents[2] / "data" / "测试文档.docx"
-    content = fixture.read_bytes()
+    content = (Path(__file__).resolve().parents[2] / "data" / "测试文档.docx").read_bytes()
     try:
         artifact_path = await _upload_project_file(test_client, headers, thread_id, "preview.docx", content, artifact_path=True)
-        public_url = f"/api/v1/agents/sessions/{thread_id}/artifacts/{artifact_path.lstrip('/')}"
-        product_url = f"/api/agent/threads/{thread_id}/artifacts/preview"
-        response = await test_client.get(public_url, params={"preview": True}, headers=headers)
+        url = f"/api/v1/agents/sessions/{thread_id}/artifacts/{artifact_path.lstrip('/')}"
+        params = {"preview": True}
+        response = await test_client.get(url, params=params, headers=headers)
         assert response.status_code == 200, response.text
-        assert response.headers["content-type"] == "application/pdf"
-        assert response.content.startswith(b"%PDF-")
+        assert response.headers["content-type"] == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        assert response.headers["x-yuxi-preview-type"] == "office"
+        assert response.headers["x-yuxi-preview-filename"] == "preview.docx"
+        assert response.headers["content-disposition"].startswith("attachment;")
+        assert response.headers["x-content-type-options"] == "nosniff"
+        assert response.content == content
 
-        params = {"path": artifact_path}
-        source = await test_client.get(product_url, params=params, headers=headers)
-        assert source.status_code == 200, source.text
-        assert source.headers["x-yuxi-preview-type"] == "office"
-        assert source.headers["x-yuxi-preview-filename"] == "preview.docx"
-        assert source.content == content
-        fallback = await test_client.get(product_url, params={**params, "office_render": "pdf"}, headers=headers)
-        assert fallback.status_code == 200, fallback.text
-        assert fallback.headers["content-type"] == "application/pdf"
-        assert fallback.content.startswith(b"%PDF-")
-
-        denied = await test_client.get(product_url, params=params, headers=admin_headers)
+        denied = await test_client.get(url, params=params, headers=admin_headers)
         assert denied.status_code == 404
     finally:
         await archive_public_thread(test_client, headers, thread_id)

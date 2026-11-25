@@ -173,8 +173,8 @@ async def save_thread_artifact(
 async def retrieve_thread_artifact(
     session_id: str,
     path: str,
-    download: bool = Query(default=False),
-    preview: bool = Query(default=False),
+    download: bool = Query(default=False, description="下载原件，上限为 1 GiB。"),
+    preview: bool = Query(default=False, description="预览产物，原件上限为 30 MiB。Office 文件返回原件。超限时返回 supported=false。"),
     context: PublicAgentContext = Depends(require_public_context),
     db: AsyncSession = Depends(get_db),
 ):

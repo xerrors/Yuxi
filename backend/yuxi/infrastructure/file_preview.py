@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import mimetypes
 from pathlib import PurePosixPath
-from typing import Literal
 
 from yuxi.shared.files import MAX_FILE_PREVIEW_BYTES, PreviewResult, detect_media_type
 
 MAX_TEXT_PREVIEW_CHARS = 250_000
-OfficeRender = Literal["source", "pdf"]
 
 _PREVIEW_HEAD_BYTES = 1024
 
@@ -53,7 +51,7 @@ _TEXT_EXTENSIONS = frozenset(
     }
 )
 _IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg"})
-_OFFICE_SOURCE_EXTENSIONS = frozenset({".docx", ".pptx", ".xlsx", ".xls"})
+_OFFICE_EXTENSIONS = frozenset({".docx", ".pptx", ".xlsx", ".xls"})
 _BINARY_SIGNATURES = (
     b"\x7fELF",
     b"MZ",
@@ -69,26 +67,18 @@ _BINARY_SIGNATURES = (
 )
 
 
-def prepare_file_preview(path: str, raw_content: bytes, *, office_source: bool = False) -> PreviewResult:
+def prepare_file_preview(path: str, raw_content: bytes) -> PreviewResult:
     """把文件字节准备为文本或二进制预览结果。"""
     filename = PurePosixPath(path).name or "preview"
-    if office_source and PurePosixPath(filename).suffix.lower() in _OFFICE_SOURCE_EXTENSIONS:
-        # Office 原件只交给文档解析器，响应类型由允许的扩展名决定。
-        return PreviewResult(
-            content=raw_content,
-            preview_type="office",
-            supported=True,
-            media_type=detect_media_type(filename),
-            filename=filename,
-        )
-
     preview_type, supported, message = detect_preview_type(path, raw_content)
-    if preview_type in {"image", "pdf"}:
+    if preview_type in {"image", "pdf", "office"}:
+        # Office 只交给文档解析器，避免内容嗅探把附件识别为其他类型。
+        media_type = detect_media_type(filename) if preview_type == "office" else detect_media_type(path, raw_content)
         return PreviewResult(
             content=raw_content,
             preview_type=preview_type,
             supported=True,
-            media_type=detect_media_type(path, raw_content),
+            media_type=media_type,
             filename=filename,
         )
     if not supported:
@@ -115,6 +105,9 @@ def prepare_file_preview(path: str, raw_content: bytes, *, office_source: bool =
 def detect_preview_type(path: str, raw_content: bytes) -> tuple[str, bool, str | None]:
     """判断文件可用的展示类型与不支持原因。"""
     suffix = PurePosixPath(path).suffix.lower()
+    if suffix in _OFFICE_EXTENSIONS:
+        return "office", True, None
+
     mime_type, _encoding = mimetypes.guess_type(path)
     head = raw_content[:_PREVIEW_HEAD_BYTES]
 

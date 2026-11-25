@@ -167,6 +167,8 @@ curl --fail "$BASE_URL/api/v1/agents/files" \
 
 删除成功会移除附件记录和文件，历史不保留占位；Input 的原始 `attachment_file_ids` 不变，不承诺已删除文件可回放。取消只取消执行，不释放附件为草稿，也不隔离它在共享工作目录中的工具可见性。
 
+读取 artifact URL 时，可用 `?preview=true` 获取预览响应。DOCX、PPTX、XLS 和 XLSX 返回原始文件字节、对应的 `Content-Type` 以及 `X-Yuxi-Preview-Type: office`。此前直接把 DOCX、PPTX 预览交给 PDF 阅读器的客户端，需要按响应头切换到 Office 渲染或保存原件。原生 PDF 仍返回 `application/pdf`。预览原件上限为 30 MiB。超限时响应为 `supported: false` 的 JSON，可用 `?download=true` 下载不超过 1 GiB 的原件。
+
 产品手动 OCR 预解析与图片缩略图处理分别使用 JWT 私有 `/api/agent/files/{file_id}/parse`、`/api/agent/images`，所有 API Key 都不能调用。Public 上传与发送不需要预解析、解析引擎或对象路径。配置了 `ocr_parse_file` 的 Agent 仍可按需解析 Workdir 文件，详见[运行时文件机制](../mechanisms/agent-runtime.md)。旧 Public 临时上传、confirm、parse 和 images 入口已移除。
 
 ## 错误与重试

@@ -47,14 +47,14 @@ async def database(monkeypatch):
 async def object_storage(monkeypatch):
     """真实 MinIO 使用独立桶，只清理本例创建的对象。"""
     from yuxi.infrastructure.minio.client import MinIOClient
-    from yuxi.modules.knowledge import base, preview
+    from yuxi.modules.knowledge import base
     from yuxi.modules.knowledge.services import uploads
 
     client = MinIOClient()
     bucket = f"pytest-knowledge-{uuid4().hex}"
     client.KB_BUCKETS = {"documents": bucket, "parsed": bucket, "images": bucket}
     monkeypatch.setattr(MinIOClient, "KB_BUCKETS", client.KB_BUCKETS)
-    for module in (base, preview, uploads):
+    for module in (base, uploads):
         monkeypatch.setattr(module, "get_minio_client", lambda: client)
     await asyncio.to_thread(client.ensure_bucket_exists, bucket)
     try:
@@ -62,46 +62,6 @@ async def object_storage(monkeypatch):
     finally:
         await client.adelete_objects_by_prefix(bucket, "")
         await asyncio.to_thread(client.client.remove_bucket, bucket)
-
-
-async def test_office_preview_cannot_publish_after_file_deletion(database, object_storage, monkeypatch):
-    """转换暂停时删除文件，恢复转换后回读存储确认没有晚写预览。"""
-    from yuxi.modules.knowledge import preview
-
-    client = object_storage
-    source = await client.aupload_file(client.KB_BUCKETS["documents"], "kb-test/original/file-test/source.docx", b"office")
-    await KnowledgeFileRepository().upsert(
-        "file-test",
-        {
-            "kb_id": "kb-test",
-            "filename": "report.docx",
-            "path": f"minio://{source.bucket_name}/{source.object_name}",
-            "status": "uploaded",
-            "file_size": 6,
-        },
-    )
-    converting, resume = asyncio.Event(), asyncio.Event()
-
-    async def convert(_filename, _content):
-        """只替代转换工具，发布、数据库及对象存储保持真实。"""
-        converting.set()
-        await resume.wait()
-        return b"%PDF-1.4\nconverted"
-
-    monkeypatch.setattr(preview, "convert_office_to_pdf", convert)
-    task = asyncio.create_task(
-        preview.read_knowledge_file_preview("kb-test", "file-test", office_render="pdf")
-    )
-    try:
-        await asyncio.wait_for(converting.wait(), timeout=5)
-        await KnowledgeFileRepository().mark_deleted(kb_id="kb-test", file_id="file-test")
-        resume.set()
-        with pytest.raises(ValueError, match="not found"):
-            await task
-        assert await client.astat_file(client.KB_BUCKETS["parsed"], "kb-test/preview/file-test.pdf") is None
-    finally:
-        resume.set()
-        await asyncio.gather(task, return_exceptions=True)
 
 
 async def test_file_resource_cleanup_removes_office_preview(database, object_storage):

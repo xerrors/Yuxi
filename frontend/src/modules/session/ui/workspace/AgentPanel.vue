@@ -924,16 +924,12 @@ const loadActivePreview = async ({ baseFileOverride = null } = {}) => {
 
   const loadPromise = (async () => {
     // 路径统一为 runtime 身份：用户目录走 workspace，当前 Workdir 走 Viewer，其余走 artifact 预览。
-    const readPreview = isWorkspaceFile
-      ? (options) => getWorkspaceFileContent(filePath, options)
+    const response = isWorkspaceFile
+      ? await getWorkspaceFileContent(filePath)
       : baseFile.workdir
-        ? (options) => getViewerFileContent(requestedThreadId, filePath, options)
-        : (options) => threadApi.previewThreadArtifact(requestedThreadId, filePath, options)
-    const response = await readPreview()
-    return normalizePreviewResponse(response, {
-      ...baseFile,
-      loadOfficePdf: () => readPreview({ officeRender: 'pdf' })
-    })
+        ? await getViewerFileContent(requestedThreadId, filePath)
+        : await threadApi.previewThreadArtifact(requestedThreadId, filePath)
+    return normalizePreviewResponse(response, baseFile)
   })()
   const loadingEntry = { status: 'loading', promise: loadPromise }
   props.previewCache.set(cacheKey, loadingEntry)

@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.api.dependencies.auth import get_db, get_required_user
 from yuxi.api.responses.files import render_file_result
 from yuxi.api.uploads import prepare_upload_files
-from yuxi.infrastructure.file_preview import OfficeRender
 from yuxi.modules.identity.models import User
 from yuxi.modules.workspace.services.files import (
     MAX_WORKSPACE_UPLOAD_SIZE_BYTES,
@@ -24,7 +23,6 @@ from yuxi.modules.workspace.services.files import (
     upload_workspace_files,
     write_workspace_file_content,
 )
-from yuxi.shared.files import PreviewResult
 
 workspace = APIRouter(prefix="/workspace", tags=["workspace"])
 workspace_knowledge = APIRouter(prefix="/workspace", tags=["workspace"])
@@ -66,13 +64,9 @@ async def search_workspace_files_route(
 @workspace.get("/file")
 async def get_workspace_file(
     path: str = Query(..., description="工作区文件路径"),
-    office_render: OfficeRender = Query(
-        "source",
-        description="Office 预览：source 返回原文件，pdf 仅对 docx/pptx 使用 LibreOffice 回退",
-    ),
     current_user: User = Depends(get_required_user),
 ):
-    return render_file_result(await read_workspace_file_content(path=path, current_user=current_user, office_render=office_render))
+    return render_file_result(await read_workspace_file_content(path=path, current_user=current_user))
 
 
 @workspace_knowledge.get("/knowledge/tree", response_model=dict)
@@ -116,10 +110,6 @@ async def get_workspace_knowledge_tree(
 async def get_workspace_knowledge_file(
     kb_id: str = Query(..., description="知识库 ID"),
     file_id: str = Query(..., description="知识库文件 ID"),
-    office_render: OfficeRender = Query(
-        "source",
-        description="Office 预览：source 返回原文件，pdf 仅对 docx/pptx 使用 LibreOffice 回退",
-    ),
     current_user: User = Depends(get_required_user),
 ):
     await _ensure_knowledge_read_access(current_user, kb_id)
@@ -127,7 +117,7 @@ async def get_workspace_knowledge_file(
     try:
         from yuxi.modules.knowledge.preview import read_knowledge_file_preview
 
-        return _preview_response(await read_knowledge_file_preview(kb_id=kb_id, file_id=file_id, office_render=office_render))
+        return render_file_result(await read_knowledge_file_preview(kb_id=kb_id, file_id=file_id))
     except ValueError as error:
         _raise_knowledge_read_error(error)
 
@@ -276,17 +266,3 @@ def _workspace_knowledge_entry(kb_id: str, item: dict) -> dict:
         "has_original_file": bool(item.get("has_original_file")),
         "has_parsed_markdown": bool(item.get("has_parsed_markdown")),
     }
-
-
-def _preview_response(data):
-    if not data.get("binary"):
-        return data
-    return render_file_result(
-        PreviewResult(
-            content=data["content"],
-            preview_type=data["preview_type"],
-            supported=data["supported"],
-            media_type=data["media_type"],
-            filename=data["filename"],
-        )
-    )

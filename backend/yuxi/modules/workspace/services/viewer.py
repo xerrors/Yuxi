@@ -7,11 +7,9 @@ import os
 import tempfile
 from pathlib import PurePosixPath
 
-from yuxi.infrastructure.file_preview import OfficeRender, preview_too_large
+from yuxi.infrastructure.file_preview import prepare_file_preview, preview_too_large
 from yuxi.infrastructure.filesystem import await_io
-from yuxi.infrastructure.office_conversion import OfficeConversionError
 from yuxi.modules.workspace.errors import FileTransferLimitError
-from yuxi.modules.workspace.preview import preview_workspace_file
 from yuxi.modules.workspace.runtime_paths import is_conversation_archive_path, is_runtime_path, runtime_path_for_workdir_scope
 from yuxi.modules.workspace.services.bindings import AuthorizedWorkdir, resolve_authorized_workdir
 from yuxi.modules.workspace.services.file_entries import file_entry, sort_file_entries
@@ -60,7 +58,6 @@ async def read_viewer_file_content(
     path: str,
     current_user,
     db,
-    office_render: OfficeRender = "source",
 ) -> dict | PreviewResult:
     """从实时 Workdir 读取预览，不经过 MinIO revision。"""
     access = await resolve_authorized_workdir(thread_id=thread_id, uid=str(current_user.uid), db=db)
@@ -75,15 +72,7 @@ async def read_viewer_file_content(
         return preview_too_large().payload()
     except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
         raise ResourceNotFoundError("文件不存在") from exc
-    try:
-        return await preview_workspace_file(
-            path,
-            raw_content,
-            office_cache_key=f"viewer:{access.uid}:{access.workdir_path}:{path}",
-            office_render=office_render,
-        )
-    except OfficeConversionError as exc:
-        raise InvalidOperationError(str(exc)) from exc
+    return prepare_file_preview(path, raw_content)
 
 
 async def download_viewer_file(*, thread_id: str, path: str, current_user, db) -> PreparedFile:
