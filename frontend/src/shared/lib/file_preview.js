@@ -12,7 +12,8 @@ const IMAGE_EXTENSIONS = new Set([
 ])
 const PDF_EXTENSIONS = new Set(['.pdf'])
 const HTML_EXTENSIONS = new Set(['.html', '.htm'])
-const OFFICE_EXTENSIONS = new Set(['.docx', '.pptx'])
+const OFFICE_EXTENSIONS = new Set(['.docx', '.pptx', '.xlsx', '.xls'])
+const OFFICE_PDF_FALLBACK_EXTENSIONS = new Set(['.docx', '.pptx'])
 const TEXT_EXTENSIONS = new Set([
   '.txt',
   '.text',
@@ -144,6 +145,33 @@ export const getCodeLanguageByPath = (path) =>
 
 export const isHtmlPreview = (path) => HTML_EXTENSIONS.has(getPreviewFileExtension(path))
 
+export const isOfficePdfFallback = (path) =>
+  OFFICE_PDF_FALLBACK_EXTENSIONS.has(getPreviewFileExtension(path))
+
+/** 还原预览响应里百分号编码的文件名，保留真实扩展名。 */
+export const decodePreviewFilename = (value) => {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+  try {
+    return decodeURIComponent(raw)
+  } catch {
+    return raw
+  }
+}
+
+export const officePreviewFilename = (response, baseFile = {}) => {
+  const headerName = decodePreviewFilename(response?.headers?.get?.('x-yuxi-preview-filename'))
+  const pathName = String(baseFile.filename || baseFile.name || baseFile.path || '')
+    .split('/')
+    .pop()
+  const name = (headerName || pathName || 'preview').split('/').pop() || 'preview'
+  const extension = getPreviewFileExtension(baseFile.path || baseFile.filename || baseFile.name || name)
+  if (extension && OFFICE_EXTENSIONS.has(extension) && !name.toLowerCase().endsWith(extension)) {
+    return `${name}${extension}`
+  }
+  return name
+}
+
 export const getPreviewTypeByContentType = (contentType) => {
   const normalized = String(contentType || '').toLowerCase()
   if (normalized.includes('application/pdf')) return 'pdf'
@@ -198,9 +226,35 @@ export const normalizePreviewResponse = async (response, baseFile = {}) => {
     }
   }
 
+  const headerPreviewType = response?.headers?.get?.('x-yuxi-preview-type') || ''
   const previewType =
-    response?.headers?.get?.('x-yuxi-preview-type') || getPreviewTypeByContentType(contentType)
+    headerPreviewType ||
+    (pathPreviewType === 'office' ? 'office' : getPreviewTypeByContentType(contentType))
   const blob = await response.blob()
+
+  // Office 原文件只交给带扩展名的 File，不生成可脱离鉴权上下文的对象 URL。
+  if (previewType === 'office') {
+    const filename = officePreviewFilename(response, baseFile)
+    const mediaType =
+      blob.type && blob.type !== 'application/octet-stream'
+        ? blob.type
+        : String(contentType || '')
+            .split(';')[0]
+            .trim() || 'application/octet-stream'
+    const previewFile = typeof File === 'undefined' ? null : new File([blob], filename, { type: mediaType })
+    return {
+      ...baseFile,
+      content: null,
+      loading: false,
+      status: previewFile ? 'ready' : 'unsupported',
+      previewType: 'office',
+      supported: Boolean(previewFile),
+      message: previewFile ? '' : '当前文件暂不支持预览，请下载后查看',
+      previewUrl: '',
+      previewFile,
+      filename
+    }
+  }
 
   const previewUrl =
     typeof window !== 'undefined' && window.URL?.createObjectURL

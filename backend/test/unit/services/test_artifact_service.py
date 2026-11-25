@@ -252,7 +252,7 @@ async def test_save_artifact_copies_skill_projection_bytes(live_files):
 
 
 @pytest.mark.asyncio
-async def test_artifact_preview_converts_office_file(live_files, monkeypatch):
+async def test_artifact_preview_returns_office_source_and_pdf_fallback(live_files, monkeypatch):
     path = "/home/user/workspace/projects/11111111-1111-4111-8111-111111111111/report.docx"
     live_files.add_runtime_file(path, b"docx bytes")
     captured = {}
@@ -264,14 +264,26 @@ async def test_artifact_preview_converts_office_file(live_files, monkeypatch):
     monkeypatch.setattr(svc, "is_office_pdf_convertible", lambda _path: True)
     monkeypatch.setattr(svc, "convert_office_to_pdf", convert_office_to_pdf)
 
-    response = await svc.resolve_thread_artifact_view(
+    source = await svc.resolve_thread_artifact_view(
         thread_id="thread-1",
         current_uid="user-1",
         db=object(),
         path=path,
         preview=True,
     )
+    assert source.preview_type == "office"
+    assert source.filename == "report.docx"
+    assert source.content == b"docx bytes"
+    assert captured == {}
 
+    response = await svc.resolve_thread_artifact_view(
+        thread_id="thread-1",
+        current_uid="user-1",
+        db=object(),
+        path=path,
+        preview=True,
+        office_render="pdf",
+    )
     assert response.preview_type == "pdf"
     assert response.content == b"%PDF-1.4 preview"
     assert captured == {"filename": "report.docx", "raw_content": b"docx bytes"}

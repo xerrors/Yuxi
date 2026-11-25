@@ -89,7 +89,9 @@ async def test_office_preview_cannot_publish_after_file_deletion(database, objec
         return b"%PDF-1.4\nconverted"
 
     monkeypatch.setattr(preview, "convert_office_to_pdf", convert)
-    task = asyncio.create_task(preview.read_knowledge_file_preview("kb-test", "file-test"))
+    task = asyncio.create_task(
+        preview.read_knowledge_file_preview("kb-test", "file-test", office_render="pdf")
+    )
     try:
         await asyncio.wait_for(converting.wait(), timeout=5)
         await KnowledgeFileRepository().mark_deleted(kb_id="kb-test", file_id="file-test")

@@ -1,5 +1,7 @@
 """Thread 范围内的文件、上下文与状态能力。"""
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -175,6 +177,10 @@ async def retrieve_thread_artifact(
     path: str,
     download: bool = Query(default=False),
     preview: bool = Query(default=False),
+    office_render: Literal["source", "pdf"] = Query(
+        "source",
+        description="Office 预览：source 返回原文件，pdf 仅对 docx/pptx 使用 LibreOffice 回退",
+    ),
     context: PublicAgentContext = Depends(require_public_context),
     db: AsyncSession = Depends(get_db),
 ):
@@ -189,5 +195,6 @@ async def retrieve_thread_artifact(
             download=download,
             preview=preview,
             app_id=context.scope.app_id,
+            office_render=office_render,
         )
     )

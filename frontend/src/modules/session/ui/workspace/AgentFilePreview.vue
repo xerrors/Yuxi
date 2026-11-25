@@ -184,7 +184,8 @@
         contentClass,
         {
           'is-editing': canEdit && editMode === 'edit',
-          'is-iframe-preview': isHtmlFile && htmlPreviewMode === 'render'
+          'is-iframe-preview': isHtmlFile && htmlPreviewMode === 'render',
+          'is-office-preview': officePreviewActive && !fullscreenPreviewVisible
         }
       ]"
     >
@@ -225,6 +226,26 @@
       </template>
       <template v-else-if="file?.previewType === 'pdf' && file?.previewUrl">
         <PdfPreview :url="file.previewUrl" class="pdf-preview" />
+      </template>
+      <template v-else-if="officePreviewActive && !fullscreenPreviewVisible">
+        <OfficePreview
+          v-if="officeClientVisible"
+          :file="file.previewFile"
+          class="office-preview"
+          @error="startOfficePdfFallback"
+        />
+        <div v-else-if="officeFallbackLoading" class="unsupported-preview loading-preview">
+          <LoaderCircle class="preview-spinner" :size="20" />
+          <span>浏览器预览失败，正在使用服务端转换...</span>
+        </div>
+        <PdfPreview v-else-if="officePdfUrl" :url="officePdfUrl" class="pdf-preview" />
+        <div v-else class="unsupported-preview error-preview">
+          <CircleAlert :size="22" class="preview-error-icon" />
+          <span class="preview-error-text">{{ officeFallbackError || '当前文件无法预览' }}</span>
+        </div>
+      </template>
+      <template v-else-if="file?.previewType === 'office'">
+        <div class="unsupported-preview">当前文件暂不支持预览，请下载后查看</div>
       </template>
       <template v-else-if="isHtmlFile && htmlPreviewMode === 'render'">
         <iframe
@@ -318,7 +339,10 @@
           </button>
         </div>
         <div class="fullscreen-preview-content">
-          <div class="file-content fullscreen-file-content">
+          <div
+            class="file-content fullscreen-file-content"
+            :class="{ 'is-office-preview': officePreviewActive }"
+          >
             <template v-if="currentStatus === 'loading'">
               <div class="unsupported-preview loading-preview fullscreen-unsupported-preview">
                 <LoaderCircle class="preview-spinner" :size="20" />
@@ -343,6 +367,28 @@
             </template>
             <template v-else-if="file?.previewType === 'pdf' && file?.previewUrl">
               <PdfPreview :url="file.previewUrl" class="pdf-preview fullscreen-embed-preview" />
+            </template>
+            <template v-else-if="officePreviewActive">
+              <OfficePreview
+                v-if="officeClientVisible"
+                :file="file.previewFile"
+                class="office-preview"
+                @error="startOfficePdfFallback"
+              />
+              <div v-else-if="officeFallbackLoading" class="unsupported-preview loading-preview fullscreen-unsupported-preview">
+                <LoaderCircle class="preview-spinner" :size="20" />
+                <span>浏览器预览失败，正在使用服务端转换...</span>
+              </div>
+              <PdfPreview v-else-if="officePdfUrl" :url="officePdfUrl" class="pdf-preview fullscreen-embed-preview" />
+              <div v-else class="unsupported-preview error-preview fullscreen-unsupported-preview">
+                <CircleAlert :size="22" class="preview-error-icon" />
+                <span class="preview-error-text">{{ officeFallbackError || '当前文件无法预览' }}</span>
+              </div>
+            </template>
+            <template v-else-if="file?.previewType === 'office'">
+              <div class="unsupported-preview fullscreen-unsupported-preview">
+                当前文件暂不支持预览，请下载后查看
+              </div>
             </template>
             <template v-else-if="isHtmlFile && htmlPreviewMode === 'render'">
               <iframe
@@ -399,6 +445,7 @@ import {
 import hljs from 'highlight.js/lib/common'
 import MarkdownPreview from '@/modules/workspace/ui/MarkdownPreview.vue'
 import PdfPreview from '@/shared/ui/PdfPreview.vue'
+import OfficePreview from '@/shared/ui/OfficePreview.vue'
 import FileTypeIcon from '@/shared/ui/FileTypeIcon.vue'
 import { useThemeStore } from '@/shared/model/theme'
 import { escapeHtml } from '@/shared/lib/html'
@@ -406,8 +453,11 @@ import {
   getCodeLanguageByPath,
   getPreviewFileExtension,
   isHtmlPreview,
-  isMarkdownPreview
+  isMarkdownPreview,
+  isOfficePdfFallback,
+  normalizePreviewResponse
 } from '@/shared/lib/file_preview'
+import { loadOfficePdfFallback } from './officePdfFallback'
 
 const EDITABLE_EXTENSIONS = new Set(['.md', '.markdown', '.mdx', '.txt'])
 const HTML_PREVIEW_DEFAULT_SCALE = 0.9
@@ -541,6 +591,68 @@ const htmlPreviewScalePercent = computed(() => Math.round(htmlPreviewScale.value
 const displayFilePath = computed(() =>
   String(props.filePath || '').replace(/^\/home\/user\/workspace(?=\/|$)/, '~')
 )
+
+const officePdfUrl = ref('')
+const officeFallbackLoading = ref(false)
+const officeFallbackError = ref('')
+let officeFallbackSeq = 0
+
+const officePreviewActive = computed(
+  () => props.file?.previewType === 'office' && props.file?.previewFile instanceof File
+)
+const officeClientVisible = computed(
+  () =>
+    officePreviewActive.value &&
+    !officePdfUrl.value &&
+    !officeFallbackLoading.value &&
+    !officeFallbackError.value
+)
+
+const revokeOfficePdfUrl = () => {
+  if (!officePdfUrl.value || typeof window === 'undefined') return
+  window.URL.revokeObjectURL(officePdfUrl.value)
+  officePdfUrl.value = ''
+}
+
+const resetOfficeFallback = () => {
+  officeFallbackSeq += 1
+  officeFallbackLoading.value = false
+  officeFallbackError.value = ''
+  revokeOfficePdfUrl()
+}
+
+const startOfficePdfFallback = async (reason) => {
+  const sourceName = props.filePath || props.file?.filename || props.file?.name || props.file?.path || ''
+  if (!isOfficePdfFallback(sourceName)) {
+    officeFallbackError.value = reason || '当前文件无法在浏览器中预览'
+    return
+  }
+  const seq = ++officeFallbackSeq
+  officeFallbackLoading.value = true
+  officeFallbackError.value = ''
+  try {
+    const response = await loadOfficePdfFallback({
+      ...props.file,
+      path: props.file?.path || props.filePath
+    })
+    if (!response) throw new Error('无法请求服务端预览')
+    const preview = await normalizePreviewResponse(response, props.file || {})
+    if (seq !== officeFallbackSeq) {
+      if (preview.previewUrl) window.URL.revokeObjectURL(preview.previewUrl)
+      return
+    }
+    if (preview.previewType !== 'pdf' || !preview.previewUrl) {
+      throw new Error(preview.message || '服务端预览失败')
+    }
+    revokeOfficePdfUrl()
+    officePdfUrl.value = preview.previewUrl
+  } catch (error) {
+    if (seq !== officeFallbackSeq) return
+    officeFallbackError.value = error?.message || reason || '服务端预览失败'
+  } finally {
+    if (seq === officeFallbackSeq) officeFallbackLoading.value = false
+  }
+}
 
 const isMarkdown = computed(() => isMarkdownPreview(props.filePath, props.file?.previewType))
 const canEdit = computed(() => {
@@ -701,11 +813,25 @@ watch([() => props.filePath, () => props.file?.previewType, () => props.file?.co
   }
 })
 
+watch(
+  () => [
+    props.filePath,
+    props.file?.previewFile?.name,
+    props.file?.previewFile?.size,
+    props.file?.previewFile?.lastModified
+  ],
+  () => {
+    resetOfficeFallback()
+  }
+)
+
 watch(fullscreenPreviewVisible, (visible) => {
   document.body.style.overflow = visible ? 'hidden' : ''
 })
 
 onUnmounted(() => {
+  officeFallbackSeq += 1
+  revokeOfficePdfUrl()
   document.body.style.overflow = ''
 })
 </script>
@@ -1082,13 +1208,27 @@ onUnmounted(() => {
   border-radius: 6px;
 }
 
-.pdf-preview {
+.pdf-preview,
+.office-preview {
   display: block;
   width: 100%;
   min-height: 100%;
   border: none;
   border-radius: 6px;
   background: var(--gray-25);
+}
+
+.file-content.is-office-preview {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.agent-file-preview.is-full-height .office-preview,
+.fullscreen-file-content .office-preview {
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
 }
 
 .html-preview {

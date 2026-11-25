@@ -11,6 +11,9 @@ __pycache__/
 ### Vue gitignore
 dist
 node_modules
+# file-viewer 在开发态复制到 public 的 Worker 与清单，生产构建由 Vite 插件写入 dist。
+frontend/public/vendor/
+frontend/public/flyfish-viewer-assets.json
 
 ### common gitignore
 .DS_Store

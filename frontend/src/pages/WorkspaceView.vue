@@ -210,6 +210,7 @@
       :bodyStyle="{ height: '82vh', maxHeight: '90vh', padding: '0', overflow: 'hidden' }"
       :footer="null"
       :closable="false"
+      destroy-on-close
       wrapClassName="workspace-file-preview-modal"
       @cancel="closePreview"
     >

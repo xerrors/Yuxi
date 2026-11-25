@@ -54,7 +54,14 @@ async def search_viewer_files(*, thread_id: str, query: str, current_user, db) -
     return {"entries": entries}
 
 
-async def read_viewer_file_content(*, thread_id: str, path: str, current_user, db) -> dict | PreviewResult:
+async def read_viewer_file_content(
+    *,
+    thread_id: str,
+    path: str,
+    current_user,
+    db,
+    office_render: str = "source",
+) -> dict | PreviewResult:
     """从实时 Workdir 读取预览，不经过 MinIO revision。"""
     access = await resolve_authorized_workdir(thread_id=thread_id, uid=str(current_user.uid), db=db)
     _validate_viewer_path(access, path)
@@ -73,6 +80,7 @@ async def read_viewer_file_content(*, thread_id: str, path: str, current_user, d
             path,
             raw_content,
             office_cache_key=f"viewer:{access.uid}:{access.workdir_path}:{path}",
+            office_render=office_render,
         )
     except OfficeConversionError as exc:
         raise InvalidOperationError(str(exc)) from exc

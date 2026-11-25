@@ -559,6 +559,7 @@ const contentState = ref({
 const sourcePreview = ref({
   loading: false,
   url: '',
+  file: null,
   content: '',
   type: '',
   message: '',
@@ -593,6 +594,7 @@ const resetSourcePreview = () => {
   sourcePreview.value = {
     loading: false,
     url: '',
+    file: null,
     content: '',
     type: '',
     message: '',
@@ -698,6 +700,7 @@ const sourcePreviewFile = computed(() => {
     content: sourcePreview.value.content,
     previewType: sourcePreviewDisplayType.value,
     previewUrl: sourcePreview.value.url,
+    previewFile: sourcePreview.value.file,
     supported: sourcePreview.value.supported,
     status: sourcePreview.value.loading
       ? 'loading'
@@ -887,7 +890,7 @@ const viewInfoText = computed(() => {
   if (viewMode.value === 'source') {
     if (sourcePreview.value.loading) return ''
     if (sourceContentLength.value > 0) return `${formatTextLength(sourceContentLength.value)} 字符`
-    if (sourcePreview.value.url) return '源文件预览'
+    if (sourcePreview.value.url || sourcePreview.value.file) return '源文件预览'
     return ''
   }
   if (contentState.value.loading) return ''
@@ -914,7 +917,13 @@ const afterOpenChange = (open) => {
 
 const loadSourcePreview = async () => {
   if (!file.value?.file_id || !props.kbId || !props.fileId || !hasSourcePreview.value) return
-  if (sourcePreview.value.url || sourcePreview.value.content || sourcePreview.value.message) return
+  if (
+    sourcePreview.value.url ||
+    sourcePreview.value.file ||
+    sourcePreview.value.content ||
+    sourcePreview.value.message
+  )
+    return
 
   const requestId = ++sourceRequestSeq
   sourcePreview.value.loading = true
@@ -932,6 +941,7 @@ const loadSourcePreview = async () => {
     sourcePreview.value.message = preview.message || ''
     sourcePreview.value.supported = preview.supported !== false
     sourcePreview.value.url = preview.previewUrl || ''
+    sourcePreview.value.file = preview.previewFile || null
     sourcePreview.value.content = preview.content || ''
   } catch (error) {
     if (requestId !== sourceRequestSeq) return
@@ -1168,7 +1178,8 @@ onBeforeUnmount(() => {
 }
 
 :deep(.source-preview-content .html-preview),
-:deep(.source-preview-content .pdf-preview) {
+:deep(.source-preview-content .pdf-preview),
+:deep(.source-preview-content .office-preview) {
   display: block;
   height: 100%;
   min-height: 100%;

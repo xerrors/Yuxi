@@ -420,13 +420,15 @@ export const threadApi = {
     apiGet(threadApi.getThreadArtifactUrl(threadId, path, true), {}, true, 'blob'),
 
   /** 读取允许跨 Project/User Data/Skills 的 artifact 预览字节。 */
-  previewThreadArtifact: (threadId, path) =>
-    apiGet(
-      `${threadApi.getThreadArtifactUrl(threadId, path, false)}?preview=true`,
+  previewThreadArtifact: (threadId, path, { officeRender } = {}) => {
+    const fallback = officeRender === 'pdf' ? '&office_render=pdf' : ''
+    return apiGet(
+      `${threadApi.getThreadArtifactUrl(threadId, path, false)}?preview=true${fallback}`,
       {},
       true,
       'blob'
-    ),
+    )
+  },
 
   /**
    * 保存交付物到指定 workspace 目录

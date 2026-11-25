@@ -17,6 +17,10 @@
     "@antv/g6": "^5.1.1",
     "@dicebear/core": "10.7.0",
     "@dicebear/styles": "10.6.0",
+    "@file-viewer/renderer-pptx": "^3.3.6",
+    "@file-viewer/renderer-spreadsheet": "^3.3.6",
+    "@file-viewer/renderer-word": "^3.3.6",
+    "@file-viewer/vue3": "^3.3.6",
     "@lucide/vue": "^1.34.0",
     "@opencode-ai/models": "0.0.55",
     "@vscode/markdown-it-katex": "^1.1.2",
@@ -41,6 +45,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@file-viewer/vite-plugin": "^3.3.6",
     "@typescript-eslint/parser": "^8.71.0",
     "@vitejs/plugin-vue": "^6.0.8",
     "@vue/eslint-config-prettier": "^10.2.0",

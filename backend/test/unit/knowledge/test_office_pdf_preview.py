@@ -71,6 +71,29 @@ def stub_file_record(monkeypatch: pytest.MonkeyPatch, record: SimpleNamespace) -
 
 
 @pytest.mark.asyncio
+async def test_read_office_source_preview_returns_original_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
+    stub_file_record(monkeypatch, make_file_record())
+    minio_client = FakeMinioClient()
+    minio_client.objects[("knowledgebases", "db1/upload/demo.docx")] = b"office"
+
+    async def fail_conversion(_filename: str, _content: bytes) -> bytes:
+        raise AssertionError("default office preview must not convert to PDF")
+
+    monkeypatch.setattr(preview, "get_minio_client", lambda: minio_client)
+    monkeypatch.setattr(preview, "convert_office_to_pdf", fail_conversion)
+
+    response = await preview.read_knowledge_file_preview("db1", "file1")
+
+    assert response["preview_type"] == "office"
+    assert response["supported"] is True
+    assert response["binary"] is True
+    assert response["content"] == b"office"
+    assert response["filename"] == "demo.docx"
+    assert response["media_type"] == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    assert ("knowledgebases", "db1/preview/file1.pdf") not in minio_client.objects
+
+
+@pytest.mark.asyncio
 async def test_read_office_pdf_preview_converts_and_caches_pdf(monkeypatch: pytest.MonkeyPatch) -> None:
     stub_file_record(monkeypatch, make_file_record())
     minio_client = FakeMinioClient()
@@ -87,8 +110,8 @@ async def test_read_office_pdf_preview_converts_and_caches_pdf(monkeypatch: pyte
     monkeypatch.setattr(preview, "get_minio_client", lambda: minio_client)
     monkeypatch.setattr(preview, "convert_office_to_pdf", fake_convert)
 
-    response = await preview.read_knowledge_file_preview("db1", "file1")
-    cached_response = await preview.read_knowledge_file_preview("db1", "file1")
+    response = await preview.read_knowledge_file_preview("db1", "file1", office_render="pdf")
+    cached_response = await preview.read_knowledge_file_preview("db1", "file1", office_render="pdf")
 
     assert response["preview_type"] == "pdf"
     assert response["supported"] is True
@@ -101,16 +124,27 @@ async def test_read_office_pdf_preview_converts_and_caches_pdf(monkeypatch: pyte
 
 
 @pytest.mark.asyncio
-async def test_non_docx_pptx_office_files_do_not_get_pdf_preview(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_xlsx_preview_returns_original_bytes_without_pdf_conversion(monkeypatch: pytest.MonkeyPatch) -> None:
     stub_file_record(monkeypatch, make_file_record(filename="demo.xlsx"))
     minio_client = FakeMinioClient()
     minio_client.objects[("knowledgebases", "db1/upload/demo.docx")] = b"PK\x03\x04excel"
+
+    async def fail_conversion(_filename: str, _content: bytes) -> bytes:
+        raise AssertionError("xlsx must not be converted to PDF")
+
     monkeypatch.setattr(preview, "get_minio_client", lambda: minio_client)
+    monkeypatch.setattr(preview, "convert_office_to_pdf", fail_conversion)
 
     response = await preview.read_knowledge_file_preview("db1", "file1")
+    pdf_request = await preview.read_knowledge_file_preview("db1", "file1", office_render="pdf")
 
-    assert response["preview_type"] == "unsupported"
-    assert response["supported"] is False
+    assert response["preview_type"] == "office"
+    assert response["supported"] is True
+    assert response["content"] == b"PK\x03\x04excel"
+    assert response["filename"] == "demo.xlsx"
+    assert response["media_type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    assert pdf_request == response
+    assert ("knowledgebases", "db1/preview/file1.pdf") not in minio_client.objects
 
 
 @pytest.mark.asyncio
