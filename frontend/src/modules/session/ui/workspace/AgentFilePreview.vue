@@ -244,7 +244,7 @@
           <span class="preview-error-text">{{ officeFallbackError || '当前文件无法预览' }}</span>
         </div>
       </template>
-      <template v-else-if="file?.previewType === 'office'">
+      <template v-else-if="file?.previewType === 'office' && !fullscreenPreviewVisible">
         <div class="unsupported-preview">当前文件暂不支持预览，请下载后查看</div>
       </template>
       <template v-else-if="isHtmlFile && htmlPreviewMode === 'render'">
