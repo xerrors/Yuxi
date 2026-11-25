@@ -2,12 +2,13 @@
 
 **Yuxi is a self-hosted platform for building and running enterprise agents.** Teams can give an agent their internal documents, tools, and working instructions, then have an administrator share it with selected people or departments. Colleagues can use the same agent to look up sources they have permission to read or to produce reports, charts, and files in a project workspace.
 
-**[Watch the demo (Chinese)](https://www.bilibili.com/video/BV1erE26iEgv/) · [Run Yuxi locally](#quick-start)**
+<a href=".github/media/community-qr.png"><img align="left" width="104" src=".github/media/community-qr.png" alt="Scan to join the Yuxi WeChat community" /></a>
 
-[Documentation](https://xerrors.github.io/Yuxi/) · [Releases](https://github.com/xerrors/Yuxi/releases) · [中文](README.md)
+**[Watch the demo (Chinese)](https://www.bilibili.com/video/BV1erE26iEgv/) · [Run locally](#quick-start)** · [Documentation](https://xerrors.github.io/Yuxi/) · [中文](README.md)
 
-[![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat&logo=docker&logoColor=ffffff)](docker-compose.yml)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+<a href="https://trendshift.io/repositories/24335"><img src="https://trendshift.io/api/badge/repositories/24335" alt="Yuxi on Trendshift" width="170" /></a>
+
+<br clear="left" />
 
 ![Food safety compliance analysis with findings in the conversation and two files in the output panel](https://oss-img.xerrors.cn/github/image-20260825145022410.png)
 
@@ -231,8 +232,6 @@ Thanks to all contributors for supporting this project!
 <a href="https://github.com/xerrors/Yuxi/contributors">
   <img src="https://contrib.rocks/image?repo=xerrors/Yuxi&max=100&columns=10" />
 </a>
-
-<a href="https://trendshift.io/repositories/24335"><img src="https://trendshift.io/api/badge/repositories/24335" alt="xerrors%2FYuxi | Trendshift" width="250" height="55"/></a>
 
 ---
 
