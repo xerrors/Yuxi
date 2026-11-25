@@ -12,7 +12,7 @@ Owner：backend/yuxi/modules/agents/services/preparation.py
 
 ### 实现方案
 
-worker 取得 Run lease 后，使用持久 Agent 配置、该 Run 已冻结的模型与审批模式、用户与线程身份准备一个 Context。`prepare_agent_runtime_context` 在同一对象上解析资源和 Skill，manifest 从准备结果派生并提交；chat/resume 执行和 `BaseAgent.get_graph(context)` 消费该对象。状态查询直接读取 PostgreSQL checkpoint，不准备 Context 或模型。SubAgent 从子 Agent 配置、已校验父 Run 输入和系统默认解析模型。
+worker 取得 Run lease 后，使用持久 Agent 配置、该 Run 已冻结的模型与审批模式、用户与线程身份准备一个 Context。`prepare_agent_runtime_context` 在同一对象上解析资源和 Skill，manifest 从准备结果派生并提交；chat/resume 执行和 `BaseAgent.get_graph(context)` 消费该对象。状态查询无需准备 Context 或模型。面板投影和 PostgreSQL checkpoint 的读取条件见[运行入口](../../../mechanisms/agent-runtime.md#运行入口)。协作成员通过[独立会话](2026-10-03-session-cooperation.md)进入相同的执行准备流程。
 
 `filter_declared_config` 只装载 Schema 可配置字段，worker 注入身份与运行标记。manifest 的摘要包含准备后的可配置字段和工作区提示词；预加载 Skill 正文只保存实际读取字节的摘要。MCP 发现、Memory 和动态文件读取在各自执行边界生效，manifest 不声明冻结这些外部事实。执行处仍校验 Agent 可见性、Project Workdir、资源权限和用户路径。
 

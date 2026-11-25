@@ -93,6 +93,7 @@ async def _running_job(database, job_id, owner):
 
 async def test_competing_parse_cannot_overwrite_winner_parameters(database, monkeypatch, tmp_path):
     """真实 worker 用例竞争文件，落败请求不能改变胜出产物的参数事实。"""
+    from yuxi.modules.knowledge.runtime import knowledge_base
     from yuxi.modules.knowledge.services import background_jobs as jobs
 
     repo = KnowledgeFileRepository()
@@ -115,9 +116,9 @@ async def test_competing_parse_cannot_overwrite_winner_parameters(database, monk
         return "minio://fixture/result/document.md"
 
     monkeypatch.setattr(
-        jobs.knowledge_base, "get_kb_config", AsyncMock(return_value=SimpleNamespace(kb_type="milvus", additional_params={}))
+        knowledge_base, "get_kb_config", AsyncMock(return_value=SimpleNamespace(kb_type="milvus", additional_params={}))
     )
-    monkeypatch.setattr(jobs.knowledge_base, "_get_or_create_kb_instance", AsyncMock(return_value=executor))
+    monkeypatch.setattr(knowledge_base, "get_executor_for_type", AsyncMock(return_value=executor))
     monkeypatch.setattr("yuxi.modules.documents.service.parse_to_hosted_markdown", parse_source)
     monkeypatch.setattr("yuxi.modules.knowledge.base.get_minio_client", lambda: SimpleNamespace(KB_BUCKETS={"images": "images"}))
     monkeypatch.setattr(executor, "save_markdown_artifact", save)

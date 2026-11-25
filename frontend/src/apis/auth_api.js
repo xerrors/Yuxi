@@ -72,11 +72,6 @@ async function checkFirstRun() {
   return apiGet('/api/auth/check-first-run', {}, false)
 }
 
-async function getUsers({ skip = 0, limit = 100 } = {}) {
-  const params = new URLSearchParams({ skip: String(skip), limit: String(limit) })
-  return apiGet(`/api/auth/users?${params}`)
-}
-
 async function getUsersPage({
   offset = 0,
   limit = 50,
@@ -150,7 +145,6 @@ export const authApi = {
   login,
   initialize,
   checkFirstRun,
-  getUsers,
   getUsersPage,
   createUser,
   updateUser,

@@ -42,7 +42,6 @@ const projectsStore = useProjectsStore()
 const jobsStore = useBackgroundJobsStore()
 const userStore = useUserStore()
 const { activeCount: activeCountRef, isDrawerOpen } = storeToRefs(jobsStore)
-const { threadCreationInFlight } = storeToRefs(chatThreadsStore)
 
 // Add state for settings modal
 const showSettingsModal = ref(false)
@@ -237,9 +236,9 @@ watch(
   () => [route.path, route.params.thread_id],
   () => {
     if (!isAgentView.value) return
-    if (threadCreationInFlight.value) return
     const threadId = typeof route.params.thread_id === 'string' ? route.params.thread_id : null
-    chatThreadsStore.setCurrentThreadId(threadId)
+    // 路由已确认，即使并发创建尚未结束也要更新恢复目标。
+    chatThreadsStore.setCurrentThreadId(threadId, { force: true })
   },
   { immediate: true }
 )

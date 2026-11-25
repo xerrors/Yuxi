@@ -179,9 +179,8 @@ const retryChats = async () => {
   }
 }
 const handleSelectChat = (threadId) => {
-  if (!threadId) return
-  if (!chatThreadsStore.setCurrentThreadId(threadId)) return
-  router.push({ name: 'AgentCompWithThreadId', params: { thread_id: threadId } })
+  if (!threadId || threadCreationInFlight.value) return
+  return router.push({ name: 'AgentCompWithThreadId', params: { thread_id: threadId } })
 }
 
 const handleSearchThreadFound = (thread) => {
@@ -195,15 +194,13 @@ const handleSearchSelectThread = (thread) => {
 }
 
 const handleCreateSessionFromSearch = () => {
-  if (!chatThreadsStore.setCurrentThreadId(null)) return
-  router.push({ name: 'AgentComp' })
+  if (threadCreationInFlight.value) return
+  return router.push({ name: 'AgentComp' })
 }
 
-const handleCreateProjectChat = async (projectId) => {
+const handleCreateProjectChat = (projectId) => {
   if (!projectId || projectPendingId.value || threadCreationInFlight.value) return
-  const initiatingUserId = userStore.userId
-  await router.push({ name: 'AgentComp', query: { project_id: projectId } })
-  if (userStore.userId === initiatingUserId) chatThreadsStore.setCurrentThreadId(null)
+  return router.push({ name: 'AgentComp', query: { project_id: projectId } })
 }
 
 const searchWorkspace = (query) => searchWorkspaceFiles(query)

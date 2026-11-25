@@ -9,7 +9,7 @@
 - 判断需求是否非平凡、何时需要 decision，按[工程决策记录](./decisions/README.md#何时需要)和 [Yuxi Spec Loop](./spec-loop.md)执行；需要时先在 Issue 或 [Discussions](https://github.com/xerrors/Yuxi/discussions) 对齐方案。
 - 一个 PR 解决一个清楚的问题。无关的格式化、重构请另开 PR，“顺手优化”也请另开 PR。
 
-修改不熟悉的模块前，先读 [ARCHITECTURE.md](https://github.com/xerrors/Yuxi/blob/main/ARCHITECTURE.md)，再从真实的路由、service、repository、Schema、Compose 和测试中定位实现。源码和可执行测试比旧文档、历史 PR 更可靠，也比自动生成 Wiki 更可靠。
+接手不熟悉的模块时，从用户遇到的问题进入[按任务阅读机制](../mechanisms/index.md#从一个任务开始)，再沿对应入口核对当前 service、持久事实和测试。跨模块变更先读 [ARCHITECTURE.md](https://github.com/xerrors/Yuxi/blob/main/ARCHITECTURE.md) 中的进程与业务边界。
 
 ## 1. Fork、同步和建分支
 
@@ -70,7 +70,7 @@ docker compose restart api worker
 - 修复 Bug 时先补一个能稳定复现原问题的回归测试，再改实现。
 - 新增函数或类使用简洁中文 docstring；注释说明时序、Owner、安全边界和调用义务，较长处理段可在段首概括职责与阶段，不逐行翻译代码。
 
-知识库现有管理和 executor 调度从 `KnowledgeBaseManager` 开始，后台处理与 Agent 工具从知识库 `services` 开始。修改前按[知识库源码定位](../mechanisms/knowledge-base.md#源码定位与验证)选择当前用例 Owner，再追踪具体 executor 和 repository。
+知识库管理从负责该用例的领域 service 进入，检索和处理调度由 `KnowledgeBaseManager` 选择 executor。修改前按[知识库源码定位](../mechanisms/knowledge-base.md#源码定位与验证)选择用例与验证入口。
 
 ### 后端
 

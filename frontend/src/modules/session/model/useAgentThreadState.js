@@ -12,7 +12,6 @@ export function useAgentThreadState({
 }) {
   const resetThreadUiState = (threadState) => {
     if (!threadState) return
-    threadState.replyLoadingVisible = false
     threadState.pendingInputId = null
     threadState.activeReasoning = null
     threadState.hiddenReasoningParts.clear()
@@ -38,7 +37,6 @@ export function useAgentThreadState({
         turnStatus: null,
         activeRunSteerable: false,
         threadCursor: null,
-        replyLoadingVisible: false,
         pendingInputId: null,
         pendingInterrupt: null,
         agentStateRequestVersion: 0,

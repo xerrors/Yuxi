@@ -4,7 +4,7 @@
 
 ## 能力边界
 
-Yuxi 通过 `KnowledgeBaseManager` 读取知识库配置、解析权限并选择 executor：
+`KnowledgeBaseManager` 读取运行配置并按知识库类型选择 executor。知识库访问服务核对用户的可见范围。
 
 - `milvus` 是文档型知识库，支持上传、解析、分块、向量索引、预览和检索，也可以构建知识图谱；
 - `dify` 和 `notion` 是只读连接器，只保存外部连接信息并执行 Query，不承载 Yuxi 的上传、解析、索引、文件树和全文预览；
@@ -26,20 +26,26 @@ flowchart LR
     Router -->|目录和导入登记| Import["knowledge services：目录、名称、持久回执"]
     Import --> PG
     Import --> Task["PostgreSQL BackgroundJob"]
-    Router -->|解析和索引| Task
-    Router -->|元数据和本地正文| Documents["文档 service"]
+    Router -->|提交解析或入库| Actions["文档处理 service"]
+    Actions --> Task
+    Router -->|库管理| Bases["库元数据 service"]
+    Bases --> PG
+    Router -->|文件元数据和本地正文| Documents["文档读取 service"]
     Documents --> PG
     Documents --> Object
-    Router -->|配置和检索| Manager
+    Router -->|检索| Manager
     Task --> Worker["ARQ worker"]
-    Worker --> Handler["knowledge services：领域作业流程"]
-    Handler --> Manager["KnowledgeBaseManager"]
+    Worker --> Handler["知识库作业 handlers"]
+    Handler -->|文档处理| Actions
+    Handler -->|图谱构建或修复| GraphService["KnowledgeGraphService"]
+    Actions --> Manager["KnowledgeBaseManager"]
     Manager --> MilvusKB["Milvus executor"]
     Manager --> Connector["Dify / Notion / 飞书只读 executor"]
     MilvusKB --> PG[("PostgreSQL")]
     MilvusKB --> Object[("MinIO")]
     MilvusKB --> Vector[("Milvus")]
     MilvusKB --> Graph[("Neo4j，图谱操作")]
+    GraphService --> Graph
     Connector --> External["外部检索与阅读 API"]
 
     Context["可信用户与会话选择"] --> Integration["Knowledge 提供 SDK Auth"]
@@ -52,17 +58,19 @@ flowchart LR
     Service --> Manager
 ```
 
-管理路由对配置、列表和详情直接调用 Manager，对解析和索引登记后台作业；worker 根据 registry 调用知识库 service，再由 Manager 选择 executor。启用 Knowledge 时，worker 在补发和消费任务前初始化已有知识库执行器，并通过真实 Neo4j 会话确认图谱连接；失败会阻止 worker 启动，Compose 按既有策略重启，pending 意图保持未领取。关闭 Knowledge 时跳过这两个连接步骤。Manager 负责配置和 executor 选择；具体 executor 负责解析、索引和检索。知识库配置的最终值在 PostgreSQL，Redis 只缓存最小运行配置，未命中或异常时回源数据库。
+管理路由把库管理和文件浏览交给对应的领域服务。文档处理 service 登记解析和入库作业，worker 通过注册的 handler 调用同一 service 执行，具体 executor 由 Manager 装配。启用 Knowledge 时，worker 在补发和消费任务前初始化已有知识库执行器，并通过真实 Neo4j 会话确认图谱连接；失败会阻止 worker 启动，Compose 按既有策略重启，pending 意图保持未领取。关闭 Knowledge 时跳过这两个连接步骤。Manager 负责配置和 executor 选择；具体 executor 负责解析、索引和检索。知识库配置的最终值在 PostgreSQL，Redis 只缓存最小运行配置，未命中或异常时回源数据库。
 
 未删除知识库的名称由 PostgreSQL 唯一索引约束，名称不区分大小写，已删除名称可复用。并发创建或重命名冲突返回 HTTP 409，冲突事务不改变已有记录。
 
 ## 存储装配与内部边界
 
-`KnowledgeExecutor` 表示按知识库类型复用的执行器，`KnowledgeBase` ORM 表示 PostgreSQL 配置行。Manager 只拥有运行配置回源、执行器装配、解析索引、检索和外部正文读取/清理。库的创建、更新、软删除、摘要和详情由 `services/bases.py` 拥有；文件列表、文件名搜索、元数据、正文窗口和原件读取由 `services/documents.py` 拥有；目录创建、移动和改名由 `services/directories.py` 拥有。管理操作直接进入领域服务和 repository，不经过 Manager，也不装配检索连接。`factory.py` 注册类型及其能力，`runtime.py` 只装配进程级 Manager；独立导入管理服务不依赖先创建运行时单例。类型配置和查询默认值仍由类型类提供。`services/access.py` 拥有用户可见范围，管理路由、Public API 与 Knowledge MCP 在知识域调用该入口；Agent 通过 HTTP MCP 消费授权后的结果。
+`KnowledgeExecutor` 表示按知识库类型复用的执行器，`KnowledgeBase` ORM 表示 PostgreSQL 配置行。Manager 拥有运行配置回源、执行器装配、检索和外部正文读取及清理。库的创建、更新、软删除、摘要和详情由 `services/bases.py` 拥有；文件列表、文件名搜索、元数据、正文窗口和原件读取由 `services/documents.py` 拥有；目录创建、移动和改名由 `services/directories.py` 拥有。库元数据和本地文件浏览直接进入领域服务与 repository。登记文档导入时，路由读取 Manager 的运行配置以校验处理参数。`factory.py` 注册类型及其能力，`runtime.py` 只装配进程级 Manager；独立导入管理服务不依赖先创建运行时单例。类型配置和查询默认值仍由类型类提供。`services/access.py` 拥有用户可见范围，管理路由、Public API 与 Knowledge MCP 在知识域调用该入口；Agent 通过 HTTP MCP 消费授权后的结果。
 
 文档与图谱通过 `knowledge/storage/milvus.py` 装配中文正文、embedding、BM25 函数和索引。文档、实体和三元组各自保留已有列顺序及来源字段。新集合采用统一字段定义，已有集合不自动重建。Milvus 与 Neo4j 查询分别使用每事件循环 8 个线程的预算；调用方取消等待后，实际线程退出才归还容量。
 
 Milvus 执行器持有 `KnowledgeGraphService`，首次图检索在线程内初始化图向量客户端，后续请求复用。Neo4j 连接由基础设施管理，图谱服务协调 PG 事实与 Neo4j/Milvus 投影。一次图谱构建复用一个抽取模型客户端。模型 JSON 归一化负责实体属性合并和关系去重，图 payload 转换只分配局部 ID。
+
+`services/document_actions.py` 拥有文档解析与入库的作业提交和单文件执行顺序。对需要恢复解析正文的文件，先用同一作业执行权和参数补解析，再执行入库。具体 executor 校验文件执行权并发布内容或索引。
 
 `services/graph_build.py` 拥有构建与向量修复的提交准入、唯一 Job 登记和重置前的活动任务检查。HTTP 路由校验权限并适配响应；worker 消费已登记的 action，直接调用图谱执行器，执行器重新验证知识库类型与锁定配置并持有投影锁。提交预检与重置的活动任务检查各自读取当前事实，不提供跨请求的串行化承诺。
 
@@ -176,7 +184,7 @@ Knowledge 默认启用。显式关闭后，知识库管理路由和 MCP 均未�
 
 ## 权限
 
-知识库的最终授权由后端依赖、Manager 可见性查询和具体工具目标校验共同完成：
+知识库的最终授权在后端依赖、知识库访问服务的可见性查询和具体工具的目标校验处执行。
 
 - 读取、检索、打开和下载需要 read 权限；
 - 创建、更新、添加文件、解析、索引、删除和图谱写操作需要 manage 权限；
@@ -200,9 +208,11 @@ Agent 的 `knowledges` 只能缩小用户已有权限。协作成员沿用执行
 | 维护任务 | 起点与职责 | 继续追踪 |
 | --- | --- | --- |
 | 库管理与文件浏览 | [库元数据 service](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/knowledge/services/bases.py) 拥有创建、更新、软删除和详情；documents 拥有列表与文件名搜索，directories 拥有目录操作 | access 拥有权限筛选；repositories 拥有持久查询、树锁与事务 |
-| 检索和处理调度 | [Manager](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/knowledge/manager.py) 回源运行配置并选择 executor | base 与 implementations 拥有文件处理和具体存储操作 |
+| 运行配置与执行器装配 | [Manager](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/knowledge/manager.py) 回源运行配置并选择 executor | base 与 implementations 拥有文件处理和具体存储操作 |
 | 暂存上传、URL 和工作区原件 | [原件暂存 service](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/knowledge/services/uploads.py) 计算内容指纹并写入独立对象和原始名称元数据 | 路由校验权限并适配响应；管理用例调用工作区安全读取入口，正式文件、目录、导入回执和后台作业由导入 service 登记 |
-| 异步导入、解析、索引和图谱构建 | [知识库作业 service](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/knowledge/services/background_jobs.py) 组织领域动作、进度和失败结论 | background_jobs registry/worker 拥有调度与 lease；文档处理由 Manager 分派，图谱构建直接调用 KnowledgeGraphService |
+| 登记导入和图谱作业 | [导入 service](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/knowledge/services/imports.py) 保存导入文件和回执。[图谱构建 service](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/knowledge/services/graph_build.py) 检查构建准入并登记图谱作业 | 核对 PostgreSQL 导入回执与后台作业记录 |
+| 解析和入库 | [文档处理 service](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/knowledge/services/document_actions.py) 登记作业并组织解析、补解析、入库与统计收尾 | Manager 选择 executor，executor 领取文件并发布结果 |
+| 执行知识库作业 | [知识库作业 handlers](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/knowledge/services/background_jobs.py) 处理进度、取消和失败，按作业类型调用文档处理 service 或 KnowledgeGraphService | BackgroundJob registry 和 worker 拥有调度与 lease |
 | 文档删除 | [管理用例](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/knowledge/services/administration.py) 校验文件归属与文档能力、编排文件和目录删除及统计收尾 | 文件 repository 和目录 service 拥有树锁、tombstone 与 outbox 事务；批量逐项保留结果 |
 | 删除与旧代次投影清理 | [投影清理 service](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/knowledge/services/projection_cleanup.py) 定时消费持久 outbox | 清理独立于 BackgroundJobContext；事件行锁与知识库投影锁保护外部删除，提交 applied 后才完成 |
 | Agent 知识能力与委托 | [Knowledge 客户端](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/knowledge/mcp/client.py) 提供内部认证连接与产品读取；[Knowledge MCP 服务端](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/knowledge/mcp/server.py) 验证身份、选择范围与工具权限 | 访问 service 查询实时可见性；工具 service 校验目标并组织领域操作 |
@@ -211,7 +221,7 @@ Agent 的 `knowledges` 只能缩小用户已有权限。协作成员沿用执行
 Agent Context 中的资源选项查询用于配置界面；执行权限仍由访问 service 与实际读取边界核验。增加用例时沿上述 Owner 修改，状态与持久化查询继续留在其负责的领域实现。
 
 - [知识库路由](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/api/routers/knowledge/management.py)：权限、上传、任务和状态筛选
-- [KnowledgeBaseManager](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/knowledge/manager.py)：运行配置回源与 executor 调度
+- [KnowledgeBaseManager](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/knowledge/manager.py)：运行配置回源与 executor 装配
 - [知识库基类](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/knowledge/base.py)：文件状态和解析流程
 - [Milvus executor](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/knowledge/implementations/milvus.py)：分块、双写、检索和重索引
 - [只读连接器](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/knowledge/implementations/read_only_connectors.py)：Dify/Notion 能力边界
@@ -222,6 +232,8 @@ Agent Context 中的资源选项查询用于配置界面；执行权限仍由访
 - [知识库 unit tests](https://github.com/xerrors/Yuxi/tree/main/backend/test/unit/knowledge)
 - [权限与路由 tests](https://github.com/xerrors/Yuxi/tree/main/backend/test/unit/routers)
 - [知识库 HTTP integration](https://github.com/xerrors/Yuxi/blob/main/backend/test/integration/api/test_knowledge_router.py)
+- [知识库管理边界](https://github.com/xerrors/Yuxi/blob/main/backend/test/integration/services/test_knowledge_management_boundaries.py) · [删除与外部清理集成测试](https://github.com/xerrors/Yuxi/blob/main/backend/test/integration/services/test_knowledge_projection_integrity.py)
+- [入库补解析测试](https://github.com/xerrors/Yuxi/blob/main/backend/test/unit/knowledge/test_index_unparsed_retry.py)
 - [Public 工具 integration](https://github.com/xerrors/Yuxi/blob/main/backend/test/integration/api/test_public_knowledge_tools.py)
 
 修改状态、权限、存储或 Agent 工具链路时，至少运行对应 unit 和真实 HTTP integration；涉及外部存储时，从 PostgreSQL、MinIO、Milvus 或 Neo4j 回读最终结果。

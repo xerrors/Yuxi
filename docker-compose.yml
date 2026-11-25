@@ -77,7 +77,6 @@ services:
         source: ${YUXI_STATE_DIR:-./docker/volumes}/yuxi/skill-projections
         target: /app/skill-projections
       - ./backend/test:/app/test
-      - ./backend/scripts:/app/scripts
     ports:
       - "${YUXI_API_PORT:-5050}:5050"
     networks:
@@ -137,7 +136,6 @@ services:
         source: ${YUXI_STATE_DIR:-./docker/volumes}/yuxi/skill-projections
         target: /app/skill-projections
       - ./backend/test:/app/test
-      - ./backend/scripts:/app/scripts
       - ./backend/pyproject.toml:/app/pyproject.toml
       - ./backend/uv.lock:/app/uv.lock
     networks:
@@ -289,7 +287,7 @@ services:
     environment:
       - NODE_ENV=development
       - VITE_API_URL=http://api:5050
-    command: pnpm run server
+    command: pnpm run dev
     restart: unless-stopped
 
   # region neo4j

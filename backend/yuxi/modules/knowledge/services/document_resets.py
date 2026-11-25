@@ -15,7 +15,7 @@ from yuxi.modules.knowledge.repositories.directories import DirectoryRepository
 from yuxi.modules.knowledge.repositories.document_resets import RESET_ACTION_LABELS, RESET_JOB_TYPE, DocumentResetRepository
 from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
 from yuxi.modules.knowledge.runtime import knowledge_base
-from yuxi.modules.knowledge.services import documents
+from yuxi.modules.knowledge.services import document_actions, documents
 from yuxi.modules.knowledge.utils import resolve_processing_params, sanitize_processing_params
 from yuxi.shared.errors import InvalidOperationError, OperationFailedError, StateConflictError
 
@@ -222,7 +222,7 @@ async def run_document_reset(context) -> dict:
     if action == "reparse":
         await context.raise_if_cancelled()
         await context.set_progress(65, "正在从原件重新解析")
-        result = await knowledge_base.parse_file(
+        result = await document_actions.parse_file(
             kb_id,
             file_id,
             operator_id=operator_id,

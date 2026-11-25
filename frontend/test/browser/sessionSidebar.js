@@ -32,7 +32,7 @@ async page => {
     if (path === '/api/projects') json = [project]
     if (path === '/api/v1/agents/sessions') {
       sessionReads++
-      json = { data: url.includes('is_pinned=true') ? [] : sessions, has_more: false }
+      json = { data: url.includes('is_pinned=true') ? [] : sessions.filter(session => !session.yuxi.archived), has_more: false }
     }
     const match = path.match(/^\/api\/v1\/agents\/sessions\/([^/]+)(?:\/(.*))?$/)
     if (match && match[1] === 'unavailable-thread' && unavailableStatus) return route.fulfill({ status: unavailableStatus, json: { detail: '恢复测试' } })
@@ -278,6 +278,28 @@ async page => {
   const currentProjectItem = panel.locator('[aria-current="page"]')
   await currentProjectItem.waitFor()
   check((await currentProjectItem.innerText()).includes(sessions[28].yuxi.title), '项目第六条必须自动展开并选中')
+  await page.evaluate(target => {
+    const router = document.querySelector('#app').__vue_app__.config.globalProperties.$router
+    window.__sidebarNavigationCancelled = new Promise(resolve => {
+      const removeGuard = router.beforeEach(to => to.path !== target)
+      const removeAfterEach = router.afterEach((to, _from, failure) => {
+        if (to.path !== target) return
+        removeGuard()
+        removeAfterEach()
+        resolve(Boolean(failure))
+      })
+    })
+  }, `/agent/${sessions[3].id}`)
+  await panel.getByText(sessions[3].yuxi.title, { exact: true }).click()
+  check(await page.evaluate(() => window.__sidebarNavigationCancelled), '需要实际取消侧栏发起的导航')
+  check(page.url() === `${origin}/agent/${sessions[28].id}`, '导航取消后应留在原会话')
+  check((await currentProjectItem.innerText()).includes(sessions[28].yuxi.title), '导航取消后应继续高亮原会话')
+  const conversationEntry = page.locator('.nav').getByRole('link', { name: '对话', exact: true })
+  check(await conversationEntry.getAttribute('href') === `/agent/${sessions[28].id}`, '导航取消后全局对话入口仍应指向原会话')
+  check(await page.evaluate(() => JSON.parse(localStorage.getItem('chat-ui-store')).navigationByUser[1].lastThreadId) === sessions[28].id, '导航取消后持久返回目标仍应是原会话')
+  const cancelledNavigationImage = '/tmp/yuxi-sidebar-aborted-navigation.png'
+  await page.screenshot({ path: cancelledNavigationImage })
+  screenshots.push(cancelledNavigationImage)
   check(await page.locator('#sidebar-session-panel').count() === 1, '切换线程只能保留一个独立面板实例')
   await panel.locator('.project-toggle').click()
   await page.waitForFunction(() => document.querySelector('#sidebar-session-panel .project-toggle').getAttribute('aria-expanded') === 'false')
@@ -477,5 +499,30 @@ async page => {
     check(await target.evaluate(el => getComputedStyle(el).transitionDuration) === '0s', '减少动态效果时应关闭侧栏与正文过渡')
   }
   check(sessionReads >= 2, '协议 fixture 未经过真实布局加载')
-  return { hover: 'passed', keyboard: 'passed', pin: 'passed', unpinCloses: 'passed', panelSearch: 'passed', newChat: 'passed', agentViewScope: 'passed', singlePanel: 'passed', currentProjectReveal: 'passed', collapsedRefresh: 'passed', originalSidebarHistory: 'passed', returnToThread: 'passed', draftPreserved: 'passed', branding: 'passed', portalMenu: 'passed', sharedListState: 'passed', refreshRecovery: 'passed', accountScope: 'passed', dashboardStableFrames: fixedDashboardFrames.length, visibleStatusSync: 'passed', widths: [1440, 1024, 768], themes: ['light', 'dark'], screenshots }
+  await navigate(`/agent/${returnSession.id}`)
+  await historyMessage.waitFor()
+  const unopenedSession = sessions[10]
+  const confirmedDuringCreation = await page.evaluate(async (target) => {
+    const { useChatThreadsStore } = await import('/src/modules/session/model/chatThreads.js')
+    const store = useChatThreadsStore()
+    const router = document.querySelector('#app').__vue_app__.config.globalProperties.$router
+    store.setThreadCreationInFlight(true)
+    try {
+      await router.push(`/agent/${target}`)
+      await new Promise(resolve => requestAnimationFrame(resolve))
+      return { selected: store.currentThreadId, path: router.currentRoute.value.path }
+    } finally {
+      store.setThreadCreationInFlight(false)
+    }
+  }, unopenedSession.id)
+  check(confirmedDuringCreation.path === `/agent/${unopenedSession.id}` && confirmedDuringCreation.selected === unopenedSession.id, '已确认路由须同步选择，即使创建尚未完成')
+  check(await conversationEntry.getAttribute('href') === `/agent/${unopenedSession.id}`, '已确认路由应成为新的返回目标')
+  await workspace.getByText(`历史消息 ${unopenedSession.id}`, { exact: true }).waitFor()
+  check(!await historyMessage.isVisible(), '创建完成后应读取新路由的历史，不再显示原会话历史')
+  const archivedSession = sessions[5]
+  archivedSession.yuxi.archived = true
+  await page.goto(`${origin}/agent/${archivedSession.id}`)
+  await workspace.getByText(`历史消息 ${archivedSession.id}`, { exact: true }).waitFor()
+  await workspace.getByText('该对话已归档，只能查看历史记录，不能继续发送消息。', { exact: true }).waitFor()
+  return { hover: 'passed', keyboard: 'passed', pin: 'passed', unpinCloses: 'passed', panelSearch: 'passed', newChat: 'passed', agentViewScope: 'passed', singlePanel: 'passed', currentProjectReveal: 'passed', cancelledNavigation: 'passed', confirmedDuringCreation: 'passed', archivedDeepLink: 'passed', collapsedRefresh: 'passed', originalSidebarHistory: 'passed', returnToThread: 'passed', draftPreserved: 'passed', branding: 'passed', portalMenu: 'passed', sharedListState: 'passed', refreshRecovery: 'passed', accountScope: 'passed', dashboardStableFrames: fixedDashboardFrames.length, visibleStatusSync: 'passed', widths: [1440, 1024, 768], themes: ['light', 'dark'], screenshots }
 }

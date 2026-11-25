@@ -44,7 +44,6 @@ export function useAgentStreamHandler({
       }
     }
     if (type.endsWith('output_text.delta') || type.endsWith('reasoning.delta')) {
-      state.replyLoadingVisible = false
       streamSmoother?.updateText(event.item_id, threadId)
     } else if (type.endsWith('.done')) {
       streamSmoother?.flushThread(threadId)
@@ -70,7 +69,6 @@ export function useAgentStreamHandler({
       state.currentTurnId = event.turn_id
       state.activeRunId = event.yuxi.run_id
       state.turnStatus = event.turn.status
-      state.replyLoadingVisible = false
       return processApprovalInStream?.(event, threadId) || false
     }
     return false

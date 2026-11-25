@@ -74,7 +74,7 @@ export const pendingInterruptFromWaitpoint = (waitpoint, threadId) => {
   return null
 }
 
-export function useApproval({ getThreadState, fetchThreadMessages, getVisibleThread }) {
+export function useApproval({ getThreadState }) {
   const approvalState = reactive({
     showModal: false,
     questions: [],
@@ -108,30 +108,12 @@ export function useApproval({ getThreadState, fetchThreadMessages, getVisibleThr
     approvalState.waitpointId = null
   }
 
-  const processApprovalInStream = (event, threadId) => {
-    if (event.type !== 'yuxi.session.turn.waiting') return false
-    const threadState = getThreadState(threadId)
-    if (!threadState) return false
-    const pendingInterrupt = pendingInterruptFromWaitpoint(event.waitpoint, threadId)
-    if (!pendingInterrupt) return false
-    threadState.isStreaming = false
-    threadState.pendingInterrupt = pendingInterrupt
-    if (!getVisibleThread || getVisibleThread() === threadId) {
-      applyInterruptToApprovalState(pendingInterrupt, threadId)
-    }
-
-    fetchThreadMessages({ threadId })
-
-    return true
-  }
-
   const restoreInterruptFromThreadState = (threadId) => {
     const threadState = getThreadState(threadId)
     const pendingInterrupt = threadState?.pendingInterrupt
     if (!hasPendingInterruptPayload(pendingInterrupt)) return false
 
     threadState.isStreaming = false
-    threadState.replyLoadingVisible = false
     threadState.pendingInputId = null
     applyInterruptToApprovalState(pendingInterrupt, threadId)
     return true
@@ -141,19 +123,9 @@ export function useApproval({ getThreadState, fetchThreadMessages, getVisibleThr
     clearApprovalState()
   }
 
-  const resetApprovalState = () => {
-    const threadState = getThreadState(approvalState.threadId)
-    if (threadState) {
-      threadState.pendingInterrupt = null
-    }
-    clearApprovalState()
-  }
-
   return {
     approvalState,
-    processApprovalInStream,
     restoreInterruptFromThreadState,
-    hideApprovalState,
-    resetApprovalState
+    hideApprovalState
   }
 }

@@ -178,7 +178,7 @@ async def test_get_knowledge_bases_does_not_initialize_knowledge_backend(monkeyp
     def fail_if_initialized(_kb_type):
         pytest.fail("知识库列表不应初始化 Milvus 等后端实例")
 
-    monkeypatch.setattr(KnowledgeBaseManager, "_get_or_create_kb_instance", fail_if_initialized)
+    monkeypatch.setattr(KnowledgeBaseManager, "get_executor_for_type", fail_if_initialized)
 
     result = await knowledge_bases.get_knowledge_bases()
 

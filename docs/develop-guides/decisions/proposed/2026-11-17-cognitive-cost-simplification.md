@@ -4,7 +4,7 @@
 类型：simplification
 Owner：docs/develop-guides/spec-loop.md
 
-读者是接手项目的工程师、维护者和 Reviewer。本文评估代码组织如何增加理解与修改成本，并提出优化顺序及评审规则；前置知识仅为常规 Web、数据库与异步任务开发。规则由 [Spec Loop](../../spec-loop.md)维护，运行事实仍归各业务模块。阅读入口和评审规则见[局部可理解性决定](../implemented/2026-11-17-local-understanding-rules.md)，知识库管理与删除见[管理边界决定](../implemented/2026-11-17-knowledge-management-boundaries.md)，聊天阅读见[阅读决定](../implemented/2026-11-17-thread-session-reading.md)。本提案保留尚未完成的方向，各切片的实施范围与证据由对应决定拥有。
+读者是接手项目的工程师、维护者和 Reviewer。本文评估代码组织如何增加理解与修改成本，并提出优化顺序及评审规则；前置知识仅为常规 Web、数据库与异步任务开发。规则由 [Spec Loop](../../spec-loop.md)维护，运行事实仍归各业务模块。阅读入口和评审规则见[局部可理解性决定](../implemented/2026-11-17-local-understanding-rules.md)，知识库管理与删除见[管理边界决定](../implemented/2026-11-17-knowledge-management-boundaries.md)，聊天阅读见[阅读决定](../implemented/2026-11-17-thread-session-reading.md)。阅读与输入准备解耦、侧栏导航和知识文档补解析见[入口收敛决定](../implemented/2026-11-25-cognitive-cost-first-pass.md)。本提案保留尚未完成的方向，各切片的实施范围与证据由对应决定拥有。
 
 ## 问题
 

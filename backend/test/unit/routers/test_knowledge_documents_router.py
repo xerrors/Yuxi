@@ -212,7 +212,7 @@ async def test_index_documents_uses_uid_for_operator(monkeypatch):
         fake_ensure_knowledge_base_supports_documents,
     )
     monkeypatch.setattr(knowledge_bases, "get_knowledge_base_info", fake_get_knowledge_base_info)
-    monkeypatch.setattr(knowledge_router.knowledge_base_manager, "index_file", fake_index_file)
+    monkeypatch.setattr(document_actions, "index_file", fake_index_file)
     _patch_submit_job(monkeypatch, fake_enqueue)
 
     result = await knowledge_router.index_documents(
@@ -275,7 +275,7 @@ async def test_parse_pending_documents_enqueues_status_scoped_job(monkeypatch):
         "list_document_file_ids_by_statuses",
         fake_list_document_file_ids_by_statuses,
     )
-    monkeypatch.setattr(knowledge_router.knowledge_base_manager, "parse_file", fake_parse_file)
+    monkeypatch.setattr(document_actions, "parse_file", fake_parse_file)
     _patch_submit_job(monkeypatch, fake_enqueue_unique_by_payload)
 
     result = await knowledge_router.parse_pending_documents(
@@ -394,7 +394,7 @@ async def test_index_pending_documents_uses_pending_statuses_and_params(monkeypa
         "list_document_file_ids_by_statuses",
         fake_list_document_file_ids_by_statuses,
     )
-    monkeypatch.setattr(knowledge_router.knowledge_base_manager, "index_file", fake_index_file)
+    monkeypatch.setattr(document_actions, "index_file", fake_index_file)
     _patch_submit_job(monkeypatch, fake_enqueue_unique_by_payload)
 
     params = {"chunk_preset_id": "general"}
@@ -482,7 +482,7 @@ async def test_parse_documents_accepts_payload_with_params(monkeypatch):
         fake_ensure_knowledge_base_supports_documents,
     )
     monkeypatch.setattr(knowledge_bases, "get_knowledge_base_info", fake_get_knowledge_base_info)
-    monkeypatch.setattr(knowledge_router.knowledge_base_manager, "parse_file", fake_parse_file)
+    monkeypatch.setattr(document_actions, "parse_file", fake_parse_file)
     _patch_submit_job(monkeypatch, fake_enqueue)
 
     params = {"ocr_engine": "rapid_ocr"}
@@ -530,7 +530,7 @@ async def test_parse_pending_documents_uses_params(monkeypatch):
         "list_document_file_ids_by_statuses",
         fake_list_document_file_ids_by_statuses,
     )
-    monkeypatch.setattr(knowledge_router.knowledge_base_manager, "parse_file", fake_parse_file)
+    monkeypatch.setattr(document_actions, "parse_file", fake_parse_file)
     _patch_submit_job(monkeypatch, fake_enqueue_unique_by_payload)
 
     params = {"ocr_engine": "rapid_ocr"}

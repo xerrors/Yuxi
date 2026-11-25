@@ -74,7 +74,7 @@ async def test_document_action_preserves_arguments_owner_and_input_order(monkeyp
         assert (kb_id, statuses, limit) == ("kb", ["uploaded"], 500)
         return ["a", "b"] if after_file_id is None else []
 
-    monkeypatch.setattr(jobs.knowledge_base, f"{action}_file", process)
+    monkeypatch.setattr(jobs.document_actions, f"{action}_file", process)
     monkeypatch.setattr(jobs.knowledge_documents, "list_document_file_ids_by_statuses", pending)
     result = await getattr(jobs, f"run_knowledge_{action}")(context)
     assert trace == [(action, "a"), (action, "b")]
@@ -104,7 +104,7 @@ async def test_pending_pages_advance_after_failures_and_count_beyond_result_samp
         return {"file_id": file_id, "status": "failed" if file_id == ids[500] else "parsed"}
 
     monkeypatch.setattr(jobs.knowledge_documents, "list_document_file_ids_by_statuses", pending)
-    monkeypatch.setattr(jobs.knowledge_base, f"{action}_file", process)
+    monkeypatch.setattr(jobs.document_actions, f"{action}_file", process)
     with pytest.raises(RuntimeError, match="失败 2 个"):
         await getattr(jobs, f"run_knowledge_{action}")(context)
     assert cursors == [None, ids[499], ids[-1]]
@@ -144,7 +144,7 @@ async def test_document_action_propagates_cancellation_without_finishing(monkeyp
         """提供未执行的后续文件以证明停止边界。"""
         return ["a", "b"]
 
-    monkeypatch.setattr(jobs.knowledge_base, f"{action}_file", process)
+    monkeypatch.setattr(jobs.document_actions, f"{action}_file", process)
     monkeypatch.setattr(jobs.knowledge_documents, "list_document_file_ids_by_statuses", pending)
     with pytest.raises(asyncio.CancelledError) as error:
         await getattr(jobs, f"run_knowledge_{action}")(context)
@@ -196,7 +196,7 @@ async def test_ingest_preserves_global_stages_owner_and_input_result_order(monke
         return {"file_id": file_id, "status": "indexed", "error": None}
 
     for name, fn in (("parse_file", parse), ("index_file", index)):
-        monkeypatch.setattr(jobs.knowledge_base, name, fn)
+        monkeypatch.setattr(jobs.document_actions, name, fn)
     with pytest.raises(RuntimeError, match=f"失败 {2 if auto_index else 1} 个"):
         await jobs.run_knowledge_ingest(context)
     expected = [("parse", item) for item in items]
@@ -254,7 +254,7 @@ async def test_ingest_preserves_cancellation_at_each_stage(monkeypatch, stage, s
         return {"file_id": file_id, "status": "indexed"}
 
     for name, fn in (("parse_file", parse), ("index_file", index)):
-        monkeypatch.setattr(jobs.knowledge_base, name, fn)
+        monkeypatch.setattr(jobs.document_actions, name, fn)
     with pytest.raises(asyncio.CancelledError) as error:
         await jobs.run_knowledge_ingest(context)
     assert error.value is cancellation and context.result is None
@@ -304,7 +304,7 @@ async def test_failure_logs_interpolate_identifiers_without_paths_or_exception_s
         ("index_file", index),
         ("list_document_file_ids_by_statuses", pending),
     ):
-        owner = jobs.knowledge_documents if name == "list_document_file_ids_by_statuses" else jobs.knowledge_base
+        owner = jobs.knowledge_documents if name == "list_document_file_ids_by_statuses" else jobs.document_actions
         monkeypatch.setattr(owner, name, fn)
     sink = logger.add(lambda message: messages.append(message.record["message"]), level="ERROR")
     try:
@@ -393,7 +393,7 @@ async def test_parameter_claim_failure_continues_with_later_files(monkeypatch, a
         ("index_file", index),
         ("list_document_file_ids_by_statuses", pending),
     ):
-        owner = jobs.knowledge_documents if name == "list_document_file_ids_by_statuses" else jobs.knowledge_base
+        owner = jobs.knowledge_documents if name == "list_document_file_ids_by_statuses" else jobs.document_actions
         monkeypatch.setattr(owner, name, fn)
     handler = jobs.run_knowledge_ingest if scope == "ingest" else getattr(jobs, f"run_knowledge_{action}")
     with pytest.raises(RuntimeError, match="失败 1 个"):

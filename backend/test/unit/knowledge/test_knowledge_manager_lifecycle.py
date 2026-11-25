@@ -6,9 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from yuxi.modules.knowledge.manager import KnowledgeBaseManager
-from yuxi.modules.knowledge.read_models import KnowledgeBaseConfig
 from yuxi.modules.knowledge.services import bases as knowledge_bases
-from yuxi.modules.knowledge.services import statistics
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 
@@ -25,7 +23,7 @@ async def test_executor_construction_is_offloaded_from_event_loop(tmp_path, monk
 
     monkeypatch.setattr("yuxi.modules.knowledge.manager.KnowledgeBaseFactory.create", create_executor)
 
-    assert await manager._get_or_create_kb_instance("fake") is executor
+    assert await manager.get_executor_for_type("fake") is executor
     assert construction_threads and construction_threads[0] != event_loop_thread
 
 
@@ -42,8 +40,8 @@ async def test_concurrent_executor_construction_is_deduplicated(tmp_path, monkey
     monkeypatch.setattr("yuxi.modules.knowledge.manager.KnowledgeBaseFactory.create", create_executor)
 
     results = await asyncio.gather(
-        manager._get_or_create_kb_instance("fake"),
-        manager._get_or_create_kb_instance("fake"),
+        manager.get_executor_for_type("fake"),
+        manager.get_executor_for_type("fake"),
     )
 
     assert results == [executor, executor]
@@ -58,44 +56,11 @@ async def test_delete_knowledge_base_commits_tombstone_before_any_external_clean
         lambda: repository,
     )
     executor = AsyncMock(side_effect=RuntimeError("Milvus offline"))
-    monkeypatch.setattr(KnowledgeBaseManager, "_get_or_create_kb_instance", executor)
+    monkeypatch.setattr(KnowledgeBaseManager, "get_executor_for_type", executor)
     result = await knowledge_bases.delete_knowledge_base("kb_1")
     assert result == {"message": "删除成功"}
     repository.mark_deleted.assert_awaited_once_with("kb_1")
     executor.assert_not_awaited()
-
-
-@pytest.mark.parametrize("refresh_stats_fails", [False, True])
-async def test_parse_file_refreshes_stats_and_keeps_original_error_after_executor_failure(tmp_path, monkeypatch, refresh_stats_fails):
-    manager = KnowledgeBaseManager(str(tmp_path))
-    refreshed = []
-
-    class FakeExecutor:
-        async def parse_file(self, *args, **kwargs):
-            raise ValueError("parse failed")
-
-    async def get_kb_config(_kb_id: str):
-        return KnowledgeBaseConfig(kb_id="kb_1", kb_type="fake")
-
-    if refresh_stats_fails:
-
-        async def refresh_database_stats(_kb_id: str):
-            raise RuntimeError("stats failed")
-    else:
-
-        async def refresh_database_stats(kb_id: str):
-            refreshed.append(kb_id)
-            return {}
-
-    monkeypatch.setattr(manager, "get_kb_config", get_kb_config)
-    monkeypatch.setattr(manager, "_get_or_create_kb_instance", AsyncMock(return_value=FakeExecutor()))
-    monkeypatch.setattr(statistics, "refresh_stats", refresh_database_stats)
-
-    with pytest.raises(ValueError, match="parse failed"):
-        await manager.parse_file("kb_1", "file_1")
-
-    if not refresh_stats_fails:
-        assert refreshed == ["kb_1"]
 
 
 async def test_update_query_params_merges_options_in_repository(monkeypatch):

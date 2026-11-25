@@ -184,9 +184,10 @@ test('附件上传固定打开时的目标，切换会话和再次打开分别�
 })
 
 for (const status of [403, 404, 503]) {
-  test(`打开历史对话时详情 ${status} 不阻断消息读取，也不恢复执行`, async (t) => {
+  test(`历史先选中，智能体详情 ${status} 只影响输入可用性`, async (t) => {
     const history = [], execution = []
-    const h = await mountSessionWorkspace(t, async ({ threadId }) => { history.push(threadId) }, {
+    const detail = Promise.withResolvers()
+    const h = await mountSessionWorkspace(t, () => assert.fail('工作区应通过阅读器读取历史'), {
       threadId: 'previous', runtime: {
         fetchAgentState: () => execution.push('state'),
         resumeActiveRunForThread: () => execution.push('resume'),
@@ -195,15 +196,31 @@ for (const status of [403, 404, 503]) {
     })
     h.state.chatThreadsStore.threads = [{ id: 'history', agent: { id: 'agent' }, yuxi: {} }]
     const toast = t.mock.method(message, 'error', () => {})
-    t.mock.method(h.agentStore, 'fetchAgentDetail', async () => { throw { status } })
+    t.mock.method(h.agentApi, 'getAgentDetail', () => detail.promise)
     t.mock.method(h.state.chatThreadsStore, 'markThreadViewed', () => {})
+    let preparation
     h.state.timelineRef.value = { refresh: async () => {
-      history.push(h.state.currentThreadId.value)
-      return h.state.initializeThreadInput({ threadId: h.state.currentThreadId.value })
+      const threadId = h.state.currentThreadId.value
+      history.push(threadId)
+      h.runtime.getThreadState(threadId).historyLoaded = true
+      // 阅读器发出 loaded 后立即完成 refresh，宿主单独等待详情。
+      preparation = h.state.initializeThreadInput({ threadId })
+      return true
     } }
-    assert.equal(await h.state.selectChat('history'), true)
+
+    assert.equal(await h.state.selectThreadFromRoute('history'), true)
     assert.deepEqual(history, ['history'])
     assert.equal(h.state.currentThreadId.value, 'history')
+    assert.equal(h.state.isSessionLoading.value, false)
+    assert.equal(h.state.sessionAgentStatus.value, 'loading')
+    assert.equal(h.state.agentExecutionAvailable.value, false)
+
+    detail.reject(Object.assign(new Error('agent unavailable'), { status }))
+    await preparation
+
+    assert.equal(h.state.currentThreadId.value, 'history')
+    assert.equal(h.state.isSessionLoading.value, false)
+    assert.equal(h.state.agentExecutionAvailable.value, false)
     assert.deepEqual(execution, [])
     assert.equal(toast.mock.callCount(), 0, '详情不可用不能重复提示错误')
     assert.equal(h.state.sessionAgentStatus.value, status === 503 ? 'error' : 'unavailable')

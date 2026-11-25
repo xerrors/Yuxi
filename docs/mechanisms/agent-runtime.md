@@ -19,15 +19,15 @@ flowchart LR
 
 worker 在取得 lease 并校验输入后，从 Input 冻结的可配置 Context 装配 Run 模型与审批模式、当前运行身份和 Workdir。准备期间持续续租，manifest 从准备结果派生并提交；固化失败时执行不开始。chat/resume 流和 BaseAgent 传递同一个 Context，构图只消费已准备的资源与 Skill 内容。当前 Agent 的专属 Skill 自动加入预加载，系统提示词继续生效；执行边界复查权限，保留本 Run 的专属根文本，中途新增绑定在下一 Run 加载。执行流复查 Agent 可见性，后端发生变化时显式失败。
 
-执行流要求明确的 Thread、Turn 和 Run 身份，并检查 Thread 及其 Project 属于当前用户、APP 和 Agent 作用域。缺失身份、归属不一致或资源已归档时显式失败。Thread 创建和用户消息写入由接入用例负责；流中的 init 消息用于展示已经保存的输入。
+执行流要求明确的 Thread、Turn 和 Run 身份，并检查 Thread 及其 Project 属于当前用户、APP 和 Agent 作用域。缺失身份、归属不一致或资源已归档时显式失败。接入用例创建 Thread 并保存 Input，调度消费事务创建用户 Message。客户端通过 Input 与公开 Items 读取已保存的输入。
 
 运行入口读取用户工作区的 `agents/AGENTS.md` 和 `agents/USER.md`，把非空内容追加到系统提示词；文件不存在或不可读不会阻断运行，每个文件最多读取 64 KiB。`prepare_agent_runtime_context` 按当前用户权限解析工具、知识库、MCP、普通 Skills 和显式选择插件的配套内容。准备结果仅属于该 Context 对象，独立执行入口对新 Context 显式准备；`get_graph(context)` 创建模型、工具和中间件。LangGraph state 保存消息、待办、产物、插件激活、协作消息消费位置和用量，checkpoint 只使用 PostgreSQL。
 
 API/worker 不信任浏览器内存中的完整配置。请求可以提供受限的单次覆盖值，例如模型或工具审批模式；配置快照也不能替代实时授权。
 
-状态查询在 Session 与 Workdir 授权后读取 PostgreSQL checkpointer 的根 namespace，返回最近完整快照及同批 pending writes 中的中断，仅在最新 Run 为 `interrupted` 时展示审批。读取不创建 Context 或模型，业务 pending writes 的合并由执行图完成。文件面板经文件系统接口读取当前 Workdir。
+HTTP `/state` 按用户和 APP 校验 Thread 归属，返回警告、产物和用量。命中 `agent_state_view` 要求投影的 checkpoint ID 与 PostgreSQL 最新根 checkpoint 一致。如果已有 Run，最新 Run 还须进入终态并与投影的 Run ID 匹配。缓存未命中时读取根 checkpoint 的完整快照及同批 pending writes 中的中断。读取到 checkpoint 且最新 Run 已终止时，尝试回填投影。中断展示仍要求最新 Run 为 `interrupted`，且 Turn 的状态为 `waiting`、当前 Run 和等待点均与该 Run 匹配。文件面板经文件系统接口读取当前 Workdir。
 
-HTTP 状态查询提供待办、产物和用量，Turn SSE 提供执行增量；`/api/v1/agents/sessions/{thread_id}/cooperation` 从持久关系批量读取成员、最新 Turn 和输入队列，不读取 checkpoint 或结果正文。同一 Thread 的页面与侧栏共享历史、状态、流订阅和 Input 观察器，最后一个观察视图卸载时释放订阅。终态和 resync 触发新的历史读取，结果归属以持久快照为准。
+Thread SSE 提供执行增量和生命周期变化。`/api/v1/agents/sessions/{thread_id}/cooperation` 从持久关系批量读取成员、最新 Turn 和输入队列。同一 Thread 的页面与侧栏共享历史、状态、流订阅和 Input 观察器，最后一个观察视图卸载时释放订阅。终态和 resync 触发新的历史读取，结果归属以持久快照为准。
 
 `sessionRuntime` 拥有前端每 Thread 的共享观察、恢复与命令，`useAgentThreadState` 创建运行版本、协作等待及审批提交等状态的确定初值；清理后重新观察使用新的独立状态。
 
@@ -139,6 +139,7 @@ worker 读取 Input 的完整配置快照，为当前 Run 重新准备工作区�
 - [Chatbot graph](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/agent_backends/chatbot/graph.py)
 - [会话协作 middleware](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/middlewares/cooperation.py)
 - [Memory middleware](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/middlewares/memory.py)
+- [checkpoint 状态与面板投影](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/services/checkpoint_state.py) · [PostgreSQL 投影验证](https://github.com/xerrors/Yuxi/blob/main/backend/test/integration/services/test_agent_state_projection_flow.py)
 - [运行时上下文 unit](https://github.com/xerrors/Yuxi/tree/main/backend/test/unit/agents)
 - [Agent 主链路 E2E](https://github.com/xerrors/Yuxi/tree/main/backend/test/e2e)
 

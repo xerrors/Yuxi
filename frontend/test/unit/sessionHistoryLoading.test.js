@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { setImmediate } from 'node:timers/promises'
 import { nextTick, toRef } from 'vue'
 import { mountThreadTimeline } from '../helpers/threadTimeline.js'
 
@@ -196,27 +197,42 @@ test('scroll 事件尚未派发时快速隐藏再显示仍恢复真实 DOM 位�
   assert.equal(h.container.scrollTop, 700)
 })
 
-for (const outcome of ['ready', 'failure']) {
-  test(`路由等待输入准备完成，自动读取与 refresh 共享一次流程：${outcome}`, async (t) => {
-    let finish, preparations = 0
-    const prepared = new Promise((resolve, reject) => { finish = outcome === 'ready' ? resolve : reject })
-    const { state } = await mountThreadTimeline(t, async () => {}, {
-      runtime: { loadThread: async () => true },
-      props: { onLoaded: async () => { preparations++; await prepared; return false } }
-    })
-    const result = state.load(true)
-    let settled = false
-    void result.then(() => { settled = true }, () => { settled = true })
-    await nextTick()
-    assert.equal(preparations, 1)
-    assert.equal(settled, false, '输入尚未准备完毕时不能向路由报告就绪')
-    if (outcome === 'failure') {
-      const error = Object.assign(new Error('input unavailable'), { status: 503 })
-      finish(error)
-      await assert.rejects(result, error)
-    } else {
-      finish()
-      assert.equal(await result, false)
-    }
+test('自动读取与 refresh 共享一次历史读取，通知后不等待输入准备', async (t) => {
+  const history = Promise.withResolvers()
+  const input = Promise.withResolvers()
+  const reads = [], notifications = []
+  const { state } = await mountThreadTimeline(t, undefined, {
+    runtime: { loadThread: (threadId) => { reads.push(threadId); return history.promise } },
+    props: { onLoaded: ({ threadId }) => { notifications.push(threadId); return input.promise } }
   })
-}
+  const refresh = state.load(true)
+  assert.deepEqual(reads, ['thread'])
+  assert.deepEqual(notifications, [])
+
+  let readResult
+  void refresh.then((result) => { readResult = result }).catch(() => {})
+  history.resolve(true)
+  await setImmediate()
+  try {
+    assert.deepEqual(notifications, ['thread'])
+    assert.equal(readResult, true, '监听器尚在准备输入时，历史读取已完成')
+  } finally {
+    input.resolve(false)
+  }
+  assert.equal(await refresh, true)
+})
+
+test('历史读取失败仍由 refresh 返回，且不通知宿主准备输入', async (t) => {
+  const history = Promise.withResolvers()
+  const notifications = []
+  const { state } = await mountThreadTimeline(t, undefined, {
+    runtime: { loadThread: () => history.promise },
+    props: { onLoaded: ({ threadId }) => { notifications.push(threadId) } }
+  })
+  const error = Object.assign(new Error('history unavailable'), { status: 503 })
+  const failed = assert.rejects(state.load(true), error)
+  history.reject(error)
+  await failed
+
+  assert.deepEqual(notifications, [])
+})

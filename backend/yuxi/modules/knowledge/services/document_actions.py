@@ -1,10 +1,12 @@
-"""管理端文档解析与入库作业的提交用例。"""
+"""知识库文档解析与入库的提交和单文件执行用例。"""
 
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.background_jobs.dispatch import dispatch_job, register_job_in_session
+from yuxi.modules.knowledge.file_status import needs_parse_before_index
 from yuxi.modules.knowledge.read_models import KnowledgeBaseDetail
 from yuxi.modules.knowledge.repositories.directories import DirectoryRepository
 from yuxi.modules.knowledge.repositories.document_resets import DocumentResetRepository
+from yuxi.modules.knowledge.services import documents, statistics
 
 PENDING_PARSE_STATUSES = ["uploaded"]
 PENDING_INDEX_STATUSES = ["parsed", "error_indexing"]
@@ -74,6 +76,79 @@ async def submit_pending_document_action(
         "job_id": job.id,
         "queued_count": pending_count,
     }
+
+
+async def parse_file(
+    kb_id: str,
+    file_id: str,
+    operator_id: str | None = None,
+    *,
+    params: dict | None = None,
+    processing_job_id: str | None = None,
+    processing_owner: str | None = None,
+    recover_missing_markdown: bool = False,
+) -> dict:
+    """解析为 Markdown，并刷新此次执行后的知识库统计。
+
+    只读连接器的文档能力由其执行器统一拒绝。
+    """
+    from yuxi.modules.knowledge.runtime import knowledge_base
+
+    config = await knowledge_base.get_kb_config(kb_id)
+    executor = await knowledge_base.get_executor_for_type(config.kb_type)
+    return await statistics.run_with_stats_refresh(
+        kb_id,
+        executor.parse_file(
+            kb_id,
+            file_id,
+            operator_id,
+            params=params,
+            additional_params=config.additional_params,
+            processing_job_id=processing_job_id,
+            processing_owner=processing_owner,
+            recover_missing_markdown=recover_missing_markdown,
+        ),
+    )
+
+
+async def index_file(
+    kb_id: str,
+    file_id: str,
+    operator_id: str | None = None,
+    params: dict | None = None,
+    *,
+    processing_job_id: str | None = None,
+    processing_owner: str | None = None,
+) -> dict:
+    """需要时先补解析，再用同一作业执行权和参数入库。"""
+    from yuxi.modules.knowledge.runtime import knowledge_base
+
+    config = await knowledge_base.get_kb_config(kb_id)
+    executor = await knowledge_base.get_executor_for_type(config.kb_type)
+    meta = await documents.load_file_meta(kb_id, file_id)
+    if needs_parse_before_index(meta):
+        await parse_file(
+            kb_id,
+            file_id,
+            operator_id,
+            params=params,
+            processing_job_id=processing_job_id,
+            processing_owner=processing_owner,
+            recover_missing_markdown=True,
+        )
+    return await statistics.run_with_stats_refresh(
+        kb_id,
+        executor.index_file(
+            kb_id,
+            file_id,
+            operator_id,
+            params=params,
+            embedding_model_spec=config.embedding_model_spec,
+            additional_params=config.additional_params,
+            processing_job_id=processing_job_id,
+            processing_owner=processing_owner,
+        ),
+    )
 
 
 def _action_label(action: str) -> str:
