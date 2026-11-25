@@ -1,7 +1,6 @@
 <template>
   <aside class="workspace-preview-pane">
     <AgentFilePreview
-      v-if="file"
       :file="file"
       :file-path="filePath"
       :show-download="false"
@@ -16,26 +15,15 @@
       @close="$emit('close')"
       @save="$emit('save', $event)"
     />
-    <div v-else-if="loading" class="preview-state">
-      <LoaderCircle class="preview-spinner" :size="20" />
-      <span>正在加载文件内容...</span>
-    </div>
-    <div v-else class="preview-empty">
-      <FileSearch :size="28" />
-      <h3>选择文件以预览</h3>
-      <p>支持 Markdown、TXT 编辑，其他格式保持只读预览。</p>
-    </div>
   </aside>
 </template>
 
 <script setup>
-import { FileSearch, LoaderCircle } from '@lucide/vue'
 import AgentFilePreview from '@/modules/session/ui/workspace/AgentFilePreview.vue'
 
 defineProps({
-  file: { type: Object, default: null },
+  file: { type: Object, required: true },
   filePath: { type: String, default: '' },
-  loading: { type: Boolean, default: false },
   editable: { type: Boolean, default: false },
   saving: { type: Boolean, default: false }
 })
@@ -68,55 +56,5 @@ defineEmits(['close', 'save'])
   display: block;
   height: 100%;
   min-height: 100%;
-}
-
-.preview-state,
-.preview-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  min-height: 260px;
-  padding: 24px;
-  color: var(--gray-500);
-  text-align: center;
-}
-
-.preview-state {
-  gap: 10px;
-
-  .preview-spinner {
-    animation: spin 1s linear infinite;
-    color: var(--color-primary-500);
-  }
-}
-
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.preview-empty {
-  gap: 8px;
-
-  h3 {
-    margin: 6px 0 0;
-    color: var(--gray-800);
-    font-size: 15px;
-    font-weight: 600;
-  }
-
-  p {
-    max-width: 240px;
-    margin: 0;
-    color: var(--gray-500);
-    font-size: 13px;
-    line-height: 1.6;
-  }
 }
 </style>

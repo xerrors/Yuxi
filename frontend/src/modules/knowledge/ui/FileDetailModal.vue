@@ -183,8 +183,6 @@
         <AgentFilePreview
           :file="sourcePreviewFile"
           :file-path="file?.filename || ''"
-          :status="sourcePreview.loading ? 'loading' : ''"
-          loading-message="正在加载文件内容..."
           :show-header="false"
           :show-download="false"
           :show-inline-html-controls="true"
@@ -710,7 +708,6 @@ const sourcePreviewFile = computed(() => {
           ? 'unsupported'
           : 'ready',
     errorMessage: sourcePreview.value.message,
-    loadingMessage: '正在加载文件内容...',
     message: sourcePreview.value.message
   }
 })
