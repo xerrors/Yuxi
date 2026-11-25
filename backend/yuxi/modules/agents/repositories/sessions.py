@@ -4,7 +4,7 @@
 
 import uuid as uuid_lib
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.infrastructure.observability.logging import logger
@@ -160,6 +160,14 @@ class SessionRepository:
         agent_session.last_viewed_run_id = run_id
         await self.db.flush()
         return True
+
+    async def save_agent_state_view(self, *, uid: str, thread_id: str, payload: dict) -> None:
+        """持久化未删除会话的面板投影，保留会话更新时间。由调用方提交。"""
+        await self.db.execute(
+            update(Session)
+            .where(Session.uid == str(uid), Session.thread_id == thread_id, Session.status != "deleted")
+            .values(agent_state_view=payload, updated_at=Session.updated_at)
+        )
 
     async def list_public_sessions(
         self,

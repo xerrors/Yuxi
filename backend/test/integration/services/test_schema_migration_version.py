@@ -34,7 +34,7 @@ from test.integration.support.postgres_schema import (
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration, pytest.mark.self_managed_resources]
 
 
-@pytest.mark.parametrize("business,knowledge", [(2, 1), (3, 1), (3, 2), (4, 1), (5, 1), (6, 1), (7, 1), (8, 2), (1, 1), (1, 3)])
+@pytest.mark.parametrize("business,knowledge", [(2, 1), (3, 1), (3, 2), (4, 1), (4, 2), (5, 1), (5, 2), (6, 1), (7, 1), (8, 2), (1, 1), (1, 3)])
 async def test_incompatible_schema_is_rejected_without_modifying_data(monkeypatch, business, knowledge):
     """历史及未来版本不再隐式升级，数据与两个版本均保持原值。"""
     schema, admin, engine, manager = await _create_isolated_manager("pytest_old_business")
@@ -135,6 +135,14 @@ async def test_fresh_business_schema_contains_input_lifecycle_without_request_ta
                     )
                 ).scalars()
             )
+            session_columns = set(
+                (
+                    await connection.execute(
+                        text("SELECT column_name FROM information_schema.columns WHERE table_schema = :schema AND table_name = 'sessions'"),
+                        {"schema": schema},
+                    )
+                ).scalars()
+            )
             execution_seq_nullable = await connection.scalar(
                 text(
                     "SELECT is_nullable FROM information_schema.columns WHERE table_schema = :schema AND table_name = 'agent_runs' AND column_name = 'execution_seq'"
@@ -176,7 +184,8 @@ async def test_fresh_business_schema_contains_input_lifecycle_without_request_ta
             "thread_id",
         } <= input_columns
         assert "conversation_thread_id" not in input_columns
-        assert BUSINESS_SCHEMA_VERSION == 5
+        assert "agent_state_view" in session_columns
+        assert BUSINESS_SCHEMA_VERSION == 6
         assert KNOWLEDGE_SCHEMA_VERSION == 2
     finally:
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)
@@ -538,4 +547,48 @@ async def test_fresh_initializer_creates_complete_baseline_and_restarts_without_
             assert await conn.scalar(text("SELECT count(*) FROM knowledge_bases")) == 2
     finally:
         await pool.close()
+        await _drop_isolated_schema(schema, admin, engine)
+
+
+@pytest.mark.parametrize("business,knowledge", [(5, 2), (5, 1), (99, 2)])
+async def test_agent_state_view_upgrade_is_explicit_and_preserves_existing_data(business, knowledge):
+    """补列保留既有会话，并在写入前拒绝不兼容的域版本。"""
+    from yuxi.migrations.agent_state_view import upgrade_agent_state_view
+
+    schema, admin, engine, manager = await _create_isolated_manager("pytest_state_view_upgrade")
+    read_applied_at = text("SELECT applied_at FROM yuxi_schema_migrations WHERE domain='business'")
+    try:
+        await create_schema_version_table(manager)
+        await record_schema_version(manager, "business", business)
+        await record_schema_version(manager, "knowledge", knowledge)
+        async with engine.begin() as conn:
+            await conn.execute(text("CREATE TABLE sessions (thread_id TEXT PRIMARY KEY, title TEXT)"))
+            await conn.execute(text("INSERT INTO sessions VALUES ('fixture', 'Kept')"))
+        supported = business == 5 and knowledge == 2
+        if supported:
+            await upgrade_agent_state_view(manager)
+            async with engine.connect() as conn:
+                applied_at = await conn.scalar(read_applied_at)
+            await upgrade_agent_state_view(manager)
+        else:
+            with pytest.raises(RuntimeError, match="business 5 或 6.*knowledge 为 2"):
+                await upgrade_agent_state_view(manager)
+        async with engine.connect() as conn:
+            assert await conn.scalar(text("SELECT title FROM sessions WHERE thread_id='fixture'")) == "Kept"
+            columns = (
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='sessions'"
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert ("agent_state_view" in columns) == supported
+            if supported:
+                assert await conn.scalar(read_applied_at) == applied_at
+        assert await get_schema_versions(manager) == {"business": 6 if supported else business, "knowledge": knowledge}
+    finally:
         await _drop_isolated_schema(schema, admin, engine)

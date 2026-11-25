@@ -117,7 +117,7 @@ API、Web 与 MinIO 的项目文件在构建时明确权限：源码和配置归
 docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container --profile all up -d --build
 ```
 
-`app-init` 以 UID/GID 1000 运行，等待 PostgreSQL 健康与 `storage-init` 成功后，在数据库锁内初始化空库。正式 `v0.8.0` 建立 business 2 / knowledge 2，0.8.1 候选建立 business 5 / knowledge 2，均包含该发行版的表、索引、约束和 LangGraph checkpoint 表。已有库与镜像版本匹配时跳过建表，版本不匹配时初始化失败。随后同步系统配置定义、内置模型供应商、Agent、MCP 和 Skill 来源文件，API 与 worker 等待全部步骤成功。已有数据按[数据库与文件目录](#_3-数据库与文件目录)的规程离线升级。历史编号重置的背景见[版本 1 基线决定](../develop-guides/decisions/implemented/2026-10-19-schema-baseline-one.md)。
+`app-init` 以 UID/GID 1000 运行，等待 PostgreSQL 健康与 `storage-init` 成功后，在数据库锁内初始化空库。当前基线为 business 6 / knowledge 2，包含应用表、索引、约束和 LangGraph checkpoint 表。已有库与镜像版本匹配时跳过建表，版本不匹配时初始化失败。随后同步系统配置定义、内置模型供应商、Agent、MCP 和 Skill 来源文件，API 与 worker 等待全部步骤成功。已有数据按[数据库与文件目录](#_3-数据库与文件目录)的规程离线升级。历史编号重置的背景见[版本 1 基线决定](../develop-guides/decisions/implemented/2026-10-19-schema-baseline-one.md)。
 
 ### 可选关闭知识库
 
@@ -159,25 +159,36 @@ API 和 worker 在各自进程内继续校验密钥及 Schema，创建连接、�
 
 ## 3. 数据库与文件目录
 
-0.8.1 支持从正式 `v0.8.0` 原地升级。维护前在旧部署的 PostgreSQL 执行：
+当前版本支持从正式 `v0.8.0` 和 `v0.8.1.beta1` 原地升级。维护前在旧部署的 PostgreSQL 执行：
 
 ```sql
 SELECT domain, version FROM yuxi_schema_migrations ORDER BY domain;
 ```
 
-只有 `business = 2` 和 `knowledge = 2` 两行时，才适用这条路径。先排空任务、停止写入，执行[冷备规程](#停机备份与恢复演练)的第 1 至 3 步。备份完成后保持 Web、API 和 worker 停机，单独启动原 PostgreSQL 并等待健康。使用 Compose 内置数据库的示例如下，命令均沿用该实例的环境文件、项目名、profile 和叠加配置。
+数据库须为 `v0.8.0` 的 business 2 / knowledge 2，或已完成插件迁移的 business 5 / knowledge 2。先排空任务、停止写入，执行[冷备规程](#停机备份与恢复演练)的第 1 至 3 步。备份完成后保持 Web、API 和 worker 停机，单独启动原 PostgreSQL 并等待健康。使用 Compose 内置数据库的示例如下，命令均沿用该实例的环境文件、项目名、profile 和叠加配置。
 
 ```bash
 docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container up -d --wait postgres
 ```
 
-使用目标版本的 API 镜像、原工作区和 Skill 挂载，按[插件与配置迁移](../agents/skills-management.md#从运行依赖升级)导出、审阅、应用。重新查询应得到 business 5 / knowledge 2。Container 部署在恢复服务前按[远程 Skill 获取](./container-sandbox.md#远程-skill-获取)更新沙盒镜像，将其名称和 digest 写入原环境文件。再执行[共享内容更新](#共享内容更新与失败重试)，检查 readiness、已有会话和知识访问。
+从 business 2 升级时，使用目标版本的 API 镜像、原工作区和 Skill 挂载，按[插件与配置迁移](../agents/skills-management.md#从运行依赖升级)导出、审阅、应用。回读应得到 business 5 / knowledge 2。该步骤完成后，或从已有的 business 5 库升级时，继续执行[会话状态迁移](#会话状态迁移)。
 
 空库直接运行目标版本的 `app-init`。过渡版本或其他历史库应从匹配的代码和成套备份单独处理。回退需恢复旧代码、数据库和同一停写时点的文件。
 
 应用不写入身份操作日志，初始 Schema 不创建 `operation_logs` 表。
 
 默认执行环境由 Container runner 提供，Run 结束后清理容器并保留工作文件。选择 Cube 时，节点准备与 Workspace、Skills 共享目录要求见[沙盒配置与运维](./sandbox-operations.md)。
+
+### 会话状态迁移
+
+对 business 5 / knowledge 2 的库，在消费者停机时用目标 API 镜像补齐会话状态投影列。
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container run --rm --no-deps \
+  api uv run --no-sync --no-dev python -m yuxi.migrations.agent_state_view
+```
+
+回读域版本应为 business 6 / knowledge 2。Container 部署在恢复服务前按[远程 Skill 获取](./container-sandbox.md#远程-skill-获取)核对沙盒镜像及其 digest。再执行[共享内容更新](#共享内容更新与失败重试)，检查 readiness、已有会话和知识访问。
 
 ### 检查 PostgreSQL 会话时区
 

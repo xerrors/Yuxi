@@ -14,6 +14,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 
+from yuxi.infrastructure.postgres.base import JSON_VALUE
 from yuxi.infrastructure.postgres.base import BusinessBase as Base
 from yuxi.shared.datetime import utc_now
 
@@ -53,6 +54,7 @@ class Session(Base):
     created_at = Column(DateTime(timezone=True), default=utc_now, comment="Creation time")
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, comment="Update time")
     extra_metadata = Column(JSON, nullable=True, comment="Additional metadata")
+    agent_state_view = Column(JSON_VALUE, nullable=True)
 
     # Relationships
     messages = relationship("Message", back_populates="agent_session", cascade="all, delete-orphan")

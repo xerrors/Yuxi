@@ -12,6 +12,7 @@ import pytest
 from sqlalchemy import text
 
 from test.integration.support.postgres_schema import create_isolated_manager, drop_isolated_schema
+from yuxi.infrastructure.postgres.schema import get_schema_versions, require_current_schema
 from yuxi.migrations.agent_plugins import apply_plugin_migration, export_plugin_migration
 from yuxi.migrations.schema import create_business_tables, create_knowledge_tables, create_schema_version_table, record_schema_version
 
@@ -24,6 +25,7 @@ async def create_legacy_schema(manager):
     await create_knowledge_tables(manager)
     await create_schema_version_table(manager)
     async with manager.async_engine.begin() as conn:
+        await conn.execute(text("ALTER TABLE sessions DROP COLUMN agent_state_view"))
         await conn.execute(text("ALTER TABLE mcp_servers DROP COLUMN code_owned"))
         for field in ("tool_dependencies", "mcp_dependencies", "skill_dependencies"):
             await conn.execute(text(f"ALTER TABLE skills ADD COLUMN {field} JSON NOT NULL DEFAULT '[]'"))
@@ -554,11 +556,12 @@ async def test_direct_selection_does_not_authorize_a_larger_plugin(tmp_path, rep
 
 
 async def test_plugin_migration_cli_registers_models_in_a_cold_process(tmp_path):
-    """正式模块入口独立装配 ORM，负控复现 pytest 预加载曾掩盖的缺陷。"""
+    """验证冷进程的插件迁移及正式 v0.8.0 到当前版本的两步升级。"""
     schema, admin, engine, manager = await create_isolated_manager("pytest_plugin_cli")
     script = textwrap.dedent('''
         import os
         import runpy
+        import sys
         from sqlalchemy.ext.asyncio import create_async_engine
         from yuxi.infrastructure.postgres.manager import PostgresManager
         from yuxi.infrastructure.postgres import models
@@ -572,24 +575,24 @@ async def test_plugin_migration_cli_registers_models_in_a_cold_process(tmp_path)
             self._initialized = True
 
         PostgresManager.initialize = initialize_isolated
-        if os.environ["PLUGIN_CLI_OMIT_MODELS"] == "1":
+        if os.environ.get("PLUGIN_CLI_OMIT_MODELS") == "1":
             models.load_models = lambda: None
-        runpy.run_module("yuxi.migrations.agent_plugins", run_name="__main__")
+        runpy.run_module(sys.argv.pop(1), run_name="__main__")
     ''')
     review = tmp_path / "review"
+    isolated_env = {
+        **os.environ,
+        "PLUGIN_CLI_TEST_SCHEMA": schema,
+        "YUXI_SKILL_DATA_DIR": str(tmp_path / "skills"),
+    }
     try:
         await create_legacy_schema(manager)
 
         for action, omit_models in (("export", "1"), ("export", "0"), ("apply", "0")):
             result = await asyncio.to_thread(
                 subprocess.run,
-                [sys.executable, "-c", script, action, str(review)],
-                env={
-                    **os.environ,
-                    "PLUGIN_CLI_TEST_SCHEMA": schema,
-                    "PLUGIN_CLI_OMIT_MODELS": omit_models,
-                    "YUXI_SKILL_DATA_DIR": str(tmp_path / "skills"),
-                },
+                [sys.executable, "-c", script, "yuxi.migrations.agent_plugins", action, str(review)],
+                env={**isolated_env, "PLUGIN_CLI_OMIT_MODELS": omit_models},
                 capture_output=True,
                 text=True,
                 timeout=30,
@@ -629,6 +632,27 @@ async def test_plugin_migration_cli_registers_models_in_a_cold_process(tmp_path)
                        WHERE table_schema=current_schema() AND table_name='mcp_servers' AND column_name='code_owned'""")
             )
             assert column.one() == ("boolean", "NO", "false", "由代码发布的内置连接")
+            projection_type = text(
+                "SELECT data_type FROM information_schema.columns WHERE table_schema=current_schema() "
+                "AND table_name='sessions' AND column_name='agent_state_view'"
+            )
+            assert await conn.scalar(projection_type) is None
+
+        with pytest.raises(RuntimeError, match="business=5"):
+            await require_current_schema(manager)
+        result = await asyncio.to_thread(
+            subprocess.run,
+            [sys.executable, "-c", script, "yuxi.migrations.agent_state_view"],
+            env=isolated_env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+        await require_current_schema(manager)
+        assert await get_schema_versions(manager) == {"business": 6, "knowledge": 2}
+        async with engine.connect() as conn:
+            assert await conn.scalar(projection_type) == "jsonb"
     finally:
         await drop_isolated_schema(schema, admin, engine)
 

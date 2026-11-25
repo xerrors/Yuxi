@@ -48,6 +48,7 @@ uv run --locked --group test pytest \
     test/integration/api/test_builtin_skill_access.py \
     test/integration/api/test_abridge_plugin_visibility.py \
     test/integration/services/test_agent_plugin_migration.py \
+    test/integration/services/test_agent_state_projection_flow.py \
     test/integration/services/test_plugin_content_sync.py \
     test/integration/api/test_error_information_boundary.py \
     test/integration/api/test_knowledge_url_import_options.py \
