@@ -21,3 +21,6 @@ overrides:
   postcss-selector-parser: 7.1.6
   undici: 6.28.0
   yaml: 2.8.3
+
+patchedDependencies:
+  '@file-viewer/renderer-pptx@3.3.6': patches/@file-viewer__renderer-pptx@3.3.6.patch

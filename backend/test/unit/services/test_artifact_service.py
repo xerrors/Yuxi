@@ -261,7 +261,6 @@ async def test_artifact_preview_returns_office_source_and_pdf_fallback(live_file
         captured.update(filename=filename, raw_content=raw_content)
         return b"%PDF-1.4 preview"
 
-    monkeypatch.setattr(svc, "is_office_pdf_convertible", lambda _path: True)
     monkeypatch.setattr(svc, "convert_office_to_pdf", convert_office_to_pdf)
 
     source = await svc.resolve_thread_artifact_view(
@@ -270,6 +269,7 @@ async def test_artifact_preview_returns_office_source_and_pdf_fallback(live_file
         db=object(),
         path=path,
         preview=True,
+        office_render="source",
     )
     assert source.preview_type == "office"
     assert source.filename == "report.docx"
@@ -282,7 +282,6 @@ async def test_artifact_preview_returns_office_source_and_pdf_fallback(live_file
         db=object(),
         path=path,
         preview=True,
-        office_render="pdf",
     )
     assert response.preview_type == "pdf"
     assert response.content == b"%PDF-1.4 preview"

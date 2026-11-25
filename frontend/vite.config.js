@@ -11,12 +11,9 @@ import { fileViewerRenderers } from '@file-viewer/vite-plugin'
 
 let jszipEsmPromise
 const jszipBrowserBuild = () => {
-  const pnpmDir = fileURLToPath(new URL('./node_modules/.pnpm', import.meta.url))
-  const docxDir = fs.readdirSync(pnpmDir).find((name) => name.startsWith('@file-viewer+docx@'))
-  if (!docxDir) throw new Error('未找到 @file-viewer/docx，无法提供浏览器 JSZip')
-  return createRequire(path.join(pnpmDir, docxDir, 'node_modules/@file-viewer/docx/package.json')).resolve(
-    'jszip/dist/jszip.min.js'
-  )
+  const wordRenderer = createRequire(import.meta.url).resolve('@file-viewer/renderer-word')
+  const docx = createRequire(wordRenderer).resolve('@file-viewer/docx')
+  return createRequire(docx).resolve('jszip/dist/jszip.min.js')
 }
 const jszipEsmPlugin = {
   name: 'yuxi-jszip-esm',
@@ -152,7 +149,8 @@ export default defineConfig(({ mode }) => {
       fileViewerRenderers({
         formats: ['docx', 'xlsx', 'xls', 'pptx'],
         inject: false,
-        copyAssets: true,
+        // SSR 单测不消费浏览器 Worker，生产构建与开发服务器各自发布。
+        copyAssets: mode === 'test' ? false : { publicDir: 'node_modules/.cache/file-viewer' },
         // 按渲染器命名分包会把 Vite preload helper 放进演示文稿 chunk，入口随之静态加载该 chunk。
         // 保持默认拆包，预览组件的动态 import 仍把渲染器留在异步图里。
         chunkStrategy: 'none',

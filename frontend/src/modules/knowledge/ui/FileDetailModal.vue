@@ -701,6 +701,7 @@ const sourcePreviewFile = computed(() => {
     previewType: sourcePreviewDisplayType.value,
     previewUrl: sourcePreview.value.url,
     previewFile: sourcePreview.value.file,
+    loadOfficePdf: sourcePreview.value.loadOfficePdf,
     supported: sourcePreview.value.supported,
     status: sourcePreview.value.loading
       ? 'loading'
@@ -927,8 +928,10 @@ const loadSourcePreview = async () => {
 
   const requestId = ++sourceRequestSeq
   sourcePreview.value.loading = true
+  const { kbId, fileId } = props
+  const readPreview = (options) => getWorkspaceKnowledgeFileContent(kbId, fileId, options)
   try {
-    const response = await getWorkspaceKnowledgeFileContent(props.kbId, props.fileId)
+    const response = await readPreview()
     const preview = await normalizePreviewResponse(response)
     if (requestId !== sourceRequestSeq) {
       if (preview.previewUrl) {
@@ -942,6 +945,7 @@ const loadSourcePreview = async () => {
     sourcePreview.value.supported = preview.supported !== false
     sourcePreview.value.url = preview.previewUrl || ''
     sourcePreview.value.file = preview.previewFile || null
+    sourcePreview.value.loadOfficePdf = () => readPreview({ officeRender: 'pdf' })
     sourcePreview.value.content = preview.content || ''
   } catch (error) {
     if (requestId !== sourceRequestSeq) return

@@ -185,7 +185,7 @@
         {
           'is-editing': canEdit && editMode === 'edit',
           'is-iframe-preview': isHtmlFile && htmlPreviewMode === 'render',
-          'is-office-preview': officePreviewActive && !fullscreenPreviewVisible
+          'is-office-preview': officePreviewActive && !officePdfUrl && !fullscreenPreviewVisible
         }
       ]"
     >
@@ -227,25 +227,27 @@
       <template v-else-if="file?.previewType === 'pdf' && file?.previewUrl">
         <PdfPreview :url="file.previewUrl" class="pdf-preview" />
       </template>
-      <template v-else-if="officePreviewActive && !fullscreenPreviewVisible">
-        <OfficePreview
-          v-if="officeClientVisible"
-          :file="file.previewFile"
-          class="office-preview"
-          @error="startOfficePdfFallback"
-        />
-        <div v-else-if="officeFallbackLoading" class="unsupported-preview loading-preview">
-          <LoaderCircle class="preview-spinner" :size="20" />
-          <span>浏览器预览失败，正在使用服务端转换...</span>
-        </div>
-        <PdfPreview v-else-if="officePdfUrl" :url="officePdfUrl" class="pdf-preview" />
-        <div v-else class="unsupported-preview error-preview">
-          <CircleAlert :size="22" class="preview-error-icon" />
-          <span class="preview-error-text">{{ officeFallbackError || '当前文件无法预览' }}</span>
-        </div>
-      </template>
-      <template v-else-if="file?.previewType === 'office' && !fullscreenPreviewVisible">
-        <div class="unsupported-preview">当前文件暂不支持预览，请下载后查看</div>
+      <template v-else-if="file?.previewType === 'office'">
+        <Teleport :to="fullscreenOfficeHost || 'body'" :disabled="!fullscreenOfficeHost">
+          <div v-if="!officePreviewActive" class="unsupported-preview">
+            当前文件暂不支持预览，请下载后查看
+          </div>
+          <div v-else-if="officeFallbackLoading" class="unsupported-preview loading-preview" role="status">
+            <LoaderCircle class="preview-spinner" :size="20" />
+            <span>浏览器预览失败，正在使用服务端转换...</span>
+          </div>
+          <PdfPreview
+            v-else-if="officePdfUrl"
+            :url="officePdfUrl"
+            class="pdf-preview"
+            :class="{ 'fullscreen-embed-preview': fullscreenPreviewVisible }"
+          />
+          <div v-else-if="officeFallbackError" class="unsupported-preview error-preview" role="alert">
+            <CircleAlert :size="22" class="preview-error-icon" />
+            <span class="preview-error-text">{{ officeFallbackError }}</span>
+          </div>
+          <OfficePreview v-else :file="file.previewFile" class="office-preview" @error="startOfficePdfFallback" />
+        </Teleport>
       </template>
       <template v-else-if="isHtmlFile && htmlPreviewMode === 'render'">
         <iframe
@@ -341,7 +343,7 @@
         <div class="fullscreen-preview-content">
           <div
             class="file-content fullscreen-file-content"
-            :class="{ 'is-office-preview': officePreviewActive }"
+            :class="{ 'is-office-preview': officePreviewActive && !officePdfUrl }"
           >
             <template v-if="currentStatus === 'loading'">
               <div class="unsupported-preview loading-preview fullscreen-unsupported-preview">
@@ -368,28 +370,7 @@
             <template v-else-if="file?.previewType === 'pdf' && file?.previewUrl">
               <PdfPreview :url="file.previewUrl" class="pdf-preview fullscreen-embed-preview" />
             </template>
-            <template v-else-if="officePreviewActive">
-              <OfficePreview
-                v-if="officeClientVisible"
-                :file="file.previewFile"
-                class="office-preview"
-                @error="startOfficePdfFallback"
-              />
-              <div v-else-if="officeFallbackLoading" class="unsupported-preview loading-preview fullscreen-unsupported-preview">
-                <LoaderCircle class="preview-spinner" :size="20" />
-                <span>浏览器预览失败，正在使用服务端转换...</span>
-              </div>
-              <PdfPreview v-else-if="officePdfUrl" :url="officePdfUrl" class="pdf-preview fullscreen-embed-preview" />
-              <div v-else class="unsupported-preview error-preview fullscreen-unsupported-preview">
-                <CircleAlert :size="22" class="preview-error-icon" />
-                <span class="preview-error-text">{{ officeFallbackError || '当前文件无法预览' }}</span>
-              </div>
-            </template>
-            <template v-else-if="file?.previewType === 'office'">
-              <div class="unsupported-preview fullscreen-unsupported-preview">
-                当前文件暂不支持预览，请下载后查看
-              </div>
-            </template>
+            <div v-else-if="file?.previewType === 'office'" ref="fullscreenOfficeHost" class="fullscreen-office-host" />
             <template v-else-if="isHtmlFile && htmlPreviewMode === 'render'">
               <iframe
                 :key="`fullscreen-${htmlPreviewRenderKey}`"
@@ -426,7 +407,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onDeactivated, onUnmounted, ref, watch } from 'vue'
 import {
   CircleAlert,
   Code2,
@@ -457,7 +438,6 @@ import {
   isOfficePdfFallback,
   normalizePreviewResponse
 } from '@/shared/lib/file_preview'
-import { loadOfficePdfFallback } from './officePdfFallback'
 
 const EDITABLE_EXTENSIONS = new Set(['.md', '.markdown', '.mdx', '.txt'])
 const HTML_PREVIEW_DEFAULT_SCALE = 0.9
@@ -595,17 +575,12 @@ const displayFilePath = computed(() =>
 const officePdfUrl = ref('')
 const officeFallbackLoading = ref(false)
 const officeFallbackError = ref('')
+// 全屏移动当前渲染器，避免重开文件或丢失文档阅读位置。
+const fullscreenOfficeHost = ref(null)
 let officeFallbackSeq = 0
 
 const officePreviewActive = computed(
   () => props.file?.previewType === 'office' && props.file?.previewFile instanceof File
-)
-const officeClientVisible = computed(
-  () =>
-    officePreviewActive.value &&
-    !officePdfUrl.value &&
-    !officeFallbackLoading.value &&
-    !officeFallbackError.value
 )
 
 const revokeOfficePdfUrl = () => {
@@ -622,8 +597,8 @@ const resetOfficeFallback = () => {
 }
 
 const startOfficePdfFallback = async (reason) => {
-  const sourceName = props.filePath || props.file?.filename || props.file?.name || props.file?.path || ''
-  if (!isOfficePdfFallback(sourceName)) {
+  const { previewFile, loadOfficePdf } = props.file
+  if (!isOfficePdfFallback(previewFile.name) || !loadOfficePdf) {
     officeFallbackError.value = reason || '当前文件无法在浏览器中预览'
     return
   }
@@ -631,16 +606,12 @@ const startOfficePdfFallback = async (reason) => {
   officeFallbackLoading.value = true
   officeFallbackError.value = ''
   try {
-    const response = await loadOfficePdfFallback({
-      ...props.file,
-      path: props.file?.path || props.filePath
-    })
-    if (!response) throw new Error('无法请求服务端预览')
+    const response = await loadOfficePdf()
     const preview = await normalizePreviewResponse(response, props.file || {})
-    if (seq !== officeFallbackSeq) {
+    if (seq !== officeFallbackSeq || preview.previewType !== 'pdf') {
       if (preview.previewUrl) window.URL.revokeObjectURL(preview.previewUrl)
-      return
     }
+    if (seq !== officeFallbackSeq) return
     if (preview.previewType !== 'pdf' || !preview.previewUrl) {
       throw new Error(preview.message || '服务端预览失败')
     }
@@ -813,21 +784,13 @@ watch([() => props.filePath, () => props.file?.previewType, () => props.file?.co
   }
 })
 
-watch(
-  () => [
-    props.filePath,
-    props.file?.previewFile?.name,
-    props.file?.previewFile?.size,
-    props.file?.previewFile?.lastModified
-  ],
-  () => {
-    resetOfficeFallback()
-  }
-)
+watch(() => props.file?.previewFile, resetOfficeFallback, { flush: 'sync' })
 
 watch(fullscreenPreviewVisible, (visible) => {
   document.body.style.overflow = visible ? 'hidden' : ''
 })
+
+onDeactivated(closeFullscreenPreview)
 
 onUnmounted(() => {
   officeFallbackSeq += 1
@@ -1222,6 +1185,13 @@ onUnmounted(() => {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+
+.is-office-preview .fullscreen-office-host {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .agent-file-preview.is-full-height .office-preview,

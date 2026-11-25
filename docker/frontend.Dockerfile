@@ -10,6 +10,7 @@ RUN npm install -g pnpm@11.24.0
 COPY --chown=0:0 --chmod=0644 ./frontend/package*.json ./
 COPY --chown=0:0 --chmod=0644 ./frontend/pnpm-lock.yaml* ./
 COPY --chown=0:0 --chmod=0644 ./frontend/pnpm-workspace.yaml ./
+COPY --chown=0:0 ./frontend/patches ./patches
 
 # 安装依赖（--frozen-lockfile 保证 dev 与 build/CI 三处依赖与 pnpm-lock.yaml 一致，避免漂移）
 RUN pnpm install --frozen-lockfile --registry=https://registry.npmmirror.com
@@ -36,6 +37,7 @@ RUN npm install -g pnpm@11.24.0
 COPY --chown=0:0 --chmod=0644 ./frontend/package*.json ./
 COPY --chown=0:0 --chmod=0644 ./frontend/pnpm-lock.yaml* ./
 COPY --chown=0:0 --chmod=0644 ./frontend/pnpm-workspace.yaml ./
+COPY --chown=0:0 ./frontend/patches ./patches
 
 # 安装依赖
 RUN pnpm install --frozen-lockfile --registry=https://registry.npmmirror.com

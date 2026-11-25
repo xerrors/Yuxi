@@ -467,9 +467,14 @@ jobs:
           exit 1
       - name: Verify readiness API
         run: docker compose exec -T api uv run --no-sync --no-dev pytest --junitxml=test/ci-reports/system-07.xml --durations=20 test/integration/api/test_system_router_api.py::test_health_endpoint_is_public test/integration/api/test_system_router_api.py::test_readiness_endpoint_proves_core_runtime_dependencies test/integration/api/test_system_router_api.py::test_discovery_and_openapi_declare_full_knowledge_capabilities -q
-      - name: Verify attachment HTTP and object contract
+      - name: Verify attachment and Office preview HTTP contracts
         timeout-minutes: 3
-        run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest --junitxml=test/ci-reports/system-08.xml --durations=20 test/integration/api/test_chat_router.py::test_thread_artifact_uses_image_signature_for_content_type test/integration/api/test_public_agent_files.py -q
+        run: |
+          docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api \
+            uv run --no-sync --no-dev pytest --junitxml=test/ci-reports/system-08.xml --durations=20 \
+              test/integration/api/test_chat_router.py::test_thread_artifact_uses_image_signature_for_content_type \
+              test/integration/api/test_chat_router.py::test_office_artifact_keeps_public_pdf_and_product_source \
+              test/integration/api/test_workspace_runtime_cache_api.py test/integration/api/test_public_agent_files.py -q
       - name: Verify MCP management connection contract
         run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest --junitxml=test/ci-reports/system-10.xml --durations=20 test/integration/api/test_mcp_router.py -q
       - name: Verify knowledge MCP authentication and persisted documents

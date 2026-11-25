@@ -9,6 +9,7 @@ export async function createTestServer(config = {}) {
   let server
   try {
     server = await createServer({
+      mode: 'test',
       ...config,
       // 测试不依赖热更新，关闭固定 WebSocket 端口以隔离并行服务。
       server: { ...config.server, hmr: false, ws: false },

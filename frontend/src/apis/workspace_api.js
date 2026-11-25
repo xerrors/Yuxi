@@ -9,11 +9,8 @@ export const getWorkspaceTree = (path = '/', recursive = false, filesOnly = fals
   return apiGet(`/api/workspace/tree?${query}`)
 }
 
-const officeRenderQuery = (officeRender) =>
-  officeRender === 'pdf' ? { office_render: 'pdf' } : {}
-
 export const getWorkspaceFileContent = (path, { officeRender } = {}) => {
-  const query = buildQuery({ path, ...officeRenderQuery(officeRender) })
+  const query = buildQuery({ path, office_render: officeRender })
   return apiGet(`/api/workspace/file?${query}`, {}, true, 'blob')
 }
 
@@ -30,7 +27,7 @@ export const getWorkspaceKnowledgeTree = (kbId, params = {}) => {
 }
 
 export const getWorkspaceKnowledgeFileContent = (kbId, fileId, { officeRender } = {}) => {
-  const query = buildQuery({ kb_id: kbId, file_id: fileId, ...officeRenderQuery(officeRender) })
+  const query = buildQuery({ kb_id: kbId, file_id: fileId, office_render: officeRender })
   return apiGet(`/api/workspace/knowledge/file?${query}`, {}, true, 'blob')
 }
 

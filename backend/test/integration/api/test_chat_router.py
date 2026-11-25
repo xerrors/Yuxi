@@ -11,7 +11,7 @@ import json
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 import asyncpg
 import pytest
@@ -480,6 +480,39 @@ async def test_thread_artifact_preview_http_preserves_raw_download(test_client, 
     assert raw_response.status_code == 200, raw_response.text
     assert raw_response.content == content
     assert raw_response.headers["content-type"].startswith("text/markdown")
+
+
+async def test_office_artifact_keeps_public_pdf_and_product_source(test_client, standard_user, admin_headers):
+    """公开预览保留 PDF，产品预览面向所属用户返回 Office 字节。"""
+    headers = standard_user["headers"]
+    thread_id = await _create_thread_for_user(test_client, headers)
+    fixture = Path(__file__).resolve().parents[2] / "data" / "测试文档.docx"
+    content = fixture.read_bytes()
+    try:
+        artifact_path = await _upload_project_file(test_client, headers, thread_id, "preview.docx", content, artifact_path=True)
+        public_url = f"/api/v1/agents/sessions/{thread_id}/artifacts/{artifact_path.lstrip('/')}"
+        product_url = f"/api/agent/threads/{thread_id}/artifacts/preview"
+        response = await test_client.get(public_url, params={"preview": True}, headers=headers)
+        assert response.status_code == 200, response.text
+        assert response.headers["content-type"] == "application/pdf"
+        assert response.content.startswith(b"%PDF-")
+
+        params = {"path": artifact_path}
+        source = await test_client.get(product_url, params=params, headers=headers)
+        assert source.status_code == 200, source.text
+        assert source.headers["x-yuxi-preview-type"] == "office"
+        assert source.headers["x-yuxi-preview-filename"] == "preview.docx"
+        assert source.content == content
+        fallback = await test_client.get(product_url, params={**params, "office_render": "pdf"}, headers=headers)
+        assert fallback.status_code == 200, fallback.text
+        assert fallback.headers["content-type"] == "application/pdf"
+        assert fallback.content.startswith(b"%PDF-")
+
+        denied = await test_client.get(product_url, params=params, headers=admin_headers)
+        assert denied.status_code == 404
+    finally:
+        await archive_public_thread(test_client, headers, thread_id)
+        await delete_created_threads(thread_id)
 
 
 async def _create_thread_for_user(test_client, headers: dict[str, str]) -> str:
