@@ -139,8 +139,7 @@ function setupUserForm(validate = async () => ({ uid: 'fixture_uid' })) {
     isSuperAdmin: true,
     validateUsernameAndGenerateUid: async (name) => { effects.push(['uid', name]); return validate(name) },
     createUser: async (data) => effects.push(['create', data]),
-    updateUser: async (id, data) => effects.push(['update', id, data]),
-    getUsers: async () => []
+    updateUser: async (id, data) => effects.push(['update', id, data])
   }
   globalThis.__guiFeedback.message = { error: (text) => effects.push(['error', text]), success() {} }
   const scope = effectScope()

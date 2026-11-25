@@ -16,11 +16,12 @@ for arg in "$@"; do
     fi
 done
 
-api_image=$(docker compose config --format json | jq -r '.services.api.image')
-minio_image=$(docker compose config --format json | jq -r '.services.minio.image')
-storage_image=$(docker compose config --format json | jq -r '.services["storage-init"].image')
-sandbox_image=$(docker compose config --format json | jq -r '.services["sandbox-image"].image')
-test -n "$api_image" && test -n "$minio_image" && test -n "$storage_image" && test "$sandbox_image" != null
+images=$(docker compose config --format json | jq -er --argjson sandbox_only "$sandbox_only" '
+    .services
+    | [."sandbox-image".image] + (if $sandbox_only then [] else [.api.image, .minio.image, ."storage-init".image] end)
+    | if all(type == "string" and length > 0) then @tsv else error("Compose 缺少所选构建需要的镜像配置") end
+')
+IFS=$'\t' read -r sandbox_image api_image minio_image storage_image <<< "$images"
 
 build_with_cache() {
   local dockerfile=$1 tag=$2 context=$3 cache_dir=$4

@@ -3951,14 +3951,6 @@ watch(currentChatId, (threadId, oldThreadId) => {
   display: flex;
   flex-direction: column;
 }
-.panel-main-chat :deep(.chat-main) {
-  margin-right: 0;
-  height: 100%;
-}
-.panel-session-chat :deep(.chat-container) {
-  height: 100%;
-  min-height: 0;
-}
 .embedded-session {
   height: 100%;
   min-height: 0;

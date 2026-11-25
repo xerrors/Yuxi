@@ -135,7 +135,6 @@
 
 <script setup>
 import { ref, computed, onDeactivated, watch } from 'vue'
-import { useClipboard } from '@vueuse/core'
 import { message as antMessage } from 'ant-design-vue'
 import {
   ThumbsUp,
@@ -149,6 +148,7 @@ import {
   LoaderCircle
 } from '@lucide/vue'
 import { formatChatTime } from '@/shared/lib/time'
+import { copyTextToClipboard } from '@/shared/lib/clipboard'
 import UserFeedbackModal from '@/modules/session/ui/UserFeedbackModal.vue'
 import { formatRunTimingDuration, getRunTotalLatencyMs } from '@/modules/session/model/runTiming'
 import { useTurnReferencesStore } from '@/modules/session/model/turnReferences'
@@ -269,9 +269,6 @@ watch(
   { immediate: true }
 )
 
-// 使用 useClipboard 实现复制功能
-const { copy, isSupported } = useClipboard()
-
 const showKey = (key) => {
   if (props.showRefs === true) {
     return true
@@ -284,21 +281,16 @@ const isCopied = ref(false)
 
 // 定义 copy 方法
 const copyText = async (text) => {
-  if (isSupported) {
-    try {
-      await copy(text)
-      antMessage.success('文本已复制到剪贴板')
-      isCopied.value = true
-      setTimeout(() => {
-        isCopied.value = false
-      }, 2000)
-    } catch (error) {
-      console.error('复制失败:', error)
-      antMessage.error('复制失败，请手动复制')
-    }
-  } else {
-    console.warn('浏览器不支持自动复制')
-    antMessage.warning('浏览器不支持自动复制，请手动复制')
+  try {
+    await copyTextToClipboard(text)
+    antMessage.success('文本已复制到剪贴板')
+    isCopied.value = true
+    setTimeout(() => {
+      isCopied.value = false
+    }, 2000)
+  } catch (error) {
+    console.error('复制失败:', error)
+    antMessage.error('复制失败，请手动复制')
   }
 }
 

@@ -106,30 +106,6 @@ export const useUserStore = defineStore('user', () => {
     }
   }
 
-  // 用户管理功能
-  async function getUsers({ pageSize = 100 } = {}) {
-    try {
-      const users = []
-      let skip = 0
-
-      while (true) {
-        const batch = await authApi.getUsers({ skip, limit: pageSize })
-        users.push(...batch)
-
-        if (batch.length < pageSize) {
-          break
-        }
-
-        skip += pageSize
-      }
-
-      return users
-    } catch (error) {
-      console.error('获取用户列表错误:', error)
-      throw error
-    }
-  }
-
   async function createUser(userData) {
     try {
       return await authApi.createUser(userData)
@@ -250,7 +226,6 @@ export const useUserStore = defineStore('user', () => {
     initialize,
     checkFirstRun,
     getAuthHeaders,
-    getUsers,
     createUser,
     updateUser,
     deleteUser,

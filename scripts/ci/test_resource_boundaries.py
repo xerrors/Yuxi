@@ -453,14 +453,15 @@ class RuntimeTopologyTests(unittest.TestCase):
             with self.assertRaises(KeyError):
                 self.assert_container_state(broken)
 
-    def test_image_builder_requires_and_builds_sandbox_image(self):
-        """真实 shell 必须构建 sandbox 镜像，profile 遗漏时在构建前失败。"""
+    def test_image_builder_requires_every_topology_image_before_building(self):
+        """全拓扑模式必须在构建前拒绝缺少任一所需镜像的配置。"""
         with tempfile.TemporaryDirectory() as root:
             base = Path(root)
             docker = base / "docker"
             docker.write_text(
                 '#!/bin/sh\n'
-                'if [ "$1" = compose ]; then cat "$BUILD_CONFIG"; else printf "%s\\n" "$*" >> "$BUILD_LOG"; fi\n'
+                'if [ "$1" = compose ]; then echo "$*" >&2; cat "$BUILD_CONFIG"; '
+                'else printf "%s\\n" "$*" >> "$BUILD_LOG"; fi\n'
             )
             docker.chmod(0o700)
             config = {"services": {name: {"image": f"test-{name}"} for name in ("api", "minio", "storage-init", "sandbox-image")}}
@@ -470,26 +471,35 @@ class RuntimeTopologyTests(unittest.TestCase):
                 **os.environ, "PATH": f"{base}:{os.environ['PATH']}",
                 "BUILD_CONFIG": str(config_file), "BUILD_LOG": str(log),
             }
-            for configured in (True, False):
-                with self.subTest(configured=configured):
+            for missing in (None, *config["services"]):
+                with self.subTest(missing=missing):
                     log.unlink(missing_ok=True)
                     value = copy.deepcopy(config)
-                    if not configured:
-                        del value["services"]["sandbox-image"]
+                    if missing:
+                        del value["services"][missing]
                     config_file.write_text(json.dumps(value))
                     result = subprocess.run(
                         ["bash", str(ROOT / "scripts/ci/build_topology_images.sh"), "", "", str(base / "sandbox-cache")],
                         env=env, capture_output=True, text=True, timeout=10, check=False,
                     )
-                    if not configured:
+                    self.assertEqual(result.stderr.splitlines().count("compose config --format json"), 1)
+                    if missing:
                         self.assertNotEqual(result.returncode, 0)
+                        self.assertIn("Compose 缺少所选构建需要的镜像配置", result.stderr)
                         self.assertFalse(log.exists())
                         continue
                     self.assertEqual(result.returncode, 0, result.stderr)
                     commands = [shlex.split(line) for line in log.read_text().splitlines()]
-                    self.assertEqual(len(commands), 4)
-                    sandbox = next(command for command in commands if "docker/sandbox.Dockerfile" in command)
-                    self.assertEqual(sandbox[sandbox.index("--tag") + 1], "test-sandbox-image")
+                    self.assertEqual(
+                        [(command[command.index("--file") + 1], command[command.index("--tag") + 1]) for command in commands],
+                        [
+                            ("docker/api.Dockerfile", "test-api"),
+                            ("docker/minio/Dockerfile", "test-minio"),
+                            ("docker/storage-init.Dockerfile", "test-storage-init"),
+                            ("docker/sandbox.Dockerfile", "test-sandbox-image"),
+                        ],
+                    )
+                    sandbox = commands[-1]
                     self.assertIn(f"type=local,dest={base}/sandbox-cache,mode=max,reset=true", sandbox)
                     self.assertIn("--load", sandbox)
 
@@ -500,10 +510,11 @@ class RuntimeTopologyTests(unittest.TestCase):
             docker = base / "docker"
             docker.write_text(
                 '#!/bin/sh\n'
-                'if [ "$1" = compose ]; then cat "$BUILD_CONFIG"; else printf "%s\\n" "$*" >> "$BUILD_LOG"; fi\n'
+                'if [ "$1" = compose ]; then echo "$*" >&2; cat "$BUILD_CONFIG"; '
+                'else printf "%s\\n" "$*" >> "$BUILD_LOG"; fi\n'
             )
             docker.chmod(0o700)
-            config = {"services": {name: {"image": f"test-{name}"} for name in ("api", "minio", "storage-init", "sandbox-image")}}
+            config = {"services": {"sandbox-image": {"image": "test-sandbox-image"}}}
             config_file = base / "config.json"
             log = base / "build.log"
             env = {
@@ -522,14 +533,17 @@ class RuntimeTopologyTests(unittest.TestCase):
                          str(base / "sandbox-cache"), "--sandbox-only"],
                         env=env, capture_output=True, text=True, timeout=10, check=False,
                     )
+                    self.assertEqual(result.stderr.splitlines().count("compose config --format json"), 1)
                     if not configured:
                         self.assertNotEqual(result.returncode, 0)
+                        self.assertIn("Compose 缺少所选构建需要的镜像配置", result.stderr)
                         self.assertFalse(log.exists())
                         continue
                     self.assertEqual(result.returncode, 0, result.stderr)
                     commands = [shlex.split(line) for line in log.read_text().splitlines()]
                     self.assertEqual(len(commands), 1)
                     self.assertIn("docker/sandbox.Dockerfile", commands[0])
+                    self.assertEqual(commands[0][commands[0].index("--tag") + 1], "test-sandbox-image")
                     self.assertIn(f"type=local,dest={base}/sandbox-cache,mode=max,reset=true", commands[0])
 
     def assert_container_state(self, config: dict) -> None:

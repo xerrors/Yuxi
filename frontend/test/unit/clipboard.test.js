@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { createPinia, disposePinia } from 'pinia'
+import { createSSRApp, h } from 'vue'
+import { renderToString } from 'vue/server-renderer'
 
 import { copyTextToClipboard } from '../../src/shared/lib/clipboard.js'
+import { createTestServer } from '../helpers/createTestServer.js'
 
 function createDocumentStub(execResult = true) {
   const appended = []
@@ -92,4 +96,41 @@ test('Clipboard API 被拒绝时继续使用 execCommand 降级复制', async ()
 
   assert.equal(document.appended[0].value, 'fallback')
   assert.equal(document.removed.length, 1)
+})
+
+test('消息引用栏在非安全上下文回读复制结果，失败时显示错误', async (t) => {
+  const server = await createTestServer({ server: { middlewareMode: true } })
+  const pinia = createPinia()
+  t.after(async () => {
+    disposePinia(pinia)
+    await server.close()
+  })
+
+  const { message } = await import('ant-design-vue')
+  const notices = []
+  t.mock.method(message, 'success', () => notices.push('success'))
+  t.mock.method(message, 'error', () => notices.push('error'))
+  const { default: RefsComponent } = await server.ssrLoadModule(
+    '/src/modules/session/ui/RefsComponent.vue'
+  )
+  let refs
+  await renderToString(createSSRApp({
+    setup() {
+      refs = RefsComponent.setup({ message: { content: '消息正文' } }, { emit() {}, expose() {} })
+      return () => h('div')
+    }
+  }).use(pinia))
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+
+  const rejected = createDocumentStub(false)
+  await withClipboardGlobals({ secure: false, document: rejected }, () => refs.copyText('消息正文'))
+  assert.deepEqual(notices, ['error'])
+  assert.equal(refs.isCopied.value, false)
+
+  const copied = createDocumentStub()
+  await withClipboardGlobals({ secure: false, document: copied }, () => refs.copyText('消息正文'))
+  assert.equal(copied.appended[0].value, '消息正文')
+  assert.equal(copied.removed[0], copied.appended[0])
+  assert.deepEqual(notices, ['error', 'success'])
+  assert.equal(refs.isCopied.value, true)
 })
