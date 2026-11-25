@@ -2,14 +2,13 @@
   <div ref="hostRef" class="office-preview-host">
     <div v-if="failed" class="office-preview-status">
       <p class="office-preview-error" role="alert">
-        <CircleAlert :size="18" />
-        <span>当前文件无法预览</span>
+        <CircleAlert :size="18" aria-hidden="true" />
+        <span>无法预览</span>
       </p>
       <a-button type="primary" @click="$emit('download')">下载原件</a-button>
     </div>
-    <div v-else-if="!active || !viewer" class="office-preview-status" role="status">
-      <LoaderCircle class="office-preview-spinner" :size="20" />
-      <span>正在加载 Office 预览...</span>
+    <div v-else-if="!active || !viewer" class="office-preview-status" role="status" aria-label="正在加载预览">
+      <LoaderCircle class="office-preview-spinner" :size="20" aria-hidden="true" />
     </div>
     <component
       :is="viewer.component"

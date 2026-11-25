@@ -137,7 +137,6 @@
               <WorkspacePreviewPane
                 :file="previewFile"
                 :file-path="selectedPreviewPath"
-                :loading="loadingPreview"
                 :editable="!isReadonlyWorkspacePath"
                 :saving="savingPreviewFile"
                 @close="closePreview"
@@ -405,7 +404,6 @@ const buildPreviewLoadingFile = (entry, baseFile = entry) => ({
   ...entry,
   content: '',
   status: 'loading',
-  loadingMessage: '正在加载文件内容...',
   supported: true,
   previewType: 'text',
   message: '',

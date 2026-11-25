@@ -203,9 +203,8 @@
         />
       </template>
       <template v-else-if="currentStatus === 'loading'">
-        <div class="unsupported-preview loading-preview">
-          <LoaderCircle class="preview-spinner" :size="20" />
-          <span>{{ currentLoadingMessage }}</span>
+        <div class="unsupported-preview" role="status" aria-label="正在加载预览">
+          <LoaderCircle class="preview-spinner" :size="20" aria-hidden="true" />
         </div>
       </template>
       <template v-else-if="currentStatus === 'error'">
@@ -332,9 +331,8 @@
             :class="{ 'is-office-preview': officePreviewActive }"
           >
             <template v-if="currentStatus === 'loading'">
-              <div class="unsupported-preview loading-preview fullscreen-unsupported-preview">
-                <LoaderCircle class="preview-spinner" :size="20" />
-                <span>{{ currentLoadingMessage }}</span>
+              <div class="unsupported-preview fullscreen-unsupported-preview" role="status" aria-label="正在加载预览">
+                <LoaderCircle class="preview-spinner" :size="20" aria-hidden="true" />
               </div>
             </template>
             <template v-else-if="currentStatus === 'error'">
@@ -441,15 +439,6 @@ const props = defineProps({
     type: String,
     default: ''
   },
-  status: {
-    type: String,
-    default: '',
-    validator: (value) => ['', 'idle', 'loading', 'error', 'unsupported', 'ready'].includes(value)
-  },
-  loadingMessage: {
-    type: String,
-    default: ''
-  },
   errorMessage: {
     type: String,
     default: ''
@@ -523,15 +512,11 @@ const closeIconComponent = computed(() =>
   props.closeVariant === 'collapse-right' ? PanelRight : X
 )
 const currentStatus = computed(() => {
-  if (props.status) return props.status
   if (props.file?.status) return props.file.status
   if (props.file?.loading === true) return 'loading'
   if (props.file?.error || props.file?.isError) return 'error'
   if (props.file?.supported === false) return 'unsupported'
   return 'ready'
-})
-const currentLoadingMessage = computed(() => {
-  return props.loadingMessage || props.file?.loadingMessage || '正在加载文件内容...'
 })
 const currentErrorMessage = computed(() => {
   return (
@@ -1172,10 +1157,6 @@ onUnmounted(() => {
   padding: 24px;
   gap: 10px;
   white-space: pre-wrap;
-
-  &.loading-preview {
-    color: var(--gray-500);
-  }
 
   &.error-preview {
     color: var(--color-error-700);
