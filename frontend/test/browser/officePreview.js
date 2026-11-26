@@ -152,9 +152,24 @@ async (page) => {
     await page.setViewportSize({ width: 768, height: 900 })
     await open('/workspace')
     await watchSheetPaint()
-    await page.getByRole('row', { name: new RegExp(localFiles[1]) }).press('Enter')
     const sheets = page.locator('.office-preview')
+    const { promise: parserReady, resolve: releaseParser } = Promise.withResolvers()
+    await page.route(spreadsheetParser, async (route) => {
+      await parserReady
+      await route.continue()
+    })
+    try {
+      await page.getByRole('row', { name: new RegExp(localFiles[1]) }).press('Enter')
+      const loading = sheets.getByRole('status').filter({ hasText: '正在解析 Excel 工作簿' })
+      await loading.waitFor()
+      check(await loading.innerText() === '正在解析 Excel 工作簿', '表格加载只显示一句话')
+      check(await loading.locator('.loading-spinner').count() === 1, '表格加载只显示一个转圈')
+      await screenshot('workspace-xls-loading', page.locator('.workspace-file-preview-modal .ant-modal'))
+    } finally {
+      releaseParser()
+    }
     await sheets.getByRole('button', { name: '单行', exact: true }).waitFor({ timeout: 45000 })
+    await page.unroute(spreadsheetParser)
     await page.waitForFunction(() => window.officePaintedCells.has('53'))
     await sheets.getByRole('button', { name: '文本与空白', exact: true }).click()
     await page.waitForFunction(() => window.officePaintedCells.has('00456'))
@@ -170,6 +185,27 @@ async (page) => {
     await previewText('李果果').waitFor({ state: 'attached' })
     await screenshot('knowledge-xlsx', page.locator('.ant-modal:visible').filter({ has: page.locator('.office-preview') }))
 
+    await page.setViewportSize({ width: 900, height: 590 })
+    const grid = sheets.locator('.excel-wrapper')
+    const zoom = () => grid.evaluate(element => element.__flyfishViewerZoomProvider.getState().scale)
+    const wheel = async (deltaY) => {
+      await grid.locator('.e-virt-table-stage').hover({ position: { x: 120, y: 100 } })
+      await page.keyboard.down('Control')
+      try {
+        await page.mouse.wheel(0, deltaY)
+      } finally {
+        await page.keyboard.up('Control')
+      }
+    }
+    const initialZoom = await zoom()
+    await wheel(-100)
+    await page.waitForFunction(initial => document.querySelector('.office-preview-frame')?.shadowRoot
+      ?.querySelector('.excel-wrapper').__flyfishViewerZoomProvider.getState().scale > initial, initialZoom)
+    await wheel(130)
+    await page.waitForFunction(initial => document.querySelector('.office-preview-frame')?.shadowRoot
+      ?.querySelector('.excel-wrapper').__flyfishViewerZoomProvider.getState().scale < initial, initialZoom)
+
+    await page.setViewportSize({ width: 1280, height: 900 })
     await page.evaluate(() => localStorage.setItem('theme', 'dark'))
     await open(`/agent/${threadId}`)
     const openPanel = page.getByRole('button', { name: '打开侧边栏' })

@@ -21,6 +21,8 @@ overrides:
 
 patchedDependencies:
   '@file-viewer/renderer-pptx@3.3.6': 3a7cc95fb6d221209758e69bf2ea69faedd42bee6e2cd1ead9a04caaf0c08fa7
+  '@file-viewer/renderer-spreadsheet@3.3.6': d61a2cf869ed1dff2c33a01ac0c8225b7a1802c215df2a6d8208dccc7083d3d4
+  e-virt-table@1.4.18: eeddead6a99dcaa795719dbb3b2145c85302bb68f9f4c91ab77bd8da6726c8f1
 
 importers:
 
@@ -40,7 +42,7 @@ importers:
         version: 3.3.6(patch_hash=3a7cc95fb6d221209758e69bf2ea69faedd42bee6e2cd1ead9a04caaf0c08fa7)
       '@file-viewer/renderer-spreadsheet':
         specifier: ^3.3.6
-        version: 3.3.6
+        version: 3.3.6(patch_hash=d61a2cf869ed1dff2c33a01ac0c8225b7a1802c215df2a6d8208dccc7083d3d4)
       '@file-viewer/renderer-word':
         specifier: ^3.3.6
         version: 3.3.6
@@ -2683,11 +2685,11 @@ snapshots:
       '@file-viewer/core': 3.3.6
       '@file-viewer/pptx': 3.3.6
 
-  '@file-viewer/renderer-spreadsheet@3.3.6':
+  '@file-viewer/renderer-spreadsheet@3.3.6(patch_hash=d61a2cf869ed1dff2c33a01ac0c8225b7a1802c215df2a6d8208dccc7083d3d4)':
     dependencies:
       '@file-viewer/core': 3.3.6
       '@xmldom/xmldom': 0.9.12
-      e-virt-table: 1.4.18
+      e-virt-table: 1.4.18(patch_hash=eeddead6a99dcaa795719dbb3b2145c85302bb68f9f4c91ab77bd8da6726c8f1)
       jszip: 3.10.2
       styled-exceljs: 0.21.6
       tinycolor2: 1.6.0
@@ -3479,7 +3481,7 @@ snapshots:
     optionalDependencies:
       '@types/trusted-types': 2.0.7
 
-  e-virt-table@1.4.18:
+  e-virt-table@1.4.18(patch_hash=eeddead6a99dcaa795719dbb3b2145c85302bb68f9f4c91ab77bd8da6726c8f1):
     dependencies:
       '@floating-ui/dom': 1.8.0
 

@@ -1,0 +1,12 @@
+diff --git a/dist/index.es.js b/dist/index.es.js
+index f7101dd10293e6771dbbf794016992421e57d437..36bbf58a61d060633cd0d1ccc240f3958f4b3c65 100644
+--- a/dist/index.es.js
++++ b/dist/index.es.js
+@@ -2604,6 +2604,7 @@ class Qe {
+     e && this.ctx.isTarget(t) && (this.ctx.dragHeaderIng || this.ctx.emit("keydown", t));
+   }
+   handleWheel(t) {
++    if (t.ctrlKey || t.metaKey) return;
+     this.ctx.emit("wheel", t);
+   }
+   handleTouchstart(t) {

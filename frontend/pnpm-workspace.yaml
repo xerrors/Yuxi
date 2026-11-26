@@ -24,3 +24,5 @@ overrides:
 
 patchedDependencies:
   '@file-viewer/renderer-pptx@3.3.6': patches/@file-viewer__renderer-pptx@3.3.6.patch
+  '@file-viewer/renderer-spreadsheet@3.3.6': patches/@file-viewer__renderer-spreadsheet@3.3.6.patch
+  e-virt-table@1.4.18: patches/e-virt-table@1.4.18.patch
