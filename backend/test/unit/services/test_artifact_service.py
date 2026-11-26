@@ -117,6 +117,16 @@ async def _async_value(value):
     return value
 
 
+async def _send_file_response(response):
+    """执行实际文件响应并让它释放临时文件。"""
+
+    async def noop(*_args):
+        """丢弃已从文件发送的 ASGI 消息。"""
+        pass
+
+    await response({"type": "http", "method": "GET", "headers": []}, noop, noop)
+
+
 @pytest.mark.asyncio
 async def test_artifact_reads_workspace_and_authorized_skill_projection(live_files):
     """Workspace 与 Skills 展示使用用户挂载中的真实字节。"""
@@ -128,7 +138,7 @@ async def test_artifact_reads_workspace_and_authorized_skill_projection(live_fil
         response = await svc.resolve_thread_artifact_view(thread_id="thread-1", current_uid="user-1", db=object(), path=path)
         assert Path(response.path).read_bytes() == live_files.expected_bytes(path)
         response = render_file_result(response)
-        await response.background()
+        await _send_file_response(response)
 
 
 @pytest.mark.asyncio
@@ -143,7 +153,7 @@ async def test_artifact_response_uses_audio_signature_with_wrong_extension(live_
         assert Path(prepared.path).read_bytes() == content
         assert response.headers["content-type"] == "audio/wav"
     finally:
-        await response.background()
+        await _send_file_response(response)
     assert not Path(prepared.path).exists()
 
 
@@ -307,7 +317,7 @@ async def test_artifact_download_encodes_untrusted_posix_filename(live_files, fi
     assert disposition.startswith("attachment;")
     assert "\r" not in disposition and "\n" not in disposition
     assert file_name not in disposition
-    await response.background()
+    await _send_file_response(response)
 
 
 @pytest.mark.asyncio

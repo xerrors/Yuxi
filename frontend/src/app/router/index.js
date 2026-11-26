@@ -183,13 +183,16 @@ router.beforeResolve(async (to) => {
   const userStore = useUserStore()
 
   // 如果有 token 但用户信息未加载，先获取用户信息
-  if (userStore.token && !userStore.userId) {
+  const requestToken = userStore.token
+  if (requestToken && !userStore.userId) {
     try {
       await userStore.getCurrentUser()
     } catch (error) {
-      // 只有认证失效才清除凭据；服务异常拒绝导航并保留重试能力。
-      if (error.status !== 401) throw error
-      userStore.logout()
+      // 只处理当前凭据的错误；服务异常拒绝导航并保留重试能力。
+      if (userStore.token === requestToken) {
+        if (error.status !== 401) throw error
+        userStore.logout()
+      }
     }
   }
 

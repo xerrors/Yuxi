@@ -2,10 +2,11 @@
 
 import io
 import os
+from contextlib import suppress
 from urllib.parse import quote
 
 from fastapi.responses import FileResponse, StreamingResponse
-from starlette.background import BackgroundTask
+from starlette.types import Receive, Scope, Send
 
 from yuxi.shared.files import PreparedFile, PreviewResult
 
@@ -17,13 +18,12 @@ def render_file_result(result: PreparedFile | PreviewResult | dict) -> FileRespo
         if result.explicit_disposition and result.filename:
             headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{quote(result.filename)}"}
         try:
-            return FileResponse(
+            return _TemporaryFileResponse(
                 result.path,
                 media_type=result.media_type,
                 filename=result.filename if not result.explicit_disposition else None,
                 headers=headers,
                 content_disposition_type="attachment",
-                background=BackgroundTask(os.unlink, result.path),
             )
         except Exception:
             os.unlink(result.path)
@@ -31,6 +31,18 @@ def render_file_result(result: PreparedFile | PreviewResult | dict) -> FileRespo
     if isinstance(result, PreviewResult):
         return _preview_response(result)
     return result
+
+
+class _TemporaryFileResponse(FileResponse):
+    """让响应在成功、范围拒绝和中断时都归还临时文件。"""
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """沿用 FileResponse 的协议，退出时回收文件。"""
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            with suppress(FileNotFoundError):
+                os.unlink(self.path)
 
 
 def _preview_response(result: PreviewResult) -> dict | StreamingResponse:

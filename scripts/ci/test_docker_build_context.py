@@ -23,6 +23,8 @@ class DockerBuildContextTests(unittest.TestCase):
                 ".env.prod",
                 "backend/test/.env.test",
                 ".yuxi/runtime-secret",
+                ".yuxi-identity/test-signing-key.pem",
+                "settings/.yuxi-identity/test-signing-key.pem",
                 ".playwright-cli/credentials.json",
             ):
                 with self.subTest(filename=filename):

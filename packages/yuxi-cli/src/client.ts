@@ -116,7 +116,11 @@ export class Client {
     try { response = await this.fetchImpl(`${this.apiBase}/v1/agents/sessions/${encodeURIComponent(id)}/events`, { headers, signal: controller.signal }); }
     catch (error) { throw new YuxiError(`事件流连接失败: ${error instanceof Error ? error.message : String(error)}`); }
     try {
-      if (!response.ok || !response.body) throw await this.error(response);
+      if (!response.ok) throw await this.error(response);
+      const mediaType = response.headers.get("Content-Type")?.split(";", 1)[0].trim().toLowerCase();
+      if (!response.body || mediaType !== "text/event-stream") {
+        throw new YuxiError("服务未返回有效的 SSE 事件流", response.status);
+      }
       yield* parseSse(response.body);
     } finally {
       controller.abort();

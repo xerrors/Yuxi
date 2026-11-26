@@ -12,7 +12,7 @@ Owner：backend/yuxi/modules/knowledge/repositories/bases.py
 
 ### 实现方案
 
-知识库 ORM 与 Schema-init 用部分唯一索引约束未删除记录的 lower(name)，保留名称不区分大小写、已删除名称可复用的规则。repository 把该索引的创建或更新冲突转换为既有名称冲突异常，HTTP 返回 409；其他完整性错误继续传播。名称唯一索引由当前 ORM 在空库初始化时直接建立；历史升级方案由[首个 Schema 基线决策](2026-10-19-schema-baseline-one.md)取代，部署步骤由[部署参考](../../../advanced/deployment.md#3-数据库与文件目录)拥有。
+知识库 ORM 与 Schema-init 用部分唯一索引约束未删除记录的 lower(name)，保留名称不区分大小写、已删除名称可复用的规则。repository 把该索引的创建或更新冲突转换为既有名称冲突异常，HTTP 返回 409；其他完整性错误继续传播。名称唯一索引由当前 ORM 在空库初始化时直接建立；历史升级方案由[首个 Schema 基线决策](2026-10-19-schema-baseline-one.md)取代，部署步骤由[部署参考](../../../advanced/deployment.md#_3-数据库与文件目录)拥有。
 
 知识文件失败 hook 在 owning Job 终态事务内按 KB → File 顺序加锁，更新仍由该 Job 拥有的文件错误态，再用既有 PostgreSQL 聚合写回受影响知识库统计。Job、文件与持久统计共同提交或回滚；知识库运行配置缓存不包含统计，详情与文件列表的统计读取按[GUI 缺陷修复决策](2026-10-12-gui-report-remaining-defects.md)从 PostgreSQL 查询当前聚合。
 

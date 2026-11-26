@@ -156,15 +156,18 @@ const userRoleText = computed(() => {
 
 // 退出登录
 const logout = async () => {
+  const requestToken = userStore.token
   try {
     await authApi.logout()
   } catch (error) {
     if (error.status !== 401) {
-      message.error(error.message || '退出未完成，请重试')
+      if (userStore.token === requestToken) message.error(error.message || '退出未完成，请重试')
       return
     }
   }
-  userStore.logout()
+  // 当前会话的 401 可能已由请求层清理，仍可以进入登录页。
+  if (userStore.token && userStore.token !== requestToken) return
+  if (userStore.token) userStore.logout()
   await router.replace('/login')
 }
 

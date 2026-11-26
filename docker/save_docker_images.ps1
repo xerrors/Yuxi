@@ -1,4 +1,6 @@
 # PowerShell脚本，用于在Windows系统上打包Docker镜像
+$ErrorActionPreference = "Stop"
+$PSNativeCommandUseErrorActionPreference = $false
 
 # 输出目录与 docker/minio 都相对仓库根；从别处调用时先切过去。
 Set-Location (Split-Path -Parent $PSScriptRoot)
@@ -11,7 +13,7 @@ if (!(Test-Path $OutputDir)) {
 
 # 定义输出文件名
 $DateTime = Get-Date -Format "yyyyMMdd"
-$OutputFile = "$OutputDir\docker_images_$DateTime.tar"
+$OutputFile = Join-Path $OutputDir "docker_images_$DateTime.tar"
 
 Write-Host "开始导出Docker镜像到 $OutputFile..." -ForegroundColor Cyan
 
@@ -47,32 +49,36 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "❌ 镜像构建失败" -ForegroundColor Red
     exit 1
 }
-$MinioImage = docker compose config --images | Where-Object { $_ -match '-minio:RELEASE' } | Select-Object -First 1
-if (-not $MinioImage) {
+$MinioImage = docker compose config --images minio
+if ($LASTEXITCODE -ne 0 -or -not $MinioImage) {
     Write-Host "❌ 未能从 Compose 配置解析出 MinIO 镜像名" -ForegroundColor Red
     exit 1
 }
 
-$StorageImage = docker compose config --images | Where-Object { $_ -match '-storage-init:' } | Select-Object -First 1
-$SandboxImage = docker compose --profile container config --images sandbox-image
-if (-not $StorageImage) {
+$StorageImage = docker compose config --images storage-init
+if ($LASTEXITCODE -ne 0 -or -not $StorageImage) {
     Write-Host "❌ 未能从 Compose 配置解析出 storage-init 镜像名" -ForegroundColor Red
     exit 1
 }
-if (-not $SandboxImage) {
+$SandboxImage = docker compose --profile container config --images sandbox-image
+if ($LASTEXITCODE -ne 0 -or -not $SandboxImage) {
     Write-Host "❌ 未能从 Compose 配置解析出 sandbox 镜像名" -ForegroundColor Red
     exit 1
 }
 
-# 确保所有镜像都已下载
+# 镜像可能已通过镜像源准备，最终由 docker save 验证本地镜像是否齐全。
 foreach ($Image in $Images) {
     Write-Host "正在拉取镜像: $Image" -ForegroundColor Yellow
     docker pull $Image
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "⚠️ $Image 拉取失败，继续使用本地镜像" -ForegroundColor Yellow
+    }
 }
 
 # 保存所有镜像到单个tar文件
 Write-Host "正在保存镜像到tar文件..." -ForegroundColor Yellow
 docker save ($Images + $MinioImage + $StorageImage + $SandboxImage) -o $OutputFile
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 # 计算文件大小
 $FileInfo = Get-Item $OutputFile

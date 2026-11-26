@@ -10,8 +10,8 @@ const MASCOT_IMAGE = `${OSS_ASSET_BASE}/yuxi-mascot-cutout.png`
 const docPaths = [
   {
     title: '第一次部署 Yuxi',
-    desc: '准备 Docker、Cube 执行节点与模型 API，启动服务并完成首次登录。',
-    link: '/intro/quick-start',
+    desc: '准备 Docker 与模型 API，选择沙盒，启动服务并完成首次登录。',
+    link: '/intro/quick-start.html',
     action: '打开快速开始',
     character: `${OSS_ASSET_BASE}/characters/deploy-run.png`,
     characterWidth: 1221,
@@ -22,7 +22,7 @@ const docPaths = [
   {
     title: '让智能体使用知识',
     desc: '创建知识库、上传文档，并验证检索和知识图谱。',
-    link: '/intro/knowledge-base',
+    link: '/intro/knowledge-base.html',
     action: '学习知识库',
     character: `${OSS_ASSET_BASE}/characters/knowledge-think.png`,
     characterWidth: 1024,
@@ -32,7 +32,7 @@ const docPaths = [
   {
     title: '编排 Agent 能力',
     desc: '配置模型、Skills、MCP、工具与协作会话。',
-    link: '/agents/agents-config',
+    link: '/agents/agents-config.html',
     action: '进入智能体开发',
     character: `${OSS_ASSET_BASE}/characters/agent-confident.png`,
     characterWidth: 1145,
@@ -510,7 +510,7 @@ onBeforeUnmount(() => {
           <h1>让知识真正参与<br>每一次行动</h1>
           <p>把团队知识、工具与多智能体执行接进一个可私有部署的工作台。</p>
           <div class="yx-actions">
-            <a class="yx-button yx-button--primary" :href="withBase('/intro/quick-start')">开始部署</a>
+            <a class="yx-button yx-button--primary" :href="withBase('/intro/quick-start.html')">开始部署</a>
             <a class="yx-button yx-button--secondary" :href="GITHUB" target="_blank" rel="noreferrer">查看 GitHub</a>
           </div>
         </div>
@@ -677,7 +677,7 @@ onBeforeUnmount(() => {
             <div class="yx-capabilities__intro">
               <span>可私有部署</span>
               <h3>数据、模型与权限由你的团队掌握</h3>
-              <a :href="withBase('/intro/project-overview')">认识 Yuxi <span aria-hidden="true">→</span></a>
+              <a :href="withBase('/intro/project-overview.html')">认识 Yuxi <span aria-hidden="true">→</span></a>
             </div>
             <dl>
               <div v-for="group in capabilityGroups" :key="group.label">
@@ -696,10 +696,10 @@ onBeforeUnmount(() => {
             <h2>用 Docker Compose 启动完整拓扑</h2>
             <p>准备 Docker 和模型 API，默认使用 Container 沙盒，无需额外执行节点。0.8 使用独立数据目录全新部署。</p>
             <div class="yx-inline-links">
-              <a :href="withBase('/intro/quick-start')">阅读完整教程</a>
-              <a :href="withBase('/advanced/container-sandbox')">了解 Container 沙盒</a>
-              <a :href="withBase('/develop-guides/releases/0.8.0')">0.8.0 更新说明</a>
-              <a :href="withBase('/advanced/deployment')">生产部署与升级</a>
+              <a :href="withBase('/intro/quick-start.html')">阅读完整教程</a>
+              <a :href="withBase('/advanced/container-sandbox.html')">了解 Container 沙盒</a>
+              <a :href="withBase('/develop-guides/releases/0.8.0.html')">0.8.0 更新说明</a>
+              <a :href="withBase('/advanced/deployment.html')">生产部署与升级</a>
             </div>
           </div>
 
@@ -753,7 +753,7 @@ docker compose --profile container up --build -d</code></pre>
             </div>
             <div class="yx-community__actions">
               <a class="yx-button yx-button--primary" :href="DEMO" target="_blank" rel="noreferrer">观看演示</a>
-              <a class="yx-button yx-button--secondary" :href="withBase('/develop-guides/contributing')">参与贡献</a>
+              <a class="yx-button yx-button--secondary" :href="withBase('/develop-guides/contributing.html')">参与贡献</a>
             </div>
           </div>
         </div>

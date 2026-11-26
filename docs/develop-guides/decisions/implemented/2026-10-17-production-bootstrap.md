@@ -14,7 +14,7 @@ Owner：scripts/init.sh
 
 Linux/macOS 初始化入口支持目标环境文件、显式无人值守模式与仅准备配置。环境输入覆盖初始化拥有的字段，其他既有配置保留；缺失安全密钥生成，非空非法应用密钥在无人值守模式下明确失败。生产模式生成缺失的存储凭据，要求部署者提供 Cube 节点与实际共享路径。dotenv 写入保留美元符等字面值，拒绝换行。PowerShell 入口保持交互式流程。
 
-Compose 拥有拓扑与发布端口，共享存储初始化器使用无网络模式，目录准备与镜像权限由[权限决策](./2026-10-17-container-storage-permissions.md)拥有。镜像拉取 helper 在加速站失败后可观察地尝试原仓库，两处失败则返回失败；初始化同样退出。Dockerignore 排除环境文件、运行槽位、浏览器产物及构建缓存。[生产部署](../../../advanced/deployment.md)拥有配置、共享路径、目录权限、启动和验收顺序。
+Compose 拥有拓扑与发布端口，共享存储初始化器使用无网络模式，目录准备与镜像权限由[权限决策](./2026-10-17-container-storage-permissions.md)拥有。镜像拉取 helper 在加速站失败后可观察地尝试原仓库，两处失败则返回失败；初始化同样退出。Dockerignore 排除环境文件、运行槽位、默认身份签名密钥目录 `.yuxi-identity/`、浏览器产物及构建缓存。[生产部署](../../../advanced/deployment.md)拥有配置、共享路径、目录权限、启动和验收顺序。
 
 同机部署使用独立 project、环境文件、持久目录与 Cube 共享路径；复用节点控制面和模板不复用用户文件。Compose 项目名使用小写 production，实例身份可使用 Production。产品访问经过 Web 80，API 和存储维护端口只绑定回环地址。
 
@@ -37,5 +37,5 @@ Compose 拥有拓扑与发布端口，共享存储初始化器使用无网络模
 - 两套 Compose 的无网络初始化回归在恢复原配置时失败；实际生产初始化容器退出 0，未创建默认网络。
 - 本机完整生产镜像构建、空库 business=4/knowledge=1、readiness、浏览器首次登录、真实模型/worker/Cube 文件任务通过；数据库最终 Turn/Run completed，文件字节经独立回读核对。
 - 合成知识文档经过 MinIO、worker 解析、嵌入与 Milvus 索引，文件 indexed；向量、关键词和混合检索均返回唯一短语与正确来源。
-- 工程契约、其 66 项单测、宿主 config 测试、后端容器 unit、文档构建与 diff 检查通过。容器部署配置 skip 由宿主 config 测试补齐；真实 BuildKit 在临时合成上下文拒绝五类私有文件，移除排除规则后允许 COPY 的负控成功；该宿主测试接入后端 workflow。
+- 工程契约、其 66 项单测、宿主 config 测试、后端容器 unit、文档构建与 diff 检查通过。容器部署配置 skip 由宿主 config 测试补齐。`python3 -m unittest scripts.ci.test_docker_build_context` 使用真实 BuildKit，验证临时合成的私有文件无法被复制，包括默认身份签名密钥路径。缺少该路径的排除规则时，合成签名密钥会被复制。该宿主测试接入后端 workflow。
 - 本机使用既有嵌套 Cube 与独立共享命名空间，构建包含当前工作树已有的前端暂存改动。未验证公网 TLS、OIDC、GPU OCR、网页搜索、容量、原生执行节点与真实数据备份恢复。

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import threading
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -169,6 +171,40 @@ async def test_viewer_download_uses_shared_media_type_fallback(realtime_viewer, 
         assert Path(result.path).read_bytes() == b"# hello"
     finally:
         Path(result.path).unlink()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_viewer_download_removes_temporary_file(realtime_viewer, monkeypatch, tmp_path):
+    """取消请求发生在文件复制中时，复制退出后应回收响应临时文件。"""
+    started = asyncio.Event()
+    finished = asyncio.Event()
+    release_copy = threading.Event()
+    loop = asyncio.get_running_loop()
+    copy_file = realtime_viewer.download_authorized_file_to_path
+
+    def copy_when_released(*args):
+        """等待请求取消，再让线程执行文件复制。"""
+        loop.call_soon_threadsafe(started.set)
+        try:
+            assert release_copy.wait(timeout=5)
+            return copy_file(*args)
+        finally:
+            loop.call_soon_threadsafe(finished.set)
+
+    monkeypatch.setattr(svc.tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setattr(realtime_viewer, "download_authorized_file_to_path", copy_when_released)
+    request = asyncio.create_task(
+        svc.download_viewer_file(thread_id="thread-1", path="/report.txt", current_user=SimpleNamespace(uid="user-1"), db=object())
+    )
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5)
+        request.cancel()
+    finally:
+        release_copy.set()
+    with pytest.raises(asyncio.CancelledError):
+        await request
+    await asyncio.wait_for(finished.wait(), timeout=5)
+    assert list(tmp_path.iterdir()) == []
 
 
 @pytest.mark.asyncio

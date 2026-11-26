@@ -51,6 +51,7 @@ uv run --locked --group test pytest \
     test/integration/services/test_agent_state_projection_flow.py \
     test/integration/services/test_plugin_content_sync.py \
     test/integration/api/test_error_information_boundary.py \
+    test/integration/api/test_viewer_filesystem_router.py::test_viewer_download_preserves_range_protocol_and_removes_prepared_file \
     test/integration/api/test_knowledge_url_import_options.py \
     test/integration/api/test_managed_abridge_browser.py \
     test/integration/api/test_personal_abridge_browser.py \

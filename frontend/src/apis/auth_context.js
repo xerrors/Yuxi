@@ -27,8 +27,7 @@ export function getApiToken() {
 }
 
 /** 为普通 HTTP 与 Thread SSE 生成一致的认证头。 */
-export function getApiAuthHeaders() {
-  const token = getApiToken()
+export function getApiAuthHeaders(token = getApiToken()) {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 

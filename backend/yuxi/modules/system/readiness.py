@@ -130,8 +130,6 @@ async def get_readiness(
 ) -> dict[str, Any]:
     """返回带短缓存与 single-flight 的结构化接流量事实。"""
 
-    global _readiness_cache
-
     component_snapshot = _component_snapshot(startup_components)
     cache_key = (startup_complete, component_snapshot, id(_probe_postgres), id(_probe_redis), id(_probe_worker))
     now = time.monotonic()
@@ -142,13 +140,18 @@ async def get_readiness(
 
     job = _readiness_inflight.get(cache_key)
     if job is None:
-        job = asyncio.create_task(_compute_readiness(startup_complete=startup_complete, component_snapshot=component_snapshot))
+        job = asyncio.create_task(_refresh_readiness(cache_key, startup_complete=startup_complete, component_snapshot=component_snapshot))
         _readiness_inflight[cache_key] = job
-    try:
-        result = await asyncio.shield(job)
-    finally:
-        if job.done() and _readiness_inflight.get(cache_key) is job:
-            _readiness_inflight.pop(cache_key, None)
+    return copy.deepcopy(await asyncio.shield(job))
 
-    _readiness_cache = (cache_key, time.monotonic() + max(0.0, READINESS_CACHE_TTL_SECONDS), result)
-    return copy.deepcopy(result)
+
+async def _refresh_readiness(cache_key: tuple, *, startup_complete: bool, component_snapshot: tuple) -> dict[str, Any]:
+    """在探针结束时更新缓存并释放任务，即使所有请求都已取消。"""
+    global _readiness_cache
+
+    try:
+        result = await _compute_readiness(startup_complete=startup_complete, component_snapshot=component_snapshot)
+        _readiness_cache = (cache_key, time.monotonic() + max(0.0, READINESS_CACHE_TTL_SECONDS), result)
+        return result
+    finally:
+        _readiness_inflight.pop(cache_key, None)

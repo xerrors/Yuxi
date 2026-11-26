@@ -24,4 +24,4 @@ ScheduledAgentEditor 的执行智能体选择复用 ActionDropdown 与 ActionTri
 
 ## 验证
 
-[项目 store 测试](../../../../frontend/test/unit/projectsStore.test.js)覆盖空列表加载完成、刷新期间与失败后的列表保留，以及退出后迟到响应不能跨会话写回。[浏览器脚本](../../../../frontend/test/browser/scheduledAgentEditor.js)在实际页面使用固定列表响应，检查打开详情不重复请求项目、刷新期间侧边栏 DOM 保留、名称焦点与默认值、历史记录内边距、频率垂直对齐及窄屏溢出，并生成浅色、深色和窄屏截图。该浏览器验证覆盖真实组件装配，不代表真实任务执行或持久化验证。
+[项目 store 测试](https://github.com/xerrors/Yuxi/blob/main/frontend/test/unit/projectsStore.test.js)覆盖空列表加载完成、刷新期间与失败后的列表保留，以及退出后迟到响应不能跨会话写回。[浏览器脚本](https://github.com/xerrors/Yuxi/blob/main/frontend/test/browser/scheduledAgentEditor.js)在实际页面使用固定列表响应，检查打开详情不重复请求项目、刷新期间侧边栏 DOM 保留、名称焦点与默认值、历史记录内边距、频率垂直对齐及窄屏溢出，并生成浅色、深色和窄屏截图。该浏览器验证覆盖真实组件装配，不代表真实任务执行或持久化验证。

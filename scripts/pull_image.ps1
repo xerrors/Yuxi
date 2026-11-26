@@ -3,8 +3,9 @@ param(
     [string]$ImageTag
 )
 
-# 当命令失败时，立即退出脚本
+# Docker 的退出码由脚本处理，镜像站失败时仍可回退到原仓库。
 $ErrorActionPreference = "Stop"
+$PSNativeCommandUseErrorActionPreference = $false
 
 Write-Host "Pulling image: $ImageTag" -ForegroundColor Green
 
@@ -33,24 +34,17 @@ switch ($slashCount) {
 $fullMirrorUrl = "$mirrorUrl/$ImageTag"
 Write-Host "Mirror URL: $fullMirrorUrl" -ForegroundColor Yellow
 
-try {
-    # 从镜像加速器拉取镜像
-    Write-Host "Step 1: Pulling image from mirror..." -ForegroundColor Blue
-    docker pull $fullMirrorUrl
-
-    # 重新标记为原始名称
-    Write-Host "Step 2: Tagging image with original name..." -ForegroundColor Blue
-    docker tag $fullMirrorUrl $ImageTag
-
-    # 删除镜像加速器标签
-    Write-Host "Step 3: Removing mirror tag..." -ForegroundColor Blue
-    docker rmi $fullMirrorUrl
-
-    Write-Host "`nProcess completed successfully!" -ForegroundColor Green
-    Write-Host "`nCurrent Docker images:" -ForegroundColor Yellow
-    docker images
-
-} catch {
-    Write-Host "`nError occurred: $_" -ForegroundColor Red
-    exit 1
+docker pull $fullMirrorUrl
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Mirror unavailable; pulling from the original registry: $ImageTag" -ForegroundColor Yellow
+    docker pull $ImageTag
+    exit $LASTEXITCODE
 }
+
+docker tag $fullMirrorUrl $ImageTag
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+docker rmi $fullMirrorUrl
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+Write-Host "Process completed successfully!" -ForegroundColor Green

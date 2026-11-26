@@ -63,4 +63,30 @@ test('身份校验在服务异常时保留凭据并拒绝导航，恢复后重�
   user.applySession({ access_token: 'fixture-user', user_id: 2, uid: 'ordinary', username: 'Fixture', role: 'user' })
   await router.push('/dashboard')
   assert.equal(router.currentRoute.value.path, '/agent', '保留凭据不能绕过角色守卫')
+
+  for (const status of [200, 401, 502]) {
+    await t.test(`旧身份请求返回 ${status} 时按替换后的身份导航`, async () => {
+      await router.push('/')
+      user.applySession({ access_token: 'previous-token', user_id: null, uid: '', role: '' })
+      const { promise: started, resolve: notifyStarted } = Promise.withResolvers()
+      const { promise: response, resolve, reject } = Promise.withResolvers()
+      t.mock.method(authApi, 'getCurrentUser', () => {
+        notifyStarted()
+        return response
+      })
+      const navigation = router.push('/dashboard')
+      await started
+      user.applySession({ access_token: 'current-token', user_id: 2, uid: 'ordinary', role: 'user' })
+      if (status === 200) {
+        resolve({ id: 1, uid: 'previous-admin', username: 'Previous', role: 'superadmin' })
+      } else {
+        reject(Object.assign(new Error('旧身份请求失败'), { status }))
+      }
+      await navigation
+      assert.equal(router.currentRoute.value.path, '/agent')
+      assert.equal(storage.get('user_token'), 'current-token')
+      assert.equal(user.uid, 'ordinary')
+      assert.equal(user.isSuperAdmin, false)
+    })
+  }
 })

@@ -22,7 +22,7 @@ function jsonResponse(body, status = 200) {
 }
 
 /** 用内存身份和假 HTTP 驱动真实 send / resume，不启动浏览器。 */
-async function openPausedThread() {
+async function openPausedThread({ upload } = {}) {
   const requests = [];
   const snapshot = {
     id: "thread-1",
@@ -61,6 +61,9 @@ async function openPausedThread() {
   globalThis.fetch = async (url, options = {}) => {
     const parsed = new URL(url);
     const method = options.method || "GET";
+    if (parsed.pathname === "/api/v1/agents/files" && method === "POST" && upload) {
+      return upload(options);
+    }
     const body = options.body ? JSON.parse(options.body) : undefined;
     requests.push({ method, path: parsed.pathname, body });
     if (parsed.pathname.endsWith("/events")) {
@@ -132,6 +135,38 @@ function resumes(requests) {
 }
 
 describe("公开输入", { concurrency: 1 }, () => {
+test("切换 APP 后不继续上传旧批次的附件", async () => {
+  const started = Promise.withResolvers();
+  const finishFirst = Promise.withResolvers();
+  const uploads = [];
+  const { demo } = await openPausedThread({
+    async upload({ body, headers }) {
+      const file = body.get("file");
+      uploads.push({ name: file.name, authorization: headers.Authorization });
+      if (file.name === "first.txt") {
+        started.resolve();
+        await finishFirst.promise;
+      }
+      return jsonResponse({ id: file.name, filename: file.name }, 201);
+    },
+  });
+
+  const batch = demo.addFiles([new File(["first"], "first.txt"), new File(["second"], "second.txt")]);
+  await started.promise;
+  demo.addApp();
+  demo.activeApp.value.key = "replacement-key";
+  await demo.connect();
+  finishFirst.resolve();
+  await batch;
+  await demo.addFiles([new File(["new"], "new.txt")]);
+
+  assert.deepEqual(uploads, [
+    { name: "first.txt", authorization: "Bearer test-key" },
+    { name: "new.txt", authorization: "Bearer replacement-key" },
+  ]);
+  assert.deepEqual(demo.state.draftFiles.map((file) => file.filename), ["new.txt"]);
+});
+
 test("暂停时 send 仍提交原来的 follow_up，其他阻止条件保留", async () => {
   const { demo, requests } = await openPausedThread();
   assert.equal(demo.state.snapshot.yuxi.queue_paused, true);

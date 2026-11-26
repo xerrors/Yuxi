@@ -6,7 +6,6 @@ import {
   BarChart3,
   ClipboardList,
   LibraryBig,
-  Box,
   HardDrive,
   PanelLeft,
   PanelLeftOpen,
@@ -30,6 +29,7 @@ import UserInfoComponent from '@/modules/settings/ui/UserInfoComponent.vue'
 import BackgroundJobsDrawer from '@/modules/background-jobs/ui/BackgroundJobsDrawer.vue'
 import SettingsModal from '@/modules/settings/ui/SettingsModal.vue'
 import SessionNavigation from '@/modules/session/ui/SessionNavigation.vue'
+import AgentNavIcon from './AgentNavIcon.vue'
 import { createSessionRouteCache } from './sessionRouteCache'
 
 const configStore = useConfigStore()
@@ -163,8 +163,8 @@ const mainList = computed(() => {
   items.push({
     name: '智能体',
     path: '/agent-manage',
-    icon: Box,
-    activeIcon: Box
+    icon: AgentNavIcon,
+    activeIcon: AgentNavIcon
   })
 
   items.push({

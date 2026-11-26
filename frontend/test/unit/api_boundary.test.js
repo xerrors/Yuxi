@@ -174,6 +174,100 @@ test('受保护请求的 401 才清理会话并跳转登录页', async () => {
   })
 })
 
+test('旧会话的资料更新与头像响应不改写新账号', async (t) => {
+  await withServer(async (server) => {
+    storageValues.clear()
+    const pending = []
+    t.mock.method(globalThis, 'fetch', (url, { headers }) =>
+      new Promise((resolve) => pending.push({ url, authorization: headers.Authorization, resolve }))
+    )
+    const { useUserStore } = await server.ssrLoadModule('/src/modules/identity/model/user.js')
+    setActivePinia(createPinia())
+    const user = useUserStore()
+    user.applySession({ access_token: 'prior-profile', user_id: 1, uid: 'first', role: 'user' })
+    const profile = user.updateProfile({ username: 'First', phone_number: 'old-phone' })
+    const avatar = user.uploadAvatar(new File(['avatar'], 'old.png', { type: 'image/png' }))
+    assert.deepEqual(pending.map(({ url, authorization }) => [url, authorization]), [
+      ['/api/auth/profile', 'Bearer prior-profile'],
+      ['/api/auth/upload-avatar', 'Bearer prior-profile']
+    ])
+
+    user.applySession({
+      access_token: 'current-profile', user_id: 2, uid: 'second', role: 'user',
+      username: 'Second', phone_number: 'current-phone', avatar: '/current.png'
+    })
+    const profileResponse = { username: 'First', phone_number: 'old-phone' }
+    const avatarResponse = { avatar_url: '/old.png' }
+    pending[0].resolve(Response.json(profileResponse))
+    pending[1].resolve(Response.json(avatarResponse))
+    assert.deepEqual(await Promise.all([profile, avatar]), [profileResponse, avatarResponse])
+    assert.deepEqual([user.username, user.phoneNumber, user.avatar], ['Second', 'current-phone', '/current.png'])
+  })
+})
+
+test('旧会话的 401 不影响替换后的凭据，重复 401 只通知一次', async (t) => {
+  await withServer(async (server) => {
+    storageValues.clear()
+    globalThis.__apiBoundaryMessages = []
+    globalThis.window = { location: { href: '/agent' } }
+    const pending = []
+    t.mock.method(globalThis, 'fetch', (_url, options) =>
+      new Promise((resolve) => pending.push({ resolve, authorization: options.headers.Authorization }))
+    )
+
+    const { apiGet } = await server.ssrLoadModule('/src/apis/base.js')
+    const { useUserStore } = await server.ssrLoadModule('/src/modules/identity/model/user.js')
+    setActivePinia(createPinia())
+    const userStore = useUserStore()
+    const applySession = (token, id) =>
+      userStore.applySession({ access_token: token, user_id: id, uid: String(id), role: 'user' })
+    const timers = []
+    const setTimeout = globalThis.setTimeout
+    t.mock.method(globalThis, 'setTimeout', (callback, delay, ...args) => {
+      if (delay !== 1500) return setTimeout(callback, delay, ...args)
+      timers.push(callback)
+    })
+    const reject = async (index, promise) => {
+      pending[index].resolve(Response.json({ detail: '令牌已失效' }, { status: 401 }))
+      await assert.rejects(promise, { status: 401 })
+    }
+
+    applySession('old-token', 1)
+    const oldRequest = apiGet('/api/old-request')
+    assert.equal(pending[0].authorization, 'Bearer old-token')
+    applySession('replacement-token', 2)
+    await reject(0, oldRequest)
+    assert.equal(userStore.userId, 2)
+    assert.equal(storageValues.get('user_token'), 'replacement-token')
+    assert.deepEqual(globalThis.__apiBoundaryMessages, [])
+    assert.equal(timers.length, 0)
+
+    const currentRequest = apiGet('/api/current-request')
+    const duplicate = apiGet('/api/duplicate')
+    assert.equal(pending[1].authorization, 'Bearer replacement-token')
+    await reject(1, currentRequest)
+    await reject(2, duplicate)
+    assert.equal(storageValues.has('user_token'), false)
+    assert.deepEqual(globalThis.__apiBoundaryMessages, ['登录已过期，请重新登录'])
+    assert.equal(timers.length, 1)
+
+    applySession('new-token', 3)
+    timers[0]()
+    assert.equal(window.location.href, '/agent')
+    assert.equal(storageValues.get('user_token'), 'new-token')
+
+    const oldTabRequest = apiGet('/api/old-tab')
+    storageValues.set('user_token', 'other-tab-token')
+    await reject(3, oldTabRequest)
+    assert.equal(userStore.isLoggedIn, false)
+    assert.equal(storageValues.get('user_token'), 'other-tab-token')
+    assert.equal(timers.length, 2)
+    window.location = { pathname: '/login', href: '/login?redirect=/agent' }
+    timers[1]()
+    assert.equal(window.location.href, '/login?redirect=/agent', '登录页已打开时保留当前表单')
+  })
+})
+
 test('用户 Store 的 422 传播链不泄露认证头、密码或 Pydantic input', async () => {
   await withServer(async (server) => {
     storageValues.clear()

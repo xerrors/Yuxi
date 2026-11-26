@@ -57,6 +57,7 @@ export const useUserStore = defineStore('user', () => {
   }
 
   function logout() {
+    const previousToken = token.value
     // 清除状态
     token.value = ''
     userId.value = null
@@ -74,8 +75,8 @@ export const useUserStore = defineStore('user', () => {
     useProjectsStore().reset()
     useSessionFeedbackStore().reset()
 
-    // 只清除 token
-    localStorage.removeItem('user_token')
+    // 另一个标签页可能已经写入替代会话。
+    if (localStorage.getItem('user_token') === previousToken) localStorage.removeItem('user_token')
   }
 
   async function initialize(admin) {
@@ -145,12 +146,10 @@ export const useUserStore = defineStore('user', () => {
 
   // 上传头像
   async function uploadAvatar(file) {
+    const requestToken = token.value
     try {
       const data = await authApi.uploadAvatar(file)
-
-      // 更新本地头像状态
-      avatar.value = data.avatar_url
-
+      if (token.value === requestToken) avatar.value = data.avatar_url
       return data
     } catch (error) {
       console.error('头像上传错误:', error)
@@ -160,8 +159,10 @@ export const useUserStore = defineStore('user', () => {
 
   // 获取当前用户信息
   async function getCurrentUser() {
+    const requestToken = token.value
     try {
       const userData = await authApi.getCurrentUser()
+      if (token.value !== requestToken) return
 
       // 更新本地状态
       userId.value = userData.id
@@ -182,10 +183,10 @@ export const useUserStore = defineStore('user', () => {
 
   // 更新个人资料
   async function updateProfile(profileData) {
+    const requestToken = token.value
     try {
       const userData = await authApi.updateProfile(profileData)
-
-      // 更新本地状态
+      if (token.value !== requestToken) return userData
       if (typeof userData.username === 'string') {
         username.value = userData.username
       }

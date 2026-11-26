@@ -39,3 +39,6 @@ jobs:
       - name: Run native PowerShell security negative controls
         shell: pwsh
         run: pwsh -NoProfile -File scripts/ci/test_init_security.ps1
+      - name: Verify PowerShell Docker image scripts
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/ci/test_docker_image_scripts.ps1

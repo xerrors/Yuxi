@@ -8,7 +8,7 @@
   "engines": { "node": ">=22" },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "prepack": "npm run build",
+    "prepack": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && npm run build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test test/*.test.js",
     "pack:check": "npm pack --dry-run"

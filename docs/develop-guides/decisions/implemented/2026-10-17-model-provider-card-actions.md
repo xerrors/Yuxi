@@ -26,4 +26,4 @@ Owner：frontend/src/modules/settings/ui/ModelProviderManagePanel.vue
 
 ## 验证
 
-[浏览器回归脚本](../../../../frontend/test/browser/modelProviderCards.js) 在真实页面使用固定 HTTP 夹具，核对正常、凭证缺失、零模型、未启用供应商的 DOM，并验证未启用卡片的鼠标及 Enter/Space 均进入正确配置且不读取远端模型，以及已启用卡片点击、设置点击、键盘操作、浅深色和 1440、1024、768px 布局。脚本断言设置入口不会同时打开模型弹窗，并核对打开弹窗不产生写请求；恢复旧整卡行为或删除设置按钮的事件隔离均会使相应断言失败。浏览器还通过延迟响应核对自动读取、列表加载动画、刷新后的实际模型替换、失败后的旧数据和重试、空结果，以及各验收宽度的刷新按钮位置。[状态单测](../../../../frontend/test/unit/modelProviderSaveActions.test.js) 验证跨供应商并发、重复打开时在途去重和错误恢复。前端 lint、unit 和 build 负责静态及既有逻辑回归。
+[浏览器回归脚本](https://github.com/xerrors/Yuxi/blob/main/frontend/test/browser/modelProviderCards.js) 在真实页面使用固定 HTTP 夹具，核对正常、凭证缺失、零模型、未启用供应商的 DOM，并验证未启用卡片的鼠标及 Enter/Space 均进入正确配置且不读取远端模型，以及已启用卡片点击、设置点击、键盘操作、浅深色和 1440、1024、768px 布局。脚本断言设置入口不会同时打开模型弹窗，并核对打开弹窗不产生写请求；恢复旧整卡行为或删除设置按钮的事件隔离均会使相应断言失败。浏览器还通过延迟响应核对自动读取、列表加载动画、刷新后的实际模型替换、失败后的旧数据和重试、空结果，以及各验收宽度的刷新按钮位置。[状态单测](https://github.com/xerrors/Yuxi/blob/main/frontend/test/unit/modelProviderSaveActions.test.js) 验证跨供应商并发、重复打开时在途去重和错误恢复。前端 lint、unit 和 build 负责静态及既有逻辑回归。

@@ -90,6 +90,13 @@ class ReleaseWorkflowTests(unittest.TestCase):
         """当前配置覆盖候选与正式 tag，CLI 仅手动触发。"""
         self.assert_release_events({path.stem: path.read_text() for path in WORKFLOWS.glob("*.yml")})
 
+    def test_pages_builds_do_not_share_the_production_deployment_queue(self) -> None:
+        """非发布构建不能替换排队中的 main 发布。"""
+        workflow = (WORKFLOWS / "deploy.yml").read_text()
+        group = re.search(r"(?m)^concurrency:\n  group: (.+)$", workflow).group(1)
+        self.assertIn("${{ github.ref }}", group)
+        self.assertIn("${{ github.event_name }}", group)
+
     def assert_pages_artifact_upload_matches_deploy(self, build_workflow: str, deploy_workflow: str) -> None:
         """共享构建仅为 Deploy job 打包上传 Pages 产物。"""
         deploy_guard = re.search(r"(?m)^  deploy:\n    (if: .+)$", deploy_workflow)

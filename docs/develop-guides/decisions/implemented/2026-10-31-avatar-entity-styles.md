@@ -30,7 +30,7 @@ Owner：frontend/src/shared/lib/avatar/generator.js
 
 - 头像 unit 5 项通过：覆盖六种风格与四套预设的原生几何、稳定身份、透明 Gaze、人物背景和深浅主题相同输出，保留作者与许可元数据；Lorelei 各套预设与仅设置背景的上游原生输出完全相同。
 - 在临时副本恢复旧默认映射，身份断言失败；删除 Notionists 背景配置，原生输出及用户背景断言失败；恢复 Lorelei 纯色底纸或人物着色覆盖，背景与原作颜色断言失败。
-- [浏览器探针](../../../../frontend/test/browser/avatarEntityStyles.js)在当前 checkout 的真实 Vite 页面验证智能体目录 Lorelei，并用合成会话数据装配会话树、协作工具、面板标签、提及与候选五个入口。回读已解码 SVG、透明像素、同一会话的图片来源、四套用户背景、主题一致性、备用图标与空状态；1440、1024、768px 无横向溢出，保存浅深色截图。DOM 断言确认会话引用使用描边气泡且没有头像图片，会话树、协作结果和面板标签仍为 18px。
+- [浏览器探针](https://github.com/xerrors/Yuxi/blob/main/frontend/test/browser/avatarEntityStyles.js)在当前 checkout 的真实 Vite 页面验证智能体目录 Lorelei，并用合成会话数据装配会话树、协作工具、面板标签、提及与候选五个入口。回读已解码 SVG、透明像素、同一会话的图片来源、四套用户背景、主题一致性、备用图标与空状态；1440、1024、768px 无横向溢出，保存浅深色截图。DOM 断言确认会话引用使用描边气泡且没有头像图片，会话树、协作结果和面板标签仍为 18px。
 - 当前 checkout 的 Compose 一次性前端容器执行 `pnpm run lint:check`、`pnpm run build` 通过。相关 `pnpm exec node --test test/unit/avatar.test.js test/unit/mention_utils.test.js` 为 9 passed、0 failed、0 skipped。`python3 scripts/ci/verify_engineering_contracts.py`、`python3 -m unittest scripts.ci.test_verify_engineering_contracts`（56 项）、`pnpm --dir docs run build` 与 `git diff --check` 通过。
 
 浏览器使用 Chromium。会话使用合成数据，没有创建模型任务；上传持久化、权限和 worker 不属于头像展示验证范围。主开发前端在 25173 端口挂载当前 checkout；5173 前端挂载其他 checkout，不作为当前源码证据。

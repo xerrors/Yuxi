@@ -20,7 +20,7 @@ Owner：backend/yuxi/modules/knowledge/implementations/milvus.py
 
 服务端高亮转换为结构化文字段，前端安全渲染，正文保持完整。3.0.2 的高亮只支持 `TextMatch` 来源，短语是否符合词序由 `PHRASE_MATCH` 决定。SDK 的混合检索不返回高亮，因此在已召回的 ID 内补一次向量检索获取服务端词项高亮，保留原融合排序与分数。纯向量检索只高亮正向文本条件；关键词与混合检索还高亮查询词。公共检索的输出投影在 `metadata` 中保留高亮与评分类型。
 
-检索测试页面直接选择三种模式、设置文本条件；保存默认值仍使用现有配置入口。界面区分余弦、BM25、混合及图谱融合分数，零分仍可见。余弦阈值只作用于纯向量检索。参数和使用方法分别由[查询 API](../../../advanced/knowledge-base-api.md#milvus-文本检索参数)、[知识库教程](../../../intro/knowledge-base.md#3-验证检索)拥有；全新部署步骤由[部署参考](../../../advanced/deployment.md#milvus-3-全新部署)拥有。
+检索测试页面直接选择三种模式、设置文本条件；保存默认值仍使用现有配置入口。界面区分余弦、BM25、混合及图谱融合分数，零分仍可见。余弦阈值只作用于纯向量检索。参数和使用方法分别由[查询 API](../../../advanced/knowledge-base-api.md#milvus-文本检索参数)、[知识库教程](../../../intro/knowledge-base.md#_3-验证检索)拥有；全新部署步骤由[部署参考](../../../advanced/deployment.md#milvus-3-全新部署)拥有。
 
 第一阶段保持当前密集向量与 BM25 索引算法。Storage V3、TEXT、聚合、近重复检测和多模态模型需要独立消费场景及质量证据，不进入本次实现。
 

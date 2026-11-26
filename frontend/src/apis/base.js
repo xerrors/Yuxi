@@ -149,13 +149,14 @@ export async function apiRequest(url, options = {}, requiresAuth = true, respons
       }
     }
 
-    // 如果需要认证，添加认证头
+    // 401 只对发出请求时的凭据生效。
+    const requestToken = requiresAuth ? getApiToken() : ''
     if (requiresAuth) {
-      if (!getApiToken()) {
+      if (!requestToken) {
         throw new Error('用户未登录')
       }
 
-      Object.assign(requestOptions.headers, getApiAuthHeaders())
+      Object.assign(requestOptions.headers, getApiAuthHeaders(requestToken))
     }
 
     // 发送请求
@@ -198,23 +199,14 @@ export async function apiRequest(url, options = {}, requiresAuth = true, respons
         headers: error.headers
       }
 
-      if (response.status === 401 && requiresAuth) {
-        // 如果是认证失败，可能需要重新登录
+      if (response.status === 401 && requiresAuth && getApiToken() === requestToken) {
         message.error('登录已过期，请重新登录')
-
-        // 将会话清理交还给 identity Store
         handleApiUnauthorized()
 
-        // 使用setTimeout确保消息显示后再跳转
+        // 先显示提示，期间如果用户已登录，保留当前页面。
         setTimeout(() => {
-          window.location.href = '/login'
+          if (!getApiToken() && window.location.pathname !== '/login') window.location.href = '/login'
         }, 1500)
-
-        throw error
-      } else if (response.status === 403) {
-        throw error
-      } else if (response.status === 500) {
-        throw error
       }
 
       throw error

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
+
 import yuxi.infrastructure.worker_health as job_health
 import yuxi.modules.system.readiness as readiness_service
 
@@ -227,3 +229,48 @@ async def test_readiness_cache_is_single_flight_and_returns_independent_payloads
 
     assert calls == {"postgres": 1, "redis": 1}
     assert cached["checks"]["postgres"]["status"] == "ok"
+
+
+@pytest.mark.parametrize("elapsed,expected_status", [(0.5, "ready"), (2.0, "not_ready")])
+async def test_readiness_probe_expires_even_if_request_is_cancelled(monkeypatch, elapsed, expected_status):
+    """共享探针独自完成后，接流量证据仍从探针结束时开始过期。"""
+    started = asyncio.Event()
+    release_probe = asyncio.Event()
+    current_time = 10.0
+    is_healthy = True
+
+    async def probe_postgres():
+        """暂停首次数据库探针，后续读取当前可用性。"""
+        started.set()
+        await release_probe.wait()
+        if not is_healthy:
+            raise ConnectionError("database unavailable")
+
+    async def probe_redis():
+        """保持 Redis 正常以独立观察数据库失败。"""
+        pass
+
+    monkeypatch.setattr(readiness_service, "_probe_postgres", probe_postgres)
+    monkeypatch.setattr(readiness_service, "_probe_redis", probe_redis)
+    monkeypatch.setattr(readiness_service, "READINESS_CACHE_TTL_SECONDS", 1)
+    monkeypatch.setattr(readiness_service, "time", SimpleNamespace(monotonic=lambda: current_time))
+
+    request = asyncio.create_task(readiness_service.get_readiness(startup_complete=True))
+    await asyncio.wait_for(started.wait(), timeout=5)
+    probe = next(iter(readiness_service._readiness_inflight.values()))
+    request.cancel()
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await request
+    finally:
+        current_time += 5
+        release_probe.set()
+        await probe
+
+    current_time += elapsed
+    is_healthy = False
+    result = await readiness_service.get_readiness(startup_complete=True)
+    assert result["status"] == expected_status
+    assert result["checks"]["postgres"] == (
+        {"status": "ok"} if expected_status == "ready" else {"status": "error", "code": "ConnectionError"}
+    )

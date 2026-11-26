@@ -22,22 +22,7 @@ async function getOIDCLoginUrl(redirectPath = '/') {
   return apiGet(`/api/auth/oidc/login-url?${params}`, {}, false)
 }
 
-/**
- * 使用一次性 code 交换 OIDC 登录结果
- * @param {string} code - 一次性登录 code
- * @returns {Promise<{
- *   access_token: string,
- *   token_type: string,
- *   user_id: number,
- *   username: string,
- *   uid: string,
- *   phone_number: string | null,
- *   avatar: string | null,
- *   role: string,
- *   department_id: number | null,
- *   department_name: string | null
- * }>}
- */
+/** 查询管理页面的用户授权选项。 */
 async function getUserAccessOptions({ search, includeUids, roles, limit } = {}) {
   const query = buildQuery({
     search: (search || '').trim() || undefined,
@@ -53,6 +38,22 @@ async function logout() {
   return apiPost('/api/auth/oidc/logout', {})
 }
 
+/**
+ * 使用一次性 code 交换 OIDC 登录结果。
+ * @param {string} code - 一次性登录 code
+ * @returns {Promise<{
+ *   access_token: string,
+ *   token_type: string,
+ *   user_id: number,
+ *   username: string,
+ *   uid: string,
+ *   phone_number: string | null,
+ *   avatar: string | null,
+ *   role: string,
+ *   department_id: number | null,
+ *   department_name: string | null
+ * }>}
+ */
 async function exchangeOIDCCode(code) {
   return apiPost('/api/auth/oidc/exchange-code', { code }, {}, false)
 }

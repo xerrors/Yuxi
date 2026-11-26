@@ -68,6 +68,31 @@ test("maps structured HTTP errors without hiding the server status", async () =>
   });
 });
 
+test("拒绝将成功返回的 HTML 当作空事件流", async () => {
+  await withServer((_request, response) => {
+    response.writeHead(200, { "Content-Type": "text/html" });
+    response.end("<!doctype html><title>Login</title>");
+  }, async url => {
+    const client = new Client({ name: "test", url });
+    await assert.rejects(Array.fromAsync(client.events("session")), {
+      message: "服务未返回有效的 SSE 事件流",
+      status: 200,
+    });
+  });
+});
+
+test("读取带字符集参数的 SSE 事件流", async () => {
+  await withServer((_request, response) => {
+    response.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8" });
+    response.end('id: cursor\ndata: {"text":"你好"}\n\n');
+  }, async url => {
+    const client = new Client({ name: "test", url });
+    assert.deepEqual(await Array.fromAsync(client.events("session")), [
+      { id: "cursor", data: '{"text":"你好"}' },
+    ]);
+  });
+});
+
 test("preserves Session resources through CLI create and retrieve", async () => {
   const session = { id: "session/1", object: "agent.session", status: "idle", agent: { id: "agent", model: "model" }, yuxi: { title: "session", archived: false } };
   const seen = [];

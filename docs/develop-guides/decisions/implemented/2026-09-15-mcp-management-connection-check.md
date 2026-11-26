@@ -28,7 +28,7 @@ Owner：backend/yuxi/modules/extensions/mcp/service.py
 
 `backend/test/integration/api/test_mcp_router.py` 复用共享 `test_client`、`admin_headers` 与 Compose 的真实 API、PostgreSQL，通过管理接口创建和清理唯一命名的 MCP 配置。测试在 api 容器内启动本地 Streamable HTTP MCP 协议对端，覆盖启用/停用零工具、停用有工具、协议服务错误和连接拒绝，并通过独立 PostgreSQL 连接逐列回读配置，确认检查无持久化副作用。运行缓存与统计不变由同进程 unit 验证。
 
-[Runtime System Tests](../../../../.github/workflows/system-tests.yml) 在既有 Compose 环境中使用测试管理员执行该 API 集成测试；本地运行复用相同环境与集成测试凭据配置：
+[Runtime System Tests](https://github.com/xerrors/Yuxi/blob/main/.github/workflows/system-tests.yml) 在既有 Compose 环境中使用测试管理员执行该 API 集成测试；本地运行复用相同环境与集成测试凭据配置：
 
 ```bash
 docker compose exec api uv run --group test pytest test/unit/services/test_mcp_management_inspection.py test/unit/services/test_mcp_service.py test/unit/routers/test_mcp_router.py -q

@@ -217,8 +217,8 @@ async def _download_to_temp(workdir: Workdir, path: str, max_bytes: int) -> str:
     descriptor, temp_path = tempfile.mkstemp(prefix="yuxi-viewer-", suffix=PurePosixPath(path).suffix)
     os.close(descriptor)
     try:
-        await asyncio.to_thread(workdir.copy_file_to_path, path, temp_path, max_bytes)
-    except Exception:
+        await await_io(asyncio.to_thread(workdir.copy_file_to_path, path, temp_path, max_bytes))
+    except BaseException:
         try:
             os.unlink(temp_path)
         except FileNotFoundError:

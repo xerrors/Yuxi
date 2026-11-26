@@ -47,7 +47,7 @@ Receipt 固定记录命令意图及目标，提交、转换、取消输入只指
 
 验证日期为 2026-10-10。Compose 独立项目 `yuxi-input-attachment` 使用新建 PostgreSQL、Redis、对象存储与 Workdir；business=8、knowledge=3，PostgreSQL fsync 保持开启。现有数据库未迁移、清空或重排。下表只记录本方案实际执行结果，不引用 Schema 7 阶段的旧方案证据。
 
-后端命令在该隔离项目的 API 容器使用已安装测试环境执行 `python -m pytest`，前端在 frontend 容器执行 pnpm，CLI、Demo、文档在各自目录执行 npm。测试文件的命令选择由[系统测试工作流](../../../../.github/workflows/system-tests.yml)与[测试规范](../../testing-guidelines.md)维护。
+后端命令在该隔离项目的 API 容器使用已安装测试环境执行 `python -m pytest`，前端在 frontend 容器执行 pnpm，CLI、Demo、文档在各自目录执行 npm。测试文件的命令选择由[系统测试工作流](https://github.com/xerrors/Yuxi/blob/main/.github/workflows/system-tests.yml)与[测试规范](../../testing-guidelines.md)维护。
 
 | 实际执行命令 / 范围 | 结果与事实 |
 |---|---|

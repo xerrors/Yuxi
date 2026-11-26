@@ -21,14 +21,16 @@ async originalPage => {
       : route.fulfill({ status: 404, body: 'missing' }))
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto(`${origin}/login`)
-    await page.locator('.login-bg-art').waitFor()
-    await page.emulateMedia({ reducedMotion: 'reduce' })
-    const motion = await page.locator('.card-side.is-image .bough').evaluate(el => getComputedStyle(el).animationName)
-    check(motion === 'none', '减少动效时枝条仍在动画')
-    await page.screenshot({ path: '/tmp/yuxi-login-review.png' })
-    await page.evaluate(() => document.documentElement.classList.add('dark'))
-    check(await page.locator('.login-bg-art').evaluate(el => getComputedStyle(el).getPropertyValue('--paper').trim()) === '#1b2422', '深色主题没有更新内置图色板')
-    await page.screenshot({ path: '/tmp/yuxi-login-review-dark.png' })
+    const art = page.locator('.login-bg-art')
+    await art.evaluate(img => img.decode())
+    check(await art.getAttribute('alt') === '', '装饰图应使用空 alt')
+    const lightSource = await art.evaluate(img => img.currentSrc)
+    await page.evaluate(() => localStorage.setItem('theme', 'dark'))
+    await page.reload()
+    await page.locator('html.dark .login-bg-art').evaluate(img => img.decode())
+    const darkSource = await art.evaluate(img => img.currentSrc)
+    check(darkSource !== lightSource, '深色主题没有加载独立的长城插画')
+    check(await art.evaluate(img => img.getAnimations().length === 0), '长城插画应保持静态')
 
     loginBg = '/login-bg.jpg'
     await page.reload()
@@ -37,12 +39,14 @@ async originalPage => {
 
     imageAvailable = false
     await page.reload()
-    await page.locator('.login-bg-art').waitFor()
+    await art.evaluate(img => img.decode())
     check(await page.locator('.login-bg-image').count() === 0, '缺失历史默认图片没有显示内置图')
-    await page.setViewportSize({ width: 375, height: 800 })
+    await page.setViewportSize({ width: 1024, height: 800 })
+    check(await art.isVisible(), '1024px 下背景图不可见')
+    await page.setViewportSize({ width: 768, height: 800 })
     check(await page.locator('.card-side.is-image').isHidden(), '窄屏没有隐藏装饰图')
     check(await page.getByRole('button', { name: /登录/ }).isVisible(), '窄屏登录入口不可见')
-    return { builtin: true, darkTheme: true, legacyCustomImage: true, missingLegacyFallback: true, reducedMotion: true, mobile: true }
+    return { builtin: true, darkTheme: true, legacyCustomImage: true, missingLegacyFallback: true, narrow: true }
   } finally {
     await context.close()
   }

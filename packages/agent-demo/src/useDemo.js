@@ -495,6 +495,7 @@ export function useDemo() {
     state.error = "";
     try {
       for (const file of files) {
+        if (!current(owner)) return;
         if (imageInput) {
           const url = await new Promise((resolve, reject) => {
             const reader = new FileReader();
