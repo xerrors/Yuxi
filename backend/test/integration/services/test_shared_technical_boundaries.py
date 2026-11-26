@@ -52,6 +52,9 @@ async def test_config_http_commit_cache_failure_and_recovery(monkeypatch):
             app.dependency_overrides[get_superadmin_user] = lambda: SimpleNamespace(username="fixture")
             app.dependency_overrides[get_required_user] = lambda: SimpleNamespace(username="fixture")
             async with serve_http(app) as client:
+                config = (await client.get("/api/system/config")).json()
+                assert config["max_cooperation_depth"] == 1
+                assert config["max_cooperation_concurrency"] == 12
                 invalid = await client.post("/api/system/config", json={"key": "max_cooperation_depth", "value": -1})
                 assert invalid.status_code == 400
                 saved = await client.post("/api/system/config", json={"key": "default_model", "value": "fixture:current"})
@@ -78,6 +81,20 @@ async def test_config_http_commit_cache_failure_and_recovery(monkeypatch):
                 await options._save_cached_value("system_options", {"default_model": "stale:model"}, old_version)
                 assert await redis.get(namespace + "value:system_options") is None
                 assert (await system_options.get())["default_model"] == "fixture:new"
+
+                saved = await client.post("/api/system/config/update", json={"max_cooperation_concurrency": 20})
+                assert saved.json()["max_cooperation_concurrency"] == 20
+                invalid = await client.post("/api/system/config/update", json={"max_cooperation_concurrency": 21})
+                assert invalid.status_code == 400
+                assert invalid.json()["detail"] == "max_cooperation_concurrency 不得大于 20"
+                async with sessions.begin() as db:
+                    record = await db.scalar(select(ConfigOption).where(ConfigOption.key == "system_options"))
+                    assert record.value["max_cooperation_concurrency"] == 20
+                    record.value = {**record.value, "max_cooperation_concurrency": 21}
+                assert (await client.get("/api/system/config")).json()["max_cooperation_concurrency"] == 20
+                async with sessions() as db:
+                    record = await db.scalar(select(ConfigOption).where(ConfigOption.key == "system_options"))
+                    assert record.value["max_cooperation_concurrency"] == 21
     finally:
         keys = [key async for key in redis.scan_iter(match=namespace + "*")]
         if keys:

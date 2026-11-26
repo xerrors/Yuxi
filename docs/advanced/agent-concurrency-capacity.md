@@ -5,7 +5,7 @@
 ## 当前运行模型
 
 - 普通输入先把原始消息保存在 PostgreSQL Input，并提交 Receipt。调度器消费就绪输入时创建正式 Message、Turn/Run 并绑定附件，事务提交后才通过 ARQ 投递 worker。输入优先级与合批规则见[输入队列机制](../mechanisms/agent-request-queue.md)。
-- `ARQ_MAX_JOBS` 是单个 worker 的执行上限。AgentRun、后台作业与已登记控制工作共用这个执行上限。后台作业还受 PostgreSQL 全局最多 4 个 `running` claim 的约束。每棵协作树的 Run 上限由管理员系统配置 `max_cooperation_concurrency` 控制，默认 4、最小 1，在领取下一次执行时读取当前值；降低上限不取消已领取的 Run，增加上限也不能突破 worker 或模型供应商容量。取消收尾同样占位，协作等待释放执行名额。协作树限额不会限制其他树的总并发，也不等于用户 VM 的命令或资源配额。
+- `ARQ_MAX_JOBS` 是单个 worker 的执行上限。AgentRun、后台作业与已登记控制工作共用这个执行上限。后台作业还受 PostgreSQL 全局最多 4 个 `running` claim 的约束。每棵协作树的 Run 上限由管理员系统配置 `max_cooperation_concurrency` 控制，默认 12，可设为 1 到 20，旧配置超过 20 时按 20 生效。系统在领取下一次执行时读取当前值；降低上限不取消已领取的 Run，增加上限也不能突破 worker 或模型供应商容量。取消收尾同样占位，协作等待释放执行名额。协作树限额不会限制其他树的总并发，也不等于用户 VM 的命令或资源配额。
 - Run 事件写入 Redis Stream，SSE 使用自适应 `XRANGE` 轮询；PostgreSQL 低频补偿权威终态。
 - 取消请求先提交 PostgreSQL durable 状态，再写入带 TTL 的 Redis key。每个运行中的 Run 约每 200ms 读取该 key，另有约 1 秒的 PostgreSQL durable watcher；模型事件循环只检查进程内 Event。
 - 取消链路不使用 Redis Pub/Sub，也不为每个 Run 长期占用一个 Redis 连接。100 个活跃 Run 的取消 key 读取上界约为 500 次/秒。

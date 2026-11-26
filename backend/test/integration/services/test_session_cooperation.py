@@ -125,6 +125,15 @@ async def child(tree, name="reviewer", call_id="create-reviewer"):
         )
 
 
+@pytest.fixture
+def cooperation_depth_two(monkeypatch):
+    """递归场景显式允许第二层，避免依赖系统默认值或共享配置。"""
+    monkeypatch.setattr(
+        "yuxi.modules.agents.services.cooperation.system_options",
+        SimpleNamespace(get=AsyncMock(return_value={"max_cooperation_depth": 2})),
+    )
+
+
 async def test_creation_is_idempotent_and_context_is_independent(tree):
     factory, _, root_id, _ = tree
     created = await child(tree)
@@ -490,7 +499,7 @@ async def test_creation_rejects_paths_without_persisting_children(tree, name):
         assert await db.scalar(select(func.count()).select_from(AgentInput).where(AgentInput.thread_id == root_id)) == before_inputs
 
 
-async def test_creation_derives_direct_parent_and_path_from_calling_session(tree):
+async def test_creation_derives_direct_parent_and_path_from_calling_session(tree, cooperation_depth_two):
     """真实派发 Run 决定父节点，同名兄弟与后代互不混淆。"""
     factory, root_run_id, root_id, uid = tree
     parent = await child(tree, name="aaa", call_id="create-aaa")
@@ -515,7 +524,7 @@ async def test_creation_derives_direct_parent_and_path_from_calling_session(tree
         assert descendant.created_by_run_id == parent["run_id"]
 
 
-async def test_tree_summary_orders_by_parent_not_path_characters(tree):
+async def test_tree_summary_orders_by_parent_not_path_characters(tree, cooperation_depth_two):
     """路径字符序（`-` 先于 `/`）不得决定层级；子会话必须紧跟真实父节点。"""
     factory, _, root_id, uid = tree
     member_a = await child(tree, name="a", call_id="create-a")
@@ -535,7 +544,7 @@ async def test_tree_summary_orders_by_parent_not_path_characters(tree):
     assert ids == [root_id, member_a["session_id"], nested["session_id"], member_dash["session_id"]]
 
 
-async def test_tree_summary_fails_closed_when_members_unreachable_from_root(tree):
+async def test_tree_summary_fails_closed_when_members_unreachable_from_root(tree, cooperation_depth_two):
     """父成员不可见而后代仍可见时，摘要显式失败而不是悄悄丢弃成员。"""
     factory, _, root_id, uid = tree
     parent = await child(tree, name="cut", call_id="create-cut")
@@ -556,7 +565,7 @@ async def test_tree_summary_fails_closed_when_members_unreachable_from_root(tree
             await tree_snapshot(db, root)
 
 
-async def test_whole_tree_shares_four_slots_and_recursive_creation(tree, monkeypatch):
+async def test_whole_tree_shares_four_slots_and_recursive_creation(tree, monkeypatch, cooperation_depth_two):
     """名额共享语义固定在上限 4，不随共享库中保存的其他配置值漂移。"""
     monkeypatch.setattr(
         "yuxi.modules.agents.repositories.cooperation.system_options",

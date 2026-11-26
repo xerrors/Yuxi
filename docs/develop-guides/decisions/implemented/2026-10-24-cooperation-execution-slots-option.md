@@ -10,9 +10,11 @@ Owner：backend/yuxi/modules/agents/repositories/cooperation.py
 
 ## 决策
 
+默认值与可配置范围以[协作默认深度与并发上限](2026-11-26-cooperation-limit-defaults.md)为准。
+
 ### 实现方案
 
-新增系统选项 `max_cooperation_concurrency`（整数，最小 1，默认 4），定义与 `max_cooperation_depth` 相邻。`claim_execution_slot` 在树级锁内使用调用方数据库会话读取该选项裁决名额，不经过缓存。选项最小值 1——上限为 0 会连根会话一起冻结。协作提示词不再写死数量，改为在每 Run 的"当前协作身份"中注入 `tree_execution_slots`（随身份按 Run 缓存），模型可据实际名额规划并行子会话。设置页在"协作限制"面板中与深度并列提供数字输入（最小 1，只提交完整整数）。整数校验提示按字段 `min` 派生，避免 min≥1 字段误报"非负整数"。
+系统选项 `max_cooperation_concurrency`（整数，最小 1），定义与 `max_cooperation_depth` 相邻。`claim_execution_slot` 在树级锁内使用调用方数据库会话读取该选项裁决名额，不经过缓存。选项最小值 1——上限为 0 会连根会话一起冻结。协作提示词不再写死数量，改为在每 Run 的"当前协作身份"中注入 `tree_execution_slots`（随身份按 Run 缓存），模型可据实际名额规划并行子会话。设置页在"协作限制"面板中与深度并列提供数字输入（最小 1，只提交完整整数）。整数校验提示按字段 `min` 派生，避免 min≥1 字段误报"非负整数"。
 
 ## 替代方案
 
@@ -25,7 +27,7 @@ Owner：backend/yuxi/modules/agents/repositories/cooperation.py
 
 ## 验证
 
-- 单元测试：选项默认 4、可降到 1；`min=1` 边界拒绝 0 与非整数，报错文案按 min 派生。
+- 单元测试：选项可降到 1；`min=1` 边界拒绝 0 与非整数，报错文案按 min 派生。
 - 真实 PostgreSQL 集成测试：名额上限降到 1 后，根会话运行中时成员 Run 认领被暂缓（旧代码上因选项未在名额边界消费而失败，负向验证）。
-- 前端单测：并发上限只提交不小于 1 的整数，0 与非法输入不落盘。
+- 前端单测：并发上限只提交范围内的整数，0 与非法输入不落盘。
 - 设置页真实页面验证截图（浅色默认主题）确认新输入项与深度并列展示。

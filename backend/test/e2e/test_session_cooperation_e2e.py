@@ -38,7 +38,11 @@ from test.live_api_cleanup import (
 )
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.infrastructure.postgres.models import load_models
+from yuxi.infrastructure.redis import close_async_redis_client
 from yuxi.modules.agents.runtime.sandbox import UserSandboxBackend, get_sandbox_provider
+from yuxi.modules.system.options import system_options
+from yuxi.modules.system.repositories.options import get_option
+from yuxi.modules.system.services.options import invalidate_option_cache
 from yuxi.modules.workspace.paths import user_workspace_dir
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow, pytest.mark.timeout(240)]
@@ -279,7 +283,8 @@ async def test_sessions_use_public_state_and_shared_sandbox(e2e_client, e2e_head
 
 
 @pytest.mark.self_managed_resources
-async def test_parallel_wait_inputs_keep_both_interrupts_and_resume_exact_results(e2e_client, e2e_headers, cooperation_parallelism_two):
+@pytest.mark.parametrize("cooperation_limit", [("max_cooperation_concurrency", 2)], indirect=True, ids=["2"])
+async def test_parallel_wait_inputs_keep_both_interrupts_and_resume_exact_results(e2e_client, e2e_headers, cooperation_limit):
     """真实 worker 保存两个并行等待，两个子任务释放 gate 后按 ID 恢复同一 Turn。"""
     me = await e2e_client.get("/api/auth/me", headers=e2e_headers)
     assert me.status_code == 200, me.text
@@ -451,7 +456,8 @@ async def test_parallel_wait_inputs_keep_both_interrupts_and_resume_exact_result
 
 
 @pytest.mark.parametrize("stop_tree", [False, True])
-async def test_full_tree_capacity_control_and_sibling_tools(e2e_client, e2e_headers, stop_tree, actors):
+@pytest.mark.parametrize("cooperation_limit", [("max_cooperation_concurrency", 4)], indirect=True, ids=["4"])
+async def test_full_tree_capacity_control_and_sibling_tools(e2e_client, e2e_headers, stop_tree, actors, cooperation_limit):
     """真实 worker 满槽等待推进；兄弟工具与持久整树控制不串轮次。"""
     from yuxi.modules.agents.services.cooperation import reconcile_stopped_trees
 
@@ -546,7 +552,6 @@ async def test_full_tree_capacity_control_and_sibling_tools(e2e_client, e2e_head
             assert queued["turn_id"] is None
             await event(root_id, {"type": "yuxi.session.tree.stop"})
             # 独立测试进程重读持久停止意图，与真实 worker 同时重复执行恢复。
-            load_models()
             pg_manager.initialize()
             try:
                 await reconcile_stopped_trees()
@@ -674,36 +679,35 @@ async def _assert_thread_activity(client, headers, thread_id, expected):
 
 
 @pytest.fixture
-async def cooperation_parallelism_two(e2e_client, e2e_headers):
-    """为两个阻塞子任务提供明确名额，并恢复管理员原配置。"""
-    current = await e2e_client.get("/api/system/config", headers=e2e_headers)
-    assert current.status_code == 200, current.text
-    previous = current.json()["max_cooperation_concurrency"]
+async def cooperation_limit(request, e2e_client, e2e_headers):
+    """通过配置接口设置用例所需的限制，退出时恢复原始字段。"""
+    field, limit = request.param
+    load_models()
     try:
-        changed = await e2e_client.post("/api/system/config/update", headers=e2e_headers, json={"max_cooperation_concurrency": 2})
-        assert changed.status_code == 200, changed.text
-        yield
+        async with pg_manager.get_async_session_context() as db:
+            original = (await get_option(db, system_options.key)).value
+        try:
+            changed = await e2e_client.post("/api/system/config/update", headers=e2e_headers, json={field: limit})
+            assert changed.status_code == 200, changed.text
+            yield
+        finally:
+            # 生效值可能来自默认值或上限截断，需恢复数据库中原有的字段状态。
+            async with pg_manager.get_async_session_context() as db:
+                record = await get_option(db, system_options.key, for_update=True)
+                restored = dict(record.value)
+                if field in original:
+                    restored[field] = original[field]
+                else:
+                    restored.pop(field, None)
+                record.value = restored
+            await invalidate_option_cache(system_options.key)
     finally:
-        restored = await e2e_client.post("/api/system/config/update", headers=e2e_headers, json={"max_cooperation_concurrency": previous})
-        assert restored.status_code == 200, restored.text
+        await close_async_redis_client()
+        await pg_manager.close()
 
 
-@pytest.fixture
-async def cooperation_depth_two(e2e_client, e2e_headers):
-    """显式设置测试深度并恢复原值，不依赖管理员当前配置。"""
-    current = await e2e_client.get("/api/system/config", headers=e2e_headers)
-    assert current.status_code == 200, current.text
-    previous = current.json()["max_cooperation_depth"]
-    try:
-        changed = await e2e_client.post("/api/system/config/update", headers=e2e_headers, json={"max_cooperation_depth": 2})
-        assert changed.status_code == 200, changed.text
-        yield
-    finally:
-        restored = await e2e_client.post("/api/system/config/update", headers=e2e_headers, json={"max_cooperation_depth": previous})
-        assert restored.status_code == 200, restored.text
-
-
-async def test_worker_rejects_third_cooperation_depth_and_commits_only_allowed_members(e2e_client, e2e_headers, cooperation_depth_two):
+@pytest.mark.parametrize("cooperation_limit", [("max_cooperation_depth", 2)], indirect=True, ids=["2"])
+async def test_worker_rejects_third_cooperation_depth_and_commits_only_allowed_members(e2e_client, e2e_headers, cooperation_limit):
     """真实 API、worker 与工具执行拒绝第三层，回读会话和输入确认无副作用。"""
     me = (await e2e_client.get("/api/auth/me", headers=e2e_headers)).json()
     await _provider(e2e_client, e2e_headers, base_url=os.environ["COOPERATION_REPLAY_URL"], provider_id="cooperation-replay")

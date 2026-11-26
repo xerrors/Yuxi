@@ -65,7 +65,7 @@ test('基本设置保存期间禁用真实数字输入，成功或失败后恢�
     useUserStore(pinia).userRole = 'superadmin'
     const { useConfigStore } = await server.ssrLoadModule('/src/modules/settings/model/config.js')
     const store = useConfigStore(pinia)
-    store.config = { max_cooperation_depth: 2, max_cooperation_concurrency: 4 }
+    store.config = {}
     const { default: Settings } = await server.ssrLoadModule('virtual:basic-settings-save')
     // Ant Design Vue 使用的真实受控输入实现，保留其步进与 disabled 行为。
     const { default: InputNumber } = await server.ssrLoadModule('/node_modules/ant-design-vue/es/input-number/src/InputNumber.js')
@@ -86,6 +86,12 @@ test('基本设置保存期间禁用真实数字输入，成功或失败后恢�
     const concurrency = () => input('max-cooperation-concurrency')
     const increase = (control) => control.parent.parent.props.onKeydown({ which: 38, preventDefault() {} })
     const settle = async () => { await setImmediate(); await nextTick() }
+
+    assert.equal(depth().props.value, '1')
+    assert.equal(concurrency().props.value, '12')
+    assert.equal(concurrency().props['aria-valuemax'], 20)
+    store.config = { max_cooperation_depth: 2, max_cooperation_concurrency: 4 }
+    await nextTick()
 
     increase(depth())
     // disabled 尚未投影到控件时，第二个真实事件也必须被保存入口拒绝。

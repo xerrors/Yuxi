@@ -236,22 +236,26 @@ def test_boolean_option_preserves_false_and_rejects_non_boolean_values():
             option.resolve({"enabled": value})
 
 
-def test_cooperation_depth_defaults_to_two_and_preserves_zero():
+def test_cooperation_depth_defaults_to_one_and_preserves_zero():
     """整数配置的零值用于禁止新增子会话，不可被默认值覆盖。"""
-    assert system_options.resolve({})["max_cooperation_depth"] == 2
+    assert system_options.resolve({})["max_cooperation_depth"] == 1
     assert system_options.resolve({"max_cooperation_depth": 0})["max_cooperation_depth"] == 0
 
 
-def test_cooperation_concurrency_defaults_to_four_and_preserves_one():
-    """并发执行上限默认 4，允许降到 1 但不允许清零冻结整树。"""
-    assert system_options.resolve({})["max_cooperation_concurrency"] == 4
+def test_cooperation_concurrency_limits_saved_and_new_values():
+    """并发默认 12，已有超限值按 20 生效，新提交超限值会被拒绝。"""
+    assert system_options.resolve({})["max_cooperation_concurrency"] == 12
     assert system_options.resolve({"max_cooperation_concurrency": 1})["max_cooperation_concurrency"] == 1
+    assert system_options.resolve({"max_cooperation_concurrency": 21})["max_cooperation_concurrency"] == 20
+    field = next(field for field in system_options.fields if field["key"] == "max_cooperation_concurrency")
+    with pytest.raises(ValueError, match="不得大于 20"):
+        options.normalize_option_value(field, 21)
 
 
 @pytest.mark.parametrize("value", [0, -1, True, 2.5, "4", None])
 def test_cooperation_concurrency_rejects_non_integer_or_below_one_values(value):
     """配置持久化边界拒绝错误数值，不把 0 当成合法上限。"""
-    field = {"key": "max_cooperation_concurrency", "type": "integer", "min": 1}
+    field = next(field for field in system_options.fields if field["key"] == "max_cooperation_concurrency")
     with pytest.raises(ValueError, match="不小于 1 的整数"):
         options.normalize_option_value(field, value)
 

@@ -66,7 +66,7 @@ class Option:
                 continue
 
             if field.get("type") in {"integer", "boolean"}:
-                resolved[field_key] = normalize_option_value(field, stored.get(field_key, field.get("default")))
+                resolved[field_key] = normalize_option_value(field, stored.get(field_key, field.get("default")), clamp_maximum=True)
                 continue
 
             stored_value = stored.get(field_key)
@@ -181,8 +181,8 @@ async def invalidate_option_cache(key: str) -> None:
         logger.warning(f"Failed to invalidate option cache {key}: {exc}")
 
 
-def normalize_option_value(field: dict[str, Any], value: Any) -> Any:
-    """在配置持久化边界解析字段类型与有效范围。"""
+def normalize_option_value(field: dict[str, Any], value: Any, *, clamp_maximum: bool = False) -> Any:
+    """校验配置类型与范围，读取已有配置时可限制超限整数的生效值。"""
     if field.get("type") == "boolean":
         if type(value) is not bool:
             raise ValueError(f"{field['key']} 必须是布尔值")
@@ -193,6 +193,11 @@ def normalize_option_value(field: dict[str, Any], value: Any) -> Any:
         if type(value) is not int or value < minimum:
             hint = "非负整数" if minimum <= 0 else f"不小于 {minimum} 的整数"
             raise ValueError(f"{field['key']} 必须是{hint}")
+        maximum = field.get("max")
+        if maximum is not None and value > maximum:
+            if clamp_maximum:
+                return maximum
+            raise ValueError(f"{field['key']} 不得大于 {maximum}")
         return value
 
     if field.get("type") == "list[str]":

@@ -60,14 +60,15 @@ system_options = Option(
                 "label": "最大协作深度",
                 "type": "integer",
                 "min": 0,
-                "default": 2,
+                "default": 1,
             },
             {
                 "key": "max_cooperation_concurrency",
                 "label": "协作树并发执行上限",
                 "type": "integer",
                 "min": 1,
-                "default": 4,
+                "max": 20,
+                "default": 12,
             },
             {
                 "key": "default_ocr_engine",

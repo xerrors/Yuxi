@@ -93,14 +93,14 @@
             <div class="settings-form-copy">
               <label class="settings-form-label" for="max-cooperation-depth">最大协作深度</label>
               <p class="settings-form-description" id="cooperation-depth-help">
-                根对话为第 0 层，默认允许 2 层协作；设为 0 可关闭新增子会话。
+                根对话为第 0 层，默认允许 {{ DEFAULT_COOPERATION_DEPTH }} 层协作。设为 0 可关闭新增子会话。
               </p>
             </div>
             <div class="settings-form-control is-number">
               <a-input-number
                 id="max-cooperation-depth"
                 aria-describedby="cooperation-depth-help"
-                :value="configStore.config?.max_cooperation_depth ?? 2"
+                :value="configStore.config?.max_cooperation_depth ?? DEFAULT_COOPERATION_DEPTH"
                 :disabled="saving"
                 :min="0"
                 :precision="0"
@@ -112,16 +112,18 @@
             <div class="settings-form-copy">
               <label class="settings-form-label" for="max-cooperation-concurrency">协作树并发执行上限</label>
               <p class="settings-form-description" id="cooperation-concurrency-help">
-                每棵协作树（含根会话）同时处于执行中的任务上限，默认 4；排队与等待中的任务不占名额。
+                每棵协作树（含根会话）默认可同时执行 {{ DEFAULT_COOPERATION_CONCURRENCY }} 个任务，最多可设为 {{ MAX_COOPERATION_CONCURRENCY }}。
+                排队与等待中的任务不占名额。
               </p>
             </div>
             <div class="settings-form-control is-number">
               <a-input-number
                 id="max-cooperation-concurrency"
                 aria-describedby="cooperation-concurrency-help"
-                :value="configStore.config?.max_cooperation_concurrency ?? 4"
+                :value="configStore.config?.max_cooperation_concurrency ?? DEFAULT_COOPERATION_CONCURRENCY"
                 :disabled="saving"
                 :min="1"
+                :max="MAX_COOPERATION_CONCURRENCY"
                 :precision="0"
                 @change="handleCooperationConcurrencyChange"
               />
@@ -141,6 +143,7 @@ import { useConfigStore } from '@/modules/settings/model/config'
 import {
   COOPERATION_CONCURRENCY_KEY,
   COOPERATION_DEPTH_KEY,
+  MAX_COOPERATION_CONCURRENCY,
   applyCooperationConcurrency,
   applyCooperationDepth
 } from '@/modules/settings/model/cooperationDepth'
@@ -148,6 +151,9 @@ import { useUserStore } from '@/modules/identity'
 import ModelSelectorComponent from '@/modules/agents/ui/ModelSelectorComponent.vue'
 import EmbeddingModelSelector from '@/modules/settings/ui/EmbeddingModelSelector.vue'
 import RerankModelSelector from '@/modules/settings/ui/RerankModelSelector.vue'
+
+const DEFAULT_COOPERATION_DEPTH = 1
+const DEFAULT_COOPERATION_CONCURRENCY = 12
 
 const configStore = useConfigStore()
 const userStore = useUserStore()
@@ -170,7 +176,7 @@ const handleCooperationDepthChange = (value) => {
   applyCooperationDepth(value, (depth) => handleChange(COOPERATION_DEPTH_KEY, depth))
 }
 
-/** 只提交不小于 1 的整数，清空输入不会修改已保存的上限。 */
+/** 只提交配置范围内的整数，清空输入不会修改已保存的上限。 */
 const handleCooperationConcurrencyChange = (value) => {
   applyCooperationConcurrency(value, (limit) => handleChange(COOPERATION_CONCURRENCY_KEY, limit))
 }
