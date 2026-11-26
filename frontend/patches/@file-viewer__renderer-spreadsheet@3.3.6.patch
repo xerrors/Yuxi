@@ -1,0 +1,99 @@
+diff --git a/dist/spreadsheet.js b/dist/spreadsheet.js
+index e0476dcecb1b1ce37e60a71912a7cc0e39defe32..1d98dd572af801899091cc3d67e218c36a20b782 100644
+--- a/dist/spreadsheet.js
++++ b/dist/spreadsheet.js
+@@ -52,14 +52,8 @@ const spreadsheetStyle = `
+ .excel-wrapper .excel-image-lightbox button{position:absolute;top:16px;right:16px;display:grid;width:40px;height:40px;place-items:center;padding:0;border:1px solid rgba(255,255,255,.7);border-radius:999px;background:rgba(255,255,255,.96);color:#172033;font:400 27px/1 Arial,sans-serif;cursor:pointer;box-shadow:0 12px 28px rgba(0,0,0,.24);transition:background-color .14s ease,transform .14s ease}
+ .excel-wrapper .excel-image-lightbox button:hover{background:#fff;transform:scale(1.04)}
+ .excel-wrapper .excel-image-lightbox button:focus-visible{outline:3px solid #60a5fa;outline-offset:2px}
+-.excel-wrapper .loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.96);z-index:999;backdrop-filter:blur(6px)}
+-.excel-wrapper .loading-card{width:min(100%,460px);display:flex;align-items:center;gap:18px;padding:22px;border-radius:24px;background:rgba(255,255,255,.92);border:1px solid rgba(33,163,102,.1);box-shadow:0 22px 48px rgba(18,36,27,.12)}
+-.excel-wrapper .loading-brand{flex-shrink:0;width:78px;height:78px;display:flex;align-items:center;justify-content:center;border-radius:22px;background:linear-gradient(135deg,rgba(33,163,102,.14),rgba(33,163,102,.04));color:#1a7f50;font-size:18px;font-weight:900;letter-spacing:0}
+-.excel-wrapper .loading-copy{min-width:0;flex:1}
+-.excel-wrapper .loading-kicker{display:block;color:#21a366;font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+-.excel-wrapper .loading-copy strong{display:block;margin-top:6px;color:#183828;font-size:20px;line-height:1.3}
+-.excel-wrapper .loading-copy p{margin:8px 0 0;color:#64748b;font-size:13px;line-height:1.5}
+-.excel-wrapper .loading-spinner{width:28px;height:28px;border-radius:999px;border:3px solid rgba(33,163,102,.16);border-top-color:#21a366;animation:file-viewer-spreadsheet-loading-spin .8s linear infinite}
++.excel-wrapper .loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:8px;padding:16px;z-index:999;color:var(--color-text-secondary,#526173);font-size:14px}
++.excel-wrapper .loading-spinner{box-sizing:border-box;flex:none;width:16px;height:16px;border:2px solid transparent;border-top-color:currentColor;border-right-color:currentColor;border-radius:50%;color:var(--main-color,#21a366);animation:file-viewer-spreadsheet-loading-spin .8s linear infinite}
+ .excel-wrapper .error{position:absolute;left:50%;top:50%;z-index:1000;transform:translate(-50%,-50%);max-width:min(520px,calc(100% - 48px));padding:16px 18px;border-radius:16px;background:#fff7ed;color:#9a3412;border:1px solid rgba(234,88,12,.18);box-shadow:0 18px 42px rgba(154,52,18,.12);font-size:14px;line-height:1.6}
+ .excel-wrapper .toolbar{min-height:44px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 12px;border-top:1px solid #e5e7eb;background:#f8fafc}
+ .excel-wrapper .btn-group{min-width:0;max-width:100%;flex:1 1 auto;display:flex;align-items:center;gap:6px;overflow-x:auto;overflow-y:hidden;scrollbar-gutter:stable;scrollbar-width:thin;overscroll-behavior-x:contain}
+@@ -75,15 +69,11 @@ const spreadsheetStyle = `
+ .excel-wrapper[data-spreadsheet-theme='dark'] .sheet-tab:hover{background:#1f2937}
+ .excel-wrapper[data-spreadsheet-theme='dark'] .sheet-tab.active{border-color:rgba(52,211,153,.38);background:rgba(33,163,102,.2);color:#6ee7b7}
+ .excel-wrapper[data-spreadsheet-theme='dark'] .summary,.excel-wrapper[data-spreadsheet-theme='dark'] .sheet-loading-summary{color:#94a3b8}
+-.excel-wrapper[data-spreadsheet-theme='dark'] .loading{background:rgba(2,6,23,.9)}
+-.excel-wrapper[data-spreadsheet-theme='dark'] .loading-card{border-color:rgba(52,211,153,.2);background:rgba(17,24,39,.96);box-shadow:0 24px 58px rgba(0,0,0,.42)}
+-.excel-wrapper[data-spreadsheet-theme='dark'] .loading-copy strong{color:#f0fdf4}
+-.excel-wrapper[data-spreadsheet-theme='dark'] .loading-copy p{color:#94a3b8}
+ .excel-wrapper[data-spreadsheet-theme='dark'] .error{border-color:rgba(251,146,60,.28);background:#2a1710;color:#fdba74;box-shadow:0 20px 48px rgba(0,0,0,.36)}
+ @keyframes file-viewer-spreadsheet-loading-spin{to{transform:rotate(360deg)}}
+ @keyframes file-viewer-spreadsheet-loading-pulse{0%,100%{opacity:.55;transform:scale(.9)}50%{opacity:1;transform:scale(1)}}
+-@media (max-width:720px){.excel-wrapper .toolbar{align-items:stretch;flex-direction:column}.excel-wrapper .btn-group{flex:0 0 auto}.excel-wrapper .summary{max-width:none;white-space:normal}.excel-wrapper .sheet-loading{left:12px;right:12px;bottom:58px;justify-content:center}.excel-wrapper .loading-card{margin:18px;flex-direction:column;text-align:center}.excel-wrapper .excel-image-lightbox button{top:12px;right:12px}}
+-@media (prefers-reduced-motion:reduce){.excel-wrapper .excel-image-lightbox,.excel-wrapper .excel-image-lightbox img,.excel-wrapper .excel-image-lightbox button{transition:none}}
++@media (max-width:720px){.excel-wrapper .toolbar{align-items:stretch;flex-direction:column}.excel-wrapper .btn-group{flex:0 0 auto}.excel-wrapper .summary{max-width:none;white-space:normal}.excel-wrapper .sheet-loading{left:12px;right:12px;bottom:58px;justify-content:center}.excel-wrapper .excel-image-lightbox button{top:12px;right:12px}}
++@media (prefers-reduced-motion:reduce){.excel-wrapper .loading-spinner{animation:none}.excel-wrapper .excel-image-lightbox,.excel-wrapper .excel-image-lightbox img,.excel-wrapper .excel-image-lightbox button{transition:none}}
+ `;
+ const scopedSpreadsheetStyle = (spreadsheetStyle + spreadsheetCommentsStyle).replace(/\.excel-wrapper/g, SPREADSHEET_STYLE_SCOPE);
+ const isEVirtTableConstructor = (value) => {
+@@ -556,26 +546,13 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+     root.dataset.viewerZoomProvider = 'xlsx';
+     const loading = documentRef.createElement('div');
+     loading.className = 'loading';
+-    const loadingCard = documentRef.createElement('div');
+-    loadingCard.className = 'loading-card';
+-    const loadingBrand = documentRef.createElement('div');
+-    loadingBrand.className = 'loading-brand';
+-    loadingBrand.textContent = 'XLSX';
+-    const loadingCopy = documentRef.createElement('div');
+-    loadingCopy.className = 'loading-copy';
+-    const loadingKicker = documentRef.createElement('span');
+-    loadingKicker.className = 'loading-kicker';
+-    t.text(loadingKicker, 'spreadsheet.loading.kicker');
+-    const loadingTitle = documentRef.createElement('strong');
+-    loadingTitle.dataset.loadingTitle = 'true';
+-    t.text(loadingTitle, 'spreadsheet.loading.title');
+-    const loadingHint = documentRef.createElement('p');
+-    t.text(loadingHint, 'spreadsheet.loading.hint');
+-    loadingCopy.append(loadingKicker, loadingTitle, loadingHint);
++    loading.setAttribute('role', 'status');
+     const loadingSpinner = documentRef.createElement('span');
+     loadingSpinner.className = 'loading-spinner';
+-    loadingCard.append(loadingBrand, loadingCopy, loadingSpinner);
+-    loading.appendChild(loadingCard);
++    loadingSpinner.setAttribute('aria-hidden', 'true');
++    const loadingText = documentRef.createElement('span');
++    t.text(loadingText, 'spreadsheet.loading.title');
++    loading.append(loadingSpinner, loadingText);
+     const error = documentRef.createElement('div');
+     error.className = 'error hidden';
+     const tableWrapper = documentRef.createElement('div');
+@@ -875,16 +852,6 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+     imageLightbox.addEventListener('click', handleImageLightboxClick);
+     lightboxCloseButton.addEventListener('click', closeImageLightbox);
+     documentRef.addEventListener('keydown', handleImageLightboxKeyDown);
+-    const getSheetLoadingText = () => {
+-        var _a;
+-        if (!sheets.length) {
+-            return t('spreadsheet.state.parsingWorkbook');
+-        }
+-        const activeName = (_a = getActiveSheet()) === null || _a === void 0 ? void 0 : _a.name;
+-        return activeName
+-            ? t('spreadsheet.state.preparingSheetNamed', { name: activeName })
+-            : t('spreadsheet.state.preparingSheet');
+-    };
+     const getCachedSummary = () => {
+         if (!totalRows) {
+             return '';
+@@ -1009,10 +976,6 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+     const renderChrome = () => {
+         commentsView.update(sheets, commentsError);
+         setHidden(loading, !showBlockingLoading());
+-        const loadingTitle = loading.querySelector('[data-loading-title]');
+-        if (loadingTitle) {
+-            t.bind(loadingTitle, node => { node.textContent = getSheetLoadingText(); });
+-        }
+         t.bind(error, node => { node.textContent = errorMessage ? normalizeFileViewerErrorMessage(loadError || errorMessage, context === null || context === void 0 ? void 0 : context.options) : ''; });
+         setHidden(error, !errorMessage);
+         setHidden(sheetLoading, !showStreamingLoading());
