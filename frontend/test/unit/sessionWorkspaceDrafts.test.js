@@ -43,7 +43,7 @@ test('普通引导和发送按钮共同遵守忙碌条件，解除阻塞后才�
   Object.assign(thread, { isStreaming: true, activeRunId: 'run', activeRunSteerable: true })
   const blockedCases = [
     ['发送被调用者禁用', () => { props.sendDisabled = true }, () => { props.sendDisabled = false }],
-    ['读取历史中', () => { state.getThreadState(state.currentThreadId.value).readingLoading = true }, () => { state.getThreadState(state.currentThreadId.value).readingLoading = false }],
+    ['读取历史中', () => { state.getThreadState(state.currentChatId.value).readingLoading = true }, () => { state.getThreadState(state.currentChatId.value).readingLoading = false }],
     ['提交待确认', () => { state.pendingSends.value.thread = { submitting: true } }, () => { delete state.pendingSends.value.thread }],
     ['取消清理中', () => { thread.cancellationPending = true }, () => { thread.cancellationPending = false }],
     ['等待人工操作', () => { thread.turnStatus = 'requires_action' }, () => { thread.turnStatus = 'running' }],
@@ -80,6 +80,37 @@ test('调用者禁用发送时，普通 follow-up 和 steer 都不能绕过提�
   assert.equal(state.userInput.value, '准备中的草稿')
 })
 
+test('审批模式保存完成前暂停发送，首条新输入使用已保存的模式', async (t) => {
+  const sent = []
+  const { state, thread } = await readyWorkspace(t, {
+    send: async (id, draft) => { sent.push({ id, draft }); return true }
+  })
+  thread.detail.yuxi.tool_approval_mode = 'always_trust'
+  state.userInput.value = '需要审批的请求'
+  const { promise, resolve } = Promise.withResolvers()
+  const update = t.mock.method(state.chatThreadsStore, 'updateThread', () => promise)
+
+  const saving = state.handleToolApprovalModeSelect('default')
+  assert.equal(state.isSendButtonDisabled.value, true)
+  assert.equal(state.widgetActionsDisabled.value, true)
+  assert.equal(await state.handleSendMessage(), false)
+  assert.equal(await state.handleSendMessage({ text: '组件输入', fromWidget: true }), false)
+  assert.deepEqual(sent, [])
+  thread.isStreaming = true
+  state.userInput.value = ''
+  assert.equal(state.shouldShowStopButton.value, true)
+  assert.equal(state.isSendButtonDisabled.value, false, '保存审批模式期间仍可停止当前运行')
+  thread.isStreaming = false
+  state.userInput.value = '需要审批的请求'
+
+  resolve({ ...thread.detail, yuxi: { ...thread.detail.yuxi, tool_approval_mode: 'default' } })
+  await saving
+  assert.equal(update.mock.calls[0].arguments[3], 'default')
+  assert.equal(state.isSendButtonDisabled.value, false)
+  assert.equal(await state.handleSendMessage(), true)
+  assert.equal(sent[0].draft.toolApprovalMode, 'default')
+})
+
 test('普通会话在目录为空时采用已授权详情的名称、模型与配置', async (t) => {
   const { state, agentStore } = await readyWorkspace(t)
   agentStore.agents = []
@@ -88,7 +119,6 @@ test('普通会话在目录为空时采用已授权详情的名称、模型与�
     config_json: { context: { model: 'provider:detail', system_prompt: '详情配置' } },
     configurable_items: {}
   }
-  state.currentThread.value = { id: 'thread', agent: { id: 'agent' }, yuxi: {} }
   assert.equal(state.currentAgentName.value, '已授权智能体')
   assert.equal(state.currentModelSpec.value, 'provider:detail')
   assert.equal(state.agentConfig.value.system_prompt, '详情配置')
@@ -101,7 +131,7 @@ async function routeWorkspace(t) {
     { path: '/other', component: { render: () => null } }
   ] })
   await router.push('/agent/thread?member_session_id=first')
-  const mounted = await readyWorkspace(t, { router })
+  const mounted = await mountSessionWorkspace(t, undefined, { router, root: true, threadId: 'thread' })
   const pending = new Map()
   t.mock.method(mounted.agentApi, 'getSessionNavigation', id => new Promise((resolve, reject) => pending.set(id, { resolve, reject })))
   return { ...mounted, router, pending }

@@ -29,8 +29,8 @@ test('导航偏好跨刷新保留，按认证账号隔离，临时展示和消�
       user.userId = userId
       return { ui: useChatUIStore(), threads: useChatThreadsStore(), user }
     }
-    let { ui, threads } = reload(1)
-    threads.setCurrentThreadId('thread-a')
+    const { ui } = reload(1)
+    ui.lastThreadId = 'thread-a'
     ui.sidebarCollapsed = true
     ui.sessionsPinned = true
     ui.sessionPeekOpen = true
@@ -49,29 +49,24 @@ test('导航偏好跨刷新保留，按认证账号隔离，临时展示和消�
     assert.equal(state.ui.lastThreadId, 'thread-a')
     assert.equal(state.ui.sessionsPinned, true)
     assert.equal(state.ui.sidebarCollapsed, true)
-    assert.equal(state.threads.currentThreadId, null, '持久目标不能冒充已加载的工作区')
+    assert.deepEqual(state.threads.threads, [], '持久目标不能插入列表')
     assert.equal(state.ui.sessionPeekOpen, false)
     assert.equal(state.ui.expandedProjects.size, 0)
-    state.threads.setCurrentThreadId('thread-a')
+    state.ui.lastThreadId = 'thread-a'
     state.ui.sessionPeekOpen = true
     state.ui.projectPendingId = 'old-account-pending'
     state.user.userId = 2
-    assert.equal(state.threads.currentThreadId, null, '账号变更必须清理内存选择且不改写任一账号偏好')
     assert.equal(state.ui.projectPendingId, null, '账号切换不能继承旧项目请求的禁用状态')
     assert.equal(state.ui.sessionPeekOpen, false, '账号切换不能继承临时浮层')
     assert.equal(state.ui.lastThreadId, null, '不能从上一账号残留的当前线程复制目标')
     assert.equal(state.ui.sessionsPinned, false)
-    state.threads.setCurrentThreadId('thread-b')
+    state.ui.lastThreadId = 'thread-b'
     state.ui.sessionsPinned = true
     await nextTick()
     state = reload(1)
     assert.equal(state.ui.lastThreadId, 'thread-a')
     assert.equal(state.ui.sessionsPinned, true)
-    state.threads.setThreadCreationInFlight(true)
-    assert.equal(state.threads.setCurrentThreadId(null), false)
-    assert.equal(state.ui.lastThreadId, 'thread-a', '创建事务拒绝的切换不能覆盖返回目标')
-    state.threads.setThreadCreationInFlight(false)
-    state.threads.setCurrentThreadId(null)
+    state.ui.lastThreadId = null
     state.ui.sessionsPinned = false
     await nextTick()
     state = reload(1)
@@ -80,18 +75,18 @@ test('导航偏好跨刷新保留，按认证账号隔离，临时展示和消�
     state = reload(2)
     assert.equal(state.ui.lastThreadId, 'thread-b')
     assert.equal(state.ui.sessionsPinned, true)
-    state.threads.upsertThread({ id: 'thread-b', yuxi: { project_id: 'removed' } })
+    state.threads.threads = [{ id: 'thread-b', yuxi: { project_id: 'removed' } }]
     state.threads.removeThreadsByProject('removed')
     // 刷新后的偏好独立于未选择的工作区，项目移除也须清除它。
     assert.equal(state.ui.lastThreadId, null)
-    state.threads.setCurrentThreadId('shared-thread')
+    state.ui.lastThreadId = 'shared-thread'
     let finishArchive
     const archiveRequest = t.mock.method(threadApi, 'archiveThread', () => new Promise(resolve => { finishArchive = resolve }))
     const archiving = state.threads.archiveThread('shared-thread')
     await Promise.resolve()
     await Promise.resolve()
     state.user.userId = 1
-    state.threads.setCurrentThreadId('shared-thread')
+    state.ui.lastThreadId = 'shared-thread'
     finishArchive()
     await archiving
     assert.equal(state.ui.lastThreadId, 'shared-thread', '旧账号归档响应不能清掉新账号的同名目标')
@@ -101,7 +96,7 @@ test('导航偏好跨刷新保留，按认证账号隔离，临时展示和消�
     await Promise.resolve()
     const queuedArchive = state.threads.archiveThread('shared-thread')
     state.user.userId = 2
-    state.threads.setCurrentThreadId('shared-thread')
+    state.ui.lastThreadId = 'shared-thread'
     finishQueue()
     await blockingOperation
     await queuedArchive

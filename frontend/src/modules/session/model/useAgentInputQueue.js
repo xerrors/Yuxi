@@ -55,17 +55,15 @@ export function useAgentInputQueue({
     const monitor = ts.inputQueueMonitor
     monitor.inputIds.add(inputId)
     if (monitor.inputIds.size > 1) return
+    const { signal } = monitor.controller
 
     const poll = async () => {
-      if (monitor.controller.signal.aborted) return
       let retryDelay = 1000
       for (const currentInputId of [...monitor.inputIds]) {
-        if (monitor.controller.signal.aborted) return
+        if (signal.aborted) return
         try {
-          const input = await agentApi.getThreadInput(threadId, currentInputId, {
-            signal: monitor.controller.signal
-          })
-          if (monitor.controller.signal.aborted) return
+          const input = await agentApi.getThreadInput(threadId, currentInputId, { signal })
+          if (signal.aborted) return
           if (input.status === 'consumed' && input.run_id) {
             advanceSnapshot(threadId)
             const state = getThreadState(threadId)
@@ -74,8 +72,10 @@ export function useAgentInputQueue({
             delete state.optimisticInputs[currentInputId]
             if (state.pendingInputId === currentInputId) state.pendingInputId = null
             // Input 只拥有历史归属；当前执行由持久 Turn 恢复入口选择。
-            if (await onInputConsumed?.(threadId) !== false)
-              stopInputMonitor(threadId, currentInputId)
+            const resumed = await onInputConsumed?.(threadId)
+            // 恢复期间可能已重置观察，旧轮询的结果不能清理新观察。
+            if (signal.aborted) return
+            if (resumed !== false) stopInputMonitor(threadId, currentInputId)
             continue
           }
           if (input.status === 'cancelled') {
@@ -89,7 +89,7 @@ export function useAgentInputQueue({
             onStreamError?.(threadId, currentInputId, 'cancelled')
           }
         } catch (error) {
-          if (error?.name === 'AbortError') return
+          if (signal.aborted || error?.name === 'AbortError') return
           if (error?.status >= 400 && error.status < 500 && error.status !== 429) {
             stopInputMonitor(threadId, currentInputId)
             onStreamError?.(threadId, currentInputId, 'unavailable')
@@ -99,10 +99,8 @@ export function useAgentInputQueue({
           }
         }
       }
-      if (!monitor.controller.signal.aborted && monitor.inputIds.size > 0) {
+      if (!signal.aborted && monitor.inputIds.size > 0) {
         monitor.timer = setTimeout(poll, retryDelay)
-      } else {
-        stopInputQueueMonitor(ts)
       }
     }
     void poll()

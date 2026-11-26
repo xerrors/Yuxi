@@ -26,15 +26,18 @@ function setup(t) {
   return { session, threadId, scope, revoked, user: useUserStore() }
 }
 
-test('目录关闭释放Thread与个人空间的目标子项，保留同前缀兄弟及其他Thread', (t) => {
+test('删除只关闭对应 Thread 的目录子项，同路径的个人空间和成员产物保留', (t) => {
   const { session, revoked } = setup(t)
   for (const path of ['/folder/a.pdf', '/folder-next/a.pdf']) session.open({ path, workdir: true })
-  for (const key of ['a:/folder/a.pdf', 'workspace:/folder/b.pdf', 'a:/folder-next/a.pdf', 'b:/folder/a.pdf'])
+  session.open({ path: '/folder/a.pdf', workspace: true })
+  session.open({ path: '/folder/a.pdf' }, 'b')
+  for (const key of ['a:/folder/a.pdf', 'workspace:/folder/a.pdf', 'a:/folder-next/a.pdf', 'b:/folder/a.pdf'])
     session.cache.set(key, { status: 'ready', file: { previewUrl: `blob:${key}` } })
-  assert.deepEqual(session.closePath('/folder/'), ['/folder/a.pdf'])
-  assert.deepEqual(session.tabs.value.map((tab) => tab.path), ['/folder-next/a.pdf'])
-  assert.deepEqual([...session.cache.keys()], ['a:/folder-next/a.pdf', 'b:/folder/a.pdf'])
-  assert.deepEqual(revoked.sort(), ['blob:a:/folder/a.pdf', 'blob:workspace:/folder/b.pdf'])
+  assert.deepEqual(session.closePath('/folder/', 'a'), ['a:/folder/a.pdf'])
+  const expected = ['a:/folder-next/a.pdf', 'b:/folder/a.pdf', 'workspace:/folder/a.pdf']
+  assert.deepEqual(session.tabs.value.map((tab) => tab.key).sort(), expected)
+  assert.deepEqual([...session.cache.keys()].sort(), expected)
+  assert.deepEqual(revoked, ['blob:a:/folder/a.pdf'])
 })
 
 for (const boundary of ['thread', 'identity', 'dispose', 'close']) {
@@ -47,7 +50,7 @@ for (const boundary of ['thread', 'identity', 'dispose', 'close']) {
     if (boundary === 'thread') threadId.value = 'b'
     else if (boundary === 'identity') user.token = 'another-user'
     else if (boundary === 'dispose') scope.stop()
-    else session.close('/pending.pdf')
+    else session.close('a:/pending.pdf')
     assert.equal(session.tabs.value.length, 0)
     const published = settlePreviewCacheLoad({ previewCache: session.cache,
       cacheKey: 'a:/pending.pdf', loadingEntry: entry, nextFile: { previewUrl: 'blob:late' },

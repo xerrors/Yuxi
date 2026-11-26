@@ -11,6 +11,8 @@ async page => {
     id: `sidebar-session-${index}`, object: 'agent.session', agent: { id: agent.agent_id, model: 'test:chat' }, metadata: {}, status: 'completed', created_at: 1792700000 - index, last_active_at: 1792700000 - index,
     yuxi: { title: index === 0 ? '调研浏览器智能体强化学习与长名称展示' : `研究对话 ${index + 1}`, project_id: index < 3 || index >= 26 ? project.id : null, is_pinned: false, unread: false, context: {}, config: {}, current_turn: null }
   }))
+  const archived = { ...sessions[0], id: 'sidebar-archived', status: 'archived',
+    yuxi: { ...sessions[0].yuxi, title: '已归档的深链接会话', archived: true } }
   let userId = 1
   let unavailableStatus = null
   let cachedUnavailableStatus = null
@@ -36,7 +38,7 @@ async page => {
     }
     const match = path.match(/^\/api\/v1\/agents\/sessions\/([^/]+)(?:\/(.*))?$/)
     if (match && match[1] === 'unavailable-thread' && unavailableStatus) return route.fulfill({ status: unavailableStatus, json: { detail: '恢复测试' } })
-    const session = match && sessions.find(item => item.id === match[1])
+    const session = match && (match[1] === archived.id ? archived : sessions.find(item => item.id === match[1]))
     if (session && cachedUnavailableStatus && session.id === sessions[4].id && !match[2]) return route.fulfill({ status: cachedUnavailableStatus, json: { detail: '缓存线程恢复测试' } })
     if (session) {
       const resource = match[2] || ''
@@ -489,6 +491,11 @@ async page => {
     check(await draftEntry.getAttribute('href') === (status === 404 ? '/agent' : target), '缓存条目确定失效清目标、临时失败保留目标')
   }
   cachedUnavailableStatus = null
+  await navigate(`/agent/${archived.id}`)
+  await workspace.getByText(archived.yuxi.title, { exact: true }).waitFor()
+  await workspace.getByText(`历史消息 ${archived.id}`, { exact: true }).waitFor()
+  await workspace.getByText('该对话已归档，只能查看历史记录，不能继续发送消息。', { exact: true }).waitFor()
+  check(await workspace.getByRole('button', { name: '添加内容', exact: true }).isDisabled(), '归档会话必须是只读')
   await navigate('/agent')
   sessions[3].status = 'failed'
   await showPanel()
@@ -504,18 +511,19 @@ async page => {
   const unopenedSession = sessions[10]
   const confirmedDuringCreation = await page.evaluate(async (target) => {
     const { useChatThreadsStore } = await import('/src/modules/session/model/chatThreads.js')
+    const { useChatUIStore } = await import('/src/modules/session/model/chatUI.js')
     const store = useChatThreadsStore()
     const router = document.querySelector('#app').__vue_app__.config.globalProperties.$router
-    store.setThreadCreationInFlight(true)
+    const finish = store.beginThreadCreation()
     try {
       await router.push(`/agent/${target}`)
       await new Promise(resolve => requestAnimationFrame(resolve))
-      return { selected: store.currentThreadId, path: router.currentRoute.value.path }
+      return { remembered: useChatUIStore().lastThreadId, path: router.currentRoute.value.path }
     } finally {
-      store.setThreadCreationInFlight(false)
+      finish()
     }
   }, unopenedSession.id)
-  check(confirmedDuringCreation.path === `/agent/${unopenedSession.id}` && confirmedDuringCreation.selected === unopenedSession.id, '已确认路由须同步选择，即使创建尚未完成')
+  check(confirmedDuringCreation.path === `/agent/${unopenedSession.id}` && confirmedDuringCreation.remembered === unopenedSession.id, '已确认路由须成为返回目标，即使创建尚未完成')
   check(await conversationEntry.getAttribute('href') === `/agent/${unopenedSession.id}`, '已确认路由应成为新的返回目标')
   await workspace.getByText(`历史消息 ${unopenedSession.id}`, { exact: true }).waitFor()
   check(!await historyMessage.isVisible(), '创建完成后应读取新路由的历史，不再显示原会话历史')

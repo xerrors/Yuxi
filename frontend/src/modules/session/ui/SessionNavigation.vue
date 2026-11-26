@@ -6,6 +6,7 @@ import { storeToRefs } from 'pinia'
 import { message } from 'ant-design-vue'
 import { MessageCirclePlus, PanelLeft, Search } from '@lucide/vue'
 import { useChatThreadsStore } from '../model/chatThreads'
+import { useSessionRuntimeStore } from '../model/sessionRuntime'
 import { useChatUIStore } from '../model/chatUI'
 import { useProjectsStore } from '@/modules/projects'
 import { useInfoStore } from '@/modules/settings'
@@ -23,6 +24,7 @@ const props = defineProps({
 const route = useRoute()
 const router = useRouter()
 const chatThreadsStore = useChatThreadsStore()
+const runtime = useSessionRuntimeStore()
 const projectsStore = useProjectsStore()
 const infoStore = useInfoStore()
 const userStore = useUserStore()
@@ -183,13 +185,8 @@ const handleSelectChat = (threadId) => {
   return router.push({ name: 'AgentCompWithThreadId', params: { thread_id: threadId } })
 }
 
-const handleSearchThreadFound = (thread) => {
-  chatThreadsStore.upsertThread(thread)
-}
-
 const handleSearchSelectThread = (thread) => {
   if (!thread?.id) return
-  chatThreadsStore.upsertThread(thread)
   handleSelectChat(thread.id)
 }
 
@@ -214,9 +211,11 @@ const handleSearchSelectFile = (entry) => {
 const handleArchiveChat = async (threadId) => {
   if (!threadId) return
   const initiatingUserId = userStore.userId
+  const state = runtime.peekThreadState(threadId)
   try {
-    await chatThreadsStore.archiveThread(threadId)
+    const detail = await chatThreadsStore.archiveThread(threadId)
     if (userStore.userId !== initiatingUserId) return
+    if (state) runtime.applyThreadDetail(threadId, detail, state)
     if (route.params.thread_id === threadId) {
       await router.replace({ name: 'AgentComp' })
     }
@@ -226,8 +225,10 @@ const handleArchiveChat = async (threadId) => {
 }
 
 const handleRenameChat = async ({ chatId, title }) => {
+  const state = runtime.peekThreadState(chatId)
   try {
-    await chatThreadsStore.updateThread(chatId, title)
+    const detail = await chatThreadsStore.updateThread(chatId, title)
+    if (state) runtime.applyThreadDetail(chatId, detail, state)
   } catch (error) {
     console.warn('重命名对话失败:', error)
   }
@@ -236,8 +237,10 @@ const handleRenameChat = async ({ chatId, title }) => {
 const handleTogglePinChat = async (threadId) => {
   const thread = threads.value.find((item) => item.id === threadId)
   if (!thread) return
+  const state = runtime.peekThreadState(threadId)
   try {
-    await chatThreadsStore.updateThread(threadId, null, !thread.yuxi.is_pinned)
+    const detail = await chatThreadsStore.updateThread(threadId, null, !thread.yuxi.is_pinned)
+    if (state) runtime.applyThreadDetail(threadId, detail, state)
     await chatThreadsStore.loadThreads()
   } catch (error) {
     console.warn('更新置顶状态失败:', error)
@@ -273,7 +276,9 @@ const handleDeleteProject = async (projectId) => {
     })
     if (userStore.userId !== initiatingUserId) return
     projectsStore.removeProject(projectId)
-    if (removedThreadIds.includes(route.params.thread_id)) {
+    const routedThreadId = route.params.thread_id
+    if (removedThreadIds.includes(routedThreadId) ||
+        runtime.peekThreadState(routedThreadId)?.detail?.yuxi.project_id === projectId) {
       await router.replace({ name: 'AgentComp' })
     }
     message.success('项目已删除，其中对话已归档，项目文件夹已保留')
@@ -390,7 +395,6 @@ const handleDeleteProject = async (projectId) => {
       file-scope-hint="仅搜索个人空间，不包含知识库文件。"
       @select-thread="handleSearchSelectThread"
       @create-thread="handleCreateSessionFromSearch"
-      @thread-found="handleSearchThreadFound"
       @select-file="handleSearchSelectFile"
     />
   </div>

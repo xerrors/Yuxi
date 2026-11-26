@@ -71,6 +71,19 @@ export const getToolApprovalSummary = (request) => {
   return formatToolApprovalArgs(args).replace(/\s+/g, ' ').trim()
 }
 
+/** 将持久等待点转换为其 Thread 的审批或问答。 */
+export const pendingInterruptFromWaitpoint = (waitpoint, threadId) => {
+  if (!waitpoint?.id || !waitpoint.run_id) return null
+  const target = { threadId, interruptedRunId: waitpoint.run_id, waitpointId: waitpoint.id }
+  if (waitpoint.kind === 'approval' && waitpoint.calls?.length) {
+    return { ...target, kind: 'tool_approval', actionRequests: waitpoint.calls }
+  }
+  if (waitpoint.kind === 'answer' && waitpoint.questions?.length) {
+    return { ...target, kind: 'question', questions: waitpoint.questions }
+  }
+  return null
+}
+
 export const hasPendingInterruptPayload = (pendingInterrupt) => {
   if (!pendingInterrupt) return false
   if (pendingInterrupt.kind === 'tool_approval') {

@@ -1,30 +1,42 @@
 import { agentApi } from '@/apis'
 
-/** 读取当前等待点并提交回答或审批，拒绝已变更的执行归属。 */
-export async function resumeSessionWaitpoint({ threadId, turnId, runId, kind, answer }) {
-  if (!turnId) throw new Error('当前线程没有等待中的 Turn')
+/** 将回答或审批提交给用户操作的持久等待点。 */
+export async function resumeSessionWaitpoint({
+  threadId, turnId, runId, waitpointId, kind, actionRequests, answer, isCurrent
+}) {
+  if (!threadId || !turnId || !runId || !waitpointId) {
+    throw new Error('当前线程没有等待中的 Turn')
+  }
+  const callIds = actionRequests?.map((call) => call.call_id) || []
   const turn = await agentApi.getThreadTurn(threadId, turnId)
-  const waitpoint = turn.yuxi.waitpoint
+  const waitpoint = turn.yuxi?.waitpoint
   if (
+    !isCurrent() ||
     turn.status !== 'requires_action' ||
-    turn.yuxi.current_run_id !== runId ||
-    !waitpoint?.id ||
-    waitpoint.run_id !== runId
+    turn.id !== turnId ||
+    turn.yuxi?.current_run_id !== runId ||
+    waitpoint?.id !== waitpointId ||
+    waitpoint.run_id !== runId ||
+    waitpoint.kind !== (kind === 'tool_approval' ? 'approval' : 'answer')
   ) {
     throw new Error('当前审批所属 Turn 已变化，请刷新后重试')
   }
   let response
   if (kind === 'tool_approval') {
     const calls = waitpoint.calls || []
-    const selected = answer?.decisions || []
-    if (!calls.length || calls.length !== selected.length) {
+    const decisions = new Map(callIds.map((id, index) => [id, answer?.decisions?.[index]?.type]))
+    if (
+      !calls.length ||
+      calls.length !== decisions.size ||
+      calls.some((call) => !['approve', 'reject'].includes(decisions.get(call.call_id)))
+    ) {
       throw new Error('审批请求已变化，请刷新后重试')
     }
     response = {
       type: 'approval',
-      decisions: calls.map((call, index) => ({
+      decisions: calls.map((call) => ({
         call_id: call.call_id,
-        decision: selected[index].type
+        decision: decisions.get(call.call_id)
       }))
     }
   } else {
@@ -45,9 +57,9 @@ export async function resumeSessionWaitpoint({ threadId, turnId, runId, kind, an
   }
   const accepted = await agentApi.resumeThreadTurn(threadId, {
     turn_id: turnId,
-    waitpoint_id: waitpoint.id,
+    waitpoint_id: waitpointId,
     response,
-    idempotency_key: `resume-${waitpoint.id}`
+    idempotency_key: `resume-${waitpointId}`
   })
   if (!accepted?.run_id) {
     throw new Error('恢复已接收但未创建 Run，请刷新后查看 Turn 状态')

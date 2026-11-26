@@ -136,14 +136,14 @@ test('模型选择按当前选择、Session、智能体默认值响应式回退�
   const h = await mountSessionWorkspace(t, undefined, { threadId: 'thread' })
   h.state.selectedModelByThread.thread = 'selected:model'
   h.state.selectedModelByThread.__draft__ = 'draft:model'
-  h.state.currentThread.value = { id: 'thread', agent: { model: 'session:model' } }
+  h.runtime.getThreadState('thread').detail = { id: 'thread', agent: { model: 'session:model' } }
   h.state.configStore.config.default_model = 'agent:model'
   assert.equal(h.state.currentModelSpec.value, 'selected:model')
   delete h.state.selectedModelByThread.thread
   assert.equal(h.state.currentModelSpec.value, 'session:model')
-  h.state.currentThread.value = null
+  h.runtime.getThreadState('thread').detail = null
   assert.equal(h.state.currentModelSpec.value, 'agent:model')
-  h.state.currentThreadId.value = null
+  h.state.currentChatId.value = null
   assert.equal(h.state.currentModelSpec.value, 'draft:model')
 })
 
@@ -161,7 +161,7 @@ test('预写 Thread 身份与已有历史都委派阅读器就绪，页面不重
       h.runtime.getThreadState('thread').historyLoaded = historyLoaded
       subtest.mock.method(h.agentStore, 'fetchAgentDetail', async () => ({ can_run: historyLoaded }))
       subtest.mock.method(h.state.chatThreadsStore, 'markThreadViewed', () => {})
-      h.state.timelineRef.value = { refresh: async () => { reads.push(h.state.currentThreadId.value); return true } }
+      h.state.timelineRef.value = { refresh: async () => { reads.push(h.state.currentChatId.value); return true } }
       assert.equal(await h.state.selectThreadFromRoute('thread'), true)
       assert.deepEqual(reads, ['thread'])
     })
@@ -172,7 +172,8 @@ test('附件上传固定打开时的目标，切换会话和再次打开分别�
   const h = await mountSessionWorkspace(t, undefined, { threadId: 'thread-a' })
   h.agentStore.selectedAgentId = 'agent'
   await h.state.handleAttachmentUpload()
-  h.state.currentThreadId.value = 'thread-b'
+  h.state.currentChatId.value = 'thread-b'
+  h.runtime.getThreadState('thread-b').detail = { id: 'thread-b', agent: { id: 'agent' }, yuxi: {} }
   await h.state.handleAttachmentUpload()
   h.state.handleTmpAttachmentsAdded([{ id: 'file-a' }])
   assert.deepEqual(h.state.draftFilesByThread.value, { 'thread-a': [{ id: 'file-a' }] })
@@ -194,23 +195,21 @@ for (const status of [403, 404, 503]) {
         resumeQueuedInputs: () => execution.push('queue')
       }
     })
-    h.state.chatThreadsStore.threads = [{ id: 'history', agent: { id: 'agent' }, yuxi: {} }]
+    h.runtime.getThreadState('history').detail = { id: 'history', agent: { id: 'agent' }, yuxi: {} }
     const toast = t.mock.method(message, 'error', () => {})
-    t.mock.method(h.agentApi, 'getAgentDetail', () => detail.promise)
+    t.mock.method(h.agentStore, 'fetchAgentDetail', () => detail.promise)
     t.mock.method(h.state.chatThreadsStore, 'markThreadViewed', () => {})
     let preparation
     h.state.timelineRef.value = { refresh: async () => {
-      const threadId = h.state.currentThreadId.value
+      const threadId = h.state.currentChatId.value
       history.push(threadId)
       h.runtime.getThreadState(threadId).historyLoaded = true
-      // 阅读器发出 loaded 后立即完成 refresh，宿主单独等待详情。
       preparation = h.state.initializeThreadInput({ threadId })
       return true
     } }
-
     assert.equal(await h.state.selectThreadFromRoute('history'), true)
     assert.deepEqual(history, ['history'])
-    assert.equal(h.state.currentThreadId.value, 'history')
+    assert.equal(h.state.currentChatId.value, 'history')
     assert.equal(h.state.isSessionLoading.value, false)
     assert.equal(h.state.sessionAgentStatus.value, 'loading')
     assert.equal(h.state.agentExecutionAvailable.value, false)
@@ -218,7 +217,7 @@ for (const status of [403, 404, 503]) {
     detail.reject(Object.assign(new Error('agent unavailable'), { status }))
     await preparation
 
-    assert.equal(h.state.currentThreadId.value, 'history')
+    assert.equal(h.state.currentChatId.value, 'history')
     assert.equal(h.state.isSessionLoading.value, false)
     assert.equal(h.state.agentExecutionAvailable.value, false)
     assert.deepEqual(execution, [])
@@ -233,8 +232,8 @@ for (const status of [403, 404, 410, 503, undefined]) {
     const h = await mountSessionWorkspace(t)
     t.mock.method(message, 'error', () => {})
     t.mock.method(h.agentApi, 'getPublicThread', async () => { throw { status } })
-    h.state.timelineRef.value = { refresh: async () => { reads.push(h.state.currentThreadId.value); throw { status } } }
-    t.mock.method(h.state.chatThreadsStore, 'upsertThread', () => assert.fail('失败详情不能写入列表'))
+    h.state.timelineRef.value = { refresh: async () => { reads.push(h.state.currentChatId.value); throw { status } } }
+    t.mock.method(h.state.chatThreadsStore, 'updateThreadSummary', () => assert.fail('失败详情不能写入列表'))
     assert.equal(await h.state.selectThreadFromRoute('remembered-thread'), [403, 404, 410].includes(status) ? false : null)
     assert.deepEqual(reads, ['remembered-thread'])
   })
@@ -251,8 +250,8 @@ for (const historyLoaded of [false, true]) {
       h.state.chatThreadsStore.threads = [{ id: 'cached', agent: { id: 'agent' }, yuxi: {} }]
       h.runtime.getThreadState('cached').historyLoaded = historyLoaded
       t.mock.method(h.agentStore, 'fetchAgentDetail', async () => ({ can_run: false }))
-      h.state.timelineRef.value = { refresh: async () => { reads.push(h.state.currentThreadId.value); throw { status } } }
-      t.mock.method(h.state.chatThreadsStore, 'upsertThread', () => assert.fail('错误响应不能写入导航列表'))
+      h.state.timelineRef.value = { refresh: async () => { reads.push(h.state.currentChatId.value); throw { status } } }
+      t.mock.method(h.state.chatThreadsStore, 'updateThreadSummary', () => assert.fail('错误响应不能写入导航列表'))
       t.mock.method(message, 'error', () => {})
       assert.equal(await h.state.selectThreadFromRoute('cached'), [403, 404, 410].includes(status) ? false : null)
       assert.deepEqual(reads, ['cached'])

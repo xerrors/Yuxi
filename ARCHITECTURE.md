@@ -89,7 +89,7 @@ Yuxi 默认交付完整知识能力。部署开关 `YUXI_KNOWLEDGE_ENABLED` 由�
 - 文件预览的标签、缓存和对象 URL 由 `workspace/model/filePreviewSession` 拥有，随 Thread、登录身份和视图作用域释放；预览加载器只向仍属于当前请求的缓存项发布结果，失效请求回收自己的 URL。
 - `shared/ui` 与 `shared/lib` 保存通用界面和工具，`shared/model` 保存主题状态；全局样式集中在 `assets/css`，颜色和基础规范复用 `base.css`。
 - `apis` 是集中 HTTP 边界，复用 `base.js` 的请求、鉴权和错误处理。模块不能依赖 app/pages，shared 不能依赖业务模块或 API；ESLint 检查别名、相对路径和动态导入。跨模块只使用 `modules/<domain>` 的模型/用例公开入口或 `modules/<domain>/ui/**/*.vue` 公开组件，不得直达 `model/` 或其他内部路径。
-- 新 TypeScript 逻辑经 strict 类型检查，build 先执行 typecheck；现有 JavaScript 逐步迁移。sessionRuntime 按 Thread 拥有一份 item 状态，历史分页、SSE 与恢复快照写入同一 reducer，展示按需派生。sessionInput 拥有冻结提交、幂等重试和接收交接；输入队列观察者确认 Input 消费并触发持久运行恢复，共享 runtime 根据当前 Turn 选择唯一运行订阅。ThreadTimeline 按 threadId 激活共享首次装载与运行恢复，并拥有消息展示、历史分页和滚动视口；SessionWorkspace 装配读取、输入与面板，编辑器草稿和附件消费仍由输入路径处理。视图存活期间的草稿分别保留，首次进入 Thread 从持久草稿初始化。完整输入职责和后续类型迁移见[重构提案](docs/develop-guides/decisions/proposed/2026-09-30-agent-view-frontend-refactor.md)。
+- 新 TypeScript 逻辑经 strict 类型检查，build 先执行 typecheck；现有 JavaScript 逐步迁移。sessionRuntime 按 Thread 持有授权详情和共享 item 投影，普通历史和指定 Turn 使用各自的读取范围，共用 reducer 与单个运行订阅。ThreadTimeline 拥有首读、滚动和分页触发。SessionWorkspace 装配协作导航与面板，根和成员共用的 SessionThreadView 按 Thread 拥有编辑、队列和当前等待点界面，sessionInput 拥有冻结提交、幂等重试和接收交接。侧栏保存列表摘要，详情归属见[会话工作区与 Thread 阅读](docs/develop-guides/decisions/implemented/2026-11-17-thread-session-reading.md)。
 
 `/` 是公开首页；登录后的核心工作区是 `/agent`。`/extensions` 对所有登录用户开放，其中 Skills 与 MCP 个人连接对普通用户可见，知识库和工具仅管理员可见，MCP 配置仅超级管理员可修改，Token/API Key/OAuth 凭证由用户分别配置；Dashboard 仅超级管理员可访问。后端权限检查始终是最终边界，前端守卫只负责页面体验。
 
@@ -97,7 +97,7 @@ Yuxi 默认交付完整知识能力。部署开关 `YUXI_KNOWLEDGE_ENABLED` 由�
 
 一次普通智能体输入经过以下边界：
 
-1. `AgentView` 装配 `SessionWorkspace`，后者收集文本、图片、附件、模型与审批配置，`frontend/src/apis/agent_api.js` 调用 Public Session API。Repository 批量读取事实，由唯一 Session 投影生成详情、列表、搜索和更新响应。
+1. `AgentView` 装配 `SessionWorkspace`，其中的 `SessionThreadView` 收集文本、图片、附件、模型与审批配置，`frontend/src/apis/agent_api.js` 调用 Public Session API。Repository 批量读取事实，由唯一 Session 投影生成详情、列表、搜索和更新响应。
 2. `api/routers/public_v1/agents` 将 JWT 或 API Key 身份转为完整 ActorScope，并把有序消息和配置交给 `modules/agents/services/inputs.py`。接入事务锁定 Thread，验证作用域与幂等回执，保存独立 Input 原始内容、提交级文件引用和 Receipt，并绑定附件到 Input；配置在接收时冻结，正文与原始文件 ID 永久保留。
 3. `modules/agents/services/scheduler.py` 在线程锁下领取未暂停队列的就绪优先队头，原子创建 Turn、首个 pending Run 和正式 Message。follow-up 单条 FIFO；steer 按原接收序号消费连续就绪前缀，各 Input 保持独立。`services/queue_control.py` 从待办派生暂停，调用用例拥有 Thread 锁、事务与恢复意图；Input model 拥有恢复标记编码，repository 拥有排序与恢复边界。暂停后用户主动提交的恢复消息持久固定优先位置并单独消费，完成后继续原队列。消费固定 Input 的执行归属，并将各 Input 附件挂到自己的最后一条 Message；Receipt 保持接收时的命令目标，不回填执行归属。Message 的 received_at 保留接收时间，created_at 表示进入执行投影的时间。等待回答或审批时拒绝普通消息。
 4. owning transaction 提交后才向 ARQ 投递 pending Run。恢复扫描可补投未成功投递的同一个 Run，不自动重试已经失败的工作。

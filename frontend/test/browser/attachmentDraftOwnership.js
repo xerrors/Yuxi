@@ -64,6 +64,7 @@ async function attachmentDraftOwnership(page) {
         json = { id: 1, uid: 'attachment-fixture', username: '附件验证', role: 'user' }
       else if (path === '/api/agent') json = { agents: [agent] }
       else if (path === `/api/agent/${agentId}`) json = agent
+      else if (path === '/api/mention/plugins') json = []
       else if (path === '/api/v1/agents/sessions')
         json = { data: raw.includes('is_pinned=true') ? [] : sessions, has_more: false }
       else if (path.endsWith('/items')) json = { data: [], has_more: false, yuxi: { runs: [] } }

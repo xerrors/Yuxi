@@ -1,4 +1,4 @@
-import { computed, ref, watch } from 'vue'
+import { ref, watch } from 'vue'
 import { useUserStore } from '@/modules/identity'
 import { defineStore } from 'pinia'
 import { threadApi } from '@/apis'
@@ -9,7 +9,6 @@ import { useChatUIStore } from './chatUI'
 const PAGE_SIZE = 100
 export const useChatThreadsStore = defineStore('chatThreads', () => {
   const threads = ref([])
-  const currentThreadId = ref(null)
   const hasLoadedThreads = ref(false)
   const threadsLoadError = ref('')
   const threadCreationInFlight = ref(false)
@@ -27,7 +26,7 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
       threadListGeneration += 1
       sidebarPages = new Map()
       threads.value = []
-      currentThreadId.value = null
+      threadCreationInFlight.value = false
       hasLoadedThreads.value = false
       threadsLoadError.value = ''
       hasMoreThreads.value = true
@@ -36,46 +35,31 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
     },
     { flush: 'sync' }
   )
-  /** 列表读取与写操作串行，保持当前页和选中会话一致。 */
+  /** 列表读取与写操作串行，保持当前页的一致性。 */
   const withThreadListUpdate = (operation) => {
     const next = threadListOperation.catch(() => {}).then(operation)
     threadListOperation = next
     return next
   }
-  const currentThread = computed(() => {
-    if (!currentThreadId.value) return null
-    return threads.value.find((thread) => thread.id === currentThreadId.value) || null
-  })
-
-  const setCurrentThreadId = (threadId, { force = false } = {}) => {
-    if (threadCreationInFlight.value && !force) return false
-    currentThreadId.value = threadId || null
-    useChatUIStore().lastThreadId = currentThreadId.value
-    return true
+  /** 新建期间暂停导航，旧身份完成请求后只释放自己的占用。 */
+  const beginThreadCreation = () => {
+    const currentGeneration = threadListGeneration
+    threadCreationInFlight.value = true
+    return () => {
+      if (currentGeneration === threadListGeneration) threadCreationInFlight.value = false
+    }
   }
 
-  const setThreadCreationInFlight = (value) => {
-    threadCreationInFlight.value = Boolean(value)
-  }
-
-  /**
-   * 合并线程到列表。归档线程不作为新条目进入侧栏，但当前正在打开的线程仍需保留
-   * 详情（URL 直达归档会话时用于只读提示）；侧栏渲染负责隐藏归档项。
-   */
-  const upsertThread = (thread) => {
-    if (!thread?.id) return
-    const index = threads.value.findIndex((item) => item.id === thread.id)
-    const archived = thread.yuxi?.archived === true
-    if (index >= 0) {
-      threads.value[index] = {
-        ...threads.value[index],
-        ...thread,
-        yuxi: { ...threads.value[index].yuxi, ...thread.yuxi }
-      }
+  /** 更新当前列表中的摘要，详情和协作成员读取不插入条目。 */
+  const updateThreadSummary = (threadId, summary) => {
+    const index = threads.value.findIndex((item) => item.id === threadId)
+    if (index === -1 || !summary) return
+    if (summary.yuxi?.archived) {
+      threads.value.splice(index, 1)
       return
     }
-    if (archived && thread.id !== currentThreadId.value) return
-    threads.value = [thread, ...threads.value]
+    const previous = threads.value[index]
+    threads.value[index] = { ...previous, ...summary, yuxi: { ...previous.yuxi, ...summary.yuxi } }
   }
 
   const markThreadViewed = async (threadId) => {
@@ -83,8 +67,7 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
     const currentGeneration = threadListGeneration
     try {
       const updatedThread = await threadApi.markThreadViewed(threadId)
-      if (currentGeneration !== threadListGeneration) return null
-      upsertThread(updatedThread)
+      if (currentGeneration !== threadListGeneration || !updatedThread?.yuxi) return null
       return updatedThread
     } catch (error) {
       if (currentGeneration !== threadListGeneration) return null
@@ -130,12 +113,7 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
         const loaded = new Map(
           [...fetchedThreads.data, ...pinnedThreads].map((thread) => [thread.id, thread])
         )
-        const cachedDetails = threads.value.filter(
-          (thread) =>
-            !loaded.has(thread.id) &&
-            (thread.yuxi.parent_session_id || thread.id === currentThreadId.value)
-        )
-        threads.value = [...loaded.values(), ...cachedDetails]
+        threads.value = [...loaded.values()]
         after = fetchedThreads.last_id
         hasMoreThreads.value = fetchedThreads.has_more
         hasLoadedThreads.value = true
@@ -220,13 +198,13 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
     return withThreadListUpdate(async () => {
       if (!threadId || currentGeneration !== threadListGeneration) return
       try {
-        await threadApi.archiveThread(threadId)
+        const archived = await threadApi.archiveThread(threadId)
         if (currentGeneration !== threadListGeneration) return
         threads.value = threads.value.filter((thread) => thread.id !== threadId)
         // 归档后清理当前线程的本地草稿。
         threadDraftStore.remove(threadId)
-        if (currentThreadId.value === threadId) setCurrentThreadId(null)
         if (useChatUIStore().lastThreadId === threadId) useChatUIStore().lastThreadId = null
+        return archived
       } catch (error) {
         if (currentGeneration !== threadListGeneration) return
         console.error('Failed to archive thread:', error)
@@ -251,7 +229,6 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
 
     threads.value = remainingThreads
     removedIds.forEach((threadId) => threadDraftStore.remove(threadId))
-    if (removedIds.includes(currentThreadId.value)) setCurrentThreadId(null)
     if (removedIds.includes(useChatUIStore().lastThreadId)) useChatUIStore().lastThreadId = null
     return removedIds
   }
@@ -280,7 +257,9 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
           modelSpec
         )
         if (currentGeneration !== threadListGeneration) return
-        upsertThread(updatedThread)
+        updateThreadSummary(threadId, {
+          yuxi: { title: updatedThread.yuxi.title, is_pinned: updatedThread.yuxi.is_pinned }
+        })
         return updatedThread
       } catch (error) {
         if (currentGeneration !== threadListGeneration) return
@@ -293,16 +272,13 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
 
   return {
     threads,
-    currentThreadId,
-    currentThread,
     hasLoadedThreads,
     threadsLoadError,
     threadCreationInFlight,
     hasMoreThreads,
     isLoadingMoreThreads,
-    setCurrentThreadId,
-    setThreadCreationInFlight,
-    upsertThread,
+    beginThreadCreation,
+    updateThreadSummary,
     markThreadViewed,
     syncThreadStatuses,
     withThreadListUpdate,

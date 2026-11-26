@@ -3,8 +3,8 @@ import { createRenderer, h, ssrContextKey, toRaw } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { createTestServer } from './createTestServer.js'
 
-/** 装配会话页面，保留真实响应式状态并控制历史读取边界。 */
-export async function mountSessionWorkspace(t, fetchThreadMessages = async () => {}, options = {}) {
+/** 装配真实的会话区域或根工作区，并控制历史读取边界。 */
+export async function mountSessionWorkspace(t, readHistory = async () => {}, options = {}) {
   const globals = Object.fromEntries(['localStorage', 'document', 'window'].map((name) =>
     [name, Object.getOwnPropertyDescriptor(globalThis, name)]
   ))
@@ -29,10 +29,10 @@ export async function mountSessionWorkspace(t, fetchThreadMessages = async () =>
     plugins: options.stubChildren ? [{
       name: 'session-workspace-children', enforce: 'pre',
       resolveId(id, importer) {
-        if (id.endsWith('/ThreadTimeline.vue')) return
+        if (id === './ThreadTimeline.vue') return
         if (importer?.includes('/session/ui/ThreadTimeline.vue') && id.endsWith('.vue')) return '\0session-workspace-child'
-        if (importer?.includes('/session/ui/SessionWorkspace.vue') && id.endsWith('/AgentInputArea.vue')) return '\0session-workspace-input'
-        if (importer?.includes('/session/ui/SessionWorkspace.vue') && id.endsWith('.vue')) return '\0session-workspace-child'
+        if (importer?.includes('/session/ui/SessionThreadView.vue') && id.endsWith('/AgentInputArea.vue')) return '\0session-workspace-input'
+        if (importer?.match(/\/session\/ui\/Session(Workspace|ThreadView)\.vue/) && id.endsWith('.vue')) return '\0session-workspace-child'
       },
       load(id) {
         if (id === '\0session-workspace-input') return "import { h } from 'vue'; export default { setup(_, { attrs }) { return () => h('input', { ...attrs, 'data-session-input': '' }) } }"
@@ -52,10 +52,15 @@ export async function mountSessionWorkspace(t, fetchThreadMessages = async () =>
   setActivePinia(pinia)
   const { useSessionRuntimeStore } = await server.ssrLoadModule('/src/modules/session/model/sessionRuntime.js')
   const runtime = useSessionRuntimeStore()
-  t.mock.method(runtime, 'fetchThreadMessages', fetchThreadMessages)
+  t.mock.method(runtime, 'loadThread', async () => true)
+  t.mock.method(runtime, 'refreshThreadHistory', readHistory)
   for (const [name, replacement] of Object.entries(options.runtime || {})) t.mock.method(runtime, name, replacement)
   const { threadApi } = await server.ssrLoadModule('/src/apis/agent_api.js')
   const { agentApi } = await server.ssrLoadModule('/src/apis/agent_api.js')
+  t.mock.method(threadApi, 'getThreadAttachments', async () => ({ attachments: [] }))
+  const { useUserStore } = await server.ssrLoadModule('/src/modules/identity/index.js')
+  useUserStore().userId = 'test-user'
+  useUserStore().token = 'test-token'
   const { mcpApi } = await server.ssrLoadModule('/src/apis/mcp_api.js')
   t.mock.method(mcpApi, 'getMcpServers', async () => ({ success: true, data: [] }))
   t.mock.method(agentApi, 'getPublicThread', async (id) => ({ id, agent: { id: 'agent' }, yuxi: {} }))
@@ -63,7 +68,8 @@ export async function mountSessionWorkspace(t, fetchThreadMessages = async () =>
   const { useAgentStore } = await server.ssrLoadModule('/src/modules/agents/model/agent.js')
   const agentStore = useAgentStore()
   agentStore.isInitialized = true
-  const { default: component } = await server.ssrLoadModule('/src/modules/session/ui/SessionWorkspace.vue')
+  const view = options.root ? 'SessionWorkspace' : 'SessionThreadView'
+  const { default: component } = await server.ssrLoadModule(`/src/modules/session/ui/${view}.vue`)
   configureApiAuth({ getToken: () => 'test-token' })
   globalThis.document = { addEventListener() {}, removeEventListener() {}, visibilityState: 'visible' }
   globalThis.window = { addEventListener() {}, removeEventListener() {}, innerWidth: 1200 }
@@ -72,14 +78,20 @@ export async function mountSessionWorkspace(t, fetchThreadMessages = async () =>
     insert() {}, remove() {}, setText() {}, setElementText() {}, patchProp() {},
     parentNode: () => null, nextSibling: () => null
   })
-  app = renderer.createApp({ ...component, render: () => h('div') }, { isNewSession: true, visible: true, ...options.props })
+  app = renderer.createApp({ ...component, render: () => h('div') }, { isNewSession: true, active: true, ...(options.root ? { visible: true } : {}), ...options.props })
   app.provide(ssrContextKey, { modules: new Set() })
   app.use(pinia)
   app.use(options.router || createRouter({ history: createMemoryHistory(), routes: [] }))
   app.mount({})
   mounted = true
   const state = toRaw(app._instance.setupState)
-  if (options.threadId) state.currentThreadId.value = options.threadId
+  if (options.threadId) {
+    if (options.root) state.mainThread.value = { threadId: options.threadId }
+    else state.currentChatId.value = options.threadId
+    runtime.getThreadState(options.threadId).detail = {
+      id: options.threadId, agent: { id: 'agent' }, yuxi: {}
+    }
+  }
   if (options.send) t.mock.method(state.sessionInput, 'send', options.send)
   return { state, runtime, agentStore, agentApi, component, props: app._instance.props }
 }

@@ -14,9 +14,9 @@ SessionWorkspace 同时管理混合面板导航和文件标签、缓存与对象
 
 workspace 的 filePreviewSession 拥有文件标签和单一缓存，处理打开、关闭、Thread/身份切换与销毁。filePreviewCache 拥有缓存键、单条/范围释放、淘汰和在途发布。删除先撤销 cache entry 所有权，再释放对象 URL；迟到请求必须仍持有原 loading entry 才能发布，否则回收自身生成的 URL。
 
-AgentPanel 保留实际文件读取、目录刷新和预览展示，只调用 workspace 公开缓存操作，不再实现独立释放或淘汰循环。SessionWorkspace 把文件打开/关闭结果转换为混合面板标签与布局选择，不创建、失效或销毁文件缓存。
+AgentPanel 保留实际文件读取、目录刷新和预览展示，通过 workspace 的公开缓存操作管理失效。根工作区通过会话面板状态将文件打开和关闭结果转换为混合面板标签与布局选择。当前面板装配与多来源文件验证见 [会话工作区与 Thread 阅读](2026-11-17-thread-session-reading.md)。
 
-目录关闭包含子目录，不能删除同前缀兄弟项或其他 Thread 缓存。文件内容仍分别经过个人 workspace、当前 Workdir viewer 或 artifact 路径。保留现有单路径标签契约与缓存容量；不增加编辑器、预取或同路径多 scope 标签。
+文件标签和缓存以个人空间或来源 Thread 加路径为键。成员文件进入根面板时，预览和下载仍沿用该成员的 Thread 与资源类型。删除文件或目录后，按操作所属 Thread 关闭匹配路径及其子项，保留相邻同前缀文件以及其他作用域的同路径预览。文件内容分别通过个人 workspace、对应 Thread 的 Workdir viewer 或 artifact 接口读取。
 
 ## 替代方案
 

@@ -154,23 +154,24 @@ test('慢等待点恢复后才聚焦，隐藏或轮次变化撤销聚焦', async
   })
   const { agentApi, knowledgeBaseApi, toolApi, threadApi, mcpApi } = await server.ssrLoadModule('/src/apis/index.js')
   t.mock.method(mcpApi, 'getMcpServers', async () => ({ success: true, data: [] }))
-  let ready, resumed = 0, focused = false
-  t.mock.method(agentApi, 'getAgents', () => new Promise((resolve) => { ready = resolve }))
+  let resumed = 0, focused = false
   t.mock.method(knowledgeBaseApi, 'getAccessibleKnowledgeBases', async () => ({ knowledge_bases: [] }))
   t.mock.method(toolApi, 'getTools', async () => ({ data: [] }))
   t.mock.method(agentApi, 'getAgentDetail', async () => ({ agent: { agent_id: 'focus-agent', can_run: true } }))
   t.mock.method(threadApi, 'getThreads', async () => ({ data: [], has_more: false }))
   t.mock.method(threadApi, 'markThreadViewed', async () => ({}))
   const { useSessionRuntimeStore } = await server.ssrLoadModule('/src/modules/session/model/sessionRuntime.js')
-  const { default: Workspace } = await server.ssrLoadModule('/src/modules/session/ui/SessionWorkspace.vue')
+  const { default: Workspace } = await server.ssrLoadModule('/src/modules/session/ui/SessionThreadView.vue')
   configureApiAuth({ getToken: () => 'test-token' })
+  const { useUserStore } = await server.ssrLoadModule('/src/modules/identity/index.js')
+  useUserStore().token = 'test-token'
   globalThis.document = { addEventListener() {}, removeEventListener() {}, visibilityState: 'visible' }
   const renderer = createRenderer({
     createElement: () => ({ children: [] }), createText: () => ({}), createComment: () => ({}),
     insert: (child, parent) => parent.children.push(child), remove() {}, setText() {}, setElementText() {},
     parentNode: () => null, nextSibling: () => null, patchProp() {}
   })
-  const props = reactive({ isNewSession: true, visible: true, agentId: 'focus-agent' })
+  const props = reactive({ isNewSession: true, active: true, pageVisible: true, cooperationMembers: [], agentId: 'focus-agent' })
   let state, exposed
   const app = renderer.createApp({ setup() {
     state = Workspace.setup(props, { expose(value) { exposed = value }, emit() {} })
@@ -187,27 +188,26 @@ test('慢等待点恢复后才聚焦，隐藏或轮次变化撤销聚焦', async
     if (previousDocument === undefined) delete globalThis.document; else globalThis.document = previousDocument
   })
   await new Promise((resolve) => setImmediate(resolve))
-  state.currentThreadId.value = 'thread-focus'
-  // setup-only 挂载不渲染阅读器；真实工作区须等待初始化后才请求恢复阅读。
+  state.currentChatId.value = 'thread-focus'
   state.timelineRef.value = { refresh: async () => { resumed++; return true } }
   state.messageInputStageRef.value = { querySelector: () => ({ focus() { focused = true } }) }
   const thread = useSessionRuntimeStore(pinia).getThreadState('thread-focus')
   thread.turnStatus = 'requires_action'
   thread.currentTurnId = 'turn'
+  thread.activeRunId = 'run'
   await nextTick()
   const pending = exposed.focusPendingAction()
   await nextTick()
-  assert.equal(resumed, 0)
-  assert.equal(focused, false)
-  ready({ agents: [] })
   await pending
   assert.equal(resumed, 1)
   assert.equal(focused, false, '导航恢复返回时，等待点仍可能未到达')
   const showApproval = () => {
-    thread.pendingInterrupt = { interruptedRunId: 'run', waitpointId: 'wait' }
-    Object.assign(state.approvalState, { showModal: true, threadId: 'thread-focus', interruptedRunId: 'run', waitpointId: 'wait' })
+    thread.pendingInterrupt = {
+      threadId: 'thread-focus', interruptedRunId: 'run', waitpointId: 'wait',
+      kind: 'question', questions: [{ question_id: 'q', question: '确认？' }]
+    }
   }
-  const hideApproval = () => { state.approvalState.showModal = false }
+  const hideApproval = () => { thread.pendingInterrupt = null }
   showApproval()
   await nextTick()
   await nextTick()
@@ -215,12 +215,12 @@ test('慢等待点恢复后才聚焦，隐藏或轮次变化撤销聚焦', async
   focused = false
   hideApproval()
   await exposed.focusPendingAction()
-  props.visible = false
+  props.active = false
   await nextTick()
   showApproval()
   await nextTick()
   assert.equal(focused, false, '晚到的卡片不能抢隐藏视图的焦点')
-  props.visible = true
+  props.active = true
   hideApproval()
   await exposed.focusPendingAction()
   thread.currentTurnId = 'another-turn'

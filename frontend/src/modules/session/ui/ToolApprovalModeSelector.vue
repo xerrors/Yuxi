@@ -2,8 +2,9 @@
   <ActionDropdown :upward="upward" :width="280" v-model:open="open">
     <template #trigger>
       <ActionTrigger
-        :label="currentOption.label"
+        :label="saving ? '正在保存审批模式' : currentOption.label"
         :open="open"
+        :disabled="saving"
         :title="currentOption.hint"
         :class="{ 'is-trusted': modelValue === 'always_trust' }"
         collapse-label
@@ -47,7 +48,8 @@ import { DEFAULT_TOOL_APPROVAL_MODE } from '@/modules/session/model/toolApproval
 
 const props = defineProps({
   upward: { type: Boolean, default: false },
-  modelValue: { type: String, default: DEFAULT_TOOL_APPROVAL_MODE }
+  modelValue: { type: String, default: DEFAULT_TOOL_APPROVAL_MODE },
+  saving: { type: Boolean, default: false }
 })
 
 const emit = defineEmits(['update:modelValue'])

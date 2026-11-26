@@ -77,8 +77,9 @@ export function useAgentRunStream({
   getThreadState,
   isThreadActive = () => true,
   handlePublicEvent,
-  fetchThreadMessages,
-  fetchAgentState,
+  readThreadDetail = (threadId) => agentApi.getPublicThread(threadId),
+  refreshThreadHistory,
+  reconcileTurnHistory,
   resetThreadExecution,
   onScrollToBottom,
   streamSmoother,
@@ -121,8 +122,9 @@ export function useAgentRunStream({
       ts.pendingInterrupt = null
     }
     let refreshed = false
+    let latestTurn
     try {
-      await fetchThreadMessages({ threadId, turnId, fresh: true })
+      latestTurn = await reconcileTurnHistory(threadId, turnId)
       refreshed = true
     } catch (error) {
       console.warn('Failed to refresh terminal history; retaining streamed output:', error)
@@ -135,8 +137,7 @@ export function useAgentRunStream({
       return false
     if (status !== 'requires_action' && refreshed)
       resetThreadExecution(threadId, { preserveInputMonitors: true })
-    void fetchAgentState(threadId)
-    if (status === 'requires_action') onInterruptDetected?.({ threadId, runId, turn })
+    if (status === 'requires_action') onInterruptDetected?.({ threadId, turn: latestTurn || turn })
     else onTerminalDetected?.({ threadId, runId, touchedThreadIds: [...touchedThreadIds] })
     if (status === 'completed') onScrollToBottom?.(threadId)
     return refreshed
@@ -176,7 +177,7 @@ export function useAgentRunStream({
     const turnId =
       options.turnId ||
       ts.currentTurnId ||
-      (await agentApi.getPublicThread(threadId)).yuxi.current_turn?.id
+      (await readThreadDetail(threadId, ts)).yuxi.current_turn?.id
     if (
       !turnId ||
       !isThreadActive(threadId) ||
@@ -218,7 +219,7 @@ export function useAgentRunStream({
         if (data.session_id !== threadId) return
         if (data.type === 'yuxi.session.resync') {
           // 暂停消费，让 ReadableStream 缓冲新事件，快照应用后再继续合并。
-          await fetchThreadMessages({ threadId, turnId, fresh: true })
+          await reconcileTurnHistory(threadId, turnId)
           sawTurnEnd = await reconcileTurn(threadId, turnId, ts.activeRunId)
           if (eventId) ts.threadCursor = String(eventId)
           return
@@ -317,7 +318,7 @@ export function useAgentRunStream({
     const ts = getThreadState(threadId)
     if (!ts) return false
     const version = ts.runStateVersion
-    const thread = session || await agentApi.getPublicThread(threadId)
+    const thread = session || await readThreadDetail(threadId, ts)
     if (
       !isThreadActive(threadId) ||
       getThreadState(threadId) !== ts ||
@@ -335,7 +336,7 @@ export function useAgentRunStream({
       ts.isStreaming = false
       ts.pendingInterrupt = null
       ts.activeRunSteerable = false
-      if (refreshHistory) await fetchThreadMessages({ threadId, fresh: true })
+      if (refreshHistory) await refreshThreadHistory(threadId)
       if (!isThreadActive(threadId) || getThreadState(threadId) !== ts || ts.runStateVersion !== version)
         return false
       onRestored?.(null)
@@ -366,7 +367,7 @@ export function useAgentRunStream({
         void startRunStream(threadId, turn.yuxi.current_run_id, ts.threadCursor, { turnId })
       }
       const restoredVersion = ts.runStateVersion
-      if (refreshHistory) await fetchThreadMessages({ threadId, fresh: true })
+      if (refreshHistory) await refreshThreadHistory(threadId)
       if (!isThreadActive(threadId) || getThreadState(threadId) !== ts || ts.runStateVersion !== restoredVersion)
         return false
       onRestored?.(turn)

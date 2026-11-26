@@ -226,7 +226,6 @@ const emit = defineEmits([
   'update:open',
   'select-thread',
   'create-thread',
-  'thread-found',
   'select-file'
 ])
 
@@ -372,7 +371,6 @@ const selectRecentThread = (thread) => {
 
 const selectSessionResult = (item) => {
   if (!item?.session.id) return
-  emit('thread-found', item.session)
   emit('select-thread', item.session)
   close()
 }

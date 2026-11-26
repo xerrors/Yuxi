@@ -11,29 +11,27 @@ globalThis.localStorage = {
   removeItem: () => {}
 }
 
-test('线程创建期间共享 Store 拒绝外层切换，创建结果可显式提交', async () => {
+test('旧账号的新建请求结束时保留新账号的导航锁', async (t) => {
   const server = await createTestServer({ server: { middlewareMode: true }, appType: 'custom' })
-  setActivePinia(createPinia())
-  try {
-    const { useChatThreadsStore } = await server.ssrLoadModule(
-      '/src/modules/session/model/chatThreads.js'
-    )
-    const store = useChatThreadsStore()
-    store.setCurrentThreadId('thread-before')
-    store.setThreadCreationInFlight(true)
-
-    assert.equal(store.setCurrentThreadId('thread-sidebar'), false)
-    assert.equal(store.currentThreadId, 'thread-before')
-    assert.equal(store.setCurrentThreadId('thread-created', { force: true }), true)
-    assert.equal(store.currentThreadId, 'thread-created')
-
-    store.setThreadCreationInFlight(false)
-  } finally {
-    await server.close()
-  }
+  t.after(() => server.close())
+  const pinia = createPinia()
+  setActivePinia(pinia)
+  const { useChatThreadsStore } = await server.ssrLoadModule('/src/modules/session/model/chatThreads.js')
+  const { useUserStore } = await server.ssrLoadModule('/src/modules/identity/index.js')
+  const user = useUserStore(pinia)
+  const store = useChatThreadsStore(pinia)
+  user.userId = 'first-user'
+  const finishFirst = store.beginThreadCreation()
+  user.userId = 'second-user'
+  assert.equal(store.threadCreationInFlight, false)
+  const finishSecond = store.beginThreadCreation()
+  finishFirst()
+  assert.equal(store.threadCreationInFlight, true)
+  finishSecond()
+  assert.equal(store.threadCreationInFlight, false)
 })
 
-test('Project 删除后 Store 只移除对应 Session 并清空当前选择', async () => {
+test('Project 删除后列表只移除对应 Session', async () => {
   const server = await createTestServer({ server: { middlewareMode: true }, appType: 'custom' })
   setActivePinia(createPinia())
   try {
@@ -45,10 +43,8 @@ test('Project 删除后 Store 只移除对应 Session 并清空当前选择', as
       { id: 'a', yuxi: { project_id: 'project-a' } },
       { id: 'b', yuxi: { project_id: 'project-b' } }
     ]
-    store.setCurrentThreadId('a')
     assert.deepEqual(store.removeThreadsByProject('project-a'), ['a'])
     assert.deepEqual(store.threads, [{ id: 'b', yuxi: { project_id: 'project-b' } }])
-    assert.equal(store.currentThreadId, null)
   } finally {
     await server.close()
   }
@@ -90,8 +86,10 @@ for (const mutation of ['pin', 'archive', 'create', 'detail']) {
       if (mutation === 'pin') await store.updateThread('boundary', null, true)
       if (mutation === 'archive') await store.archiveThread('boundary')
       if (mutation === 'create') await store.createThread('agent')
-      if (mutation === 'detail')
-        store.upsertThread({ id: 'child', yuxi: { parent_session_id: 'first' } })
+      if (mutation === 'detail') {
+        store.updateThreadSummary('child', { status: 'in_progress' })
+        assert.equal(store.threads.some(session => session.id === 'child'), false)
+      }
       await store.loadMoreThreads()
       assert.deepEqual(calls, [
         { limit: 100, after: undefined },
@@ -220,7 +218,7 @@ test('后台状态读取与改名串行，迟到资源不会覆盖已保存的�
       '/src/modules/session/model/chatThreads.js'
     )
     const store = useChatThreadsStore()
-    store.upsertThread({ id: 'session', yuxi: { title: '旧标题' } })
+    store.threads = [{ id: 'session', yuxi: { title: '旧标题' } }]
     const syncing = store.syncThreadStatuses()
     await new Promise(setImmediate)
     const renamed = store.updateThread('session', '已保存的新标题')

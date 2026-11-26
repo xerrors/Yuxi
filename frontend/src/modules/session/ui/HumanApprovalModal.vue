@@ -6,8 +6,9 @@
       :class="{ 'is-tool-approval': isToolApproval, 'is-question-dialog': !isToolApproval }"
       role="dialog"
       tabindex="-1"
-      :aria-labelledby="isToolApproval ? 'tool-approval-question' : 'question-dialog-title'"
-      :aria-describedby="isToolApproval ? 'tool-approval-summary' : undefined"
+      :aria-labelledby="titleId"
+      :aria-describedby="descriptionIds"
+      :aria-busy="isProcessing"
     >
       <div class="approval-content">
         <div v-if="isToolApproval" class="tool-approval-block">
@@ -42,7 +43,7 @@
             </span>
           </div>
 
-          <h4 id="tool-approval-question" class="tool-approval-question">
+          <h4 :id="titleId" class="tool-approval-question">
             {{ toolApprovalQuestion }}
           </h4>
 
@@ -52,11 +53,11 @@
             :class="{ 'is-expanded': toolArgsExpanded }"
           >
             <button
-              id="tool-approval-summary"
+              :id="summaryId"
               type="button"
               class="tool-args-trigger"
               :aria-expanded="toolArgsExpanded"
-              aria-controls="tool-approval-full-args"
+              :aria-controls="toolArgsExpanded ? argsId : undefined"
               @click="toolArgsExpanded = !toolArgsExpanded"
             >
               <code>{{ toolApprovalSummary }}</code>
@@ -68,7 +69,7 @@
             </button>
             <transition name="tool-args-expand">
               <div v-if="toolArgsExpanded" class="tool-args-panel">
-                <pre id="tool-approval-full-args" class="tool-args-expanded">{{
+                <pre :id="argsId" class="tool-args-expanded">{{
                   formattedToolArgs
                 }}</pre>
               </div>
@@ -78,7 +79,7 @@
 
         <div v-else class="question-dialog-header">
           <h4
-            id="question-dialog-title"
+            :id="titleId"
             ref="questionTitleRef"
             class="question-title"
             tabindex="-1"
@@ -111,12 +112,11 @@
             </template>
             <button
               type="button"
-              class="question-icon-button question-close-button"
-              aria-label="关闭问题"
+              class="question-icon-button question-stop-button"
               :disabled="isProcessing"
               @click="handleCancel"
             >
-              <X :size="19" />
+              停止本轮
             </button>
           </div>
         </div>
@@ -148,7 +148,7 @@
                 v-else
                 class="visually-hidden"
                 type="radio"
-                :name="`approval-option-${activeQuestion.questionId}`"
+                :name="`${formId}-option-${activeQuestion.questionId}`"
                 :value="optionItem.value"
                 :checked="getSelected(activeQuestion.questionId)[0] === optionItem.value"
                 :disabled="isProcessing"
@@ -192,11 +192,11 @@
               }"
             >
               <template v-if="activeQuestion.answerMode === 'text'">
-                <label class="visually-hidden" :for="`question-answer-${activeQuestion.questionId}`">
+                <label class="visually-hidden" :for="`${formId}-answer`">
                   回答 {{ activeQuestion.question }}
                 </label>
                 <textarea
-                  :id="`question-answer-${activeQuestion.questionId}`"
+                  :id="`${formId}-answer`"
                   ref="answerTextareaRef"
                   :value="answerTexts[activeQuestion.questionId] || ''"
                   :disabled="isProcessing"
@@ -206,12 +206,12 @@
                 ></textarea>
               </template>
               <template v-else-if="activeQuestion.allowOther">
-                <label class="other-input-icon" :for="`other-answer-${activeQuestion.questionId}`">
+                <label class="other-input-icon" :for="`${formId}-other`">
                   <PencilLine :size="16" aria-hidden="true" />
                   <span class="visually-hidden">自行填写回答</span>
                 </label>
                 <textarea
-                  :id="`other-answer-${activeQuestion.questionId}`"
+                  :id="`${formId}-other`"
                   ref="otherTextareaRef"
                   :value="answerTexts[activeQuestion.questionId] || ''"
                   :disabled="isProcessing"
@@ -255,6 +255,7 @@
         </button>
       </div>
 
+      <p v-if="error" :id="errorId" class="approval-error" role="alert">{{ error }}</p>
       <div v-if="isProcessing" class="approval-processing">
         <span class="processing-spinner"></span>
         处理中...
@@ -264,15 +265,14 @@
 </template>
 
 <script setup>
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, useId, watch } from 'vue'
 import {
   Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   PencilLine,
-  Wrench,
-  X
+  Wrench
 } from '@lucide/vue'
 import {
   buildQuestionAnswer as buildQuestionAnswerValue,
@@ -297,10 +297,17 @@ const props = defineProps({
   processing: { type: Boolean, default: false },
   questions: { type: Array, default: () => [] },
   kind: { type: String, default: 'question' },
-  actionRequests: { type: Array, default: () => [] }
+  actionRequests: { type: Array, default: () => [] },
+  waitpointId: { type: String, default: '' },
+  error: { type: String, default: '' }
 })
 
 const emit = defineEmits(['submit', 'cancel'])
+const formId = `turn-action-${useId()}`
+const titleId = `${formId}-title`
+const summaryId = `${formId}-summary`
+const argsId = `${formId}-args`
+const errorId = `${formId}-error`
 
 const isProcessing = computed(() => props.processing)
 const activeQuestionIndex = ref(0)
@@ -321,6 +328,12 @@ const normalizedQuestions = computed(() => {
 })
 const isToolApproval = computed(() => props.kind === 'tool_approval')
 const activeToolRequest = computed(() => props.actionRequests[activeToolIndex.value] || null)
+const descriptionIds = computed(() =>
+  [
+    isToolApproval.value && activeToolRequest.value ? summaryId : '',
+    props.error ? errorId : ''
+  ].filter(Boolean).join(' ') || undefined
+)
 const activeToolIcon = computed(() => getToolIcon(activeToolRequest.value?.name) || Wrench)
 const toolApprovalQuestion = computed(() => {
   if (activeToolRequest.value?.name === 'execute') return '是否允许执行以下命令？'
@@ -580,7 +593,7 @@ const buildAnswer = () => {
 
 const handleSubmit = () => {
   if (isSubmitDisabled.value) return
-  emit('submit', buildAnswer())
+  emit('submit', buildAnswer(), props.waitpointId)
 }
 
 const handlePrimaryAction = () => {
@@ -596,7 +609,7 @@ const handlePrimaryAction = () => {
 
 const handleCancel = () => {
   if (isProcessing.value) return
-  emit('cancel')
+  emit('cancel', props.waitpointId)
 }
 
 const handleToolDecision = (decision) => {
@@ -613,7 +626,7 @@ const handleToolDecision = (decision) => {
 
   emit('submit', {
     decisions: buildToolApprovalDecisions(nextDecisions, props.actionRequests.length)
-  })
+  }, props.waitpointId)
 }
 
 const toolDisplayName = (name) => TOOL_DISPLAY_NAMES[name] || '工具调用'
@@ -730,8 +743,19 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
   }
 }
 
-.question-close-button {
+.question-icon-button.question-stop-button {
+  width: auto;
+  padding: 0 8px;
   margin-left: 4px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.approval-error {
+  margin: 0 12px 12px;
+  color: var(--color-error-700);
+  font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 .approval-header {

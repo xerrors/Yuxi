@@ -245,3 +245,55 @@ test('FIFO 领取只用真实 item 替换对应乐观输入，并通知持久运
   assert.deepEqual(state.optimisticInputs, {})
   assert.deepEqual(consumed, [['thread']])
 })
+
+for (const failed of [false, true]) {
+  test(`旧运行恢复${failed ? '失败' : '完成'}后，新 Input 观察仍能读取领取结果`, async (t) => {
+    const { ErrorHandler } = await server.ssrLoadModule('/src/shared/lib/errorHandler.js')
+    t.mock.method(ErrorHandler, 'handleError', () => {})
+    const { getThreadState, resetThreadExecution } = useAgentThreadState({
+      chatState: { threadStates: {} }
+    })
+    const { promise: recovering, resolve: notifyRecovering } = Promise.withResolvers()
+    const { promise: oldRecovery, resolve: resolveOld, reject: rejectOld } = Promise.withResolvers()
+    const { promise: newInput, resolve: resolveNewInput } = Promise.withResolvers()
+    const { promise: newRecovered, resolve: notifyNewRecovered } = Promise.withResolvers()
+    const errors = []
+    const queue = useAgentInputQueue({
+      getThreadState,
+      onInputConsumed: () => {
+        if (!getThreadState('thread').itemState.items['new-item']) {
+          notifyRecovering()
+          return oldRecovery
+        }
+        notifyNewRecovered()
+      },
+      onStreamError: (...args) => errors.push(args)
+    })
+    t.after(() => queue.stopAllInputMonitors('thread'))
+    t.mock.method(agentApi, 'getThreadInput', async (_thread, inputId) => {
+      if (inputId === 'old-input') return { status: 'consumed', run_id: 'old-run' }
+      return newInput
+    })
+
+    queue.startInputMonitor('thread', 'old-input')
+    await recovering
+    resetThreadExecution('thread')
+    queue.startInputMonitor('thread', 'new-input')
+    if (failed) rejectOld(Object.assign(new Error('旧恢复响应已失效'), { status: 404 }))
+    else resolveOld()
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.deepEqual(errors, [])
+    assert.deepEqual([...(getThreadState('thread').inputQueueMonitor?.inputIds || [])], ['new-input'])
+
+    resolveNewInput({
+      status: 'consumed',
+      run_id: 'new-run',
+      items: [{
+        id: 'new-item', type: 'message', role: 'user', status: 'completed', content: [],
+        yuxi: { input_id: 'new-input' }
+      }]
+    })
+    await newRecovered
+    assert.equal(getThreadState('thread').itemState.items['new-item'].yuxi.input_id, 'new-input')
+  })
+}

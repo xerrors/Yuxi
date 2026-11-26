@@ -1,10 +1,24 @@
 <template>
   <div class="agent-panel" :class="{ resizing: isResizing, maximized }">
-    <div v-if="!maximized" class="resize-handle" @pointerdown="startResize"></div>
+    <div
+      v-if="!maximized"
+      class="resize-handle"
+      role="separator"
+      tabindex="0"
+      aria-label="调整侧边栏宽度"
+      aria-orientation="vertical"
+      :aria-valuenow="panelWidthPercentage"
+      :aria-controls="tabPanelId"
+      @pointerdown="startResize"
+      @keydown.left.prevent="emit('resize-by', 24)"
+      @keydown.right.prevent="emit('resize-by', -24)"
+      @keydown.home.prevent="emit('resize-by', -Infinity)"
+      @keydown.end.prevent="emit('resize-by', Infinity)"
+    ></div>
     <div class="panel-header side-panel__header">
       <div ref="sectionTabsRef" class="section-tabs" role="tablist" aria-label="侧边栏内容">
         <div
-          v-for="section in normalizedSections"
+          v-for="(section, index) in normalizedSections"
           :key="section.key"
           class="section-tab"
           :class="{ active: section.key === activeSectionKey }"
@@ -13,7 +27,10 @@
             type="button"
             class="section-tab-main"
             role="tab"
+            :id="`${tabPanelId}-tab-${index}`"
+            :aria-controls="tabPanelId"
             :aria-selected="section.key === activeSectionKey"
+            :tabindex="section.key === activeSectionKey ? 0 : -1"
             :aria-label="
               section.attentionLabel ? `${section.title}，${section.attentionLabel}` : section.title
             "
@@ -21,6 +38,7 @@
               section.attentionLabel ? `${section.title}，${section.attentionLabel}` : section.title
             "
             @click="emit('activate-section', section.key)"
+            @keydown="handleTabKey($event, section)"
           >
             <Folders v-if="section.type === 'file-tree'" :size="15" />
             <FileTypeIcon v-else-if="section.type === 'file'" :name="section.path" :size="15" />
@@ -42,11 +60,12 @@
             }}</span>
           </button>
           <button
-            v-if="section.type !== 'file-tree' && section.type !== 'main-session'"
+            v-if="canCloseTab(section)"
             type="button"
             class="section-tab-close"
+            :tabindex="section.key === activeSectionKey ? 0 : -1"
             :aria-label="`关闭 ${section.title}`"
-            @click.stop="emit('close-section', section.key)"
+            @click.stop="closeTab(section)"
           >
             <X :size="13" />
           </button>
@@ -75,7 +94,7 @@
       </div>
     </div>
 
-    <div class="tab-content">
+    <div class="tab-content" :id="tabPanelId" role="tabpanel" :aria-labelledby="activeTabId">
       <slot name="session-content"></slot>
       <div v-show="activeSectionKey === 'file-tree'" class="tree-pane">
         <div class="tree-toolbar">
@@ -214,7 +233,7 @@
           :showClose="false"
           :showDownload="true"
           :showFullscreen="true"
-          @download="downloadFile"
+          @download="downloadFile(activePreviewTab)"
         />
         <div v-else class="preview-empty">正在加载文件内容...</div>
       </div>
@@ -232,14 +251,13 @@
       </div>
       <div
         v-if="turnSourcesSection"
-        v-show="activeSectionKey === turnSourcesSection.key"
         class="turn-sources-section"
       >
         <TurnSourcesPanel
-          :thread-id="threadId"
+          :thread-id="turnSourcesSection.threadId || threadId"
           :turn-id="turnSourcesSection.turnId || ''"
           :sources="turnSourcesSection.sources"
-          :active="visible && activeSectionKey === turnSourcesSection.key"
+          :active="visible"
         />
       </div>
     </div>
@@ -258,11 +276,12 @@
 
 <script setup>
 import {
-  filePreviewCacheKey, releaseFilePreviewCacheEntry, releaseFilePreviewCache, pruneFilePreviewCache,
+  releaseFilePreviewCacheEntry, releaseFilePreviewCache, pruneFilePreviewCache,
   reloadPreviewAfterOrderedCacheEntryInvalidation, replacePreviewCacheEntryIfCurrent, settlePreviewCacheLoad
 } from '@/modules/workspace'
 import {
   computed,
+  getCurrentInstance,
   nextTick,
   onActivated,
   onDeactivated,
@@ -325,10 +344,6 @@ defineOptions({
 })
 
 const props = defineProps({
-  agentState: {
-    type: Object,
-    default: () => ({})
-  },
   threadId: {
     type: String,
     default: null
@@ -345,26 +360,17 @@ const props = defineProps({
     type: Boolean,
     default: false
   },
-  panelRatio: {
+  panelWidthPercentage: {
     type: Number,
-    default: 0.35
+    default: 50
   },
-  previewTabs: {
-    type: Array,
-    default: () => []
+  activePreview: {
+    type: Object,
+    default: null
   },
   previewCache: {
     type: Object,
     default: () => new Map()
-  },
-  activePreviewPath: {
-    type: String,
-    default: ''
-  },
-  viewMode: {
-    type: String,
-    default: 'tree',
-    validator: (value) => ['tree', 'preview'].includes(value)
   },
   maximized: { type: Boolean, default: false },
   sections: {
@@ -374,19 +380,17 @@ const props = defineProps({
   activeSectionKey: { type: String, default: 'file-tree' },
   filesystemVisible: { type: Boolean, default: false },
   filesystemPollingActive: { type: Boolean, default: false },
-  filesystemRefreshVersion: { type: Number, default: 0 }
+  filesystemRefreshVersions: { type: Map, default: () => new Map() }
 })
 
 const emit = defineEmits([
   'close',
   'refresh',
   'resize',
+  'resize-by',
   'resizing',
   'open-preview',
-  'activate-preview',
-  'close-preview-tab',
   'close-preview-path',
-  'view-mode-change',
   'toggle-maximize',
   'activate-section',
   'close-section'
@@ -416,21 +420,51 @@ const workspaceLoaded = ref(false)
 const isResizing = ref(false)
 const fileSearchOpen = ref(false)
 const sectionTabsRef = ref(null)
+const tabPanelId = `agent-panel-${getCurrentInstance().uid}`
 const normalizedSections = computed(() =>
   (props.sections || []).filter((section) => section?.key && section?.type)
 )
+const activeTabId = computed(() => {
+  const index = normalizedSections.value.findIndex((section) => section.key === props.activeSectionKey)
+  return index < 0 ? undefined : `${tabPanelId}-tab-${index}`
+})
 
 const hasMessageDebugSection = computed(() =>
   normalizedSections.value.some(
     (section) => section.type === 'message-debug' || section.key === 'message-debug'
   )
 )
-const turnSourcesSection = computed(
-  () => normalizedSections.value.find((section) => section.type === 'turn-sources') || null
-)
 const activeSection = computed(
   () => normalizedSections.value.find((section) => section.key === props.activeSectionKey) || null
 )
+const turnSourcesSection = computed(() => activeSection.value?.type === 'turn-sources' ? activeSection.value : null)
+
+/** 方向键访问侧栏标签，删除键关闭后把焦点交给剩余标签。 */
+const handleTabKey = (event, section) => {
+  const sections = normalizedSections.value
+  const index = sections.indexOf(section)
+  const nextIndex = {
+    ArrowLeft: (index + sections.length - 1) % sections.length,
+    ArrowRight: (index + 1) % sections.length,
+    Home: 0,
+    End: sections.length - 1
+  }[event.key]
+  if (event.key === 'Delete' && canCloseTab(section)) {
+    event.preventDefault()
+    void closeTab(section)
+  } else if (nextIndex !== undefined) {
+    event.preventDefault()
+    emit('activate-section', sections[nextIndex].key)
+    sectionTabsRef.value?.querySelectorAll('[role="tab"]')[nextIndex]?.focus()
+  }
+}
+
+const canCloseTab = (section) => section.type !== 'file-tree' && section.type !== 'main-session'
+const closeTab = async (section) => {
+  emit('close-section', section.key)
+  await nextTick()
+  sectionTabsRef.value?.querySelector('[role="tab"][aria-selected="true"]')?.focus()
+}
 
 const ensureActiveSectionVisible = async () => {
   await nextTick()
@@ -457,26 +491,15 @@ const handleSearchSelect = (entry) => {
   if (!entry?.path) return
   if (activeTreeScope.value === 'workspace') {
     workspaceSelectedKeys.value = [entry.path]
-    emit('open-preview', { ...entry, type: 'file', workdir: false, workspace: true }, false)
+    emit('open-preview', { ...entry, type: 'file', workdir: false, workspace: true })
     return
   }
   if (!props.threadId) return
   selectedKeys.value = [entry.path]
-  emit('open-preview', { ...entry, type: 'file', workdir: true }, false)
+  emit('open-preview', { ...entry, type: 'file', workdir: true })
 }
 
-const normalizedPreviewTabs = computed(() =>
-  (props.previewTabs || [])
-    .filter((file) => file?.path)
-    .map((file) => ({
-      ...file,
-      path: String(file.path),
-      name: file.name || getFileName(file)
-    }))
-)
-const activePreviewTab = computed(
-  () => normalizedPreviewTabs.value.find((file) => file.path === props.activePreviewPath) || null
-)
+const activePreviewTab = computed(() => props.activePreview)
 const fileTreeData = computed(() => dynamicTreeData.value)
 
 const buildDisplayName = (fullPath) => {
@@ -654,7 +677,8 @@ const refreshFileSystem = async ({ silent = false, ensure = false } = {}) => {
       }
       dynamicTreeData.value = nodes
       expandedKeys.value = expandedKeysAfterFilesystemRefresh(expandedKeys.value, { silent })
-      selectedKeys.value = props.activePreviewPath ? [props.activePreviewPath] : []
+      const tab = activePreviewTab.value
+      selectedKeys.value = tab?.threadId === requestedThreadId && tab.workdir ? [tab.path] : []
       if (silent) await refreshActivePreviewIfChanged(nodes, requestedThreadId)
     } else if (
       requestedGeneration === filesystemRefreshGeneration &&
@@ -688,11 +712,15 @@ const refreshFileSystem = async ({ silent = false, ensure = false } = {}) => {
 }
 
 const loadData = async (treeNode) => {
-  if (treeNode.isLeaf || treeNode.children?.length || !props.threadId) return
+  const requestedThreadId = props.threadId
+  const requestedGeneration = filesystemRefreshGeneration
+  if (treeNode.isLeaf || treeNode.children?.length || !requestedThreadId) return
 
   try {
-    const children = await loadDirectoryChildren(treeNode.key)
-    dynamicTreeData.value = updateTreeChildren(dynamicTreeData.value, treeNode.key, children)
+    const children = await loadDirectoryChildren(treeNode.key, requestedThreadId)
+    if (requestedGeneration === filesystemRefreshGeneration) {
+      dynamicTreeData.value = updateTreeChildren(dynamicTreeData.value, treeNode.key, children)
+    }
   } catch (error) {
     console.error('Failed to load children for', treeNode.key, error)
   }
@@ -739,9 +767,8 @@ const refreshWorkspaceTree = async ({ force = false, refreshPreview = false } = 
         workspaceTreeData.value = nodes
         workspaceLoaded.value = true
 
-        if (shouldRefreshPreview && props.activePreviewPath && activePreviewTab.value?.workspace) {
-          const cacheKey = workspacePreviewCacheKey(props.activePreviewPath)
-          releaseFilePreviewCacheEntry(props.previewCache, cacheKey)
+        if (shouldRefreshPreview && activePreviewTab.value?.workspace) {
+          releaseFilePreviewCacheEntry(props.previewCache, activePreviewTab.value.key)
           await loadActivePreview()
         }
       } catch (error) {
@@ -771,7 +798,7 @@ const loadWorkspaceData = async (treeNode) => {
 const onWorkspaceFileSelect = (nextSelectedKeys, { node }) => {
   workspaceSelectedKeys.value = nextSelectedKeys
   if (!node?.isLeaf) return
-  emit('open-preview', node.fileData, false)
+  emit('open-preview', node.fileData)
 }
 
 const setTreeScope = (scope) => {
@@ -810,36 +837,31 @@ const syncFilesystemRefreshPolling = () => {
   })
 }
 
-const previewCacheKey = (filePath, threadId = props.threadId) => filePreviewCacheKey(filePath, threadId)
-const workspacePreviewCacheKey = (filePath) => filePreviewCacheKey(filePath, 'workspace')
-
 const loadActivePreview = async ({ baseFileOverride = null } = {}) => {
-  const requestedThreadId = props.threadId
-  const filePath = props.activePreviewPath
+  const tab = activePreviewTab.value
+  const rootThreadId = props.threadId
   const requestSeq = ++previewRequestSeq
   const requestIsCurrent = () =>
+    props.visible &&
+    componentActive.value &&
     requestSeq === previewRequestSeq &&
-    requestedThreadId === props.threadId &&
-    filePath === props.activePreviewPath
+    rootThreadId === props.threadId &&
+    tab?.key === activePreviewTab.value?.key
 
-  const isWorkspaceFile = Boolean(activePreviewTab.value?.workspace || baseFileOverride?.workspace)
-
-  // 用户目录文件不依赖当前对话；对话文件必须先有线程。
-  if (!filePath || (!requestedThreadId && !isWorkspaceFile)) {
+  if (!tab || !props.visible || !componentActive.value) {
     currentFile.value = null
     currentFilePath.value = ''
     return
   }
 
+  const { path: filePath, key: cacheKey, threadId: requestedThreadId, workspace: isWorkspaceFile } = tab
   const baseFile = {
-    ...(activePreviewTab.value || {}),
+    ...tab,
     ...(baseFileOverride || {}),
-    path: filePath,
     resourceBaseUrl:
       baseFileOverride?.artifact_url ||
-      activePreviewTab.value?.artifact_url ||
+      tab.artifact_url ||
       (requestedThreadId ? threadApi.getThreadArtifactUrl(requestedThreadId, filePath, false) : ''),
-    name: activePreviewTab.value?.name || getFileName({ path: filePath }),
     type: 'file'
   }
 
@@ -855,9 +877,6 @@ const loadActivePreview = async ({ baseFileOverride = null } = {}) => {
     loading: true
   }
 
-  const cacheKey = isWorkspaceFile
-    ? workspacePreviewCacheKey(filePath)
-    : previewCacheKey(filePath, requestedThreadId)
   const cachedEntry = props.previewCache.get(cacheKey)
   if (cachedEntry?.status === 'ready') {
     cachedEntry.lastAccessed = Date.now()
@@ -972,7 +991,7 @@ const findTreeNode = (nodes, filePath) => {
 
 const refreshActivePreviewIfChanged = async (nodes, requestedThreadId) => {
   const tab = activePreviewTab.value
-  if (!tab || tab.workdir !== true || requestedThreadId !== props.threadId) return
+  if (tab?.workdir !== true || tab.threadId !== requestedThreadId) return
   let latestFile = findTreeNode(nodes, tab.path)?.fileData || null
   if (!latestFile) {
     const parentPath = tab.path.split('/').slice(0, -1).join('/') || '/'
@@ -987,18 +1006,16 @@ const refreshActivePreviewIfChanged = async (nodes, requestedThreadId) => {
   if (!shouldRefreshActivePreview(tab, latestFile)) return
   if (
     requestedThreadId !== props.threadId ||
-    tab.path !== props.activePreviewPath ||
     tab !== activePreviewTab.value
   ) {
     return
   }
   const nextTab = { ...tab, ...(latestFile || {}) }
-  const cacheKey = previewCacheKey(tab.path, requestedThreadId)
   await reloadPreviewAfterOrderedCacheEntryInvalidation({
     previewCache: props.previewCache,
-    cacheKey,
+    cacheKey: tab.key,
     revokeObjectURL: window.URL.revokeObjectURL.bind(window.URL),
-    notifyPreviewChanged: () => emit('open-preview', nextTab, props.viewMode === 'tree'),
+    notifyPreviewChanged: () => emit('open-preview', nextTab, tab.threadId),
     reloadPreview: () => loadActivePreview({ baseFileOverride: nextTab })
   })
 }
@@ -1006,7 +1023,7 @@ const refreshActivePreviewIfChanged = async (nodes, requestedThreadId) => {
 const onFileSelect = (nextSelectedKeys, { node }) => {
   selectedKeys.value = nextSelectedKeys
   if (!node?.isLeaf || !props.threadId) return
-  emit('open-preview', node.fileData, false)
+  emit('open-preview', node.fileData)
 }
 
 const pruneTreeStateAfterDelete = (targetPath) => {
@@ -1016,6 +1033,8 @@ const pruneTreeStateAfterDelete = (targetPath) => {
 }
 
 const confirmDeleteNode = (node) => {
+  const threadId = props.threadId
+  const generation = filesystemRefreshGeneration
   const fileName = node?.title || getFileName(node?.fileData)
   const isDirectory = !node?.isLeaf
   Modal.confirm({
@@ -1025,22 +1044,27 @@ const confirmDeleteNode = (node) => {
     okType: 'danger',
     cancelText: '取消',
     onOk: async () => {
+      if (generation !== filesystemRefreshGeneration) return
       const nextDeletingPaths = new Set(deletingPaths.value)
       nextDeletingPaths.add(node.key)
       deletingPaths.value = nextDeletingPaths
 
       try {
-        await deleteViewerFile(props.threadId, node.key)
+        await deleteViewerFile(threadId, node.key)
+        if (generation !== filesystemRefreshGeneration) return
         dynamicTreeData.value = removeTreeNode(dynamicTreeData.value, node.key)
         pruneTreeStateAfterDelete(node.key)
         message.success(isDirectory ? '文件夹删除成功' : '文件删除成功')
       } catch (error) {
+        if (generation !== filesystemRefreshGeneration) return
         console.error(isDirectory ? '删除文件夹失败:' : '删除文件失败:', error)
         message.error(error?.message || (isDirectory ? '删除文件夹失败' : '删除文件失败'))
       } finally {
-        const latestDeletingPaths = new Set(deletingPaths.value)
-        latestDeletingPaths.delete(node.key)
-        deletingPaths.value = latestDeletingPaths
+        if (generation === filesystemRefreshGeneration) {
+          const latestDeletingPaths = new Set(deletingPaths.value)
+          latestDeletingPaths.delete(node.key)
+          deletingPaths.value = latestDeletingPaths
+        }
       }
     }
   })
@@ -1048,14 +1072,15 @@ const confirmDeleteNode = (node) => {
 
 const downloadFile = async (fileItem) => {
   if (!fileItem?.path) return
-  if (!fileItem.workspace && !props.threadId) return
+  const threadId = fileItem.threadId || props.threadId
+  if (!fileItem.workspace && !threadId) return
 
   try {
     const response = fileItem.workspace
       ? await downloadWorkspaceFile(fileItem.path)
       : fileItem.workdir
-        ? await downloadViewerFile(props.threadId, fileItem.path)
-        : await threadApi.downloadThreadArtifact(props.threadId, fileItem.path)
+        ? await downloadViewerFile(threadId, fileItem.path)
+        : await threadApi.downloadThreadArtifact(threadId, fileItem.path)
     const blob = await response.blob()
     const contentDisposition =
       response.headers.get('Content-Disposition') || response.headers.get('content-disposition')
@@ -1070,19 +1095,24 @@ const downloadFile = async (fileItem) => {
     window.URL.revokeObjectURL(url)
   } catch (error) {
     console.error('下载文件失败:', error)
+    message.error('文件下载失败，请重试')
   }
 }
 
 const emitRefresh = async () => {
-  const previewActive = activeSection.value?.type === 'file'
-  if (previewActive ? activePreviewTab.value?.workspace : activeTreeScope.value === 'workspace') {
+  const preview = activePreviewTab.value
+  if (preview) {
+    releaseFilePreviewCache(props.previewCache, preview.workspace ? 'workspace' : preview.threadId)
+    await loadActivePreview()
+    return
+  }
+  if (activeTreeScope.value === 'workspace') {
     releaseFilePreviewCache(props.previewCache, 'workspace')
     await refreshWorkspaceTree({ force: true, refreshPreview: true })
     return
   }
   releaseFilePreviewCache(props.previewCache, props.threadId)
-  if (!previewActive) await refreshFileSystem()
-  if (props.activePreviewPath) await loadActivePreview()
+  await refreshFileSystem()
   emit('refresh', props.threadId)
 }
 
@@ -1093,6 +1123,7 @@ const emitClose = () => {
 let resizePointerId = null
 let pendingClientX = 0
 let resizeFrameId = 0
+let previousBodyStyle = null
 
 const flushResize = () => {
   resizeFrameId = 0
@@ -1113,6 +1144,10 @@ const startResize = (e) => {
   resizePointerId = e.pointerId
   pendingClientX = e.clientX
   emit('resizing', true, e.clientX)
+  previousBodyStyle = {
+    cursor: document.body.style.cursor,
+    userSelect: document.body.style.userSelect
+  }
   document.body.style.cursor = 'col-resize'
   document.body.style.userSelect = 'none'
 
@@ -1143,8 +1178,8 @@ const stopResize = (e) => {
   isResizing.value = false
   resizePointerId = null
   emit('resizing', false)
-  document.body.style.cursor = ''
-  document.body.style.userSelect = ''
+  Object.assign(document.body.style, previousBodyStyle)
+  previousBodyStyle = null
   window.removeEventListener('pointermove', onPointerMove)
   window.removeEventListener('pointerup', stopResize)
   window.removeEventListener('pointercancel', stopResize)
@@ -1160,7 +1195,7 @@ onActivated(() => {
   componentActive.value = true
   if (wasInactive && props.visible && activeSection.value?.type === 'file') {
     void emitRefresh()
-  } else if (wasInactive && activeTreeScope.value === 'workspace') {
+  } else if (wasInactive && props.filesystemVisible && activeTreeScope.value === 'workspace') {
     void refreshWorkspaceTree({ force: true, refreshPreview: true })
   } else if (wasInactive && props.filesystemVisible) {
     void refreshFileSystem({ silent: true })
@@ -1170,20 +1205,13 @@ onActivated(() => {
 
 onDeactivated(() => {
   componentActive.value = false
+  stopResize()
   stopFilesystemRefreshPolling()
 })
 
 onUnmounted(() => {
+  stopResize()
   stopFilesystemRefreshPolling()
-  if (resizeFrameId) {
-    window.cancelAnimationFrame(resizeFrameId)
-    resizeFrameId = 0
-  }
-  window.removeEventListener('pointermove', onPointerMove)
-  window.removeEventListener('pointerup', stopResize)
-  window.removeEventListener('pointercancel', stopResize)
-  document.body.style.cursor = ''
-  document.body.style.userSelect = ''
 })
 
 watch(
@@ -1195,6 +1223,7 @@ watch(
     dynamicTreeData.value = []
     expandedKeys.value = []
     selectedKeys.value = []
+    deletingPaths.value = new Set()
     filesystemError.value = ''
     if (threadId && props.filesystemVisible) {
       refreshFileSystem({ ensure: true })
@@ -1203,12 +1232,8 @@ watch(
 )
 
 watch(
-  [
-    () => props.threadId,
-    () => props.activePreviewPath,
-    () => activePreviewTab.value
-  ],
-  loadActivePreview,
+  [() => props.threadId, activePreviewTab],
+  () => void loadActivePreview(),
   { immediate: true }
 )
 
@@ -1225,6 +1250,7 @@ watch(
 watch(
   () => props.visible,
   (visible) => {
+    if (!visible) stopResize()
     if (visible && componentActive.value && activeSection.value?.type === 'file') {
       void loadActivePreview()
     }
@@ -1234,44 +1260,39 @@ watch(
 watch([() => props.filesystemPollingActive, componentActive], syncFilesystemRefreshPolling)
 
 watch(
-  () => props.filesystemRefreshVersion,
-  () => {
-    releaseFilePreviewCache(props.previewCache, props.threadId)
+  () => props.filesystemRefreshVersions,
+  (versions, previous) => {
+    const changedThreads = [...versions].filter(([id, version]) => version !== previous.get(id)).map(([id]) => id)
+    for (const id of changedThreads) releaseFilePreviewCache(props.previewCache, id)
     if (!props.visible || !componentActive.value) return
+    const rootChanged = changedThreads.includes(props.threadId)
     if (activeSection.value?.type === 'file') {
-      if (activePreviewTab.value?.workspace) releaseFilePreviewCache(props.previewCache, 'workspace')
-      void loadActivePreview()
-    } else if (!props.filesystemVisible) {
-      return
-    } else if (activeTreeScope.value === 'workspace') {
-      void refreshWorkspaceTree({ force: true, refreshPreview: true })
-    } else {
-      void refreshFileSystem({ silent: true, ensure: true })
+      const tab = activePreviewTab.value
+      if (tab?.workspace && rootChanged) releaseFilePreviewCache(props.previewCache, 'workspace')
+      if (tab?.workspace ? rootChanged : changedThreads.includes(tab?.threadId)) void loadActivePreview()
+    } else if (rootChanged && props.filesystemVisible) {
+      if (activeTreeScope.value === 'workspace') void refreshWorkspaceTree({ force: true, refreshPreview: true })
+      else void refreshFileSystem({ silent: true, ensure: true })
     }
   }
 )
 
 watch(
-  () => props.activePreviewPath,
-  (filePath) => {
-    selectedKeys.value = filePath ? [filePath] : []
-    workspaceSelectedKeys.value = filePath ? [filePath] : []
+  activePreviewTab,
+  (tab) => {
+    if (!tab) return
+    if (tab.workspace) workspaceSelectedKeys.value = [tab.path]
+    else if (tab.threadId === props.threadId && tab.workdir) selectedKeys.value = [tab.path]
   }
 )
 watch(
   () => props.activeSectionKey,
   () => {
     void ensureActiveSectionVisible()
-    if (activeSection.value?.type === 'file' && activePreviewTab.value?.workspace) {
-      const cacheKey = workspacePreviewCacheKey(activePreviewTab.value.path)
-      releaseFilePreviewCacheEntry(props.previewCache, cacheKey)
-      void loadActivePreview()
-    } else if (activeSection.value?.type === 'file' && props.visible && componentActive.value) {
-      void loadActivePreview()
-    }
     if (
       props.activeSectionKey === 'file-tree' &&
       activeTreeScope.value === 'workspace' &&
+      props.visible &&
       componentActive.value
     ) {
       void refreshWorkspaceTree({ force: true, refreshPreview: true })
@@ -1297,8 +1318,13 @@ watch(
   transition: background 0.2s;
   touch-action: none;
 
-  &:hover {
+  &:hover,
+  &:focus-visible {
     background: var(--main-400);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--main-400);
+    outline-offset: 2px;
   }
 }
 

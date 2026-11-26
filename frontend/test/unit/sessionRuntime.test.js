@@ -194,7 +194,7 @@ test('断线恢复的完成索引关闭旧思考，历史快照不会制造正�
   await h.reasoning('重放旧片段')
   assert.deepEqual(h.visible(), [])
   h.runtime.resetThreadExecution('thread')
-  await h.runtime.fetchThreadMessages({ threadId: 'thread', fresh: true })
+  await h.runtime.refreshThreadHistory('thread')
   assert.deepEqual(h.visible(), [])
   assert.equal(h.state.activeReasoning, null)
 })
@@ -297,8 +297,8 @@ test('重复启动同一轮不重连，另一视图读取同一份持久历史',
   await tick()
   await runtime.startRunStream('thread', 'run', null, { turnId: 'turn' })
   await Promise.all([
-    runtime.fetchThreadMessages({ threadId: 'thread' }),
-    runtime.fetchThreadMessages({ threadId: 'thread' })
+    runtime.refreshThreadHistory('thread'),
+    runtime.refreshThreadHistory('thread')
   ])
   assert.equal(histories, 1)
   assert.equal(runtime.threadRuns.thread[0].id, 'result-run')
@@ -323,7 +323,7 @@ test('最后一个视图释放后，迟到恢复和历史不能启动流或覆�
       releaseHistory = resolve
     })
   const resume = runtime.resumeActiveRunForThread('thread')
-  const history = runtime.fetchThreadMessages({ threadId: 'thread' })
+  const history = runtime.refreshThreadHistory('thread')
   await tick()
   detach()
   const detachNew = runtime.observeThread('thread', {})
@@ -388,7 +388,7 @@ for (const historyFails of [false, true]) {
         data: [item], yuxi: { runs: [] }, has_more: false, last_id: item.id
       }
     }
-    const old = runtime.fetchThreadMessages({ threadId: 'thread' })
+    const old = runtime.refreshThreadHistory('thread')
     await tick()
     const stream = runtime.startRunStream('thread', 'run', null, { turnId: 'turn' })
     await tick()
@@ -568,6 +568,38 @@ test('旧 checkpoint 查询不能覆盖新 Run 的状态事件', async (t) => {
   await stream
 })
 
+test('恢复人类操作使用持久等待点，状态面板的 checkpoint 不覆盖审批', async (t) => {
+  const { runtime } = setup(t)
+  t.after(runtime.observeThread('thread', {}))
+  api.getThreadTurn = async () => ({
+    id: 'turn', status: 'requires_action',
+    yuxi: {
+      current_run_id: 'run',
+      waitpoint: { id: 'waitpoint', run_id: 'run', kind: 'answer', questions: [{ question_id: 'q' }] },
+      output: [], runs: []
+    }
+  })
+  const previous = Promise.withResolvers()
+  api.getAgentState = t.mock.fn()
+  api.getAgentState.mock.mockImplementationOnce(() => previous.promise)
+  api.getAgentState.mock.mockImplementation(async () => ({
+    agent_state: { todos: ['面板任务'] },
+    interrupt: { run_id: 'run', questions: [{ question_id: 'old' }] }
+  }))
+  const oldState = runtime.fetchAgentState('thread')
+  await tick()
+  await runtime.restoreThreadWaitpoint('thread')
+  const freshState = runtime.fetchAgentState('thread')
+  assert.notEqual(freshState, oldState, '等待点必须独立读取面板状态')
+  assert.equal(await freshState, true)
+  previous.resolve({ agent_state: { todos: ['旧的面板任务'] } })
+  assert.equal(await oldState, false)
+  const state = runtime.getThreadState('thread')
+  assert.equal(state.pendingInterrupt.waitpointId, 'waitpoint')
+  assert.deepEqual(state.pendingInterrupt.questions, [{ question_id: 'q' }])
+  assert.deepEqual(state.agentState.todos, ['面板任务'])
+})
+
 test('分页历史合并更早内容，刷新跨过断线缺口且保留已加载页面', async (t) => {
   const { runtime } = setup(t)
   const detach = runtime.observeThread('thread', {})
@@ -589,22 +621,128 @@ test('分页历史合并更早内容，刷新跨过断线缺口且保留已加�
     const data = [index, index - 1].filter((id) => id > 0).map(item)
     return { data, last_id: data.at(-1)?.id || null, has_more: index > 2, yuxi: { runs: [] } }
   }
-  await runtime.fetchThreadMessages({ threadId: 'thread' })
+  await runtime.refreshThreadHistory('thread')
   assert.deepEqual(
     runtime.threadMessages.thread.map((message) => message.content),
     Array.from({ length: 6 }, (_, index) => `message ${index + 4}`)
   )
   assert.equal(runtime.historyPages.thread.hasMore, true)
-  await runtime.fetchThreadMessages({ threadId: 'thread', more: true })
+  await runtime.loadOlderHistory('thread')
   assert.equal(runtime.threadMessages.thread[0].content, 'message 1')
   latest = 17
-  await runtime.fetchThreadMessages({ threadId: 'thread', fresh: true })
+  await runtime.refreshThreadHistory('thread')
   assert.deepEqual(
     runtime.threadMessages.thread.map((message) => message.content),
     Array.from({ length: 17 }, (_, index) => `message ${index + 1}`)
   )
   assert.deepEqual(calls, [undefined, '8', '6', '4', '2', undefined, '16', '14', '12', '10'])
   detach()
+})
+
+test('指定旧 Turn 的内容和结果不替代新运行，也不改变会话分页游标', async (t) => {
+  const { runtime } = setup(t)
+  t.after(runtime.observeThread('thread', {}))
+  const item = (id, turnId, content, role = 'user') => ({
+    id: String(id), turn_id: turnId, type: 'message', role, status: 'completed',
+    phase: role === 'assistant' ? 'final_answer' : null,
+    content: [{ type: role === 'user' ? 'input_text' : 'output_text', text: content }],
+    yuxi: { message_id: id, run_id: `run-${turnId}` }
+  })
+  api.getPublicThread = async () => ({ id: 'thread', yuxi: { current_turn: { id: 'next' } } })
+  api.getThreadTurn = async (_id, turnId) => ({
+    id: turnId,
+    status: turnId === 'old' ? 'completed' : 'in_progress',
+    yuxi: {
+      current_run_id: `run-${turnId}`,
+      result_run_id: turnId === 'old' ? 'run-old' : null,
+      output: turnId === 'old' ? [item(3, 'old', '指定轮次的结果', 'assistant')] : [],
+      runs: [{ id: `run-${turnId}`, turn_id: turnId, status: turnId === 'old' ? 'completed' : 'running' }]
+    }
+  })
+  const reads = []
+  api.getSessionItems = async (_id, { turnId, after }) => {
+    reads.push([turnId, after])
+    const data = turnId === 'old'
+      ? [item(2, 'old', '指定轮次的输入')]
+      : [item(after ? Number(after) - 1 : 6, 'next', '会话窗口')]
+    return { data, last_id: data[0].id, has_more: !turnId && Number(data[0].id) > 4, yuxi: { runs: [] } }
+  }
+  await runtime.loadThread('thread')
+  assert.equal(runtime.getThreadState('thread').currentTurnId, 'next')
+  assert.equal(runtime.historyPages.thread.after, '4')
+  const earlier = await runtime.reconcileTurnHistory('thread', 'old')
+  assert.equal(earlier.yuxi.result_run_id, 'run-old')
+  assert.equal(runtime.historyPages.thread.after, '4')
+  assert.equal(runtime.getThreadState('thread').currentTurnId, 'next')
+  assert.equal(runtime.getThreadState('thread').activeRunId, 'run-next')
+  assert.deepEqual(runtime.threadMessages.thread.map(({ content }) => content),
+    ['指定轮次的输入', '指定轮次的结果', '会话窗口', '会话窗口', '会话窗口'])
+  assert.deepEqual(reads, [[undefined, undefined], [undefined, '6'], [undefined, '5'], ['old', undefined]])
+})
+
+test('在途读取不能覆盖更新的授权详情，详情读取本身不会加入侧栏', async (t) => {
+  const { runtime } = setup(t)
+  const { useChatThreadsStore } = await server.ssrLoadModule('/src/modules/session/model/chatThreads.js')
+  const sidebar = useChatThreadsStore()
+  t.after(runtime.observeThread('thread', {}))
+  const started = Promise.withResolvers()
+  const request = Promise.withResolvers()
+  api.getPublicThread = () => {
+    started.resolve()
+    return request.promise
+  }
+  const refresh = runtime.refreshThreadHistory('thread')
+  await started.promise
+  const state = runtime.peekThreadState('thread')
+  assert.equal(runtime.applyThreadDetail('thread', {
+    id: 'thread', agent: { id: 'a' }, status: 'idle',
+    yuxi: { title: '已保存的标题', archived: true, current_turn: null }
+  }, state), true)
+  request.resolve({
+    id: 'thread', agent: { id: 'a' }, status: 'idle',
+    yuxi: { title: '旧标题', archived: false, current_turn: null }
+  })
+  await refresh
+  assert.equal(state.detail.yuxi.title, '已保存的标题')
+  assert.equal(state.detail.yuxi.archived, true)
+  assert.deepEqual(sidebar.threads, [])
+  assert.equal(runtime.applyThreadDetail('inactive', { id: 'inactive', yuxi: {} }), false)
+  assert.equal(runtime.peekThreadState('inactive'), null)
+})
+
+test('已查看回执与会话修改分别发布未读和元数据', async (t) => {
+  const { runtime } = setup(t)
+  const { useChatThreadsStore } = await server.ssrLoadModule('/src/modules/session/model/chatThreads.js')
+  const sidebar = useChatThreadsStore()
+  t.after(runtime.observeThread('thread', {}))
+  const detail = (title, unread, status = 'in_progress') => ({
+    id: 'thread', agent: { id: 'a', model: 'model' }, status,
+    yuxi: { title, unread, archived: false, current_turn: null }
+  })
+  const original = detail('原有标题', true)
+  sidebar.threads = [original]
+  const state = runtime.peekThreadState('thread')
+  runtime.applyThreadDetail('thread', original, state)
+  const started = Promise.withResolvers()
+  const request = Promise.withResolvers()
+  api.getPublicThread = () => {
+    started.resolve()
+    return request.promise
+  }
+  const refresh = runtime.refreshThreadHistory('thread')
+  await started.promise
+  runtime.applyThreadViewed('thread', detail('已查看回执中的旧标题', false, 'completed'), state)
+  assert.equal(state.detail.yuxi.title, '原有标题')
+  assert.equal(sidebar.threads[0].status, 'in_progress')
+  request.resolve(detail('授权读取中的新标题', true))
+  await refresh
+  assert.equal(state.detail.yuxi.title, '授权读取中的新标题')
+  assert.equal(state.detail.yuxi.unread, false)
+  assert.equal(sidebar.threads[0].yuxi.unread, false)
+  runtime.applyThreadDetail('thread', detail('用户保存的新标题', true, 'completed'), state)
+  assert.equal(state.detail.yuxi.title, '用户保存的新标题')
+  assert.equal(state.detail.yuxi.unread, false)
+  assert.equal(state.detail.status, 'in_progress')
 })
 
 test('首次和追加各读取最多三页，短历史停止且并发追加共享同一窗口', async (t) => {
@@ -628,17 +766,17 @@ test('首次和追加各读取最多三页，短历史停止且并发追加共�
     })
     return { data, last_id: data.at(-1).id, has_more: newest > limit, yuxi: { runs: [] } }
   }
-  await runtime.fetchThreadMessages({ threadId: 'thread' })
+  await runtime.refreshThreadHistory('thread')
   assert.equal(runtime.threadMessages.thread.length, 300)
   assert.equal(runtime.threadMessages.thread[0].content, 'message 351')
   assert.equal(runtime.historyPages.thread.after, '351')
   await Promise.all([
-    runtime.fetchThreadMessages({ threadId: 'thread', more: true }),
-    runtime.fetchThreadMessages({ threadId: 'thread', more: true })
+    runtime.loadOlderHistory('thread'),
+    runtime.loadOlderHistory('thread')
   ])
   assert.equal(runtime.threadMessages.thread.length, 600)
   assert.equal(runtime.historyPages.thread.after, '51')
-  await runtime.fetchThreadMessages({ threadId: 'thread', more: true })
+  await runtime.loadOlderHistory('thread')
   assert.equal(runtime.threadMessages.thread.length, 650)
   assert.equal(runtime.threadMessages.thread[0].content, 'message 1')
   assert.equal(runtime.threadMessages.thread.at(-1).content, 'message 650')
@@ -697,7 +835,7 @@ test('首次打开已结束的长轮次只补未读尾页，交错的其他轮�
   assert.deepEqual(calls, [[null, null], [null, '311'], [null, '211'], ['turn', '112']])
   assert.equal(runtime.historyPages.thread.after, firstWindow.at(-1).id)
   assert.equal(completions, 0, '打开历史不产生新的完成事件')
-  await runtime.fetchThreadMessages({ threadId: 'thread', more: true })
+  await runtime.loadOlderHistory('thread')
   assert.deepEqual(projected(), [...items.map(i => i.id), 'final'].sort())
   assert.equal(runtime.historyPages.thread.hasMore, false)
   firstView()
@@ -711,7 +849,7 @@ test('首次打开已结束的长轮次只补未读尾页，交错的其他轮�
   await runtime.loadThread('thread', { fresh: true })
   assert.equal(feedback.getEntry('thread', 'run').record.rating, 'dislike')
   assert.equal(runtime.historyPages.thread.after, '111')
-  await runtime.fetchThreadMessages({ threadId: 'thread', more: true })
+  await runtime.loadOlderHistory('thread')
   assert.deepEqual(projected(), [...items.map(i => i.id), 'final'].sort())
 })
 
@@ -859,9 +997,9 @@ test('首次会话页等待在途轮次页，保留会话范围的分页游标',
       content: [{ type: 'input_text', text: id }], yuxi: { message_id: 2 - index } })),
     last_id: ids.at(-1), has_more: false, yuxi: { runs: [] } }
   }
-  const prior = runtime.fetchThreadMessages({ threadId: 'thread', turnId: 'turn' })
+  const prior = runtime.reconcileTurnHistory('thread', 'turn')
   await started.promise
-  const terminal = runtime.fetchThreadMessages({ threadId: 'thread', turnId: 'turn', fresh: true })
+  const terminal = runtime.reconcileTurnHistory('thread', 'turn')
   await tick()
   const opening = runtime.loadThread('thread')
   await tick()
@@ -874,7 +1012,7 @@ test('首次会话页等待在途轮次页，保留会话范围的分页游标',
 test('历史、流和完成后的显示由同一 item 集合派生，不依赖历史再同步', async (t) => {
   const h = setup(t)
   const detach = h.runtime.observeThread('thread', {})
-  await h.runtime.fetchThreadMessages({ threadId: 'thread' })
+  await h.runtime.refreshThreadHistory('thread')
   const stream = h.runtime.startRunStream('thread', 'run', null, { turnId: 'turn' })
   await tick()
   h.emit({ type: 'agent.session.turn.item.added', event_id: 'added', session_id: 'thread', turn_id: 'turn',

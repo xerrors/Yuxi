@@ -15,39 +15,48 @@ export function useFilePreviewSession(threadId) {
   const user = useUserStore()
   const tabs = ref([])
   const cache = reactive(new Map())
-  const release = (key) => releaseFilePreviewCacheEntry(cache, key)
-  const invalidate = (path) => {
-    release(filePreviewCacheKey(path, threadId.value))
-    release(filePreviewCacheKey(path, 'workspace'))
-  }
-  const open = (file) => {
+  const open = (file, sourceThreadId = threadId.value) => {
     if (!file?.path) return null
     const workspace = file.workspace === true
-    const tab = { ...file, workspace, workdir: !workspace && file.workdir === true,
-      path: String(file.path), name: file.name || String(file.path).split('/').pop() || String(file.path) }
-    const index = tabs.value.findIndex((item) => item.path === tab.path)
+    if (!workspace && !sourceThreadId) return null
+    const path = String(file.path)
+    const key = filePreviewCacheKey(path, workspace ? 'workspace' : sourceThreadId)
+    const tab = {
+      ...file,
+      key,
+      threadId: workspace ? null : sourceThreadId,
+      workspace,
+      workdir: !workspace && file.workdir === true,
+      path,
+      name: file.name || path.split('/').pop() || path
+    }
+    const index = tabs.value.findIndex((item) => item.key === key)
     if (index < 0) tabs.value = [...tabs.value, tab]
     else {
       const existing = tabs.value[index]
       if ((!tab.workdir && !tab.workspace && tab.modified_at == null && tab.size == null) ||
         existing.modified_at !== tab.modified_at || existing.size !== tab.size ||
-        Boolean(existing.workdir) !== tab.workdir || Boolean(existing.workspace) !== tab.workspace) invalidate(tab.path)
+        Boolean(existing.workdir) !== tab.workdir) releaseFilePreviewCacheEntry(cache, key)
       tabs.value = tabs.value.map((item, current) => current === index ? { ...item, ...tab } : item)
     }
     return tab
   }
-  const close = (path) => {
-    invalidate(path)
-    tabs.value = tabs.value.filter((tab) => tab.path !== path)
+  const close = (key) => {
+    releaseFilePreviewCacheEntry(cache, key)
+    tabs.value = tabs.value.filter((tab) => tab.key !== key)
   }
-  const closePath = (target) => {
-    const removed = tabs.value.filter((tab) => includesPath(tab.path, target)).map((tab) => tab.path)
-    for (const path of removed) close(path)
+  /** Viewer 删除只关闭操作所属 Thread 中的文件，保留其他作用域的同名资源。 */
+  const closePath = (target, sourceThreadId) => {
+    const removed = tabs.value
+      .filter((tab) => tab.threadId === sourceThreadId && includesPath(tab.path, target))
+      .map((tab) => tab.key)
+    const prefix = `${sourceThreadId}:`
     for (const key of cache.keys()) {
-      const separator = key.indexOf(':')
-      const scope = key.slice(0, separator)
-      if ([String(threadId.value), 'workspace'].includes(scope) && includesPath(key.slice(separator + 1), target)) release(key)
+      if (key.startsWith(prefix) && includesPath(key.slice(prefix.length), target)) {
+        releaseFilePreviewCacheEntry(cache, key)
+      }
     }
+    tabs.value = tabs.value.filter((tab) => !removed.includes(tab.key))
     return removed
   }
   const reset = () => {

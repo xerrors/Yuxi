@@ -161,7 +161,7 @@ const props = defineProps({
   widgetAction: { type: Function, default: null },
   widgetActionsDisabled: { type: Boolean, default: true }
 })
-const emit = defineEmits(['loaded', 'interrupt', 'terminal', 'open-refs', 'open-session', 'artifact-saved', 'open-preview'])
+const emit = defineEmits(['loaded', 'terminal', 'open-refs', 'open-session', 'artifact-saved', 'open-preview'])
 const user = useUserStore()
 const runtime = useSessionRuntimeStore()
 const currentChatId = computed(() => user.isLoggedIn ? props.threadId : null)
@@ -176,7 +176,6 @@ const currentThreadConfigNotice = toRef(props, 'configNotice')
 const availableKnowledgeBases = toRef(props, 'knowledgeBases')
 provide('getAgentThreadState', runtime.getThreadState)
 const { historyPages } = storeToRefs(runtime)
-const { fetchThreadMessages } = runtime
 const { runGroups, currentThreadRuns } = useThreadMessageProjection(currentChatId)
 const currentRunById = computed(() => new Map(currentThreadRuns.value.map((run) => [run.id, run])))
 const getMessageRun = (message) => currentRunById.value.get(getMessageRunId(message)) || null
@@ -354,7 +353,7 @@ const loadEarlierMessages = async () => {
   const previousHeight = container.scrollHeight
   const previousScrollTop = container.scrollTop
   try {
-    await fetchThreadMessages({ threadId, more: true })
+    await runtime.loadOlderHistory(threadId)
     await nextTick()
     if (
       generation !== readingGeneration ||
@@ -434,7 +433,7 @@ function observeLayout() {
   }, 50)
 }
 
-/** 合并同一视图的在途读取，完成首次定位后通知宿主。 */
+/** 首次定位完成后通知输入区；输入准备独立于阅读。 */
 const load = (fresh = false) => {
   const threadId = currentChatId.value
   if (!workspaceActive.value || !threadId) return Promise.resolve(false)
@@ -478,7 +477,6 @@ watch(
       scrollController.enableAutoScroll()
       releaseView()
       releaseView = threadId ? runtime.observeThread(threadId, {
-        onInterruptDetected: (event) => emit('interrupt', event),
         onTerminalDetected: (event) => emit('terminal', event),
         onScrollToBottom() {
           if (workspaceActive.value && pageVisible.value) scrollController.scrollToBottom()

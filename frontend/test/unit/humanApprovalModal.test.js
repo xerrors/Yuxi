@@ -119,8 +119,8 @@ test('问题弹窗按顺序收集全部答案', async () => {
         allow_other: true
       }
     ]
-    const { pendingInterruptFromWaitpoint, extractPendingInterrupt } = await server.ssrLoadModule(
-      '/src/modules/session/model/useApproval.js'
+    const { pendingInterruptFromWaitpoint } = await server.ssrLoadModule(
+      '/src/modules/session/model/toolApproval.js'
     )
     const pending = pendingInterruptFromWaitpoint(
       {
@@ -131,16 +131,7 @@ test('问题弹窗按顺序收集全部答案', async () => {
       },
       'thread-1'
     )
-    const streamed = extractPendingInterrupt(
-      {
-        status: 'ask_user_question_required',
-        questions: wireQuestions,
-        run_id: 'run-1'
-      },
-      'thread-1'
-    )
     assert.equal(pending.questions, wireQuestions)
-    assert.equal(streamed.questions, wireQuestions)
     const questions = pending.questions
     const host = makeNode('root')
     app = renderer.createApp(() =>
@@ -239,7 +230,11 @@ test('问题弹窗按顺序收集全部答案', async () => {
     await nextTick()
     await nextTick()
 
-    const questionTitle = find(multipleHost, (node) => node.props.id === 'question-dialog-title')
+    const questionDialog = find(multipleHost, (node) => node.props.role === 'dialog')
+    const questionTitle = find(
+      multipleHost,
+      (node) => node.props.id === questionDialog.props['aria-labelledby']
+    )
     assert.equal(questionTitle.focused, true)
 
     const multipleCustomAnswer = find(
@@ -266,16 +261,19 @@ test('问题弹窗按顺序收集全部答案', async () => {
     submissions.length = 0
     const approvalHost = makeNode('root')
     const processing = ref(false)
+    const error = ref('')
     app = renderer.createApp(() =>
       h(HumanApprovalModal, {
         visible: true,
         kind: 'tool_approval',
         processing: processing.value,
+        waitpointId: 'waitpoint-2',
+        error: error.value,
         actionRequests: [
           { name: 'write_file', args: { file_path: 'result.txt', content: 'result' } }
         ],
-        onSubmit: (decision) => {
-          submissions.push(decision)
+        onSubmit: (decision, waitpointId) => {
+          submissions.push({ decision, waitpointId })
           processing.value = true
         }
       })
@@ -288,14 +286,38 @@ test('问题弹窗按顺序收集全部答案', async () => {
     await nextTick()
     assert.equal(approve().props.disabled, true)
     processing.value = false
+    error.value = '暂时无法提交'
     await nextTick()
     assert.equal(approve().props.disabled, false, '提交失败后同一卡片可重试，不需要关掉再打开')
+    const approvalDialog = find(approvalHost, (node) => node.props.role === 'dialog')
+    const alert = find(approvalHost, (node) => node.props.role === 'alert')
+    assert.equal(textContent(alert), '暂时无法提交')
+    assert.ok(approvalDialog.props['aria-describedby'].split(' ').includes(alert.props.id))
     approve().props.onClick()
     await nextTick()
     assert.deepEqual(submissions, [
-      { decisions: [{ type: 'approve' }] },
-      { decisions: [{ type: 'approve' }] }
+      { decision: { decisions: [{ type: 'approve' }] }, waitpointId: 'waitpoint-2' },
+      { decision: { decisions: [{ type: 'approve' }] }, waitpointId: 'waitpoint-2' }
     ])
+
+    app.unmount()
+    const parallelHost = makeNode('root')
+    app = renderer.createApp(() =>
+      h('main', ['root', 'member'].map((id) => h('section', { id }, [
+        h(HumanApprovalModal, { visible: true, questions: [questions[1]], waitpointId: id })
+      ])))
+    )
+    app.mount(parallelHost)
+    await nextTick()
+    const fields = ['root', 'member'].map((id) => {
+      const section = find(parallelHost, (node) => node.props.id === id)
+      return {
+        dialog: find(section, (node) => node.props.role === 'dialog'),
+        radio: find(section, (node) => node.props.type === 'radio')
+      }
+    })
+    assert.notEqual(fields[0].dialog.props['aria-labelledby'], fields[1].dialog.props['aria-labelledby'])
+    assert.notEqual(fields[0].radio.props.name, fields[1].radio.props.name)
   } finally {
     app?.unmount()
     await server.close()

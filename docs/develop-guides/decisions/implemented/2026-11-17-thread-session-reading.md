@@ -1,60 +1,46 @@
-# Thread 独立阅读与视口生命周期
+# 会话工作区与 Thread 阅读生命周期
 
 状态：implemented
 类型：simplification
-Owner：frontend/src/modules/session/ui/ThreadTimeline.vue
+Owner：frontend/src/modules/session/ui/SessionWorkspace.vue
 
 ## 问题
 
-消息视口与输入工作区共用页面装载流程，读取一个已有 Thread 需要先理解 Agent 目录和输入配置。目标是仅传 threadId 即可读取、恢复与观察已有 Thread，同 Thread 多实例共享事实并独立阅读。后端继续拥有权限、最终结果与输入队列事实。
-
-完整输入组件、完整草稿持久化、指定子 Run 阅读器与全站 TypeScript 迁移仍属于[前端重构提案](../proposed/2026-09-30-agent-view-frontend-refactor.md)。本决定不把整个 SessionWorkspace 标为纯装配。
+会话读取依赖侧栏列表、Agent 目录和输入准备。协作成员复用整个根工作区，首读、翻页和指定 Turn 回读共用多模式入口，调用者难以判断读取范围与状态归属。完整草稿持久化、指定子 Run 阅读器与全站 TypeScript 迁移见[前端重构提案](../proposed/2026-09-30-agent-view-frontend-refactor.md)。
 
 ## 决策
 
 ### 实现方案
 
-ThreadTimeline 接收 threadId，复用 sessionRuntime 的 loadThread 完成历史读取、持久 Turn 恢复和队列观察，同时拥有消息展示、分页与滚动视口。每个阅读实例只注册一个观察者；同一身份、同一 Thread 的首读和 SSE 由 runtime 共享。无需先初始化 Agent 目录、输入配置或侧栏。
+路由选择根 Thread，协作标签选择成员 Thread。根工作区装配协作导航和面板，根与成员共用 `SessionThreadView`，各自管理草稿、输入、队列和当前等待点。侧栏维护列表、摘要和返回导航。已确认的路由决定返回偏好，取消导航保留原目标。授权详情由 `sessionRuntime` 按 Thread 保存，重命名、归档和已查看分别消费服务端结果。详情读取和协作观察只更新已有侧栏摘要。
 
-阅读器通过 `refresh` 显式复核持久事实。一次在途读取覆盖授权读取和首次定位，完成后发送带 `threadId` 的 `loaded` 通知。工作区收到通知后恢复等待点，独立准备 Agent 配置和附件。同一工作区共享当前 Thread 的在途输入准备，完成结果按 Thread 状态归属应用。`selectChat` 等待 `refresh` 并处理读取结果，403/404/410 返回不可读取，临时失败返回可重试。Agent 加载失败由工作区的重试入口再次调用 `refresh`。
+`ThreadTimeline` 仅凭 `threadId` 启动读取和观察，拥有消息展示、分页触发和滚动视口。每个阅读实例注册一个观察者，同一身份与 Thread 共用首读、item 投影和 SSE。runtime 分别提供当前窗口、向前翻页和指定 Turn 回读，指定 Turn 使用独立游标，最终结果取持久 `result_run_id`。阅读器的 `refresh` 重新核对授权和历史，定位完成后发出 `loaded`。输入区合并同一 Thread 的在途准备，独立读取 Agent 配置和附件。路由按 403/404/410 拒绝读取，临时失败保留重试。Agent 配置失败可在编辑区单独重试。
 
-隐藏保活视图保留历史、分页和共享观察，只暂停布局与滚动。停用前直接保存 DOM.scrollTop，恢复本视口位置；新实例自行决定初次定位。换 Thread、销毁或身份变化释放观察；最后一个消费者离开清理共享状态和连接。身份变化使旧状态失效，迟到历史和事件不能覆盖新身份。分页代次与 ScrollController 取消代次分别阻止旧请求、nextTick、两帧布局和延迟重试触碰新视口。
+隐藏保活视图保存滚动位置，暂停布局、滚动和标记已读，保留共享观察。分页和滚动代次拒绝旧请求或延迟布局回写，最后一个消费者离开时释放共享状态和连接，身份切换使旧结果失效。`sessionInput` 持有在途提交的观察者直到接收或拒绝，身份变化时旧响应不修改新草稿或新 pending。已接收的 Input 通过持久回执恢复，避免重复发送。
 
-主工作区和递归协作侧面工作区复用同一阅读组件。消息分组由 threadMessageProjection 派生，阅读器与导出消费同一转换；页面通过事件处理引用、文件和导航，通过插槽组合输入与队列 UI。页面不操作消息内部 DOM，只消费阅读器的滚动动作和根视口几何。
-
-sessionInput 的在途提交也是 runtime 消费者，持有到接收或拒绝收敛。身份变化后旧响应不修改新草稿、不删除新 pending，也不重新 POST 已接收输入。文件资源归属见[文件预览决定](2026-11-17-file-preview-session.md)。
+人工操作绑定界面显示的 Thread、Turn、Run 和等待点，提交前重新核对目标等待点。接收前失败保留答案与重试入口，已接收的操作按持久结果和后续运行恢复。保存 Thread 审批模式期间暂停新输入，根会话出现新等待点时刷新状态面板数据。阅读和导出共用消息分组，工作区以事件处理引用、文件和导航。引用按来源 Thread 与 Turn 读取，预览按来源 Thread 与路径缓存。右侧面板支持键盘切换及关闭标签，也支持键盘调宽。文件资源生命周期见[文件预览决定](2026-11-17-file-preview-session.md)。
 
 ## 替代方案
 
-把读取包装层和视口层分成两个仅相互消费的组件，会重复观察与激活生命周期。等待工作区的配置完成会延长路由等待。采用一个阅读组件，由路由等待读取返回、工作区响应读完通知，两个调用者各自处理其结果。
-
-保留页面装载不能满足独立阅读。把页面全部搬入 composable 仍携带 Agent 和输入前提。增加第二套 runtime 会分裂订阅和终态事实，因此复用既有领域 Owner。
-
-隐藏即丢弃共享历史会破坏分页范围之外的阅读位置；为此增加分页重播没有业务必要性。保留既有保活语义，最终离开再清理。
+只切分模板会保留详情对侧栏的依赖和成员对根页面的重复装配。单独的读取包装层或第二个 runtime 会重复观察与激活生命周期。隐藏后释放历史再重播分页会增加读取，并使超出首屏的阅读位置更难恢复。保留共享 runtime 和视口各自的生命周期，路由等待授权读完，输入区响应同一读取的完成通知。
 
 ## 后果
 
-阅读维护者从 ThreadTimeline → sessionRuntime → 历史/流 Owner 即可理解主路径。后端权限和 Input/Turn/Run 事实不变。SessionWorkspace 仍拥有输入编辑组合、等待点和队列 UI、Agent 配置、混合面板导航与路由导出；这部分不因独立读取完成而宣称已简化完毕。
+多个视口共享同一 Thread 的持久与实时投影，各自保留滚动位置和编辑状态。根工作区只处理跨视图装配，成员预览沿用来源 Thread 的授权范围。后端拥有权限、排队、执行和最终结果。
 
 ## 验证
 
-以下记录阅读器拆分时的验证。阅读和输入准备解耦的验证见[会话阅读与文档处理入口收敛](./2026-11-25-cognitive-cost-first-pass.md)。
-
 | 验收主张 | 失败面 | 语义 Owner | 直接证据 / 命令 | 负向案例 | 当前结果 |
 | --- | --- | --- | --- | --- | --- |
-| 仅 threadId 自行读取与观察，同 Thread 单连接 | 隐含父初始化、重复首读/SSE | ThreadTimeline / runtime | `playwright-cli -s=thread-session run-code --filename=frontend/test/browser/threadSession.js` | fixture 无预读或 runtime 写入，Agent/目录接口拒绝；双实例 | Passed |
-| 保留历史位置，隔离不同 Thread 和身份 | 隐藏后回底、旧响应污染 | runtime / Timeline | 同上；真实 SFC + 独立 HTTP/SSE 服务 | 650 条历史分页至第 100 条，隐藏最后视图再开同消息偏移 <2px；新视图到底、A/B 乱序、登出换身份 | Passed |
-| 失败重试闭合输入，缓存路由复核持久可见性 | 输入永久 loading、缓存跳过鉴权请求 | Workspace / ThreadTimeline | `playwright-cli -s=thread-session run-code --filename=frontend/test/browser/sessionHistoryLoading.js` | 首读 503 → reader 重试；Agent 503 →重试可发送；已读 Thread 再次 HTTP 403/404/410 返回 false，503/network 返回 null | Passed |
-| 终态只取持久最终结果 | 事件尾文本或相邻 Run 替代结果 | 原有 Turn 投影 | 独立浏览器 SSE 到最终 DOM | 完成事件文本与持久 result_run 输出不同 | Passed |
-| 提交在隐藏期间收敛，身份变化不修改新草稿 | 观察释放丢接收结果、旧响应覆盖 | sessionInput / runtime | `test/unit/sessionInputConsumption.test.js`、`sessionRuntime.test.js` | 隐藏最后读者、换 Thread、旧身份迟到成功/拒绝 | Passed |
-| 原有前端行为与构建 | 组装入口遗漏 | 前端各 Owner | `pnpm run lint:check`、`pnpm run test:unit`、`pnpm run build`、阅读位置/双视口浏览器回归 | 对应既有负例 | Passed |
+| 仅凭 Thread ID 可阅读，同 Thread 共用首读与 SSE | 隐含父初始化、重复订阅 | ThreadTimeline / runtime | `threadSession.js` 浏览器回放 | fixture 无预读或 runtime 写入，Agent/目录接口拒绝，双视口并行 | Passed |
+| 历史位置、普通游标和指定 Turn 各自独立 | 隐藏后回底、旧结果覆盖、相邻 Turn 或 SSE 尾文本代替最终结果 | ThreadTimeline / runtime | `threadSession.js`、`sessionHistoryLoading.js`、`sessionRuntime.test.js` | 650 条历史隐藏后锚点偏移 <2px、新视口到底、950 条翻页、A/B 乱序、重新登录、指定轮次独立对账、SSE 尾文本与持久输出不同 | Passed |
+| 路由复核可见性，输入失败可单独重试 | 侧栏遗漏或缓存跳过授权，Agent 失败阻断历史 | Timeline / SessionThreadView / 导航 | `sessionHistoryLoading.js`、`sessionSidebar.js`、`sessionRouteRestoration.js` | 侧栏外深链接、归档、403/404/410、503、重复刷新、取消导航及过期成员路由 | Passed |
+| 等待点、在途输入和文件按来源隔离 | 迟到响应覆盖新草稿、隐藏会话误标已读或同名资源串用 | sessionInput / runtime / 面板 | `sessionInputConsumption.test.js`、`sessionApprovalFailure.js`、`cooperationMemberSync.js`、`attachmentDraftOwnership.js`、`sessionPanelKeyboard.js` | 隐藏最后读者、旧用户迟到成功或拒绝、旧等待点、隐藏根会话完成、延迟上传、相同路径或 Turn ID 属于不同 Thread | Passed |
 
-最终前端检查：`pnpm run lint:check`、`pnpm run test:unit`（1104/1104）、`pnpm run build` 均通过。`chatReadingPosition.js` 覆盖浅/深色与 1440/1024/768 宽度；双视口的独立滚动与增量展示由 `threadSession.js` 的 HTTP/SSE fixture 验证，不保留直接写 runtime 的重复 fixture。截图保留普通输入及最终回答、窄屏深色、历史加载与错误状态。
+阅读组件交付时，`pnpm run lint:check`、`pnpm run test:unit`（1104 项）与 `pnpm run build` 通过，`chatReadingPosition.js` 覆盖浅色、深色和 1440/1024/768 宽度。工作区职责调整后，同一组命令通过，单测 1206 项。浏览器使用 Playwright 与固定 HTTP/SSE 响应核对真实组件，面板键盘交互覆盖 1440px 浅色与 768px 深色。真实 API/worker/模型执行、后端权限和真实断网恢复在上述浏览器验证范围之外。
 
-长消息正文 delta 下的手动位置保持尚有缺口：同等 Workspace 回放在基线 `3c6ccd27` 和当前源码均出现 scrollTop 从 700 跳到 0，根因未定位；上述新消息追加与分页锚点通过不代表该场景通过。
+长消息连续正文增量下的手动阅读位置仍缺少复验。阅读组件交付时，同等 Workspace 回放在基线 `3c6ccd27` 和当时源码均出现 scrollTop 从 700 跳到 0，根因未定位。
 
-浏览器固定 HTTP/SSE 回放证明前端装配、协议处理与 DOM，不证明真实 API/worker/模型执行、后端权限或断网恢复。真实 worker E2E 未执行。
+旧能力不存在：侧栏缓存提供当前详情或预写导航，成员递归装配根工作区，工作区管理首次历史请求和订阅，多模式历史函数作为调用入口。
 
-旧能力不存在：SessionWorkspace 不再拥有首次 history 请求和 Run 订阅注册；未新增平行运行状态、协议或分页重播。
-
-重新引入条件：有真实消费者不能复用既有 runtime、输入事实或视口边界，且独立审查证明需要新的 Owner；不能仅为缩短页面行数新增编排层。
+重新引入条件：有真实消费者无法使用共享 Thread 视图、直接授权读取或现有视口生命周期，并有独立证据支持新增职责。

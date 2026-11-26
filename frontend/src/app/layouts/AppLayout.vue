@@ -237,8 +237,7 @@ watch(
   () => {
     if (!isAgentView.value) return
     const threadId = typeof route.params.thread_id === 'string' ? route.params.thread_id : null
-    // 路由已确认，即使并发创建尚未结束也要更新恢复目标。
-    chatThreadsStore.setCurrentThreadId(threadId, { force: true })
+    lastThreadId.value = threadId
   },
   { immediate: true }
 )

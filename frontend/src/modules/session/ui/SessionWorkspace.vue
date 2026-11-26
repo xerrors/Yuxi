@@ -1,18 +1,17 @@
 <template>
-  <div class="chat-container" :class="{ 'embedded-session': embedded }">
+  <div class="chat-container">
     <div
       class="chat"
       ref="workspaceChatRef"
-      :id="workspacePanelId"
       :class="{
-        'has-file-panel': isFilePanelOpen && !embedded,
+        'has-file-panel': isFilePanelOpen,
         'has-maximized-panel': isFilePanelOpen && isAgentPanelMaximized,
         'is-resizing-file-panel': isResizing
       }"
       :style="{ '--file-panel-width': filePanelWidthStyle }"
     >
       <div
-        v-if="!embedded && !isAgentPanelMaximized"
+        v-if="!isAgentPanelMaximized"
         class="chat-header"
         :class="{ 'has-active-thread': !!currentChatId }"
       >
@@ -54,6 +53,7 @@
             v-if="showFileEntry && !isFilePanelOpen"
             type="button"
             class="agent-nav-btn agent-state-btn file-entry-btn"
+            ref="filePanelTriggerRef"
             title="打开侧边栏"
             aria-label="打开侧边栏"
             :aria-expanded="isFilePanelOpen"
@@ -77,286 +77,60 @@
         ref="chatContentContainerRef"
         class="chat-content-container"
         :class="{
-          'has-file-panel': isFilePanelOpen && !embedded
+          'has-file-panel': isFilePanelOpen
         }"
       >
         <!-- Main Chat Area -->
-        <Teleport
-          defer
-          :to="`#${embedded ? workspacePanelId : mainChatPanelId}`"
-          :disabled="!isAgentPanelMaximized"
-        >
-          <ThreadTimeline
-            ref="timelineRef"
-            :thread-id="currentChatId"
-            :active="workspaceActive && userStore.isLoggedIn"
+        <Teleport defer :to="`#${mainChatPanelId}`" :disabled="!isAgentPanelMaximized">
+          <SessionThreadView
+            ref="mainThread"
+            :active="mainThreadVisible"
             :page-visible="pageVisible"
-            :loading="isSessionLoading"
-            :processing="isProcessing"
-            :reply-loading="isReplyLoading"
-            :suppress-refs="shouldSuppressRefsForApproval()"
-            :config-notice="currentThreadConfigNotice"
-            :config-notice-scroll-version="configNoticeScrollVersion"
-            :mention-config="mentionConfig"
-            :cooperation-view="cooperationToolView"
-            :knowledge-bases="availableKnowledgeBases"
-            :widget-action="handleWidgetAction"
-            :widget-actions-disabled="widgetActionsDisabled"
-            :class="{ 'has-embedded-state': statePanelOpen && statePanelPlacement.mode === 'embedded' }"
-            @interrupt="runtimeView.onInterruptDetected"
-            @terminal="runtimeView.onTerminalDetected"
-            @loaded="initializeThreadInput"
-            @open-refs="openTurnSourcesPanel"
+            :is-new-session="isNewSession"
+            :initial-project-id="initialProjectId"
+            :send-disabled="sendDisabled"
+            :agent-id="agentId"
+            :cooperation-members="cooperationSessions"
+            :class="{
+              'has-embedded-state': statePanelOpen && statePanelPlacement.mode === 'embedded'
+            }"
+            @thread-change="emit('thread-change', $event)"
             @open-session="navigateToSession"
-            @artifact-saved="handleArtifactSaved"
+            @open-refs="openTurnSourcesPanel"
             @open-preview="openPanelPreview"
+            @open-tree="openCooperationTree"
+            @artifact-saved="handleArtifactSaved"
+            @terminal="handleTerminal"
           >
-            <template #status>
-              <div class="generating-status" v-if="isReplyLoading && !isSessionLoading" role="status">
-                <div class="generating-indicator">
-                  <span class="loading-spark" aria-hidden="true"></span>
-                  <span class="generating-text">{{ replyLoadingText }}</span>
-                  <button
-                    v-if="primaryQueuedInput && !currentThreadState?.activeRunId"
-                    type="button"
-                    class="generating-cancel lucide-icon-btn"
-                    aria-label="取消这条待处理输入"
-                    title="取消这条待处理输入"
-                    :disabled="cancellingInputIds.has(primaryQueuedInput.input_id)"
-                    @click="handleCancelQueuedInput(primaryQueuedInput.input_id)"
-                  >
-                    <X :size="14" />
-                  </button>
-                </div>
-              </div>
+            <template #before-input>
+              <CooperationAttention
+                :key="currentChatId"
+                :actions="cooperationPendingActions"
+                :error="cooperationError"
+                @open="openCooperationAttention"
+                @refresh="refreshCooperation"
+              />
             </template>
-            <div
-              ref="messageInputDockRef"
-              class="bottom"
-              :class="{ 'start-screen': showStartScreen }"
-            >
-              <div class="message-input-wrapper">
-                <div v-if="pendingSends[currentChatId] && !pendingSends[currentChatId].submitting" class="queued-request-notice">
-                  <span>发送结果待确认，重试会确认同一条消息。</span>
-                  <button
-                    class="queued-request-continue"
-                    :disabled="!agentExecutionAvailable || sendCooldownActive || pendingSends[currentChatId]?.submitting"
-                    @click="handleSendMessage({ retry: true })"
-                  >
-                    重试发送
-                  </button>
-                </div>
-                <!-- 打招呼区域 - 在输入框上方 -->
-                <div v-if="showStartScreen" class="chat-greeting-input">
-                  <h1>{{ randomGreeting }}</h1>
-                </div>
-
-                <section
-                  v-if="visibleQueuedInputs.length"
-                  class="queued-request-panel"
-                  aria-label="排队请求"
-                >
-                  <div
-                    v-if="currentQueueSnapshot.status === 'paused'"
-                    class="queued-request-notice is-paused"
-                  >
-                    <span>{{ queuePausedMessage }}</span>
-                    <button
-                      type="button"
-                      class="queued-request-continue"
-                      :disabled="!agentExecutionAvailable || currentThreadState?.continueQueueInFlight"
-                      @click="handleContinueQueue"
-                    >
-                      <Play :size="14" fill="currentColor" />
-                      继续队列
-                    </button>
-                  </div>
-                  <div v-else-if="isWaitingForUserAction" class="queued-request-notice">
-                    当前任务正在等待回答或审批，完成后将继续处理后续输入。
-                  </div>
-                  <div class="queued-request-list">
-                    <div
-                      v-for="input in visibleQueuedInputs"
-                      :key="input.input_id"
-                      class="queued-request-row"
-                    >
-                      <CornerDownRight :size="16" class="queued-request-icon" aria-hidden="true" />
-                      <span class="queued-request-content" :title="input.content || '排队输入'">
-                        {{ input.content || '排队输入' }}
-                      </span>
-                      <span class="queued-request-status" :title="input.attachment_error || ''">
-                        {{
-                          input.attachment_status === 'preparing'
-                            ? '附件准备中'
-                            : input.kind === 'steer'
-                              ? '等待引导'
-                              : '排队中'
-                        }}
-                      </span>
-                      <div class="queued-request-actions">
-                        <button
-                          v-if="canPromoteQueuedInput(input)"
-                          type="button"
-                          class="queued-request-promote lucide-icon-btn"
-                          :disabled="
-                            promotingInputIds.has(input.input_id) ||
-                            cancellingInputIds.has(input.input_id)
-                          "
-                          :title="
-                            isStreaming ? '转为引导，将沿用当前任务的模型和审批配置' : '转为引导'
-                          "
-                          aria-label="转为引导"
-                          @click="handlePromoteQueuedInput(input.input_id)"
-                        >
-                          <ArrowUpFromLine :size="16" />
-                        </button>
-                        <button
-                          v-if="canCancelQueuedInput(input)"
-                          type="button"
-                          class="queued-request-delete lucide-icon-btn"
-                          :disabled="cancellingInputIds.has(input.input_id)"
-                          :aria-label="`取消排队输入：${input.content || '排队输入'}`"
-                          @click="handleCancelQueuedInput(input.input_id)"
-                        >
-                          <Trash2 :size="16" />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </section>
-
-                <CooperationAttention
-                  v-if="!embedded"
-                  :key="currentChatId"
-                  :actions="cooperationPendingActions"
-                  :error="cooperationError"
-                  @open="openCooperationAttention"
-                  @refresh="refreshCooperation"
-                />
-
-                <div
-                  ref="messageInputStageRef"
-                  class="message-input-stage"
-                  :class="{ 'has-tool-approval': currentToolApprovalVisible }"
-                >
-                  <div v-if="currentChatId && ['unavailable', 'error'].includes(sessionAgentStatus)" class="agent-availability-notice" role="status">
-                    <span v-if="sessionAgentStatus === 'unavailable'">智能体当前不可用</span>
-                    <template v-else-if="sessionAgentStatus === 'error'">
-                      <span>智能体加载失败，请重试</span>
-                      <a-button type="link" size="small" @click="retrySessionAgent">重试</a-button>
-                    </template>
-                  </div>
-                  <HumanApprovalModal
-                    v-if="agentExecutionAvailable"
-                    :visible="currentApprovalModalVisible"
-                    :processing="approvalSubmitting"
-                    :questions="currentApprovalQuestions"
-                    :kind="approvalState.kind"
-                    :action-requests="approvalState.actionRequests"
-                    @submit="handleQuestionSubmit"
-                    @cancel="handleQuestionCancel"
-                  />
-
-                  <div
-                    class="message-input-surface"
-                    :inert="currentToolApprovalVisible"
-                    :aria-hidden="currentToolApprovalVisible ? 'true' : undefined"
-                  >
-                    <p v-if="threadArchived" class="archived-thread-notice" role="status">
-                      该对话已归档，只能查看历史记录，不能继续发送消息。
-                    </p>
-                    <AgentInputArea
-                      ref="agentInputAreaRef"
-                      v-model="userInput"
-                      :is-loading="shouldShowStopButton"
-                      :disabled="threadCreationInFlight || !agentExecutionAvailable || currentToolApprovalVisible"
-                      :send-button-disabled="isSendButtonDisabled"
-                      :mention="mentionConfig"
-                      :thread-id="currentChatId"
-                      :show-extra="showStartScreen"
-                      :attachments="currentPendingThreadAttachments"
-                      @send="handleSendOrStop"
-                      @upload-attachment="handleAttachmentUpload"
-                      @remove-attachment="handleAttachmentRemove"
-                    >
-                      <template #extra>
-                        <ProjectSelectionSection
-                          upward
-                          v-if="showStartScreen"
-                          v-model="selectedProjectId"
-                          :disabled="threadCreationInFlight"
-                        />
-                      </template>
-                      <template #actions-left-extra>
-                        <slot
-                          name="input-actions-left"
-                          :agent-id="currentAgentId"
-                          :has-active-thread="!!currentChatId"
-                          :is-creating-thread="threadCreationInFlight"
-                        ></slot>
-                        <ToolApprovalModeSelector
-                          upward
-                          :model-value="currentToolApprovalMode"
-                          @update:model-value="handleToolApprovalModeSelect"
-                        />
-                      </template>
-                      <template #actions-right-extra>
-                        <button
-                          v-if="canSubmitSteer"
-                          type="button"
-                          class="direct-steer-button"
-                          title="当前步骤结束后优先执行这条消息"
-                          @click="handleDirectSteer"
-                        >
-                          <CornerDownRight :size="14" aria-hidden="true" />
-                          引导
-                        </button>
-                        <ContextUsageRing
-                          v-if="showStateEntry"
-                          :used-tokens="contextUsageSummary.usedTokens"
-                          :limit-tokens="contextUsageSummary.limitTokens"
-                          :ratio="contextUsageSummary.ratio"
-                          @click="toggleStatePanel"
-                        />
-                        <div class="input-model-selector">
-                          <ModelSelectorComponent
-                            upward
-                            :model_spec="currentModelSpec"
-                            size="nano"
-                            display-name="mini"
-                            placeholder="选择模型"
-                            @select-model="handleModelSelect"
-                          />
-                        </div>
-                        <slot
-                          name="input-actions-right"
-                          :has-active-thread="!!currentChatId"
-                        ></slot>
-                      </template>
-                    </AgentInputArea>
-                  </div>
-                </div>
-
-                <AttachmentTmpUploadModal
-                  v-model:open="attachmentUploadModalOpen"
-                  :initial-files="attachmentInitialFiles"
-                  :initial-files-key="attachmentInitialFilesKey"
-                  @added="handleTmpAttachmentsAdded"
-                />
-
-                <div class="bottom-actions" v-if="!showStartScreen">
-                  <p class="note">
-                    当前智能体：{{ currentThreadAgentName }}；请注意辨别内容的可靠性
-                  </p>
-                </div>
-              </div>
-            </div>
-          </ThreadTimeline>
+            <template #context-usage>
+              <ContextUsageRing
+                v-if="showStateEntry"
+                :used-tokens="contextUsageSummary.usedTokens"
+                :limit-tokens="contextUsageSummary.limitTokens"
+                :ratio="contextUsageSummary.ratio"
+                @click="toggleStatePanel"
+              />
+            </template>
+            <template #input-actions-left="scope">
+              <slot name="input-actions-left" v-bind="scope" />
+            </template>
+            <template #input-actions-right="scope">
+              <slot name="input-actions-right" v-bind="scope" />
+            </template>
+          </SessionThreadView>
         </Teleport>
       </div>
 
       <div
-        v-if="!embedded"
         id="agent-state-panel"
         ref="statePanelRef"
         :inert="!statePanelOpen"
@@ -388,18 +162,21 @@
             </button>
           </div>
 
-          <div class="state-panel-body">
+          <div class="state-panel-body" :aria-busy="isRefreshingState">
             <section v-if="currentAgentState?.warnings?.length" class="state-warning" role="status">
               <span class="state-section-title">警告</span>
-              <p v-for="warning in currentAgentState.warnings" :key="`${warning.code}:${warning.source}`">
+              <p
+                v-for="warning in currentAgentState.warnings"
+                :key="`${warning.code}:${warning.source}`"
+              >
                 {{ warning.message }}
               </p>
             </section>
             <ContextUsagePanel
               :usage="currentTokenUsage"
               :compressing="isContextCompressionPending"
-              :compression-disabled="!agentExecutionAvailable || isProcessing || hasQueuedInputs || isWaitingForUserAction"
-              @compress="handleContextCompression"
+              :compression-disabled="mainThread?.compressionDisabled ?? true"
+              @compress="mainThread?.compressContext()"
             />
 
             <section
@@ -516,13 +293,14 @@
               @refresh="refreshCooperation"
             />
 
-            <div v-if="!hasVisibleStateSections" class="state-panel-empty">暂无状态内容</div>
+            <div v-if="!hasVisibleStateSections" class="state-panel-empty" role="status">
+              {{ isRefreshingState ? '正在读取状态…' : '暂无状态内容' }}
+            </div>
           </div>
         </div>
       </div>
 
       <div
-        v-if="!embedded"
         id="agent-file-panel"
         class="side-panel side-panel--file"
         :inert="!isFilePanelOpen"
@@ -537,31 +315,26 @@
         }"
       >
         <AgentPanel
-          :agent-state="currentAgentState"
           :thread-id="currentChatId"
           :active-run-id="currentThreadState?.activeRunId || null"
           :run-active="Boolean(currentThreadState?.activeRunId && currentThreadState?.isStreaming)"
           :visible="isFilePanelOpen && cooperationObservationEnabled"
-          :panel-ratio="panelRatio"
-          :preview-tabs="agentPanelPreviewTabs"
+          :active-preview="activeAgentPanelPreview"
+          :panel-width-percentage="panelWidthPercentage"
           :preview-cache="agentPanelPreviewCache"
-          :active-preview-path="agentPanelActivePreviewPath"
-          :view-mode="agentPanelViewMode"
           :maximized="isAgentPanelMaximized"
           :sections="visibleAgentPanelSections"
           :active-section-key="agentPanelActiveSectionKey"
           :filesystem-visible="agentPanelFilesystemVisible"
           :filesystem-polling-active="agentPanelFilesystemPollingActive"
-          :filesystem-refresh-version="agentPanelFilesystemRefreshVersion"
-          @close="closeFilePanel"
+          :filesystem-refresh-versions="filesystemRefreshVersions"
+          @close="closeFilePanel(true)"
           @refresh="handleAgentStateRefresh"
           @resize="handlePanelResize"
+          @resize-by="resizePanelBy"
           @resizing="handleResizingChange"
           @open-preview="openPanelPreview"
-          @activate-preview="activatePanelPreview"
-          @close-preview-tab="closePanelPreviewTab"
           @close-preview-path="closePanelPreviewPath"
-          @view-mode-change="setAgentPanelViewMode"
           @toggle-maximize="toggleAgentPanelMaximized"
           @activate-section="activateAgentPanelSection"
           @close-section="closeAgentPanelSection"
@@ -601,17 +374,20 @@
               v-show="agentPanelActiveSectionKey === section.key"
               class="panel-session-chat"
             >
-              <SessionWorkspace
-                :ref="(workspace) => setCooperationWorkspaceRef(section.sessionId, workspace)"
-                :embedded="true"
-                :visible="
+              <SessionThreadView
+                :ref="(view) => setCooperationWorkspaceRef(section.sessionId, view)"
+                :active="
                   workspaceActive && isFilePanelOpen && agentPanelActiveSectionKey === section.key
                 "
-                @open-session="navigateToSession"
+                :page-visible="pageVisible"
                 :cooperation-members="cooperationSessions"
-                :embedded-thread-id="section.sessionId"
-                :agent-id="currentAgentId"
-                :is-new-session="false"
+                :initial-thread-id="section.sessionId"
+                @open-session="navigateToSession"
+                @open-refs="openTurnSourcesPanel($event, section.sessionId)"
+                @open-preview="openPanelPreview"
+                @open-tree="openCooperationTree"
+                @artifact-saved="handleArtifactSaved"
+                @terminal="handleTerminal"
               />
             </div>
           </template>
@@ -622,251 +398,128 @@
 </template>
 
 <script setup>
-import ThreadTimeline from './ThreadTimeline.vue'
-import { useFilePreviewSession } from '@/modules/workspace'
-import { useThreadMessageProjection } from '../model/threadMessageProjection'
-import { useSessionAgentAvailability } from '@/modules/session/model/sessionAgentAvailability'
 import {
-  ref,
-  reactive,
-  onMounted,
-  watch,
-  nextTick,
   computed,
-  provide,
-  onUnmounted,
+  getCurrentInstance,
+  nextTick,
   onActivated,
   onDeactivated,
-  getCurrentInstance
+  onMounted,
+  onUnmounted,
+  reactive,
+  ref,
+  watch
 } from 'vue'
-import { message } from 'ant-design-vue'
 import { useRouter } from 'vue-router'
-import { createSessionLinkNavigator } from '@/modules/session/model/sessionLinks'
-import {
-  ArrowUpFromLine,
-  Bug,
-  ChevronDown,
-  CornerDownRight,
-  PanelRight,
-  Gauge,
-  Play,
-  RefreshCw,
-  Trash2,
-  X
-} from '@lucide/vue'
+import { Bug, ChevronDown, Gauge, PanelRight, RefreshCw } from '@lucide/vue'
+import { agentApi } from '@/apis'
+import { useUserStore } from '@/modules/identity'
+import { useInfoStore } from '@/modules/settings'
+import { handleChatError } from '@/shared/lib/errorHandler'
+import { useOutsidePointerdown } from '@/shared/lib/useOutsidePointerdown'
 import FileTypeIcon from '@/shared/ui/FileTypeIcon.vue'
-import AgentInputArea from '@/modules/session/ui/AgentInputArea.vue'
-import ContextUsagePanel from './ContextUsagePanel.vue'
-import CooperationAttention from '@/modules/session/ui/CooperationAttention.vue'
+import { createSessionLinkNavigator } from '../model/sessionLinks'
 import {
   getCooperationPendingActions,
   getSessionAttentionLabel
-} from '@/modules/session/model/cooperationAttention'
-import ContextUsageRing from '@/modules/session/ui/ContextUsageRing.vue'
-import ToolApprovalModeSelector from '@/modules/session/ui/ToolApprovalModeSelector.vue'
-import ModelSelectorComponent from '@/modules/agents/ui/ModelSelectorComponent.vue'
-import { handleChatError, handleValidationError } from '@/shared/lib/errorHandler'
+} from '../model/cooperationAttention'
+import { resolveContextUsageSummary } from '../model/contextUsage'
+import { useSessionRuntimeStore } from '../model/sessionRuntime'
+import { useSessionCooperation } from '../model/useSessionCooperation'
+import { normalizeArtifacts } from '../model/artifacts'
+import { getStatePanelPlacement } from '../model/statePanelLayout'
 import {
-  DRAFT_THREAD_ID,
-  threadDraftStore,
-  createThreadDraftSession,
-  entryDraftHandoff
-} from '@/modules/session/model/thread_draft'
-import { resolveContextUsageSummary } from '@/modules/session/model/contextUsage'
-import { AgentValidator } from '@/modules/agents'
-import { useAgentStore } from '@/modules/agents'
-import { useChatThreadsStore } from '@/modules/session/model/chatThreads'
-import { normalizeAgentConfigurableItems } from '@/modules/agents'
-import { useConfigStore } from '@/modules/settings'
-import { useInfoStore } from '@/modules/settings'
-import { useUserStore } from '@/modules/identity'
-import { storeToRefs } from 'pinia'
-import { agentApi, threadApi } from '@/apis'
-import { mcpApi } from '@/apis/mcp_api'
-import HumanApprovalModal from '@/modules/session/ui/HumanApprovalModal.vue'
-import { useApproval } from '@/modules/session/model/useApproval'
-import { IDLE_QUEUE_SNAPSHOT } from '@/modules/session/model/useAgentThreadState'
-import { createSessionInput, createInputRequestId } from '@/modules/session/model/sessionInput'
-import { useSessionRuntimeStore } from '@/modules/session/model/sessionRuntime'
-import { resumeSessionWaitpoint } from '@/modules/session/model/sessionCommands'
-import { useSessionCooperation } from '@/modules/session/model/useSessionCooperation'
-import CooperationTree from '@/modules/session/ui/CooperationTree.vue'
-import { useAgentMentionConfig } from '@/modules/session/model/useAgentMentionConfig'
-import { useSessionPluginMentions } from '@/modules/session/model/useSessionPluginMentions'
-import { getToolCallId, parseToolCallResult } from '@/modules/session/model/toolCallProjection'
-import { collectCooperationTasks } from '@/modules/session/model/cooperationToolView'
-import { normalizeArtifacts } from '@/modules/session/model/artifacts'
-import AgentPanel from '@/modules/session/ui/workspace/AgentPanel.vue'
-import AttachmentTmpUploadModal from '@/modules/session/ui/AttachmentTmpUploadModal.vue'
-import ProjectSelectionSection from '@/modules/projects/ui/ProjectSelectionSection.vue'
-import { getStatePanelPlacement } from '@/modules/session/model/statePanelLayout'
-import { useOutsidePointerdown } from '@/shared/lib/useOutsidePointerdown'
-import { AUTO_PROJECT_ID } from '@/modules/projects'
-import { createSingleFlight } from '@/shared/lib/singleFlight'
-import { createThreadForContext } from '@/modules/session/model/threadCreation'
-import {
-  FILE_TREE_SECTION,
   MESSAGE_DEBUG_SECTION,
   TURN_SOURCES_SECTION,
-  closeAgentPanelSection as closePanelSectionState,
-  shouldPollAgentPanelFilesystem,
-  upsertAgentPanelSection
-} from '@/modules/session/model/agentPanelSections'
-import {
-  isRunInterruptedConflict,
-  isThreadWaitingForUserAction,
-  isToolApprovalMode,
-  readToolApprovalModePreference,
-  resolveToolApprovalMode,
-  writeToolApprovalModePreference
-} from '@/modules/session/model/toolApproval'
+  shouldPollAgentPanelFilesystem
+} from '../model/agentPanelSections'
+import { useSessionPanel } from '../model/useSessionPanel'
+import AgentPanel from './workspace/AgentPanel.vue'
+import ContextUsagePanel from './ContextUsagePanel.vue'
+import ContextUsageRing from './ContextUsageRing.vue'
+import CooperationAttention from './CooperationAttention.vue'
+import CooperationTree from './CooperationTree.vue'
+import SessionThreadView from './SessionThreadView.vue'
 
-// ==================== PROPS & EMITS ====================
 const props = defineProps({
-  embedded: { type: Boolean, default: false },
   visible: { type: Boolean, default: true },
-  embeddedThreadId: { type: String, default: '' },
-  cooperationMembers: { type: Array, default: () => [] },
   agentId: { type: String, default: '' },
   initialProjectId: { type: String, default: '' },
   isNewSession: { type: Boolean, required: true },
   sendDisabled: { type: Boolean, default: false }
 })
-const emit = defineEmits(['thread-change', 'open-session'])
+const emit = defineEmits(['thread-change'])
 const router = useRouter()
-
-// ==================== STORE MANAGEMENT ====================
-const agentStore = useAgentStore()
-const chatThreadsStore = useChatThreadsStore()
-const configStore = useConfigStore()
-const infoStore = useInfoStore()
 const userStore = useUserStore()
-const messageDebugEnabled = computed(() => infoStore.debugMode && userStore.isSuperAdmin)
-const { agents, selectedAgentId, agentDetails, availableKnowledgeBases } = storeToRefs(agentStore)
-const threadStoreRefs = storeToRefs(chatThreadsStore)
-const { threads, threadCreationInFlight } = threadStoreRefs
-const currentThreadId = ref(null)
-const showStartScreen = computed(
-  () => props.isNewSession && !currentThreadId.value && !threadCreationInFlight.value
-)
-const currentThread = ref(null)
-// 列表翻页不能丢弃保活实例的会话详情；新详情仍从共享目录同步。
-watch(
-  () => threads.value.find((thread) => thread.id === currentThreadId.value) || null,
-  (thread) => {
-    if (thread || currentThread.value?.id !== currentThreadId.value) currentThread.value = thread
-  }
-)
-const workspacePanelId = `session-workspace-${getCurrentInstance().uid}`
-const mainChatPanelId = `main-chat-panel-${getCurrentInstance().uid}`
-const isLoadingMessages = computed(() => Boolean(currentThreadState.value?.readingLoading))
-const workspaceActivated = ref(true)
-const workspaceActive = computed(() => workspaceActivated.value && props.visible)
-
-// ==================== LOCAL CHAT & UI STATE ====================
-// 输入草稿按线程保存：初始按当前线程还原，后续输入实时写入对应线程
-const threadDraftSession = createThreadDraftSession(threadDraftStore, currentThreadId.value)
-const userInput = ref(threadDraftStore.read(currentThreadId.value || DRAFT_THREAD_ID))
-watch(userInput, (text) => threadDraftSession.saveInput(text))
-const agentInputAreaRef = ref(null)
-
-/** 组件动作追加到当前草稿，保留用户已输入内容并等待显式发送。 */
-function composeWidgetDraft(text) {
-  userInput.value = [userInput.value, text].filter(Boolean).join('\n\n')
-  nextTick(() => agentInputAreaRef.value?.focus())
-}
-
-/** 表单和按钮独立发送用户回答，旧列表动作继续填写草稿。 */
-function handleWidgetAction(action) {
-  if (typeof action === 'string') return composeWidgetDraft(action)
-  if (action?.type !== 'send_message' || widgetActionsDisabled.value) return false
-  return handleSendMessage({
-    text: action.text,
-    fromWidget: true,
-    onWidgetAccepted: action.onAccepted
-  })
-}
-
-watch(
-  [workspaceActive, () => props.isNewSession, currentThreadId],
-  ([active, isNewSession, threadId]) => {
-    if (!active || !isNewSession || threadId || props.embedded) return
-    const text = entryDraftHandoff.take()
-    if (text) composeWidgetDraft(text)
-  },
-  { immediate: true, flush: 'post' }
-)
-
-const messageInputStageRef = ref(null)
-const cooperationWorkspaceRefs = new Map()
-let workspaceReady = Promise.resolve()
-const pendingActionFocusTurnId = ref(null)
-const sendCooldownActive = ref(false)
-const cancellingInputIds = reactive(new Set())
-const promotingInputIds = reactive(new Set())
-let sendCooldownTimer = null
-// 预设的打招呼文本
-const greetingMessages = [
-  '语析，Natural Language Processing',
-  '语析，与知识对话',
-  '答案藏在知识里，我来找',
-  '与知识对话，与答案相遇',
-  '你负责提问，我负责寻找'
-]
-
-// 随机选择一个打招呼文本
-const randomGreeting = greetingMessages[Math.floor(Math.random() * greetingMessages.length)]
-
+const infoStore = useInfoStore()
 const sessionRuntime = useSessionRuntimeStore()
-const {
-  getThreadState,
-  resetThreadExecution,
-  fetchThreadMessages,
-  fetchAgentState,
-  startRunStream,
-  requestTurnCancellation,
-  resumeQueuedInputs,
-  cancelInput,
-  promoteInput,
-  continueQueue
-} = sessionRuntime
-const { threadMessages, pendingSends } = storeToRefs(sessionRuntime)
-const threadAttachmentsMap = ref({})
-const draftFilesByThread = ref({})
-const attachmentUploadModalOpen = ref(false)
-const attachmentUploadThreadKey = ref(null)
-const attachmentInitialFiles = ref([])
-const attachmentInitialFilesKey = ref(0)
-const selectedProjectId = ref(AUTO_PROJECT_ID)
-const threadCreationRequest = ref(null)
-const isRefreshingState = ref(false)
-const approvalSubmitting = computed(() =>
-  Boolean(getThreadState(currentThreadId.value)?.approvalSubmitting)
+const mainThread = ref(null)
+const currentChatId = computed(() => mainThread.value?.threadId || null)
+const currentThreadState = computed(() => sessionRuntime.peekThreadState(currentChatId.value))
+const currentThread = computed(() => currentThreadState.value?.detail || null)
+const chatMainRef = computed(() => mainThread.value?.timelineElement || null)
+const messageInputDockRef = computed(() => mainThread.value?.inputDock || null)
+const messageDebugEnabled = computed(() => infoStore.debugMode && userStore.isSuperAdmin)
+const mainChatPanelId = `main-chat-panel-${getCurrentInstance().uid}`
+const workspaceActivated = ref(true)
+const workspaceActive = computed(
+  () => workspaceActivated.value && props.visible && userStore.isLoggedIn
 )
+const pageVisible = ref(typeof document === 'undefined' || document.visibilityState === 'visible')
+const cooperationWorkspaceRefs = new Map()
+const isRefreshingState = ref(false)
+const filePanelTriggerRef = ref(null)
+
 const collapsedStateSections = reactive({
   files: false,
   artifacts: false
 })
-const threadConfigNoticeMap = ref({})
-const threadPendingConfigNoticeMap = ref({})
-const threadConfigSnapshotMap = ref({})
-const configNoticeSyncDepth = ref(0)
-const configNoticeScrollVersion = ref(0)
-
-// 本地 UI 状态（仅在本组件使用）
 const localUIState = reactive({
   chatMainWidth: typeof window !== 'undefined' ? window.innerWidth : 0,
   chatContentWidth: typeof window !== 'undefined' ? window.innerWidth : 0
 })
 
-// Agent Panel State
-const isFilePanelOpen = ref(false)
 const statePanelOpen = ref(false)
 const workspaceChatRef = ref(null)
 const mainStateTriggerRef = ref(null)
 const panelStateTriggerRef = ref(null)
 const statePanelRef = ref(null)
 const statePanelPlacement = ref({ mode: 'floating', style: {} })
+
+const {
+  isFilePanelOpen,
+  isAgentPanelMaximized,
+  isResizing,
+  chatContentContainerRef,
+  panelWrapperRef,
+  filePanelWidthStyle,
+  agentPanelPreviewCache,
+  panelWidthPercentage,
+  activeAgentPanelPreview,
+  agentPanelSections,
+  agentPanelActiveSectionKey,
+  showFilePanel,
+  showFileTreePanel,
+  filesystemRefreshVersions,
+  markThreadFilesChanged,
+  openPanelPreview,
+  closePanelPreviewPath,
+  toggleAgentPanelMaximized,
+  handlePanelResize,
+  handleResizingChange,
+  showSection,
+  activateAgentPanelSection,
+  closeAgentPanelSection,
+  hideFilePanel,
+  resizePanelBy
+} = useSessionPanel({
+  threadId: currentChatId,
+  statePanelOpen,
+  containerWidth: computed(() => localUIState.chatContentWidth)
+})
+const mainThreadVisible = computed(() =>
+  workspaceActive.value && (!isAgentPanelMaximized.value || agentPanelActiveSectionKey.value === 'main-session')
+)
 
 useOutsidePointerdown(
   computed({
@@ -887,9 +540,8 @@ const updateStatePanelPlacement = () => {
   const trigger = stateTriggerRef.value.getBoundingClientRect()
   if (!trigger.width || !trigger.height) return
   const workspace = workspaceChatRef.value.getBoundingClientRect()
-  const visibleInput = [...workspaceChatRef.value.querySelectorAll('.bottom')]
-    .map((element) => element.getBoundingClientRect())
-    .find((rect) => rect.height > 0 && rect.top > trigger.bottom)
+  const input = messageInputDockRef.value?.getBoundingClientRect()
+  const visibleInput = input?.height && input.top > trigger.bottom ? input : null
   const main = chatMainRef.value?.getBoundingClientRect()
   const embeddedArea =
     !isAgentPanelMaximized.value && main && main.width >= 1000
@@ -912,336 +564,12 @@ const sideActive = computed(() => {
   if (statePanelOpen.value) return 'state'
   return ''
 })
-const isResizing = ref(false)
-const isAgentPanelMaximized = ref(false)
 const stateTriggerRef = computed(() =>
   isAgentPanelMaximized.value ? panelStateTriggerRef.value : mainStateTriggerRef.value
 )
-const defaultPanelRatio = 0.5
-const previewPanelRatio = 0.5
-const minPanelRatio = 0.25
-const maxPanelRatio = 0.75
-const minChatMainWidth = 350
-const filePanelGapWidth = 0
-const mobilePanelBreakpoint = 768
-const panelRatio = ref(defaultPanelRatio) // 面板宽度比例 (0-1)
-const filePanelDragWidth = ref(null)
-const filePreviews = useFilePreviewSession(currentThreadId)
-const { tabs: agentPanelPreviewTabs, cache: agentPanelPreviewCache } = filePreviews
-const agentPanelActivePreviewPath = ref('')
-const agentPanelViewMode = ref('tree')
-const agentPanelSections = ref([FILE_TREE_SECTION])
-const agentPanelActiveSectionKey = ref(FILE_TREE_SECTION.key)
-watch(
-  [
-    statePanelOpen,
-    stateTriggerRef,
-    isAgentPanelMaximized,
-    isFilePanelOpen,
-    panelRatio,
-    agentPanelActiveSectionKey
-  ],
-  async () => {
-    await nextTick()
-    updateStatePanelPlacement()
-  },
-  { flush: 'post' }
-)
-const agentPanelFilesystemRefreshVersion = ref(0)
-const pageVisible = ref(typeof document === 'undefined' || document.visibilityState === 'visible')
-const chatContentContainerRef = ref(null)
-const panelWrapperRef = ref(null) // 直接操作 DOM
-let resizeStartX = 0
-let resizeStartWidth = 0
-let panelContainerWidth = 0
-let streamingStateRefreshTimer = null
-
-const getPanelContainerWidth = () => {
-  const container = chatContentContainerRef.value || panelWrapperRef.value?.parentElement
-  return container?.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 0)
-}
-
-const getFilePanelMaxWidth = (containerWidth = getPanelContainerWidth()) => {
-  if (!containerWidth) return 0
-  if (containerWidth <= mobilePanelBreakpoint) return Math.max(0, containerWidth - 16)
-  return Math.max(0, containerWidth - minChatMainWidth - filePanelGapWidth)
-}
-
-const getFilePanelMinWidth = (containerWidth, maxWidth = getFilePanelMaxWidth(containerWidth)) => {
-  const preferredMinWidth = containerWidth <= mobilePanelBreakpoint ? 280 : 320
-  return Math.min(preferredMinWidth, maxWidth)
-}
-
-const getMaxPanelRatio = (containerWidth = getPanelContainerWidth()) => {
-  if (!containerWidth) return maxPanelRatio
-  return Math.max(
-    minPanelRatio,
-    Math.min(maxPanelRatio, getFilePanelMaxWidth(containerWidth) / containerWidth)
-  )
-}
-
-const clampPanelRatio = (ratio, containerWidth = getPanelContainerWidth()) => {
-  return Math.max(minPanelRatio, Math.min(ratio, getMaxPanelRatio(containerWidth)))
-}
-
-const filePanelWidthStyle = computed(() => {
-  if (!isFilePanelOpen.value) return '0px'
-  if (isAgentPanelMaximized.value) {
-    const containerWidth = localUIState.chatContentWidth || getPanelContainerWidth()
-    return containerWidth ? `${containerWidth}px` : '100%'
-  }
-  if (filePanelDragWidth.value !== null) return `${filePanelDragWidth.value}px`
-
-  const containerWidth = localUIState.chatContentWidth || getPanelContainerWidth()
-  if (!containerWidth) return `${panelRatio.value * 100}%`
-
-  const maxWidth = getFilePanelMaxWidth(containerWidth)
-  const minWidth = getFilePanelMinWidth(containerWidth, maxWidth)
-  const preferredWidth = containerWidth * panelRatio.value
-  return `${Math.max(minWidth, Math.min(preferredWidth, maxWidth))}px`
-})
-
-const setPanelRatioForViewMode = () => {
-  const hasPreview = Boolean(agentPanelActivePreviewPath.value)
-  panelRatio.value = clampPanelRatio(hasPreview ? previewPanelRatio : defaultPanelRatio)
-}
-
-const showFilePanel = (mode = 'tree') => {
-  isFilePanelOpen.value = true
-  statePanelOpen.value = false
-  agentPanelViewMode.value =
-    mode === 'preview' && agentPanelActivePreviewPath.value ? 'preview' : 'tree'
-  setPanelRatioForViewMode()
-}
-
-const showFileTreePanel = () => {
-  isFilePanelOpen.value = true
-  statePanelOpen.value = false
-  agentPanelActiveSectionKey.value = FILE_TREE_SECTION.key
-  agentPanelActivePreviewPath.value = ''
-  agentPanelViewMode.value = 'tree'
-  setPanelRatioForViewMode()
-}
-
-/** 文件展示名允许协议只提供路径。 */
-const getPanelFileName = (file) => file?.name || String(file?.path || '').split('/').pop() || '未知文件'
-
-const resetAgentPanelState = () => {
-  isFilePanelOpen.value = false
-  statePanelOpen.value = false
-  panelRatio.value = defaultPanelRatio
-  isAgentPanelMaximized.value = false
-  filePreviews.reset()
-  agentPanelActivePreviewPath.value = ''
-  agentPanelViewMode.value = 'tree'
-  agentPanelSections.value = [FILE_TREE_SECTION]
-  agentPanelActiveSectionKey.value = FILE_TREE_SECTION.key
-}
-
-const setAgentPanelViewMode = (mode) => {
-  agentPanelViewMode.value =
-    mode === 'preview' && agentPanelActivePreviewPath.value ? 'preview' : 'tree'
-  setPanelRatioForViewMode()
-}
-
-const activatePanelPreview = (path) => {
-  if (!path) return
-  agentPanelActiveSectionKey.value = `file:${path}`
-  agentPanelActivePreviewPath.value = path
-  showFilePanel('preview')
-}
-
-const openPanelPreview = (file, keepTreeOpen = false) => {
-  const tab = filePreviews.open(file)
-  if (!tab) return
-
-  agentPanelActivePreviewPath.value = tab.path
-  agentPanelSections.value = upsertAgentPanelSection(agentPanelSections.value, {
-    key: `file:${tab.path}`,
-    type: 'file',
-    title: tab.name,
-    path: tab.path
-  })
-  agentPanelActiveSectionKey.value = keepTreeOpen ? FILE_TREE_SECTION.key : `file:${tab.path}`
-  showFilePanel('preview')
-}
-
-const closePanelPreviewTab = (path) => {
-  if (!path) return
-
-  filePreviews.close(path)
-  const nextSectionState = closePanelSectionState(
-    agentPanelSections.value,
-    agentPanelActiveSectionKey.value,
-    `file:${path}`
-  )
-  agentPanelSections.value = nextSectionState.sections
-  agentPanelActiveSectionKey.value = nextSectionState.activeKey || FILE_TREE_SECTION.key
-
-  if (agentPanelActivePreviewPath.value !== path) return
-
-  const activeSection = agentPanelSections.value.find(
-    (section) => section.key === agentPanelActiveSectionKey.value
-  )
-  agentPanelActivePreviewPath.value = activeSection?.type === 'file' ? activeSection.path : ''
-  agentPanelViewMode.value = activeSection?.type === 'file' ? 'preview' : 'tree'
-  setPanelRatioForViewMode()
-}
-
-const closePanelPreviewPath = (targetPath) => {
-  if (!targetPath) return
-
-  const removed = filePreviews.closePath(targetPath)
-  const shouldCloseActive = removed.includes(agentPanelActivePreviewPath.value)
-  const removedPaths = removed.map((path) => `file:${path}`)
-  agentPanelSections.value = agentPanelSections.value.filter(
-    (section) => !removedPaths.includes(section.key)
-  )
-  if (removedPaths.includes(agentPanelActiveSectionKey.value)) {
-    agentPanelActiveSectionKey.value = FILE_TREE_SECTION.key
-  }
-
-  if (!shouldCloseActive) return
-
-  const activeSection = agentPanelSections.value.find(
-    (section) => section.key === agentPanelActiveSectionKey.value
-  )
-  agentPanelActivePreviewPath.value = activeSection?.type === 'file' ? activeSection.path : ''
-  agentPanelViewMode.value = activeSection?.type === 'file' ? 'preview' : 'tree'
-  setPanelRatioForViewMode()
-}
-
-// ==================== COMPUTED PROPERTIES ====================
-const currentAgentId = computed(() => {
-  return currentThread.value?.agent.id || props.agentId || selectedAgentId.value
-})
-
-const { status: sessionAgentStatus, refresh: refreshSessionAgent } = useSessionAgentAvailability(
-  currentThreadId, (agentId) => agentStore.fetchAgentDetail(agentId, true, { notify: false })
-)
-/** 归档会话只读：后端会拒绝新输入，前端同步禁用而不是让发送失败。 */
-const threadArchived = computed(() => currentThread.value?.yuxi?.archived === true)
-
-const agentExecutionAvailable = computed(() =>
-  !threadArchived.value &&
-  (currentChatId.value
-    ? sessionAgentStatus.value === 'ready'
-    : Boolean(currentAgent.value?.can_run !== false && currentAgent.value))
-)
-const isSessionLoading = computed(() =>
-  (props.isNewSession && threadCreationInFlight.value) ||
-  (!currentThreadState.value?.historyLoaded && isLoadingMessages.value)
-)
-
-/** 重用对话加载入口重试，临时错误不改变对话身份。 */
-const retrySessionAgent = async () => {
-  if (currentChatId.value) await selectChat(currentChatId.value)
-}
-
-const currentAgentName = computed(() => {
-  const agent = currentAgent.value
-  return agent ? agent.name : '智能体'
-})
-
-const currentAgent = computed(() => {
-  if (!currentAgentId.value) return null
-  return (
-    agentDetails.value[currentAgentId.value] ||
-    agents.value?.find((agent) => agent.agent_id === currentAgentId.value) ||
-    null
-  )
-})
-const agentConfig = computed(() => {
-  if (!currentThread.value) return agentStore.agentConfig
-  const config = currentAgent.value?.config_json || {}
-  return config.context || config
-})
-const configurableItems = computed(() =>
-  currentThread.value
-    ? normalizeAgentConfigurableItems(currentAgent.value?.configurable_items)
-    : agentStore.configurableItems
-)
-const currentChatId = computed(() => currentThreadId.value)
-
-watch(
-  [currentChatId, () => props.initialProjectId],
-  ([threadId, initialProjectId]) => {
-    if (!threadId) selectedProjectId.value = initialProjectId || AUTO_PROJECT_ID
-  },
-  { immediate: true }
-)
-
-// ==================== 对话级模型覆盖 ====================
-// 当前选择优先；否则依次使用 Session、智能体和系统默认模型。
-const DRAFT_MODEL_KEY = '__draft__'
-const selectedModelByThread = reactive({})
-const savedToolApprovalMode = ref(readToolApprovalModePreference())
-const agentDefaultModel = computed(
-  () =>
-    agentConfig.value?.model ||
-    currentAgent.value?.config_json?.context?.model ||
-    configStore.config?.default_model ||
-    ''
-)
-const currentModelSpec = computed(
-  () =>
-    selectedModelByThread[currentChatId.value || DRAFT_MODEL_KEY] ||
-    currentThread.value?.agent.model ||
-    agentDefaultModel.value
-)
-const handleModelSelect = (spec) => {
-  if (typeof spec === 'string') {
-    if (spec) {
-      selectedModelByThread[currentChatId.value || DRAFT_MODEL_KEY] = spec
-    } else {
-      delete selectedModelByThread[currentChatId.value || DRAFT_MODEL_KEY]
-    }
-  }
-}
-
-const currentToolApprovalMode = computed(() =>
-  resolveToolApprovalMode({
-    hasThread: Boolean(currentChatId.value),
-    threadMode: currentThread.value?.yuxi.tool_approval_mode,
-    savedMode: savedToolApprovalMode.value
-  })
-)
-const handleToolApprovalModeSelect = async (mode) => {
-  if (!isToolApprovalMode(mode)) return
-
-  const thread = currentThread.value
-  if (!thread) {
-    savedToolApprovalMode.value = mode
-    writeToolApprovalModePreference(mode)
-    return
-  }
-
-  const previousMode = thread.yuxi.tool_approval_mode
-  thread.yuxi.tool_approval_mode = mode
-  try {
-    await chatThreadsStore.updateThread(thread.id, null, undefined, mode)
-    savedToolApprovalMode.value = mode
-    writeToolApprovalModePreference(mode)
-  } catch {
-    thread.yuxi.tool_approval_mode = previousMode
-    message.error('审批模式保存失败')
-  }
-}
-
-const currentThreadAgentName = computed(() => {
-  const threadAgentId = currentThread.value?.agent.id
-  if (threadAgentId && agents.value?.length) {
-    const threadAgent = agents.value.find((agent) => agent.agent_id === threadAgentId)
-    if (threadAgent?.name) {
-      return threadAgent.name
-    }
-  }
-  return currentAgentName.value
-})
-// AgentState 相关计算属性
-const currentAgentState = computed(() => {
-  return currentChatId.value ? getThreadState(currentChatId.value)?.agentState || null : null
-})
+const currentAgentState = computed(() => currentThreadState.value?.agentState || null)
+const currentThreadAttachments = computed(() => mainThread.value?.attachments || [])
+const isStreaming = computed(() => Boolean(currentThreadState.value?.isStreaming))
 const currentTokenUsage = computed(() => {
   const usage = currentAgentState.value?.token_usage
   return usage && typeof usage === 'object' && !Array.isArray(usage) ? usage : null
@@ -1250,13 +578,6 @@ const contextUsageSummary = computed(() => resolveContextUsageSummary(currentTok
 const isContextCompressionPending = computed(() =>
   Boolean(currentThreadState.value?.contextCompressing)
 )
-const currentThreadAttachments = computed(() => {
-  if (!currentChatId.value) return []
-  return threadAttachmentsMap.value[currentChatId.value] || []
-})
-const currentPendingThreadAttachments = computed(
-  () => draftFilesByThread.value[currentChatId.value || DRAFT_MODEL_KEY] || []
-)
 const currentArtifacts = computed(() => {
   const artifacts = currentAgentState.value?.artifacts
   return Array.isArray(artifacts) ? artifacts : []
@@ -1264,11 +585,11 @@ const currentArtifacts = computed(() => {
 const currentArtifactFiles = computed(() =>
   normalizeArtifacts(currentArtifacts.value).map((path) => ({
     path,
-    name: getPanelFileName({ path })
+    name: path.split('/').pop() || path
   }))
 )
 const cooperationObservationEnabled = computed(
-  () => !props.embedded && workspaceActive.value && pageVisible.value
+  () => workspaceActive.value && pageVisible.value && Boolean(currentThread.value)
 )
 const {
   sessions: cooperationSessions,
@@ -1285,38 +606,35 @@ const toggleMessageDebugPanel = () => {
     closeFilePanel()
     return
   }
-  agentPanelSections.value = upsertAgentPanelSection(
-    agentPanelSections.value,
-    MESSAGE_DEBUG_SECTION
-  )
-  agentPanelActiveSectionKey.value = MESSAGE_DEBUG_SECTION.key
-  isFilePanelOpen.value = true
-  statePanelOpen.value = false
+  showSection(MESSAGE_DEBUG_SECTION)
 }
 
 /** 消息内"来源"改为在右侧栏展开；再次点击同一 Turn 的入口时收起面板。 */
-const openTurnSourcesPanel = (payload) => {
+const openTurnSourcesPanel = (payload, threadId = currentChatId.value) => {
   const turnId = payload?.turnId || ''
+  const key = `sources:${threadId}`
   if (
     isFilePanelOpen.value &&
-    agentPanelActiveSectionKey.value === TURN_SOURCES_SECTION.key &&
-    agentPanelSections.value.find((section) => section.key === TURN_SOURCES_SECTION.key)
-      ?.turnId === turnId
+    agentPanelActiveSectionKey.value === key &&
+    agentPanelSections.value.find((section) => section.key === key)?.turnId === turnId
   ) {
     closeFilePanel()
     return
   }
-  agentPanelSections.value = upsertAgentPanelSection(agentPanelSections.value, {
+  const member = cooperationSessions.value.find((session) => session.session_id === threadId)
+  showSection({
     ...TURN_SOURCES_SECTION,
+    key,
+    threadId,
     turnId,
+    title: threadId === currentChatId.value
+      ? TURN_SOURCES_SECTION.title
+      : `${member?.name || '协作成员'}的来源`,
     sources: {
       knowledgeChunks: Array.isArray(payload?.knowledgeChunks) ? payload.knowledgeChunks : [],
       webSources: Array.isArray(payload?.webSources) ? payload.webSources : []
     }
   })
-  agentPanelActiveSectionKey.value = TURN_SOURCES_SECTION.key
-  isFilePanelOpen.value = true
-  statePanelOpen.value = false
 }
 const cooperationPendingActions = computed(() =>
   getCooperationPendingActions(cooperationSessions.value, currentChatId.value)
@@ -1364,14 +682,11 @@ async function openCooperationAttention(sessionId) {
 
 /** 在现有侧栏标签中打开协作列表，重复点击复用同一标签。 */
 const openCooperationTree = () => {
-  agentPanelSections.value = upsertAgentPanelSection(agentPanelSections.value, {
+  showSection({
     key: 'cooperation',
     type: 'cooperation',
     title: '协作会话'
   })
-  agentPanelActiveSectionKey.value = 'cooperation'
-  isFilePanelOpen.value = true
-  statePanelOpen.value = false
 }
 
 const sessionLinkNavigator = createSessionLinkNavigator({
@@ -1379,24 +694,31 @@ const sessionLinkNavigator = createSessionLinkNavigator({
   resolveTarget: (target) => agentApi.getSessionNavigation(target),
   isActive: () => workspaceActive.value,
   openTarget(destination, { restore }) {
-    if (restore && (destination.tree_root_session_id !== currentChatId.value || !destination.parent_session_id)) {
+    if (
+      restore &&
+      (destination.tree_root_session_id !== currentChatId.value || !destination.parent_session_id)
+    ) {
       throw new Error('会话不属于当前主页面')
     }
     if (destination.tree_root_session_id === currentChatId.value) {
-      if (destination.parent_session_id) openCooperationSession(destination.session_id, destination.name)
+      if (destination.parent_session_id)
+        openCooperationSession(destination.session_id, destination.name)
       else if (isAgentPanelMaximized.value) agentPanelActiveSectionKey.value = 'main-session'
-      else isFilePanelOpen.value = false
+      else hideFilePanel()
     }
   },
   onError: (error) => handleChatError(error, 'load')
 })
-watch([workspaceActive, currentChatId, () => router.currentRoute.value], () => sessionLinkNavigator.invalidate(), { flush: 'sync' })
+watch(
+  [workspaceActive, currentChatId, () => router.currentRoute.value],
+  () => sessionLinkNavigator.invalidate(),
+  { flush: 'sync' }
+)
 onUnmounted(() => sessionLinkNavigator.invalidate())
 
 /** 嵌入会话把导航交给根工作区，避免侧栏递归嵌套。 */
 async function navigateToSession(target) {
-  if (props.embedded) emit('open-session', target)
-  else await sessionLinkNavigator.navigate(target)
+  await sessionLinkNavigator.navigate(target)
 }
 
 /** 路由恢复先校验成员属于当前根页面，再打开侧栏。 */
@@ -1404,8 +726,11 @@ async function openSessionFromRoute(sessionId) {
   if (!sessionId) {
     sessionLinkNavigator.invalidate()
     if (isAgentPanelMaximized.value) agentPanelActiveSectionKey.value = 'main-session'
-    else if (agentPanelSections.value.find((section) => section.key === agentPanelActiveSectionKey.value)?.type === 'session') {
-      isFilePanelOpen.value = false
+    else if (
+      agentPanelSections.value.find((section) => section.key === agentPanelActiveSectionKey.value)
+        ?.type === 'session'
+    ) {
+      hideFilePanel()
     }
     return
   }
@@ -1419,39 +744,13 @@ const openCooperationSession = (sessionId, title) => {
   }
   const session = cooperationSessions.value.find((item) => item.session_id === sessionId)
   const key = `session:${sessionId}`
-  agentPanelSections.value = upsertAgentPanelSection(agentPanelSections.value, {
+  showSection({
     key,
     type: 'session',
     title: title || session?.name || session?.path?.split('/').pop() || '协作会话',
     sessionId,
     avatarSeed: sessionId
   })
-  agentPanelActiveSectionKey.value = key
-  isFilePanelOpen.value = true
-  statePanelOpen.value = false
-}
-
-const activateAgentPanelSection = (key) => {
-  const section = visibleAgentPanelSections.value.find((item) => item.key === key)
-  if (!section) return
-  agentPanelActiveSectionKey.value = key
-  if (section.type === 'file') {
-    agentPanelActivePreviewPath.value = section.path
-  }
-}
-const closeAgentPanelSection = (key) => {
-  const section = agentPanelSections.value.find((item) => item.key === key)
-  if (section?.type === 'file') {
-    closePanelPreviewTab(section.path)
-    return
-  }
-  const next = closePanelSectionState(
-    agentPanelSections.value,
-    agentPanelActiveSectionKey.value,
-    key
-  )
-  agentPanelSections.value = next.sections
-  agentPanelActiveSectionKey.value = next.activeKey
 }
 
 watch(messageDebugEnabled, (enabled) => {
@@ -1474,7 +773,7 @@ const currentStateFiles = computed(() => {
     const path = String(entry?.path || entry?.file_path || entry?.file_name || entry?.name || '')
     if (!path || seenPaths.has(path)) return
     seenPaths.add(path)
-    const name = entry?.file_name || entry?.name || getPanelFileName({ path }) || fallbackName
+    const name = entry?.file_name || entry?.name || path.split('/').pop() || fallbackName
     files.push({
       key: path,
       path,
@@ -1486,8 +785,8 @@ const currentStateFiles = computed(() => {
 
   return files
 })
-const showStateEntry = computed(() => !props.embedded && Boolean(currentChatId.value))
-const showFileEntry = computed(() => Boolean(currentChatId.value))
+const showStateEntry = computed(() => Boolean(currentThread.value))
+const showFileEntry = showStateEntry
 const hasVisibleStateSections = computed(
   () =>
     Boolean(currentAgentState.value?.warnings?.length) ||
@@ -1497,146 +796,6 @@ const hasVisibleStateSections = computed(
     cooperationSessions.value.length > 1
 )
 
-const mentionMcpServers = ref([])
-watch(workspaceActive, async (active) => {
-  if (!active) return
-  try {
-    const result = await mcpApi.getMcpServers({ directOnly: true })
-    mentionMcpServers.value = result.data || []
-  } catch {
-    mentionMcpServers.value = []
-    message.error('连接器列表加载失败，请重新打开对话重试')
-  }
-}, { immediate: true })
-
-const sessionMentionPlugins = useSessionPluginMentions(currentChatId, workspaceActive)
-const { mentionConfig } = useAgentMentionConfig({
-  agents,
-  currentThreadAttachments,
-  configurableItems,
-  agentConfig,
-  sessionPlugins: sessionMentionPlugins,
-  mcpServers: mentionMcpServers
-})
-
-const currentThreadMessages = computed(() => threadMessages.value[currentChatId.value] || [])
-const { runGroups, ongoingRunMessages } = useThreadMessageProjection(currentChatId)
-const currentThreadHasHistory = computed(() => currentThreadMessages.value.length > 0)
-const currentThreadConfigNotice = computed(() => {
-  if (!currentChatId.value) return null
-  return threadConfigNoticeMap.value[currentChatId.value] || null
-})
-
-const visibleApprovalThreadId = computed(() => {
-  return currentChatId.value
-})
-const currentApprovalModalVisible = computed(
-  () =>
-    approvalState.showModal &&
-    Boolean(approvalState.threadId) &&
-    approvalState.threadId === visibleApprovalThreadId.value &&
-    Boolean(currentThreadState.value?.pendingInterrupt) &&
-    approvalState.interruptedRunId === currentThreadState.value.pendingInterrupt.interruptedRunId &&
-    approvalState.waitpointId === (currentThreadState.value.pendingInterrupt.waitpointId || null)
-)
-const currentApprovalQuestions = computed(() =>
-  currentApprovalModalVisible.value ? approvalState.questions : []
-)
-const currentToolApprovalVisible = computed(
-  () => currentApprovalModalVisible.value && approvalState.kind === 'tool_approval'
-)
-
-const shouldSuppressRefsForApproval = () =>
-  currentApprovalModalVisible.value ||
-  Boolean(
-    approvalState.threadId && currentChatId.value === approvalState.threadId && isProcessing.value
-  )
-
-// 当前线程状态的computed属性
-const currentThreadState = computed(() => {
-  return getThreadState(currentChatId.value)
-})
-
-const cooperationToolView = computed(() => {
-  const sessions = [
-    ...currentThreadMessages.value.flatMap((message) => (message.tool_calls || [])
-      .filter((call) => getToolCallId(call) === 'list_sessions')
-      .flatMap((call) => parseToolCallResult(call)?.sessions || [])),
-    ...props.cooperationMembers,
-    ...cooperationSessions.value
-  ]
-  return {
-    sessions,
-    treeRootSessionId: sessions.find((member) => member.session_id === currentChatId.value)?.tree_root_session_id || currentChatId.value,
-    tasks: collectCooperationTasks(currentThreadMessages.value),
-    openSession: navigateToSession,
-    openTree: openCooperationTree
-  }
-})
-
-const isStreaming = computed(() => {
-  const threadState = currentThreadState.value
-  return threadState ? threadState.isStreaming : false
-})
-const currentQueuedInputs = computed(() => currentThreadState.value?.queuedInputs || [])
-const currentQueueSnapshot = computed(
-  () => currentThreadState.value?.queueSnapshot || IDLE_QUEUE_SNAPSHOT
-)
-// 当前首条输入已有消息气泡，等待消费时只在回复位置提供取消操作。
-const primaryQueuedInput = computed(() => {
-  const state = currentThreadState.value
-  if (currentQueueSnapshot.value.status === 'paused') return null
-  return currentQueuedInputs.value.find((input) =>
-    input.input_id === state?.pendingInputId &&
-    state?.optimisticInputs?.[input.input_id]?.length &&
-    input.attachment_status !== 'preparing'
-  ) || null
-})
-const visibleQueuedInputs = computed(() =>
-  currentQueuedInputs.value.filter((input) => input !== primaryQueuedInput.value)
-)
-const queuedInputCount = computed(() => currentQueuedInputs.value.length)
-const hasQueuedInputs = computed(() => queuedInputCount.value > 0)
-const isWaitingForUserAction = computed(() =>
-  isThreadWaitingForUserAction(currentThreadState.value)
-)
-const queuePausedMessage = '后续队列已暂停。发送新消息将优先处理并继续队列。'
-const hasDraftContent = computed(
-  () => Boolean(String(userInput.value || '').trim() || agentInputAreaRef.value?.hasImages)
-)
-const shouldShowStopButton = computed(
-  () =>
-    (isStreaming.value || currentThreadState.value?.cooperationWaiting) &&
-    !hasDraftContent.value
-)
-const inputSubmissionBlocked = computed(
-  () =>
-    !agentExecutionAvailable.value ||
-    props.sendDisabled ||
-    sendCooldownActive.value ||
-    isLoadingMessages.value ||
-    isWaitingForUserAction.value ||
-    !!pendingSends.value[currentChatId.value] ||
-    Boolean(currentThreadState.value?.cancellationPending)
-)
-const canSubmitSteer = computed(
-  () =>
-    !inputSubmissionBlocked.value &&
-    isStreaming.value &&
-    Boolean(currentThreadState.value?.activeRunId) &&
-    !currentThreadState.value?.cooperationWaiting &&
-    currentThreadState.value?.activeRunSteerable === true &&
-    hasDraftContent.value
-)
-const canCancelQueuedInput = (input) => input?.status !== 'sending'
-const canPromoteQueuedInput = (input) =>
-  agentExecutionAvailable.value &&
-  input?.status === 'pending' &&
-  input.kind === 'follow_up' &&
-  input.attachment_status !== 'preparing' &&
-  !isWaitingForUserAction.value &&
-  !currentThreadState.value?.cooperationWaiting &&
-  (!currentThreadState.value?.activeRunId || currentThreadState.value?.activeRunSteerable === true)
 const shouldRefreshStateWhileStreaming = computed(
   () =>
     workspaceActive.value &&
@@ -1647,16 +806,13 @@ const shouldRefreshStateWhileStreaming = computed(
 const activeAgentPanelSection = computed(() =>
   agentPanelSections.value.find((section) => section.key === agentPanelActiveSectionKey.value)
 )
-const activeAgentPanelPreview = computed(() =>
-  agentPanelPreviewTabs.value.find((file) => file.path === agentPanelActivePreviewPath.value)
-)
 const agentPanelFilesystemVisible = computed(
   () =>
     workspaceActive.value &&
     isFilePanelOpen.value &&
     (activeAgentPanelSection.value?.type === 'file-tree' ||
-      (activeAgentPanelSection.value?.type === 'file' &&
-        activeAgentPanelPreview.value?.workdir === true))
+      (activeAgentPanelPreview.value?.workdir === true &&
+        activeAgentPanelPreview.value.threadId === currentChatId.value))
 )
 const agentPanelFilesystemPollingActive = computed(() =>
   shouldPollAgentPanelFilesystem({
@@ -1664,173 +820,13 @@ const agentPanelFilesystemPollingActive = computed(() =>
     pageVisible: workspaceActive.value && pageVisible.value,
     streaming: isStreaming.value,
     activeSection: activeAgentPanelSection.value,
-    activePreview: activeAgentPanelPreview.value
+    activePreview:
+      activeAgentPanelPreview.value?.threadId === currentChatId.value
+        ? activeAgentPanelPreview.value
+        : null
   })
 )
-const isProcessing = computed(
-  () =>
-    isStreaming.value ||
-    currentThreadState.value?.cooperationWaiting ||
-    currentThreadState.value?.cancellationPending ||
-    (hasQueuedInputs.value && currentQueueSnapshot.value.status !== 'paused')
-)
-const isReplyLoading = computed(() => {
-  return (
-    currentThreadState.value?.cancellationPending ||
-    (isProcessing.value && !isWaitingForUserAction.value)
-  )
-})
-const replyLoadingText = computed(() => {
-  const threadState = currentThreadState.value
-  if (threadState?.cancellationPending) return '正在停止，等待任务清理完成...'
-  if (threadState?.cooperationWaiting) return '等待协作任务完成...'
-  if (threadState?.contextCompressing) return '正在压缩上下文...'
-  if (!isStreaming.value && hasQueuedInputs.value && !primaryQueuedInput.value)
-    return `排队中（${queuedInputCount.value} 条）...`
-  return '正在生成回复...'
-})
-const isSendButtonDisabled = computed(
-  () => inputSubmissionBlocked.value || (!hasDraftContent.value && !isProcessing.value)
-)
-
-const startSendCooldown = () => {
-  sendCooldownActive.value = true
-  if (sendCooldownTimer) {
-    clearTimeout(sendCooldownTimer)
-  }
-  sendCooldownTimer = setTimeout(() => {
-    sendCooldownActive.value = false
-    sendCooldownTimer = null
-  }, 2000)
-}
-
-const CONFIG_CHANGE_NOTICE_MESSAGE =
-  '本会话沿用创建时的智能体配置；之后的修改只对新会话生效，建议新建对话以使用最新配置。'
-
-const withConfigNoticeSync = async (task) => {
-  configNoticeSyncDepth.value += 1
-  try {
-    return await task()
-  } finally {
-    configNoticeSyncDepth.value = Math.max(0, configNoticeSyncDepth.value - 1)
-  }
-}
-
-const buildThreadConfigSnapshot = () => {
-  return {
-    agentId: currentAgentId.value || '',
-    configJson: JSON.stringify(agentConfig.value || {})
-  }
-}
-
-const syncThreadConfigSnapshot = (threadId, options = {}) => {
-  if (!threadId) return
-
-  const { overwrite = true } = options
-  if (!overwrite && threadConfigSnapshotMap.value[threadId]) return
-  if (threadPendingConfigNoticeMap.value[threadId]) return
-
-  // 线程切换时先记录当前 UI 的配置快照，避免同步 thread 绑定配置时误报。
-  threadConfigSnapshotMap.value = {
-    ...threadConfigSnapshotMap.value,
-    [threadId]: buildThreadConfigSnapshot()
-  }
-}
-
-const upsertThreadConfigNotice = (threadId, insertAfterGroupCount) => {
-  if (!threadId) return
-
-  const existingNotice = threadConfigNoticeMap.value[threadId]
-  const nextNotice = {
-    id: existingNotice?.id || `config-change-notice-${threadId}`,
-    message: existingNotice?.message || CONFIG_CHANGE_NOTICE_MESSAGE,
-    insertAfterGroupCount
-  }
-  const shouldScroll =
-    !existingNotice || existingNotice.insertAfterGroupCount !== insertAfterGroupCount
-
-  threadConfigNoticeMap.value = {
-    ...threadConfigNoticeMap.value,
-    [threadId]: nextNotice
-  }
-
-  if (threadPendingConfigNoticeMap.value[threadId]) {
-    const nextPendingNotices = { ...threadPendingConfigNoticeMap.value }
-    delete nextPendingNotices[threadId]
-    threadPendingConfigNoticeMap.value = nextPendingNotices
-  }
-
-  if (shouldScroll) {
-    configNoticeScrollVersion.value += 1
-  }
-}
-
-const queuePendingThreadConfigNotice = (threadId) => {
-  if (!threadId) return
-  threadPendingConfigNoticeMap.value = {
-    ...threadPendingConfigNoticeMap.value,
-    [threadId]: {
-      id: `config-change-notice-${threadId}`,
-      message: CONFIG_CHANGE_NOTICE_MESSAGE
-    }
-  }
-}
-
-const flushPendingThreadConfigNotice = (threadId) => {
-  if (
-    !threadId ||
-    !currentThreadHasHistory.value ||
-    !threadPendingConfigNoticeMap.value[threadId]
-  ) {
-    return
-  }
-
-  upsertThreadConfigNotice(threadId, runGroups.value.length)
-}
-
-const maybeInsertThreadConfigNotice = () => {
-  const threadId = currentChatId.value
-  if (!threadId || configNoticeSyncDepth.value > 0) {
-    return
-  }
-
-  const previousSnapshot = threadConfigSnapshotMap.value[threadId]
-  const currentSnapshot = buildThreadConfigSnapshot()
-
-  if (!previousSnapshot) {
-    threadConfigSnapshotMap.value = {
-      ...threadConfigSnapshotMap.value,
-      [threadId]: currentSnapshot
-    }
-    return
-  }
-
-  if (
-    previousSnapshot.agentId === currentSnapshot.agentId &&
-    previousSnapshot.configJson === currentSnapshot.configJson
-  ) {
-    return
-  }
-
-  if (currentThreadHasHistory.value) {
-    upsertThreadConfigNotice(threadId, runGroups.value.length)
-  } else if (isLoadingMessages.value) {
-    // 历史线程仍在加载时先挂起提示，避免消息返回后把变更误当成新的基线。
-    queuePendingThreadConfigNotice(threadId)
-  } else {
-    return
-  }
-
-  threadConfigSnapshotMap.value = {
-    ...threadConfigSnapshotMap.value,
-    [threadId]: currentSnapshot
-  }
-}
-
-// 布局只读取视口几何；阅读锚点、滚动与分页由 ThreadTimeline 拥有。
-const timelineRef = ref(null)
-const chatMainRef = computed(() => timelineRef.value?.element || null)
-const messageInputDockRef = ref(null)
+let streamingStateRefreshTimer = null
 let chatMainResizeObserver = null
 // 初始化延迟标志，避免首次挂载时 ResizeObserver 立即触发导致侧边栏意外关闭
 let isResizeObserverReady = false
@@ -1935,10 +931,6 @@ onDeactivated(() => {
   workspaceActivated.value = false
   stopChatMainResizeObserver()
   stopStreamingStateRefresh()
-  if (props.isNewSession && currentChatId.value) {
-    // 正式路由接管线程草稿；缓存的新建页不能在再次打开时覆写它。
-    userInput.value = threadDraftSession.switchThread('', userInput.value)
-  }
 })
 
 onUnmounted(() => {
@@ -1947,622 +939,37 @@ onUnmounted(() => {
   }
   stopChatMainResizeObserver()
   stopStreamingStateRefresh()
-  if (sendCooldownTimer) {
-    clearTimeout(sendCooldownTimer)
-    sendCooldownTimer = null
-  }
-
-})
-
-// ==================== 线程管理方法 ====================
-// 把草稿线程的选择迁移到真实线程：真实线程未设值时才覆盖，迁移后删除草稿。
-const promoteDraftSelection = (selectionByThread, threadId) => {
-  const draft = selectionByThread[DRAFT_MODEL_KEY]
-  if (!draft) return
-  if (!selectionByThread[threadId]) selectionByThread[threadId] = draft
-  delete selectionByThread[DRAFT_MODEL_KEY]
-}
-
-const fetchThreadAttachments = async (threadId) => {
-  if (!threadId) return
-  try {
-    const response = await threadApi.getThreadAttachments(threadId)
-    threadAttachmentsMap.value[threadId] = Array.isArray(response?.attachments)
-      ? response.attachments
-      : []
-  } catch (error) {
-    console.warn('Failed to fetch thread attachments:', error)
-    threadAttachmentsMap.value[threadId] = []
-  }
-}
-
-const handleArtifactSaved = async () => {
-  if (!currentChatId.value) return
-  await fetchThreadAttachments(currentChatId.value)
-  agentPanelFilesystemRefreshVersion.value += 1
-  showFileTreePanel()
-}
-
-const invalidateAgentStateRequest = (threadId) => {
-  const threadState = getThreadState(threadId)
-  if (!threadState) return
-  threadState.agentStateRequestVersion = (threadState.agentStateRequestVersion || 0) + 1
-}
-
-const createActiveThread = async () => {
-  if (currentChatId.value) return currentChatId.value
-  const selectedAgent = currentAgentId.value
-  const selectedProject = selectedProjectId.value
-  const startingThreadId = currentChatId.value
-  const creationContext = {
-    agentId: selectedAgent,
-    projectId: selectedProject,
-    threadId: startingThreadId
-  }
-  let request = threadCreationRequest.value
-  if (!request || request.agentId !== selectedAgent || request.projectId !== selectedProject) {
-    request = {
-      ...creationContext,
-      id: createInputRequestId(),
-      metadata: { tool_approval_mode: currentToolApprovalMode.value }
-    }
-    threadCreationRequest.value = request
-  }
-  chatThreadsStore.setThreadCreationInFlight(true)
-  try {
-    const projectId = selectedProject === AUTO_PROJECT_ID ? '' : selectedProject
-    const { thread, accepted } = await createThreadForContext({
-      context: creationContext,
-      getCurrentContext: () => ({
-        agentId: currentAgentId.value,
-        projectId: selectedProjectId.value,
-        threadId: currentChatId.value
-      }),
-      requestId: request.id,
-      create: (stableRequestId) =>
-        chatThreadsStore.createThread(selectedAgent, null, request.metadata, {
-          requestId: stableRequestId,
-          projectId: projectId || undefined
-        })
-    })
-    if (!thread) throw new Error('创建对话失败')
-    if (!accepted) throw new Error('新对话上下文已变化，请重新发送或添加附件')
-
-    getThreadState(thread.id).historyLoaded = true
-    threadAttachmentsMap.value[thread.id] = []
-    threadCreationRequest.value = null
-    promoteDraftSelection(draftFilesByThread.value, thread.id)
-    if (attachmentUploadThreadKey.value === DRAFT_MODEL_KEY) {
-      attachmentUploadThreadKey.value = thread.id
-    }
-    currentThreadId.value = thread.id
-    await refreshSessionAgent(thread.id, selectedAgent)
-    return thread.id
-  } catch (error) {
-    if (error.status >= 400 && error.status < 500 && error.status !== 429)
-      threadCreationRequest.value = null
-    throw error
-  } finally {
-    chatThreadsStore.setThreadCreationInFlight(false)
-  }
-}
-
-const ensureActiveThread = createSingleFlight(createActiveThread)
-
-const handleAttachmentUpload = async (files = []) => {
-  if (
-    !AgentValidator.validateAgentIdWithError(
-      currentAgentId.value,
-      '上传附件',
-      handleValidationError
-    )
-  )
-    return
-
-  if (!attachmentUploadModalOpen.value) {
-    attachmentUploadThreadKey.value = currentChatId.value || DRAFT_MODEL_KEY
-  }
-  const droppedFiles = Array.from(files || []).filter((file) => file instanceof File)
-  if (droppedFiles.length) {
-    attachmentInitialFiles.value = droppedFiles
-    attachmentInitialFilesKey.value += 1
-  }
-
-  attachmentUploadModalOpen.value = true
-}
-
-const handleTmpAttachmentsAdded = (files) => {
-  const key = attachmentUploadThreadKey.value
-  draftFilesByThread.value[key] = [...(draftFilesByThread.value[key] || []), ...files]
-}
-
-const handleAttachmentRemove = async (file) => {
-  const key = currentChatId.value || DRAFT_MODEL_KEY
-  try {
-    await threadApi.deleteDraftFile(file.id)
-    draftFilesByThread.value[key] = (draftFilesByThread.value[key] || []).filter(
-      (item) => item.id !== file.id
-    )
-  } catch (error) {
-    handleChatError(error, 'delete')
-  }
-}
-
-// ==================== 审批功能管理 ====================
-const { approvalState, restoreInterruptFromThreadState, hideApprovalState } = useApproval({ getThreadState })
-
-const restorePendingInterruptForThread = (threadId) => {
-  if (!threadId) return false
-  return restoreInterruptFromThreadState(threadId)
-}
-watch(visibleApprovalThreadId, (threadId) => {
-  if (!restorePendingInterruptForThread(threadId)) hideApprovalState()
-})
-
-provide('getAgentThreadState', getThreadState)
-provide('sessionAgentConfigurableItems', configurableItems)
-const runtimeView = {
-  onInterruptDetected: ({ threadId }) => {
-    if (workspaceActive.value) restorePendingInterruptForThread(threadId)
-  },
-  onTerminalDetected: ({ threadId, runId }) => {
-    if (approvalState.threadId === threadId) hideApprovalState()
-    if (runId && threadId === currentThreadId.value) {
-      agentPanelFilesystemRefreshVersion.value += 1
-    }
-    if (workspaceActive.value && pageVisible.value && runId && threadId === currentThreadId.value) {
-      void chatThreadsStore.markThreadViewed(threadId)
-    }
-  }
-}
-const preparingThreadInputs = new WeakSet()
-
-/** 在授权读取完成后准备该 Thread 的输入，异步结果只用于当前工作区。 */
-const initializeThreadInput = async ({ threadId }) => {
-  if (threadId !== currentThreadId.value) return
-  const state = getThreadState(threadId)
-  if (preparingThreadInputs.has(state)) return
-  preparingThreadInputs.add(state)
-  try {
-    const current = () => currentThreadId.value === threadId && sessionRuntime.isCurrentThreadState(threadId, state)
-    restorePendingInterruptForThread(threadId)
-    if (workspaceActive.value && pageVisible.value) void chatThreadsStore.markThreadViewed(threadId)
-    await refreshSessionAgent(threadId, currentThread.value?.agent.id)
-    if (!current()) return
-    if (!agentExecutionAvailable.value) {
-      // 归档或智能体不可用时，已结束轮次的状态面板仍可阅读。
-      if (['completed', 'failed', 'cancelled'].includes(state.turnStatus)) void fetchAgentState(threadId)
-      return
-    }
-    await withConfigNoticeSync(async () => syncThreadConfigSnapshot(threadId))
-    if (!current()) return
-    await handleAgentStateRefresh(threadId)
-    if (!current()) return
-    syncThreadConfigSnapshot(threadId, { overwrite: false })
-    restorePendingInterruptForThread(threadId)
-  } finally {
-    preparingThreadInputs.delete(state)
-  }
-}
-
-const handlePromoteQueuedInput = async (inputId) => {
-  const threadId = currentChatId.value
-  if (!threadId || promotingInputIds.has(inputId)) return
-  promotingInputIds.add(inputId)
-  try {
-    if (await promoteInput(threadId, inputId)) message.success('已转为引导')
-  } finally {
-    promotingInputIds.delete(inputId)
-  }
-}
-
-const handleCancelQueuedInput = async (inputId) => {
-  const threadId = currentChatId.value
-  if (!threadId || !inputId || cancellingInputIds.has(inputId)) return
-
-  cancellingInputIds.add(inputId)
-  const cancelled = await cancelInput(threadId, inputId)
-  cancellingInputIds.delete(inputId)
-  if (cancelled) {
-    await resumeQueuedInputs(threadId)
-    message.success('已取消排队输入')
-  }
-}
-
-const handleContinueQueue = async () => {
-  if (!agentExecutionAvailable.value) return
-  const threadId = currentChatId.value
-  if (!threadId || currentThreadState.value?.continueQueueInFlight) return
-
-  if (await continueQueue(threadId)) {
-    message.success('队列已继续')
-  }
-}
-
-const resumeCurrentRunForVisiblePage = async () => {
-  if (!workspaceActive.value) return
-  if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
-  const threadId = currentChatId.value
-  if (!threadId) return
-
-  try {
-    await timelineRef.value?.refresh()
-    restorePendingInterruptForThread(threadId)
-  } catch (error) {
-    console.warn('Failed to resume current run after page became visible:', error)
-  }
-}
-
-watch(workspaceActive, (active) => {
-  if (!active) {
-    agentInputAreaRef.value?.closeOptions()
-    return
-  }
-  if (pageVisible.value && currentChatId.value) {
-    void chatThreadsStore.markThreadViewed(currentChatId.value)
-  }
 })
 
 const handlePageVisibilityChange = () => {
   pageVisible.value = typeof document === 'undefined' || document.visibilityState === 'visible'
 }
 
-// ==================== CHAT ACTIONS ====================
-const selectChat = async (chatId) => {
-  const previousThreadId = currentThreadId.value
-  if (previousThreadId !== chatId) resetAgentPanelState()
-  currentThreadId.value = chatId
-  await nextTick()
-  try {
-    if (!(await timelineRef.value?.refresh())) return false
-  } catch (error) {
-    return [403, 404, 410].includes(error?.status) ? false : null
-  }
-  if (currentChatId.value !== chatId) return false
-  return true
-}
-
-const selectThreadFromRoute = async (threadId) => {
-  if (!threadId) {
-    // 草稿视图可能正在接收首条输入；已确认的具体 Thread 独立读取。
-    if (threadCreationInFlight.value) return null
-    const previousThreadId = currentThreadId.value
-    resetAgentPanelState()
-    currentThreadId.value = null
-    if (previousThreadId) emit('thread-change', '')
-    return true
-  }
-
-  return selectChat(threadId)
-}
-
-const sessionInput = createSessionInput({
-  runtime: sessionRuntime,
-  onPrepared: (_threadId, draft) => {
-    if (!draft.fromWidget && userInput.value.trim() === draft.text) userInput.value = ''
-    if (approvalState.threadId === _threadId) hideApprovalState()
-    void nextTick(() => timelineRef.value?.scrollToBottom(true))
-  },
-  onAccepted: async (threadId, draft) => {
-    draft.onWidgetAccepted?.()
-    draftFilesByThread.value[threadId] = (draftFilesByThread.value[threadId] || []).filter(
-      (item) => !draft.data.attachment_file_ids.includes(item.id)
-    )
-    const model = draft.data.model_spec
-    const thread = threads.value.find((item) => item.id === threadId)
-    if (model && thread) {
-      thread.agent.model = model
-      delete selectedModelByThread[threadId]
-      void chatThreadsStore
-        .updateThread(threadId, null, undefined, undefined, model)
-        .catch(() => {})
-    }
-    if (draft.createdFromDraft && currentChatId.value === threadId)
-      threadDraftSession.clearDraftThread()
-    if (props.isNewSession && currentChatId.value === threadId) emit('thread-change', threadId)
-    await fetchThreadAttachments(threadId)
-  },
-  onRejected: async (threadId, draft, error, { accepted, restore }) => {
-    if (restore && !draft.fromWidget && currentChatId.value === threadId) {
-      userInput.value = [draft.text, userInput.value].filter(Boolean).join('\n')
-      agentInputAreaRef.value?.restoreImages?.(draft.images)
-    }
-    if (isRunInterruptedConflict(error)) {
-      try {
-        await fetchAgentState(threadId, { required: true })
-      } catch {
-        message.error('审批状态恢复失败，请刷新页面后重试')
-      }
-    }
-    if (accepted && props.isNewSession) emit('thread-change', threadId)
-    handleChatError(error, 'send')
-  }
-})
-
-const widgetActionsDisabled = computed(
-  () =>
-    !agentExecutionAvailable.value ||
-    props.sendDisabled ||
-    isLoadingMessages.value ||
-    isProcessing.value ||
-    isWaitingForUserAction.value ||
-    sendCooldownActive.value ||
-    Boolean(pendingSends.value[currentChatId.value])
-)
-
-const handleSendMessage = async ({
-  images = [],
-  mode = 'follow_up',
-  retry = false,
-  text: submittedText,
-  fromWidget = false,
-  onWidgetAccepted
-} = {}) => {
-  const original = pendingSends.value[currentChatId.value]
-  if ((original && !retry) || (retry && !original)) return false
-  const text = original?.text ?? submittedText ?? userInput.value.trim()
-  if (
-    (!text && !images.length && !original?.images.length) ||
-    !agentExecutionAvailable.value ||
-    sendCooldownActive.value ||
-    props.sendDisabled ||
-    isLoadingMessages.value ||
-    isWaitingForUserAction.value
-  )
-    return false
-  startSendCooldown()
-  let threadId = currentChatId.value
-  const createdFromDraft = !threadId
-  const draft = {
-    text,
-    images: images.map((image) => ({ ...image })),
-    createdFromDraft,
-    fromWidget,
-    onWidgetAccepted,
-    attachments: fromWidget
-      ? []
-      : currentPendingThreadAttachments.value.map((file) => ({ ...file })),
-    modelSpec: currentModelSpec.value || null,
-    toolApprovalMode: currentToolApprovalMode.value,
-    mode
-  }
-  if (!threadId) {
-    const consumeDraft = !fromWidget && userInput.value.trim() === text
-    if (consumeDraft) userInput.value = ''
-    try {
-      threadId = await ensureActiveThread()
-      if (!threadId) throw new Error('创建对话未返回线程')
-    } catch {
-      if (consumeDraft) {
-        userInput.value = [draft.text, userInput.value].filter(Boolean).join('\n')
-        agentInputAreaRef.value?.restoreImages?.(draft.images)
-      }
-      message.error('创建对话失败，请重试')
-      return
-    }
-    promoteDraftSelection(selectedModelByThread, threadId)
-  }
-  return sessionInput.send(threadId, draft, { retry })
-}
-
-const handleDirectSteer = async () => {
-  if (!canSubmitSteer.value) return
-  agentInputAreaRef.value?.submit('steer')
-}
-
-const handleContextCompression = async () => {
-  if (!agentExecutionAvailable.value) return
+/** 根状态面板仅刷新自己显示的 Thread。 */
+async function handleAgentStateRefresh() {
   const threadId = currentChatId.value
-  const threadState = getThreadState(threadId)
-  if (
-    !threadId ||
-    !threadState ||
-    isContextCompressionPending.value ||
-    isProcessing.value ||
-    hasQueuedInputs.value ||
-    isWaitingForUserAction.value
-  )
-    return
-
-  threadState.contextCompressing = true
-  try {
-    const response = await agentApi.compressThreadContext(threadId)
-    await fetchAgentState(threadId)
-    if (response?.status === 'completed') message.success('上下文压缩完成')
-    else message.info('当前没有足够的历史消息可压缩')
-  } catch (error) {
-    handleChatError(error, 'compress_context')
-  } finally {
-    const latestState = getThreadState(threadId)
-    if (latestState) latestState.contextCompressing = false
-  }
-}
-
-// 发送或中断
-const handleSendOrStop = async (payload) => {
-  if (sendCooldownActive.value) {
-    return
-  }
-
-  const threadId = currentChatId.value
-  const threadState = getThreadState(threadId)
-  const hasNewInput = Boolean(String(userInput.value || '').trim() || payload?.images?.length)
-  if (
-    threadState?.activeRunId &&
-    (threadState.isStreaming || threadState.cooperationWaiting) &&
-    !hasNewInput
-  ) {
-    try {
-      if (!(await requestTurnCancellation(threadId))) return
-      threadState.pendingInterrupt = null
-      if (approvalState.threadId === threadId) {
-        hideApprovalState()
-      }
-      message.info('已发送取消请求')
-    } catch (error) {
-      handleChatError(error, 'stop')
-    }
-    return
-  }
-  await handleSendMessage(payload)
-}
-
-// ==================== 人工审批处理 ====================
-const handleApprovalWithStream = async (answer) => {
-  if (approvalSubmitting.value) return
-  const threadId = approvalState.threadId
-  const interruptedRunId = approvalState.interruptedRunId
-  if (!threadId) {
-    message.error('无效的提问请求')
-    approvalState.showModal = false
-    return
-  }
-
-  const threadState = getThreadState(threadId)
-  if (!threadState) {
-    message.error('无法找到对应的对话线程')
-    approvalState.showModal = false
-    return
-  }
-
-  if (!interruptedRunId) {
-    message.error('无法找到需要恢复的运行任务')
-    approvalState.showModal = false
-    return
-  }
-
-  threadState.approvalSubmitting = true
-
-  try {
-    const turnId = threadState.currentTurnId
-    const accepted = await resumeSessionWaitpoint({
-      threadId,
-      turnId,
-      runId: interruptedRunId,
-      kind: approvalState.kind,
-      answer
-    })
-    const runId = accepted.run_id
-    invalidateAgentStateRequest(threadId)
-    hideApprovalState()
-    threadState.pendingInterrupt = null
-    threadState.isStreaming = true
-    resetThreadExecution(threadId, { preserveInputMonitors: true })
-    // 首个流事件前读取已持久化的续跑关系；读取失败不能把已创建的 Run 当成创建失败。
-    try {
-      await fetchThreadMessages({ threadId })
-    } catch (error) {
-      console.warn('Failed to refresh history before resume stream:', error)
-    }
-    await startRunStream(threadId, runId, null, { turnId })
-  } catch (error) {
-    // 接收前保留原审批供重试；失败不能回滚期间推进的 Run 或等待点。
-    handleChatError(error, 'resume')
-  } finally {
-    threadState.approvalSubmitting = false
-  }
-}
-
-const handleQuestionSubmit = (answer) => {
-  handleApprovalWithStream(answer)
-}
-
-const handleQuestionCancel = async () => {
-  if (approvalSubmitting.value) return
-  const threadId = approvalState.threadId
-  if (!threadId) return
-  const threadState = getThreadState(threadId)
-  threadState.approvalSubmitting = true
-  try {
-    if (!threadState.currentTurnId || !threadState.activeRunId)
-      throw new Error('当前线程没有等待中的 Turn')
-    if (!(await requestTurnCancellation(threadId))) return
-    hideApprovalState()
-    getThreadState(threadId).pendingInterrupt = null
-    await resumeQueuedInputs(threadId)
-    message.info('已请求停止当前任务')
-  } catch (error) {
-    handleChatError(error, 'stop')
-  } finally {
-    threadState.approvalSubmitting = false
-  }
-}
-
-const buildExportPayload = () => {
-  const agentId = currentAgentId.value
-  let agentDescription = ''
-  if (agentId && agents.value && agents.value.length > 0) {
-    const agent = agents.value.find((a) => a.agent_id === agentId)
-    agentDescription = agent ? agent.description || '' : ''
-  }
-
-  const payload = {
-    chatTitle: currentThread.value?.yuxi.title || '新对话',
-    agentName: currentAgentName.value || currentAgent.value?.name || '智能助手',
-    agentDescription: agentDescription || currentAgent.value?.description || '',
-    messages: runGroups.value ? JSON.parse(JSON.stringify(runGroups.value)) : [],
-    onGoingMessages: ongoingRunMessages.value
-      ? JSON.parse(JSON.stringify(ongoingRunMessages.value))
-      : []
-  }
-
-  return payload
-}
-
-defineExpose({
-  getExportPayload: buildExportPayload,
-  selectThreadFromRoute,
-  openSessionFromRoute,
-  focusPendingAction
-})
-
-/** 重新读取目标会话，为当前人工等待登记一次聚焦意图。 */
-async function focusPendingAction() {
-  await workspaceReady
-  await resumeCurrentRunForVisiblePage()
-  if (workspaceActive.value && currentThreadState.value?.turnStatus === 'requires_action') {
-    pendingActionFocusTurnId.value = currentThreadState.value.currentTurnId
-  }
-}
-
-// 等待点在历史恢复后异步到达；离开视图或轮次变化时撤销导航聚焦。
-watch(
-  [
-    currentApprovalModalVisible,
-    workspaceActive,
-    pendingActionFocusTurnId,
-    () => currentThreadState.value?.currentTurnId,
-    () => currentThreadState.value?.turnStatus
-  ],
-  async ([visible, active, requestedTurnId, turnId, turnStatus]) => {
-    if (!requestedTurnId) return
-    if (!active || requestedTurnId !== turnId || turnStatus !== 'requires_action') {
-      pendingActionFocusTurnId.value = null
-      return
-    }
-    if (!visible) return
-    await nextTick()
-    if (
-      workspaceActive.value &&
-      currentApprovalModalVisible.value &&
-      pendingActionFocusTurnId.value === currentThreadState.value?.currentTurnId
-    ) {
-      messageInputStageRef.value?.querySelector('[role="dialog"]')?.focus()
-      pendingActionFocusTurnId.value = null
-    }
-  }
-)
-
-const handleAgentStateRefresh = async (threadId = null) => {
-  if (!currentAgentId.value) return
-  const chatId = threadId || currentChatId.value
-  if (!chatId) return
+  if (!threadId || isRefreshingState.value) return
   isRefreshingState.value = true
   try {
-    await Promise.all([fetchAgentState(chatId), fetchThreadAttachments(chatId)])
+    await Promise.all([
+      sessionRuntime.fetchAgentState(threadId),
+      mainThread.value?.refreshAttachments(threadId)
+    ])
   } finally {
     isRefreshingState.value = false
   }
+}
+
+function handleTerminal(threadId) {
+  markThreadFilesChanged(threadId)
+  if (workspaceActive.value && pageVisible.value && threadId === currentChatId.value) {
+    void sessionRuntime.fetchAgentState(threadId)
+  }
+}
+
+function handleArtifactSaved(threadId) {
+  markThreadFilesChanged(threadId)
+  if (threadId === currentChatId.value) showFileTreePanel()
 }
 
 const toggleStatePanel = async () => {
@@ -2573,23 +980,13 @@ const toggleStatePanel = async () => {
   }
 }
 
-const closeFilePanel = () => {
+function closeFilePanel(restoreFocus = false) {
   sessionLinkNavigator.invalidate()
-  isFilePanelOpen.value = false
-  isAgentPanelMaximized.value = false
-  filePanelDragWidth.value = null
+  hideFilePanel()
+  if (restoreFocus) void nextTick(() => filePanelTriggerRef.value?.focus())
 }
 
-const toggleAgentPanelMaximized = () => {
-  if (isResizing.value) return
-  isAgentPanelMaximized.value = !isAgentPanelMaximized.value
-  if (!isAgentPanelMaximized.value && agentPanelActiveSectionKey.value === 'main-session') {
-    agentPanelActiveSectionKey.value = agentPanelSections.value[0]?.key || 'file-tree'
-  }
-  filePanelDragWidth.value = null
-}
-
-const toggleAgentPanel = async () => {
+const toggleAgentPanel = () => {
   const nextOpen = !isFilePanelOpen.value
 
   if (!nextOpen) {
@@ -2597,96 +994,34 @@ const toggleAgentPanel = async () => {
     return
   }
 
-  showFilePanel(agentPanelActivePreviewPath.value ? 'preview' : 'tree')
-  await handleAgentStateRefresh()
+  showFilePanel()
 }
 
-// 处理面板宽度调整（使用比例）
-// 向右拖动(deltaX > 0)让面板变窄，向左拖动(deltaX < 0)让面板变宽
-const handlePanelResize = (clientX) => {
-  if (!panelWrapperRef.value || isAgentPanelMaximized.value) return
-
-  if (!panelContainerWidth) {
-    panelContainerWidth = getPanelContainerWidth()
-  }
-
-  const deltaX = clientX - resizeStartX
-  const rawWidth = resizeStartWidth - deltaX
-  const maxWidth = getFilePanelMaxWidth(panelContainerWidth)
-  const minWidth = getFilePanelMinWidth(panelContainerWidth, maxWidth)
-  const nextWidth = Math.max(minWidth, Math.min(rawWidth, maxWidth))
-
-  filePanelDragWidth.value = nextWidth
-
-  if (nextWidth !== rawWidth) {
-    resizeStartX = clientX
-    resizeStartWidth = nextWidth
-  }
-}
-
-// 拖拽状态变化时，同步最终状态到 Vue 响应式数据
-const handleResizingChange = (isResizingState, clientX = 0) => {
-  if (isAgentPanelMaximized.value) return
-  isResizing.value = isResizingState
-
-  if (isResizingState && panelWrapperRef.value) {
-    resizeStartX = clientX
-    resizeStartWidth = panelWrapperRef.value.offsetWidth
-    filePanelDragWidth.value = resizeStartWidth
-    if (!panelContainerWidth) {
-      panelContainerWidth = getPanelContainerWidth()
+watch([statePanelOpen, isAgentPanelMaximized], () => {
+  void nextTick(updateStatePanelPlacement)
+})
+watch(
+  [
+    () => workspaceActive.value && currentThreadState.value?.readingReady ? currentChatId.value : null,
+    () => currentThreadState.value?.pendingInterrupt?.waitpointId,
+    () => currentThreadState.value?.pendingInterrupt?.waitpointId ? currentThreadState.value.runStateVersion : null
+  ],
+  ([threadId, waitpointId, runVersion], [previousThreadId, previousWaitpointId, previousRunVersion]) => {
+    const waitingStateChanged = waitpointId && (waitpointId !== previousWaitpointId || runVersion !== previousRunVersion)
+    if (threadId && (threadId !== previousThreadId || waitingStateChanged)) {
+      void sessionRuntime.fetchAgentState(threadId)
     }
-    return
   }
-
-  if (!isResizingState && panelWrapperRef.value && panelContainerWidth) {
-    const finalWidth = filePanelDragWidth.value ?? panelWrapperRef.value.offsetWidth
-    panelRatio.value = clampPanelRatio(finalWidth / panelContainerWidth, panelContainerWidth)
-  }
-
-  if (!isResizingState) {
-    filePanelDragWidth.value = null
-    resizeStartX = 0
-    resizeStartWidth = 0
-    panelContainerWidth = 0 // 重置，供下次使用
-  }
-}
-
-// ==================== HELPER FUNCTIONS ====================
-// ==================== LIFECYCLE & WATCHERS ====================
-const initAll = async () => {
-  try {
-    if (!agentStore.isInitialized) {
-      await agentStore.initialize()
-    }
-  } catch (error) {
-    handleChatError(error, 'load')
-  }
-}
-
-/** 初始化视图，待办导航等待成员首次装载完成后再聚焦。 */
-async function initializeWorkspace() {
-  await initAll()
-  if (props.embeddedThreadId) {
-    await selectThreadFromRoute(props.embeddedThreadId)
-    closeFilePanel()
-  }
-}
-
-onMounted(() => {
-  workspaceReady = initializeWorkspace()
+)
+watch(workspaceActive, (active) => {
+  if (active) void nextTick(startChatMainResizeObserver)
+  else stopChatMainResizeObserver()
 })
 
-watch(showStateEntry, (visible) => {
-  if (!visible && statePanelOpen.value) {
-    statePanelOpen.value = false
-  }
-})
-
-watch(showFileEntry, (visible) => {
-  if (!visible && isFilePanelOpen.value) {
-    closeFilePanel()
-  }
+defineExpose({
+  getExportPayload: () => mainThread.value?.getExportPayload(),
+  selectThreadFromRoute: (threadId) => mainThread.value?.selectThreadFromRoute(threadId),
+  openSessionFromRoute
 })
 
 watch(
@@ -2701,69 +1036,9 @@ watch(
   },
   { immediate: true }
 )
-
-watch(
-  currentThreadMessages,
-  () => {
-    if (currentThreadHasHistory.value) {
-      flushPendingThreadConfigNotice(currentChatId.value)
-      syncThreadConfigSnapshot(currentChatId.value, { overwrite: false })
-    }
-  },
-  { deep: false }
-)
-
-watch(currentAgentId, (newAgentId, oldAgentId) => {
-  if (oldAgentId === undefined || newAgentId === oldAgentId) return
-  maybeInsertThreadConfigNotice()
-})
-
-watch(
-  () => JSON.stringify(agentConfig.value || {}),
-  (newConfigJson, oldConfigJson) => {
-    if (oldConfigJson === undefined || newConfigJson === oldConfigJson) return
-    maybeInsertThreadConfigNotice()
-  }
-)
-
-watch(currentChatId, (threadId, oldThreadId) => {
-  if (threadId === oldThreadId) return
-  // 旧线程已被删除时丢弃输入草稿，避免写入无法再次访问的孤儿缓存
-  const keepInput = !oldThreadId || threads.value.some((thread) => thread.id === oldThreadId)
-  // 切换线程：保存旧线程的输入草稿，并还原新线程（或新建对话）的草稿
-  userInput.value = threadDraftSession.switchThread(threadId, keepInput ? userInput.value : '')
-  if (!threadId || approvalState.threadId !== threadId) {
-    hideApprovalState()
-  }
-  if (!threadId) {
-    ensureActiveThread.reset()
-    selectedProjectId.value = props.initialProjectId || AUTO_PROJECT_ID
-    threadCreationRequest.value = null
-  }
-  if (threadId) {
-    restorePendingInterruptForThread(threadId)
-  }
-})
 </script>
 
 <style lang="less" scoped>
-.agent-availability-notice {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 0;
-  right: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 8px;
-  background: var(--gray-0);
-  color: var(--gray-600);
-  font-size: 14px;
-}
-
-@import '@/assets/css/animations.less';
-@import '@/modules/session/ui/composerStyles.less';
-
 .chat-container {
   display: flex;
   width: 100%;
@@ -2955,18 +1230,6 @@ watch(currentChatId, (threadId, oldThreadId) => {
   box-sizing: border-box;
 }
 
-.chat-greeting-input {
-  padding: 10px 0;
-  text-align: center;
-  margin-bottom: 7vh;
-
-  h1 {
-    font-size: 1.4rem;
-    color: var(--gray-1000);
-    margin: 0;
-  }
-}
-
 .agent-segment-wrapper {
   width: fit-content;
   max-width: 100%;
@@ -3076,409 +1339,6 @@ watch(currentChatId, (threadId, oldThreadId) => {
   background: var(--main-30);
   color: var(--main-700);
   font-size: 12px;
-}
-
-.archived-thread-notice {
-  margin: 0 0 8px;
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: var(--gray-25);
-  color: var(--color-text-secondary);
-  font-size: 12px;
-  text-align: center;
-}
-
-.bottom {
-  position: sticky;
-  bottom: 0;
-  width: 100%;
-  margin: 0 auto;
-  padding: 14px 14px 0 14px;
-  z-index: 1000;
-  background: linear-gradient(to bottom, transparent, var(--bg-page) 10%);
-
-  .message-input-wrapper {
-    width: 100%;
-    max-width: 800px;
-    margin: 0 auto;
-
-    .message-input-stage {
-      position: relative;
-      min-width: 0;
-      z-index: 1;
-    }
-
-    .message-input-stage.has-tool-approval {
-      display: grid;
-
-      > .approval-modal,
-      > .message-input-surface {
-        min-width: 0;
-        grid-area: 1 / 1;
-      }
-
-      > .approval-modal {
-        z-index: 2;
-      }
-
-      > .message-input-surface {
-        opacity: 0;
-        pointer-events: none;
-      }
-    }
-
-    .message-input-surface {
-      min-width: 0;
-      transition: opacity 0.18s ease;
-    }
-
-    .queued-request-panel {
-      .composer-top-attachment();
-      max-height: 196px;
-      overflow-y: auto;
-      padding: 6px 14px 4px;
-    }
-
-    .queued-request-notice {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      margin: 0 6px 4px;
-      padding: 0;
-      color: var(--color-text-tertiary);
-      background: transparent;
-      font-size: 13px;
-      line-height: 1.5;
-
-      &.is-paused {
-        color: var(--color-warning-700);
-        background: transparent;
-      }
-    }
-
-    .queued-request-continue {
-      display: inline-flex;
-      flex: 0 0 auto;
-      align-items: center;
-      gap: 4px;
-      padding: 4px 0;
-      color: var(--color-warning-700);
-      background: transparent;
-      border: 0;
-      cursor: pointer;
-      font-size: 12px;
-
-      &:disabled {
-        opacity: 0.55;
-        cursor: wait;
-      }
-    }
-
-    .queued-request-list {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-    }
-
-    .queued-request-row {
-      min-height: 28px;
-      display: grid;
-      grid-template-columns: 18px minmax(0, 1fr) auto auto;
-      gap: 10px;
-      align-items: center;
-      padding: 0 4px 0 6px;
-      color: var(--color-text);
-      border-radius: 8px;
-      transition: background-color 0.18s ease;
-
-      &:hover {
-        background: var(--gray-50);
-      }
-    }
-
-    .queued-request-icon {
-      color: var(--gray-500);
-    }
-
-    .queued-request-content {
-      min-width: 0;
-      overflow: hidden;
-      font-size: 13px;
-      font-weight: 400;
-      line-height: 1.4;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .queued-request-position {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      color: var(--gray-500);
-      font-size: 12px;
-      font-variant-numeric: tabular-nums;
-      white-space: nowrap;
-
-      &::before {
-        content: '↪';
-        color: var(--gray-400);
-        font-size: 14px;
-      }
-    }
-
-    .queued-request-actions {
-      display: inline-flex;
-      align-items: center;
-      justify-content: flex-end;
-      min-width: 64px;
-      gap: 4px;
-    }
-
-    .queued-request-status {
-      color: var(--color-text-tertiary);
-      font-size: 12px;
-      white-space: nowrap;
-    }
-
-    .queued-request-steer,
-    .direct-steer-button {
-      height: 28px;
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      padding: 0 6px;
-      color: var(--gray-500);
-      background: transparent;
-      border: 0;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 12px;
-      line-height: 1;
-      transition:
-        color 0.18s ease,
-        background-color 0.18s ease;
-
-      &:hover:not(:disabled) {
-        color: var(--gray-700);
-        background: var(--gray-100);
-      }
-
-      &:focus-visible {
-        outline: 2px solid var(--main-color);
-        outline-offset: 1px;
-      }
-
-      &:disabled {
-        opacity: 0.45;
-        cursor: wait;
-      }
-    }
-
-    .queued-request-delete {
-      width: 30px;
-      height: 30px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      padding: 0;
-      color: var(--gray-500);
-      background: transparent;
-      border: 0;
-      border-radius: 6px;
-      cursor: pointer;
-      transition:
-        color 0.18s ease,
-        background-color 0.18s ease;
-
-      &:hover:not(:disabled) {
-        color: var(--color-error-700);
-        background: var(--color-error-50);
-      }
-
-      &:focus-visible {
-        outline: 2px solid var(--main-color);
-        outline-offset: 1px;
-      }
-
-      &:disabled {
-        color: var(--gray-300);
-        cursor: wait;
-      }
-    }
-
-    .queued-request-promote {
-      width: 30px;
-      height: 30px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      padding: 0;
-      color: var(--gray-500);
-      background: transparent;
-      border: 0;
-      border-radius: 6px;
-      cursor: pointer;
-      transition:
-        color 0.18s ease,
-        background-color 0.18s ease;
-
-      &:hover:not(:disabled) {
-        color: var(--color-success-700);
-        background: var(--color-success-50);
-      }
-
-      &:focus-visible {
-        outline: 2px solid var(--main-color);
-        outline-offset: 1px;
-      }
-
-      &:disabled {
-        color: var(--gray-300);
-        cursor: wait;
-      }
-    }
-
-    .bottom-actions {
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      width: 100%;
-    }
-
-    .note {
-      font-size: small;
-      color: var(--gray-300);
-      margin: 4px 0;
-      user-select: none;
-    }
-  }
-
-  .input-model-selector {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 0;
-    max-width: min(224px, 50cqi);
-  }
-
-  &.start-screen {
-    position: absolute;
-    top: 45%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    bottom: auto;
-    max-width: 800px;
-    width: 90%;
-    background: transparent;
-    padding: 0;
-    border-top: none;
-    z-index: 100; /* Ensure it's above other elements */
-  }
-}
-
-.loading-spark {
-  position: relative;
-  display: inline-block;
-  flex: 0 0 22px;
-  width: 22px;
-  height: 22px;
-  color: var(--main-color);
-}
-
-.loading-spark::before,
-.loading-spark::after {
-  content: '';
-  position: absolute;
-  background: currentColor;
-}
-
-.loading-spark::before {
-  inset: 5%;
-  clip-path: polygon(50% 0, 63% 36%, 100% 50%, 63% 64%, 50% 100%, 37% 64%, 0 50%, 37% 36%);
-  animation: loading-spark-bloom 2.6s ease-in-out infinite;
-}
-
-.loading-spark::after {
-  top: 0;
-  right: 0;
-  width: 24%;
-  height: 24%;
-  clip-path: polygon(50% 0, 65% 35%, 100% 50%, 65% 65%, 50% 100%, 35% 65%, 0 50%, 35% 35%);
-  animation: loading-spark-satellite 2.6s ease-in-out infinite;
-}
-
-@keyframes loading-spark-bloom {
-  0%,
-  100% {
-    transform: scale(0.65) rotate(-15deg);
-    opacity: 0.6;
-  }
-  50% {
-    transform: scale(1) rotate(75deg);
-    opacity: 1;
-  }
-}
-
-@keyframes loading-spark-satellite {
-  0%,
-  100% {
-    transform: scale(0.3);
-    opacity: 0.2;
-  }
-  50% {
-    transform: scale(1);
-    opacity: 1;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .loading-spark::before,
-  .loading-spark::after {
-    animation: none;
-  }
-}
-
-.generating-status {
-  display: flex;
-  justify-content: flex-start;
-  padding: 1rem 0;
-}
-
-.generating-indicator {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-
-  // 轻微呼吸的文本，替代原先的高亮闪动
-  .generating-text {
-    font-size: 14px;
-    font-weight: 500;
-    letter-spacing: 0.025em;
-    color: var(--gray-600);
-    animation: textBreath 1.8s ease-in-out infinite;
-  }
-}
-
-@keyframes textBreath {
-  0%,
-  100% {
-    opacity: 0.55;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-
-.generating-cancel {
-  border: none;
-  padding: 4px;
-  background: transparent;
-  color: var(--gray-500);
-
-  &:disabled {
-    cursor: wait;
-  }
 }
 
 @media (max-width: 1024px) {
@@ -3951,16 +1811,12 @@ watch(currentChatId, (threadId, oldThreadId) => {
   display: flex;
   flex-direction: column;
 }
-.embedded-session {
-  height: 100%;
+.panel-session-chat .chat-main {
+  margin-right: 0;
   min-height: 0;
 }
 
-.embedded-session .chat-main {
-  margin-right: 0;
-}
-
-.embedded-session .bottom {
+.panel-session-chat .bottom {
   background: linear-gradient(to bottom, transparent, var(--gray-0) 10%);
 }
 

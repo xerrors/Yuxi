@@ -8,7 +8,7 @@ import { renderToString } from 'vue/server-renderer'
 import { createTestServer } from '../helpers/createTestServer.js'
 
 /** 加载真实导航组件，在 store、路由和请求边界控制竞态。 */
-async function setup(t, router = { push() {}, replace() {} }) {
+async function setup(t, activeRouter) {
   const previousStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
   const previousPinia = getActivePinia()
   let server, pinia
@@ -29,9 +29,9 @@ async function setup(t, router = { push() {}, replace() {} }) {
   const { useProjectsStore } = await server.ssrLoadModule('/src/modules/projects/model/projects.js')
   const { projectApi } = await server.ssrLoadModule('/src/apis/project_api.js')
   const userStore = useUserStore(pinia), chatThreadsStore = useChatThreadsStore(pinia), projectsStore = useProjectsStore(pinia)
-  const chatUIStore = useChatUIStore(pinia)
   userStore.userId = 'a'
   const route = reactive({ params: { thread_id: 'shared' } })
+  const router = activeRouter || { push() {}, replace() {} }
   const { default: component } = await server.ssrLoadModule('/src/modules/session/ui/SessionNavigation.vue')
   let state
   const app = createSSRApp({ setup() {
@@ -42,7 +42,7 @@ async function setup(t, router = { push() {}, replace() {} }) {
   app.provide(routerKey, router)
   app.provide(routeLocationKey, route)
   await renderToString(app)
-  return { state, userStore, chatThreadsStore, chatUIStore, projectsStore, projectApi, router }
+  return { state, userStore, chatThreadsStore, chatUIStore: useChatUIStore(pinia), projectsStore, projectApi, router }
 }
 
 test('旧账号归档响应不能将新账号的同名线程导航到空白页', async (t) => {
@@ -92,6 +92,19 @@ test('删除项目排队期间切账号不能以新身份请求或解除新操�
   assert.equal(h.state.projectPendingId.value, 'b-project')
 })
 
+test('项目新建只请求路由，创建中保留当前导航', async (t) => {
+  const h = await setup(t)
+  const push = t.mock.method(h.router, 'push', async () => {})
+  const finishCreation = h.chatThreadsStore.beginThreadCreation()
+  await h.state.handleCreateProjectChat('a-project')
+  assert.equal(push.mock.callCount(), 0)
+  finishCreation()
+  await h.state.handleCreateProjectChat('a-project')
+  assert.deepEqual(push.mock.calls.map(call => call.arguments[0]), [
+    { name: 'AgentComp', query: { project_id: 'a-project' } }
+  ])
+})
+
 for (const { entry, openDraft, query } of [
   { entry: '搜索', openDraft: (state) => state.handleCreateSessionFromSearch(), query: {} },
   { entry: '项目', openDraft: (state) => state.handleCreateProjectChat('a-project'), query: { project_id: 'a-project' } }
@@ -105,8 +118,8 @@ for (const { entry, openDraft, query } of [
       ]
     })
     await router.push('/agent/shared')
-    const { state, chatThreadsStore, chatUIStore } = await setup(t, router)
-    chatThreadsStore.setCurrentThreadId('shared')
+    const { state, chatUIStore } = await setup(t, router)
+    chatUIStore.lastThreadId = 'shared'
     router.beforeEach(() => false)
     const stopped = new Promise(resolve => router.afterEach((to, _from, failure) => resolve({ to, failure })))
 
@@ -116,7 +129,6 @@ for (const { entry, openDraft, query } of [
     assert.ok(isNavigationFailure(failure, NavigationFailureType.aborted))
     assert.deepEqual(to.query, query)
     assert.equal(router.currentRoute.value.path, '/agent/shared')
-    assert.equal(chatThreadsStore.currentThreadId, 'shared')
     assert.equal(chatUIStore.lastThreadId, 'shared')
   })
 }

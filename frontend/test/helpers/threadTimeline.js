@@ -4,7 +4,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { createTestServer } from './createTestServer.js'
 
 /** 装配真实阅读组件，保留 runtime 和视口生命周期。 */
-export async function mountThreadTimeline(t, fetchThreadMessages = async () => {}, options = {}) {
+export async function mountThreadTimeline(t, loadOlderHistory = async () => {}, options = {}) {
   const globals = Object.fromEntries(
     ['localStorage', 'document', 'window'].map((name) => [
       name,
@@ -43,7 +43,7 @@ export async function mountThreadTimeline(t, fetchThreadMessages = async () => {
   const { useUserStore } = await server.ssrLoadModule('/src/modules/identity/index.js')
   useUserStore().token = 'test-reader'
   t.mock.method(runtime, 'loadThread', async () => false)
-  t.mock.method(runtime, 'fetchThreadMessages', fetchThreadMessages)
+  t.mock.method(runtime, 'loadOlderHistory', loadOlderHistory)
   for (const [name, replacement] of Object.entries(options.runtime || {}))
     t.mock.method(runtime, name, replacement)
   const { default: component } = await server.ssrLoadModule(

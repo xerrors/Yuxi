@@ -175,7 +175,7 @@ test('项目提供带项目上下文的新建入口', () => {
   )
   const agentViewSource = readFileSync(new URL('../../src/pages/AgentView.vue', import.meta.url), 'utf8')
   const chatSource = readFileSync(
-    new URL('../../src/modules/session/ui/SessionWorkspace.vue', import.meta.url),
+    new URL('../../src/modules/session/ui/SessionThreadView.vue', import.meta.url),
     'utf8'
   )
 

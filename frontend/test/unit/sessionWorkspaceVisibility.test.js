@@ -1,9 +1,31 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { createSSRApp, h } from 'vue'
+import { createSSRApp, h, nextTick } from 'vue'
 import { renderToString } from 'vue/server-renderer'
 import { mountSessionWorkspace } from '../helpers/sessionWorkspace.js'
+
+test('根会话进入新等待点后刷新状态面板的检查点数据', async (t) => {
+  let observedState = { token_usage: { total_tokens: 10 } }
+  const { state, runtime } = await mountSessionWorkspace(t, undefined, { root: true, threadId: 'root' })
+  const thread = runtime.getThreadState('root')
+  t.mock.method(runtime, 'fetchAgentState', async () => { thread.agentState = observedState })
+  Object.assign(thread, { readingReady: true, isStreaming: true, turnStatus: 'in_progress' })
+  await nextTick()
+  assert.equal(state.currentAgentState.value.token_usage.total_tokens, 10)
+
+  observedState = { token_usage: { total_tokens: 35 } }
+  Object.assign(thread, {
+    isStreaming: false, turnStatus: 'requires_action', pendingInterrupt: { waitpointId: 'wait-1' }
+  })
+  await nextTick()
+  assert.equal(state.currentAgentState.value.token_usage.total_tokens, 35)
+
+  observedState = { token_usage: { total_tokens: 42 } }
+  thread.runStateVersion++
+  await nextTick()
+  assert.equal(state.currentAgentState.value.token_usage.total_tokens, 42, '同一等待点对账使旧读取失效后仍会刷新')
+})
 
 test('人工等待取消期间显示停止反馈，即使没有流和排队消息', async (t) => {
   const { state, runtime } = await mountSessionWorkspace(t, undefined, { threadId: 'thread' })
@@ -16,45 +38,36 @@ test('人工等待取消期间显示停止反馈，即使没有流和排队消�
 })
 
 test('隐藏成员标签继续接收终态但不标已读；显示后恢复可见副作用', async (t) => {
-  const resumed = []
   const { state, props } = await mountSessionWorkspace(t, undefined, {
-    threadId: 'child', props: { visible: false }, runtime: { resumeQueuedInputs: (id) => resumed.push(id) }
+    threadId: 'child', props: { active: false }
   })
   const viewed = []
   t.mock.method(state.chatThreadsStore, 'markThreadViewed', (id) => { viewed.push(id) })
-  const complete = () => {
-    state.runtimeView.onTerminalDetected({ threadId: 'child', runId: 'run' })
-  }
+  const complete = (threadId = 'child') => state.handleTerminal({ threadId, runId: 'run' })
   complete()
-  assert.deepEqual(resumed, [], '恢复由共享运行内核负责')
   assert.deepEqual(viewed, [])
-  props.visible = true
+  props.active = true
   complete()
   assert.deepEqual(viewed, ['child'])
-  state.pageVisible.value = false
+  props.pageVisible = false
   complete()
   assert.deepEqual(viewed, ['child'])
-  state.pageVisible.value = true
-  state.workspaceActivated.value = false
-  complete()
+  props.pageVisible = true
+  complete('other-thread')
   assert.deepEqual(viewed, ['child'])
-  assert.equal(state.agentPanelFilesystemRefreshVersion.value, 4)
-  state.runtimeView.onTerminalDetected({ threadId: 'other-thread', runId: 'other-run' })
-  assert.equal(state.agentPanelFilesystemRefreshVersion.value, 4)
 })
 
 test('另一视图完成审批后，本视图立即解除旧等待点的输入遮罩', async (t) => {
   const { state, runtime } = await mountSessionWorkspace(t, undefined, { threadId: 'thread' })
   const shared = runtime.getThreadState('thread')
   const pending = { threadId: 'thread', kind: 'question', interruptedRunId: 'run', waitpointId: 'approval-1', questions: [{ question_id: 'q', question: '问题' }] }
-  shared.pendingInterrupt = pending
-  state.restorePendingInterruptForThread('thread')
+  Object.assign(shared, { currentTurnId: 'turn', activeRunId: 'run', turnStatus: 'requires_action', pendingInterrupt: pending })
   assert.equal(state.currentApprovalModalVisible.value, true)
   shared.pendingInterrupt = null
   assert.equal(state.currentApprovalModalVisible.value, false)
   shared.pendingInterrupt = { ...pending, interruptedRunId: 'run2', waitpointId: 'approval-2' }
   assert.equal(state.currentApprovalModalVisible.value, false)
-  state.restorePendingInterruptForThread('thread')
+  shared.activeRunId = 'run2'
   assert.equal(state.currentApprovalModalVisible.value, true)
 })
 
@@ -101,7 +114,7 @@ test('新建路由且没有线程才显示欢迎布局，加载和空消息不�
   for (const isNewSession of [false, true]) {
     for (const threadId of [null, 'created-thread']) {
       props.isNewSession = isNewSession
-      state.currentThreadId.value = threadId
+      state.currentChatId.value = threadId
       for (const isLoadingMessages of [false, true]) {
         if (threadId) runtime.getThreadState(threadId).readingLoading = isLoadingMessages
         for (const runs of [[], [{ id: 'history' }]]) {
@@ -115,12 +128,12 @@ test('新建路由且没有线程才显示欢迎布局，加载和空消息不�
     }
   }
   props.isNewSession = true
-  state.currentThreadId.value = null
+  state.currentChatId.value = null
   assert.equal(state.showStartScreen.value, true)
-  state.currentThreadId.value = 'just-created'
+  state.currentChatId.value = 'just-created'
   assert.equal(state.showStartScreen.value, false, '创建完成立即收起欢迎布局')
   props.isNewSession = false
-  state.currentThreadId.value = null
+  state.currentChatId.value = null
   assert.equal(state.showStartScreen.value, false, '已有会话加载时不显示欢迎布局')
 })
 
@@ -171,7 +184,7 @@ test('首条输入在回复位置保留取消入口，取消期间禁用重复�
 })
 
 test('仅有 warnings 时状态面板展示警告，警告清除后恢复空态', async (t) => {
-  const { state, runtime } = await mountSessionWorkspace(t, undefined, { threadId: 'thread' })
+  const { state, runtime } = await mountSessionWorkspace(t, undefined, { threadId: 'thread', root: true })
   const thread = runtime.getThreadState('thread')
   thread.agentState = { warnings: [
     { code: 'mcp_unavailable', source: 'mcp:attendance', message: '考勤未连接' },
@@ -183,7 +196,7 @@ test('仅有 warnings 时状态面板展示警告，警告清除后恢复空态'
 })
 
 test('状态警告逐条渲染安全文本，空列表不显示警告区域', async (t) => {
-  const { state, runtime, component } = await mountSessionWorkspace(t, undefined, { threadId: 'thread', stubChildren: true })
+  const { state, runtime, component } = await mountSessionWorkspace(t, undefined, { threadId: 'thread', root: true, stubChildren: true })
   const thread = runtime.getThreadState('thread')
   const renderState = async (warnings) => {
     thread.agentState = { warnings }

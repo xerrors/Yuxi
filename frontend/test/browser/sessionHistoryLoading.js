@@ -9,7 +9,7 @@ async (page) => {
   const thread = {
     id: threadId, object: 'agent.session', status: 'completed', agent: { id: agentId },
     created_at: 1791580000, metadata: {},
-    yuxi: { title: '历史消息加载验证', current_turn: null, context: {}, project_id: 'history-project', config: {}, is_pinned: false }
+    yuxi: { title: '历史消息加载验证', current_turn: null, context: {}, project_id: 'history-project', config: {}, is_pinned: false, tool_approval_mode: 'default' }
   }
   const agent = { agent_id: agentId, name: '历史验证助手', description: '用于历史阅读验证', config_json: { context: {} }, configurable_items: {}, metadata: {} }
   const completedTurn = { id: 'turn-long', status: 'completed', current_run_id: 'run-long', result_run_id: 'run-long' }
@@ -25,6 +25,8 @@ async (page) => {
   const requests = [], unknown = new Set()
   let failNext = false, delayed = false, release
   let failAgent = false
+  const agentRequest = Promise.withResolvers()
+  const releaseAgent = Promise.withResolvers()
   const check = (condition, message) => { if (!condition) throw new Error(message) }
   await page.addInitScript(() => localStorage.setItem('user_token', 'history-replay-token'))
   await page.route('**/api/**', async route => {
@@ -33,9 +35,16 @@ async (page) => {
     const url = { searchParams: { get: name => decodeURIComponent(raw.match(new RegExp(`[?&]${name}=([^&]*)`))?.[1] || '') || null } }
     let json
     if (path === '/api/auth/me') json = { id: 1, uid: 'history-verification', username: '历史验证', role: 'user' }
+    else if (path === '/api/system/info') json = { success: true, data: {
+      branding: { name: '语析', title: '语析', logo: '/favicon.svg' }
+    } }
     else if (path === '/api/mention/plugins') json = []
     else if (path === '/api/agent') json = { agents: [agent] }
     else if (path === `/api/agent/${agentId}`) {
+      if (coldHistory) {
+        agentRequest.resolve()
+        await releaseAgent.promise
+      }
       if (failAgent) return route.fulfill({ status: 503, json: { detail: '智能体暂不可用' } })
       json = agent
     }
@@ -72,16 +81,33 @@ async (page) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   thread.yuxi.current_turn = completedTurn
   await page.goto(`${origin}/agent/${threadId}`)
+  try {
+    await agentRequest.promise
+    await page.locator('.agent-view .chat-header')
+      .getByText('历史消息加载验证', { exact: true }).waitFor()
+    check(await page.getByText('历史消息加载验证', { exact: true }).count() === 1,
+      '直接读取的标题应显示在工作区，且不新增侧栏条目')
+    await page.getByText('历史消息 0950：', { exact: false }).waitFor()
+    check(!await page.locator('.agent-view [contenteditable="true"]').isVisible(), '输入准备前出现可编辑的输入框')
+    await page.screenshot({ path: '/tmp/yuxi-history-detail-before-agent.png' })
+  } finally {
+    releaseAgent.resolve()
+  }
   await page.locator('.agent-view [contenteditable="true"]').waitFor()
+  const approvalMode = page.getByRole('button', { name: '请求审批', exact: true })
+  await approvalMode.click()
+  check(await page.getByRole('menuitemradio', { name: /请求审批/ }).getAttribute('aria-checked') === 'true',
+    '审批模式菜单没有使用当前 Thread 的审批设置')
+  await approvalMode.click()
   await page.getByText('历史消息 0601：', { exact: false }).waitFor()
   await page.getByText('历史消息 0950：', { exact: false }).waitFor()
   check(await page.locator('.agent-view .history-display-item').count() === 350, '首读长轮次应展示全部 350 条')
-  let releaseAgent, agentRequests = 0
-  const agentResponse = new Promise(resolve => { releaseAgent = resolve })
+  let agentRequests = 0
+  const refreshAgent = Promise.withResolvers()
   const agentUrl = `**/api/agent/${agentId}`
   await page.route(agentUrl, async route => {
     agentRequests++
-    await agentResponse
+    await refreshAgent.promise
     await route.fulfill({ json: agent })
   })
   const selectThread = () => page.locator('.agent-session-workspace').first().evaluate(async (el, id) => {
@@ -101,7 +127,7 @@ async (page) => {
     check(await page.locator('.agent-view [contenteditable="true"]').count() === 0, 'Agent 详情就绪前开放了输入')
     await page.screenshot({ path: '/tmp/yuxi-history-agent-pending.png' })
   } finally {
-    releaseAgent()
+    refreshAgent.resolve()
     await selection
   }
   await page.locator('.agent-view [contenteditable="true"]').waitFor()
@@ -119,7 +145,7 @@ async (page) => {
   await page.getByRole('button', { name: '重新读取对话', exact: true }).click()
   await page.getByText('智能体加载失败，请重试', { exact: true }).waitFor()
   check(requests.length === 3, `历史重试首次窗口请求数 ${requests.length}`)
-  requests.length = 0 // 显式重新选择会话复核权限；后续分页以本次刷新为基线。
+  // 输入准备失败的重试只重新读取 Agent，保留已打开的历史窗口。
   failAgent = false
   await page.locator('.agent-availability-notice').getByRole('button', { name: '重试', exact: true }).click()
   await page.locator('.agent-view [contenteditable="true"]').waitFor()
@@ -129,7 +155,7 @@ async (page) => {
   await page.getByText('历史消息 0950：', { exact: false }).waitFor()
   await page.waitForFunction(() => document.querySelector('.agent-view .chat-main')?.scrollTop > 600)
   await page.waitForTimeout(300)
-  check(requests.length === 3, `首次窗口请求数 ${requests.length}`)
+  check(requests.length === 3, `重试 Agent 时重复读取了历史窗口：${requests.length}`)
   const bubbleAlignment = await chat.locator('.message-box.human').first().evaluate(el => ({
     right: el.getBoundingClientRect().right, parentRight: el.parentElement.getBoundingClientRect().right,
     width: el.getBoundingClientRect().width, parentWidth: el.parentElement.getBoundingClientRect().width
@@ -139,19 +165,20 @@ async (page) => {
   delayed = true
   await chat.evaluate(el => { el.scrollTop = 500 })
   await page.getByRole('button', { name: '正在加载更早消息…', exact: true }).waitFor({ state: 'attached' })
-  await chat.evaluate(el => {
+  const anchorKey = await chat.evaluate(el => {
     const group = [...el.querySelectorAll('.history-display-item')].find(node => node.getBoundingClientRect().bottom > el.getBoundingClientRect().top)
-    group.dataset.historyAnchor = 'true'
+    return group.dataset.historyKey
   })
+  const anchor = chat.locator(`[data-history-key=${JSON.stringify(anchorKey)}]`)
   await chat.evaluate(el => { el.scrollTop = 0 })
-  const movedTop = await page.locator('[data-history-anchor]').evaluate(el => el.getBoundingClientRect().top)
+  const movedTop = await anchor.evaluate(el => el.getBoundingClientRect().top)
   await page.screenshot({ path: '/tmp/yuxi-history-loading.png' })
   check(requests.length === 4, '在途追加产生重复请求')
   release()
   await page.getByText('历史消息 0351：', { exact: false }).waitFor()
   await page.getByRole('button', { name: '加载更早消息', exact: true }).waitFor({ state: 'attached' })
   await page.waitForTimeout(200)
-  const restoredTop = await page.locator('[data-history-anchor]').evaluate(el => el.getBoundingClientRect().top)
+  const restoredTop = await anchor.evaluate(el => el.getBoundingClientRect().top)
   check(Math.abs(restoredTop - movedTop) < 2, `阅读位置偏移 ${restoredTop - movedTop}px`)
   check(requests.length === 6, `追加请求数 ${requests.length}`)
   await page.screenshot({ path: '/tmp/yuxi-history-loaded.png' })

@@ -19,14 +19,16 @@ after(async () => {
 })
 
 const waitingTurn = () => ({
+  id: 'turn-1',
   status: 'requires_action',
   yuxi: {
     current_run_id: 'run-1',
-    waitpoint: { id: 'wait-1', run_id: 'run-1', questions: [{ question_id: 'q1' }, { question_id: 'q2' }] }
+    waitpoint: { id: 'wait-1', run_id: 'run-1', kind: 'answer', questions: [{ question_id: 'q1' }, { question_id: 'q2' }] }
   }
 })
 const answerCommand = () => ({
-  threadId: 'thread-1', turnId: 'turn-1', runId: 'run-1', kind: 'question', answer: { q2: '二', q1: '一' }
+  threadId: 'thread-1', turnId: 'turn-1', runId: 'run-1', waitpointId: 'wait-1',
+  kind: 'question', answer: { q2: '二', q1: '一' }, isCurrent: () => true
 })
 
 test('问答按当前问题ID构造协议，恢复结果绑定同一Turn和等待点', async (t) => {
@@ -48,29 +50,40 @@ test('问答按当前问题ID构造协议，恢复结果绑定同一Turn和等�
 
 test('审批使用持久call_id并保留每项允许或拒绝', async (t) => {
   const turn = waitingTurn()
-  turn.yuxi.waitpoint.calls = [{ call_id: 'call-a' }, { call_id: 'call-b' }]
+  turn.yuxi.waitpoint.kind = 'approval'
+  turn.yuxi.waitpoint.calls = [{ call_id: 'call-b' }, { call_id: 'call-a' }]
   t.mock.method(api, 'getThreadTurn', async () => turn)
   let response
   t.mock.method(api, 'resumeThreadTurn', async (_, body) => { response = body.response; return { run_id: 'run-2' } })
-  await resumeSessionWaitpoint({ ...answerCommand(), kind: 'tool_approval', answer: { decisions: [{ type: 'approve' }, { type: 'reject' }] } })
+  await resumeSessionWaitpoint({
+    ...answerCommand(),
+    kind: 'tool_approval',
+    actionRequests: [{ call_id: 'call-a' }, { call_id: 'call-b' }],
+    answer: { decisions: [{ type: 'approve' }, { type: 'reject' }] }
+  })
   assert.deepEqual(response, { type: 'approval', decisions: [
-    { call_id: 'call-a', decision: 'approve' }, { call_id: 'call-b', decision: 'reject' }
+    { call_id: 'call-b', decision: 'reject' }, { call_id: 'call-a', decision: 'approve' }
   ] })
 })
 
-for (const defect of ['finished', 'different-run', 'different-waitpoint-run', 'missing-waitpoint', 'missing-answer', 'missing-turn', 'changed-calls']) {
+for (const defect of ['finished', 'different-turn', 'different-run', 'different-waitpoint-run', 'different-waitpoint', 'missing-waitpoint', 'missing-answer', 'missing-turn', 'changed-calls', 'expired-view']) {
   test(`拒绝过期或不完整等待点：${defect}`, async (t) => {
     const turn = waitingTurn(), command = answerCommand()
     if (defect === 'finished') turn.status = 'completed'
+    if (defect === 'different-turn') turn.id = 'turn-other'
     if (defect === 'different-run') turn.yuxi.current_run_id = 'run-other'
     if (defect === 'different-waitpoint-run') turn.yuxi.waitpoint.run_id = 'run-other'
+    if (defect === 'different-waitpoint') turn.yuxi.waitpoint.id = 'wait-other'
     if (defect === 'missing-waitpoint') delete turn.yuxi.waitpoint
     if (defect === 'missing-answer') delete command.answer.q2
     if (defect === 'missing-turn') command.turnId = null
+    if (defect === 'expired-view') command.isCurrent = () => false
     if (defect === 'changed-calls') {
       command.kind = 'tool_approval'
-      turn.yuxi.waitpoint.calls = [{ call_id: 'call-a' }]
-      command.answer = { decisions: [] }
+      command.actionRequests = [{ call_id: 'call-a' }]
+      command.answer = { decisions: [{ type: 'approve' }] }
+      turn.yuxi.waitpoint.kind = 'approval'
+      turn.yuxi.waitpoint.calls = [{ call_id: 'call-b' }]
     }
     t.mock.method(api, 'getThreadTurn', async () => turn)
     const writes = []

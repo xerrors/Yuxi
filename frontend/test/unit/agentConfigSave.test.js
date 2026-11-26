@@ -173,7 +173,7 @@ test('会话导出按稳定 Agent 身份读取列表元数据', async (t) => {
     t.mock.method(threadApi, 'getThreads', async () => ({ data: [], has_more: false }))
     const { useSessionRuntimeStore } = await server.ssrLoadModule('/src/modules/session/model/sessionRuntime.js')
     const runtime = useSessionRuntimeStore(pinia)
-    const { default: component } = await server.ssrLoadModule('/src/modules/session/ui/SessionWorkspace.vue')
+    const { default: component } = await server.ssrLoadModule('/src/modules/session/ui/SessionThreadView.vue')
     let state, exposed
     const renderer = createRenderer({
       createElement: () => ({ children: [] }), createText: () => ({}), createComment: () => ({}),
@@ -181,7 +181,7 @@ test('会话导出按稳定 Agent 身份读取列表元数据', async (t) => {
       parentNode: () => null, nextSibling: () => null, patchProp() {}
     })
     app = renderer.createApp({ setup() {
-      state = component.setup({ agentId: 'export-agent', isNewSession: true, visible: false }, {
+      state = component.setup({ agentId: 'export-agent', isNewSession: true, active: false, cooperationMembers: [] }, {
         expose(value) { exposed = value }, emit() {}
       })
       return () => null
@@ -191,8 +191,8 @@ test('会话导出按稳定 Agent 身份读取列表元数据', async (t) => {
     app.provide(ssrContextKey, {})
     app.mount({ children: [] })
     await new Promise((resolve) => setImmediate(resolve))
-    state.currentThreadId.value = 'thread-export'
-    state.currentThread.value = { agent: { id: 'export-agent' }, yuxi: { title: '导出会话' } }
+    state.currentChatId.value = 'thread-export'
+    runtime.getThreadState('thread-export').detail = { id: 'thread-export', agent: { id: 'export-agent' }, yuxi: { title: '导出会话' } }
     runtime.getThreadState('thread-export').optimisticInputs = { pending: [{ id: 'input', type: 'human', content: '正文', extra_metadata: {} }] }
     const payload = exposed.getExportPayload()
     assert.equal(payload.agentDescription, '导出说明')

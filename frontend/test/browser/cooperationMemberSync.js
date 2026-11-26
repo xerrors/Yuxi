@@ -8,17 +8,19 @@ async (page) => {
   const rootId = 'sync-root', childId = 'sync-child', agentId = 'default-chatbot'
   const agent = { agent_id: agentId, name: '协作同步助手', can_run: true, configurable_items: {}, config_json: { context: {} } }
   let stage = 'waiting', queueTexts = ['第一条外部排队输入'], streams = 0, summaries = 0, releaseStream, releaseOldInput
+  let rootAdvanced = false, rootStatus = 'completed', releaseRootStream
   const streamGate = new Promise(resolve => { releaseStream = resolve })
+  const rootStreamGate = new Promise(resolve => { releaseRootStream = resolve })
   const oldInputGate = new Promise(resolve => { releaseOldInput = resolve })
   const viewed = [], errors = []
   const onError = error => errors.push(error.message)
   page.on('pageerror', onError)
   const turn = id => {
     const root = id === rootId
-    const next = !root && ['running', 'completed'].includes(stage)
+    const next = root ? rootAdvanced : ['running', 'completed'].includes(stage)
     const turnId = `${id}-${next ? 'next' : 'first'}`
     const runId = `run-${turnId}`
-    const status = root || stage === 'completed' ? 'completed' : stage === 'waiting' ? 'requires_action' : stage === 'cancelled' ? 'cancelled' : 'in_progress'
+    const status = root ? rootStatus : stage === 'completed' ? 'completed' : stage === 'waiting' ? 'requires_action' : stage === 'cancelled' ? 'cancelled' : 'in_progress'
     return { id: turnId, status, yuxi: { current_run_id: runId, output: [], runs: [],
       waitpoint: !root && stage === 'waiting' ? { id: 'sync-wait', run_id: runId, kind: 'answer', questions: [{ question_id: 'q', question: '协作任务需要你的回答' }] } : null } }
   }
@@ -46,8 +48,8 @@ async (page) => {
     if (match) {
       const id = match[1]
       if (path.endsWith('/events') && request.method() === 'GET') {
-        streams++
-        await streamGate
+        if (id === childId) streams++
+        await (id === rootId ? rootStreamGate : streamGate)
         const current = turn(id)
         const data = { type: 'agent.session.turn.completed', session_id: id, turn_id: current.id,
           event_id: 'sync-done', turn: { status: 'completed' }, yuxi: { run_id: current.yuxi.current_run_id, current_run_id: current.yuxi.current_run_id } }
@@ -94,6 +96,27 @@ async (page) => {
   const member = page.locator('.panel-session-chat:visible')
   await member.getByRole('dialog').waitFor()
   await member.getByRole('heading', { name: '协作任务需要你的回答', exact: true }).waitFor()
+  const answer = member.getByRole('dialog').getByRole('textbox')
+  await answer.fill('成员的未提交答案')
+  await page.getByRole('tab', { name: '文件', exact: true }).click()
+  await page.getByRole('tab', { name: /^资料整理/ }).click()
+  check(await answer.inputValue() === '成员的未提交答案', '切换成员标签不应清除当前等待点的答案')
+  await page.getByRole('button', { name: '最大化面板', exact: true }).click()
+  const rootViewedBeforeCompletion = viewed.filter(id => id === rootId).length
+  const rootSubscription = page.waitForRequest(request => request.url().includes(`/sessions/${rootId}/events`))
+  rootAdvanced = true
+  rootStatus = 'in_progress'
+  await rootSubscription
+  rootStatus = 'completed'
+  releaseRootStream()
+  await page.waitForFunction(async () => {
+    const { useSessionRuntimeStore } = await import('/src/modules/session/model/sessionRuntime.js')
+    const root = useSessionRuntimeStore().peekThreadState('sync-root')
+    return root?.turnStatus === 'completed' && root.detail?.yuxi.current_turn?.id === 'sync-root-next'
+  })
+  await page.waitForLoadState('networkidle')
+  check(viewed.filter(id => id === rootId).length === rootViewedBeforeCompletion, '最大化成员时隐藏的主会话不能标记已读')
+  await page.getByRole('button', { name: '还原面板', exact: true }).click()
   // 初始等待态没有 SSE；先结束前台恢复，避免将它的迟到结果误算为后台新读。
   await page.waitForLoadState('networkidle')
   await page.evaluate(() => {
@@ -105,6 +128,7 @@ async (page) => {
   await page.waitForTimeout(6500)
   check(summaries === beforeSummaries, '浏览器后台页面仍在轮询协作摘要')
   check(await member.getByRole('dialog').isVisible(), '浏览器后台页面不应发起成员对账')
+  check(await answer.inputValue() === '成员的未提交答案', '切换浏览器标签不应清除当前答案')
   await page.evaluate(() => {
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
     document.dispatchEvent(new Event('visibilitychange'))
@@ -147,10 +171,10 @@ async (page) => {
   stage = 'completed'
   releaseStream()
   await member.getByRole('button', { name: '停止回答', exact: true }).waitFor({ state: 'hidden' })
-  await page.setViewportSize({ width: 375, height: 900 })
-  await page.locator('.agent-view').screenshot({ path: '/tmp/yuxi-cooperation-sync-mobile.png', animations: 'disabled' })
+  await page.setViewportSize({ width: 768, height: 900 })
+  await page.locator('.agent-view').screenshot({ path: '/tmp/yuxi-cooperation-sync-narrow.png', animations: 'disabled' })
   page.off('pageerror', onError)
   check(!errors.length, `页面异常：${errors.join('; ')}`)
   return { externalCancellation: true, pausedQueue: true, secondQueuedInput: true, nextTurnHistory: true, lateOldInputKeepsCurrentTurn: true, oneSse: streams === 1,
-    hiddenRootDoesNotPoll: true, hiddenMemberDoesNotMarkViewed: true, hiddenMemberDoesNotSelectTab: true, screenshots: ['cancelled', 'next-dark', 'mobile'], evidence: 'real page with deterministic HTTP fixture' }
+    hiddenRootDoesNotPoll: true, hiddenRootCompletionDoesNotMarkViewed: true, hiddenMemberDoesNotMarkViewed: true, hiddenMemberDoesNotSelectTab: true, screenshots: ['cancelled', 'next-dark', 'narrow'], evidence: 'real page with deterministic HTTP fixture' }
 }

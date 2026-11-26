@@ -1,12 +1,11 @@
 import assert from 'node:assert/strict'
-import { setImmediate } from 'node:timers'
 import test, { before, after } from 'node:test'
-import { createRenderer, h, KeepAlive, nextTick, reactive, ref, ssrContextKey } from 'vue'
+import { createRenderer, effectScope, h, KeepAlive, nextTick, reactive, ref, ssrContextKey } from 'vue'
 import { createPinia, disposePinia, setActivePinia } from 'pinia'
-import { createMemoryHistory, createRouter, routerKey } from 'vue-router'
 import { createTestServer } from '../helpers/createTestServer.js'
 
 const artifactPath = '/home/user/workspace/projects/demo/方案.html'
+const artifactPreview = { path: artifactPath, name: '方案.html', workdir: false, key: `thread-a:${artifactPath}`, threadId: 'thread-a' }
 let server, component, threadApi, workspaceApi
 const oldWindow = globalThis.window, oldDocument = globalThis.document, oldStorage = globalThis.localStorage
 before(async () => {
@@ -49,15 +48,13 @@ async function setupPanel(t) {
   const props = reactive({
     threadId: 'thread-a',
     visible: true,
-    viewMode: 'preview',
     activeSectionKey: `file:${artifactPath}`,
     sections: [{ key: `file:${artifactPath}`, type: 'file' }],
-    activePreviewPath: artifactPath,
-    previewTabs: [{ path: artifactPath, name: '方案.html', workdir: false }],
+    activePreview: artifactPreview,
     previewCache: new Map(),
     filesystemVisible: false,
     filesystemPollingActive: false,
-    filesystemRefreshVersion: 0
+    filesystemRefreshVersions: new Map()
   })
   const oldPreview = threadApi.previewThreadArtifact
   const oldUrl = threadApi.getThreadArtifactUrl
@@ -109,6 +106,10 @@ async function setupPanel(t) {
     hooks,
     requests,
     settle,
+    refresh(threadId = 'thread-a') {
+      const versions = props.filesystemRefreshVersions
+      props.filesystemRefreshVersions = new Map(versions).set(threadId, (versions.get(threadId) || 0) + 1)
+    },
     update: (value) => {
       content = value
     }
@@ -122,7 +123,7 @@ test('同名交付物在终态通知后更新，默认个人空间树不阻断�
   panel.props.previewCache.set('thread-b:/other', { status: 'ready', file: { content: 'other' } })
   panel.props.previewCache.set('thread-a:/inactive', { status: 'ready', file: { content: 'old' } })
   panel.update('<h1>预算08万元</h1>')
-  panel.props.filesystemRefreshVersion++
+  panel.refresh()
   await panel.settle()
   assert.match(panel.view.currentFile.value.content, /08万元/)
   assert.equal(panel.props.previewCache.has('thread-a:/inactive'), false)
@@ -140,32 +141,19 @@ test('产物预览中的手动刷新读取当前产物，不只刷新个人空�
 test('再次点击同名交付卡片使未知元数据缓存失效并触发面板重读', async (t) => {
   const panel = await setupPanel(t)
   panel.update('<h1>最新卡片</h1>')
-  t.mock.method(threadApi, 'getThreads', async () => ({ data: [], has_more: false }))
-  const { default: Workspace } = await server.ssrLoadModule('/src/modules/session/ui/SessionWorkspace.vue')
-  const { useAgentStore } = await server.ssrLoadModule('/src/modules/agents/model/agent.js')
+  const { useSessionPanel } = await server.ssrLoadModule('/src/modules/session/model/useSessionPanel.js')
   const pinia = createPinia()
   setActivePinia(pinia)
-  useAgentStore(pinia).isInitialized = true
-  let state
-  const app = renderer.createApp({ setup() {
-    state = Workspace.setup({ isNewSession: true, visible: false }, { expose() {}, emit() {} })
-    return () => null
-  } })
-  app.use(pinia)
-  app.provide(routerKey, createRouter({ history: createMemoryHistory('/'), routes: [] }))
-  app.provide(ssrContextKey, {})
-  app.mount({ children: [] })
-  t.after(() => { app.unmount(); disposePinia(pinia) })
-  await new Promise((resolve) => setImmediate(resolve))
-  state.currentThreadId.value = 'thread-a'
+  const scope = effectScope()
+  const state = scope.run(() => useSessionPanel({
+    threadId: ref('thread-a'), statePanelOpen: ref(false), containerWidth: ref(1280)
+  }))
+  t.after(() => { scope.stop(); disposePinia(pinia) })
+  state.openPanelPreview({ path: artifactPath, name: '方案.html' })
   for (const [key, value] of panel.props.previewCache) state.agentPanelPreviewCache.set(key, value)
   panel.props.previewCache = state.agentPanelPreviewCache
-  state.agentPanelPreviewTabs.value = panel.props.previewTabs
-  state.agentPanelActivePreviewPath.value = artifactPath
-  state.agentPanelSections.value = panel.props.sections
-  state.agentPanelActiveSectionKey.value = `file:${artifactPath}`
   state.openPanelPreview({ path: artifactPath, name: '方案.html' })
-  panel.props.previewTabs = state.agentPanelPreviewTabs.value
+  panel.props.activePreview = state.activeAgentPanelPreview.value
   await panel.settle()
   assert.match(panel.view.currentFile.value.content, /最新卡片/)
 })
@@ -174,7 +162,7 @@ test('KeepAlive 停用时不读取文件，返回页面时活动产物重新读�
   const panel = await setupPanel(t)
   await panel.hooks.deactivated()
   panel.update('<h1>后台修订</h1>')
-  panel.props.filesystemRefreshVersion++
+  panel.refresh()
   await panel.settle()
   assert.equal(panel.requests.length, 1)
   await panel.hooks.activated()
@@ -187,7 +175,7 @@ test('关闭面板期间完成的同名修改在重开时可见，无需 KeepAli
   panel.props.visible = false
   await panel.settle()
   panel.update('<h1>关闭期间修订</h1>')
-  panel.props.filesystemRefreshVersion++
+  panel.refresh()
   await panel.settle()
   assert.equal(panel.requests.length, 1)
   panel.props.visible = true
@@ -199,11 +187,13 @@ test('查看协作成员期间完成的修改在切回产物标签时可见', as
   const panel = await setupPanel(t)
   panel.props.sections.push({ key: 'session:child', type: 'session' })
   panel.props.activeSectionKey = 'session:child'
+  panel.props.activePreview = null
   await panel.settle()
   panel.update('<h1>协作期间修订</h1>')
-  panel.props.filesystemRefreshVersion++
+  panel.refresh()
   await panel.settle()
   panel.props.activeSectionKey = `file:${artifactPath}`
+  panel.props.activePreview = artifactPreview
   await panel.settle()
   assert.match(panel.view.currentFile.value.content, /协作期间修订/)
 })
@@ -211,15 +201,33 @@ test('查看协作成员期间完成的修改在切回产物标签时可见', as
 test('终态在个人文件标签发生时也使当前线程的非活动产物失效', async (t) => {
   const panel = await setupPanel(t)
   panel.props.sections.push({ key: 'file:/personal.md', type: 'file' })
-  panel.props.previewTabs.push({ path: '/personal.md', name: 'personal.md', workspace: true })
   panel.props.activeSectionKey = 'file:/personal.md'
-  panel.props.activePreviewPath = '/personal.md'
+  panel.props.activePreview = { path: '/personal.md', name: 'personal.md', workspace: true, key: 'workspace:/personal.md' }
   await panel.settle()
   panel.update('<h1>其它标签期间修订</h1>')
-  panel.props.filesystemRefreshVersion++
+  panel.refresh()
   await panel.settle()
   panel.props.activeSectionKey = `file:${artifactPath}`
-  panel.props.activePreviewPath = artifactPath
+  panel.props.activePreview = artifactPreview
   await panel.settle()
   assert.match(panel.view.currentFile.value.content, /其它标签期间修订/)
+})
+
+test('成员产物与根会话同路径时，按成员 Thread 读取且保留根预览', async (t) => {
+  const panel = await setupPanel(t)
+  panel.update('<h1>成员版本</h1>')
+  panel.props.activePreview = { ...artifactPreview, key: `thread-child:${artifactPath}`, threadId: 'thread-child' }
+  await panel.settle()
+  assert.deepEqual(panel.requests, [
+    { threadId: 'thread-a', path: artifactPath },
+    { threadId: 'thread-child', path: artifactPath }
+  ])
+  assert.match(panel.view.currentFile.value.content, /成员版本/)
+  panel.update('<h1>成员终态</h1>')
+  panel.refresh('thread-child')
+  await panel.settle()
+  assert.match(panel.view.currentFile.value.content, /成员终态/)
+  panel.props.activePreview = artifactPreview
+  await panel.settle()
+  assert.match(panel.view.currentFile.value.content, /20万元/)
 })

@@ -18,10 +18,19 @@ async (page) => {
   })
   const session = () => ({ id: 'approval-thread', agent: { id: agent.agent_id }, status: turn().status,
     yuxi: { title: '审批失败竞态验证', current_turn: turn() } })
+  const input = {
+    id: 'approval-input', type: 'message', role: 'user', status: 'completed', turn_id: 'approval-turn',
+    content: [{ type: 'input_text', text: '准备报告，执行前请确认。' }],
+    yuxi: { message_id: 'approval-input', run_id: 'run-A', created_at: '2026-11-25T10:00:00Z' }
+  }
   await page.route('**/api/**', async route => {
     const request = route.request(), path = request.url().split('?')[0].replace(/^https?:\/\/[^/]+/, '')
     const reply = body => route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) })
     if (path.includes('/sessions/approval-thread')) {
+      if (path.endsWith('/items')) return reply({
+        data: [input], has_more: false, last_id: input.id,
+        yuxi: { runs: [{ id: 'run-A', turn_id: input.turn_id, status: 'interrupted', artifacts: [] }] }
+      })
       if (path.includes('/turns/')) {
         if (failNextTurn) {
           failNextTurn = false
@@ -31,7 +40,6 @@ async (page) => {
         return reply(turn())
       }
       if (path.endsWith('/events')) return route.fulfill({ contentType: 'text/event-stream', body: '' })
-      if (path.endsWith('/items')) return reply({ data: [], has_more: false, last_id: null, yuxi: { runs: [] } })
       if (path.endsWith('/state')) return reply({ agent_state: {} })
       if (path.endsWith('/queue')) return reply({ inputs: [], status: 'idle' })
       if (path.endsWith('/attachments')) return reply({ attachments: [] })
@@ -41,18 +49,23 @@ async (page) => {
     if (path === '/api/v1/agents/sessions') return reply({ data: [session()], has_more: false, last_id: null })
     if (path === '/api/agent') return reply({ agents: [agent] })
     if (path === '/api/agent/default-chatbot') return reply(agent)
+    if (path === '/api/mention/plugins') return reply([])
+    if (path === '/api/system/info') return reply({
+      success: true, data: { branding: { name: 'Yuxi', logo: '/favicon.svg', title: '语析' } }
+    })
     if (path === '/api/auth/me') return reply({ id: 1, uid: 'approval-test', username: '测试用户', role: 'user' })
     if (path === '/api/projects') return reply([])
     return reply({ data: [], databases: [], models: {}, first_run: false, enabled: false })
   })
   await page.addInitScript(() => localStorage.setItem('user_token', 'approval-browser-fixture'))
-  await page.setViewportSize({ width: 1440, height: 1000 })
   const results = [], pageErrors = []
   const onPageError = error => pageErrors.push(error.message)
   page.on('pageerror', onPageError)
   try {
     for (const next of ['old', 'running', 'new']) {
       phase = 'old'
+      await page.setViewportSize({ width: next === 'new' ? 768 : 1440, height: 900 })
+      await page.evaluate((theme) => localStorage.setItem('theme', theme), next === 'new' ? 'dark' : 'light')
       await page.goto(`${origin}/agent/approval-thread`)
       const dialog = page.locator('[role="dialog"]:visible')
       await dialog.getByText('是否继续旧任务？', { exact: true }).waitFor()
@@ -88,8 +101,20 @@ async (page) => {
         await page.locator('.generating-status').waitFor()
       } else {
         await dialog.getByText(next === 'old' ? '是否继续旧任务？' : '请确认新的任务？', { exact: true }).waitFor()
-        check(await dialog.getByRole('button', { name: '提交', exact: true }).isEnabled(), '失败后无法重试当前审批')
+        const submit = dialog.getByRole('button', { name: '提交', exact: true })
+        check(await dialog.getByRole('button', { name: '停止本轮', exact: true }).isVisible(), '停止操作的后果需通过按钮文案说明')
+        if (next === 'old') {
+          await dialog.getByRole('alert').waitFor()
+          check((await dialog.locator('textarea').inputValue()) === '继续', '失败清空了原问题的回答')
+          check(await submit.isEnabled(), '失败后无法重试当前审批')
+        } else {
+          check(await dialog.getByRole('alert').count() === 0, '旧请求错误显示在新审批内')
+          check((await dialog.locator('textarea').inputValue()) === '', '新审批复用了旧问题的回答')
+          check(await submit.isDisabled(), '新问题需要新的回答')
+        }
       }
+      check(await page.getByText('准备报告，执行前请确认。', { exact: true }).isVisible(), '审批变化时会话历史仍可见')
+      check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), '审批工作区超出视口')
       await page.screenshot({ path: `/tmp/yuxi-approval-failure-${next}.png`, fullPage: true, animations: 'disabled' })
       results.push({ scenario: next, ...actual })
     }

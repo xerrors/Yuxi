@@ -4,7 +4,7 @@
 类型：architecture
 Owner：frontend/src/pages/AgentView.vue
 
-调研日期：2026-09-30。读者为前端维护者、产品设计者和后续实现的 Reviewer。本文保存以 AgentView 完整可见工作区为中心的调研快照和整体重构方案。应用装配、目录归属与页面协调已按[主干决策](../implemented/2026-09-30-frontend-architecture-spine.md)实施；共享 item 状态与输入提交职责由 [Session 收敛决策](../implemented/2026-10-15-session-item-input-ownership.md)拥有。仅传 threadId 的首读、恢复、观察、消息展示和滚动由[Thread 阅读决定](../implemented/2026-11-17-thread-session-reading.md)闭合，文件标签/缓存/URL 生命周期由[文件预览决定](../implemented/2026-11-17-file-preview-session.md)拥有。完整输入组件、指定子 Run 阅读、完整草稿持久化和全量 strict TypeScript 仍属于后续提案；SessionWorkspace 仍保留输入与混合面板组合。
+调研日期：2026-09-30。读者为前端维护者、产品设计者和后续实现的 Reviewer。本文保存以 AgentView 完整可见工作区为中心的调研快照和整体重构方案。[主干决策](../implemented/2026-09-30-frontend-architecture-spine.md)记录应用装配、目录归属与页面协调。[Session 收敛决策](../implemented/2026-10-15-session-item-input-ownership.md)记录共享 item 与输入提交。[会话工作区与 Thread 阅读](../implemented/2026-11-17-thread-session-reading.md)记录详情、阅读、单 Thread 编辑及协作装配。[文件预览决定](../implemented/2026-11-17-file-preview-session.md)记录文件标签、缓存和 URL 生命周期。完整输入组件、指定子 Run 阅读、完整草稿持久化和全量 strict TypeScript 仍属于后续提案。
 
 结论：前端需要围绕业务边界进行系统重构。优先建立按 Thread 隔离的会话数据与订阅模块、仅传 `threadId` 即可工作的对话阅读组件，以及管理完整草稿与提交回执的统一输入组件。页面负责组合这些能力，文件、状态、子智能体、调试和管理功能分别拥有自己的数据与界面。Vue 3、Vite、Pinia 和现有设计 token 可以继续使用。
 

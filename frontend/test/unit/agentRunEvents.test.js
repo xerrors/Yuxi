@@ -287,8 +287,7 @@ function harness(
     getThreadState: () => state,
     currentAgentId: 'agent',
     handlePublicEvent: (value) => delivered.push(value),
-    fetchThreadMessages: snapshot,
-    fetchAgentState() {},
+    reconcileTurnHistory: snapshot,
     resetThreadExecution() {},
     onTerminalDetected: (value) => terminal.push(value)
   })
@@ -396,8 +395,7 @@ test('旧 Turn 等待历史回读时启动新 FIFO 流，旧收尾不能中止�
     getThreadState: () => state,
     currentAgentId: 'agent',
     handlePublicEvent() {},
-    fetchThreadMessages: () => history,
-    fetchAgentState() {},
+    reconcileTurnHistory: () => history,
     resetThreadExecution: () => {
       resetCount++
       state.runStreamAbortController?.abort()
