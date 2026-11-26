@@ -25,6 +25,7 @@ export function useAgentThreadState({
         isStreaming: false,
         cancellationPending: false,
         cooperationWaiting: false,
+        settledCooperationTurns: new Map(),
         approvalSubmitting: false,
         approvalModeSaving: false,
         runStateVersion: 0,

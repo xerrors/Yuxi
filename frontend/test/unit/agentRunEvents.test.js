@@ -356,6 +356,27 @@ test('旧 Run 的 waiting 和其他 Turn 的终态不能结束恢复后的 Run',
   assert.deepEqual(h.terminal[0].touchedThreadIds, ['thread'])
 })
 
+test('同一轮的协作取消可在本地 Run 落后且快照不可用时收尾', async (t) => {
+  const cancelled = {
+    ...event('agent.session.turn.cancelled', 'resumed'),
+    yuxi: { run_id: 'resumed', current_run_id: 'resumed', error_type: 'cooperation_waiting' }
+  }
+  const wrongOwner = { ...cancelled, yuxi: { ...cancelled.yuxi, run_id: 'superseded' } }
+  const h = harness(t, [wrongOwner, cancelled], {
+    snapshot: async () => { throw new Error('轮次历史不可用') }
+  })
+  t.mock.method(api, 'getThreadTurn', async () => { throw new Error('轮次详情不可用') })
+
+  await h.stream.startRunStream('thread', 'old', null, { turnId: 'turn' })
+  await tick()
+
+  assert.deepEqual(h.delivered, [cancelled])
+  assert.equal(h.state.turnStatus, 'cancelled')
+  assert.equal(h.state.isStreaming, false)
+  assert.equal(h.state.threadCursor, '2.0.1.2-0.3')
+  assert.equal(h.terminal[0].runId, 'resumed')
+})
+
 test('Run settled 不结束 Turn；只有 Turn 终态收尾', async (t) => {
   const h = harness(t, [event('yuxi.session.run.settled'), event('agent.session.turn.completed')])
   await h.stream.startRunStream('thread', 'run', null, { turnId: 'turn' })

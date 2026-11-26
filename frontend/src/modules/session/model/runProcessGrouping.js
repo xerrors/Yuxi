@@ -121,3 +121,26 @@ export const formatEmptyRunStatus = (status) => ({
   interrupted: '本次运行已中断',
   completed: '本次运行已结束'
 })[status] || '暂无消息'
+
+const STOPPED_RUN_STATUSES = new Set(['cancelled', 'interrupted', 'cancel_requested'])
+
+/** 识别为协作等待而结束的执行段。 */
+export const isCooperationWaitRun = (run) =>
+  run?.status === 'interrupted' && run.error_type === 'cooperation_waiting'
+
+/** 根据执行段的结束原因及所属轮次生成消息区状态提示。 */
+export const getRunStatusNotice = (run, hasDisplayItems, turn) => {
+  if (!run) return null
+
+  let { status } = run
+  if (isCooperationWaitRun(run)) {
+    // 等待中的 Run 在取消后仍保留原结束原因，取消结果由同一 Turn 确认。
+    if (turn?.status !== 'cancelled' || turn.id !== run.turn_id || turn.current_run_id !== run.id) {
+      return null
+    }
+    status = 'cancelled'
+  }
+
+  const stopped = STOPPED_RUN_STATUSES.has(status)
+  return stopped || !hasDisplayItems ? { message: formatEmptyRunStatus(status), stopped } : null
+}

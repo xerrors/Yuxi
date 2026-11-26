@@ -6,6 +6,7 @@ import {
   groupRunContinuations,
   collapseRunProcess,
   formatProcessDuration,
+  getRunStatusNotice,
   isRunGroupSettled,
   formatEmptyRunStatus
 } from '../../src/modules/session/model/runProcessGrouping.js'
@@ -178,6 +179,29 @@ test('零消息后续 Run 不隐藏上一条完成回答的操作栏，关联 re
   assert.equal(formatEmptyRunStatus(empty.run.status), '本次运行失败')
   assert.equal(formatEmptyRunStatus('cancelled'), '本次运行已取消')
   assert.equal(formatEmptyRunStatus('cancel_requested'), '取消中')
+})
+
+test('协作等待执行段只在匹配的轮次确认取消后显示停止提示', () => {
+  const run = { id: 'wait-run', turn_id: 'turn-1', status: 'interrupted', error_type: 'cooperation_waiting' }
+  const cancelled = { id: 'turn-1', current_run_id: 'wait-run', status: 'cancelled' }
+  for (const turn of [
+    null,
+    { ...cancelled, status: 'in_progress' },
+    { ...cancelled, id: 'other-turn' },
+    { ...cancelled, current_run_id: 'resume-run' }
+  ]) {
+    assert.equal(getRunStatusNotice(run, true, turn), null)
+    assert.equal(getRunStatusNotice(run, false, turn), null)
+  }
+  assert.deepEqual(getRunStatusNotice(run, true, cancelled), { message: '本次运行已取消', stopped: true })
+})
+
+test('其他中断、主动取消和空白执行段保留原状态提示', () => {
+  assert.deepEqual(getRunStatusNotice({ status: 'interrupted' }, true), { message: '本次运行已中断', stopped: true })
+  assert.deepEqual(getRunStatusNotice({ status: 'cancelled' }, true), { message: '本次运行已取消', stopped: true })
+  assert.deepEqual(getRunStatusNotice({ status: 'cancel_requested' }, true), { message: '取消中', stopped: true })
+  assert.deepEqual(getRunStatusNotice({ status: 'pending' }, false), { message: '等待运行', stopped: false })
+  assert.equal(getRunStatusNotice({ status: 'pending' }, true), null)
 })
 
 test('审批前后的工具和思考跨关联 Run 连续展示，正文仍独立', () => {

@@ -5,13 +5,14 @@ import { useUserStore } from '@/modules/identity'
 import { handleChatError } from '@/shared/lib/errorHandler'
 import { useChatThreadsStore } from './chatThreads'
 import { useAgentThreadState } from './useAgentThreadState'
-import { useAgentRunStream } from './useAgentRunStream'
+import { isCooperationCancellationEvent, useAgentRunStream } from './useAgentRunStream'
 import { useAgentInputQueue } from './useAgentInputQueue'
 import { useAgentStreamHandler } from './useAgentStreamHandler'
 import { useStreamSmoother } from './useStreamSmoother'
 import { getStreamingReasoning, itemsToMessages, mergeItemSnapshot } from './agentItems'
 import { pendingInterruptFromWaitpoint } from './toolApproval'
 import { useSessionFeedbackStore } from './sessionFeedback'
+import { isCooperationWaitRun } from './runProcessGrouping'
 
 /** 协作摘要与首读使用相同的轮次、执行段和等待状态进行核对。 */
 const executionSnapshot = (turnId, status, currentRunId, resultRunId, runStatus, waitingFor) =>
@@ -154,12 +155,47 @@ export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
         for (const run of pageRuns || []) runs.set(run.id, run)
       },
       finish(fresh = false) {
-        threadRuns.value[threadId] = [...runs.values()]
+        const mergedRuns = [...runs.values()]
+        threadRuns.value[threadId] = mergedRuns
         streamSmoother.flushThread(threadId)
+        readHistoricalCooperationTurns(threadId, state, mergedRuns)
         void feedback.load(threadId, (threadMessages.value[threadId] || [])
           .filter((message) => message.phase === 'final_answer' && message.execution_status === 'completed')
           .map((message) => message.run_id), fresh)
       }
+    }
+  }
+
+  /** 保留单轮接口已确认的协作终态，供当前和历史消息读取。 */
+  const rememberSettledCooperationTurn = (state, turn) => {
+    if (state.settledCooperationTurns.has(turn.id)) return
+    if (!isSettled(turn.status) || !turn.yuxi.runs?.some(isCooperationWaitRun)) return
+    state.settledCooperationTurns.set(turn.id, {
+      id: turn.id, status: turn.status, current_run_id: turn.yuxi.current_run_id
+    })
+  }
+
+  /** 旧协作等待段保留原 Run 状态，按明确 Turn 回读历史终态。 */
+  const readHistoricalCooperationTurns = (threadId, state, runs) => {
+    const currentTurnId = state.detail?.yuxi.current_turn?.id
+    if (!currentTurnId) return
+
+    let resumedRunIds
+    for (const run of runs) {
+      const turnId = run.turn_id
+      if (!isCooperationWaitRun(run) || !turnId || turnId === currentTurnId || state.settledCooperationTurns.has(turnId)) continue
+
+      // 已有续跑快照时，原等待段已不再是该轮当前 Run。
+      resumedRunIds ??= new Set(runs.map((run) => run.resume_from_run_id))
+      if (resumedRunIds.has(run.id)) continue
+
+      void once(`cooperation-history:${turnId}:${threadId}`, async () => {
+        const turn = await agentApi.getThreadTurn(threadId, turnId)
+        if (!isCurrentThreadState(threadId, state) || turn.id !== turnId) return
+        rememberSettledCooperationTurn(state, turn)
+      }).catch(() => {
+        // API 层记录读取失败，后续历史读取可重试，当前消息仍可阅读。
+      })
     }
   }
 
@@ -225,7 +261,10 @@ export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
     const turnId = session.yuxi.current_turn?.id
     const turn = turnId && await agentApi.getThreadTurn(threadId, turnId)
     if (!isCurrentThreadState(threadId, state)) return
-    if (turn) merge.items(turn.yuxi.output, turn.yuxi.runs)
+    if (turn) {
+      merge.items(turn.yuxi.output, turn.yuxi.runs)
+      rememberSettledCooperationTurn(state, turn)
+    }
     finishThreadWindow(threadId, state, window)
     if (!state.isStreaming && state.runStateVersion === version) state.turnStatus = session.yuxi.current_turn?.status || null
     merge.finish(!opening || Boolean(settled))
@@ -258,6 +297,7 @@ export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
     const turn = await agentApi.getThreadTurn(threadId, turnId)
     if (!isCurrentThreadState(threadId, state)) return
     merge.items(turn.yuxi.output, turn.yuxi.runs)
+    rememberSettledCooperationTurn(state, turn)
     merge.finish(true)
     return turn
   })
@@ -301,6 +341,14 @@ export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
     handlePublicEvent: (event, threadId) => {
       const result = handlePublicEvent(event, threadId)
       if (event.turn && event.session_id === threadId) {
+        if (isCooperationCancellationEvent(event)) {
+          // 单轮终态事件已确认持久取消，详情和历史暂不可用时也能展示结果。
+          const turns = peekThreadState(threadId)?.settledCooperationTurns
+          const turnId = event.turn_id
+          if (turns && !turns.has(turnId)) {
+            turns.set(turnId, { id: turnId, status: 'cancelled', current_run_id: event.yuxi.run_id })
+          }
+        }
         chatThreads.updateThreadSummary(threadId, {
           status: event.turn.status === 'queued' ? 'in_progress' : event.turn.status
         })

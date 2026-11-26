@@ -68,11 +68,11 @@
             :error-message="row.group.run.error_message"
           />
           <div
-            v-else-if="shouldShowRunStatusNotice(row)"
+            v-else-if="row.runNotice"
             class="chat-inline-notice"
-            :class="{ 'is-terminal': isUserStoppedRun(row.group.run) }"
+            :class="{ 'is-terminal': row.runNotice.stopped }"
           >
-            {{ formatEmptyRunStatus(row.group.run.status) }}
+            {{ row.runNotice.message }}
           </div>
           <AgentArtifactsCard
             v-if="row.artifacts.length && shouldShowRefs(row.group)"
@@ -137,7 +137,8 @@ import { ScrollController } from '../model/scrollController'
 import { getMessageRunId } from '../model/messageDebug'
 import { MessageProcessor } from '../model/messageProcessor'
 import {
-  formatEmptyRunStatus,
+  getRunStatusNotice,
+  isCooperationWaitRun,
   isRunGroupSettled as isRunGroupExecutionSettled
 } from '../model/runProcessGrouping'
 import { getMessageGroupDisplayItems } from '../model/messageGrouping'
@@ -217,17 +218,25 @@ const getMessageGroupTimeLabel = (group, previousGroup) => {
 }
 
 const messageGroupRows = computed(() => {
-  const rows = runGroups.value.map((group, index) => ({
-    type: 'message-group',
-    key:
-      group.displayKey ||
-      group.run?.id ||
-      (group.status === 'streaming' ? 'ongoing-message-group' : `history-${index}`),
-    group,
-    timeLabel: getMessageGroupTimeLabel(group, runGroups.value[index - 1]),
-    displayItems: getDisplayItems(group),
-    artifacts: MessageProcessor.extractArtifactsFromMessageGroup(group)
-  }))
+  const rows = runGroups.value.map((group, index) => {
+    const displayItems = getDisplayItems(group)
+    const { run } = group
+    const turn = isCooperationWaitRun(run)
+      ? state.value?.settledCooperationTurns.get(run.turn_id) ?? state.value?.detail?.yuxi.current_turn
+      : null
+    return {
+      type: 'message-group',
+      key:
+        group.displayKey ||
+        group.run?.id ||
+        (group.status === 'streaming' ? 'ongoing-message-group' : `history-${index}`),
+      group,
+      timeLabel: getMessageGroupTimeLabel(group, runGroups.value[index - 1]),
+      displayItems,
+      runNotice: getRunStatusNotice(run, displayItems.length > 0, turn),
+      artifacts: MessageProcessor.extractArtifactsFromMessageGroup(group)
+    }
+  })
 
   if (currentThreadConfigNotice.value) {
     const insertAfterCount = Math.max(
@@ -243,18 +252,6 @@ const messageGroupRows = computed(() => {
 
   return rows
 })
-
-/** 用户主动停止的 Run 终态：即使已有工具摘要也要显式告知结果。 */
-const USER_STOPPED_RUN_STATUSES = new Set(['cancelled', 'interrupted', 'cancel_requested'])
-
-const isUserStoppedRun = (run) => Boolean(run) && USER_STOPPED_RUN_STATUSES.has(run.status)
-
-const shouldShowRunStatusNotice = (row) => {
-  const run = row?.group?.run
-  if (!run) return false
-  if (isUserStoppedRun(run)) return true
-  return !row.displayItems.length
-}
 
 const getMessageToolCalls = (message) => normalizeToolCalls(message?.tool_calls)
 

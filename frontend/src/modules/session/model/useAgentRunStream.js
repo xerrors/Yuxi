@@ -73,6 +73,14 @@ export const processRunSseResponse = async (response, onEvent) => {
   }
 }
 
+/** 协作等待的持久取消事件携带准确的当前执行段归属。 */
+export const isCooperationCancellationEvent = (event) =>
+  event.type === 'agent.session.turn.cancelled' &&
+  event.turn?.status === 'cancelled' &&
+  event.yuxi?.error_type === 'cooperation_waiting' &&
+  Boolean(event.yuxi.run_id) &&
+  event.yuxi.run_id === event.yuxi.current_run_id
+
 export function useAgentRunStream({
   getThreadState,
   isThreadActive = () => true,
@@ -253,7 +261,8 @@ export function useAgentRunStream({
           // 同一 SSE 会跨协作恢复的多个 Run，事件进展也必须使旧快照失效。
           ts.runStateVersion = (ts.runStateVersion || 0) + 1
           const eventVersion = ts.runStateVersion
-          if (data.yuxi?.run_id !== ts.activeRunId) {
+          // 已确认归属的持久取消不可再接续，当前快照不可用也能消费。
+          if (data.yuxi?.run_id !== ts.activeRunId && !isCooperationCancellationEvent(data)) {
             const turn = await agentApi.getThreadTurn(threadId, turnId)
             if (controller.signal.aborted || ts.runStateVersion !== eventVersion) return
             ts.activeRunId = turn.yuxi.current_run_id
