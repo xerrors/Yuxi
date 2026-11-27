@@ -1,32 +1,5 @@
 <template>
   <div class="workspace-view layout-container">
-    <PageHeader title="个人空间" :loading="loadingTree || loadingPreview" :show-border="true">
-      <template #actions>
-        <a-button
-          class="lucide-icon-btn"
-          :aria-label="sidebarCollapsed ? '展开个人空间侧边栏' : '收起个人空间侧边栏'"
-          :aria-expanded="!sidebarCollapsed"
-          aria-controls="workspace-navigation"
-          @click="sidebarCollapsed = !sidebarCollapsed"
-        >
-          <template #icon><PanelLeft :size="16" /></template>
-          {{ sidebarCollapsed ? '展开导航' : '收起导航' }}
-        </a-button>
-        <a-button class="lucide-icon-btn" @click="fileSearchOpen = true">
-          <template #icon><Search :size="16" /></template>
-          搜索
-        </a-button>
-        <a-button
-          v-if="isAgentsWorkspacePath"
-          class="lucide-icon-btn"
-          @click="openAgentsGuideModal"
-        >
-          <template #icon><CircleHelp :size="16" /></template>
-          使用说明
-        </a-button>
-      </template>
-    </PageHeader>
-
     <input
       ref="uploadInputRef"
       class="upload-input"
@@ -53,104 +26,68 @@
       @select-file="handleFileSearchSelect"
     />
 
-    <a-alert
-      v-if="uploadError && activeSourceKey === 'personal'"
-      class="upload-error"
-      type="error"
-      :message="uploadError"
-      show-icon
-      closable
-      @close="uploadError = ''"
-    />
-
-    <div class="workspace-shell" :class="{ 'is-sidebar-collapsed': sidebarCollapsed }">
-      <div
-        id="workspace-navigation"
-        class="workspace-sidebar-slot"
-        :inert="sidebarCollapsed"
-        :aria-hidden="sidebarCollapsed"
-      >
-        <WorkspaceSidebar
-          :active-key="activeSourceKey"
-          :current-path="currentPath"
-          :knowledge-bases="knowledgeBases"
-          :loading-knowledge-bases="loadingKnowledgeBases"
-          :current-uid="userStore.uid"
-          :disabled="activeSourceKey !== 'personal' || isReadonlyWorkspacePath"
-          :uploading="uploadingFile"
-          @select-personal="selectPersonalWorkspace"
-          @select-knowledge-base="selectKnowledgeBase"
-          @select-path="selectWorkspacePath"
-          @upload-file="openUploadFilePicker"
-          @upload-folder="openUploadFolderPicker"
-          @create-directory="openCreateDirectoryModal"
+    <div class="workspace-shell">
+      <WorkspaceSidebar
+        :active-key="activeSourceKey"
+        :current-path="currentPath"
+        :knowledge-bases="knowledgeBases"
+        :knowledge-list-status="knowledgeListStatus"
+        :current-uid="userStore.uid"
+        @select-overview="selectOverview"
+        @select-personal="selectWorkspacePath('/')"
+        @select-knowledge-base="selectKnowledgeBase"
+        @reload-knowledge-bases="loadKnowledgeBases"
+        @select-path="selectWorkspacePath"
+      />
+      <main class="workspace-main">
+        <a-alert
+          v-if="uploadError && !isKnowledgeSource" class="upload-error" type="error"
+          :message="uploadError" show-icon closable @close="uploadError = ''"
         />
-      </div>
-      <main
-        ref="workspaceMainRef"
-        class="workspace-main"
-        :class="{ 'is-inline-preview': showInlinePreview }"
-      >
-        <template v-if="activeSourceKey === 'personal' || selectedKnowledgeBase">
-          <WorkspaceFileList
-            :entries="entries"
-            :current-path="currentPath"
-            :selected-path="selectedEntry?.path || ''"
-            :selected-paths="selectedPaths"
-            :deleting-paths="deletingPaths"
-            :selection-mode="selectionMode"
-            :loading="loadingTree"
-            :readonly="isReadonlyWorkspacePath"
-            :root-label="selectedKnowledgeBase?.name || '全部文件'"
-            :breadcrumb-items="
-              isKnowledgeSource ? knowledgeBreadcrumbItems : workspaceBreadcrumbItems
-            "
-            :pagination="isKnowledgeSource ? knowledgePagination : null"
-            :uploadable="personalUploadEnabled"
-            :uploading="uploadingFile"
-            @select-entry="handleSelectEntry"
-            @breadcrumb-click="handleListBreadcrumbClick"
-            @update:selected-paths="selectedPaths = $event"
-            @update:selection-mode="handleSelectionModeChange"
-            @delete-selected="confirmDeleteEntries(selectedEntries)"
-            @delete-entry="(entry) => confirmDeleteEntries([entry])"
-            @download-entry="downloadEntry"
-            @page-change="handleKnowledgePageChange"
-            @upload-file="openUploadFilePicker"
-            @create-directory="openCreateDirectoryModal"
-            @upload-drop="handleDropUpload"
-          />
-          <Transition name="workspace-preview-slide" @after-leave="handlePreviewAfterLeave">
-            <aside
-              v-if="showInlinePreview"
-              class="workspace-preview-panel"
-              :class="{ 'is-resizing': isPreviewResizing }"
-              :style="workspacePreviewStyle"
-            >
-              <div
-                class="workspace-preview-resizer"
-                role="separator"
-                aria-label="调整预览宽度"
-                tabindex="0"
-                @pointerdown="startPreviewResize"
-              ></div>
-              <WorkspacePreviewPane
-                :file="previewFile"
-                :file-path="selectedPreviewPath"
-                :editable="!isReadonlyWorkspacePath"
-                :saving="savingPreviewFile"
-                @close="closePreview"
-                @save="handleSavePreviewFile"
-              />
-            </aside>
-          </Transition>
-        </template>
-
-        <div v-else class="workspace-placeholder">
-          <LibraryBig :size="32" />
-          <h2>知识库</h2>
-          <p>请选择一个可访问知识库以浏览文件。</p>
-        </div>
+        <WorkspaceOverview
+          v-if="activeSourceKey === 'overview'" v-show="!previewFile" ref="overviewRef"
+          @open-file="loadWorkspacePreview" @open-artifact="loadArtifactPreview" @open-directory="selectWorkspacePath"
+        >
+          <template #actions>
+            <WorkspaceActions :uploading="uploadingFile" writable v-on="toolbarEvents" />
+          </template>
+        </WorkspaceOverview>
+        <WorkspaceFileList
+          v-else v-show="!previewFile"
+          :entries="entries"
+          :current-path="currentPath"
+          :selected-path="selectedEntry?.path || ''"
+          :selected-paths="selectedPaths"
+          :deleting-paths="deletingPaths"
+          :selection-mode="selectionMode"
+          :loading="loadingTree"
+          :readonly="isKnowledgeSource"
+          :root-label="selectedKnowledgeBase?.name || '全部文件'"
+          :breadcrumb-items="isKnowledgeSource ? knowledgeBreadcrumbItems : workspaceBreadcrumbItems"
+          :pagination="isKnowledgeSource ? knowledgePagination : null"
+          :uploadable="personalUploadEnabled"
+          @select-entry="handleSelectEntry"
+          @breadcrumb-click="handleListBreadcrumbClick"
+          @update:selected-paths="selectedPaths = $event"
+          @update:selection-mode="handleSelectionModeChange"
+          @delete-selected="confirmDeleteEntries(selectedEntries)"
+          @delete-entry="(entry) => confirmDeleteEntries([entry])"
+          @download-entry="downloadEntry"
+          @page-change="handleKnowledgePageChange"
+          @upload-drop="handleDropUpload"
+        >
+          <template #actions>
+            <a-button v-if="isAgentsWorkspacePath" class="workspace-toolbar-icon lucide-icon-btn" title="Agents 目录说明" aria-label="Agents 目录说明" @click="openAgentsGuideModal">
+              <CircleHelp :size="16" />
+            </a-button>
+            <WorkspaceActions :uploading="uploadingFile" :writable="personalUploadEnabled" v-on="toolbarEvents" />
+          </template>
+        </WorkspaceFileList>
+        <WorkspacePreviewPane
+          v-if="previewFile" :file="previewFile" :file-path="selectedPreviewPath"
+          :editable="previewEditable" :saving="savingPreviewFile"
+          @close="returnFromPreview" @download="downloadEntry(selectedEntry)" @save="handleSavePreviewFile"
+        />
       </main>
     </div>
 
@@ -202,42 +139,16 @@
       </div>
     </a-modal>
 
-    <a-modal
-      :open="workspaceActive && previewModalVisible && !useInlinePreview"
-      width="880px"
-      :style="{ maxWidth: '92vw', top: '5vh' }"
-      :bodyStyle="{ height: '82vh', maxHeight: '90vh', padding: '0', overflow: 'hidden' }"
-      :footer="null"
-      :closable="false"
-      destroy-on-close
-      wrapClassName="workspace-file-preview-modal"
-      @cancel="closePreview"
-    >
-      <AgentFilePreview
-        :file="previewFile"
-        :filePath="selectedPreviewPath"
-        :showClose="true"
-        :showDownload="false"
-        :showFullscreen="true"
-        :full-height="true"
-        :editable="activeSourceKey === 'personal'"
-        :saving="savingPreviewFile"
-        container-class="workspace-modal-preview-container"
-        content-class="workspace-modal-preview-content"
-        @close="closePreview"
-        @save="handleSavePreviewFile"
-      />
-    </a-modal>
   </div>
 </template>
 
 <script setup>
-import { computed, onActivated, onDeactivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
-import { CircleHelp, LibraryBig, PanelLeft, Search } from '@lucide/vue'
-import PageHeader from '@/shared/ui/PageHeader.vue'
-import AgentFilePreview from '@/modules/session/ui/workspace/AgentFilePreview.vue'
+import { CircleHelp } from '@lucide/vue'
+import WorkspaceActions from '@/modules/workspace/ui/WorkspaceActions.vue'
+import WorkspaceOverview from '@/modules/workspace/ui/WorkspaceOverview.vue'
 import WorkspaceFileList from '@/modules/workspace/ui/WorkspaceFileList.vue'
 import WorkspacePreviewPane from '@/modules/workspace/ui/WorkspacePreviewPane.vue'
 import WorkspaceSidebar from '@/modules/workspace/ui/WorkspaceSidebar.vue'
@@ -248,14 +159,16 @@ import {
   traverseDirectoryEntry,
   validateFolderUploadEntries
 } from '@/modules/workspace'
+import { threadApi } from '@/apis/agent_api'
 import { knowledgeBaseApi } from '@/apis/knowledge_api'
-import { useUserStore } from '@/modules/identity/model/user'
+import { useUserStore } from '@/modules/identity'
 import {
   createWorkspaceDirectory,
   deleteWorkspacePath,
   downloadWorkspaceFile,
   downloadWorkspaceKnowledgeFile,
   getWorkspaceFileContent,
+  openWorkspaceFile,
   getWorkspaceKnowledgeFileContent,
   getWorkspaceKnowledgeTree,
   getWorkspaceTree,
@@ -271,7 +184,8 @@ const userStore = useUserStore()
 const route = useRoute()
 const router = useRouter()
 
-const activeSourceKey = ref('personal')
+const activeSourceKey = ref('overview')
+const overviewRef = ref(null)
 const currentPath = ref('/')
 const fileSearchOpen = ref(false)
 
@@ -280,10 +194,11 @@ const searchWorkspace = (query) => searchWorkspaceFiles(query)
 // 搜索命中后切到文件所在目录并打开预览
 const handleFileSearchSelect = async (entry) => {
   if (!entry?.path) return
-  const parentPath = entry.path.replace(/\/[^/]+$/, '') || '/'
-  await selectWorkspacePath(parentPath)
-  const matched = entries.value.find((item) => item.path === entry.path)
-  if (matched) await loadWorkspacePreview(matched)
+  if (activeSourceKey.value === 'overview') {
+    await loadWorkspacePreview(entry)
+  } else {
+    await openFileByPath(entry.path)
+  }
 }
 
 // 侧边栏全局搜索选中工作区文件后，通过 query 跳转打开对应文件
@@ -291,6 +206,7 @@ const openFileByPath = async (path) => {
   if (!path) return
   const parentPath = String(path).replace(/\/[^/]+$/, '') || '/'
   await selectWorkspacePath(parentPath)
+  if (activeSourceKey.value !== 'personal' || currentPath.value !== parentPath) return
   const matched = entries.value.find((item) => item.path === String(path))
   if (!matched) return
   await loadWorkspacePreview(matched)
@@ -309,17 +225,11 @@ const selectedPaths = ref([])
 const selectionMode = ref(false)
 const previewFile = ref(null)
 const previewObjectUrl = ref('')
-const previewModalVisible = ref(false)
-const inlinePreviewVisible = ref(false)
 const loadingTree = ref(false)
-const loadingPreview = ref(false)
 const savingPreviewFile = ref(false)
-const loadingKnowledgeBases = ref(false)
+const knowledgeListStatus = ref('loading')
 const knowledgeBases = ref([])
 const selectedKnowledgeBase = ref(null)
-const workspaceMainRef = ref(null)
-const workspaceMainWidth = ref(0)
-const workspaceActive = ref(true)
 const createDirectoryModalVisible = ref(false)
 const agentsGuideModalVisible = ref(false)
 const newDirectoryName = ref('')
@@ -329,11 +239,7 @@ const uploadError = ref('')
 const uploadInputRef = ref(null)
 const folderUploadInputRef = ref(null)
 const deletingPaths = ref([])
-const sidebarCollapsed = ref(false)
-const previewWidthPercent = ref(50)
-const isPreviewResizing = ref(false)
 const previewRequestId = ref(0)
-const INLINE_PREVIEW_MIN_WIDTH = 960
 const AGENTS_WORKSPACE_PATH = '/agents'
 const knowledgeFileBrowser = reactive({
   parentId: null,
@@ -343,7 +249,6 @@ const knowledgeFileBrowser = reactive({
   hasMore: false
 })
 
-const useInlinePreview = computed(() => workspaceMainWidth.value >= INLINE_PREVIEW_MIN_WIDTH)
 const isKnowledgeSource = computed(() => activeSourceKey.value.startsWith('knowledge-base:'))
 const comparablePath = (path) => String(path || '/').replace(/\/$/, '') || '/'
 const isSameOrChildPath = (path, targetPath) => {
@@ -358,23 +263,14 @@ const isAgentsWorkspacePath = computed(
     activeSourceKey.value === 'personal' &&
     comparablePath(currentPath.value) === AGENTS_WORKSPACE_PATH
 )
-const isReadonlyWorkspacePath = computed(() => isKnowledgeSource.value)
-// 与侧边栏上传入口同一语义：仅个人空间非只读目录可上传，知识库只读。
-const personalUploadEnabled = computed(
-  () => activeSourceKey.value === 'personal' && !isReadonlyWorkspacePath.value
-)
+const personalUploadEnabled = computed(() => activeSourceKey.value === 'personal')
+const previewEditable = computed(() => !isKnowledgeSource.value && selectedEntry.value?.source !== 'artifact' && !selectedEntry.value?.readonly)
+const uploadTarget = computed(() => activeSourceKey.value === 'overview' ? '/' : currentPath.value)
 const selectedPreviewPath = computed(() =>
-  selectedEntry.value?.source === 'knowledge'
+  selectedEntry.value?.source === 'knowledge' || selectedEntry.value?.source === 'artifact'
     ? selectedEntry.value.name || ''
     : selectedEntry.value?.path || ''
 )
-const showInlinePreview = computed(
-  () => useInlinePreview.value && inlinePreviewVisible.value && Boolean(previewFile.value)
-)
-const workspacePreviewStyle = computed(() => ({
-  width: `${previewWidthPercent.value}%`
-}))
-
 const knowledgePagination = computed(() => ({
   current: knowledgeFileBrowser.page,
   pageSize: knowledgeFileBrowser.pageSize,
@@ -394,13 +290,7 @@ const revokePreviewObjectUrl = () => {
   previewObjectUrl.value = ''
 }
 
-const KNOWLEDGE_PREVIEW_LOAD_MESSAGES = {
-  log: '加载知识库文件预览失败:',
-  resolveUserMessage: () => '加载知识库文件预览失败'
-}
-
-const buildPreviewLoadingFile = (entry, baseFile = entry) => ({
-  ...baseFile,
+const buildPreviewLoadingFile = (entry) => ({
   ...entry,
   content: '',
   status: 'loading',
@@ -421,15 +311,14 @@ const buildPreviewErrorFile = (entry, error) => ({
   previewUrl: ''
 })
 
-const startPreviewRequest = (entry, baseFile = entry) => {
+let previewTrigger = null
+const startPreviewRequest = (entry) => {
+  if (!previewFile.value) previewTrigger = document.activeElement
   const requestId = previewRequestId.value + 1
   previewRequestId.value = requestId
   selectedEntry.value = entry
   revokePreviewObjectUrl()
-  previewFile.value = buildPreviewLoadingFile(entry, baseFile)
-  inlinePreviewVisible.value = true
-  previewModalVisible.value = !useInlinePreview.value
-  loadingPreview.value = true
+  previewFile.value = buildPreviewLoadingFile(entry)
   return requestId
 }
 
@@ -456,50 +345,31 @@ const applyPreviewFile = (requestId, entry, file) => {
   previewFile.value = file
 }
 
-const showPreviewError = (requestId, entry, error, logMessage, userMessage) => {
-  if (!isCurrentPreviewEntry(requestId, entry)) return
-  console.warn(logMessage, error)
-  previewFile.value = buildPreviewErrorFile(entry, error)
-  message.error(userMessage)
-}
-
-const finishPreviewRequest = (requestId) => {
-  if (previewRequestId.value === requestId) {
-    loadingPreview.value = false
-  }
-}
-
-const loadWorkspacePreview = async (entry) => {
+/** 按来源读取预览，快速切换时只发布当前请求的内容。 */
+const loadPreview = async (entry, fetchResponse) => {
   const requestId = startPreviewRequest(entry)
   try {
-    const response = await getWorkspaceFileContent(entry.path)
+    const response = await fetchResponse()
     if (!isCurrentPreviewEntry(requestId, entry)) return
     const file = await normalizePreviewResponse(response, entry)
     applyPreviewFile(requestId, entry, file)
   } catch (error) {
-    showPreviewError(requestId, entry, error, '加载文件预览失败:', '加载文件预览失败')
-  } finally {
-    finishPreviewRequest(requestId)
+    if (!isCurrentPreviewEntry(requestId, entry)) return
+    console.warn('加载文件预览失败:', error)
+    previewFile.value = buildPreviewErrorFile(entry, error)
+    message.error(error?.message || '加载文件预览失败')
   }
 }
 
-const loadKnowledgePreview = async (
-  entry,
-  baseFile = entry,
-  messages = KNOWLEDGE_PREVIEW_LOAD_MESSAGES
-) => {
-  const requestId = startPreviewRequest(entry, baseFile)
-  try {
-    const response = await getWorkspaceKnowledgeFileContent(entry.kb_id, entry.file_id)
-    if (!isCurrentPreviewEntry(requestId, entry)) return
-    const file = await normalizePreviewResponse(response, entry)
-    applyPreviewFile(requestId, entry, file)
-  } catch (error) {
-    showPreviewError(requestId, entry, error, messages.log, messages.resolveUserMessage(error))
-  } finally {
-    finishPreviewRequest(requestId)
-  }
-}
+const loadWorkspacePreview = (entry) => loadPreview(entry, () => openWorkspaceFile(entry.path))
+
+const loadKnowledgePreview = (entry) => loadPreview(entry, () => getWorkspaceKnowledgeFileContent(entry.kb_id, entry.file_id))
+
+const loadArtifactPreview = (entry) => loadPreview({
+  ...entry,
+  source: 'artifact',
+  resourceBaseUrl: threadApi.getThreadArtifactUrl(entry.thread_id, entry.path)
+}, () => threadApi.previewThreadArtifact(entry.thread_id, entry.path))
 
 const syncSelectedPaths = () => {
   const entryPathSet = new Set(entries.value.map((entry) => entry.path))
@@ -517,23 +387,28 @@ const handleSelectionModeChange = (enabled) => {
   }
 }
 
+let directoryRequestId = 0
 const loadWorkspaceEntries = async (path = '/') => {
+  const requestId = ++directoryRequestId
+  currentPath.value = path
+  workspaceBreadcrumbItems.value = buildWorkspaceBreadcrumbItems()
   loadingTree.value = true
   try {
     const response = await getWorkspaceTree(path)
+    if (requestId !== directoryRequestId) return
     entries.value = response.entries || []
-    currentPath.value = path
     knowledgeBreadcrumbItems.value = []
-    workspaceBreadcrumbItems.value = buildWorkspaceBreadcrumbItems()
     syncSelectedPaths()
     if (!selectedPaths.value.length) {
       selectionMode.value = false
     }
   } catch (error) {
+    if (requestId !== directoryRequestId) return
+    entries.value = []
     console.warn('加载个人空间目录失败:', error)
     message.error('加载个人空间目录失败')
   } finally {
-    loadingTree.value = false
+    if (requestId === directoryRequestId) loadingTree.value = false
   }
 }
 
@@ -557,6 +432,7 @@ const loadKnowledgeEntries = async (
 ) => {
   if (!knowledgeBase?.kb_id) return
 
+  const requestId = ++directoryRequestId
   loadingTree.value = true
   try {
     const response = await getWorkspaceKnowledgeTree(knowledgeBase.kb_id, {
@@ -564,6 +440,7 @@ const loadKnowledgeEntries = async (
       page,
       pageSize
     })
+    if (requestId !== directoryRequestId) return
     entries.value = response.entries || []
     knowledgeBreadcrumbItems.value = breadcrumbs || [
       {
@@ -585,39 +462,45 @@ const loadKnowledgeEntries = async (
       selectionMode.value = false
     }
   } catch (error) {
+    if (requestId !== directoryRequestId) return
     console.warn('加载知识库目录失败:', error)
     entries.value = []
     message.error(error?.message || '加载知识库目录失败')
   } finally {
-    loadingTree.value = false
+    if (requestId === directoryRequestId) loadingTree.value = false
   }
 }
 
+let knowledgeListRequestId = 0
+/** 返回缓存页面时重新核对当前用户可浏览的文档库。 */
 const loadKnowledgeBases = async () => {
-  loadingKnowledgeBases.value = true
+  const requestId = ++knowledgeListRequestId
+  knowledgeListStatus.value = 'loading'
   try {
     const response = await knowledgeBaseApi.getAccessibleKnowledgeBases()
-    knowledgeBases.value = (response?.knowledge_bases || []).filter((knowledgeBase) => {
-      return knowledgeBase?.supports_documents !== false
-    })
+    if (requestId !== knowledgeListRequestId) return
+    knowledgeBases.value = response.knowledge_bases.filter(kb => kb.supports_documents !== false)
+    knowledgeListStatus.value = 'ready'
   } catch (error) {
-    console.warn('加载可访问知识库失败:', error)
+    if (requestId !== knowledgeListRequestId) return
     knowledgeBases.value = []
-  } finally {
-    loadingKnowledgeBases.value = false
+    // Knowledge 关闭时，服务端不会挂载可访问知识库集合路由。
+    knowledgeListStatus.value = error?.status === 404 ? 'unavailable' : 'error'
+    if (knowledgeListStatus.value === 'error') return
+  }
+  if (selectedKnowledgeBase.value && !knowledgeBases.value.some(kb => kb.kb_id === selectedKnowledgeBase.value.kb_id)) {
+    selectOverview()
   }
 }
 
-const selectPersonalWorkspace = async () => {
-  const wasKnowledgeSource = isKnowledgeSource.value
-  activeSourceKey.value = 'personal'
-  selectedKnowledgeBase.value = null
-  knowledgeBreadcrumbItems.value = []
+const selectOverview = () => {
+  ++directoryRequestId
+  loadingTree.value = false
   closePreview()
+  activeSourceKey.value = 'overview'
+  selectedKnowledgeBase.value = null
   clearWorkspaceSelection()
-  if (wasKnowledgeSource || currentPath.value !== '/' || !entries.value.length) {
-    await loadWorkspaceEntries('/')
-  }
+  overviewRef.value?.refresh()
 }
 
 const selectWorkspacePath = async (path) => {
@@ -714,25 +597,21 @@ const handleSelectEntry = async (entry) => {
 
 const closePreview = () => {
   previewRequestId.value += 1
-  previewModalVisible.value = false
-  inlinePreviewVisible.value = false
-  loadingPreview.value = false
-  if (!useInlinePreview.value) {
-    selectedEntry.value = null
-    previewFile.value = null
-    revokePreviewObjectUrl()
-  }
-}
-
-const handlePreviewAfterLeave = () => {
-  if (inlinePreviewVisible.value || previewModalVisible.value) return
   selectedEntry.value = null
   previewFile.value = null
   revokePreviewObjectUrl()
 }
 
+const returnFromPreview = async () => {
+  closePreview()
+  if (activeSourceKey.value === 'overview') await overviewRef.value?.refresh()
+  await nextTick()
+  if (!previewFile.value && previewTrigger?.isConnected) previewTrigger.focus()
+  previewTrigger = null
+}
+
 const handleSavePreviewFile = async (content) => {
-  if (isReadonlyWorkspacePath.value) {
+  if (!previewEditable.value) {
     message.warning('当前文件为只读，无法保存')
     return
   }
@@ -740,15 +619,13 @@ const handleSavePreviewFile = async (content) => {
 
   savingPreviewFile.value = true
   try {
-    const response = await saveWorkspaceFileContent(selectedEntry.value.path, content)
-    if (response.entry) {
-      selectedEntry.value = response.entry
-    }
-    previewFile.value = {
-      ...previewFile.value,
-      content
-    }
-    await loadWorkspaceEntries(currentPath.value)
+    const entry = selectedEntry.value
+    const requestId = previewRequestId.value
+    const response = await saveWorkspaceFileContent(entry.path, content)
+    if (!isCurrentPreviewEntry(requestId, entry)) return
+    if (response.entry) selectedEntry.value = response.entry
+    previewFile.value = { ...previewFile.value, content }
+    if (activeSourceKey.value === 'personal') await loadWorkspaceEntries(currentPath.value)
     message.success('文件保存成功')
   } catch (error) {
     console.warn('保存个人空间文件失败:', error)
@@ -759,7 +636,7 @@ const handleSavePreviewFile = async (content) => {
 }
 
 const openCreateDirectoryModal = () => {
-  if (activeSourceKey.value !== 'personal' || isReadonlyWorkspacePath.value) return
+  if (isKnowledgeSource.value) return
   newDirectoryName.value = ''
   createDirectoryModalVisible.value = true
 }
@@ -782,8 +659,9 @@ const createDirectory = async () => {
 
   creatingDirectory.value = true
   try {
-    await createWorkspaceDirectory(currentPath.value, directoryName)
-    await loadWorkspaceEntries(currentPath.value)
+    const target = uploadTarget.value
+    await createWorkspaceDirectory(target, directoryName)
+    if (activeSourceKey.value === 'personal' && currentPath.value === target) await loadWorkspaceEntries(target)
     createDirectoryModalVisible.value = false
     newDirectoryName.value = ''
     message.success('文件夹创建成功')
@@ -796,7 +674,7 @@ const createDirectory = async () => {
 }
 
 const openUploadFilePicker = () => {
-  if (activeSourceKey.value !== 'personal' || isReadonlyWorkspacePath.value || uploadingFile.value)
+  if (isKnowledgeSource.value || uploadingFile.value)
     return
   if (uploadInputRef.value) {
     uploadInputRef.value.value = ''
@@ -816,8 +694,9 @@ const handleUploadInputChange = async (event) => {
   uploadingFile.value = true
   uploadError.value = ''
   try {
-    await uploadWorkspaceFiles(currentPath.value, files)
-    await loadWorkspaceEntries(currentPath.value)
+    const target = uploadTarget.value
+    await uploadWorkspaceFiles(target, files)
+    if (activeSourceKey.value === 'personal' && currentPath.value === target) await loadWorkspaceEntries(target)
     message.success(`${files.length} 个文件上传成功`)
   } catch (error) {
     console.warn('上传文件失败:', error)
@@ -831,7 +710,7 @@ const handleUploadInputChange = async (event) => {
 }
 
 const openUploadFolderPicker = () => {
-  if (activeSourceKey.value !== 'personal' || isReadonlyWorkspacePath.value || uploadingFile.value)
+  if (isKnowledgeSource.value || uploadingFile.value)
     return
   if (folderUploadInputRef.value) {
     folderUploadInputRef.value.value = ''
@@ -855,8 +734,7 @@ const formatFolderUploadFailure = (failed, batchCount, uploadedCount) => {
 }
 
 const handleDropUpload = async (roots) => {
-  if (activeSourceKey.value !== 'personal' || isReadonlyWorkspacePath.value || uploadingFile.value)
-    return
+  if (!personalUploadEnabled.value || uploadingFile.value) return
   const plainFiles = roots?.files || []
   const directories = roots?.directories || []
   if (!plainFiles.length && !directories.length) return
@@ -865,7 +743,7 @@ const handleDropUpload = async (roots) => {
     return
   }
 
-  const parentPath = currentPath.value
+  const parentPath = uploadTarget.value
   uploadingFile.value = true
   uploadError.value = ''
   let uploadedCount = 0
@@ -941,7 +819,7 @@ const handleFolderUploadInputChange = async (event) => {
     return
   }
 
-  const parentPath = currentPath.value
+  const parentPath = uploadTarget.value
   uploadingFile.value = true
   uploadError.value = ''
   let uploadedCount = 0
@@ -1028,7 +906,9 @@ const downloadEntry = async (entry) => {
     const response =
       entry.source === 'knowledge'
         ? await downloadWorkspaceKnowledgeFile(entry.kb_id, entry.file_id)
-        : await downloadWorkspaceFile(entry.path)
+        : entry.source === 'artifact'
+          ? await threadApi.downloadThreadArtifact(entry.thread_id, entry.path)
+          : await downloadWorkspaceFile(entry.path)
     const blob = await response.blob()
     const contentDisposition =
       response.headers.get('Content-Disposition') || response.headers.get('content-disposition')
@@ -1047,112 +927,46 @@ const downloadEntry = async (entry) => {
   }
 }
 
-let resizePointerId = null
-
-const stopPreviewResize = () => {
-  resizePointerId = null
-  isPreviewResizing.value = false
-  document.body.style.cursor = ''
-  document.body.style.userSelect = ''
-  window.removeEventListener('pointermove', resizePreview)
-  window.removeEventListener('pointerup', stopPreviewResize)
-  window.removeEventListener('pointercancel', stopPreviewResize)
+const toolbarEvents = {
+  search: () => { fileSearchOpen.value = true },
+  'upload-file': openUploadFilePicker,
+  'upload-folder': openUploadFolderPicker,
+  'create-directory': openCreateDirectoryModal
 }
 
-const resizePreview = (event) => {
-  if (!workspaceMainRef.value || resizePointerId === null || event.pointerId !== resizePointerId)
-    return
-  const rect = workspaceMainRef.value.getBoundingClientRect()
-  const relativeX = event.clientX - rect.left
-  const nextPreviewPercent = Math.round(((rect.width - relativeX) / rect.width) * 100)
-  previewWidthPercent.value = Math.min(70, Math.max(30, nextPreviewPercent))
-}
-
-const startPreviewResize = (event) => {
-  if (!showInlinePreview.value) return
-  resizePointerId = event.pointerId
-  isPreviewResizing.value = true
-  document.body.style.cursor = 'col-resize'
-  document.body.style.userSelect = 'none'
-  window.addEventListener('pointermove', resizePreview)
-  window.addEventListener('pointerup', stopPreviewResize)
-  window.addEventListener('pointercancel', stopPreviewResize)
-}
-
-let workspaceResizeObserver = null
 let workspaceMounted = false
-
-onMounted(async () => {
-  await Promise.all([loadWorkspaceEntries('/'), loadKnowledgeBases()])
-
-  if (workspaceMainRef.value && typeof ResizeObserver !== 'undefined') {
-    workspaceMainWidth.value = workspaceMainRef.value.clientWidth || 0
-    workspaceResizeObserver = new ResizeObserver((entries) => {
-      const entry = entries[0]
-      if (!entry) return
-      workspaceMainWidth.value = entry.contentRect.width
-    })
-    workspaceResizeObserver.observe(workspaceMainRef.value)
-  }
-
-  // 侧边栏全局搜索跳转后打开指定文件
-  await openFileByPath(route.query.open)
-  workspaceMounted = true
+onMounted(() => {
+  loadKnowledgeBases()
+  nextTick(() => { workspaceMounted = true })
 })
 
 onActivated(async () => {
-  workspaceMainWidth.value = workspaceMainRef.value?.clientWidth || 0
-  workspaceActive.value = true
-  if (!workspaceMounted || activeSourceKey.value !== 'personal') return
+  if (!workspaceMounted) return
+  void loadKnowledgeBases()
+  // 路由携带打开请求时，目录加载和预览由下方的 watcher 独占。
+  if (route.query.open) return
+  const entry = selectedEntry.value
+  if (activeSourceKey.value === 'overview') {
+    if (!entry) await overviewRef.value?.refresh()
+    else if (entry.source === 'artifact') await loadArtifactPreview(entry)
+    else await loadPreview(entry, () => getWorkspaceFileContent(entry.path))
+    return
+  }
+  if (activeSourceKey.value !== 'personal') return
   await loadWorkspaceEntries(currentPath.value)
-  if (!selectedEntry.value?.path) return
-  const refreshedEntry = entries.value.find((entry) => entry.path === selectedEntry.value.path)
-  if (refreshedEntry) {
-    await loadWorkspacePreview(refreshedEntry)
+  if (!entry || selectedEntry.value !== entry) return
+  if (entries.value.some(item => item.path === entry.path)) {
+    await loadPreview(entry, () => getWorkspaceFileContent(entry.path))
   } else {
     closePreview()
   }
 })
 
-onDeactivated(() => {
-  workspaceActive.value = false
-  stopPreviewResize()
-})
+watch(() => route.path === '/workspace' && route.query.open, (path) => {
+  if (path) openFileByPath(path)
+}, { immediate: true })
 
-watch(
-  () => route.query.open,
-  (path) => {
-    if (path) openFileByPath(path)
-  }
-)
-
-onUnmounted(() => {
-  workspaceResizeObserver?.disconnect()
-  workspaceResizeObserver = null
-  stopPreviewResize()
-  revokePreviewObjectUrl()
-})
-
-watch([useInlinePreview, workspaceActive], ([isInline, isActive]) => {
-  // KeepAlive 隐藏页面后的零宽度不代表用户切换到窄屏。
-  if (!isActive) return
-  if (!previewFile.value) {
-    previewModalVisible.value = false
-    inlinePreviewVisible.value = false
-    return
-  }
-
-  if (isInline) {
-    previewModalVisible.value = false
-    inlinePreviewVisible.value = true
-    return
-  }
-
-  if (inlinePreviewVisible.value) {
-    previewModalVisible.value = true
-    inlinePreviewVisible.value = false
-  }
-})
+onUnmounted(closePreview)
 </script>
 
 <style scoped lang="less">
@@ -1175,162 +989,70 @@ watch([useInlinePreview, workspaceActive], ([isInline, isActive]) => {
 .workspace-shell {
   position: relative;
   display: grid;
-  --workspace-sidebar-width: clamp(240px, 15vw, 280px);
+  --workspace-sidebar-width: clamp(188px, 15vw, 240px);
   grid-template-columns: var(--workspace-sidebar-width) minmax(0, 1fr);
-  transition: grid-template-columns 220ms ease;
   flex: 1 1 auto;
   min-height: 0;
-  background: var(--bg-page);
+  background: var(--gray-0);
   overflow: hidden;
-
-  &.is-sidebar-collapsed {
-    grid-template-columns: 0px minmax(0, 1fr);
-  }
-}
-
-.workspace-sidebar-slot {
-  position: relative;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-  opacity: 1;
-  visibility: visible;
-  transition: opacity 180ms ease, visibility 0s;
-}
-
-.is-sidebar-collapsed .workspace-sidebar-slot {
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 180ms ease, visibility 0s 220ms;
-}
-
-.workspace-sidebar-slot :deep(.workspace-sidebar) {
-  width: var(--workspace-sidebar-width);
-  height: 100%;
-}
-
-@media (max-width: 1023px) {
-  .workspace-shell {
-    --workspace-sidebar-width: 216px;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .workspace-shell,
-  .workspace-sidebar-slot,
-  .is-sidebar-collapsed .workspace-sidebar-slot {
-    transition: none;
-  }
 }
 
 .workspace-main {
-  display: flex;
-  flex-direction: row;
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
-  overflow: hidden;
-  position: relative;
-}
-
-:deep(.workspace-list-shell) {
-  flex: 1 1 0;
-  min-width: 0;
-  height: 100%;
-}
-
-.workspace-preview-panel {
-  position: relative;
-  display: flex;
-  flex-direction: row;
-  height: 100%;
-  min-height: 0;
-  flex-shrink: 0;
-  min-width: 0;
-  overflow: hidden;
-  will-change: width, opacity, transform;
-  transition:
-    width 0.28s cubic-bezier(0.16, 1, 0.3, 1),
-    opacity 0.22s ease,
-    transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
-
-  &.is-resizing {
-    transition: none !important;
-  }
-
-  :deep(.workspace-preview-pane) {
-    flex: 1 1 auto;
-    min-width: 280px;
-    height: 100%;
-  }
-}
-
-.workspace-preview-slide-enter-active {
-  transition:
-    width 0.28s cubic-bezier(0.16, 1, 0.3, 1),
-    opacity 0.22s ease,
-    transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
-  overflow: hidden;
-  min-width: 0 !important;
-}
-
-.workspace-preview-slide-leave-active {
-  transition:
-    width 0.24s cubic-bezier(0.16, 1, 0.3, 1),
-    opacity 0.18s ease,
-    transform 0.24s cubic-bezier(0.16, 1, 0.3, 1);
-  overflow: hidden;
-  min-width: 0 !important;
-}
-
-.workspace-preview-slide-enter-from,
-.workspace-preview-slide-leave-to {
-  width: 0 !important;
-  min-width: 0 !important;
-  opacity: 0;
-  transform: translateX(16px);
-}
-
-.workspace-preview-resizer {
-  width: 1px;
-  min-width: 1px;
-  background: var(--gray-100);
-  cursor: col-resize;
-  flex-shrink: 0;
-  height: 100%;
-  transition: background 0.15s ease;
-
-  &:hover,
-  &:active {
-    background: var(--main-400);
-  }
-}
-
-.workspace-placeholder {
-  grid-column: 1 / -1;
+  --workspace-content-inset: var(--page-padding);
+  --workspace-action-size: 32px;
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.workspace-main > :deep(.workspace-list-shell),
+.workspace-main > :deep(.workspace-overview),
+.workspace-main > :deep(.workspace-preview-pane) { flex: 1; min-height: 0; }
+
+.workspace-main :deep(.workspace-overview .page-header),
+.workspace-main :deep(.workspace-file-list .file-browser-header) {
+  min-height: 49px;
+  padding: 8px var(--workspace-content-inset);
+  flex-direction: row;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: center;
+  gap: 8px 16px;
+}
+
+.workspace-main :deep(.workspace-overview .page-header-left) { width: auto; }
+.workspace-main :deep(.workspace-file-list .file-browser-breadcrumb-label) {
+  color: var(--gray-600);
+}
+.workspace-main :deep(.workspace-file-list .file-browser-breadcrumb-item.active .file-browser-breadcrumb-label) {
+  color: var(--gray-2000);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.workspace-main :deep(.workspace-overview .page-header-right),
+.workspace-main :deep(.workspace-file-list .file-browser-actions) {
+  width: auto;
+  max-width: 100%;
+  margin-left: auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
-  min-height: 360px;
-  padding: 32px;
-  color: var(--gray-500);
-  text-align: center;
+}
 
-  h2 {
-    margin: 8px 0 0;
-    color: var(--gray-900);
-    font-size: 18px;
-    font-weight: 600;
-  }
+.workspace-main :deep(.workspace-overview .page-header-right .ant-btn),
+.workspace-main :deep(.workspace-file-list .file-browser-actions .ant-btn) {
+  height: var(--workspace-action-size);
+}
 
-  p {
-    max-width: 360px;
-    margin: 0;
-    font-size: 14px;
-    line-height: 1.6;
-  }
+.workspace-main :deep(.workspace-toolbar-icon) {
+  width: var(--workspace-action-size);
+  padding: 0;
+}
+
+@media (max-width: 1023px) {
+  .workspace-shell { --workspace-sidebar-width: 164px; }
 }
 
 .agents-guide-content {
@@ -1372,44 +1094,6 @@ watch([useInlinePreview, workspaceActive], ([isInline, isActive]) => {
 
   li + li {
     margin-top: 6px;
-  }
-}
-</style>
-
-<style lang="less">
-.workspace-file-preview-modal {
-  .ant-modal {
-    z-index: 1050;
-
-    .ant-modal-content {
-      padding: 0;
-      overflow: hidden;
-      border: 1px solid var(--gray-200);
-    }
-
-    .ant-modal-body {
-      height: 82vh;
-      padding: 0;
-      overflow: hidden;
-    }
-
-    .workspace-modal-preview-container {
-      height: 100%;
-      max-height: none;
-    }
-
-    .workspace-modal-preview-content {
-      flex: 1 1 auto;
-      max-height: none;
-      min-height: 0;
-    }
-
-    .workspace-modal-preview-content .html-preview,
-    .workspace-modal-preview-content .pdf-preview {
-      display: block;
-      height: 100%;
-      min-height: 100%;
-    }
   }
 }
 </style>

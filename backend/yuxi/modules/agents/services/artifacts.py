@@ -9,7 +9,8 @@ import tempfile
 from pathlib import PurePosixPath
 
 from yuxi.infrastructure.file_preview import prepare_file_preview, preview_too_large
-from yuxi.infrastructure.filesystem import await_io
+from yuxi.infrastructure.filesystem import await_io, open_regular_file_fd
+from yuxi.modules.agents.repositories.tool_audit import ToolMessageAuditRepository
 from yuxi.modules.extensions.skills.access import lock_accessible_shared_skill_for_file
 from yuxi.modules.identity.repositories.users import UserRepository
 from yuxi.modules.workspace.errors import FileTransferLimitError
@@ -18,9 +19,12 @@ from yuxi.modules.workspace.runtime_paths import (
     SHARED_SKILLS_PATH,
     is_runtime_path,
     normalize_artifact_path,
+    runtime_workdir_path,
     runtime_workspace_path,
 )
 from yuxi.modules.workspace.services.bindings import resolve_authorized_workdir
+from yuxi.modules.workspace.workdir import Workdir
+from yuxi.shared.datetime import format_utc_datetime
 from yuxi.shared.errors import (
     ContentTooLargeError,
     DomainError,
@@ -34,6 +38,56 @@ from yuxi.shared.files import MAX_FILE_PREVIEW_BYTES, PreparedFile, PreviewResul
 MAX_ARTIFACT_DOWNLOAD_BYTES = 1024 * 1024 * 1024
 MAX_SAVED_ARTIFACT_NAME_ATTEMPTS = 1000
 DEFAULT_ARTIFACT_DESTINATION = "/saved_artifacts"
+
+
+async def recent_presented_artifacts(*, uid: str, db) -> dict:
+    """列出最近五个仍可从来源会话打开的已交付文件。"""
+    items = []
+    seen = set()
+    files = RuntimeFiles(uid)
+    async with ToolMessageAuditRepository(db).recent_presentations(uid) as calls:
+        async for call in calls:
+            try:
+                workdir = await asyncio.to_thread(Workdir.open_existing, uid, call.workdir_path)
+            except (FileNotFoundError, NotADirectoryError, PermissionError, ValueError):
+                continue
+            for raw_path in call.paths or []:
+                try:
+                    path = normalize_artifact_path(runtime_workdir_path(workdir.relative_path), raw_path)
+                    if path in seen:
+                        continue
+                    await _require_skill_artifact_access(normalized_path=path, current_uid=uid, db=db)
+                    await asyncio.to_thread(_require_readable_artifact, files, path)
+                except (
+                    FileNotFoundError,
+                    NotADirectoryError,
+                    IsADirectoryError,
+                    PermissionError,
+                    ValueError,
+                    PermissionDeniedError,
+                    InvalidOperationError,
+                ):
+                    continue
+                seen.add(path)
+                items.append(
+                    {
+                        "name": PurePosixPath(path).name,
+                        "path": path,
+                        "thread_id": call.thread_id,
+                        "thread_title": call.title,
+                        "presented_at": format_utc_datetime(call.finished_at),
+                    }
+                )
+                if len(items) == 5:
+                    return {"items": items}
+    return {"items": items}
+
+
+def _require_readable_artifact(files: RuntimeFiles, path: str) -> None:
+    """在下载所用的用户挂载边界内核对普通文件，无需复制内容。"""
+    _, root, parts, _ = files.route(path)
+    with open_regular_file_fd(root, parts):
+        pass
 
 
 async def resolve_thread_artifact_view(

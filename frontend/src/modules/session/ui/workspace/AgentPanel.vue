@@ -37,7 +37,7 @@
             :title="
               section.attentionLabel ? `${section.title}，${section.attentionLabel}` : section.title
             "
-            @click="emit('activate-section', section.key)"
+            @click="activateSection(section)"
             @keydown="handleTabKey($event, section)"
           >
             <Folders v-if="section.type === 'file-tree'" :size="15" />
@@ -276,7 +276,7 @@
 
 <script setup>
 import {
-  releaseFilePreviewCacheEntry, releaseFilePreviewCache, pruneFilePreviewCache,
+  filePreviewCacheKey, releaseFilePreviewCacheEntry, releaseFilePreviewCache, pruneFilePreviewCache,
   reloadPreviewAfterOrderedCacheEntryInvalidation, replacePreviewCacheEntryIfCurrent, settlePreviewCacheLoad
 } from '@/modules/workspace'
 import {
@@ -329,6 +329,7 @@ import {
   downloadWorkspaceFile,
   getWorkspaceFileContent,
   getWorkspaceTree,
+  openWorkspaceFile,
   searchWorkspaceFiles
 } from '@/apis/workspace_api'
 import { normalizePreviewResponse } from '@/shared/lib/file_preview'
@@ -439,6 +440,15 @@ const activeSection = computed(
 )
 const turnSourcesSection = computed(() => activeSection.value?.type === 'turn-sources' ? activeSection.value : null)
 
+/** 用户切回已有的个人文件标签时也算一次访问；恢复面板由被动读取处理。 */
+const activateSection = (section) => {
+  const changed = section.key !== props.activeSectionKey
+  emit('activate-section', section.key)
+  if (changed && section.previewKey === filePreviewCacheKey(section.path, 'workspace')) {
+    void loadActivePreview({ workspaceOpen: { path: section.path, name: section.title } })
+  }
+}
+
 /** 方向键访问侧栏标签，删除键关闭后把焦点交给剩余标签。 */
 const handleTabKey = (event, section) => {
   const sections = normalizedSections.value
@@ -454,7 +464,7 @@ const handleTabKey = (event, section) => {
     void closeTab(section)
   } else if (nextIndex !== undefined) {
     event.preventDefault()
-    emit('activate-section', sections[nextIndex].key)
+    activateSection(sections[nextIndex])
     sectionTabsRef.value?.querySelectorAll('[role="tab"]')[nextIndex]?.focus()
   }
 }
@@ -487,11 +497,18 @@ const searchActiveTreeFiles = (query) =>
     ? searchWorkspaceFiles(query)
     : searchViewerFiles(props.threadId, query)
 
+/** 文件树与搜索的显式打开共享同一次预览请求。 */
+const openPersonalFile = (entry) => {
+  const file = { ...entry, type: 'file', workdir: false, workspace: true }
+  emit('open-preview', file)
+  void loadActivePreview({ workspaceOpen: file })
+}
+
 const handleSearchSelect = (entry) => {
   if (!entry?.path) return
   if (activeTreeScope.value === 'workspace') {
     workspaceSelectedKeys.value = [entry.path]
-    emit('open-preview', { ...entry, type: 'file', workdir: false, workspace: true })
+    openPersonalFile(entry)
     return
   }
   if (!props.threadId) return
@@ -798,7 +815,7 @@ const loadWorkspaceData = async (treeNode) => {
 const onWorkspaceFileSelect = (nextSelectedKeys, { node }) => {
   workspaceSelectedKeys.value = nextSelectedKeys
   if (!node?.isLeaf) return
-  emit('open-preview', node.fileData)
+  openPersonalFile(node.fileData)
 }
 
 const setTreeScope = (scope) => {
@@ -837,8 +854,10 @@ const syncFilesystemRefreshPolling = () => {
   })
 }
 
-const loadActivePreview = async ({ baseFileOverride = null } = {}) => {
-  const tab = activePreviewTab.value
+const loadActivePreview = async ({ baseFileOverride = null, workspaceOpen = null } = {}) => {
+  const tab = workspaceOpen
+    ? { ...workspaceOpen, key: filePreviewCacheKey(workspaceOpen.path, 'workspace'), workspace: true, workdir: false, threadId: null }
+    : activePreviewTab.value
   const rootThreadId = props.threadId
   const requestSeq = ++previewRequestSeq
   const requestIsCurrent = () =>
@@ -879,6 +898,8 @@ const loadActivePreview = async ({ baseFileOverride = null } = {}) => {
     loading: true
   }
 
+  // 用户打开重新校验文件并记录访问；随后响应标签变化的 watcher 共享这次读取。
+  if (workspaceOpen) releaseFilePreviewCacheEntry(props.previewCache, cacheKey)
   const cachedEntry = props.previewCache.get(cacheKey)
   if (cachedEntry?.status === 'ready') {
     cachedEntry.lastAccessed = Date.now()
@@ -925,7 +946,7 @@ const loadActivePreview = async ({ baseFileOverride = null } = {}) => {
   const loadPromise = (async () => {
     // 路径统一为 runtime 身份：用户目录走 workspace，当前 Workdir 走 Viewer，其余走 artifact 预览。
     const response = isWorkspaceFile
-      ? await getWorkspaceFileContent(filePath)
+      ? await (workspaceOpen ? openWorkspaceFile : getWorkspaceFileContent)(filePath)
       : baseFile.workdir
         ? await getViewerFileContent(requestedThreadId, filePath)
         : await threadApi.previewThreadArtifact(requestedThreadId, filePath)

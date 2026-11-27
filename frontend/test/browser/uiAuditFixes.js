@@ -144,7 +144,7 @@ async (page) => {
   result.push('Agent description priority, keyboard menu/one ID copy/Escape/Tab, draft cancel/discard, unchanged close')
 
   await page.goto(`${origin}/workspace`)
-  const trigger = page.getByRole('button', { name: '搜索', exact: true }).last()
+  const trigger = page.getByRole('button', { name: '搜索个人空间文件', exact: true })
   await trigger.focus(); await page.keyboard.press('Enter')
   await page.locator('.global-search-input').fill('__ui_audit_no_match__')
   await page.locator('.global-search-close').focus()

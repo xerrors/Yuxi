@@ -3,7 +3,7 @@ import { routerKey, routeLocationKey } from 'vue-router'
 import { createTestServer } from './createTestServer.js'
 
 /** 装配工作区页面，并在路由和文件服务边界提供可控数据。 */
-export async function mountWorkspaceView(t, { path = '/agents/MEMORY.md', width = 1200 } = {}) {
+export async function mountWorkspaceView(t, { path = '/agents/MEMORY.md' } = {}) {
   const globals = Object.fromEntries(['window', 'document', '__workspaceViewBoundary'].map((name) =>
     [name, Object.getOwnPropertyDescriptor(globalThis, name)]
   ))
@@ -25,7 +25,10 @@ export async function mountWorkspaceView(t, { path = '/agents/MEMORY.md', width 
     route,
     router: { replace: async (location) => { replacements.push(location); route.query = location.query } },
     getWorkspaceTree: async () => ({ entries: [{ path, name: 'MEMORY.md', is_dir: false }] }),
+    getAccessibleKnowledgeBases: async () => ({ knowledge_bases: [] }),
     getWorkspaceFileContent: async () => ({}),
+    openWorkspaceFile: async () => ({}),
+    previewThreadArtifact: async () => ({}),
     normalizePreviewResponse: async () => ({ path, content: '# MEMORY', previewType: 'text' })
   }
   globalThis.__workspaceViewBoundary = boundary
@@ -33,6 +36,7 @@ export async function mountWorkspaceView(t, { path = '/agents/MEMORY.md', width 
     router: 'export const useRoute = () => globalThis.__workspaceViewBoundary.route; export const useRouter = () => globalThis.__workspaceViewBoundary.router',
     user: 'export const useUserStore = () => ({})',
     workspace: `export const getWorkspaceTree = (...args) => globalThis.__workspaceViewBoundary.getWorkspaceTree(...args);
+      export const openWorkspaceFile = (...args) => globalThis.__workspaceViewBoundary.openWorkspaceFile(...args);
       export const getWorkspaceFileContent = (...args) => globalThis.__workspaceViewBoundary.getWorkspaceFileContent(...args);
       export const createWorkspaceDirectory = () => {}; export const deleteWorkspacePath = () => {};
       export const downloadWorkspaceFile = () => {}; export const downloadWorkspaceKnowledgeFile = () => {};
@@ -47,20 +51,25 @@ export async function mountWorkspaceView(t, { path = '/agents/MEMORY.md', width 
       name: 'workspace-view-boundaries', enforce: 'pre',
       resolveId(id, importer) {
         if (!importer?.includes('/pages/WorkspaceView.vue')) return
-        if (id.endsWith('.vue')) return '\0workspace-view-child'
+        if (id.endsWith('.vue')) return '\0workspace-view-child/' + id.split('/').at(-1).replace('.vue', '')
         if (id === 'vue-router') return '\0workspace-view-router'
-        if (id.endsWith('/modules/identity/model/user') || id.endsWith('/modules/identity/model/user.js')) return '\0workspace-view-user'
+        if (/\/modules\/identity(?:\/index\.js)?$/.test(id)) return '\0workspace-view-user'
         if (id.endsWith('/apis/workspace_api') || id.endsWith('/apis/workspace_api.js')) return '\0workspace-view-workspace'
         if (id.endsWith('/shared/lib/file_preview') || id.endsWith('/shared/lib/file_preview.js')) return '\0workspace-view-preview'
       },
       load(id) {
-        if (id === '\0workspace-view-child') return 'export default { render: () => null }'
+        if (id.startsWith('\0workspace-view-child/')) {
+          const name = id.split('/').at(-1)
+          return `import { h } from 'vue'; export default { render() { return h('section', { 'data-child': '${name}' }) } }`
+        }
         return exports[id.replace('\0workspace-view-', '')]
       }
     }]
   })
+  const { threadApi } = await server.ssrLoadModule('/src/apis/agent_api.js')
+  t.mock.method(threadApi, 'previewThreadArtifact', (...args) => boundary.previewThreadArtifact(...args))
   const { knowledgeBaseApi } = await server.ssrLoadModule('/src/apis/knowledge_api.js')
-  t.mock.method(knowledgeBaseApi, 'getAccessibleKnowledgeBases', async () => [])
+  t.mock.method(knowledgeBaseApi, 'getAccessibleKnowledgeBases', () => boundary.getAccessibleKnowledgeBases())
   const { default: component } = await server.ssrLoadModule('/src/pages/WorkspaceView.vue')
   globalThis.window = { URL: { revokeObjectURL() {} }, removeEventListener() {} }
   globalThis.document = { body: { style: {} } }
@@ -77,7 +86,5 @@ export async function mountWorkspaceView(t, { path = '/agents/MEMORY.md', width 
   app.mount({})
   mounted = true
   const state = toRaw(app._instance.setupState)
-  state.workspaceMainRef.value = { clientWidth: width }
-  state.workspaceMainWidth.value = width
-  return { state, route, replacements, instance: app._instance, component }
+  return { state, route, replacements, instance: app._instance, component, boundary }
 }

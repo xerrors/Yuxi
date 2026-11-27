@@ -6,6 +6,8 @@ Owner：frontend/src/modules/workspace/ui/WorkspaceFileList.vue
 
 上传语义与批次约束的次要 Owner 是 frontend/src/modules/workspace/model/workspaceFolderUpload.js 与 frontend/src/pages/WorkspaceView.vue；目录上传的后端契约沿用 [2026-10-23 个人空间文件夹上传](2026-10-23-personal-space-folder-upload.md)，本次后端零改动。
 
+目录拖放与批次约定继续适用。当前上传入口的位置见[个人空间概览与文件阅读](2026-11-26-personal-space-overview.md)。
+
 ## 问题
 
 个人空间的上传入口只有侧边栏下拉菜单（上传文件/上传文件夹/新建文件夹），文件列表区域本身没有拖拽投放能力，也没有贴近当前目录的工具栏入口；与常见网盘交互差距明显。目录上传的后端（`relative_paths`、分批、冲突预检）与新建目录接口已经就绪。

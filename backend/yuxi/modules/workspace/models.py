@@ -13,6 +13,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 
+from yuxi.infrastructure.postgres.base import JSON_VALUE
 from yuxi.infrastructure.postgres.base import BusinessBase as Base
 from yuxi.shared.datetime import format_utc_datetime, utc_now
 
@@ -66,3 +67,12 @@ class Project(Base):
             "created_at": format_utc_datetime(self.created_at),
             "updated_at": format_utc_datetime(self.updated_at),
         }
+
+
+class WorkspaceRecentFiles(Base):
+    """按用户保存个人空间最近成功打开的文件。"""
+
+    __tablename__ = "workspace_recent_files"
+
+    uid = Column(String(128), ForeignKey("users.uid", ondelete="CASCADE"), primary_key=True)
+    entries = Column(JSON_VALUE, nullable=False)

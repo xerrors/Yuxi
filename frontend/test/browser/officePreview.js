@@ -56,7 +56,7 @@ async (page) => {
     if (response.headers()['x-yuxi-preview-type'] === 'office') previews.push(response)
   }
   const onRequest = (request) => {
-    if (request.method() === 'GET' && request.url().startsWith(origin + '/api/workspace/file?')) {
+    if (request.method() === 'POST' && request.url().startsWith(origin + '/api/workspace/open-file?')) {
       previewRequests.push(request.url())
     }
   }
@@ -132,25 +132,40 @@ async (page) => {
     await page.setViewportSize({ width: 1280, height: 900 })
     await open('/agent')
     await page.getByRole('link', { name: '个人空间', exact: true }).click()
-    await page.getByText(localFiles[0], { exact: true }).click()
+    await page.getByRole('navigation', { name: '资源位置' }).getByRole('button', { name: '全部文件', exact: true }).click()
+    const headerLoading = page.locator('.page-header-loading-bar-wrapper')
+    const wordPreviewUrl = origin + '/api/workspace/open-file?' + query({ path: '/' + localFiles[0] })
+    const { promise: wordPreviewReady, resolve: releaseWordPreview } = Promise.withResolvers()
+    await page.route(wordPreviewUrl, async (route) => {
+      await wordPreviewReady
+      await route.continue()
+    })
+    try {
+      await page.getByText(localFiles[0], { exact: true }).click()
+      await page.locator('.agent-file-preview').getByRole('status', { name: '正在加载预览' }).waitFor()
+      check(await headerLoading.count() === 0, '预览加载不应显示页头进度条')
+    } finally {
+      releaseWordPreview()
+      await page.unroute(wordPreviewUrl)
+    }
     await previewText('述职报告').waitFor({ timeout: 45000 })
     await screenshot('workspace-docx')
 
     const viewer = await page.locator('.office-preview-host').elementHandle()
-    await page.getByTitle('全屏预览', { exact: true }).click()
-    await page.locator('.fullscreen-preview-overlay .office-preview').getByText('述职报告').first().waitFor()
-    check(await viewer.evaluate((node) => node.closest('.fullscreen-preview-overlay') !== null), '全屏重新创建了预览器')
-    await assertNoToolbar()
-    await screenshot('workspace-docx-fullscreen')
-    await page.locator('.fullscreen-preview-overlay').getByTitle('关闭', { exact: true }).click()
-    await previewText('述职报告').waitFor()
-    await page.getByTitle('全屏预览', { exact: true }).click()
-    await page.goBack()
-    await page.locator('.fullscreen-preview-overlay').waitFor({ state: 'hidden' })
-    check(await page.evaluate(() => document.body.style.overflow !== 'hidden'), '退出页面后滚动仍被全屏锁定')
-
+    const reader = page.getByRole('region', { name: '文件预览' })
     await page.setViewportSize({ width: 768, height: 900 })
+    check(await viewer.evaluate(node => node.closest('.workspace-main') !== null), '缩窄后应保留同一主区域预览器')
+    check(await reader.getByTitle('全屏预览').count() === 0, '个人空间还提供弹窗预览入口')
+    const mainRect = await page.locator('.workspace-main').boundingBox()
+    const readerRect = await reader.boundingBox()
+    check(Math.abs(readerRect.width - mainRect.width) < 2 && Math.abs(readerRect.height - mainRect.height) < 2,
+      '文件预览没有占满第三栏')
+    await assertNoToolbar()
+    await reader.getByRole('button', { name: '关闭预览' }).click()
+    await page.getByRole('row', { name: new RegExp(localFiles[0]) }).waitFor()
+
     await open('/workspace')
+    await page.getByRole('navigation', { name: '资源位置' }).getByRole('button', { name: '全部文件', exact: true }).click()
     await watchSheetPaint()
     const sheets = page.locator('.office-preview')
     const { promise: parserReady, resolve: releaseParser } = Promise.withResolvers()
@@ -164,7 +179,7 @@ async (page) => {
       await loading.waitFor()
       check(await loading.innerText() === '正在解析 Excel 工作簿', '表格加载只显示一句话')
       check(await loading.locator('.loading-spinner').count() === 1, '表格加载只显示一个转圈')
-      await screenshot('workspace-xls-loading', page.locator('.workspace-file-preview-modal .ant-modal'))
+      await screenshot('workspace-xls-loading', page.locator('.workspace-preview-pane'))
     } finally {
       releaseParser()
     }
@@ -176,7 +191,7 @@ async (page) => {
     await sheets.getByText('共 3 行，3 列', { exact: true }).waitFor()
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), '预览导致整页横向滚动')
     await assertNoToolbar()
-    await screenshot('workspace-xls-768', page.locator('.workspace-file-preview-modal .ant-modal'))
+    await screenshot('workspace-xls-768', page.locator('.workspace-preview-pane'))
 
     await page.setViewportSize({ width: 1280, height: 900 })
     await open(`/extensions/knowledge-bases/${kbId}`)
@@ -232,6 +247,7 @@ async (page) => {
     // 阻断 Office 模块后只读一次原件，直接下载的浏览器字节与上传夹具一致。
     await page.route(viewerModule, (route) => route.abort())
     await open('/workspace')
+    await page.getByRole('navigation', { name: '资源位置' }).getByRole('button', { name: '全部文件', exact: true }).click()
     const wordPath = '/' + localFiles[0]
     const countWordReads = () => previewRequests.filter((url) => url.includes('path=' + encodeURIComponent(wordPath))).length
     const readsBeforeError = countWordReads()
@@ -242,24 +258,25 @@ async (page) => {
       'Office 下载字节与上传原件不一致')
     check(countWordReads() === readsBeforeError + 1,
       'Office 渲染失败后再次请求了预览')
-    await screenshot('workspace-office-render-error', page.locator('.workspace-file-preview-modal .agent-file-preview'))
+    await screenshot('workspace-office-render-error', page.locator('.workspace-preview-pane .agent-file-preview'))
     await page.unroute(viewerModule)
 
-    // Excel 解析器的加载失败由渲染器自行处理，全屏标题栏仍提供下载。
+    // Excel 解析器的加载失败由渲染器自行处理，第三栏标题仍提供下载。
     await page.route(spreadsheetParser, (route) => route.abort())
     await open('/workspace')
+    await page.getByRole('navigation', { name: '资源位置' }).getByRole('button', { name: '全部文件', exact: true }).click()
     const parserFailed = page.waitForEvent('requestfailed', (request) => spreadsheetParser.test(request.url()))
     await page.getByText(localFiles[1], { exact: true }).click()
     await parserFailed
     await page.locator('.office-preview-frame .excel-wrapper .error').waitFor({ state: 'visible' })
-    await page.getByTitle('全屏预览', { exact: true }).click()
     const downloadedSheet = await readDownload(
-      page.locator('.fullscreen-preview-overlay').getByTitle('下载', { exact: true }), localFiles[1])
+      reader.getByTitle('下载', { exact: true }), localFiles[1])
     check(downloadedSheet.length === sheetBytes.length && downloadedSheet.every((byte, index) => byte === sheetBytes[index]),
-      'Excel 全屏下载字节与上传原件不一致')
+      'Excel 下载字节与上传原件不一致')
     await page.unroute(spreadsheetParser)
 
     await open('/workspace')
+    await page.getByRole('navigation', { name: '资源位置' }).getByRole('button', { name: '全部文件', exact: true }).click()
     await page.getByText(localFiles[2], { exact: true }).click()
     const checkPdf = async (selector) => {
       await page.locator(selector).hover()
@@ -280,11 +297,9 @@ async (page) => {
         return pane?.scrollTop > 0 && nextPage?.getBoundingClientRect().top < pane.getBoundingClientRect().bottom
       }, selector)
     }
-    await checkPdf('.workspace-file-preview-modal .file-content:has(.pdf-canvas)')
-    await page.getByTitle('全屏预览', { exact: true }).click()
-    await checkPdf('.fullscreen-preview-overlay .file-content:has(.pdf-canvas)')
+    await checkPdf('.workspace-preview-pane .file-content:has(.pdf-canvas)')
     check(pdfResponses.length === 1, '原生 PDF 未从普通预览读取')
-    await screenshot('workspace-pdf-direct', page.locator('.fullscreen-preview-overlay'))
+    await screenshot('workspace-pdf-direct', reader)
 
 
     check(previews.length >= 5, 'Office 原件请求缺失')

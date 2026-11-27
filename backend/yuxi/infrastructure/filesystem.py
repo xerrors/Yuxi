@@ -97,6 +97,9 @@ def open_regular_file_fd(
         except OSError as exc:
             if exc.errno == errno.ELOOP:
                 raise PermissionError("symlink paths are not allowed") from exc
+            if exc.errno == errno.ENXIO:
+                # Unix socket 等特殊文件无法先打开再 fstat。
+                raise PermissionError("only regular files are allowed") from exc
             raise
         file_stat = os.fstat(file_fd)
         if stat.S_ISDIR(file_stat.st_mode):

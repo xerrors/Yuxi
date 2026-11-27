@@ -34,7 +34,7 @@ from test.integration.support.postgres_schema import (
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration, pytest.mark.self_managed_resources]
 
 
-@pytest.mark.parametrize("business,knowledge", [(2, 1), (3, 1), (3, 2), (4, 1), (4, 2), (5, 1), (5, 2), (6, 1), (7, 1), (8, 2), (1, 1), (1, 3)])
+@pytest.mark.parametrize("business,knowledge", [(2, 1), (3, 1), (3, 2), (4, 1), (4, 2), (5, 1), (5, 2), (6, 1), (6, 2), (7, 1), (8, 2), (1, 1), (1, 3)])
 async def test_incompatible_schema_is_rejected_without_modifying_data(monkeypatch, business, knowledge):
     """历史及未来版本不再隐式升级，数据与两个版本均保持原值。"""
     schema, admin, engine, manager = await _create_isolated_manager("pytest_old_business")
@@ -185,7 +185,8 @@ async def test_fresh_business_schema_contains_input_lifecycle_without_request_ta
         } <= input_columns
         assert "conversation_thread_id" not in input_columns
         assert "agent_state_view" in session_columns
-        assert BUSINESS_SCHEMA_VERSION == 6
+        assert "workspace_recent_files" in tables
+        assert BUSINESS_SCHEMA_VERSION == 7
         assert KNOWLEDGE_SCHEMA_VERSION == 2
     finally:
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)
@@ -410,10 +411,11 @@ async def test_schema_version_is_persisted_and_runtime_validation_fails_closed()
                 )
             )
         await create_schema_version_table(manager)
-        await record_schema_version(manager, "business", 7)
-        with pytest.raises(RuntimeError, match="business=7"):
+        previous_version = BUSINESS_SCHEMA_VERSION - 1
+        await record_schema_version(manager, "business", previous_version)
+        with pytest.raises(RuntimeError, match=f"business={previous_version}"):
             await require_current_schema(manager)
-        assert await get_schema_versions(manager) == {"business": 7}
+        assert await get_schema_versions(manager) == {"business": previous_version}
         async with scoped_engine.connect() as connection:
             assert await connection.scalar(text("SELECT count(*) FROM sessions WHERE thread_id='legacy-thread'")) == 1
 
@@ -590,5 +592,40 @@ async def test_agent_state_view_upgrade_is_explicit_and_preserves_existing_data(
             if supported:
                 assert await conn.scalar(read_applied_at) == applied_at
         assert await get_schema_versions(manager) == {"business": 6 if supported else business, "knowledge": knowledge}
+    finally:
+        await _drop_isolated_schema(schema, admin, engine)
+
+
+@pytest.mark.parametrize("knowledge", [1, 2])
+async def test_workspace_recent_files_upgrade_preserves_users_and_is_idempotent(knowledge):
+    """最近文件表由合法版本显式迁入，复跑保留已生成的打开记录。"""
+    from yuxi.migrations.workspace_recent_files import upgrade_workspace_recent_files
+
+    schema, admin, engine, manager = await _create_isolated_manager("pytest_recent_files_upgrade")
+    try:
+        await create_schema_version_table(manager)
+        await record_schema_version(manager, "business", 6)
+        await record_schema_version(manager, "knowledge", knowledge)
+        async with engine.begin() as conn:
+            await conn.execute(text("CREATE TABLE users (uid VARCHAR(128) PRIMARY KEY)"))
+            await conn.execute(text("INSERT INTO users VALUES ('existing')"))
+        if knowledge == 1:
+            with pytest.raises(RuntimeError, match="knowledge 为 2"):
+                await upgrade_workspace_recent_files(manager)
+            assert await get_schema_versions(manager) == {"business": 6, "knowledge": 1}
+            async with engine.connect() as conn:
+                assert await conn.scalar(text("SELECT to_regclass('workspace_recent_files')")) is None
+            return
+
+        await upgrade_workspace_recent_files(manager)
+        await require_current_schema(manager)
+        async with engine.begin() as conn:
+            assert await conn.scalar(text("SELECT count(*) FROM workspace_recent_files")) == 0
+            await conn.execute(text("""INSERT INTO workspace_recent_files VALUES ('existing', '[{"path":"/old.txt"}]')"""))
+        await upgrade_workspace_recent_files(manager)
+        async with engine.begin() as conn:
+            assert await conn.scalar(text("SELECT entries->0->>'path' FROM workspace_recent_files WHERE uid='existing'")) == "/old.txt"
+            await conn.execute(text("DELETE FROM users WHERE uid='existing'"))
+            assert await conn.scalar(text("SELECT count(*) FROM workspace_recent_files")) == 0
     finally:
         await _drop_isolated_schema(schema, admin, engine)

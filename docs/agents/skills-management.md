@@ -109,7 +109,7 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml --profile contain
 
 应用命令在锁内复核源数据、Skill 内容、部署声明与审阅计划。它将受影响的当前 Skill 写到新包引用，转换 Agent 配置和会话快照，删除 `skills` 的三个依赖列，给 `mcp_servers` 增加 `code_owned` 并记录核实过的归属。历史 Input、Run manifest、Skill 历史版本及个人 MCP 凭证保留。
 
-回读域版本应为 business 5 / knowledge 2。在该版本上可重复执行 apply。应用当前镜像的 [会话状态迁移](../advanced/deployment.md#会话状态迁移)后再重跑 app-init、启动 API 和 worker，并用原账号核对会话、知识访问、所选插件和 MCP 开关。若需回退，恢复维护前成套备份及旧代码。
+回读域版本应为 business 5 / knowledge 2。在该版本上可重复执行 apply。依次完成[会话状态迁移](../advanced/deployment.md#会话状态迁移)和[个人空间最近文件迁移](../advanced/deployment.md#个人空间最近文件迁移)后再重跑 app-init、启动 API 和 worker，并用原账号核对会话、知识访问、所选插件和 MCP 开关。若需回退，恢复维护前成套备份及旧代码。
 
 ## 安装方式
 

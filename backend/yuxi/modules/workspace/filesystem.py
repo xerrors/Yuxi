@@ -110,6 +110,11 @@ class Workspace:
             finally:
                 os.close(target_fd)
 
+    def stat_readable_file(self, path: str) -> dict:
+        """按预览的读取权限打开普通文件，从同一描述符返回元数据。"""
+        with self._open_regular_file(path, writable=False) as (_fd, file_stat):
+            return self._metadata_from_stat(file_stat)
+
     def read_authorized_file(self, path: str, max_bytes: int) -> bytes:
         """在 no-follow 边界内有界读取普通文件。"""
         if max_bytes < 0:

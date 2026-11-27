@@ -9,6 +9,8 @@ import os
 import tempfile
 from pathlib import Path, PurePosixPath
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from yuxi.infrastructure.file_preview import detect_preview_type, prepare_file_preview, preview_too_large
 from yuxi.infrastructure.filesystem import await_io
 from yuxi.modules.identity.models import User
@@ -16,6 +18,7 @@ from yuxi.modules.workspace.errors import FileTransferLimitError
 from yuxi.modules.workspace.filesystem import Workspace
 from yuxi.modules.workspace.paths import ensure_user_workspace, normalize_workspace_scope, validate_directory_name
 from yuxi.modules.workspace.repositories.projects import ProjectRepository
+from yuxi.modules.workspace.repositories.recent_files import recent_file_opens, record_file_open
 from yuxi.modules.workspace.runtime_paths import is_conversation_archive_path, runtime_workspace_path
 from yuxi.modules.workspace.services.file_entries import file_entry, sort_file_entries
 from yuxi.shared.errors import (
@@ -123,6 +126,35 @@ async def read_workspace_file_bytes(*, path: str, current_user: User) -> tuple[s
     except (PermissionError, NotADirectoryError, ValueError) as exc:
         raise PermissionDeniedError("Access denied") from exc
     return PurePosixPath(workspace_path).name, content
+
+
+async def list_recent_workspace_files(*, current_user: User, db: AsyncSession) -> dict:
+    """按打开顺序返回仍可访问的个人文件，并从文件系统读取当前属性。"""
+    history = await recent_file_opens(db, str(current_user.uid))
+    if not history:
+        return {"entries": []}
+
+    backend = _workspace_backend(current_user)
+    entries = []
+    for opened in history:
+        path = opened["path"]
+        try:
+            item = await asyncio.to_thread(backend.stat_readable_file, path)
+        except (FileNotFoundError, NotADirectoryError, IsADirectoryError, PermissionError, ValueError):
+            continue
+        entries.append({**_entry_from_metadata(path, item), "opened_at": opened["opened_at"]})
+    return {"entries": entries}
+
+
+async def open_workspace_file(*, path: str, current_user: User, db: AsyncSession) -> dict | PreviewResult:
+    """成功生成个人文件预览后，提交用户主动打开的记录。"""
+    # PurePosixPath 保留双前导斜杠，但 Workspace 将两个拼写解析到同一个文件。
+    workspace_path = "/" + _workspace_path(path).lstrip("/")
+    result = await read_workspace_file_content(path=workspace_path, current_user=current_user)
+    if isinstance(result, PreviewResult) and result.supported:
+        await record_file_open(db, str(current_user.uid), workspace_path)
+        await db.commit()
+    return result
 
 
 async def read_workspace_file_content(

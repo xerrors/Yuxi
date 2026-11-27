@@ -1,4 +1,4 @@
-"""产品内部的附件预解析与图片处理入口。"""
+"""产品内部的交付物、附件预解析与图片处理入口。"""
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, ConfigDict
@@ -8,6 +8,7 @@ from yuxi.api.dependencies.auth import get_db, require_product_user
 from yuxi.api.uploads import read_upload_with_limit
 from yuxi.infrastructure.images import process_uploaded_image
 from yuxi.modules.agents.scope import ActorScope
+from yuxi.modules.agents.services.artifacts import recent_presented_artifacts
 from yuxi.modules.agents.services.attachments import get_draft_file, parse_draft_file
 from yuxi.modules.identity.models import User
 
@@ -19,6 +20,12 @@ class DraftParse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     parse_method: str | None = None
+
+
+@router.get("/artifacts/recent")
+async def list_recent_artifacts(user: User = Depends(require_product_user), db: AsyncSession = Depends(get_db)):
+    """返回个人空间概览中最近展示的 Agent 产物。"""
+    return await recent_presented_artifacts(uid=str(user.uid), db=db)
 
 
 @router.get("/files/{file_id}")

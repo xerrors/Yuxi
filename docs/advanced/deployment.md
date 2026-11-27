@@ -117,7 +117,7 @@ API、Web 与 MinIO 的项目文件在构建时明确权限：源码和配置归
 docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container --profile all up -d --build
 ```
 
-`app-init` 以 UID/GID 1000 运行，等待 PostgreSQL 健康与 `storage-init` 成功后，在数据库锁内初始化空库。当前基线为 business 6 / knowledge 2，包含应用表、索引、约束和 LangGraph checkpoint 表。已有库与镜像版本匹配时跳过建表，版本不匹配时初始化失败。随后同步系统配置定义、内置模型供应商、Agent、MCP 和 Skill 来源文件，API 与 worker 等待全部步骤成功。已有数据按[数据库与文件目录](#_3-数据库与文件目录)的规程离线升级。历史编号重置的背景见[版本 1 基线决定](../develop-guides/decisions/implemented/2026-10-19-schema-baseline-one.md)。
+`app-init` 以 UID/GID 1000 运行，等待 PostgreSQL 健康与 `storage-init` 成功后，在数据库锁内初始化空库。当前基线为 business 7 / knowledge 2，包含应用表、索引、约束和 LangGraph checkpoint 表。已有库与镜像版本匹配时跳过建表，版本不匹配时初始化失败。随后同步系统配置定义、内置模型供应商、Agent、MCP 和 Skill 来源文件，API 与 worker 等待全部步骤成功。已有数据按[数据库与文件目录](#_3-数据库与文件目录)的规程离线升级。历史编号重置的背景见[版本 1 基线决定](../develop-guides/decisions/implemented/2026-10-19-schema-baseline-one.md)。
 
 ### 可选关闭知识库
 
@@ -188,7 +188,18 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml --profile contain
   api uv run --no-sync --no-dev python -m yuxi.migrations.agent_state_view
 ```
 
-回读域版本应为 business 6 / knowledge 2。Container 部署在恢复服务前按[远程 Skill 获取](./container-sandbox.md#远程-skill-获取)核对沙盒镜像及其 digest。再执行[共享内容更新](#共享内容更新与失败重试)，检查 readiness、已有会话和知识访问。
+回读域版本为 business 6 / knowledge 2 后，继续执行[个人空间最近文件迁移](#个人空间最近文件迁移)。
+
+### 个人空间最近文件迁移
+
+对 business 6 / knowledge 2 的库，在同一停写窗口执行以下命令。迁移创建个人文件打开记录表，用户首次打开文件后开始积累历史。
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container run --rm --no-deps \
+  api uv run --no-sync --no-dev python -m yuxi.migrations.workspace_recent_files
+```
+
+回读域版本应为 business 7 / knowledge 2。Container 部署在恢复服务前按[远程 Skill 获取](./container-sandbox.md#远程-skill-获取)核对沙盒镜像及其 digest。再执行[共享内容更新](#共享内容更新与失败重试)，检查 readiness、已有会话和知识访问。
 
 ### 检查 PostgreSQL 会话时区
 

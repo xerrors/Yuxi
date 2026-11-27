@@ -4,6 +4,8 @@
 类型：bug-fix
 Owner：frontend/src/pages/WorkspaceView.vue
 
+这份记录保留页面失活边界的来源。当前个人空间在主内容区域阅读文件，宽窄屏布局见[个人空间概览与文件阅读](2026-11-26-personal-space-overview.md)。
+
 ## 问题
 
 个人空间由应用布局的 KeepAlive 缓存。离开路由后，ResizeObserver 可以报告隐藏容器的零宽度；仅按宽度切换预览形式会把侧栏预览转换成仍挂在全局 DOM 的弹窗，遮挡其他页面。窄屏原有弹窗也需要随页面失活隐藏。

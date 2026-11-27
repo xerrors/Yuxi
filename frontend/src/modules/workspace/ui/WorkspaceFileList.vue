@@ -27,42 +27,19 @@
     >
       <template #toolbar-actions>
         <span class="entry-count">{{ entryCountText }}</span>
-        <a-tooltip v-if="uploadable" title="上传文件">
-          <a-button
-            size="small"
-            class="lucide-icon-btn"
-            :disabled="uploading"
-            aria-label="上传文件"
-            @click="$emit('upload-file')"
-          >
-            <Upload :size="14" />
-          </a-button>
-        </a-tooltip>
-        <a-tooltip v-if="uploadable" title="新建文件夹">
-          <a-button
-            size="small"
-            class="lucide-icon-btn"
-            :disabled="uploading"
-            aria-label="新建文件夹"
-            @click="$emit('create-directory')"
-          >
-            <FolderPlus :size="14" />
-          </a-button>
-        </a-tooltip>
         <a-tooltip v-if="!readonly" title="多选">
           <a-button
-            size="small"
-            class="lucide-icon-btn"
+            class="workspace-toolbar-icon lucide-icon-btn"
             :type="effectiveSelectionMode ? 'primary' : 'default'"
             aria-label="多选"
+            :aria-pressed="effectiveSelectionMode"
             @click="toggleSelectionMode"
           >
-            <ListChecks :size="14" />
+            <ListChecks :size="16" />
           </a-button>
         </a-tooltip>
         <a-button
           v-if="effectiveSelectionMode"
-          size="small"
           danger
           :disabled="!selectedPaths.length"
           :loading="deletingPaths.length > 0"
@@ -70,6 +47,7 @@
         >
           删除选中
         </a-button>
+        <slot name="actions" />
       </template>
 
       <template #name="{ row }">
@@ -134,7 +112,7 @@
 
 <script setup>
 import { computed, ref } from 'vue'
-import { Download, FolderPlus, ListChecks, MoreHorizontal, Trash2, Upload } from '@lucide/vue'
+import { Download, ListChecks, MoreHorizontal, Trash2, Upload } from '@lucide/vue'
 import FileBrowserTable from '@/shared/ui/FileBrowserTable.vue'
 import FileTypeIcon from '@/shared/ui/FileTypeIcon.vue'
 import { formatFileSize, formatRelativeTime } from '@/shared/lib/file_utils'
@@ -152,8 +130,7 @@ const props = defineProps({
   breadcrumbItems: { type: Array, default: null },
   rootLabel: { type: String, default: '全部文件' },
   pagination: { type: Object, default: null },
-  uploadable: { type: Boolean, default: false },
-  uploading: { type: Boolean, default: false }
+  uploadable: { type: Boolean, default: false }
 })
 
 const emit = defineEmits([
@@ -166,8 +143,6 @@ const emit = defineEmits([
   'delete-entry',
   'download-entry',
   'page-change',
-  'upload-file',
-  'create-directory',
   'upload-drop'
 ])
 
@@ -328,16 +303,19 @@ const handleDrop = (event) => {
   opacity: 0;
 }
 
-.workspace-file-list :deep(.file-browser-header) {
-  min-height: 48px;
-  padding: 0 16px;
+.workspace-file-list :deep(.file-browser-ant-table) {
+  padding-inline: var(--workspace-content-inset);
 }
 
 .workspace-file-list :deep(.ant-table-thead > tr > th) {
   padding: 9px 12px;
-  background: var(--gray-10);
+  border-bottom-color: var(--gray-150);
   color: var(--gray-600);
   font-weight: 500;
+}
+
+.workspace-file-list :deep(.ant-table-thead > tr > th::before) {
+  display: none;
 }
 
 .workspace-file-list :deep(.ant-table-tbody > tr > td) {

@@ -419,6 +419,9 @@ export const threadApi = {
   downloadThreadArtifact: (threadId, path) =>
     apiGet(threadApi.getThreadArtifactUrl(threadId, path, true), {}, true, 'blob'),
 
+  /** 读取当前用户最近收到的 Agent 交付物。 */
+  getRecentArtifacts: () => apiGet('/api/agent/artifacts/recent'),
+
   /** 读取线程产物预览。 */
   previewThreadArtifact: (threadId, path) =>
     apiGet(`${threadApi.getThreadArtifactUrl(threadId, path)}?preview=true`, {}, true, 'blob'),

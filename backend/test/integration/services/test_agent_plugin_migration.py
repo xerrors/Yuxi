@@ -25,6 +25,7 @@ async def create_legacy_schema(manager):
     await create_knowledge_tables(manager)
     await create_schema_version_table(manager)
     async with manager.async_engine.begin() as conn:
+        await conn.execute(text("DROP TABLE workspace_recent_files"))
         await conn.execute(text("ALTER TABLE sessions DROP COLUMN agent_state_view"))
         await conn.execute(text("ALTER TABLE mcp_servers DROP COLUMN code_owned"))
         for field in ("tool_dependencies", "mcp_dependencies", "skill_dependencies"):
@@ -556,7 +557,7 @@ async def test_direct_selection_does_not_authorize_a_larger_plugin(tmp_path, rep
 
 
 async def test_plugin_migration_cli_registers_models_in_a_cold_process(tmp_path):
-    """验证冷进程的插件迁移及正式 v0.8.0 到当前版本的两步升级。"""
+    """验证冷进程的插件迁移及正式 v0.8.0 到当前版本的升级。"""
     schema, admin, engine, manager = await create_isolated_manager("pytest_plugin_cli")
     script = textwrap.dedent('''
         import os
@@ -640,17 +641,18 @@ async def test_plugin_migration_cli_registers_models_in_a_cold_process(tmp_path)
 
         with pytest.raises(RuntimeError, match="business=5"):
             await require_current_schema(manager)
-        result = await asyncio.to_thread(
-            subprocess.run,
-            [sys.executable, "-c", script, "yuxi.migrations.agent_state_view"],
-            env=isolated_env,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        assert result.returncode == 0, result.stderr
+        for module, version in (("agent_state_view", 6), ("workspace_recent_files", 7)):
+            result = await asyncio.to_thread(
+                subprocess.run,
+                [sys.executable, "-c", script, f"yuxi.migrations.{module}"],
+                env=isolated_env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert result.returncode == 0, result.stderr
+            assert await get_schema_versions(manager) == {"business": version, "knowledge": 2}
         await require_current_schema(manager)
-        assert await get_schema_versions(manager) == {"business": 6, "knowledge": 2}
         async with engine.connect() as conn:
             assert await conn.scalar(projection_type) == "jsonb"
     finally:

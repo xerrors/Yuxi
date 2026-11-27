@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, Literal
 
@@ -10,8 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.modules.agents.models.messages import MODEL_AUDIT_MESSAGE_TYPE, TOOL_AUDIT_MESSAGE_TYPE, Message
 from yuxi.modules.agents.models.runs import AgentRun
+from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.repositories.sessions import SessionRepository
+from yuxi.modules.workspace.models import Project
 
 
 class ToolMessageAuditRepository:
@@ -20,6 +23,38 @@ class ToolMessageAuditRepository:
     def __init__(self, db_session: AsyncSession):
         self.db = db_session
         self.run_repo = AgentRunRepository(db_session)
+
+    @asynccontextmanager
+    async def recent_presentations(self, uid: str):
+        """按交付时间读取当前产品用户可见会话中成功的展示调用。"""
+        stmt = (
+            select(
+                Session.thread_id,
+                Session.title,
+                Project.workdir_path,
+                Message.extra_metadata["input"]["filepaths"].label("paths"),
+                Message.finished_at,
+            )
+            .select_from(Session)
+            .join(Project, (Project.id == Session.project_id) & (Project.uid == Session.uid))
+            .join(Message, Message.session_record_id == Session.id)
+            .where(
+                Session.uid == uid,
+                Session.app_id.is_(None),
+                Session.status.in_(("active", "archived")),
+                Message.message_type == TOOL_AUDIT_MESSAGE_TYPE,
+                Message.execution_status == "completed",
+                Message.extra_metadata["tool_name"].as_string() == "present_artifacts",
+                Message.finished_at.is_not(None),
+            )
+            .order_by(Message.finished_at.desc(), Message.id.desc())
+        )
+        # 删除或撤权的文件不占名额；按需读取更早的成功调用，凑齐后即释放游标。
+        rows = await self.db.stream(stmt.execution_options(yield_per=20))
+        try:
+            yield rows
+        finally:
+            await rows.close()
 
     async def start(
         self,

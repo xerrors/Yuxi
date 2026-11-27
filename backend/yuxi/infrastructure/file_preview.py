@@ -89,16 +89,18 @@ def prepare_file_preview(path: str, raw_content: bytes) -> PreviewResult:
     except UnicodeDecodeError:
         return _unsupported_preview("当前文件不是 UTF-8 文本，暂不支持预览")
 
-    truncated = len(content) > MAX_TEXT_PREVIEW_CHARS
+    # HTML 按完整文档渲染，截断 head 内的样式可能使正文全部丢失。
+    limit = None if preview_type == "html" else MAX_TEXT_PREVIEW_CHARS
+    truncated = limit is not None and len(content) > limit
     if truncated:
-        content = content[:MAX_TEXT_PREVIEW_CHARS]
+        content = content[:limit]
     return PreviewResult(
         content=content,
         preview_type=preview_type,
         supported=True,
         message=message,
         truncated=truncated,
-        limit=MAX_TEXT_PREVIEW_CHARS,
+        limit=limit,
     )
 
 

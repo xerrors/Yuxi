@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.api.dependencies.auth import get_db, get_required_user
+from yuxi.api.dependencies.auth import get_db, get_required_user, require_product_user
 from yuxi.api.responses.files import render_file_result
 from yuxi.api.uploads import prepare_upload_files
 from yuxi.modules.identity.models import User
@@ -17,7 +17,9 @@ from yuxi.modules.workspace.services.files import (
     create_workspace_directory,
     delete_workspace_path,
     download_workspace_file,
+    list_recent_workspace_files,
     list_workspace_tree,
+    open_workspace_file,
     read_workspace_file_content,
     search_workspace_files,
     upload_workspace_files,
@@ -59,6 +61,25 @@ async def search_workspace_files_route(
     current_user: User = Depends(get_required_user),
 ):
     return await search_workspace_files(query=query, current_user=current_user)
+
+
+@workspace.get("/recent-files", response_model=dict)
+async def get_recent_workspace_files(
+    current_user: User = Depends(require_product_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """返回用户最近打开的个人文件。"""
+    return await list_recent_workspace_files(current_user=current_user, db=db)
+
+
+@workspace.post("/open-file")
+async def open_workspace_file_route(
+    path: str = Query(..., description="工作区文件路径"),
+    current_user: User = Depends(require_product_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """主动打开文件并返回原有预览格式。"""
+    return render_file_result(await open_workspace_file(path=path, current_user=current_user, db=db))
 
 
 @workspace.get("/file")

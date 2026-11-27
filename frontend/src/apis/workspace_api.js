@@ -14,6 +14,12 @@ export const getWorkspaceFileContent = (path) => {
   return apiGet(`/api/workspace/file?${query}`, {}, true, 'blob')
 }
 
+/** 主动打开个人文件，后端同时更新最近打开时间。 */
+export const openWorkspaceFile = (path) =>
+  apiPost(`/api/workspace/open-file?${buildQuery({ path })}`, {}, {}, true, 'blob')
+
+export const getRecentWorkspaceFiles = () => apiGet('/api/workspace/recent-files')
+
 export const getWorkspaceKnowledgeTree = (kbId, params = {}) => {
   const query = buildQuery({
     kb_id: kbId,

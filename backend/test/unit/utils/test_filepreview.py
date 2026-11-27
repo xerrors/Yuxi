@@ -9,14 +9,30 @@ from yuxi.infrastructure.file_preview import (
 )
 
 
-def test_prepare_file_preview_truncates_long_markdown():
-    result = prepare_file_preview("note.md", ("x" * (MAX_TEXT_PREVIEW_CHARS + 1)).encode("utf-8"))
+@pytest.mark.parametrize(("path", "preview_type"), [("note.md", "markdown"), ("note.txt", "text")])
+def test_prepare_file_preview_truncates_long_text(path: str, preview_type: str):
+    """普通文本及 Markdown 继续按字符数截断。"""
+    result = prepare_file_preview(path, ("字" * (MAX_TEXT_PREVIEW_CHARS + 1)).encode("utf-8"))
 
-    assert result.preview_type == "markdown"
+    assert result.preview_type == preview_type
     assert result.supported is True
     assert result.truncated is True
     assert result.limit == MAX_TEXT_PREVIEW_CHARS
     assert len(result.content) == MAX_TEXT_PREVIEW_CHARS
+
+
+@pytest.mark.parametrize("path", ["report.html", "Report.HTM"])
+def test_html_preview_preserves_body_after_long_head(path: str):
+    """较长的内嵌样式之后仍能读取完整 HTML 正文。"""
+    content = "<html><head><style>/*" + "x" * MAX_TEXT_PREVIEW_CHARS + "*/</style></head><body>正文</body></html>"
+
+    result = prepare_file_preview(path, content.encode("utf-8"))
+
+    assert result.content == content
+    assert result.preview_type == "html"
+    assert result.supported is True
+    assert result.truncated is False
+    assert result.limit is None
 
 
 def test_prepare_file_preview_returns_complete_binary_result_from_signature():

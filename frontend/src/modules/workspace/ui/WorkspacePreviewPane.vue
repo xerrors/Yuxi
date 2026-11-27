@@ -1,24 +1,24 @@
 <template>
-  <aside class="workspace-preview-pane">
+  <section ref="reader" class="workspace-preview-pane" aria-label="文件预览" tabindex="-1">
     <AgentFilePreview
       :file="file"
       :file-path="filePath"
-      :show-download="false"
+      :show-download="true"
       :show-close="true"
-      close-variant="collapse-right"
-      :show-fullscreen="true"
       :full-height="true"
       :editable="editable"
       :saving="saving"
       container-class="workspace-preview-container"
       content-class="workspace-preview-content"
+      @download="$emit('download')"
       @close="$emit('close')"
       @save="$emit('save', $event)"
     />
-  </aside>
+  </section>
 </template>
 
 <script setup>
+import { onMounted, ref } from 'vue'
 import AgentFilePreview from '@/modules/session/ui/workspace/AgentFilePreview.vue'
 
 defineProps({
@@ -28,7 +28,10 @@ defineProps({
   saving: { type: Boolean, default: false }
 })
 
-defineEmits(['close', 'save'])
+defineEmits(['close', 'download', 'save'])
+
+const reader = ref(null)
+onMounted(() => reader.value?.focus({ preventScroll: true }))
 </script>
 
 <style scoped lang="less">
@@ -42,6 +45,11 @@ defineEmits(['close', 'save'])
 :deep(.workspace-preview-container) {
   height: 100%;
   border-radius: 0;
+}
+
+:deep(.workspace-preview-container .file-path-title) {
+  color: var(--gray-900);
+  font-weight: 500;
 }
 
 :deep(.workspace-preview-content) {

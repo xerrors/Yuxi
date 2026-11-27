@@ -17,6 +17,7 @@ before(async () => {
       if (id.endsWith('/src/apis/workspace_api.js')) return `
         export const getWorkspaceTree = (...args) => globalThis.__artifactWorkspaceApi.getWorkspaceTree(...args)
         export const getWorkspaceFileContent = (...args) => globalThis.__artifactWorkspaceApi.getWorkspaceFileContent(...args)
+        export const openWorkspaceFile = (...args) => globalThis.__artifactWorkspaceApi.openWorkspaceFile(...args)
         export const downloadWorkspaceFile = () => {}
         export const searchWorkspaceFiles = () => {}`
     } }]
@@ -41,7 +42,7 @@ const renderer = createRenderer({
 })
 
 /** 执行真实面板 setup，以文件响应和终态通知驱动缓存生命周期。 */
-async function setupPanel(t) {
+async function setupPanel(t, onEmit = () => {}) {
   const hooks = {}
   let content = '<h1>预算20万元</h1>'
   const requests = []
@@ -75,7 +76,7 @@ async function setupPanel(t) {
   let view
   const active = ref(true)
   const Panel = { setup() {
-    view = component.setup(props, { expose() {}, emit() {} })
+    view = component.setup(props, { expose() {}, emit: (...args) => onEmit(props, ...args) })
     return () => null
   } }
   const app = renderer.createApp({ setup: () => () => h(KeepAlive, null, () => active.value ? h(Panel) : null) })
@@ -115,6 +116,58 @@ async function setupPanel(t) {
     }
   }
 }
+
+test('会话面板的个人文件树、搜索和标签主动打开时读取最新内容，刷新和自动恢复不记录访问', async (t) => {
+  const path = '/projects/notes.md'
+  const file = { name: 'notes.md', path }
+  const preview = { ...file, key: 'workspace:' + path, workspace: true, workdir: false }
+  const section = { key: 'file:' + preview.key, type: 'file', previewKey: preview.key, title: file.name, path }
+  const panel = await setupPanel(t, (props, event, payload) => {
+    if (event === 'open-preview' || event === 'activate-section') {
+      props.activeSectionKey = section.key
+      props.activePreview = { ...preview, ...(event === 'open-preview' ? payload : {}) }
+    }
+  })
+  const accesses = []
+  const content = (method, filePath) => {
+    accesses.push([method, filePath])
+    return new Response(JSON.stringify({ content: '版本 ' + accesses.length, preview_type: 'text', supported: true }), {
+      headers: { 'content-type': 'application/json' }
+    })
+  }
+  workspaceApi.getWorkspaceFileContent = filePath => content('GET', filePath)
+  workspaceApi.openWorkspaceFile = filePath => content('POST', filePath)
+  const showTree = async () => {
+    panel.props.activeSectionKey = 'file-tree'
+    panel.props.activePreview = null
+    await panel.settle()
+  }
+  panel.props.sections.push(section)
+  await showTree()
+  panel.view.onWorkspaceFileSelect([path], { node: { isLeaf: false, fileData: file } })
+  await panel.settle()
+  assert.deepEqual(accesses, [])
+  panel.view.onWorkspaceFileSelect([path], { node: { isLeaf: true, fileData: file } })
+  await panel.settle()
+  assert.equal(panel.view.currentFile.value.content, '版本 1')
+  await showTree()
+  panel.view.handleSearchSelect(file)
+  await panel.settle()
+  assert.equal(panel.view.currentFile.value.content, '版本 2')
+  await showTree()
+  panel.view.activateSection(section)
+  await panel.settle()
+  assert.equal(panel.view.currentFile.value.content, '版本 3')
+  await panel.view.emitRefresh()
+  await panel.settle()
+  assert.equal(panel.view.currentFile.value.content, '版本 4')
+  await showTree()
+  panel.props.activeSectionKey = section.key
+  panel.props.activePreview = preview
+  await panel.settle()
+  assert.equal(panel.view.currentFile.value.content, '版本 4')
+  assert.deepEqual(accesses, ['POST', 'POST', 'POST', 'GET'].map(method => [method, path]))
+})
 
 test('同名交付物在终态通知后更新，默认个人空间树不阻断活动产物刷新', async (t) => {
   const panel = await setupPanel(t)
