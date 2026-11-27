@@ -126,11 +126,16 @@ async def send_input(sessions, content: str, mode: str = "steer") -> dict:
         )
 
 
+def prepare_input_workdir(monkeypatch, tmp_path):
+    """在独立数据根物化测试会话绑定的工作目录。"""
+    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path))
+    (user_workspace_dir(SCOPE.uid) / "projects/input-project").mkdir(parents=True)
+
+
 @pytest_asyncio.fixture
 async def sessions(monkeypatch, tmp_path):
     """为输入契约建真实数据库，替代外部发现、沙盒、投递与通知。"""
-    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path))
-    (user_workspace_dir(SCOPE.uid) / "projects/input-project").mkdir(parents=True)
+    prepare_input_workdir(monkeypatch, tmp_path)
     schema, admin_engine, engine = await create_input_schema()
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with factory() as db:

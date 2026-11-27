@@ -19,6 +19,7 @@ from test.integration.services.agent_input_fixtures import (
 from test.integration.services.agent_input_fixtures import (
     drop_input_schema as _drop_schema,
 )
+from test.integration.services.agent_input_fixtures import prepare_input_workdir
 from test.integration.services.agent_input_fixtures import (
     queue_inputs as _queue_inputs,
 )
@@ -34,6 +35,12 @@ from yuxi.modules.agents.scope import ActorScope
 from yuxi.shared.errors import StateConflictError
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration, pytest.mark.self_managed_resources]
+
+
+@pytest.fixture(autouse=True)
+def input_workdir(monkeypatch, tmp_path):
+    """为数据库夹具绑定的 Project 准备真实工作目录。"""
+    prepare_input_workdir(monkeypatch, tmp_path)
 
 
 async def test_concurrent_claims_consume_only_fifo_head() -> None:
