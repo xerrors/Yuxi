@@ -60,7 +60,7 @@ Windows 下的 Docker Desktop 不支持启动 Cube。可以选择 Container；�
 
 :::
 
-两种初始化脚本都默认选择 Container 并自动生成 `SANDBOX_RUNNER_TOKEN`。已有 `.env` 会保留原后端；如需切换，先将 `SANDBOX_BACKEND` 改为 `container` 再初始化。Docker Desktop 使用 Linux 容器模式，并允许项目目录共享。
+两种初始化脚本都默认选择 Container 并自动生成 `SANDBOX_RUNNER_TOKEN`。已有 `.env` 会保留原后端；如需切换，先将 `SANDBOX_BACKEND` 改为 `container` 再初始化。Docker Desktop 使用 Linux 容器模式，并允许项目目录共享。Windows 环境使用[Linux 用户数据卷](../advanced/container-sandbox.md#windows-用户数据卷)支持个人目录的原子发布。
 
 初始化完成后，直接进入步骤 3。沙盒镜像会在启动时构建，不需要填写 Cube 配置。容器默认禁止联网，每个执行段（Run）使用独立临时环境；工作目录文件保留，Home 和临时安装的软件随容器清理。更多限制见[Container 沙盒](../advanced/container-sandbox.md)。
 

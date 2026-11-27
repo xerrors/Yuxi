@@ -112,6 +112,12 @@ Shell 命名空间包含当前 Run 的 Workdir、当前用户个人 Skill 目录
 - 对话中的个人安装可执行 `npx -y skills add <source> -g -y`，联网安装需要 `bridge`。管理页远程安装使用[独立获取容器](#远程-skill-获取)。网页上传直接进入草稿与确认流程。
 - 不提供多镜像、模型自建沙盒、持久 Home 或多租户强隔离。
 
+## Windows 用户数据卷
+
+Windows Docker Desktop 的宿主目录绑定缺少个人 Skill 与 Workspace 原子目录发布所需的 `RENAME_NOREPLACE`。Container 部署可以叠加根目录的 `docker-compose.windows.yml`，让 API、worker、runner 和 storage-init 共用项目隔离的 Linux 用户数据卷。
+
+全新环境在 `.env` 设置 `COMPOSE_FILE=docker-compose.yml;docker-compose.windows.yml`。已有环境切换前先停止用户数据写入，复制原用户数据并校验目录、文件字节和符号链接，再启用覆盖文件。切换 Compose 文件只改变挂载，已有数据需要显式复制。保留原目录供回退。`docker compose down -v` 会删除命名卷及其中的用户文件。
+
 ## 运维与验证
 
 ```bash
