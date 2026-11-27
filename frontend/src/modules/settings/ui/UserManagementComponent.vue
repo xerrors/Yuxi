@@ -26,22 +26,34 @@
       </div>
     </div>
 
-    <div class="filter-section">
-      <a-input
-        v-model:value="userManagement.searchKeyword"
-        class="search-input"
-        placeholder="搜索用户名 / ID / 手机号"
-        allow-clear
-      >
-        <template #prefix><Search :size="16" /></template>
-      </a-input>
-      <div class="filter-actions">
+    <div class="user-table-toolbar">
+      <div class="user-table-filters">
+        <a-input
+          v-model:value="userManagement.searchKeyword"
+          class="search-input"
+          placeholder="搜索用户名 / ID / 手机号"
+          allow-clear
+        >
+          <template #prefix><Search :size="16" /></template>
+        </a-input>
         <label for="managed-user-kind" class="filter-label">用户类型</label>
-        <a-select id="managed-user-kind" v-model:value="userManagement.userKindFilter" class="filter-select user-kind-select">
+        <a-select id="managed-user-kind" v-model:value="userManagement.userKindFilter" class="user-kind-select">
           <a-select-option value="human">系统用户</a-select-option>
           <a-select-option value="end_user">APP 终端用户</a-select-option>
           <a-select-option value="all">全部用户类型</a-select-option>
         </a-select>
+      </div>
+      <div v-if="selectedUserIds.length" class="user-selection-actions" role="group" aria-label="所选用户操作">
+        <a-button type="text" @click="selectedUserIds = []">清空选择</a-button>
+        <a-button
+          danger
+          class="lucide-icon-btn"
+          :disabled="selectionUnavailable"
+          @click="deleteSelectedUsers"
+        >
+          <Trash2 :size="14" />
+          批量删除 ({{ selectedUserIds.length }})
+        </a-button>
       </div>
     </div>
 
@@ -58,6 +70,7 @@
               :dataSource="userManagement.users"
               :columns="columns"
               :rowKey="(record) => record.id"
+              :row-selection="userSelection"
               :pagination="false"
               table-layout="fixed"
               :scroll="{ x: 760 }"
@@ -363,6 +376,7 @@ import { Plus, SquarePen, Trash2, User, UserLock, UserStar, RefreshCw, Search, L
 import { formatDateTime } from '@/shared/lib/time'
 import { isPasswordLongEnough, MIN_PASSWORD_LENGTH } from '@/modules/identity'
 import FallbackAvatar from '@/shared/ui/FallbackAvatar.vue'
+import { confirmManagementBatchDeletion } from '../model/confirmManagementBatchDeletion'
 
 const userStore = useUserStore()
 
@@ -580,11 +594,23 @@ watch(
   }
 )
 
+const selectedUserIds = ref([])
+const selectionUnavailable = computed(() => userManagement.loading || Boolean(userManagement.error))
 let filterRequestTimer = null
+let latestUserRequest = 0
+
+watch(() => userStore.token, () => {
+  selectedUserIds.value = []
+})
+
 watch(
   () => [userManagement.searchKeyword, userManagement.departmentFilterValues, userManagement.roleFilterValues, userManagement.userKindFilter],
   () => {
+    selectedUserIds.value = []
     userManagement.currentPage = 1
+    // 筛选防抖期间保留旧行供展示，停止选择并丢弃旧请求结果。
+    userManagement.loading = true
+    latestUserRequest += 1
     if (filterRequestTimer) clearTimeout(filterRequestTimer)
     filterRequestTimer = setTimeout(() => fetchUsers(), 250)
   },
@@ -603,7 +629,17 @@ const isUserDeleteDisabled = (user) =>
   user.id === userStore.userId ||
   (!userStore.isSuperAdmin && user.role !== 'user')
 
-let latestUserRequest = 0
+const userSelection = computed(() => ({
+  columnWidth: 44,
+  selectedRowKeys: selectedUserIds.value,
+  preserveSelectedRowKeys: true,
+  onChange: (ids) => { selectedUserIds.value = ids },
+  getCheckboxProps: (user) => ({
+    disabled: selectionUnavailable.value || isUserDeleteDisabled(user),
+    'aria-label': `选择用户 ${user.username}`
+  })
+}))
+
 const fetchUsers = async () => {
   const requestId = ++latestUserRequest
   try {
@@ -629,6 +665,8 @@ const fetchUsers = async () => {
     userManagement.users = response.items
     userManagement.total = response.total
     userManagement.error = null
+    const blockedIds = new Set(response.items.filter(isUserDeleteDisabled).map(user => user.id))
+    selectedUserIds.value = selectedUserIds.value.filter(id => !blockedIds.has(id))
   } catch (error) {
     if (requestId !== latestUserRequest) return
     console.error('获取用户列表失败:', error)
@@ -798,6 +836,20 @@ const handleUserFormSubmit = async () => {
   }
 }
 
+/** 删除各页选中的用户，保留删除结果未确认的记录以便核查。 */
+function deleteSelectedUsers() {
+  confirmManagementBatchDeletion({
+    ids: [...selectedUserIds.value],
+    label: '用户',
+    consequence: '',
+    deleteById: userStore.deleteUser,
+    async refresh(failedIds) {
+      selectedUserIds.value = failedIds
+      await fetchUsers()
+    }
+  })
+}
+
 // 删除用户
 const confirmDeleteUser = (user) => {
   // 自己不能删除自己
@@ -817,6 +869,7 @@ const confirmDeleteUser = (user) => {
       try {
         userManagement.loading = true
         await userStore.deleteUser(user.id)
+        selectedUserIds.value = selectedUserIds.value.filter(id => id !== user.id)
         message.success('用户删除成功')
         // 重新获取用户列表
         await fetchUsers()
@@ -849,13 +902,23 @@ onUnmounted(() => {
 }
 
 .user-management {
-  .filter-section {
+  .user-table-toolbar,
+  .user-table-filters,
+  .user-selection-actions {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 16px;
     flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .user-table-toolbar {
+    gap: 8px 16px;
+    margin-bottom: 12px;
+  }
+
+  .user-table-filters {
+    flex: 1 1 398px;
+    min-width: 0;
 
     .search-input {
       width: 240px;
@@ -867,21 +930,9 @@ onUnmounted(() => {
       }
     }
 
-    .filter-actions {
-      display: flex;
-      align-items: center;
-      justify-content: flex-end;
-      gap: 8px;
-      margin-left: auto;
-      flex-wrap: wrap;
-    }
-
-    .filter-select {
-      width: 120px;
-
-      &.user-kind-select {
-        width: 150px;
-      }
+    .user-kind-select {
+      width: 150px;
+      max-width: 100%;
     }
 
     .filter-label {
@@ -894,28 +945,9 @@ onUnmounted(() => {
     }
   }
 
-  @media (max-width: 640px) {
-    .filter-section {
-      align-items: stretch;
-
-      .search-input,
-      .filter-actions {
-        width: 100%;
-      }
-
-      .filter-actions {
-        margin-left: 0;
-      }
-
-      .filter-select {
-        flex: 1;
-        min-width: 0;
-
-        &.user-kind-select {
-          flex-basis: 100%;
-        }
-      }
-    }
+  .user-selection-actions {
+    margin-inline-start: auto;
+    justify-content: flex-end;
   }
 
   .user-table-cell {

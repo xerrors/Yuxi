@@ -17,6 +17,16 @@
             ><RefreshCw :size="16" :class="{ 'yuxi-rotate': departmentManagement.refreshing }"
           /></template>
         </a-button>
+        <a-button
+          v-if="selectedDepartments.length"
+          danger
+          class="lucide-icon-btn"
+          :disabled="!canSelectDepartments"
+          @click="deleteSelectedDepartments"
+        >
+          <Trash2 :size="14" />
+          批量删除 ({{ selectedDepartments.length }})
+        </a-button>
         <a-button type="primary" @click="showAddDepartmentModal" class="lucide-icon-btn">
           <template #icon><Plus :size="16" /></template>
           添加部门
@@ -37,6 +47,7 @@
               :dataSource="departmentManagement.departments"
               :columns="columns"
               :rowKey="(record) => record.id"
+              :row-selection="departmentSelection"
               :pagination="false"
             >
               <template #bodyCell="{ column, record }">
@@ -69,7 +80,7 @@
                         type="text"
                         size="small"
                         danger
-                        :disabled="record.id === 1"
+                        :disabled="isDepartmentDeleteDisabled(record)"
                         class="yuxi-table-action lucide-icon-btn"
                         @click="confirmDeleteDepartment(record)"
                       >
@@ -185,11 +196,12 @@
 </template>
 
 <script setup>
-import { reactive, onMounted, watch } from 'vue'
+import { computed, reactive, ref, onMounted, watch } from 'vue'
 import { notification, message, Modal } from 'ant-design-vue'
 import { authApi, departmentApi } from '@/apis'
 import { Building2, Plus, RefreshCw, SquarePen, Trash2 } from '@lucide/vue'
 import { isPasswordLongEnough, MIN_PASSWORD_LENGTH } from '@/modules/identity'
+import { confirmManagementBatchDeletion } from '../model/confirmManagementBatchDeletion'
 
 // 表格列定义
 const columns = [
@@ -241,6 +253,26 @@ const departmentManagement = reactive({
   }
 })
 
+/** 默认部门接收被删除部门的成员，始终禁止删除。 */
+const isDepartmentDeleteDisabled = department => department.id === 1
+
+const selectedDepartmentIds = ref([])
+const canSelectDepartments = computed(() => !departmentManagement.loading && !departmentManagement.error)
+const selectedDepartments = computed(() =>
+  departmentManagement.departments.filter(department =>
+    selectedDepartmentIds.value.includes(department.id) && !isDepartmentDeleteDisabled(department)
+  )
+)
+const departmentSelection = computed(() => ({
+  columnWidth: 44,
+  selectedRowKeys: selectedDepartments.value.map(department => department.id),
+  onChange: (ids) => { selectedDepartmentIds.value = ids },
+  getCheckboxProps: (department) => ({
+    disabled: !canSelectDepartments.value || isDepartmentDeleteDisabled(department),
+    'aria-label': `选择部门 ${department.name}`
+  })
+}))
+
 // 获取部门列表
 const fetchDepartments = async () => {
   try {
@@ -262,7 +294,7 @@ const handleRefresh = async () => {
   departmentManagement.refreshing = true
   try {
     await fetchDepartments()
-    message.success('刷新成功')
+    if (!departmentManagement.error) message.success('刷新成功')
   } catch (error) {
     console.error('刷新失败:', error)
     message.error('刷新失败')
@@ -457,6 +489,21 @@ const handleDepartmentFormSubmit = async () => {
   }
 }
 
+/** 批量确认时说明部门删除会迁移成员并清理部门资源。 */
+function deleteSelectedDepartments() {
+  if (!canSelectDepartments.value) return
+  confirmManagementBatchDeletion({
+    ids: selectedDepartments.value.map(department => department.id),
+    label: '部门',
+    consequence: '这些部门的成员会迁移到默认部门，部门 API Key 会被吊销。',
+    deleteById: departmentApi.deleteDepartment,
+    async refresh(failedIds) {
+      selectedDepartmentIds.value = failedIds
+      await fetchDepartments()
+    }
+  })
+}
+
 // 删除部门
 const confirmDeleteDepartment = (department) => {
   Modal.confirm({
@@ -469,15 +516,12 @@ const confirmDeleteDepartment = (department) => {
       try {
         departmentManagement.loading = true
         await departmentApi.deleteDepartment(department.id)
-        notification.success({ message: '部门删除成功' })
+        message.success('部门删除成功')
         // 重新获取部门列表
         await fetchDepartments()
       } catch (error) {
         console.error('删除部门失败:', error)
-        notification.error({
-          message: '删除失败',
-          description: error.message || '请稍后重试'
-        })
+        message.error(`删除失败，${error.message || '请稍后重试'}`)
       } finally {
         departmentManagement.loading = false
       }
