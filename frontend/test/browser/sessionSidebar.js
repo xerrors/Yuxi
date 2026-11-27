@@ -341,7 +341,7 @@ async page => {
   await panel.waitFor()
   check(await page.getByRole('button', { name: '收起对话侧栏', exact: true }).isVisible(), '返回对话应恢复常驻展开')
   await hidePanel()
-  for (const path of ['/agent-manage', '/workspace', '/extensions']) {
+  for (const path of ['/agent-manage', '/system-manage', '/workspace', '/extensions']) {
     await showPanel()
     await pin.click()
     await navigate(path)
@@ -353,8 +353,8 @@ async page => {
     await page.mouse.move(80, 20)
     await page.waitForTimeout(250)
     check(await panel.isHidden(), '非对话页移过原触发区不能重新打开面板')
-    if (path === '/agent-manage') {
-      const imagePath = '/tmp/yuxi-session-sidebar-agent-manage-collapsed.png'
+    if (path === '/system-manage') {
+      const imagePath = '/tmp/yuxi-session-sidebar-system-manage-collapsed.png'
       await page.screenshot({ path: imagePath })
       screenshots.push(imagePath)
     }
@@ -365,8 +365,8 @@ async page => {
     check(await panel.locator('.session-panel-header').count() === 0, '原导航中的列表不应显示独立面板头部')
     check(await page.locator('.sidebar-brand').getByRole('button', { name: '搜索', exact: true }).count() === 1, '展开原导航仍应保留搜索')
     check(Math.abs((await page.locator('.foo').boundingBox()).y + (await page.locator('.foo').boundingBox()).height - 1000) < 2, '非对话页用户菜单应保持在底部')
-    if (path === '/agent-manage') {
-      const imagePath = '/tmp/yuxi-session-sidebar-agent-manage-expanded.png'
+    if (path === '/system-manage') {
+      const imagePath = '/tmp/yuxi-session-sidebar-system-manage-expanded.png'
       await page.screenshot({ path: imagePath })
       screenshots.push(imagePath)
     }
@@ -382,9 +382,9 @@ async page => {
   await historyMessage.waitFor()
   const editor = page.locator('.agent-view [contenteditable="true"]').first()
   await editor.fill('返回线程时保留这段未发送草稿')
-  for (const destination of ['智能体', '个人空间']) {
+  for (const [destination, path] of [['智能体', '/agent-manage'], ['系统管理', '/system-manage'], ['个人空间', '/workspace']]) {
     await page.locator('.nav').getByRole('link', { name: destination, exact: true }).click()
-    await page.waitForURL(destination === '智能体' ? origin + '/agent-manage' : origin + '/workspace')
+    await page.waitForURL(origin + path)
     const conversationEntry = page.locator('.nav').getByRole('link', { name: '对话', exact: true })
     check(await conversationEntry.getAttribute('href') === `/agent/${returnSession.id}`, '离开后对话入口应指向之前的线程')
     await conversationEntry.click()

@@ -1,4 +1,4 @@
-// 在独立浏览器运行：playwright-cli -s=<session> run-code --filename=frontend/test/browser/apiIntegrationSurfaces.js
+// 在已打开 Vite 页面的独立浏览器运行：playwright-cli -s=<session> run-code --filename=frontend/test/browser/apiIntegrationSurfaces.js
 // API 只使用合成数据；真实组件和浏览器证明错误状态、主题与剪贴板行为。
 async (page) => {
   const check = (value, message) => { if (!value) throw new Error(message) }
@@ -15,7 +15,7 @@ async (page) => {
     const b = luminance(background)
     return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
   }
-  const origin = 'http://localhost:5173'
+  const origin = page.url().split('/').slice(0, 3).join('/')
   const overview = {
     apps: [{
       app_id: 'integration-fixture-with-a-long-app-name-to-check-layout-at-768px',
@@ -70,8 +70,9 @@ async (page) => {
     const { default: Tool } = await import('/src/modules/session/ui/tools/ToolRendererUnavailable.vue')
     const root = document.querySelector('#app')
     const pinia = root.__vue_app__.config.globalProperties.$pinia
+    const router = root.__vue_app__.config.globalProperties.$router
     const theme = useThemeStore(pinia)
-    const state = reactive({ mcp: false, controls: false, openedTab: '' })
+    const state = reactive({ mcp: false, controls: false })
     const host = document.createElement('main')
     host.id = 'integration-review'
     host.style.cssText = 'position:fixed;inset:0;z-index:900;overflow:auto;background:var(--bg-page);color:var(--gray-900)'
@@ -95,9 +96,9 @@ async (page) => {
     })
     app.use(pinia)
     app.use(Antd)
-    app.provide('settingsModal', { openSettingsModal: tab => { state.openedTab = tab } })
+    app.use(router)
     app.mount(host)
-    window.integrationReview = { state, theme, nextTick }
+    window.integrationReview = { state, theme, nextTick, router }
   })
   await page.getByText('有效接入凭据 · agents', { exact: true }).waitFor()
   await page.getByText('过期凭据 · knowledge · 无效', { exact: true }).waitFor()
@@ -184,18 +185,19 @@ async (page) => {
   const copied = await page.evaluate(() => navigator.clipboard.readText())
   check(copied === `${origin}/api/mcp`, '非安全连接复制失败')
   await page.screenshot({ path: '/tmp/yuxi-review-mcp-dark.png', animations: 'disabled' })
-  await mcp.getByRole('button', { name: '到设置中创建 API Key' }).click()
+  await mcp.getByRole('link', { name: '管理 API Key' }).click()
+  await page.waitForFunction(() => window.integrationReview.router.currentRoute.value.fullPath === '/system-manage?tab=integration')
+  await page.evaluate(() => { window.integrationReview.state.mcp = false })
   await mcp.waitFor({ state: 'hidden' })
-  check(await page.evaluate(() => window.integrationReview.state.openedTab) === 'apiKeys', '创建入口未打开凭据设置')
   failed = true
-  await page.locator('#integration-review').getByRole('button', { name: '刷新' }).click()
+  await page.locator('#integration-review').getByRole('button', { name: '刷新接入概览' }).click()
   await page.locator('.settings-error .ant-alert').waitFor()
   await settle()
   check(await page.locator('.metric-card').count() === 0, '加载失败仍展示零值或过期统计')
   check(await page.locator('.integration-section').count() === 1, '加载失败丢失静态接入信息')
   await page.screenshot({ path: '/tmp/yuxi-review-integration-error.png', animations: 'disabled' })
   failed = false
-  await page.locator('#integration-review').getByRole('button', { name: '刷新' }).click()
+  await page.locator('#integration-review').getByRole('button', { name: '刷新接入概览' }).click()
   await page.getByText('有效接入凭据 · agents', { exact: true }).waitFor()
   await page.evaluate(async () => {
     document.querySelector('#integration-review').style.display = 'none'

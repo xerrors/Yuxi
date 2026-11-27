@@ -20,7 +20,7 @@ agents 业务域的 feedback service 拥有授权、最终结果校验、执行 
 | --- | --- |
 | 最终回答下方赞/踩及可选说明弹窗 | `RefsComponent.vue`、`UserFeedbackModal.vue` 和 sessionFeedback store 按服务端已提交值展示；Session runtime 批量恢复当前消息页的评价 |
 | `mark_for_improvement(reason)` | extensions tools runtime 统一装配基础工具集合，不以 Run 或 Skill 作为可见性条件，授权与 Skill 门控保持它可见；executor 使用注入的身份、Run、worker token 和 call ID |
-| 数据总览 → Agent 反馈 | 管理列表只读展示、筛选与分页；system 路由及 repository 均限制为产品 JWT 的 superadmin，普通 admin、Agent 管理者和全部 API Key 被拒绝 |
+| 系统管理 → 智能体反馈 | 管理列表只读展示、筛选与分页；system 路由及 repository 均限制为产品 JWT 的 superadmin，普通 admin、Agent 管理者和全部 API Key 被拒绝 |
 
 用户评价只允许 Run 所属的产品登录用户提交，APP 会话不通过 Web 反馈开放，目标必须是终态 Turn 的 `result_run_id` 和它绑定的非空最终助手 Message。每个 Run 保留一份当前用户评价，修改覆盖、撤销删除，重复完整状态不增行。客户端每个目标只允许一个在途写请求，保存失败保留说明草稿和已保存值；切换赞/踩清空旧说明。没有最终输出的错误、人工等待、协作等待、中间 Run 或流式正文 done 不开放评价。
 

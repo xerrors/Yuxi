@@ -132,16 +132,11 @@ test('设置惰性挂载并保留草稿，安全设置仅超管可见且拒绝�
     await select('安全设置')
     assert.equal(find(host, (node) => node.props.panel === 'SecuritySettingsSection'), security)
     assert.equal(security.props.value, 'security-draft')
-    await select('API Keys')
-    const apiKeys = find(host, (node) => node.props.panel === 'ApiKeyManagementComponent')
-    apiKeys.props.onInput({ target: { value: 'api-draft' } })
-    await select('账户设置')
-    await select('API Keys')
-    assert.equal(
-      find(host, (node) => node.props.panel === 'ApiKeyManagementComponent'),
-      apiKeys
-    )
-    assert.equal(apiKeys.props.value, 'api-draft')
+    for (const label of ['API Keys', '用户管理', '部门管理']) {
+      assert.equal(find(host, (node) => node.props.onClick && (
+        node.text === label || node.children.some((child) => child.text === label)
+      )), undefined)
+    }
 
     await select('运行环境')
     const agentEnv = find(host, (node) => node.props.panel === 'AgentEnvSettingsCard')

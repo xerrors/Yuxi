@@ -111,7 +111,7 @@ runuser -u managed-browser -- /usr/local/bin/python3 -I /opt/yuxi-managed-browse
 
 ### 恢复 APP 终端运行环境
 
-`sandbox_create_failed` 表示 Cube 未能完成创建。`sandbox_unavailable` 表示已有失败记录，需要部署管理员检查。先恢复节点资源，再在 Yuxi 的用户管理筛选 APP 终端用户，核对 APP、终端标识和完整 UID。重建会清理来宾主目录中的文件与软件，工作区和技能保留。确认目标、清除范围和无在途任务后，在 Yuxi 部署目录运行以下命令。成功推进到新代次后，针对旧代次的恢复请求会被拒绝。
+`sandbox_create_failed` 表示 Cube 未能完成创建。`sandbox_unavailable` 表示已有失败记录，需要部署管理员检查。先恢复节点资源，再在「系统管理 → 用户管理」筛选 APP 终端用户，核对 APP、终端标识和完整 UID。重建会清理来宾主目录中的文件与软件，工作区和技能保留。确认目标、清除范围和无在途任务后，在 Yuxi 部署目录运行以下命令。成功推进到新代次后，针对旧代次的恢复请求会被拒绝。
 
 ```bash
 docker compose exec -T api uv run --no-sync python - '<终端 UID>' <<'PY'

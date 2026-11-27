@@ -183,7 +183,7 @@ docker compose ps
 curl --fail http://localhost:5050/api/system/ready
 ```
 
-打开 **<http://localhost:5173>**，按提示创建超级管理员账号。在「智能体 → 模型供应商」配置模型，然后选择已启用命令执行工具的智能体，发送：
+打开 **<http://localhost:5173>**，按提示创建超级管理员账号。在「系统管理 → 模型供应商」配置模型，然后选择已启用命令执行工具的智能体，发送：
 
 > 请执行 `pwd`，并在当前工作目录创建 `hello.txt`，内容为 `hello Yuxi`。
 

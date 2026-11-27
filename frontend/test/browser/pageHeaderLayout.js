@@ -49,11 +49,10 @@ async page => {
     finally { await oldLayout.evaluate(element => element.remove()) }
     check(rejected, '布局检查没有拒绝旧的单行挤压问题')
     await checkHeader()
-    // 点击最后一个标签证明布局修复后入口仍可用。
-    await page.locator('.page-header .tab-item').last().click()
-    await page.waitForURL('**/agent-manage?tab=integration')
+    await page.locator('.page-header').getByRole('button', { name: 'API 集成', exact: true }).click()
+    await page.waitForURL('**/system-manage?tab=integration')
     await checkHeader()
-    return { coverage, oldLayoutRejected: rejected, lastTabReachable: true }
+    return { coverage, oldLayoutRejected: rejected, integrationTabReachable: true }
   } finally {
     await page.evaluate(async value => {
       const { useThemeStore } = await import('/src/shared/model/theme.js')

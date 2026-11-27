@@ -40,7 +40,7 @@ async page => {
   await vote.click()
   await requested
   await page.goBack()
-  await page.waitForURL(origin + '/dashboard?tab=feedback')
+  await page.waitForURL(origin + '/system-manage?tab=feedback')
   await page.goForward()
   await page.waitForURL(origin + '/agent/' + target.session_id)
   await vote.waitFor()
@@ -78,7 +78,7 @@ async page => {
   await page.waitForURL(origin + '/agent/' + target.session_id)
   await details.waitFor({ state: 'hidden' })
   await page.goBack()
-  await page.waitForURL(origin + '/dashboard?tab=feedback')
+  await page.waitForURL(origin + '/system-manage?tab=feedback')
   check(await details.count() === 0, '返回缓存列表时详情应保持关闭')
 
   // 查询原会话期间切换页面或销毁反馈标签，迟到成功不能重新接管导航。
@@ -98,7 +98,7 @@ async page => {
     await details.waitFor({ state: 'hidden' })
     if (leave === 'page') await page.getByRole('link', { name: '智能体', exact: true }).click()
     else await page.getByRole('button', { name: '系统概览', exact: true }).click()
-    const destination = origin + (leave === 'page' ? '/agent-manage' : '/dashboard')
+    const destination = origin + (leave === 'page' ? '/agent-manage' : '/system-manage?tab=overview')
     await page.waitForURL(destination)
     const sessionReplied = page.waitForResponse(response => response.url().endsWith(sessionPath))
     releaseSession()

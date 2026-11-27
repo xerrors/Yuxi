@@ -5,7 +5,7 @@ async page => {
   const check = (condition, message) => { if (!condition) throw new Error(message) }
   const origin = await page.evaluate(() => location.origin)
   await page.goto(`${origin}/dashboard`)
-  await page.locator('.page-header').waitFor()
+  await page.getByRole('heading', { name: '系统管理' }).waitFor()
   await page.evaluate(async () => {
     const main = await (await fetch('/src/app/main.js')).text()
     const appSource = await (await fetch('/src/app/App.vue')).text()

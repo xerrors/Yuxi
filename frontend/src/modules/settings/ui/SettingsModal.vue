@@ -30,17 +30,6 @@
             <CircleUser class="icon" :size="18" />
             <span>账户设置</span>
           </button>
-          <button
-            type="button"
-            class="sider-item"
-            :class="{ activesec: activeTab === 'apiKeys' }"
-            :aria-pressed="activeTab === 'apiKeys'"
-            @click="activeTab = 'apiKeys'"
-            v-if="userStore.isLoggedIn"
-          >
-            <Key class="icon" :size="18" />
-            <span>API Keys</span>
-          </button>
           <button v-if="userStore.isLoggedIn" class="sider-item device-nav" :class="{ activesec: activeTab === 'devices' }" :aria-pressed="activeTab === 'devices'" @click="activeTab = 'devices'">
             <Monitor class="icon" :size="18" aria-hidden="true" /><span>设备管理</span>
           </button>
@@ -87,28 +76,6 @@
           >
             <Globe class="icon" :size="18" />
             <span>网络搜索</span>
-          </button>
-          <button
-            type="button"
-            class="sider-item"
-            :class="{ activesec: activeTab === 'user' }"
-            :aria-pressed="activeTab === 'user'"
-            @click="activeTab = 'user'"
-            v-if="userStore.isAdmin"
-          >
-            <User class="icon" :size="18" />
-            <span>用户管理</span>
-          </button>
-          <button
-            type="button"
-            class="sider-item"
-            :class="{ activesec: activeTab === 'department' }"
-            :aria-pressed="activeTab === 'department'"
-            @click="activeTab = 'department'"
-            v-if="userStore.isSuperAdmin"
-          >
-            <Users class="icon" :size="18" />
-            <span>部门管理</span>
           </button>
           <button
             type="button"
@@ -172,16 +139,6 @@
         <button
           type="button"
           class="nav-item"
-          :class="{ active: activeTab === 'apiKeys' }"
-          :aria-pressed="activeTab === 'apiKeys'"
-          @click="activeTab = 'apiKeys'"
-          v-if="userStore.isLoggedIn"
-        >
-          API Keys
-        </button>
-        <button
-          type="button"
-          class="nav-item"
           :class="{ active: activeTab === 'agentEnv' }"
           :aria-pressed="activeTab === 'agentEnv'"
           @click="activeTab = 'agentEnv'"
@@ -228,26 +185,6 @@
           :aria-pressed="activeTab === 'webSearch'"
           @click="activeTab = 'webSearch'"
         >网络搜索</button>
-        <button
-          type="button"
-          class="nav-item"
-          :class="{ active: activeTab === 'user' }"
-          :aria-pressed="activeTab === 'user'"
-          @click="activeTab = 'user'"
-          v-if="userStore.isAdmin"
-        >
-          用户管理
-        </button>
-        <button
-          type="button"
-          class="nav-item"
-          :class="{ active: activeTab === 'department' }"
-          :aria-pressed="activeTab === 'department'"
-          @click="activeTab = 'department'"
-          v-if="userStore.isSuperAdmin"
-        >
-          部门管理
-        </button>
       </div>
 
       <!-- 内容区域 -->
@@ -258,13 +195,6 @@
             v-if="userStore.isLoggedIn && loadedTabs.has('account')"
           >
             <AccountSettingsComponent />
-          </div>
-
-          <div
-            v-show="activeTab === 'apiKeys'"
-            v-if="userStore.isLoggedIn && loadedTabs.has('apiKeys')"
-          >
-            <ApiKeyManagementComponent />
           </div>
 
           <div
@@ -295,17 +225,6 @@
           <div v-show="activeTab === 'webSearch'" v-if="userStore.isSuperAdmin && loadedTabs.has('webSearch')">
             <WebSearchSettingsSection />
           </div>
-
-          <div v-show="activeTab === 'user'" v-if="userStore.isAdmin && loadedTabs.has('user')">
-            <UserManagementComponent />
-          </div>
-
-          <div
-            v-show="activeTab === 'department'"
-            v-if="userStore.isSuperAdmin && loadedTabs.has('department')"
-          >
-            <DepartmentManagementComponent />
-          </div>
         </div>
       </div>
     </div>
@@ -322,12 +241,9 @@ import {
   Globe,
   Settings,
   ShieldCheck,
-  Key,
   ScanText,
   Star,
   SquareTerminal,
-  User,
-  Users,
   X
 } from '@lucide/vue'
 import { createAsyncPanel } from '@/shared/lib/asyncPanel'
@@ -341,15 +257,6 @@ const BasicSettingsSection = createAsyncPanel(() => import('@/modules/settings/u
 const SecuritySettingsSection = createAsyncPanel(() => import('@/modules/settings/ui/SecuritySettingsSection.vue'))
 const OCRSettingsSection = createAsyncPanel(() => import('@/modules/settings/ui/OCRSettingsSection.vue'))
 const WebSearchSettingsSection = createAsyncPanel(() => import('@/modules/settings/ui/WebSearchSettingsSection.vue'))
-const ApiKeyManagementComponent = createAsyncPanel(
-  () => import('@/modules/settings/ui/ApiKeyManagementComponent.vue')
-)
-const UserManagementComponent = createAsyncPanel(
-  () => import('@/modules/settings/ui/UserManagementComponent.vue')
-)
-const DepartmentManagementComponent = createAsyncPanel(
-  () => import('@/modules/settings/ui/DepartmentManagementComponent.vue')
-)
 
 const props = defineProps({
   visible: {
@@ -379,10 +286,8 @@ const visible = computed({
 
 const availableTabs = computed(() => {
   const tabs = []
-  if (userStore.isLoggedIn) tabs.push('account', 'apiKeys', 'agentEnv', 'devices')
-  if (userStore.isAdmin) tabs.push('user')
+  if (userStore.isLoggedIn) tabs.push('account', 'agentEnv', 'devices')
   if (userStore.isSuperAdmin) tabs.push('base', 'security', 'ocr', 'webSearch')
-  if (userStore.isSuperAdmin) tabs.push('department')
   return tabs
 })
 

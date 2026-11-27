@@ -3,7 +3,7 @@
     <!-- 头部区域 -->
     <div class="settings-header">
       <div class="settings-header-copy">
-        <div class="settings-section-title">API Key 管理</div>
+        <h2 class="settings-section-title">API Key 管理</h2>
         <p class="settings-section-description">
           用于外部系统调用 Agent 对话或知识库查询接口。密钥仅显示一次，请妥善保管。
         </p>
@@ -12,7 +12,8 @@
         <a-button
           @click="handleRefresh"
           :loading="refreshing"
-          title="刷新"
+          title="刷新 API Key 列表"
+          aria-label="刷新 API Key 列表"
           class="yuxi-refresh-button lucide-icon-btn"
         >
           <template #icon><RefreshCw :size="16" :class="{ 'yuxi-rotate': refreshing }" /></template>
@@ -269,6 +270,8 @@ import { Key as KeyIcon } from '@lucide/vue'
 import { apikeyApi } from '@/apis/apikey_api'
 import { copyTextToClipboard } from '@/shared/lib/clipboard'
 
+const emit = defineEmits(['changed'])
+
 const loading = ref(false)
 const refreshing = ref(false)
 const error = ref(null)
@@ -425,6 +428,7 @@ const handleCreate = async () => {
     createdSecret.value = res.secret
     createModalVisible.value = false
     secretModalVisible.value = true
+    emit('changed')
     await loadApiKeys()
   } catch (e) {
     message.error(e.message || '创建失败')
@@ -460,6 +464,7 @@ const handleEdit = async () => {
     })
     editModalVisible.value = false
     message.success('权限已更新')
+    emit('changed')
     await loadApiKeys()
   } catch (e) {
     message.error(e.message || '更新失败')
@@ -481,6 +486,7 @@ const toggleEnabled = async (key) => {
   try {
     await apikeyApi.update(key.id, { is_enabled: !key.is_enabled })
     message.success(key.is_enabled ? '已禁用' : '已启用')
+    emit('changed')
     await loadApiKeys()
   } catch (e) {
     message.error(e.message || '操作失败')
@@ -491,6 +497,7 @@ const deleteKey = async (key) => {
   try {
     await apikeyApi.delete(key.id)
     message.success('删除成功')
+    emit('changed')
     await loadApiKeys()
   } catch (e) {
     message.error(e.message || '删除失败')

@@ -15,9 +15,12 @@ async (page) => {
   }}))
   await page.goto('http://localhost:5173/dashboard')
   await page.locator('.file-type-legend li').first().waitFor()
-  if (await page.locator('html').evaluate((el) => el.classList.contains('dark'))) {
-    await page.getByRole('button', { name: /切换主题/ }).click()
+  const setTheme = async (mode) => {
+    await page.evaluate((value) => localStorage.setItem('theme', value), mode)
+    await page.reload()
+    await page.locator('.file-type-legend li').first().waitFor()
   }
+  await setTheme('light')
   for (const width of [1440, 1024, 768, 375]) {
     await page.setViewportSize({width, height:1000})
     await page.locator('.file-distribution').scrollIntoViewIfNeeded()
@@ -58,9 +61,8 @@ async (page) => {
   await page.setViewportSize({width:1440,height:1000})
   await page.locator('.tool-stats').screenshot({path:'/tmp/dashboard-tools-final.png'})
   await page.locator('.knowledge-stats').screenshot({path:'/tmp/dashboard-files-final.png'})
-  await page.getByRole('button', { name: /切换主题/ }).click()
+  await setTheme('dark')
   await page.locator('.knowledge-stats').screenshot({path:'/tmp/dashboard-files-dark.png'})
-  await page.getByRole('button', { name: /切换主题/ }).click()
   empty = true
   await page.reload()
   await page.getByText('暂无文件类型数据', {exact:true}).waitFor()

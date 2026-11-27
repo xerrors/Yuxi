@@ -57,14 +57,17 @@ async (page) => {
     }), '超级管理员使用中性文本色')
     await settings.locator('.identity-panel').screenshot({ path: `/tmp/yuxi-main-role-${mode}.png` })
   }
-  await settings.locator('.settings-sider').getByText('用户管理', { exact: true }).click()
-  await settings.locator('.user-uid').getByText('ID: fixture-user', { exact: true }).waitFor()
-  check(!await settings.getByText('登录 ID', { exact: false }).count(), '用户管理不再展示登录 ID')
-  await settings.locator('.ant-table-tbody').screenshot({ path: '/tmp/yuxi-main-user-id.png' })
   await settings.locator('.settings-sider').getByText('运行环境', { exact: true }).click()
   await settings.getByRole('heading', { name: '运行环境', exact: true }).waitFor()
   check(!await settings.getByText('Agent 环境', { exact: true }).count(), '设置标题和导航使用运行环境')
   await settings.getByRole('button', { name: '关闭设置', exact: true }).click()
+
+  await page.locator('.nav').getByRole('link', { name: '系统管理', exact: true }).click()
+  await page.locator('.page-header').getByRole('button', { name: '用户管理', exact: true }).click()
+  const users = page.locator('.user-management')
+  await users.locator('.user-uid').getByText('ID: fixture-user', { exact: true }).waitFor()
+  check(!await users.getByText('登录 ID', { exact: false }).count(), '用户管理不再展示登录 ID')
+  await users.locator('.ant-table-tbody').screenshot({ path: '/tmp/yuxi-main-user-id.png' })
 
   await page.goto(origin + '/extensions?tab=skills')
   const suite = page.locator('.skill-suite-card').first()
@@ -90,8 +93,8 @@ async (page) => {
   const integration = page.locator('.api-integration-panel')
   await integration.locator('.metric-strip').waitFor()
   check(!await integration.locator('.settings-section-description, .integration-section-hint').count(), 'API 概览不常驻显示内部协议说明')
-  check(await integration.getByRole('button', { name: '创建 API Key', exact: true }).isVisible(), 'API Key 创建入口保留')
-  await integration.screenshot({ path: '/tmp/yuxi-main-api-integration.png' })
+  await page.getByRole('button', { name: '创建 API Key', exact: true }).waitFor()
+  await page.locator('.system-manage-view').screenshot({ path: '/tmp/yuxi-main-api-integration.png' })
 
   await page.goto(origin + '/agent-manage?tab=agents&agent=default-chatbot')
   const dialog = page.getByRole('dialog', { name: '编辑智能体', exact: true })

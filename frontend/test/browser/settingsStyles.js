@@ -14,8 +14,8 @@ async page => {
   const modes = new Map()
   const pending = new Map()
   const labels = {
-    account: '账户设置', apiKeys: 'API Keys', base: '基本设置', ocr: 'OCR 配置',
-    webSearch: '网络搜索', user: '用户管理', department: '部门管理', agentEnv: 'Agent 环境'
+    account: '账户设置', base: '基本设置', ocr: 'OCR 配置',
+    webSearch: '网络搜索', agentEnv: '运行环境'
   }
   const selectors = {
     menu: '.user-info-component', account: '.account-settings', apiKeys: '.apikey-management', base: '.basic-settings-section',
@@ -139,7 +139,7 @@ async page => {
     const result = await panel.evaluate(element => {
       const visible = el => el.getClientRects().length > 0
       const descriptions = [...element.querySelectorAll('.settings-section-description, .settings-form-description, .settings-service-description')].filter(visible)
-      const titles = [...element.querySelectorAll('.settings-section-title')].filter(visible)
+      const titles = [...element.querySelectorAll('.settings-section-title:not(.sandbox-heading *)')].filter(visible)
       const labels = [...element.querySelectorAll('.settings-form-label')].filter(visible)
       const rootStyle = getComputedStyle(document.documentElement)
       const probe = document.createElement('span')
@@ -149,16 +149,16 @@ async page => {
       probe.remove()
       const style = el => {
         const css = getComputedStyle(el)
-        return { text: el.textContent.trim().slice(0, 32), fontSize: css.fontSize, fontWeight: css.fontWeight, lineHeight: css.lineHeight, color: css.color, marginTop: css.marginTop, marginBottom: css.marginBottom, inHeader: Boolean(el.closest('.settings-header')), sectionDescription: el.classList.contains('settings-section-description') }
+        return { text: el.textContent.trim().slice(0, 32), fontSize: css.fontSize, fontWeight: css.fontWeight, lineHeight: css.lineHeight, color: css.color, marginTop: css.marginTop, marginBottom: css.marginBottom, inHeader: Boolean(el.closest('.settings-header')), inEnvToolbar: Boolean(el.closest('.env-editor-toolbar')), sectionDescription: el.classList.contains('settings-section-description') }
       }
       return {
         titles: titles.map(style), descriptions: descriptions.map(style), labels: labels.map(style),
         secondary,
-        headers: [...element.querySelectorAll('.settings-header')].filter(visible).map(el => {
+        headers: [...element.querySelectorAll('.settings-header:not(.sandbox-header)')].filter(visible).map(el => {
           const css = getComputedStyle(el)
           return { gap: css.gap, marginBottom: css.marginBottom, flexWrap: css.flexWrap }
         }),
-        actions: [...element.querySelectorAll('.settings-header-actions')].filter(visible).map(el => {
+        actions: [...element.querySelectorAll('.settings-header-actions:not(.sandbox-header *)')].filter(visible).map(el => {
           const css = getComputedStyle(el)
           return { gap: css.gap, flexWrap: css.flexWrap }
         })
@@ -166,7 +166,8 @@ async page => {
     })
     for (const title of result.titles) {
       check(title.fontSize === '16px' && title.fontWeight === '600' && Math.abs(parseFloat(title.lineHeight) - 22.4) < 0.1, `${context} 标题层级漂移：${JSON.stringify(title)}`)
-      check(title.marginTop === '0px' && title.marginBottom === (title.inHeader ? '6px' : '12px'), `${context} 标题间距漂移：${JSON.stringify(title)}`)
+      const marginBottom = title.inEnvToolbar ? '0px' : title.inHeader ? '6px' : '12px'
+      check(title.marginTop === '0px' && title.marginBottom === marginBottom, `${context} 标题间距漂移：${JSON.stringify(title)}`)
     }
     for (const description of result.descriptions) {
       check(description.fontSize === '12px' && Math.abs(parseFloat(description.lineHeight) - 19.2) < 0.1, `${context} 说明层级漂移：${JSON.stringify(description)}`)
@@ -198,7 +199,7 @@ async page => {
     const headers = panel.locator('.settings-header')
     for (let index = 0; index < await headers.count(); index++) {
       const header = headers.nth(index)
-      const copy = header.locator('.settings-header-copy')
+      const copy = header.locator('.settings-header-copy, .sandbox-heading')
       const actions = header.locator('.settings-header-actions')
       if (!await actions.count()) continue
       const a = await copy.boundingBox()
@@ -312,7 +313,7 @@ async page => {
     check(driftRejected, '样式 oracle 没有拒绝旧 Modal 规则覆盖 OCR 说明')
     await checkStyles(initialPanel, '清理旧 Modal 覆盖后的 OCR')
     await page.evaluate(() => window.settingsStyles.setTheme('dark'))
-    const boundaryPanel = await mount('modal', 'apiKeys')
+    const boundaryPanel = await mount('standalone', 'apiKeys')
     await checkTable(boundaryPanel, '边界修复')
     const transparentTable = await page.addStyleTag({ content: '.settings-table-wrapper .ant-table { background:transparent!important }' })
     let transparentTableRejected = false
@@ -427,6 +428,12 @@ async page => {
       await page.evaluate(tab => window.settingsStyles.mount('standalone', tab), tab)
       const loading = visiblePanel(tab)
       await page.waitForFunction(selector => document.querySelector(`${selector} .ant-spin-spinning`)?.getAttribute('aria-busy') === 'true', selectors[tab])
+      const indicatorFits = await loading.locator('.ant-spin-spinning').evaluate(spin => {
+        const content = spin.closest('.settings-management-content').getBoundingClientRect()
+        const indicator = spin.querySelector('.ant-spin-dot').getBoundingClientRect()
+        return indicator.top >= content.top - 1 && indicator.bottom <= content.bottom + 1
+      })
+      check(indicatorFits, `${tab} 加载动画被内容区裁切`)
       await screenshot(`loading-${tab}`)
       check(pending.has(path), `${tab} 没有等待中的真实 HTTP 请求`)
       modes.delete(path)
@@ -435,8 +442,7 @@ async page => {
       await loading.locator('.ant-spin-spinning').waitFor({ state: 'hidden' })
       await loading.locator('tbody tr:not(.ant-table-measure-row)').first().waitFor()
     }
-    // 长列表必须在弹窗内部滚动，导航和关闭入口保持在视口内。
-    departments.push(...Array.from({ length: 35 }, (_, index) => ({ id: 100 + index, name: `布局测试部门 ${index + 1}`, description: longName, user_count: 1 })))
+    // 长内容必须在弹窗内部滚动，导航和关闭入口保持在视口内。
     /** 从 DOM 边界和实际滚动结果证明设置弹窗没有随内容无限增高。 */
     const checkModalScroll = async () => {
       const result = await page.locator('.settings-modal').evaluate(modal => {
@@ -450,10 +456,14 @@ async page => {
     }
     for (const width of [1440, 1024, 768]) {
       await page.setViewportSize({ width, height: 1000 })
-      await mount('modal', 'department')
-      await page.locator('.settings-modal tbody tr').nth(20).waitFor()
+      await mount('modal', 'account')
+      await page.locator('.settings-modal .settings-content').evaluate(content => {
+        const longContent = document.createElement('div')
+        longContent.style.height = '1500px'
+        content.append(longContent)
+      })
       await checkModalScroll()
-      await screenshot(`long-departments-${width}`)
+      await screenshot(`long-settings-content-${width}`)
     }
     const unboundedModal = await page.addStyleTag({ content: '.settings-container {height:auto!important;min-height:75vh!important}.settings-content-wrapper {min-height:auto!important;height:100%!important}' })
     let unboundedModalRejected = false
@@ -484,7 +494,7 @@ async page => {
       check(skillStyles.every(css => css.background === 'rgba(0, 0, 0, 0)' && css.borderTop === '0px' && css.borderRight === '0px' && css.borderLeft === '0px' && css.radius === '0px' && css.padding === '18px 0px'), `${theme} Skill 配置行受设置卡片表面污染：${JSON.stringify(skillStyles)}`)
       await screenshot(`${theme}-isolated-skill`)
       const providers = await mount('standalone', 'providers')
-      await providers.getByRole('button', { name: '选择 样式隔离供应商 模型', exact: true }).click()
+      await providers.getByRole('button', { name: '选择 样式隔离供应商 模型', exact: true }).press('Enter')
       const modelDialog = page.getByRole('dialog', { name: '样式隔离供应商 - 模型配置', exact: true })
       await modelDialog.locator('.model-name').filter({ hasText: '样式隔离模型' }).waitFor()
       check(await modelDialog.locator('[class*="settings-section-"], .settings-form-control').count() === 0, `${theme} 模型列表意外使用设置面板皮肤`)

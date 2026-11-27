@@ -124,7 +124,7 @@ API/worker 默认使用 `MINERU_API_URI=http://mineru-api:30001`。外接实例�
 
 ### DeepSeek OCR
 
-在“智能体 → 模型供应商”中启用 `siliconflow-cn` 并配置凭证。DeepSeek OCR 会复用该供应商的 API 地址和 API Key，不接受单独的 OCR 凭证配置。
+在“系统管理 → 模型供应商”中启用 `siliconflow-cn` 并配置凭证。DeepSeek OCR 会复用该供应商的 API 地址和 API Key，不接受单独的 OCR 凭证配置。
 
 ### PaddleOCR API
 

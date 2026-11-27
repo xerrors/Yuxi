@@ -4,33 +4,22 @@ import { onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
 
 import PageHeader from '@/shared/ui/PageHeader.vue'
 import AgentManagePanel from '@/modules/agents/ui/AgentManagePanel.vue'
-import ModelProviderManagePanel from '@/modules/settings/ui/ModelProviderManagePanel.vue'
-import ApiIntegrationPanel from '@/modules/settings/ui/ApiIntegrationPanel.vue'
 import ScheduledAgentsView from '@/modules/agents/ui/ScheduledAgents.vue'
-import { useUserStore } from '@/modules/identity/model/user'
 
 const route = useRoute()
 const router = useRouter()
-const userStore = useUserStore()
 
 const activeTab = ref('agents')
 const agentPanelRef = ref(null)
-const providerPanelRef = ref(null)
-const apiIntegrationPanelRef = ref(null)
 const schedulePanelRef = ref(null)
 
-const modelManageTabs = computed(() => {
-  const tabs = [{ key: 'agents', label: '智能体' }]
-  if (userStore.isAdmin) tabs.push({ key: 'providers', label: '模型供应商' })
-  tabs.push({ key: 'schedules', label: '定时任务' })
-  if (userStore.isSuperAdmin) tabs.push({ key: 'integration', label: 'API 集成' })
-  return tabs
-})
+const tabs = [
+  { key: 'agents', label: '智能体' },
+  { key: 'schedules', label: '定时任务' }
+]
 
 const activePanel = computed(() => {
   if (activeTab.value === 'schedules') return schedulePanelRef.value
-  if (activeTab.value === 'integration') return apiIntegrationPanelRef.value
-  if (activeTab.value === 'providers') return providerPanelRef.value
   return agentPanelRef.value
 })
 
@@ -39,19 +28,11 @@ const activeLoading = computed(
 )
 const activeStats = computed(() => activePanel.value?.stats || {})
 
-const normalizeTab = (tab) => {
-  if (tab === 'providers' && userStore.isAdmin) return 'providers'
-  if (tab === 'integration' && userStore.isSuperAdmin) return 'integration'
-  if (tab === 'schedules') return 'schedules'
-  return 'agents'
-}
+const normalizeTab = (tab) => tab === 'schedules' ? 'schedules' : 'agents'
 
 watch(
-  () => [route.query.tab, userStore.isAdmin, userStore.isSuperAdmin],
-  ([tab]) => {
-    const nextTab = normalizeTab(tab)
-    if (activeTab.value !== nextTab) activeTab.value = nextTab
-  },
+  () => route.query.tab,
+  (tab) => { activeTab.value = normalizeTab(tab) },
   { immediate: true }
 )
 
@@ -74,7 +55,7 @@ onBeforeRouteUpdate((to) => canChangeTab(normalizeTab(to.query.tab)))
     <PageHeader
       :active-key="activeTab"
       title="智能体管理"
-      :tabs="modelManageTabs"
+      :tabs="tabs"
       :loading="activeLoading"
       :show-border="true"
       aria-label="智能体管理视图切换"
@@ -86,25 +67,12 @@ onBeforeRouteUpdate((to) => canChangeTab(normalizeTab(to.query.tab)))
           <span>{{ activeStats.manageable || 0 }} 个可编辑</span>
           <span v-if="!activeStats.manageable">可新建私有智能体</span>
         </div>
-        <div v-else-if="activeTab === 'providers'" class="summary-strip">
-          <span>{{ activeStats.enabled || 0 }} 个启用</span>
-          <span v-if="activeStats.warning > 0" class="warning-count">
-            {{ activeStats.warning }} 个凭证缺失
-          </span>
-          <span>{{ activeStats.models || 0 }} 个模型</span>
-        </div>
       </template>
     </PageHeader>
 
     <div class="agent-manage-content">
       <div v-show="activeTab === 'agents'" class="tab-panel">
         <AgentManagePanel ref="agentPanelRef" :focus-agent="String(route.query.agent || '')" />
-      </div>
-      <div v-if="userStore.isAdmin && activeTab === 'providers'" class="tab-panel">
-        <ModelProviderManagePanel ref="providerPanelRef" />
-      </div>
-      <div v-if="userStore.isSuperAdmin && activeTab === 'integration'" class="tab-panel">
-        <ApiIntegrationPanel ref="apiIntegrationPanelRef" />
       </div>
       <div v-if="activeTab === 'schedules'" class="tab-panel schedule-tab-panel">
         <ScheduledAgentsView ref="schedulePanelRef" />
@@ -149,13 +117,6 @@ onBeforeRouteUpdate((to) => canChangeTab(normalizeTab(to.query.tab)))
     font-size: 12px;
     line-height: 18px;
     white-space: nowrap;
-  }
-
-  .warning-count {
-    padding: 2px 8px;
-    border-radius: 4px;
-    background: var(--color-warning-50);
-    color: var(--color-warning-700);
   }
 }
 </style>

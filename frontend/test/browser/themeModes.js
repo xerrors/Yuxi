@@ -48,7 +48,7 @@ async page => {
       check(await page.evaluate(() => localStorage.getItem('theme')) === mode, `${mode} 未保存选择`)
       await screenshotMenu(mode)
     }
-    await page.locator('.page-header').click({ position: { x: 250, y: 15 } })
+    await page.locator('.system-manage-view > .page-header').click({ position: { x: 250, y: 15 } })
     await themeItem.waitFor({ state: 'hidden' })
     await openMenu()
     await page.getByRole('menuitem', { name: '设置', exact: true }).click()
@@ -70,12 +70,7 @@ async page => {
     check(await page.evaluate(() => localStorage.getItem('theme')) === 'auto', '浏览器变化覆盖了自动选择')
     await page.emulateMedia({ colorScheme: 'light' })
     await waitDark(false)
-    const dashboardToggle = page.getByRole('button', { name: /^切换主题，当前/ })
-    for (const [mode, dark] of [['light', false], ['dark', true], ['auto', false]]) {
-      await dashboardToggle.click()
-      await waitDark(dark)
-      check(await page.evaluate(() => localStorage.getItem('theme')) === mode, 'Dashboard 未按同一顺序轮换')
-    }
+    check(await page.getByRole('button', { name: /^切换主题，当前/ }).count() === 0, '数据总览不应重复提供主题快捷按钮')
     await setMode('light')
     await page.emulateMedia({ colorScheme: 'dark' })
     await waitDark(false)
@@ -91,7 +86,7 @@ async page => {
     await screenshotMenu('auto-mobile')
     return { cycle: true, menuStaysOpen: true, outsideCloses: true, settingsCloses: true,
       reloadModes: 3, browserPreferenceLive: true, explicitModesOverrideBrowser: true,
-      dashboardCycle: true, mobile: true }
+      dashboardShortcutRemoved: true, mobile: true }
   } finally {
     await page.emulateMedia({ colorScheme: null })
     await page.setViewportSize(originalViewport)

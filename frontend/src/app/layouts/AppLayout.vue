@@ -3,7 +3,6 @@ import { ref, onMounted, onUnmounted, computed, provide, watch } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import {
-  BarChart3,
   ClipboardList,
   LibraryBig,
   HardDrive,
@@ -12,6 +11,7 @@ import {
   MessageCircle,
   SquarePen,
   Search,
+  UserRoundCog,
 } from '@lucide/vue'
 
 import { healthApi } from '@/apis/system_api'
@@ -182,14 +182,13 @@ const mainList = computed(() => {
     activeIcon: LibraryBig
   })
 
-  if (userStore.isSuperAdmin) {
-    items.push({
-      name: '数据总览',
-      path: '/dashboard',
-      icon: BarChart3,
-      activeIcon: BarChart3
-    })
-  }
+  items.push({
+    name: '系统管理',
+    path: '/system-manage',
+    icon: UserRoundCog,
+    activeIcon: UserRoundCog
+  })
+
 
   return items
 })

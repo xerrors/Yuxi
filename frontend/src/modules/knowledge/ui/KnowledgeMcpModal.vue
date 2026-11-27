@@ -50,17 +50,28 @@
 
       <div class="mcp-modal-actions">
         <a-button @click="emit('update:open', false)">关闭</a-button>
-        <a-button type="primary" class="lucide-icon-btn" @click="goCreateKey">
-          <KeyRound :size="14" />
-          到设置中创建 API Key
-        </a-button>
+        <RouterLink
+          :to="{ name: 'SystemManage', query: { tab: 'integration' } }"
+          custom
+          v-slot="{ href, navigate }"
+        >
+          <a-button
+            :href="href"
+            type="primary"
+            class="lucide-icon-btn"
+            @click="navigate($event)"
+          >
+            <KeyRound :size="14" />
+            管理 API Key
+          </a-button>
+        </RouterLink>
       </div>
     </div>
   </a-modal>
 </template>
 
 <script setup>
-import { inject } from 'vue'
+import { RouterLink } from 'vue-router'
 import { Copy, KeyRound } from '@lucide/vue'
 import { message } from 'ant-design-vue'
 import { copyTextToClipboard } from '@/shared/lib/clipboard'
@@ -70,8 +81,6 @@ defineProps({
   knowledgeBaseId: { type: String, default: '' }
 })
 const emit = defineEmits(['update:open'])
-
-const settingsModal = inject('settingsModal', null)
 
 // 开发与生产入口均代理 API，外部客户端使用浏览器可访问的同源地址。
 const mcpUrl = `${window.location.origin}/api/mcp`
@@ -85,12 +94,6 @@ async function copy(text) {
   } catch {
     message.error('复制失败')
   }
-}
-
-/** 关闭接入说明并打开已有凭据管理。 */
-function goCreateKey() {
-  emit('update:open', false)
-  settingsModal?.openSettingsModal?.('apiKeys')
 }
 </script>
 

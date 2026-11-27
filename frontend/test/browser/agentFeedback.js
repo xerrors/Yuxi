@@ -155,7 +155,7 @@ async (page) => {
   await page.route(`**/api/v1/agents/sessions/${target.session_id}`, route => route.fulfill({ status: 404, json: { detail: 'Session 不存在' } }))
   await details.getByRole('button', { name: '查看原会话', exact: true }).click()
   await details.getByRole('alert').filter({ hasText: '无会话访问权限' }).waitFor()
-  check(page.url().includes('/dashboard'), '原会话拒绝时应留在反馈详情')
+  check(new URL(page.url()).searchParams.get('tab') === 'feedback', '原会话拒绝时应留在反馈详情')
   await page.unroute(`**/api/v1/agents/sessions/${target.session_id}`)
   await details.locator('.ant-modal-close').click()
   await details.waitFor({ state: 'hidden' })
@@ -175,7 +175,7 @@ async (page) => {
     })), `列表操作应完整可见 ${width}`)
     check(await page.locator('.feedback-list').evaluate(el => el.scrollWidth <= el.clientWidth), `反馈筛选不得溢出 ${width}`)
   }
-  await page.locator('.dashboard-container').evaluate(el => { el.scrollTop = 0 })
+  await page.locator('.system-manage-content > .tab-panel:visible').evaluate(el => { el.scrollTop = 0 })
   const mobileBounds = await page.locator('.feedback-list').boundingBox()
   await page.screenshot({ animations: 'disabled', path: '/tmp/yuxi-feedback-ui-admin-mobile.png', clip: {
     ...mobileBounds, height: Math.min(mobileBounds.height, page.viewportSize().height - mobileBounds.y)
@@ -192,7 +192,7 @@ async (page) => {
     }, theme === 'dark')
     await page.locator('.feedback-count').hover()
     await page.locator('.ant-tooltip:visible').waitFor({ state: 'hidden' })
-    await page.locator('.dashboard-container').evaluate(el => { el.scrollTop = 0 })
+    await page.locator('.system-manage-content > .tab-panel:visible').evaluate(el => { el.scrollTop = 0 })
     await page.locator('.feedback-list').screenshot({ animations: 'disabled', path: `/tmp/yuxi-feedback-ui-admin-${theme}.png` })
   }
   await page.locator('.source-field .ant-select-selector').click()

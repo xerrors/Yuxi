@@ -37,7 +37,7 @@ export SANDBOX_CONTAINER_IMAGE_DIGEST="$(docker image inspect "$SANDBOX_CONTAINE
 YUXI_INIT_NON_INTERACTIVE=1 ./scripts/init.sh
 ```
 
-初始化脚本当前无条件要求 `SILICONFLOW_API_KEY`；即使生产使用其他供应商，也需提供该变量完成初始化，其他供应商在启动后于「智能体 → 模型供应商」接入。
+初始化脚本当前无条件要求 `SILICONFLOW_API_KEY`；即使生产使用其他供应商，也需提供该变量完成初始化，其他供应商在启动后于「系统管理 → 模型供应商」接入。
 
 Container 共享宿主内核，适用于单租户可信代码；生产必须固定镜像 digest。需要强隔离时显式设置 `SANDBOX_BACKEND=cube`，按[沙盒配置与运维](./sandbox-operations.md#原生执行节点)准备节点、模板和共享挂载，并配置 `CUBE_*` 连接与路径；Cube 启动命令去掉 `--profile container`。Docker 项目名只接受小写字母、数字、连字符和下划线，因此显示名称 `Production` 对应项目名 `production`。
 

@@ -40,6 +40,7 @@
         history: createMemoryHistory(),
         routes: [
           { path: '/skills/:slug', component: { render: () => null } },
+          { path: '/system-manage', name: 'SystemManage', component: { render: () => null } },
           { path: '/:pathMatch(.*)*', component: { render: () => null } }
         ]
       })

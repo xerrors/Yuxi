@@ -4,7 +4,7 @@ API Key 适合服务之间调用 Yuxi。它绑定到一个具体的 Yuxi 用户�
 
 ## 创建 API Key
 
-登录 Web 后，进入“设置 → API Keys”，点击“创建 API Key”。创建时填写名称、权限、可选的 APP 标识与过期时间。Web 默认选择 `agents`；管理 API 省略 `access_level` 时仍默认 `full`。`agents` 权限只允许访问 [Agents Public API](./agents-public-api.md)。选择“本人身份”时不绑定 APP，选择“APP 终端用户身份”时必须填写 `app_id`。`knowledge` 权限只允许访问版本化的[知识库 HTTP 查询](./knowledge-base-api.md#外部查询接口)和[知识库 MCP](./knowledge-mcp.md)，不要求 `app_id`。`full` Key 受绑定用户权限及各入口的认证要求约束，产品 JWT 专用接口仍会拒绝 API Key。
+登录 Web 后，进入侧栏的「系统管理 → API 集成」，点击「创建 API Key」。创建时填写名称、权限、可选的 APP 标识与过期时间。Web 默认选择 `agents`；管理 API 省略 `access_level` 时仍默认 `full`。`agents` 权限只允许访问 [Agents Public API](./agents-public-api.md)。选择“本人身份”时不绑定 APP，选择“APP 终端用户身份”时必须填写 `app_id`。`knowledge` 权限只允许访问版本化的[知识库 HTTP 查询](./knowledge-base-api.md#外部查询接口)和[知识库 MCP](./knowledge-mcp.md)，不要求 `app_id`。`full` Key 受绑定用户权限及各入口的认证要求约束，产品 JWT 专用接口仍会拒绝 API Key。超级管理员可以在同一页查看接入概览、APP 授权和对外端点。
 
 本人身份的 `agents` Key 与网页使用同一用户资源范围：能读取本人已有的可见会话和工作区，并通过 Agent 使用已授权工具。它不是只读凭据，不限制为单个 Agent，也不隔离不同 Key 创建的会话。本人 Key 不接受 `X-End-User-Id`，包括与本人 UID 相同的值。
 

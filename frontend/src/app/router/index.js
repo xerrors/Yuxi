@@ -96,15 +96,14 @@ const router = createRouter({
     {
       path: '/dashboard',
       name: 'dashboard',
-      component: AppLayout,
-      children: [
-        {
-          path: '',
-          name: 'DashboardComp',
-          component: () => import('../../pages/DashboardView.vue'),
-          ...requireAuth({ keepAlive: false, requiresSuperAdmin: true })
+      redirect: (to) => {
+        const { tab, dashboardTab, ...query } = to.query
+        return {
+          name: 'SystemManage',
+          query: { ...query, tab: (tab || dashboardTab) === 'feedback' ? 'feedback' : 'overview' },
+          hash: to.hash
         }
-      ]
+      }
     },
     {
       path: '/agent-manage',
@@ -115,6 +114,18 @@ const router = createRouter({
           path: '',
           name: 'AgentManageComp',
           component: () => import('../../pages/AgentManageView.vue'),
+          ...requireAuth({ keepAlive: false })
+        }
+      ]
+    },
+    {
+      path: '/system-manage',
+      component: AppLayout,
+      children: [
+        {
+          path: '',
+          name: 'SystemManage',
+          component: () => import('../../pages/SystemManageView.vue'),
           ...requireAuth({ keepAlive: false })
         }
       ]
@@ -175,10 +186,38 @@ function redirectGuest(to) {
   }
 }
 
+// 按标签迁移已发布的管理链接，并保留标签之外的定位信息。
+router.beforeEach((to) => {
+  const { tab, section, ...query } = to.query
+  if (to.name === 'AgentManageComp' && (tab === 'providers' || tab === 'integration')) {
+    return { name: 'SystemManage', query: to.query, hash: to.hash }
+  }
+  if (to.name !== 'SystemManage') return
+  if (tab === 'agents' || tab === 'schedules') {
+    return { name: 'AgentManageComp', query: to.query, hash: to.hash }
+  }
+  if (tab === 'dashboard') {
+    const { dashboardTab, ...legacyQuery } = to.query
+    return {
+      name: 'SystemManage',
+      query: { ...legacyQuery, tab: dashboardTab === 'feedback' ? 'feedback' : 'overview' },
+      hash: to.hash
+    }
+  }
+  if (tab === 'organization') {
+    return {
+      name: 'SystemManage',
+      query: { ...query, tab: section === 'departments' ? 'departments' : 'users' },
+      hash: to.hash
+    }
+  }
+})
+
 // 已有凭据的身份恢复仍在导航跟踪之后，服务异常沿用 App 的重试界面。
 router.beforeResolve(async (to) => {
   const requiresAdmin = to.matched.some((record) => record.meta.requiresAdmin)
-  const requiresSuperAdmin = to.matched.some((record) => record.meta.requiresSuperAdmin)
+  const isDashboard = to.name === 'SystemManage' && ['overview', 'feedback'].includes(to.query.tab)
+  const requiresSuperAdmin = isDashboard || to.matched.some((record) => record.meta.requiresSuperAdmin)
 
   const userStore = useUserStore()
 
@@ -202,7 +241,7 @@ router.beforeResolve(async (to) => {
   const isSuperAdmin = userStore.isSuperAdmin
 
   if ((requiresAdmin && !isAdmin) || (requiresSuperAdmin && !isSuperAdmin)) {
-    message.warning(to.path === '/dashboard' ? '无权访问数据总览' : '无权访问此页面')
+    message.warning(isDashboard ? '无权访问数据总览' : '无权访问此页面')
     return '/agent'
   }
 

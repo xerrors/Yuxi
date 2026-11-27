@@ -31,7 +31,7 @@ async page => {
   await modal.waitFor()
   await modal.getByRole('textbox').fill('尚未提交的说明')
   await page.goBack()
-  await page.waitForURL(/\/dashboard\?tab=feedback$/)
+  await page.waitForURL(/\/system-manage\?tab=feedback$/)
   await modal.waitFor({ state: 'hidden' })
   await page.goForward()
   await page.waitForURL(new RegExp('/agent/' + sessionId + '$'))

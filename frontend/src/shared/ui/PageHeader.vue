@@ -21,6 +21,7 @@
             type="button"
             class="tab-item"
             :class="{ active: activeKey === item.key }"
+            :aria-pressed="activeKey === item.key"
             @click="emitChange(item)"
           >
             {{ item.label }}

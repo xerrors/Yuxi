@@ -1,3 +1,8 @@
+/* 让 Spin 的绝对定位遮罩以内容区为基准，避免定位到零高度的包装层。 */
+.ant-spin-nested-loading > div:not(.ant-spin-container):has(> .ant-spin) {
+  position: static;
+}
+
 /* 保留 Spin 的方形占位与定位，让嵌套遮罩、tip 和三档尺寸沿用组件布局。 */
 .ant-spin .ant-spin-dot.yuxi-loading {
   display: inline-flex;
