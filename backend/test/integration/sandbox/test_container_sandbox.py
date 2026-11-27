@@ -180,13 +180,12 @@ def test_workspace_usage_marker_follows_real_container_lifecycle(manager, monkey
         assert provider.active_workspace_uids(["one", "two"]) == {"one"}
         assert run(value, run_id, "printf sandbox > usage-proof.txt")["exit_code"] == 0
         assert (workdir / "usage-proof.txt").read_bytes() == b"sandbox"
-        subprocess.run(
-            ["docker", "--host", f"unix://{value.settings.socket_path}", "stop", "--time", "1", container["id"]],
-            check=True,
-            capture_output=True,
-            timeout=10,
-        )
-        assert value.list_containers()["containers"][0]["state"] == "exited"
+        docker = ["docker", "--host", f"unix://{value.settings.socket_path}"]
+        subprocess.run([*docker, "stop", "--time", "1", container["id"]], check=True, capture_output=True, timeout=10)
+        # 旧版 Docker 的 stop 可能先于列表状态更新返回。
+        subprocess.run([*docker, "wait", container["id"]], check=True, capture_output=True, timeout=10)
+        states = {item["id"]: item["state"] for item in value.list_containers()["containers"]}
+        assert states[container["id"]] == "exited"
         assert provider.active_workspace_uids(["one", "two"]) == {"one"}
     finally:
         value.remove_run(uid="one", run_id=run_id)
