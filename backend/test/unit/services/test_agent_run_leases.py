@@ -58,7 +58,7 @@ async def test_stale_cleanup_does_not_touch_commands_of_new_attempt(monkeypatch,
     """清理候选已被处理并重新领取时，不得终止新 attempt 的命令。"""
     marker = tmp_path / "new-attempt-command"
     marker.write_text("running")
-    current = SimpleNamespace(id="run-1", uid="user-1", status="running", runtime_cleanup_pending=False)
+    current = SimpleNamespace(id="run-1", uid="user-1", status="running", worker_id="w-1", updated_at=None, runtime_cleanup_pending=False)
     db = SimpleNamespace(scalar=AsyncMock(return_value=current), flush=AsyncMock())
 
     @asynccontextmanager

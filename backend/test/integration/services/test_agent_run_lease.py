@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import uuid
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -12,6 +13,7 @@ import pytest
 from agent_run_test_helpers import cleanup_agent_run_threads, create_agent_run
 from langchain_core.messages import ToolMessage
 from langgraph.types import Command
+from sqlalchemy import select
 
 import yuxi.modules.agents.services.run_lifecycle as lifecycle
 import yuxi.modules.agents.services.leases as lease_worker
@@ -550,12 +552,9 @@ async def test_cancelling_recovery_isolates_bad_checkpoint(postgres_sessions, mo
         await cleanup_agent_run_threads(sessions, [bad_thread, good_thread])
 
 
-async def test_cancelled_cleanup_holds_run_lock_until_external_command_finishes(postgres_sessions, monkeypatch, tmp_path):
-    """取消清理协程不能提前释放 Run 锁，也不能误清已领取的新 attempt。"""
-    import threading
-
+async def test_cancelled_cleanup_never_releases_responsibility_early(postgres_sessions, monkeypatch, tmp_path):
+    """外部命令未结束时取消清理协程，不得提前交还清理责任；销毁期间不持有数据库事务/行锁，也不误清已领取的新 attempt。"""
     from sqlalchemy import text
-    from sqlalchemy.exc import DBAPIError
 
     sessions = postgres_sessions
     run_id, thread_id, _ = await _create_run(sessions)
@@ -585,9 +584,10 @@ async def test_cancelled_cleanup_holds_run_lock_until_external_command_finishes(
         task.cancel()
         await asyncio.sleep(0)
         async with sessions() as db:
-            with pytest.raises(DBAPIError) as error:
-                await db.execute(text("SELECT id FROM agent_runs WHERE id=:id FOR NO KEY UPDATE NOWAIT"), {"id": run_id})
-            assert error.value.orig.sqlstate == "55P03"
+            # 销毁在事务外进行：外部命令仍在跑时行锁已可 NOWAIT 取得；随后取消不得交还责任。
+            locked = await db.execute(text("SELECT id FROM agent_runs WHERE id=:id FOR NO KEY UPDATE NOWAIT"), {"id": run_id})
+            assert locked.scalar() == run_id
+            await db.rollback()
         assert command.read_text() == "old attempt"
         finish.set()
         with pytest.raises(asyncio.CancelledError):
@@ -611,3 +611,94 @@ async def test_cancelled_cleanup_holds_run_lock_until_external_command_finishes(
         if task is not None and not task.done():
             await asyncio.gather(task, return_exceptions=True)
         await cleanup_agent_run_threads(sessions, [thread_id])
+
+
+async def test_runtime_cleanup_does_not_hold_db_transaction_during_release(postgres_sessions, monkeypatch: pytest.MonkeyPatch):
+    """负向守卫：cleanup_run 阻塞期间不持有 Run 行锁与 idle in transaction 连接。
+
+    沙盒销毁是阻塞 HTTP（现场实测 22~26 秒）；若它仍在事务内，下面的 NOWAIT 取行锁
+    会 LockNotAvailableError，且 cleanup 责任标志的确认写会被同一事务连坐。
+    """
+    run_id, thread_id, _ = await _create_run(postgres_sessions, status="completed")
+    try:
+        async with postgres_sessions() as db:
+            staged = await db.get(AgentRun, run_id)
+            staged.runtime_cleanup_pending = True
+            await db.commit()
+
+        started = threading.Event()
+        proceed = threading.Event()
+        calls: list[tuple[str, str]] = []
+
+        def cleanup_run(uid: str, target_run_id: str) -> None:
+            calls.append((uid, target_run_id))
+            started.set()
+            assert proceed.wait(timeout=10)
+
+        monkeypatch.setattr(lifecycle, "get_sandbox_provider", lambda: type("Provider", (), {"cleanup_run": staticmethod(cleanup_run)})())
+        monkeypatch.setattr(lifecycle.pg_manager, "get_async_session_context", lambda: _session_context(postgres_sessions))
+
+        async with postgres_sessions() as db:
+            run = await db.get(AgentRun, run_id)
+        task = asyncio.create_task(lifecycle.complete_run_runtime_cleanup(run))
+        assert await asyncio.to_thread(started.wait, 10)
+        try:
+            async with postgres_sessions() as probe:
+                locked = await probe.scalar(select(AgentRun.id).where(AgentRun.id == run_id).with_for_update(nowait=True))
+                assert locked == run_id
+                assert (await probe.get(AgentRun, run_id)).runtime_cleanup_pending is True
+                await probe.rollback()
+        finally:
+            proceed.set()
+        assert await asyncio.wait_for(task, 10) is True
+
+        async with postgres_sessions() as db:
+            assert (await db.get(AgentRun, run_id)).runtime_cleanup_pending is False
+        assert calls and calls[0][1] == run_id
+    finally:
+        await cleanup_agent_run_threads(postgres_sessions, [thread_id])
+
+
+async def test_runtime_cleanup_does_not_release_another_generations_flag(postgres_sessions, monkeypatch: pytest.MonkeyPatch):
+    """越代守卫：旧清理者苏醒时 Run 已被新 attempt 领取并再次挂起责任，不得清除新一代标志。"""
+    run_id, thread_id, _ = await _create_run(postgres_sessions, status="pending")
+    let_finish = threading.Event()
+    try:
+        async with postgres_sessions() as db:
+            staged = await db.get(AgentRun, run_id)
+            staged.runtime_cleanup_pending = True
+            await db.commit()
+
+        entered = threading.Event()
+
+        def cleanup_run(*_):
+            entered.set()
+            assert let_finish.wait(timeout=10)
+
+        monkeypatch.setattr(lifecycle, "get_sandbox_provider", lambda: type("Provider", (), {"cleanup_run": staticmethod(cleanup_run)})())
+        monkeypatch.setattr(lifecycle.pg_manager, "get_async_session_context", lambda: _session_context(postgres_sessions))
+        async with postgres_sessions() as db:
+            run = await db.get(AgentRun, run_id)
+        task = asyncio.create_task(lifecycle.complete_run_runtime_cleanup(run))
+        assert await asyncio.to_thread(entered.wait, 10)
+        async with postgres_sessions() as db:
+            # 模拟第二清理者已交还责任（标志 False 才可领取），新 attempt 落库后再次挂起为新一代责任。
+            waiting = await db.get(AgentRun, run_id)
+            waiting.runtime_cleanup_pending = False
+            _, acquired = await AgentRunRepository(db).mark_running(run_id, worker_id="new-attempt", lease_seconds=60)
+            assert acquired
+            gen2 = await db.get(AgentRun, run_id)
+            gen2.runtime_cleanup_pending = True
+            await db.commit()
+        let_finish.set()
+        assert await asyncio.wait_for(task, 10) is True
+        async with postgres_sessions() as db:
+            assert (await db.get(AgentRun, run_id)).runtime_cleanup_pending is True
+    finally:
+        let_finish.set()
+        async with postgres_sessions() as db:
+            current = await db.get(AgentRun, run_id)
+            if current is not None:
+                current.runtime_cleanup_pending = False
+                await db.commit()
+        await cleanup_agent_run_threads(postgres_sessions, [thread_id])

@@ -222,16 +222,31 @@ async def finish_run_lifecycle(run: AgentRun) -> None:
 
 
 async def complete_run_runtime_cleanup(run: AgentRun) -> bool:
-    """确认该 Run 拥有的命令与环境已释放后才解除持久清理责任。"""
+    """确认该 Run 拥有的命令与环境已释放后才解除持久清理责任。
+
+    容器销毁（阻塞 HTTP，慢时数十秒）不持数据库事务/行锁：先短事务读取责任标志并
+    快照代次（status/worker_id/updated_at），外部清理后再进短事务持同一 Run 锁，
+    仅当代次与快照全等时才交还责任——清理者在途期间 Run 被 retry/领取改写为新一代
+    时，其 pending 标志归新一代的清理者所有，本方不得越代清除（残留责任由恢复扫描
+    按新标志再收敛）。销毁请求本身迟达新一代容器的窗口无法在单次 DELETE 协议内闭合，
+    runner 的 exec 自动重建兜底，见决策记录后果一节。
+    """
     async with pg_manager.get_async_session_context() as db:
         current = await db.scalar(select(AgentRun).where(AgentRun.id == run.id).with_for_update(key_share=True))
         if current is None:
             raise RuntimeError("Run 的 cleanup Owner 不存在")
-        if current.runtime_cleanup_pending:
-            # 与 retry 领取持同一 Run 锁；取消也必须等待外部清理结束后才能释放。
-            await await_io(asyncio.to_thread(get_sandbox_provider().cleanup_run, current.uid, current.id))
-            current.runtime_cleanup_pending = False
-            await db.flush()
+        needs_cleanup = bool(current.runtime_cleanup_pending)
+        owner_uid, run_id = current.uid, current.id
+        generation = (current.status, current.worker_id, current.updated_at)
+    if needs_cleanup:
+        await await_io(asyncio.to_thread(get_sandbox_provider().cleanup_run, owner_uid, run_id))
+        async with pg_manager.get_async_session_context() as db:
+            current = await db.scalar(select(AgentRun).where(AgentRun.id == run.id).with_for_update(key_share=True))
+            if current is None:
+                raise RuntimeError("Run 的 cleanup Owner 不存在")
+            if current.runtime_cleanup_pending and (current.status, current.worker_id, current.updated_at) == generation:
+                current.runtime_cleanup_pending = False
+                await db.flush()
     if current.status == "cancelled":
         await finish_cancelled_run(current)
     return True
@@ -239,9 +254,20 @@ async def complete_run_runtime_cleanup(run: AgentRun) -> bool:
 
 async def settle_waiting_cancel(*, thread_id: str, turn_id: str, uid: str, app_id: str | None) -> bool:
     """清理等待 checkpoint，再把 cancelling Turn 变为 cancelled。"""
+    # 预读只负责定位承担清理的 Run；容器销毁必须在进入持锁事务之前完成（cleanup 幂等，
+    # 迟到/重复执行由 runner 的 404 容忍兜底），权威校验仍在下方锁事务内重做。
+    async with pg_manager.get_async_session_context() as db:
+        pre_turn = await AgentTurnRepository(db).get_for_scope(turn_id=turn_id, thread_id=thread_id, uid=uid, app_id=app_id)
+        pre_run = (
+            await AgentRunRepository(db).get_run(pre_turn.current_run_id)
+            if pre_turn and pre_turn.status == "cancelling" and pre_turn.waitpoint
+            else None
+        )
+    if pre_run is not None and pre_run.status == "interrupted":
+        await complete_run_runtime_cleanup(pre_run)
     async with pg_manager.get_async_session_context() as db:
         scope = ActorScope(uid=uid, app_id=app_id)
-        # 与其他清理和新轮领取串行；checkpoint 按 Thread 保存，末尾复查无法撤销迟到的清理。
+        # 与新轮领取串行（容器清理已在锁外完成）；checkpoint 按 Thread 保存，锁内复查决定终局。
         await require_thread(db=db, scope=scope, thread_id=thread_id, lock=True)
         turn = await AgentTurnRepository(db).get_for_scope(turn_id=turn_id, thread_id=thread_id, uid=uid, app_id=app_id, for_update=True)
         if turn is None or turn.status != "cancelling" or not turn.waitpoint:
@@ -249,7 +275,6 @@ async def settle_waiting_cancel(*, thread_id: str, turn_id: str, uid: str, app_i
         run = await AgentRunRepository(db).get_run(turn.current_run_id)
         if run is None or run.status != "interrupted":
             return False
-        await complete_run_runtime_cleanup(run)
         await _clear_waitpoint_checkpoint(run)
         await AgentTurnRepository(db).set_terminal(turn, status="cancelled")
 
