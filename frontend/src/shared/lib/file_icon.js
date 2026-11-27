@@ -7,6 +7,8 @@ const cadIcon = new URL('../../assets/icons/files/cad.svg', import.meta.url).hre
 const codeIcon = new URL('../../assets/icons/files/code.svg', import.meta.url).href
 const fileIcon = new URL('../../assets/icons/files/file.svg', import.meta.url).href
 const imageIcon = new URL('../../assets/icons/files/image.svg', import.meta.url).href
+const mailIcon = new URL('../../assets/icons/files/mail.svg', import.meta.url).href
+const calendarIcon = new URL('../../assets/icons/files/calendar.svg', import.meta.url).href
 const markdownIcon = new URL('../../assets/icons/files/markdown.svg', import.meta.url).href
 const pdfIcon = new URL('../../assets/icons/files/pdf.svg', import.meta.url).href
 const pptIcon = new URL('../../assets/icons/files/ppt.svg', import.meta.url).href
@@ -40,12 +42,48 @@ const EXTENSION_ICONS = {
   pdf: pdfIcon,
   doc: wordIcon,
   docx: wordIcon,
+  docm: wordIcon,
+  dot: wordIcon,
+  dotx: wordIcon,
+  dotm: wordIcon,
+  wps: wordIcon,
+  wpt: wordIcon,
+  odt: wordIcon,
+  ott: wordIcon,
+  pages: wordIcon,
   rtf: wordIcon,
   ppt: pptIcon,
   pptx: pptIcon,
+  pptm: pptIcon,
+  pps: pptIcon,
+  ppsx: pptIcon,
+  ppsm: pptIcon,
+  pot: pptIcon,
+  potx: pptIcon,
+  potm: pptIcon,
+  dps: pptIcon,
+  dpt: pptIcon,
+  odp: pptIcon,
+  otp: pptIcon,
+  key: pptIcon,
   xls: spreadsheetIcon,
   xlsx: spreadsheetIcon,
+  xlsm: spreadsheetIcon,
+  xlsb: spreadsheetIcon,
+  xlt: spreadsheetIcon,
+  xltx: spreadsheetIcon,
+  xltm: spreadsheetIcon,
+  et: spreadsheetIcon,
+  ett: spreadsheetIcon,
+  ods: spreadsheetIcon,
+  ots: spreadsheetIcon,
+  numbers: spreadsheetIcon,
+  tsv: spreadsheetIcon,
   csv: spreadsheetIcon,
+  // 邮件与日历邀请
+  eml: mailIcon,
+  msg: mailIcon,
+  ics: calendarIcon,
   // 文本 / Markdown
   txt: textIcon,
   text: textIcon,
@@ -97,6 +135,10 @@ const EXTENSION_ICONS = {
   apng: imageIcon,
   avif: imageIcon,
   ico: imageIcon,
+  tif: imageIcon,
+  tiff: imageIcon,
+  heic: imageIcon,
+  heif: imageIcon,
   // 设计 / 工程
   psd: psdIcon,
   dwg: cadIcon,

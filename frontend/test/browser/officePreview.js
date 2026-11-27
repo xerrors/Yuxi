@@ -168,6 +168,18 @@ async (page) => {
     await page.getByRole('navigation', { name: '资源位置' }).getByRole('button', { name: '全部文件', exact: true }).click()
     await watchSheetPaint()
     const sheets = page.locator('.office-preview')
+    await page.evaluate((filename) => {
+      const read = Blob.prototype.arrayBuffer
+      const { promise, resolve } = Promise.withResolvers()
+      Blob.prototype.arrayBuffer = async function () {
+        if (this.name === filename) await promise
+        return read.call(this)
+      }
+      window.releaseOfficeFileRead = () => {
+        Blob.prototype.arrayBuffer = read
+        resolve()
+      }
+    }, localFiles[1])
     const { promise: parserReady, resolve: releaseParser } = Promise.withResolvers()
     await page.route(spreadsheetParser, async (route) => {
       await parserReady
@@ -175,12 +187,24 @@ async (page) => {
     })
     try {
       await page.getByRole('row', { name: new RegExp(localFiles[1]) }).press('Enter')
+      const viewerLoading = sheets.locator('[part~="loading-state"]')
+      await viewerLoading.waitFor({ state: 'attached' })
+      check(await viewerLoading.isHidden(), '通用查看器仍显示旧加载卡片')
+      const fileLoading = sheets.getByRole('status', { name: '正在加载预览' })
+      await fileLoading.waitFor()
+      check(await fileLoading.locator('.office-preview-spinner').isVisible(), '文件读取时未显示应用加载图标')
+      await screenshot('workspace-office-file-loading', page.locator('.workspace-preview-pane'))
+      await page.evaluate(() => window.releaseOfficeFileRead())
       const loading = sheets.getByRole('status').filter({ hasText: '正在解析 Excel 工作簿' })
       await loading.waitFor()
       check(await loading.innerText() === '正在解析 Excel 工作簿', '表格加载只显示一句话')
       check(await loading.locator('.loading-spinner').count() === 1, '表格加载只显示一个转圈')
       await screenshot('workspace-xls-loading', page.locator('.workspace-preview-pane'))
     } finally {
+      await page.evaluate(() => {
+        window.releaseOfficeFileRead?.()
+        delete window.releaseOfficeFileRead
+      })
       releaseParser()
     }
     await sheets.getByRole('button', { name: '单行', exact: true }).waitFor({ timeout: 45000 })

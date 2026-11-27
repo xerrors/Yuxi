@@ -538,7 +538,7 @@ const zoomInDisabled = computed(() => htmlPreviewScale.value >= HTML_PREVIEW_SCA
 const zoomOutDisabled = computed(() => htmlPreviewScale.value <= HTML_PREVIEW_SCALE_MIN)
 const htmlPreviewScalePercent = computed(() => Math.round(htmlPreviewScale.value * 100))
 const displayFilePath = computed(() =>
-  String(props.filePath || '').replace(/^\/home\/user\/workspace(?=\/|$)/, '~')
+  String(props.filePath || '').replace(/^\/home\/user\/workspace(?=\/|$)/, '~').replace(/^\//, '')
 )
 
 // 全屏移动当前渲染器，避免重开文件或丢失文档阅读位置。

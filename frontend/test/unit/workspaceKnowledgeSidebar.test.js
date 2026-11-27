@@ -28,10 +28,10 @@ test('资源、自有和共享知识库并列常显，快捷入口使用各自�
   const buttons = [...resources.matchAll(/<button\b[^>]*>([\s\S]*?)<\/button>/g)]
   assert.equal(buttons.length, 2)
   assert.match(buttons[0][1], /\blucide-layers-plus\b[\s\S]*智能体文件/)
-  assert.match(buttons[1][1], /\blucide-star\b[\s\S]*保存的产物/)
-  assert.match(mine, />项目文档<\/span>/)
+  assert.match(buttons[1][1], /\blucide-bookmark\b[\s\S]*保存的产物/)
+  assert.match(mine, /\blucide-folder-user\b[\s\S]*>项目文档<\/span>/)
   assert.doesNotMatch(mine, /aria-current=/)
-  assert.match(others, /<button\b[^>]*aria-current="page"[^>]*>[\s\S]*>共享手册<\/span>/)
+  assert.match(others, /<button\b[^>]*aria-current="page"[^>]*>[\s\S]*\blucide-folder-users\b[\s\S]*>共享手册<\/span>/)
 })
 
 test('重新进入缓存的个人空间刷新可读知识库；失败后可重试，模块缺席与空列表各自呈现', async (t) => {

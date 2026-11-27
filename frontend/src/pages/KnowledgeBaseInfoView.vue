@@ -52,7 +52,7 @@
               class="lucide-icon-btn extension-detail-action"
               @click="showEditModal"
             >
-              <Pencil :size="14" />
+              <FolderCog :size="14" />
               <span>配置</span>
             </a-button>
           </a-space>
@@ -365,10 +365,10 @@ import {
   Copy,
   Plug,
   FileText,
+  FolderCog,
   FolderPlus,
   FolderUp,
   Network,
-  Pencil,
   Search,
   Upload,
   CircleHelp as QuestionCircleOutlined

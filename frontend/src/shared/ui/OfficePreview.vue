@@ -7,17 +7,26 @@
       </p>
       <a-button type="primary" @click="$emit('download')">下载原件</a-button>
     </div>
-    <div v-else-if="!active || !viewer" class="office-preview-status" role="status" aria-label="正在加载预览">
-      <LoaderCircle class="office-preview-spinner" :size="20" aria-hidden="true" />
-    </div>
-    <component
-      :is="viewer.component"
-      v-else
-      class="office-preview-frame"
-      :file="file"
-      :options="viewerOptions"
-      @error="failed = true"
-    />
+    <template v-else>
+      <component
+        :is="viewer.component"
+        v-if="active && viewer"
+        class="office-preview-frame"
+        :file="file"
+        :options="viewerOptions"
+        @load-start="reading = true"
+        @load-complete="reading = false"
+        @error="failed = true"
+      />
+      <div
+        v-if="!active || !viewer || reading"
+        class="office-preview-status office-preview-loading"
+        role="status"
+        aria-label="正在加载预览"
+      >
+        <LoaderCircle class="office-preview-spinner" :size="20" aria-hidden="true" />
+      </div>
+    </template>
   </div>
 </template>
 
@@ -38,6 +47,7 @@ const viewer = shallowRef(null)
 const visible = ref(false)
 const deactivated = ref(false)
 const failed = ref(false)
+const reading = ref(false)
 const active = computed(() => visible.value && !deactivated.value)
 
 const viewerOptions = computed(() => ({
@@ -58,7 +68,10 @@ onActivated(() => { deactivated.value = false })
 onDeactivated(() => { deactivated.value = true })
 
 watch([active, () => props.file], async ([isActive, file], [, previousFile]) => {
-  if (file !== previousFile) failed.value = false
+  if (file !== previousFile) {
+    failed.value = false
+    reading.value = false
+  }
   if (!isActive || viewer.value || failed.value) return
   try {
     const [{ FileViewer }, , { configuredFileViewerRenderers }] = await Promise.all([
@@ -76,6 +89,7 @@ watch([active, () => props.file], async ([isActive, file], [, previousFile]) => 
 
 <style scoped>
 .office-preview-host {
+  position: relative;
   isolation: isolate;
 }
 
@@ -100,6 +114,18 @@ watch([active, () => props.file], async ([isActive, file], [, previousFile]) => 
   color: var(--gray-500);
   font-size: 14px;
   line-height: 1.6;
+}
+
+/* FileViewer 的通用加载面板位于 Shadow DOM，沿用应用加载指示。 */
+.office-preview-frame::part(loading-state) {
+  display: none;
+}
+
+.office-preview-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: var(--gray-0);
 }
 
 .office-preview-spinner {

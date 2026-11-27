@@ -989,6 +989,7 @@ onUnmounted(closePreview)
 .workspace-shell {
   position: relative;
   display: grid;
+  --workspace-header-content-height: 44px;
   --workspace-sidebar-width: clamp(188px, 15vw, 240px);
   grid-template-columns: var(--workspace-sidebar-width) minmax(0, 1fr);
   flex: 1 1 auto;
@@ -1013,8 +1014,8 @@ onUnmounted(closePreview)
 
 .workspace-main :deep(.workspace-overview .page-header),
 .workspace-main :deep(.workspace-file-list .file-browser-header) {
-  min-height: 49px;
-  padding: 8px var(--workspace-content-inset);
+  min-height: calc(var(--workspace-header-content-height) + 1px);
+  padding: 6px var(--workspace-content-inset);
   flex-direction: row;
   flex-wrap: wrap;
   align-items: center;
