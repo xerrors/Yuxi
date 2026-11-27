@@ -68,10 +68,29 @@ class BumpVersionScriptTests(unittest.TestCase):
         return script
 
     def test_release_bump_updates_current_references_only(self) -> None:
-        """正式版本升级应覆盖重复入口但不改 changelog。"""
+        """候选版本升级应更新候选引用并保留正式入口与历史记录。"""
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             script = self._create_fixture(root)
+            stable_checkout = "git clone --branch v0.7.1 --depth 1 https://github.com/xerrors/Yuxi.git\n"
+            stable_paths = (
+                "README.md",
+                "README.en.md",
+                "docs/intro/quick-start.md",
+                "docs/.vitepress/theme/components/YuxiHome.vue",
+            )
+            for relative_path in stable_paths:
+                path = root / relative_path
+                path.write_text(stable_checkout + path.read_text())
+            readme = root / "README.md"
+            other_candidate = "历史候选：`v0.7.2.beta10`。\n"
+            readme.write_text(readme.read_text() + other_candidate)
+            sandbox_guide = root / "docs/advanced/container-sandbox.md"
+            stable_sandbox = "docker build -t yuxi-sandbox:0.7.1 .\n"
+            sandbox_guide.write_text(stable_sandbox + sandbox_guide.read_text())
+            deployment = root / "docs/advanced/deployment.md"
+            stable_deploy = "稳定版首次部署使用 `v0.7.1` 和 `yuxi-sandbox:0.7.1`。\n"
+            deployment.write_text(stable_deploy + deployment.read_text())
             subprocess.run(
                 ["bash", str(script), "0.7.2.beta2"],
                 input="y\n",
@@ -100,9 +119,14 @@ class BumpVersionScriptTests(unittest.TestCase):
             for relative_path in current_paths:
                 content = (root / relative_path).read_text()
                 self.assertIn("0.7.2.beta2", content, relative_path)
-                self.assertNotIn("0.7.2.beta1", content, relative_path)
+                self.assertNotRegex(content, r"(?<![0-9.])0\.7\.2\.beta1(?![0-9A-Za-z])", relative_path)
                 self.assertNotIn("0.7.2b1", content, relative_path)
 
+            for relative_path in stable_paths:
+                self.assertIn(stable_checkout, (root / relative_path).read_text(), relative_path)
+            self.assertIn(other_candidate, readme.read_text())
+            self.assertIn(stable_sandbox, sandbox_guide.read_text())
+            self.assertIn(stable_deploy, deployment.read_text())
             self.assertEqual((root / "docker-compose.yml").read_text().count("0.7.2.beta2"), 4)
             self.assertEqual((root / "docker-compose.prod.yml").read_text().count("0.7.2.beta2"), 4)
             changelog = (root / "docs/develop-guides/changelog.md").read_text()
@@ -110,6 +134,53 @@ class BumpVersionScriptTests(unittest.TestCase):
             self.assertIn("v0.7.2.beta1", changelog)
             self.assertIn("当前候选为 `0.7.2.beta2`", changelog)
             self.assertNotIn("## v0.7.2.beta2", changelog)
+
+    def test_first_candidate_keeps_the_current_stable_version_in_docs(self) -> None:
+        """从正式版开启首个候选时，现行正式版引用保持原值。"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            script = self._create_fixture(root)
+            (root / "backend/pyproject.toml").write_text('version = "0.7.1"\n')
+            readme = root / "README.md"
+            stable_docs = (
+                "本文使用正式版 `v0.7.1`。\n"
+                "git clone --branch v0.7.1 --depth 1 https://github.com/xerrors/Yuxi.git\n"
+            )
+            readme.write_text(stable_docs)
+
+            subprocess.run(
+                ["bash", str(script), "0.7.2.beta1"],
+                input="y\n",
+                text=True,
+                check=True,
+                capture_output=True,
+            )
+
+            self.assertEqual(readme.read_text(), stable_docs)
+
+    def test_stable_bump_keeps_historical_upgrade_sources(self) -> None:
+        """正式版升级应保留旧库迁移的发行标签和文档链接。"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            script = self._create_fixture(root)
+            (root / "backend/pyproject.toml").write_text('version = "0.7.1"\n')
+            deployment = root / "docs/advanced/deployment.md"
+            upgrade_source = (
+                "原地升级以正式 `v0.7.1` 为起点，见[旧版说明](../develop-guides/releases/0.7.1.md)。\n"
+                "git checkout v0.7.1\n"
+            )
+            deployment.write_text(upgrade_source + deployment.read_text())
+
+            subprocess.run(
+                ["bash", str(script), "0.7.2"],
+                input="y\n",
+                text=True,
+                check=True,
+                capture_output=True,
+            )
+
+            self.assertIn(upgrade_source, deployment.read_text())
+            self.assertIn("git clone --branch v0.7.2 --depth 1", (root / "README.md").read_text())
 
     def test_dev_bump_keeps_release_document_references(self) -> None:
         """开发版本升级不得移动公开发布文档的稳定目标。"""

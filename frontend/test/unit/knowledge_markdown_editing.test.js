@@ -217,14 +217,14 @@ test('409 保留修订与草稿并阻止盲目重试，切换账号后旧回执�
   assert.equal(switched.visible.value, true)
 })
 
-test('共享编辑器显式取消事件和详情 opt-in，原有只读调用点不启用编辑', () => {
+test('取消编辑后回传已保存内容，详情按权限显式启用编辑', () => {
   const detail = readFileSync(new URL(detailPath, import.meta.url), 'utf8')
   const preview = readFileSync(new URL('../../src/modules/session/ui/workspace/AgentFilePreview.vue', import.meta.url), 'utf8')
   const page = readFileSync(new URL('../../src/pages/KnowledgeBaseInfoView.vue', import.meta.url), 'utf8')
   assert.match(detail, /editable: \{ type: Boolean, default: false \}/)
   assert.match(detail, /:show-edit-actions="false"/)
   assert.match(detail, /:content="markdownEditor.draft"/)
-  assert.match(preview, /const cancelEdit[\s\S]*?emit\('cancel-edit'\)/)
+  assert.match(preview, /const cancelEdit[\s\S]*?emit\('draft-change', savedContent\.value\)/)
   assert.match(page, /:editable="canManageKnowledgeBase && isMilvus"/)
   assert.match(page, /@saved="handleMarkdownSaved"/)
   assert.match(page, /v-model:edit-requested="markdownEditRequested"/)

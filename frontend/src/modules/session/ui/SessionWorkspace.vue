@@ -1008,7 +1008,6 @@ watch(workspaceActive, (active) => {
 })
 
 defineExpose({
-  getExportPayload: () => mainThread.value?.getExportPayload(),
   selectThreadFromRoute: (threadId) => mainThread.value?.selectThreadFromRoute(threadId),
   openSessionFromRoute
 })

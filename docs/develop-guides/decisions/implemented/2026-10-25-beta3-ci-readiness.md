@@ -12,7 +12,9 @@ Owner：scripts/bump-version.sh
 
 ### 实现方案
 
-版本脚本同步应用、锁文件、Compose、sandbox runner 与集成测试的默认镜像及容器沙盒文档示例至 `0.8.0.beta3`。源码获取入口继续指向 `develop/0-8-0`。脚本在普通升级中同步沙盒文档，`--dev` 只同步代码与测试默认值，保留公开文档版本。初始化集成测试明确回读 business 1、knowledge 2；补投替身返回实际投递接口的成功值；MCP 故障 E2E 使用当前注册的 `ocr_parse_file` 依赖，继续验证故障 Skill 不向模型暴露其工具、普通聊天完成及数据库和事件中的告警。知识评估 service 的既有显式导出按 Ruff 排序要求分组，保留导出身份。
+该候选的版本脚本同步应用、锁文件、Compose、sandbox runner 与集成测试的默认镜像及容器沙盒文档示例至 `0.8.0.beta3`，源码获取入口指向 `develop/0-8-0`。初始化集成测试明确回读 business 1、knowledge 2；补投替身返回实际投递接口的成功值；MCP 故障 E2E 使用注册的 `ocr_parse_file` 依赖验证工具隔离、普通聊天及持久告警。
+
+正式入口与候选引用并存时，`scripts/bump-version.sh` 仍同步候选的应用和镜像版本。继续发布候选时，公开文档只替换完整的当前候选版本号，正式安装命令和稳定版沙盒示例保留原值。从正式版开始首个候选时，维护者按需添加候选说明。`--dev` 跳过公开文档同步。正式发布只定向更新安装命令、镜像示例等版本入口，维护者按[贡献指南](../../contributing.md#候选版本与正式发布)定稿。
 
 保留现有 workflow、路径过滤和结果断言。开发分支推送后的检查必须归属同一个候选提交，全部通过才创建并推送 `v0.8.0.beta3`，同时核对 tag 触发的检查。不创建 GitHub Release、不上传 npm。维护者指定 main 直接替换为最终验收的开发分支提交，不采用合并方式；候选准备阶段只核对切换目标、远端保护和文档部署边界，尚未更新 main。
 
@@ -21,6 +23,7 @@ Owner：scripts/bump-version.sh
 - 降低断言或跳过失败测试：不能验证当前初始化、队列和 MCP 故障语义。
 - 仅对 beta2 提交新增 beta3 标签：应用版本和标签不一致。
 - 合并开发分支到 main：不符合维护者指定的直接替换策略，额外引入合并结果与冲突处理。
+- 候选升级同步所有克隆命令：会让稳定版安装入口提前指向候选，导致命令和部署说明的版本不一致。
 
 ## 后果
 
@@ -51,6 +54,8 @@ Owner：scripts/bump-version.sh
 - `pnpm --dir frontend run lint:check`、`pnpm --dir frontend run test:unit`、`pnpm --dir frontend run build`：Passed，849 项 unit、无跳过，build 包含 typecheck。旧开发容器内的同名 unit 命令为 840 passed / 9 failed；文件哈希核对确认其未挂载的 `eslint-boundaries.js` 仍是旧规则，当前 checkout 的 19 项边界目标测试和完整集合通过。旧容器结果不作为候选通过证据，未为此放宽断言或修改产品配置。
 
 版本脚本的扩展夹具在修复前为 2 failed / 1 passed，明确复现普通升级与 dev 升级遗漏 sandbox 镜像默认值；修复后 3 项通过，仍验证 dev 模式保留公开文档和历史记录。
+
+`python3 -m unittest scripts.ci.test_bump_version` 的当前 5 项覆盖候选同步、首个候选保留正式入口、正式升级保留历史起点、开发模式及非法版本。恢复全篇替换会改写旧迁移版本，移除版本边界会误改较长的历史候选号。
 
 远端 CI 在提交时尚未运行，本地证据不能代替对应提交的 Actions 结果；标签创建以该结果为前置条件。
 

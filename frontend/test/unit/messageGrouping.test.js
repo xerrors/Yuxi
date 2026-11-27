@@ -113,8 +113,8 @@ test('已完成对话使用后端 Run 总耗时聚合过程组', () => {
     { total_latency_ms: 64000 }
   )
   assert.deepEqual(items.map((item) => item.type), ['message', 'process-group', 'message'])
-  assert.equal(items[1].messageCount, 1)
-  assert.equal(items[1].toolCallCount, 2)
+  assert.deepEqual(items[1].items.map((item) => item.key), ['a1', 'tools'])
+  assert.deepEqual(items[1].items[1].toolCalls.map((call) => call.id), ['t1', 't2'])
   assert.equal(items[1].durationMs, 64000)
 })
 
@@ -352,7 +352,7 @@ test('交付物展示不把最后可见工具后的正文收入过程区', () =>
     const items = getMessageGroupDisplayItems({ messages }, { collapseIntermediate: true })
     assert.deepEqual(items.map(item => item.type), ['message', 'process-group', 'message', 'message'])
     assert.deepEqual(items[1].items.map(item => item.key), ['prepare', 'tool-group-prepare-tools'])
-    assert.equal(items[1].toolCallCount, 1)
+    assert.deepEqual(items[1].items[1].toolCalls.map((call) => call.name), ['ls'])
     assert.deepEqual(items.slice(2).map(item => item.message.id), ['answer', 'confirm'])
     assert.deepEqual(MessageProcessor.extractArtifactsFromMessageGroup({ messages }), ['/dog.png'])
     assert.deepEqual(messages, original)
@@ -375,8 +375,7 @@ test('只有交付物展示时正文全部保留，混合调用或后续执行�
   ]) {
     const items = getMessageGroupDisplayItems({ messages }, { collapseIntermediate: true })
     assert.deepEqual(items.map(item => item.type), ['process-group', 'message'])
-    assert.equal(items[0].toolCallCount, 1)
-    assert.equal(items[0].items.at(-1).toolCalls[0].name, 'bash')
+    assert.deepEqual(items[0].items.at(-1).toolCalls.map((call) => call.name), ['bash'])
     assert.equal(items[1].message.id, 'confirm')
     const live = getMessageGroupDisplayItems({ messages })
     assert.equal(live.some(item => item.type === 'process-group'), false)

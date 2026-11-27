@@ -276,7 +276,6 @@ import ProjectSelectionSection from '@/modules/projects/ui/ProjectSelectionSecti
 import { useConfigStore } from '@/modules/settings'
 import { handleChatError, handleValidationError } from '@/shared/lib/errorHandler'
 import { createSingleFlight } from '@/shared/lib/singleFlight'
-import { useThreadMessageProjection } from '../model/threadMessageProjection'
 import { useSessionAgentAvailability } from '../model/sessionAgentAvailability'
 import {
   DRAFT_THREAD_ID,
@@ -588,7 +587,6 @@ const { mentionConfig } = useAgentMentionConfig({
 })
 
 const currentThreadMessages = computed(() => threadMessages.value[currentChatId.value] || [])
-const { runGroups, ongoingRunMessages } = useThreadMessageProjection(currentChatId)
 
 const {
   action: currentTurnAction,
@@ -1149,27 +1147,6 @@ const handleSendOrStop = async (payload) => {
   await handleSendMessage(payload)
 }
 
-const buildExportPayload = () => {
-  const agentId = currentAgentId.value
-  let agentDescription = ''
-  if (agentId && agents.value && agents.value.length > 0) {
-    const agent = agents.value.find((a) => a.agent_id === agentId)
-    agentDescription = agent ? agent.description || '' : ''
-  }
-
-  const payload = {
-    chatTitle: currentThread.value?.yuxi.title || '新对话',
-    agentName: currentAgentName.value || currentAgent.value?.name || '智能助手',
-    agentDescription: agentDescription || currentAgent.value?.description || '',
-    messages: runGroups.value ? JSON.parse(JSON.stringify(runGroups.value)) : [],
-    onGoingMessages: ongoingRunMessages.value
-      ? JSON.parse(JSON.stringify(ongoingRunMessages.value))
-      : []
-  }
-
-  return payload
-}
-
 defineExpose({
   threadId: currentChatId,
   timelineElement: computed(() => timelineRef.value?.element || null),
@@ -1186,7 +1163,6 @@ defineExpose({
   handleExecutionError,
   threadWorkdirUnavailable,
   refreshAttachments: fetchThreadAttachments,
-  getExportPayload: buildExportPayload,
   selectThreadFromRoute,
   focusPendingAction
 })

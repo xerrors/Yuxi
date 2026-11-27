@@ -168,44 +168,46 @@ perl -0pi -e "s/(^name = \"yuxi\"\nversion = \")[^\"]+/\${1}${LOCK_VERSION}/m" \
 # -----------------------------------------------------------------------------
 # 6. 更新文档中的版本引用
 # -----------------------------------------------------------------------------
-# 只替换 git clone 命令中的版本标签（确保总是指向最新版本）
-# 发布历史记录（如 [2026/04/01] v0.6.1 版本发布）不修改，保持为历史版本记录
+# 只有正式发布才移动稳定版安装入口。
 if [ "$DEV_MODE" = false ]; then
-    echo "→ 更新 README.md"
-    perl -pi -e "s/(git clone --branch v)[0-9]+\\.[0-9]+\\.[0-9]+(\\.[a-zA-Z0-9]+)?/\${1}${NEW_VERSION}/g; s/(当前仓库默认配置对应 \`v)[0-9]+\\.[0-9]+\\.[0-9]+(\\.[a-zA-Z0-9]+)?/\${1}${NEW_VERSION}/g" \
-        "${PROJECT_ROOT}/README.md"
+    if [[ "$NEW_VERSION" != *.*.*.* ]]; then
+        echo "→ 更新 README.md"
+        perl -pi -e "s/(git clone --branch v)[0-9]+\\.[0-9]+\\.[0-9]+(\\.[a-zA-Z0-9]+)?/\${1}${NEW_VERSION}/g; s/(当前仓库默认配置对应 \`v)[0-9]+\\.[0-9]+\\.[0-9]+(\\.[a-zA-Z0-9]+)?/\${1}${NEW_VERSION}/g" \
+            "${PROJECT_ROOT}/README.md"
 
-    echo "→ 更新 README.en.md"
-    perl -pi -e "s/(git clone --branch v)[0-9]+\\.[0-9]+\\.[0-9]+(\\.[a-zA-Z0-9]+)?/\${1}${NEW_VERSION}/g" \
-        "${PROJECT_ROOT}/README.en.md"
+        echo "→ 更新 README.en.md"
+        perl -pi -e "s/(git clone --branch v)[0-9]+\\.[0-9]+\\.[0-9]+(\\.[a-zA-Z0-9]+)?/\${1}${NEW_VERSION}/g" \
+            "${PROJECT_ROOT}/README.en.md"
 
-    echo "→ 更新 docs/intro/quick-start.md"
-    perl -pi -e "s/(git clone --branch v)[0-9]+\\.[0-9]+\\.[0-9]+(\\.[a-zA-Z0-9]+)?/\${1}${NEW_VERSION}/g; s/(仓库当前默认配置对应 \`v)[0-9]+\\.[0-9]+\\.[0-9]+(\\.[a-zA-Z0-9]+)?/\${1}${NEW_VERSION}/g" \
-        "${PROJECT_ROOT}/docs/intro/quick-start.md"
+        echo "→ 更新 docs/intro/quick-start.md"
+        perl -pi -e "s/(git clone --branch v)[0-9]+\\.[0-9]+\\.[0-9]+(\\.[a-zA-Z0-9]+)?/\${1}${NEW_VERSION}/g; s/(仓库当前默认配置对应 \`v)[0-9]+\\.[0-9]+\\.[0-9]+(\\.[a-zA-Z0-9]+)?/\${1}${NEW_VERSION}/g" \
+            "${PROJECT_ROOT}/docs/intro/quick-start.md"
 
-    echo "→ 更新 docs/advanced/deployment.md"
-    perl -pi -e "s/(升级到当前 \`v)[0-9]+\\.[0-9]+\\.[0-9]+(\\.[a-zA-Z0-9]+)?/\${1}${NEW_VERSION}/g; s/(git checkout v)[0-9]+\\.[0-9]+\\.[0-9]+(\\.[a-zA-Z0-9]+)?/\${1}${NEW_VERSION}/g" \
-        "${PROJECT_ROOT}/docs/advanced/deployment.md"
+        echo "→ 更新 docs/advanced/deployment.md"
+        perl -pi -e "s/(升级到当前 \`v)[0-9]+\\.[0-9]+\\.[0-9]+(\\.[a-zA-Z0-9]+)?/\${1}${NEW_VERSION}/g" \
+            "${PROJECT_ROOT}/docs/advanced/deployment.md"
 
-    echo "→ 更新 docs/advanced/container-sandbox.md"
-    perl -pi -e "s/(yuxi-sandbox:)[0-9]+\\.[0-9]+\\.[0-9]+(\\.[a-zA-Z0-9]+)?/\${1}${NEW_VERSION}/g" \
-        "${PROJECT_ROOT}/docs/advanced/container-sandbox.md"
+        echo "→ 更新 docs/advanced/container-sandbox.md"
+        perl -pi -e "s/(yuxi-sandbox:)[0-9]+\\.[0-9]+\\.[0-9]+(\\.[a-zA-Z0-9]+)?/\${1}${NEW_VERSION}/g" \
+            "${PROJECT_ROOT}/docs/advanced/container-sandbox.md"
 
-    echo "→ 更新 docs/.vitepress/theme/components/YuxiHome.vue"
-    perl -pi -e "s/(git clone --branch v)[0-9]+\\.[0-9]+\\.[0-9]+(\\.[a-zA-Z0-9]+)?/\${1}${NEW_VERSION}/g" \
-        "${PROJECT_ROOT}/docs/.vitepress/theme/components/YuxiHome.vue"
-
-    # 当前候选说明包含正文版本号；历史验收记录不参与替换。
-    for current_doc in README.md README.en.md docs/intro/quick-start.md docs/advanced/deployment.md \
-        docs/.vitepress/theme/components/YuxiHome.vue; do
-        perl -pi -e "s/\\Q${CURRENT_VERSION}\\E/${NEW_VERSION}/g" "${PROJECT_ROOT}/${current_doc}"
-    done
-    release_notes="${PROJECT_ROOT}/docs/develop-guides/releases/$(printf '%s' "$NEW_VERSION" | cut -d. -f1-3).md"
-    if [ -f "$release_notes" ]; then
-        perl -pi -e "s/\\Q${CURRENT_VERSION}\\E/${NEW_VERSION}/g" "$release_notes"
+        echo "→ 更新 docs/.vitepress/theme/components/YuxiHome.vue"
+        perl -pi -e "s/(git clone --branch v)[0-9]+\\.[0-9]+\\.[0-9]+(\\.[a-zA-Z0-9]+)?/\${1}${NEW_VERSION}/g" \
+            "${PROJECT_ROOT}/docs/.vitepress/theme/components/YuxiHome.vue"
+    elif [[ "$CURRENT_VERSION" == *.*.*.* ]]; then
+        # 精确更新当前候选引用，保留其他发布版本和历史章节。
+        current_version_pattern="(?<![0-9.])\\Q${CURRENT_VERSION}\\E(?![0-9A-Za-z])"
+        for current_doc in README.md README.en.md docs/intro/quick-start.md docs/advanced/deployment.md \
+            docs/advanced/container-sandbox.md docs/.vitepress/theme/components/YuxiHome.vue; do
+            perl -pi -e "s/${current_version_pattern}/${NEW_VERSION}/g" "${PROJECT_ROOT}/${current_doc}"
+        done
+        release_notes="${PROJECT_ROOT}/docs/develop-guides/releases/$(printf '%s' "$NEW_VERSION" | cut -d. -f1-3).md"
+        if [ -f "$release_notes" ]; then
+            perl -pi -e "s/${current_version_pattern}/${NEW_VERSION}/g" "$release_notes"
+        fi
+        perl -pi -e "s/${current_version_pattern}/${NEW_VERSION}/g if /当前候选/" \
+            "${PROJECT_ROOT}/docs/develop-guides/changelog.md"
     fi
-    perl -pi -e "s/\\Q${CURRENT_VERSION}\\E/${NEW_VERSION}/g if /当前候选/" \
-        "${PROJECT_ROOT}/docs/develop-guides/changelog.md"
 else
     echo "→ dev 模式，跳过 README、快速开始、部署指南和文档首页的发布版本更新"
 fi

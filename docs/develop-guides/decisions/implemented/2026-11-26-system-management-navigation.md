@@ -14,7 +14,7 @@ Owner：frontend/src/pages/SystemManageView.vue
 
 ### 实现方案
 
-`frontend/src/app/router/index.js` 按标签迁移管理链接。模型供应商和 API 集成的旧书签进入 `/system-manage`，智能体配置和定时任务在 `/agent-manage` 打开，迁移保留其他查询参数和锚点。原「用户与部门」链接根据所选分区定位到新标签。系统管理页按角色装配现有面板，在用户管理和部门管理之间切换时保留已打开的筛选状态。API Key 写入成功后，接入概览回读 APP 数据，并丢弃较早发出的请求结果。统计和接入说明见[API 集成入口与知识库 MCP 接入说明](./2026-10-28-api-integration-surface.md)。
+`frontend/src/app/router/index.js` 将 `/agent-manage` 的模型供应商和 API 集成书签迁移到 `/system-manage`，保留其他查询参数和锚点。智能体配置和定时任务在 `/agent-manage` 打开。系统管理页使用其实际提供的标签，按角色装配面板，在用户管理和部门管理之间切换时保留已打开的筛选状态。API Key 写入成功后，接入概览回读 APP 数据，并丢弃较早发出的请求结果。统计和接入说明见[API 集成入口与知识库 MCP 接入说明](./2026-10-28-api-integration-surface.md)。
 
 旧 `/dashboard` 书签迁移到系统概览，旧反馈链接迁移到智能体反馈，并保留其他参数和锚点。两个面板共用系统管理页头。
 

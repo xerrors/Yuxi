@@ -19,7 +19,7 @@ ProvisionerSandboxBackend 在 SDK 响应解析边界识别结构化的文件不�
 
 自动标题服务保留事务内先写用户输入截断的机制，清除模型思考段与标记，拒绝空结果、占位词及残留会话引用协议；模型失败或候选不可用时保留输入截断。字词关联限制由[自动标题只校验格式](2026-11-01-session-title-format-only.md)取代，候选不要求复用原文字词。一次命名与手动改名优先级保持不变。
 
-system_options 增加整数最大协作深度，根会话为 0，默认值见[协作默认深度与并发上限](2026-11-26-cooperation-limit-defaults.md)。SessionCooperationService 根据持久调用者的派生路径，在新建子会话和 Input 前拒绝超限；已有幂等创建结果继续重放。系统设置提供对应配置入口，配置校验由现有 Option 边界拥有。
+system_options 增加整数最大协作深度，根会话为 0，默认值见[协作树执行名额与深度配置](2026-10-24-cooperation-execution-slots-option.md)。SessionCooperationService 根据持久调用者的派生路径，在新建子会话和 Input 前拒绝超限；已有幂等创建结果继续重放。系统设置提供对应配置入口，配置校验由现有 Option 边界拥有。
 
 KnowledgeFileRepository 的文件统计读取真实 PostgreSQL 聚合，移除短 TTL 统计缓存，避免上传后列表与统计跨版本；文件及统计事实仍由数据库拥有。
 

@@ -22,7 +22,7 @@
       :scroll="{ x: 520 }"
       empty-text="当前文件夹为空"
       @open-row="(entry) => $emit('select-entry', entry)"
-      @breadcrumb-click="handleBreadcrumbClick"
+      @breadcrumb-click="$emit('breadcrumb-click', $event)"
       @page-change="(payload) => $emit('page-change', payload)"
     >
       <template #toolbar-actions>
@@ -135,7 +135,6 @@ const props = defineProps({
 
 const emit = defineEmits([
   'select-entry',
-  'select-path',
   'breadcrumb-click',
   'update:selectedPaths',
   'update:selectionMode',
@@ -213,11 +212,6 @@ const toggleSelectionMode = () => {
   if (!nextMode) {
     emit('update:selectedPaths', [])
   }
-}
-
-const handleBreadcrumbClick = ({ item, index }) => {
-  emit('breadcrumb-click', { item, index })
-  emit('select-path', item.path)
 }
 
 const dragOver = ref(false)

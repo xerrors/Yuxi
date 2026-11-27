@@ -35,14 +35,12 @@ class ScheduledAgentRepository:
         uid: str,
         *,
         lock: bool = False,
-        include_deleted: bool = False,
     ) -> ScheduledAgentJob | None:
         stmt = select(ScheduledAgentJob).where(
             ScheduledAgentJob.id == job_id,
             ScheduledAgentJob.uid == str(uid),
+            ScheduledAgentJob.deleted_at.is_(None),
         )
-        if not include_deleted:
-            stmt = stmt.where(ScheduledAgentJob.deleted_at.is_(None))
         if lock:
             stmt = stmt.with_for_update()
         return await self.db.scalar(stmt)

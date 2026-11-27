@@ -1641,7 +1641,6 @@ watch(
   flex-direction: column;
 }
 
-.file-section,
 .message-debug-section,
 .turn-sources-section {
   width: 100%;
@@ -1652,17 +1651,6 @@ watch(
 .turn-sources-section {
   display: flex;
   flex-direction: column;
-}
-
-.file-section {
-  display: flex;
-  flex-direction: column;
-}
-
-.files-display {
-  flex: 1;
-  min-height: 0;
-  display: flex;
 }
 
 .preview-pane {
@@ -1768,104 +1756,6 @@ watch(
   gap: 2px;
 }
 
-.preview-tabs-bar {
-  flex: 0 0 auto;
-  width: 100%;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  overflow-x: auto;
-  padding: 4px 8px;
-  border-bottom: 1px solid var(--gray-100);
-  scrollbar-width: none;
-
-  &::-webkit-scrollbar {
-    display: none;
-  }
-}
-
-.preview-tab {
-  min-width: 0;
-  max-width: 220px;
-  display: flex;
-  align-items: center;
-  border: 1px solid var(--gray-150);
-  border-radius: 8px;
-  background: var(--gray-25);
-  color: var(--gray-700);
-  overflow: hidden;
-  flex-shrink: 0;
-
-  &.active {
-    border-color: var(--gray-200);
-    background: var(--gray-0);
-    color: var(--gray-1000);
-  }
-}
-
-.preview-tab-main {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  border: none;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  padding: 5px 6px 5px 8px;
-}
-
-.preview-tab-icon {
-  flex-shrink: 0;
-  font-size: 14px;
-}
-
-.preview-tab-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.preview-tab-close {
-  width: 22px;
-  height: 22px;
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  margin-right: 3px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--gray-500);
-  cursor: pointer;
-  padding: 0;
-  transition:
-    color 160ms ease,
-    background-color 160ms ease,
-    transform 160ms ease;
-
-  &:hover {
-    color: var(--gray-900);
-    background: var(--gray-100);
-    transform: scale(1.04);
-  }
-
-  &:active {
-    background: var(--gray-150);
-    transform: scale(0.96);
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--main-400);
-    outline-offset: 1px;
-  }
-}
-
 .side-preview-shell {
   flex: 1;
   width: 100%;
@@ -1913,18 +1803,6 @@ watch(
   border: 1px dashed var(--gray-200);
   border-radius: 12px;
   background: linear-gradient(180deg, var(--gray-25) 0%, var(--gray-0) 100%);
-}
-
-.preview-empty-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--gray-800);
-}
-
-.preview-empty-desc {
-  margin-top: 6px;
-  font-size: 12px;
-  line-height: 1.6;
 }
 
 .error-state {

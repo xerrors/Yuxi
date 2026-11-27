@@ -70,7 +70,6 @@ export class ErrorHandler {
       archive: '归档对话',
       rename: '重命名对话',
       load: '加载对话',
-      export: '导出对话',
       stream: '流式处理',
       promote: '转为引导',
       cancel: '取消排队输入',

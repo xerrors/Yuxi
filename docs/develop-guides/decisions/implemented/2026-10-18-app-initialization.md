@@ -12,7 +12,7 @@ API 和 worker 启动都同步系统配置、内置 MCP 与 Skills，发布内�
 
 ### 实现方案
 
-无网络 root storage-init 仅准备五个挂载根。Compose 的 app-init 复用 API 镜像和普通用户身份，仅挂载内置 Skill 来源存储，等待 PostgreSQL 健康和 storage-init 成功。入口显式装配全部 ORM 模型，在数据库 advisory lock 内顺序完成 Schema、配置定义、内置供应商、Agent、MCP 与 Skill 同步；领域服务继续拥有管理员字段保留和同步规则。Schema 初始化失败只清理已确认空库的半成品；后续共享内容失败保留已完成数据，重跑幂等收敛。
+无网络的 root 进程 storage-init 准备[部署所需的目录权限](../../../advanced/deployment.md#_2-首次启动)。Compose 的 app-init 复用 API 镜像和普通用户身份，仅挂载内置 Skill 来源存储，等待 PostgreSQL 健康和 storage-init 成功。入口显式装配全部 ORM 模型，在数据库 advisory lock 内顺序完成 Schema、配置定义、内置供应商、Agent、MCP 与 Skill 同步；领域服务继续拥有管理员字段保留和同步规则。Schema 初始化只为空库建表，兼容的现有库直接进入共享同步，历史版本按[部署指南](../../../advanced/deployment.md#_3-数据库与文件目录)离线升级。初始化失败只清理已确认空库的半成品；后续共享内容失败保留已完成数据，重跑幂等收敛。
 
 API 和 worker 等待 app-init 成功，启动保留实际进程配置校验、Schema 版本校验、缓存及客户端创建和恢复检查。共享内容每次部署显式运行，开发修改内置定义后也重新执行 app-init。配置校验与可变外部服务 readiness 继续由消费进程负责。内置 MCP 发布定义同步失败同样阻止部署；此步骤不连接外部 MCP，其连接与调用仍按启用状态执行。
 

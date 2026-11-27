@@ -82,10 +82,10 @@
           v-if="showClose"
           class="modal-action-btn"
           @click="$emit('close')"
-          :title="closeTitle"
-          :aria-label="closeTitle"
+          title="关闭预览"
+          aria-label="关闭预览"
         >
-          <component :is="closeIconComponent" :size="16" />
+          <X :size="16" />
         </button>
       </div>
     </div>
@@ -264,7 +264,6 @@ import {
   Download,
   Globe,
   LoaderCircle,
-  PanelRight,
   FilePen,
   Save,
   WrapText,
@@ -324,11 +323,6 @@ const props = defineProps({
     type: Boolean,
     default: false
   },
-  closeVariant: {
-    type: String,
-    default: 'close',
-    validator: (value) => ['close', 'collapse-right'].includes(value)
-  },
   fullHeight: {
     type: Boolean,
     default: false
@@ -363,15 +357,9 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['close', 'download', 'save', 'draft-change', 'cancel-edit'])
+const emit = defineEmits(['close', 'download', 'save', 'draft-change'])
 
 const themeStore = useThemeStore()
-const closeTitle = computed(() =>
-  props.closeVariant === 'collapse-right' ? '收起预览面板' : '关闭预览'
-)
-const closeIconComponent = computed(() =>
-  props.closeVariant === 'collapse-right' ? PanelRight : X
-)
 const currentStatus = computed(() => {
   if (props.file?.status) return props.file.status
   if (props.file?.loading === true) return 'loading'
@@ -607,11 +595,7 @@ const startEditing = async (startLine = 1) => {
   textarea.focus()
 }
 
-defineExpose({
-  startEditing,
-  discardChanges: syncDraftContent,
-  hasUnsavedChanges: () => editMode.value === 'edit' && draftChanged.value
-})
+defineExpose({ startEditing })
 
 const requestSave = () => {
   if (!canEdit.value || props.saving) return
@@ -622,7 +606,6 @@ const cancelEdit = () => {
   draftContent.value = savedContent.value
   emit('draft-change', savedContent.value)
   editMode.value = 'preview'
-  emit('cancel-edit')
 }
 
 watch(

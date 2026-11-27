@@ -41,8 +41,6 @@ const props = defineProps({
   widgetsDisabled: Boolean,
   cooperationView: { type: Object, default: null },
   items: { type: Array, default: () => [] },
-  messageCount: { type: Number, default: 0 },
-  toolCallCount: { type: Number, default: 0 },
   durationMs: { type: Number, default: null },
   mention: { type: Object, default: () => null }
 })

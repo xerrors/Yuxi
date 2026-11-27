@@ -5,7 +5,7 @@ import { MessageProcessor } from './messageProcessor'
 import { getMessageRunId } from './messageDebug'
 import { groupRunContinuations } from './runProcessGrouping'
 
-/** 从共享消息事实派生阅读和导出分组，不拥有第二份消息状态或连接。 */
+/** 从共享消息事实派生阅读分组。 */
 export function useThreadMessageProjection(threadId) {
   const runtime = useSessionRuntimeStore()
   const { threadMessages, threadRuns } = storeToRefs(runtime)
@@ -13,27 +13,6 @@ export function useThreadMessageProjection(threadId) {
   const currentThreadState = computed(() => getThreadState(threadId.value))
   const currentThreadMessages = computed(() => threadMessages.value[threadId.value] || [])
   const currentThreadRuns = computed(() => threadRuns.value[threadId.value] || [])
-  const getThreadOngoingMessages = (threadId) => {
-    const threadState = getThreadState(threadId)
-    if (!threadState || !threadState.itemState) return []
-
-    const visible = (threadMessages.value[threadId] || [])
-      .filter((item) => item.run_id === threadState.activeRunId)
-      .map((item) => ({
-        ...item,
-        content: threadState.displayText[item.id] ?? item.content
-      }))
-    const inputIds = new Set(
-      visible.filter((item) => item.type === 'human').map((item) => item.input_id)
-    )
-    const optimistic = Object.values(threadState.optimisticInputs)
-      .flat()
-      .filter((item) => !inputIds.has(item.extra_metadata?.input_id))
-    return [...optimistic, ...visible]
-  }
-
-  const ongoingRunMessages = computed(() => getThreadOngoingMessages(threadId.value))
-
   const runGroups = computed(() => {
     const state = currentThreadState.value
     const messages = currentThreadMessages.value.map((item) => ({
@@ -65,11 +44,5 @@ export function useThreadMessageProjection(threadId) {
     return groupRunContinuations(groups)
   })
 
-  return {
-    runGroups,
-    ongoingRunMessages,
-    currentThreadMessages,
-    currentThreadRuns,
-    currentThreadState
-  }
+  return { runGroups, currentThreadRuns }
 }

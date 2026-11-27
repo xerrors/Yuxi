@@ -386,7 +386,7 @@ sudo tar --numeric-owner --acls --xattrs -xpf "$BACKUP_DIR/state.tar" -C "$RESTO
 
 ### 轮换历史默认凭据
 
-更换 `.env.prod` 中的 PostgreSQL、Neo4j 或 MinIO 凭据，不会自动修改已经写入数据卷的服务凭据。请先使用对应服务的官方管理流程修改数据卷内的凭据，再更新 `.env.prod`，重新创建相关服务，并用旧凭据验证登录已被拒绝。不要把真实密码写进命令历史、日志或文档。
+轮换前先排空任务并停止 API、worker。PostgreSQL 和 Neo4j 的账号密码已持久化，请先使用对应服务的管理流程修改，再更新 `.env.prod`。密码通过安全渠道输入，避免进入命令历史、日志或文档。
 
 PostgreSQL 可以在数据库容器内使用交互式命令修改，避免新密码出现在 shell 历史和进程参数中：
 
@@ -395,14 +395,14 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml --profile contain
   exec postgres psql -U postgres -d yuxi -c '\password postgres'
 ```
 
-Neo4j 使用 `cypher-shell` 的当前用户密码修改流程；MinIO 使用 `mc admin` 或部署采用的密钥管理流程。完成轮换后，把新值写入 `.env.prod`，再重建依赖这些凭据的服务：
+Neo4j 使用 `cypher-shell` 的当前用户密码修改流程。MinIO 从 Compose 注入的 `MINIO_ACCESS_KEY`、`MINIO_SECRET_KEY` 读取根凭据。轮换时停止 Milvus，把新值写入 `.env.prod`，再重建 MinIO、Milvus、API 和 worker。下面的命令适用于三类凭据同时轮换。[MinIO 根凭据配置](https://github.com/minio/minio/blob/RELEASE.2024-12-18T13-15-44Z/docs/config/README.md#credentials)
 
 ```bash
 docker compose --env-file .env.prod -f docker-compose.prod.yml --profile container \
-  up -d --force-recreate postgres graph minio api worker
+  up -d --force-recreate postgres graph minio milvus api worker
 ```
 
-最后分别用新凭据和旧凭据执行一次受控登录验证；API/worker 的 `API_KEY_DERIVATION_SECRET` 也必须保持为持久、独立且至少 32 个字符的值。
+最后验证新凭据可用、旧凭据被拒绝。MinIO 可从装有 `mc` 的运维客户端认证并回读既有对象。再通过应用下载既有知识原件、检索已有知识库，分别检查 API 的对象读取和 Milvus 的检索。API/worker 的 `API_KEY_DERIVATION_SECRET` 保持为持久、独立且至少 32 个字符的值。
 
 ### 常用检查顺序
 
@@ -436,7 +436,7 @@ Yuxi 本体使用 MIT License。Compose 依赖以独立进程运行，Yuxi 通�
 | Redis | `redis:7.4.10-alpine` | RSALv2 / SSPLv1（均非 OSI 许可证） |
 | MinerU（可选） | 本地构建：`<项目名>-mineru:4.1.3`，vLLM 基础镜像 `v0.21.0` | 以 `docker/mineru.Dockerfile` 与上游许可证为准 |
 
-MinIO 的镜像由本仓库构建：MinIO 在 Docker Hub 与 quay.io 上的镜像已不再公开分发（同一 registry 上其他镜像仍可匿名拉取），`dl.min.io` 返回 410。Compose 按 `docker/minio/Dockerfile` 构建该镜像，构建时从官方 GitHub Release 下载固定版本的二进制并校验 sha256；它运行与下架前镜像逐字节相同的 MinIO 二进制，基础镜像与镜像内附带文件则不同（不再包含 `mc`、`minisig` 与 `*_FILE` 变量默认值）。
+Compose 按 `docker/minio/Dockerfile` 构建 MinIO 镜像，从官方 GitHub Release 下载对应架构的固定版本二进制并校验 SHA-256。镜像包含运行服务和健康检查所需的文件。选择仓库内构建的原因见[MinIO 镜像构建决策](../develop-guides/decisions/archived/2026-09-26-minio-image-self-built.md)。
 
 这张表只覆盖 Compose 的主要镜像本体，不是完整的软件物料清单，也不承诺 `latest` 镜像的内容固定。镜像还可能包含各自的基础系统和传递依赖，离线交付前要按实际 digest 核对许可证、版权声明和对应源码。
 

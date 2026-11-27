@@ -6,7 +6,6 @@
     v-bind="toolId in COOPERATION_ACTIONS ? { cooperationView } : {}"
     :appearance="appearance"
     :default-expanded="defaultExpanded"
-    ref="toolRendererRef"
   />
   <BaseToolCall
     v-else-if="!isHidden"
@@ -17,7 +16,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import BaseToolCall from './BaseToolCall.vue'
 import { CooperationTool, TOOL_RENDERERS } from './toolRenderers.js'
 import { COOPERATION_ACTIONS } from '@/modules/session/model/cooperationToolView'
@@ -47,15 +46,4 @@ const currentRenderer = computed(() =>
     : TOOL_RENDERERS[toolId.value] || null
 )
 const isHidden = computed(() => isHiddenToolCall(props.toolCall))
-
-const toolRendererRef = ref(null)
-const refreshGraph = () => {
-  if (toolRendererRef.value && typeof toolRendererRef.value.refreshGraph === 'function') {
-    toolRendererRef.value.refreshGraph()
-  }
-}
-
-defineExpose({ refreshGraph })
 </script>
-
-<style lang="less" scoped></style>

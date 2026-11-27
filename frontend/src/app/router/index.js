@@ -97,10 +97,10 @@ const router = createRouter({
       path: '/dashboard',
       name: 'dashboard',
       redirect: (to) => {
-        const { tab, dashboardTab, ...query } = to.query
+        const { tab, ...query } = to.query
         return {
           name: 'SystemManage',
-          query: { ...query, tab: (tab || dashboardTab) === 'feedback' ? 'feedback' : 'overview' },
+          query: { ...query, tab: tab === 'feedback' ? 'feedback' : 'overview' },
           hash: to.hash
         }
       }
@@ -188,28 +188,9 @@ function redirectGuest(to) {
 
 // 按标签迁移已发布的管理链接，并保留标签之外的定位信息。
 router.beforeEach((to) => {
-  const { tab, section, ...query } = to.query
+  const { tab } = to.query
   if (to.name === 'AgentManageComp' && (tab === 'providers' || tab === 'integration')) {
     return { name: 'SystemManage', query: to.query, hash: to.hash }
-  }
-  if (to.name !== 'SystemManage') return
-  if (tab === 'agents' || tab === 'schedules') {
-    return { name: 'AgentManageComp', query: to.query, hash: to.hash }
-  }
-  if (tab === 'dashboard') {
-    const { dashboardTab, ...legacyQuery } = to.query
-    return {
-      name: 'SystemManage',
-      query: { ...legacyQuery, tab: dashboardTab === 'feedback' ? 'feedback' : 'overview' },
-      hash: to.hash
-    }
-  }
-  if (tab === 'organization') {
-    return {
-      name: 'SystemManage',
-      query: { ...query, tab: section === 'departments' ? 'departments' : 'users' },
-      hash: to.hash
-    }
   }
 })
 

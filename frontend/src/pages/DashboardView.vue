@@ -187,9 +187,6 @@ defineExpose({ loading })
   }
 }
 @media (max-width: 900px) {
-  .job-center-button {
-    padding-right: 8px;
-  }
   .dashboard-grid {
     grid-template-columns: minmax(0, 1fr);
     gap: 12px;

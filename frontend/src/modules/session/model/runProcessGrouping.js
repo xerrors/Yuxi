@@ -76,12 +76,10 @@ export const collapseRunProcess = (items, enabled = false, runTiming = null) => 
     return items
   }
 
-  const messageCount = processItems.filter((item) => item.type === 'message').length
-  const toolCallCount = processItems.reduce(
-    (count, item) => count + (item.type === 'tool-group' ? item.toolCalls.length : 0),
-    0
+  const hasMessagesOrTools = processItems.some(
+    (item) => item.type === 'message' || (item.type === 'tool-group' && item.toolCalls.length > 0)
   )
-  if (!messageCount && !toolCallCount) return items
+  if (!hasMessagesOrTools) return items
 
   const durationMs = getRunTotalLatencyMs(runTiming)
 
@@ -91,8 +89,6 @@ export const collapseRunProcess = (items, enabled = false, runTiming = null) => 
       type: 'process-group',
       key: `process-group-${processItems[0].key}`,
       items: processItems,
-      messageCount,
-      toolCallCount,
       durationMs
     },
     ...items.slice(processEnd)

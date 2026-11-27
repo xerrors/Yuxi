@@ -54,8 +54,6 @@
             v-else
             :items="displayItem.items"
             :cooperation-view="cooperationView"
-            :message-count="displayItem.messageCount"
-            :tool-call-count="displayItem.toolCallCount"
             :duration-ms="displayItem.durationMs"
             :widgets-disabled="row.group.status === 'streaming' || widgetActionsDisabled"
             :mention="mentionConfig"

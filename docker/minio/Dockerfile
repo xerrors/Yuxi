@@ -1,8 +1,4 @@
-# MinIO 的官方镜像已不再公开分发：Docker Hub 于 2026-09-11 前后移除 minio/minio 与
-# minio/mc，quay.io 上 minio/minio 这个仓库自 2026-09-24 起不再对匿名用户公开（同一
-# registry 上其他镜像仍可匿名拉取），dl.min.io 返回 410。此处按官方 GitHub Release
-# 发布的二进制重建镜像：版本与 sha256 都取自 release 资产并在构建时校验，运行的是与
-# 下架前镜像逐字节相同的 MinIO 二进制（基础镜像与镜像内附带文件不同，见部署文档）。
+# 使用官方 GitHub Release 的固定版本二进制，按目标架构校验 SHA-256。
 FROM alpine:3.20
 
 ARG MINIO_VERSION=RELEASE.2024-12-18T13-15-44Z

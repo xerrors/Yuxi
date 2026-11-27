@@ -33,7 +33,7 @@ Agent 配置中的 `skills` 只选择共享和内置 Skill。Context 选项与�
 ## 验证
 
 - Context、repository 与 Skill runtime 单测覆盖动态全部、显式空列表、隐藏引用、个人 Skill 与共享选择分离、同名覆盖、用户目录隔离、预加载范围和非法值拒绝。负向案例恢复旧选项查询和旧运行合并规则后分别失败。
-- 真实 HTTP integration 保存并回读选择意图，拒绝非法形状和个人 Skill 配置引用后数据库原值保持不变。当前 Schema 初始化边界由[全新部署决策](../proposed/2026-09-29-fresh-schema-only.md)追踪。
+- 真实 HTTP integration 保存并回读选择意图，拒绝非法形状和个人 Skill 配置引用后数据库原值保持不变。当前 Schema 初始化边界由[应用共享初始化](./2026-10-18-app-initialization.md)追踪。
 - Chatbot 中间件装配单测验证空子智能体列表不注册工具；安装测试回读个人文件并证明不依赖 Agent 配置数据库访问。Web unit 与浏览器验证全部模式、固定勾选、空分组响应式显示及保存值不变；CLI 测试区分全部与禁用。完整命令与环境边界见交付 PR。
 - 旧能力不存在：预加载数组专用类型、拒绝 all 的 guard、资源字段外部名单、前端默认全选名单，以及安装时修改 Agent 配置的入口均已删除。重新引入条件：有当前协议无法表达的真实用户约束或个人 Skill 需要显式管理的产品要求。
 - Not run：完整 worker/模型 E2E；个人 Skill E2E 已定义最终输出、文件和 Run manifest 回读断言，运行仍需模型与 worker 环境。

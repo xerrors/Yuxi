@@ -9,7 +9,7 @@ from yuxi.modules.system.models import ConfigOption
 OPTION_SYNC_LOCK_KEY = 94721801
 
 
-async def sync_option_definitions(db: AsyncSession, definitions: dict) -> list[ConfigOption]:
+async def sync_option_definitions(db: AsyncSession, definitions: dict) -> None:
     """幂等同步系统定义，保留管理员已经保存的值。"""
 
     if db.bind and db.bind.dialect.name == "postgresql":
@@ -17,7 +17,6 @@ async def sync_option_definitions(db: AsyncSession, definitions: dict) -> list[C
 
     result = await db.execute(select(ConfigOption).where(ConfigOption.key.in_(definitions)))
     existing = {record.key: record for record in result.scalars().all()}
-    synced = []
     for key, definition in definitions.items():
         record = existing.get(key)
         if record is None:
@@ -35,9 +34,7 @@ async def sync_option_definitions(db: AsyncSession, definitions: dict) -> list[C
             record.name = definition.name
             record.description = definition.description
             record.params = dict(definition.params)
-        synced.append(record)
     await db.flush()
-    return synced
 
 
 async def list_options(db: AsyncSession) -> list[ConfigOption]:
